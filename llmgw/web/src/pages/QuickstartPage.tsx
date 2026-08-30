@@ -272,6 +272,9 @@ export function QuickstartPage() {
   // 预检的代次与在途请求：并发时只有最新那一代的结论算数（见 checkRealRoute）。
   const routeProbeSeq = useRef(0);
   const routeProbeAbort = useRef<AbortController | null>(null);
+  // 用途推导同理：改一句话重新提交时，上一条流常常还在写同一批状态（见 submitIntent）。
+  const intentDraftSeq = useRef(0);
+  const intentDraftAbort = useRef<AbortController | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   // code 是归因的唯一入口（serving 的 error.code），message 只做兜底展示。
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string; requestId?: string; code?: string }
@@ -498,6 +501,19 @@ export function QuickstartPage() {
   const submitIntent = async () => {
     const text = intent.trim();
     if (text.length < MIN_INTENT_LENGTH) return;
+    /*
+      与路由预检同一形状：用户点「改那句话」再提交时，上一条推导常常还在流。
+      两条写的是同一批状态（trace / 两段码 / 依据 / loading），先发的那条后到，
+      就把上一句话推出来的码配到这句话上——屏幕上是新句子，码是旧句子的；
+      它的 finally 还会把新那条的 loading 关掉，看着像「推完了」。
+      所以同样按代次判：不是最新那一代一个字都不许写，并把在途的旧请求 abort 掉
+      （draftAppCallerIntent 本来就收 signal，此前没人给它）。
+    */
+    const draftId = ++intentDraftSeq.current;
+    intentDraftAbort.current?.abort();
+    const abortController = new AbortController();
+    intentDraftAbort.current = abortController;
+    const superseded = () => intentDraftSeq.current !== draftId;
     setStage('draft');
     setDrafting(true);
     setDraftTrace('');
@@ -514,6 +530,7 @@ export function QuickstartPage() {
     /** 模型这条路走不通时的统一兜底：本地关键词表，且必须写清「这是降级」。 */
     const fallbackTo = (message: string) => {
       settled = true;
+      if (superseded()) return;
       const local = analyzeAppCallerIntent(text);
       setDraftNotice(message);
       if (local.actor && local.task) {
@@ -528,6 +545,7 @@ export function QuickstartPage() {
     };
     try {
       await draftAppCallerIntent(text, (frame) => {
+        if (superseded()) return;
         if (frame.type === 'stage') {
           setDraftStageText(frame.text);
           return;
@@ -553,13 +571,17 @@ export function QuickstartPage() {
           setDraftReason(frame.reason);
           setDraftModel(frame.model);
         }
-      });
+      }, abortController.signal);
       if (!settled) fallbackTo('推导没有返回结果，已退回本地关键词判定。');
     } catch (error) {
-      fallbackTo(`推导请求失败（${(error as Error).name}），已退回本地关键词判定。`);
+      // 被新一次提交 abort 掉的那条不算失败：它的结论已经没人要了，
+      // 报成「推导请求失败」只会在新那条还在跑的时候先弹一句假的降级提示。
+      if (!superseded()) fallbackTo(`推导请求失败（${(error as Error).name}），已退回本地关键词判定。`);
     } finally {
-      setDrafting(false);
-      setDraftStageText('');
+      if (!superseded()) {
+        setDrafting(false);
+        setDraftStageText('');
+      }
     }
   };
 

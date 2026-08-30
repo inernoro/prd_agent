@@ -116,9 +116,8 @@ export function ServiceKeysPage() {
   const [rateLimitPerMinute, setRateLimitPerMinute] = useState('');
   const [rotatesKeyId, setRotatesKeyId] = useState<string | undefined>();
   const [confirmWildcardRisk, setConfirmWildcardRisk] = useState(false);
+  /** 只喂下拉与补全。签发前的「存不存在、什么状态」现问服务端，不看这一页（见 submit）。 */
   const [knownAppCallers, setKnownAppCallers] = useState<string[]>([]);
-  /** 码 → 状态。只有能接流量的状态才可以跳过登记直接签发（与 serving 的判据同一套枚举）。 */
-  const [appCallerStatuses, setAppCallerStatuses] = useState<Record<string, string>>({});
   const [legacy, setLegacy] = useState<LegacyKeyCutoverData | null>(null);
   const [legacyDeadline, setLegacyDeadline] = useState('');
   const [legacyAllowedCallers, setLegacyAllowedCallers] = useState('');
@@ -149,13 +148,11 @@ export function ServiceKeysPage() {
     void load();
     void getGatewayAppCallers({ page: 1, pageSize: 200 }).then((res) => {
       if (res.success) {
+        // 这一页只喂给「手选已有用途」的下拉与补全，不参与签发前的判定：
+        // 那是一页有上限的列表，用它判「这个码存不存在 / 是什么状态」在用途多过一页的
+        // 租户上必然判错，所以签发那一步改成现问服务端（见 submit）。
         const codes = Array.from(new Set(res.data.items.map((item) => item.appCallerCode))).sort();
         setKnownAppCallers(codes);
-        // 状态要留着：只记住「这个码存在」的话，撞上一条**已停用**的同码 appCaller 时
-        // 登记会被跳过（认为已经有了），密钥照签，而 serving 当场回 APP_CALLER_DISABLED——
-        // 页面刚把一把注定用不了的 key 交到用户手上。
-        setAppCallerStatuses(Object.fromEntries(
-          res.data.items.map((item) => [item.appCallerCode.toLowerCase(), item.status])));
         setAppCallerCodes((current) => current || codes[0] || '');
       }
     });
@@ -173,17 +170,36 @@ export function ServiceKeysPage() {
     // 登记之后这条用途才会出现在「调用方」页上，能绑模型池、能被 Quickstart 直测
     // （直测对未登记的 code 返回 APP_CALLER_NOT_FOUND）。登记失败就不签发，
     // 免得留下一把指向无主 code 的密钥。
-    // 与 serving 的 GatewayAppCallerPolicy 同一套枚举：只有这三种状态放行真实流量。
-    const existingStatus = appCallerStatuses[generatedAppCallerCode.toLowerCase()];
-    if (appCallerMode === 'generate'
-      && existingStatus !== undefined
-      && !['discovered', 'configured', 'active'].includes(existingStatus.trim().toLowerCase())) {
-      setCreating(false);
-      setError(`调用用途「${generatedAppCallerCode}」已存在但处于「${existingStatus}」状态，不接受流量。`
-        + '先去「调用用途」把它恢复，或换一个用途名——现在签出来的密钥一调用就会被拒。');
-      return;
+    /*
+      「这个码此刻是什么状态」必须现问服务端，不能翻手上那一页。
+      页面开屏拉的是第一页（上限 200 条），租户的调用用途多过这个数时，一条**已停用**的同码
+      落在页外就查不到：状态判空 → 这道闸整条跳过 → 幂等创建把那条停用的原样返回 → 密钥照签，
+      而 serving 当场回 APP_CALLER_DISABLED。判据只覆盖了「最直观的那一页」，
+      正是 predicate-and-wiring-discipline 形状 1；而它上一轮刚被我按同一个理由修过一次。
+      顺带把「要不要登记」也改由这一次探测回答：两个判断问同一个来源，不会一个说有、一个说没有。
+    */
+    let existingCaller: { appCallerCode: string; status: string } | undefined;
+    if (appCallerMode === 'generate') {
+      const probe = await getGatewayAppCallers({ page: 1, pageSize: 200, search: generatedAppCallerCode });
+      if (!probe.success) {
+        setCreating(false);
+        setError(`没能确认调用用途「${generatedAppCallerCode}」当前是什么状态（${probe.error?.message || '读取失败'}），密钥未创建。`
+          + '这一步不敢猜：万一它已被停用，签出来的密钥一调用就会被拒。请重试，或先去「调用用途」页确认。');
+        return;
+      }
+      existingCaller = probe.data.items.find(
+        (item) => item.appCallerCode.trim().toLowerCase() === generatedAppCallerCode.trim().toLowerCase());
+      // 与 serving 的 GatewayAppCallerPolicy 同一套枚举：只有这三种状态放行真实流量。
+      const existingStatus = existingCaller?.status;
+      if (existingStatus !== undefined
+        && !['discovered', 'configured', 'active'].includes(existingStatus.trim().toLowerCase())) {
+        setCreating(false);
+        setError(`调用用途「${generatedAppCallerCode}」已存在但处于「${existingStatus}」状态，不接受流量。`
+          + '先去「调用用途」把它恢复，或换一个用途名——现在签出来的密钥一调用就会被拒。');
+        return;
+      }
     }
-    if (appCallerMode === 'generate' && !knownAppCallers.some((code) => code.toLowerCase() === generatedAppCallerCode)) {
+    if (appCallerMode === 'generate' && !existingCaller) {
       if (!appCallerTeamId) {
         setCreating(false);
         setError('当前租户还没有可用团队，无法登记调用用途。请先在组织与团队里建一个团队。');

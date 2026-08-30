@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using PrdAgent.Core.Models;
@@ -35,6 +36,16 @@ public class ModelResolver : IModelResolver
     /// </summary>
     private readonly bool _catalogGateEnforces;
 
+    /// <summary>补标记迁移的完成状态（进程级，按网关库名分桶）。见 CatalogGateEnforcesAsync。</summary>
+    private static readonly ConcurrentDictionary<string, (bool Complete, DateTime CheckedAt)> CatalogMigrationState = new();
+
+    /// <summary>
+    /// 还没完成时的重查间隔：控制台可能晚几十秒才起来，不能一直按第一次的结论走。
+    /// 可由 `LlmGateway:ModelCatalogGateRecheckSeconds` 调整（默认 30 秒）——
+    /// 它只影响「多久回头再问一次库」，不参与判据本身。
+    /// </summary>
+    private readonly TimeSpan _catalogMigrationRecheckInterval;
+
     public ModelResolver(
         MongoDbContext db,
         IConfiguration config,
@@ -54,6 +65,10 @@ public class ModelResolver : IModelResolver
         // 一道安全门不该因为配置写错就悄悄敞开。
         _catalogGateEnforces = !string.Equals(
             config["LlmGateway:ModelCatalogGate"]?.Trim(), "observe", StringComparison.OrdinalIgnoreCase);
+        _catalogMigrationRecheckInterval =
+            int.TryParse(config["LlmGateway:ModelCatalogGateRecheckSeconds"], out var recheckSeconds) && recheckSeconds >= 0
+                ? TimeSpan.FromSeconds(recheckSeconds)
+                : TimeSpan.FromSeconds(30);
     }
 
     /// <inheritdoc />
@@ -101,6 +116,19 @@ public class ModelResolver : IModelResolver
         if (resolved.RetryCandidates is { Count: > 0 }) gateTargets.AddRange(resolved.RetryCandidates);
         var batch = await PrefetchCatalogDocsAsync(gateTargets, ct);
 
+        /*
+          「能不能拦」要现问，而且只在真要拦的时候才问：配置写着 enforce 只是意愿，
+          真凭据是控制台那几条补标记迁移跑完了没有（见 CatalogGateEnforcesAsync）。
+          放在这里而不是方法开头，是因为绝大多数请求全在名录内，一条都不会被拦，
+          不该为它们多问一次库。
+        */
+        bool? enforcesCache = null;
+        async Task<bool> EnforcesAsync()
+        {
+            enforcesCache ??= await CatalogGateEnforcesAsync(ct);
+            return enforcesCache.Value;
+        }
+
         if (await JudgeAsync(resolved.ActualModel, resolved.ActualPlatformId, ct, batch) != CatalogVerdict.Blocked)
         {
             // 主选放行；重试链里越界的成员要摘掉，否则第一次失败后照样会打出去。
@@ -114,30 +142,32 @@ public class ModelResolver : IModelResolver
                         kept.Add(candidate);
                         continue;
                     }
+                    var enforcesForCandidate = await EnforcesAsync();
                     _logger.LogWarning(
                         "[ModelResolver] 重试候选不在名录且未放行（名录门={Gate}）: AppCallerCode={Code}, Model={Model}, PlatformId={PlatformId}",
-                        _catalogGateEnforces ? "enforce/已摘除" : "observe/仍保留",
+                        enforcesForCandidate ? "enforce/已摘除" : "observe/仍保留",
                         appCallerCode, candidate.ActualModel ?? "(空)", candidate.ActualPlatformId ?? "(空)");
-                    if (!_catalogGateEnforces) kept.Add(candidate);
+                    if (!enforcesForCandidate) kept.Add(candidate);
                 }
                 resolved.RetryCandidates = kept;
             }
             return resolved;
         }
 
+        var enforces = await EnforcesAsync();
         _logger.LogError(
             "[ModelResolver] 选中的模型不在内置名录且没有放行标记（名录门={Gate}）: "
             + "AppCallerCode={Code}, Model={Model}, PlatformId={PlatformId}, ResolutionType={Type}, Pool={Pool}",
-            _catalogGateEnforces ? "enforce/已拒绝" : "observe/仅记录未拦截",
+            enforces ? "enforce/已拒绝" : "observe/仅记录未拦截",
             appCallerCode,
             resolved.ActualModel ?? "(空)",
             resolved.ActualPlatformId ?? "(空)",
             resolved.ResolutionType,
             resolved.ModelGroupId ?? "(无)");
 
-        // observe 档：日志已经把该点名的都点了，请求照常放行——这一档存在的意义就是
-        // 「先看清存量有多少会被拦」，拦下来就看不成了。
-        if (!_catalogGateEnforces) return resolved;
+        // observe 档（配置降档，或补标记还没跑完）：日志已经把该点名的都点了，请求照常放行——
+        // 这一档存在的意义就是「先看清存量有多少会被拦」，拦下来就看不成了。
+        if (!enforces) return resolved;
 
         return ModelResolutionResult.NotFound(
             resolved.ExpectedModel,
@@ -147,6 +177,62 @@ public class ModelResolver : IModelResolver
             "model-catalog",
             appCallerCode,
             modelPoolId: resolved.ModelGroupId);
+    }
+
+    /// <summary>
+    /// 这道门此刻有没有资格真拦。
+    ///
+    /// 配置写着 enforce 只是**意愿**；真凭据是控制台那几条「给存量补放行标记」的迁移跑完了没有。
+    /// 两者跑在不同容器里、没有启动顺序（compose 里都只依赖 Mongo，serving 的就绪探针只看自己），
+    /// 所以「控制台还没迁完或迁失败」和「数据面已经在拦」完全可能同时成立——那一刻存量模型
+    /// 会集体收到 MODEL_NOT_IN_CATALOG，一次控制面故障就扩大成了数据面故障，
+    /// 而 `llm-gateway.md` 规则 7 明令禁止这件事。所以补标记没做完就只记录、不拦。
+    ///
+    /// 读不到标记（没有网关库、查库失败）一律按「还没做完」处理：这道门是后加的，
+    /// 它自己出问题时该退回原状，而不是把请求一起拖下水。
+    ///
+    /// 缓存放在进程级静态里而不是实例字段——解析器是 scoped，每个请求一个新实例，
+    /// 实例字段缓存不住任何东西。按库名分桶，测试里多个临时库不会互相污染。
+    /// 只有「已完成」是终态可以永久缓存：完成标记写下去就不会再撤销。
+    /// </summary>
+    private async Task<bool> CatalogGateEnforcesAsync(CancellationToken ct)
+    {
+        if (!_catalogGateEnforces) return false;
+        if (_gatewayDb is null) return false;
+
+        var databaseKey = _gatewayDb.Database.DatabaseNamespace.DatabaseName;
+        if (CatalogMigrationState.TryGetValue(databaseKey, out var cached)
+            && (cached.Complete || DateTime.UtcNow - cached.CheckedAt < _catalogMigrationRecheckInterval))
+        {
+            return cached.Complete;
+        }
+
+        var complete = false;
+        try
+        {
+            var migrations = _gatewayDb.Database.GetCollection<BsonDocument>(GatewayCatalogMigrations.CollectionName);
+            var done = await migrations.CountDocumentsAsync(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.In("_id", GatewayCatalogMigrations.RequiredIds),
+                    Builders<BsonDocument>.Filter.Exists(GatewayCatalogMigrations.CompletedAtField)),
+                cancellationToken: ct);
+            complete = done >= GatewayCatalogMigrations.RequiredIds.Length;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[ModelResolver] 读不到名录门的迁移完成标记，本轮按 observe 处理（只记录不拦）");
+        }
+
+        CatalogMigrationState[databaseKey] = (complete, DateTime.UtcNow);
+        if (!complete)
+        {
+            _logger.LogWarning(
+                "[ModelResolver] 名录门配置为 enforce，但控制台的存量补标记（{Ids}）还没有全部记下完成时间，"
+                + "本轮只记录不拦截——先确认控制台已启动并完成迁移，否则存量模型会被误拦",
+                string.Join(", ", GatewayCatalogMigrations.RequiredIds));
+        }
+
+        return complete;
     }
 
     /// <summary>

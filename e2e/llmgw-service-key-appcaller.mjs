@@ -70,10 +70,27 @@ const posted = [];
 // 两档的正确行为不一样，所以要用同一套页面分别跑一遍。
 let session = { role: 'owner', teamIds: ['team-1'] };
 
+/*
+  「翻不到的那一页」：页面开屏只拉第一页（上限 200 条），用途多过这个数的租户上，
+  一条已停用的同码 appCaller 完全可能落在页外。这里就把它做成那种形态——
+  不带 search 的列表里没有它，按它的 code 搜才搜得到。
+*/
+let pagedOutAppCaller = null;
+
 const server = http.createServer((req, res) => {
-  const p = new URL(req.url, `http://localhost:${PORT}`).pathname;
+  const requestUrl = new URL(req.url, `http://localhost:${PORT}`);
+  const p = requestUrl.pathname;
   if (p.startsWith('/llmgw/gw/')) {
     const api = p.replace('/llmgw/gw', '');
+    if (req.method === 'GET' && api === '/app-callers') {
+      const search = (requestUrl.searchParams.get('search') || '').trim().toLowerCase();
+      const hit = pagedOutAppCaller && search && pagedOutAppCaller.appCallerCode.toLowerCase() === search
+        ? [pagedOutAppCaller]
+        : APP_CALLERS;
+      return json(res, 200, { success: true, error: null, data: {
+        ...LIST, items: hit, total: hit.length, statuses: [], sourceSystems: [], ingressProtocols: [], requestTypes: [],
+      } });
+    }
     if (api === '/auth/login') {
       return json(res, 200, { success: true, error: null, data: {
         token: 'stub', username: 'demo', displayName: 'Demo',
@@ -216,6 +233,26 @@ await page.getByRole('button', { name: '生成 API Key' }).click();
 await page.waitForTimeout(1200);
 check('复用已有 code 时不再登记 appCaller', posted.map((item) => item.api), ['/service-keys']);
 check('复用的 code 原样提交', posted[0]?.body?.appCallerCodes, ['ai-toolbox.agent::generation']);
+
+// 6.5) 停用的同码 appCaller 落在第一页之外：判据必须问服务端，不能翻手上那一页。
+//      翻页那种写法在小租户上永远是绿的——一条都没漏，因为总共就那么几条；
+//      用途多过一页的租户上它必然判空，于是这道闸整条跳过、密钥照签，
+//      而 serving 当场回 APP_CALLER_DISABLED：页面刚把一把注定用不了的 key 交出去。
+posted.length = 0;
+await page.getByRole('button', { name: '新建密钥' }).click();
+await page.waitForSelector('.lg-service-key-form');
+await nameInput.fill('paged-out-client');
+await page.locator('input[aria-label="调用用途"]').fill('desktop');
+await page.waitForTimeout(200);
+const pagedOutCode = await generatedCode();
+pagedOutAppCaller = { ...APP_CALLERS[0], id: 'ac-paged-out', appCallerCode: pagedOutCode, status: 'archived' };
+await page.getByRole('button', { name: '生成 API Key' }).click();
+await page.waitForTimeout(1200);
+check('页外的停用同码被查出来：一个写请求都不许发', posted.map((item) => item.api), []);
+check('并说清为什么不签', (await page.locator('.lg-page-body').innerText()).includes('不接受流量'), true);
+pagedOutAppCaller = null;
+await page.getByRole('button', { name: '取消' }).click();
+await page.waitForTimeout(200);
 
 // 7) 多团队 Developer：留空团队时，服务端不会替他推断（只有「刚好一个团队」才推），
 //    Developer 又不允许租户级密钥，于是密钥这一步会被 TEAM_SCOPE_REQUIRED 挡回来——

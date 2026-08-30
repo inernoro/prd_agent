@@ -198,6 +198,28 @@ const server = http.createServer((req, res) => {
       req.on('data', (c) => { raw += c; });
       req.on('end', () => {
         drafted.push(raw ? JSON.parse(raw) : null);
+        /*
+          race 档：第一句慢慢回、第二句立刻回，两条答案的码互不相同。
+          用来验「后提交的那句说了算」——先发后到的那条不许把它的码写到新句子上。
+        */
+        if (draftMode === 'race') {
+          const intentText = drafted[drafted.length - 1]?.intent ?? '';
+          const slow = intentText.includes('第一句');
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          setTimeout(() => {
+            // 新提交会 abort 掉上一条，socket 早就没了；往死掉的响应上写会炸掉整个桩。
+            if (res.writableEnded || res.destroyed) return;
+            res.write(`data: ${JSON.stringify({
+              type: 'result', ok: true,
+              app: slow ? 'slow-first' : 'fast-second', feature: 'command-intent', requestType: 'chat',
+              reason: slow ? '第一句的依据' : '第二句的依据',
+              appCallerCode: slow ? 'slow-first.command-intent::chat' : 'fast-second.command-intent::chat',
+              model: 'demo/chat-1',
+            })}\n\n`);
+            res.end();
+          }, slow ? 1500 : 0);
+          return;
+        }
         if (draftMode === 'unavailable') {
           res.writeHead(200, { 'Content-Type': 'text/event-stream' });
           res.write(`data: ${JSON.stringify({ type: 'error', code: 'INTENT_DRAFT_UNAVAILABLE', message: '系统级用途码还没绑上可用的模型池。去「服务网关设置」选一个对话池或指定一个模型。已退回本地关键词判定。' })}\n\n`);
@@ -350,8 +372,33 @@ check('降级消息指出自救入口', (await page.locator('.lg-test-result.is-
 check('降级后本地关键词表接住这句话', (await issuedCode(page).innerText()).trim(), 'smart-device.command-parse::chat');
 check('降级时标明是本地判定', (await page.locator('.lg-qs-draft-source').innerText()).includes('降级'), true);
 check('降级时摊开本地清单供手动改', await page.locator('.lg-qs-facets').count(), 1);
+/*
+  ── 改了那句话再提交：后提交的那句说了算 ──────────────────────────
+  上一条推导常常还在流（它是 SSE，一句话要推好几秒）。两条写的是同一批状态——
+  推导原文、两段码、判定依据、loading。先发的那条后到，就把上一句话推出来的码
+  配到这句话上：屏幕上是新句子，码是旧句子的，而它的 finally 还会把 loading 关掉，
+  看着像「推完了」。这里让第一句慢 1.5 秒、第二句立刻回，专验这件事。
+*/
+draftMode = 'race';
+await page.getByRole('button', { name: '改那句话' }).click();
+await page.waitForTimeout(200);
+await askInput(page).fill('第一句：接入小米音响指令集');
+await page.getByRole('button', { name: '准备接入' }).click();
+await page.waitForTimeout(300);
+await page.getByRole('button', { name: '改那句话' }).click();
+await page.waitForTimeout(200);
+await askInput(page).fill('第二句：接入客服助手对话');
+await page.getByRole('button', { name: '准备接入' }).click();
+await page.waitForSelector('.lg-qs-issue code', { timeout: 15000 });
+await page.waitForTimeout(2000);
+check('后提交的那句说了算', (await issuedCode(page).innerText()).trim(), 'fast-second.command-intent::chat');
+check('依据也跟着后提交的那句', (await page.locator('.lg-qs-draft-reason').innerText()).includes('第二句'), true);
+
 draftMode = 'model';
-await page.getByRole('button', { name: '重新生成' }).click();
+await page.getByRole('button', { name: '改那句话' }).click();
+await page.waitForTimeout(200);
+await askInput(page).fill('接入小米音响，对接大模型网关指令集');
+await page.getByRole('button', { name: '准备接入' }).click();
 await page.waitForSelector('.lg-qs-draft-source', { timeout: 15000 });
 await page.waitForTimeout(300);
 

@@ -107,6 +107,77 @@ public sealed class ModelCatalogGateBehaviorTests
     }
 
     /// <summary>
+    /// 控制台的补标记还没跑完时，这道门只许记录、不许拦。
+    ///
+    /// 控制台与 serving 是两个容器，compose 里都只依赖 Mongo，serving 的就绪探针也只看自己活没活——
+    /// 「控制台还没起来 / 迁移失败了」与「数据面已经在按 enforce 拦」完全可能同时成立。
+    /// 一旦成立，名录门上线前入库的存量模型会集体收到 MODEL_NOT_IN_CATALOG：
+    /// 一次控制面故障就这样扩大成了整片数据面故障，而 `llm-gateway.md` 规则 7 明令禁止。
+    ///
+    /// 所以判据不是配置怎么写，而是补标记这件事做完没有。这条用例造的正是那个窗口：
+    /// 同一批数据、同一个 enforce 配置，只差 llmgw_migrations 里的完成标记——
+    /// 没有标记必须放行，补上标记立刻开始拦。两个方向都断言，少一个方向就说明不了判据是它。
+    /// </summary>
+    [Fact]
+    public async Task 补标记迁移没跑完时_名录门只记录不拦()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27018";
+        var settings = MongoClientSettings.FromConnectionString(connectionString);
+        settings.ServerSelectionTimeout = TimeSpan.FromSeconds(3);
+        var client = new MongoClient(settings);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+
+        var gatewayDatabaseName = $"catalog_gate_premigration_{Guid.NewGuid():N}";
+        var mapDatabaseName = $"catalog_gate_premigration_map_{Guid.NewGuid():N}";
+        var gatewayData = new LlmGatewayDataContext(connectionString, gatewayDatabaseName);
+        var mapData = new MongoDbContext(connectionString, mapDatabaseName);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["LlmGateway:InternalTenantId"] = GatewayTenantDefaults.InternalTenantId,
+                ["ApiKeyCrypto:Secret"] = "catalog-gate-test-secret-2026",
+                // 配置写的是 enforce（默认值就是它）——这条用例要证明「光有意愿还不够」。
+                ["LlmGateway:ModelCatalogGate"] = "enforce",
+                // 不缓存「还没跑完」这个结论：这条用例要在同一个进程里看它从放行翻成拦截，
+                // 隔着 30 秒默认节流就看不到那次翻转（而线上要的正是那点节流）。
+                ["LlmGateway:ModelCatalogGateRecheckSeconds"] = "0",
+            })
+            .Build();
+
+        try
+        {
+            await SeedAsync(gatewayData.Database, configuration);
+            // 把完成标记撤掉，回到「控制台还没迁完」的那一刻。数据本身一个字节都不动。
+            await gatewayData.Database.DropCollectionAsync(GatewayCatalogMigrations.CollectionName);
+
+            var resolver = new ModelResolver(
+                mapData, configuration, NullLogger<ModelResolver>.Instance, gatewayData);
+            var duringMigration = await resolver.ResolveAsync(
+                Caller, ModelTypes.Chat,
+                expectedModel: OutsideModel, pinnedPlatformId: PlatformId, pinnedModelId: OutsideModel);
+            duringMigration.FailureCode.ShouldNotBe(
+                GatewayRouteFailure.ModelNotInCatalog,
+                "补标记还没跑完就开拦，等于把控制面故障扩大成数据面故障——存量模型会集体被误伤");
+            duringMigration.Success.ShouldBeTrue(duringMigration.ErrorMessage);
+
+            // 补上完成标记 → 同一条请求立刻被拦。判据确实是标记，不是别的什么东西。
+            await MarkCatalogMigrationsCompleteAsync(gatewayData.Database);
+            var afterMigration = await resolver.ResolveAsync(
+                Caller, ModelTypes.Chat,
+                expectedModel: OutsideModel, pinnedPlatformId: PlatformId, pinnedModelId: OutsideModel);
+            afterMigration.FailureCode.ShouldBe(
+                GatewayRouteFailure.ModelNotInCatalog,
+                "补标记跑完之后这道门必须真拦，否则它等于没上线");
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(gatewayDatabaseName);
+            await client.DropDatabaseAsync(mapDatabaseName);
+        }
+    }
+
+    /// <summary>
     /// 兑换所来的模型：门判的是**这一条别名**有没有被放行，不是「它来自兑换所」。
     ///
     /// 认容器不认条目的写法看不出毛病——兑换所确实是管理员建的，里面的别名也确实是他列的。
@@ -194,6 +265,7 @@ public sealed class ModelCatalogGateBehaviorTests
     private static async Task SeedExchangeAsync(
         IMongoDatabase database, IConfiguration configuration, string exchangeId, string alias)
     {
+        await MarkCatalogMigrationsCompleteAsync(database);
         await database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
             .InsertOneAsync(new GatewayAppCallerRecord
             {
@@ -268,8 +340,30 @@ public sealed class ModelCatalogGateBehaviorTests
         });
     }
 
+    /// <summary>
+    /// 控制台那几条「给存量补放行标记」的迁移已经跑完的样子。
+    ///
+    /// 数据面要拦人，前提是补标记这件事真的做完了（见 ModelResolver.CatalogGateEnforcesAsync）：
+    /// 控制台与 serving 是两个容器、没有启动顺序，控制台没迁完就开拦，存量模型会集体误伤。
+    /// 所以凡是要断言「拦得住」的用例，都得先把这个前提摆出来——不摆就说明不了拦是对的。
+    /// </summary>
+    private static async Task MarkCatalogMigrationsCompleteAsync(IMongoDatabase database)
+    {
+        var migrations = database.GetCollection<BsonDocument>(GatewayCatalogMigrations.CollectionName);
+        foreach (var id in GatewayCatalogMigrations.RequiredIds)
+        {
+            await migrations.InsertOneAsync(new BsonDocument
+            {
+                { "_id", id },
+                { "ClaimedAt", DateTime.UtcNow },
+                { GatewayCatalogMigrations.CompletedAtField, DateTime.UtcNow },
+            });
+        }
+    }
+
     private static async Task SeedAsync(IMongoDatabase database, IConfiguration configuration)
     {
+        await MarkCatalogMigrationsCompleteAsync(database);
         await database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
             .InsertOneAsync(new GatewayAppCallerRecord
             {

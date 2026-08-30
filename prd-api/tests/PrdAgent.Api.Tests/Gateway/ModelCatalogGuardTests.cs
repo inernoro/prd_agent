@@ -222,4 +222,47 @@ public sealed class ModelCatalogMirrorGuardTests
                 .ShouldBe(ModelCatalog.Contains(probe), $"「{probe}」在两道门必须得到同一个结论");
         }
     }
+
+    /// <summary>
+    /// 补标记迁移的 id 也是一对镜像：控制台按这些 id 记「跑过了」，数据面按同样的 id 判「能不能开拦」。
+    ///
+    /// 改一侧忘一侧的坏法是静默的：控制台照常迁移并记下新 id，数据面还在找旧 id、永远找不到，
+    /// 于是这道门在一个**已经迁完**的部署上永久停在只记录不拦——它等于没上线，
+    /// 而日志里只有一句「还没迁完」，看着像句正常的等待。
+    /// </summary>
+    [Fact]
+    public void CatalogMigrationIds_AreDeclaredOnBothSides()
+    {
+        var consoleProgram = File.ReadAllText(RepoFile("llmgw/console-api/Program.cs"));
+
+        consoleProgram.ShouldContain(
+            $"GetCollection<BsonDocument>(\"{PrdAgent.Core.LlmGateway.GatewayCatalogMigrations.CollectionName}\")",
+            "控制台记迁移的集合名必须与数据面读的那个一致，否则数据面永远读不到完成标记");
+
+        foreach (var id in PrdAgent.Core.LlmGateway.GatewayCatalogMigrations.RequiredIds)
+        {
+            consoleProgram.ShouldContain(
+                $"\"{id}\"",
+                $"数据面要等「{id}」跑完才敢开拦，控制台必须真的用这个 id 记录，否则这道门永久停在只记录不拦");
+        }
+
+        // 完成时间字段同理：控制台只写 ClaimedAt 而不写它，数据面就会一直认为没迁完。
+        consoleProgram.ShouldContain(
+            $"Set(\"{PrdAgent.Core.LlmGateway.GatewayCatalogMigrations.CompletedAtField}\"",
+            "控制台必须写下完成时间——数据面判「迁完了」认的就是这个字段");
+    }
+
+    private static string RepoFile(string relativePath)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AGENTS.md")))
+        {
+            dir = dir.Parent;
+        }
+
+        dir.ShouldNotBeNull("找不到仓库根目录（以 AGENTS.md 为锚）");
+        var full = Path.Combine(dir!.FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.Exists(full).ShouldBeTrue($"找不到文件：{full}");
+        return full;
+    }
 }
