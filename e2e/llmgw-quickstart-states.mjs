@@ -56,8 +56,10 @@ const drafted = [];
 const authSeen = [];
 /** 推导桩的行为：model = 给出草案；unavailable = 模型没接通，前端应降级到本地关键词表。 */
 let draftMode = 'model';
-/** 真实调用桩的流式行为：ok = 正常收完；inband-error = 上游在流中途失败（HTTP 已经 200 了）。 */
+/** 真实调用桩的流式行为：ok = 正常收完；inband-error = 流中途失败帧；truncated = 没有 [DONE] 就断。 */
 let streamMode = 'ok';
+/** 路由预解析桩：normal = 正常上游；stub = 识别出开发桩（真实调用必须被拦住）。 */
+let routeMode = 'normal';
 /** 真实调用发出的请求体：用来断言上传的内容真的进了 payload。 */
 const realBodies = [];
 
@@ -128,6 +130,13 @@ const server = http.createServer((req, res) => {
         const timer = setInterval(() => {
           // 上游在响应头发出之后才失败：HTTP 已经是 200，失败只能夹在流里回来。
           // serving 真实吐的就是这个形状（finishReason: "error" + 一个 error 对象，随后 [DONE]）。
+          // 连接在收到 [DONE] 之前就断：serving 在响应头已发出后遇到取消就是这样收尾的，
+          // 既没有失败帧也没有完成帧。只认失败帧的读法会把它当成「收完了」报成功。
+          if (streamMode === 'truncated' && i === 2) {
+            clearInterval(timer);
+            res.end();
+            return;
+          }
           if (streamMode === 'inband-error' && i === 2) {
             clearInterval(timer);
             res.write(`data: ${JSON.stringify({
@@ -152,7 +161,10 @@ const server = http.createServer((req, res) => {
     }
     return json(res, 200, { model: 'demo/chat-1', gateway: { requestId: REQUEST_ID, upstreamCalled: false } });
   }
-  if (p === '/gw/v1/resolve') return json(res, 200, { success: true, actualModel: 'demo/chat-1', actualPlatformName: '教程假上游', modelGroupName: '对话默认池', protocol: 'openai' });
+  if (p === '/gw/v1/resolve') return json(res, 200, routeMode === 'stub'
+    // 上游被识别成开发桩：这时按下「真实调用」跑的是假上游，页面却会报「已计费的真实调用成功」。
+    ? { success: true, actualModel: 'stub-chat', actualPlatformName: 'dev stub provider', modelGroupName: '对话默认池', protocol: 'openai' }
+    : { success: true, actualModel: 'demo/chat-1', actualPlatformName: '教程假上游', modelGroupName: '对话默认池', protocol: 'openai' });
   if (p.startsWith('/llmgw/gw/')) {
     const api = p.replace('/llmgw/gw', '');
     authSeen.push({ api, authorization: req.headers.authorization ?? null });
@@ -475,10 +487,18 @@ check('选了非健康成员时两个执行按钮都禁用', [
 await page.getByLabel('测试模型').fill('demo/chat-2');
 await page.waitForTimeout(300);
 check('选了健康成员后可执行', await page.getByRole('button', { name: '安全试跑' }).isDisabled(), false);
-check('cURL 跟着所选模型变', (await page.locator('.lg-qs-code').innerText()).includes('"model": "demo/chat-2"'), true);
+const memberCurl = await page.locator('.lg-qs-code').innerText();
+check('cURL 跟着所选模型变', memberCurl.includes('"model": "demo/chat-2"'), true);
+// 选了具体成员要按「在已绑池内钉这个成员」的契约发：只把名字塞进 model 再声明 pool，
+// serving 会把它当成池标识去找，严格池契约下直接 ROUTE_CONFIG_INCOMPATIBLE。
+check('选成员时声明 pinned 而不是 pool', memberCurl.includes('"model_policy": "pinned"'), true);
+check('选成员时同时给出 pinned_model_id', memberCurl.includes('"pinned_model_id": "demo/chat-2"'), true);
 await page.getByLabel('测试模型').fill('');
 await page.waitForTimeout(300);
-check('清空即回到 auto', (await page.locator('.lg-qs-code').innerText()).includes('"model": "auto"'), true);
+const autoCurl = await page.locator('.lg-qs-code').innerText();
+check('清空即回到 auto', autoCurl.includes('"model": "auto"'), true);
+check('auto 时不带 pinned_model_id', autoCurl.includes('pinned_model_id'), false);
+check('auto 时策略是 auto', autoCurl.includes('"model_policy": "auto"'), true);
 
 /*
   ── Gemini 入口：模型只认路由段，页面不许拿 body 里的 model 冒充「钉住了」──────
@@ -497,9 +517,10 @@ check('Gemini 把选中的模型钉进路由段', (await page.locator('.lg-qs-co
 await page.getByLabel('测试模型').fill('demo/chat-2');
 await page.waitForTimeout(300);
 const geminiCurl = await page.locator('.lg-qs-code').innerText();
-// 名字里带斜杠放不进单个路由段：保持 auto，但必须说清为什么，不许闷着按 auto 跑却声称钉住了。
+// 名字里带斜杠放不进单个路由段：路由段保持 auto，但模型必须出现在 body 里——
+// serving 的 Gemini 入口在路由段为 auto 时回退读它，这条链路才不会退化成池调度。
 check('斜杠模型进不了 Gemini 路由段时保持 auto', geminiCurl.includes('/v1beta/models/auto:generateContent'), true);
-check('保持 auto 时页面明说退回池调度', (await page.locator('.lg-qs-testbar-models').innerText()).includes('本次按池调度执行'), true);
+check('斜杠模型改由 body 携带', geminiCurl.includes('"model": "demo/chat-2"'), true);
 await page.getByLabel('测试模型').fill('');
 await page.waitForTimeout(300);
 await page.selectOption('select[aria-label="入口协议"]', 'openai');
@@ -580,6 +601,32 @@ check('流中途失败说明这次仍会计费', inbandResult.includes('计入�
 // 已经吐出来的半截仍留着：它是「跑到一半断了」的证据，比清空更有用。
 check('流中途失败保留已收到的半截输出', (await page.locator('.lg-qs-output pre').innerText()).length > 0, true);
 streamMode = 'ok';
+
+// 没收到 [DONE] 就断：必须判「未完成」，不能报成功——那是一次已经计了费的截断调用。
+streamMode = 'truncated';
+await page.getByRole('button', { name: '再跑一次' }).click();
+await page.waitForTimeout(1400);
+const truncatedResult = await page.locator('.lg-qs-failure').innerText();
+check('流被截断判成失败', truncatedResult.includes('真实调用未完成'), true);
+check('流被截断说明可能是半截', truncatedResult.includes('半截'), true);
+streamMode = 'ok';
+
+/*
+  ── 真实调用要过路由闸 ──────────────────────────────────────────
+  路由识别出目标是开发桩时按下「真实调用」，跑的是假上游，页面却会报
+  「真实调用已返回、本次计费」——给用户一个假的成功。上方那对按钮早就判了这道闸，
+  产物区这个主按钮当初漏了。
+*/
+routeMode = 'stub';
+// 换一次入口协议会重新跑路由预解析——这是页面上真实存在的重新校验时机。
+await page.selectOption('select[aria-label="入口协议"]', 'claude');
+await page.waitForTimeout(1200);
+check('识别出开发桩时真实调用被拦住', await page.getByRole('button', { name: /真实调用|再跑一次/ }).first().isDisabled(), true);
+check('安全试跑不受影响', await page.getByRole('button', { name: '安全试跑' }).isDisabled(), false);
+routeMode = 'normal';
+await page.selectOption('select[aria-label="入口协议"]', 'openai');
+await page.waitForTimeout(1200);
+check('上游恢复正常后真实调用又可点', await page.getByRole('button', { name: /真实调用|再跑一次/ }).first().isDisabled(), false);
 
 // ── 上传：上传的文本要填进那个输入框（用户看得见、能改），再进请求体与 cURL ──
 await page.getByLabel('上传测试输入').setInputFiles({ name: 'prompt.txt', mimeType: 'text/plain', buffer: Buffer.from('用三个字回答：你好吗') });

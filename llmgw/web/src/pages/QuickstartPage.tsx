@@ -84,12 +84,10 @@ const PROTOCOLS: ProtocolDefinition[] = [
 ];
 
 /**
- * Gemini 入口的模型**只**从路由段 `models/{model}:generateContent` 读，body 里的 `model`
- * 它不看。所以选了具体模型却仍打 `models/auto:` 时，真跑的是池调度，而屏幕上写着
- * 「实际执行 X」——测试结果与账单都对不上那句话。
- *
- * 名字带斜杠的模型（聚合型上游的 `厂商/模型`）放不进单个路由段，这里不赌编码后能不能匹配：
- * 这种情况保持 auto，并且**不谎称**执行了它（见 pinnedTestModel）。
+ * Gemini 入口的模型优先从路由段 `models/{model}:generateContent` 读——那是这个协议的原生形状。
+ * 名字带斜杠的模型（聚合型上游的 `厂商/模型`）放不进单个路由段，这里不赌 `%2F` 能不能匹配路由，
+ * 而是保持路由段为 auto、把模型放在 body 里：serving 的 Gemini 入口在路由段为 auto 时会回退
+ * 读 body 的 model，两条路都落到同一个模型上。
  */
 function geminiRouteModel(model: string): string | null {
   if (!model || model === 'auto' || model.includes('/')) return null;
@@ -102,10 +100,12 @@ function protocolPathFor(definition: ProtocolDefinition, model: string): string 
   return `/v1beta/models/${encodeURIComponent(geminiRouteModel(model) ?? 'auto')}:generateContent`;
 }
 
-/** 这次调用真正钉住的模型；钉不住就是 auto，页面按 auto 说话，不照着输入框声称。 */
-function pinnedTestModel(protocol: Protocol, model: string): string {
-  if (protocol !== 'gemini') return model;
-  return geminiRouteModel(model) ?? 'auto';
+/**
+ * 这次调用真正钉住的模型。Gemini 走路由段或 body 都能钉住，所以各协议一致——
+ * 页面各处的「实际执行」读它，语义是「这次请求钉住了谁」，不是「输入框里写了谁」。
+ */
+function pinnedTestModel(_protocol: Protocol, model: string): string {
+  return model;
 }
 
 /**
@@ -298,14 +298,11 @@ export function QuickstartPage() {
   // 页面各处说「实际执行 X」时必须用这个，不能用输入框里那个：Gemini 钉不住的模型
   // 会退回池调度，照着输入框声称就是在编造一个没发生的执行结果。
   const effectiveTestModel = pinnedTestModel(protocol, testModel);
-  const geminiModelDropped = testModel !== 'auto' && effectiveTestModel === 'auto';
   const modelHint = !modelValid
     ? '这个模型不在池内健康成员里，换一个或清空走 auto。'
-    : geminiModelDropped
-      ? 'Gemini 入口的模型只能写进路由段，这个名字里有斜杠放不进去，本次按池调度执行。换 OpenAI 或 GW Native 入口可以钉住它。'
-      : poolModels.length === 0
-        ? '池内暂无健康成员，走 auto。'
-        : `「${poolName || '默认池'}」${poolMemberCount} 个成员中 ${poolModels.length} 个健康，可搜索。`;
+    : poolModels.length === 0
+      ? '池内暂无健康成员，走 auto。'
+      : `「${poolName || '默认池'}」${poolMemberCount} 个成员中 ${poolModels.length} 个健康，可搜索。`;
   /*
     调用用途码只从用户那句「我想做什么」来。首选让网关自己的模型推（它读得懂
     「接入小米音响，对接大模型网关指令集」这种关键词表覆盖不到的说法）；
@@ -773,7 +770,9 @@ export function QuickstartPage() {
    * 返回内容按形状判断：先看有没有图片（b64/url），再看有没有音频，最后当文字。
    */
   const runRealTest = async () => {
-    if (!bundle || testing) return;
+    // 闸放在函数里而不是只放在按钮上：按钮是一处调用点，函数是唯一出口。
+    // 只守按钮，下一个调用点（快捷键、重试链接、别处的入口）会绕过去。
+    if (!bundle || testing || !realRouteReady) return;
     const target = bundle;
     const definition = protocolDefinition(protocol);
     const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
@@ -819,6 +818,10 @@ export function QuickstartPage() {
         // （finishReason: "error" + 一个 error 对象）。只挑 delta 不看这一帧，就会把一次
         // 真花了钱的失败调用报成成功——用户拿着「成功」去排查，而账单上是失败。
         let streamError: { message: string; code?: string } | null = null;
+        // 收没收到完成帧，是与「有没有失败帧」互相独立的一件事：serving 在响应头已发出后
+        // 遇到取消会直接收尾——既不发失败帧也不发 [DONE]。只认失败帧的话，这种截断
+        // 同样会被当成「收完了」报成功。
+        let sawDone = false;
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -827,6 +830,7 @@ export function QuickstartPage() {
           buffer = lines.pop() ?? '';
           for (const line of lines) {
             streamError = streamError ?? readStreamError(line);
+            if (line.trim() === 'data: [DONE]') sawDone = true;
             const delta = readStreamDelta(line);
             if (delta === null) continue;
             text += delta;
@@ -842,6 +846,16 @@ export function QuickstartPage() {
             message: `真实调用失败：${streamError.message}（上游在流中途报错，这次调用仍会计入用量）`,
             requestId: actualRequestId,
             code: streamError.code || 'UPSTREAM_STREAM_ERROR',
+          });
+          return;
+        }
+        if (!sawDone) {
+          setLiveOutput(text ? { kind: 'text', text, done: true } : null);
+          setTestResult({
+            ok: false,
+            message: '真实调用未完成：连接在收到结束标记之前就断了，已返回的内容可能是半截（这次调用仍会计入用量）。',
+            requestId: actualRequestId,
+            code: 'UPSTREAM_STREAM_TRUNCATED',
           });
           return;
         }
@@ -1445,7 +1459,19 @@ export function QuickstartPage() {
                               <Button size="sm" variant="secondary" disabled={testing || !modelValid} onClick={() => void runTest(bundle, 'safe')}>
                                 <Play size={14} />{testing ? '执行中' : '安全试跑'}
                               </Button>
-                              <Button size="sm" variant="primary" disabled={testing || !modelValid} onClick={() => void runRealTest()}>
+                              {/*
+                                真实调用必须过路由闸：路由还在校验、校验失败、或识别出目标是
+                                stub/mock 时按下去，跑的是假上游，页面却会报「真实调用已返回、
+                                本次计费」——给用户一个假的成功。上方那对「安全试跑 / 真实模型」
+                                早就判了这道闸，这个主按钮当初漏了。
+                              */}
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                disabled={testing || !modelValid || !realRouteReady}
+                                title={!realRouteReady ? '真实路由还没确认就绪，先看下方的路由校验结果' : undefined}
+                                onClick={() => void runRealTest()}
+                              >
                                 <Play size={14} />{liveOutput?.done ? '再跑一次' : '真实调用'}
                               </Button>
                             </div>
@@ -1747,9 +1773,10 @@ function userContentFor(requestType: RequestType, attachment: TestAttachment, fl
   if (requestType !== 'vision') return flavor === 'gemini' ? [{ text: prompt }] : prompt;
   // 没上传图片就沿用内嵌的 1x1 测试图：那三个 vision*Content 仍是各协议形状的唯一来源。
   if (!attachment) {
-    if (flavor === 'claude') return visionClaudeContent();
-    if (flavor === 'gemini') return visionGeminiParts();
-    return visionOpenAiContent();
+    // 图用内嵌的那张，**话仍然用用户写的那句**：丢掉它，输入框里写着一句、发出去的是另一句。
+    if (flavor === 'claude') return visionClaudeContent(prompt);
+    if (flavor === 'gemini') return visionGeminiParts(prompt);
+    return visionOpenAiContent(prompt);
   }
   const dataUrl = attachment.dataUrl;
   const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
@@ -1769,36 +1796,52 @@ function userContentFor(requestType: RequestType, attachment: TestAttachment, fl
 }
 
 function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode: string, requestId: string, model = 'auto', attachment: TestAttachment = null, stream = false, prompt = '') {
-  // model=auto 表示交给模型池调度；选了具体成员就把它发出去，由网关按池规则校验。
-  const policy = model === 'auto' ? 'auto' : 'pool';
+  /*
+    model=auto 交给池调度；选了具体成员就要**按钉成员的契约**发，不能只把名字塞进 model
+    再声明 pool：serving 在 model_policy=pool 时会把 ExpectedModel 当成**池标识**去找，
+    而我们给的是模型名，appCaller 一旦绑了严格池契约就回 ROUTE_CONFIG_INCOMPATIBLE——
+    选了成员反而跑不通，错误码还把人往「池没权限」上带。
+    解析器认的是「ExpectedModel 与 PinnedModelId 相等 = 在已绑池内钉这个成员」，
+    所以两处发同一个值、策略声明 pinned。
+  */
+  const pinned = model !== 'auto';
+  const policy = pinned ? 'pinned' : 'auto';
+  const pin = pinned ? { pinned_model_id: model } : {};
   if (protocol === 'native') return {
     appCallerCode,
     modelType: requestType,
+    ...pin,
     requestBody: { model, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'openai', prompt) }] },
     context: { requestId, sourceSystem: 'external', modelPolicy: policy },
   };
-  if (protocol === 'claude') return { model, model_policy: policy, max_tokens: 64, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'claude', prompt) }] };
-  if (protocol === 'gemini') return { model, model_policy: policy, contents: [{ role: 'user', parts: userContentFor(requestType, attachment, 'gemini', prompt) }] };
-  return { model, model_policy: policy, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'openai', prompt) }], stream };
+  if (protocol === 'claude') return { model, model_policy: policy, ...pin, max_tokens: 64, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'claude', prompt) }] };
+  if (protocol === 'gemini') return { model, model_policy: policy, ...pin, contents: [{ role: 'user', parts: userContentFor(requestType, attachment, 'gemini', prompt) }] };
+  return { model, model_policy: policy, ...pin, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'openai', prompt) }], stream };
 }
 
-function visionOpenAiContent() {
+/*
+  内嵌 1x1 测试图的三种协议形状。**问什么由调用方给**——用户在输入框写了什么，
+  发出去的就是什么；他没写才落到默认那句。写死一句会让输入框成为摆设。
+*/
+const DEFAULT_VISION_PROMPT = 'Describe this test image';
+
+function visionOpenAiContent(prompt = DEFAULT_VISION_PROMPT) {
   return [
-    { type: 'text', text: 'Describe this test image' },
+    { type: 'text', text: prompt },
     { type: 'image_url', image_url: { url: `data:image/png;base64,${TEST_IMAGE_BASE64}` } },
   ];
 }
 
-function visionClaudeContent() {
+function visionClaudeContent(prompt = DEFAULT_VISION_PROMPT) {
   return [
-    { type: 'text', text: 'Describe this test image' },
+    { type: 'text', text: prompt },
     { type: 'image', source: { type: 'base64', media_type: 'image/png', data: TEST_IMAGE_BASE64 } },
   ];
 }
 
-function visionGeminiParts() {
+function visionGeminiParts(prompt = DEFAULT_VISION_PROMPT) {
   return [
-    { text: 'Describe this test image' },
+    { text: prompt },
     { inlineData: { mimeType: 'image/png', data: TEST_IMAGE_BASE64 } },
   ];
 }

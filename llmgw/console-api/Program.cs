@@ -954,8 +954,33 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
                 Builders<LlmGwMembership>.Filter.Eq(x => x.Status, "active")),
             Builders<LlmGwMembership>.Update.Set(x => x.UpdatedAt, now),
             new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership> { ReturnDocument = ReturnDocument.After });
+        // 上面那条快路只在「角色与状态都已就位」时命中。走到这里说明**这个请求看到的**
+        // 还没就位——但并发下另一个请求可能正在或已经把它改好。此时两个请求各自 +1，
+        // 先返回的那把 token 带着旧版本号，`TenantAccess.ResolveAsync` 立刻判它失效：
+        // 正是这次改动要消除的那种「刚登进去就被登出」。
+        //
+        // 所以把「还没就位」写进谓词，让库来裁决谁是真正做出改变的那一个；
+        // 落败的一方拿到 null，回去走不自增的快路读胜者。
+        var membershipNotYetActive = Builders<LlmGwMembership>.Filter.Not(
+            Builders<LlmGwMembership>.Filter.And(
+                Builders<LlmGwMembership>.Filter.Eq(x => x.Role, LlmGwTenantRoles.Admin),
+                Builders<LlmGwMembership>.Filter.Eq(x => x.Status, "active")));
+        var membershipActive = Builders<LlmGwMembership>.Filter.And(
+            membershipFilter,
+            Builders<LlmGwMembership>.Filter.Eq(x => x.Role, LlmGwTenantRoles.Admin),
+            Builders<LlmGwMembership>.Filter.Eq(x => x.Status, "active"));
         if (membership is null)
         {
+            // 一、文档已存在但还没就位：条件更新，只有一个请求能命中。不带 upsert——
+            // 谓词里有取反子句，upsert 在不命中时会去插入，那条路要单独走（第二步）。
+            membership = await memberships.FindOneAndUpdateAsync(
+                Builders<LlmGwMembership>.Filter.And(membershipFilter, membershipNotYetActive),
+                membershipUpdate,
+                new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership> { ReturnDocument = ReturnDocument.After });
+        }
+        if (membership is null)
+        {
+            // 二、文档压根不存在：等值谓词 + upsert 建它。唯一索引保证并发只有一个建成。
             try
             {
                 membership = await memberships.FindOneAndUpdateAsync(
@@ -969,12 +994,14 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
             }
             catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
             {
-                membership = await memberships.FindOneAndUpdateAsync(
-                    membershipFilter,
-                    membershipUpdate,
-                    new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership> { ReturnDocument = ReturnDocument.After });
+                membership = null; // 另一个请求刚建好，落到第三步去读它，不再自增。
             }
         }
+        // 三、并发落败：胜者已经就位，按不自增的方式读回来。
+        membership ??= await memberships.FindOneAndUpdateAsync(
+            membershipActive,
+            Builders<LlmGwMembership>.Update.Set(x => x.UpdatedAt, now),
+            new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership> { ReturnDocument = ReturnDocument.After });
         if (membership is null) throw new InvalidOperationException("MAP_SSO_MEMBERSHIP_UPDATE_CONFLICT");
 
         await mapSsoTickets.UpdateOneAsync(
@@ -5450,19 +5477,46 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
     var existingCaller = await gwAppCallers.Find(callerFilter).FirstOrDefaultAsync();
     if (existingCaller is not null)
     {
+        // 归属认标记，不认码：这个码没有被任何地方保留，租户可以自助登记同名的一条。
+        // 只按码搬，等于「谁先占了这个码，谁的 appCaller 就被我搬进系统团队」——
+        // 那条业务 appCaller 名下的团队级密钥随后会在 serving 的归属比对上被判 403，
+        // 而触发它的只是有人打开了这一页。别人的数据不该被这道自愈动到。
+        // 存量兼容：标记是这一版才加的，此前系统自建的那条没有它。用它当时就写死的
+        // SourceSystem 认亲（业务登记走的是 "external"，不会撞上），认到就顺手补上标记，
+        // 之后再判就只看标记了。缺了这一档，已经用过这个功能的部署会被自己的旧文档挡在门外。
+        var callerIsOurs = existingCaller.AsNullableBool("SystemManaged") == true
+            || (!existingCaller.Contains("SystemManaged")
+                && string.Equals(existingCaller.GetStringOrEmpty("SourceSystem"), SystemServiceKeySource, StringComparison.Ordinal));
+        if (!callerIsOurs)
+        {
+            return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
+                $"调用用途码「{SystemIntentDraftAppCaller}」已被本租户的业务调用方占用。"
+                + "系统功能不会接管它——去「调用用途」把那条改成别的码，或联系管理员协调，之后再回来。");
+        }
+
         // 存量迁移：上一版把系统 appCaller 挂在了租户第一个业务团队上。留着不动有两个后果——
         // 消耗继续记在别人头上；而且 serving 会拿 key.TeamId 与 appCaller.TeamId 比对，
         // 对不上直接 403 GATEWAY_KEY_TEAM_MISMATCH。所以搬到系统团队，幂等。
         //
-        // 搬的范围按 **AppCallerCode** 而不是「code + requestType」：serving 那条比对
-        // 查的是同租户下这个码的**全部**文档，只要有一条团队不一致就整个拒绝。
-        // 按更窄的条件搬，会留下一条搬不到的漏网文档把整条链路卡死（判据比它该管的范围窄）。
+        // 搬的范围按 **AppCallerCode + SystemManaged** 而不是「code + requestType」：
+        // serving 那条比对查的是同租户下这个码的**全部**文档，只要有一条团队不一致就整个拒绝；
+        // 按更窄的条件搬会留下漏网文档把链路卡死，按更宽的条件搬会搬走别人的（上面那道门挡的就是它）。
         await gwAppCallers.UpdateManyAsync(
             Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
                 Builders<BsonDocument>.Filter.Eq("AppCallerCode", SystemIntentDraftAppCaller),
+                Builders<BsonDocument>.Filter.Eq("SourceSystem", SystemServiceKeySource),
                 Builders<BsonDocument>.Filter.Ne("TeamId", effectiveTeamId)),
             Builders<BsonDocument>.Update.Set("TeamId", effectiveTeamId).Set("UpdatedAt", DateTime.UtcNow));
+
+        // 认过亲就把标记补上：下一次判定不必再走存量兼容那一档。
+        await gwAppCallers.UpdateManyAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+                Builders<BsonDocument>.Filter.Eq("AppCallerCode", SystemIntentDraftAppCaller),
+                Builders<BsonDocument>.Filter.Eq("SourceSystem", SystemServiceKeySource),
+                Builders<BsonDocument>.Filter.Exists("SystemManaged", false)),
+            Builders<BsonDocument>.Update.Set("SystemManaged", true).Set("UpdatedAt", DateTime.UtcNow));
     }
     else
     {
@@ -5476,6 +5530,8 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
                 { "TeamId", effectiveTeamId },
                 { "AppCallerCode", SystemIntentDraftAppCaller },
                 { "RequestType", "chat" },
+                // 归属标记：日后判「这条是不是系统自建的」只认它，不认码（码可被业务占用）。
+                { "SystemManaged", true },
                 { "SourceSystem", SystemServiceKeySource },
                 { "IngressProtocol", "openai-compatible" },
                 { "ObservedIngressProtocols", new BsonArray() },
@@ -5715,6 +5771,10 @@ async Task InvalidateSystemCredentialAsync(string tenantId, string failedKey)
 const int IntentDraftTimeoutSeconds = 40;
 var intentDraftHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(IntentDraftTimeoutSeconds) };
 const int IntentDraftMaxChars = 500;
+// 产物是四个短字段的 JSON，256 token 绰绰有余；上限本身就是成本闸，不是性能调优。
+const int IntentDraftMaxCompletionTokens = 256;
+// 累积体积的第二道闸：上游若无视 max_tokens（不是所有协议都认），也不能让 raw 无限涨。
+const int IntentDraftMaxRawChars = 4000;
 const string IntentDraftSystemPrompt = """
 你是 LLM 网关的接入助手。用户用一句话说明他要接什么、要做什么，你把它压成调用用途码的两段。
 
@@ -5757,13 +5817,31 @@ app.MapGet("/gw/system-settings", async (HttpContext http) =>
         .ToListAsync();
     // 逻辑模型库是跨租户共用一个集合的，所以这里必须和上面的池查询一样带上 TenantId：
     // 少这一条谓词，任何管理员打开这一页就会看到别的租户的模型名，还能选中它。
+    var chatModelFilter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+        Builders<BsonDocument>.Filter.Eq("ModelType", "chat"),
+        Builders<BsonDocument>.Filter.Ne("Enabled", false));
+    // 排序固定：不排序的 200 条是「随便哪 200 条」，同一个租户两次打开可能给出不同的清单。
     var chatModels = await gwLogicalModels
-        .Find(Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
-            Builders<BsonDocument>.Filter.Eq("ModelType", "chat"),
-            Builders<BsonDocument>.Filter.Ne("Enabled", false)))
+        .Find(chatModelFilter)
+        .Sort(Builders<BsonDocument>.Sort.Ascending("PublicIdNormalized").Ascending("_id"))
         .Limit(200)
         .ToListAsync();
+    // 已保存的那个必须在清单里，哪怕它排在 200 条之外：否则下拉里没有对应选项，
+    // 页面看起来像「没选模型」，而系统调用仍在用那个看不见的模型。
+    var savedModelName = settings.AsNullableString("ModelName");
+    if (!string.IsNullOrWhiteSpace(savedModelName)
+        && !chatModels.Any(d => string.Equals(d.GetStringOrEmpty("PublicId"), savedModelName, StringComparison.Ordinal)))
+    {
+        var savedModel = await gwLogicalModels
+            .Find(Builders<BsonDocument>.Filter.And(
+                chatModelFilter,
+                Builders<BsonDocument>.Filter.Or(
+                    Builders<BsonDocument>.Filter.Eq("PublicId", savedModelName),
+                    Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", savedModelName.ToLowerInvariant()))))
+            .FirstOrDefaultAsync();
+        if (savedModel is not null) chatModels.Insert(0, savedModel);
+    }
 
     var keyId = settings.AsNullableString("ServiceKeyId");
     var keyDoc = string.IsNullOrWhiteSpace(keyId)
@@ -6032,6 +6110,10 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
                 {
                     model = access.Model,
                     stream = true,
+                    // 期望产物只是四个字段的 JSON，给一个紧的上限：这条链路花的是平台的钱
+                    // （系统 appCaller 没有预算闸、密钥每分钟允许 120 次），模型若没有自带
+                    // 小上限，一次注入式的长 intent 就能让它一直生成到 40 秒 deadline。
+                    max_tokens = IntentDraftMaxCompletionTokens,
                     // 不发 temperature：池里选到的模型可能只接受默认值，实测发 0 会被上游 400
                     // 回「temperature does not support 0 with this model」。推导要的确定性靠
                     // 提示词里的「只输出 JSON」约束，不靠采样参数。
@@ -6094,12 +6176,26 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
                     var root = doc.RootElement;
                     if (root.TryGetProperty("model", out var modelEl) && modelEl.ValueKind == JsonValueKind.String && usedModel.Length == 0)
                         usedModel = modelEl.GetString() ?? string.Empty;
+                    // 上游在响应头之后才失败时，HTTP 已经是 200，失败只能夹在流里回来
+                    // （finishReason=error + 顶层 error）。不认它的话，模型若在失败前已吐出
+                    // 一段可解析的 JSON，这个端点会对一次**失败且计费**的调用回 ok:true。
+                    if (TryReadIntentDraftStreamError(root, out var streamFailure))
+                    {
+                        await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"{streamFailure}已退回本地关键词判定。" });
+                        return;
+                    }
                     if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) continue;
                     var delta = choices[0];
                     if (!delta.TryGetProperty("delta", out var deltaEl)) continue;
                     if (!deltaEl.TryGetProperty("content", out var contentEl) || contentEl.ValueKind != JsonValueKind.String) continue;
                     var text = contentEl.GetString() ?? string.Empty;
                     if (text.Length == 0) continue;
+                    if (raw.Length + text.Length > IntentDraftMaxRawChars)
+                    {
+                        // 到顶就收工：已经拿到的片段照常去解析（多半够了），不再继续收。
+                        raw.Append(text.AsSpan(0, Math.Max(0, IntentDraftMaxRawChars - raw.Length)));
+                        break;
+                    }
                     raw.Append(text);
                     await SendAsync(new { type = "delta", text });
                 }
@@ -14964,6 +15060,45 @@ static async Task<(string Detail, string Code)> ReadGatewayFailureDetailAsync(Ht
 /// 那些重签一万次也修不好，重试只会白烧一次调用（predicate-and-wiring-discipline
 /// 形状 5：别造一个自己修不好自己的循环）。
 /// </summary>
+/// <summary>
+/// 这一帧是不是 serving 在响应头已发出后回的失败帧？
+///
+/// 那种失败没有别的表达方式：HTTP 状态已经写出去了，只能夹在流里回一帧
+/// <c>choices[0].finishReason = "error"</c> 外加一个顶层 <c>error</c>，随后 [DONE]。
+/// 只挑 delta.content 的读法看不见它——模型若在失败前已经吐出一段可解析的 JSON，
+/// 调用方会对一次失败且计费的调用回 ok:true。前端那条真实调用已按同一形状认了它。
+/// </summary>
+static bool TryReadIntentDraftStreamError(JsonElement root, out string message)
+{
+    message = string.Empty;
+    var hasErrorObject = root.TryGetProperty("error", out var errorEl) && errorEl.ValueKind is JsonValueKind.Object;
+    var finishedWithError = false;
+    if (root.TryGetProperty("choices", out var choices)
+        && choices.ValueKind == JsonValueKind.Array
+        && choices.GetArrayLength() > 0)
+    {
+        var first = choices[0];
+        // 两种命名都认：序列化口径换一次就漏，这类判据不该挂在某一种拼写上。
+        if ((first.TryGetProperty("finishReason", out var finish) || first.TryGetProperty("finish_reason", out finish))
+            && finish.ValueKind == JsonValueKind.String)
+        {
+            finishedWithError = string.Equals(finish.GetString(), "error", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+    if (!hasErrorObject && !finishedWithError) return false;
+
+    message = "上游模型调用失败。";
+    if (hasErrorObject
+        && errorEl.TryGetProperty("message", out var msgEl)
+        && msgEl.ValueKind == JsonValueKind.String
+        && !string.IsNullOrWhiteSpace(msgEl.GetString()))
+    {
+        message = msgEl.GetString()!.Trim();
+        if (!message.EndsWith('.') && !message.EndsWith('。')) message += "。";
+    }
+    return true;
+}
+
 static bool IsSystemCredentialFixableCode(string code) => code is
     "GATEWAY_KEY_REQUIRED"
     or "GATEWAY_KEY_INVALID"

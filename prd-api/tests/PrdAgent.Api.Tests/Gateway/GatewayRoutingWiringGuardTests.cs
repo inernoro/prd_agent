@@ -344,6 +344,71 @@ public sealed class GatewayRoutingWiringGuardTests
             customMessage: "存模型时要判未停用：页面加载后被停用的模型仍能存进去，下一次系统调用就落回默认池了");
     }
 
+    /// <summary>
+    /// 系统 appCaller 的归属认标记、不认码；推导端点认失败帧、且有 completion 上限。
+    ///
+    /// 三件事都「删掉不会红」：
+    /// - 只按码认归属，租户自助登记的同码 appCaller 会被搬进系统团队，其团队级密钥随后 403；
+    /// - 不认失败帧，模型在失败前吐出可解析 JSON 时，端点会对一次失败且计费的调用回 ok:true；
+    /// - 没有 completion 上限，一次注入式长 intent 就能让模型生成到 40 秒 deadline，花的是平台的钱。
+    /// </summary>
+    [Fact]
+    public void 系统调用方认标记且推导端点认失败帧并有上限()
+    {
+        var console = File.ReadAllText(Path.Combine(RepoRoot(), "llmgw", "console-api", "Program.cs"));
+
+        // 一、接管别人的同码 appCaller 是唯一会动到用户既有数据的路径，必须先判归属再搬。
+        var ensureAt = console.IndexOf("var existingCaller = await gwAppCallers.Find(callerFilter)", StringComparison.Ordinal);
+        ensureAt.ShouldBeGreaterThanOrEqualTo(0, "找不到系统 appCaller 的登记段，守卫的取值范围需要跟着改");
+        var ensureEnd = console.IndexOf("\n    else\n", ensureAt, StringComparison.Ordinal);
+        ensureEnd.ShouldBeGreaterThan(ensureAt, "登记段与新建分支的相邻关系变了，守卫的取值范围需要跟着改");
+        var ensure = console[ensureAt..ensureEnd];
+        ensure.ShouldContain(
+            "callerIsOurs",
+            customMessage: "搬迁前必须先判这条是不是系统自建的；只按码搬会把租户自助登记的同码 appCaller 搬进系统团队");
+        ensure.ShouldContain(
+            "SystemManaged",
+            customMessage: "归属认标记，不认码——码没有被任何地方保留，租户可以自助登记同名的一条");
+
+        // 二、推导端点必须认流里夹着的失败帧（与前端真实调用同一形状）。
+        console.ShouldContain(
+            "TryReadIntentDraftStreamError(",
+            customMessage: "推导端点不认失败帧的话，会对一次失败且计费的调用回 ok:true");
+        // 三、成本闸：上限本身 + 累积体积上限，两道都要在。
+        console.ShouldContain(
+            "max_tokens = IntentDraftMaxCompletionTokens",
+            customMessage: "推导请求必须带紧的 completion 上限：系统 appCaller 没有预算闸，花的是平台的钱");
+        console.ShouldContain(
+            "IntentDraftMaxRawChars",
+            customMessage: "上游若无视 max_tokens，累积体积仍需第二道闸");
+    }
+
+    /// <summary>
+    /// 视觉类测试用内嵌图时，问题仍然要用**用户写的那句**。
+    ///
+    /// 写死一句不会有任何用例变红——输入框照常显示他写的内容，发出去的却是别的。
+    /// 这里守的是「无附件那一支把算出来的 prompt 传下去」这条接线本身。
+    /// </summary>
+    [Fact]
+    public void 视觉类无附件时仍用用户写的那句()
+    {
+        var page = File.ReadAllText(Path.Combine(
+            RepoRoot(), "llmgw", "web", "src", "pages", "QuickstartPage.tsx"));
+
+        var branchAt = page.IndexOf("if (!attachment) {", StringComparison.Ordinal);
+        branchAt.ShouldBeGreaterThanOrEqualTo(0, "找不到视觉类无附件分支，守卫的取值范围需要跟着改");
+        var branchEnd = page.IndexOf("}", page.IndexOf("return visionOpenAiContent", branchAt, StringComparison.Ordinal), StringComparison.Ordinal);
+        branchEnd.ShouldBeGreaterThan(branchAt, "无附件分支的结构变了，守卫的取值范围需要跟着改");
+        var branch = page[branchAt..branchEnd];
+
+        foreach (var helper in new[] { "visionClaudeContent", "visionGeminiParts", "visionOpenAiContent" })
+        {
+            branch.ShouldContain(
+                $"{helper}(prompt)",
+                customMessage: $"{helper} 必须收下算出来的 prompt；不传就等于输入框里写一句、发出去另一句");
+        }
+    }
+
     [Fact]
     public void 历史别名兼容不得被静默撤销()
     {
