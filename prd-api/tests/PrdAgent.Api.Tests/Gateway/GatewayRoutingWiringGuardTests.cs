@@ -441,6 +441,16 @@ public sealed class GatewayRoutingWiringGuardTests
         drain.ShouldContain(
             "if (!streamCompleted)",
             customMessage: "没有完成标记就不许把这段文本交给解析器——那是一次被截断的计费调用");
+        // 二'、钉池不只是发个头：候选池只来自这条 appCaller 的绑定，
+        // 不把选中的池绑上去，跑的仍是默认池，而设置页写着「只在这个池里调度」。
+        // 非 pool 档位要摘掉绑定，否则改回「交给网关挑」之后还钉在上次那个池上。
+        console.ShouldContain(
+            "Set(\"ModelPoolId\", poolId)",
+            customMessage: "选中的池必须绑到系统 appCaller 上；只发策略头的话解析器根本看不到这个池");
+        console.ShouldContain(
+            "Unset(\"ModelPoolId\")",
+            customMessage: "非「钉一个池」档位必须摘掉绑定，否则改回交给网关挑之后还钉在上次那个池上");
+
         // 三、成本闸：上限本身 + 累积体积上限，两道都要在。
         console.ShouldContain(
             "max_tokens = IntentDraftMaxCompletionTokens",

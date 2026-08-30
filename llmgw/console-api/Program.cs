@@ -5589,6 +5589,39 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
     if (string.Equals(modelSource, "model", StringComparison.Ordinal) && string.IsNullOrWhiteSpace(settings.AsNullableString("ModelName")))
         return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model, "系统级模型来源选了「指定模型」，但没有选中任何模型。去「服务网关设置」选一个。");
 
+    /*
+      保存时校验过还不够：那只证明**保存的那一刻**这个池/模型是可用的对话类。
+      此后它可能被停用、被改成别的类型、被删掉——而这里照旧把陈旧的名字发出去，
+      运行时解析不到它就静默落回默认池，「测试连接」还会报成功。
+      页面写着 A、实际跑的是 B，正是仓库 llm-gateway 规则点名禁止的静默落默认。
+      所以取用时按运行时同一套口径再判一次，不成立就给说得出下一步的失败。
+    */
+    if (poolId is { Length: > 0 })
+    {
+        var poolStillUsable = await gwModelPools.Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+            Builders<BsonDocument>.Filter.Eq("_id", poolId),
+            Builders<BsonDocument>.Filter.Eq("ModelType", "chat"))).AnyAsync();
+        if (!poolStillUsable)
+            return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
+                "系统级模型池已经不可用了（被删除，或已不是对话类）。去「服务网关设置」重新选一个对话池——"
+                + "在那之前系统功能不会去跑默认池冒充你的选择。");
+    }
+    if (string.Equals(modelSource, "model", StringComparison.Ordinal))
+    {
+        var modelStillUsable = await gwLogicalModels.Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+            Builders<BsonDocument>.Filter.Eq("ModelType", "chat"),
+            Builders<BsonDocument>.Filter.Ne("Enabled", false),
+            Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Eq("PublicId", model),
+                Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", model.ToLowerInvariant())))).AnyAsync();
+        if (!modelStillUsable)
+            return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
+                $"系统级模型「{model}」现在解析不到了（已停用、已改成别的类型，或已删除）。去「服务网关设置」重新选一个——"
+                + "在那之前系统功能不会去跑默认池冒充你的选择。");
+    }
+
     // 归属团队恒为系统团队。这里不再读设置里的 TeamId、也不再看调用者属于哪个团队——
     // 系统消耗只记在系统团队，才谈得上「单独计费」。
     var effectiveTeamId = await EnsureSystemTeamAsync(tenantId);
@@ -5695,6 +5728,37 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             }
         }
     }
+
+    /*
+      把设置里选中的池**绑到**系统 appCaller 上。
+
+      只发 X-Gateway-Model-Policy: pool 是不够的——那让池 id 进了 ExpectedModel，
+      但解析器的候选池只来自这条 appCaller 的绑定（没绑就用租户默认池）：
+      选中的池根本不在候选集里，把 ExpectedModel 拿去匹配也匹配不到，
+      于是真跑的仍是默认池，而设置页上写着「只在这个池里调度」。
+      页面说 A、实际跑 B，正是 llm-gateway 规则点名禁止的静默落默认。
+
+      绑的是我们自己的 SystemManaged appCaller，而这一页正是它的配置界面，
+      所以这不是越界改别人的治理状态——上一轮我以此为由只做了发头那一半，是判断错了。
+      用 ModelPoolId 而不是 AllowedModelPoolIds：前者给出「候选池只有这一个」，
+      恰好就是用户选的语义，且不会打开严格池契约（那会顺手掐掉「钉一个逻辑模型」那一档）。
+      非 pool 档位要把绑定摘掉，否则改回「交给网关挑」之后还钉在上次那个池上。
+    */
+    var systemCallerScope = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("AppCallerCode", SystemIntentDraftAppCaller),
+        Builders<BsonDocument>.Filter.Eq("SystemManaged", true));
+    await gwAppCallers.UpdateManyAsync(
+        systemCallerScope,
+        poolId is { Length: > 0 }
+            ? Builders<BsonDocument>.Update
+                .Set("ModelPoolId", poolId)
+                .Set("ModelPolicy", "pool")
+                .Set("UpdatedAt", DateTime.UtcNow)
+            : Builders<BsonDocument>.Update
+                .Unset("ModelPoolId")
+                .Set("ModelPolicy", "auto")
+                .Set("UpdatedAt", DateTime.UtcNow));
 
     // 2. 密钥自愈：库里那把还在且启用就复用；对不上就重签一把。
     //    「对不上」包含三种：从没签过、被人撤销了、密文用当前密钥解不开（轮换过 ApiKeyCrypto:Secret）。
