@@ -13,6 +13,7 @@ import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } 
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
+import { applyMysqlConnectionDefaults } from './infra-connection-defaults.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -2612,8 +2613,26 @@ export class ContainerService {
     const resolvedEnv = customEnv
       ? resolveEnvTemplates(service.env, customEnv)
       : service.env;
-    const resolvedCommand = resolveCommandTemplate(service.command, customEnv);
+    const resolvedCommandRaw = resolveCommandTemplate(service.command, customEnv);
     const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
+    // MySQL 连接上限兜底：CDS 把 N 个分支复用到同一台库，扇出是 CDS 造的，
+    // 默认值就该由 CDS 给。只在项目没显式声明时补，判据见 infra-connection-defaults.ts。
+    const mysqlDefaults = applyMysqlConnectionDefaults({
+      dockerImage: service.dockerImage,
+      command: resolvedCommandRaw,
+      entrypoint: resolvedEntrypoint,
+    });
+    const resolvedCommand = mysqlDefaults.command;
+    if (mysqlDefaults.injected !== null) {
+      this.recordContainerEvent({
+        severity: 'info',
+        source: 'infra-connection-defaults',
+        action: 'infra.mysql.max-connections-defaulted',
+        message: `${service.containerName}: 未声明连接上限，按 CDS 分支扇出注入 --max-connections=${mysqlDefaults.injected}`,
+        projectId: service.projectId,
+        containerName: service.containerName,
+      });
+    }
     const authDecision = evaluateInfraAuthentication({
       dockerImage: service.dockerImage,
       id: service.id,

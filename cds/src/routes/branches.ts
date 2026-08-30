@@ -44,7 +44,7 @@ import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledS
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
-import { recordBuild } from '../services/build-activity-tracker.js';
+import { recordBuild, assessDeployLoop } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
@@ -6892,11 +6892,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { kind: type || 'unknown', values: [], truncated: false };
   }
 
-  async function createMysqlBranchDatabase(service: InfraService, branch: BranchEntry, targetDatabase: string): Promise<MysqlBranchDatabaseResult> {
+  async function createMysqlBranchDatabase(
+    service: InfraService,
+    branch: BranchEntry,
+    targetDatabase: string,
+    options: { dropFirst?: boolean } = {},
+  ): Promise<MysqlBranchDatabaseResult> {
     const branchUser = branchDatabaseUser(branch);
     const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
     const rootPassword = mysqlRootPassword(service);
     const sql = [
+      // dropFirst 只由 mode=reset 走到：CREATE DATABASE IF NOT EXISTS 对「库在、
+      // 但里面留着一条 success=0 的 Flyway 记录」这种脏状态无能为力——库存在就直接跳过，
+      // 迁移每次重试都撞同一条失败记录。分支库按设计是可丢弃的，推倒重来才是它的修法。
+      ...(options.dropFirst ? [`DROP DATABASE IF EXISTS ${sqlIdent(targetDatabase)}`] : []),
       `CREATE DATABASE IF NOT EXISTS ${sqlIdent(targetDatabase)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
       `CREATE USER IF NOT EXISTS ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
       `ALTER USER ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
@@ -10051,8 +10060,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const mode = typeof req.body?.mode === 'string' ? req.body.mode : 'empty';
-    if (!['empty', 'clone-main', 'restore-backup', 'connect-existing'].includes(mode)) {
-      res.status(400).json({ error: 'mode 必须是 empty / clone-main / restore-backup / connect-existing' });
+    if (!['empty', 'reset', 'clone-main', 'restore-backup', 'connect-existing'].includes(mode)) {
+      res.status(400).json({ error: 'mode 必须是 empty / reset / clone-main / restore-backup / connect-existing' });
       return;
     }
     const cloneAction: ResourcePermissionAction = mode === 'restore-backup'
@@ -10070,6 +10079,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const targetDatabase = String(req.body?.targetDatabase || branchDatabaseName(baseDb, branch))
       .replace(/[^a-zA-Z0-9_]/g, '_')
       .slice(0, 64);
+    // reset 会 DROP 目标库。唯一真正危险的误用是「把它指到项目共享的基础库上」，
+    // 那会一次性抹掉所有分支共用的数据。分支独立库是可丢弃的，基础库不是——这里硬拦。
+    if (mode === 'reset' && targetDatabase === baseDb) {
+      res.status(400).json({
+        error: 'reset_refuses_base_database',
+        message: `reset 会 DROP 目标库，拒绝对项目共享基础库 "${baseDb}" 执行。它只用于推倒重建分支独立库。`,
+        baseDatabase: baseDb,
+        targetDatabase,
+      });
+      return;
+    }
+
     const strategy = mode === 'connect-existing'
       ? 'external-connection'
       : mode === 'restore-backup'
@@ -10082,11 +10103,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchId: branch.id,
       resourceId,
       runtime,
-      mode: mode as 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing',
+      mode: mode as 'empty' | 'reset' | 'clone-main' | 'restore-backup' | 'connect-existing',
       strategy,
-      status: mode === 'empty' ? 'running' : 'pending',
-      progress: mode === 'empty' ? 20 : 5,
-      progressMessage: mode === 'empty' ? '正在创建分支独立空库' : '任务已登记，等待后台执行器接管',
+      status: mode === 'empty' || mode === 'reset' ? 'running' : 'pending',
+      progress: mode === 'empty' || mode === 'reset' ? 20 : 5,
+      progressMessage: mode === 'reset'
+        ? '正在推倒重建分支独立库'
+        : mode === 'empty' ? '正在创建分支独立空库' : '任务已登记，等待后台执行器接管',
       sourceBranchId: typeof req.body?.sourceBranchId === 'string' ? req.body.sourceBranchId : undefined,
       sourceResourceId: typeof req.body?.sourceResourceId === 'string' ? req.body.sourceResourceId : resourceId,
       targetDatabase,
@@ -10098,17 +10121,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     let resultTask = task;
     try {
-      if (mode === 'empty') {
+      if (mode === 'empty' || mode === 'reset') {
         let branchDb: MysqlConnectionEnvResult | MysqlBranchDatabaseResult;
         if (runtime === 'mysql') {
           if (rawInfra.status !== 'running') {
             throw new Error(`MySQL 服务当前未运行（status=${rawInfra.status}）`);
           }
-          branchDb = await createMysqlBranchDatabase(rawInfra, branch, targetDatabase);
-        } else if (runtime === 'postgres') {
-          branchDb = await createPostgresBranchDatabase(rawInfra, branch, targetDatabase);
-        } else if (runtime === 'mongodb') {
-          branchDb = await createMongoBranchDatabase(rawInfra, branch, targetDatabase);
+          branchDb = await createMysqlBranchDatabase(rawInfra, branch, targetDatabase, { dropFirst: mode === 'reset' });
+        } else if (runtime === 'postgres' || runtime === 'mongodb') {
+          // 只有 MySQL 实现了 dropFirst。这里显式拒绝而不是静默退化成 empty——
+          // 后者会让调用方以为库已经推倒重建，实际脏状态原封不动还在（静默失败最难查）。
+          if (mode === 'reset') {
+            throw new Error(`${resource.runtime} 暂不支持 reset（推倒重建），目前仅 MySQL 实现；请改用 empty 或手工处理`);
+          }
+          branchDb = runtime === 'postgres'
+            ? await createPostgresBranchDatabase(rawInfra, branch, targetDatabase)
+            : await createMongoBranchDatabase(rawInfra, branch, targetDatabase);
         } else {
           throw new Error(`${resource.runtime} 暂不支持创建分支独立数据库`);
         }
@@ -10116,7 +10144,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         resultTask = stateService.updateResourceCloneTask(task.id, {
           status: 'completed',
           progress: 100,
-          progressMessage: `分支独立 ${resource.runtime} 空库已创建，连接变量已注入分支 scope`,
+          progressMessage: mode === 'reset'
+            ? `分支独立 ${resource.runtime} 库已推倒重建，连接变量已注入分支 scope`
+            : `分支独立 ${resource.runtime} 空库已创建，连接变量已注入分支 scope`,
           startedAt: task.createdAt,
           finishedAt: new Date().toISOString(),
           injectedEnv: branchDb.maskedInjectedEnv,
@@ -12101,6 +12131,53 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? req.body.commitSha
         : undefined
     );
+    // 空转部署熔断（2026-08-29）：同一分支反复部署**同一个 commit** 是「部署环」的
+    // 特征，正常连推每次都是新 SHA、永远不命中。判据与阈值见
+    // build-activity-tracker.ts 的 assessDeployLoop 注释（含事故经过）。
+    // 放在 deploymentRun 登记与租约之前——被拦下的请求不该留下 run 记录、不该占租约。
+    // 此处尚未进入 SSE，响应头未发出，可以正常返 JSON。
+    const deployLoopSha = requestCommitSha || entry.githubCommitSha;
+    const loopAssessment = assessDeployLoop(entry.id, deployLoopSha);
+    const ignoreDeployLoopGuard = req.query.ignoreDeployLoopGuard === '1'
+      || req.body?.ignoreDeployLoopGuard === true;
+    if (loopAssessment.level === 'trip' && !ignoreDeployLoopGuard) {
+      stateService.appendActivityLog(entry.projectId || 'default', {
+        type: 'deploy-loop-blocked',
+        branchId: entry.id,
+        branchName: entry.branch,
+        actor: resolveActorFromRequest(req),
+        // 用既有的 failed 而不是新增 'blocked'：这次部署确实没发生，
+        // 语义够用，且不必让每个 result 消费方都跟着改（不必要的枚举涟漪）。
+        result: 'failed',
+        note: `空转部署熔断：${loopAssessment.windowMinutes} 分钟内已对同一提交 ${loopAssessment.commitSha} 部署 ${loopAssessment.sameCommitCount} 次，本次已拒绝`,
+      });
+      stateService.save();
+      res.status(429).json({
+        error: 'deploy_loop_detected',
+        message: `空转部署熔断：最近 ${loopAssessment.windowMinutes} 分钟内，本分支已对同一个提交 ${loopAssessment.commitSha} 部署了 ${loopAssessment.sameCommitCount} 次，代码没有任何变化。这通常意味着某个部署步骤在自己重新触发部署，形成无法收敛的环——它会让分支永远停在 building、预览域名长期 503，并独占宿主构建槽把其它分支饿死。请先查清是谁在反复触发。`,
+        branchId: entry.id,
+        commitSha: loopAssessment.commitSha,
+        sameCommitCount: loopAssessment.sameCommitCount,
+        windowMinutes: loopAssessment.windowMinutes,
+        escapeHatch: {
+          hint: '推一个新提交即可自动解除（判据按「分支 + 提交」计数）；确认这次重复部署是有意为之，可附加 ?ignoreDeployLoopGuard=1 强制放行',
+        },
+      });
+      return;
+    }
+    if (loopAssessment.level === 'warn') {
+      stateService.appendActivityLog(entry.projectId || 'default', {
+        type: 'deploy-loop-warning',
+        branchId: entry.id,
+        branchName: entry.branch,
+        actor: resolveActorFromRequest(req),
+        result: 'pending',
+        note: `空转部署告警：${loopAssessment.windowMinutes} 分钟内已对同一提交 ${loopAssessment.commitSha} 部署 ${loopAssessment.sameCommitCount} 次；达到 ${loopAssessment.tripAt} 次将拒绝`,
+      });
+      // 这里不显式 save()：appendActivityLog 只改内存，而告警是放行路径，
+      // 后续部署流程本来就会落盘。上面 trip 分支必须自己存，因为它立即 return。
+    }
+
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     const deploymentRun = await deploymentRunService?.begin({
       projectId: entry.projectId || 'default',
@@ -12117,7 +12194,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // 资源面板：记录一次构建活动（webhook / 手动 / reconciler 重试统一在此计数），
     // 让「分支少但反复构建」的项目能在资源占用面板按频次排到前面。
-    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req));
+    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req), deployLoopSha);
 
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'deploy',
