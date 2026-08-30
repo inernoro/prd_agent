@@ -270,6 +270,31 @@ describe('连接上限：事件只在真生效时说「已注入」，复用路�
     expect(runStartedAt).toBeGreaterThan(appliedAt);
   });
 
+  /**
+   * Codex 在 PR #1454 的 P2：传给审计的原本是 mysqlDefaults.injected（「这次注没注入」），
+   * 而不是「想要多少」。service 命令已显式声明 1000 时 injected 为 null，审计整个跳过，
+   * 复用的旧容器可能还停在 300——数值解析器根本到不了。
+   */
+  it('审计拿到的是「想要的上限」，不是「这次注没注入」', () => {
+    const source = containerSource();
+    expect(source).toContain('const desiredMysqlMaxConnections = isMysqlFamilyImage(service.dockerImage)');
+    expect(source).toContain('parseDeclaredMaxConnections(resolvedCommand) ?? mysqlDefaults.injected');
+    // 两条复用路径都传目标值，不再传注入标记
+    expect(source).not.toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
+  });
+
+  it('红用例：把目标值换回注入标记，守卫必须变红', () => {
+    const guard = (source: string) => {
+      expect(source).not.toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
+    };
+    const real = containerSource();
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(real, 'auditMysqlConnectionLimit(service, desiredMysqlMaxConnections)', 'auditMysqlConnectionLimit(service, mysqlDefaults.injected)'),
+    );
+  });
+
   it('两条复用路径都接了「尚未生效」审计', () => {
     const source = containerSource();
     const reuseAt = source.indexOf("action: 'infra.reuse-running'");
@@ -279,8 +304,8 @@ describe('连接上限：事件只在真生效时说「已注入」，复用路�
     // 每条路径在发自己的复用事件之前，先跑一次连接上限审计
     const beforeReuse = source.slice(Math.max(0, reuseAt - 900), reuseAt);
     const beforeWake = source.slice(Math.max(0, wakeAt - 900), wakeAt);
-    expect(beforeReuse, 'running 复用路径没接审计').toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
-    expect(beforeWake, 'stopped 唤醒路径没接审计').toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
+    expect(beforeReuse, 'running 复用路径没接审计').toContain('auditMysqlConnectionLimit(service, desiredMysqlMaxConnections)');
+    expect(beforeWake, 'stopped 唤醒路径没接审计').toContain('auditMysqlConnectionLimit(service, desiredMysqlMaxConnections)');
   });
 
   it('审计判的是「值够不够」，不是「有没有声明」', () => {
@@ -355,13 +380,13 @@ describe('连接上限：事件只在真生效时说「已注入」，复用路�
       const reuseAt = source.indexOf("action: 'infra.reuse-running'");
       expect(reuseAt).toBeGreaterThan(-1);
       expect(source.slice(Math.max(0, reuseAt - 900), reuseAt))
-        .toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
+        .toContain('auditMysqlConnectionLimit(service, desiredMysqlMaxConnections)');
     };
     const real = containerSource();
     expectGuardRedOnMutation(
       guard,
       real,
-      mutate(real, 'auditMysqlConnectionLimit(service, mysqlDefaults.injected)', 'noopAudit()'),
+      mutate(real, 'auditMysqlConnectionLimit(service, desiredMysqlMaxConnections)', 'noopAudit()'),
     );
   });
 });

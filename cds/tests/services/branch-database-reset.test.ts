@@ -53,6 +53,32 @@ function cloneTasksRouteSlice(source: string): string {
   return slice;
 }
 
+/**
+ * 截出「所有权白名单 + 默认目标」那一段，并**只保留代码行**。
+ *
+ * 注释里会正当地写出 `baseDb`（解释为什么不能用它），把散文算进判据就会误报——
+ * 判据要判的是代码在读什么，不是文档在说什么。
+ */
+function ownershipCodeOnly(source: string): string {
+  const slice = cloneTasksRouteSlice(source);
+  const from = slice.indexOf('const ownedFromLedger');
+  const to = slice.indexOf('const targetDatabase');
+  expect(from, '找不到所有权白名单起点').toBeGreaterThan(-1);
+  expect(to, '找不到 targetDatabase').toBeGreaterThan(from);
+  // 结束于 defaultTarget 的**非 reset 分支**：那一支正当地用 baseDb（其余 mode 就是
+  // 「按当前绑定库派生一个新分支库」），不属于本判据要管的范围。
+  const nonResetArm = slice.indexOf(': branchDatabaseName(baseDb, branch);', from);
+  expect(nonResetArm, '找不到 defaultTarget 的非 reset 分支').toBeGreaterThan(from);
+  expect(nonResetArm).toBeLessThan(to);
+  return slice.slice(from, nonResetArm)
+    .split('\n')
+    .filter((line) => {
+      const t = line.trim();
+      return t.length > 0 && !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+    })
+    .join('\n');
+}
+
 describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
   it('reset 是被接受的模式', () => {
     const slice = cloneTasksRouteSlice(readBranchesRoute());
@@ -108,16 +134,39 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
     expect(slice).toContain('branchOwnedDatabases');
     expect(slice).toContain('reset_refuses_foreign_database');
     expect(slice).toContain('!branchOwnedDatabases.has(targetDatabase)');
-    // 白名单必须同时含「分支 scope 当前绑定的库」与「CDS 约定的分支库名」，
-    // 前者覆盖项目自建命名（mdimp 的 imp_b_<token>），少了它对存量分支全不可用。
-    expect(slice).toContain('[baseDb, branchDatabaseName(projectBaseDb, branch)]');
+    // 白名单只许由「CDS 能证明的事实」构成：可复算的命名规则 + CDS 自己写的建库台账。
+    expect(slice).toContain('[branchDatabaseName(projectBaseDb, branch), ...ownedFromLedger]');
+    expect(slice).toContain("listResourceCloneTasks({ projectId, branchId: branch.id, resourceId })");
+    expect(slice).toContain("t.status === 'completed'");
   });
 
-  it('reset 的默认目标不得再叠一层分支后缀', () => {
-    // baseDb 在分支库已存在时就是分支库本身，再套 branchDatabaseName 会算出
-    // 一个谁都不是的名字，把脏库留在原地。
+  it('reset 的默认目标来自台账，不叠分支后缀也不读可变 env', () => {
     const slice = cloneTasksRouteSlice(readBranchesRoute());
-    expect(slice).toContain("mode === 'reset'\n      ? (baseDb && baseDb !== projectBaseDb ? baseDb : branchDatabaseName(projectBaseDb, branch))");
+    expect(slice).toContain('ownedFromLedger[ownedFromLedger.length - 1]');
+  });
+
+  /**
+   * Codex 在 PR #1454 的 P1：白名单原本含 baseDb，而它来自分支 scope 的
+   * MYSQL_DATABASE——**可变**的项目配置。那个值被手工改过或过期指向兄弟分支的库时，
+   * 白名单会把别人的库认成「本分支拥有」，reset 用 root 凭据 DROP 掉。
+   * 护栏被自己的取值来源绕开了。所有权必须从不可变记录推导。
+   */
+  it('白名单与默认目标都不得读分支 scope 的可变 env', () => {
+    // 只看代码行：注释里正当地解释了「为什么不用 baseDb」，把散文算进判据会误报。
+    expect(ownershipCodeOnly(readBranchesRoute()), '白名单/默认目标的代码里不该出现 baseDb')
+      .not.toContain('baseDb');
+  });
+
+  it('红用例：把 baseDb 放回白名单，守卫必须变红', () => {
+    const guard = (source: string) => {
+      expect(ownershipCodeOnly(source)).not.toContain('baseDb');
+    };
+    const real = readBranchesRoute();
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(real, '[branchDatabaseName(projectBaseDb, branch), ...ownedFromLedger]', '[baseDb, branchDatabaseName(projectBaseDb, branch), ...ownedFromLedger]'),
+    );
   });
 
   it('红用例：白名单拿掉后守卫必须变红', () => {

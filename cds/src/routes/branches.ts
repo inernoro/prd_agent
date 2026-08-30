@@ -10126,23 +10126,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
     /**
      * 这个分支「拥有」的库有哪些——reset 的白名单。
      *
-     * 两个来源，缺一不可：
-     *   - baseDb：分支 scope 当前绑定的库。项目自建的命名（如 mdimp 的 `imp_b_<token>`）
-     *     只在这里出现，CDS 推不出来，漏了它就等于对真实存量分支库全部不可用。
-     *   - branchDatabaseName(projectBaseDb, branch)：CDS 自己约定的分支库名，
-     *     用于分支 scope 还没注入（第一次建库前）的情况。
-     * 注意基数必须用 projectBaseDb：用 baseDb 会在分支库已存在时再叠一层分支后缀，
-     * 算出一个谁都不是的名字。
+     * 两个来源都必须是**CDS 自己能证明的事实**，不能是任何可被改写的运行时状态：
+     *   - `branchDatabaseName(projectBaseDb, branch)`：CDS 约定的命名规则，可复算、
+     *     不可伪造。基数必须用 projectBaseDb——用 baseDb 会在分支库已存在时再叠一层
+     *     分支后缀，算出一个谁都不是的名字。
+     *   - 本分支 + 本资源下**已完成的建库任务**记下的 targetDatabase。这条台账是
+     *     CDS 自己写的（`stateService.updateResourceCloneTask`），项目自建的命名
+     *     （如 mdimp 的 `imp_b_<token>`）只在这里留痕，漏了它等于对真实存量分支库全不可用。
+     *
+     * **刻意不含 baseDb**：它来自分支 scope 的 `MYSQL_DATABASE`，是**可变**的项目配置。
+     * 那个值一旦被手工改过、或过期指向兄弟分支的库，白名单就会把别人的库认成「本分支
+     * 拥有」，reset 用 root 凭据把它 DROP 掉——护栏被自己的取值来源绕开
+     * （Codex 在 PR #1454 的 P1）。所有权必须从不可变记录推导，不能从可写状态推导。
      */
+    const ownedFromLedger = stateService
+      .listResourceCloneTasks({ projectId, branchId: branch.id, resourceId })
+      .filter((t) => t.status === 'completed' && t.targetDatabase)
+      .map((t) => sanitizeDbName(String(t.targetDatabase)));
     const branchOwnedDatabases = new Set(
-      [baseDb, branchDatabaseName(projectBaseDb, branch)]
+      [branchDatabaseName(projectBaseDb, branch), ...ownedFromLedger]
         .filter(Boolean)
         .map(sanitizeDbName),
     );
-    // reset 默认目标：分支当前绑定的那个库；没有绑定过才回落到 CDS 约定名。
+    // reset 默认目标：台账里最近一次建成的那个库；没有台账才回落到 CDS 约定名。
+    // 同样不读 baseDb —— 默认值也不能被可写状态牵着走。
     // 其余 mode 维持原语义（建一个新的分支库）。
     const defaultTarget = mode === 'reset'
-      ? (baseDb && baseDb !== projectBaseDb ? baseDb : branchDatabaseName(projectBaseDb, branch))
+      ? (ownedFromLedger.length > 0
+        ? ownedFromLedger[ownedFromLedger.length - 1]
+        : branchDatabaseName(projectBaseDb, branch))
       : branchDatabaseName(baseDb, branch);
     const targetDatabase = sanitizeDbName(String(req.body?.targetDatabase || defaultTarget));
     if (mode === 'reset') {

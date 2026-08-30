@@ -13,7 +13,7 @@ import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } 
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
-import { applyMysqlConnectionDefaults, parseDeclaredMaxConnections } from './infra-connection-defaults.js';
+import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConnections } from './infra-connection-defaults.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -2623,6 +2623,13 @@ export class ContainerService {
       entrypoint: resolvedEntrypoint,
     });
     const resolvedCommand = mysqlDefaults.command;
+    // 复用既有容器时要比对的「目标上限」是**想要多少**，不是「这次注没注入」。
+    // 用 mysqlDefaults.injected 当目标值会漏掉一整类：service 命令已显式声明 1000 时
+    // injected 为 null（already-declared），审计整个跳过，而复用的旧容器可能还停在 300
+    // （Codex 在 PR #1454 的 P2）。所以从解析后的命令里取声明值，没有才用注入值。
+    const desiredMysqlMaxConnections = isMysqlFamilyImage(service.dockerImage)
+      ? (parseDeclaredMaxConnections(resolvedCommand) ?? mysqlDefaults.injected)
+      : null;
     // 注意：这里只是**算出**要注入的命令，还没生效。下面的幂等启动分三档，
     // 只有 `docker run` 那一档真的用 resolvedCommand；running 直接复用、
     // stopped 走 docker start，两者都沿用容器**创建时**的命令。
@@ -2722,7 +2729,7 @@ export class ContainerService {
         await this.auditInfraLogLimit(service);
         // 复用既有容器不改启动命令：如实报告连接上限还没生效，别让上面算出的
         // resolvedCommand 冒充「已应用」。
-        await this.auditMysqlConnectionLimit(service, mysqlDefaults.injected);
+        await this.auditMysqlConnectionLimit(service, desiredMysqlMaxConnections);
         this.recordContainerEvent({
           severity: 'info',
           source: 'cds-container-service',
@@ -2743,7 +2750,7 @@ export class ContainerService {
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
         await this.auditInfraLogLimit(service);
         // docker start 沿用容器创建时的命令，同上：如实报告尚未生效。
-        await this.auditMysqlConnectionLimit(service, mysqlDefaults.injected);
+        await this.auditMysqlConnectionLimit(service, desiredMysqlMaxConnections);
         const diagnostics = await this.captureContainerDiagnostics(service.containerName, 120);
         this.recordContainerEvent({
           severity: 'info',
