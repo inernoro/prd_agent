@@ -5768,9 +5768,14 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
         var stored = await serviceKeys.Find(Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("_id", keyId),
             Builders<BsonDocument>.Filter.Eq("TenantId", tenantId))).FirstOrDefaultAsync();
-        if (stored is not null
-            && stored.AsNullableBool("Enabled") == true
-            && SystemKeyStillPassesTheGate(stored, effectiveTeamId, SystemServiceKeySource, SystemIntentDraftAppCaller))
+        if (SystemKeyIsUsableNow(
+                stored,
+                settings.AsNullableString("ServiceKeyEncrypted"),
+                effectiveTeamId,
+                SystemServiceKeySource,
+                SystemIntentDraftAppCaller,
+                builder.Configuration)
+            && await SystemKeyHasDirectoryRowAsync(serviceKeyDirectory, tenantId, keyId))
         {
             // 存量归一：早期自签的 key 写过一个列表不认的 IssuanceState，那批 key 在接入密钥页
             // 是隐形的。这里顺手把它掰回 issued——幂等，且不必等下一次重签才让运维看见它。
@@ -6090,6 +6095,17 @@ app.MapGet("/gw/system-settings", async (HttpContext http) =>
             "SYSTEM_TEAM_NAME_TAKEN",
             $"「{SystemTeamName}」这个名字已被业务团队占用，备用名也都被占，系统团队建不出来。去「团队与成员」把那个同名团队改个名字再回来。"), jsonOptions, 409);
     var teamDoc = await teams.Find(x => x.Id == systemTeamId && x.TenantId == tenant.TenantId).FirstOrDefaultAsync();
+    // 与 EnsureSystemGatewayAccessAsync 同一个判据 + 同一条目录行检查：
+    // 页面上的「就绪」必须与「下一次调用会不会重签」说的是同一件事。
+    var systemKeyUsableNow = keyDoc is not null
+        && SystemKeyIsUsableNow(
+            keyDoc,
+            settings.AsNullableString("ServiceKeyEncrypted"),
+            systemTeamId,
+            SystemServiceKeySource,
+            SystemIntentDraftAppCaller,
+            builder.Configuration)
+        && await SystemKeyHasDirectoryRowAsync(serviceKeyDirectory, tenant.TenantId, keyId!);
 
     return Json(ApiEnvelope<object>.Ok(new
     {
@@ -6104,7 +6120,11 @@ app.MapGet("/gw/system-settings", async (HttpContext http) =>
         servingReachable = baseUrl.Length > 0,
         appCallerCode = SystemIntentDraftAppCaller,
         // 密钥只回前缀指纹，永不回明文——它是系统自己在用的凭据，不下发给浏览器。
-        credentialState = keyDoc is null ? "will-issue" : keyDoc.AsNullableBool("Enabled") == true ? "ready" : "will-reissue",
+        // 「就绪」必须与调用路径同一个判据：只看 Enabled 的话，加密密钥轮换过、目录行丢了、
+        // 或 key 已经不合闸之后这里照样写「就绪」，而下一次真调用当场重签或直接失败。
+        credentialState = keyDoc is null
+            ? "will-issue"
+            : systemKeyUsableNow ? "ready" : "will-reissue",
         credentialPrefix = keyDoc?.AsNullableString("KeyPrefix") ?? settings.AsNullableString("ServiceKeyPrefix"),
         credentialIssuedAt = settings.AsNullableString("ServiceKeyIssuedAt"),
         pools = chatPools.Select(x => new
@@ -6549,6 +6569,24 @@ app.MapPost("/gw/app-callers", async (HttpContext http, [FromBody] CreateGateway
     {
         if (!string.Equals(existing.AsNullableString("TeamId"), teamId, StringComparison.Ordinal))
             return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("APP_CALLER_IDENTITY_CONFLICT", "该 appCaller 已归属当前租户中的其他团队"), jsonOptions, 409);
+        /*
+          已存在但**不接流量**（停用 / 归档）时不许原样返回。
+
+          调用方拿到这条身份的下一步就是用它签一把 key，而 serving 会当场回
+          APP_CALLER_DISABLED——页面等于把一把注定用不了的钥匙交到用户手上。
+          判定必须落在这里：这是全库唯一一次**精确**身份查询（AppCallerCode + RequestType，
+          租户内、无分页），页面那边只能按 search 模糊搜一页，用途多过一页时根本搜不到它。
+          与 serving 的 GatewayAppCallerPolicy 同一套枚举，列表写在这里是因为
+          console-api 按既定架构不引用 PrdAgent.*（守卫钉住两侧一致）。
+        */
+        var existingStatus = (existing.AsNullableString("Status") ?? "discovered").Trim().ToLowerInvariant();
+        if (existingStatus is not ("discovered" or "configured" or "active"))
+        {
+            return Json(ApiEnvelope<GatewayAppCallerItem>.Fail(
+                "APP_CALLER_DISABLED",
+                $"调用用途「{appCallerCode}」已存在，但处于「{existingStatus}」状态，不接受流量。"
+                + "先去「调用用途」把它恢复，或换一个用途名——用它签出来的密钥一调用就会被拒。"), jsonOptions, 409);
+        }
         return Json(ApiEnvelope<GatewayAppCallerItem>.Ok(MapGatewayAppCaller(existing)), jsonOptions);
     }
 
@@ -15392,6 +15430,45 @@ static bool IsSystemCredentialFixableCode(string code) => code is
 /// 团队与 appCaller 不一致 → GATEWAY_KEY_TEAM_MISMATCH。
 /// 判据故意写宽（有疑问就重签）：重签的代价是一次写库，判错的代价是用户看见 401。
 /// </summary>
+/// <summary>
+/// 「库里那把系统凭据此刻还能直接用吗」——调用路径与设置页必须问这同一个函数。
+///
+/// 分成两处写的坏法是静默的：设置页只看 Enabled，于是 ApiKeyCrypto:Secret 轮换过、
+/// 目录行丢了、或者 key 的团队/来源/scope 已经不合闸之后，页面照样写「就绪」，
+/// 而下一次真调用要么当场重签、要么直接失败。用户盯着「就绪」二字排查一个不存在的状态。
+///
+/// 判据故意写宽（有疑问就当不可用）：重签的代价是一次写库，判错的代价是用户看见 401。
+/// </summary>
+/// <summary>
+/// 鉴权目录里还有没有这把 key 的行。没有这一行，serving 查不到它，
+/// 出站那一次会直接 401——而 key 文档本身看着一切正常（Enabled、没过期、合闸）。
+/// 与上面那个判据成对使用：它管「这把 key 本身还成立吗」，这条管「serving 找得到它吗」。
+/// </summary>
+static async Task<bool> SystemKeyHasDirectoryRowAsync(
+    IMongoCollection<BsonDocument> directory, string tenantId, string keyId)
+{
+    var found = await directory.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("_id", keyId),
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId))).AnyAsync();
+    return found;
+}
+
+static bool SystemKeyIsUsableNow(
+    BsonDocument? storedKey,
+    string? encryptedKeyMaterial,
+    string expectedTeamId,
+    string expectedSource,
+    string expectedAppCaller,
+    IConfiguration configuration)
+{
+    if (storedKey is null) return false;
+    if (storedKey.AsNullableBool("Enabled") != true) return false;
+    if (!SystemKeyStillPassesTheGate(storedKey, expectedTeamId, expectedSource, expectedAppCaller)) return false;
+    // 密文解不开（轮换过加密密钥）等同于没有这把 key：出站那一头拿不到明文。
+    var material = GwApiKeyCrypto.Decrypt(encryptedKeyMaterial, configuration);
+    return material.Success && material.PlainText.Length > 0;
+}
+
 static bool SystemKeyStillPassesTheGate(BsonDocument key, string expectedTeamId, string expectedSource, string expectedAppCaller)
 {
     static bool Has(BsonDocument doc, string field, string expected) =>

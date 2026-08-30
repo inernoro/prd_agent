@@ -76,6 +76,8 @@ let session = { role: 'owner', teamIds: ['team-1'] };
   不带 search 的列表里没有它，按它的 code 搜才搜得到。
 */
 let pagedOutAppCaller = null;
+/** 页面连搜都搜不到的那一条（超出一页的极端情形）：只有服务端的精确查询拦得住。 */
+let serverSideDisabledCode = null;
 
 const server = http.createServer((req, res) => {
   const requestUrl = new URL(req.url, `http://localhost:${PORT}`);
@@ -102,8 +104,17 @@ const server = http.createServer((req, res) => {
       let raw = '';
       req.on('data', (chunk) => { raw += chunk; });
       req.on('end', () => {
-        posted.push({ api, body: raw ? JSON.parse(raw) : null });
+        const body = raw ? JSON.parse(raw) : null;
+        posted.push({ api, body });
         if (api === '/app-callers') {
+          // 服务端那次是**精确**身份查询（AppCallerCode + RequestType，无分页），
+          // 页面搜不到的那条它照样查得到——所以拦截落在这里，不在页面。
+          if (serverSideDisabledCode && serverSideDisabledCode === (body?.appCallerCode ?? '')) {
+            return json(res, 409, { success: false, data: null, error: {
+              code: 'APP_CALLER_DISABLED',
+              message: `调用用途「${serverSideDisabledCode}」已存在，但处于「archived」状态，不接受流量。`,
+            } });
+          }
           return json(res, 200, { success: true, error: null, data: { ...APP_CALLERS[0], id: 'ac-new' } });
         }
         if (api === '/service-keys') {
@@ -251,6 +262,25 @@ await page.waitForTimeout(1200);
 check('页外的停用同码被查出来：一个写请求都不许发', posted.map((item) => item.api), []);
 check('并说清为什么不签', (await page.locator('.lg-page-body').innerText()).includes('不接受流量'), true);
 pagedOutAppCaller = null;
+await page.getByRole('button', { name: '取消' }).click();
+await page.waitForTimeout(200);
+
+// 6.6) 连搜索都翻不到时（匹配超过一页、目标排在页外）：拦截必须由服务端兜住。
+//      页面那次 search 是模糊正则、按页截断，本来就不是精确身份查询；
+//      而幂等创建那一步在服务端是精确的（AppCallerCode + RequestType，无分页），
+//      所以它必须拒绝，而不是把那条停用身份原样返回——返回了，下一步就是拿它签 key。
+posted.length = 0;
+await page.getByRole('button', { name: '新建密钥' }).click();
+await page.waitForSelector('.lg-service-key-form');
+await nameInput.fill('invisible-client');
+await page.locator('input[aria-label="调用用途"]').fill('desktop');
+await page.waitForTimeout(200);
+serverSideDisabledCode = await generatedCode();
+await page.getByRole('button', { name: '生成 API Key' }).click();
+await page.waitForTimeout(1200);
+check('服务端拒绝后不再签发密钥', posted.map((item) => item.api), ['/app-callers']);
+check('把服务端给的原因原样告诉用户', (await page.locator('.lg-page-body').innerText()).includes('不接受流量'), true);
+serverSideDisabledCode = null;
 await page.getByRole('button', { name: '取消' }).click();
 await page.waitForTimeout(200);
 

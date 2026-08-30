@@ -252,6 +252,39 @@ public sealed class ModelCatalogMirrorGuardTests
             customMessage: "控制台必须写下完成时间——数据面判「迁完了」认的就是这个字段");
     }
 
+    /// <summary>
+    /// 「哪些状态接流量」也是一对镜像：serving 按 GatewayAppCallerPolicy 判，
+    /// 控制台的幂等创建按自己那份字面量判——后者是唯一一次精确身份查询，
+    /// 页面只能模糊搜一页，所以拦不拦得住停用用途全靠控制台这一处。
+    ///
+    /// 两侧漂移的坏法是静默的：控制台放行了一条 serving 不认的状态，
+    /// 页面照常签发，而那把 key 一调用就 APP_CALLER_DISABLED。
+    /// </summary>
+    [Fact]
+    public void AppCallerTrafficStatuses_AgreeWithServingPolicy()
+    {
+        var consoleProgram = File.ReadAllText(RepoFile("llmgw/console-api/Program.cs"));
+
+        // 控制台的幂等创建必须逐个列出 serving 认的那几种状态。
+        foreach (var status in new[] { "discovered", "configured", "active" })
+        {
+            PrdAgent.Core.LlmGateway.GatewayAppCallerPolicy.AllowsTraffic(status).ShouldBeTrue(
+                customMessage: $"「{status}」在 serving 侧应当放行；两侧的枚举必须一致");
+        }
+
+        consoleProgram.ShouldContain(
+            "existingStatus is not (\"discovered\" or \"configured\" or \"active\")",
+            customMessage: "幂等创建必须按 serving 那套枚举判：放行了 serving 不认的状态，"
+                + "页面就会签出一把一调用即 APP_CALLER_DISABLED 的 key");
+        consoleProgram.ShouldContain(
+            "\"APP_CALLER_DISABLED\"",
+            customMessage: "拒绝要给专属错误码，否则页面只能显示一句「创建失败」，用户不知道去哪恢复");
+
+        // serving 侧不认的状态，控制台也不许出现在那张放行清单里。
+        PrdAgent.Core.LlmGateway.GatewayAppCallerPolicy.AllowsTraffic("archived").ShouldBeFalse();
+        PrdAgent.Core.LlmGateway.GatewayAppCallerPolicy.AllowsTraffic("disabled").ShouldBeFalse();
+    }
+
     private static string RepoFile(string relativePath)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
