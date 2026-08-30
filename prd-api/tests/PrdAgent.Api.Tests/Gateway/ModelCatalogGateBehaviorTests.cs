@@ -139,7 +139,7 @@ public sealed class ModelCatalogGateBehaviorTests
         const string exchangeAlias = "some-vendor/exchange-only-model";
         try
         {
-            await SeedExchangeAsync(gatewayData.Database, exchangeId, exchangeAlias);
+            await SeedExchangeAsync(gatewayData.Database, configuration, exchangeId, exchangeAlias);
             var resolver = new ModelResolver(
                 mapData, configuration, NullLogger<ModelResolver>.Instance, gatewayData);
 
@@ -177,7 +177,8 @@ public sealed class ModelCatalogGateBehaviorTests
     /// 兑换所那一支的种子：模型**只**活在兑换所文档里（llmgw_models 里没有它），
     /// 这正是走到「查不到任何文档」那一支的前提。
     /// </summary>
-    private static async Task SeedExchangeAsync(IMongoDatabase database, string exchangeId, string alias)
+    private static async Task SeedExchangeAsync(
+        IMongoDatabase database, IConfiguration configuration, string exchangeId, string alias)
     {
         await database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
             .InsertOneAsync(new GatewayAppCallerRecord
@@ -208,12 +209,17 @@ public sealed class ModelCatalogGateBehaviorTests
         poolDocument["TenantId"] = GatewayTenantDefaults.InternalTenantId;
         await database.GetCollection<BsonDocument>("llmgw_model_pools").InsertOneAsync(poolDocument);
 
+        // TargetUrl 与可解密的 TargetApiKeyEncrypted 是**必填**：缺任一项，解析在名录门之前
+        // 就以 OfferingUnresolvable 失败了，这条用例会变成一条测不到门的绿灯（形状 4b）。
         await database.GetCollection<BsonDocument>("llmgw_model_exchanges").InsertOneAsync(new BsonDocument
         {
             { "_id", exchangeId },
             { "TenantId", GatewayTenantDefaults.InternalTenantId },
             { "Name", "名录门兑换所用例" },
             { "Enabled", true },
+            { "TargetUrl", "https://catalog-gate-exchange.example.test/v1/models/{model}" },
+            { "TargetApiKeyEncrypted", ApiKeyCryptoKeyRing.Encrypt("sk-catalog-gate-exchange", configuration) },
+            { "TargetAuthScheme", "Bearer" },
             {
                 "Models", new BsonArray
                 {
