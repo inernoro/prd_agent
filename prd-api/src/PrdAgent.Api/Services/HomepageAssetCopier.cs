@@ -38,18 +38,29 @@ public sealed class HomepageAssetCopier
 
     private const string SafeOutboundClient = "SafeOutbound";
 
+    /// <summary>
+    /// 整个下载（含跳转）的总预算。`HttpClient.Timeout` 在 `ResponseHeadersRead` 下只管到
+    /// 响应头到手为止——对方 1 秒内回完头、然后每 30 秒滴一个字节，body 永远读不完也永远
+    /// 不超时，这条请求和那个出站连接就一直挂着。所以读 body 要另有一个自己的期限。
+    /// </summary>
+    private static readonly TimeSpan DefaultDownloadBudget = TimeSpan.FromSeconds(120);
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IAssetStorage _assetStorage;
     private readonly ISafeOutboundUrlValidator _urlValidator;
+    private readonly TimeSpan _downloadBudget;
 
     public HomepageAssetCopier(
         IHttpClientFactory httpClientFactory,
         IAssetStorage assetStorage,
-        ISafeOutboundUrlValidator urlValidator)
+        ISafeOutboundUrlValidator urlValidator,
+        TimeSpan? downloadBudget = null)
     {
         _httpClientFactory = httpClientFactory;
         _assetStorage = assetStorage;
         _urlValidator = urlValidator;
+        // 可覆盖只为让用例能在毫秒级验到超时；DI 走默认值。
+        _downloadBudget = downloadBudget ?? DefaultDownloadBudget;
     }
 
     /// <summary>复制结果：都是要写进槽位记录的东西。</summary>
@@ -77,13 +88,23 @@ public sealed class HomepageAssetCopier
         var client = _httpClientFactory.CreateClient(SafeOutboundClient);
         client.Timeout = TimeSpan.FromSeconds(60);
 
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(_downloadBudget);
+
         byte[] bytes;
         try
         {
-            bytes = await DownloadAsync(client, sourceUrl, ct);
+            bytes = await DownloadAsync(client, sourceUrl, budget.Token);
         }
         catch (CopyFailedException) { throw; }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException ex)
+        {
+            // 不是调用方取消的，那就是上面那个预算到点了——说清是「对方不给完」，
+            // 别混成一句笼统的「失败」。
+            throw new CopyFailedException(
+                $"取回这张图超过 {_downloadBudget.TotalSeconds:F0} 秒还没结束，已经断开", ex);
+        }
         catch (Exception ex)
         {
             throw new CopyFailedException($"取回这张图失败：{ex.Message}", ex);

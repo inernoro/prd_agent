@@ -153,6 +153,32 @@ public sealed class HomepageAssetCopierTests
     }
 
     /// <summary>
+    /// `ResponseHeadersRead` 让 `HttpClient.Timeout` 只管到响应头到手为止。对方 1 秒内
+    /// 回完头、然后 body 一直不给完（挂着不动、或者每 30 秒滴一个字节），读就永远不结束
+    /// 也永远不超时——这条请求和那个出站连接一直挂着，而字节数还没到 20MB，上限也拦不住。
+    /// 所以读 body 另有自己的期限。
+    /// </summary>
+    [Fact]
+    public async Task 响应头回来了但body一直不给完时到点断开()
+    {
+        var storage = new RecordingAssetStorage();
+        var copier = new HomepageAssetCopier(
+            new StubHttpClientFactory(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new StallingStream()),
+            })),
+            storage,
+            new StubUrlValidator(),
+            downloadBudget: TimeSpan.FromMilliseconds(200));
+
+        var ex = await Should.ThrowAsync<HomepageAssetCopier.CopyFailedException>(
+            () => copier.CopyAsync(ProviderUrl, e => $"icon/homepage/landing/hero.{e}", CancellationToken.None));
+
+        ex.Message.ShouldContain("还没结束");
+        storage.Uploaded.ShouldBeEmpty();
+    }
+
+    /// <summary>
     /// key 是确定性的，替换同一个槽位时上传是在**原地覆盖**线上那个对象。把请求的
     /// CancellationToken 传进去，管理员这时关掉标签页就会把覆盖写到一半掐断——公网上
     /// 留下半张图（server-authority 第 1 条）。判据读的是替身真正收到的那个 token，
@@ -324,6 +350,30 @@ public sealed class HomepageAssetCopierTests
             return n;
         }
 
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override void Flush() { }
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    /// <summary>响应头已经回完，body 挂着不动——只有读 body 那一侧自己的期限能把它断开。</summary>
+    private sealed class StallingStream : Stream
+    {
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return 0;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+            => ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
