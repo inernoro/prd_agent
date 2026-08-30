@@ -5385,6 +5385,28 @@ async Task<string> EnsureSystemTeamAsync(string tenantId)
 }
 
 /// <summary>
+/// 退役该租户下多余的系统级密钥：留下设置指向的那把（winner），其余**够老的**一律停用。
+///
+/// 两个条件缺一不可。不碰胜者，否则设置会指着一把已停用的密钥；不碰刚签出来的（5 分钟内），
+/// 否则两个并发请求会各自把对方那把停掉，最后两把都不可用——回读与停用之间没有原子性，
+/// 靠「够老」这一条把并发对手排除在射程外，就不必再引入锁。
+///
+/// 判定只此一处，签发路径与复用路径都调它：抄成两份，下次就只会改一边。
+/// </summary>
+async Task RetireStaleSystemKeysAsync(string tenantId, string winnerKeyId)
+{
+    var retireBefore = DateTime.UtcNow.AddMinutes(-5);
+    await serviceKeys.UpdateManyAsync(
+        Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+            Builders<BsonDocument>.Filter.Eq("Name", SystemServiceKeyName),
+            Builders<BsonDocument>.Filter.Ne("_id", winnerKeyId),
+            Builders<BsonDocument>.Filter.Lt("CreatedAt", retireBefore),
+            Builders<BsonDocument>.Filter.Eq("Enabled", true)),
+        Builders<BsonDocument>.Update.Set("Enabled", false).Set("RotationState", "revoked").Set("UpdatedAt", DateTime.UtcNow));
+}
+
+/// <summary>
 /// 系统级网关访问凭据的自愈入口：确保系统团队在、appCaller 已登记、有一把当下真的能过门的 key。
 /// 任何一步失败都返回**说得出原因**的错误，绝不把裸 HTTP 状态码丢给用户。
 ///
@@ -5499,7 +5521,13 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             // 与那条守卫要防的事无关——换个名字，让守卫继续对它该管的那处保持有效。
             var systemKey = GwApiKeyCrypto.Decrypt(settings.AsNullableString("ServiceKeyEncrypted"), builder.Configuration);
             if (systemKey.Success && systemKey.PlainText.Length > 0)
+            {
+                // 复用路径也要扫一遍陈旧 key。并发签发时落败的那把被 5 分钟窗口有意放过，
+                // 而此后每一次调用都从这里返回、再也走不到签发末尾的退役——不在这里扫，
+                // 那把就一直留着，「只多留 5 分钟」也就成了一句不兑现的话。
+                await RetireStaleSystemKeysAsync(tenantId, keyId);
                 return (true, baseUrl, systemKey.PlainText, SystemIntentDraftAppCaller, poolId, model, string.Empty);
+            }
         }
     }
 
@@ -5596,7 +5624,6 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
     // 而并发对手的 key 同样新，谁也够不着谁；真正的陈旧 key 会在下一次签发时被扫掉。
     // 代价是并发落败的那把会多留 5 分钟（页面上多一行、且它不被任何人引用），
     // 比「两把都停用、系统对自己回 401」这种状态好得多。
-    var retireBefore = DateTime.UtcNow.AddMinutes(-5);
     var settledSettings = await LoadSystemSettingsAsync(tenantId);
     var winnerKeyId = settledSettings.AsNullableString("ServiceKeyId") ?? newKeyId;
     var effectiveKey = plainKey;
@@ -5623,14 +5650,7 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
                     .Set("UpdatedAt", DateTime.UtcNow));
         }
     }
-    await serviceKeys.UpdateManyAsync(
-        Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
-            Builders<BsonDocument>.Filter.Eq("Name", SystemServiceKeyName),
-            Builders<BsonDocument>.Filter.Ne("_id", winnerKeyId),
-            Builders<BsonDocument>.Filter.Lt("CreatedAt", retireBefore),
-            Builders<BsonDocument>.Filter.Eq("Enabled", true)),
-        Builders<BsonDocument>.Update.Set("Enabled", false).Set("RotationState", "revoked").Set("UpdatedAt", DateTime.UtcNow));
+    await RetireStaleSystemKeysAsync(tenantId, winnerKeyId);
 
     return (true, baseUrl, effectiveKey, SystemIntentDraftAppCaller, poolId, model, string.Empty);
 }
@@ -5671,7 +5691,11 @@ async Task InvalidateSystemCredentialAsync(string tenantId)
 // 这一段不再读任何密钥类环境变量。serving 一时不通时返回**说得出原因**的错误，
 // 前端退回本地关键词表并明说这是降级判定（no-rootless-tree：不假装模型给过意见）。
 // 推导是短任务，40s 足够；超时就降级，不把控制台请求挂住。
-var intentDraftHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
+// 40 秒是这条推导链路对用户的承诺（前端超过它就退回本地关键词表）。HttpClient.Timeout
+// 只管到响应头为止——用 ResponseHeadersRead 流式读时，body 卡住它就不再兜底了，
+// 所以读流那一段要用同一个数字另外拉一条 deadline，见 IntentDraftDeadline。
+const int IntentDraftTimeoutSeconds = 40;
+var intentDraftHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(IntentDraftTimeoutSeconds) };
 const int IntentDraftMaxChars = 500;
 const string IntentDraftSystemPrompt = """
 你是 LLM 网关的接入助手。用户用一句话说明他要接什么、要做什么，你把它压成调用用途码的两段。
@@ -5953,6 +5977,12 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
     await SendAsync(new { type = "stage", stage = "connecting", text = "正在把这句话交给网关自己的模型" });
     var raw = new StringBuilder();
     var usedModel = string.Empty;
+    // 整条推导（含流式读）共用一个 deadline。只挂 http.RequestAborted 的话，serving 把响应头
+    // 发回来之后再卡住，HttpClient.Timeout 已经不管事、ReadLineAsync 又只在浏览器断开时才醒，
+    // 于是这一屏会无限停在「模型正在推导」——承诺的 40 秒兜底静默失效。
+    using var draftDeadline = CancellationTokenSource.CreateLinkedTokenSource(http.RequestAborted);
+    draftDeadline.CancelAfter(TimeSpan.FromSeconds(IntentDraftTimeoutSeconds));
+    var draftCt = draftDeadline.Token;
     try
     {
         // 两轮：第一轮撞上凭据类拒绝就地重签、原样再来一次，第二轮才允许把失败告诉用户。
@@ -5981,11 +6011,11 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
             if (!string.IsNullOrWhiteSpace(access.PoolId))
                 upstream.Headers.TryAddWithoutValidation("X-Gateway-Model-Pool-Id", access.PoolId);
 
-            using var response = await intentDraftHttp.SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, http.RequestAborted);
+            using var response = await intentDraftHttp.SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, draftCt);
             if (!response.IsSuccessStatusCode)
             {
                 // 裸状态码对用户毫无意义（他会问「系统就是网关，还 401?」），所以翻译成能行动的一句话。
-                var (detail, failureCode) = await ReadGatewayFailureDetailAsync(response, http.RequestAborted);
+                var (detail, failureCode) = await ReadGatewayFailureDetailAsync(response, draftCt);
                 // 凭据类失败当场作废那把 key，并在同一次请求里重签、重试，用户那侧看不见这次失败。
                 if (IsSystemCredentialFixableCode(failureCode))
                 {
@@ -6005,11 +6035,11 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
                 return;
             }
             await SendAsync(new { type = "stage", stage = "thinking", text = "模型正在推导两段码" });
-            using var body2 = await response.Content.ReadAsStreamAsync(http.RequestAborted);
+            using var body2 = await response.Content.ReadAsStreamAsync(draftCt);
             using var reader = new StreamReader(body2, Encoding.UTF8);
-            while (!reader.EndOfStream && !http.RequestAborted.IsCancellationRequested)
+            while (!reader.EndOfStream && !draftCt.IsCancellationRequested)
             {
-                var line = await reader.ReadLineAsync(http.RequestAborted);
+                var line = await reader.ReadLineAsync(draftCt);
                 if (line is null) break;
                 if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
                 var payload = line[5..].Trim();
@@ -6034,7 +6064,19 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
             break;
         }
     }
-    catch (OperationCanceledException) { return; }
+    catch (OperationCanceledException)
+    {
+        // 浏览器自己走了就静默收工；是我们的 deadline 到点，就得说清楚——
+        // 用户那侧正看着「模型正在推导」，不给这一句他会一直等下去。
+        if (http.RequestAborted.IsCancellationRequested) return;
+        await SendAsync(new
+        {
+            type = "error",
+            code = "INTENT_DRAFT_UNAVAILABLE",
+            message = $"推导超过 {IntentDraftTimeoutSeconds} 秒没有返回，已退回本地关键词判定。",
+        });
+        return;
+    }
     catch (Exception ex)
     {
         await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"推导模型调用失败（{ex.GetType().Name}），已退回本地关键词判定。" });

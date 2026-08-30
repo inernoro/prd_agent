@@ -208,14 +208,20 @@ public sealed class GatewayRoutingWiringGuardTests
     public void 系统密钥退役必须避开胜者与新签的那把()
     {
         var console = File.ReadAllText(Path.Combine(RepoRoot(), "llmgw", "console-api", "Program.cs"));
-        var start = console.IndexOf("var settledSettings = await LoadSystemSettingsAsync(tenantId);", StringComparison.Ordinal);
-        start.ShouldBeGreaterThanOrEqualTo(0, "找不到系统密钥的胜者回读，守卫的取值范围需要跟着改");
-        var end = console.IndexOf("return (true, baseUrl, effectiveKey", start, StringComparison.Ordinal);
-        end.ShouldBeGreaterThan(start, "胜者回读与返回之间的结构变了，守卫的取值范围需要跟着改");
+        var start = console.IndexOf("async Task RetireStaleSystemKeysAsync(", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, "找不到共享的退役判定，守卫的取值范围需要跟着改");
+        var end = console.IndexOf("\n/// <summary>", start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, "退役判定与下一个成员的相邻关系变了，守卫的取值范围需要跟着改");
         var retire = console[start..end];
 
         retire.ShouldContain("Ne(\"_id\", winnerKeyId)", customMessage: "必须放过设置指向的那把，否则设置会指着一把已停用的密钥");
         retire.ShouldContain("Lt(\"CreatedAt\", retireBefore)", customMessage: "必须放过刚签出来的 key，否则两个并发请求会互相把对方停用");
+
+        // 两条路径都要扫：签发路径扫完就返回，复用路径（库里那把还能用，直接 return）不扫的话，
+        // 并发落败的那把此后永远等不到下一次签发，「只多留 5 分钟」就成了空话。
+        console.Split("await RetireStaleSystemKeysAsync(").Length.ShouldBe(
+            3,
+            "退役必须在签发路径与复用路径各调一次——少一处就会攒下永不退役的系统密钥");
     }
 
     [Fact]
