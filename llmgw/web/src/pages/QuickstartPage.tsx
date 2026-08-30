@@ -16,7 +16,7 @@ import { AlertCircle, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from '
 import { Link } from 'react-router-dom';
 import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, ensurePoolTypes, getOrganization, getPools, getPoolTypes, updateGatewayAppCaller } from '@/lib/api';
 import type { OrganizationData } from '@/lib/types';
-import { Button, Card, Chip, ReadOnlyNotice, SectionLoader } from '@/components/ui';
+import { Button, Card, Chip, ReadOnlyNotice, SectionLoader, Spinner } from '@/components/ui';
 import { AccessSnippetBar } from '@/components/AccessSnippetBar';
 import { DetailsBlock, PageBody, PageHeader, PageShell, TutorialLink } from '@/components/PageShell';
 import { invalidateOnboardingCache, markRequestCompleted } from '@/lib/onboarding';
@@ -253,6 +253,10 @@ export function QuickstartPage() {
   const [testMode, setTestMode] = useState<TestMode>('safe');
   const [copied, setCopied] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
+  // 「真实模型」那一档走的是非流式路径：请求发出去之后屏幕上没有任何东西在动，
+  // 而它要等的是真上游，十几秒很常见。静止超过 2 秒即体验缺陷（AGENTS.md 规则 #6），
+  // 所以按已等的秒数报出来——转圈 + 秒数，让人看得见它还在跑、跑了多久。
+  const [testElapsed, setTestElapsed] = useState(0);
   const [routeChecking, setRouteChecking] = useState(false);
   const [preparingRoute, setPreparingRoute] = useState(false);
   const [routePreview, setRoutePreview] = useState<RoutePreview | null>(null);
@@ -284,6 +288,13 @@ export function QuickstartPage() {
   const [budgetUsd, setBudgetUsd] = useState('');
   const [holdCapUsd, setHoldCapUsd] = useState('');
 
+  useEffect(() => {
+    if (!testing) return;
+    const startedAt = Date.now();
+    setTestElapsed(0);
+    const timer = window.setInterval(() => setTestElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [testing]);
   useEffect(() => {
     if (!testing) return undefined;
     const timer = window.setInterval(() => setHeartbeat((value) => value + 1), 100);
@@ -1601,7 +1612,7 @@ export function QuickstartPage() {
                       <button type="button" className={testMode === 'real' ? 'is-active' : ''} disabled={!realRouteReady || routeChecking} title={!realRouteReady ? '先在下方确认真实路由已就绪' : undefined} onClick={() => { setTestMode('real'); setTestResult(null); }}>真实模型</button>
                     </div>
                     <div className="lg-safe-test-controls">
-                      {canCreateAccess ? <Button variant="primary" disabled={testing || (testMode === 'real' && !realRouteReady)} onClick={() => void runTest()}>{testing ? (testMode === 'real' ? '正在等待真实模型' : '正在验证并写日志') : testMode === 'real' ? '发送一次真实请求' : '验证接入边界'}</Button> : null}
+                      {canCreateAccess ? <Button variant="primary" disabled={testing || (testMode === 'real' && !realRouteReady)} onClick={() => void runTest()}>{testing ? <Spinner size={15} /> : null}{testing ? (testMode === 'real' ? `正在等待真实模型 ${testElapsed}s` : '正在验证并写日志') : testMode === 'real' ? '发送一次真实请求' : '验证接入边界'}</Button> : null}
                       <span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{canCreateAccess ? (testMode === 'real' ? '只调用下方已解析的真实模型' : '返回 requestId 且 upstreamCalled=false 才算通过') : '请联系 Owner、Admin 或 Developer 完成签发与测试'}</span>
                     </div>
                   </div>

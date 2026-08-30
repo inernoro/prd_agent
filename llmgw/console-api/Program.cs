@@ -5720,6 +5720,12 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
     // 提到 try 外：并发落败时要用它们把设置改回指向自己这把（见函数末尾的胜者判定）。
     string keyPrefix;
     string encrypted;
+    // 已经写出去了什么：签发不是一次写入，是三步（密钥文档 → 目录 → 设置）。
+    // 中途失败时必须把前面写成功的收回去，否则会留下一把**启用着、却没人用得上**的 key：
+    // 目录写失败 = 鉴权查不到它；设置写失败 = 明文已经丢了、没人再知道它是什么。
+    // 两种都会在接入密钥页上越积越多，而每次重试又添一把。
+    string? insertedKeyId = null;
+    var directoryInserted = false;
     try
     {
         var secretBytes = RandomNumberGenerator.GetBytes(32);
@@ -5768,6 +5774,7 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             { "CreatedAt", keyNow },
             { "UpdatedAt", keyNow },
         });
+        insertedKeyId = newKeyId;
         await serviceKeyDirectory.InsertOneAsync(new BsonDocument
         {
             { "_id", newKeyId },
@@ -5776,6 +5783,7 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             { "ServiceKeyId", newKeyId },
             { "CreatedAt", keyNow },
         });
+        directoryInserted = true;
         await systemSettings.UpdateOneAsync(
             Builders<BsonDocument>.Filter.Eq("_id", tenantId),
             Builders<BsonDocument>.Update
@@ -5791,6 +5799,24 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
     }
     catch (Exception ex)
     {
+        // 回滚已经写出去的那几步。清理本身再失败也不能盖住原始错误——用户要看的是
+        // 「为什么签不出来」，不是「清理时又出了什么事」，所以这里只吞不报。
+        if (insertedKeyId is not null)
+        {
+            try
+            {
+                if (directoryInserted)
+                    await serviceKeyDirectory.DeleteOneAsync(Builders<BsonDocument>.Filter.Eq("_id", insertedKeyId));
+                await serviceKeys.DeleteOneAsync(Builders<BsonDocument>.Filter.Eq("_id", insertedKeyId));
+            }
+            catch (Exception cleanupError)
+            {
+                app.Logger.LogWarning(
+                    cleanupError,
+                    "[SystemKey] 签发失败后的回滚没做干净，可能留下一把无法使用的密钥：{KeyId}",
+                    insertedKeyId);
+            }
+        }
         return (false, baseUrl, "", SystemIntentDraftAppCaller, poolId, model,
             $"系统级密钥自动签发失败（{ex.GetType().Name}）。多数情况是 ApiKeyCrypto:Secret 没注入到 llmgw 容器，密文无法写入。");
     }

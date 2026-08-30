@@ -317,24 +317,39 @@ public class ModelResolver : IModelResolver
     private async Task<CatalogVerdict?> JudgeExchangeModelAsync(string platformId, string modelId, CancellationToken ct)
     {
         if (_gatewayDb is null) return null;
-        var exchanges = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_model_exchanges");
-        var fb = Builders<BsonDocument>.Filter;
+        // 读成 ModelExchange 而不是裸 BsonDocument，为的是用 GetEffectiveModels()——
+        // 解析器选中这条模型时用的就是它。直接读 `Models` 数组会漏掉旧形态的兑换所
+        // （别名只在 ModelAlias / ModelAliases 里，Models 为空），于是解析器选得出来、
+        // 这道门却判它「没声明过」而拦下：又是拿变更前的状态去卡这次变更（形状 5）。
+        var exchanges = _gatewayDb.Context.Database.GetCollection<ModelExchange>("llmgw_model_exchanges");
         var exchange = await exchanges
-            .Find(fb.And(fb.Eq("TenantId", CurrentTenantId), fb.Eq("_id", platformId)))
+            .Find(Builders<ModelExchange>.Filter.And(
+                Builders<ModelExchange>.Filter.Eq("TenantId", CurrentTenantId),
+                Builders<ModelExchange>.Filter.Eq(x => x.Id, platformId)))
             .FirstOrDefaultAsync(ct);
         if (exchange is null) return null;
 
         // 兑换所里没有这条别名 = 它不是这个兑换所声明过的东西，一律拦下。
         // （解析器正常走下来不该出现这种情况；出现了说明有人在别处拼了个 PlatformId。）
-        var declared = exchange.TryGetValue("Models", out var raw) && raw is BsonArray array
-            ? array.OfType<BsonDocument>().FirstOrDefault(item =>
-                string.Equals(item.GetValue("ModelId", string.Empty).AsString, modelId, StringComparison.OrdinalIgnoreCase))
-            : null;
+        var declared = exchange.GetEffectiveModels().FirstOrDefault(item =>
+            string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
         if (declared is null) return CatalogVerdict.Blocked;
+
+        // 旧形态没有地方盖逐条标记（别名是两个字符串字段合成出来的，不是文档数组），
+        // 而它们同样是管理员在逐条放行落地**之前**声明的——与名录门上线前已入库的模型
+        // 同一处境，按同一条口径放行。控制台下一次写这个兑换所时会把它落成带标记的 Models。
+        if (exchange.Models is null || exchange.Models.Count == 0)
+        {
+            _logger.LogDebug(
+                "[ModelResolver] 名录门：{Model} 来自旧形态兑换所 {ExchangeId}（别名在 ModelAlias/ModelAliases），"
+                + "按逐条放行落地前的既有声明放行",
+                modelId, platformId);
+            return CatalogVerdict.Allowed;
+        }
 
         // 名录内的在方法开头就放行了，走到这里的一定是名录外的：所以只看放行标记。
         // （不在这里再判一次名录——那一档永远为假，读的人会以为它在起作用。）
-        return declared.TryGetValue("AllowedOutsideCatalog", out var allowed) && allowed.IsBoolean && allowed.AsBoolean
+        return declared.AllowedOutsideCatalog == true
             ? CatalogVerdict.Allowed
             : CatalogVerdict.Blocked;
     }

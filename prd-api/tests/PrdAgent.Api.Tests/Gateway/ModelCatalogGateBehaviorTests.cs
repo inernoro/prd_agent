@@ -34,6 +34,9 @@ public sealed class ModelCatalogGateBehaviorTests
     private const string CatalogModel = "gpt-4o";
     /// <summary>名录外：真实存在的模型，但不在我们登记的那 38 条里。</summary>
     private const string OutsideModel = "some-vendor/experimental-model-x";
+    /// <summary>旧形态兑换所：别名只在 ModelAlias 里，没有 Models 数组，也就没有地方盖逐条标记。</summary>
+    private const string LegacyExchangeId = "gw-exchange-catalog-gate-legacy";
+    private const string LegacyAlias = "some-vendor/legacy-exchange-model";
 
     [Fact]
     public async Task 名录外且没有放行标记的模型_必须被拦下并点名错误码()
@@ -165,6 +168,17 @@ public sealed class ModelCatalogGateBehaviorTests
             afterStamp.FailureCode.ShouldNotBe(
                 GatewayRouteFailure.ModelNotInCatalog,
                 "盖过放行标记之后，名录门不该再拦它——拦的依据必须是标记本身");
+
+            // 旧形态兑换所：别名只在 ModelAlias/ModelAliases 里，Models 数组根本不存在。
+            // 解析器用 GetEffectiveModels() 选得出它，这道门若只读 Models 数组就会判它
+            // 「没声明过」而拦下——存量兑换所在 enforce 档下当场全断。它们是逐条放行落地
+            // **之前**由管理员声明的，与名录门上线前已入库的模型同一处境，必须放行。
+            var legacyBlocked = await resolver.ResolveAsync(
+                Caller, ModelTypes.Chat,
+                expectedModel: LegacyAlias, pinnedPlatformId: LegacyExchangeId, pinnedModelId: LegacyAlias);
+            legacyBlocked.FailureCode.ShouldNotBe(
+                GatewayRouteFailure.ModelNotInCatalog,
+                "旧形态兑换所的别名不该被这道门拦下：它没有地方盖逐条标记，而它确实是管理员声明过的");
         }
         finally
         {
@@ -203,6 +217,11 @@ public sealed class ModelCatalogGateBehaviorTests
                     PlatformId = exchangeId, ModelId = alias,
                     Priority = 0, HealthStatus = ModelHealthStatus.Healthy,
                 },
+                new ModelGroupItem
+                {
+                    PlatformId = LegacyExchangeId, ModelId = LegacyAlias,
+                    Priority = 1, HealthStatus = ModelHealthStatus.Healthy,
+                },
             ],
         };
         var poolDocument = pool.ToBsonDocument();
@@ -232,6 +251,20 @@ public sealed class ModelCatalogGateBehaviorTests
                     },
                 }
             },
+        });
+
+        // 旧形态：**没有** Models 数组，别名活在 ModelAlias 里。
+        // GetEffectiveModels() 会把它合成出来，只读 Models 数组的判据则完全看不见它。
+        await database.GetCollection<BsonDocument>("llmgw_model_exchanges").InsertOneAsync(new BsonDocument
+        {
+            { "_id", LegacyExchangeId },
+            { "TenantId", GatewayTenantDefaults.InternalTenantId },
+            { "Name", "旧形态兑换所用例" },
+            { "Enabled", true },
+            { "ModelAlias", LegacyAlias },
+            { "TargetUrl", "https://catalog-gate-legacy.example.test/v1/models/{model}" },
+            { "TargetApiKeyEncrypted", ApiKeyCryptoKeyRing.Encrypt("sk-catalog-gate-legacy", configuration) },
+            { "TargetAuthScheme", "Bearer" },
         });
     }
 
