@@ -117,6 +117,8 @@ export function ServiceKeysPage() {
   const [rotatesKeyId, setRotatesKeyId] = useState<string | undefined>();
   const [confirmWildcardRisk, setConfirmWildcardRisk] = useState(false);
   const [knownAppCallers, setKnownAppCallers] = useState<string[]>([]);
+  /** 码 → 状态。只有能接流量的状态才可以跳过登记直接签发（与 serving 的判据同一套枚举）。 */
+  const [appCallerStatuses, setAppCallerStatuses] = useState<Record<string, string>>({});
   const [legacy, setLegacy] = useState<LegacyKeyCutoverData | null>(null);
   const [legacyDeadline, setLegacyDeadline] = useState('');
   const [legacyAllowedCallers, setLegacyAllowedCallers] = useState('');
@@ -149,6 +151,11 @@ export function ServiceKeysPage() {
       if (res.success) {
         const codes = Array.from(new Set(res.data.items.map((item) => item.appCallerCode))).sort();
         setKnownAppCallers(codes);
+        // 状态要留着：只记住「这个码存在」的话，撞上一条**已停用**的同码 appCaller 时
+        // 登记会被跳过（认为已经有了），密钥照签，而 serving 当场回 APP_CALLER_DISABLED——
+        // 页面刚把一把注定用不了的 key 交到用户手上。
+        setAppCallerStatuses(Object.fromEntries(
+          res.data.items.map((item) => [item.appCallerCode.toLowerCase(), item.status])));
         setAppCallerCodes((current) => current || codes[0] || '');
       }
     });
@@ -166,6 +173,16 @@ export function ServiceKeysPage() {
     // 登记之后这条用途才会出现在「调用方」页上，能绑模型池、能被 Quickstart 直测
     // （直测对未登记的 code 返回 APP_CALLER_NOT_FOUND）。登记失败就不签发，
     // 免得留下一把指向无主 code 的密钥。
+    // 与 serving 的 GatewayAppCallerPolicy 同一套枚举：只有这三种状态放行真实流量。
+    const existingStatus = appCallerStatuses[generatedAppCallerCode.toLowerCase()];
+    if (appCallerMode === 'generate'
+      && existingStatus !== undefined
+      && !['discovered', 'configured', 'active'].includes(existingStatus.trim().toLowerCase())) {
+      setCreating(false);
+      setError(`调用用途「${generatedAppCallerCode}」已存在但处于「${existingStatus}」状态，不接受流量。`
+        + '先去「调用用途」把它恢复，或换一个用途名——现在签出来的密钥一调用就会被拒。');
+      return;
+    }
     if (appCallerMode === 'generate' && !knownAppCallers.some((code) => code.toLowerCase() === generatedAppCallerCode)) {
       if (!appCallerTeamId) {
         setCreating(false);

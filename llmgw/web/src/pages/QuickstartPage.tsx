@@ -440,6 +440,19 @@ export function QuickstartPage() {
     skill: agentSkillSnippet(displayBundle, snippetMode),
   }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode, testModel, attachment, testPrompt, testPlatformId]);
 
+  /*
+    换了选中的成员，上一次预检的结论就不再描述这一次会跑的路。不重新预检的话，
+    realRouteReady 会带着「自动调度那条路是真的」这个旧结论，替一条**没验过**的钉住路放行。
+    输入框每敲一下都会变，所以压一个 400ms 的节流；模型名还不合法时不预检
+    （那条路本来就不让执行），避免为一串半成品输入反复打 serving。
+  */
+  useEffect(() => {
+    if (!bundle || !modelValid) return;
+    const timer = window.setTimeout(() => { void checkRealRoute(bundle, testModel, testPlatformId, false); }, 400);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundle?.key, bundle?.appCallerCode, testModel, testPlatformId, modelValid]);
+
   const copyText = async (name: string, value: string) => {
     await navigator.clipboard.writeText(value);
     setCopied(name);
@@ -624,11 +637,27 @@ export function QuickstartPage() {
     return `调用用途已登记，但预算没写上：${response.error?.message || '未知错误'}。密钥尚未签发，改完再点一次即可。`;
   };
 
-  const checkRealRoute = async (target = bundle) => {
+  /*
+    路由预检必须预检**这一次真的会跑的那条路**。
+
+    此前它恒发 modelPolicy:'auto'，所以 realRouteReady 描述的是「自动调度会落到谁」；
+    而选中一个成员之后，真实调用钉的是另一个上游。池里只要有一个成员指向 stub/mock，
+    选中它时这道闸仍然是绿的——于是打到桩上的那次调用会被报成「真实调用已返回、本次计费」，
+    正是这道闸本身要防的那件事。所以钉了成员就按 pinned 预检，钉什么就预检什么。
+  */
+  const checkRealRoute = async (
+    target = bundle,
+    pinModel = testModel,
+    pinPlatform = testPlatformId,
+    // 用户显式动作触发时清掉上一次的测试结论（那份结论说的是另一条路）；
+    // 而选中成员后自动重跑的那次**不清**——它是背景校验，把用户刚看到的测试结果
+    // 从屏幕上抹掉属于「东西凭空消失」，而且他并没有做任何要求重测的动作。
+    resetTestResult = true,
+  ) => {
     if (!target) return;
     setRouteChecking(true);
     setRoutePreview(null);
-    setTestResult(null);
+    if (resetTestResult) setTestResult(null);
     const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
     try {
       const response = await fetch(new URL('/gw/v1/resolve', `${normalizedBaseUrl}/`).toString(), {
@@ -642,7 +671,9 @@ export function QuickstartPage() {
         body: JSON.stringify({
           appCallerCode: target.appCallerCode,
           modelType: target.requestType,
-          modelPolicy: 'auto',
+          ...(pinModel !== 'auto' && pinPlatform
+            ? { modelPolicy: 'pinned', pinnedPlatformId: pinPlatform, pinnedModelId: pinModel, expectedModel: pinModel }
+            : { modelPolicy: 'auto' }),
           context: { sourceSystem: 'external' },
         }),
         credentials: 'omit',
