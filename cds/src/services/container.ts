@@ -13,7 +13,7 @@ import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } 
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
-import { applyMysqlConnectionDefaults, declaresMaxConnections } from './infra-connection-defaults.js';
+import { applyMysqlConnectionDefaults, parseDeclaredMaxConnections } from './infra-connection-defaults.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -3246,7 +3246,13 @@ export class ContainerService {
         // inspect 输出不是合法 JSON（容器无 Cmd 时为 null）——当作没声明处理。
         cmd = [];
       }
-      if (declaresMaxConnections(cmd)) return;
+      // 判「声明的值够不够」，不是判「有没有声明」。容器创建时可能带着一个更低的
+      // 旧值（例如 --max-connections=300），而现在 CDS 想要 1000——只看有没有声明
+      // 会把这种欠配静默放过（Codex 在 PR #1454 的 P2，形状 8：一份声明不等于
+      // 想要的值已生效）。
+      const declared = parseDeclaredMaxConnections(cmd);
+      if (declared !== null && declared >= pendingMax) return;
+      const currentDesc = declared === null ? '镜像默认' : `--max-connections=${declared}`;
       this.recordContainerEvent({
         severity: 'warn',
         source: 'infra-connection-defaults',
@@ -3254,7 +3260,7 @@ export class ContainerService {
         // 补救 URL 必须带 ?project=：同名 infra id（如 `mysql`）在多个项目都存在时，
         // /infra/:id/restart 的 resolveInfraProject 会判 ambiguous 并 400 要求带项目。
         // 一个点了就 400 的「下一步」等于没给（minimal-user-input 的可诊断义务）。
-        message: `${service.containerName}: 仍在用镜像默认连接上限运行，CDS 要补的 --max-connections=${pendingMax} 未生效（复用既有容器不会改启动命令）。让它生效请走 POST /api/infra/${service.id}/restart?project=${service.projectId} 重建容器。`,
+        message: `${service.containerName}: 当前以 ${currentDesc} 运行，低于 CDS 按分支扇出要补的 --max-connections=${pendingMax}（复用既有容器不会改启动命令）。让它生效请走 POST /api/infra/${service.id}/restart?project=${service.projectId} 重建容器。`,
         projectId: service.projectId,
         serviceId: service.id,
         containerName: service.containerName,

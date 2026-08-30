@@ -67,6 +67,45 @@ export function declaresMaxConnections(command: string | string[] | undefined): 
 }
 
 /**
+ * 从命令里取出**实际生效的**连接上限数值；没有声明返回 null。
+ *
+ * 与 `declaresMaxConnections` 的分工：那条判「有没有声明」，用于决定要不要注入
+ * （项目显式配过就一律尊重，不问值大小）；本函数判「声明的是多少」，用于回答
+ * 「正在跑的这个容器，上限够不够」——**「有一份声明」不等于「想要的值已生效」**。
+ * 把前者当后者用，就会放过「容器创建时带着 --max-connections=300、而现在想要 1000」
+ * 这种欠配（predicate-and-wiring-discipline 形状 8，Codex 在 PR #1454 指出）。
+ *
+ * mysqld 的同名选项**后写的赢**，所以取最后一次声明，而不是第一次（形状 6）。
+ */
+export function parseDeclaredMaxConnections(command: string | string[] | undefined): number | null {
+  if (command === undefined) return null;
+  const parts = Array.isArray(command) ? command.map((c) => String(c)) : [String(command)];
+  let found: number | null = null;
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i];
+    // `--max-connections=N` / `--max_connections=N`（含整串 command 里内嵌的形式）
+    const inline = [...part.matchAll(/--max[-_]connections=(\d+)/gi)];
+    if (inline.length > 0) {
+      found = Number.parseInt(inline[inline.length - 1][1], 10);
+      continue;
+    }
+    // `--max-connections N`：值可能在同一段的空格之后，也可能在数组的下一项
+    const spaced = [...part.matchAll(/--max[-_]connections\s+(\d+)/gi)];
+    if (spaced.length > 0) {
+      found = Number.parseInt(spaced[spaced.length - 1][1], 10);
+      continue;
+    }
+    if (/^--max[-_]connections$/i.test(part.trim())) {
+      const next = parts[i + 1];
+      if (next !== undefined && /^\d+$/.test(String(next).trim())) {
+        found = Number.parseInt(String(next).trim(), 10);
+      }
+    }
+  }
+  return found !== null && Number.isFinite(found) ? found : null;
+}
+
+/**
  * 追加参数是否安全。
  *
  * 只在「这些参数确实会被 mysqld 收到」时才追加：

@@ -8,6 +8,7 @@ import {
   canAppendMysqldFlag,
   declaresMaxConnections,
   isMysqlFamilyImage,
+  parseDeclaredMaxConnections,
   resolveConfiguredMysqlMaxConnections,
 } from '../../src/services/infra-connection-defaults.js';
 import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
@@ -76,6 +77,40 @@ describe('declaresMaxConnections：三种等价写法都要认出来', () => {
     // 不能被形近选项骗到
     expect(declaresMaxConnections(['--max-connect-errors=100000'])).toBe(false);
     expect(declaresMaxConnections(['--max-user-connections=50'])).toBe(false);
+  });
+});
+
+/**
+ * Codex 在 PR #1454 的 P2：复用容器的审计原本用 declaresMaxConnections（只判有没有
+ * 声明），于是「容器创建时带着 --max-connections=300、而现在 CDS 想要 1000」这种
+ * 欠配被静默放过——把「有一份声明」当成了「想要的值已生效」（形状 8）。
+ *
+ * 两个函数分工不同，不能互相顶替：
+ *   declaresMaxConnections → 要不要注入（项目显式配过就尊重，不问大小）
+ *   parseDeclaredMaxConnections → 正在跑的这个上限够不够（必须拿到数值）
+ */
+describe('parseDeclaredMaxConnections：取出实际生效的数值', () => {
+  it('三种等价写法都取得到', () => {
+    expect(parseDeclaredMaxConnections(['--max-connections=300'])).toBe(300);
+    expect(parseDeclaredMaxConnections(['--max_connections=300'])).toBe(300);
+    expect(parseDeclaredMaxConnections(['--max-connections', '300'])).toBe(300);
+    expect(parseDeclaredMaxConnections(['mysqld', '--max_connections', '300'])).toBe(300);
+    expect(parseDeclaredMaxConnections('mysqld --max-connections=300')).toBe(300);
+  });
+
+  it('声明多次时取最后一次（mysqld 同名选项后写的赢，形状 6）', () => {
+    expect(parseDeclaredMaxConnections(['--max-connections=300', '--max-connections=1000'])).toBe(1000);
+    expect(parseDeclaredMaxConnections('mysqld --max-connections=1000 --max_connections=200')).toBe(200);
+  });
+
+  it('没声明返回 null，且不被形近选项骗到', () => {
+    expect(parseDeclaredMaxConnections(undefined)).toBeNull();
+    expect(parseDeclaredMaxConnections([])).toBeNull();
+    expect(parseDeclaredMaxConnections(['--character-set-server=utf8mb4'])).toBeNull();
+    expect(parseDeclaredMaxConnections(['--max-connect-errors=100000'])).toBeNull();
+    expect(parseDeclaredMaxConnections(['--max-user-connections=50'])).toBeNull();
+    // 只有选项名、后面不是数字
+    expect(parseDeclaredMaxConnections(['--max-connections', '--foo'])).toBeNull();
   });
 });
 
@@ -248,6 +283,34 @@ describe('连接上限：事件只在真生效时说「已注入」，复用路�
     expect(beforeWake, 'stopped 唤醒路径没接审计').toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
   });
 
+  it('审计判的是「值够不够」，不是「有没有声明」', () => {
+    const source = containerSource();
+    const at = source.indexOf('private async auditMysqlConnectionLimit(');
+    const fn = source.slice(at, at + 2600);
+    // 必须取数值来比较，不能只判存在
+    expect(fn).toContain('parseDeclaredMaxConnections(cmd)');
+    expect(fn).toContain('declared >= pendingMax');
+    // 只判存在的老写法不许回来
+    expect(fn).not.toContain('if (declaresMaxConnections(cmd)) return;');
+    // 告警要说清当前值，否则运维不知道差多少
+    expect(fn).toContain('currentDesc');
+  });
+
+  it('红用例：把值比较改回「只判有没有声明」，守卫必须变红', () => {
+    const guard = (source: string) => {
+      const at = source.indexOf('private async auditMysqlConnectionLimit(');
+      expect(at).toBeGreaterThan(-1);
+      const fn = source.slice(at, at + 2600);
+      expect(fn).toContain('declared >= pendingMax');
+    };
+    const real = containerSource();
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(real, 'if (declared !== null && declared >= pendingMax) return;', 'if (declared !== null) return;'),
+    );
+  });
+
   it('审计读的是容器自己的 Config.Cmd，不是 service 定义（形状 6）', () => {
     const source = containerSource();
     const at = source.indexOf('private async auditMysqlConnectionLimit(');
@@ -255,7 +318,7 @@ describe('连接上限：事件只在真生效时说「已注入」，复用路�
     const fn = source.slice(at, at + 2200);
     // 真正生效的值只能从运行中的容器读
     expect(fn).toContain('.Config.Cmd');
-    expect(fn).toContain('declaresMaxConnections(cmd)');
+    expect(fn).toContain('parseDeclaredMaxConnections(cmd)');
     // 判定为未生效时给得出可执行的下一步，而不是只喊一声
     expect(fn).toContain("action: 'infra.mysql.max-connections-pending'");
     expect(fn).toContain('/restart');
