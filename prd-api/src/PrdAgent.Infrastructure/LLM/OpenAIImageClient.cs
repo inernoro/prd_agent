@@ -249,6 +249,22 @@ public class OpenAIImageClient : IImageGenerationClient
         if (n <= 0) n = 1;
         if (n > 20) n = 20;
 
+        ImageInputNormalizer.Input? inputImage = null;
+        try
+        {
+            if (initImageBase64 is not null)
+            {
+                inputImage = ImageInputNormalizer.Read(initImageBase64);
+                initImageBase64 = inputImage.DataUri;
+            }
+            if (maskBase64 is not null)
+                maskBase64 = ImageInputNormalizer.Read(maskBase64).DataUri;
+        }
+        catch (ImageInputException ex)
+        {
+            return ApiResponse<ImageGenResult>.Fail(ImageInputNormalizer.ErrorCode, ex.Message);
+        }
+
         // 日志上下文：若上游未设置 scope，则使用默认值兜底
         var ctx = _ctxAccessor?.Current;
         var requestId = (ctx?.RequestId ?? string.Empty).Trim();
@@ -782,14 +798,8 @@ public class OpenAIImageClient : IImageGenerationClient
                 else
                 {
                     // 图生图请求（multipart/form-data）
-                    if (!TryDecodeDataUrlOrBase64(initImageBase64, out var imgBytes, out var imgMime))
-                    {
-                        return GatewayRawResponse.Fail("INVALID_FORMAT", "initImageBase64 无效", 400);
-                    }
-                    if (imgBytes.Length > 10 * 1024 * 1024)
-                    {
-                        return GatewayRawResponse.Fail("INVALID_FORMAT", "initImageBase64 图片过大（上限 10MB）", 413);
-                    }
+                    var imgBytes = inputImage!.Bytes;
+                    var imgMime = inputImage.MimeType;
 
                     // 构建 multipart 字段
                     var multipartFields = new Dictionary<string, object>();
@@ -828,7 +838,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
                     var multipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
                     {
-                        ["image"] = ("init.png", imgBytes, string.IsNullOrWhiteSpace(imgMime) ? "image/png" : imgMime)
+                        ["image"] = (inputImage!.FileName("init"), imgBytes, imgMime)
                     };
 
                     _logger.LogInformation(
@@ -1370,12 +1380,34 @@ public class OpenAIImageClient : IImageGenerationClient
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请至少添加一张参考图。");
         }
 
-        // Vision API 限制：最多 6 张图片
+        // 先按既有上限选择参考图，只校验后续真正会发送的图片。
         const int MaxImages = 6;
         if (imageRefs.Count > MaxImages)
         {
             _logger.LogWarning("[Vision API] 图片数量超过限制({Max}张)，将只使用前{Max}张", MaxImages, MaxImages);
             imageRefs = imageRefs.Take(MaxImages).ToList();
+        }
+
+        try
+        {
+            imageRefs = imageRefs.Select(reference =>
+            {
+                var image = ImageInputNormalizer.Read(reference.Base64);
+                return new Core.Models.MultiImage.ImageRefData
+                {
+                    RefId = reference.RefId,
+                    Base64 = image.DataUri,
+                    MimeType = image.MimeType,
+                    Label = reference.Label,
+                    Role = reference.Role,
+                    Sha256 = reference.Sha256,
+                    CosUrl = reference.CosUrl,
+                };
+            }).ToList();
+        }
+        catch (ImageInputException ex)
+        {
+            return ApiResponse<ImageGenResult>.Fail(ImageInputNormalizer.ErrorCode, ex.Message);
         }
 
         var ctx = _ctxAccessor?.Current;

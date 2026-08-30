@@ -1337,6 +1337,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 409);
         }
 
+        try
+        {
+            request = NormalizeImageInputs(request);
+        }
+        catch (ImageInputException ex)
+        {
+            // 输入拒绝不触发 Provider 调用、故障切换或健康降级。
+            return GatewayRawResponse.Fail(ImageInputNormalizer.ErrorCode, ex.Message, 400);
+        }
+
         // 将 GatewayModelResolution 转回 ModelResolutionResult 以复用内部执行逻辑
         // GatewayModelResolution 已包含 ApiKey / ExchangeAuthScheme / ExchangeTransformerConfig
         var internalResolution = new ModelResolutionResult
@@ -1809,12 +1819,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
             else
             {
-                var decodedImages = new List<(byte[] Bytes, string MimeType)>();
-                foreach (var image in images)
-                {
-                    if (TryDecodeCanonicalImage(image, out var imageBytes, out var imageMimeType))
-                        decodedImages.Add((imageBytes, imageMimeType));
-                }
+                // 任一引用失效必须整笔拒绝，不能跳过坏图后静默用剩余图片生成。
+                var decodedImages = images.Select(ImageInputNormalizer.Read).ToList();
                 if (decodedImages.Count > 0)
                 {
                     var effectiveSize = adapter.NormalizeSize(spec.Size);
@@ -1834,13 +1840,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     for (var index = 0; index < decodedImages.Count; index++)
                     {
                         var fieldName = decodedImages.Count == 1 ? "image" : $"image[{index}]";
-                        var fileName = decodedImages.Count == 1 ? "input.png" : $"input-{index + 1}.png";
+                        var fileName = decodedImages[index].FileName(decodedImages.Count == 1 ? "input" : $"input-{index + 1}");
                         multipartFiles[fieldName] = (fileName, decodedImages[index].Bytes, decodedImages[index].MimeType);
                     }
-                    if (!string.IsNullOrWhiteSpace(spec.MaskBase64)
-                        && TryDecodeCanonicalImage(spec.MaskBase64, out var maskBytes, out var maskMimeType))
+                    if (!string.IsNullOrWhiteSpace(spec.MaskBase64))
                     {
-                        multipartFiles["mask"] = ("mask.png", maskBytes, maskMimeType);
+                        var mask = ImageInputNormalizer.Read(spec.MaskBase64);
+                        multipartFiles["mask"] = (mask.FileName("mask"), mask.Bytes, mask.MimeType);
                     }
                 }
             }
@@ -1949,11 +1955,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private static GatewayRawRequest CopyRawRequestWithWire(
         GatewayRawRequest source,
         JsonObject? body,
-        Dictionary<string, object>? multipartFields)
+        Dictionary<string, object>? multipartFields,
+        Dictionary<string, (string FileName, byte[] Content, string MimeType)>? multipartFiles = null,
+        GatewayCanonicalImageRequest? canonicalImageRequest = null)
         => new()
         {
-            CanonicalImageRequest = source.CanonicalImageRequest,
+            CanonicalImageRequest = canonicalImageRequest ?? source.CanonicalImageRequest,
             RequiredLogicalModelPublicId = source.RequiredLogicalModelPublicId,
+            RequiredOfferingId = source.RequiredOfferingId,
             AppCallerCode = source.AppCallerCode,
             ModelType = source.ModelType,
             EndpointPath = source.EndpointPath,
@@ -1963,7 +1972,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             RequestBody = body,
             IsMultipart = source.IsMultipart,
             MultipartFields = multipartFields,
-            MultipartFiles = source.MultipartFiles,
+            MultipartFiles = multipartFiles ?? source.MultipartFiles,
             MultipartFileRefs = source.MultipartFileRefs,
             HttpMethod = source.HttpMethod,
             ExtraHeaders = source.ExtraHeaders,
@@ -2259,29 +2268,42 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private static string EnsureImageDataUri(string value)
         => value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? value : $"data:image/png;base64,{value}";
 
-    private static bool TryDecodeCanonicalImage(string value, out byte[] bytes, out string mimeType)
+    private static GatewayRawRequest NormalizeImageInputs(GatewayRawRequest source)
     {
-        bytes = Array.Empty<byte>();
-        mimeType = "image/png";
-        try
+        var spec = source.CanonicalImageRequest;
+        GatewayCanonicalImageRequest? canonical = null;
+        if (spec is not null)
         {
-            var raw = value;
-            if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            canonical = new GatewayCanonicalImageRequest
             {
-                var comma = value.IndexOf(',');
-                if (comma < 0) return false;
-                var meta = value[5..comma];
-                var separator = meta.IndexOf(';');
-                if (separator > 0) mimeType = meta[..separator];
-                raw = value[(comma + 1)..];
-            }
-            bytes = Convert.FromBase64String(raw);
-            return bytes.Length > 0;
+                Prompt = spec.Prompt,
+                Count = spec.Count,
+                Size = spec.Size,
+                ResponseFormat = spec.ResponseFormat,
+                // URL 引用由已有协议处理；此处不新增网络读取或改变 URL 安全边界。
+                Images = spec.Images.Select(value =>
+                    Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
+                        ? value
+                        : ImageInputNormalizer.Read(value).DataUri).ToList(),
+                MaskBase64 = spec.MaskBase64 is null ? null : ImageInputNormalizer.Read(spec.MaskBase64).DataUri,
+            };
         }
-        catch (FormatException)
+        Dictionary<string, (string FileName, byte[] Content, string MimeType)>? files = null;
+        if (source.MultipartFiles is not null)
         {
-            return false;
+            files = new(source.MultipartFiles, StringComparer.Ordinal);
+            foreach (var (field, file) in source.MultipartFiles)
+            {
+                if (field != "mask" && field != "image" && field != "image[]"
+                    && !IsIndexedMultipartArrayField(field, "image")) continue;
+                var image = ImageInputNormalizer.Read(file.Content);
+                var stem = Path.GetFileNameWithoutExtension(file.FileName);
+                files[field] = (image.FileName(string.IsNullOrWhiteSpace(stem) ? "input" : stem), image.Bytes, image.MimeType);
+            }
         }
+        return canonical is null && files is null
+            ? source
+            : CopyRawRequestWithWire(source, source.RequestBody, source.MultipartFields, files, canonical);
     }
 
     /// <summary>
@@ -2300,13 +2322,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // 同一上游沿用调用方通过 ImageGenRequestBuilder 算好的 wire 请求，再叠加显式 image_size 能力；
         // 这样 inherit 不会丢失旧适配器的字段重命名/response_format 约束，端点与尺寸重试也会重新
         // 应用显式能力。只有切换 Provider candidate 或调用方未提供 wire 请求时才完整重建。
-        if (request.CanonicalImageRequest is not null)
-        {
-            request = rebuildCanonicalImageRequest
-                ? RebuildCanonicalImageRequest(request, resolution)
-                : ApplyResolvedImageSizeControlToBuiltRequest(request, resolution);
-        }
-
         string? logId = null;
         GatewayProviderConcurrencyLease? providerLease = null;
         var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
@@ -2314,6 +2329,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         try
         {
+            if (request.CanonicalImageRequest is not null)
+            {
+                request = rebuildCanonicalImageRequest
+                    ? RebuildCanonicalImageRequest(request, resolution)
+                    : ApplyResolvedImageSizeControlToBuiltRequest(request, resolution);
+            }
+
             // 上游调用方已经按首个 Offering 完成模型级参数适配时必须原样保留；仅 canonical
             // 请求没有 wire body 时才在此补建。跨 Offering 切换则只在协议变化时重建。
             request = PrepareCanonicalImageRequestForResolution(request, null, resolution);
@@ -3009,6 +3031,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 LogId = logId
             };
         }
+        catch (ImageInputException ex)
+        {
+            return GatewayRawResponse.Fail(ImageInputNormalizer.ErrorCode, ex.Message, 400);
+        }
         catch (Exception ex)
         {
             var (msg, code) = ClassifyTransportException(ex, ct.IsCancellationRequested);
@@ -3676,6 +3702,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 ["field"] = NormalizeMultipartSendFieldName(fieldName),
                 ["mime_type"] = file.MimeType,
+                ["file_extension"] = Path.GetExtension(file.FileName),
                 ["size_bytes"] = file.Content.LongLength,
                 ["sha256"] = Convert.ToHexString(
                     System.Security.Cryptography.SHA256.HashData(file.Content)).ToLowerInvariant(),

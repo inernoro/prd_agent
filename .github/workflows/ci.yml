@@ -478,7 +478,7 @@ jobs:
         working-directory: ${{ github.workspace }}/e2e
         env:
           E2E_LOCAL_SERVER: '1'
-        run: pnpm exec playwright test specs/recording-continuity.spec.ts
+        run: pnpm exec playwright test specs/recording-continuity.spec.ts specs/generation-progress-layout.spec.ts
 
       - name: Upload recording acceptance evidence
         if: always()

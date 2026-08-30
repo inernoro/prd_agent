@@ -11,13 +11,12 @@ import { getGenAvgMs } from '@/lib/genTiming';
  * 超过预计转黄显示「即将完成」，避免「卡 93%」式假精确。
  *
  * 性能：纯 background-position + transform 动画（GPU 合成），全局样式单例注入；多实例不爆层。
- * 可读性：底部计时条跟随宿主容器缩放，避免小节点下反向放大后被容器裁切。
+ * 可读性：宽度受宿主限制，字号与高度按屏幕像素计量；小节点只保留流光。
  */
 
 const STYLE_ID = 'gen-sweep-loader-styles';
 const GLOBAL_CSS = `
-/* container-type 供下面 .gen-sweep__row 的 cqw 字号取容器宽（#1350 引入，勿删）。 */
-.gen-sweep{position:absolute;inset:0;overflow:hidden;border-radius:inherit;pointer-events:none;container-type:inline-size}
+.gen-sweep{position:absolute;inset:0;overflow:hidden;border-radius:inherit;pointer-events:none}
 /* 底：一层几乎看不见的斜纹 + 一层极淡的竖向渐变，给「有东西在酝酿」的质感。 */
 .gen-sweep__fill{position:absolute;inset:0;
   background:
@@ -40,22 +39,20 @@ const GLOBAL_CSS = `
   animation:gen-sweep-move 2.8s linear infinite;}
 @keyframes gen-sweep-move{from{transform:translate3d(-110%,0,0)}to{transform:translate3d(210%,0,0)}}
 @media (prefers-reduced-motion: reduce){.gen-sweep__glare{animation:none;opacity:.5;transform:translate3d(5%,0,0)}}
-/* 计时条一律按宿主宽度收缩，不做画布反向缩放（#1350 定的口径，有 GenSweepLoader.test.tsx 钉着）。
-   历史上这里挂过 scale(var(--invZoom)) + min-width:140px：低倍下计时条纹丝不动而卡片越来越窄，
-   zoom<0.78 就比卡片还宽，撞上 .gen-sweep 的 overflow:hidden 被切一半。
-   #1350 换成「宽度跟着宿主走 + max-width 留 16px 余量 + 字号用 cqw 收缩」，同一个症状根治且不引入
-   与画布缩放耦合的算式。画布这边另有一层保险：卡片在屏幕上太小时 showBar 直接不渲染计时条
-   （见下面 screenW/screenH），小到读不清就不该占着画面。 */
-.gen-sweep__bar{position:absolute;left:50%;bottom:max(8px,10%);
+/* 百分比宽度属于画布，像素上限/字号/间距换算成屏幕像素。
+   不直接反向 scale 整条（会把百分比宽度放大到容器外），也不把 340px 当世界像素
+   （20% 缩放只剩 68px）。复用画布逐帧更新的 --invZoom，不等 React 低频同步。
+   无画布的宿主默认 1；过小卡片仍由 showBar 隐藏计时条。 */
+.gen-sweep__bar{position:absolute;left:50%;bottom:max(calc(8px * var(--invZoom,1)),10%);
   transform:translateX(-50%);transform-origin:center bottom;
-  box-sizing:border-box;width:min(78%,340px);max-width:calc(100% - 16px);min-width:0;display:flex;flex-direction:column;gap:6px;
-  background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);
-  border-radius:14px;padding:8px 11px;overflow:hidden;backdrop-filter:blur(4px)}
-.gen-sweep__row{min-width:0;display:flex;justify-content:space-between;gap:6px;font-size:clamp(8px,2.8cqw,11px);font-weight:800;line-height:1;color:rgba(255,255,255,0.86)}
-.gen-sweep__row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.gen-sweep__est{color:rgba(255,255,255,0.55)}
+  box-sizing:border-box;width:min(86%,calc(340px * var(--invZoom,1)));max-width:calc(100% - 16px * var(--invZoom,1));min-width:0;display:flex;flex-direction:column;gap:calc(6px * var(--invZoom,1));
+  background:rgba(0,0,0,0.72);border:calc(1px * var(--invZoom,1)) solid rgba(255,255,255,0.12);
+  border-radius:calc(14px * var(--invZoom,1));padding:calc(8px * var(--invZoom,1)) calc(11px * var(--invZoom,1));overflow:hidden;backdrop-filter:blur(4px)}
+.gen-sweep__row{min-width:0;display:flex;flex-wrap:wrap;justify-content:space-between;gap:calc(4px * var(--invZoom,1));font-size:calc(12px * var(--invZoom,1));font-weight:800;line-height:1.2;color:rgba(255,255,255,0.92)}
+.gen-sweep__row>span{min-width:0;white-space:nowrap}
+.gen-sweep__est{color:rgba(255,255,255,0.78)}
 .gen-sweep__est--over{color:rgba(251,191,36,0.95)}
-.gen-sweep__track{height:5px;border-radius:99px;background:rgba(255,255,255,0.14);overflow:hidden}
+.gen-sweep__track{height:calc(5px * var(--invZoom,1));border-radius:999px;background:rgba(255,255,255,0.14);overflow:hidden}
 .gen-sweep__pct{height:100%;border-radius:99px;background:linear-gradient(90deg,#818cf8,#a5b4fc);transition:width .7s ease-out}
 .gen-sweep__pct--over{background:rgba(251,191,36,0.9)}
 `;
@@ -109,15 +106,6 @@ export function GenSweepLoader({ createdAt, className, screenW, screenH }: {
       <div
         className="gen-sweep__bar"
         data-testid="generation-progress-bar"
-        style={{
-          left: '50%',
-          bottom: 'max(8px, 10%)',
-          width: 'min(78%, 340px)',
-          maxWidth: 'calc(100% - 16px)',
-          minWidth: 0,
-          transform: 'translateX(-50%)',
-          overflow: 'hidden',
-        }}
       >
 
         <div className="gen-sweep__row">

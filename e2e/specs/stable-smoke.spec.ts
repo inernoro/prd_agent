@@ -2897,6 +2897,96 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[VIS-003][REG-image-input-001] JPEG 参考图真实生成及字节、MIME、扩展名一致性', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.setTimeout(240_000);
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'jpeg-reference');
+    let runId = '';
+    try {
+      // 只生成合成色块，不读取或复用用户图片；正式环境不注入错误声明。
+      const jpeg = await page.evaluate(() => {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 256;
+        const context = canvas.getContext('2d')!;
+        context.fillStyle = '#235abe';
+        context.fillRect(0, 0, 256, 256);
+        return canvas.toDataURL('image/jpeg');
+      });
+      const digest = createHash('sha256').update(Buffer.from(jpeg.split(',')[1], 'base64')).digest('hex');
+      const upload = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/assets`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-jpeg` },
+        data: {
+          data: requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production'
+            ? jpeg : jpeg.replace('data:image/jpeg;', 'data:image/png;'),
+          width: 256, height: 256, prompt: 'JPEG 格式回归合成参考图',
+        },
+      });
+      const { asset } = await readEnvelope<{ asset: { sha256: string; url: string } }>(upload);
+      expect(asset.sha256).toBe(digest);
+      const pools = await readEnvelope<ImageModelPool[]>(await page.request.get(
+        '/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) },
+      ));
+      const gateway = await loginGateway(request);
+      const { items } = await readEnvelope<{ items: GatewayLogicalModel[] }>(await request.get(
+        `${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers },
+      ));
+      const logical = items.find((item) => {
+        const primary = item.offerings.filter((offering) => offering.enabled)
+          .sort((left, right) => left.priority - right.priority)[0];
+        return item.enabled && ['openai', 'openai-compatible'].includes(primary?.protocol || '')
+          && pools.some((pool) => pool.code === item.publicId
+            && pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
+      });
+      expect(logical, 'JPEG 回归必须配置可用的 OpenAI 图生图主路，不能用其他协议成功代替').toBeTruthy();
+      const created = await readEnvelope<{ runId: string }>(await page.request.post(
+        `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
+          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-run` },
+          data: {
+            prompt: '保留 @img1 的蓝色主色，生成纯白背景上的一只蓝色陶瓷杯，不要文字',
+            userMessageContent: '参考 @img1 生成蓝色陶瓷杯',
+            targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-jpeg-target`,
+            platformId: 'logical-model', modelId: logical!.publicId,
+            size: '1024x1024', responseFormat: 'url',
+            imageRefs: [{ refId: 1, assetSha256: asset.sha256, url: asset.url, label: 'JPEG 参考', role: 'target' }],
+            x: 0, y: 0, w: 1001, h: 1001,
+          },
+        },
+      ));
+      runId = created.runId;
+      const completed = await waitForImageRun(page, token, runId);
+      await assertImageArtifact(page, completed.detail);
+      const log = await waitForGatewayLog(request, `${runId}-0-0`);
+      expect(log.logicalModelPublicId).toBe(logical!.publicId);
+      expect(['openai', 'openai-compatible']).toContain(log.protocol);
+      expect(log.isFallback, '格式错误不能靠切换供应商掩盖').not.toBe(true);
+      const wire = JSON.parse(log.requestBodyRedacted || '{}') as {
+        content_type?: string; endpoint_path?: string;
+        files?: Array<{ mime_type?: string; file_extension?: string; sha256?: string }>;
+      };
+      expect(wire.content_type).toBe('multipart/form-data');
+      expect(wire.endpoint_path).toMatch(/\/images\/edits$/);
+      expect(wire.files).toHaveLength(1);
+      expect(wire.files?.[0]).toMatchObject({ mime_type: 'image/jpeg', file_extension: '.jpg', sha256: digest });
+      expect(log.imageSuccessCount || 0).toBeGreaterThan(0);
+    } finally {
+      if (runId) {
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) });
+        if (current.ok()) {
+          const state = await current.json() as ApiEnvelope<ImageRunDetail>;
+          if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
+            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, { headers: authHeaders(token) });
+            await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
+          }
+        }
+      }
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-delete` },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      if (runId) expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+    }
+  });
+
   test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-011][REG-multi-image-001][REG-multi-image-002] 多图逻辑模型真实生成、语义保真、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');

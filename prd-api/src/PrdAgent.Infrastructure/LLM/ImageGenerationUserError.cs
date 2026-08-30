@@ -14,6 +14,9 @@ internal static class ImageGenerationUserError
 
     internal static Result FromGateway(GatewayRawResponse response)
     {
+        if (response.ErrorCode == ImageInputNormalizer.ErrorCode)
+            return new Result(ImageInputNormalizer.ErrorCode, ImageInputNormalizer.ErrorMessage);
+
         if (string.Equals(
                 response.ErrorCode,
                 GatewayQuotaAlertPolicy.QuotaErrorCode,

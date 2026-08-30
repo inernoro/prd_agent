@@ -7166,7 +7166,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         ) : null}
                         {it.status === 'running' ? (
-                          <GenSweepLoader createdAt={it.createdAt} />
+                          <GenSweepLoader createdAt={it.createdAt} screenW={w * zoom} screenH={h * zoom} />
                         ) : it.status === 'error' ? (
                           <div className="absolute inset-0">
                             {/* 灰色静止花瓣背景 */}

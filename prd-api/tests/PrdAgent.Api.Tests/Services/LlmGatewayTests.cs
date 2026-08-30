@@ -2091,8 +2091,8 @@ public class LlmGatewayTests
                 Prompt = "combine the references",
                 Count = 1,
                 Size = "1024x1024",
-                Images = ["AQID", "BAUG"],
-                MaskBase64 = "BwgJ",
+                Images = [ImageInputTestData.DataUri(seed: 1), ImageInputTestData.DataUri(seed: 2)],
+                MaskBase64 = ImageInputTestData.DataUri(),
             },
         }, resolution);
 
@@ -2483,14 +2483,14 @@ public class LlmGatewayTests
             },
             MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
-                ["image"] = ("input.png", new byte[] { 1, 2, 3 }, "image/png"),
+                ["image"] = ("input.png", ImageInputTestData.Create(), "image/png"),
             },
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
                 Prompt = "edit the poster",
                 Count = 1,
                 Size = "768x1024",
-                Images = ["aW1hZ2U="],
+                Images = [ImageInputTestData.DataUri()],
             },
         }, resolution);
 
@@ -2693,8 +2693,8 @@ public class LlmGatewayTests
             new TestLogger<LlmGateway>(),
             new CapturingLogWriter());
         var prompt = "merge both references into a poster";
-        var imageA = "data:image/png;base64,aW1hZ2UtYQ==";
-        var imageB = "data:image/png;base64,aW1hZ2UtYg==";
+        var imageA = ImageInputTestData.DataUri(seed: 1);
+        var imageB = ImageInputTestData.DataUri(seed: 2);
 
         var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
         {
@@ -2913,8 +2913,8 @@ public class LlmGatewayTests
             new TestLogger<LlmGateway>(),
             new CapturingLogWriter());
         var prompt = "use the second reference as the style seed";
-        var imageA = "data:image/png;base64,aW1hZ2UtYQ==";
-        var imageB = "data:image/png;base64,aW1hZ2UtYg==";
+        var imageA = ImageInputTestData.DataUri(seed: 1);
+        var imageB = ImageInputTestData.DataUri(seed: 2);
 
         var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
         {
@@ -2962,7 +2962,7 @@ public class LlmGatewayTests
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
                 Prompt = "draw an icon",
-                Images = ["data:image/png;base64,aW1hZ2U="],
+                Images = [ImageInputTestData.DataUri()],
             },
         };
 
@@ -2996,7 +2996,7 @@ public class LlmGatewayTests
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
                 Prompt = "merge both references",
-                Images = ["data:image/png;base64,aW1hZ2U="],
+                Images = [ImageInputTestData.DataUri()],
             },
         };
 
@@ -3073,7 +3073,7 @@ public class LlmGatewayTests
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
                 Prompt = "draw an image",
-                Images = ["data:image/png;base64,aW1hZ2U="],
+                Images = [ImageInputTestData.DataUri()],
             },
         };
 
@@ -3132,7 +3132,7 @@ public class LlmGatewayTests
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
                 Prompt = "draw an image",
-                Images = ["data:image/png;base64,aW1hZ2U="],
+                Images = [ImageInputTestData.DataUri()],
             },
         }, resolution);
 
@@ -3178,7 +3178,7 @@ public class LlmGatewayTests
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
                 Prompt = "draw an image",
-                Images = ["data:image/png;base64,aW1hZ2U="],
+                Images = [ImageInputTestData.DataUri()],
             },
         }, resolution);
 
@@ -3219,7 +3219,7 @@ public class LlmGatewayTests
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
                 Prompt = "draw an image",
-                Images = ["data:image/png;base64,aW1hZ2U="],
+                Images = [ImageInputTestData.DataUri()],
             },
         }, resolution);
 
@@ -3259,7 +3259,7 @@ public class LlmGatewayTests
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
                 Prompt = "draw an image",
-                Images = ["data:image/png;base64,aW1hZ2U="],
+                Images = [ImageInputTestData.DataUri()],
             },
         }, resolution);
 
@@ -3377,8 +3377,8 @@ public class LlmGatewayTests
             },
             MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
-                ["image[0]"] = ("first.png", new byte[] { 1, 1, 1 }, "image/png"),
-                ["image[1]"] = ("second.jpg", new byte[] { 2, 2, 2 }, "image/jpeg"),
+                ["image[0]"] = ("first.png", ImageInputTestData.Create(), "image/png"),
+                ["image[1]"] = ("second.jpg", ImageInputTestData.Create("image/jpeg"), "image/jpeg"),
             },
         }, resolution);
 
@@ -3401,8 +3401,8 @@ public class LlmGatewayTests
         Assert.Equal(
             new[]
             {
-                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(new byte[] { 1, 1, 1 })).ToLowerInvariant(),
-                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(new byte[] { 2, 2, 2 })).ToLowerInvariant(),
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ImageInputTestData.Create())).ToLowerInvariant(),
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ImageInputTestData.Create("image/jpeg"))).ToLowerInvariant(),
             },
             loggedFiles.Select(file => file!["sha256"]!.GetValue<string>()).ToArray());
     }
@@ -3427,7 +3427,7 @@ public class LlmGatewayTests
         var logWriter = new CapturingLogWriter();
         var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), logWriter);
         var imageContents = Enumerable.Range(0, 11)
-            .Select(index => new byte[] { (byte)index, (byte)(index + 1) })
+            .Select(index => ImageInputTestData.Create(seed: (byte)index))
             .ToArray();
         var multipartFiles = imageContents
             .Select((content, index) => new KeyValuePair<string, (string FileName, byte[] Content, string MimeType)>(
