@@ -146,6 +146,8 @@ builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundWebS
 builder.Services.AddSingleton<PrdAgent.Api.Services.AdminPushDispatchSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminPushNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>();
+// 首页槽位认领时把外部图片复制进我们自己的存储（供应商的临时/签名地址不能原样挂上首页）
+builder.Services.AddScoped<PrdAgent.Api.Services.HomepageAssetCopier>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.AdminPushNotificationWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.LlmGatewayIncidentWatchdog>();
 
