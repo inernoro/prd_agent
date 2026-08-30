@@ -58,13 +58,42 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
 
   it('硬拦：reset 绝不允许落到项目共享基础库上', () => {
     const slice = cloneTasksRouteSlice(readBranchesRoute());
-    expect(slice).toContain("mode === 'reset' && targetDatabase === baseDb");
+    expect(slice).toContain("mode === 'reset' && targetDatabase === projectBaseDb");
     expect(slice).toContain('reset_refuses_base_database');
     // 拦截必须在真正执行之前返回
     const guardAt = slice.indexOf('reset_refuses_base_database');
     const execAt = slice.indexOf('createMysqlBranchDatabase(rawInfra');
     expect(guardAt).toBeGreaterThan(-1);
     expect(execAt).toBeGreaterThan(guardAt);
+  });
+
+  /**
+   * 2026-08-30 线上实测撞到：第一版判据写的是 `targetDatabase === baseDb`，
+   * 而 baseDb 来自 `resourceDatabaseForRuntime` → `mysqlDatabaseForBranch`，
+   * 它**分支 scope 优先**，分支库建好之后那里存的就是 `imp_b_<token>` 本身。
+   * 于是 target === base 恒成立，reset 被自己永久挡死；反过来若某分支 scope
+   * 指回共享库，判据又会放行 DROP。判据取的值不是它要判的那个事实（形状 6）。
+   *
+   * 这两条守卫锁住修法：基础库判据必须走不看分支 scope 的项目级解析函数。
+   */
+  it('基础库判据必须走项目级解析，不得读分支 scope', () => {
+    const source = readBranchesRoute();
+    const at = source.indexOf('function projectBaseDatabaseForRuntime(');
+    expect(at, '找不到 projectBaseDatabaseForRuntime').toBeGreaterThan(-1);
+    const fn = source.slice(at, at + 1600);
+    // 项目级解析：resolvedInfraEnv 不许传 branch，也不许碰 getCustomEnvScope
+    expect(fn).toContain('resolvedInfraEnv(service)');
+    expect(fn).not.toContain('getCustomEnvScope');
+    expect(fn).not.toContain('ForBranch(');
+  });
+
+  it('红用例：把判据改回分支感知的 baseDb，守卫必须变红', () => {
+    const slice = cloneTasksRouteSlice(readBranchesRoute());
+    const regressed = slice.replace(
+      "mode === 'reset' && targetDatabase === projectBaseDb",
+      "mode === 'reset' && targetDatabase === baseDb",
+    );
+    expect(regressed).not.toContain("mode === 'reset' && targetDatabase === projectBaseDb");
   });
 
   it('不支持 reset 的 runtime 显式报错，而不是静默退化成 empty', () => {

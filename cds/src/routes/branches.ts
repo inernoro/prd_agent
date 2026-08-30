@@ -7317,6 +7317,40 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return undefined;
   }
 
+  /**
+   * 项目共享基础库的库名——**刻意不看分支 scope**。
+   *
+   * 上面那组 `*DatabaseForBranch` 是「这个分支现在该连哪个库」，分支 scope 优先是对的：
+   * 建过分支独立库之后，那里存的就是 `imp_b_<token>`。但「哪个库是不可 DROP 的基础库」
+   * 是**项目级**事实，跟分支建没建过独立库无关。
+   *
+   * 拿分支版当基础库判据，会在两个方向同时出错（predicate-and-wiring-discipline 形状 6：
+   * 判据读的值不是真正生效的那个值）：
+   *   - 误挡：分支独立库一旦建成，分支 scope 里就是它，于是 `target === base` 恒成立，
+   *     reset 被自己永久挡死——恰好挡在唯一需要它的场景上（2026-08-30 实测撞到）。
+   *   - 漏挡：某个分支的 scope 若指回共享基础库，`target !== base` 反而放行，DROP 真的落到共享库。
+   */
+  function projectBaseDatabaseForRuntime(runtime: ResourceDatabaseRuntime, service: InfraService): string {
+    // 不传 branch：resolvedInfraEnv 走 stateService.getCustomEnv(projectId)，只含项目级变量。
+    const env = resolvedInfraEnv(service);
+    if (runtime === 'mysql') {
+      return String(env.MYSQL_DATABASE || env.MARIADB_DATABASE || resolvedServiceDbName(service) || 'app')
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .slice(0, 64);
+    }
+    if (runtime === 'postgres') {
+      return String(env.POSTGRES_DB || resolvedServiceDbName(service) || env.POSTGRES_USER || 'postgres')
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .slice(0, 63);
+    }
+    if (runtime === 'mongodb') {
+      return String(resolvedServiceDbName(service) || env.MONGO_INITDB_DATABASE || 'app')
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 63);
+    }
+    return String(resolvedServiceDbName(service) || 'app').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
+  }
+
   function makeResourceBackupFileName(params: {
     service: InfraService;
     branch: BranchEntry;
@@ -10081,11 +10115,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       .slice(0, 64);
     // reset 会 DROP 目标库。唯一真正危险的误用是「把它指到项目共享的基础库上」，
     // 那会一次性抹掉所有分支共用的数据。分支独立库是可丢弃的，基础库不是——这里硬拦。
-    if (mode === 'reset' && targetDatabase === baseDb) {
+    //
+    // 判据必须用**项目级**基础库名，不能用上面那个 baseDb：baseDb 走的是
+    // `*DatabaseForBranch`，分支 scope 优先，而分支 scope 里存的正是上一次建好的分支库名。
+    // 用它作判据会把 reset 永久挡在「分支库已存在」这个唯一需要它的场景之外。
+    const projectBaseDb = runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb' || runtime === 'redis'
+      ? projectBaseDatabaseForRuntime(runtime, rawInfra)
+      : (resolvedServiceDbName(rawInfra) || 'app');
+    if (mode === 'reset' && targetDatabase === projectBaseDb) {
       res.status(400).json({
         error: 'reset_refuses_base_database',
-        message: `reset 会 DROP 目标库，拒绝对项目共享基础库 "${baseDb}" 执行。它只用于推倒重建分支独立库。`,
-        baseDatabase: baseDb,
+        message: `reset 会 DROP 目标库，拒绝对项目共享基础库 "${projectBaseDb}" 执行。它只用于推倒重建分支独立库。`,
+        baseDatabase: projectBaseDb,
         targetDatabase,
       });
       return;
