@@ -56,4 +56,53 @@ if (missing.length) {
   process.exit(1);
 }
 
-console.log(`挂载点覆盖守卫通过：${bases.map((b) => `${b}/*`).join('、')} 都有 console-api location。`);
+/*
+  覆盖到了还不够：还要**没被更长的前缀抢走、也没有抢走别人的**。
+
+  2026-08-30 的事故形状：补 `/llmgw/gw/` → 控制台 8090 的时候，顺手把
+  `/llmgw/gw/v1/*` 也一起吞了——那是 serving 的四协议入口（8091），控制台根本没有它。
+  生产发布冒烟探的正是 `/llmgw/gw/v1/healthz`（`exec_dep.sh` 的 --llmgw-serving-health-path），
+  于是每一次发布都会被一个 404 挡住。而它编译过、页面照常打开、控制台自己的请求全都正常，
+  只有真发一次生产才炸——所以这里必须机械判：serving 的路径必须落到 serving 上游。
+*/
+const SERVING_PATHS = [
+  // 生产发布冒烟的两条：控制台健康与 serving 健康，前者 8090、后者 8091，不许互串。
+  { path: '/llmgw/gw/v1/healthz', port: '8091', why: '生产发布冒烟的 serving 健康探针（exec_dep.sh）' },
+  { path: '/gw/v1/healthz', port: '8091', why: '独立子域上的 serving 健康探针' },
+  { path: '/llmgw/gw/healthz', port: '8090', why: '生产发布冒烟的控制台健康探针（exec_dep.sh）' },
+  { path: '/gw/healthz', port: '8090', why: '独立子域上的控制台健康探针' },
+];
+
+/** 所有 ^~ location 及其上游端口。前缀匹配取最长者——这里照同一套规则算胜出的那条。 */
+const prefixLocations = [];
+for (const match of conf.matchAll(/location\s+\^~\s+(\S+)\s*\{([^]*?)\n {4}\}/g)) {
+  const port = /proxy_pass\s+http:\/\/\$\w+:(\d+)/.exec(match[2])?.[1] ?? null;
+  prefixLocations.push({ prefix: match[1], port });
+}
+
+const misrouted = [];
+for (const target of SERVING_PATHS) {
+  const winner = prefixLocations
+    .filter((loc) => target.path.startsWith(loc.prefix))
+    .sort((a, b) => b.prefix.length - a.prefix.length)[0];
+  if (!winner) {
+    misrouted.push(`${target.path} 没有任何 location 命中（会落进 SPA fallback，拿到一份 index.html）—— ${target.why}`);
+    continue;
+  }
+  if (winner.port !== target.port) {
+    misrouted.push(
+      `${target.path} 被 \`location ^~ ${winner.prefix}\` 接走，转去 ${winner.port ?? '（没有 proxy_pass）'}，`
+      + `而它必须落到 ${target.port} —— ${target.why}`);
+  }
+}
+
+if (misrouted.length) {
+  console.error('挂载点覆盖守卫未通过：下面这些路径被转到了错误的上游\n');
+  for (const line of misrouted) console.error(`  ${line}`);
+  console.error('\nnginx 前缀匹配取最长者：给被抢走的那条补一个**更长**的 location，别去调顺序。');
+  process.exit(1);
+}
+
+console.log(
+  `挂载点覆盖守卫通过：${bases.map((b) => `${b}/*`).join('、')} 都有 console-api location；`
+  + `${SERVING_PATHS.length} 条健康探针路径各自落到正确上游。`);
