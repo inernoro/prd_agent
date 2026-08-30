@@ -6,7 +6,7 @@ import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
-import { GenSweepLoader } from '@/components/ui/GenSweepLoader'; // 生图等待动效=流光进度条（替换旧金色 Nebula）
+import { GenDevelopLoader } from '@/components/ui/GenDevelopLoader'; // 生图等待动效=显影（进度画在画框上，替换旧流光进度条）
 import { recordGenDurationMs } from '@/lib/genTiming';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
@@ -7166,7 +7166,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         ) : null}
                         {it.status === 'running' ? (
-                          <GenSweepLoader createdAt={it.createdAt} screenW={w * zoom} screenH={h * zoom} />
+                          <GenDevelopLoader
+                            createdAt={it.createdAt}
+                            screenW={w * zoom}
+                            screenH={h * zoom}
+                            worldW={w}
+                            worldH={h}
+                            sizeLabel={`${Math.round(w)} × ${Math.round(h)}`}
+                          />
                         ) : it.status === 'error' ? (
                           <div className="absolute inset-0">
                             {/* 灰色静止花瓣背景 */}
@@ -7209,50 +7216,26 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     ) : it.status === 'running' ? (
                       <div
                         className="w-full h-full rounded-[16px] relative"
-                        // 需求：加载中要有“占位框”，告诉用户会在这里生成一张这么大的图
-                        // - 非选中：也要有细边框（避免 loader 像“漂浮出来的”）
-                        // - 选中：强化描边/光晕（不改变尺寸/比例）
-                        style={{
-                          background: 'rgba(255,255,255,0.01)',
-                          border: '1px solid rgba(255,255,255,0.12)',
-                          boxShadow: 'none',
-                        }}
+                        // 需求：加载中要有“占位框”，告诉用户会在这里生成一张这么大的图。
+                        // 这个框现在由 GenDevelopLoader 自己画（描边即进度，按屏幕像素恒定），
+                        // 所以这里**不再画 border**——两条边一个在世界坐标一个在屏幕坐标，
+                        // 叠在一起低倍下必然错开半像素、看着发毛。底纱也归 loader 管。
+                        style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}
                       >
-                        {/* 贴**左上角**：右上角是 Frame 的「图层面板」按钮、正上方是 Frame 头部、
-                            正下方是计时条，四者都用 scale(1/zoom) 保持屏幕尺寸恒定，
-                            凑一起必然互相压（2026-08-11 用户截图：徽章正压在进度条上）。
-                            左上角是这张卡里唯一没人占的角。卡片在屏幕上太小时直接不显示——
-                            那个尺寸下它只会盖住产物本身。 */}
-                        {h * zoom >= 90 && (
-                          <div
-                            className="absolute left-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
-                            style={{
-                              background: 'rgba(0,0,0,0.28)',
-                              border: '1px solid rgba(255,255,255,0.10)',
-                              color: 'rgba(255,255,255,0.78)',
-                              // 关键：文字大小不随画布 zoom 缩放（保持清晰可读）
-                              // 再让开 Frame 头部：Frame 给头部留的是 FRAME_HEADER=46 个**世界**像素，
-                              // 而头部标签自己是 scale(1/zoom) 的**屏幕**常量。缩得越小，
-                              // 那 46px 在屏幕上越薄（21% 时只剩 ~10px），头部就压到卡片上来了
-                              // ——冒烟实测 21%/19% 两档「Frame 头部 × 图层分离中」重叠。
-                              // 这里按同一套换算把徽章往下推：scale 之后的 translateY 正好是屏幕像素，
-                              // 需要让开的量 = 头部屏幕高度 − 头部预留的屏幕高度，高倍下自然归零。
-                              transform: `scale(var(--invZoom)) translateY(${
-                                it.layerRole === 'layer'
-                                  ? Math.max(0, Math.round(30 - 41 * zoom))
-                                  : 0
-                              }px)`,
-                              transformOrigin: 'left top',
-                            }}
-                            title={it.layerRole === 'layer' ? '正在把原图拆成可编辑图层' : '预计生成尺寸（画布占位）'}
-                            // 低倍下这些标签的文字会按档收起，冒烟不能靠文字找它们
-                            // （靠文字找 = 一收起就找不到 = 那一档静默没测）。
-                            data-testid={it.layerRole === 'layer' ? 'frame-layering-badge' : undefined}
-                          >
-                            {it.layerRole === 'layer' ? '图层分离中' : `预计 ${Math.round(w)} × ${Math.round(h)}`}
-                          </div>
-                        )}
-                        <GenSweepLoader createdAt={it.createdAt} screenW={w * zoom} screenH={h * zoom} />
+                        {/* 尺寸、阶段、剩余时间原来是三处各自反缩放的标签（左上角徽章 + 底部黑胶囊），
+                            和 Frame 头部、图层面板按钮四件东西抢同一张卡，缩放一低必打架
+                            （2026-08-11 用户截图：徽章正压在进度条上；PR #1458 打的就是这个补丁）。
+                            现在合并成 loader 底边的一行，四个角全部还给卡片——那个冲突不是被修好，
+                            是结构上不存在了。 */}
+                        <GenDevelopLoader
+                          createdAt={it.createdAt}
+                          screenW={w * zoom}
+                          screenH={h * zoom}
+                          worldW={w}
+                          worldH={h}
+                          sizeLabel={`${Math.round(w)} × ${Math.round(h)}`}
+                          mode={it.layerRole === 'layer' ? 'layer' : 'image'}
+                        />
                       </div>
                     ) : kind === 'shape' ? (
                       <div className="w-full h-full flex items-center justify-center">

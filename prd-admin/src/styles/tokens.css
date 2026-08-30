@@ -107,6 +107,28 @@
   --tooltip-border: rgba(255, 255, 255, 0.12);
   --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.5'/%3E%3C/svg%3E");
 
+  /* 视觉创作画布的生图等待态（GenDevelopLoader）。
+     这一族**故意不双写**：画布舞台在 AdvancedVisualAgentTab 里被钉死成 #1e1e1e，
+     两个主题下都是暗的（见 stageRef 的 backgroundColor）。跟着主题翻会得到
+     「暗底 + 浅色主题的深色字」，正好是双皮肤规则要防的那种不可读。
+     哪天舞台自己跟着主题翻了，这一族要一起改，别只改一半。
+     放这里而不是写在组件里，是为了让它仍然是可查、可一处改的 SSOT。 */
+     取值恒为**暗色档**的字面色，不引用 --accent-primary / --accent-fg-amber：
+     那两个在浅色档会翻到 #A64B35 / #92400e，落在恒暗的画布上只剩 4.4:1 和更差，
+     等于「跟着主题翻了一半」。 */
+  --gen-wait-veil: rgba(0, 0, 0, 0.56);
+  --gen-wait-vignette: rgba(0, 0, 0, 0.42);
+  --gen-wait-track: rgba(255, 255, 255, 0.20);
+  --gen-wait-progress: #D97757;
+  --gen-wait-progress-halo: rgba(217, 119, 87, 0.22);
+  /* 超时用琥珀，不是更亮一档的赤陶：同色系只差一点亮度，用户根本看不出状态变了。 */
+  --gen-wait-progress-over: #fbbf24;
+  --gen-wait-scrim: linear-gradient(to top, rgba(10, 10, 12, 0.70) 0%, rgba(10, 10, 12, 0.26) 55%, transparent 100%);
+  --gen-wait-develop: linear-gradient(180deg, transparent 0%, rgba(217, 119, 87, 0.04) 30%, rgba(217, 119, 87, 0.09) 47%, rgba(255, 236, 222, 0.09) 52%, rgba(217, 119, 87, 0.08) 58%, rgba(217, 119, 87, 0.03) 74%, transparent 100%);
+  --gen-wait-text: rgba(247, 247, 251, 0.92);
+  --gen-wait-text-dim: rgba(247, 247, 251, 0.74);
+  --gen-wait-dot: rgba(247, 247, 251, 0.34);
+
   /* 「向我提问」浮层坞的玻璃。与 --overlay-panel-solid 的区别：那一族是近实心的浮层面板，
      而起手长条是**浮在托管正文之上**的一件东西——正文要透着看得见，所以 alpha 停在 0.78。
      形变途中 blur 要关掉（跨帧合成会掉帧），那一档单独给一个不透明些的底顶上。 */

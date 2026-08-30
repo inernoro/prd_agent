@@ -169,16 +169,47 @@ describe('分层内容判定的接线', () => {
     expect(panel).toMatch(/>期望拆</);
   });
 
-  it('【关键】等待动效不许用 background-position 百分比做循环', () => {
+  it('【关键】等待动效循环走 transform，不许用 background-position 百分比', () => {
     // 那个百分比是相对「容器宽 - 背景宽」算的，背景比容器宽时分母为负，
     // 一圈走的距离和平铺周期对不上，每圈结尾都要跳一下
     //（2026-08-11 用户原话：每次进行到最后一点总是抽搐一下）。
-    const loader = read('src/components/ui/GenSweepLoader.tsx');
-    expect(loader).not.toMatch(/animation:gen-sweep-move[\s\S]{0,200}background-position/);
-    expect(loader).toMatch(/@keyframes gen-sweep-move\{from\{transform:translate3d/);
-    // 两端都要完全移出容器，接缝才在画面外。
-    expect(loader).toMatch(/translate3d\(-1[0-9]{2}%,0,0\)/);
+    // 2026-08-30 换成「显影」动效后判据跟着改口径：循环的是自上而下的显影带，
+    // 但「用 transform、两端完全移出容器」这条不变。
+    const loader = read('src/components/ui/GenDevelopLoader.tsx');
+    expect(loader).not.toMatch(/animation:gen-dev-pass[\s\S]{0,200}background-position/);
+    expect(loader).toMatch(/@keyframes gen-dev-pass\{from\{transform:translate3d/);
+    // 两端都要完全移出容器，接缝才在画面外（带高 62%，−70% / 170% 两端都在画外）。
+    expect(loader).toMatch(/translate3d\(0,-70%,0\)/);
+    expect(loader).toMatch(/translate3d\(0,170%,0\)/);
     expect(loader).toMatch(/prefers-reduced-motion/);
+  });
+
+  it('【关键】等待态占位卡的边框只由 loader 画一次', () => {
+    // 描边即进度，按屏幕像素恒定；调用方若再画一条世界坐标的 1px border，
+    // 两条边低倍下会错开半像素、看着发毛，而且那条 border 在 30% 以下本来就已经看不见了。
+    const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+    const styleAt = code.indexOf("style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}");
+    expect(styleAt, '等待态占位卡应自己不画底纱和边框，全部交给 loader').toBeGreaterThan(0);
+    const running = code.slice(styleAt, styleAt + 900);
+    expect(running).toContain('<GenDevelopLoader');
+    expect(running).toMatch(/mode=\{it\.layerRole === 'layer' \? 'layer' : 'image'\}/);
+    expect(running).not.toMatch(/border:\s*'1px solid/);
+    // 尺寸/阶段/剩余时间合并进 loader 底边一行之后，调用方不许再自己摆反缩放标签，
+    // 否则又回到「四件东西抢同一张卡」（PR #1458 打补丁的那个局面）。
+    expect(running).not.toMatch(/scale\(var\(--invZoom\)\)/);
+  });
+
+  it('【关键】等待态与产物互斥，loader 永远不会压在已生成的图上', () => {
+    // 底边那行的对比度判据是按「暗底纱 + 暗渐变」算的，前提是它下面**没有图**。
+    // 一旦哪天 loader 和 <img> 能同时在场，那个前提就塌了，判据会变成不成立的证据
+    //（判据纪律形状 8）。这里把互斥钉死在结构上。
+    const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+    for (const at of [...code.matchAll(/<GenDevelopLoader/g)].map((m) => m.index ?? 0)) {
+      const branch = code.slice(Math.max(0, at - 600), at);
+      expect(branch, 'loader 必须挂在 status === \'running\' 这一支上').toMatch(/status === 'running' \?/);
+    }
+    // 产物分支读的是 it.src，且和 running 分支是同一条三元链上的不同支。
+    expect(code).toMatch(/status === 'running' \?[\s\S]{0,2000}: it\.src \?/);
   });
 
   it('【关键】透明裁剪必须接到画布上，不能只在导出时生效', () => {

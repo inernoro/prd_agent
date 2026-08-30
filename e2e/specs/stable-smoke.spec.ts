@@ -2703,11 +2703,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const progress = page.getByTestId('generation-progress').first();
       await expect(progress, '真实生图开始后页面必须恢复生成中占位').toBeVisible({ timeout: 15_000 });
       const progressBox = await progress.boundingBox();
-      const barBox = await progress.locator('.gen-sweep__bar').boundingBox();
+      // 等待态的信息现在是底边一行（尺寸 · 阶段 · 剩余时间），不再是浮在画面上的黑胶囊。
+      const metaBox = await progress.getByTestId('generation-progress-meta').boundingBox();
       expect(progressBox).not.toBeNull();
-      expect(barBox).not.toBeNull();
-      expect(barBox!.x).toBeGreaterThanOrEqual(progressBox!.x - 1);
-      expect(barBox!.x + barBox!.width).toBeLessThanOrEqual(progressBox!.x + progressBox!.width + 1);
+      expect(metaBox).not.toBeNull();
+      expect(metaBox!.x).toBeGreaterThanOrEqual(progressBox!.x - 1);
+      expect(metaBox!.x + metaBox!.width).toBeLessThanOrEqual(progressBox!.x + progressBox!.width + 1);
+      // 进度画在画框上：描边任何缩放下都不许退场，它退场进度就没有载体了。
+      await expect(progress.locator('.gen-dev__arc'), '等待态必须有画框进度描边').toHaveCount(1);
       await testInfo.attach('single-image-progress', { body: await page.screenshot(), contentType: 'image/png' });
 
       const completed = await waitForImageRun(page, token, runId);
