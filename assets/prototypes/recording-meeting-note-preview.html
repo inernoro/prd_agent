@@ -1,0 +1,817 @@
+<!doctype html>
+<!--
+  重大改动方案预览 · 录音交付与纪要网页
+  单文件、零外链、双主题、无 emoji。产出规则见 .claude/skills/change-preview/SKILL.md。
+  同一份内容也发布成了可点击的 Artifact，便于决策者直接在手机上看。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>录音交付与纪要网页 · 方案预览</title>
+<style>
+:root{
+  color-scheme: light;
+  --bg:#F6F5F3; --panel:#FFFFFF; --sunk:#EFEDE9; --line:rgba(28,25,23,.10); --line2:rgba(28,25,23,.18);
+  --ink:#1C1917; --ink2:rgba(28,25,23,.72); --ink3:rgba(28,25,23,.50);
+  --accent:#B45309; --accent-soft:rgba(180,83,9,.10); --accent-line:rgba(180,83,9,.32);
+  --ok:#3F7D58; --ok-soft:rgba(63,125,88,.12);
+  --warn:#A16207; --warn-soft:rgba(161,98,7,.12);
+  --bad:#A63D3D; --bad-soft:rgba(166,61,61,.10);
+  --info:#3A6B8F; --info-soft:rgba(58,107,143,.12);
+  --new:#7C3AED; --new-soft:rgba(124,58,237,.10); --new-line:rgba(124,58,237,.34);
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --sans:ui-sans-serif,system-ui,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --shadow:0 8px 28px -22px rgba(28,25,23,.55);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#17161A; --panel:#211F25; --sunk:#1B1A1F; --line:rgba(255,255,255,.09); --line2:rgba(255,255,255,.17);
+    --ink:#F5F3F0; --ink2:rgba(245,243,240,.76); --ink3:rgba(245,243,240,.50);
+    --accent:#E0975B; --accent-soft:rgba(224,151,91,.14); --accent-line:rgba(224,151,91,.38);
+    --ok:#6FBF8E; --ok-soft:rgba(111,191,142,.14);
+    --warn:#DBA85E; --warn-soft:rgba(219,168,94,.14);
+    --bad:#D97B7B; --bad-soft:rgba(217,123,123,.14);
+    --info:#7FA8CC; --info-soft:rgba(127,168,204,.14);
+    --new:#B292F0; --new-soft:rgba(178,146,240,.13); --new-line:rgba(178,146,240,.36);
+    --shadow:0 10px 30px -20px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#17161A; --panel:#211F25; --sunk:#1B1A1F; --line:rgba(255,255,255,.09); --line2:rgba(255,255,255,.17);
+  --ink:#F5F3F0; --ink2:rgba(245,243,240,.76); --ink3:rgba(245,243,240,.50);
+  --accent:#E0975B; --accent-soft:rgba(224,151,91,.14); --accent-line:rgba(224,151,91,.38);
+  --ok:#6FBF8E; --ok-soft:rgba(111,191,142,.14);
+  --warn:#DBA85E; --warn-soft:rgba(219,168,94,.14);
+  --bad:#D97B7B; --bad-soft:rgba(217,123,123,.14);
+  --info:#7FA8CC; --info-soft:rgba(127,168,204,.14);
+  --new:#B292F0; --new-soft:rgba(178,146,240,.13); --new-line:rgba(178,146,240,.36);
+  --shadow:0 10px 30px -20px rgba(0,0,0,.8);
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;margin:0;
+  font-feature-settings:"tnum" 0;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px 90px}
+h1,h2,h3{line-height:1.25;text-wrap:balance;margin:0}
+a{color:inherit}
+
+/* ---------- 顶部 ---------- */
+header.top{border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:40}
+.topin{max-width:1120px;margin:0 auto;padding:13px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-size:14.5px;font-weight:660;letter-spacing:-.01em}
+.brand small{display:block;font-weight:420;color:var(--ink3);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase}
+nav.jump{display:flex;gap:2px;margin-left:auto;flex-wrap:wrap}
+nav.jump a{font-size:12.5px;color:var(--ink3);text-decoration:none;padding:5px 9px;border-radius:7px}
+nav.jump a:hover{color:var(--ink);background:var(--sunk)}
+.tbtn{font:inherit;font-size:12px;color:var(--ink2);background:var(--sunk);border:1px solid var(--line);
+  border-radius:8px;padding:6px 11px;cursor:pointer}
+.tbtn:hover{border-color:var(--line2)}
+
+/* ---------- 通用 ---------- */
+section{padding:44px 0 8px;border-top:1px solid var(--line)}
+section:first-of-type{border-top:none}
+.sec-head{display:flex;align-items:baseline;gap:11px;margin-bottom:7px;flex-wrap:wrap}
+.sec-num{font-family:var(--mono);font-size:11px;letter-spacing:.13em;color:var(--accent);
+  border:1px solid var(--accent-line);background:var(--accent-soft);border-radius:5px;padding:2px 7px}
+.sec-head h2{font-size:20px;font-weight:640;letter-spacing:-.015em}
+.sec-sub{color:var(--ink2);font-size:13.5px;margin:0 0 20px;max-width:74ch}
+.pill{font-size:11px;font-family:var(--mono);letter-spacing:.05em;border-radius:20px;padding:2px 9px;
+  border:1px solid var(--line2);color:var(--ink3)}
+.pill.new{color:var(--new);border-color:var(--new-line);background:var(--new-soft)}
+.pill.reuse{color:var(--info);border-color:var(--info-soft);background:var(--info-soft)}
+.pill.no{color:var(--ink3);border-style:dashed}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px 17px;box-shadow:var(--shadow)}
+.grid{display:grid;gap:13px}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:860px){.g2,.g3,.g4{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:12.8px}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:11px;background:var(--panel)}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);font-weight:600;background:var(--sunk)}
+tr:last-child td{border-bottom:none}
+code{font-family:var(--mono);font-size:.9em;background:var(--sunk);padding:1px 5px;border-radius:4px}
+
+/* ---------- 屏幕画廊 ---------- */
+.stagebar{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
+.stagebar button{font:inherit;font-size:12px;color:var(--ink2);background:var(--panel);border:1px solid var(--line);
+  border-radius:8px;padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.stagebar button:hover{border-color:var(--line2)}
+.stagebar button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.stagebar .k{font-family:var(--mono);font-size:10.5px;opacity:.7}
+
+.screens{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:15px}
+.screen{background:var(--panel);border:1px solid var(--line);border-radius:13px;overflow:hidden;
+  display:flex;flex-direction:column;box-shadow:var(--shadow)}
+.screen.is-new{border-color:var(--new-line)}
+.screen .sh{display:flex;align-items:center;gap:8px;padding:10px 13px;border-bottom:1px solid var(--line);background:var(--sunk)}
+.screen .letter{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--accent);
+  border:1px solid var(--accent-line);border-radius:5px;padding:1px 6px;background:var(--accent-soft)}
+.screen.is-new .letter{color:var(--new);border-color:var(--new-line);background:var(--new-soft)}
+.screen .sh b{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.screen .sh .tag{margin-left:auto;font-size:10.5px;font-family:var(--mono);color:var(--ink3)}
+.screen .note{padding:9px 13px 13px;font-size:12.2px;color:var(--ink2);border-top:1px solid var(--line);margin-top:auto}
+.screen .note em{font-style:normal;color:var(--accent);font-weight:600}
+
+/* 迷你界面 */
+.mock{padding:12px 13px;background:var(--bg);min-height:172px;display:flex;flex-direction:column;gap:7px}
+.mock .bar{height:26px;border-radius:7px;background:var(--panel);border:1px solid var(--line);
+  display:flex;align-items:center;padding:0 8px;gap:6px;font-size:10.5px;color:var(--ink3);flex:none}
+.mock .bar .dot{width:6px;height:6px;border-radius:50%;background:var(--line2);flex:none}
+.mock .row{display:flex;gap:6px;align-items:center}
+.mock .ln{height:7px;border-radius:4px;background:var(--line);flex:1}
+.mock .ln.s{flex:.45}.mock .ln.m{flex:.7}.mock .ln.dark{background:var(--line2)}
+.mock .box{border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--panel);font-size:11px;color:var(--ink2)}
+.mock .box.hl{border-color:var(--accent-line);background:var(--accent-soft)}
+.mock .box.newhl{border-color:var(--new-line);background:var(--new-soft)}
+.mock .box.bad{border-color:var(--bad);background:var(--bad-soft)}
+.mock .box.ok{border-color:var(--ok);background:var(--ok-soft)}
+.mock .btn{font-size:10.5px;border-radius:7px;padding:4px 9px;border:1px solid var(--line2);color:var(--ink2);background:var(--panel)}
+.mock .btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.mock .btn.newpri{background:var(--new);border-color:var(--new);color:#fff}
+.mock .wave{display:flex;align-items:flex-end;gap:2px;height:34px}
+.mock .wave i{flex:1;background:var(--accent);opacity:.65;border-radius:2px;display:block}
+.mock .prog{height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+.mock .prog i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.mock .chips{display:flex;gap:5px;flex-wrap:wrap}
+.mock .chip{font-size:10px;border:1px solid var(--line2);border-radius:20px;padding:2px 7px;color:var(--ink3)}
+.mock .chip.on{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
+.mock .field{display:flex;gap:6px;align-items:center;font-size:10.5px;color:var(--ink3)}
+.mock .field span{flex:none;width:52px}
+.mock .field i{flex:1;height:20px;border:1px solid var(--line);border-radius:6px;background:var(--panel);display:block}
+.mock .field i.filled{background:var(--ok-soft);border-color:var(--ok)}
+.mock .field i.empty{border-style:dashed}
+.mock .qr{width:52px;height:52px;border-radius:8px;border:1px solid var(--line2);
+  background:repeating-conic-gradient(var(--ink) 0 25%, transparent 0 50%) 0 0/13px 13px;opacity:.55}
+
+/* 流程 */
+.flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
+.flow .n{border:1px solid var(--line2);border-radius:8px;padding:6px 10px;background:var(--panel)}
+.flow .n.new{border-color:var(--new-line);background:var(--new-soft);color:var(--new)}
+.flow .n.end{border-color:var(--ok);background:var(--ok-soft);color:var(--ok);font-weight:600}
+.flow .a{color:var(--ink3)}
+.flow .n.gone{border-style:dashed;color:var(--ink3);text-decoration:line-through}
+
+.lane{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:12px 14px}
+.lane h4{margin:0 0 8px;font-size:13px;font-weight:640}
+.lane .who{font-size:11.5px;color:var(--ink3);margin-bottom:9px}
+
+.split{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+@media(max-width:860px){.split{grid-template-columns:1fr}}
+.split .col{border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--panel)}
+.split .col h4{font-size:13px;margin:0 0 9px;font-weight:640}
+.split .col ul{margin:0;padding-left:17px;font-size:12.6px;color:var(--ink2)}
+.split .col li{margin-bottom:5px}
+.redline{margin-top:11px;border:1px solid var(--bad);background:var(--bad-soft);border-radius:9px;
+  padding:9px 11px;font-size:12.4px;color:var(--ink)}
+.nots{border:1px dashed var(--line2);border-radius:11px;padding:13px 15px;background:var(--sunk)}
+.nots ul{margin:7px 0 0;padding-left:17px;font-size:12.6px;color:var(--ink2)}
+.get{border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--panel)}
+.get b{display:block;font-size:13.5px;margin-bottom:5px;letter-spacing:-.01em}
+.get p{margin:0;font-size:12.6px;color:var(--ink2)}
+.get .ico{width:26px;height:26px;border-radius:7px;background:var(--accent-soft);color:var(--accent);
+  display:flex;align-items:center;justify-content:center;margin-bottom:9px;border:1px solid var(--accent-line)}
+.dec{border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--panel);margin-bottom:11px}
+.dec h4{font-size:13.2px;margin:0 0 4px;font-weight:640}
+.dec .opt{font-size:12.6px;color:var(--ink2);margin:6px 0 0;padding-left:15px}
+.dec .rec{color:var(--ok);font-weight:600}
+.hero{padding:34px 0 6px}
+.hero h1{font-size:31px;font-weight:680;letter-spacing:-.028em;margin-bottom:9px}
+.hero p{font-size:14.5px;color:var(--ink2);max-width:70ch;margin:0}
+.meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}
+.meta span{font-size:11.5px;font-family:var(--mono);color:var(--ink3);border:1px solid var(--line);
+  border-radius:7px;padding:4px 9px;background:var(--panel)}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header class="top"><div class="topin">
+  <div class="brand">录音交付与纪要网页<small>Change Preview</small></div>
+  <nav class="jump">
+    <a href="#s0">结论</a><a href="#s1">所有页面</a><a href="#s2">架构</a><a href="#s3">数据与鉴权</a>
+    <a href="#s4">角色流</a><a href="#s5">验收</a><a href="#s6">范围</a><a href="#s7">拍板</a><a href="#s8">成本</a>
+  </nav>
+  <button class="tbtn" id="themeBtn" type="button">切换主题</button>
+</div></header>
+
+<div class="wrap">
+
+<div class="hero">
+  <h1>录音不再把你甩到另一页，纪要能一键变成可分享网页</h1>
+  <p>两件事：一是把「录音处理页 → 结果页」那次跳转取消掉，合成同一屏的两个状态；二是新增一条不调模型的纪要网页链路——预设模板 + 自动抽字段 + 你补几个空 + 生成可分享网页。下面 A 到 Z 把每一屏都画出来了。</p>
+  <div class="meta">
+    <span>26 屏</span><span>新增 11 屏</span><span>改造 2 屏</span><span>复用 13 屏</span><span>新增对外容器 0 个</span>
+  </div>
+</div>
+
+<!-- ===== S0 ===== -->
+<section id="s0">
+  <div class="sec-head"><span class="sec-num">S0</span><h2>你能得到什么</h2></div>
+  <p class="sec-sub">这一屏答一个问题：做完之后你手上多了什么、少了什么麻烦。每一条在后面都有对应的验收判据。</p>
+  <div class="grid g4">
+    <div class="get">
+      <div class="ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></div>
+      <b>录音路上少一次跳转</b>
+      <p>录完不再被甩到另一个地址。转写中和转写完是同一屏的两个状态，进度走完原地变成结果，播放按钮就在原位。</p>
+    </div>
+    <div class="get">
+      <div class="ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4h16v12H4z"/><path d="M2 20h20"/></svg></div>
+      <b>纪要一键变网页</b>
+      <p>会后点一下，出一张排好版的会议纪要网页。不调模型，秒级出，内容全部来自这次录音本身。</p>
+    </div>
+    <div class="get">
+      <div class="ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12v8h16v-8"/><path d="M12 16V3"/><path d="m8 7 4-4 4 4"/></svg></div>
+      <b>发给没有账号的人</b>
+      <p>生成分享链接，对方点开就能看，不用登录、不用装东西。用来对齐策略、发给客户或上级。</p>
+    </div>
+    <div class="get">
+      <div class="ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 8v5"/><path d="M12 16h.01"/><circle cx="12" cy="12" r="9"/></svg></div>
+      <b>抽不到的字段当面问你</b>
+      <p>参会人、议题、结论这类录音里说不清的，给一张只有三五格的补填表单，填完再生成。不编造、不留空。</p>
+    </div>
+  </div>
+  <div class="nots" style="margin-top:14px">
+    <b style="font-size:13.5px">首版明确<span style="color:var(--bad)">不给</span>你的（写在这里就是承诺不偷偷做，也不假装有）</b>
+    <ul>
+      <li>不做模板编辑器。首版给四套写死的模板，你不能自己拖版式、改配色。</li>
+      <li>不做 PDF / Word 导出。产物只有网页与现有的 .md 导出两种。</li>
+      <li>不做协作编辑。网页生成之后是快照，别人不能同时改。</li>
+      <li>不用模型补内容。抽不到就是抽不到，靠你补填，不让 AI 猜一个像模像样的「参会人」出来。</li>
+      <li>不做定时/自动发布。每一次生成与分享都由你点。</li>
+    </ul>
+    <p style="margin:9px 0 0;font-size:12.5px;color:var(--ink3)">这些不是做不了，是首版故意不做。全部进技术债务台账，等真人用起来再按真实呼声排序。</p>
+  </div>
+</section>
+
+<!-- ===== S1 所有页面 ===== -->
+<section id="s1">
+  <div class="sec-head"><span class="sec-num">S1</span><h2>所有页面（A 到 Z）</h2><span class="pill new">紫框=本次新增</span></div>
+  <p class="sec-sub">26 屏，按你实际会走的顺序排。上面的按钮可以只看某一段。每张卡下面那行小字写的是「这一屏要解决什么」，紫色是本次新增的屏。</p>
+
+  <div class="stagebar" id="stagebar">
+    <button type="button" data-g="all" aria-pressed="true">全部 26 屏</button>
+    <button type="button" data-g="rec" aria-pressed="false"><span class="k">A-D</span> 录音与转写</button>
+    <button type="button" data-g="note" aria-pressed="false"><span class="k">E-L</span> 整理与笔记</button>
+    <button type="button" data-g="web" aria-pressed="false"><span class="k">M-U</span> 纪要网页</button>
+    <button type="button" data-g="admin" aria-pressed="false"><span class="k">V-Z</span> 管理与边界</button>
+  </div>
+
+  <div class="screens" id="screens">
+
+    <!-- A -->
+    <article class="screen" data-g="rec"><div class="sh"><span class="letter">A</span><b>知识库主页</b><span class="tag">复用</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>知识库 · 快捷知识库</div>
+        <div class="row"><span class="btn pri">开始录音</span><span class="btn">上传</span><span class="btn">新建</span></div>
+        <div class="box">录音 2026-08-29 15-34.m4a<div class="row" style="margin-top:5px"><span class="ln m"></span></div></div>
+        <div class="box">录音 2026-08-28 20-01.m4a<div class="row" style="margin-top:5px"><span class="ln s"></span></div></div>
+        <div class="row"><span class="ln"></span></div><div class="row"><span class="ln m"></span></div>
+      </div>
+      <div class="note">录音的起点。点「开始录音」进 B；点已有录音条目直接进 C/D 那一屏——<em>不再先落到中间页再跳</em>。</div>
+    </article>
+
+    <!-- B -->
+    <article class="screen" data-g="rec"><div class="sh"><span class="letter">B</span><b>录音采集</b><span class="tag">复用</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>正在录音 00:42</div>
+        <div class="wave" id="waveA"></div>
+        <div class="box hl">实时出字：一开始就有那个协议，这个你也清楚……</div>
+        <div class="row" style="margin-top:auto"><span class="btn">暂停</span><span class="btn pri">结束并转写</span></div>
+      </div>
+      <div class="note">边录边出字。结束后<em>不跳转</em>，同一屏切到 C 的状态。</div>
+    </article>
+
+    <!-- C -->
+    <article class="screen is-new" data-g="rec"><div class="sh"><span class="letter">C</span><b>转写中（同屏状态一）</b><span class="tag">改造</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>录音 2026-08-29 15-34</div>
+        <div class="box newhl">阶段 2/3 · 正在识别说话人<div class="prog" style="margin-top:6px"><i style="width:62%"></i></div>
+          <div style="margin-top:5px;font-size:10px">已用 18 秒 · 预计还需约 25 秒</div></div>
+        <div class="box">一开始就有那个协议，这个你也清楚……</div>
+        <div class="row"><span class="ln m"></span></div>
+        <div class="row" style="margin-top:auto"><span class="btn">后台运行</span><span class="btn pri">播放</span></div>
+      </div>
+      <div class="note">这就是原来的「处理页」。<em>改动点：它不再是独立地址</em>——原来那颗「进入结果页」变成就地的「播放」，转写完成后本屏原地变成 D。</div>
+    </article>
+
+    <!-- D -->
+    <article class="screen is-new" data-g="rec"><div class="sh"><span class="letter">D</span><b>转写完成（同屏状态二）</b><span class="tag">改造</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>录音 2026-08-29 15-34 · 已完成</div>
+        <div class="box ok">3 分 12 秒 · 2 位说话人 · 104 字</div>
+        <div class="row"><span class="btn">播放</span><span class="btn">跟读</span><span class="btn">词云</span><span class="btn">问答</span></div>
+        <div class="box">说话人 1：一开始就有那个协议……</div>
+        <div class="row" style="margin-top:auto"><span class="btn pri">一键整理</span><span class="btn newpri">生成纪要网页</span></div>
+      </div>
+      <div class="note">与 C 是<em>同一个地址</em>，只是状态变了。播放器、跟读、词云、问答全部沿用现在这一屏已有的。</div>
+    </article>
+
+    <!-- E -->
+    <article class="screen" data-g="note"><div class="sh"><span class="letter">E</span><b>一键整理：选方式</b><span class="tag">复用</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>选择整理方式</div>
+        <div class="chips"><span class="chip on">会议纪要</span><span class="chip">智能摘要</span><span class="chip">待办清单</span><span class="chip">访谈整理</span><span class="chip">自定义</span></div>
+        <div class="box">补充背景（可选）：参会人、项目名……</div>
+        <div class="row" style="margin-top:auto"><span class="btn pri">开始整理</span></div>
+      </div>
+      <div class="note">这一步<em>会调模型</em>，是现有能力。它与后面的「纪要网页」是两件事，不要混——网页那条不调模型。</div>
+    </article>
+
+    <!-- F -->
+    <article class="screen" data-g="note"><div class="sh"><span class="letter">F</span><b>整理中</b><span class="tag">复用</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>正在生成会议纪要</div>
+        <div class="box hl">## 会议纪要<br>## 会议概要<br>- 会议时间：2026 年 8 月 29 日 15:34<span id="caret">|</span></div>
+        <div class="prog"><i style="width:44%"></i></div>
+        <div class="row"><span class="ln"></span></div><div class="row"><span class="ln m"></span></div>
+      </div>
+      <div class="note">逐字流式出字。等待期屏幕一直在变，不是一个转圈图标。</div>
+    </article>
+
+    <!-- G -->
+    <article class="screen" data-g="note"><div class="sh"><span class="letter">G</span><b>整理完成</b><span class="tag">复用</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>笔记 · 已生成</div>
+        <div class="box ok">## 摘要<br>会议概要 / 讨论议题 / 关键结论 / 待办事项</div>
+        <div class="box">## 转录全文<br>说话人 1：一开始就有那个协议……</div>
+        <div class="row" style="margin-top:auto"><span class="btn">重新整理</span><span class="btn newpri">生成纪要网页</span></div>
+      </div>
+      <div class="note">纪要网页的最佳起点：这时字段最全，抽取命中率最高。但没有摘要也能生成（见 O）。</div>
+    </article>
+
+    <!-- H -->
+    <article class="screen" data-g="note"><div class="sh"><span class="letter">H</span><b>整理失败</b><span class="tag">已修</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>笔记 · 原文已保存</div>
+        <div class="box bad">## 整理未生成<br>这次整理没有生成出来。转录原文已完整保存，可以在这条笔记上重新整理。</div>
+        <div class="box">## 转录全文<br>说话人 1：一开始就有那个协议……</div>
+        <div class="row" style="margin-top:auto"><span class="btn pri">重新整理</span></div>
+      </div>
+      <div class="note">今天这个 PR 修的就是它：以前失败是<em>整节不渲染</em>，页面一个字提示都没有，用户只当功能就长这样。</div>
+    </article>
+
+    <!-- I -->
+    <article class="screen" data-g="note"><div class="sh"><span class="letter">I</span><b>逐句校对 / 改说话人</b><span class="tag">复用</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>校对模式</div>
+        <div class="box hl">00:12 <b>说话人 1</b> 一开始就有那个协议</div>
+        <div class="box">00:19 说话人 2 打通之后流到哪里</div>
+        <div class="chips"><span class="chip on">改名为「蒋云峰」</span><span class="chip">合并说话人</span></div>
+        <div class="row" style="margin-top:auto"><span class="btn pri">保存</span></div>
+      </div>
+      <div class="note">改过的说话人名会被纪要网页直接用上——这是「补填表单」里参会人一栏能预填的来源之一。</div>
+    </article>
+
+    <!-- J -->
+    <article class="screen" data-g="note"><div class="sh"><span class="letter">J</span><b>词云与关键词定位</b><span class="tag">复用</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>全场词云</div>
+        <div class="chips"><span class="chip on">协议 12</span><span class="chip">流转 7</span><span class="chip">打通 5</span><span class="chip">遵循 4</span><span class="chip">理解 3</span></div>
+        <div class="box">点词跳到原文对应句</div>
+        <div class="row"><span class="ln"></span></div><div class="row"><span class="ln m"></span></div>
+      </div>
+      <div class="note">本次不动。列在这里是因为它与纪要网页的「关键词」栏共用同一份统计，不重复实现。</div>
+    </article>
+
+    <!-- K -->
+    <article class="screen" data-g="note"><div class="sh"><span class="letter">K</span><b>录音问答</b><span class="tag">复用</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>问这段录音</div>
+        <div class="box">他们最后对协议的结论是什么？</div>
+        <div class="box hl">结论是共同遵循现有协议，以便流程顺利流转。</div>
+        <div class="row" style="margin-top:auto"><span class="ln m"></span></div>
+      </div>
+      <div class="note">本次不动。</div>
+    </article>
+
+    <!-- L -->
+    <article class="screen" data-g="note"><div class="sh"><span class="letter">L</span><b>导出 .md</b><span class="tag">复用</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>导出</div>
+        <div class="box">录音 2026-08-29 15-34.md</div>
+        <div class="box">含：摘要 / 转录全文 / 说话人来源</div>
+        <div class="row" style="margin-top:auto"><span class="btn pri">下载</span></div>
+      </div>
+      <div class="note">本次不动。纪要网页是它的补充，不是替代——一个给自己存档，一个给别人看。</div>
+    </article>
+
+    <!-- M -->
+    <article class="screen is-new" data-g="web"><div class="sh"><span class="letter">M</span><b>入口：生成纪要网页</b><span class="tag">新增</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>笔记 · 动作区</div>
+        <div class="row"><span class="btn">重新整理</span><span class="btn">导出</span><span class="btn newpri">生成纪要网页</span></div>
+        <div class="box newhl">不调模型 · 用这次录音已有的内容排版 · 通常 1 秒内出</div>
+        <div class="row"><span class="ln"></span></div><div class="row"><span class="ln m"></span></div>
+      </div>
+      <div class="note">入口只有这一颗，放在 D 与 G 两屏的动作区。<em>按钮上直接写明不调模型</em>，避免和「一键整理」混淆。</div>
+    </article>
+
+    <!-- N -->
+    <article class="screen is-new" data-g="web"><div class="sh"><span class="letter">N</span><b>选模板</b><span class="tag">新增</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>选择纪要模板</div>
+        <div class="row"><span class="box newhl" style="flex:1">标准会议纪要<br><span style="font-size:10px">概要 · 议题 · 结论 · 待办</span></span>
+          <span class="box" style="flex:1">决议纪要<br><span style="font-size:10px">决议 · 责任人 · 期限</span></span></div>
+        <div class="row"><span class="box" style="flex:1">访谈实录<br><span style="font-size:10px">对话 · 要点</span></span>
+          <span class="box" style="flex:1">周会同步<br><span style="font-size:10px">进展 · 阻塞 · 下周</span></span></div>
+        <div class="row" style="margin-top:auto"><span class="btn newpri">下一步</span></div>
+      </div>
+      <div class="note">四套写死的模板，首版不给编辑器。每套模板声明自己需要哪些字段，决定 O 和 P 显示什么。</div>
+    </article>
+
+    <!-- O -->
+    <article class="screen is-new" data-g="web"><div class="sh"><span class="letter">O</span><b>自动抽取结果</b><span class="tag">新增</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>已从这次录音里抽到</div>
+        <div class="field"><span>标题</span><i class="filled"></i></div>
+        <div class="field"><span>时间</span><i class="filled"></i></div>
+        <div class="field"><span>参会人</span><i class="filled"></i></div>
+        <div class="field"><span>待办</span><i class="filled"></i></div>
+        <div class="field"><span>议题</span><i class="empty"></i></div>
+        <div class="field"><span>结论</span><i class="empty"></i></div>
+        <div class="box newhl">4 项已自动填好，2 项需要你补</div>
+      </div>
+      <div class="note">每一格都标来源（标题来自文件名、参会人来自说话人标签、待办来自摘要的待办节）。<em>抽不到的留空并标出来，不猜</em>。</div>
+    </article>
+
+    <!-- P -->
+    <article class="screen is-new" data-g="web"><div class="sh"><span class="letter">P</span><b>补填表单</b><span class="tag">新增</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>补两项就能生成</div>
+        <div class="box">议题<div class="row" style="margin-top:4px"><span class="ln dark"></span></div></div>
+        <div class="box">关键结论<div class="row" style="margin-top:4px"><span class="ln dark"></span></div><div class="row" style="margin-top:3px"><span class="ln m dark"></span></div></div>
+        <div class="box hl">已自动填好的 4 项也可以点开改</div>
+        <div class="row" style="margin-top:auto"><span class="btn">跳过，留空生成</span><span class="btn newpri">生成网页</span></div>
+      </div>
+      <div class="note">这是你选的那条路：<em>自动抽取 + 补填表单</em>。表单只显示抽不到的那几格，不把已填的再问一遍。允许跳过。</div>
+    </article>
+
+    <!-- Q -->
+    <article class="screen is-new" data-g="web"><div class="sh"><span class="letter">Q</span><b>生成中</b><span class="tag">新增</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>正在排版</div>
+        <div class="box newhl">套用模板 · 填入 6 个字段 · 生成快照
+          <div class="prog" style="margin-top:6px"><i style="width:88%"></i></div></div>
+        <div class="row"><span class="ln"></span></div><div class="row"><span class="ln m"></span></div>
+        <div class="box" style="margin-top:auto;font-size:10.5px">不调模型，通常 1 秒内完成</div>
+      </div>
+      <div class="note">这一屏通常一闪而过。留着它是因为慢的时候也必须有阶段名与进度，不能是空白。</div>
+    </article>
+
+    <!-- R -->
+    <article class="screen is-new" data-g="web"><div class="sh"><span class="letter">R</span><b>网页产物预览</b><span class="tag">新增</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>会议纪要 · 预览</div>
+        <div class="box ok" style="text-align:center;padding:10px 8px"><b style="font-size:12px">协议流转对齐会</b><div style="font-size:10px;margin-top:2px">2026-08-29 15:34 · 参会 2 人</div></div>
+        <div class="box">议题<br><span style="font-size:10px">协议的制定与遵循</span></div>
+        <div class="box">关键结论<br><span style="font-size:10px">共同遵循现有协议，保障流程顺利流转</span></div>
+        <div class="row" style="margin-top:auto"><span class="btn">回去改</span><span class="btn newpri">生成分享链接</span></div>
+      </div>
+      <div class="note">先看真产物再决定分不分享。<em>验收判据之一：这一屏必须显示排好版的纪要，停在进度条上不算生成成功</em>。</div>
+    </article>
+
+    <!-- S -->
+    <article class="screen is-new" data-g="web"><div class="sh"><span class="letter">S</span><b>分享设置</b><span class="tag">新增</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>谁能看</div>
+        <div class="chips"><span class="chip on">任何人凭链接</span><span class="chip">需要口令</span><span class="chip">仅本知识库成员</span></div>
+        <div class="chips"><span class="chip">7 天</span><span class="chip on">30 天</span><span class="chip">长期</span></div>
+        <div class="box">复用知识库现有的分享链接机制，不新开一套权限模型</div>
+        <div class="row" style="margin-top:auto"><span class="btn newpri">创建链接</span></div>
+      </div>
+      <div class="note">口令、有效期、撤销全部沿用现有分享链接，本次<em>不新增权限模型</em>。</div>
+    </article>
+
+    <!-- T -->
+    <article class="screen is-new" data-g="web"><div class="sh"><span class="letter">T</span><b>链接与二维码</b><span class="tag">新增</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>已生成</div>
+        <div class="row"><span class="qr"></span><span class="box" style="flex:1;font-size:10px">.../s/9f3c2a<br>30 天后失效</span></div>
+        <div class="row"><span class="btn">复制链接</span><span class="btn">复制为文字</span><span class="btn">撤销</span></div>
+        <div class="box ok" style="margin-top:auto">已复制。可以直接粘到群里。</div>
+      </div>
+      <div class="note">终点是「链接在你手上、点开真能看」，不是「已提交」。</div>
+    </article>
+
+    <!-- U -->
+    <article class="screen is-new" data-g="web"><div class="sh"><span class="letter">U</span><b>访客看到的网页</b><span class="tag">新增</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>公开页 · 无需登录</div>
+        <div class="box ok" style="text-align:center"><b style="font-size:12px">协议流转对齐会</b></div>
+        <div class="box">议题 / 结论 / 待办 / 参会人</div>
+        <div class="box" style="font-size:10px">底部：由 XX 于 2026-08-29 生成 · 内容为快照</div>
+        <div class="row" style="margin-top:auto"><span class="ln m"></span></div>
+      </div>
+      <div class="note">不登录、不下载。手机打开也要能看——<em>移动端版式是验收必查项</em>。</div>
+    </article>
+
+    <!-- V -->
+    <article class="screen is-new" data-g="admin"><div class="sh"><span class="letter">V</span><b>笔记上的回链</b><span class="tag">新增</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>笔记 · 已发布</div>
+        <div class="box newhl">这条录音已生成 1 张纪要网页 · 30 天后失效<div class="row" style="margin-top:5px"><span class="btn">打开</span><span class="btn">重新生成</span></div></div>
+        <div class="box">## 摘要 …</div>
+        <div class="row"><span class="ln"></span></div>
+      </div>
+      <div class="note">从笔记能找回它发布过什么。没有这一条，用户过两天就找不到自己发出去的链接了。</div>
+    </article>
+
+    <!-- W -->
+    <article class="screen is-new" data-g="admin"><div class="sh"><span class="letter">W</span><b>我的分享</b><span class="tag">复用+</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>我的分享</div>
+        <div class="box">协议流转对齐会 · 纪要网页 · 30 天<span style="float:right;font-size:10px">12 次访问</span></div>
+        <div class="box">周会同步 8-22 · 纪要网页 · 已失效</div>
+        <div class="row"><span class="btn">撤销</span><span class="btn">延长</span></div>
+        <div class="row" style="margin-top:auto"><span class="ln m"></span></div>
+      </div>
+      <div class="note">复用现有的「我的分享」，只是多认一种产物类型。撤销即刻生效。</div>
+    </article>
+
+    <!-- X -->
+    <article class="screen is-new" data-g="admin"><div class="sh"><span class="letter">X</span><b>失败与降级</b><span class="tag">新增</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>没能生成</div>
+        <div class="box bad">这条录音还没有转录原文，纪要网页至少需要原文。先完成转写再来。</div>
+        <div class="box">另一种：模板需要「决议」，你没填也跳过了 —— 那一栏会显示「本次未记录」，不编内容。</div>
+        <div class="row" style="margin-top:auto"><span class="btn pri">去转写</span></div>
+      </div>
+      <div class="note">每种失败都说清<em>缺什么、下一步点哪</em>。空字段在成品里显示「本次未记录」，不留一片空白也不瞎编。</div>
+    </article>
+
+    <!-- Y -->
+    <article class="screen" data-g="admin"><div class="sh"><span class="letter">Y</span><b>模板管理</b><span class="tag">不做</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>本期不做</div>
+        <div class="box" style="border-style:dashed;color:var(--ink3)">自定义模板编辑器<br><span style="font-size:10px">拖拽版式 / 改配色 / 增删字段</span></div>
+        <div class="box" style="border-style:dashed;color:var(--ink3)">企业统一模板与品牌</div>
+        <div class="row" style="margin-top:auto"><span class="ln s"></span></div>
+      </div>
+      <div class="note">画出来是为了承诺不做。首版四套模板写死，等真人用过再谈要不要开编辑器。</div>
+    </article>
+
+    <!-- Z -->
+    <article class="screen" data-g="admin"><div class="sh"><span class="letter">Z</span><b>你怎么验收</b><span class="tag">流程</span></div>
+      <div class="mock">
+        <div class="bar"><span class="dot"></span>验收入口</div>
+        <div class="box ok">1. 录一段 30 秒的话</div>
+        <div class="box ok">2. 全程不该出现第二个地址</div>
+        <div class="box ok">3. 生成纪要网页，手机打开链接</div>
+        <div class="box ok">4. 换个浏览器（未登录）再打开一次</div>
+      </div>
+      <div class="note">四步全部你自己能做，不需要看代码、不需要问我。详细判据见 S5。</div>
+    </article>
+
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <b style="font-size:13.5px">这次跳转到底去掉了什么</b>
+    <div class="flow" style="margin-top:10px">
+      <span class="n">A 知识库</span><span class="a">→</span>
+      <span class="n gone">处理页（独立地址）</span><span class="a">→</span>
+      <span class="n gone">结果页（另一个地址）</span>
+      <span class="a" style="margin-left:8px">现在：</span>
+      <span class="n">A 知识库</span><span class="a">→</span>
+      <span class="n new">C/D 同一屏，状态自己变</span><span class="a">→</span>
+      <span class="n end">拿到纪要网页链接</span>
+    </div>
+    <p style="margin:10px 0 0;font-size:12.6px;color:var(--ink2)">原来那次跳转是为了迁就一句按钮文案（「进入结果页」）——代码注释里写着「同一个地址上说这句话说不通」。<b>先有跳转再有理由。</b>把按钮改成「播放」，跳转就没有存在的必要了。</p>
+  </div>
+</section>
+
+<!-- ===== S2 架构 ===== -->
+<section id="s2">
+  <div class="sec-head"><span class="sec-num">S2</span><h2>架构</h2></div>
+  <p class="sec-sub">先把名字分清，再看图。这一节要回答的是「有没有又造一个新东西」——答案是没有，新增对外容器 0 个。</p>
+
+  <b style="font-size:13px">名字分清</b>
+  <div class="tablewrap" style="margin:8px 0 16px">
+    <table><thead><tr><th>名字</th><th>它是什么</th><th>跑在哪</th><th>对外域名</th><th>本次动不动</th></tr></thead><tbody>
+      <tr><td><code>prd-admin</code></td><td>部件：前端应用</td><td>已有容器</td><td>有（主域名）</td><td><span class="pill new">改</span> 合并两条录音路由、加纪要网页那几屏</td></tr>
+      <tr><td><code>prd-api</code></td><td>部件：后端 API</td><td>已有容器</td><td>有（同域 /api）</td><td><span class="pill new">改</span> 加字段抽取与网页生成端点</td></tr>
+      <tr><td>录音转写</td><td>功能：用 prd-api 调 ASR</td><td>prd-api 进程内</td><td>无</td><td><span class="pill no">不碰</span></td></tr>
+      <tr><td>一键整理</td><td>功能：用网关调对话模型</td><td>prd-api 进程内</td><td>无</td><td><span class="pill no">不碰</span></td></tr>
+      <tr><td>纪要网页生成</td><td>功能：模板 + 字段填充</td><td>prd-api 进程内</td><td>无</td><td><span class="pill new">新增</span> 纯字符串处理，无外部调用</td></tr>
+      <tr><td>分享链接</td><td>功能：已有的知识库分享</td><td>prd-api 进程内</td><td>无</td><td><span class="pill reuse">复用</span> 只多认一种产物类型</td></tr>
+      <tr><td>LLM Gateway</td><td>基础设施：模型网关</td><td>独立容器</td><td>有（llmgw 子域）</td><td><span class="pill no">不碰</span> 纪要网页这条根本不经过它</td></tr>
+      <tr><td>MongoDB</td><td>基础设施：共享库</td><td>共享实例</td><td>无</td><td><span class="pill reuse">复用</span> 新增一个集合存网页快照</td></tr>
+      <tr><td>CDS</td><td>部署平台</td><td>—</td><td>—</td><td><span class="pill no">不碰</span> 它是「在哪跑」，不是并列部件</td></tr>
+    </tbody></table>
+  </div>
+
+  <div class="grid g3">
+    <div class="card" style="border-color:var(--new-line)"><b style="color:var(--new);font-size:12.5px">本次新增</b>
+      <ul style="margin:7px 0 0;padding-left:17px;font-size:12.4px;color:var(--ink2)">
+        <li>纪要模板注册表（四套，后端 SSOT）</li>
+        <li>字段抽取器（读笔记 markdown，纯函数）</li>
+        <li>网页快照集合与只读公开页</li>
+        <li>前端：N/O/P/Q/R/S/T 七屏</li>
+      </ul></div>
+    <div class="card" style="border-color:var(--info)"><b style="color:var(--info);font-size:12.5px">复用现有</b>
+      <ul style="margin:7px 0 0;padding-left:17px;font-size:12.4px;color:var(--ink2)">
+        <li>知识库分享链接与撤销</li>
+        <li>笔记解析（说话人、待办、摘要节）</li>
+        <li>录音播放器、词云、问答、导出</li>
+        <li>鉴权与权限位 <code>document-store.*</code></li>
+      </ul></div>
+    <div class="card" style="border-style:dashed"><b style="color:var(--ink3);font-size:12.5px">明确不碰</b>
+      <ul style="margin:7px 0 0;padding-left:17px;font-size:12.4px;color:var(--ink3)">
+        <li>LLM Gateway 与模型池</li>
+        <li>ASR 转写链路</li>
+        <li>一键整理的提示词与流式</li>
+        <li>CDS 部署与容器拓扑</li>
+      </ul></div>
+  </div>
+
+  <div class="split" style="margin-top:14px">
+    <div class="col"><h4>别人写好的，直接用，一行不碰</h4>
+      <ul>
+        <li>分享链接的建、验、撤、过期</li>
+        <li>笔记 markdown 的解析与小节替换</li>
+        <li>录音与转写的整条链路</li>
+        <li>前端路由、鉴权守卫、双主题 token</li>
+      </ul></div>
+    <div class="col"><h4>我们只写这几样</h4>
+      <ul>
+        <li>四套模板的字段声明与 HTML 排版</li>
+        <li>从笔记结构抽字段的纯函数</li>
+        <li>把字段填进模板、存快照</li>
+        <li>七屏前端与一条回链</li>
+      </ul>
+      <div class="redline"><b>红线：不许自造模板引擎、不许自造分享/权限、不许为这条链路引入任何模型调用。</b>「无需 AI 版」是这次的核心约束，一旦有人往里加一句「用模型补一下」，就是走偏了。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== S3 数据与鉴权 ===== -->
+<section id="s3">
+  <div class="sec-head"><span class="sec-num">S3</span><h2>数据怎么流、每一跳拿什么凭据</h2></div>
+  <p class="sec-sub">四跳，其中三跳是现成的。第 4 跳是唯一的新面——公开只读页。</p>
+  <div class="flow" style="margin-bottom:14px">
+    <span class="n">浏览器</span><span class="a">→①→</span><span class="n">prd-api 读笔记</span><span class="a">→②→</span>
+    <span class="n new">抽字段（进程内）</span><span class="a">→③→</span><span class="n new">存网页快照</span><span class="a">→④→</span>
+    <span class="n end">访客打开公开页</span>
+  </div>
+  <div class="tablewrap">
+    <table><thead><tr><th>跳</th><th>谁调谁</th><th>凭据</th><th>为什么不是新东西</th></tr></thead><tbody>
+      <tr><td>①</td><td>前端 → prd-api</td><td>登录后的 JWT + <code>document-store.write</code></td><td>与现在点「一键整理」完全同一套</td></tr>
+      <tr><td>②</td><td>prd-api 进程内</td><td>无（不出进程）</td><td>纯字符串处理，不联网、不调模型</td></tr>
+      <tr><td>③</td><td>prd-api → MongoDB</td><td>现有连接</td><td>新增一个集合，与笔记同库同权限</td></tr>
+      <tr><td>④</td><td>访客 → prd-api 公开页</td><td>分享 token（可选口令）</td><td>复用知识库分享链接那一套验证</td></tr>
+    </tbody></table>
+  </div>
+  <b style="font-size:13px;display:block;margin:16px 0 8px">失败与降级</b>
+  <div class="tablewrap">
+    <table><thead><tr><th>哪里坏了</th><th>用户看到什么</th><th>数据会不会烂在半路</th></tr></thead><tbody>
+      <tr><td>笔记还没有转录原文</td><td>X 屏：说清缺原文，给「去转写」按钮</td><td>不会。生成前先校验，不落任何快照</td></tr>
+      <tr><td>模板要的字段全空</td><td>P 屏拦一下；坚持跳过则成品显示「本次未记录」</td><td>不会。空字段是显式状态，不是空白</td></tr>
+      <tr><td>存快照失败</td><td>停在 R 屏并说明「没能保存，可重试」</td><td>不会。没存成功就不给链接</td></tr>
+      <tr><td>分享链接过期或被撤销</td><td>访客看到「链接已失效」，不是白屏也不是 500</td><td>快照仍在，重新分享即可</td></tr>
+      <tr><td>笔记后来被改了</td><td>网页仍是生成那一刻的快照，顶部标明生成时间</td><td>不会。快照与笔记解耦，避免「发出去的东西被偷偷改掉」</td></tr>
+    </tbody></table>
+  </div>
+</section>
+
+<!-- ===== S4 角色流 ===== -->
+<section id="s4">
+  <div class="sec-head"><span class="sec-num">S4</span><h2>三个角色，各自怎么走到「手里有东西」</h2></div>
+  <p class="sec-sub">每条链路的终点都必须是「这个人手里拿到了产物」，不能停在「已提交」。</p>
+  <div class="grid g3">
+    <div class="lane"><h4>开会的人（不懂技术）</h4><div class="who">目标：会后十分钟内把纪要发到群里</div>
+      <div class="flow"><span class="n">A 点录音</span><span class="a">→</span><span class="n new">C/D 同屏</span><span class="a">→</span><span class="n">E 一键整理</span><span class="a">→</span><span class="n new">M-P 补两格</span><span class="a">→</span><span class="n end">T 链接已复制</span></div>
+      <p style="margin:9px 0 0;font-size:12.3px;color:var(--ink3)">终点检查：链接粘出去别人点开能看见纪要。停在「已生成」而没拿到链接，不算到达。</p></div>
+    <div class="lane"><h4>产品/运营</h4><div class="who">目标：把几次会的结论摊开，定策略</div>
+      <div class="flow"><span class="n">W 我的分享</span><span class="a">→</span><span class="n new">打开三张纪要网页</span><span class="a">→</span><span class="n end">对照结论写策略</span></div>
+      <p style="margin:9px 0 0;font-size:12.3px;color:var(--ink3)">终点检查：三张网页能同时打开、都还没过期。找不回自己发过什么，不算到达。</p></div>
+    <div class="lane"><h4>收到链接的人（没有账号）</h4><div class="who">目标：不注册也能看懂这次会定了什么</div>
+      <div class="flow"><span class="n">收到链接</span><span class="a">→</span><span class="n new">U 公开页</span><span class="a">→</span><span class="n end">看到议题与结论</span></div>
+      <p style="margin:9px 0 0;font-size:12.3px;color:var(--ink3)">终点检查：手机上打开版式不塌、不要求登录。要求登录即未到达。</p></div>
+  </div>
+</section>
+
+<!-- ===== S5 验收 ===== -->
+<section id="s5">
+  <div class="sec-head"><span class="sec-num">S5</span><h2>验收方式</h2></div>
+  <p class="sec-sub">每条都是你自己能核的，不需要看代码、不需要问我。</p>
+  <div class="tablewrap">
+    <table><thead><tr><th>要证明什么</th><th>你怎么亲自核</th><th>什么算过</th></tr></thead><tbody>
+      <tr><td>跳转真的没了</td><td>录一段话，全程盯着地址栏</td><td>从进入到看到结果，地址只变一次（进录音屏那一次）</td></tr>
+      <tr><td>转写完是原地变的</td><td>转写完成的那一刻不要点任何东西</td><td>页面自己从进度态变成结果态，没有跳走再回来</td></tr>
+      <tr><td>纪要网页真的出来了</td><td>点「生成纪要网页」，走到 R 屏</td><td>屏幕上是排好版的纪要正文；停在进度条上不算</td></tr>
+      <tr><td>字段确实来自这次录音</td><td>对照 O 屏每格标的来源，翻回原文核一句</td><td>参会人、待办能在原文/摘要里找到出处</td></tr>
+      <tr><td>没有编造</td><td>故意跳过补填，直接生成</td><td>空字段显示「本次未记录」，不是一段像模像样的假话</td></tr>
+      <tr><td>没登录的人能看</td><td>换一个浏览器的无痕窗口打开链接</td><td>不要求登录，正文完整</td></tr>
+      <tr><td>手机能看</td><td>用手机打开同一条链接</td><td>不横向滚动，标题与正文都读得下来</td></tr>
+      <tr><td>撤销即刻生效</td><td>在 W 撤销后，用无痕窗口再打开一次</td><td>显示「已失效」，不是仍能看见内容</td></tr>
+    </tbody></table>
+  </div>
+  <div class="nots" style="margin-top:13px">
+    <b style="font-size:13px">不算数的证据</b>
+    <ul>
+      <li>接口返回 200、测试全绿、「我通读自审过」</li>
+      <li>旧截图、别的分支上的截图</li>
+      <li>进度条截图配一句「已完成」</li>
+      <li>我说「应该没问题」</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ===== S6 范围 ===== -->
+<section id="s6">
+  <div class="sec-head"><span class="sec-num">S6</span><h2>范围契约</h2></div>
+  <div class="split">
+    <div class="col"><h4>本期做这些（8 件，可数）</h4>
+      <ul>
+        <li>合并录音处理页与结果页为同一路由两状态</li>
+        <li>「进入结果页」改成就地「播放」</li>
+        <li>四套纪要模板（字段声明 + 排版）</li>
+        <li>字段抽取器（标题/时间/参会人/待办/关键词）</li>
+        <li>补填表单（只问抽不到的）</li>
+        <li>网页快照存储与只读公开页</li>
+        <li>复用分享链接，多认一种产物类型</li>
+        <li>笔记上的回链与「我的分享」露出</li>
+      </ul></div>
+    <div class="col"><h4>本期不做（全进债务台账）</h4>
+      <ul>
+        <li>模板编辑器、自定义版式与品牌</li>
+        <li>PDF / Word 导出</li>
+        <li>协作编辑与评论</li>
+        <li>用模型补字段（这是硬约束，不是排期问题）</li>
+        <li>定时或自动发布</li>
+        <li>访问统计的深度分析（只留现有的访问计数）</li>
+      </ul>
+      <div class="redline"><b>熔断线（命中任意一条立刻停下来找你）</b>
+        <ul style="margin:6px 0 0;padding-left:17px;font-size:12.3px">
+          <li>连续 8 个提交没有功能净增</li>
+          <li>清单外的东西被接进来（尤其是模型调用）</li>
+          <li>碰到了「明确不碰」里的任何一项</li>
+          <li>改动文件数超出首轮基线两倍</li>
+          <li>同一份方案被重写第 3 次</li>
+        </ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== S7 拍板 ===== -->
+<section id="s7">
+  <div class="sec-head"><span class="sec-num">S7</span><h2>要你拍板的</h2></div>
+  <p class="sec-sub">每条都给了默认值。你什么都不说，我就按默认走。</p>
+  <div class="dec"><h4>1. 录音那一屏的形态</h4>
+    <p class="opt"><span class="rec">默认（推荐）：合并成同一屏两状态，保留全屏版式。</span>去掉你说的那次跳转，同时不推翻上一轮按设计稿做的整屏布局。改动集中在路由与那颗按钮。</p>
+    <p class="opt">备选：把结果整个搬回知识库页内，取消全屏页。更贴近「结果页就是主页」的字面意思，但等于作废上一轮的设计稿复刻，返工量大得多。</p></div>
+  <div class="dec"><h4>2. 模板数量</h4>
+    <p class="opt"><span class="rec">默认（推荐）：先做「标准会议纪要」一套，跑通全链路再补另外三套。</span>四套的排版工作量不小，而链路对不对与模板多少无关。</p>
+    <p class="opt">备选：四套一起做。首次交付更完整，但把验证链路的时间往后推。</p></div>
+  <div class="dec"><h4>3. 网页产物存在哪</h4>
+    <p class="opt"><span class="rec">默认（推荐）：存成快照，与笔记解耦。</span>发出去的东西不会因为你后来改了笔记而变，访客看到的永远是你当时确认过的那一版。</p>
+    <p class="opt">备选：实时跟着笔记走。省一个集合，但「发出去的内容被偷偷改掉」的风险由你承担。</p></div>
+  <div class="dec"><h4>4. 先做哪一件</h4>
+    <p class="opt"><span class="rec">默认（推荐）：先做纪要网页，再动录音路由。</span>纪要网页是净新增、风险低、你能立刻看到价值；路由合并要动上一轮刚做完的东西，适合单独一轮做干净。</p>
+    <p class="opt">备选：先合路由。你今天抱怨的是它，先修体感更直接。</p></div>
+</section>
+
+<!-- ===== S8 成本 ===== -->
+<section id="s8">
+  <div class="sec-head"><span class="sec-num">S8</span><h2>分几步、每步停下来你手上有什么</h2></div>
+  <div class="tablewrap">
+    <table><thead><tr><th>阶段</th><th>做什么</th><th>在这里停的话，你手上有</th><th>规模量级</th></tr></thead><tbody>
+      <tr><td>一</td><td>字段抽取 + 标准会议纪要模板 + R 屏预览</td><td>能生成并看到一张纪要网页（还不能分享）</td><td>后端 3-4 个文件，前端 2-3 个</td></tr>
+      <tr><td>二</td><td>补填表单 + 分享链接 + 公开页</td><td>能把链接发给别人，别人能看</td><td>前端 3-4 个，后端 2 个</td></tr>
+      <tr><td>三</td><td>回链、我的分享露出、另外三套模板</td><td>找得回发过什么，四种会都能用</td><td>前端 3-4 个</td></tr>
+      <tr><td>四</td><td>合并录音两条路由</td><td>跳转消失</td><td>前端 2-3 个 + 路由表</td></tr>
+    </tbody></table>
+  </div>
+  <p style="margin:12px 0 0;font-size:12.8px;color:var(--ink2)"><b>怎么退出：</b>阶段一到三是净新增，全部挂在一颗按钮后面——不想要就把那颗按钮摘掉，没有数据迁移，笔记与录音完全不受影响。阶段四是路由合并，回滚要把两条路由恢复，影响面限于录音那一屏。<b>超出这个量级就是走偏了</b>，按 S6 的熔断线停下来找你。</p>
+</section>
+
+</div>
+
+<script>
+(function(){
+  var root=document.documentElement, btn=document.getElementById('themeBtn');
+  function cur(){ var e=root.getAttribute('data-theme'); if(e) return e;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark':'light'; }
+  try{ var saved=localStorage.getItem('rp-theme'); if(saved) root.setAttribute('data-theme',saved); }catch(e){}
+  btn.addEventListener('click',function(){ var n = cur()==='dark' ? 'light':'dark';
+    root.setAttribute('data-theme',n); try{ localStorage.setItem('rp-theme',n); }catch(e){} });
+
+  var bar=document.getElementById('stagebar'), cards=[].slice.call(document.querySelectorAll('#screens .screen'));
+  bar.addEventListener('click',function(ev){ var b=ev.target.closest('button'); if(!b) return;
+    [].forEach.call(bar.querySelectorAll('button'),function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+    var g=b.getAttribute('data-g');
+    cards.forEach(function(c){ c.hidden = !(g==='all' || c.getAttribute('data-g')===g); }); });
+
+  var w=document.getElementById('waveA');
+  if(w){ var h=[30,62,45,80,55,38,70,48,88,40,66,52,74,44,60,35];
+    h.forEach(function(v){ var i=document.createElement('i'); i.style.height=v+'%'; w.appendChild(i); }); }
+
+  var caret=document.getElementById('caret');
+  if(caret && !window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+    setInterval(function(){ caret.style.opacity = caret.style.opacity==='0' ? '1':'0'; }, 560); }
+})();
+</script>
+</body>
+</html>

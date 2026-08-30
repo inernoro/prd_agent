@@ -110,6 +110,8 @@ const ACTIVITY_TYPE_LABELS: Record<string, string> = {
   'resource-credentials-reset': '重置凭据',
   'resource-connection-inject': '注入连接',
   'resource-data-query': '数据查询',
+  'deploy-loop-blocked': '空转熔断',
+  'deploy-loop-warning': '空转告警',
 };
 
 function activityTypeLabel(type: string): string {

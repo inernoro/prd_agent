@@ -61,6 +61,23 @@ test('未登记的核心代码变更不能静默通过', () => {
   assert.deepEqual(plan.unmappedFiles, ['prd-api/src/UnknownFeature/NewController.cs']);
 });
 
+test('图片输入与网关共享源码命中视觉功能线，JPEG 回归绑定每轮单图必跑项', () => {
+  for (const file of [
+    'prd-api/src/PrdAgent.Infrastructure/LLM/ImageInputNormalizer.cs',
+    'prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs',
+  ]) {
+    const result = selectFeatureLines(catalog, [file], [], 'changed');
+    assert.deepEqual(result.unmappedFiles, []);
+    assert.ok(result.selected.some((feature) => feature.id === 'llm-gateway'));
+    assert.ok(result.selected.some((feature) => feature.id === 'multi-image-creation'));
+  }
+  const specification = readFileSync(resolve(repoRoot, 'e2e/specs/stable-smoke.spec.ts'), 'utf8');
+  assert.match(specification, /test\('\[VIS-003\]\[REG-image-input-001\]/);
+  const selected = selectMatrixCasesByEnvironment(matrixCases, 'jpeg-regression');
+  assert.ok(selected.cds.includes('VIS-003'));
+  assert.ok(selected.production.includes('VIS-003'));
+});
+
 test('定时模式固定纳入全部功能线', () => {
   const result = selectFeatureLines(catalog, [], regressions, 'scheduled');
   assert.equal(result.selected.length, catalog.featureLines.length);

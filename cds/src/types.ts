@@ -2847,6 +2847,8 @@ export interface ProjectActivityLog {
     | 'resource-credentials-reset'
     | 'resource-connection-inject'
     | 'resource-data-query'
+    | 'deploy-loop-blocked'   // 空转部署熔断：同一提交反复部署，本次已拒绝
+    | 'deploy-loop-warning'   // 空转部署告警：同一提交重复部署已接近熔断阈值
   ;
   /** 关联分支（如有）。 */
   branchId?: string;
@@ -2893,7 +2895,8 @@ export interface ResourceCloneTask {
   branchId: string;
   resourceId: string;
   runtime: 'mysql' | 'postgres' | 'mongodb' | 'redis' | 'unknown';
-  mode: 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
+  /** reset：先 DROP 再重建分支独立空库，用于迁移失败留下脏状态时把可丢弃分支库推倒重来。 */
+  mode: 'empty' | 'reset' | 'clone-main' | 'restore-backup' | 'connect-existing';
   strategy: 'branch-database' | 'mysqldump' | 'mysqlpump' | 'background-copy' | 'backup-restore' | 'external-connection';
   status: 'pending' | 'running' | 'completed' | 'failed';
   progress: number;

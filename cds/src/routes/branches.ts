@@ -44,7 +44,7 @@ import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledS
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
-import { recordBuild } from '../services/build-activity-tracker.js';
+import { recordBuild, assessDeployLoop } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
@@ -6892,7 +6892,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { kind: type || 'unknown', values: [], truncated: false };
   }
 
-  async function createMysqlBranchDatabase(service: InfraService, branch: BranchEntry, targetDatabase: string): Promise<MysqlBranchDatabaseResult> {
+  async function createMysqlBranchDatabase(
+    service: InfraService,
+    branch: BranchEntry,
+    targetDatabase: string,
+  ): Promise<MysqlBranchDatabaseResult> {
     const branchUser = branchDatabaseUser(branch);
     const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
     const rootPassword = mysqlRootPassword(service);
@@ -7306,6 +7310,40 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (runtime === 'postgres') return postgresDatabaseForBranch(service, branch);
     if (runtime === 'mongodb') return mongoDatabaseForBranch(service, branch);
     return undefined;
+  }
+
+  /**
+   * 项目共享基础库的库名——**刻意不看分支 scope**。
+   *
+   * 上面那组 `*DatabaseForBranch` 是「这个分支现在该连哪个库」，分支 scope 优先是对的：
+   * 建过分支独立库之后，那里存的就是 `imp_b_<token>`。但「哪个库是不可 DROP 的基础库」
+   * 是**项目级**事实，跟分支建没建过独立库无关。
+   *
+   * 拿分支版当基础库判据，会在两个方向同时出错（predicate-and-wiring-discipline 形状 6：
+   * 判据读的值不是真正生效的那个值）：
+   *   - 误挡：分支独立库一旦建成，分支 scope 里就是它，于是 `target === base` 恒成立，
+   *     reset 被自己永久挡死——恰好挡在唯一需要它的场景上（2026-08-30 实测撞到）。
+   *   - 漏挡：某个分支的 scope 若指回共享基础库，`target !== base` 反而放行，DROP 真的落到共享库。
+   */
+  function projectBaseDatabaseForRuntime(runtime: ResourceDatabaseRuntime, service: InfraService): string {
+    // 不传 branch：resolvedInfraEnv 走 stateService.getCustomEnv(projectId)，只含项目级变量。
+    const env = resolvedInfraEnv(service);
+    if (runtime === 'mysql') {
+      return String(env.MYSQL_DATABASE || env.MARIADB_DATABASE || resolvedServiceDbName(service) || 'app')
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .slice(0, 64);
+    }
+    if (runtime === 'postgres') {
+      return String(env.POSTGRES_DB || resolvedServiceDbName(service) || env.POSTGRES_USER || 'postgres')
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .slice(0, 63);
+    }
+    if (runtime === 'mongodb') {
+      return String(resolvedServiceDbName(service) || env.MONGO_INITDB_DATABASE || 'app')
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 63);
+    }
+    return String(resolvedServiceDbName(service) || 'app').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
   }
 
   function makeResourceBackupFileName(params: {
@@ -10051,6 +10089,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const mode = typeof req.body?.mode === 'string' ? req.body.mode : 'empty';
+    if (mode === 'reset') {
+      // reset 已撤下（2026-08-30）。它要 DROP DATABASE，安全性取决于「这个库是不是本分支的」，
+      // 而这个问题在 review 里被连续打穿四次：分支 env 可写、建库台账可伪造（mode=empty
+      // 接受任意库名 + CREATE DATABASE IF NOT EXISTS）、派生库名因 slug 截断会撞车、
+      // 兄弟分支可先用 mode=empty 把自己绑到本分支派生的名字上。每修一次就多一道拒绝，
+      // 下一轮又出新进路——所有权模型不存在，护栏就补不完。
+      // 重开条件见 doc/debt.cds.md：建库时记录「这个库是我建的」+ 破坏性操作改用抗碰撞身份。
+      res.status(400).json({
+        error: 'reset_withdrawn',
+        message: 'mode=reset 已撤下：它的安全性依赖一个尚不存在的库所有权模型，连续四次被发现跨分支删除路径。分支库需要推倒重建时请由有权限的人直连数据库处理；重开条件见 doc/debt.cds.md。',
+      });
+      return;
+    }
     if (!['empty', 'clone-main', 'restore-backup', 'connect-existing'].includes(mode)) {
       res.status(400).json({ error: 'mode 必须是 empty / clone-main / restore-backup / connect-existing' });
       return;
@@ -10067,9 +10118,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const baseDb = runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb' || runtime === 'redis'
       ? resourceDatabaseForRuntime(runtime, rawInfra, branch) || 'app'
       : resolvedServiceDbName(rawInfra) || 'app';
-    const targetDatabase = String(req.body?.targetDatabase || branchDatabaseName(baseDb, branch))
-      .replace(/[^a-zA-Z0-9_]/g, '_')
-      .slice(0, 64);
+    // 项目共享基础库名。**刻意不看分支 scope**——见 projectBaseDatabaseForRuntime 的注释：
+    // baseDb 走 `*DatabaseForBranch`（分支 scope 优先），而分支 scope 里存的正是上一次
+    // 建好的分支库名，拿它当基础库判据会两头出错。
+    const projectBaseDb = runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb' || runtime === 'redis'
+      ? projectBaseDatabaseForRuntime(runtime, rawInfra)
+      : (resolvedServiceDbName(rawInfra) || 'app');
+    const sanitizeDbName = (v: string) => String(v).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
+    const defaultTarget = branchDatabaseName(baseDb, branch);
+    const targetDatabase = sanitizeDbName(String(req.body?.targetDatabase || defaultTarget));
+
     const strategy = mode === 'connect-existing'
       ? 'external-connection'
       : mode === 'restore-backup'
@@ -10082,7 +10140,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchId: branch.id,
       resourceId,
       runtime,
-      mode: mode as 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing',
+      mode: mode as 'empty' | 'reset' | 'clone-main' | 'restore-backup' | 'connect-existing',
       strategy,
       status: mode === 'empty' ? 'running' : 'pending',
       progress: mode === 'empty' ? 20 : 5,
@@ -10105,10 +10163,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
             throw new Error(`MySQL 服务当前未运行（status=${rawInfra.status}）`);
           }
           branchDb = await createMysqlBranchDatabase(rawInfra, branch, targetDatabase);
-        } else if (runtime === 'postgres') {
-          branchDb = await createPostgresBranchDatabase(rawInfra, branch, targetDatabase);
-        } else if (runtime === 'mongodb') {
-          branchDb = await createMongoBranchDatabase(rawInfra, branch, targetDatabase);
+        } else if (runtime === 'postgres' || runtime === 'mongodb') {
+          branchDb = runtime === 'postgres'
+            ? await createPostgresBranchDatabase(rawInfra, branch, targetDatabase)
+            : await createMongoBranchDatabase(rawInfra, branch, targetDatabase);
         } else {
           throw new Error(`${resource.runtime} 暂不支持创建分支独立数据库`);
         }
@@ -12101,6 +12159,53 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? req.body.commitSha
         : undefined
     );
+    // 空转部署熔断（2026-08-29）：同一分支反复部署**同一个 commit** 是「部署环」的
+    // 特征，正常连推每次都是新 SHA、永远不命中。判据与阈值见
+    // build-activity-tracker.ts 的 assessDeployLoop 注释（含事故经过）。
+    // 放在 deploymentRun 登记与租约之前——被拦下的请求不该留下 run 记录、不该占租约。
+    // 此处尚未进入 SSE，响应头未发出，可以正常返 JSON。
+    const deployLoopSha = requestCommitSha || entry.githubCommitSha;
+    const loopAssessment = assessDeployLoop(entry.id, deployLoopSha);
+    const ignoreDeployLoopGuard = req.query.ignoreDeployLoopGuard === '1'
+      || req.body?.ignoreDeployLoopGuard === true;
+    if (loopAssessment.level === 'trip' && !ignoreDeployLoopGuard) {
+      stateService.appendActivityLog(entry.projectId || 'default', {
+        type: 'deploy-loop-blocked',
+        branchId: entry.id,
+        branchName: entry.branch,
+        actor: resolveActorFromRequest(req),
+        // 用既有的 failed 而不是新增 'blocked'：这次部署确实没发生，
+        // 语义够用，且不必让每个 result 消费方都跟着改（不必要的枚举涟漪）。
+        result: 'failed',
+        note: `空转部署熔断：${loopAssessment.windowMinutes} 分钟内已对同一提交 ${loopAssessment.commitSha} 部署 ${loopAssessment.sameCommitCount} 次，本次已拒绝`,
+      });
+      stateService.save();
+      res.status(429).json({
+        error: 'deploy_loop_detected',
+        message: `空转部署熔断：最近 ${loopAssessment.windowMinutes} 分钟内，本分支已对同一个提交 ${loopAssessment.commitSha} 部署了 ${loopAssessment.sameCommitCount} 次，代码没有任何变化。这通常意味着某个部署步骤在自己重新触发部署，形成无法收敛的环——它会让分支永远停在 building、预览域名长期 503，并独占宿主构建槽把其它分支饿死。请先查清是谁在反复触发。`,
+        branchId: entry.id,
+        commitSha: loopAssessment.commitSha,
+        sameCommitCount: loopAssessment.sameCommitCount,
+        windowMinutes: loopAssessment.windowMinutes,
+        escapeHatch: {
+          hint: '推一个新提交即可自动解除（判据按「分支 + 提交」计数）；确认这次重复部署是有意为之，可附加 ?ignoreDeployLoopGuard=1 强制放行',
+        },
+      });
+      return;
+    }
+    if (loopAssessment.level === 'warn') {
+      stateService.appendActivityLog(entry.projectId || 'default', {
+        type: 'deploy-loop-warning',
+        branchId: entry.id,
+        branchName: entry.branch,
+        actor: resolveActorFromRequest(req),
+        result: 'pending',
+        note: `空转部署告警：${loopAssessment.windowMinutes} 分钟内已对同一提交 ${loopAssessment.commitSha} 部署 ${loopAssessment.sameCommitCount} 次；达到 ${loopAssessment.tripAt} 次将拒绝`,
+      });
+      // 这里不显式 save()：appendActivityLog 只改内存，而告警是放行路径，
+      // 后续部署流程本来就会落盘。上面 trip 分支必须自己存，因为它立即 return。
+    }
+
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     const deploymentRun = await deploymentRunService?.begin({
       projectId: entry.projectId || 'default',
@@ -12114,10 +12219,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     if (deploymentRun) res.setHeader('X-CDS-Deployment-Run-Id', deploymentRun.id);
     if (managedPlan && deploymentRun) managedProjectService?.persistPlan(managedPlan);
-
-    // 资源面板：记录一次构建活动（webhook / 手动 / reconciler 重试统一在此计数），
-    // 让「分支少但反复构建」的项目能在资源占用面板按频次排到前面。
-    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req));
 
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'deploy',
@@ -12137,6 +12238,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       cancelDeploymentRun(deploymentRun?.id, '部署请求未取得分支操作租约');
       return;
     }
+
+    // 记一次构建活动。**必须在拿到分支操作租约之后**——这个账本同时喂着资源面板的
+    // 构建频次和 assessDeployLoop 的空转熔断计数。
+    //
+    // 记在租约之前的话，被协调器 409 拒掉、或合并进 pending 的请求也会计数：
+    // 一次部署在途时 agent 连打六次同 SHA 重试，实际只会产生一个 pending 部署，
+    // 熔断计数却已经满了，于是把**下一个真实请求**429 掉——熔断的反效果。
+    // （Codex 在 PR #1453 的 P1；判据算的是「请求数」，要判的是「真实部署数」。）
+    // 资源面板那一侧口径也因此更准：它要的是「这个分支真的重建了多少次」。
+    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req), deployLoopSha);
+
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     const stopAttribution = stopAttributionFromRequest(req);
 
