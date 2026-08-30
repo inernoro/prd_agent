@@ -87,25 +87,6 @@ fi
 IFS=$'\n' sorted_dates=($(printf '%s\n' "${date_keys[@]}" | sort -r))
 unset IFS
 
-# 构建插入内容
-insert_block=""
-for date in "${sorted_dates[@]}"; do
-  entries=$(get_date_entries "$date")
-  insert_block+="### $date"$'\n'
-  insert_block+=$'\n'
-  insert_block+="| 类型 | 模块 | 描述 |"$'\n'
-  insert_block+="|------|------|------|"$'\n'
-  insert_block+="$entries"$'\n'
-  insert_block+=$'\n'
-done
-
-if $DRY_RUN; then
-  echo ""
-  echo "=== 将插入以下内容（dry-run）==="
-  echo "$insert_block"
-  exit 0
-fi
-
 if ! grep -q '## \[未发布\]' "$CHANGELOG"; then
   echo "找不到 '## [未发布]' 标记"
   exit 1
@@ -129,6 +110,16 @@ trap 'rm -f "$payload_file"' EXIT
   done
   printf '}'
 } > "$payload_file"
+
+# dry-run 走同一条 merge 路径，只是不落盘、不删碎片。
+# 原来它自己拼一份预览：那份预览把每个日期都画成新起一段，而真跑会并进已有段——
+# 预览与实际行为不一致，等于给了一个看着像证据、其实不成立的东西（形状 8）。
+if $DRY_RUN; then
+  echo ""
+  echo "=== dry-run：将按下面这样合并（不落盘、不删碎片）==="
+  python3 "$(dirname "$0")/lib/changelog_merge.py" --dry-run "$CHANGELOG" "$payload_file"
+  exit 0
+fi
 
 python3 "$(dirname "$0")/lib/changelog_merge.py" "$CHANGELOG" "$payload_file"
 

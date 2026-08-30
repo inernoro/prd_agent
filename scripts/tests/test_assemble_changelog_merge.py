@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
-from changelog_merge import merge  # noqa: E402
+from changelog_merge import merge, plan  # noqa: E402
 
 BASE = """# 更新日志
 
@@ -82,6 +82,43 @@ def test_new_day_goes_to_top_in_desc_order() -> None:
     )
 
 
+def test_backfilled_older_date_keeps_descending_order() -> None:
+    """补登一个比现有段都旧的日期，不许堆到最前面——那是重复日期段之外的第二种乱序。"""
+    out = merge(BASE, {"2026-08-18": ["| fix | cds | 补登的旧日期 |"]})
+    lines = [l for l in out.split("\n") if l.startswith("### ")]
+    check(
+        lines[:3] == ["### 2026-08-20", "### 2026-08-19", "### 2026-08-18"],
+        f"补登的旧日期没有落在降序位置：{lines[:3]}",
+    )
+
+
+def test_backfilled_middle_date_lands_between() -> None:
+    out = merge(
+        BASE,
+        {
+            "2026-08-22": ["| feat | cds | 比现有段都新 |"],
+            "2026-08-19": ["| fix | cds | 并进最旧那一段 |"],
+        },
+    )
+    lines = [l for l in out.split("\n") if l.startswith("### ")]
+    check(
+        lines[:3] == ["### 2026-08-22", "### 2026-08-20", "### 2026-08-19"],
+        f"新日期没有插到正确位置：{lines[:3]}",
+    )
+
+
+def test_dry_run_plan_matches_real_merge() -> None:
+    """dry-run 必须走同一条 merge 路径：说「并入」的日期，真跑就不许长出第二个头。"""
+    payload = {"2026-08-20": ["| fix | cds | 并入 |"], "2026-08-18": ["| fix | cds | 新建 |"]}
+    text = "\n".join(plan(BASE, payload))
+    check("2026-08-20  并入已有段" in text, f"dry-run 没把已有日期报成并入：\n{text}")
+    check("2026-08-18  新建一段" in text, f"dry-run 没把新日期报成新建：\n{text}")
+    out = merge(BASE, payload)
+    check(day_headers(out, "2026-08-20") == 1, "真跑与 dry-run 说的不一致：并入的日期长出了第二个头")
+    check(day_headers(out, "2026-08-18") == 1, "真跑没有建出新日期段")
+    check("日期降序：是" in text, f"dry-run 没报出末态顺序，或末态不降序：\n{text}")
+
+
 def test_does_not_touch_released_sections() -> None:
     """同一个日期在已发版段里出现过，不能被当成「已有段」并进去。"""
     out = merge(BASE, {"2026-05-10": ["| fix | prd-api | 不该并进已发版那段 |"]})
@@ -99,6 +136,9 @@ def main() -> int:
     for fn in (
         test_merges_into_existing_day,
         test_new_day_goes_to_top_in_desc_order,
+        test_backfilled_older_date_keeps_descending_order,
+        test_backfilled_middle_date_lands_between,
+        test_dry_run_plan_matches_real_merge,
         test_does_not_touch_released_sections,
     ):
         fn()
@@ -106,7 +146,7 @@ def main() -> int:
         for f in FAILURES:
             print(f"[FAIL] {f}")
         return 1
-    print("[OK] changelog 合并守卫全绿（同日期并段 / 新日期降序 / 不碰已发版段）")
+    print("[OK] changelog 合并守卫全绿（同日期并段 / 新日期按序插入 / 补登旧日期不乱序 / dry-run 与真跑一致 / 不碰已发版段）")
     return 0
 
 
