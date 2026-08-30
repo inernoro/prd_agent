@@ -5399,6 +5399,11 @@ async Task RetireStaleSystemKeysAsync(string tenantId, string winnerKeyId)
     await serviceKeys.UpdateManyAsync(
         Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+            // 归属认标记，不认名字：名字是显示用的，接入密钥页不拦着谁把自己的 key 也叫
+            // 这个名。只按名字扫，用户那把同名 key 会被每一次系统调用连坐撤销——
+            // 这道自愈本来是修自己的凭据，不该动别人的。SystemManaged 从签发那天起就盖，
+            // 没有缺标记的存量系统 key，所以按它筛不留缺口。
+            Builders<BsonDocument>.Filter.Eq("SystemManaged", true),
             Builders<BsonDocument>.Filter.Eq("Name", SystemServiceKeyName),
             Builders<BsonDocument>.Filter.Ne("_id", winnerKeyId),
             Builders<BsonDocument>.Filter.Lt("CreatedAt", retireBefore),

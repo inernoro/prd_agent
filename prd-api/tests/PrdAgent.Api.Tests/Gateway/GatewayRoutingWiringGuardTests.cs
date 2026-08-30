@@ -243,6 +243,9 @@ public sealed class GatewayRoutingWiringGuardTests
         end.ShouldBeGreaterThan(start, "退役判定与下一个成员的相邻关系变了，守卫的取值范围需要跟着改");
         var retire = console[start..end];
 
+        retire.ShouldContain(
+            "Eq(\"SystemManaged\", true)",
+            customMessage: "归属要认标记不认名字：只按名字扫，用户那把同名 key 会被每次系统调用连坐撤销");
         retire.ShouldContain("Ne(\"_id\", winnerKeyId)", customMessage: "必须放过设置指向的那把，否则设置会指着一把已停用的密钥");
         retire.ShouldContain("Lt(\"CreatedAt\", retireBefore)", customMessage: "必须放过刚签出来的 key，否则两个并发请求会互相把对方停用");
 
