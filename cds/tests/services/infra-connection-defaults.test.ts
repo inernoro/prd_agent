@@ -284,9 +284,33 @@ describe('连接上限：事件只在真生效时说「已注入」，复用路�
   it('审计拿到的是「想要的上限」，不是「这次注没注入」', () => {
     const source = containerSource();
     expect(source).toContain('const desiredMysqlMaxConnections = isMysqlFamilyImage(service.dockerImage)');
-    expect(source).toContain('parseDeclaredMaxConnections(resolvedCommand) ?? mysqlDefaults.injected');
+    // 断言拆成两条，不绑死表达式的换行形态——加了配置默认值兜底之后它是三行的。
+    expect(source).toContain('parseDeclaredMaxConnections(resolvedCommand)');
+    expect(source).toContain('?? mysqlDefaults.injected');
     // 两条复用路径都传目标值，不再传注入标记
     expect(source).not.toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
+  });
+
+  /**
+   * Codex 在 PR #1454 的 P2：命令形态不安全（启动被包了一层 shell）且没显式声明上限时，
+   * 注入被有意跳过（injected=null）、解析器也取不到值，目标值成了 null，
+   * 两条复用路径的审计双双直接早退——容器既没拿到默认值、也没有任何告警。
+   */
+  it('目标值有配置默认值兜底，不安全命令形态下也不会静默无声', () => {
+    const source = containerSource();
+    expect(source).toContain('?? resolveConfiguredMysqlMaxConnections()');
+  });
+
+  it('红用例：拿掉配置默认值兜底，守卫必须变红', () => {
+    const guard = (source: string) => {
+      expect(source).toContain('?? resolveConfiguredMysqlMaxConnections()');
+    };
+    const real = containerSource();
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(real, '\n        ?? resolveConfiguredMysqlMaxConnections()', ''),
+    );
   });
 
   it('红用例：把目标值换回注入标记，守卫必须变红', () => {

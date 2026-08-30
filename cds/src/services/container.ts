@@ -13,7 +13,7 @@ import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } 
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
-import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConnections } from './infra-connection-defaults.js';
+import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConnections, resolveConfiguredMysqlMaxConnections } from './infra-connection-defaults.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -2627,8 +2627,16 @@ export class ContainerService {
     // 用 mysqlDefaults.injected 当目标值会漏掉一整类：service 命令已显式声明 1000 时
     // injected 为 null（already-declared），审计整个跳过，而复用的旧容器可能还停在 300
     // （Codex 在 PR #1454 的 P2）。所以从解析后的命令里取声明值，没有才用注入值。
+    // 三个来源按优先级取：命令里声明的值 > 本次注入的值 > 配置的默认值。
+    // 最后那个兜底不能少：命令形态不安全（例如启动被包了一层 shell）时，
+    // applyMysqlConnectionDefaults 会有意跳过注入并返回 null，解析器也取不到值——
+    // 于是目标值成了 null，两条复用路径的审计双双直接早退，容器**既没拿到默认值、
+    // 也没有任何告警**，静默停在出厂默认（Codex 在 PR #1454 的 P2）。
+    // 逃生阀（CDS_MYSQL_MAX_CONNECTIONS=0/off）仍然优先：它返回 null，此处也就不告警。
     const desiredMysqlMaxConnections = isMysqlFamilyImage(service.dockerImage)
-      ? (parseDeclaredMaxConnections(resolvedCommand) ?? mysqlDefaults.injected)
+      ? (parseDeclaredMaxConnections(resolvedCommand)
+        ?? mysqlDefaults.injected
+        ?? resolveConfiguredMysqlMaxConnections())
       : null;
     // 注意：这里只是**算出**要注入的命令，还没生效。下面的幂等启动分三档，
     // 只有 `docker run` 那一档真的用 resolvedCommand；running 直接复用、
