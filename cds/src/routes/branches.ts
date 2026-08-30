@@ -10144,6 +10144,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
      * 「已存在」并落库），那是独立的一次改动，不在本 PR 展开。
      */
     const resetTargetDatabase = sanitizeDbName(branchDatabaseName(projectBaseDb, branch));
+    /**
+     * 「复算出来的名字」本身并**不保证唯一**——上面那个推理有个洞。
+     *
+     * `branchDatabaseName` 把分支 slug 截到 28 字符，两个前 28 字符相同的分支会算出
+     * 同一个库名（实测 `claude/mdimp-fast-build-something-one` 与 `...-two` 都得到
+     * `imp_claude_mdimp_fast_build_some`）。以本仓库这种长前缀命名，撞车不是理论风险。
+     * 于是「别的分支的库在算术上不可能等于它」这句话不成立，跨分支删除路径仍在
+     * （Codex 在 PR #1454 的 P1）。
+     *
+     * 这里不改命名规则——改了存量分支库就对不上，reset 会拒绝它本该修的那些库。
+     * 改为**撞名即拒绝**：同项目下若还有别的分支算出同一个名字，谁都别想 DROP 它。
+     * 破坏性操作在身份不明确时必须 fail-closed，宁可不修，不可误删。
+     */
+    const resetTargetCollidingBranches = stateService
+      .getBranchesForProject(projectId)
+      .filter((b) => b.id !== branch.id)
+      .filter((b) => sanitizeDbName(branchDatabaseName(projectBaseDb, b)) === resetTargetDatabase)
+      .map((b) => b.branch || b.id);
     // 其余 mode 维持原语义（按当前绑定库派生一个新的分支库）。
     const defaultTarget = mode === 'reset'
       ? resetTargetDatabase
@@ -10164,6 +10182,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 只排除基础库是不够的：targetDatabase 来自请求体，排掉基础库之后任何其它库名
       // （包括**兄弟分支预览的库**）仍会被 root 权限的建库助手 DROP 掉。跨分支互删是
       // cross-project-isolation 意义上的穿透，所以这里只放行那一个复算出来的名字。
+      // 撞名即拒绝：目标库归属不唯一时，DROP 谁都可能是误删。
+      if (resetTargetCollidingBranches.length > 0) {
+        res.status(409).json({
+          error: 'reset_target_ambiguous',
+          message: `库名 "${resetTargetDatabase}" 同时被本项目的另外 ${resetTargetCollidingBranches.length} 个分支算到（分支名前 28 字符相同被截断成了同一个名字），归属不唯一，拒绝执行 reset。请先改用更短或更早分叉的分支名，或直连数据库人工处理。`,
+          targetDatabase: resetTargetDatabase,
+          collidingBranches: resetTargetCollidingBranches,
+        });
+        return;
+      }
       if (targetDatabase !== resetTargetDatabase) {
         res.status(400).json({
           error: 'reset_refuses_foreign_database',

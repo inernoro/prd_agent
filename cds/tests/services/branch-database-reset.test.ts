@@ -138,6 +138,36 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
    * branchDatabaseName(projectBaseDb, branch)：后缀来自本分支自己的标识，
    * 别的分支的库在算术上不可能等于它，不留伪造输入面。
    */
+  /**
+   * 「复算的名字唯一」这个推理有洞：branchDatabaseName 把分支 slug 截到 28 字符，
+   * 前 28 字符相同的两个分支算出同一个库名（实测
+   * `claude/mdimp-fast-build-something-one` 与 `...-two` 都得到
+   * `imp_claude_mdimp_fast_build_some`）。跨分支删除路径因此仍在。
+   * 不改命名规则（改了存量库就对不上），改为撞名即拒绝——破坏性操作在身份不明确时
+   * 必须 fail-closed。
+   */
+  it('撞名时拒绝 reset，而不是挑一个删', () => {
+    const slice = cloneTasksRouteSlice(readBranchesRoute());
+    expect(slice).toContain('resetTargetCollidingBranches');
+    expect(slice).toContain('reset_target_ambiguous');
+    expect(slice).toContain('res.status(409)');
+    // 撞名检查必须排在真正执行之前
+    const guardAt = slice.indexOf('reset_target_ambiguous');
+    const execAt = slice.indexOf('createMysqlBranchDatabase(rawInfra');
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(execAt).toBeGreaterThan(guardAt);
+  });
+
+  it('红用例：拿掉撞名拒绝，守卫必须变红', () => {
+    const guard = (source: string) => {
+      const slice = cloneTasksRouteSlice(source);
+      expect(slice).toContain('reset_target_ambiguous');
+      expect(slice).toContain('resetTargetCollidingBranches.length > 0');
+    };
+    const real = readBranchesRoute();
+    expectGuardRedOnMutation(guard, real, mutate(real, 'reset_target_ambiguous', 'noop_ambiguous'));
+  });
+
   it('reset 目标只认那一个复算出来的名字', () => {
     const slice = cloneTasksRouteSlice(readBranchesRoute());
     expect(slice).toContain('const resetTargetDatabase = sanitizeDbName(branchDatabaseName(projectBaseDb, branch))');
