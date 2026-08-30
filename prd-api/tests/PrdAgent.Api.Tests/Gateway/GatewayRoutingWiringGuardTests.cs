@@ -166,6 +166,17 @@ public sealed class GatewayRoutingWiringGuardTests
         gate.ShouldContain("RetryCandidates");
         // 「管不着」必须与「拦下」分开：合成一档就会把运维配的应急兜底一起判死。
         gate.ShouldContain("CatalogVerdict.Blocked");
+
+        // 批量取回只许省往返，不许长出第二个判据：放行判定在全文件只能有这一处。
+        // 抄一份进批量分支，两条取值路径就会各判各的，而它们本该是同一道门（形状 3）。
+        Regex.Matches(source, Regex.Escape("docs.Any(IsAllowedOutsideCatalog)")).Count.ShouldBe(
+            1,
+            "名录门的放行判定只允许有一处；批量与单条两条路径必须喂给同一个判据");
+        // 两条路径的每对判定还必须共用同一个条数上限——一边看 20 条、另一边看全部，
+        // 同一对输入会在两条路径上得到不同结论。
+        Regex.Matches(source, Regex.Escape("CatalogPairDocumentCap")).Count.ShouldBeGreaterThanOrEqualTo(
+            3,
+            "单条查询与批量筛选都要按同一个上限截断（常量定义 + 两处使用）");
     }
 
     /// <summary>

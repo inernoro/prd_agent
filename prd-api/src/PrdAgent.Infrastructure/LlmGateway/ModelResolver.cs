@@ -94,7 +94,14 @@ public class ModelResolver : IModelResolver
     {
         if (!resolved.Success) return resolved;
 
-        if (await JudgeAsync(resolved.ActualModel, resolved.ActualPlatformId, ct) != CatalogVerdict.Blocked)
+        // 主选与整条重试链一次取回。逐个判的话，一个成员全是名录外私有模型的大池
+        // （真实租户上有两百多个成员）会在打上游之前先串行做上百次带索引的读——
+        // 判据没错，代价错了。名录内的成员在 JudgeAsync 开头就返回，本来就不进这一批。
+        var gateTargets = new List<ModelResolutionResult> { resolved };
+        if (resolved.RetryCandidates is { Count: > 0 }) gateTargets.AddRange(resolved.RetryCandidates);
+        var batch = await PrefetchCatalogDocsAsync(gateTargets, ct);
+
+        if (await JudgeAsync(resolved.ActualModel, resolved.ActualPlatformId, ct, batch) != CatalogVerdict.Blocked)
         {
             // 主选放行；重试链里越界的成员要摘掉，否则第一次失败后照样会打出去。
             if (resolved.RetryCandidates is { Count: > 0 })
@@ -102,7 +109,7 @@ public class ModelResolver : IModelResolver
                 var kept = new List<ModelResolutionResult>();
                 foreach (var candidate in resolved.RetryCandidates)
                 {
-                    if (await JudgeAsync(candidate.ActualModel, candidate.ActualPlatformId, ct) != CatalogVerdict.Blocked)
+                    if (await JudgeAsync(candidate.ActualModel, candidate.ActualPlatformId, ct, batch) != CatalogVerdict.Blocked)
                     {
                         kept.Add(candidate);
                         continue;
@@ -164,7 +171,11 @@ public class ModelResolver : IModelResolver
         OutOfJurisdiction,
     }
 
-    private async Task<CatalogVerdict> JudgeAsync(string? modelName, string? platformId, CancellationToken ct)
+    private async Task<CatalogVerdict> JudgeAsync(
+        string? modelName,
+        string? platformId,
+        CancellationToken ct,
+        IReadOnlyList<BsonDocument>? batch = null)
     {
         if (string.IsNullOrWhiteSpace(modelName)) return CatalogVerdict.OutOfJurisdiction;
         // 名录命中零额外开销（绝大多数请求走到这里就结束），只有名录外的才多一次带索引的读。
@@ -190,10 +201,12 @@ public class ModelResolver : IModelResolver
         var scopedFilter = string.IsNullOrWhiteSpace(platformId)
             ? nameFilter
             : fb.And(nameFilter, fb.Eq("PlatformId", platformId));
-        var docs = await models
-            .Find(scopedFilter)
-            .Limit(20)
-            .ToListAsync(ct);
+        // 预取拿到的是「这一批名字的全部文档」，按同一套口径在内存里收窄即可；
+        // 预取不成立（超出上限、没有 db）就照旧单条查。**判据只有下面一处**，
+        // 两条取值路径喂给它的是同形状的输入，不许各判各的。
+        var docs = batch is not null
+            ? SelectCatalogDocs(batch, trimmed, platformId)
+            : await models.Find(scopedFilter).Limit(CatalogPairDocumentCap).ToListAsync(ct);
 
         if (docs.Count == 0)
         {
@@ -220,6 +233,74 @@ public class ModelResolver : IModelResolver
         // 走到这里 docs 已经是「该管的那些」：给了 PlatformId 就只有那个 Provider 的，
         // 没给就是同名的全部（退回「任意一条放行过就算放行」）。
         return docs.Any(IsAllowedOutsideCatalog) ? CatalogVerdict.Allowed : CatalogVerdict.Blocked;
+    }
+
+    /// <summary>名录门一次判定的用量上限。超过它就退回逐条查——宁可慢，不拿一份被截断的清单下判断。</summary>
+    private const int CatalogBatchDocumentCap = 2000;
+
+    /// <summary>
+    /// 单次判定（一个模型名 + 一个 Provider）最多看多少条文档。
+    /// 两条取值路径必须用同一个上限：一边看 20 条、另一边看全部的话，
+    /// 同一对输入会在两条路径上得到不同结论，而它们本该是同一个判据。
+    /// </summary>
+    private const int CatalogPairDocumentCap = 200;
+
+    /// <summary>
+    /// 把主选与整条重试链要用到的模型文档一次取回。
+    ///
+    /// 只为省往返，不改判据：返回的是「这一批名字在本租户下的全部文档」，
+    /// 收窄到某个 Provider 由 <see cref="SelectCatalogDocs"/> 按与单条查询同一套口径做。
+    /// 名录内的模型不进这一批（<see cref="JudgeAsync"/> 开头就放行了），所以常见请求这里是空转。
+    ///
+    /// 取不满或超上限时返回 null，调用方照旧逐条查——**一份被截断的清单不能拿来下判断**：
+    /// 那正是这道门此前栽过的形状（判据取的是任意一页，不是它该管的那条）。
+    /// </summary>
+    private async Task<IReadOnlyList<BsonDocument>?> PrefetchCatalogDocsAsync(
+        IReadOnlyList<ModelResolutionResult> targets,
+        CancellationToken ct)
+    {
+        if (_gatewayDb is null) return null;
+        var names = targets
+            .Select(target => target.ActualModel?.Trim() ?? string.Empty)
+            .Where(name => name.Length > 0 && !GatewayModelCatalog.Contains(name))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        // 一两条的时候批量查没有意义，直接让它走单条路径，少一个分支要维护。
+        if (names.Count < 2) return null;
+
+        var fb = Builders<BsonDocument>.Filter;
+        var docs = await _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_models")
+            .Find(fb.And(
+                fb.Eq("TenantId", CurrentTenantId),
+                fb.Or(
+                    fb.In("ModelNameNormalized", names.Select(name => name.ToLowerInvariant())),
+                    fb.In("ModelName", names))))
+            .Limit(CatalogBatchDocumentCap + 1)
+            .ToListAsync(ct);
+        return docs.Count > CatalogBatchDocumentCap ? null : docs;
+    }
+
+    /// <summary>
+    /// 从预取结果里挑出「这一条该管的那些」：两个名字字段都认、给了 Provider 就只留那个 Provider 的。
+    /// 与单条查询的谓词逐字对应，改一边就要改另一边——这也是它紧挨着放的原因。
+    /// </summary>
+    private static List<BsonDocument> SelectCatalogDocs(
+        IReadOnlyList<BsonDocument> batch,
+        string modelName,
+        string? platformId)
+    {
+        var normalized = modelName.ToLowerInvariant();
+        return batch.Where(doc =>
+        {
+            var matchesName = Text(doc, "ModelNameNormalized") == normalized || Text(doc, "ModelName") == modelName;
+            if (!matchesName) return false;
+            return string.IsNullOrWhiteSpace(platformId) || Text(doc, "PlatformId") == platformId;
+        }).Take(CatalogPairDocumentCap).ToList();
+
+        // 字段不是字符串（历史脏数据）时当成空串，而不是抛——判据在请求路径上，
+        // 一条坏文档不该让整次调用炸掉。
+        static string Text(BsonDocument doc, string field)
+            => doc.TryGetValue(field, out var value) && value.IsString ? value.AsString : string.Empty;
     }
 
     /// <summary>
