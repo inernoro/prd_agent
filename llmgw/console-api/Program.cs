@@ -650,23 +650,35 @@ if (exchangeStampClaimedAt is not null)
         foreach (var exchange in exchangeCursor.Current)
         {
             if (!exchange.TryGetValue("Models", out var rawModels) || rawModels is not BsonArray declaredModels) continue;
-            var touched = false;
-            foreach (var declared in declaredModels.OfType<BsonDocument>())
+            // 只挑「该盖而还没盖」的那些别名，名录内的不盖（它本来就在白名单里，与写入路径同一口径）。
+            var pending = declaredModels.OfType<BsonDocument>()
+                .Where(declared => !declared.Contains("AllowedOutsideCatalog"))
+                .Select(declared => declared.GetValue("ModelId", string.Empty))
+                .Where(alias => alias.IsString && alias.AsString.Length > 0 && !ModelCatalog.Contains(alias.AsString))
+                .Distinct()
+                .ToList();
+            if (pending.Count == 0) continue;
+
+            // **只补缺的那几个字段，不整片写回 Models。**
+            // 整片写回的谓词只有 _id：滚动升级期间旧副本在「读出来」和「写回去」之间
+            // 编辑了这个兑换所，这一写就会把他的改动连同新别名一起抹掉、换回读到的那份旧数组——
+            // 迁移顺手做了一次静默回滚。按元素定位就没有这个窗口：没被点名的元素一个字节都不动。
+            var arrayFilter = new BsonDocument
             {
-                if (declared.Contains("AllowedOutsideCatalog")) continue;
-                var alias = declared.GetValue("ModelId", string.Empty).AsString;
-                // 名录内的不盖标记（它本来就在白名单里），与写入路径同一口径。
-                if (alias.Length == 0 || ModelCatalog.Contains(alias)) continue;
-                declared["AllowedOutsideCatalog"] = true;
-                declared["AllowedOutsideCatalogBy"] = "存量迁移（兑换所逐条放行标记落地前已声明，未经人工审阅）";
-                declared["AllowedOutsideCatalogAt"] = exchangeStampClaimedAt.Value;
-                touched = true;
-                stampedAliases++;
-            }
-            if (!touched) continue;
-            await gwModelExchanges.UpdateOneAsync(
+                { "el.ModelId", new BsonDocument("$in", new BsonArray(pending)) },
+                { "el.AllowedOutsideCatalog", new BsonDocument("$exists", false) },
+            };
+            var stampResult = await gwModelExchanges.UpdateOneAsync(
                 Builders<BsonDocument>.Filter.Eq("_id", exchange.GetValue("_id", string.Empty)),
-                Builders<BsonDocument>.Update.Set("Models", declaredModels));
+                Builders<BsonDocument>.Update
+                    .Set("Models.$[el].AllowedOutsideCatalog", true)
+                    .Set("Models.$[el].AllowedOutsideCatalogBy", "存量迁移（兑换所逐条放行标记落地前已声明，未经人工审阅）")
+                    .Set("Models.$[el].AllowedOutsideCatalogAt", exchangeStampClaimedAt.Value),
+                new UpdateOptions
+                {
+                    ArrayFilters = new[] { new BsonDocumentArrayFilterDefinition<BsonDocument>(arrayFilter) },
+                });
+            if (stampResult.ModifiedCount > 0) stampedAliases += pending.Count;
         }
     }
     await CompleteOneShotMigrationAsync(ExchangeStampMigrationId, stampedAliases);

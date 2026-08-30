@@ -363,6 +363,13 @@ export function QuickstartPage() {
   useEffect(() => {
     if (!bundle) return;
     let active = true;
+    // 换了身份或换了路由，旧池的成员就不再是「这条 appCaller 会走的那些」。
+    // 留着它们，输入框里上一轮的模型仍然判「合法」，还会连着上一轮的上游 id 一起钉出去——
+    // 发出的是一条这条 appCaller 根本没被授权用的请求。请求失败时同样要清：
+    // 「查不到池」不等于「还是上次那个池」。
+    setPoolModels([]);
+    setPoolName('');
+    setPoolMemberCount(0);
     void getPools(bundle.requestType).then((response) => {
       if (!active || !response.success) return;
       const pools = response.data.items;
@@ -431,7 +438,7 @@ export function QuickstartPage() {
     curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode, testModel, attachment, testPrompt, testPlatformId),
     env: environmentSnippet(displayBundle),
     skill: agentSkillSnippet(displayBundle, snippetMode),
-  }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode, testModel, attachment, testPrompt]);
+  }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode, testModel, attachment, testPrompt, testPlatformId]);
 
   const copyText = async (name: string, value: string) => {
     await navigator.clipboard.writeText(value);
