@@ -237,19 +237,19 @@ public sealed class ModelCatalogMirrorGuardTests
 
         consoleProgram.ShouldContain(
             $"GetCollection<BsonDocument>(\"{PrdAgent.Core.LlmGateway.GatewayCatalogMigrations.CollectionName}\")",
-            "控制台记迁移的集合名必须与数据面读的那个一致，否则数据面永远读不到完成标记");
+            customMessage: "控制台记迁移的集合名必须与数据面读的那个一致，否则数据面永远读不到完成标记");
 
         foreach (var id in PrdAgent.Core.LlmGateway.GatewayCatalogMigrations.RequiredIds)
         {
             consoleProgram.ShouldContain(
                 $"\"{id}\"",
-                $"数据面要等「{id}」跑完才敢开拦，控制台必须真的用这个 id 记录，否则这道门永久停在只记录不拦");
+                customMessage: $"数据面要等「{id}」跑完才敢开拦，控制台必须真的用这个 id 记录，否则这道门永久停在只记录不拦");
         }
 
         // 完成时间字段同理：控制台只写 ClaimedAt 而不写它，数据面就会一直认为没迁完。
         consoleProgram.ShouldContain(
             $"Set(\"{PrdAgent.Core.LlmGateway.GatewayCatalogMigrations.CompletedAtField}\"",
-            "控制台必须写下完成时间——数据面判「迁完了」认的就是这个字段");
+            customMessage: "控制台必须写下完成时间——数据面判「迁完了」认的就是这个字段");
     }
 
     private static string RepoFile(string relativePath)
