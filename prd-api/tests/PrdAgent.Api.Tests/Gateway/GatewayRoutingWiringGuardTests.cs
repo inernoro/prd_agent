@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Shouldly;
 using Xunit;
 
@@ -369,6 +370,15 @@ public sealed class GatewayRoutingWiringGuardTests
         ensure.ShouldContain(
             "SystemManaged",
             customMessage: "归属认标记，不认码——码没有被任何地方保留，租户可以自助登记同名的一条");
+        // 插入撞唯一索引那一支同样要复判：赢的可能是用户刚登记的业务文档，
+        // 假定「赢的是我们」会让后面签出来的系统密钥一路 403，而凭据自愈修不好归属。
+        ensure.ShouldContain(
+            "winnerIsOurs",
+            customMessage: "撞唯一索引后必须回读胜者并复判归属，不能假定赢的那条是系统自己建的");
+        // 两条归属拒绝路径（先查到 / 撞索引后回读）都要给同一套说得出原因的失败。
+        Regex.Matches(ensure, "系统功能不会接管它").Count.ShouldBe(
+            2,
+            "两条归属判定路径都要拒绝并说明原因；少一条就是有一条路径会默默接管别人的 appCaller");
 
         // 二、推导端点必须认流里夹着的失败帧（与前端真实调用同一形状）。
         console.ShouldContain(

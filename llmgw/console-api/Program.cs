@@ -5551,7 +5551,21 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
         }
         catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
         {
-            // 并发下另一个请求刚建好，按幂等处理。
+            // 撞唯一索引说明并发里有人先建好了——但**不能假定那个人是我们**。
+            // 用户在这一刻自助登记同一个码，赢的就是一条业务文档；把它当成自己的往下走，
+            // 后面签出来的系统密钥会在 serving 的归属比对上一路 403，而凭据自愈修不好
+            // 「这条码不归我」这件事。所以回读胜者，按同一套归属判据复判一次。
+            var winner = await gwAppCallers.Find(callerFilter).FirstOrDefaultAsync();
+            var winnerIsOurs = winner is not null
+                && (winner.AsNullableBool("SystemManaged") == true
+                    || (!winner.Contains("SystemManaged")
+                        && string.Equals(winner.GetStringOrEmpty("SourceSystem"), SystemServiceKeySource, StringComparison.Ordinal)));
+            if (!winnerIsOurs)
+            {
+                return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
+                    $"调用用途码「{SystemIntentDraftAppCaller}」刚被本租户的业务调用方登记走了。"
+                    + "系统功能不会接管它——去「调用用途」把那条改成别的码，或联系管理员协调，之后再回来。");
+            }
         }
     }
 
@@ -5775,6 +5789,8 @@ const int IntentDraftMaxChars = 500;
 const int IntentDraftMaxCompletionTokens = 256;
 // 累积体积的第二道闸：上游若无视 max_tokens（不是所有协议都认），也不能让 raw 无限涨。
 const int IntentDraftMaxRawChars = 4000;
+// 上游失败文案的长度上限：内容保留（要可诊断），但不让它无限长地进 SSE。
+const int IntentDraftMaxErrorChars = 200;
 const string IntentDraftSystemPrompt = """
 你是 LLM 网关的接入助手。用户用一句话说明他要接什么、要做什么，你把它压成调用用途码的两段。
 
@@ -15094,7 +15110,13 @@ static bool TryReadIntentDraftStreamError(JsonElement root, out string message)
         && !string.IsNullOrWhiteSpace(msgEl.GetString()))
     {
         message = msgEl.GetString()!.Trim();
-        if (!message.EndsWith('.') && !message.EndsWith('。')) message += "。";
+        // 上限：这句会进 SSE 与浏览器里的推导痕迹，不能让上游想塞多长塞多长。
+        // 内容本身保留——受众是本租户的网关管理员，而这一页的既有失败文案
+        // （ReadGatewayFailureDetailAsync）也是这样把上游原因端给他的；
+        // 换成一句不带信息的套话，反而违反「失败要给得出下一步」。
+        if (message.Length > IntentDraftMaxErrorChars)
+            message = message[..IntentDraftMaxErrorChars].TrimEnd() + "…";
+        if (!message.EndsWith('.') && !message.EndsWith('。') && !message.EndsWith('…')) message += "。";
     }
     return true;
 }
