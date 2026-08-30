@@ -302,6 +302,45 @@ public sealed class GatewayRoutingWiringGuardTests
         }
     }
 
+    /// <summary>
+    /// 系统调用钉池时必须同时声明策略，且设置页存下去的选择必须是运行时解析得到的那一种。
+    ///
+    /// 两件事都「删掉不会红」，症状却是同一个：设置页说着 A，实际跑的是 B。
+    /// - 只发池 id 不发策略：serving 按 body 的 model 推策略，而这两条请求的 model 恒是
+    ///   「auto」（非空）→ 推成 pinned；池 id 只在策略为 pool 时才顶替 ExpectedModel 进解析，
+    ///   于是选中的池只进了日志上下文，真正跑的是 appCaller 绑定或默认池。
+    /// - 写端点的校验比运行时松：页面加载后被停用/改了类型的模型仍能存进去，
+    ///   下一次系统调用解析不到它就静默落回默认池，而「测试连接」还会报成功。
+    /// </summary>
+    [Fact]
+    public void 系统调用钉池要声明策略且存的选择必须是运行时认的那一种()
+    {
+        var console = File.ReadAllText(Path.Combine(RepoRoot(), "llmgw", "console-api", "Program.cs"));
+
+        // 每一处发池 id 的地方都要配一处声明策略；数量对不上就是有一条路径漏了。
+        var poolHeaders = console.Split("\"X-Gateway-Model-Pool-Id\"").Length - 1;
+        var policyHeaders = console.Split("\"X-Gateway-Model-Policy\"").Length - 1;
+        poolHeaders.ShouldBeGreaterThanOrEqualTo(2, "系统调用的钉池请求数量异常，守卫可能没扫到真实文件");
+        policyHeaders.ShouldBe(
+            poolHeaders,
+            "每一处发 X-Gateway-Model-Pool-Id 的系统调用都必须同时发 X-Gateway-Model-Policy: pool，"
+            + "否则 serving 会按 body 的 model 把策略推成 pinned，选中的池根本不参与解析");
+
+        // 存设置时的校验谓词必须与读端点、运行时同口径：本租户 + chat + 未停用。
+        var saveAt = console.IndexOf("MODEL_POOL_REQUIRED", StringComparison.Ordinal);
+        saveAt.ShouldBeGreaterThanOrEqualTo(0, "找不到设置写端点的校验段，守卫的取值范围需要跟着改");
+        var saveEnd = console.IndexOf("system_settings.update", saveAt, StringComparison.Ordinal);
+        saveEnd.ShouldBeGreaterThan(saveAt, "写端点校验与审计写入的相邻关系变了，守卫的取值范围需要跟着改");
+        var save = console[saveAt..saveEnd];
+
+        save.ShouldContain(
+            "Eq(\"ModelType\", \"chat\")",
+            customMessage: "存池/存模型时要判类型，否则钉一个非对话类的进去，运行时解析不到就静默落回默认池");
+        save.ShouldContain(
+            "Ne(\"Enabled\", false)",
+            customMessage: "存模型时要判未停用：页面加载后被停用的模型仍能存进去，下一次系统调用就落回默认池了");
+    }
+
     [Fact]
     public void 历史别名兼容不得被静默撤销()
     {

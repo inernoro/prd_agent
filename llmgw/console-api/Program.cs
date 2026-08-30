@@ -5830,9 +5830,14 @@ app.MapPut("/gw/system-settings", async (HttpContext http, [FromBody] UpdateSyst
             return Json(ApiEnvelope<object>.Fail("MODEL_POOL_REQUIRED", "选择「模型池」时必须指定一个池"), jsonOptions, 400);
         var poolExists = await gwModelPools.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("_id", modelGroupId),
-            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId))) == 1;
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+            // 读端点只列 chat 池，写端点也要判一次：钉一个别的类型的池，系统调用同样解析不到，
+            // 一样会静默落回默认池。
+            Builders<BsonDocument>.Filter.Eq("ModelType", "chat"))) == 1;
         if (!poolExists)
-            return Json(ApiEnvelope<object>.Fail("MODEL_POOL_NOT_FOUND", "指定的模型池不在当前租户下"), jsonOptions, 404);
+            return Json(ApiEnvelope<object>.Fail(
+                "MODEL_POOL_NOT_FOUND",
+                "指定的模型池在当前租户下不可用（不存在或不是对话类）。回到「服务网关设置」重选一个。"), jsonOptions, 404);
     }
     if (modelSource == "model")
     {
@@ -5841,13 +5846,20 @@ app.MapPut("/gw/system-settings", async (HttpContext http, [FromBody] UpdateSyst
         // 和池一样按租户校验，并且认的是 PublicId：读端点只列本租户的模型，
         // 写端点也必须自己判一次，否则直接构造请求就能把别的租户的模型钉进来；
         // 认 PublicId 也保证存下去的值就是解析器会去匹配的那个值。
+        // 谓词必须与**读端点和运行时**同口径（本租户 + chat + 未停用）。少这两条时，
+        // 页面加载之后被停用、或类型被改走的模型仍能存进去；下一次系统调用解析不到它，
+        // 就静默落回默认池——设置页说着 A，实际跑的是 B，而测试连接还会报成功。
         var modelExists = await gwLogicalModels.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+            Builders<BsonDocument>.Filter.Eq("ModelType", "chat"),
+            Builders<BsonDocument>.Filter.Ne("Enabled", false),
             Builders<BsonDocument>.Filter.Or(
                 Builders<BsonDocument>.Filter.Eq("PublicId", modelName),
                 Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", modelName.ToLowerInvariant())))) > 0;
         if (!modelExists)
-            return Json(ApiEnvelope<object>.Fail("MODEL_NOT_FOUND", "指定的逻辑模型不在当前租户下"), jsonOptions, 404);
+            return Json(ApiEnvelope<object>.Fail(
+                "MODEL_NOT_FOUND",
+                "指定的逻辑模型在当前租户下不可用（不存在、已停用，或已不是对话类）。回到「服务网关设置」重选一个。"), jsonOptions, 404);
     }
 
     // 归属团队不接受写入：系统消耗恒记在系统团队（EnsureSystemTeamAsync）。
@@ -5910,8 +5922,15 @@ app.MapPost("/gw/system-settings/test", async (HttpContext http) =>
         probe.Headers.TryAddWithoutValidation("X-Gateway-Key", access.Key);
         probe.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", access.AppCaller);
         probe.Headers.TryAddWithoutValidation("X-Gateway-Source", SystemServiceKeySource);
+        // 钉池必须同时声明策略：serving 按 body 里的 model 推策略，而这两条请求的 model 恒是
+        // 「auto」——非空，于是被推成 pinned；而 ModelPoolId 只在策略是 pool 时才会顶替
+        // ExpectedModel 进入解析。少这一行，选中的池只会进日志上下文，真正跑的仍是
+        // appCaller 绑定或默认池——设置页说着这个池，实际跑的是另一个（选 A 给 B）。
         if (!string.IsNullOrWhiteSpace(access.PoolId))
+        {
             probe.Headers.TryAddWithoutValidation("X-Gateway-Model-Pool-Id", access.PoolId);
+            probe.Headers.TryAddWithoutValidation("X-Gateway-Model-Policy", "pool");
+        }
 
         using var response = await intentDraftHttp.SendAsync(probe, http.RequestAborted);
         var elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
@@ -6021,8 +6040,15 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
             upstream.Headers.TryAddWithoutValidation("X-Gateway-Key", access.Key);
             upstream.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", access.AppCaller);
             upstream.Headers.TryAddWithoutValidation("X-Gateway-Source", SystemServiceKeySource);
+            // 钉池必须同时声明策略：serving 按 body 里的 model 推策略，而这两条请求的 model 恒是
+            // 「auto」——非空，于是被推成 pinned；而 ModelPoolId 只在策略是 pool 时才会顶替
+            // ExpectedModel 进入解析。少这一行，选中的池只会进日志上下文，真正跑的仍是
+            // appCaller 绑定或默认池——设置页说着这个池，实际跑的是另一个（选 A 给 B）。
             if (!string.IsNullOrWhiteSpace(access.PoolId))
+            {
                 upstream.Headers.TryAddWithoutValidation("X-Gateway-Model-Pool-Id", access.PoolId);
+                upstream.Headers.TryAddWithoutValidation("X-Gateway-Model-Policy", "pool");
+            }
 
             using var response = await intentDraftHttp.SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, draftCt);
             if (!response.IsSuccessStatusCode)
