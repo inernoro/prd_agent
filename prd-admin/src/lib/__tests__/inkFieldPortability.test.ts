@@ -31,13 +31,22 @@ function fragmentShader(): string {
   return body
     .split('\n')
     .filter((l) => !l.trimStart().startsWith('*') && !l.trimStart().startsWith('/*') && !l.trimStart().startsWith('//'))
+    .map((l) => l.replace(/\/\/.*$/, '')) // 行尾注释也去掉，否则注释里提一句 sin 就能把判据弄红
     .join('\n');
 }
 
 describe('首页墨场的跨显卡一致性', () => {
-  it('噪声 hash 不许再用 sin，它的结果由驱动说了算', () => {
+  it('这段 shader 里不许出现三角函数，它们的精度由驱动说了算', () => {
+    // 判据故意管得比「那一句写法」宽：只认 fract(sin(...)) 的直写法，
+    // 把 sin 的结果先存进临时变量、之后再 fract 乘个别的数，就绕过去了——
+    // 而绕过去的那个版本恢复的正是本 PR 要消灭的驱动相关行为。
+    //
+    // 所以这里禁的是整类：这段 shader 的随机性只该来自那个整数 hash，
+    // 它不需要任何三角函数。日后真有正当用途（比如拿 sin(t) 做一次振荡），
+    // 那是一次要当面想清楚的改动——改这条守卫时先回答一句：新加的这个
+    // sin 有没有参与噪声取值？参与了就不行，没参与就在这里显式放行并写明理由。
     const glsl = fragmentShader();
-    expect(glsl).not.toMatch(/fract\s*\(\s*sin\s*\(/);
+    expect(glsl).not.toMatch(/\b(sin|cos|tan)\s*\(/);
     expect(glsl).not.toContain('43758.5453');
   });
 
