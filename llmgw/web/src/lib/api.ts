@@ -743,6 +743,9 @@ export async function draftAppCallerIntent(
     body: JSON.stringify({ intent }),
     signal,
   });
+  // 手写 fetch 也要接住滑动续期：这一页可能是用户唯一在用的端点，漏接就等于他一边在用、
+  // 一边被本地那个还按旧到期时间走的计时器踢下线。
+  applyRenewedToken(response, token);
   if (!response.ok || !response.body) {
     onFrame({ type: 'error', code: 'INTENT_DRAFT_UNAVAILABLE', message: `推导服务返回 ${response.status}，已退回本地关键词判定。` });
     return;

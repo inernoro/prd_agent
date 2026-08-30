@@ -84,6 +84,31 @@ const PROTOCOLS: ProtocolDefinition[] = [
 ];
 
 /**
+ * Gemini 入口的模型**只**从路由段 `models/{model}:generateContent` 读，body 里的 `model`
+ * 它不看。所以选了具体模型却仍打 `models/auto:` 时，真跑的是池调度，而屏幕上写着
+ * 「实际执行 X」——测试结果与账单都对不上那句话。
+ *
+ * 名字带斜杠的模型（聚合型上游的 `厂商/模型`）放不进单个路由段，这里不赌编码后能不能匹配：
+ * 这种情况保持 auto，并且**不谎称**执行了它（见 pinnedTestModel）。
+ */
+function geminiRouteModel(model: string): string | null {
+  if (!model || model === 'auto' || model.includes('/')) return null;
+  return model;
+}
+
+/** 本次请求真正要打的路径：Gemini 把选中的模型写进路由段，其余协议是固定路径。 */
+function protocolPathFor(definition: ProtocolDefinition, model: string): string {
+  if (definition.ingressProtocol !== 'gemini-compatible') return definition.path;
+  return `/v1beta/models/${encodeURIComponent(geminiRouteModel(model) ?? 'auto')}:generateContent`;
+}
+
+/** 这次调用真正钉住的模型；钉不住就是 auto，页面按 auto 说话，不照着输入框声称。 */
+function pinnedTestModel(protocol: Protocol, model: string): string {
+  if (protocol !== 'gemini') return model;
+  return geminiRouteModel(model) ?? 'auto';
+}
+
+/**
  * 接入方式只决定「复制走的是哪种片段」与 clientCode，**不再预填 appCallerCode**。
  * 以前 Cherry Studio 一档带着现成的码，点一下就能绕过「说清用途」这道门。
  */
@@ -270,11 +295,17 @@ export function QuickstartPage() {
   // 输入框空着就是 auto；填了就必须是这个池里的健康成员，否则不让执行（选了也是白跑）。
   const testModel = modelQuery.trim() || 'auto';
   const modelValid = testModel === 'auto' || poolModels.includes(testModel);
+  // 页面各处说「实际执行 X」时必须用这个，不能用输入框里那个：Gemini 钉不住的模型
+  // 会退回池调度，照着输入框声称就是在编造一个没发生的执行结果。
+  const effectiveTestModel = pinnedTestModel(protocol, testModel);
+  const geminiModelDropped = testModel !== 'auto' && effectiveTestModel === 'auto';
   const modelHint = !modelValid
     ? '这个模型不在池内健康成员里，换一个或清空走 auto。'
-    : poolModels.length === 0
-      ? '池内暂无健康成员，走 auto。'
-      : `「${poolName || '默认池'}」${poolMemberCount} 个成员中 ${poolModels.length} 个健康，可搜索。`;
+    : geminiModelDropped
+      ? 'Gemini 入口的模型只能写进路由段，这个名字里有斜杠放不进去，本次按池调度执行。换 OpenAI 或 GW Native 入口可以钉住它。'
+      : poolModels.length === 0
+        ? '池内暂无健康成员，走 auto。'
+        : `「${poolName || '默认池'}」${poolMemberCount} 个成员中 ${poolModels.length} 个健康，可搜索。`;
   /*
     调用用途码只从用户那句「我想做什么」来。首选让网关自己的模型推（它读得懂
     「接入小米音响，对接大模型网关指令集」这种关键词表覆盖不到的说法）；
@@ -702,7 +733,7 @@ export function QuickstartPage() {
         'X-Request-Id': requestId,
       };
       if (mode === 'safe') headers['X-Gateway-Dry-Run'] = 'quickstart';
-      const response = await fetch(new URL(definition.path, `${normalizedBaseUrl}/`).toString(), {
+      const response = await fetch(new URL(protocolPathFor(definition, testModel), `${normalizedBaseUrl}/`).toString(), {
         method: 'POST',
         headers,
         body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment, false, testPrompt)),
@@ -755,7 +786,7 @@ export function QuickstartPage() {
     setActionError(null);
     setLiveOutput({ kind: 'text', text: '', done: false });
     try {
-      const response = await fetch(new URL(definition.path, `${normalizedBaseUrl}/`).toString(), {
+      const response = await fetch(new URL(protocolPathFor(definition, testModel), `${normalizedBaseUrl}/`).toString(), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${target.key}`,
@@ -803,7 +834,7 @@ export function QuickstartPage() {
         setLiveOutput(readNonStreamOutput(payload));
       }
       markRequestCompleted(tenant?.id);
-      setTestResult({ ok: true, message: `真实调用已返回，模型 ${testModel === 'auto' ? currentRoutePreview?.actualModel || '由池调度' : testModel}；本次会计入用量与费用。`, requestId: actualRequestId });
+      setTestResult({ ok: true, message: `真实调用已返回，模型 ${effectiveTestModel === 'auto' ? currentRoutePreview?.actualModel || '由池调度' : effectiveTestModel}；本次会计入用量与费用。`, requestId: actualRequestId });
     } catch (error) {
       setLiveOutput(null);
       setTestResult({ ok: false, message: error instanceof Error ? `真实调用失败：${error.message}` : '真实调用失败。' });
@@ -1412,7 +1443,7 @@ export function QuickstartPage() {
                             {liveOutput ? (
                               <small className="lg-qs-io-meta">
                                 {liveOutput.done
-                                  ? `${testElapsedMs === null ? '已返回' : `${(testElapsedMs / 1000).toFixed(1)}s`} · 实际执行 ${testModel === 'auto' ? currentRoutePreview?.actualModel || '由池调度' : testModel}`
+                                  ? `${testElapsedMs === null ? '已返回' : `${(testElapsedMs / 1000).toFixed(1)}s`} · 实际执行 ${effectiveTestModel === 'auto' ? currentRoutePreview?.actualModel || '由池调度' : effectiveTestModel}`
                                   : `已用 ${((Date.now() - (runStartedAt ?? Date.now())) / 1000).toFixed(1)}s`}
                               </small>
                             ) : null}
@@ -2053,7 +2084,7 @@ function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: strin
     .replace(requestIdToken, `'"$REQUEST_ID"'`);
   const extra = protocol === 'claude' ? ' \\\n  -H "anthropic-version: 2023-06-01"' : '';
   return `REQUEST_ID="quickstart-\$(date +%s)-\$RANDOM"
-curl "${baseUrl}${definition.path}" \\
+curl "${baseUrl}${protocolPathFor(definition, model)}" \\
   ${common}${extra} \\
   -H "Content-Type: application/json" \\
   -d '${body}'`;

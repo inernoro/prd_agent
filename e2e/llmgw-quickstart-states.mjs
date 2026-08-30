@@ -52,6 +52,8 @@ let gatewayMode = 'pass';
 const posted = [];
 /** 推导端点收到的请求体：断言送过去的就是用户写的那句话。 */
 const drafted = [];
+/** 每个控制台 API 请求带的 Authorization：用来验滑动续期真的被接住了。 */
+const authSeen = [];
 /** 推导桩的行为：model = 给出草案；unavailable = 模型没接通，前端应降级到本地关键词表。 */
 let draftMode = 'model';
 /** 真实调用发出的请求体：用来断言上传的内容真的进了 payload。 */
@@ -67,11 +69,13 @@ const STUBS = {
     strategyType: 0, sourceCollection: 'llmgw', authority: 'llmgw', models: [
       { modelId: 'demo/chat-1', platformId: 'p1', priority: 1, healthStatus: 0, healthStatusLabel: 'healthy', consecutiveFailures: 0, consecutiveSuccesses: 3, isMain: true, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
       { modelId: 'demo/chat-2', platformId: 'p1', priority: 2, healthStatus: 0, healthStatusLabel: 'healthy', consecutiveFailures: 0, consecutiveSuccesses: 1, isMain: false, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
+      // 名字不带斜杠：Gemini 的路由段只装得下这一种，正向断言靠它。
+      { modelId: 'flash-demo', platformId: 'p1', priority: 3, healthStatus: 0, healthStatusLabel: 'healthy', consecutiveFailures: 0, consecutiveSuccesses: 2, isMain: false, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
       { modelId: 'demo/chat-degraded', platformId: 'p1', priority: 3, healthStatus: 1, healthStatusLabel: 'degraded', consecutiveFailures: 4, consecutiveSuccesses: 0, isMain: false, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
       { modelId: 'demo/chat-down', platformId: 'p1', priority: 4, healthStatus: 2, healthStatusLabel: 'unavailable', consecutiveFailures: 9, consecutiveSuccesses: 0, isMain: false, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
     ],
     boundAppCallerCount: 0, boundAppCallers: [], recentRequests: 0, recentSucceeded: 0, recentFailed: 0,
-    trafficWindowHours: 168, recentTenRequests: 0, health: 'healthy', healthyMembers: 2, degradedMembers: 0,
+    trafficWindowHours: 168, recentTenRequests: 0, health: 'healthy', healthyMembers: 3, degradedMembers: 0,
     unavailableMembers: 0, managedByRegistry: false, appendOnly: false,
   }, {
     id: 'pool-2', name: '实验池', code: 'chat-lab', priority: 2, modelType: 'chat', isDefaultForType: false,
@@ -137,6 +141,7 @@ const server = http.createServer((req, res) => {
   if (p === '/gw/v1/resolve') return json(res, 200, { success: true, actualModel: 'demo/chat-1', actualPlatformName: '教程假上游', modelGroupName: '对话默认池', protocol: 'openai' });
   if (p.startsWith('/llmgw/gw/')) {
     const api = p.replace('/llmgw/gw', '');
+    authSeen.push({ api, authorization: req.headers.authorization ?? null });
     if (api === '/auth/login') {
       return json(res, 200, { success: true, error: null, data: {
         token: 'stub', username: 'zhou', displayName: '周越', expiresAt: new Date(Date.now() + 3600_000).toISOString(),
@@ -155,7 +160,13 @@ const server = http.createServer((req, res) => {
           res.end();
           return;
         }
-        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        // 服务端滑动续期通过这两个响应头换发新 token。推导是手写 fetch（要流），
+        // 漏接就等于用户一边在用这一页、一边被本地那个还按旧到期时间走的计时器踢下线。
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'X-Gw-Token': 'renewed-stub',
+          'X-Gw-Token-Expires-At': new Date(Date.now() + 7200_000).toISOString(),
+        });
         res.write(`data: ${JSON.stringify({ type: 'stage', stage: 'thinking', text: '模型正在推导两段码' })}\n\n`);
         const frames = ['{"app":"xiaomi-', 'speaker","feature":"command-', 'intent","requestType":"chat",', '"reason":"从「小米音响」判出调用方，从「指令集」判出场景。"}'];
         let i = 0;
@@ -367,6 +378,13 @@ check('密钥主区排在页签之上', await page.evaluate(() => {
 }), true);
 check('产物屏露出本次登记的调用用途码', (await page.locator('.lg-qs-hero.is-caller code').innerText()).trim(), 'xiaomi-speaker.command-intent::chat');
 check('提交给控制台的就是模型推出来的码', posted.find((item) => item.api === '/app-callers')?.body?.appCallerCode, 'xiaomi-speaker.command-intent::chat');
+// 推导那条是手写 fetch（要流式），滑动续期的响应头必须照样接住：漏接的话，用户一边在用
+// 这一页、一边被本地那个还按旧到期时间走的计时器踢下线。判据看**后续请求带的是哪把 token**。
+check('推导响应的续期 token 被后续请求用上', (() => {
+  const draftAt = authSeen.findIndex((item) => item.api === '/app-callers/draft');
+  const after = authSeen.slice(draftAt + 1).find((item) => item.authorization);
+  return after?.authorization ?? '(后面没有带鉴权的请求)';
+})(), 'Bearer renewed-stub');
 check('调用用途卡标出归属团队', (await page.locator('.lg-qs-hero.is-caller small').innerText()).includes('归属团队 核心平台组'), true);
 // 切到 cURL 页：测试栏与片段在这一页，接入信息卡让位。
 await page.locator('.lg-qs-result-tabs > button', { hasText: 'cURL' }).click();
@@ -383,7 +401,7 @@ check('切到 cURL 页后密钥仍在', [
 ], [1, true]);
 // 候选只能来自这条 appCaller 真正走的那个池：另一个同类型池的成员不许混进来，
 // 否则真实租户上会平铺出 200+ 个模型，且违反「可选模型必须来自获准的池」。
-check('模型候选只来自被路由到的池、且只列健康成员', await page.$$eval('#lg-qs-model-options option', (nodes) => nodes.map((n) => n.value)), ['demo/chat-1', 'demo/chat-2']);
+check('模型候选只来自被路由到的池、且只列健康成员', await page.$$eval('#lg-qs-model-options option', (nodes) => nodes.map((n) => n.value)), ['demo/chat-1', 'demo/chat-2', 'flash-demo']);
 /*
   产物屏「一屏装下」的口径，2026-08-28 随试跑区改版收窄了一档，写清为什么：
   cURL 页多出了「上输入 / 下输出」这一对（各 88px），1440x900 下再要求整页零滚动，
@@ -431,7 +449,7 @@ check('试跑结果块渲染出来了', Boolean(okBox), true);
 check('试跑结果块紧贴产物区顶部', Boolean(okBox && artifactsBox && okBox.y - artifactsBox.y < 120), true);
 check('成功态留下 requestId 回查深链', await page.locator(`.lg-test-result.is-ok a[href*="requestId=${REQUEST_ID}"]`).count(), 1);
 // 候选提示与计费提示已合成一句（改版后它们同属「按下去会发生什么」），所以断言的是它包含健康数与总数。
-check('候选提示写明健康数与总数', (await page.locator('.lg-qs-testbar-models').innerText()).includes('「对话默认池」4 个成员中 2 个健康，可搜索。'), true);
+check('候选提示写明健康数与总数', (await page.locator('.lg-qs-testbar-models').innerText()).includes('「对话默认池」5 个成员中 3 个健康，可搜索。'), true);
 check('同一句里说清两个按钮的计费差别', (await page.locator('.lg-qs-testbar-models').innerText()).includes('安全试跑不打上游、不计费；真实调用会计入用量与费用。'), true);
 // 填一个不在健康清单里的模型：执行必须被挡住，否则那一次试跑注定白跑。
 await page.getByLabel('测试模型').fill('demo/chat-down');
@@ -447,6 +465,32 @@ check('cURL 跟着所选模型变', (await page.locator('.lg-qs-code').innerText
 await page.getByLabel('测试模型').fill('');
 await page.waitForTimeout(300);
 check('清空即回到 auto', (await page.locator('.lg-qs-code').innerText()).includes('"model": "auto"'), true);
+
+/*
+  ── Gemini 入口：模型只认路由段，页面不许拿 body 里的 model 冒充「钉住了」──────
+  serving 的 gemini 端点从 `models/{model}:generateContent` 这一段取模型，body 里的
+  `model` 它不读。所以 body 写着 demo/chat-2、路径写着 models/auto 时，真跑的是池调度，
+  而屏幕上若还写「实际执行 demo/chat-2」，那句话就是编的。
+  这里钉两件事：路径必须是这次真要打的那条；钉不住时页面必须**明说**退回了池调度。
+*/
+await page.selectOption('select[aria-label="入口协议"]', 'gemini');
+await page.waitForTimeout(300);
+await page.getByLabel('测试模型').fill('demo/chat-2');
+await page.waitForTimeout(300);
+await page.getByLabel('测试模型').fill('flash-demo');
+await page.waitForTimeout(300);
+check('Gemini 把选中的模型钉进路由段', (await page.locator('.lg-qs-code').innerText()).includes('/v1beta/models/flash-demo:generateContent'), true);
+await page.getByLabel('测试模型').fill('demo/chat-2');
+await page.waitForTimeout(300);
+const geminiCurl = await page.locator('.lg-qs-code').innerText();
+// 名字里带斜杠放不进单个路由段：保持 auto，但必须说清为什么，不许闷着按 auto 跑却声称钉住了。
+check('斜杠模型进不了 Gemini 路由段时保持 auto', geminiCurl.includes('/v1beta/models/auto:generateContent'), true);
+check('保持 auto 时页面明说退回池调度', (await page.locator('.lg-qs-testbar-models').innerText()).includes('本次按池调度执行'), true);
+await page.getByLabel('测试模型').fill('');
+await page.waitForTimeout(300);
+await page.selectOption('select[aria-label="入口协议"]', 'openai');
+await page.waitForTimeout(300);
+check('切回 OpenAI 入口路径复原', (await page.locator('.lg-qs-code').innerText()).includes('/v1/chat/completions'), true);
 
 // 提示词页：三种取用方式，系统提示词里必须带上这条码，且**不带密钥明文**。
 await page.locator('.lg-qs-result-tabs > button', { hasText: '提示词' }).click();
