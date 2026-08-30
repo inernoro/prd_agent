@@ -361,8 +361,11 @@ public sealed class GatewayRoutingWiringGuardTests
         // 一、接管别人的同码 appCaller 是唯一会动到用户既有数据的路径，必须先判归属再搬。
         var ensureAt = console.IndexOf("var existingCaller = await gwAppCallers.Find(callerFilter)", StringComparison.Ordinal);
         ensureAt.ShouldBeGreaterThanOrEqualTo(0, "找不到系统 appCaller 的登记段，守卫的取值范围需要跟着改");
-        var ensureEnd = console.IndexOf("\n    else\n", ensureAt, StringComparison.Ordinal);
-        ensureEnd.ShouldBeGreaterThan(ensureAt, "登记段与新建分支的相邻关系变了，守卫的取值范围需要跟着改");
+        // 取值范围要盖住 if/else 两支：先查到的那支判 callerIsOurs，新建那支撞唯一索引后回读复判
+        // winnerIsOurs。只切到 else 之前就只剩一条路径可查，另一条默默接管别人的 appCaller 也不会红。
+        var ensureEnd = console.IndexOf(
+            "var keyId = settings.AsNullableString(\"ServiceKeyId\");", ensureAt, StringComparison.Ordinal);
+        ensureEnd.ShouldBeGreaterThan(ensureAt, "登记段与随后的密钥自愈段相邻关系变了，守卫的取值范围需要跟着改");
         var ensure = console[ensureAt..ensureEnd];
         ensure.ShouldContain(
             "callerIsOurs",
