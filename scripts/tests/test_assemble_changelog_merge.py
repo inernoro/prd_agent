@@ -160,6 +160,18 @@ def test_write_is_atomic_on_failure() -> None:
         check(not leftovers, f"失败后残留了临时文件：{leftovers}")
 
 
+def test_write_preserves_file_mode() -> None:
+    """替换不许把目标文件的权限换成 mkstemp 的 0600（共享工作区里别人就读不到了）。"""
+    with tempfile.TemporaryDirectory() as d:
+        target = os.path.join(d, "CHANGELOG.md")
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(BASE)
+        os.chmod(target, 0o644)
+        write_atomic(target, BASE + "\n新内容\n")
+        mode = os.stat(target).st_mode & 0o7777
+        check(mode == 0o644, f"合并后权限从 644 变成了 {oct(mode)}")
+
+
 def main() -> int:
     for fn in (
         test_merges_into_existing_day,
@@ -169,13 +181,14 @@ def main() -> int:
         test_dry_run_plan_matches_real_merge,
         test_does_not_touch_released_sections,
         test_write_is_atomic_on_failure,
+        test_write_preserves_file_mode,
     ):
         fn()
     if FAILURES:
         for f in FAILURES:
             print(f"[FAIL] {f}")
         return 1
-    print("[OK] changelog 合并守卫全绿（同日期并段 / 新日期按序插入 / 补登旧日期不乱序 / dry-run 与真跑一致 / 不碰已发版段 / 写入原子）")
+    print("[OK] changelog 合并守卫全绿（同日期并段 / 新日期按序插入 / 补登旧日期不乱序 / dry-run 与真跑一致 / 不碰已发版段 / 写入原子 / 权限不变）")
     return 0
 
 

@@ -150,6 +150,13 @@ def write_atomic(path: str, content: str) -> None:
             fh.write(content)
             fh.flush()
             os.fsync(fh.fileno())
+        # mkstemp 建出来的是 0600，os.replace 会把这个权限一起带到目标文件上——
+        # 一次合并就能把 0644 的 CHANGELOG.md 变成只有属主读得了，共享工作区里
+        # 其它用户与服务账号从此读不到。所以替换前先把原文件的权限抄到临时文件上。
+        try:
+            os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+        except FileNotFoundError:
+            pass  # 目标文件本来就不存在：保持 mkstemp 的保守权限
         os.replace(tmp, path)
     except BaseException:
         # 替换没成功就把临时文件清掉，原文件一个字节都没动过
