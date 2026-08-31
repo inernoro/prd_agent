@@ -15595,7 +15595,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     pathPrefixes: string[];
     project: { subdomain: string; name: string; path: string };
     branchOverride: { subdomain: string; name: string; path: string } | null;
-    effective: { subdomain: string; name: string; path: string };
+    /** `primary` 由 compose 的 cds.web-entry-primary 声明，本表单不编辑，只透出让用户知道谁是主入口 */
+    effective: { subdomain: string; name: string; path: string; primary: boolean };
     /** 当前这条配置算出来的落地 URL；配不出入口时为空串 */
     url: string;
   };
@@ -15651,12 +15652,76 @@ export function createBranchRouter(deps: RouterDeps): Router {
           subdomain: sub,
           name: effectiveEntry?.name || '',
           path: effectiveEntry?.path || '/',
+          primary: Boolean(effectiveEntry?.primary),
         },
         url,
       };
     });
     return { previewSlug, services };
   };
+
+  /**
+   * 这条命名子域在**某一条分支上**会不会撞车，返回人类可读的冲突原因。
+   *
+   * 为什么要按分支逐条算：命名 host 是 `<该分支的 previewSlug>-<subdomain>`，
+   * 存到项目档时**该项目的每条分支**都会各自拼出一个 host，只验请求这条分支
+   * 等于放过其它分支的撞车——那边发布器只会静默跳过路由，用户看到的是
+   * 「保存成功但地址打不开」（Codex review P1）。
+   *
+   * 三类占位都要查，缺一类就会存下一条永远发不出去的入口：
+   *   1. 同分支另一个服务已经在用同一个子域（发布器只保留首个）；
+   *   2. 别的分支的 preview host / 已发布命名服务 host；
+   *   3. 子域别名与完整自定义域名——**含本分支自己的**：发布器的 occupiedHosts
+   *      不跳过自己，本分支别名占走的 host 同样会让这条服务路由被跳过
+   *      （Codex review P2），所以这里也不能因为「是自己」就放行。
+   * 唯一豁免的是「这个服务自己当前已发布的那条 host」，否则原样再存一次都会 409。
+   */
+  const namedHostConflictsOnBranch = (
+    branch: BranchEntry,
+    serviceId: string,
+    subdomain: string,
+    roots: string[],
+  ): string[] => {
+    const project = stateService.getProject(branch.projectId);
+    const slug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug;
+    if (!slug) return [];
+    const label = namedServiceLabel(slug, subdomain);
+    // 首标签超限的分支本来就发不出这条命名路由（发布器会 warn 并跳过），
+    // 那是「这条分支享受不到」而不是「撞了别人」，不在这里拦。
+    if (!isPublishableNamedLabel(label)) return [];
+    const hosts = roots.map((root) => `${label}.${root}`.toLowerCase());
+    const conflicts: string[] = [];
+    for (const bp of stateService.getEffectiveProfilesForBranch(branch)) {
+      if (bp.id === serviceId) continue;
+      if (resolveEffectiveProfile(bp, branch).subdomain === subdomain) {
+        conflicts.push(`分支 "${branch.id}" 的服务 "${bp.id}" 已经在用子域 "${subdomain}"`);
+      }
+    }
+    for (const collision of findPreviewHostCollisions(hosts)) {
+      // 本分支自己那条命名服务 host = 这个服务当前已发布的地址，不算冲突；
+      // 同分支**别的**服务占用的情况已由上面一段单独报出，不会漏。
+      if (collision.conflictWith === branch.id && collision.reason === 'service-subdomain') continue;
+      conflicts.push(`"${collision.domain}" 已被分支 "${collision.conflictWith}" 占用`);
+    }
+    const owners = occupiedHostOwners(stateService.getAllBranches(), roots);
+    for (const host of hosts) {
+      const owner = owners.get(host);
+      if (owner) conflicts.push(`"${host}" 已被分支 "${owner}" 的子域别名或自定义域名占用`);
+    }
+    return conflicts;
+  };
+
+  /** 存项目档时会跟着变的分支：同项目、且没有用分支档把这个服务的子域钉死的。 */
+  const branchesInheritingProfile = (
+    projectId: string,
+    serviceId: string,
+    requestingBranchId: string,
+  ): BranchEntry[] => stateService.getAllBranches().filter((b) => {
+    if ((b.projectId || 'default') !== projectId) return false;
+    // 请求这条分支的覆盖会被本次保存清掉，所以它一定继承项目值。
+    if (b.id === requestingBranchId) return true;
+    return b.profileOverrides?.[serviceId]?.subdomain === undefined;
+  });
 
   router.get('/branches/:id/web-entry-config', (req, res) => {
     const { id } = req.params;
@@ -15730,10 +15795,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         return;
       }
-      if (subdomain && !name) {
-        res.status(400).json({ error: `服务 "${serviceId}" 配了子域但没有入口名称；名称是入口显示与存在的凭据` });
-        return;
-      }
+      // 「有子域没名称」是**合法且常见**的形态：API-only 服务（如网关 serving）
+      // 靠 cds.subdomain 拿一条可被调用的命名 URL，本来就不该出现在用户入口清单里。
+      // 早先在这里 400 会把这类服务逼进死角：要么编一个入口名，要么把行删掉，
+      // 而删行等于把它已有的命名 API 路由清掉（Codex review P1）。
       if (name && normalizeWebEntryPath(path) === null) {
         res.status(400).json({ error: `入口路径 "${path}" 非法：必须是以 / 开头的同源路径，且不能是健康探针路径` });
         return;
@@ -15753,21 +15818,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
           return;
         }
         const roots = config.rootDomains?.length ? config.rootDomains : [primaryRoot];
-        const hosts = roots.map((root) => `${label}.${root}`.toLowerCase());
-        // 占位判定必须与发布器同口径：别名与完整自定义域名（occupiedHostOwners）让
-        // 命名路由被静默跳过，preview slug / 其它分支的命名服务 host 则是真撞车。
-        // 只查一半，用户会存下一条永远发不出去、面板上却写着地址的入口。
-        const occupiedOwners = occupiedHostOwners(stateService.getAllBranches(), roots);
-        const collisions = [
-          ...findPreviewHostCollisions(hosts),
-          ...hosts.flatMap((host) => {
-            const owner = occupiedOwners.get(host);
-            return owner ? [{ domain: host, conflictWith: owner, reason: 'alias' as const }] : [];
-          }),
-        ].filter((c) => c.conflictWith !== id);
+        // 存分支档只影响本分支；存项目档要把**每条会继承这个值的分支**都验一遍。
+        const affected = scope === 'branch'
+          ? [entry]
+          : branchesInheritingProfile(entry.projectId || 'default', serviceId, id);
+        const collisions = affected.flatMap((b) =>
+          namedHostConflictsOnBranch(b, serviceId, subdomain, roots).map((message) => ({ branchId: b.id, message })),
+        );
         if (collisions.length > 0) {
           res.status(409).json({
-            error: `子域 "${subdomain}" 生成的地址已被占用：${collisions.map((c) => `"${c.domain}" 属于分支 "${c.conflictWith}"`).join('; ')}`,
+            error: `子域 "${subdomain}" 无法使用：${collisions.map((c) => c.message).join('; ')}`,
             collisions,
           });
           return;
@@ -15779,7 +15839,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       for (const item of normalized) {
         const row = rowById.get(item.serviceId)!;
-        const webEntry = item.name ? { name: item.name, path: item.path } : undefined;
+        // `primary`（cds.web-entry-primary）不是这个表单编辑的字段，但它决定了
+        // selectPrimaryWebEntry 挑谁当主入口。整对象替换会把它顺手丢掉，于是
+        // 一次改名就能把主入口挪到别的服务上、连主域名 URL 一起变（Codex review P2）。
+        // 所以按档位把现有的 primary 原样带过去。
+        const baselineEntry = stateService.getBuildProfile(item.serviceId)?.webEntry;
+        const effectiveEntry = scope === 'project'
+          ? baselineEntry
+          : (entry.profileOverrides?.[item.serviceId]?.webEntry ?? baselineEntry);
+        const buildEntry = (primary?: boolean) => (
+          item.name ? { name: item.name, path: item.path, ...(primary ? { primary: true } : {}) } : undefined
+        );
+        const webEntry = buildEntry(effectiveEntry?.primary);
         if (scope === 'project') {
           const profile = stateService.getBuildProfile(item.serviceId);
           if (!profile) {

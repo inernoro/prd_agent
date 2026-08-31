@@ -37,7 +37,7 @@ export interface WebEntryConfigService {
   pathPrefixes: string[];
   project: { subdomain: string; name: string; path: string };
   branchOverride: { subdomain: string; name: string; path: string } | null;
-  effective: { subdomain: string; name: string; path: string };
+  effective: { subdomain: string; name: string; path: string; primary: boolean };
   url: string;
 }
 
@@ -170,7 +170,8 @@ export function WebEntryConfigDialog({
       if (invalidSubdomain(row.subdomain)) {
         return `子域 "${row.subdomain}" 非法：只能用小写字母、数字、连字符，不以连字符开头结尾`;
       }
-      if (row.subdomain && !row.name) return `服务 "${row.serviceId}" 配了子域，还需要填入口名称`;
+      // 「有子域没名称」合法：API-only 服务（如网关 serving）就是这个形态——
+      // 有一条可被调用的命名 URL，但不该出现在用户入口清单里。
       if (row.path && !row.path.startsWith('/')) return `入口路径 "${row.path}" 必须以 / 开头`;
       if (row.subdomain) {
         const owner = seen.get(row.subdomain);
@@ -258,6 +259,12 @@ export function WebEntryConfigDialog({
           {rows.map((row, index) => {
             const service = serviceById.get(row.serviceId);
             const url = previewUrlFor(row, service, config?.previewSlug || '', config?.rootDomain || '');
+            // 有子域没名称 = API-only 服务：路由照发，只是不进用户入口清单。
+            // 这条地址仍然要给出来，否则用户以为自己什么都没配到。
+            const routeOnlyUrl = !row.name && row.subdomain && !invalidSubdomain(row.subdomain)
+              && !service?.handlesRoot && config?.previewSlug
+              ? `https://${config.previewSlug}-${row.subdomain}.${config.rootDomain}`
+              : '';
             return (
               <div key={row.serviceId} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/30 p-3">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -275,6 +282,10 @@ export function WebEntryConfigDialog({
                   ) : null}
                   {service?.branchOverride ? (
                     <span className="rounded border border-warn/40 px-1.5 py-0.5 text-[10px] text-warn">当前值来自本分支覆盖</span>
+                  ) : null}
+                  {/* primary 由 compose 声明、本表单不编辑，标出来是让用户知道改名不会换掉主入口 */}
+                  {service?.effective.primary ? (
+                    <span className="rounded border border-ok/40 px-1.5 py-0.5 text-[10px] text-ok">主入口</span>
                   ) : null}
                   <Button
                     variant="ghost"
@@ -320,8 +331,21 @@ export function WebEntryConfigDialog({
                 </div>
 
                 <div className="mt-2 flex min-w-0 items-center gap-2 text-xs">
-                  <span className="shrink-0 text-muted-foreground">地址</span>
-                  {url ? (
+                  <span className="shrink-0 text-muted-foreground">{routeOnlyUrl ? '路由地址' : '地址'}</span>
+                  {routeOnlyUrl ? (
+                    <span className="flex min-w-0 items-center gap-2">
+                      <a
+                        href={routeOnlyUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex min-w-0 items-center gap-1 truncate font-mono text-foreground hover:underline"
+                      >
+                        <span className="truncate">{routeOnlyUrl}</span>
+                        <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                      </a>
+                      <span className="shrink-0 text-muted-foreground">未命名，只发路由、不进入口清单</span>
+                    </span>
+                  ) : url ? (
                     <a
                       href={url}
                       target="_blank"

@@ -616,7 +616,7 @@ describe('Branch Routes', () => {
       expect(gateway.hostPort).toBe(18101);
       expect(gateway.status).toBe('running');
       expect(gateway.origin).toBe('project');
-      expect(gateway.effective).toEqual({ subdomain: '', name: '', path: '/' });
+      expect(gateway.effective).toEqual({ subdomain: '', name: '', path: '/', primary: false });
       const web = body.services.find((s) => s.serviceId === 'web');
       expect(web.handlesRoot).toBe(true);
       expect(web.url).toBe(`https://${body.previewSlug}.example.test`);
@@ -683,7 +683,7 @@ describe('Branch Routes', () => {
       expect(await webEntryNames('branch-a')).toEqual([]);
     });
 
-    it('拒绝非法子域、缺名称的子域和非法路径', async () => {
+    it('拒绝非法子域与探针路径', async () => {
       seedProject('proj-a', 'a');
       seedProfiles('proj-a');
       seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
@@ -692,11 +692,6 @@ describe('Branch Routes', () => {
         scope: 'project', entries: [{ serviceId: 'gateway', name: 'GW', subdomain: 'Bad_Sub' }],
       }, { 'X-Test-Key': 'A' });
       expect(bad.status).toBe(400);
-
-      const noName = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
-        scope: 'project', entries: [{ serviceId: 'gateway', name: '', subdomain: 'gw' }],
-      }, { 'X-Test-Key': 'A' });
-      expect(noName.status).toBe(400);
 
       const probePath = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
         scope: 'project', entries: [{ serviceId: 'gateway', name: 'GW', subdomain: 'gw', path: '/healthz' }],
@@ -723,6 +718,111 @@ describe('Branch Routes', () => {
 
       expect(res.status).toBe(409);
       expect(stateService.getBuildProfile('gateway')!.subdomain).toBeUndefined();
+    });
+
+    /*
+     * 下面四条是 Codex review（PR #1461）报出的四个洞，每条都钉住「保存成功却发不出路由」
+     * 那一类静默失败：判据是 state 与 409，不是文案。
+     */
+    it('API-only 服务可以只有子域没有入口名称，保存不会把它的命名路由清掉', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      // 网关 serving 这类服务：有 cds.subdomain 拿一条可被调用的 URL，但不进用户入口清单
+      stateService.updateBuildProfile('gateway', { subdomain: 'llmgw' });
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'project',
+        entries: [
+          { serviceId: 'web', name: '主应用', path: '/' },
+          { serviceId: 'gateway', name: '', subdomain: 'llmgw' },
+        ],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(200);
+      expect(stateService.getBuildProfile('gateway')!.subdomain).toBe('llmgw');
+      expect(stateService.getBuildProfile('gateway')!.webEntry).toBeUndefined();
+      // 没名字就不该出现在入口清单里（resolveWebEntry 判据）
+      expect(await webEntryNames('branch-a')).toEqual([]);
+    });
+
+    it('保存不丢 primary：改名不会把主入口挪到别的服务上', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      stateService.updateBuildProfile('gateway', {
+        subdomain: 'llmgw',
+        webEntry: { name: '网关控制台', path: '/', primary: true },
+      });
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'project',
+        entries: [{ serviceId: 'gateway', name: '网关控制台（改名）', subdomain: 'llmgw', path: '/' }],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(200);
+      expect(stateService.getBuildProfile('gateway')!.webEntry).toEqual({
+        name: '网关控制台（改名）', path: '/', primary: true,
+      });
+    });
+
+    it('拒绝撞上本分支自己的子域别名（发布器会因此静默跳过这条服务路由）', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
+      const slugRes = await request(server, 'GET', '/api/branches/branch-a/web-entry-config', undefined, { 'X-Test-Key': 'A' });
+      const slug = (slugRes.body as any).previewSlug as string;
+      stateService.setBranchSubdomainAliases('branch-a', [`${slug}-llmgw`]);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'branch', entries: [{ serviceId: 'gateway', name: 'GW', subdomain: 'llmgw' }],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(409);
+      expect(stateService.getBranchProfileOverride('branch-a', 'gateway')).toBeUndefined();
+    });
+
+    it('存项目档要验每条会继承的分支，别的分支撞车同样拒绝', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
+      seedRunningBranch('branch-other', 'proj-a', 'feature/other', ['web', 'gateway']);
+      // 只有 branch-other 那条 host 被占：请求分支自己完全干净
+      const otherSlug = 'other-feature-a';
+      stateService.setBranchCustomDomains('branch-other', [`${otherSlug}-llmgw.example.test`]);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'project', entries: [{ serviceId: 'gateway', name: 'GW', subdomain: 'llmgw' }],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(409);
+      expect((res.body as any).collisions.some((c: any) => c.branchId === 'branch-other')).toBe(true);
+      expect(stateService.getBuildProfile('gateway')!.subdomain).toBeUndefined();
+
+      // 该分支用分支档把子域钉死后就不再继承项目值，项目档保存重新放行
+      stateService.setBranchProfileOverride('branch-other', 'gateway', { subdomain: 'gw2' });
+      const retry = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'project', entries: [{ serviceId: 'gateway', name: 'GW', subdomain: 'llmgw' }],
+      }, { 'X-Test-Key': 'A' });
+      expect(retry.status).toBe(200);
+      expect(stateService.getBuildProfile('gateway')!.subdomain).toBe('llmgw');
+    });
+
+    it('同分支另一个服务已占同一子域时拒绝', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      stateService.addBuildProfile({
+        id: 'api', projectId: 'proj-a', name: 'API', dockerImage: 'node:20', workDir: '.',
+        containerPort: 5000, subdomain: 'llmgw',
+      });
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'api', 'gateway']);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'branch', entries: [{ serviceId: 'gateway', name: 'GW', subdomain: 'llmgw' }],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(409);
+      expect(stateService.getBranchProfileOverride('branch-a', 'gateway')).toBeUndefined();
     });
 
     it('项目档不能改分支临时服务，跨项目 key 一律 403', async () => {
