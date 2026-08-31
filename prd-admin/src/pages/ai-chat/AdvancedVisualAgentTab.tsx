@@ -8360,7 +8360,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       <div className="mt-1">{modelsError.message}</div>
                                       {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
                                     </>
-                                  ) : '尚未配置可用的业务模型，请管理员在模型网关配置逻辑模型及可用上游。'}
+                                  ) : '尚未开放业务模型，请管理员返回视觉创作首页，在“模型设置”中开放模型并指定默认项。'}
                                   <button
                                     type="button"
                                     className="mt-3 inline-flex h-7 items-center gap-1.5 rounded-full border border-token-subtle px-2.5 text-[10px] font-medium text-token-secondary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-50"
@@ -9511,7 +9511,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   <div className="mt-1 leading-relaxed">{modelsError.message}</div>
                                   {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
                                 </>
-                              ) : '尚未配置可用的业务模型，请管理员在模型网关配置逻辑模型及可用上游。'}
+                              ) : '尚未开放业务模型，请管理员返回视觉创作首页，在“模型设置”中开放模型并指定默认项。'}
                               <button
                                 type="button"
                                 className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-full border border-token-subtle px-3 text-[11px] font-medium text-token-secondary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-50"
