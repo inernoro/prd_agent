@@ -260,8 +260,12 @@ describe('动效声明纪律', () => {
   });
 
   it('尺寸相关的量全部按屏幕像素计量（复用画布逐帧更新的 --invZoom）', () => {
-    for (const decl of ['font-size:calc(12.5px * var(--invZoom,1))', 'stroke-width:calc(2px * var(--invZoom,1))']) {
-      expect(GLOBAL_CSS).toContain(decl);
+    expect(GLOBAL_CSS).toContain('font-size:calc(12.5px * var(--invZoom,1))');
+    // 画框上每一条描边都要按屏幕像素恒定，漏一条它就会在低倍下先消失。
+    // 逐条列名字而不是只挑一条：只挑一条时，新加的那条漏了判据也不会红。
+    for (const [cls, px] of [['halo', '8px'], ['arc', '3px'], ['head', '4.5px']] as const) {
+      const rule = new RegExp(`\\.gen-dev__${cls}\\{[^}]*stroke-width:calc\\(${px.replace('.', '\\.')} \\* var\\(--invZoom,1\\)\\)`);
+      expect(GLOBAL_CSS, `.gen-dev__${cls} 的描边宽度应按屏幕像素恒定`).toMatch(rule);
     }
     // 插入距离同时按百分比封顶：纯屏幕像素在极小卡片上会把 left+right 加到超过卡宽，
     // 整行塌成零宽度然后静默消失。
@@ -269,7 +273,12 @@ describe('动效声明纪律', () => {
   });
 
   it('配色全部走 --gen-wait-* token，组件内零硬编码颜色', () => {
-    expect(GLOBAL_CSS).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-    expect(GLOBAL_CSS).not.toMatch(/rgba?\(/);
+    // 只看会生效的声明：注释里引用用户原话（「只显示 #D97757 的」）不是硬编码颜色，
+    // 但若不剥注释，判据会因为一句解释而变红——那是判据错，不是代码错。
+    const declarations = GLOBAL_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(declarations).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(declarations).not.toMatch(/rgba?\(/);
+    // 剥注释不能把判据剥没了：确认剥完还剩着真正的声明。
+    expect(declarations).toContain('stroke:var(--gen-wait-progress)');
   });
 });

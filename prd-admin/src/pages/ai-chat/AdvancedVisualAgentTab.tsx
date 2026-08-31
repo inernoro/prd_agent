@@ -4836,8 +4836,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 重要：新元素要在最上层 => 放到数组末尾（后渲染覆盖先渲染）
       return [...prev, placeholder].slice(-60);
     });
-    // 体验：像"上传图片"一样，开始生成就把视角移动到占位图位置（避免用户找不到新图）
-    setSelectionWithoutChip([key]); // generator 不需要 chip
+    // 体验：开始生成就把视角移动到占位图位置（避免用户找不到新图）。
+    // 但**不选中**它：选中会在等待卡外面再套一圈蓝色选择框，和进度画框贴在一起，
+    // 用户原话「这三个边框给用户感觉就挺累的」。而且这个选中是系统替用户做的决定——
+    // 他选的是参考图，没说要选这张还没画出来的。镜头已经把它推到眼前，不需要再框一次。
+    // 用户自己点一下当然还是能选中。
     requestAnimationFrame(() => {
       const f = focusKeyRef.current;
       if (!f || f.key !== key) return;
@@ -5329,7 +5332,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         };
         return [...prev, placeholder].slice(-60);
       });
-      setSelectionWithoutChip([key]);
+      // 不自动选中：这是系统替用户做的决定，而选中会在等待卡外面再套一圈蓝色选择框，
+      // 和进度画框贴在一起（用户原话「这三个边框给用户感觉就挺累的」）。同上，见 4840 附近。
 
       // 强制保存 canvas（确保占位元素已持久化）
       {
@@ -10437,7 +10441,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               y: near.y - genH / 2,
             },
           ].slice(-60));
-          setSelectionWithoutChip([genKey]);
+          // 不自动选中：这是系统替用户做的决定，而选中会在等待卡外面再套一圈蓝色选择框，
+          // 和进度画框贴在一起（用户原话「这三个边框给用户感觉就挺累的」）。同上，见 4840 附近。
 
           // 创建生图任务
           try {

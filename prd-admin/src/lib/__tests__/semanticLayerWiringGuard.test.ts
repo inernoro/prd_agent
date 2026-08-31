@@ -364,3 +364,34 @@ describe('上传落位：只新增、不替换，且贴着锚点对齐', () => {
     expect(near).toMatch(/if \(!w \|\| !h\) return null;/);
   });
 });
+
+describe('生成中的占位卡不许被系统自动选中', () => {
+  it('【关键】任何 status: \'running\' 的占位卡后面都不许跟一个自动选中', () => {
+    // 2026-08-31 用户看着一张正在生成的卡说「这三个边框给用户感觉就挺累的，
+    // 我倾向于只显示 #D97757 的」——三条线是：蓝色选择框、灰色底轨、赤陶进度弧。
+    // 底轨在 loader 里删掉了；蓝框则是因为生成一开始就把占位卡自动选中了。
+    // 那是系统替用户做的决定：他选的是参考图，没说要选这张还没画出来的。
+    // 三条生成路径各写了一份自动选中，所以判据扫全文件，不盯某一处。
+    const tab = read(TAB);
+    const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+    const runningAt = [...code.matchAll(/status: 'running'/g)].map((m) => m.index!);
+    expect(runningAt.length, '至少应扫到几处占位卡创建').toBeGreaterThanOrEqual(2);
+    for (const at of runningAt) {
+      const after = code.slice(at, at + 700);
+      expect(
+        after,
+        `第 ${at} 处占位卡后面跟了自动选中——生成中的卡不许被系统选中`
+      ).not.toMatch(/set(Selection|SelectionWithoutChip|SelectedKeys)\(\[/);
+    }
+  });
+
+  it('【关键】画框上只有 #D97757 一种颜色，没有灰色底轨', () => {
+    const loader = read('src/components/ui/GenDevelopLoader.tsx');
+    expect(loader, '灰色底轨已退场').not.toContain('gen-dev__track');
+    expect(loader, '底轨的 token 也一起退场').not.toContain('--gen-wait-track');
+    // 头是同色提亮，不是奶白——奶白会被读成「另一个东西」，而它只是这条线的头。
+    const tokens = read('src/styles/tokens.css');
+    expect(tokens).toMatch(/--gen-wait-head:\s*#[0-9A-Fa-f]{6};/);
+    expect(tokens).not.toMatch(/--gen-wait-track:/);
+  });
+});

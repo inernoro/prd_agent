@@ -67,9 +67,11 @@ export const GLOBAL_CSS = `
   .gen-dev__head{animation:none;opacity:1}
 }
 /* 画框：描边即进度。stroke-width 按屏幕像素恒定，所以 5% 缩放下它也还在，
-   而原来那条 1 世界像素的 border 在 30% 以下就已经看不见了。 */
+   而原来那条 1 世界像素的 border 在 30% 以下就已经看不见了。
+   **没有底轨**：底轨 + 进度弧 + 选中框三条线套在一起，用户原话「这三个边框给用户感觉
+   就挺累的，我倾向于只显示 #D97757 的」。整个画框只留赤陶这一种颜色，卡片的边界由
+   卡面本身的底纱与织纹交代，不需要再画一圈灰线去说「这里还有个矩形」。 */
 .gen-dev__frame{position:absolute;inset:0;overflow:visible}
-.gen-dev__track{fill:none;stroke:var(--gen-wait-track);stroke-width:calc(2px * var(--invZoom,1))}
 .gen-dev__halo{fill:none;stroke:var(--gen-wait-progress-halo);stroke-linecap:round;
   stroke-width:calc(8px * var(--invZoom,1));transition:stroke-dashoffset .7s ease-out}
 .gen-dev__arc{fill:none;stroke:var(--gen-wait-progress);stroke-linecap:round;
@@ -298,7 +300,6 @@ export function GenDevelopLoader({
           fill="none"
           aria-hidden
         >
-          <path className="gen-dev__track" d={path} />
           <path
             className={`gen-dev__halo${overtime ? ' gen-dev__halo--over' : ''}`}
             d={path}
