@@ -16,6 +16,10 @@
 import type {
   AccountProfile,
   ApiResponse,
+  SystemGatewaySettings,
+  SystemGatewayTestResult,
+  UpdateSystemSettingsRequest,
+  UpdateSystemSettingsResult,
   ChangePasswordRequest,
   ChangePasswordResult,
   LoginRequest,
@@ -701,6 +705,72 @@ export function updateGatewayAppCaller(id: string, req: UpdateGatewayAppCallerRe
 export function createGatewayAppCaller(req: CreateGatewayAppCallerRequest): Promise<ApiResponse<GatewayAppCaller>> {
   return apiRequest<GatewayAppCaller>('/app-callers', { method: 'POST', body: req });
 }
+
+/** 调用用途码草案的一帧。后端边推边吐，等待期屏幕一直在变（规则 #6）。 */
+export type IntentDraftFrame =
+  | { type: 'stage'; stage: string; text: string }
+  | { type: 'delta'; text: string }
+  | { type: 'error'; code: string; message: string }
+  | {
+      type: 'result';
+      ok: boolean;
+      app: string;
+      feature: string;
+      requestType: 'chat' | 'vision';
+      reason: string;
+      appCallerCode: string;
+      model: string;
+    };
+
+/**
+ * 把用户那句「我想做什么」交给网关自己的模型推成两段码，SSE 逐帧回调。
+ *
+ * 不走 apiRequest：那条路径把响应当 JSON 一次性读完，拿不到流。这里手写 fetch + reader，
+ * 但鉴权头、base 与它保持同一套来源，避免出现第二份会话逻辑。
+ */
+export async function draftAppCallerIntent(
+  intent: string,
+  onFrame: (frame: IntentDraftFrame) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const token = getToken();
+  const response = await fetch(`${API_BASE}/app-callers/draft`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ intent }),
+    signal,
+  });
+  // 手写 fetch 也要接住滑动续期：这一页可能是用户唯一在用的端点，漏接就等于他一边在用、
+  // 一边被本地那个还按旧到期时间走的计时器踢下线。
+  applyRenewedToken(response, token);
+  if (!response.ok || !response.body) {
+    onFrame({ type: 'error', code: 'INTENT_DRAFT_UNAVAILABLE', message: `推导服务返回 ${response.status}，已退回本地关键词判定。` });
+    return;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // SSE 以空行分帧；最后一段可能是半帧，留在 buffer 里等下一次读取补齐。
+    const chunks = buffer.split('\n\n');
+    buffer = chunks.pop() ?? '';
+    for (const chunk of chunks) {
+      const line = chunk.split('\n').find((item) => item.startsWith('data:'));
+      if (!line) continue;
+      try {
+        onFrame(JSON.parse(line.slice(5).trim()) as IntentDraftFrame);
+      } catch {
+        /* 半帧或心跳，跳过 */
+      }
+    }
+  }
+}
 export function bulkUpdateGatewayAppCallers(req: BulkUpdateGatewayAppCallersRequest): Promise<ApiResponse<BulkUpdateGatewayAppCallersResult>> {
   return apiRequest<BulkUpdateGatewayAppCallersResult>('/app-callers/bulk-governance', { method: 'POST', body: req });
 }
@@ -946,4 +1016,21 @@ export function removePoolModel(id: string, modelId: string, platformId?: string
     method: 'DELETE',
     query: { modelId, platformId },
   });
+}
+
+// ── 服务网关设置：系统级功能（当前是 Quickstart 的一句话推导）用哪个模型 ──
+// 地址、appCaller、密钥都由后端自管，这里只读展示、只写模型选择。
+/**
+ * `query` 只筛逻辑模型清单（第 201 条之后的模型靠它才够得着），不影响其它任何字段。
+ * 不传就是不筛。
+ */
+export function getSystemSettings(query?: string): Promise<ApiResponse<SystemGatewaySettings>> {
+  const q = (query ?? '').trim();
+  return apiRequest<SystemGatewaySettings>(q ? `/system-settings?q=${encodeURIComponent(q)}` : '/system-settings');
+}
+export function saveSystemSettings(req: UpdateSystemSettingsRequest): Promise<ApiResponse<UpdateSystemSettingsResult>> {
+  return apiRequest<UpdateSystemSettingsResult>('/system-settings', { method: 'PUT', body: req });
+}
+export function testSystemSettings(): Promise<ApiResponse<SystemGatewayTestResult>> {
+  return apiRequest<SystemGatewayTestResult>('/system-settings/test', { method: 'POST' });
 }

@@ -27,6 +27,7 @@ import { ServiceKeysPage } from '@/pages/ServiceKeysPage';
 import { QuickstartPage } from '@/pages/QuickstartPage';
 import { OrganizationPage } from '@/pages/OrganizationPage';
 import { PromptPolicyPage } from '@/pages/PromptPolicyPage';
+import { GatewaySettingsPage } from '@/pages/GatewaySettingsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { AccountSecurityPage } from '@/pages/AccountSecurityPage';
 import { UsagePage } from '@/pages/UsagePage';
@@ -134,6 +135,7 @@ export function App() {
             <Route path="/organization" element={<RequirePageAccess page="organization"><OrganizationPage /></RequirePageAccess>} />
             <Route path="/shadow" element={<RequirePageAccess page="shadow"><ShadowPage /></RequirePageAccess>} />
             <Route path="/governance" element={<RequirePageAccess page="governance"><GovernancePage /></RequirePageAccess>} />
+            <Route path="/gateway-settings" element={<RequirePageAccess page="gatewaySettings"><GatewaySettingsPage /></RequirePageAccess>} />
             <Route path="/settings" element={<RequirePageAccess page="settings"><SettingsPage /></RequirePageAccess>} />
             {/* 管自己的登录名与口令不是租户能力，任何角色都必须能进，故不套 RequirePageAccess。 */}
             <Route path="/account" element={<AccountSecurityPage />} />

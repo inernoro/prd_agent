@@ -807,6 +807,25 @@ public sealed class CreateGatewayAppCallerRequest
     public string? IngressProtocol { get; set; }
 }
 
+/// <summary>用户那句「我想做什么」。调用用途码由它推导，除此之外不接收任何字段。</summary>
+public sealed class DraftAppCallerRequest
+{
+    public string? Intent { get; set; }
+}
+
+/// <summary>
+/// 服务网关设置的唯一可写面：系统级功能用哪个模型。
+/// 地址、appCaller、密钥都由系统自管，不在这里接收——它们不是用户该知道的值。
+/// </summary>
+public sealed class UpdateSystemSettingsRequest
+{
+    /// <summary>auto（网关自己挑）/ pool（钉一个模型池）/ model（钉一个模型）。</summary>
+    public string? ModelSource { get; set; }
+    public string? ModelGroupId { get; set; }
+    public string? ModelName { get; set; }
+    // 刻意不接受归属团队字段：系统消耗恒记在「系统内部」团队，单独计费，不由请求体改写。
+}
+
 public sealed class BulkUpdateGatewayAppCallersRequest
 {
     public string? FilterStatus { get; set; }
@@ -1778,8 +1797,25 @@ public sealed class UpstreamModelItem
 {
     public string ModelId { get; set; } = string.Empty;
     public string? DisplayName { get; set; }
-    /// <summary>系统按模型标识推断的用途；推断不出来就是空数组，由用户勾选。</summary>
+    /// <summary>这个模型的用途；名录命中就是名录登记的事实，否则退回上游声明或按标识猜。</summary>
     public List<string> InferredCapabilities { get; set; } = new();
+
+    /// <summary>
+    /// 用途的来源：catalog = 内置名录查到的、upstream = 上游自己声明的、guess = 按模型标识猜的。
+    /// 必须透出到界面——猜出来的用途和查出来的不是一回事，用户有权知道该不该信它。
+    /// </summary>
+    public string CapabilitySource { get; set; } = string.Empty;
+
+    /// <summary>是否在内置名录里。不在名录的模型要走管理员显式放行才能入池。</summary>
+    public bool InCatalog { get; set; }
+
+    /// <summary>名录登记的展示名与出品方；不在名录时为空。</summary>
+    public string? CatalogDisplayName { get; set; }
+    public string? CatalogVendor { get; set; }
+
+    /// <summary>能不能接收图片输入 / 是不是必须给图才能调（名录登记的事实）。</summary>
+    public bool AcceptsImageInput { get; set; }
+    public bool RequiresImageInput { get; set; }
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
     public decimal? PricePerCall { get; set; }
@@ -1823,6 +1859,15 @@ public sealed class ImportUpstreamModelEntry
 {
     public string? ModelId { get; set; }
     public List<string>? Capabilities { get; set; }
+
+    /// <summary>
+    /// 管理员对「不在内置名录里的模型」的显式放行。
+    ///
+    /// 白名单默认只放行名录内的模型：名录外的模型没人说得清它能吃什么、吐什么，
+    /// 入了池就会被调度到，用户看到的是「一请求就报错」。要用就得有人明确按下放行，
+    /// 而不是让系统按模型名猜一把替他决定——放行动作会进审计，责任落到人。
+    /// </summary>
+    public bool AllowOutsideCatalog { get; set; }
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
     public decimal? PricePerCall { get; set; }
@@ -1836,6 +1881,13 @@ public sealed class ImportUpstreamModelsResult
     public int Skipped { get; set; }
     public List<string> SkippedModelIds { get; set; } = new();
     public List<string> CreatedModelIds { get; set; } = new();
+
+    /// <summary>
+    /// 因为不在名录、又没有显式放行而被拦下的模型。
+    /// 与 SkippedModelIds 分开列：那批是「已经有了」，这批是「需要你拍一下板」，
+    /// 混在一起用户就分不清该做什么（失败必须给可执行的下一步）。
+    /// </summary>
+    public List<string> BlockedOutsideCatalog { get; set; } = new();
 
     /// <summary>默认模型池同步是否失败。true 时模型已入库但不会被池路由选中，前端必须如实告知而不是报全绿。</summary>
     public bool PoolSyncFailed { get; set; }

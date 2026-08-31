@@ -332,13 +332,14 @@ public static class GatewayConfigurationProvisioning
         string tenantId,
         string id,
         string encryptedApiKey,
-        DateTime now) => new()
+        DateTime now,
+        string allowedBy) => new()
     {
         ["_id"] = id,
         ["TenantId"] = tenantId,
         ["Name"] = draft.Name,
         ["NameNormalized"] = draft.NameNormalized,
-        ["Models"] = BuildExchangeModels(draft.Models),
+        ["Models"] = BuildExchangeModels(draft.Models, allowedBy, now),
         ["TargetUrl"] = draft.TargetUrl,
         ["TargetApiKeyEncrypted"] = encryptedApiKey,
         ["TargetAuthScheme"] = draft.TargetAuthScheme,
@@ -353,14 +354,35 @@ public static class GatewayConfigurationProvisioning
         ["Version"] = 1L,
     };
 
-    public static BsonArray BuildExchangeModels(IReadOnlyList<NormalizedExchangeModelDraft> models) =>
-        new(models.Select(model => new BsonDocument
+    /// <summary>
+    /// 兑换所声明的模型清单。名录外的别名在这里**逐条**盖放行标记（谁放的、什么时候）——
+    /// 与手工新增模型那道门同一套依据：数据面只认标记，不认「这条记录来自兑换所」。
+    ///
+    /// 认容器不认条目是行不通的：兑换所是个容器，「进了这个门的都算放行」意味着
+    /// 往里加一个从没被人看过的别名照样过，那正是名录门要拦的形态，只是换了个集合。
+    /// 名录内的不盖标记（它本来就在白名单里），与模型导入路径保持同一口径。
+    /// </summary>
+    public static BsonArray BuildExchangeModels(
+        IReadOnlyList<NormalizedExchangeModelDraft> models,
+        string allowedBy,
+        DateTime now) =>
+        new(models.Select(model =>
         {
-            ["ModelId"] = model.ModelId,
-            ["DisplayName"] = ToBsonValue(model.DisplayName),
-            ["ModelType"] = model.ModelType,
-            ["Description"] = ToBsonValue(model.Description),
-            ["Enabled"] = model.Enabled,
+            var document = new BsonDocument
+            {
+                ["ModelId"] = model.ModelId,
+                ["DisplayName"] = ToBsonValue(model.DisplayName),
+                ["ModelType"] = model.ModelType,
+                ["Description"] = ToBsonValue(model.Description),
+                ["Enabled"] = model.Enabled,
+            };
+            if (!ModelCatalog.Contains(model.ModelId))
+            {
+                document["AllowedOutsideCatalog"] = true;
+                document["AllowedOutsideCatalogBy"] = allowedBy;
+                document["AllowedOutsideCatalogAt"] = now;
+            }
+            return document;
         }));
 
     public static BsonDocument BuildExchangePoolModelDocument(string exchangeId, BsonDocument exchangeModel)

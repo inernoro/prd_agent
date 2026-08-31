@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using PrdAgent.Core.Models;
 using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
@@ -387,7 +388,7 @@ public sealed class GatewayConfigurationProvisioningTests
         }, out var draft, out var error).ShouldBeTrue(error);
 
         var document = GatewayConfigurationProvisioning.BuildExchangeDocument(
-            draft!, "tenant-from-session", "gw-exchange-1", "encrypted-only", DateTime.UnixEpoch);
+            draft!, "tenant-from-session", "gw-exchange-1", "encrypted-only", DateTime.UnixEpoch, "admin@example.com");
 
         document["TenantId"].AsString.ShouldBe("tenant-from-session");
         document["NameNormalized"].AsString.ShouldBe("教程原生中继");
@@ -396,6 +397,59 @@ public sealed class GatewayConfigurationProvisioningTests
         document.Contains("ApiKey").ShouldBeFalse();
         document["Models"].AsBsonArray.Count.ShouldBe(2);
         document["Version"].AsInt64.ShouldBe(1);
+
+        // 名录外的别名必须逐条盖上放行标记：数据面只认这个标记，不认「它来自兑换所」。
+        // 认容器不认条目的话，往兑换所里加一个没人看过的别名照样能过名录门。
+        foreach (var model in document["Models"].AsBsonArray.OfType<BsonDocument>())
+        {
+            model["AllowedOutsideCatalog"].AsBoolean.ShouldBeTrue(
+                $"{model["ModelId"].AsString} 不在名录里，写入时就该记下是谁放行的");
+            model["AllowedOutsideCatalogBy"].AsString.ShouldBe("admin@example.com");
+            model["AllowedOutsideCatalogAt"].ToUniversalTime().ShouldBe(DateTime.UnixEpoch);
+        }
+    }
+
+    /// <summary>
+    /// 盖了放行标记的兑换所文档，运行时必须还读得回来。
+    ///
+    /// 这条不是形式主义：`ModelExchange` 带 <c>[BsonIgnoreExtraElements]</c>，但那个属性
+    /// **不会传染给嵌套类型**。给 `Models` 数组的元素加一个 `ExchangeModel` 上没有的字段，
+    /// serving 的就绪探针、serving 的兑换所装配、解析器的兑换所查找——所有把这个集合
+    /// 读成 `ModelExchange` 的地方都会在反序列化时抛。写入侧一盖戳，读取侧全线炸，
+    /// 而写入侧自己用的是 BsonDocument，测不出来。
+    /// </summary>
+    [Fact]
+    public void StampedExchangeModel_StillDeserializes()
+    {
+        var document = new BsonDocument
+        {
+            { "_id", "gw-exchange-stamp" },
+            { "TenantId", "tenant-1" },
+            { "Name", "盖过戳的兑换所" },
+            { "Enabled", true },
+            {
+                "Models", new BsonArray
+                {
+                    new BsonDocument
+                    {
+                        { "ModelId", "vendor/private-model" },
+                        { "ModelType", "chat" },
+                        { "Enabled", true },
+                        { "AllowedOutsideCatalog", true },
+                        { "AllowedOutsideCatalogBy", "admin@example.com" },
+                        { "AllowedOutsideCatalogAt", DateTime.UnixEpoch },
+                    },
+                }
+            },
+        };
+
+        var exchange = BsonSerializer.Deserialize<ModelExchange>(document);
+
+        exchange.Models.Count.ShouldBe(1);
+        exchange.Models[0].ModelId.ShouldBe("vendor/private-model");
+        exchange.Models[0].AllowedOutsideCatalog.ShouldBe(true);
+        exchange.Models[0].AllowedOutsideCatalogBy.ShouldBe("admin@example.com");
+        exchange.GetEffectiveModels().Count.ShouldBe(1);
     }
 
     [Fact]

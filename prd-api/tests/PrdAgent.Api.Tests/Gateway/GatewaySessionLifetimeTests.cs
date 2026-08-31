@@ -9,7 +9,7 @@ using Xunit;
 namespace PrdAgent.Api.Tests.Gateway;
 
 /// <summary>
-/// 网关控制台登录有效期：默认 7 天 + 用后自动续期（滑动窗口），
+/// 网关控制台登录有效期：默认一个月 + 用后自动续期（滑动窗口），
 /// 且显式缩短的会话（MAP SSO 这类联邦短会话）不得被悄悄拉长。
 /// </summary>
 public sealed class GatewaySessionLifetimeTests
@@ -54,13 +54,21 @@ public sealed class GatewaySessionLifetimeTests
         }, out _);
     }
 
+    /// <summary>
+    /// 默认会话时长跟着生产常量走，不写死一个字面量：用户要的是「一个月」，
+    /// 此前这里钉着 7 天，改成 30 天之后这条用例反过来锁住了旧行为
+    /// （predicate-and-wiring-discipline 形状 4a：测试逐字要求那个已被推翻的实现存在）。
+    /// 读常量仍然能红——把生产默认值改小，下面的区间立刻不成立。
+    /// </summary>
     [Fact]
-    public void Issue_DefaultsToSevenDayLifetime()
+    public void Issue_DefaultsToConfiguredLifetime()
     {
         var jwt = new GwJwt(Secret, Issuer);
         var (_, expiresAt) = jwt.Issue(BuildUser(), BuildTenant(), BuildMembership());
 
-        (expiresAt - DateTime.UtcNow).TotalDays.ShouldBeInRange(6.9, 7.01);
+        var expected = GwJwt.DefaultLifetimeDays;
+        expected.ShouldBeGreaterThan(7, "用户明确要求「一个月」，默认会话不得退回周级");
+        (expiresAt - DateTime.UtcNow).TotalDays.ShouldBeInRange(expected - 0.1, expected + 0.01);
     }
 
     [Fact]
@@ -83,7 +91,9 @@ public sealed class GatewaySessionLifetimeTests
         var renewed = jwt.TryRenew(principal, DateTime.UtcNow.AddDays(3));
 
         renewed.ShouldNotBeNull();
-        (renewed!.Value.ExpiresAt - DateTime.UtcNow.AddDays(3)).TotalDays.ShouldBeInRange(6.9, 7.01);
+        // 续期是「重新计时」，所以换发出来的仍是一整个默认时长，而不是把旧的补齐。
+        (renewed!.Value.ExpiresAt - DateTime.UtcNow.AddDays(3)).TotalDays
+            .ShouldBeInRange(GwJwt.DefaultLifetimeDays - 0.1, GwJwt.DefaultLifetimeDays + 0.01);
 
         var renewedPrincipal = ReadPrincipal(jwt, renewed.Value.Token);
         renewedPrincipal.FindFirst(ClaimTypes.NameIdentifier)?.Value.ShouldBe("user-1");
