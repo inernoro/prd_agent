@@ -14,10 +14,21 @@ namespace PrdAgent.LlmGw.Provisioning;
 ///
 /// **这里的规则是冻结的，不许跟着 <see cref="ModelCatalog"/> 一起演进。**
 /// 它描述的是历史上某一刻的判定方式，改了它就等于改写历史，会让窗口覆盖错人。
-/// 与 ModelCatalog 里看起来重复的那几段是**有意重复**，不要「顺手统一」掉。
+/// 与 ModelCatalog 里看起来重复的那几段是**有意重复**，不要「顺手统一」掉——
+/// 尤其是那几个后缀/标点改写：ModelCatalog 已经不再做了，而这里必须原样留着，
+/// 因为它们正是当年那个口径的定义。
 /// </summary>
 public static class LegacyCatalogRules
 {
+    /// <summary>历史上做过的两种改写，按收紧的先后拆开：先没了标点合并（v3），再没了后缀剥除（v4）。</summary>
+    private static string StripSnapshotSuffix(string id)
+    {
+        id = System.Text.RegularExpressions.Regex.Replace(id, @"-\d{4}-\d{2}-\d{2}$", string.Empty);
+        id = System.Text.RegularExpressions.Regex.Replace(id, @"-\d{8}$", string.Empty);
+        if (id.EndsWith("-latest", StringComparison.Ordinal)) id = id[..^"-latest".Length];
+        return id;
+    }
+
     /// <summary>
     /// v3 收紧之前的归一化：小写、**把 `.` `_` 一律改写成 `-`**、去日期快照、去 `-latest`。
     /// 标点合并正是 v3 收紧掉的那一条。
@@ -26,13 +37,19 @@ public static class LegacyCatalogRules
     {
         var id = (modelId ?? string.Empty).Trim().ToLowerInvariant();
         if (id.Length == 0) return string.Empty;
-
         id = id.Replace('.', '-').Replace('_', '-');
-        id = System.Text.RegularExpressions.Regex.Replace(id, @"-\d{4}-\d{2}-\d{2}$", string.Empty);
-        id = System.Text.RegularExpressions.Regex.Replace(id, @"-\d{8}$", string.Empty);
-        if (id.EndsWith("-latest", StringComparison.Ordinal)) id = id[..^"-latest".Length];
+        return StripSnapshotSuffix(id);
+    }
 
-        return id;
+    /// <summary>
+    /// v4 收紧之前的归一化：标点已经不合并了（v3 收紧过），但日期快照与 `-latest` 仍被剥掉。
+    /// 后缀剥除正是 v4 收紧掉的那一条。
+    /// </summary>
+    private static string NormalizeWithSuffixStripped(string? modelId)
+    {
+        var id = (modelId ?? string.Empty).Trim().ToLowerInvariant();
+        if (id.Length == 0) return string.Empty;
+        return StripSnapshotSuffix(id);
     }
 
     /// <summary>按给定归一化建一份名录索引（登记的标识与别名都进）。</summary>
@@ -51,14 +68,17 @@ public static class LegacyCatalogRules
     private static readonly Dictionary<string, CatalogModel> PunctuationCollapsedIndex =
         BuildIndex(NormalizeWithPunctuationCollapsed);
 
-    /// <summary>这条登记自己认不认这个厂商段？（与当时 ModelCatalog 的判定一致，按旧归一化算。）</summary>
-    private static bool RegistersVendorSegment(CatalogModel model, string vendor)
+    private static readonly Dictionary<string, CatalogModel> SuffixStrippedIndex =
+        BuildIndex(NormalizeWithSuffixStripped);
+
+    /// <summary>这条登记自己认不认这个厂商段？（与当时 ModelCatalog 的判定一致，按那一刻的归一化算。）</summary>
+    private static bool RegistersVendorSegment(CatalogModel model, string vendor, Func<string?, string> normalize)
     {
-        if (string.Equals(NormalizeWithPunctuationCollapsed(model.Vendor), vendor, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(normalize(model.Vendor), vendor, StringComparison.OrdinalIgnoreCase))
             return true;
         foreach (var alias in model.Aliases ?? Array.Empty<string>())
         {
-            var normalized = NormalizeWithPunctuationCollapsed(alias);
+            var normalized = normalize(alias);
             var slash = normalized.IndexOf('/');
             if (slash > 0 && string.Equals(normalized[..slash], vendor, StringComparison.OrdinalIgnoreCase))
                 return true;
@@ -67,8 +87,8 @@ public static class LegacyCatalogRules
     }
 
     /// <summary>
-    /// **v2（厂商段收紧）之前**的判定：归一化含标点合并，查不到时剥掉斜杠前的**任意**一段重查。
-    /// 于是 `private-provider/gpt-4o` 当年判成名录内的 `gpt-4o`。
+    /// **v2（厂商段收紧）之前**的判定：归一化含标点合并与后缀剥除，查不到时剥掉斜杠前的
+    /// **任意**一段重查。于是 `private-provider/gpt-4o` 当年判成名录内的 `gpt-4o`。
     /// </summary>
     public static bool WasInCatalogBeforeStrictVendorPrefix(string? modelId)
     {
@@ -86,15 +106,29 @@ public static class LegacyCatalogRules
     /// 「只剥名录自己登记过的厂商段」。于是 `gpt-4-1` 当年判成名录内的 `gpt-4.1`。
     /// </summary>
     public static bool WasInCatalogBeforeStrictPunctuation(string? modelId)
+        => WasInCatalogUnder(modelId, NormalizeWithPunctuationCollapsed, PunctuationCollapsedIndex);
+
+    /// <summary>
+    /// **v4（后缀收紧）之前**的判定：标点已不合并，而日期快照与 `-latest` 仍被剥掉。
+    /// 于是名录里没登记过的 `gpt-4o-2024-08-06` 当年判成名录内的 `gpt-4o`。
+    /// </summary>
+    public static bool WasInCatalogBeforeStrictSuffix(string? modelId)
+        => WasInCatalogUnder(modelId, NormalizeWithSuffixStripped, SuffixStrippedIndex);
+
+    /// <summary>v2 之后那套前缀规则（只剥名录自己登记过的厂商段）+ 指定的历史归一化。</summary>
+    private static bool WasInCatalogUnder(
+        string? modelId,
+        Func<string?, string> normalize,
+        Dictionary<string, CatalogModel> index)
     {
-        var key = NormalizeWithPunctuationCollapsed(modelId);
+        var key = normalize(modelId);
         if (key.Length == 0) return false;
-        if (PunctuationCollapsedIndex.ContainsKey(key)) return true;
+        if (index.ContainsKey(key)) return true;
 
         var slash = key.IndexOf('/');
         if (slash <= 0 || slash >= key.Length - 1) return false;
-        if (!PunctuationCollapsedIndex.TryGetValue(key[(slash + 1)..], out var stripped)) return false;
-        return RegistersVendorSegment(stripped, key[..slash]);
+        if (!index.TryGetValue(key[(slash + 1)..], out var stripped)) return false;
+        return RegistersVendorSegment(stripped, key[..slash], normalize);
     }
 
     /// <summary>

@@ -686,6 +686,30 @@ if (strictPunctuationCount >= 0)
 }
 
 /*
+  存量放行之五（一次性，幂等）：后缀口径收紧。
+
+  归一化此前把日期快照后缀（`-20240806` / `-2024-08-06`）与 `-latest` 一律剥掉，
+  等于**凭后缀合成别名**：从没登记过的 `gpt-4o-20990101` 会落到登记过的 `gpt-4o` 上，
+  继承它的用途与能力，并且因为「判成名录内」而不需要任何放行标记。收紧成「标识按原样比、
+  真实存在的日期与 latest 写法逐条登记为别名」之后，一批在旧口径下判成名录内、
+  因而导入时没有盖过放行标记的存量模型会变成名录外——前几条迁移早已跑完。
+
+  与 v2/v3 同形（同一种病，只是换了个后缀），所以处置也同形：自带一次性窗口，跑完即关。
+*/
+var strictSuffixCount = await RunCatalogGrandfatherAsync(
+    "model-catalog-grandfather-v4-strict-suffix",
+    "存量迁移（名录后缀口径收紧前已入库，未经人工审阅）",
+    // 只补「旧口径（剥日期与 -latest）判成名录内、新口径判成名录外」的那些。
+    id => LegacyCatalogRules.NeedsAllowanceAfterTightening(
+        id, LegacyCatalogRules.WasInCatalogBeforeStrictSuffix));
+if (strictSuffixCount >= 0)
+{
+    app.Logger.LogInformation(
+        "[ModelCatalog] 后缀口径收紧迁移已执行（一次性）：为 {Count} 条存量模型补上放行标记（未经人工审阅，来历见审计字段）",
+        strictSuffixCount);
+}
+
+/*
   存量放行之三（一次性，幂等）：兑换所的 per-model 放行标记。
 
   数据面此前对兑换所来的模型认的是**容器**——「这个 PlatformId 是一条兑换所记录吗」，

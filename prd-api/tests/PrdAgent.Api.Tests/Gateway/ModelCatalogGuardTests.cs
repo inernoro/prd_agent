@@ -56,15 +56,15 @@ public sealed class ModelCatalogGuardTests
     }
 
     [Theory]
-    // 同一个模型的三种等价写法都必须落回同一条登记：登记过的厂商前缀、日期快照、-latest。
-    // 前两者的处置不同——日期与 -latest 由归一化吃掉，而厂商前缀是**逐条登记的别名**，
-    // 查不到时才按「名录自己登记过的厂商段」剥一层（没登记过的前缀一律不剥，见下一条用例）。
+    // 同一个模型的等价写法都必须落回同一条登记——而且**每一条都靠逐条登记的别名**，
+    // 没有一条是靠归一化合成的：大小写与首尾空白之外，归一化不再改写标识的任何一个字符。
+    // 厂商前缀是别名；查不到时才按「名录自己登记过的厂商段」剥一层（没登记过的一律不剥，见下一条用例）。
     [InlineData("gpt-4o", "openai/gpt-4o")]
-    [InlineData("gpt-4o", "gpt-4o-2024-08-06")]
+    // `-latest` 与日期快照同样是**登记过的别名**（删掉名录里那条别名，这一行立刻红），
+    // 不是「后缀被吃掉之后碰巧撞上」——那种合成会让 `gpt-4o-20990101` 一起蒙混过关。
     [InlineData("gpt-4o", "GPT-4O-latest")]
     [InlineData("claude-3-5-sonnet", "anthropic/claude-3.5-sonnet")]
-    // 标点写法**逐条登记**，不靠归一化合成：这一条命中，靠的是名录里真有 `claude-3.5-sonnet`
-    // 这个别名，而不是「把点改成横杠碰巧撞上了」。删掉那条别名，这一行立刻红。
+    // 标点写法同理逐条登记：这一条命中靠的是名录里真有 `claude-3.5-sonnet` 这个别名。
     [InlineData("claude-3-5-sonnet", "claude-3.5-sonnet")]
     [InlineData("claude-3-5-sonnet", "claude-3-5-sonnet-20241022")]
     [InlineData("qwen-vl-max", "qwen/qwen-vl-max-latest")]
@@ -85,6 +85,37 @@ public sealed class ModelCatalogGuardTests
         // 白名单就退化成又一个关键词猜测。
         ModelCatalog.Find("gpt-4o-my-private-finetune-v2").ShouldBeNull();
         ModelCatalog.Contains("some-vendor/never-heard-of-this").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void SuffixVariants_AreNotSynthesizedIntoTheCatalog()
+    {
+        /*
+          归一化曾把日期快照后缀（`-20240806` / `-2024-08-06`）与 `-latest` 剥掉再查。
+          那是与标点合并**同一种病**，只是换了个后缀：名录里只登记过 `gpt-4o`，
+          而任何人随手写的 `gpt-4o-20990101` 都会跟它落到同一个键上，继承它的用途与能力，
+          并且因为「判成名录内」而不需要放行标记——两道门一起放过一个从没被批准过的标识。
+
+          这一条是上一轮修标点时**没有横扫同类**留下的：同一个函数里有两条合成规则，
+          只删了一条。判据该描述的是「这一类合成」，不是某一种写法。
+        */
+        foreach (var synthesized in new[]
+                 {
+                     "gpt-4o-20990101", "gpt-4o-2099-01-01", "openai/gpt-4o-20990101",
+                     "gpt-4.1-2099-12-31", "claude-3-opus-20240229", "o3-mini-latest",
+                 })
+        {
+            ModelCatalog.Contains(synthesized).ShouldBeFalse(
+                customMessage: $"「{synthesized}」不是名录登记过的写法，不能靠剥后缀认成别的模型");
+            PrdAgent.Core.Models.GatewayModelCatalog.Contains(synthesized).ShouldBeFalse(
+                customMessage: $"运行时那道门对「{synthesized}」必须得到同一个结论，否则导入拦住了、请求照样放行");
+        }
+
+        // 反过来也要成立：真实存在、**逐条登记过**的日期与 latest 写法照旧命中。
+        // 这次收紧只是不再凭后缀合成，不是把已登记的写法一起误伤。
+        ModelCatalog.Find("claude-3-5-sonnet-20241022")!.CanonicalId.ShouldBe("claude-3-5-sonnet");
+        ModelCatalog.Find("gpt-4o-latest")!.CanonicalId.ShouldBe("gpt-4o");
+        ModelCatalog.Find("claude-3-opus-latest")!.CanonicalId.ShouldBe("claude-3-opus");
     }
 
     [Fact]
@@ -131,6 +162,7 @@ public sealed class ModelCatalogGuardTests
         */
         var byVendorPrefix = (Func<string?, bool>)LegacyCatalogRules.WasInCatalogBeforeStrictVendorPrefix;
         var byPunctuation = (Func<string?, bool>)LegacyCatalogRules.WasInCatalogBeforeStrictPunctuation;
+        var bySuffix = (Func<string?, bool>)LegacyCatalogRules.WasInCatalogBeforeStrictSuffix;
 
         // 受 v2（厂商段收紧）影响的：旧口径剥掉任意前缀就命中，新口径落空。
         LegacyCatalogRules.NeedsAllowanceAfterTightening("private-provider/gpt-4o", byVendorPrefix).ShouldBeTrue();
@@ -139,6 +171,10 @@ public sealed class ModelCatalogGuardTests
         // 受 v3（标点收紧）影响的：旧口径把点改成横杠就命中，新口径落空。
         LegacyCatalogRules.NeedsAllowanceAfterTightening("gpt-4-1", byPunctuation).ShouldBeTrue();
         LegacyCatalogRules.NeedsAllowanceAfterTightening("gpt_4.1", byPunctuation).ShouldBeTrue();
+
+        // 受 v4（后缀收紧）影响的：旧口径剥掉日期 / -latest 就命中，新口径落空。
+        LegacyCatalogRules.NeedsAllowanceAfterTightening("gpt-4o-2024-08-06", bySuffix).ShouldBeTrue();
+        LegacyCatalogRules.NeedsAllowanceAfterTightening("o3-mini-latest", bySuffix).ShouldBeTrue();
 
         // **这条是本用例的重点**：两头都判外的陌生模型，任何一个窗口都不许放行。
         // 它正是「绕过控制台直接写库」那一种，也正是数据面名录门存在的理由。
@@ -152,6 +188,8 @@ public sealed class ModelCatalogGuardTests
                 customMessage: $"「{stranger}」两个口径下都不在名录里，厂商段收紧的窗口不该顺手放行它");
             LegacyCatalogRules.NeedsAllowanceAfterTightening(stranger, byPunctuation).ShouldBeFalse(
                 customMessage: $"「{stranger}」两个口径下都不在名录里，标点收紧的窗口不该顺手放行它");
+            LegacyCatalogRules.NeedsAllowanceAfterTightening(stranger, bySuffix).ShouldBeFalse(
+                customMessage: $"「{stranger}」两个口径下都不在名录里，后缀收紧的窗口不该顺手放行它");
         }
 
         // 新口径下仍在名录里的，本来就不需要放行标记，窗口也不该动它们。
@@ -159,6 +197,7 @@ public sealed class ModelCatalogGuardTests
         {
             LegacyCatalogRules.NeedsAllowanceAfterTightening(stillFine, byVendorPrefix).ShouldBeFalse();
             LegacyCatalogRules.NeedsAllowanceAfterTightening(stillFine, byPunctuation).ShouldBeFalse();
+            LegacyCatalogRules.NeedsAllowanceAfterTightening(stillFine, bySuffix).ShouldBeFalse();
         }
     }
 
@@ -338,9 +377,10 @@ public sealed class ModelCatalogMirrorGuardTests
             customMessage: "v1 是门上线那一次，本来就该无差别补标记");
 
         CountOccurrences(consoleProgram, "LegacyCatalogRules.NeedsAllowanceAfterTightening(").ShouldBe(
-            2,
-            customMessage: "两次口径收紧（厂商段、标点）各要一个「旧口径判内、新口径判外」的影响面判据；"
+            3,
+            customMessage: "三次口径收紧（厂商段、标点、后缀）各要一个「旧口径判内、新口径判外」的影响面判据；"
                 + "少一个就是又用 v1 那个过宽的过滤放行了一批本该被拦的模型");
+        consoleProgram.ShouldContain("LegacyCatalogRules.WasInCatalogBeforeStrictSuffix");
         consoleProgram.ShouldContain("LegacyCatalogRules.WasInCatalogBeforeStrictVendorPrefix");
         consoleProgram.ShouldContain("LegacyCatalogRules.WasInCatalogBeforeStrictPunctuation");
 

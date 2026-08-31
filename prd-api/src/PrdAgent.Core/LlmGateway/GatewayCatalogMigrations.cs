@@ -35,6 +35,9 @@ public static class GatewayCatalogMigrations
     /// <summary>标点口径收紧后再跑一次：旧口径把 `.` `_` 合并成 `-`，靠标点合成的别名现在要按新口径补标记。</summary>
     public const string GrandfatherV3StrictPunctuation = "model-catalog-grandfather-v3-strict-punctuation";
 
+    /// <summary>后缀口径收紧后再跑一次：旧口径剥掉日期快照与 `-latest`，靠后缀合成的别名现在要按新口径补标记。</summary>
+    public const string GrandfatherV4StrictSuffix = "model-catalog-grandfather-v4-strict-suffix";
+
     /// <summary>全部跑完，数据面才有资格从「只记录」升到「真拦」。</summary>
     public static readonly string[] RequiredIds =
     {
@@ -42,5 +45,6 @@ public static class GatewayCatalogMigrations
         GrandfatherV2StrictVendorPrefix,
         ExchangeModelAllowanceV1,
         GrandfatherV3StrictPunctuation,
+        GrandfatherV4StrictSuffix,
     };
 }

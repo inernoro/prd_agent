@@ -165,15 +165,20 @@ public static class ModelCatalog
     }
 
     /// <summary>
-    /// 归一化模型标识，让「同一个模型的不同写法」落到同一条登记上：
-    /// 统一小写、去掉日期快照后缀（<c>gpt-4o-2024-08-06</c>）、去掉 <c>-latest</c>。
+    /// 归一化模型标识：只做 trim + 小写。**不做任何后缀改写**。
     ///
-    /// **标点不合并**：`.` 与 `_` 不会被改写成 `-`。合并它们等于凭标点**合成别名**——
-    /// 从没登记过的 `gpt-4-1` / `gpt_4.1` 会落到登记过的 `gpt-4.1` 上，继承它的用途与能力，
-    /// 并且因为「判成名录内」而不需要任何放行标记：导入确认与数据面名录门一起放过它。
-    /// 这与本注释最后一段自己立的规矩（名录是白名单，不做模糊匹配）也是矛盾的。
+    /// **日期快照与 `-latest` 不再被剥掉**。剥它们等于凭后缀**合成别名**：从没登记过的
+    /// `gpt-4o-20990101` / `gpt-4o-2099-01-01` 会落到登记过的 `gpt-4o` 上，继承它的用途与能力，
+    /// 并且因为「判成名录内」而不需要任何放行标记——导入确认与数据面名录门一起放过它。
+    /// 与标点合并是同一种病，只是换了个后缀：判据该描述的是「这一类合成」，不是某一种写法。
+    /// 真实上游确实在用的日期写法（`claude-3-5-sonnet-20241022`）与 `-latest` 写法
+    /// **逐条登记为别名**，走白名单而不是靠合成；名录里没有的日期快照就是名录外，
+    /// 由管理员在导入时显式放行——那正是这道门存在的意义。名录不替上游猜哪天发过哪一版。
+    ///
+    /// **标点不合并**：`.` 与 `_` 不会被改写成 `-`。合并它们同样是凭标点合成别名——
+    /// 从没登记过的 `gpt-4-1` / `gpt_4.1` 会落到登记过的 `gpt-4.1` 上。
     /// 真实上游确实在用的另一种标点写法（`claude-3.5-sonnet` 之于 `claude-3-5-sonnet`）
-    /// **逐条登记为别名**，走白名单而不是靠合成。
+    /// 同样逐条登记为别名。
     ///
     /// **厂商前缀保留**，不在这里剥。它是标识的一部分：`private-provider/gpt-4o` 与 `gpt-4o`
     /// 是两个东西，无条件剥掉前缀等于把一个从没登记过的别名认成登记过的那个，连带继承它的
@@ -187,13 +192,6 @@ public static class ModelCatalog
     public static string Normalize(string? modelId)
     {
         var id = (modelId ?? string.Empty).Trim().ToLowerInvariant();
-        if (id.Length == 0) return string.Empty;
-
-        // 日期快照后缀：-20240806 / -2024-08-06
-        id = System.Text.RegularExpressions.Regex.Replace(id, @"-\d{4}-\d{2}-\d{2}$", string.Empty);
-        id = System.Text.RegularExpressions.Regex.Replace(id, @"-\d{8}$", string.Empty);
-        if (id.EndsWith("-latest", StringComparison.Ordinal)) id = id[..^"-latest".Length];
-
         return id;
     }
 

@@ -64,6 +64,8 @@ export function GatewaySettingsPage() {
     它只换清单，不改配置，所以**不作废测试结论**（改的不是「系统按什么走」）。
   */
   const [modelQuery, setModelQuery] = useState('');
+  /** 读回配置的代次：只有最新那一条读允许写回 data / 选择框，先发后回的一律丢弃。 */
+  const loadSeq = useRef(0);
 
   // 计时器只跟着 testing 起落，组件卸载也要清掉——否则在测试途中离开这一页会留下
   // 一个还在滴答的 setInterval。
@@ -90,7 +92,15 @@ export function GatewaySettingsPage() {
    * 显示「你手上这份还没保存」，又不把他刚改的选择悄悄抹回服务端那份。
    */
   const load = async (applySelection = true, query = modelQuery) => {
+    /*
+      读回也要按代次丢弃，理由和写入侧一样：连着敲几个关键字就有几条读在路上，
+      先发的那条**后回来**就会把清单盖成上一个关键字的结果——搜索框里写着 B、
+      下拉里装着 A 的模型。保存前发出的那条同理：它回来时带的是保存前那份配置，
+      盖到 data 上会让刚存好的配置显示成「未保存」，连「测试连接」都跟着被禁用。
+    */
+    const loadId = ++loadSeq.current;
     const res = await getSystemSettings(query);
+    if (loadSeq.current !== loadId) return;
     if (!res.success) { setError(res.error?.message || '加载失败'); return; }
     setData(res.data);
     if (!applySelection) return;

@@ -4635,6 +4635,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("`/system-settings?q=${encodeURIComponent(q)}`", api);
 
         Assert.Contains("placeholder=\"按模型名或标识筛选\"", gatewaySettings);
+        /*
+          连着敲几个关键字就有几条读在路上：先发的那条**后回来**会把清单盖成上一个关键字的结果
+          （搜索框写着 B、下拉里装着 A 的模型）；保存前发出的那条回来还会把 data 盖回保存前那份，
+          让刚存好的配置显示成「未保存」、连测试连接都跟着被禁用。所以读回也按代次丢弃。
+        */
+        Assert.Contains("const loadId = ++loadSeq.current;", gatewaySettings);
+        Assert.Contains("if (loadSeq.current !== loadId) return;", gatewaySettings);
         // 筛清单不是改配置：不回填选择框（applySelection=false），也不作废测试结论。
         Assert.Contains("void load(false, modelQuery);", gatewaySettings);
         Assert.Contains("data.modelTotal > data.models.length", gatewaySettings);

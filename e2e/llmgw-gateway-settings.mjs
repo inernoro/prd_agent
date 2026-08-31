@@ -33,6 +33,12 @@ const posted = [];
 let testMode = 'ok';
 /** 测试连接桩的拖延时长：模拟真实那一次要等好几秒的调用，用来验等待期屏幕在动。 */
 let testDelayMs = 0;
+/*
+  读回桩的拖延：只拖某一个关键字，用来造出「先发的那条后回来」。
+  连着敲两个关键字就有两条读在路上，先发的那条若能写回，清单会被盖成上一个关键字的结果。
+*/
+let slowGetQuery = '';
+const SLOW_GET_MS = 1500;
 /** 保存桩的拖延时长：保存期间控件仍可编辑，用来验「这一小段里改的选择」不会被读回来的值盖掉。 */
 let saveDelayMs = 0;
 /*
@@ -70,7 +76,7 @@ const server = http.createServer((req, res) => {
       const matchedModels = modelQuery
         ? ALL_MODELS.filter((m) => `${m.publicId} ${m.name}`.toLowerCase().includes(modelQuery.toLowerCase()))
         : ALL_MODELS.filter((m) => !m.beyondPage);
-      return json(res, 200, { success: true, error: null, data: {
+      const respond = () => json(res, 200, { success: true, error: null, data: {
         ...settings,
         // 归属团队恒为系统自己的团队，不是登录者所属的业务团队——系统消耗单独计费。
         teamId: 't1_system',
@@ -95,6 +101,9 @@ const server = http.createServer((req, res) => {
         modelPageSize: 200,
         consumers: [{ feature: 'Quickstart · 一句话推导调用用途码', appCallerCode: 'llmgw-console.intent-draft::chat' }],
       } });
+      if (slowGetQuery && modelQuery === slowGetQuery) setTimeout(respond, SLOW_GET_MS);
+      else respond();
+      return undefined;
     }
     if (api === '/system-settings' && req.method === 'PUT') {
       let raw = '';
@@ -291,6 +300,27 @@ check('输关键字之后它出现在可选项里',
   await page.locator('.lg-gws-field option', { hasText: '排在两百名之后的模型' }).count(), 1);
 // 筛清单不是改配置：当前选中的那个不许被这次重读顶掉，也不许从下拉里消失。
 check('筛清单不动用户当前的选择', await page.locator('.lg-gws-field select').inputValue(), 'demo/chat-2');
+await page.locator('.lg-gws-field input[type=search]').fill('');
+await page.waitForTimeout(900);
+
+/*
+  ── 先发后回的那条读，不许盖掉当前关键字的清单 ──────────────────
+  连着敲两个关键字就有两条读在路上。先发的那条若能写回，搜索框里写着 B、
+  下拉里却装着 A 的模型——页面不报错，只是给的选项对不上他刚敲的字。
+*/
+slowGetQuery = 'chat-1';
+await page.locator('.lg-gws-field input[type=search]').fill('chat-1');
+await page.waitForTimeout(500);
+await page.locator('.lg-gws-field input[type=search]').fill('far-behind');
+await page.waitForTimeout(600);
+check('后发的那条先回来，清单是它的结果',
+  await page.locator('.lg-gws-field option', { hasText: '排在两百名之后的模型' }).count(), 1);
+await page.waitForTimeout(1600);
+check('先发的那条晚到之后没有把清单盖回去',
+  await page.locator('.lg-gws-field option', { hasText: '排在两百名之后的模型' }).count(), 1);
+check('也没有把上一个关键字的模型塞进来',
+  await page.locator('.lg-gws-field option', { hasText: '对话主力' }).count(), 0);
+slowGetQuery = '';
 await page.locator('.lg-gws-field input[type=search]').fill('');
 await page.waitForTimeout(900);
 
