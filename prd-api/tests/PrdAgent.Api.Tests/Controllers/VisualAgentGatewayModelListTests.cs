@@ -16,6 +16,33 @@ namespace PrdAgent.Api.Tests.Controllers;
 
 public class VisualAgentGatewayModelListTests
 {
+    [Fact]
+    public async Task GetAdapterInfo_WhenDefaultBusinessModelResolvesToGptImage1_ShouldExposeThreeSizes()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(x => x.ResolveRequiredLogicalModelAsync(
+                "visual-agent.image.text2img::generation", "generation", "image1",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayModelResolution
+            {
+                Success = true,
+                ResolutionType = "LogicalModel",
+                LogicalModelPublicId = "image1",
+                ActualModel = "gpt-image-1",
+            });
+
+        var action = await CreateController(gateway.Object).GetAdapterInfo("image1", CancellationToken.None);
+        var response = action.ShouldBeOfType<OkObjectResult>().Value.ShouldBeOfType<ApiResponse<object>>();
+        response.Success.ShouldBeTrue();
+        var data = JsonNode.Parse(JsonSerializer.Serialize(response.Data,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)))!.AsObject();
+        data["matched"]!.GetValue<bool>().ShouldBeTrue();
+        data["sizeParamFormat"]!.GetValue<string>().ShouldBe("WxH");
+        var sizes = data["sizesByResolution"]!["1k"]!.AsArray();
+        sizes.Select(x => x!["size"]!.GetValue<string>())
+            .ShouldBe(new[] { "1024x1024", "1024x1536", "1536x1024" });
+    }
+
     [Theory]
     [InlineData("image_size.none", true, "none")]
     [InlineData("image_size.field.size", false, "WxH")]

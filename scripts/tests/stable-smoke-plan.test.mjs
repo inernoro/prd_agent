@@ -61,6 +61,27 @@ test('未登记的核心代码变更不能静默通过', () => {
   assert.deepEqual(plan.unmappedFiles, ['prd-api/src/UnknownFeature/NewController.cs']);
 });
 
+test('视觉真实源码路径与本次逃逸回归进入计划，不依赖旧页面目录或已有 active 偶然选中', () => {
+  for (const file of [
+    'prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx',
+    'prd-admin/src/pages/ai-chat/visualAgentModelOptions.ts',
+    'prd-admin/src/components/ui/GenSweepLoader.tsx',
+    'prd-admin/src/components/ui/generationProgressPlacement.ts',
+  ]) {
+    const result = selectFeatureLines(catalog, [file], [], 'changed');
+    assert.deepEqual(result.unmappedFiles, []);
+    assert.ok(result.selected.some((item) => item.id === 'visual-creation'));
+    assert.ok(result.selected.some((item) => item.id === 'multi-image-creation'));
+  }
+  const plan = buildPlan({ catalog, changedFiles: [], activeRegressions: regressions,
+    visualRegressionCaseIds, matrixCases, mode: 'scheduled', commit: 'visual-contract-regression' });
+  for (const caseId of ['REG-visual-model-contract-001', 'REG-visual-viewport-001']) {
+    assert.ok(regressions.includes(caseId));
+    assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes(caseId));
+    assert.ok(plan.requiredCaseIdsByEnvironment.production.includes(caseId));
+  }
+});
+
 test('图片输入与网关共享源码命中视觉功能线，JPEG 回归绑定每轮单图必跑项', () => {
   for (const file of [
     'prd-api/src/PrdAgent.Infrastructure/LLM/ImageInputNormalizer.cs',
