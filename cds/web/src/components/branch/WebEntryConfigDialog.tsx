@@ -128,6 +128,11 @@ export function WebEntryConfigDialog({
 }): JSX.Element {
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
+  // 用户**显式点了「移除」**的服务。提交时只发「界面上的行 + 这里登记的移除」，
+  // 绝不把「没出现在表单里」当成删除：被分支覆盖隐藏的服务（生效名与子域都为空）
+  // 本来就不会有行，按旧写法一存项目档就会把它的项目级路由与入口一起清掉，
+  // 而用户从头到尾没见过那一行（Codex review 第五轮 P1）。
+  const [removedServiceIds, setRemovedServiceIds] = useState<Set<string>>(new Set());
   // 请求代次 + 当前 branchId 镜像：用来丢弃迟到的扫描响应（详见 load 里的注释）
   const loadGenerationRef = useRef(0);
   const branchIdRef = useRef(branchId);
@@ -136,6 +141,7 @@ export function WebEntryConfigDialog({
     // 切分支时先清空，免得新分支的弹窗短暂显示上一条分支的行
     setConfig(null);
     setRows([]);
+    setRemovedServiceIds(new Set());
   }, [branchId]);
   const [scope, setScope] = useState<Scope>('project');
   const [loading, setLoading] = useState(false);
@@ -157,6 +163,7 @@ export function WebEntryConfigDialog({
       const res = await apiRequest<ConfigResponse>(`/api/branches/${encodeURIComponent(requestedBranchId)}/web-entry-config`);
       if (isStale()) return;
       setConfig(res);
+      setRemovedServiceIds(new Set());
       // 已有入口（或已有命名子域）的服务先摆出来；其余服务留给「新增入口」按需添加，
       // 免得一屏十几行空表单。
       setRows(
@@ -200,6 +207,12 @@ export function WebEntryConfigDialog({
   const addRow = (serviceId: string): void => {
     const service = serviceById.get(serviceId);
     if (!service) return;
+    setRemovedServiceIds((prev) => {
+      if (!prev.has(serviceId)) return prev;
+      const next = new Set(prev);
+      next.delete(serviceId);
+      return next;
+    });
     setRows((prev) => [
       ...prev,
       {
@@ -238,19 +251,23 @@ export function WebEntryConfigDialog({
     setSaving(true);
     setError('');
     try {
-      // 整份提交：被删掉的行以「空名 + 空子域」回传，服务端才知道那条入口要清掉。
-      const submitted = new Map(rows.map((r) => [r.serviceId, r]));
-      const entries = (config?.services || [])
-        .filter((s) => scope === 'branch' || s.origin === 'project')
-        .map((s) => {
-          const row = submitted.get(s.serviceId);
-          return {
-            serviceId: s.serviceId,
-            name: row?.name?.trim() || '',
-            subdomain: row?.subdomain?.trim().toLowerCase() || '',
-            path: row?.path?.trim() || '/',
-          };
-        });
+      // 只提交「界面上的行」+「用户显式移除的服务」。没出现在表单里的服务一概不发，
+      // 服务端也就不会碰它——绝不用「缺席」表达删除（见 removedServiceIds 的注释）。
+      const writable = (serviceId: string): boolean =>
+        scope === 'branch' || serviceById.get(serviceId)?.origin === 'project';
+      const entries = [
+        ...rows
+          .filter((r) => writable(r.serviceId))
+          .map((r) => ({
+            serviceId: r.serviceId,
+            name: r.name.trim(),
+            subdomain: r.subdomain.trim().toLowerCase(),
+            path: r.path.trim() || '/',
+          })),
+        ...[...removedServiceIds]
+          .filter((id) => serviceById.has(id) && writable(id) && !rows.some((r) => r.serviceId === id))
+          .map((id) => ({ serviceId: id, name: '', subdomain: '', path: '/' })),
+      ];
       const res = await apiRequest<{ message?: string }>(
         `/api/branches/${encodeURIComponent(branchId)}/web-entry-config`,
         { method: 'PUT', body: { scope, entries } },
@@ -357,7 +374,10 @@ export function WebEntryConfigDialog({
                     variant="ghost"
                     size="sm"
                     className="ml-auto text-muted-foreground"
-                    onClick={() => setRows((prev) => prev.filter((_, i) => i !== index))}
+                    onClick={() => {
+                      setRemovedServiceIds((prev) => new Set(prev).add(row.serviceId));
+                      setRows((prev) => prev.filter((_, i) => i !== index));
+                    }}
                     title="移除这条入口"
                   >
                     <Trash2 />
