@@ -32,11 +32,15 @@ public static class GatewayCatalogMigrations
     /// <summary>兑换所里逐条别名补标记（新形态兑换所的 Models 元素）。</summary>
     public const string ExchangeModelAllowanceV1 = "exchange-model-allowance-v1";
 
+    /// <summary>标点口径收紧后再跑一次：旧口径把 `.` `_` 合并成 `-`，靠标点合成的别名现在要按新口径补标记。</summary>
+    public const string GrandfatherV3StrictPunctuation = "model-catalog-grandfather-v3-strict-punctuation";
+
     /// <summary>全部跑完，数据面才有资格从「只记录」升到「真拦」。</summary>
     public static readonly string[] RequiredIds =
     {
         GrandfatherV1,
         GrandfatherV2StrictVendorPrefix,
         ExchangeModelAllowanceV1,
+        GrandfatherV3StrictPunctuation,
     };
 }

@@ -765,6 +765,35 @@ await page.getByRole('button', { name: '再跑一次' }).click();
 await page.waitForTimeout(1400);
 check('上传的文本进了真实请求体', realBodies[0]?.messages?.[0]?.content, '用三个字回答：你好吗');
 
+/*
+  ── 撤下身份时，选中的成员必须跟着一起撤 ──────────────────────────
+  「更改」把身份撤掉、退回那句话那一屏。此前选中的成员是**上一条 appCaller 那个池**里的，
+  但它留在输入框里：清空池候选的那个 effect 要等下一次渲染，而签发新身份的处理函数是同步跑的，
+  当场就拿闭包里的 testModel / testPlatformId 去发预检与安全试跑。于是新身份刚签出来
+  就先显示一次「验证失败」，原因是一条它根本没被授权用的模型——用户看到的是新身份坏了。
+  判据取「预检请求里钉的是谁」，不取源码里有没有那几行 setState：钉出去的那个值才是后果所在。
+*/
+await page.getByLabel('测试模型').fill('demo/chat-2');
+await page.waitForTimeout(600);
+check('撤身份前确实钉着上一条身份池里的成员',
+  (await page.locator('.lg-qs-code').innerText()).includes('"pinned_model_id": "demo/chat-2"'), true);
+await page.getByRole('button', { name: '更改' }).click();
+await page.getByRole('button', { name: '修改身份' }).click();
+await page.waitForTimeout(400);
+check('撤下身份后回到那句话那一屏', await page.locator('.lg-qs-ask').count(), 1);
+resolveCalls.length = 0;
+await walkToOwner(page);
+await create(page).click();
+await page.waitForTimeout(2600);
+check('新身份签发后没有一次预检钉着上一条身份的成员',
+  resolveCalls.filter((model) => model !== 'auto'), []);
+await page.locator('.lg-qs-result-tabs > button', { hasText: 'cURL' }).click();
+await page.waitForTimeout(400);
+check('新身份的 cURL 不带上一条身份的成员',
+  (await page.locator('.lg-qs-code').innerText()).includes('demo/chat-2'), false);
+check('新身份的测试模型框已经是空的（回到 auto）',
+  (await page.getByLabel('测试模型').inputValue()).trim(), '');
+
 await page.close();
 
 /*

@@ -376,15 +376,17 @@ export function QuickstartPage() {
    * 优先用路由预览回来的池（那才是运行时真会用的），拿不到就退回该类型的默认池。
    */
   useEffect(() => {
-    if (!bundle) return;
     let active = true;
     // 换了身份或换了路由，旧池的成员就不再是「这条 appCaller 会走的那些」。
     // 留着它们，输入框里上一轮的模型仍然判「合法」，还会连着上一轮的上游 id 一起钉出去——
     // 发出的是一条这条 appCaller 根本没被授权用的请求。请求失败时同样要清：
     // 「查不到池」不等于「还是上次那个池」。
+    // **清空必须排在「没有身份就返回」前面**：身份被撤下（点了「更改」）时这个 effect 照样
+    // 重跑一次，早返回排在前面就会把上一条身份的池原样留着。
     setPoolModels([]);
     setPoolName('');
     setPoolMemberCount(0);
+    if (!bundle) return;
     void getPools(bundle.requestType).then((response) => {
       if (!active || !response.success) return;
       const pools = response.data.items;
@@ -1039,6 +1041,11 @@ export function QuickstartPage() {
     setTestResult(null);
     setRoutePreview(null);
     setTestMode('safe');
+    // 选中的成员是**上一条身份那个池**里的，必须跟着身份一起撤。
+    // 上面 effect 里的清空要等下一次渲染才生效，而签发新身份的那个处理函数是同步跑的：
+    // 它当场就用闭包里的 testModel / testPlatformId 发预检与安全试跑，钉的正是上一个池的成员——
+    // 新身份一签出来就显示一次「验证失败」，原因是一条它根本没被授权用的模型。
+    setModelQuery('');
     // 回到那句话本身：改身份就是改「我想做什么」，不是回到某个中间表单。
     setStage('intent');
   };

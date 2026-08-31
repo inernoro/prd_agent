@@ -63,6 +63,9 @@ public sealed class ModelCatalogGuardTests
     [InlineData("gpt-4o", "gpt-4o-2024-08-06")]
     [InlineData("gpt-4o", "GPT-4O-latest")]
     [InlineData("claude-3-5-sonnet", "anthropic/claude-3.5-sonnet")]
+    // 标点写法**逐条登记**，不靠归一化合成：这一条命中，靠的是名录里真有 `claude-3.5-sonnet`
+    // 这个别名，而不是「把点改成横杠碰巧撞上了」。删掉那条别名，这一行立刻红。
+    [InlineData("claude-3-5-sonnet", "claude-3.5-sonnet")]
     [InlineData("claude-3-5-sonnet", "claude-3-5-sonnet-20241022")]
     [InlineData("qwen-vl-max", "qwen/qwen-vl-max-latest")]
     public void EquivalentWritings_ResolveToTheSameEntry(string canonicalId, string writing)
@@ -82,6 +85,37 @@ public sealed class ModelCatalogGuardTests
         // 白名单就退化成又一个关键词猜测。
         ModelCatalog.Find("gpt-4o-my-private-finetune-v2").ShouldBeNull();
         ModelCatalog.Contains("some-vendor/never-heard-of-this").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void PunctuationVariants_AreNotSynthesizedIntoTheCatalog()
+    {
+        // 归一化曾把 `.` 与 `_` 一律改写成 `-`。那不是「统一分隔符」，是**凭标点合成别名**：
+        // 名录里只登记过 `gpt-4.1`，而 `gpt-4-1` / `gpt_4.1` 从没被任何人登记过，
+        // 却会跟它落到同一个键上——继承它的用途与能力，并且因为「判成名录内」
+        // 而不需要放行标记，导入确认与数据面名录门一起放过它。
+        // 与本文件另一条用例（UnknownModel_IsNotGuessedIntoTheCatalog）是同一条规矩：
+        // 名录是白名单，「差不多像」不等于「就是它」。
+        foreach (var synthesized in new[]
+                 {
+                     "gpt-4-1", "gpt_4.1", "openai/gpt-4-1", "gpt-3-5-turbo",
+                     "gemini-1-5-pro", "claude-3_5-sonnet",
+                 })
+        {
+            ModelCatalog.Contains(synthesized).ShouldBeFalse(
+                customMessage: $"「{synthesized}」不是名录登记过的写法，不能靠改写标点认成别的模型");
+            PrdAgent.Core.Models.GatewayModelCatalog.Contains(synthesized).ShouldBeFalse(
+                customMessage: $"运行时那道门对「{synthesized}」必须得到同一个结论，否则导入拦住了、请求照样放行");
+        }
+
+        // 反过来也要成立：真实存在的另一种标点写法照旧命中——它们是**逐条登记的别名**，
+        // 走白名单。这次收紧只是不再凭标点合成，不是误伤真写法。
+        ModelCatalog.Find("gpt-4.1")!.CanonicalId.ShouldBe("gpt-4.1");
+        ModelCatalog.Find("claude-3.5-sonnet")!.CanonicalId.ShouldBe("claude-3-5-sonnet");
+        ModelCatalog.Find("anthropic/claude-3-5-sonnet")!.CanonicalId.ShouldBe(
+            "claude-3-5-sonnet",
+            customMessage: "带厂商段的官方写法由 Find 那一档剥前缀命中，不该受标点收紧影响");
+        ModelCatalog.Find("gemini-1.5-pro")!.CanonicalId.ShouldBe("gemini-1.5-pro");
     }
 
     [Fact]
@@ -195,6 +229,8 @@ public sealed class ModelCatalogMirrorGuardTests
     [InlineData("gpt-4o-2024-08-06")]
     [InlineData("GPT-4O-latest")]
     [InlineData("anthropic/claude-3.5-sonnet")]
+    [InlineData("gpt-4-1")]
+    [InlineData("gpt_4.1")]
     [InlineData("acme/never-heard-of-this-2024-01-02")]
     [InlineData("")]
     public void Normalize_AgreesOnBothSides(string raw)
@@ -214,6 +250,9 @@ public sealed class ModelCatalogMirrorGuardTests
             // 否则会出现「导入拦住了、请求照样放行」这种两边都自认没错的静默不一致。
             "private-provider/gpt-4o", "openai/o1-preview", "acme/claude-3.5-sonnet",
             "openai/claude-3-opus", "anthropic/gpt-4o",
+            // 标点口径：登记过的写法命中，靠改写标点合成的写法必须落空——同样要两侧一致。
+            "gpt-4.1", "gpt-4-1", "gpt_4.1", "openai/gpt-4-1", "gpt-3-5-turbo",
+            "claude-3.5-sonnet", "anthropic/claude-3-5-sonnet",
         ];
 
         foreach (var probe in probes)

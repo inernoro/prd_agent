@@ -620,6 +620,28 @@ if (strictPrefixCount >= 0)
 }
 
 /*
+  存量放行之四（一次性，幂等）：标点口径收紧。
+
+  归一化此前把 `.` 与 `_` 一律改写成 `-`，等于**凭标点合成别名**：从没登记过的
+  `gpt-4-1` / `gpt_4.1` 会落到登记过的 `gpt-4.1` 上，继承它的用途与能力，
+  并且因为「判成名录内」而不需要任何放行标记。收紧成「标点原样、真实存在的另一种写法
+  逐条登记为别名」之后，一批**在旧口径下判成名录内、因而导入时没有盖过放行标记**的
+  存量模型会变成名录外——前几条迁移早已跑完，它们没有补戳的时机。
+
+  与 v2 同形，所以处置也同形：口径收紧自带**它自己的**一次性窗口，跑完即关。
+  放行人如实写成「口径收紧前已入库」，不冒充有人审过。
+*/
+var strictPunctuationCount = await RunCatalogGrandfatherAsync(
+    "model-catalog-grandfather-v3-strict-punctuation",
+    "存量迁移（名录标点口径收紧前已入库，未经人工审阅）");
+if (strictPunctuationCount >= 0)
+{
+    app.Logger.LogInformation(
+        "[ModelCatalog] 标点口径收紧迁移已执行（一次性）：为 {Count} 条存量模型补上放行标记（未经人工审阅，来历见审计字段）",
+        strictPunctuationCount);
+}
+
+/*
   存量放行之三（一次性，幂等）：兑换所的 per-model 放行标记。
 
   数据面此前对兑换所来的模型认的是**容器**——「这个 PlatformId 是一条兑换所记录吗」，

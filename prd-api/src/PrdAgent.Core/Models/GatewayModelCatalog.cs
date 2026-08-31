@@ -70,11 +70,11 @@ public static class GatewayModelCatalog
         new("claude-3-5-sonnet", "Claude 3.5 Sonnet", "anthropic",
             ["chat", "vision", "function_calling", "long_context"],
             AcceptsImageInput: true,
-            Aliases: ["anthropic/claude-3.5-sonnet", "claude-3-5-sonnet-latest", "claude-3-5-sonnet-20241022"]),
+            Aliases: ["anthropic/claude-3.5-sonnet", "claude-3.5-sonnet", "claude-3-5-sonnet-latest", "claude-3-5-sonnet-20241022"]),
         new("claude-3-5-haiku", "Claude 3.5 Haiku", "anthropic",
             ["chat", "vision", "function_calling"],
             AcceptsImageInput: true,
-            Aliases: ["anthropic/claude-3.5-haiku", "claude-3-5-haiku-latest"]),
+            Aliases: ["anthropic/claude-3.5-haiku", "claude-3.5-haiku", "claude-3-5-haiku-latest"]),
         new("claude-3-opus", "Claude 3 Opus", "anthropic",
             ["chat", "vision", "function_calling", "long_context"],
             AcceptsImageInput: true,
@@ -145,7 +145,14 @@ public static class GatewayModelCatalog
 
     /// <summary>
     /// 归一化模型标识，让「同一个模型的不同写法」落到同一条登记上：
-    /// 去掉日期快照后缀（<c>gpt-4o-2024-08-06</c>）、去掉 <c>-latest</c>，并统一小写与分隔符。
+    /// 统一小写、去掉日期快照后缀（<c>gpt-4o-2024-08-06</c>）、去掉 <c>-latest</c>。
+    ///
+    /// **标点不合并**：`.` 与 `_` 不会被改写成 `-`。合并它们等于凭标点**合成别名**——
+    /// 从没登记过的 `gpt-4-1` / `gpt_4.1` 会落到登记过的 `gpt-4.1` 上，继承它的用途与能力，
+    /// 并且因为「判成名录内」而不需要任何放行标记：导入确认与数据面名录门一起放过它。
+    /// 这与本注释最后一段自己立的规矩（名录是白名单，不做模糊匹配）也是矛盾的。
+    /// 真实上游确实在用的另一种标点写法（`claude-3.5-sonnet` 之于 `claude-3-5-sonnet`）
+    /// **逐条登记为别名**，走白名单而不是靠合成。
     ///
     /// **厂商前缀保留**，不在这里剥。它是标识的一部分：`private-provider/gpt-4o` 与 `gpt-4o`
     /// 是两个东西，无条件剥掉前缀等于把一个从没登记过的别名认成登记过的那个，连带继承它的
@@ -163,8 +170,6 @@ public static class GatewayModelCatalog
     {
         var id = (modelId ?? string.Empty).Trim().ToLowerInvariant();
         if (id.Length == 0) return string.Empty;
-
-        id = id.Replace('.', '-').Replace('_', '-');
 
         // 日期快照后缀：-20240806 / -2024-08-06
         id = System.Text.RegularExpressions.Regex.Replace(id, @"-\d{4}-\d{2}-\d{2}$", string.Empty);
