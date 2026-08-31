@@ -825,6 +825,50 @@ describe('Branch Routes', () => {
       expect(stateService.getBranchProfileOverride('branch-a', 'gateway')).toBeUndefined();
     });
 
+    /*
+     * 托管交付项目的服务清单在 Project.managedProfiles，不在全局 buildProfiles 里，
+     * 且由 ManagedProjectService 每次重新生成覆盖。裸 id 去全局表找会命中**别的项目**
+     * 同名 profile（web / api 这类），鉴权过了却写坏邻居（Codex review 第二轮 P1）。
+     */
+    it('托管交付项目拒绝项目档保存，且不会误写别的项目的同名 profile', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'managed-p', slug: 'managed', name: '托管项目', kind: 'git',
+        deliveryMode: 'managed', createdAt: now, updatedAt: now,
+        managedProfiles: [{
+          id: 'web', projectId: 'managed-p', name: '托管 Web', dockerImage: 'nginx:alpine',
+          workDir: '.', containerPort: 80, pathPrefixes: ['/'],
+          webEntry: { name: '托管应用', path: '/' },
+        }],
+      } as any);
+      // 另一个 compose 项目里有同名 id 的 profile —— 它绝不能被这次保存碰到
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      stateService.updateBuildProfile('web', { subdomain: 'keepme' });
+      seedRunningBranch('managed-branch', 'managed-p', 'main', ['web']);
+
+      const cfg = await request(server, 'GET', '/api/branches/managed-branch/web-entry-config');
+      expect(cfg.status).toBe(200);
+      expect((cfg.body as any).supportsProjectScope).toBe(false);
+
+      const res = await request(server, 'PUT', '/api/branches/managed-branch/web-entry-config', {
+        scope: 'project', entries: [{ serviceId: 'web', name: '被改的名字', subdomain: 'hijack' }],
+      });
+      expect(res.status).toBe(400);
+      // proj-a 的 web profile 一个字都不能变
+      expect(stateService.getBuildProfile('web')!.subdomain).toBe('keepme');
+      expect(stateService.getBuildProfile('web')!.webEntry).toEqual({ name: '主应用', path: '/' });
+
+      // 分支档这条路照常可用（profileOverrides 不受方案重新生成影响）
+      const branchScoped = await request(server, 'PUT', '/api/branches/managed-branch/web-entry-config', {
+        scope: 'branch', entries: [{ serviceId: 'web', name: '托管应用（本分支）', path: '/' }],
+      });
+      expect(branchScoped.status).toBe(200);
+      expect(stateService.getBranchProfileOverride('managed-branch', 'web')!.webEntry)
+        .toEqual({ name: '托管应用（本分支）', path: '/' });
+      expect(stateService.getBuildProfile('web')!.webEntry).toEqual({ name: '主应用', path: '/' });
+    });
+
     it('项目档不能改分支临时服务，跨项目 key 一律 403', async () => {
       seedProject('proj-a', 'a');
       seedProject('proj-b', 'b');

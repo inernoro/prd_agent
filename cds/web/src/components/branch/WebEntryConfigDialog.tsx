@@ -46,6 +46,8 @@ interface ConfigResponse {
   rootDomain: string;
   previewSlug: string;
   services: WebEntryConfigService[];
+  /** 托管交付项目没有可写的「项目档」（服务清单由 CDS 按方案生成并覆盖），只能存分支 */
+  supportsProjectScope?: boolean;
 }
 
 type Scope = 'project' | 'branch';
@@ -125,8 +127,9 @@ export function WebEntryConfigDialog({
             path: s.effective.path || '/',
           })),
       );
-      // 分支上已有覆盖时，默认停在分支档，避免一保存就把分支的特例抹平。
-      setScope((res.services || []).some((s) => s.branchOverride) ? 'branch' : 'project');
+      // 托管交付项目只能存分支；否则分支上已有覆盖时默认停在分支档，免得一保存就抹平特例
+      const projectScopeAllowed = res.supportsProjectScope !== false;
+      setScope(!projectScopeAllowed || (res.services || []).some((s) => s.branchOverride) ? 'branch' : 'project');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -140,6 +143,8 @@ export function WebEntryConfigDialog({
     () => new Map((config?.services || []).map((s) => [s.serviceId, s])),
     [config],
   );
+  // 托管交付项目没有可写的项目档，只留「仅本分支」
+  const projectScopeDisabled = config?.supportsProjectScope === false;
   const remainingServices = useMemo(
     () => (config?.services || []).filter((s) => !rows.some((r) => r.serviceId === s.serviceId)),
     [config, rows],
@@ -233,13 +238,24 @@ export function WebEntryConfigDialog({
           <div className="flex flex-wrap items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2">
             <span className="text-xs font-medium text-muted-foreground">保存到</span>
             <label className="flex items-center gap-1.5 text-sm">
-              <input type="radio" className="h-4 w-4" checked={scope === 'project'} onChange={() => setScope('project')} />
+              <input
+                type="radio"
+                className="h-4 w-4"
+                checked={scope === 'project'}
+                disabled={projectScopeDisabled}
+                onChange={() => setScope('project')}
+              />
               项目（该项目所有分支）
             </label>
             <label className="flex items-center gap-1.5 text-sm">
               <input type="radio" className="h-4 w-4" checked={scope === 'branch'} onChange={() => setScope('branch')} />
               仅本分支
             </label>
+            {projectScopeDisabled ? (
+              <span className="text-xs text-muted-foreground">
+                托管交付项目的服务清单由 CDS 按方案生成，项目档会被下次生成覆盖，只能存本分支
+              </span>
+            ) : null}
             <Button variant="ghost" size="sm" className="ml-auto" onClick={() => void load()} disabled={loading}>
               <RefreshCw className={loading ? 'animate-spin' : undefined} />
               重新扫描

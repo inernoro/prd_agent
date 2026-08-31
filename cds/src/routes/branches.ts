@@ -15601,6 +15601,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     url: string;
   };
 
+  /**
+   * 托管交付（deliveryMode='managed'）项目的服务清单来自 `Project.managedProfiles`，
+   * 由 ManagedProjectService 按 managedSpec **每次重新生成并覆盖**，而且这些 profile
+   * 不在全局 `state.buildProfiles` 里。所以对这类项目：
+   *   - 往「项目档」写没有意义（下次生成即被抹掉）；
+   *   - 用 id 去全局表找更危险：托管 profile 的 id（web / api 这类常见名）与别的
+   *     compose 项目的 profile id 可能重名，找到的是**别的项目**那条，鉴权已经过了
+   *     却写坏了邻居（Codex review P1 + cross-project-isolation）。
+   * 因此托管项目只允许存分支档（profileOverrides 按 profile id 生效，且不受重新生成影响）。
+   */
+  const supportsProjectScopedProfiles = (projectId: string): boolean =>
+    stateService.getProject(projectId)?.deliveryMode !== 'managed';
+
   const readWebEntryConfig = (entry: BranchEntry, primaryRoot: string): {
     previewSlug: string;
     services: WebEntryConfigRow[];
@@ -15734,7 +15747,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (access) { res.status(access.status).json(access.body); return; }
     const primaryRoot = config.previewDomain || config.rootDomains?.[0] || 'example.com';
     const { previewSlug, services } = readWebEntryConfig(entry, primaryRoot);
-    res.json({ branchId: id, rootDomain: primaryRoot, previewSlug, services });
+    res.json({
+      branchId: id,
+      rootDomain: primaryRoot,
+      previewSlug,
+      services,
+      // 托管交付项目没有「项目档」可写，前端据此只留「仅本分支」
+      supportsProjectScope: supportsProjectScopedProfiles(entry.projectId || 'default'),
+    });
   });
 
   router.put('/branches/:id/web-entry-config', (req, res) => {
@@ -15755,6 +15775,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     if (!Array.isArray(body.entries)) {
       res.status(400).json({ error: 'entries 必须是数组（每项 { serviceId, name, subdomain, path }）' });
+      return;
+    }
+
+    const projectId = entry.projectId || 'default';
+    if (scope === 'project' && !supportsProjectScopedProfiles(projectId)) {
+      res.status(400).json({
+        error: '该项目是托管交付模式，服务清单由 CDS 按方案自动生成，写项目档会在下次生成时被覆盖；请选择「仅本分支」保存。',
+      });
       return;
     }
 
@@ -15843,7 +15871,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // selectPrimaryWebEntry 挑谁当主入口。整对象替换会把它顺手丢掉，于是
         // 一次改名就能把主入口挪到别的服务上、连主域名 URL 一起变（Codex review P2）。
         // 所以按档位把现有的 primary 原样带过去。
-        const baselineEntry = stateService.getBuildProfile(item.serviceId)?.webEntry;
+        // baseline 同样只能从**本分支生效的** profile 里取（托管 profile 与分支临时
+        // 服务都不在全局表里，裸 id 全局查会拿到别的项目那条）。
+        const baselineEntry = stateService.getEffectiveProfilesForBranch(entry)
+          .find((p) => p.id === item.serviceId)?.webEntry;
         const effectiveEntry = scope === 'project'
           ? baselineEntry
           : (entry.profileOverrides?.[item.serviceId]?.webEntry ?? baselineEntry);
@@ -15852,9 +15883,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         );
         const webEntry = buildEntry(effectiveEntry?.primary);
         if (scope === 'project') {
-          const profile = stateService.getBuildProfile(item.serviceId);
+          // 必须从**目标项目**的 profile 表里取，不能拿裸 id 去全局表找：那样
+          // 同名 id（web / api）会命中别的项目那条，鉴权过了却写坏邻居（Codex review P1）。
+          const profile = stateService.getBuildProfilesForProject(projectId)
+            .find((p) => p.id === item.serviceId && (p.projectId || 'default') === projectId);
           if (!profile) {
-            res.status(404).json({ error: `构建配置 "${item.serviceId}" 不存在` });
+            res.status(404).json({ error: `项目 "${projectId}" 下不存在构建配置 "${item.serviceId}"` });
             return;
           }
           stateService.updateBuildProfile(item.serviceId, {
