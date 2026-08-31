@@ -10,6 +10,7 @@ import type {
   ReleaseRunStatus,
   ScheduledJob,
   ScheduledJobAction,
+  ScheduledJobRunStep,
   ScheduledJobRun,
   ScheduledJobSchedule,
   ScheduledJobTarget,
@@ -56,6 +57,8 @@ export interface ScheduledJobServiceDeps {
 }
 
 export interface ScheduledJobTargetCheckResult {
+  /** 逐个动作的结果。只有整单执行（executeActions）会填，单点检测不填。 */
+  steps?: ScheduledJobRunStep[];
   ok: boolean;
   exitCode?: number;
   httpStatus?: number;
@@ -253,6 +256,7 @@ export class ScheduledJobService {
       );
       run.exitCode = result.exitCode;
       run.httpStatus = result.httpStatus;
+      if (result.steps) run.steps = result.steps;
       run.log = truncateLog(result.log);
       if (result.releaseId) run.releaseId = result.releaseId;
       if (result.releaseStatus) run.releaseStatus = result.releaseStatus;
@@ -286,6 +290,28 @@ export class ScheduledJobService {
       `check-${crypto.randomBytes(8).toString('hex')}`,
       { mode: 'check' },
     );
+  }
+
+  /**
+   * 往后推算若干次触发时刻。
+   *
+   * 前端要在时间轴右半边画「待触发」的点，只有一个 nextRunAt 是不够的；
+   * 让前端自己按 schedule 投影则等于把 isJobDue 的到期判定复制一份到浏览器，
+   * 两边早晚漂移。所以序列由这里出，仍然只走 computeNextRunAt 一个判定源。
+   */
+  computeNextRuns(schedule: ScheduledJobSchedule, count: number, from = new Date()): string[] {
+    const out: string[] = [];
+    let cursor = from;
+    for (let i = 0; i < Math.max(0, count); i += 1) {
+      const next = this.computeNextRunAt(schedule, cursor);
+      if (!next) break;
+      out.push(next);
+      const parsed = Date.parse(next);
+      if (!Number.isFinite(parsed)) break;
+      // 加 1ms 越过刚算出的那个时刻，否则固定间隔会原地打转。
+      cursor = new Date(parsed + 1);
+    }
+    return out;
   }
 
   computeNextRunAt(schedule: ScheduledJobSchedule, from = new Date()): string | null {
@@ -464,6 +490,14 @@ export class ScheduledJobService {
     }
 
     const logs: string[] = [];
+    // 逐步结果：先按「未执行」铺满，跑到哪一步就把哪一步覆盖掉。
+    // 这样失败/跳过后面的动作天然记成 not-run，不用在每个 return 分支里补。
+    const steps: ScheduledJobRunStep[] = actions.map((action, index) => ({
+      index: index + 1,
+      name: action.name || defaultActionName(action),
+      type: action.type,
+      status: 'not-run',
+    }));
     let lastExitCode: number | undefined;
     let lastHttpStatus: number | undefined;
     let releaseId: string | undefined;
@@ -473,6 +507,7 @@ export class ScheduledJobService {
       const title = action.name || defaultActionName(action);
       logs.push(`[${index + 1}/${actions.length}] ${title}`);
       const sandboxKey = actions.length === 1 ? job.id : `${job.id}-${index + 1}-${action.id}`;
+      const startedAt = Date.now();
       const result = await this.executeTargetWithRetry(
         action, deadlineMs, sandboxKey, retryCount,
         {
@@ -484,12 +519,21 @@ export class ScheduledJobService {
       );
       lastExitCode = result.exitCode;
       lastHttpStatus = result.httpStatus;
+      steps[index] = {
+        ...steps[index],
+        status: result.skipped ? 'skipped' : result.ok ? 'success' : 'failed',
+        durationMs: Date.now() - startedAt,
+        ...(result.httpStatus !== undefined ? { httpStatus: result.httpStatus } : {}),
+        ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+        ...(result.ok || result.skipped ? {} : { error: result.error }),
+      };
       if (result.log) logs.push(result.log);
       // 任一动作被跳过 → 整单跳过，后续动作一律不跑（前提已不成立）。
       if (result.skipped) {
         return {
           ok: true,
           skipped: true,
+          steps,
           exitCode: result.exitCode,
           httpStatus: result.httpStatus,
           log: logs.join('\n'),
@@ -501,6 +545,7 @@ export class ScheduledJobService {
         if (result.error) logs.push(result.error);
         return {
           ok: false,
+          steps,
           exitCode: result.exitCode,
           httpStatus: result.httpStatus,
           log: logs.join('\n'),
@@ -514,6 +559,7 @@ export class ScheduledJobService {
     }
     return {
       ok: true,
+      steps,
       exitCode: lastExitCode,
       httpStatus: lastHttpStatus,
       log: logs.join('\n'),

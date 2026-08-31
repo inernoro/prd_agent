@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ArrowDown, ArrowUp, CalendarClock, Globe2, Pencil, Play, Plus, RefreshCw, Rocket, Save, SlidersHorizontal, Terminal, Trash2, type LucideIcon } from 'lucide-react';
+import { AlarmClock, ArrowDown, ArrowUp, CalendarClock, Globe2, Pencil, Play, Plus, RefreshCw, Rocket, Save, SlidersHorizontal, Terminal, Trash2, type LucideIcon } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
@@ -8,11 +8,16 @@ import { apiRequest } from '@/lib/api';
 import { parseCurlCommand } from '@/lib/curl-import';
 import { resolveTaskScheduleProjectId, taskScheduleProjectReference } from '@/lib/task-schedule-project';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import type {
+  HttpMethod, RunStatus, ScheduleType, ScheduledJob, ScheduledJobAction,
+  ScheduledJobRun, ScheduledJobTarget, TargetType,
+} from '@/types/task-schedule';
+import {
+  buildOverview, buildTimeline, computeHealth, countdownTo, formatDuration, formatTime,
+  msUntil, runStatusLabel, scheduleLabel, statusTone,
+  type JobHealth, type TimelineLane,
+} from '@/lib/task-schedule-view';
 
-type ScheduleType = 'manual' | 'interval' | 'daily';
-type TargetType = 'http' | 'command' | 'release';
-type RunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 interface ProjectLite {
   id: string;
@@ -21,48 +26,8 @@ interface ProjectLite {
   aliasName?: string;
 }
 
-interface ScheduledJob {
-  id: string;
-  projectId: string;
-  name: string;
-  description?: string;
-  enabled: boolean;
-  schedule: { type: ScheduleType; intervalMinutes?: number; timeOfDay?: string; timezone?: string };
-  target?: ScheduledJobTarget;
-  actions?: ScheduledJobAction[];
-  timeoutSeconds: number;
-  retryCount: number;
-  lastRunAt?: string;
-  lastRunStatus?: RunStatus;
-  nextRunAt?: string | null;
-  consecutiveFailureCount?: number;
-  autoDisabledAt?: string;
-  autoDisabledReason?: string;
-}
 
-interface ScheduledJobTarget {
-  type: TargetType;
-  method?: HttpMethod;
-  url?: string;
-  headers?: Record<string, string>;
-  body?: string;
-  command?: string;
-  cwd?: string;
-  // release 动作（定时发布）。本页这一轮只做「看得见 + 能启停 + 能看运行记录」，
-  // 编辑表单在发布中心的「自动发布」页签落地；这些字段必须原样带回后端，
-  // 否则用户在本页改个名字就会把发布配置整块抹掉。
-  targetId?: string;
-  source?: { kind: 'branch'; branchId: string } | { kind: 'promote'; fromTargetId: string };
-  dryRun?: boolean;
-  requireApproval?: boolean;
-  rollbackOnFailure?: boolean;
-  skipWhenUnchanged?: boolean;
-}
 
-interface ScheduledJobAction extends ScheduledJobTarget {
-  id: string;
-  name?: string;
-}
 
 interface ActionForm {
   id: string;
@@ -80,21 +45,7 @@ interface ActionForm {
   release?: ScheduledJobTarget;
 }
 
-interface ScheduledJobRun {
-  id: string;
-  jobId: string;
-  projectId: string;
-  trigger: 'schedule' | 'manual';
-  status: RunStatus;
-  queuedAt: string;
-  startedAt?: string;
-  finishedAt?: string;
-  durationMs?: number;
-  exitCode?: number;
-  httpStatus?: number;
-  log?: string;
-  error?: string;
-}
+
 
 interface TargetCheckResult {
   ok: boolean;
@@ -153,6 +104,15 @@ const textareaClass = 'w-full resize-y rounded-md border border-input bg-backgro
 const compactInputClass = 'h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring';
 const segmentClass = 'inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors';
 
+type RunFilterKey = 'all' | 'failed' | 'manual';
+
+const RUN_FILTERS: { key: RunFilterKey; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'failed', label: '失败' },
+  { key: 'manual', label: '手动' },
+];
+
+
 export function TaskSchedulePage(): JSX.Element {
   const location = useLocation();
   const [projects, setProjects] = useState<ProjectLite[]>([]);
@@ -172,6 +132,16 @@ export function TaskSchedulePage(): JSX.Element {
   const [actionError, setActionError] = useState('');
   const [checkingAction, setCheckingAction] = useState(false);
   const [checkResult, setCheckResult] = useState<TargetCheckResult | null>(null);
+  const [runFilter, setRunFilter] = useState<RunFilterKey>('all');
+  const [expandedRunId, setExpandedRunId] = useState('');
+  const [editing, setEditing] = useState(false);
+  // 倒计时要一直走。静止的「下次 12:28」读不出紧迫感，也不满足「变化可感知」。
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -179,8 +149,8 @@ export function TaskSchedulePage(): JSX.Element {
     try {
       const [projectRes, jobRes, runRes] = await Promise.all([
         apiRequest<{ projects?: ProjectLite[] }>('/api/projects'),
-        apiRequest<{ jobs: ScheduledJob[] }>('/api/scheduled-jobs'),
-        apiRequest<{ runs: ScheduledJobRun[] }>('/api/scheduled-jobs/runs?limit=100'),
+        apiRequest<{ jobs: ScheduledJob[] }>('/api/scheduled-jobs?nextRuns=24'),
+        apiRequest<{ runs: ScheduledJobRun[] }>('/api/scheduled-jobs/runs?limit=400'),
       ]);
       const nextProjects = projectRes.projects || [];
       const initialProjectId = resolveTaskScheduleProjectId(location.search, nextProjects);
@@ -218,14 +188,68 @@ export function TaskSchedulePage(): JSX.Element {
     return project ? (project.aliasName || project.name || project.slug || project.id) : projectId;
   }, [projects]);
 
-  const selectedRuns = useMemo(() => {
-    if (!selectedId) return runs;
-    return runs.filter((run) => run.jobId === selectedId);
-  }, [runs, selectedId]);
+  const runsByJob = useMemo(() => {
+    const map = new Map<string, ScheduledJobRun[]>();
+    for (const run of runs) {
+      const list = map.get(run.jobId);
+      if (list) list.push(run); else map.set(run.jobId, [run]);
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
+    }
+    return map;
+  }, [runs]);
+
+  const healthOf = useCallback((jobId: string): JobHealth => computeHealth(runsByJob.get(jobId) || []), [runsByJob]);
+
+  const jobNameOf = useCallback((jobId: string) => jobs.find((job) => job.id === jobId)?.name || jobId, [jobs]);
+
+  const selectedJob = useMemo(() => jobs.find((job) => job.id === selectedId) || null, [jobs, selectedId]);
+
+  const groupedJobs = useMemo(() => {
+    const attention: ScheduledJob[] = [];
+    const soon: ScheduledJob[] = [];
+    const normal: ScheduledJob[] = [];
+    for (const job of jobs) {
+      if (!job.enabled || job.autoDisabledReason || (job.consecutiveFailureCount || 0) > 0) attention.push(job);
+      else if (msUntil(job.nextRunAt, now) !== null && msUntil(job.nextRunAt, now)! <= 2 * 60 * 60 * 1000) soon.push(job);
+      else normal.push(job);
+    }
+    const byNext = (a: ScheduledJob, b: ScheduledJob) => (msUntil(a.nextRunAt, now) ?? Infinity) - (msUntil(b.nextRunAt, now) ?? Infinity);
+    soon.sort(byNext);
+    normal.sort(byNext);
+    return [
+      { key: 'attention', label: '需要注意', tone: 'text-bad', jobs: attention },
+      { key: 'soon', label: '即将触发', tone: 'text-primary-ink', jobs: soon },
+      { key: 'normal', label: '正常运行', tone: 'text-muted-foreground', jobs: normal },
+    ].filter((group) => group.jobs.length > 0);
+  }, [jobs, now]);
+
+  const visibleRuns = useMemo(() => {
+    const base = selectedId ? runs.filter((run) => run.jobId === selectedId) : runs;
+    const filtered = runFilter === 'failed'
+      ? base.filter((run) => run.status === 'failed' || run.status === 'skipped')
+      : runFilter === 'manual'
+        ? base.filter((run) => run.trigger === 'manual')
+        : base;
+    return [...filtered].sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt)).slice(0, 200);
+  }, [runs, runFilter, selectedId]);
+
+  const runFilterCaption = useMemo(() => {
+    const scope = selectedId ? jobNameOf(selectedId) : '全部任务';
+    if (runFilter === 'failed') return `${scope} · 只看失败与跳过`;
+    if (runFilter === 'manual') return `${scope} · 只看手动触发`;
+    return `${scope} · 最近 ${visibleRuns.length} 条`;
+  }, [runFilter, selectedId, jobNameOf, visibleRuns.length]);
+
+  const overview = useMemo(() => buildOverview(jobs, runs, now), [jobs, runs, now]);
+  const timeline = useMemo(() => buildTimeline(jobs, runsByJob, now, selectedId), [jobs, runsByJob, now, selectedId]);
 
   const selectJob = (job: ScheduledJob): void => {
     setSelectedId(job.id);
     setForm(jobToForm(job));
+    // 从清单换一个任务，回到观察态。编辑始终是显式动作，不会因为切换而「粘」在表单上。
+    setEditing(false);
   };
 
   const newJob = (): void => {
@@ -390,244 +414,294 @@ export function TaskSchedulePage(): JSX.Element {
         />
       )}
     >
-      <Workspace className="min-h-0">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-normal">任务调度</h1>
-            <p className="mt-1 text-xs text-muted-foreground">项目级定时任务，调度交给 CDS，业务逻辑留在接口或脚本里。</p>
-          </div>
-          <Button size="sm" onClick={newJob}>
-            <Plus className="h-4 w-4" />
-            新建任务
-          </Button>
-        </div>
-
+      <Workspace fluid className="min-h-0">
         {error ? <ErrorBlock message={error} /> : null}
         {toast ? (
-          <div className="mb-4 rounded-md border border-ok/30 bg-ok-soft px-3 py-2 text-sm text-ok">
+          <div className="mb-3 rounded-md border border-ok/30 bg-ok-soft px-3 py-2 text-sm text-ok">
             {toast}
           </div>
         ) : null}
 
         {loading ? <LoadingBlock label="加载任务调度配置" /> : (
-          <div className="grid min-h-0 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-            <section className="min-h-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
-              <div className="flex items-center justify-between border-b border-[hsl(var(--hairline))] px-4 py-3">
-                <div className="text-sm font-semibold">全部任务</div>
-                <span className="text-xs text-muted-foreground">{jobs.length} 个</span>
-              </div>
-              <div className="max-h-[660px] overflow-auto p-2">
-                {jobs.length === 0 ? (
-                  <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-4 text-center text-sm text-muted-foreground">
-                    <CalendarClock className="h-9 w-9 opacity-60" />
-                    <div>还没有定时任务。新建一个任务后，可以每天定时调用接口或执行命令。</div>
-                  </div>
-                ) : jobs.map((job) => (
-                  <button
-                    key={job.id}
-                    type="button"
-                    onClick={() => selectJob(job)}
-                    className={`mb-2 w-full rounded-md border px-3 py-3 text-left transition-colors ${selectedId === job.id ? 'border-primary bg-primary/10' : 'border-[hsl(var(--hairline))] bg-background hover:border-primary/50'}`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="min-w-0 truncate text-sm font-semibold">{job.name}</span>
-                      <StatusBadge status={job.lastRunStatus} enabled={job.enabled} />
-                    </div>
-                    <div className="mt-1 truncate text-xs text-muted-foreground">{projectName(job.projectId)} · {scheduleLabel(job)}</div>
-                    <div className="mt-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                      <span className="truncate">下次 {formatTime(job.nextRunAt)}</span>
-                      <span className="shrink-0">{targetLabel(job)}</span>
-                    </div>
-                    {job.autoDisabledReason ? (
-                      // 自动停用不解释原因，用户只会看到「怎么自己关了」——那比不停用更糟。
-                      <div className="mt-2 rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] leading-4 text-destructive">
-                        {job.autoDisabledReason}
-                      </div>
-                    ) : null}
-                  </button>
-                ))}
-              </div>
-            </section>
+          <div className="flex min-h-0 flex-col gap-3">
 
-            <div className="min-h-0 space-y-3">
-              <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4">
-                <div className="mb-4 flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] pb-3">
-                  <div>
-                    <div className="text-sm font-semibold">{form.id ? '编辑任务' : '新建任务'}</div>
-                    <div className="text-xs text-muted-foreground">触发器启动任务，动作按顺序执行。</div>
+            {/* 结论条：先给判断，再给数字。空表单不该占据第一屏。 */}
+            <div className="flex flex-wrap items-stretch gap-3">
+              <div className="flex min-w-0 flex-1 items-center gap-4 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${overview.tone === 'bad' ? 'bg-bad' : overview.tone === 'warn' ? 'bg-warn' : 'bg-ok'}`} />
+                    <span className="truncate text-base font-semibold">{overview.headline}</span>
                   </div>
-                  <div className="flex gap-2">
-                    {form.id ? (
-                      <Button variant="outline" size="sm" onClick={() => void runNow(form.id!)} disabled={runningId === form.id}>
-                        <Play className="h-4 w-4" />
-                        {runningId === form.id ? '执行中' : '立即执行'}
-                      </Button>
-                    ) : null}
-                    <Button size="sm" onClick={() => void saveJob()} disabled={saving || !form.projectId || !form.name || form.actions.length === 0}>
-                      <Save className="h-4 w-4" />
-                      {saving ? '保存中' : '保存'}
-                    </Button>
-                  </div>
+                  <div className="mt-1 text-xs leading-5 text-muted-foreground">{overview.detail}</div>
                 </div>
-
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <Field label="所属项目">
-                    <select className={compactInputClass} value={form.projectId} onChange={(e) => setForm({ ...form, projectId: e.target.value })} disabled={Boolean(form.id)}>
-                      <option value="">选择项目</option>
-                      {projects.map((project) => (
-                        <option key={project.id} value={project.id}>{projectName(project.id)}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="任务名称">
-                    <input className={compactInputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="生码统计同步" />
-                  </Field>
-                </div>
-
-                <section className="mt-4 rounded-md border border-[hsl(var(--hairline))] bg-background p-3">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold">触发器</div>
-                      <div className="text-xs text-muted-foreground">{scheduleLabelFromForm(form)}</div>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <SegmentButton icon={CalendarClock} label="每天" active={form.scheduleType === 'daily'} onClick={() => setForm({ ...form, scheduleType: 'daily' })} />
-                    <SegmentButton icon={RefreshCw} label="间隔" active={form.scheduleType === 'interval'} onClick={() => setForm({ ...form, scheduleType: 'interval' })} />
-                    <SegmentButton icon={Play} label="手动" active={form.scheduleType === 'manual'} onClick={() => setForm({ ...form, scheduleType: 'manual' })} />
-                  </div>
-                  <div className="mt-3 max-w-sm">
-                    {form.scheduleType === 'daily' ? (
-                      <Field label="执行时间">
-                        <input className={compactInputClass} type="time" value={form.timeOfDay} onChange={(e) => setForm({ ...form, timeOfDay: e.target.value })} />
-                      </Field>
-                    ) : null}
-                    {form.scheduleType === 'interval' ? (
-                      <Field label="间隔分钟">
-                        <input className={compactInputClass} value={form.intervalMinutes} onChange={(e) => setForm({ ...form, intervalMinutes: e.target.value })} inputMode="numeric" />
-                      </Field>
-                    ) : null}
-                    {form.scheduleType === 'manual' ? (
-                      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs text-muted-foreground">
-                        保存后通过“立即执行”触发。
-                      </div>
-                    ) : null}
-                  </div>
-                </section>
-
-                <section className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-background p-3">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold">动作步骤</div>
-                      <div className="text-xs text-muted-foreground">{form.actions.length} 个动作，按列表顺序执行。</div>
-                    </div>
-                    <Button type="button" size="sm" onClick={() => openActionDialog()}>
-                      <Plus className="h-4 w-4" />
-                      添加动作
-                    </Button>
-                  </div>
-                  {form.actions.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-4 py-8 text-center text-sm text-muted-foreground">
-                      还没有动作。添加 HTTP 调用或命令脚本后，任务触发时会从第 1 步开始执行。
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {form.actions.map((action, index) => (
-                        <div key={action.id} className="flex items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/30 px-3 py-2">
-                          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-[hsl(var(--hairline))] bg-background text-xs font-semibold">
-                            {index + 1}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 text-sm font-medium">
-                              {action.targetType === 'http' ? <Globe2 className="h-4 w-4 text-muted-foreground" /> : <Terminal className="h-4 w-4 text-muted-foreground" />}
-                              <span className="truncate">{actionTitle(action)}</span>
-                            </div>
-                            <div className="mt-0.5 truncate text-xs text-muted-foreground">{actionDescription(action)}</div>
-                          </div>
-                          <div className="flex shrink-0 items-center gap-1">
-                            <IconButton label="上移" disabled={index === 0} onClick={() => moveAction(index, -1)} icon={ArrowUp} />
-                            <IconButton label="下移" disabled={index === form.actions.length - 1} onClick={() => moveAction(index, 1)} icon={ArrowDown} />
-                            <IconButton label="编辑" onClick={() => openActionDialog(index)} icon={Pencil} />
-                            <IconButton label="删除" onClick={() => deleteAction(index)} icon={Trash2} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                <details className="mt-4 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
-                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground">
-                    <SlidersHorizontal className="h-3.5 w-3.5" />
-                    更多设置
-                  </summary>
-                  <div className="grid gap-3 border-t border-[hsl(var(--hairline))] p-3 lg:grid-cols-2">
-                    <Field label="启用状态">
-                      <label className="flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm">
-                        <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
-                        {form.enabled ? '已启用' : '已停用'}
-                      </label>
-                    </Field>
-                    <Field label="超时秒数">
-                      <input className={compactInputClass} value={form.timeoutSeconds} onChange={(e) => setForm({ ...form, timeoutSeconds: e.target.value })} inputMode="numeric" />
-                    </Field>
-                    <Field label="重试次数">
-                      <input className={compactInputClass} value={form.retryCount} onChange={(e) => setForm({ ...form, retryCount: e.target.value })} inputMode="numeric" />
-                    </Field>
-                    <Field label="时区">
-                      <input className={compactInputClass} value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} />
-                    </Field>
-                    <Field label="说明" className="lg:col-span-2">
-                      <textarea className={`${textareaClass} min-h-16`} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="说明这个任务拉取什么数据、写入哪里。" />
-                    </Field>
-                  </div>
-                </details>
-
-                {form.id ? (
-                  <div className="mt-3 flex justify-end">
-                    <Button variant="outline" size="sm" onClick={() => void deleteJob()} disabled={saving} className="text-destructive hover:text-destructive">
-                      <Trash2 className="h-4 w-4" />
-                      删除任务
-                    </Button>
-                  </div>
-                ) : null}
-              </section>
-
-              <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
-                  <span>运行记录</span>
-                  <span className="text-xs font-normal text-muted-foreground">{selectedRuns.length} 条</span>
-                </summary>
-                <div className="max-h-[720px] overflow-auto p-3">
-                  {selectedRuns.length === 0 ? (
-                    <div className="flex min-h-24 items-center justify-center text-center text-sm text-muted-foreground">
-                      还没有运行记录。
-                    </div>
-                  ) : selectedRuns.map((run) => (
-                    <div key={run.id} className="mb-3 rounded-md border border-[hsl(var(--hairline))] bg-background p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-sm font-semibold">{runStatusLabel(run.status)}</span>
-                        <span className="text-xs text-muted-foreground">{formatTime(run.startedAt || run.queuedAt)}</span>
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {run.trigger === 'manual' ? '手动触发' : '定时触发'}
-                        {run.durationMs !== undefined ? ` · ${Math.round(run.durationMs / 1000)} 秒` : ''}
-                        {run.httpStatus ? ` · HTTP ${run.httpStatus}` : ''}
-                        {run.exitCode !== undefined ? ` · exit ${run.exitCode}` : ''}
-                      </div>
-                      {run.error ? <div className="mt-2 text-xs text-destructive">{run.error}</div> : null}
-                      {run.log ? (
-                        <details className="mt-2 rounded-md bg-[hsl(var(--surface-sunken))]">
-                          <summary className="cursor-pointer px-2 py-1.5 text-xs text-muted-foreground">查看日志</summary>
-                          <pre className="max-h-44 overflow-auto whitespace-pre-wrap border-t border-[hsl(var(--hairline))] p-2 font-mono text-[11px] leading-5 text-muted-foreground">
-                            {run.log}
-                          </pre>
-                        </details>
-                      ) : null}
+                <div className="hidden shrink-0 items-stretch gap-5 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
+                  {overview.stats.map((stat) => (
+                    <div key={stat.label}>
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{stat.label}</div>
+                      <div className={`font-mono text-lg font-semibold leading-tight ${stat.tone}`}>{stat.value}</div>
                     </div>
                   ))}
                 </div>
-              </details>
+              </div>
+              <div className="flex w-56 shrink-0 flex-col justify-center rounded-md border border-primary/30 bg-primary-soft px-4 py-2">
+                <div className="text-[10px] uppercase tracking-wide text-primary-ink/80">下一次触发</div>
+                <div className="flex items-baseline gap-2">
+                  <span className="font-mono text-2xl font-semibold leading-none text-primary-ink">{overview.nextCountdown}</span>
+                  <span className="min-w-0 truncate text-xs text-muted-foreground">{overview.nextName}</span>
+                </div>
+              </div>
+              <Button className="shrink-0 self-stretch" onClick={newJob}>
+                <Plus className="h-4 w-4" />
+                新建任务
+              </Button>
+            </div>
+
+            <TimelineBand lanes={timeline.lanes} nowRatio={timeline.nowRatio} nowLabel={timeline.nowLabel} hiddenCount={timeline.hiddenCount} />
+
+            <div className="grid min-h-0 flex-1 gap-3 2xl:grid-cols-[300px_minmax(0,1fr)_420px] xl:grid-cols-[280px_minmax(0,1fr)]">
+              {/* 左：任务清单，按「需要注意 / 即将触发 / 正常运行」分组 */}
+              <section className="flex min-h-0 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+                <div className="flex items-center justify-between border-b border-[hsl(var(--hairline))] px-4 py-3">
+                  <div className="text-sm font-semibold">任务</div>
+                  <span className="font-mono text-xs text-muted-foreground">{jobs.length}</span>
+                </div>
+                <div className="min-h-0 flex-1 overflow-auto p-2">
+                  {jobs.length === 0 ? (
+                    <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-4 text-center text-sm text-muted-foreground">
+                      <AlarmClock className="h-9 w-9 opacity-60" />
+                      <div>还没有定时任务。新建一个任务后，可以每天定时调用接口或执行命令。</div>
+                    </div>
+                  ) : groupedJobs.map((group) => (
+                    <div key={group.key}>
+                      <div className="flex items-center gap-2 px-1 pb-1 pt-2">
+                        <span className={`text-[10px] font-semibold uppercase tracking-wide ${group.tone}`}>{group.label}</span>
+                        <span className="h-px flex-1 bg-[hsl(var(--hairline))]" />
+                        <span className="font-mono text-[10px] text-muted-foreground">{group.jobs.length}</span>
+                      </div>
+                      {group.jobs.map((job) => (
+                        <JobRow
+                          key={job.id}
+                          job={job}
+                          selected={selectedId === job.id}
+                          projectLabel={projectName(job.projectId)}
+                          scheduleText={scheduleLabel(job)}
+                          countdown={countdownTo(job.nextRunAt, now)}
+                          bars={healthOf(job.id).bars}
+                          onSelect={() => selectJob(job)}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              {/* 中：运行流。此前折在 <details> 里，是这一页最有价值也最难看到的数据。 */}
+              <section className="flex min-h-0 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+                <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="text-sm font-semibold">运行流</span>
+                    <span className="truncate text-xs text-muted-foreground">{runFilterCaption}</span>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    {RUN_FILTERS.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => setRunFilter(item.key)}
+                        className={`h-7 rounded-md px-2.5 text-xs transition-colors ${runFilter === item.key ? 'border border-primary/45 bg-primary-soft font-semibold text-primary-ink' : 'border border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="min-h-0 flex-1 overflow-auto">
+                  {visibleRuns.length === 0 ? (
+                    <div className="flex min-h-24 items-center justify-center px-4 py-10 text-center text-sm text-muted-foreground">
+                      还没有运行记录。
+                    </div>
+                  ) : visibleRuns.map((run) => (
+                    <RunRow
+                      key={run.id}
+                      run={run}
+                      jobName={jobNameOf(run.jobId)}
+                      expanded={expandedRunId === run.id}
+                      onToggle={() => setExpandedRunId(expandedRunId === run.id ? '' : run.id)}
+                    />
+                  ))}
+                </div>
+              </section>
+
+              {/* 右：观察与编辑分开。选中任务默认给概览，编辑是显式动作。 */}
+              <section className="hidden min-h-0 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] 2xl:flex">
+                {editing || !selectedJob ? (
+                  <div className="min-h-0 flex-1 overflow-auto p-3">
+                    {selectedJob ? (
+                      <button
+                        type="button"
+                        onClick={() => setEditing(false)}
+                        className="mb-2 text-xs text-primary-ink hover:underline"
+                      >
+                        返回概览
+                      </button>
+                    ) : null}
+                    <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4">
+                      <div className="mb-4 flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] pb-3">
+                        <div>
+                          <div className="text-sm font-semibold">{form.id ? '编辑任务' : '新建任务'}</div>
+                          <div className="text-xs text-muted-foreground">触发器启动任务，动作按顺序执行。</div>
+                        </div>
+                        <div className="flex gap-2">
+                          {form.id ? (
+                            <Button variant="outline" size="sm" onClick={() => void runNow(form.id!)} disabled={runningId === form.id}>
+                              <Play className="h-4 w-4" />
+                              {runningId === form.id ? '执行中' : '立即执行'}
+                            </Button>
+                          ) : null}
+                          <Button size="sm" onClick={() => void saveJob()} disabled={saving || !form.projectId || !form.name || form.actions.length === 0}>
+                            <Save className="h-4 w-4" />
+                            {saving ? '保存中' : '保存'}
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 lg:grid-cols-2">
+                        <Field label="所属项目">
+                          <select className={compactInputClass} value={form.projectId} onChange={(e) => setForm({ ...form, projectId: e.target.value })} disabled={Boolean(form.id)}>
+                            <option value="">选择项目</option>
+                            {projects.map((project) => (
+                              <option key={project.id} value={project.id}>{projectName(project.id)}</option>
+                            ))}
+                          </select>
+                        </Field>
+                        <Field label="任务名称">
+                          <input className={compactInputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="生码统计同步" />
+                        </Field>
+                      </div>
+
+                      <section className="mt-4 rounded-md border border-[hsl(var(--hairline))] bg-background p-3">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold">触发器</div>
+                            <div className="text-xs text-muted-foreground">{scheduleLabelFromForm(form)}</div>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <SegmentButton icon={CalendarClock} label="每天" active={form.scheduleType === 'daily'} onClick={() => setForm({ ...form, scheduleType: 'daily' })} />
+                          <SegmentButton icon={RefreshCw} label="间隔" active={form.scheduleType === 'interval'} onClick={() => setForm({ ...form, scheduleType: 'interval' })} />
+                          <SegmentButton icon={Play} label="手动" active={form.scheduleType === 'manual'} onClick={() => setForm({ ...form, scheduleType: 'manual' })} />
+                        </div>
+                        <div className="mt-3 max-w-sm">
+                          {form.scheduleType === 'daily' ? (
+                            <Field label="执行时间">
+                              <input className={compactInputClass} type="time" value={form.timeOfDay} onChange={(e) => setForm({ ...form, timeOfDay: e.target.value })} />
+                            </Field>
+                          ) : null}
+                          {form.scheduleType === 'interval' ? (
+                            <Field label="间隔分钟">
+                              <input className={compactInputClass} value={form.intervalMinutes} onChange={(e) => setForm({ ...form, intervalMinutes: e.target.value })} inputMode="numeric" />
+                            </Field>
+                          ) : null}
+                          {form.scheduleType === 'manual' ? (
+                            <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs text-muted-foreground">
+                              保存后通过“立即执行”触发。
+                            </div>
+                          ) : null}
+                        </div>
+                      </section>
+
+                      <section className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-background p-3">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold">动作步骤</div>
+                            <div className="text-xs text-muted-foreground">{form.actions.length} 个动作，按列表顺序执行。</div>
+                          </div>
+                          <Button type="button" size="sm" onClick={() => openActionDialog()}>
+                            <Plus className="h-4 w-4" />
+                            添加动作
+                          </Button>
+                        </div>
+                        {form.actions.length === 0 ? (
+                          <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-4 py-8 text-center text-sm text-muted-foreground">
+                            还没有动作。添加 HTTP 调用或命令脚本后，任务触发时会从第 1 步开始执行。
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {form.actions.map((action, index) => (
+                              <div key={action.id} className="flex items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/30 px-3 py-2">
+                                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-[hsl(var(--hairline))] bg-background text-xs font-semibold">
+                                  {index + 1}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2 text-sm font-medium">
+                                    {action.targetType === 'http' ? <Globe2 className="h-4 w-4 text-muted-foreground" /> : <Terminal className="h-4 w-4 text-muted-foreground" />}
+                                    <span className="truncate">{actionTitle(action)}</span>
+                                  </div>
+                                  <div className="mt-0.5 truncate text-xs text-muted-foreground">{actionDescription(action)}</div>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1">
+                                  <IconButton label="上移" disabled={index === 0} onClick={() => moveAction(index, -1)} icon={ArrowUp} />
+                                  <IconButton label="下移" disabled={index === form.actions.length - 1} onClick={() => moveAction(index, 1)} icon={ArrowDown} />
+                                  <IconButton label="编辑" onClick={() => openActionDialog(index)} icon={Pencil} />
+                                  <IconButton label="删除" onClick={() => deleteAction(index)} icon={Trash2} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+
+                      <details className="mt-4 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
+                        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground">
+                          <SlidersHorizontal className="h-3.5 w-3.5" />
+                          更多设置
+                        </summary>
+                        <div className="grid gap-3 border-t border-[hsl(var(--hairline))] p-3 lg:grid-cols-2">
+                          <Field label="启用状态">
+                            <label className="flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm">
+                              <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
+                              {form.enabled ? '已启用' : '已停用'}
+                            </label>
+                          </Field>
+                          <Field label="超时秒数">
+                            <input className={compactInputClass} value={form.timeoutSeconds} onChange={(e) => setForm({ ...form, timeoutSeconds: e.target.value })} inputMode="numeric" />
+                          </Field>
+                          <Field label="重试次数">
+                            <input className={compactInputClass} value={form.retryCount} onChange={(e) => setForm({ ...form, retryCount: e.target.value })} inputMode="numeric" />
+                          </Field>
+                          <Field label="时区">
+                            <input className={compactInputClass} value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} />
+                          </Field>
+                          <Field label="说明" className="lg:col-span-2">
+                            <textarea className={`${textareaClass} min-h-16`} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="说明这个任务拉取什么数据、写入哪里。" />
+                          </Field>
+                        </div>
+                      </details>
+
+                      {form.id ? (
+                        <div className="mt-3 flex justify-end">
+                          <Button variant="outline" size="sm" onClick={() => void deleteJob()} disabled={saving} className="text-destructive hover:text-destructive">
+                            <Trash2 className="h-4 w-4" />
+                            删除任务
+                          </Button>
+                        </div>
+                      ) : null}
+                    </section>
+                  </div>
+                ) : (
+                  <JobOverview
+                    job={selectedJob}
+                    projectLabel={projectName(selectedJob.projectId)}
+                    scheduleText={scheduleLabel(selectedJob)}
+                    countdown={countdownTo(selectedJob.nextRunAt, now)}
+                    health={healthOf(selectedJob.id)}
+                    running={runningId === selectedJob.id}
+                    onRun={() => void runNow(selectedJob.id)}
+                    onEdit={() => { selectJob(selectedJob); setEditing(true); }}
+                  />
+                )}
+              </section>
             </div>
           </div>
         )}
@@ -802,6 +876,18 @@ function hasActionConfigured(action: ActionLike): boolean {
   return action.targetType === 'http' ? Boolean(action.url.trim()) : Boolean(action.command.trim());
 }
 
+/** 把服务端的 target/action 形状映射成表单侧的 ActionLike，标题与描述复用同一套判定。 */
+function actionFromTarget(action: ScheduledJobAction): ActionLike {
+  return {
+    name: action.name || '',
+    targetType: action.type,
+    method: action.method || 'POST',
+    url: action.url || '',
+    command: action.command || '',
+    release: action,
+  };
+}
+
 function actionTitle(action: ActionLike): string {
   if (action.name.trim()) return action.name.trim();
   if (action.targetType === 'release') return '发布到环境';
@@ -880,29 +966,8 @@ function Field({ label, children, className = '' }: { label: string; children: R
   );
 }
 
-function StatusBadge({ status, enabled }: { status?: RunStatus; enabled: boolean }): JSX.Element {
-  if (!enabled) return <span className="rounded border border-muted px-2 py-0.5 text-xs text-muted-foreground">已停用</span>;
-  const cls = status === 'success'
-    ? 'border-ok/35 text-ok'
-    : status === 'failed'
-      ? 'border-destructive/35 text-destructive'
-      : 'border-[hsl(var(--hairline))] text-muted-foreground';
-  return <span className={`rounded border px-2 py-0.5 text-xs ${cls}`}>{status ? runStatusLabel(status) : '待运行'}</span>;
-}
 
-function runStatusLabel(status: RunStatus): string {
-  if (status === 'success') return '成功';
-  if (status === 'failed') return '失败';
-  if (status === 'running') return '运行中';
-  if (status === 'skipped') return '已跳过';
-  return '排队中';
-}
 
-function scheduleLabel(job: ScheduledJob): string {
-  if (job.schedule.type === 'manual') return '仅手动';
-  if (job.schedule.type === 'interval') return `每 ${job.schedule.intervalMinutes || 60} 分钟`;
-  return `每天 ${job.schedule.timeOfDay || '02:00'} ${job.schedule.timezone || 'Asia/Shanghai'}`;
-}
 
 function scheduleLabelFromForm(form: FormState): string {
   if (form.scheduleType === 'manual') return '仅手动触发';
@@ -910,23 +975,7 @@ function scheduleLabelFromForm(form: FormState): string {
   return `每天 ${form.timeOfDay || '02:00'} 触发`;
 }
 
-function targetLabel(job: ScheduledJob): string {
-  const actions = normalizeJobActions(job);
-  if (actions.length === 0) return '无动作';
-  if (actions.length === 1) {
-    const action = actions[0];
-    if (action.targetType === 'release') return releaseActionSummary(action.release);
-    return action.targetType === 'http' ? `${action.method || 'POST'} ${action.url || ''}` : '命令';
-  }
-  return `${actions.length} 个动作`;
-}
 
-function formatTime(iso?: string | null): string {
-  if (!iso) return '无';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString();
-}
 
 function jobToForm(job: ScheduledJob): FormState {
   return {
@@ -981,4 +1030,322 @@ function normalizeJobActions(job: ScheduledJob): ActionForm[] {
     cwd: action.cwd || '',
     ...(action.type === 'release' ? { release: action } : {}),
   }));
+}
+
+/** 今日调度轴。左侧已发生，右侧待触发，橙线是现在。 */
+function TimelineBand({
+  lanes, nowRatio, nowLabel, hiddenCount,
+}: {
+  lanes: TimelineLane[];
+  nowRatio: number;
+  nowLabel: string;
+  hiddenCount: number;
+}): JSX.Element | null {
+  if (lanes.length === 0) return null;
+  const hours = [0, 3, 6, 9, 12, 15, 18, 21, 24];
+  return (
+    <section className="shrink-0 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+      <div className="flex items-center justify-between border-b border-[hsl(var(--hairline))] px-4 py-2">
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-semibold">今日调度轴</span>
+          <span className="text-xs text-muted-foreground">左侧已发生，右侧待触发</span>
+        </div>
+        <div className="hidden items-center gap-4 text-[11px] text-muted-foreground sm:flex">
+          <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 rounded bg-ok" />成功</span>
+          <span className="flex items-center gap-1.5"><span className="h-2.5 w-0.5 rounded bg-bad" />失败</span>
+          <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full border border-dashed border-[hsl(var(--hairline-strong))]" />待触发</span>
+        </div>
+      </div>
+
+      <div className="px-4 pb-3 pt-2">
+        <div className="flex">
+          <div className="w-36 shrink-0" />
+          <div className="relative h-4 flex-1">
+            {hours.map((hour) => (
+              <span
+                key={hour}
+                className="absolute top-0 font-mono text-[10px] text-muted-foreground"
+                style={{ left: `${(hour / 24) * 100}%`, transform: hour === 0 ? 'none' : hour === 24 ? 'translateX(-100%)' : 'translateX(-50%)' }}
+              >
+                {String(hour).padStart(2, '0')}
+              </span>
+            ))}
+          </div>
+          <div className="w-16 shrink-0" />
+        </div>
+
+        <div className="relative">
+          {lanes.map((lane) => (
+            <div key={lane.id} className={`flex h-7 items-center rounded ${lane.selected ? 'bg-primary/[0.07] shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.18)]' : ''}`}>
+              <div className="flex w-36 shrink-0 items-center gap-1.5 pr-3">
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${lane.disabled ? 'bg-muted-foreground' : 'bg-ok'}`} />
+                <span className={`truncate text-[11px] ${lane.disabled ? 'text-muted-foreground line-through' : lane.selected ? 'text-primary-ink' : 'text-foreground-muted'}`}>{lane.name}</span>
+              </div>
+              <div className="relative h-6 flex-1">
+                {[3, 6, 9, 12, 15, 18, 21].map((hour) => (
+                  <span key={hour} className="absolute inset-y-0 w-px bg-[hsl(var(--hairline))]/80" style={{ left: `${(hour / 24) * 100}%` }} />
+                ))}
+                <span className="absolute inset-y-0 right-0 bg-[hsl(var(--surface-sunken))]/55" style={{ left: `${nowRatio}%` }} />
+                {lane.dense && !lane.disabled ? (
+                  <>
+                    <span className="absolute top-1/2 h-1 -translate-y-1/2 rounded bg-gradient-to-r from-ok/35 to-ok/85" style={{ left: 0, width: `${nowRatio}%` }} />
+                    <span className="absolute top-1/2 right-0 h-1 -translate-y-1/2 rounded border border-dashed border-[hsl(var(--hairline-strong))]" style={{ left: `${nowRatio}%` }} />
+                  </>
+                ) : null}
+                {lane.events.map((event, index) => (
+                  <span
+                    key={`${event.leftPct}-${index}`}
+                    title={event.title}
+                    className={
+                      event.status === 'pending'
+                        ? 'absolute top-1/2 h-[7px] w-[7px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-[hsl(var(--hairline-strong))]'
+                        : event.status === 'failed'
+                          ? 'absolute top-1/2 h-3.5 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-sm bg-bad'
+                          : `absolute top-1/2 h-[7px] w-[7px] -translate-x-1/2 -translate-y-1/2 rounded-full ${statusTone(event.status)}`
+                    }
+                    style={{ left: `${event.leftPct}%` }}
+                  />
+                ))}
+              </div>
+              <div className="flex w-16 shrink-0 justify-end">
+                <span className={`truncate text-[10px] ${lane.disabled ? 'text-bad' : 'text-muted-foreground'}`}>{lane.tag}</span>
+              </div>
+            </div>
+          ))}
+
+          <div
+            className="pointer-events-none absolute top-0 w-px bg-primary shadow-[0_0_10px_hsl(var(--primary)/0.6)]"
+            style={{ left: `calc(9rem + (100% - 9rem - 4rem) * ${nowRatio / 100})`, height: `${lanes.length * 28}px` }}
+          />
+          <span
+            className="pointer-events-none absolute -translate-x-1/2 rounded bg-primary px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[hsl(var(--status-ink))]"
+            style={{ left: `calc(9rem + (100% - 9rem - 4rem) * ${nowRatio / 100})`, top: `${lanes.length * 28 + 4}px` }}
+          >
+            现在 {nowLabel}
+          </span>
+        </div>
+
+        {hiddenCount > 0 ? (
+          <div className="pl-36 pt-7 text-[11px] text-muted-foreground">另有 {hiddenCount} 个任务未展开</div>
+        ) : <div className="pt-6" />}
+      </div>
+    </section>
+  );
+}
+
+/** 任务清单里的一行：名字 + 倒计时 + 最近 10 次健康条。 */
+function JobRow({
+  job, selected, projectLabel, scheduleText, countdown, bars, onSelect,
+}: {
+  job: ScheduledJob;
+  selected: boolean;
+  projectLabel: string;
+  scheduleText: string;
+  countdown: string;
+  bars: RunStatus[];
+  onSelect: () => void;
+}): JSX.Element {
+  const disabled = Boolean(job.autoDisabledReason) || !job.enabled;
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`mb-1 block w-full rounded-md border px-2.5 py-2 text-left transition-colors ${selected ? 'border-primary/50 bg-primary-soft' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:border-primary/40'} ${disabled ? 'opacity-75' : ''}`}
+    >
+      <div className="flex items-center gap-2">
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${disabled ? 'bg-muted-foreground' : job.lastRunStatus === 'failed' ? 'bg-bad' : job.lastRunStatus === 'skipped' ? 'bg-warn' : 'bg-ok'}`} />
+        <span className={`min-w-0 flex-1 truncate text-[13px] font-semibold ${selected ? 'text-primary-ink' : ''}`}>{job.name}</span>
+        <span className={`shrink-0 font-mono text-[11px] ${disabled ? 'text-bad' : selected ? 'text-primary-ink' : 'text-muted-foreground'}`}>
+          {disabled ? '已停用' : countdown}
+        </span>
+      </div>
+      <div className="mt-1.5 flex items-center gap-2">
+        <span className="min-w-0 max-w-[7rem] truncate text-[11px] text-muted-foreground">{projectLabel}</span>
+        <span className="h-0.5 w-0.5 shrink-0 rounded-full bg-[hsl(var(--hairline-strong))]" />
+        <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground">{scheduleText}</span>
+        <span className="flex flex-1 justify-end gap-px">
+          {bars.map((status, index) => (
+            <span key={index} className={`h-2.5 w-1 rounded-sm ${statusTone(status)}`} />
+          ))}
+        </span>
+      </div>
+      {job.autoDisabledReason ? (
+        <div className="mt-1.5 rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-[10px] leading-4 text-destructive">
+          {job.autoDisabledReason}
+        </div>
+      ) : null}
+    </button>
+  );
+}
+
+/** 运行流的一行。动作链缩略来自 run.steps，点开展日志与逐步耗时。 */
+function RunRow({
+  run, jobName, expanded, onToggle,
+}: {
+  run: ScheduledJobRun;
+  jobName: string;
+  expanded: boolean;
+  onToggle: () => void;
+}): JSX.Element {
+  const bad = run.status === 'failed';
+  return (
+    <div className={`border-b border-[hsl(var(--hairline))]/70 ${bad ? 'bg-destructive/[0.08]' : ''}`}>
+      <button type="button" onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-2 text-left">
+        <span className={`h-5 w-[3px] shrink-0 rounded-sm ${statusTone(run.status)}`} />
+        <span className="w-11 shrink-0 font-mono text-[11px] text-muted-foreground">{formatTime(run.startedAt || run.queuedAt).slice(-5)}</span>
+        <span className={`min-w-0 max-w-[11rem] flex-1 truncate text-[12.5px] font-medium ${bad ? 'text-bad' : ''}`}>{jobName}</span>
+        <span className={`shrink-0 rounded px-1.5 py-px text-[10.5px] ${run.trigger === 'manual' ? 'border border-info/30 bg-info-soft text-info' : 'border border-[hsl(var(--hairline-strong))] text-muted-foreground'}`}>
+          {run.trigger === 'manual' ? '手动' : run.trigger === 'push' ? 'push' : '定时'}
+        </span>
+        <span className="hidden shrink-0 items-center gap-0.5 sm:flex">
+          {(run.steps || []).map((step) => (
+            <span key={step.index} title={`${step.index}. ${step.name}`} className={`h-1.5 w-1.5 rounded-sm ${statusTone(step.status)}`} />
+          ))}
+        </span>
+        <span className="w-14 shrink-0 text-right font-mono text-[11px] text-foreground-muted">{formatDuration(run.durationMs)}</span>
+        <span className={`w-14 shrink-0 text-right font-mono text-[11px] ${bad ? 'text-bad' : run.status === 'skipped' ? 'text-warn' : 'text-ok'}`}>
+          {run.httpStatus ? run.httpStatus : run.exitCode !== undefined ? `exit ${run.exitCode}` : runStatusLabel(run.status)}
+        </span>
+      </button>
+
+      {expanded ? (
+        <div className="px-4 pb-3 pl-[3.4rem]">
+          {run.steps && run.steps.length > 0 ? (
+            <div className="mb-2 space-y-1">
+              {run.steps.map((step) => (
+                <div key={step.index} className="flex items-center gap-2 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60 px-2 py-1">
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-sm ${statusTone(step.status)}`} />
+                  <span className="font-mono text-[10px] text-muted-foreground">{step.index}</span>
+                  <span className="min-w-0 flex-1 truncate text-[11.5px]">{step.name}</span>
+                  <span className="shrink-0 font-mono text-[10.5px] text-muted-foreground">
+                    {step.status === 'not-run' ? '未执行' : formatDuration(step.durationMs)}
+                    {step.httpStatus ? ` · ${step.httpStatus}` : step.exitCode !== undefined ? ` · exit ${step.exitCode}` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {run.error ? <div className="mb-2 text-[11.5px] text-destructive">{run.error}</div> : null}
+          {run.log ? (
+            <pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2 font-mono text-[11px] leading-5 text-muted-foreground">
+              {run.log}
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** 选中任务的概览。观察态默认，编辑是显式动作。 */
+function JobOverview({
+  job, projectLabel, scheduleText, countdown, health, running, onRun, onEdit,
+}: {
+  job: ScheduledJob;
+  projectLabel: string;
+  scheduleText: string;
+  countdown: string;
+  health: JobHealth;
+  running: boolean;
+  onRun: () => void;
+  onEdit: () => void;
+}): JSX.Element {
+  const disabled = Boolean(job.autoDisabledReason) || !job.enabled;
+  const actions: ScheduledJobAction[] = job.actions && job.actions.length > 0
+    ? job.actions
+    : (job.target ? [{ ...job.target, id: 'legacy' }] : []);
+  return (
+    <>
+      <div className="border-b border-[hsl(var(--hairline))] px-4 py-3">
+        <div className="truncate text-[15px] font-semibold">{job.name}</div>
+        <div className="mt-1.5 flex items-center gap-2">
+          <span className="rounded border border-[hsl(var(--hairline-strong))] px-1.5 py-px text-[11px] text-foreground-muted">{projectLabel}</span>
+          <span className="text-[11.5px] text-muted-foreground">{scheduleText}</span>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
+        <div className="flex gap-2.5">
+          <div className={`flex w-32 shrink-0 flex-col justify-center gap-1 rounded-md border px-3 py-2 ${disabled ? 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60' : 'border-primary/30 bg-primary-soft'}`}>
+            <span className="text-[9.5px] uppercase tracking-wide text-muted-foreground">{disabled ? '已停用' : '下次触发'}</span>
+            <span className={`font-mono text-lg font-semibold leading-none ${disabled ? 'text-muted-foreground' : 'text-primary-ink'}`}>
+              {disabled ? '——:——' : countdown}
+            </span>
+          </div>
+          <div className="grid flex-1 grid-cols-2 gap-2">
+            {[
+              { label: `近 ${health.total} 次`, value: health.successRate === null ? '—' : `${health.successRate}%`, tone: health.successRate !== null && health.successRate < 100 ? 'text-warn' : 'text-ok' },
+              { label: 'P50 耗时', value: formatDuration(health.p50Ms), tone: 'text-foreground' },
+              { label: '连续成功', value: String(health.streak), tone: 'text-ok' },
+              { label: '连续失败', value: String(job.consecutiveFailureCount || 0), tone: (job.consecutiveFailureCount || 0) > 0 ? 'text-bad' : 'text-muted-foreground' },
+            ].map((item) => (
+              <div key={item.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-2 py-1.5">
+                <div className="text-[9.5px] uppercase tracking-wide text-muted-foreground">{item.label}</div>
+                <div className={`font-mono text-sm font-semibold leading-tight ${item.tone}`}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {health.bars.length > 0 ? (
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">最近 {health.bars.length} 次</span>
+              <span className="text-[11px] text-muted-foreground">越靠右越新</span>
+            </div>
+            <div className="flex items-end gap-0.5">
+              {health.bars.map((status, index) => (
+                <span key={index} className={`h-6 flex-1 rounded-sm ${statusTone(status)}`} style={{ opacity: 0.45 + (index / Math.max(1, health.bars.length - 1)) * 0.55 }} />
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <div>
+          <div className="mb-2 text-[10px] uppercase tracking-wide text-muted-foreground">动作链</div>
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/40 bg-primary-soft">
+              <AlarmClock className="h-3.5 w-3.5 text-primary-ink" />
+            </span>
+            <span className="text-[12.5px] text-foreground-muted">{scheduleText}</span>
+          </div>
+          {actions.map((action, index) => (
+            <div key={action.id || index}>
+              <div className="ml-[0.85rem] h-3 w-px bg-[hsl(var(--hairline-strong))]" />
+              <div className="flex items-center gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-2.5 py-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[hsl(var(--hairline-strong))] font-mono text-[11.5px] font-semibold">{index + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`shrink-0 rounded px-1.5 py-px text-[9.5px] ${action.type === 'http' ? 'bg-info-soft text-info' : action.type === 'release' ? 'bg-primary-soft text-primary-ink' : 'bg-[hsl(var(--hairline))] text-foreground-muted'}`}>
+                      {action.type === 'http' ? 'HTTP' : action.type === 'release' ? '发布' : '命令'}
+                    </span>
+                    <span className="truncate text-[12.5px] font-medium">{actionTitle(actionFromTarget(action))}</span>
+                  </div>
+                  <div className="mt-0.5 truncate font-mono text-[10.5px] text-muted-foreground">{actionDescription(actionFromTarget(action))}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {job.autoDisabledReason ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2.5">
+            <div className="text-[12px] font-medium leading-5 text-destructive">已自动停用</div>
+            <div className="mt-1 text-[11.5px] leading-5 text-muted-foreground">{job.autoDisabledReason}</div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="flex gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-4 py-3">
+        <Button className="flex-1" onClick={onRun} disabled={running}>
+          <Play className="h-4 w-4" />
+          {running ? '执行中' : '立即执行'}
+        </Button>
+        <Button variant="outline" onClick={onEdit}>
+          <Pencil className="h-4 w-4" />
+          编辑配置
+        </Button>
+      </div>
+    </>
+  );
 }

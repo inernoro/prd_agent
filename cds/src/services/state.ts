@@ -43,6 +43,10 @@ import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
+/* 定时任务运行记录：按任务各留 120 条（每 5 分钟的任务约 10 小时，日任务约 4 个月），
+   全局 5000 条兜底防状态文件无限膨胀。 */
+const SCHEDULED_JOB_RUNS_PER_JOB = 120;
+const SCHEDULED_JOB_RUNS_GLOBAL_CAP = 5000;
 const MAX_DEPLOYMENT_VERSIONS_PER_PROJECT = 100;
 /** 容器日志黑匣子 per-branch 上限：条数与字节双闸，防止 state 无界膨胀
  *（JSON 模式每次 save 全量 stringify、mongo-split 每 tick structuredClone 都要背这份数据）。 */
@@ -905,9 +909,20 @@ export class StateService {
     const idx = this.state.scheduledJobRuns.findIndex((item) => item.id === run.id);
     if (idx >= 0) this.state.scheduledJobRuns[idx] = run;
     else this.state.scheduledJobRuns.push(run);
+    // 保留策略按「每个任务各留 N 条」，不是全局一刀切。
+    // 全局环形缓冲下，一个每 5 分钟的任务一天写 288 条，几天就能把日任务的
+    // 历史整段挤掉——「最近 20 次成功率」会静默缩水成「最近 3 次」，
+    // 24 小时轴的左半边也只剩最近一两个小时。全局上限只作为兜底。
+    const perJob = new Map<string, number>();
     this.state.scheduledJobRuns = this.state.scheduledJobRuns
       .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
-      .slice(0, 1000);
+      .filter((item) => {
+        const seen = perJob.get(item.jobId) || 0;
+        if (seen >= SCHEDULED_JOB_RUNS_PER_JOB) return false;
+        perJob.set(item.jobId, seen + 1);
+        return true;
+      })
+      .slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP);
     this.save(HINT_GLOBAL);
     return run;
   }

@@ -2264,6 +2264,24 @@ export interface ScheduledJob {
 
 export type ScheduledJobRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
 
+/**
+ * 一次运行里单个动作的结果。
+ *
+ * 在此之前一次运行只留一个 status / httpStatus / exitCode / log —— 三步的任务
+ * 挂了只知道「整条失败」，要读整段拼接日志才知道挂在第几步、前面几步花了多久。
+ * 运行流里的动作链缩略与详情里的逐步耗时都依赖这个数组。
+ */
+export interface ScheduledJobRunStep {
+  index: number;
+  name: string;
+  type: ScheduledJobTarget['type'];
+  status: 'success' | 'failed' | 'skipped' | 'not-run';
+  durationMs?: number;
+  httpStatus?: number;
+  exitCode?: number;
+  error?: string;
+}
+
 export interface ScheduledJobRun {
   id: string;
   jobId: string;
@@ -2285,6 +2303,8 @@ export interface ScheduledJobRun {
   releaseId?: string;
   /** 观察到的发布终态（或超时时的最后一次观察值）。 */
   releaseStatus?: ReleaseRunStatus;
+  /** 逐个动作的结果；失败或跳过之后的动作记为 not-run。 */
+  steps?: ScheduledJobRunStep[];
 }
 
 /**

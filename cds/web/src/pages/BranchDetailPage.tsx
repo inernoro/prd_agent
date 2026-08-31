@@ -1305,7 +1305,7 @@ export function BranchDetailPage(): JSX.Element {
         />
       }
     >
-      <Workspace wide>
+      <Workspace fluid>
         {state.status === 'loading' ? <BranchDetailLoadingSkeleton className="rounded-md" /> : null}
         {state.status === 'error' ? (
           // 2026-07-09：错误码翻译成人话 + 给出路（旧版把 branch_not_found 机器码
