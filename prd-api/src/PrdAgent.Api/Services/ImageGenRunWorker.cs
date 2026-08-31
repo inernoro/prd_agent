@@ -309,6 +309,18 @@ public class ImageGenRunWorker : BackgroundService
         // Done 就 +1，最终出现 Total=5 / Done=8 这种自相矛盾的记录，runStart.total
         // 推给前端的分母也是错的（Codex PR #1363 P2）。
         var isLayering = IsLayeringRun(run);
+        if (!isLayering && run.AppKey == "visual-agent")
+        {
+            var policy = (await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct))?.VisualModelPolicy;
+            if (policy?.Select(ResolveExplicitLogicalModelPublicId(run)) is null
+                || string.IsNullOrWhiteSpace(ResolveExplicitLogicalModelPublicId(run)))
+            {
+                const string message = "该模型已停止开放，请重新选择模型后重试。";
+                await AppendEventAsync(run, "run", new { type = "error", errorCode = "VISUAL_MODEL_NOT_ALLOWED", errorMessage = message }, ct);
+                await MarkRunFailedSafeAsync(run.Id, "VISUAL_MODEL_NOT_ALLOWED", message, ct);
+                return;
+            }
+        }
         var total = 0;
         for (var i = 0; i < items.Count; i++)
         {

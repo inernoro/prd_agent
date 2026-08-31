@@ -169,7 +169,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useVisualAgentPrefsStore } from '@/stores/visualAgentPrefsStore';
-import { buildVisualAgentModelOptions, type VisualAgentModelOption } from './visualAgentModelOptions';
+import { buildVisualAgentModelOptions, selectVisualModel, type VisualAgentModelOption } from './visualAgentModelOptions';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
@@ -938,10 +938,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [poolModels]);
 
   const serverDefaultModel = useMemo(() => {
-    // 默认业务模型由后端标记，旧数据只按后端目录顺序兜底。
-    return allImageGenModels.find((m) => m.enabled && m.isDefault)
-      ?? allImageGenModels.find((m) => m.enabled)
-      ?? null;
+    // 排序与默认互不相关；默认不可用也不能偷偷改选另一型号。
+    return selectVisualModel(allImageGenModels, true);
   }, [allImageGenModels]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
@@ -1096,10 +1094,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [directPrompt, setDirectPrompt] = useState(false);
   const [directPromptReady, setDirectPromptReady] = useState(false);
   const effectiveModel = useMemo(() => {
-    const byId = modelPrefModelId ? allImageGenModels.find((m) => m.id === modelPrefModelId) ?? null : null;
-    if (modelPrefAuto) return serverDefaultModel;
-    return byId ?? serverDefaultModel;
-  }, [allImageGenModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
+    return selectVisualModel(allImageGenModels, modelPrefAuto, modelPrefModelId);
+  }, [allImageGenModels, modelPrefAuto, modelPrefModelId]);
 
   // 尺寸选项（后端按分辨率分组返回，前端直接使用，无需转换）
   type SizeOption = { size: string; aspectRatio: string };
@@ -1109,8 +1105,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
 
   useEffect(() => {
-    // 生成和尺寸查询均使用业务模型标识；adapter-info 在后端解析实际适配器，
+    // 生成和尺寸查询均使用业务模型标识；adapter-info 转发网关发布的能力，
     // 前端不自行选择池成员或猜测上游型号。
+    let cancelled = false;
+    setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
+    setCurrentModelSizesNotApplicable(false);
     const modelCode = effectiveModel?.actualModelId || effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
@@ -1120,6 +1119,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
     getVisualAgentAdapterInfo(modelCode)
       .then((res) => {
+        if (cancelled) return;
         if (res.success && res.data?.matched && res.data.sizesByResolution) {
           const data = res.data.sizesByResolution;
           setSizesByResolution({
@@ -1134,9 +1134,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }
       })
       .catch(() => {
+        if (cancelled) return;
         setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
         setCurrentModelSizesNotApplicable(false);
       });
+    return () => { cancelled = true; };
   }, [effectiveModel]);
 
   // 按比例分组，每个比例只保留一个尺寸
@@ -3312,19 +3314,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   }, [directPrompt, directPromptKey, directPromptReady]);
 
-  // 只有模型池从目录中删除时才回到自动；健康异常只做建议，不剥夺用户选择。
-  // 重要：必须等模型池加载完成后再判断，否则空数组会误判用户选择
-  useEffect(() => {
-    if (modelsLoading) return;
-    if (modelPrefAuto) return;
-    if (!modelPrefModelId) return;
-    if (allImageGenModels.length === 0) return;
-    const ok = allImageGenModels.some((m) => m.id === modelPrefModelId);
-    if (!ok) {
-      setModelPrefAuto(true);
-      setModelPrefModelId('');
-    }
-  }, [allImageGenModels, modelPrefAuto, modelPrefModelId, modelsLoading]);
+  // 已选模型被撤回时保留偏好并要求用户重选，不自动改写为默认模型。
 
   // 启动时：加载 workspace 并回放历史消息+画布（workspaceId 为稳定主键）
   useEffect(() => {
@@ -4538,9 +4528,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (!reqText) return;
     let pickedModel = forcedPick.forced ?? effectiveModel;
     if (!pickedModel) {
-      const msg = modelsLoading ? '模型加载中' : '暂无可用生图模型（请在 LLM Gateway 配置逻辑模型及至少一个上游）';
+      const msg = modelsLoading ? '模型加载中' : '当前模型未配置或已停止开放，请重新选择；管理员可在视觉创作的模型设置中配置默认模型。';
       setError(msg);
-      pushMsg('Assistant', '暂无可用生图模型（请在 LLM Gateway 配置逻辑模型及至少一个上游）');
+      pushMsg('Assistant', msg);
       return;
     }
 

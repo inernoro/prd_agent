@@ -167,6 +167,8 @@ function downloadFileName(contentDisposition: string) {
 type ImageModelPool = {
   id: string;
   code: string;
+  isDefault?: boolean;
+  resolutionType?: string;
   models: Array<{ healthStatus?: string }>;
 };
 
@@ -2245,16 +2247,22 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await expect(page.getByText('快捷录音', { exact: true })).toBeHidden();
   });
 
-  test('[VIS-001] 单图模型目录只返回可用逻辑模型', async ({ page, request }) => {
+  test('[VIS-001][REG-visual-policy-001] 单图模型目录有唯一业务默认且不暴露池', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const response = await page.request.get('/api/visual-agent/image-gen/models', { headers: authHeaders(token) });
-    const pools = await readEnvelope<Array<{ id: string; code: string; models: Array<{ healthStatus?: string }> }>>(response);
+    const pools = await readEnvelope<ImageModelPool[]>(response);
     expect(pools.length).toBeGreaterThan(0);
+    const defaults = pools.filter((model) => model.isDefault);
+    expect(defaults, '视觉创作必须由 MAP 明确配置唯一默认模型').toHaveLength(1);
+    expect(defaults[0].models.length, '默认模型不可用属于巡检失败，不能改测其它型号').toBeGreaterThan(0);
     for (const pool of pools) {
+      expect(pool.resolutionType).toBe('LogicalModel');
       expect(pool.id).toBeTruthy();
       expect(pool.code).toBeTruthy();
-      expect(pool.models.length).toBeGreaterThan(0);
-      expect(pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || ''))).toBe(true);
+      // 非默认模型停用时仍保留其业务身份供界面禁用展示，不因此自动换型号。
+      if (pool.isDefault) {
+        expect(pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || ''))).toBe(true);
+      }
     }
   });
 
@@ -2640,7 +2648,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010] 文生图真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010][REG-visual-policy-001] 业务默认模型真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'single-image');
@@ -2650,8 +2658,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     try {
       const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) });
       const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
-      const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
-      expect(pool, '没有可用的文生图逻辑模型').toBeTruthy();
+      const pool = pools.find((item) => item.isDefault);
+      expect(pool, 'MAP 未配置业务默认，禁止用第一个可用模型替代').toBeTruthy();
+      expect(pool!.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')), '默认型号不可用').toBe(true);
 
       const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-run` },

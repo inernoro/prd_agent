@@ -122,7 +122,9 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
     commit: 'test-commit',
   });
   const selected = selectMatrixCasesByEnvironment(matrixCases, 'test-commit');
-  const functionalRegressions = regressions.filter((caseId) => !visualRegressionCaseIds.includes(caseId));
+  const functionalRegressions = [...new Set([...regressions,
+    ...catalog.featureLines.flatMap((feature) => feature.regressionCaseIds),
+  ])].filter((caseId) => !visualRegressionCaseIds.includes(caseId));
   assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.cds), new Set([...selected.cds, ...functionalRegressions]));
   assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.production), new Set([...selected.production, ...functionalRegressions]));
   assert.deepEqual(plan.visualRegressions, ['REG-visual-evidence-001']);
@@ -132,6 +134,8 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
   assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes('FILE-004'));
   assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes('VIDEO-005'));
   assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('VIS-004'));
+  assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REG-visual-policy-001'));
+  assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('REG-visual-policy-001'));
   assert.deepEqual(
     new Set(plan.requiredCaseIds),
     new Set([...plan.requiredCaseIdsByEnvironment.cds, ...plan.requiredCaseIdsByEnvironment.production]),

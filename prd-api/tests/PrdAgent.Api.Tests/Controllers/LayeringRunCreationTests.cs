@@ -61,15 +61,13 @@ public class LayeringRunCreationTests
     {
         var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
 
-        // 分层不带模型，必填校验必须先认出它、放它过去。判定算得比校验晚一行，
-        // 请求就会被「必须提供 configModelId」挡在门外，后面清空 picker 的代码永远走不到——
-        // 编译过、测试绿、只有真的点一次分层才会发现这条链路根本没通。
+        // 分层不带业务模型，MAP 开放列表校验必须限定在非分层路径。
         var decided = controller.IndexOf("var isLayering = string.Equals", System.StringComparison.Ordinal);
-        var required = controller.IndexOf("必须提供 configModelId", System.StringComparison.Ordinal);
+        var required = controller.IndexOf("var policy = await _visualModels.ReadAsync(ct);", System.StringComparison.Ordinal);
         Assert.True(decided > 0 && required > 0, "找不到分层判定或模型必填校验");
         Assert.True(decided < required, "isLayering 必须在模型必填校验之前算出来");
-        Assert.Contains("if (!isLayering && !string.IsNullOrWhiteSpace(cfgModelId))", controller);
-        Assert.Contains("else if (!isLayering)", controller);
+        var beforeValidation = controller[decided..required];
+        Assert.EndsWith("if (!isLayering)\n            {\n                ", beforeValidation.Replace("\r\n", "\n"));
     }
 
     [Fact]

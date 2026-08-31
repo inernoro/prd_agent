@@ -24,6 +24,13 @@ export type VisualResultModelMeta = {
   actualModel?: string;
 };
 
+/** 默认只认业务配置；显式选择失效时返回空，不替用户换型号。 */
+export function selectVisualModel(
+  models: VisualAgentModelOption[], auto: boolean, selectedId?: string | null,
+): VisualAgentModelOption | null {
+  return models.find((model) => auto ? model.isDefault : model.id === selectedId) ?? null;
+}
+
 /**
  * 视觉创作的主展示只认应用选择的逻辑模型；上游模型仅作为旧任务兜底，
  * 避免 Provider / Offering 细节重新泄漏回应用模型列表。

@@ -451,7 +451,7 @@ public class GatewayLegacySweepGuardTests
     private static string ReadRepoFile(string relativePath)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")) && !File.Exists(Path.Combine(dir.FullName, ".git")))
             dir = dir.Parent;
         Assert.NotNull(dir);
         var full = Path.Combine(dir!.FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));

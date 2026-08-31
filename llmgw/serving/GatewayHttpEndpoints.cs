@@ -1051,6 +1051,8 @@ public static class GatewayHttpEndpoints
                 multipartOwnershipEstablished = rehydrated.MultipartRefOwnershipEstablished;
                 request = rehydrated.Request ?? request;
                 var routedRequest = ApplyIngressRouting(request, ingress);
+                var canonicalOnly = routedRequest.CanonicalImageRequest is not null
+                    && routedRequest.RequestBody is null && !routedRequest.IsMultipart;
                 using var _ = OpenContextScope(accessor, routedRequest.Context, routedRequest.ModelType, routedRequest.AppCallerCode);
                 var res = string.IsNullOrWhiteSpace(routedRequest.RequiredOfferingId)
                     ? await gateway.ResolveModelAsync(
@@ -1066,6 +1068,8 @@ public static class GatewayHttpEndpoints
                         routedRequest.RequiredOfferingId,
                         token);
                 var raw = await gateway.SendRawWithResolutionAsync(routedRequest, res, token);
+                if (canonicalOnly)
+                    raw = PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageResponseNormalizer.Normalize(raw);
                 multipartRequestSucceeded = raw.Success;
                 if (executionStore is not null && execution is not null)
                 {
@@ -1176,6 +1180,24 @@ public static class GatewayHttpEndpoints
             {
                 cancellation?.Dispose();
             }
+        });
+
+        // 业务模型目录：技术能力在网关生成，调用方无需读取网关数据库或维护型号适配表。
+        app.MapGet("/gw/v1/image-models", async (
+            HttpContext http,
+            string appCallerCode,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
+            ILLMRequestContextAccessor accessor) =>
+        {
+            using var scope = OpenContextScope(accessor, new GatewayRequestContext
+            {
+                TenantId = GetVerifiedTenantId(http),
+                TeamId = GetVerifiedTeamId(http),
+                GatewayTransport = GatewayTransports.Http,
+            }, PrdAgent.Core.Models.ModelTypes.ImageGen, appCallerCode);
+            var models = await PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageModelCatalog.ReadAsync(
+                gateway, appCallerCode, CancellationToken.None);
+            return Results.Json(models, jsonOpts);
         });
 
         // 可用模型池列表。
@@ -1756,7 +1778,8 @@ public static class GatewayHttpEndpoints
             || path.Equals("/gw/v1/client-stream", StringComparison.OrdinalIgnoreCase)
             || path.Contains(":streamGenerateContent", StringComparison.OrdinalIgnoreCase)) return "stream:invoke";
         if (path.Contains("/resolve", StringComparison.OrdinalIgnoreCase)
-            || path.Contains("/pools", StringComparison.OrdinalIgnoreCase)) return "route:read";
+            || path.Contains("/pools", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/gw/v1/image-models", StringComparison.OrdinalIgnoreCase)) return "route:read";
         return "invoke";
     }
 
@@ -1788,7 +1811,8 @@ public static class GatewayHttpEndpoints
             && string.IsNullOrWhiteSpace(appCallerCode))
             appCallerCode = ResolveCompatibleDefaultAppCaller(path, null);
 
-        if (path.Equals("/gw/v1/pools", StringComparison.OrdinalIgnoreCase)
+        if ((path.Equals("/gw/v1/pools", StringComparison.OrdinalIgnoreCase)
+             || path.Equals("/gw/v1/image-models", StringComparison.OrdinalIgnoreCase))
             && context.Request.Query.TryGetValue("appCallerCode", out var queryCaller)
             && !string.IsNullOrWhiteSpace(queryCaller.FirstOrDefault()))
         {

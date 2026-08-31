@@ -264,6 +264,7 @@ var logicalModelsRequireHttp = builder.Configuration.GetValue<bool?>("LlmGateway
 // 显式逻辑模型不跟随 MAP 的全局 inproc/shadow 迁移开关：它始终使用独立 serving HTTP 边界。
 // 注册同一个 Scoped 实例，保证一次请求的预解析与发送共享同一传输实现。
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IVisualModelPolicyService, PrdAgent.Api.Services.VisualModelPolicyService>();
 builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILogicalModelGateway>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
 

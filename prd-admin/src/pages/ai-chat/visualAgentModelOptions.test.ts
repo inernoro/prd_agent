@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ModelHealthStatus, PoolStrategyType, type ModelGroupForApp } from '@/types/modelGroup';
-import { buildVisualAgentModelOptions, resolveVisualResultModelLabel } from './visualAgentModelOptions';
+import { buildVisualAgentModelOptions, resolveVisualResultModelLabel, selectVisualModel } from './visualAgentModelOptions';
 
 function pool(models: ModelGroupForApp['models']): ModelGroupForApp {
   return {
@@ -82,5 +82,23 @@ describe('resolveVisualResultModelLabel', () => {
       .toBe('upstream');
     expect(resolveVisualResultModelLabel({ actualModel: 'upstream' }, 'selected')).toBe('upstream');
     expect(resolveVisualResultModelLabel(null, 'selected')).toBe('selected');
+  });
+});
+
+describe('业务默认和显式选择', () => {
+  const models = buildVisualAgentModelOptions([
+    { ...pool([]), id: 'image2', code: 'image2', resolutionType: 'LogicalModel' },
+    { ...pool([]), id: 'image1', code: 'image1', resolutionType: 'LogicalModel', isDefault: true },
+  ]);
+  it('默认不跟随首项，即使默认暂时不可用也保留身份', () => {
+    expect(selectVisualModel(models, true)?.modelName).toBe('image1');
+    expect(selectVisualModel(models, true)?.enabled).toBe(false);
+  });
+  it('失效的旧选择不回退到业务默认', () => {
+    expect(selectVisualModel(models, false, 'removed')).toBeNull();
+    expect(selectVisualModel(models, false, 'pool_image2')?.modelName).toBe('image2');
+  });
+  it('缺少业务默认时不选择任意模型', () => {
+    expect(selectVisualModel(models.slice(0, 1), true)).toBeNull();
   });
 });

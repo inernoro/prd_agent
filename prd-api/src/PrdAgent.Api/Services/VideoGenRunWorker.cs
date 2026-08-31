@@ -1176,7 +1176,8 @@ public class VideoGenRunWorker : BackgroundService
                 $"Scenes.{sceneIdx}.RenderLeaseExpiresAt",
                 DateTime.UtcNow + SceneRenderLease),
             cancellationToken: CancellationToken.None);
-        return renewed.ModifiedCount == 1;
+        // 同一毫秒内两次续租可能写入相同截止时间；匹配到所有权即有效，不能把无值变化当成失租。
+        return renewed.MatchedCount == 1;
     }
 
     /// <summary>处理单镜重生成 prompt（用户点"重新设计这个分镜"）</summary>

@@ -35,7 +35,7 @@ namespace PrdAgent.Infrastructure.LLM;
 public class OpenAIImageClient : IImageGenerationClient
 {
     private readonly MongoDbContext _db;
-    private readonly ILogicalModelGateway _servingGateway;
+    private readonly HttpLlmGatewayClient _servingGateway;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private readonly ILogger<OpenAIImageClient> _logger;
@@ -174,6 +174,10 @@ public class OpenAIImageClient : IImageGenerationClient
         // 所有生图操作产出的文件都是 AI 生成内容
         using var _ = RegistryAssetStorage.ScopeAs("generated");
 
+        var logicalModel = ResolveRequiredLogicalModelPublicId(requiredLogicalModelPublicId, platformId, modelId, modelName);
+        if (!string.IsNullOrWhiteSpace(logicalModel))
+            return await GenerateLogicalImageAsync(prompt, n, size, images ?? [], maskBase64, logicalModel, appCallerCode, ct);
+
         if (images == null || images.Count == 0)
         {
             // 文生图：无参考图
@@ -216,6 +220,132 @@ public class OpenAIImageClient : IImageGenerationClient
     }
 
 
+    /// <summary>逻辑模型路径只发送业务参数、保存产物；全部型号限制和协议转换由 serving 执行。</summary>
+    private async Task<ApiResponse<ImageGenResult>> GenerateLogicalImageAsync(
+        string prompt, int count, string? size, List<string> images, string? mask,
+        string logicalModel, string appCallerCode, CancellationToken ct)
+    {
+        using var generated = RegistryAssetStorage.ScopeAs("generated");
+        if (string.IsNullOrWhiteSpace(prompt))
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请输入图片描述。");
+        var ctx = _ctxAccessor?.Current;
+        var requestId = ctx?.RequestId ?? Guid.NewGuid().ToString("N");
+        var inputArtifactIds = new List<string>();
+        var imageReferences = new List<LlmImageReference>();
+        try
+        {
+            // MAP 保存业务资产与关联；供应商参数及出站图片格式仍由 serving 统一处理。
+            var inputs = images.Select(ImageInputNormalizer.Read).ToList();
+            foreach (var input in inputs)
+            {
+                var storedInput = await _assetStorage.SaveAsync(input.Bytes, input.MimeType, ct,
+                    domain: AppDomainPaths.DomainAssets, type: AppDomainPaths.TypeImg);
+                var dimensions = SixLabors.ImageSharp.Image.Identify(input.Bytes);
+                var artifact = new UploadArtifact
+                {
+                    RequestId = requestId, Kind = "input_image", CreatedByAdminId = ctx?.UserId ?? "system",
+                    Prompt = prompt, Sha256 = storedInput.Sha256, Mime = storedInput.Mime,
+                    Width = dimensions.Width, Height = dimensions.Height, SizeBytes = storedInput.SizeBytes,
+                    CosUrl = storedInput.Url, CreatedAt = DateTime.UtcNow,
+                };
+                await _db.UploadArtifacts.InsertOneAsync(artifact, cancellationToken: ct);
+                inputArtifactIds.Add(artifact.Id);
+                imageReferences.Add(new LlmImageReference
+                {
+                    Sha256 = storedInput.Sha256, CosUrl = storedInput.Url, MimeType = storedInput.Mime,
+                    SizeBytes = storedInput.SizeBytes, Label = $"参考图 {imageReferences.Count + 1}",
+                });
+            }
+        }
+        catch (ImageInputException ex)
+        {
+            return ApiResponse<ImageGenResult>.Fail(ImageInputNormalizer.ErrorCode, ex.Message);
+        }
+        var response = await _servingGateway.GenerateImageAsync(new GatewayRawRequest
+        {
+            AppCallerCode = appCallerCode, ModelType = ModelTypes.ImageGen,
+            ExpectedModel = logicalModel, RequiredLogicalModelPublicId = logicalModel,
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = prompt, Count = count, Size = size, Images = images, MaskBase64 = mask,
+            },
+            TimeoutSeconds = ResolveImageGenerationTimeoutSeconds(_config.GetValue<int?>("ImageGen:TimeoutSeconds")),
+            Context = new GatewayRequestContext
+            {
+                RequestId = requestId, SessionId = ctx?.SessionId, GroupId = ctx?.GroupId,
+                UserId = ctx?.UserId, ViewRole = ctx?.ViewRole, QuestionText = prompt,
+                GatewayTransport = GatewayTransports.Http, SourceSystem = "map",
+                ImageReferences = imageReferences,
+            },
+        }, ct);
+        if (!response.Success) return UserFailure(ImageGenerationUserError.FromGateway(response));
+        try
+        {
+            var root = JsonNode.Parse(response.Content ?? "")?.AsObject();
+            var outputs = root?["data"] as JsonArray;
+            if (outputs is null || outputs.Count == 0) return UserFailure(ImageGenerationUserError.MissingImage());
+            var watermark = await TryGetWatermarkConfigAsync(TryResolveAppKeyFromAppCallerCode(appCallerCode) ?? "", ct);
+            var results = new List<ImageGenImage>();
+            string? actualSize = null;
+            foreach (var output in outputs.OfType<JsonObject>())
+            {
+                byte[]? bytes = null;
+                var mime = output["media_type"]?.GetValue<string>() ?? "image/png";
+                var base64 = output["b64_json"]?.GetValue<string>();
+                var url = output["url"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(base64)) bytes = Convert.FromBase64String(base64);
+                else if (!string.IsNullOrWhiteSpace(url))
+                {
+                    var download = await TryDownloadImageBytesAsync(url, ct);
+                    bytes = download.bytes; mime = download.mime ?? mime;
+                }
+                if (bytes is null || bytes.Length == 0) return UserFailure(ImageGenerationUserError.MissingImage());
+                var identified = SixLabors.ImageSharp.Image.Identify(bytes);
+                mime = identified.Metadata.DecodedImageFormat?.DefaultMimeType ?? mime;
+                actualSize ??= $"{identified.Width}x{identified.Height}";
+                var stored = await SaveGeneratedOutputAsync(bytes, mime, requestId, ctx?.UserId ?? "system",
+                    prompt, inputArtifactIds, identified.Width, identified.Height, ct);
+                var displayUrl = stored.Url;
+                var displaySha = stored.Sha256;
+                if (watermark is not null)
+                {
+                    try
+                    {
+                        var rendered = await _watermarkRenderer.ApplyAsync(bytes, mime, watermark, ct);
+                        var marked = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
+                            domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
+                        displayUrl = marked.Url; displaySha = marked.Sha256;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.LogWarning(ex, "水印生成失败，保留原图 requestId={RequestId}", requestId);
+                    }
+                }
+                results.Add(new ImageGenImage
+                {
+                    Index = results.Count, Url = displayUrl, DisplaySha256 = displaySha,
+                    OriginalUrl = stored.Url, OriginalSha256 = stored.Sha256, Mime = mime,
+                    RevisedPrompt = output["revised_prompt"]?.GetValue<string>(),
+                });
+            }
+            return ApiResponse<ImageGenResult>.Ok(new ImageGenResult
+            {
+                Images = results,
+                Meta = new ImageGenResultMeta
+                {
+                    RequestedSize = size, EffectiveSize = actualSize,
+                    SizeAdjusted = !string.IsNullOrEmpty(size) && size != actualSize,
+                    RatioAdjusted = IsRatioAdjusted(size, actualSize, threshold: 0.02),
+                },
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "生图产物读取或保存失败 requestId={RequestId}", requestId);
+            return ApiResponse<ImageGenResult>.Fail("IMAGE_RESULT_SAVE_FAILED", "图片结果未能保存，请稍后重试。");
+        }
+    }
+
     public async Task<ApiResponse<ImageGenResult>> GenerateAsync(
         string prompt,
         int n,
@@ -231,6 +361,10 @@ public class OpenAIImageClient : IImageGenerationClient
         string? maskBase64 = null,
         string? requiredLogicalModelPublicId = null)
     {
+        var logicalModel = ResolveRequiredLogicalModelPublicId(requiredLogicalModelPublicId, platformId, modelId, modelName);
+        if (!string.IsNullOrWhiteSpace(logicalModel))
+            return await GenerateLogicalImageAsync(prompt, n, size,
+                initImageBase64 is null ? [] : [initImageBase64], maskBase64, logicalModel, appCallerCode, ct);
         if (string.IsNullOrWhiteSpace(prompt))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请输入图片描述。");
@@ -275,7 +409,7 @@ public class OpenAIImageClient : IImageGenerationClient
             requiredLogicalModelPublicId, platformId, modelId, modelName);
         // 视觉创作只依赖独立 Gateway。显式逻辑模型、未显式选模型时的默认池与故障兜底
         // 都在 Gateway 内部完成；MAP 不再保留第二条进程内上游发送路径。
-        var requestGateway = _servingGateway;
+        ILogicalModelGateway requestGateway = _servingGateway;
         var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
             ? await requestGateway.ResolveRequiredLogicalModelAsync(
                 appCallerCode, "generation", requiredLogicalModel, ct)
@@ -1360,6 +1494,12 @@ public class OpenAIImageClient : IImageGenerationClient
         string? modelName = null,
         string? requiredLogicalModelPublicId = null)
     {
+        if (imageRefs is null || imageRefs.Count == 0)
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请至少添加一张参考图。");
+        var logicalModel = ResolveRequiredLogicalModelPublicId(requiredLogicalModelPublicId, platformId, modelId, modelName);
+        if (!string.IsNullOrWhiteSpace(logicalModel))
+            return await GenerateLogicalImageAsync(prompt, 1, size,
+                imageRefs.Select(x => x.Base64).ToList(), null, logicalModel, appCallerCode, ct);
         if (string.IsNullOrWhiteSpace(prompt))
         {
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请输入图片描述。");
@@ -1421,7 +1561,7 @@ public class OpenAIImageClient : IImageGenerationClient
         var requiredLogicalModel = ResolveRequiredLogicalModelPublicId(
             requiredLogicalModelPublicId, platformId, modelId, modelName);
         // 多图生图与文生图使用同一独立 Gateway 边界，避免协议分支重新引入 MAP 旧池。
-        var requestGateway = _servingGateway;
+        ILogicalModelGateway requestGateway = _servingGateway;
         var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
             ? await requestGateway.ResolveRequiredLogicalModelAsync(
                 appCallerCode, "generation", requiredLogicalModel, ct)
