@@ -36,6 +36,11 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("ImageGenRequestBuilder", logicalPath);
         Assert.Contains("ImageReferences = imageReferences", logicalPath);
         Assert.Contains("prompt, inputArtifactIds, identified.Width", logicalPath);
+        Assert.Contains("ActualModel = response.Resolution?.ActualModel", logicalPath);
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+        Assert.Contains("actualModel = doneActualModel", worker);
+        Assert.Contains("modelId = doneActualModel", worker);
+        Assert.Contains("var doneActualModel = meta?.ActualModel", worker);
         Assert.DoesNotContain("private readonly ILlmGateway _gateway", client);
         Assert.DoesNotContain("private readonly ILogicalModelGateway _logicalModelGateway", client);
         Assert.DoesNotContain("_gateway.ResolveRequiredLogicalModelAsync", client);

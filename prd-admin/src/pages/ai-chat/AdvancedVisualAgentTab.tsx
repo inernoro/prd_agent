@@ -174,6 +174,7 @@ import { buildVisualAgentModelOptions, selectVisualModel, type VisualAgentModelO
 import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
 import { LlmLogsPanel } from '@/pages/LlmLogsPage';
+import { createViewportUiSync } from './viewportUiSync';
 import { getVisualAgentLogsReal, getVisualAgentLogsMetaReal, getVisualAgentLogDetailReal } from '@/services/real/visualAgent';
 import { autoSubmitImages } from '@/services/real/submissions';
 import { downloadGeneratedImage } from '@/lib/generatedImageDownload';
@@ -1454,7 +1455,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const zoomRef = useRef(DEFAULT_ZOOM);
   const cameraRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const rafTransformRef = useRef<number | null>(null);
-  const lastUiSyncRef = useRef(0);
+  const viewportUiSync = useMemo(() => createViewportUiSync(() => {
+    setZoom(zoomRef.current);
+    setCamera({ ...cameraRef.current });
+  }), []);
+  useEffect(() => () => {
+    viewportUiSync.cancel();
+    if (rafTransformRef.current != null) window.cancelAnimationFrame(rafTransformRef.current);
+    rafTransformRef.current = null;
+  }, [viewportUiSync]);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const chatPanelRef = useRef<HTMLDivElement | null>(null);
   const worldRef = useRef<HTMLDivElement | null>(null);
@@ -1557,16 +1566,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       rafTransformRef.current = window.requestAnimationFrame(() => {
         rafTransformRef.current = null;
         applyWorldTransform();
-        const now = Date.now();
-        // UI 展示低频同步：避免每帧 setState
-        if (syncUi || now - lastUiSyncRef.current > 80) {
-          lastUiSyncRef.current = now;
-          setZoom(zoomRef.current);
-          setCamera({ ...cameraRef.current });
-        }
+        // 保持低频更新，同时保证最后一次缩放/平移同步到进度层和比例数字。
+        viewportUiSync.schedule(syncUi);
       });
     },
-    [applyWorldTransform]
+    [applyWorldTransform, viewportUiSync]
   );
 
   const setViewport = useCallback(

@@ -333,6 +333,8 @@ public class OpenAIImageClient : IImageGenerationClient
                 Images = results,
                 Meta = new ImageGenResultMeta
                 {
+                    ActualModel = response.Resolution?.ActualModel,
+                    ActualModelPool = response.Resolution?.ModelGroupName,
                     RequestedSize = size, EffectiveSize = actualSize,
                     SizeAdjusted = !string.IsNullOrEmpty(size) && size != actualSize,
                     RatioAdjusted = IsRatioAdjusted(size, actualSize, threshold: 0.02),
@@ -3185,6 +3187,9 @@ public class ImageGenImage
 
 public class ImageGenResultMeta
 {
+    /// <summary>网关本次执行结果，不用于覆盖任务保存的业务模型身份。</summary>
+    public string? ActualModel { get; set; }
+    public string? ActualModelPool { get; set; }
     public string? RequestedSize { get; set; }
     public string? EffectiveSize { get; set; }
     public bool SizeAdjusted { get; set; }

@@ -62,4 +62,21 @@ public sealed class CanonicalImageBoundaryTests
     [InlineData("invalid-json")]
     public void Http200WithoutImageIsNotSuccess(string wire)
         => Assert.False(GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse { Success = true, StatusCode = 200, Content = wire }).Success);
+
+    [Fact]
+    public void NormalizedImagePreservesActualExecutionAndRequestedLogicalIdentity()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true, LogicalModelPublicId = "image1", ActualModel = "gpt-image-1",
+            ModelGroupName = "image-channel",
+        };
+        var result = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = true, Content = "{\"data\":[{\"b64_json\":\"abc\"}]}", Resolution = resolution,
+        });
+        Assert.Same(resolution, result.Resolution);
+        Assert.Equal("image1", result.Resolution!.LogicalModelPublicId);
+        Assert.Equal("gpt-image-1", result.Resolution.ActualModel);
+    }
 }
