@@ -4473,7 +4473,7 @@ function ResourceWorkbenchLauncher({
           </div>
         </div>
         <Button type="button" onClick={onOpen}>
-          <Maximize2 className="h-4 w-4" />
+          <Maximize2 />
           打开工作台
         </Button>
       </div>
@@ -4504,7 +4504,7 @@ function ResourceWorkbenchModal({
             <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{subtitle}</div>
           </div>
           <Button type="button" size="sm" variant="ghost" onClick={onClose} aria-label="关闭工作台">
-            <X className="h-4 w-4" />
+            <X />
           </Button>
         </div>
         {/* Body: on phones the panes stack and the whole body scrolls vertically

@@ -2126,7 +2126,7 @@ function LogPanel({ title, lines, status = 'running' }: { title: string; lines: 
           <span className="truncate">{title}</span>
         </div>
         <Button size="sm" variant="ghost" className="h-7 shrink-0 px-2 text-xs" onClick={() => void copy()}>
-          <Copy className="h-3.5 w-3.5" />
+          <Copy />
           {copied ? '已复制' : '复制'}
         </Button>
       </div>

@@ -778,7 +778,7 @@ function ProjectFilterMenu({
       width={268}
       trigger={(
         <Button variant="ghost" size="sm" className="h-7 min-w-0 shrink-0 gap-1.5 px-2" aria-label="打开项目筛选" title="项目筛选">
-          <Boxes className="h-4 w-4" />
+          <Boxes />
           <span className="max-w-[96px] truncate">{label}</span>
         </Button>
       )}
@@ -831,7 +831,7 @@ function ReportFilterMenu({
       width={268}
       trigger={(
         <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1.5 px-2" aria-label="打开报告库筛选" title="筛选报告">
-          <SlidersHorizontal className="h-4 w-4" />
+          <SlidersHorizontal />
           <span className="hidden sm:inline">筛选</span>
         </Button>
       )}
@@ -883,7 +883,7 @@ function ReportArrangeMenu({
       width={240}
       trigger={(
         <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" aria-label="排序和分组" title="排序和分组">
-          <ArrowUpDown className="h-4 w-4" />
+          <ArrowUpDown />
         </Button>
       )}
     >
@@ -1337,7 +1337,7 @@ function ReportList({
               title={allCollapsed ? '全部展开' : '全部折叠'}
               onClick={toggleAllFolders}
             >
-              {allCollapsed ? <ChevronsUpDown className="h-4 w-4" /> : <ChevronsDownUp className="h-4 w-4" />}
+              {allCollapsed ? <ChevronsUpDown /> : <ChevronsDownUp />}
             </Button>
           ) : null}
         </div>
@@ -1425,7 +1425,7 @@ function ReportRowActions({
           aria-label="打开报告操作菜单"
           title="更多操作"
         >
-          <MoreVertical className="h-4 w-4" />
+          <MoreVertical />
         </Button>
       )}
     >
@@ -1566,7 +1566,7 @@ function FolderRowActions({
           aria-label="打开文件夹操作菜单"
           title="文件夹操作"
         >
-          <MoreVertical className="h-4 w-4" />
+          <MoreVertical />
         </Button>
       )}
     >
@@ -1776,12 +1776,12 @@ function ReportViewer({
         <div className="flex min-w-0 items-center gap-2">
           {onBack ? (
             <Button variant="ghost" size="icon" className="-ml-1 h-8 w-8 shrink-0 lg:hidden" aria-label="返回报告列表" title="返回报告列表" onClick={onBack}>
-              <ArrowLeft className="h-4 w-4" />
+              <ArrowLeft />
             </Button>
           ) : null}
           {onOpenNav ? (
             <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 lg:hidden" aria-label="打开报告目录" title="打开报告目录" onClick={onOpenNav}>
-              <Layers className="h-4 w-4" />
+              <Layers />
             </Button>
           ) : null}
           {report.verdict ? <VerdictBadge verdict={report.verdict} /> : null}
@@ -1794,10 +1794,10 @@ function ReportViewer({
         <div className="flex shrink-0 items-center gap-2">
           {report.prNumber && report.verdict ? <PushToPrControl report={report} /> : null}
           <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => onSync(report)} title="使用 MAP 当前登录账号保存到我的验收知识库">
-            <Save className="h-3.5 w-3.5" />保存到 MAP
+            <Save />保存到 MAP
           </Button>
           <Button asChild variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" title="下载正文、元数据和截图压缩包">
-            <a href={reportDownloadUrl(report.id)} download><Download className="h-3.5 w-3.5" />下载 ZIP</a>
+            <a href={reportDownloadUrl(report.id)} download><Download />下载 ZIP</a>
           </Button>
           <ShareControl report={report} />
           <span className="text-[11px] text-muted-foreground">{formatBytes(report.sizeBytes)}</span>
@@ -1809,7 +1809,7 @@ function ReportViewer({
             title={expanded ? '退出全屏查看' : '全屏查看报告'}
             onClick={() => setExpanded((current) => !current)}
           >
-            {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            {expanded ? <Minimize2 /> : <Maximize2 />}
           </Button>
         </div>
       </div>
@@ -1883,13 +1883,13 @@ function ShareControl({ report }: { report: AcceptanceReport }): JSX.Element {
         onClick={() => void onEnableOrCopy()}
         title={token ? '复制匿名公开链接 /r/<token>' : '生成匿名只读公开链接（无需登录即可查看）'}
       >
-        <Share2 className="h-3.5 w-3.5" />{token ? '复制公开链接' : '匿名分享'}
+        <Share2 />{token ? '复制公开链接' : '匿名分享'}
       </Button>
       {token ? (
         <ConfirmAction
           trigger={(
             <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" aria-label="撤销分享" title="撤销分享链接">
-              <Trash2 className="h-3.5 w-3.5" />
+              <Trash2 />
             </Button>
           )}
           title="撤销这份报告的公开链接？"
@@ -1937,7 +1937,7 @@ function PushToPrControl({ report }: { report: AcceptanceReport }): JSX.Element 
         onClick={() => void onPush()}
         title={`使用 CDS 关联仓库的 GitHub App 权限，把验收结论同步到 PR #${report.prNumber} 的评论和 Check Run`}
       >
-        <GitPullRequest className="h-3.5 w-3.5" />同步结论到 PR #{report.prNumber}
+        <GitPullRequest />同步结论到 PR #{report.prNumber}
       </Button>
     </div>
   );

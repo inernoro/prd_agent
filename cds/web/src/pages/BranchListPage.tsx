@@ -3817,7 +3817,7 @@ export function BranchListPage(): JSX.Element {
                       </div>
                       <div className="flex items-center gap-2">
                         <Button type="button" variant="ghost" size="icon" onClick={() => void refreshSlowHttp()} title="刷新请求观测">
-                          <RefreshCw className="h-4 w-4" />
+                          <RefreshCw />
                         </Button>
                         <Gauge className="h-4 w-4 text-muted-foreground" />
                       </div>
@@ -5051,7 +5051,7 @@ function CoolPolicyEditorModal({ onClose }: { onClose: () => void }): JSX.Elemen
         <div className="mt-4 flex justify-end gap-2">
           <Button type="button" size="sm" variant="outline" onClick={onClose}>取消</Button>
           <Button type="button" size="sm" disabled={phase !== 'ready'} onClick={() => void save()}>
-            {phase === 'saving' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            {phase === 'saving' ? <Loader2 className="animate-spin" /> : null}
             保存并生效
           </Button>
         </div>

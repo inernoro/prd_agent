@@ -264,7 +264,7 @@ function ConnectTab({ prompt }: { prompt: string }): JSX.Element {
           {prompt}
         </pre>
         <Button size="sm" variant={copied ? 'default' : 'outline'} className="absolute right-2 top-2" onClick={() => void copy()}>
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? <Check /> : <Copy />}
           {copied ? '已复制' : '复制接入口令'}
         </Button>
       </div>
@@ -278,7 +278,7 @@ function ManualTab(): JSX.Element {
       <p>技能包采用通用的 SKILL.md 结构。下载后把 skills/ 下的五个目录复制到当前项目对应的技能目录。</p>
       <Button asChild>
         <a href="/api/export-skill" download>
-          <Download className="h-4 w-4" />
+          <Download />
           下载技能包
         </a>
       </Button>
@@ -329,7 +329,7 @@ function MarketplaceTab(): JSX.Element {
         {MARKETPLACE_URL ? (
           <Button asChild variant="outline">
             <a href={MARKETPLACE_URL} target="_blank" rel="noreferrer">
-              <ExternalLink className="h-4 w-4" />
+              <ExternalLink />
               在浏览器打开来源站点
             </a>
           </Button>
@@ -500,7 +500,7 @@ function ProjectInitTab(): JSX.Element {
                 className="absolute right-2 top-2"
                 onClick={() => void copy(twoStep, 'two')}
               >
-                {copied === 'two' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copied === 'two' ? <Check /> : <Copy />}
               </Button>
             </div>
             <button
@@ -519,7 +519,7 @@ function ProjectInitTab(): JSX.Element {
                   className="absolute right-2 top-2"
                   onClick={() => void copy(oneLine, 'one')}
                 >
-                  {copied === 'one' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  {copied === 'one' ? <Check /> : <Copy />}
                 </Button>
               </div>
             ) : null}
@@ -535,7 +535,7 @@ function ProjectInitTab(): JSX.Element {
                 className="absolute right-2 top-2"
                 onClick={() => void copy(active.nextStep, 'next')}
               >
-                {copied === 'next' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copied === 'next' ? <Check /> : <Copy />}
               </Button>
             </div>
           </div>

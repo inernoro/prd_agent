@@ -438,7 +438,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
               onClick={() => fileInputRef.current?.click()}
               disabled={state.status !== 'ready'}
             >
-              <Upload className="mr-1 h-3.5 w-3.5" />
+              <Upload className="mr-1" />
               上传 .env
             </Button>
           </div>
@@ -503,9 +503,9 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                   title="自动识别失败时的手动兜底"
                 >
                   {initScriptUploading ? (
-                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="mr-1 animate-spin" />
                   ) : (
-                    <Upload className="mr-1 h-3.5 w-3.5" />
+                    <Upload className="mr-1" />
                   )}
                   导入 SQL
                 </Button>
@@ -579,7 +579,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                                 onClick={() => toggleReveal(key)}
                                 title={isRevealed ? '隐藏' : '显示'}
                               >
-                                {isRevealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                                {isRevealed ? <EyeOff /> : <Eye />}
                               </Button>
                             ) : null}
                             {looksSecret ? (
@@ -594,7 +594,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                                 }}
                                 title="生成强随机密钥(浏览器侧 crypto.getRandomValues)"
                               >
-                                <Wand2 className="mr-1 h-3.5 w-3.5" />
+                                <Wand2 className="mr-1" />
                                 生成
                               </Button>
                             ) : null}
@@ -650,7 +650,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                                 onClick={() => toggleReveal(key)}
                                 title={isRevealed ? '隐藏' : '显示'}
                               >
-                                {isRevealed ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                                {isRevealed ? <EyeOff /> : <Eye />}
                               </Button>
                             ) : null}
                           </div>
@@ -714,7 +714,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
             disabled={saving || state.status !== 'ready' || !allRequiredFilled}
           >
             {saving ? (
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="mr-1 animate-spin" />
             ) : null}
             完成,开始部署
           </Button>

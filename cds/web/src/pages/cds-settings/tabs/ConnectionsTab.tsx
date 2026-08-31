@@ -167,7 +167,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
             ) : integration?.authorizationUrl ? (
               <Button asChild className="shrink-0">
                 <a href={integration.authorizationUrl}>
-                  <ExternalLink className="mr-1 h-4 w-4" />
+                  <ExternalLink className="mr-1" />
                   前往 MAP 授权
                 </a>
               </Button>
@@ -251,7 +251,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
               <p className="mt-1 text-sm text-muted-foreground">长期授权不按时间自动过期，可在这里明确撤销或删除。</p>
             </div>
             <Button type="button" variant="outline" size="sm" onClick={() => void reload()}>
-              <RefreshCw className="mr-1 h-4 w-4" /> 刷新
+              <RefreshCw className="mr-1" /> 刷新
             </Button>
           </div>
           {state.status === 'ok' && connections.length === 0 ? (
@@ -298,7 +298,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
                               description={`撤销与 ${connection.partnerName || connection.name} 的连接后，对方将不能继续调用 CDS。`}
                               confirmLabel="撤销"
                               onConfirm={() => handleRevoke(connection)}
-                              trigger={<Button variant="ghost" size="sm" title="撤销"><ShieldCheck className="h-4 w-4" /></Button>}
+                              trigger={<Button variant="ghost" size="sm" title="撤销"><ShieldCheck /></Button>}
                             />
                           ) : null}
                           <ConfirmAction
@@ -306,7 +306,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
                             description={`删除连接记录 ${connection.name}。`}
                             confirmLabel="删除"
                             onConfirm={() => handleDelete(connection)}
-                            trigger={<Button variant="ghost" size="sm" title="删除"><Trash2 className="h-4 w-4" /></Button>}
+                            trigger={<Button variant="ghost" size="sm" title="删除"><Trash2 /></Button>}
                           />
                         </div>
                       </td>

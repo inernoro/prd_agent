@@ -406,7 +406,7 @@ export function TaskSchedulePage(): JSX.Element {
             <>
               <PaletteHint />
               <Button variant="outline" size="sm" onClick={() => void load()}>
-                <RefreshCw className="h-4 w-4" />
+                <RefreshCw />
                 刷新
               </Button>
             </>
@@ -452,7 +452,7 @@ export function TaskSchedulePage(): JSX.Element {
                 </div>
               </div>
               <Button className="shrink-0 self-stretch" onClick={newJob}>
-                <Plus className="h-4 w-4" />
+                <Plus />
                 新建任务
               </Button>
             </div>
@@ -555,12 +555,12 @@ export function TaskSchedulePage(): JSX.Element {
                         <div className="flex gap-2">
                           {form.id ? (
                             <Button variant="outline" size="sm" onClick={() => void runNow(form.id!)} disabled={runningId === form.id}>
-                              <Play className="h-4 w-4" />
+                              <Play />
                               {runningId === form.id ? '执行中' : '立即执行'}
                             </Button>
                           ) : null}
                           <Button size="sm" onClick={() => void saveJob()} disabled={saving || !form.projectId || !form.name || form.actions.length === 0}>
-                            <Save className="h-4 w-4" />
+                            <Save />
                             {saving ? '保存中' : '保存'}
                           </Button>
                         </div>
@@ -618,7 +618,7 @@ export function TaskSchedulePage(): JSX.Element {
                             <div className="text-xs text-muted-foreground">{form.actions.length} 个动作，按列表顺序执行。</div>
                           </div>
                           <Button type="button" size="sm" onClick={() => openActionDialog()}>
-                            <Plus className="h-4 w-4" />
+                            <Plus />
                             添加动作
                           </Button>
                         </div>
@@ -682,7 +682,7 @@ export function TaskSchedulePage(): JSX.Element {
                       {form.id ? (
                         <div className="mt-3 flex justify-end">
                           <Button variant="outline" size="sm" onClick={() => void deleteJob()} disabled={saving} className="text-destructive hover:text-destructive">
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 />
                             删除任务
                           </Button>
                         </div>
@@ -1338,11 +1338,11 @@ function JobOverview({
 
       <div className="flex gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-4 py-3">
         <Button className="flex-1" onClick={onRun} disabled={running}>
-          <Play className="h-4 w-4" />
+          <Play />
           {running ? '执行中' : '立即执行'}
         </Button>
         <Button variant="outline" onClick={onEdit}>
-          <Pencil className="h-4 w-4" />
+          <Pencil />
           编辑配置
         </Button>
       </div>
