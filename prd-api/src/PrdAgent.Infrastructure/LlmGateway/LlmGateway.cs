@@ -1824,9 +1824,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (decodedImages.Count > 0)
                 {
                     var effectiveSize = adapter.NormalizeSize(spec.Size);
-                    var adapterConfig = ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
                     var effectiveFormat = adapter.ForceUrlResponseFormat ? "url" : spec.ResponseFormat;
-                    if (adapterConfig?.SupportsResponseFormat == false) effectiveFormat = null;
+                    if (!ImageGenModelAdapterRegistry.SupportsResponseFormat(resolution.ActualModel)) effectiveFormat = null;
                     isMultipart = true;
                     endpointPath = "images/edits";
                     multipartFields = new Dictionary<string, object>

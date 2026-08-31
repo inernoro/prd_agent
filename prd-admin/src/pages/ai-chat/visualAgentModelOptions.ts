@@ -34,8 +34,6 @@ export function resolveVisualResultModelLabel(
 ): string {
   return String(
     meta?.logicalModelPublicId
-      ?? meta?.modelPool
-      ?? meta?.actualModelPool
       ?? meta?.actualModel
       ?? fallback,
   ).trim();
@@ -69,18 +67,17 @@ export function isOperationOnlyPool(pool: Pick<ModelGroupForApp, 'code' | 'capab
 }
 
 export function buildVisualAgentModelOptions(pools: ModelGroupForApp[]): VisualAgentModelOption[] {
-  return pools.filter((pool) => !isOperationOnlyPool(pool)).flatMap((pool) => {
+  return pools.filter((pool) => pool.resolutionType === 'LogicalModel' && !isOperationOnlyPool(pool)).flatMap((pool) => {
     const members = pool.models ?? [];
     const preferredMember = members.find((member) => member.healthStatus === 'Healthy')
       ?? members.find((member) => member.healthStatus === 'Degraded')
       ?? members[0];
-    const logicalModel = pool.resolutionType === 'LogicalModel';
     return {
       id: `pool_${pool.id}`,
       name: pool.name,
-      modelName: logicalModel ? (preferredMember?.modelId || pool.code) : pool.id,
-      actualModelId: preferredMember?.modelId,
-      platformId: logicalModel ? 'logical-model' : 'model-pool',
+      modelName: pool.code,
+      actualModelId: pool.code,
+      platformId: 'logical-model',
       enabled: members.some((member) => member.healthStatus === 'Healthy' || member.healthStatus === 'Degraded'),
       isMain: false,
       isImageGen: true,

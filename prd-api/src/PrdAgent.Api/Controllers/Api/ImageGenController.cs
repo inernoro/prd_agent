@@ -200,6 +200,7 @@ public class ImageGenController : ControllerBase
             Id = pool.Id,
             Name = pool.Name,
             Code = pool.Code,
+            Description = pool.Description,
             Priority = pool.Priority,
             ModelType = modelType,
             IsDefaultForType = pool.IsDefault,

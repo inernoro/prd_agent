@@ -427,83 +427,6 @@ type CanvasPlacing =
   | { kind: 'shape'; shapeType: NonNullable<CanvasImageItem['shapeType']> }
   | { kind: 'text' };
 
-/**
- * 生图模型展示元信息（副标题 / 描述 / 推荐标记）。
- *
- * 这是一份「临时」的前端兜底文案表：当前后端模型池还没有下发副标题/描述/推荐字段，
- * 先由前端按模型名/code 匹配出文案。一旦后端在模型池或模型对象上下发
- * `subtitle` / `description` / `recommended` 字段，`getImageModelMeta` 会优先采用后端值，
- * 这张表即可逐步退役，无需改动 UI。
- *
- * 当前推荐：gpt-image-2-all（即 image-2）。
- */
-interface ImageModelMeta {
-  subtitle?: string;
-  description?: string;
-  recommended?: boolean;
-}
-
-// key 为小写关键字，匹配模型 name / modelName(code) / actualModelId 的子串
-const IMAGE_MODEL_META_REGISTRY: Array<{ match: string[]; meta: ImageModelMeta }> = [
-  {
-    match: ['gpt-image-2', 'image-2'],
-    meta: {
-      subtitle: '综合推荐 · 指令理解最强',
-      description: '自适应尺寸，复杂指令、文字排版与多图参考表现最稳，日常首选。',
-      recommended: true,
-    },
-  },
-  {
-    match: ['gpt-image-1.5', 'image-1.5'],
-    meta: {
-      subtitle: '速度优先 · 轻量出图',
-      description: '出图更快、成本更低，适合草图、批量试稿等对精度要求不高的场景。',
-    },
-  },
-  {
-    match: ['nano-banana-pro', 'nano-banana'],
-    meta: {
-      subtitle: '细节质感 · 写实风格',
-      description: '写实质感和光影细节出色，适合人像、产品与场景类高质量出图。',
-    },
-  },
-  {
-    match: ['gemini-3-pro-image', 'gemini-3', 'gemini'],
-    meta: {
-      subtitle: 'Google · 创意发散',
-      description: '创意联想强，适合概念探索与多样化风格尝试。',
-    },
-  },
-  {
-    match: ['doubao', 'seedream', '豆包'],
-    meta: {
-      subtitle: '豆包 · 中文友好',
-      description: '对中文提示词理解好，国风/中文海报类题材表现稳定。',
-    },
-  },
-];
-
-/** 当前默认推荐模型（用于头部提示文案；后端下发 recommended 后可弃用）。 */
-const RECOMMENDED_IMAGE_MODEL_LABEL = 'gpt-image-2-all';
-
-function getImageModelMeta(m: { name?: string; modelName?: string; actualModelId?: string; subtitle?: string; description?: string; recommended?: boolean }): ImageModelMeta {
-  // 1) 优先采用后端下发字段（一旦后端开始发送，这里自动生效）
-  const fromBackend: ImageModelMeta = {};
-  if (m.subtitle) fromBackend.subtitle = m.subtitle;
-  if (m.description) fromBackend.description = m.description;
-  if (typeof m.recommended === 'boolean') fromBackend.recommended = m.recommended;
-
-  // 2) 前端兜底：按关键字匹配
-  const hay = `${m.name ?? ''} ${m.modelName ?? ''} ${m.actualModelId ?? ''}`.toLowerCase();
-  const hit = IMAGE_MODEL_META_REGISTRY.find((e) => e.match.some((k) => hay.includes(k)));
-
-  return {
-    subtitle: fromBackend.subtitle ?? hit?.meta.subtitle,
-    description: fromBackend.description ?? hit?.meta.description,
-    recommended: fromBackend.recommended ?? hit?.meta.recommended ?? false,
-  };
-}
-
 const clampZoom = (z: number) => Math.max(0.05, Math.min(3, z));
 const clampZoomFactor = (f: number) => Math.max(0.93, Math.min(1.07, f));
 
@@ -994,13 +917,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState<{ message: string; requestId?: string | null } | null>(null);
-  // 统一模型目录。新配置返回逻辑模型；没有逻辑目录时兼容返回旧模型池投影。
+  // 业务模型目录，模型池只属于网关内部调度，不进入创作选择器。
   const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
 
   // 将模型目录转换为 Model 兼容对象，用于选择器展示
   // 扩展 Model 类型以包含来源标记
   type ModelWithSource = VisualAgentModelOption;
-  // 直接使用统一的模型池列表
+  // 使用后端授权的业务模型列表
   const filteredPools = useMemo(() => {
     return imageGenPools;
   }, [imageGenPools]);
@@ -1009,13 +932,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     return buildVisualAgentModelOptions(filteredPools);
   }, [filteredPools]);
 
-  // 模型列表：优先使用逻辑模型；旧环境继续走模型池兼容投影。
+  // 只展示逻辑模型，不将默认池包装成可选模型。
   const allImageGenModels = useMemo<ModelWithSource[]>(() => {
     return poolModels;
   }, [poolModels]);
 
   const serverDefaultModel = useMemo(() => {
-    // 严格 AppCaller 的默认池由后端显式标记；不能用排序后的第一个池覆盖默认配置。
+    // 默认业务模型由后端标记，旧数据只按后端目录顺序兜底。
     return allImageGenModels.find((m) => m.enabled && m.isDefault)
       ?? allImageGenModels.find((m) => m.enabled)
       ?? null;
@@ -1186,8 +1109,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
 
   useEffect(() => {
-    // 生成请求仍使用模型池 ID；尺寸适配查询必须使用池内实际上游模型 ID，
-    // 否则 adapter-info 无法命中 Provider 适配器，尺寸/比例选项会被错误清空。
+    // 生成和尺寸查询均使用业务模型标识；adapter-info 在后端解析实际适配器，
+    // 前端不自行选择池成员或猜测上游型号。
     const modelCode = effectiveModel?.actualModelId || effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
@@ -8384,7 +8307,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         >
                           <Sparkles size={10} className="shrink-0" />
                           <span className="truncate max-w-[140px]">
-                            {effectiveModel?.name || effectiveModel?.modelName || '自动模型'}
+                            {effectiveModel?.name || effectiveModel?.modelName || '选择模型'}
                           </span>
                           <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
                         </button>
@@ -8397,14 +8320,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           className="surface-popover z-50 min-w-[320px] rounded-[18px] p-3"
                         >
                           <div className="px-2 py-1 text-[11px] font-semibold text-token-muted">
-                            {(() => {
-                              const first = allImageGenModels[0];
-                              if (first?.resolutionType === 'LogicalModel') return '绘图模型';
-                              if (first?.isDedicated) return '绘图模型（兼容专属池）';
-                              if (first?.isDefault) return '绘图模型（兼容默认池）';
-                              if (first?.isLegacy) return '绘图模型（默认生图）';
-                              return '绘图模型';
-                            })()}
+                            绘图模型
                           </div>
 
                           {/* 智能切换开关：遇到不可用模型时，默认会弹窗询问是否切换；关闭后进入严格模式，直接按用户选择发送 */}
@@ -8454,7 +8370,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       <div className="mt-1">{modelsError.message}</div>
                                       {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
                                     </>
-                                  ) : '当前没有可用的生图模型，请联系管理员检查 LLM Gateway 模型池。'}
+                                  ) : '尚未配置可用的业务模型，请管理员在模型网关配置逻辑模型及可用上游。'}
                                   <button
                                     type="button"
                                     className="mt-3 inline-flex h-7 items-center gap-1.5 rounded-full border border-token-subtle px-2.5 text-[10px] font-medium text-token-secondary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-50"
@@ -8476,17 +8392,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               .map((m) => {
                                 const disabled = !m.enabled;
                                 const using = modelPrefAuto ? effectiveModel?.id === m.id : modelPrefModelId === m.id;
-                                const isPool = m.id.startsWith('pool_');
-                                // 根据来源类型生成标签
-                                const getSourceLabel = () => {
-                                  if (m.resolutionType === 'LogicalModel') return '逻辑模型';
-                                  if (m.isDedicated) return '兼容专属池';
-                                  if (m.isDefault) return '兼容默认池';
-                                  if (m.isLegacy) return '默认生图';
-                                  if (isPool) return '兼容模型池';
-                                  return disabled ? '已禁用' : '已启用';
-                                };
-                                const sourceLabel = getSourceLabel();
+                                const sourceLabel = disabled ? '暂不可用' : m.isDefault ? '默认模型' : '业务模型';
                                 return (
                                   <button
                                     key={m.id}
@@ -9593,7 +9499,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <span className="text-[11px] font-semibold uppercase tracking-wide text-token-muted">
                             选择模型
                           </span>
-                          <span
+                          {serverDefaultModel && <span
                             className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
                             style={{
                               background: 'rgba(250,204,21,0.12)',
@@ -9602,8 +9508,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             }}
                           >
                             <Sparkles size={10} />
-                            推荐 {RECOMMENDED_IMAGE_MODEL_LABEL}
-                          </span>
+                            默认 {serverDefaultModel.name || serverDefaultModel.modelName}
+                          </span>}
                         </div>
 
                         <div className="max-h-[400px] overflow-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
@@ -9615,7 +9521,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   <div className="mt-1 leading-relaxed">{modelsError.message}</div>
                                   {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
                                 </>
-                              ) : '当前没有可用的生图模型，请联系管理员检查 LLM Gateway 模型池。'}
+                              ) : '尚未配置可用的业务模型，请管理员在模型网关配置逻辑模型及可用上游。'}
                               <button
                                 type="button"
                                 className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-full border border-token-subtle px-3 text-[11px] font-medium text-token-secondary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-50"
@@ -9630,11 +9536,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             <div className="space-y-1.5">
                               {allImageGenModels.map((m) => {
                                   const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
-                                  const meta = getImageModelMeta(m);
+                                  const meta = { subtitle: m.subtitle, description: m.description, recommended: m.isDefault };
                                   return (
                                     <button
                                       key={m.id}
                                       type="button"
+                                      disabled={!m.enabled}
                                       className="group w-full text-left rounded-[14px] px-3 py-2.5 transition-all"
                                       style={{
                                         border: picked ? '1px solid rgba(250,204,21,0.45)' : '1px solid var(--border-subtle)',
@@ -9678,7 +9585,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                                 }}
                                               >
                                                 <Sparkles size={9} />
-                                                推荐
+                                                默认
                                               </span>
                                             )}
                                           </div>
@@ -9702,7 +9609,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </div>
                           )}
                           <div className="mt-2.5 px-1 text-[10px] leading-relaxed text-token-muted-faint">
-                            说明文案为临时内置参考，后续将由模型配置统一下发。
+                            选择的是业务模型；实际服务线路由网关管理，不会静默切换到其他业务模型。
                           </div>
                         </div>
 

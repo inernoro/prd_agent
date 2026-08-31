@@ -22,7 +22,7 @@ function pool(models: ModelGroupForApp['models']): ModelGroupForApp {
 }
 
 describe('buildVisualAgentModelOptions', () => {
-  it('一个网关池只暴露一个业务模型身份，池内成员由网关调度', () => {
+  it('混合模型池不再伪装成业务模型', () => {
     const options = buildVisualAgentModelOptions([
       pool([
         { modelId: 'openai/gpt-image-2', platformId: 'openrouter', priority: 10, healthStatus: ModelHealthStatus.Healthy, consecutiveFailures: 0, consecutiveSuccesses: 1 },
@@ -31,22 +31,17 @@ describe('buildVisualAgentModelOptions', () => {
       ]),
     ]);
 
-    expect(options.map((item) => item.name)).toEqual(['视觉创作测试池']);
-    expect(options.map((item) => item.modelName)).toEqual(['image-test-pool']);
-    expect(options[0]?.platformId).toBe('model-pool');
-    expect(options).toHaveLength(1);
-    expect(options.every((item) => item.enabled && item.isDedicated)).toBe(true);
+    expect(options).toEqual([]);
   });
 
-  it('单成员池继续显示原有池名称', () => {
+  it('单成员默认池也不能替代业务模型目录', () => {
     const options = buildVisualAgentModelOptions([
       pool([
         { modelId: 'default-generation-stub', platformId: 'stub', priority: 1, healthStatus: ModelHealthStatus.Healthy, consecutiveFailures: 0, consecutiveSuccesses: 0 },
       ]),
     ]);
 
-    expect(options[0]?.name).toBe('视觉创作测试池');
-    expect(options[0]?.modelName).toBe('image-test-pool');
+    expect(options).toEqual([]);
   });
 
   it('逻辑模型只暴露稳定公开标识，不暴露 Offering 上游', () => {
@@ -82,9 +77,9 @@ describe('resolveVisualResultModelLabel', () => {
     })).toBe('nanobanana-2');
   });
 
-  it('旧任务按实际模型池、上游模型、原消息依次兜底', () => {
+  it('旧任务展示实际模型而不是默认池', () => {
     expect(resolveVisualResultModelLabel({ actualModelPool: '旧默认图像池', actualModel: 'upstream' }, 'selected'))
-      .toBe('旧默认图像池');
+      .toBe('upstream');
     expect(resolveVisualResultModelLabel({ actualModel: 'upstream' }, 'selected')).toBe('upstream');
     expect(resolveVisualResultModelLabel(null, 'selected')).toBe('selected');
   });

@@ -97,11 +97,12 @@ public class ModelResolver : IModelResolver
 
         // 旧 AppCaller 在迁移完成前保留逻辑模型目录兼容路径。新 AppCaller 一旦写入
         // AllowedModelPoolIds 就启用严格模型池契约，逻辑模型不得越过该边界。
-        if (!gatewayRegistry.StrictPoolContract
+        if ((!gatewayRegistry.StrictPoolContract || UsesVisualLogicalModelCatalog(appCallerCode))
             && string.IsNullOrWhiteSpace(pinnedPlatformId)
             && string.IsNullOrWhiteSpace(pinnedModelId))
         {
-            var logical = await TryResolveLogicalModelAsync(appCallerCode, modelType, expectedModel, ct);
+            var logical = await TryResolveLogicalModelAsync(appCallerCode, modelType, expectedModel, ct,
+                gatewayRegistry.StrictPoolContract ? gatewayRegistry.Groups : null);
             if (logical is not null)
                 return logical;
         }
@@ -871,6 +872,14 @@ public class ModelResolver : IModelResolver
         if (gatewayRegistry.TrafficRejected)
             return result;
 
+        // 创作页选择业务模型，池只保留后台授权边界；无目录时不伪装成一个默认模型。
+        if (UsesVisualLogicalModelCatalog(appCallerCode))
+        {
+            var catalog = await GetAvailableLogicalModelsAsPoolsAsync(appCallerCode, modelType, ct,
+                gatewayRegistry.StrictPoolContract ? gatewayRegistry.Groups : null);
+            return catalog;
+        }
+
         if (gatewayRegistry.StrictPoolContract)
         {
             foreach (var group in gatewayRegistry.Groups)
@@ -1105,10 +1114,24 @@ public class ModelResolver : IModelResolver
 
     #region Private Methods
 
+    internal static bool UsesVisualLogicalModelCatalog(string appCallerCode)
+        => appCallerCode is AppCallerRegistry.VisualAgent.Image.Text2Img
+            or AppCallerRegistry.VisualAgent.Image.Img2Img
+            or AppCallerRegistry.VisualAgent.Image.VisionGen;
+
+    internal static bool IsLogicalOfferingAllowed(
+        ModelResolutionResult resolution,
+        IReadOnlyCollection<ModelGroup>? allowedGroups)
+        => allowedGroups is null || allowedGroups.Any(group => group.Models.Any(member =>
+            member.HealthStatus != ModelHealthStatus.Unavailable
+            && string.Equals(member.PlatformId, resolution.ActualPlatformId, StringComparison.Ordinal)
+            && string.Equals(member.ModelId, resolution.ActualModel, StringComparison.Ordinal)));
+
     private async Task<List<AvailableModelPool>> GetAvailableLogicalModelsAsPoolsAsync(
         string appCallerCode,
         string modelType,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyCollection<ModelGroup>? allowedGroups = null)
     {
         if (_gatewayDb is null)
             return [];
@@ -1120,6 +1143,7 @@ public class ModelResolver : IModelResolver
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType)))
             .SortBy(x => x.DisplayOrder)
             .ThenBy(x => x.Name)
+            .ThenBy(x => x.PublicId)
             .ToListAsync(ct);
         if (logicalModels.Count == 0)
             return [];
@@ -1138,6 +1162,9 @@ public class ModelResolver : IModelResolver
         {
             if (!SupportsAppCallerScenario(logical, appCallerCode))
                 continue;
+            if (UsesVisualLogicalModelCatalog(appCallerCode)
+                && GatewayCapabilityIds.IsOperationOnly(logical.PublicId, logical.Capabilities))
+                continue;
 
             if (!offeringsByLogicalModel.TryGetValue(logical.Id, out var logicalOfferings))
                 continue;
@@ -1148,7 +1175,8 @@ public class ModelResolver : IModelResolver
             var hasResolvableOffering = false;
             foreach (var offering in OrderLogicalOfferings(logical, logicalOfferings))
             {
-                if (await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct) is not null)
+                var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
+                if (candidate is not null && IsLogicalOfferingAllowed(candidate, allowedGroups))
                 {
                     hasResolvableOffering = true;
                     break;
@@ -1162,10 +1190,12 @@ public class ModelResolver : IModelResolver
                 Id = logical.Id,
                 Name = logical.Name,
                 Code = logical.PublicId,
+                Description = logical.Description,
                 Priority = logical.DisplayOrder,
                 ResolutionType = "LogicalModel",
                 IsDedicated = logical.AllowedAppCallerCodes.Count > 0,
-                IsDefault = false,
+                // 管理端 DisplayOrder 决定默认业务模型，前端不猜型号或池成员。
+                IsDefault = UsesVisualLogicalModelCatalog(appCallerCode) && result.Count == 0,
                 Capabilities = logical.Capabilities?.ToList() ?? [],
                 Models =
                 [
@@ -1189,7 +1219,8 @@ public class ModelResolver : IModelResolver
         string appCallerCode,
         string modelType,
         string? expectedModel,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyCollection<ModelGroup>? allowedGroups = null)
     {
         if (_gatewayDb is null || string.IsNullOrWhiteSpace(expectedModel))
             return null;
@@ -1233,7 +1264,7 @@ public class ModelResolver : IModelResolver
         foreach (var offering in ordered)
         {
             var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, expectedModel, ct);
-            if (candidate is not null)
+            if (candidate is not null && IsLogicalOfferingAllowed(candidate, allowedGroups))
                 resolved.Add(candidate);
         }
 
