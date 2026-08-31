@@ -73,7 +73,8 @@ function previewUrlFor(
   previewSlug: string,
   rootDomain: string,
 ): string {
-  if (!row.name || !previewSlug) return '';
+  // 非法子域拼出来的 host 根本发不出去，别把它渲染成一条可点的地址骗人
+  if (!row.name || !previewSlug || invalidSubdomain(row.subdomain)) return '';
   const path = row.path && row.path !== '/' ? row.path : '';
   if (row.subdomain && !service?.handlesRoot) {
     return `https://${previewSlug}-${row.subdomain}.${rootDomain}${path}`;
@@ -331,7 +332,9 @@ export function WebEntryConfigDialog({
                       <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                     </a>
                   ) : (
-                    <span className="text-muted-foreground">填入口名称后这里显示地址</span>
+                    <span className="text-muted-foreground">
+                      {invalidSubdomain(row.subdomain) ? '子域不合法，改好后这里显示地址' : '填入口名称后这里显示地址'}
+                    </span>
                   )}
                 </div>
               </div>
