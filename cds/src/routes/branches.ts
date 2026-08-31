@@ -15682,12 +15682,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * 「保存成功但地址打不开」（Codex review P1）。
    *
    * 三类占位都要查，缺一类就会存下一条永远发不出去的入口：
-   *   1. 同分支另一个服务已经在用同一个子域（发布器只保留首个）；
+   *   1. 同分支另一个服务已经占了同一组 host（发布器只保留首个）；
    *   2. 别的分支的 preview host / 已发布命名服务 host；
    *   3. 子域别名与完整自定义域名——**含本分支自己的**：发布器的 occupiedHosts
    *      不跳过自己，本分支别名占走的 host 同样会让这条服务路由被跳过
    *      （Codex review P2），所以这里也不能因为「是自己」就放行。
-   * 唯一豁免的是「这个服务自己当前已发布的那条 host」，否则原样再存一次都会 409。
+   * 唯一豁免的是「这个服务自己当前已发布的那些 host」，否则原样再存一次都会 409。
+   *
+   * **枚举口径必须是 `publishedServiceLabels`（规范名 + 历史别名）而不是单个
+   * `namedServiceLabel`**：一个子域会展开出多条 host（`llmgw` 也发 `llmgw-web`）。
+   * 只比规范名时，服务 A 用 `llmgw`、服务 B 用 `llmgw-web` 这种组合按原始字符串
+   * 不相等就放行了，而两者展开后的 host 完全重合——发布器于是跳过或改指其中一条，
+   * 一条对外承诺过的兼容地址会开始指向错的容器（Codex review 第三轮 P1）。
+   * `preview-entrypoints.ts` 里那句「凡是要跟发布结果对齐的地方都必须走它」正是这个意思，
+   * 判据分裂（predicate-and-wiring-discipline 形状 3）在这里复发了一次。
    */
   const namedHostConflictsOnBranch = (
     branch: BranchEntry,
@@ -15698,22 +15706,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const project = stateService.getProject(branch.projectId);
     const slug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug;
     if (!slug) return [];
-    const label = namedServiceLabel(slug, subdomain);
-    // 首标签超限的分支本来就发不出这条命名路由（发布器会 warn 并跳过），
-    // 那是「这条分支享受不到」而不是「撞了别人」，不在这里拦。
-    if (!isPublishableNamedLabel(label)) return [];
-    const hosts = roots.map((root) => `${label}.${root}`.toLowerCase());
+    const hostsFor = (sub: string): string[] => publishedServiceLabels(slug, sub)
+      .flatMap((label) => roots.map((root) => `${label}.${root}`.toLowerCase()));
+    const hosts = hostsFor(subdomain);
+    // 一条都发不出去（首标签超限）：那是「这条分支享受不到」而不是「撞了别人」，不在这里拦。
+    if (hosts.length === 0) return [];
     const conflicts: string[] = [];
-    for (const bp of stateService.getEffectiveProfilesForBranch(branch)) {
-      if (bp.id === serviceId) continue;
-      if (resolveEffectiveProfile(bp, branch).subdomain === subdomain) {
-        conflicts.push(`分支 "${branch.id}" 的服务 "${bp.id}" 已经在用子域 "${subdomain}"`);
+    const effectiveProfiles = stateService.getEffectiveProfilesForBranch(branch)
+      .map((bp) => ({ id: bp.id, resolved: resolveEffectiveProfile(bp, branch) }));
+    // 本服务**当前**已发布的那些 host —— 豁免只认它们，不认「凡是本分支的都放行」。
+    const currentSub = effectiveProfiles.find((p) => p.id === serviceId)?.resolved.subdomain || '';
+    const ownHosts = new Set(currentSub ? hostsFor(currentSub) : []);
+    for (const { id, resolved } of effectiveProfiles) {
+      if (id === serviceId || !resolved.subdomain) continue;
+      const otherHosts = new Set(hostsFor(resolved.subdomain));
+      const overlap = hosts.filter((host) => otherHosts.has(host));
+      if (overlap.length > 0) {
+        conflicts.push(
+          `分支 "${branch.id}" 的服务 "${id}"（子域 "${resolved.subdomain}"）已经占用 ${overlap.join('、')}（含历史别名）`,
+        );
       }
     }
     for (const collision of findPreviewHostCollisions(hosts)) {
-      // 本分支自己那条命名服务 host = 这个服务当前已发布的地址，不算冲突；
-      // 同分支**别的**服务占用的情况已由上面一段单独报出，不会漏。
-      if (collision.conflictWith === branch.id && collision.reason === 'service-subdomain') continue;
+      // 只豁免「本服务自己现在就发布着的那条 host」；同分支别的服务占的、
+      // 或本服务换名后腾不出来的旧 host，都是真冲突。
+      if (collision.conflictWith === branch.id
+        && collision.reason === 'service-subdomain'
+        && ownHosts.has(collision.domain)) continue;
       conflicts.push(`"${collision.domain}" 已被分支 "${collision.conflictWith}" 占用`);
     }
     const owners = occupiedHostOwners(stateService.getAllBranches(), roots);

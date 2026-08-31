@@ -830,6 +830,50 @@ describe('Branch Routes', () => {
      * 且由 ManagedProjectService 每次重新生成覆盖。裸 id 去全局表找会命中**别的项目**
      * 同名 profile（web / api 这类），鉴权过了却写坏邻居（Codex review 第二轮 P1）。
      */
+    /*
+     * 子域会展开出历史别名（llmgw 也发 llmgw-web，见 LEGACY_SUBDOMAIN_ALIASES）。
+     * 只比规范名时，A 用 llmgw、B 用 llmgw-web 按原始字符串不相等就放行了，
+     * 而两者展开后的 host 完全重合——发布器会跳过或改指其中一条，一条对外承诺过的
+     * 兼容地址开始指向错的容器（Codex review 第三轮 P1）。
+     */
+    it('展开历史别名后重合的子域算撞车（llmgw 与 llmgw-web）', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      stateService.addBuildProfile({
+        id: 'legacy', projectId: 'proj-a', name: '旧网关', dockerImage: 'node:20', workDir: '.',
+        containerPort: 8092, subdomain: 'llmgw-web',
+      });
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway', 'legacy']);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'branch', entries: [{ serviceId: 'gateway', name: 'GW', subdomain: 'llmgw' }],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(409);
+      expect(String((res.body as any).error)).toContain('legacy');
+      expect(stateService.getBranchProfileOverride('branch-a', 'gateway')).toBeUndefined();
+    });
+
+    it('原样重存自己已有的子域不算撞车（豁免只认本服务自己的 host）', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      stateService.updateBuildProfile('gateway', {
+        subdomain: 'llmgw', webEntry: { name: '网关', path: '/' },
+      });
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'project',
+        entries: [
+          { serviceId: 'web', name: '主应用', path: '/' },
+          { serviceId: 'gateway', name: '网关（改名）', subdomain: 'llmgw', path: '/' },
+        ],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(200);
+      expect(stateService.getBuildProfile('gateway')!.webEntry).toEqual({ name: '网关（改名）', path: '/' });
+    });
+
     it('托管交付项目拒绝项目档保存，且不会误写别的项目的同名 profile', async () => {
       const now = new Date().toISOString();
       stateService.addProject({

@@ -13,7 +13,7 @@
  * 用户只填「域名前缀 + 入口名称」这两个系统猜不到的字段；地址即时预览，
  * 不必等保存完再去别处看自己配出了什么。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -103,6 +103,15 @@ export function WebEntryConfigDialog({
 }): JSX.Element {
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
+  // 请求代次 + 当前 branchId 镜像：用来丢弃迟到的扫描响应（详见 load 里的注释）
+  const loadGenerationRef = useRef(0);
+  const branchIdRef = useRef(branchId);
+  useEffect(() => {
+    branchIdRef.current = branchId;
+    // 切分支时先清空，免得新分支的弹窗短暂显示上一条分支的行
+    setConfig(null);
+    setRows([]);
+  }, [branchId]);
   const [scope, setScope] = useState<Scope>('project');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -110,10 +119,18 @@ export function WebEntryConfigDialog({
 
   const load = useCallback(async () => {
     if (!branchId) return;
+    // 迟到的响应必须丢掉：先给分支 A 开弹窗、关掉再开分支 B 时，A 的 GET 可能后到，
+    // 无条件写 state 会让界面显示 A 的值、保存却打到 B 的 branchId 上（web / api
+    // 这类 id 在两边都存在，服务端会照单全收）——等于拿 A 的配置覆盖 B（Codex review P2）。
+    const requestedBranchId = branchId;
+    const generation = loadGenerationRef.current + 1;
+    loadGenerationRef.current = generation;
+    const isStale = () => generation !== loadGenerationRef.current || requestedBranchId !== branchIdRef.current;
     setLoading(true);
     setError('');
     try {
-      const res = await apiRequest<ConfigResponse>(`/api/branches/${encodeURIComponent(branchId)}/web-entry-config`);
+      const res = await apiRequest<ConfigResponse>(`/api/branches/${encodeURIComponent(requestedBranchId)}/web-entry-config`);
+      if (isStale()) return;
       setConfig(res);
       // 已有入口（或已有命名子域）的服务先摆出来；其余服务留给「新增入口」按需添加，
       // 免得一屏十几行空表单。
@@ -131,9 +148,10 @@ export function WebEntryConfigDialog({
       const projectScopeAllowed = res.supportsProjectScope !== false;
       setScope(!projectScopeAllowed || (res.services || []).some((s) => s.branchOverride) ? 'branch' : 'project');
     } catch (err) {
+      if (isStale()) return;
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (!isStale()) setLoading(false);
     }
   }, [branchId]);
 
