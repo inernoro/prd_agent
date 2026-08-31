@@ -87,7 +87,10 @@ public class ModelResolver : IModelResolver
           薄壳只有一个出口，新增分支自动被罩住。
         */
         var resolved = await ResolveCoreAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
-        return await ApplyCatalogGateAsync(resolved, appCallerCode, ct);
+        // 钉了具体成员的请求不许在门内换人：用户点名要 A，给他 B 就是「选 A 给 B」，
+        // 那是本仓库专门立过规矩要防的事（llm-gateway 规则 1/2）。宁可如实报这条钉住的用不了。
+        return await ApplyCatalogGateAsync(
+            resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct);
     }
 
     /// <summary>
@@ -105,6 +108,7 @@ public class ModelResolver : IModelResolver
     private async Task<ModelResolutionResult> ApplyCatalogGateAsync(
         ModelResolutionResult resolved,
         string appCallerCode,
+        bool allowPromotion,
         CancellationToken ct)
     {
         if (!resolved.Success) return resolved;
@@ -178,7 +182,7 @@ public class ModelResolver : IModelResolver
           所以这里先看链上还有没有过得了门的成员：有就把第一个顶上来当主选，
           剩下过门的仍留作重试链；一个都过不了，才是真的没有可用成员，那时再报 NotFound。
         */
-        if (resolved.RetryCandidates is { Count: > 0 })
+        if (allowPromotion && resolved.RetryCandidates is { Count: > 0 })
         {
             var allowedCandidates = new List<ModelResolutionResult>();
             foreach (var candidate in resolved.RetryCandidates)
@@ -1231,7 +1235,8 @@ public class ModelResolver : IModelResolver
         CancellationToken ct = default)
     {
         var resolved = await ResolveOfferingCoreAsync(appCallerCode, modelType, offeringId, ct);
-        return await ApplyCatalogGateAsync(resolved, appCallerCode, ct);
+        // 调用方点名了某个 offering，门内不许换成别的：他要的就是这一个。
+        return await ApplyCatalogGateAsync(resolved, appCallerCode, allowPromotion: false, ct);
     }
 
     private async Task<ModelResolutionResult> ResolveOfferingCoreAsync(
