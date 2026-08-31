@@ -8469,8 +8469,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           {/* 右上：专注模式按钮（已隐藏 - 功能暂时不需要） */}
 
-          {/* 顶部居中：缩放浮层 */}
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
+          {/* 固定缩放控件高于画布标签层（z-30），图片移到顶部时仍可连续缩放。 */}
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40">
             <div className="surface-popover inline-flex h-9 items-center gap-1 whitespace-nowrap rounded-full px-1.5 text-token-secondary">
               <button
                 type="button"

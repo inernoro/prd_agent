@@ -1,5 +1,12 @@
 import type { Model } from '@/types/admin';
 import type { ModelGroupForApp } from '@/types/modelGroup';
+import type { ModelAdapterInfo, SizeOptionFromBackend } from '@/services/contracts/models';
+
+/** 直接消费授权目录的尺寸，不在手机端另设一份型号或尺寸表。 */
+export function visualImageSizeChoices(info: ModelAdapterInfo | null): SizeOptionFromBackend[] {
+  if (!info?.matched || info.sizesNotApplicable) return [];
+  return [...new Map(Object.values(info.sizesByResolution ?? {}).flat().map(option => [option.size, option])).values()];
+}
 
 export type VisualAgentModelOption = Model & {
   resolutionType?: ModelGroupForApp['resolutionType'];

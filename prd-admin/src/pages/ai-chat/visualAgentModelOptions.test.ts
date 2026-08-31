@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ModelHealthStatus, PoolStrategyType, type ModelGroupForApp } from '@/types/modelGroup';
-import { buildVisualAgentModelOptions, resolveVisualResultModelLabel, selectVisualModel } from './visualAgentModelOptions';
+import { buildVisualAgentModelOptions, resolveVisualResultModelLabel, selectVisualModel, visualImageSizeChoices } from './visualAgentModelOptions';
 
 function pool(models: ModelGroupForApp['models']): ModelGroupForApp {
   return {
@@ -100,5 +100,19 @@ describe('业务默认和显式选择', () => {
   });
   it('缺少业务默认时不选择任意模型', () => {
     expect(selectVisualModel(models.slice(0, 1), true)).toBeNull();
+  });
+});
+
+describe('手机尺寸与授权目录一致', () => {
+  it('保留网关发布的尺寸且跨档位去重，不生成写死的 3:4 尺寸', () => {
+    expect(visualImageSizeChoices({matched:true,modelId:'image1',sizesByResolution:{
+      '1k':[{size:'1024x1024',aspectRatio:'1:1'},{size:'1024x1536',aspectRatio:'2:3'},{size:'1536x1024',aspectRatio:'3:2'}],
+      '2k':[{size:'1024x1024',aspectRatio:'1:1'}],
+    }}).map(x=>x.size)).toEqual(['1024x1024','1024x1536','1536x1024']);
+  });
+  it('目录未就绪或尺寸不适用时不伪造选项', () => {
+    expect(visualImageSizeChoices(null)).toEqual([]);
+    expect(visualImageSizeChoices({matched:false,modelId:'unknown'})).toEqual([]);
+    expect(visualImageSizeChoices({matched:true,modelId:'adaptive',sizesNotApplicable:true})).toEqual([]);
   });
 });
