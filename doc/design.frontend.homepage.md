@@ -289,6 +289,14 @@
 
 前三项都是「缺真实数据/素材」，不是实现问题；第四项是范围问题，留给下一轮决定。
 
+### 10.4 第二批落了什么（2026-08-28，10.3 第四项「旧幕未动」在此批被处理）
+
+- **四幕改节拍驱动**：开局是空的，滚到才演——视觉创作走打字→发送→思考→渲染→落回画布→选中→混合计算，文学创作走上传→打锚点→逐张落进正文→换风格；每幕加一行随节拍变化的旁白条。
+- **尾部重绘**：原六段（Agent 深潜 + Agent 网格 + logo 墙 + 三步 + 桌面端 + 最终 CTA）合并为三幕——`RosterScene`（照百宝箱注册表画真实 Agent，演一次搜索筛选）、`ModelLayerScene`（照 LLMGW 模型池真实切片演成员半开与隔离兜底）、`StartScene`（三步 + 三端 + 收口通栏），整页高度显著下降。
+- **新增独立幕**：`CdsScene`（拆出「分支即环境」的时间轴演示，日志逐字取自真实部署记录）、`WorkflowScene`（照 `/workflow-agent` 画舱库 + 真实模板执行日志）、`VocScene`（照 `/team-activity` 复刻热力图下钻）。
+- **首页配图流水线**：新增槽位注册表 `landingPreviewSlots.ts`、匿名读接口 `GET /api/v1/landing/preview-assets`、系统设置「首页预览图」Tab 可逐幕生成，产物落 `HomepageAsset`（含生成用的 Prompt 字段）。
+- **演示因果契约落地**：新增模拟鼠标指针（按节拍走位、先到位再按下、按下是一次完整手势）覆盖到视觉创作/文学创作/知识库/百宝箱/工作流/用户之声/CDS 各幕，配套衔接契约守卫（旁白写点击必须真有按下）与衔接体检脚本；沉淀为规则 [`demo-causality-contract.md`](../.claude/rules/demo-causality-contract.md)。
+
 ---
 
 ## 实现来源
@@ -299,5 +307,6 @@
 - Agent 与工具的真实数量来源：`prd-admin/src/stores/toolboxStore.ts`
 - 首页素材槽位注册表（替换默认视觉从这里进）：`prd-admin/src/lib/homepageAssetSlots.ts`
 - 墨系配色的 CI 守卫：`prd-admin/src/lib/__tests__/inkPalette.test.ts`
+- 演示因果契约的衔接体检脚本：`prd-admin/scripts/landing-seam-audit.mjs`
 
 本文引用的规则：`chief-designer-usability`（好用四原则）、`conclusion-before-numbers`（先给结论再给数字）、`no-rootless-tree`（无根之木禁令）、`mobile-first-density`（移动端密度优先），均在 `.claude/rules/` 下。

@@ -112,6 +112,10 @@ jobs:
               # 所以连同各自的被测脚本一起登记进这道闸。
               - 'scripts/gw-smoke.py'
               - 'scripts/llmgw-rollout-ledger.py'
+              # changelog 碎片合并的被测文件：不登记的话，只改合并逻辑的 PR
+              # 完全跳过这道闸，而它要防的重复日期段恰恰是在那里长出来的（形状 7）。
+              - 'scripts/assemble-changelog.sh'
+              - 'scripts/lib/changelog_merge.py'
               - 'scripts/tests/test_*.py'
               # cdscli 的冒烟覆盖守卫盯的是这个脚本本身：不把它登记进来，
               # 只改 cdscli 的 PR 就完全跳过这道闸，而假绿恰恰是在那里回潮的

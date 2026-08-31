@@ -87,43 +87,41 @@ fi
 IFS=$'\n' sorted_dates=($(printf '%s\n' "${date_keys[@]}" | sort -r))
 unset IFS
 
-# 构建插入内容
-insert_block=""
-for date in "${sorted_dates[@]}"; do
-  entries=$(get_date_entries "$date")
-  insert_block+="### $date"$'\n'
-  insert_block+=$'\n'
-  insert_block+="| 类型 | 模块 | 描述 |"$'\n'
-  insert_block+="|------|------|------|"$'\n'
-  insert_block+="$entries"$'\n'
-  insert_block+=$'\n'
-done
-
-if $DRY_RUN; then
-  echo ""
-  echo "=== 将插入以下内容（dry-run）==="
-  echo "$insert_block"
-  exit 0
-fi
-
-# 在 "## [未发布]" 后插入
-# 找到 "[未发布]" 行号
-line_num=$(grep -n '## \[未发布\]' "$CHANGELOG" | head -1 | cut -d: -f1)
-
-if [[ -z "$line_num" ]]; then
+if ! grep -q '## \[未发布\]' "$CHANGELOG"; then
   echo "找不到 '## [未发布]' 标记"
   exit 1
 fi
 
-# 在 [未发布] 后插入空行 + 内容
-head -n "$line_num" "$CHANGELOG" > "${CHANGELOG}.tmp"
-echo "" >> "${CHANGELOG}.tmp"
-echo -n "$insert_block" >> "${CHANGELOG}.tmp"
+# 合并交给 scripts/lib/changelog_merge.py：已有同日期段就并进那一段，没有才新起一段。
+# 原来这里是「无条件在 [未发布] 后插入整块」，下面还留着一行
+# 「检查是否已有相同日期的条目，如果有则需要合并」的注释——注释承诺的行为并不存在。
+# 后果不是排版难看：ChangelogReader 对每个 `### 日期` 都新建一个 ChangelogDay 且不去重，
+# 更新中心会把同一天渲染成两组，日期顺序还会往回跳。
+payload_file=$(mktemp)
+trap 'rm -f "$payload_file"' EXIT
+{
+  printf '{'
+  first=true
+  for date in "${sorted_dates[@]}"; do
+    $first || printf ','
+    first=false
+    printf '"%s":' "$date"
+    get_date_entries "$date" | python3 -c 'import json,sys; print(json.dumps([l for l in sys.stdin.read().split("\n") if l.strip()], ensure_ascii=False))'
+  done
+  printf '}'
+} > "$payload_file"
 
-# 检查 [未发布] 后面是否已有相同日期的条目，如果有则需要合并
-tail_start=$((line_num + 1))
-tail -n +"$tail_start" "$CHANGELOG" >> "${CHANGELOG}.tmp"
-mv "${CHANGELOG}.tmp" "$CHANGELOG"
+# dry-run 走同一条 merge 路径，只是不落盘、不删碎片。
+# 原来它自己拼一份预览：那份预览把每个日期都画成新起一段，而真跑会并进已有段——
+# 预览与实际行为不一致，等于给了一个看着像证据、其实不成立的东西（形状 8）。
+if $DRY_RUN; then
+  echo ""
+  echo "=== dry-run：将按下面这样合并（不落盘、不删碎片）==="
+  python3 "$(dirname "$0")/lib/changelog_merge.py" --dry-run "$CHANGELOG" "$payload_file"
+  exit 0
+fi
+
+python3 "$(dirname "$0")/lib/changelog_merge.py" "$CHANGELOG" "$payload_file"
 
 # 删除碎片文件
 for f in "${fragments[@]}"; do

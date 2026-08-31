@@ -113,6 +113,8 @@ Dispatcher 支持按分支数量、实时负载或温池容量选择节点：
 | executor 心跳超时 | 标记 offline，停止新派发，等待恢复或迁移决策 |
 | scheduler 重启 | 从持久状态和 executor 心跳重建视图 |
 | 网络分区 | 避免双重派发；未知执行结果先对账再重试 |
+| 同分支同提交反复部署（空转） | 30 分钟窗口内按「分支 + commit」计数：达 3 次告警、达 6 次拒绝（429），拒绝写活动流留痕；推一个新提交即自动解除计数 |
+| 分支库共享 MySQL 连接耗尽 | 多分支复用同一台 MySQL 时默认注入 `--max-connections=1000`（`CDS_MYSQL_MAX_CONNECTIONS` 可调），项目显式声明的值优先 |
 
 自动迁移必须区分“目标节点重新构建”与“持久数据搬迁”。没有数据迁移证据时，只能恢复无状态服务，不能宣称完整故障转移。
 
@@ -136,6 +138,7 @@ Dispatcher 支持按分支数量、实时负载或温池容量选择节点：
 | 集群 bootstrap | `cds/src/routes/cluster.ts` |
 | Dashboard 配置 | `cds/web/src/pages/cds-settings/tabs/SchedulerTab.tsx` |
 | 自动生命周期 | `cds/src/services/auto-lifecycle.ts` |
+| 空转部署判定 | `assessDeployLoop`（build-activity-tracker，按「分支 + commit」计数，非并发协调器） |
 
 ## 11. 验收标准
 

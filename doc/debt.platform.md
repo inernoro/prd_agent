@@ -681,6 +681,29 @@ readiness 或 route preflight（例如自动化探针）就会把「跑通首条
 
 ---
 
+## CI 聚合闸接线（release-script-test 未进 ci-status）
+
+分支保护认的是 `ci.yml` 里的聚合 job `ci-status`，而它的 `needs` 只有
+changes / server-build / admin-build / desktop-check / cds-build / docs-readability /
+acceptance-report-gate 七个，**没有 `release-script-test`**。
+
+后果：`release-script-test` 里那一批守卫（静态发布布局、网关挂载一致性、公网表面冒烟、
+发布证据、gw-smoke、rollout 账本、ASR WebSocket 转发、cdscli 冒烟覆盖，以及本次新增的
+changelog 合并守卫）跑归跑、红也会显示在 PR 的检查列表里，**但红不会让 `CI Status` 变红**，
+因此不阻断合并。这正是 `predicate-and-wiring-discipline` 形状 7 的一种：守卫接了 CI，
+却没接到真正把门的那一处。
+
+| ID | 说明 | 优先级 | 触发条件 | 状态 |
+|---|---|---|---|---|
+| CI-1 | `ci-status` 的 `needs` 与结果计算补上 `release-script-test`，让这批守卫真的把门 | **P2** | 下一次有人依赖这批守卫拦回归时；或任何一次「守卫红了却合进去了」 | new（2026-08-30 PR #1459 review 发现） |
+
+**为什么当期不做**：它改的是全仓分支保护行为——这批守卫一旦进聚合，所有触碰发布脚本的
+PR 都会被它拦。该 job 是路径过滤的，多数 PR 会 skip，聚合的结果计算要一并处理 skip 档，
+属于需要人明确点头的流程变更（AGENTS.md §5.5 的 B 类），不该由一份周报 PR 顺手改掉。
+发现它的那个 PR 已按范围熔断停在这里。
+
+---
+
 ## 已结清（供回溯）
 
 下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
