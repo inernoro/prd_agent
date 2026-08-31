@@ -1,8 +1,18 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { GenDevelopLoader, GLOBAL_CSS, framePath, metaLevel, phaseOf } from './GenDevelopLoader';
 
 const EST_MS = 40_000; // getGenAvgMs 的首样本兜底
+
+/** 组件不写死颜色，取值都在 tokens.css，所以要断言取值就得去那里读。 */
+const TOKENS = readFileSync(resolve(__dirname, '../../styles/tokens.css'), 'utf8');
+function readToken(name: string): string {
+  const hits = [...TOKENS.matchAll(new RegExp(`${name}:\\s*([^;]+);`, 'g'))];
+  expect(hits.length, `tokens.css 里找不到 ${name}`).toBeGreaterThan(0);
+  return hits[hits.length - 1][1].trim(); // 后写的赢
+}
 
 describe('metaLevel：底边一行按屏幕尺寸逐段脱落', () => {
   it.each([
@@ -166,25 +176,38 @@ describe('动效声明纪律', () => {
     );
     expect(html).not.toMatch(/style="[^"]*animation/);
     expect(GLOBAL_CSS).toContain('@media (prefers-reduced-motion:reduce)');
-    expect(GLOBAL_CSS).toMatch(/\.gen-dev__develop\{[^}]*animation:gen-dev-pass/);
+    expect(GLOBAL_CSS).toMatch(/\.gen-dev__glare\{[^}]*animation:gen-dev-sweep/);
   });
 
-  it('呼吸动画乘上进度变量，不写死 opacity', () => {
-    // 动画在层叠里压过 inline style：关键帧若直接写 opacity，
-    // 进度驱动的粗细格交叉淡入会被整个吃掉，看着像「格子永远那么浓」。
-    expect(GLOBAL_CSS).toMatch(/@keyframes gen-dev-breathe\{[^}]*calc\(var\(--gen-dev-latent,1\) \* \.62\)/);
-    expect(GLOBAL_CSS).toMatch(/50%\{opacity:var\(--gen-dev-latent,1\)\}/);
-  });
-
-  it('潜像是共享的 data-URI，不是每张卡几百个各带动画的格子', () => {
-    // 画布上同时十几张占位卡时，这条决定还有没有帧预算。
-    expect(GLOBAL_CSS).toContain('background-image:url("data:image/svg+xml,');
+  it('画框上有一颗一直在跑的光点——边不许是静止的', () => {
+    // v1 的教训：进度描边一秒才走 2%，肉眼就是一段静止的半截矩形边，
+    // 读起来像「边框画坏了」而不是「进度」。用户原话：以前的版本更高级一些。
+    expect(GLOBAL_CSS).toMatch(/@keyframes gen-dev-run\{from\{stroke-dashoffset:0\}to\{stroke-dashoffset:-100\}\}/);
+    expect(GLOBAL_CSS).toMatch(/\.gen-dev__runner\{[^}]*animation:gen-dev-run/);
     const html = renderToStaticMarkup(
       <GenDevelopLoader createdAt={Date.now()} screenW={420} screenH={420} worldW={1024} worldH={1024} />,
     );
-    // 整个潜像层就两个节点（粗 + 细），不是每格一个 div。
-    expect(html.match(/gen-dev__latent--/g)).toHaveLength(2);
-    expect(html).not.toContain('gen-dev__cell');
+    // 归一化单位，跑光的长度与卡片尺寸无关。
+    expect(html).toContain('stroke-dasharray="5 95"');
+  });
+
+  it('动的只有一件大而慢的东西：92% 宽的斜向柔光，两端移出容器', () => {
+    // 「高级」的来源是一件大而慢的东西在动、别的都不抢戏，不是层数多。
+    // v1 叠了两级潜像马赛克 + 暗角 + 竖向窄带，九层堆一起就从「轻」掉到「厚」。
+    expect(GLOBAL_CSS).toMatch(/\.gen-dev__glare\{[^}]*width:92%/);
+    expect(GLOBAL_CSS).toMatch(/@keyframes gen-dev-sweep\{from\{transform:translate3d\(-110%,0,0\)\}/);
+    expect(GLOBAL_CSS).toContain('translate3d(210%,0,0)');
+    // 退场的那几层不许悄悄回来。
+    for (const gone of ['gen-dev__latent', 'gen-dev__vignette', 'gen-dev-breathe', 'data:image/svg+xml']) {
+      expect(GLOBAL_CSS, `${gone} 已随 v2 退场`).not.toContain(gone);
+    }
+  });
+
+  it('卡面是近乎透明的一层，不是一块黑砖', () => {
+    // 底纱压太狠画布点阵是干净了，但卡片会变沉——v1 压到 0.56 就是这么丢掉「轻」的。
+    const veil = readToken('--gen-wait-veil');
+    const alpha = Number(/rgba\([^)]*,\s*([\d.]+)\)/.exec(veil)?.[1]);
+    expect(alpha, `--gen-wait-veil = ${veil}`).toBeLessThanOrEqual(0.2);
   });
 
   it('尺寸相关的量全部按屏幕像素计量（复用画布逐帧更新的 --invZoom）', () => {
@@ -197,9 +220,7 @@ describe('动效声明纪律', () => {
   });
 
   it('配色全部走 --gen-wait-* token，组件内零硬编码颜色', () => {
-    // 潜像 data-URI 里的两个浅色是图片像素、不是主题面，另算。
-    const withoutMosaic = GLOBAL_CSS.replace(/url\("data:image\/svg\+xml,[^"]*"\)/g, 'MOSAIC');
-    expect(withoutMosaic).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-    expect(withoutMosaic).not.toMatch(/rgba?\(/);
+    expect(GLOBAL_CSS).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(GLOBAL_CSS).not.toMatch(/rgba?\(/);
   });
 });

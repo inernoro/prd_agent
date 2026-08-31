@@ -1,32 +1,40 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getGenAvgMs } from '@/lib/genTiming';
 
-// build-marker: gen-develop-loader v1 (2026-08-30) — 强制 chunk 重编译，冲掉 CDS 构建缓存
+// build-marker: gen-develop-loader v2 (2026-08-30) — 强制 chunk 重编译，冲掉 CDS 构建缓存
 
 /**
- * GenDevelopLoader — 生图等待「显影」动效（2026-08-30 替换靛蓝流光进度条）
+ * GenDevelopLoader — 生图等待动效。
  *
- * 一句话主张：**进度画在画框上，不压在画面上。**
+ * 一句话主张：**进度画在画框上，不压在画面上；画面上只留一件大而慢的东西在动。**
  *
- * 上一版（GenSweepLoader）把「已耗时 / 预计」塞进一枚底部黑胶囊里。那是整张卡最重、
- * 最实、最不透明的一块，讲的却是「关于产物的状态」而不是产物本身
- * （违反 artifact-is-experience.md：主视觉永远留给产物）。更要命的是它和
- * Frame 头部、图层面板按钮、左上角尺寸徽章一样按屏幕像素反缩放，四件东西抢同一张卡，
- * 缩放一低必打架 —— PR #1458 打的正是那个补丁。这一版把那个冲突从结构上消掉：
+ * 三版的来龙去脉，写在这里免得下一个人再走一遍：
  *
- *  1. 进度 = 画框。描边从正上方顺时针合拢，同时**替掉卡片自己的边框**（调用方不再画 border）。
- *     零占位、不挡产物；描边按屏幕像素恒定，所以低倍下反而比原来 1 世界像素的边框更读得出来。
- *  2. 画面 = 潜像在显影。两级马赛克由粗到细随进度交叉淡入，一道暖光自上而下缓缓扫过。
- *     等的是图，看的就该是图在成形，而不是又一道「放到表格骨架屏上也成立」的通用流光。
- *  3. 文字 = 底边一行。尺寸 / 阶段 / 剩余时间合并成一处，四个角全部还给卡片。
- *     卡片在屏幕上越小，这一行从右往左逐段脱落（见 metaLevel），最后只剩一个点。
+ *  v0（GenSweepLoader）把「已耗时 / 预计」塞进一枚底部黑胶囊。那是整张卡最重、最实、
+ *  最不透明的一块，讲的却是「关于产物的状态」而不是产物本身（违反 artifact-is-experience）；
+ *  它还和 Frame 头部、图层面板按钮、左上角尺寸徽章一样按屏幕像素反缩放，四件东西抢同一张卡，
+ *  缩放一低必打架 —— PR #1458 打的正是那个补丁。
  *
- * 性能：潜像整层是两张 data-URI（模块级常量，全画布共享一份），一张卡两个节点 ——
- * 不是 200+ 个各带动画的格子。画布上同时十几张占位卡时这条很要命。
- * 持续变化的只有「显影带」一个合成层（transform 位移，GPU 合成）。
+ *  v1 把胶囊拆了、把进度挪上画框（结构对了），但顺手把动效也换掉了：底纱压到 0.56、
+ *  叠了两级潜像马赛克和暗角，横向大斜扫换成更窄的竖向带。用户看完的原话是
+ *  「以前的版本更高级一些」。拆下来是两件事：主因是**表面变沉**（九层堆一起，从「轻」掉到「厚」），
+ *  次因是**画框不动**（描边一秒才走 2%，肉眼就是一段静止的半截矩形边，读起来像边框画坏了）。
  *
- * 可读性：宽度受宿主限制，字号 / 间距 / 描边按屏幕像素计量（复用画布逐帧更新的 --invZoom，
- * 不等 React 低频同步）；插入距离同时按百分比封顶，极小卡片上不会把内容挤成负宽度。
+ *  v2（本版）保留 v1 全部的结构收益，把材质换回 v0 那套：
+ *   1. 卡面近乎透明（底纱 0.12）+ 一层 45 度细斜纹，一道 92% 宽的暖色柔光斜扫而过。
+ *      「高级」的来源是**一件大而慢的东西在动，别的都不抢戏**，不是层数多。
+ *   2. 进度仍是画框：描边从正上方顺时针合拢，并**替掉卡片自己的 border**（调用方不再画）。
+ *      另有一颗光点沿整圈画框一直跑 —— 边不再是静止的。
+ *   3. 文字仍是底边一行：尺寸 / 阶段 / 剩余时间合并成一处，上面两个角还给卡片；
+ *      卡片在屏幕上越小，这一行从右往左逐段脱落（见 metaLevel），最后只剩一个点。
+ *
+ * 性能：持续变化的是两件——斜扫柔光（transform 位移，GPU 合成）与画框跑光
+ * （stroke-dashoffset，绘制级动画）。跑光是这版唯一的非合成动画，画布上同时十几张
+ * 占位卡时它是主要开销；换成 offset-path 能进合成层，但那条路在不支持的浏览器上
+ * 会静默退化成「光点钉在左上角」，宁可要一个到处都对的实现。
+ *
+ * 可读性：字号 / 间距 / 描边按屏幕像素计量（复用画布逐帧更新的 --invZoom，不等 React 低频同步）；
+ * 插入距离同时按百分比封顶，极小卡片上不会把内容挤成负宽度。
  *
  * 主题：画布舞台被钉死成暗色，所以配色走 tokens.css 的 --gen-wait-* 一族（那里写明了
  * 为什么不双写）。组件内零硬编码颜色。
@@ -35,73 +43,24 @@ import { getGenAvgMs } from '@/lib/genTiming';
 const STYLE_ID = 'gen-develop-loader-styles';
 
 /**
- * 潜像马赛克：一张按 viewBox 拉伸的 data-URI SVG。
- *
- * 为什么不是 DOM 格子：一张卡 6×6 + 12×12 = 180 个节点，每个各带一条 CSS 动画，
- * 画布上十几张占位卡就是两千多个动画元素，直接吃掉画布本就紧张的帧预算。
- * 整层做成一张图之后，一张卡只剩两个节点，而且两张图全画布共享、只解码一次。
- *
- * 随机数用固定种子的 LCG：同一份构建里每次渲染都一样，不引入跨设备/跨帧的抖动
- * （首页墨场那次不可移植的 sin hash 的教训，见 PR #1457）。
- */
-function mosaic(cols: number, rows: number, seed: number, baseAlpha: number, spread: number): string {
-  let s = seed;
-  const rand = () => {
-    s = (s * 1664525 + 1013904223) % 4294967296;
-    return s / 4294967296;
-  };
-  let rects = '';
-  for (let y = 0; y < rows; y += 1) {
-    for (let x = 0; x < cols; x += 1) {
-      const alpha = (baseAlpha + rand() * spread).toFixed(3);
-      // 冷暖两档交替，避免整层是一块死灰；两个色都是浅色，落在恒暗的卡上才看得见。
-      const fill = rand() > 0.62 ? '%23FFE8D8' : '%23E2E0EC';
-      rects += `<rect x="${x}" y="${y}" width="1" height="1" fill="${fill}" fill-opacity="${alpha}"/>`;
-    }
-  }
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${cols} ${rows}' preserveAspectRatio='none'>${rects}</svg>`;
-  // 只转义 data-URI 里真正会歧义的字符；fill 里的 # 已经预先写成 %23。
-  return `url("data:image/svg+xml,${svg.replace(/</g, '%3C').replace(/>/g, '%3E').replace(/"/g, '%22')}")`;
-}
-
-// 格子要够密才读成「潜像」。第一版是 6×6 / 12×12，在 420px 的卡上单格 70px，
-// 亮度差直接变成一块块脏斑，看着像压缩失真而不是像有东西在浮现（真组件截图实测）。
-const LATENT_COARSE = mosaic(11, 11, 20260830, 0.022, 0.034);
-const LATENT_FINE = mosaic(26, 26, 771103, 0.016, 0.026);
-
-/**
  * 动画一律写在样式表里，**不写进 inline style**。
  * inline 声明压过作者样式表，`@media (prefers-reduced-motion)` 里的 `animation:none`
  * 会被静默无视 —— 那是一条看着有、其实从不生效的无障碍逃生门。
  */
 export const GLOBAL_CSS = `
 .gen-dev{position:absolute;inset:0;overflow:hidden;border-radius:inherit;pointer-events:none}
-/* 底纱：占位卡此刻还没有内容。压暗让画布点阵退到后面，但仍透得出来——如实表示「这里是空的」。 */
+/* 底纱只压一点点：卡片是「留给那张图的一块地方」，不是一块黑砖。压太狠就沉了。 */
 .gen-dev__veil{position:absolute;inset:0;background:var(--gen-wait-veil)}
-/* 潜像：粗格先在，细格随进度浮上来。 */
-.gen-dev__latent{position:absolute;inset:0;background-repeat:no-repeat;background-size:100% 100%}
-/* 粗格的整体不透明度由进度驱动（--gen-dev-latent），呼吸动画在那个值上下浮动。
-   关键：动画在层叠里压过 inline style，所以呼吸的关键帧必须**乘上**那个变量，
-   不能直接写死 opacity —— 否则进度驱动的交叉淡入会被呼吸动画整个吃掉，
-   看着像「格子永远那么浓」（判据纪律形状 6：判据读的值不是真正生效的那个值）。 */
-.gen-dev__latent--coarse{background-image:${LATENT_COARSE};
-  opacity:var(--gen-dev-latent,1);animation:gen-dev-breathe 5.6s ease-in-out infinite}
-.gen-dev__latent--fine{background-image:${LATENT_FINE}}
-/* 显影带：整张卡唯一持续变化的东西，也是「静止超过 2 秒即缺陷」那条的兜底。 */
-.gen-dev__develop{position:absolute;left:-6%;right:-6%;top:0;height:45%;
+.gen-dev__surface{position:absolute;inset:0;background:var(--gen-wait-surface)}
+/* 斜向柔光：宽而软的一道光掠过表面，不是一条亮带。两端完全移出容器，循环处没有接缝。 */
+.gen-dev__glare{position:absolute;top:-10%;bottom:-10%;left:0;width:92%;
   background:var(--gen-wait-develop);will-change:transform;
-  animation:gen-dev-pass 3.6s cubic-bezier(.42,0,.58,1) infinite}
-.gen-dev__vignette{position:absolute;inset:0;
-  box-shadow:inset 0 0 calc(58px * var(--invZoom,1)) var(--gen-wait-vignette)}
-@keyframes gen-dev-pass{from{transform:translate3d(0,-70%,0)}to{transform:translate3d(0,170%,0)}}
-@keyframes gen-dev-breathe{
-  0%,100%{opacity:calc(var(--gen-dev-latent,1) * .62)}
-  50%{opacity:var(--gen-dev-latent,1)}
-}
-/* 只关动画，不改 opacity —— 那一层的不透明度是进度信息，关掉动效不代表要丢掉它。 */
+  animation:gen-dev-sweep 2.8s linear infinite}
+@keyframes gen-dev-sweep{from{transform:translate3d(-110%,0,0)}to{transform:translate3d(210%,0,0)}}
+@keyframes gen-dev-run{from{stroke-dashoffset:0}to{stroke-dashoffset:-100}}
 @media (prefers-reduced-motion:reduce){
-  .gen-dev__develop{animation:none;transform:translate3d(0,40%,0)}
-  .gen-dev__latent--coarse{animation:none}
+  .gen-dev__glare{animation:none;opacity:.5;transform:translate3d(5%,0,0)}
+  .gen-dev__runner{animation:none;opacity:0}
 }
 /* 画框：描边即进度。stroke-width 按屏幕像素恒定，所以 5% 缩放下它也还在，
    而原来那条 1 世界像素的 border 在 30% 以下就已经看不见了。 */
@@ -113,6 +72,9 @@ export const GLOBAL_CSS = `
   stroke-width:calc(2px * var(--invZoom,1));transition:stroke-dashoffset .7s ease-out}
 .gen-dev__arc--over{stroke:var(--gen-wait-progress-over)}
 .gen-dev__halo--over{stroke:var(--gen-wait-progress-over);opacity:.22}
+/* 沿整圈画框跑的一颗光点：进度描边一秒才动 2%，肉眼是静止的；这一颗负责让边活着。 */
+.gen-dev__runner{fill:none;stroke:var(--gen-wait-runner);stroke-linecap:round;
+  stroke-width:calc(2px * var(--invZoom,1));animation:gen-dev-run 3.2s linear infinite}
 /* 底边一行。插入距离同时按屏幕像素和百分比取小值：纯屏幕像素在极小卡片上会把
    left+right 加到超过卡宽，整行塌成零宽度然后静默消失。 */
 .gen-dev__scrim{position:absolute;left:0;right:0;bottom:0;
@@ -229,10 +191,10 @@ export function GenDevelopLoader({
     return () => window.clearInterval(id);
   }, []);
 
-  // 只有调用方没给世界尺寸时才量。clientWidth/Height 拿到的是未经 transform 的布局像素，
-  // 正好就是世界尺寸；getBoundingClientRect 拿到的是屏幕像素，这里不能用。
   // useEffect 而不是 useLayoutEffect：后者在 SSR/静态渲染下会告警，而画布宿主一律显式传
   // worldW/worldH 走不到这条兜底路径，晚一帧拿到尺寸没有可感知代价。
+  // 只有调用方没给世界尺寸时才量。clientWidth/Height 拿到的是未经 transform 的布局像素，
+  // 正好就是世界尺寸；getBoundingClientRect 拿到的是屏幕像素，这里不能用。
   const needsMeasure = !(typeof worldW === 'number' && typeof worldH === 'number');
   useEffect(() => {
     if (!needsMeasure) return;
@@ -273,18 +235,8 @@ export function GenDevelopLoader({
       data-gen-mode={mode}
     >
       <div className="gen-dev__veil" />
-      <div
-        className="gen-dev__latent gen-dev__latent--coarse"
-        // 粗格随进度让位给细格：这两个值是逐秒变化的状态，只能内联。
-        // 走 CSS 变量而不是直接写 opacity —— 呼吸动画会压过 inline opacity（见上面的关键帧注释）。
-        style={{ '--gen-dev-latent': String(0.35 + clamp01(1 - pct / 52) * 0.65) } as CSSProperties}
-      />
-      <div
-        className="gen-dev__latent gen-dev__latent--fine"
-        style={{ opacity: clamp01((pct - 18) / 46) * 0.95 }}
-      />
-      <div className="gen-dev__develop" />
-      <div className="gen-dev__vignette" />
+      <div className="gen-dev__surface" />
+      <div className="gen-dev__glare" />
       {level !== 'pip' && <div className="gen-dev__scrim" />}
 
       <div
@@ -336,14 +288,12 @@ export function GenDevelopLoader({
             strokeDasharray={100}
             strokeDashoffset={100 - pct}
           />
+          {/* 一小段亮弧绕整圈跑。dasharray 用 pathLength 归一化后的单位，与卡片尺寸无关。 */}
+          <path className="gen-dev__runner" d={path} pathLength={100} strokeDasharray="5 95" />
         </svg>
       ) : null}
     </div>
   );
-}
-
-function clamp01(v: number): number {
-  return Math.max(0, Math.min(1, v));
 }
 
 export default GenDevelopLoader;

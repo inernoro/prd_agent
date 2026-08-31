@@ -173,14 +173,15 @@ describe('分层内容判定的接线', () => {
     // 那个百分比是相对「容器宽 - 背景宽」算的，背景比容器宽时分母为负，
     // 一圈走的距离和平铺周期对不上，每圈结尾都要跳一下
     //（2026-08-11 用户原话：每次进行到最后一点总是抽搐一下）。
-    // 2026-08-30 换成「显影」动效后判据跟着改口径：循环的是自上而下的显影带，
-    // 但「用 transform、两端完全移出容器」这条不变。
+    // 2026-08-30 两轮改版后判据仍是这一条：v1 的竖向显影带、v2 换回的 92% 宽斜向柔光，
+    // 都必须用 transform 平移且两端完全移出容器。用户对 v1 的评价是「以前的版本更高级」，
+    // 拆下来主因是表面太沉、动的那道太窄——但「怎么循环」这条从来没变过。
     const loader = read('src/components/ui/GenDevelopLoader.tsx');
-    expect(loader).not.toMatch(/animation:gen-dev-pass[\s\S]{0,200}background-position/);
-    expect(loader).toMatch(/@keyframes gen-dev-pass\{from\{transform:translate3d/);
-    // 两端都要完全移出容器，接缝才在画面外（带高 62%，−70% / 170% 两端都在画外）。
-    expect(loader).toMatch(/translate3d\(0,-70%,0\)/);
-    expect(loader).toMatch(/translate3d\(0,170%,0\)/);
+    expect(loader).not.toMatch(/animation:gen-dev-sweep[\s\S]{0,200}background-position/);
+    expect(loader).toMatch(/@keyframes gen-dev-sweep\{from\{transform:translate3d/);
+    // 两端都要完全移出容器，接缝才在画面外（带宽 92%，−110% / 210% 两端都在画外）。
+    expect(loader).toMatch(/translate3d\(-110%,0,0\)/);
+    expect(loader).toMatch(/translate3d\(210%,0,0\)/);
     expect(loader).toMatch(/prefers-reduced-motion/);
   });
 

@@ -116,15 +116,19 @@
      取值恒为**暗色档**的字面色，不引用 --accent-primary / --accent-fg-amber：
      那两个在浅色档会翻到 #A64B35 / #92400e，落在恒暗的画布上只剩 4.4:1 和更差，
      等于「跟着主题翻了一半」。 */
-  --gen-wait-veil: rgba(0, 0, 0, 0.56);
-  --gen-wait-vignette: rgba(0, 0, 0, 0.42);
-  --gen-wait-track: rgba(255, 255, 255, 0.20);
+  --gen-wait-veil: rgba(0, 0, 0, 0.12);
+  --gen-wait-track: rgba(255, 255, 255, 0.14);
   --gen-wait-progress: #D97757;
   --gen-wait-progress-halo: rgba(217, 119, 87, 0.22);
   /* 超时用琥珀，不是更亮一档的赤陶：同色系只差一点亮度，用户根本看不出状态变了。 */
   --gen-wait-progress-over: #fbbf24;
-  --gen-wait-scrim: linear-gradient(to top, rgba(10, 10, 12, 0.70) 0%, rgba(10, 10, 12, 0.26) 55%, transparent 100%);
-  --gen-wait-develop: linear-gradient(180deg, transparent 0%, rgba(217, 119, 87, 0.04) 30%, rgba(217, 119, 87, 0.09) 47%, rgba(255, 236, 222, 0.09) 52%, rgba(217, 119, 87, 0.08) 58%, rgba(217, 119, 87, 0.03) 74%, transparent 100%);
+  /* 沿画框跑的那颗光点。画框不动的话，一段静止的半截矩形边读起来像边框画坏了。 */
+  --gen-wait-runner: rgba(255, 236, 222, 0.85);
+  /* 卡面：一层极淡的暖向渐变 + 一层 45 度细斜纹，让「还没有东西」也有质感可看。 */
+  --gen-wait-surface: linear-gradient(180deg, rgba(217, 119, 87, 0.05) 0%, transparent 45%, rgba(217, 119, 87, 0.04) 100%), repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.014) 0 14px, transparent 14px 28px);
+  /* 斜向柔光：整张卡唯一持续变化的东西，也是这版「轻」的来源——一件大而慢的东西在动，别的都不抢戏。 */
+  --gen-wait-develop: linear-gradient(108deg, transparent 0%, rgba(255, 236, 222, 0.015) 22%, rgba(255, 236, 222, 0.10) 50%, rgba(255, 236, 222, 0.015) 78%, transparent 100%);
+  --gen-wait-scrim: linear-gradient(to top, rgba(10, 10, 12, 0.74) 0%, rgba(10, 10, 12, 0.34) 55%, transparent 100%);
   --gen-wait-text: rgba(247, 247, 251, 0.92);
   --gen-wait-text-dim: rgba(247, 247, 251, 0.74);
   --gen-wait-dot: rgba(247, 247, 251, 0.34);
