@@ -219,6 +219,9 @@ export function WebEntryConfigDialog({
         serviceId,
         // 名称/子域给可用的默认值（anti-detour：不给空白框），用户改差异即可。
         name: service.serviceName || serviceId,
+        // 承载根路径的主应用默认不给子域（它的入口就是主域名）；但字段照样可编辑——
+        // 主应用**也可以**额外声明一条命名路由，禁掉输入等于逼这类用户回去改 compose
+        // （Codex review 第六轮 P2；契约见 .claude/rules/cds-dual-exit-topology.md）。
         subdomain: service.handlesRoot ? '' : serviceId.replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 40),
         path: '/',
       },
@@ -392,9 +395,13 @@ export function WebEntryConfigDialog({
                       className={`${inputClass} font-mono`}
                       value={row.subdomain}
                       onChange={(e) => updateRow(index, { subdomain: e.target.value })}
-                      placeholder={service?.handlesRoot ? '主应用无需子域' : 'llmgw'}
-                      disabled={service?.handlesRoot}
+                      placeholder={service?.handlesRoot ? '可留空（主应用走主域名）' : 'llmgw'}
                     />
+                    {service?.handlesRoot && row.subdomain ? (
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        主应用入口仍走主域名；这个子域会额外发一条命名路由
+                      </div>
+                    ) : null}
                   </div>
                   <div>
                     <label className={labelClass}>入口名称（面板上显示）</label>
