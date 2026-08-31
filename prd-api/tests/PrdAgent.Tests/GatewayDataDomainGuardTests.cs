@@ -4613,7 +4613,29 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("location ^~ /v1beta/", webNginx);
         Assert.Contains("location ^~ /gemini/v1beta/", webNginx);
         Assert.Contains("client_max_body_size 30m;", webNginx);
-        Assert.True(System.Text.RegularExpressions.Regex.Matches(webNginx, "proxy_pass http://\\$llmgw_serving_upstream:8091;").Count == 4);
+        // 判的是「这几个入口分别落到 serving」，不是「serving 的 proxy_pass 出现几次」。
+        // 数个数有两处坏：新增一条**合法**的 serving 入口它也红（2026-08-30 补
+        // /llmgw/gw/v1/ 时就红了一次，逼着人去改数字而不是去核对路由）；反过来，
+        // 把某条入口从 8091 改到 8090、同时在别处补一条 8091，总数不变照样绿。
+        // 取的是**生效的**那条 proxy_pass，不是「块里出现过这串字」：注释掉的那行
+        // 一样含有它，用 Contains 判会把一条被注释的声明当成证据（形状 8）——
+        // 这条守卫自己就栽过一次：把某个入口改指 8090、再把原来那行注释掉留在块里，Contains 照样绿。
+        foreach (var servingPrefix in new[] { "/gw/v1/", "/v1/", "/v1beta/", "/gemini/v1beta/", "/llmgw/gw/v1/" })
+        {
+            var locationAt = webNginx.IndexOf($"location ^~ {servingPrefix} {{", StringComparison.Ordinal);
+            Assert.True(locationAt >= 0, $"nginx.conf 缺少 serving 入口 location ^~ {servingPrefix}");
+            var blockEnd = webNginx.IndexOf("\n    }", locationAt, StringComparison.Ordinal);
+            Assert.True(blockEnd > locationAt, $"location ^~ {servingPrefix} 的块没有正常收尾");
+            var effectiveProxyPasses = webNginx[locationAt..blockEnd]
+                .Split('\n')
+                .Select(line => line.Trim())
+                .Where(line => line.StartsWith("proxy_pass ", StringComparison.Ordinal))
+                .ToList();
+            Assert.True(
+                effectiveProxyPasses.Count == 1,
+                $"location ^~ {servingPrefix} 里生效的 proxy_pass 应当只有一条，实际 {effectiveProxyPasses.Count} 条");
+            Assert.Equal("proxy_pass http://$llmgw_serving_upstream:8091;", effectiveProxyPasses[0]);
+        }
         Assert.Contains("llmgw-serve:", devCompose);
         Assert.Contains("dockerfile: llmgw/serving/Dockerfile", devCompose);
         Assert.Contains("- llmgw-serve", devCompose);

@@ -107,6 +107,78 @@ public sealed class ModelCatalogGateBehaviorTests
     }
 
     /// <summary>
+    /// 主选被拦下，但重试链里还有过得了门的成员时，必须顶上来，不能整条请求失败。
+    ///
+    /// 池里混进一个名录外未放行的成员（绕过控制台直接写库就会这样），若因此让整条链一起失败，
+    /// 就是把「一个成员的问题」放大成「这条 appCaller 的功能不可用」——
+    /// `llm-gateway.md` 规则 4 明令禁止：单成员失败只更新该成员健康，不得关停整条功能。
+    ///
+    /// 两个方向都断言：过门的成员顶上来（可用性），而它顶上来之后**自己**必须是过门的那个
+    /// （不是随便抓一个来充数）；池里一个都过不了时仍然报 MODEL_NOT_IN_CATALOG。
+    /// </summary>
+    [Fact]
+    public async Task 主选被拦下但重试链里有过门成员时_必须顶上来()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27018";
+        var settings = MongoClientSettings.FromConnectionString(connectionString);
+        settings.ServerSelectionTimeout = TimeSpan.FromSeconds(3);
+        var client = new MongoClient(settings);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+
+        var gatewayDatabaseName = $"catalog_gate_promote_{Guid.NewGuid():N}";
+        var mapDatabaseName = $"catalog_gate_promote_map_{Guid.NewGuid():N}";
+        var gatewayData = new LlmGatewayDataContext(connectionString, gatewayDatabaseName);
+        var mapData = new MongoDbContext(connectionString, mapDatabaseName);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["LlmGateway:InternalTenantId"] = GatewayTenantDefaults.InternalTenantId,
+                ["ApiKeyCrypto:Secret"] = "catalog-gate-test-secret-2026",
+            })
+            .Build();
+
+        try
+        {
+            // 池里两个成员：优先级高的那个是名录外未放行（要被拦），低的那个在名录内（该顶上来）。
+            await SeedAsync(gatewayData.Database, configuration);
+            await gatewayData.Database.GetCollection<BsonDocument>("llmgw_model_pools").UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", PoolId),
+                Builders<BsonDocument>.Update.Set("Models", new BsonArray
+                {
+                    new BsonDocument
+                    {
+                        { "ModelId", OutsideModel }, { "PlatformId", PlatformId }, { "Priority", 1 },
+                        { "HealthStatus", 0 }, { "IsMain", true },
+                    },
+                    new BsonDocument
+                    {
+                        { "ModelId", CatalogModel }, { "PlatformId", PlatformId }, { "Priority", 2 },
+                        { "HealthStatus", 0 }, { "IsMain", false },
+                    },
+                }));
+
+            var resolver = new ModelResolver(
+                mapData, configuration, NullLogger<ModelResolver>.Instance, gatewayData);
+            // 不钉成员：走池调度，主选会是优先级最高的那个（名录外未放行）。
+            var routed = await resolver.ResolveAsync(Caller, ModelTypes.Chat);
+
+            routed.FailureCode.ShouldNotBe(
+                GatewayRouteFailure.ModelNotInCatalog,
+                "池里还有过门的成员，却让整条请求失败——一个成员的问题被放大成整条 appCaller 不可用");
+            routed.Success.ShouldBeTrue(routed.ErrorMessage);
+            routed.ActualModel.ShouldBe(
+                CatalogModel,
+                "顶上来的必须是过门的那个成员，不能把被拦下的那个原样放出去");
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(gatewayDatabaseName);
+            await client.DropDatabaseAsync(mapDatabaseName);
+        }
+    }
+
+    /// <summary>
     /// 控制台的补标记还没跑完时，这道门只许记录、不许拦。
     ///
     /// 控制台与 serving 是两个容器，compose 里都只依赖 Mongo，serving 的就绪探针也只看自己活没活——

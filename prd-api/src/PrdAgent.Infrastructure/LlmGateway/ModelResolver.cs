@@ -169,6 +169,39 @@ public class ModelResolver : IModelResolver
         // 这一档存在的意义就是「先看清存量有多少会被拦」，拦下来就看不成了。
         if (!enforces) return resolved;
 
+        /*
+          主选被拦下，不等于这次请求就该失败。
+
+          重试链是解析器**已经算好**的同池候选，池里混进一个名录外未放行的成员，
+          若因此让整条链一起失败，就是把「一个成员的问题」放大成「这条 appCaller 的功能不可用」——
+          `llm-gateway.md` 规则 4 明令禁止（单成员失败只更新该成员健康，不得关停整条功能）。
+          所以这里先看链上还有没有过得了门的成员：有就把第一个顶上来当主选，
+          剩下过门的仍留作重试链；一个都过不了，才是真的没有可用成员，那时再报 NotFound。
+        */
+        if (resolved.RetryCandidates is { Count: > 0 })
+        {
+            var allowedCandidates = new List<ModelResolutionResult>();
+            foreach (var candidate in resolved.RetryCandidates)
+            {
+                if (await JudgeAsync(candidate.ActualModel, candidate.ActualPlatformId, ct, batch) != CatalogVerdict.Blocked)
+                    allowedCandidates.Add(candidate);
+            }
+
+            if (allowedCandidates.Count > 0)
+            {
+                var promoted = allowedCandidates[0];
+                promoted.RetryCandidates = allowedCandidates.Skip(1).ToList();
+                _logger.LogWarning(
+                    "[ModelResolver] 主选被名录门拦下，改用重试链里第一个过门的成员: "
+                    + "AppCallerCode={Code}, Blocked={Blocked}, Promoted={Promoted}, 剩余候选={Rest}",
+                    appCallerCode,
+                    resolved.ActualModel ?? "(空)",
+                    promoted.ActualModel ?? "(空)",
+                    promoted.RetryCandidates.Count);
+                return promoted;
+            }
+        }
+
         return ModelResolutionResult.NotFound(
             resolved.ExpectedModel,
             $"模型「{resolved.ActualModel}」不在内置名录里，也没有被管理员显式放行；"
