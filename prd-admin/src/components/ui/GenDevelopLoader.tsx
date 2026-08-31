@@ -53,13 +53,17 @@ export const GLOBAL_CSS = `
 .gen-dev__veil{position:absolute;inset:0;background:var(--gen-wait-veil)}
 .gen-dev__surface{position:absolute;inset:0;background:var(--gen-wait-surface)}
 /* 斜向柔光：宽而软的一道光掠过表面，不是一条亮带。两端完全移出容器，循环处没有接缝。 */
-.gen-dev__glare{position:absolute;top:-10%;bottom:-10%;left:0;width:92%;
+.gen-dev__core{position:absolute;inset:0;background:var(--gen-wait-core);
+  will-change:opacity,transform;animation:gen-dev-breathe 5.4s ease-in-out infinite}
+.gen-dev__glare{position:absolute;top:-10%;bottom:-10%;left:0;width:58%;
   background:var(--gen-wait-develop);will-change:transform;
   animation:gen-dev-sweep 2.8s linear infinite}
 @keyframes gen-dev-sweep{from{transform:translate3d(-110%,0,0)}to{transform:translate3d(210%,0,0)}}
+@keyframes gen-dev-breathe{0%,100%{opacity:.5;transform:scale(.97)}50%{opacity:1;transform:scale(1.04)}}
 @keyframes gen-dev-run{from{stroke-dashoffset:0}to{stroke-dashoffset:-100}}
 @media (prefers-reduced-motion:reduce){
   .gen-dev__glare{animation:none;opacity:.5;transform:translate3d(5%,0,0)}
+  .gen-dev__core{animation:none;opacity:.8;transform:none}
   .gen-dev__runner{animation:none;opacity:0}
 }
 /* 画框：描边即进度。stroke-width 按屏幕像素恒定，所以 5% 缩放下它也还在，
@@ -67,9 +71,9 @@ export const GLOBAL_CSS = `
 .gen-dev__frame{position:absolute;inset:0;overflow:visible}
 .gen-dev__track{fill:none;stroke:var(--gen-wait-track);stroke-width:calc(2px * var(--invZoom,1))}
 .gen-dev__halo{fill:none;stroke:var(--gen-wait-progress-halo);stroke-linecap:round;
-  stroke-width:calc(6px * var(--invZoom,1));transition:stroke-dashoffset .7s ease-out}
+  stroke-width:calc(8px * var(--invZoom,1));transition:stroke-dashoffset .7s ease-out}
 .gen-dev__arc{fill:none;stroke:var(--gen-wait-progress);stroke-linecap:round;
-  stroke-width:calc(2px * var(--invZoom,1));transition:stroke-dashoffset .7s ease-out}
+  stroke-width:calc(3px * var(--invZoom,1));transition:stroke-dashoffset .7s ease-out}
 .gen-dev__arc--over{stroke:var(--gen-wait-progress-over)}
 .gen-dev__halo--over{stroke:var(--gen-wait-progress-over);opacity:.22}
 /* 沿整圈画框跑的一颗光点：进度描边一秒才动 2%，肉眼是静止的；这一颗负责让边活着。 */
@@ -110,13 +114,18 @@ function ensureStyles() {
 /**
  * 从正上方出发、顺时针合拢的圆角矩形。
  * 起点定在上边中点而不是左上角：合拢过程左右对称，看着像画框自己在收口。
+ *
+ * `inset` 是距卡片边缘的**世界**像素。贴着边画会被选中态的蓝色选择框整个盖住
+ * （那圈描边是 max(2, 4 * invZoom) 世界像素，屏幕上约 4~6px），于是卡片一被选中
+ * 进度就彻底看不见了——用户截图里那条几乎看不出的橙线正是这个。
  */
-export function framePath(w: number, h: number, radius: number): string {
-  const r = Math.max(0, Math.min(radius, w / 2 - 1, h / 2 - 1));
-  const x0 = 1;
-  const y0 = 1;
-  const x1 = w - 1;
-  const y1 = h - 1;
+export function framePath(w: number, h: number, radius: number, inset = 1): string {
+  const d = Math.max(1, Math.min(inset, w / 2 - 2, h / 2 - 2));
+  const r = Math.max(0, Math.min(radius, w / 2 - d, h / 2 - d));
+  const x0 = d;
+  const y0 = d;
+  const x1 = w - d;
+  const y1 = h - d;
   const mid = w / 2;
   return `M ${mid} ${y0}`
     + ` H ${x1 - r} A ${r} ${r} 0 0 1 ${x1} ${y0 + r}`
@@ -224,7 +233,15 @@ export function GenDevelopLoader({
   const timeText = overtime ? `已 ${elapsedS}s` : `还需约 ${remainS}s`;
 
   const box = needsMeasure ? measured : { w: worldW as number, h: worldH as number };
-  const path = box && box.w > 2 && box.h > 2 ? framePath(box.w, box.h, 16) : null;
+  // 画框内缩到选择框里侧：7 个**屏幕**像素换算回世界像素，另按卡片尺寸的 6% 封顶——
+  // 极低缩放下 7/zoom 会大到把画框缩成卡中央的一个小盒子。
+  const zoom = box && box.w > 0 && typeof screenW === 'number' ? screenW / box.w : 1;
+  const insetWorld = box
+    ? Math.max(1, Math.min(7 / Math.max(zoom, 0.02), Math.min(box.w, box.h) * 0.06))
+    : 1;
+  const path = box && box.w > 2 && box.h > 2
+    ? framePath(box.w, box.h, Math.max(2, 16 - insetWorld), insetWorld)
+    : null;
 
   return (
     <div
@@ -236,6 +253,7 @@ export function GenDevelopLoader({
     >
       <div className="gen-dev__veil" />
       <div className="gen-dev__surface" />
+      <div className="gen-dev__core" />
       <div className="gen-dev__glare" />
       {level !== 'pip' && <div className="gen-dev__scrim" />}
 

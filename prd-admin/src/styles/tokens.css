@@ -116,18 +116,24 @@
      取值恒为**暗色档**的字面色，不引用 --accent-primary / --accent-fg-amber：
      那两个在浅色档会翻到 #A64B35 / #92400e，落在恒暗的画布上只剩 4.4:1 和更差，
      等于「跟着主题翻了一半」。 */
-  --gen-wait-veil: rgba(0, 0, 0, 0.12);
-  --gen-wait-track: rgba(255, 255, 255, 0.14);
+  --gen-wait-veil: rgba(0, 0, 0, 0.16);
+  --gen-wait-track: rgba(255, 255, 255, 0.18);
   --gen-wait-progress: #D97757;
   --gen-wait-progress-halo: rgba(217, 119, 87, 0.22);
   /* 超时用琥珀，不是更亮一档的赤陶：同色系只差一点亮度，用户根本看不出状态变了。 */
   --gen-wait-progress-over: #fbbf24;
   /* 沿画框跑的那颗光点。画框不动的话，一段静止的半截矩形边读起来像边框画坏了。 */
   --gen-wait-runner: rgba(255, 236, 222, 0.85);
-  /* 卡面：一层极淡的暖向渐变 + 一层 45 度细斜纹，让「还没有东西」也有质感可看。 */
-  --gen-wait-surface: linear-gradient(180deg, rgba(217, 119, 87, 0.05) 0%, transparent 45%, rgba(217, 119, 87, 0.04) 100%), repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.014) 0 14px, transparent 14px 28px);
-  /* 斜向柔光：整张卡唯一持续变化的东西，也是这版「轻」的来源——一件大而慢的东西在动，别的都不抢戏。 */
-  --gen-wait-develop: linear-gradient(108deg, transparent 0%, rgba(255, 236, 222, 0.015) 22%, rgba(255, 236, 222, 0.10) 50%, rgba(255, 236, 222, 0.015) 78%, transparent 100%);
+  /* 卡面织纹：条纹周期按屏幕像素恒定。写死 14 世界像素时，20% 缩放下只剩 2.5 屏幕像素、
+     配 1.4% 的 alpha 完全看不见——卡片于是变成一块纯平的深色方块（用户原话：很单调哦）。 */
+  --gen-wait-surface: repeating-linear-gradient(45deg,
+    rgba(255, 255, 255, 0.038) 0 calc(6px * var(--invZoom, 1)),
+    transparent calc(6px * var(--invZoom, 1)) calc(13px * var(--invZoom, 1)));
+  /* 中心辉光：缓慢呼吸，给这张空卡一个重心——「有东西正在这里聚起来」。 */
+  --gen-wait-core: radial-gradient(58% 44% at 50% 52%, rgba(255, 236, 222, 0.09) 0%, rgba(217, 119, 87, 0.05) 45%, transparent 72%);
+  /* 斜向柔光。上一版 92% 宽 + 0.10 峰值铺满整张卡，看着是均匀的一层雾而不是「一道光掠过」；
+     收窄到 58%、峰值提到 0.17，才读得出是有东西在走。 */
+  --gen-wait-develop: linear-gradient(108deg, transparent 0%, rgba(255, 236, 222, 0.02) 18%, rgba(255, 236, 222, 0.17) 50%, rgba(255, 236, 222, 0.02) 82%, transparent 100%);
   --gen-wait-scrim: linear-gradient(to top, rgba(10, 10, 12, 0.74) 0%, rgba(10, 10, 12, 0.34) 55%, transparent 100%);
   --gen-wait-text: rgba(247, 247, 251, 0.92);
   --gen-wait-text-dim: rgba(247, 247, 251, 0.74);

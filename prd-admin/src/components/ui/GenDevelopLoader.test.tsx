@@ -71,6 +71,15 @@ describe('framePath：从正上方出发顺时针合拢的圆角矩形', () => {
     expect(d.match(/A 16 16 0 0 1 /g)).toHaveLength(4);
   });
 
+  it('画框内缩到选择框里侧——否则卡片一选中，进度就整个看不见了', () => {
+    // 选择框是 max(2, 4 * invZoom) 世界像素的描边，屏幕上约 4~6px，贴边画的画框会被它整个盖住。
+    const inset = framePath(420, 420, 10, 12);
+    expect(inset.startsWith('M 210 12')).toBe(true);
+    // 右上角那段弧的终点落在 (x1, y0+r) = (408, 22)：四条边整体内缩 12。
+    expect(inset).toContain('A 10 10 0 0 1 408 22');
+    expect(inset.endsWith('H 210')).toBe(true);
+  });
+
   it('极窄卡片上圆角自动收敛，不会画出自相交的路径', () => {
     const d = framePath(20, 400, 16);
     // r 被 w/2-1 夹住，否则左右两段弧会越过中线交叉。
@@ -160,6 +169,16 @@ describe('GenDevelopLoader 渲染', () => {
     }
   });
 
+  it('内缩量按屏幕像素给，且不许把画框缩成卡中央的小盒子', () => {
+    // 7/zoom 在极低缩放下会大到离谱，所以按卡片尺寸 6% 封顶。
+    const big = render({ createdAt: Date.now(), screenW: 360, screenH: 360, worldW: 1024, worldH: 1024 });
+    const tiny = render({ createdAt: Date.now(), screenW: 51, screenH: 51, worldW: 1024, worldH: 1024 });
+    // 360px 屏幕宽 → zoom 0.352 → 内缩 7/0.352 ≈ 19.9 世界像素（未触顶）。
+    expect(big).toMatch(/d="M 512 19\.\d/);
+    // 51px 屏幕宽 → 7/0.0498 = 140 会触 6% 上限 61.44。
+    expect(tiny).toMatch(/d="M 512 61\.44/);
+  });
+
   it('非画布宿主（不传屏幕尺寸）按全量显示', () => {
     const html = render({ createdAt: Date.now() - 12_000, sizeLabel: '1024 × 1024', worldW: 800, worldH: 600 });
     expect(html).toContain('1024 × 1024');
@@ -191,14 +210,16 @@ describe('动效声明纪律', () => {
     expect(html).toContain('stroke-dasharray="5 95"');
   });
 
-  it('动的只有一件大而慢的东西：92% 宽的斜向柔光，两端移出容器', () => {
+  it('动的只有一件大而慢的东西：斜向柔光，两端移出容器', () => {
     // 「高级」的来源是一件大而慢的东西在动、别的都不抢戏，不是层数多。
     // v1 叠了两级潜像马赛克 + 暗角 + 竖向窄带，九层堆一起就从「轻」掉到「厚」。
-    expect(GLOBAL_CSS).toMatch(/\.gen-dev__glare\{[^}]*width:92%/);
+    // 宽度从 92% 收到 58%：铺满整张卡的那一版看着是均匀一层雾，读不出「有东西在走」。
+    expect(GLOBAL_CSS).toMatch(/\.gen-dev__glare\{[^}]*width:58%/);
     expect(GLOBAL_CSS).toMatch(/@keyframes gen-dev-sweep\{from\{transform:translate3d\(-110%,0,0\)\}/);
     expect(GLOBAL_CSS).toContain('translate3d(210%,0,0)');
     // 退场的那几层不许悄悄回来。
-    for (const gone of ['gen-dev__latent', 'gen-dev__vignette', 'gen-dev-breathe', 'data:image/svg+xml']) {
+    // 注：gen-dev-breathe 这个名字被中心辉光复用了（v1 里它是潜像格的呼吸），不在退场清单里。
+    for (const gone of ['gen-dev__latent', 'gen-dev__vignette', 'data:image/svg+xml']) {
       expect(GLOBAL_CSS, `${gone} 已随 v2 退场`).not.toContain(gone);
     }
   });

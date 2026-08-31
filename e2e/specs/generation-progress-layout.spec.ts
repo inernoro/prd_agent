@@ -102,7 +102,9 @@ async function assertFrame(page: Page, zoom: number) {
   await expect(arc, '画框描边必须在场——进度画在画框上，它退场进度就没了').toHaveCount(1);
   const stroke = await arc.evaluate((el) => parseFloat(getComputedStyle(el).strokeWidth));
   // 按屏幕像素恒定：低倍下原来那条 1 世界像素的 border 早就看不见了，描边不能重蹈覆辙。
-  expect(stroke * zoom, `${zoom * 100}% 下描边的屏幕宽度`).toBeCloseTo(2, 1);
+  // 3px 而不是 2px：选中态的蓝色选择框（max(2, 4*invZoom) 世界像素）就贴在卡边上，
+  // 2px 的赤陶挨着它会被压掉存在感——用户截图里那条几乎看不出的橙线就是这么来的。
+  expect(stroke * zoom, `${zoom * 100}% 下描边的屏幕宽度`).toBeCloseTo(3, 1);
   const offset = await arc.evaluate((el) => parseFloat(getComputedStyle(el).strokeDashoffset));
   expect(offset).toBeGreaterThan(0);   // 没出图就不许画满
   expect(offset).toBeLessThan(100);    // 但必须已经走出去一段
