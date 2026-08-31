@@ -15277,7 +15277,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         dbScope: body.dbScope as 'shared' | 'per-branch' | undefined,
         notes: typeof body.notes === 'string' ? body.notes : undefined,
       };
-      stateService.setBranchProfileOverride(id, profileId, override);
+      // `setBranchProfileOverride` 是**整体替换**，而这份白名单只认它自己管的字段。
+      // 手动入口配置（PUT /web-entry-config）把 subdomain / webEntry 也存进同一个
+      // override 对象，调用方（本 PUT 的 UI）根本不知道这两个字段的存在、请求体里
+      // 自然没有 —— 于是「改一下部署模式 / 端口 / 环境变量」就会顺手把这条命名入口
+      // 抹掉，下一次 forwarder 刷新时路由消失（Codex review 第七轮 P1）。
+      // 这两个字段没有任何客户端用「省略」表达清空（要清由 web-entry-config 显式写），
+      // 所以请求体没提就从已存的覆盖里原样带过来，不管它的人不许毁它。
+      const prevOverride = stateService.getBranchProfileOverride(id, profileId);
+      const preserved: Pick<BuildProfileOverride, 'subdomain' | 'webEntry'> = {
+        ...(body.subdomain === undefined && prevOverride?.subdomain !== undefined
+          ? { subdomain: prevOverride.subdomain } : {}),
+        ...(body.webEntry === undefined && prevOverride?.webEntry !== undefined
+          ? { webEntry: prevOverride.webEntry } : {}),
+      };
+      stateService.setBranchProfileOverride(id, profileId, { ...override, ...preserved });
       stateService.save();
 
       // Return the new effective profile so the UI can show the merged result

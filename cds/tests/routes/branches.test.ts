@@ -923,6 +923,37 @@ describe('Branch Routes', () => {
       expect(stateService.getBuildProfile('gateway')!.webEntry).toEqual({ name: '网关（改名）', path: '/' });
     });
 
+    /*
+     * 分支档存在同一个 profileOverrides 对象里，而通用的 PUT /profile-overrides/:profileId
+     * 是「白名单重建 + 整体替换」。它不认识 subdomain / webEntry，调用方（运行模式、端口、
+     * 环境变量那套 UI）也不会带上——不保护就等于「改个部署模式顺手删掉命名入口」
+     * （Codex review 第七轮 P1）。
+     */
+    it('改别的分支覆盖设置不会顺手抹掉入口配置', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
+
+      const saved = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'branch',
+        entries: [{ serviceId: 'gateway', name: '网关（本分支）', subdomain: 'gw', path: '/' }],
+      }, { 'X-Test-Key': 'A' });
+      expect(saved.status).toBe(200);
+      expect(await webEntryNames('branch-a')).toEqual(['网关（本分支）']);
+
+      // 用通用覆盖接口只改运行模式，请求体里完全没有 subdomain / webEntry
+      const other = await request(server, 'PUT', '/api/branches/branch-a/profile-overrides/gateway', {
+        activeDeployMode: 'express',
+      }, { 'X-Test-Key': 'A' });
+      expect(other.status).toBe(200);
+
+      const override = stateService.getBranchProfileOverride('branch-a', 'gateway')!;
+      expect(override.activeDeployMode).toBe('express');
+      expect(override.subdomain).toBe('gw');
+      expect(override.webEntry).toEqual({ name: '网关（本分支）', path: '/' });
+      expect(await webEntryNames('branch-a')).toEqual(['网关（本分支）']);
+    });
+
     it('托管交付项目拒绝项目档保存，且不会误写别的项目的同名 profile', async () => {
       const now = new Date().toISOString();
       stateService.addProject({
