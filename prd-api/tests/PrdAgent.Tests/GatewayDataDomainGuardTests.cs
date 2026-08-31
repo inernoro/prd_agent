@@ -4525,6 +4525,15 @@ public class GatewayDataDomainGuardTests
             Assert.Contains("if (!superseded()) {", body);
         }
 
+        /*
+          档位（安全连通 / 真实模型）同样改请求的**性质**：带不带 dry-run 头、花不花钱。
+          它一变，屏幕上那份产物与旁边的 cURL 片段说的就不是同一件事了——真实那条还在路上时
+          切到「安全连通」，页面写着「未访问上游」，而那次付费调用照跑照计费，回来还会把结果
+          写进这块写着安全档的面板。判据仍是那一条：这个控件改不改请求，改就走同一道作废。
+        */
+        Assert.Contains("setTestMode('safe'); invalidateActiveRun();", quickstart);
+        Assert.Contains("setTestMode('real'); invalidateActiveRun();", quickstart);
+
         // 四个会改变请求内容的输入，逐个必须调它。少一个就是又留下一条「产物与请求对不上」的路径。
         Assert.Contains("setModelQuery(event.target.value); invalidateActiveRun();", quickstart);
         Assert.Contains("setTestPrompt(event.target.value); invalidateActiveRun();", quickstart);
@@ -4534,7 +4543,7 @@ public class GatewayDataDomainGuardTests
         // 上传附件那条路径（pickAttachment）同样改请求，也要调——连同上面四处共 5 个调用点。
         var invalidations = CountOccurrences(quickstart, "invalidateActiveRun();");
         Assert.True(
-            invalidations >= 6,
+            invalidations >= 8,
             $"改请求的输入必须全部走同一道作废，当前只有 {invalidations} 个调用点");
 
         // 「更改身份」是第六个出口，而且是唯一一个**离开这一屏**的：不 abort 的话请求照跑照计费，
@@ -4593,6 +4602,38 @@ public class GatewayDataDomainGuardTests
             "三处选择都得走同一个出口，少一处就会留下「配置 B 配着配置 A 的证明」");
         // 保存自己也要作废一次：保存换的是「下一次调用按什么走」，旧结论证明不了新的那份。
         Assert.Contains("invalidateTestResult();\n    const editedDuringSave", gatewaySettings.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// 这一页给出的绑定必须是权威的——写自己那份之前，先把会盖过它的那份清掉。
+    ///
+    /// 解析器读这条 appCaller 时，`AllowedModelPoolIds` 非空就走严格分支**当场返回**，
+    /// 根本不看 `ModelPoolId`（那两段是先后关系不是并列关系）。而这条 SystemManaged 的
+    /// appCaller 在「调用用途」页上照样能编辑：任何一次在那边设过严格清单，这一页从此
+    /// 说什么都不作数——写着新池 / 交给网关挑 / 钉一个逻辑模型，实际仍走旧的严格池，
+    /// 逻辑模型那一档还被严格契约整个掐掉。页面说 A、实际跑 B，坏法全程静默。
+    /// </summary>
+    [Fact]
+    public void SystemSettings_ClearsStrictPoolBindingsBeforeApplyingItsOwn()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+
+        // 先钉住「严格清单确实排在 ModelPoolId 前面」——这条前提没了，下面的清理就失去理由。
+        var strictAt = resolver.IndexOf("if (allowedPoolIds.Count > 0)", StringComparison.Ordinal);
+        var boundAt = resolver.IndexOf("if (!string.IsNullOrWhiteSpace(record.ModelPoolId))", StringComparison.Ordinal);
+        Assert.True(strictAt >= 0 && boundAt > strictAt,
+            "解析器里严格池清单必须仍排在 ModelPoolId 之前；顺序变了，这条守卫的理由要重写");
+
+        var start = console.IndexOf("var systemCallerScope = Builders<BsonDocument>.Filter.And(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "找不到系统 appCaller 的绑定写入，守卫的取值范围失效了");
+        var end = console.IndexOf("// 2. 密钥自愈", start, StringComparison.Ordinal);
+        Assert.True(end > start, "绑定写入的取值范围没有正常收尾");
+        var binding = console[start..end];
+
+        // 两条分支（选了池 / 没选池）都要清，否则「交给网关挑」「钉一个逻辑模型」照样被旧清单盖住。
+        Assert.Equal(2, CountOccurrences(binding, ".Unset(\"AllowedModelPoolIds\")"));
+        Assert.Equal(2, CountOccurrences(binding, ".Unset(\"DefaultModelPoolId\")"));
     }
 
     /// <summary>

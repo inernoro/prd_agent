@@ -1824,8 +1824,15 @@ export function QuickstartPage() {
                   <div className="lg-safe-test-panel">
                     <div><Play size={17} /><span><strong>再测一次</strong><small>安全连通不访问上游；真实模型会计费。</small></span></div>
                     <div className="lg-test-mode" role="group" aria-label="测试模式">
-                      <button type="button" className={testMode === 'safe' ? 'is-active' : ''} onClick={() => { setTestMode('safe'); setTestResult(null); }}>安全连通</button>
-                      <button type="button" className={testMode === 'real' ? 'is-active' : ''} disabled={!realRouteReady || routeChecking} title={!realRouteReady ? '先在下方确认真实路由已就绪' : undefined} onClick={() => { setTestMode('real'); setTestResult(null); }}>真实模型</button>
+                      {/*
+                        换档同样要作废在跑的那一条。档位决定这次请求的**性质**（带不带 dry-run 头、
+                        花不花钱），它一变，屏幕上那份产物与旁边的 cURL 片段说的就不是同一件事了：
+                        真实那条还在路上时切到「安全连通」，页面写着「未访问上游」，而那次付费调用
+                        照跑照计费，回来还会把结果写进这块写着安全档的面板。
+                        判据仍是那一条——这个控件改不改请求，改就走同一道作废。
+                      */}
+                      <button type="button" className={testMode === 'safe' ? 'is-active' : ''} onClick={() => { setTestMode('safe'); invalidateActiveRun(); }}>安全连通</button>
+                      <button type="button" className={testMode === 'real' ? 'is-active' : ''} disabled={!realRouteReady || routeChecking} title={!realRouteReady ? '先在下方确认真实路由已就绪' : undefined} onClick={() => { setTestMode('real'); invalidateActiveRun(); }}>真实模型</button>
                     </div>
                     <div className="lg-safe-test-controls">
                       {canCreateAccess ? <Button variant="primary" disabled={testing || (testMode === 'real' && !realRouteReady)} onClick={() => void runTest()}>{testing ? <Spinner size={15} /> : null}{testing ? (testMode === 'real' ? `正在等待真实模型 ${testElapsed}s` : '正在验证并写日志') : testMode === 'real' ? '发送一次真实请求' : '验证接入边界'}</Button> : null}

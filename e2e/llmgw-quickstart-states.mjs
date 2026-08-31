@@ -743,6 +743,35 @@ check('真实调用请求体带 stream:true', realBodies[0]?.stream, true);
 check('真实调用不带 dry-run 头（桩已按此分流）', realBodies.length, 1);
 
 /*
+  ── 换档同样要作废在跑的那一条 ────────────────────────────────────
+  档位决定这次请求的性质（带不带 dry-run 头、花不花钱）。真实那条还在路上时切到
+  「安全连通」，页面写着「未访问上游」，而那次付费调用照跑照计费，回来还会把结果
+  写进这块写着安全档的面板——用户看到的档位与真正跑的那次对不上。
+*/
+// 档位开关在「再测一次 / 真实路由与排障」里，默认收起，先展开。
+await page.locator('.lg-explainer > summary', { hasText: '再测一次' }).click();
+await page.waitForTimeout(200);
+check('档位开关展开后可见', await page.locator('.lg-test-mode button').count(), 2);
+realBodies.length = 0;
+await page.getByRole('button', { name: /真实调用|再跑一次/ }).first().click();
+await page.waitForTimeout(260);
+check('换档之前那条真实流确实在跑', await page.locator('.lg-qs-output.is-streaming').count(), 1);
+await page.locator('.lg-test-mode button', { hasText: '安全连通' }).click();
+await page.waitForTimeout(200);
+check('切到安全档时在跑的那条产物当场撤下', await page.locator('.lg-qs-output .lg-qs-io-empty').count(), 1);
+check('并且它不再是「正在流」的状态', await page.locator('.lg-qs-output.is-streaming').count(), 0);
+await page.waitForTimeout(1400);
+check('被作废那条流回来也不再往产物里写', await page.locator('.lg-qs-output .lg-qs-io-empty').count(), 1);
+// 切回真实档继续后面的用例；它同样走作废，屏幕上不该留着上一档的结论。
+await page.locator('.lg-test-mode button', { hasText: '真实模型' }).click();
+await page.waitForTimeout(200);
+check('切回真实档也不留上一档的结论', await page.locator('.lg-qs-output .lg-qs-io-empty').count(), 1);
+streamMode = 'ok';
+await page.getByRole('button', { name: /真实调用|再跑一次/ }).first().click();
+await page.waitForTimeout(1500);
+check('重新跑一次后产物回来了', (await page.locator('.lg-qs-output pre').innerText()).trim(), '你好，这是流式输出');
+
+/*
   ── 流里夹着的失败必须被认出来 ────────────────────────────────────
   上游在响应头发出之后才失败时，HTTP 状态已经是 200 了，失败只能夹在 SSE 帧里回来。
   只挑 delta 不看那一帧，就会把一次**真花了钱**的失败调用报成「已返回」——用户拿着

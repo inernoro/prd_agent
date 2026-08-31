@@ -5863,6 +5863,15 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
       用 ModelPoolId 而不是 AllowedModelPoolIds：前者给出「候选池只有这一个」，
       恰好就是用户选的语义，且不会打开严格池契约（那会顺手掐掉「钉一个逻辑模型」那一档）。
       非 pool 档位要把绑定摘掉，否则改回「交给网关挑」之后还钉在上次那个池上。
+
+      **同时必须把严格池清单摘掉**。解析器读这条 appCaller 时，`AllowedModelPoolIds`
+      非空就走严格分支并当场返回，根本不看 `ModelPoolId`（ModelResolver 里那两段是
+      先后关系不是并列关系）。而这条 SystemManaged 的 appCaller 在「调用用途」页上照样能编辑，
+      任何一次在那边设过严格清单，这一页从此说什么都不作数：写着新池 / 交给网关挑 /
+      钉一个逻辑模型，实际仍走旧的严格池，逻辑模型那一档还被严格契约整个掐掉——
+      页面说 A、实际跑 B，与上面那半个问题同一种，只是藏在另一个字段里。
+      这一页是这条 appCaller 的配置界面，它给出的绑定就该是权威的：写自己那份之前，
+      先把会盖过它的那份清掉。
     */
     var systemCallerScope = Builders<BsonDocument>.Filter.And(
         Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
@@ -5874,10 +5883,15 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             ? Builders<BsonDocument>.Update
                 .Set("ModelPoolId", poolId)
                 .Set("ModelPolicy", "pool")
+                // 严格池清单会盖过上面这条绑定，写自己那份的同时必须清掉它。
+                .Unset("AllowedModelPoolIds")
+                .Unset("DefaultModelPoolId")
                 .Set("UpdatedAt", DateTime.UtcNow)
             : Builders<BsonDocument>.Update
                 .Unset("ModelPoolId")
                 .Set("ModelPolicy", "auto")
+                .Unset("AllowedModelPoolIds")
+                .Unset("DefaultModelPoolId")
                 .Set("UpdatedAt", DateTime.UtcNow));
 
     // 2. 密钥自愈：库里那把还在且启用就复用；对不上就重签一把。
