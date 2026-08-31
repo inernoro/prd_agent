@@ -7,6 +7,7 @@ import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { GenDevelopLoader } from '@/components/ui/GenDevelopLoader'; // 生图等待动效=显影（进度画在画框上，替换旧流光进度条）
+import { findAlignedFreeTopLeft, type PlacementRect } from '@/lib/canvasPlacement'; // 新图贴着锚点共边落位
 import { recordGenDurationMs } from '@/lib/genTiming';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
@@ -5809,7 +5810,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     await sendText(raw);
   };
 
-  const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
+  const onUploadImages = async (files: File[]) => {
     // 工作区初始画布仍在回放时接收上传，会被稍后返回的服务器快照覆盖：界面提示
     // “已加入”但图片随即消失。入口和处理函数双重门禁，覆盖文件选择、拖放与粘贴路径。
     if (!workspaceReady) {
@@ -5845,129 +5846,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }
     }
     if (anyCompressed) showUploadToast('已自动压缩大图以提升画布流畅度');
-    // 选中单张“图片”时：上传单图默认“替换”而非叠加（保留 x/y/w/h）
-    const mode = opts?.mode ?? 'auto';
-    if (mode === 'auto' && list.length === 1 && selectedKeys.length === 1) {
-      const targetKey = selectedKeys[0]!;
-      const target = canvas.find((x) => x.key === targetKey);
-      if (!target || (target.kind ?? 'image') !== 'image') {
-        // 如果当前选中的是“生成器区域”等非图片对象，则走新增逻辑
-      } else {
-      const file = list[0]!;
-      const now = Date.now();
-      const dimFile = await readImageSizeFromFile(file);
-      const src = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => resolve('');
-        reader.readAsDataURL(file);
-      });
-      if (!src) return;
-      const dim = dimFile ?? (await readImageSizeFromSrc(src));
-      const nextW = dim?.w ?? target.w ?? 1;
-      const nextH = dim?.h ?? target.h ?? 1;
-
-      setCanvas((prev) =>
-        prev.map((it) => {
-          if (it.key !== targetKey) return it;
-          // 替换后如果尺寸变化导致碰撞：用“最近空位”微移，避免遮挡
-          const cx = (it.x ?? 0) + (nextW / 2);
-          const cy = (it.y ?? 0) + (nextH / 2);
-          const others = prev
-            .filter((x) => x.key !== targetKey)
-            .filter(
-              (x) =>
-                ((x.kind ?? 'image') === 'generator' ||
-                  (x.kind ?? 'image') === 'shape' ||
-                  (x.kind ?? 'image') === 'text' ||
-                  !!x.src ||
-                  x.status === 'running' ||
-                  x.status === 'error')
-            )
-            .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
-          const hit = others.some((r) => {
-            const ax0 = (it.x ?? 0) - 18;
-            const ay0 = (it.y ?? 0) - 18;
-            const ax1 = (it.x ?? 0) + nextW + 18;
-            const ay1 = (it.y ?? 0) + nextH + 18;
-            const bx0 = r.x;
-            const by0 = r.y;
-            const bx1 = r.x + r.w;
-            const by1 = r.y + r.h;
-            return ax0 < bx1 && ax1 > bx0 && ay0 < by1 && ay1 > by0;
-          });
-          const pos = hit ? findNearestFreeTopLeft(others, nextW, nextH, { x: cx, y: cy }) : { x: it.x ?? 0, y: it.y ?? 0 };
-          focusKeyRef.current = { key: targetKey, cx: pos.x + nextW / 2, cy: pos.y + nextH / 2, w: nextW, h: nextH };
-          requestAnimationFrame(() => {
-            const f = focusKeyRef.current;
-            if (!f || f.key !== targetKey) return;
-            // 新图：只缩小适应或平移，不放大
-            if (f.w && f.h) {
-              animateCameraToFitRect({ x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h }, { maxZoom: zoomRef.current });
-            } else {
-              animateCameraToWorldCenter(f.cx, f.cy);
-            }
-          });
-          return {
-            ...it,
-            createdAt: now,
-            prompt: file.name || it.prompt,
-            src,
-            status: 'done',
-            errorMessage: null,
-            assetId: undefined,
-            sha256: undefined,
-            syncStatus: 'pending',
-            syncError: null,
-            w: nextW,
-            h: nextH,
-            naturalW: dim?.w ?? it.naturalW,
-            naturalH: dim?.h ?? it.naturalH,
-            x: pos.x,
-            y: pos.y,
-          };
-        })
-      );
-      pushMsg('Assistant', '已替换当前选中图片。');
-
-      // 持久化替换后的图片
-      const up = await uploadVisualAgentWorkspaceAsset({ id: workspaceId, data: src, prompt: file.name || 'uploaded' });
-      if (up.success) {
-        const a = up.data.asset;
-        setCanvas((prev) =>
-          prev.map((x) =>
-            x.key === targetKey
-              ? {
-                  ...x,
-                  assetId: a.id,
-                  sha256: a.sha256,
-                  src: a.url || x.src,
-                  syncStatus: 'synced',
-                  syncError: null,
-                }
-              : x
-          )
-        );
-        showUploadToast(`上传成功：${file.name || '图片'}`);
-      } else {
-        const msg = up.error?.message || '图片持久化失败';
-        setCanvas((prev) =>
-          prev.map((x) =>
-            x.key === targetKey
-              ? {
-                  ...x,
-                  syncStatus: 'failed',
-                  syncError: msg,
-                }
-              : x
-          )
-        );
-        pushMsg('Assistant', `图片未能持久化到后端资产（刷新可能丢失）：${msg}`);
-      }
-      return;
-      }
-    }
-
     const added: CanvasImageItem[] = [];
     const now = Date.now();
 
@@ -6006,9 +5884,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (added.length === 0) return;
     // 保持顺序：用户选中的文件顺序
     added.sort((a, b) => a.createdAt - b.createdAt);
+    // 首张是否真的贴着选中图落位（不是「有没有选中」——四个方向被占满时会退回最近空位，
+    // 那时说「已贴着选中图」就是假话）。收尾文案按这个说，不按选中状态说。
+    let placedAlongsideSelection = false;
     {
       const prev = canvasRef.current;
-      // “最近路径”算法：从当前视口中心向外找最近空位，避免与现有元素堆叠
+      // 兜底仍是“最近空位”：只在四个方向的对齐车道全被占满时才用（见 lib/canvasPlacement.ts）
       const near = stageCenterWorld();
       const existingRects = prev
         .filter(
@@ -6023,13 +5904,29 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
       const placed: CanvasImageItem[] = [];
       let focus: { key: string; cx: number; cy: number; w?: number; h?: number } | null = null;
+      // 锚点：选中的那张图。上传时选中一张，新图就贴着它摆，而不是丢到视口中心附近
+      // 找到的第一个空格里——那样每张的边都差几十像素，画布很快就乱了。
+      // 只认「已经有坐标和尺寸」的选中项；选了多张或选中的是没落位的对象就没有锚点。
+      let anchor: PlacementRect | null = (() => {
+        if (selectedKeys.length !== 1) return null;
+        const t = prev.find((x) => x.key === selectedKeys[0]);
+        if (!t) return null;
+        const { x, y, w, h } = t;
+        if (typeof x !== 'number' || typeof y !== 'number') return null;
+        if (!w || !h) return null;
+        return { x, y, w, h };
+      })();
       for (const it of added) {
         const w = it.w ?? 1;
         const h = it.h ?? 1;
-        const pos = findNearestFreeTopLeft(existingRects, w, h, near);
+        const aligned = anchor ? findAlignedFreeTopLeft(existingRects, w, h, anchor) : null;
+        if (aligned && placed.length === 0 && selectedKeys.length === 1) placedAlongsideSelection = true;
+        const pos = aligned ?? findNearestFreeTopLeft(existingRects, w, h, near);
         const nextIt: CanvasImageItem = { ...it, w, h, x: pos.x, y: pos.y };
         placed.push(nextIt);
         existingRects.push({ x: pos.x, y: pos.y, w, h });
+        // 链式：下一张贴着这一张，多张一次上传会排成等距的一行/一列，而不是各找各的空格。
+        anchor = { x: pos.x, y: pos.y, w, h };
         focus = { key: it.key, cx: pos.x + w / 2, cy: pos.y + h / 2, w, h };
       }
       // 重要：新元素要在最上层 => 放到数组末尾（后渲染覆盖先渲染）
@@ -6067,7 +5964,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         animateCameraToWorldCenter(f.cx, f.cy);
       }
     });
-    pushMsg('Assistant', `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`);
+    pushMsg(
+      'Assistant',
+      placedAlongsideSelection
+        ? `已在选中图旁新增 ${added.length} 张（原图保留，不会被覆盖）。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`
+        : `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`
+    );
 
     // 持久化：上传到后端并替换为自托管 URL（避免 dataURL 过大、也方便跨设备恢复）
     void (async () => {
@@ -6128,7 +6030,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     onUploadImagesRef.current = onUploadImages;
   });
 
-  // 画板支持 Ctrl/Cmd+V 粘贴图片（作为“新增一项”，不走替换逻辑）
+  // 画板支持 Ctrl/Cmd+V 粘贴图片（与拖放、选文件同一条路径：一律新增，从不替换）
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const cd = e.clipboardData;
@@ -6168,7 +6070,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         return new File([f], name, { type });
       });
 
-      void onUploadImagesRef.current(files, { mode: 'add' });
+      void onUploadImagesRef.current(files);
     };
 
     window.addEventListener('paste', onPaste);
@@ -9290,7 +9192,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   const ext = type.includes('png') ? 'png' : type.includes('jpeg') || type.includes('jpg') ? 'jpg' : type.includes('webp') ? 'webp' : 'png';
                   const name = (file.name && file.name.trim()) ? file.name : `clipboard_${now}.${ext}`;
                   const normalizedFile = new File([file], name, { type });
-                  void onUploadImages([normalizedFile], { mode: 'add' });
+                  void onUploadImages([normalizedFile]);
                   return true;
                 }}
                 onPendingKeysChange={handlePendingKeysChange}

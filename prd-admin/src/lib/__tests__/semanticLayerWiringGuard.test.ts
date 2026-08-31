@@ -327,3 +327,40 @@ describe('画布持久化只许有一份实现', () => {
     }
   });
 });
+
+describe('上传落位：只新增、不替换，且贴着锚点对齐', () => {
+  const tab = read(TAB);
+  const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+
+  it('【关键】上传永远是新增，选中态不再吞掉用户原来那张图', () => {
+    // 2026-08-31 用户原话：「选中图上传不要替换了，而是新增一张新的图」，并把旧行为
+    // 判成「原始需求的问题很大，有很大的 bug」——选中一张图再拖一张进来，原图当场消失、
+    // 无法撤销，用户根本没表达过「替换」的意图。
+    expect(code, '替换分支已整条退场').not.toContain('已替换当前选中图片');
+    // mode 选项曾经是替换的开关（'auto' 命中单图 + 单选就替换）；替换没了它也不该留，
+    // 否则下一个人会以为还有一条替换路径可走。
+    expect(code).toMatch(/const onUploadImages = async \(files: File\[\]\) => \{/);
+    expect(code).not.toMatch(/mode\?: 'auto' \| 'add'/);
+  });
+
+  it('【关键】对齐落位真的接进了上传路径，不是一个没人调的模块', () => {
+    // 形状 2：新建的判定函数最容易「建了一半」——模块写好、单测全绿、没有任何人 import。
+    expect(code).toMatch(/findAlignedFreeTopLeft[\s\S]{0,160}from '@\/lib\/canvasPlacement'/);
+    const at = code.indexOf('const aligned = anchor ? findAlignedFreeTopLeft(');
+    expect(at, '上传落位应先试对齐位').toBeGreaterThan(0);
+    const near = code.slice(at, at + 700);
+    // 对齐位取不到时必须退回最近空位，不许硬塞一个重叠位置。
+    expect(near).toMatch(/aligned \?\? findNearestFreeTopLeft\(/);
+    // 链式：下一张贴着上一张，多张一次上传排成一行而不是各找各的空格。
+    expect(near).toMatch(/anchor = \{ x: pos\.x, y: pos\.y, w, h \}/);
+  });
+
+  it('【关键】锚点取的是选中项的真实坐标，选多张/无坐标时不硬凑', () => {
+    const at = code.indexOf('let anchor: PlacementRect | null =');
+    expect(at, '锚点应从选中项算出').toBeGreaterThan(0);
+    const near = code.slice(at, at + 420);
+    expect(near).toMatch(/selectedKeys\.length !== 1/);
+    expect(near).toMatch(/typeof x !== 'number' \|\| typeof y !== 'number'/);
+    expect(near).toMatch(/if \(!w \|\| !h\) return null;/);
+  });
+});

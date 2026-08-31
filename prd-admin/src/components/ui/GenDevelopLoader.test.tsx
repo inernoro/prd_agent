@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { GenDevelopLoader, GLOBAL_CSS, framePath, metaLevel, phaseOf } from './GenDevelopLoader';
+import { GenDevelopLoader, GLOBAL_CSS, HEAD_LEN, framePath, metaLevel, phaseOf } from './GenDevelopLoader';
 
 const EST_MS = 40_000; // getGenAvgMs 的首样本兜底
 
@@ -198,16 +198,44 @@ describe('动效声明纪律', () => {
     expect(GLOBAL_CSS).toMatch(/\.gen-dev__glare\{[^}]*animation:gen-dev-sweep/);
   });
 
-  it('画框上有一颗一直在跑的光点——边不许是静止的', () => {
-    // v1 的教训：进度描边一秒才走 2%，肉眼就是一段静止的半截矩形边，
-    // 读起来像「边框画坏了」而不是「进度」。用户原话：以前的版本更高级一些。
-    expect(GLOBAL_CSS).toMatch(/@keyframes gen-dev-run\{from\{stroke-dashoffset:0\}to\{stroke-dashoffset:-100\}\}/);
-    expect(GLOBAL_CSS).toMatch(/\.gen-dev__runner\{[^}]*animation:gen-dev-run/);
-    const html = renderToStaticMarkup(
-      <GenDevelopLoader createdAt={Date.now()} screenW={420} screenH={420} worldW={1024} worldH={1024} />,
-    );
-    // 归一化单位，跑光的长度与卡片尺寸无关。
-    expect(html).toContain('stroke-dasharray="5 95"');
+  it('画框上只有一处光，且它就钉在进度的最前端', () => {
+    // 用户看着上一版直接问「两根光柱分别代表什么意思」：那时画框上有两处等亮等粗的光——
+    // 进度描边的头，和一颗独立绕圈的光点。一个画框只该有一个光，它的位置就是进度。
+    expect(GLOBAL_CSS, '独立绕圈的那颗光点已退场').not.toContain('gen-dev__runner');
+    expect(GLOBAL_CSS, '位移动画一起退场，头不许自己跑').not.toContain('gen-dev-run ');
+    // 头靠呼吸活着（进度一秒才走 2%，肉眼近乎静止），不靠位移。
+    expect(GLOBAL_CSS).toMatch(/\.gen-dev__head\{[^}]*animation:gen-dev-pulse/);
+    expect(GLOBAL_CSS).toMatch(/@keyframes gen-dev-pulse\{[^}]*opacity/);
+  });
+
+  it('头部的 dash 相位跟着进度走，而不是一个常数', () => {
+    // 判据必须能分辨「真的贴在描边前端」和「碰巧画了一小段」：两个不同进度渲染出来的
+    // dashoffset 必须不同，且差值恰好等于进度差。常数相位会让它退化成静止的装饰。
+    const html = (elapsedSec: number) =>
+      renderToStaticMarkup(
+        <GenDevelopLoader
+          createdAt={Date.now() - elapsedSec * 1000}
+          screenW={420}
+          screenH={420}
+          worldW={1024}
+          worldH={1024}
+        />,
+      );
+    const offsetOf = (h: string) => {
+      const m = /class="gen-dev__head"[^>]*stroke-dashoffset="([\d.]+)"/.exec(h);
+      expect(m, 'gen-dev__head 必须在场并带 stroke-dashoffset').toBeTruthy();
+      return Number(m![1]);
+    };
+    const pctOf = (h: string) => {
+      const m = /class="gen-dev__arc[^"]*"[^>]*stroke-dashoffset="([\d.]+)"/.exec(h);
+      return 100 - Number(m![1]);
+    };
+    const a = html(10);
+    const b = html(40);
+    expect(offsetOf(a) - offsetOf(b)).toBeCloseTo(pctOf(b) - pctOf(a), 6);
+    expect(offsetOf(a)).not.toBe(offsetOf(b));
+    // dash 周期恒为 100，offset 才能与进度线性对应。
+    expect(a).toContain(`stroke-dasharray="${HEAD_LEN} ${100 - HEAD_LEN}"`);
   });
 
   it('动的只有一件大而慢的东西：斜向柔光，两端移出容器', () => {

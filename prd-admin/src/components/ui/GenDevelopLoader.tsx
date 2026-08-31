@@ -60,11 +60,11 @@ export const GLOBAL_CSS = `
   animation:gen-dev-sweep 2.8s linear infinite}
 @keyframes gen-dev-sweep{from{transform:translate3d(-110%,0,0)}to{transform:translate3d(210%,0,0)}}
 @keyframes gen-dev-breathe{0%,100%{opacity:.5;transform:scale(.97)}50%{opacity:1;transform:scale(1.04)}}
-@keyframes gen-dev-run{from{stroke-dashoffset:0}to{stroke-dashoffset:-100}}
+@keyframes gen-dev-pulse{0%,100%{opacity:.5}50%{opacity:1}}
 @media (prefers-reduced-motion:reduce){
   .gen-dev__glare{animation:none;opacity:.5;transform:translate3d(5%,0,0)}
   .gen-dev__core{animation:none;opacity:.8;transform:none}
-  .gen-dev__runner{animation:none;opacity:0}
+  .gen-dev__head{animation:none;opacity:1}
 }
 /* 画框：描边即进度。stroke-width 按屏幕像素恒定，所以 5% 缩放下它也还在，
    而原来那条 1 世界像素的 border 在 30% 以下就已经看不见了。 */
@@ -76,9 +76,13 @@ export const GLOBAL_CSS = `
   stroke-width:calc(3px * var(--invZoom,1));transition:stroke-dashoffset .7s ease-out}
 .gen-dev__arc--over{stroke:var(--gen-wait-progress-over)}
 .gen-dev__halo--over{stroke:var(--gen-wait-progress-over);opacity:.22}
-/* 沿整圈画框跑的一颗光点：进度描边一秒才动 2%，肉眼是静止的；这一颗负责让边活着。 */
-.gen-dev__runner{fill:none;stroke:var(--gen-wait-runner);stroke-linecap:round;
-  stroke-width:calc(2px * var(--invZoom,1));animation:gen-dev-run 3.2s linear infinite}
+/* 进度的**头部**：一小段更亮更粗的弧，钉在赤陶描边的最前端。
+   它不自己绕圈——上一版那颗独立跑的光点和进度描边一样粗、一样亮，画框上于是有两道光，
+   用户直接问「两根光柱分别代表什么意思」。一个画框只该有一个光，且它的位置就是进度。
+   进度一秒才走 2%，肉眼近乎静止，所以这颗头靠**呼吸**活着，不靠位移。 */
+.gen-dev__head{fill:none;stroke:var(--gen-wait-head);stroke-linecap:round;
+  stroke-width:calc(4.5px * var(--invZoom,1));transition:stroke-dashoffset .7s ease-out;
+  animation:gen-dev-pulse 1.7s ease-in-out infinite}
 /* 底边一行。插入距离同时按屏幕像素和百分比取小值：纯屏幕像素在极小卡片上会把
    left+right 加到超过卡宽，整行塌成零宽度然后静默消失。 */
 .gen-dev__scrim{position:absolute;left:0;right:0;bottom:0;
@@ -110,6 +114,9 @@ function ensureStyles() {
   el.textContent = GLOBAL_CSS;
   document.head.appendChild(el);
 }
+
+/** 进度头部那一小段亮弧的长度（pathLength 归一化后的单位，即整圈的百分之几）。 */
+export const HEAD_LEN = 4;
 
 /**
  * 从正上方出发、顺时针合拢的圆角矩形。
@@ -306,8 +313,16 @@ export function GenDevelopLoader({
             strokeDasharray={100}
             strokeDashoffset={100 - pct}
           />
-          {/* 一小段亮弧绕整圈跑。dasharray 用 pathLength 归一化后的单位，与卡片尺寸无关。 */}
-          <path className="gen-dev__runner" d={path} pathLength={100} strokeDasharray="5 95" />
+          {/* 头部：可见段落在 [pct-HEAD_LEN, pct]，即描边的最前端。
+              dash 周期 = HEAD_LEN + 间隔 = 100，所以 offset 加 100 与不加等价，
+              这里加上只为避开负数。单位是 pathLength 归一化后的，与卡片尺寸无关。 */}
+          <path
+            className="gen-dev__head"
+            d={path}
+            pathLength={100}
+            strokeDasharray={`${HEAD_LEN} ${100 - HEAD_LEN}`}
+            strokeDashoffset={100 + HEAD_LEN - pct}
+          />
         </svg>
       ) : null}
     </div>
