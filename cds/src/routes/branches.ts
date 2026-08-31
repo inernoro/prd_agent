@@ -31,7 +31,7 @@ import {
   occupiedHostOwners,
   resolveBranchEntrypointsEnv,
 } from '../services/preview-entrypoints.js';
-import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, selectPrimaryWebEntry } from '../services/web-entry.js';
+import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
 import {
@@ -15346,7 +15346,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       profileById.set(bp.id, resolveEffectiveProfile(bp, entry));
     }
     const effectiveProfiles = [...profileById.values()].filter((profile) =>
-      profile.webEntry && normalizeWebEntryPath(profile.webEntry.path) !== null,
+      resolveWebEntry(profile) !== null,
     );
     const primaryProfile = selectPrimaryWebEntry(effectiveProfiles);
     const primaryConfig = primaryProfile?.webEntry;
@@ -15392,8 +15392,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     for (const profileId of routable) {
       const profile = profileById.get(profileId);
       const sub = profile?.subdomain;
-      const webEntry = profile?.webEntry;
-      const webPath = normalizeWebEntryPath(webEntry?.path);
+      const webEntry = profile ? resolveWebEntry(profile) : null;
+      const webPath = webEntry?.path || null;
       // 同一 profile 已由主域名承载时不再列命名子域，解决“主入口和第二项其实
       // 是同一个 Web 应用”的重复识别问题。
       if (!sub || !webEntry || !webPath || profileId === primaryProfile?.id) continue;
@@ -15567,6 +15567,275 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // not inferred gateway health links.
       gatewayUrls: webEntries.slice(1),
       rootDomain: primaryRoot,
+    });
+  });
+
+  // ── 手动多出口配置（2026-08-31）──
+  //
+  // 多出口此前只有一条路：Agent 改 cds-compose.yml 的 `cds.subdomain` / `cds.web-entry-*`
+  // 标签，再重新导入项目。用户想自己加一个「左边域名 → 右边端口」的入口就必须找 Agent。
+  // 这两个端点把同一份配置（BuildProfile.subdomain + webEntry）开成可读可写：
+  //
+  //   GET  扫描本分支所有服务（含端口 / 运行状态 / 当前入口 / 值来自项目还是分支）
+  //   PUT  按 scope 写回：'project' 落 BuildProfile（该项目所有分支），'branch' 落
+  //        BranchEntry.profileOverrides（只影响本分支）
+  //
+  // 生效不需要重新部署：forwarder-route-publisher 每 2s 从 state 重算路由表，
+  // 命名子域路由随之出现/消失；webEntry 只影响面板入口清单，即时可见。
+  type WebEntryConfigRow = {
+    serviceId: string;
+    serviceName: string;
+    /** 'project' = 项目底座服务（可存项目档）；'branch' = 分支临时服务（只能存分支档） */
+    origin: 'project' | 'branch';
+    containerPort: number | null;
+    hostPort: number | null;
+    status: string;
+    /** 承载主域名根路径的服务：它的入口就是主域名，不需要命名子域 */
+    handlesRoot: boolean;
+    pathPrefixes: string[];
+    project: { subdomain: string; name: string; path: string };
+    branchOverride: { subdomain: string; name: string; path: string } | null;
+    effective: { subdomain: string; name: string; path: string };
+    /** 当前这条配置算出来的落地 URL；配不出入口时为空串 */
+    url: string;
+  };
+
+  const readWebEntryConfig = (entry: BranchEntry, primaryRoot: string): {
+    previewSlug: string;
+    services: WebEntryConfigRow[];
+  } => {
+    const project = stateService.getProject(entry.projectId);
+    const previewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug || '';
+    const projectProfileIds = new Set(
+      stateService.getBuildProfilesForProject(entry.projectId || 'default').map((p) => p.id),
+    );
+    const services = stateService.getEffectiveProfilesForBranch(entry).map((baseline): WebEntryConfigRow => {
+      const override = entry.profileOverrides?.[baseline.id];
+      const effective = resolveEffectiveProfile(baseline, entry);
+      const svc = entry.services?.[baseline.id];
+      const effectiveEntry = resolveWebEntry(effective);
+      const sub = effective.subdomain || '';
+      const handlesRoot = handlesRootPath(effective);
+      // URL 口径与 computeBranchWebEntries 同源：命名子域走命名 host（整条路由直达容器），
+      // 否则挂在主域名的该服务前缀下。这里只算「这条配置指向哪」，可达性由部署状态决定。
+      let url = '';
+      if (effectiveEntry && previewSlug) {
+        const label = sub ? namedServiceLabel(previewSlug, sub) : '';
+        const useNamedHost = !handlesRoot && Boolean(label) && isPublishableNamedLabel(label);
+        const host = useNamedHost ? `${label}.${primaryRoot}` : `${previewSlug}.${primaryRoot}`;
+        const hostPath = useNamedHost ? effectiveEntry.path : mainDomainEntryPath(effective, effectiveEntry.path);
+        url = `https://${host}${hostPath === '/' ? '' : hostPath}`;
+      }
+      return {
+        serviceId: baseline.id,
+        serviceName: baseline.name || baseline.id,
+        origin: projectProfileIds.has(baseline.id) ? 'project' : 'branch',
+        containerPort: effective.containerPort ?? null,
+        hostPort: svc?.hostPort ?? null,
+        status: String(svc?.status || 'stopped'),
+        handlesRoot,
+        pathPrefixes: effective.pathPrefixes || [],
+        project: {
+          subdomain: baseline.subdomain || '',
+          name: baseline.webEntry?.name || '',
+          path: baseline.webEntry?.path || '/',
+        },
+        branchOverride: override && (override.subdomain !== undefined || override.webEntry !== undefined)
+          ? {
+              subdomain: override.subdomain || '',
+              name: override.webEntry?.name || '',
+              path: override.webEntry?.path || '/',
+            }
+          : null,
+        effective: {
+          subdomain: sub,
+          name: effectiveEntry?.name || '',
+          path: effectiveEntry?.path || '/',
+        },
+        url,
+      };
+    });
+    return { previewSlug, services };
+  };
+
+  router.get('/branches/:id/web-entry-config', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) { res.status(access.status).json(access.body); return; }
+    const primaryRoot = config.previewDomain || config.rootDomains?.[0] || 'example.com';
+    const { previewSlug, services } = readWebEntryConfig(entry, primaryRoot);
+    res.json({ branchId: id, rootDomain: primaryRoot, previewSlug, services });
+  });
+
+  router.put('/branches/:id/web-entry-config', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) { res.status(access.status).json(access.body); return; }
+
+    const body = (req.body ?? {}) as { scope?: unknown; entries?: unknown };
+    const scope = body.scope === 'branch' ? 'branch' : body.scope === 'project' ? 'project' : null;
+    if (!scope) {
+      res.status(400).json({ error: '请求体需要 { scope: "project" | "branch", entries: [...] }' });
+      return;
+    }
+    if (!Array.isArray(body.entries)) {
+      res.status(400).json({ error: 'entries 必须是数组（每项 { serviceId, name, subdomain, path }）' });
+      return;
+    }
+
+    const primaryRoot = config.previewDomain || config.rootDomains?.[0] || 'example.com';
+    const { previewSlug, services } = readWebEntryConfig(entry, primaryRoot);
+    if (!previewSlug) {
+      res.status(409).json({ error: '该分支还没有预览 slug（尚未部署过），暂时无法配置入口' });
+      return;
+    }
+    const rowById = new Map(services.map((row) => [row.serviceId, row]));
+
+    type NormalizedEntry = { serviceId: string; name: string; subdomain: string; path: string };
+    const normalized: NormalizedEntry[] = [];
+    const seenServiceIds = new Set<string>();
+    const subdomainOwner = new Map<string, string>();
+    for (const raw of body.entries as Array<Record<string, unknown>>) {
+      const serviceId = String(raw?.serviceId || '').trim();
+      const row = rowById.get(serviceId);
+      if (!row) {
+        res.status(400).json({ error: `未知服务 "${serviceId}"：它不在本分支生效的服务列表里` });
+        return;
+      }
+      if (seenServiceIds.has(serviceId)) {
+        res.status(400).json({ error: `服务 "${serviceId}" 在请求里出现了多次` });
+        return;
+      }
+      seenServiceIds.add(serviceId);
+      if (scope === 'project' && row.origin !== 'project') {
+        res.status(400).json({ error: `"${serviceId}" 是分支临时服务，只能保存到当前分支` });
+        return;
+      }
+      const name = String(raw?.name ?? '').trim();
+      const subdomain = String(raw?.subdomain ?? '').trim().toLowerCase();
+      const path = String(raw?.path ?? '/').trim() || '/';
+      if (subdomain && !isValidServiceSubdomain(subdomain)) {
+        res.status(400).json({
+          error: `子域 "${subdomain}" 非法：须为单个 DNS 标签（小写字母/数字/连字符，不以连字符开头结尾，长度 1..40），且不能用保留名`,
+        });
+        return;
+      }
+      if (subdomain && !name) {
+        res.status(400).json({ error: `服务 "${serviceId}" 配了子域但没有入口名称；名称是入口显示与存在的凭据` });
+        return;
+      }
+      if (name && normalizeWebEntryPath(path) === null) {
+        res.status(400).json({ error: `入口路径 "${path}" 非法：必须是以 / 开头的同源路径，且不能是健康探针路径` });
+        return;
+      }
+      if (subdomain) {
+        const owner = subdomainOwner.get(subdomain);
+        if (owner) {
+          res.status(400).json({ error: `子域 "${subdomain}" 被 "${owner}" 和 "${serviceId}" 同时使用；同一分支内子域必须唯一` });
+          return;
+        }
+        subdomainOwner.set(subdomain, serviceId);
+        const label = namedServiceLabel(previewSlug, subdomain);
+        if (!isPublishableNamedLabel(label)) {
+          res.status(400).json({
+            error: `子域 "${subdomain}" 与分支名拼出的 host 首标签 "${label}" 超过 63 字符上限，无法解析且通配证书不覆盖；请换个更短的子域`,
+          });
+          return;
+        }
+        const roots = config.rootDomains?.length ? config.rootDomains : [primaryRoot];
+        const hosts = roots.map((root) => `${label}.${root}`.toLowerCase());
+        // 占位判定必须与发布器同口径：别名与完整自定义域名（occupiedHostOwners）让
+        // 命名路由被静默跳过，preview slug / 其它分支的命名服务 host 则是真撞车。
+        // 只查一半，用户会存下一条永远发不出去、面板上却写着地址的入口。
+        const occupiedOwners = occupiedHostOwners(stateService.getAllBranches(), roots);
+        const collisions = [
+          ...findPreviewHostCollisions(hosts),
+          ...hosts.flatMap((host) => {
+            const owner = occupiedOwners.get(host);
+            return owner ? [{ domain: host, conflictWith: owner, reason: 'alias' as const }] : [];
+          }),
+        ].filter((c) => c.conflictWith !== id);
+        if (collisions.length > 0) {
+          res.status(409).json({
+            error: `子域 "${subdomain}" 生成的地址已被占用：${collisions.map((c) => `"${c.domain}" 属于分支 "${c.conflictWith}"`).join('; ')}`,
+            collisions,
+          });
+          return;
+        }
+      }
+      normalized.push({ serviceId, name, subdomain, path });
+    }
+
+    try {
+      for (const item of normalized) {
+        const row = rowById.get(item.serviceId)!;
+        const webEntry = item.name ? { name: item.name, path: item.path } : undefined;
+        if (scope === 'project') {
+          const profile = stateService.getBuildProfile(item.serviceId);
+          if (!profile) {
+            res.status(404).json({ error: `构建配置 "${item.serviceId}" 不存在` });
+            return;
+          }
+          stateService.updateBuildProfile(item.serviceId, {
+            subdomain: item.subdomain || undefined,
+            webEntry,
+          });
+          // 项目档写完必须把**本分支**这两个字段的覆盖清掉：否则分支覆盖继续赢，
+          // 用户在自己面前这条分支上看不到刚保存的值，会以为没生效。
+          const prev = entry.profileOverrides?.[item.serviceId];
+          if (prev && (prev.subdomain !== undefined || prev.webEntry !== undefined)) {
+            const next: BuildProfileOverride = { ...prev };
+            delete next.subdomain;
+            delete next.webEntry;
+            delete next.updatedAt;
+            if (Object.keys(next).length === 0) stateService.clearBranchProfileOverride(id, item.serviceId);
+            else stateService.setBranchProfileOverride(id, item.serviceId, next);
+          }
+        } else {
+          const prev = entry.profileOverrides?.[item.serviceId];
+          const next: BuildProfileOverride = { ...(prev || {}) };
+          delete next.updatedAt;
+          // 与项目底座一致的值不写覆盖（回到继承），避免分支上堆一层永远与项目相同的影子配置。
+          if (item.subdomain === row.project.subdomain) delete next.subdomain;
+          else next.subdomain = item.subdomain;
+          const sameEntry = item.name === row.project.name
+            && (item.name === '' || item.path === row.project.path);
+          if (sameEntry) delete next.webEntry;
+          // 空名 = 本分支隐藏这个入口（resolveWebEntry 判空名即无入口），
+          // 用空名对象而不是删字段，才能压过项目底座声明的入口。
+          else next.webEntry = webEntry ?? { name: '', path: '/' };
+          if (Object.keys(next).length === 0) stateService.clearBranchProfileOverride(id, item.serviceId);
+          else stateService.setBranchProfileOverride(id, item.serviceId, next);
+        }
+      }
+      stateService.save();
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+      return;
+    }
+
+    const refreshed = stateService.getBranch(id) || entry;
+    const after = readWebEntryConfig(refreshed, primaryRoot);
+    res.json({
+      message: scope === 'project' ? '已保存到项目（该项目所有分支生效）' : '已保存到当前分支',
+      branchId: id,
+      scope,
+      rootDomain: primaryRoot,
+      previewSlug: after.previewSlug,
+      services: after.services,
+      webEntries: computeBranchWebEntries(refreshed, primaryRoot),
+      // 路由表由 forwarder 每 2s 从 state 重算，命名子域几秒内自动出现，无需重新部署。
+      needsRedeploy: false,
     });
   });
 

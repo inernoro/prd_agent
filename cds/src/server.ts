@@ -1253,6 +1253,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/smoke$/, '分支冒烟测试'],
     [/^GET \/branches\/(.+)\/subdomain-aliases$/, '列出分支域名别名'],
     [/^PUT \/branches\/(.+)\/subdomain-aliases$/, '设置分支域名别名'],
+    [/^GET \/branches\/(.+)\/web-entry-config$/, '扫描分支入口配置'],
+    [/^PUT \/branches\/(.+)\/web-entry-config$/, '保存分支入口配置'],
     [/^GET \/branches\/(.+)\/custom-domains$/, '列出分支完整自定义域名'],
     [/^PUT \/branches\/(.+)\/custom-domains$/, '设置分支完整自定义域名'],
     [/^GET \/branches\/(.+)\/profile-overrides$/, '获取构建覆写'],
