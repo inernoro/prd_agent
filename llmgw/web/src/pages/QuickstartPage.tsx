@@ -296,7 +296,15 @@ export function QuickstartPage() {
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [, setHeartbeat] = useState(0);
   /** 真实调用的返回：文字边收边渲染，图片/音频收完再渲染。 */
-  const [liveOutput, setLiveOutput] = useState<{ kind: 'text' | 'image' | 'audio'; text: string; url?: string; done: boolean } | null>(null);
+  /**
+   * 这次真实调用的产物。`model` 是**这一跑真的执行了哪个模型**，从上游返回里取，
+   * 跟着产物一起存——不能在渲染时读当前选择：产物出来之后用户随手改一下选择，
+   * 那句「实际执行 X」就会挂到一段不是它跑出来的输出上。取不到就留空，如实说没带。
+   */
+  const [liveOutput, setLiveOutput] = useState<{ kind: 'text' | 'image' | 'audio'; text: string; url?: string; done: boolean; model: string } | null>(null);
+  // 真实调用的代次：换模型 / 再点一次都会把上一跑作废，它的回写一律丢弃。
+  const realRunSeq = useRef(0);
+  const realRunAbort = useRef<AbortController | null>(null);
   const [binding, setBinding] = useState(false);
   const [bindNotice, setBindNotice] = useState<string | null>(null);
   // 月预算是本页唯一要用户想的数字；单次预占上限由它派生（成对约束见 budgetPair）。
@@ -915,11 +923,29 @@ export function QuickstartPage() {
     const requestId = createRequestId();
     const canStream = protocol === 'openai';
     const startedAt = Date.now();
+    /*
+      这一跑的身份：代次 + 请求开始那一刻钉住的模型。
+
+      产物与「实际执行了什么」必须绑在同一跑上。读渲染时的当前选择是错的——
+      流还在跑的时候用户改一下模型，上一跑的输出就会被贴上新模型的名字；
+      而 auto 档下更离谱：贴的是**预检**那次解析出来的成员，可这次真花钱的调用
+      完全可能因为健康状态变化落到另一个成员上，等于把 A 的回答说成 B 跑的。
+    */
+    const runId = ++realRunSeq.current;
+    realRunAbort.current?.abort();
+    const abortController = new AbortController();
+    realRunAbort.current = abortController;
+    const superseded = () => realRunSeq.current !== runId;
+    const pinnedAtStart = effectiveTestModel === 'auto' ? '' : effectiveTestModel;
+    // 上游返回里带的模型名——那才是「真的跑了谁」。钉了成员时用钉住的那个兜底；
+    // auto 档下取不到就留空，界面如实说「返回里没带模型名」，不拿预检的结论冒充。
+    let runModel = '';
+    const stamp = () => runModel || pinnedAtStart;
     setRunStartedAt(startedAt);
     setTesting(true);
     setTestResult(null);
     setActionError(null);
-    setLiveOutput({ kind: 'text', text: '', done: false });
+    setLiveOutput({ kind: 'text', text: '', done: false, model: '' });
     try {
       const response = await fetch(new URL(protocolPathFor(definition, testModel), `${normalizedBaseUrl}/`).toString(), {
         method: 'POST',
@@ -932,9 +958,12 @@ export function QuickstartPage() {
         },
         body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment, canStream, testPrompt, testPlatformId)),
         credentials: 'omit',
+        signal: abortController.signal,
       });
+      if (superseded()) return;
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+        if (superseded()) return;
         setLiveOutput(null);
         setTestResult({
           ok: false,
@@ -967,16 +996,20 @@ export function QuickstartPage() {
           for (const line of lines) {
             streamError = streamError ?? readStreamError(line);
             if (line.trim() === 'data: [DONE]') sawDone = true;
+            // 帧里带的 model 就是这次真跑的那个，取第一条非空的钉住。
+            runModel = runModel || readStreamModel(line);
             const delta = readStreamDelta(line);
             if (delta === null) continue;
             text += delta;
-            setLiveOutput({ kind: 'text', text, done: false });
+            if (superseded()) return;
+            setLiveOutput({ kind: 'text', text, done: false, model: stamp() });
           }
           if (streamError) break;
         }
+        if (superseded()) return;
         if (streamError) {
           // 已经吐出来的片段留着：它是「跑到一半断了」的证据，比清空更有用。
-          setLiveOutput(text ? { kind: 'text', text, done: true } : null);
+          setLiveOutput(text ? { kind: 'text', text, done: true, model: stamp() } : null);
           setTestResult({
             ok: false,
             message: `真实调用失败：${streamError.message}（上游在流中途报错，这次调用仍会计入用量）`,
@@ -986,7 +1019,7 @@ export function QuickstartPage() {
           return;
         }
         if (!sawDone) {
-          setLiveOutput(text ? { kind: 'text', text, done: true } : null);
+          setLiveOutput(text ? { kind: 'text', text, done: true, model: stamp() } : null);
           setTestResult({
             ok: false,
             message: '真实调用未完成：连接在收到结束标记之前就断了，已返回的内容可能是半截（这次调用仍会计入用量）。',
@@ -995,19 +1028,24 @@ export function QuickstartPage() {
           });
           return;
         }
-        setLiveOutput({ kind: 'text', text, done: true });
+        setLiveOutput({ kind: 'text', text, done: true, model: stamp() });
       } else {
         const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
-        setLiveOutput(readNonStreamOutput(payload));
+        if (superseded()) return;
+        runModel = runModel || readActualModel(payload) || '';
+        setLiveOutput({ ...readNonStreamOutput(payload), model: stamp() });
       }
       markRequestCompleted(tenant?.id);
-      setTestResult({ ok: true, message: `真实调用已返回，模型 ${effectiveTestModel === 'auto' ? currentRoutePreview?.actualModel || '由池调度' : effectiveTestModel}；本次会计入用量与费用。`, requestId: actualRequestId });
+      setTestResult({ ok: true, message: `真实调用已返回，模型 ${stamp() || '由池调度（返回里没带模型名）'}；本次会计入用量与费用。`, requestId: actualRequestId });
     } catch (error) {
+      if (superseded() || (error instanceof DOMException && error.name === 'AbortError')) return;
       setLiveOutput(null);
       setTestResult({ ok: false, message: error instanceof Error ? `真实调用失败：${error.message}` : '真实调用失败。' });
     } finally {
-      setTestElapsedMs(Date.now() - startedAt);
-      setTesting(false);
+      if (!superseded()) {
+        setTestElapsedMs(Date.now() - startedAt);
+        setTesting(false);
+      }
     }
   };
 
@@ -1524,7 +1562,20 @@ export function QuickstartPage() {
                             list="lg-qs-model-options"
                             placeholder="auto（由模型池调度）"
                             value={modelQuery}
-                            onChange={(event) => { setModelQuery(event.target.value); setTestResult(null); }}
+                            onChange={(event) => {
+                              setModelQuery(event.target.value);
+                              setTestResult(null);
+                              /*
+                                换模型必须把上一跑连同它的产物一起作废。
+                                只清 testResult 不够：产物还挂在屏幕上，而「实际执行」那句
+                                会跟着新选择重新渲染——A 的回答被贴上 B 的名字。
+                                在跑的那条也要顶掉，否则它回来时照样往新选择上写。
+                              */
+                              realRunSeq.current += 1;
+                              realRunAbort.current?.abort();
+                              setLiveOutput(null);
+                              setTesting(false);
+                            }}
                           />
                           <datalist id="lg-qs-model-options">
                             {poolModels.map((model) => <option key={`${model.platformId}:${model.modelId}`} value={model.modelId} />)}
@@ -1627,7 +1678,7 @@ export function QuickstartPage() {
                             {liveOutput ? (
                               <small className="lg-qs-io-meta">
                                 {liveOutput.done
-                                  ? `${testElapsedMs === null ? '已返回' : `${(testElapsedMs / 1000).toFixed(1)}s`} · 实际执行 ${effectiveTestModel === 'auto' ? currentRoutePreview?.actualModel || '由池调度' : effectiveTestModel}`
+                                  ? `${testElapsedMs === null ? '已返回' : `${(testElapsedMs / 1000).toFixed(1)}s`} · 实际执行 ${liveOutput.model || '由池调度（返回里没带模型名）'}`
                                   : `已用 ${((Date.now() - (runStartedAt ?? Date.now())) / 1000).toFixed(1)}s`}
                               </small>
                             ) : null}
@@ -2071,6 +2122,22 @@ function readStreamError(line: string): { message: string; code?: string } | nul
     return { message, code };
   } catch {
     return null;
+  }
+}
+
+/**
+ * 这一帧说这次跑的是哪个模型。OpenAI 兼容的每一帧都带 `model`，那才是**真的执行了谁**——
+ * 预检那次解析出来的成员只是「当时会选谁」，健康状态一变，这次真花钱的调用完全可能落到别人身上。
+ */
+function readStreamModel(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('data:')) return '';
+  const data = trimmed.slice(5).trim();
+  if (data.length === 0 || data === '[DONE]') return '';
+  try {
+    return readActualModel(JSON.parse(data) as Record<string, unknown>) || '';
+  } catch {
+    return '';
   }
 }
 

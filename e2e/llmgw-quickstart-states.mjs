@@ -152,7 +152,10 @@ const server = http.createServer((req, res) => {
             return;
           }
           if (i < frames.length) {
-            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: frames[i] } }] })}\n\n`);
+            // 帧里带上「这次真的执行了谁」，而且**故意与预检解析出来的成员不同**：
+            // 预检回的是 demo/chat-1，真跑落到 demo/chat-served。页面若拿预检的结论
+            // 当「实际执行」，这里就分辨不出来——真实数据里健康状态一变就是这个形态。
+            res.write(`data: ${JSON.stringify({ model: 'demo/chat-served', choices: [{ delta: { content: frames[i] } }] })}\n\n`);
             i += 1;
             return;
           }
@@ -706,6 +709,15 @@ check('流式：收完后三点撤掉', await page.locator('.lg-qs-io-dots').cou
 check('流式：收完后输出块左侧竖线转成完成色', await page.locator('.lg-qs-output.is-done').count(), 1);
 check('返回内容标出类型', (await page.locator('.lg-qs-io-chip').innerText()).trim(), '文字');
 check('输出头写明耗时与实际执行的模型', /\d+\.\ds · 实际执行 /.test(await page.locator('.lg-qs-io-meta').last().innerText()), true);
+/*
+  ── 「实际执行」必须来自这次调用的返回，不是预检的结论 ──────────────
+  auto 档下预检解析出来的成员只代表「当时会选谁」；健康状态一变，这次真花钱的调用
+  完全可能落到别人身上。拿预检那个值当「实际执行」，就是把 A 的回答说成 B 跑的——
+  与账单和请求记录对不上，用户照着它排查只会更远。桩里两者刻意不同，一眼可判。
+*/
+const servedMeta = await page.locator('.lg-qs-io-meta').last().innerText();
+check('实际执行取自本次返回的模型', servedMeta.includes('实际执行 demo/chat-served'), true);
+check('实际执行不拿预检解析的成员冒充', servedMeta.includes('demo/chat-1'), false);
 check('输出头留下 requestId 回查深链', await page.locator(`.lg-qs-io-link[href*="requestId=${REQUEST_ID}"]`).count(), 1);
 check('跑完之后主按钮变成再跑一次', await page.getByRole('button', { name: '再跑一次' }).count(), 1);
 check('框里写的那句进了真实请求体', realBodies[0]?.messages?.[0]?.content, '用三句话说明什么是模型网关');
@@ -739,6 +751,21 @@ check('流被截断说明可能是半截', truncatedResult.includes('半截'), t
 streamMode = 'ok';
 
 /*
+  ── 换模型必须把上一跑的产物一起作废 ──────────────────────────────
+  产物留在屏幕上、而「实际执行」那句跟着当前选择重新渲染时，A 的回答会被贴上 B 的名字。
+  它不报错、不变红，只有真的坐下来点一遍才看得见——所以判据是「换完之后那块还在不在」。
+*/
+await page.getByRole('button', { name: '再跑一次' }).click();
+await page.waitForTimeout(1400);
+check('换模型前屏幕上确实有一份产物', await page.locator('.lg-qs-output.is-done').count(), 1);
+await page.getByLabel('测试模型').fill('demo/chat-2');
+await page.waitForTimeout(300);
+check('换模型后上一跑的产物被撤下', await page.locator('.lg-qs-output.is-done').count(), 0);
+check('换模型后不再挂着上一跑的「实际执行」', await page.locator('.lg-qs-io-meta').count(), 0);
+await page.getByLabel('测试模型').fill('');
+await page.waitForTimeout(900);
+
+/*
   ── 真实调用要过路由闸 ──────────────────────────────────────────
   路由识别出目标是开发桩时按下「真实调用」，跑的是假上游，页面却会报
   「真实调用已返回、本次计费」——给用户一个假的成功。上方那对按钮早就判了这道闸，
@@ -761,7 +788,8 @@ await page.waitForTimeout(400);
 check('上传的文本填进了输入框', (await page.locator('.lg-qs-io-input').inputValue()).trim(), '用三个字回答：你好吗');
 check('cURL 用上了上传的文本', (await page.locator('.lg-qs-code').innerText()).includes('用三个字回答：你好吗'), true);
 realBodies.length = 0;
-await page.getByRole('button', { name: '再跑一次' }).click();
+// 主按钮的字随「屏幕上有没有产物」变：上一段刚验过换模型会撤下产物，这里两种字样都接受。
+await page.getByRole('button', { name: /真实调用|再跑一次/ }).first().click();
 await page.waitForTimeout(1400);
 check('上传的文本进了真实请求体', realBodies[0]?.messages?.[0]?.content, '用三个字回答：你好吗');
 

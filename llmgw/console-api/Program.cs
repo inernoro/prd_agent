@@ -9477,6 +9477,31 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         .Where(x => x.Length > 0)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    /*
+      价格与币种在**动第一次库之前**全批校验完。
+
+      原来这道校验写在插入循环里：前面几条已经插进去了，轮到一条价格非法的才返回 400。
+      于是三件事同时成立——用户被告知「导入失败」、库里已经多了几条模型、而且那个 400
+      跳过了后面的默认池同步与 `platform.models.import` 审计，那几条既没进池（池路由选不到，
+      业务侧调不通）也没留下任何「谁在什么时候导入了它们」的记录。
+      入参不合法就一条都不该写；要写就整批可解释。
+    */
+    foreach (var entry in entries)
+    {
+        if (GatewayConfigurationProvisioning.IsValidPrice(entry.InputPricePerMillion)
+            && GatewayConfigurationProvisioning.IsValidPrice(entry.OutputPricePerMillion)
+            && GatewayConfigurationProvisioning.IsValidPrice(entry.PricePerCall)
+            && GatewayConfigurationProvisioning.IsSupportedCurrency(entry.PriceCurrency))
+        {
+            continue;
+        }
+
+        return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail(
+            "INVALID_INPUT",
+            $"模型「{entry.ModelId!.Trim()}」的价格或币种不合法（价格不能为负，币种只支持 CNY / USD）；"
+            + "这一批一条都没有导入，改好后整批重提即可。"), jsonOptions, 400);
+    }
+
     var result = new ImportUpstreamModelsResult { Requested = entries.Count };
     var now = DateTime.UtcNow;
     foreach (var entry in entries)
@@ -9520,15 +9545,6 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             .Select(c => c.Trim().ToLowerInvariant())
             .Distinct(StringComparer.Ordinal)
             .ToList();
-
-        if (!GatewayConfigurationProvisioning.IsValidPrice(entry.InputPricePerMillion)
-            || !GatewayConfigurationProvisioning.IsValidPrice(entry.OutputPricePerMillion)
-            || !GatewayConfigurationProvisioning.IsValidPrice(entry.PricePerCall)
-            || !GatewayConfigurationProvisioning.IsSupportedCurrency(entry.PriceCurrency))
-        {
-            return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail(
-                "INVALID_INPUT", $"模型「{modelId}」的价格或币种不合法（价格不能为负，币种只支持 CNY / USD）"), jsonOptions, 400);
-        }
 
         var doc = new BsonDocument
         {

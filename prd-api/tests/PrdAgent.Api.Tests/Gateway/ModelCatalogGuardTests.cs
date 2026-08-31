@@ -345,6 +345,55 @@ public sealed class ModelCatalogMirrorGuardTests
         PrdAgent.Core.LlmGateway.GatewayAppCallerPolicy.AllowsTraffic("disabled").ShouldBeFalse();
     }
 
+    /// <summary>
+    /// 批量导入必须**先全批校验、再动第一次库**。
+    ///
+    /// 这条的坏法是静默的半committed：价格校验原来写在插入循环里，前面几条已经插进去了，
+    /// 轮到一条价格非法的才返回 400。于是用户被告知「导入失败」，库里却多了几条模型；
+    /// 而那个 400 还跳过了后面的默认池同步与 platform.models.import 审计——那几条既没进池
+    /// （池路由选不到，业务侧调不通），也没留下任何「谁在什么时候导入了它们」的记录。
+    ///
+    /// 判据是**位置关系**而不是「这段代码在不在」：校验必须排在插入之前。
+    /// 把它挪回循环里（位置落到插入之后），这条当场红。
+    /// </summary>
+    [Fact]
+    public void ModelImport_ValidatesTheWholeBatchBeforeTheFirstInsert()
+    {
+        var consoleProgram = File.ReadAllText(RepoFile("llmgw/console-api/Program.cs"));
+
+        var endpointAt = consoleProgram.IndexOf(
+            "app.MapPost(\"/gw/platforms/{id}/models/import\"", StringComparison.Ordinal);
+        endpointAt.ShouldBeGreaterThan(-1, customMessage: "找不到批量导入端点，守卫的取值范围失效了");
+
+        var validateAt = consoleProgram.IndexOf(
+            "GatewayConfigurationProvisioning.IsSupportedCurrency(entry.PriceCurrency)", endpointAt, StringComparison.Ordinal);
+        var insertAt = consoleProgram.IndexOf("await gwModels.InsertOneAsync(doc)", endpointAt, StringComparison.Ordinal);
+
+        validateAt.ShouldBeGreaterThan(-1, customMessage: "批量导入必须校验价格与币种，否则负价格会直接进成本核算");
+        insertAt.ShouldBeGreaterThan(-1, customMessage: "找不到插入点，守卫的取值范围失效了");
+
+        /*
+          判据锚在**插入循环的 foreach 头**上，不是锚在插入那一行上。
+
+          「校验排在 InsertOneAsync 这一行之前」是个假判据：把校验塞进循环体里、
+          写在插入语句上方，它照样成立——而那正是这条要防的写法（前几条已经插进去了，
+          第 N 条才 400）。真正要问的是「校验在不在循环外面」，所以取插入点之前
+          最后一个 foreach 头，校验必须比它更早。
+        */
+        var insertLoopAt = consoleProgram.LastIndexOf(
+            "foreach (var entry in entries)", insertAt, StringComparison.Ordinal);
+        insertLoopAt.ShouldBeGreaterThan(endpointAt, customMessage: "找不到插入循环的头，守卫的取值范围失效了");
+        validateAt.ShouldBeLessThan(
+            insertLoopAt,
+            customMessage: "价格与币种必须在**进入插入循环之前**全批校验完——校验落在循环里，"
+                + "非法入参会留下几条既没进池也没进审计的模型，而调用方收到的是「导入失败」");
+
+        // 循环里不许再留一份：留着就等于「先校验一遍、再边插边校验」，后者照样会半途返回。
+        CountOccurrences(consoleProgram, "GatewayConfigurationProvisioning.IsSupportedCurrency(entry.PriceCurrency)").ShouldBe(
+            1,
+            customMessage: "这批校验只许有一处（全批预检那一处）；插入循环里再留一份就又能半途 400");
+    }
+
     /// <summary>数子串出现次数：判「只此一份」与「每条路径都接上了」都靠它，比断言某一行存在更贴合。</summary>
     private static int CountOccurrences(string haystack, string needle)
     {
