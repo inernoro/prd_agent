@@ -1580,11 +1580,14 @@
     flex-shrink: 0;
   }
 
-  /* 左侧栏里的全局操作使用 24px SVG，44px 点击区内图标占比清晰可辨。 */
-  .cds-rail-action-entry svg {
-    width: 1.5rem;
-    height: 1.5rem;
+  /* 短标签只服务桌面栏，抽屉里显示完整中文名。 */
+  .cds-rail-short {
+    display: none;
   }
+
+  /* 2026-08-31 起底部动作不再比导航项大一档：同一根栏里出现 19.2 / 24 / 16
+     三种图标尺寸正是「怎么调都不协调」的来源。尺寸统一交给
+     .cds-rail .cds-rail-item svg（桌面栏 20px）与基础的 1.2rem（抽屉）。 */
 
   .cds-rail-item:hover {
     background-color: hsl(var(--surface-raised) / 0.7);
@@ -2854,11 +2857,66 @@
    * 之内,保留文字标签。每个 item 已有 aria-label + title,隐藏文字后无障碍 + 悬停提示不丢。
    */
   .cds-rail .cds-rail-item {
-    @apply justify-center gap-0 px-0;
+    @apply h-[52px] flex-col justify-center gap-[3px] px-1;
   }
-  .cds-rail .cds-rail-item > span {
+
+  /* 图标：全栏一档 20px + 描边 1.7。lucide 把 stroke-width 写成表现属性，
+     CSS 声明压得过它，所以不用改任何组件调用点。 */
+  .cds-rail .cds-rail-item svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 1.7;
+  }
+
+  /* 抽屉用完整中文名，桌面栏用两字短名；两边共用同一个 RailNav。 */
+  .cds-rail .cds-rail-item > span:not(.cds-rail-short) {
     display: none;
   }
+  .cds-rail .cds-rail-item > .cds-rail-short {
+    display: block;
+    font-size: 10px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+  }
+
+  /* 当前页三件套：左侧 2px 橙条 + 淡橙底 + 橙字，缩略视图下也认得出「我在哪」。 */
+  .cds-rail .cds-rail-item[data-active='true'] {
+    background-color: hsl(var(--primary) / 0.1);
+    color: hsl(var(--primary-ink));
+    box-shadow: inset 2px 0 0 hsl(var(--primary));
+  }
+
+  /* 底部动作在栏里不再各自带盒子：强调只留颜色，边框与底色交给 hover/active，
+     否则「主导航是纯图标、底部动作是小按钮」两套语言会拼在同一根栏里。 */
+  .cds-rail .cds-agent-access-entry,
+  .cds-rail .cds-bug-report-entry {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .cds-rail .cds-bug-report-entry {
+    color: hsl(var(--muted-foreground)) !important;
+  }
+
+  .cds-rail .cds-agent-access-entry:hover,
+  .cds-rail .cds-bug-report-entry:hover {
+    background-color: hsl(var(--surface-raised) / 0.7) !important;
+    border: 0 !important;
+  }
+
+  /* 头像跟着图标的节奏走，不再是 32px 的第三档。 */
+  .cds-rail .cds-user-avatar {
+    width: 22px;
+    height: 22px;
+    font-size: 9px;
+  }
+
+  .cds-rail .cds-user-avatar svg {
+    width: 14px;
+    height: 14px;
+  }
+
   .cds-rail .cds-rail-brand-title {
     display: none;
   }
