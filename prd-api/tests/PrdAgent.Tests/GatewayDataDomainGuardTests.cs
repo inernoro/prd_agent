@@ -4479,6 +4479,60 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("AddExactFilter(\"ModelPoolId\", body.ModelPoolId)", console[bulkStart..bulkEnd]);
     }
 
+    /// <summary>
+    /// 改请求的每一个输入，都必须作废「当前这一跑」。
+    ///
+    /// 坏法是静默的：产物留在屏幕上，而它旁边的 cURL 片段与「实际执行」已经跟着新输入
+    /// 重新渲染了——用户看到的回答与它旁边写着的请求内容根本不是一回事；在途那条回来时
+    /// 还会继续往新输入上写。页面不报错、测试不变红，只有真的坐下来点一遍才看得见。
+    ///
+    /// 判据不是「某个控件有没有清结果」，而是「改请求的那几个控件是不是都走了同一道作废」。
+    /// 上一轮只给模型那一个装了，判据当时写成了「用户报的是哪个控件」——于是提示词、附件、
+    /// 协议三处原样留着同一个洞。所以这里钉两件事：作废只有一份定义，且每一处都调它。
+    /// </summary>
+    [Fact]
+    public void QuickstartRequestInputs_AllInvalidateTheActiveRun()
+    {
+        var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
+
+        // 作废是一份共享动作（顶掉代次 + abort + 清产物 + 清结论），不许各处各写一套。
+        Assert.Contains("const invalidateActiveRun = () => {", quickstart);
+        Assert.Contains("realRunAbort.current?.abort();", quickstart);
+
+        // 四个会改变请求内容的输入，逐个必须调它。少一个就是又留下一条「产物与请求对不上」的路径。
+        Assert.Contains("setModelQuery(event.target.value); invalidateActiveRun();", quickstart);
+        Assert.Contains("setTestPrompt(event.target.value); invalidateActiveRun();", quickstart);
+        Assert.Contains("setAttachment(null); invalidateActiveRun();", quickstart);
+        Assert.Contains("setProtocol(event.target.value as Protocol); invalidateActiveRun();", quickstart);
+
+        // 上传附件那条路径（pickAttachment）同样改请求，也要调——连同上面四处共 5 个调用点。
+        var invalidations = CountOccurrences(quickstart, "invalidateActiveRun();");
+        Assert.True(
+            invalidations >= 5,
+            $"改请求的输入必须全部走同一道作废，当前只有 {invalidations} 个调用点");
+    }
+
+    /// <summary>
+    /// 服务网关设置：那条绿色的「测试连接」结论是照**当时那份配置**跑出来的。
+    /// 改了来源/池/模型还留着它，页面就成了「配置 B + 来自配置 A 的证明」；
+    /// 保存之后同样如此——而这一页存在的理由正是让人当场确认这份配置能用。
+    /// </summary>
+    [Fact]
+    public void GatewaySettings_InvalidatesTheTestResultOnEveryChange()
+    {
+        var gatewaySettings = ReadRepoFile("llmgw/web/src/pages/GatewaySettingsPage.tsx");
+
+        Assert.Contains("const invalidateTestResult = () => {", gatewaySettings);
+        Assert.Contains("setSource(item.id); invalidateTestResult();", gatewaySettings);
+        Assert.Contains("setPoolId(event.target.value); invalidateTestResult();", gatewaySettings);
+        Assert.Contains("setModelName(event.target.value); invalidateTestResult();", gatewaySettings);
+        // 在途那次也要按代次丢弃：请求在路上时改了选择，旧结论回来就会给新配置背书。
+        Assert.Contains("if (testSeq.current !== runId) return;", gatewaySettings);
+        Assert.True(
+            CountOccurrences(gatewaySettings, "invalidateTestResult();") >= 4,
+            "三处选择 + 保存后各一次，少一处就会留下「配置 B 配着配置 A 的证明」");
+    }
+
     [Fact]
     public void AgentFirstQuickstart_KeepsTenantAuthorityAndUnknownCostBoundaries()
     {

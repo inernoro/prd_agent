@@ -187,6 +187,25 @@ await page.getByRole('button', { name: '测试连接' }).click();
 await page.waitForTimeout(900);
 check('测试通过时报出实际执行的模型', (await bodyScope.getByRole('status').last().innerText()).includes('demo/chat-1'), true);
 
+/*
+  ── 那条绿色结论只对「跑它时那份配置」有效 ──────────────────────
+  改了来源/池/模型还留着它，页面就是「配置 B + 来自配置 A 的证明」——
+  而这一页存在的理由正是让人当场确认**这份**配置能用。判据取「改完之后它还在不在」。
+*/
+const proofBefore = await bodyScope.getByRole('status').last().innerText();
+check('改选择之前屏幕上确实挂着一条测试结论', proofBefore.includes('demo/chat-1'), true);
+// 换的是「来源」这一档（此刻页面停在「钉一个模型」，池下拉里没有池选项）。
+// 来源、池、模型三处改动同属一类，验一处即可——三处走的是同一个作废函数（源码守卫钉住）。
+await page.getByRole('radio', { name: /交给网关挑/ }).click();
+await page.waitForTimeout(300);
+check('改了选择就撤下上一份配置的测试结论',
+  (await bodyScope.getByRole('status').allInnerTexts()).some((text) => text.includes('demo/chat-1')), false);
+// 选回原来那档：改动未保存时「测试连接」是禁用的（那条闸本来就该在），下面几步还要用它。
+await page.getByRole('radio', { name: /固定用这一个模型/ }).click();
+await page.waitForTimeout(300);
+check('选回原选择后未保存态解除、测试连接恢复可点',
+  await page.getByRole('button', { name: '测试连接' }).isDisabled(), false);
+
 // 4. 等待期屏幕必须在动（AGENTS.md 规则 #6）：真实那一次要等好几秒（后端单轮 40 秒上限，
 //    还可能自动重签重试一轮）。按钮上要能读到已等秒数、且秒数真的在往前走——
 //    停在一个不动的「正在测试」就是体验缺陷。

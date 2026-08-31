@@ -51,6 +51,8 @@ export function GatewaySettingsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  // 测试连接的代次：任何一次改选择 / 保存都作废上一次的结论，它的回写一律丢弃。
+  const testSeq = useRef(0);
   const [testElapsed, setTestElapsed] = useState(0);
   const [testResult, setTestResult] = useState<SystemGatewayTestResult | null>(null);
   const testTimer = useRef<number | null>(null);
@@ -82,6 +84,19 @@ export function GatewaySettingsPage() {
   };
   useEffect(() => { void load(); }, []);
 
+  /**
+   * 作废上一次「测试连接」的结论。
+   *
+   * 那条绿色结果是**照当时那份配置**跑出来的。改了来源/池/模型还留着它，页面就变成
+   * 「配置 B + 来自配置 A 的证明」——而这一页存在的理由正是让人当场确认这份配置能用。
+   * 保存之后同样要作废：保存换的是「系统下一次调用按什么走」，旧结论证明不了新的那份。
+   * 顺带把在途那次也顶掉（按代次丢弃回写）：不然它回来时会盖到新选择上。
+   */
+  const invalidateTestResult = () => {
+    testSeq.current += 1;
+    setTestResult(null);
+  };
+
   const save = async () => {
     setSaving(true); setError(null); setNotice(null);
     const res = await saveSystemSettings({
@@ -91,14 +106,19 @@ export function GatewaySettingsPage() {
     });
     setSaving(false);
     if (!res.success) { setError(res.error?.message || '保存失败'); return; }
-    setNotice('已保存。系统功能下一次调用就按这个走。');
+    invalidateTestResult();
+    setNotice('已保存。系统功能下一次调用就按这个走。上面的连接测试结论对应的是保存前那份配置，已清掉——要确认新配置能用，再点一次「测试连接」。');
     await load();
   };
 
   // 保存完必须能当场验一次——否则「最小输入」就退化成蒙着眼睛少填几个字。
   const runTest = async () => {
+    const runId = ++testSeq.current;
     setTesting(true); setError(null); setTestResult(null);
     const res = await testSystemSettings();
+    // 请求在路上时用户可能已经改了选择或保存过——那时这条结论说的已经不是屏幕上这份配置了，
+    // 原样写回去就是拿旧配置的成败给新配置背书。
+    if (testSeq.current !== runId) return;
     setTesting(false);
     if (!res.success) { setError(res.error?.message || '测试请求失败'); return; }
     setTestResult(res.data);
@@ -139,7 +159,7 @@ export function GatewaySettingsPage() {
                   role="radio"
                   aria-checked={source === item.id}
                   className={source === item.id ? 'is-active' : ''}
-                  onClick={() => setSource(item.id)}
+                  onClick={() => { setSource(item.id); invalidateTestResult(); }}
                 >
                   <Icon size={16} />
                   <strong>{item.label}</strong>
@@ -152,7 +172,7 @@ export function GatewaySettingsPage() {
           {source === 'pool' ? (
             <label className="lg-gws-field">
               <span style={FIELD_LABEL}>对话模型池</span>
-              <select value={poolId} onChange={(event) => setPoolId(event.target.value)}>
+              <select value={poolId} onChange={(event) => { setPoolId(event.target.value); invalidateTestResult(); }}>
                 <option value="">请选择一个池</option>
                 {data.pools.map((pool) => (
                   <option key={pool.id} value={pool.id}>{pool.name}{pool.isDefault ? '（默认池）' : ''}</option>
@@ -165,7 +185,7 @@ export function GatewaySettingsPage() {
           {source === 'model' ? (
             <label className="lg-gws-field">
               <span style={FIELD_LABEL}>逻辑模型</span>
-              <select value={modelName} onChange={(event) => setModelName(event.target.value)}>
+              <select value={modelName} onChange={(event) => { setModelName(event.target.value); invalidateTestResult(); }}>
                 <option value="">请选择一个模型</option>
                 {/* 提交 publicId、显示 name：解析器按 publicId 匹配，拿显示名去存会匹配不上 */}
                 {data.models.map((model) => (

@@ -618,6 +618,24 @@ await page.getByLabel('测试模型').fill('');
 await page.waitForTimeout(900);
 
 /*
+  ── 改提示词同样要作废在跑的那条 ────────────────────────────────
+  上一段验的是换模型。但会改请求的不止模型：提示词、附件、协议都改。它们中任何一个变了，
+  cURL 片段立刻换成新的，而在途那条流仍带着旧内容往产物里写——屏幕上就成了
+  「这段回答」配着「从没发出去过的那段提问」。上一轮我只给模型装了作废动作，
+  判据当时写成了「用户报的是哪个控件」，而它应该是「这个控件改不改请求」。
+*/
+await page.getByRole('button', { name: /真实调用|再跑一次/ }).first().click();
+await page.waitForTimeout(200);
+check('改提示词之前流确实在跑', await page.locator('.lg-qs-output.is-streaming').count(), 1);
+await page.locator('.lg-qs-io-input').fill('换一句：用一句话说明什么是模型网关');
+await page.waitForTimeout(120);
+check('改提示词当场作废在跑的那条', await page.locator('.lg-qs-output.is-streaming').count(), 0);
+await page.waitForTimeout(1200);
+check('被作废的那条流回来也不再往产物里写', await page.locator('.lg-qs-output.is-done').count(), 0);
+await page.locator('.lg-qs-io-input').fill('用三句话说明什么是模型网关');
+await page.waitForTimeout(300);
+
+/*
   ── Gemini 入口：模型只认路由段，页面不许拿 body 里的 model 冒充「钉住了」──────
   serving 的 gemini 端点从 `models/{model}:generateContent` 这一段取模型，body 里的
   `model` 它不读。所以 body 写着 demo/chat-2、路径写着 models/auto 时，真跑的是池调度，

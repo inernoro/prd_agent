@@ -913,6 +913,26 @@ export function QuickstartPage() {
    * 的流式帧格式各不相同，这里不假装支持——它们一次性收完再渲染，并在界面上说明。
    * 返回内容按形状判断：先看有没有图片（b64/url），再看有没有音频，最后当文字。
    */
+  /**
+   * 作废「当前这一跑」——**每一个会改变请求内容的输入都必须调它**。
+   *
+   * 会改请求的有四样：模型、提示词、附件、入口协议。它们中任何一个变了，
+   * 屏幕上那份产物就不再是「照当前这些输入跑出来的」；而在途的那条回来时
+   * 还会继续往新输入上写，于是页面显示的回答与它旁边的请求内容根本不是一回事
+   * （cURL 片段已经换成新的了，产物却是旧输入跑出来的）。
+   *
+   * 上一轮我只给模型那一个输入装了这套动作——判据当时写成了「用户报的是哪个控件」，
+   * 而它应该是「这个控件改不改请求」。所以收敛成这一个函数，四处都调；
+   * 守卫按调用点数量钉住，日后新增输入漏调即红。
+   */
+  const invalidateActiveRun = () => {
+    realRunSeq.current += 1;
+    realRunAbort.current?.abort();
+    setLiveOutput(null);
+    setTestResult(null);
+    setTesting(false);
+  };
+
   const runRealTest = async () => {
     // 闸放在函数里而不是只放在按钮上：按钮是一处调用点，函数是唯一出口。
     // 只守按钮，下一个调用点（快捷键、重试链接、别处的入口）会绕过去。
@@ -1052,7 +1072,7 @@ export function QuickstartPage() {
   /** 读上传的文件：图片转 data URL 进请求体，文本填进输入框当正文。不上传后端。 */
   const pickAttachment = async (file: File | null) => {
     if (!file) return;
-    setTestResult(null);
+    invalidateActiveRun();
     if (file.size > 4 * 1024 * 1024) {
       setActionError('测试输入请控制在 4 MB 以内。');
       return;
@@ -1562,20 +1582,7 @@ export function QuickstartPage() {
                             list="lg-qs-model-options"
                             placeholder="auto（由模型池调度）"
                             value={modelQuery}
-                            onChange={(event) => {
-                              setModelQuery(event.target.value);
-                              setTestResult(null);
-                              /*
-                                换模型必须把上一跑连同它的产物一起作废。
-                                只清 testResult 不够：产物还挂在屏幕上，而「实际执行」那句
-                                会跟着新选择重新渲染——A 的回答被贴上 B 的名字。
-                                在跑的那条也要顶掉，否则它回来时照样往新选择上写。
-                              */
-                              realRunSeq.current += 1;
-                              realRunAbort.current?.abort();
-                              setLiveOutput(null);
-                              setTesting(false);
-                            }}
+                            onChange={(event) => { setModelQuery(event.target.value); invalidateActiveRun(); }}
                           />
                           <datalist id="lg-qs-model-options">
                             {poolModels.map((model) => <option key={`${model.platformId}:${model.modelId}`} value={model.modelId} />)}
@@ -1608,7 +1615,7 @@ export function QuickstartPage() {
                                   onChange={(event) => { void pickAttachment(event.target.files?.[0] ?? null); event.target.value = ''; }}
                                 />
                               </label>
-                              {attachment ? <button type="button" className="lg-text-link" onClick={() => { setAttachment(null); setTestResult(null); }}>移除</button> : null}
+                              {attachment ? <button type="button" className="lg-text-link" onClick={() => { setAttachment(null); invalidateActiveRun(); }}>移除</button> : null}
                             </div>
                             <div className={`lg-qs-io-image${attachment ? ' is-ready' : ''}`}>
                               {attachment
@@ -1638,7 +1645,7 @@ export function QuickstartPage() {
                             aria-label="试跑要发送的内容"
                             placeholder="写一句要发给模型的话，例如：用三句话说明什么是模型网关。留空发 Reply with OK。"
                             value={testPrompt}
-                            onChange={(event) => { setTestPrompt(event.target.value); setTestResult(null); }}
+                            onChange={(event) => { setTestPrompt(event.target.value); invalidateActiveRun(); }}
                           />
                         </div>
 
@@ -1709,7 +1716,7 @@ export function QuickstartPage() {
                       <select
                         aria-label="入口协议"
                         value={protocol}
-                        onChange={(event) => { setProtocol(event.target.value as Protocol); setTestResult(null); if (bundle) void checkRealRoute(bundle); }}
+                        onChange={(event) => { setProtocol(event.target.value as Protocol); invalidateActiveRun(); if (bundle) void checkRealRoute(bundle); }}
                         style={inputStyle}
                       >
                         {PROTOCOLS.map((item) => <option key={item.id} value={item.id}>{`${item.label} ${item.path}`}</option>)}
