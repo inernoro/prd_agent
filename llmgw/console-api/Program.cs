@@ -5587,6 +5587,15 @@ async Task RetireStaleSystemKeysAsync(string tenantId, string winnerKeyId)
         Builders<BsonDocument>.Update.Set("Enabled", false).Set("RotationState", "revoked").Set("UpdatedAt", DateTime.UtcNow));
 }
 
+/*
+  「这条 appCaller 此刻接不接流量」——与 serving 的 GatewayAppCallerPolicy.AllowsTraffic 同一套枚举。
+  console-api 按既定架构不引用 PrdAgent.*，所以这里有一份镜像；守卫钉住两侧枚举一致，
+  并钉住这个判定**全文件只此一处**：同一个判断在这个仓库里已经被抄散过两次，
+  每多一份就多一条会漏判的路径，而漏判的后果都是「页面签出一把一调用即被拒的钥匙」。
+*/
+static bool AppCallerAcceptsTraffic(string? status)
+    => (status ?? "discovered").Trim().ToLowerInvariant() is "discovered" or "configured" or "active";
+
 /// <summary>
 /// 系统级网关访问凭据的自愈入口：确保系统团队在、appCaller 已登记、有一把当下真的能过门的 key。
 /// 任何一步失败都返回**说得出原因**的错误，绝不把裸 HTTP 状态码丢给用户。
@@ -5674,6 +5683,27 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
                 $"调用用途码「{SystemIntentDraftAppCaller}」已被本租户的业务调用方占用。"
                 + "系统功能不会接管它——去「调用用途」把那条改成别的码，或联系管理员协调，之后再回来。");
+        }
+
+        /*
+          归属对了还不够，还得问一句「它现在接不接流量」。
+
+          这条虽然是系统自建的，但它照常出现在「调用用途」页里，管理员可以像对任何一条那样
+          把它停用或归档（那个批量端点不区分是不是系统的）。停用之后这里若照旧发凭据，
+          serving 会对每一次「测试连接」与「一句话推导」回 APP_CALLER_DISABLED，
+          而这个码不在 IsSystemCredentialFixableCode 里——重签修不好它，自愈会一直空转，
+          用户看到的只是一个反复失败、原因看不懂的功能。
+
+          不替他改回去：那是他在「调用用途」页上做出的显式动作，系统悄悄撤销它就成了
+          「我点的和实际发生的不是一件事」。改成当场停下并说清是哪一种状态、去哪一页恢复。
+        */
+        var systemCallerStatus = (existingCaller.AsNullableString("Status") ?? "discovered").Trim().ToLowerInvariant();
+        if (!AppCallerAcceptsTraffic(systemCallerStatus))
+        {
+            return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
+                $"系统内部调用用途「{SystemIntentDraftAppCaller}」当前处于「{systemCallerStatus}」状态，不接受流量。"
+                + "去「调用用途」把它改回启用（configured / active），控制台自己的模型调用才能恢复——"
+                + "在那之前重签密钥也没用，被拒的是这条用途而不是密钥。");
         }
 
         // 存量迁移：上一版把系统 appCaller 挂在了租户第一个业务团队上。留着不动有两个后果——
@@ -6581,6 +6611,40 @@ app.MapPost("/gw/app-callers", async (HttpContext http, [FromBody] CreateGateway
     if (!teamExists || access.Role == LlmGwTenantRoles.Developer && !access.TeamIds.Contains(teamId, StringComparer.Ordinal))
         return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("TEAM_SCOPE_DENIED", "不能为该团队创建 appCaller"), jsonOptions, 403);
 
+    /*
+      「查到一条同码记录，能不能原样交给调用方」——两条路径共用这一个判定：
+      先查到的那条，以及插入撞唯一索引之后回读的胜者。
+
+      为什么必须共用：这两条路径此前各写各的，先查到那条判了归属与状态，
+      撞索引那条只判了归属。于是并发下的胜者是一条停用记录时，它会被当成
+      「登记成功」原样返回，页面接着为它签一把 key，而 serving 当场回
+      APP_CALLER_DISABLED——同一个洞在同一个端点里开了两次，只因为判定抄了两份。
+      判定只此一份，两条路径都从这里过（守卫钉住这两件事）。
+    */
+    IResult? RejectUnusableExistingAppCaller(BsonDocument candidate)
+    {
+        if (!string.Equals(candidate.AsNullableString("TeamId"), teamId, StringComparison.Ordinal))
+            return Json(ApiEnvelope<GatewayAppCallerItem>.Fail(
+                "APP_CALLER_IDENTITY_CONFLICT", "该 appCaller 已归属当前租户中的其他团队"), jsonOptions, 409);
+
+        /*
+          已存在但**不接流量**（停用 / 归档）时不许原样返回。
+
+          调用方拿到这条身份的下一步就是用它签一把 key，而 serving 会当场回
+          APP_CALLER_DISABLED——页面等于把一把注定用不了的钥匙交到用户手上。
+          判定必须落在这里：这是全库唯一一次**精确**身份查询（AppCallerCode + RequestType，
+          租户内、无分页），页面那边只能按 search 模糊搜一页，用途多过一页时根本搜不到它。
+        */
+        var candidateStatus = (candidate.AsNullableString("Status") ?? "discovered").Trim().ToLowerInvariant();
+        if (!AppCallerAcceptsTraffic(candidateStatus))
+            return Json(ApiEnvelope<GatewayAppCallerItem>.Fail(
+                "APP_CALLER_DISABLED",
+                $"调用用途「{appCallerCode}」已存在，但处于「{candidateStatus}」状态，不接受流量。"
+                + "先去「调用用途」把它恢复，或换一个用途名——用它签出来的密钥一调用就会被拒。"), jsonOptions, 409);
+
+        return null;
+    }
+
     var identity = Builders<BsonDocument>.Filter.And(
         Builders<BsonDocument>.Filter.Eq("AppCallerCode", appCallerCode),
         Builders<BsonDocument>.Filter.Eq("RequestType", requestType));
@@ -6601,14 +6665,8 @@ app.MapPost("/gw/app-callers", async (HttpContext http, [FromBody] CreateGateway
           与 serving 的 GatewayAppCallerPolicy 同一套枚举，列表写在这里是因为
           console-api 按既定架构不引用 PrdAgent.*（守卫钉住两侧一致）。
         */
-        var existingStatus = (existing.AsNullableString("Status") ?? "discovered").Trim().ToLowerInvariant();
-        if (existingStatus is not ("discovered" or "configured" or "active"))
-        {
-            return Json(ApiEnvelope<GatewayAppCallerItem>.Fail(
-                "APP_CALLER_DISABLED",
-                $"调用用途「{appCallerCode}」已存在，但处于「{existingStatus}」状态，不接受流量。"
-                + "先去「调用用途」把它恢复，或换一个用途名——用它签出来的密钥一调用就会被拒。"), jsonOptions, 409);
-        }
+        var rejection = RejectUnusableExistingAppCaller(existing);
+        if (rejection is not null) return rejection;
         return Json(ApiEnvelope<GatewayAppCallerItem>.Ok(MapGatewayAppCaller(existing)), jsonOptions);
     }
 
@@ -6644,9 +6702,12 @@ app.MapPost("/gw/app-callers", async (HttpContext http, [FromBody] CreateGateway
     catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
     {
         var winner = await gwAppCallers.Find(tenantIdentity, identityOptions).FirstOrDefaultAsync();
-        if (winner is not null && string.Equals(winner.AsNullableString("TeamId"), teamId, StringComparison.Ordinal))
-            return Json(ApiEnvelope<GatewayAppCallerItem>.Ok(MapGatewayAppCaller(winner)), jsonOptions);
-        return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("APP_CALLER_IDENTITY_CONFLICT", "该 appCaller 已被并发创建，请刷新后重试"), jsonOptions, 409);
+        if (winner is null)
+            return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("APP_CALLER_IDENTITY_CONFLICT", "该 appCaller 已被并发创建，请刷新后重试"), jsonOptions, 409);
+        // 胜者走与「先查到那条」完全相同的一道门：归属对不上、或它此刻不接流量，都不能算登记成功。
+        var winnerRejection = RejectUnusableExistingAppCaller(winner);
+        if (winnerRejection is not null) return winnerRejection;
+        return Json(ApiEnvelope<GatewayAppCallerItem>.Ok(MapGatewayAppCaller(winner)), jsonOptions);
     }
 
     try

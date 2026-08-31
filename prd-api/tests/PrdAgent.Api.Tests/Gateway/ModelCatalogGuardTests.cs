@@ -311,10 +311,31 @@ public sealed class ModelCatalogMirrorGuardTests
                 customMessage: $"「{status}」在 serving 侧应当放行；两侧的枚举必须一致");
         }
 
+        // 控制台侧的镜像判定：枚举逐字一致。
         consoleProgram.ShouldContain(
-            "existingStatus is not (\"discovered\" or \"configured\" or \"active\")",
-            customMessage: "幂等创建必须按 serving 那套枚举判：放行了 serving 不认的状态，"
+            "is \"discovered\" or \"configured\" or \"active\"",
+            customMessage: "控制台必须按 serving 那套枚举判：放行了 serving 不认的状态，"
                 + "页面就会签出一把一调用即 APP_CALLER_DISABLED 的 key");
+
+        // **只此一份**。这个判断在本仓库被抄散过两次，每一次都留下一条漏判的路径：
+        // 幂等创建里「先查到那条」判了、撞唯一索引回读的胜者没判；系统 appCaller 判了归属、没判状态。
+        // 抄第三份就会有第三条。所以判定收敛成一个函数，并钉住它的定义只出现一次。
+        CountOccurrences(consoleProgram, "static bool AppCallerAcceptsTraffic(").ShouldBe(
+            1,
+            customMessage: "「这条 appCaller 接不接流量」只许有一个定义——多一份就多一条会漏判的路径");
+
+        // 三条路径都得从这道门过：幂等创建先查到的那条、撞索引回读的胜者、系统自建的那条。
+        CountOccurrences(consoleProgram, "AppCallerAcceptsTraffic(").ShouldBeGreaterThanOrEqualTo(
+            3,
+            customMessage: "定义 1 处 + 至少 2 个调用点（幂等创建那道共用门、系统自建的那条）；"
+                + "少一个调用点就是又留下一条「查到了就当能用」的路径");
+
+        // 幂等创建的两条路径必须走同一道门，而不是各写各的。
+        CountOccurrences(consoleProgram, "RejectUnusableExistingAppCaller(").ShouldBe(
+            3,
+            customMessage: "定义 1 处 + 两个调用点（先查到那条、撞唯一索引回读的胜者）——"
+                + "撞索引那条此前只判归属不判状态，并发下的胜者是停用记录时会被当成登记成功");
+
         consoleProgram.ShouldContain(
             "\"APP_CALLER_DISABLED\"",
             customMessage: "拒绝要给专属错误码，否则页面只能显示一句「创建失败」，用户不知道去哪恢复");
@@ -322,6 +343,19 @@ public sealed class ModelCatalogMirrorGuardTests
         // serving 侧不认的状态，控制台也不许出现在那张放行清单里。
         PrdAgent.Core.LlmGateway.GatewayAppCallerPolicy.AllowsTraffic("archived").ShouldBeFalse();
         PrdAgent.Core.LlmGateway.GatewayAppCallerPolicy.AllowsTraffic("disabled").ShouldBeFalse();
+    }
+
+    /// <summary>数子串出现次数：判「只此一份」与「每条路径都接上了」都靠它，比断言某一行存在更贴合。</summary>
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        var at = haystack.IndexOf(needle, StringComparison.Ordinal);
+        while (at >= 0)
+        {
+            count++;
+            at = haystack.IndexOf(needle, at + needle.Length, StringComparison.Ordinal);
+        }
+        return count;
     }
 
     private static string RepoFile(string relativePath)
