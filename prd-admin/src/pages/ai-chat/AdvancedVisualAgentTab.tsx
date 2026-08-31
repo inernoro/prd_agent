@@ -174,7 +174,7 @@ import { buildVisualAgentModelOptions, selectVisualModel, type VisualAgentModelO
 import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
 import { LlmLogsPanel } from '@/pages/LlmLogsPage';
-import { createViewportUiSync } from './viewportUiSync';
+import { cancelViewportAnimation, createViewportUiSync } from './viewportUiSync';
 import { getVisualAgentLogsReal, getVisualAgentLogsMetaReal, getVisualAgentLogDetailReal } from '@/services/real/visualAgent';
 import { autoSubmitImages } from '@/services/real/submissions';
 import { downloadGeneratedImage } from '@/lib/generatedImageDownload';
@@ -1451,6 +1451,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 性能关键：高频交互（wheel/pan/drag）不走 React setState，否则会触发整棵画布重渲染导致“不跟手”
   // 用 ref + rAF 直接更新 worldRef 的 transform；state 仅用于 UI 展示（低频同步）
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
+  const cameraAnimRef = useRef<number | null>(null);
   const [camera, setCamera] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const zoomRef = useRef(DEFAULT_ZOOM);
   const cameraRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -1460,6 +1461,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setCamera({ ...cameraRef.current });
   }), []);
   useEffect(() => () => {
+    cancelViewportAnimation(cameraAnimRef);
     viewportUiSync.cancel();
     if (rafTransformRef.current != null) window.cancelAnimationFrame(rafTransformRef.current);
     rafTransformRef.current = null;
@@ -4024,6 +4026,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [confirmAndDeleteSelectedKeys, focusStage, clearSelectionWithChips]);
 
   const zoomAt = useCallback((clientX: number, clientY: number, nextZoom: number) => {
+    cancelViewportAnimation(cameraAnimRef);
     const el = stageRef.current;
     if (!el) {
       setViewport(nextZoom, cameraRef.current, { syncUi: true });
@@ -4197,7 +4200,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     [placing]
   );
 
-  const cameraAnimRef = useRef<number | null>(null);
   const animateCameraToWorldCenter = useCallback(
     (worldCx: number, worldCy: number) => {
       if (!stageSize.w || !stageSize.h) return;
@@ -6101,6 +6103,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   /** 适配指定内容到视口（Figma 风格）*/
   const fitItemsToViewport = useCallback(
     (items: CanvasImageItem[]) => {
+      cancelViewportAnimation(cameraAnimRef);
       if (items.length === 0) {
         // 回到原点附近
         setViewport(DEFAULT_ZOOM, { x: Math.round(stageSize.w / 2), y: Math.round(stageSize.h / 2) }, { syncUi: true });
@@ -6153,6 +6156,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   /** Cmd/Ctrl+1: 缩放到 100%（保持当前视口中心不变） */
   const zoomTo100 = useCallback(() => {
+    cancelViewportAnimation(cameraAnimRef);
     // 计算当前视口中心对应的世界坐标
     const currentZoom = zoomRef.current;
     const currentCam = cameraRef.current;

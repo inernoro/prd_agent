@@ -1,9 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createViewportUiSync } from './viewportUiSync';
+import { cancelViewportAnimation, createViewportUiSync } from './viewportUiSync';
 
 afterEach(() => vi.useRealTimers());
 
 describe('画布缩放与进度层最终状态同步', () => {
+  it('手动缩放取消尚未结束的自动适配，重复取消无副作用', () => {
+    const frame = { current: 17 as number | null };
+    const cancel = vi.fn();
+    cancelViewportAnimation(frame, cancel);
+    cancelViewportAnimation(frame, cancel);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledWith(17);
+    expect(frame.current).toBeNull();
+  });
+
   it('连续缩放结束后补齐最后一次状态，不依赖下一个手势', () => {
     vi.useFakeTimers();
     let zoom = 0.5;

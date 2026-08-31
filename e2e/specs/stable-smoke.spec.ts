@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page, type Response, type TestInfo } from '@playwright/test';
+import { devices, expect, test, type APIRequestContext, type Page, type Response, type TestInfo } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -167,6 +167,7 @@ function downloadFileName(contentDisposition: string) {
 type ImageModelPool = {
   id: string;
   code: string;
+  name: string;
   isDefault?: boolean;
   resolutionType?: string;
   models: Array<{ healthStatus?: string }>;
@@ -2608,14 +2609,36 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(overflow).toBeLessThanOrEqual(1);
   });
 
-  test('[VIS-009] 移动端视觉输入与结果区域无横向溢出', async ({ page, request }, testInfo) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    const module = modules.find((item) => item.key === 'visual-creation') || modules[0];
-    await openModule(page, request, module, testInfo);
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-    expect(overflow).toBeLessThanOrEqual(1);
-    const interactive = page.locator('textarea:visible, input:visible, button:visible');
-    expect(await interactive.count()).toBeGreaterThan(0);
+  test('[VIS-009][REG-visual-policy-001] 真实触控手机使用业务默认及授权尺寸', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const page = await context.newPage();
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'mobile-business-policy');
+    try {
+      const models = await readEnvelope<ImageModelPool[]>(await page.request.get('/api/visual-agent/image-gen/models', { headers: authHeaders(token) }));
+      const defaults = models.filter(model => model.isDefault);
+      expect(defaults).toHaveLength(1);
+      const model = defaults[0];
+      const capability = await readEnvelope<{ matched: boolean; sizesByResolution?: Record<string, Array<{size:string;aspectRatio:string}>> }>(
+        await page.request.get(`/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(model.code)}`, { headers: authHeaders(token) }));
+      expect(capability.matched).toBe(true);
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
+      await expect(page.getByText(model.name, { exact: true }).first()).toBeVisible();
+      const sizes = [...new Map(Object.values(capability.sizesByResolution ?? {}).flat().map(option => [option.size, option])).values()];
+      expect(sizes.length).toBeGreaterThan(0);
+      for (const size of sizes) await expect(page.getByRole('button', { name: `${size.aspectRatio} · ${size.size}`, exact: true })).toBeAttached();
+      await expect(page.getByPlaceholder('描述你想生成的画面…')).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+      await testInfo.attach('mobile-business-model-policy', { body: await page.screenshot(), contentType: 'image/png' });
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      await context.close();
+    }
   });
 
   test('[MVIS-012] 移动端参考图、尺寸、输入和移除操作均可触达', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
@@ -2634,7 +2657,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(page.getByAltText('参考图')).toBeVisible({ timeout: 15_000 });
       await expect(page.getByPlaceholder('描述要怎么改这张图…')).toBeVisible();
       await expect(page.getByRole('button', { name: '生成', exact: true })).toBeVisible();
-      await expect(page.getByText('方形 1:1', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: /^1:1 · \d+x\d+$/ })).toBeVisible();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow).toBeLessThanOrEqual(1);
       await testInfo.attach('multi-image-mobile-input', { body: await page.screenshot(), contentType: 'image/png' });
