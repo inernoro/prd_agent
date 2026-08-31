@@ -7,6 +7,7 @@ import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import { classifyDeployRuntime } from './deploy-runtime.js';
+import { isAutoWakeEligible } from './branch-wake-eligibility.js';
 import { computeWaitTiming } from './wait-timing.js';
 import { GEM_STORY_CSS, buildGemStorySvg, serverGemMineralForStatus } from '../loading-pages/gem.js';
 import { resolveEffectiveProfile } from './container.js';
@@ -1305,15 +1306,12 @@ export class ProxyService {
   }
 
   private shouldAutoWakeCooled(branch: BranchEntry): boolean {
+    // 分支够不够格由唯一判定源回答（branch-wake-eligibility.ts，含来源分档与
+    // executorId / 空 services 兜底）；这里只管「唤醒回调接没接上」这件本地的事。
+    // 曾经这里和 index.ts 各写一份 lastStopSource 判断，两份都只认 'scheduler'，
+    // 于是 auto-lifecycle 停的分支（停机文案写着「下次访问重建」）永久 503。
     if (!this.onReviveCooled) return false;
-    if (branch.lastStopSource !== 'scheduler') return false;
-    if (branch.status !== 'idle') return false;
-    // Executor-owned (remote) branches can't be revived by a local docker
-    // restart — a resolved local deploy clears executorId, so a truthy value
-    // means a remote executor (present or temporarily absent). The index.ts
-    // revive callback double-guards this.
-    if (branch.executorId) return false;
-    return Object.keys(branch.services || {}).length > 0;
+    return isAutoWakeEligible(branch);
   }
 
   /**

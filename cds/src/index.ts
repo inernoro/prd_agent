@@ -17,6 +17,7 @@ import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq } 
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
+import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
 import { WorktreeService } from './services/worktree.js';
@@ -2996,26 +2997,17 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
   proxyService.setOnReviveCooled(async (slug: string) => {
     const branch = stateService.getBranch(slug);
     if (!branch) return;
-    // Re-check eligibility on this side: only scheduler-cooled, still idle, with
-    // preserved containers. Guards against a status change between the proxy's
-    // check and this async entry.
-    if (branch.lastStopSource !== 'scheduler') return;
-    if (branch.status !== 'idle') return;
+    // Re-check eligibility on this side against the SAME single predicate the
+    // proxy used — guards against a status change between the proxy's check and
+    // this async entry. 曾经这里另写一份 lastStopSource 判断，两份都只认
+    // 'scheduler'，改一处忘一处的风险白送（判据纪律形状 3）。
+    if (!isAutoWakeEligible(branch)) return;
     const services = Object.values(branch.services);
-    if (services.length === 0) return;
 
-    // Executor-owned branches can't be revived by a LOCAL docker restart. A
-    // resolved deploy clears executorId to undefined for embedded/local runs
-    // (branches.ts: `stillRemote?.role==='embedded' || !stillRemote` → undefined),
-    // so a truthy executorId always means a REMOTE executor — whether currently
-    // registered OR temporarily absent from the registry (coordinator restart /
-    // missed heartbeat). In both cases the container runs off-master and the
-    // local `restartServiceInPlace` is a doomed no-op that would flip the branch
-    // to `error` and stop future retries. Skip without touching state so the
-    // diagnostic page stays and a later visit retries once the executor
-    // re-registers. Mirrors the auto-lifecycle stop path's
-    // `if (branch.executorId && !remoteExecutor)` remote-unavailable handling.
-    if (branch.executorId) return;
+    // executorId（远端执行器）那一条已经在 isAutoWakeEligible 里了，不在这里重复判——
+    // 理由是本机 restartServiceInPlace 对跑在别处的容器是注定失败的空操作，失败还会把
+    // 分支翻成 error、断掉后续重试；跳过时不碰状态，等执行器重新注册后下次访问再试。
+    // 一份判据一处定义，见 services/branch-wake-eligibility.ts。
 
     // Acquire the operation lease BEFORE mutating state — throws on conflict
     // (a deploy / cooling already owns the branch), in which case we abort
