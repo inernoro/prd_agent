@@ -65,9 +65,26 @@ function invalidSubdomain(sub: string): boolean {
   return !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(sub);
 }
 
+/** DNS 首标签上限；与服务端 preview-entrypoints 的 DNS_LABEL_MAX_LENGTH 同值。 */
+const DNS_LABEL_MAX_LENGTH = 63;
+
+/**
+ * 这条子域的命名 host 能不能在浏览器里**原样**算出来。
+ *
+ * 服务端 `namedServiceLabel()` 是命名 host 的唯一拼法：超过 63 字符时它会按段截断
+ * previewSlug 再接一段 sha1 摘要。那套压缩逻辑绝不能在前端复刻（复刻就是判据分裂，
+ * 两端一改就漂），所以只在「不需要压缩」的长度区间内才由前端拼——这个区间里
+ * 拼出来的字符串与服务端逐字相同。超出区间就不显示地址，如实说明保存后才知道
+ * （Codex review 第四轮 P1：此前无条件拼，长分支会把一条解析不了的地址当真地址展示）。
+ */
+function canRenderNamedHostLocally(previewSlug: string, subdomain: string): boolean {
+  return `${previewSlug}-${subdomain}`.length <= DNS_LABEL_MAX_LENGTH;
+}
+
 /**
  * 表单行 → 地址预览。口径与后端 readWebEntryConfig 一致：有子域走命名 host，
- * 承载根路径的主应用走主域名。这里只是预览，真正的 URL 以保存后的响应为准。
+ * 承载根路径的主应用走主域名。这里只是草稿预览，真正的 URL 以保存后服务端返回的为准；
+ * 未改动的行直接用服务端下发的 `service.url`，不本地推。
  */
 function previewUrlFor(
   row: Row,
@@ -77,8 +94,16 @@ function previewUrlFor(
 ): string {
   // 非法子域拼出来的 host 根本发不出去，别把它渲染成一条可点的地址骗人
   if (!row.name || !previewSlug || invalidSubdomain(row.subdomain)) return '';
+  // 这一行跟服务端扫描回来的值一模一样 → 直接用服务端算好的地址（权威口径）
+  if (service?.url
+    && row.subdomain === service.effective.subdomain
+    && row.name === service.effective.name
+    && row.path === (service.effective.path || '/')) {
+    return service.url;
+  }
   const path = row.path && row.path !== '/' ? row.path : '';
   if (row.subdomain && !service?.handlesRoot) {
+    if (!canRenderNamedHostLocally(previewSlug, row.subdomain)) return '';
     return `https://${previewSlug}-${row.subdomain}.${rootDomain}${path}`;
   }
   const prefix = (service?.pathPrefixes || []).map((p) => p.trim()).find((p) => p && p !== '/');
@@ -297,8 +322,15 @@ export function WebEntryConfigDialog({
             // 这条地址仍然要给出来，否则用户以为自己什么都没配到。
             const routeOnlyUrl = !row.name && row.subdomain && !invalidSubdomain(row.subdomain)
               && !service?.handlesRoot && config?.previewSlug
+              && canRenderNamedHostLocally(config.previewSlug, row.subdomain)
               ? `https://${config.previewSlug}-${row.subdomain}.${config.rootDomain}`
               : '';
+            // 需要服务端压缩首标签（分支名过长）时前端算不出真地址，如实说明而不是编一个
+            const hostNeedsServerSide = Boolean(row.subdomain)
+              && !invalidSubdomain(row.subdomain)
+              && !service?.handlesRoot
+              && Boolean(config?.previewSlug)
+              && !canRenderNamedHostLocally(config?.previewSlug || '', row.subdomain);
             return (
               <div key={row.serviceId} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/30 p-3">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -391,7 +423,11 @@ export function WebEntryConfigDialog({
                     </a>
                   ) : (
                     <span className="text-muted-foreground">
-                      {invalidSubdomain(row.subdomain) ? '子域不合法，改好后这里显示地址' : '填入口名称后这里显示地址'}
+                      {invalidSubdomain(row.subdomain)
+                        ? '子域不合法，改好后这里显示地址'
+                        : hostNeedsServerSide
+                          ? '分支名较长，实际地址由服务端压缩生成，保存后显示'
+                          : '填入口名称后这里显示地址'}
                     </span>
                   )}
                 </div>

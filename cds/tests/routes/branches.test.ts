@@ -854,6 +854,55 @@ describe('Branch Routes', () => {
       expect(stateService.getBranchProfileOverride('branch-a', 'gateway')).toBeUndefined();
     });
 
+    /*
+     * 同一次请求内部的撞车：两个当前都没配子域的服务，一个填 llmgw、一个填 llmgw-web，
+     * 各自跟保存前状态比都干净、原始名字符串也不相等——只有按「保存后的结果态」比
+     * 展开 host 才抓得到（Codex review 第四轮 P1）。
+     */
+    it('同一次请求里两个服务的子域展开后重合也算撞车', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      stateService.addBuildProfile({
+        id: 'legacy', projectId: 'proj-a', name: '旧网关', dockerImage: 'node:20', workDir: '.',
+        containerPort: 8092,
+      });
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway', 'legacy']);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'project',
+        entries: [
+          { serviceId: 'gateway', name: 'GW', subdomain: 'llmgw' },
+          { serviceId: 'legacy', name: '旧 GW', subdomain: 'llmgw-web' },
+        ],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(409);
+      expect(stateService.getBuildProfile('gateway')!.subdomain).toBeUndefined();
+      expect(stateService.getBuildProfile('legacy')!.subdomain).toBeUndefined();
+    });
+
+    it('同一次请求里把子域从一个服务搬到另一个服务是合法的', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      stateService.addBuildProfile({
+        id: 'legacy', projectId: 'proj-a', name: '旧网关', dockerImage: 'node:20', workDir: '.',
+        containerPort: 8092, subdomain: 'llmgw', webEntry: { name: '旧 GW', path: '/' },
+      });
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway', 'legacy']);
+
+      const res = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'project',
+        entries: [
+          { serviceId: 'legacy', name: '', subdomain: '' },
+          { serviceId: 'gateway', name: '新 GW', subdomain: 'llmgw' },
+        ],
+      }, { 'X-Test-Key': 'A' });
+
+      expect(res.status).toBe(200);
+      expect(stateService.getBuildProfile('legacy')!.subdomain).toBeUndefined();
+      expect(stateService.getBuildProfile('gateway')!.subdomain).toBe('llmgw');
+    });
+
     it('原样重存自己已有的子域不算撞车（豁免只认本服务自己的 host）', async () => {
       seedProject('proj-a', 'a');
       seedProfiles('proj-a');

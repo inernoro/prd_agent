@@ -15702,6 +15702,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     serviceId: string,
     subdomain: string,
     roots: string[],
+    /**
+     * 本次请求里各服务**将要**变成的子域（serviceId → subdomain，空串表示要清掉）。
+     * 判定必须按结果态做：只跟保存前的状态比，同一次请求里两个服务分别填
+     * `llmgw` / `llmgw-web` 会双双放行（Codex review 第四轮 P1）。
+     */
+    pendingSubdomains: ReadonlyMap<string, string> = new Map(),
   ): string[] => {
     const project = stateService.getProject(branch.projectId);
     const slug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug;
@@ -15714,25 +15720,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const conflicts: string[] = [];
     const effectiveProfiles = stateService.getEffectiveProfilesForBranch(branch)
       .map((bp) => ({ id: bp.id, resolved: resolveEffectiveProfile(bp, branch) }));
-    // 本服务**当前**已发布的那些 host —— 豁免只认它们，不认「凡是本分支的都放行」。
-    const currentSub = effectiveProfiles.find((p) => p.id === serviceId)?.resolved.subdomain || '';
-    const ownHosts = new Set(currentSub ? hostsFor(currentSub) : []);
     for (const { id, resolved } of effectiveProfiles) {
-      if (id === serviceId || !resolved.subdomain) continue;
-      const otherHosts = new Set(hostsFor(resolved.subdomain));
+      if (id === serviceId) continue;
+      // 结果态优先：本次请求给它改成什么，就按什么判（没提到的服务沿用现值）。
+      const otherSub = pendingSubdomains.get(id) ?? resolved.subdomain ?? '';
+      if (!otherSub) continue;
+      const otherHosts = new Set(hostsFor(otherSub));
       const overlap = hosts.filter((host) => otherHosts.has(host));
       if (overlap.length > 0) {
         conflicts.push(
-          `分支 "${branch.id}" 的服务 "${id}"（子域 "${resolved.subdomain}"）已经占用 ${overlap.join('、')}（含历史别名）`,
+          `分支 "${branch.id}" 的服务 "${id}"（子域 "${otherSub}"）已经占用 ${overlap.join('、')}（含历史别名）`,
         );
       }
     }
     for (const collision of findPreviewHostCollisions(hosts)) {
-      // 只豁免「本服务自己现在就发布着的那条 host」；同分支别的服务占的、
-      // 或本服务换名后腾不出来的旧 host，都是真冲突。
-      if (collision.conflictWith === branch.id
-        && collision.reason === 'service-subdomain'
-        && ownHosts.has(collision.domain)) continue;
+      // 同分支的「命名服务 host」一律交给上面那段判：它按**结果态**比对（含本次请求
+      // 里别的服务要改成什么），比这里基于保存前状态的枚举更准。留在这里判反而会把
+      // 「把同一个子域从服务 A 挪到服务 B」这种合法搬迁误判成撞车。
+      // 别名 / 自定义域名占位（reason 'alias' / 'custom-domain'）不在此列，照常报。
+      if (collision.conflictWith === branch.id && collision.reason === 'service-subdomain') continue;
       conflicts.push(`"${collision.domain}" 已被分支 "${collision.conflictWith}" 占用`);
     }
     const owners = occupiedHostOwners(stateService.getAllBranches(), roots);
@@ -15864,23 +15870,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
           });
           return;
         }
-        const roots = config.rootDomains?.length ? config.rootDomains : [primaryRoot];
-        // 存分支档只影响本分支；存项目档要把**每条会继承这个值的分支**都验一遍。
-        const affected = scope === 'branch'
-          ? [entry]
-          : branchesInheritingProfile(entry.projectId || 'default', serviceId, id);
-        const collisions = affected.flatMap((b) =>
-          namedHostConflictsOnBranch(b, serviceId, subdomain, roots).map((message) => ({ branchId: b.id, message })),
-        );
-        if (collisions.length > 0) {
-          res.status(409).json({
-            error: `子域 "${subdomain}" 无法使用：${collisions.map((c) => c.message).join('; ')}`,
-            collisions,
-          });
-          return;
-        }
       }
       normalized.push({ serviceId, name, subdomain, path });
+    }
+
+    // ── 撞车校验：必须在**整份请求解析完之后**做，且按「这次保存之后的结果」判 ──
+    //
+    // 逐条边解析边判会漏掉同一次请求内部的撞车：两个当前都没配子域的服务，一个填
+    // `llmgw`、一个填 `llmgw-web`，各自跟**保存前**的状态比都干净，原始名字符串又不相等，
+    // 于是双双放行；可它们展开后的 host 完全重合，发布器只会把兼容 host 给其中一个
+    // （Codex review 第四轮 P1）。所以把本次请求的赋值先合进「结果态」，再拿结果去判。
+    const pendingSubdomains = new Map(normalized.map((item) => [item.serviceId, item.subdomain]));
+    const roots = config.rootDomains?.length ? config.rootDomains : [primaryRoot];
+    for (const item of normalized) {
+      if (!item.subdomain) continue;
+      // 存分支档只影响本分支；存项目档要把**每条会继承这个值的分支**都验一遍。
+      const affected = scope === 'branch'
+        ? [entry]
+        : branchesInheritingProfile(projectId, item.serviceId, id);
+      const collisions = affected.flatMap((b) =>
+        namedHostConflictsOnBranch(b, item.serviceId, item.subdomain, roots, pendingSubdomains)
+          .map((message) => ({ branchId: b.id, message })),
+      );
+      if (collisions.length > 0) {
+        res.status(409).json({
+          error: `子域 "${item.subdomain}" 无法使用：${collisions.map((c) => c.message).join('; ')}`,
+          collisions,
+        });
+        return;
+      }
     }
 
     try {
