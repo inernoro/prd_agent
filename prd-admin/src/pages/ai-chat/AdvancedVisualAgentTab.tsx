@@ -7089,7 +7089,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         ) : null}
                         {it.status === 'running' ? (
-                          <GenSweepLoader createdAt={it.createdAt} screenW={w * zoom} screenH={h * zoom} />
+                          <GenSweepLoader createdAt={it.createdAt} screenW={w * zoom} screenH={h * zoom} viewportRef={stageRef} />
                         ) : it.status === 'error' ? (
                           <div className="absolute inset-0">
                             {/* 灰色静止花瓣背景 */}
@@ -7175,7 +7175,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             {it.layerRole === 'layer' ? '图层分离中' : `预计 ${Math.round(w)} × ${Math.round(h)}`}
                           </div>
                         )}
-                        <GenSweepLoader createdAt={it.createdAt} screenW={w * zoom} screenH={h * zoom} />
+                        <GenSweepLoader createdAt={it.createdAt} screenW={w * zoom} screenH={h * zoom} viewportRef={stageRef} />
                       </div>
                     ) : kind === 'shape' ? (
                       <div className="w-full h-full flex items-center justify-center">
