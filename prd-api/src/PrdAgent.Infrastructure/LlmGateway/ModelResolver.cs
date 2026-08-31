@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using PrdAgent.Core.Models;
@@ -24,6 +25,27 @@ public class ModelResolver : IModelResolver
     private readonly ILLMRequestContextAccessor? _requestContext;
     private readonly string _internalTenantId;
 
+    /// <summary>
+    /// 名录门的执行档。默认 enforce（拦下并结构化失败）。
+    ///
+    /// 之所以要有 observe 档：这道门是**后加的**，而库里可能已经躺着名录外的模型
+    /// （在这道门存在之前导入的，那时还没有放行标记这回事）。一上来就 enforce，
+    /// 那些池会在下一次请求时集体开始失败，而管理员从错误码里才第一次得知这件事——
+    /// 用「变更前就存在的状态」去判定，正是 predicate-and-wiring-discipline 形状 5 的场景。
+    /// observe 档只记日志不拦，用来先看清楚「到底有多少存量会被拦」，再决定什么时候收紧。
+    /// </summary>
+    private readonly bool _catalogGateEnforces;
+
+    /// <summary>补标记迁移的完成状态（进程级，按网关库名分桶）。见 CatalogGateEnforcesAsync。</summary>
+    private static readonly ConcurrentDictionary<string, (bool Complete, DateTime CheckedAt)> CatalogMigrationState = new();
+
+    /// <summary>
+    /// 还没完成时的重查间隔：控制台可能晚几十秒才起来，不能一直按第一次的结论走。
+    /// 可由 `LlmGateway:ModelCatalogGateRecheckSeconds` 调整（默认 30 秒）——
+    /// 它只影响「多久回头再问一次库」，不参与判据本身。
+    /// </summary>
+    private readonly TimeSpan _catalogMigrationRecheckInterval;
+
     public ModelResolver(
         MongoDbContext db,
         IConfiguration config,
@@ -39,10 +61,426 @@ public class ModelResolver : IModelResolver
         _internalTenantId = config["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
+        // 只认 "observe" 这一个降档值；拼错、留空、写别的都落回 enforce——
+        // 一道安全门不该因为配置写错就悄悄敞开。
+        _catalogGateEnforces = !string.Equals(
+            config["LlmGateway:ModelCatalogGate"]?.Trim(), "observe", StringComparison.OrdinalIgnoreCase);
+        _catalogMigrationRecheckInterval =
+            int.TryParse(config["LlmGateway:ModelCatalogGateRecheckSeconds"], out var recheckSeconds) && recheckSeconds >= 0
+                ? TimeSpan.FromSeconds(recheckSeconds)
+                : TimeSpan.FromSeconds(30);
     }
 
     /// <inheritdoc />
     public async Task<ModelResolutionResult> ResolveAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+    {
+        /*
+          白名单第二道门。刻意做成「罩住整个解析」而不是「在每个 return 前判一次」——
+          下面那个方法有十几个成功出口（池 / 逻辑模型 / Offering / pinned / legacy 降级），
+          逐个补判据必然漏，而漏掉的那条正好是没人走过的分支（形状 2：链路只建到一半）。
+          薄壳只有一个出口，新增分支自动被罩住。
+        */
+        var resolved = await ResolveCoreAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        // 钉了具体成员的请求不许在门内换人：用户点名要 A，给他 B 就是「选 A 给 B」，
+        // 那是本仓库专门立过规矩要防的事（llm-gateway 规则 1/2）。宁可如实报这条钉住的用不了。
+        return await ApplyCatalogGateAsync(
+            resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct);
+    }
+
+    /// <summary>
+    /// 名录门（白名单的第二道，也是最后一道）。
+    ///
+    /// 第一道在控制台导入那一步：名录外模型要管理员显式放行才准入库，用户在那一刻就知道
+    /// 被拦了、为什么、怎么放行。这一道兜住**绕过控制台的路径**——直接写库、历史遗留数据、
+    /// 别的写入方——因为请求最终只认「库里有什么」，不认「它是怎么进来的」。
+    ///
+    /// 判定顺序刻意是「先查名录，查不到才读库」：名录命中零额外开销（绝大多数请求），
+    /// 只有名录外的模型才多一次带索引的文档读，用来看它有没有被放行过的戳。
+    ///
+    /// 重试候选一并过门：把主选拦下却把同样越界的候选留在重试链上，等于换条路照样打出去。
+    /// </summary>
+    private async Task<ModelResolutionResult> ApplyCatalogGateAsync(
+        ModelResolutionResult resolved,
+        string appCallerCode,
+        bool allowPromotion,
+        CancellationToken ct)
+    {
+        if (!resolved.Success) return resolved;
+
+        // 主选与整条重试链一次取回。逐个判的话，一个成员全是名录外私有模型的大池
+        // （真实租户上有两百多个成员）会在打上游之前先串行做上百次带索引的读——
+        // 判据没错，代价错了。名录内的成员在 JudgeAsync 开头就返回，本来就不进这一批。
+        var gateTargets = new List<ModelResolutionResult> { resolved };
+        if (resolved.RetryCandidates is { Count: > 0 }) gateTargets.AddRange(resolved.RetryCandidates);
+        var batch = await PrefetchCatalogDocsAsync(gateTargets, ct);
+
+        /*
+          「能不能拦」要现问，而且只在真要拦的时候才问：配置写着 enforce 只是意愿，
+          真凭据是控制台那几条补标记迁移跑完了没有（见 CatalogGateEnforcesAsync）。
+          放在这里而不是方法开头，是因为绝大多数请求全在名录内，一条都不会被拦，
+          不该为它们多问一次库。
+        */
+        bool? enforcesCache = null;
+        async Task<bool> EnforcesAsync()
+        {
+            enforcesCache ??= await CatalogGateEnforcesAsync(ct);
+            return enforcesCache.Value;
+        }
+
+        if (await JudgeAsync(resolved.ActualModel, resolved.ActualPlatformId, ct, batch) != CatalogVerdict.Blocked)
+        {
+            // 主选放行；重试链里越界的成员要摘掉，否则第一次失败后照样会打出去。
+            if (resolved.RetryCandidates is { Count: > 0 })
+            {
+                var kept = new List<ModelResolutionResult>();
+                foreach (var candidate in resolved.RetryCandidates)
+                {
+                    if (await JudgeAsync(candidate.ActualModel, candidate.ActualPlatformId, ct, batch) != CatalogVerdict.Blocked)
+                    {
+                        kept.Add(candidate);
+                        continue;
+                    }
+                    var enforcesForCandidate = await EnforcesAsync();
+                    _logger.LogWarning(
+                        "[ModelResolver] 重试候选不在名录且未放行（名录门={Gate}）: AppCallerCode={Code}, Model={Model}, PlatformId={PlatformId}",
+                        enforcesForCandidate ? "enforce/已摘除" : "observe/仍保留",
+                        appCallerCode, candidate.ActualModel ?? "(空)", candidate.ActualPlatformId ?? "(空)");
+                    if (!enforcesForCandidate) kept.Add(candidate);
+                }
+                resolved.RetryCandidates = kept;
+            }
+            return resolved;
+        }
+
+        var enforces = await EnforcesAsync();
+        _logger.LogError(
+            "[ModelResolver] 选中的模型不在内置名录且没有放行标记（名录门={Gate}）: "
+            + "AppCallerCode={Code}, Model={Model}, PlatformId={PlatformId}, ResolutionType={Type}, Pool={Pool}",
+            enforces ? "enforce/已拒绝" : "observe/仅记录未拦截",
+            appCallerCode,
+            resolved.ActualModel ?? "(空)",
+            resolved.ActualPlatformId ?? "(空)",
+            resolved.ResolutionType,
+            resolved.ModelGroupId ?? "(无)");
+
+        // observe 档（配置降档，或补标记还没跑完）：日志已经把该点名的都点了，请求照常放行——
+        // 这一档存在的意义就是「先看清存量有多少会被拦」，拦下来就看不成了。
+        if (!enforces) return resolved;
+
+        /*
+          主选被拦下，不等于这次请求就该失败。
+
+          重试链是解析器**已经算好**的同池候选，池里混进一个名录外未放行的成员，
+          若因此让整条链一起失败，就是把「一个成员的问题」放大成「这条 appCaller 的功能不可用」——
+          `llm-gateway.md` 规则 4 明令禁止（单成员失败只更新该成员健康，不得关停整条功能）。
+          所以这里先看链上还有没有过得了门的成员：有就把第一个顶上来当主选，
+          剩下过门的仍留作重试链；一个都过不了，才是真的没有可用成员，那时再报 NotFound。
+        */
+        if (allowPromotion && resolved.RetryCandidates is { Count: > 0 })
+        {
+            var allowedCandidates = new List<ModelResolutionResult>();
+            foreach (var candidate in resolved.RetryCandidates)
+            {
+                if (await JudgeAsync(candidate.ActualModel, candidate.ActualPlatformId, ct, batch) != CatalogVerdict.Blocked)
+                    allowedCandidates.Add(candidate);
+            }
+
+            if (allowedCandidates.Count > 0)
+            {
+                var promoted = allowedCandidates[0];
+                promoted.RetryCandidates = allowedCandidates.Skip(1).ToList();
+                _logger.LogWarning(
+                    "[ModelResolver] 主选被名录门拦下，改用重试链里第一个过门的成员: "
+                    + "AppCallerCode={Code}, Blocked={Blocked}, Promoted={Promoted}, 剩余候选={Rest}",
+                    appCallerCode,
+                    resolved.ActualModel ?? "(空)",
+                    promoted.ActualModel ?? "(空)",
+                    promoted.RetryCandidates.Count);
+                return promoted;
+            }
+        }
+
+        return ModelResolutionResult.NotFound(
+            resolved.ExpectedModel,
+            $"模型「{resolved.ActualModel}」不在内置名录里，也没有被管理员显式放行；"
+            + "正常从控制台导入的模型不会出现这种状态，请确认它是怎么进库的",
+            GatewayRouteFailure.ModelNotInCatalog,
+            "model-catalog",
+            appCallerCode,
+            modelPoolId: resolved.ModelGroupId);
+    }
+
+    /// <summary>
+    /// 这道门此刻有没有资格真拦。
+    ///
+    /// 配置写着 enforce 只是**意愿**；真凭据是控制台那几条「给存量补放行标记」的迁移跑完了没有。
+    /// 两者跑在不同容器里、没有启动顺序（compose 里都只依赖 Mongo，serving 的就绪探针只看自己），
+    /// 所以「控制台还没迁完或迁失败」和「数据面已经在拦」完全可能同时成立——那一刻存量模型
+    /// 会集体收到 MODEL_NOT_IN_CATALOG，一次控制面故障就扩大成了数据面故障，
+    /// 而 `llm-gateway.md` 规则 7 明令禁止这件事。所以补标记没做完就只记录、不拦。
+    ///
+    /// 读不到标记（没有网关库、查库失败）一律按「还没做完」处理：这道门是后加的，
+    /// 它自己出问题时该退回原状，而不是把请求一起拖下水。
+    ///
+    /// 缓存放在进程级静态里而不是实例字段——解析器是 scoped，每个请求一个新实例，
+    /// 实例字段缓存不住任何东西。按库名分桶，测试里多个临时库不会互相污染。
+    /// 只有「已完成」是终态可以永久缓存：完成标记写下去就不会再撤销。
+    /// </summary>
+    private async Task<bool> CatalogGateEnforcesAsync(CancellationToken ct)
+    {
+        if (!_catalogGateEnforces) return false;
+        if (_gatewayDb is null) return false;
+
+        var databaseKey = _gatewayDb.Database.DatabaseNamespace.DatabaseName;
+        if (CatalogMigrationState.TryGetValue(databaseKey, out var cached)
+            && (cached.Complete || DateTime.UtcNow - cached.CheckedAt < _catalogMigrationRecheckInterval))
+        {
+            return cached.Complete;
+        }
+
+        var complete = false;
+        try
+        {
+            var migrations = _gatewayDb.Database.GetCollection<BsonDocument>(GatewayCatalogMigrations.CollectionName);
+            var done = await migrations.CountDocumentsAsync(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.In("_id", GatewayCatalogMigrations.RequiredIds),
+                    Builders<BsonDocument>.Filter.Exists(GatewayCatalogMigrations.CompletedAtField)),
+                cancellationToken: ct);
+            complete = done >= GatewayCatalogMigrations.RequiredIds.Length;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[ModelResolver] 读不到名录门的迁移完成标记，本轮按 observe 处理（只记录不拦）");
+        }
+
+        CatalogMigrationState[databaseKey] = (complete, DateTime.UtcNow);
+        if (!complete)
+        {
+            _logger.LogWarning(
+                "[ModelResolver] 名录门配置为 enforce，但控制台的存量补标记（{Ids}）还没有全部记下完成时间，"
+                + "本轮只记录不拦截——先确认控制台已启动并完成迁移，否则存量模型会被误拦",
+                string.Join(", ", GatewayCatalogMigrations.RequiredIds));
+        }
+
+        return complete;
+    }
+
+    /// <summary>
+    /// 这道门对一次解析结果的三种裁决。
+    ///
+    /// 有「管不着」这一档，是因为门的判据只有一个来源：网关模型库里那条文档上的放行标记。
+    /// 解析结果里的模型如果压根不是从那个库来的（主站自己的 legacy 模型、运维在主站配置或
+    /// 环境变量里写死的应急兜底），库里就没有任何一条文档可查——**查不到不等于越界**。
+    /// 把「查不到」和「查到了但没放行」混成一档，就会把运维亲手配的应急退路判死，
+    /// 而那条退路恰恰是网关配置面出问题时唯一还能用的东西。
+    ///
+    /// 判据刻意问「这条模型是不是网关模型库里的」，而不是列一串 ResolutionType 字符串：
+    /// 后者改个枚举名就悄悄失效，且每新增一条解析路径都得记得回来加一行（形状 1 / 形状 3）。
+    /// </summary>
+    private enum CatalogVerdict
+    {
+        /// <summary>名录内，或库里有放行标记。</summary>
+        Allowed,
+        /// <summary>是网关模型库里的模型，但既不在名录、也没有放行标记——这才是这道门要拦的。</summary>
+        Blocked,
+        /// <summary>不是网关模型库里的模型，这道门无从裁决。</summary>
+        OutOfJurisdiction,
+    }
+
+    private async Task<CatalogVerdict> JudgeAsync(
+        string? modelName,
+        string? platformId,
+        CancellationToken ct,
+        IReadOnlyList<BsonDocument>? batch = null)
+    {
+        if (string.IsNullOrWhiteSpace(modelName)) return CatalogVerdict.OutOfJurisdiction;
+        // 名录命中零额外开销（绝大多数请求走到这里就结束），只有名录外的才多一次带索引的读。
+        if (GatewayModelCatalog.Contains(modelName)) return CatalogVerdict.Allowed;
+        if (_gatewayDb is null) return CatalogVerdict.OutOfJurisdiction;
+
+        var models = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_models");
+        var fb = Builders<BsonDocument>.Filter;
+        var trimmed = modelName.Trim();
+        // 两个名字字段都认：`ModelNameNormalized` 是控制台导入路径写的，但不是每条模型文档
+        // 都有它（更早的写入、别的写入方只写了 ModelName）。只认归一化字段，那些文档就永远
+        // 查不到、被判成「管不着」而放过去——同一个模型换个写法得到相反结论（形状 1）。
+        // 知道是哪个 Provider 就把它写进谓词，**在 Limit 之前**收窄。
+        // 先取 20 条再在内存里按 PlatformId 过滤，等于让「同名模型挂在几个 Provider 下」
+        // 决定这道门的结论：同名文档超过 20 条时，那一页里可能根本没有当前这个 Provider 的记录，
+        // 于是过滤后为空、判成「管不着」——没盖放行标记的模型反而被放过去（形状 1：
+        // 判据取的是任意一页，不是它该管的那条）。
+        var nameFilter = fb.And(
+            fb.Eq("TenantId", CurrentTenantId),
+            fb.Or(
+                fb.Eq("ModelNameNormalized", trimmed.ToLowerInvariant()),
+                fb.Eq("ModelName", trimmed)));
+        var scopedFilter = string.IsNullOrWhiteSpace(platformId)
+            ? nameFilter
+            : fb.And(nameFilter, fb.Eq("PlatformId", platformId));
+        // 预取拿到的是「这一批名字的全部文档」，按同一套口径在内存里收窄即可；
+        // 预取不成立（超出上限、没有 db）就照旧单条查。**判据只有下面一处**，
+        // 两条取值路径喂给它的是同形状的输入，不许各判各的。
+        var docs = batch is not null
+            ? SelectCatalogDocs(batch, trimmed, platformId)
+            : await models.Find(scopedFilter).Limit(CatalogPairDocumentCap).ToListAsync(ct);
+
+        if (docs.Count == 0)
+        {
+            // 走兑换所（exchange）解析出来的模型只活在兑换所文档里，llmgw_models 查不到它，
+            // 于是会静默落进「管不着」——结果是放行，但那是**漏判**不是判断：
+            // 下一个人读这段代码会以为这条路径本来就不在门的射程内。
+            // 这里显式认出来，并且判的是**这一条别名**有没有被放行，不是「它是不是一条兑换所记录」。
+            // 后者太宽：兑换所是个容器，认容器等于「进了这个门的都算放行」，往里加一个
+            // 从没被人看过的别名照样过——那正是这道门要拦的形态，只是换了个集合。
+            if (!string.IsNullOrWhiteSpace(platformId))
+            {
+                var exchangeVerdict = await JudgeExchangeModelAsync(platformId, trimmed, ct);
+                if (exchangeVerdict is not null)
+                {
+                    _logger.LogDebug(
+                        "[ModelResolver] 名录门：{Model} 来自兑换所 {ExchangeId}，判定 {Verdict}",
+                        trimmed, platformId, exchangeVerdict);
+                    return exchangeVerdict.Value;
+                }
+            }
+            return CatalogVerdict.OutOfJurisdiction;
+        }
+
+        // 走到这里 docs 已经是「该管的那些」：给了 PlatformId 就只有那个 Provider 的，
+        // 没给就是同名的全部（退回「任意一条放行过就算放行」）。
+        return docs.Any(IsAllowedOutsideCatalog) ? CatalogVerdict.Allowed : CatalogVerdict.Blocked;
+    }
+
+    /// <summary>名录门一次判定的用量上限。超过它就退回逐条查——宁可慢，不拿一份被截断的清单下判断。</summary>
+    private const int CatalogBatchDocumentCap = 2000;
+
+    /// <summary>
+    /// 单次判定（一个模型名 + 一个 Provider）最多看多少条文档。
+    /// 两条取值路径必须用同一个上限：一边看 20 条、另一边看全部的话，
+    /// 同一对输入会在两条路径上得到不同结论，而它们本该是同一个判据。
+    /// </summary>
+    private const int CatalogPairDocumentCap = 200;
+
+    /// <summary>
+    /// 把主选与整条重试链要用到的模型文档一次取回。
+    ///
+    /// 只为省往返，不改判据：返回的是「这一批名字在本租户下的全部文档」，
+    /// 收窄到某个 Provider 由 <see cref="SelectCatalogDocs"/> 按与单条查询同一套口径做。
+    /// 名录内的模型不进这一批（<see cref="JudgeAsync"/> 开头就放行了），所以常见请求这里是空转。
+    ///
+    /// 取不满或超上限时返回 null，调用方照旧逐条查——**一份被截断的清单不能拿来下判断**：
+    /// 那正是这道门此前栽过的形状（判据取的是任意一页，不是它该管的那条）。
+    /// </summary>
+    private async Task<IReadOnlyList<BsonDocument>?> PrefetchCatalogDocsAsync(
+        IReadOnlyList<ModelResolutionResult> targets,
+        CancellationToken ct)
+    {
+        if (_gatewayDb is null) return null;
+        var names = targets
+            .Select(target => target.ActualModel?.Trim() ?? string.Empty)
+            .Where(name => name.Length > 0 && !GatewayModelCatalog.Contains(name))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        // 一两条的时候批量查没有意义，直接让它走单条路径，少一个分支要维护。
+        if (names.Count < 2) return null;
+
+        var fb = Builders<BsonDocument>.Filter;
+        var docs = await _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_models")
+            .Find(fb.And(
+                fb.Eq("TenantId", CurrentTenantId),
+                fb.Or(
+                    fb.In("ModelNameNormalized", names.Select(name => name.ToLowerInvariant())),
+                    fb.In("ModelName", names))))
+            .Limit(CatalogBatchDocumentCap + 1)
+            .ToListAsync(ct);
+        return docs.Count > CatalogBatchDocumentCap ? null : docs;
+    }
+
+    /// <summary>
+    /// 从预取结果里挑出「这一条该管的那些」：两个名字字段都认、给了 Provider 就只留那个 Provider 的。
+    /// 与单条查询的谓词逐字对应，改一边就要改另一边——这也是它紧挨着放的原因。
+    /// </summary>
+    private static List<BsonDocument> SelectCatalogDocs(
+        IReadOnlyList<BsonDocument> batch,
+        string modelName,
+        string? platformId)
+    {
+        var normalized = modelName.ToLowerInvariant();
+        return batch.Where(doc =>
+        {
+            var matchesName = Text(doc, "ModelNameNormalized") == normalized || Text(doc, "ModelName") == modelName;
+            if (!matchesName) return false;
+            return string.IsNullOrWhiteSpace(platformId) || Text(doc, "PlatformId") == platformId;
+        }).Take(CatalogPairDocumentCap).ToList();
+
+        // 字段不是字符串（历史脏数据）时当成空串，而不是抛——判据在请求路径上，
+        // 一条坏文档不该让整次调用炸掉。
+        static string Text(BsonDocument doc, string field)
+            => doc.TryGetValue(field, out var value) && value.IsString ? value.AsString : string.Empty;
+    }
+
+    /// <summary>
+    /// 这条模型是兑换所里的吗？是的话它该不该放行？
+    ///
+    /// 兑换所解析会把 PlatformId 写成兑换所自己的 id（<c>item.PlatformId = exchange.Id</c>），
+    /// 所以按 id 查得到就说明这条模型来自兑换所。但「来自兑换所」只回答了管辖问题，
+    /// 放行与否要看**这一条别名**：走到这里的一定是名录外的（名录内的在方法开头就放行了），
+    /// 所以它必须带着控制台写入时盖的 per-model 放行标记（谁放的、什么时候），
+    /// 与手工新增模型那道门同一套依据。
+    ///
+    /// 返回 null 表示「这个 PlatformId 不是兑换所」——那是管辖之外，交回上层按原样处理。
+    /// </summary>
+    private async Task<CatalogVerdict?> JudgeExchangeModelAsync(string platformId, string modelId, CancellationToken ct)
+    {
+        if (_gatewayDb is null) return null;
+        // 读成 ModelExchange 而不是裸 BsonDocument，为的是用 GetEffectiveModels()——
+        // 解析器选中这条模型时用的就是它。直接读 `Models` 数组会漏掉旧形态的兑换所
+        // （别名只在 ModelAlias / ModelAliases 里，Models 为空），于是解析器选得出来、
+        // 这道门却判它「没声明过」而拦下：又是拿变更前的状态去卡这次变更（形状 5）。
+        var exchanges = _gatewayDb.Context.Database.GetCollection<ModelExchange>("llmgw_model_exchanges");
+        var exchange = await exchanges
+            .Find(Builders<ModelExchange>.Filter.And(
+                Builders<ModelExchange>.Filter.Eq("TenantId", CurrentTenantId),
+                Builders<ModelExchange>.Filter.Eq(x => x.Id, platformId)))
+            .FirstOrDefaultAsync(ct);
+        if (exchange is null) return null;
+
+        // 兑换所里没有这条别名 = 它不是这个兑换所声明过的东西，一律拦下。
+        // （解析器正常走下来不该出现这种情况；出现了说明有人在别处拼了个 PlatformId。）
+        var declared = exchange.GetEffectiveModels().FirstOrDefault(item =>
+            string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
+        if (declared is null) return CatalogVerdict.Blocked;
+
+        // 旧形态没有地方盖逐条标记（别名是两个字符串字段合成出来的，不是文档数组），
+        // 而它们同样是管理员在逐条放行落地**之前**声明的——与名录门上线前已入库的模型
+        // 同一处境，按同一条口径放行。控制台下一次写这个兑换所时会把它落成带标记的 Models。
+        if (exchange.Models is null || exchange.Models.Count == 0)
+        {
+            _logger.LogDebug(
+                "[ModelResolver] 名录门：{Model} 来自旧形态兑换所 {ExchangeId}（别名在 ModelAlias/ModelAliases），"
+                + "按逐条放行落地前的既有声明放行",
+                modelId, platformId);
+            return CatalogVerdict.Allowed;
+        }
+
+        // 名录内的在方法开头就放行了，走到这里的一定是名录外的：所以只看放行标记。
+        // （不在这里再判一次名录——那一档永远为假，读的人会以为它在起作用。）
+        return declared.AllowedOutsideCatalog == true
+            ? CatalogVerdict.Allowed
+            : CatalogVerdict.Blocked;
+    }
+
+    private static bool IsAllowedOutsideCatalog(BsonDocument doc)
+        => doc.TryGetValue("AllowedOutsideCatalog", out var value) && value.IsBoolean && value.AsBoolean;
+
+    private async Task<ModelResolutionResult> ResolveCoreAsync(
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
@@ -791,6 +1229,17 @@ public class ModelResolver : IModelResolver
 
     /// <inheritdoc />
     public async Task<ModelResolutionResult> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        var resolved = await ResolveOfferingCoreAsync(appCallerCode, modelType, offeringId, ct);
+        // 调用方点名了某个 offering，门内不许换成别的：他要的就是这一个。
+        return await ApplyCatalogGateAsync(resolved, appCallerCode, allowPromotion: false, ct);
+    }
+
+    private async Task<ModelResolutionResult> ResolveOfferingCoreAsync(
         string appCallerCode,
         string modelType,
         string offeringId,

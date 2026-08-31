@@ -4,7 +4,7 @@ import { toUserReadableErrorMessage } from './userReadableError';
 /**
  * 矩阵 D2：前端不得再把「配置不兼容」显示成「Provider 宕机」。
  *
- * 这十个码与后端 prd-api/src/PrdAgent.Core/LlmGateway/GatewayRouteFailure.cs 一一对应。
+ * 这些码与后端 prd-api/src/PrdAgent.Core/LlmGateway/GatewayRouteFailure.cs 一一对应。
  * 少一个，用户就会在那条链路上重新看到那句包治百病的「服务暂时不可用」，
  * 于是又要靠猜来分辨「重试有没有用」。
  */
@@ -19,6 +19,7 @@ const ROUTE_FAILURE_CODES = [
   'PROVIDER_UNAVAILABLE',
   'PROVIDER_QUOTA_EXCEEDED',
   'GATEWAY_CONFIG_UNAVAILABLE',
+  'MODEL_NOT_IN_CATALOG',
 ] as const;
 
 /** 重试不会自行恢复的配置类问题：必须把用户导向管理员，而不是让他一直点重试。 */
@@ -29,6 +30,7 @@ const CONFIGURATION_FAULTS = [
   'LOGICAL_MODEL_CAPABILITY_MISMATCH',
   'OFFERING_UNRESOLVABLE',
   'PLATFORM_DISABLED',
+  'MODEL_NOT_IN_CATALOG',
 ] as const;
 
 const options = {

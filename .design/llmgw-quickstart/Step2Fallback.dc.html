@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+  <style>
+    body {
+      --bg-page: #03080a; --bg-surface: #0c1114; --bg-elevated: #11181d; --bg-base: #030608;
+      --text-primary: #fcfcfe; --text-secondary: #c4c4cc; --text-muted: #a1a1aa;
+      --border-subtle: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+      --accent: #a78bfa; --accent-soft: rgba(167,139,250,0.14);
+      --warn: #eab308; --warn-bg: rgba(234,179,8,0.12);
+      --radius: 8px; --radius-sm: 6px;
+      --card-pad: 24px; --sp-tight: 8px; --sp-group: 20px; --sp-layer: 28px;
+      margin: 0; background: var(--bg-page); color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+      font-size: 14px; font-weight: 450; line-height: 1.625; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: #c4b5fd; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</helmet>
+
+<div style="padding: 24px 28px; display: flex; flex-direction: column; gap: 20px;">
+  <div style="display: flex; flex-direction: column; gap: 3px;">
+    <div style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.8;">Quickstart</div>
+    <div style="font-size: 13px; color: var(--text-muted);">先说清要做什么，再签发；密钥在下一屏只显示一次。</div>
+  </div>
+
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-layer);">
+
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="flex: none; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 700;">2</span>
+        <strong style="font-size: 15px; font-weight: 650;">颁发调用用途码</strong>
+        <button type="button" style="margin-left: auto; height: 32px; padding: 0 10px; border: none; background: none; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; border-radius: var(--radius-sm);">改那句话</button>
+      </div>
+      <div style="padding-left: 40px; font-size: 13px; color: var(--text-muted);">模型没给出可用结果，下面两段请你自己挑</div>
+    </div>
+
+    <!-- 降级说明用警告色条，一眼分清「这不是正常路径」 -->
+    <div style="display: flex; align-items: flex-start; gap: 8px; background: var(--warn-bg); border: 1px solid rgba(234,179,8,0.32); border-radius: var(--radius-sm); padding: 12px 14px;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#eab308" stroke-width="1.5" stroke-linecap="round" style="flex: none; margin-top: 2px;"><path d="M8 5v4"/><path d="M8 11.5v.01"/><circle cx="8" cy="8" r="6.25"/></svg>
+      <span style="font-size: 13px; color: var(--text-secondary); line-height: 1.7;">模型这次没给出可用的两段码，已退回本地关键词判定。下面两段选完就能继续。</span>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: var(--sp-tight);">
+      <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">你写的</div>
+      <div style="border-left: 2px solid var(--accent); background: var(--bg-elevated); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding: 14px 18px; font-size: 14px; color: var(--text-secondary); line-height: 1.7;">帮我把那个东西接一下</div>
+    </div>
+
+    <!--
+      两段判定：各自成块、两列并排（窄屏自动单列）。
+      每块内部三行——标题独占一行，当前值一行，操作一行——不再挤成一堵墙。
+    -->
+    <div style="display: flex; flex-direction: column; gap: var(--sp-group);">
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-group);">
+        <div style="border: 1px solid var(--border-subtle); background: var(--bg-elevated); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-tight);">
+          <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">谁在调用</div>
+          <div class="mono" style="font-size: 15px; font-weight: 650; color: var(--text-primary); word-break: break-all;">internal-tool</div>
+          <div style="display: flex; align-items: center; gap: var(--sp-tight); padding-top: 4px;">
+            <span style="font-size: 12px; color: var(--text-muted);">未从那句话认出，用了兜底值</span>
+            <button type="button" style="margin-left: auto; height: 32px; padding: 0 10px; border: none; background: none; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer;">换一个</button>
+          </div>
+        </div>
+        <div style="border: 1px solid var(--accent); background: var(--accent-soft); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-tight);">
+          <div style="font-size: 12px; color: var(--accent); letter-spacing: 0.04em;">要做什么</div>
+          <div class="mono" style="font-size: 15px; font-weight: 650; color: var(--text-primary); word-break: break-all;">general-access</div>
+          <div style="display: flex; align-items: center; gap: var(--sp-tight); padding-top: 4px;">
+            <span style="font-size: 12px; color: var(--accent);">你指定的，不再被自动改回</span>
+            <button type="button" style="margin-left: auto; height: 32px; padding: 0 10px; border: none; background: none; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer;">换一个</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 结果块形态与成功态完全一致，只是来源 chip 换成「本地关键词」 -->
+      <div style="background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-tight);">
+        <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.06em; font-weight: 500;">将颁发</div>
+        <div class="mono" style="font-size: 17px; font-weight: 650; color: var(--text-primary); line-height: 1.5; word-break: break-all;">internal-tool.general-access::chat</div>
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-tight); padding-top: 4px;">
+          <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--bg-base); color: var(--text-muted); font-size: 12px; font-weight: 500;">本地关键词判定</span>
+          <span style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">这不是模型给的意见，两段都由你在上面挑定</span>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: var(--sp-tight);">
+        <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">调用类型</div>
+        <div style="display: inline-flex; align-self: flex-start; gap: 3px; padding: 3px; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+          <button type="button" style="height: 32px; padding: 0 16px; border: 1px solid var(--accent); border-radius: 4px; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">文字对话</button>
+          <button type="button" style="height: 32px; padding: 0 16px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--text-muted); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">图片理解</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-group); border-top: 1px solid var(--border-subtle); padding-top: var(--sp-layer);">
+      <span style="flex: 1 1 320px; min-width: 0; font-size: 13px; color: var(--text-muted); line-height: 1.7;">码登记后跟着团队走，先确认它说的是你要做的事。</span>
+      <div style="flex: none; display: flex; gap: var(--sp-tight);">
+        <button type="button" style="height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-primary); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">重新生成</button>
+        <button type="button" style="height: 32px; padding: 0 16px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent); color: #09090b; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">下一步</button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

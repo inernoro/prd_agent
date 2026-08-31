@@ -23,6 +23,24 @@
 >
 > **正确做法**：当场用 `/cds-deploy` 推到 CDS 灰度环境，CDS 容器内的 .NET SDK 会真实编译；编译错误会出现在 `POST /api/branches/:id/container-logs` 返回里，AI 看到错误自己修，修完重新部署。整个过程 AI 自闭环，用户零参与。
 
+## 先找 SDK，再说「本地没有」
+
+`which dotnet` 是空的**不等于**机器上没有 SDK——它常常装在 PATH 之外。断言「本地无 SDK」之前必须先找一遍：
+
+```bash
+which dotnet || ls /opt/dotnet8/dotnet    # 有就 export PATH=/opt/dotnet8:$PATH
+```
+
+找到了就必须本地编译、跑完再推，CDS 退回二次验证，不再是唯一通道。
+
+2026-08-30 的教训：一处 Shouldly 重载（`ShouldContain(实际, 说明)` 必须写成 `customMessage:`，
+否则解析到 `IEnumerable<char>` 那个重载）本地一编译就报，而当时判定「本地无 SDK、交给 CI」，
+CI 六个 `error CS1503`、测试整步跳过，白烧一轮往返。**把编译交给 CI 是最慢的一种编译。**
+
+本地跑测试还要会读失败：`Category!=Integration&Category!=Manual` 这一档有大量用例依赖真
+MongoDB（27017/27018）与 ffmpeg，缺这两样会有两百来条「Connection refused」失败——
+那是环境缺件不是回归。判断有没有引入回归看**失败原因**，不看失败条数。
+
 ## 决策树
 
 ```
