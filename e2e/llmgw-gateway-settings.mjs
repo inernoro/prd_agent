@@ -206,6 +206,28 @@ await page.waitForTimeout(300);
 check('选回原选择后未保存态解除、测试连接恢复可点',
   await page.getByRole('button', { name: '测试连接' }).isDisabled(), false);
 
+/*
+  ── 作废在途那次测试之后，忙态必须收掉 ──────────────────────────
+  代次判据把旧结论挡在门外是对的，但收忙态原来就挂在那条被挡掉的分支上：
+  作废之后请求回来执行不到 setTesting(false)，计时器跟着 testing 跑，
+  按钮永久停在「正在测试 N s」且禁用——只有刷新页面才能恢复。
+  判据取「作废之后按钮还能不能点」，那正是用户会撞上的那一面。
+*/
+testDelayMs = 1500;
+await page.getByRole('button', { name: '测试连接' }).click();
+await page.waitForTimeout(300);
+check('作废前那次测试确实在跑', /正在测试/.test(await bodyScope.locator('.lg-gws-actions button').first().innerText()), true);
+await page.getByRole('radio', { name: /交给网关挑/ }).click();
+await page.waitForTimeout(300);
+check('作废在途测试后按钮立刻脱离「正在测试」',
+  /正在测试/.test(await bodyScope.locator('.lg-gws-actions button').first().innerText()), false);
+await page.waitForTimeout(1800);
+await page.getByRole('radio', { name: /固定用这一个模型/ }).click();
+await page.waitForTimeout(300);
+check('被作废那次回来之后测试连接仍可点（没有卡在忙态）',
+  await page.getByRole('button', { name: '测试连接' }).isDisabled(), false);
+testDelayMs = 0;
+
 // 4. 等待期屏幕必须在动（AGENTS.md 规则 #6）：真实那一次要等好几秒（后端单轮 40 秒上限，
 //    还可能自动重签重试一轮）。按钮上要能读到已等秒数、且秒数真的在往前走——
 //    停在一个不动的「正在测试」就是体验缺陷。

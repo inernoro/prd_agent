@@ -823,6 +823,15 @@ await page.getByLabel('测试模型').fill('demo/chat-2');
 await page.waitForTimeout(600);
 check('撤身份前确实钉着上一条身份池里的成员',
   (await page.locator('.lg-qs-code').innerText()).includes('"pinned_model_id": "demo/chat-2"'), true);
+/*
+  「更改」是作废的第六个出口，而且是唯一一个**离开这一屏**的：撤身份时若不顶掉在跑的那条，
+  它仍是当前代次——等新身份签出来之后回来，会把产物、结论、忙态一并写到**新身份**头上。
+  （请求本身也该 abort：页面把它藏起来不等于上游停下来，它照跑照计费。）
+  所以这里刻意在流跑到一半时点「更改」。
+*/
+await page.getByRole('button', { name: /真实调用|再跑一次/ }).first().click();
+await page.waitForTimeout(200);
+check('点更改之前流确实在跑', await page.locator('.lg-qs-output.is-streaming').count(), 1);
 await page.getByRole('button', { name: '更改' }).click();
 await page.getByRole('button', { name: '修改身份' }).click();
 await page.waitForTimeout(400);
@@ -839,6 +848,8 @@ check('新身份的 cURL 不带上一条身份的成员',
   (await page.locator('.lg-qs-code').innerText()).includes('demo/chat-2'), false);
 check('新身份的测试模型框已经是空的（回到 auto）',
   (await page.getByLabel('测试模型').inputValue()).trim(), '');
+check('被撤身份时顶掉的那条流没有把产物写到新身份头上',
+  await page.locator('.lg-qs-output.is-done, .lg-qs-output.is-streaming').count(), 0);
 
 await page.close();
 

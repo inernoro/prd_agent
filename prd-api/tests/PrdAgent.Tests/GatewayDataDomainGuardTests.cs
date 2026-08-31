@@ -4508,8 +4508,16 @@ public class GatewayDataDomainGuardTests
         // 上传附件那条路径（pickAttachment）同样改请求，也要调——连同上面四处共 5 个调用点。
         var invalidations = CountOccurrences(quickstart, "invalidateActiveRun();");
         Assert.True(
-            invalidations >= 5,
+            invalidations >= 6,
             $"改请求的输入必须全部走同一道作废，当前只有 {invalidations} 个调用点");
+
+        // 「更改身份」是第六个出口，而且是唯一一个**离开这一屏**的：不 abort 的话请求照跑照计费，
+        // 不顶代次的话它会把产物/结论/忙态写到新签出来的那个身份头上。
+        var editStart = quickstart.IndexOf("const editIdentity = async () => {", StringComparison.Ordinal);
+        Assert.True(editStart >= 0, "找不到 editIdentity，守卫的取值范围失效了");
+        var editEnd = quickstart.IndexOf("setStage('intent');", editStart, StringComparison.Ordinal);
+        Assert.True(editEnd > editStart, "editIdentity 的取值范围没有正常收尾");
+        Assert.Contains("invalidateActiveRun();", quickstart[editStart..editEnd]);
     }
 
     /// <summary>
@@ -4528,6 +4536,18 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("setModelName(event.target.value); invalidateTestResult();", gatewaySettings);
         // 在途那次也要按代次丢弃：请求在路上时改了选择，旧结论回来就会给新配置背书。
         Assert.Contains("if (testSeq.current !== runId) return;", gatewaySettings);
+        /*
+          但被代次挡掉的那条分支上不许挂着别人依赖的收尾动作。
+          忙态原来就收在那条分支里：作废之后请求回来被挡住，`setTesting(false)` 永远执行不到，
+          计时器跟着 testing 跑，按钮永久停在「正在测试 N s」且禁用，只有刷新才能恢复。
+          所以收忙态搬进 finally 且只由当前代次收，作废本身也顺手收一次。
+        */
+        Assert.Contains("if (testSeq.current === runId) setTesting(false);", gatewaySettings);
+        var invalidateStart = gatewaySettings.IndexOf("const invalidateTestResult = () => {", StringComparison.Ordinal);
+        Assert.True(invalidateStart >= 0, "找不到 invalidateTestResult，守卫的取值范围失效了");
+        var invalidateEnd = gatewaySettings.IndexOf("const save = async () => {", invalidateStart, StringComparison.Ordinal);
+        Assert.True(invalidateEnd > invalidateStart, "invalidateTestResult 的取值范围没有正常收尾");
+        Assert.Contains("setTesting(false);", gatewaySettings[invalidateStart..invalidateEnd]);
         Assert.True(
             CountOccurrences(gatewaySettings, "invalidateTestResult();") >= 4,
             "三处选择 + 保存后各一次，少一处就会留下「配置 B 配着配置 A 的证明」");

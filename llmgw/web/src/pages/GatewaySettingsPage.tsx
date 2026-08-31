@@ -95,6 +95,16 @@ export function GatewaySettingsPage() {
   const invalidateTestResult = () => {
     testSeq.current += 1;
     setTestResult(null);
+    /*
+      忙态也要一起收掉。
+
+      上一版只顶代次不收忙态，于是作废之后那条请求回来时被代次挡在门外，
+      `setTesting(false)` 永远执行不到——计时器跟着 `testing` 跑，按钮就一直停在
+      「正在测试 N s」且禁用，只有刷新页面才能恢复。**我上一轮亲手造的**：
+      加代次判据时只想着「别让旧结论写回去」，没想过「那条路径上还挂着收尾动作」。
+      被代次挡掉的分支里如果还有别人依赖的收尾，那条收尾就得挪到挡不住的地方。
+    */
+    setTesting(false);
   };
 
   const save = async () => {
@@ -115,13 +125,17 @@ export function GatewaySettingsPage() {
   const runTest = async () => {
     const runId = ++testSeq.current;
     setTesting(true); setError(null); setTestResult(null);
-    const res = await testSystemSettings();
-    // 请求在路上时用户可能已经改了选择或保存过——那时这条结论说的已经不是屏幕上这份配置了，
-    // 原样写回去就是拿旧配置的成败给新配置背书。
-    if (testSeq.current !== runId) return;
-    setTesting(false);
-    if (!res.success) { setError(res.error?.message || '测试请求失败'); return; }
-    setTestResult(res.data);
+    try {
+      const res = await testSystemSettings();
+      // 请求在路上时用户可能已经改了选择或保存过——那时这条结论说的已经不是屏幕上这份配置了，
+      // 原样写回去就是拿旧配置的成败给新配置背书。
+      if (testSeq.current !== runId) return;
+      if (!res.success) { setError(res.error?.message || '测试请求失败'); return; }
+      setTestResult(res.data);
+    } finally {
+      // 收忙态放 finally，且只由**当前这一代**收：被顶掉的那条不许把新一轮的忙态关掉。
+      if (testSeq.current === runId) setTesting(false);
+    }
   };
 
   if (!data) {

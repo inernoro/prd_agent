@@ -1096,7 +1096,15 @@ export function QuickstartPage() {
     if (!bundle) return;
     if (!await confirm({ title: '确认修改身份？', description: '当前一次性密钥明文将从页面清除；已签发密钥仍然有效，可到“接入密钥”页撤销。', tone: 'danger', confirmLabel: '修改身份' })) return;
     setBundle(null);
-    setTestResult(null);
+    /*
+      在跑的那条也要顶掉、并真的 abort。
+
+      不 abort：请求已经发出去了，页面把它藏起来不等于上游停下来——它照跑照计费，
+      而用户以为自己「改身份」就把这次调用取消了。
+      不顶代次：它仍是当前代次，等新身份签出来之后回来，会把产物、结论、忙态
+      一并写到**新身份**头上——上一轮我给四个输入装的那套作废，漏了这个出口。
+    */
+    invalidateActiveRun();
     setRoutePreview(null);
     setTestMode('safe');
     // 选中的成员是**上一条身份那个池**里的，必须跟着身份一起撤。
