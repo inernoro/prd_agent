@@ -16194,7 +16194,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     try {
-      stateService.clearBranchProfileOverride(id, profileId);
+      // 「恢复为公共配置」指的是构建/运行那套覆盖，不包括手动入口配置——后者只是恰好
+      // 存在同一个 override 对象里（subdomain / webEntry）。分支覆盖 UI 在字段被清空时
+      // 走这条 DELETE，若整份清掉就等于「把端口删了顺手撤掉命名路由」（与 PUT 同一族，
+      // Codex review 第七轮 P1）。这两个字段的清除入口是 web-entry-config，不在这里。
+      const prev = stateService.getBranchProfileOverride(id, profileId);
+      const keep: Pick<BuildProfileOverride, 'subdomain' | 'webEntry'> = {
+        ...(prev?.subdomain !== undefined ? { subdomain: prev.subdomain } : {}),
+        ...(prev?.webEntry !== undefined ? { webEntry: prev.webEntry } : {}),
+      };
+      if (Object.keys(keep).length > 0) {
+        stateService.setBranchProfileOverride(id, profileId, keep);
+      } else {
+        stateService.clearBranchProfileOverride(id, profileId);
+      }
       stateService.save();
       res.json({ message: '已恢复为公共配置', profileId, needsRedeploy: true });
     } catch (err) {

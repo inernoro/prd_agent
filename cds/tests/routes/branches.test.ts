@@ -954,6 +954,34 @@ describe('Branch Routes', () => {
       expect(await webEntryNames('branch-a')).toEqual(['网关（本分支）']);
     });
 
+    /*
+     * 同一族的第二条出口：分支覆盖 UI 在所有白名单字段都被清空时不是 PUT 空对象，
+     * 而是 DELETE 整份覆盖（`overrideHasFields` 为假的那条分支）。整份删掉同样会
+     * 带走入口配置——「把端口清了顺手撤掉命名路由」。
+     */
+    it('清空分支覆盖（DELETE）保留入口配置，只撤掉构建覆盖', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
+
+      await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'branch',
+        entries: [{ serviceId: 'gateway', name: '网关（本分支）', subdomain: 'gw', path: '/' }],
+      }, { 'X-Test-Key': 'A' });
+      await request(server, 'PUT', '/api/branches/branch-a/profile-overrides/gateway', {
+        activeDeployMode: 'express',
+      }, { 'X-Test-Key': 'A' });
+
+      const removed = await request(server, 'DELETE', '/api/branches/branch-a/profile-overrides/gateway', undefined, { 'X-Test-Key': 'A' });
+      expect(removed.status).toBe(200);
+
+      const override = stateService.getBranchProfileOverride('branch-a', 'gateway')!;
+      expect(override.activeDeployMode).toBeUndefined();
+      expect(override.subdomain).toBe('gw');
+      expect(override.webEntry).toEqual({ name: '网关（本分支）', path: '/' });
+      expect(await webEntryNames('branch-a')).toEqual(['网关（本分支）']);
+    });
+
     it('托管交付项目拒绝项目档保存，且不会误写别的项目的同名 profile', async () => {
       const now = new Date().toISOString();
       stateService.addProject({
