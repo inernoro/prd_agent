@@ -135,3 +135,8 @@ doc/acceptance/
 # 之前只忽略了具体几个目录名，换个 AUDIT_OUT 就漏，于是 116 个文件 23MB 被提交进来
 # （Codex 在 PR #1374 抓到）。改成前缀通配，堵住所有 .audit-* 变体。
 .audit-*/
+
+# 设计画布的成品页：每次都从技能模板全新生成（约 2.5MB，其中绝大部分是编辑器代码）。
+# 源文件是同目录的 *.dc.html + canvas.json，成品页属于构建产物。
+.design-work/**/*.html
+!.design-work/**/*.dc.html
