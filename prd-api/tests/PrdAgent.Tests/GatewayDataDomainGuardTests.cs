@@ -4497,7 +4497,33 @@ public class GatewayDataDomainGuardTests
 
         // 作废是一份共享动作（顶掉代次 + abort + 清产物 + 清结论），不许各处各写一套。
         Assert.Contains("const invalidateActiveRun = () => {", quickstart);
-        Assert.Contains("realRunAbort.current?.abort();", quickstart);
+        Assert.Contains("activeRunAbort.current?.abort();", quickstart);
+
+        /*
+          这一屏有两条会写同一批状态（testing / testResult / liveOutput / testElapsedMs）的调用路径：
+          安全测试 runTest 与真实调用 runRealTest。**两条都得挂在同一份代次上**——
+          上一轮只给 runRealTest 装了，于是作废对 runTest 完全无效：在途那条回来照样把结论
+          写到新输入上，它的 finally 还会把另一跑的忙态收掉（按钮提前解禁、计时停在别人的耗时上）。
+        */
+        foreach (var (name, from, to) in new[]
+                 {
+                     ("runTest", "const runTest = async (target = bundle, mode = testMode) => {", "const invalidateActiveRun = () => {"),
+                     ("runRealTest", "const runRealTest = async () => {", "/** 读上传的文件"),
+                 })
+        {
+            var start = quickstart.IndexOf(from, StringComparison.Ordinal);
+            Assert.True(start >= 0, $"找不到 {name}，守卫的取值范围失效了");
+            var end = quickstart.IndexOf(to, start, StringComparison.Ordinal);
+            Assert.True(end > start, $"{name} 的取值范围没有正常收尾");
+            var body = quickstart[start..end];
+
+            Assert.Contains("const runId = ++activeRunSeq.current;", body);
+            Assert.Contains("activeRunAbort.current = abortController;", body);
+            Assert.Contains("const superseded = () => activeRunSeq.current !== runId;", body);
+            Assert.Contains("signal: abortController.signal,", body);
+            // 收尾（忙态 + 耗时）只许当前代次做，被顶掉的那一跑不许替新的那一跑解禁按钮。
+            Assert.Contains("if (!superseded()) {", body);
+        }
 
         // 四个会改变请求内容的输入，逐个必须调它。少一个就是又留下一条「产物与请求对不上」的路径。
         Assert.Contains("setModelQuery(event.target.value); invalidateActiveRun();", quickstart);
@@ -4531,9 +4557,23 @@ public class GatewayDataDomainGuardTests
         var gatewaySettings = ReadRepoFile("llmgw/web/src/pages/GatewaySettingsPage.tsx");
 
         Assert.Contains("const invalidateTestResult = () => {", gatewaySettings);
-        Assert.Contains("setSource(item.id); invalidateTestResult();", gatewaySettings);
-        Assert.Contains("setPoolId(event.target.value); invalidateTestResult();", gatewaySettings);
-        Assert.Contains("setModelName(event.target.value); invalidateTestResult();", gatewaySettings);
+        // 三处选择走同一个出口：记一次「用户动过手」+ 改值 + 作废旧结论。
+        Assert.Contains("onClick={() => changeSelection(() => setSource(item.id))}", gatewaySettings);
+        Assert.Contains("onChange={(event) => changeSelection(() => setPoolId(event.target.value))}", gatewaySettings);
+        Assert.Contains("onChange={(event) => changeSelection(() => setModelName(event.target.value))}", gatewaySettings);
+        Assert.Contains("invalidateTestResult();", gatewaySettings[gatewaySettings.IndexOf("const changeSelection = (apply: () => void) => {", StringComparison.Ordinal)..]);
+
+        /*
+          保存期间控件仍可编辑（该保留：保存是个快请求，为它锁整屏不值当），
+          而保存收尾会读回服务端那份。不认代次的话，用户在这一小段里改的选择会被
+          读回来的旧值**静默覆盖**，`dirty` 随之归零——屏幕上是他没选的那个，
+          页面还告诉他「已保存」。所以：保存开头钉住选择代次，收尾按它决定要不要回填。
+        */
+        Assert.Contains("const selectionAtStart = selectionSeq.current;", gatewaySettings);
+        Assert.Contains("const editedDuringSave = selectionSeq.current !== selectionAtStart;", gatewaySettings);
+        Assert.Contains("await load(!editedDuringSave);", gatewaySettings);
+        // 不回填选择时仍要刷新 data，否则 dirty 会拿旧的服务端值比，说不出「这份还没保存」。
+        Assert.Contains("setData(res.data);\n    if (!applySelection) return;", gatewaySettings.Replace("\r\n", "\n"));
         // 在途那次也要按代次丢弃：请求在路上时改了选择，旧结论回来就会给新配置背书。
         Assert.Contains("if (testSeq.current !== runId) return;", gatewaySettings);
         /*
@@ -4549,8 +4589,55 @@ public class GatewayDataDomainGuardTests
         Assert.True(invalidateEnd > invalidateStart, "invalidateTestResult 的取值范围没有正常收尾");
         Assert.Contains("setTesting(false);", gatewaySettings[invalidateStart..invalidateEnd]);
         Assert.True(
-            CountOccurrences(gatewaySettings, "invalidateTestResult();") >= 4,
-            "三处选择 + 保存后各一次，少一处就会留下「配置 B 配着配置 A 的证明」");
+            CountOccurrences(gatewaySettings, "changeSelection(() =>") >= 3,
+            "三处选择都得走同一个出口，少一处就会留下「配置 B 配着配置 A 的证明」");
+        // 保存自己也要作废一次：保存换的是「下一次调用按什么走」，旧结论证明不了新的那份。
+        Assert.Contains("invalidateTestResult();\n    const editedDuringSave", gatewaySettings.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// 逻辑模型清单被截断时，剩下那些必须够得着。
+    ///
+    /// 坏法同样是静默的：清单只回前 200 条，排在之后的模型在这一页等于不存在——
+    /// 页面不报错、下拉里就是没有它，用户只会以为系统不支持那个模型。
+    /// 所以截断要成对出现三件事：能筛（关键字进查询）、说得出还剩多少（总数回前端）、
+    /// 筛的时候不动用户的选择（关键字不是配置变更，不能顺手把选择框重读回来）。
+    /// </summary>
+    [Fact]
+    public void SystemSettings_KeepsLogicalModelsBeyondThePageReachable()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var gatewaySettings = ReadRepoFile("llmgw/web/src/pages/GatewaySettingsPage.tsx");
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+
+        var start = console.IndexOf("app.MapGet(\"/gw/system-settings\"", StringComparison.Ordinal);
+        Assert.True(start >= 0, "找不到 /gw/system-settings，守卫的取值范围失效了");
+        var end = console.IndexOf("app.MapPut(\"/gw/system-settings\"", start, StringComparison.Ordinal);
+        Assert.True(end > start, "/gw/system-settings 读端点的取值范围没有正常收尾");
+        var endpoint = console[start..end];
+
+        /*
+          关键字要真的进**清单那条查询**，不是「代码里出现过这个变量」就算数。
+          第一版守卫写成了后者：把清单查询改回未筛的 chatModelFilter，
+          变量仍在（定义 + 计数还用着它），断言照样绿——判据读的不是真正生效的那个值。
+        */
+        Assert.Contains("http.Request.Query[\"q\"]", endpoint);
+        Assert.Contains(".Find(chatModelQueryFilter)", endpoint);
+        // 总数也必须按同一份条件数，否则「还剩 N 条」说的是另一批模型。
+        Assert.Contains("CountDocumentsAsync(chatModelQueryFilter)", endpoint);
+        // 总数要回出去：说不出「还剩多少条」，用户就无从判断该不该去筛。
+        Assert.Contains("modelTotal = chatModelTotal", endpoint);
+        Assert.Contains("modelPageSize = ChatModelPageSize", endpoint);
+        // 已保存的那个仍按未筛的条件补进来：筛掉它就等于把「当前在用的模型」从页面上抹掉。
+        Assert.Contains("chatModelFilter,", endpoint);
+
+        Assert.Contains("export function getSystemSettings(query?: string)", api);
+        Assert.Contains("`/system-settings?q=${encodeURIComponent(q)}`", api);
+
+        Assert.Contains("placeholder=\"按模型名或标识筛选\"", gatewaySettings);
+        // 筛清单不是改配置：不回填选择框（applySelection=false），也不作废测试结论。
+        Assert.Contains("void load(false, modelQuery);", gatewaySettings);
+        Assert.Contains("data.modelTotal > data.models.length", gatewaySettings);
     }
 
     [Fact]

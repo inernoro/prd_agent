@@ -555,19 +555,57 @@ async Task CompleteOneShotMigrationAsync(string migrationId, long stampedCount)
             .Set("StampedCount", stampedCount));
 }
 
-async Task<long> RunCatalogGrandfatherAsync(string migrationId, string stampedBy)
+/*
+  `affected` 为 null = 无差别补标记，**只有名录门上线那一次（v1）配这么做**：
+  那之前根本没有「放行标记」这回事，库里每一条都该被视为「门上线前已入库」。
+
+  之后每一次**口径收紧**都必须给出自己的 affected：判据是
+  「旧口径判成名录内、新口径判成名录外」。用「此刻缺标记」当判据太宽——
+  v1 跑完之后绕过控制台直接写库塞进来的模型同样缺标记，下一个窗口会顺手把它们一起放行，
+  而那正是这道门要拦的那一种。等于每加一条迁移就把门重新开一次，
+  与当初把迁移改成一次性所要解决的问题一模一样，只是换了个触发方式。
+*/
+async Task<long> RunCatalogGrandfatherAsync(
+    string migrationId,
+    string stampedBy,
+    Func<string?, bool>? affected = null)
 {
     var claimedAt = await ClaimOneShotMigrationAsync(migrationId);
     if (claimedAt is null) return -1;
 
-    var result = await gwModels.UpdateManyAsync(
-        Builders<BsonDocument>.Filter.Exists("AllowedOutsideCatalog", false),
-        Builders<BsonDocument>.Update
-            .Set("AllowedOutsideCatalog", true)
-            .Set("AllowedOutsideCatalogBy", stampedBy)
-            .Set("AllowedOutsideCatalogAt", claimedAt.Value));
-    await CompleteOneShotMigrationAsync(migrationId, result.ModifiedCount);
-    return result.ModifiedCount;
+    var unstamped = Builders<BsonDocument>.Filter.Exists("AllowedOutsideCatalog", false);
+    var stamp = Builders<BsonDocument>.Update
+        .Set("AllowedOutsideCatalog", true)
+        .Set("AllowedOutsideCatalogBy", stampedBy)
+        .Set("AllowedOutsideCatalogAt", claimedAt.Value);
+
+    if (affected is null)
+    {
+        var all = await gwModels.UpdateManyAsync(unstamped, stamp);
+        await CompleteOneShotMigrationAsync(migrationId, all.ModifiedCount);
+        return all.ModifiedCount;
+    }
+
+    // 逐条判「这次收紧是否真的影响到它」。只取 _id 与模型名，判中的再一次性盖戳。
+    var candidates = await gwModels
+        .Find(unstamped)
+        .Project(Builders<BsonDocument>.Projection.Include("ModelName"))
+        .ToListAsync();
+    var targets = candidates
+        .Where(doc => affected(doc.AsNullableString("ModelName")))
+        .Select(doc => doc["_id"])
+        .ToList();
+    if (targets.Count == 0)
+    {
+        await CompleteOneShotMigrationAsync(migrationId, 0);
+        return 0;
+    }
+
+    var scoped = await gwModels.UpdateManyAsync(
+        Builders<BsonDocument>.Filter.And(unstamped, Builders<BsonDocument>.Filter.In("_id", targets)),
+        stamp);
+    await CompleteOneShotMigrationAsync(migrationId, scoped.ModifiedCount);
+    return scoped.ModifiedCount;
 }
 
 /*
@@ -611,7 +649,10 @@ if (grandfatherCount >= 0)
 */
 var strictPrefixCount = await RunCatalogGrandfatherAsync(
     "model-catalog-grandfather-v2-strict-vendor-prefix",
-    "存量迁移（名录归一化口径收紧前已入库，未经人工审阅）");
+    "存量迁移（名录归一化口径收紧前已入库，未经人工审阅）",
+    // 只补「旧口径（任意前缀都剥）判成名录内、新口径判成名录外」的那些。
+    id => LegacyCatalogRules.NeedsAllowanceAfterTightening(
+        id, LegacyCatalogRules.WasInCatalogBeforeStrictVendorPrefix));
 if (strictPrefixCount >= 0)
 {
     app.Logger.LogInformation(
@@ -633,7 +674,10 @@ if (strictPrefixCount >= 0)
 */
 var strictPunctuationCount = await RunCatalogGrandfatherAsync(
     "model-catalog-grandfather-v3-strict-punctuation",
-    "存量迁移（名录标点口径收紧前已入库，未经人工审阅）");
+    "存量迁移（名录标点口径收紧前已入库，未经人工审阅）",
+    // 只补「旧口径（标点合并）判成名录内、新口径判成名录外」的那些。
+    id => LegacyCatalogRules.NeedsAllowanceAfterTightening(
+        id, LegacyCatalogRules.WasInCatalogBeforeStrictPunctuation));
 if (strictPunctuationCount >= 0)
 {
     app.Logger.LogInformation(
@@ -6111,12 +6155,33 @@ app.MapGet("/gw/system-settings", async (HttpContext http) =>
         Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
         Builders<BsonDocument>.Filter.Eq("ModelType", "chat"),
         Builders<BsonDocument>.Filter.Ne("Enabled", false));
+    /*
+      关键字：第 201 条之后的模型必须有办法选到。
+
+      只截前 200 条而不给筛选，等于「排在 200 名之后的模型在这一页根本不存在」——
+      页面不会报错，下拉里就是没有它，用户只能以为系统不支持。截断是为了不把整库
+      端到前端，那就得同时给一条够得着剩下那些的路，并如实说还剩多少条没列出来。
+    */
+    var modelQuery = (http.Request.Query["q"].ToString() ?? string.Empty).Trim();
+    if (modelQuery.Length > 100) modelQuery = modelQuery[..100];
+    var chatModelQueryFilter = modelQuery.Length == 0
+        ? chatModelFilter
+        : Builders<BsonDocument>.Filter.And(
+            chatModelFilter,
+            Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Regex("PublicIdNormalized", new BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(modelQuery.ToLowerInvariant()), "i")),
+                Builders<BsonDocument>.Filter.Regex("Name", new BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(modelQuery), "i"))));
+    const int ChatModelPageSize = 200;
     // 排序固定：不排序的 200 条是「随便哪 200 条」，同一个租户两次打开可能给出不同的清单。
     var chatModels = await gwLogicalModels
-        .Find(chatModelFilter)
+        .Find(chatModelQueryFilter)
         .Sort(Builders<BsonDocument>.Sort.Ascending("PublicIdNormalized").Ascending("_id"))
-        .Limit(200)
+        .Limit(ChatModelPageSize)
         .ToListAsync();
+    // 命中总数用来如实说「还有多少条没列出来」。只有真截断了才去数，平时不多跑一次 count。
+    var chatModelTotal = chatModels.Count < ChatModelPageSize
+        ? chatModels.Count
+        : (int)Math.Min(int.MaxValue, await gwLogicalModels.CountDocumentsAsync(chatModelQueryFilter));
     // 已保存的那个必须在清单里，哪怕它排在 200 条之外：否则下拉里没有对应选项，
     // 页面看起来像「没选模型」，而系统调用仍在用那个看不见的模型。
     var savedModelName = settings.AsNullableString("ModelName");
@@ -6194,6 +6259,11 @@ app.MapGet("/gw/system-settings", async (HttpContext http) =>
             publicId = x.AsNullableString("PublicId") ?? x.GetStringOrEmpty("_id"),
             name = x.AsNullableString("Name") ?? x.AsNullableString("PublicId") ?? x.GetStringOrEmpty("_id"),
         }).ToList(),
+        // 这次筛选命中多少条、回了多少条。前端据此如实说「还有 N 条没列出，输关键字筛」，
+        // 而不是让用户以为剩下那些模型不存在。
+        modelQuery,
+        modelTotal = chatModelTotal,
+        modelPageSize = ChatModelPageSize,
         // 「谁在用它」：让用户知道改这一项会影响什么，而不是改完不知道动了谁。
         consumers = new[]
         {

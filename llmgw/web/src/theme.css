@@ -8836,7 +8836,8 @@ a:focus-visible {
   margin-top: 20px;
 }
 
-.lg-gws-field > select {
+.lg-gws-field > select,
+.lg-gws-field > input[type='search'] {
   padding: 9px 12px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);

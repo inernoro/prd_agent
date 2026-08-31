@@ -56,6 +56,14 @@ export function GatewaySettingsPage() {
   const [testElapsed, setTestElapsed] = useState(0);
   const [testResult, setTestResult] = useState<SystemGatewayTestResult | null>(null);
   const testTimer = useRef<number | null>(null);
+  /*
+    逻辑模型清单的筛选关键字。
+
+    清单单次只回前 200 条：不给筛选的话，排在 200 名之后的模型在这一页等于不存在——
+    页面不报错，下拉里就是没有它，用户只会以为系统不支持那个模型。
+    它只换清单，不改配置，所以**不作废测试结论**（改的不是「系统按什么走」）。
+  */
+  const [modelQuery, setModelQuery] = useState('');
 
   // 计时器只跟着 testing 起落，组件卸载也要清掉——否则在测试途中离开这一页会留下
   // 一个还在滴答的 setInterval。
@@ -74,15 +82,31 @@ export function GatewaySettingsPage() {
     };
   }, [testing]);
 
-  const load = async () => {
-    const res = await getSystemSettings();
+  /**
+   * 读回服务端那份配置。
+   *
+   * `applySelection=false` 时只刷新 `data`（也就是「服务端现在存的是什么」），
+   * 不动三个选择框——保存期间用户又改了选择时要的就是这个：既让 `dirty` 如实
+   * 显示「你手上这份还没保存」，又不把他刚改的选择悄悄抹回服务端那份。
+   */
+  const load = async (applySelection = true, query = modelQuery) => {
+    const res = await getSystemSettings(query);
     if (!res.success) { setError(res.error?.message || '加载失败'); return; }
     setData(res.data);
+    if (!applySelection) return;
     setSource(res.data.modelSource);
     setPoolId(res.data.modelGroupId ?? res.data.pools.find((p) => p.isDefault)?.id ?? '');
     setModelName(res.data.modelName ?? '');
   };
   useEffect(() => { void load(); }, []);
+
+  // 关键字改了就换一份清单，但不回填选择框——用户正在挑的那个不能被重新读回来的值顶掉。
+  useEffect(() => {
+    if (!data) return;
+    const timer = window.setTimeout(() => { void load(false, modelQuery); }, 250);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelQuery]);
 
   /**
    * 作废上一次「测试连接」的结论。
@@ -107,7 +131,23 @@ export function GatewaySettingsPage() {
     setTesting(false);
   };
 
+  /**
+   * 三处选择的唯一出口：记一次「用户动过手」，改值，作废旧结论。
+   *
+   * 记这一次的理由在 save 里：保存期间控件仍可编辑（该保留——保存是个快请求，
+   * 为它锁住整屏不值当），而保存收尾会读回服务端那份并回填选择框。
+   * 不记代次的话，用户在这一小段里改的选择会被读回来的旧值**静默覆盖**，
+   * 且 `dirty` 随之归零——屏幕上显示的是他没选的那个，还告诉他「已保存」。
+   */
+  const selectionSeq = useRef(0);
+  const changeSelection = (apply: () => void) => {
+    selectionSeq.current += 1;
+    apply();
+    invalidateTestResult();
+  };
+
   const save = async () => {
+    const selectionAtStart = selectionSeq.current;
     setSaving(true); setError(null); setNotice(null);
     const res = await saveSystemSettings({
       modelSource: source,
@@ -117,8 +157,11 @@ export function GatewaySettingsPage() {
     setSaving(false);
     if (!res.success) { setError(res.error?.message || '保存失败'); return; }
     invalidateTestResult();
-    setNotice('已保存。系统功能下一次调用就按这个走。上面的连接测试结论对应的是保存前那份配置，已清掉——要确认新配置能用，再点一次「测试连接」。');
-    await load();
+    const editedDuringSave = selectionSeq.current !== selectionAtStart;
+    setNotice(editedDuringSave
+      ? '已保存（存的是你点保存那一刻的选择）。保存期间你又改了上面的选择，页面保留的是改之后这份、它还没保存——确认无误再点一次「保存」。连接测试结论已清掉。'
+      : '已保存。系统功能下一次调用就按这个走。上面的连接测试结论对应的是保存前那份配置，已清掉——要确认新配置能用，再点一次「测试连接」。');
+    await load(!editedDuringSave);
   };
 
   // 保存完必须能当场验一次——否则「最小输入」就退化成蒙着眼睛少填几个字。
@@ -147,6 +190,15 @@ export function GatewaySettingsPage() {
     );
   }
 
+  /*
+    当前选中的那个必须始终在可选项里——哪怕它不在这次筛出来的清单里。
+    少这一手，用户一筛关键字，选中的模型就从下拉里消失、控件显示空白，
+    而 React 里那个值其实还在：屏幕说「没选模型」，保存下去的却是它。
+  */
+  const modelOptions = modelName && !data.models.some((m) => m.publicId === modelName)
+    ? [{ id: `current:${modelName}`, publicId: modelName, name: `${modelName}（当前选择）` }, ...data.models]
+    : data.models;
+
   const dirty = source !== data.modelSource
     || (source === 'pool' && poolId !== (data.modelGroupId ?? ''))
     || (source === 'model' && modelName !== (data.modelName ?? ''));
@@ -173,7 +225,7 @@ export function GatewaySettingsPage() {
                   role="radio"
                   aria-checked={source === item.id}
                   className={source === item.id ? 'is-active' : ''}
-                  onClick={() => { setSource(item.id); invalidateTestResult(); }}
+                  onClick={() => changeSelection(() => setSource(item.id))}
                 >
                   <Icon size={16} />
                   <strong>{item.label}</strong>
@@ -186,7 +238,7 @@ export function GatewaySettingsPage() {
           {source === 'pool' ? (
             <label className="lg-gws-field">
               <span style={FIELD_LABEL}>对话模型池</span>
-              <select value={poolId} onChange={(event) => { setPoolId(event.target.value); invalidateTestResult(); }}>
+              <select value={poolId} onChange={(event) => changeSelection(() => setPoolId(event.target.value))}>
                 <option value="">请选择一个池</option>
                 {data.pools.map((pool) => (
                   <option key={pool.id} value={pool.id}>{pool.name}{pool.isDefault ? '（默认池）' : ''}</option>
@@ -199,14 +251,29 @@ export function GatewaySettingsPage() {
           {source === 'model' ? (
             <label className="lg-gws-field">
               <span style={FIELD_LABEL}>逻辑模型</span>
-              <select value={modelName} onChange={(event) => { setModelName(event.target.value); invalidateTestResult(); }}>
+              {/* 清单只回前 N 条，所以必须给一条够得着剩下那些的路，否则它们在这一页等于不存在。 */}
+              <input
+                type="search"
+                value={modelQuery}
+                placeholder="按模型名或标识筛选"
+                onChange={(event) => setModelQuery(event.target.value)}
+              />
+              <select value={modelName} onChange={(event) => changeSelection(() => setModelName(event.target.value))}>
                 <option value="">请选择一个模型</option>
                 {/* 提交 publicId、显示 name：解析器按 publicId 匹配，拿显示名去存会匹配不上 */}
-                {data.models.map((model) => (
+                {modelOptions.map((model) => (
                   <option key={model.id} value={model.publicId}>{model.name}</option>
                 ))}
               </select>
-              {data.models.length === 0 ? <small style={HINT_TEXT}>当前没有启用的对话类逻辑模型，先去「逻辑模型」启用一个。</small> : null}
+              {data.models.length === 0 ? (
+                <small style={HINT_TEXT}>
+                  {modelQuery
+                    ? `没有匹配「${modelQuery}」的启用中对话模型，换个关键字试试。`
+                    : '当前没有启用的对话类逻辑模型，先去「逻辑模型」启用一个。'}
+                </small>
+              ) : data.modelTotal > data.models.length ? (
+                <small style={HINT_TEXT}>共 {data.modelTotal} 个符合条件，这里只列出前 {data.models.length} 个——输关键字缩小范围就能选到其余的。</small>
+              ) : null}
             </label>
           ) : null}
 

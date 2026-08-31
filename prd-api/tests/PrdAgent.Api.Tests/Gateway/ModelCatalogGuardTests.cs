@@ -119,6 +119,50 @@ public sealed class ModelCatalogGuardTests
     }
 
     [Fact]
+    public void TighteningMigrations_OnlyGrandfatherModelsTheTighteningActuallyBroke()
+    {
+        /*
+          每次口径收紧都自带一个一次性窗口，给「昨天判成名录内、今天判成名录外」的存量模型补标记。
+          但窗口用「此刻缺标记」当判据太宽：上一个窗口跑完之后**绕过控制台直接写库**塞进来的模型
+          同样缺标记，下一个窗口会顺手把它们一起放行——那正是这道门要拦的那一种。
+          等于每加一条迁移就把门重新开一次，与当初把迁移改成一次性所要解决的问题一模一样。
+
+          所以判据必须两头都算：旧口径判内 **且** 新口径判外。
+        */
+        var byVendorPrefix = (Func<string?, bool>)LegacyCatalogRules.WasInCatalogBeforeStrictVendorPrefix;
+        var byPunctuation = (Func<string?, bool>)LegacyCatalogRules.WasInCatalogBeforeStrictPunctuation;
+
+        // 受 v2（厂商段收紧）影响的：旧口径剥掉任意前缀就命中，新口径落空。
+        LegacyCatalogRules.NeedsAllowanceAfterTightening("private-provider/gpt-4o", byVendorPrefix).ShouldBeTrue();
+        LegacyCatalogRules.NeedsAllowanceAfterTightening("openai/claude-3-opus", byVendorPrefix).ShouldBeTrue();
+
+        // 受 v3（标点收紧）影响的：旧口径把点改成横杠就命中，新口径落空。
+        LegacyCatalogRules.NeedsAllowanceAfterTightening("gpt-4-1", byPunctuation).ShouldBeTrue();
+        LegacyCatalogRules.NeedsAllowanceAfterTightening("gpt_4.1", byPunctuation).ShouldBeTrue();
+
+        // **这条是本用例的重点**：两头都判外的陌生模型，任何一个窗口都不许放行。
+        // 它正是「绕过控制台直接写库」那一种，也正是数据面名录门存在的理由。
+        foreach (var stranger in new[]
+                 {
+                     "some-vendor/never-heard-of-this", "acme/unknown",
+                     "gpt-4o-my-private-finetune", "totally-made-up-model",
+                 })
+        {
+            LegacyCatalogRules.NeedsAllowanceAfterTightening(stranger, byVendorPrefix).ShouldBeFalse(
+                customMessage: $"「{stranger}」两个口径下都不在名录里，厂商段收紧的窗口不该顺手放行它");
+            LegacyCatalogRules.NeedsAllowanceAfterTightening(stranger, byPunctuation).ShouldBeFalse(
+                customMessage: $"「{stranger}」两个口径下都不在名录里，标点收紧的窗口不该顺手放行它");
+        }
+
+        // 新口径下仍在名录里的，本来就不需要放行标记，窗口也不该动它们。
+        foreach (var stillFine in new[] { "gpt-4o", "openai/gpt-4o", "gpt-4.1", "claude-3.5-sonnet" })
+        {
+            LegacyCatalogRules.NeedsAllowanceAfterTightening(stillFine, byVendorPrefix).ShouldBeFalse();
+            LegacyCatalogRules.NeedsAllowanceAfterTightening(stillFine, byPunctuation).ShouldBeFalse();
+        }
+    }
+
+    [Fact]
     public void UnknownVendorPrefix_DoesNotInheritTheCatalogEntry()
     {
         // 归一化曾把斜杠前的**任意**前缀都当厂商剥掉。于是任何人只要把自家模型命名成
@@ -277,6 +321,28 @@ public sealed class ModelCatalogMirrorGuardTests
         consoleProgram.ShouldContain(
             $"GetCollection<BsonDocument>(\"{PrdAgent.Core.LlmGateway.GatewayCatalogMigrations.CollectionName}\")",
             customMessage: "控制台记迁移的集合名必须与数据面读的那个一致，否则数据面永远读不到完成标记");
+
+        /*
+          v1 是「名录门上线」那一次，无差别补标记是对的——那之前根本没有放行标记这回事。
+          但**每一次口径收紧都必须给出自己的影响面判据**：沿用 v1 那个「此刻缺标记」的过滤，
+          会把 v1 跑完之后绕过控制台直接写库塞进来的模型一起放行——那正是这道门要拦的那一种，
+          等于每加一条迁移就把门重新开一次。
+        */
+        var v1Call = consoleProgram.IndexOf(
+            $"RunCatalogGrandfatherAsync(\n    \"{PrdAgent.Core.LlmGateway.GatewayCatalogMigrations.GrandfatherV1}\"",
+            StringComparison.Ordinal);
+        v1Call.ShouldBeGreaterThan(-1, customMessage: "找不到 v1 迁移的调用，守卫的取值范围失效了");
+        var v1End = consoleProgram.IndexOf(");", v1Call, StringComparison.Ordinal);
+        consoleProgram[v1Call..v1End].ShouldNotContain(
+            "LegacyCatalogRules",
+            customMessage: "v1 是门上线那一次，本来就该无差别补标记");
+
+        CountOccurrences(consoleProgram, "LegacyCatalogRules.NeedsAllowanceAfterTightening(").ShouldBe(
+            2,
+            customMessage: "两次口径收紧（厂商段、标点）各要一个「旧口径判内、新口径判外」的影响面判据；"
+                + "少一个就是又用 v1 那个过宽的过滤放行了一批本该被拦的模型");
+        consoleProgram.ShouldContain("LegacyCatalogRules.WasInCatalogBeforeStrictVendorPrefix");
+        consoleProgram.ShouldContain("LegacyCatalogRules.WasInCatalogBeforeStrictPunctuation");
 
         foreach (var id in PrdAgent.Core.LlmGateway.GatewayCatalogMigrations.RequiredIds)
         {

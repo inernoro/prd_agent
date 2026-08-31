@@ -33,6 +33,19 @@ const posted = [];
 let testMode = 'ok';
 /** 测试连接桩的拖延时长：模拟真实那一次要等好几秒的调用，用来验等待期屏幕在动。 */
 let testDelayMs = 0;
+/** 保存桩的拖延时长：保存期间控件仍可编辑，用来验「这一小段里改的选择」不会被读回来的值盖掉。 */
+let saveDelayMs = 0;
+/*
+  逻辑模型全集。第三条带 beyondPage 标记：不筛时它不在清单里（模拟排在 200 名之后），
+  只有输关键字才够得着——「够不着」正是这条守卫要盯的那个静默缺陷。
+*/
+const ALL_MODELS = [
+  { id: 'lm-1', publicId: 'demo/chat-1', name: '对话主力' },
+  { id: 'lm-2', publicId: 'demo/chat-2', name: '实验模型' },
+  { id: 'lm-far', publicId: 'demo/chat-far-behind', name: '排在两百名之后的模型', beyondPage: true },
+];
+/** 桩里的「符合条件总数」：页面必须如实说出还剩多少条没列出来。 */
+const MODEL_TOTAL = 240;
 /** 当前系统级设置，PUT 之后 GET 要能读回改后的值。 */
 let settings = { modelSource: 'auto', modelGroupId: null, modelName: null };
 
@@ -42,7 +55,8 @@ const json = (res, status, body) => {
 };
 
 const server = http.createServer((req, res) => {
-  const p = new URL(req.url, `http://localhost:${PORT}`).pathname;
+  const requestUrl = new URL(req.url, `http://localhost:${PORT}`);
+  const p = requestUrl.pathname;
   if (p.startsWith('/llmgw/gw/')) {
     const api = p.replace('/llmgw/gw', '');
     if (api === '/auth/login') {
@@ -52,6 +66,10 @@ const server = http.createServer((req, res) => {
       } });
     }
     if (api === '/system-settings' && req.method === 'GET') {
+      const modelQuery = (requestUrl.searchParams.get('q') || '').trim();
+      const matchedModels = modelQuery
+        ? ALL_MODELS.filter((m) => `${m.publicId} ${m.name}`.toLowerCase().includes(modelQuery.toLowerCase()))
+        : ALL_MODELS.filter((m) => !m.beyondPage);
       return json(res, 200, { success: true, error: null, data: {
         ...settings,
         // 归属团队恒为系统自己的团队，不是登录者所属的业务团队——系统消耗单独计费。
@@ -70,10 +88,11 @@ const server = http.createServer((req, res) => {
           { id: 'pool-2', name: '实验池', isDefault: false },
         ],
         // 显示名故意与 publicId 不同：页面若把显示名当模型名提交，下面那条断言立刻红。
-        models: [
-          { id: 'lm-1', publicId: 'demo/chat-1', name: '对话主力' },
-          { id: 'lm-2', publicId: 'demo/chat-2', name: '实验模型' },
-        ],
+        models: matchedModels.map(({ id, publicId, name }) => ({ id, publicId, name })),
+        modelQuery,
+        // 不筛时如实报总数（远大于回的条数）：页面据此说「还剩多少条」。筛过就报命中数。
+        modelTotal: modelQuery ? matchedModels.length : MODEL_TOTAL,
+        modelPageSize: 200,
         consumers: [{ feature: 'Quickstart · 一句话推导调用用途码', appCallerCode: 'llmgw-console.intent-draft::chat' }],
       } });
     }
@@ -88,7 +107,9 @@ const server = http.createServer((req, res) => {
           modelGroupId: body.modelGroupId ?? null,
           modelName: body.modelName ?? null,
         };
-        json(res, 200, { success: true, error: null, data: body });
+        const reply = () => json(res, 200, { success: true, error: null, data: body });
+        if (saveDelayMs > 0) setTimeout(reply, saveDelayMs);
+        else reply();
       });
       return undefined;
     }
@@ -253,6 +274,45 @@ const failText = await bodyScope.getByRole('alert').last().innerText();
 check('测试失败说清了是密钥问题', failText.includes('密钥'), true);
 check('测试失败给出了下一步', failText.includes('自动重签') || failText.includes('服务网关设置'), true);
 check('测试失败不是裸状态码', /^\s*\d{3}\s*$/.test(failText), false);
+
+/*
+  ── 排在清单之后的模型必须够得着 ────────────────────────────────
+  清单单次只回前 200 条。不给筛选的话，排在之后的模型在这一页等于不存在：
+  页面不报错、下拉里就是没有它，用户只会以为系统不支持那个模型。
+  判据取「输了关键字之后，它出不出现在可选项里」，那正是用户会撞上的那一面。
+*/
+const modelField = page.locator('.lg-gws-field');
+check('清单被截断时如实说还剩多少', (await modelField.innerText()).includes(`共 ${MODEL_TOTAL} 个符合条件`), true);
+check('没筛之前够不到排在后面的那个',
+  await page.locator('.lg-gws-field option', { hasText: '排在两百名之后的模型' }).count(), 0);
+await page.locator('.lg-gws-field input[type=search]').fill('far-behind');
+await page.waitForTimeout(900);
+check('输关键字之后它出现在可选项里',
+  await page.locator('.lg-gws-field option', { hasText: '排在两百名之后的模型' }).count(), 1);
+// 筛清单不是改配置：当前选中的那个不许被这次重读顶掉，也不许从下拉里消失。
+check('筛清单不动用户当前的选择', await page.locator('.lg-gws-field select').inputValue(), 'demo/chat-2');
+await page.locator('.lg-gws-field input[type=search]').fill('');
+await page.waitForTimeout(900);
+
+/*
+  ── 保存期间改的选择，不许被读回来的旧值静默盖掉 ────────────────
+  保存收尾会读回服务端那份并回填选择框。用户在这一小段里改的选择若被它顶掉，
+  屏幕上显示的就是他没选的那个，`dirty` 还跟着归零——页面同时告诉他「已保存」。
+  判据取「保存回来之后，选择框里是不是他最后选的那个」。
+*/
+saveDelayMs = 1200;
+await page.locator('.lg-gws-field select').selectOption('demo/chat-1');
+await page.getByRole('button', { name: '保存设置' }).click();
+await page.waitForTimeout(250);
+await page.locator('.lg-gws-field select').selectOption('demo/chat-2');
+await page.waitForTimeout(1800);
+check('保存期间改的选择没有被读回来的值盖掉',
+  await page.locator('.lg-gws-field select').inputValue(), 'demo/chat-2');
+check('并且如实说这份还没保存',
+  (await bodyScope.getByRole('status').allInnerTexts()).some((t) => t.includes('还没保存')), true);
+check('保存按钮回到可点（这份确实还没存）',
+  await page.getByRole('button', { name: '保存设置' }).isDisabled(), false);
+saveDelayMs = 0;
 
 // 窄屏不塌：三个来源按钮纵向排开，不出横向滚动条。
 await page.setViewportSize({ width: 390, height: 844 });

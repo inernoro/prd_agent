@@ -1020,8 +1020,13 @@ export function removePoolModel(id: string, modelId: string, platformId?: string
 
 // ── 服务网关设置：系统级功能（当前是 Quickstart 的一句话推导）用哪个模型 ──
 // 地址、appCaller、密钥都由后端自管，这里只读展示、只写模型选择。
-export function getSystemSettings(): Promise<ApiResponse<SystemGatewaySettings>> {
-  return apiRequest<SystemGatewaySettings>('/system-settings');
+/**
+ * `query` 只筛逻辑模型清单（第 201 条之后的模型靠它才够得着），不影响其它任何字段。
+ * 不传就是不筛。
+ */
+export function getSystemSettings(query?: string): Promise<ApiResponse<SystemGatewaySettings>> {
+  const q = (query ?? '').trim();
+  return apiRequest<SystemGatewaySettings>(q ? `/system-settings?q=${encodeURIComponent(q)}` : '/system-settings');
 }
 export function saveSystemSettings(req: UpdateSystemSettingsRequest): Promise<ApiResponse<UpdateSystemSettingsResult>> {
   return apiRequest<UpdateSystemSettingsResult>('/system-settings', { method: 'PUT', body: req });

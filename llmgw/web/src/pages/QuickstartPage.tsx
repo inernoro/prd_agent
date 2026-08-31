@@ -302,9 +302,15 @@ export function QuickstartPage() {
    * 那句「实际执行 X」就会挂到一段不是它跑出来的输出上。取不到就留空，如实说没带。
    */
   const [liveOutput, setLiveOutput] = useState<{ kind: 'text' | 'image' | 'audio'; text: string; url?: string; done: boolean; model: string } | null>(null);
-  // 真实调用的代次：换模型 / 再点一次都会把上一跑作废，它的回写一律丢弃。
-  const realRunSeq = useRef(0);
-  const realRunAbort = useRef<AbortController | null>(null);
+  /*
+    这一屏「正在跑的那一次调用」的代次与中止句柄。
+
+    **安全测试与真实调用共用同一份**，不是各管各的：两条路径写的是同一批状态
+    （testing / testResult / liveOutput / testElapsedMs），代次分家就等于没有代次——
+    作废真实调用挡不住在途的安全测试回来改写结论，反之亦然。
+  */
+  const activeRunSeq = useRef(0);
+  const activeRunAbort = useRef<AbortController | null>(null);
   const [binding, setBinding] = useState(false);
   const [bindNotice, setBindNotice] = useState<string | null>(null);
   // 月预算是本页唯一要用户想的数字；单次预占上限由它派生（成对约束见 budgetPair）。
@@ -855,8 +861,21 @@ export function QuickstartPage() {
     await runTest(bundle, 'safe');
   };
 
+  /*
+    安全测试（也可能被主按钮用来跑真实档）——与 runRealTest 共用同一份代次。
+
+    上一轮只给 runRealTest 装了代次与中止：判据又一次写成了「用户报的是哪一次调用」，
+    而它应该是「这次调用会不会写那批共享状态」。runTest 写的是同一批状态，
+    于是作废动作对它完全无效：改完输入之后，在途的这一条回来照样把结论写到新输入上，
+    它的 finally 还会把**别人那一跑**的忙态收掉（按钮提前解禁、计时停在别人的耗时上）。
+  */
   const runTest = async (target = bundle, mode = testMode) => {
     if (!target || (mode === 'real' && !realRouteReady)) return;
+    const runId = ++activeRunSeq.current;
+    activeRunAbort.current?.abort();
+    const abortController = new AbortController();
+    activeRunAbort.current = abortController;
+    const superseded = () => activeRunSeq.current !== runId;
     setTesting(true);
     setTestResult(null);
     setActionError(null);
@@ -879,8 +898,11 @@ export function QuickstartPage() {
         headers,
         body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment, false, testPrompt, testPlatformId)),
         credentials: 'omit',
+        signal: abortController.signal,
       });
+      if (superseded()) return;
       const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+      if (superseded()) return;
       const actualRequestId = readRequestId(response, payload) || requestId;
       const upstreamCalled = readUpstreamCalled(response, payload);
       if (!response.ok) {
@@ -899,10 +921,14 @@ export function QuickstartPage() {
         setTestResult({ ok: true, message: `真实上游已返回，Provider：${provider}，模型：${actualModel}。请用 requestId 核对实际模型、耗时和费用。`, requestId: actualRequestId });
       }
     } catch (error) {
+      if (superseded() || (error instanceof DOMException && error.name === 'AbortError')) return;
       setTestResult({ ok: false, message: error instanceof Error ? `无法访问 Gateway：${error.message}` : '无法访问 Gateway。' });
     } finally {
-      setTestElapsedMs(Date.now() - startedAt);
-      setTesting(false);
+      // 收尾只由当前代次做：被顶掉的那一跑收忙态，等于替新的那一跑提前解禁按钮。
+      if (!superseded()) {
+        setTestElapsedMs(Date.now() - startedAt);
+        setTesting(false);
+      }
     }
   };
 
@@ -926,8 +952,8 @@ export function QuickstartPage() {
    * 守卫按调用点数量钉住，日后新增输入漏调即红。
    */
   const invalidateActiveRun = () => {
-    realRunSeq.current += 1;
-    realRunAbort.current?.abort();
+    activeRunSeq.current += 1;
+    activeRunAbort.current?.abort();
     setLiveOutput(null);
     setTestResult(null);
     setTesting(false);
@@ -951,11 +977,11 @@ export function QuickstartPage() {
       而 auto 档下更离谱：贴的是**预检**那次解析出来的成员，可这次真花钱的调用
       完全可能因为健康状态变化落到另一个成员上，等于把 A 的回答说成 B 跑的。
     */
-    const runId = ++realRunSeq.current;
-    realRunAbort.current?.abort();
+    const runId = ++activeRunSeq.current;
+    activeRunAbort.current?.abort();
     const abortController = new AbortController();
-    realRunAbort.current = abortController;
-    const superseded = () => realRunSeq.current !== runId;
+    activeRunAbort.current = abortController;
+    const superseded = () => activeRunSeq.current !== runId;
     const pinnedAtStart = effectiveTestModel === 'auto' ? '' : effectiveTestModel;
     // 上游返回里带的模型名——那才是「真的跑了谁」。钉了成员时用钉住的那个兜底；
     // auto 档下取不到就留空，界面如实说「返回里没带模型名」，不拿预检的结论冒充。

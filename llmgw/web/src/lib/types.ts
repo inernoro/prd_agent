@@ -1429,6 +1429,12 @@ export type SystemGatewaySettings = {
   pools: Array<{ id: string; name: string; isDefault: boolean }>;
   // publicId 是提交给后端的值（解析器只认它），name 只做显示。
   models: Array<{ id: string; publicId: string; name: string }>;
+  /** 本次清单用的筛选关键字（服务端回显，空串表示没筛）。 */
+  modelQuery: string;
+  /** 满足条件的模型总数：大于 models.length 就说明被截断了，得靠关键字够剩下那些。 */
+  modelTotal: number;
+  /** 单次最多回多少条。 */
+  modelPageSize: number;
   consumers: Array<{ feature: string; appCallerCode: string }>;
 };
 
