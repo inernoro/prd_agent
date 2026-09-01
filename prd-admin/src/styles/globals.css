@@ -82,6 +82,88 @@
   .latent-field__sweep { animation: none; }
 }
 
+/* ===== 磨砂玻璃 =====
+   一块玻璃 = 半透明底 + 背后模糊 + **顶边高光** + 投影。前两条谁都会写，
+   真正让它从「一块半透明的板」变成「一块玻璃」的是后两条：
+   顶边那道细高光是光打在玻璃厚度上的边，投影说明它浮在东西之上。
+   取证：先只写前两条，卡片就是块板；补上边和影，玻璃感立刻出来。
+
+   还有一条前提：**背后得有东西可透**。中间挖空的那一版玻璃后面一片纯色，
+   磨砂就白磨了——所以 DarkroomPlate 的中央遮罩留了三成，不是零。 */
+.glass-pane {
+  background: var(--glass-surface);
+  backdrop-filter: blur(26px) saturate(1.4);
+  -webkit-backdrop-filter: blur(26px) saturate(1.4);
+  box-shadow: inset 0 1px 0 var(--glass-edge), var(--glass-shadow);
+}
+
+/* 卡内的分区（chip、工具条）。它们是同一块玻璃上的分区，不是各自独立的玻璃，
+   所以只换底色、不再各来一道高光和投影——否则一屏里到处是浮起来的小方块。 */
+.glass-sub {
+  background: var(--glass-surface-sub);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+}
+
+/* ===== 印相台：首页背景美术层（见 components/effects/DarkroomPlate.tsx） =====
+   颜色一律走 --plate-* token（双写），这里只管几何与合成方式。 */
+.plate {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.plate__svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 墨块。柔边靠 filter，颜色靠 token。极慢的呼吸是整层唯一的动画。 */
+.plate__ink-warm { fill: var(--plate-ink-warm); }
+.plate__ink-cool { fill: var(--plate-ink-cool); }
+.plate__ink-misreg { fill: var(--plate-ink-misreg); }
+.plate__inks {
+  will-change: opacity;
+  animation: plate-breathe 22s ease-in-out infinite;
+}
+
+/* 网点、印样线、影调、齿孔、套准十字。 */
+.plate__dot { fill: var(--plate-dot); }
+.plate__halftone { opacity: 1; }
+.plate__frame { fill: none; stroke: var(--plate-line); stroke-width: 1; }
+.plate__toned { opacity: 1; }
+.plate__tone-hi { stop-color: var(--plate-tone-hi); }
+.plate__tone-lo { stop-color: var(--plate-tone-lo); }
+.plate__sprocket { fill: var(--plate-line); }
+.plate__reg {
+  fill: none;
+  stroke: var(--plate-line-strong);
+  stroke-width: 1;
+}
+.plate__photo-veil { fill: var(--plate-photo-veil); }
+
+/* 纸的颗粒：把上面所有硬边压回同一张纸上。周期与潜像场同源（45 度斜织）。 */
+.plate__grain {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(45deg,
+    var(--plate-grain) 0 7px,
+    transparent 7px 16px);
+}
+
+@keyframes plate-breathe {
+  0%, 100% { opacity: .78; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plate__inks { animation: none; opacity: .9; }
+}
+
 /* 背景照片层：轮换素材。cover + 居中，淡入由 JS 在 decode 之后触发。 */
 .backdrop-photo {
   position: absolute;
@@ -100,6 +182,7 @@
  * 预设 chip 也失去了和底的分层）。没有哪个数值能救一张近黑的图当浅色底，
  * 所以直接不放，浅色下留潜像场自己成立。
  */
-[data-theme="light"] .backdrop-photo-layer {
+[data-theme="light"] .backdrop-photo-layer,
+[data-theme="light"] .plate__photo {
   display: none;
 }

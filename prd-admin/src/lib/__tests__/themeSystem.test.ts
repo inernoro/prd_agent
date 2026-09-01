@@ -262,8 +262,12 @@ describe('主题系统契约', () => {
      * 浅色档禁止近白值——但纸面类介质（缩略图假页渐变、预览窗、二维码底）在设计稿里
      * 本来就是纯白纸，那不是「浅字压浅底」的来源。所以只放行显式点名的介质 token，
      * 其余一律照旧拦下：把这几行注释掉再跑，仍会因为别处的 #fff 变红。
+     *
+     * --glass-edge 同理：它是磨砂玻璃**顶边那道 1px 高光**（inset box-shadow），
+     * 是光打在玻璃厚度上的镜面反射，浅色下本来就该是接近纯白的一条线。
+     * 它永远不承载文字，也永远不做背景填充，不可能变成「浅字压浅底」。
      */
-    const PAPER_MEDIA_TOKENS = ['--thumb-gradient'];
+    const PAPER_MEDIA_TOKENS = ['--thumb-gradient', '--glass-edge'];
     const lightBlockWithoutPaper = lightBlock
       .split('\n')
       .filter((line) => !PAPER_MEDIA_TOKENS.some((t) => line.trim().startsWith(t)))

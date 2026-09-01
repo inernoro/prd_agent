@@ -44,7 +44,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
-import { BackdropPhoto, LatentField } from '@/components/effects/LatentField';
+import { BackdropPhoto } from '@/components/effects/LatentField';
+import { DarkroomPlate } from '@/components/effects/DarkroomPlate';
 import { BackdropSettings, readBackdropMode, resolveBackdrop, type BackdropMode } from '@/components/visual-agent/BackdropSettings';
 import type { BackdropAsset } from '@/lib/backdropRotation';
 import { BACKDROP_CATALOG, dimFor } from '@/lib/backdropCatalog';
@@ -439,14 +440,16 @@ function QuickInputBox(props: {
   return (
     <div className="w-full mx-auto mt-5" style={{ width: 'min(820px, 100%)' }}>
       <div
-        className="overflow-hidden cursor-text transition-colors"
+        // 磨砂玻璃：底色、模糊、顶边高光、投影全在 .glass-pane 里（见 globals.css）。
+        // 聚焦态要盖掉 glass-pane 自带的 box-shadow，所以这里把高光那一段一起写回去，
+        // 否则一聚焦玻璃的边就没了。
+        className="glass-pane overflow-hidden cursor-text transition-colors"
         style={{
           borderRadius: 8,
-          background: 'var(--bg-elevated)',
           border: `1px solid ${focused ? 'var(--border-focus)' : 'var(--border-subtle)'}`,
           boxShadow: focused
-            ? 'var(--shadow-card), 0 0 0 3px rgba(var(--accent-primary-rgb), 0.14)'
-            : 'var(--shadow-card)',
+            ? 'inset 0 1px 0 var(--glass-edge), var(--glass-shadow), 0 0 0 3px rgba(var(--accent-primary-rgb), 0.14)'
+            : undefined,
         }}
         onClick={handleContainerClick}
         onPaste={handlePaste}
@@ -504,12 +507,11 @@ function QuickInputBox(props: {
         {selectedImage ? (
           <div className="flex flex-wrap items-center gap-[7px] px-5 pb-1.5">
             <span
-              className="inline-flex items-center gap-1.5"
+              className="glass-sub inline-flex items-center gap-1.5"
               style={{
                 height: 30,
                 padding: '3px 4px',
                 borderRadius: 6,
-                background: 'var(--bg-secondary)',
                 color: 'var(--text-secondary)',
                 fontSize: 10,
               }}
@@ -547,12 +549,11 @@ function QuickInputBox(props: {
 
         {/* 底部工具条：自带底色 + 上边框，与视频创作同结构。 */}
         <div
-          className="flex items-center justify-between gap-2.5"
+          className="glass-sub flex items-center justify-between gap-2.5"
           style={{
             minHeight: 58,
             padding: '9px 10px 9px 13px',
             borderTop: '1px solid var(--border-faint)',
-            background: 'var(--bg-secondary)',
           }}
         >
           <div className="flex items-center gap-[3px]">
@@ -643,10 +644,11 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             type="button"
             data-tour-id={tag.isPro ? 'visual-pro' : undefined}
             onClick={() => { if (!tag.isPro) onSelect(tag.prompt); }}
-            className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md px-[7px] text-[9px] shrink-0 transition-colors"
+            className={`${isActive ? '' : 'glass-sub '}inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md px-[7px] text-[9px] shrink-0 transition-colors`}
             style={{
               minHeight: 38,
-              background: isActive ? 'var(--bg-card)' : 'var(--bg-secondary)',
+              // 选中态保持实心卡面：它要从这一排里跳出来，磨砂会把它压回去。
+              background: isActive ? 'var(--bg-card)' : undefined,
               color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
               boxShadow: isActive
                 ? `inset 0 0 0 1px ${tag.hue}, var(--shadow-card-sm)`
@@ -1249,22 +1251,23 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       className="surface-tone-dark h-full min-h-0 flex flex-col overflow-auto relative"
       style={{ background: 'var(--bg-base)' }}
     >
-      {/* 潜像场：织纹周期与生图等待卡同源，「等待」和「首页」是同一种材质。
-          旧版这里是星空插画 + 粒子漩涡——那是可以贴在任何产品上的装饰。 */}
-      <LatentField />
-      {/* 轮换背景。压暗罩由 BackdropPhoto 自带——那一层是 9-13px 小字可读性的唯一保障。 */}
+      {/* 背景两层，顺序不能反：
+          底下是轮换的那张图（压暗罩由 BackdropPhoto 自带，是小字可读性的唯一保障），
+          上面压印相台美术层——接触印样、两块错开套印的墨、网点、四角套准十字。
+          合起来读作「一张片子摊在灯箱上」，轮换素材因此仍然是整页的底光，
+          而不是被降级成角落里的一格。
+          旧版这里是「潜像场」（一团辉光 + 斜掠光）——用户原话：不要只有灯、粒子，太丑。 */}
       <BackdropPhoto src={backdrop?.url ?? null} dim={dimFor(backdrop)} />
+      <DarkroomPlate />
 
       {/* 顶栏：品牌 + 创作/作品 + 右侧动作，与视频创作同结构。
           旧版这里只有一个孤零零的返回箭头和一枚教程胶囊，页面没有身份。 */}
       <div
-        className="relative z-20 grid items-center px-6"
+        className="glass-pane relative z-20 grid items-center px-6"
         style={{
           gridTemplateColumns: '1fr auto 1fr',
           minHeight: 64,
           borderBottom: '1px solid var(--border-faint)',
-          background: 'var(--panel-solid)',
-          backdropFilter: 'blur(16px)',
         }}
       >
         <div className="flex items-center gap-2.5 justify-self-start">
@@ -1289,7 +1292,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           </span>
         </div>
 
-        <div className="flex items-center gap-0.5 justify-self-center" style={{ height: 38, padding: 3, borderRadius: 8, background: 'var(--bg-secondary)' }}>
+        <div className="glass-sub flex items-center gap-0.5 justify-self-center" style={{ height: 38, padding: 3, borderRadius: 8 }}>
           <span
             className="grid place-items-center"
             style={{ minWidth: 64, height: 32, borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 11, boxShadow: 'var(--shadow-card-sm)' }}

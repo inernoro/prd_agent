@@ -136,6 +136,36 @@
   --latent-sweep: rgba(255, 236, 222, 0.030);
   /* 背景照片上的压暗罩。它是前景 9-13px 小字可读性的唯一保障，不许为了「图好看」调低。 */
   --backdrop-scrim: 10, 10, 12;
+
+  /* ===== 印相台：首页背景美术层（components/effects/DarkroomPlate.tsx）=====
+     两块墨 + 一张接触印样 + 网点 + 套准十字。同样跟着 data-theme 走，必须双写。
+     浅色档不是取反：墨要变淡（浅纸上同样的浓度会显脏），线要变黑，
+     网点在白纸上比在黑纸上显眼得多，所以透明度砍一半还多。 */
+  --plate-ink-warm: rgba(217, 119, 87, 0.235);
+  --plate-ink-cool: rgba(96, 132, 168, 0.19);
+  --plate-ink-misreg: rgba(232, 168, 124, 0.10);
+  --plate-line: rgba(255, 236, 222, 0.10);
+  --plate-line-strong: rgba(255, 236, 222, 0.16);
+  --plate-dot: rgba(255, 236, 222, 0.05);
+  --plate-tone-hi: rgba(255, 236, 222, 0.055);
+  --plate-tone-lo: rgba(255, 236, 222, 0.012);
+  --plate-grain: rgba(255, 255, 255, 0.014);
+  /* 印样格里那张照片上的压暗罩：格子只有 214x143，比整幅小得多，
+     所以不需要整幅那么重的罩，但仍然要罩——照片会紧挨着标题。 */
+  --plate-photo-veil: rgba(10, 10, 12, 0.22);
+
+  /* ===== 磨砂玻璃 =====
+     光把「半透明 + 模糊」写完就以为是玻璃了，取证下来不是：那样只是一块半透明的板。
+     玻璃之所以是玻璃，靠的是**边**——顶边一道极细的高光（光打在玻璃厚度上的那条边）
+     和底下的投影（它浮在东西之上）。这两条缺了，透明度调到哪个值都只是块板。 */
+  --glass-edge: rgba(255, 236, 222, 0.13);
+  --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.30);
+  /* 0.618 是用户点名的黄金比。取证下来这个值和 0.382 视觉上几乎分不出
+     （卡面色和底色本来就接近），所以取更保命的一档：背景是可换的，
+     用户自己生成一张亮底图之后，薄的那一档会让正文掉对比度。
+     色值 = --bg-elevated #1e1e24 / --bg-secondary #26262e 带 alpha，改底色时要一起改。 */
+  --glass-surface: rgba(30, 30, 36, 0.618);
+  --glass-surface-sub: rgba(38, 38, 46, 0.618);
   /* 卡面织纹：条纹周期按屏幕像素恒定。写死 14 世界像素时，20% 缩放下只剩 2.5 屏幕像素、
      配 1.4% 的 alpha 完全看不见——卡片于是变成一块纯平的深色方块（用户原话：很单调哦）。 */
   --gen-wait-surface: repeating-linear-gradient(45deg,
@@ -895,6 +925,26 @@
   --latent-core-mid: rgba(166, 75, 53, 0.04);
   --latent-sweep: rgba(120, 80, 60, 0.030);
   --backdrop-scrim: 251, 248, 242;
+
+  /* 印相台浅色档（暗色档与说明见 :root 同名处）。 */
+  --plate-ink-warm: rgba(193, 106, 74, 0.14);
+  --plate-ink-cool: rgba(84, 118, 154, 0.09);
+  --plate-ink-misreg: rgba(200, 132, 92, 0.06);
+  --plate-line: rgba(60, 44, 36, 0.10);
+  --plate-line-strong: rgba(60, 44, 36, 0.17);
+  --plate-dot: rgba(60, 44, 36, 0.035);
+  --plate-tone-hi: rgba(60, 44, 36, 0.045);
+  --plate-tone-lo: rgba(60, 44, 36, 0.010);
+  --plate-grain: rgba(0, 0, 0, 0.012);
+  --plate-photo-veil: rgba(251, 248, 242, 0.30);
+
+  /* 磨砂玻璃浅色档：浅底上的玻璃高光要更亮更实（白纸上一道 13% 的暖白看不出来），
+     投影则要更浅——浅色界面里重投影会显脏。 */
+  --glass-edge: rgba(255, 255, 255, 0.72);
+  --glass-shadow: 0 10px 30px rgba(60, 44, 36, 0.10);
+  /* 浅色档的玻璃底色 = --bg-elevated #E4DED5 / --bg-card #F8F5EF 带同一个 0.618。 */
+  --glass-surface: rgba(228, 222, 213, 0.618);
+  --glass-surface-sub: rgba(248, 245, 239, 0.618);
   --gold-gradient: linear-gradient(135deg, #E2B19F 0%, #A64B35 52%, #C9795E 100%);
   --selection-bg: rgba(166, 75, 53, 0.10);
   --selection-icon-bg: rgba(166, 75, 53, 0.14);
@@ -1186,6 +1236,7 @@
   --button-primary-bg: #D97757;
   --button-primary-shadow: 0 4px 16px -4px rgba(217, 119, 87, 0.42);
   --gold-gradient: linear-gradient(135deg, #F0C9A8 0%, #C8623A 45%, #E8A87C 100%);
+  --glass-edge: rgba(255, 236, 222, 0.13);
   --hairline: rgba(255, 255, 255, 0.08);
   --media-card-edge: rgba(247, 247, 251, 0.08);
   --nested-block-bg: rgba(255, 255, 255, 0.05);

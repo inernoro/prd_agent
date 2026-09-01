@@ -33,10 +33,10 @@ export const BACKDROP_CATALOG: readonly BackdropAsset[] = [
  * 随包这四张本来就够暗（亮部也只到中灰），所以 0.55 就足以保住 9-13px 小字的对比度，
  * 又能让那点光透出来。用户自己生成的背景则未知深浅，走 {@link GENERATED_DIM} 的保守值。
  */
-export const CATALOG_DIM = 0.55;
+export const CATALOG_DIM = 0.62;
 
 /** 用户自己生成的背景：深浅不可控，压重一点，宁可看不清也不能让正文掉对比度。 */
-export const GENERATED_DIM = 0.78;
+export const GENERATED_DIM = 0.80;
 
 /** 这张图该用多重的暗罩——随包的认 id，其余一律按「不可控」处理。 */
 export function dimFor(asset: BackdropAsset | null | undefined): number {

@@ -412,7 +412,13 @@ describe('首页背景：素材来源与浅色主题的两条接线', () => {
     // 剥注释这一步本身也要有判据：剥完还得剩下真实代码，否则正则写坏了会把整份源码吃掉，
     // 上面那条断言就永远失败——那是另一种坏（假红），同样得拦。
     expect(latent).toContain('export function BackdropPhoto');
-    expect(read(GLOBALS)).toMatch(/\[data-theme="light"\]\s*\.backdrop-photo-layer\s*\{[^}]*display:\s*none/);
+
+    // 规则可能是「A, B { display:none }」的并列选择器，所以取整条规则再逐个查，
+    // 不假设 class 后面紧跟着 {（第一版正是这么写的，一加并列选择器就假红）。
+    const rule = read(GLOBALS).match(/\[data-theme="light"\][^{]*\{[^}]*display:\s*none[^}]*\}/);
+    expect(rule?.[0]).toContain('.backdrop-photo-layer');
+    // 印相台里那一格照片同理：近黑素材落在奶白纸上是一团脏，两处都得关。
+    expect(rule?.[0]).toContain('.plate__photo');
   });
 
   it('背景素材取随包清单，不再取项目封面（白底产品图压暗后整页变平灰）', () => {
