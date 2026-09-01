@@ -2918,7 +2918,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
                 ) : (
                   <div className="text-center">
                     <p className="text-sm text-token-secondary">拖拽文件到此处，或点击选择</p>
-                    <p className="text-xs text-token-muted">支持 .html / .zip / .md / .pdf / 视频（.mp4/.webm/.mov），最大 500MB；ZIP 最多 5000 个文件</p>
+                    <p className="text-xs text-token-muted">支持 .html / .zip / .md / .pdf / 视频（.mp4/.webm/.mov），最大 500MB；ZIP 最多 20000 个文件</p>
                   </div>
                 )}
                 <input
