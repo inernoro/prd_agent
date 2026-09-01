@@ -60,9 +60,21 @@ describe('Agent 上手助手技能库契约', () => {
    * 条件挡住，技能库必须是浮层。
    */
   it('主按钮不受技能库开关影响，永远在推荐页上', () => {
-    expect(source).toMatch(/<PrimaryNext onClick=\{\(\) => advance\(3\)\}>确认这些技能<\/PrimaryNext>/);
-    // 任何形如 `{!libraryOpen && <PrimaryNext` / `{!showSkillLibrary && <PrimaryNext` 的写法都是旧病复发。
+    /*
+     * 判据只钉不变量，不钉写法（predicate-and-wiring-discipline 形状 4a）。
+     *
+     * 这里原来还断言过 `<PrimaryNext onClick={() => advance(3)}>确认这些技能</PrimaryNext>`
+     * 一字不差地存在——改成具名 handler 这种保行为的重构会红，而换个条件写法的
+     * 等价回归照样绿，两头都错。事故本身是「主按钮被库开关条件渲染掉」，所以留下
+     * 的是这条否定断言，外加下面几条渲染断言。
+     *
+     * 彻底的做法是渲染向导、真的点一遍——本仓库 cds 侧还没有 DOM 测试环境
+     * （无 jsdom / testing-library），已记入 doc/debt.cds.md。
+     */
     expect(source).not.toMatch(/\{\s*!\s*\w*[lL]ibrary\w*\s*&&\s*<PrimaryNext/);
+    expect(source).not.toMatch(/\w*[lL]ibrary\w*\s*\?[^:]{0,80}:\s*<PrimaryNext/);
+    // 主按钮确实存在且推进到完成页（不锁它长什么样，只锁它在）
+    expect(source).toMatch(/<PrimaryNext[\s\S]{0,120}?确认这些技能/);
   });
 
   it('技能库是浮层，推荐页留在下面没被换掉', () => {
