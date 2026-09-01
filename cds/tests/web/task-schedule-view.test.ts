@@ -165,7 +165,7 @@ describe('第一屏落位', () => {
     expect(shouldAutoSelectJob({ alreadyPicked: false, selectedId: '', groupCount: 0 })).toBe(false);
   });
 
-  it('落过一次之后不再抢方向盘 —— 点了「新建任务」清空选中也不抢回来', () => {
+  it('落过一次之后不再抢方向盘 —— 选中被清空时也不许自动抢回去', () => {
     expect(shouldAutoSelectJob({ alreadyPicked: true, selectedId: '', groupCount: 3 })).toBe(false);
     expect(shouldAutoSelectJob({ alreadyPicked: false, selectedId: 'sjob_x', groupCount: 3 })).toBe(false);
   });

@@ -186,6 +186,29 @@ async function checkTaskScheduleAction(browser, viewport) {
   assertOk(result.found, `${label}: 找不到「立即执行」——主操作不该在任何桌面档位缺席`);
   assertOk(result.bottom <= result.viewportHeight, `${label}: 「立即执行」落在折叠线以下`, result);
   assertOk(!result.overflowX, `${label}: 出现横向溢出`, result);
+
+  /*
+   * 「新建任务」曾经是死按钮：表单渲染在 2xl 才存在的第三栏里，1512px 下点它
+   * 表单一个字都不出现。现在它开的是全屏浮层，不依赖任何断点。
+   * 红绿闭环：把浮层改回渲染在第三栏，1512 与 1280 两档立刻红。
+   */
+  const created = await page.evaluate(async () => {
+    const btn = Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent.trim() === '新建任务' && b.getBoundingClientRect().height > 0);
+    if (!btn) return { clicked: false };
+    btn.click();
+    await new Promise((r) => setTimeout(r, 500));
+    const save = Array.from(document.querySelectorAll('button')).find((b) => b.textContent.trim() === '保存');
+    const rect = save ? save.getBoundingClientRect() : null;
+    return {
+      clicked: true,
+      formVisible: document.body.innerText.includes('触发器启动任务'),
+      saveVisible: rect ? rect.height > 0 && rect.bottom <= window.innerHeight : false,
+    };
+  });
+  assertOk(created.clicked, `${label}: 页面上找不到「新建任务」按钮`);
+  assertOk(created.formVisible, `${label}: 点了「新建任务」表单没出现——按钮是死的`, created);
+  assertOk(created.saveVisible, `${label}: 新建表单的「保存」不在视野里`, created);
   await context.close();
 }
 
