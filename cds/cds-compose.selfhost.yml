@@ -91,6 +91,11 @@ services:
           cpus: "2"
     labels:
       cds.path-prefix: "/"
+      # 项目级作用域的唯一来源（并集自各服务的 cds.build-scope）。
+      # 本项目只关心 CDS 自身的代码：只有改到这些路径的 push 才该建分支、才该重编。
+      # 不声明的话作用域恒为空 = 全通配，一仓多项目分发之后每个 push 都会白白
+      # 重编一遍 CDS —— 正是自托管设计里点名要避免的那笔浪费。
+      cds.build-scope: "cds/**"
       # /api/instance-mode 是公开端点，无需登录即可 200，适合做就绪探针。
       cds.readiness-path: "/api/instance-mode"
       # 冷构建 = 两次 pnpm install + tsc + vite build，给足窗口。

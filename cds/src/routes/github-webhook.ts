@@ -485,12 +485,24 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     // posts directly from runSlashCommand), so explicit redeploys are
     // unaffected.
     let deployDedupSkipped = false;
-    if (result.deployRequest) {
-      const request = result.deployRequest;
+    // 一仓多项目分发（2026-09-01）：同一个仓库下每个被波及的项目都会各自产生一条
+    // deployRequest。派发逻辑因此抽成一个函数、对主结果与 fanout 一视同仁 —— 少了
+    // 这一层循环，第二个项目就会「分支建好了、却没人替它部署」，那是比收不到事件
+    // 更难发现的一种半接线（predicate-and-wiring-discipline 形状 2）。
+    let fanoutDeployDispatched = 0;
+    let fanoutDeployFailed = 0;
+    const runDeployDispatch = async (
+      request: { branchId: string; commitSha: string },
+      isPrimary: boolean,
+    ): Promise<void> => {
       if (shouldSkipDuplicateDispatch(request.branchId, request.commitSha)) {
-        deployDedupSkipped = true;
-        outcome.deployDispatched = false;
-        outcome.deployDedupSkipped = true;
+        // outcome.* 描述的是**主结果**这一条链路；fanout 的成败另计，绝不覆盖它，
+        // 否则第二个项目的一次去重会把主项目的投递记录写成「跳过」。
+        if (isPrimary) {
+          deployDedupSkipped = true;
+          outcome.deployDispatched = false;
+          outcome.deployDedupSkipped = true;
+        }
         // eslint-disable-next-line no-console
         console.log(
           `[webhook] skip duplicate deploy dispatch branch=${request.branchId} sha=${request.commitSha.slice(0, 7)} (within ${DEPLOY_DEDUP_WINDOW_MS}ms)`,
@@ -503,14 +515,19 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           markWebhookDeployDispatch(stateService, request.branchId, request.commitSha, 'dispatching');
           await dispatcherFn(request.branchId, request.commitSha);
           markWebhookDeployDispatch(stateService, request.branchId, request.commitSha, 'accepted');
-          outcome.deployDispatched = true;
+          if (isPrimary) outcome.deployDispatched = true;
+          else fanoutDeployDispatched += 1;
         } catch (err) {
           const message = (err as Error).message;
-          outcome.deployDispatched = false;
-          outcome.deployDispatchError = message;
-          outcome.dispatchAction = 'error';
-          outcome.dispatchReason = `部署派发失败: ${message}`;
-          outcome.error = message;
+          if (isPrimary) {
+            outcome.deployDispatched = false;
+            outcome.deployDispatchError = message;
+            outcome.dispatchAction = 'error';
+            outcome.dispatchReason = `部署派发失败: ${message}`;
+            outcome.error = message;
+          } else {
+            fanoutDeployFailed += 1;
+          }
           markWebhookDeployDispatchFailed(stateService, request.branchId, message);
           // 把派发失败写成 GitHub 上的红灯（fire-and-forget，绝不阻塞 webhook
           // 10s 响应窗口）。没有这一步，push 后 PR Checks 面板上什么都不出现。
@@ -535,6 +552,11 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           );
         }
       }
+    };
+
+    if (result.deployRequest) await runDeployDispatch(result.deployRequest, true);
+    for (const extra of result.fanout || []) {
+      if (extra.deployRequest) await runDeployDispatch(extra.deployRequest, false);
     }
 
     // PR opened/reopened → post (or refresh) the preview-URL bot comment.
@@ -744,6 +766,12 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       deployDedupSkipped: deployDedupSkipped || undefined,
       stopDispatched: Boolean(result.stopRequest),
       slashCommand: result.slashCommand?.command,
+      // 一仓多项目：同一次 push 分发到的其它项目。没有 fanout 时这几项不出现，
+      // 单项目仓库的响应体与启用前逐字节一致。
+      fanoutProjects: result.fanout?.length || undefined,
+      fanoutDeployDispatched: fanoutDeployDispatched || undefined,
+      fanoutDeployFailed: fanoutDeployFailed || undefined,
+      fanoutActions: result.fanout?.length ? result.fanout.map((item) => item.action) : undefined,
     });
   });
 

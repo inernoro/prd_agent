@@ -5226,4 +5226,131 @@ describe('Branch Routes', () => {
       expect(body.logs.map((e) => e.type)).toEqual(['crash', 'deploy']);
     });
   });
+
+  // ── 预览地址按提交派发（P5）──────────────────────────────────────
+  describe('POST /api/preview-dispatch', () => {
+    const REPO = 'octocat/monorepo';
+    const now = () => new Date().toISOString();
+
+    function seedProject(id: string, slug: string, name: string, buildScope?: string[]): void {
+      stateService.addProject({
+        id, slug, name, kind: 'git', createdAt: now(), updatedAt: now(),
+        githubRepoFullName: REPO,
+      });
+      stateService.addBuildProfile({
+        id: `${id}-web`,
+        projectId: id,
+        name: 'web',
+        dockerImage: 'node:22',
+        workDir: '.',
+        containerPort: 3000,
+        hostPortPreference: 0,
+        buildCommand: 'echo build',
+        pathPrefixes: ['/'],
+        webEntry: { name: '主应用入口', path: '/' },
+        ...(buildScope ? { buildScope } : {}),
+      } as any);
+    }
+
+    function seedRunningBranch(projectId: string, slug: string, branch: string): string {
+      const branchId = `${slug}-${branch.replace(/[^a-z0-9-]+/gi, '-')}`;
+      stateService.addBranch({
+        id: branchId,
+        projectId,
+        branch,
+        worktreePath: path.join(tmpDir, branchId),
+        status: 'running',
+        createdAt: now(),
+        services: {
+          [`${projectId}-web`]: {
+            profileId: `${projectId}-web`,
+            containerName: `${branchId}-web`,
+            hostPort: 10010,
+            status: 'running',
+          },
+        },
+      } as any);
+      return branchId;
+    }
+
+    it('两个项目都被波及时给出两行地址，格式为 [项目] URL', async () => {
+      seedProject('proj-main', 'mainp', 'MAP');
+      seedProject('proj-self', 'selfp', 'CDS Self');
+      seedRunningBranch('proj-main', 'mainp', 'feature/x');
+      seedRunningBranch('proj-self', 'selfp', 'feature/x');
+
+      const res = await request(server, 'POST', '/api/preview-dispatch', {
+        repo: REPO, branch: 'feature/x',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.projects).toHaveLength(2);
+      expect(res.body.lines).toHaveLength(2);
+      expect(res.body.lines.some((l: string) => l.startsWith('[MAP] https://'))).toBe(true);
+      expect(res.body.lines.some((l: string) => l.startsWith('[CDS Self] https://'))).toBe(true);
+      // 地址必须来自服务端的入口表，不能是客户端拼的
+      expect(res.body.lines.every((l: string) => l.includes('.example.test'))).toBe(true);
+    });
+
+    it('作用域挡掉的项目仍然出现在结果里，状态为 not-affected 而不是消失', async () => {
+      seedProject('proj-main', 'mainp', 'MAP', ['prd-api/**']);
+      seedProject('proj-self', 'selfp', 'CDS Self', ['cds/**']);
+      seedRunningBranch('proj-main', 'mainp', 'feature/x');
+      seedRunningBranch('proj-self', 'selfp', 'feature/x');
+
+      const res = await request(server, 'POST', '/api/preview-dispatch', {
+        repo: REPO, branch: 'feature/x', changedPaths: ['cds/src/server.ts'],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.lines).toHaveLength(1);
+      expect(res.body.lines[0]).toContain('[CDS Self]');
+      const main = res.body.projects.find((p: any) => p.projectId === 'proj-main');
+      expect(main.status).toBe('not-affected');
+      expect(main.entries).toEqual([]);
+    });
+
+    it('波及但 CDS 上没有这条分支：affected-no-branch，不是报错', async () => {
+      seedProject('proj-self', 'selfp', 'CDS Self', ['cds/**']);
+
+      const res = await request(server, 'POST', '/api/preview-dispatch', {
+        repo: REPO, branch: 'feature/missing', changedPaths: ['cds/src/server.ts'],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.projects[0].status).toBe('affected-no-branch');
+      expect(res.body.lines).toEqual([]);
+    });
+
+    it('项目级凭据只看得到自己那个项目，别人的项目名与地址一概不出现', async () => {
+      seedProject('proj-a', 'proja', '项目 A');
+      seedProject('proj-b', 'projb', '项目 B');
+      seedRunningBranch('proj-a', 'proja', 'feature/x');
+      seedRunningBranch('proj-b', 'projb', 'feature/x');
+
+      const res = await request(server, 'POST', '/api/preview-dispatch', {
+        repo: REPO, branch: 'feature/x',
+      }, { 'x-test-key': 'A' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.projects).toHaveLength(1);
+      expect(res.body.projects[0].projectId).toBe('proj-a');
+      expect(JSON.stringify(res.body)).not.toContain('项目 B');
+    });
+
+    it('仓库没有绑定任何项目时明说，不返回 500', async () => {
+      const res = await request(server, 'POST', '/api/preview-dispatch', {
+        repo: 'nobody/nothing', branch: 'feature/x',
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.projects).toEqual([]);
+      expect(res.body.message).toContain('没有任何项目绑定');
+    });
+
+    it('缺 repo 或 branch 一律 400', async () => {
+      expect((await request(server, 'POST', '/api/preview-dispatch', { branch: 'x' })).status).toBe(400);
+      expect((await request(server, 'POST', '/api/preview-dispatch', { repo: REPO })).status).toBe(400);
+    });
+  });
+
 });
