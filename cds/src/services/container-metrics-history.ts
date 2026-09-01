@@ -40,12 +40,16 @@ interface StoredPoint {
   netTxBytes: number;
 }
 
+/**
+ * 一个桶。值为 null 表示**这个容器在这段时间里没有样本**（还没起来 / 已经停了 /
+ * 采集断档），不是「用量为 0」——两者别混，调用方自己决定怎么呈现。
+ */
 export interface SeriesPoint {
   ts: number;
-  cpuPercent: number;
-  memUsedBytes: number;
-  rxRate: number;
-  txRate: number;
+  cpuPercent: number | null;
+  memUsedBytes: number | null;
+  rxRate: number | null;
+  txRate: number | null;
 }
 
 export interface SeriesQuery {
@@ -64,6 +68,8 @@ export interface SeriesResult {
   /** 实际覆盖到的窗口（可能比请求的窗）。空序列时两者相等。 */
   after: number;
   before: number;
+  /** 共享时间轴：所有容器的 points 与它一一对应、长度相同。 */
+  timestamps: number[];
   /** 每个点代表多长时间（毫秒）。降采样后 = 窗口 / 点数。 */
   groupSeconds: number;
   group: 'average' | 'max';
@@ -193,28 +199,50 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
   const span = Math.max(1, before - after);
   const bucketMs = span / wanted;
 
-  const series: Record<string, SeriesPoint[]> = {};
+  // 先按桶归集每个容器的样本。桶边界对所有容器是同一套（同一个 after / bucketMs），
+  // 这样下面才能拼出一条共享时间轴。
+  const bucketsByContainer = new Map<string, Map<number, StoredPoint[]>>();
+  const usedBuckets = new Set<number>();
   for (const name of query.containers) {
     const all = store.get(name);
-    if (!all || all.length === 0) { series[name] = []; continue; }
-    const windowed = all.filter((p) => p.ts >= after && p.ts <= before);
-    if (windowed.length === 0) { series[name] = []; continue; }
-
     const buckets = new Map<number, StoredPoint[]>();
-    for (const p of windowed) {
+    bucketsByContainer.set(name, buckets);
+    if (!all) continue;
+    for (const p of all) {
+      if (p.ts < after || p.ts > before) continue;
       const idx = Math.min(wanted - 1, Math.floor((p.ts - after) / bucketMs));
       const list = buckets.get(idx);
       if (list) list.push(p); else buckets.set(idx, [p]);
+      usedBuckets.add(idx);
     }
-    series[name] = [...buckets.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([idx, bucket]) => ({
-        ts: Math.round(after + (idx + 0.5) * bucketMs),
-        ...aggregate(bucket, group),
-      }));
   }
 
-  return { after, before, groupSeconds: Math.round(bucketMs / 1000), group, series };
+  /**
+   * 共享时间轴 = 至少有一个容器有数据的那些桶。
+   *
+   * 这一步是 2026-09-01 的缺陷修复：以前每个容器各自跳过自己的空桶，于是
+   * 「全程在跑的容器」拿到 60 个点、「中途停掉的容器」只拿到 30 个点。
+   * 前端按数组下标堆叠，短的那条读到 undefined → 累加成 NaN → SVG 路径带
+   * NaN 坐标 → 画面上出现黑色缺口。长度不一致本身就意味着下标对不上时间：
+   * 停机容器的第 0 个点和其它容器的第 0 个点根本不是同一时刻。
+   * 所以对齐必须由服务端保证，且缺口用 null 显式表达，不能靠"少给几个点"暗示。
+   */
+  const axis = [...usedBuckets].sort((a, b) => a - b);
+  const timestamps = axis.map((idx) => Math.round(after + (idx + 0.5) * bucketMs));
+
+  const series: Record<string, SeriesPoint[]> = {};
+  for (const name of query.containers) {
+    const buckets = bucketsByContainer.get(name);
+    series[name] = axis.map((idx, i) => {
+      const bucket = buckets?.get(idx);
+      if (!bucket || bucket.length === 0) {
+        return { ts: timestamps[i], cpuPercent: null, memUsedBytes: null, rxRate: null, txRate: null };
+      }
+      return { ts: timestamps[i], ...aggregate(bucket, group) };
+    });
+  }
+
+  return { after, before, timestamps, groupSeconds: Math.round(bucketMs / 1000), group, series };
 }
 
 /** 测试用：清空全部历史。生产路径不调用。 */

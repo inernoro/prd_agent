@@ -48,15 +48,18 @@ export function emptyMetricSeries(): MetricSeries {
  * 前端不再从累计字节自己算 —— 那正是「关掉抽屉丢历史」时代的遗留做法。
  */
 export function seedMetricSeries(points: Array<{
-  cpuPercent: number; memUsedBytes: number; rxRate: number; txRate: number;
+  cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null;
 }>): MetricSeries {
   const tail = points.length > METRIC_RING_SIZE ? points.slice(points.length - METRIC_RING_SIZE) : points;
+  // null = 那一段这个容器没有样本（没起来 / 已停 / 断档）。堆叠图里它的贡献就是 0，
+  // 于是那一段的色带自然收没——这正是「服务挂了」在图上该有的样子。
+  const v = (x: number | null): number => (x == null ? 0 : x);
   return {
-    cpu: tail.map((p) => p.cpuPercent),
+    cpu: tail.map((p) => v(p.cpuPercent)),
     mem: tail.map(() => 0),
-    memBytes: tail.map((p) => p.memUsedBytes),
-    rxRate: tail.map((p) => p.rxRate),
-    txRate: tail.map((p) => p.txRate),
+    memBytes: tail.map((p) => v(p.memUsedBytes)),
+    rxRate: tail.map((p) => v(p.rxRate)),
+    txRate: tail.map((p) => v(p.txRate)),
   };
 }
 
@@ -127,7 +130,15 @@ function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): str
 
 /** 堆叠面积：返回每层的闭合路径（层间留 1 单位缝，避免糊成一坨） */
 function stackAreas(values: number[][], max: number, h: number): string[] {
-  const n = values[0]?.length ?? 0;
+  /**
+   * 只取各条序列的**最短**长度，且逐点 ?? 0 兜底。
+   *
+   * 这是 2026-09-01 那个「图上有黑色缺口」的回归护栏：原来取 values[0].length，
+   * 短的那条读到 undefined，cum 累加成 NaN，SVG 路径带 NaN 坐标就整段不画。
+   * 对齐本该由服务端保证（共享时间轴 + null 填缺），这里是第二道闸——
+   * 万一哪天上游又回到不等长，宁可少画右边一小截，也不能吐出 NaN 路径。
+   */
+  const n = values.length === 0 ? 0 : Math.min(...values.map((row) => row.length));
   if (n < 2 || max <= 0) return values.map(() => '');
   const x = (i: number): number => (i / (n - 1)) * VB_W;
   const y = (v: number): number => h - Math.min(1, v / max) * h;
@@ -137,7 +148,7 @@ function stackAreas(values: number[][], max: number, h: number): string[] {
     const bottom: string[] = [];
     for (let i = 0; i < n; i += 1) {
       bottom.unshift(`${x(i).toFixed(1)},${y(cum[i]).toFixed(1)}`);
-      cum[i] += row[i];
+      cum[i] += row[i] ?? 0;
       top.push(`${x(i).toFixed(1)},${y(cum[i]).toFixed(1)}`);
     }
     return `M${top.join(' L')} L${bottom.join(' L')} Z`;
@@ -492,9 +503,52 @@ function DeployHistoryChart({
 
 // ── 入口卡 ────────────────────────────────────────────────────────────────
 
+function EntryCard({ e, reachable }: { e: OverviewEntry; reachable: boolean }): JSX.Element {
+  const hero = Boolean(e.primary);
+  const lit = hero && reachable;
+  return (
+    <a
+      href={e.url}
+      target="_blank"
+      rel="noreferrer"
+      title={`打开 ${e.name} — ${e.url}`}
+      className={`group flex items-center gap-3 rounded-xl border px-3.5 py-3 transition-colors ${
+        lit
+          ? 'border-ok/40 bg-ok-soft hover:border-ok/70'
+          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] hover:border-[hsl(var(--hairline-strong))]'
+      }`}
+    >
+      <span
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${
+          lit ? 'bg-ok text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'
+        }`}
+      >
+        {hero ? <Rocket className="h-[18px] w-[18px]" /> : <Server className="h-4 w-4" />}
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="flex items-center gap-1.5">
+          <span className="text-[13px] font-bold text-foreground">{e.name}</span>
+          {hero ? (
+            <span className={`rounded px-1.5 py-px text-[10px] font-bold ${reachable ? 'bg-ok/15 text-ok' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>默认入口</span>
+          ) : null}
+          {e.subdomain ? (
+            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-px font-mono text-[10px] text-muted-foreground">
+              {e.subdomain}
+            </span>
+          ) : null}
+        </span>
+        <span className="truncate font-mono text-[11.5px] text-muted-foreground">{e.url}</span>
+      </span>
+      <ExternalLink className={`h-4 w-4 shrink-0 ${lit ? 'text-ok' : 'text-muted-foreground group-hover:text-foreground'}`} />
+    </a>
+  );
+}
+
 function EntryCards({
   entries, reachable, onConfigure,
 }: { entries: OverviewEntry[]; reachable: boolean; onConfigure?: () => void }): JSX.Element {
+  const primary = entries.find((e) => e.primary);
+  const rest = entries.filter((e) => e !== primary);
   return (
     <section className="flex flex-col gap-2.5">
       <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -515,45 +569,21 @@ function EntryCards({
           </button>
         ) : null}
       </header>
-      <div className="grid gap-2.5 md:grid-cols-2">
-        {entries.map((e) => (
-          <a
-            key={e.url}
-            href={e.url}
-            target="_blank"
-            rel="noreferrer"
-            title={`打开 ${e.name}`}
-            className={`group flex items-center gap-3 rounded-xl border px-3.5 py-3 transition-colors ${
-              e.primary && reachable
-                ? 'border-ok/40 bg-ok-soft hover:border-ok/70'
-                : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] hover:border-[hsl(var(--hairline-strong))]'
-            } ${e.primary ? 'md:col-span-2' : ''}`}
-          >
-            <span
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${
-                e.primary && reachable ? 'bg-ok text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'
-              }`}
-            >
-              {e.primary ? <Rocket className="h-[18px] w-[18px]" /> : <Server className="h-4 w-4" />}
-            </span>
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="flex items-center gap-1.5">
-                <span className="text-[13px] font-bold text-foreground">{e.name}</span>
-                {e.primary ? (
-                  <span className={`rounded px-1.5 py-px text-[10px] font-bold ${reachable ? 'bg-ok/15 text-ok' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>默认入口</span>
-                ) : null}
-                {e.subdomain ? (
-                  <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-px font-mono text-[10px] text-muted-foreground">
-                    {e.subdomain}
-                  </span>
-                ) : null}
-              </span>
-              <span className="truncate font-mono text-[11.5px] text-muted-foreground">{e.url}</span>
-            </span>
-            <ExternalLink className={`h-4 w-4 shrink-0 ${e.primary && reachable ? 'text-ok' : 'text-muted-foreground group-hover:text-foreground'}`} />
-          </a>
-        ))}
-      </div>
+      {/*
+        主入口独占一行，且**不放进下面那个网格**。
+        它曾经是网格里一个 grid-column: 1 / -1 的项——那样每条轨道都被它占着，
+        没有一条是空的，auto-fit 便不折叠空轨道，于是 3 个次要入口挤在左边、
+        右侧空出一整列。拿出来之后，网格里只剩次要入口，列数才真的按数量自适应。
+      */}
+      {primary ? <EntryCard e={primary} reachable={reachable} /> : null}
+      {rest.length > 0 ? (
+        <div
+          className="grid gap-2.5"
+          style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, 300px), 1fr))` }}
+        >
+          {rest.map((e) => <EntryCard key={e.url} e={e} reachable={reachable} />)}
+        </div>
+      ) : null}
     </section>
   );
 }

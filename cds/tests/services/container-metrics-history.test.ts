@@ -111,6 +111,49 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     for (const p of r.series.c1) expect(p.cpuPercent).toBe(5);
   });
 
+  /**
+   * 2026-09-01 真实缺陷的回归。
+   *
+   * 病象：图上出现黑色缺口，色带断成一截一截。
+   * 病根：以前每个容器各自跳过自己的空桶——全程在跑的拿到 60 个点，中途停掉的
+   * 只拿到 30 个点。前端按数组下标堆叠，短的那条读到 undefined，累加成 NaN，
+   * SVG 路径带 NaN 坐标就整段不画。而且长度不等本身就意味着下标对不上时间：
+   * 停机容器的第 0 个点和别人的第 0 个点根本不是同一时刻。
+   */
+  it('所有容器共享同一条时间轴，长度必须一致', () => {
+    for (let i = 0; i < 120; i += 1) recordContainerSample('alive', sample({ cpuPercent: 2 }), T0 + i * 10_000);
+    for (let i = 0; i < 60; i += 1) recordContainerSample('died', sample({ cpuPercent: 3 }), T0 + i * 10_000);
+    const now = T0 + 1_200_000;
+    const r = queryContainerSeries({ containers: ['alive', 'died'], after: T0, before: now, points: 60 }, now);
+    expect(r.series.alive.length).toBe(r.series.died.length);
+    expect(r.timestamps.length).toBe(r.series.alive.length);
+    for (let i = 0; i < r.timestamps.length; i += 1) {
+      expect(r.series.alive[i].ts).toBe(r.timestamps[i]);
+      expect(r.series.died[i].ts).toBe(r.timestamps[i]);
+    }
+  });
+
+  it('停掉之后的桶给 null，不是 0——「没数据」与「用量为 0」不是一回事', () => {
+    for (let i = 0; i < 120; i += 1) recordContainerSample('alive', sample({ cpuPercent: 2 }), T0 + i * 10_000);
+    for (let i = 0; i < 60; i += 1) recordContainerSample('died', sample({ cpuPercent: 3 }), T0 + i * 10_000);
+    const now = T0 + 1_200_000;
+    const r = queryContainerSeries({ containers: ['alive', 'died'], after: T0, before: now, points: 60 }, now);
+    expect(r.series.died.at(-1)?.cpuPercent).toBeNull();
+    expect(r.series.alive.at(-1)?.cpuPercent).not.toBeNull();
+  });
+
+  it('按下标堆叠不再产生 NaN（前端就是这么画的）', () => {
+    for (let i = 0; i < 120; i += 1) recordContainerSample('alive', sample({ cpuPercent: 2 }), T0 + i * 10_000);
+    for (let i = 0; i < 60; i += 1) recordContainerSample('died', sample({ cpuPercent: 3 }), T0 + i * 10_000);
+    const now = T0 + 1_200_000;
+    const r = queryContainerSeries({ containers: ['alive', 'died'], after: T0, before: now, points: 60 }, now);
+    const rows = [r.series.alive, r.series.died].map((pts) => pts.map((p) => p.cpuPercent ?? 0));
+    const n = rows[0].length;
+    const cum = new Array<number>(n).fill(0);
+    for (const row of rows) for (let i = 0; i < n; i += 1) cum[i] += row[i];
+    expect(cum.some((v) => Number.isNaN(v)), '堆叠结果里出现 NaN —— SVG 会画出黑色缺口').toBe(false);
+  });
+
   it('group=max 取桶内峰值，average 取均值', () => {
     recordContainerSample('c1', sample({ cpuPercent: 1 }), T0);
     recordContainerSample('c1', sample({ cpuPercent: 99 }), T0 + 1_000);
