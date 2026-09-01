@@ -46,6 +46,7 @@ import { BackdropSettings, readBackdropMode, resolveBackdrop, type BackdropMode 
 import type { BackdropAsset } from '@/lib/backdropRotation';
 import { BACKDROP_CATALOG, dimFor } from '@/lib/backdropCatalog';
 import { readGeneratedBackdrops } from '@/lib/backdropStudio';
+import { consumeWakeOnce } from '@/lib/wakeSweep';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { getNextWorkspaceSkip, isVisibleWorkspace } from './workspaceListPaging';
 
@@ -1175,6 +1176,14 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   // 1. ScenarioTags 的 onClick 写着 if (!tag.isPro)，MAP Pro 直接不进这个函数；
   // 2. 就算进来了，这里第一行原本是 if (!prompt) return —— 空 prompt 照样被吞掉。
   // 典型的「链路只建一半」：修了第一处不修第二处，那一格还是点了没反应。
+  // 整页刷新时那一束光。useState 的初始化函数只跑一次，正好消费掉那一次机会；
+  // 写成 useState(consumeWakeOnce()) 会在每次 render 求值（React 只用第一次的结果，
+  // 但机会已经被后面的 render 白白消费掉了），SPA 内再进来就永远没有。
+  const [wake] = useState(() => consumeWakeOnce());
+  // 沿光路依次点亮：左上先亮，右下最后。数值是光带 1150ms 行程上的取样点。
+  const rise = (delayMs: number) =>
+    wake ? { className: 'wake-rise', style: { '--wake-delay': `${delayMs}ms` } as React.CSSProperties } : {};
+
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
 
   const onTagSelect = (prompt: string) => {
@@ -1329,16 +1338,19 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           滑动下去背景居然消失了）。外层不滚、内层滚，背景才是钉住的。 */}
       <BackdropPhoto src={backdrop?.url ?? null} dim={dimFor(backdrop)} focus={backdrop?.focus} />
       <PageVignette />
+      {/* 光带。挂在背景与内容之间，不滚动的那一层——它扫的是整屏，不是内容的某一段。 */}
+      {wake && <div className="wake-beam" aria-hidden />}
       <div className="h-full min-h-0 flex flex-col overflow-auto relative" style={{ zIndex: 1 }}>
 
       {/* 顶栏：品牌 + 创作/作品 + 右侧动作，与视频创作同结构。
           旧版这里只有一个孤零零的返回箭头和一枚教程胶囊，页面没有身份。 */}
       <div
-        className="glass-pane relative z-20 grid items-center px-6"
+        className={`glass-pane relative z-20 grid items-center px-6${wake ? ' wake-rise' : ''}`}
         style={{
           gridTemplateColumns: '1fr auto 1fr',
           minHeight: 64,
           borderBottom: '1px solid var(--border-faint)',
+          ...(wake ? ({ '--wake-delay': '40ms' } as React.CSSProperties) : {}),
         }}
       >
         <div className="flex items-center gap-2.5 justify-self-start">
@@ -1412,9 +1424,10 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           现在标题区是内容高度，再按视口比例留白会在大屏上空出一大块。52px 取自视频创作的舞台节奏。 */}
       <div className="flex flex-col items-center justify-center pt-[52px] pb-4 relative z-10 px-5">
         {/* Hero 区域 */}
-        <HeroSection />
+        <div {...rise(150)}><HeroSection /></div>
 
         {/* 快捷输入框 */}
+        <div className="w-full flex justify-center" {...rise(300)}>
         <QuickInputBox
           inputRef={promptRef}
           value={inputValue}
@@ -1431,9 +1444,12 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           size={selectedSize}
           onSizeChange={onSelectedSizeChange}
         />
+        </div>
 
         {/* 场景标签 */}
-        <ScenarioTags onSelect={onTagSelect} activeKey={activeTag} />
+        <div className="w-full flex justify-center" {...rise(430)}>
+          <ScenarioTags onSelect={onTagSelect} activeKey={activeTag} />
+        </div>
       </div>
 
       {/* 错误提示 */}
@@ -1447,20 +1463,28 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         </div>
       ) : null}
 
-      {/* 项目列表 */}
-      <ProjectCarousel
-        onCreateFolder={onCreateFolder}
-        items={items}
-        loading={loading}
-        loadingMore={loadingMore}
-        hasMore={hasMore}
-        onLoadMore={loadMore}
-        onCreate={onCreate}
-        onRename={onRename}
-        onShare={openShare}
-        onDelete={onDelete}
-        onOpen={(ws) => navigate(getEditorPath(ws.id))}
-      />
+      {/* 项目列表。光路最后一站。
+          这一层的 className 不走 rise()——ProjectCarousel 的根是 flex-1，
+          外面套一个不带 flex-1 的 div 会让它塌成内容高度（full-height-layout 那条链断一层就全塌）。
+          所以这里手拼：flex 链照旧，只把 wake-rise 追加上去。 */}
+      <div
+        className={`flex-1 min-h-0 flex flex-col${wake ? ' wake-rise' : ''}`}
+        style={wake ? ({ '--wake-delay': '600ms' } as React.CSSProperties) : undefined}
+      >
+        <ProjectCarousel
+          onCreateFolder={onCreateFolder}
+          items={items}
+          loading={loading}
+          loadingMore={loadingMore}
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          onCreate={onCreate}
+          onRename={onRename}
+          onShare={openShare}
+          onDelete={onDelete}
+          onOpen={(ws) => navigate(getEditorPath(ws.id))}
+        />
+      </div>
 
       {/* 共享对话框 */}
       <Dialog

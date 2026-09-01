@@ -122,6 +122,67 @@
     rgba(var(--backdrop-scrim), var(--scrim-edge)) 100%);
 }
 
+/* ===== 唤醒：整页刷新时那一束斜扫下来的光 =====
+ *
+ * 用户要的是 iPhone 唤醒那种感觉：一束光从左上斜切下来，页面跟着被点亮，
+ * 而且带方向。所以这里是两件事配合，缺一个都不成立：
+ *
+ *   1. .wake-beam —— 一道很宽的斜向光带，从画面左上外侧扫到右下外侧，走一遍就没了。
+ *      它只负责「有一束光经过」。
+ *   2. .wake-rise —— 页面元素跟着光的路径**依次**亮起来（延迟由各元素自己声明）。
+ *      它负责「是这束光把它们点亮的」。
+ *
+ * 只做第 1 件，就是一道划过屏幕的高光，页面自己没有反应，像贴上去的装饰
+ * （demo-causality-contract 里说的「东西自己在变」的反面：光在动，但什么都没被它点亮）。
+ * 只做第 2 件，就是普通的入场淡入，没有方向。两件一起，方向感才成立。
+ *
+ * 光带用 105deg：和骨架扫光、生图等待卡的织纹同一个倾角，
+ * 等待与唤醒在这个产品里是同一种光。
+ */
+.wake-beam {
+  position: absolute;
+  inset: -20% -60%;
+  pointer-events: none;
+  z-index: 2;
+  background: linear-gradient(105deg,
+    transparent 0%,
+    transparent 38%,
+    var(--wake-beam-soft) 47%,
+    var(--wake-beam-core) 50%,
+    var(--wake-beam-soft) 53%,
+    transparent 62%,
+    transparent 100%);
+  transform: translate3d(-62%, -34%, 0);
+  animation: wake-beam-pass 1150ms cubic-bezier(.22, .61, .36, 1) forwards;
+}
+
+@keyframes wake-beam-pass {
+  from { transform: translate3d(-62%, -34%, 0); opacity: 0; }
+  12%  { opacity: 1; }
+  80%  { opacity: 1; }
+  to   { transform: translate3d(62%, 34%, 0); opacity: 0; }
+}
+
+/* 被点亮的元素。延迟由每个元素按它在光路上的位置声明（--wake-delay），
+   这就是「方向性」的来源——不是所有东西一起淡入，是沿着光走的顺序依次亮。 */
+.wake-rise {
+  animation: wake-rise-in 620ms cubic-bezier(.22, .61, .36, 1) both;
+  animation-delay: var(--wake-delay, 0ms);
+}
+
+@keyframes wake-rise-in {
+  from { opacity: 0; transform: translate3d(-10px, -6px, 0); filter: brightness(.55); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+
+/* 关掉动效时：光带整个不放，元素直接就位。
+   这里必须显式把 animation 设成 none 并保证终态可见——
+   只写 opacity 会留下 translate 和 brightness 的初值，页面会歪着且发暗。 */
+@media (prefers-reduced-motion: reduce) {
+  .wake-beam { display: none; }
+  .wake-rise { animation: none; opacity: 1; transform: none; filter: none; }
+}
+
 /*
  * 浅色主题不放背景照片。
  *
