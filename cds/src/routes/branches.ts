@@ -34,6 +34,7 @@ import {
 import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { normalizeReadOnlyStatement, normalizeWriteStatement } from '../services/sql-statement-policy.js';
+import { explainMissingTable } from '../services/db-error-explain.js';
 import {
   branchDbAccountName,
   branchDbCredentialOwner,
@@ -6610,7 +6611,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (runtime === 'postgres') {
       return ref.schema ? `${pgIdent(ref.schema)}.${pgIdent(ref.table)}` : pgIdent(ref.table);
     }
-    return sqlIdent(ref.table);
+    // MySQL 这一侧此前把 schema 丢了，永远只查连接的默认库：表树里点一张属于别的库的表
+    // 就是 `Table 'default_db.x' doesn't exist`，报文里的库名还和面板上显示的对不上。
+    return ref.schema ? `${sqlIdent(ref.schema)}.${sqlIdent(ref.table)}` : sqlIdent(ref.table);
   }
 
   function redisPassword(service: InfraService): string {
@@ -9188,7 +9191,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : [
           'SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA',
           'FROM information_schema.COLUMNS',
-          `WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${sqlString(ref.table)}`,
+          `WHERE TABLE_SCHEMA = ${ref.schema ? sqlString(ref.schema) : 'DATABASE()'} AND TABLE_NAME = ${sqlString(ref.table)}`,
           'ORDER BY ORDINAL_POSITION',
         ].join(' ');
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
@@ -9202,7 +9205,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }));
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, columns });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json({
+        error: explainMissingTable({
+          database: sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch),
+          requestedSchema: ref.schema,
+          table: ref.table,
+          rawError: (err as Error).message,
+        }),
+      });
     }
   });
 
@@ -9224,7 +9234,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, `SELECT * FROM ${ident} LIMIT ${limit}`);
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, limit, ...result });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      // 表在别的库/别台容器上时，1146 报的库名和面板显示的对不上，得把差异讲出来。
+      res.status(500).json({
+        error: explainMissingTable({
+          database: sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch),
+          requestedSchema: ref.schema,
+          table: ref.table,
+          rawError: (err as Error).message,
+        }),
+      });
     }
   });
 

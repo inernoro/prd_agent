@@ -1,0 +1,97 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import { explainMissingTable, isMissingTableOrSchemaError } from '../../src/services/db-error-explain.js';
+import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
+
+/**
+ * 现场（2026-09-01，用户截图）：
+ *   GET .../data/preview?table=distributed_lock&schema=webhook_platform&limit=50
+ *   → ERROR 1146: Table 'imp_b_9bd351d94c8f35ab.distributed_lock' doesn't exist
+ *
+ * 请求明明带了 schema=webhook_platform，MySQL 这一侧却把它丢了，拼出来的是
+ * `SELECT * FROM \`distributed_lock\``，走连接的默认库 imp_b_...。报文里的库名与
+ * 用户在面板上看到的库名对不上，只能干瞪眼。
+ */
+const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+function readBranchesRoute(): string {
+  return fs.readFileSync(path.join(CDS_ROOT, 'src/routes/branches.ts'), 'utf8');
+}
+
+describe('MySQL 表标识符要带库名', () => {
+  it('sqlTableIdent 在有 schema 时限定库名，没有时保持原样', () => {
+    const source = readBranchesRoute();
+    const at = source.indexOf('function sqlTableIdent(');
+    expect(at, '找不到 sqlTableIdent').toBeGreaterThan(-1);
+    const fn = source.slice(at, at + 700);
+    expect(fn).toContain('ref.schema ? `${sqlIdent(ref.schema)}.${sqlIdent(ref.table)}` : sqlIdent(ref.table)');
+  });
+
+  it('查字段用请求带的库，而不是永远 DATABASE()', () => {
+    const source = readBranchesRoute();
+    expect(source).toContain("TABLE_SCHEMA = ${ref.schema ? sqlString(ref.schema) : 'DATABASE()'}");
+    expect(source, '不许再留一处写死 DATABASE() 的字段查询').not.toContain('WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME');
+  });
+
+  it('红用例：把 MySQL 的库名限定去掉，守卫必须变红', () => {
+    const real = readBranchesRoute();
+    const guard = (source: string) => {
+      const at = source.indexOf('function sqlTableIdent(');
+      expect(at).toBeGreaterThan(-1);
+      expect(source.slice(at, at + 700)).toContain('sqlIdent(ref.schema)');
+    };
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(
+        real,
+        'return ref.schema ? `${sqlIdent(ref.schema)}.${sqlIdent(ref.table)}` : sqlIdent(ref.table);',
+        'return sqlIdent(ref.table);',
+      ),
+    );
+  });
+
+  it('预览与字段两个入口都把「找不到表」翻成人话', () => {
+    const source = readBranchesRoute();
+    expect(source.split('explainMissingTable({').length - 1, '两个入口都要接上').toBe(2);
+  });
+});
+
+describe('找不到表时的解释', () => {
+  const RAW_1146 = "mysql: [Warning] Using a password on the command line interface can be insecure.\n"
+    + "ERROR 1146 (42S02) at line 1: Table 'imp_b_9bd351d94c8f35ab.distributed_lock' doesn't exist";
+
+  it('认得出「表/库不存在」这类错误', () => {
+    expect(isMissingTableOrSchemaError(RAW_1146)).toBe(true);
+    expect(isMissingTableOrSchemaError('ERROR 1049 (42000): Unknown database \'x\'')).toBe(true);
+    expect(isMissingTableOrSchemaError('ERROR 1045 (28000): Access denied')).toBe(false);
+  });
+
+  it('请求的库与当前连接的库不一致时，把差异讲清楚并给下一步', () => {
+    const message = explainMissingTable({
+      database: 'imp_b_9bd351d94c8f35ab',
+      requestedSchema: 'webhook_platform',
+      table: 'distributed_lock',
+      rawError: RAW_1146,
+    });
+    expect(message).toContain('webhook_platform.distributed_lock');
+    expect(message).toContain('imp_b_9bd351d94c8f35ab');
+    expect(message).toContain('刷新');
+    expect(message).toContain(RAW_1146);
+  });
+
+  it('库一致 / 没带 schema / 非此类错误时不加戏', () => {
+    expect(explainMissingTable({
+      database: 'app', requestedSchema: 'app', table: 't', rawError: RAW_1146,
+    })).toBe(RAW_1146);
+    expect(explainMissingTable({
+      database: 'app', table: 't', rawError: RAW_1146,
+    })).toBe(RAW_1146);
+    const denied = 'ERROR 1045 (28000): Access denied';
+    expect(explainMissingTable({
+      database: 'app', requestedSchema: 'other', table: 't', rawError: denied,
+    })).toBe(denied);
+  });
+});
