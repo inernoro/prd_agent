@@ -1,5 +1,7 @@
 import http from 'node:http';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
+import { resolveProjectScope } from '../services/project-scope.js';
+import { resolvePreviewDispatch, type PreviewProjectFacts } from '../services/preview-dispatch.js';
 import https from 'node:https';
 import { isIP } from 'node:net';
 import fs from 'node:fs';
@@ -15554,6 +15556,67 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     return conflicts;
   };
+
+  /**
+   * POST /preview-dispatch —— 「这次提交该给哪些预览地址」。
+   *
+   * 客户端只交事实（仓库、分支、可选的改动清单），项目归属与作用域判定全在这里，
+   * 与 push 分发**共用同一份作用域判据**。命令行因此不再需要在本地推断「我这条分支
+   * 属于哪个项目」—— 一个仓库喂多个项目时，那个推断必然要么猜错要么硬失败。
+   *
+   * 可见性：项目级凭据只看得到自己那个项目，全局凭据看得到该仓库下全部项目。
+   * 下拉别人的项目名与地址属于越权，判据直接复用 assertProjectAccess，不另写一份。
+   *
+   * 入口 URL 一律取 computeBranchWebEntries —— 与 GET /api/branches 同一个来源，
+   * 绝不在这里另拼一次域名。
+   */
+  router.post('/preview-dispatch', (req, res) => {
+    const body = (req.body || {}) as { repo?: string; branch?: string; changedPaths?: unknown };
+    const repo = typeof body.repo === 'string' ? body.repo.trim() : '';
+    const branch = typeof body.branch === 'string' ? body.branch.trim() : '';
+    if (!repo || !branch) {
+      res.status(400).json({ error: 'bad_request', message: 'repo 与 branch 均为必填' });
+      return;
+    }
+    const changedPaths = Array.isArray(body.changedPaths)
+      ? body.changedPaths.filter((p): p is string => typeof p === 'string')
+      : [];
+
+    const candidates = stateService.findProjectsByRepoFullName(repo);
+    // 可见性过滤在**判定之前**：不可见的项目连「未波及」都不该出现在结果里，
+    // 否则等于把别人的项目名泄露出去。
+    const visible = candidates.filter((project) => assertProjectAccess(req as never, project.id) === null);
+    if (visible.length === 0) {
+      res.json({
+        ok: true,
+        repo,
+        branch,
+        projects: [],
+        lines: [],
+        message: candidates.length > 0
+          ? '该仓库下有项目，但当前凭据都无权查看'
+          : `没有任何项目绑定到仓库 ${repo}`,
+      });
+      return;
+    }
+
+    const primaryRoot = config.previewDomain || config.rootDomains?.[0] || '';
+    const facts: PreviewProjectFacts[] = visible.map((project) => {
+      const entry = stateService.findBranchByProjectAndName(project.id, branch);
+      const webEntries = entry && primaryRoot ? computeBranchWebEntries(entry, primaryRoot) : [];
+      return {
+        projectId: project.id,
+        projectSlug: project.slug,
+        projectName: project.aliasName || project.name,
+        scope: resolveProjectScope(stateService.getBuildProfilesForProject(project.id)),
+        ...(entry ? { branchId: entry.id } : {}),
+        entries: webEntries.map((webEntry) => ({ name: webEntry.name, url: webEntry.url })),
+      };
+    });
+
+    const dispatch = resolvePreviewDispatch(branch, facts, changedPaths);
+    res.json({ ok: true, repo, ...dispatch });
+  });
 
   router.get('/branches/:id/subdomain-aliases', (req, res) => {
     const { id } = req.params;

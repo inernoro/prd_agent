@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.14.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.15.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -1976,6 +1976,66 @@ def _preview_urls_from_branch(branch: dict[str, Any]) -> list[str]:
     return urls
 
 
+def _git_repo_full_name(repo_root: str) -> str:
+    """从 origin remote 解析 `owner/repo`。拿不到就返回空串，绝不猜。"""
+    try:
+        url = subprocess.check_output(
+            ["git", "-C", repo_root, "remote", "get-url", "origin"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+    if not url:
+        return ""
+    # 支持 https://host/owner/repo(.git) 与 git@host:owner/repo(.git)
+    tail = url.split(":")[-1] if url.startswith("git@") else url.split("//", 1)[-1]
+    parts = [p for p in tail.replace(".git", "").split("/") if p]
+    if len(parts) < 2:
+        return ""
+    return f"{parts[-2]}/{parts[-1]}"
+
+
+def _changed_paths_since(repo_root: str, base_ref: str) -> list[str]:
+    """本分支相对 base_ref 的改动文件清单。取不到就返回空 —— 服务端对空清单
+    fail-open（算全部命中），宁可多列一条地址也不能漏掉一个真的被波及的项目。"""
+    if not base_ref:
+        return []
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", repo_root, "diff", "--name-only", f"{base_ref}...HEAD"],
+            text=True, stderr=subprocess.DEVNULL)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _try_preview_dispatch(repo_root: str, branch: str, base_ref: str) -> dict[str, Any] | None:
+    """走服务端的「这次提交该给哪些预览地址」判定。
+
+    这条路径的意义是**取消客户端的项目归属推算权**：一个仓库可以同时喂多个 CDS
+    项目，同名分支天然可以属于好几个，本地怎么猜都是错的（下面那条旧路径里已经
+    长出「自托管项目专用」的特判分支，就是判据开始分裂的症状）。客户端只交仓库、
+    分支和可选的改动清单，项目归属与作用域判定全在服务端，与 push 分发同一份判据。
+
+    返回 None 表示服务端不支持（老版本 CDS），调用方回退旧路径。
+    """
+    repo = _git_repo_full_name(repo_root)
+    if not repo:
+        return None
+    body: dict[str, Any] = {"repo": repo, "branch": branch}
+    changed = _changed_paths_since(repo_root, base_ref)
+    if changed:
+        body["changedPaths"] = changed
+    # fatal_network_errors=False：新链路一旦网络抖动就 die() 会把它变成新的单点，
+    # 而它本来只是「更好的那条路」——任何异常都该安静退回旧路径。
+    status, resp, _ = _request("POST", "/api/preview-dispatch", body=body,
+                               timeout=15, fatal_network_errors=False)
+    if status == 404 or status == 405:
+        return None          # 老版本 CDS 没有这条端点
+    if status != 200 or not isinstance(resp, dict) or not resp.get("ok"):
+        return None          # 任何异常都退回旧路径，不让新链路成为新的单点
+    return resp
+
+
 def cmd_preview_url(args: argparse.Namespace) -> None:
     """打印当前分支在 CDS 已发布的真实预览 URL。
 
@@ -2014,6 +2074,34 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
             "拒绝本地推算预览地址；请先从 CDS 右上角快速接入，"
             "或运行 cdscli connect 完成项目授权。",
             code=1)
+        return
+
+    # Step 1.5（2026-09-01）：优先走服务端派定。一个仓库可以同时喂多个 CDS 项目，
+    # 「我这条分支属于哪个项目」在本地没有唯一答案；下面 Step 3 那套本地推算是历史
+    # 路径，服务端支持时不再使用它。服务端不支持（老版本 CDS）才回退。
+    dispatch = _try_preview_dispatch(repo_root, branch, str(getattr(args, "changed_since", "") or ""))
+    if dispatch is not None:
+        lines = [str(x) for x in (dispatch.get("lines") or [])]
+        if lines:
+            if _HUMAN:
+                print("\n".join(lines))
+            else:
+                ok({"branch": branch, "repo": dispatch.get("repo"),
+                    "lines": lines, "projects": dispatch.get("projects") or []},
+                   note=f"{len(lines)} 个已发布入口")
+            return
+        # 没有地址不等于出错：要把三种情形分开说，别压成一句「取不到地址」。
+        projects = dispatch.get("projects") or []
+        if not projects:
+            die(dispatch.get("message") or "该仓库下没有当前凭据可见的项目",
+                code=2, extra={"repo": dispatch.get("repo"), "branch": branch})
+            return
+        detail = "；".join(
+            f"{p.get('projectName') or p.get('projectId')}：{p.get('summary')}"
+            for p in projects if isinstance(p, dict)
+        )
+        die(f"分支 '{branch}' 当前没有可用的预览入口。{detail}",
+            code=4, extra={"branch": branch, "projects": projects})
         return
 
     # Step 2: 只读 CDS API。网络、鉴权、代理或 JSON 异常都是硬失败，
@@ -9006,6 +9094,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="打印当前分支在 CDS 实际发布的全部预览 URL"
              "（零参数，只读 /api/branches 的 previewUrl/previewUrls）",
     )
+    pu.add_argument("--changed-since", default="",
+                    help="按「相对该 ref 的改动」收窄到被波及的项目（如 origin/main）；不给则列出全部可见项目的入口")
     pu.set_defaults(func=cmd_preview_url)
 
     bid = sub.add_parser(
