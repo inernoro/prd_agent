@@ -960,7 +960,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
           </div>
         ) : '水印配置'}
         maxWidth={920}
-        contentClassName="overflow-hidden !p-4"
+        contentClassName="overflow-hidden"
         contentStyle={{ maxHeight: '70vh', height: '70vh' }}
         content={draftConfig ? (
           <WatermarkEditor

@@ -522,6 +522,29 @@
   --button-ghost-bg-hover: rgba(255, 255, 255, 0.06);
   --section-label-text: #D9906E;
 
+  /* ── 弹窗「控制台」形态（2026-09-01 用户选定方向 A）──
+     旧形态是 22px 圆角 + 液态玻璃 + 44px 药丸按钮，那是「另一个系统的东西」压在页面上。
+     新形态直接并进产品已有的那一档密度：8px 容器、6px 控件、12-13px 字。
+     弹窗自己是实底，所以遮罩只压暗不模糊——模糊是给半透明面板映照用的，实底没有可映照的东西。 */
+  --dialog-surface: #1E1E24;
+  --dialog-border: rgba(255, 255, 255, 0.12);
+  --dialog-shadow: 0 10px 34px rgba(0, 0, 0, 0.30);
+  --dialog-divider: rgba(255, 255, 255, 0.08);
+  --dialog-footer-bg: rgba(255, 255, 255, 0.03);
+  --dialog-overlay: rgba(6, 6, 10, 0.62);
+  /* 主操作反色：整块弹窗里最亮的一处，不需要第二种强调手段就能一眼锁定。 */
+  --dialog-primary-bg: #F7F7FB;
+  --dialog-primary-bg-hover: #FFFFFF;
+  --dialog-primary-fg: #141418;
+  --dialog-secondary-border: rgba(255, 255, 255, 0.12);
+  --dialog-secondary-fg: rgba(247, 247, 251, 0.80);
+  --dialog-danger-bg: #B91C1C;
+  --dialog-danger-bg-hover: #C62828;
+  /* 填色红上的白字两个主题都成立（admin-dual-theme 的合法例外），
+     所以只在这里定义一次，浅色块不重写、直接继承。 */
+  --dialog-danger-fg: #FFFFFF;
+  --dialog-input-bg: rgba(0, 0, 0, 0.28);
+
   /* 数据可视化只保留“数据色”例外；画布中性层与文字仍跟随主题。 */
   --viz-sticky-bg: rgba(24, 24, 30, 0.90);
   --viz-grid: rgba(247, 247, 251, 0.10);
@@ -985,6 +1008,23 @@
   --button-danger-fg: #b91c1c;
   --button-ghost-bg-hover: rgba(15, 23, 42, 0.05);
   --section-label-text: #8F3F2B;
+
+  /* 弹窗「控制台」形态的浅色档。面板走纸面卡，分隔线与动作条底走墨色低透明度。
+     --dialog-danger-fg 不在这里重写：填色红上的白字两个主题共用。 */
+  --dialog-surface: var(--bg-card);
+  --dialog-border: var(--hairline-strong);
+  --dialog-shadow: 0 10px 30px rgba(60, 44, 36, 0.10);
+  --dialog-divider: rgba(26, 26, 31, 0.08);
+  --dialog-footer-bg: rgba(26, 26, 31, 0.03);
+  --dialog-overlay: rgba(60, 44, 36, 0.28);
+  --dialog-primary-bg: #0F172A;
+  --dialog-primary-bg-hover: #1E293B;
+  --dialog-primary-fg: #F8F5EF;
+  --dialog-secondary-border: rgba(26, 26, 31, 0.18);
+  --dialog-secondary-fg: rgba(15, 23, 42, 0.78);
+  --dialog-danger-bg: #B91C1C;
+  --dialog-danger-bg-hover: #A11616;
+  --dialog-input-bg: var(--bg-input);
 
   --viz-sticky-bg: rgba(248, 245, 239, 0.92);
   --viz-grid: rgba(15, 23, 42, 0.12);
