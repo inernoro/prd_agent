@@ -1,4 +1,4 @@
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+
 import { GlassCard } from '@/components/design/GlassCard';
 import { SizePickerButton } from '@/components/visual-agent/SizePickerPanel';
 import { glassToolbar } from '@/lib/glassStyles';
@@ -802,6 +802,41 @@ function NewProjectCard(props: { onClick: () => void }) {
 }
 
 // ============ 项目列表（网格布局，一排5个） ============
+/**
+ * 项目卡骨架。
+ *
+ * 形状照着 ProjectCard 一比一：160px 的封面块 + 13px 标题条 + 11px 日期条，
+ * 位置和尺寸都对得上，所以真数据落位时不会跳。这是「产物形状的骨架」——
+ * 上一版这里是一个居中 spinner，它既不告诉你要来几张，也不占位，
+ * 列表一到整页往下弹一截。
+ *
+ * 扫光沿 45 度走，和印相台的织纹同一个角度；错峰启动，免得九张卡一起闪。
+ *
+ * 和「统一加载组件」那条规则不冲突，别改回去：那条禁的是**裸 lucide spinner**，
+ * 要求区块加载走 MapSectionLoader；而 artifact-is-experience 更进一步——
+ * 有确定形状的列表要用**产物形状的骨架**，不用居中 spinner。这里取更高的那一档。
+ */
+function ProjectCardSkeleton({ index }: { index: number }) {
+  return (
+    <div aria-hidden>
+      <div
+        className="skeleton-sheen h-[160px] w-full rounded-xl"
+        style={{ animationDelay: `${(index % 5) * 110}ms` }}
+      />
+      <div className="pt-2.5 px-0.5">
+        <div
+          className="skeleton-sheen rounded"
+          style={{ height: 9, width: '58%', animationDelay: `${(index % 5) * 110 + 60}ms` }}
+        />
+        <div
+          className="skeleton-sheen mt-2 rounded"
+          style={{ height: 7, width: '32%', animationDelay: `${(index % 5) * 110 + 120}ms` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function ProjectCarousel(props: {
   items: VisualAgentWorkspace[];
   loading: boolean;
@@ -832,13 +867,11 @@ function ProjectCarousel(props: {
     return () => io.disconnect();
   }, [hasMore, loadingMore, onLoadMore]);
 
-  if (loading) {
-    return <MapSectionLoader />;
-  }
-
   return (
     <div className="mt-8 flex-1 relative z-10">
-      {/* 标题栏 - 增加分隔线和更好的层级 */}
+      {/* 标题栏 - 增加分隔线和更好的层级。
+          注意它在 loading 时也渲染：骨架期把标题和分隔线留在原位，
+          列表到位时页面不会整体往下跳一截。 */}
       <div className="max-w-[1340px] mx-auto px-5 mb-4">
         <div
           className="flex items-center justify-between py-3"
@@ -858,7 +891,8 @@ function ProjectCarousel(props: {
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-5 pb-6 px-5 max-w-[1340px] mx-auto"
       >
         <NewProjectCard onClick={onCreate} />
-        {items.map((ws) => (
+        {loading && Array.from({ length: 9 }).map((_, i) => <ProjectCardSkeleton key={`sk-${i}`} index={i} />)}
+        {!loading && items.map((ws) => (
           <ProjectCard
             key={ws.id}
             workspace={ws}
@@ -869,8 +903,12 @@ function ProjectCarousel(props: {
           />
         ))}
       </div>
-      {/* 加载更多指示器 + 哨兵 */}
-      {loadingMore && <MapSectionLoader />}
+      {/* 翻页也用骨架，和首屏同一种形状——换成 spinner 会在同一页出现两种等待语言。 */}
+      {loadingMore && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-5 pb-6 px-5 max-w-[1340px] mx-auto">
+          {Array.from({ length: 5 }).map((_, i) => <ProjectCardSkeleton key={`skm-${i}`} index={i} />)}
+        </div>
+      )}
       {hasMore && <div ref={sentinelRef} className="h-1" />}
     </div>
   );
@@ -1280,11 +1318,27 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           >
             <ArrowLeft size={16} />
           </button>
+          {/*
+            品牌标记：一枚套准十字，和背景印相台四角那四枚同一个符号。
+            上一版是一块 34x34 的实心 --text-primary 方块——它是整页最亮的东西，
+            比标题还抢眼，而里面只是个占位图标，不表示任何东西。
+            线性、低对比、和背景同源：它标身份，不抢注意力。
+          */}
           <span
             className="grid place-items-center shrink-0"
-            style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--text-primary)', color: 'var(--bg-base)' }}
+            style={{
+              width: 30,
+              height: 30,
+              borderRadius: 7,
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-secondary)',
+            }}
+            aria-hidden
           >
-            <Image size={17} />
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <circle cx="12" cy="12" r="5.5" />
+              <path d="M12 3v18M3 12h18" strokeLinecap="round" />
+            </svg>
           </span>
           <span className="min-w-0">
             <strong className="block" style={{ fontSize: 13, fontWeight: 650, color: 'var(--text-primary)' }}>视觉创作</strong>

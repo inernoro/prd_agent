@@ -82,6 +82,36 @@
   .latent-field__sweep { animation: none; }
 }
 
+/* ===== 骨架 =====
+   底色 + 一道 45 度的扫光。45 度是为了和印相台的织纹、生图等待卡的织纹同一个角度——
+   等待这件事在这个产品里只有一种材质。颜色全走 token（双写），这里只管运动。 */
+.skeleton-sheen {
+  position: relative;
+  overflow: hidden;
+  background: var(--skeleton-base);
+}
+
+.skeleton-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg,
+    transparent 38%,
+    var(--skeleton-sheen) 50%,
+    transparent 62%);
+  transform: translateX(-100%);
+  animation: skeleton-sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  to { transform: translateX(100%); }
+}
+
+/* 关掉动效时留静态底色：骨架的**占位**职责比扫光重要，不能一起去掉。 */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-sheen::after { animation: none; opacity: 0; }
+}
+
 /* ===== 磨砂玻璃 =====
    一块玻璃 = 半透明底 + 背后模糊 + **顶边高光** + 投影。前两条谁都会写，
    真正让它从「一块半透明的板」变成「一块玻璃」的是后两条：
