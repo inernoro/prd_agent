@@ -887,8 +887,10 @@
   --fg-on-bright-fill: #0a0a0c;   /* 底两档同色，故前景也两档同值（见 :root 处注释） */
   --accent-gold-2: #C36F52;
 
-  /* 潜像场浅色档（暗色档与说明见 :root 同名处）。 */
-  --latent-weave: rgba(0, 0, 0, 0.022);
+  /* 潜像场浅色档（暗色档与说明见 :root 同名处）。
+     织纹比暗色档还要再压一档：深色纹落在奶白底上比浅色纹落在近黑底上显眼得多，
+     0.022 在整屏尺度会读成一片斜条纹布（取证 hero-dusk-0.55-light.png 第一版）。 */
+  --latent-weave: rgba(0, 0, 0, 0.014);
   --latent-core: rgba(166, 75, 53, 0.10);
   --latent-core-mid: rgba(166, 75, 53, 0.04);
   --latent-sweep: rgba(120, 80, 60, 0.030);

@@ -395,3 +395,36 @@ describe('生成中的占位卡不许被系统自动选中', () => {
     expect(tokens).not.toMatch(/--gen-wait-track:/);
   });
 });
+
+describe('首页背景：素材来源与浅色主题的两条接线', () => {
+  const LATENT = 'src/components/effects/LatentField.tsx';
+  const PAGE = 'src/pages/visual-agent/VisualAgentWorkspaceListPage.tsx';
+  const GLOBALS = 'src/styles/globals.css';
+
+  it('浅色主题整层隐藏背景照片——class 和 CSS 规则必须同时在，缺一层就静默失效', () => {
+    // 形状 8：一处声明看着有，另一处没接上，页面照常渲染、测试照常绿，
+    // 只有真人在浅色下打开才发现整页糊成一片灰。两边都断言。
+    //
+    // 断言前先剥注释：第一版直接 toContain，结果**解释这条规则的那句注释**自己就把断言喂饱了
+    // ——把 className 删掉测试照样绿（形状 4a：断言的是字面存在，不是行为）。
+    const latent = read(LATENT).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(latent).toContain('className="backdrop-photo-layer"');
+    // 剥注释这一步本身也要有判据：剥完还得剩下真实代码，否则正则写坏了会把整份源码吃掉，
+    // 上面那条断言就永远失败——那是另一种坏（假红），同样得拦。
+    expect(latent).toContain('export function BackdropPhoto');
+    expect(read(GLOBALS)).toMatch(/\[data-theme="light"\]\s*\.backdrop-photo-layer\s*\{[^}]*display:\s*none/);
+  });
+
+  it('背景素材取随包清单，不再取项目封面（白底产品图压暗后整页变平灰）', () => {
+    const page = read(PAGE);
+    expect(page).toContain('BACKDROP_CATALOG');
+    // coverAssets 仍用于项目卡的封面拼图，但不许再流进背景池。
+    const backdropBlock = page.slice(page.indexOf('const backdropAssets'), page.indexOf('const backdrop ='));
+    expect(backdropBlock).not.toContain('coverAssets');
+  });
+
+  it('暗罩强度按素材来源分档，不是所有图共用一个写死的值', () => {
+    // 随包素材本来就暗、用户生成的深浅不可控，共用一个值必然有一头是错的。
+    expect(read(PAGE)).toMatch(/<BackdropPhoto[^/]*dim=\{dimFor\(/s);
+  });
+});

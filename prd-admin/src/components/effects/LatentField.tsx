@@ -62,7 +62,9 @@ export function BackdropPhoto({ src, dim = 0.82 }: { src?: string | null; dim?: 
 
   if (!src) return null;
   return (
-    <div aria-hidden style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+    // backdrop-photo-layer：浅色主题下由 CSS 整层隐藏——近黑素材在浅底上无论怎么压
+    // 都只会糊成一片灰，见 globals.css 里那条规则的注释。
+    <div className="backdrop-photo-layer" aria-hidden style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
       <div
         ref={ref}
         className="backdrop-photo"

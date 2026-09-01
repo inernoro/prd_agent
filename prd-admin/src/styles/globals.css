@@ -91,3 +91,15 @@
   background-repeat: no-repeat;
   transition: opacity .9s ease-out;
 }
+
+/*
+ * 浅色主题不放背景照片。
+ *
+ * 这批素材是近黑的暗房光影，浅色下无论压暗罩取什么值都只会把整页糊成一片灰
+ * （取证：hero-dusk-0.55-light.png——眉标那行赤陶色小字几乎读不出来，
+ * 预设 chip 也失去了和底的分层）。没有哪个数值能救一张近黑的图当浅色底，
+ * 所以直接不放，浅色下留潜像场自己成立。
+ */
+[data-theme="light"] .backdrop-photo-layer {
+  display: none;
+}
