@@ -9,6 +9,7 @@ namespace PrdAgent.Api.Authentication;
 public static class AuthorizationFailureContract
 {
     private const string ContextKey = "authorization-failure";
+    private const string ChallengeWrittenContextKey = "authorization-failure-challenge-written";
 
     public const string SessionRequired = "AUTH_SESSION_REQUIRED";
     public const string SessionInvalid = "AUTH_SESSION_INVALID";
@@ -60,8 +61,13 @@ public static class AuthorizationFailureContract
 
     public static async Task WriteChallengeAsync(HttpContext context, JsonSerializerOptions? jsonOptions = null)
     {
-        if (context.Response.HasStarted)
+        // 默认授权策略会依次 challenge JWT、ApiKey、AiAccessKey 与 StableSmoke。
+        // HasStarted 在部分服务器实现中不会在首次 WriteAsync 后立刻变为 true，必须用
+        // 请求级标记保证只写一次，否则响应会拼成多个 JSON 对象，Agent 无法解析。
+        if (context.Response.HasStarted || context.Items.ContainsKey(ChallengeWrittenContextKey))
             return;
+
+        context.Items[ChallengeWrittenContextKey] = true;
 
         var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
         var hasBearerToken = authHeader?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true;

@@ -27,6 +27,27 @@ public sealed class AuthorizationFailureContractTests
     }
 
     [Fact]
+    public async Task WriteChallengeAsync_WritesOnlyOnceWhenMultipleSchemesChallenge()
+    {
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+        AuthorizationFailureContract.Set(context, AuthorizationFailureContract.AgentKeyInvalid);
+
+        await AuthorizationFailureContract.WriteChallengeAsync(context);
+        await AuthorizationFailureContract.WriteChallengeAsync(context);
+        await AuthorizationFailureContract.WriteChallengeAsync(context);
+        await AuthorizationFailureContract.WriteChallengeAsync(context);
+
+        context.Response.Body.Position = 0;
+        var body = await new StreamReader(context.Response.Body).ReadToEndAsync();
+        using var json = JsonDocument.Parse(body);
+        Assert.Equal(
+            AuthorizationFailureContract.AgentKeyInvalid,
+            json.RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal(1, body.Split("\"success\"", StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
     public void GetOrDefault_DistinguishesMissingAndInvalidUserSession()
     {
         var missing = AuthorizationFailureContract.GetOrDefault(new DefaultHttpContext(), hasBearerToken: false);
