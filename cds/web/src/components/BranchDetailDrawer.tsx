@@ -15,6 +15,7 @@ import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { ReplicaSetPanel, type ProfileReplicaSetView } from '@/components/branch/ReplicaSetPanel';
+import { WebEntryConfigDialog } from '@/components/branch/WebEntryConfigDialog';
 import { Layers, Lock, Plus } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
@@ -888,6 +889,8 @@ export function BranchDetailDrawer({
   const [revealedValues, setRevealedValues] = useState<Map<string, string>>(new Map());
   const [envQuery, setEnvQuery] = useState('');
   const [branchEnvEditorOpen, setBranchEnvEditorOpen] = useState(false);
+  // 手动多出口配置弹窗：入口卡右上角的「配置入口」按钮打开它（不必找 Agent 改 compose）
+  const [webEntryConfigOpen, setWebEntryConfigOpen] = useState(false);
   const [systemLogsState, setSystemLogsState] = useState<SystemLogsState>({ status: 'idle' });
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
@@ -2049,6 +2052,17 @@ export function BranchDetailDrawer({
                   <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-ok">
                     <Rocket className="h-4 w-4" />
                     应用已上线
+                    {/* 多出口不再只能由 Agent 改 compose：用户自己在这里加/改「域名前缀 → 服务端口」 */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto text-ok hover:bg-ok-soft hover:text-ok dark:hover:text-ok"
+                      onClick={() => setWebEntryConfigOpen(true)}
+                      title="手动配置入口（新增子域入口 / 改名 / 改落地路径）"
+                    >
+                      <Settings />
+                      配置入口
+                    </Button>
                   </div>
                   {/* 入口卡片列：主入口在上，其余由 cds.web-entry-* 声明的页面在下。
                       readiness/health URL 不属于用户入口，不在这里渲染。 */}
@@ -2772,6 +2786,18 @@ export function BranchDetailDrawer({
           </footer>
         ) : null}
       </div>
+      {branchId ? (
+        <WebEntryConfigDialog
+          open={webEntryConfigOpen}
+          branchId={branchId}
+          onClose={() => setWebEntryConfigOpen(false)}
+          onSaved={(message) => {
+            onToast?.(message);
+            // 入口卡的数据来自 /subdomain-aliases，重拉一次才能看到刚配的入口
+            void load();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

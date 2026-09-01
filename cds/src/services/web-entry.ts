@@ -20,6 +20,26 @@ export function normalizeWebEntryPath(raw: string | undefined): string | null {
   return value;
 }
 
+/**
+ * 该 profile 到底有没有一个「给人看的入口」，以及规范化后的名称/路径。
+ *
+ * 判据与 `parseWebEntryLabels` 同源：**名称是入口存在的唯一凭据**，路径必须是
+ * 合法的同源浏览器路径（探针路径不算）。分支手动配置要能「本分支取消这个入口」，
+ * 写入的就是空名——所以这条判据必须由入口表和发布侧共用一份，不能各写各的
+ * （predicate-and-wiring-discipline 形状 3）。
+ */
+export function resolveWebEntry(
+  profile: Pick<BuildProfile, 'webEntry'>,
+): WebEntryConfig | null {
+  const config = profile.webEntry;
+  if (!config) return null;
+  const name = (config.name || '').trim();
+  if (!name) return null;
+  const path = normalizeWebEntryPath(config.path);
+  if (!path) return null;
+  return { ...config, name, path };
+}
+
 /** A profile routed at `/` is the natural main Web application. */
 export function handlesRootPath(profile: Pick<BuildProfile, 'pathPrefixes'>): boolean {
   return profile.pathPrefixes?.some((path) => path.trim() === '/') === true;

@@ -17,7 +17,10 @@ describe('分支预览地址 API 契约', () => {
   });
 
   it('入口只读 webEntry，主 profile 不以 subdomain 重复列出', () => {
-    expect(source).toContain('const webEntry = profile?.webEntry');
+    // 「有没有一个给人看的入口」只许有一份判据（resolveWebEntry）：入口表与手动配置
+    // 两处各判一次就会漂移——分支档用空名隐藏入口时，另一处照样把它列出来。
+    expect(source).toContain('const webEntry = profile ? resolveWebEntry(profile) : null');
+    expect(source).toContain('resolveWebEntry(profile) !== null');
     expect(source).toContain('profileId === primaryProfile?.id');
     expect(source).not.toContain('resolveServiceLandingPath(sub, profile?.readinessProbe?.path)');
   });
