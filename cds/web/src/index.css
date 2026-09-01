@@ -1175,7 +1175,7 @@
     background-color: hsl(var(--surface-base));
     color: hsl(var(--foreground));
     /* rail 宽度是壳层网格的 SSOT，移动端断点会将其归零。 */
-    --cds-rail-w: 60px;
+    --cds-rail-w: 72px;
     grid-template-columns: var(--cds-rail-w) minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
@@ -1195,7 +1195,7 @@
   }
 
   .cds-rail {
-    @apply flex min-h-0 flex-col gap-2.5 overflow-y-auto px-1.5 py-2.5;
+    @apply flex min-h-0 flex-col gap-3 overflow-y-auto px-2 py-2.5;
     grid-column: 1;
     grid-row: 2;
     background-color: hsl(var(--surface-sunken));
@@ -1551,7 +1551,7 @@
   }
 
   .cds-rail-section {
-    @apply flex flex-col gap-0.5 border-t border-[hsl(var(--hairline))] pt-2.5;
+    @apply flex flex-col gap-0.5 border-t border-[hsl(var(--hairline))] pt-3;
   }
 
   /* 首段上方没有内容，那根分割线是悬空的——栏顶已经有顶栏的边界了。 */
@@ -1561,7 +1561,7 @@
   }
 
   .cds-rail-footer {
-    @apply flex flex-col gap-0.5 border-t border-[hsl(var(--hairline))] pt-2.5;
+    @apply flex flex-col gap-0.5 border-t border-[hsl(var(--hairline))] pt-3;
   }
 
   .cds-rail-item {
@@ -2863,29 +2863,39 @@
    * 之内,保留文字标签。每个 item 已有 aria-label + title,隐藏文字后无障碍 + 悬停提示不丢。
    */
   .cds-rail .cds-rail-item {
-    /* 2026-09-01：52px 的格子里只有 20+3+10=33px 的内容，每项上下各 9.5px 空气，
-       10 项累计 520px——「浮肿」就是这么来的。收到 44px（内容 30px），
-       与生产版那根纯图标栏的行距基本一致，但保留两字短名。 */
-    @apply h-[44px] flex-col justify-center gap-px px-0.5;
+    /* 2026-09-01 定档（两位设计评审独立比对 60/64/68/72 四稿后一致选 72 这一档）：
+       上一版收到 60px 栏 / 44px 项是矫枉过正——47px 的项装进 60px 的栏，
+       左右只剩 6.5px，选中的实心块贴着栏边像「把栏染了一段色」，
+       容器反而比内容窄；标签 9.5px 已经在汉字的渲染下限以下，
+       「报」「缺」「设」的笔画并成灰块，那才是「失真」的来源。
+       现在：栏 72 ⊃ 项 56 ⊃ 内容，三层包含关系正过来；竖向 10+20+4+14+4=52。 */
+    @apply h-[52px] flex-col justify-center gap-1 rounded-xl px-1;
   }
 
   /* 图标：全栏一档 20px + 描边 1.7。lucide 把 stroke-width 写成表现属性，
      CSS 声明压得过它，所以不用改任何组件调用点。 */
   .cds-rail .cds-rail-item svg {
-    width: 18px;
-    height: 18px;
-    stroke-width: 1.6;
+    width: 20px;
+    height: 20px;
+    /* lucide 默认 2 是照 24px 画的；20px 上用 2 会让「缺陷」「Agent」这类密纹图标糊成块。 */
+    stroke-width: 1.75;
   }
 
   /* 抽屉用完整中文名，桌面栏用两字短名；两边共用同一个 RailNav。 */
   .cds-rail .cds-rail-item > span:not(.cds-rail-short) {
     display: none;
   }
+  /* 11px 是两个汉字在桌面端有余量的第一档：10.5 勉强立住、10 在临界、9.5 已经糊。 */
   .cds-rail .cds-rail-item > .cds-rail-short {
     display: block;
-    font-size: 9.5px;
-    line-height: 1;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 14px;
     letter-spacing: 0.02em;
+  }
+
+  .cds-rail .cds-rail-item[data-active='true'] > .cds-rail-short {
+    font-weight: 600;
   }
 
   /* 非活动项走 --foreground-muted 而不是 --muted-foreground：

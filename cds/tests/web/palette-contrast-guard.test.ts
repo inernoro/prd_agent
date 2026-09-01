@@ -132,3 +132,69 @@ describe('状态色只走 token，不再硬编码调色板', () => {
     }
   });
 });
+
+
+describe('左栏当前页：选中态不许退回淡底橙字', () => {
+  /*
+   * 这条规则被手工断言过两次（2026-08-31 定实心底，2026-09-01 调尺度时又核了一遍），
+   * 却一直没有判据——而它正是「改完页面照样渲染、没人会发现」的那一类：
+   * 曾经用「淡橙底（primary-soft）+ 橙字（primary-ink）」，白天实测 4.25:1，
+   * 比未选中项对栏底的 4.72:1 还低，选中项反而是全栏最弱的一个。
+   *
+   * 判据分两半：接线（选中态必须是实心 primary-ink 底 + status-ink 墨）
+   * 与数值（实心档必须过 AA，且必须明显高于那个被否掉的淡底档）。
+   * 红绿闭环：把这条规则改回 primary-soft / primary-ink，两半同时红。
+   */
+  const css = strip(CSS);
+
+  const themeBlock = (selector: string): string => {
+    const at = css.indexOf(selector);
+    if (at < 0) throw new Error(`找不到主题块 ${selector}`);
+    const open = css.indexOf('{', at);
+    return css.slice(open, css.indexOf('\n  }', open));
+  };
+
+  const token = (block: string, name: string): [number, number, number] => {
+    const m = block.match(new RegExp(`--${name}:\\s*([\\d.]+)\\s+([\\d.]+)%\\s+([\\d.]+)%`));
+    if (!m) throw new Error(`${name} 没在这个主题块里定义`);
+    return [Number(m[1]), Number(m[2]) / 100, Number(m[3]) / 100];
+  };
+
+  const luminance = ([h, s, l]: [number, number, number]): number => {
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = l - c / 2;
+    const seg = Math.floor(h / 60) % 6;
+    const rgb = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][seg]
+      .map((v) => v + m)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  };
+
+  const ratio = (a: [number, number, number], b: [number, number, number]): number => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100;
+  };
+
+  it('接线：选中态是实心 primary-ink 底 + status-ink 墨', () => {
+    const at = css.indexOf(".cds-rail .cds-rail-item[data-active='true'] {");
+    expect(at, '找不到左栏选中态那条规则（选择器变了？）').toBeGreaterThan(-1);
+    const rule = css.slice(at, css.indexOf('}', at));
+    expect(rule).toContain('background-color: hsl(var(--primary-ink))');
+    expect(rule).toContain('color: hsl(var(--status-ink))');
+    // 反向：淡底档不许再出现在这条规则里
+    expect(rule).not.toContain('primary-soft');
+  });
+
+  for (const theme of ["[data-theme='dark']", "[data-theme='light']"]) {
+    it(`数值：${theme} 下选中过 AA，且明显高于被否掉的淡底档`, () => {
+      const block = themeBlock(theme);
+      const idle = ratio(token(block, 'foreground-muted'), token(block, 'surface-sunken'));
+      const active = ratio(token(block, 'status-ink'), token(block, 'primary-ink'));
+      const rejected = ratio(token(block, 'primary-ink'), token(block, 'primary-soft'));
+      expect(idle, `未选中项对栏底只有 ${idle}:1`).toBeGreaterThanOrEqual(4.5);
+      expect(active, `选中态只有 ${active}:1，没过 AA`).toBeGreaterThanOrEqual(4.5);
+      expect(active, `选中 ${active}:1 并不比被否掉的淡底档 ${rejected}:1 更清楚`).toBeGreaterThan(rejected);
+    });
+  }
+});
