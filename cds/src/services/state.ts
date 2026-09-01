@@ -1928,11 +1928,34 @@ export class StateService {
    * projects shouldn't happen in practice (the link endpoint refuses that),
    * but this picks the first match defensively.
    */
-  findProjectByRepoFullName(repoFullName: string): Project | undefined {
-    const needle = repoFullName.toLowerCase();
-    return (this.state.projects || []).find(
+  /**
+   * 同一个仓库下的**全部**项目。
+   *
+   * 一个 git 仓库可以同时喂多个 CDS 项目（本仓库就是：主项目与自托管项目共用
+   * 同一个 repo）。这才是「按仓库名找项目」的真实语义；只取第一个是历史遗留，
+   * 它让第二个及以后的项目永远收不到 webhook 事件。
+   *
+   * 顺序沿用 projects 数组顺序，因此第一个元素与旧的
+   * {@link findProjectByRepoFullName} 逐字节一致。
+   */
+  findProjectsByRepoFullName(repoFullName: string): Project[] {
+    const needle = String(repoFullName || '').toLowerCase();
+    if (!needle) return [];
+    return (this.state.projects || []).filter(
       (p) => p.githubRepoFullName?.toLowerCase() === needle,
     );
+  }
+
+  /**
+   * 单个项目版本。**只在语义确实是「任取一个」时用**（例如仅需要项目的
+   * installation id 这类同仓库共享的信息）；凡是「这个仓库的每个项目都该
+   * 收到」的场景，一律改用 {@link findProjectsByRepoFullName}。
+   *
+   * 内部委托给复数版，保证两者的匹配口径永远是同一份
+   * （predicate-and-wiring-discipline 形状 3：同一个判断不许有两份实现）。
+   */
+  findProjectByRepoFullName(repoFullName: string): Project | undefined {
+    return this.findProjectsByRepoFullName(repoFullName)[0];
   }
 
   /**

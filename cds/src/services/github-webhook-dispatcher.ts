@@ -27,6 +27,7 @@ import { StateService as StateServiceClass } from './state.js';
 import { analyzeChangeImpact } from './change-impact-analyzer.js';
 import { isTrunkBranch } from './branch-protection.js';
 import { branchUsesPrebuiltMode, applyDefaultDeployModesToBranch } from './deploy-runtime.js';
+import { decideProjectScope, resolveProjectScope } from './project-scope.js';
 
 /**
  * 2026-06-23 极速版（CI 预构建）—— 负责构建预构建镜像的 GitHub Actions 工作流标识。
@@ -86,6 +87,42 @@ export function isAllowedCdsBranchName(ref: string): boolean {
   return true;
 }
 
+/**
+ * 把「同一个仓库下每个项目各自的 push 结果」收敛成一条主结果 + 其余挂在 fanout。
+ *
+ * 挑主结果的顺序刻意是「谁真的要干活谁当主」：先看有没有人要部署，再看有没有人
+ * 不是被忽略的，最后才退回第一条。理由是 webhook 的 HTTP 响应与投递记录只显示
+ * 主结果 —— 如果让一条 `ignored-out-of-scope` 当主，面板上就会显示「本次被忽略」，
+ * 而实际上另一个项目正在构建，看的人会以为没动。
+ *
+ * 纯函数，与调用它的类无关，可直接单测。
+ */
+export function mergePushResults(
+  results: WebhookDispatchResult[],
+  projects: readonly { id: string; name: string }[],
+): WebhookDispatchResult {
+  if (results.length === 0) {
+    return { action: 'ignored-no-project', message: '没有任何项目处理本次 push' };
+  }
+  if (results.length === 1) return results[0];
+
+  let primaryIndex = results.findIndex((r) => !!r.deployRequest);
+  if (primaryIndex < 0) primaryIndex = results.findIndex((r) => !r.action.startsWith('ignored-'));
+  if (primaryIndex < 0) primaryIndex = 0;
+
+  const primary = results[primaryIndex];
+  const others = results.filter((_, index) => index !== primaryIndex);
+  const deployCount = results.filter((r) => !!r.deployRequest).length;
+  // 主结果的 message 要带上「这个仓库还有几个项目、其中几个要部署」，否则投递记录
+  // 里只看得见一个项目，多项目分发等于没有可观测性。
+  const suffix = `（本仓库共 ${projects.length} 个项目，本次 ${deployCount} 个触发部署）`;
+  return {
+    ...primary,
+    message: `${primary.message}${suffix}`,
+    fanout: others,
+  };
+}
+
 export interface WebhookDispatchResult {
   /** Machine-readable outcome. */
   action:
@@ -96,6 +133,8 @@ export interface WebhookDispatchResult {
     | 'ignored-auto-deploy-off'
     | 'ignored-project-paused'
     | 'ignored-bot-push'
+    // 一仓多项目：该项目声明了构建输入范围，而本次改动一条都没落进去
+    | 'ignored-out-of-scope'
     | 'ignored-doc-only'
     | 'ignored-ping'
     | 'ignored-event'
@@ -119,6 +158,14 @@ export interface WebhookDispatchResult {
     | 'workflow-acknowledged';
   /** Short human message for the response + logs. */
   message: string;
+  /**
+   * 一仓多项目 push 分发：除主结果之外，同一个仓库下其它项目各自的处理结果。
+   *
+   * 只在 push 事件、且该仓库确实挂着多个项目时出现。路由必须把它和主结果**同等
+   * 对待**（尤其是各自的 deployRequest），否则第二个项目又会退回到「收得到事件、
+   * 但没人替它部署」——那是比收不到事件更难发现的一种半接线。
+   */
+  fanout?: WebhookDispatchResult[];
   /** Populated when a branch was touched. */
   branchId?: string;
   /** Populated when a deploy should be fired after the dispatcher returns. */
@@ -1188,13 +1235,59 @@ export class GitHubWebhookDispatcher {
     const repoFullName = event.repository.full_name;
     const receivedAt = nowIso();
 
-    const project = this.deps.stateService.findProjectByRepoFullName(repoFullName);
-    if (!project) {
+    // ── 一仓多项目分发（2026-09-01）────────────────────────────────────
+    // 一个 git 仓库可以同时喂多个 CDS 项目（本仓库就是：主项目与自托管项目共用
+    // 同一个 repo）。此前这里只取第一个匹配项目，于是第二个及以后的项目**永远
+    // 收不到 push**，只能手动建分支手动部署。判据是「取第一个」，语义却是「全部」。
+    //
+    // 现在逐个项目判定，并在分发之前先过一道项目级作用域（该项目名下全部服务
+    // buildScope 的并集）：只改 cds/** 的提交不必惊动主项目，反之亦然。未声明
+    // 作用域的项目按全通配处理，行为与启用前逐字节一致。
+    const projects = this.deps.stateService.findProjectsByRepoFullName(repoFullName);
+    if (projects.length === 0) {
       return {
         action: 'ignored-no-project',
         message: `No project linked to ${repoFullName}. Ignoring push.`,
       };
     }
+
+    const changedPaths = this.changedPathsFromPush(event);
+    const perProject: WebhookDispatchResult[] = [];
+    for (const project of projects) {
+      const scope = resolveProjectScope(this.deps.stateService.getBuildProfilesForProject(project.id));
+      const decision = decideProjectScope(scope, changedPaths);
+      if (!decision.matched) {
+        perProject.push({
+          action: 'ignored-out-of-scope',
+          message: `项目 '${project.name}' 未被本次改动波及：${decision.reason}`,
+        });
+        continue;
+      }
+      perProject.push(
+        await this.handlePushForProject(
+          event,
+          project,
+          { branchName, commitSha, repoFullName, receivedAt },
+          dryRun,
+        ),
+      );
+    }
+    return mergePushResults(perProject, projects);
+  }
+
+  /**
+   * 单个项目视角的 push 处理。
+   *
+   * 从 {@link handlePush} 原样抽出，逐字节保留原有行为；唯一的差别是项目由参数
+   * 传入而不是自己去查——因为「这个仓库对应哪些项目」现在是上一层的事。
+   */
+  private async handlePushForProject(
+    event: GitHubPushEvent,
+    project: Project,
+    ctx: { branchName: string; commitSha: string; repoFullName: string; receivedAt: string },
+    dryRun: boolean,
+  ): Promise<WebhookDispatchResult> {
+    const { branchName, commitSha, repoFullName, receivedAt } = ctx;
     if (!dryRun) this.rememberProjectInstallation(project, event.installation?.id);
 
     // PR_D.2: 统一走 isEventEnabled('push')，内部已 fallback 到老的

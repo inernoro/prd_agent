@@ -10,14 +10,14 @@
 
 ## 〇、状态看板
 
-> 最后更新：2026-09-01 | 权限线 | 距离可发布：权限线第一步已落地并有回归；其余阶段未开工。
+> 最后更新：2026-09-01 | 权限线 + 多项目线 | 距离可发布：P1 已在真实预览上验过；P4 代码与回归就绪，等「把自托管项目 link 到仓库」这一步人工开关。
 
 | 阶段 | 进度% | 状态 | 当前 blocker | 下一步 | 验收证据 |
 |---|---|---|---|---|---|
-| P1 凭据三态自检 | 100 | 已落地 | 无 | 部署后用真实凭据打一次端点 | 判据回归 12 例 + 路由回归 9 例全绿，含红绿闭环与接线守卫（文件见文末实现来源） |
+| P1 凭据三态自检 | 100 | 已验收 | 无 | 无 | 判据 12 例 + 路由 9 例全绿（含红绿闭环、漂移守卫、接线守卫）；并已部署到自托管项目预览实例实测：同一请求在旧构建上 401、在本构建上 200，`malformed` 与 `never-issued` 两态在真实部署上取到（见 §七） |
 | P2 身份层三张表 + 用户级凭证 + 自愈回落 | 0 | 未开始 | 无 | 定主体 / 凭证 / 项目授权三张表的字段，先写迁移与纯函数判据 | 待补 |
 | P3 列表按主体聚合 + 90 天归档 + 权限总览页 | 0 | 未开始 | 依赖 P2 | 主列表只列活的，已吊销折叠；权限总览页可撤销用户级凭证 | 待补 |
-| P4 仓库到项目复数化 + 项目级作用域 | 0 | 未开始 | 无 | 把「按仓库名找项目」从取第一个改成取全部，加项目级作用域判据，再让 push 分发到每个命中项目（要动 CDS 最热路径，单独一个 PR） | 待补 |
+| P4 仓库到项目复数化 + 项目级作用域 | 90 | 已落地 | 无（等人工 link） | 把自托管项目 link 到本仓库，并重新导入它的 compose 让 `cds.build-scope` 生效 | 作用域判据 17 例 + 分发 9 例 + 路由 2 例，含「删掉 fanout 循环就变红」的红绿闭环 |
 | P5 预览地址按提交派发 | 0 | 未开始 | 依赖 P4 的判据 | 服务端算「本次改动波及哪些项目的哪些入口」，cdscli 删掉本地项目归属推断 | 待补 |
 | P6 依赖指向区 | 0 | 未开始 | 依赖 P4/P5（候选表要齐） | 依赖声明落 CDS 配置树，自动发现出候选、点一次确认固化 | 待补 |
 
@@ -111,15 +111,42 @@
 
 ---
 
-## 六、实现来源与关联
+## 六、验收记录
 
-本轮 P1 的代码与回归：
+### P1（2026-09-01，已验）
+
+自托管项目上手动建分支 + 部署本分支（commit `21cd00f`），拿到预览入口后直接打端点：
+
+- 不带任何凭据：线上旧构建 `401`，本构建 `200` 且给出 `malformed` 与「凭据该放哪个请求头」。**这条差异本身就是免鉴权接线生效的证据** —— 也很讽刺：一个专门诊断「未授权」的端点，在旧构建上正返回未授权。
+- 随机项目级凭据：`200`，`never-issued`，且不带任何项目信息。
+
+`active` / `revoked` / `prefix-mismatch` 三态**未在真实部署上验**：在预览实例上签发凭据需要它自己那套访问口令，按设计与父实例刻意不共享。这三态由判据回归覆盖，并有红绿闭环证明用例真的在测它们。
+
+### P4（2026-09-01，代码就绪，等人工开关）
+
+核对过线上事实：**自托管项目当前没有 `githubRepoFullName`**，即没有 link GitHub（与自托管设计里的取舍一致）。因此本次改动对本仓库是**零行为变化** —— fan-out 只是把「能分发给多个项目」这条路修通，真正打开开关的是 link 这个显式动作。
+
+也正因如此，顺手补了服务级 `cds.build-scope` 声明能力：此前只有部署模式能声明构建输入范围，而自托管项目那个唯一的服务没有部署模式，于是作用域恒为空、恒等于全通配。真要 link 之后不至于每个 push 都把 CDS 重编一遍，这条声明是安全前提，不是可选项。
+
+## 七、实现来源与关联
+
+P1 的代码与回归：
 
 - `cds/src/services/credential-self-check.ts` —— 六态判据（纯函数）
 - `cds/src/routes/credential-self-check.ts` —— 免鉴权端点与节流
 - `cds/src/server.ts`、`cds/src/middleware/github-auth.ts` —— 两处免鉴权白名单
 - `cds/tests/services/credential-self-check.test.ts` —— 判据回归 12 例（含红绿闭环、漂移守卫、不泄密）
 - `cds/tests/routes/credential-self-check.test.ts` —— 路由回归 9 例（含接线守卫）
+
+P4 的代码与回归：
+
+- `cds/src/services/project-scope.ts` —— 项目作用域判据（并集 + 匹配 + fail-open）
+- `cds/src/services/state.ts` —— `findProjectsByRepoFullName`（复数），单数版委托给它
+- `cds/src/services/github-webhook-dispatcher.ts` —— push 按项目分发、`mergePushResults`、`handlePushForProject`
+- `cds/src/routes/github-webhook.ts` —— 部署派发抽成函数，主结果与 fanout 一视同仁
+- `cds/src/services/compose-parser.ts` —— 服务级 `cds.build-scope` 标签
+- `cds/cds-compose.selfhost.yml` —— 自托管项目声明 `cds/**`
+- `cds/tests/services/project-scope.test.ts`、`cds/tests/services/github-webhook-fanout.test.ts`、`cds/tests/routes/github-webhook.test.ts`
 
 规则与设计：
 
