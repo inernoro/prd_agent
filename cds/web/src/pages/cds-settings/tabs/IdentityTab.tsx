@@ -30,7 +30,7 @@ interface CredentialView {
   expiresAt?: string;
   lastUsedAt?: string;
   revokedAt?: string;
-  status: 'active' | 'expired' | 'revoked';
+  status: 'active' | 'expired' | 'revoked' | 'principal-disabled' | 'grant-revoked';
   issuedCount?: number;
   lastIssuedAt?: string;
 }
@@ -95,6 +95,26 @@ function remaining(expiresAt?: string): string {
   if (ms <= 0) return '已过期';
   const days = Math.floor(ms / 86_400_000);
   return days >= 1 ? `还剩 ${days} 天` : '不足 1 天';
+}
+
+/**
+ * 这条退役凭证为什么不能用。
+ *
+ * 服务端把「主体被停用」「授权被撤」与「到期」分成了三种状态，界面若把非
+ * `revoked` 的一律当成到期，管理员看到的就是「过期于 —」（这两种情况根本没有
+ * 到期时间）—— 明明是他自己刚点的停用，界面却说不出原因。
+ */
+function retiredReason(cred: CredentialView): string {
+  switch (cred.status) {
+    case 'revoked':
+      return `吊销于 ${formatDate(cred.revokedAt)}`;
+    case 'principal-disabled':
+      return '主体已停用，名下凭证一律不可用';
+    case 'grant-revoked':
+      return '该项目的授权已被撤销';
+    default:
+      return `过期于 ${formatDate(cred.expiresAt)}`;
+  }
 }
 
 export function IdentityTab({ onToast }: Props): JSX.Element {
@@ -232,7 +252,15 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
             */}
             <div className="mt-3 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--muted))]/40 p-3">
               <p className="mb-1 text-xs font-semibold">在那台机器上执行一次，凭证才真正落地</p>
-              <pre className="overflow-x-auto rounded bg-[hsl(var(--background))] px-2 py-1.5 font-mono text-[11px] leading-5">cdscli identity save</pre>
+              {/*
+                必须带上主机：新机器 / 新 clone 上没有仓库里那份凭据文件，
+                CDS_HOST 也往往没设，命令会在收凭证之前就先失败 —— 而这一屏
+                只出现一次，给一条跑不通的命令等于没给。主机就是当前这个页面
+                的域名，直接从地址栏取，不写死。
+              */}
+              <pre className="overflow-x-auto rounded bg-[hsl(var(--background))] px-2 py-1.5 font-mono text-[11px] leading-5">
+                {`cdscli identity save --host ${typeof window === 'undefined' ? '<CDS 主机>' : window.location.host}`}
+              </pre>
               <p className="mt-1 text-xs leading-6 text-muted-foreground">
                 回车后粘贴上面这串（不回显），会写进用户目录并设为仅本人可读。
                 它跟着人走、不跟着仓库走，所以挪目录、重新 clone 都不会丢。
@@ -367,7 +395,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
                 ? row.retiredCredentials.map((cred) => (
                     <div key={cred.id} className="flex flex-wrap items-center gap-3 px-3 py-1 text-xs text-muted-foreground">
                       <span className="font-mono text-[11px]">{cred.id}</span>
-                      <span>{cred.status === 'revoked' ? `吊销于 ${formatDate(cred.revokedAt)}` : `过期于 ${formatDate(cred.expiresAt)}`}</span>
+                      <span>{retiredReason(cred)}</span>
                     </div>
                   ))
                 : null}

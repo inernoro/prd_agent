@@ -203,8 +203,12 @@ export interface OverviewResult {
   archivedCount: number;
 }
 
-function viewOfUserCredential(cred: UserCredential, now: number): PrincipalCredentialView {
-  const usability = credentialUsability(cred, undefined, now);
+function viewOfUserCredential(
+  cred: UserCredential,
+  now: number,
+  principal?: Pick<Principal, 'status'>,
+): PrincipalCredentialView {
+  const usability = credentialUsability(cred, principal, now);
   return {
     id: cred.id,
     kind: 'user',
@@ -214,7 +218,13 @@ function viewOfUserCredential(cred: UserCredential, now: number): PrincipalCrede
     ...(cred.lastUsedAt ? { lastUsedAt: cred.lastUsedAt } : {}),
     ...(cred.revokedAt ? { revokedAt: cred.revokedAt } : {}),
     ...(cred.revokedBy ? { revokedBy: cred.revokedBy } : {}),
-    status: usability.usable ? 'active' : usability.reason === 'revoked' ? 'revoked' : 'expired',
+    status: usability.usable
+      ? 'active'
+      : usability.reason === 'revoked'
+        ? 'revoked'
+        : usability.reason === 'principal-disabled'
+          ? 'principal-disabled'
+          : 'expired',
     ...(cred.issuedCount !== undefined ? { issuedCount: cred.issuedCount } : {}),
     ...(cred.lastIssuedAt ? { lastIssuedAt: cred.lastIssuedAt } : {}),
   };
@@ -286,7 +296,9 @@ export function buildPrincipalOverview(input: OverviewInput): OverviewResult {
   const unclaimed: PrincipalCredentialView[] = [];
 
   for (const cred of input.userCredentials) {
-    const view = viewOfUserCredential(cred, now);
+    const view = viewOfUserCredential(
+      cred, now, input.principals.find((p) => p.id === cred.principalId),
+    );
     const target = bucket(cred.principalId);
     if (view.status === 'active') target.active.push(view);
     else if (withinRetention(view, now, retentionDays)) target.retired.push(view);

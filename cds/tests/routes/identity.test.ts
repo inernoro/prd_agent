@@ -375,3 +375,28 @@ describe('身份管理只认人，不认机器钥匙', () => {
     expect(res.status).toBe(200);
   });
 });
+
+/**
+ * 用户级凭证的「发现自己能干什么」入口必须按授权收窄（Codex 第四轮 P2）。
+ *
+ * 我把 GET /api/projects 放进了用户级凭证的白名单，但那条列表路由只按项目级
+ * 凭证过滤 —— 于是一把 cdsu_ 能看到**全部**项目的仓库地址与配置摘要。放行一条
+ * 路由的同时没收窄它的可见范围，是「加了入口没加围栏」。
+ */
+describe('项目列表按主体授权收窄', () => {
+  it('列表路由源码里按 cdsPrincipal + 授权过滤，不是只看项目级凭证', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'src', 'routes', 'projects.ts'),
+      'utf-8',
+    );
+    const idx = source.indexOf("router.get('/projects', (req, res) => {");
+    expect(idx).toBeGreaterThan(-1);
+    const handler = source.slice(idx, idx + 2000);
+    expect(handler).toContain('cdsPrincipal');
+    expect(handler).toContain('hasActiveGrant');
+  });
+
+  it('放行清单里确实有这条路由（否则上面那条守卫是空转的）', () => {
+    expect(userCredentialRouteAllowed('GET', '/api/projects')).toBe(true);
+  });
+});

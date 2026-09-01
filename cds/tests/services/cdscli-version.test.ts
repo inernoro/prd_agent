@@ -72,5 +72,10 @@ describe('cdscli identity save：明文不走命令行参数', () => {
     // 明文只出现这一次，这一屏必须说清它该落到哪儿，否则自愈会报「本机没有凭证」
     expect(tab).toContain('cdscli identity save');
     expect(tab).not.toContain('identity save --credential');
+    // 新机器 / 新 clone 上没有仓库里那份凭据文件，CDS_HOST 也往往没设 ——
+    // 命令不带主机会在收凭证之前就先失败，而这一屏只出现一次（Codex 第四轮）。
+    expect(tab).toContain('--host');
+    // 主机取自当前页面地址，不写死某个域名
+    expect(tab).toContain('window.location.host');
   });
 });

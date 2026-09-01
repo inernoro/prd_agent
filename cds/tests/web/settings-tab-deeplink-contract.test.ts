@@ -103,3 +103,27 @@ describe('CDS 系统设置：页签与内容槽一一对应', () => {
     expect(orphan).toEqual([]);
   });
 });
+
+/**
+ * 服务端把「主体被停用」「授权被撤」与「到期」分成三种状态之后，界面必须能把
+ * 它们分别说出来 —— 否则管理员看到的是「过期于 —」（这两种情况根本没有到期
+ * 时间），明明是他自己刚点的停用，界面却说不出原因（Codex 第四轮）。
+ */
+describe('权限总览：新增的失效原因要渲染得出来', () => {
+  const tabSource = fs.readFileSync(
+    path.resolve(process.cwd(), '../cds/web/src/pages/cds-settings/tabs/IdentityTab.tsx'),
+    'utf8',
+  );
+
+  it('前端类型认得服务端返回的全部状态', () => {
+    for (const status of ['principal-disabled', 'grant-revoked', 'expired', 'revoked', 'active']) {
+      expect(tabSource, status).toContain(`'${status}'`);
+    }
+  });
+
+  it('退役行不再把非 revoked 的一律当成到期', () => {
+    expect(tabSource).toContain('retiredReason');
+    expect(tabSource).toContain('主体已停用');
+    expect(tabSource).toContain('授权已被撤销');
+  });
+});
