@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiRequest } from './apiClient';
+import { apiRequest, isSessionAuthenticationFailure } from './apiClient';
 import { useAuthStore } from '@/stores/authStore';
 
 describe('apiRequest timeout', () => {
@@ -42,6 +42,45 @@ describe('apiRequest timeout', () => {
     expect(useAuthStore.getState().isAuthenticated).toBe(true);
     expect(useAuthStore.getState().token).toBe('existing-token');
     expect(window.location.href).toBe('/current');
+  });
+
+  it('keeps the current user session when a service credential returns a classified 401', async () => {
+    vi.stubGlobal('window', {
+      location: { origin: 'https://example.test', hash: '', pathname: '/', href: '/authorization-health' },
+    });
+    useAuthStore.setState({
+      isAuthenticated: true,
+      user: { userId: 'admin-1', username: 'admin', displayName: 'Admin', role: 'ADMIN' },
+      token: 'existing-token',
+      refreshToken: 'existing-refresh',
+      sessionKey: 'existing-session',
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      status: 401,
+      ok: false,
+      statusText: 'Unauthorized',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: async () => JSON.stringify({
+        success: false,
+        data: null,
+        error: { code: 'AUTH_AI_KEY_INVALID', message: '自动化访问凭据与当前环境不一致。' },
+      }),
+    } as Response)));
+
+    const result = await apiRequest('/api/automation-probe');
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.code).toBe('AUTH_AI_KEY_INVALID');
+    expect(useAuthStore.getState().isAuthenticated).toBe(true);
+    expect(useAuthStore.getState().token).toBe('existing-token');
+    expect(window.location.href).toBe('/authorization-health');
+  });
+
+  it('classifies only session failures as logout-worthy', () => {
+    expect(isSessionAuthenticationFailure(401, 'AUTH_SESSION_REVOKED')).toBe(true);
+    expect(isSessionAuthenticationFailure(401, 'AUTH_AI_KEY_INVALID')).toBe(false);
+    expect(isSessionAuthenticationFailure(401, 'AUTH_AGENT_KEY_INVALID')).toBe(false);
+    expect(isSessionAuthenticationFailure(401)).toBe(true);
   });
 
   it('aborts a request that never returns headers', async () => {

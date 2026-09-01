@@ -141,8 +141,20 @@ public sealed class StableSmokeAuthenticationHandler
             reasonCode,
             Request.Path.Value,
             Context.TraceIdentifier);
+        var publicCode = reasonCode switch
+        {
+            "key_not_configured" => AuthorizationFailureContract.StableSmokeNotConfigured,
+            "expired_signature" or "replayed_signature" => AuthorizationFailureContract.StableSmokeSignatureExpired,
+            "invalid_signature" or "host_mismatch" => AuthorizationFailureContract.StableSmokeSignatureInvalid,
+            "account_unavailable" => AuthorizationFailureContract.StableSmokeIdentityUnavailable,
+            _ => AuthorizationFailureContract.StableSmokeRequestInvalid,
+        };
+        AuthorizationFailureContract.Set(Context, publicCode);
         return AuthenticateResult.Fail("Stable smoke signature authentication failed");
     }
+
+    protected override Task HandleChallengeAsync(AuthenticationProperties properties) =>
+        AuthorizationFailureContract.WriteChallengeAsync(Context);
 
     internal static IReadOnlyList<StableSmokePublicKeyOptions> ReadKeys(IConfiguration configuration) =>
         configuration.GetSection("StableSmokeAuthentication:Keys")

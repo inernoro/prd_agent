@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "2026.08.04.3",
+  "catalogVersion": "2026.09.01.1",
   "name": "MAP 核心业务功能台账",
   "autoEnrollment": {
     "scheduledMode": "all",
@@ -18,12 +18,12 @@
       "entryPath": "/",
       "entrySmoke": false,
       "automationStatus": "contract-and-entry",
-      "requiredCaseIds": ["CORE-001", "CORE-002", "CORE-003", "CORE-004", "CORE-005", "CORE-006", "CORE-007", "CORE-008"],
-      "regressionCaseIds": ["REG-tutorial-progress-001"],
-      "sourcePrefixes": ["prd-api/src/PrdAgent.Api/Authentication/", "prd-api/src/PrdAgent.Api/Controllers/SyntheticLoginController.cs", "prd-api/src/PrdAgent.Api/Controllers/Api/DailyTipsController.cs", "prd-api/src/PrdAgent.Api/Services/SyntheticLogin", "prd-admin/src/pages/auth/", "scripts/stable-smoke-login.sh"],
+      "requiredCaseIds": ["CORE-001", "CORE-002", "CORE-003", "CORE-004", "CORE-005", "CORE-006", "CORE-007", "CORE-008", "CORE-009"],
+      "regressionCaseIds": ["REG-tutorial-progress-001", "REG-auth-diagnosis-001"],
+      "sourcePrefixes": ["prd-api/src/PrdAgent.Api/Authentication/", "prd-api/src/PrdAgent.Api/Controllers/SyntheticLoginController.cs", "prd-api/src/PrdAgent.Api/Controllers/Api/AuthorizationHealthController.cs", "prd-api/src/PrdAgent.Api/Controllers/Api/DailyTipsController.cs", "prd-api/src/PrdAgent.Api/Services/SyntheticLogin", "prd-admin/src/pages/auth/", "prd-admin/src/pages/AuthorizationHealthPage.tsx", "scripts/stable-smoke-login.sh", "scripts/authorization-health-preflight.mjs"],
       "cdsPolicy": "一次性票据、重复消费、过期、禁用账号、权限隔离和会话恢复全量验证",
       "productionPolicy": "白名单合成账号使用三分钟单次票据；不开放通用密码登录",
-      "artifactAssertions": ["会话可进入目标页", "票据不可重复消费", "用户错误不泄漏认证细节"],
+      "artifactAssertions": ["会话可进入目标页", "票据不可重复消费", "用户错误不泄漏认证细节", "非会话 401 不退出当前用户且有稳定诊断码与恢复动作"],
       "cleanup": "票据原子消费，TTL 回收；短会话不可续期",
       "rollback": "关闭 SYNTHETIC_LOGIN_ENABLED，并通过 CDS 回滚到 previous 发布版本"
     },
