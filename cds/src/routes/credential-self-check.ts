@@ -88,6 +88,10 @@ export function createCredentialSelfCheckRouter(deps: CredentialSelfCheckRouterD
         agentKeys: project.agentKeys,
       })),
       globalAgentKeys: state.globalAgentKeys,
+      // 身份层没启用时 state.userCredentials 是 undefined，自检据此报 not-checkable
+      // 而不是 never-issued —— 「查不了」和「没签过」不是一回事。
+      ...(state.userCredentials ? { userCredentials: state.userCredentials } : {}),
+      ...(state.principals ? { principals: state.principals } : {}),
       ...(staticKeys.length > 0 ? { staticKeyHashes: staticKeys.map(hashCredential) } : {}),
       // 一条 active 连接都没有时也给空数组：那是「查过了，没有」，
       // 与「本次没法查」是两回事，不能都退化成 not-checkable。

@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import crypto from 'node:crypto';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -127,6 +128,53 @@ describe('GET /api/credentials/self-check', () => {
   it('响应里不出现明文凭据', async () => {
     const res = await get(server, SELF_CHECK_PATH, { Authorization: `Bearer ${activeKey}` });
     expect(JSON.stringify(res.body)).not.toContain(activeKey);
+  });
+
+  it('路由把身份层的事实一起装进快照——签出来的用户级凭证当场自检得出 active', async () => {
+    // 端到端复现发布当天的那条 bug：判据认得 cdsu_，但路由没把
+    // state.userCredentials 装进 facts，结论照样会塌回 never-issued。
+    const plaintext = 'cdsu_routewiring0000000000000000';
+    stateService.addPrincipal({
+      id: 'pr_route',
+      name: '接线守卫主体',
+      kind: 'machine',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+    stateService.addUserCredential({
+      id: 'uc_route',
+      principalId: 'pr_route',
+      hash: crypto.createHash('sha256').update(plaintext).digest('hex'),
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 86400_000).toISOString(),
+    });
+
+    const res = await get(server, SELF_CHECK_PATH, { 'x-ai-access-key': plaintext });
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe('user');
+    expect(res.body.status).toBe('active');
+    expect(res.body.keyId).toBe('uc_route');
+  });
+
+  it('主体被停用时端点答 principal-disabled，不谎报 active', async () => {
+    const plaintext = 'cdsu_routedisabled00000000000000';
+    stateService.addPrincipal({
+      id: 'pr_off',
+      name: '已停用主体',
+      kind: 'machine',
+      status: 'disabled',
+      createdAt: new Date().toISOString(),
+    });
+    stateService.addUserCredential({
+      id: 'uc_off',
+      principalId: 'pr_off',
+      hash: crypto.createHash('sha256').update(plaintext).digest('hex'),
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 86400_000).toISOString(),
+    });
+
+    const res = await get(server, SELF_CHECK_PATH, { 'x-ai-access-key': plaintext });
+    expect(res.body.status).toBe('principal-disabled');
   });
 
   it('同来源高频调用会被节流成 429', async () => {
