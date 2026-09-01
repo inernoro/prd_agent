@@ -3169,7 +3169,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 ) : (
                   <div className="text-center leading-relaxed">
                     <p className="text-sm text-token-secondary">把文件拖到这里，或点击选择</p>
-                    <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤5000 个文件，自动识别入口）</p>
+                    <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，自动识别入口）</p>
                     <p className="text-xs text-token-muted">.md · .pdf · .mp4 / .webm / .mov</p>
                     <p className="text-xs text-token-muted">单个文件上限 500 MB</p>
                   </div>
