@@ -710,7 +710,7 @@ function runPlaywright(environment, values, runDir, grep = '') {
   return { status: result.status ?? 1, resultPath, htmlPath, testResultPath };
 }
 
-const smokeCaseIdPattern = /((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|REG-[a-z0-9-]+)-\d+)/gi;
+const smokeCaseIdPattern = /((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|WEB|REG-[a-z0-9-]+)-\d+)/gi;
 
 function grepCaseIds(grepExpression) {
   return [...String(grepExpression || '').replaceAll('\\', '').matchAll(smokeCaseIdPattern)]

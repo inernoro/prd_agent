@@ -189,6 +189,10 @@ test('双环境执行范围按各自矩阵取交集且正式环境不能点名�
     buildEnvironmentGrep(['REG-user-error-001'], '\\[reg-user-error-001\\]'),
     '\\[REG-user-error-001\\]',
   );
+  assert.equal(
+    buildEnvironmentGrep(['CORE-001', 'WEB-001', 'WEB-006'], '\\[WEB-001\\]|\\[WEB-006\\]'),
+    '\\[WEB-001\\]|\\[WEB-006\\]',
+  );
   assert.deepEqual(
     selectCoverageCaseIdsByEnvironment(
       plan,
