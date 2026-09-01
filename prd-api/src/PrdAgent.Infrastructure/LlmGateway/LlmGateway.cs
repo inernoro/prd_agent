@@ -1690,7 +1690,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var spec = source.CanonicalImageRequest!;
         var protocol = string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol;
         var normalizedProtocol = protocol?.Trim().ToLowerInvariant();
-        var images = spec.Images.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+        var images = spec.Images.Select(image => ImageInputNormalizer.Read(image).DataUri).ToList();
         // 上游模型能力优先于 MAP 静态兼容表。只有存量模型尚未配置 image_size 能力时，
         // 才回退到旧适配表，避免新增模型继续依赖按名称猜测。
         var upstreamSizeControl = ImageSizeControlCapabilities.Parse(resolution.ParameterCapabilities);
@@ -1824,9 +1824,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (decodedImages.Count > 0)
                 {
                     var effectiveSize = adapter.NormalizeSize(spec.Size);
-                    var adapterConfig = ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
                     var effectiveFormat = adapter.ForceUrlResponseFormat ? "url" : spec.ResponseFormat;
-                    if (adapterConfig?.SupportsResponseFormat == false) effectiveFormat = null;
+                    if (!ImageGenModelAdapterRegistry.SupportsResponseFormat(resolution.ActualModel)) effectiveFormat = null;
                     isMultipart = true;
                     endpointPath = "images/edits";
                     multipartFields = new Dictionary<string, object>
@@ -2331,6 +2330,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             if (request.CanonicalImageRequest is not null)
             {
+                if (!string.IsNullOrWhiteSpace(request.RequiredLogicalModelPublicId)
+                    && (!HasBuiltImageWireRequest(request) || rebuildCanonicalImageRequest))
+                {
+                    var validation = ImageGen.GatewayImageModelCatalog.ValidateRequest(
+                        request.CanonicalImageRequest, resolution.ToGatewayResolution());
+                    if (validation is not null)
+                        return GatewayRawResponse.Fail("IMAGE_REQUEST_INVALID", validation, 400);
+                }
                 request = rebuildCanonicalImageRequest
                     ? RebuildCanonicalImageRequest(request, resolution)
                     : ApplyResolvedImageSizeControlToBuiltRequest(request, resolution);

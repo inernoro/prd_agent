@@ -14,7 +14,7 @@ public class ChangePasswordGuardTests
     private static string ChangePasswordSource()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")) && !File.Exists(Path.Combine(dir.FullName, ".git")))
         {
             dir = dir.Parent;
         }
@@ -86,7 +86,7 @@ public class ChangePasswordGuardTests
     public void 条件更新必须比对旧散列()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")) && !File.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
         var repo = Path.Combine(dir!.FullName, "prd-api", "src", "PrdAgent.Infrastructure", "Repositories", "UserRepository.cs");
         var source = File.ReadAllText(repo);
         var body = source[source.IndexOf("TryReplacePasswordAsync", StringComparison.Ordinal)..];
@@ -112,7 +112,7 @@ public class ChangePasswordGuardTests
     public void 必须改密标记要跟密码一起原子写()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")) && !File.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
         var repo = Path.Combine(dir!.FullName, "prd-api", "src", "PrdAgent.Infrastructure", "Repositories", "UserRepository.cs");
         var source = File.ReadAllText(repo);
         var body = source[source.IndexOf("TryReplacePasswordAsync", StringComparison.Ordinal)..];

@@ -309,6 +309,18 @@ public class ImageGenRunWorker : BackgroundService
         // Done 就 +1，最终出现 Total=5 / Done=8 这种自相矛盾的记录，runStart.total
         // 推给前端的分母也是错的（Codex PR #1363 P2）。
         var isLayering = IsLayeringRun(run);
+        if (!isLayering && run.AppKey == "visual-agent")
+        {
+            var policy = (await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct))?.VisualModelPolicy;
+            if (policy?.Select(ResolveExplicitLogicalModelPublicId(run)) is null
+                || string.IsNullOrWhiteSpace(ResolveExplicitLogicalModelPublicId(run)))
+            {
+                const string message = "该模型已停止开放，请重新选择模型后重试。";
+                await AppendEventAsync(run, "run", new { type = "error", errorCode = "VISUAL_MODEL_NOT_ALLOWED", errorMessage = message }, ct);
+                await MarkRunFailedSafeAsync(run.Id, "VISUAL_MODEL_NOT_ALLOWED", message, ct);
+                return;
+            }
+        }
         var total = 0;
         for (var i = 0; i < items.Count; i++)
         {
@@ -863,9 +875,12 @@ public class ImageGenRunWorker : BackgroundService
                         var doneIsAdaptive = meta?.IsAdaptive
                             ?? (doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive);
                         var doneDisplayModel = run.LogicalModelPublicId ?? run.ModelGroupName;
+                        var doneActualModel = meta?.ActualModel
+                            ?? (run.LogicalModelPublicId is null ? run.ModelId : null);
+                        var doneActualPool = meta?.ActualModelPool ?? run.ModelGroupName;
                         // 持久化的 GEN_DONE 必须带上实际模型 / 真实出图尺寸 / 自适应标记，
                         // 否则刷新后从 DB 重放时这些字段丢失，徽标会回退到"请求尺寸 + 池名"而显示错误。
-                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = doneDisplayModel, logicalModelPublicId = run.LogicalModelPublicId, actualModel = run.ModelId, actualModelPool = run.ModelGroupName, effectiveSize = effSize, isAdaptive = doneIsAdaptive, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
+                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = doneDisplayModel, logicalModelPublicId = run.LogicalModelPublicId, actualModel = doneActualModel, actualModelPool = doneActualPool, effectiveSize = effSize, isAdaptive = doneIsAdaptive, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
                         var doneMsgId = await SaveWorkspaceMessageAsync(run, "Assistant", doneMsgContent, ct);
 
                         // ===== 日志图片填充：input 来自前端 COS URL，output 来自生成结果 =====
@@ -882,9 +897,9 @@ public class ImageGenRunWorker : BackgroundService
                             effectiveSize = effSize,
                             sizeAdjusted,
                             ratioAdjusted,
-                            modelId = run.ModelId,
+                            modelId = doneActualModel,
                             logicalModelPublicId = run.LogicalModelPublicId,
-                            modelGroupName = run.ModelGroupName,
+                            modelGroupName = doneActualPool,
                             isAdaptive = doneIsAdaptive,
                             platformId = run.PlatformId,
                             base64,

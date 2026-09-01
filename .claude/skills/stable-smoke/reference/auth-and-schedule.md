@@ -53,11 +53,13 @@ scripts/stable-smoke-login.sh \
 
 | 环境 | 地址 | AI 密钥 | 专用账号 |
 |---|---|---|---|
-| CDS | `preview-url` 返回的当前主分支入口；`STABLE_SMOKE_CDS_BASE_URL` 只作本地显式固定值 | `STABLE_SMOKE_CDS_AI_ACCESS_KEY` | `STABLE_SMOKE_CDS_USER` |
+| CDS | `preview-url` 返回的当前主分支入口；`STABLE_SMOKE_CDS_BASE_URL` 只作本地显式固定值 | `STABLE_SMOKE_CDS_SIGNING_KEY_ID` + `STABLE_SMOKE_CDS_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_CDS_USER` |
 | 正式 | `STABLE_SMOKE_PROD_BASE_URL` 由部署环境注入；独立允许值 `STABLE_SMOKE_PROD_ALLOWED_BASE_URL` 由凭据登记表对应的 Keychain / Secret Store 注入 | `STABLE_SMOKE_PROD_SIGNING_KEY_ID` + `STABLE_SMOKE_PROD_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_PROD_USER` |
 | MAP 通知 | `STABLE_SMOKE_NOTIFY_BASE_URL`、`STABLE_SMOKE_NOTIFY_SOURCE` 均由部署环境注入 | `STABLE_SMOKE_NOTIFY_SIGNING_KEY_ID` + `STABLE_SMOKE_NOTIFY_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_NOTIFY_USER` + `STABLE_SMOKE_NOTIFY_TARGET_USER_ID`；首次可用服务端固定的 `STABLE_SMOKE_NOTIFY_TARGET_USERNAME` 安全解析 |
 
-正式环境默认使用 RSA-PSS 签名式破窗：服务端只保存公钥，私钥只存在自动化执行机安全凭据库。签名绑定请求方法、路径、正文哈希、账号、时间戳与一次性 nonce；时间窗口为两分钟，nonce 使用数据库唯一约束防重放；签名认证只允许合成登录票据和定向通知两个端点。旧的全局 `AI_ACCESS_KEY` 仅作存量兼容，不再作为正式环境稳定冒烟的首选凭据。
+双环境默认使用 RSA-PSS 签名身份：服务端只保存公钥，私钥只存在自动化执行机安全凭据库。签名绑定请求方法、路径、正文哈希、账号、时间戳与一次性 nonce；时间窗口为两分钟，nonce 使用数据库唯一约束防重放；签名认证只允许合成登录票据、模型网关短票据和定向通知三个端点。模型网关不再保存巡检长期密码：MAP 签发 60 秒单次票据，LLMGW 只自动补齐缺失账号或成员关系；人工停用、角色漂移和连续失败必须熔断。旧的全局 `AI_ACCESS_KEY` 与网关固定密码仅作存量兼容，不再作为稳定冒烟的首选凭据。
+
+所有登录失败写入脱敏审计。十分钟内同一身份同一原因连续三次失败记为身份事件；同一原因影响三个及以上身份记为平台事件。成功登录会关闭该身份此前的开放失败，但在窗口内保留 `recovered` 观察，不把自愈伪装成从未失败。普通浏览器会话只允许一次共享 refresh 和一次原请求重放；机器身份只允许一次短票据自愈，禁止无限重试。
 
 本地兼容文件必须是 `.env.stable-smoke.local`，该名称已被 `.env.*.local` 忽略规则覆盖。文件权限应为仅当前用户可读。CDS 环境和正式环境使用不同 AI 密钥与不同专用账号。目标用户 ID 必须配置，脚本拒绝降级成全局通知。生产 API 尚未发布 `stable-smoke` 来源前，`STABLE_SMOKE_NOTIFY_SOURCE` 使用 `system-alert`；发布后切为 `stable-smoke`。
 

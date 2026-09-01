@@ -54,7 +54,7 @@ describe('生图模型选择器只放用户能挑来生图的模型', () => {
     const generation = pool({ capabilities: ['image_generation'] });
     expect(isOperationOnlyPool(generation)).toBe(false);
     expect(buildVisualAgentModelOptions([generation]).map((item) => item.modelName))
-      .toEqual(['openai/gpt-image-2']);
+      .toEqual(['gpt-image-2']);
   });
 
   it('旧后端不下发 capabilities 时不误伤正常模型', () => {

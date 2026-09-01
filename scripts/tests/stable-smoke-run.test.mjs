@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
+import { generateKeyPairSync } from 'node:crypto';
 import {
   acquireLock,
   applyCredentialRegistry,
@@ -24,6 +25,7 @@ import {
   evaluateCdsReadiness,
   evaluateProductionSafetyGate,
   initializeProductionSafetyGate,
+  issueGatewayFederationSession,
   mergeVisualPlans,
   extractArchivedReportUrl,
   foldVisualGateVerdict,
@@ -755,6 +757,16 @@ test('主应用凭据齐全但网关凭据缺失时仍阻断开测', () => {
   ]);
 });
 
+test('RSA 签名身份启用后不再要求长期网关账号密码', () => {
+  assert.deepEqual(validateEnvironmentConfig('cds', {
+    STABLE_SMOKE_CDS_BASE_URL: 'https://app.example',
+    STABLE_SMOKE_CDS_SIGNING_KEY_ID: 'key-1',
+    STABLE_SMOKE_CDS_SIGNING_PRIVATE_KEY: 'private-key-placeholder',
+    STABLE_SMOKE_CDS_USER: 'stable-smoke',
+    STABLE_SMOKE_CDS_GW_BASE_URL: 'https://gateway.example',
+  }), []);
+});
+
 test('凭据登记表只在环境变量缺失时读取 Keychain', () => {
   const calls = [];
   const values = applyCredentialRegistry(
@@ -1002,6 +1014,45 @@ test('预检身份失败只返回审核人可读阻塞项', async () => {
     '正式环境模型网关自动化身份校验未通过',
   ]);
   assert.doesNotMatch(blockers.join(' '), /HTTP|provider|token|secret|gateway-user/i);
+});
+
+test('网关巡检用 MAP 签名换单次票据并完成短会话登录', async () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const values = {
+    STABLE_SMOKE_CDS_BASE_URL: 'https://app.example',
+    STABLE_SMOKE_CDS_USER: 'stable-smoke',
+    STABLE_SMOKE_CDS_SIGNING_KEY_ID: 'key-1',
+    STABLE_SMOKE_CDS_SIGNING_PRIVATE_KEY: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    STABLE_SMOKE_CDS_GW_BASE_URL: 'https://gateway.example',
+  };
+  const calls = [];
+  const fetchFn = async (url, options) => {
+    calls.push({ url, options });
+    if (String(url).endsWith('/gateway-ticket')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: { code: 'one-time-code-value-that-is-long-enough-1234' } }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: { token: gatewayToken(), mustChangePassword: false } }),
+    };
+  };
+
+  const session = await issueGatewayFederationSession('cds', values, fetchFn);
+
+  assert.equal(session.token, gatewayToken());
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, 'https://app.example/api/v1/auth/synthetic/gateway-ticket');
+  assert.equal(calls[1].url, 'https://gateway.example/gw/auth/stable-smoke-sso');
+  assert.equal(calls[0].options.headers['X-Stable-Smoke-Key-Id'], 'key-1');
+  assert.equal(calls[0].options.headers['X-AI-Access-Key'], undefined);
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    code: 'one-time-code-value-that-is-long-enough-1234',
+  });
 });
 
 test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移', () => {
