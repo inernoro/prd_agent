@@ -649,12 +649,15 @@ export function TaskSchedulePage(): JSX.Element {
           </div>
         )}
         {/* 创建/编辑走 shadcn Dialog：遮罩与层级由组件统一负责，不自己造
-            （自己写死中性色遮罩会被 palette-contrast-guard 的棘轮拦下，那条拦得对）。 */}
+            （自己写死中性色遮罩会被 palette-contrast-guard 的棘轮拦下，那条拦得对）。
+            浮层限高而非定高：表单只有三段时浮层就该只有三段高。写死 820px 会在动作链
+            为空时留出一大块空白，违反「内容填满画布」——那条规则反过来同样成立：
+            画布不该大于内容。 */}
         <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
           <DialogContent
             frame
             className="max-w-none"
-            style={{ width: 'min(1080px, calc(100vw - 40px))', height: 'min(820px, calc(100vh - 40px))' }}
+            style={{ width: 'min(1080px, calc(100vw - 40px))', maxHeight: 'calc(100vh - 40px)' }}
           >
             <DialogHeader className="shrink-0 border-b border-[hsl(var(--hairline))] px-5 py-3">
               <div className="flex items-center justify-between gap-3">
@@ -679,7 +682,6 @@ export function TaskSchedulePage(): JSX.Element {
             </DialogHeader>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               <div className="mx-auto w-full max-w-4xl">
-          <div className="min-h-0 flex-1 overflow-auto p-3">
             <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4">
               <div className="grid gap-3 lg:grid-cols-2">
                 <Field label="所属项目">
@@ -803,7 +805,6 @@ export function TaskSchedulePage(): JSX.Element {
                 </div>
               ) : null}
             </section>
-          </div>
               </div>
             </div>
           </DialogContent>
