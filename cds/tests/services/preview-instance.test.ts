@@ -207,18 +207,39 @@ describe('seedPreviewInstanceDemoData', () => {
     const project = service.getProject(PREVIEW_DEMO_PROJECT_ID);
     expect(project?.name).toContain('演示');
     const branches = service.getAllBranches();
-    expect(branches).toHaveLength(3);
-    expect(new Set(branches.map((b) => b.status))).toEqual(new Set(['running', 'error', 'idle']));
+    // 不写死条数：加一条演示数据不该让这条用例红。要成立的是「状态有覆盖面」，
+    // 那才是这份 seed 存在的理由（空 dashboard 什么都验收不了）。
+    expect(branches.length).toBeGreaterThanOrEqual(3);
+    for (const status of ['running', 'error', 'idle']) {
+      expect(branches.some((b) => b.status === status)).toBe(true);
+    }
     // 每条演示分支都显式标注，不冒充真实部署（no-rootless-tree）
     for (const b of branches) expect(b.notes).toContain('演示数据');
     expect(service.getBuildProfiles().filter((p) => p.projectId === PREVIEW_DEMO_PROJECT_ID)).toHaveLength(2);
     expect(service.getActivityLogs(PREVIEW_DEMO_PROJECT_ID).length).toBeGreaterThan(0);
   });
 
+  it('seeds 任务调度 / 验收报告，让那两页不是空状态', () => {
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const jobs = service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID);
+    // 三种 schedule 都要有：分段控件和列表的三种形态都得能看到
+    for (const type of ['daily', 'interval', 'manual']) {
+      expect(jobs.some((j) => j.schedule.type === type)).toBe(true);
+    }
+    for (const j of jobs) expect(j.name).toContain('演示数据');
+
+    const reports = service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID);
+    for (const verdict of ['pass', 'conditional', 'fail']) {
+      expect(reports.some((r) => r.verdict === verdict)).toBe(true);
+    }
+    for (const r of reports) expect(r.title).toContain('演示数据');
+  });
+
   it('is idempotent — second call is a no-op', () => {
     expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const seeded = service.getAllBranches().length;
     expect(seedPreviewInstanceDemoData(service)).toBe(false);
-    expect(service.getAllBranches()).toHaveLength(3);
+    expect(service.getAllBranches()).toHaveLength(seeded);
   });
 
   it('never touches a store that already has data', () => {
