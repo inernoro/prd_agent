@@ -226,10 +226,14 @@ export function BackdropSettings(props: {
                   或钉住一张
                 </div>
                 {/* 3:2 而不是方形：这几张是横构图的光影，方形裁切会把光的来向裁掉。
-                    两列而不是三列，且每张下面写名字：这批素材全是近黑的光影，
-                    在 3 列 100px 的尺度上互相分不出来，名字只挂在原生 title 里
-                    等于没有——想挑「余烬」得逐个悬停一秒去试。 */}
-                <div className="grid grid-cols-2 gap-2 overflow-y-auto" style={{ maxHeight: 250 }}>
+                    每张下面写名字——这批素材全是近黑的光影，光靠缩略图互相分不出来，
+                    名字只挂在原生 title 里等于没有（想挑「余烬」得逐个悬停一秒去试）。
+
+                    列数走过一次弯路：为了让图大一点先改成两列，结果素材从 4 张涨到 9 张之后，
+                    250px 的窗口里只装得下一行半，新加的那几张要滚很久才看得见——
+                    而用户问的正是「只有这些了吗」。名字才是认得出的关键，不是尺寸；
+                    回到三列 + 名字，九张一屏全在。 */}
+                <div className="grid grid-cols-3 gap-1.5 overflow-y-auto" style={{ maxHeight: 320 }}>
                   {assets.map((a) => {
                     const pinned = mode === a.id;
                     const isGenerated = generated.some((g) => g.id === a.id);
@@ -260,18 +264,15 @@ export function BackdropSettings(props: {
                             </span>
                           )}
                         </button>
-                        <div className="mt-1 px-0.5 flex items-baseline gap-1 min-w-0">
-                          <span
-                            className="shrink-0"
-                            style={{ fontSize: 10, color: pinned ? 'var(--text-primary)' : 'var(--text-secondary)' }}
-                          >
-                            {a.name}
-                          </span>
-                          {a.note && (
-                            <span className="truncate" style={{ fontSize: 9, color: 'var(--text-muted)' }}>
-                              {a.note}
-                            </span>
-                          )}
+                        {/* 只写名字，不写说明。
+                            三列下每格约 100px，说明挤进去只剩四五个字（「光穿过百…」），
+                            那不是信息是噪音。用户认不出哪张是哪张，缺的是**名字**，
+                            不是更长的描述——说明留在 title 里，想看悬停即可。 */}
+                        <div
+                          className="mt-1 px-0.5 truncate"
+                          style={{ fontSize: 10, color: pinned ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+                        >
+                          {a.name}
                         </div>
                         {isGenerated && (
                           <button

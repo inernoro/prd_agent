@@ -66,6 +66,20 @@ describe('预设行六格都能点', () => {
   });
 });
 
+describe('看着能点的必须能点', () => {
+  it('输入框里那个虚线空槽是真按钮，点了会开文件选择器', () => {
+    // 它长得完完全全像一个上传区（虚线框 + 图片图标 + 一句「拖到这里」），
+    // 用户第一反应就是点它。第一版给它挂了 pointer-events-none，
+    // 理由是「它只是个提示」——那就又造了一个死控件。
+    const page = strip(read(PAGE));
+    const slot = page.slice(page.indexOf('{!selectedImage && ('), page.indexOf('{selectedImage && ('));
+    expect(slot).toContain('onClick={handleImageButtonClick}');
+    expect(slot).not.toContain('pointer-events-none');
+    // 剥完注释还剩真代码。
+    expect(slot).toContain('aria-label="选择参考图"');
+  });
+});
+
 describe('不摆只有一项的分段控件', () => {
   it('顶栏「创作」是纯标签，没有套控件外壳', () => {
     const page = strip(read(PAGE));
@@ -99,7 +113,9 @@ describe('看得出是什么 / 看得出是空的', () => {
     const panel = strip(read(BACKDROP_PANEL));
     const grid = panel.slice(panel.indexOf('或钉住一张'), panel.indexOf('想要别的'));
     // title/alt 属性里的 a.name 不算——要的是渲染进 DOM 文本的那个。
-    expect(grid).toContain('>\n                            {a.name}\n                          </span>');
+    // 判据取「name 出现在一个元素的文本位置」，不逐字锁缩进：上一版把整段带缩进的
+    // JSX 抄进断言，换个标签或改一次列数就假红（形状 4a：断言字面存在而不是行为）。
+    expect(grid).toMatch(/>\s*\{a\.name\}\s*<\//);
   });
 
   it('没有封面的项目卡不是一个纯色空框', () => {

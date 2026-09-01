@@ -134,8 +134,20 @@ describe('本机生成的背景：存取与上限', () => {
 });
 
 describe('暗罩强度按素材来源分档', () => {
-  it('随包四张本来就暗，用较轻的暗罩让那点光透出来', () => {
-    for (const a of BACKDROP_CATALOG) expect(dimFor(a)).toBe(CATALOG_DIM);
+  it('随包素材一律比用户生成的轻，没写 dim 的走批次默认值', () => {
+    for (const a of BACKDROP_CATALOG) {
+      // 写了就用它，没写走默认——但无论哪一档都必须比「不可控」那档轻。
+      expect(dimFor(a)).toBe(a.dim ?? CATALOG_DIM);
+      expect(dimFor(a)).toBeLessThan(GENERATED_DIM);
+    }
+  });
+
+  it('明显偏亮的那几张单独写了 dim——全批一个值必然有一头是错的', () => {
+    // 第二批带「形」的素材（百叶的光栅、粼的水面、析出的墨）亮度明显高于第一批柔光，
+    // 共用 CATALOG_DIM 会让它们抢标题。这条防的是哪天有人「统一一下」把 dim 抹平。
+    const tuned = BACKDROP_CATALOG.filter((a) => typeof a.dim === 'number');
+    expect(tuned.length).toBeGreaterThanOrEqual(3);
+    for (const a of tuned) expect(a.dim!).toBeGreaterThan(CATALOG_DIM);
   });
 
   it('用户自己生成的深浅不可控，压得更重——宁可看不清也不能让正文掉对比度', () => {

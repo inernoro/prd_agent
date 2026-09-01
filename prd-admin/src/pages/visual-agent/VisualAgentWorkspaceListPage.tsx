@@ -453,21 +453,36 @@ function QuickInputBox(props: {
               那正是「空的大框比空的小框更糟」。空槽既填住这块地方，
               又把这块面是个拖放目标这件事说清楚，图一落下它就被真图替换。 */}
           {!selectedImage && (
-            <div className="mt-auto pt-2.5 flex items-center gap-2.5 pointer-events-none">
+            /*
+             * 空槽本身就是第三条入口：点它 = 打开文件选择器。
+             *
+             * 上一版这里挂着 pointer-events-none，理由是「它只是个提示」——但它长得
+             * 完完全全像一个上传区（虚线框 + 图片图标 + 一句「拖到这里」），
+             * 用户第一反应就是点它，点了没反应。看着能点就必须能点，
+             * 这正是这一轮刚修掉的三个死控件的同一种错，不能自己再造一个。
+             *
+             * 拖放和粘贴原本就由外层容器接着，这里只补「点」这一路。
+             */
+            <button
+              type="button"
+              onClick={handleImageButtonClick}
+              aria-label="选择参考图"
+              className="mt-auto mr-auto pt-2.5 flex items-center gap-2.5 group/slot bg-transparent border-0 p-0 cursor-pointer text-left"
+            >
               <span
-                className="grid place-items-center shrink-0"
+                className="grid place-items-center shrink-0 transition-colors"
                 style={{
                   width: 56, height: 56, borderRadius: 6,
-                  border: '1px dashed var(--border-default)',
+                  border: `1px dashed ${isDragging ? 'var(--border-focus)' : 'var(--border-default)'}`,
                   color: 'var(--text-muted)',
                 }}
               >
                 <Image size={16} />
               </span>
               <span style={{ color: 'var(--text-muted)', fontSize: 10, lineHeight: 1.6 }}>
-                把参考图拖到这里，或按 {isMac ? '⌘V' : 'Ctrl+V'} 粘贴
+                点这里选图，或把参考图拖进来 / 按 {isMac ? '⌘V' : 'Ctrl+V'} 粘贴
               </span>
-            </div>
+            </button>
           )}
           {selectedImage && (
             <div className="mt-auto pt-2.5 flex items-end gap-2">
