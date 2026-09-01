@@ -33,6 +33,7 @@ import {
 } from '../services/preview-entrypoints.js';
 import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
+import { branchDbAccountName, explainBranchDbAuthFailure } from '../services/branch-db-identity.js';
 import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
 import {
   resolveBranchProtection,
@@ -6300,8 +6301,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return `${prefix}_${suffix}`.slice(0, 64);
   }
 
+  /**
+   * 派发给该分支的数据库账号名。身份由 branch-db-identity 一处算（抗碰撞：可读前缀
+   * 可以撞，指纹保证唯一），这里不再自己拼——旧写法把 slug 截到 24 字符当身份，
+   * 兄弟分支算出同一个账号后互相覆盖口令/删账号，正是 1045 那次事故的根因。
+   */
   function branchDatabaseUser(branch: BranchEntry): string {
-    return `cds_${StateService.slugify(branch.id).replace(/-/g, '_').slice(0, 24)}`.slice(0, 32);
+    return branchDbAccountName(branch.id);
   }
 
   interface MysqlBranchDatabaseResult {
@@ -6457,7 +6463,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       { timeout: timeoutMs },
     );
     if (result.exitCode !== 0) {
-      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 查询失败').trim(), creds.secrets));
+      // 裸的 `ERROR 1045` 对用户等于没说：它既可能是口令被兄弟分支改过，也可能是账号
+      // 已被删掉，而两种情况的下一步是同一个「重置连接凭据」。把这句话说出来。
+      throw new Error(explainBranchDbAuthFailure({
+        runtime: 'mysql',
+        branchId: branch.id,
+        user: creds.user,
+        rawError: maskTextSecrets((result.stderr || result.stdout || 'MySQL 查询失败').trim(), creds.secrets),
+      }));
     }
     return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
   }
@@ -6497,7 +6510,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       { timeout: timeoutMs },
     );
     if (result.exitCode !== 0) {
-      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 查询失败').trim(), creds.secrets));
+      throw new Error(explainBranchDbAuthFailure({
+        runtime: 'postgres',
+        branchId: branch.id,
+        user: creds.user,
+        rawError: maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 查询失败').trim(), creds.secrets),
+      }));
     }
     return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
   }
@@ -6522,6 +6540,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           command: `printf %s ${shq(trimmed)} | docker exec -i -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -v ON_ERROR_STOP=1 -P pager=off`,
           secrets: creds.secrets,
+          user: creds.user,
         };
       })()
       : (() => {
@@ -6529,13 +6548,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           command: `printf %s ${shq(trimmed)} | docker exec -i ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --default-character-set=utf8mb4 ${shq(creds.database)}`,
           secrets: creds.secrets,
+          user: creds.user,
         };
       })();
     const result = await shell.exec(command.command, { timeout: 120_000 });
     const rawOutput = result.stdout || '';
     const rawError = result.stderr || '';
     const output = maskTextSecrets(rawOutput.slice(0, 256 * 1024), command.secrets);
-    const error = maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets);
+    const error = explainBranchDbAuthFailure({
+      runtime,
+      branchId: branch.id,
+      user: command.user,
+      rawError: maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets),
+    });
     return {
       exitCode: result.exitCode,
       output,
@@ -8077,13 +8102,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const database = branchOwnedDatabaseForDelete(runtime, service, branch);
     const safetyBackup = await createResourceBackupFile({ runtime, service, branch, resourceId, resourceName, projectId, actor, reason: 'pre-restore' });
+    const accountNotes: string[] = [];
     if (runtime === 'mysql') {
       const rootPassword = mysqlRootPassword(service);
       const branchEnv = stateService.getCustomEnvScope(branch.id);
       const user = branchEnv.MYSQL_USER || '';
+      // MySQL 账号是**实例级**的：旧派发规则按分支名截断，兄弟分支会共用同一个账号，
+      // 那时删本分支的库顺手 DROP USER，等于把还在用它的兄弟分支一起打死（1045 事故
+      // 的第二条路径）。所以只有能证明「这个账号就是本分支的」时才删。
+      const dropUser = user && user === branchDatabaseUser(branch);
+      if (user && !dropUser) {
+        accountNotes.push(`账号 ${user} 不是按当前抗碰撞规则派发给本分支的（可能与兄弟分支共用），已保留不删`);
+      }
       const sql = [
         `DROP DATABASE IF EXISTS ${sqlIdent(database)}`,
-        user ? `DROP USER IF EXISTS ${sqlString(user)}@'%'` : '',
+        dropUser ? `DROP USER IF EXISTS ${sqlString(user)}@'%'` : '',
         'FLUSH PRIVILEGES',
       ].filter(Boolean).join('; ');
       const result = await shell.exec(
@@ -8098,10 +8131,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const adminUser = env.POSTGRES_USER || 'postgres';
       const adminPassword = env.POSTGRES_PASSWORD || '';
       const adminDb = env.POSTGRES_DB || adminUser || 'postgres';
+      // 同 MySQL：role 是实例级的，只有能证明是本分支的账号才删。
+      const dropRole = user && user === branchDatabaseUser(branch);
+      if (user && !dropRole) {
+        accountNotes.push(`角色 ${user} 不是按当前抗碰撞规则派发给本分支的（可能与兄弟分支共用），已保留不删`);
+      }
       const sql = [
         `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${pgString(database)} AND pid <> pg_backend_pid();`,
         `DROP DATABASE IF EXISTS ${pgIdent(database)};`,
-        user ? `DROP ROLE IF EXISTS ${pgIdent(user)};` : '',
+        dropRole ? `DROP ROLE IF EXISTS ${pgIdent(user)};` : '',
       ].filter(Boolean).join('\n');
       const result = await shell.exec(
         `printf %s ${shq(sql)} | docker exec -i -e PGPASSWORD=${shq(adminPassword)} ${shq(service.containerName || '')} psql -U ${shq(adminUser)} -d ${shq(adminDb)} -v ON_ERROR_STOP=1`,
@@ -8138,7 +8176,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       resourceId,
       resourceName,
       result: 'success',
-      note: `${resourceName} 分支数据库 ${database} 已删除，操作前备份 ${safetyBackup.name}`,
+      note: `${resourceName} 分支数据库 ${database} 已删除，操作前备份 ${safetyBackup.name}`
+        + (accountNotes.length > 0 ? `；${accountNotes.join('；')}` : ''),
     });
     return { database, safetyBackup };
   }
