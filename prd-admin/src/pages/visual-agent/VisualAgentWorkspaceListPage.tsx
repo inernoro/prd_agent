@@ -365,8 +365,19 @@ function QuickInputBox(props: {
   // 换掉的是那套「老」：20px 大圆角 + 靛蓝描边 + 渐变主按钮 + 15px 正文。
   // 靛蓝是这一页唯一和品牌色无关的颜色，删掉之后整页只剩 #D97757 一种强调色。
   const focused = isFocused || isDragging;
+  /*
+   * 宽度跟着视口走，不写死。
+   *
+   * 上一版是 min(880px, 100%)：在 1520 的屏上是 58%，看着还行；到 1950 的宽屏上
+   * 就只剩 45%，而下面的项目栅格是 69%——同一屏里主操作比它下面的列表还窄一大截，
+   * 用户的原话是「怎么变窄了？又短又小」。固定像素宽在宽屏上必然越用越窄。
+   *
+   * clamp(680, 58vw, 1180)：小屏保底 680（再小由外层 min(100%) 接管，不会溢出），
+   * 常规屏跟着 58vw 长，宽屏封顶 1180——不封顶的话一行文字会长到读起来费劲。
+   * 58% 是刻意比栅格的 69% 窄一档：它是个聚焦的输入区，不该和列表一样宽。
+   */
   return (
-    <div className="w-full mx-auto mt-5" style={{ width: 'min(880px, 100%)' }}>
+    <div className="w-full mx-auto mt-5" style={{ width: 'min(100%, clamp(680px, 58vw, 1180px))' }}>
       <div
         // 磨砂玻璃：底色、模糊、顶边高光、投影全在 .glass-pane 里（见 globals.css）。
         // 聚焦态要盖掉 glass-pane 自带的 box-shadow，所以这里把高光那一段一起写回去，
@@ -400,7 +411,13 @@ function QuickInputBox(props: {
          * 关键前提：**高度必须由内容换来**。空的大框比空的小框更糟（零摩擦那条规则），
          * 所以参考图从下面那条 30px 的 chip 行搬进来了，占的是这块面本身。
          */}
-        <div className="relative px-5 pt-4 pb-2 flex flex-col" style={{ minHeight: 190 }}>
+        <div
+          className="relative px-5 pt-4 pb-2 flex flex-col"
+          // 高度也得跟着长。只放宽不长高的话，1950 宽屏上这块面是 1131x190，
+          // 长宽比 5.9:1 —— 正好退回「触控板」那次讨论之前的横条形态。
+          // clamp 让它在各档屏幕上稳定在 3.4-3.8:1。
+          style={{ minHeight: 'clamp(190px, 17vw, 300px)' }}
+        >
           {isDragging && (
             <div
               className="absolute inset-0 z-40 flex items-center justify-center gap-2 pointer-events-none"
@@ -433,6 +450,7 @@ function QuickInputBox(props: {
               color: 'var(--text-primary)',
               fontSize: 14,
               lineHeight: 1.65,
+              flex: '1 1 auto',
               minHeight: 130,
               border: 'none',
             }}
@@ -615,7 +633,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
     <div
       data-tour-id="visual-scenarios"
       className="mt-3 grid grid-flow-col auto-cols-[minmax(96px,1fr)] sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-6 gap-1.5 overflow-x-auto no-scrollbar"
-      style={{ width: 'min(880px, 100%)' }}
+      style={{ width: 'min(100%, clamp(680px, 58vw, 1180px))' }}
     >
       {SCENARIO_TAGS.map((tag) => {
         const Icon = tag.icon;
@@ -1338,8 +1356,9 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           滑动下去背景居然消失了）。外层不滚、内层滚，背景才是钉住的。 */}
       <BackdropPhoto src={backdrop?.url ?? null} dim={dimFor(backdrop)} focus={backdrop?.focus} />
       <PageVignette />
-      {/* 光带。挂在背景与内容之间，不滚动的那一层——它扫的是整屏，不是内容的某一段。 */}
-      {wake && <div className="wake-beam" aria-hidden />}
+      {/* 唤醒幕。挂在背景与内容之间、不滚动的那一层——它遮的是整屏，不是内容的某一段。
+          它退到哪里，背景才第一次在那里显影。 */}
+      {wake && <div className="wake-veil" aria-hidden />}
       <div className="h-full min-h-0 flex flex-col overflow-auto relative" style={{ zIndex: 1 }}>
 
       {/* 顶栏：品牌 + 创作/作品 + 右侧动作，与视频创作同结构。
@@ -1350,7 +1369,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           gridTemplateColumns: '1fr auto 1fr',
           minHeight: 64,
           borderBottom: '1px solid var(--border-faint)',
-          ...(wake ? ({ '--wake-delay': '40ms' } as React.CSSProperties) : {}),
+          ...(wake ? ({ '--wake-delay': '120ms' } as React.CSSProperties) : {}),
         }}
       >
         <div className="flex items-center gap-2.5 justify-self-start">
@@ -1424,10 +1443,10 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           现在标题区是内容高度，再按视口比例留白会在大屏上空出一大块。52px 取自视频创作的舞台节奏。 */}
       <div className="flex flex-col items-center justify-center pt-[52px] pb-4 relative z-10 px-5">
         {/* Hero 区域 */}
-        <div {...rise(150)}><HeroSection /></div>
+        <div {...rise(430)}><HeroSection /></div>
 
         {/* 快捷输入框 */}
-        <div className="w-full flex justify-center" {...rise(300)}>
+        <div className="w-full flex justify-center" {...rise(720)}>
         <QuickInputBox
           inputRef={promptRef}
           value={inputValue}
@@ -1447,7 +1466,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         </div>
 
         {/* 场景标签 */}
-        <div className="w-full flex justify-center" {...rise(430)}>
+        <div className="w-full flex justify-center" {...rise(1010)}>
           <ScenarioTags onSelect={onTagSelect} activeKey={activeTag} />
         </div>
       </div>
@@ -1469,7 +1488,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           所以这里手拼：flex 链照旧，只把 wake-rise 追加上去。 */}
       <div
         className={`flex-1 min-h-0 flex flex-col${wake ? ' wake-rise' : ''}`}
-        style={wake ? ({ '--wake-delay': '600ms' } as React.CSSProperties) : undefined}
+        style={wake ? ({ '--wake-delay': '1320ms' } as React.CSSProperties) : undefined}
       >
         <ProjectCarousel
           onCreateFolder={onCreateFolder}

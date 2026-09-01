@@ -122,64 +122,81 @@
     rgba(var(--backdrop-scrim), var(--scrim-edge)) 100%);
 }
 
-/* ===== 唤醒：整页刷新时那一束斜扫下来的光 =====
+/* ===== 唤醒：整页刷新时，壁纸从左上角被点亮到右下角 =====
  *
- * 用户要的是 iPhone 唤醒那种感觉：一束光从左上斜切下来，页面跟着被点亮，
- * 而且带方向。所以这里是两件事配合，缺一个都不成立：
+ * 第一版做成了「一道窄光带扫过去」，用户看完的判断是「一闪而过的前期预设」，
+ * 不是他要的——他要的是 Apple 壁纸唤醒那种感觉：**整张图被逐渐点亮**，
+ * 光沿着对角线推进，推到哪里哪里就亮起来，而不是一道高光划过去。
  *
- *   1. .wake-beam —— 一道很宽的斜向光带，从画面左上外侧扫到右下外侧，走一遍就没了。
- *      它只负责「有一束光经过」。
- *   2. .wake-rise —— 页面元素跟着光的路径**依次**亮起来（延迟由各元素自己声明）。
- *      它负责「是这束光把它们点亮的」。
+ * 两者的机制完全不同，不是把时长调慢就能变过去的：
+ *   窄光带 = 一个在移动的**加法高光**，它经过之后画面回到原样，所以观感是「闪」。
+ *   点亮   = 一块在退去的**遮盖层**，它退到哪里，哪里才第一次显影，是不可逆的推进。
  *
- * 只做第 1 件，就是一道划过屏幕的高光，页面自己没有反应，像贴上去的装饰
- * （demo-causality-contract 里说的「东西自己在变」的反面：光在动，但什么都没被它点亮）。
- * 只做第 2 件，就是普通的入场淡入，没有方向。两件一起，方向感才成立。
+ * 所以这一版是「幕」不是「光带」：.wake-veil 用与页面同色的底铺满，
+ * 沿 135deg（正指右下）做渐变——左上是透明、右下是实底，然后整层往右下平移。
+ * 视口先落在它的实底那半边（全黑），随着平移落到透明那半边（全亮），
+ * 于是显影是从左上角开始的。交界处留一道极窄的暖白，那是「光的前沿」，
+ * 让推进看得出是被照亮而不是被擦掉。
  *
- * 光带用 105deg：和骨架扫光、生图等待卡的织纹同一个倾角，
- * 等待与唤醒在这个产品里是同一种光。
+ * 时长 1900ms、cubic-bezier(.32,.04,.18,1)。
+ * 曲线是取证调的：第一版用 (.16,.7,.3,1)，那条曲线把大部分行程压在前三分之一——
+ * 逐帧看下去 600ms（32% 的时间）时幕已经退掉八成，等于又变成「唰一下」。
+ * 换成起步平缓、末段收束的这条，光的前沿在整段里都看得见，才是「被点亮」而不是「被擦掉」。
  */
-.wake-beam {
+/*
+ * inset / translate 这三个数是**量出来的，不是推出来的**，改任何一个都要重跑
+ * scripts/wake-veil-probe.mjs 复核。
+ *
+ * 为什么手推会错：translate 的百分比按**元素自身**算，而这个元素是父级的 3.4 倍，
+ * 所以 -30% 其实是父级的 -102%。第一版写 inset:-55% + translate:±55%，
+ * 算下来幕直接滑出了画面——探针实测 t=0 时四角亮度 20/43/43/37（只有一角是底色），
+ * 也就是刚打开页面就已经漏出大半张图，「被点亮」的过程根本不存在。
+ * 而且渐变是斜的，投影距离还要再乘一个系数，一维的估算必然算不准。
+ *
+ * 判据很简单，探针就测这个：t=0 四角必须全等于页面底色（全盖住），
+ * t=末必须全等于原图（全露出），中途至少一角亮一角暗（有推进）。
+ * 当前这组的实测：t=0 全部 20；t=950 左上 84 / 右上 20 / 左下 51 / 右下 20；
+ * t=1899 恢复到 84/43/43/37。
+ */
+.wake-veil {
   position: absolute;
-  inset: -20% -60%;
+  inset: -120%;
   pointer-events: none;
   z-index: 2;
-  background: linear-gradient(105deg,
+  background: linear-gradient(135deg,
     transparent 0%,
-    transparent 38%,
-    var(--wake-beam-soft) 47%,
-    var(--wake-beam-core) 50%,
-    var(--wake-beam-soft) 53%,
-    transparent 62%,
-    transparent 100%);
-  transform: translate3d(-62%, -34%, 0);
-  animation: wake-beam-pass 1150ms cubic-bezier(.22, .61, .36, 1) forwards;
+    transparent 42%,
+    var(--wake-beam-soft) 46%,
+    var(--wake-beam-core) 48%,
+    var(--bg-base) 53%,
+    var(--bg-base) 100%);
+  transform: translate3d(-30%, -30%, 0);
+  animation: wake-illuminate 1900ms cubic-bezier(.32, .04, .18, 1) forwards;
 }
 
-@keyframes wake-beam-pass {
-  from { transform: translate3d(-62%, -34%, 0); opacity: 0; }
-  12%  { opacity: 1; }
-  80%  { opacity: 1; }
-  to   { transform: translate3d(62%, 34%, 0); opacity: 0; }
+@keyframes wake-illuminate {
+  from { transform: translate3d(-30%, -30%, 0); }
+  to   { transform: translate3d(30%, 30%, 0); }
 }
 
-/* 被点亮的元素。延迟由每个元素按它在光路上的位置声明（--wake-delay），
-   这就是「方向性」的来源——不是所有东西一起淡入，是沿着光走的顺序依次亮。 */
+/* 被点亮的元素。延迟按它在对角线上的位置排，跨度铺满整个推进过程——
+   上一版全部挤在 40-600ms 里，光还在左上，右下的东西已经亮完了，
+   因果就断了（demo-causality-contract：先走到，再发生）。 */
 .wake-rise {
-  animation: wake-rise-in 620ms cubic-bezier(.22, .61, .36, 1) both;
+  animation: wake-rise-in 760ms cubic-bezier(.16, .7, .3, 1) both;
   animation-delay: var(--wake-delay, 0ms);
 }
 
 @keyframes wake-rise-in {
-  from { opacity: 0; transform: translate3d(-10px, -6px, 0); filter: brightness(.55); }
+  from { opacity: 0; transform: translate3d(-14px, -9px, 0); filter: brightness(.42); }
   to   { opacity: 1; transform: none; filter: none; }
 }
 
-/* 关掉动效时：光带整个不放，元素直接就位。
+/* 关掉动效时：幕整个不放，元素直接就位。
    这里必须显式把 animation 设成 none 并保证终态可见——
    只写 opacity 会留下 translate 和 brightness 的初值，页面会歪着且发暗。 */
 @media (prefers-reduced-motion: reduce) {
-  .wake-beam { display: none; }
+  .wake-veil { display: none; }
   .wake-rise { animation: none; opacity: 1; transform: none; filter: none; }
 }
 

@@ -33,29 +33,65 @@ describe('唤醒只发生在整页刷新', () => {
   });
 });
 
-describe('方向性：一束光 + 沿光路依次点亮，两件都要有', () => {
-  it('光带存在，且只走一遍（forwards，不循环）', () => {
+describe('方向性：幕从左上退到右下 + 元素沿路依次点亮', () => {
+  it('是「幕在退」不是「光带在扫」——幕必须用页面底色遮住，退到哪才显影到哪', () => {
+    // 这条是这一版的核心判据。上一版做的是窄光带（加法高光），经过之后画面回到原样，
+    // 观感就是「一闪而过」；用户要的是 Apple 壁纸那种不可逆的推进。
+    // 两者的机械差别就在这里：幕里必须有一段**不透明的页面底色**。
     const css = read(GLOBALS);
-    const rule = css.slice(css.indexOf('.wake-beam {'));
+    const body = css.slice(css.indexOf('.wake-veil {'), css.indexOf('@keyframes wake-illuminate'));
+    expect(body).toContain('var(--bg-base)');
+    // 起点必须是「遮住」的那一侧，否则第一帧就是亮的，没有被点亮的过程。
+    expect(body).toMatch(/transform:\s*translate3d\(-\d+%,\s*-\d+%/);
+  });
+
+  it('几何参数是量出来的那一组，改了必须重跑探针', () => {
+    // 这条守的不是「好看」，是**幕真的盖得住**。
+    // translate 的百分比按元素自身算，而这个元素是父级的 3.4 倍，再叠 135deg 的斜向投影，
+    // 手推必错：第一版 inset:-55% + translate:±55% 实际位移是父级的 115%，
+    // 幕直接滑出画面，探针实测 t=0 四角 20/43/43/37——刚打开就漏了大半张图，
+    // 「被点亮」这个过程压根不存在，而代码看上去完全正常。
+    //
+    // 所以这里钉死那一组实测通过的数值。要改就先跑 scripts/wake-veil-probe.mjs，
+    // 确认 t=0 四角全等于页面底色、t=末全等于原图，再回来改这条。
+    const css = read(GLOBALS);
+    const body = css.slice(css.indexOf('.wake-veil {'), css.indexOf('@keyframes wake-illuminate'));
+    expect(body).toContain('inset: -120%');
+    expect(body).toContain('translate3d(-30%, -30%, 0)');
+    expect(css).toContain('scripts/wake-veil-probe.mjs');
+  });
+
+  it('推进够慢，不会退回「闪一下」', () => {
+    const ms = Number(read(GLOBALS).match(/animation: wake-illuminate (\d+)ms/)![1]);
+    expect(ms).toBeGreaterThanOrEqual(1500);
+  });
+
+  it('幕存在，且只走一遍（forwards，不循环）', () => {
+    const css = read(GLOBALS);
+    const rule = css.slice(css.indexOf('.wake-veil {'));
     const body = rule.slice(0, rule.indexOf('}') + 1);
-    expect(body).toContain('animation: wake-beam-pass');
+    expect(body).toContain('animation: wake-illuminate');
     expect(body).toContain('forwards');
     expect(body).not.toContain('infinite');
   });
 
-  it('光带是斜的——正交的扫光没有「从左上下来」这个方向', () => {
+  it('渐变是 135deg——正指右下，正交的方向读不出「从左上角点亮」', () => {
     const css = read(GLOBALS);
-    const body = css.slice(css.indexOf('.wake-beam {'), css.indexOf('@keyframes wake-beam-pass'));
+    const body = css.slice(css.indexOf('.wake-veil {'), css.indexOf('@keyframes wake-illuminate'));
     const deg = body.match(/linear-gradient\((\d+)deg/);
     expect(deg).not.toBeNull();
+    // 135deg 在 CSS 里正指右下角，正是「从左上角点亮到右下角」的那条对角线。
+    // 上一版这里写的是开区间 (90,135)，因为那版是 105deg 的窄光带；换成幕之后
+    // 恰好该取 135，判据当场判红——该改的是判据。区间放到 [110,160]：
+    // 再偏就退回横扫或下拉，读不出对角。
     const d = Number(deg![1]);
-    expect(d).toBeGreaterThan(90);
-    expect(d).toBeLessThan(135);
+    expect(d).toBeGreaterThanOrEqual(110);
+    expect(d).toBeLessThanOrEqual(160);
   });
 
   it('位移是左上 → 右下，不是反过来也不是横平竖直', () => {
     const css = read(GLOBALS);
-    const kf = css.slice(css.indexOf('@keyframes wake-beam-pass'));
+    const kf = css.slice(css.indexOf('@keyframes wake-illuminate'));
     const block = kf.slice(0, kf.indexOf('\n}') + 2);
     const from = block.match(/from\s*\{[^}]*translate3d\((-?[\d.]+)%,\s*(-?[\d.]+)%/);
     const to = block.match(/to\s*\{[^}]*translate3d\((-?[\d.]+)%,\s*(-?[\d.]+)%/);
@@ -67,9 +103,9 @@ describe('方向性：一束光 + 沿光路依次点亮，两件都要有', () =
   });
 
   it('页面元素沿光路依次亮，延迟单调递增', () => {
-    // 只有光带 = 一道划过屏幕的高光，页面自己没反应，光就是贴上去的装饰
-    // （demo-causality-contract：东西自己在变 / 光在动但什么都没被点亮）。
-    // 依次亮起来才是「这束光把它们点亮了」。
+    // 只有幕在退、页面元素却一起淡入，就看不出是被那条推进线点亮的
+    // （demo-causality-contract：先走到，再发生）。延迟必须铺满整个推进过程：
+    // 上一版全挤在 40-600ms，光还在左上、右下的东西已经亮完了。
     const page = strip(read(PAGE));
     const delays = [...page.matchAll(/rise\((\d+)\)/g)].map((m) => Number(m[1]));
     const inline = [...page.matchAll(/'--wake-delay': '(\d+)ms'/g)].map((m) => Number(m[1]));
@@ -77,16 +113,16 @@ describe('方向性：一束光 + 沿光路依次点亮，两件都要有', () =
     expect(all.length).toBeGreaterThanOrEqual(4);
     // 去重后仍应有多个不同档位——全都相同就是一起淡入，没有方向。
     expect(new Set(all).size).toBe(all.length);
-    // 最后一站要落在光带行程之内，否则光早走完了元素才亮，因果就断了。
-    const beamMs = Number(read(GLOBALS).match(/animation: wake-beam-pass (\d+)ms/)![1]);
+    // 最后一站要落在幕的行程之内，否则幕早退完了元素才亮，因果就断了。
+    const beamMs = Number(read(GLOBALS).match(/animation: wake-illuminate (\d+)ms/)![1]);
     expect(Math.max(...all)).toBeLessThan(beamMs);
   });
 
   it('关掉动效时元素直接就位，不留下歪着或发暗的终态', () => {
     const css = read(GLOBALS);
-    const mq = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)', css.indexOf('.wake-beam')));
+    const mq = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)', css.indexOf('.wake-veil')));
     const block = mq.slice(0, mq.indexOf('\n}\n') + 3);
-    expect(block).toContain('.wake-beam { display: none; }');
+    expect(block).toContain('.wake-veil { display: none; }');
     // 只写 opacity 会留下 translate 与 brightness 的初值——页面歪着且发暗。
     for (const must of ['opacity: 1', 'transform: none', 'filter: none']) {
       expect(block).toContain(must);
