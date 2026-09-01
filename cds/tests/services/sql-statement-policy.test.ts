@@ -8,6 +8,7 @@ import {
   TRANSACTION_CONTROL_HEADS,
   WRITE_STATEMENT_HEADS,
   classifySqlStatement,
+  isLockingRead,
   normalizeReadOnlyStatement,
   stripSqlComments,
   normalizeWriteStatement,
@@ -109,6 +110,24 @@ describe('工作台 SQL 准入：该放的都放行', () => {
     expect(() => normalizeReadOnlyStatement(commented)).not.toThrow();
     // 真正的写照旧判写
     expect(classifySqlStatement("WITH x AS (DELETE FROM demo RETURNING *) SELECT * FROM x").kind).toBe('write');
+  });
+
+  /**
+   * 加锁读同属连接作用域：行锁在语句返回时就释放，保护不了随后那条 UPDATE，
+   * 却会报「成功」（Codex P1，第三轮）。两条通道都不收。
+   */
+  it('加锁读两条通道都拒，并指向初始化 SQL', () => {
+    for (const sql of [
+      'SELECT * FROM demo WHERE id = 1 FOR UPDATE',
+      'SELECT * FROM demo FOR SHARE',
+      'SELECT * FROM demo LOCK IN SHARE MODE',
+      'SELECT * FROM demo FOR NO KEY UPDATE',
+    ]) {
+      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+    }
+    // 字面量里的 for update 不算加锁读
+    expect(isLockingRead("SELECT * FROM demo WHERE note = 'for update'")).toBe(false);
   });
 
   it('读写分类与两端白名单一致', () => {

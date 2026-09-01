@@ -84,6 +84,23 @@ describe('认证失败的解释', () => {
     expect(isDbAuthFailure('ERROR 1146 (42S02): Table \'app.users\' doesn\'t exist')).toBe(false);
   });
 
+  /**
+   * PostgreSQL 角色被删掉时报 `FATAL: role "cds_..." does not exist`——对用户是同一个
+   * 下一步（重新派发凭据），不认它就只剩一行裸报文（Codex P2，第三轮）。
+   */
+  it('PostgreSQL 角色缺失算认证失败，给得出恢复路径', () => {
+    const raw = 'psql: error: connection to server failed: FATAL:  role "cds_demo_1a2b3c4d" does not exist';
+    expect(isDbAuthFailure(raw)).toBe(true);
+    const message = explainBranchDbAuthFailure({
+      runtime: 'postgres',
+      branchId: INCIDENT_BRANCH,
+      user: 'cds_demo_1a2b3c4d',
+      rawError: raw,
+    });
+    expect(message).toContain('重置连接凭据');
+    expect(message).toContain(raw);
+  });
+
   it('CDS 派发账号的 1045 给出原因与下一步，并保留原始错误', () => {
     const message = explainBranchDbAuthFailure({
       runtime: 'mysql',

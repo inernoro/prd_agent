@@ -22,27 +22,62 @@ function readBranchList(): string {
   return fs.readFileSync(path.join(CDS_ROOT, 'web/src/pages/BranchListPage.tsx'), 'utf8');
 }
 
+/**
+ * 断言的是**行为形状**，不是某串 class 字面量。
+ *
+ * 第一版把 `overflow-x-auto px-1 pb-2 pt-2` 整串钉死，Codex 当场指出这正是仓库
+ * predicate-and-wiring-discipline 形状 4a「反向锁死」：把 `pb-2 pt-2` 合并成
+ * `py-2`、把 class 抽成常量、或改用 CSS 实现同一个最小高度——裁切这个 bug 明明
+ * 还是修好的，CI 却会红。谁重构谁的 CI 红，于是没人敢重构。
+ */
+function chipScrollerClasses(source: string): string {
+  const at = source.indexOf('ref={chipScrollerRef}');
+  expect(at, '找不到 chip 滚动容器').toBeGreaterThan(-1);
+  return source.slice(at, at + 320).match(/className="([^"]+)"/)?.[1] ?? '';
+}
+
+function chipButtonClasses(source: string): string {
+  const at = source.indexOf('const active = selectedResource?.id === resource.id;');
+  expect(at, '找不到 chip 按钮').toBeGreaterThan(-1);
+  return source.slice(at, at + 2000).match(/className=\{`([^`]+)`/)?.[1] ?? '';
+}
+
 describe('资源 chip 横条不许再被裁', () => {
-  it('滚动容器有纵向留白，chip 高度随内容而不是钉死一行半', () => {
-    const source = readDrawer();
-    // overflow-x:auto 会把纵轴一并变成裁剪轴：留白是这里唯一能让 -top-1 小圆钮
-    // 和 chip 两行文字都活下来的办法。
-    expect(source).toContain('className="flex gap-3 overflow-x-auto px-1 pb-2 pt-2"');
-    expect(source, 'chip 不该再是固定 h-10（两行内容塞不下）')
-      .not.toContain('inline-flex h-10 min-w-[132px] shrink-0 items-center');
-    expect(source).toContain('inline-flex min-h-[2.75rem] min-w-[132px] shrink-0 items-center');
+  it('横向滚动容器同时有纵向留白（overflow-x:auto 会把纵轴一并变成裁剪轴）', () => {
+    const cls = chipScrollerClasses(readDrawer());
+    expect(cls, '这条得能横滑').toMatch(/\boverflow-x-auto\b/);
+    // py-N 或 pt-N + pb-N 都算数——留白多少、怎么写都行，有就行
+    const hasVerticalPadding = /\bpy-\d/.test(cls) || (/\bpt-\d/.test(cls) && /\bpb-\d/.test(cls));
+    expect(hasVerticalPadding, `滚动容器缺纵向留白，-top-1 的小圆钮和 chip 首行会被裁：${cls}`).toBe(true);
   });
 
-  it('红用例：把 chip 改回固定 h-10，守卫必须变红', () => {
+  it('chip 高度随内容长，不钉死一行半', () => {
+    const cls = chipButtonClasses(readDrawer());
+    expect(/\bmin-h-/.test(cls), `chip 应给最小高而不是固定高：${cls}`).toBe(true);
+    expect(/\bh-\d+\b/.test(cls), `chip 不该再用固定 h-N（两行内容塞不下）：${cls}`).toBe(false);
+  });
+
+  it('红用例：把 chip 改回固定高，守卫必须变红', () => {
     const real = readDrawer();
     const guard = (source: string) => {
-      expect(source).toContain('inline-flex min-h-[2.75rem] min-w-[132px] shrink-0 items-center');
+      const cls = chipButtonClasses(source);
+      expect(/\bmin-h-/.test(cls)).toBe(true);
+      expect(/\bh-\d+\b/.test(cls)).toBe(false);
     };
     expectGuardRedOnMutation(
       guard,
       real,
-      mutate(real, 'inline-flex min-h-[2.75rem] min-w-[132px] shrink-0 items-center', 'inline-flex h-10 min-w-[132px] shrink-0 items-center'),
+      mutate(real, 'inline-flex min-h-[2.75rem] min-w-[132px]', 'inline-flex h-10 min-w-[132px]'),
     );
+  });
+
+  it('红用例：拿掉滚动容器的纵向留白，守卫必须变红', () => {
+    const real = readDrawer();
+    const guard = (source: string) => {
+      const cls = chipScrollerClasses(source);
+      expect(/\bpy-\d/.test(cls) || (/\bpt-\d/.test(cls) && /\bpb-\d/.test(cls))).toBe(true);
+    };
+    expectGuardRedOnMutation(guard, real, mutate(real, 'overflow-x-auto px-1 pb-2 pt-2', 'overflow-x-auto px-1'));
   });
 });
 
@@ -103,9 +138,13 @@ describe('数据库 chip 一步直达工作台', () => {
 describe('方案 B 的分层落在 token 上，不是硬编码颜色', () => {
   it('chip 区走凹陷带、chip 走抬升层、分区标题带竖分隔', () => {
     const source = readDrawer();
-    expect(source).toContain('bg-[hsl(var(--surface-sunken))]/60 px-4 py-3');
-    expect(source).toContain('bg-[hsl(var(--surface-raised))] shadow-[inset_0_1px_0_hsl(0_0%_100%/.05)]');
-    expect(source).toContain('border-r border-[hsl(var(--hairline-strong))] pr-3');
+    const chip = chipButtonClasses(source);
+    // 断言「用了哪一层 token」，不锁具体写法：换个透明度、调个内阴影都不该让 CI 红
+    expect(chip, 'chip 未选中态应抬到 raised 层').toMatch(/bg-\[hsl\(var\(--surface-raised\)\)\]/);
+    const stripAt = source.indexOf('ref={chipScrollerRef}');
+    const wrapper = source.slice(Math.max(0, stripAt - 700), stripAt);
+    expect(wrapper, 'chip 区应自成一条凹陷带').toMatch(/bg-\[hsl\(var\(--surface-sunken\)\)\]/);
+    expect(source, '分区标题应有竖分隔线').toMatch(/border-r border-\[hsl\(var\(--hairline-strong\)\)\]/);
   });
 
   it('这一块没有引入任何暗色/浅色字面量（cds-theme-tokens 规则）', () => {

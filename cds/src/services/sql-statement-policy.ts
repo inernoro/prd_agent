@@ -68,6 +68,17 @@ export const CONNECTION_SCOPED_HEADS: readonly string[] = [
 ];
 
 /**
+ * 加锁读（`SELECT ... FOR UPDATE` / `FOR SHARE` / `LOCK IN SHARE MODE`）同属连接作用域：
+ * 行锁在进程退出的那一刻就释放，保护不了用户随后那条 UPDATE，可这条还会报「成功」
+ * （Codex P1，2026-09-01 第三轮）。和事务控制一样，是**假的安全信号**，两条通道都不收。
+ */
+const LOCKING_READ_PATTERN = /\bfor\s+(update|share|no\s+key\s+update|key\s+share)\b|\block\s+in\s+share\s+mode\b/i;
+
+export function isLockingRead(sql: string): boolean {
+  return LOCKING_READ_PATTERN.test(stripSqlComments(String(sql ?? ''), true));
+}
+
+/**
  * 越过数据库边界去碰宿主文件系统 / 外部进程的**单个词**。
  *
  * 只认单词、不认词组，是因为词组能被注释拆开：`SELECT 1 INTO/**\/OUTFILE '/tmp/x'` 里
@@ -168,6 +179,14 @@ export function assertNoHostEscape(sql: string): void {
   }
 }
 
+function lockingReadError(): Error {
+  return new Error(
+    '加锁读（SELECT ... FOR UPDATE / FOR SHARE）在这里不成立：每执行一条语句就是一条新连接，'
+    + '行锁在这条语句返回时就已经释放，保护不了你接下来那条 UPDATE，可这一条还会报「成功」。'
+    + '要在同一个事务里加锁再改，请把整段脚本放进工作台的「初始化 SQL」执行。',
+  );
+}
+
 function connectionScopedError(head: string): Error {
   return new Error(
     `${head.toUpperCase()} 只对当前连接生效，而这里每执行一条语句就是一条新连接：`
@@ -202,6 +221,7 @@ export function normalizeReadOnlyStatement(sql: string): string {
   const { head, kind } = classifySqlStatement(body);
   if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
   if (CONNECTION_SCOPED_HEADS.includes(head)) throw connectionScopedError(head);
+  if (isLockingRead(body)) throw lockingReadError();
   if (kind !== 'read') {
     throw new Error(`只读通道只接受 ${READ_STATEMENT_HEADS.join(' / ').toUpperCase()}；"${head || body.slice(0, 12)}" 属于写操作，请走写 SQL 通道。`);
   }
@@ -220,6 +240,7 @@ export function normalizeWriteStatement(sql: string): string {
   const { head, kind } = classifySqlStatement(body);
   if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
   if (CONNECTION_SCOPED_HEADS.includes(head)) throw connectionScopedError(head);
+  if (isLockingRead(body)) throw lockingReadError();
   if (kind === 'read') {
     throw new Error('这条是只读语句，请走只读通道执行。');
   }

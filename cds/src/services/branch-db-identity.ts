@@ -180,7 +180,11 @@ export function isCdsManagedBranchAccount(user: string): boolean {
  */
 export function isDbAuthFailure(message: string): boolean {
   const text = String(message || '');
-  return /ERROR\s*1045|Access denied for user|password authentication failed|authentication failed|auth failed/i.test(text);
+  // PostgreSQL 的 `FATAL: role "cds_..." does not exist`：角色被删掉了，也是认证这条线的
+  // 事（口令不对与账号不在，对用户是同一个下一步）。不认它就只剩一行裸报文，
+  // 凭据恢复路径被藏起来（Codex P2，2026-09-01）。
+  return /ERROR\s*1045|Access denied for user|password authentication failed|authentication failed|auth failed/i.test(text)
+    || /\brole\s+"?[^"\s]+"?\s+does not exist/i.test(text);
 }
 
 /**
