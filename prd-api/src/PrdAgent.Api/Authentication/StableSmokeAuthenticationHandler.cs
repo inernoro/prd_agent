@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -75,7 +76,7 @@ public sealed class StableSmokeAuthenticationHandler
         var key = matchingKeys.Count == 1 ? matchingKeys[0] : null;
         if (key is null || !key.IsComplete)
             return Fail("key_not_configured");
-        if (!IsAllowedHost(key.AllowedHost, Request.Host.Host, _configuration))
+        if (!IsAllowedHost(key.AllowedHost, ResolveRequestHost(Request), _configuration))
             return Fail("host_mismatch");
 
         if (!TryReadSignatureHeaders(Request, out var timestamp, out var nonce, out var signature))
@@ -167,6 +168,40 @@ public sealed class StableSmokeAuthenticationHandler
         }
         return expectedHost.Length > 0
             && string.Equals(requestHost, expectedHost, StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string ResolveRequestHost(HttpRequest request)
+    {
+        var peer = request.HttpContext.Connection.RemoteIpAddress;
+        if (peer is not null && IsTrustedProxyPeer(peer))
+        {
+            var forwardedHost = request.Headers["X-Forwarded-Host"].FirstOrDefault();
+            var firstHost = forwardedHost?.Split(',')[0].Trim();
+            if (!string.IsNullOrWhiteSpace(firstHost)
+                && Uri.TryCreate($"https://{firstHost}", UriKind.Absolute, out var parsed))
+            {
+                return parsed.Host;
+            }
+        }
+
+        return request.Host.Host;
+    }
+
+    private static bool IsTrustedProxyPeer(IPAddress peer)
+    {
+        if (IPAddress.IsLoopback(peer)) return true;
+        if (peer.IsIPv4MappedToIPv6) peer = peer.MapToIPv4();
+        if (peer.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var bytes = peer.GetAddressBytes();
+            return bytes[0] == 10
+                || bytes[0] == 172 && bytes[1] is >= 16 and <= 31
+                || bytes[0] == 192 && bytes[1] == 168
+                || bytes[0] == 169 && bytes[1] == 254;
+        }
+
+        if (peer.IsIPv6LinkLocal || peer.IsIPv6SiteLocal) return true;
+        return (peer.GetAddressBytes()[0] & 0xFE) == 0xFC;
     }
 
     internal static string BuildCanonicalRequest(

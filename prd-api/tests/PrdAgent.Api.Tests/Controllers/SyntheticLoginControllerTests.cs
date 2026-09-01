@@ -1,6 +1,8 @@
+using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -170,6 +172,26 @@ public sealed class SyntheticLoginControllerTests
             "@deployment", "other.example.test", configuration));
         Assert.True(StableSmokeAuthenticationHandler.IsAllowedHost(
             "fixed.example.test", "FIXED.EXAMPLE.TEST", configuration));
+    }
+
+    [Fact]
+    public void StableSmokeSignature_ShouldTrustForwardedHostOnlyFromPrivateProxy()
+    {
+        var proxied = new DefaultHttpContext();
+        proxied.Connection.RemoteIpAddress = IPAddress.Parse("10.240.24.1");
+        proxied.Request.Host = new HostString("127.0.0.1", 8080);
+        proxied.Request.Headers["X-Forwarded-Host"] = "branch.example.test, proxy.internal";
+        Assert.Equal(
+            "branch.example.test",
+            StableSmokeAuthenticationHandler.ResolveRequestHost(proxied.Request));
+
+        var direct = new DefaultHttpContext();
+        direct.Connection.RemoteIpAddress = IPAddress.Parse("203.0.113.20");
+        direct.Request.Host = new HostString("api.example.test");
+        direct.Request.Headers["X-Forwarded-Host"] = "spoofed.example.test";
+        Assert.Equal(
+            "api.example.test",
+            StableSmokeAuthenticationHandler.ResolveRequestHost(direct.Request));
     }
 
     [Fact]
