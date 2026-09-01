@@ -61,6 +61,27 @@ test('未登记的核心代码变更不能静默通过', () => {
   assert.deepEqual(plan.unmappedFiles, ['prd-api/src/UnknownFeature/NewController.cs']);
 });
 
+test('视觉真实源码路径与本次逃逸回归进入计划，不依赖旧页面目录或已有 active 偶然选中', () => {
+  for (const file of [
+    'prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx',
+    'prd-admin/src/pages/ai-chat/visualAgentModelOptions.ts',
+    'prd-admin/src/components/ui/GenSweepLoader.tsx',
+    'prd-admin/src/components/ui/generationProgressPlacement.ts',
+  ]) {
+    const result = selectFeatureLines(catalog, [file], [], 'changed');
+    assert.deepEqual(result.unmappedFiles, []);
+    assert.ok(result.selected.some((item) => item.id === 'visual-creation'));
+    assert.ok(result.selected.some((item) => item.id === 'multi-image-creation'));
+  }
+  const plan = buildPlan({ catalog, changedFiles: [], activeRegressions: regressions,
+    visualRegressionCaseIds, matrixCases, mode: 'scheduled', commit: 'visual-contract-regression' });
+  for (const caseId of ['REG-visual-model-contract-001', 'REG-visual-viewport-001']) {
+    assert.ok(regressions.includes(caseId));
+    assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes(caseId));
+    assert.ok(plan.requiredCaseIdsByEnvironment.production.includes(caseId));
+  }
+});
+
 test('图片输入与网关共享源码命中视觉功能线，JPEG 回归绑定每轮单图必跑项', () => {
   for (const file of [
     'prd-api/src/PrdAgent.Infrastructure/LLM/ImageInputNormalizer.cs',
@@ -101,7 +122,9 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
     commit: 'test-commit',
   });
   const selected = selectMatrixCasesByEnvironment(matrixCases, 'test-commit');
-  const functionalRegressions = regressions.filter((caseId) => !visualRegressionCaseIds.includes(caseId));
+  const functionalRegressions = [...new Set([...regressions,
+    ...catalog.featureLines.flatMap((feature) => feature.regressionCaseIds),
+  ])].filter((caseId) => !visualRegressionCaseIds.includes(caseId));
   assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.cds), new Set([...selected.cds, ...functionalRegressions]));
   assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.production), new Set([...selected.production, ...functionalRegressions]));
   assert.deepEqual(plan.visualRegressions, ['REG-visual-evidence-001']);
@@ -111,6 +134,8 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
   assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes('FILE-004'));
   assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes('VIDEO-005'));
   assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('VIS-004'));
+  assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REG-visual-policy-001'));
+  assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('REG-visual-policy-001'));
   assert.deepEqual(
     new Set(plan.requiredCaseIds),
     new Set([...plan.requiredCaseIdsByEnvironment.cds, ...plan.requiredCaseIdsByEnvironment.production]),

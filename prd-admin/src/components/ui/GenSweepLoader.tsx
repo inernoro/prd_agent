@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { getGenAvgMs } from '@/lib/genTiming';
+import { generationProgressPlacement } from './generationProgressPlacement';
 
 // build-marker: gen-sweep-loader v1 (2026-06-23) — 强制 chunk 重编译，冲掉 CDS 构建缓存
 
@@ -66,7 +67,7 @@ function ensureStyles() {
   document.head.appendChild(el);
 }
 
-export function GenSweepLoader({ createdAt, className, screenW, screenH }: {
+export function GenSweepLoader({ createdAt, className, screenW, screenH, viewportRef }: {
   createdAt?: number;
   className?: string;
   /**
@@ -76,8 +77,12 @@ export function GenSweepLoader({ createdAt, className, screenW, screenH }: {
    */
   screenW?: number;
   screenH?: number;
+  /** 画布裁切容器；不传时保持普通卡片原有布局。 */
+  viewportRef?: RefObject<HTMLElement | null>;
 }) {
   ensureStyles();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
   const [now, setNow] = useState(() => Date.now());
   // 兜底起点固定在挂载时刻（不随每秒 now 漂移）：createdAt 缺失时若用 now 当起点，elapsed 恒为 0。
   const mountAtRef = useRef(Date.now());
@@ -98,13 +103,58 @@ export function GenSweepLoader({ createdAt, className, screenW, screenH }: {
   const showBar = typeof screenW !== 'number' || typeof screenH !== 'number'
     || (screenW >= 200 && screenH >= 120);
 
+  useEffect(() => {
+    const root = rootRef.current;
+    const bar = barRef.current;
+    const viewport = viewportRef?.current;
+    if (!root || !bar || !viewport) return;
+    let frame = 0;
+    const place = () => {
+      frame = 0;
+      const rect = root.getBoundingClientRect();
+      const bounds = viewport.getBoundingClientRect();
+      const scale = rect.width / root.offsetWidth;
+      if (!Number.isFinite(scale) || scale <= 0) return;
+      const placement = generationProgressPlacement(rect, {
+        left: Math.max(0, bounds.left), top: Math.max(0, bounds.top),
+        right: Math.min(window.innerWidth, bounds.right), bottom: Math.min(window.innerHeight, bounds.bottom),
+      }, bar.offsetHeight * scale);
+      bar.style.visibility = placement ? 'visible' : 'hidden';
+      if (!placement) return;
+      bar.style.left = `${placement.left / scale}px`;
+      bar.style.bottom = `${placement.bottom / scale}px`;
+      bar.style.width = `${placement.width / scale}px`;
+    };
+    const schedule = () => { if (!frame) frame = window.requestAnimationFrame(place); };
+    // 只观察祖先变换，不观察计时条自身样式；避免测量与写入相互触发。
+    const transforms = new MutationObserver(schedule);
+    for (let parent = root.parentElement; parent; parent = parent.parentElement) {
+      transforms.observe(parent, { attributes: true, attributeFilter: ['style', 'class'] });
+      if (parent === viewport) break;
+    }
+    const sizes = new ResizeObserver(schedule);
+    sizes.observe(root);
+    sizes.observe(viewport);
+    window.addEventListener('resize', schedule);
+    window.addEventListener('scroll', schedule, true);
+    schedule();
+    return () => {
+      transforms.disconnect();
+      sizes.disconnect();
+      window.removeEventListener('resize', schedule);
+      window.removeEventListener('scroll', schedule, true);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [viewportRef, showBar]);
+
   return (
-    <div className={`gen-sweep${className ? ` ${className}` : ''}`} data-testid="generation-progress">
+    <div ref={rootRef} className={`gen-sweep${className ? ` ${className}` : ''}`} data-testid="generation-progress">
       <div className="gen-sweep__fill" />
       <div className="gen-sweep__glare" />
       {!showBar ? null : (
       <div
         className="gen-sweep__bar"
+        ref={barRef}
         data-testid="generation-progress-bar"
       >
 

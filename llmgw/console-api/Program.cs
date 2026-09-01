@@ -123,6 +123,12 @@ var mapSsoLifetime = mapSsoLifetimeMinutes > 0
 // fed_session 跟着无限延长——那样这个 flag 就是个假承诺（Codex PR #1364 P2）。
 // 判据跟着实际效果走，而不是跟着「配了没配」走。
 var mapSsoLifetimeIsHardDeadline = mapSsoLifetimeMinutes > 0 && mapSsoLifetime < gwJwt.Lifetime;
+var stableSmokeFederationEnabled = config.GetValue<bool>("StableSmokeFederation:Enabled", false);
+var stableSmokeAllowedUsers = StableSmokeFederation.ReadAllowedUsernames(
+    config["StableSmokeFederation:AllowedUsernames"]);
+var stableSmokeRole = StableSmokeFederation.NormalizeRole(config["StableSmokeFederation:Role"]);
+var stableSmokeLifetime = TimeSpan.FromMinutes(StableSmokeFederation.NormalizeSessionMinutes(
+    config.GetValue<int>("StableSmokeFederation:SessionMinutes", StableSmokeFederation.DefaultSessionMinutes)));
 builder.Services.AddSingleton(gwJwt);
 
 // 联邦会话续签的**绝对**到期时刻：原样沿用当前 token 的 exp，一秒都不往后挪。
@@ -1256,6 +1262,173 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
         throw;
     }
 }).AllowAnonymous();
+
+// 稳定冒烟一次性登录：MAP 先用 RSA 签名确认机器身份，再把 60 秒单次票据写进共享网关库。
+// 网关只自动补齐“缺失”的专用账号和成员关系；人工停用、角色漂移一律熔断，不擅自恢复权限。
+app.MapPost("/gw/auth/stable-smoke-sso", async (HttpContext http, [FromBody] MapSsoRequestDto req) =>
+{
+    if (!stableSmokeFederationEnabled)
+    {
+        return Json(
+            ApiEnvelope<LoginResultDto>.Fail(
+                "STABLE_SMOKE_FEDERATION_DISABLED",
+                "模型网关巡检登录未启用，请由管理员开启后重试"),
+            jsonOptions,
+            503);
+    }
+
+    var code = (req.Code ?? string.Empty).Trim();
+    if (code.Length is < 32 or > 256)
+    {
+        await WriteLoginAuditAsync(
+            loginAudits, http, internalTenantId, "stable-smoke-sso", null, false,
+            "STABLE_SMOKE_INVALID_CODE");
+        return Json(
+            ApiEnvelope<LoginResultDto>.Fail(
+                "STABLE_SMOKE_SSO_INVALID",
+                "巡检登录凭据无效或已过期，请重新签发后重试"),
+            jsonOptions,
+            401);
+    }
+
+    var ticket = await StableSmokeSsoTicketStore.TryClaimAsync(
+        mapSsoTickets,
+        code,
+        DateTime.UtcNow,
+        CancellationToken.None);
+    if (ticket is null)
+    {
+        await WriteLoginAuditAsync(
+            loginAudits, http, internalTenantId, "stable-smoke-sso", null, false,
+            "STABLE_SMOKE_REPLAY_OR_EXPIRED");
+        return Json(
+            ApiEnvelope<LoginResultDto>.Fail(
+                "STABLE_SMOKE_SSO_INVALID",
+                "巡检登录凭据无效、已过期或已使用，请重新签发后重试"),
+            jsonOptions,
+            401);
+    }
+
+    var mapUserId = ticket.GetStringOrEmpty("MapUserId").Trim();
+    var mapUsername = ticket.GetStringOrEmpty("MapUsername").Trim();
+    var mapDisplayName = ticket.GetStringOrEmpty("MapDisplayName").Trim();
+    if (!stableSmokeAllowedUsers.Contains(mapUsername))
+    {
+        await mapSsoTickets.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", ticket["_id"]),
+            Builders<BsonDocument>.Update
+                .Set("State", "failed")
+                .Set("FailureReason", "username_not_allowed"),
+            cancellationToken: CancellationToken.None);
+        await WriteLoginAuditAsync(
+            loginAudits, http, internalTenantId, mapUsername, null, false,
+            "STABLE_SMOKE_USERNAME_NOT_ALLOWED");
+        return Json(
+            ApiEnvelope<LoginResultDto>.Fail(
+                "STABLE_SMOKE_USERNAME_NOT_ALLOWED",
+                "当前巡检身份不在模型网关允许名单中，请由管理员校准后重试"),
+            jsonOptions,
+            403);
+    }
+
+    try
+    {
+        var provisioned = await StableSmokeFederation.ProvisionAsync(
+            mapUserId,
+            mapUsername,
+            mapDisplayName,
+            internalTenantId,
+            stableSmokeRole,
+            users,
+            tenants,
+            memberships,
+            CancellationToken.None);
+        if (!provisioned.Success)
+        {
+            await mapSsoTickets.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", ticket["_id"]),
+                Builders<BsonDocument>.Update
+                    .Set("State", "failed")
+                    .Set("FailureReason", provisioned.Code),
+                cancellationToken: CancellationToken.None);
+            await WriteLoginAuditAsync(
+                loginAudits, http, internalTenantId, mapUsername, provisioned.User?.Id, false,
+                provisioned.Code);
+            return Json(
+                ApiEnvelope<LoginResultDto>.Fail(provisioned.Code, provisioned.Message),
+                jsonOptions,
+                provisioned.StatusCode);
+        }
+
+        var user = provisioned.User!;
+        var tenant = provisioned.Tenant!;
+        var membership = provisioned.Membership!;
+        await mapSsoTickets.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", ticket["_id"]),
+                Builders<BsonDocument>.Filter.Eq("State", "claimed")),
+            Builders<BsonDocument>.Update
+                .Set("State", "consumed")
+                .Set("GatewayUserId", user.Id)
+                .Set("CompletedAt", DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        await WriteLoginAuditAsync(
+            loginAudits, http, tenant.Id, mapUsername, user.Id, true, null);
+
+        // 显式短会话，不带 federatedSession 免旧口令特权，也不会进入滑动续期。
+        var (token, expiresAt) = gwJwt.Issue(user, tenant, membership, stableSmokeLifetime);
+        return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
+        {
+            Token = token,
+            Username = mapUsername,
+            DisplayName = user.DisplayName,
+            ExpiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+            IdentityProvider = StableSmokeFederation.IdentityProvider,
+            MustChangePassword = false,
+            Tenant = ToTenantSession(tenant, membership),
+        }), jsonOptions);
+    }
+    catch
+    {
+        await mapSsoTickets.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", ticket["_id"]),
+                Builders<BsonDocument>.Filter.Eq("State", "claimed")),
+            Builders<BsonDocument>.Update
+                .Set("State", "failed")
+                .Set("FailureReason", "provisioning_failed"),
+            cancellationToken: CancellationToken.None);
+        throw;
+    }
+}).AllowAnonymous();
+
+// 401 见微知著：同一身份连续失败与多身份同因失败分开聚合。
+// 成功登录会关闭此前失败，返回值只含不可逆指纹，不暴露账号名或凭据。
+app.MapGet("/gw/auth/failure-health", async (int? windowMinutes, int? threshold) =>
+{
+    var minutes = Math.Clamp(windowMinutes ?? 10, 5, 120);
+    var effectiveThreshold = Math.Clamp(threshold ?? AuthFailureHealthPolicy.DefaultThreshold, 2, 20);
+    var since = DateTime.UtcNow.AddMinutes(-minutes);
+    var samples = await loginAudits.Find(item => item.CreatedAt >= since)
+        .SortBy(item => item.CreatedAt)
+        .ToListAsync(CancellationToken.None);
+    var incidents = AuthFailureHealthPolicy.Evaluate(samples, effectiveThreshold);
+    var recoveries = AuthFailureHealthPolicy.FindRecoveries(samples);
+    return Json(ApiEnvelope<object>.Ok(new
+    {
+        status = incidents.Count > 0 ? "warning" : recoveries.Count > 0 ? "recovered" : "healthy",
+        windowMinutes = minutes,
+        threshold = effectiveThreshold,
+        incidents,
+        recoveries,
+        recovery = new
+        {
+            browserSession = "single-refresh-single-retry",
+            machineIdentity = "one-time-ticket-auto-provision",
+            circuitBreaker = "manual-disable-role-drift-repeated-failure",
+        },
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
 
 // ───────────────────────────── 改密（需鉴权，mcp token 也可）─────────────────────────────
 // 首登强制改密：校验旧口令 → 写新哈希 → 清 MustChangePassword → 重新签发不带 mcp 的 token。

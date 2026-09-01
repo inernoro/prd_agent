@@ -67,13 +67,14 @@ export function buildStableSmokeSignatureHeaders({
 }
 
 export function buildStableSmokeAuthHeaders(options) {
-  if (options.aiAccessKey) {
-    return {
-      'X-AI-Access-Key': options.aiAccessKey,
-      'X-AI-Impersonate': options.username,
-    };
+  if (options.keyId && options.privateKey) {
+    return buildStableSmokeSignatureHeaders(options);
   }
-  return buildStableSmokeSignatureHeaders(options);
+  if (!options.aiAccessKey) throw new Error('稳定冒烟认证凭据未配置完整');
+  return {
+    'X-AI-Access-Key': options.aiAccessKey,
+    'X-AI-Impersonate': options.username,
+  };
 }
 
 function readArg(argv, name) {

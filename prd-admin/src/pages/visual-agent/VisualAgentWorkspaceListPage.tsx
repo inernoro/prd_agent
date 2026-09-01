@@ -1,6 +1,7 @@
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { SizePickerButton } from '@/components/visual-agent/SizePickerPanel';
+import { VisualModelSettings } from '@/components/visual-agent/VisualModelSettings';
 import { glassToolbar, glassInputArea } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
@@ -1306,6 +1307,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       <div className="flex flex-col items-center justify-center pt-[8vh] pb-4 relative z-10">
         {/* Hero 区域 */}
         <HeroSection />
+        <div className="my-3"><VisualModelSettings /></div>
 
         {/* 快捷输入框 */}
         <QuickInputBox

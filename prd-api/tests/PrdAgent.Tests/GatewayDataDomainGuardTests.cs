@@ -11,7 +11,7 @@ namespace PrdAgent.Tests;
 public class GatewayDataDomainGuardTests
 {
     [Fact]
-    public void VisualCreation_AlwaysUsesDedicatedHttpGatewayForResolveAndSend()
+    public void VisualCreation_SendsCanonicalBusinessRequestThroughDedicatedHttpGateway()
     {
         var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
         var client = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
@@ -20,11 +20,27 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ILogicalModelGateway : ILlmGateway", ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/ILogicalModelGateway.cs"));
         Assert.Contains("ILogicalModelGateway, CoreGateway.ILlmGateway", httpGateway);
         Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.ILogicalModelGateway>", program);
-        Assert.Contains("private readonly ILogicalModelGateway _servingGateway", client);
+        Assert.Contains("private readonly HttpLlmGatewayClient _servingGateway", client);
         Assert.Contains("HttpLlmGatewayClient servingGateway", client);
         Assert.True(
-            client.Split("var requestGateway = _servingGateway;", StringSplitOptions.None).Length - 1 == 2,
-            "文生图与多图生图都必须直接选择独立 Gateway HTTP 边界");
+            client.Split("ILogicalModelGateway requestGateway = _servingGateway;", StringSplitOptions.None).Length - 1 == 2,
+            "尚未迁移的消费者也必须保留独立 Gateway HTTP 边界");
+        var logicalStart = client.IndexOf("private async Task<ApiResponse<ImageGenResult>> GenerateLogicalImageAsync", StringComparison.Ordinal);
+        var logicalEnd = client.IndexOf("public async Task<ApiResponse<ImageGenResult>> GenerateAsync", logicalStart, StringComparison.Ordinal);
+        var logicalPath = client[logicalStart..logicalEnd];
+        Assert.Contains("_servingGateway.GenerateImageAsync", logicalPath);
+        Assert.Contains("RequiredLogicalModelPublicId = logicalModel", logicalPath);
+        Assert.Contains("CanonicalImageRequest = new GatewayCanonicalImageRequest", logicalPath);
+        Assert.DoesNotContain("ResolveModel", logicalPath);
+        Assert.DoesNotContain("ResolveRequiredLogicalModel", logicalPath);
+        Assert.DoesNotContain("ImageGenRequestBuilder", logicalPath);
+        Assert.Contains("ImageReferences = imageReferences", logicalPath);
+        Assert.Contains("prompt, inputArtifactIds, identified.Width", logicalPath);
+        Assert.Contains("ActualModel = response.Resolution?.ActualModel", logicalPath);
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+        Assert.Contains("actualModel = doneActualModel", worker);
+        Assert.Contains("modelId = doneActualModel", worker);
+        Assert.Contains("var doneActualModel = meta?.ActualModel", worker);
         Assert.DoesNotContain("private readonly ILlmGateway _gateway", client);
         Assert.DoesNotContain("private readonly ILogicalModelGateway _logicalModelGateway", client);
         Assert.DoesNotContain("_gateway.ResolveRequiredLogicalModelAsync", client);

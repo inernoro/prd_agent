@@ -22,6 +22,7 @@ import {
   createWorkspaceImageGenRun,
   getImageGenRun,
   getVisualAgentImageGenModels,
+  getVisualAgentAdapterInfo,
   getVisualAgentWorkspaceCanvas,
   getVisualAgentWorkspaceDetail,
   saveVisualAgentWorkspaceCanvas,
@@ -30,6 +31,8 @@ import {
 } from '@/services';
 import type { ImageAsset } from '@/services/contracts/visualAgent';
 import type { ModelGroupForApp } from '@/types/modelGroup';
+import type { ModelAdapterInfo } from '@/services/contracts/models';
+import { buildVisualAgentModelOptions, selectVisualModel, visualImageSizeChoices } from '../ai-chat/visualAgentModelOptions';
 import { buildInlineImageToken, parseInlinePrompt, tryParseWxH } from '@/lib/visualAgentPromptUtils';
 
 // 与 AdvancedVisualAgentTab 的持久化契约一致（schemaVersion=1）
@@ -80,12 +83,6 @@ type SsePayload = {
   asset?: { id?: string; sha256?: string; url?: string; originalUrl?: string; originalSha256?: string } | null;
 };
 
-const SIZE_CHOICES: Array<{ id: string; label: string }> = [
-  { id: '1024x1024', label: '方形 1:1' },
-  { id: '768x1024', label: '竖版 3:4' },
-  { id: '1024x768', label: '横版 4:3' },
-];
-
 const EXAMPLE_PROMPTS = ['一只戴宇航员头盔的柴犬，胶片质感', '深夜便利店门口的霓虹灯雨景插画'];
 
 function newKey() {
@@ -132,6 +129,8 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
   const [pools, setPools] = useState<ModelGroupForApp[]>([]);
   const [pickedPoolId, setPickedPoolId] = useState<string>('');
   const [poolSheetOpen, setPoolSheetOpen] = useState(false);
+  const [capabilities, setCapabilities] = useState<{ model: string; info: ModelAdapterInfo } | null>(null);
+  const [capabilityError, setCapabilityError] = useState('');
   // 每秒 tick 一次驱动"已等待 Ns"（仅有生成中卡片时才计时）
   const [, setTick] = useState(0);
 
@@ -147,19 +146,29 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
   const pendingInitRef = useRef<{ text: string; size: string | null; assetId?: string | null } | null>(null);
   const initFiredRef = useRef(false);
 
-  const enabledPools = useMemo(
-    () =>
-      pools.filter(
-        (g) =>
-          (g.models?.length ?? 0) > 0 &&
-          g.models!.some((m) => (m as { healthStatus?: string }).healthStatus === 'Healthy' || (m as { healthStatus?: string }).healthStatus === 'Degraded')
-      ),
-    [pools]
-  );
+  const modelOptions = useMemo(() => buildVisualAgentModelOptions(pools), [pools]);
   const pickedPool = useMemo(
-    () => enabledPools.find((g) => g.id === pickedPoolId) ?? enabledPools[0] ?? null,
-    [enabledPools, pickedPoolId]
+    () => selectVisualModel(modelOptions, !pickedPoolId, pickedPoolId),
+    [modelOptions, pickedPoolId]
   );
+  const pickedCode = pickedPool?.modelName;
+  const currentCapabilities = capabilities && capabilities.model === pickedCode ? capabilities.info : null;
+  const sizeChoices = useMemo(() => visualImageSizeChoices(currentCapabilities), [currentCapabilities]);
+  const capabilitiesReady = currentCapabilities?.matched === true;
+  useEffect(() => {
+    let alive = true;
+    setCapabilities(null); setCapabilityError('');
+    if (!pickedCode) return;
+    void getVisualAgentAdapterInfo(pickedCode).then(result => {
+      if (!alive) return;
+      if (result.success && result.data?.matched) setCapabilities({ model: pickedCode, info: result.data });
+      else setCapabilityError('模型能力暂时无法读取，请重新选择模型或稍后重试。');
+    }).catch(() => { if (alive) setCapabilityError('模型能力暂时无法读取，请重新选择模型或稍后重试。'); });
+    return () => { alive = false; };
+  }, [pickedCode]);
+  useEffect(() => {
+    if (sizeChoices.length) setSize(previous => sizeChoices.some(x => x.size === previous) ? previous : sizeChoices[0].size);
+  }, [sizeChoices]);
 
   const hasRunning = cards.some((c) => c.status === 'running');
   useEffect(() => {
@@ -228,13 +237,20 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
       const prompt = rawPrompt.trim();
       if (!prompt) return;
       const pool = pickedPool;
-      if (!pool) {
-        toast.error('暂无可用生图模型', '请联系管理员在 LLM Gateway 配置逻辑模型及上游');
+      if (!pool?.enabled) {
+        toast.error('当前模型未开放或不可用', '请重新选择；管理员可在视觉创作首页的模型设置中配置默认模型。');
         return;
       }
-      const first = pool.models?.[0];
       const ref = opts?.ref === undefined ? refImage : opts.ref;
       const genSize = opts?.sizeOverride || size;
+      if (!capabilitiesReady || (!currentCapabilities?.sizesNotApplicable && !sizeChoices.some(x => x.size === genSize))) {
+        toast.error('请先选择当前模型支持的图片尺寸');
+        return;
+      }
+      if (ref && !currentCapabilities?.supportsImageToImage) {
+        toast.error('当前模型不支持参考图，请重新选择模型或移除参考图');
+        return;
+      }
       const key = newKey();
       const wh = tryParseWxH(genSize) ?? { w: 1024, h: 1024 };
 
@@ -352,8 +368,8 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
             y: placement.y,
             w: wh.w,
             h: wh.h,
-            platformId: first?.platformId,
-            modelId: pool.code,
+            platformId: 'logical-model',
+            modelId: pool.modelName,
             size: genSize,
             responseFormat: 'url',
             imageRefs: ref
@@ -456,14 +472,14 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
         void removeCanvasPlaceholder();
       }
     },
-    [pickedPool, refImage, size, scrollToBottom, workspaceId]
+    [pickedPool, refImage, size, scrollToBottom, workspaceId, capabilitiesReady, currentCapabilities, sizeChoices]
   );
 
   // 列表页快捷创建的初始 prompt：模型与资产就绪后自动发送一次
   useEffect(() => {
     if (loading || initFiredRef.current) return;
     const pending = pendingInitRef.current;
-    if (!pending || !pickedPool) return;
+    if (!pending || !pickedPool?.enabled || !capabilitiesReady) return;
     initFiredRef.current = true;
     pendingInitRef.current = null;
     let ref: RefImage | null = null;
@@ -472,7 +488,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
       if (a) ref = { assetId: a.id, sha256: a.sha256, url: a.url, label: a.prompt || '参考图' };
     }
     void handleGenerate(pending.text, { ref, sizeOverride: pending.size || undefined });
-  }, [loading, pickedPool, handleGenerate]);
+  }, [loading, pickedPool, capabilitiesReady, handleGenerate]);
 
   const onPickFile = useCallback(
     async (file: File | null) => {
@@ -602,7 +618,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
         </div>
         {/* 模型可见性：展示当前逻辑模型；多个模型可切换，单模型纯展示 */}
         {pickedPool ? (
-          enabledPools.length > 1 ? (
+          modelOptions.length > 1 ? (
             <button
               type="button"
               className="h-8 px-2.5 rounded-lg text-[11px] font-mono truncate max-w-[120px] active:opacity-70"
@@ -616,7 +632,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
               {pickedPool.name}
             </span>
           )
-        ) : null}
+        ) : <button type="button" className="h-8 px-2 text-[11px]" onClick={() => setPoolSheetOpen(true)}>选择模型</button>}
         <button
           type="button"
           className="h-8 px-2.5 inline-flex items-center gap-1 rounded-lg text-[12px] active:opacity-70"
@@ -727,29 +743,32 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           </div>
         ) : null}
         <div className="flex items-center gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-          {SIZE_CHOICES.map((s) => (
+          {sizeChoices.map((s) => (
             <button
-              key={s.id}
+              key={s.size}
               type="button"
               className="h-7 px-2.5 rounded-full text-[11px] shrink-0 whitespace-nowrap active:opacity-70"
               style={
-                size === s.id
+                size === s.size
                   ? { background: 'rgba(120,120,255,0.25)', color: 'var(--accent-fg-blue)', border: '1px solid rgba(140,140,255,0.5)' }
                   : { background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)', border: '1px solid rgba(255,255,255,0.08)' }
               }
-              onClick={() => setSize(s.id)}
+              onClick={() => setSize(s.size)}
             >
-              {s.label}
+              {s.aspectRatio} · {s.size}
             </button>
           ))}
         </div>
+        {(!pickedPool?.enabled || !capabilitiesReady) && <p role="status" className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+          {!pickedPool?.enabled ? '请先选择已开放模型；管理员可在视觉创作首页配置默认模型。' : capabilityError || '正在读取模型能力…'}
+        </p>}
         <div className="flex items-end gap-2">
           <button
             type="button"
             className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-xl active:opacity-70"
             style={actionBtnStyle}
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploadingRef}
+            disabled={uploadingRef || !currentCapabilities?.supportsImageToImage}
             aria-label="上传参考图"
           >
             {uploadingRef ? <MapSpinner size={16} /> : <ImagePlus size={17} />}
@@ -783,7 +802,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
             className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-xl active:opacity-70 disabled:opacity-40"
             style={{ background: 'rgba(120,120,255,0.85)', color: '#fff' }}
             onClick={() => void handleGenerate(input)}
-            disabled={!input.trim() || loading}
+            disabled={!input.trim() || loading || !pickedPool?.enabled || !capabilitiesReady}
             aria-label="生成"
           >
             <Send size={16} />
@@ -839,10 +858,12 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
                 <div className="text-[13px] font-medium px-1 pb-1" style={{ color: 'rgba(255,255,255,0.85)' }}>
                   选择生图模型
                 </div>
-                {enabledPools.map((g) => (
+                {modelOptions.length === 0 && <p className="p-3 text-sm">尚未开放业务模型，请管理员在视觉创作首页的模型设置中配置。</p>}
+                {modelOptions.map((g) => (
                   <button
                     key={g.id}
                     type="button"
+                    disabled={!g.enabled}
                     className="w-full text-left px-3 py-3 rounded-xl active:opacity-70"
                     style={
                       g.id === pickedPool?.id
@@ -854,7 +875,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
                       setPoolSheetOpen(false);
                     }}
                   >
-                    <div className="text-[14px]">{g.name}</div>
+                    <div className="text-[14px]">{g.name}{g.isDefault ? ' · 默认' : ''}{!g.enabled ? ' · 暂不可用' : ''}</div>
                     {g.description ? (
                       <div className="text-[11px] mt-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>
                         {g.description}
