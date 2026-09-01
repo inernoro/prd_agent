@@ -109,6 +109,39 @@ describe('认证失败的解释', () => {
     expect(message).not.toContain('兄弟分支会算出同一个账号');
   });
 
+  /**
+   * 真机复现（2026-09-01）：出事的 cloudbridge-db 用 MYSQL_RANDOM_ROOT_PASSWORD 起的，
+   * root 口令只在容器日志里出现过一次，CDS 拿不到。对这种库指路「点重置连接凭据」
+   * 是把人送进死胡同——他点了会再吃一条 root 的 1045。
+   */
+  it('拿不到管理员口令时，不许指路「重置连接凭据」', () => {
+    const message = explainBranchDbAuthFailure({
+      runtime: 'mysql',
+      branchId: INCIDENT_BRANCH,
+      user: 'cds_mdimp_claude_open_api_ch',
+      rawError: RAW_1045,
+      adminAvailable: false,
+    });
+    expect(message).toContain('这条路走不通');
+    expect(message).toContain('直连');
+    expect(message).toContain('root 口令');
+    expect(message).not.toContain('下一步：在该资源的面板点「重置连接凭据」');
+  });
+
+  it('拿得到管理员口令 / 未知时，维持「重置连接凭据」指引', () => {
+    for (const adminAvailable of [true, undefined]) {
+      const message = explainBranchDbAuthFailure({
+        runtime: 'mysql',
+        branchId: INCIDENT_BRANCH,
+        user: 'cds_mdimp_claude_open_api_ch',
+        rawError: RAW_1045,
+        adminAvailable,
+      });
+      expect(message).toContain('下一步：在该资源的面板点「重置连接凭据」');
+      expect(message).not.toContain('这条路走不通');
+    }
+  });
+
   it('用户自填账号 / 非认证错误原样返回，不硬套指引', () => {
     expect(explainBranchDbAuthFailure({
       runtime: 'mysql',
@@ -178,6 +211,49 @@ describe('branches.ts 真的用上了这套身份与解释', () => {
         `      throw new Error(String({
         runtime: 'mysql',`,
       ),
+    );
+  });
+
+  /**
+   * 管理员能力判据必须**独立于** mysqlRootPassword()：后者会一路回落到 MYSQL_PASSWORD
+   * （应用账号的口令），拿它判「有没有 root」永远为真，随机 root 口令的容器就会被判成
+   * 「能重置」，指引再次把用户送进死胡同。
+   */
+  it('管理员能力判据只认显式 root 口令 / 显式空口令，不看 MYSQL_PASSWORD', () => {
+    const source = readBranchesRoute();
+    const at = source.indexOf('function mysqlAdminAvailable(');
+    expect(at, '找不到 mysqlAdminAvailable').toBeGreaterThan(-1);
+    const fn = source.slice(at, at + 700);
+    expect(fn).toContain('MYSQL_ROOT_PASSWORD');
+    expect(fn).toContain('MYSQL_ALLOW_EMPTY_PASSWORD');
+    expect(fn, '不得回落到应用账号口令').not.toContain('MYSQL_PASSWORD ||');
+    expect(fn).not.toContain('mysqlRootPassword(');
+  });
+
+  it('重置凭据在拿不到管理员口令时当场拒绝，而不是硬跑注定 1045 的命令', () => {
+    const source = readBranchesRoute();
+    const at = source.indexOf('async function resetMysqlBranchCredentials(');
+    expect(at, '找不到 resetMysqlBranchCredentials').toBeGreaterThan(-1);
+    const fn = source.slice(at, at + 1600);
+    expect(fn).toContain('if (!mysqlAdminAvailable(service, branch)) {');
+    // 拒绝必须给得出去处（对齐仓库既有的「拒绝要有下一步」纪律）
+    expect(fn).toContain('MYSQL_ROOT_PASSWORD');
+    const guardAt = fn.indexOf('if (!mysqlAdminAvailable(service, branch)) {');
+    const execAt = fn.indexOf('shell.exec(');
+    expect(guardAt, '拒绝必须排在执行之前').toBeLessThan(execAt);
+  });
+
+  it('红用例：拆掉重置的管理员前置检查，守卫必须变红', () => {
+    const real = readBranchesRoute();
+    const guard = (source: string) => {
+      const at = source.indexOf('async function resetMysqlBranchCredentials(');
+      expect(at).toBeGreaterThan(-1);
+      expect(source.slice(at, at + 1600)).toContain('if (!mysqlAdminAvailable(service, branch)) {');
+    };
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(real, 'if (!mysqlAdminAvailable(service, branch)) {', 'if (false) {'),
     );
   });
 

@@ -109,8 +109,19 @@ export function explainBranchDbAuthFailure(params: {
   branchId: string;
   user: string;
   rawError: string;
+  /**
+   * 这台库的管理员账号（MySQL root）CDS 到底拿不拿得到。
+   *
+   * 这条不是装饰：重新派发分支账号要以管理员身份执行 `ALTER USER`，而随机 root 口令
+   * （`MYSQL_RANDOM_ROOT_PASSWORD`）的容器**谁都没有那个口令**——镜像只往容器日志里
+   * 打过一次。对这种库指路「点重置连接凭据」就是把人送进死胡同：他点了，报另一条
+   * 1045（这次是 root）。拿不到就得说拿不到，并给真正走得通的路。
+   *
+   * 不传 = 不知道，按「能重置」给指引（保持既有行为）。
+   */
+  adminAvailable?: boolean;
 }): string {
-  const { runtime, branchId, user, rawError } = params;
+  const { runtime, branchId, user, rawError, adminAvailable } = params;
   const raw = String(rawError || '').trim();
   if (!isDbAuthFailure(raw) || !isCdsManagedBranchAccount(user)) return raw;
   const label = runtime === 'postgres' ? 'PostgreSQL' : 'MySQL';
@@ -122,8 +133,13 @@ export function explainBranchDbAuthFailure(params: {
         + '谁最后派发谁改掉口令，别人就连不上；兄弟分支删库时还会把这个共用账号一并删掉。'
         + '派发规则已改成带指纹的唯一账号名，重新派发一次即可摆脱共用。'
       : '分支账号由 CDS 派发，口令只存在 CDS 的分支环境变量里；口令对不上说明它在库里被改过或账号被删过。',
-    '下一步：在该资源的面板点「重置连接凭据」重新派发（会输入资源名二次确认）；'
-      + '重置后应用容器要重新部署一次才会拿到新口令。',
+    adminAvailable === false
+      ? '下一步：这台库没有 CDS 拿得到的管理员口令（容器用的是随机 root 口令，或压根没配 root 口令），'
+        + '「重置连接凭据」需要管理员身份执行，因此这条路走不通。可行的两条：'
+        + '一是由有权限的人直连这台库，为该分支账号重设口令、或换用容器自带的应用账号；'
+        + '二是给这个服务补上 root 口令并重建容器，之后再回来点「重置连接凭据」。'
+      : '下一步：在该资源的面板点「重置连接凭据」重新派发（会输入资源名二次确认）；'
+        + '重置后应用容器要重新部署一次才会拿到新口令。',
     raw ? `原始错误：${raw}` : '',
   ].filter(Boolean).join('\n');
 }

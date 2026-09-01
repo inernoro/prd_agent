@@ -6378,6 +6378,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return password ? ` -p${shq(password)}` : '';
   }
 
+  /**
+   * CDS 到底拿不拿得到这台 MySQL 的管理员（root）口令。
+   *
+   * 判据不能用 `mysqlRootPassword()` 是否非空：那个函数会一路回落到 `MYSQL_PASSWORD`，
+   * 而那是**应用账号**的口令，拿它当 root 口令用必然 1045。真正决定「能不能以管理员
+   * 身份改账号」的只有两种情形：显式配了 root 口令，或显式允许空口令 root。
+   * 官方镜像的 `MYSQL_RANDOM_ROOT_PASSWORD` 属于第三种——口令只在容器日志里出现过一次，
+   * CDS、运维、用户手上都没有，任何需要 root 的动作（建库 / 重置凭据）都做不了。
+   */
+  function mysqlAdminAvailable(service: InfraService, branch?: BranchEntry): boolean {
+    const env = resolvedInfraEnv(service, branch);
+    if (String(env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '').trim()) return true;
+    const allowEmpty = String(env.MYSQL_ALLOW_EMPTY_PASSWORD || env.MARIADB_ALLOW_EMPTY_ROOT_PASSWORD || '').trim();
+    return /^(1|true|yes)$/i.test(allowEmpty);
+  }
+
   function maskTextSecrets(textValue: string, secrets: string[]): string {
     let masked = textValue;
     for (const secret of secrets) {
@@ -6470,6 +6486,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchId: branch.id,
         user: creds.user,
         rawError: maskTextSecrets((result.stderr || result.stdout || 'MySQL 查询失败').trim(), creds.secrets),
+        adminAvailable: mysqlAdminAvailable(service, branch),
       }));
     }
     return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
@@ -6560,6 +6577,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchId: branch.id,
       user: command.user,
       rawError: maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets),
+      adminAvailable: runtime === 'mysql' ? mysqlAdminAvailable(service, branch) : undefined,
     });
     return {
       exitCode: result.exitCode,
@@ -7229,6 +7247,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
   async function resetMysqlBranchCredentials(service: InfraService, branch: BranchEntry): Promise<MysqlConnectionEnvResult> {
     if (service.status !== 'running') {
       throw new Error(`MySQL 服务当前未运行（status=${service.status}）`);
+    }
+    // 重新派发要以 root 身份 ALTER USER。拿不到 root 就当场说清为什么、给替代路径，
+    // 而不是硬跑一条注定 1045 的命令，让用户对着「Access denied for user 'root'」再猜一轮。
+    if (!mysqlAdminAvailable(service, branch)) {
+      throw new Error(
+        `服务 "${service.id}" 没有 CDS 拿得到的管理员口令（容器用的是随机 root 口令，或没配置 root 口令），`
+        + '重新派发分支账号需要管理员身份，无法执行。'
+        + '可行的两条：一是由有权限的人直连这台库为该分支账号重设口令、或改用容器自带的应用账号；'
+        + '二是给这个服务补上 MYSQL_ROOT_PASSWORD 并重建容器后再来重置。',
+      );
     }
     const database = mysqlDatabaseForBranch(service, branch);
     if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
