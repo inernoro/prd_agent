@@ -106,6 +106,24 @@ describe('Agent 上手助手技能库契约', () => {
     expect(well).not.toBe(card);
   });
 
+  /*
+   * Codex 第三轮 P2：键盘用户能 Tab 到被浮层盖住的「确认这些技能」并按下去——
+   * 浮层还开着，向导却前进了。那是本 PR 声明的三个出口之外的第四个、看不见的
+   * 出口，正好推翻这次要修的东西，所以按 A 类缺陷处理。
+   *
+   * 判据钉三件事：被盖住的那一屏要整块 inert、浮层有对话框语义、焦点收进来。
+   * inert 走 DOM 属性而不是 JSX prop——React 18 不认识它。
+   */
+  it('技能库开着时，被盖住的那一屏不可聚焦', () => {
+    expect(source).toMatch(/stepContentRef\.current[\s\S]{0,80}?\.inert = skillLibraryOpen/);
+    expect(source).toMatch(/<div ref=\{stepContentRef\}/);
+    const markup = renderSheet();
+    expect(markup).toContain('role="dialog"');
+    expect(markup).toContain('aria-modal="true"');
+    // 焦点收进浮层，不留在被盖住的「打开技能库」上
+    expect(source).toMatch(/searchRef\.current\?\.focus\(\)/);
+  });
+
   it('搜不到东西时给的是出路，不是空白', () => {
     const markup = renderSheet({ visibleSkills: [], query: '不存在的技能' });
     expect(markup).toContain('没有匹配');

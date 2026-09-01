@@ -431,7 +431,24 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace }: Age
   }
 
   const completionExpanded = showDecisionCard || showSkillSource
-  const panelTall = completionExpanded || (step === 2 && libraryOpen)
+  const skillLibraryOpen = step === 2 && libraryOpen
+  const panelTall = completionExpanded || skillLibraryOpen
+
+  /*
+   * 技能库开着时，把被它盖住的那一屏整块设为 inert。
+   *
+   * 不设的话键盘用户能 Tab 到被盖住的「确认这些技能」并按下去——浮层还开着，
+   * 向导却前进了。那等于本 PR 声明的「出口固定为关闭/放弃/完成三个」之外，
+   * 多出第四个看不见的出口，正好推翻这次要修的东西。
+   *
+   * 走 DOM 属性而不是 JSX prop：React 18 不认识 inert（19 才支持），写成 prop
+   * 会被当未知属性并告警。
+   */
+  const stepContentRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = stepContentRef.current
+    if (el) el.inert = skillLibraryOpen
+  }, [skillLibraryOpen])
 
   // 生成上手包 = 用户确认了这套配置，此时把角色声明记到项目上，
   // 让 CDS 侧也知道这个项目的 Agent 以什么角色在跑（此前只写进仓库文件，无人读取）。
@@ -501,7 +518,7 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace }: Age
         </div>
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden px-7 py-6">
+      <div ref={stepContentRef} className="relative min-h-0 flex-1 overflow-hidden px-7 py-6">
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.section
             key={step}
@@ -795,7 +812,7 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace }: Age
         </div>
       )}
 
-      {step === 2 && libraryOpen && (
+      {skillLibraryOpen && (
         <div className="absolute inset-0 z-20 flex flex-col bg-[hsl(var(--surface-sunken)/0.78)] p-3 sm:p-5">
           <SkillLibrarySheet
             groups={skillGroups}
@@ -957,6 +974,11 @@ export function SkillLibrarySheet({
   groups, activeGroup, onActiveGroup, query, onQuery, visibleSkills, totalCount,
   selectedKeys, openedWith, recommendedKeys, onToggle, onCancel, onDone,
 }: SkillLibrarySheetProps) {
+  // 浮层一开就把焦点收进来：底下那一屏已经 inert，焦点若还留在被盖住的
+  // 「打开技能库」上，键盘用户第一下 Tab 会落在哪要看浏览器脾气。
+  const searchRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { searchRef.current?.focus() }, [])
+
   const summary = summarizeSkillSelection({ selected: selectedKeys, openedWith })
   const changeNote = summary.added === 0 && summary.removed === 0
     ? '还没有改动'
@@ -965,7 +987,7 @@ export function SkillLibrarySheet({
       .join('，')
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[0_28px_80px_rgba(0,0,0,0.35)]">
+    <div role="dialog" aria-modal="true" aria-label="技能库" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[0_28px_80px_rgba(0,0,0,0.35)]">
       <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[hsl(var(--hairline))] px-5 py-4">
         <div className="flex min-w-0 items-start gap-2.5">
           <PackageCheck className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
@@ -1017,6 +1039,7 @@ export function SkillLibrarySheet({
           <label className="flex h-9 shrink-0 items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <input
+              ref={searchRef}
               type="search"
               value={query}
               onChange={(event) => onQuery(event.target.value)}

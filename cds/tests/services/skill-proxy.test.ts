@@ -9,7 +9,7 @@
  *
  * 详见 doc/design.cds.project-bootstrap.md。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -240,6 +240,44 @@ describe('SkillProxy', () => {
     // 三档必须刚好把清单分完，不许有技能既不在这档也不在那档。
     expect(source.localSkillCount + source.cachedSkillCount + source.upstreamSkillCount)
       .toBe(source.skillCount);
+  });
+
+  /*
+   * Codex 第三轮 P1：这条探测挂在匿名的 /api/skills/bundles 上、每个技能走一次。
+   * 用 readCache 会把整个档案 readFileSync 进内存——几十个缓存包就是一次请求
+   * 同步读掉几百 MB，把唯一的事件循环按住，且匿名可反复触发。
+   *
+   * 判据钉「只读头部、不搬整包」：造一个远大于阈值的缓存包，探测仍要认出它，
+   * 而整个 fetchBundles 的耗时不能随包大小走。数字留足余量，不做成计时抖动
+   * 就会红的脆弱用例。
+   */
+  it('探测缓存只读头部，不把整个档案搬进内存', async () => {
+    const big = Buffer.concat([
+      Buffer.from('PK\u0003\u0004'),
+      Buffer.alloc(4 * 1024 * 1024, 0x41),
+    ]);
+    fs.writeFileSync(path.join(cacheDir, 'plan-first.zip'), big);
+
+    // 判据直接盯机制，不盯耗时：先写过一版「整个 fetchBundles 不超过 2s」的守卫，
+    // 拿 readFileSync 整包读去撞它，24MB 照样 2s 内跑完——那条是假绿。
+    // 这里断言的是「探测路径根本没碰过同步整包读」。
+    const readFileSync = vi.spyOn(fs, 'readFileSync');
+    const statSync = vi.spyOn(fs, 'statSync');
+    try {
+      const proxy = new SkillProxy({ mapBase: '', cacheDir });
+      const { source } = await proxy.fetchBundles();
+      // 大包照样被认成可用（判据没因为「不读整包」而变松）
+      expect(source.cachedSkillCount).toBe(1);
+
+      const touchedCache = (spy: typeof readFileSync): boolean => spy.mock.calls
+        .some((call) => String(call[0]).startsWith(cacheDir));
+      expect(touchedCache(readFileSync)).toBe(false);
+      // 同步 stat 也不该出现在这条匿名端点的路径上
+      expect(touchedCache(statSync)).toBe(false);
+    } finally {
+      readFileSync.mockRestore();
+      statSync.mockRestore();
+    }
   });
 
   it('启动套件目录由 CDS 本地发布契约提供，不访问不存在的 MAP bundles 端点', async () => {

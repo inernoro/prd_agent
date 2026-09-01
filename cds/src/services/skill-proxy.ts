@@ -534,13 +534,30 @@ export class SkillProxy {
   /**
    * 缓存目录里有没有这个 key 的**可用**包。
    *
-   * 直接复用 readCache 而不是自己 stat 一下：真正决定「这个缓存能不能用」的
-   * 是 readCache（非空 + 真的是 zip——旧版本写进来的错误页会被它判为未命中）。
-   * 只查文件存在与否，就会对着一个空文件或一张 HTML 错误页说「断网也装得上」，
-   * 而下载路径转头把它当没有。判据必须和做决定的那个是同一个函数。
+   * 判据必须和真正做决定的那个一致：readCache 要求非空 + 真的是 zip（旧版本
+   * 写进来的 HTML 错误页会被它判为未命中）。只查文件在不在，就会对着一个空
+   * 文件或一张错误页说「断网也装得上」，而下载路径转头把它当没有。
+   *
+   * 但不能直接调 readCache：它 readFileSync 整个档案，而这条路挂在匿名的
+   * `/api/skills/bundles` 上、每个技能走一次——几十个缓存包就是一次请求同步
+   * 读掉几百 MB，把唯一的事件循环按住。所以只异步读**前 4 个字节**验魔数，
+   * 判据仍然是同一个 looksLikeZip，只是不把整包搬进内存。
    */
   private async hasCachedSkill(key: string): Promise<boolean> {
-    return this.readCache(path.join(this.cacheDir, `${key}.zip`)) !== null;
+    const cachePath = path.join(this.cacheDir, `${key}.zip`);
+    let handle: fs.promises.FileHandle | null = null;
+    try {
+      const stat = await fs.promises.stat(cachePath);
+      if (!stat.isFile() || stat.size === 0) return false;
+      handle = await fs.promises.open(cachePath, 'r');
+      const header = Buffer.alloc(4);
+      const { bytesRead } = await handle.read(header, 0, 4, 0);
+      return bytesRead === 4 && looksLikeZip(header);
+    } catch {
+      return false;
+    } finally {
+      await handle?.close().catch(() => { /* best-effort */ });
+    }
   }
 
   private localSkill(key: string): Promise<Buffer | null> {
