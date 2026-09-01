@@ -47,6 +47,8 @@ import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
 import { BackdropPhoto, LatentField } from '@/components/effects/LatentField';
 import { BackdropSettings, readBackdropMode, resolveBackdrop, type BackdropMode } from '@/components/visual-agent/BackdropSettings';
 import type { BackdropAsset } from '@/lib/backdropRotation';
+import { BACKDROP_CATALOG, dimFor } from '@/lib/backdropCatalog';
+import { readGeneratedBackdrops } from '@/lib/backdropStudio';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { getNextWorkspaceSkip, isVisibleWorkspace } from './workspaceListPaging';
 
@@ -901,30 +903,15 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [activeTag, setActiveTag] = useState<string | null>(null);
 
   // ---- 首页背景 ----
-  // 素材池 = **你自己项目的封面图**，不是随包发的一组风景照。
-  // 三个理由：(1) 手上没有真实素材，编不出来也不该编（no-rootless-tree）；
-  // (2)「适合我们自己风格」最硬的解释就是它本来就是我们自己的产出；
-  // (3) 像 Photos 的地方正在于此——放的是你自己的图。
-  // 池子为空（新用户还没出过图）时 resolveBackdrop 返回 null，整层不渲染，页面照常成立。
+  // 素材池 = 随包四张专门为「当背景」而画的暗调图 + 用户自己生成的。
+  // 第一版把池子接成「你自己项目的封面图」，取证之后推翻了：真实封面绝大多数是白底产品图，
+  // 压到暗罩底下整页从近黑变成一片平灰，暗房的黑没了，那张图自己也糊成一团认不出来。
+  // 详见 backdropCatalog.ts 的注释。
   const [backdropMode, setBackdropMode] = useState<BackdropMode>(() => readBackdropMode());
+  const [generatedBackdrops, setGeneratedBackdrops] = useState<BackdropAsset[]>(() => readGeneratedBackdrops());
   const backdropAssets = useMemo<BackdropAsset[]>(
-    () =>
-      items
-        .flatMap((ws) =>
-          (ws.coverAssets ?? [])
-            .filter((a) => a.url)
-            // 只收够大的封面：小图拉满屏会糊，还不如不放。
-            .filter((a) => (a.width ?? 0) >= 512 && (a.height ?? 0) >= 512)
-            .slice(0, 1) // 每个项目最多贡献一张，免得一个项目霸占整个轮换池
-            .map((a) => ({
-              id: a.id,
-              name: ws.title || '未命名',
-              url: a.url,
-              note: formatDate(ws.updatedAt) || undefined,
-            })),
-        )
-        .slice(0, 24),
-    [items],
+    () => [...BACKDROP_CATALOG, ...generatedBackdrops],
+    [generatedBackdrops],
   );
   const backdrop = useMemo(() => resolveBackdrop(backdropAssets, backdropMode), [backdropAssets, backdropMode]);
   const [selectedImage, setSelectedImage] = useState<{ file: File; previewUrl: string } | null>(null);
@@ -1266,7 +1253,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           旧版这里是星空插画 + 粒子漩涡——那是可以贴在任何产品上的装饰。 */}
       <LatentField />
       {/* 轮换背景。压暗罩由 BackdropPhoto 自带——那一层是 9-13px 小字可读性的唯一保障。 */}
-      <BackdropPhoto src={backdrop?.url ?? null} />
+      <BackdropPhoto src={backdrop?.url ?? null} dim={dimFor(backdrop)} />
 
       {/* 顶栏：品牌 + 创作/作品 + 右侧动作，与视频创作同结构。
           旧版这里只有一个孤零零的返回箭头和一枚教程胶囊，页面没有身份。 */}
@@ -1312,7 +1299,13 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         </div>
 
         <div className="flex items-center gap-1.5 justify-self-end">
-          <BackdropSettings assets={backdropAssets} mode={backdropMode} onModeChange={setBackdropMode} />
+          <BackdropSettings
+            assets={backdropAssets}
+            generated={generatedBackdrops}
+            onGeneratedChange={setGeneratedBackdrops}
+            mode={backdropMode}
+            onModeChange={setBackdropMode}
+          />
           <TipsEntryButton compact />
         </div>
       </div>
