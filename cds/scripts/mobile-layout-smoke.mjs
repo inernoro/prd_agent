@@ -185,15 +185,31 @@ async function checkTaskScheduleAction(browser, viewport) {
       groupCount: groups.length,
       // 未选中任务时右侧是值班概览，时间轴在这里满高展开
       overviewBand: document.body.innerText.includes('今日调度轴'),
+      rows: document.querySelectorAll('[data-job-row]').length,
+      emptyState: document.body.innerText.includes('还没有定时任务'),
       overflowX: document.body.scrollWidth > window.innerWidth,
     };
   });
   assertOk(spine.found, `${label}: 找不到任务索引（以「新建」按钮所在的 section 为锚）`);
   assertOk(spine.top < spine.viewportHeight * 0.4, `${label}: 任务索引起点落在首屏下半部`, spine);
   assertOk(spine.height > spine.viewportHeight * 0.5, `${label}: 任务索引没有满高——脊柱被压扁了`, spine);
-  assertOk(spine.groupsInView, `${label}: 分组标题没在首屏全部露出`, spine);
-  assertOk(spine.overviewBand, `${label}: 未选中任务时右侧不是值班概览（找不到「今日调度轴」）`, spine);
   assertOk(!spine.overflowX, `${label}: 出现横向溢出`, spine);
+
+  /*
+   * 空实例（全新装、还没建任何定时任务）是受支持的状态，页面渲染的是空状态。
+   * 上一版把「三个分组首屏全露」「点任务行」当成无条件前提，于是这套冒烟在全新
+   * 实例上会因为「没有数据」而红——那是判据坏了，不是页面坏了。
+   * 现在按有没有任务分两条路走，并且**跳过时必须打印原因**：一个不会红也不说话的
+   * 用例，比没有用例更糟（predicate-and-wiring 形状 4b）。
+   */
+  const hasJobs = spine.rows > 0;
+  if (hasJobs) {
+    assertOk(spine.groupsInView, `${label}: 分组标题没在首屏全部露出`, spine);
+    assertOk(spine.overviewBand, `${label}: 未选中任务时右侧不是值班概览（找不到「今日调度轴」）`, spine);
+  } else {
+    console.log(`${label}: 实例里没有定时任务，跳过「分组/调度轴/两态切换」三组断言，只验空状态与新建浮层`);
+    assertOk(spine.emptyState, `${label}: 没有任务时也没渲染空状态引导`, spine);
+  }
 
   /*
    * 两态切换。点任务 → 右栏换成这一个任务（主操作「立即执行」出现，时间轴收成细带，
@@ -201,7 +217,7 @@ async function checkTaskScheduleAction(browser, viewport) {
    * 红绿闭环：把右栏改成恒为 JobOverview（不分两态），第二组断言里
    * bandCollapsed 立刻红——「今日调度轴」不会消失。
    */
-  const detail = await page.evaluate(async () => {
+  const detail = hasJobs ? await page.evaluate(async () => {
     const row = document.querySelector('[data-job-row]') || Array.from(document.querySelectorAll('button, [role="button"]'))
       .find((el) => el.closest('section') && el.textContent.includes('每天'));
     if (!row) return { clicked: false };
@@ -218,22 +234,24 @@ async function checkTaskScheduleAction(browser, viewport) {
       bandCollapsed: !document.body.innerText.includes('今日调度轴'),
       runStream: document.body.innerText.includes('运行流'),
     };
-  });
+  }) : null;
+  if (detail) {
   assertOk(detail.clicked, `${label}: 左栏点不到任务行`);
   assertOk(detail.actionVisible, `${label}: 选中任务后「立即执行」不在视野里`, detail);
   assertOk(detail.backVisible, `${label}: 选中态没有「返回值班概览」的出口`, detail);
   assertOk(detail.bandCollapsed, `${label}: 选中后时间轴没有收成细带`, detail);
   assertOk(detail.runStream, `${label}: 选中态看不到运行流`, detail);
 
-  const restored = await page.evaluate(async () => {
+  const restored = detail ? await page.evaluate(async () => {
     const back = Array.from(document.querySelectorAll('button'))
       .find((b) => b.textContent.trim() === '返回值班概览');
     if (!back) return { clicked: false };
     back.click();
     await new Promise((r) => setTimeout(r, 500));
     return { clicked: true, overviewBand: document.body.innerText.includes('今日调度轴') };
-  });
+  }) : { clicked: true, overviewBand: true };
   assertOk(restored.clicked && restored.overviewBand, `${label}: 「返回值班概览」没有回到概览态`, restored);
+  }
 
   /*
    * 「新建」曾经是死按钮：表单渲染在 2xl 才存在的第三栏里，1512px 下点它一个字都不出现。

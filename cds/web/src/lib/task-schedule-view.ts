@@ -122,6 +122,15 @@ export function startOfToday(now: number): number {
  * 结论条。先给一句带数字的判断，再给统计 —— 而不是让人自己读一排数字去算。
  * 失败归因只在「多条任务撞同一个上游」时才敢下，判据是失败记录里的目标是否同源。
  */
+export type OverviewState =
+  | 'no-jobs'      // 一个任务都没有
+  | 'failing'      // 有任务处于连续失败（最要紧，优先于其它档）
+  | 'all-disabled' // 有任务，但没有一个是启用的
+  | 'unresolved'   // 今天挂过，计数清零了但没有成功的重跑
+  | 'recovered'    // 今天挂过，之后确有成功的重跑
+  | 'clean';       // 今天没挂过
+
+
 export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now: number) {
   const dayStart = startOfToday(now);
   const today = runs.filter((run) => Date.parse(run.queuedAt) >= dayStart);
@@ -146,34 +155,70 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
     return Number.isFinite(at) && at > now && at - now <= 6 * 60 * 60 * 1000;
   }).length, 0);
 
+  // 结论状态是有限枚举，不是一串越叠越长的 else if。
+  // 前两轮 Review 已经要求往这句话里加过三次条件（今日挂过又恢复 / 被跳过清零 /
+  // 停用的任务不算在跑）；再叠下去就是 CLAUDE.md §5.5 说的「同一个产出口反复被加分支」。
+  // 现在每一档由一个显式判据决定，文案只是它的渲染。
+  const enabled = jobs.filter((job) => job.enabled && !job.autoDisabledReason);
+  const disabledCount = jobs.length - enabled.length;
+
+  // 「恢复」要有证据：该任务今天挂过之后，确实还有一次成功的重跑。
+  // 光看 consecutiveFailureCount 清零不够——patchJobAfterRun 对**跳过**也清零，
+  // 一次失败的发布后面跟一次「目标忙」的跳过，计数就归零了，但它根本没跑成功过。
+  const failedJobIds = new Set(today.filter((run) => run.status === 'failed').map((run) => run.jobId));
+  const unrecovered = [...failedJobIds].filter((jobId) => {
+    const lastFail = Math.max(...today.filter((r) => r.jobId === jobId && r.status === 'failed').map((r) => Date.parse(r.queuedAt)));
+    return !today.some((r) => r.jobId === jobId && r.status === 'success' && Date.parse(r.queuedAt) > lastFail);
+  });
+
+  const state: OverviewState = jobs.length === 0
+    ? 'no-jobs'
+    : failing.length > 0
+      ? 'failing'
+      : enabled.length === 0
+        ? 'all-disabled'
+        : failed === 0
+          ? 'clean'
+          : unrecovered.length > 0
+            ? 'unresolved'
+            : 'recovered';
+
+  const tail = disabledCount > 0 && state !== 'all-disabled' ? `；另有 ${disabledCount} 个任务已停用` : '';
+  const skipTail = skipped ? `；今日有 ${skipped} 次因上一轮未结束而跳过` : '';
+
   let headline: string;
   let detail: string;
   let tone: 'ok' | 'warn' | 'bad';
-  if (failing.length > 0) {
+  if (state === 'no-jobs') {
+    tone = 'ok';
+    headline = '这个项目还没有定时任务';
+    detail = '新建一个任务后，可以每天定时调用接口或执行命令，每次结果都会记在运行流里。';
+  } else if (state === 'failing') {
     tone = disabled.length > 0 ? 'bad' : 'warn';
     headline = disabled.length > 0
       ? `${failing.length} 个任务连续失败，其中 ${disabled.length} 个已被自动停用`
       : `${failing.length} 个任务连续失败`;
-    detail = `${failing.map((job) => job.name).slice(0, 3).join('、')}${failing.length > 3 ? ' 等' : ''}；其余 ${jobs.length - failing.length} 个任务今日${failed ? '' : '零失败'}${skipped ? `，另有 ${skipped} 次因上一轮未结束而跳过` : ''}。`;
-  } else if (jobs.length === 0) {
+    detail = `${failing.map((job) => job.name).slice(0, 3).join('、')}${failing.length > 3 ? ' 等' : ''}；其余 ${jobs.length - failing.length} 个任务今日${failed ? '' : '零失败'}${skipTail}。`;
+  } else if (state === 'all-disabled') {
+    tone = 'warn';
+    headline = `${jobs.length} 个任务全部已停用`;
+    detail = '没有任务会被自动触发。启用其中任意一个，或用「立即执行」手动跑一次。';
+  } else if (state === 'unresolved') {
+    tone = 'warn';
+    headline = `${enabled.length} 个任务在跑，今日 ${failed} 次失败尚未复跑成功`;
+    detail = `${unrecovered.length} 个任务挂过之后没有再成功跑过一次${skipTail}${tail}。`;
+  } else if (state === 'recovered') {
     tone = 'ok';
-    headline = '这个项目还没有定时任务';
-    detail = '新建一个任务后，可以每天定时调用接口或执行命令，每次结果都会记在运行流里。';
-  } else if (failed > 0) {
-    // 早上挂过、后来又成功了：patchJobAfterRun 会把 consecutiveFailureCount 清零，
-    // failing 于是为空。此时若照旧说「今日无失败」，就会和紧挨着的「失败 3」自相矛盾
-    // ——结论必须由它自己那排数字支撑，不能各说各的。
-    tone = 'ok';
-    headline = `${jobs.length} 个任务在跑，今日 ${failed} 次失败均已恢复`;
-    detail = `当前没有任务处于连续失败状态；接下来 6 小时将触发 ${upcoming} 次${skipped ? `；今日有 ${skipped} 次因上一轮未结束而跳过` : ''}。`;
+    headline = `${enabled.length} 个任务在跑，今日 ${failed} 次失败均已恢复`;
+    detail = `挂过的任务之后都有成功的重跑${skipTail}${tail}；接下来 6 小时将触发 ${upcoming} 次。`;
   } else {
     tone = 'ok';
-    headline = `${jobs.length} 个任务在跑，今日无失败`;
-    detail = `接下来 6 小时将触发 ${upcoming} 次${skipped ? `；今日有 ${skipped} 次因上一轮未结束而跳过` : ''}。`;
+    headline = `${enabled.length} 个任务在跑，今日无失败`;
+    detail = `接下来 6 小时将触发 ${upcoming} 次${skipTail}${tail}。`;
   }
 
   return {
-    tone, headline, detail,
+    state, tone, headline, detail,
     nextCountdown: nextJob ? countdownTo(nextJob.nextRunAt, now) : '—',
     nextName: nextJob ? nextJob.name : '无待触发任务',
     stats: [

@@ -256,39 +256,91 @@ describe('选中态的单泳道细带', () => {
 });
 
 
-describe('结论条不许和自己那排数字打架', () => {
+describe('结论条的状态是有限枚举，不是越叠越长的条件链', () => {
   /*
-   * Codex #1471 P2。早上挂过、后来又成功了：patchJobAfterRun 会把
-   * consecutiveFailureCount 清零，failing 于是为空，结论条照旧说「今日无失败」，
-   * 而紧挨着的统计段写着「失败 3」——同一行里结论和支撑数据相反。
-   * 红绿闭环：把 `} else if (failed > 0) {` 那一支删掉，第一条断言立刻红。
+   * Codex #1471 连着两轮往这句话里加条件（今日挂过又恢复 / 被跳过清零算恢复 /
+   * 停用的任务算在跑）。第三次再叠 else if 就是 CLAUDE.md §5.5 说的
+   * 「同一个产出口反复被加分支」，所以改成显式枚举，每档一个判据。
+   * 红绿闭环见各条注释。
    */
   const j = (id: string, over: Partial<ScheduledJob> = {}) => job({ id, name: id, nextRunAt: '2026-08-31T23:00:00.000Z', ...over });
+  const r = (id: string, jobId: string, status: 'success' | 'failed' | 'skipped', at: string) =>
+    run({ id, jobId, status, queuedAt: at });
 
-  it('今天挂过但已恢复：说「均已恢复」，不说「无失败」', () => {
-    const jobs = [j('sjob_a'), j('sjob_b')];
-    const runs = [
-      run({ id: 'r1', jobId: 'sjob_a', status: 'failed', queuedAt: '2026-08-31T09:00:00.000Z' }),
-      run({ id: 'r2', jobId: 'sjob_a', status: 'success', queuedAt: '2026-08-31T10:00:00.000Z' }),
-    ];
-    const o = buildOverview(jobs, runs, NOW);
-    expect(o.headline).not.toContain('无失败');
-    expect(o.headline).toContain('1 次失败均已恢复');
-    // 结论与统计段必须指同一件事
-    expect(o.stats.find((s) => s.label === '失败')?.value).toBe('1');
+  it('一个任务都没有 → no-jobs', () => {
+    expect(buildOverview([], [], NOW).state).toBe('no-jobs');
   });
 
-  it('今天一次都没挂：仍然说「今日无失败」', () => {
-    const jobs = [j('sjob_a')];
-    const runs = [run({ id: 'r1', jobId: 'sjob_a', status: 'success', queuedAt: '2026-08-31T10:00:00.000Z' })];
-    expect(buildOverview(jobs, runs, NOW).headline).toContain('今日无失败');
-  });
-
-  it('还在连续失败时，走的仍是「N 个任务连续失败」那一支', () => {
-    const jobs = [j('sjob_a', { consecutiveFailureCount: 2 })];
-    const runs = [run({ id: 'r1', jobId: 'sjob_a', status: 'failed', queuedAt: '2026-08-31T10:00:00.000Z' })];
-    const o = buildOverview(jobs, runs, NOW);
-    expect(o.headline).toContain('连续失败');
+  it('有任务在连续失败 → failing，优先于其它档', () => {
+    const o = buildOverview([j('a', { consecutiveFailureCount: 2 })], [r('r1', 'a', 'failed', '2026-08-31T10:00:00.000Z')], NOW);
+    expect(o.state).toBe('failing');
     expect(o.tone).toBe('warn');
+  });
+
+  it('任务全被停用 → all-disabled，不许说「N 个任务在跑」', () => {
+    // 手动停用（没有 autoDisabledReason）此前不在 failing 里，于是走到 clean 分支，
+    // 五个全停的项目会显示「5 个任务在跑，今日无失败」。
+    // 红绿闭环：把 enabled 换回 jobs.length，本条与下一条同时红。
+    const jobs = [j('a', { enabled: false }), j('b', { enabled: false })];
+    const o = buildOverview(jobs, [], NOW);
+    expect(o.state).toBe('all-disabled');
+    expect(o.headline).toBe('2 个任务全部已停用');
+    expect(o.headline).not.toContain('在跑');
+    expect(o.tone).toBe('warn');
+  });
+
+  it('部分停用时，「在跑」只数启用的那些', () => {
+    const jobs = [j('a'), j('b', { enabled: false })];
+    const o = buildOverview(jobs, [], NOW);
+    expect(o.state).toBe('clean');
+    expect(o.headline).toBe('1 个任务在跑，今日无失败');
+    expect(o.detail).toContain('另有 1 个任务已停用');
+  });
+
+  it('挂过之后确有成功的重跑 → recovered', () => {
+    const o = buildOverview([j('a')], [
+      r('r1', 'a', 'failed', '2026-08-31T09:00:00.000Z'),
+      r('r2', 'a', 'success', '2026-08-31T10:00:00.000Z'),
+    ], NOW);
+    expect(o.state).toBe('recovered');
+    expect(o.headline).toContain('1 次失败均已恢复');
+    expect(o.tone).toBe('ok');
+  });
+
+  it('挂过之后只是被跳过、没有成功重跑 → unresolved，不许说「已恢复」', () => {
+    // patchJobAfterRun 对「跳过」也清零 consecutiveFailureCount，
+    // 于是 failing 为空而任务其实一次都没跑成功过。
+    // 红绿闭环：把判据换回「只看 consecutiveFailureCount」，本条立刻红。
+    const o = buildOverview([j('a')], [
+      r('r1', 'a', 'failed', '2026-08-31T09:00:00.000Z'),
+      r('r2', 'a', 'skipped', '2026-08-31T10:00:00.000Z'),
+    ], NOW);
+    expect(o.state).toBe('unresolved');
+    expect(o.headline).toContain('尚未复跑成功');
+    expect(o.headline).not.toContain('已恢复');
+    expect(o.tone).toBe('warn');
+  });
+
+  it('成功的重跑必须发生在最后一次失败之后，不是当天随便一次成功', () => {
+    const o = buildOverview([j('a')], [
+      r('r1', 'a', 'success', '2026-08-31T08:00:00.000Z'),
+      r('r2', 'a', 'failed', '2026-08-31T09:00:00.000Z'),
+    ], NOW);
+    expect(o.state).toBe('unresolved');
+  });
+
+  it('今天一次都没挂 → clean', () => {
+    const o = buildOverview([j('a')], [r('r1', 'a', 'success', '2026-08-31T10:00:00.000Z')], NOW);
+    expect(o.state).toBe('clean');
+    expect(o.headline).toContain('今日无失败');
+  });
+
+  it('结论与统计段永远指同一件事：说了 N 次失败，统计段就是 N', () => {
+    const o = buildOverview([j('a')], [
+      r('r1', 'a', 'failed', '2026-08-31T09:00:00.000Z'),
+      r('r2', 'a', 'success', '2026-08-31T10:00:00.000Z'),
+    ], NOW);
+    expect(o.headline).toContain('1 次失败');
+    expect(o.stats.find((x) => x.label === '失败')?.value).toBe('1');
   });
 });

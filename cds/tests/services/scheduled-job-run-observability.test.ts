@@ -95,6 +95,40 @@ describe('定时任务运行记录的可观测性', () => {
   });
 
   /*
+   * Codex #1471 P2。http 分支只有 try/finally，DNS 解析失败或 AbortController 超时
+   * 会让 fetch **reject**，异常一路穿出 executeActions —— steps 根本没机会挂到 run 上，
+   * 「断在哪一步」在最常见的故障（网络）下正好失效。
+   * 红绿闭环：把 executeActions 里那个动作级 try/catch 去掉，本用例立刻红
+   * （run.steps 变成 undefined，或整个 runJob 直接抛出去）。
+   */
+  it('动作抛异常（网络失败 / 超时）时，逐步结果照样留下来', async () => {
+    shell.addResponsePattern(/step-ok/, () => ({ stdout: 'ok\n', stderr: '', exitCode: 0 }));
+    // 第二步走 http，直接让 fetch 抛出——等价于 DNS 解析失败或 abort 超时
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('getaddrinfo ENOTFOUND nowhere.invalid'));
+
+    const job = service.normalizeJob({
+      id: 'job_throw',
+      projectId: 'demo',
+      name: 'job_throw',
+      enabled: true,
+      schedule: { type: 'manual' },
+      actions: [
+        { id: 'a1', name: '第 1 步', type: 'command' as const, command: 'echo step-ok' },
+        { id: 'a2', name: '第 2 步', type: 'http' as const, method: 'GET' as const, url: 'http://nowhere.invalid/x' },
+        { id: 'a3', name: '第 3 步', type: 'command' as const, command: 'echo step-never' },
+      ],
+    } as unknown as ScheduledJob);
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.steps).toBeDefined();
+    expect(run.steps!.map((s) => s.status)).toEqual(['success', 'failed', 'not-run']);
+    expect(run.steps![1].error).toContain('ENOTFOUND');
+    expect(run.status).toBe('failed');
+  });
+
+  /*
    * 红绿闭环：把 upsertScheduledJobRun 的保留策略改回全局 .slice(0, 1000)，
    * 本用例会红——日任务的历史会被高频任务挤光。
    */

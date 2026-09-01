@@ -527,15 +527,25 @@ export class ScheduledJobService {
       logs.push(`[${index + 1}/${actions.length}] ${title}`);
       const sandboxKey = actions.length === 1 ? job.id : `${job.id}-${index + 1}-${action.id}`;
       const startedAt = Date.now();
-      const result = await this.executeTargetWithRetry(
-        action, deadlineMs, sandboxKey, retryCount,
-        {
-          mode: 'run',
-          jobId: job.id,
-          ...(overrideBranchId ? { overrideBranchId } : {}),
-          ...(overrideCommitSha ? { overrideCommitSha } : {}),
-        },
-      );
+      // 动作级兜底：http 分支只有 try/finally，DNS 解析失败或 AbortController 超时
+      // 会让 fetch **reject**，异常一路穿出 executeActions，steps 根本没机会挂到 run 上
+      // ——「断在哪一步」这个功能恰好在最常见的故障（网络）下失效。
+      // 把抛出转成一个失败结果，下面的记账与「后续动作记 not-run」原样走。
+      let result: ScheduledJobTargetCheckResult;
+      try {
+        result = await this.executeTargetWithRetry(
+          action, deadlineMs, sandboxKey, retryCount,
+          {
+            mode: 'run',
+            jobId: job.id,
+            ...(overrideBranchId ? { overrideBranchId } : {}),
+            ...(overrideCommitSha ? { overrideCommitSha } : {}),
+          },
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        result = { ok: false, exitCode: 1, log: '', error: `动作执行抛出异常：${message}` };
+      }
       lastExitCode = result.exitCode;
       lastHttpStatus = result.httpStatus;
       steps[index] = {
