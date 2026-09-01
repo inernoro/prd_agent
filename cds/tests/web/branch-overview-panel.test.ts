@@ -93,6 +93,42 @@ describe('停掉的容器不许显示停机前的旧读数', () => {
   });
 });
 
+describe('图表对齐与入口排布（都是演示时用户一眼看出来的）', () => {
+  it('堆叠取各序列最短长度并逐点兜底，长度不齐也吐不出 NaN 路径', () => {
+    expect(PANEL).toContain('Math.min(...values.map((row) => row.length))');
+    expect(PANEL).toContain('cum[i] += row[i] ?? 0;');
+    // 回到「以第一条的长度为准」就是原缺陷
+    expect(PANEL).not.toContain('const n = values[0]?.length');
+  });
+
+  it('服务端的缺口（null）在前端落成 0，不是 undefined', () => {
+    expect(PANEL).toContain('cpuPercent: number | null');
+    expect(PANEL).toContain('x == null ? 0 : x');
+  });
+
+  /**
+   * 两处都是演示时用户一眼看出来的。
+   *
+   * 第一版：固定两列 + 主入口用 grid-column: 1 / -1 跨满。
+   * 结果 3 个次要入口剩一张半宽的孤儿卡；换成 auto-fit 后仍然不对——
+   * 主入口跨满所有轨道，等于每条轨道都有项目，auto-fit 便不折叠空轨道，
+   * 右边空出一整列。真正的修法是把主入口移出网格。
+   */
+  it('次要入口按可用宽度自适应分列', () => {
+    expect(PANEL).toMatch(/repeat\(auto-fit, minmax\(min\(100%, \d+px\), 1fr\)\)/);
+    expect(PANEL).not.toContain('md:grid-cols-2');
+  });
+
+  it('主入口不在那个网格里（跨满轨道会让 auto-fit 失效）', () => {
+    // 主入口与次要入口各自渲染，共用同一个 EntryCard
+    expect(PANEL).toContain('const rest = entries.filter((e) => e !== primary)');
+    expect(PANEL).toContain('{primary ? <EntryCard e={primary}');
+    // 跨满整行的写法一旦回来，auto-fit 就又失效了
+    expect(PANEL).not.toContain("gridColumn: '1 / -1'");
+    expect(PANEL).not.toContain('md:col-span-2');
+  });
+});
+
 describe('内存按绝对值展示（百分比在没配 mem_limit 的机器上恒为 0）', () => {
   it('环形缓冲存了绝对字节', () => {
     expect(PANEL).toContain('memBytes');
