@@ -237,32 +237,28 @@ const SCENARIO_TAGS = [
 
 // ============ Hero 区域 ============
 /**
- * 标题区。相对旧版的三处改动，每一处都有具体理由：
+ * 标题区。
  *
- * 1. 42px 青绿渐变标题 → 32px 实心标题。渐变字是 2022 年的手法，且那套青绿
- *    (#c4b5fd→#6ee7b7) 和产品里唯一的品牌色 #D97757 没有任何关系，等于页面有两套色。
- * 2. 加一行小眉标。视频创作用的是同一套节奏（眉标 + 标题 + 一句说明），
- *    两个 Agent 因此读起来是一家人。
- * 3. 副标题从「AI 驱动的设计助手，让创作更简单」换成一句只对这个产品成立的话——
- *    前者放到任何产品上都成立，等于没说。
+ * 这里**没有口号**，是刻意的。之前挂的是「先落到画布，再谈生成」，
+ * 用户一句话判了死刑：很 low。回头看它确实是口号体——在教用户该怎么想，
+ * 而不是帮他开始干活；而且下面那行说明已经把同一件事讲清楚了，等于说了两遍。
+ *
+ * 换成一句直接指向下面输入框的问句。工作台的首页不需要立场，
+ * 需要的是让人立刻开始打字。同理删掉了原来那行眉标（「一次粘几张参考图开局」）：
+ * 它和输入框里那句「直接按 ⌘V 粘贴」是同一句话，重复一遍只会把标题往下推。
+ *
+ * 更早一版是 42px 青绿渐变标题——渐变字是 2022 年的手法，而且那套青绿
+ * 和产品唯一的品牌色 #D97757 毫无关系，等于页面有两套色。
  */
 function HeroSection() {
   return (
     <div className="relative w-full flex flex-col items-center text-center" style={{ paddingTop: 8 }}>
-      <span
-        className="inline-flex items-center gap-[7px] text-[11px] font-bold"
-        style={{ color: 'var(--accent-gold-2)' }}
-      >
-        <Sparkles size={13} />
-        一次粘几张参考图开局，之后都在画布上改
-      </span>
-
       <h1
         data-tour-id="visual-page-title"
-        className="mt-2.5 text-[32px] font-semibold leading-[1.2]"
+        className="text-[32px] font-semibold leading-[1.2]"
         style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}
       >
-        先落到画布，再谈生成
+        今天做什么图？
       </h1>
 
       <p
@@ -1286,17 +1282,19 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
   return (
     <div
-      className="surface-tone-dark h-full min-h-0 flex flex-col overflow-auto relative"
+      className="surface-tone-dark h-full min-h-0 relative"
       style={{ background: 'var(--bg-base)' }}
     >
-      {/* 背景两层，顺序不能反：
-          底下是轮换的那张图（压暗罩由 BackdropPhoto 自带，是小字可读性的唯一保障），
-          上面压印相台美术层——接触印样、两块错开套印的墨、网点、四角套准十字。
-          合起来读作「一张片子摊在灯箱上」，轮换素材因此仍然是整页的底光，
-          而不是被降级成角落里的一格。
-          旧版这里是「潜像场」（一团辉光 + 斜掠光）——用户原话：不要只有灯、粒子，太丑。 */}
+      {/* 背景两层，顺序不能反：底下是轮换的那张图（压暗罩由 BackdropPhoto 自带，
+          是小字可读性的唯一保障），上面压印相台美术层。
+
+          它们必须挂在**滚动容器之外**这一层。上一版和内容放在同一个 overflow-auto
+          容器里，absolute inset:0 在滚动容器里量的是**可视框**、而且跟着内容一起滚——
+          于是往下滑两屏，背景就从画面顶上滑走了，剩下一片纯底色（用户原话：
+          滑动下去背景居然消失了）。外层不滚、内层滚，背景才是钉住的。 */}
       <BackdropPhoto src={backdrop?.url ?? null} dim={dimFor(backdrop)} />
       <DarkroomPlate />
+      <div className="h-full min-h-0 flex flex-col overflow-auto relative" style={{ zIndex: 1 }}>
 
       {/* 顶栏：品牌 + 创作/作品 + 右侧动作，与视频创作同结构。
           旧版这里只有一个孤零零的返回箭头和一枚教程胶囊，页面没有身份。 */}
@@ -1497,6 +1495,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           </div>
         }
       />
+      </div>
     </div>
   );
 }

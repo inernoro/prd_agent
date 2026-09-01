@@ -417,8 +417,46 @@ describe('首页背景：素材来源与浅色主题的两条接线', () => {
     // 不假设 class 后面紧跟着 {（第一版正是这么写的，一加并列选择器就假红）。
     const rule = read(GLOBALS).match(/\[data-theme="light"\][^{]*\{[^}]*display:\s*none[^}]*\}/);
     expect(rule?.[0]).toContain('.backdrop-photo-layer');
-    // 印相台里那一格照片同理：近黑素材落在奶白纸上是一团脏，两处都得关。
-    expect(rule?.[0]).toContain('.plate__photo');
+  });
+
+  it('印相台不用胶片语言——齿孔与连续画格是动态影像的符号，这里是静态图像工具', () => {
+    // 用户看完第一版：「背景用电影的背景就有点奇怪了」。齿孔（sprocket）和
+    // 一格格接触印样是 35mm 电影/胶卷的符号，隔壁视频创作才该用。
+    // 这条守卫防的是「哪天顺手又把胶片元素加回来」。
+    const plate = read('src/components/effects/DarkroomPlate.tsx')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    for (const filmish of ['sprocket', 'FRAME_W', 'plate__frame']) {
+      expect(plate).not.toContain(filmish);
+    }
+    // 剥注释后仍要剩下真实代码，否则正则写坏了这条会假绿。
+    expect(plate).toContain('export function DarkroomPlate');
+  });
+
+  it('网点必须细到读作纹理，不是马赛克', () => {
+    // 用户原话：你的背景长得像马赛克。根因是 9px 周期配 r=1.6 的圆点阵列，
+    // 覆盖率约 10%，整页尺度上规则阵列就是格子。判据直接盯几何：
+    // 周期 >= 14px 且半径 <= 1，覆盖率掉到 1% 以下才回到「网点」。
+    const plate = read('src/components/effects/DarkroomPlate.tsx');
+    const pat = plate.match(/id="plate-halftone"\s+width="(\d+)"/);
+    const dot = plate.match(/<circle[^>]*r="([\d.]+)"[^>]*className="plate__dot"/);
+    expect(Number(pat?.[1])).toBeGreaterThanOrEqual(14);
+    expect(Number(dot?.[1])).toBeLessThanOrEqual(1);
+  });
+
+  it('背景层挂在滚动容器之外，滑下去不会跟着滚走', () => {
+    // 用户原话：滑动下去，背景居然消失了。根因是背景和内容在同一个
+    // overflow-auto 容器里，absolute inset:0 量的是可视框且随内容滚动。
+    // 先剥注释：解释这个 bug 的那段注释里就写着 overflow-auto，不剥的话
+    // 判据会被自己的说明文字喂饱（这个坑在本仓库已经踩到第四次了）。
+    const page = read(PAGE).replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rootStart = page.indexOf('surface-tone-dark h-full');
+    const plateAt = page.indexOf('<DarkroomPlate');
+    expect(rootStart).toBeGreaterThan(-1);
+    expect(plateAt).toBeGreaterThan(rootStart);
+    // 根容器这一段里不许出现 overflow-auto——它必须在 DarkroomPlate 之后的内层。
+    expect(page.slice(rootStart, plateAt)).not.toContain('overflow-auto');
+    expect(page.slice(plateAt)).toContain('overflow-auto');
   });
 
   it('背景素材取随包清单，不再取项目封面（白底产品图压暗后整页变平灰）', () => {

@@ -147,6 +147,10 @@
   --plate-line: rgba(255, 236, 222, 0.10);
   --plate-line-strong: rgba(255, 236, 222, 0.16);
   --plate-dot: rgba(255, 236, 222, 0.05);
+  /* 梯尺色：**接近不透明**，每一级的浓淡交给组件的 wedgeOpacity 去乘。
+     第一版这里直接用 --plate-tone-hi（本身就带 0.055 alpha），再乘一次每级
+     0.006-0.06，最终有效 alpha 只有千分之三——整条尺子肉眼不可见。 */
+  --plate-wedge: rgba(255, 236, 222, 0.92);
   --plate-tone-hi: rgba(255, 236, 222, 0.055);
   --plate-tone-lo: rgba(255, 236, 222, 0.012);
   --plate-grain: rgba(255, 255, 255, 0.014);
@@ -938,6 +942,7 @@
   --plate-line: rgba(60, 44, 36, 0.10);
   --plate-line-strong: rgba(60, 44, 36, 0.17);
   --plate-dot: rgba(60, 44, 36, 0.035);
+  --plate-wedge: rgba(60, 44, 36, 0.92);
   --plate-tone-hi: rgba(60, 44, 36, 0.045);
   --plate-tone-lo: rgba(60, 44, 36, 0.010);
   --plate-grain: rgba(0, 0, 0, 0.012);

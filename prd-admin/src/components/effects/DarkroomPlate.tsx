@@ -2,65 +2,49 @@
  * 印相台：视觉创作首页的背景美术层。
  *
  * 为什么不是「灯 + 粒子」：那两样是屏保的语言，谁家产品都能贴，贴上去只说明
- * 这里需要点东西填空。这一层换成**这个产品自己的对象**——暗房里的接触印相台：
+ * 这里需要点东西填空。这一层用**这个产品自己的对象**：暗房 / 印房里的东西。
  *
- *   1. 版面墨块  —— 两块柔边色场（暖赤陶 + 冷靛），故意错开一点点套印，
- *                   riso / 丝网印的失准感，是「印」不是「亮」；
- *   2. 接触印样  —— 一张歪着放的印样纸，上面是 35mm 的一格格画面，
- *                   出血到画外，只露一部分。这是暗房真实存在的那张纸；
- *   3. 片孔边条  —— 印样边上的齿孔；
- *   4. 网点      —— 一片放大的半调网点，压在墨块交界上，印刷的皮肤；
- *   5. 套准十字  —— 四角的印刷套准标记。整页唯一的「说明性」符号。
+ *   1. 版面墨块 —— 两块柔边色场（暖赤陶 + 冷靛），故意错开一点点套印，
+ *                  riso / 丝网印的失准感，是「印」不是「亮」；
+ *   2. 灰阶梯尺 —— 一条从黑到白的阶调标尺，摄影暗房用来校准影调的那把尺；
+ *   3. 色标条   —— 印刷厂在版边留的那排小色块，用来对色；
+ *   4. 网点     —— 极细的半调网点，印刷的皮肤；
+ *   5. 套准十字 —— 四角的印刷套准标记。整页唯一的「说明性」符号。
  *
- * 和轮换背景图的关系：这一层压在 BackdropPhoto **之上**，那张图仍然全幅铺开当底光，
- * 合起来读作「一张片子摊在灯箱上」。本组件的 photoSrc 是另一件事——把同一张图再放进
- * 印样的其中一格；不传就没有那一格，整层照常成立。
+ * 两条被推翻的做法，写在这里免得再来一遍：
  *
- * 一开始想的是「照片只放进一格、不再全幅」，取证之后否了：那样轮换素材被降级成角落里
- * 一个 92x62 的小方块，等于把上一轮刚做的功能废掉。
+ * - **不用胶片语言**。第一版画的是 35mm 接触印样：一格格画面 + 齿孔边条。
+ *   用户看完说「用电影的背景就有点奇怪了」——对的：齿孔和连续画格是**动态影像**
+ *   的符号，这里是静态图像工具，隔壁才是视频创作。改成灰阶梯尺和色标条，
+ *   同样是暗房/印房的东西，但属于静态图像那一支。
+ * - **网点不能大**。第一版 9px 周期、半径 1.6（覆盖率约 10%），铺满整页之后
+ *   规则的圆点阵列读出来就是马赛克（用户原话：你的背景长得像马赛克）。
+ *   现在 16px 周期、半径 0.75（覆盖率约 0.7%），并且**半径跟着遮罩衰减**，
+ *   靠近边缘才有——那才是「网点」，不是格子。
  *
- * 全部是静态 SVG + CSS，没有 canvas 循环、没有逐帧计算；唯一的动画是墨块
- * 极慢的呼吸，prefers-reduced-motion 下停掉。
+ * 全部是静态 SVG + CSS，没有 canvas 循环；唯一的动画是墨块极慢的呼吸，
+ * prefers-reduced-motion 下停掉。
  */
 
-/**
- * 印样的格子布局。单位是 viewBox 坐标（1440x1020 的画布）。
- *
- * 尺寸是取证调出来的：第一版 214x143 的大格子在整页尺度上不像印样，像四个大方块
- * （plate-a0.382-b26.png）。接触印样的语言在于**小而多**——一张纸上一整卷片子。
- */
-const FRAME_W = 92;
-const FRAME_H = 62;
-const GAP_X = 8;
-const GAP_Y = 22;
-const COLS = 17;
-const ROWS = 11;
-/** 印样纸整体的摆放：歪一点，并且往左上挪出画外，让它是「一张纸的一角」而不是居中构图。 */
-const SHEET_ROTATE = -7.5;
-const SHEET_X = -150;
-const SHEET_Y = -130;
+/** 灰阶梯尺：多少级、多大。真实的柯达阶调尺是 21 级，这里取 15 级够用。 */
+const WEDGE_STEPS = 15;
+const WEDGE_W = 104;
+const WEDGE_H = 132;
+const WEDGE_X = -140;
+const WEDGE_Y = 92;
+const WEDGE_ROTATE = -7.5;
 
-/** 哪几格里有影调（其余是空片基）。挑得稀疏，让整张纸有疏密。 */
-const TONED = new Set([
-  '0-2', '0-9', '1-5', '1-13', '2-1', '2-7', '3-11', '3-3', '4-15',
-  '5-0', '5-8', '6-4', '6-12', '7-2', '8-9', '8-14', '9-6', '10-11',
-]);
-/**
- * 照片落在哪一格。
- *
- * 必须挑一个**遮罩是亮的**格子——否则它跟着中间那块留白一起被压到三成，
- * 等于轮换素材白换（第三版就犯了这个错：格子选在正中，整张图完全看不见）。
- * 左下角这一格算完旋转后落在页面 (100, 655) 附近，正是遮罩最亮的区域。
- */
-const PHOTO_CELL = { row: 9, col: 2 };
+/** 色标条：印刷版边那排对色块。 */
+const BAR_SWATCH = 30;
+const BAR_X = 986;
+const BAR_Y = 902;
 
-function frameXY(row: number, col: number) {
-  return { x: SHEET_X + col * (FRAME_W + GAP_X), y: SHEET_Y + row * (FRAME_H + GAP_Y) };
+/** 梯尺每一级的亮度。从近乎全黑推到中灰——整条不许推到亮，那会变成一条白带子。 */
+function wedgeOpacity(i: number): number {
+  return 0.006 + (i / (WEDGE_STEPS - 1)) * 0.055;
 }
 
-export function DarkroomPlate({ photoSrc }: { photoSrc?: string | null }) {
-  const photo = frameXY(PHOTO_CELL.row, PHOTO_CELL.col);
-
+export function DarkroomPlate() {
   return (
     <div className="plate" aria-hidden>
       <svg
@@ -70,10 +54,12 @@ export function DarkroomPlate({ photoSrc }: { photoSrc?: string | null }) {
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
-          {/* 半调网点。放到 9px 一个周期——再密就成灰面了，看不出是网点。 */}
-          <pattern id="plate-halftone" width="9" height="9" patternUnits="userSpaceOnUse">
-            <circle cx="4.5" cy="4.5" r="1.6" className="plate__dot" />
+          {/* 网点。16px 周期、半径 0.75：覆盖率不到 1%，整页尺度上读作纸的纹理。
+              第一版 9px / 1.6 覆盖率约 10%，那是马赛克不是网点。 */}
+          <pattern id="plate-halftone" width="16" height="16" patternUnits="userSpaceOnUse">
+            <circle cx="8" cy="8" r="0.75" className="plate__dot" />
           </pattern>
+
           {/* 墨块的柔边。印出来的墨没有硬边，这一步是「像印的」的关键。 */}
           <filter id="plate-bleed" x="-30%" y="-30%" width="160%" height="160%">
             <feGaussianBlur stdDeviation="46" />
@@ -81,27 +67,17 @@ export function DarkroomPlate({ photoSrc }: { photoSrc?: string | null }) {
           <filter id="plate-bleed-soft" x="-30%" y="-30%" width="160%" height="160%">
             <feGaussianBlur stdDeviation="70" />
           </filter>
-          <radialGradient id="plate-tone" cx="38%" cy="32%" r="78%">
-            <stop offset="0%" className="plate__tone-hi" />
-            <stop offset="100%" className="plate__tone-lo" />
-          </radialGradient>
-          <clipPath id="plate-photo-clip">
-            <rect x={photo.x} y={photo.y} width={FRAME_W} height={FRAME_H} rx="2" />
-          </clipPath>
 
           {/*
            * 中间要淡下去——但**不能空掉**。
            *
-           * 两版取证：第一版整页铺满印样，标题直接压在片格线上，糊成一片；
-           * 第二版中间彻底挖空，安静是安静了，可磨砂玻璃后面什么都没有，
-           * 那块卡就退化成一块实心深色方块——磨砂的意义正在于「透出后面那点东西」。
-           *
-           * 所以中间不是 0 而是**三成**：线条弱到不干扰读字，又足以让玻璃有东西可折。
+           * 取证过三版：铺满 → 标题压在线条上糊成一片；彻底挖空 → 磨砂玻璃背后
+           * 一片纯色，那块卡退化成实心方块（磨砂的意义正在于透出后面那点东西）；
+           * 留三成 → 对。遮罩一律写成「白 + 不透明度」而不是灰阶 hex：
+           * 遮罩看的是亮度，白 30% 和 30% 灰等效，但前者一眼看得出「这里露三成」，
+           * 也不会被双皮肤棘轮误判成新增的深色硬编码。
+           * （棘轮是连注释一起扫的，所以这段话里也不能出现那个字面量。）
            */}
-          {/* 遮罩一律写成「白 + 不透明度」而不是灰阶 hex：
-              遮罩看的是亮度，白 30% 和 30% 灰等效，但前者一眼看得出「这里露三成」，
-              也不会被双皮肤棘轮误判成新增的深色硬编码——纯黑那个写法就被它拦过。
-              （棘轮是连注释一起扫的，所以这段话里也不能出现那个字面量。） */}
           <radialGradient id="plate-clear" cx="50%" cy="44%" r="66%">
             <stop offset="0%" stopColor="#fff" stopOpacity="0.29" />
             <stop offset="42%" stopColor="#fff" stopOpacity="0.34" />
@@ -112,11 +88,11 @@ export function DarkroomPlate({ photoSrc }: { photoSrc?: string | null }) {
             <rect x="0" y="0" width="1440" height="1020" fill="url(#plate-clear)" />
           </mask>
 
-          {/* 网点只在左下角一块，且边缘要化开——第一版能看见那个矩形的直边。 */}
-          <radialGradient id="plate-dot-falloff" cx="14%" cy="86%" r="58%">
-            <stop offset="0%" stopColor="#fff" stopOpacity="1" />
-            <stop offset="55%" stopColor="#fff" stopOpacity="0.53" />
-            <stop offset="100%" stopColor="#fff" stopOpacity="0" />
+          {/* 网点只在四周，中间完全不铺——中间是内容区，一点纹理都不该有。 */}
+          <radialGradient id="plate-dot-falloff" cx="50%" cy="46%" r="70%">
+            <stop offset="0%" stopColor="#fff" stopOpacity="0" />
+            <stop offset="52%" stopColor="#fff" stopOpacity="0" />
+            <stop offset="100%" stopColor="#fff" stopOpacity="1" />
           </radialGradient>
           <mask id="plate-dot-mask">
             <rect x="0" y="0" width="1440" height="1020" fill="url(#plate-dot-falloff)" />
@@ -124,7 +100,7 @@ export function DarkroomPlate({ photoSrc }: { photoSrc?: string | null }) {
         </defs>
 
         {/* --- 1. 版面墨块：两块，错开套印。
-             位置是取证调的：墨块必须有一块**从输入卡背后穿过去**，
+             位置是取证调的：必须有一块**从输入卡背后穿过去**，
              否则磨砂玻璃后面没有明暗，玻璃就白磨了。 --- */}
         <g className="plate__inks">
           <ellipse cx="600" cy="330" rx="520" ry="300" className="plate__ink-warm" filter="url(#plate-bleed)" />
@@ -133,58 +109,50 @@ export function DarkroomPlate({ photoSrc }: { photoSrc?: string | null }) {
           <ellipse cx="626" cy="356" rx="520" ry="300" className="plate__ink-misreg" filter="url(#plate-bleed)" />
         </g>
 
-        {/* --- 4. 网点：左下角一片，边缘用 mask 化开，不留直边 --- */}
+        {/* --- 4. 网点 --- */}
         <rect x="0" y="0" width="1440" height="1020" fill="url(#plate-halftone)" mask="url(#plate-dot-mask)" />
 
-        {/* --- 2/3. 接触印样。
-             mask 挂在**没有 transform 的外层**：挂在旋转的组上，遮罩会跟着一起转，
+        {/* --- 2. 灰阶梯尺。
+             mask 挂在**没有 transform 的外层**：挂在旋转的组上遮罩会跟着转，
              中间那块留白就不在页面中间了。外层遮罩、内层旋转，顺序不能反。 --- */}
         <g mask="url(#plate-edges)">
-        <g transform={`rotate(${SHEET_ROTATE} 300 260)`} className="plate__sheet">
-          {Array.from({ length: ROWS }).flatMap((_, row) =>
-            Array.from({ length: COLS }).map((_, col) => {
-              const { x, y } = frameXY(row, col);
-              const isPhoto = row === PHOTO_CELL.row && col === PHOTO_CELL.col;
-              return (
-                <g key={`${row}-${col}`}>
-                  {TONED.has(`${row}-${col}`) && !isPhoto && (
-                    <rect x={x} y={y} width={FRAME_W} height={FRAME_H} rx="2" fill="url(#plate-tone)" className="plate__toned" />
-                  )}
-                  <rect x={x} y={y} width={FRAME_W} height={FRAME_H} rx="2" className="plate__frame" />
-                </g>
-              );
-            }),
-          )}
-
-          {/* 轮换的那张照片：落进其中一格，不是全幅壁纸。 */}
-          {photoSrc && (
-            <g clipPath="url(#plate-photo-clip)" className="plate__photo">
-              <image
-                href={photoSrc}
-                x={photo.x}
-                y={photo.y}
-                width={FRAME_W}
-                height={FRAME_H}
-                preserveAspectRatio="xMidYMid slice"
+          <g transform={`rotate(${WEDGE_ROTATE} 300 260)`}>
+            {Array.from({ length: WEDGE_STEPS }).map((_, i) => (
+              <rect
+                key={`w-${i}`}
+                x={WEDGE_X + i * WEDGE_W}
+                y={WEDGE_Y}
+                width={WEDGE_W}
+                height={WEDGE_H}
+                className="plate__wedge"
+                style={{ opacity: wedgeOpacity(i) }}
               />
-              <rect x={photo.x} y={photo.y} width={FRAME_W} height={FRAME_H} className="plate__photo-veil" />
-            </g>
-          )}
+            ))}
+            {/* 尺子的上下两条边线，让它读作一件器物而不是一排色块。 */}
+            <line x1={WEDGE_X} y1={WEDGE_Y} x2={WEDGE_X + WEDGE_STEPS * WEDGE_W} y2={WEDGE_Y} className="plate__rule" />
+            <line
+              x1={WEDGE_X}
+              y1={WEDGE_Y + WEDGE_H}
+              x2={WEDGE_X + WEDGE_STEPS * WEDGE_W}
+              y2={WEDGE_Y + WEDGE_H}
+              className="plate__rule"
+            />
+          </g>
 
-          {/* 片孔边条：每一行印样纸的上下边。间距按格宽走，格子变了它自己跟着变。 */}
-          {Array.from({ length: ROWS }).flatMap((_, row) =>
-            Array.from({ length: COLS * 6 }).map((_, i) => {
-              const { y } = frameXY(row, 0);
-              const x = SHEET_X + 3 + i * 17;
-              return (
-                <g key={`s-${row}-${i}`}>
-                  <rect x={x} y={y - 11} width="7" height="6" rx="1.5" className="plate__sprocket" />
-                  <rect x={x} y={y + FRAME_H + 5} width="7" height="6" rx="1.5" className="plate__sprocket" />
-                </g>
-              );
-            }),
-          )}
-        </g>
+          {/* --- 3. 色标条：版边那排对色块，右下角，很小。 --- */}
+          <g transform={`rotate(${WEDGE_ROTATE} 1200 900)`}>
+            {['warm', 'warm2', 'cool', 'neutral', 'warm', 'cool', 'neutral', 'warm2'].map((kind, i) => (
+              <rect
+                key={`b-${i}`}
+                x={BAR_X + i * (BAR_SWATCH + 4)}
+                y={BAR_Y}
+                width={BAR_SWATCH}
+                height={BAR_SWATCH * 0.62}
+                rx="1"
+                className={`plate__swatch plate__swatch--${kind}`}
+              />
+            ))}
+          </g>
         </g>
 
         {/* --- 5. 套准十字：四角，印刷标记 --- */}
