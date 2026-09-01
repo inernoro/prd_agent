@@ -60,8 +60,28 @@ export function explainMissingTable(params: {
     denied
       ? `当前账号读不了 ${wanted}.${table}：这个资源的连接在库 ${database} 上，对库 ${wanted} 没有查询权限。`
       : `在这个资源上找不到 ${wanted}.${table}：当前连接的是库 ${database}，而请求要的是库 ${wanted}。`,
-    '常见成因：这张表属于另一个数据库资源，而左侧表列表是旧的（面板开着跨过了一次部署或切换）。',
-    '下一步：刷新工作台重新拉表列表；如果这张表确实属于另一个资源，到那个资源的工作台打开它。',
+    FOREIGN_SCHEMA_CAUSE,
+    FOREIGN_SCHEMA_NEXT_STEP,
     raw ? `原始错误：${raw}` : '',
   ].filter(Boolean).join('\n');
+}
+
+const FOREIGN_SCHEMA_CAUSE = '常见成因：这张表属于另一个数据库资源，而左侧表列表是旧的（面板开着跨过了一次部署或切换）。';
+const FOREIGN_SCHEMA_NEXT_STEP = '下一步：刷新工作台重新拉表列表；如果这张表确实属于另一个资源，到那个资源的工作台打开它。';
+
+/**
+ * MySQL 侧请求了**本分支库以外**的库时的拒绝文案（执行之前就拒，不发查询）。
+ *
+ * 为什么要在执行前拒：MySQL 的 schema 就是 database，一旦允许请求方自带库名，
+ * 用回落到服务自带账号（典型是 root）的资源上就能读到同实例里**别的分支、别的项目**
+ * 的库，越过了 `mysqlDatabaseForBranch` 这条边界（Codex P1，2026-09-01）。
+ * PostgreSQL 的 schema 是库内命名空间，不构成同样的越界，故不受此限。
+ */
+export function foreignSchemaRefusal(params: { database: string; requestedSchema: string; table: string }): string {
+  const { database, requestedSchema, table } = params;
+  return [
+    `这个资源的工作台只能读它自己的库 ${database}，不能读 ${requestedSchema}.${table}。`,
+    FOREIGN_SCHEMA_CAUSE,
+    FOREIGN_SCHEMA_NEXT_STEP,
+  ].join('\n');
 }

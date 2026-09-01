@@ -34,7 +34,7 @@ import {
 import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { normalizeReadOnlyStatement, normalizeWriteStatement } from '../services/sql-statement-policy.js';
-import { explainMissingTable } from '../services/db-error-explain.js';
+import { explainMissingTable, foreignSchemaRefusal } from '../services/db-error-explain.js';
 import {
   branchDbAccountName,
   branchDbCredentialOwner,
@@ -8015,46 +8015,66 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   }
 
+  /**
+   * 删库前置条件不成立时抛这个：路由据此回 409（拒绝，不是故障）。
+   * 以前靠匹配「拒绝删除共享数据库」这句文案判状态码，加一条新的拒绝理由就会漏判成 500——
+   * 判据挂在措辞上，改一次文案就漂一次。
+   */
+  function deleteRefusal(message: string): Error {
+    return Object.assign(new Error(message), { cdsDeleteRefusal: true });
+  }
+
   function branchOwnedDatabaseForDelete(runtime: ResourceDatabaseRuntime, service: InfraService, branch: BranchEntry): string {
+    // 顺序有讲究：先答「本分支到底有没有独立库」，再答「这套 env 是不是这台服务的」。
+    // 反过来的话，一个压根没有分支库的分支会先撞上归属报错，说的却不是它真正的处境。
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const database = ((): string => {
+      if (runtime === 'mysql') {
+        const value = branchEnv.MYSQL_DATABASE || '';
+        if (!value || !branchEnv.MYSQL_USER) {
+          throw deleteRefusal('未检测到分支独立 MySQL 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
+      }
+      if (runtime === 'postgres') {
+        const value = branchEnv.POSTGRES_DB || '';
+        if (!value || !branchEnv.POSTGRES_USER) {
+          throw deleteRefusal('未检测到分支独立 PostgreSQL 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 63);
+      }
+      if (runtime === 'mongodb') {
+        const value = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
+        const env = resolvedInfraEnv(service);
+        const serviceRequiresAuth = Boolean(env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME);
+        if (!value || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
+          throw deleteRefusal('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 63);
+      }
+      throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
+    })();
+
     // 删库要以分支 env 里的库名为准，而分支 env 只有一份、可能是**另一台同类型库**的。
     // 不判归属就会「删 B 资源，掉的是 A 的库」——这是数据丢失，不是连不上而已。
-    if (runtime !== 'redis') {
-      const rawBranchEnv = stateService.getCustomEnvScope(branch.id);
-      const owner = branchDbCredentialOwner(rawBranchEnv, runtime as BranchDbRuntime);
-      if (owner && owner !== service.id) {
-        throw new Error(
-          `分支环境变量里的库名/账号是派发给服务 "${owner}" 的，不是 "${service.id}"；`
-          + '拒绝按它删库（否则会删掉另一台库的数据）。请先为本资源重新注入连接信息再操作。',
-        );
-      }
+    const owner = branchDbCredentialOwner(branchEnv, runtime as BranchDbRuntime);
+    // 破坏性路径**失败关闭**：读路径可以在「判断不出归属」时沿用老行为，删库不行——
+    // 同一分支挂两台同类型库时，拿一份没有归属标记的库名去删，掉的可能是另一台的同名库
+    // （Codex P1，2026-09-01）。没有证据就不动手。
+    if (!owner) {
+      throw deleteRefusal(
+        `分支环境变量里有库名 ${database}，却没有归属标记（缺 *_HOST，连接串也解析不出 host），`
+        + `无法证明它属于本分支的资源 "${service.id}"；删库不可逆，拒绝执行。`
+        + '请先在该资源上重新注入连接信息（会写入归属标记）再来删。',
+      );
     }
-    const branchEnv = runtime === 'redis'
-      ? stateService.getCustomEnvScope(branch.id)
-      : ownedBranchEnv(branch, runtime as BranchDbRuntime, service);
-    if (runtime === 'mysql') {
-      const database = branchEnv.MYSQL_DATABASE || '';
-      if (!database || !branchEnv.MYSQL_USER) {
-        throw new Error('未检测到分支独立 MySQL 数据库和用户，拒绝删除共享数据库');
-      }
-      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
+    if (owner !== service.id) {
+      throw deleteRefusal(
+        `分支环境变量里的库名/账号是派发给服务 "${owner}" 的，不是 "${service.id}"；`
+        + '拒绝按它删库（否则会删掉另一台库的数据）。请先为本资源重新注入连接信息再操作。',
+      );
     }
-    if (runtime === 'postgres') {
-      const database = branchEnv.POSTGRES_DB || '';
-      if (!database || !branchEnv.POSTGRES_USER) {
-        throw new Error('未检测到分支独立 PostgreSQL 数据库和用户，拒绝删除共享数据库');
-      }
-      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 63);
-    }
-    if (runtime === 'mongodb') {
-      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
-      const env = resolvedInfraEnv(service);
-      const serviceRequiresAuth = Boolean(env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME);
-      if (!database || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
-        throw new Error('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
-      }
-      return database.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 63);
-    }
-    throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
+    return database;
   }
 
   async function clearResourceData(params: {
@@ -9178,6 +9198,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      if (ctx.runtime === 'mysql' && ref.schema && ref.schema !== database) {
+        res.status(400).json({ error: foreignSchemaRefusal({ database, requestedSchema: ref.schema, table: ref.table }) });
+        return;
+      }
       const sql = ctx.runtime === 'postgres'
         ? [
           'SELECT column_name, data_type, is_nullable,',
@@ -9230,6 +9254,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 200) : 50;
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      // MySQL 的 schema 就是 database：允许请求方自带库名，等于让工作台读到同实例里
+      // 别的分支/项目的库（回落到服务自带账号时尤其明显）。执行前就挡住。
+      if (ctx.runtime === 'mysql' && ref.schema && ref.schema !== database) {
+        res.status(400).json({ error: foreignSchemaRefusal({ database, requestedSchema: ref.schema, table: ref.table }) });
+        return;
+      }
       const ident = sqlTableIdent(ctx.runtime, ref);
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, `SELECT * FROM ${ident} LIMIT ${limit}`);
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, limit, ...result });
@@ -9982,7 +10012,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       stateService.save();
       const message = (err as Error).message;
-      res.status(message.includes('拒绝删除共享数据库') ? 409 : 500).json({ error: message });
+      const refused = Boolean((err as { cdsDeleteRefusal?: boolean }).cdsDeleteRefusal)
+        || message.includes('拒绝删除共享数据库');
+      res.status(refused ? 409 : 500).json({ error: message });
     }
   });
 

@@ -84,10 +84,34 @@ describe('branches.ts 的每个分支 env 读取点都判了归属', () => {
     const source = readBranchesRoute();
     const at = source.indexOf('function branchOwnedDatabaseForDelete(');
     expect(at).toBeGreaterThan(-1);
-    const fn = source.slice(at, at + 1800);
-    expect(fn).toContain('branchDbCredentialOwner(rawBranchEnv,');
-    expect(fn).toContain('if (owner && owner !== service.id) {');
+    const fn = source.slice(at, at + 3200);
+    expect(fn).toContain('branchDbCredentialOwner(branchEnv,');
+    expect(fn).toContain('if (owner !== service.id) {');
     expect(fn).toContain('拒绝按它删库');
+  });
+
+  /**
+   * 破坏性路径失败关闭：读路径可以在「判断不出归属」时沿用老行为，删库不行——
+   * 拿一份没有归属标记的库名去删，掉的可能是另一台同类型库的同名库（Codex P1）。
+   */
+  it('归属判断不出来时，删库拒绝执行而不是沿用老行为', () => {
+    const source = readBranchesRoute();
+    const at = source.indexOf('function branchOwnedDatabaseForDelete(');
+    const fn = source.slice(at, at + 3200);
+    expect(fn).toContain('if (!owner) {');
+    expect(fn).toContain('没有归属标记');
+    expect(fn).toContain('拒绝执行');
+    // 「未知归属」必须在「归属不符」之前先拦
+    expect(fn.indexOf('if (!owner) {')).toBeLessThan(fn.indexOf('if (owner !== service.id) {'));
+  });
+
+  it('红用例：让未知归属重新放行，守卫必须变红', () => {
+    const real = readBranchesRoute();
+    const guard = (source: string) => {
+      const at = source.indexOf('function branchOwnedDatabaseForDelete(');
+      expect(source.slice(at, at + 3200)).toContain('if (!owner) {');
+    };
+    expectGuardRedOnMutation(guard, real, mutate(real, 'if (!owner) {', 'if (false) {'));
   });
 
   it('红用例：拆掉删库的归属判断，守卫必须变红', () => {
@@ -95,9 +119,9 @@ describe('branches.ts 的每个分支 env 读取点都判了归属', () => {
     const guard = (source: string) => {
       const at = source.indexOf('function branchOwnedDatabaseForDelete(');
       expect(at).toBeGreaterThan(-1);
-      expect(source.slice(at, at + 1800)).toContain('if (owner && owner !== service.id) {');
+      expect(source.slice(at, at + 3200)).toContain('if (owner !== service.id) {');
     };
-    expectGuardRedOnMutation(guard, real, mutate(real, 'if (owner && owner !== service.id) {', 'if (false) {'));
+    expectGuardRedOnMutation(guard, real, mutate(real, 'if (owner !== service.id) {', 'if (false) {'));
   });
 
   it('红用例：把工作台凭据改回不判归属，守卫必须变红', () => {

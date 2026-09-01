@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { explainMissingTable, isMissingTableOrSchemaError, isTablePermissionError } from '../../src/services/db-error-explain.js';
+import { explainMissingTable, foreignSchemaRefusal, isMissingTableOrSchemaError, isTablePermissionError } from '../../src/services/db-error-explain.js';
 import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
 /**
@@ -50,6 +50,41 @@ describe('MySQL 表标识符要带库名', () => {
         'return ref.schema ? `${sqlIdent(ref.schema)}.${sqlIdent(ref.table)}` : sqlIdent(ref.table);',
         'return sqlIdent(ref.table);',
       ),
+    );
+  });
+
+  /**
+   * MySQL 的 schema 就是 database：放任请求方自带库名，等于让工作台读到同实例里别的
+   * 分支/项目的库（回落到服务自带账号时尤其明显）。必须在**执行之前**挡住（Codex P1）。
+   */
+  it('MySQL 请求本分支库以外的库，执行前就拒绝', () => {
+    const source = readBranchesRoute();
+    const guards = source.split("if (ctx.runtime === 'mysql' && ref.schema && ref.schema !== database) {").length - 1;
+    expect(guards, '预览与字段两个入口都要有这道闸').toBe(2);
+    expect(source).toContain('foreignSchemaRefusal({ database, requestedSchema: ref.schema, table: ref.table })');
+    // 闸必须排在真正发查询之前
+    const at = source.indexOf("router.get('/branches/:id/resources/:resourceId/data/preview'");
+    const slice = source.slice(at, at + 2200);
+    expect(slice.indexOf("ref.schema !== database")).toBeLessThan(slice.indexOf('runSqlDataQuery('));
+  });
+
+  it('拒绝文案说清「只能读自己的库」并给下一步', () => {
+    const message = foreignSchemaRefusal({ database: 'imp_b_1', requestedSchema: 'mysql', table: 'user' });
+    expect(message).toContain('只能读它自己的库 imp_b_1');
+    expect(message).toContain('mysql.user');
+    expect(message).toContain('刷新');
+  });
+
+  it('红用例：拆掉跨库闸，守卫必须变红', () => {
+    const real = readBranchesRoute();
+    const guard = (source: string) => {
+      const n = source.split("if (ctx.runtime === 'mysql' && ref.schema && ref.schema !== database) {").length - 1;
+      expect(n).toBe(2);
+    };
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(real, "if (ctx.runtime === 'mysql' && ref.schema && ref.schema !== database) {", 'if (false) {'),
     );
   });
 

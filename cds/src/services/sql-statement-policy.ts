@@ -37,10 +37,22 @@ export const WRITE_STATEMENT_HEADS: readonly string[] = [
   'insert', 'update', 'delete', 'replace', 'merge', 'upsert',
   'create', 'alter', 'drop', 'truncate', 'rename', 'comment',
   'call', 'do', 'set', 'use', 'reset',
-  'begin', 'start', 'commit', 'rollback', 'savepoint',
   'grant', 'revoke',
   'analyze', 'optimize', 'repair', 'check', 'checksum', 'vacuum', 'refresh', 'reindex',
   'flush', 'lock', 'unlock',
+];
+
+/**
+ * 事务控制：**两条通道都不收**。
+ *
+ * 每次执行都是一个新的 `mysql` / `psql` 进程，而单语句限制又不允许把事务和它包住的
+ * 操作一起发过来。于是 `BEGIN` 成功、`UPDATE` 在另一个连接里自动提交、`ROLLBACK` 也
+ * 成功——三条全绿，数据却改了回不去。这不是「拦一个危险操作」，是**不能给出一个假的
+ * 安全信号**（Codex P1，2026-09-01）。真要用事务，整段脚本走「初始化 SQL」：那边是
+ * 一个进程跑完整个脚本，BEGIN ... COMMIT 才真的成立。
+ */
+export const TRANSACTION_CONTROL_HEADS: readonly string[] = [
+  'begin', 'start', 'commit', 'rollback', 'savepoint', 'release',
 ];
 
 /** 越过数据库边界去碰宿主文件系统 / 外部进程的写法，两条路都不收。 */
@@ -74,7 +86,13 @@ export function normalizeStatementBody(sql: string): string {
 export function classifySqlStatement(sql: string): SqlStatementClassification {
   const body = normalizeStatementBody(sql);
   const head = body.match(/^\s*([a-z]+)/i)?.[1]?.toLowerCase() || '';
-  if (READ_STATEMENT_HEADS.includes(head)) return { head, kind: 'read' };
+  if (READ_STATEMENT_HEADS.includes(head)) {
+    // 改数据的 CTE（PostgreSQL 的 `WITH x AS (DELETE ... RETURNING *) SELECT ...`）语句头
+    // 也是 with，但它是写。只看语句头会把它判成读，而读通道又因为含 DELETE 拒收——
+    // 两条路都不收，这条合法语句就没地方跑了（Codex P2，2026-09-01）。
+    if (WRITE_KEYWORDS_IN_READ_PATH.test(body)) return { head, kind: 'write' };
+    return { head, kind: 'read' };
+  }
   if (WRITE_STATEMENT_HEADS.includes(head)) return { head, kind: 'write' };
   return { head, kind: 'unknown' };
 }
@@ -86,6 +104,14 @@ export function assertNoHostEscape(sql: string): void {
       throw new Error('检测到读写宿主文件或调用外部进程的 SQL（如 INTO OUTFILE / LOAD DATA / COPY ... PROGRAM），已拒绝执行。');
     }
   }
+}
+
+function transactionControlError(): Error {
+  return new Error(
+    '事务控制语句（BEGIN / COMMIT / ROLLBACK / SAVEPOINT）在这里不成立：每次执行都是一条独立连接，'
+    + 'BEGIN 之后的语句会在别的连接里自动提交，ROLLBACK 也回滚不了任何东西——三条都会「成功」，数据却改了回不去。'
+    + '要用事务，请把整段脚本放进工作台的「初始化 SQL」一起执行（那边是同一个进程跑完整个脚本）。',
+  );
 }
 
 function assertSingleStatement(body: string, label: string): void {
@@ -103,12 +129,10 @@ export function normalizeReadOnlyStatement(sql: string): string {
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
   assertSingleStatement(body, '只读 SQL Console ');
+  if (TRANSACTION_CONTROL_HEADS.includes(classifySqlStatement(body).head)) throw transactionControlError();
   const { head, kind } = classifySqlStatement(body);
   if (kind !== 'read') {
     throw new Error(`只读通道只接受 ${READ_STATEMENT_HEADS.join(' / ').toUpperCase()}；"${head || body.slice(0, 12)}" 属于写操作，请走写 SQL 通道。`);
-  }
-  if (WRITE_KEYWORDS_IN_READ_PATH.test(body)) {
-    throw new Error('这条语句里含写入关键字（如 UPDATE / DELETE），只读通道拒绝执行；确认要改数据请走写 SQL 通道。');
   }
   assertNoHostEscape(body);
   return body;
@@ -123,6 +147,7 @@ export function normalizeWriteStatement(sql: string): string {
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
   assertSingleStatement(body, '写 SQL ');
   const { head, kind } = classifySqlStatement(body);
+  if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
   if (kind === 'read') {
     throw new Error('这条是只读语句，请走只读通道执行。');
   }

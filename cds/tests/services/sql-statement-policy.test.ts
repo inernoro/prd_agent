@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   READ_STATEMENT_HEADS,
+  TRANSACTION_CONTROL_HEADS,
   WRITE_STATEMENT_HEADS,
   classifySqlStatement,
   normalizeReadOnlyStatement,
@@ -31,6 +32,7 @@ describe('工作台 SQL 准入：该放的都放行', () => {
       'OPTIMIZE TABLE demo',
       'CALL some_proc(1)',
       'SET SESSION sql_mode = ""',
+      'WITH removed AS (DELETE FROM demo WHERE id = 1 RETURNING *) SELECT * FROM removed',
     ];
     for (const sql of statements) {
       expect(() => normalizeWriteStatement(sql), `写通道应放行：${sql}`).not.toThrow();
@@ -48,6 +50,32 @@ describe('工作台 SQL 准入：该放的都放行', () => {
       'EXPLAIN SELECT * FROM demo',
     ]) {
       expect(() => normalizeReadOnlyStatement(sql), `读通道应放行：${sql}`).not.toThrow();
+    }
+  });
+
+  /**
+   * 改数据的 CTE 此前两条路都不收：语句头是 with 被判成读，读通道又因含 DELETE 拒收，
+   * 写通道再以「这是只读语句」拒收（Codex P2）。
+   */
+  it('改数据的 CTE 判为写，读通道拒、写通道收', () => {
+    const sql = 'WITH removed AS (DELETE FROM demo WHERE id = 1 RETURNING *) SELECT * FROM removed';
+    expect(classifySqlStatement(sql).kind).toBe('write');
+    expect(() => normalizeWriteStatement(sql)).not.toThrow();
+    expect(() => normalizeReadOnlyStatement(sql)).toThrow(/写操作|写 SQL/);
+  });
+
+  /**
+   * 事务控制两条路都不收：每次执行是独立连接，BEGIN / UPDATE / ROLLBACK 三条全「成功」
+   * 而数据回不去，等于给了一个假的安全信号（Codex P1）。
+   */
+  it('事务控制语句被拒绝，并指向初始化 SQL', () => {
+    for (const sql of ['BEGIN', 'START TRANSACTION', 'COMMIT', 'ROLLBACK', 'SAVEPOINT s1']) {
+      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+    }
+    expect(TRANSACTION_CONTROL_HEADS).toContain('begin');
+    for (const head of TRANSACTION_CONTROL_HEADS) {
+      expect(WRITE_STATEMENT_HEADS, `${head} 不该再出现在写白名单里`).not.toContain(head);
     }
   });
 
