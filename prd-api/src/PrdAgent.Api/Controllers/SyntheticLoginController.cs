@@ -24,12 +24,16 @@ namespace PrdAgent.Api.Controllers;
 public sealed class SyntheticLoginController : ControllerBase
 {
     private const string TicketPurpose = "stable-smoke-login";
+    private const string GatewayTicketPurpose = "stable-smoke-console-login";
+    private const string GatewayTicketAudience = "llmgw-console";
+    private const string GatewayTicketCollectionName = "llmgw_map_sso_tickets";
     private const int DefaultTicketSeconds = 180;
     private const int MinTicketSeconds = 60;
     private const int MaxTicketSeconds = 300;
     private const int SessionMinutes = 30;
 
     private readonly MongoDbContext _db;
+    private readonly LlmGatewayDataContext _gatewayData;
     private readonly IConfiguration _configuration;
     private readonly IJwtService _jwtService;
     private readonly IAuthSessionService _authSessionService;
@@ -37,16 +41,100 @@ public sealed class SyntheticLoginController : ControllerBase
 
     public SyntheticLoginController(
         MongoDbContext db,
+        LlmGatewayDataContext gatewayData,
         IConfiguration configuration,
         IJwtService jwtService,
         IAuthSessionService authSessionService,
         ILogger<SyntheticLoginController> logger)
     {
         _db = db;
+        _gatewayData = gatewayData;
         _configuration = configuration;
         _jwtService = jwtService;
         _authSessionService = authSessionService;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// 为稳定冒烟签发 LLMGW 一次性短票据。只接受 RSA 签名身份，不接受长期 AI Access Key。
+    /// 账号和角色是否可补齐由 LLMGW 自己决定，MAP 不替网关管理成员权限。
+    /// </summary>
+    [HttpPost("gateway-ticket")]
+    [Authorize(AuthenticationSchemes = StableSmokeAuthenticationHandler.SchemeName)]
+    [ProducesResponseType(typeof(ApiResponse<StableSmokeGatewayTicketResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> IssueGatewayTicket(CancellationToken ct)
+    {
+        if (!IsEnabled(_configuration))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(
+                    "SYNTHETIC_LOGIN_DISABLED",
+                    "合成测试登录未启用，请由管理员开启后重试"));
+        }
+
+        if (!string.Equals(
+                User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value,
+                "1",
+                StringComparison.Ordinal))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(
+                    "STABLE_SMOKE_SIGNATURE_REQUIRED",
+                    "网关巡检入口只接受稳定冒烟签名身份，请更新巡检凭据后重试"));
+        }
+
+        var username = User.FindFirst(JwtRegisteredClaimNames.UniqueName)?.Value?.Trim() ?? string.Empty;
+        var userId = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value?.Trim() ?? string.Empty;
+        if (!IsAllowedUser(username, ReadAllowedUsers(_configuration)))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(
+                    "SYNTHETIC_LOGIN_ACCOUNT_NOT_ALLOWED",
+                    "当前账号不是合成测试专用账号，请更换已授权账号后重试"));
+        }
+
+        var user = await _db.Users.Find(item => item.UserId == userId).FirstOrDefaultAsync(ct);
+        if (user is null || user.Status != UserStatus.Active || user.UserType != UserType.Human)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(
+                    "SYNTHETIC_LOGIN_ACCOUNT_UNAVAILABLE",
+                    "合成测试账号不可用，请检查账号状态后重试"));
+        }
+
+        var now = DateTime.UtcNow;
+        var expiresAt = now.AddSeconds(60);
+        var code = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+        var ticketId = Guid.NewGuid().ToString("N");
+        var tickets = _gatewayData.Database.GetCollection<BsonDocument>(GatewayTicketCollectionName);
+        await tickets.InsertOneAsync(new BsonDocument
+        {
+            { "_id", ticketId },
+            { "CodeHash", Hash(code) },
+            { "Purpose", GatewayTicketPurpose },
+            { "Audience", GatewayTicketAudience },
+            { "MapUserId", user.UserId },
+            { "MapUsername", user.Username },
+            { "MapDisplayName", user.DisplayName },
+            { "State", "issued" },
+            { "CreatedAt", now },
+            { "ExpiresAt", expiresAt },
+            { "ConsumedAt", BsonNull.Value },
+        }, cancellationToken: ct);
+
+        _logger.LogInformation(
+            "Stable smoke gateway ticket issued. ticketId={TicketId}, username={Username}, expiresAt={ExpiresAt}, requestId={RequestId}",
+            ticketId,
+            user.Username,
+            expiresAt,
+            HttpContext.TraceIdentifier);
+
+        return Ok(ApiResponse<StableSmokeGatewayTicketResponse>.Ok(new StableSmokeGatewayTicketResponse
+        {
+            Code = code,
+            ExpiresAt = expiresAt,
+            TicketId = ticketId,
+        }));
     }
 
     [HttpPost("ticket")]
@@ -306,6 +394,13 @@ public sealed class SyntheticLoginExchangeRequest
 public sealed class SyntheticLoginTicketResponse
 {
     public string LoginUrl { get; set; } = string.Empty;
+    public DateTime ExpiresAt { get; set; }
+    public string TicketId { get; set; } = string.Empty;
+}
+
+public sealed class StableSmokeGatewayTicketResponse
+{
+    public string Code { get; set; } = string.Empty;
     public DateTime ExpiresAt { get; set; }
     public string TicketId { get; set; } = string.Empty;
 }

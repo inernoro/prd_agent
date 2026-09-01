@@ -479,6 +479,7 @@ public class GatewayKeyGateContractTests
         new object[] { HttpMethod.Post, "/gemini/v1beta/models/gemini-test:generateContent" },
         new object[] { HttpMethod.Post, "/gemini/v1beta/models/gemini-test:streamGenerateContent" },
         new object[] { HttpMethod.Get, "/gw/v1/pools?appCallerCode=demo.app::chat&modelType=chat" },
+        new object[] { HttpMethod.Get, "/gw/v1/image-models?appCallerCode=demo.app::image-gen" },
         new object[] { HttpMethod.Get, "/gw/v1/shadow-comparisons?sinceHours=24" },
     };
 
@@ -1691,6 +1692,16 @@ public class GatewayKeyGateContractTests
             var poolsResponse = await app.GetTestClient().SendAsync(pools);
 
             poolsResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastPoolsTenantId.ShouldBe("tenant-test");
+
+            var catalog = new HttpRequestMessage(HttpMethod.Get,
+                "/gw/v1/image-models?appCallerCode=visual-agent.text2img%3A%3Aimage-gen");
+            catalog.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            catalog.Headers.Add("X-Gateway-App-Caller", "header.other::image-gen");
+            var catalogResponse = await app.GetTestClient().SendAsync(catalog);
+            catalogResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            authorizer.RequiredScope.ShouldBe("route:read");
+            authorizer.AppCallerCode.ShouldBe("visual-agent.text2img::image-gen");
             gateway.LastPoolsTenantId.ShouldBe("tenant-test");
         }
         finally
