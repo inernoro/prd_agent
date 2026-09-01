@@ -3744,7 +3744,7 @@ function ResourceConsole({
                       className={`inline-flex min-h-[2.75rem] min-w-[132px] shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left leading-tight transition-colors ${
                         active
                           ? 'border-primary bg-primary/12 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
-                          : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[var(--shadow-chip)] hover:bg-[hsl(var(--accent))]'
+                          : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[shadow:var(--shadow-chip)] hover:bg-[hsl(var(--accent))]'
                       } ${resource.access === 'external' ? 'ring-1 ring-info/30' : ''} ${
                         isReplicaSet ? 'ring-1 ring-indigo-500/45' : ''
                       } ${chipInfo?.provisioning ? 'animate-pulse ring-2 ring-indigo-400/60' : ''} ${

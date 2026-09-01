@@ -178,7 +178,34 @@ describe('方案 B 的分层落在 token 上，不是硬编码颜色', () => {
     expectGuardRedOnMutation(
       guard,
       real,
-      mutate(real, 'shadow-[var(--shadow-chip)]', 'shadow-[inset_0_1px_0_hsl(0_0%_100%/.05)]'),
+      mutate(real, 'shadow-[shadow:var(--shadow-chip)]', 'shadow-[inset_0_1px_0_hsl(0_0%_100%/.05)]'),
+    );
+  });
+
+  /**
+   * `shadow-[var(--x)]` 会被 Tailwind 解析成**阴影颜色**而不是阴影值：实际产出的是
+   * `--tw-shadow-color: var(--x); --tw-shadow: var(--tw-shadow-colored)`，
+   * 而 `--tw-shadow-colored` 此时是空的 —— 阴影整个消失，页面照常渲染、测试照常绿
+   * （形状 2 的静默退化，本次真的踩了：token 加对了、类写上了、编译出来是个颜色）。
+   * 必须写成带类型提示的 `shadow-[shadow:var(--x)]`。
+   *
+   * 只管这种「整个值就是一个裸 var()」的歧义写法。`shadow-[0_0_0_1px_hsl(var(--primary)/.35)]`
+   * 以长度开头，Tailwind 判得出是阴影值，编译正确（已核对 dist 产物），不在此列。
+   */
+  it('引用 token 的阴影必须带 shadow: 类型提示，否则 Tailwind 当成颜色', () => {
+    const bad = readDrawer().match(/shadow-\[var\(--[^\]]*\]/g) || [];
+    expect(bad, `这些阴影会被编译成颜色、实际不产生阴影：${bad.join(' / ')}`).toEqual([]);
+  });
+
+  it('红用例：去掉 shadow: 类型提示，守卫必须变红', () => {
+    const real = readDrawer();
+    const guard = (source: string) => {
+      expect(source.match(/shadow-\[var\(--[^\]]*\]/g) || []).toEqual([]);
+    };
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(real, 'shadow-[shadow:var(--shadow-chip)]', 'shadow-[var(--shadow-chip)]'),
     );
   });
 
