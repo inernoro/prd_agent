@@ -93,6 +93,33 @@ describe('scrubParentSecretsFromEnv', () => {
     expect(env.JWT_SECRET).toBeUndefined();
   });
 
+  it('scrubs the parent AI key but remaps a child-specific CDS_PREVIEW_AI_ACCESS_KEY', () => {
+    // 红绿闭环：把 preview-instance.ts 里 `env.CDS_AI_ACCESS_KEY = previewAiAccessKey`
+    // 那行删掉，本用例第三条断言变红（拿到 undefined）——它测的是接线，不是常量。
+    const env: NodeJS.ProcessEnv = {
+      CDS_PREVIEW_INSTANCE: '1',
+      // 父实例那两把（能操作生产 CDS）
+      AI_ACCESS_KEY: 'parent-key',
+      CDS_AI_ACCESS_KEY: 'parent-key-canonical',
+      // 为子实例单独生成的那把
+      CDS_PREVIEW_AI_ACCESS_KEY: 'child-only-key',
+    };
+
+    const scrubbed = scrubParentSecretsFromEnv(env);
+
+    expect(scrubbed).toContain('AI_ACCESS_KEY');
+    expect(scrubbed).toContain('CDS_PREVIEW_AI_ACCESS_KEY');
+    expect(env.CDS_AI_ACCESS_KEY).toBe('child-only-key');
+    expect(env.AI_ACCESS_KEY).toBeUndefined();
+  });
+
+  it('leaves no AI key at all when only the parent key was inherited', () => {
+    const env: NodeJS.ProcessEnv = { CDS_PREVIEW_INSTANCE: '1', AI_ACCESS_KEY: 'parent-key' };
+    scrubParentSecretsFromEnv(env);
+    expect(env.AI_ACCESS_KEY).toBeUndefined();
+    expect(env.CDS_AI_ACCESS_KEY).toBeUndefined();
+  });
+
   it('keeps preview SSO disabled when no trusted preview public base URL is provided', () => {
     const env: NodeJS.ProcessEnv = {
       CDS_PREVIEW_INSTANCE: '1',

@@ -26,6 +26,11 @@
 # auth mode 无需配置：子实例启动时自动归一化——有 CDS_PREVIEW_PASSWORD 即
 # basic，没有即 disabled；继承的 CDS_AUTH_MODE（如父实例的 github）不生效。
 #
+# 要让 AI Agent 直接调子实例 API 自测（不靠无头浏览器登录），再配一把子实例专用钥匙：
+#   CDS_PREVIEW_AI_ACCESS_KEY=<为子实例单独生成，勿复用父实例的 AI_ACCESS_KEY>
+# 启动清洗会把它重映射为 CDS_AI_ACCESS_KEY，供 X-AI-Access-Key 校验消费。父实例那把
+# 照旧被清除：它能操作生产 CDS，不能留给未合并代码。不配就是没有，Agent 只能走登录。
+#
 # 可选的一键登录同样使用子实例专用前缀，避免父级 SSO 密钥进入未合并代码：
 #   CDS_PREVIEW_PUBLIC_BASE_URL=<该子实例的 HTTPS 预览根地址，启用 SSO 时必填>
 #   CDS_PREVIEW_SSO_ENABLED=1

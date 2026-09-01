@@ -118,6 +118,11 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
   // 先抄下子实例专用凭据（本身命中 PASSWORD 模式，会在下面的循环里被删）。
   const previewUsername = env.CDS_PREVIEW_USERNAME;
   const previewPassword = env.CDS_PREVIEW_PASSWORD;
+  // 子实例专用 AI 静态钥匙。父实例的 AI_ACCESS_KEY / CDS_AI_ACCESS_KEY 命中
+  // ACCESS_KEY 模式，照旧被下面的循环删掉——那把钥匙能操作生产 CDS，绝不能
+  // 留给未合并代码。要让 Agent 在子实例上自测（无头浏览器登录之外的唯一路径），
+  // 必须为它单独生成一把，走 CDS_PREVIEW_ 前缀，与门禁凭据同一套规矩。
+  const previewAiAccessKey = env.CDS_PREVIEW_AI_ACCESS_KEY;
   const previewPublicBaseUrl = normalizePreviewPublicBaseUrl(env.CDS_PREVIEW_PUBLIC_BASE_URL);
   const previewSso = {
     enabled: env.CDS_PREVIEW_SSO_ENABLED,
@@ -137,6 +142,7 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
   }
   if (previewUsername) env.CDS_USERNAME = previewUsername;
   if (previewPassword) env.CDS_PASSWORD = previewPassword;
+  if (previewAiAccessKey) env.CDS_AI_ACCESS_KEY = previewAiAccessKey;
   if (previewPublicBaseUrl) env.CDS_PUBLIC_BASE_URL = previewPublicBaseUrl;
   const previewSsoWantsEnabled = /^(1|true|yes|on)$/i.test(previewSso.enabled || '');
   if (previewSso.enabled) {
@@ -165,7 +171,8 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
     console.log(
       `[preview-instance] 已清除 ${scrubbed.length} 个疑似密钥的环境变量（子实例不持有父实例秘密）: ` +
       scrubbed.sort().join(', ') +
-      (previewPassword ? '；已用 CDS_PREVIEW_* 专用凭据启用子实例门禁' : ''),
+      (previewPassword ? '；已用 CDS_PREVIEW_* 专用凭据启用子实例门禁' : '') +
+      (previewAiAccessKey ? '；已启用子实例专用 AI 静态钥匙（CDS_PREVIEW_AI_ACCESS_KEY）' : ''),
     );
   }
   return scrubbed;
