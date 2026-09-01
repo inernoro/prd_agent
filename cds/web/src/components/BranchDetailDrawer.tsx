@@ -5400,12 +5400,51 @@ type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQ
  */
 const READ_STATEMENT_HEADS = ['select', 'show', 'describe', 'desc', 'explain', 'with', 'table', 'values'];
 
+/**
+ * 写关键字表。**必须与后端 sql-statement-policy.ts 的 WRITE_KEYWORDS_IN_READ_PATH
+ * 逐字一致**（守卫测试比对两边源码）：两边不一致就会出现「前端当读发过去、后端当写
+ * 拒绝」或反过来的死语句。
+ */
+const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock)\b/i;
+
+/** 与后端 stripSqlComments(sql, true) 同一套扫描：注释剥掉，字面量内容抹成空格。 */
+function stripSqlCommentsAndLiterals(sql: string): string {
+  let out = '';
+  let quote: string | null = null;
+  for (let i = 0; i < sql.length; i += 1) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+    if (quote) {
+      out += ch === quote ? ch : ' ';
+      if (ch === '\\') { out += ' '; i += 1; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; continue; }
+    if (ch === '/' && next === '*') {
+      const end = sql.indexOf('*/', i + 2);
+      i = end === -1 ? sql.length : end + 1;
+      out += ' ';
+      continue;
+    }
+    if ((ch === '-' && next === '-') || ch === '#') {
+      const end = sql.indexOf('\n', i);
+      i = end === -1 ? sql.length : end;
+      out += ' ';
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
 function sqlCommandIsReadOnly(sql: string): boolean {
   const body = sql.trim().replace(/;+$/g, '').trim();
   const head = body.match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
   if (!READ_STATEMENT_HEADS.includes(head)) return false;
-  // CTE 后面可以跟 DELETE/UPDATE；头是 with 不代表只读，与后端同一条判据。
-  return !/\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock)\b/i.test(body);
+  // CTE 后面可以跟 DELETE/UPDATE，头是 with 不代表只读；但字面量/注释里的那些词不算
+  // ——判据看代码本身，与后端同一条。
+  return !WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body));
 }
 
 function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter; onWorkbenchDismiss?: () => void }): JSX.Element {

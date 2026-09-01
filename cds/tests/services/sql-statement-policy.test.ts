@@ -94,6 +94,23 @@ describe('工作台 SQL 准入：该放的都放行', () => {
     }
   });
 
+  /**
+   * 字面量/注释里的 update 不是写：这条纯读 CTE 被判成写就会被推进需要 admin +
+   * 二次确认的写通道（Codex P2 第二轮）。判据要看代码本身。
+   */
+  it('字符串字面量里的写关键字不算写', () => {
+    const readCte = "WITH x AS (SELECT 'update') SELECT * FROM x";
+    expect(classifySqlStatement(readCte).kind).toBe('read');
+    expect(() => normalizeReadOnlyStatement(readCte)).not.toThrow();
+    expect(stripSqlComments(readCte, true)).not.toMatch(/update/i);
+    // 注释里的同理
+    const commented = 'SELECT 1 /* delete from demo */';
+    expect(classifySqlStatement(commented).kind).toBe('read');
+    expect(() => normalizeReadOnlyStatement(commented)).not.toThrow();
+    // 真正的写照旧判写
+    expect(classifySqlStatement("WITH x AS (DELETE FROM demo RETURNING *) SELECT * FROM x").kind).toBe('write');
+  });
+
   it('读写分类与两端白名单一致', () => {
     expect(classifySqlStatement('with x as (select 1) select * from x').kind).toBe('read');
     expect(classifySqlStatement('DELETE FROM demo').kind).toBe('write');
@@ -185,6 +202,19 @@ describe('前后端判据不许漂移', () => {
     expect(source).toContain('return normalizeWriteStatement(sql);');
     expect(source, '路由里不应再自己维护一份语句头白名单')
       .not.toContain("['select', 'show', 'describe', 'desc', 'explain'].includes(head)");
+  });
+
+  it('前端与后端的写关键字表逐字一致', () => {
+    const backend = fs.readFileSync(path.join(CDS_ROOT, 'src/services/sql-statement-policy.ts'), 'utf8');
+    const front = fs.readFileSync(path.join(CDS_ROOT, 'web/src/components/BranchDetailDrawer.tsx'), 'utf8');
+    const pick = (src: string) => src.match(/WRITE_KEYWORDS_IN_READ_PATH = (\/[^\n]+\/i);/)?.[1];
+    const backendRe = pick(backend);
+    const frontRe = pick(front);
+    expect(backendRe, '后端写关键字表找不到了').toBeTruthy();
+    expect(frontRe, '前端写关键字表找不到了').toBeTruthy();
+    expect(frontRe).toBe(backendRe);
+    // 前端也必须先剥注释、抹字面量再扫，否则纯读 CTE 会被送进写通道再被后端拒
+    expect(front).toContain('WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body))');
   });
 
   it('红用例：前端白名单漂一个词，守卫必须变红', () => {

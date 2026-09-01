@@ -90,18 +90,23 @@ const HOST_ESCAPE_PHRASES: readonly RegExp[] = [
 ];
 
 /**
- * 剥掉 SQL 注释（`/* *\/`、`--` 到行尾、`#` 到行尾），字符串字面量内的照原样保留。
- * 只服务于上面的词组匹配；判「危险与否」的主力是词级别标记，不依赖这个函数完美。
+ * 剥掉 SQL 注释（`/* *\/`、`--` 到行尾、`#` 到行尾）。
+ *
+ * `maskLiterals` 为真时，字符串字面量的**内容**一并抹成空格（引号保留）：判「这条语句
+ * 里有没有写关键字」必须看代码本身，`WITH x AS (SELECT 'update') SELECT * FROM x`
+ * 是一条纯读语句，却因为字面量里那个词被判成写，被推进需要 admin + 二次确认的写通道
+ * （Codex P2，2026-09-01）。这仍是同一个扫描器，不是往正则里再加一层同义词。
  */
-export function stripSqlComments(sql: string): string {
+export function stripSqlComments(sql: string, maskLiterals = false): string {
   let out = '';
   let quote: string | null = null;
   for (let i = 0; i < sql.length; i += 1) {
     const ch = sql[i];
     const next = sql[i + 1];
     if (quote) {
-      out += ch;
-      if (ch === '\\') { out += next ?? ''; i += 1; continue; }
+      const inLiteral = maskLiterals && ch !== quote;
+      out += inLiteral ? ' ' : ch;
+      if (ch === '\\') { out += maskLiterals ? ' ' : (next ?? ''); i += 1; continue; }
       if (ch === quote) quote = null;
       continue;
     }
@@ -146,7 +151,7 @@ export function classifySqlStatement(sql: string): SqlStatementClassification {
     // 改数据的 CTE（PostgreSQL 的 `WITH x AS (DELETE ... RETURNING *) SELECT ...`）语句头
     // 也是 with，但它是写。只看语句头会把它判成读，而读通道又因为含 DELETE 拒收——
     // 两条路都不收，这条合法语句就没地方跑了（Codex P2，2026-09-01）。
-    if (WRITE_KEYWORDS_IN_READ_PATH.test(body)) return { head, kind: 'write' };
+    if (WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlComments(body, true))) return { head, kind: 'write' };
     return { head, kind: 'read' };
   }
   if (WRITE_STATEMENT_HEADS.includes(head)) return { head, kind: 'write' };
