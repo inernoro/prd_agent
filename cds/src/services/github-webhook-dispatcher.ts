@@ -693,14 +693,27 @@ export class GitHubWebhookDispatcher {
     return [...out];
   }
 
-  private isDocsOnlyPush(event: GitHubPushEvent): { ok: boolean; changedPaths: string[] } {
-    const changedPaths = this.changedPathsFromPush(event);
+  /**
+   * 这次 push 的改动清单是不是完整的。
+   *
+   * GitHub 的 push payload 会截断 commits（`size` / `distinct_size` 报的是真实
+   * 条数），截断之后 `changedPathsFromPush` 返回的是一份**非空但不全**的清单 ——
+   * 这是最危险的一种输入：它看起来像证据，实际会让任何「按改动路径下判断」的
+   * 逻辑得出反向结论。所以凡是拿改动清单做判断的地方都必须先问这一句。
+   */
+  private changedPathsComplete(event: GitHubPushEvent): boolean {
     const commits = event.commits || [];
     const reportedSize = typeof event.size === 'number' ? event.size : undefined;
     const distinctSize = typeof event.distinct_size === 'number' ? event.distinct_size : undefined;
-    if (commits.length >= 2048) return { ok: false, changedPaths };
-    if (reportedSize !== undefined && reportedSize > commits.length) return { ok: false, changedPaths };
-    if (distinctSize !== undefined && distinctSize > commits.length) return { ok: false, changedPaths };
+    if (commits.length >= 2048) return false;
+    if (reportedSize !== undefined && reportedSize > commits.length) return false;
+    if (distinctSize !== undefined && distinctSize > commits.length) return false;
+    return true;
+  }
+
+  private isDocsOnlyPush(event: GitHubPushEvent): { ok: boolean; changedPaths: string[] } {
+    const changedPaths = this.changedPathsFromPush(event);
+    if (!this.changedPathsComplete(event)) return { ok: false, changedPaths };
     if (changedPaths.length === 0) return { ok: false, changedPaths };
     const impact = analyzeChangeImpact(changedPaths);
     return {
@@ -1251,7 +1264,10 @@ export class GitHubWebhookDispatcher {
       };
     }
 
-    const changedPaths = this.changedPathsFromPush(event);
+    // 清单被截断时当作「判不准」——传空数组进去，作用域判据据此 fail-open。
+    // 拿一份不全的清单当权威，会把某个项目判成「未被波及」而静默跳过它的部署，
+    // 而这正是本次改动最不该引入的失败模式（漏部署没有任何信号）。
+    const changedPaths = this.changedPathsComplete(event) ? this.changedPathsFromPush(event) : [];
     const perProject: WebhookDispatchResult[] = [];
     for (const project of projects) {
       const scope = resolveProjectScope(this.deps.stateService.getBuildProfilesForProject(project.id));

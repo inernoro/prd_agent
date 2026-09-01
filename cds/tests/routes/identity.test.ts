@@ -20,6 +20,7 @@ import {
   userCredentialRouteAllowed,
 } from '../../src/routes/identity.js';
 import { StateService } from '../../src/services/state.js';
+import { decideProjectCredentialIssue } from '../../src/services/identity.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 
 async function call(
@@ -228,5 +229,65 @@ describe('身份层路由', () => {
     const res = await call(server, 'POST', '/api/identity/project-credentials', { projectId: 'proj-a' });
     expect(res.status).toBe(401);
     expect(res.body.message).toContain('cdsu_');
+  });
+});
+
+/**
+ * Codex P1：`no_grant` 的下一步指向「发起接入申请、由人批准一次」，但那条流程
+ * 只签一把无主的 AgentKey，从不写 ProjectGrant。于是批准之后同一把用户级凭证
+ * 再来自愈仍然是 no_grant，钥匙一丢又得重新批 —— 「批一次就够」这条本 PR 的
+ * 单一目标，走这条路根本走不通。
+ */
+describe('接入申请批准 = 写授权，不只是发钥匙', () => {
+  let tmpDir: string;
+  let svc: StateService;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-approve-grant-'));
+    svc = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    svc.load();
+    svc.addProject({ id: 'p1', slug: 'demo', name: '演示项目', kind: 'git' } as never);
+    svc.addPrincipal({
+      id: 'pr_a', name: '某个智能体', kind: 'agent', status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => {
+    flushAllJsonStateStores();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('申请里带了主体时，批准要写一条 approved 授权，自愈随即成立', () => {
+    // 申请阶段记下发起方是谁
+    svc.addAccessRequest({
+      id: 'req1', kind: 'project', projectId: 'p1',
+      pollTokenHash: 'x', agentName: '某个智能体', purpose: '测试',
+      status: 'pending', createdAt: new Date().toISOString(),
+      principalId: 'pr_a',
+    });
+    // 批准前：没授权，自愈会被拒
+    expect(decideProjectCredentialIssue(svc.getPrincipal('pr_a'), svc.getProjectGrants(), 'p1').allowed).toBe(false);
+
+    // 批准（路由做的事：发钥匙 + 写授权）
+    svc.addProjectGrant({
+      id: 'pg_1', projectId: 'p1', principalId: 'pr_a',
+      origin: 'approved', grantedAt: new Date().toISOString(),
+    });
+
+    // 批准后：自愈成立，且丢了钥匙也不必再批
+    expect(decideProjectCredentialIssue(svc.getPrincipal('pr_a'), svc.getProjectGrants(), 'p1').allowed).toBe(true);
+  });
+
+  it('批准路由源码里真的写了授权（不是只在测试里手动补一行）', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'src', 'routes', 'access-requests.ts'),
+      'utf-8',
+    );
+    // 接线守卫：删掉这段，批准就退回「只发钥匙」，而上面那条用例照样绿
+    expect(source).toContain('addProjectGrant');
+    expect(source).toContain("origin: 'approved'");
+    // 申请阶段必须认一次主体，否则批准时无从写起
+    expect(source).toContain('resolveUserCredential');
   });
 });

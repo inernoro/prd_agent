@@ -38,6 +38,7 @@ import {
   selectReleasePreflightsToPrune,
   selectReleaseRunsToPrune,
 } from './release-retention.js';
+import { credentialUsability, hasActiveGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
 
@@ -2738,6 +2739,17 @@ export class StateService {
         // 身份层（2026-09-01）：新签发的项目级凭证是短命的（用即续）。存量密钥
         // 没有 expiresAt，这里恒为 false —— 与启用前逐字节一致，零回归。
         if (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()) continue;
+        // 归属主体的凭据，撤销要**当场**生效：界面上写着「停用后它名下所有凭证
+        // 立刻不可用」，撤销授权同理。只按密钥自己的 revokedAt 判，等于让这两条
+        // 承诺落空最长 30 天。判据不在这里另写一份，直接借身份层那一份。
+        //
+        // 只对带 principalId 的密钥生效 —— 存量密钥没有主体、没有授权行，
+        // 这段整个跳过，与启用前逐字节一致。
+        if (entry.principalId) {
+          const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
+          if (!credentialUsability(entry, principal, Date.now(), true).usable) continue;
+          if (!hasActiveGrant(this.state.projectGrants || [], entry.principalId, project.id)) continue;
+        }
         try {
           const entryBuf = Buffer.from(entry.hash, 'hex');
           if (entryBuf.length !== hashBuf.length) continue;
@@ -2758,6 +2770,14 @@ export class StateService {
     const entry = project?.agentKeys?.find((k) => k.id === keyId);
     if (!entry) return;
     entry.lastUsedAt = new Date().toISOString();
+    // 「用即续」必须在这里兑现：只更新 lastUsedAt 而不推 expiresAt，一直在干活的
+    // Agent 也会在第 30 天被锁在门外，而文档与界面都写着用一次就续期。
+    // 存量密钥没有 expiresAt —— 不给它凭空造一个，否则等于给永不过期的密钥
+    // 强加一个到期日。slideExpiry 少于一天不返回新值，不会把 state 写爆。
+    if (entry.expiresAt) {
+      const next = slideExpiry(entry.expiresAt, PROJECT_CREDENTIAL_TTL_DAYS);
+      if (next) entry.expiresAt = next;
+    }
     // Save is best-effort — a failed save here shouldn't block the request.
     try { this.save(); } catch { /* ignore */ }
   }

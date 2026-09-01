@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
+import nodeCrypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { StateService } from '../../src/services/state.js';
@@ -291,5 +292,88 @@ describe('removeProject：授权跟着项目一起谢幕', () => {
     svc.removeProject('p-doomed');
     expect(hasActiveGrant(svc.getProjectGrants(), 'pr_x', 'p-doomed')).toBe(false);
     expect(hasActiveGrant(svc.getProjectGrants(), 'pr_x', 'p-keep')).toBe(true);
+  });
+});
+
+/**
+ * Codex 第一轮的三条 P1 —— 都不是逻辑写错，是**承诺与代码对不上**：
+ * 界面逐字写着「停用后它名下所有凭证立刻不可用」，文档写着项目级凭据「用即续」，
+ * 而鉴权路径只看密钥自己的 revokedAt 与一个固定到期日。这三条各自都能编译、
+ * 各自都有测试、通读也挑不出，只有把「界面说什么」和「代码做什么」并排放才现形。
+ */
+describe('findAgentKeyForAuth：撤销当场生效、用一次就续期', () => {
+  let tmpDir: string;
+  let svc: StateService;
+  const projectKey = 'cdsp_owned_' + 'a'.repeat(24);
+  const legacyKey = 'cdsp_owned_' + 'b'.repeat(24);
+  const sha = (v: string) => nodeCrypto.createHash('sha256').update(v).digest('hex');
+  const inDays = (n: number) => new Date(Date.now() + n * 86400_000).toISOString();
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-auth-revoke-'));
+    svc = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    svc.load();
+    svc.addProject({ id: 'p1', slug: 'owned', name: '有主项目', kind: 'git' } as never);
+    svc.addPrincipal({
+      id: 'pr_a', name: '某台机器', kind: 'machine', status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+    svc.addProjectGrant({
+      id: 'pg_a', projectId: 'p1', principalId: 'pr_a',
+      origin: 'approved', grantedAt: new Date().toISOString(),
+    });
+    svc.addAgentKey('p1', {
+      id: 'k_owned', label: '有主', hash: sha(projectKey), scope: 'rw',
+      createdAt: new Date().toISOString(),
+      principalId: 'pr_a', expiresAt: inDays(30),
+    });
+    // 存量密钥：没有主体、没有到期日 —— 下面每一条都要证明它不受影响
+    svc.addAgentKey('p1', {
+      id: 'k_legacy', label: '存量', hash: sha(legacyKey), scope: 'rw',
+      createdAt: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => {
+    flushAllJsonStateStores();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('停用主体后，它名下的项目级凭据立刻鉴权失败（界面就是这么写的）', () => {
+    expect(svc.findAgentKeyForAuth(projectKey)).not.toBeNull();
+    svc.setPrincipalStatus('pr_a', 'disabled');
+    expect(svc.findAgentKeyForAuth(projectKey)).toBeNull();
+    // 恢复后重新可用 —— 停用是可逆的，不是把密钥烧了
+    svc.setPrincipalStatus('pr_a', 'active');
+    expect(svc.findAgentKeyForAuth(projectKey)).not.toBeNull();
+  });
+
+  it('撤销项目授权后，该主体在这个项目上的凭据立刻失效', () => {
+    expect(svc.findAgentKeyForAuth(projectKey)).not.toBeNull();
+    svc.revokeProjectGrant('pg_a');
+    expect(svc.findAgentKeyForAuth(projectKey)).toBeNull();
+  });
+
+  it('存量密钥不受主体与授权影响（零回归的那条线）', () => {
+    svc.setPrincipalStatus('pr_a', 'disabled');
+    svc.revokeProjectGrant('pg_a');
+    expect(svc.findAgentKeyForAuth(legacyKey)).not.toBeNull();
+  });
+
+  it('用一次就把到期日往后推（否则一直在干活的 Agent 第 30 天被锁在门外）', () => {
+    const before = svc.getState().projects![0].agentKeys!.find((k) => k.id === 'k_owned')!.expiresAt!;
+    // 先把到期日改近，模拟已经用了一阵子
+    svc.getState().projects![0].agentKeys!.find((k) => k.id === 'k_owned')!.expiresAt = inDays(3);
+    svc.touchAgentKeyLastUsed('p1', 'k_owned');
+    const after = svc.getState().projects![0].agentKeys!.find((k) => k.id === 'k_owned')!.expiresAt!;
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(inDays(29)));
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(before) - 86400_000);
+  });
+
+  it('存量密钥用一次不会被凭空安上一个到期日', () => {
+    svc.touchAgentKeyLastUsed('p1', 'k_legacy');
+    const entry = svc.getState().projects![0].agentKeys!.find((k) => k.id === 'k_legacy')!;
+    expect(entry.expiresAt).toBeUndefined();
+    expect(entry.lastUsedAt).toBeTruthy();
   });
 });

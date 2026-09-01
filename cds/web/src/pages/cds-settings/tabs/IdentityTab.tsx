@@ -116,17 +116,25 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
 
   useEffect(() => { void load(); }, [load]);
 
-  const issue = useCallback(async () => {
+  /**
+   * 签一张用户级凭证。
+   *
+   * 传 principalId = 给**已有主体**补一张（换了机器、凭证丢了、到期了）——
+   * 这条路径是整套自愈的入口：新建主体名下没有任何项目授权，补签成新主体
+   * 等于把「批一次就够」作废，人得重新批一遍。
+   * 不传 = 新建一个主体。
+   */
+  const issue = useCallback(async (principalId?: string) => {
     const name = newName.trim();
-    if (!name) { onToast('先给这台机器 / 这个智能体起个名字'); return; }
+    if (!principalId && !name) { onToast('先给这台机器 / 这个智能体起个名字'); return; }
     setCreating(true);
     try {
       const res = await apiRequest<{ plaintext: string; reach: string }>('/api/identity/user-credentials', {
         method: 'POST',
-        body: { name },
+        body: principalId ? { principalId } : { name },
       });
       setIssued({ plaintext: res.plaintext, reach: res.reach });
-      setNewName('');
+      if (!principalId) setNewName('');
       await load();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
@@ -250,6 +258,16 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
                 有效凭证 {row.activeCredentials.length} · 项目授权 {row.grants.length}
               </span>
               <span className="ml-auto text-xs text-muted-foreground">最近活动 {formatDate(row.principal.lastSeenAt)}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={creating || disabled}
+                title={disabled ? '主体已停用，先恢复再补签' : '为这个主体再签一张用户级凭证（换机器 / 凭证丢了 / 到期）'}
+                onClick={() => void issue(row.principal.id)}
+              >
+                <KeyRound /> 补签凭证
+              </Button>
               <ConfirmAction
                 title={disabled ? '恢复该主体?' : '停用该主体?'}
                 description={disabled

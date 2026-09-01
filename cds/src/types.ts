@@ -3682,6 +3682,14 @@ export interface AccessRequest {
   decidedBy?: string;
   /** 拒绝原因(status='rejected' 时可选)。 */
   rejectReason?: string;
+  /**
+   * 发起方的主体 id（身份层，2026-09-01）。发起时带了用户级凭证才有。
+   *
+   * 批准时据此写一条 `approved` 项目授权 —— 「人批一次，此后同一主体换机器、
+   * 丢凭据都不必再批」这条承诺全靠它落地：没有这个字段，批准只会签出一把
+   * 无主的密钥，密钥一丢又得重新申请，自愈根本无从谈起。
+   */
+  principalId?: string;
   /** 批准时签发的授权密钥(项目 AgentKey)的 id,留作审计/吊销。 */
   issuedKeyId?: string;
   /**

@@ -23,6 +23,7 @@ import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { AccessRequest, AgentKey, GlobalAgentKey } from '../types.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
+import { resolveUserCredential } from './identity.js';
 
 export interface AccessRequestsRouterDeps {
   stateService: StateService;
@@ -70,6 +71,15 @@ function pendingCount(stateService: StateService): number {
   return stateService.listAccessRequests().filter((r) => r.status === 'pending').length;
 }
 
+/** 从请求头里取出调用方出示的凭据明文（两种写法等价，与鉴权中间件同一口径）。 */
+function presentedKey(req: { headers: Record<string, unknown> }): string {
+  const header = req.headers['x-ai-access-key'];
+  if (typeof header === 'string' && header.trim()) return header.trim();
+  const auth = req.headers['authorization'];
+  if (typeof auth === 'string' && auth.startsWith('Bearer ')) return auth.slice(7).trim();
+  return '';
+}
+
 export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Router {
   const { stateService } = deps;
   const authDisabled = deps.authMode === 'disabled';
@@ -100,6 +110,11 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     const purpose = typeof body.purpose === 'string' && body.purpose.trim()
       ? body.purpose.trim().slice(0, 500) : '请求项目授权密钥(全权访问)。';
 
+    // 这条路由是免鉴权的（鸡生蛋：还没凭据才来申请），所以主体身份只能在这里
+    // 顺手认一次：带了用户级凭证就记下它是谁，没带就照旧匿名。批准时据此写授权，
+    // 让「批一次，以后丢凭据自己补」真的成立。
+    const principalId = resolveUserCredential(stateService, presentedKey(req))?.principalId;
+
     const pollToken = randomBytes(24).toString('base64url');
     const item: AccessRequest = {
       id: newRequestId(),
@@ -110,6 +125,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       purpose,
       status: 'pending',
       createdAt: new Date().toISOString(),
+      ...(principalId ? { principalId } : {}),
     };
     stateService.addAccessRequest(item);
     cdsEventsBus.publish('access-request.created', {
@@ -343,6 +359,20 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     };
     try {
       stateService.addAgentKey(project.id, keyEntry);
+      // 批准 = 授权，不只是发一把钥匙。少了这一步，同一个主体丢了钥匙还得再申请
+      // 一次，「批一次就够」只是句口号；而且 addProjectGrant 是集合语义，
+      // 重复批准不会写第二行。
+      if (item.principalId) {
+        stateService.addProjectGrant({
+          id: `pg_${randomBytes(6).toString('hex')}`,
+          projectId: project.id,
+          principalId: item.principalId,
+          origin: 'approved',
+          grantedAt: now.toISOString(),
+          ...(typeof decidedBy === 'string' ? { grantedBy: decidedBy } : {}),
+        });
+        keyEntry.principalId = item.principalId;
+      }
     } catch (err) {
       res.status(500).json({ error: 'state_save_failed', message: (err as Error).message });
       return;
