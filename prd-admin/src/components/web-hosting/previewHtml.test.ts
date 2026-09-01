@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { hasFetchableHtml, canUseSrcDocPreview, withPreviewBase } from './previewHtml';
+import { hasFetchableHtml, canUseSrcDocPreview, preserveSrcDocFragmentLinks, withPreviewBase } from './previewHtml';
 
 /**
  * 「这个站点走 srcDoc 还是直链」的判据。
@@ -92,5 +92,45 @@ describe('CDN 注入的遥测脚本', () => {
   it('不做「凡是跨域 module 一律剥」——那种页面可能真靠 CDN 上的 ESM 依赖跑', () => {
     const esm = '<script type="module" src="https://esm.sh/vue@3"></script>';
     expect(canUseSrcDocPreview(`<html><body>${esm}</body></html>`)).toBe(false);
+  });
+});
+
+describe('srcDoc 页内锚点', () => {
+  it('注入 base 后纯片段链接仍停留在当前 srcDoc，不请求对象存储目录', () => {
+    const out = withPreviewBase(
+      '<html><head></head><body><a href="#risk">风险</a><section id="risk">正文</section></body></html>',
+      'https://storage.example/data/web-hosting/sites/site-1/index.html',
+    );
+
+    expect(out).toContain('<base href="https://storage.example/data/web-hosting/sites/site-1/">');
+    expect(out).toContain('href="about:srcdoc#risk"');
+    expect(out).not.toContain('href="#risk"');
+  });
+
+  it('只改 a 与 area 的纯片段，不改资源引用、相对页面和外链', () => {
+    const html = [
+      '<a href=#top>顶部</a>',
+      "<area href='#map'>",
+      '<use href="#icon"></use>',
+      '<a href="./detail.html#part">详情</a>',
+      '<a href="https://example.test/#part">外链</a>',
+    ].join('');
+    const out = preserveSrcDocFragmentLinks(html);
+
+    expect(out).toContain('href="about:srcdoc#top"');
+    expect(out).toContain('href="about:srcdoc#map"');
+    expect(out).toContain('<use href="#icon"></use>');
+    expect(out).toContain('href="./detail.html#part"');
+    expect(out).toContain('href="https://example.test/#part"');
+  });
+
+  it('页面自带绝对 base 时同样保护纯片段链接', () => {
+    const out = withPreviewBase(
+      '<html><head><base href="https://cdn.example/assets/"></head><body><a href="#summary">摘要</a></body></html>',
+      'https://storage.example/site/index.html',
+    );
+
+    expect(out).toContain('<base href="https://cdn.example/assets/">');
+    expect(out).toContain('href="about:srcdoc#summary"');
   });
 });

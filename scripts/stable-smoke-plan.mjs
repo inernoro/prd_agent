@@ -42,7 +42,7 @@ export function parseMatrixCaseIds(markdown) {
 
 export function parseMatrixCases(markdown) {
   return markdown.split('\n').flatMap((line) => {
-    if (!/^\|\s*(?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW)-\d+\s*\|/.test(line)) return [];
+    if (!/^\|\s*(?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|WEB)-\d+\s*\|/.test(line)) return [];
     const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
     if (cells.length < 5) return [];
     return [{

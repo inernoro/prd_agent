@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "2026.08.31.1",
+  "catalogVersion": "2026.09.01.1",
   "name": "MAP 核心业务功能台账",
   "autoEnrollment": {
     "scheduledMode": "all",
@@ -188,6 +188,24 @@
       "artifactAssertions": ["选择模型与调用模型一致", "主备状态可解释", "请求和响应协议正确"],
       "cleanup": "删除 stsmk- 调用产物；日志按保留策略留证",
       "rollback": "优先禁用异常 Offering；必要时通过 CDS 回滚 previous"
+    },
+    {
+      "id": "web-hosting-sharing",
+      "label": "网页托管与分享",
+      "criticality": "P0",
+      "owner": "web-hosting",
+      "breadcrumb": ["首页", "网页托管", "个人空间", "创建文件夹或分享", "拖拽归档与访客交互"],
+      "entryPath": "/web-pages",
+      "entrySmoke": true,
+      "automationStatus": "journey",
+      "requiredCaseIds": ["WEB-001", "WEB-002", "WEB-003", "WEB-004", "WEB-005", "WEB-006"],
+      "regressionCaseIds": [],
+      "sourcePrefixes": ["prd-admin/src/pages/WebPagesPage.tsx", "prd-admin/src/pages/ShareViewPage.tsx", "prd-admin/src/components/web-hosting/", "prd-admin/src/components/share-dock/", "prd-admin/src/services/real/webPages", "prd-admin/src/services/real/webFolders", "prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs", "prd-api/src/PrdAgent.Api/Controllers/Api/WebPageAskController.cs", "prd-api/src/PrdAgent.Api/Controllers/Api/WebFolderController.cs", "prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService", "prd-api/src/PrdAgent.Infrastructure/Services/SiteContentSnapshotService", "prd-api/tests/PrdAgent.Tests/SiteContentSnapshotServiceTests.cs"],
+      "cdsPolicy": "HTML 上传、空文件夹持久化、拖拽高亮与归档、分享页片段导航、存量正文回退、流式提问和清理全量验证",
+      "productionPolicy": "专用账号上传最小 HTML，执行个人文件夹拖拽、公开分享、片段导航与一个最小真实问题后立即清理",
+      "artifactAssertions": ["文件夹刷新后仍存在", "拖拽目标高亮且归属可回读", "片段链接不离开 srcDoc", "提问流不含 ASK_NO_CONTENT"],
+      "cleanup": "撤销 stsmk- 分享并删除站点与文件夹，随后回读确认无残留",
+      "rollback": "CDS 回滚 previous；停用网页托管写入和分享入口，保留现有站点对象供恢复"
     },
     {
       "id": "knowledge-assets",

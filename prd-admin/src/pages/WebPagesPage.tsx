@@ -84,9 +84,14 @@ import AskConfigDrawer from '@/components/web-hosting/ask/AskConfigDrawer';
 import { createPortal } from 'react-dom';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import type { DocumentStore } from '@/services/contracts/documentStore';
-import { ShareDock, useDockDrag } from '@/components/share-dock';
+import { ShareDock, useDockDrag, DOCK_EVENTS, type DockDropDetail } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { MobileFab } from '@/components/mobile/MobileFab';
+import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real/webFolders';
+import {
+  buildWebPageGroupSlot,
+  parseWebPageDropSlot,
+} from '@/components/web-hosting/folderDrop';
 
 /** ShareDock MIME 由 SiteCard 组件统一定义（卡片与投放槽必须同一个常量） */
 
@@ -406,6 +411,7 @@ export default function WebPagesPage() {
   const sharedSiteIds = useMemo(() => buildSharedSiteIds(shareLinks), [shareLinks]);
 
   const [folders, setFolders] = useState<string[]>([]);
+  const [managedFolders, setManagedFolders] = useState<WebFolder[]>([]);
   const [tags, setTags] = useState<TagCount[]>([]);
 
   const [showUploadDialog, setShowUploadDialog] = useState(false);
@@ -489,9 +495,10 @@ export default function WebPagesPage() {
   }, [teamScope.scope, currentUserId, myWebHostingRole]);
 
   const loadMeta = useCallback(async () => {
-    const [fRes, tRes] = await Promise.all([listSiteFolders(), listSiteTags()]);
+    const [fRes, tRes, managedRes] = await Promise.all([listSiteFolders(), listSiteTags(), listWebFolders()]);
     if (fRes.success) setFolders(fRes.data.folders);
     if (tRes.success) setTags(tRes.data.tags);
+    if (managedRes.success) setManagedFolders(managedRes.data.items ?? []);
   }, []);
 
   // 团队空间分组列表（专题 + 日常分类）
@@ -675,6 +682,22 @@ export default function WebPagesPage() {
     () => Array.from(new Set(spaceSites.map((s) => s.folder).filter((f): f is string => !!f && !!f.trim()))).sort(),
     [spaceSites],
   );
+  // 显式创建的空文件夹也必须留在左栏；仅从站点 folder 字段派生会让空文件夹创建后立刻消失。
+  const personalFolderOptions = useMemo(
+    () => Array.from(new Set([
+      ...managedFolders.map((folder) => folder.name.trim()).filter(Boolean),
+      ...spaceFolders,
+    ])).sort((a, b) => a.localeCompare(b, 'zh-CN')),
+    [managedFolders, spaceFolders],
+  );
+  // 上传/编辑弹窗同样消费显式文件夹，避免左栏看得到、上传表单却选不到。
+  const uploadFolderOptions = useMemo(
+    () => Array.from(new Set([
+      ...folders,
+      ...managedFolders.map((folder) => folder.name.trim()).filter(Boolean),
+    ])).sort((a, b) => a.localeCompare(b, 'zh-CN')),
+    [folders, managedFolders],
+  );
   const displaySites = useMemo(() => {
     // 团队空间按分组（专题/日常分类）过滤；个人空间沿用文件夹过滤
     if (currentSpace.kind === 'team') {
@@ -703,8 +726,9 @@ export default function WebPagesPage() {
   const folderCounts = useMemo(() => {
     const m = new Map<string, number>();
     for (const s of spaceSites) if (s.folder) m.set(s.folder, (m.get(s.folder) ?? 0) + 1);
+    for (const folder of personalFolderOptions) if (!m.has(folder)) m.set(folder, 0);
     return m;
-  }, [spaceSites]);
+  }, [spaceSites, personalFolderOptions]);
   const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 264;
   const siteShareStats = useMemo(() => buildSiteShareStats(shareLinks), [shareLinks]);
   // 顶栏「分享 N」与分享档结论句同一个口径：未过期且未撤销
@@ -824,6 +848,32 @@ export default function WebPagesPage() {
 
   // ── 团队空间分组（专题/日常分类）操作 ──
 
+  const handleCreatePersonalFolder = async (name: string): Promise<boolean> => {
+    const normalized = name.trim();
+    if (!normalized) return false;
+    const existing = personalFolderOptions.find((folder) => folder.localeCompare(normalized, 'zh-CN', { sensitivity: 'accent' }) === 0);
+    if (existing) {
+      setActiveFolder(existing);
+      toast.success('文件夹已存在', `已切换到「${existing}」`);
+      return true;
+    }
+
+    const res = await createWebFolder({
+      name: normalized,
+      generatorType: 'none',
+      generateTarget: 'web',
+    });
+    if (!res.success) {
+      toast.error('创建文件夹失败', res.error?.message || '请稍后重试');
+      return false;
+    }
+
+    setManagedFolders((prev) => [...prev, res.data]);
+    setActiveFolder(res.data.name);
+    toast.success('文件夹已创建', `可把右侧网页拖入「${res.data.name}」`);
+    return true;
+  };
+
   const handleCreateGroup = async (kind: 'topic' | 'daily', name: string) => {
     if (currentSpace.kind !== 'team') return;
     const res = await createSiteGroup({ teamId: currentSpace.teamId, kind, name });
@@ -871,6 +921,56 @@ export default function WebPagesPage() {
     await load();
     toast.success('已移动', targetSpace.kind === 'team' ? '已移动到团队空间' : '已移动到个人空间');
   };
+
+  const moveSiteIntoPersonalFolder = useCallback(async (siteId: string, folder: string) => {
+    if (currentSpace.kind !== 'personal') return;
+    const site = sites.find((item) => item.id === siteId);
+    if (!site || site.folder === folder) return;
+
+    const res = await updateSite(siteId, { folder });
+    if (!res.success) {
+      toast.error('移入文件夹失败', res.error?.message || '请稍后重试');
+      return;
+    }
+
+    setSites((prev) => prev.map((item) => item.id === siteId ? { ...item, folder, updatedAt: res.data.updatedAt } : item));
+    setFolders((prev) => Array.from(new Set([...prev, folder])).sort((a, b) => a.localeCompare(b, 'zh-CN')));
+    toast.success('已移入文件夹', `「${site.title}」已移入「${folder}」`);
+    await loadMeta();
+  }, [currentSpace.kind, sites, loadMeta]);
+
+  const moveSiteIntoTeamGroup = useCallback(async (siteId: string, groupId: string) => {
+    if (currentSpace.kind !== 'team') return;
+    const site = sites.find((item) => item.id === siteId);
+    const group = teamGroups.find((item) => item.id === groupId);
+    if (!site || !group || site.groupId === groupId) return;
+    if (myWebHostingRole !== null && !canEditInWebHosting(myWebHostingRole)) {
+      toast.error('无权限', '你在该团队空间是只读角色，无法移动网页');
+      return;
+    }
+
+    const res = await setSiteGroup(siteId, groupId);
+    if (!res.success) {
+      toast.error('移入分组失败', res.error?.message || '请稍后重试');
+      return;
+    }
+
+    setSites((prev) => prev.map((item) => item.id === siteId ? { ...item, groupId } : item));
+    toast.success('已移入分组', `「${site.title}」已移入「${group.name}」`);
+    await loadGroups();
+  }, [currentSpace.kind, sites, teamGroups, myWebHostingRole, loadGroups]);
+
+  useEffect(() => {
+    const onFolderDrop = (event: Event) => {
+      const detail = (event as CustomEvent<DockDropDetail>).detail;
+      if (!detail || detail.mime !== WEB_PAGE_MIME) return;
+      const target = parseWebPageDropSlot(detail.slotKey);
+      if (target?.kind === 'folder') void moveSiteIntoPersonalFolder(detail.id, target.value);
+      if (target?.kind === 'group') void moveSiteIntoTeamGroup(detail.id, target.value);
+    };
+    window.addEventListener(DOCK_EVENTS.DROP, onFolderDrop);
+    return () => window.removeEventListener(DOCK_EVENTS.DROP, onFolderDrop);
+  }, [moveSiteIntoPersonalFolder, moveSiteIntoTeamGroup]);
 
   // 单组内的卡片/列表渲染，按 viewMode 复用
   const renderGroupItems = (items: HostedSite[]) =>
@@ -1402,7 +1502,7 @@ export default function WebPagesPage() {
                       >
                         全部文件夹
                       </button>
-                      {spaceFolders.map((f) => (
+                      {personalFolderOptions.map((f) => (
                         <button
                           key={f}
                           type="button"
@@ -1571,10 +1671,11 @@ export default function WebPagesPage() {
             personalCount={currentSpace.kind === 'personal' ? total : null}
             teamCount={currentSpace.kind === 'team' ? total : null}
             spaceHint={`默认沿用上次停留的空间。当前显示：${activeSpaceLabel}。`}
-            folders={currentSpace.kind === 'team' ? undefined : spaceFolders}
+            folders={currentSpace.kind === 'team' ? undefined : personalFolderOptions}
             activeFolder={activeFolder}
             onFolder={setActiveFolder}
             folderCounts={folderCounts}
+            onCreateFolder={currentSpace.kind === 'personal' ? handleCreatePersonalFolder : undefined}
             teamTree={currentSpace.kind === 'team' ? (
               <TeamGroupsTree
                 groups={teamGroups}
@@ -1736,7 +1837,7 @@ export default function WebPagesPage() {
       {showUploadDialog && (
         <UploadEditDialog
           item={editItem}
-          folders={folders}
+          folders={uploadFolderOptions}
           initialFile={pendingExternalFile}
           onClose={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); }}
           onShareSite={(id) => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); setShareTargetId(id); setShowShareDialog(true); }}
@@ -2032,7 +2133,10 @@ function TeamGroupsTree({
         onDoubleClick={() => { if (canEdit) setEditing({ id: g.id, value: g.name }); }}
         onKeyDown={(e) => { if (e.key === 'Enter') onSelect(on ? null : g.id); }}
         title={canEdit ? '双击重命名' : undefined}
-        className="group/tree-item w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover-bg-soft"
+        className="web-folder-drop-target group/tree-item w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover-bg-soft"
+        data-dock-slot={buildWebPageGroupSlot(g.id)}
+        data-dock-mime={WEB_PAGE_MIME}
+        data-tour-id="webpages-group-drop-target"
         style={itemStyle(on)}
       >
         <Folder size={11} className="shrink-0" />
@@ -2062,7 +2166,8 @@ function TeamGroupsTree({
             <X size={11} />
           </button>
         )}
-        <span className="shrink-0 text-[10px] opacity-60">{counts.get(g.id) ?? 0}</span>
+        <span className="web-folder-drop-target__count shrink-0 text-[10px] opacity-60">{counts.get(g.id) ?? 0}</span>
+        <span className="web-folder-drop-target__hint">松开移入</span>
       </div>
     );
   };

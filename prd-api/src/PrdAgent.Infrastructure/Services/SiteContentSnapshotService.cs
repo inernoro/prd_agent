@@ -51,17 +51,20 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     private readonly IFileContentExtractor _extractor;
     private readonly IMemoryCache _cache;
     private readonly ILogger<SiteContentSnapshotService> _logger;
+    private readonly IHttpClientFactory? _httpClientFactory;
 
     public SiteContentSnapshotService(
         IAssetStorage storage,
         IFileContentExtractor extractor,
         IMemoryCache cache,
-        ILogger<SiteContentSnapshotService> logger)
+        ILogger<SiteContentSnapshotService> logger,
+        IHttpClientFactory? httpClientFactory = null)
     {
         _storage = storage;
         _extractor = extractor;
         _cache = cache;
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
     }
 
     public async Task<SiteContentSnapshot> GetAsync(HostedSite site, CancellationToken ct = default)
@@ -124,6 +127,12 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
             try
             {
                 bytes = await _storage.TryDownloadBytesAsync(file.CosKey, ct);
+                // 存量站点可能仍指向旧 COS，而当前环境已经切到 R2。Mongo 里的 CosKey
+                // 在当前 Provider 下会 404，但入口 SiteUrl 仍然可读。只对入口文件走这条
+                // 有界公网回退：它是系统创建时落库的地址，不接受访客请求传入 URL；其余
+                // 文件仍坚持从当前存储读取，避免把任意站点资源下载扩大成外连面。
+                if (bytes == null && IsEntryFile(site, file))
+                    bytes = await TryDownloadLegacyEntryAsync(site, file, ct);
             }
             catch (Exception ex)
             {
@@ -186,6 +195,67 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         }
 
         return result;
+    }
+
+    private static bool IsEntryFile(HostedSite site, HostedSiteFile file)
+        => !string.IsNullOrWhiteSpace(site.EntryFile)
+           && string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 当前 Provider 找不到存量入口对象时，从站点落库的旧公网地址读取一次。
+    /// 下载前后都执行 2MB 上限，并使用独立短超时；失败返回 null，让调用方继续按暂时故障处理。
+    /// </summary>
+    private async Task<byte[]?> TryDownloadLegacyEntryAsync(
+        HostedSite site,
+        HostedSiteFile file,
+        CancellationToken ct)
+    {
+        if (_httpClientFactory == null || file.Size > MaxFileDownloadBytes)
+            return null;
+        if (!Uri.TryCreate(site.SiteUrl, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+            return null;
+
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            using var response = await _httpClientFactory.CreateClient()
+                .GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength is > MaxFileDownloadBytes)
+                return null;
+
+            await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
+            using var buffered = new MemoryStream();
+            var chunk = new byte[8192];
+            while (true)
+            {
+                var read = await stream.ReadAsync(chunk, timeout.Token);
+                if (read <= 0) break;
+                if (buffered.Length + read > MaxFileDownloadBytes)
+                    return null;
+                await buffered.WriteAsync(chunk.AsMemory(0, read), timeout.Token);
+            }
+
+            var bytes = buffered.ToArray();
+            if (bytes.Length > 0)
+            {
+                _logger.LogInformation(
+                    "站点正文快照：当前存储缺少入口对象，已从存量站点地址读取 site={SiteId} key={Key}",
+                    site.Id,
+                    file.CosKey);
+            }
+            return bytes.Length > 0 ? bytes : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "站点正文快照：存量入口地址读取失败 site={SiteId} key={Key}",
+                site.Id,
+                file.CosKey);
+            return null;
+        }
     }
 
     /// <summary>

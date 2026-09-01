@@ -144,6 +144,8 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
 
 test('矩阵解析保留双环境原始策略并按模块只取一条轮换用例', () => {
   assert.deepEqual(matrixCases.map((item) => item.caseId), matrixCaseIds);
+  assert.ok(matrixCaseIds.includes('WEB-001'));
+  assert.ok(matrixCaseIds.includes('WEB-006'));
   const rec006 = matrixCases.find((item) => item.caseId === 'REC-006');
   assert.equal(rec006.cdsPolicy, '必跑');
   assert.equal(rec006.productionPolicy, '不主动运行');
@@ -168,6 +170,17 @@ test('矩阵解析保留双环境原始策略并按模块只取一条轮换用�
   });
   assert.equal(plan.matrixPolicies['VIS-004'].productionRotation, 'within-case');
   assert.equal(plan.matrixPolicies['VIS-006'].productionRotation, 'case');
+});
+
+test('网页托管变更进入功能台账并绑定六个操作锚点', () => {
+  const result = selectFeatureLines(catalog, [
+    'prd-admin/src/components/web-hosting/LibraryRail.tsx',
+    'prd-api/src/PrdAgent.Infrastructure/Services/SiteContentSnapshotService.cs',
+  ], [], 'changed');
+  assert.deepEqual(result.unmappedFiles, []);
+  const feature = result.selected.find((item) => item.id === 'web-hosting-sharing');
+  assert.ok(feature);
+  assert.deepEqual(feature.requiredCaseIds, ['WEB-001', 'WEB-002', 'WEB-003', 'WEB-004', 'WEB-005', 'WEB-006']);
 });
 
 test('正式环境禁止项不得混入可被正式环境选中的组合用例', () => {

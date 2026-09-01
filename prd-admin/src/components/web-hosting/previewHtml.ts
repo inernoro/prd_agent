@@ -164,10 +164,30 @@ function isAbsoluteBaseHref(href: string): boolean {
   return v.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(v);
 }
 
+/**
+ * srcDoc 中的纯片段链接必须继续指向当前文档。
+ *
+ * 浏览器会用 `<base href>` 解析 `href="#section"`，结果变成对象存储目录
+ * `.../site-id/#section`。对象存储没有目录对象，最终显示 NoSuchKey。
+ * `about:srcdoc#section` 是绝对地址，不受 base 影响，同时仍在当前 iframe 内完成页内跳转。
+ *
+ * 只处理 a / area 的纯片段 href；SVG 的 `<use href="#icon">` 等资源引用不能改。
+ */
+export function preserveSrcDocFragmentLinks(html: string): string {
+  if (!html) return html;
+  return html.replace(/<(a|area)\b[^>]*>/gi, (tag) => {
+    const hrefAttr = tag.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/i);
+    if (!hrefAttr) return tag;
+    const href = (hrefAttr[1] ?? hrefAttr[2] ?? hrefAttr[3] ?? '').trim();
+    if (!href.startsWith('#')) return tag;
+    return tag.replace(hrefAttr[0], `href="${escapeHtmlAttr(`about:srcdoc${href}`)}"`);
+  });
+}
+
 export function withPreviewBase(html: string, siteUrl: string) {
   // 同一处剥干净：srcDoc 里留着一条注定加载不了的第三方 beacon 没有意义，
   // 还会在访客的控制台里刷一条 CORS 报错，让真问题更难被看见。
-  html = stripInjectedTelemetry(html);
+  html = preserveSrcDocFragmentLinks(stripInjectedTelemetry(html));
   const baseHref = new URL('.', siteUrl).toString();
 
   // 先找到那个 <base> 标签本身，再看它有没有 href —— 两件事分开判。

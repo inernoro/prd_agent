@@ -23,11 +23,19 @@ public class SiteContentSnapshotServiceTests
             new MemoryCache(new MemoryCacheOptions()),
             NullLogger<SiteContentSnapshotService>.Instance);
 
+    private static SiteContentSnapshotService NewService(FakeAssetStorage storage, HttpMessageHandler handler) =>
+        new(storage,
+            new FakeExtractor(),
+            new MemoryCache(new MemoryCacheOptions()),
+            NullLogger<SiteContentSnapshotService>.Instance,
+            new FakeHttpClientFactory(handler));
+
     private static HostedSite SiteWith(params (string Path, string Key)[] files) => new()
     {
         Id = "site-1",
         Title = "测试站点",
         EntryFile = "index.html",
+        SiteUrl = "https://legacy-storage.example/data/web-hosting/sites/site-1/index.html",
         Files = files.Select(f => new HostedSiteFile
         {
             Path = f.Path,
@@ -139,6 +147,43 @@ public class SiteContentSnapshotServiceTests
     }
 
     [Fact]
+    public async Task 当前存储缺少存量入口时_从落库站点地址读取正文()
+    {
+        var storage = new FakeAssetStorage();
+        var handler = new StubHttpHandler(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent("旧腾讯云入口仍可读取的正文"),
+        });
+
+        var snap = await NewService(storage, handler).GetAsync(SiteWith(("index.html", "old-cos-key")));
+
+        Assert.Null(snap.Unavailable);
+        Assert.False(snap.TransientFailure);
+        Assert.Contains("旧腾讯云入口仍可读取的正文", snap.Text);
+        Assert.Single(handler.Requests);
+        Assert.Equal("legacy-storage.example", handler.Requests[0].RequestUri?.Host);
+    }
+
+    [Fact]
+    public async Task 公网回退只允许入口文件_兄弟文件缺失仍标截断()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = "入口正文";
+        var handler = new StubHttpHandler(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent("不应被拿来冒充兄弟文件"),
+        });
+
+        var snap = await NewService(storage, handler).GetAsync(
+            SiteWith(("index.html", "entry"), ("chapter.html", "missing")));
+
+        Assert.Contains("入口正文", snap.Text);
+        Assert.DoesNotContain("不应被拿来冒充兄弟文件", snap.Text);
+        Assert.True(snap.Truncated);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task 成功的快照会被缓存_第二次不再打存储()
     {
         var storage = new FakeAssetStorage();
@@ -180,7 +225,7 @@ public class SiteContentSnapshotServiceTests
         Assert.DoesNotContain("巨大的正文", snap.Text);
         Assert.True(snap.Truncated, "被体积上限挡掉的文件必须反映到 Truncated 上");
         // 关键：那个 key 根本不该被读过
-        Assert.False(storage.RequestedKeys.Contains("big"), "超大文件仍然发起了下载——闸门形同虚设");
+        Assert.DoesNotContain("big", storage.RequestedKeys);
     }
 
     [Fact]
@@ -193,7 +238,7 @@ public class SiteContentSnapshotServiceTests
 
         var snap = await NewService(storage).GetAsync(site);
 
-        Assert.False(storage.RequestedKeys.Contains("entry"));
+        Assert.DoesNotContain("entry", storage.RequestedKeys);
         Assert.NotNull(snap.Unavailable);
     }
 
@@ -275,5 +320,21 @@ public class SiteContentSnapshotServiceTests
         public string? Extract(byte[] bytes, string mimeType, string? fileName = null)
             => System.Text.Encoding.UTF8.GetString(bytes);
         public bool IsSupported(string mimeType) => true;
+    }
+
+    private sealed class FakeHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    private sealed class StubHttpHandler(HttpResponseMessage response) : HttpMessageHandler
+    {
+        public List<HttpRequestMessage> Requests { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+            return Task.FromResult(response);
+        }
     }
 }
