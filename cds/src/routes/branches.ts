@@ -10,6 +10,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router, type Request, type Response } from 'express';
 import { StateService } from '../services/state.js';
+import { recordContainerSample, queryContainerSeries } from '../services/container-metrics-history.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
@@ -11250,6 +11251,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     const statsMap = await containerService.getServiceStats(runningContainers);
 
+    // 抽屉打开期间这里是 5s 一帧，比后台采样器（45s）密得多。两路都写进同一个
+    // 历史存储：读的一侧只认 container-metrics-history，不存在「谁的数据更新」的问题。
+    const sampledAt = Date.now();
+    for (const [containerName, stat] of statsMap) {
+      recordContainerSample(containerName, {
+        cpuPercent: stat.cpuPercent,
+        memUsedBytes: stat.memUsedBytes,
+        memLimitBytes: stat.memLimitBytes,
+        netRxBytes: stat.netRxBytes,
+        netTxBytes: stat.netTxBytes,
+      }, sampledAt);
+    }
+
     const result = services.map(([profileId, svc]) => ({
       profileId,
       containerName: svc.containerName,
@@ -11265,6 +11279,65 @@ export function createBranchRouter(deps: RouterDeps): Router {
       services: result,
       runningCount: runningContainers.length,
       totalCount: services.length,
+    });
+  });
+
+  // GET /api/branches/:id/metrics/series — 该分支各 service 的历史序列（2026-09-01）
+  //
+  // 查询契约借 Netdata 的形状：调用方声明「多长的窗口、要多少个点、怎么聚合」，
+  // 降采样在服务端做完再下发。以前是前端每 5s 打一次瞬时值、自己在 React state
+  // 里攒 60 点 ring —— 关掉抽屉就全丢，窗口最长只有 5 分钟，图上画不了部署竖线
+  // （部署几乎不会正好落在那 5 分钟里）。
+  //
+  //   after   窗口起点。负数 = 相对现在往前多少秒（-3600 = 近一小时）；正数 = 毫秒时间戳
+  //   before  窗口终点，省略或 0 = 现在
+  //   points  期望点数（默认 120，上限 1000）；实际点数不超过它
+  //   group   average（看趋势，默认）| max（找毛刺）
+  //
+  // 数据来自 container-metrics-history：45s 常驻采样器 + 抽屉打开时的 5s 端点
+  // 两路都往那里写，所以抽屉没开的时段也有基线，打开就有图，不用等攒点。
+  // 历史在内存里、进程重启即丢——这是观测视图不是审计账本。
+  router.get('/branches/:id/metrics/series', async (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const m2 = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m2) {
+      res.status(m2.status).json(m2.body);
+      return;
+    }
+
+    const num = (raw: unknown, fallback: number): number => {
+      const v = Number.parseInt(String(raw ?? ''), 10);
+      return Number.isFinite(v) ? v : fallback;
+    };
+    const services = Object.entries(branch.services || {});
+    const byContainer = new Map(services.map(([profileId, svc]) => [svc.containerName, profileId]));
+
+    const result = queryContainerSeries({
+      containers: [...byContainer.keys()],
+      after: num(req.query.after, -1800),
+      before: num(req.query.before, 0),
+      points: num(req.query.points, 120),
+      group: req.query.group === 'max' ? 'max' : 'average',
+    });
+
+    res.json({
+      branchId: branch.id,
+      after: result.after,
+      before: result.before,
+      groupSeconds: result.groupSeconds,
+      group: result.group,
+      // 按 profileId 下发，前端不必再认容器名
+      services: services.map(([profileId, svc]) => ({
+        profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+        points: result.series[svc.containerName] ?? [],
+      })),
     });
   });
 

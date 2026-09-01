@@ -18,9 +18,15 @@ import { ExternalLink, RefreshCw, Rocket, Server, Settings } from 'lucide-react'
  * 那四档是保留的状态色，拿来当「第 4 个服务」会跟「警告」撞成同一个红。
  */
 
-export const METRIC_RING_SIZE = 60;
+/**
+ * 客户端环形缓冲上限。
+ * 历史的真身在服务端（container-metrics-history），这里只是把它取回来画，
+ * 外加把 5s 轮询的新点续在尾巴上。240 点够放「近 30 分钟 × 服务端 120 点降采样
+ * + 之后十分钟的实时追加」，再多就该调窗口而不是把点堆在浏览器里。
+ */
+export const METRIC_RING_SIZE = 240;
 
-/** 5-min ring buffer（60 点 × 5s）per service+metric */
+/** per service+metric 的滚动缓冲。窗口长度由服务端 series 端点决定，不再是写死的 5 分钟。 */
 export interface MetricSeries {
   cpu: number[];        // %
   mem: number[];        // % of limit
@@ -32,6 +38,26 @@ export interface MetricSeries {
 
 export function emptyMetricSeries(): MetricSeries {
   return { cpu: [], mem: [], memBytes: [], rxRate: [], txRate: [] };
+}
+
+/**
+ * 用服务端历史序列铺底。
+ *
+ * 抽屉一打开就有完整曲线，不必再干等 10 秒攒两个点才出图；关掉再打开也接得上，
+ * 因为点存在服务端不在这个组件里。速率已由服务端算好（累计差 / 间隔），
+ * 前端不再从累计字节自己算 —— 那正是「关掉抽屉丢历史」时代的遗留做法。
+ */
+export function seedMetricSeries(points: Array<{
+  cpuPercent: number; memUsedBytes: number; rxRate: number; txRate: number;
+}>): MetricSeries {
+  const tail = points.length > METRIC_RING_SIZE ? points.slice(points.length - METRIC_RING_SIZE) : points;
+  return {
+    cpu: tail.map((p) => p.cpuPercent),
+    mem: tail.map(() => 0),
+    memBytes: tail.map((p) => p.memUsedBytes),
+    rxRate: tail.map((p) => p.rxRate),
+    txRate: tail.map((p) => p.txRate),
+  };
 }
 
 export function pushMetricRing(
@@ -532,7 +558,7 @@ export function OverviewPanel({
   lastReadyAt, lastDeployAt, deployDurationMs,
   entries, deployments, metricSeries, metricsReady, metricsError,
   replicaSummary, infraSummary,
-  now, onRefreshMetrics, onConfigureEntries, onOpenDeployments,
+  now, windowMinutes, onRefreshMetrics, onConfigureEntries, onOpenDeployments,
 }: {
   services: OverviewService[];
   running: boolean;
@@ -550,6 +576,8 @@ export function OverviewPanel({
   replicaSummary: string;
   infraSummary: string;
   now: number;
+  /** 图表窗口长度（分钟）。由服务端 series 端点的 after/before 决定，前端不猜。 */
+  windowMinutes: number;
   onRefreshMetrics: () => void;
   onConfigureEntries?: () => void;
   onOpenDeployments?: () => void;
@@ -622,7 +650,10 @@ export function OverviewPanel({
         : '分支未运行';
   const verdictTone = badServices.length > 0 ? 'bad' : running && okCount === services.length && services.length > 0 ? 'ok' : 'idle';
 
-  const windowLabel = `每 5s 采样 · 近 ${Math.max(1, Math.round((sampleCount * 5) / 60))} 分钟`;
+  const windowText = windowMinutes >= 60
+    ? `近 ${(windowMinutes / 60).toFixed(windowMinutes % 60 === 0 ? 0 : 1)} 小时`
+    : `近 ${Math.max(1, Math.round(windowMinutes))} 分钟`;
+  const windowLabel = `服务端聚合 · ${windowText}`;
   const yTicksOf = (max: number, fmt: (v: number) => string): string[] =>
     [1, 0.66, 0.33, 0].map((f) => fmt(max * f));
 
@@ -708,7 +739,7 @@ export function OverviewPanel({
             <PlotFrame
               height={168}
               yTicks={yTicksOf(cpuMax, (v) => v.toFixed(0))}
-              xLabels={[`${Math.round((sampleCount * 5) / 60)} 分钟前`, '现在']}
+              xLabels={[windowText.replace('近 ', '') + '前', '现在']}
             >
               <StackedAreaChart height={168} max={cpuMax} series={cpuSeries} />
             </PlotFrame>
@@ -726,7 +757,7 @@ export function OverviewPanel({
               <PlotFrame
                 height={120}
                 yTicks={yTicksOf(memMax, (v) => formatBytesShort(v).replace(/ (\w)\w*$/, "$1"))}
-                xLabels={[`${Math.round((sampleCount * 5) / 60)} 分钟前`, '现在']}
+                xLabels={[windowText.replace('近 ', '') + '前', '现在']}
               >
                 <StackedAreaChart height={120} max={memMax} series={memSeries} />
               </PlotFrame>

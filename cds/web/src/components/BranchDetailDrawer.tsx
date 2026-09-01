@@ -20,6 +20,7 @@ import {
   OverviewPanel,
   emptyMetricSeries,
   pushMetricRing,
+  seedMetricSeries,
   type MetricSeries,
   type OverviewDeployment,
 } from '@/components/branch/OverviewPanel';
@@ -1348,6 +1349,40 @@ export function BranchDetailDrawer({
     }
   }, [branchId]);
 
+  // 总览打开时先取服务端历史铺底（2026-09-01）。
+  // 以前这里是「打开抽屉才开始攒点」——头 10 秒是空图，关掉再打开又从零开始，
+  // 窗口永远只有 5 分钟。现在点存在服务端 container-metrics-history 里，
+  // 45s 常驻采样器不管抽屉开不开都在写，所以一进来就有完整曲线。
+  const HISTORY_WINDOW_MINUTES = 30;
+  useEffect(() => {
+    if (activeTab !== 'overview' || !branchId) return;
+    const requestForBranch = branchId;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await apiRequest<{
+          services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number; memUsedBytes: number; rxRate: number; txRate: number }> }>;
+        }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
+        if (cancelled || branchIdRef.current !== requestForBranch) return;
+        const seeded: Record<string, MetricSeries> = {};
+        for (const svc of data?.services ?? []) {
+          if (svc.points && svc.points.length > 0) seeded[svc.profileId] = seedMetricSeries(svc.points);
+        }
+        // 只铺底，不覆盖轮询已经追加的新点：合并时保留已有的（更新）那一份。
+        if (Object.keys(seeded).length > 0) {
+          setMetricSeries((prev) => {
+            const next = { ...seeded };
+            for (const [k, v] of Object.entries(prev)) if (v.cpu.length > (seeded[k]?.cpu.length ?? 0)) next[k] = v;
+            return next;
+          });
+        }
+      } catch {
+        // 老版本 CDS 没有这个端点 —— 静默降级回「打开后自己攒点」，不弹错。
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeTab, branchId]);
+
   useEffect(() => {
     // 方案 A：指标并入总览（原独立「指标」页签取消）——总览打开时轮询
     if (activeTab !== 'overview' || !branchId) return;
@@ -2541,6 +2576,7 @@ export function BranchDetailDrawer({
                     replicaSummary={overviewReplicaSummary}
                     infraSummary={overviewInfraSummary}
                     now={now}
+                    windowMinutes={HISTORY_WINDOW_MINUTES}
                     onRefreshMetrics={() => void loadMetrics()}
                     onConfigureEntries={() => setWebEntryConfigOpen(true)}
                     onOpenDeployments={() => setActiveTab('deployments')}
