@@ -159,6 +159,13 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
     tone = 'ok';
     headline = '这个项目还没有定时任务';
     detail = '新建一个任务后，可以每天定时调用接口或执行命令，每次结果都会记在运行流里。';
+  } else if (failed > 0) {
+    // 早上挂过、后来又成功了：patchJobAfterRun 会把 consecutiveFailureCount 清零，
+    // failing 于是为空。此时若照旧说「今日无失败」，就会和紧挨着的「失败 3」自相矛盾
+    // ——结论必须由它自己那排数字支撑，不能各说各的。
+    tone = 'ok';
+    headline = `${jobs.length} 个任务在跑，今日 ${failed} 次失败均已恢复`;
+    detail = `当前没有任务处于连续失败状态；接下来 6 小时将触发 ${upcoming} 次${skipped ? `；今日有 ${skipped} 次因上一轮未结束而跳过` : ''}。`;
   } else {
     tone = 'ok';
     headline = `${jobs.length} 个任务在跑，今日无失败`;

@@ -26,7 +26,7 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
     res.json({
       jobs: jobs.map((job) => ({
         ...job,
-        nextRuns: job.enabled ? scheduledJobService.computeNextRuns(job.schedule, horizon, now) : [],
+        nextRuns: scheduledJobService.projectUpcomingRuns(job, horizon, now),
       })),
     });
   });

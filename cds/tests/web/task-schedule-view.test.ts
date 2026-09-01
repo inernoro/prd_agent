@@ -254,3 +254,41 @@ describe('选中态的单泳道细带', () => {
     expect(all.hiddenCount).toBe(1);
   });
 });
+
+
+describe('结论条不许和自己那排数字打架', () => {
+  /*
+   * Codex #1471 P2。早上挂过、后来又成功了：patchJobAfterRun 会把
+   * consecutiveFailureCount 清零，failing 于是为空，结论条照旧说「今日无失败」，
+   * 而紧挨着的统计段写着「失败 3」——同一行里结论和支撑数据相反。
+   * 红绿闭环：把 `} else if (failed > 0) {` 那一支删掉，第一条断言立刻红。
+   */
+  const j = (id: string, over: Partial<ScheduledJob> = {}) => job({ id, name: id, nextRunAt: '2026-08-31T23:00:00.000Z', ...over });
+
+  it('今天挂过但已恢复：说「均已恢复」，不说「无失败」', () => {
+    const jobs = [j('sjob_a'), j('sjob_b')];
+    const runs = [
+      run({ id: 'r1', jobId: 'sjob_a', status: 'failed', queuedAt: '2026-08-31T09:00:00.000Z' }),
+      run({ id: 'r2', jobId: 'sjob_a', status: 'success', queuedAt: '2026-08-31T10:00:00.000Z' }),
+    ];
+    const o = buildOverview(jobs, runs, NOW);
+    expect(o.headline).not.toContain('无失败');
+    expect(o.headline).toContain('1 次失败均已恢复');
+    // 结论与统计段必须指同一件事
+    expect(o.stats.find((s) => s.label === '失败')?.value).toBe('1');
+  });
+
+  it('今天一次都没挂：仍然说「今日无失败」', () => {
+    const jobs = [j('sjob_a')];
+    const runs = [run({ id: 'r1', jobId: 'sjob_a', status: 'success', queuedAt: '2026-08-31T10:00:00.000Z' })];
+    expect(buildOverview(jobs, runs, NOW).headline).toContain('今日无失败');
+  });
+
+  it('还在连续失败时，走的仍是「N 个任务连续失败」那一支', () => {
+    const jobs = [j('sjob_a', { consecutiveFailureCount: 2 })];
+    const runs = [run({ id: 'r1', jobId: 'sjob_a', status: 'failed', queuedAt: '2026-08-31T10:00:00.000Z' })];
+    const o = buildOverview(jobs, runs, NOW);
+    expect(o.headline).toContain('连续失败');
+    expect(o.tone).toBe('warn');
+  });
+});

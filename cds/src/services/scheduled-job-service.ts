@@ -305,13 +305,32 @@ export class ScheduledJobService {
     for (let i = 0; i < Math.max(0, count); i += 1) {
       const next = this.computeNextRunAt(schedule, cursor);
       if (!next) break;
-      out.push(next);
       const parsed = Date.parse(next);
       if (!Number.isFinite(parsed)) break;
-      // 加 1ms 越过刚算出的那个时刻，否则固定间隔会原地打转。
-      cursor = new Date(parsed + 1);
+      // 单调性由这里保证，而不是靠给游标加 1ms —— 那个偏移每步累加，
+      // 第 N 个点会带 (N-1)ms 的漂移（实测第 3 个点是 ...:00.001Z）。
+      // interval 本来就是 cursor + 间隔、daily 的 candidate <= from 会顺延到第二天，
+      // 两者拿上一个时刻当游标都不会原地打转；真原地打转就在这里断开。
+      if (parsed <= cursor.getTime() && out.length > 0) break;
+      out.push(next);
+      cursor = new Date(parsed);
     }
     return out;
+  }
+
+  /**
+   * 时间轴右半边那串待触发点：必须锚在任务**已存的** nextRunAt 上，不能拿 now 起算。
+   * interval 的 computeNextRunAt 是「from + 间隔」——一个每小时的任务若还有 10 分钟到期，
+   * 从 now 起算会把第一个点画在 60 分钟后，真正的下一次直接消失，后面每个点整体后移 50 分钟。
+   */
+  projectUpcomingRuns(job: ScheduledJob, count: number, now = new Date()): string[] {
+    if (!job.enabled || count <= 0) return [];
+    const stored = Date.parse(job.nextRunAt || '');
+    if (!Number.isFinite(stored) || stored <= now.getTime()) {
+      return this.computeNextRuns(job.schedule, count, now);
+    }
+    const anchor = new Date(stored);
+    return [anchor.toISOString(), ...this.computeNextRuns(job.schedule, count - 1, anchor)];
   }
 
   computeNextRunAt(schedule: ScheduledJobSchedule, from = new Date()): string | null {
