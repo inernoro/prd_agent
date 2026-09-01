@@ -225,6 +225,15 @@ public sealed class GatewayPinnedRegistryModelTests
     {
         var document = value!.ToBsonDocument();
         document["TenantId"] = GatewayTenantDefaults.InternalTenantId;
+        if (collectionName == "llmgw_models")
+        {
+            // 名录门（ModelResolver）只认「在内置名录里」或「有放行标记」两种模型。
+            // 这两条 ASR 模型都是名录外的临时标识，在真实部署里它们会带着放行标记
+            // ——要么是管理员导入时显式勾的，要么是名录门上线时的存量迁移补的。
+            // 这里照那个形态铺，测的才是「pinned 成员不会被换掉」，不是「名录门存不存在」。
+            document["AllowedOutsideCatalog"] = true;
+            document["AllowedOutsideCatalogBy"] = "测试夹具（等价于存量迁移补的标记）";
+        }
         await database.GetCollection<BsonDocument>(collectionName).InsertOneAsync(document);
     }
 }

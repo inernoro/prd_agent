@@ -15,6 +15,7 @@ import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { ReplicaSetPanel, type ProfileReplicaSetView } from '@/components/branch/ReplicaSetPanel';
+import { WebEntryConfigDialog } from '@/components/branch/WebEntryConfigDialog';
 import { Layers, Lock, Plus } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
@@ -822,6 +823,7 @@ export function BranchDetailDrawer({
   branchStatus,
   initialResourceId,
   initialResourceDetailTab,
+  resourceWorkbenchDirect = false,
   onToast,
   onActionComplete,
   onRelease,
@@ -849,6 +851,9 @@ export function BranchDetailDrawer({
   previewMode?: PreviewMode;
   initialResourceId?: string | null;
   initialResourceDetailTab?: BranchResourceDetailTab | null;
+  /* 从分支卡片的数据库 chip 直达工作台：关掉工作台直接退回分支列表，
+     不把用户留在中间这层抽屉里。 */
+  resourceWorkbenchDirect?: boolean;
   /**
    * Branch status at the time of opening, used to decide whether to
    * actually render the URL chip (only running). The Drawer also has
@@ -888,6 +893,8 @@ export function BranchDetailDrawer({
   const [revealedValues, setRevealedValues] = useState<Map<string, string>>(new Map());
   const [envQuery, setEnvQuery] = useState('');
   const [branchEnvEditorOpen, setBranchEnvEditorOpen] = useState(false);
+  // 手动多出口配置弹窗：入口卡右上角的「配置入口」按钮打开它（不必找 Agent 改 compose）
+  const [webEntryConfigOpen, setWebEntryConfigOpen] = useState(false);
   const [systemLogsState, setSystemLogsState] = useState<SystemLogsState>({ status: 'idle' });
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
@@ -2049,6 +2056,17 @@ export function BranchDetailDrawer({
                   <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-ok">
                     <Rocket className="h-4 w-4" />
                     应用已上线
+                    {/* 多出口不再只能由 Agent 改 compose：用户自己在这里加/改「域名前缀 → 服务端口」 */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto text-ok hover:bg-ok-soft hover:text-ok dark:hover:text-ok"
+                      onClick={() => setWebEntryConfigOpen(true)}
+                      title="手动配置入口（新增子域入口 / 改名 / 改落地路径）"
+                    >
+                      <Settings />
+                      配置入口
+                    </Button>
                   </div>
                   {/* 入口卡片列：主入口在上，其余由 cds.web-entry-* 声明的页面在下。
                       readiness/health URL 不属于用户入口，不在这里渲染。 */}
@@ -2469,6 +2487,7 @@ export function BranchDetailDrawer({
                     dbGuardBusy={dbGuardBusy}
                     selectedResource={selectedResource}
                     initialDetailTab={initialResourceDetailTab}
+                    onWorkbenchDismiss={resourceWorkbenchDirect ? onClose : undefined}
                     serviceLogs={serviceLogs}
                     branchName={branch.branch}
                     onSelect={(resource) => {
@@ -2772,6 +2791,18 @@ export function BranchDetailDrawer({
           </footer>
         ) : null}
       </div>
+      {branchId ? (
+        <WebEntryConfigDialog
+          open={webEntryConfigOpen}
+          branchId={branchId}
+          onClose={() => setWebEntryConfigOpen(false)}
+          onSaved={(message) => {
+            onToast?.(message);
+            // 入口卡的数据来自 /subdomain-aliases，重拉一次才能看到刚配的入口
+            void load();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -3517,6 +3548,7 @@ function ResourceConsole({
   dbGuardBusy,
   selectedResource,
   initialDetailTab,
+  onWorkbenchDismiss,
   serviceLogs,
   branchName,
   onSelect,
@@ -3541,6 +3573,8 @@ function ResourceConsole({
   dbGuardBusy?: Record<string, boolean>;
   selectedResource: BranchResource | null;
   initialDetailTab?: BranchResourceDetailTab | null;
+  /* 直达工作台时由抽屉传入：关掉工作台 = 关掉整个抽屉，退回分支列表。 */
+  onWorkbenchDismiss?: () => void;
   serviceLogs: ServiceLogsState;
   branchName: string;
   onSelect: (resource: BranchResource) => void;
@@ -3569,6 +3603,25 @@ function ResourceConsole({
     permissions: ResourcePermissionSummary | null;
     message?: string;
   }>({ status: 'idle', permissions: null });
+
+  /* chip 横条的滑动提示：只有「右边确实还有东西」时才盖那层渐变。
+     常驻渐变会在资源不多、根本不需要滑的时候平白糊掉最后一个 chip。 */
+  const chipScrollerRef = useRef<HTMLDivElement | null>(null);
+  const [chipScrollHint, setChipScrollHint] = useState<{ left: boolean; right: boolean }>({ left: false, right: false });
+  const updateChipScrollHint = useCallback(() => {
+    const el = chipScrollerRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    setChipScrollHint({ left: el.scrollLeft > 4, right: max > 4 && el.scrollLeft < max - 4 });
+  }, []);
+  useEffect(() => {
+    updateChipScrollHint();
+    const el = chipScrollerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => updateChipScrollHint());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [updateChipScrollHint, resources.length]);
 
   useEffect(() => {
     setDetailTab(resourceInitialDetailTab(selectedResource, initialDetailTab));
@@ -3656,11 +3709,21 @@ function ResourceConsole({
         </div>
       </header>
 
-      <div className="border-b border-[hsl(var(--hairline))] px-4 py-3">
-        <div className="flex gap-3 overflow-x-auto pb-1">
+      {/* 方案 B（2026-09-01 用户选定）：底色不动，靠分层把「糊在一起」拆开——
+          chip 区自成一个凹陷带、分区标题带竖分隔、chip 抬到 raised 层。
+          右侧渐变是滑动提示：横向还有内容时才出现，让人知道这条能滑。 */}
+      <div className="relative border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60 px-4 py-3">
+        {/* 纵向内边距不是装饰：overflow-x:auto 会把纵轴一并变成裁剪轴，而 chip 右上角的
+            「加副本 / 保护罩」小圆钮挂在 -top-1、选中态还有 1px 外环——没有这段留白，
+            它们连同 chip 的第一行文字一起被切掉（2026-09-01 用户截图）。 */}
+        <div
+          ref={chipScrollerRef}
+          onScroll={updateChipScrollHint}
+          className="flex gap-3 overflow-x-auto px-1 pb-2 pt-2"
+        >
           {groups.map((group) => (
-            <div key={group.kind} className="flex shrink-0 items-center gap-2">
-              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <div key={group.kind} className="flex shrink-0 items-center gap-2 pr-1">
+              <span className="shrink-0 border-r border-[hsl(var(--hairline-strong))] pr-3 text-[11px] font-bold uppercase tracking-[0.1em] text-foreground/70">
                 {resourceKindLabel(group.kind)}
               </span>
               {group.items.map((resource) => {
@@ -3678,10 +3741,10 @@ function ResourceConsole({
                   <span key={resource.id} className="relative inline-flex shrink-0">
                     <button
                       type="button"
-                      className={`inline-flex h-10 min-w-[132px] shrink-0 items-center gap-2 rounded-md border px-2.5 text-left transition-colors ${
+                      className={`inline-flex min-h-[2.75rem] min-w-[132px] shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left leading-tight transition-colors ${
                         active
-                          ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
-                          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:bg-[hsl(var(--surface-sunken))]'
+                          ? 'border-primary bg-primary/12 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
+                          : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[shadow:var(--shadow-chip)] hover:bg-[hsl(var(--accent))]'
                       } ${resource.access === 'external' ? 'ring-1 ring-info/30' : ''} ${
                         isReplicaSet ? 'ring-1 ring-indigo-500/45' : ''
                       } ${chipInfo?.provisioning ? 'animate-pulse ring-2 ring-indigo-400/60' : ''} ${
@@ -3757,6 +3820,18 @@ function ResourceConsole({
             </div>
           ))}
         </div>
+        {chipScrollHint.left ? (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-3 left-0 w-10 bg-gradient-to-r from-[hsl(var(--surface-sunken))] to-transparent"
+          />
+        ) : null}
+        {chipScrollHint.right ? (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-3 right-0 w-12 bg-gradient-to-l from-[hsl(var(--surface-sunken))] to-transparent"
+          />
+        ) : null}
       </div>
 
       <div className="min-h-[620px] min-w-0">
@@ -3853,7 +3928,7 @@ function ResourceConsole({
                     }}
                   />
                 ) : null}
-                {detailTab === 'data' ? <ResourceDataPanel resource={selectedResource} /> : null}
+                {detailTab === 'data' ? <ResourceDataPanel resource={selectedResource} onWorkbenchDismiss={onWorkbenchDismiss} /> : null}
                 {detailTab === 'backups' ? (
                   <ResourceBackupsPanel
                     resource={selectedResource}
@@ -4286,16 +4361,16 @@ function resourceWorkbenchAdapter(resource: BranchResource): ResourceWorkbenchAd
   };
 }
 
-function ResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+function ResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: BranchResource; onWorkbenchDismiss?: () => void }): JSX.Element {
   const adapter = resourceWorkbenchAdapter(resource);
   if (adapter.runner === 'redis-readonly') {
-    return <RedisResourceDataPanel resource={resource} />;
+    return <RedisResourceDataPanel resource={resource} onWorkbenchDismiss={onWorkbenchDismiss} />;
   }
   if (adapter.runner === 'mongo') {
-    return <MongoResourceDataPanel resource={resource} />;
+    return <MongoResourceDataPanel resource={resource} onWorkbenchDismiss={onWorkbenchDismiss} />;
   }
   if (adapter.runner === 'sql') {
-    return <SqlResourceDataPanel resource={resource} adapter={adapter} />;
+    return <SqlResourceDataPanel resource={resource} adapter={adapter} onWorkbenchDismiss={onWorkbenchDismiss} />;
   }
   return <PlannedResourceWorkbenchPanel resource={resource} adapter={adapter} />;
 }
@@ -4529,7 +4604,7 @@ function resultModeLabel(mode: WorkbenchResultMode): string {
   return '输出';
 }
 
-function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: BranchResource; onWorkbenchDismiss?: () => void }): JSX.Element {
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [databasesState, setDatabasesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; databases: MongoDatabaseSummary[]; currentDatabase?: string; configuredDatabase?: string; message?: string }>({ status: 'idle', databases: [] });
   const [collectionsState, setCollectionsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; collections: MongoCollectionSummary[]; database?: string; message?: string }>({ status: 'idle', collections: [] });
@@ -4692,7 +4767,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         open={workbenchOpen}
         title={`MongoDB :${resource.port || resource.containerPort || '?'}`}
         subtitle={`${databaseLabel}.${selectedCollection || '-'} · ${resource.displayName}`}
-        onClose={() => setWorkbenchOpen(false)}
+        onClose={() => { setWorkbenchOpen(false); onWorkbenchDismiss?.(); }}
       >
         <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[320px_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
@@ -5090,7 +5165,9 @@ interface RedisKeyDetail extends RedisKeySummary {
   };
 }
 
-function RedisResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: BranchResource; onWorkbenchDismiss?: () => void }): JSX.Element {
+  // Redis 面板没有工作台弹窗，直达入口不适用；接住这个 prop 只为签名统一。
+  void onWorkbenchDismiss;
   const [pattern, setPattern] = useState('*');
   const [cursor, setCursor] = useState('0');
   const [keysState, setKeysState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; keys: RedisKeySummary[]; nextCursor: string; message?: string }>({ status: 'idle', keys: [], nextCursor: '0' });
@@ -5316,12 +5393,69 @@ function quoteSqlTableName(resource: BranchResource, table: DbTableSummary): str
 
 type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string };
 
-function sqlCommandIsReadOnly(sql: string): boolean {
-  const head = sql.trim().replace(/;+$/g, '').match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
-  return ['select', 'show', 'describe', 'desc', 'explain'].includes(head);
+/**
+ * 只读语句头。**必须与后端 src/services/sql-statement-policy.ts 的 READ_STATEMENT_HEADS
+ * 逐字一致**（守卫测试 branch-db-identity.test.ts 会比对两边）：前端据此决定走 /data/query
+ * 还是 /data/query-write，两边不一致就会出现「前端当读发过去、后端当写拒绝」的死语句。
+ */
+const READ_STATEMENT_HEADS = ['select', 'show', 'describe', 'desc', 'explain', 'with', 'table', 'values'];
+
+/**
+ * 写关键字表。**必须与后端 sql-statement-policy.ts 的 WRITE_KEYWORDS_IN_READ_PATH
+ * 逐字一致**（守卫测试比对两边源码）：两边不一致就会出现「前端当读发过去、后端当写
+ * 拒绝」或反过来的死语句。
+ */
+const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock)\b/i;
+
+/**
+ * 与后端 stripSqlComments(sql, { maskLiterals: true, dialect }) 同一套扫描：
+ * 注释剥掉，字面量内容抹成空格。
+ *
+ * `hashStartsComment` 必须跟着方言走：`#` 在 MySQL 是行注释，在 PostgreSQL 是 JSON
+ * 运算符（`#>>` / `#>` / `#-`）。当成注释就会把后面的代码整段吞掉，
+ * `WITH x AS (SELECT payload #>> '{a}' FROM src) UPDATE target SET n = 1` 于是被判成
+ * 只读、直接发去 /data/query（Codex P1，2026-09-01）。默认按「不是注释」处理。
+ */
+function stripSqlCommentsAndLiterals(sql: string, hashStartsComment = false): string {
+  let out = '';
+  let quote: string | null = null;
+  for (let i = 0; i < sql.length; i += 1) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+    if (quote) {
+      out += ch === quote ? ch : ' ';
+      if (ch === '\\') { out += ' '; i += 1; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; continue; }
+    if (ch === '/' && next === '*') {
+      const end = sql.indexOf('*/', i + 2);
+      i = end === -1 ? sql.length : end + 1;
+      out += ' ';
+      continue;
+    }
+    if ((ch === '-' && next === '-') || (ch === '#' && hashStartsComment)) {
+      const end = sql.indexOf('\n', i);
+      i = end === -1 ? sql.length : end;
+      out += ' ';
+      continue;
+    }
+    out += ch;
+  }
+  return out;
 }
 
-function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter }): JSX.Element {
+function sqlCommandIsReadOnly(sql: string, runtime?: string): boolean {
+  const body = sql.trim().replace(/;+$/g, '').trim();
+  const head = body.match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
+  if (!READ_STATEMENT_HEADS.includes(head)) return false;
+  // CTE 后面可以跟 DELETE/UPDATE，头是 with 不代表只读；但字面量/注释里的那些词不算
+  // ——判据看代码本身，与后端同一条。`#` 只有 MySQL 才是注释。
+  return !WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body, runtime === 'MySQL'));
+}
+
+function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter; onWorkbenchDismiss?: () => void }): JSX.Element {
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [tablesState, setTablesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; tables: DbTableSummary[]; database?: string; message?: string }>({ status: 'idle', tables: [] });
   const [selectedTableKey, setSelectedTableKey] = useState('');
@@ -5416,7 +5550,7 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
     if (!basePath || !sql.trim()) return;
     setResultState({ status: 'loading' });
     try {
-      const readOnly = sqlCommandIsReadOnly(sql);
+      const readOnly = sqlCommandIsReadOnly(sql, resource.runtime);
       const result = await apiRequest<DbQueryResult>(`${basePath}/${readOnly ? 'query' : 'query-write'}`, {
         method: 'POST',
         body: readOnly ? { sql } : { sql, confirmResourceName: resource.serviceName || resource.displayName },
@@ -5445,7 +5579,7 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
         open={workbenchOpen}
         title={`${resource.runtime} :${resource.port || resource.containerPort || '?'}`}
         subtitle={`${tablesState.database || '-'}${selectedTable ? `.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : ''} · ${resource.displayName}`}
-        onClose={() => setWorkbenchOpen(false)}
+        onClose={() => { setWorkbenchOpen(false); onWorkbenchDismiss?.(); }}
       >
         <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[320px_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">

@@ -11,7 +11,7 @@ namespace PrdAgent.Tests;
 public class GatewayDataDomainGuardTests
 {
     [Fact]
-    public void VisualCreation_AlwaysUsesDedicatedHttpGatewayForResolveAndSend()
+    public void VisualCreation_SendsCanonicalBusinessRequestThroughDedicatedHttpGateway()
     {
         var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
         var client = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
@@ -20,11 +20,27 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ILogicalModelGateway : ILlmGateway", ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/ILogicalModelGateway.cs"));
         Assert.Contains("ILogicalModelGateway, CoreGateway.ILlmGateway", httpGateway);
         Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.ILogicalModelGateway>", program);
-        Assert.Contains("private readonly ILogicalModelGateway _servingGateway", client);
+        Assert.Contains("private readonly HttpLlmGatewayClient _servingGateway", client);
         Assert.Contains("HttpLlmGatewayClient servingGateway", client);
         Assert.True(
-            client.Split("var requestGateway = _servingGateway;", StringSplitOptions.None).Length - 1 == 2,
-            "文生图与多图生图都必须直接选择独立 Gateway HTTP 边界");
+            client.Split("ILogicalModelGateway requestGateway = _servingGateway;", StringSplitOptions.None).Length - 1 == 2,
+            "尚未迁移的消费者也必须保留独立 Gateway HTTP 边界");
+        var logicalStart = client.IndexOf("private async Task<ApiResponse<ImageGenResult>> GenerateLogicalImageAsync", StringComparison.Ordinal);
+        var logicalEnd = client.IndexOf("public async Task<ApiResponse<ImageGenResult>> GenerateAsync", logicalStart, StringComparison.Ordinal);
+        var logicalPath = client[logicalStart..logicalEnd];
+        Assert.Contains("_servingGateway.GenerateImageAsync", logicalPath);
+        Assert.Contains("RequiredLogicalModelPublicId = logicalModel", logicalPath);
+        Assert.Contains("CanonicalImageRequest = new GatewayCanonicalImageRequest", logicalPath);
+        Assert.DoesNotContain("ResolveModel", logicalPath);
+        Assert.DoesNotContain("ResolveRequiredLogicalModel", logicalPath);
+        Assert.DoesNotContain("ImageGenRequestBuilder", logicalPath);
+        Assert.Contains("ImageReferences = imageReferences", logicalPath);
+        Assert.Contains("prompt, inputArtifactIds, identified.Width", logicalPath);
+        Assert.Contains("ActualModel = response.Resolution?.ActualModel", logicalPath);
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+        Assert.Contains("actualModel = doneActualModel", worker);
+        Assert.Contains("modelId = doneActualModel", worker);
+        Assert.Contains("var doneActualModel = meta?.ActualModel", worker);
         Assert.DoesNotContain("private readonly ILlmGateway _gateway", client);
         Assert.DoesNotContain("private readonly ILogicalModelGateway _logicalModelGateway", client);
         Assert.DoesNotContain("_gateway.ResolveRequiredLogicalModelAsync", client);
@@ -815,8 +831,22 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("sourceSystem: 'external'", quickstart);
         Assert.Contains("context: { sourceSystem: 'external' }", quickstart);
         Assert.Contains("payload.success ?? payload.Success", quickstart);
-        Assert.Contains("normalizeRoutePreview(payload, normalizedBaseUrl)", quickstart);
+        Assert.Contains("normalizeRoutePreview(payload, checked)", quickstart);
         Assert.Contains("preview.checkedBaseUrl !== normalizeBaseUrl(baseUrl)", quickstart);
+        // 一次预检的结论钉着「哪一条路」：地址 + 钉住的成员。只比地址的话，换成员之后
+        // 上一个成员的结论仍算数，会替一条没验过的路放行——池里有成员指向开发桩时，
+        // 选中它的那一刻闸门还是绿的，正是这道闸要防的那件事。
+        Assert.Contains("routePreview.checkedModel === (activeProbePin?.model ?? 'auto')", quickstart);
+        Assert.Contains("routePreview.checkedPlatformId === (activeProbePin?.platformId ?? '')", quickstart);
+        // 并发预检只认最后发起的那一代：先发的那条后到，会把旧结论盖到当前成员头上。
+        Assert.Contains("const probeId = ++routeProbeSeq.current;", quickstart);
+        Assert.Contains("if (superseded()) return;", quickstart);
+        // 钉住与否只许判一处，预检与真实调用必须问同一个函数，否则预检的不是会跑的那条路。
+        Assert.Equal(1, CountOccurrences(quickstart, "function pinnedTargetOf("));
+        // 片段里的自由文本（输入框那句、上传的文本、模型名）要过 shell 转义：
+        // 一个撇号就能让 -d 的参数提前收尾，后半句被当成命令跑。
+        Assert.Contains("shellSingleQuoted(", quickstart);
+        Assert.Contains("shellDoubleQuoted(appCaller)", quickstart);
         Assert.Contains("disabled={!realRouteReady || routeChecking}", quickstart);
         Assert.Contains("const snippetMode: TestMode", quickstart);
         Assert.Contains("X-Request-Id: \\$REQUEST_ID", quickstart);
@@ -4465,6 +4495,174 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("AddExactFilter(\"ModelPoolId\", body.ModelPoolId)", console[bulkStart..bulkEnd]);
     }
 
+    /// <summary>
+    /// 改请求的每一个输入，都必须作废「当前这一跑」。
+    ///
+    /// 坏法是静默的：产物留在屏幕上，而它旁边的 cURL 片段与「实际执行」已经跟着新输入
+    /// 重新渲染了——用户看到的回答与它旁边写着的请求内容根本不是一回事；在途那条回来时
+    /// 还会继续往新输入上写。页面不报错、测试不变红，只有真的坐下来点一遍才看得见。
+    ///
+    /// 判据不是「某个控件有没有清结果」，而是「改请求的那几个控件是不是都走了同一道作废」。
+    /// 上一轮只给模型那一个装了，判据当时写成了「用户报的是哪个控件」——于是提示词、附件、
+    /// 协议三处原样留着同一个洞。所以这里钉两件事：作废只有一份定义，且每一处都调它。
+    /// </summary>
+    [Fact]
+    public void QuickstartRequestInputs_AllInvalidateTheActiveRun()
+    {
+        var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
+
+        // 作废是一份共享动作（顶掉代次 + abort + 清产物 + 清结论），不许各处各写一套。
+        Assert.Contains("const invalidateActiveRun = () => {", quickstart);
+        Assert.Contains("activeRunAbort.current?.abort();", quickstart);
+
+        /*
+          这一屏有两条会写同一批状态（testing / testResult / liveOutput / testElapsedMs）的调用路径：
+          安全测试 runTest 与真实调用 runRealTest。**两条都得挂在同一份代次上**——
+          上一轮只给 runRealTest 装了，于是作废对 runTest 完全无效：在途那条回来照样把结论
+          写到新输入上，它的 finally 还会把另一跑的忙态收掉（按钮提前解禁、计时停在别人的耗时上）。
+        */
+        foreach (var (name, from, to) in new[]
+                 {
+                     ("runTest", "const runTest = async (target = bundle, mode = testMode) => {", "const invalidateActiveRun = () => {"),
+                     ("runRealTest", "const runRealTest = async () => {", "/** 读上传的文件"),
+                 })
+        {
+            var start = quickstart.IndexOf(from, StringComparison.Ordinal);
+            Assert.True(start >= 0, $"找不到 {name}，守卫的取值范围失效了");
+            var end = quickstart.IndexOf(to, start, StringComparison.Ordinal);
+            Assert.True(end > start, $"{name} 的取值范围没有正常收尾");
+            var body = quickstart[start..end];
+
+            Assert.Contains("const runId = ++activeRunSeq.current;", body);
+            Assert.Contains("activeRunAbort.current = abortController;", body);
+            Assert.Contains("const superseded = () => activeRunSeq.current !== runId;", body);
+            Assert.Contains("signal: abortController.signal,", body);
+            // 收尾（忙态 + 耗时）只许当前代次做，被顶掉的那一跑不许替新的那一跑解禁按钮。
+            Assert.Contains("if (!superseded()) {", body);
+        }
+
+        // 四个会改变请求内容的输入，逐个必须调它。少一个就是又留下一条「产物与请求对不上」的路径。
+        Assert.Contains("setModelQuery(event.target.value); invalidateActiveRun();", quickstart);
+        Assert.Contains("setTestPrompt(event.target.value); invalidateActiveRun();", quickstart);
+        Assert.Contains("setAttachment(null); invalidateActiveRun();", quickstart);
+        Assert.Contains("setProtocol(event.target.value as Protocol); invalidateActiveRun();", quickstart);
+
+        // 上传附件那条路径（pickAttachment）同样改请求，也要调——连同上面四处共 5 个调用点。
+        var invalidations = CountOccurrences(quickstart, "invalidateActiveRun();");
+        Assert.True(
+            invalidations >= 6,
+            $"改请求的输入必须全部走同一道作废，当前只有 {invalidations} 个调用点");
+
+        // 「更改身份」是第六个出口，而且是唯一一个**离开这一屏**的：不 abort 的话请求照跑照计费，
+        // 不顶代次的话它会把产物/结论/忙态写到新签出来的那个身份头上。
+        var editStart = quickstart.IndexOf("const editIdentity = async () => {", StringComparison.Ordinal);
+        Assert.True(editStart >= 0, "找不到 editIdentity，守卫的取值范围失效了");
+        var editEnd = quickstart.IndexOf("setStage('intent');", editStart, StringComparison.Ordinal);
+        Assert.True(editEnd > editStart, "editIdentity 的取值范围没有正常收尾");
+        Assert.Contains("invalidateActiveRun();", quickstart[editStart..editEnd]);
+    }
+
+    /// <summary>
+    /// 服务网关设置：那条绿色的「测试连接」结论是照**当时那份配置**跑出来的。
+    /// 改了来源/池/模型还留着它，页面就成了「配置 B + 来自配置 A 的证明」；
+    /// 保存之后同样如此——而这一页存在的理由正是让人当场确认这份配置能用。
+    /// </summary>
+    [Fact]
+    public void GatewaySettings_InvalidatesTheTestResultOnEveryChange()
+    {
+        var gatewaySettings = ReadRepoFile("llmgw/web/src/pages/GatewaySettingsPage.tsx");
+
+        Assert.Contains("const invalidateTestResult = () => {", gatewaySettings);
+        // 三处选择走同一个出口：记一次「用户动过手」+ 改值 + 作废旧结论。
+        Assert.Contains("onClick={() => changeSelection(() => setSource(item.id))}", gatewaySettings);
+        Assert.Contains("onChange={(event) => changeSelection(() => setPoolId(event.target.value))}", gatewaySettings);
+        Assert.Contains("onChange={(event) => changeSelection(() => setModelName(event.target.value))}", gatewaySettings);
+        Assert.Contains("invalidateTestResult();", gatewaySettings[gatewaySettings.IndexOf("const changeSelection = (apply: () => void) => {", StringComparison.Ordinal)..]);
+
+        /*
+          保存期间控件仍可编辑（该保留：保存是个快请求，为它锁整屏不值当），
+          而保存收尾会读回服务端那份。不认代次的话，用户在这一小段里改的选择会被
+          读回来的旧值**静默覆盖**，`dirty` 随之归零——屏幕上是他没选的那个，
+          页面还告诉他「已保存」。所以：保存开头钉住选择代次，收尾按它决定要不要回填。
+        */
+        Assert.Contains("const selectionAtStart = selectionSeq.current;", gatewaySettings);
+        Assert.Contains("const editedDuringSave = selectionSeq.current !== selectionAtStart;", gatewaySettings);
+        Assert.Contains("await load(!editedDuringSave);", gatewaySettings);
+        // 不回填选择时仍要刷新 data，否则 dirty 会拿旧的服务端值比，说不出「这份还没保存」。
+        Assert.Contains("setData(res.data);\n    if (!applySelection) return;", gatewaySettings.Replace("\r\n", "\n"));
+        // 在途那次也要按代次丢弃：请求在路上时改了选择，旧结论回来就会给新配置背书。
+        Assert.Contains("if (testSeq.current !== runId) return;", gatewaySettings);
+        /*
+          但被代次挡掉的那条分支上不许挂着别人依赖的收尾动作。
+          忙态原来就收在那条分支里：作废之后请求回来被挡住，`setTesting(false)` 永远执行不到，
+          计时器跟着 testing 跑，按钮永久停在「正在测试 N s」且禁用，只有刷新才能恢复。
+          所以收忙态搬进 finally 且只由当前代次收，作废本身也顺手收一次。
+        */
+        Assert.Contains("if (testSeq.current === runId) setTesting(false);", gatewaySettings);
+        var invalidateStart = gatewaySettings.IndexOf("const invalidateTestResult = () => {", StringComparison.Ordinal);
+        Assert.True(invalidateStart >= 0, "找不到 invalidateTestResult，守卫的取值范围失效了");
+        var invalidateEnd = gatewaySettings.IndexOf("const save = async () => {", invalidateStart, StringComparison.Ordinal);
+        Assert.True(invalidateEnd > invalidateStart, "invalidateTestResult 的取值范围没有正常收尾");
+        Assert.Contains("setTesting(false);", gatewaySettings[invalidateStart..invalidateEnd]);
+        Assert.True(
+            CountOccurrences(gatewaySettings, "changeSelection(() =>") >= 3,
+            "三处选择都得走同一个出口，少一处就会留下「配置 B 配着配置 A 的证明」");
+        // 保存自己也要作废一次：保存换的是「下一次调用按什么走」，旧结论证明不了新的那份。
+        Assert.Contains("invalidateTestResult();\n    const editedDuringSave", gatewaySettings.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// 逻辑模型清单被截断时，剩下那些必须够得着。
+    ///
+    /// 坏法同样是静默的：清单只回前 200 条，排在之后的模型在这一页等于不存在——
+    /// 页面不报错、下拉里就是没有它，用户只会以为系统不支持那个模型。
+    /// 所以截断要成对出现三件事：能筛（关键字进查询）、说得出还剩多少（总数回前端）、
+    /// 筛的时候不动用户的选择（关键字不是配置变更，不能顺手把选择框重读回来）。
+    /// </summary>
+    [Fact]
+    public void SystemSettings_KeepsLogicalModelsBeyondThePageReachable()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var gatewaySettings = ReadRepoFile("llmgw/web/src/pages/GatewaySettingsPage.tsx");
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+
+        var start = console.IndexOf("app.MapGet(\"/gw/system-settings\"", StringComparison.Ordinal);
+        Assert.True(start >= 0, "找不到 /gw/system-settings，守卫的取值范围失效了");
+        var end = console.IndexOf("app.MapPut(\"/gw/system-settings\"", start, StringComparison.Ordinal);
+        Assert.True(end > start, "/gw/system-settings 读端点的取值范围没有正常收尾");
+        var endpoint = console[start..end];
+
+        /*
+          关键字要真的进**清单那条查询**，不是「代码里出现过这个变量」就算数。
+          第一版守卫写成了后者：把清单查询改回未筛的 chatModelFilter，
+          变量仍在（定义 + 计数还用着它），断言照样绿——判据读的不是真正生效的那个值。
+        */
+        Assert.Contains("http.Request.Query[\"q\"]", endpoint);
+        Assert.Contains(".Find(chatModelQueryFilter)", endpoint);
+        // 总数也必须按同一份条件数，否则「还剩 N 条」说的是另一批模型。
+        Assert.Contains("CountDocumentsAsync(chatModelQueryFilter)", endpoint);
+        // 总数要回出去：说不出「还剩多少条」，用户就无从判断该不该去筛。
+        Assert.Contains("modelTotal = chatModelTotal", endpoint);
+        Assert.Contains("modelPageSize = ChatModelPageSize", endpoint);
+        // 已保存的那个仍按未筛的条件补进来：筛掉它就等于把「当前在用的模型」从页面上抹掉。
+        Assert.Contains("chatModelFilter,", endpoint);
+
+        Assert.Contains("export function getSystemSettings(query?: string)", api);
+        Assert.Contains("`/system-settings?q=${encodeURIComponent(q)}`", api);
+
+        Assert.Contains("placeholder=\"按模型名或标识筛选\"", gatewaySettings);
+        /*
+          连着敲几个关键字就有几条读在路上：先发的那条**后回来**会把清单盖成上一个关键字的结果
+          （搜索框写着 B、下拉里装着 A 的模型）；保存前发出的那条回来还会把 data 盖回保存前那份，
+          让刚存好的配置显示成「未保存」、连测试连接都跟着被禁用。所以读回也按代次丢弃。
+        */
+        Assert.Contains("const loadId = ++loadSeq.current;", gatewaySettings);
+        Assert.Contains("if (loadSeq.current !== loadId) return;", gatewaySettings);
+        // 筛清单不是改配置：不回填选择框（applySelection=false），也不作废测试结论。
+        Assert.Contains("void load(false, modelQuery);", gatewaySettings);
+        Assert.Contains("data.modelTotal > data.models.length", gatewaySettings);
+    }
+
     [Fact]
     public void AgentFirstQuickstart_KeepsTenantAuthorityAndUnknownCostBoundaries()
     {
@@ -4505,6 +4703,74 @@ public class GatewayDataDomainGuardTests
         Assert.True(logWriteIndex >= 0 && observationUpdateIndex > logWriteIndex);
         Assert.True(System.Text.RegularExpressions.Regex.Matches(console, "TeamId = d.AsNullableString\\(\\\"TeamId\\\"\\)").Count >= 4);
 
+        // appCallerCode 必须从用户那句「我想要做什么」派生，不许再兜底成 `xxx.quickstart` 占位码：
+        // 用户三次反馈「不要直接给一个随机的 xxxquickstart」，靠人自觉守不住，钉成字面量断言。
+        var intent = ReadRepoFile("llmgw/web/src/lib/appCallerIntent.ts");
+        Assert.Contains("MIN_INTENT_LENGTH", intent);
+        Assert.Contains("analyzeAppCallerIntent", quickstart);
+        Assert.Contains("buildAppCallerCode", quickstart);
+        Assert.DoesNotContain(".quickstart::", quickstart);
+        // 码由模型推：控制台自己吃自己的狗粮，走 serving 的兼容端点，前端边收边渲染。
+        // 这条接线删掉不会让任何测试变红（页面会静默退回本地关键词表），所以钉成字面量。
+        var consoleApi = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("/gw/app-callers/draft", consoleApi);
+        Assert.Contains("X-Gateway-App-Caller", consoleApi);
+        Assert.Contains("INTENT_DRAFT_UNAVAILABLE", consoleApi);
+        Assert.Contains("draftAppCallerIntent", quickstart);
+
+        // 系统级凭据必须自愈：手签一把 key 塞环境变量的做法在真实部署上出过
+        // 「网关对自己回 401」——env 与网关库的密钥目录一旦对不上就没人能自救。
+        // 这四条接线删掉都不会让别的测试变红（推导会静默退回本地关键词表），所以钉成字面量。
+        Assert.Contains("EnsureSystemGatewayAccessAsync", consoleApi);
+        Assert.Contains("llmgw_system_settings", consoleApi);
+        Assert.Contains("/gw/system-settings", consoleApi);
+        Assert.Contains("/gw/system-settings/test", consoleApi);
+        // 推导端点必须走自愈入口取凭据，不许再直接读密钥类环境变量。
+        Assert.DoesNotContain("LLMGW_INTENT_DRAFT_KEY", consoleApi);
+        // 裸状态码对用户毫无意义（他会问「系统就是网关，还 401?」），必须翻译成能行动的一句话。
+        Assert.Contains("ReadGatewayFailureDetailAsync", consoleApi);
+        Assert.Contains("GATEWAY_KEY_INVALID", consoleApi);
+        // 设置页存在、接进路由与侧栏，并且只让用户做「用哪个模型」这一个决定。
+        var gatewaySettings = ReadRepoFile("llmgw/web/src/pages/GatewaySettingsPage.tsx");
+        Assert.Contains("getSystemSettings", gatewaySettings);
+        Assert.Contains("testSystemSettings", gatewaySettings);
+        Assert.Contains("gatewaySettings", ReadRepoFile("llmgw/web/src/lib/access.ts"));
+        Assert.Contains("/gateway-settings", ReadRepoFile("llmgw/web/src/App.tsx"));
+        Assert.Contains("服务网关设置", ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx"));
+        // 系统密钥明文永不下发到浏览器：设置页只认前缀字段。
+        Assert.DoesNotContain("credentialPlaintext", gatewaySettings);
+        Assert.Contains("credentialPrefix", gatewaySettings);
+        // 自愈必须真的闭环：被网关以凭据类原因拒绝时要作废重签，而不是让用户再点一次。
+        // 且只对「重签能修好」的码作废——否则就成了自己修不好自己的循环（形状 5）。
+        Assert.Contains("InvalidateSystemCredentialAsync", consoleApi);
+        Assert.Contains("IsSystemCredentialFixableCode", consoleApi);
+        // 系统密钥不挂在任何人名下：挂了人，那个人一离职这把 key 就跟着死。
+        Assert.Contains("{ \"CreatedByUserId\", BsonNull.Value },", consoleApi);
+        // 自签的 key 必须能在接入密钥页看见：列表只收 IssuanceState 缺失或 issued，
+        // 写别的值这把 key 就成了页面上不存在的幽灵凭据。
+        Assert.Contains("{ \"IssuanceState\", \"issued\" },", consoleApi);
+
+        // ── 系统内部消耗单独计费：凭据与用途码必须挂在专属的「系统内部」团队上 ──
+        // 用户 2026-08-28：「系统内部的，按照系统内部的团队，消耗，权限……计费方式是单独计费」。
+        // 借用「租户第一个 active 团队」会把系统用量记进某个业务团队的预算，且这个团队随
+        // 建库顺序变化。删掉这条归属不会让任何测试变红（调用照常成功，只是记错账），故钉字面量。
+        Assert.Contains("EnsureSystemTeamAsync", consoleApi);
+        Assert.Contains("const string SystemTeamName = \"系统内部\";", consoleApi);
+        // 归属不许由请求体写入——留一个可写字段就等于留一条把系统账单混进业务团队的路。
+        Assert.DoesNotContain("TeamId", MethodBody(
+            ReadRepoFile("llmgw/console-api/Models/Dtos.cs"),
+            "public sealed class UpdateSystemSettingsRequest"));
+        // 「系统内部永远不会出现 401」要靠**事前**核对，不能只等被拒之后再自愈：
+        // 复用存量 key 前先按 serving 的门禁判据过一遍，对不上就地重签。
+        Assert.Contains("SystemKeyStillPassesTheGate", consoleApi);
+        // key 与 appCaller 归属团队对不上时 serving 回 GATEWAY_KEY_TEAM_MISMATCH，
+        // 而重签走 EnsureSystemTeamAsync 能让两边落到同一个团队——所以它必须在可自愈码里。
+        Assert.Contains("GATEWAY_KEY_TEAM_MISMATCH", consoleApi);
+        Assert.Contains("GATEWAY_KEY_TEAM_INACTIVE", consoleApi);
+        // 模型推的、本地降级的、用户手改的，界面必须分得出来（推断值可见可改可追责）。
+        Assert.Contains("codeSource", quickstart);
+        // 系统提示词是给用户粘走的产物，绝不能把密钥明文写进去。
+        Assert.Contains("$LLMGW_API_KEY", quickstart);
         Assert.Contains("scopes: ['invoke', 'stream:invoke', 'route:read']", quickstart);
         Assert.Contains("ingressProtocols: PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
         Assert.Contains("type RequestType = 'chat' | 'vision'", quickstart);
@@ -4531,10 +4797,87 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("location ^~ /v1beta/", webNginx);
         Assert.Contains("location ^~ /gemini/v1beta/", webNginx);
         Assert.Contains("client_max_body_size 30m;", webNginx);
-        Assert.True(System.Text.RegularExpressions.Regex.Matches(webNginx, "proxy_pass http://\\$llmgw_serving_upstream:8091;").Count == 4);
+        // 判的是「这几个入口分别落到 serving」，不是「serving 的 proxy_pass 出现几次」。
+        // 数个数有两处坏：新增一条**合法**的 serving 入口它也红（2026-08-30 补
+        // /llmgw/gw/v1/ 时就红了一次，逼着人去改数字而不是去核对路由）；反过来，
+        // 把某条入口从 8091 改到 8090、同时在别处补一条 8091，总数不变照样绿。
+        // 取的是**生效的**那条 proxy_pass，不是「块里出现过这串字」：注释掉的那行
+        // 一样含有它，用 Contains 判会把一条被注释的声明当成证据（形状 8）——
+        // 这条守卫自己就栽过一次：把某个入口改指 8090、再把原来那行注释掉留在块里，Contains 照样绿。
+        foreach (var servingPrefix in new[] { "/gw/v1/", "/v1/", "/v1beta/", "/gemini/v1beta/", "/llmgw/gw/v1/" })
+        {
+            var locationAt = webNginx.IndexOf($"location ^~ {servingPrefix} {{", StringComparison.Ordinal);
+            Assert.True(locationAt >= 0, $"nginx.conf 缺少 serving 入口 location ^~ {servingPrefix}");
+            var blockEnd = webNginx.IndexOf("\n    }", locationAt, StringComparison.Ordinal);
+            Assert.True(blockEnd > locationAt, $"location ^~ {servingPrefix} 的块没有正常收尾");
+            var effectiveProxyPasses = webNginx[locationAt..blockEnd]
+                .Split('\n')
+                .Select(line => line.Trim())
+                .Where(line => line.StartsWith("proxy_pass ", StringComparison.Ordinal))
+                .ToList();
+            Assert.True(
+                effectiveProxyPasses.Count == 1,
+                $"location ^~ {servingPrefix} 里生效的 proxy_pass 应当只有一条，实际 {effectiveProxyPasses.Count} 条");
+            Assert.Equal("proxy_pass http://$llmgw_serving_upstream:8091;", effectiveProxyPasses[0]);
+        }
         Assert.Contains("llmgw-serve:", devCompose);
         Assert.Contains("dockerfile: llmgw/serving/Dockerfile", devCompose);
         Assert.Contains("- llmgw-serve", devCompose);
+    }
+
+    /// <summary>
+    /// 登录一个月、滑动续期，且一次 SSO 不得踢掉这个人别处的会话。
+    ///
+    /// 用户 2026-08-28：「为什么登录总是失效，我都不知道 sso 多少次了……系统默认登录时间为
+    /// 一个月，滑动更新，不允许短效，不允许打开链接就失效登录」。
+    ///
+    /// 根因是 map-sso 无条件 `.Inc(SecurityVersion, 1)`：SecurityVersion 是撤销计数器，
+    /// 每个已鉴权请求都拿 token 里的版本与库里比对，对不上整条会话作废。于是**登录**成了
+    /// 撤销事件——每 SSO 一次，之前发出去的所有链接同时失效。
+    ///
+    /// 这两处改动删掉都不会让任何测试变红（登录照样成功，只是会话又开始随机掉），
+    /// 所以按「删掉仍全绿就需要一条守卫」钉成字面量。
+    /// </summary>
+    [Fact]
+    public void GatewaySession_LastsAMonthSlidesAndIsNotRevokedByLoggingInAgain()
+    {
+        var consoleApi = ReadRepoFile("llmgw/console-api/Program.cs");
+        var ssoStart = consoleApi.IndexOf("app.MapPost(\"/gw/auth/map-sso\"", StringComparison.Ordinal);
+        Assert.True(ssoStart > 0, "找不到 map-sso 端点");
+        var ssoEnd = consoleApi.IndexOf("}).AllowAnonymous();", ssoStart, StringComparison.Ordinal);
+        Assert.True(ssoEnd > ssoStart, "map-sso 端点没有收尾声明");
+        var mapSso = consoleApi[ssoStart..ssoEnd];
+        Assert.DoesNotContain("SecurityVersion, 1", mapSso);
+
+        // 撤销计数器有**两个**：用户 SecurityVersion 与成员 Version，token 里两个都带、
+        // 每个请求都比对。只修掉一个，用户看到的仍然是「每次打开链接都要重新 SSO」——
+        // 这正是第一轮修完之后实测仍然 401 的原因。所以两条都要钉。
+        //
+        // 成员那条不能简单地断言「不出现 Inc(Version, 1)」：真的有变化（首次进来、
+        // 角色或状态被改过）时该自增是对的。判据是「必须先有一条不动版本的路」——
+        // 角色与状态都已就位时只刷 UpdatedAt，落不到那条才走带 Inc 的 upsert。
+        Assert.Contains("Builders<LlmGwMembership>.Update.Set(x => x.UpdatedAt, now)", mapSso);
+        var unchangedPathIndex = mapSso.IndexOf("Builders<LlmGwMembership>.Update.Set(x => x.UpdatedAt, now)", StringComparison.Ordinal);
+        var incPathIndex = mapSso.IndexOf(".Inc(x => x.Version, 1)", StringComparison.Ordinal);
+        Assert.True(incPathIndex > 0, "成员变更路径仍应保留版本自增");
+        Assert.True(
+            mapSso.IndexOf("if (membership is null)", unchangedPathIndex, StringComparison.Ordinal) > unchangedPathIndex,
+            "带 Inc 的 upsert 必须只在「不动版本那条路没命中」时才走");
+
+        // 真正撤销会话的三处仍必须自增，否则改密/停用成员就形同虚设。
+        Assert.Contains(".Inc(u => u.SecurityVersion, 1)", consoleApi);
+
+        // 时长：常量与 appsettings 两处都要是 30 天。只改常量不改配置文件不会生效——
+        // 配置里的值覆盖常量，那正是「改了却没生效」这一类问题的常见形状。
+        var jwt = ReadRepoFile("llmgw/console-api/Auth/GwJwt.cs");
+        Assert.Contains("DefaultLifetimeDays = 30", jwt);
+        Assert.Contains("X-Gw-Token-Expires-At", ReadRepoFile("llmgw/console-api/Auth/GwSessionHeaders.cs"));
+        var appSettings = ReadRepoFile("llmgw/console-api/appsettings.json");
+        Assert.Contains("\"LifetimeDays\": 30", appSettings);
+
+        // 滑动续期要真的接到浏览器上：后端发续期头、前端收下并覆写本地会话，缺一条就退化成硬过期。
+        var webApi = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        Assert.Contains("x-gw-token", webApi.ToLowerInvariant());
     }
 
     [Fact]
@@ -5426,6 +5769,17 @@ public class GatewayDataDomainGuardTests
 
         Assert.Fail($"方法大括号不配平：{signature}");
         return string.Empty;
+    }
+
+    private static int CountOccurrences(string source, string needle)
+    {
+        var count = 0;
+        for (var at = source.IndexOf(needle, StringComparison.Ordinal); at >= 0; at = source.IndexOf(needle, at + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 
     private static string ReadRepoFile(string relativePath)

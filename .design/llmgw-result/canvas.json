@@ -1,0 +1,28 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html",   "x": 0,    "y": 0,    "w": 1160, "h": 980,  "page": "page-1", "title": "接入信息页签（主稿）" },
+    { "file": "KeyHero.dc.html","x": 1280, "y": 0,    "w": 1160, "h": 840,  "page": "page-1", "title": "密钥主区 · 标注" },
+    { "file": "Curl.dc.html",   "x": 0,    "y": 1120, "w": 1160, "h": 1180, "page": "page-1", "title": "cURL 页签（上输入 / 下输出）" },
+    { "file": "Prompt.dc.html", "x": 1280, "y": 1120, "w": 1160, "h": 800,  "page": "page-1", "title": "提示词页签" },
+    { "file": "TestIO.dc.html", "x": 1280, "y": 2060, "w": 1160, "h": 1240, "page": "page-1", "title": "试跑输入 / 输出 · 三态" },
+
+    { "file": "AccessLight.dc.html", "x": 0,    "y": 0, "w": 1160, "h": 980,  "page": "page-2", "title": "接入信息 · 浅色核对" },
+    { "file": "CurlLight.dc.html",   "x": 1280, "y": 0, "w": 1160, "h": 1180, "page": "page-2", "title": "cURL · 浅色核对" },
+
+    { "file": "AccessMobile.dc.html", "x": 0,   "y": 0, "w": 390,  "h": 1180, "page": "page-3", "title": "接入信息 · 390 宽" },
+    { "file": "Spec.dc.html",         "x": 510, "y": 0, "w": 1000, "h": 1400, "page": "page-3", "title": "改稿对照表" }
+  ],
+  "annotations": [
+    { "id": "note-core", "page": "page-1", "x": 0, "y": -190, "w": 700, "text": "最重要的一处不是版式，是信息架构：一次性密钥从「接入信息」页签里提出来，移到页签之上常驻。\n它是全屏唯一取不回来的东西，而现在切到 cURL 页签它就被卸载掉了。\n右边那张画板专门讲这一块。" },
+    { "id": "note-tabs", "page": "page-1", "x": 0, "y": 1010, "w": 700, "text": "页签从三张等宽大卡降级成分段控件之后，导航与内容才分得出层。\ncURL 页签里最上面那一块换成了「上输入 / 下输出」：用户自己写要发什么，模型回什么就贴在正下方。" },
+    { "id": "note-io", "page": "page-1", "x": 1280, "y": 1950, "w": 700, "text": "右边这张把试跑区的三个状态拆开画：还没跑 / 正在接收 / 已返回。\n对照关系靠三件事成立——同宽同圆角上下相邻、空态也占 88px 不让页面跳、输出块左侧一条竖线标明「这是回来的」。" },
+    { "id": "note-light", "page": "page-2", "x": 0, "y": -150, "w": 700, "text": "浅色档不是换色号：--bg-elevated 与 --bg-surface 同为 #ffffff，\n代码块、输入框、输出块、分段控件轨道、配角卡的底一律改用 --bg-base(#f1f5f9)，否则在白天全部和卡片糊成一片。" },
+    { "id": "note-spec", "page": "page-3", "x": 510, "y": -150, "w": 700, "text": "右边这张是改 CSS 时的对照表：七处改动逐条列了「现状 → 改法」，\n外加字号落点和两个容易漏的实现点。" }
+  ],
+  "pages": [
+    { "id": "page-1", "name": "产物屏（深色）" },
+    { "id": "page-2", "name": "浅色核对" },
+    { "id": "page-3", "name": "移动端与对照表" }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { constants, generateKeyPairSync, verify } from 'node:crypto';
 import {
   buildStableSmokeCanonicalRequest,
+  buildStableSmokeAuthHeaders,
   buildStableSmokeSignatureHeaders,
 } from '../stable-smoke-signature.mjs';
 
@@ -50,4 +51,21 @@ test('签名请求绑定方法、路径、账号、正文、时间戳与一次�
     verifyOptions,
     Buffer.from(headers['X-Stable-Smoke-Signature'], 'base64'),
   ), false);
+});
+
+test('RSA 与旧 AI Key 同时存在时始终优先使用签名身份', () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const headers = buildStableSmokeAuthHeaders({
+    method: 'POST',
+    url: 'https://branch.example/api/v1/auth/synthetic/ticket',
+    body: '{}',
+    keyId: 'current-key',
+    username: 'stsmk_cds',
+    privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    aiAccessKey: 'legacy-key',
+  });
+
+  assert.equal(headers['X-Stable-Smoke-Key-Id'], 'current-key');
+  assert.equal(headers['X-AI-Access-Key'], undefined);
+  assert.equal(headers['X-AI-Impersonate'], undefined);
 });

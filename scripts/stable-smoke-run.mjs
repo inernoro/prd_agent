@@ -193,8 +193,10 @@ export function validateEnvironmentConfig(name, values) {
   }
   if (!values[`${prefix}_USER`]) errors.push(`${prefix}_USER`);
   if (!values[`${prefix}_GW_BASE_URL`]) errors.push(`${prefix}_GW_BASE_URL`);
-  if (!values[`${prefix}_GW_USER`]) errors.push(`${prefix}_GW_USER`);
-  if (!values[`${prefix}_GW_PASSWORD`]) errors.push(`${prefix}_GW_PASSWORD`);
+  if (!hasSignature) {
+    if (!values[`${prefix}_GW_USER`]) errors.push(`${prefix}_GW_USER`);
+    if (!values[`${prefix}_GW_PASSWORD`]) errors.push(`${prefix}_GW_PASSWORD`);
+  }
   if (name === 'production') {
     const baseUrl = values[`${prefix}_BASE_URL`]?.replace(/\/+$/, '');
     const allowedBaseUrl = values.STABLE_SMOKE_PROD_ALLOWED_BASE_URL?.replace(/\/+$/, '');
@@ -202,6 +204,65 @@ export function validateEnvironmentConfig(name, values) {
     else if (baseUrl !== allowedBaseUrl) errors.push('正式环境地址与部署注入的允许地址不一致');
   }
   return errors;
+}
+
+function hasStableSmokeSigningIdentity(prefix, values) {
+  return Boolean(
+    values[`${prefix}_SIGNING_KEY_ID`]
+    && values[`${prefix}_SIGNING_PRIVATE_KEY`],
+  );
+}
+
+export async function issueGatewayFederationSession(
+  environment,
+  values,
+  fetchFn = globalThis.fetch,
+) {
+  const prefix = environment === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
+  if (!hasStableSmokeSigningIdentity(prefix, values)) {
+    throw new Error('模型网关短票据要求稳定冒烟 RSA 签名身份');
+  }
+
+  const ticketUrl = `${withoutTrailingSlash(values[`${prefix}_BASE_URL`])}/api/v1/auth/synthetic/gateway-ticket`;
+  const ticketBody = '{}';
+  const ticketResponse = await fetchFn(ticketUrl, {
+    signal: AbortSignal.timeout(10_000),
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...buildStableSmokeAuthHeaders({
+        method: 'POST',
+        url: ticketUrl,
+        body: ticketBody,
+        username: values[`${prefix}_USER`],
+        keyId: values[`${prefix}_SIGNING_KEY_ID`],
+        privateKey: values[`${prefix}_SIGNING_PRIVATE_KEY`],
+      }),
+    },
+    body: ticketBody,
+  });
+  const ticketPayload = await ticketResponse.json().catch(() => null);
+  if (!ticketResponse.ok || ticketPayload?.success !== true || !ticketPayload?.data?.code) {
+    const code = ticketPayload?.error?.code || `HTTP_${ticketResponse.status}`;
+    throw new Error(`MAP_GATEWAY_TICKET_REJECTED:${code}`);
+  }
+
+  const gatewayUrl = `${withoutTrailingSlash(values[`${prefix}_GW_BASE_URL`])}/gw/auth/stable-smoke-sso`;
+  const exchangeResponse = await fetchFn(gatewayUrl, {
+    signal: AbortSignal.timeout(10_000),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: ticketPayload.data.code }),
+  });
+  const exchangePayload = await exchangeResponse.json().catch(() => null);
+  if (!exchangeResponse.ok
+    || exchangePayload?.success !== true
+    || !exchangePayload?.data?.token
+    || exchangePayload?.data?.mustChangePassword !== false) {
+    const code = exchangePayload?.error?.code || `HTTP_${exchangeResponse.status}`;
+    throw new Error(`GATEWAY_FEDERATION_REJECTED:${code}`);
+  }
+  return exchangePayload.data;
 }
 
 export function validateProductionReadOnlyConfig(values) {
@@ -262,27 +323,34 @@ export async function validateEnvironmentIdentities(environment, values, fetchFn
   }
 
   try {
-    const response = await fetchFn(
-      `${withoutTrailingSlash(values[`${prefix}_GW_BASE_URL`])}/gw/auth/login`,
-      {
-        signal: AbortSignal.timeout(10_000),
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: values[`${prefix}_GW_USER`],
-          password: values[`${prefix}_GW_PASSWORD`],
-        }),
-      },
-    );
-    const payload = await response.json().catch(() => null);
-    if (!response.ok
-      || payload?.success !== true
-      || !payload?.data?.token
-      || payload?.data?.mustChangePassword !== false) {
-      blockers.push(`${label}模型网关自动化身份校验未通过`);
+    if (hasStableSmokeSigningIdentity(prefix, values)) {
+      await issueGatewayFederationSession(environment, values, fetchFn);
+    } else {
+      const response = await fetchFn(
+        `${withoutTrailingSlash(values[`${prefix}_GW_BASE_URL`])}/gw/auth/login`,
+        {
+          signal: AbortSignal.timeout(10_000),
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: values[`${prefix}_GW_USER`],
+            password: values[`${prefix}_GW_PASSWORD`],
+          }),
+        },
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok
+        || payload?.success !== true
+        || !payload?.data?.token
+        || payload?.data?.mustChangePassword !== false) {
+        blockers.push(`${label}模型网关自动化身份校验未通过`);
+      }
     }
-  } catch {
-    blockers.push(`${label}模型网关自动化身份无法连接`);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : '';
+    blockers.push(reason.includes('_REJECTED:')
+      ? `${label}模型网关自动化身份校验未通过（${reason.split(':').at(-1)}）`
+      : `${label}模型网关自动化身份无法连接`);
   }
 
   return blockers;
@@ -297,6 +365,13 @@ export function decodeJwtPayload(token) {
 }
 
 async function readGatewayLoginSnapshot(values, fetchFn = globalThis.fetch) {
+  if (hasStableSmokeSigningIdentity('STABLE_SMOKE_CDS', values)) {
+    const data = await issueGatewayFederationSession('cds', values, fetchFn);
+    const claims = decodeJwtPayload(data.token);
+    const securityVersion = String(claims.user_security_version || '').trim();
+    if (!securityVersion) throw new Error('CDS 网关巡检会话缺少安全版本声明');
+    return { token: data.token, securityVersion };
+  }
   const baseUrl = withoutTrailingSlash(values.STABLE_SMOKE_CDS_GW_BASE_URL);
   const response = await fetchFn(`${baseUrl}/gw/auth/login`, {
     signal: AbortSignal.timeout(10_000),

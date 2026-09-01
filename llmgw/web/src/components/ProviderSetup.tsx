@@ -143,13 +143,21 @@ export function UpstreamModelPicker({
 }) {
   const [selected, setSelected] = useState<Set<string>>(() => defaultSelection(data.items));
   const [onlyNew, setOnlyNew] = useState(true);
+  /*
+    名录外模型默认勾不动：它们的用途只能靠模型名猜，猜错了照样入池、被调度到，
+    用户看到的就是「一请求就报错」。要用得管理员在这里明确放行一次（这个动作进审计），
+    而不是让系统替他赌一把。
+  */
+  const [allowOutside, setAllowOutside] = useState(false);
 
   const visible = onlyNew ? data.items.filter((m) => !m.alreadyImported) : data.items;
-  const selectable = visible.filter((m) => !m.alreadyImported);
+  const isBlocked = (m: UpstreamModelItem) => !m.inCatalog && !allowOutside;
+  const selectable = visible.filter((m) => !m.alreadyImported && !isBlocked(m));
   const selectedCount = selectable.filter((m) => selected.has(m.modelId)).length;
   // 用户可以手动继续勾，勾过上限就在按钮上拦住并说清怎么办，别等服务端甩个 400 回来
   const overBatchLimit = selectedCount > MAX_IMPORT_BATCH;
-  const eligibleCount = data.items.filter((m) => !m.alreadyImported && m.inferredCapabilities.length > 0).length;
+  const eligibleCount = data.items.filter((m) => !m.alreadyImported && m.inCatalog).length;
+  const outsideCount = data.items.filter((m) => !m.alreadyImported && !m.inCatalog).length;
 
   function toggle(modelId: string) {
     setSelected((prev) => {
@@ -180,6 +188,24 @@ export function UpstreamModelPicker({
           <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} />
           只看未导入
         </label>
+        {outsideCount > 0 ? (
+          <label style={checkRowStyle} title="名录外模型的用途只能按模型名猜；放行后请到模型页逐个核对用途，这个动作会记进审计">
+            <input
+              type="checkbox"
+              checked={allowOutside}
+              onChange={(e) => {
+                setAllowOutside(e.target.checked);
+                // 关掉放行时，把已经勾上的名录外模型一并撤掉——否则界面显示「不可选」，
+                // 提交时却仍然带着它们，是最典型的「看到的和发出去的不一致」。
+                if (!e.target.checked) {
+                  const outside = new Set(data.items.filter((m) => !m.inCatalog).map((m) => m.modelId));
+                  setSelected((prev) => new Set([...prev].filter((id) => !outside.has(id))));
+                }
+              }}
+            />
+            放行名录外的 {outsideCount} 个
+          </label>
+        ) : null}
         {/* 来源 + 时间一起给：面板可能开着不动，用户得能分辨手上这份报价是刚拉的还是很久以前的
             （minimal-user-input 第 2 条：拉回来的值要标来源与时间） */}
         <span style={{ marginLeft: 'auto', ...HINT_TEXT, fontFamily: 'var(--font-mono)' }}>
@@ -189,9 +215,14 @@ export function UpstreamModelPicker({
 
       <div style={modelListStyle}>
         {visible.map((m) => {
-          const disabled = m.alreadyImported;
+          const blocked = isBlocked(m);
+          const disabled = m.alreadyImported || blocked;
           return (
-            <label key={m.modelId} style={{ ...modelRowStyle, opacity: disabled ? 0.55 : 1 }}>
+            <label
+              key={m.modelId}
+              style={{ ...modelRowStyle, opacity: disabled ? 0.55 : 1 }}
+              title={blocked ? '不在内置名录里：用途只能按模型名猜，先在上面打开「放行名录外的」再选' : undefined}
+            >
               <input
                 type="checkbox"
                 disabled={disabled}
@@ -200,10 +231,30 @@ export function UpstreamModelPicker({
               />
               <span style={{ fontFamily: 'var(--font-mono)', minWidth: 0, overflowWrap: 'anywhere' }}>{m.modelId}</span>
               <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginLeft: 'auto' }}>
-                {disabled ? <Chip label="已导入" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
+                {m.alreadyImported ? <Chip label="已导入" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
+                {/* 用途是查出来的还是猜出来的，必须一眼分得清——它决定了用户要不要去核对 */}
+                {m.inCatalog ? (
+                  <Chip
+                    label="名录内"
+                    color="#5fd08a"
+                    bg="rgba(95,208,138,0.14)"
+                    title={`内置名录登记：${m.catalogDisplayName || m.modelId}${m.catalogVendor ? ` · ${m.catalogVendor}` : ''}。用途是查出来的事实，不是猜的`}
+                  />
+                ) : (
+                  <Chip label="名录外" color="#e0b341" bg="rgba(224,179,65,0.14)" title="不在内置名录里，用途只能按模型名猜；要用得显式放行并自行核对" />
+                )}
+                {m.requiresImageInput ? (
+                  <Chip label="必须给图" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title="这个模型没有图片就调不动，界面会要求先给图再放行发送" />
+                ) : null}
                 {m.inferredCapabilities.length > 0 ? (
                   m.inferredCapabilities.map((c) => (
-                    <Chip key={c} label={capabilityLabel(c)} color="#7aa2ff" bg="rgba(122,162,255,0.14)" title="系统按模型标识推断，导入后可改" />
+                    <Chip
+                      key={c}
+                      label={capabilityLabel(c)}
+                      color={m.capabilitySource === 'guess' ? 'var(--text-muted)' : '#7aa2ff'}
+                      bg={m.capabilitySource === 'guess' ? 'var(--bg-elevated)' : 'rgba(122,162,255,0.14)'}
+                      title={capabilitySourceHint(m.capabilitySource)}
+                    />
                   ))
                 ) : (
                   <Chip label="用途待定" color="var(--text-muted)" bg="var(--bg-elevated)" title="推断不出来，导入后需要到模型页手动勾选用途" />
@@ -238,8 +289,9 @@ export function UpstreamModelPicker({
           <span style={HINT_TEXT}>一次最多导入 {MAX_IMPORT_BATCH} 个，请取消一些再导，剩下的分批来。</span>
         ) : (
           <span style={HINT_TEXT}>
-            默认只勾了「未导入且系统认得出用途」的；用途待定的建议先别导，导进来也参与不了模型池选型。
-            {eligibleCount > MAX_IMPORT_BATCH ? `这个上游可导的有 ${eligibleCount} 个，超过单批上限，已先勾前 ${MAX_IMPORT_BATCH} 个，导完再来一轮。` : ''}
+            默认只勾了名录内的模型——它们的用途是查出来的事实。名录外的用途只能按模型名猜，猜错了入池后一请求就报错。
+            {outsideCount > 0 ? `这个上游有 ${outsideCount} 个不在名录里，确实要用就打开上面的放行。` : ''}
+            {eligibleCount > MAX_IMPORT_BATCH ? `可导的有 ${eligibleCount} 个，超过单批上限，已先勾前 ${MAX_IMPORT_BATCH} 个，导完再来一轮。` : ''}
           </span>
         )}
       </div>
@@ -261,8 +313,16 @@ export const MAX_IMPORT_BATCH = 200;
  * 判据独立成函数，便于单测钉住。
  */
 export function defaultSelection(items: UpstreamModelItem[]): Set<string> {
-  const eligible = items.filter((m) => !m.alreadyImported && m.inferredCapabilities.length > 0);
+  // 默认只勾名录内的：名录外模型的用途是猜的，默认勾上等于替用户赌一把。
+  const eligible = items.filter((m) => !m.alreadyImported && m.inCatalog);
   return new Set(eligible.slice(0, MAX_IMPORT_BATCH).map((m) => m.modelId));
+}
+
+/** 用途来源的人话说明。猜出来的必须说清是猜的，用户才知道要不要去核对。 */
+export function capabilitySourceHint(source: string): string {
+  if (source === 'catalog') return '取自内置名录：这是登记在案的事实，不是猜的';
+  if (source === 'upstream') return '上游自己声明的用途';
+  return '按模型标识猜的，导入后请到模型页核对；猜错会导致这个模型进池后一请求就报错';
 }
 
 /** 拉取时间的可读表达。拿不到就如实说「时间未知」，不编一个当前时间冒充新鲜度。 */

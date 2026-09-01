@@ -30,6 +30,7 @@ public sealed class GatewayRouteFailureTaxonomyTests
             "PROVIDER_UNAVAILABLE",
             "PROVIDER_QUOTA_EXCEEDED",
             "GATEWAY_CONFIG_UNAVAILABLE",
+            "MODEL_NOT_IN_CATALOG",
         ],
         ignoreOrder: true);
     }
@@ -53,6 +54,7 @@ public sealed class GatewayRouteFailureTaxonomyTests
     [InlineData(GatewayRouteFailure.LogicalModelCapabilityMismatch)]
     [InlineData(GatewayRouteFailure.OfferingUnresolvable)]
     [InlineData(GatewayRouteFailure.PlatformDisabled)]
+    [InlineData(GatewayRouteFailure.ModelNotInCatalog)]
     public void ConfigurationFaults_TellUserRetryWontHelp(string failureCode)
     {
         GatewayRouteFailure.IsConfigurationFault(failureCode).ShouldBeTrue();

@@ -9,6 +9,15 @@ namespace PrdAgent.Infrastructure.LLM;
 /// </summary>
 public static class ImageGenModelAdapterRegistry
 {
+    /// <summary>GPT Image 固定返回 base64；未知兼容模型仍保留原有参数契约。</summary>
+    public static bool SupportsResponseFormat(string? modelName)
+    {
+        var name = modelName?.Trim() ?? string.Empty;
+        return !name.StartsWith("gpt-image-", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(name, "chatgpt-image-latest", StringComparison.OrdinalIgnoreCase)
+            && TryMatch(name)?.SupportsResponseFormat != false;
+    }
+
     private static readonly Regex SizeRegex = new(@"^\s*(\d+)\s*[xX×＊*]\s*(\d+)\s*$", RegexOptions.Compiled);
 
     /// <summary>

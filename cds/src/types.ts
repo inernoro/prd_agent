@@ -487,6 +487,17 @@ export interface BuildProfileOverride {
   startupSignal?: string;
   /** Override readiness probe */
   readinessProbe?: ReadinessProbe;
+  /**
+   * 覆盖命名子域（`BuildProfile.subdomain`）。手动多出口配置里「只保存到本分支」
+   * 走这里；空串 = 本分支显式取消项目底座声明的命名 URL（`!sub` 在发布器/入口表
+   * 里等价于未声明，不需要 null 哨兵——那会被 sanitizeProfileOverride 剥掉）。
+   */
+  subdomain?: string;
+  /**
+   * 覆盖用户可见 Web 入口（`BuildProfile.webEntry`：名称/路径/primary）。
+   * 与 subdomain 同源于手动多出口配置，只作用于本分支。
+   */
+  webEntry?: WebEntryConfig;
   /** Free-form notes explaining why this branch needs the override */
   notes?: string;
   /** ISO timestamp of last update — set automatically by StateService */

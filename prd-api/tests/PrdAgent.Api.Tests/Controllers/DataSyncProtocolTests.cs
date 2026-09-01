@@ -327,7 +327,8 @@ public class DataSyncProtocolTests
     private static string ReadRepoText(params string[] segments)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))
+               && !File.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
         Assert.NotNull(dir);
         var parts = new List<string> { dir!.FullName };
         parts.AddRange(segments);

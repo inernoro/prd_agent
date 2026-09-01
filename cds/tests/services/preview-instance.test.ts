@@ -234,18 +234,121 @@ describe('seedPreviewInstanceDemoData', () => {
     const project = service.getProject(PREVIEW_DEMO_PROJECT_ID);
     expect(project?.name).toContain('演示');
     const branches = service.getAllBranches();
-    expect(branches).toHaveLength(3);
-    expect(new Set(branches.map((b) => b.status))).toEqual(new Set(['running', 'error', 'idle']));
+    // 不写死条数：加一条演示数据不该让这条用例红。要成立的是「状态有覆盖面」，
+    // 那才是这份 seed 存在的理由（空 dashboard 什么都验收不了）。
+    expect(branches.length).toBeGreaterThanOrEqual(3);
+    for (const status of ['running', 'error', 'idle']) {
+      expect(branches.some((b) => b.status === status)).toBe(true);
+    }
     // 每条演示分支都显式标注，不冒充真实部署（no-rootless-tree）
     for (const b of branches) expect(b.notes).toContain('演示数据');
     expect(service.getBuildProfiles().filter((p) => p.projectId === PREVIEW_DEMO_PROJECT_ID)).toHaveLength(2);
     expect(service.getActivityLogs(PREVIEW_DEMO_PROJECT_ID).length).toBeGreaterThan(0);
   });
 
+  it('seeds 任务调度 / 验收报告，让那两页不是空状态', () => {
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const jobs = service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID);
+    // 三种 schedule 都要有：分段控件和列表的三种形态都得能看到
+    for (const type of ['daily', 'interval', 'manual']) {
+      expect(jobs.some((j) => j.schedule.type === type)).toBe(true);
+    }
+    for (const j of jobs) expect(j.name).toContain('演示数据');
+    /*
+     * Codex 第二轮 P2：演示任务不许自己跑起来。
+     *
+     * 调度器在预览实例上照样启动，enabled 的演示任务会被它真的执行——实机验到
+     * 「每 30 分钟同步」的 lastRunAt 被改成了当天的真实执行时间。那会把 seed 摆
+     * 出来的成功/失败示例状态覆盖掉，还往运行历史里灌噪音。演示数据是给人看的，
+     * 不是给调度器跑的。
+     */
+    for (const j of jobs) expect(j.enabled).toBe(false);
+    // 但「上次运行」的示例状态要保住，否则列表那一列全空、看不出成功/失败长什么样
+    expect(jobs.some((j) => j.lastRunStatus === 'success')).toBe(true);
+    expect(jobs.some((j) => j.lastRunStatus === 'failed')).toBe(true);
+
+    const reports = service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID);
+    for (const verdict of ['pass', 'conditional', 'fail']) {
+      expect(reports.some((r) => r.verdict === verdict)).toBe(true);
+    }
+    for (const r of reports) expect(r.title).toContain('演示数据');
+  });
+
+  it('给「已经播过首播的老实例」补播新增的演示数据', () => {
+    // 复现旧版本播下的库：演示项目 + 一条分支，但没有定时任务与验收报告。
+    // 预览实例的 state 跨部署保留，如果 seed 是全有或全无的，这种库升级之后
+    // 任务调度和验收报告两页会永远空着——这条用例就是钉这个。
+    const now = new Date().toISOString();
+    service.addProject({
+      id: PREVIEW_DEMO_PROJECT_ID, slug: PREVIEW_DEMO_PROJECT_ID,
+      name: '演示项目（预览实例）', kind: 'git', createdAt: now, updatedAt: now,
+    });
+    service.addBranch({
+      id: `${PREVIEW_DEMO_PROJECT_ID}-old`, projectId: PREVIEW_DEMO_PROJECT_ID,
+      branch: 'feat/old', worktreePath: '/tmp/preview-demo/old', status: 'idle',
+      createdAt: now, notes: '演示数据：旧版本播下的分支。', services: {},
+    });
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(0);
+
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID).length).toBeGreaterThan(0);
+    expect(service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID).length).toBeGreaterThan(0);
+
+    const branches = service.getAllBranches();
+    // 老实例已有的那条原样保留（补播只补缺的，不重写既有条目）
+    expect(branches.find((b) => b.id === `${PREVIEW_DEMO_PROJECT_ID}-old`)?.branch).toBe('feat/old');
+    // 而当前清单里的状态覆盖面必须补齐——线上真的踩过这个洞：预览实例停在
+    // 旧版本播下的三条分支上，清单扩到五条之后「构建中 / 冷分支」两种卡片
+    // 在实例里从来没出现过。判据钉覆盖面，不钉条数。
+    for (const status of ['running', 'error', 'building', 'idle']) {
+      expect(branches.some((b) => b.status === status)).toBe(true);
+    }
+  });
+
+  /*
+   * Codex 第四轮 P2：任务和报告仍是整类守卫，只有分支那一档真按 id 补。
+   * 这直接违反本文件注释里写的口径（「不能只判这一类有没有」）——老实例只要
+   * 已经有任意一条任务，后来新增的演示任务就永远补不进去，而这个函数存在的
+   * 理由就是给老实例补东西。
+   *
+   * 判据钉「删掉其中一条能补回来，且没被补的那些不受影响」。
+   */
+  it('任务和报告也按身份逐条补，不是整类有无', () => {
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const jobs = service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID);
+    const reports = service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID);
+    expect(jobs.length).toBeGreaterThan(1);
+    expect(reports.length).toBeGreaterThan(1);
+
+    // 模拟「老实例只有一条」：删到只剩一条，整类守卫在这种库上会一条都不补。
+    const keptJob = jobs[0];
+    for (const j of jobs.slice(1)) service.deleteScheduledJob(j.id);
+    const keptReport = reports[0];
+    for (const r of reports.slice(1)) service.deleteAcceptanceReport(r.id);
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(1);
+
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(jobs.length);
+    expect(service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(reports.length);
+    // 留下的那条原样不动，没有被重播成新的
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID).find((j) => j.id === keptJob.id)?.name)
+      .toBe(keptJob.name);
+    expect(service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID).some((r) => r.id === keptReport.id))
+      .toBe(true);
+  });
+
+  it('补播只补缺的分支，第二次调用不再产生副作用', () => {
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const first = service.getAllBranches().map((b) => b.id).sort();
+    expect(seedPreviewInstanceDemoData(service)).toBe(false);
+    expect(service.getAllBranches().map((b) => b.id).sort()).toEqual(first);
+  });
+
   it('is idempotent — second call is a no-op', () => {
     expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const seeded = service.getAllBranches().length;
     expect(seedPreviewInstanceDemoData(service)).toBe(false);
-    expect(service.getAllBranches()).toHaveLength(3);
+    expect(service.getAllBranches()).toHaveLength(seeded);
   });
 
   it('never touches a store that already has data', () => {

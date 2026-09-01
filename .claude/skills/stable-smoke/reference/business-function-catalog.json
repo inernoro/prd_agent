@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "2026.08.04.3",
+  "catalogVersion": "2026.08.31.1",
   "name": "MAP 核心业务功能台账",
   "autoEnrollment": {
     "scheduledMode": "all",
@@ -145,8 +145,8 @@
       "entrySmoke": true,
       "automationStatus": "contract-and-entry",
       "requiredCaseIds": ["VIS-001", "VIS-002", "VIS-003", "VIS-004", "VIS-005", "VIS-006", "VIS-007", "VIS-008", "VIS-009", "VIS-010"],
-      "regressionCaseIds": ["REG-visual-error-001"],
-      "sourcePrefixes": ["prd-admin/src/pages/visual-agent/", "prd-api/src/PrdAgent.Api/Controllers/Api/Image", "prd-api/src/PrdAgent.Api/Services/Image", "prd-api/src/PrdAgent.Infrastructure/Services/Image", "prd-api/src/PrdAgent.Infrastructure/LLM/"],
+      "regressionCaseIds": ["REG-visual-error-001", "REG-visual-model-contract-001", "REG-visual-viewport-001", "REG-visual-policy-001"],
+      "sourcePrefixes": ["prd-admin/src/pages/visual-agent/", "prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab", "prd-admin/src/pages/ai-chat/visualAgentModelOptions", "prd-admin/src/components/visual-agent/VisualModelSettings", "prd-admin/src/services/real/visualModelPolicy", "prd-admin/src/components/ui/GenSweepLoader", "prd-admin/src/components/ui/generationProgressPlacement", "prd-api/src/PrdAgent.Api/Controllers/Api/Image", "prd-api/src/PrdAgent.Api/Controllers/Api/VisualModelPolicy", "prd-api/src/PrdAgent.Api/Services/VisualModelPolicy", "prd-api/src/PrdAgent.Api/Services/Image", "prd-api/src/PrdAgent.Core/Models/VisualModelPolicy", "prd-api/src/PrdAgent.Infrastructure/Services/Image", "prd-api/src/PrdAgent.Infrastructure/LLM/", "prd-api/src/PrdAgent.Infrastructure/LlmGateway/", "llmgw/serving/"],
       "cdsPolicy": "每逻辑模型、三种比例、进度尺寸、错误恢复、视觉取证与清理",
       "productionPolicy": "每种协议至少一个最低成本真实产物并清理",
       "artifactAssertions": ["进度不裁切", "图片可读且比例正确", "用户错误不泄漏底层细节"],
@@ -164,7 +164,7 @@
       "automationStatus": "contract-and-entry",
       "requiredCaseIds": ["MVIS-001", "MVIS-002", "MVIS-003", "MVIS-004", "MVIS-005", "MVIS-006", "MVIS-007", "MVIS-008", "MVIS-009", "MVIS-010", "MVIS-011", "MVIS-012"],
       "regressionCaseIds": ["REG-multi-image-001", "REG-multi-image-002", "REG-visual-error-001"],
-      "sourcePrefixes": ["prd-admin/src/pages/visual-agent/", "prd-api/src/PrdAgent.Api/Services/ImageGeneration/MultiImage", "prd-api/src/PrdAgent.Infrastructure/LlmGateway/", "prd-api/src/PrdAgent.Infrastructure/LLM/", "llmgw/"],
+      "sourcePrefixes": ["prd-admin/src/pages/visual-agent/", "prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab", "prd-admin/src/pages/ai-chat/visualAgentModelOptions", "prd-admin/src/components/ui/GenSweepLoader", "prd-admin/src/components/ui/generationProgressPlacement", "prd-api/src/PrdAgent.Api/Services/ImageGeneration/MultiImage", "prd-api/src/PrdAgent.Infrastructure/LlmGateway/", "prd-api/src/PrdAgent.Infrastructure/LLM/", "llmgw/"],
       "cdsPolicy": "两图、三图、重排、删除、超限、协议、恢复、双端布局和视觉语义验收",
       "productionPolicy": "两图最小真实生成；三图按轮次执行；不注入破坏性故障",
       "artifactAssertions": ["全部引用进入结构化请求", "结果受每张参考图影响", "进度和结果不裁切"],

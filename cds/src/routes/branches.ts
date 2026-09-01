@@ -31,8 +31,18 @@ import {
   occupiedHostOwners,
   resolveBranchEntrypointsEnv,
 } from '../services/preview-entrypoints.js';
-import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, selectPrimaryWebEntry } from '../services/web-entry.js';
+import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
+import { normalizeReadOnlyStatement, normalizeWriteStatement } from '../services/sql-statement-policy.js';
+import { explainMissingTable, foreignSchemaRefusal } from '../services/db-error-explain.js';
+import {
+  branchDbAccountName,
+  branchDbCredentialOwner,
+  branchDbCredentialsBelongTo,
+  explainBranchDbAuthFailure,
+  foreignBranchDbEnvKeys,
+  type BranchDbRuntime,
+} from '../services/branch-db-identity.js';
 import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
 import {
   resolveBranchProtection,
@@ -6300,8 +6310,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return `${prefix}_${suffix}`.slice(0, 64);
   }
 
+  /**
+   * 派发给该分支的数据库账号名。身份由 branch-db-identity 一处算（抗碰撞：可读前缀
+   * 可以撞，指纹保证唯一），这里不再自己拼——旧写法把 slug 截到 24 字符当身份，
+   * 兄弟分支算出同一个账号后互相覆盖口令/删账号，正是 1045 那次事故的根因。
+   */
   function branchDatabaseUser(branch: BranchEntry): string {
-    return `cds_${StateService.slugify(branch.id).replace(/-/g, '_').slice(0, 24)}`.slice(0, 32);
+    return branchDbAccountName(branch.id);
   }
 
   interface MysqlBranchDatabaseResult {
@@ -6349,9 +6364,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   type SqlDataRuntime = 'mysql' | 'postgres';
 
+  /**
+   * 分支作用域的 env，**只在它确实是派发给这台服务时**才返回；否则返回空表。
+   *
+   * 分支 env 是一张平表（MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE 各一份），而一个分支
+   * 可以挂多台同类型库。不做归属判断就会把 A 库的账号、口令、库名喂给 B 库——账号在 B
+   * 上不存在，于是「CDS 自己建的库，CDS 自己连不上」（2026-09-01 现场）。
+   */
+  /** 只有这三种运行时有「分支凭据」这套东西；其余（redis / rabbitmq / minio / unknown）没有。 */
+  function isBranchDbRuntime(runtime: string): runtime is BranchDbRuntime {
+    return runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb';
+  }
+
+  function ownedBranchEnv(branch: BranchEntry, runtime: BranchDbRuntime, service: InfraService): Record<string, string> {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    return branchDbCredentialsBelongTo(branchEnv, runtime, service.id) ? branchEnv : {};
+  }
+
+  /**
+   * 展开这台服务自己的 env 模板。
+   *
+   * 模板变量里必须先把**别人家的分支凭据**摘掉：`POSTGRES_USER: ${POSTGRES_USER}` 是 CDS
+   * 支持的标准写法，而 getMergedEnv 里躺着分支作用域那一份平表凭据。不摘，B 服务就绕开
+   * ownedBranchEnv 的归属判定，照样把 A 的账号口令展开进自己的 env，1045 原样复现
+   * （Codex P1，2026-09-01）。摘掉之后回落到项目/全局层的同名值，而不是让这个 key 凭空消失。
+   */
   function resolvedInfraEnv(service: InfraService, branch?: BranchEntry): Record<string, string> {
     const projectId = service.projectId || branch?.projectId || 'default';
-    const vars = branch ? getMergedEnv(projectId, branch.id) : stateService.getCustomEnv(projectId);
+    if (!branch) return resolveEnvTemplates(service.env || {}, stateService.getCustomEnv(projectId));
+    const vars = getMergedEnv(projectId, branch.id);
+    const foreignKeys = foreignBranchDbEnvKeys(stateService.getCustomEnvScope(branch.id), service.id);
+    if (foreignKeys.length) {
+      const withoutBranchScope = getMergedEnv(projectId);
+      for (const key of foreignKeys) {
+        if (key in withoutBranchScope) vars[key] = withoutBranchScope[key];
+        else delete vars[key];
+      }
+    }
     return resolveEnvTemplates(service.env || {}, vars);
   }
 
@@ -6372,6 +6421,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return password ? ` -p${shq(password)}` : '';
   }
 
+  /**
+   * CDS 到底拿不拿得到这台 MySQL 的管理员（root）口令。
+   *
+   * 判据不能用 `mysqlRootPassword()` 是否非空：那个函数会一路回落到 `MYSQL_PASSWORD`，
+   * 而那是**应用账号**的口令，拿它当 root 口令用必然 1045。真正决定「能不能以管理员
+   * 身份改账号」的只有两种情形：显式配了 root 口令，或显式允许空口令 root。
+   * 官方镜像的 `MYSQL_RANDOM_ROOT_PASSWORD` 属于第三种——口令只在容器日志里出现过一次，
+   * CDS、运维、用户手上都没有，任何需要 root 的动作（建库 / 重置凭据）都做不了。
+   */
+  function resolveMysqlAdmin(service: InfraService, branch?: BranchEntry): { available: boolean; password: string } {
+    const env = resolvedInfraEnv(service, branch);
+    // 判空可以，**不能 trim 后当口令用**：首尾带空白的 root 口令是合法的，改一个字符
+    // 就连不上，而 available 还报 true（Codex P2，2026-09-01）。口令原样带出去。
+    const rootPassword = String(env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '');
+    if (rootPassword) return { available: true, password: rootPassword };
+    const allowEmpty = String(env.MYSQL_ALLOW_EMPTY_PASSWORD || env.MARIADB_ALLOW_EMPTY_ROOT_PASSWORD || '').trim();
+    // 显式允许空口令 root：**口令就是空的**。这里必须把这个事实带出去——判「能不能」与
+    // 取「用什么连」如果是两个函数，就会出现「判定说能，实际却拿应用账号的口令去连 root」
+    // 的错位，报出来还是 1045（Codex P1，2026-09-01）。
+    if (/^(1|true|yes)$/i.test(allowEmpty)) return { available: true, password: '' };
+    return { available: false, password: '' };
+  }
+
+  function mysqlAdminAvailable(service: InfraService, branch?: BranchEntry): boolean {
+    return resolveMysqlAdmin(service, branch).available;
+  }
+
   function maskTextSecrets(textValue: string, secrets: string[]): string {
     let masked = textValue;
     for (const secret of secrets) {
@@ -6381,7 +6457,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mysqlClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mysql', service);
     const env = resolvedInfraEnv(service, branch);
     const database = mysqlDatabaseForBranch(service, branch);
     const branchUser = branchEnv.MYSQL_USER || '';
@@ -6405,43 +6481,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { columns, rows, rowCount: rows.length };
   }
 
-  function normalizeReadOnlySql(sql: string): string {
-    const trimmed = sql.trim();
-    if (!trimmed) throw new Error('SQL 不能为空');
-    if (trimmed.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
-    const withoutTrailing = trimmed.replace(/;+$/g, '').trim();
-    if (withoutTrailing.includes(';')) {
-      throw new Error('只读 SQL Console 一次只允许执行一条语句');
-    }
-    const head = withoutTrailing.match(/^\s*([a-z]+)/i)?.[1]?.toLowerCase() || '';
-    if (!['select', 'show', 'describe', 'desc', 'explain'].includes(head)) {
-      throw new Error('第一阶段 SQL Console 只允许 SELECT / SHOW / DESCRIBE / EXPLAIN');
-    }
-    // 危险关键字检查必须覆盖全部放行语句头，不只 select：PostgreSQL 的
-    // EXPLAIN ANALYZE UPDATE ... 会真实执行底层 UPDATE，仅查 select 头会被
-    // 绕过 /data/query-write 的 data-write 权限与确认门（PR #799 Codex P1）
-    if (/\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|set|use|load|outfile|dumpfile|lock|unlock)\b/i.test(withoutTrailing)) {
-      throw new Error('检测到写入或高风险关键字，已拒绝执行');
-    }
-    return withoutTrailing;
+  // 方言必须传：`#` 在 MySQL 是行注释、在 PostgreSQL 是 JSON 运算符（`#>>` / `#>` / `#-`）。
+  // 不传就按「# 不是注释」处理，写语句不会被截断成假的只读（Codex P1，2026-09-01）。
+  function normalizeReadOnlySql(sql: string, runtime: SqlDataRuntime): string {
+    // 判据在 sql-statement-policy（唯一一份，前端那份由守卫钉着与它一致）。
+    return normalizeReadOnlyStatement(sql, runtime);
   }
 
-  function normalizeDangerousWriteSql(sql: string): string {
-    const trimmed = sql.trim();
-    if (!trimmed) throw new Error('SQL 不能为空');
-    if (trimmed.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
-    const withoutTrailing = trimmed.replace(/;+$/g, '').trim();
-    if (withoutTrailing.includes(';')) {
-      throw new Error('写 SQL 一次只允许执行一条语句');
-    }
-    const head = withoutTrailing.match(/^\s*([a-z]+)/i)?.[1]?.toLowerCase() || '';
-    if (!['insert', 'update', 'delete', 'create', 'alter', 'drop', 'truncate', 'replace'].includes(head)) {
-      throw new Error('写 SQL 只允许 INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE');
-    }
-    if (/\b(grant|revoke|load\s+data|outfile|dumpfile|copy\s+.*program|pg_read_file|pg_ls_dir)\b/i.test(withoutTrailing)) {
-      throw new Error('检测到权限或文件系统高风险 SQL，已拒绝执行');
-    }
-    return withoutTrailing;
+  function normalizeDangerousWriteSql(sql: string, runtime: SqlDataRuntime): string {
+    return normalizeWriteStatement(sql, runtime);
   }
 
   async function runMysqlDataQuery(service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000): Promise<DbDataQueryResult> {
@@ -6457,13 +6505,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
       { timeout: timeoutMs },
     );
     if (result.exitCode !== 0) {
-      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 查询失败').trim(), creds.secrets));
+      // 裸的 `ERROR 1045` 对用户等于没说：它既可能是口令被兄弟分支改过，也可能是账号
+      // 已被删掉，而两种情况的下一步是同一个「重置连接凭据」。把这句话说出来。
+      throw new Error(explainBranchDbAuthFailure({
+        runtime: 'mysql',
+        branchId: branch.id,
+        user: creds.user,
+        rawError: maskTextSecrets((result.stderr || result.stdout || 'MySQL 查询失败').trim(), creds.secrets),
+        adminAvailable: mysqlAdminAvailable(service, branch),
+      }));
     }
     return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
   }
 
   function postgresDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'postgres', service);
     const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.POSTGRES_DB
@@ -6477,7 +6533,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function postgresClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'postgres', service);
     const env = resolvedInfraEnv(service, branch);
     const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
     const password = branchEnv.POSTGRES_PASSWORD || env.POSTGRES_PASSWORD || '';
@@ -6497,7 +6553,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       { timeout: timeoutMs },
     );
     if (result.exitCode !== 0) {
-      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 查询失败').trim(), creds.secrets));
+      throw new Error(explainBranchDbAuthFailure({
+        runtime: 'postgres',
+        branchId: branch.id,
+        user: creds.user,
+        rawError: maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 查询失败').trim(), creds.secrets),
+      }));
     }
     return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
   }
@@ -6522,6 +6583,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           command: `printf %s ${shq(trimmed)} | docker exec -i -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -v ON_ERROR_STOP=1 -P pager=off`,
           secrets: creds.secrets,
+          user: creds.user,
         };
       })()
       : (() => {
@@ -6529,13 +6591,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           command: `printf %s ${shq(trimmed)} | docker exec -i ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --default-character-set=utf8mb4 ${shq(creds.database)}`,
           secrets: creds.secrets,
+          user: creds.user,
         };
       })();
     const result = await shell.exec(command.command, { timeout: 120_000 });
     const rawOutput = result.stdout || '';
     const rawError = result.stderr || '';
     const output = maskTextSecrets(rawOutput.slice(0, 256 * 1024), command.secrets);
-    const error = maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets);
+    const error = explainBranchDbAuthFailure({
+      runtime,
+      branchId: branch.id,
+      user: command.user,
+      rawError: maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets),
+      adminAvailable: runtime === 'mysql' ? mysqlAdminAvailable(service, branch) : undefined,
+    });
     return {
       exitCode: result.exitCode,
       output,
@@ -6578,7 +6647,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (runtime === 'postgres') {
       return ref.schema ? `${pgIdent(ref.schema)}.${pgIdent(ref.table)}` : pgIdent(ref.table);
     }
-    return sqlIdent(ref.table);
+    // MySQL 这一侧此前把 schema 丢了，永远只查连接的默认库：表树里点一张属于别的库的表
+    // 就是 `Table 'default_db.x' doesn't exist`，报文里的库名还和面板上显示的对不上。
+    return ref.schema ? `${sqlIdent(ref.schema)}.${sqlIdent(ref.table)}` : sqlIdent(ref.table);
   }
 
   function redisPassword(service: InfraService): string {
@@ -6587,7 +6658,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mongoDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
     const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.MONGO_INITDB_DATABASE
@@ -6618,7 +6689,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; uri: string; secrets: string[] } {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
     const env = resolvedInfraEnv(service, branch);
     const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
     const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
@@ -6968,7 +7039,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function getExistingMysqlConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mysql', service);
     const branchPassword = branchEnv.MYSQL_PASSWORD || '';
     const branchUser = branchEnv.MYSQL_USER || '';
     if (!branchUser || !branchPassword) return null;
@@ -7143,7 +7214,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function getExistingPostgresConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'postgres', service);
     const branchUser = branchEnv.POSTGRES_USER || '';
     const branchPassword = branchEnv.POSTGRES_PASSWORD || '';
     const database = branchEnv.POSTGRES_DB || postgresDatabaseForBranch(service, branch);
@@ -7152,7 +7223,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function getExistingMongoConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
     const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || mongoDatabaseForBranch(service, branch);
     const branchUser = branchEnv.MONGODB_USERNAME || '';
     const branchPassword = branchEnv.MONGODB_PASSWORD || '';
@@ -7205,13 +7276,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (service.status !== 'running') {
       throw new Error(`MySQL 服务当前未运行（status=${service.status}）`);
     }
+    // 重新派发要以 root 身份 ALTER USER。拿不到 root 就当场说清为什么、给替代路径，
+    // 而不是硬跑一条注定 1045 的命令，让用户对着「Access denied for user 'root'」再猜一轮。
+    const admin = resolveMysqlAdmin(service, branch);
+    if (!admin.available) {
+      throw new Error(
+        `服务 "${service.id}" 没有 CDS 拿得到的管理员口令（容器用的是随机 root 口令，或没配置 root 口令），`
+        + '重新派发分支账号需要管理员身份，无法执行。'
+        + '可行的两条：一是由有权限的人直连这台库为该分支账号重设口令、或改用容器自带的应用账号；'
+        + '二是给这个服务补上 MYSQL_ROOT_PASSWORD 并重建容器后再来重置。',
+      );
+    }
     const database = mysqlDatabaseForBranch(service, branch);
     if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
       throw new Error(`数据库名不合法: ${database || '(empty)'}`);
     }
     const branchUser = branchDatabaseUser(branch);
     const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
-    const rootPassword = mysqlRootPassword(service);
+    // 用上面解出来的管理员口令（空口令 root 就是空串），不再走会回落到应用账号口令的旧取法。
+    const rootPassword = admin.password;
     const sql = [
       `CREATE USER IF NOT EXISTS ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
       `ALTER USER ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
@@ -7286,7 +7369,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mysqlDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mysql', service);
     const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.MYSQL_DATABASE
@@ -7970,32 +8053,66 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   }
 
+  /**
+   * 删库前置条件不成立时抛这个：路由据此回 409（拒绝，不是故障）。
+   * 以前靠匹配「拒绝删除共享数据库」这句文案判状态码，加一条新的拒绝理由就会漏判成 500——
+   * 判据挂在措辞上，改一次文案就漂一次。
+   */
+  function deleteRefusal(message: string): Error {
+    return Object.assign(new Error(message), { cdsDeleteRefusal: true });
+  }
+
   function branchOwnedDatabaseForDelete(runtime: ResourceDatabaseRuntime, service: InfraService, branch: BranchEntry): string {
+    // 顺序有讲究：先答「本分支到底有没有独立库」，再答「这套 env 是不是这台服务的」。
+    // 反过来的话，一个压根没有分支库的分支会先撞上归属报错，说的却不是它真正的处境。
     const branchEnv = stateService.getCustomEnvScope(branch.id);
-    if (runtime === 'mysql') {
-      const database = branchEnv.MYSQL_DATABASE || '';
-      if (!database || !branchEnv.MYSQL_USER) {
-        throw new Error('未检测到分支独立 MySQL 数据库和用户，拒绝删除共享数据库');
+    const database = ((): string => {
+      if (runtime === 'mysql') {
+        const value = branchEnv.MYSQL_DATABASE || '';
+        if (!value || !branchEnv.MYSQL_USER) {
+          throw deleteRefusal('未检测到分支独立 MySQL 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
       }
-      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
-    }
-    if (runtime === 'postgres') {
-      const database = branchEnv.POSTGRES_DB || '';
-      if (!database || !branchEnv.POSTGRES_USER) {
-        throw new Error('未检测到分支独立 PostgreSQL 数据库和用户，拒绝删除共享数据库');
+      if (runtime === 'postgres') {
+        const value = branchEnv.POSTGRES_DB || '';
+        if (!value || !branchEnv.POSTGRES_USER) {
+          throw deleteRefusal('未检测到分支独立 PostgreSQL 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 63);
       }
-      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 63);
-    }
-    if (runtime === 'mongodb') {
-      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
-      const env = resolvedInfraEnv(service);
-      const serviceRequiresAuth = Boolean(env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME);
-      if (!database || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
-        throw new Error('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
+      if (runtime === 'mongodb') {
+        const value = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
+        const env = resolvedInfraEnv(service);
+        const serviceRequiresAuth = Boolean(env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME);
+        if (!value || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
+          throw deleteRefusal('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 63);
       }
-      return database.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 63);
+      throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
+    })();
+
+    // 删库要以分支 env 里的库名为准，而分支 env 只有一份、可能是**另一台同类型库**的。
+    // 不判归属就会「删 B 资源，掉的是 A 的库」——这是数据丢失，不是连不上而已。
+    const owner = branchDbCredentialOwner(branchEnv, runtime as BranchDbRuntime);
+    // 破坏性路径**失败关闭**：读路径可以在「判断不出归属」时沿用老行为，删库不行——
+    // 同一分支挂两台同类型库时，拿一份没有归属标记的库名去删，掉的可能是另一台的同名库
+    // （Codex P1，2026-09-01）。没有证据就不动手。
+    if (!owner) {
+      throw deleteRefusal(
+        `分支环境变量里有库名 ${database}，却没有归属标记（缺 *_HOST，连接串也解析不出 host），`
+        + `无法证明它属于本分支的资源 "${service.id}"；删库不可逆，拒绝执行。`
+        + '请先在该资源上重新注入连接信息（会写入归属标记）再来删。',
+      );
     }
-    throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
+    if (owner !== service.id) {
+      throw deleteRefusal(
+        `分支环境变量里的库名/账号是派发给服务 "${owner}" 的，不是 "${service.id}"；`
+        + '拒绝按它删库（否则会删掉另一台库的数据）。请先为本资源重新注入连接信息再操作。',
+      );
+    }
+    return database;
   }
 
   async function clearResourceData(params: {
@@ -8077,13 +8194,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const database = branchOwnedDatabaseForDelete(runtime, service, branch);
     const safetyBackup = await createResourceBackupFile({ runtime, service, branch, resourceId, resourceName, projectId, actor, reason: 'pre-restore' });
+    const accountNotes: string[] = [];
     if (runtime === 'mysql') {
       const rootPassword = mysqlRootPassword(service);
-      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const branchEnv = ownedBranchEnv(branch, 'mysql', service);
       const user = branchEnv.MYSQL_USER || '';
+      // MySQL 账号是**实例级**的：旧派发规则按分支名截断，兄弟分支会共用同一个账号，
+      // 那时删本分支的库顺手 DROP USER，等于把还在用它的兄弟分支一起打死（1045 事故
+      // 的第二条路径）。所以只有能证明「这个账号就是本分支的」时才删。
+      const dropUser = user && user === branchDatabaseUser(branch);
+      if (user && !dropUser) {
+        accountNotes.push(`账号 ${user} 不是按当前抗碰撞规则派发给本分支的（可能与兄弟分支共用），已保留不删`);
+      }
       const sql = [
         `DROP DATABASE IF EXISTS ${sqlIdent(database)}`,
-        user ? `DROP USER IF EXISTS ${sqlString(user)}@'%'` : '',
+        dropUser ? `DROP USER IF EXISTS ${sqlString(user)}@'%'` : '',
         'FLUSH PRIVILEGES',
       ].filter(Boolean).join('; ');
       const result = await shell.exec(
@@ -8092,16 +8217,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 删除数据库失败').trim(), [rootPassword]));
     } else if (runtime === 'postgres') {
-      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const branchEnv = ownedBranchEnv(branch, 'postgres', service);
       const user = branchEnv.POSTGRES_USER || '';
       const env = resolvedInfraEnv(service);
       const adminUser = env.POSTGRES_USER || 'postgres';
       const adminPassword = env.POSTGRES_PASSWORD || '';
       const adminDb = env.POSTGRES_DB || adminUser || 'postgres';
+      // 同 MySQL：role 是实例级的，只有能证明是本分支的账号才删。
+      const dropRole = user && user === branchDatabaseUser(branch);
+      if (user && !dropRole) {
+        accountNotes.push(`角色 ${user} 不是按当前抗碰撞规则派发给本分支的（可能与兄弟分支共用），已保留不删`);
+      }
       const sql = [
         `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${pgString(database)} AND pid <> pg_backend_pid();`,
         `DROP DATABASE IF EXISTS ${pgIdent(database)};`,
-        user ? `DROP ROLE IF EXISTS ${pgIdent(user)};` : '',
+        dropRole ? `DROP ROLE IF EXISTS ${pgIdent(user)};` : '',
       ].filter(Boolean).join('\n');
       const result = await shell.exec(
         `printf %s ${shq(sql)} | docker exec -i -e PGPASSWORD=${shq(adminPassword)} ${shq(service.containerName || '')} psql -U ${shq(adminUser)} -d ${shq(adminDb)} -v ON_ERROR_STOP=1`,
@@ -8110,7 +8240,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 删除数据库失败').trim(), [adminPassword]));
     } else if (runtime === 'mongodb') {
       const creds = mongoCredentials(service, branch);
-      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
       const user = branchEnv.MONGODB_USERNAME || '';
       const script = [
         'db.dropDatabase();',
@@ -8138,7 +8268,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       resourceId,
       resourceName,
       result: 'success',
-      note: `${resourceName} 分支数据库 ${database} 已删除，操作前备份 ${safetyBackup.name}`,
+      note: `${resourceName} 分支数据库 ${database} 已删除，操作前备份 ${safetyBackup.name}`
+        + (accountNotes.length > 0 ? `；${accountNotes.join('；')}` : ''),
     });
     return { database, safetyBackup };
   }
@@ -8375,7 +8506,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
   ): string {
     const runtime = resourceRuntimeKey(resource.runtime);
     const env = resolvedInfraEnv(service, branch);
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    // 归属判断同工作台：分支 env 只有一份，别把另一台库的账号/库名显示成这台的连接串。
+    // 只有三种数据库运行时有分支凭据；redis / rabbitmq / minio / unknown 一律走原始 env
+    // （给它们传 unknown 会在归属查表上抛，把只读端点打成 500——Codex P1）。
+    const branchEnv = isBranchDbRuntime(runtime)
+      ? ownedBranchEnv(branch, runtime, service)
+      : stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
       const db = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || env.MARIADB_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || env.MARIADB_USER || 'user';
@@ -8411,7 +8547,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
   ): string {
     const runtime = resourceRuntimeKey(resource.runtime);
     const env = resolvedInfraEnv(service, branch);
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = isBranchDbRuntime(runtime)
+      ? ownedBranchEnv(branch, runtime, service)
+      : stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
       const database = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || 'root';
@@ -9104,6 +9242,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      if (ctx.runtime === 'mysql' && ref.schema && ref.schema !== database) {
+        res.status(400).json({ error: foreignSchemaRefusal({ database, requestedSchema: ref.schema, table: ref.table }) });
+        return;
+      }
       const sql = ctx.runtime === 'postgres'
         ? [
           'SELECT column_name, data_type, is_nullable,',
@@ -9117,7 +9259,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : [
           'SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA',
           'FROM information_schema.COLUMNS',
-          `WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${sqlString(ref.table)}`,
+          `WHERE TABLE_SCHEMA = ${ref.schema ? sqlString(ref.schema) : 'DATABASE()'} AND TABLE_NAME = ${sqlString(ref.table)}`,
           'ORDER BY ORDINAL_POSITION',
         ].join(' ');
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
@@ -9131,7 +9273,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }));
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, columns });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json({
+        error: explainMissingTable({
+          database: sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch),
+          requestedSchema: ref.schema,
+          table: ref.table,
+          rawError: (err as Error).message,
+        }),
+      });
     }
   });
 
@@ -9149,11 +9298,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 200) : 50;
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      // MySQL 的 schema 就是 database：允许请求方自带库名，等于让工作台读到同实例里
+      // 别的分支/项目的库（回落到服务自带账号时尤其明显）。执行前就挡住。
+      if (ctx.runtime === 'mysql' && ref.schema && ref.schema !== database) {
+        res.status(400).json({ error: foreignSchemaRefusal({ database, requestedSchema: ref.schema, table: ref.table }) });
+        return;
+      }
       const ident = sqlTableIdent(ctx.runtime, ref);
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, `SELECT * FROM ${ident} LIMIT ${limit}`);
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, limit, ...result });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      // 表在别的库/别台容器上时，1146 报的库名和面板显示的对不上，得把差异讲出来。
+      res.status(500).json({
+        error: explainMissingTable({
+          database: sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch),
+          requestedSchema: ref.schema,
+          table: ref.table,
+          rawError: (err as Error).message,
+        }),
+      });
     }
   });
 
@@ -9162,7 +9325,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!ctx) return;
     let sql = '';
     try {
-      sql = normalizeReadOnlySql(typeof req.body?.sql === 'string' ? req.body.sql : '');
+      sql = normalizeReadOnlySql(typeof req.body?.sql === 'string' ? req.body.sql : '', ctx.runtime);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -9216,7 +9379,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     let sql = '';
     try {
-      sql = normalizeDangerousWriteSql(typeof req.body?.sql === 'string' ? req.body.sql : '');
+      sql = normalizeDangerousWriteSql(typeof req.body?.sql === 'string' ? req.body.sql : '', ctx.runtime);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -9893,7 +10056,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       stateService.save();
       const message = (err as Error).message;
-      res.status(message.includes('拒绝删除共享数据库') ? 409 : 500).json({ error: message });
+      const refused = Boolean((err as { cdsDeleteRefusal?: boolean }).cdsDeleteRefusal)
+        || message.includes('拒绝删除共享数据库');
+      res.status(refused ? 409 : 500).json({ error: message });
     }
   });
 
@@ -15277,7 +15442,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         dbScope: body.dbScope as 'shared' | 'per-branch' | undefined,
         notes: typeof body.notes === 'string' ? body.notes : undefined,
       };
-      stateService.setBranchProfileOverride(id, profileId, override);
+      // `setBranchProfileOverride` 是**整体替换**，而这份白名单只认它自己管的字段。
+      // 手动入口配置（PUT /web-entry-config）把 subdomain / webEntry 也存进同一个
+      // override 对象，调用方（本 PUT 的 UI）根本不知道这两个字段的存在、请求体里
+      // 自然没有 —— 于是「改一下部署模式 / 端口 / 环境变量」就会顺手把这条命名入口
+      // 抹掉，下一次 forwarder 刷新时路由消失（Codex review 第七轮 P1）。
+      // 这两个字段没有任何客户端用「省略」表达清空（要清由 web-entry-config 显式写），
+      // 所以请求体没提就从已存的覆盖里原样带过来，不管它的人不许毁它。
+      const prevOverride = stateService.getBranchProfileOverride(id, profileId);
+      const preserved: Pick<BuildProfileOverride, 'subdomain' | 'webEntry'> = {
+        ...(body.subdomain === undefined && prevOverride?.subdomain !== undefined
+          ? { subdomain: prevOverride.subdomain } : {}),
+        ...(body.webEntry === undefined && prevOverride?.webEntry !== undefined
+          ? { webEntry: prevOverride.webEntry } : {}),
+      };
+      stateService.setBranchProfileOverride(id, profileId, { ...override, ...preserved });
       stateService.save();
 
       // Return the new effective profile so the UI can show the merged result
@@ -15346,7 +15525,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       profileById.set(bp.id, resolveEffectiveProfile(bp, entry));
     }
     const effectiveProfiles = [...profileById.values()].filter((profile) =>
-      profile.webEntry && normalizeWebEntryPath(profile.webEntry.path) !== null,
+      resolveWebEntry(profile) !== null,
     );
     const primaryProfile = selectPrimaryWebEntry(effectiveProfiles);
     const primaryConfig = primaryProfile?.webEntry;
@@ -15392,8 +15571,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     for (const profileId of routable) {
       const profile = profileById.get(profileId);
       const sub = profile?.subdomain;
-      const webEntry = profile?.webEntry;
-      const webPath = normalizeWebEntryPath(webEntry?.path);
+      const webEntry = profile ? resolveWebEntry(profile) : null;
+      const webPath = webEntry?.path || null;
       // 同一 profile 已由主域名承载时不再列命名子域，解决“主入口和第二项其实
       // 是同一个 Web 应用”的重复识别问题。
       if (!sub || !webEntry || !webPath || profileId === primaryProfile?.id) continue;
@@ -15567,6 +15746,417 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // not inferred gateway health links.
       gatewayUrls: webEntries.slice(1),
       rootDomain: primaryRoot,
+    });
+  });
+
+  // ── 手动多出口配置（2026-08-31）──
+  //
+  // 多出口此前只有一条路：Agent 改 cds-compose.yml 的 `cds.subdomain` / `cds.web-entry-*`
+  // 标签，再重新导入项目。用户想自己加一个「左边域名 → 右边端口」的入口就必须找 Agent。
+  // 这两个端点把同一份配置（BuildProfile.subdomain + webEntry）开成可读可写：
+  //
+  //   GET  扫描本分支所有服务（含端口 / 运行状态 / 当前入口 / 值来自项目还是分支）
+  //   PUT  按 scope 写回：'project' 落 BuildProfile（该项目所有分支），'branch' 落
+  //        BranchEntry.profileOverrides（只影响本分支）
+  //
+  // 生效不需要重新部署：forwarder-route-publisher 每 2s 从 state 重算路由表，
+  // 命名子域路由随之出现/消失；webEntry 只影响面板入口清单，即时可见。
+  type WebEntryConfigRow = {
+    serviceId: string;
+    serviceName: string;
+    /** 'project' = 项目底座服务（可存项目档）；'branch' = 分支临时服务（只能存分支档） */
+    origin: 'project' | 'branch';
+    containerPort: number | null;
+    hostPort: number | null;
+    status: string;
+    /** 承载主域名根路径的服务：它的入口就是主域名，不需要命名子域 */
+    handlesRoot: boolean;
+    pathPrefixes: string[];
+    project: { subdomain: string; name: string; path: string };
+    branchOverride: { subdomain: string; name: string; path: string } | null;
+    /** `primary` 由 compose 的 cds.web-entry-primary 声明，本表单不编辑，只透出让用户知道谁是主入口 */
+    effective: { subdomain: string; name: string; path: string; primary: boolean };
+    /** 当前这条配置算出来的落地 URL；配不出入口时为空串 */
+    url: string;
+  };
+
+  /**
+   * 托管交付（deliveryMode='managed'）项目的服务清单来自 `Project.managedProfiles`，
+   * 由 ManagedProjectService 按 managedSpec **每次重新生成并覆盖**，而且这些 profile
+   * 不在全局 `state.buildProfiles` 里。所以对这类项目：
+   *   - 往「项目档」写没有意义（下次生成即被抹掉）；
+   *   - 用 id 去全局表找更危险：托管 profile 的 id（web / api 这类常见名）与别的
+   *     compose 项目的 profile id 可能重名，找到的是**别的项目**那条，鉴权已经过了
+   *     却写坏了邻居（Codex review P1 + cross-project-isolation）。
+   * 因此托管项目只允许存分支档（profileOverrides 按 profile id 生效，且不受重新生成影响）。
+   */
+  const supportsProjectScopedProfiles = (projectId: string): boolean =>
+    stateService.getProject(projectId)?.deliveryMode !== 'managed';
+
+  const readWebEntryConfig = (entry: BranchEntry, primaryRoot: string): {
+    previewSlug: string;
+    services: WebEntryConfigRow[];
+  } => {
+    const project = stateService.getProject(entry.projectId);
+    const previewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug || '';
+    const projectProfileIds = new Set(
+      stateService.getBuildProfilesForProject(entry.projectId || 'default').map((p) => p.id),
+    );
+    const services = stateService.getEffectiveProfilesForBranch(entry).map((baseline): WebEntryConfigRow => {
+      const override = entry.profileOverrides?.[baseline.id];
+      const effective = resolveEffectiveProfile(baseline, entry);
+      const svc = entry.services?.[baseline.id];
+      const effectiveEntry = resolveWebEntry(effective);
+      const sub = effective.subdomain || '';
+      const handlesRoot = handlesRootPath(effective);
+      // URL 口径与 computeBranchWebEntries 同源：命名子域走命名 host（整条路由直达容器），
+      // 否则挂在主域名的该服务前缀下。这里只算「这条配置指向哪」，可达性由部署状态决定。
+      let url = '';
+      if (effectiveEntry && previewSlug) {
+        const label = sub ? namedServiceLabel(previewSlug, sub) : '';
+        const useNamedHost = !handlesRoot && Boolean(label) && isPublishableNamedLabel(label);
+        const host = useNamedHost ? `${label}.${primaryRoot}` : `${previewSlug}.${primaryRoot}`;
+        const hostPath = useNamedHost ? effectiveEntry.path : mainDomainEntryPath(effective, effectiveEntry.path);
+        url = `https://${host}${hostPath === '/' ? '' : hostPath}`;
+      }
+      return {
+        serviceId: baseline.id,
+        serviceName: baseline.name || baseline.id,
+        origin: projectProfileIds.has(baseline.id) ? 'project' : 'branch',
+        containerPort: effective.containerPort ?? null,
+        hostPort: svc?.hostPort ?? null,
+        status: String(svc?.status || 'stopped'),
+        handlesRoot,
+        pathPrefixes: effective.pathPrefixes || [],
+        project: {
+          subdomain: baseline.subdomain || '',
+          name: baseline.webEntry?.name || '',
+          path: baseline.webEntry?.path || '/',
+        },
+        branchOverride: override && (override.subdomain !== undefined || override.webEntry !== undefined)
+          ? {
+              subdomain: override.subdomain || '',
+              name: override.webEntry?.name || '',
+              path: override.webEntry?.path || '/',
+            }
+          : null,
+        effective: {
+          subdomain: sub,
+          name: effectiveEntry?.name || '',
+          path: effectiveEntry?.path || '/',
+          primary: Boolean(effectiveEntry?.primary),
+        },
+        url,
+      };
+    });
+    return { previewSlug, services };
+  };
+
+  /**
+   * 这条命名子域在**某一条分支上**会不会撞车，返回人类可读的冲突原因。
+   *
+   * 为什么要按分支逐条算：命名 host 是 `<该分支的 previewSlug>-<subdomain>`，
+   * 存到项目档时**该项目的每条分支**都会各自拼出一个 host，只验请求这条分支
+   * 等于放过其它分支的撞车——那边发布器只会静默跳过路由，用户看到的是
+   * 「保存成功但地址打不开」（Codex review P1）。
+   *
+   * 三类占位都要查，缺一类就会存下一条永远发不出去的入口：
+   *   1. 同分支另一个服务已经占了同一组 host（发布器只保留首个）；
+   *   2. 别的分支的 preview host / 已发布命名服务 host；
+   *   3. 子域别名与完整自定义域名——**含本分支自己的**：发布器的 occupiedHosts
+   *      不跳过自己，本分支别名占走的 host 同样会让这条服务路由被跳过
+   *      （Codex review P2），所以这里也不能因为「是自己」就放行。
+   * 唯一豁免的是「这个服务自己当前已发布的那些 host」，否则原样再存一次都会 409。
+   *
+   * **枚举口径必须是 `publishedServiceLabels`（规范名 + 历史别名）而不是单个
+   * `namedServiceLabel`**：一个子域会展开出多条 host（`llmgw` 也发 `llmgw-web`）。
+   * 只比规范名时，服务 A 用 `llmgw`、服务 B 用 `llmgw-web` 这种组合按原始字符串
+   * 不相等就放行了，而两者展开后的 host 完全重合——发布器于是跳过或改指其中一条，
+   * 一条对外承诺过的兼容地址会开始指向错的容器（Codex review 第三轮 P1）。
+   * `preview-entrypoints.ts` 里那句「凡是要跟发布结果对齐的地方都必须走它」正是这个意思，
+   * 判据分裂（predicate-and-wiring-discipline 形状 3）在这里复发了一次。
+   */
+  const namedHostConflictsOnBranch = (
+    branch: BranchEntry,
+    serviceId: string,
+    subdomain: string,
+    roots: string[],
+    /**
+     * 本次请求里各服务**将要**变成的子域（serviceId → subdomain，空串表示要清掉）。
+     * 判定必须按结果态做：只跟保存前的状态比，同一次请求里两个服务分别填
+     * `llmgw` / `llmgw-web` 会双双放行（Codex review 第四轮 P1）。
+     */
+    pendingSubdomains: ReadonlyMap<string, string> = new Map(),
+  ): string[] => {
+    const project = stateService.getProject(branch.projectId);
+    const slug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug;
+    if (!slug) return [];
+    const hostsFor = (sub: string): string[] => publishedServiceLabels(slug, sub)
+      .flatMap((label) => roots.map((root) => `${label}.${root}`.toLowerCase()));
+    const hosts = hostsFor(subdomain);
+    // 一条都发不出去（首标签超限）：那是「这条分支享受不到」而不是「撞了别人」，不在这里拦。
+    if (hosts.length === 0) return [];
+    const conflicts: string[] = [];
+    const effectiveProfiles = stateService.getEffectiveProfilesForBranch(branch)
+      .map((bp) => ({ id: bp.id, resolved: resolveEffectiveProfile(bp, branch) }));
+    for (const { id, resolved } of effectiveProfiles) {
+      if (id === serviceId) continue;
+      // 结果态优先：本次请求给它改成什么，就按什么判（没提到的服务沿用现值）。
+      const otherSub = pendingSubdomains.get(id) ?? resolved.subdomain ?? '';
+      if (!otherSub) continue;
+      const otherHosts = new Set(hostsFor(otherSub));
+      const overlap = hosts.filter((host) => otherHosts.has(host));
+      if (overlap.length > 0) {
+        conflicts.push(
+          `分支 "${branch.id}" 的服务 "${id}"（子域 "${otherSub}"）已经占用 ${overlap.join('、')}（含历史别名）`,
+        );
+      }
+    }
+    for (const collision of findPreviewHostCollisions(hosts)) {
+      // 同分支的「命名服务 host」一律交给上面那段判：它按**结果态**比对（含本次请求
+      // 里别的服务要改成什么），比这里基于保存前状态的枚举更准。留在这里判反而会把
+      // 「把同一个子域从服务 A 挪到服务 B」这种合法搬迁误判成撞车。
+      // 别名 / 自定义域名占位（reason 'alias' / 'custom-domain'）不在此列，照常报。
+      if (collision.conflictWith === branch.id && collision.reason === 'service-subdomain') continue;
+      conflicts.push(`"${collision.domain}" 已被分支 "${collision.conflictWith}" 占用`);
+    }
+    const owners = occupiedHostOwners(stateService.getAllBranches(), roots);
+    for (const host of hosts) {
+      const owner = owners.get(host);
+      if (owner) conflicts.push(`"${host}" 已被分支 "${owner}" 的子域别名或自定义域名占用`);
+    }
+    return conflicts;
+  };
+
+  /** 存项目档时会跟着变的分支：同项目、且没有用分支档把这个服务的子域钉死的。 */
+  const branchesInheritingProfile = (
+    projectId: string,
+    serviceId: string,
+    requestingBranchId: string,
+  ): BranchEntry[] => stateService.getAllBranches().filter((b) => {
+    if ((b.projectId || 'default') !== projectId) return false;
+    // 请求这条分支的覆盖会被本次保存清掉，所以它一定继承项目值。
+    if (b.id === requestingBranchId) return true;
+    return b.profileOverrides?.[serviceId]?.subdomain === undefined;
+  });
+
+  router.get('/branches/:id/web-entry-config', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) { res.status(access.status).json(access.body); return; }
+    const primaryRoot = config.previewDomain || config.rootDomains?.[0] || 'example.com';
+    const { previewSlug, services } = readWebEntryConfig(entry, primaryRoot);
+    res.json({
+      branchId: id,
+      rootDomain: primaryRoot,
+      previewSlug,
+      services,
+      // 托管交付项目没有「项目档」可写，前端据此只留「仅本分支」
+      supportsProjectScope: supportsProjectScopedProfiles(entry.projectId || 'default'),
+    });
+  });
+
+  router.put('/branches/:id/web-entry-config', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) { res.status(access.status).json(access.body); return; }
+
+    const body = (req.body ?? {}) as { scope?: unknown; entries?: unknown };
+    const scope = body.scope === 'branch' ? 'branch' : body.scope === 'project' ? 'project' : null;
+    if (!scope) {
+      res.status(400).json({ error: '请求体需要 { scope: "project" | "branch", entries: [...] }' });
+      return;
+    }
+    if (!Array.isArray(body.entries)) {
+      res.status(400).json({ error: 'entries 必须是数组（每项 { serviceId, name, subdomain, path }）' });
+      return;
+    }
+
+    const projectId = entry.projectId || 'default';
+    if (scope === 'project' && !supportsProjectScopedProfiles(projectId)) {
+      res.status(400).json({
+        error: '该项目是托管交付模式，服务清单由 CDS 按方案自动生成，写项目档会在下次生成时被覆盖；请选择「仅本分支」保存。',
+      });
+      return;
+    }
+
+    const primaryRoot = config.previewDomain || config.rootDomains?.[0] || 'example.com';
+    const { previewSlug, services } = readWebEntryConfig(entry, primaryRoot);
+    if (!previewSlug) {
+      res.status(409).json({ error: '该分支还没有预览 slug（尚未部署过），暂时无法配置入口' });
+      return;
+    }
+    const rowById = new Map(services.map((row) => [row.serviceId, row]));
+
+    type NormalizedEntry = { serviceId: string; name: string; subdomain: string; path: string };
+    const normalized: NormalizedEntry[] = [];
+    const seenServiceIds = new Set<string>();
+    const subdomainOwner = new Map<string, string>();
+    for (const raw of body.entries as Array<Record<string, unknown>>) {
+      const serviceId = String(raw?.serviceId || '').trim();
+      const row = rowById.get(serviceId);
+      if (!row) {
+        res.status(400).json({ error: `未知服务 "${serviceId}"：它不在本分支生效的服务列表里` });
+        return;
+      }
+      if (seenServiceIds.has(serviceId)) {
+        res.status(400).json({ error: `服务 "${serviceId}" 在请求里出现了多次` });
+        return;
+      }
+      seenServiceIds.add(serviceId);
+      if (scope === 'project' && row.origin !== 'project') {
+        res.status(400).json({ error: `"${serviceId}" 是分支临时服务，只能保存到当前分支` });
+        return;
+      }
+      const name = String(raw?.name ?? '').trim();
+      const subdomain = String(raw?.subdomain ?? '').trim().toLowerCase();
+      const path = String(raw?.path ?? '/').trim() || '/';
+      if (subdomain && !isValidServiceSubdomain(subdomain)) {
+        res.status(400).json({
+          error: `子域 "${subdomain}" 非法：须为单个 DNS 标签（小写字母/数字/连字符，不以连字符开头结尾，长度 1..40），且不能用保留名`,
+        });
+        return;
+      }
+      // 「有子域没名称」是**合法且常见**的形态：API-only 服务（如网关 serving）
+      // 靠 cds.subdomain 拿一条可被调用的命名 URL，本来就不该出现在用户入口清单里。
+      // 早先在这里 400 会把这类服务逼进死角：要么编一个入口名，要么把行删掉，
+      // 而删行等于把它已有的命名 API 路由清掉（Codex review P1）。
+      if (name && normalizeWebEntryPath(path) === null) {
+        res.status(400).json({ error: `入口路径 "${path}" 非法：必须是以 / 开头的同源路径，且不能是健康探针路径` });
+        return;
+      }
+      if (subdomain) {
+        const owner = subdomainOwner.get(subdomain);
+        if (owner) {
+          res.status(400).json({ error: `子域 "${subdomain}" 被 "${owner}" 和 "${serviceId}" 同时使用；同一分支内子域必须唯一` });
+          return;
+        }
+        subdomainOwner.set(subdomain, serviceId);
+        const label = namedServiceLabel(previewSlug, subdomain);
+        if (!isPublishableNamedLabel(label)) {
+          res.status(400).json({
+            error: `子域 "${subdomain}" 与分支名拼出的 host 首标签 "${label}" 超过 63 字符上限，无法解析且通配证书不覆盖；请换个更短的子域`,
+          });
+          return;
+        }
+      }
+      normalized.push({ serviceId, name, subdomain, path });
+    }
+
+    // ── 撞车校验：必须在**整份请求解析完之后**做，且按「这次保存之后的结果」判 ──
+    //
+    // 逐条边解析边判会漏掉同一次请求内部的撞车：两个当前都没配子域的服务，一个填
+    // `llmgw`、一个填 `llmgw-web`，各自跟**保存前**的状态比都干净，原始名字符串又不相等，
+    // 于是双双放行；可它们展开后的 host 完全重合，发布器只会把兼容 host 给其中一个
+    // （Codex review 第四轮 P1）。所以把本次请求的赋值先合进「结果态」，再拿结果去判。
+    const pendingSubdomains = new Map(normalized.map((item) => [item.serviceId, item.subdomain]));
+    const roots = config.rootDomains?.length ? config.rootDomains : [primaryRoot];
+    for (const item of normalized) {
+      if (!item.subdomain) continue;
+      // 存分支档只影响本分支；存项目档要把**每条会继承这个值的分支**都验一遍。
+      const affected = scope === 'branch'
+        ? [entry]
+        : branchesInheritingProfile(projectId, item.serviceId, id);
+      const collisions = affected.flatMap((b) =>
+        namedHostConflictsOnBranch(b, item.serviceId, item.subdomain, roots, pendingSubdomains)
+          .map((message) => ({ branchId: b.id, message })),
+      );
+      if (collisions.length > 0) {
+        res.status(409).json({
+          error: `子域 "${item.subdomain}" 无法使用：${collisions.map((c) => c.message).join('; ')}`,
+          collisions,
+        });
+        return;
+      }
+    }
+
+    try {
+      for (const item of normalized) {
+        const row = rowById.get(item.serviceId)!;
+        // `primary`（cds.web-entry-primary）不是这个表单编辑的字段，但它决定了
+        // selectPrimaryWebEntry 挑谁当主入口。整对象替换会把它顺手丢掉，于是
+        // 一次改名就能把主入口挪到别的服务上、连主域名 URL 一起变（Codex review P2）。
+        // 所以按档位把现有的 primary 原样带过去。
+        // baseline 同样只能从**本分支生效的** profile 里取（托管 profile 与分支临时
+        // 服务都不在全局表里，裸 id 全局查会拿到别的项目那条）。
+        const baselineEntry = stateService.getEffectiveProfilesForBranch(entry)
+          .find((p) => p.id === item.serviceId)?.webEntry;
+        const effectiveEntry = scope === 'project'
+          ? baselineEntry
+          : (entry.profileOverrides?.[item.serviceId]?.webEntry ?? baselineEntry);
+        const buildEntry = (primary?: boolean) => (
+          item.name ? { name: item.name, path: item.path, ...(primary ? { primary: true } : {}) } : undefined
+        );
+        const webEntry = buildEntry(effectiveEntry?.primary);
+        if (scope === 'project') {
+          // 必须从**目标项目**的 profile 表里取，不能拿裸 id 去全局表找：那样
+          // 同名 id（web / api）会命中别的项目那条，鉴权过了却写坏邻居（Codex review P1）。
+          const profile = stateService.getBuildProfilesForProject(projectId)
+            .find((p) => p.id === item.serviceId && (p.projectId || 'default') === projectId);
+          if (!profile) {
+            res.status(404).json({ error: `项目 "${projectId}" 下不存在构建配置 "${item.serviceId}"` });
+            return;
+          }
+          stateService.updateBuildProfile(item.serviceId, {
+            subdomain: item.subdomain || undefined,
+            webEntry,
+          });
+          // 项目档写完必须把**本分支**这两个字段的覆盖清掉：否则分支覆盖继续赢，
+          // 用户在自己面前这条分支上看不到刚保存的值，会以为没生效。
+          const prev = entry.profileOverrides?.[item.serviceId];
+          if (prev && (prev.subdomain !== undefined || prev.webEntry !== undefined)) {
+            const next: BuildProfileOverride = { ...prev };
+            delete next.subdomain;
+            delete next.webEntry;
+            delete next.updatedAt;
+            if (Object.keys(next).length === 0) stateService.clearBranchProfileOverride(id, item.serviceId);
+            else stateService.setBranchProfileOverride(id, item.serviceId, next);
+          }
+        } else {
+          const prev = entry.profileOverrides?.[item.serviceId];
+          const next: BuildProfileOverride = { ...(prev || {}) };
+          delete next.updatedAt;
+          // 与项目底座一致的值不写覆盖（回到继承），避免分支上堆一层永远与项目相同的影子配置。
+          if (item.subdomain === row.project.subdomain) delete next.subdomain;
+          else next.subdomain = item.subdomain;
+          const sameEntry = item.name === row.project.name
+            && (item.name === '' || item.path === row.project.path);
+          if (sameEntry) delete next.webEntry;
+          // 空名 = 本分支隐藏这个入口（resolveWebEntry 判空名即无入口），
+          // 用空名对象而不是删字段，才能压过项目底座声明的入口。
+          else next.webEntry = webEntry ?? { name: '', path: '/' };
+          if (Object.keys(next).length === 0) stateService.clearBranchProfileOverride(id, item.serviceId);
+          else stateService.setBranchProfileOverride(id, item.serviceId, next);
+        }
+      }
+      stateService.save();
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+      return;
+    }
+
+    const refreshed = stateService.getBranch(id) || entry;
+    const after = readWebEntryConfig(refreshed, primaryRoot);
+    res.json({
+      message: scope === 'project' ? '已保存到项目（该项目所有分支生效）' : '已保存到当前分支',
+      branchId: id,
+      scope,
+      rootDomain: primaryRoot,
+      previewSlug: after.previewSlug,
+      services: after.services,
+      webEntries: computeBranchWebEntries(refreshed, primaryRoot),
+      // 路由表由 forwarder 每 2s 从 state 重算，命名子域几秒内自动出现，无需重新部署。
+      needsRedeploy: false,
     });
   });
 
@@ -15769,7 +16359,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     try {
-      stateService.clearBranchProfileOverride(id, profileId);
+      // 「恢复为公共配置」指的是构建/运行那套覆盖，不包括手动入口配置——后者只是恰好
+      // 存在同一个 override 对象里（subdomain / webEntry）。分支覆盖 UI 在字段被清空时
+      // 走这条 DELETE，若整份清掉就等于「把端口删了顺手撤掉命名路由」（与 PUT 同一族，
+      // Codex review 第七轮 P1）。这两个字段的清除入口是 web-entry-config，不在这里。
+      const prev = stateService.getBranchProfileOverride(id, profileId);
+      const keep: Pick<BuildProfileOverride, 'subdomain' | 'webEntry'> = {
+        ...(prev?.subdomain !== undefined ? { subdomain: prev.subdomain } : {}),
+        ...(prev?.webEntry !== undefined ? { webEntry: prev.webEntry } : {}),
+      };
+      if (Object.keys(keep).length > 0) {
+        stateService.setBranchProfileOverride(id, profileId, keep);
+      } else {
+        stateService.clearBranchProfileOverride(id, profileId);
+      }
       stateService.save();
       res.json({ message: '已恢复为公共配置', profileId, needsRedeploy: true });
     } catch (err) {

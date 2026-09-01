@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -15,7 +16,7 @@ namespace PrdAgent.Api.Authentication;
 
 /// <summary>
 /// 稳定冒烟专用签名认证。
-/// 私钥只存在执行机安全凭据库；服务端仅保存公钥，且只接受登录票据与定向通知两个端点。
+/// 私钥只存在执行机安全凭据库；服务端仅保存公钥，且只接受合成登录、网关短票据与定向通知端点。
 /// </summary>
 public sealed class StableSmokeAuthenticationHandler
     : AuthenticationHandler<StableSmokeAuthenticationOptions>
@@ -33,6 +34,7 @@ public sealed class StableSmokeAuthenticationHandler
     private static readonly HashSet<(string Method, string Path)> AllowedRequests = new()
     {
         (HttpMethods.Post, "/api/v1/auth/synthetic/ticket"),
+        (HttpMethods.Post, "/api/v1/auth/synthetic/gateway-ticket"),
         (HttpMethods.Post, "/api/dashboard/notifications/events"),
     };
 
@@ -74,7 +76,7 @@ public sealed class StableSmokeAuthenticationHandler
         var key = matchingKeys.Count == 1 ? matchingKeys[0] : null;
         if (key is null || !key.IsComplete)
             return Fail("key_not_configured");
-        if (!string.Equals(Request.Host.Host, key.AllowedHost, StringComparison.OrdinalIgnoreCase))
+        if (!IsAllowedHost(key.AllowedHost, ResolveRequestHost(Request), _configuration))
             return Fail("host_mismatch");
 
         if (!TryReadSignatureHeaders(Request, out var timestamp, out var nonce, out var signature))
@@ -150,6 +152,57 @@ public sealed class StableSmokeAuthenticationHandler
 
     internal static bool IsAllowedRequest(string method, string path) =>
         AllowedRequests.Contains((method, path));
+
+    internal static bool IsAllowedHost(
+        string configuredHost,
+        string requestHost,
+        IConfiguration configuration)
+    {
+        var expectedHost = configuredHost.Trim();
+        if (string.Equals(expectedHost, "@deployment", StringComparison.Ordinal))
+        {
+            var deploymentUrl = configuration["CDS_PREVIEW_URL"]
+                ?? configuration["PUBLIC_BASE_URL"];
+            if (!Uri.TryCreate(deploymentUrl, UriKind.Absolute, out var parsed)) return false;
+            expectedHost = parsed.Host;
+        }
+        return expectedHost.Length > 0
+            && string.Equals(requestHost, expectedHost, StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string ResolveRequestHost(HttpRequest request)
+    {
+        var peer = request.HttpContext.Connection.RemoteIpAddress;
+        if (peer is not null && IsTrustedProxyPeer(peer))
+        {
+            var forwardedHost = request.Headers["X-Forwarded-Host"].FirstOrDefault();
+            var firstHost = forwardedHost?.Split(',')[0].Trim();
+            if (!string.IsNullOrWhiteSpace(firstHost)
+                && Uri.TryCreate($"https://{firstHost}", UriKind.Absolute, out var parsed))
+            {
+                return parsed.Host;
+            }
+        }
+
+        return request.Host.Host;
+    }
+
+    private static bool IsTrustedProxyPeer(IPAddress peer)
+    {
+        if (IPAddress.IsLoopback(peer)) return true;
+        if (peer.IsIPv4MappedToIPv6) peer = peer.MapToIPv4();
+        if (peer.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var bytes = peer.GetAddressBytes();
+            return bytes[0] == 10
+                || bytes[0] == 172 && bytes[1] is >= 16 and <= 31
+                || bytes[0] == 192 && bytes[1] == 168
+                || bytes[0] == 169 && bytes[1] == 254;
+        }
+
+        if (peer.IsIPv6LinkLocal || peer.IsIPv6SiteLocal) return true;
+        return (peer.GetAddressBytes()[0] & 0xFE) == 0xFC;
+    }
 
     internal static string BuildCanonicalRequest(
         string method,
