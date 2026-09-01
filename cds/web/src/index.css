@@ -2879,11 +2879,21 @@
     letter-spacing: 0.02em;
   }
 
-  /* 当前页三件套：左侧 2px 橙条 + 淡橙底 + 橙字，缩略视图下也认得出「我在哪」。 */
+  /* 非活动项走 --foreground-muted 而不是 --muted-foreground：
+     白天那一档从 4.72:1 抬到 6.43:1（对栏底 #EEE8E3），暗色 10.3:1。 */
+  .cds-rail .cds-rail-item {
+    color: hsl(var(--foreground-muted));
+  }
+
+  /* 当前页：实心底 + 反色墨。
+     此前是「淡橙底 + 橙字」，白天实测 4.25:1 —— 比非活动的 4.72:1 还低，
+     选中项反而是全栏最弱的一个，「我在哪」只能靠色相和那根竖条撑着。
+     实色填充上的墨色必须用 --status-ink（白天=白、暗色=深墨），
+     两档都是自己那一档的正确反色：白天 4.97:1，暗色 7.63:1。 */
   .cds-rail .cds-rail-item[data-active='true'] {
-    background-color: hsl(var(--primary) / 0.1);
-    color: hsl(var(--primary-ink));
-    box-shadow: inset 2px 0 0 hsl(var(--primary));
+    background-color: hsl(var(--primary-ink));
+    color: hsl(var(--status-ink));
+    box-shadow: none;
   }
 
   /* 底部动作在栏里不再各自带盒子：强调只留颜色，边框与底色交给 hover/active，

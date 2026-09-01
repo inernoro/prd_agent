@@ -130,6 +130,65 @@ async function checkLayout(page, label) {
   console.log(`PASS ${label} ${result.url}`);
 }
 
+/*
+ * 桌面高度契约：任务调度页的主操作「立即执行」必须在视野里，不能靠滚动去够。
+ *
+ * 它坏过一次，而且不是「偏下」这么轻：网格行是 auto，会长到最高那一栏的内容高
+ * （实测 1027px）撑破 flex 容器，于是按钮被钉在 y=986 不随视口变；1536px 以下
+ * 第三栏整个 `hidden`，rect 直接是 0x0——那台 14 寸笔记本上根本没有这个按钮。
+ * 编译、类型、单测全都拦不住，只有真浏览器量得出来。
+ *
+ * 红绿闭环：把 Workspace 的 cds-workspace--fill 去掉，或把网格的
+ * xl:grid-rows-[minmax(0,1fr)] 去掉，四档里至少两档立刻变红。
+ */
+const TASK_SCHEDULE_VIEWPORTS = [
+  { label: '1280x720', width: 1280, height: 720 },
+  { label: '1512x860', width: 1512, height: 860 },
+  { label: '1920x860', width: 1920, height: 860 },
+  { label: '1920x1080', width: 1920, height: 1080 },
+];
+
+async function checkTaskScheduleAction(browser, viewport) {
+  const context = await browser.newContext({
+    viewport: { width: viewport.width, height: viewport.height },
+    ignoreHTTPSErrors: true,
+  });
+  const page = await context.newPage();
+  await page.goto(`${baseUrl}/task-schedule`, { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await page.waitForTimeout(1500);
+
+  const result = await page.evaluate(async () => {
+    const findAction = () => Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent.trim().startsWith('立即执行') && b.getBoundingClientRect().height > 0);
+    // <2xl 第三栏不在网格里，概览走中栏页签——这一步本身也是判据：
+    // 页签没接上的话下面就找不到按钮。
+    if (!findAction()) {
+      const tab = Array.from(document.querySelectorAll('button'))
+        .find((b) => b.textContent.trim() === '概览' && b.getBoundingClientRect().height > 0);
+      if (tab) {
+        tab.click();
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+    const btn = findAction();
+    if (!btn) return { found: false };
+    const rect = btn.getBoundingClientRect();
+    return {
+      found: true,
+      top: Math.round(rect.top),
+      bottom: Math.round(rect.bottom),
+      viewportHeight: window.innerHeight,
+      overflowX: document.body.scrollWidth > window.innerWidth,
+    };
+  });
+
+  const label = `task-schedule:${viewport.label}`;
+  assertOk(result.found, `${label}: 找不到「立即执行」——主操作不该在任何桌面档位缺席`);
+  assertOk(result.bottom <= result.viewportHeight, `${label}: 「立即执行」落在折叠线以下`, result);
+  assertOk(!result.overflowX, `${label}: 出现横向溢出`, result);
+  await context.close();
+}
+
 async function runViewport(browser, project, viewport) {
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
@@ -175,12 +234,20 @@ async function runViewport(browser, project, viewport) {
 }
 
 async function main() {
-  const browser = await chromium.launch({ args: ['--no-sandbox'] });
-  const probe = await browser.newPage();
-  const project = await getFirstProject(probe);
-  await probe.close();
-  for (const viewport of viewports) {
-    await runViewport(browser, project, viewport);
+  // 沙箱/CI 里 Playwright 自带的浏览器版本未必与镜像预装的一致，允许显式指定。
+  const executablePath = process.env.CDS_CHROMIUM_PATH || undefined;
+  const only = process.env.CDS_SMOKE_ONLY || '';
+  const browser = await chromium.launch({ args: ['--no-sandbox'], executablePath });
+  if (only !== 'task-schedule') {
+    const probe = await browser.newPage();
+    const project = await getFirstProject(probe);
+    await probe.close();
+    for (const viewport of viewports) {
+      await runViewport(browser, project, viewport);
+    }
+  }
+  for (const viewport of TASK_SCHEDULE_VIEWPORTS) {
+    await checkTaskScheduleAction(browser, viewport);
   }
   await browser.close();
 }

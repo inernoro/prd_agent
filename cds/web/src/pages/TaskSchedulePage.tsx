@@ -106,6 +106,11 @@ const segmentClass = 'inline-flex h-8 items-center gap-1.5 rounded-md border px-
 
 type RunFilterKey = 'all' | 'failed' | 'manual';
 
+const MID_TABS = [
+  { key: 'runs' as const, label: '运行流' },
+  { key: 'overview' as const, label: '概览' },
+];
+
 const RUN_FILTERS: { key: RunFilterKey; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'failed', label: '失败' },
@@ -246,6 +251,8 @@ export function TaskSchedulePage(): JSX.Element {
   // 中栏会空掉大半（content-fills-canvas）。所以给一个显式的作用域开关，
   // 而不是让用户靠「清空选中」来换回全部（那会把右栏打回空表单）。
   const [runScopeAll, setRunScopeAll] = useState(false);
+  // <2xl 时中栏在「运行流 / 概览」之间切；≥2xl 两者并列，这个值不参与渲染。
+  const [midPanel, setMidPanel] = useState<'runs' | 'overview'>('runs');
   const runScopeJobId = runScopeAll ? '' : selectedId;
 
   const visibleRuns = useMemo(() => {
@@ -439,7 +446,7 @@ export function TaskSchedulePage(): JSX.Element {
         />
       )}
     >
-      <Workspace fluid className="min-h-0">
+      <Workspace fluid className="cds-workspace--fill min-h-0">
         {error ? <ErrorBlock message={error} /> : null}
         {toast ? (
           <div className="mb-3 rounded-md border border-ok/30 bg-ok-soft px-3 py-2 text-sm text-ok">
@@ -448,7 +455,7 @@ export function TaskSchedulePage(): JSX.Element {
         ) : null}
 
         {loading ? <LoadingBlock label="加载任务调度配置" /> : (
-          <div className="flex min-h-0 flex-col gap-3">
+          <div className="flex flex-col gap-3 xl:min-h-0">
 
             {/* 结论条：先给判断，再给数字。空表单不该占据第一屏。 */}
             <div className="flex flex-wrap items-stretch gap-3">
@@ -484,9 +491,14 @@ export function TaskSchedulePage(): JSX.Element {
 
             <TimelineBand lanes={timeline.lanes} nowRatio={timeline.nowRatio} nowLabel={timeline.nowLabel} hiddenCount={timeline.hiddenCount} />
 
-            <div className="grid min-h-0 flex-1 gap-3 2xl:grid-cols-[300px_minmax(0,1fr)_420px] xl:grid-cols-[280px_minmax(0,1fr)]">
+            {/* 高度契约：真正起作用的是 Workspace 上的 cds-workspace--fill（把 main 的确定高度
+                传下来）；把它去掉，四档视口守卫立刻变红。下面这条 grid-rows 是冗余的第二道
+                —— 隐式行是 auto，今天靠各栏自己的 overflow-hidden 把最小尺寸压成 0 才没撑破，
+                哪天有人去掉某一栏的 overflow-hidden，这条就是兜底。删掉它守卫不会红，
+                所以在此写明它是有意保留的冗余，不是没接上的线。 */}
+            <div className="grid flex-1 gap-3 xl:min-h-0 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_420px]">
               {/* 左：任务清单，按「需要注意 / 即将触发 / 正常运行」分组 */}
-              <section className="flex min-h-0 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+              <section className="flex min-h-0 max-h-[60vh] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] xl:max-h-none">
                 <div className="flex items-center justify-between border-b border-[hsl(var(--hairline))] px-4 py-3">
                   <div className="text-sm font-semibold">任务</div>
                   <span className="font-mono text-xs text-muted-foreground">{jobs.length}</span>
@@ -521,8 +533,24 @@ export function TaskSchedulePage(): JSX.Element {
                 </div>
               </section>
 
-              {/* 中：运行流。此前折在 <details> 里，是这一页最有价值也最难看到的数据。 */}
-              <section className="flex min-h-0 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+              {/* 中：运行流。此前折在 <details> 里，是这一页最有价值也最难看到的数据。
+                  <2xl 时它还兼任概览的宿主 —— 那一档第三栏不在网格里，概览必须有个去处，
+                  否则「立即执行」在 1536px 以下就是不存在的（此前实测 rect 为 0×0）。 */}
+              <section className="flex min-h-0 max-h-[80vh] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] xl:max-h-none">
+                <div className="flex shrink-0 items-center gap-1 border-b border-[hsl(var(--hairline))] px-3 py-1.5 2xl:hidden">
+                  {MID_TABS.map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => setMidPanel(item.key)}
+                      className={`h-7 rounded-md px-2.5 text-xs transition-colors ${midPanel === item.key ? 'bg-primary-soft font-semibold text-primary-ink' : 'text-muted-foreground hover:text-foreground'}`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className={`min-h-0 flex-1 flex-col overflow-hidden ${midPanel === 'runs' ? 'flex' : 'hidden'} 2xl:flex`}>
                 <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="text-sm font-semibold">运行流</span>
@@ -564,6 +592,26 @@ export function TaskSchedulePage(): JSX.Element {
                       onToggle={() => setExpandedRunId(expandedRunId === run.id ? '' : run.id)}
                     />
                   ))}
+                </div>
+                </div>
+
+                <div className={`min-h-0 flex-1 flex-col overflow-hidden ${midPanel === 'overview' ? 'flex' : 'hidden'} 2xl:hidden`}>
+                  {selectedJob ? (
+                    <JobOverview
+                      job={selectedJob}
+                      projectLabel={projectName(selectedJob.projectId)}
+                      scheduleText={scheduleLabel(selectedJob)}
+                      countdown={countdownTo(selectedJob.nextRunAt, now)}
+                      health={healthOf(selectedJob.id)}
+                      running={runningId === selectedJob.id}
+                      onRun={() => void runNow(selectedJob.id)}
+                      onEdit={() => { selectJob(selectedJob); setEditing(true); setMidPanel('overview'); }}
+                    />
+                  ) : (
+                    <div className="flex flex-1 items-center justify-center px-4 py-10 text-center text-sm text-muted-foreground">
+                      左侧选一个任务查看概览。
+                    </div>
+                  )}
                 </div>
               </section>
 
@@ -1092,8 +1140,10 @@ function TimelineBand({
       </div>
 
       <div className="px-4 pb-3 pt-2">
+        {/* 刻度行的三段必须与泳道逐段对齐，否则刻度和点位是两套坐标。 */}
         <div className="flex">
-          <div className="w-36 shrink-0" />
+          <div className="w-44 shrink-0" />
+          <div className="w-6 shrink-0" />
           <div className="relative h-4 flex-1">
             {hours.map((hour) => (
               <span
@@ -1105,17 +1155,22 @@ function TimelineBand({
               </span>
             ))}
           </div>
-          <div className="w-16 shrink-0" />
+          <div className="w-6 shrink-0" />
+          <div className="w-32 shrink-0" />
         </div>
 
         <div className="relative">
           {lanes.map((lane) => (
-            <div key={lane.id} className={`flex h-7 items-center rounded ${lane.selected ? 'bg-primary/[0.07] shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.18)]' : ''}`}>
-              <div className="flex w-36 shrink-0 items-center gap-1.5 pr-3">
+            <div key={lane.id} className="flex h-7 items-center">
+              {/* 选中态此前把底色铺满整行，未选中行只在轨道区有底纹——两种行看着不是一套结构。
+                  现在底纹统一只铺轨道区，选中靠名字列左侧一根竖条 + 主色墨。 */}
+              <div className={`flex h-full w-44 shrink-0 items-center gap-1.5 pl-2 pr-3 ${lane.selected ? 'shadow-[inset_2px_0_0_hsl(var(--primary))]' : ''}`}>
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${lane.disabled ? 'bg-muted-foreground' : 'bg-ok'}`} />
-                <span className={`truncate text-[11px] ${lane.disabled ? 'text-muted-foreground line-through' : lane.selected ? 'text-primary-ink' : 'text-foreground-muted'}`}>{lane.name}</span>
+                <span className={`truncate text-[11px] ${lane.disabled ? 'text-muted-foreground line-through' : lane.selected ? 'font-semibold text-primary-ink' : 'text-foreground-muted'}`}>{lane.name}</span>
               </div>
-              <div className="relative h-6 flex-1">
+              {/* 沟槽：轨道右端此前直接贴着调度列（实测 0px），虚线带压在「每 10 分钟」上。 */}
+              <div className="box-border h-full w-6 shrink-0 border-l border-[hsl(var(--hairline))]" />
+              <div className={`relative h-6 flex-1 rounded ${lane.selected ? 'bg-primary/[0.07]' : ''}`}>
                 {[3, 6, 9, 12, 15, 18, 21].map((hour) => (
                   <span key={hour} className="absolute inset-y-0 w-px bg-[hsl(var(--hairline))]/80" style={{ left: `${(hour / 24) * 100}%` }} />
                 ))}
@@ -1141,7 +1196,9 @@ function TimelineBand({
                   />
                 ))}
               </div>
-              <div className="flex w-16 shrink-0 justify-end">
+              <div className="box-border h-full w-6 shrink-0 border-r border-[hsl(var(--hairline))]" />
+              {/* 8rem 才放得下「每天 09:00 Asia/Shanghai」；4rem 时六行里有三行吃省略号。 */}
+              <div className="flex w-32 shrink-0 justify-end">
                 <span className={`truncate text-[10px] ${lane.disabled ? 'text-bad' : 'text-muted-foreground'}`}>{lane.tag}</span>
               </div>
             </div>
@@ -1149,18 +1206,18 @@ function TimelineBand({
 
           <div
             className="pointer-events-none absolute top-0 w-px bg-primary shadow-[0_0_10px_hsl(var(--primary)/0.6)]"
-            style={{ left: `calc(9rem + (100% - 9rem - 4rem) * ${nowRatio / 100})`, height: `${lanes.length * 28}px` }}
+            style={{ left: `calc(12.5rem + (100% - 22rem) * ${nowRatio / 100})`, height: `${lanes.length * 28}px` }}
           />
           <span
             className="pointer-events-none absolute -translate-x-1/2 rounded bg-primary px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[hsl(var(--status-ink))]"
-            style={{ left: `calc(9rem + (100% - 9rem - 4rem) * ${nowRatio / 100})`, top: `${lanes.length * 28 + 4}px` }}
+            style={{ left: `calc(12.5rem + (100% - 22rem) * ${nowRatio / 100})`, top: `${lanes.length * 28 + 4}px` }}
           >
             现在 {nowLabel}
           </span>
         </div>
 
         {hiddenCount > 0 ? (
-          <div className="pl-36 pt-7 text-[11px] text-muted-foreground">另有 {hiddenCount} 个任务未展开</div>
+          <div className="pl-[12.5rem] pt-7 text-[11px] text-muted-foreground">另有 {hiddenCount} 个任务未展开</div>
         ) : <div className="pt-6" />}
       </div>
     </section>
