@@ -40,6 +40,7 @@ import {
   branchDbCredentialOwner,
   branchDbCredentialsBelongTo,
   explainBranchDbAuthFailure,
+  foreignBranchDbEnvKeys,
   type BranchDbRuntime,
 } from '../services/branch-db-identity.js';
 import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
@@ -6380,9 +6381,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return branchDbCredentialsBelongTo(branchEnv, runtime, service.id) ? branchEnv : {};
   }
 
+  /**
+   * 展开这台服务自己的 env 模板。
+   *
+   * 模板变量里必须先把**别人家的分支凭据**摘掉：`POSTGRES_USER: ${POSTGRES_USER}` 是 CDS
+   * 支持的标准写法，而 getMergedEnv 里躺着分支作用域那一份平表凭据。不摘，B 服务就绕开
+   * ownedBranchEnv 的归属判定，照样把 A 的账号口令展开进自己的 env，1045 原样复现
+   * （Codex P1，2026-09-01）。摘掉之后回落到项目/全局层的同名值，而不是让这个 key 凭空消失。
+   */
   function resolvedInfraEnv(service: InfraService, branch?: BranchEntry): Record<string, string> {
     const projectId = service.projectId || branch?.projectId || 'default';
-    const vars = branch ? getMergedEnv(projectId, branch.id) : stateService.getCustomEnv(projectId);
+    if (!branch) return resolveEnvTemplates(service.env || {}, stateService.getCustomEnv(projectId));
+    const vars = getMergedEnv(projectId, branch.id);
+    const foreignKeys = foreignBranchDbEnvKeys(stateService.getCustomEnvScope(branch.id), service.id);
+    if (foreignKeys.length) {
+      const withoutBranchScope = getMergedEnv(projectId);
+      for (const key of foreignKeys) {
+        if (key in withoutBranchScope) vars[key] = withoutBranchScope[key];
+        else delete vars[key];
+      }
+    }
     return resolveEnvTemplates(service.env || {}, vars);
   }
 
@@ -6414,7 +6432,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
    */
   function resolveMysqlAdmin(service: InfraService, branch?: BranchEntry): { available: boolean; password: string } {
     const env = resolvedInfraEnv(service, branch);
-    const rootPassword = String(env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '').trim();
+    // 判空可以，**不能 trim 后当口令用**：首尾带空白的 root 口令是合法的，改一个字符
+    // 就连不上，而 available 还报 true（Codex P2，2026-09-01）。口令原样带出去。
+    const rootPassword = String(env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '');
     if (rootPassword) return { available: true, password: rootPassword };
     const allowEmpty = String(env.MYSQL_ALLOW_EMPTY_PASSWORD || env.MARIADB_ALLOW_EMPTY_ROOT_PASSWORD || '').trim();
     // 显式允许空口令 root：**口令就是空的**。这里必须把这个事实带出去——判「能不能」与

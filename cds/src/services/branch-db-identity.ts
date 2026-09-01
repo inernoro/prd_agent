@@ -168,6 +168,64 @@ export function branchDbCredentialsBelongTo(
   return owner === String(serviceId || '').trim();
 }
 
+/**
+ * 派发分支凭据时写进分支 env 的键（按运行时）。`DATABASE_URL` 是共用键，另按 scheme 判。
+ *
+ * 这张表是 buildMysqlConnectionEnv / buildPostgresConnectionEnv / buildMongoConnectionEnv
+ * 三处 injectedEnv 的并集：新增注入键要同步到这里，否则「摘掉别人家的凭据」会漏摘一条。
+ */
+const BRANCH_DB_ENV_KEYS: Record<BranchDbRuntime, string[]> = {
+  mysql: ['MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_DATABASE', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_URL'],
+  postgres: ['POSTGRES_HOST', 'POSTGRES_PORT', 'POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_URL'],
+  mongodb: [
+    'MONGODB_HOST', 'MONGODB_PORT', 'MONGODB_DATABASE', 'MONGO_INITDB_DATABASE',
+    'MONGODB_USERNAME', 'MONGODB_PASSWORD', 'MONGODB_AUTH_SOURCE', 'MONGODB_URL',
+  ],
+};
+
+const BRANCH_DB_RUNTIMES: BranchDbRuntime[] = ['mysql', 'postgres', 'mongodb'];
+
+/** 分支凭据涉及的全部 env 键（含共用的 DATABASE_URL）。守卫用它比对注入端有没有漏登记。 */
+export function allBranchDbEnvKeys(): string[] {
+  return ['DATABASE_URL', ...BRANCH_DB_RUNTIMES.flatMap((runtime) => BRANCH_DB_ENV_KEYS[runtime])];
+}
+
+/**
+ * 分支 env 里**明确属于别的服务**的那些数据库凭据键。
+ *
+ * ## 为什么光靠「不用这份 env」不够
+ *
+ * 把分支 env 判成别人家的、于是不读它（ownedBranchEnv 返回空表），只堵住了直接读的那条路。
+ * 服务自己的 env 还可以写成模板形式 —— `POSTGRES_USER: ${POSTGRES_USER}` 是 CDS 支持的
+ * 标准写法 —— 而模板展开用的是 getMergedEnv，那里面**照样躺着 A 的分支凭据**。于是
+ * B 服务绕开归属判定，又一次拿到 A 的账号口令去连，1045 原样复现（Codex P1，2026-09-01）。
+ * 这正是 predicate-and-wiring-discipline 形状 1：判据只堵了最直观的那一条输入路径。
+ *
+ * 判「明确属于别人」而不是「不属于我」：归属判断不出来（老数据没写 HOST）时一个都不摘，
+ * 与 branchDbCredentialsBelongTo 的宽松侧保持同一口径。
+ */
+export function foreignBranchDbEnvKeys(branchEnv: Record<string, string>, serviceId: string): string[] {
+  const env = branchEnv || {};
+  const self = String(serviceId || '').trim();
+  const keys = new Set<string>();
+  for (const runtime of BRANCH_DB_RUNTIMES) {
+    const owner = branchDbCredentialOwner(env, runtime);
+    if (!owner || owner === self) continue;
+    for (const key of BRANCH_DB_ENV_KEYS[runtime]) {
+      if (key in env) keys.add(key);
+    }
+    // 共用键只在 scheme 对得上时才算这台库的（同 branchDbCredentialOwner 的口径）
+    const shared = String(env.DATABASE_URL ?? '').trim();
+    if (!shared) continue;
+    try {
+      if (OWNER_URL_SCHEMES[runtime].test(new URL(shared).protocol.replace(/:$/, ''))) keys.add('DATABASE_URL');
+    } catch {
+      /* 解析不了的连接串不动它 */
+    }
+  }
+  return [...keys];
+}
+
 /** 这个账号名是不是 CDS 派发的分支账号（而不是用户自己填在环境变量里的账号）。 */
 export function isCdsManagedBranchAccount(user: string): boolean {
   return /^cds_[a-z0-9_]+$/.test(String(user || ''));

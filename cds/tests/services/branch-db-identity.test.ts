@@ -7,6 +7,8 @@ import {
   branchDbAccountName,
   branchDbFingerprint,
   explainBranchDbAuthFailure,
+  allBranchDbEnvKeys,
+  foreignBranchDbEnvKeys,
   isCdsManagedBranchAccount,
   isDbAuthFailure,
   legacyBranchDbAccountName,
@@ -72,6 +74,81 @@ describe('分支数据库账号身份', () => {
     expect(isCdsManagedBranchAccount('app')).toBe(false);
     expect(isCdsManagedBranchAccount('root')).toBe(false);
     expect(isCdsManagedBranchAccount('')).toBe(false);
+  });
+});
+
+/**
+ * 归属判定只堵住「直接读分支 env」那一条路；服务 env 写成 `${POSTGRES_USER}` 模板时，
+ * 展开用的 merged env 里照样躺着别人家的分支凭据（Codex P1，2026-09-01）。
+ */
+describe('别人家的分支凭据要从模板变量里摘掉', () => {
+  const FOREIGN_PG = {
+    POSTGRES_HOST: 'postgres-a',
+    POSTGRES_PORT: '5432',
+    POSTGRES_DB: 'branch_a',
+    POSTGRES_USER: 'cds_branch_a',
+    POSTGRES_PASSWORD: 'a-pw',
+    DATABASE_URL: 'postgresql://cds_branch_a:a-pw@postgres-a:5432/branch_a',
+  };
+
+  it('归属是别的服务时，这套键全部点名', () => {
+    const keys = foreignBranchDbEnvKeys(FOREIGN_PG, 'postgres-b');
+    expect(keys.sort()).toEqual([
+      'DATABASE_URL', 'POSTGRES_DB', 'POSTGRES_HOST', 'POSTGRES_PASSWORD', 'POSTGRES_PORT', 'POSTGRES_USER',
+    ]);
+  });
+
+  it('归属就是自己时，一个都不摘', () => {
+    expect(foreignBranchDbEnvKeys(FOREIGN_PG, 'postgres-a')).toEqual([]);
+  });
+
+  it('判断不出归属（老数据没写 HOST）时一个都不摘，与宽松侧同口径', () => {
+    const { POSTGRES_HOST: _host, DATABASE_URL: _url, ...noOwner } = FOREIGN_PG;
+    expect(foreignBranchDbEnvKeys(noOwner, 'postgres-b')).toEqual([]);
+  });
+
+  it('共用键 DATABASE_URL 按 scheme 归到某条运行时线上，那条线是自己的就不摘', () => {
+    // postgres 那套是别人家的（该摘），但 DATABASE_URL 是 mysql scheme 且指向本服务
+    const mixed = {
+      ...FOREIGN_PG,
+      MYSQL_HOST: 'mysql-b',
+      MYSQL_USER: 'cds_b',
+      DATABASE_URL: 'mysql://cds_b:p@mysql-b:3306/app',
+    };
+    const keys = foreignBranchDbEnvKeys(mixed, 'mysql-b');
+    expect(keys).toContain('POSTGRES_USER');
+    expect(keys, 'DATABASE_URL 归 mysql 那条线，而那条线就是本服务').not.toContain('DATABASE_URL');
+  });
+
+  it('只摘分支 env 里真的有的键，不无中生有', () => {
+    const sparse = { POSTGRES_HOST: 'postgres-a', POSTGRES_USER: 'cds_branch_a' };
+    expect(foreignBranchDbEnvKeys(sparse, 'postgres-b').sort()).toEqual(['POSTGRES_HOST', 'POSTGRES_USER']);
+  });
+
+  /**
+   * 形状 3（判据分裂后漂移）的防线：注入端加了一个新键、这边的表没跟上，
+   * 「摘掉别人家的凭据」就会漏摘一条，而漏掉的那条照样能把 A 的账号展开进 B。
+   * 这条守卫按源码扫注入端的 injectedEnv，逐键要求登记在册。
+   */
+  it('注入端写进分支 env 的键，全部登记在册（漏一个就漏摘一个）', () => {
+    const source = readBranchesRoute();
+    const registered = new Set(allBranchDbEnvKeys());
+    const injected = new Set<string>();
+    for (const block of source.match(/const injectedEnv: Record<string, string> = \{[\s\S]*?\n {4}\};/g) || []) {
+      for (const key of block.match(/^\s{6}([A-Z][A-Z0-9_]+):/gm) || []) injected.add(key.trim().replace(':', ''));
+    }
+    for (const assign of source.match(/injectedEnv\.([A-Z][A-Z0-9_]+)\s*=/g) || []) {
+      injected.add(assign.replace(/injectedEnv\.|\s*=/g, ''));
+    }
+    expect(injected.size, '没扫到注入端的 injectedEnv，锚点漂了').toBeGreaterThanOrEqual(6);
+    expect([...injected].filter((key) => !registered.has(key))).toEqual([]);
+  });
+
+  it('多台库并存时各判各的：mysql 是自己的就留着，postgres 是别人的才摘', () => {
+    const both = { ...FOREIGN_PG, MYSQL_HOST: 'mysql-b', MYSQL_USER: 'cds_b', MYSQL_PASSWORD: 'b-pw' };
+    const keys = foreignBranchDbEnvKeys(both, 'mysql-b');
+    expect(keys).toContain('POSTGRES_USER');
+    expect(keys).not.toContain('MYSQL_USER');
   });
 });
 
