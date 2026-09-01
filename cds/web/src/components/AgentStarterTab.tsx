@@ -979,8 +979,15 @@ export function SkillLibrarySheet({
           ))}
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col p-4 lg:p-5">
-          <label className="flex h-9 shrink-0 items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3">
+        {/*
+          * 内容区是下沉层（sunken），卡片和搜索框是抬升层（raised），这样卡片才有
+          * 东西可以浮在上面。此前内容区和卡片同为 raised，填充对比度 1.000 —— 只有
+          * 1px 发丝线在区分。深色下这不明显：近黑的底让白字和琥珀色自己就以 9.8:1
+          * 炸出来；白天没这个红利，琥珀对自己的填充只有 2.92，于是整片纯白发「光」。
+          * 下沉之后两个主题都是 1.21，是对称的修法，不是只给白天打补丁。
+          */}
+        <div className="flex min-h-0 flex-1 flex-col bg-[hsl(var(--surface-sunken))] p-4 lg:p-5">
+          <label className="flex h-9 shrink-0 items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <input
               type="search"
@@ -1023,7 +1030,8 @@ export function SkillLibrarySheet({
         </div>
       </div>
 
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-5 py-3.5">
+      {/* 底栏回到抬升层：内容区已经下沉，底栏再下沉两者就糊成一片。 */}
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-5 py-3.5">
         <div className="min-w-0">
           <div className="text-sm font-bold">已选择 {summary.total} 项</div>
           <div className="mt-px text-xs text-muted-foreground">共 {totalCount} 项可选 · 这次{changeNote}</div>
