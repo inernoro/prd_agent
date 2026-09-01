@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { explainMissingTable, foreignSchemaRefusal, isMissingTableOrSchemaError, isTablePermissionError } from '../../src/services/db-error-explain.js';
+import { explainMissingTable, foreignSchemaRefusal, isMissingDatabaseFailure, isMissingTableOrSchemaError, isTablePermissionError } from '../../src/services/db-error-explain.js';
 import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
 /**
@@ -98,9 +98,11 @@ describe('找不到表时的解释', () => {
   const RAW_1146 = "mysql: [Warning] Using a password on the command line interface can be insecure.\n"
     + "ERROR 1146 (42S02) at line 1: Table 'imp_b_9bd351d94c8f35ab.distributed_lock' doesn't exist";
 
-  it('认得出「表/库不存在」这类错误', () => {
+  it('认得出「表不存在」这类错误', () => {
     expect(isMissingTableOrSchemaError(RAW_1146)).toBe(true);
-    expect(isMissingTableOrSchemaError('ERROR 1049 (42000): Unknown database \'x\'')).toBe(true);
+    // 1049（Unknown database）从这一档挪走了：库整个不在是连接级失败，指引完全不同，
+    // 见下面「库整个不在了，别按「找不到表」指路」（Codex P2，第七轮）
+    expect(isMissingTableOrSchemaError('ERROR 1049 (42000): Unknown database \'x\'')).toBe(false);
     expect(isMissingTableOrSchemaError('ERROR 1045 (28000): Access denied')).toBe(false);
   });
 
@@ -148,5 +150,42 @@ describe('找不到表时的解释', () => {
     expect(explainMissingTable({
       database: 'app', requestedSchema: 'other', table: 't', rawError: denied,
     })).toBe(denied);
+  });
+});
+
+/**
+ * Codex P2（第七轮，2026-09-01）：库整个不在了时 psql 报的是连接级的
+ * `FATAL: database "x" does not exist`。它此前被 isMissingTableOrSchemaError 收进
+ * 「找不到表」那一档，而 PostgreSQL 的 requestedSchema 恒为 public、与库名必然不同，
+ * 于是必定套上「刷新表列表 / 去另一个资源打开」——两句都救不回一个不存在的库。
+ */
+describe('库整个不在了，别按「找不到表」指路', () => {
+  const PG_FATAL = 'psql: error: connection to server failed: FATAL:  database "branch_gone" does not exist';
+  const MYSQL_1049 = "ERROR 1049 (42000): Unknown database 'branch_gone'";
+
+  it('连接级的库不存在不算「找不到表」', () => {
+    expect(isMissingDatabaseFailure(PG_FATAL)).toBe(true);
+    expect(isMissingDatabaseFailure(MYSQL_1049)).toBe(true);
+    expect(isMissingTableOrSchemaError(PG_FATAL)).toBe(false);
+    expect(isMissingTableOrSchemaError(MYSQL_1049)).toBe(false);
+  });
+
+  it('表不存在仍然是表不存在（别把这一档也吞了）', () => {
+    const missingTable = 'ERROR:  relation "public.users" does not exist';
+    expect(isMissingDatabaseFailure(missingTable)).toBe(false);
+    expect(isMissingTableOrSchemaError(missingTable)).toBe(true);
+  });
+
+  it('给的是重建库的下一步，不是「刷新表列表」', () => {
+    const message = explainMissingTable({
+      database: 'branch_gone',
+      requestedSchema: 'public',
+      table: 'users',
+      rawError: PG_FATAL,
+    });
+    expect(message).toContain('整个库不在');
+    expect(message).toContain('重新创建分支库');
+    expect(message).not.toContain('刷新工作台重新拉表列表');
+    expect(message).toContain(PG_FATAL);
   });
 });

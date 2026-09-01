@@ -6481,13 +6481,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { columns, rows, rowCount: rows.length };
   }
 
-  function normalizeReadOnlySql(sql: string): string {
+  // 方言必须传：`#` 在 MySQL 是行注释、在 PostgreSQL 是 JSON 运算符（`#>>` / `#>` / `#-`）。
+  // 不传就按「# 不是注释」处理，写语句不会被截断成假的只读（Codex P1，2026-09-01）。
+  function normalizeReadOnlySql(sql: string, runtime: SqlDataRuntime): string {
     // 判据在 sql-statement-policy（唯一一份，前端那份由守卫钉着与它一致）。
-    return normalizeReadOnlyStatement(sql);
+    return normalizeReadOnlyStatement(sql, runtime);
   }
 
-  function normalizeDangerousWriteSql(sql: string): string {
-    return normalizeWriteStatement(sql);
+  function normalizeDangerousWriteSql(sql: string, runtime: SqlDataRuntime): string {
+    return normalizeWriteStatement(sql, runtime);
   }
 
   async function runMysqlDataQuery(service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000): Promise<DbDataQueryResult> {
@@ -9323,7 +9325,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!ctx) return;
     let sql = '';
     try {
-      sql = normalizeReadOnlySql(typeof req.body?.sql === 'string' ? req.body.sql : '');
+      sql = normalizeReadOnlySql(typeof req.body?.sql === 'string' ? req.body.sql : '', ctx.runtime);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -9377,7 +9379,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     let sql = '';
     try {
-      sql = normalizeDangerousWriteSql(typeof req.body?.sql === 'string' ? req.body.sql : '');
+      sql = normalizeDangerousWriteSql(typeof req.body?.sql === 'string' ? req.body.sql : '', ctx.runtime);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;

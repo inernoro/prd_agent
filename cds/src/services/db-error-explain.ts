@@ -27,9 +27,39 @@
 export function isMissingTableOrSchemaError(message: string): boolean {
   const text = String(message || '');
   if (isRoleMissingError(text)) return false;
+  // 连库都没连上（psql 的 `FATAL: database "x" does not exist`）不是「表找不到」：
+  // 库整个不在了，刷新表列表、去别的资源打开都救不回来，那两句指引全是废话
+  // （Codex P2，2026-09-01）。这类交给下面的 explainMissingDatabase。
+  if (isMissingDatabaseFailure(text)) return false;
   return /ERROR\s*1146|ERROR\s*1049|42S02|42P01|Unknown database/i.test(text)
     || /(table|relation|schema|database)\s+"?[^"\s]+"?\s+does not exist/i.test(text)
     || /Table\s+'[^']+'\s+doesn'?t exist/i.test(text);
+}
+
+/**
+ * 连接级的「库不存在」：`FATAL: database "x" does not exist`（psql）、
+ * `ERROR 1049 (42000): Unknown database 'x'`（mysql，连接时就报）。
+ *
+ * 与「表不存在」的区别在于**能不能靠换个查询救回来**：表没了可以刷新列表、去别的资源找；
+ * 库没了只能重建或改库名，指引完全不同。
+ */
+export function isMissingDatabaseFailure(message: string): boolean {
+  const text = String(message || '');
+  if (/\bFATAL\b[\s\S]*\bdatabase\s+"?[^"\s]+"?\s+does not exist/i.test(text)) return true;
+  return /ERROR\s*1049|Unknown database/i.test(text);
+}
+
+/** 库整个不在了时的「为什么 + 下一步」。 */
+export function explainMissingDatabase(params: { database: string; rawError: string }): string {
+  const raw = String(params.rawError || '').trim();
+  const database = String(params.database || '').trim();
+  return [
+    `连不上库 ${database || '(未知)'}：这个库在这台数据库上不存在（不是某张表没了，是整个库不在）。`,
+    '常见成因：分支库被删过、库名被改过，或这个分支的凭据指向的库名与实际不符。',
+    '下一步：在该资源的面板重新创建分支库（或点「重置连接凭据」重新派发），完成后应用容器要重新部署一次；'
+      + '如果库名本来就不对，改掉分支环境变量里的库名再重试。',
+    raw ? `原始错误：${raw}` : '',
+  ].filter(Boolean).join('\n');
 }
 
 const ROLE_MISSING_RE = /\brole\s+"?([^"\s]+?)"?\s+does not exist/i;
@@ -97,6 +127,9 @@ export function explainMissingTable(params: {
   const { database, requestedSchema, table, rawError } = params;
   const raw = String(rawError || '').trim();
   const wanted = String(requestedSchema || '').trim();
+  // 库整个不在了：与「请求的库和当前库不是同一个」无关，先于下面的短路判断处理，
+  // 否则 PostgreSQL 那边 schema 恒为 public、与库名必然不同，会被套上一段没用的指引。
+  if (isMissingDatabaseFailure(raw)) return explainMissingDatabase({ database, rawError: raw });
   if (!wanted || wanted === database) return raw;
   // 认证类（角色不存在 / 口令不对）先于「找不到表」判定：把它翻成「刷新表列表」
   // 会把凭据恢复路径藏起来。这类原样返回，交给 explainBranchDbAuthFailure 那条线。

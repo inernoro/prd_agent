@@ -9,4 +9,6 @@
 | fix | cds | Review 第二轮六条：共用 DATABASE_URL 只在 scheme 匹配时才当归属证据；未知运行时（RabbitMQ/MinIO）不再进数据库归属判定导致连接串端点 500；管理员能力与管理员口令改由同一函数解出（空口令 root 不再拿应用账号口令去连）；SET/USE/LOCK 等连接作用域语句两条通道都拒；宿主逃逸判据降到词级别，注释拆词组也拦得住；PostgreSQL 角色缺失不再被误翻成「表列表旧了」 |
 | fix | cds | Review 第五轮两条：PostgreSQL 的「角色不存在」只在缺失角色就是登录账号（或连接级 FATAL）时才算认证失败，`GRANT ... TO missing_role` 这类语句错误不再被翻成「分支账号被拒、去重置凭据」；资源 chip 的顶边高光改走双主题都定义的 `--shadow-chip`（白高光在白天的白 chip 上等于没有），守卫扫描补上 Tailwind 下划线写法里的颜色字面量 |
 | fix | cds | Review 第六轮两条：服务 env 写成 `${POSTGRES_USER}` 模板时，展开用的 merged env 里仍躺着别台库的分支凭据，B 服务绕开归属判定又拿到 A 的账号口令——模板展开前先摘掉别人家的凭据键并回落到项目层同名值；MySQL root 口令判空可 trim 但拿去连库的那一份不再 trim（首尾带空白的合法口令此前会被改写，available 报 true 却认证失败） |
+| security | cds | 修复 PostgreSQL 的 `#>>` / `#>` / `#-` 被当成 MySQL 行注释、把后面的代码整段吞掉，导致 `WITH x AS (SELECT p #>> '{a}' FROM src) UPDATE ...` 被判成只读、从只读通道直接执行、绕开 data-write 权限与二次确认：注释扫描改为按方言判定，不知道方言时按「# 不是注释」兜底（往安全那边错），前后端同步 |
+| fix | cds | 库整个不在了（`FATAL: database "x" does not exist` / `ERROR 1049`）不再被当成「找不到表」，不再指路「刷新表列表 / 去别的资源打开」这两句救不回来的话，改为给重建分支库 / 重置凭据 / 改库名的下一步 |
 | fix | cds | 判「这条 SQL 是不是写」时先剥注释、抹字符串字面量：`WITH x AS (SELECT 'update') SELECT ...` 是纯读语句，不再被推进需要 admin 二次确认的写通道；前后端共用同一份关键字表与同一套扫描，由守卫钉住 |

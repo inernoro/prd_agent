@@ -74,8 +74,8 @@ export const CONNECTION_SCOPED_HEADS: readonly string[] = [
  */
 const LOCKING_READ_PATTERN = /\bfor\s+(update|share|no\s+key\s+update|key\s+share)\b|\block\s+in\s+share\s+mode\b/i;
 
-export function isLockingRead(sql: string): boolean {
-  return LOCKING_READ_PATTERN.test(stripSqlComments(String(sql ?? ''), true));
+export function isLockingRead(sql: string, dialect?: SqlDialect): boolean {
+  return LOCKING_READ_PATTERN.test(stripSqlComments(String(sql ?? ''), { maskLiterals: true, dialect }));
 }
 
 /**
@@ -100,15 +100,35 @@ const HOST_ESCAPE_PHRASES: readonly RegExp[] = [
   /\bcopy\b[\s\S]*\bprogram\b/i,
 ];
 
+/** 方言：`#` 在 MySQL 里是行注释，在 PostgreSQL 里是运算符（`#>>` / `#>` / `#-` / 位异或）。 */
+export type SqlDialect = 'mysql' | 'postgres';
+
+export interface SqlScanOptions {
+  /** 抹掉字符串字面量的内容（引号保留）。 */
+  maskLiterals?: boolean;
+  /**
+   * 语句所属方言。**不传 = 不知道 = 按「`#` 不是注释」处理**。
+   *
+   * 这个默认方向是有意选的：把 `#` 当注释会**吞掉后面的所有代码**，于是
+   * `WITH x AS (SELECT payload #>> '{a}' FROM src) UPDATE target SET n = 1`
+   * 在扫描器眼里只剩前半截，判成只读、从只读通道直接执行，绕开 data-write 权限与
+   * 二次确认（Codex P1，2026-09-01）。反过来把 MySQL 的真注释当代码，最坏结果是
+   * 一条只读语句被推去写通道（多一次确认），不会让写溜过去。往安全的那边错。
+   */
+  dialect?: SqlDialect;
+}
+
 /**
- * 剥掉 SQL 注释（`/* *\/`、`--` 到行尾、`#` 到行尾）。
+ * 剥掉 SQL 注释（`/* *\/`、`--` 到行尾，以及 MySQL 的 `#` 到行尾）。
  *
  * `maskLiterals` 为真时，字符串字面量的**内容**一并抹成空格（引号保留）：判「这条语句
  * 里有没有写关键字」必须看代码本身，`WITH x AS (SELECT 'update') SELECT * FROM x`
  * 是一条纯读语句，却因为字面量里那个词被判成写，被推进需要 admin + 二次确认的写通道
  * （Codex P2，2026-09-01）。这仍是同一个扫描器，不是往正则里再加一层同义词。
  */
-export function stripSqlComments(sql: string, maskLiterals = false): string {
+export function stripSqlComments(sql: string, options: SqlScanOptions = {}): string {
+  const maskLiterals = options.maskLiterals === true;
+  const hashStartsComment = options.dialect === 'mysql';
   let out = '';
   let quote: string | null = null;
   for (let i = 0; i < sql.length; i += 1) {
@@ -128,7 +148,7 @@ export function stripSqlComments(sql: string, maskLiterals = false): string {
       out += ' ';
       continue;
     }
-    if ((ch === '-' && next === '-') || ch === '#') {
+    if ((ch === '-' && next === '-') || (ch === '#' && hashStartsComment)) {
       const end = sql.indexOf('\n', i);
       i = end === -1 ? sql.length : end;
       out += ' ';
@@ -155,14 +175,14 @@ export function normalizeStatementBody(sql: string): string {
   return String(sql ?? '').trim().replace(/;+$/g, '').trim();
 }
 
-export function classifySqlStatement(sql: string): SqlStatementClassification {
+export function classifySqlStatement(sql: string, dialect?: SqlDialect): SqlStatementClassification {
   const body = normalizeStatementBody(sql);
   const head = body.match(/^\s*([a-z]+)/i)?.[1]?.toLowerCase() || '';
   if (READ_STATEMENT_HEADS.includes(head)) {
     // 改数据的 CTE（PostgreSQL 的 `WITH x AS (DELETE ... RETURNING *) SELECT ...`）语句头
     // 也是 with，但它是写。只看语句头会把它判成读，而读通道又因为含 DELETE 拒收——
     // 两条路都不收，这条合法语句就没地方跑了（Codex P2，2026-09-01）。
-    if (WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlComments(body, true))) return { head, kind: 'write' };
+    if (WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlComments(body, { maskLiterals: true, dialect }))) return { head, kind: 'write' };
     return { head, kind: 'read' };
   }
   if (WRITE_STATEMENT_HEADS.includes(head)) return { head, kind: 'write' };
@@ -170,8 +190,8 @@ export function classifySqlStatement(sql: string): SqlStatementClassification {
 }
 
 /** 命中宿主逃逸写法就抛；两条路径共用。 */
-export function assertNoHostEscape(sql: string): void {
-  const stripped = stripSqlComments(sql);
+export function assertNoHostEscape(sql: string, dialect?: SqlDialect): void {
+  const stripped = stripSqlComments(sql, { dialect });
   for (const pattern of [...HOST_ESCAPE_TOKENS, ...HOST_ESCAPE_PHRASES]) {
     if (pattern.test(sql) || pattern.test(stripped)) {
       throw new Error('检测到读写宿主文件或调用外部进程的 SQL（如 INTO OUTFILE / LOAD DATA / COPY ... PROGRAM），已拒绝执行。');
@@ -213,40 +233,40 @@ function assertSingleStatement(body: string, label: string): void {
  * 只读路径：语句头必须在只读白名单里，且整条语句不含写关键字
  * （挡住 `WITH ... DELETE`、`SELECT ... FOR UPDATE` 这类披着读皮的写）。
  */
-export function normalizeReadOnlyStatement(sql: string): string {
+export function normalizeReadOnlyStatement(sql: string, dialect?: SqlDialect): string {
   const body = normalizeStatementBody(sql);
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
   assertSingleStatement(body, '只读 SQL Console ');
-  const { head, kind } = classifySqlStatement(body);
+  const { head, kind } = classifySqlStatement(body, dialect);
   if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
   if (CONNECTION_SCOPED_HEADS.includes(head)) throw connectionScopedError(head);
-  if (isLockingRead(body)) throw lockingReadError();
+  if (isLockingRead(body, dialect)) throw lockingReadError();
   if (kind !== 'read') {
     throw new Error(`只读通道只接受 ${READ_STATEMENT_HEADS.join(' / ').toUpperCase()}；"${head || body.slice(0, 12)}" 属于写操作，请走写 SQL 通道。`);
   }
-  assertNoHostEscape(body);
+  assertNoHostEscape(body, dialect);
   return body;
 }
 
 /**
  * 写路径：语句头必须在写白名单里（只读语句不该走这条，避免绕过读路径的关键字检查）。
  */
-export function normalizeWriteStatement(sql: string): string {
+export function normalizeWriteStatement(sql: string, dialect?: SqlDialect): string {
   const body = normalizeStatementBody(sql);
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
   assertSingleStatement(body, '写 SQL ');
-  const { head, kind } = classifySqlStatement(body);
+  const { head, kind } = classifySqlStatement(body, dialect);
   if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
   if (CONNECTION_SCOPED_HEADS.includes(head)) throw connectionScopedError(head);
-  if (isLockingRead(body)) throw lockingReadError();
+  if (isLockingRead(body, dialect)) throw lockingReadError();
   if (kind === 'read') {
     throw new Error('这条是只读语句，请走只读通道执行。');
   }
   if (kind !== 'write') {
     throw new Error(`无法识别的语句 "${head || body.slice(0, 12)}"，已拒绝执行。`);
   }
-  assertNoHostEscape(body);
+  assertNoHostEscape(body, dialect);
   return body;
 }

@@ -17,6 +17,41 @@ import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
 const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
+/**
+ * Codex P1（第七轮，2026-09-01）：`#` 此前无条件当 MySQL 行注释剥掉，于是
+ * PostgreSQL 的 JSON 运算符 `#>>` 会把后面的代码整段吞掉——一条真正的 UPDATE
+ * 在扫描器眼里只剩前半截，判成只读，从 /data/query 直接执行，绕开 data-write
+ * 权限与二次确认。这是形状 1（判据太窄）里最贵的一种：它让写伪装成读。
+ */
+describe('`#` 是注释还是运算符，取决于方言', () => {
+  const PG_HASH_WRITE = "WITH x AS (SELECT payload #>> '{a}' FROM src) UPDATE target SET n = 1";
+
+  it('PostgreSQL 的 #>> 后面那条 UPDATE 不许被吞掉', () => {
+    expect(stripSqlComments(PG_HASH_WRITE, { maskLiterals: true, dialect: 'postgres' })).toMatch(/update/i);
+    expect(classifySqlStatement(PG_HASH_WRITE, 'postgres').kind).toBe('write');
+    expect(() => normalizeReadOnlyStatement(PG_HASH_WRITE, 'postgres')).toThrow(/写操作|写 SQL/);
+    expect(() => normalizeWriteStatement(PG_HASH_WRITE, 'postgres')).not.toThrow();
+  });
+
+  it('不知道方言时按「# 不是注释」兜底，写不会溜进只读通道', () => {
+    expect(classifySqlStatement(PG_HASH_WRITE).kind).toBe('write');
+    expect(() => normalizeReadOnlyStatement(PG_HASH_WRITE)).toThrow(/写操作|写 SQL/);
+  });
+
+  it('MySQL 那边 # 仍然是行注释', () => {
+    const commented = 'SELECT 1 # delete from demo';
+    expect(stripSqlComments(commented, { maskLiterals: true, dialect: 'mysql' })).not.toMatch(/delete/i);
+    expect(classifySqlStatement(commented, 'mysql').kind).toBe('read');
+    expect(() => normalizeReadOnlyStatement(commented, 'mysql')).not.toThrow();
+  });
+
+  it('PostgreSQL 的 #>> 纯读语句照样走只读通道', () => {
+    const read = "SELECT payload #>> '{a}' AS a FROM src";
+    expect(classifySqlStatement(read, 'postgres').kind).toBe('read');
+    expect(() => normalizeReadOnlyStatement(read, 'postgres')).not.toThrow();
+  });
+});
+
 describe('工作台 SQL 准入：该放的都放行', () => {
   it('DDL / DML / 账号维护 / 维护动作全部走得通写通道', () => {
     const statements = [
@@ -103,7 +138,7 @@ describe('工作台 SQL 准入：该放的都放行', () => {
     const readCte = "WITH x AS (SELECT 'update') SELECT * FROM x";
     expect(classifySqlStatement(readCte).kind).toBe('read');
     expect(() => normalizeReadOnlyStatement(readCte)).not.toThrow();
-    expect(stripSqlComments(readCte, true)).not.toMatch(/update/i);
+    expect(stripSqlComments(readCte, { maskLiterals: true })).not.toMatch(/update/i);
     // 注释里的同理
     const commented = 'SELECT 1 /* delete from demo */';
     expect(classifySqlStatement(commented).kind).toBe('read');
@@ -217,8 +252,9 @@ describe('前后端判据不许漂移', () => {
 
   it('后端两个入口都走这份策略，没有第二份判据', () => {
     const source = fs.readFileSync(path.join(CDS_ROOT, 'src/routes/branches.ts'), 'utf8');
-    expect(source).toContain('return normalizeReadOnlyStatement(sql);');
-    expect(source).toContain('return normalizeWriteStatement(sql);');
+    // 必须把方言一起传下去：不传就用「# 不是注释」的兜底，MySQL 的真注释会被当代码
+    expect(source).toMatch(/return normalizeReadOnlyStatement\(sql, runtime\);/);
+    expect(source).toMatch(/return normalizeWriteStatement\(sql, runtime\);/);
     expect(source, '路由里不应再自己维护一份语句头白名单')
       .not.toContain("['select', 'show', 'describe', 'desc', 'explain'].includes(head)");
   });
@@ -233,7 +269,7 @@ describe('前后端判据不许漂移', () => {
     expect(frontRe, '前端写关键字表找不到了').toBeTruthy();
     expect(frontRe).toBe(backendRe);
     // 前端也必须先剥注释、抹字面量再扫，否则纯读 CTE 会被送进写通道再被后端拒
-    expect(front).toContain('WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body))');
+    expect(front).toMatch(/WRITE_KEYWORDS_IN_READ_PATH\.test\(stripSqlCommentsAndLiterals\(body/);
   });
 
   it('红用例：前端白名单漂一个词，守卫必须变红', () => {

@@ -5407,8 +5407,16 @@ const READ_STATEMENT_HEADS = ['select', 'show', 'describe', 'desc', 'explain', '
  */
 const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock)\b/i;
 
-/** 与后端 stripSqlComments(sql, true) 同一套扫描：注释剥掉，字面量内容抹成空格。 */
-function stripSqlCommentsAndLiterals(sql: string): string {
+/**
+ * 与后端 stripSqlComments(sql, { maskLiterals: true, dialect }) 同一套扫描：
+ * 注释剥掉，字面量内容抹成空格。
+ *
+ * `hashStartsComment` 必须跟着方言走：`#` 在 MySQL 是行注释，在 PostgreSQL 是 JSON
+ * 运算符（`#>>` / `#>` / `#-`）。当成注释就会把后面的代码整段吞掉，
+ * `WITH x AS (SELECT payload #>> '{a}' FROM src) UPDATE target SET n = 1` 于是被判成
+ * 只读、直接发去 /data/query（Codex P1，2026-09-01）。默认按「不是注释」处理。
+ */
+function stripSqlCommentsAndLiterals(sql: string, hashStartsComment = false): string {
   let out = '';
   let quote: string | null = null;
   for (let i = 0; i < sql.length; i += 1) {
@@ -5427,7 +5435,7 @@ function stripSqlCommentsAndLiterals(sql: string): string {
       out += ' ';
       continue;
     }
-    if ((ch === '-' && next === '-') || ch === '#') {
+    if ((ch === '-' && next === '-') || (ch === '#' && hashStartsComment)) {
       const end = sql.indexOf('\n', i);
       i = end === -1 ? sql.length : end;
       out += ' ';
@@ -5438,13 +5446,13 @@ function stripSqlCommentsAndLiterals(sql: string): string {
   return out;
 }
 
-function sqlCommandIsReadOnly(sql: string): boolean {
+function sqlCommandIsReadOnly(sql: string, runtime?: string): boolean {
   const body = sql.trim().replace(/;+$/g, '').trim();
   const head = body.match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
   if (!READ_STATEMENT_HEADS.includes(head)) return false;
   // CTE 后面可以跟 DELETE/UPDATE，头是 with 不代表只读；但字面量/注释里的那些词不算
-  // ——判据看代码本身，与后端同一条。
-  return !WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body));
+  // ——判据看代码本身，与后端同一条。`#` 只有 MySQL 才是注释。
+  return !WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body, runtime === 'MySQL'));
 }
 
 function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter; onWorkbenchDismiss?: () => void }): JSX.Element {
@@ -5542,7 +5550,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
     if (!basePath || !sql.trim()) return;
     setResultState({ status: 'loading' });
     try {
-      const readOnly = sqlCommandIsReadOnly(sql);
+      const readOnly = sqlCommandIsReadOnly(sql, resource.runtime);
       const result = await apiRequest<DbQueryResult>(`${basePath}/${readOnly ? 'query' : 'query-write'}`, {
         method: 'POST',
         body: readOnly ? { sql } : { sql, confirmResourceName: resource.serviceName || resource.displayName },
