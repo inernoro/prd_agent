@@ -193,7 +193,11 @@ function demoBranches(projectId: string): BranchEntry[] {
  * 补播：缺的演示分支 + 定时任务 + 验收报告。
  *
  * 只认演示项目——库里是真项目时一律不碰（和首播同一条底线）。
- * 各自判各自的，所以对已经播过首播的老实例也能补上。
+ *
+ * 三档都按身份逐条补，不按「这一类有没有」：分支比 id、任务比 id、报告比标题
+ * （报告的 id 是创建时生成的，没有稳定标识可比）。整类守卫会让老实例永远拿不到
+ * 后来新增的演示条目——那正是这个函数存在的理由，用整类守卫等于自己废掉自己。
+ * 手动删掉其中一条也能补回来。
  */
 function seedDemoExtras(state: StateService): boolean {
   const project = state.getProject(PREVIEW_DEMO_PROJECT_ID);
@@ -221,71 +225,78 @@ function seedDemoExtras(state: StateService): boolean {
   // 摆出来的成功/失败两种示例状态覆盖掉（演示数据自己把自己改了），二是往运行
   // 历史里灌真实噪音。演示数据的本分是「长得像真的给人看」，不是自己跑起来。
   // lastRunAt / lastRunStatus 仍然照写，列表上「上次运行」那一列该有内容。
-  if (state.listScheduledJobs(project.id).length === 0) {
-    const jobBase = {
-      projectId: project.id,
-      timeoutSeconds: 60,
-      retryCount: 0,
-      concurrencyPolicy: 'skip' as const,
-      createdAt: now,
-      updatedAt: now,
-      createdBy: 'preview-instance-seed',
-    };
-    state.upsertScheduledJob({
+  const existingJobIds = new Set(state.listScheduledJobs(project.id).map((job) => job.id));
+  const jobBase = {
+    projectId: project.id,
+    timeoutSeconds: 60,
+    retryCount: 0,
+    concurrencyPolicy: 'skip' as const,
+    createdAt: now,
+    updatedAt: now,
+    createdBy: 'preview-instance-seed',
+  };
+  const demoJobs = [
+    {
       ...jobBase,
       id: `${project.id}-job-daily`,
       name: '演示数据：每天巡检',
       description: '预览实例演示任务。已停用，不会被调度器执行；手动点「立即执行」仍会真的发起请求（打不到 example.invalid，必然失败）。',
       enabled: false,
-      schedule: { type: 'daily', timeOfDay: '09:30' },
-      actions: [{ id: 'a1', name: '健康检查', type: 'http', method: 'GET', url: 'https://example.invalid/healthz' }],
+      schedule: { type: 'daily' as const, timeOfDay: '09:30' },
+      actions: [{ id: 'a1', name: '健康检查', type: 'http' as const, method: 'GET' as const, url: 'https://example.invalid/healthz' }],
       lastRunAt: minutesAgoIso(600),
-      lastRunStatus: 'success',
-    });
-    state.upsertScheduledJob({
+      lastRunStatus: 'success' as const,
+    },
+    {
       ...jobBase,
       id: `${project.id}-job-interval`,
       name: '演示数据：每 30 分钟同步',
       description: '预览实例演示任务，展示「间隔」类型与失败态。已停用；手动执行会真的跑一次这条命令。',
       enabled: false,
-      schedule: { type: 'interval', intervalMinutes: 30 },
-      actions: [{ id: 'a1', name: '同步脚本', type: 'command', command: 'echo demo-sync' }],
+      schedule: { type: 'interval' as const, intervalMinutes: 30 },
+      actions: [{ id: 'a1', name: '同步脚本', type: 'command' as const, command: 'echo demo-sync' }],
       lastRunAt: minutesAgoIso(25),
-      lastRunStatus: 'failed',
-    });
-    state.upsertScheduledJob({
+      lastRunStatus: 'failed' as const,
+    },
+    {
       ...jobBase,
       id: `${project.id}-job-manual`,
       name: '演示数据：手动触发的清理',
       description: '预览实例演示任务，只能手动跑；跑起来会真的执行这条命令。',
       enabled: false,
-      schedule: { type: 'manual' },
-      actions: [{ id: 'a1', name: '清理', type: 'command', command: 'echo demo-cleanup' }],
-    });
+      schedule: { type: 'manual' as const },
+      actions: [{ id: 'a1', name: '清理', type: 'command' as const, command: 'echo demo-cleanup' }],
+    },
+  ];
+  for (const job of demoJobs) {
+    if (existingJobIds.has(job.id)) continue;
+    state.upsertScheduledJob(job);
     seeded = true;
   }
 
   // 验收报告页同理：三种 verdict 各来一份，报告正文自带「演示数据」抬头。
-  if (state.listAcceptanceReports(project.id).length === 0) {
-    const reportBody = (verdict: string): string =>
-      `<h1>演示数据：${verdict} 示例报告</h1><p>预览实例自动生成，用于查看验收报告列表与详情的界面形状，不对应任何真实验收。</p>`;
-    for (const [verdict, title, tier] of [
-      ['pass', '演示数据：分支预览冒烟（通过）', 'smoke'],
-      ['conditional', '演示数据：发布前走查（有条件通过）', 'visual'],
-      ['fail', '演示数据：回归验收（未通过）', 'regression'],
-    ] as const) {
-      state.createAcceptanceReport({
-        title,
-        format: 'html',
-        content: reportBody(verdict),
-        projectId: project.id,
-        branchId: demoBranch?.id ?? null,
-        branch: demoBranch?.branch ?? null,
-        verdict,
-        tier,
-        createdBy: 'preview-instance-seed',
-      });
-    }
+  const existingReportTitles = new Set(state.listAcceptanceReports(project.id).map((r) => r.title));
+  const reportBody = (verdict: string): string =>
+    `<h1>演示数据：${verdict} 示例报告</h1><p>预览实例自动生成，用于查看验收报告列表与详情的界面形状，不对应任何真实验收。</p>`;
+  for (const [verdict, title, tier] of [
+    ['pass', '演示数据：分支预览冒烟（通过）', 'smoke'],
+    ['conditional', '演示数据：发布前走查（有条件通过）', 'visual'],
+    ['fail', '演示数据：回归验收（未通过）', 'regression'],
+  ] as const) {
+    // 报告的 id 是创建时生成的，没有稳定标识可比——用标题当身份。
+    // 三个标题都写死在这里，改标题等于换一份新的演示报告，语义上说得通。
+    if (existingReportTitles.has(title)) continue;
+    state.createAcceptanceReport({
+      title,
+      format: 'html',
+      content: reportBody(verdict),
+      projectId: project.id,
+      branchId: demoBranch?.id ?? null,
+      branch: demoBranch?.branch ?? null,
+      verdict,
+      tier,
+      createdBy: 'preview-instance-seed',
+    });
     seeded = true;
   }
 

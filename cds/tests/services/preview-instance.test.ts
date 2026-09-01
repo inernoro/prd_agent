@@ -278,6 +278,38 @@ describe('seedPreviewInstanceDemoData', () => {
     }
   });
 
+  /*
+   * Codex 第四轮 P2：任务和报告仍是整类守卫，只有分支那一档真按 id 补。
+   * 这直接违反本文件注释里写的口径（「不能只判这一类有没有」）——老实例只要
+   * 已经有任意一条任务，后来新增的演示任务就永远补不进去，而这个函数存在的
+   * 理由就是给老实例补东西。
+   *
+   * 判据钉「删掉其中一条能补回来，且没被补的那些不受影响」。
+   */
+  it('任务和报告也按身份逐条补，不是整类有无', () => {
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const jobs = service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID);
+    const reports = service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID);
+    expect(jobs.length).toBeGreaterThan(1);
+    expect(reports.length).toBeGreaterThan(1);
+
+    // 模拟「老实例只有一条」：删到只剩一条，整类守卫在这种库上会一条都不补。
+    const keptJob = jobs[0];
+    for (const j of jobs.slice(1)) service.deleteScheduledJob(j.id);
+    const keptReport = reports[0];
+    for (const r of reports.slice(1)) service.deleteAcceptanceReport(r.id);
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(1);
+
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(jobs.length);
+    expect(service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(reports.length);
+    // 留下的那条原样不动，没有被重播成新的
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID).find((j) => j.id === keptJob.id)?.name)
+      .toBe(keptJob.name);
+    expect(service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID).some((r) => r.id === keptReport.id))
+      .toBe(true);
+  });
+
   it('补播只补缺的分支，第二次调用不再产生副作用', () => {
     expect(seedPreviewInstanceDemoData(service)).toBe(true);
     const first = service.getAllBranches().map((b) => b.id).sort();
