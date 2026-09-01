@@ -1530,6 +1530,9 @@ export function BranchListPage(): JSX.Element {
   const [detailDrawerResourceFocus, setDetailDrawerResourceFocus] = useState<{
     resourceId: string;
     detailTab: BranchResourceDetailTab;
+    /* 从分支卡片的数据库 chip 直接进工作台：关掉工作台就一路退回分支列表，
+       不把用户丢在中间那层抽屉里（2026-09-01 用户反馈「点一次要走两步」）。 */
+    directWorkbench?: boolean;
   } | null>(null);
   const [releaseBranchId, setReleaseBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
@@ -2380,6 +2383,7 @@ export function BranchListPage(): JSX.Element {
     setDetailDrawerResourceFocus({
       resourceId: resource.id,
       detailTab: resource.kind === 'app' ? 'logs' : 'data',
+      directWorkbench: resource.kind === 'database',
     });
     setDetailDrawerBranchId(branch.id);
   }, []);
@@ -3579,6 +3583,7 @@ export function BranchListPage(): JSX.Element {
           previewMode={state.status === 'ok' ? state.previewMode : 'multi'}
           initialResourceId={detailDrawerResourceFocus?.resourceId || null}
           initialResourceDetailTab={detailDrawerResourceFocus?.detailTab || null}
+          resourceWorkbenchDirect={detailDrawerResourceFocus?.directWorkbench || false}
           branchStatus={(() => {
             if (state.status !== 'ok' || !detailDrawerBranchId) return undefined;
             const target = state.branches.find((b) => b.id === detailDrawerBranchId);
