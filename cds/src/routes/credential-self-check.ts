@@ -20,6 +20,7 @@
 
 import { Router } from 'express';
 import type { StateService } from '../services/state.js';
+import { clientAddressOf } from '../services/client-address.js';
 import { checkCredential, hashCredential, type CredentialFacts } from '../services/credential-self-check.js';
 
 export interface CredentialSelfCheckRouterDeps {
@@ -101,7 +102,9 @@ export function createCredentialSelfCheckRouter(deps: CredentialSelfCheckRouterD
   }
 
   router.get('/credentials/self-check', (req, res) => {
-    const source = String(req.ip || req.socket?.remoteAddress || 'unknown');
+    // 不能用 req.ip：nginx 后面它对所有外部调用方是同一个值，一个人打满配额
+    // 其他人全吃 429 —— 而这条端点存在的全部理由就是给「进不来的人」自查。
+    const source = clientAddressOf(req as never);
     if (throttled(source, Date.now())) {
       res.status(429).json({
         error: 'too_many_requests',

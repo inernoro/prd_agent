@@ -177,6 +177,21 @@ describe('GET /api/credentials/self-check', () => {
     expect(res.body.status).toBe('principal-disabled');
   });
 
+  it('节流按转发来的客户端地址分桶，一个人打满不影响别人（Codex P2）', async () => {
+    // nginx 后面 req.ip 对所有外部调用方是同一个值。若按它分桶，一个人打满
+    // 配额其他人全吃 429 —— 而这条端点存在的全部理由就是给进不来的人自查。
+    let sawThrottle = false;
+    for (let i = 0; i < 40; i += 1) {
+      const res = await get(server, SELF_CHECK_PATH, { 'x-forwarded-for': '203.0.113.7' });
+      if (res.status === 429) { sawThrottle = true; break; }
+    }
+    expect(sawThrottle).toBe(true);
+
+    // 另一个来源不受影响
+    const other = await get(server, SELF_CHECK_PATH, { 'x-forwarded-for': '198.51.100.9' });
+    expect(other.status).toBe(200);
+  });
+
   it('同来源高频调用会被节流成 429', async () => {
     let sawThrottle = false;
     for (let i = 0; i < 40; i += 1) {
