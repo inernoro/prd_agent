@@ -228,15 +228,19 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
         </nav>
 
         <div className="min-h-[260px]">
-          {active === 'starter'
-            ? (
-              <AgentStarterTab
-                cdsPrompt={prompt}
-                projectId={targetKind === 'existing' ? effectiveProjectId : ''}
-                onOpenMarketplace={() => setActive('marketplace')}
-              />
-            )
-            : null}
+          {/*
+           * 上手助手切走时只藏不卸：卸载会把用户在向导里选的技能、交付方式连同
+           * 所在步骤一起丢掉，回来直接退回步骤 01。而「去技能市场」这个入口正好
+           * 开在完成页——那一屏的状态最贵，用户可能还没把结果抄走。
+           * starter 本来就是默认 tab、进弹窗即挂载，藏起来不额外产生开销。
+           */}
+          <div className={active === 'starter' ? undefined : 'hidden'}>
+            <AgentStarterTab
+              cdsPrompt={prompt}
+              projectId={targetKind === 'existing' ? effectiveProjectId : ''}
+              onOpenMarketplace={() => setActive('marketplace')}
+            />
+          </div>
           {active === 'init' ? <ProjectInitTab /> : null}
           {active === 'connect' ? <ConnectTab prompt={prompt} /> : null}
           {active === 'manual' ? <ManualTab /> : null}

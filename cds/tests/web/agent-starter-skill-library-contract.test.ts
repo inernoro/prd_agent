@@ -125,6 +125,27 @@ describe('Agent 上手助手技能库契约', () => {
     expect(source).toMatch(/onClick=\{\(\) => advance\(1\)\}[\s\S]{0,400}返回/);
   });
 
+  /*
+   * Codex review P2（本 PR）：完成页新增的「去技能市场」会把 active 切成
+   * marketplace，而弹窗当时写的是 `active === 'starter' ? <AgentStarterTab/> : null`
+   * —— 一切走就卸载，回来直接退到步骤 01，用户选好的技能和交付方式全丢，
+   * 而这个入口恰恰开在「配置已完成、结果还没抄走」的那一屏。
+   *
+   * 判据钉的是「切走时不许卸载」这个不变量：三元卸载的写法一旦回来即红。
+   */
+  it('切到技能市场时上手助手只藏不卸，向导状态不丢', () => {
+    const dialog = fs.readFileSync(
+      path.join(process.cwd(), 'web/src/components/SkillDownloadDialog.tsx'),
+      'utf8',
+    );
+    // 不许再出现「三元把 AgentStarterTab 整个渲染掉」的卸载写法。
+    // 判据盯的是这个三元和组件之间的直接关系，不是文件里有没有 `: null`
+    // ——别的 tab 用三元卸载是合理的，只有向导不行。
+    expect(dialog).not.toMatch(/active === 'starter'[\s\S]{0,80}?\?\s*\(?\s*<AgentStarterTab/);
+    // 必须是「常驻挂载 + 用 hidden 切显隐」
+    expect(dialog).toMatch(/active === 'starter' \? undefined : 'hidden'/);
+  });
+
   it('只有打开的上手助手弹窗才能隐藏全局入口和锁定页面滚动', () => {
     const openDialogSelector = "body:has([role='dialog'][data-state='open'] [data-agent-starter='true'])";
     expect(styles.match(new RegExp(openDialogSelector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))?.length).toBe(3);
@@ -158,8 +179,8 @@ describe('技能来源面板', () => {
   it('服务端没报出来源就返回 null，不许拿 0 兜底', () => {
     expect(normalizeSkillSource({ bundles: [] })).toBeNull();
     expect(normalizeSkillSource({ source: { kind: 'builtin' } })).toBeNull();
-    expect(normalizeSkillSource({ source: { kind: 'builtin', bundleCount: 4, skillCount: 19, localSkillCount: 17, upstreamSkillCount: 2, upstreamConfigured: true } }))
-      .toEqual({ kind: 'builtin', bundleCount: 4, skillCount: 19, localSkillCount: 17, upstreamSkillCount: 2, upstreamConfigured: true });
+    expect(normalizeSkillSource({ source: { kind: 'builtin', bundleCount: 4, skillCount: 19, localSkillCount: 17, cachedSkillCount: 0, upstreamSkillCount: 2, upstreamConfigured: true } }))
+      .toEqual({ kind: 'builtin', bundleCount: 4, skillCount: 19, localSkillCount: 17, cachedSkillCount: 0, upstreamSkillCount: 2, upstreamConfigured: true });
   });
 
   it('读不到清单时如实说「现在这份是兜底的」，并给重试', () => {
@@ -178,14 +199,49 @@ describe('技能来源面板', () => {
   it('读到来源就回答「还能不能装」，回源装不上时明确告警', () => {
     const markup = renderToStaticMarkup(createElement(SkillSourcePanel, {
       state: 'ok',
-      source: { kind: 'builtin', bundleCount: 4, skillCount: 19, localSkillCount: 17, upstreamSkillCount: 2, upstreamConfigured: false },
+      source: { kind: 'builtin', bundleCount: 4, skillCount: 19, localSkillCount: 17, cachedSkillCount: 0, upstreamSkillCount: 2, upstreamConfigured: false },
       fallbackCount: 19,
       rawUrl: 'https://cds.example.com/api/skills/bundles',
       onRetry: () => {},
     }));
     expect(markup).toContain('4 类 · 19 个技能');
-    expect(markup).toContain('17 个这台 CDS 自带');
+    expect(markup).toContain('17 个这台 CDS 上有现成的');
     expect(markup).toContain('没有配置上游');
+  });
+
+  /*
+   * Codex review P2（本 PR）：缓存包被算进了「必须回源」。
+   *
+   * 面板原来的话是「这 N 个技能需要回源，但没配上游，装到它们会失败」——
+   * 对一个缓存里躺着现成 zip 的技能，这句是假的（fetchSkill 命中缓存直接返回，
+   * 上游失败还会回退陈旧缓存）。判据钉两件事：缓存要算进「断网也装得上」，
+   * 且全都装得上时不许再出那条告警。
+   */
+  it('缓存包算进「断网也装得上」，不触发回源告警', () => {
+    const markup = renderToStaticMarkup(createElement(SkillSourcePanel, {
+      state: 'ok',
+      // 19 个里 12 个本机自带、7 个只有缓存包，一个都不需要回源
+      source: { kind: 'builtin', bundleCount: 4, skillCount: 19, localSkillCount: 12, cachedSkillCount: 7, upstreamSkillCount: 0, upstreamConfigured: false },
+      fallbackCount: 19,
+      rawUrl: 'https://cds.example.com/api/skills/bundles',
+      onRetry: () => {},
+    }));
+    expect(markup).toContain('19 个这台 CDS 上都有现成的');
+    // 上游没配，但一个都不缺——不许再说「装到它们会失败」
+    expect(markup).not.toContain('装到它们会失败');
+  });
+
+  it('确实缺包时照旧告警，并说清缺在哪一档', () => {
+    const markup = renderToStaticMarkup(createElement(SkillSourcePanel, {
+      state: 'ok',
+      source: { kind: 'builtin', bundleCount: 4, skillCount: 19, localSkillCount: 10, cachedSkillCount: 4, upstreamSkillCount: 5, upstreamConfigured: false },
+      fallbackCount: 19,
+      rawUrl: 'https://cds.example.com/api/skills/bundles',
+      onRetry: () => {},
+    }));
+    expect(markup).toContain('14 个这台 CDS 上有现成的');
+    expect(markup).toContain('含 4 个缓存包');
+    expect(markup).toContain('装到它们会失败');
   });
 
   /*
@@ -194,7 +250,7 @@ describe('技能来源面板', () => {
    * 两个口径摆在同一块面板里对不上，用户只会以为哪个数错了。
    */
   it('分类条数加得起来才显示', () => {
-    const source = { kind: 'builtin', bundleCount: 2, skillCount: 22, localSkillCount: 22, upstreamSkillCount: 0, upstreamConfigured: true };
+    const source = { kind: 'builtin', bundleCount: 2, skillCount: 22, localSkillCount: 22, cachedSkillCount: 0, upstreamSkillCount: 0, upstreamConfigured: true };
     const base = { state: 'ok' as const, source, fallbackCount: 19, rawUrl: 'https://x/api', onRetry: () => {} };
     const good = renderToStaticMarkup(createElement(SkillSourcePanel, {
       ...base, groups: [{ key: 'a', label: '基础方法', count: 14 }, { key: 'b', label: '研发交付', count: 8 }],
@@ -212,7 +268,7 @@ describe('技能来源面板', () => {
   it('角色筛掉一部分时说清楚为什么技能库比总数少', () => {
     const markup = renderToStaticMarkup(createElement(SkillSourcePanel, {
       state: 'ok',
-      source: { kind: 'builtin', bundleCount: 4, skillCount: 22, localSkillCount: 22, upstreamSkillCount: 0, upstreamConfigured: true },
+      source: { kind: 'builtin', bundleCount: 4, skillCount: 22, localSkillCount: 22, cachedSkillCount: 0, upstreamSkillCount: 0, upstreamConfigured: true },
       roleLabel: '产品经理',
       roleSkillCount: 18,
       fallbackCount: 19,

@@ -201,11 +201,39 @@ describe('SkillProxy', () => {
       const proxy = new SkillProxy({ mapBase: '', cacheDir, localSkillRoots: [localRoot] });
       const { source } = await proxy.fetchBundles();
       expect(source.localSkillCount).toBe(2);
+      expect(source.cachedSkillCount).toBe(0);
       expect(source.upstreamSkillCount).toBe(source.skillCount - 2);
       expect(source.upstreamConfigured).toBe(false);
     } finally {
       fs.rmSync(localRoot, { recursive: true, force: true });
     }
+  });
+
+  /*
+   * Codex review P2（本 PR）：缓存里有现成包的技能被算进了「必须回源」，
+   * 面板于是对着一个其实装得上的技能说「装它会失败」。
+   *
+   * 判据钉的是「有缓存包就不算必须回源」这个不变量。缓存**不看新鲜度**——
+   * fetchSkill 在上游取失败时会把过期缓存作为陈旧回退返回，所以哪怕这个 zip
+   * 已经过了 TTL，断网照样装得上。
+   */
+  it('缓存里有现成包的技能不算「必须回源」', async () => {
+    fs.writeFileSync(path.join(cacheDir, 'plan-first.zip'), 'cached-zip');
+    // 过期缓存同样成立：把 mtime 推到很久以前，它仍是陈旧回退的来源。
+    const longAgo = new Date(Date.now() - 400 * 24 * 3600 * 1000);
+    fs.writeFileSync(path.join(cacheDir, 'scope-check.zip'), 'stale-zip');
+    fs.utimesSync(path.join(cacheDir, 'scope-check.zip'), longAgo, longAgo);
+    // 目录不算包：同名目录不许被当成缓存命中。
+    fs.mkdirSync(path.join(cacheDir, 'human-verify.zip'), { recursive: true });
+
+    const proxy = new SkillProxy({ mapBase: '', cacheDir });
+    const { source } = await proxy.fetchBundles();
+    expect(source.localSkillCount).toBe(0);
+    expect(source.cachedSkillCount).toBe(2);
+    expect(source.upstreamSkillCount).toBe(source.skillCount - 2);
+    // 三档必须刚好把清单分完，不许有技能既不在这档也不在那档。
+    expect(source.localSkillCount + source.cachedSkillCount + source.upstreamSkillCount)
+      .toBe(source.skillCount);
   });
 
   it('启动套件目录由 CDS 本地发布契约提供，不访问不存在的 MAP bundles 端点', async () => {
@@ -225,6 +253,7 @@ describe('SkillProxy', () => {
       bundleCount: STARTER_SKILL_BUNDLES.bundles.length,
       skillCount: catalogSkills.length,
       localSkillCount: 0,
+      cachedSkillCount: 0,
       upstreamSkillCount: catalogSkills.length,
       upstreamConfigured: true,
     });

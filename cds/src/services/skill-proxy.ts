@@ -108,7 +108,15 @@ export interface StarterBundleSource {
   skillCount: number;
   /** 本机技能目录里真实存在、断网也装得上的数量。 */
   localSkillCount: number;
-  /** 只能回源 MAP 才装得上的数量。 */
+  /**
+   * 本机目录里没有、但缓存目录里有现成 zip 的数量。
+   *
+   * 这一档同样断网可装：fetchSkill 命中未过期缓存直接返回，过期缓存在上游取
+   * 失败时也会作为陈旧回退返回。所以它不能被算进「必须回源」里——算进去，
+   * 面板就会对着一个其实装得上的技能说「装它会失败」。
+   */
+  cachedSkillCount: number;
+  /** 本机没有、缓存也没有，只能回源 MAP 才装得上的数量。 */
   upstreamSkillCount: number;
   /** 上游是否配置。没配又存在回源技能时，面板要如实告警而不是假装能装。 */
   upstreamConfigured: boolean;
@@ -486,8 +494,15 @@ export class SkillProxy {
    */
   async fetchBundles(): Promise<StarterBundlesResponse> {
     const keys = STARTER_SKILL_BUNDLES.bundles.flatMap((bundle) => bundle.skills.map((skill) => skill.key));
-    const localHits = await Promise.all(keys.map((key) => this.hasLocalSkill(key)));
-    const localSkillCount = localHits.filter(Boolean).length;
+    const offline = await Promise.all(keys.map(async (key) => {
+      if (await this.hasLocalSkill(key)) return 'local' as const;
+      // 缓存不看新鲜度：过期缓存在上游取失败时仍会作为陈旧回退返回，
+      // 所以「有 zip」就等于「断网也装得上」。
+      if (await this.hasCachedSkill(key)) return 'cache' as const;
+      return 'upstream' as const;
+    }));
+    const localSkillCount = offline.filter((x) => x === 'local').length;
+    const cachedSkillCount = offline.filter((x) => x === 'cache').length;
     return {
       bundles: STARTER_SKILL_BUNDLES.bundles,
       source: {
@@ -495,7 +510,8 @@ export class SkillProxy {
         bundleCount: STARTER_SKILL_BUNDLES.bundles.length,
         skillCount: keys.length,
         localSkillCount,
-        upstreamSkillCount: keys.length - localSkillCount,
+        cachedSkillCount,
+        upstreamSkillCount: keys.length - localSkillCount - cachedSkillCount,
         upstreamConfigured: this.mapBase.length > 0,
       },
     };
@@ -513,6 +529,12 @@ export class SkillProxy {
       if (stat?.isDirectory()) return true;
     }
     return false;
+  }
+
+  /** 缓存目录里有没有这个 key 的现成包。路径与 fetchSkill 的 cachePath 同源。 */
+  private async hasCachedSkill(key: string): Promise<boolean> {
+    const stat = await fs.promises.stat(path.join(this.cacheDir, `${key}.zip`)).catch(() => null);
+    return stat?.isFile() === true;
   }
 
   private localSkill(key: string): Promise<Buffer | null> {

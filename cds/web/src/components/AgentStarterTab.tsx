@@ -57,6 +57,8 @@ export interface SkillSourceInfo {
   bundleCount: number
   skillCount: number
   localSkillCount: number
+  /** 本机目录没有、但缓存里有现成包——同样断网可装，不许并进「要回源」。 */
+  cachedSkillCount: number
   upstreamSkillCount: number
   upstreamConfigured: boolean
 }
@@ -153,8 +155,10 @@ export function normalizeSkillSource(payload: unknown): SkillSourceInfo | null {
   const bundleCount = num(raw.bundleCount)
   const skillCount = num(raw.skillCount)
   const localSkillCount = num(raw.localSkillCount)
+  const cachedSkillCount = num(raw.cachedSkillCount)
   const upstreamSkillCount = num(raw.upstreamSkillCount)
-  if (bundleCount === null || skillCount === null || localSkillCount === null || upstreamSkillCount === null) {
+  if (bundleCount === null || skillCount === null || localSkillCount === null
+    || cachedSkillCount === null || upstreamSkillCount === null) {
     return null
   }
   return {
@@ -162,6 +166,7 @@ export function normalizeSkillSource(payload: unknown): SkillSourceInfo | null {
     bundleCount,
     skillCount,
     localSkillCount,
+    cachedSkillCount,
     upstreamSkillCount,
     upstreamConfigured: raw.upstreamConfigured === true,
   }
@@ -1086,6 +1091,8 @@ export function SkillSourcePanel({
   // 那种情况下摆出来只会让人以为哪个错了——宁可不显示。
   const groupsTotal = groups.reduce((sum, group) => sum + group.count, 0)
   const groupsTrustworthy = groups.length > 0 && source != null && groupsTotal === source.skillCount
+  // 断网可装 = 本机目录 + 缓存包。缓存过期也算：上游取失败时它会作为陈旧回退返回。
+  const offlineReadyCount = source ? source.localSkillCount + source.cachedSkillCount : 0
   const badge = state === 'loading'
     ? { text: '正在读取', className: 'bg-[hsl(var(--surface-sunken))] text-muted-foreground' }
     : state === 'fallback'
@@ -1148,9 +1155,10 @@ export function SkillSourcePanel({
               )}
               <SourceRow
                 label="离线"
-                value={source.upstreamSkillCount === 0
-                  ? `${source.localSkillCount} 个全部由这台 CDS 自带，断网也装得上`
-                  : `${source.localSkillCount} 个这台 CDS 自带，另外 ${source.upstreamSkillCount} 个要回源才装得上`}
+                value={offlineReadyCount === source.skillCount
+                  ? `${source.skillCount} 个这台 CDS 上都有现成的，断网也装得上`
+                  : `${offlineReadyCount} 个这台 CDS 上有现成的${source.cachedSkillCount > 0 ? `（含 ${source.cachedSkillCount} 个缓存包）` : ''}，`
+                    + `另外 ${source.upstreamSkillCount} 个要回源才装得上`}
               />
             </dl>
 
@@ -1177,7 +1185,8 @@ export function SkillSourcePanel({
               <div className="mx-4 mb-3 flex items-start gap-2 rounded-lg border border-warn bg-warn-soft px-3 py-2">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
                 <p className="text-xs leading-5">
-                  这 {source.upstreamSkillCount} 个技能需要回源，但这台 CDS 没有配置上游，装到它们会失败。
+                  这 {source.upstreamSkillCount} 个技能这台 CDS 上既没有本机目录也没有缓存包，
+                  而这台 CDS 没有配置上游，装到它们会失败。
                 </p>
               </div>
             )}
