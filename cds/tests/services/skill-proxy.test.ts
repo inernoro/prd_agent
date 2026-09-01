@@ -186,6 +186,28 @@ describe('SkillProxy', () => {
     }
   });
 
+  it('来源自述如实数出本机自带的技能，剩下的算回源', async () => {
+    // 上手助手的「技能来源」面板拿这两个数回答用户「我还能不能装」。
+    // 数错了，用户会以为断网也能装上一个其实要回源的技能。
+    const localRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'local-skills-'));
+    for (const key of ['plan-first', 'scope-check']) {
+      fs.mkdirSync(path.join(localRoot, key), { recursive: true });
+      fs.writeFileSync(path.join(localRoot, key, 'SKILL.md'), `# ${key}\n`);
+    }
+    // 目录不存在的 key 不许被算成本机自带；同名的普通文件也不算。
+    fs.writeFileSync(path.join(localRoot, 'human-verify'), 'not a directory');
+
+    try {
+      const proxy = new SkillProxy({ mapBase: '', cacheDir, localSkillRoots: [localRoot] });
+      const { source } = await proxy.fetchBundles();
+      expect(source.localSkillCount).toBe(2);
+      expect(source.upstreamSkillCount).toBe(source.skillCount - 2);
+      expect(source.upstreamConfigured).toBe(false);
+    } finally {
+      fs.rmSync(localRoot, { recursive: true, force: true });
+    }
+  });
+
   it('启动套件目录由 CDS 本地发布契约提供，不访问不存在的 MAP bundles 端点', async () => {
     let calls = 0;
     const proxy = new SkillProxy({
@@ -194,8 +216,18 @@ describe('SkillProxy', () => {
       fetchImpl: async () => { calls += 1; throw new Error('不应访问上游'); },
     });
 
-    expect(await proxy.fetchBundles()).toEqual(STARTER_SKILL_BUNDLES);
+    const response = await proxy.fetchBundles();
+    expect(response.bundles).toEqual(STARTER_SKILL_BUNDLES.bundles);
     const catalogSkills = STARTER_SKILL_BUNDLES.bundles.flatMap((bundle) => bundle.skills);
+    // 来源自述要如实：这台实例没配 localSkillRoots，所以一个都不是本机自带的。
+    expect(response.source).toEqual({
+      kind: 'builtin',
+      bundleCount: STARTER_SKILL_BUNDLES.bundles.length,
+      skillCount: catalogSkills.length,
+      localSkillCount: 0,
+      upstreamSkillCount: catalogSkills.length,
+      upstreamConfigured: true,
+    });
     expect(STARTER_SKILL_BUNDLES.bundles.map((bundle) => bundle.key)).toEqual([
       'foundation', 'product', 'delivery', 'quality',
     ]);

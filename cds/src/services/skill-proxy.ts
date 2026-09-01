@@ -97,6 +97,28 @@ export interface SkillFetchResult {
   source: 'upstream' | 'cache' | 'local';
 }
 
+/**
+ * 技能清单的自述。上手助手的「技能来源」面板照它渲染，所以每个字段都必须是
+ * 服务端当场查得到的事实——不放版本号、不放「最后同步时间」这类没有真实来源的字段。
+ */
+export interface StarterBundleSource {
+  /** 清单出处。目前恒为随 CDS 版本发布的内置常量，不是从上游拉的。 */
+  kind: 'builtin';
+  bundleCount: number;
+  skillCount: number;
+  /** 本机技能目录里真实存在、断网也装得上的数量。 */
+  localSkillCount: number;
+  /** 只能回源 MAP 才装得上的数量。 */
+  upstreamSkillCount: number;
+  /** 上游是否配置。没配又存在回源技能时，面板要如实告警而不是假装能装。 */
+  upstreamConfigured: boolean;
+}
+
+export interface StarterBundlesResponse {
+  bundles: typeof STARTER_SKILL_BUNDLES.bundles;
+  source: StarterBundleSource;
+}
+
 export class SkillProxyError extends Error {
   constructor(message: string, readonly status: number, readonly hint: string) {
     super(message);
@@ -456,9 +478,41 @@ export class SkillProxy {
   /**
    * 取角色套装清单。启动目录属于 CDS 发布契约，不依赖需要 Key 的市场搜索接口，
    * 也不请求 MAP 中不存在的 `/official-skills/bundles`。
+   *
+   * 除了清单本身，还要如实报出「这份清单哪来的、里面有几个是本机自带的」——
+   * 上手助手的技能来源面板拿它回答用户，而不是把这个端点的裸 JSON 甩给人看。
+   * 这里只报**查得到**的事实：清单出处、条数、本机命中数、上游配没配。
+   * 没有版本号就不编版本号。
    */
-  async fetchBundles(): Promise<unknown> {
-    return STARTER_SKILL_BUNDLES;
+  async fetchBundles(): Promise<StarterBundlesResponse> {
+    const keys = STARTER_SKILL_BUNDLES.bundles.flatMap((bundle) => bundle.skills.map((skill) => skill.key));
+    const localHits = await Promise.all(keys.map((key) => this.hasLocalSkill(key)));
+    const localSkillCount = localHits.filter(Boolean).length;
+    return {
+      bundles: STARTER_SKILL_BUNDLES.bundles,
+      source: {
+        kind: 'builtin',
+        bundleCount: STARTER_SKILL_BUNDLES.bundles.length,
+        skillCount: keys.length,
+        localSkillCount,
+        upstreamSkillCount: keys.length - localSkillCount,
+        upstreamConfigured: this.mapBase.length > 0,
+      },
+    };
+  }
+
+  /**
+   * 本机技能目录里有没有这个 key。
+   *
+   * 只 stat 目录，不打包——面板要的是「能不能离线装」这一位信息，
+   * 为它把 19 个技能全压成 zip 是把一次读清单变成一次全量构建。
+   */
+  private async hasLocalSkill(key: string): Promise<boolean> {
+    for (const root of this.localSkillRoots) {
+      const stat = await fs.promises.stat(path.join(root, key)).catch(() => null);
+      if (stat?.isDirectory()) return true;
+    }
+    return false;
   }
 
   private localSkill(key: string): Promise<Buffer | null> {
