@@ -1353,7 +1353,7 @@ function RunRow({
         <span className="w-11 shrink-0 font-mono text-[11px] text-muted-foreground">{formatClock(run.startedAt || run.queuedAt)}</span>
         {showJobName
           ? <span className={`min-w-0 max-w-[11rem] flex-1 truncate text-[12.5px] font-medium ${bad ? 'text-bad' : ''}`}>{jobName}</span>
-          : <span className="flex-1" />}
+          : null}
         <span className={`shrink-0 rounded px-1.5 py-px text-[10.5px] ${run.trigger === 'manual' ? 'border border-info/30 bg-info-soft text-info' : 'border border-[hsl(var(--hairline-strong))] text-muted-foreground'}`}>
           {run.trigger === 'manual' ? '手动' : run.trigger === 'push' ? 'push' : '定时'}
         </span>
@@ -1362,6 +1362,9 @@ function RunRow({
             <span key={step.index} title={`${step.index}. ${step.name}`} className={`h-1.5 w-1.5 rounded-sm ${statusTone(step.status)}`} />
           ))}
         </span>
+        {/* 名字列缺席时，弹性空档要留在这里而不是名字原来的位置，
+            否则「定时」和耗时之间会裂开一条几百像素的空白。 */}
+        {showJobName ? null : <span className="flex-1" />}
         <span className="w-14 shrink-0 text-right font-mono text-[11px] text-foreground-muted">{formatDuration(run.durationMs)}</span>
         <span className={`w-14 shrink-0 text-right font-mono text-[11px] ${bad ? 'text-bad' : run.status === 'skipped' ? 'text-warn' : 'text-ok'}`}>
           {run.httpStatus ? run.httpStatus : run.exitCode !== undefined ? `exit ${run.exitCode}` : runStatusLabel(run.status)}
