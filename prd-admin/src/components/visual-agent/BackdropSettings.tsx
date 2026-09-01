@@ -229,11 +229,15 @@ export function BackdropSettings(props: {
                     每张下面写名字——这批素材全是近黑的光影，光靠缩略图互相分不出来，
                     名字只挂在原生 title 里等于没有（想挑「余烬」得逐个悬停一秒去试）。
 
-                    列数走过一次弯路：为了让图大一点先改成两列，结果素材从 4 张涨到 9 张之后，
+                    列数走过一次弯路：为了让图大一点先改成两列，结果素材涨到 9 张之后，
                     250px 的窗口里只装得下一行半，新加的那几张要滚很久才看得见——
                     而用户问的正是「只有这些了吗」。名字才是认得出的关键，不是尺寸；
-                    回到三列 + 名字，九张一屏全在。 */}
-                <div className="grid grid-cols-3 gap-1.5 overflow-y-auto" style={{ maxHeight: 320 }}>
+                    回到三列 + 名字。
+
+                    现在 15 张、五行。高度给到 400（四行整 + 第五行露一截）：
+                    露出来那一截本身就是「下面还有」的提示，比一个干净的下边缘更诚实。
+                    真正保证「新的先被看见」的是 catalog 的排序（设计批在最前），不是高度。 */}
+                <div className="grid grid-cols-3 gap-1.5 overflow-y-auto" style={{ maxHeight: 400 }}>
                   {assets.map((a) => {
                     const pinned = mode === a.id;
                     const isGenerated = generated.some((g) => g.id === a.id);
