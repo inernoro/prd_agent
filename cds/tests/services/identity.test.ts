@@ -377,3 +377,65 @@ describe('findAgentKeyForAuth：撤销当场生效、用一次就续期', () => 
     expect(entry.lastUsedAt).toBeTruthy();
   });
 });
+
+/**
+ * 总览显示的状态必须与鉴权同一口径（Codex P2，同一形状第三次出现）。
+ *
+ * 停用主体 / 撤销授权之后鉴权会拒，而总览仍把那张凭据算进「有效凭证」——
+ * 管理员刚点了停用，界面却告诉他对方还有 N 张有效凭证。改鉴权没改展示，
+ * 与「改鉴权没改自检」是同一个洞的两个面。
+ */
+describe('权限总览：显示状态跟着实际能不能用走', () => {
+  const now = Date.now();
+  const iso = (d: number) => new Date(now + d * 86400_000).toISOString();
+
+  const build = (opts: { principalStatus?: 'active' | 'disabled'; grantRevoked?: boolean }) =>
+    buildPrincipalOverview({
+      principals: [{
+        id: 'pr_a', name: '某台机器', kind: 'machine',
+        status: opts.principalStatus || 'active', createdAt: iso(-10),
+      }],
+      userCredentials: [],
+      projectCredentials: [{
+        id: 'ak1', label: '自助补发', hash: 'x', scope: 'rw',
+        createdAt: iso(-1), expiresAt: iso(20),
+        principalId: 'pr_a', projectId: 'p1', projectName: '演示项目',
+      } as never],
+      grants: [{
+        id: 'pg1', projectId: 'p1', principalId: 'pr_a', origin: 'approved',
+        grantedAt: iso(-5), ...(opts.grantRevoked ? { revokedAt: iso(-1) } : {}),
+      }],
+    });
+
+  it('一切正常时算有效', () => {
+    const row = build({}).rows[0];
+    expect(row.activeCredentials).toHaveLength(1);
+    expect(row.activeCredentials[0].status).toBe('active');
+  });
+
+  it('主体被停用后不再算有效凭证，状态写明是主体被停用', () => {
+    const row = build({ principalStatus: 'disabled' }).rows[0];
+    expect(row.activeCredentials).toHaveLength(0);
+    expect(row.retiredCredentials[0].status).toBe('principal-disabled');
+  });
+
+  it('授权被撤后不再算有效凭证，状态写明是授权被撤', () => {
+    const row = build({ grantRevoked: true }).rows[0];
+    expect(row.activeCredentials).toHaveLength(0);
+    expect(row.retiredCredentials[0].status).toBe('grant-revoked');
+  });
+
+  it('存量凭证没有主体，不受这两条影响（零回归）', () => {
+    const out = buildPrincipalOverview({
+      principals: [],
+      userCredentials: [],
+      projectCredentials: [{
+        id: 'ak_legacy', hash: 'x', scope: 'rw', createdAt: iso(-400),
+        projectId: 'p1', projectName: '演示项目',
+      } as never],
+      grants: [],
+    });
+    expect(out.unclaimed).toHaveLength(1);
+    expect(out.unclaimed[0].status).toBe('active');
+  });
+});
