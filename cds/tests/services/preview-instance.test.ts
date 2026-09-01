@@ -227,6 +227,18 @@ describe('seedPreviewInstanceDemoData', () => {
       expect(jobs.some((j) => j.schedule.type === type)).toBe(true);
     }
     for (const j of jobs) expect(j.name).toContain('演示数据');
+    /*
+     * Codex 第二轮 P2：演示任务不许自己跑起来。
+     *
+     * 调度器在预览实例上照样启动，enabled 的演示任务会被它真的执行——实机验到
+     * 「每 30 分钟同步」的 lastRunAt 被改成了当天的真实执行时间。那会把 seed 摆
+     * 出来的成功/失败示例状态覆盖掉，还往运行历史里灌噪音。演示数据是给人看的，
+     * 不是给调度器跑的。
+     */
+    for (const j of jobs) expect(j.enabled).toBe(false);
+    // 但「上次运行」的示例状态要保住，否则列表那一列全空、看不出成功/失败长什么样
+    expect(jobs.some((j) => j.lastRunStatus === 'success')).toBe(true);
+    expect(jobs.some((j) => j.lastRunStatus === 'failed')).toBe(true);
 
     const reports = service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID);
     for (const verdict of ['pass', 'conditional', 'fail']) {

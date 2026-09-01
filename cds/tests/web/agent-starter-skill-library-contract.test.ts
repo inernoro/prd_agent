@@ -146,6 +146,25 @@ describe('Agent 上手助手技能库契约', () => {
     expect(dialog).toMatch(/active === 'starter' \? undefined : 'hidden'/);
   });
 
+  /*
+   * Codex 第二轮 P2：重试读清单会把用户改过的技能选择冲掉。
+   *
+   * 铺推荐的那个 effect 原来只依赖 recommendedSkills，而它在两种情况下都会变：
+   * 换角色（该重铺）和清单重新加载（不该重铺）。后者包含「读不到清单 → 用兜底
+   * 清单配好 → 点重新读一次 → 成功」这条路，而重试按钮就开在完成页。
+   *
+   * 判据钉的是「清单变化不许无条件重铺」：effect 里必须有定制标记的早退，
+   * 且用户动手的入口要把标记立起来。
+   */
+  it('清单重新加载不冲掉用户改过的技能选择', () => {
+    // 铺推荐的 effect 必须先看定制标记再决定要不要覆盖
+    expect(source).toMatch(/if \(skillsCustomizedRef\.current\) return[\s\S]{0,120}?setSelectedSkills\(recommendedSkills/);
+    // 换角色是用户自己的动作，标记归零后重铺推荐才合理
+    expect(source).toMatch(/skillsCustomizedRef\.current = false[\s\S]{0,60}?\}, \[roleId\]\)/);
+    // 勾选/取消技能要把标记立起来，否则早退永远不生效
+    expect(source).toMatch(/toggleSkill[\s\S]{0,160}?skillsCustomizedRef\.current = true/);
+  });
+
   it('只有打开的上手助手弹窗才能隐藏全局入口和锁定页面滚动', () => {
     const openDialogSelector = "body:has([role='dialog'][data-state='open'] [data-agent-starter='true'])";
     expect(styles.match(new RegExp(openDialogSelector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))?.length).toBe(3);

@@ -214,7 +214,13 @@ function seedDemoExtras(state: StateService): boolean {
   const demoBranch = state.getAllBranches().find((b) => b.projectId === project.id);
 
   // 三种 schedule 各来一条，把「每天 / 间隔 / 手动」三个分段和列表卡片都撑起来。
-  // 动作全部指向 example.invalid，触发也打不到任何真东西。
+  //
+  // 三条全部 enabled=false。调度器在预览实例上照样启动，enabled=true 的演示任务
+  // 会被它真的执行——实机验到过：「每 30 分钟同步」的 lastRunAt 从 seed 写的值
+  // 变成了当天的真实执行时间，nextRunAt 也排上了。后果有两层：一是把 seed 精心
+  // 摆出来的成功/失败两种示例状态覆盖掉（演示数据自己把自己改了），二是往运行
+  // 历史里灌真实噪音。演示数据的本分是「长得像真的给人看」，不是自己跑起来。
+  // lastRunAt / lastRunStatus 仍然照写，列表上「上次运行」那一列该有内容。
   if (state.listScheduledJobs(project.id).length === 0) {
     const jobBase = {
       projectId: project.id,
@@ -230,7 +236,7 @@ function seedDemoExtras(state: StateService): boolean {
       id: `${project.id}-job-daily`,
       name: '演示数据：每天巡检',
       description: '预览实例演示任务，不会真的发出请求。',
-      enabled: true,
+      enabled: false,
       schedule: { type: 'daily', timeOfDay: '09:30' },
       actions: [{ id: 'a1', name: '健康检查', type: 'http', method: 'GET', url: 'https://example.invalid/healthz' }],
       lastRunAt: minutesAgoIso(600),
@@ -241,7 +247,7 @@ function seedDemoExtras(state: StateService): boolean {
       id: `${project.id}-job-interval`,
       name: '演示数据：每 30 分钟同步',
       description: '预览实例演示任务，展示「间隔」类型与失败态。',
-      enabled: true,
+      enabled: false,
       schedule: { type: 'interval', intervalMinutes: 30 },
       actions: [{ id: 'a1', name: '同步脚本', type: 'command', command: 'echo demo-sync' }],
       lastRunAt: minutesAgoIso(25),

@@ -218,13 +218,19 @@ describe('SkillProxy', () => {
    * 已经过了 TTL，断网照样装得上。
    */
   it('缓存里有现成包的技能不算「必须回源」', async () => {
-    fs.writeFileSync(path.join(cacheDir, 'plan-first.zip'), 'cached-zip');
+    // zip 魔数开头才算数——判据要和下载路径的 readCache 用同一套校验。
+    const zip = (name: string) => Buffer.concat([Buffer.from('PK\u0003\u0004'), Buffer.from(name)]);
+    fs.writeFileSync(path.join(cacheDir, 'plan-first.zip'), zip('cached'));
     // 过期缓存同样成立：把 mtime 推到很久以前，它仍是陈旧回退的来源。
     const longAgo = new Date(Date.now() - 400 * 24 * 3600 * 1000);
-    fs.writeFileSync(path.join(cacheDir, 'scope-check.zip'), 'stale-zip');
+    fs.writeFileSync(path.join(cacheDir, 'scope-check.zip'), zip('stale'));
     fs.utimesSync(path.join(cacheDir, 'scope-check.zip'), longAgo, longAgo);
     // 目录不算包：同名目录不许被当成缓存命中。
     fs.mkdirSync(path.join(cacheDir, 'human-verify.zip'), { recursive: true });
+    // 空文件、以及旧版本缓存下来的 HTML 错误页都不算——下载路径会把它们当未命中，
+    // 面板要是算成「断网也装得上」，用户装的时候才发现装不上（Codex 第二轮 P2）。
+    fs.writeFileSync(path.join(cacheDir, 'risk-matrix.zip'), '');
+    fs.writeFileSync(path.join(cacheDir, 'flow-trace.zip'), '<html>502 Bad Gateway</html>');
 
     const proxy = new SkillProxy({ mapBase: '', cacheDir });
     const { source } = await proxy.fetchBundles();

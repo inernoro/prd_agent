@@ -229,6 +229,8 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace }: Age
     setRoleSelection({ ...roleSelection, roleId: next, declared: true })
   const [skills, setSkills] = useState<StarterSkill[]>(FALLBACK_SKILLS)
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
+  // 用户有没有亲手改过技能选择（勾选/取消/在技能库里完成选择）。
+  const skillsCustomizedRef = useRef(false)
   // 技能库是覆盖在推荐页之上的一层浮层，不是把推荐页换掉。
   // openedWith 记下打开那一刻的选择：「放弃这次改动」据它还原，
   // 「刚加上」标签据它计算——没有它，用户在库里点完就再也说不清自己改了什么。
@@ -342,7 +344,21 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace }: Age
     return [...counts].map(([key, value]) => ({ key, label: value.label, count: value.count }))
   }, [skills])
 
+  /*
+   * 按角色铺推荐，但不许冲掉用户已经改过的选择。
+   *
+   * 这个 effect 原来只依赖 recommendedSkills，而它在两种情况下都会变：换角色
+   * （该重铺）和清单本身重新加载（不该重铺）。后者包括「读不到清单 → 用兜底
+   * 清单配好 → 点重新读一次 → 成功」这条路——重试按钮就开在完成页，冲掉等于
+   * 把用户刚配好、还没抄走的东西悄悄换掉。所以用 ref 记住「他自己动过手」。
+   */
   useEffect(() => {
+    // 换角色是用户自己的动作，重铺推荐符合预期，定制标记跟着归零。
+    skillsCustomizedRef.current = false
+  }, [roleId])
+
+  useEffect(() => {
+    if (skillsCustomizedRef.current) return
     setSelectedSkills(recommendedSkills.map((skill) => skill.key))
   }, [recommendedSkills])
 
@@ -383,8 +399,11 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace }: Age
     setStep(nextStep)
   }
 
-  const toggleSkill = (key: string): void => setSelectedSkills((current) =>
-    current.includes(key) ? current.filter((item) => item !== key) : [...current, key])
+  const toggleSkill = (key: string): void => {
+    skillsCustomizedRef.current = true
+    setSelectedSkills((current) => (
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]))
+  }
 
   const openSkillLibrary = (): void => {
     setLibraryOpenedWith(selectedSkills)

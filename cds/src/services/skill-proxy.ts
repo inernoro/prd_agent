@@ -531,10 +531,16 @@ export class SkillProxy {
     return false;
   }
 
-  /** 缓存目录里有没有这个 key 的现成包。路径与 fetchSkill 的 cachePath 同源。 */
+  /**
+   * 缓存目录里有没有这个 key 的**可用**包。
+   *
+   * 直接复用 readCache 而不是自己 stat 一下：真正决定「这个缓存能不能用」的
+   * 是 readCache（非空 + 真的是 zip——旧版本写进来的错误页会被它判为未命中）。
+   * 只查文件存在与否，就会对着一个空文件或一张 HTML 错误页说「断网也装得上」，
+   * 而下载路径转头把它当没有。判据必须和做决定的那个是同一个函数。
+   */
   private async hasCachedSkill(key: string): Promise<boolean> {
-    const stat = await fs.promises.stat(path.join(this.cacheDir, `${key}.zip`)).catch(() => null);
-    return stat?.isFile() === true;
+    return this.readCache(path.join(this.cacheDir, `${key}.zip`)) !== null;
   }
 
   private localSkill(key: string): Promise<Buffer | null> {
