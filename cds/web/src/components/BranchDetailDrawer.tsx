@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Server, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
+import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
@@ -16,6 +16,13 @@ import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplit
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { ReplicaSetPanel, type ProfileReplicaSetView } from '@/components/branch/ReplicaSetPanel';
 import { WebEntryConfigDialog } from '@/components/branch/WebEntryConfigDialog';
+import {
+  OverviewPanel,
+  emptyMetricSeries,
+  pushMetricRing,
+  type MetricSeries,
+  type OverviewDeployment,
+} from '@/components/branch/OverviewPanel';
 import { Layers, Lock, Plus } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
@@ -502,31 +509,9 @@ type TriggerLogsState =
 // 2026-05-14: webhook 日志分页 — 每页 20 条，懒加载下一页，与 buffer 1000 配合。
 const TRIGGER_LOGS_PAGE_SIZE = 20;
 
-/** 5-min ring buffer (60 points × 5s 间隔) per service+metric — UI sparkline 用 */
-interface MetricSeries {
-  cpu: number[];        // %
-  mem: number[];        // % of limit
-  rxRate: number[];     // bytes/sec(由两次响应间 delta / dt 算出)
-  txRate: number[];     // bytes/sec
-}
-const METRIC_RING_SIZE = 60;
+// MetricSeries / 环形缓冲 / 系列色都在 OverviewPanel —— 图表与它的数据结构同处一地，
+// 免得改了一边忘另一边（predicate-and-wiring-discipline 形状 3）。
 
-/** 总览仪表块（2026-07-26「让总览像一个总览」）：大数字 + 语义色点 + 一句副文案 */
-function OverviewTile({ label, value, sub, tone = 'muted', mono }: {
-  label: string; value: string; sub?: string; tone?: 'good' | 'bad' | 'muted'; mono?: boolean;
-}): JSX.Element {
-  const dot = tone === 'good' ? '#10b981' : tone === 'bad' ? '#ef4444' : 'hsl(var(--muted-foreground))';
-  return (
-    <div className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-3.5 py-3">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        <span className="h-1.5 w-1.5 rounded-full" style={{ background: dot }} aria-hidden />
-        {label}
-      </div>
-      <div className={`mt-1 truncate text-lg font-bold ${tone === 'bad' ? 'text-destructive' : ''} ${mono ? 'font-mono' : ''}`} title={value}>{value}</div>
-      {sub ? <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={sub}>{sub}</div> : null}
-    </div>
-  );
-}
 
 function DrawerTabButton({
   tab,
@@ -1332,11 +1317,11 @@ export function BranchDetailDrawer({
         const next = { ...prev };
         const dt = prevTs > 0 ? (data.ts - prevTs) / 1000 : 0;
         for (const svc of data.services) {
-          const series = next[svc.profileId] || { cpu: [], mem: [], rxRate: [], txRate: [] };
+          const series = next[svc.profileId] ?? emptyMetricSeries();
           const stats = svc.stats;
           if (!stats) {
             // 容器没在跑,push 0 占位让 sparkline 有连续 60 点
-            next[svc.profileId] = pushRing(series, 0, 0, 0, 0);
+            next[svc.profileId] = pushMetricRing(series, 0, 0, 0, 0, 0);
             continue;
           }
           const lastStats = prevByService[svc.profileId];
@@ -1346,7 +1331,7 @@ export function BranchDetailDrawer({
             rxRate = Math.max(0, (stats.netRxBytes - lastStats.netRxBytes) / dt);
             txRate = Math.max(0, (stats.netTxBytes - lastStats.netTxBytes) / dt);
           }
-          next[svc.profileId] = pushRing(series, stats.cpuPercent, stats.memPercent, rxRate, txRate);
+          next[svc.profileId] = pushMetricRing(series, stats.cpuPercent, stats.memPercent, stats.memUsedBytes, rxRate, txRate);
         }
         return next;
       });
@@ -1563,6 +1548,48 @@ export function BranchDetailDrawer({
     const scoped = deployments.filter((item) => item.branchId === branchId);
     return scoped.sort((left, right) => right.startedAt - left.startedAt);
   }, [branchId, deployments]);
+
+  // ── 总览面板的派生数据 ───────────────────────────────────────────────
+  // 入口：主入口 + cds.web-entry-* 声明的页面，主入口置顶。readiness/health 探针
+  // 不是用户入口，不进这个列表。
+  const overviewEntries = useMemo(() => ([
+    ...(primaryEntryUrl
+      ? [{ name: primaryEntry?.name || '主应用入口', url: primaryEntryUrl, subdomain: primaryEntry?.subdomain, primary: true }]
+      : []),
+    ...[...webEntries]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((entry) => ({ name: entry.name, url: entry.url, subdomain: entry.subdomain, primary: false })),
+  ]), [primaryEntry, primaryEntryUrl, webEntries]);
+
+  // 部署柱状图只认「构建类」记录：restart / stop / favorite 之类的耗时跟构建不可比，
+  // 混进同一张图会把中位线拉歪。
+  const overviewDeployments = useMemo<OverviewDeployment[]>(() => visibleDeployments
+    .filter((d) => d.kind === 'deploy' || d.kind === 'preview' || d.kind === 'rebuild')
+    .map((d) => ({
+      key: d.key,
+      kind: d.kind,
+      status: d.status,
+      commitSha: d.commitSha,
+      startedAt: d.startedAt,
+      finishedAt: d.finishedAt,
+    })), [visibleDeployments]);
+
+  const latestDeployDurationMs = useMemo(() => {
+    const latest = overviewDeployments.find((d) => d.finishedAt && d.finishedAt > d.startedAt);
+    return latest?.finishedAt ? latest.finishedAt - latest.startedAt : undefined;
+  }, [overviewDeployments]);
+
+  const overviewReplicaSummary = useMemo(() => {
+    const sets = Object.values(branch?.replicaSets ?? {}).filter((rs) => rs?.enabled);
+    const members = sets.reduce((n, rs) => n + (rs.members?.length ?? 0), 0);
+    if (members === 0) return '未启用 · 单副本';
+    const bad = sets.some((rs) => (rs.members ?? []).some((m) => m.status === 'error'));
+    return `${members} 副本${bad ? ' · 有异常' : ' · 入口按权重分流'}`;
+  }, [branch?.replicaSets]);
+
+  const overviewInfraSummary = useMemo(() => (
+    infraServices.length === 0 ? '无' : infraServices.map((svc) => svc.name).join(' · ')
+  ), [infraServices]);
 
   const combinedDeployments = useMemo<BranchDeploymentItem[]>(() => {
     if (!branchId) return visibleDeployments;
@@ -2051,69 +2078,8 @@ export function BranchDetailDrawer({
                   只看 branch.status 会让 URL 卡在部署完成后仍隐藏(Codex review P2)。 */}
               {/* 2026-07-26 用户拍板：入口卡不再常驻抽屉头部占每个页签 ~180px——
                   只在「总览」（现在怎么样）保留；「运行」页签由画布入口节点承载同一组入口 */}
-              {activeTab === 'overview' && (branch.status === 'running' || branchStatus === 'running') && primaryEntryUrl ? (
-                <div className="mx-5 mt-4 rounded-xl border border-ok/40 bg-ok-soft p-3">
-                  <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-ok">
-                    <Rocket className="h-4 w-4" />
-                    应用已上线
-                    {/* 多出口不再只能由 Agent 改 compose：用户自己在这里加/改「域名前缀 → 服务端口」 */}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="ml-auto text-ok hover:bg-ok-soft hover:text-ok dark:hover:text-ok"
-                      onClick={() => setWebEntryConfigOpen(true)}
-                      title="手动配置入口（新增子域入口 / 改名 / 改落地路径）"
-                    >
-                      <Settings />
-                      配置入口
-                    </Button>
-                  </div>
-                  {/* 入口卡片列：主入口在上，其余由 cds.web-entry-* 声明的页面在下。
-                      readiness/health URL 不属于用户入口，不在这里渲染。 */}
-                  <div className="flex flex-col gap-1.5">
-                    <a
-                      href={primaryEntryUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={`打开 ${primaryEntry?.name || '主应用入口'}`}
-                      className="group flex items-center gap-3 rounded-lg border border-ok/30 bg-ok-soft px-3 py-2 transition hover:border-ok/60 hover:bg-ok-soft"
-                    >
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-ok text-white">
-                        <Rocket className="h-4 w-4" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-xs font-semibold text-ok">{primaryEntry?.name || '主应用入口'}</span>
-                        <span className="block min-w-0 truncate font-mono text-[11px] text-ok/70 /70">{primaryEntryUrl}</span>
-                      </span>
-                      <ExternalLink className="h-4 w-4 shrink-0 text-ok/60 transition group-hover:text-ok/60 dark:group-hover:text-ok" />
-                    </a>
-                    {[...webEntries]
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map((entry) => (
-                          <a
-                            key={entry.serviceId || entry.subdomain || entry.url}
-                            href={entry.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            title={`打开 ${entry.name}`}
-                            className="group flex items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 transition hover:border-ok/40 hover:bg-ok-soft"
-                          >
-                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--surface-raised))] text-muted-foreground">
-                              <Server className="h-4 w-4" />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5">
-                                <span className="text-xs font-semibold text-foreground">{entry.name}</span>
-                                {entry.subdomain ? <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{entry.subdomain}</span> : null}
-                              </span>
-                              <span className="block min-w-0 truncate font-mono text-[11px] text-muted-foreground">{entry.url}</span>
-                            </span>
-                            <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground/60 transition group-hover:text-ok" />
-                          </a>
-                      ))}
-                  </div>
-                </div>
-              ) : null}
+              {/* 入口卡已并入总览面板（OverviewPanel）——原先它常驻在页签之上，
+                  和总览里的「入口 N 个」计数各说各话；现在只有一处。 */}
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
                 {(() => {
                   const origin = branchOriginInsight(branch);
@@ -2163,9 +2129,9 @@ export function BranchDetailDrawer({
                     </div>
                   );
                 })()}
-                {/* 「运行中 + production URL」卡已删除(2026-07-15 用户反馈冗余):
-                    URL 与顶部「应用已上线 · 主应用入口」重复,状态/commit/服务数
-                    已上移到上方 origin 卡。 */}
+                {/* 「运行中 + production URL」卡已删除(2026-07-15 用户反馈冗余)。
+                    入口 URL 现在只在总览面板的入口卡组里出现一次(2026-09-01 重排),
+                    状态 / commit / 服务数由总览的判断行承载。 */}
                 {currentFailureReason ? (
                   <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2553,46 +2519,33 @@ export function BranchDetailDrawer({
 
                 {/* 总览 = 仪表盘（2026-07-26 用户拍板「让总览像一个总览」）：
                     状态/服务/复制集/版本/CPU/内存/流量 一屏仪表块，不再是文字堆砌 */}
-                {activeTab === 'overview' ? (() => {
-                  const svcList = Object.values(branch.services || {});
-                  const upCount = svcList.filter((sv) => sv.status === 'running').length;
-                  const svcBad = svcList.some((sv) => sv.status === 'error');
-                  const rsMap = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {};
-                  const rsList = Object.values(rsMap).filter((rs) => rs?.enabled);
-                  const memberCount = rsList.reduce((n, rs) => n + (rs.members?.length ?? 0), 0);
-                  const memberBad = rsList.some((rs) => (rs.members ?? []).some((m) => m.status === 'error'));
-                  const rsMode = (branch as { replicaMode?: 'container' | 'project' }).replicaMode;
-                  const latest = (arr?: number[]): number | null => (arr && arr.length > 0 ? arr[arr.length - 1] : null);
-                  const seriesList = Object.values(metricSeries);
-                  const cpuNow = seriesList.length > 0 ? Math.max(...seriesList.map((sv) => latest(sv.cpu) ?? 0)) : null;
-                  const memNow = seriesList.length > 0 ? Math.max(...seriesList.map((sv) => latest(sv.mem) ?? 0)) : null;
-                  const netNow = seriesList.length > 0
-                    ? seriesList.reduce((n, sv) => n + (latest(sv.rxRate) ?? 0) + (latest(sv.txRate) ?? 0), 0)
-                    : null;
-                  const running = branch.status === 'running' || branchStatus === 'running';
-                  return (
-                    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                      <OverviewTile label="状态" value={statusLabel(branch.status)} sub={branch.branch}
-                        tone={branch.status === 'error' ? 'bad' : running ? 'good' : 'muted'} />
-                      <OverviewTile label="服务" value={`${upCount} / ${svcList.length}`} sub={svcBad ? '有服务异常' : '运行中 / 总数'}
-                        tone={svcBad ? 'bad' : upCount === svcList.length && svcList.length > 0 ? 'good' : 'muted'} />
-                      <OverviewTile label="复制集" value={memberCount > 0 ? `${memberCount} 副本` : '未启用'}
-                        sub={memberCount > 0 ? `${rsMode === 'project' ? '项目级' : '容器级'}${memberBad ? ' · 有异常' : ' · 入口按权重分流'}` : '在「运行」页签开启'}
-                        tone={memberBad ? 'bad' : memberCount > 0 ? 'good' : 'muted'} />
-                      <OverviewTile label="版本" value={branch.commitSha?.slice(0, 7) || '-'} sub="当前部署提交" mono />
-                      <OverviewTile label="CPU" value={cpuNow != null ? `${cpuNow.toFixed(0)}%` : '—'}
-                        sub={cpuNow != null ? '最忙服务瞬时值' : '监控采样中…'}
-                        tone={cpuNow != null && cpuNow > 85 ? 'bad' : 'muted'} />
-                      <OverviewTile label="内存" value={memNow != null ? `${memNow.toFixed(0)}%` : '—'}
-                        sub={memNow != null ? '最高服务占限额比' : '监控采样中…'}
-                        tone={memNow != null && memNow > 85 ? 'bad' : 'muted'} />
-                      <OverviewTile label="网络" value={netNow != null ? `${formatBytes(netNow)}/s` : '—'}
-                        sub={netNow != null ? '全服务收发合计' : '监控采样中…'} />
-                      <OverviewTile label="入口" value={running && primaryEntryUrl ? `${1 + webEntries.length} 个` : '未上线'}
-                        sub={running ? '上方入口卡直达' : '部署成功后出现'} tone={running ? 'good' : 'muted'} />
-                    </div>
-                  );
-                })() : null}
+                {activeTab === 'overview' ? (
+                  <OverviewPanel
+                    services={Object.values(branch.services || {}).map((sv) => ({
+                      profileId: sv.profileId,
+                      containerName: sv.containerName,
+                      status: sv.status,
+                    }))}
+                    running={branch.status === 'running' || branchStatus === 'running'}
+                    branchName={branch.branch}
+                    commitSha={branch.commitSha}
+                    commitMessage={branch.subject}
+                    lastReadyAt={branch.lastReadyAt}
+                    lastDeployAt={branch.lastDeployAt}
+                    deployDurationMs={latestDeployDurationMs}
+                    entries={overviewEntries}
+                    deployments={overviewDeployments}
+                    metricSeries={metricSeries}
+                    metricsReady={metricsState.status === 'ok'}
+                    metricsError={metricsState.status === 'error' ? metricsState.message : undefined}
+                    replicaSummary={overviewReplicaSummary}
+                    infraSummary={overviewInfraSummary}
+                    now={now}
+                    onRefreshMetrics={() => void loadMetrics()}
+                    onConfigureEntries={() => setWebEntryConfigOpen(true)}
+                    onOpenDeployments={() => setActiveTab('deployments')}
+                  />
+                ) : null}
 
                 {/* 方案 A：配置页签三分区（读生效值 / 逐 key 溯源 / 写分支行为）——
                     原「变量 / 配置 / 设置」三个近义页签合并，进哪儿不再靠猜 */}
@@ -2698,18 +2651,6 @@ export function BranchDetailDrawer({
                     onSetProfileDbScope={setProfileDbScope}
                     onToast={onToast}
                   />
-                ) : null}
-
-                {/* 方案 A：指标并入总览（现在怎么样 = 状态 + 指标一屏看全） */}
-                {activeTab === 'overview' ? (
-                  <section className="mt-4">
-                    <h4 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">监控</h4>
-                    <MetricsPanel
-                      state={metricsState}
-                      series={metricSeries}
-                      onRefresh={() => void loadMetrics()}
-                    />
-                  </section>
                 ) : null}
 
                 <div className="mt-5 shrink-0 text-center text-xs text-muted-foreground">
@@ -7168,145 +7109,8 @@ function SettingsActionButton({
 // 不持久化(关抽屉就丢)— 这是观测视图,不是审计。
 // ──────────────────────────────────────────────────────────────────────────
 
-function pushRing(
-  series: MetricSeries,
-  cpu: number,
-  mem: number,
-  rxRate: number,
-  txRate: number,
-): MetricSeries {
-  const trim = (arr: number[], v: number): number[] => {
-    const next = [...arr, v];
-    return next.length > METRIC_RING_SIZE ? next.slice(next.length - METRIC_RING_SIZE) : next;
-  };
-  return {
-    cpu: trim(series.cpu, cpu),
-    mem: trim(series.mem, mem),
-    rxRate: trim(series.rxRate, rxRate),
-    txRate: trim(series.txRate, txRate),
-  };
-}
 
-function MetricsPanel({
-  state,
-  series,
-  onRefresh,
-}: {
-  state: MetricsState;
-  series: Record<string, MetricSeries>;
-  onRefresh: () => void;
-}): JSX.Element {
-  if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在采集 docker stats…
-      </section>
-    );
-  }
-  if (state.status === 'error') {
-    return (
-      <section className="rounded-md border border-destructive/30 bg-destructive/10 px-5 py-4 text-sm text-destructive">
-        <div className="flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          <span>读取失败:{state.message}</span>
-          <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={onRefresh}>
-            <RefreshCw />重试
-          </Button>
-        </div>
-      </section>
-    );
-  }
-  const data = state.data;
-  if (data.services.length === 0) {
-    return (
-      <section className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        该分支没有任何 service。先去构建配置 / 部署。
-      </section>
-    );
-  }
 
-  return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span>共 {data.totalCount} 个 service · 运行中 {data.runningCount} · 每 5s 自动刷新 · 5min 滚动窗口</span>
-        <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={onRefresh}>
-          <RefreshCw />立即刷新
-        </Button>
-      </div>
-      {data.services.map((svc) => (
-        <ServiceMetricCard
-          key={svc.profileId}
-          profileId={svc.profileId}
-          containerName={svc.containerName}
-          status={svc.status}
-          stats={svc.stats}
-          series={series[svc.profileId]}
-        />
-      ))}
-    </section>
-  );
-}
-
-function ServiceMetricCard({
-  profileId,
-  containerName,
-  status,
-  stats,
-  series,
-}: {
-  profileId: string;
-  containerName: string;
-  status: string;
-  stats: ContainerStatsResponse | null;
-  series: MetricSeries | undefined;
-}): JSX.Element {
-  const isRunning = status === 'running' && stats !== null;
-  return (
-    <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(status)}`} aria-hidden />
-            <span className="font-mono text-sm font-medium">{profileId}</span>
-            <span className={`inline-flex h-5 items-center rounded-md border px-1.5 text-[10px] ${statusClass(status)}`}>
-              {status}
-            </span>
-          </div>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground" title={containerName}>
-            {containerName}
-          </div>
-        </div>
-      </div>
-
-      {!isRunning ? (
-        <div className="text-xs text-muted-foreground">服务未运行,无指标可读。</div>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          <MetricBar label="CPU" value={stats!.cpuPercent} unit="%" max={100} />
-          <MetricBar
-            label="内存"
-            value={stats!.memPercent}
-            unit="%"
-            max={100}
-            sub={`${formatBytes(stats!.memUsedBytes)} / ${formatBytes(stats!.memLimitBytes)}`}
-          />
-          <MetricRate label="网络入站(rx)" rate={series?.rxRate.at(-1) || 0} />
-          <MetricRate label="网络出站(tx)" rate={series?.txRate.at(-1) || 0} />
-        </div>
-      )}
-
-      {/* CPU sparkline — 5min 滚动窗口 */}
-      {isRunning && series && series.cpu.length >= 2 ? (
-        <div className="mt-3 flex items-center gap-3">
-          <span className="text-[11px] text-muted-foreground">CPU 5min 趋势</span>
-          <Sparkline data={series.cpu} max={Math.max(100, ...series.cpu)} />
-          <span className="text-[11px] text-muted-foreground">峰值 {Math.max(...series.cpu).toFixed(1)}%</span>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 function MetricBar({
   label,
@@ -7340,50 +7144,7 @@ function MetricBar({
   );
 }
 
-function MetricRate({ label, rate }: { label: string; rate: number }): JSX.Element {
-  return (
-    <div>
-      <div className="mb-1 text-xs text-muted-foreground">{label}</div>
-      <div className="font-mono text-sm font-medium">{formatBytes(rate)}/s</div>
-    </div>
-  );
-}
 
-/**
- * 极简内联 SVG sparkline。zero-dep,~30 行,viewBox 0..100 × 0..30,
- * 父容器用 className 控制实际像素尺寸。data 不足 2 点时不渲染。
- */
-function Sparkline({ data, max, className }: { data: number[]; max: number; className?: string }): JSX.Element | null {
-  if (data.length < 2) return null;
-  const width = 100;
-  const height = 30;
-  const safeMax = max > 0 ? max : 1;
-  const points = data
-    .map((v, i) => {
-      const x = (i / (data.length - 1)) * width;
-      const y = height - (v / safeMax) * height;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
-  return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      className={`flex-1 h-6 ${className || ''}`}
-      aria-label="趋势"
-    >
-      <polyline
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        points={points}
-        className="text-primary"
-      />
-    </svg>
-  );
-}
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
