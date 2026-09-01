@@ -77,6 +77,22 @@ describe('系列色 token 两个主题都定义', () => {
   });
 });
 
+describe('停掉的容器不许显示停机前的旧读数', () => {
+  /**
+   * 演示时逮到的真缺陷：portal 已经 error、容器不在跑了，序列尾巴停在它停机那一刻，
+   * 而图例取 values.at(-1)，于是「当前值」位上摆着停机前的 2.34% —— 看起来它还活着。
+   * 合计同理，会把这份旧读数算进去虚报占用。
+   */
+  it('图例按 status 判停，不是拿末值当现值', () => {
+    expect(PANEL).toContain("stopped: x.svc.status !== 'running'");
+    expect(PANEL).toContain('s.stopped ?');
+  });
+
+  it('当前合计跳过已停容器', () => {
+    expect(PANEL).toContain('s.stopped ? 0 : s.values.at(-1)');
+  });
+});
+
 describe('内存按绝对值展示（百分比在没配 mem_limit 的机器上恒为 0）', () => {
   it('环形缓冲存了绝对字节', () => {
     expect(PANEL).toContain('memBytes');
