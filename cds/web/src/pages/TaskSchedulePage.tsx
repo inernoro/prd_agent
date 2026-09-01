@@ -557,7 +557,7 @@ export function TaskSchedulePage(): JSX.Element {
                         hiddenCount={0}
                       />
                     ) : null}
-                    <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px]">
+                    <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
                       <div className="flex min-h-0 max-h-[70vh] flex-col overflow-hidden border-b border-[hsl(var(--hairline))] xl:max-h-none xl:border-b-0 xl:border-r">
                         <JobOverview
                           job={selectedJob}
@@ -576,6 +576,7 @@ export function TaskSchedulePage(): JSX.Element {
                           onFilter={setRunFilter}
                           runs={visibleRuns}
                           jobNameOf={jobNameOf}
+                          showJobName={runScopeAll}
                           expandedRunId={expandedRunId}
                           onToggleRun={(id) => setExpandedRunId(expandedRunId === id ? '' : id)}
                         />
@@ -599,6 +600,7 @@ export function TaskSchedulePage(): JSX.Element {
                         onFilter={setRunFilter}
                         runs={visibleRuns}
                         jobNameOf={jobNameOf}
+                        showJobName
                         expandedRunId={expandedRunId}
                         onToggleRun={(id) => setExpandedRunId(expandedRunId === id ? '' : id)}
                       />
@@ -1220,7 +1222,7 @@ function TimelineBand({
  * onToggleScope 为 null 时不渲染范围切换（未选中任务时没有「只看某个」可切）。
  */
 function RunStream({
-  caption, scopeLabel, onToggleScope, filter, onFilter, runs, jobNameOf, expandedRunId, onToggleRun,
+  caption, scopeLabel, onToggleScope, filter, onFilter, runs, jobNameOf, showJobName, expandedRunId, onToggleRun,
 }: {
   caption: string;
   scopeLabel: string;
@@ -1229,6 +1231,7 @@ function RunStream({
   onFilter: (key: RunFilterKey) => void;
   runs: ScheduledJobRun[];
   jobNameOf: (jobId: string) => string;
+  showJobName: boolean;
   expandedRunId: string;
   onToggleRun: (runId: string) => void;
 }): JSX.Element {
@@ -1273,6 +1276,7 @@ function RunStream({
             key={run.id}
             run={run}
             jobName={jobNameOf(run.jobId)}
+            showJobName={showJobName}
             expanded={expandedRunId === run.id}
             onToggle={() => onToggleRun(run.id)}
           />
@@ -1332,10 +1336,12 @@ function JobRow({
 
 /** 运行流的一行。动作链缩略来自 run.steps，点开展日志与逐步耗时。 */
 function RunRow({
-  run, jobName, expanded, onToggle,
+  run, jobName, showJobName, expanded, onToggle,
 }: {
   run: ScheduledJobRun;
   jobName: string;
+  /** 只看一个任务时每行都印同一个名字，12 行全是被截断的同一串字——那列该消失。 */
+  showJobName: boolean;
   expanded: boolean;
   onToggle: () => void;
 }): JSX.Element {
@@ -1345,7 +1351,9 @@ function RunRow({
       <button type="button" onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-2 text-left">
         <span className={`h-5 w-[3px] shrink-0 rounded-sm ${statusTone(run.status)}`} />
         <span className="w-11 shrink-0 font-mono text-[11px] text-muted-foreground">{formatClock(run.startedAt || run.queuedAt)}</span>
-        <span className={`min-w-0 max-w-[11rem] flex-1 truncate text-[12.5px] font-medium ${bad ? 'text-bad' : ''}`}>{jobName}</span>
+        {showJobName
+          ? <span className={`min-w-0 max-w-[11rem] flex-1 truncate text-[12.5px] font-medium ${bad ? 'text-bad' : ''}`}>{jobName}</span>
+          : <span className="flex-1" />}
         <span className={`shrink-0 rounded px-1.5 py-px text-[10.5px] ${run.trigger === 'manual' ? 'border border-info/30 bg-info-soft text-info' : 'border border-[hsl(var(--hairline-strong))] text-muted-foreground'}`}>
           {run.trigger === 'manual' ? '手动' : run.trigger === 'push' ? 'push' : '定时'}
         </span>
