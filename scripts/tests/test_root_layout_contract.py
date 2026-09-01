@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import pathlib
+import subprocess
 import sys
 
 
@@ -70,11 +71,26 @@ FORBIDDEN_ROOT_DIRECTORIES = {
 }
 
 
+def is_git_ignored(entry: pathlib.Path) -> bool:
+    """Return whether an untracked root entry is intentionally local-only."""
+    result = subprocess.run(
+        ["git", "check-ignore", "--quiet", "--", entry.name],
+        cwd=REPO,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
 def main() -> int:
     failures: list[str] = []
     entries = sorted(REPO.iterdir(), key=lambda path: path.name)
 
     for entry in entries:
+        if is_git_ignored(entry):
+            continue
+
         try:
             entry.name.encode("ascii")
         except UnicodeEncodeError:
@@ -82,7 +98,11 @@ def main() -> int:
                 f"non-ASCII root entry {entry.name!r}; move it into its owning module and use an ASCII path"
             )
 
-        if entry.is_file() and entry.name not in ALLOWED_ROOT_FILES:
+        if entry.is_symlink():
+            failures.append(
+                f"root symlink {entry.name!r} is not allowed; keep real project entrypoints in the repository root"
+            )
+        elif entry.is_file() and entry.name not in ALLOWED_ROOT_FILES:
             failures.append(
                 f"unapproved root file {entry.name!r}; place it in its owning module or update the root contract"
             )
