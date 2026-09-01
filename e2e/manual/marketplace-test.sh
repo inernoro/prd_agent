@@ -6,10 +6,10 @@
 #
 # 使用方法:
 #   export AI_ACCESS_KEY="your-access-key"
-#   ./e2e-tests/marketplace-test.sh
+#   ./e2e/manual/marketplace-test.sh
 #
 # 或者:
-#   AI_ACCESS_KEY="your-access-key" ./e2e-tests/marketplace-test.sh
+#   AI_ACCESS_KEY="your-access-key" ./e2e/manual/marketplace-test.sh
 #
 # ============================================================
 

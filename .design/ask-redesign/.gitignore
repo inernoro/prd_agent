@@ -12,3 +12,6 @@ motion-frames.png
 # prototype 是一次性的交互草稿，真实现落地后它就该退场，别留一份会漂的第二真相。
 motion-demo.html
 prototype.html
+
+# build-motion-demo.py 的可维护外壳是源文件，不是生成后的 demo。
+!motion-demo.shell.html
