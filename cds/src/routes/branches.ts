@@ -15769,11 +15769,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const facts: PreviewProjectFacts[] = visible.map((project) => {
       const entry = stateService.findBranchByProjectAndName(project.id, branch);
       // 光有分支不等于有能打开的地址：computeBranchWebEntries 只要配了预览域名就
-      // 无条件造一条默认入口，于是「分支在、但还没跑起来」这一档永远走不到，
-      // 命令行会打印一个打不开的 URL（Codex P2）。地址只在真的在跑时才算数 ——
-      // 判据与面板显示运行中用的是同一个 status 字段，不另立一套。
-      const running = entry?.status === 'running';
-      const webEntries = entry && running && primaryRoot ? computeBranchWebEntries(entry, primaryRoot) : [];
+      // 无条件造一条默认入口（那条默认入口是面板的正常行为，绝大多数项目并不显式
+      // 声明 web-entry，所以不能去动它），于是「分支在、但还没跑起来」这一档永远
+      // 走不到，命令行会打印一个打不开的 URL。
+      //
+      // 判据要的是「这个地址背后真有东西在接」，光看分支总状态不够（Codex 两轮）：
+      // 只跑后台 worker 的分支同样是 running，却没有任何可路由服务。所以用与转发器
+      // 发布路由**同一条**判据 —— 有 hostPort 且状态可路由的服务至少一个。
+      const routableUp = Object.values(entry?.services ?? {}).some(
+        (svc) => svc?.hostPort && ROUTABLE_SERVICE_STATUSES.has(String(svc.status)),
+      );
+      const webEntries = entry && routableUp && primaryRoot ? computeBranchWebEntries(entry, primaryRoot) : [];
       return {
         projectId: project.id,
         projectSlug: project.slug,

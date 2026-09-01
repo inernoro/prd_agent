@@ -9170,7 +9170,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ident = sub.add_parser("identity", help="身份层：用户级凭证 / 我是谁 / 凭据自愈").add_subparsers(dest="sub", required=True)
     isave = ident.add_parser("save", help="保存用户级凭证到用户目录（跟着人走，不跟着仓库走）")
-    isave.add_argument("--credential", required=True, help="在「权限总览」签发的 cdsu_ 明文")
+    # 明文**不走命令行参数**：argv 对同机任何进程可见，还会留在 shell 历史里。
+    # 默认从 stdin 读（管道）或交互式隐藏输入；--credential 保留只为兼容既有脚本，
+    # 用到时会明确警告一次。
+    isave.add_argument("--credential", default="", help="（不推荐）直接给明文；会进 argv 与 shell 历史，改用 stdin 或交互输入")
     isave.add_argument("--host", default="", help="CDS 主机（默认读 CDS_HOST）")
     isave.set_defaults(func=cmd_identity_save)
     iwho = ident.add_parser("whoami", help="我是谁 / 我对哪些项目有授权")
@@ -9219,6 +9222,22 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _read_secret_stdin_or_prompt(prompt: str) -> str:
+    """读一段不该出现在 argv 里的秘密。
+
+    管道进来（`echo ... | cdscli identity save`）就读 stdin；交互式终端就用
+    getpass 隐藏回显。两条路都不经过命令行参数，也就不进 shell 历史、不被
+    同机的 `ps` 看见。
+    """
+    if not sys.stdin.isatty():
+        return sys.stdin.readline().strip()
+    try:
+        import getpass
+        return getpass.getpass(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
+
+
 def cmd_identity_save(args: argparse.Namespace) -> None:
     """把一张用户级凭证存进用户目录（跟着人走，不跟着仓库走）。"""
     host = str(getattr(args, "host", "") or os.environ.get("CDS_HOST", "")).strip()
@@ -9226,6 +9245,12 @@ def cmd_identity_save(args: argparse.Namespace) -> None:
         die("--host 必填（或先 export CDS_HOST）", code=1)
         return
     credential = str(getattr(args, "credential", "") or "").strip()
+    if credential:
+        # 兼容既有脚本，但要说清代价：这条路径已经把明文写进 argv 和 shell 历史了。
+        print("[warn] --credential 会把明文留在 argv 与 shell 历史里；"
+              "改用 `... | cdscli identity save` 或不带参数交互输入。", file=sys.stderr)
+    else:
+        credential = _read_secret_stdin_or_prompt("粘贴用户级凭证（cdsu_，输入不回显）：")
     if not credential.startswith("cdsu_"):
         die("用户级凭证应以 cdsu_ 开头；在 CDS 系统设置「权限总览」里签发", code=1)
         return
@@ -9239,7 +9264,7 @@ def cmd_identity_whoami(args: argparse.Namespace) -> None:
     cred = _load_user_credential(host)
     if not cred:
         die("本机没有该 CDS 主机的用户级凭证。先在「权限总览」签发，再 "
-            "`cdscli identity save --credential cdsu_...`", code=1)
+            "`cdscli identity save`（粘贴时不回显）", code=1)
         return
     status, resp, _ = _request("GET", "/api/identity/whoami", timeout=15,
                                extra_headers={"x-ai-access-key": cred},
@@ -9274,7 +9299,7 @@ def cmd_identity_heal(args: argparse.Namespace) -> None:
     cred = _load_user_credential(host)
     if not cred:
         die("本机没有该 CDS 主机的用户级凭证，无法自愈。先在「权限总览」签发一张，"
-            "再 `cdscli identity save --credential cdsu_...`", code=1)
+            "再 `cdscli identity save`（粘贴时不回显）", code=1)
         return
 
     project_id = str(getattr(args, "project", "") or os.environ.get("CDS_PROJECT_ID", "")).strip()

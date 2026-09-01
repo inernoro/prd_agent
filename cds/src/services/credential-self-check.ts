@@ -18,6 +18,7 @@
  * | revoked | 被吊销过，何时 | 找项目负责人重新签发 |
  * | expired | 到期了（身份层的凭据短命、用即续） | 项目级跑自愈；用户级找管理员重签 |
  * | principal-disabled | 凭据没问题，是持有它的主体被停用了 | 重新签发无用，先恢复主体 |
+ * | grant-revoked | 主体对这个项目的授权被撤了 | 重新签发也进不来，先请人重新批准 |
  * | never-issued | 这个系统从没签发过这把 | 拿错实例 / 拿错钥匙 / 复制截断 |
  * | prefix-mismatch | 凭据本身有效，但项目前缀与项目当前 slug 不符 | 重新签发（见下） |
  * | not-checkable | 认得出类型，但本实例没有可比对的记录 | 明说查不了，不猜 |
@@ -66,6 +67,8 @@ export type CredentialStatus =
   | 'expired'
   /** 凭据本身好好的，是持有它的那个主体被停用了 —— 重新签发也没用。 */
   | 'principal-disabled'
+  /** 凭据与主体都没问题，是这个主体对该项目的授权被撤了。 */
+  | 'grant-revoked'
   | 'never-issued'
   | 'prefix-mismatch'
   | 'not-checkable'
@@ -104,6 +107,12 @@ export interface CredentialFacts {
   userCredentials?: StoredCredential[];
   /** 主体状态表，用来把「凭据没问题、人被停用了」单独报出来。 */
   principals?: Array<{ id: string; name?: string; status: string }>;
+  /**
+   * 项目授权表（含已撤销条目）。鉴权路径会因为授权被撤而拒绝一把没吊销、没过期
+   * 的项目级凭据 —— 自检拿不到这份事实，就会对着**它自己造成的那个 401** 回答
+   * 「有效」，正是这个端点最不该给出的答案。
+   */
+  grants?: Array<{ principalId: string; projectId: string; revokedAt?: string }>;
   /**
    * 静态访问密钥的 sha256 集合。undefined = 本实例没配 / 调用方没提供，
    * 此时静态密钥只能报 not-checkable，不许猜。
@@ -343,6 +352,26 @@ export function checkCredential(plaintext: string, facts: CredentialFacts): Cred
       // 对不上」。三者的下一步各不相同，塌缩成一个就等于没拆。
       const dead = deadReasonOf(entry, facts);
       if (dead) return { ...describeDead('project', dead, entry, facts), ...identity };
+      // 授权被撤：凭据本身、主体都没问题，但鉴权照样拒。少了这一档，自检会对着
+      // 自己造成的 401 回答「有效」。判据与鉴权同一条（未撤销的授权算数）。
+      if (entry.principalId && facts.grants) {
+        const granted = facts.grants.some((g) =>
+          g.principalId === entry.principalId && g.projectId === project.id && !g.revokedAt);
+        if (!granted) {
+          return {
+            ...describeStored(
+              base(
+                'project',
+                'grant-revoked',
+                `凭据本身有效、主体也正常，但该主体对项目「${project.name || project.slug}」的授权已被撤销 —— 鉴权因此拒绝它。`,
+                '这不是凭据问题，重新签发也进不来。请人重新批准一次该项目的接入；批准之后这把凭据无需更换即可恢复。',
+              ),
+              entry,
+            ),
+            ...identity,
+          };
+        }
+      }
       if (actualSlugHead && actualSlugHead !== claimedSlugHead) {
         return {
           ...describeStored(

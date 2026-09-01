@@ -452,3 +452,69 @@ describe('credential-self-check：与鉴权路径的凭据面对齐', () => {
     expect(new Set(kinds).size).toBe(prefixes.length);
   });
 });
+
+/**
+ * 自检必须认得「授权被撤」这一档（Codex P2）。
+ *
+ * 上一轮我让鉴权在授权被撤时拒掉一把没吊销、没过期的项目级凭据 —— 却没同步给
+ * 自检这份事实。于是自检对着**它自己造成的那个 401** 回答「有效」，正是这个端点
+ * 最不该给出的答案。同一个判断被拆在两处、只改了一处，是本仓库反复踩的形状。
+ */
+describe('credential-self-check：授权被撤要单独报出来', () => {
+  const projectKey = 'cdsp_demo_' + crypto.randomBytes(18).toString('base64url');
+  const iso = (d: number) => new Date(Date.now() + d * 86400_000).toISOString();
+
+  const facts = (grants: Array<{ principalId: string; projectId: string; revokedAt?: string }>) => ({
+    projects: [{
+      id: 'p1', slug: 'demo', name: '演示项目',
+      agentKeys: [{
+        id: 'ak1', principalId: 'pr_a', hash: hashCredential(projectKey),
+        createdAt: iso(-1), expiresAt: iso(20),
+      }],
+    }],
+    principals: [{ id: 'pr_a', name: '某台机器', status: 'active' }],
+    grants,
+  });
+
+  it('授权还在：active', () => {
+    const r = checkCredential(projectKey, facts([{ principalId: 'pr_a', projectId: 'p1' }]));
+    expect(r.status).toBe('active');
+  });
+
+  it('授权被撤：grant-revoked，而不是谎报 active', () => {
+    const r = checkCredential(projectKey, facts([
+      { principalId: 'pr_a', projectId: 'p1', revokedAt: iso(-1) },
+    ]));
+    expect(r.status).toBe('grant-revoked');
+    expect(r.projectId).toBe('p1');
+    // 下一步必须指向「重新批准」，而不是「重新签发」——换把钥匙照样进不来
+    expect(r.nextStep).toContain('批准');
+    expect(r.nextStep).toContain('重新签发也进不来');
+  });
+
+  it('压根没有授权行，也不是 active（自愈签出后授权被删的情形）', () => {
+    const r = checkCredential(projectKey, facts([]));
+    expect(r.status).toBe('grant-revoked');
+  });
+
+  it('存量密钥没有主体，不参与授权判定（零回归）', () => {
+    const legacyKey = 'cdsp_demo_' + crypto.randomBytes(18).toString('base64url');
+    const r = checkCredential(legacyKey, {
+      projects: [{
+        id: 'p1', slug: 'demo',
+        agentKeys: [{ id: 'ak_legacy', hash: hashCredential(legacyKey), createdAt: iso(-400) }],
+      }],
+      principals: [],
+      grants: [],
+    });
+    expect(r.status).toBe('active');
+  });
+
+  it('拿不到授权事实时不猜（旧实例 / 身份层未启用）', () => {
+    const r = checkCredential(projectKey, {
+      projects: facts([]).projects,
+      principals: [{ id: 'pr_a', name: '某台机器', status: 'active' }],
+    });
+    expect(r.status).toBe('active');
+  });
+});

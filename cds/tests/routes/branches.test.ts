@@ -5315,11 +5315,36 @@ describe('Branch Routes', () => {
      * 入口，于是「分支在、但还没跑起来」这一档永远走不到 —— 命令行会照常打印
      * 一个打不开的地址。四种结论分开报是 P5 的整个卖点，少一档等于没分开。
      */
-    it('分支在但还没跑起来：affected-not-deployed，不许给打不开的地址', async () => {
+    it('分支刚建、还在构建：affected-not-deployed，不许给打不开的地址', async () => {
       seedProject('proj-main', 'mainp', 'MAP');
       const branchId = seedRunningBranch('proj-main', 'mainp', 'feature/x');
-      // 改成构建中 —— 分支确实存在，只是还没有能打开的东西
-      stateService.getBranch(branchId)!.status = 'building';
+      // 刚建出来还在构建的分支：没有任何服务在跑，自然没有能打开的地址。
+      // （只翻总状态、留着一个还在跑且有端口的服务，那地址其实是能打开的 ——
+      //  判据要看的是「背后有没有人接」，不是分支这一刻的总状态。）
+      const branch = stateService.getBranch(branchId)!;
+      branch.status = 'building';
+      branch.services = {};
+
+      const res = await request(server, 'POST', '/api/preview-dispatch', {
+        repo: REPO, branch: 'feature/x',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.projects[0].status).toBe('affected-not-deployed');
+      expect(res.body.lines).toHaveLength(0);
+    });
+
+    /**
+     * Codex 第二次点同一处：上一轮我只按分支总状态判「跑起来了没」，而只跑后台
+     * worker 的分支同样是 running —— 照样给出一个背后没人接的地址。判据得看
+     * 「有没有可路由服务在跑」，与转发器发布路由用同一条。
+     */
+    it('分支在跑但只有后台服务：仍是 affected-not-deployed，不给没人接的地址', async () => {
+      seedProject('proj-main', 'mainp', 'MAP');
+      const branchId = seedRunningBranch('proj-main', 'mainp', 'feature/x');
+      // 服务还在跑，但没有对外端口 —— 典型的 worker-only 分支
+      const svc = stateService.getBranch(branchId)!.services!['proj-main-web'];
+      delete (svc as { hostPort?: number }).hostPort;
 
       const res = await request(server, 'POST', '/api/preview-dispatch', {
         repo: REPO, branch: 'feature/x',

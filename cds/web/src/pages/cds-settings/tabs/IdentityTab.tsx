@@ -225,6 +225,20 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
               <Button type="button" size="sm" variant="ghost" onClick={() => setIssued(null)}>我已存好</Button>
             </div>
             <p className="mt-2 text-xs leading-6 text-muted-foreground">{issued.reach}</p>
+            {/*
+              光说「复制、存好」不够：whoami 与自愈只读用户目录下那个文件，
+              存进密码管理器或随手贴进别处，自愈会报「本机没有用户级凭证」——
+              这一屏只出现一次，所以要在这里就把落地方式说清（Codex P2）。
+            */}
+            <div className="mt-3 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--muted))]/40 p-3">
+              <p className="mb-1 text-xs font-semibold">在那台机器上执行一次，凭证才真正落地</p>
+              <pre className="overflow-x-auto rounded bg-[hsl(var(--background))] px-2 py-1.5 font-mono text-[11px] leading-5">cdscli identity save</pre>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                回车后粘贴上面这串（不回显），会写进用户目录并设为仅本人可读。
+                它跟着人走、不跟着仓库走，所以挪目录、重新 clone 都不会丢。
+                <span className="font-medium">不要把明文写进命令行参数</span> —— 那样它会留在 shell 历史里。
+              </p>
+            </div>
           </div>
         ) : null}
       </section>
