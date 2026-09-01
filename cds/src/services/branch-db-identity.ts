@@ -99,6 +99,20 @@ const OWNER_URL_KEYS: Record<BranchDbRuntime, string[]> = {
 };
 
 /**
+ * 连接串的 scheme 必须与运行时对得上才认。
+ *
+ * `DATABASE_URL` 是**共用键**：同一个分支后来注入 PostgreSQL 或 MongoDB 凭据时，它就指向
+ * 那台库的 host。拿它当 MySQL 的归属证据，会把仍然有效的 `MYSQL_*` 判成「别人的」，
+ * 于是工作台/备份/连接串全都回落到服务默认凭据与默认库——读写的可能是共享数据
+ * （Codex P1，2026-09-01）。运行时专属键（MYSQL_URL 等）本身已带语义，共用键必须验 scheme。
+ */
+const OWNER_URL_SCHEMES: Record<BranchDbRuntime, RegExp> = {
+  mysql: /^(mysql|mysqlx|mariadb)$/i,
+  postgres: /^(postgres|postgresql)$/i,
+  mongodb: /^(mongodb|mongodb\+srv)$/i,
+};
+
+/**
  * 这套分支凭据是派发给哪台服务的；判断不出来返回空串。
  *
  * ## 为什么需要这个
@@ -113,6 +127,10 @@ const OWNER_URL_KEYS: Record<BranchDbRuntime, string[]> = {
  */
 export function branchDbCredentialOwner(branchEnv: Record<string, string>, runtime: BranchDbRuntime): string {
   const env = branchEnv || {};
+  // 不认识的运行时（RabbitMQ / MinIO / redis…）没有分支凭据这套东西，直接「判断不出」。
+  // 少了这道，调用方传进一个 unknown 会在下面 for...of undefined 上抛，把只读端点打成 500
+  // （Codex P1，2026-09-01）。
+  if (!OWNER_HOST_KEYS[runtime]) return '';
   for (const key of OWNER_HOST_KEYS[runtime]) {
     const value = String(env[key] ?? '').trim();
     if (value) return value;
@@ -121,7 +139,10 @@ export function branchDbCredentialOwner(branchEnv: Record<string, string>, runti
     const raw = String(env[key] ?? '').trim();
     if (!raw) continue;
     try {
-      const host = new URL(raw).hostname;
+      const url = new URL(raw);
+      const scheme = url.protocol.replace(/:$/, '');
+      if (!OWNER_URL_SCHEMES[runtime].test(scheme)) continue;
+      const host = url.hostname;
       if (host) return host;
     } catch {
       /* 连接串解析不了就当作判断不出来，继续下一个 */

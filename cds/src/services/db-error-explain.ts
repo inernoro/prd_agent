@@ -17,10 +17,24 @@
  * 前者已经修成带库名限定，后者拼不出来——那就把话说清楚，别让人对着 1146 猜。
  */
 
-/** MySQL 1146 / 1049、PostgreSQL 42P01：表或库不存在。 */
+/**
+ * MySQL 1146 / 1049、PostgreSQL 42P01：**表或库**不存在。
+ *
+ * 判据必须钉在「表/库」上，不能笼统认 `does not exist`：PostgreSQL 的
+ * `FATAL: role "cds_..." does not exist` 是**认证失败**，被这条吃掉就会被翻译成
+ * 「表列表旧了，刷新一下」，把真正的凭据恢复路径藏起来（Codex P2，2026-09-01）。
+ */
 export function isMissingTableOrSchemaError(message: string): boolean {
   const text = String(message || '');
-  return /ERROR\s*1146|ERROR\s*1049|42S02|42P01|Unknown database|doesn'?t exist|does not exist/i.test(text);
+  if (isRoleMissingError(text)) return false;
+  return /ERROR\s*1146|ERROR\s*1049|42S02|42P01|Unknown database/i.test(text)
+    || /(table|relation|schema|database)\s+"?[^"\s]+"?\s+does not exist/i.test(text)
+    || /Table\s+'[^']+'\s+doesn'?t exist/i.test(text);
+}
+
+/** PostgreSQL 的角色缺失：是认证问题，不是找不到表。 */
+export function isRoleMissingError(message: string): boolean {
+  return /\brole\s+"?[^"\s]+"?\s+does not exist/i.test(String(message || ''));
 }
 
 /**
@@ -53,6 +67,9 @@ export function explainMissingTable(params: {
   const raw = String(rawError || '').trim();
   const wanted = String(requestedSchema || '').trim();
   if (!wanted || wanted === database) return raw;
+  // 认证类（角色不存在 / 口令不对）先于「找不到表」判定：把它翻成「刷新表列表」
+  // 会把凭据恢复路径藏起来。这类原样返回，交给 explainBranchDbAuthFailure 那条线。
+  if (isRoleMissingError(raw)) return raw;
   const missing = isMissingTableOrSchemaError(raw);
   const denied = isTablePermissionError(raw);
   if (!missing && !denied) return raw;

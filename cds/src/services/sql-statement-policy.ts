@@ -36,10 +36,10 @@ export const READ_STATEMENT_HEADS: readonly string[] = [
 export const WRITE_STATEMENT_HEADS: readonly string[] = [
   'insert', 'update', 'delete', 'replace', 'merge', 'upsert',
   'create', 'alter', 'drop', 'truncate', 'rename', 'comment',
-  'call', 'do', 'set', 'use', 'reset',
+  'call', 'do',
   'grant', 'revoke',
   'analyze', 'optimize', 'repair', 'check', 'checksum', 'vacuum', 'refresh', 'reindex',
-  'flush', 'lock', 'unlock',
+  'flush',
 ];
 
 /**
@@ -55,17 +55,73 @@ export const TRANSACTION_CONTROL_HEADS: readonly string[] = [
   'begin', 'start', 'commit', 'rollback', 'savepoint', 'release',
 ];
 
-/** 越过数据库边界去碰宿主文件系统 / 外部进程的写法，两条路都不收。 */
-const HOST_ESCAPE_PATTERNS: readonly RegExp[] = [
-  /\binto\s+outfile\b/i,
-  /\binto\s+dumpfile\b/i,
-  /\bload\s+data\b/i,
+/**
+ * 连接作用域的语句：和事务控制同一个道理，**这里执行等于没执行**。
+ *
+ * `SET` 的会话变量、`USE` 选中的库、`LOCK TABLES` 拿到的锁，都随进程退出一起消失；
+ * 下一条语句在新连接里跑，设置和锁都不在了，可前一条却报了「成功」。同样是假信号
+ * （Codex P1，2026-09-01）。要让它们生效，必须和依赖它们的语句在同一个会话里跑——
+ * 那就是「初始化 SQL」。
+ */
+export const CONNECTION_SCOPED_HEADS: readonly string[] = [
+  'set', 'use', 'reset', 'lock', 'unlock',
+];
+
+/**
+ * 越过数据库边界去碰宿主文件系统 / 外部进程的**单个词**。
+ *
+ * 只认单词、不认词组，是因为词组能被注释拆开：`SELECT 1 INTO/**\/OUTFILE '/tmp/x'` 里
+ * `into\s+outfile` 匹配不上，但 `outfile` 这个词本身拆不开——SQL 不允许在标识符中间插注释
+ * （Codex P1，2026-09-01）。所以危险标记一律降到词级别，别再往正则里加同义词和空白变体。
+ */
+const HOST_ESCAPE_TOKENS: readonly RegExp[] = [
+  /\boutfile\b/i,
+  /\bdumpfile\b/i,
   /\bload_file\s*\(/i,
-  /\bcopy\b[\s\S]*\bprogram\b/i,
   /\bpg_read_file\b/i,
   /\bpg_read_binary_file\b/i,
   /\bpg_ls_dir\b/i,
 ];
+
+/** 只能按词组认的（`LOAD DATA` / `COPY ... PROGRAM`）：先剥注释再匹配。 */
+const HOST_ESCAPE_PHRASES: readonly RegExp[] = [
+  /\bload\s+data\b/i,
+  /\bcopy\b[\s\S]*\bprogram\b/i,
+];
+
+/**
+ * 剥掉 SQL 注释（`/* *\/`、`--` 到行尾、`#` 到行尾），字符串字面量内的照原样保留。
+ * 只服务于上面的词组匹配；判「危险与否」的主力是词级别标记，不依赖这个函数完美。
+ */
+export function stripSqlComments(sql: string): string {
+  let out = '';
+  let quote: string | null = null;
+  for (let i = 0; i < sql.length; i += 1) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+    if (quote) {
+      out += ch;
+      if (ch === '\\') { out += next ?? ''; i += 1; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; continue; }
+    if (ch === '/' && next === '*') {
+      const end = sql.indexOf('*/', i + 2);
+      i = end === -1 ? sql.length : end + 1;
+      out += ' ';
+      continue;
+    }
+    if ((ch === '-' && next === '-') || ch === '#') {
+      const end = sql.indexOf('\n', i);
+      i = end === -1 ? sql.length : end;
+      out += ' ';
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
 
 /** 只读路径额外要拦的写关键字：CTE 后面可以跟 DELETE/UPDATE（PostgreSQL），头是 `with` 也不代表只读。 */
 const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock)\b/i;
@@ -99,11 +155,20 @@ export function classifySqlStatement(sql: string): SqlStatementClassification {
 
 /** 命中宿主逃逸写法就抛；两条路径共用。 */
 export function assertNoHostEscape(sql: string): void {
-  for (const pattern of HOST_ESCAPE_PATTERNS) {
-    if (pattern.test(sql)) {
+  const stripped = stripSqlComments(sql);
+  for (const pattern of [...HOST_ESCAPE_TOKENS, ...HOST_ESCAPE_PHRASES]) {
+    if (pattern.test(sql) || pattern.test(stripped)) {
       throw new Error('检测到读写宿主文件或调用外部进程的 SQL（如 INTO OUTFILE / LOAD DATA / COPY ... PROGRAM），已拒绝执行。');
     }
   }
+}
+
+function connectionScopedError(head: string): Error {
+  return new Error(
+    `${head.toUpperCase()} 只对当前连接生效，而这里每执行一条语句就是一条新连接：`
+    + '设置、选中的库、表锁都会随进程退出立刻消失，下一条语句拿不到它们，可这一条还会报「成功」。'
+    + '要让它生效，请把它和依赖它的语句一起放进工作台的「初始化 SQL」执行。',
+  );
 }
 
 function transactionControlError(): Error {
@@ -129,8 +194,9 @@ export function normalizeReadOnlyStatement(sql: string): string {
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
   assertSingleStatement(body, '只读 SQL Console ');
-  if (TRANSACTION_CONTROL_HEADS.includes(classifySqlStatement(body).head)) throw transactionControlError();
   const { head, kind } = classifySqlStatement(body);
+  if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
+  if (CONNECTION_SCOPED_HEADS.includes(head)) throw connectionScopedError(head);
   if (kind !== 'read') {
     throw new Error(`只读通道只接受 ${READ_STATEMENT_HEADS.join(' / ').toUpperCase()}；"${head || body.slice(0, 12)}" 属于写操作，请走写 SQL 通道。`);
   }
@@ -148,6 +214,7 @@ export function normalizeWriteStatement(sql: string): string {
   assertSingleStatement(body, '写 SQL ');
   const { head, kind } = classifySqlStatement(body);
   if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
+  if (CONNECTION_SCOPED_HEADS.includes(head)) throw connectionScopedError(head);
   if (kind === 'read') {
     throw new Error('这条是只读语句，请走只读通道执行。');
   }

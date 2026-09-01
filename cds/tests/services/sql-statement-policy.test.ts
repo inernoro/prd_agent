@@ -4,10 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   READ_STATEMENT_HEADS,
+  CONNECTION_SCOPED_HEADS,
   TRANSACTION_CONTROL_HEADS,
   WRITE_STATEMENT_HEADS,
   classifySqlStatement,
   normalizeReadOnlyStatement,
+  stripSqlComments,
   normalizeWriteStatement,
 } from '../../src/services/sql-statement-policy.js';
 import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
@@ -31,7 +33,6 @@ describe('工作台 SQL 准入：该放的都放行', () => {
       'ANALYZE TABLE demo',
       'OPTIMIZE TABLE demo',
       'CALL some_proc(1)',
-      'SET SESSION sql_mode = ""',
       'WITH removed AS (DELETE FROM demo WHERE id = 1 RETURNING *) SELECT * FROM removed',
     ];
     for (const sql of statements) {
@@ -79,6 +80,20 @@ describe('工作台 SQL 准入：该放的都放行', () => {
     }
   });
 
+  /**
+   * 连接作用域语句和事务控制同理：设置/选中的库/表锁随进程退出消失，下一条语句拿不到，
+   * 可这一条还报「成功」（Codex P1，第二轮）。
+   */
+  it('连接作用域语句被拒绝，并指向初始化 SQL', () => {
+    for (const sql of ['SET SESSION sql_mode = ""', 'USE other_db', 'LOCK TABLES demo WRITE', 'UNLOCK TABLES', 'RESET QUERY CACHE']) {
+      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+    }
+    for (const head of CONNECTION_SCOPED_HEADS) {
+      expect(WRITE_STATEMENT_HEADS, `${head} 不该再出现在写白名单里`).not.toContain(head);
+    }
+  });
+
   it('读写分类与两端白名单一致', () => {
     expect(classifySqlStatement('with x as (select 1) select * from x').kind).toBe('read');
     expect(classifySqlStatement('DELETE FROM demo').kind).toBe('write');
@@ -99,6 +114,28 @@ describe('工作台 SQL 准入：该拦的仍拦', () => {
 
   it('只读语句不许从写通道绕过读通道的检查', () => {
     expect(() => normalizeWriteStatement('SELECT * FROM demo')).toThrow(/只读通道/);
+  });
+
+  /**
+   * 注释能把词组拆开：`INTO/**\/OUTFILE` 匹配不上 `into\s+outfile`，而它的语句头是
+   * SELECT，会一路走读通道写出文件——绕过 data-write 权限与二次确认（Codex P1，第二轮）。
+   * 所以危险标记降到**词级别**：SQL 不允许在标识符中间插注释，`outfile` 这个词拆不开。
+   */
+  it('注释拆词组也拦得住', () => {
+    // 词级别标记（outfile / dumpfile）注释拆不开，直接命中宿主逃逸判据
+    for (const sql of [
+      "SELECT 1 INTO/**/OUTFILE '/tmp/x'",
+      "SELECT 1 INTO -- c\nOUTFILE '/tmp/x'",
+      "SELECT 1 INTO/*x*/DUMPFILE '/tmp/x'",
+    ]) {
+      expect(() => normalizeReadOnlyStatement(sql), `读通道应以宿主逃逸拒绝：${sql}`).toThrow(/宿主文件/);
+      expect(() => normalizeWriteStatement(sql), `写通道也应拒绝：${sql}`).toThrow();
+    }
+    // 词组标记（LOAD DATA）靠剥注释后匹配；读通道另有语句头闸先拦，两条路都进不去
+    const loadData = "LOAD/**/DATA INFILE '/etc/passwd' INTO TABLE demo";
+    expect(stripSqlComments(loadData)).toContain('LOAD DATA');
+    expect(() => normalizeReadOnlyStatement(loadData)).toThrow();
+    expect(() => normalizeWriteStatement(loadData)).toThrow();
   });
 
   it('读写宿主文件 / 调外部进程一律拒绝', () => {

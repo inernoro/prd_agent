@@ -6370,6 +6370,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * 可以挂多台同类型库。不做归属判断就会把 A 库的账号、口令、库名喂给 B 库——账号在 B
    * 上不存在，于是「CDS 自己建的库，CDS 自己连不上」（2026-09-01 现场）。
    */
+  /** 只有这三种运行时有「分支凭据」这套东西；其余（redis / rabbitmq / minio / unknown）没有。 */
+  function isBranchDbRuntime(runtime: string): runtime is BranchDbRuntime {
+    return runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb';
+  }
+
   function ownedBranchEnv(branch: BranchEntry, runtime: BranchDbRuntime, service: InfraService): Record<string, string> {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
     return branchDbCredentialsBelongTo(branchEnv, runtime, service.id) ? branchEnv : {};
@@ -6407,11 +6412,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * 官方镜像的 `MYSQL_RANDOM_ROOT_PASSWORD` 属于第三种——口令只在容器日志里出现过一次，
    * CDS、运维、用户手上都没有，任何需要 root 的动作（建库 / 重置凭据）都做不了。
    */
-  function mysqlAdminAvailable(service: InfraService, branch?: BranchEntry): boolean {
+  function resolveMysqlAdmin(service: InfraService, branch?: BranchEntry): { available: boolean; password: string } {
     const env = resolvedInfraEnv(service, branch);
-    if (String(env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '').trim()) return true;
+    const rootPassword = String(env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '').trim();
+    if (rootPassword) return { available: true, password: rootPassword };
     const allowEmpty = String(env.MYSQL_ALLOW_EMPTY_PASSWORD || env.MARIADB_ALLOW_EMPTY_ROOT_PASSWORD || '').trim();
-    return /^(1|true|yes)$/i.test(allowEmpty);
+    // 显式允许空口令 root：**口令就是空的**。这里必须把这个事实带出去——判「能不能」与
+    // 取「用什么连」如果是两个函数，就会出现「判定说能，实际却拿应用账号的口令去连 root」
+    // 的错位，报出来还是 1045（Codex P1，2026-09-01）。
+    if (/^(1|true|yes)$/i.test(allowEmpty)) return { available: true, password: '' };
+    return { available: false, password: '' };
+  }
+
+  function mysqlAdminAvailable(service: InfraService, branch?: BranchEntry): boolean {
+    return resolveMysqlAdmin(service, branch).available;
   }
 
   function maskTextSecrets(textValue: string, secrets: string[]): string {
@@ -7242,7 +7256,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     // 重新派发要以 root 身份 ALTER USER。拿不到 root 就当场说清为什么、给替代路径，
     // 而不是硬跑一条注定 1045 的命令，让用户对着「Access denied for user 'root'」再猜一轮。
-    if (!mysqlAdminAvailable(service, branch)) {
+    const admin = resolveMysqlAdmin(service, branch);
+    if (!admin.available) {
       throw new Error(
         `服务 "${service.id}" 没有 CDS 拿得到的管理员口令（容器用的是随机 root 口令，或没配置 root 口令），`
         + '重新派发分支账号需要管理员身份，无法执行。'
@@ -7256,7 +7271,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const branchUser = branchDatabaseUser(branch);
     const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
-    const rootPassword = mysqlRootPassword(service);
+    // 用上面解出来的管理员口令（空口令 root 就是空串），不再走会回落到应用账号口令的旧取法。
+    const rootPassword = admin.password;
     const sql = [
       `CREATE USER IF NOT EXISTS ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
       `ALTER USER ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
@@ -8469,7 +8485,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const runtime = resourceRuntimeKey(resource.runtime);
     const env = resolvedInfraEnv(service, branch);
     // 归属判断同工作台：分支 env 只有一份，别把另一台库的账号/库名显示成这台的连接串。
-    const branchEnv = runtime === 'redis' ? stateService.getCustomEnvScope(branch.id) : ownedBranchEnv(branch, runtime as BranchDbRuntime, service);
+    // 只有三种数据库运行时有分支凭据；redis / rabbitmq / minio / unknown 一律走原始 env
+    // （给它们传 unknown 会在归属查表上抛，把只读端点打成 500——Codex P1）。
+    const branchEnv = isBranchDbRuntime(runtime)
+      ? ownedBranchEnv(branch, runtime, service)
+      : stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
       const db = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || env.MARIADB_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || env.MARIADB_USER || 'user';
@@ -8505,7 +8525,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
   ): string {
     const runtime = resourceRuntimeKey(resource.runtime);
     const env = resolvedInfraEnv(service, branch);
-    const branchEnv = runtime === 'redis' ? stateService.getCustomEnvScope(branch.id) : ownedBranchEnv(branch, runtime as BranchDbRuntime, service);
+    const branchEnv = isBranchDbRuntime(runtime)
+      ? ownedBranchEnv(branch, runtime, service)
+      : stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
       const database = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || 'root';

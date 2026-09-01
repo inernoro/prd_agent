@@ -221,24 +221,42 @@ describe('branches.ts 真的用上了这套身份与解释', () => {
    */
   it('管理员能力判据只认显式 root 口令 / 显式空口令，不看 MYSQL_PASSWORD', () => {
     const source = readBranchesRoute();
-    const at = source.indexOf('function mysqlAdminAvailable(');
-    expect(at, '找不到 mysqlAdminAvailable').toBeGreaterThan(-1);
-    const fn = source.slice(at, at + 700);
+    const at = source.indexOf('function resolveMysqlAdmin(');
+    expect(at, '找不到 resolveMysqlAdmin').toBeGreaterThan(-1);
+    const fn = source.slice(at, at + 900);
     expect(fn).toContain('MYSQL_ROOT_PASSWORD');
     expect(fn).toContain('MYSQL_ALLOW_EMPTY_PASSWORD');
     expect(fn, '不得回落到应用账号口令').not.toContain('MYSQL_PASSWORD ||');
-    expect(fn).not.toContain('mysqlRootPassword(');
+  });
+
+  /**
+   * 判「能不能用 root」与取「用什么口令连 root」必须是同一处：分成两处时会出现
+   * 「判定说能（ALLOW_EMPTY），实际却拿应用账号口令去连 root」的错位（Codex P1，第二轮）。
+   */
+  it('管理员能力与管理员口令由同一个函数解出', () => {
+    const source = readBranchesRoute();
+    const at = source.indexOf('function resolveMysqlAdmin(');
+    expect(at, '找不到 resolveMysqlAdmin').toBeGreaterThan(-1);
+    const fn = source.slice(at, at + 900);
+    expect(fn).toContain('return { available: true, password: rootPassword };');
+    expect(fn).toContain('return { available: true, password: \'\' };');
+    expect(fn).toContain('return { available: false, password: \'\' };');
+    // 重置必须用它解出的口令，不能再走会回落到应用账号口令的旧取法
+    const resetAt = source.indexOf('async function resetMysqlBranchCredentials(');
+    const reset = source.slice(resetAt, resetAt + 1800);
+    expect(reset).toContain('const rootPassword = admin.password;');
+    expect(reset, '重置不该再用会回落到 MYSQL_PASSWORD 的取法').not.toContain('mysqlRootPassword(service)');
   });
 
   it('重置凭据在拿不到管理员口令时当场拒绝，而不是硬跑注定 1045 的命令', () => {
     const source = readBranchesRoute();
     const at = source.indexOf('async function resetMysqlBranchCredentials(');
     expect(at, '找不到 resetMysqlBranchCredentials').toBeGreaterThan(-1);
-    const fn = source.slice(at, at + 1600);
-    expect(fn).toContain('if (!mysqlAdminAvailable(service, branch)) {');
+    const fn = source.slice(at, at + 1800);
+    expect(fn).toContain('if (!admin.available) {');
     // 拒绝必须给得出去处（对齐仓库既有的「拒绝要有下一步」纪律）
     expect(fn).toContain('MYSQL_ROOT_PASSWORD');
-    const guardAt = fn.indexOf('if (!mysqlAdminAvailable(service, branch)) {');
+    const guardAt = fn.indexOf('if (!admin.available) {');
     const execAt = fn.indexOf('shell.exec(');
     expect(guardAt, '拒绝必须排在执行之前').toBeLessThan(execAt);
   });
@@ -248,13 +266,9 @@ describe('branches.ts 真的用上了这套身份与解释', () => {
     const guard = (source: string) => {
       const at = source.indexOf('async function resetMysqlBranchCredentials(');
       expect(at).toBeGreaterThan(-1);
-      expect(source.slice(at, at + 1600)).toContain('if (!mysqlAdminAvailable(service, branch)) {');
+      expect(source.slice(at, at + 1800)).toContain('if (!admin.available) {');
     };
-    expectGuardRedOnMutation(
-      guard,
-      real,
-      mutate(real, 'if (!mysqlAdminAvailable(service, branch)) {', 'if (false) {'),
-    );
+    expectGuardRedOnMutation(guard, real, mutate(real, 'if (!admin.available) {', 'if (false) {'));
   });
 
   it('删库时只删得掉「证明是本分支的」账号', () => {

@@ -48,6 +48,27 @@ describe('分支凭据的归属判定', () => {
     expect(branchDbCredentialsBelongTo({ DATABASE_URL: 'not a url' }, 'mysql', 'any-service')).toBe(true);
   });
 
+  /**
+   * DATABASE_URL 是共用键：分支后来注入 PostgreSQL 凭据时它指向那台库，
+   * 拿它当 MySQL 的归属证据会把仍然有效的 MYSQL_* 判成别人的（Codex P1，第二轮）。
+   */
+  it('共用的 DATABASE_URL 只在 scheme 对得上时才认', () => {
+    const pgUrlOnly = { MYSQL_USER: 'u', MYSQL_PASSWORD: 'p', MYSQL_DATABASE: 'app', DATABASE_URL: 'postgresql://u:p@pg-main:5432/app' };
+    expect(branchDbCredentialOwner(pgUrlOnly, 'mysql'), 'postgres 连接串不该当作 mysql 的归属证据').toBe('');
+    expect(branchDbCredentialsBelongTo(pgUrlOnly, 'mysql', 'any-mysql')).toBe(true);
+    expect(branchDbCredentialOwner(pgUrlOnly, 'postgres')).toBe('pg-main');
+    expect(branchDbCredentialOwner({ DATABASE_URL: 'mongodb://m-main:27017/app' }, 'mysql')).toBe('');
+    expect(branchDbCredentialOwner({ DATABASE_URL: 'mongodb://m-main:27017/app' }, 'mongodb')).toBe('m-main');
+    expect(branchDbCredentialOwner({ DATABASE_URL: 'mysql://my-main:3306/app' }, 'mysql')).toBe('my-main');
+  });
+
+  it('不认识的运行时直接判断不出，不抛', () => {
+    // /connection-string 对 RabbitMQ / MinIO 会带着 unknown 进来，抛错会把只读端点打成 500
+    expect(() => branchDbCredentialOwner({ MYSQL_HOST: 'x' }, 'unknown' as never)).not.toThrow();
+    expect(branchDbCredentialOwner({ MYSQL_HOST: 'x' }, 'unknown' as never)).toBe('');
+    expect(branchDbCredentialsBelongTo({ MYSQL_HOST: 'x' }, 'unknown' as never, 'svc')).toBe(true);
+  });
+
   it('三种运行时各看自己的 HOST，不串台', () => {
     const env = { MYSQL_HOST: 'db-a', POSTGRES_HOST: 'db-b', MONGODB_HOST: 'db-c' };
     expect(branchDbCredentialOwner(env, 'mysql')).toBe('db-a');
@@ -142,6 +163,17 @@ describe('branches.ts 的每个分支 env 读取点都判了归属', () => {
     const branchEnv = stateService.getCustomEnvScope(branch.id);`,
       ),
     );
+  });
+
+  it('连接串构造只对三种数据库运行时判归属，其余走原始 env', () => {
+    const source = readBranchesRoute();
+    expect(source).toContain('function isBranchDbRuntime(runtime: string): runtime is BranchDbRuntime {');
+    // 两个连接串构造用它分流；删库路径不需要，它在算出库名那一步就把 redis 抛掉了，
+    // 走到归属判断时运行时必然是三种之一。
+    const guards = source.split('isBranchDbRuntime(runtime)').length - 1;
+    expect(guards, '两个连接串构造都要用这个判据').toBe(2);
+    expect(source, '不许再用 runtime !== redis 反推它是数据库运行时')
+      .not.toContain("runtime === 'redis' ? stateService.getCustomEnvScope(branch.id) : ownedBranchEnv");
   });
 
   it('资源清单里的连接串也判归属（否则面板显示的是另一台库的账号）', () => {

@@ -6,3 +6,4 @@
 | feat | cds | 数据工作台 SQL 准入收敛成唯一策略并放开：DDL / DML / 账号维护 / 维护动作全部可执行，CTE 等只读语句不再被两条通道都拒；仅拦宿主文件逃逸（OUTFILE / LOAD DATA / COPY PROGRAM 等） |
 | fix | cds | 修复 MySQL 工作台点表预览/查字段时丢掉 schema，永远查连接默认库导致 ERROR 1146；现在按请求的库限定，跨库表报错也讲清「当前库 vs 请求库」并给下一步 |
 | fix | cds | Review 修复四条：MySQL 工作台限定只能读本分支库（禁止用 schema 参数越界读同实例其它库）；删库在归属未知时失败关闭；事务控制语句两条通道都拒（每次执行是独立连接，BEGIN/ROLLBACK 会给出假的安全信号）；改数据的 CTE 判为写，不再两条路都不收 |
+| fix | cds | Review 第二轮六条：共用 DATABASE_URL 只在 scheme 匹配时才当归属证据；未知运行时（RabbitMQ/MinIO）不再进数据库归属判定导致连接串端点 500；管理员能力与管理员口令改由同一函数解出（空口令 root 不再拿应用账号口令去连）；SET/USE/LOCK 等连接作用域语句两条通道都拒；宿主逃逸判据降到词级别，注释拆词组也拦得住；PostgreSQL 角色缺失不再被误翻成「表列表旧了」 |
