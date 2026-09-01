@@ -163,6 +163,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['cds-system-topology', 'CDS 网络拓扑', 'cds-system-topology.ts', 'system', 'system', 'read-only', 'direct', 'cds', '', '只读拓扑用于判断控制面、节点和路由故障范围'],
   ['cds-system-offsite-backup', 'CDS 离机备份配置', 'cds-system-offsite-backup.ts', 'system', 'system', 'write', 'guided', 'cds', '', '凭据先对 R2 实测再落盘，通不过一律不保存；读取永不返回 secret，access key 只回尾四位'],
   ['credential-self-check', '凭据自检', 'credential-self-check.ts', 'system', 'public', 'read-only', 'direct', 'cds', 'connect', '匿名只读诊断：把「未授权」拆成有效 / 已吊销 / 从未签发 / 项目前缀不符；不返回明文或哈希，也不签发任何凭据'],
+  ['identity', '身份、用户级凭证与项目授权', 'identity.ts', 'system', 'system', 'write', 'guided', 'cds', 'connect', '用户级凭证只能建项目/列项目/为已授权项目签钥，可达路由一处收口；签发、撤销与授权变更留痕，撤源头级联撤下游'],
   ['cluster', '集群与 Build Gate', 'cluster.ts', 'system', 'protocol-token', 'destructive', 'guided', 'cds', '', 'join、leave 和调度策略变更必须由系统管理员确认'],
   ['comment-template', 'PR 评论模板', 'comment-template.ts', 'mixed', 'system', 'write', 'direct', 'cds', '', '预览后再保存，项目模板和系统模板不能混用'],
   ['deployment-runs', '部署运行与结构化诊断', 'deployment-runs.ts', 'project', 'project', 'read-only', 'direct', 'cds-deploy-pipeline', 'deployment-run', 'SSE 诊断需要持续反馈并保留终态证据'],

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, Principal, UserCredential, ProjectGrant, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -2514,6 +2514,147 @@ export class StateService {
     return true;
   }
 
+  // ── 身份层：主体 / 用户级凭证 / 项目授权（2026-09-01）──
+  //
+  // 三张表都是**纯增量**：缺省为空数组，任何存量安装的行为不变。它们回答的是
+  // 此前系统答不上来的一个问题——「这把钥匙是谁的」。没有它，钥匙就是身份，
+  // 于是丢钥匙等于丢身份、换钥匙等于作废已批的授权、吊销列表看不出归属。
+
+  getPrincipals(): Principal[] {
+    return this.state.principals || [];
+  }
+
+  getPrincipal(id: string): Principal | undefined {
+    return (this.state.principals || []).find((p) => p.id === id);
+  }
+
+  addPrincipal(entry: Principal): void {
+    if (!this.state.principals) this.state.principals = [];
+    this.state.principals.push(entry);
+    this.save();
+  }
+
+  /** 停用一个主体：它名下所有凭证立刻不可用，但记录保留（审计）。 */
+  setPrincipalStatus(id: string, status: Principal['status'], actor?: string): boolean {
+    const entry = (this.state.principals || []).find((p) => p.id === id);
+    if (!entry) return false;
+    entry.status = status;
+    if (status === 'disabled') {
+      entry.disabledAt = new Date().toISOString();
+      if (actor) entry.disabledBy = actor;
+    } else {
+      delete entry.disabledAt;
+      delete entry.disabledBy;
+    }
+    this.save();
+    return true;
+  }
+
+  touchPrincipalSeen(id: string): void {
+    const entry = (this.state.principals || []).find((p) => p.id === id);
+    if (!entry) return;
+    entry.lastSeenAt = new Date().toISOString();
+    try { this.save(); } catch { /* best-effort */ }
+  }
+
+  getUserCredentials(): UserCredential[] {
+    return this.state.userCredentials || [];
+  }
+
+  addUserCredential(entry: UserCredential): void {
+    if (!this.state.userCredentials) this.state.userCredentials = [];
+    this.state.userCredentials.push(entry);
+    this.save();
+  }
+
+  /**
+   * 解析明文 `cdsu_<suffix>` 找到未吊销的用户级凭证。
+   *
+   * 与项目级同一套做法：只存 sha256、定长比较。**过期判定不在这里做** ——
+   * 这里只回答「是哪一张」，能不能用由 identity.credentialUsability 统一判，
+   * 免得两处各写一份过期逻辑然后漂移。
+   */
+  findUserCredentialByPlaintext(plaintextKey: string): UserCredential | undefined {
+    if (!plaintextKey || !plaintextKey.startsWith('cdsu_')) return undefined;
+    const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
+    const hashBuf = Buffer.from(hash, 'hex');
+    for (const entry of this.state.userCredentials || []) {
+      if (entry.revokedAt) continue;
+      try {
+        const entryBuf = Buffer.from(entry.hash, 'hex');
+        if (entryBuf.length !== hashBuf.length) continue;
+        if (crypto.timingSafeEqual(entryBuf, hashBuf)) return entry;
+      } catch { /* malformed hash in state, skip */ }
+    }
+    return undefined;
+  }
+
+  /** 记一次使用；`newExpiresAt` 有值时同时滑动续期（用一次自动续）。 */
+  touchUserCredential(id: string, newExpiresAt?: string): void {
+    const entry = (this.state.userCredentials || []).find((c) => c.id === id);
+    if (!entry) return;
+    entry.lastUsedAt = new Date().toISOString();
+    if (newExpiresAt) entry.expiresAt = newExpiresAt;
+    try { this.save(); } catch { /* best-effort */ }
+  }
+
+  /** 记一次签发（签发留痕：留痕是这套设计唯一的安全收益，看不见就等于没留）。 */
+  recordUserCredentialIssue(id: string): void {
+    const entry = (this.state.userCredentials || []).find((c) => c.id === id);
+    if (!entry) return;
+    entry.issuedCount = (entry.issuedCount || 0) + 1;
+    entry.lastIssuedAt = new Date().toISOString();
+    try { this.save(); } catch { /* best-effort */ }
+  }
+
+  revokeUserCredential(id: string, actor?: string): boolean {
+    const entry = (this.state.userCredentials || []).find((c) => c.id === id);
+    if (!entry) return false;
+    if (!entry.revokedAt) {
+      entry.revokedAt = new Date().toISOString();
+      if (actor) entry.revokedBy = actor;
+      this.save();
+    }
+    return true;
+  }
+
+  getProjectGrants(): ProjectGrant[] {
+    return this.state.projectGrants || [];
+  }
+
+  addProjectGrant(entry: ProjectGrant): void {
+    if (!this.state.projectGrants) this.state.projectGrants = [];
+    // 同一 (主体, 项目) 已有未撤销授权时不重复写 —— 授权是集合语义，不是流水。
+    const existing = this.state.projectGrants.find(
+      (g) => g.principalId === entry.principalId && g.projectId === entry.projectId && !g.revokedAt,
+    );
+    if (existing) return;
+    this.state.projectGrants.push(entry);
+    this.save();
+  }
+
+  revokeProjectGrant(id: string, actor?: string): boolean {
+    const entry = (this.state.projectGrants || []).find((g) => g.id === id);
+    if (!entry) return false;
+    if (!entry.revokedAt) {
+      entry.revokedAt = new Date().toISOString();
+      if (actor) entry.revokedBy = actor;
+      this.save();
+    }
+    return true;
+  }
+
+  /** 全部项目级凭证（带上所属项目），供权限总览按主体聚合。 */
+  getAllAgentKeysWithProject(): Array<AgentKey & { projectId: string; projectName: string }> {
+    const out: Array<AgentKey & { projectId: string; projectName: string }> = [];
+    for (const project of this.state.projects || []) {
+      for (const key of project.agentKeys || []) {
+        out.push({ ...key, projectId: project.id, projectName: project.aliasName || project.name });
+      }
+    }
+    return out;
+  }
+
   // ── Project-scoped Agent Keys ──
   //
   // Each AgentKey stores only the sha256 of the plaintext key; the key
@@ -2580,6 +2721,9 @@ export class StateService {
       if (projectSlugHead !== slugHead) continue;
       for (const entry of project.agentKeys || []) {
         if (entry.revokedAt) continue;
+        // 身份层（2026-09-01）：新签发的项目级凭证是短命的（用即续）。存量密钥
+        // 没有 expiresAt，这里恒为 false —— 与启用前逐字节一致，零回归。
+        if (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()) continue;
         try {
           const entryBuf = Buffer.from(entry.hash, 'hex');
           if (entryBuf.length !== hashBuf.length) continue;

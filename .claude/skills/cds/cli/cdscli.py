@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.15.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -1773,6 +1773,85 @@ def _has_cds_auth() -> bool:
     """与 _auth_headers() 的逻辑保持一致：项目级 cdsp_* 或全局 AI_ACCESS_KEY 任一。"""
     return bool(os.environ.get("CDS_PROJECT_KEY", "").strip()
                 or os.environ.get("AI_ACCESS_KEY", "").strip())
+
+
+# ── 身份层：用户级凭证与自愈回落（2026-09-01）────────────────────────────
+#
+# 项目级凭据存在**仓库根**的 .cds/credentials.json 里。挪个目录、换台机器、
+# 重新 clone，它就不在了 —— 而报出来是一句「未授权」，于是人开始猜，管理员去
+# 项目卡上一看「key 明明还在」。密钥其实没失效，是文件没跟着走。
+#
+# 用户级凭证放**用户目录**、按 CDS 主机索引，因此跟着人走。凭据文件丢了就回落到
+# 它，用它为「我已获授权的项目」当场补一张项目级凭证写回仓库根 —— 全程零人工。
+# 没授权才走页面批准，这正是「默认只对自己创建的项目有权限，其余手动批一次」。
+
+_USER_CREDENTIALS_PATH = os.path.join(
+    os.path.expanduser("~"), ".cds", "user-credentials.json")
+
+
+def _load_user_credential(host: str) -> str:
+    """按 CDS 主机取本机的用户级凭证。一个人可能连多个 CDS 实例，所以按 host 索引。"""
+    try:
+        with open(_USER_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+    entry = (data.get("hosts") or {}).get(_normalize_host_key(host)) or {}
+    return str(entry.get("credential") or "").strip()
+
+
+def _normalize_host_key(host: str) -> str:
+    return (host or "").strip().rstrip("/").replace("https://", "").replace("http://", "").lower()
+
+
+def save_user_credential(host: str, credential: str) -> str:
+    """把用户级凭证写进用户目录（0600）。不进仓库、不打印、不进日志。"""
+    os.makedirs(os.path.dirname(_USER_CREDENTIALS_PATH), exist_ok=True)
+    data: dict[str, Any] = {"version": 1, "hosts": {}}
+    try:
+        with open(_USER_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+            if isinstance(existing, dict):
+                data = existing
+                data.setdefault("hosts", {})
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    data["hosts"][_normalize_host_key(host)] = {
+        "credential": credential,
+        "savedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    tmp = _USER_CREDENTIALS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, _USER_CREDENTIALS_PATH)
+    return _USER_CREDENTIALS_PATH
+
+
+def try_self_heal_project_credential(host: str, project_id: str) -> dict[str, Any] | None:
+    """仓库里的项目级凭据读不到时，用用户级凭证当场补一张。
+
+    返回 None = 没有用户级凭证、或该主体对这个项目没有授权（那就该走页面批准）。
+    绝不静默失败成「未授权」——调用方拿到 None 要把原因说清楚。
+    """
+    user_cred = _load_user_credential(host)
+    if not user_cred:
+        return None
+    status, resp, _ = _request(
+        "POST", "/api/identity/project-credentials",
+        body={"projectId": project_id}, timeout=20,
+        extra_headers={"x-ai-access-key": user_cred},
+        fatal_network_errors=False,
+    )
+    if status == 201 and isinstance(resp, dict) and resp.get("plaintext"):
+        _save_local_credentials(host=host, project_id=project_id,
+                                project_key=str(resp["plaintext"]))
+        return {"projectId": project_id, "healed": True,
+                "grantOrigin": resp.get("grantOrigin")}
+    if isinstance(resp, dict) and resp.get("error") == "no_grant":
+        return {"projectId": project_id, "healed": False,
+                "reason": "no-grant", "nextStep": resp.get("nextStep")}
+    return None
 
 
 def _call_safe(method: str, path: str, timeout: int = 10,
@@ -9089,6 +9168,17 @@ def _build_parser() -> argparse.ArgumentParser:
     sm.add_argument("id", help="branchId")
     sm.set_defaults(func=cmd_smoke)
 
+    ident = sub.add_parser("identity", help="身份层：用户级凭证 / 我是谁 / 凭据自愈").add_subparsers(dest="sub", required=True)
+    isave = ident.add_parser("save", help="保存用户级凭证到用户目录（跟着人走，不跟着仓库走）")
+    isave.add_argument("--credential", required=True, help="在「权限总览」签发的 cdsu_ 明文")
+    isave.add_argument("--host", default="", help="CDS 主机（默认读 CDS_HOST）")
+    isave.set_defaults(func=cmd_identity_save)
+    iwho = ident.add_parser("whoami", help="我是谁 / 我对哪些项目有授权")
+    iwho.set_defaults(func=cmd_identity_whoami)
+    iheal = ident.add_parser("heal", help="凭据丢了就自己补回来（挪目录 / 换机器 / 新 clone 后用）")
+    iheal.add_argument("--project", default="", help="项目 id（默认按 git 仓库反查）")
+    iheal.set_defaults(func=cmd_identity_heal)
+
     pu = sub.add_parser(
         "preview-url",
         help="打印当前分支在 CDS 实际发布的全部预览 URL"
@@ -9127,6 +9217,105 @@ def _build_parser() -> argparse.ArgumentParser:
     sy.set_defaults(func=cmd_sync_from_cds)
 
     return p
+
+
+def cmd_identity_save(args: argparse.Namespace) -> None:
+    """把一张用户级凭证存进用户目录（跟着人走，不跟着仓库走）。"""
+    host = str(getattr(args, "host", "") or os.environ.get("CDS_HOST", "")).strip()
+    if not host:
+        die("--host 必填（或先 export CDS_HOST）", code=1)
+        return
+    credential = str(getattr(args, "credential", "") or "").strip()
+    if not credential.startswith("cdsu_"):
+        die("用户级凭证应以 cdsu_ 开头；在 CDS 系统设置「权限总览」里签发", code=1)
+        return
+    path = save_user_credential(host, credential)
+    ok({"host": host, "path": path}, note=f"用户级凭证已保存到 {path}（0600，不进仓库）")
+
+
+def cmd_identity_whoami(args: argparse.Namespace) -> None:
+    """我是谁 / 我对哪些项目有授权。"""
+    host = os.environ.get("CDS_HOST", "").strip()
+    cred = _load_user_credential(host)
+    if not cred:
+        die("本机没有该 CDS 主机的用户级凭证。先在「权限总览」签发，再 "
+            "`cdscli identity save --credential cdsu_...`", code=1)
+        return
+    status, resp, _ = _request("GET", "/api/identity/whoami", timeout=15,
+                               extra_headers={"x-ai-access-key": cred},
+                               fatal_network_errors=False)
+    if status != 200 or not isinstance(resp, dict):
+        die(f"读取身份失败: HTTP {status}", code=2, extra={"response": resp})
+        return
+    if _HUMAN:
+        principal = resp.get("principal") or {}
+        print(f"主体：{principal.get('name')}（{principal.get('id')}，{principal.get('status')}）")
+        grants = resp.get("grants") or []
+        if not grants:
+            print("项目授权：无 —— 只能建新项目；操作别人建的项目要先批准一次")
+        for g in grants:
+            print(f"  - {g.get('projectName') or g.get('projectId')}"
+                  f"（{'创建' if g.get('origin') == 'created' else '批准'}）")
+    else:
+        ok(resp, note="身份与授权")
+
+
+def cmd_identity_heal(args: argparse.Namespace) -> None:
+    """凭据丢了就自己补回来。
+
+    这条命令存在的理由：项目级凭据存在仓库根，挪个目录 / 换台机器 / 重新 clone
+    它就不在了，而报出来是一句「未授权」。密钥其实没失效，是文件没跟着走。
+    有用户级凭证 + 该项目的授权，就当场补一张写回仓库根，全程零人工。
+    """
+    host = os.environ.get("CDS_HOST", "").strip()
+    if not host:
+        die("CDS_HOST 未设置", code=1)
+        return
+    cred = _load_user_credential(host)
+    if not cred:
+        die("本机没有该 CDS 主机的用户级凭证，无法自愈。先在「权限总览」签发一张，"
+            "再 `cdscli identity save --credential cdsu_...`", code=1)
+        return
+
+    project_id = str(getattr(args, "project", "") or os.environ.get("CDS_PROJECT_ID", "")).strip()
+    if not project_id:
+        # 不知道项目 id 时按仓库反查：用户级凭证可以列出它看得见的项目。
+        try:
+            repo_root = subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"], text=True,
+                stderr=subprocess.DEVNULL).strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            repo_root = ""
+        repo = _git_repo_full_name(repo_root) if repo_root else ""
+        if not repo:
+            die("既没有 --project 也解析不出 git 仓库，无法确定要补哪个项目的凭据", code=1)
+            return
+        status, resp, _ = _request("GET", "/api/projects", timeout=20,
+                                   extra_headers={"x-ai-access-key": cred},
+                                   fatal_network_errors=False)
+        projects = (resp or {}).get("projects") if isinstance(resp, dict) else None
+        candidates = [
+            p for p in (projects or [])
+            if isinstance(p, dict) and str(p.get("githubRepoFullName") or "").lower() == repo.lower()
+        ]
+        if len(candidates) != 1:
+            die(f"仓库 {repo} 对应 {len(candidates)} 个可见项目，请用 --project 指定要补哪一个",
+                code=2, extra={"candidates": [p.get("id") for p in candidates]})
+            return
+        project_id = str(candidates[0].get("id"))
+
+    result = try_self_heal_project_credential(host, project_id)
+    if result is None:
+        die("自愈失败：用户级凭证不可用（已吊销 / 已过期 / 主体被停用），"
+            "或该项目不存在。先跑 `cdscli identity whoami` 看看这张凭证还认不认。",
+            code=3, extra={"projectId": project_id})
+        return
+    if not result.get("healed"):
+        die(f"该主体对项目 {project_id} 没有授权。{result.get('nextStep') or ''}",
+            code=4, extra=result)
+        return
+    ok(result, note=f"已为项目 {project_id} 补发项目级凭据并写回仓库根"
+                    f"（授权来源：{'创建' if result.get('grantOrigin') == 'created' else '批准'}）")
 
 
 def main(argv: list[str] | None = None) -> None:

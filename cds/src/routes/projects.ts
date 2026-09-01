@@ -2781,6 +2781,29 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // 每个新建项目发一把独立、隔离的 key,建完即可接着操作它刚建的项目(2026-07-09 统一
     // 授权模型:创建时返回 scoped key)。access.projects === 'all' 的全权 key 本就能操作
     // 所有项目,无需再发。
+    // 身份层（2026-09-01）：建项目 = 自动写一条「创建型」项目授权。
+    //
+    // 这是自愈链路的起点：有了这条授权，同一主体日后换机器、挪目录、重新 clone
+    // 导致仓库里的凭据文件丢了，都能当场补一张项目级凭证，全程零人工 —— 而不是
+    // 像今天这样「钥匙没了等于身份没了，重新申请重新批」。
+    //
+    // 判据刻意是「在不在授权名单里」而不是「是不是我建的」：创建只是拿到授权的
+    // 一种方式，页面批准是另一种，两者写进同一张表、往后一视同仁。
+    const creatorPrincipal = (req as unknown as { cdsPrincipal?: { principalId: string } }).cdsPrincipal;
+    if (creatorPrincipal) {
+      try {
+        stateService.addProjectGrant({
+          id: `pg_${randomBytes(6).toString('hex')}`,
+          projectId: newProject.id,
+          principalId: creatorPrincipal.principalId,
+          origin: 'created',
+          grantedAt: new Date().toISOString(),
+        });
+      } catch {
+        // 授权写失败不阻断建项目本身：项目已建好，管理员仍可在权限总览里补授权。
+      }
+    }
+
     let issuedProjectKey: { keyId: string; plaintext: string; preview: string } | undefined;
     if (callerAccess && callerAccess.access.projects !== 'all') {
       const already = Array.isArray(callerAccess.access.projects)
