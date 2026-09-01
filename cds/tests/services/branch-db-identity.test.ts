@@ -101,6 +101,30 @@ describe('认证失败的解释', () => {
     expect(message).toContain(raw);
   });
 
+  /**
+   * 反过来的一半（Codex P2，第五轮）：`GRANT SELECT ON demo TO missing_role` 报的是
+   * 语句级的 `ERROR: role "missing_role" does not exist`——连接好好的、分支账号也好好的，
+   * 只是被 GRANT 的角色不存在。把它算成认证失败，工作台会对着一条正常 SQL 说
+   * 「当前分支账号被拒」并指路重置凭据，而凭据根本没坏。
+   */
+  it('语句里引用到别的缺失角色，不算认证失败', () => {
+    const raw = 'ERROR:  role "missing_role" does not exist';
+    expect(isDbAuthFailure(raw, 'cds_demo_1a2b3c4d')).toBe(false);
+    expect(explainBranchDbAuthFailure({
+      runtime: 'postgres',
+      branchId: INCIDENT_BRANCH,
+      user: 'cds_demo_1a2b3c4d',
+      rawError: raw,
+    })).toBe(raw);
+  });
+
+  it('缺失的角色就是登录账号时，即使没有 FATAL 也算认证失败', () => {
+    const raw = 'ERROR:  role "cds_demo_1a2b3c4d" does not exist';
+    expect(isDbAuthFailure(raw, 'cds_demo_1a2b3c4d')).toBe(true);
+    // 不知道登录账号是谁时，只认连接级的 FATAL，不瞎猜
+    expect(isDbAuthFailure(raw)).toBe(false);
+  });
+
   it('CDS 派发账号的 1045 给出原因与下一步，并保留原始错误', () => {
     const message = explainBranchDbAuthFailure({
       runtime: 'mysql',

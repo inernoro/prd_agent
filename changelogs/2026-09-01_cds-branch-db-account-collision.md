@@ -7,4 +7,5 @@
 | fix | cds | 修复 MySQL 工作台点表预览/查字段时丢掉 schema，永远查连接默认库导致 ERROR 1146；现在按请求的库限定，跨库表报错也讲清「当前库 vs 请求库」并给下一步 |
 | fix | cds | Review 修复四条：MySQL 工作台限定只能读本分支库（禁止用 schema 参数越界读同实例其它库）；删库在归属未知时失败关闭；事务控制语句两条通道都拒（每次执行是独立连接，BEGIN/ROLLBACK 会给出假的安全信号）；改数据的 CTE 判为写，不再两条路都不收 |
 | fix | cds | Review 第二轮六条：共用 DATABASE_URL 只在 scheme 匹配时才当归属证据；未知运行时（RabbitMQ/MinIO）不再进数据库归属判定导致连接串端点 500；管理员能力与管理员口令改由同一函数解出（空口令 root 不再拿应用账号口令去连）；SET/USE/LOCK 等连接作用域语句两条通道都拒；宿主逃逸判据降到词级别，注释拆词组也拦得住；PostgreSQL 角色缺失不再被误翻成「表列表旧了」 |
+| fix | cds | Review 第五轮两条：PostgreSQL 的「角色不存在」只在缺失角色就是登录账号（或连接级 FATAL）时才算认证失败，`GRANT ... TO missing_role` 这类语句错误不再被翻成「分支账号被拒、去重置凭据」；资源 chip 的顶边高光改走双主题都定义的 `--shadow-chip`（白高光在白天的白 chip 上等于没有），守卫扫描补上 Tailwind 下划线写法里的颜色字面量 |
 | fix | cds | 判「这条 SQL 是不是写」时先剥注释、抹字符串字面量：`WITH x AS (SELECT 'update') SELECT ...` 是纯读语句，不再被推进需要 admin 二次确认的写通道；前后端共用同一份关键字表与同一套扫描，由守卫钉住 |

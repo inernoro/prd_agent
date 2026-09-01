@@ -32,9 +32,40 @@ export function isMissingTableOrSchemaError(message: string): boolean {
     || /Table\s+'[^']+'\s+doesn'?t exist/i.test(text);
 }
 
-/** PostgreSQL 的角色缺失：是认证问题，不是找不到表。 */
+const ROLE_MISSING_RE = /\brole\s+"?([^"\s]+?)"?\s+does not exist/i;
+
+/** 报文里说「不存在」的那个角色名；没有就返回空串。 */
+export function missingRoleName(message: string): string {
+  return ROLE_MISSING_RE.exec(String(message || ''))?.[1] || '';
+}
+
+/** PostgreSQL 的角色缺失：无论是连接失败还是语句里引用到了别的角色，都不是「找不到表」。 */
 export function isRoleMissingError(message: string): boolean {
-  return /\brole\s+"?[^"\s]+"?\s+does not exist/i.test(String(message || ''));
+  return Boolean(missingRoleName(message));
+}
+
+/**
+ * 缺失的角色**就是这次登录用的那个角色** —— 也就是连接根本没建起来，属于认证失败。
+ *
+ * 必须和「语句里引用到一个不存在的角色」分开：`GRANT SELECT ON demo TO missing_role`
+ * 报的是 `ERROR: role "missing_role" does not exist`，连接好好的、账号也好好的，
+ * 只是被 GRANT 的那个角色不存在。把它一并算成认证失败，工作台就会对着一条正常的
+ * SQL 报错说「当前分支账号被拒」并指路「重置连接凭据」——凭据没坏，重置了也不会好
+ * （Codex P2，2026-09-01）。
+ *
+ * 两个可信信号，满足其一即可：
+ *   - 缺失的角色名 === 这次登录用的账号；
+ *   - 报文带连接级的 `FATAL`（psql 的
+ *     `connection to server ... failed: FATAL:  role "cds_x" does not exist`；
+ *     语句级错误是 `ERROR:` 开头）。
+ */
+export function isLoginRoleMissingError(message: string, loginUser?: string): boolean {
+  const text = String(message || '');
+  const role = missingRoleName(text);
+  if (!role) return false;
+  const login = String(loginUser || '').trim();
+  if (login && role === login) return true;
+  return /\bFATAL\b/.test(text);
 }
 
 /**

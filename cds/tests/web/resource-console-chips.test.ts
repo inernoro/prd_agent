@@ -147,12 +147,47 @@ describe('方案 B 的分层落在 token 上，不是硬编码颜色', () => {
     expect(source, '分区标题应有竖分隔线').toMatch(/border-r border-\[hsl\(var\(--hairline-strong\)\)\]/);
   });
 
-  it('这一块没有引入任何暗色/浅色字面量（cds-theme-tokens 规则）', () => {
+  /**
+   * 第一版只扫 `#hex` 与 `rgb()`，于是 chip 的 `shadow-[inset_0_1px_0_hsl(0_0%_100%/.05)]`
+   * 一路绿灯——Tailwind 的下划线写法把颜色藏在方括号里，那条白色内高光在白天主题的
+   * 白 chip 上等于没有，双主题表现不一致（Codex P1，2026-09-01）。所以扫描要认
+   * `hsl(` 本身：里面不是 `var(--…)` 就是字面量。
+   */
+  function themeLiteralsIn(block: string): string[] {
+    return [
+      ...block.match(/#[0-9a-fA-F]{3,8}\b/g) || [],
+      ...block.match(/rgba?\([^)]*\)/g) || [],
+      // hsl( 后面直接跟数字/其它 = 写死的颜色；hsl(var(--x)) 才是走 token
+      ...block.match(/hsl\((?!var\()[^)]*\)?/g) || [],
+    ];
+  }
+
+  it('这一块没有引入任何颜色字面量（cds-theme-tokens 规则）', () => {
     const source = readDrawer();
     const at = source.indexOf('方案 B（2026-09-01 用户选定）');
     expect(at).toBeGreaterThan(-1);
-    const block = source.slice(at, at + 3000);
-    expect(block).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-    expect(block).not.toMatch(/rgba?\(/);
+    expect(themeLiteralsIn(source.slice(at, at + 3000))).toEqual([]);
+  });
+
+  it('红用例：把 chip 高光写回颜色字面量，守卫必须变红', () => {
+    const real = readDrawer();
+    const guard = (source: string) => {
+      const at = source.indexOf('方案 B（2026-09-01 用户选定）');
+      expect(themeLiteralsIn(source.slice(at, at + 3000))).toEqual([]);
+    };
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(real, 'shadow-[var(--shadow-chip)]', 'shadow-[inset_0_1px_0_hsl(0_0%_100%/.05)]'),
+    );
+  });
+
+  it('chip 抬升配方在两个主题都定义了', () => {
+    const css = fs.readFileSync(path.join(CDS_ROOT, 'web/src/index.css'), 'utf8');
+    const light = css.indexOf("[data-theme='light']");
+    expect(light).toBeGreaterThan(-1);
+    // 暗色块在前、白天块在后：两侧各要有一份定义，只加一半就是「白天没这档」
+    expect(css.slice(0, light)).toContain('--shadow-chip:');
+    expect(css.slice(light)).toContain('--shadow-chip:');
   });
 });

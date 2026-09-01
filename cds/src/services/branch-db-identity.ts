@@ -33,6 +33,7 @@
  * mongo 更宽，统一按最紧的那个来，一个分支在三种库里拿到同一个账号名。
  */
 import { createHash } from 'node:crypto';
+import { isLoginRoleMissingError } from './db-error-explain.js';
 
 /** MySQL 8 的账号名上限（CHAR(32)）；三种库统一按最紧的这个算。 */
 export const BRANCH_DB_ACCOUNT_MAX_LEN = 32;
@@ -177,14 +178,15 @@ export function isCdsManagedBranchAccount(user: string): boolean {
  *
  * MySQL 的 1045 对「口令错」和「账号根本不存在」报同一句话，所以这条判据只回答
  * 「是不是认证被拒」，不回答「为什么被拒」——后者由 explainBranchDbAuthFailure 给证据。
+ *
+ * `loginUser` 传的是这次连接用的账号。PostgreSQL 的 `role "x" does not exist` 只有在
+ * x 就是登录账号（或报文带连接级 FATAL）时才算认证失败；语句里引用到别的角色
+ * （`GRANT ... TO missing_role`）连接是好的，见 isLoginRoleMissingError。
  */
-export function isDbAuthFailure(message: string): boolean {
+export function isDbAuthFailure(message: string, loginUser?: string): boolean {
   const text = String(message || '');
-  // PostgreSQL 的 `FATAL: role "cds_..." does not exist`：角色被删掉了，也是认证这条线的
-  // 事（口令不对与账号不在，对用户是同一个下一步）。不认它就只剩一行裸报文，
-  // 凭据恢复路径被藏起来（Codex P2，2026-09-01）。
   return /ERROR\s*1045|Access denied for user|password authentication failed|authentication failed|auth failed/i.test(text)
-    || /\brole\s+"?[^"\s]+"?\s+does not exist/i.test(text);
+    || isLoginRoleMissingError(text, loginUser);
 }
 
 /**
@@ -212,7 +214,7 @@ export function explainBranchDbAuthFailure(params: {
 }): string {
   const { runtime, branchId, user, rawError, adminAvailable } = params;
   const raw = String(rawError || '').trim();
-  if (!isDbAuthFailure(raw) || !isCdsManagedBranchAccount(user)) return raw;
+  if (!isDbAuthFailure(raw, user) || !isCdsManagedBranchAccount(user)) return raw;
   const label = runtime === 'postgres' ? 'PostgreSQL' : 'MySQL';
   const collided = user === legacyBranchDbAccountName(branchId) && user !== branchDbAccountName(branchId);
   return [
