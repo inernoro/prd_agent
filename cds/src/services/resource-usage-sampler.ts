@@ -1,6 +1,7 @@
 import type { StateService } from './state.js';
 import type { BranchEntry } from '../types.js';
 import { summarizeBuildActivity, type BuildActivitySummary } from './build-activity-tracker.js';
+import { recordContainerSample } from './container-metrics-history.js';
 
 /**
  * 项目级资源占用采样（2026-06-23）。
@@ -37,10 +38,17 @@ export interface ResourceUsageSnapshot {
   totals: { cpuPercent: number; memUsedMB: number; runningContainers: number };
 }
 
-/** 采样只需要 CPU% 与内存字节，window 化依赖 ContainerService.getServiceStats。 */
+/**
+ * 采样器自己只用 CPU% 与内存字节做项目汇总，但它拿到的是完整 stats——
+ * 顺手把整帧喂给 container-metrics-history（2026-09-01）。
+ * 以前这里把 net / limit 直接丢掉，导致「采了却没有历史」。
+ */
 interface ContainerStatLite {
   cpuPercent: number;
   memUsedBytes: number;
+  memLimitBytes?: number;
+  netRxBytes?: number;
+  netTxBytes?: number;
 }
 interface StatsProvider {
   getServiceStats(names: string[]): Promise<Map<string, ContainerStatLite>>;
@@ -178,6 +186,17 @@ export class ResourceUsageSampler {
         ? await this.containerService.getServiceStats(runningNames)
         : new Map<string, ContainerStatLite>();
       const nowMs = Date.now();
+      // 同一帧同时供两处用：项目汇总（下面）与按容器的历史序列。
+      // 这是全宿主唯一的常驻采集点，抽屉不开也在攒，所以「关掉抽屉丢历史」不再成立。
+      for (const [containerName, stat] of statsByContainer) {
+        recordContainerSample(containerName, {
+          cpuPercent: stat.cpuPercent,
+          memUsedBytes: stat.memUsedBytes,
+          memLimitBytes: stat.memLimitBytes ?? 0,
+          netRxBytes: stat.netRxBytes ?? 0,
+          netTxBytes: stat.netTxBytes ?? 0,
+        }, nowMs);
+      }
       const snapshot = computeResourceSnapshot(
         branches,
         statsByContainer,
