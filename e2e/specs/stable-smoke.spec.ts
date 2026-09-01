@@ -871,6 +871,28 @@ async function deleteStableHostedSite(page: Page, token: string, siteId: string)
   expect((await page.request.get(`/api/web-pages/${siteId}`, { headers: authHeaders(token) })).status()).toBe(404);
 }
 
+function readSseTypingText(stream: string) {
+  return stream
+    .replaceAll('\r\n', '\n')
+    .split('\n\n')
+    .flatMap((frame) => {
+      const lines = frame.split('\n');
+      const eventType = lines.find((line) => line.startsWith('event:'))?.slice(6).trim();
+      if (eventType !== 'typing') return [];
+      const data = lines
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim())
+        .join('\n');
+      try {
+        const payload = JSON.parse(data) as { text?: unknown };
+        return typeof payload.text === 'string' ? [payload.text] : [];
+      } catch {
+        return [];
+      }
+    })
+    .join('');
+}
+
 test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   test('[CORE-001] 首页与入口静态资源可用', async ({ page }) => {
     const resourceFailures: string[] = [];
@@ -1105,7 +1127,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       shareId = share.id;
 
       await page.goto(share.shareUrl, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByText(runKey, { exact: true })).toBeVisible();
+      await expect(page.locator('#root').getByText(runKey, { exact: true }).first()).toBeVisible();
       await expect.poll(() => page.frames().some((frame) => frame.url().startsWith('about:srcdoc')), {
         message: '分享页未进入 srcDoc 预览路径',
         timeout: 20_000,
@@ -1136,7 +1158,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(stream).toContain('event: phase');
       expect(stream).toContain('event: typing');
       expect(stream).toContain('event: done');
-      expect(stream).toContain(uploaded.marker);
+      expect(readSseTypingText(stream)).toContain(uploaded.marker);
       expect(stream).not.toContain('ASK_NO_CONTENT');
       expect(stream).not.toContain('event: error');
     } finally {
