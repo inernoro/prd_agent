@@ -161,6 +161,40 @@ describe('技能来源面板', () => {
     expect(markup).toContain('没有配置上游');
   });
 
+  /*
+   * 分类明细只有在加起来等于总数时才准露面。
+   * 技能库按角色筛（产品经理 18 个），来源面板报的是整份清单（22 个）——
+   * 两个口径摆在同一块面板里对不上，用户只会以为哪个数错了。
+   */
+  it('分类条数加得起来才显示', () => {
+    const source = { kind: 'builtin', bundleCount: 2, skillCount: 22, localSkillCount: 22, upstreamSkillCount: 0, upstreamConfigured: true };
+    const base = { state: 'ok' as const, source, fallbackCount: 19, rawUrl: 'https://x/api', onRetry: () => {} };
+    const good = renderToStaticMarkup(createElement(SkillSourcePanel, {
+      ...base, groups: [{ key: 'a', label: '基础方法', count: 14 }, { key: 'b', label: '研发交付', count: 8 }],
+    }));
+    expect(good).toContain('这 22 个技能分成');
+    expect(good).toContain('基础方法');
+
+    // 口径不一致（按角色筛过的 18）：宁可不显示，也不摆一组对不上的数字
+    const mismatched = renderToStaticMarkup(createElement(SkillSourcePanel, {
+      ...base, groups: [{ key: 'a', label: '基础方法', count: 10 }, { key: 'b', label: '研发交付', count: 8 }],
+    }));
+    expect(mismatched).not.toContain('技能分成');
+  });
+
+  it('角色筛掉一部分时说清楚为什么技能库比总数少', () => {
+    const markup = renderToStaticMarkup(createElement(SkillSourcePanel, {
+      state: 'ok',
+      source: { kind: 'builtin', bundleCount: 4, skillCount: 22, localSkillCount: 22, upstreamSkillCount: 0, upstreamConfigured: true },
+      roleLabel: '产品经理',
+      roleSkillCount: 18,
+      fallbackCount: 19,
+      rawUrl: 'https://x/api',
+      onRetry: () => {},
+    }));
+    expect(markup).toContain('按「产品经理」筛出 18 个');
+  });
+
   it('清单读到了但服务端没报来源时，说没报出来，不编一个', () => {
     const markup = renderToStaticMarkup(createElement(SkillSourcePanel, {
       state: 'ok',

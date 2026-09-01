@@ -324,6 +324,19 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace }: Age
 
   const recommendedKeys = useMemo(() => recommendedSkills.map((skill) => skill.key), [recommendedSkills])
 
+  // 来源面板按**整份清单**分类，不按角色筛过的那份：面板上写着「4 类 · 22 个技能」，
+  // 底下的分类条数就必须加起来也是 22。拿 availableSkills 算会得到 18，
+  // 同一块面板里两个数对不上，用户只会以为哪个错了。
+  const catalogGroups = useMemo(() => {
+    const counts = new Map<string, { label: string; count: number }>()
+    for (const skill of skills) {
+      const current = counts.get(skill.groupKey)
+      if (current) current.count += 1
+      else counts.set(skill.groupKey, { label: skill.groupLabel, count: 1 })
+    }
+    return [...counts].map(([key, value]) => ({ key, label: value.label, count: value.count }))
+  }, [skills])
+
   useEffect(() => {
     setSelectedSkills(recommendedSkills.map((skill) => skill.key))
   }, [recommendedSkills])
@@ -733,6 +746,9 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace }: Age
                     <SkillSourcePanel
                       state={skillSourceState}
                       source={skillSource}
+                      groups={catalogGroups}
+                      roleLabel={roleProfile.label}
+                      roleSkillCount={availableSkills.length}
                       fallbackCount={FALLBACK_SKILLS.length}
                       rawUrl={`${serviceOrigin}/api/skills/bundles`}
                       onRetry={() => { void loadSkillBundles() }}
@@ -1039,15 +1055,26 @@ export function SkillLibrarySheet({
  * 每一行都必须有真实来源：服务端报什么就显示什么，没报出来就说没报出来，
  * 不用 0 或者「未知版本」把空位填上。原始 JSON 留在角落给排障用。
  */
-export function SkillSourcePanel({ state, source, fallbackCount, rawUrl, onRetry, onOpenMarketplace }: {
+export function SkillSourcePanel({
+  state, source, groups = [], roleLabel, roleSkillCount, fallbackCount, rawUrl, onRetry, onOpenMarketplace,
+}: {
   state: SkillSourceState
   source: SkillSourceInfo | null
+  /** 整份清单的分类条数（不是按角色筛过的那份），加起来必须等于 source.skillCount。 */
+  groups?: readonly { key: string; label: string; count: number }[]
+  roleLabel?: string
+  /** 这个角色能看到的条数。它比总数少是正常的，但得说出来，否则用户以为清单少了。 */
+  roleSkillCount?: number
   /** 读不到时页面用的兜底清单条数，用来如实告诉用户「你现在看到的是这份」。 */
   fallbackCount: number
   rawUrl: string
   onRetry: () => void
   onOpenMarketplace?: () => void
 }) {
+  // 分类条数只有在加起来等于总数时才敢展示。对不上说明两个数来自不同口径，
+  // 那种情况下摆出来只会让人以为哪个错了——宁可不显示。
+  const groupsTotal = groups.reduce((sum, group) => sum + group.count, 0)
+  const groupsTrustworthy = groups.length > 0 && source != null && groupsTotal === source.skillCount
   const badge = state === 'loading'
     ? { text: '正在读取', className: 'bg-[hsl(var(--surface-sunken))] text-muted-foreground' }
     : state === 'fallback'
@@ -1102,6 +1129,12 @@ export function SkillSourcePanel({ state, source, fallbackCount, rawUrl, onRetry
             <dl className="grid gap-2 px-4 py-3">
               <SourceRow label="来源" value={source.kind === 'builtin' ? '随 CDS 版本发布的内置清单' : source.kind} />
               <SourceRow label="清单" value={`${source.bundleCount} 类 · ${source.skillCount} 个技能`} />
+              {roleLabel && typeof roleSkillCount === 'number' && roleSkillCount !== source.skillCount && (
+                <SourceRow
+                  label="适用"
+                  value={`按「${roleLabel}」筛出 ${roleSkillCount} 个，技能库里能看到的就是这些`}
+                />
+              )}
               <SourceRow
                 label="离线"
                 value={source.upstreamSkillCount === 0
@@ -1109,6 +1142,21 @@ export function SkillSourcePanel({ state, source, fallbackCount, rawUrl, onRetry
                   : `${source.localSkillCount} 个这台 CDS 自带，另外 ${source.upstreamSkillCount} 个要回源才装得上`}
               />
             </dl>
+
+            {groupsTrustworthy && (
+              <div className="border-t border-[hsl(var(--hairline))] px-4 py-3">
+                <div className="text-[11px] font-semibold text-muted-foreground">这 {source.skillCount} 个技能分成</div>
+                <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                  {groups.map((group) => (
+                    <div key={group.key} className="flex items-center gap-2 text-xs">
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
+                      <span className="min-w-0 flex-1 truncate text-foreground">{group.label}</span>
+                      <span className="cds-ident shrink-0 text-[11px] text-muted-foreground">{group.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {source.upstreamSkillCount > 0 && !source.upstreamConfigured && (
               <div className="mx-4 mb-3 flex items-start gap-2 rounded-lg border border-warn bg-warn-soft px-3 py-2">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
