@@ -24,6 +24,7 @@ import { createPendingImportRouter } from './routes/pending-import.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
+import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
@@ -1387,6 +1388,10 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   if (method === 'GET' && /^\/api\/bootstrap\/[a-z0-9-]+$/.test(path)) return true;
   if (method === 'GET' && path === '/api/skills/bundles') return true;
   if (method === 'GET' && /^\/api\/skills\/[a-z0-9-]+\/download$/.test(path)) return true;
+  // 凭据自检（2026-09-01）：诊断一把过不了鉴权的凭据，必须在鉴权之前放行，
+  // 否则它永远执行不到、只会再回一句「未授权」。出参不含明文与哈希。
+  // 与 middleware/github-auth.ts 的 PUBLIC_PATHS 保持同步。
+  if (method === 'GET' && path === '/api/credentials/self-check') return true;
   return false;
 }
 
@@ -4046,6 +4051,10 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+
+  // 凭据自检：免鉴权（见 isPublicAccessRequestRoute / github-auth PUBLIC_PATHS），
+  // 把「未授权」拆成有效 / 已吊销 / 从未签发 / 项目前缀不符 / 查不了几种可分辨结论。
+  app.use('/api', createCredentialSelfCheckRouter({ stateService: deps.stateService }));
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({

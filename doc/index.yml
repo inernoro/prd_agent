@@ -264,6 +264,7 @@ docs:
   plan.cds.agent.official-sdk-migration: "CDS Agent 官方 SDK 商业闭环 · 计划"
   plan.cds.backlog-matrix: "CDS 未完成事项矩阵 · 计划"
   plan.cds.infra-hardening: "CDS 基础设施加固 · 计划"
+  plan.cds.multi-project-identity: "CDS 一仓多项目与身份层 · 计划"
   plan.cds.multi-project-phases: "CDS 多项目剩余交付 · 计划"
   plan.cds.release-system: "CDS 发布系统改进 · 计划"
   plan.cds.resilience-rollout: "CDS 高可用运行验证 · 计划"
