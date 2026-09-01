@@ -21,6 +21,7 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import type { StateService } from '../services/state.js';
+import { assertNotMachineAgentKey } from './projects.js';
 import type { AgentKey, Principal, ProjectGrant, UserCredential } from '../types.js';
 import {
   buildPrincipalOverview,
@@ -82,15 +83,23 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
   const router = Router();
   const { stateService } = deps;
 
-  /** 管理动作要求「不是项目级凭证」—— 项目级凭证只管自己那个项目，管不了身份。 */
+  /**
+   * 管理动作要求「是人，不是机器钥匙」。
+   *
+   * 只挡 `cdsProjectKey` 是不够的（Codex P1）：全权 `cdsg_`（projects: 'all'）
+   * 不会被 stamp 成项目级凭证，于是一把机器钥匙就能给任意主体签凭证、停用主体、
+   * 增删项目授权 —— 而签发/吊销全局通行证那几条路由早就用
+   * `assertNotMachineAgentKey` 把所有机器钥匙一律挡在门外了。身份管理的杀伤力
+   * 只大不小，判据必须对齐到同一条，不能只看项目级那一种。
+   */
   function requireAdmin(req: unknown): { ok: true } | { ok: false; body: Record<string, unknown> } {
-    const projectKey = (req as { cdsProjectKey?: unknown }).cdsProjectKey;
-    if (projectKey) {
+    const machine = assertNotMachineAgentKey(req as { cdsProjectKey?: unknown; cdsAccess?: unknown });
+    if (machine) {
       return {
         ok: false,
         body: {
           error: 'forbidden',
-          message: '项目级凭证只管自己那个项目，不能管理身份、凭证或授权。',
+          message: '机器钥匙（项目级或全局级）不能管理身份、凭证或授权。请在浏览器登录 CDS 操作。',
         },
       };
     }

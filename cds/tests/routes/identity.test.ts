@@ -86,6 +86,11 @@ describe('身份层路由', () => {
       if (req.headers['x-project-key']) {
         (req as any).cdsProjectKey = { projectId: 'proj-a', keyId: 'k1' };
       }
+      // 全权 cdsg_ 机器钥匙：server.ts 不会给它盖 cdsProjectKey，只盖 cdsAccess ——
+      // 正是这个差别让「只挡项目级」的门卫把机器钥匙当成了管理员。
+      if (req.headers['x-global-key']) {
+        (req as any).cdsAccess = { keyId: 'g1', access: { projects: 'all' } };
+      }
       next();
     });
     app.use('/api', createIdentityRouter({ stateService }));
@@ -289,5 +294,84 @@ describe('接入申请批准 = 写授权，不只是发钥匙', () => {
     expect(source).toContain("origin: 'approved'");
     // 申请阶段必须认一次主体，否则批准时无从写起
     expect(source).toContain('resolveUserCredential');
+  });
+});
+
+/**
+ * Codex P1（安全）：身份管理的门卫只挡项目级凭证，而全权 `cdsg_` 机器钥匙
+ * （projects: 'all'）不会被盖 `cdsProjectKey` —— 于是一把机器钥匙就能给任意主体
+ * 签凭证、停用主体、增删项目授权。而签发/吊销全局通行证那几条路由早就用
+ * `assertNotMachineAgentKey` 把所有机器钥匙一律挡在门外了：同样杀伤力的动作，
+ * 两套判据，宽的那套赢。
+ */
+describe('身份管理只认人，不认机器钥匙', () => {
+  let tmp: string;
+  let stateService: StateService;
+  let server: http.Server;
+
+  beforeEach(async () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-identity-admin-'));
+    stateService = new StateService(path.join(tmp, 'state.json'), tmp);
+    stateService.load();
+    stateService.addPrincipal({
+      id: 'pr_v', name: '受害主体', kind: 'machine', status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      if (req.headers['x-global-key']) {
+        (req as never as { cdsAccess: unknown }).cdsAccess = { keyId: 'g1', access: { projects: 'all' } };
+      }
+      if (req.headers['x-project-key']) {
+        (req as never as { cdsProjectKey: unknown }).cdsProjectKey = { projectId: 'p', keyId: 'k' };
+      }
+      next();
+    });
+    app.use('/api', createIdentityRouter({ stateService }));
+    server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => server.once('listening', () => r()));
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((r) => server.close(() => r()));
+    flushAllJsonStateStores();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const H = { 'x-global-key': '1' };
+
+  it('全权机器钥匙不能给已有主体签凭证（拿到就等于冒充那个主体）', async () => {
+    const res = await call(server, 'POST', '/api/identity/user-credentials', { principalId: 'pr_v' }, H);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('forbidden');
+  });
+
+  it('全权机器钥匙不能停用主体（那是一键切断别人访问）', async () => {
+    const res = await call(server, 'POST', '/api/identity/principals/pr_v/status', { status: 'disabled' }, H);
+    expect(res.status).toBe(403);
+    expect(stateService.getPrincipal('pr_v')?.status).toBe('active');
+  });
+
+  it('全权机器钥匙不能增删项目授权', async () => {
+    const grant = await call(server, 'POST', '/api/identity/grants', { principalId: 'pr_v', projectId: 'p1' }, H);
+    expect(grant.status).toBe(403);
+    const revoke = await call(server, 'POST', '/api/identity/grants/pg_x/revoke', {}, H);
+    expect(revoke.status).toBe(403);
+  });
+
+  it('全权机器钥匙也读不了权限总览（那是一份完整的凭据地图）', async () => {
+    const res = await call(server, 'GET', '/api/identity/overview', undefined, H);
+    expect(res.status).toBe(403);
+  });
+
+  it('项目级凭证同样被挡（原来的判据没被放宽）', async () => {
+    const res = await call(server, 'GET', '/api/identity/overview', undefined, { 'x-project-key': '1' });
+    expect(res.status).toBe(403);
+  });
+
+  it('没盖任何机器钥匙时放行（判据不是恒假）', async () => {
+    const res = await call(server, 'GET', '/api/identity/overview');
+    expect(res.status).toBe(200);
   });
 });

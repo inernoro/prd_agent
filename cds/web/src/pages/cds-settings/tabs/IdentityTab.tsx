@@ -367,7 +367,9 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
           <h4 className="mb-1 text-xs font-semibold text-[hsl(var(--warn))]">未认领的存量凭证 {unclaimed.length} 张</h4>
           <p className="mb-2 text-xs leading-6 text-muted-foreground">
             这些是身份层之前签发的项目级凭证，还没有归属主体。它们照常可用，只是不享受
-            「换机器自助补发」和「按主体聚合」。下次使用时认领，或在项目卡上重签一张即可。
+            「换机器自助补发」和「按主体聚合」。要让某台机器拿到这两样，让它用自己的用户级
+            凭证跑一次自愈、拿一张有主的新凭证，再吊销这张旧的。存量凭证不会自己认领 ——
+            光看它被使用，认不出背后是谁。
           </p>
           <div className="flex flex-wrap gap-2 text-xs">
             {unclaimed.slice(0, 30).map((cred) => (

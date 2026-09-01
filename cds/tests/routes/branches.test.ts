@@ -5310,6 +5310,26 @@ describe('Branch Routes', () => {
       expect(main.entries).toEqual([]);
     });
 
+    /**
+     * Codex P2：只要配了预览域名，`computeBranchWebEntries` 就无条件造一条默认
+     * 入口，于是「分支在、但还没跑起来」这一档永远走不到 —— 命令行会照常打印
+     * 一个打不开的地址。四种结论分开报是 P5 的整个卖点，少一档等于没分开。
+     */
+    it('分支在但还没跑起来：affected-not-deployed，不许给打不开的地址', async () => {
+      seedProject('proj-main', 'mainp', 'MAP');
+      const branchId = seedRunningBranch('proj-main', 'mainp', 'feature/x');
+      // 改成构建中 —— 分支确实存在，只是还没有能打开的东西
+      stateService.getBranch(branchId)!.status = 'building';
+
+      const res = await request(server, 'POST', '/api/preview-dispatch', {
+        repo: REPO, branch: 'feature/x',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.projects[0].status).toBe('affected-not-deployed');
+      expect(res.body.lines).toHaveLength(0);
+    });
+
     it('波及但 CDS 上没有这条分支：affected-no-branch，不是报错', async () => {
       seedProject('proj-self', 'selfp', 'CDS Self', ['cds/**']);
 
