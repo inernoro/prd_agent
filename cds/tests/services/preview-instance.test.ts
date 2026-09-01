@@ -254,8 +254,23 @@ describe('seedPreviewInstanceDemoData', () => {
     expect(seedPreviewInstanceDemoData(service)).toBe(true);
     expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID).length).toBeGreaterThan(0);
     expect(service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID).length).toBeGreaterThan(0);
-    // 首播不该重跑：分支还是原来那一条，没有被再播一遍
-    expect(service.getAllBranches()).toHaveLength(1);
+
+    const branches = service.getAllBranches();
+    // 老实例已有的那条原样保留（补播只补缺的，不重写既有条目）
+    expect(branches.find((b) => b.id === `${PREVIEW_DEMO_PROJECT_ID}-old`)?.branch).toBe('feat/old');
+    // 而当前清单里的状态覆盖面必须补齐——线上真的踩过这个洞：预览实例停在
+    // 旧版本播下的三条分支上，清单扩到五条之后「构建中 / 冷分支」两种卡片
+    // 在实例里从来没出现过。判据钉覆盖面，不钉条数。
+    for (const status of ['running', 'error', 'building', 'idle']) {
+      expect(branches.some((b) => b.status === status)).toBe(true);
+    }
+  });
+
+  it('补播只补缺的分支，第二次调用不再产生副作用', () => {
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const first = service.getAllBranches().map((b) => b.id).sort();
+    expect(seedPreviewInstanceDemoData(service)).toBe(false);
+    expect(service.getAllBranches().map((b) => b.id).sort()).toEqual(first);
   });
 
   it('is idempotent — second call is a no-op', () => {

@@ -26,8 +26,9 @@ function minutesAgoIso(minutes: number): string {
  *
  * **分节幂等**，不是全有或全无：预览实例的 state 跨部署保留，如果只用
  * 「零项目才播」一个总守卫，以后往演示数据里加的任何东西都永远到不了
- * 已经播过的实例——升级了 CDS，新页面还是空的。所以首播（项目/分支）
- * 和后续补播（定时任务/验收报告）各自判各自的。
+ * 已经播过的实例——升级了 CDS，新页面还是空的。所以首播（项目 + 构建配置 +
+ * 活动日志）和补播（缺的演示分支 / 定时任务 / 验收报告）各自判各自的，
+ * 补播还要按 id 逐条比对，不能只判「这一类有没有」。
  */
 export function seedPreviewInstanceDemoData(state: StateService): boolean {
   const core = seedCoreDemoData(state);
@@ -76,77 +77,7 @@ function seedCoreDemoData(state: StateService): boolean {
   ];
   for (const profile of profiles) state.addBuildProfile(profile);
 
-  const branches: BranchEntry[] = [
-    {
-      id: `${project.id}-sample-running-feat`,
-      projectId: project.id,
-      branch: 'feat/sample-running',
-      worktreePath: '/tmp/preview-demo/sample-running',
-      status: 'running',
-      createdAt: minutesAgoIso(180),
-      lastAccessedAt: minutesAgoIso(6),
-      notes: '演示数据：展示「运行中」状态的分支卡片，无真实容器。',
-      services: {
-        'demo-api': { profileId: 'demo-api', containerName: 'cds-demo-api-sample', hostPort: 10101, status: 'running' },
-        'demo-web': { profileId: 'demo-web', containerName: 'cds-demo-web-sample', hostPort: 10102, status: 'running' },
-      },
-    },
-    {
-      id: `${project.id}-sample-error-fix`,
-      projectId: project.id,
-      branch: 'fix/sample-error',
-      worktreePath: '/tmp/preview-demo/sample-error',
-      status: 'error',
-      errorMessage: '演示数据：构建失败示例（exit 1），用于查看错误态 UI。',
-      createdAt: minutesAgoIso(90),
-      notes: '演示数据：展示「错误」状态与错误信息展示。',
-      services: {
-        'demo-api': {
-          profileId: 'demo-api',
-          containerName: 'cds-demo-api-error',
-          hostPort: 10103,
-          status: 'error',
-          errorMessage: '演示数据：dotnet build 退出码 1',
-        },
-      },
-    },
-    {
-      id: `${project.id}-sample-idle-feat`,
-      projectId: project.id,
-      branch: 'feat/sample-idle',
-      worktreePath: '/tmp/preview-demo/sample-idle',
-      status: 'idle',
-      createdAt: minutesAgoIso(30),
-      notes: '演示数据：尚未部署的分支。',
-      services: {},
-    },
-    {
-      id: `${project.id}-sample-building-chore`,
-      projectId: project.id,
-      branch: 'chore/sample-building',
-      worktreePath: '/tmp/preview-demo/sample-building',
-      status: 'building',
-      createdAt: minutesAgoIso(12),
-      lastAccessedAt: minutesAgoIso(1),
-      notes: '演示数据：构建中状态，用于查看进度与排队 UI。',
-      services: {
-        'demo-api': { profileId: 'demo-api', containerName: 'cds-demo-api-building', hostPort: 10105, status: 'building' },
-      },
-    },
-    {
-      id: `${project.id}-sample-stopped-docs`,
-      projectId: project.id,
-      branch: 'docs/sample-stopped',
-      worktreePath: '/tmp/preview-demo/sample-stopped',
-      status: 'idle',
-      createdAt: minutesAgoIso(600),
-      lastAccessedAt: minutesAgoIso(240),
-      notes: '演示数据：被调度器按 LRU 停掉后回到空闲的冷分支。',
-      services: {
-        'demo-web': { profileId: 'demo-web', containerName: 'cds-demo-web-stopped', hostPort: 10106, status: 'stopped' },
-      },
-    },
-  ];
+  const branches = demoBranches(project.id);
   for (const branch of branches) state.addBranch(branch);
 
   state.appendActivityLog(project.id, {
@@ -178,7 +109,88 @@ function seedCoreDemoData(state: StateService): boolean {
 }
 
 /**
- * 补播：定时任务与验收报告。这两页原来是纯空状态。
+ * 演示分支清单。首播与补播共用这一份。
+ *
+ * 分成独立函数不是为了整洁，是为了补播能按 id 逐条比对「少了哪几条」——
+ * 两处各写一份，加一条分支就只有新实例看得到（这个洞已经真的发生过一次：
+ * 清单从 3 条扩到 5 条，跑着的预览实例始终停在 3 条）。
+ */
+function demoBranches(projectId: string): BranchEntry[] {
+  return [
+    {
+      id: `${projectId}-sample-running-feat`,
+      projectId,
+      branch: 'feat/sample-running',
+      worktreePath: '/tmp/preview-demo/sample-running',
+      status: 'running',
+      createdAt: minutesAgoIso(180),
+      lastAccessedAt: minutesAgoIso(6),
+      notes: '演示数据：展示「运行中」状态的分支卡片，无真实容器。',
+      services: {
+        'demo-api': { profileId: 'demo-api', containerName: 'cds-demo-api-sample', hostPort: 10101, status: 'running' },
+        'demo-web': { profileId: 'demo-web', containerName: 'cds-demo-web-sample', hostPort: 10102, status: 'running' },
+      },
+    },
+    {
+      id: `${projectId}-sample-error-fix`,
+      projectId,
+      branch: 'fix/sample-error',
+      worktreePath: '/tmp/preview-demo/sample-error',
+      status: 'error',
+      errorMessage: '演示数据：构建失败示例（exit 1），用于查看错误态 UI。',
+      createdAt: minutesAgoIso(90),
+      notes: '演示数据：展示「错误」状态与错误信息展示。',
+      services: {
+        'demo-api': {
+          profileId: 'demo-api',
+          containerName: 'cds-demo-api-error',
+          hostPort: 10103,
+          status: 'error',
+          errorMessage: '演示数据：dotnet build 退出码 1',
+        },
+      },
+    },
+    {
+      id: `${projectId}-sample-idle-feat`,
+      projectId,
+      branch: 'feat/sample-idle',
+      worktreePath: '/tmp/preview-demo/sample-idle',
+      status: 'idle',
+      createdAt: minutesAgoIso(30),
+      notes: '演示数据：尚未部署的分支。',
+      services: {},
+    },
+    {
+      id: `${projectId}-sample-building-chore`,
+      projectId,
+      branch: 'chore/sample-building',
+      worktreePath: '/tmp/preview-demo/sample-building',
+      status: 'building',
+      createdAt: minutesAgoIso(12),
+      lastAccessedAt: minutesAgoIso(1),
+      notes: '演示数据：构建中状态，用于查看进度与排队 UI。',
+      services: {
+        'demo-api': { profileId: 'demo-api', containerName: 'cds-demo-api-building', hostPort: 10105, status: 'building' },
+      },
+    },
+    {
+      id: `${projectId}-sample-stopped-docs`,
+      projectId,
+      branch: 'docs/sample-stopped',
+      worktreePath: '/tmp/preview-demo/sample-stopped',
+      status: 'idle',
+      createdAt: minutesAgoIso(600),
+      lastAccessedAt: minutesAgoIso(240),
+      notes: '演示数据：被调度器按 LRU 停掉后回到空闲的冷分支。',
+      services: {
+        'demo-web': { profileId: 'demo-web', containerName: 'cds-demo-web-stopped', hostPort: 10106, status: 'stopped' },
+      },
+    },
+  ];
+}
+
+/**
+ * 补播：缺的演示分支 + 定时任务 + 验收报告。
  *
  * 只认演示项目——库里是真项目时一律不碰（和首播同一条底线）。
  * 各自判各自的，所以对已经播过首播的老实例也能补上。
@@ -186,9 +198,20 @@ function seedCoreDemoData(state: StateService): boolean {
 function seedDemoExtras(state: StateService): boolean {
   const project = state.getProject(PREVIEW_DEMO_PROJECT_ID);
   if (!project) return false;
-  const demoBranch = state.getAllBranches().find((b) => b.projectId === project.id);
   const now = new Date().toISOString();
   let seeded = false;
+
+  // 分支按 id 逐条补：老实例只播过前三条，清单扩到五条之后它永远差两条状态
+  // （用户看到的就是「构建中 / 冷分支这两种卡片在预览实例里根本不存在」）。
+  // 只补自己名下缺的那几条，已存在的（含用户改过的）一律不动。
+  const existing = new Set(state.getAllBranches().map((b) => b.id));
+  for (const branch of demoBranches(project.id)) {
+    if (existing.has(branch.id)) continue;
+    state.addBranch(branch);
+    seeded = true;
+  }
+
+  const demoBranch = state.getAllBranches().find((b) => b.projectId === project.id);
 
   // 三种 schedule 各来一条，把「每天 / 间隔 / 手动」三个分段和列表卡片都撑起来。
   // 动作全部指向 example.invalid，触发也打不到任何真东西。
