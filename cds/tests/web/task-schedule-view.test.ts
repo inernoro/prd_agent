@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildOverview, buildTimeline, computeHealth, countdownTo, formatDuration, msUntil,
+  buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration, msUntil, shouldAutoSelectJob,
 } from '../../web/src/lib/task-schedule-view.js';
 import type { ScheduledJob, ScheduledJobRun } from '../../web/src/types/task-schedule.js';
 
@@ -49,6 +49,28 @@ describe('倒计时与耗时格式', () => {
     expect(formatDuration(252_000)).toBe('4m12s');
     expect(formatDuration(null)).toBe('—');
     expect(formatDuration(undefined)).toBe('—');
+  });
+});
+
+describe('运行流的时钟列', () => {
+  /*
+   * 红绿闭环：把 RunRow 改回 `formatTime(iso).slice(-5)`，或让 formatClock 走
+   * toLocaleString 再截尾，本用例立刻红 —— 截出来的是秒和 AM/PM（`05 AM`），不是 `HH:MM`。
+   * 这不是样式问题：读到的值和想要的值不是同一个，页面照常渲染、类型照常过。
+   */
+  it('只给 HH:MM 两位补零，不带秒也不带 AM/PM', () => {
+    const at = (h: number, m: number) => {
+      const d = new Date(2026, 7, 31, h, m, 19);
+      return d.toISOString();
+    };
+    expect(formatClock(at(9, 5))).toBe('09:05');
+    expect(formatClock(at(0, 0))).toBe('00:00');
+    expect(formatClock(at(23, 59))).toBe('23:59');
+    // 午后必须是 24 小时制的 13:07，不是 01:07，更不是 `07 PM`
+    expect(formatClock(at(13, 7))).toBe('13:07');
+    for (const bad of [null, undefined, '不是时间']) {
+      expect(formatClock(bad)).toBe('--:--');
+    }
   });
 });
 
@@ -126,6 +148,26 @@ describe('结论条', () => {
     expect(overview.tone).toBe('ok');
     const byLabel = Object.fromEntries(overview.stats.map((s) => [s.label, s.value]));
     expect(byLabel['接下来 6H']).toBe('2');
+  });
+});
+
+describe('第一屏落位', () => {
+  /*
+   * 红绿闭环：删掉页面里那个 useEffect（或把判据改成恒 false），第一条断言仍绿，
+   * 但页面回到「打开就是一张空表单」；把判据改成不看 alreadyPicked / selectedId，
+   * 第二、三条立刻红 —— 用户点「新建任务」后会被抢回去。
+   */
+  it('有任务且没人选过时替用户落位一次', () => {
+    expect(shouldAutoSelectJob({ alreadyPicked: false, selectedId: '', groupCount: 3 })).toBe(true);
+  });
+
+  it('一个任务都没有时不硬选', () => {
+    expect(shouldAutoSelectJob({ alreadyPicked: false, selectedId: '', groupCount: 0 })).toBe(false);
+  });
+
+  it('落过一次之后不再抢方向盘 —— 点了「新建任务」清空选中也不抢回来', () => {
+    expect(shouldAutoSelectJob({ alreadyPicked: true, selectedId: '', groupCount: 3 })).toBe(false);
+    expect(shouldAutoSelectJob({ alreadyPicked: false, selectedId: 'sjob_x', groupCount: 3 })).toBe(false);
   });
 });
 

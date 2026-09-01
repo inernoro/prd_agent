@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlarmClock, ArrowDown, ArrowUp, CalendarClock, Globe2, Pencil, Play, Plus, RefreshCw, Rocket, Save, SlidersHorizontal, Terminal, Trash2, type LucideIcon } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
@@ -13,8 +13,8 @@ import type {
   ScheduledJobRun, ScheduledJobTarget, TargetType,
 } from '@/types/task-schedule';
 import {
-  buildOverview, buildTimeline, computeHealth, countdownTo, formatDuration, formatTime,
-  msUntil, runStatusLabel, scheduleLabel, statusTone,
+  buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration,
+  msUntil, runStatusLabel, scheduleLabel, shouldAutoSelectJob, statusTone,
   type JobHealth, type TimelineLane,
 } from '@/lib/task-schedule-view';
 
@@ -225,22 +225,45 @@ export function TaskSchedulePage(): JSX.Element {
     ].filter((group) => group.jobs.length > 0);
   }, [jobs, now]);
 
+  // 第一屏不该是一张空表单 —— 那正是这次重构要治的病。有任务就默认打开最该看的
+  // 那一个（分组已按「需要注意 → 即将触发 → 正常运行」排好），新建始终是显式动作。
+  // 只在首次落位一次：用户点了「新建任务」把 selectedId 清空后，不许再被抢回去。
+  const autoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (!shouldAutoSelectJob({
+      alreadyPicked: autoSelectedRef.current,
+      selectedId,
+      groupCount: groupedJobs.length,
+    })) return;
+    const first = groupedJobs[0].jobs[0];
+    if (!first) return;
+    autoSelectedRef.current = true;
+    setSelectedId(first.id);
+    setForm(jobToForm(first));
+  }, [groupedJobs, selectedId]);
+
+  // 选中某个任务时运行流默认只看它 —— 归因要的就是这个。但低频任务只有一两条记录，
+  // 中栏会空掉大半（content-fills-canvas）。所以给一个显式的作用域开关，
+  // 而不是让用户靠「清空选中」来换回全部（那会把右栏打回空表单）。
+  const [runScopeAll, setRunScopeAll] = useState(false);
+  const runScopeJobId = runScopeAll ? '' : selectedId;
+
   const visibleRuns = useMemo(() => {
-    const base = selectedId ? runs.filter((run) => run.jobId === selectedId) : runs;
+    const base = runScopeJobId ? runs.filter((run) => run.jobId === runScopeJobId) : runs;
     const filtered = runFilter === 'failed'
       ? base.filter((run) => run.status === 'failed' || run.status === 'skipped')
       : runFilter === 'manual'
         ? base.filter((run) => run.trigger === 'manual')
         : base;
     return [...filtered].sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt)).slice(0, 200);
-  }, [runs, runFilter, selectedId]);
+  }, [runs, runFilter, runScopeJobId]);
 
   const runFilterCaption = useMemo(() => {
-    const scope = selectedId ? jobNameOf(selectedId) : '全部任务';
+    const scope = runScopeJobId ? jobNameOf(runScopeJobId) : '全部任务';
     if (runFilter === 'failed') return `${scope} · 只看失败与跳过`;
     if (runFilter === 'manual') return `${scope} · 只看手动触发`;
     return `${scope} · 最近 ${visibleRuns.length} 条`;
-  }, [runFilter, selectedId, jobNameOf, visibleRuns.length]);
+  }, [runFilter, runScopeJobId, jobNameOf, visibleRuns.length]);
 
   const overview = useMemo(() => buildOverview(jobs, runs, now), [jobs, runs, now]);
   const timeline = useMemo(() => buildTimeline(jobs, runsByJob, now, selectedId), [jobs, runsByJob, now, selectedId]);
@@ -250,6 +273,8 @@ export function TaskSchedulePage(): JSX.Element {
     setForm(jobToForm(job));
     // 从清单换一个任务，回到观察态。编辑始终是显式动作，不会因为切换而「粘」在表单上。
     setEditing(false);
+    // 作用域也跟着回到「只看这个任务」——换任务就是为了看它。
+    setRunScopeAll(false);
   };
 
   const newJob = (): void => {
@@ -502,6 +527,15 @@ export function TaskSchedulePage(): JSX.Element {
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="text-sm font-semibold">运行流</span>
                     <span className="truncate text-xs text-muted-foreground">{runFilterCaption}</span>
+                    {selectedId ? (
+                      <button
+                        type="button"
+                        onClick={() => setRunScopeAll((prev) => !prev)}
+                        className="shrink-0 rounded border border-[hsl(var(--hairline))] px-1.5 py-px text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        {runScopeAll ? `只看 ${jobNameOf(selectedId)}` : '看全部任务'}
+                      </button>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 gap-1">
                     {RUN_FILTERS.map((item) => (
@@ -1192,7 +1226,7 @@ function RunRow({
     <div className={`border-b border-[hsl(var(--hairline))]/70 ${bad ? 'bg-destructive/[0.08]' : ''}`}>
       <button type="button" onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-2 text-left">
         <span className={`h-5 w-[3px] shrink-0 rounded-sm ${statusTone(run.status)}`} />
-        <span className="w-11 shrink-0 font-mono text-[11px] text-muted-foreground">{formatTime(run.startedAt || run.queuedAt).slice(-5)}</span>
+        <span className="w-11 shrink-0 font-mono text-[11px] text-muted-foreground">{formatClock(run.startedAt || run.queuedAt)}</span>
         <span className={`min-w-0 max-w-[11rem] flex-1 truncate text-[12.5px] font-medium ${bad ? 'text-bad' : ''}`}>{jobName}</span>
         <span className={`shrink-0 rounded px-1.5 py-px text-[10.5px] ${run.trigger === 'manual' ? 'border border-info/30 bg-info-soft text-info' : 'border border-[hsl(var(--hairline-strong))] text-muted-foreground'}`}>
           {run.trigger === 'manual' ? '手动' : run.trigger === 'push' ? 'push' : '定时'}
