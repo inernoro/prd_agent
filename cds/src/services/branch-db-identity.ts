@@ -82,6 +82,70 @@ export function legacyBranchDbAccountName(branchId: string): string {
   return `${ACCOUNT_PREFIX}${slug.replace(/-/g, '_').slice(0, 24)}`.slice(0, BRANCH_DB_ACCOUNT_MAX_LEN);
 }
 
+export type BranchDbRuntime = 'mysql' | 'postgres' | 'mongodb';
+
+/** 派发时写进分支 env 的「这套凭据是给哪台服务的」标记：值就是 InfraService.id。 */
+const OWNER_HOST_KEYS: Record<BranchDbRuntime, string[]> = {
+  mysql: ['MYSQL_HOST'],
+  postgres: ['POSTGRES_HOST'],
+  mongodb: ['MONGODB_HOST'],
+};
+
+/** HOST 缺失时的兜底：从连接串里把 host 抠出来（派发时 host 段同样写的是服务 id）。 */
+const OWNER_URL_KEYS: Record<BranchDbRuntime, string[]> = {
+  mysql: ['MYSQL_URL', 'DATABASE_URL'],
+  postgres: ['POSTGRES_URL', 'DATABASE_URL'],
+  mongodb: ['MONGODB_URL', 'DATABASE_URL'],
+};
+
+/**
+ * 这套分支凭据是派发给哪台服务的；判断不出来返回空串。
+ *
+ * ## 为什么需要这个
+ *
+ * 分支作用域的 env 是**一张平表**：`MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE`
+ * 各自只有一份。可是一个分支完全可以挂**两台 MySQL**（2026-09-01 现场就是：
+ * `cloudbridge-db` 与 `mysql-mdimp` 并存）。于是后派发的那台把前一台的账号、口令和库名
+ * 整个盖掉，工作台再拿这一份去连另一台——账号在那台库里根本不存在，报 1045。
+ * 「CDS 自己建的库，CDS 自己连不上」就是这么来的。
+ *
+ * 派发时写入的 `*_HOST`（值是 InfraService.id）就是天然的归属标记，据此判断即可。
+ */
+export function branchDbCredentialOwner(branchEnv: Record<string, string>, runtime: BranchDbRuntime): string {
+  const env = branchEnv || {};
+  for (const key of OWNER_HOST_KEYS[runtime]) {
+    const value = String(env[key] ?? '').trim();
+    if (value) return value;
+  }
+  for (const key of OWNER_URL_KEYS[runtime]) {
+    const raw = String(env[key] ?? '').trim();
+    if (!raw) continue;
+    try {
+      const host = new URL(raw).hostname;
+      if (host) return host;
+    } catch {
+      /* 连接串解析不了就当作判断不出来，继续下一个 */
+    }
+  }
+  return '';
+}
+
+/**
+ * 分支 env 里那套凭据能不能用在这台服务上。
+ *
+ * 判断不出归属（老数据没写 HOST、也没有可解析的连接串）时返回 true——维持既有行为，
+ * 不因为多了一条判据把原本能用的分支弄成连不上。
+ */
+export function branchDbCredentialsBelongTo(
+  branchEnv: Record<string, string>,
+  runtime: BranchDbRuntime,
+  serviceId: string,
+): boolean {
+  const owner = branchDbCredentialOwner(branchEnv, runtime);
+  if (!owner) return true;
+  return owner === String(serviceId || '').trim();
+}
+
 /** 这个账号名是不是 CDS 派发的分支账号（而不是用户自己填在环境变量里的账号）。 */
 export function isCdsManagedBranchAccount(user: string): boolean {
   return /^cds_[a-z0-9_]+$/.test(String(user || ''));

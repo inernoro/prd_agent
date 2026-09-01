@@ -5342,9 +5342,19 @@ function quoteSqlTableName(resource: BranchResource, table: DbTableSummary): str
 
 type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string };
 
+/**
+ * 只读语句头。**必须与后端 src/services/sql-statement-policy.ts 的 READ_STATEMENT_HEADS
+ * 逐字一致**（守卫测试 branch-db-identity.test.ts 会比对两边）：前端据此决定走 /data/query
+ * 还是 /data/query-write，两边不一致就会出现「前端当读发过去、后端当写拒绝」的死语句。
+ */
+const READ_STATEMENT_HEADS = ['select', 'show', 'describe', 'desc', 'explain', 'with', 'table', 'values'];
+
 function sqlCommandIsReadOnly(sql: string): boolean {
-  const head = sql.trim().replace(/;+$/g, '').match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
-  return ['select', 'show', 'describe', 'desc', 'explain'].includes(head);
+  const body = sql.trim().replace(/;+$/g, '').trim();
+  const head = body.match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
+  if (!READ_STATEMENT_HEADS.includes(head)) return false;
+  // CTE 后面可以跟 DELETE/UPDATE；头是 with 不代表只读，与后端同一条判据。
+  return !/\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock)\b/i.test(body);
 }
 
 function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter }): JSX.Element {

@@ -1,0 +1,127 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import { branchDbCredentialOwner, branchDbCredentialsBelongTo } from '../../src/services/branch-db-identity.js';
+import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
+
+/**
+ * 现场（2026-09-01）：分支 mdimp-claude-open-api-channel-cl04-byglbh 下挂着两台 MySQL——
+ * `cloudbridge-db` 与 `mysql-mdimp`。分支作用域的 env 只有一份 MYSQL_USER / MYSQL_PASSWORD /
+ * MYSQL_DATABASE，派发给谁就是谁的；工作台却拿这一份去连**另一台**，账号在那台库里不存在，
+ * 于是「CDS 自己建的库，CDS 自己连不上」。同一处漏判在删库路径上更狠：删 B 资源掉的是 A 的库。
+ */
+const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+function readBranchesRoute(): string {
+  return fs.readFileSync(path.join(CDS_ROOT, 'src/routes/branches.ts'), 'utf8');
+}
+
+const BRANCH_ENV_FOR_MYSQL_MDIMP = {
+  DATABASE_URL: 'mysql://cds_x:pw@mysql-mdimp:3306/imp_cb_939d75849081e7a8',
+  MYSQL_HOST: 'mysql-mdimp',
+  MYSQL_PORT: '3306',
+  MYSQL_DATABASE: 'imp_cb_939d75849081e7a8',
+  MYSQL_USER: 'cds_x',
+  MYSQL_PASSWORD: 'pw',
+};
+
+describe('分支凭据的归属判定', () => {
+  it('HOST 就是派发目标：认得出这套凭据是给哪台服务的', () => {
+    expect(branchDbCredentialOwner(BRANCH_ENV_FOR_MYSQL_MDIMP, 'mysql')).toBe('mysql-mdimp');
+    expect(branchDbCredentialsBelongTo(BRANCH_ENV_FOR_MYSQL_MDIMP, 'mysql', 'mysql-mdimp')).toBe(true);
+    expect(branchDbCredentialsBelongTo(BRANCH_ENV_FOR_MYSQL_MDIMP, 'mysql', 'cloudbridge-db')).toBe(false);
+  });
+
+  it('没有 HOST 时从连接串里取 host', () => {
+    const env = { DATABASE_URL: 'mysql://u:p@cloudbridge-db:3306/app' };
+    expect(branchDbCredentialOwner(env, 'mysql')).toBe('cloudbridge-db');
+    expect(branchDbCredentialsBelongTo(env, 'mysql', 'cloudbridge-db')).toBe(true);
+    expect(branchDbCredentialsBelongTo(env, 'mysql', 'mysql-mdimp')).toBe(false);
+  });
+
+  it('判断不出归属时维持既有行为（老数据不因为多一条判据而连不上）', () => {
+    expect(branchDbCredentialOwner({}, 'mysql')).toBe('');
+    expect(branchDbCredentialsBelongTo({}, 'mysql', 'any-service')).toBe(true);
+    expect(branchDbCredentialsBelongTo({ MYSQL_USER: 'u', MYSQL_PASSWORD: 'p' }, 'mysql', 'any-service')).toBe(true);
+    // 解析不了的连接串同样算「判断不出」，不是「不属于」
+    expect(branchDbCredentialsBelongTo({ DATABASE_URL: 'not a url' }, 'mysql', 'any-service')).toBe(true);
+  });
+
+  it('三种运行时各看自己的 HOST，不串台', () => {
+    const env = { MYSQL_HOST: 'db-a', POSTGRES_HOST: 'db-b', MONGODB_HOST: 'db-c' };
+    expect(branchDbCredentialOwner(env, 'mysql')).toBe('db-a');
+    expect(branchDbCredentialOwner(env, 'postgres')).toBe('db-b');
+    expect(branchDbCredentialOwner(env, 'mongodb')).toBe('db-c');
+  });
+});
+
+describe('branches.ts 的每个分支 env 读取点都判了归属', () => {
+  const OWNED_CALLERS = [
+    'mysqlClientCredentials',
+    'mysqlDatabaseForBranch',
+    'postgresClientCredentials',
+    'postgresDatabaseForBranch',
+    'mongoDatabaseForBranch',
+    'mongoCredentials',
+    'getExistingMysqlConnectionEnv',
+    'getExistingPostgresConnectionEnv',
+    'getExistingMongoConnectionEnv',
+  ];
+
+  for (const fnName of OWNED_CALLERS) {
+    it(`${fnName} 取的是判过归属的分支 env`, () => {
+      const source = readBranchesRoute();
+      const at = source.indexOf(`function ${fnName}(`);
+      expect(at, `找不到 ${fnName}`).toBeGreaterThan(-1);
+      const head = source.slice(at, at + 420);
+      expect(head, `${fnName} 仍在读未判归属的分支 env`).not.toContain('stateService.getCustomEnvScope(branch.id)');
+      expect(head).toContain('ownedBranchEnv(branch,');
+    });
+  }
+
+  it('删库前先判归属：不是本服务的分支 env 一律拒绝', () => {
+    const source = readBranchesRoute();
+    const at = source.indexOf('function branchOwnedDatabaseForDelete(');
+    expect(at).toBeGreaterThan(-1);
+    const fn = source.slice(at, at + 1800);
+    expect(fn).toContain('branchDbCredentialOwner(rawBranchEnv,');
+    expect(fn).toContain('if (owner && owner !== service.id) {');
+    expect(fn).toContain('拒绝按它删库');
+  });
+
+  it('红用例：拆掉删库的归属判断，守卫必须变红', () => {
+    const real = readBranchesRoute();
+    const guard = (source: string) => {
+      const at = source.indexOf('function branchOwnedDatabaseForDelete(');
+      expect(at).toBeGreaterThan(-1);
+      expect(source.slice(at, at + 1800)).toContain('if (owner && owner !== service.id) {');
+    };
+    expectGuardRedOnMutation(guard, real, mutate(real, 'if (owner && owner !== service.id) {', 'if (false) {'));
+  });
+
+  it('红用例：把工作台凭据改回不判归属，守卫必须变红', () => {
+    const real = readBranchesRoute();
+    const guard = (source: string) => {
+      const at = source.indexOf('function mysqlClientCredentials(');
+      expect(at).toBeGreaterThan(-1);
+      expect(source.slice(at, at + 420)).toContain("ownedBranchEnv(branch, 'mysql', service)");
+    };
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(
+        real,
+        `function mysqlClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
+    const branchEnv = ownedBranchEnv(branch, 'mysql', service);`,
+        `function mysqlClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);`,
+      ),
+    );
+  });
+
+  it('资源清单里的连接串也判归属（否则面板显示的是另一台库的账号）', () => {
+    const source = fs.readFileSync(path.join(CDS_ROOT, 'src/services/resources.ts'), 'utf8');
+    expect(source).toContain('branchDbCredentialsBelongTo(rawBranchEnv, runtimeKey, service.id)');
+  });
+});
