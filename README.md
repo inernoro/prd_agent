@@ -39,11 +39,14 @@ prd_agent/
 ├── prd-api/        # .NET 8 API and background workers
 ├── prd-admin/      # React admin console
 ├── prd-desktop/    # Tauri desktop client
-├── prd-video/      # Remotion video engine
 ├── cds/            # Cloud Dev Suite branch preview platform
+├── llmgw/          # Centralized LLM gateway
+├── claude-sdk-sidecar/ # Agent SDK sidecar service
+├── e2e/            # Automated tests, manual probes, and test fixtures
 ├── scripts/        # Build, smoke, migration, and maintenance scripts
 ├── doc/            # Structured specs, designs, plans, guides, reports, debt notes
 ├── assets/         # Static design/reference assets and archived prototypes
+├── .design/        # Editable design-canvas source files
 ├── changelogs/     # One changelog fragment per PR
 └── deploy/         # Deployment support files
 ```
@@ -52,8 +55,10 @@ Root directory policy:
 
 - Keep only project entrypoints, compose files, top-level documentation, and repository metadata in the root.
 - Put exploratory HTML prototypes under `assets/prototypes/`.
-- Put test fixtures under `scripts/fixtures/`.
+- Put automated tests under `e2e/`, manual probes under `e2e/manual/`, and test fixtures under `e2e/fixtures/`.
+- Put editable design-canvas sources under `.design/`; do not create parallel root-level design workspaces.
 - Put operational scripts under `scripts/` unless they are intentionally kept as root entrypoints.
+- Keep top-level path names ASCII-only; `scripts/tests/test_root_layout_contract.py` enforces the contract in CI.
 
 ## Main Capabilities
 
