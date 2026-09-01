@@ -8,8 +8,9 @@
  * 都在名称 / 备注里写明「演示数据」，不冒充真实部署
  * （no-rootless-tree：虚构数据必须显式标注）。
  *
- * 只在满足全部条件时执行：预览实例模式 + 零项目 + 零分支。
- * 已有数据（例如挂了外部 mongo 的实例）一律不碰。
+ * 首播只在「预览实例模式 + 零项目 + 零分支」时执行；后续新增的演示数据分节补播
+ * （见 seedPreviewInstanceDemoData 的注释）。已有真实数据（例如挂了外部 mongo
+ * 的实例）一律不碰。
  */
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile, Project } from '../types.js';
@@ -20,8 +21,23 @@ function minutesAgoIso(minutes: number): string {
   return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
-/** 幂等 seed。执行了返回 true，条件不满足跳过返回 false。 */
+/**
+ * 幂等 seed。执行了返回 true，条件不满足跳过返回 false。
+ *
+ * **分节幂等**，不是全有或全无：预览实例的 state 跨部署保留，如果只用
+ * 「零项目才播」一个总守卫，以后往演示数据里加的任何东西都永远到不了
+ * 已经播过的实例——升级了 CDS，新页面还是空的。所以首播（项目/分支）
+ * 和后续补播（定时任务/验收报告）各自判各自的。
+ */
 export function seedPreviewInstanceDemoData(state: StateService): boolean {
+  const core = seedCoreDemoData(state);
+  const extras = seedDemoExtras(state);
+  if (core || extras) state.save();
+  return core || extras;
+}
+
+/** 首播：项目 + 构建配置 + 分支 + 活动日志。只在完全空库时执行。 */
+function seedCoreDemoData(state: StateService): boolean {
   if (state.getProjects().length > 0) return false;
   if (state.getAllBranches().length > 0) return false;
 
@@ -158,70 +174,91 @@ export function seedPreviewInstanceDemoData(state: StateService): boolean {
     at: minutesAgoIso(85),
   });
 
-  // 任务调度页原来是纯空状态——三种 schedule 各来一条，把「每天 / 间隔 / 手动」
-  // 三个分段和列表卡片都撑起来。动作全部指向 example.invalid，触发也打不到任何真东西。
-  const jobBase = {
-    projectId: project.id,
-    timeoutSeconds: 60,
-    retryCount: 0,
-    concurrencyPolicy: 'skip' as const,
-    createdAt: now,
-    updatedAt: now,
-    createdBy: 'preview-instance-seed',
-  };
-  state.upsertScheduledJob({
-    ...jobBase,
-    id: `${project.id}-job-daily`,
-    name: '演示数据：每天巡检',
-    description: '预览实例演示任务，不会真的发出请求。',
-    enabled: true,
-    schedule: { type: 'daily', timeOfDay: '09:30' },
-    actions: [{ id: 'a1', name: '健康检查', type: 'http', method: 'GET', url: 'https://example.invalid/healthz' }],
-    lastRunAt: minutesAgoIso(600),
-    lastRunStatus: 'success',
-  });
-  state.upsertScheduledJob({
-    ...jobBase,
-    id: `${project.id}-job-interval`,
-    name: '演示数据：每 30 分钟同步',
-    description: '预览实例演示任务，展示「间隔」类型与失败态。',
-    enabled: true,
-    schedule: { type: 'interval', intervalMinutes: 30 },
-    actions: [{ id: 'a1', name: '同步脚本', type: 'command', command: 'echo demo-sync' }],
-    lastRunAt: minutesAgoIso(25),
-    lastRunStatus: 'failed',
-  });
-  state.upsertScheduledJob({
-    ...jobBase,
-    id: `${project.id}-job-manual`,
-    name: '演示数据：手动触发的清理',
-    description: '预览实例演示任务，只能手动跑。',
-    enabled: false,
-    schedule: { type: 'manual' },
-    actions: [{ id: 'a1', name: '清理', type: 'command', command: 'echo demo-cleanup' }],
-  });
+  return true;
+}
 
-  // 验收报告页同理：三种 verdict 各来一份，报告正文自带「演示数据」抬头。
-  const reportBody = (verdict: string): string =>
-    `<h1>演示数据：${verdict} 示例报告</h1><p>预览实例自动生成，用于查看验收报告列表与详情的界面形状，不对应任何真实验收。</p>`;
-  for (const [verdict, title, tier] of [
-    ['pass', '演示数据：分支预览冒烟（通过）', 'smoke'],
-    ['conditional', '演示数据：发布前走查（有条件通过）', 'visual'],
-    ['fail', '演示数据：回归验收（未通过）', 'regression'],
-  ] as const) {
-    state.createAcceptanceReport({
-      title,
-      format: 'html',
-      content: reportBody(verdict),
+/**
+ * 补播：定时任务与验收报告。这两页原来是纯空状态。
+ *
+ * 只认演示项目——库里是真项目时一律不碰（和首播同一条底线）。
+ * 各自判各自的，所以对已经播过首播的老实例也能补上。
+ */
+function seedDemoExtras(state: StateService): boolean {
+  const project = state.getProject(PREVIEW_DEMO_PROJECT_ID);
+  if (!project) return false;
+  const demoBranch = state.getAllBranches().find((b) => b.projectId === project.id);
+  const now = new Date().toISOString();
+  let seeded = false;
+
+  // 三种 schedule 各来一条，把「每天 / 间隔 / 手动」三个分段和列表卡片都撑起来。
+  // 动作全部指向 example.invalid，触发也打不到任何真东西。
+  if (state.listScheduledJobs(project.id).length === 0) {
+    const jobBase = {
       projectId: project.id,
-      branchId: branches[0].id,
-      branch: branches[0].branch,
-      verdict,
-      tier,
+      timeoutSeconds: 60,
+      retryCount: 0,
+      concurrencyPolicy: 'skip' as const,
+      createdAt: now,
+      updatedAt: now,
       createdBy: 'preview-instance-seed',
+    };
+    state.upsertScheduledJob({
+      ...jobBase,
+      id: `${project.id}-job-daily`,
+      name: '演示数据：每天巡检',
+      description: '预览实例演示任务，不会真的发出请求。',
+      enabled: true,
+      schedule: { type: 'daily', timeOfDay: '09:30' },
+      actions: [{ id: 'a1', name: '健康检查', type: 'http', method: 'GET', url: 'https://example.invalid/healthz' }],
+      lastRunAt: minutesAgoIso(600),
+      lastRunStatus: 'success',
     });
+    state.upsertScheduledJob({
+      ...jobBase,
+      id: `${project.id}-job-interval`,
+      name: '演示数据：每 30 分钟同步',
+      description: '预览实例演示任务，展示「间隔」类型与失败态。',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 30 },
+      actions: [{ id: 'a1', name: '同步脚本', type: 'command', command: 'echo demo-sync' }],
+      lastRunAt: minutesAgoIso(25),
+      lastRunStatus: 'failed',
+    });
+    state.upsertScheduledJob({
+      ...jobBase,
+      id: `${project.id}-job-manual`,
+      name: '演示数据：手动触发的清理',
+      description: '预览实例演示任务，只能手动跑。',
+      enabled: false,
+      schedule: { type: 'manual' },
+      actions: [{ id: 'a1', name: '清理', type: 'command', command: 'echo demo-cleanup' }],
+    });
+    seeded = true;
   }
 
-  state.save();
-  return true;
+  // 验收报告页同理：三种 verdict 各来一份，报告正文自带「演示数据」抬头。
+  if (state.listAcceptanceReports(project.id).length === 0) {
+    const reportBody = (verdict: string): string =>
+      `<h1>演示数据：${verdict} 示例报告</h1><p>预览实例自动生成，用于查看验收报告列表与详情的界面形状，不对应任何真实验收。</p>`;
+    for (const [verdict, title, tier] of [
+      ['pass', '演示数据：分支预览冒烟（通过）', 'smoke'],
+      ['conditional', '演示数据：发布前走查（有条件通过）', 'visual'],
+      ['fail', '演示数据：回归验收（未通过）', 'regression'],
+    ] as const) {
+      state.createAcceptanceReport({
+        title,
+        format: 'html',
+        content: reportBody(verdict),
+        projectId: project.id,
+        branchId: demoBranch?.id ?? null,
+        branch: demoBranch?.branch ?? null,
+        verdict,
+        tier,
+        createdBy: 'preview-instance-seed',
+      });
+    }
+    seeded = true;
+  }
+
+  return seeded;
 }

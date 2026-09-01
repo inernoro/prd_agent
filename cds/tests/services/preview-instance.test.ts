@@ -235,6 +235,29 @@ describe('seedPreviewInstanceDemoData', () => {
     for (const r of reports) expect(r.title).toContain('演示数据');
   });
 
+  it('给「已经播过首播的老实例」补播新增的演示数据', () => {
+    // 复现旧版本播下的库：演示项目 + 一条分支，但没有定时任务与验收报告。
+    // 预览实例的 state 跨部署保留，如果 seed 是全有或全无的，这种库升级之后
+    // 任务调度和验收报告两页会永远空着——这条用例就是钉这个。
+    const now = new Date().toISOString();
+    service.addProject({
+      id: PREVIEW_DEMO_PROJECT_ID, slug: PREVIEW_DEMO_PROJECT_ID,
+      name: '演示项目（预览实例）', kind: 'git', createdAt: now, updatedAt: now,
+    });
+    service.addBranch({
+      id: `${PREVIEW_DEMO_PROJECT_ID}-old`, projectId: PREVIEW_DEMO_PROJECT_ID,
+      branch: 'feat/old', worktreePath: '/tmp/preview-demo/old', status: 'idle',
+      createdAt: now, notes: '演示数据：旧版本播下的分支。', services: {},
+    });
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(0);
+
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID).length).toBeGreaterThan(0);
+    expect(service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID).length).toBeGreaterThan(0);
+    // 首播不该重跑：分支还是原来那一条，没有被再播一遍
+    expect(service.getAllBranches()).toHaveLength(1);
+  });
+
   it('is idempotent — second call is a no-op', () => {
     expect(seedPreviewInstanceDemoData(service)).toBe(true);
     const seeded = service.getAllBranches().length;
