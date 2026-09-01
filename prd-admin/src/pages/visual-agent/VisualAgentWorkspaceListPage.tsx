@@ -1,7 +1,7 @@
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { SizePickerButton } from '@/components/visual-agent/SizePickerPanel';
-import { glassToolbar, glassInputArea } from '@/lib/glassStyles';
+import { glassToolbar } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { systemDialog } from '@/lib/systemDialog';
@@ -23,6 +23,7 @@ import {
   Pencil,
   Trash2,
   ArrowRight,
+  ArrowLeft,
   Image,
   ShoppingCart,
   PenTool,
@@ -33,6 +34,8 @@ import {
   FolderPlus,
   FilePlus,
   Bug,
+  X,
+  Clipboard,
 } from 'lucide-react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useAuthStore } from '@/stores/authStore';
@@ -41,9 +44,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
-import { LatentField } from '@/components/effects/LatentField';
+import { BackdropPhoto, LatentField } from '@/components/effects/LatentField';
+import { BackdropSettings, readBackdropMode, resolveBackdrop, type BackdropMode } from '@/components/visual-agent/BackdropSettings';
+import type { BackdropAsset } from '@/lib/backdropRotation';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { getNextWorkspaceSkip, isVisibleWorkspace } from './workspaceListPaging';
+
+/** 快捷键提示按平台给。写死 ⌘V 会让 Windows 用户对着一个不存在的键发呆。 */
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 
 function formatDate(iso: string | null | undefined) {
   const s = String(iso ?? '').trim();
@@ -238,9 +246,6 @@ const SCENARIO_TAGS = [
 function HeroSection() {
   return (
     <div className="relative w-full flex flex-col items-center text-center" style={{ paddingTop: 8 }}>
-      {/* 本页教程入口（内嵌进页面右上角，页面级单实例，非悬浮浮层） */}
-      <div className="absolute top-0 right-3 z-20"><TipsEntryButton compact /></div>
-
       <span
         className="inline-flex items-center gap-[7px] text-[11px] font-bold"
         style={{ color: 'var(--accent-gold-2)' }}
@@ -425,21 +430,21 @@ function QuickInputBox(props: {
 
   const canSubmit = value.trim() && !loading;
 
+  // 暗房档的输入区。行为一行没改（粘贴 / 拖入 / 选文件 / 尺寸 / 缺陷 / 回车提交都在），
+  // 换掉的是那套「老」：20px 大圆角 + 靛蓝描边 + 渐变主按钮 + 15px 正文。
+  // 靛蓝是这一页唯一和品牌色无关的颜色，删掉之后整页只剩 #D97757 一种强调色。
+  const focused = isFocused || isDragging;
   return (
-    <div className="max-w-full sm:max-w-[680px] w-full mx-auto px-3 sm:px-6 mt-8">
+    <div className="w-full mx-auto mt-5" style={{ width: 'min(820px, 100%)' }}>
       <div
-        className="surface-tone-dark rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
+        className="overflow-hidden cursor-text transition-colors"
         style={{
-          ...glassInputArea,
-          // 暖褐色调磨砂玻璃，与金色主题协调
-          background: 'rgba(28, 24, 20, 0.82)',
-          // 聚焦/拖拽时边框变亮 - 使用柔和的琥珀金
-          border: isFocused || isDragging
-            ? '1px solid rgba(99, 102, 241, 0.5)'
-            : '1px solid rgba(99, 102, 241, 0.18)',
-          boxShadow: isFocused || isDragging
-            ? '0 24px 64px rgba(0,0,0,0.5), 0 0 0 3px rgba(99, 102, 241, 0.15), 0 1px 0 rgba(199,210,254,0.08) inset'
-            : '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(199,210,254,0.05) inset',
+          borderRadius: 8,
+          background: 'var(--bg-elevated)',
+          border: `1px solid ${focused ? 'var(--border-focus)' : 'var(--border-subtle)'}`,
+          boxShadow: focused
+            ? 'var(--shadow-card), 0 0 0 3px rgba(var(--accent-primary-rgb), 0.14)'
+            : 'var(--shadow-card)',
         }}
         onClick={handleContainerClick}
         onPaste={handlePaste}
@@ -447,113 +452,22 @@ function QuickInputBox(props: {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
       >
-        {/* 输入区域 - 简化内边距 */}
-        <div className="px-5 pt-4 pb-3 relative min-h-[80px]">
-          {/* 拖拽图片时的提示蒙层 */}
+        <div className="relative px-5 pt-4 pb-2" style={{ minHeight: 96 }}>
           {isDragging && (
             <div
-              className="surface-tone-dark absolute inset-0 z-40 flex items-center justify-center gap-2 rounded-[16px] pointer-events-none"
+              className="absolute inset-0 z-40 flex items-center justify-center gap-2 pointer-events-none"
               style={{
-                background: 'rgba(28, 24, 20, 0.92)',
-                border: '1px dashed rgba(99, 102, 241, 0.6)',
-                color: 'rgba(199, 210, 254, 0.9)',
+                borderRadius: 6,
+                background: 'var(--panel-solid)',
+                border: '1px dashed var(--border-focus)',
+                color: 'var(--text-secondary)',
               }}
             >
-              <Image size={16} />
-              <span className="text-[13px] font-medium">松开鼠标，把图片作为参考图</span>
+              <Image size={15} />
+              <span className="text-[12px]">松开，把图片作为参考图</span>
             </div>
           )}
-          {/* 图片预览 chip - 参考 AdvancedVisualAgentTab 样式 */}
-          {selectedImage ? (
-            <div
-              className="absolute left-3 right-3 top-3 z-30 inline-flex items-center gap-1.5"
-              style={{ pointerEvents: 'auto', flexWrap: 'wrap' }}
-            >
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 border border-token-subtle bg-token-nested"
-                style={{ height: 20, maxWidth: 140, paddingLeft: 4, paddingRight: 6, borderRadius: 4, overflow: 'hidden', color: 'var(--text-primary)' }}
-                title={`参考图：${selectedImage.file.name}`}
-                aria-label="预览参考图"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  // 可以在这里打开预览对话框
-                }}
-              >
-                {/* 序号标记 */}
-                <span
-                  style={{
-                    minWidth: 14,
-                    height: 14,
-                    borderRadius: 3,
-                    background: 'rgba(99, 102, 241, 0.25)',
-                    border: '1px solid rgba(99, 102, 241, 0.4)',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 9,
-                    fontWeight: 700,
-                    color: 'var(--accent-fg-violet)',
-                    flexShrink: 0,
-                  }}
-                >
-                  1
-                </span>
-                {/* 图片缩略图 */}
-                <span
-                  className="border border-token-subtle" style={{ width: 14, height: 14, borderRadius: 3, overflow: 'hidden', background: 'var(--bg-input-hover)', display: 'inline-flex', flex: '0 0 auto' }}
-                >
-                  <img
-                    src={selectedImage.previewUrl}
-                    alt={selectedImage.file.name}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                  />
-                </span>
-                {/* 文件名 */}
-                <span
-                  style={{
-                    fontSize: 10,
-                    lineHeight: '16px',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    maxWidth: 70,
-                  }}
-                >
-                  {selectedImage.file.name.length > 8 ? `${selectedImage.file.name.slice(0, 6)}...` : selectedImage.file.name}
-                </span>
-                {/* 删除按钮 */}
-                {onRemoveImage && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRemoveImage();
-                    }}
-                    style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: 2,
-                      border: 'none',
-                      background: 'rgba(239,68,68,0.2)',
-                      color: 'var(--accent-fg-danger)',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      fontSize: 10,
-                      padding: 0,
-                      marginLeft: 2,
-                    }}
-                    title="移除图片"
-                  >
-                    ×
-                  </button>
-                )}
-              </button>
 
-            </div>
-          ) : null}
           <textarea
             ref={textareaRef}
             value={value}
@@ -563,30 +477,83 @@ function QuickInputBox(props: {
             onBlur={() => setIsFocused(false)}
             rows={2}
             data-tour-id="visual-prompt-input"
-            className="w-full bg-transparent text-[15px] resize-none leading-relaxed no-focus-ring"
+            className="w-full bg-transparent resize-none no-focus-ring"
             style={{
-              color: '#fff',
-              minHeight: '52px',
+              color: 'var(--text-primary)',
+              fontSize: 14,
+              lineHeight: 1.65,
+              minHeight: 60,
               border: 'none',
-              paddingTop: selectedImage ? '32px' : '0',
             }}
             disabled={loading}
           />
-          {/* 自定义打字动效占位符 - 偏暖白 */}
-          {!value && !selectedImage && (
+          {!value && (
             <div
-              className="absolute top-4 left-5 right-5 pointer-events-none text-[15px] leading-relaxed"
-              style={{ color: 'var(--text-muted)' }}
+              className="absolute left-5 right-5 pointer-events-none"
+              style={{ top: 16, color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.65 }}
             >
               {typingPlaceholder}
               <span className="animate-pulse">|</span>
             </div>
           )}
         </div>
-        {/* 底部工具栏 - 简化，只保留核心操作 */}
-        <div className="flex items-center justify-between px-4 pb-3">
-          {/* 左侧：附件按钮 + 尺寸配置 */}
-          <div className="flex items-center gap-2">
+
+        {/* 参考图 chip 行。空着时不占位——一个常驻的空行会让输入区看起来「有个坏掉的槽」。 */}
+        {selectedImage ? (
+          <div className="flex flex-wrap items-center gap-[7px] px-5 pb-1.5">
+            <span
+              className="inline-flex items-center gap-1.5"
+              style={{
+                height: 30,
+                padding: '3px 4px',
+                borderRadius: 6,
+                background: 'var(--bg-secondary)',
+                color: 'var(--text-secondary)',
+                fontSize: 10,
+              }}
+              title={`参考图：${selectedImage.file.name}`}
+            >
+              <img
+                src={selectedImage.previewUrl}
+                alt=""
+                style={{ width: 24, height: 24, flex: '0 0 auto', borderRadius: 4, objectFit: 'cover', display: 'block' }}
+              />
+              <span className="truncate" style={{ maxWidth: 120, paddingRight: 2 }}>{selectedImage.file.name}</span>
+              {onRemoveImage && (
+                <button
+                  type="button"
+                  aria-label="移除参考图"
+                  onClick={(e) => { e.stopPropagation(); onRemoveImage(); }}
+                  className="grid place-items-center hover-bg-soft"
+                  style={{ width: 20, height: 20, borderRadius: 4, border: 0, background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </span>
+          </div>
+        ) : null}
+
+        {/* 一行说明：这是与视频创作的分界——那边只吃一段文字。 */}
+        <div
+          className="flex items-center gap-1.5 px-5 pb-3"
+          style={{ color: 'var(--text-muted)', fontSize: 10 }}
+        >
+          <Clipboard size={12} />
+          直接按 {isMac ? '⌘V' : 'Ctrl+V'} 粘贴，或把图拖进来当参考图
+        </div>
+
+        {/* 底部工具条：自带底色 + 上边框，与视频创作同结构。 */}
+        <div
+          className="flex items-center justify-between gap-2.5"
+          style={{
+            minHeight: 58,
+            padding: '9px 10px 9px 13px',
+            borderTop: '1px solid var(--border-faint)',
+            background: 'var(--bg-secondary)',
+          }}
+        >
+          <div className="flex items-center gap-[3px]">
             <input
               ref={fileInputRef}
               type="file"
@@ -600,71 +567,58 @@ function QuickInputBox(props: {
               data-tour-id="visual-image-btn"
               onClick={handleImageButtonClick}
               disabled={loading}
-              className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{
-                background: 'rgba(99, 102, 241, 0.1)',
-                color: 'var(--accent-fg-violet)',
-                border: '1px solid rgba(99, 102, 241, 0.15)',
-              }}
-              title="添加图片参考（也可直接粘贴 Ctrl/Cmd+V 或拖入图片）"
+              className="inline-flex items-center gap-1.5 hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ minHeight: 36, padding: '0 9px', borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-secondary)', fontSize: 10, cursor: 'pointer' }}
+              title="添加参考图（也可粘贴或拖入）"
             >
-              <Image size={14} />
-              <span>图片</span>
+              <Image size={13} />
+              参考图
             </button>
-
-            {/* 尺寸选择器（复用编辑器的面板组件） */}
             {onSizeChange && (
               <span data-tour-id="visual-size-btn" className="inline-flex">
                 <SizePickerButton size={size} onSizeChange={onSizeChange} />
               </span>
             )}
-          </div>
-          {/* 右侧：Bug 按钮 + 发送按钮 */}
-          <div className="flex items-center gap-2">
             <button
               type="button"
               data-tour-id="visual-defect-btn"
-              onClick={() => openDefectDialog()}
-              className="h-9 w-9 rounded-xl flex items-center justify-center transition-all duration-200 hover-bg-soft"
-              style={{
-                background: 'var(--bg-input-hover)',
-                color: 'var(--text-secondary)',
-                border: '1px solid var(--border-subtle)',
-              }}
+              onClick={(e) => { e.stopPropagation(); openDefectDialog(); }}
+              className="inline-flex items-center gap-1.5 hover-bg-soft"
+              style={{ minHeight: 36, padding: '0 9px', borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-secondary)', fontSize: 10, cursor: 'pointer' }}
               title="提交缺陷 (Cmd/Ctrl+B)"
             >
-              <Bug size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={onSubmit}
-              disabled={!canSubmit}
-              data-tour-id="visual-submit-btn"
-              className="h-9 px-5 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all duration-200"
-              style={{
-                background: canSubmit
-                  ? 'linear-gradient(135deg, rgba(99,102,241,0.95) 0%, rgba(79,82,221,0.95) 100%)'
-                  : 'var(--border-subtle)',
-                color: canSubmit ? 'rgba(255,255,255,0.95)' : 'var(--text-muted)',
-                cursor: canSubmit ? 'pointer' : 'not-allowed',
-                boxShadow: canSubmit ? '0 4px 20px rgba(99,102,241,0.3)' : 'none',
-              }}
-            >
-              {loading ? (
-                <span>生成中...</span>
-              ) : (
-                <>
-                  <Sparkles size={14} />
-                  <span>开始创作</span>
-                </>
-              )}
+              <Bug size={13} />
+              反馈
             </button>
           </div>
+
+          {/* 反色主按钮：视频创作的主操作就是这么做的，也是「控制台感」里最见效的一笔。 */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onSubmit(); }}
+            disabled={!canSubmit}
+            data-tour-id="visual-submit-btn"
+            className="inline-flex items-center gap-[7px] transition-opacity"
+            style={{
+              minHeight: 40,
+              padding: '0 16px',
+              borderRadius: 7,
+              border: 0,
+              background: canSubmit ? 'var(--text-primary)' : 'var(--bg-tertiary)',
+              color: canSubmit ? 'var(--bg-base)' : 'var(--text-muted)',
+              fontSize: 12,
+              fontWeight: 650,
+              cursor: canSubmit ? 'pointer' : 'not-allowed',
+            }}
+          >
+            {loading ? '生成中…' : (<><Sparkles size={14} />开始创作</>)}
+          </button>
         </div>
       </div>
     </div>
   );
 }
+
 
 // ============ 场景标签 ============
 function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: string | null }) {
@@ -945,6 +899,34 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [inputValue, setInputValue] = useState('');
   const [inputLoading, setInputLoading] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
+
+  // ---- 首页背景 ----
+  // 素材池 = **你自己项目的封面图**，不是随包发的一组风景照。
+  // 三个理由：(1) 手上没有真实素材，编不出来也不该编（no-rootless-tree）；
+  // (2)「适合我们自己风格」最硬的解释就是它本来就是我们自己的产出；
+  // (3) 像 Photos 的地方正在于此——放的是你自己的图。
+  // 池子为空（新用户还没出过图）时 resolveBackdrop 返回 null，整层不渲染，页面照常成立。
+  const [backdropMode, setBackdropMode] = useState<BackdropMode>(() => readBackdropMode());
+  const backdropAssets = useMemo<BackdropAsset[]>(
+    () =>
+      items
+        .flatMap((ws) =>
+          (ws.coverAssets ?? [])
+            .filter((a) => a.url)
+            // 只收够大的封面：小图拉满屏会糊，还不如不放。
+            .filter((a) => (a.width ?? 0) >= 512 && (a.height ?? 0) >= 512)
+            .slice(0, 1) // 每个项目最多贡献一张，免得一个项目霸占整个轮换池
+            .map((a) => ({
+              id: a.id,
+              name: ws.title || '未命名',
+              url: a.url,
+              note: formatDate(ws.updatedAt) || undefined,
+            })),
+        )
+        .slice(0, 24),
+    [items],
+  );
+  const backdrop = useMemo(() => resolveBackdrop(backdropAssets, backdropMode), [backdropAssets, backdropMode]);
   const [selectedImage, setSelectedImage] = useState<{ file: File; previewUrl: string } | null>(null);
   // 默认尺寸：从 sessionStorage 读取用户偏好，与编辑器共享同一 key
   const defaultSizeKey = userId ? `prdAdmin.visualAgent.defaultSize.${userId}` : '';
@@ -1283,6 +1265,57 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       {/* 潜像场：织纹周期与生图等待卡同源，「等待」和「首页」是同一种材质。
           旧版这里是星空插画 + 粒子漩涡——那是可以贴在任何产品上的装饰。 */}
       <LatentField />
+      {/* 轮换背景。压暗罩由 BackdropPhoto 自带——那一层是 9-13px 小字可读性的唯一保障。 */}
+      <BackdropPhoto src={backdrop?.url ?? null} />
+
+      {/* 顶栏：品牌 + 创作/作品 + 右侧动作，与视频创作同结构。
+          旧版这里只有一个孤零零的返回箭头和一枚教程胶囊，页面没有身份。 */}
+      <div
+        className="relative z-20 grid items-center px-6"
+        style={{
+          gridTemplateColumns: '1fr auto 1fr',
+          minHeight: 64,
+          borderBottom: '1px solid var(--border-faint)',
+          background: 'var(--panel-solid)',
+          backdropFilter: 'blur(16px)',
+        }}
+      >
+        <div className="flex items-center gap-2.5 justify-self-start">
+          <button
+            type="button"
+            aria-label="返回"
+            onClick={() => navigate(-1)}
+            className="grid place-items-center hover-bg-soft"
+            style={{ width: 30, height: 30, borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
+          >
+            <ArrowLeft size={16} />
+          </button>
+          <span
+            className="grid place-items-center shrink-0"
+            style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--text-primary)', color: 'var(--bg-base)' }}
+          >
+            <Image size={17} />
+          </span>
+          <span className="min-w-0">
+            <strong className="block" style={{ fontSize: 13, fontWeight: 650, color: 'var(--text-primary)' }}>视觉创作</strong>
+            <small className="block" style={{ marginTop: 1, fontSize: 9, fontWeight: 500, letterSpacing: '.08em', color: 'var(--text-muted)' }}>DARKROOM</small>
+          </span>
+        </div>
+
+        <div className="flex items-center gap-0.5 justify-self-center" style={{ height: 38, padding: 3, borderRadius: 8, background: 'var(--bg-secondary)' }}>
+          <span
+            className="grid place-items-center"
+            style={{ minWidth: 64, height: 32, borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 11, boxShadow: 'var(--shadow-card-sm)' }}
+          >
+            创作
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5 justify-self-end">
+          <BackdropSettings assets={backdropAssets} mode={backdropMode} onModeChange={setBackdropMode} />
+          <TipsEntryButton compact />
+        </div>
+      </div>
 
       {/* 浮动工具栏 - 桌面端页面左侧垂直居中，移动端隐藏 */}
       {!isMobile && (
