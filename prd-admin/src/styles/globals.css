@@ -138,7 +138,7 @@
  * 于是显影是从左上角开始的。交界处留一道极窄的暖白，那是「光的前沿」，
  * 让推进看得出是被照亮而不是被擦掉。
  *
- * 时长 1900ms、cubic-bezier(.32,.04,.18,1)。
+ * 时长 2500ms（用户在真机上定的；1900 还是偏快）、cubic-bezier(.32,.04,.18,1)。
  * 曲线是取证调的：第一版用 (.16,.7,.3,1)，那条曲线把大部分行程压在前三分之一——
  * 逐帧看下去 600ms（32% 的时间）时幕已经退掉八成，等于又变成「唰一下」。
  * 换成起步平缓、末段收束的这条，光的前沿在整段里都看得见，才是「被点亮」而不是「被擦掉」。
@@ -171,7 +171,7 @@
     var(--bg-base) 53%,
     var(--bg-base) 100%);
   transform: translate3d(-30%, -30%, 0);
-  animation: wake-illuminate 1900ms cubic-bezier(.32, .04, .18, 1) forwards;
+  animation: wake-illuminate 2500ms cubic-bezier(.32, .04, .18, 1) forwards;
 }
 
 @keyframes wake-illuminate {
@@ -183,7 +183,7 @@
    上一版全部挤在 40-600ms 里，光还在左上，右下的东西已经亮完了，
    因果就断了（demo-causality-contract：先走到，再发生）。 */
 .wake-rise {
-  animation: wake-rise-in 760ms cubic-bezier(.16, .7, .3, 1) both;
+  animation: wake-rise-in 900ms cubic-bezier(.32, .04, .18, 1) both;
   animation-delay: var(--wake-delay, 0ms);
 }
 
