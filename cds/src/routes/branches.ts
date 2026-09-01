@@ -35,6 +35,16 @@ import {
 } from '../services/preview-entrypoints.js';
 import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
+import { normalizeReadOnlyStatement, normalizeWriteStatement } from '../services/sql-statement-policy.js';
+import { explainMissingTable, foreignSchemaRefusal } from '../services/db-error-explain.js';
+import {
+  branchDbAccountName,
+  branchDbCredentialOwner,
+  branchDbCredentialsBelongTo,
+  explainBranchDbAuthFailure,
+  foreignBranchDbEnvKeys,
+  type BranchDbRuntime,
+} from '../services/branch-db-identity.js';
 import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
 import {
   resolveBranchProtection,
@@ -6302,8 +6312,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return `${prefix}_${suffix}`.slice(0, 64);
   }
 
+  /**
+   * 派发给该分支的数据库账号名。身份由 branch-db-identity 一处算（抗碰撞：可读前缀
+   * 可以撞，指纹保证唯一），这里不再自己拼——旧写法把 slug 截到 24 字符当身份，
+   * 兄弟分支算出同一个账号后互相覆盖口令/删账号，正是 1045 那次事故的根因。
+   */
   function branchDatabaseUser(branch: BranchEntry): string {
-    return `cds_${StateService.slugify(branch.id).replace(/-/g, '_').slice(0, 24)}`.slice(0, 32);
+    return branchDbAccountName(branch.id);
   }
 
   interface MysqlBranchDatabaseResult {
@@ -6351,9 +6366,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   type SqlDataRuntime = 'mysql' | 'postgres';
 
+  /**
+   * 分支作用域的 env，**只在它确实是派发给这台服务时**才返回；否则返回空表。
+   *
+   * 分支 env 是一张平表（MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE 各一份），而一个分支
+   * 可以挂多台同类型库。不做归属判断就会把 A 库的账号、口令、库名喂给 B 库——账号在 B
+   * 上不存在，于是「CDS 自己建的库，CDS 自己连不上」（2026-09-01 现场）。
+   */
+  /** 只有这三种运行时有「分支凭据」这套东西；其余（redis / rabbitmq / minio / unknown）没有。 */
+  function isBranchDbRuntime(runtime: string): runtime is BranchDbRuntime {
+    return runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb';
+  }
+
+  function ownedBranchEnv(branch: BranchEntry, runtime: BranchDbRuntime, service: InfraService): Record<string, string> {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    return branchDbCredentialsBelongTo(branchEnv, runtime, service.id) ? branchEnv : {};
+  }
+
+  /**
+   * 展开这台服务自己的 env 模板。
+   *
+   * 模板变量里必须先把**别人家的分支凭据**摘掉：`POSTGRES_USER: ${POSTGRES_USER}` 是 CDS
+   * 支持的标准写法，而 getMergedEnv 里躺着分支作用域那一份平表凭据。不摘，B 服务就绕开
+   * ownedBranchEnv 的归属判定，照样把 A 的账号口令展开进自己的 env，1045 原样复现
+   * （Codex P1，2026-09-01）。摘掉之后回落到项目/全局层的同名值，而不是让这个 key 凭空消失。
+   */
   function resolvedInfraEnv(service: InfraService, branch?: BranchEntry): Record<string, string> {
     const projectId = service.projectId || branch?.projectId || 'default';
-    const vars = branch ? getMergedEnv(projectId, branch.id) : stateService.getCustomEnv(projectId);
+    if (!branch) return resolveEnvTemplates(service.env || {}, stateService.getCustomEnv(projectId));
+    const vars = getMergedEnv(projectId, branch.id);
+    const foreignKeys = foreignBranchDbEnvKeys(stateService.getCustomEnvScope(branch.id), service.id);
+    if (foreignKeys.length) {
+      const withoutBranchScope = getMergedEnv(projectId);
+      for (const key of foreignKeys) {
+        if (key in withoutBranchScope) vars[key] = withoutBranchScope[key];
+        else delete vars[key];
+      }
+    }
     return resolveEnvTemplates(service.env || {}, vars);
   }
 
@@ -6374,6 +6423,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return password ? ` -p${shq(password)}` : '';
   }
 
+  /**
+   * CDS 到底拿不拿得到这台 MySQL 的管理员（root）口令。
+   *
+   * 判据不能用 `mysqlRootPassword()` 是否非空：那个函数会一路回落到 `MYSQL_PASSWORD`，
+   * 而那是**应用账号**的口令，拿它当 root 口令用必然 1045。真正决定「能不能以管理员
+   * 身份改账号」的只有两种情形：显式配了 root 口令，或显式允许空口令 root。
+   * 官方镜像的 `MYSQL_RANDOM_ROOT_PASSWORD` 属于第三种——口令只在容器日志里出现过一次，
+   * CDS、运维、用户手上都没有，任何需要 root 的动作（建库 / 重置凭据）都做不了。
+   */
+  function resolveMysqlAdmin(service: InfraService, branch?: BranchEntry): { available: boolean; password: string } {
+    const env = resolvedInfraEnv(service, branch);
+    // 判空可以，**不能 trim 后当口令用**：首尾带空白的 root 口令是合法的，改一个字符
+    // 就连不上，而 available 还报 true（Codex P2，2026-09-01）。口令原样带出去。
+    const rootPassword = String(env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '');
+    if (rootPassword) return { available: true, password: rootPassword };
+    const allowEmpty = String(env.MYSQL_ALLOW_EMPTY_PASSWORD || env.MARIADB_ALLOW_EMPTY_ROOT_PASSWORD || '').trim();
+    // 显式允许空口令 root：**口令就是空的**。这里必须把这个事实带出去——判「能不能」与
+    // 取「用什么连」如果是两个函数，就会出现「判定说能，实际却拿应用账号的口令去连 root」
+    // 的错位，报出来还是 1045（Codex P1，2026-09-01）。
+    if (/^(1|true|yes)$/i.test(allowEmpty)) return { available: true, password: '' };
+    return { available: false, password: '' };
+  }
+
+  function mysqlAdminAvailable(service: InfraService, branch?: BranchEntry): boolean {
+    return resolveMysqlAdmin(service, branch).available;
+  }
+
   function maskTextSecrets(textValue: string, secrets: string[]): string {
     let masked = textValue;
     for (const secret of secrets) {
@@ -6383,7 +6459,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mysqlClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mysql', service);
     const env = resolvedInfraEnv(service, branch);
     const database = mysqlDatabaseForBranch(service, branch);
     const branchUser = branchEnv.MYSQL_USER || '';
@@ -6407,43 +6483,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { columns, rows, rowCount: rows.length };
   }
 
-  function normalizeReadOnlySql(sql: string): string {
-    const trimmed = sql.trim();
-    if (!trimmed) throw new Error('SQL 不能为空');
-    if (trimmed.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
-    const withoutTrailing = trimmed.replace(/;+$/g, '').trim();
-    if (withoutTrailing.includes(';')) {
-      throw new Error('只读 SQL Console 一次只允许执行一条语句');
-    }
-    const head = withoutTrailing.match(/^\s*([a-z]+)/i)?.[1]?.toLowerCase() || '';
-    if (!['select', 'show', 'describe', 'desc', 'explain'].includes(head)) {
-      throw new Error('第一阶段 SQL Console 只允许 SELECT / SHOW / DESCRIBE / EXPLAIN');
-    }
-    // 危险关键字检查必须覆盖全部放行语句头，不只 select：PostgreSQL 的
-    // EXPLAIN ANALYZE UPDATE ... 会真实执行底层 UPDATE，仅查 select 头会被
-    // 绕过 /data/query-write 的 data-write 权限与确认门（PR #799 Codex P1）
-    if (/\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|set|use|load|outfile|dumpfile|lock|unlock)\b/i.test(withoutTrailing)) {
-      throw new Error('检测到写入或高风险关键字，已拒绝执行');
-    }
-    return withoutTrailing;
+  // 方言必须传：`#` 在 MySQL 是行注释、在 PostgreSQL 是 JSON 运算符（`#>>` / `#>` / `#-`）。
+  // 不传就按「# 不是注释」处理，写语句不会被截断成假的只读（Codex P1，2026-09-01）。
+  function normalizeReadOnlySql(sql: string, runtime: SqlDataRuntime): string {
+    // 判据在 sql-statement-policy（唯一一份，前端那份由守卫钉着与它一致）。
+    return normalizeReadOnlyStatement(sql, runtime);
   }
 
-  function normalizeDangerousWriteSql(sql: string): string {
-    const trimmed = sql.trim();
-    if (!trimmed) throw new Error('SQL 不能为空');
-    if (trimmed.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
-    const withoutTrailing = trimmed.replace(/;+$/g, '').trim();
-    if (withoutTrailing.includes(';')) {
-      throw new Error('写 SQL 一次只允许执行一条语句');
-    }
-    const head = withoutTrailing.match(/^\s*([a-z]+)/i)?.[1]?.toLowerCase() || '';
-    if (!['insert', 'update', 'delete', 'create', 'alter', 'drop', 'truncate', 'replace'].includes(head)) {
-      throw new Error('写 SQL 只允许 INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE');
-    }
-    if (/\b(grant|revoke|load\s+data|outfile|dumpfile|copy\s+.*program|pg_read_file|pg_ls_dir)\b/i.test(withoutTrailing)) {
-      throw new Error('检测到权限或文件系统高风险 SQL，已拒绝执行');
-    }
-    return withoutTrailing;
+  function normalizeDangerousWriteSql(sql: string, runtime: SqlDataRuntime): string {
+    return normalizeWriteStatement(sql, runtime);
   }
 
   async function runMysqlDataQuery(service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000): Promise<DbDataQueryResult> {
@@ -6459,13 +6507,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
       { timeout: timeoutMs },
     );
     if (result.exitCode !== 0) {
-      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 查询失败').trim(), creds.secrets));
+      // 裸的 `ERROR 1045` 对用户等于没说：它既可能是口令被兄弟分支改过，也可能是账号
+      // 已被删掉，而两种情况的下一步是同一个「重置连接凭据」。把这句话说出来。
+      throw new Error(explainBranchDbAuthFailure({
+        runtime: 'mysql',
+        branchId: branch.id,
+        user: creds.user,
+        rawError: maskTextSecrets((result.stderr || result.stdout || 'MySQL 查询失败').trim(), creds.secrets),
+        adminAvailable: mysqlAdminAvailable(service, branch),
+      }));
     }
     return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
   }
 
   function postgresDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'postgres', service);
     const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.POSTGRES_DB
@@ -6479,7 +6535,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function postgresClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'postgres', service);
     const env = resolvedInfraEnv(service, branch);
     const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
     const password = branchEnv.POSTGRES_PASSWORD || env.POSTGRES_PASSWORD || '';
@@ -6499,7 +6555,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       { timeout: timeoutMs },
     );
     if (result.exitCode !== 0) {
-      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 查询失败').trim(), creds.secrets));
+      throw new Error(explainBranchDbAuthFailure({
+        runtime: 'postgres',
+        branchId: branch.id,
+        user: creds.user,
+        rawError: maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 查询失败').trim(), creds.secrets),
+      }));
     }
     return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
   }
@@ -6524,6 +6585,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           command: `printf %s ${shq(trimmed)} | docker exec -i -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -v ON_ERROR_STOP=1 -P pager=off`,
           secrets: creds.secrets,
+          user: creds.user,
         };
       })()
       : (() => {
@@ -6531,13 +6593,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           command: `printf %s ${shq(trimmed)} | docker exec -i ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --default-character-set=utf8mb4 ${shq(creds.database)}`,
           secrets: creds.secrets,
+          user: creds.user,
         };
       })();
     const result = await shell.exec(command.command, { timeout: 120_000 });
     const rawOutput = result.stdout || '';
     const rawError = result.stderr || '';
     const output = maskTextSecrets(rawOutput.slice(0, 256 * 1024), command.secrets);
-    const error = maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets);
+    const error = explainBranchDbAuthFailure({
+      runtime,
+      branchId: branch.id,
+      user: command.user,
+      rawError: maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets),
+      adminAvailable: runtime === 'mysql' ? mysqlAdminAvailable(service, branch) : undefined,
+    });
     return {
       exitCode: result.exitCode,
       output,
@@ -6580,7 +6649,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (runtime === 'postgres') {
       return ref.schema ? `${pgIdent(ref.schema)}.${pgIdent(ref.table)}` : pgIdent(ref.table);
     }
-    return sqlIdent(ref.table);
+    // MySQL 这一侧此前把 schema 丢了，永远只查连接的默认库：表树里点一张属于别的库的表
+    // 就是 `Table 'default_db.x' doesn't exist`，报文里的库名还和面板上显示的对不上。
+    return ref.schema ? `${sqlIdent(ref.schema)}.${sqlIdent(ref.table)}` : sqlIdent(ref.table);
   }
 
   function redisPassword(service: InfraService): string {
@@ -6589,7 +6660,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mongoDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
     const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.MONGO_INITDB_DATABASE
@@ -6620,7 +6691,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; uri: string; secrets: string[] } {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
     const env = resolvedInfraEnv(service, branch);
     const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
     const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
@@ -6970,7 +7041,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function getExistingMysqlConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mysql', service);
     const branchPassword = branchEnv.MYSQL_PASSWORD || '';
     const branchUser = branchEnv.MYSQL_USER || '';
     if (!branchUser || !branchPassword) return null;
@@ -7145,7 +7216,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function getExistingPostgresConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'postgres', service);
     const branchUser = branchEnv.POSTGRES_USER || '';
     const branchPassword = branchEnv.POSTGRES_PASSWORD || '';
     const database = branchEnv.POSTGRES_DB || postgresDatabaseForBranch(service, branch);
@@ -7154,7 +7225,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function getExistingMongoConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
     const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || mongoDatabaseForBranch(service, branch);
     const branchUser = branchEnv.MONGODB_USERNAME || '';
     const branchPassword = branchEnv.MONGODB_PASSWORD || '';
@@ -7207,13 +7278,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (service.status !== 'running') {
       throw new Error(`MySQL 服务当前未运行（status=${service.status}）`);
     }
+    // 重新派发要以 root 身份 ALTER USER。拿不到 root 就当场说清为什么、给替代路径，
+    // 而不是硬跑一条注定 1045 的命令，让用户对着「Access denied for user 'root'」再猜一轮。
+    const admin = resolveMysqlAdmin(service, branch);
+    if (!admin.available) {
+      throw new Error(
+        `服务 "${service.id}" 没有 CDS 拿得到的管理员口令（容器用的是随机 root 口令，或没配置 root 口令），`
+        + '重新派发分支账号需要管理员身份，无法执行。'
+        + '可行的两条：一是由有权限的人直连这台库为该分支账号重设口令、或改用容器自带的应用账号；'
+        + '二是给这个服务补上 MYSQL_ROOT_PASSWORD 并重建容器后再来重置。',
+      );
+    }
     const database = mysqlDatabaseForBranch(service, branch);
     if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
       throw new Error(`数据库名不合法: ${database || '(empty)'}`);
     }
     const branchUser = branchDatabaseUser(branch);
     const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
-    const rootPassword = mysqlRootPassword(service);
+    // 用上面解出来的管理员口令（空口令 root 就是空串），不再走会回落到应用账号口令的旧取法。
+    const rootPassword = admin.password;
     const sql = [
       `CREATE USER IF NOT EXISTS ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
       `ALTER USER ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
@@ -7288,7 +7371,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mysqlDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mysql', service);
     const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.MYSQL_DATABASE
@@ -7972,32 +8055,66 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   }
 
+  /**
+   * 删库前置条件不成立时抛这个：路由据此回 409（拒绝，不是故障）。
+   * 以前靠匹配「拒绝删除共享数据库」这句文案判状态码，加一条新的拒绝理由就会漏判成 500——
+   * 判据挂在措辞上，改一次文案就漂一次。
+   */
+  function deleteRefusal(message: string): Error {
+    return Object.assign(new Error(message), { cdsDeleteRefusal: true });
+  }
+
   function branchOwnedDatabaseForDelete(runtime: ResourceDatabaseRuntime, service: InfraService, branch: BranchEntry): string {
+    // 顺序有讲究：先答「本分支到底有没有独立库」，再答「这套 env 是不是这台服务的」。
+    // 反过来的话，一个压根没有分支库的分支会先撞上归属报错，说的却不是它真正的处境。
     const branchEnv = stateService.getCustomEnvScope(branch.id);
-    if (runtime === 'mysql') {
-      const database = branchEnv.MYSQL_DATABASE || '';
-      if (!database || !branchEnv.MYSQL_USER) {
-        throw new Error('未检测到分支独立 MySQL 数据库和用户，拒绝删除共享数据库');
+    const database = ((): string => {
+      if (runtime === 'mysql') {
+        const value = branchEnv.MYSQL_DATABASE || '';
+        if (!value || !branchEnv.MYSQL_USER) {
+          throw deleteRefusal('未检测到分支独立 MySQL 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
       }
-      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
-    }
-    if (runtime === 'postgres') {
-      const database = branchEnv.POSTGRES_DB || '';
-      if (!database || !branchEnv.POSTGRES_USER) {
-        throw new Error('未检测到分支独立 PostgreSQL 数据库和用户，拒绝删除共享数据库');
+      if (runtime === 'postgres') {
+        const value = branchEnv.POSTGRES_DB || '';
+        if (!value || !branchEnv.POSTGRES_USER) {
+          throw deleteRefusal('未检测到分支独立 PostgreSQL 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 63);
       }
-      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 63);
-    }
-    if (runtime === 'mongodb') {
-      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
-      const env = resolvedInfraEnv(service);
-      const serviceRequiresAuth = Boolean(env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME);
-      if (!database || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
-        throw new Error('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
+      if (runtime === 'mongodb') {
+        const value = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
+        const env = resolvedInfraEnv(service);
+        const serviceRequiresAuth = Boolean(env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME);
+        if (!value || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
+          throw deleteRefusal('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 63);
       }
-      return database.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 63);
+      throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
+    })();
+
+    // 删库要以分支 env 里的库名为准，而分支 env 只有一份、可能是**另一台同类型库**的。
+    // 不判归属就会「删 B 资源，掉的是 A 的库」——这是数据丢失，不是连不上而已。
+    const owner = branchDbCredentialOwner(branchEnv, runtime as BranchDbRuntime);
+    // 破坏性路径**失败关闭**：读路径可以在「判断不出归属」时沿用老行为，删库不行——
+    // 同一分支挂两台同类型库时，拿一份没有归属标记的库名去删，掉的可能是另一台的同名库
+    // （Codex P1，2026-09-01）。没有证据就不动手。
+    if (!owner) {
+      throw deleteRefusal(
+        `分支环境变量里有库名 ${database}，却没有归属标记（缺 *_HOST，连接串也解析不出 host），`
+        + `无法证明它属于本分支的资源 "${service.id}"；删库不可逆，拒绝执行。`
+        + '请先在该资源上重新注入连接信息（会写入归属标记）再来删。',
+      );
     }
-    throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
+    if (owner !== service.id) {
+      throw deleteRefusal(
+        `分支环境变量里的库名/账号是派发给服务 "${owner}" 的，不是 "${service.id}"；`
+        + '拒绝按它删库（否则会删掉另一台库的数据）。请先为本资源重新注入连接信息再操作。',
+      );
+    }
+    return database;
   }
 
   async function clearResourceData(params: {
@@ -8079,13 +8196,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const database = branchOwnedDatabaseForDelete(runtime, service, branch);
     const safetyBackup = await createResourceBackupFile({ runtime, service, branch, resourceId, resourceName, projectId, actor, reason: 'pre-restore' });
+    const accountNotes: string[] = [];
     if (runtime === 'mysql') {
       const rootPassword = mysqlRootPassword(service);
-      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const branchEnv = ownedBranchEnv(branch, 'mysql', service);
       const user = branchEnv.MYSQL_USER || '';
+      // MySQL 账号是**实例级**的：旧派发规则按分支名截断，兄弟分支会共用同一个账号，
+      // 那时删本分支的库顺手 DROP USER，等于把还在用它的兄弟分支一起打死（1045 事故
+      // 的第二条路径）。所以只有能证明「这个账号就是本分支的」时才删。
+      const dropUser = user && user === branchDatabaseUser(branch);
+      if (user && !dropUser) {
+        accountNotes.push(`账号 ${user} 不是按当前抗碰撞规则派发给本分支的（可能与兄弟分支共用），已保留不删`);
+      }
       const sql = [
         `DROP DATABASE IF EXISTS ${sqlIdent(database)}`,
-        user ? `DROP USER IF EXISTS ${sqlString(user)}@'%'` : '',
+        dropUser ? `DROP USER IF EXISTS ${sqlString(user)}@'%'` : '',
         'FLUSH PRIVILEGES',
       ].filter(Boolean).join('; ');
       const result = await shell.exec(
@@ -8094,16 +8219,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 删除数据库失败').trim(), [rootPassword]));
     } else if (runtime === 'postgres') {
-      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const branchEnv = ownedBranchEnv(branch, 'postgres', service);
       const user = branchEnv.POSTGRES_USER || '';
       const env = resolvedInfraEnv(service);
       const adminUser = env.POSTGRES_USER || 'postgres';
       const adminPassword = env.POSTGRES_PASSWORD || '';
       const adminDb = env.POSTGRES_DB || adminUser || 'postgres';
+      // 同 MySQL：role 是实例级的，只有能证明是本分支的账号才删。
+      const dropRole = user && user === branchDatabaseUser(branch);
+      if (user && !dropRole) {
+        accountNotes.push(`角色 ${user} 不是按当前抗碰撞规则派发给本分支的（可能与兄弟分支共用），已保留不删`);
+      }
       const sql = [
         `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${pgString(database)} AND pid <> pg_backend_pid();`,
         `DROP DATABASE IF EXISTS ${pgIdent(database)};`,
-        user ? `DROP ROLE IF EXISTS ${pgIdent(user)};` : '',
+        dropRole ? `DROP ROLE IF EXISTS ${pgIdent(user)};` : '',
       ].filter(Boolean).join('\n');
       const result = await shell.exec(
         `printf %s ${shq(sql)} | docker exec -i -e PGPASSWORD=${shq(adminPassword)} ${shq(service.containerName || '')} psql -U ${shq(adminUser)} -d ${shq(adminDb)} -v ON_ERROR_STOP=1`,
@@ -8112,7 +8242,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 删除数据库失败').trim(), [adminPassword]));
     } else if (runtime === 'mongodb') {
       const creds = mongoCredentials(service, branch);
-      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
       const user = branchEnv.MONGODB_USERNAME || '';
       const script = [
         'db.dropDatabase();',
@@ -8140,7 +8270,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       resourceId,
       resourceName,
       result: 'success',
-      note: `${resourceName} 分支数据库 ${database} 已删除，操作前备份 ${safetyBackup.name}`,
+      note: `${resourceName} 分支数据库 ${database} 已删除，操作前备份 ${safetyBackup.name}`
+        + (accountNotes.length > 0 ? `；${accountNotes.join('；')}` : ''),
     });
     return { database, safetyBackup };
   }
@@ -8377,7 +8508,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
   ): string {
     const runtime = resourceRuntimeKey(resource.runtime);
     const env = resolvedInfraEnv(service, branch);
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    // 归属判断同工作台：分支 env 只有一份，别把另一台库的账号/库名显示成这台的连接串。
+    // 只有三种数据库运行时有分支凭据；redis / rabbitmq / minio / unknown 一律走原始 env
+    // （给它们传 unknown 会在归属查表上抛，把只读端点打成 500——Codex P1）。
+    const branchEnv = isBranchDbRuntime(runtime)
+      ? ownedBranchEnv(branch, runtime, service)
+      : stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
       const db = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || env.MARIADB_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || env.MARIADB_USER || 'user';
@@ -8413,7 +8549,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
   ): string {
     const runtime = resourceRuntimeKey(resource.runtime);
     const env = resolvedInfraEnv(service, branch);
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = isBranchDbRuntime(runtime)
+      ? ownedBranchEnv(branch, runtime, service)
+      : stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
       const database = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || 'root';
@@ -9106,6 +9244,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      if (ctx.runtime === 'mysql' && ref.schema && ref.schema !== database) {
+        res.status(400).json({ error: foreignSchemaRefusal({ database, requestedSchema: ref.schema, table: ref.table }) });
+        return;
+      }
       const sql = ctx.runtime === 'postgres'
         ? [
           'SELECT column_name, data_type, is_nullable,',
@@ -9119,7 +9261,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : [
           'SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA',
           'FROM information_schema.COLUMNS',
-          `WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${sqlString(ref.table)}`,
+          `WHERE TABLE_SCHEMA = ${ref.schema ? sqlString(ref.schema) : 'DATABASE()'} AND TABLE_NAME = ${sqlString(ref.table)}`,
           'ORDER BY ORDINAL_POSITION',
         ].join(' ');
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
@@ -9133,7 +9275,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }));
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, columns });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json({
+        error: explainMissingTable({
+          database: sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch),
+          requestedSchema: ref.schema,
+          table: ref.table,
+          rawError: (err as Error).message,
+        }),
+      });
     }
   });
 
@@ -9151,11 +9300,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 200) : 50;
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      // MySQL 的 schema 就是 database：允许请求方自带库名，等于让工作台读到同实例里
+      // 别的分支/项目的库（回落到服务自带账号时尤其明显）。执行前就挡住。
+      if (ctx.runtime === 'mysql' && ref.schema && ref.schema !== database) {
+        res.status(400).json({ error: foreignSchemaRefusal({ database, requestedSchema: ref.schema, table: ref.table }) });
+        return;
+      }
       const ident = sqlTableIdent(ctx.runtime, ref);
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, `SELECT * FROM ${ident} LIMIT ${limit}`);
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, limit, ...result });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      // 表在别的库/别台容器上时，1146 报的库名和面板显示的对不上，得把差异讲出来。
+      res.status(500).json({
+        error: explainMissingTable({
+          database: sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch),
+          requestedSchema: ref.schema,
+          table: ref.table,
+          rawError: (err as Error).message,
+        }),
+      });
     }
   });
 
@@ -9164,7 +9327,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!ctx) return;
     let sql = '';
     try {
-      sql = normalizeReadOnlySql(typeof req.body?.sql === 'string' ? req.body.sql : '');
+      sql = normalizeReadOnlySql(typeof req.body?.sql === 'string' ? req.body.sql : '', ctx.runtime);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -9218,7 +9381,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     let sql = '';
     try {
-      sql = normalizeDangerousWriteSql(typeof req.body?.sql === 'string' ? req.body.sql : '');
+      sql = normalizeDangerousWriteSql(typeof req.body?.sql === 'string' ? req.body.sql : '', ctx.runtime);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -9895,7 +10058,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       stateService.save();
       const message = (err as Error).message;
-      res.status(message.includes('拒绝删除共享数据库') ? 409 : 500).json({ error: message });
+      const refused = Boolean((err as { cdsDeleteRefusal?: boolean }).cdsDeleteRefusal)
+        || message.includes('拒绝删除共享数据库');
+      res.status(refused ? 409 : 500).json({ error: message });
     }
   });
 
