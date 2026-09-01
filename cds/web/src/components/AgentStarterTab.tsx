@@ -532,12 +532,13 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace }: Age
                   description="已经按你的角色选好。可以取消，也可以打开技能库按类别增加更多。"
                 />
                 <div className="mt-4 grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+                  {/* 这一屏每张卡都是角色推荐的，再逐张打「角色推荐」标签是噪音；
+                      那个标签只在技能库里有意义——那里推荐和非推荐混在一起。 */}
                   {recommendedSkills.map((skill) => (
                     <SkillCard
                       key={skill.key}
                       skill={skill}
                       selected={selectedSkills.includes(skill.key)}
-                      recommended
                       onToggle={() => toggleSkill(skill.key)}
                     />
                   ))}
