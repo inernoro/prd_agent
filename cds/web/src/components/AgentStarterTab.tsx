@@ -875,11 +875,14 @@ export function SkillCard({ skill, selected, recommended, justAdded, onToggle }:
   justAdded?: boolean
   onToggle: () => void
 }) {
+  // data-skill-card 是守卫锚点：技能卡的填充必须和它背后的内容区分层（见同名契约
+  // 测试）。用属性钉身份，免得守卫去猜「第几个 aria-pressed 按钮才是卡片」。
   return (
     <button
       type="button"
       onClick={onToggle}
       aria-pressed={selected}
+      data-skill-card={selected ? 'selected' : 'default'}
       className={`group relative rounded-xl border p-4 text-left transition-all ${selected ? 'border-warn bg-warn-soft text-foreground shadow-[0_8px_24px_rgba(194,91,33,0.12)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-foreground hover:border-[hsl(var(--hairline-strong))]'}`}
     >
       <div className="flex items-center justify-between gap-3">

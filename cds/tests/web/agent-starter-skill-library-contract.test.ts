@@ -79,6 +79,33 @@ describe('Agent 上手助手技能库契约', () => {
     expect(markup).toContain('完成选择');
   });
 
+  /*
+   * 卡片必须有个「下沉的底」可以浮在上面。
+   *
+   * 事故值：卡片填充和它背后的底原来都是 surface-raised，对比度 1.000——
+   * 完全同色，只有 1px 发丝线在区分。深色下靠近黑底把白字和琥珀色顶出来，
+   * 看不出这个洞；白天没这个红利，整片纯白（用户原话「有点光光的」）。
+   * 修法是给浮层一个下沉的内容区，两个主题都变成 1.21。
+   *
+   * 判据钉的是不变量本身——**内容区的表面不许和卡片同色**，而不是数某个
+   * token 出现几次（数数会被关闭按钮、hover 底色这些小控件带偏）。
+   * 任何一方改成和另一方同层，这条即红。
+   */
+  it('技能卡浮在下沉的内容区上，不是同色贴同色', () => {
+    const markup = renderSheet();
+    // 内容区 = 装着搜索框和网格的那一列，用 `p-4 lg:p-5` 这个唯一后缀锚定
+    const well = markup.match(/bg-\[hsl\(var\(--surface-(\w+)\)\)\] p-4 lg:p-5/)?.[1];
+    // 卡片认 data-skill-card="default"（未选中态才有填充色；选中态走 warn-soft）。
+    // 不许按「第几个 aria-pressed 按钮」去猜——分组筛选也是 aria-pressed，
+    // 猜出来的是没有表面 token 的分组按钮，判据会静默读到 undefined。
+    const cardTag = markup.match(/<button[^>]*data-skill-card="default"[^>]*>/)?.[0] ?? '';
+    const card = cardTag.match(/--surface-(\w+)/)?.[1];
+    // 任一侧读不出来就直接失败，不许因为「没匹配到」而静默通过
+    expect(well).toBeTruthy();
+    expect(card).toBeTruthy();
+    expect(well).not.toBe(card);
+  });
+
   it('搜不到东西时给的是出路，不是空白', () => {
     const markup = renderSheet({ visibleSkills: [], query: '不存在的技能' });
     expect(markup).toContain('没有匹配');
