@@ -11,7 +11,12 @@
  * 外加一条零回归：存量凭证没有 expiresAt = 永不过期，不许被新逻辑判成过期。
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { StateService } from '../../src/services/state.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import {
   buildPrincipalOverview,
   cascadeRevokeTargets,
@@ -215,5 +220,76 @@ describe('buildPrincipalOverview —— 按主体聚合，不按钥匙平铺', (
     const view = result.rows[0].activeCredentials[0];
     expect(view.issuedCount).toBe(7);
     expect(view.lastIssuedAt).toBe('2026-08-31T00:00:00Z');
+  });
+});
+
+/**
+ * 删项目要连带吊销它的授权 —— 发布当天拆验证现场时撞出来的。
+ *
+ * 用用户级凭证建了个探针项目（自动写了一条 created 授权），验完删掉项目，
+ * whoami 里那条授权还在，而且因为项目没了连名字都显示不出来。授权本身不再
+ * 授予任何东西（项目都没了），但它会在权限总览里堆成一排指向空气的芯片 ——
+ * 而总览正是这次要让人「能看清、能撤销」的那一屏。
+ */
+describe('removeProject：授权跟着项目一起谢幕', () => {
+  let tmpDir: string;
+  let svc: StateService;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-grant-cascade-'));
+    svc = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    svc.load();
+    svc.addProject({ id: 'p-doomed', slug: 'doomed', name: '待删项目', kind: 'git' } as never);
+    svc.addProject({ id: 'p-keep', slug: 'keep', name: '留着的项目', kind: 'git' } as never);
+    svc.addPrincipal({
+      id: 'pr_x', name: '某台机器', kind: 'machine', status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+    svc.addProjectGrant({
+      id: 'pg_doomed', projectId: 'p-doomed', principalId: 'pr_x',
+      origin: 'created', grantedAt: new Date().toISOString(),
+    });
+    svc.addProjectGrant({
+      id: 'pg_keep', projectId: 'p-keep', principalId: 'pr_x',
+      origin: 'approved', grantedAt: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => {
+    flushAllJsonStateStores();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('删项目时它的授权被吊销，别的项目的授权原样不动', () => {
+    const summary = svc.removeProject('p-doomed');
+    expect(summary.projectGrants).toEqual(['pg_doomed']);
+
+    const grants = svc.getProjectGrants();
+    const doomed = grants.find((g) => g.id === 'pg_doomed');
+    const keep = grants.find((g) => g.id === 'pg_keep');
+    expect(doomed?.revokedAt).toBeTruthy();
+    expect(doomed?.revokedBy).toBe('system:project-deleted');
+    expect(keep?.revokedAt).toBeUndefined();
+  });
+
+  it('吊销而不是删除：总览里不再出现，审计行还留着', () => {
+    svc.removeProject('p-doomed');
+    // 留痕：行还在
+    expect(svc.getProjectGrants().some((g) => g.id === 'pg_doomed')).toBe(true);
+    // 但总览只列未吊销的，所以界面上立刻消失
+    const overview = buildPrincipalOverview({
+      principals: svc.getPrincipals(),
+      userCredentials: svc.getUserCredentials(),
+      projectCredentials: svc.getAllAgentKeysWithProject(),
+      grants: svc.getProjectGrants(),
+    });
+    const row = overview.rows.find((r) => r.principal.id === 'pr_x');
+    expect(row?.grants.map((g) => g.projectId)).toEqual(['p-keep']);
+  });
+
+  it('授权对该主体不再成立（自愈会重新要求页面批准）', () => {
+    svc.removeProject('p-doomed');
+    expect(hasActiveGrant(svc.getProjectGrants(), 'pr_x', 'p-doomed')).toBe(false);
+    expect(hasActiveGrant(svc.getProjectGrants(), 'pr_x', 'p-keep')).toBe(true);
   });
 });

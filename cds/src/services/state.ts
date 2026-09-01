@@ -1753,13 +1753,14 @@ export class StateService {
     buildProfiles: string[];
     infraServices: string[];
     routingRules: string[];
+    projectGrants: string[];
   } {
     if (!this.state.projects) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [] };
     }
     const project = this.state.projects.find((p) => p.id === id);
     if (!project) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [] };
     }
     if (project.legacyFlag) {
       throw new Error('Cannot remove the legacy default project');
@@ -1781,6 +1782,12 @@ export class StateService {
     const routingRulesToRemove = (this.state.routingRules || [])
       .filter((r) => r.projectId === id)
       .map((r) => r.id);
+    // 项目没了，指向它的授权也就不再授予任何东西 —— 但**吊销而不是删除**：
+    // 权限总览只列未吊销的授权（所以界面上立刻消失），审计行按吊销留存期保留。
+    // 少了这一步，删项目会在总览里留下一枚指向空气、连名字都显示不出来的授权。
+    const projectGrantsToRevoke = (this.state.projectGrants || [])
+      .filter((g) => g.projectId === id && !g.revokedAt)
+      .map((g) => g.id);
 
     // ── Cascade mutate ──
     for (const bid of branchesToRemove) {
@@ -1804,6 +1811,12 @@ export class StateService {
     // leave behind a dangling bucket that would revive on re-create with
     // the same id. _global is never removed.
     this.dropCustomEnvScope(id);
+    for (const grant of this.state.projectGrants || []) {
+      if (grant.projectId === id && !grant.revokedAt) {
+        grant.revokedAt = new Date().toISOString();
+        grant.revokedBy = 'system:project-deleted';
+      }
+    }
 
     this.state.projects = this.state.projects.filter((p) => p.id !== id);
     this.save();
@@ -1813,6 +1826,7 @@ export class StateService {
       buildProfiles: buildProfilesToRemove,
       infraServices: infraServicesToRemove,
       routingRules: routingRulesToRemove,
+      projectGrants: projectGrantsToRevoke,
     };
   }
 
