@@ -83,7 +83,7 @@ describe('scopeEntryToRegExp / pathInScope', () => {
 
 describe('decideProjectScope —— 三条取舍', () => {
   it('未声明作用域 = 全通配，且标记 unscoped 以便与「声明了但没命中」区分', () => {
-    const decision = decideProjectScope([], ['doc/readme.md']);
+    const decision = decideProjectScope([], ['doc/x.md']);
     expect(decision.matched).toBe(true);
     expect(decision.unscoped).toBe(true);
     expect(decision.reason).toContain('全通配');
