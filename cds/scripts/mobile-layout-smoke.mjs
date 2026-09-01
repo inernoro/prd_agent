@@ -156,45 +156,92 @@ async function checkTaskScheduleAction(browser, viewport) {
   const page = await context.newPage();
   await page.goto(`${baseUrl}/task-schedule`, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForTimeout(1500);
+  const label = `task-schedule:${viewport.label}`;
 
-  const result = await page.evaluate(async () => {
-    const findAction = () => Array.from(document.querySelectorAll('button'))
-      .find((b) => b.textContent.trim().startsWith('立即执行') && b.getBoundingClientRect().height > 0);
-    // <2xl 第三栏不在网格里，概览走中栏页签——这一步本身也是判据：
-    // 页签没接上的话下面就找不到按钮。
-    if (!findAction()) {
-      const tab = Array.from(document.querySelectorAll('button'))
-        .find((b) => b.textContent.trim() === '概览' && b.getBoundingClientRect().height > 0);
-      if (tab) {
-        tab.click();
-        await new Promise((r) => setTimeout(r, 400));
-      }
-    }
-    const btn = findAction();
-    if (!btn) return { found: false };
-    const rect = btn.getBoundingClientRect();
+  /*
+   * 主从布局的骨架判据。任务索引是这一屏的脊柱：它必须满高、必须在首屏上半部，
+   * 不能像改版前那样被时间轴压到 y=445（52% 屏高）再挤成 280×367。
+   * 红绿闭环：把左栏改回 `max-h-[60vh]` 且把时间轴搬回值班条下面（即改版前的样子），
+   * 四档全红。
+   */
+  const spine = await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent.trim() === '新建' && b.getBoundingClientRect().height > 0);
+    const index = btn ? btn.closest('section') : null;
+    if (!index) return { found: false };
+    const rect = index.getBoundingClientRect();
+    const groups = Array.from(index.querySelectorAll('span'))
+      .filter((s) => ['需要注意', '即将触发', '正常运行'].includes(s.textContent.trim()));
     return {
       found: true,
       top: Math.round(rect.top),
-      bottom: Math.round(rect.bottom),
+      height: Math.round(rect.height),
       viewportHeight: window.innerHeight,
+      // 分组标题必须首屏就在视野里，不需要先在窄槽里滚动才能看见全部三组
+      groupsInView: groups.length > 0 && groups.every((s) => {
+        const r = s.getBoundingClientRect();
+        return r.top >= 0 && r.bottom <= window.innerHeight;
+      }),
+      groupCount: groups.length,
+      // 未选中任务时右侧是值班概览，时间轴在这里满高展开
+      overviewBand: document.body.innerText.includes('今日调度轴'),
       overflowX: document.body.scrollWidth > window.innerWidth,
     };
   });
-
-  const label = `task-schedule:${viewport.label}`;
-  assertOk(result.found, `${label}: 找不到「立即执行」——主操作不该在任何桌面档位缺席`);
-  assertOk(result.bottom <= result.viewportHeight, `${label}: 「立即执行」落在折叠线以下`, result);
-  assertOk(!result.overflowX, `${label}: 出现横向溢出`, result);
+  assertOk(spine.found, `${label}: 找不到任务索引（以「新建」按钮所在的 section 为锚）`);
+  assertOk(spine.top < spine.viewportHeight * 0.4, `${label}: 任务索引起点落在首屏下半部`, spine);
+  assertOk(spine.height > spine.viewportHeight * 0.5, `${label}: 任务索引没有满高——脊柱被压扁了`, spine);
+  assertOk(spine.groupsInView, `${label}: 分组标题没在首屏全部露出`, spine);
+  assertOk(spine.overviewBand, `${label}: 未选中任务时右侧不是值班概览（找不到「今日调度轴」）`, spine);
+  assertOk(!spine.overflowX, `${label}: 出现横向溢出`, spine);
 
   /*
-   * 「新建任务」曾经是死按钮：表单渲染在 2xl 才存在的第三栏里，1512px 下点它
-   * 表单一个字都不出现。现在它开的是全屏浮层，不依赖任何断点。
-   * 红绿闭环：把浮层改回渲染在第三栏，1512 与 1280 两档立刻红。
+   * 两态切换。点任务 → 右栏换成这一个任务（主操作「立即执行」出现，时间轴收成细带，
+   * 概览的表头随之消失）；点「返回值班概览」→ 换回去。
+   * 红绿闭环：把右栏改成恒为 JobOverview（不分两态），第二组断言里
+   * bandCollapsed 立刻红——「今日调度轴」不会消失。
+   */
+  const detail = await page.evaluate(async () => {
+    const row = document.querySelector('[data-job-row]') || Array.from(document.querySelectorAll('button, [role="button"]'))
+      .find((el) => el.closest('section') && el.textContent.includes('每天'));
+    if (!row) return { clicked: false };
+    row.click();
+    await new Promise((r) => setTimeout(r, 500));
+    const find = (text) => Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent.trim().startsWith(text) && b.getBoundingClientRect().height > 0);
+    const act = find('立即执行');
+    const back = find('返回值班概览');
+    return {
+      clicked: true,
+      actionVisible: Boolean(act) && act.getBoundingClientRect().bottom <= window.innerHeight,
+      backVisible: Boolean(back),
+      bandCollapsed: !document.body.innerText.includes('今日调度轴'),
+      runStream: document.body.innerText.includes('运行流'),
+    };
+  });
+  assertOk(detail.clicked, `${label}: 左栏点不到任务行`);
+  assertOk(detail.actionVisible, `${label}: 选中任务后「立即执行」不在视野里`, detail);
+  assertOk(detail.backVisible, `${label}: 选中态没有「返回值班概览」的出口`, detail);
+  assertOk(detail.bandCollapsed, `${label}: 选中后时间轴没有收成细带`, detail);
+  assertOk(detail.runStream, `${label}: 选中态看不到运行流`, detail);
+
+  const restored = await page.evaluate(async () => {
+    const back = Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent.trim() === '返回值班概览');
+    if (!back) return { clicked: false };
+    back.click();
+    await new Promise((r) => setTimeout(r, 500));
+    return { clicked: true, overviewBand: document.body.innerText.includes('今日调度轴') };
+  });
+  assertOk(restored.clicked && restored.overviewBand, `${label}: 「返回值班概览」没有回到概览态`, restored);
+
+  /*
+   * 「新建」曾经是死按钮：表单渲染在 2xl 才存在的第三栏里，1512px 下点它一个字都不出现。
+   * 现在它开的是浮层，不依赖任何断点。红绿闭环：把浮层改回渲染在栏里，1512 与 1280 两档立刻红。
    */
   const created = await page.evaluate(async () => {
     const btn = Array.from(document.querySelectorAll('button'))
-      .find((b) => b.textContent.trim() === '新建任务' && b.getBoundingClientRect().height > 0);
+      .find((b) => b.textContent.trim() === '新建' && b.getBoundingClientRect().height > 0);
     if (!btn) return { clicked: false };
     btn.click();
     await new Promise((r) => setTimeout(r, 500));
@@ -206,8 +253,8 @@ async function checkTaskScheduleAction(browser, viewport) {
       saveVisible: rect ? rect.height > 0 && rect.bottom <= window.innerHeight : false,
     };
   });
-  assertOk(created.clicked, `${label}: 页面上找不到「新建任务」按钮`);
-  assertOk(created.formVisible, `${label}: 点了「新建任务」表单没出现——按钮是死的`, created);
+  assertOk(created.clicked, `${label}: 页面上找不到「新建」按钮`);
+  assertOk(created.formVisible, `${label}: 点了「新建」表单没出现——按钮是死的`, created);
   assertOk(created.saveVisible, `${label}: 新建表单的「保存」不在视野里`, created);
   await context.close();
 }

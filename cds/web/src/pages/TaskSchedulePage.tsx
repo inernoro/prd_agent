@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AlarmClock, ArrowDown, ArrowUp, CalendarClock, Globe2, Pencil, Play, Plus, RefreshCw, Rocket, Save, SlidersHorizontal, Terminal, Trash2, type LucideIcon } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
@@ -14,7 +14,7 @@ import type {
 } from '@/types/task-schedule';
 import {
   buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration,
-  msUntil, runStatusLabel, scheduleLabel, shouldAutoSelectJob, statusTone,
+  msUntil, runStatusLabel, scheduleLabel, statusTone,
   type JobHealth, type TimelineLane,
 } from '@/lib/task-schedule-view';
 
@@ -105,11 +105,6 @@ const compactInputClass = 'h-9 w-full rounded-md border border-input bg-backgrou
 const segmentClass = 'inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors';
 
 type RunFilterKey = 'all' | 'failed' | 'manual';
-
-const MID_TABS = [
-  { key: 'runs' as const, label: '运行流' },
-  { key: 'overview' as const, label: '概览' },
-];
 
 const RUN_FILTERS: { key: RunFilterKey; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -235,26 +230,11 @@ export function TaskSchedulePage(): JSX.Element {
   // 第一屏不该是一张空表单 —— 那正是这次重构要治的病。有任务就默认打开最该看的
   // 那一个（分组已按「需要注意 → 即将触发 → 正常运行」排好），新建始终是显式动作。
   // 只在首次落位一次：用户点了「新建任务」把 selectedId 清空后，不许再被抢回去。
-  const autoSelectedRef = useRef(false);
-  useEffect(() => {
-    if (!shouldAutoSelectJob({
-      alreadyPicked: autoSelectedRef.current,
-      selectedId,
-      groupCount: groupedJobs.length,
-    })) return;
-    const first = groupedJobs[0].jobs[0];
-    if (!first) return;
-    autoSelectedRef.current = true;
-    setSelectedId(first.id);
-    setForm(jobToForm(first));
-  }, [groupedJobs, selectedId]);
-
   // 选中某个任务时运行流默认只看它 —— 归因要的就是这个。但低频任务只有一两条记录，
   // 中栏会空掉大半（content-fills-canvas）。所以给一个显式的作用域开关，
   // 而不是让用户靠「清空选中」来换回全部（那会把右栏打回空表单）。
   const [runScopeAll, setRunScopeAll] = useState(false);
   // <2xl 时中栏在「运行流 / 概览」之间切；≥2xl 两者并列，这个值不参与渲染。
-  const [midPanel, setMidPanel] = useState<'runs' | 'overview'>('runs');
   const runScopeJobId = runScopeAll ? '' : selectedId;
 
   const visibleRuns = useMemo(() => {
@@ -276,6 +256,11 @@ export function TaskSchedulePage(): JSX.Element {
 
   const overview = useMemo(() => buildOverview(jobs, runs, now), [jobs, runs, now]);
   const timeline = useMemo(() => buildTimeline(jobs, runsByJob, now, selectedId), [jobs, runsByJob, now, selectedId]);
+  // 选中态顶部那条 44px 细带：只画这一个任务。onlyJobId 让它在任务排名靠后时也不会落空。
+  const laneStrip = useMemo(
+    () => (selectedId ? buildTimeline(jobs, runsByJob, now, selectedId, { onlyJobId: selectedId }) : null),
+    [jobs, runsByJob, now, selectedId],
+  );
 
   const selectJob = (job: ScheduledJob): void => {
     setSelectedId(job.id);
@@ -462,9 +447,10 @@ export function TaskSchedulePage(): JSX.Element {
         ) : null}
 
         {loading ? <LoadingBlock label="加载任务调度配置" /> : (
-          <div className="flex flex-col gap-3 xl:min-h-0">
+          <div className="flex flex-col gap-3 xl:min-h-0 xl:flex-1">
 
-            {/* 结论条：先给判断，再给数字。空表单不该占据第一屏。 */}
+            {/* 值班条：常驻，跨左右两栏。它回答的是页面级的「有没有出事」，
+                与选中了哪个任务无关，所以不进右栏。 */}
             <div className="flex flex-wrap items-stretch gap-3">
               <div className="flex min-w-0 flex-1 items-center gap-4 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
                 <div className="min-w-0 flex-1">
@@ -490,25 +476,28 @@ export function TaskSchedulePage(): JSX.Element {
                   <span className="min-w-0 truncate text-xs text-muted-foreground">{overview.nextName}</span>
                 </div>
               </div>
-              <Button className="shrink-0 self-stretch" onClick={newJob}>
-                <Plus />
-                新建任务
-              </Button>
             </div>
 
-            <TimelineBand lanes={timeline.lanes} nowRatio={timeline.nowRatio} nowLabel={timeline.nowLabel} hiddenCount={timeline.hiddenCount} />
+            {/* 高度契约：Workspace 是 height:100% 的 flex 列，外面那层 div 必须 xl:flex-1
+                才把确定高度传下来——少了它，这条 grid 写多少 flex-1 都只有内容高
+                （实测索引 381px 而不是 660px，四档冒烟里「脊柱被压扁」那条会红）。
 
-            {/* 高度契约：真正起作用的是 Workspace 上的 cds-workspace--fill（把 main 的确定高度
-                传下来）；把它去掉，四档视口守卫立刻变红。下面这条 grid-rows 是冗余的第二道
-                —— 隐式行是 auto，今天靠各栏自己的 overflow-hidden 把最小尺寸压成 0 才没撑破，
-                哪天有人去掉某一栏的 overflow-hidden，这条就是兜底。删掉它守卫不会红，
-                所以在此写明它是有意保留的冗余，不是没接上的线。 */}
-            <div className="grid flex-1 gap-3 xl:min-h-0 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_420px]">
-              {/* 左：任务清单，按「需要注意 / 即将触发 / 正常运行」分组 */}
-              <section className="flex min-h-0 max-h-[60vh] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] xl:max-h-none">
-                <div className="flex items-center justify-between border-b border-[hsl(var(--hairline))] px-4 py-3">
+                主从：左栏索引是这一屏的脊柱，满高常驻；右栏按「选没选中任务」分两态。
+                此前索引被时间轴压到 y=445（52% 屏高）、只有 280×367，而它是使用频率
+                最高的元件；同时 2xl 才存在的第三栏让「新建」在 1536px 以下不可见。
+                两栏之后没有断点分歧，那个洞从结构上被填掉。 */}
+            <div className="grid flex-1 gap-3 xl:min-h-0 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]">
+
+              {/* 左：任务索引。窄屏（<xl）退回自然流并限高，桌面才满高填充。 */}
+              <section className="flex min-h-0 max-h-[52vh] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] xl:max-h-none">
+                <div className="flex shrink-0 items-center gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
                   <div className="text-sm font-semibold">任务</div>
                   <span className="font-mono text-xs text-muted-foreground">{jobs.length}</span>
+                  <div className="flex-1" />
+                  <Button size="sm" onClick={newJob}>
+                    <Plus />
+                    新建
+                  </Button>
                 </div>
                 <div className="min-h-0 flex-1 overflow-auto p-2">
                   {jobs.length === 0 ? (
@@ -540,108 +529,75 @@ export function TaskSchedulePage(): JSX.Element {
                 </div>
               </section>
 
-              {/* 中：运行流。此前折在 <details> 里，是这一页最有价值也最难看到的数据。
-                  <2xl 时它还兼任概览的宿主 —— 那一档第三栏不在网格里，概览必须有个去处，
-                  否则「立即执行」在 1536px 以下就是不存在的（此前实测 rect 为 0×0）。 */}
-              <section className="flex min-h-0 max-h-[80vh] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] xl:max-h-none">
-                <div className="flex shrink-0 items-center gap-1 border-b border-[hsl(var(--hairline))] px-3 py-1.5 2xl:hidden">
-                  {MID_TABS.map((item) => (
-                    <button
-                      key={item.key}
-                      type="button"
-                      onClick={() => setMidPanel(item.key)}
-                      className={`h-7 rounded-md px-2.5 text-xs transition-colors ${midPanel === item.key ? 'bg-primary-soft font-semibold text-primary-ink' : 'text-muted-foreground hover:text-foreground'}`}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className={`min-h-0 flex-1 flex-col overflow-hidden ${midPanel === 'runs' ? 'flex' : 'hidden'} 2xl:flex`}>
-                <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="text-sm font-semibold">运行流</span>
-                    <span className="truncate text-xs text-muted-foreground">{runFilterCaption}</span>
-                    {selectedId ? (
-                      <button
-                        type="button"
-                        onClick={() => setRunScopeAll((prev) => !prev)}
-                        className="shrink-0 rounded border border-[hsl(var(--hairline))] px-1.5 py-px text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-                      >
-                        {runScopeAll ? `只看 ${jobNameOf(selectedId)}` : '看全部任务'}
-                      </button>
-                    ) : null}
-                  </div>
-                  <div className="flex shrink-0 gap-1">
-                    {RUN_FILTERS.map((item) => (
-                      <button
-                        key={item.key}
-                        type="button"
-                        onClick={() => setRunFilter(item.key)}
-                        className={`h-7 rounded-md px-2.5 text-xs transition-colors ${runFilter === item.key ? 'border border-primary/45 bg-primary-soft font-semibold text-primary-ink' : 'border border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="min-h-0 flex-1 overflow-auto">
-                  {visibleRuns.length === 0 ? (
-                    <div className="flex min-h-24 items-center justify-center px-4 py-10 text-center text-sm text-muted-foreground">
-                      还没有运行记录。
-                    </div>
-                  ) : visibleRuns.map((run) => (
-                    <RunRow
-                      key={run.id}
-                      run={run}
-                      jobName={jobNameOf(run.jobId)}
-                      expanded={expandedRunId === run.id}
-                      onToggle={() => setExpandedRunId(expandedRunId === run.id ? '' : run.id)}
-                    />
-                  ))}
-                </div>
-                </div>
-
-                <div className={`min-h-0 flex-1 flex-col overflow-hidden ${midPanel === 'overview' ? 'flex' : 'hidden'} 2xl:hidden`}>
-                  {selectedJob ? (
-                    <JobOverview
-                      job={selectedJob}
-                      projectLabel={projectName(selectedJob.projectId)}
-                      scheduleText={scheduleLabel(selectedJob)}
-                      countdown={countdownTo(selectedJob.nextRunAt, now)}
-                      health={healthOf(selectedJob.id)}
-                      running={runningId === selectedJob.id}
-                      onRun={() => void runNow(selectedJob.id)}
-                      onEdit={() => { selectJob(selectedJob); setEditorOpen(true); }}
-                    />
-                  ) : (
-                    <div className="flex flex-1 items-center justify-center px-4 py-10 text-center text-sm text-muted-foreground">
-                      左侧选一个任务查看概览。
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              {/* 右：观察与编辑分开。选中任务默认给概览，编辑是显式动作。 */}
-              <section className="hidden min-h-0 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] 2xl:flex">
+              {/* 右：两态。未选中 = 值班概览（时间轴在这里满高展开）；
+                  选中 = 这一个任务（时间轴收成 44px 细带，高度让给动作链与运行流）。 */}
+              <section className="flex min-h-0 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
                 {selectedJob ? (
-                  <JobOverview
-                    job={selectedJob}
-                    projectLabel={projectName(selectedJob.projectId)}
-                    scheduleText={scheduleLabel(selectedJob)}
-                    countdown={countdownTo(selectedJob.nextRunAt, now)}
-                    health={healthOf(selectedJob.id)}
-                    running={runningId === selectedJob.id}
-                    onRun={() => void runNow(selectedJob.id)}
-                    onEdit={() => { selectJob(selectedJob); setEditorOpen(true); }}
-                  />
+                  <>
+                    <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2">
+                      <div className="min-w-0 flex-1 text-xs text-muted-foreground">
+                        今天 · <span className="font-medium text-foreground">{selectedJob.name}</span>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedId('')}>返回值班概览</Button>
+                    </div>
+                    {laneStrip ? (
+                      <TimelineBand
+                        compact
+                        lanes={laneStrip.lanes}
+                        nowRatio={laneStrip.nowRatio}
+                        nowLabel={laneStrip.nowLabel}
+                        hiddenCount={0}
+                      />
+                    ) : null}
+                    <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px]">
+                      <div className="flex min-h-0 max-h-[70vh] flex-col overflow-hidden border-b border-[hsl(var(--hairline))] xl:max-h-none xl:border-b-0 xl:border-r">
+                        <JobOverview
+                          job={selectedJob}
+                          projectLabel={projectName(selectedJob.projectId)}
+                          scheduleText={scheduleLabel(selectedJob)}
+                          countdown={countdownTo(selectedJob.nextRunAt, now)}
+                          health={healthOf(selectedJob.id)}
+                          running={runningId === selectedJob.id}
+                          onRun={() => void runNow(selectedJob.id)}
+                          onEdit={() => { selectJob(selectedJob); setEditorOpen(true); }}
+                        />
+                      </div>
+                      <div className="flex min-h-0 max-h-[60vh] flex-col overflow-hidden xl:max-h-none">
+                        <RunStream
+                          caption={runFilterCaption}
+                          scopeLabel={runScopeAll ? `只看 ${jobNameOf(selectedId)}` : '看全部任务'}
+                          onToggleScope={() => setRunScopeAll((prev) => !prev)}
+                          filter={runFilter}
+                          onFilter={setRunFilter}
+                          runs={visibleRuns}
+                          jobNameOf={jobNameOf}
+                          expandedRunId={expandedRunId}
+                          onToggleRun={(id) => setExpandedRunId(expandedRunId === id ? '' : id)}
+                        />
+                      </div>
+                    </div>
+                  </>
                 ) : (
-                  <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-10 text-center">
-                    <div className="text-sm text-muted-foreground">左侧选一个任务查看概览</div>
-                    <Button variant="outline" size="sm" onClick={newJob}>
-                      <Plus />
-                      新建任务
-                    </Button>
+                  <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+                    <TimelineBand
+                      lanes={timeline.lanes}
+                      nowRatio={timeline.nowRatio}
+                      nowLabel={timeline.nowLabel}
+                      hiddenCount={timeline.hiddenCount}
+                    />
+                    <div className="min-h-0 flex-1 border-t border-[hsl(var(--hairline))]">
+                      <RunStream
+                        caption={runFilterCaption}
+                        scopeLabel=""
+                        onToggleScope={null}
+                        filter={runFilter}
+                        onFilter={setRunFilter}
+                        runs={visibleRuns}
+                        jobNameOf={jobNameOf}
+                        expandedRunId={expandedRunId}
+                        onToggleRun={(id) => setExpandedRunId(expandedRunId === id ? '' : id)}
+                      />
+                    </div>
                   </div>
                 )}
               </section>
@@ -1139,18 +1095,22 @@ function normalizeJobActions(job: ScheduledJob): ActionForm[] {
 
 /** 今日调度轴。左侧已发生，右侧待触发，橙线是现在。 */
 function TimelineBand({
-  lanes, nowRatio, nowLabel, hiddenCount,
+  lanes, nowRatio, nowLabel, hiddenCount, compact = false,
 }: {
   lanes: TimelineLane[];
   nowRatio: number;
   nowLabel: string;
   hiddenCount: number;
+  /** 选中态的细带：只画一条泳道，表头、图例、未展开计数在那一档都是噪音。 */
+  compact?: boolean;
 }): JSX.Element | null {
   if (lanes.length === 0) return null;
   const hours = [0, 3, 6, 9, 12, 15, 18, 21, 24];
   return (
-    <section className="shrink-0 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
-      <div className="flex items-center justify-between border-b border-[hsl(var(--hairline))] px-4 py-2">
+    <section className={compact
+      ? 'shrink-0 overflow-hidden border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))]'
+      : 'shrink-0 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'}>
+      <div className={`items-center justify-between border-b border-[hsl(var(--hairline))] px-4 py-2 ${compact ? 'hidden' : 'flex'}`}>
         <div className="flex items-center gap-3">
           <span className="text-sm font-semibold">今日调度轴</span>
           <span className="text-xs text-muted-foreground">左侧已发生，右侧待触发</span>
@@ -1162,9 +1122,9 @@ function TimelineBand({
         </div>
       </div>
 
-      <div className="px-4 pb-3 pt-2">
+      <div className={compact ? 'px-4 pb-1 pt-1' : 'px-4 pb-3 pt-2'}>
         {/* 刻度行的三段必须与泳道逐段对齐，否则刻度和点位是两套坐标。 */}
-        <div className="flex">
+        <div className={compact ? 'hidden' : 'flex'}>
           <div className="w-44 shrink-0" />
           <div className="w-6 shrink-0" />
           <div className="relative h-4 flex-1">
@@ -1231,21 +1191,92 @@ function TimelineBand({
             className="pointer-events-none absolute top-0 w-px bg-primary shadow-[0_0_10px_hsl(var(--primary)/0.6)]"
             style={{ left: `calc(12.5rem + (100% - 22rem) * ${nowRatio / 100})`, height: `${lanes.length * 28}px` }}
           />
-          <span
-            className="pointer-events-none absolute -translate-x-1/2 rounded bg-primary px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[hsl(var(--status-ink))]"
-            style={{ left: `calc(12.5rem + (100% - 22rem) * ${nowRatio / 100})`, top: `${lanes.length * 28 + 4}px` }}
-          >
-            现在 {nowLabel}
-          </span>
+          {compact ? null : (
+            <span
+              className="pointer-events-none absolute -translate-x-1/2 rounded bg-primary px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[hsl(var(--status-ink))]"
+              style={{ left: `calc(12.5rem + (100% - 22rem) * ${nowRatio / 100})`, top: `${lanes.length * 28 + 4}px` }}
+            >
+              现在 {nowLabel}
+            </span>
+          )}
         </div>
 
-        {hiddenCount > 0 ? (
+        {compact ? null : hiddenCount > 0 ? (
           <div className="pl-[12.5rem] pt-7 text-[11px] text-muted-foreground">另有 {hiddenCount} 个任务未展开</div>
         ) : <div className="pt-6" />}
       </div>
     </section>
   );
 }
+
+/**
+ * 运行流。值班概览态与单任务态共用这一份——两处各写一遍就是
+ * predicate-and-wiring 形状 3（判据分裂后各自漂移）。
+ * onToggleScope 为 null 时不渲染范围切换（未选中任务时没有「只看某个」可切）。
+ */
+function RunStream({
+  caption, scopeLabel, onToggleScope, filter, onFilter, runs, jobNameOf, expandedRunId, onToggleRun,
+}: {
+  caption: string;
+  scopeLabel: string;
+  onToggleScope: (() => void) | null;
+  filter: RunFilterKey;
+  onFilter: (key: RunFilterKey) => void;
+  runs: ScheduledJobRun[];
+  jobNameOf: (jobId: string) => string;
+  expandedRunId: string;
+  onToggleRun: (runId: string) => void;
+}): JSX.Element {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {/* 380px 那一栏里，标题不写 shrink-0 会被 min-w-0 的兄弟挤成一列竖排的「运行流」。
+          实测截图见 2026-09-01 本地 1512 档。 */}
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 whitespace-nowrap text-sm font-semibold">运行流</span>
+          <span className="min-w-0 truncate text-xs text-muted-foreground">{caption}</span>
+          {onToggleScope ? (
+            <button
+              type="button"
+              onClick={onToggleScope}
+              className="shrink-0 rounded border border-[hsl(var(--hairline))] px-1.5 py-px text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {scopeLabel}
+            </button>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 gap-1">
+          {RUN_FILTERS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => onFilter(item.key)}
+              className={`h-7 rounded-md px-2.5 text-xs transition-colors ${filter === item.key ? 'border border-primary/45 bg-primary-soft font-semibold text-primary-ink' : 'border border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        {runs.length === 0 ? (
+          <div className="flex min-h-24 items-center justify-center px-4 py-10 text-center text-sm text-muted-foreground">
+            还没有运行记录。
+          </div>
+        ) : runs.map((run) => (
+          <RunRow
+            key={run.id}
+            run={run}
+            jobName={jobNameOf(run.jobId)}
+            expanded={expandedRunId === run.id}
+            onToggle={() => onToggleRun(run.id)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 
 /** 任务清单里的一行：名字 + 倒计时 + 最近 10 次健康条。 */
 function JobRow({
@@ -1264,6 +1295,8 @@ function JobRow({
     <button
       type="button"
       onClick={onSelect}
+      /* 冒烟脚本按这个属性点行，不靠文案猜——文案改了不该让守卫静默失效。 */
+      data-job-row={job.id}
       className={`mb-1 block w-full rounded-md border px-2.5 py-2 text-left transition-colors ${selected ? 'border-primary/50 bg-primary-soft' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:border-primary/40'} ${disabled ? 'opacity-75' : ''}`}
     >
       <div className="flex items-center gap-2">

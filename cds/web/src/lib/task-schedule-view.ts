@@ -81,22 +81,6 @@ export function formatClock(iso?: string | null): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-/**
- * 第一屏该不该替用户选中一个任务。
- *
- * 「打开页面第一眼是一张空表单」正是这次重构要治的病 —— 有任务就默认落在最该看的
- * 那一个上。但只许落一次：用户点了「新建任务」把选中清空之后，再把它抢回去就是
- * 抢用户的方向盘（最小惊讶）。所以判据把「首次」和「当前有没有选中」分开看。
- */
-export function shouldAutoSelectJob(input: {
-  alreadyPicked: boolean;
-  selectedId: string;
-  groupCount: number;
-}): boolean {
-  if (input.alreadyPicked) return false;
-  if (input.selectedId) return false;
-  return input.groupCount > 0;
-}
 
 export function msUntil(iso: string | null | undefined, now: number): number | null {
   if (!iso) return null;
@@ -205,12 +189,17 @@ export function buildTimeline(
   runsByJob: Map<string, ScheduledJobRun[]>,
   now: number,
   selectedId: string,
+  options: { onlyJobId?: string } = {},
 ) {
   const dayStart = startOfToday(now);
   const dayMs = 24 * 60 * 60 * 1000;
   const ratio = (at: number) => Math.max(0, Math.min(100, ((at - dayStart) / dayMs) * 100));
 
-  const ranked = [...jobs].sort((a, b) => {
+  // onlyJobId：选中态的 44px 细带只画这一条。走「先筛后取前 N」而不是「取前 N 再筛」，
+  // 因为排名只留 6 条，选中的任务排在第 7 位时后者会得到空数组——细带静默消失，
+  // 页面照常渲染、测试照常绿。
+  const pool = options.onlyJobId ? jobs.filter((job) => job.id === options.onlyJobId) : jobs;
+  const ranked = [...pool].sort((a, b) => {
     const weight = (job: ScheduledJob) => (job.autoDisabledReason ? 0 : (job.consecutiveFailureCount || 0) > 0 ? 1 : job.id === selectedId ? 2 : 3);
     return weight(a) - weight(b);
   });
@@ -248,7 +237,7 @@ export function buildTimeline(
     lanes,
     nowRatio: ratio(now),
     nowLabel: new Date(now).toTimeString().slice(0, 5),
-    hiddenCount: Math.max(0, jobs.length - lanes.length),
+    hiddenCount: Math.max(0, pool.length - lanes.length),
   };
 }
 

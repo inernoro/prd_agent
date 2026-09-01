@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration, msUntil, shouldAutoSelectJob,
+  buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration, msUntil,
 } from '../../web/src/lib/task-schedule-view.js';
 import type { ScheduledJob, ScheduledJobRun } from '../../web/src/types/task-schedule.js';
 
@@ -151,26 +151,6 @@ describe('结论条', () => {
   });
 });
 
-describe('第一屏落位', () => {
-  /*
-   * 红绿闭环：删掉页面里那个 useEffect（或把判据改成恒 false），第一条断言仍绿，
-   * 但页面回到「打开就是一张空表单」；把判据改成不看 alreadyPicked / selectedId，
-   * 第二、三条立刻红 —— 用户点「新建任务」后会被抢回去。
-   */
-  it('有任务且没人选过时替用户落位一次', () => {
-    expect(shouldAutoSelectJob({ alreadyPicked: false, selectedId: '', groupCount: 3 })).toBe(true);
-  });
-
-  it('一个任务都没有时不硬选', () => {
-    expect(shouldAutoSelectJob({ alreadyPicked: false, selectedId: '', groupCount: 0 })).toBe(false);
-  });
-
-  it('落过一次之后不再抢方向盘 —— 选中被清空时也不许自动抢回去', () => {
-    expect(shouldAutoSelectJob({ alreadyPicked: true, selectedId: '', groupCount: 3 })).toBe(false);
-    expect(shouldAutoSelectJob({ alreadyPicked: false, selectedId: 'sjob_x', groupCount: 3 })).toBe(false);
-  });
-});
-
 describe('今日调度轴', () => {
   const dayStart = new Date(NOW);
   dayStart.setHours(0, 0, 0, 0);
@@ -236,5 +216,41 @@ describe('今日调度轴', () => {
     const timeline = buildTimeline([job({ id: 'x' })], new Map(), NOW, '');
     const expected = ((NOW - dayStart.getTime()) / (24 * 3600_000)) * 100;
     expect(timeline.nowRatio).toBeCloseTo(expected, 5);
+  });
+});
+
+
+describe('选中态的单泳道细带', () => {
+  /*
+   * 红绿闭环：把 buildTimeline 里的 onlyJobId 改成「先取前 6 再按 id 过滤」
+   * （或直接在页面里写 lanes.filter(l => l.selected)），第一条断言立刻红 ——
+   * 排名第 7 的任务过滤后是空数组，细带在页面上静默消失、其余部分照常渲染。
+   * 这正是 predicate-and-wiring 形状 2：删掉不会红的链路必须有守卫。
+   */
+  // 排名把「连续失败」排在「选中」前面，所以只要失败的任务够多，
+  // 选中的那个就会被挤出展示上限——这不是构造的极端值，而是这一页最常见的一天：
+  // 一批任务在报错，你点开的偏偏是一个正常的。
+  const many = [
+    ...Array.from({ length: 6 }, (_, i) => job({ id: `sjob_bad_${i}`, name: `失败任务 ${i}`, consecutiveFailureCount: 3 })),
+    job({ id: 'sjob_ok', name: '正常任务' }),
+  ];
+  const empty = new Map<string, ScheduledJobRun[]>();
+
+  it('选中的任务排在展示上限之外时，细带仍然只有它这一条', () => {
+    const all = buildTimeline(many, empty, NOW, 'sjob_ok');
+    // 前提成立：不加 onlyJobId 时它确实不在被展示的 6 条里
+    expect(all.lanes.some((lane) => lane.id === 'sjob_ok')).toBe(false);
+
+    const strip = buildTimeline(many, empty, NOW, 'sjob_ok', { onlyJobId: 'sjob_ok' });
+    expect(strip.lanes.map((lane) => lane.id)).toEqual(['sjob_ok']);
+    expect(strip.lanes[0].selected).toBe(true);
+    // 只画一条时不该再说「另有 N 个任务未展开」——那是概览态的文案
+    expect(strip.hiddenCount).toBe(0);
+  });
+
+  it('不传 onlyJobId 时行为不变：按排名取前 6 条并给出未展开计数', () => {
+    const all = buildTimeline(many, empty, NOW, 'sjob_ok');
+    expect(all.lanes).toHaveLength(6);
+    expect(all.hiddenCount).toBe(1);
   });
 });
