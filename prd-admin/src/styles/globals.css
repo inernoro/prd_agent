@@ -13,3 +13,81 @@
    it just floated the avatar 52px off the bottom of the rail. Removed 2026-08-25.
    If the widget ever goes back to a left-rail anchor, bring the reserve back; the
    guard in AppShell.cdsCompatibility.test.ts watches that anchor and will go red. */
+
+/* ===== 潜像场：视觉创作首页背景（见 components/effects/LatentField.tsx） =====
+   织纹周期与生图等待卡同源（45 度、6/13px）。那边挂在画布上要跟着缩放走，
+   所以用 var(--invZoom)；首页没有画布缩放，直接写死屏幕像素。
+   颜色一律走 token 或与 --gen-wait-* 同源的字面值，别在这里另配一套。 */
+.latent-field__weave,
+.latent-field__core,
+.latent-field__sweep {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* 织纹。周期与等待卡同源，但**放大到整页就得再淡一档**：
+   等待卡是一张几百像素的小卡，6/13px 的 2% 白读起来是颗粒；
+   铺满 1440px 之后同样的值变成一块条纹布，还会把核辉光整个压住
+   （第一版取证图就是这个样子）。周期放宽到 7/16、alpha 降到 1.2%，才回到「颗粒」。 */
+.latent-field__weave {
+  inset: 0;
+  background: repeating-linear-gradient(45deg,
+    var(--latent-weave) 0 7px,
+    transparent 7px 16px);
+}
+
+/* 核辉光：给空页一个重心。半径按视口宽走，窄屏下不会缩成一个小点。 */
+.latent-field__core {
+  left: 50%;
+  top: -180px;
+  width: min(1100px, 130vw);
+  height: 780px;
+  transform: translateX(-50%);
+  background: radial-gradient(50% 50% at 50% 50%,
+    var(--latent-core) 0%,
+    var(--latent-core-mid) 42%,
+    transparent 72%);
+  will-change: opacity, transform;
+  animation: latent-breathe 14s ease-in-out infinite;
+}
+
+/* 斜掠光：整页唯一「在走」的东西，26 秒一个来回，慢到几乎察觉不到。 */
+.latent-field__sweep {
+  left: -10%;
+  top: 120px;
+  width: 120%;
+  height: 520px;
+  background: linear-gradient(104deg,
+    transparent 0%,
+    var(--latent-sweep) 46%,
+    transparent 100%);
+  will-change: transform;
+  animation: latent-drift 26s ease-in-out infinite alternate;
+}
+
+/* 核辉光的呼吸带 translateX(-50%)：keyframes 里必须把它一起写回去，
+   否则动画那一帧会把居中偏移覆盖掉，辉光会突然跳到右边半个身位。 */
+@keyframes latent-breathe {
+  0%, 100% { opacity: .45; transform: translateX(-50%) scale(.98); }
+  50%      { opacity: 1;   transform: translateX(-50%) scale(1.03); }
+}
+
+@keyframes latent-drift {
+  from { transform: translate3d(-8%, 0, 0); }
+  to   { transform: translate3d(8%, 0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .latent-field__core { animation: none; opacity: .8; transform: translateX(-50%); }
+  .latent-field__sweep { animation: none; }
+}
+
+/* 背景照片层：轮换素材。cover + 居中，淡入由 JS 在 decode 之后触发。 */
+.backdrop-photo {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transition: opacity .9s ease-out;
+}

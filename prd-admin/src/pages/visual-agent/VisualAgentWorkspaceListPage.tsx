@@ -41,8 +41,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
-import { NightSkyBackground } from '@/components/effects/NightSkyBackground';
-import { ParticleVortex } from '@/components/effects/ParticleVortex';
+import { LatentField } from '@/components/effects/LatentField';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { getNextWorkspaceSkip, isVisibleWorkspace } from './workspaceListPaging';
 
@@ -215,61 +214,60 @@ function FloatingToolbar(props: {
 
 // ============ 场景标签定义 ============
 const SCENARIO_TAGS = [
-  { key: 'pro', label: 'MAP Pro', icon: Sparkles, prompt: '', isPro: true },
-  { key: 'design', label: '平面设计', icon: LayoutGrid, prompt: '帮我设计一张' },
-  { key: 'branding', label: '品牌设计', icon: Star, prompt: '帮我设计一个品牌视觉，包括' },
-  { key: 'illustration', label: '插画创作', icon: PenTool, prompt: '帮我创作一幅插画，主题是' },
-  { key: 'ecommerce', label: '电商设计', icon: ShoppingCart, prompt: '帮我设计一张电商主图，产品是' },
-  { key: 'video', label: '视频封面', icon: Video, prompt: '帮我设计一张视频封面，内容是' },
+  // hue 是每格左侧那根色条。它是本页**唯一**的彩色：其余一切走 #D97757 单色 + 三档灰。
+  // 六格等宽（视频创作的风格档同构），所以 label 一律控制在四个字以内。
+  { key: 'pro', label: 'MAP Pro', icon: Sparkles, prompt: '', isPro: true, hue: 'var(--accent-primary)' },
+  { key: 'design', label: '平面设计', icon: LayoutGrid, prompt: '帮我设计一张', hue: '#6fd5ef' },
+  { key: 'branding', label: '品牌设计', icon: Star, prompt: '帮我设计一个品牌视觉，包括', hue: '#E8A87C' },
+  { key: 'illustration', label: '插画创作', icon: PenTool, prompt: '帮我创作一幅插画，主题是', hue: '#77e3b2' },
+  { key: 'ecommerce', label: '电商设计', icon: ShoppingCart, prompt: '帮我设计一张电商主图，产品是', hue: '#fb7185' },
+  { key: 'video', label: '视频封面', icon: Video, prompt: '帮我设计一张视频封面，内容是', hue: '#a78bfa' },
 ];
 
 // ============ Hero 区域 ============
+/**
+ * 标题区。相对旧版的三处改动，每一处都有具体理由：
+ *
+ * 1. 42px 青绿渐变标题 → 32px 实心标题。渐变字是 2022 年的手法，且那套青绿
+ *    (#c4b5fd→#6ee7b7) 和产品里唯一的品牌色 #D97757 没有任何关系，等于页面有两套色。
+ * 2. 加一行小眉标。视频创作用的是同一套节奏（眉标 + 标题 + 一句说明），
+ *    两个 Agent 因此读起来是一家人。
+ * 3. 副标题从「AI 驱动的设计助手，让创作更简单」换成一句只对这个产品成立的话——
+ *    前者放到任何产品上都成立，等于没说。
+ */
 function HeroSection() {
   return (
-    <div className="relative w-full" style={{ height: 260 }}>
-      {/* 本页教程入口(内嵌进页面右上角,页面级单实例,非悬浮浮层) */}
-      <div className="absolute top-3 right-3 z-20"><TipsEntryButton compact /></div>
-      {/* 粒子漩涡背景 — trailColor 精确匹配 #0a0a0c，无 CSS opacity 避免矩形覆盖 */}
-      <div
-        className="absolute inset-0"
-        style={{
-          maskImage: 'radial-gradient(ellipse 70% 50% at 50% 50%, black 15%, transparent 85%)',
-          WebkitMaskImage: 'radial-gradient(ellipse 70% 50% at 50% 50%, black 15%, transparent 85%)',
-        }}
+    <div className="relative w-full flex flex-col items-center text-center" style={{ paddingTop: 8 }}>
+      {/* 本页教程入口（内嵌进页面右上角，页面级单实例，非悬浮浮层） */}
+      <div className="absolute top-0 right-3 z-20"><TipsEntryButton compact /></div>
+
+      <span
+        className="inline-flex items-center gap-[7px] text-[11px] font-bold"
+        style={{ color: 'var(--accent-gold-2)' }}
       >
-        <ParticleVortex particleCount={200} mouseFollow trailColor="rgba(10,10,12,0.9)" sizeRange={[1, 3]} hueRange={[230, 280]} />
-      </div>
-      {/* 文字层 */}
-      <div className="relative z-10 flex flex-col items-center justify-center h-full text-center">
-        <h1
-          data-tour-id="visual-page-title"
-          className="text-[42px] font-bold tracking-tight mb-3"
-          style={{
-            background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #818cf8, #c4b5fd)',
-            backgroundSize: '200% 100%',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-            letterSpacing: '-0.02em',
-            animation: 'vaHoloFlow 6s ease-in-out infinite',
-          }}
-        >
-          视觉创作 Agent
-        </h1>
-        <p
-          data-tour-id="visual-subtitle"
-          className="text-[15px]"
-          style={{
-            color: 'rgba(199,210,254,0.58)',
-            letterSpacing: '0.01em',
-          }}
-        >
-          AI 驱动的设计助手，让创作更简单
-        </p>
-      </div>
+        <Sparkles size={13} />
+        一次粘几张参考图开局，之后都在画布上改
+      </span>
+
+      <h1
+        data-tour-id="visual-page-title"
+        className="mt-2.5 text-[32px] font-semibold leading-[1.2]"
+        style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}
+      >
+        先落到画布，再谈生成
+      </h1>
+
+      <p
+        data-tour-id="visual-subtitle"
+        className="mt-2.5 text-[13px] leading-[1.6]"
+        style={{ color: 'var(--text-muted)' }}
+      >
+        生成只是其中一步。出图之后还能拆图层、局部重绘、扩展画幅——都在同一张画布上。
+      </p>
     </div>
   );
 }
+
 
 // ============ 打字动效占位符 ============
 const TYPING_TEXTS = [
@@ -672,50 +670,40 @@ function QuickInputBox(props: {
 function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: string | null }) {
   const { onSelect, activeKey } = props;
 
+  // 六格等宽（与视频创作的风格档同构），窄屏退回横向滚动而不是换行——
+  // 换行会让这一排在手机上吃掉两倍高度，把输入框挤出首屏（mobile-first-density 规则 3）。
   return (
-    <div data-tour-id="visual-scenarios" className="flex items-center justify-start sm:justify-center gap-2.5 flex-nowrap overflow-x-auto sm:flex-wrap px-3 sm:px-6 mt-6 no-scrollbar">
+    <div
+      data-tour-id="visual-scenarios"
+      className="mt-3 grid grid-flow-col auto-cols-[minmax(96px,1fr)] sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-6 gap-1.5 overflow-x-auto no-scrollbar"
+      style={{ width: 'min(820px, 100%)' }}
+    >
       {SCENARIO_TAGS.map((tag) => {
         const Icon = tag.icon;
-        const isActive = activeKey === tag.key;
-        const isPro = tag.isPro;
-
-        if (isPro) {
-          // PRD Agent Pro - 特殊高亮样式
-          return (
-            <button
-              key={tag.key}
-              type="button"
-              data-tour-id="visual-pro"
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 hover:scale-[1.02] shrink-0"
-              style={{
-                background: 'linear-gradient(135deg, rgba(99,102,241,0.12) 0%, rgba(79,82,221,0.06) 100%)',
-                border: '1px solid rgba(99,102,241,0.35)',
-                color: 'rgba(165,180,252,0.95)',
-                boxShadow: '0 0 24px rgba(99,102,241,0.08)',
-              }}
-              onClick={() => {}}
-            >
-              <Icon size={15} />
-              {tag.label}
-            </button>
-          );
-        }
-
-        // 普通标签 - 更柔和的样式，偏暖白
+        const isActive = tag.isPro ? activeKey === tag.key || activeKey === null : activeKey === tag.key;
         return (
           <button
             key={tag.key}
             type="button"
-            onClick={() => onSelect(tag.prompt)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover-bg-soft shrink-0"
+            data-tour-id={tag.isPro ? 'visual-pro' : undefined}
+            onClick={() => { if (!tag.isPro) onSelect(tag.prompt); }}
+            className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md px-[7px] text-[9px] shrink-0 transition-colors"
             style={{
-              background: isActive ? 'rgba(99,102,241,0.1)' : 'transparent',
-              border: isActive ? '1px solid rgba(99,102,241,0.22)' : '1px solid var(--border-subtle)',
-              color: isActive ? 'var(--text-primary)' : 'var(--accent-fg-violet)',
+              minHeight: 38,
+              background: isActive ? 'var(--bg-card)' : 'var(--bg-secondary)',
+              color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+              boxShadow: isActive
+                ? `inset 0 0 0 1px ${tag.hue}, var(--shadow-card-sm)`
+                : undefined,
             }}
           >
-            <Icon size={14} style={{ opacity: isActive ? 1 : 0.65 }} />
-            {tag.label}
+            <i
+              aria-hidden
+              className="block shrink-0 rounded-[3px]"
+              style={{ width: 8, height: 22, background: tag.hue }}
+            />
+            <Icon size={11} className="shrink-0" style={{ opacity: isActive ? 1 : 0.7 }} />
+            <span className="truncate">{tag.label}</span>
           </button>
         );
       })}
@@ -1290,10 +1278,11 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   return (
     <div
       className="surface-tone-dark h-full min-h-0 flex flex-col overflow-auto relative"
-      style={{ background: '#0a0a0c' }}
+      style={{ background: 'var(--bg-base)' }}
     >
-      {/* 夜景背景 */}
-      <NightSkyBackground />
+      {/* 潜像场：织纹周期与生图等待卡同源，「等待」和「首页」是同一种材质。
+          旧版这里是星空插画 + 粒子漩涡——那是可以贴在任何产品上的装饰。 */}
+      <LatentField />
 
       {/* 浮动工具栏 - 桌面端页面左侧垂直居中，移动端隐藏 */}
       {!isMobile && (
@@ -1302,8 +1291,9 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         </div>
       )}
 
-      {/* 顶部居中区域 - 调整间距使布局更紧凑 */}
-      <div className="flex flex-col items-center justify-center pt-[8vh] pb-4 relative z-10">
+      {/* 顶部居中区域。8vh 换成固定 52px：旧版 hero 自带 260px 高度，靠 vh 顶下来才不至于贴顶；
+          现在标题区是内容高度，再按视口比例留白会在大屏上空出一大块。52px 取自视频创作的舞台节奏。 */}
+      <div className="flex flex-col items-center justify-center pt-[52px] pb-4 relative z-10 px-5">
         {/* Hero 区域 */}
         <HeroSection />
 
