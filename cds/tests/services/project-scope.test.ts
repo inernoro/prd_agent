@@ -83,7 +83,10 @@ describe('scopeEntryToRegExp / pathInScope', () => {
 
 describe('decideProjectScope —— 三条取舍', () => {
   it('未声明作用域 = 全通配，且标记 unscoped 以便与「声明了但没命中」区分', () => {
-    const decision = decideProjectScope([], ['doc/readme.md']);
+    // 路径只是「随便一个改动」的占位，用例断言的是「空作用域全通配」，与文件名无关。
+    // 名字取 doc/x.md：doc-readability 守卫的 FIXTURE_NAMES 收录了它，而 readme.md 没有——
+    // 那个守卫扫全仓的 doc/xxx.md 面包屑并逐个验存在，现编一个像真文档的名字会被判落空。
+    const decision = decideProjectScope([], ['doc/x.md']);
     expect(decision.matched).toBe(true);
     expect(decision.unscoped).toBe(true);
     expect(decision.reason).toContain('全通配');
