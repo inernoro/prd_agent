@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { explainMissingTable, isMissingTableOrSchemaError } from '../../src/services/db-error-explain.js';
+import { explainMissingTable, isMissingTableOrSchemaError, isTablePermissionError } from '../../src/services/db-error-explain.js';
 import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
 /**
@@ -80,6 +80,26 @@ describe('找不到表时的解释', () => {
     expect(message).toContain('imp_b_9bd351d94c8f35ab');
     expect(message).toContain('刷新');
     expect(message).toContain(RAW_1146);
+  });
+
+  /**
+   * 带上库名限定之后，同一台服务器上「库在、账号没权限」的真实报文变成 1142
+   * （实测：SELECT command denied to user 'cds_...' for table 'distributed_lock'）。
+   * 它比 1146 准确，对用户依然是天书，同样要给下一步。
+   */
+  it('跨库但没权限（1142）也给解释', () => {
+    const raw = "ERROR 1142 (42000) at line 1: SELECT command denied to user 'cds_mdimp_codex_async_worker'@'localhost' for table 'distributed_lock'";
+    expect(isTablePermissionError(raw)).toBe(true);
+    const message = explainMissingTable({
+      database: 'imp_b_9bd351d94c8f35ab',
+      requestedSchema: 'webhook_platform',
+      table: 'distributed_lock',
+      rawError: raw,
+    });
+    expect(message).toContain('读不了 webhook_platform.distributed_lock');
+    expect(message).toContain('imp_b_9bd351d94c8f35ab');
+    expect(message).toContain('另一个数据库资源');
+    expect(message).toContain(raw);
   });
 
   it('库一致 / 没带 schema / 非此类错误时不加戏', () => {

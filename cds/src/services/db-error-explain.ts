@@ -24,8 +24,22 @@ export function isMissingTableOrSchemaError(message: string): boolean {
 }
 
 /**
- * 表找不到时补一句「为什么 + 下一步」；不是这类错误、或请求本来就没带 schema
- * （那说明用的就是当前库，1146 的字面意思已经准确）时原样返回。
+ * MySQL 1142 / PostgreSQL 42501：库或表存在，但当前账号没权限读。
+ *
+ * 修完「带库名限定」之后，跨库点表的报文就从「表不存在」变成了这一条（实测：
+ * `SELECT command denied to user 'cds_...' for table 'distributed_lock'`）——
+ * 它比 1146 准确，但对用户依然是天书，同样要给下一步。
+ */
+export function isTablePermissionError(message: string): boolean {
+  const text = String(message || '');
+  return /ERROR\s*1142|ERROR\s*1044|command denied|permission denied for (table|relation|schema)|42501/i.test(text);
+}
+
+/**
+ * 点表打不开时补一句「为什么 + 下一步」。
+ *
+ * 只在**请求的库与当前连接的库不是同一个**时才加解释：同库内的 1146 字面意思已经
+ * 准确（就是没这张表），再套一段指引只会添乱。
  */
 export function explainMissingTable(params: {
   /** 这次连接实际所在的库。 */
@@ -38,12 +52,16 @@ export function explainMissingTable(params: {
   const { database, requestedSchema, table, rawError } = params;
   const raw = String(rawError || '').trim();
   const wanted = String(requestedSchema || '').trim();
-  if (!isMissingTableOrSchemaError(raw) || !wanted || wanted === database) return raw;
+  if (!wanted || wanted === database) return raw;
+  const missing = isMissingTableOrSchemaError(raw);
+  const denied = isTablePermissionError(raw);
+  if (!missing && !denied) return raw;
   return [
-    `在这个资源上找不到 ${wanted}.${table}：当前连接的是库 ${database}，而请求要的是库 ${wanted}。`,
-    '两种可能：这张表在另一台数据库容器上（左侧表列表可能是旧的，刷新一下面板即可）；'
-      + '或者当前账号没有那个库的权限。',
-    `下一步：刷新工作台重新拉表列表；如果这张表确实属于另一个资源，请到那个资源的工作台打开。`,
+    denied
+      ? `当前账号读不了 ${wanted}.${table}：这个资源的连接在库 ${database} 上，对库 ${wanted} 没有查询权限。`
+      : `在这个资源上找不到 ${wanted}.${table}：当前连接的是库 ${database}，而请求要的是库 ${wanted}。`,
+    '常见成因：这张表属于**另一个数据库资源**，而左侧表列表是旧的（面板开着跨过了一次部署或切换）。',
+    '下一步：刷新工作台重新拉表列表；如果这张表确实属于另一个资源，到那个资源的工作台打开它。',
     raw ? `原始错误：${raw}` : '',
   ].filter(Boolean).join('\n');
 }
