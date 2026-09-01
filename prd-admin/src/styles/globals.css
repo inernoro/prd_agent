@@ -87,9 +87,39 @@
   position: absolute;
   inset: 0;
   background-size: cover;
-  background-position: center;
+  /* 焦点位置由每张素材自己声明（--backdrop-focus），不写就居中。
+     这是「和页面结合」的第一半：让每张图**有意思的那一块**落在没有内容的地方，
+     而不是随机地压在标题底下。 */
+  background-position: var(--backdrop-focus, center);
   background-repeat: no-repeat;
   transition: opacity .9s ease-out;
+}
+
+/*
+ * 可读性罩。
+ *
+ * 上一版是一整块 rgba(scrim, 0.62) 铺满全屏。用户的三条反馈其实是同一个根因：
+ * 「有效果但不多」「模模糊糊」「没有和页面结合起来的感觉」——
+ * 均匀压暗意味着整张图统一按 38% 透出来，亮的被压灰、暗的被提亮，
+ * 所有东西收敛到同一档中间调；而一个和布局毫无关系的全屏矩形，
+ * 当然也谈不上跟页面有关系。换几张图救不了，得换这一层的形状。
+ *
+ * 现在它是**按内容分布的**：中央偏上那一片（标题、副标题、输入框、预设行都在这里）
+ * 压到 core，往外过渡到 mid，到画面四边只剩 edge。三档由组件按每张素材算：
+ * edge 通常只有 0.14 左右，也就是说**画面边缘的艺术效果是按 86% 露出来的**，
+ * 而不是全屏 38%。字该清楚的地方照样清楚，图该有存在感的地方才真的有。
+ *
+ * 之所以中心点取 22% 而不是 50%：内容是压在上半屏的，罩的重心必须跟着内容走，
+ * 这就是「结合」的第二半——罩的几何来自布局，不是来自画面。
+ */
+.backdrop-scrim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(128% 78% at 50% 22%,
+    rgba(var(--backdrop-scrim), var(--scrim-core)) 0%,
+    rgba(var(--backdrop-scrim), var(--scrim-core)) 34%,
+    rgba(var(--backdrop-scrim), var(--scrim-mid)) 66%,
+    rgba(var(--backdrop-scrim), var(--scrim-edge)) 100%);
 }
 
 /*

@@ -21,6 +21,9 @@ import { useEffect, useRef } from 'react';
  * 它要么淡到看不见，要么就在抢内容，中间没有窗口。
  */
 
+/** 罩的三档由 dim 减出来，减完要夹住：负数会让罩反过来提亮，>1 则整页纯色。 */
+const clamp01 = (n: number) => Math.min(1, Math.max(0, Number.isFinite(n) ? n : 0));
+
 /**
  * 渐晕。整页唯一的程序背景元素：一层、单向、不重复、不动。
  *
@@ -37,7 +40,17 @@ export function PageVignette() {
  * `src` 为空时整层不渲染——没有图时页面仍然成立（渐晕自己就够了），
  * 这条是刻意的：轮换素材拉不到、或用户关掉背景，首页不能变成一块纯色。
  */
-export function BackdropPhoto({ src, dim = 0.82 }: { src?: string | null; dim?: number }) {
+export function BackdropPhoto({
+  src,
+  dim = 0.82,
+  focus,
+}: {
+  src?: string | null;
+  /** 中央读字区的压暗强度。边缘会自动比它轻很多——见下面 scrim 三档的算法。 */
+  dim?: number;
+  /** 这张素材有意思的那一块该落在哪（CSS background-position）。默认居中。 */
+  focus?: string;
+}) {
   const ref = useRef<HTMLDivElement | null>(null);
 
   // 图片解码完再淡入。直接挂 background-image 的话，大图会「啪」地一下出现，
@@ -67,11 +80,29 @@ export function BackdropPhoto({ src, dim = 0.82 }: { src?: string | null; dim?: 
       <div
         ref={ref}
         className="backdrop-photo"
-        style={{ backgroundImage: 'none', opacity: 0 }}
+        style={{ backgroundImage: 'none', opacity: 0, '--backdrop-focus': focus ?? 'center' } as React.CSSProperties}
       />
-      {/* 压暗罩：背景照片再好看，也不能让 9-13px 的小字掉对比度。
-          这一层的不透明度是前景可读性的唯一保障，不许为了「图好看」调低。 */}
-      <div style={{ position: 'absolute', inset: 0, background: `rgba(var(--backdrop-scrim), ${dim})` }} />
+      {/*
+       * 可读性罩，三档。
+       *
+       * 上一版是一整块 rgba(scrim, dim) 铺满全屏，于是整张图统一按 (1-dim) 透出来——
+       * 亮部被压灰、暗部被提亮，全都收敛到同一档中间调。用户看完的三句话
+       * 「有效果但不多」「模模糊糊」「没有和页面结合起来的感觉」是同一个根因，
+       * 换几张图救不了。
+       *
+       * 现在按内容分布：core 只作用在中央偏上那一片（标题、副标题、输入框、预设行），
+       * 往外退到 mid，四边只剩 edge。两个减量是刻意留得很大的——
+       * dim=0.62 时边缘只有 0.14，也就是画面边角的效果按 86% 露出来，
+       * 而不是全屏 38%。clamp 保证再怎么算都不会翻转或越界。
+       */}
+      <div
+        className="backdrop-scrim"
+        style={{
+          '--scrim-core': String(clamp01(dim)),
+          '--scrim-mid': String(clamp01(dim - 0.22)),
+          '--scrim-edge': String(clamp01(dim - 0.48)),
+        } as React.CSSProperties}
+      />
     </div>
   );
 }

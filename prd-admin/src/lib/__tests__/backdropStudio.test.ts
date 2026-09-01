@@ -142,12 +142,27 @@ describe('暗罩强度按素材来源分档', () => {
     }
   });
 
-  it('明显偏亮的那几张单独写了 dim——全批一个值必然有一头是错的', () => {
-    // 第二批带「形」的素材（百叶的光栅、粼的水面、析出的墨）亮度明显高于第一批柔光，
-    // 共用 CATALOG_DIM 会让它们抢标题。这条防的是哪天有人「统一一下」把 dim 抹平。
+  it('罩强度按每张的实际明暗单独调过，而且是双向的', () => {
+    // 这条上一版写成「单独写的 dim 必须大于 CATALOG_DIM」，隐含假设是「只会调高」。
+    // 假设错了：「色场」中央顶带实测只有 7.5（几乎全黑），它需要的是**调低**到 0.58，
+    // 否则那一片压死了什么都看不见。守卫当场判红——判得对，该改的是判据不是数值。
+    //
+    // 真正要守的是「没有被统一成一个值」：既有比默认重的（等高、同心压住亮画面），
+    // 也有比默认轻的（色场本来就暗）。哪天有人「统一一下」把 dim 抹平，这条会红。
     const tuned = BACKDROP_CATALOG.filter((a) => typeof a.dim === 'number');
     expect(tuned.length).toBeGreaterThanOrEqual(3);
-    for (const a of tuned) expect(a.dim!).toBeGreaterThan(CATALOG_DIM);
+    expect(tuned.some((a) => a.dim! > CATALOG_DIM)).toBe(true);
+    expect(tuned.some((a) => a.dim! < CATALOG_DIM)).toBe(true);
+    // 无论往哪个方向调，都不能越过「用户生成」那一档——随包的我们看过，理应更轻。
+    for (const a of tuned) expect(a.dim!).toBeLessThan(GENERATED_DIM);
+  });
+
+  it('每张素材都声明了焦点——默认 center 会把主体正好塞在标题底下', () => {
+    // 「和页面结合」最便宜的一半：cover + center 让每张图最好看的部分永远压在内容区，
+    // 于是罩压得最狠的地方恰好是最该露的地方，四角反倒空着。
+    for (const a of BACKDROP_CATALOG) {
+      expect(a.focus, `${a.id} 缺 focus`).toMatch(/^\d+% \d+%$/);
+    }
   });
 
   it('用户自己生成的深浅不可控，压得更重——宁可看不清也不能让正文掉对比度', () => {

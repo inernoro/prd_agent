@@ -1327,7 +1327,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           容器里，absolute inset:0 在滚动容器里量的是**可视框**、而且跟着内容一起滚——
           于是往下滑两屏，背景就从画面顶上滑走了，剩下一片纯底色（用户原话：
           滑动下去背景居然消失了）。外层不滚、内层滚，背景才是钉住的。 */}
-      <BackdropPhoto src={backdrop?.url ?? null} dim={dimFor(backdrop)} />
+      <BackdropPhoto src={backdrop?.url ?? null} dim={dimFor(backdrop)} focus={backdrop?.focus} />
       <PageVignette />
       <div className="h-full min-h-0 flex flex-col overflow-auto relative" style={{ zIndex: 1 }}>
 
