@@ -281,6 +281,19 @@
       "tutorialSourceIds": ["chapter-02", "chapter-32"]
     },
     {
+      "id": "gateway-settings",
+      "routes": ["/gateway-settings"],
+      "pagePath": "llmgw/web/src/pages/GatewaySettingsPage.tsx",
+      "changeSources": [
+        "llmgw/console-api/Program.cs"
+      ],
+      "tutorialSourceIds": ["chapter-30"],
+      "anchors": [
+        { "name": "服务网关设置入口", "product": "服务网关设置", "tutorial": "服务网关设置" },
+        { "name": "当场测一次", "product": "测试连接", "tutorial": "测试连接" }
+      ]
+    },
+    {
       "id": "usage",
       "routes": ["/usage"],
       "pagePath": "llmgw/web/src/pages/UsagePage.tsx",

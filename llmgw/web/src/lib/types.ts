@@ -735,6 +735,14 @@ export type UpstreamModelItem = {
   priceCurrency?: string | null;
   priceSource?: string | null;
   alreadyImported: boolean;
+  /** 用途来源：catalog = 内置名录查到的、upstream = 上游声明的、guess = 按标识猜的。 */
+  capabilitySource: string;
+  /** 是否在内置名录里。不在名录的要显式放行才准导入。 */
+  inCatalog: boolean;
+  catalogDisplayName?: string | null;
+  catalogVendor?: string | null;
+  acceptsImageInput: boolean;
+  requiresImageInput: boolean;
 };
 export type UpstreamModelsData = {
   probedUrl: string;
@@ -751,6 +759,8 @@ export type UpstreamModelsData = {
 export type ImportUpstreamModelEntry = {
   modelId: string;
   capabilities?: string[];
+  /** 管理员对名录外模型的显式放行；会进审计。 */
+  allowOutsideCatalog?: boolean;
   inputPricePerMillion?: number | null;
   outputPricePerMillion?: number | null;
   pricePerCall?: number | null;
@@ -762,6 +772,8 @@ export type ImportUpstreamModelsResult = {
   skipped: number;
   skippedModelIds: string[];
   createdModelIds: string[];
+  /** 因为不在名录、又没显式放行被拦下的模型（与「已存在」分开列）。 */
+  blockedOutsideCatalog?: string[];
   /** 模型已入库但没进默认池：池路由选不到它们，必须如实告知 */
   poolSyncFailed?: boolean;
   message?: string;
@@ -1395,3 +1407,54 @@ export type ShadowSummary = {
   coverageHours?: number;
 };
 export type ShadowData = { summary: ShadowSummary; recent: ShadowItem[] };
+
+// ── 服务网关设置（系统级模型）──
+// 系统自己知道的值（serving 地址、appCaller、密钥前缀）只读回展示，不做输入。
+export type SystemGatewaySettings = {
+  /** auto：网关自己挑；pool：钉一个模型池；model：钉一个模型。 */
+  modelSource: 'auto' | 'pool' | 'model';
+  modelGroupId: string | null;
+  modelName: string | null;
+  teamId: string | null;
+  teamName: string | null;
+  /** true = 归属团队是系统自己的「系统内部」团队，消耗单独计费、不可改。 */
+  teamIsSystemOwned: boolean;
+  servingBaseUrl: string;
+  servingReachable: boolean;
+  appCallerCode: string;
+  /** ready 已就绪 / will-issue 首次调用时自动签发 / will-reissue 旧的失效了会自动重签。 */
+  credentialState: 'ready' | 'will-issue' | 'will-reissue';
+  credentialPrefix: string | null;
+  credentialIssuedAt: string | null;
+  pools: Array<{ id: string; name: string; isDefault: boolean }>;
+  // publicId 是提交给后端的值（解析器只认它），name 只做显示。
+  models: Array<{ id: string; publicId: string; name: string }>;
+  /** 本次清单用的筛选关键字（服务端回显，空串表示没筛）。 */
+  modelQuery: string;
+  /** 满足条件的模型总数：大于 models.length 就说明被截断了，得靠关键字够剩下那些。 */
+  modelTotal: number;
+  /** 单次最多回多少条。 */
+  modelPageSize: number;
+  consumers: Array<{ feature: string; appCallerCode: string }>;
+};
+
+export type UpdateSystemSettingsRequest = {
+  modelSource: 'auto' | 'pool' | 'model';
+  modelGroupId?: string;
+  modelName?: string;
+  // 没有 teamId：归属团队由后端钉死在「系统内部」团队上，单独计费。
+};
+
+export type UpdateSystemSettingsResult = {
+  modelSource: string;
+  modelGroupId: string;
+  modelName: string;
+};
+
+export type SystemGatewayTestResult = {
+  ok: boolean;
+  stage: 'credential' | 'invoke' | 'done';
+  elapsedMs: number;
+  servedModel?: string;
+  message: string;
+};

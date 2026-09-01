@@ -697,13 +697,25 @@ public static class GatewayHttpEndpoints
             var requestId = TrackGatewayRequestId(http);
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = NormalizeGeminiRouteModel(model);
+            // 路由段是 auto/空时回退读 body 的 model。Gemini 的模型只能写进路由段，而单个
+            // 路由段装不下带斜杠的名字（聚合型上游的「厂商/模型」正是这种），客户端除了
+            // 放进 body 没有别的地方可放。不接住它，用户选了具体模型却只能按池调度跑，
+            // 而界面上写着他选的那个——选 A 给 B。
+            if (string.IsNullOrWhiteSpace(requestedModel)
+                || string.Equals(requestedModel, "auto", StringComparison.OrdinalIgnoreCase))
+            {
+                var bodyModel = ReadString(body, "model");
+                if (!string.IsNullOrWhiteSpace(bodyModel)) requestedModel = bodyModel.Trim();
+            }
             var modelPoolId = ResolveCompatModelPoolId(http, body);
             var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
             var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
             StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
                 body,
-                "contents", "systemInstruction", "generationConfig", "tools", "toolConfig",
+                // "model"：Gemini 原生把模型放路由段，但带斜杠的名字放不进去，我们接住 body 里那个，
+                // 所以它是**被消费的路由字段**，不能再算成被丢弃的参数（严格调用方会因此被拒）。
+                "contents", "systemInstruction", "generationConfig", "tools", "toolConfig", "model",
                 "model_policy", "modelPolicy", "model_pool_id", "modelPoolId",
                 "pinned_platform_id", "pinnedPlatformId", "pinned_model_id", "pinnedModelId");
             var openAiBody = ConvertGeminiGenerateContentToOpenAiBody(body);

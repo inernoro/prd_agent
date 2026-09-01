@@ -27,7 +27,10 @@ public class HostedSiteService : IHostedSiteService
     // 后，控制器会把媒体包装成 ZIP 走这条路径，解压上限若仍是 200MB 会让 200-500MB 的上传
     // "过了控制器、却被服务层拒收"。该值同时保留 zip bomb 防御（停止解压超出此总大小的归档）。
     private const long MaxExtractedSize = 500L * 1024 * 1024; // 500MB
-    public const int MaxZipFileCount = 5000;
+    // 现代原型导出会生成大量切片、字体和静态资源；5000 会拒绝体积很小但条目较多的正常包。
+    // 文件数仍保留硬上限以避免用海量空条目消耗解析与对象存储资源；解压总量另由
+    // MaxExtractedSize 独立限制，不能用提高文件数上限绕过 zip bomb 防护。
+    public const int MaxZipFileCount = 20000;
 
     // 网页托管对象的 Cache-Control。配合 SiteUrl 上的 ?v={UpdatedAt.Ticks} 版本指纹形成
     // 「内容指纹缓存」：内容不变 → URL 不变 → 命中浏览器/CDN 缓存（满足"没更新就用缓存"）；
@@ -2569,6 +2572,11 @@ public class HostedSiteService : IHostedSiteService
         public List<(ZipArchiveEntry Entry, string RelativePath, string Mime)> Items = new();
     }
 
+    internal static string? ValidateZipFileCount(int fileCount)
+        => fileCount > MaxZipFileCount
+            ? $"ZIP 包含的文件数超过上限（{MaxZipFileCount}），请删除无用文件或拆分后再上传"
+            : null;
+
     /// <summary>
     /// ZIP 过滤/计数/限额逻辑的唯一来源（路径穿越、__MACOSX、黑名单后缀、文件数、
     /// 解压总大小、空文件处理、≥1 有效文件）。ValidateZip 与 ExtractAndUploadZip 都走它，
@@ -2579,9 +2587,10 @@ public class HostedSiteService : IHostedSiteService
     {
         var plan = new ZipPlan();
 
-        if (archive.Entries.Count > MaxZipFileCount)
+        var fileCountError = ValidateZipFileCount(archive.Entries.Count);
+        if (fileCountError != null)
         {
-            plan.Error = $"ZIP 包含的文件数超过限制 ({MaxZipFileCount})";
+            plan.Error = fileCountError;
             return plan;
         }
 
