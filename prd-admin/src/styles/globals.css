@@ -14,72 +14,19 @@
    If the widget ever goes back to a left-rail anchor, bring the reserve back; the
    guard in AppShell.cdsCompatibility.test.ts watches that anchor and will go red. */
 
-/* ===== 潜像场：视觉创作首页背景（见 components/effects/LatentField.tsx） =====
-   织纹周期与生图等待卡同源（45 度、6/13px）。那边挂在画布上要跟着缩放走，
-   所以用 var(--invZoom)；首页没有画布缩放，直接写死屏幕像素。
-   颜色一律走 token 或与 --gen-wait-* 同源的字面值，别在这里另配一套。 */
-.latent-field__weave,
-.latent-field__core,
-.latent-field__sweep {
+/* ===== 页面渐晕：视觉创作首页背景里唯一的程序元素（见 components/effects/PageBackdrop.tsx）
+   一层、单向、不重复、不动。
+   这条约束是量出来的，不是审美偏好——见 tokens.css 里 --vignette-* 上方那段。
+   简言之：背景里的「器物级细节」要么看不见，要么就在抢内容；而**重复图案**
+   哪怕淡到 4/255，也会因为覆盖面大 + 周期规则而在缩放显示下摩尔纹成条纹布。
+   所以这里只允许一个非重复的径向渐变。往这一层加 repeating-* 有守卫会红。 */
+.page-vignette {
   position: absolute;
-  pointer-events: none;
-}
-
-/* 织纹。周期与等待卡同源，但**放大到整页就得再淡一档**：
-   等待卡是一张几百像素的小卡，6/13px 的 2% 白读起来是颗粒；
-   铺满 1440px 之后同样的值变成一块条纹布，还会把核辉光整个压住
-   （第一版取证图就是这个样子）。周期放宽到 7/16、alpha 降到 1.2%，才回到「颗粒」。 */
-.latent-field__weave {
   inset: 0;
-  background: repeating-linear-gradient(45deg,
-    var(--latent-weave) 0 7px,
-    transparent 7px 16px);
-}
-
-/* 核辉光：给空页一个重心。半径按视口宽走，窄屏下不会缩成一个小点。 */
-.latent-field__core {
-  left: 50%;
-  top: -180px;
-  width: min(1100px, 130vw);
-  height: 780px;
-  transform: translateX(-50%);
-  background: radial-gradient(50% 50% at 50% 50%,
-    var(--latent-core) 0%,
-    var(--latent-core-mid) 42%,
-    transparent 72%);
-  will-change: opacity, transform;
-  animation: latent-breathe 14s ease-in-out infinite;
-}
-
-/* 斜掠光：整页唯一「在走」的东西，26 秒一个来回，慢到几乎察觉不到。 */
-.latent-field__sweep {
-  left: -10%;
-  top: 120px;
-  width: 120%;
-  height: 520px;
-  background: linear-gradient(104deg,
-    transparent 0%,
-    var(--latent-sweep) 46%,
-    transparent 100%);
-  will-change: transform;
-  animation: latent-drift 26s ease-in-out infinite alternate;
-}
-
-/* 核辉光的呼吸带 translateX(-50%)：keyframes 里必须把它一起写回去，
-   否则动画那一帧会把居中偏移覆盖掉，辉光会突然跳到右边半个身位。 */
-@keyframes latent-breathe {
-  0%, 100% { opacity: .45; transform: translateX(-50%) scale(.98); }
-  50%      { opacity: 1;   transform: translateX(-50%) scale(1.03); }
-}
-
-@keyframes latent-drift {
-  from { transform: translate3d(-8%, 0, 0); }
-  to   { transform: translate3d(8%, 0, 0); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .latent-field__core { animation: none; opacity: .8; transform: translateX(-50%); }
-  .latent-field__sweep { animation: none; }
+  pointer-events: none;
+  background:
+    radial-gradient(120% 82% at 50% 8%, var(--vignette-core) 0%, transparent 58%),
+    radial-gradient(112% 96% at 50% 42%, transparent 42%, var(--vignette-edge) 100%);
 }
 
 /* ===== 骨架 =====
@@ -118,8 +65,8 @@
    顶边那道细高光是光打在玻璃厚度上的边，投影说明它浮在东西之上。
    取证：先只写前两条，卡片就是块板；补上边和影，玻璃感立刻出来。
 
-   还有一条前提：**背后得有东西可透**。中间挖空的那一版玻璃后面一片纯色，
-   磨砂就白磨了——所以 DarkroomPlate 的中央遮罩留了三成，不是零。 */
+   还有一条前提：**背后得有东西可透**。背后一片纯色时磨砂就白磨了，卡片退化成实心板。
+   现在这个前提由背景照片承担（浅色主题不放照片，那一档的玻璃靠渐晕和纸面本身的明暗）。 */
 .glass-pane {
   background: var(--glass-surface);
   backdrop-filter: blur(26px) saturate(1.4);
@@ -133,65 +80,6 @@
   background: var(--glass-surface-sub);
   backdrop-filter: blur(18px) saturate(1.3);
   -webkit-backdrop-filter: blur(18px) saturate(1.3);
-}
-
-/* ===== 印相台：首页背景美术层（见 components/effects/DarkroomPlate.tsx） =====
-   颜色一律走 --plate-* token（双写），这里只管几何与合成方式。 */
-.plate {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.plate__svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-/* 墨块。柔边靠 filter，颜色靠 token。极慢的呼吸是整层唯一的动画。 */
-.plate__ink-warm { fill: var(--plate-ink-warm); }
-.plate__ink-cool { fill: var(--plate-ink-cool); }
-.plate__ink-misreg { fill: var(--plate-ink-misreg); }
-.plate__inks {
-  will-change: opacity;
-  animation: plate-breathe 22s ease-in-out infinite;
-}
-
-/* 网点、灰阶梯尺、色标条、套准十字。 */
-.plate__dot { fill: var(--plate-dot); }
-/* 梯尺每一级的不透明度由组件按级数算（wedgeOpacity），这里只给底色。 */
-.plate__wedge { fill: var(--plate-wedge); }
-.plate__rule { stroke: var(--plate-line); stroke-width: 1; }
-.plate__swatch--warm { fill: var(--plate-ink-warm); }
-.plate__swatch--warm2 { fill: var(--plate-ink-misreg); }
-.plate__swatch--cool { fill: var(--plate-ink-cool); }
-.plate__swatch--neutral { fill: var(--plate-tone-hi); }
-.plate__reg {
-  fill: none;
-  stroke: var(--plate-line-strong);
-  stroke-width: 1;
-}
-
-/* 纸的颗粒：把上面所有硬边压回同一张纸上。周期与潜像场同源（45 度斜织）。 */
-.plate__grain {
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(45deg,
-    var(--plate-grain) 0 7px,
-    transparent 7px 16px);
-}
-
-@keyframes plate-breathe {
-  0%, 100% { opacity: .78; }
-  50%      { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .plate__inks { animation: none; opacity: .9; }
 }
 
 /* 背景照片层：轮换素材。cover + 居中，淡入由 JS 在 decode 之后触发。 */

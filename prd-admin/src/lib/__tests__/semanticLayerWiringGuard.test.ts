@@ -397,7 +397,7 @@ describe('生成中的占位卡不许被系统自动选中', () => {
 });
 
 describe('首页背景：素材来源与浅色主题的两条接线', () => {
-  const LATENT = 'src/components/effects/LatentField.tsx';
+  const BACKDROP = 'src/components/effects/PageBackdrop.tsx';
   const PAGE = 'src/pages/visual-agent/VisualAgentWorkspaceListPage.tsx';
   const GLOBALS = 'src/styles/globals.css';
 
@@ -407,7 +407,7 @@ describe('首页背景：素材来源与浅色主题的两条接线', () => {
     //
     // 断言前先剥注释：第一版直接 toContain，结果**解释这条规则的那句注释**自己就把断言喂饱了
     // ——把 className 删掉测试照样绿（形状 4a：断言的是字面存在，不是行为）。
-    const latent = read(LATENT).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const latent = read(BACKDROP).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     expect(latent).toContain('className="backdrop-photo-layer"');
     // 剥注释这一步本身也要有判据：剥完还得剩下真实代码，否则正则写坏了会把整份源码吃掉，
     // 上面那条断言就永远失败——那是另一种坏（假红），同样得拦。
@@ -419,44 +419,52 @@ describe('首页背景：素材来源与浅色主题的两条接线', () => {
     expect(rule?.[0]).toContain('.backdrop-photo-layer');
   });
 
-  it('印相台不用胶片语言——齿孔与连续画格是动态影像的符号，这里是静态图像工具', () => {
-    // 用户看完第一版：「背景用电影的背景就有点奇怪了」。齿孔（sprocket）和
-    // 一格格接触印样是 35mm 电影/胶卷的符号，隔壁视频创作才该用。
-    // 这条守卫防的是「哪天顺手又把胶片元素加回来」。
-    const plate = read('src/components/effects/DarkroomPlate.tsx')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/\/\/[^\n]*/g, '');
-    for (const filmish of ['sprocket', 'FRAME_W', 'plate__frame']) {
-      expect(plate).not.toContain(filmish);
+  it('背景里不许出现重复图案——程序纹理这条路已经走死了', () => {
+    // 这一条替掉了原来的「印相台不用胶片语言」和「网点必须细到读作纹理」。
+    // 那两条守的是「器物画对没有」「网点够不够细」，但真正的教训不在参数上：
+    //
+    // 把印相台每一层单独关掉量像素差（1440x940 纯底）——墨块 49/255、色标条 40、
+    // 套准十字 38、尺边线 16、梯尺 13、网点 5、纸颗粒 4。峰值还行的三件里，
+    // 色标条在 y=902、套准十字在四角，实际都被项目卡和顶栏压住；真能看见的只有墨块，
+    // 也就是两团柔光。而唯一在整屏尺度上有存在感的是纸颗粒：4/255 却覆盖 81%，
+    // 且是 16px 规则重复，缩放显示下摩尔纹成一块斜条纹布（用户：你的背景长得像马赛克）。
+    //
+    // 所以判据换成两条形状约束，不再盯某个数值：
+    //   1. 背景组件里不许再出现程序美术（SVG 图案、pattern、器物几何）；
+    //   2. 背景那几条 CSS 规则里不许出现 repeating-*，重复图案是摩尔纹的唯一来源。
+    const backdrop = read(BACKDROP).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    for (const painterly of ['<pattern', '<svg', 'plate__', 'sprocket']) {
+      expect(backdrop).not.toContain(painterly);
     }
     // 剥注释后仍要剩下真实代码，否则正则写坏了这条会假绿。
-    expect(plate).toContain('export function DarkroomPlate');
-  });
+    expect(backdrop).toContain('export function PageVignette');
+    expect(backdrop).toContain('export function BackdropPhoto');
 
-  it('网点必须细到读作纹理，不是马赛克', () => {
-    // 用户原话：你的背景长得像马赛克。根因是 9px 周期配 r=1.6 的圆点阵列，
-    // 覆盖率约 10%，整页尺度上规则阵列就是格子。判据直接盯几何：
-    // 周期 >= 14px 且半径 <= 1，覆盖率掉到 1% 以下才回到「网点」。
-    const plate = read('src/components/effects/DarkroomPlate.tsx');
-    const pat = plate.match(/id="plate-halftone"\s+width="(\d+)"/);
-    const dot = plate.match(/<circle[^>]*r="([\d.]+)"[^>]*className="plate__dot"/);
-    expect(Number(pat?.[1])).toBeGreaterThanOrEqual(14);
-    expect(Number(dot?.[1])).toBeLessThanOrEqual(1);
+    const globals = read(GLOBALS);
+    const vignette = globals.slice(globals.indexOf('.page-vignette'));
+    const rule = vignette.slice(0, vignette.indexOf('}') + 1);
+    expect(rule).toContain('radial-gradient');
+    expect(rule).not.toContain('repeating-');
   });
 
   it('背景层挂在滚动容器之外，滑下去不会跟着滚走', () => {
     // 用户原话：滑动下去，背景居然消失了。根因是背景和内容在同一个
     // overflow-auto 容器里，absolute inset:0 量的是可视框且随内容滚动。
-    // 先剥注释：解释这个 bug 的那段注释里就写着 overflow-auto，不剥的话
-    // 判据会被自己的说明文字喂饱（这个坑在本仓库已经踩到第四次了）。
-    const page = read(PAGE).replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    //
+    // 剥注释有两个坑，都踩过：解释这个 bug 的那段注释里就写着 overflow-auto，
+    // 不剥的话判据会被自己的说明文字喂饱（第四次）；而块注释正则若不钉行首，
+    // 这一页的 accept="image/*" 会把斜杠星号当注释开头，一路吃掉五千多字符，
+    // 判据于是对着残骸断言。
+    const page = read(PAGE)
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+      .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, '');
     const rootStart = page.indexOf('surface-tone-dark h-full');
-    const plateAt = page.indexOf('<DarkroomPlate');
+    const bgAt = page.indexOf('<PageVignette');
     expect(rootStart).toBeGreaterThan(-1);
-    expect(plateAt).toBeGreaterThan(rootStart);
-    // 根容器这一段里不许出现 overflow-auto——它必须在 DarkroomPlate 之后的内层。
-    expect(page.slice(rootStart, plateAt)).not.toContain('overflow-auto');
-    expect(page.slice(plateAt)).toContain('overflow-auto');
+    expect(bgAt).toBeGreaterThan(rootStart);
+    // 根容器这一段里不许出现 overflow-auto——它必须在背景层之后的内层。
+    expect(page.slice(rootStart, bgAt)).not.toContain('overflow-auto');
+    expect(page.slice(bgAt)).toContain('overflow-auto');
   });
 
   it('背景素材取随包清单，不再取项目封面（白底产品图压暗后整页变平灰）', () => {

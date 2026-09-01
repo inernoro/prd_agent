@@ -1,7 +1,6 @@
 
 import { GlassCard } from '@/components/design/GlassCard';
 import { SizePickerButton } from '@/components/visual-agent/SizePickerPanel';
-import { glassToolbar } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { systemDialog } from '@/lib/systemDialog';
@@ -32,10 +31,8 @@ import {
   Star,
   Sparkles,
   FolderPlus,
-  FilePlus,
   Bug,
   X,
-  Clipboard,
 } from 'lucide-react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useAuthStore } from '@/stores/authStore';
@@ -44,8 +41,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
-import { BackdropPhoto } from '@/components/effects/LatentField';
-import { DarkroomPlate } from '@/components/effects/DarkroomPlate';
+import { BackdropPhoto, PageVignette } from '@/components/effects/PageBackdrop';
 import { BackdropSettings, readBackdropMode, resolveBackdrop, type BackdropMode } from '@/components/visual-agent/BackdropSettings';
 import type { BackdropAsset } from '@/lib/backdropRotation';
 import { BACKDROP_CATALOG, dimFor } from '@/lib/backdropCatalog';
@@ -152,73 +148,6 @@ function CoverMosaic(props: { title: string; assets: VisualAgentWorkspace['cover
       <Tile idx={1} />
       <Tile idx={2} />
       <Tile idx={3} />
-    </div>
-  );
-}
-
-// ============ 浮动工具栏按钮 ============
-function ToolbarButton(props: {
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  const [showTooltip, setShowTooltip] = useState(false);
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        className="h-10 w-10 rounded-xl inline-flex items-center justify-center transition-all duration-200 hover-bg-soft hover:scale-105 active:scale-95"
-        style={{ color: 'var(--text-secondary)' }}
-        onClick={props.onClick}
-        onMouseEnter={() => setShowTooltip(true)}
-        onMouseLeave={() => setShowTooltip(false)}
-      >
-        {props.icon}
-      </button>
-      {/* Tooltip */}
-      {showTooltip && (
-        <div
-          className="surface-tone-dark absolute left-full ml-3 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap pointer-events-none"
-          style={{
-            background: 'rgba(30, 30, 35, 0.95)',
-            color: '#fff',
-            border: '1px solid var(--border-default)',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          }}
-        >
-          {props.label}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============ 浮动工具栏 ============
-function FloatingToolbar(props: {
-  onNewProject: () => void;
-  onNewFolder: () => void;
-}) {
-  const { onNewProject, onNewFolder } = props;
-
-  return (
-    <div
-      className="rounded-2xl p-1.5 flex flex-col gap-1 bg-transparent"
-      style={{
-        ...glassToolbar,
-        background: 'rgba(18, 18, 22, 0.6)',
-      }}
-    >
-      <ToolbarButton
-        icon={<FilePlus size={17} />}
-        label="新建项目"
-        onClick={onNewProject}
-      />
-      <ToolbarButton
-        icon={<FolderPlus size={17} />}
-        label="新建文件夹"
-        onClick={onNewFolder}
-      />
     </div>
   );
 }
@@ -330,10 +259,12 @@ function QuickInputBox(props: {
   onRemoveImage?: () => void;
   size?: string;
   onSizeChange?: (size: string) => void;
+  /** 让页面拿到 textarea：选完预设格要把光标送进来。 */
+  inputRef?: React.MutableRefObject<HTMLTextAreaElement | null>;
 }) {
-  const { value, onChange, onSubmit, loading, onImageSelect, selectedImage, onRemoveImage, size = '1024x1024', onSizeChange } = props;
+  const { value, onChange, onSubmit, loading, onImageSelect, selectedImage, onRemoveImage, size = '1024x1024', onSizeChange, inputRef } = props;
   const typingPlaceholder = useTypingPlaceholder();
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isFocused, setIsFocused] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -434,7 +365,7 @@ function QuickInputBox(props: {
   // 靛蓝是这一页唯一和品牌色无关的颜色，删掉之后整页只剩 #D97757 一种强调色。
   const focused = isFocused || isDragging;
   return (
-    <div className="w-full mx-auto mt-5" style={{ width: 'min(820px, 100%)' }}>
+    <div className="w-full mx-auto mt-5" style={{ width: 'min(880px, 100%)' }}>
       <div
         // 磨砂玻璃：底色、模糊、顶边高光、投影全在 .glass-pane 里（见 globals.css）。
         // 聚焦态要盖掉 glass-pane 自带的 box-shadow，所以这里把高光那一段一起写回去，
@@ -453,7 +384,22 @@ function QuickInputBox(props: {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
       >
-        <div className="relative px-5 pt-4 pb-2" style={{ minHeight: 96 }}>
+        {/*
+         * 打字区。
+         *
+         * 上一版这块是 96 高、里面一个 2 行 60px 的 textarea——整块输入框 820x180，
+         * 长宽比 4.6:1 的窄条，真正能打字的只有 60px，比一张项目卡的封面（160px）还矮。
+         * 用户的原话是「是否需要像苹果的触控板一样做大点」，方向对：这块面同时还是
+         * 拖放目标（「把图拖进来当参考图」），窄条不像一块能往上放东西的面。
+         *
+         * 没有做到触控板的 1.6:1——880 宽照那个比例是 550 高，加上顶栏、标题区、
+         * 预设行，「最近项目」会被整个推到折叠线以下。取 190（整块约 3.4:1）：
+         * 打字区从 60 涨到 130，参考图直接落在这块面里，而项目列表第一行仍在首屏。
+         *
+         * 关键前提：**高度必须由内容换来**。空的大框比空的小框更糟（零摩擦那条规则），
+         * 所以参考图从下面那条 30px 的 chip 行搬进来了，占的是这块面本身。
+         */}
+        <div className="relative px-5 pt-4 pb-2 flex flex-col" style={{ minHeight: 190 }}>
           {isDragging && (
             <div
               className="absolute inset-0 z-40 flex items-center justify-center gap-2 pointer-events-none"
@@ -470,20 +416,23 @@ function QuickInputBox(props: {
           )}
 
           <textarea
-            ref={textareaRef}
+            ref={(el) => {
+              textareaRef.current = el;
+              if (inputRef) inputRef.current = el;
+            }}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
-            rows={2}
+            rows={4}
             data-tour-id="visual-prompt-input"
             className="w-full bg-transparent resize-none no-focus-ring"
             style={{
               color: 'var(--text-primary)',
               fontSize: 14,
               lineHeight: 1.65,
-              minHeight: 60,
+              minHeight: 130,
               border: 'none',
             }}
             disabled={loading}
@@ -497,51 +446,72 @@ function QuickInputBox(props: {
               <span className="animate-pulse">|</span>
             </div>
           )}
+
+          {/* 参考图落在这块面上，而不是挤在一条 30px 的附加行里。
+              没有参考图时同一个位置放一个虚线空槽——把面做大之后，
+              本地取证第一版这里是一片纯粹的空白（浅色下尤其明显），
+              那正是「空的大框比空的小框更糟」。空槽既填住这块地方，
+              又把这块面是个拖放目标这件事说清楚，图一落下它就被真图替换。 */}
+          {!selectedImage && (
+            <div className="mt-auto pt-2.5 flex items-center gap-2.5 pointer-events-none">
+              <span
+                className="grid place-items-center shrink-0"
+                style={{
+                  width: 56, height: 56, borderRadius: 6,
+                  border: '1px dashed var(--border-default)',
+                  color: 'var(--text-muted)',
+                }}
+              >
+                <Image size={16} />
+              </span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 10, lineHeight: 1.6 }}>
+                把参考图拖到这里，或按 {isMac ? '⌘V' : 'Ctrl+V'} 粘贴
+              </span>
+            </div>
+          )}
+          {selectedImage && (
+            <div className="mt-auto pt-2.5 flex items-end gap-2">
+              <div
+                className="relative group/ref shrink-0"
+                title={`参考图：${selectedImage.file.name}`}
+              >
+                <img
+                  src={selectedImage.previewUrl}
+                  alt=""
+                  style={{
+                    width: 56, height: 56, borderRadius: 6, objectFit: 'cover', display: 'block',
+                    boxShadow: 'inset 0 0 0 1px var(--border-subtle)',
+                  }}
+                />
+                {onRemoveImage && (
+                  <button
+                    type="button"
+                    aria-label="移除参考图"
+                    onClick={(e) => { e.stopPropagation(); onRemoveImage(); }}
+                    className="absolute -top-1.5 -right-1.5 grid place-items-center transition-opacity opacity-0 group-hover/ref:opacity-100 focus-visible:opacity-100"
+                    style={{
+                      width: 18, height: 18, borderRadius: 9, border: 0, cursor: 'pointer',
+                      background: 'var(--panel-solid)', color: 'var(--text-secondary)',
+                      boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+                    }}
+                  >
+                    <X size={10} />
+                  </button>
+                )}
+              </div>
+              <span
+                className="truncate pb-0.5"
+                style={{ color: 'var(--text-muted)', fontSize: 10, maxWidth: 220 }}
+              >
+                {selectedImage.file.name}
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* 参考图 chip 行。空着时不占位——一个常驻的空行会让输入区看起来「有个坏掉的槽」。 */}
-        {selectedImage ? (
-          <div className="flex flex-wrap items-center gap-[7px] px-5 pb-1.5">
-            <span
-              className="glass-sub inline-flex items-center gap-1.5"
-              style={{
-                height: 30,
-                padding: '3px 4px',
-                borderRadius: 6,
-                color: 'var(--text-secondary)',
-                fontSize: 10,
-              }}
-              title={`参考图：${selectedImage.file.name}`}
-            >
-              <img
-                src={selectedImage.previewUrl}
-                alt=""
-                style={{ width: 24, height: 24, flex: '0 0 auto', borderRadius: 4, objectFit: 'cover', display: 'block' }}
-              />
-              <span className="truncate" style={{ maxWidth: 120, paddingRight: 2 }}>{selectedImage.file.name}</span>
-              {onRemoveImage && (
-                <button
-                  type="button"
-                  aria-label="移除参考图"
-                  onClick={(e) => { e.stopPropagation(); onRemoveImage(); }}
-                  className="grid place-items-center hover-bg-soft"
-                  style={{ width: 20, height: 20, borderRadius: 4, border: 0, background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}
-                >
-                  <X size={11} />
-                </button>
-              )}
-            </span>
-          </div>
-        ) : null}
-
-        {/* 一行说明：这是与视频创作的分界——那边只吃一段文字。 */}
-        <div
-          className="flex items-center gap-1.5 px-5 pb-3"
-          style={{ color: 'var(--text-muted)', fontSize: 10 }}
-        >
-          <Clipboard size={12} />
-          直接按 {isMac ? '⌘V' : 'Ctrl+V'} 粘贴，或把图拖进来当参考图
-        </div>
+        {/* 原来这里有一条独立的「⌘V 粘贴 / 拖图进来」说明行。
+            现在这句话由打字区里的虚线空槽承担——就写在那个槽旁边，
+            说的正是那个槽的用法，比隔着一条分割线在下面另起一行准确，也少一行 chrome。 */}
 
         {/* 底部工具条：自带底色 + 上边框，与视频创作同结构。 */}
         <div
@@ -629,7 +599,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
     <div
       data-tour-id="visual-scenarios"
       className="mt-3 grid grid-flow-col auto-cols-[minmax(96px,1fr)] sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-6 gap-1.5 overflow-x-auto no-scrollbar"
-      style={{ width: 'min(820px, 100%)' }}
+      style={{ width: 'min(880px, 100%)' }}
     >
       {SCENARIO_TAGS.map((tag) => {
         const Icon = tag.icon;
@@ -639,7 +609,10 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             key={tag.key}
             type="button"
             data-tour-id={tag.isPro ? 'visual-pro' : undefined}
-            onClick={() => { if (!tag.isPro) onSelect(tag.prompt); }}
+            // MAP Pro 也要能点。它的高亮条件本来就是 activeKey === null，
+            // 语义即「没选任何预设」——所以点它 = 清空输入回到自由描述。
+            // 上一版这里写的是 if (!tag.isPro)，六格里默认高亮的第一格点了没有任何反应。
+            onClick={() => onSelect(tag.prompt)}
             className={`${isActive ? '' : 'glass-sub '}inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md px-[7px] text-[9px] shrink-0 transition-colors`}
             style={{
               minHeight: 38,
@@ -702,7 +675,27 @@ function ProjectCard(props: {
           boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
         }}
       >
-        {hasCover && <CoverMosaic title={ws.title || ws.id} assets={ws.coverAssets} />}
+        {hasCover ? (
+          <CoverMosaic title={ws.title || ws.id} assets={ws.coverAssets} />
+        ) : (
+          /* 还没有图的项目。上一版这里什么都不放，卡片就是一个纯色空框——
+             和「封面加载失败」长得一模一样，用户分不出是没画过还是坏了。
+             放项目名首字 + 一句说明，一眼就知道它是空的、不是坏的。 */
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
+            <span
+              className="grid place-items-center"
+              style={{
+                width: 40, height: 40, borderRadius: 10,
+                background: 'var(--nested-block-bg)',
+                color: 'var(--text-secondary)',
+                fontSize: 17, fontWeight: 600,
+              }}
+            >
+              {(ws.title || '未').trim().slice(0, 1)}
+            </span>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>还没有图</span>
+          </div>
+        )}
         {/* Hover 遮罩 */}
         <div
           className="absolute inset-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
@@ -834,6 +827,7 @@ function ProjectCardSkeleton({ index }: { index: number }) {
 }
 
 function ProjectCarousel(props: {
+  onCreateFolder: () => void;
   items: VisualAgentWorkspace[];
   loading: boolean;
   loadingMore: boolean;
@@ -845,7 +839,7 @@ function ProjectCarousel(props: {
   onDelete: (ws: VisualAgentWorkspace) => void;
   onOpen: (ws: VisualAgentWorkspace) => void;
 }) {
-  const { items, loading, loadingMore, hasMore, onLoadMore, onCreate, onRename, onShare, onDelete, onOpen } = props;
+  const { items, loading, loadingMore, hasMore, onLoadMore, onCreate, onCreateFolder, onRename, onShare, onDelete, onOpen } = props;
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   // 无限滚动：当哨兵元素进入视口时加载更多
@@ -880,6 +874,17 @@ function ProjectCarousel(props: {
           >
             最近项目
           </h2>
+          {/* 从左侧那条浮动工具栏搬过来的。带文字——匿名图标悬在页面左缘时
+              没人认得出它是什么，也跟它要操作的这个列表隔着大半个屏幕。 */}
+          <button
+            type="button"
+            onClick={onCreateFolder}
+            className="glass-sub inline-flex items-center gap-1.5 rounded-md px-2.5 h-7 text-[11px] transition-colors"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            <FolderPlus size={12} />
+            新建文件夹
+          </button>
         </div>
       </div>
       {/* 网格布局，响应式列数 */}
@@ -916,7 +921,6 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const _fullscreenMode = props.fullscreenMode;
   void _fullscreenMode; // 避免 TS6133 警告
   const navigate = useNavigate();
-  const { isMobile } = useBreakpoint();
   const userId = useAuthStore((s) => s.user?.userId ?? '');
 
   // 统一使用 /visual-agent 路径（现在所有模式都是全屏）
@@ -1150,11 +1154,25 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   };
 
   // 场景标签选择
+  // 预设格：填词 + 把光标送进输入框。
+  //
+  // 两处都刚修过，原来这一排里有一格是死的：
+  // 1. ScenarioTags 的 onClick 写着 if (!tag.isPro)，MAP Pro 直接不进这个函数；
+  // 2. 就算进来了，这里第一行原本是 if (!prompt) return —— 空 prompt 照样被吞掉。
+  // 典型的「链路只建一半」：修了第一处不修第二处，那一格还是点了没反应。
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+
   const onTagSelect = (prompt: string) => {
-    if (!prompt) return;
     setInputValue(prompt);
-    const tag = SCENARIO_TAGS.find((t) => t.prompt === prompt);
-    setActiveTag(tag?.key ?? null);
+    setActiveTag(SCENARIO_TAGS.find((t) => t.prompt === prompt)?.key ?? null);
+    // 无论填词还是清空，光标都落进输入框——否则「选中 MAP Pro」在输入本来就空时
+    // 是一次零反馈的点击，跟没接线没有区别。
+    const el = promptRef.current;
+    if (el) {
+      el.focus();
+      const end = prompt.length;
+      requestAnimationFrame(() => el.setSelectionRange(end, end));
+    }
   };
 
   // 处理图片选择
@@ -1286,14 +1304,16 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       style={{ background: 'var(--bg-base)' }}
     >
       {/* 背景两层，顺序不能反：底下是轮换的那张图（压暗罩由 BackdropPhoto 自带，
-          是小字可读性的唯一保障），上面压印相台美术层。
+          是小字可读性的唯一保障），上面一层非重复的渐晕。
+          这里曾经压着一整层程序美术（印相台），量下来五件器物只有一件看得见、
+          唯一有存在感的是无意的重复纹理，已整层删除，判据见 PageBackdrop.tsx。
 
           它们必须挂在**滚动容器之外**这一层。上一版和内容放在同一个 overflow-auto
           容器里，absolute inset:0 在滚动容器里量的是**可视框**、而且跟着内容一起滚——
           于是往下滑两屏，背景就从画面顶上滑走了，剩下一片纯底色（用户原话：
           滑动下去背景居然消失了）。外层不滚、内层滚，背景才是钉住的。 */}
       <BackdropPhoto src={backdrop?.url ?? null} dim={dimFor(backdrop)} />
-      <DarkroomPlate />
+      <PageVignette />
       <div className="h-full min-h-0 flex flex-col overflow-auto relative" style={{ zIndex: 1 }}>
 
       {/* 顶栏：品牌 + 创作/作品 + 右侧动作，与视频创作同结构。
@@ -1344,14 +1364,17 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           </span>
         </div>
 
-        <div className="glass-sub flex items-center gap-0.5 justify-self-center" style={{ height: 38, padding: 3, borderRadius: 8 }}>
-          <span
-            className="grid place-items-center"
-            style={{ minWidth: 64, height: 32, borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 11, boxShadow: 'var(--shadow-card-sm)' }}
-          >
-            创作
-          </span>
-        </div>
+        {/* 当前位置，纯标签。
+            上一版这里套着 glass-sub + padding 3 + radius 8 的分段控件外壳，里面只装了
+            一个不可点的 span——看着像个开关，没有第二项可切，点了什么都不会发生
+            （「只有一个选项的选择器一律不显示」）。等真做出「作品」那一栏，
+            再把控件外壳加回来。 */}
+        <span
+          className="justify-self-center"
+          style={{ fontSize: 11, letterSpacing: '.06em', color: 'var(--text-secondary)' }}
+        >
+          创作
+        </span>
 
         <div className="flex items-center gap-1.5 justify-self-end">
           <BackdropSettings
@@ -1365,12 +1388,10 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         </div>
       </div>
 
-      {/* 浮动工具栏 - 桌面端页面左侧垂直居中，移动端隐藏 */}
-      {!isMobile && (
-        <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
-          <FloatingToolbar onNewProject={onCreate} onNewFolder={onCreateFolder} />
-        </div>
-      )}
+      {/* 这里原本挂着一条左侧浮动工具栏（新建项目 / 新建文件夹）。撤掉了：
+          「新建项目」在这一页已经有两个入口（最近项目里那张大虚线卡、输入框的开始创作），
+          它是第三个；而且是贴着视口左缘、没有文字、悬在空白里的图标，跟任何东西都没有
+          空间关系。「新建文件夹」挪到了「最近项目」标题行，带文字。 */}
 
       {/* 顶部居中区域。8vh 换成固定 52px：旧版 hero 自带 260px 高度，靠 vh 顶下来才不至于贴顶；
           现在标题区是内容高度，再按视口比例留白会在大屏上空出一大块。52px 取自视频创作的舞台节奏。 */}
@@ -1380,6 +1401,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
         {/* 快捷输入框 */}
         <QuickInputBox
+          inputRef={promptRef}
           value={inputValue}
           onChange={(v) => {
             setInputValue(v);
@@ -1412,6 +1434,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
       {/* 项目列表 */}
       <ProjectCarousel
+        onCreateFolder={onCreateFolder}
         items={items}
         loading={loading}
         loadingMore={loadingMore}

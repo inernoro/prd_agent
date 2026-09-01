@@ -225,8 +225,11 @@ export function BackdropSettings(props: {
                 <div className="mt-3 mb-1.5" style={{ color: 'var(--text-muted)', fontSize: 10 }}>
                   或钉住一张
                 </div>
-                {/* 3:2 而不是方形：这几张是横构图的光影，方形裁切会把光的来向裁掉。 */}
-                <div className="grid grid-cols-3 gap-1.5 overflow-y-auto" style={{ maxHeight: 190 }}>
+                {/* 3:2 而不是方形：这几张是横构图的光影，方形裁切会把光的来向裁掉。
+                    两列而不是三列，且每张下面写名字：这批素材全是近黑的光影，
+                    在 3 列 100px 的尺度上互相分不出来，名字只挂在原生 title 里
+                    等于没有——想挑「余烬」得逐个悬停一秒去试。 */}
+                <div className="grid grid-cols-2 gap-2 overflow-y-auto" style={{ maxHeight: 250 }}>
                   {assets.map((a) => {
                     const pinned = mode === a.id;
                     const isGenerated = generated.some((g) => g.id === a.id);
@@ -257,6 +260,19 @@ export function BackdropSettings(props: {
                             </span>
                           )}
                         </button>
+                        <div className="mt-1 px-0.5 flex items-baseline gap-1 min-w-0">
+                          <span
+                            className="shrink-0"
+                            style={{ fontSize: 10, color: pinned ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+                          >
+                            {a.name}
+                          </span>
+                          {a.note && (
+                            <span className="truncate" style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+                              {a.note}
+                            </span>
+                          )}
+                        </div>
                         {isGenerated && (
                           <button
                             type="button"
