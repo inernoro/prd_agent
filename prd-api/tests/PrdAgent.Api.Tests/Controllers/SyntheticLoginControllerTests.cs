@@ -145,12 +145,58 @@ public sealed class SyntheticLoginControllerTests
 
     [Theory]
     [InlineData("POST", "/api/v1/auth/synthetic/ticket", true)]
+    [InlineData("POST", "/api/v1/auth/synthetic/gateway-ticket", true)]
     [InlineData("POST", "/api/dashboard/notifications/events", true)]
     [InlineData("GET", "/api/v1/auth/synthetic/ticket", false)]
     [InlineData("POST", "/api/users", false)]
     public void StableSmokeSignature_ShouldBeEndpointScoped(string method, string path, bool expected)
     {
         Assert.Equal(expected, StableSmokeAuthenticationHandler.IsAllowedRequest(method, path));
+    }
+
+    [Fact]
+    public void StableSmokeSignature_ShouldResolveDeploymentHostWithoutWildcardTrust()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CDS_PREVIEW_URL"] = "https://branch.example.test/visual-agent",
+            })
+            .Build();
+
+        Assert.True(StableSmokeAuthenticationHandler.IsAllowedHost(
+            "@deployment", "branch.example.test", configuration));
+        Assert.False(StableSmokeAuthenticationHandler.IsAllowedHost(
+            "@deployment", "other.example.test", configuration));
+        Assert.True(StableSmokeAuthenticationHandler.IsAllowedHost(
+            "fixed.example.test", "FIXED.EXAMPLE.TEST", configuration));
+    }
+
+    [Fact]
+    public void GatewayFederation_ShouldAutoProvisionOnlyMissingStateAndCircuitBreakManualChanges()
+    {
+        var controller = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/SyntheticLoginController.cs"));
+        var federation = File.ReadAllText(LocateRepoFile(
+            "llmgw/console-api/Auth/StableSmokeFederation.cs"));
+        var gateway = File.ReadAllText(LocateRepoFile(
+            "llmgw/console-api/Program.cs"));
+
+        Assert.Contains("StableSmokeAuthenticationHandler.SchemeName", controller);
+        var gatewayTicketMethod = typeof(SyntheticLoginController).GetMethod(
+            nameof(SyntheticLoginController.IssueGatewayTicket));
+        Assert.NotNull(gatewayTicketMethod);
+        Assert.Equal(
+            StableSmokeAuthenticationHandler.SchemeName,
+            gatewayTicketMethod.GetCustomAttribute<AuthorizeAttribute>()?.AuthenticationSchemes);
+        Assert.Contains("if (!user.IsActive)", federation);
+        Assert.Contains("STABLE_SMOKE_ACCOUNT_DISABLED", federation);
+        Assert.Contains("STABLE_SMOKE_MEMBERSHIP_DISABLED", federation);
+        Assert.Contains("STABLE_SMOKE_ROLE_DRIFT", federation);
+        Assert.DoesNotContain(".Set(x => x.IsActive, true)", federation);
+        Assert.Contains("/gw/auth/failure-health", gateway);
+        Assert.Contains("single-refresh-single-retry", gateway);
+        Assert.Contains("one-time-ticket-auto-provision", gateway);
     }
 
     [Fact]

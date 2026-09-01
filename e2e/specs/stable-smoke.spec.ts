@@ -483,6 +483,43 @@ async function waitForImageRun(page: Page, token: string, runId: string, timeout
 
 async function loginGateway(request: APIRequestContext) {
   const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
+  const signingKeyId = process.env.STABLE_SMOKE_SIGNING_KEY_ID?.trim();
+  const signingPrivateKey = process.env.STABLE_SMOKE_SIGNING_PRIVATE_KEY?.trim();
+  if (signingKeyId && signingPrivateKey) {
+    const ticketBody = '{}';
+    const ticket = await request.post('/api/v1/auth/synthetic/gateway-ticket', {
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildStableSmokeAuthHeaders({
+          method: 'POST',
+          url: '/api/v1/auth/synthetic/gateway-ticket',
+          body: ticketBody,
+          username: requiredEnv('STABLE_SMOKE_USER'),
+          keyId: signingKeyId,
+          privateKey: signingPrivateKey,
+        }),
+      },
+      data: ticketBody,
+    });
+    const ticketEnvelope = await ticket.json() as ApiEnvelope<{ code: string }>;
+    expect(ticket.ok(), ticketEnvelope.error?.message || '生成模型网关巡检入口失败').toBe(true);
+    expect(ticketEnvelope.success, ticketEnvelope.error?.message || '生成模型网关巡检入口失败').toBe(true);
+    expect(ticketEnvelope.data.code).toBeTruthy();
+
+    const exchange = await request.post(`${baseUrl}/gw/auth/stable-smoke-sso`, {
+      data: { code: ticketEnvelope.data.code },
+    });
+    const exchangeEnvelope = await exchange.json() as ApiEnvelope<{ token: string; mustChangePassword: boolean }>;
+    expect(exchange.ok(), exchangeEnvelope.error?.message || '模型网关巡检短票据登录失败').toBe(true);
+    expect(exchangeEnvelope.success, exchangeEnvelope.error?.message || '模型网关巡检短票据登录失败').toBe(true);
+    expect(exchangeEnvelope.data.token).toBeTruthy();
+    expect(exchangeEnvelope.data.mustChangePassword).toBe(false);
+    return {
+      baseUrl,
+      headers: { Authorization: `Bearer ${exchangeEnvelope.data.token}` },
+    };
+  }
+
   const login = await request.post(`${baseUrl}/gw/auth/login`, {
     data: {
       username: requiredEnv('STABLE_SMOKE_GW_USER'),
@@ -2267,10 +2304,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001][REG-asr-routing-001] 网关配置与路由可由专用身份审计', async ({ request }) => {
+  test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001][REG-auth-synthetic-001][REG-asr-routing-001] 网关配置与路由可由专用身份审计', async ({ request }) => {
     const { baseUrl, headers } = await loginGateway(request);
 
-    const [context, models, logicalModels, health, authority, logs, poolTypes, asrPools] = await Promise.all([
+    const [context, models, logicalModels, health, authority, logs, poolTypes, asrPools, authFailureHealth] = await Promise.all([
       request.get(`${baseUrl}/gw/auth/context`, { headers }),
       request.get(`${baseUrl}/gw/models?enabled=true`, { headers }),
       request.get(`${baseUrl}/gw/logical-models?enabled=true`, { headers }),
@@ -2279,9 +2316,29 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       request.get(`${baseUrl}/gw/logs?limit=20`, { headers }),
       request.get(`${baseUrl}/gw/pool-types`, { headers }),
       request.get(`${baseUrl}/gw/pools?modelType=asr&sinceHours=168`, { headers }),
+      request.get(`${baseUrl}/gw/auth/failure-health?windowMinutes=10&threshold=3`, { headers }),
     ]);
-    for (const response of [context, models, logicalModels, health, authority, logs, poolTypes, asrPools]) {
+    for (const response of [context, models, logicalModels, health, authority, logs, poolTypes, asrPools, authFailureHealth]) {
       expect(response.ok(), `网关审计接口 ${response.url()} 不可用`).toBe(true);
+    }
+
+    const authFailureBody = await authFailureHealth.json() as ApiEnvelope<{
+      status: 'healthy' | 'recovered' | 'warning';
+      incidents: Array<{ scope: 'identity' | 'platform'; attempts: number; affectedIdentities: number }>;
+      recoveries: Array<{ attempts: number; identityFingerprint: string }>;
+      recovery: { browserSession: string; machineIdentity: string; circuitBreaker: string };
+    }>;
+    expect(authFailureBody.success).toBe(true);
+    expect(authFailureBody.data.recovery.browserSession).toBe('single-refresh-single-retry');
+    expect(authFailureBody.data.recovery.machineIdentity).toBe('one-time-ticket-auto-provision');
+    expect(authFailureBody.data.recovery.circuitBreaker).toBe('manual-disable-role-drift-repeated-failure');
+    for (const incident of authFailureBody.data.incidents) {
+      expect(incident.attempts).toBeGreaterThanOrEqual(3);
+      expect(incident.affectedIdentities).toBeGreaterThanOrEqual(1);
+    }
+    for (const recovery of authFailureBody.data.recoveries) {
+      expect(recovery.attempts).toBeGreaterThanOrEqual(1);
+      expect(recovery.identityFingerprint).toMatch(/^[a-f0-9]{12}$/);
     }
 
     const modelsBody = await models.text();
@@ -2342,17 +2399,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[GW-006] 路由配置变化后健康状态清零且原配置可恢复', async ({ request }) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动修改网关路由配置');
-    const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
-    const login = await request.post(`${baseUrl}/gw/auth/login`, {
-      data: {
-        username: requiredEnv('STABLE_SMOKE_GW_USER'),
-        password: requiredEnv('STABLE_SMOKE_GW_PASSWORD'),
-      },
-    });
-    const loginBody = await login.json() as ApiEnvelope<{ token: string }>;
-    expect(login.ok(), loginBody.error?.message || '模型网关专用账号登录失败').toBe(true);
-    expect(loginBody.success, loginBody.error?.message || '模型网关专用账号登录失败').toBe(true);
-    const headers = { Authorization: `Bearer ${loginBody.data.token}` };
+    const { baseUrl, headers } = await loginGateway(request);
     const logicalResponse = await request.get(`${baseUrl}/gw/logical-models?enabled=true`, { headers });
     const logicalBody = await logicalResponse.json() as ApiEnvelope<{ items: Array<{
       id: string;

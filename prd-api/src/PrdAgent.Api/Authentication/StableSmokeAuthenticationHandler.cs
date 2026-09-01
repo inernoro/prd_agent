@@ -15,7 +15,7 @@ namespace PrdAgent.Api.Authentication;
 
 /// <summary>
 /// 稳定冒烟专用签名认证。
-/// 私钥只存在执行机安全凭据库；服务端仅保存公钥，且只接受登录票据与定向通知两个端点。
+/// 私钥只存在执行机安全凭据库；服务端仅保存公钥，且只接受合成登录、网关短票据与定向通知端点。
 /// </summary>
 public sealed class StableSmokeAuthenticationHandler
     : AuthenticationHandler<StableSmokeAuthenticationOptions>
@@ -33,6 +33,7 @@ public sealed class StableSmokeAuthenticationHandler
     private static readonly HashSet<(string Method, string Path)> AllowedRequests = new()
     {
         (HttpMethods.Post, "/api/v1/auth/synthetic/ticket"),
+        (HttpMethods.Post, "/api/v1/auth/synthetic/gateway-ticket"),
         (HttpMethods.Post, "/api/dashboard/notifications/events"),
     };
 
@@ -74,7 +75,7 @@ public sealed class StableSmokeAuthenticationHandler
         var key = matchingKeys.Count == 1 ? matchingKeys[0] : null;
         if (key is null || !key.IsComplete)
             return Fail("key_not_configured");
-        if (!string.Equals(Request.Host.Host, key.AllowedHost, StringComparison.OrdinalIgnoreCase))
+        if (!IsAllowedHost(key.AllowedHost, Request.Host.Host, _configuration))
             return Fail("host_mismatch");
 
         if (!TryReadSignatureHeaders(Request, out var timestamp, out var nonce, out var signature))
@@ -150,6 +151,23 @@ public sealed class StableSmokeAuthenticationHandler
 
     internal static bool IsAllowedRequest(string method, string path) =>
         AllowedRequests.Contains((method, path));
+
+    internal static bool IsAllowedHost(
+        string configuredHost,
+        string requestHost,
+        IConfiguration configuration)
+    {
+        var expectedHost = configuredHost.Trim();
+        if (string.Equals(expectedHost, "@deployment", StringComparison.Ordinal))
+        {
+            var deploymentUrl = configuration["CDS_PREVIEW_URL"]
+                ?? configuration["PUBLIC_BASE_URL"];
+            if (!Uri.TryCreate(deploymentUrl, UriKind.Absolute, out var parsed)) return false;
+            expectedHost = parsed.Host;
+        }
+        return expectedHost.Length > 0
+            && string.Equals(requestHost, expectedHost, StringComparison.OrdinalIgnoreCase);
+    }
 
     internal static string BuildCanonicalRequest(
         string method,
