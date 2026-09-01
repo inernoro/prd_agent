@@ -452,28 +452,31 @@ export function TaskSchedulePage(): JSX.Element {
             {/* 值班条：常驻，跨左右两栏。它回答的是页面级的「有没有出事」，
                 与选中了哪个任务无关，所以不进右栏。 */}
             <div className="flex flex-wrap items-stretch gap-3">
-              <div className="flex min-w-0 flex-1 items-center gap-4 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
-                <div className="min-w-0 flex-1">
+              {/* 一块，不是三块。原来是「卡片 + 橙色实心块」两种容器并排，
+                  卡片内部又用左分割线切了一段统计——同一行里三种分组语言。
+                  现在统一成「结论句 + 等分统计段」，与详情里的指标条同一套节奏。 */}
+              <div className="flex min-w-0 flex-1 items-stretch overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+                <div className="flex min-w-0 flex-1 flex-col justify-center px-4 py-3">
                   <div className="flex items-center gap-2">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${overview.tone === 'bad' ? 'bg-bad' : overview.tone === 'warn' ? 'bg-warn' : 'bg-ok'}`} />
                     <span className="truncate text-base font-semibold">{overview.headline}</span>
                   </div>
-                  <div className="mt-1 text-xs leading-5 text-muted-foreground">{overview.detail}</div>
+                  <div className="mt-1 truncate text-xs leading-5 text-muted-foreground">{overview.detail}</div>
                 </div>
-                <div className="hidden shrink-0 items-stretch gap-5 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
+                <div className="hidden shrink-0 items-stretch md:flex">
                   {overview.stats.map((stat) => (
-                    <div key={stat.label}>
-                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{stat.label}</div>
-                      <div className={`font-mono text-lg font-semibold leading-tight ${stat.tone}`}>{stat.value}</div>
+                    <div key={stat.label} className="flex w-[86px] flex-col justify-center border-l border-[hsl(var(--hairline))] px-3 py-2">
+                      <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">{stat.label}</div>
+                      <div className={`mt-0.5 font-mono text-[17px] font-semibold leading-tight ${stat.tone}`}>{stat.value}</div>
                     </div>
                   ))}
-                </div>
-              </div>
-              <div className="flex w-56 shrink-0 flex-col justify-center rounded-md border border-primary/30 bg-primary-soft px-4 py-2">
-                <div className="text-[10px] uppercase tracking-wide text-primary-ink/80">下一次触发</div>
-                <div className="flex items-baseline gap-2">
-                  <span className="font-mono text-2xl font-semibold leading-none text-primary-ink">{overview.nextCountdown}</span>
-                  <span className="min-w-0 truncate text-xs text-muted-foreground">{overview.nextName}</span>
+                  <div className="flex w-[188px] flex-col justify-center border-l border-[hsl(var(--hairline))] bg-primary-soft/50 px-3 py-2">
+                    <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">下一次触发</div>
+                    <div className="mt-0.5 flex items-baseline gap-2">
+                      <span className="font-mono text-[17px] font-semibold leading-tight text-primary-ink">{overview.nextCountdown}</span>
+                      <span className="min-w-0 truncate text-[11px] text-muted-foreground">{overview.nextName}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -534,12 +537,17 @@ export function TaskSchedulePage(): JSX.Element {
               <section className="flex min-h-0 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
                 {selectedJob ? (
                   <>
-                    <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2">
-                      <div className="min-w-0 flex-1 text-xs text-muted-foreground">
-                        今天 · <span className="font-medium text-foreground">{selectedJob.name}</span>
-                      </div>
-                      <Button variant="ghost" size="sm" onClick={() => setSelectedId('')}>返回值班概览</Button>
-                    </div>
+                    {/* 三层表头（页面 / 上下文 / 详情）连排是噪音：细带自己就写着任务名，
+                        原来那行「今天 · X」与它、与详情头三处重复。合并成一层。 */}
+                    <JobDetailHeader
+                      job={selectedJob}
+                      projectLabel={projectName(selectedJob.projectId)}
+                      scheduleText={scheduleLabel(selectedJob)}
+                      running={runningId === selectedJob.id}
+                      onRun={() => void runNow(selectedJob.id)}
+                      onEdit={() => { selectJob(selectedJob); setEditorOpen(true); }}
+                      onBack={() => setSelectedId('')}
+                    />
                     {laneStrip ? (
                       <TimelineBand
                         compact
@@ -553,12 +561,9 @@ export function TaskSchedulePage(): JSX.Element {
                       <div className="flex min-h-0 max-h-[70vh] flex-col overflow-hidden border-b border-[hsl(var(--hairline))] xl:max-h-none xl:border-b-0 xl:border-r">
                         <JobOverview
                           job={selectedJob}
-                          projectLabel={projectName(selectedJob.projectId)}
                           scheduleText={scheduleLabel(selectedJob)}
                           countdown={countdownTo(selectedJob.nextRunAt, now)}
                           health={healthOf(selectedJob.id)}
-                          running={runningId === selectedJob.id}
-                          onRun={() => void runNow(selectedJob.id)}
                           onEdit={() => { selectJob(selectedJob); setEditorOpen(true); }}
                         />
                       </div>
@@ -1385,71 +1390,127 @@ function RunRow({
 }
 
 /** 选中任务的概览。观察态默认，编辑是显式动作。 */
-function JobOverview({
-  job, projectLabel, scheduleText, countdown, health, running, onRun, onEdit,
+/**
+ * 详情头：名字 + 归属 + 主操作。
+ * 操作从底部满宽橙条搬到这里——那条按钮在 420px 侧栏里是「填满宽度的主操作」，
+ * 拉到 1080px 就成了整屏最响的东西，而这一页的主要行为是**读状态**不是执行。
+ */
+function JobDetailHeader({
+  job, projectLabel, scheduleText, running, onRun, onEdit, onBack,
 }: {
   job: ScheduledJob;
   projectLabel: string;
   scheduleText: string;
-  countdown: string;
-  health: JobHealth;
   running: boolean;
   onRun: () => void;
+  onEdit: () => void;
+  onBack: () => void;
+}): JSX.Element {
+  const disabled = Boolean(job.autoDisabledReason) || !job.enabled;
+  return (
+    <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-[15px] font-semibold">{job.name}</span>
+          {disabled ? (
+            <span className="shrink-0 rounded-full border border-destructive/40 bg-destructive/10 px-2 py-px text-[10.5px] font-semibold text-destructive">已停用</span>
+          ) : null}
+        </div>
+        <div className="mt-0.5 flex items-center gap-2 text-[11.5px] text-muted-foreground">
+          <span className="truncate">{projectLabel}</span>
+          <span className="text-[hsl(var(--hairline-strong))]">·</span>
+          <span className="truncate">{scheduleText}</span>
+        </div>
+      </div>
+      <div className="flex-1" />
+      <div className="flex shrink-0 items-center gap-2">
+        <Button size="sm" onClick={onRun} disabled={running}>
+          <Play />
+          {running ? '执行中' : '立即执行'}
+        </Button>
+        <Button variant="outline" size="sm" onClick={onEdit}>
+          <Pencil />
+          编辑配置
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onBack}>返回值班概览</Button>
+      </div>
+    </div>
+  );
+}
+
+
+/**
+ * 详情体：指标条 + 健康条 + 动作链。
+ * 指标不再是 1 个异形大块 + 2x2 小卡：那套尺度是给 420px 侧栏画的，拉宽之后
+ * 每张卡有 460px 却只装两行字。改成与顶部值班条同构的一行分栏——同一页里
+ * 重复一种节奏，比再发明第三种容器好。
+ */
+function JobOverview({
+  job, scheduleText, countdown, health, onEdit,
+}: {
+  job: ScheduledJob;
+  scheduleText: string;
+  countdown: string;
+  health: JobHealth;
   onEdit: () => void;
 }): JSX.Element {
   const disabled = Boolean(job.autoDisabledReason) || !job.enabled;
   const actions: ScheduledJobAction[] = job.actions && job.actions.length > 0
     ? job.actions
     : (job.target ? [{ ...job.target, id: 'legacy' }] : []);
+  const stats = [
+    {
+      label: disabled ? '已停用' : '下次触发',
+      value: disabled ? '——:——' : countdown,
+      tone: disabled ? 'text-muted-foreground' : 'text-primary-ink',
+    },
+    {
+      label: `近 ${health.total} 次`,
+      value: health.successRate === null ? '—' : `${health.successRate}%`,
+      tone: health.successRate !== null && health.successRate < 100 ? 'text-warn' : 'text-ok',
+    },
+    { label: 'P50 耗时', value: formatDuration(health.p50Ms), tone: 'text-foreground' },
+    { label: '连续成功', value: String(health.streak), tone: 'text-ok' },
+    {
+      label: '连续失败',
+      value: String(job.consecutiveFailureCount || 0),
+      tone: (job.consecutiveFailureCount || 0) > 0 ? 'text-bad' : 'text-muted-foreground',
+    },
+  ];
   return (
     <>
-      <div className="border-b border-[hsl(var(--hairline))] px-4 py-3">
-        <div className="truncate text-[15px] font-semibold">{job.name}</div>
-        <div className="mt-1.5 flex items-center gap-2">
-          <span className="rounded border border-[hsl(var(--hairline-strong))] px-1.5 py-px text-[11px] text-foreground-muted">{projectLabel}</span>
-          <span className="text-[11.5px] text-muted-foreground">{scheduleText}</span>
-        </div>
+      <div className="flex shrink-0 items-stretch border-b border-[hsl(var(--hairline))]">
+        {stats.map((stat) => (
+          <div key={stat.label} className="min-w-0 flex-1 border-r border-[hsl(var(--hairline))] px-4 py-2 last:border-r-0">
+            <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">{stat.label}</div>
+            <div className={`mt-0.5 truncate font-mono text-[15px] font-semibold leading-tight ${stat.tone}`}>{stat.value}</div>
+          </div>
+        ))}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
-        <div className="flex gap-2.5">
-          <div className={`flex w-32 shrink-0 flex-col justify-center gap-1 rounded-md border px-3 py-2 ${disabled ? 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60' : 'border-primary/30 bg-primary-soft'}`}>
-            <span className="text-[9.5px] uppercase tracking-wide text-muted-foreground">{disabled ? '已停用' : '下次触发'}</span>
-            <span className={`font-mono text-lg font-semibold leading-none ${disabled ? 'text-muted-foreground' : 'text-primary-ink'}`}>
-              {disabled ? '——:——' : countdown}
-            </span>
-          </div>
-          <div className="grid flex-1 grid-cols-2 gap-2">
-            {[
-              { label: `近 ${health.total} 次`, value: health.successRate === null ? '—' : `${health.successRate}%`, tone: health.successRate !== null && health.successRate < 100 ? 'text-warn' : 'text-ok' },
-              { label: 'P50 耗时', value: formatDuration(health.p50Ms), tone: 'text-foreground' },
-              { label: '连续成功', value: String(health.streak), tone: 'text-ok' },
-              { label: '连续失败', value: String(job.consecutiveFailureCount || 0), tone: (job.consecutiveFailureCount || 0) > 0 ? 'text-bad' : 'text-muted-foreground' },
-            ].map((item) => (
-              <div key={item.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-2 py-1.5">
-                <div className="text-[9.5px] uppercase tracking-wide text-muted-foreground">{item.label}</div>
-                <div className={`font-mono text-sm font-semibold leading-tight ${item.tone}`}>{item.value}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
+      <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
         {health.bars.length > 0 ? (
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">最近 {health.bars.length} 次</span>
-              <span className="text-[11px] text-muted-foreground">越靠右越新</span>
-            </div>
-            <div className="flex items-end gap-0.5">
+          <div className="flex items-center gap-2.5">
+            <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">最近 {health.bars.length} 次</span>
+            {/* 原来是 h-6 flex-1 的大方块：拉宽后每格 105px，像被切碎的进度条而不是走势。 */}
+            <div className="flex items-end gap-[2px]">
               {health.bars.map((status, index) => (
-                <span key={index} className={`h-6 flex-1 rounded-sm ${statusTone(status)}`} style={{ opacity: 0.45 + (index / Math.max(1, health.bars.length - 1)) * 0.55 }} />
+                <span
+                  key={index}
+                  className={`h-3.5 w-2 rounded-[1px] ${statusTone(status)}`}
+                  style={{ opacity: 0.45 + (index / Math.max(1, health.bars.length - 1)) * 0.55 }}
+                />
               ))}
             </div>
+            <span className="shrink-0 text-[10.5px] text-muted-foreground">越靠右越新</span>
           </div>
         ) : null}
 
         <div>
-          <div className="mb-2 text-[10px] uppercase tracking-wide text-muted-foreground">动作链</div>
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">动作链</span>
+            <span className="font-mono text-[10px] text-muted-foreground">{actions.length}</span>
+          </div>
           <div className="flex items-center gap-2.5">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/40 bg-primary-soft">
               <AlarmClock className="h-3.5 w-3.5 text-primary-ink" />
@@ -1473,6 +1534,18 @@ function JobOverview({
               </div>
             </div>
           ))}
+          {/* 链尾给一个真入口，而不是留一段死空白：它开的就是编辑浮层。 */}
+          <div className="ml-[0.85rem] h-3 w-px bg-[hsl(var(--hairline-strong))]" />
+          <button
+            type="button"
+            onClick={onEdit}
+            className="flex w-full items-center gap-2.5 rounded-md border border-dashed border-[hsl(var(--hairline-strong))] px-2.5 py-2 text-left text-[12.5px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary-ink"
+          >
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-dashed border-[hsl(var(--hairline-strong))]">
+              <Plus className="h-3.5 w-3.5" />
+            </span>
+            在这一步之后添加动作
+          </button>
         </div>
 
         {job.autoDisabledReason ? (
@@ -1481,17 +1554,6 @@ function JobOverview({
             <div className="mt-1 text-[11.5px] leading-5 text-muted-foreground">{job.autoDisabledReason}</div>
           </div>
         ) : null}
-      </div>
-
-      <div className="flex gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-4 py-3">
-        <Button className="flex-1" onClick={onRun} disabled={running}>
-          <Play />
-          {running ? '执行中' : '立即执行'}
-        </Button>
-        <Button variant="outline" onClick={onEdit}>
-          <Pencil />
-          编辑配置
-        </Button>
       </div>
     </>
   );
