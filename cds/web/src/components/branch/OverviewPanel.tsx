@@ -305,6 +305,8 @@ interface StackedSeries {
   values: number[];
   nowLabel: string;
   nowUnit: string;
+  /** 容器已经不在跑了。序列尾巴停在它停机那一刻，末值是**停机前的旧读数**，不能当现值显示。 */
+  stopped?: boolean;
 }
 
 function StackedAreaChart({
@@ -339,10 +341,15 @@ function SeriesLegend({ series }: { series: StackedSeries[] }): JSX.Element {
           <span className="w-[3px] shrink-0 rounded-full" style={{ background: s.color }} aria-hidden />
           <span className="flex min-w-0 flex-col gap-px">
             <span className="truncate font-mono text-[10.5px] text-muted-foreground" title={s.id}>{s.id}</span>
-            <span className="font-mono text-base font-bold leading-tight tracking-tight text-foreground">
-              {s.nowLabel}
-              <span className="text-[11px] font-medium text-muted-foreground">{s.nowUnit}</span>
-            </span>
+            {s.stopped ? (
+              // 停掉的容器不许显示末值：那是它停机前的读数，摆在「当前值」位置上等于说它还活着。
+              <span className="font-mono text-base font-bold leading-tight tracking-tight text-bad">停止</span>
+            ) : (
+              <span className="font-mono text-base font-bold leading-tight tracking-tight text-foreground">
+                {s.nowLabel}
+                <span className="text-[11px] font-medium text-muted-foreground">{s.nowUnit}</span>
+              </span>
+            )}
           </span>
         </div>
       ))}
@@ -617,7 +624,14 @@ export function OverviewPanel({
     const head = picked.head.map((x, i) => {
       const values = read(x.ring);
       const [nowLabel, nowUnit] = label(values.at(-1) ?? 0);
-      return { id: x.svc.profileId, color: seriesColor(i), values, nowLabel, nowUnit };
+      return {
+        id: x.svc.profileId,
+        color: seriesColor(i),
+        values,
+        nowLabel,
+        nowUnit,
+        stopped: x.svc.status !== 'running',
+      };
     });
     if (picked.tail.length === 0) return head;
     const len = head[0]?.values.length ?? 0;
@@ -632,8 +646,9 @@ export function OverviewPanel({
     return [parts[0], ` ${parts[1] ?? ''}`];
   }) : [];
 
-  const cpuTotalNow = cpuSeries.reduce((n, s) => n + (s.values.at(-1) ?? 0), 0);
-  const memTotalNow = memSeries.reduce((n, s) => n + (s.values.at(-1) ?? 0), 0);
+  // 合计只算还在跑的：把停机前的旧读数加进「当前合计」会虚报占用。
+  const cpuTotalNow = cpuSeries.reduce((n, s) => n + (s.stopped ? 0 : s.values.at(-1) ?? 0), 0);
+  const memTotalNow = memSeries.reduce((n, s) => n + (s.stopped ? 0 : s.values.at(-1) ?? 0), 0);
   const cpuMax = Math.max(5, ...Array.from({ length: sampleCount }, (_, i) => cpuSeries.reduce((n, s) => n + (s.values[i] ?? 0), 0))) * 1.12;
   const memMax = Math.max(1, ...Array.from({ length: sampleCount }, (_, i) => memSeries.reduce((n, s) => n + (s.values[i] ?? 0), 0))) * 1.12;
 
