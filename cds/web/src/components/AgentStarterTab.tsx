@@ -1143,18 +1143,23 @@ export function SkillSourcePanel({
               />
             </dl>
 
+            {/*
+              * 分类走一行可换行的 chip，不用两列网格：这块面板的高度是完成页
+              * 剩下的那点空间，网格多占的两行正好把最后一类挤到滚动折线以下，
+              * 真机截图上是「切掉一半」的观感。
+              */}
             {groupsTrustworthy && (
-              <div className="border-t border-[hsl(var(--hairline))] px-4 py-3">
-                <div className="text-[11px] font-semibold text-muted-foreground">这 {source.skillCount} 个技能分成</div>
-                <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                  {groups.map((group) => (
-                    <div key={group.key} className="flex items-center gap-2 text-xs">
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
-                      <span className="min-w-0 flex-1 truncate text-foreground">{group.label}</span>
-                      <span className="cds-ident shrink-0 text-[11px] text-muted-foreground">{group.count}</span>
-                    </div>
-                  ))}
-                </div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-[hsl(var(--hairline))] px-4 py-2.5">
+                <span className="text-[11px] text-muted-foreground">分成</span>
+                {groups.map((group) => (
+                  <span
+                    key={group.key}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1 text-[11px] text-foreground"
+                  >
+                    {group.label}
+                    <span className="cds-ident text-muted-foreground">{group.count}</span>
+                  </span>
+                ))}
               </div>
             )}
             {source.upstreamSkillCount > 0 && !source.upstreamConfigured && (

@@ -172,14 +172,14 @@ describe('技能来源面板', () => {
     const good = renderToStaticMarkup(createElement(SkillSourcePanel, {
       ...base, groups: [{ key: 'a', label: '基础方法', count: 14 }, { key: 'b', label: '研发交付', count: 8 }],
     }));
-    expect(good).toContain('这 22 个技能分成');
+    expect(good).toContain('分成');
     expect(good).toContain('基础方法');
 
     // 口径不一致（按角色筛过的 18）：宁可不显示，也不摆一组对不上的数字
     const mismatched = renderToStaticMarkup(createElement(SkillSourcePanel, {
       ...base, groups: [{ key: 'a', label: '基础方法', count: 10 }, { key: 'b', label: '研发交付', count: 8 }],
     }));
-    expect(mismatched).not.toContain('技能分成');
+    expect(mismatched).not.toContain('研发交付');
   });
 
   it('角色筛掉一部分时说清楚为什么技能库比总数少', () => {
