@@ -202,7 +202,6 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
   // 先按桶归集每个容器的样本。桶边界对所有容器是同一套（同一个 after / bucketMs），
   // 这样下面才能拼出一条共享时间轴。
   const bucketsByContainer = new Map<string, Map<number, StoredPoint[]>>();
-  const usedBuckets = new Set<number>();
   for (const name of query.containers) {
     const all = store.get(name);
     const buckets = new Map<number, StoredPoint[]>();
@@ -213,21 +212,26 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
       const idx = Math.min(wanted - 1, Math.floor((p.ts - after) / bucketMs));
       const list = buckets.get(idx);
       if (list) list.push(p); else buckets.set(idx, [p]);
-      usedBuckets.add(idx);
     }
   }
 
   /**
-   * 共享时间轴 = 至少有一个容器有数据的那些桶。
+   * 共享时间轴 = 请求窗口切出来的**全部**桶，一个不少。
    *
-   * 这一步是 2026-09-01 的缺陷修复：以前每个容器各自跳过自己的空桶，于是
-   * 「全程在跑的容器」拿到 60 个点、「中途停掉的容器」只拿到 30 个点。
-   * 前端按数组下标堆叠，短的那条读到 undefined → 累加成 NaN → SVG 路径带
-   * NaN 坐标 → 画面上出现黑色缺口。长度不一致本身就意味着下标对不上时间：
-   * 停机容器的第 0 个点和其它容器的第 0 个点根本不是同一时刻。
-   * 所以对齐必须由服务端保证，且缺口用 null 显式表达，不能靠"少给几个点"暗示。
+   * 两次缺陷叠出来的形状，两次都是「少给点」惹的祸：
+   *
+   * 1）容器各自跳过自己的空桶 → 全程在跑的拿 60 个点、中途停掉的拿 30 个点。
+   *    前端按下标堆叠，短的那条读到 undefined → 累加成 NaN → SVG 整段不画，
+   *    图上出现黑色缺口。长度不等本身就意味着下标对不上时间。
+   * 2）改成「至少一个容器有数据的桶」之后仍然会少给：全员断档的桶被整个丢掉。
+   *    前端只吃数值数组、把点均摊到固定宽度，于是轴被压缩——CDS 刚重启时
+   *    3 分钟的数据被摊满「30 分钟」全宽，全员停机的那一段则从图上凭空消失，
+   *    两侧曲线接在一起。x 轴在说谎。
+   *
+   * 所以轴长恒等于请求的 points：没数据的桶留在轴上，整桶给 null。
+   * 「没有数据」与「用量为 0」由 null / 0 区分，不靠点数多少暗示。
    */
-  const axis = [...usedBuckets].sort((a, b) => a - b);
+  const axis = Array.from({ length: wanted }, (_, idx) => idx);
   const timestamps = axis.map((idx) => Math.round(after + (idx + 0.5) * bucketMs));
 
   const series: Record<string, SeriesPoint[]> = {};

@@ -16,18 +16,27 @@ const sample = (over: Partial<{ cpuPercent: number; memUsedBytes: number; memLim
 
 beforeEach(() => __resetContainerMetricsHistory());
 
+/**
+ * 取「真的有样本」的那些桶。
+ *
+ * 时间轴恒等于请求窗口的全部桶（没数据的整桶给 null），所以 `[0]` / `.at(-1)`
+ * 拿到的往往是窗口两端的空桶，而不是最早/最新的那次采样。速率相关的用例问的是
+ * 差分算得对不对，跟轴上有多少空桶无关，所以先滤掉空桶再断言。
+ */
+const withData = (points: Array<{ rxRate: number | null }>) => points.filter((p) => p.rxRate != null);
+
 describe('速率由累计值差分算出', () => {
   it('两点之间的累计差除以间隔 = bytes/sec', () => {
     recordContainerSample('c1', sample({ netRxBytes: 0 }), T0);
     recordContainerSample('c1', sample({ netRxBytes: 10_000 }), T0 + 10_000);
     const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 20_000, points: 10 }, T0 + 20_000);
-    expect(series.c1.at(-1)?.rxRate).toBeCloseTo(1000, 3);
+    expect(withData(series.c1).at(-1)?.rxRate).toBeCloseTo(1000, 3);
   });
 
   it('首点没有前一点，速率是 0 而不是 NaN', () => {
     recordContainerSample('c1', sample({ netRxBytes: 999 }), T0);
     const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 1000, points: 4 }, T0 + 1000);
-    expect(series.c1[0].rxRate).toBe(0);
+    expect(withData(series.c1)[0].rxRate).toBe(0);
   });
 
   /**
@@ -38,7 +47,7 @@ describe('速率由累计值差分算出', () => {
     recordContainerSample('c1', sample({ netRxBytes: 5_000_000 }), T0);
     recordContainerSample('c1', sample({ netRxBytes: 1_000 }), T0 + 5_000);
     const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 10_000, points: 10 }, T0 + 10_000);
-    for (const p of series.c1) expect(p.rxRate).toBeGreaterThanOrEqual(0);
+    for (const p of withData(series.c1)) expect(p.rxRate).toBeGreaterThanOrEqual(0);
   });
 
   /**
@@ -49,7 +58,7 @@ describe('速率由累计值差分算出', () => {
     recordContainerSample('c1', sample({ netRxBytes: 0 }), T0);
     recordContainerSample('c1', sample({ netRxBytes: 100_000_000 }), T0 + 30 * 60_000);
     const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 31 * 60_000, points: 50 }, T0 + 31 * 60_000);
-    expect(series.c1.at(-1)?.rxRate).toBe(0);
+    expect(withData(series.c1).at(-1)?.rxRate).toBe(0);
   });
 
   it('同一毫秒或更旧的点被忽略（两路采集者可能同时落点）', () => {
@@ -107,8 +116,60 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     recordContainerSample('c1', sample({ cpuPercent: 5 }), T0);
     recordContainerSample('c1', sample({ cpuPercent: 5 }), T0 + 100_000);
     const r = queryContainerSeries({ containers: ['c1'], after: T0, before: T0 + 100_000, points: 20 }, T0 + 100_000);
-    expect(r.series.c1.length).toBe(2);
-    for (const p of r.series.c1) expect(p.cpuPercent).toBe(5);
+    // 断言的是「空桶给 null 而不是 0」这件事本身。
+    // 早先这里写的是 `length === 2`——那是把「空桶被从轴上删掉」这个缺陷
+    // 当成契约锁死了（形状 4a：反向锁死 bug），修缺陷时它会变红。
+    const withData = r.series.c1.filter((p) => p.cpuPercent != null);
+    expect(withData.length).toBe(2);
+    for (const p of withData) expect(p.cpuPercent).toBe(5);
+    for (const p of r.series.c1) expect(p.cpuPercent).not.toBe(0);
+  });
+
+  /**
+   * 2026-09-01 第二个真实缺陷（Codex review 报出，核对属实）。
+   *
+   * 病象：CDS 刚重启，历史里只有 3 分钟数据，图却画满整个「30 分钟」宽度——
+   * 12 个点被摊开铺满全宽，看着像 30 分钟一直有量。全员停机的那一段同理：
+   * 那段时间直接从轴上消失，两侧的曲线接在一起，停机在图上看不出来。
+   *
+   * 病根：时间轴只由「至少有一个容器有数据」的桶拼出来（usedBuckets），
+   * 全员空的桶被整个丢掉。前端只吃数值数组、把点均摊到固定宽度上，
+   * 于是轴被压缩，x 轴在说谎。
+   *
+   * 修法：请求窗口内的每一个桶都出现在轴上，没数据就整桶给 null。
+   */
+  it('全员断档的那一段仍留在轴上（否则时间轴被压缩，停机看不出来）', () => {
+    // 窗口 1200s / 60 桶 = 每桶 20s。前 200s 与后 200s 有量，中间 800s 全员停机。
+    for (let i = 0; i < 20; i += 1) recordContainerSample('a', sample({ cpuPercent: 2 }), T0 + i * 10_000);
+    for (let i = 0; i < 20; i += 1) recordContainerSample('b', sample({ cpuPercent: 3 }), T0 + i * 10_000);
+    for (let i = 0; i < 20; i += 1) recordContainerSample('a', sample({ cpuPercent: 4 }), T0 + 1_000_000 + i * 10_000);
+    for (let i = 0; i < 20; i += 1) recordContainerSample('b', sample({ cpuPercent: 5 }), T0 + 1_000_000 + i * 10_000);
+    const now = T0 + 1_200_000;
+    const r = queryContainerSeries({ containers: ['a', 'b'], after: T0, before: now, points: 60 }, now);
+
+    expect(r.timestamps.length, '轴必须覆盖整个请求窗口，不能只留有数据的桶').toBe(60);
+    // 中间那 800s（第 10 到 49 桶）必须真的以 null 的形式留在轴上。
+    const holeA = r.series.a.slice(12, 48);
+    expect(holeA.length).toBeGreaterThan(0);
+    for (const p of holeA) expect(p.cpuPercent).toBeNull();
+    // 两端有量的桶还在。
+    expect(r.series.a[0].cpuPercent).not.toBeNull();
+    expect(r.series.a.at(-1)?.cpuPercent).not.toBeNull();
+  });
+
+  it('历史只覆盖窗口末尾时，轴仍是完整窗口（冷启动不许把 3 分钟摊成 30 分钟）', () => {
+    // 只有最后 180s 有数据，窗口却要 1800s。
+    for (let i = 0; i < 36; i += 1) {
+      recordContainerSample('c1', sample({ cpuPercent: 7 }), T0 + 1_620_000 + i * 5_000);
+    }
+    const now = T0 + 1_800_000;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
+    expect(r.timestamps.length).toBe(120);
+    expect(r.series.c1[0].cpuPercent, '窗口开头没有数据，必须是 null 而不是被裁掉').toBeNull();
+    expect(r.series.c1.at(-1)?.cpuPercent).not.toBeNull();
+    // 有数据的桶只该占窗口末尾的一小段（180/1800 = 10%）。
+    const withData = r.series.c1.filter((p) => p.cpuPercent != null).length;
+    expect(withData / r.series.c1.length).toBeLessThan(0.2);
   });
 
   /**
@@ -162,9 +223,18 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     expect(queryContainerSeries({ ...q, group: 'average' }, T0 + 2_000).series.c1[0].cpuPercent).toBe(50);
   });
 
-  it('没有任何样本的容器返回空数组，不是 undefined', () => {
-    const r = queryContainerSeries({ containers: ['never-seen'], after: -600 }, T0);
-    expect(r.series['never-seen']).toEqual([]);
+  /**
+   * 早先这里断言的是「返回空数组」。空数组会让这个容器的序列长度与其它容器不等，
+   * 而前端是按数组下标堆叠的——长度不等正是黑色缺口那个缺陷的成因。
+   * 所以从没见过的容器也必须落在同一条轴上，只是每个桶都是 null。
+   */
+  it('没有任何样本的容器也对齐到共享时间轴，每个桶都是 null', () => {
+    recordContainerSample('has-data', sample({ cpuPercent: 3 }), T0 - 60_000);
+    const r = queryContainerSeries({ containers: ['never-seen', 'has-data'], after: -600, points: 60 }, T0);
+    expect(r.series['never-seen']).toBeDefined();
+    expect(r.series['never-seen'].length).toBe(r.series['has-data'].length);
+    expect(r.series['never-seen'].length).toBe(r.timestamps.length);
+    for (const p of r.series['never-seen']) expect(p.cpuPercent).toBeNull();
   });
 });
 
