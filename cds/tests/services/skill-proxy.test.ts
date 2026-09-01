@@ -9,7 +9,7 @@
  *
  * 详见 doc/design.cds.project-bootstrap.md。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -186,6 +186,100 @@ describe('SkillProxy', () => {
     }
   });
 
+  it('来源自述如实数出本机自带的技能，剩下的算回源', async () => {
+    // 上手助手的「技能来源」面板拿这两个数回答用户「我还能不能装」。
+    // 数错了，用户会以为断网也能装上一个其实要回源的技能。
+    const localRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'local-skills-'));
+    for (const key of ['plan-first', 'scope-check']) {
+      fs.mkdirSync(path.join(localRoot, key), { recursive: true });
+      fs.writeFileSync(path.join(localRoot, key, 'SKILL.md'), `# ${key}\n`);
+    }
+    // 目录不存在的 key 不许被算成本机自带；同名的普通文件也不算。
+    fs.writeFileSync(path.join(localRoot, 'human-verify'), 'not a directory');
+
+    try {
+      const proxy = new SkillProxy({ mapBase: '', cacheDir, localSkillRoots: [localRoot] });
+      const { source } = await proxy.fetchBundles();
+      expect(source.localSkillCount).toBe(2);
+      expect(source.cachedSkillCount).toBe(0);
+      expect(source.upstreamSkillCount).toBe(source.skillCount - 2);
+      expect(source.upstreamConfigured).toBe(false);
+    } finally {
+      fs.rmSync(localRoot, { recursive: true, force: true });
+    }
+  });
+
+  /*
+   * Codex review P2（本 PR）：缓存里有现成包的技能被算进了「必须回源」，
+   * 面板于是对着一个其实装得上的技能说「装它会失败」。
+   *
+   * 判据钉的是「有缓存包就不算必须回源」这个不变量。缓存**不看新鲜度**——
+   * fetchSkill 在上游取失败时会把过期缓存作为陈旧回退返回，所以哪怕这个 zip
+   * 已经过了 TTL，断网照样装得上。
+   */
+  it('缓存里有现成包的技能不算「必须回源」', async () => {
+    // zip 魔数开头才算数——判据要和下载路径的 readCache 用同一套校验。
+    const zip = (name: string) => Buffer.concat([Buffer.from('PK\u0003\u0004'), Buffer.from(name)]);
+    fs.writeFileSync(path.join(cacheDir, 'plan-first.zip'), zip('cached'));
+    // 过期缓存同样成立：把 mtime 推到很久以前，它仍是陈旧回退的来源。
+    const longAgo = new Date(Date.now() - 400 * 24 * 3600 * 1000);
+    fs.writeFileSync(path.join(cacheDir, 'scope-check.zip'), zip('stale'));
+    fs.utimesSync(path.join(cacheDir, 'scope-check.zip'), longAgo, longAgo);
+    // 目录不算包：同名目录不许被当成缓存命中。
+    fs.mkdirSync(path.join(cacheDir, 'human-verify.zip'), { recursive: true });
+    // 空文件、以及旧版本缓存下来的 HTML 错误页都不算——下载路径会把它们当未命中，
+    // 面板要是算成「断网也装得上」，用户装的时候才发现装不上（Codex 第二轮 P2）。
+    fs.writeFileSync(path.join(cacheDir, 'risk-matrix.zip'), '');
+    fs.writeFileSync(path.join(cacheDir, 'flow-trace.zip'), '<html>502 Bad Gateway</html>');
+
+    const proxy = new SkillProxy({ mapBase: '', cacheDir });
+    const { source } = await proxy.fetchBundles();
+    expect(source.localSkillCount).toBe(0);
+    expect(source.cachedSkillCount).toBe(2);
+    expect(source.upstreamSkillCount).toBe(source.skillCount - 2);
+    // 三档必须刚好把清单分完，不许有技能既不在这档也不在那档。
+    expect(source.localSkillCount + source.cachedSkillCount + source.upstreamSkillCount)
+      .toBe(source.skillCount);
+  });
+
+  /*
+   * Codex 第三轮 P1：这条探测挂在匿名的 /api/skills/bundles 上、每个技能走一次。
+   * 用 readCache 会把整个档案 readFileSync 进内存——几十个缓存包就是一次请求
+   * 同步读掉几百 MB，把唯一的事件循环按住，且匿名可反复触发。
+   *
+   * 判据钉「只读头部、不搬整包」：造一个远大于阈值的缓存包，探测仍要认出它，
+   * 而整个 fetchBundles 的耗时不能随包大小走。数字留足余量，不做成计时抖动
+   * 就会红的脆弱用例。
+   */
+  it('探测缓存只读头部，不把整个档案搬进内存', async () => {
+    const big = Buffer.concat([
+      Buffer.from('PK\u0003\u0004'),
+      Buffer.alloc(4 * 1024 * 1024, 0x41),
+    ]);
+    fs.writeFileSync(path.join(cacheDir, 'plan-first.zip'), big);
+
+    // 判据直接盯机制，不盯耗时：先写过一版「整个 fetchBundles 不超过 2s」的守卫，
+    // 拿 readFileSync 整包读去撞它，24MB 照样 2s 内跑完——那条是假绿。
+    // 这里断言的是「探测路径根本没碰过同步整包读」。
+    const readFileSync = vi.spyOn(fs, 'readFileSync');
+    const statSync = vi.spyOn(fs, 'statSync');
+    try {
+      const proxy = new SkillProxy({ mapBase: '', cacheDir });
+      const { source } = await proxy.fetchBundles();
+      // 大包照样被认成可用（判据没因为「不读整包」而变松）
+      expect(source.cachedSkillCount).toBe(1);
+
+      const touchedCache = (spy: typeof readFileSync): boolean => spy.mock.calls
+        .some((call) => String(call[0]).startsWith(cacheDir));
+      expect(touchedCache(readFileSync)).toBe(false);
+      // 同步 stat 也不该出现在这条匿名端点的路径上
+      expect(touchedCache(statSync)).toBe(false);
+    } finally {
+      readFileSync.mockRestore();
+      statSync.mockRestore();
+    }
+  });
+
   it('启动套件目录由 CDS 本地发布契约提供，不访问不存在的 MAP bundles 端点', async () => {
     let calls = 0;
     const proxy = new SkillProxy({
@@ -194,8 +288,19 @@ describe('SkillProxy', () => {
       fetchImpl: async () => { calls += 1; throw new Error('不应访问上游'); },
     });
 
-    expect(await proxy.fetchBundles()).toEqual(STARTER_SKILL_BUNDLES);
+    const response = await proxy.fetchBundles();
+    expect(response.bundles).toEqual(STARTER_SKILL_BUNDLES.bundles);
     const catalogSkills = STARTER_SKILL_BUNDLES.bundles.flatMap((bundle) => bundle.skills);
+    // 来源自述要如实：这台实例没配 localSkillRoots，所以一个都不是本机自带的。
+    expect(response.source).toEqual({
+      kind: 'builtin',
+      bundleCount: STARTER_SKILL_BUNDLES.bundles.length,
+      skillCount: catalogSkills.length,
+      localSkillCount: 0,
+      cachedSkillCount: 0,
+      upstreamSkillCount: catalogSkills.length,
+      upstreamConfigured: true,
+    });
     expect(STARTER_SKILL_BUNDLES.bundles.map((bundle) => bundle.key)).toEqual([
       'foundation', 'product', 'delivery', 'quality',
     ]);
