@@ -45,6 +45,16 @@ interface AgentStarterTabProps {
   projectId?: string
   /** 切到同一个弹窗的技能市场 tab。缺省时来源面板不显示那个入口，不给死链。 */
   onOpenMarketplace?: () => void
+  /**
+   * 这个 tab 当前是不是被选中的那个。
+   *
+   * 决定要不要挂 `data-agent-starter`——`≤640px` 的整套移动端样式靠
+   * `:has([data-agent-starter='true'])` 生效，其中一条把弹窗的 tab 导航整个
+   * `display:none`。切走时组件只藏不卸（为了保住向导状态），属性若跟着留在
+   * DOM 里，那条规则照样命中：手机上进了技能市场就没有导航能切回来，只能关掉
+   * 弹窗——而关掉正好丢掉那份要保住的状态。缺省 true，独立使用时行为不变。
+   */
+  active?: boolean
 }
 
 /**
@@ -213,7 +223,7 @@ function downloadText(filename: string, content: string) {
   URL.revokeObjectURL(url)
 }
 
-export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace }: AgentStarterTabProps) {
+export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, active = true }: AgentStarterTabProps) {
   const reduceMotion = useReducedMotion()
   const [step, setStep] = useState(0)
   // 角色和经验档走共享 store：任务地图、项目卡都读同一个值，
@@ -490,7 +500,7 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace }: Age
 
   return (
     <div
-      data-agent-starter="true"
+      data-agent-starter={active ? 'true' : undefined}
       /*
        * 展开决策卡时面板长高一档：12 段清单在 560px 里只能分到几十像素。
        * max-h 必须按**弹窗内的可用高度**算，不是按视口：弹窗自己是 90vh，

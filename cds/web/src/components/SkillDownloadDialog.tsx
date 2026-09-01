@@ -236,6 +236,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
            */}
           <div className={active === 'starter' ? undefined : 'hidden'}>
             <AgentStarterTab
+              active={active === 'starter'}
               cdsPrompt={prompt}
               projectId={targetKind === 'existing' ? effectiveProjectId : ''}
               onOpenMarketplace={() => setActive('marketplace')}

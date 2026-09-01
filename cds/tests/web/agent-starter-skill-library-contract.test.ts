@@ -183,6 +183,27 @@ describe('Agent 上手助手技能库契约', () => {
     expect(source).toMatch(/toggleSkill[\s\S]{0,160}?skillsCustomizedRef\.current = true/);
   });
 
+  /*
+   * Codex 第五轮 P2：切到技能市场后手机上回不去。
+   *
+   * ≤640px 的整套移动端样式靠 `:has([data-agent-starter='true'])` 生效，其中
+   * 一条把弹窗的 tab 导航整个 display:none。上一轮为了保住向导状态改成「只藏
+   * 不卸」，属性就一直留在 DOM 里——`hidden` 挡不住 :has()，于是导航照样被藏，
+   * 手机上进了市场只能关弹窗，而关掉正好丢掉那份要保住的状态。比原问题更糟。
+   *
+   * 判据钉「属性跟着激活态走」：切走时不许再挂 data-agent-starter。
+   */
+  it('切走时不挂 data-agent-starter，手机端导航不被误藏', () => {
+    expect(source).toMatch(/data-agent-starter=\{active \? 'true' : undefined\}/);
+    const dialog = fs.readFileSync(
+      path.join(process.cwd(), 'web/src/components/SkillDownloadDialog.tsx'),
+      'utf8',
+    );
+    expect(dialog).toMatch(/active=\{active === 'starter'\}/);
+    // 那条藏导航的规则确实存在，判据不是对着空气立的
+    expect(styles).toMatch(/\[role='dialog'\]:has\(\[data-agent-starter='true'\]\) > nav/);
+  });
+
   it('只有打开的上手助手弹窗才能隐藏全局入口和锁定页面滚动', () => {
     const openDialogSelector = "body:has([role='dialog'][data-state='open'] [data-agent-starter='true'])";
     expect(styles.match(new RegExp(openDialogSelector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))?.length).toBe(3);
