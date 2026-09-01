@@ -1,8 +1,18 @@
 import { renderToStaticMarkup } from 'react-dom/server';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { GenSweepLoader } from './GenSweepLoader';
 
 describe('GenSweepLoader', () => {
+  it('普通生图和 Frame 等待态都接入共享的可见区域定位', () => {
+    const loader = readFileSync(new URL('./GenSweepLoader.tsx', import.meta.url), 'utf8');
+    const canvas = readFileSync(new URL('../../pages/ai-chat/AdvancedVisualAgentTab.tsx', import.meta.url), 'utf8');
+    expect(loader).toMatch(/generationProgressPlacement\(rect,/);
+    const usages = canvas.match(/<GenSweepLoader\b[^>]*\/>/g) ?? [];
+    expect(usages).toHaveLength(2);
+    for (const usage of usages) expect(usage).toContain('viewportRef={stageRef}');
+  });
+
   it('未传屏幕尺寸时保持计时条和等待信息', () => {
     const html = renderToStaticMarkup(<GenSweepLoader createdAt={Date.now()} />);
 

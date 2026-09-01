@@ -23,13 +23,13 @@ export function buildStableSmokeAuthHeaders(options: {
   keyId?: string;
   privateKey?: string;
 }): Record<string, string> {
-  if (options.aiAccessKey) {
+  if (!options.keyId || !options.privateKey) {
+    if (!options.aiAccessKey) throw new Error('稳定冒烟认证凭据未配置完整');
     return {
       'X-AI-Access-Key': options.aiAccessKey,
       'X-AI-Impersonate': options.username,
     };
   }
-  if (!options.keyId || !options.privateKey) throw new Error('稳定冒烟签名凭据未配置完整');
   const timestamp = Math.floor(Date.now() / 1000);
   const nonce = randomBytes(24).toString('base64url');
   const path = new URL(options.url, 'https://stable-smoke.invalid').pathname;

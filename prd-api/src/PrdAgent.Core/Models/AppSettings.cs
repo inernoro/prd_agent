@@ -11,6 +11,9 @@ public class AppSettings
     /// <summary>固定为 global</summary>
     public string Id { get; set; } = "global";
 
+    /// <summary>视觉创作开放模型及默认项，由 MAP 业务配置显式维护。</summary>
+    public VisualModelPolicy? VisualModelPolicy { get; set; }
+
     /// <summary>是否启用 Prompt Caching（关闭后将强制不使用缓存相关能力）</summary>
     public bool EnablePromptCache { get; set; } = true;
 

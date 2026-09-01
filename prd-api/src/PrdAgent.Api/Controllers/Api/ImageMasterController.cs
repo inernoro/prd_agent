@@ -47,6 +47,7 @@ public class ImageMasterController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IImageDescriptionService _imageDescriptionService;
+    private readonly PrdAgent.Api.Services.IVisualModelPolicyService _visualModels;
 
     private static readonly TimeSpan IdemExpiry = TimeSpan.FromMinutes(30);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -74,7 +75,8 @@ public class ImageMasterController : ControllerBase
         IModelDomainService modelDomain,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
-        IImageDescriptionService imageDescriptionService)
+        IImageDescriptionService imageDescriptionService,
+        PrdAgent.Api.Services.IVisualModelPolicyService visualModels)
     {
         _db = db;
         _assetStorage = assetStorage;
@@ -85,6 +87,7 @@ public class ImageMasterController : ControllerBase
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _imageDescriptionService = imageDescriptionService;
+        _visualModels = visualModels;
     }
 
     private string GetAdminId() => this.GetRequiredUserId();
@@ -1672,19 +1675,17 @@ public class ImageMasterController : ControllerBase
             if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
             var modelId = (request?.ModelId ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(modelId)) modelId = null;
-            if (!isLayering && !string.IsNullOrWhiteSpace(cfgModelId))
+            if (!isLayering)
             {
-                var m = await _db.LLMModels.Find(x => x.Id == cfgModelId && x.Enabled).FirstOrDefaultAsync(ct);
-                if (m == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "指定的模型不存在或未启用"));
-                platformId = m.PlatformId;
-                modelId = m.ModelName;
-            }
-            else if (!isLayering)
-            {
-                if (string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelId))
-                {
-                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "必须提供 configModelId，或提供 platformId + modelId"));
-                }
+                var policy = await _visualModels.ReadAsync(ct);
+                var selected = policy.Select(modelId);
+                if (selected is null || !string.IsNullOrWhiteSpace(cfgModelId)
+                    || (!string.IsNullOrWhiteSpace(platformId) && platformId != "logical-model"))
+                    return BadRequest(ApiResponse<object>.Fail("VISUAL_MODEL_NOT_ALLOWED",
+                        "当前模型未开放或默认模型尚未配置，请重新选择或联系管理员。"));
+                modelId = selected;
+                platformId = "logical-model";
+                cfgModelId = null;
             }
 
             var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();

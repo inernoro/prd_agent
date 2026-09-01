@@ -668,6 +668,50 @@ public sealed class HttpLlmGatewayClient
         }
     }
 
+    public async Task<List<ImageGen.GatewayImageModel>> GetImageModelsAsync(string appCallerCode, CancellationToken ct = default)
+    {
+        using var http = CreateHttp(infiniteTimeout: false);
+        http.Timeout = TimeSpan.FromSeconds(20);
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            $"{_baseUrl}/gw/v1/image-models?appCallerCode={Uri.EscapeDataString(appCallerCode)}");
+        ApplyRoutingHeaders(request, appCallerCode, new GatewayRequestContext { SourceSystem = "map" });
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync(ct);
+        try
+        {
+            return JsonSerializer.Deserialize<List<ImageGen.GatewayImageModel>>(body, JsonOpts)
+                ?? throw new InvalidOperationException("网关模型目录响应为空。");
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException("网关模型目录响应格式不正确。", ex);
+        }
+    }
+
+    /// <summary>业务参数直达 serving；不在 MAP 预解析型号、尺寸或供应商协议。</summary>
+    public async Task<GatewayRawResponse> GenerateImageAsync(GatewayRawRequest request, CancellationToken ct)
+    {
+        if (request.CanonicalImageRequest is null || string.IsNullOrWhiteSpace(request.RequiredLogicalModelPublicId)
+            || request.RequestBody is not null || request.IsMultipart)
+            return GatewayRawResponse.Fail("IMAGE_REQUEST_INVALID", "图片请求必须指定业务模型和标准参数。", 400);
+        try
+        {
+            using var http = CreateHttp(infiniteTimeout: false);
+            using var message = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/raw") { Content = JsonBody(request) };
+            ApplyRoutingHeaders(message, request.AppCallerCode, request.Context);
+            using var response = await http.SendAsync(message, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            return TryDeserializeRawResponse(body)
+                ?? GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "模型网关暂时无法返回结果，请稍后重试。", (int)response.StatusCode);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            _logger.LogWarning(ex, "业务生图请求未完成");
+            return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "模型网关暂时不可用，请稍后重试。", 503);
+        }
+    }
+
     public Core.Interfaces.ILLMClient CreateClient(
         string appCallerCode,
         string modelType,

@@ -167,7 +167,7 @@ public static class ImageGenRequestBuilder
         var effectiveResponseFormat = responseFormat;
         if (platformAdapter.ForceUrlResponseFormat)
             effectiveResponseFormat = "url";
-        if (adapterConfig?.SupportsResponseFormat == false)
+        if (!ImageGenModelAdapterRegistry.SupportsResponseFormat(model))
             effectiveResponseFormat = null;
 
         // 3. 已归一化的 size 参数（可能是 size / width+height / aspect_ratio，已应用 ParamRenames）。
