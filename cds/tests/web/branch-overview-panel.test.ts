@@ -168,6 +168,37 @@ describe('两个数据源就有两个错误面（Codex P2，核对属实）', ()
   });
 });
 
+describe('尾部聚合与陈旧序列（Codex P2，核对属实）', () => {
+  /**
+   * 「其他 N 个」是多个服务的合并项，带不了 stopped 标记，后面那道
+   * `s.stopped ? 0 : s.nowValue` 的过滤够不着它——于是已停容器停机前的旧读数
+   * 会一直算进「其他」和顶部合计，谎称它还在吃资源。
+   */
+  it('尾部聚合的当前值只算还在跑的服务', () => {
+    const tail = PANEL_CODE.slice(PANEL_CODE.indexOf('const tailNow'), PANEL_CODE.indexOf('const [nowLabel, nowUnit] = label(tailNow)'));
+    expect(tail.length, '找不到尾部聚合，选择器过时了').toBeGreaterThan(0);
+    expect(tail, '尾部当前值必须跳过已停容器').toMatch(/status !== 'running'/);
+  });
+
+  it('历史那一条仍包含全部尾部服务（画的是过去，过去它确实在跑）', () => {
+    const merged = PANEL_CODE.slice(PANEL_CODE.indexOf('const merged ='), PANEL_CODE.indexOf('const tailNow'));
+    expect(merged.length).toBeGreaterThan(0);
+    expect(merged, '历史几何不该按当前状态裁剪').not.toMatch(/status !== 'running'/);
+  });
+
+  /**
+   * 「非空才替换」是「铺底不覆盖已追加点」那套逻辑的遗留。留着它，
+   * loadSeries 成功返回空（服务全删 / 历史过期）时会跳过 setState，
+   * 上一次的曲线就一直挂在屏幕上冒充当前数据。
+   */
+  it('series 拉取成功后无条件整体替换，不保留上一次的曲线', () => {
+    const code = stripComments(DRAWER);
+    const load = code.slice(code.indexOf('const loadSeries'), code.indexOf('const loadSeries') + 1800);
+    expect(load).toContain('setMetricSeries(next)');
+    expect(load, '「非空才替换」会让旧曲线冒充当前数据').not.toMatch(/Object\.keys\(next\)\.length\s*>\s*0\s*\)\s*setMetricSeries/);
+  });
+});
+
 describe('图形与配色（2026-09-02 真人验收：太丑、非常乱）', () => {
   /**
    * 内存几乎不随时间变，画成 30 分钟面积图就是几条水平直线，白占半屏，
