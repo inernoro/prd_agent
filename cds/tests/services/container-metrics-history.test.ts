@@ -10,8 +10,12 @@ import {
 } from '../../src/services/container-metrics-history.js';
 
 const T0 = 1_800_000_000_000;
-const sample = (over: Partial<{ cpuPercent: number; memUsedBytes: number; memLimitBytes: number; netRxBytes: number; netTxBytes: number }> = {}) => ({
-  cpuPercent: 1, memUsedBytes: 100, memLimitBytes: 1000, netRxBytes: 0, netTxBytes: 0, ...over,
+const sample = (over: Partial<{
+  cpuPercent: number; memUsedBytes: number; memLimitBytes: number;
+  netRxBytes: number; netTxBytes: number; blockReadBytes: number; blockWriteBytes: number;
+}> = {}) => ({
+  cpuPercent: 1, memUsedBytes: 100, memLimitBytes: 1000,
+  netRxBytes: 0, netTxBytes: 0, blockReadBytes: 0, blockWriteBytes: 0, ...over,
 });
 
 beforeEach(() => __resetContainerMetricsHistory());
@@ -82,6 +86,32 @@ describe('速率由累计值差分算出', () => {
     recordContainerSample('c1', sample({ cpuPercent: 99 }), T0);
     recordContainerSample('c1', sample({ cpuPercent: 98 }), T0 - 5_000);
     expect(containerMetricsHistoryStats().points).toBe(1);
+  });
+});
+
+describe('磁盘 I/O（2026-09-02 补采：docker stats 一直在给，采集器一直在扔）', () => {
+  it('块设备累计值差分出读写速率，口径与网络一致', () => {
+    recordContainerSample('c1', sample({ blockReadBytes: 0, blockWriteBytes: 0 }), T0);
+    recordContainerSample('c1', sample({ blockReadBytes: 20_000, blockWriteBytes: 5_000 }), T0 + 10_000);
+    const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 20_000, points: 10 }, T0 + 20_000);
+    const pts = series.c1.filter((p) => p.readRate != null);
+    expect(pts.at(-1)?.readRate).toBeCloseTo(2000, 3);
+    expect(pts.at(-1)?.writeRate).toBeCloseTo(500, 3);
+  });
+
+  it('容器重建导致块设备累计值回绕时记 0，不出负数', () => {
+    recordContainerSample('c1', sample({ blockReadBytes: 9_000_000 }), T0);
+    recordContainerSample('c1', sample({ blockReadBytes: 1_000 }), T0 + 5_000);
+    const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 10_000, points: 10 }, T0 + 10_000);
+    for (const p of series.c1) if (p.readRate != null) expect(p.readRate).toBeGreaterThanOrEqual(0);
+  });
+
+  it('空桶的磁盘速率也是 null，不是 0（与其它维度同一口径）', () => {
+    recordContainerSample('c1', sample({ blockReadBytes: 1_000 }), T0);
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: T0 + 600_000, points: 20 }, T0 + 600_000);
+    const empties = r.series.c1.filter((p) => p.cpuPercent == null);
+    expect(empties.length).toBeGreaterThan(0);
+    for (const p of empties) expect(p.readRate).toBeNull();
   });
 });
 

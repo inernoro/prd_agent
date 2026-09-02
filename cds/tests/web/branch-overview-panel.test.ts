@@ -67,6 +67,73 @@ describe('打开即出图（2026-09-02 真人验收：打开之后卡了很长�
   });
 });
 
+describe('图的时间轴只有一个口径（2026-09-02：X 轴在说谎）', () => {
+  /**
+   * 病象：抽屉开得越久，X 轴越离谱——而那恰好就是真人验收时的姿势。
+   * 病根：铺底用服务端的桶（自适应后每桶数十秒），前端又每 5 秒往数组尾巴 append
+   * 一个点；图按下标等距画，于是开 5 分钟后右边 60 个点占 69% 宽度只代表 5 分钟，
+   * 左边 27 个点占 31% 却代表 30 分钟，横跨全宽差七倍。
+   * 与最初那片锯齿是同一类病（图的几何与数据的时间对不上），只是藏在实时更新那条路上。
+   */
+  it('前端不再把实时点追加进图的数组', () => {
+    expect(stripComments(DRAWER), 'pushMetricRing 会把 5 秒粒度混进数十秒的桶里').not.toContain('pushMetricRing');
+    expect(PANEL_CODE, '这个函数已无人调用，留着就是形状 2 的死接线').not.toContain('export function pushMetricRing');
+  });
+
+  it('series 端点是被轮询的，不是只在打开时取一次', () => {
+    const code = stripComments(DRAWER);
+    const idx = code.indexOf('metrics/series?after=');
+    expect(idx, '找不到 series 请求，选择器过时了').toBeGreaterThan(0);
+    // 该请求所在的 loadSeries 必须被挂进一个 setInterval
+    expect(code).toMatch(/loadSeries[\s\S]{0,400}setInterval\(\(\)\s*=>\s*void\s+loadSeries/);
+  });
+
+  it('图例的当前值走实时快照，不是序列最后一个桶（桶是数十秒的平均，慢一拍）', () => {
+    expect(PANEL_CODE).toContain('liveStats');
+    expect(PANEL_CODE).toMatch(/readLive\(live\)/);
+  });
+});
+
+describe('等待与变化（2026-09-02 真人验收：第一屏空白 / 不丝滑）', () => {
+  /** CLAUDE.md §6：静止反馈超过 2 秒即缺陷。artifact-is-experience 要的是产物形状的骨架。 */
+  it('出图前是图的骨架，不是虚线空盒', () => {
+    // 断言它**被渲染**，不只是「源码里出现过这几个字」——
+    // 第一版写的是 toContain('function MetricsSkeleton')，把它改名成
+    // MetricsSkeletonX 照样包含这个子串，守卫不会红（判据太松）。
+    expect(PANEL_CODE).toMatch(/<MetricsSkeleton\s/);
+    expect(PANEL_CODE).toMatch(/function MetricsSkeleton\(/);
+    expect(PANEL_CODE, '旧的虚线空框已经不该存在').not.toContain('正在读取指标历史…');
+    // 骨架必须给出「还要等多久」，不能只写「加载中」
+    expect(PANEL_CODE).toContain('SAMPLER_CADENCE_SECONDS');
+    expect(PANEL_CODE).toMatch(/约还需/);
+  });
+
+  it('骨架说的帧数来自真样本数，不是把 null 当成有数据', () => {
+    expect(PANEL_CODE).toContain('filledSamples');
+    expect(PANEL_CODE).toMatch(/filled:\s*tail\.filter/);
+  });
+
+  /**
+   * 渲染取证抓到的：冷启动只有 1 个真样本、轴上却有 2 个桶（另一个 null），
+   * 按数组长度判「够画图了」，于是画出一个从左上斜到零的大三角——那条下降沿
+   * 是 null 被映射成 0 画出来的，纯属虚构。判据必须落在真数据上。
+   */
+  it('「够不够画图」看真有数据的桶数，不看数组长度', () => {
+    const gate = PANEL_CODE.match(/const hasPlot = [^;]+;/)?.[0];
+    expect(gate, '找不到 hasPlot，选择器过时了').toBeTruthy();
+    expect(gate, 'sampleCount 是数组长度，null 桶也算在内').not.toContain('sampleCount');
+    expect(gate).toContain('filledSamples');
+  });
+
+  /** miduo-review-lens 镜头 4：变化要看得见，一帧切过去等于没看见。 */
+  it('数据更新走补间，且尊重 prefers-reduced-motion', () => {
+    expect(PANEL_CODE).toContain('function useTweenedSeries');
+    expect(PANEL_CODE).toContain('prefers-reduced-motion');
+    // 形状变了（服务上下线 / 分辨率重算）必须直接切，不能在两组不同含义的数之间连线
+    expect(PANEL_CODE).toContain('sameShape');
+  });
+});
+
 describe('图形与配色（2026-09-02 真人验收：太丑、非常乱）', () => {
   /**
    * 内存几乎不随时间变，画成 30 分钟面积图就是几条水平直线，白占半屏，

@@ -18,8 +18,6 @@ import { ReplicaSetPanel, type ProfileReplicaSetView } from '@/components/branch
 import { WebEntryConfigDialog } from '@/components/branch/WebEntryConfigDialog';
 import {
   OverviewPanel,
-  emptyMetricSeries,
-  pushMetricRing,
   seedMetricSeries,
   type MetricSeries,
   type OverviewDeployment,
@@ -901,6 +899,8 @@ export function BranchDetailDrawer({
   const [modeSavingProfileId, setModeSavingProfileId] = useState<string | null>(null);
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
   const [metricSeries, setMetricSeries] = useState<Record<string, MetricSeries>>({});
+  /** 图例里的「当前值」走实时快照；图本身只认服务端分桶的 series，两者口径分开。 */
+  const [liveStats, setLiveStats] = useState<Record<string, ContainerStatsResponse>>({});
   // 上次响应快照,用来算 rx/tx 速率(后端只给累计值,前端做 delta/dt)。
   // 必须用 ref 而不是 state:setInterval 在 useEffect [activeTab, branchId]
   // 内创建,只会捕获**首次** loadMetrics 闭包。state 变了之后,新 loadMetrics
@@ -1160,6 +1160,7 @@ export function BranchDetailDrawer({
     // 时 effect 不会重新拉取，UI 会把上一个分支的生命周期事件错挂到新分支。
     setSystemLogsState({ status: 'idle' });
     setMetricSeries({});
+    setLiveStats({});
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
     void load();
@@ -1311,37 +1312,28 @@ export function BranchDetailDrawer({
       }
       const data = raw as MetricsResponse;
       setMetricsState({ status: 'ok', data });
-      // 算 rate + 推 ring buffer
-      const prevTs = lastMetricsTsRef.current;
-      const prevByService = lastMetricsByServiceRef.current;
-      setMetricSeries((prev) => {
-        const next = { ...prev };
-        const dt = prevTs > 0 ? (data.ts - prevTs) / 1000 : 0;
-        for (const svc of data.services) {
-          const series = next[svc.profileId] ?? emptyMetricSeries();
-          const stats = svc.stats;
-          if (!stats) {
-            // 容器没在跑,push 0 占位让 sparkline 有连续 60 点
-            next[svc.profileId] = pushMetricRing(series, 0, 0, 0, 0, 0);
-            continue;
-          }
-          const lastStats = prevByService[svc.profileId];
-          let rxRate = 0;
-          let txRate = 0;
-          if (lastStats && dt > 0) {
-            rxRate = Math.max(0, (stats.netRxBytes - lastStats.netRxBytes) / dt);
-            txRate = Math.max(0, (stats.netTxBytes - lastStats.netTxBytes) / dt);
-          }
-          next[svc.profileId] = pushMetricRing(series, stats.cpuPercent, stats.memPercent, stats.memUsedBytes, rxRate, txRate);
-        }
-        return next;
-      });
-      lastMetricsTsRef.current = data.ts;
-      const lastMap: Record<string, ContainerStatsResponse> = {};
+
+      /*
+       * 这里**不再**往图的数组尾巴上追加实时点（2026-09-02 修）。
+       *
+       * 病象：X 轴在说谎，而且抽屉开得越久越离谱——恰好就是真人验收时的姿势。
+       * 病根：铺底用的是服务端的桶（自适应后每桶约 67 秒），而这里每 5 秒 append
+       * 一个点；图按数组下标等距画，于是抽屉开 5 分钟后，右边 60 个点占了 69% 的
+       * 宽度却只代表 5 分钟，左边 27 个点占 31% 却代表 30 分钟，横跨全宽差七倍。
+       * 这和最初那片锯齿是同一类病（图的几何与数据的时间对不上），只是藏在实时
+       * 更新这条路上。
+       *
+       * 现在职责分开：**图只认服务端统一分桶的 series**（一条轴一个口径），
+       * **数字认这里的实时快照**。这一趟请求仍然有用——它顺带把 5 秒一帧写进
+       * 服务端历史，也提供图例里的「当前值」。
+       */
+      const liveMap: Record<string, ContainerStatsResponse> = {};
       for (const svc of data.services) {
-        if (svc.stats) lastMap[svc.profileId] = svc.stats;
+        if (svc.stats) liveMap[svc.profileId] = svc.stats;
       }
-      lastMetricsByServiceRef.current = lastMap;
+      lastMetricsTsRef.current = data.ts;
+      lastMetricsByServiceRef.current = liveMap;
+      setLiveStats(liveMap);
     } catch (err) {
       // 同样保护:切分支后旧请求 reject 不要写到新 state
       if (branchIdRef.current !== requestForBranch) return;
@@ -1349,39 +1341,41 @@ export function BranchDetailDrawer({
     }
   }, [branchId]);
 
-  // 总览打开时先取服务端历史铺底（2026-09-01）。
-  // 以前这里是「打开抽屉才开始攒点」——头 10 秒是空图，关掉再打开又从零开始，
-  // 窗口永远只有 5 分钟。现在点存在服务端 container-metrics-history 里，
-  // 45s 常驻采样器不管抽屉开不开都在写，所以一进来就有完整曲线。
+  /*
+   * 图的唯一数据源：服务端分桶的 series（2026-09-02 起）。
+   *
+   * 以前是「打开时铺一次底，之后前端每 5 秒往数组尾巴 append」——两种时间粒度
+   * 混在同一个按下标等距绘制的数组里，X 轴就开始说谎（详见 loadMetrics 里的注释）。
+   * 现在整条数组每次都由服务端重算，一条轴只有一个口径；这个端点是纯内存的，
+   * 5 秒一拉不心疼，而且返回值只在新桶落成时才变，图因此是「按桶推进」而不是
+   * 每 5 秒抖一下。
+   */
   const HISTORY_WINDOW_MINUTES = 30;
+  const loadSeries = useCallback(async () => {
+    if (!branchId) return;
+    const requestForBranch = branchId;
+    try {
+      const data = await apiRequest<{
+        services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null }> }>;
+      }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
+      if (branchIdRef.current !== requestForBranch) return;
+      const next: Record<string, MetricSeries> = {};
+      for (const svc of data?.services ?? []) {
+        if (svc.points && svc.points.length > 0) next[svc.profileId] = seedMetricSeries(svc.points);
+      }
+      // 整体替换，不与旧值合并：合并会让不同批次的桶混进同一个数组。
+      if (Object.keys(next).length > 0) setMetricSeries(next);
+    } catch {
+      // 老版本 CDS 没有这个端点 —— 静默降级成「只有实时数字、没有曲线」，不弹错。
+    }
+  }, [branchId]);
+
   useEffect(() => {
     if (activeTab !== 'overview' || !branchId) return;
-    const requestForBranch = branchId;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const data = await apiRequest<{
-          services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number; memUsedBytes: number; rxRate: number; txRate: number }> }>;
-        }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
-        if (cancelled || branchIdRef.current !== requestForBranch) return;
-        const seeded: Record<string, MetricSeries> = {};
-        for (const svc of data?.services ?? []) {
-          if (svc.points && svc.points.length > 0) seeded[svc.profileId] = seedMetricSeries(svc.points);
-        }
-        // 只铺底，不覆盖轮询已经追加的新点：合并时保留已有的（更新）那一份。
-        if (Object.keys(seeded).length > 0) {
-          setMetricSeries((prev) => {
-            const next = { ...seeded };
-            for (const [k, v] of Object.entries(prev)) if (v.cpu.length > (seeded[k]?.cpu.length ?? 0)) next[k] = v;
-            return next;
-          });
-        }
-      } catch {
-        // 老版本 CDS 没有这个端点 —— 静默降级回「打开后自己攒点」，不弹错。
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [activeTab, branchId]);
+    void loadSeries();
+    const timer = window.setInterval(() => void loadSeries(), 5000);
+    return () => window.clearInterval(timer);
+  }, [activeTab, branchId, loadSeries]);
 
   useEffect(() => {
     // 方案 A：指标并入总览（原独立「指标」页签取消）——总览打开时轮询
@@ -2571,6 +2565,7 @@ export function BranchDetailDrawer({
                     entries={overviewEntries}
                     deployments={overviewDeployments}
                     metricSeries={metricSeries}
+                    liveStats={liveStats}
                     metricsReady={metricsState.status === 'ok'}
                     metricsError={metricsState.status === 'error' ? metricsState.message : undefined}
                     replicaSummary={overviewReplicaSummary}

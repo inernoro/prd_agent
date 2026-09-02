@@ -24,6 +24,15 @@ export interface ContainerSample {
   memLimitBytes: number;
   netRxBytes: number;
   netTxBytes: number;
+  /**
+   * 块设备累计读写字节（docker stats 的 BlockIO）。
+   *
+   * 2026-09-02 补采：`docker stats` 一直在返回它、`ContainerStats` 一直在解析它，
+   * 只有这里没收——白丢的一维。核对过不是常年 0：宿主 cgroup v2 的 io.stat 实测
+   * `rbytes=7360512 wbytes=1200128`。
+   */
+  blockReadBytes?: number;
+  blockWriteBytes?: number;
 }
 
 /** 落库后的一点：速率已算好，调用方直接画。 */
@@ -35,9 +44,14 @@ interface StoredPoint {
   /** bytes/sec，由与上一点的累计差除以间隔得出；首点或计数器回绕时为 0。 */
   rxRate: number;
   txRate: number;
+  /** bytes/sec，块设备读写。口径与 net 完全一致（累计差 / 间隔，回绕与断档记 0）。 */
+  readRate: number;
+  writeRate: number;
   /** 保留累计值，供下一点算速率。 */
   netRxBytes: number;
   netTxBytes: number;
+  blockReadBytes: number;
+  blockWriteBytes: number;
 }
 
 /**
@@ -50,6 +64,8 @@ export interface SeriesPoint {
   memUsedBytes: number | null;
   rxRate: number | null;
   txRate: number | null;
+  readRate: number | null;
+  writeRate: number | null;
 }
 
 export interface SeriesQuery {
@@ -120,12 +136,16 @@ export function recordContainerSample(
 
   let rxRate = 0;
   let txRate = 0;
+  let readRate = 0;
+  let writeRate = 0;
   if (prev) {
     const dtSec = (ts - prev.ts) / 1000;
     if (dtSec > 0 && ts - prev.ts <= MAX_RATE_GAP_MS) {
       // 容器重建后累计值归零，差为负 —— 这不是「负流量」，是换了个容器，记 0。
       rxRate = Math.max(0, (sample.netRxBytes - prev.netRxBytes) / dtSec);
       txRate = Math.max(0, (sample.netTxBytes - prev.netTxBytes) / dtSec);
+      readRate = Math.max(0, ((sample.blockReadBytes ?? 0) - prev.blockReadBytes) / dtSec);
+      writeRate = Math.max(0, ((sample.blockWriteBytes ?? 0) - prev.blockWriteBytes) / dtSec);
     }
   }
 
@@ -136,8 +156,12 @@ export function recordContainerSample(
     memLimitBytes: sample.memLimitBytes,
     rxRate,
     txRate,
+    readRate,
+    writeRate,
     netRxBytes: sample.netRxBytes,
     netTxBytes: sample.netTxBytes,
+    blockReadBytes: sample.blockReadBytes ?? 0,
+    blockWriteBytes: sample.blockWriteBytes ?? 0,
   });
   store.set(containerName, trim(existing, ts));
 
@@ -207,6 +231,8 @@ function aggregate(bucket: StoredPoint[], group: 'average' | 'max'): Omit<Series
       memUsedBytes: Math.max(...bucket.map((p) => p.memUsedBytes)),
       rxRate: Math.max(...bucket.map((p) => p.rxRate)),
       txRate: Math.max(...bucket.map((p) => p.txRate)),
+      readRate: Math.max(...bucket.map((p) => p.readRate)),
+      writeRate: Math.max(...bucket.map((p) => p.writeRate)),
     };
   }
   const n = bucket.length;
@@ -215,6 +241,8 @@ function aggregate(bucket: StoredPoint[], group: 'average' | 'max'): Omit<Series
     memUsedBytes: bucket.reduce((s, p) => s + p.memUsedBytes, 0) / n,
     rxRate: bucket.reduce((s, p) => s + p.rxRate, 0) / n,
     txRate: bucket.reduce((s, p) => s + p.txRate, 0) / n,
+    readRate: bucket.reduce((s, p) => s + p.readRate, 0) / n,
+    writeRate: bucket.reduce((s, p) => s + p.writeRate, 0) / n,
   };
 }
 
@@ -300,7 +328,7 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
     series[name] = axis.map((idx, i) => {
       const bucket = buckets?.get(idx);
       if (!bucket || bucket.length === 0) {
-        return { ts: timestamps[i], cpuPercent: null, memUsedBytes: null, rxRate: null, txRate: null };
+        return { ts: timestamps[i], cpuPercent: null, memUsedBytes: null, rxRate: null, txRate: null, readRate: null, writeRate: null };
       }
       return { ts: timestamps[i], ...aggregate(bucket, group) };
     });

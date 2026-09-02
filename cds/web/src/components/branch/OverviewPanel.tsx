@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, RefreshCw, Rocket, Server, Settings } from 'lucide-react';
 
 /**
@@ -19,14 +19,12 @@ import { ExternalLink, RefreshCw, Rocket, Server, Settings } from 'lucide-react'
  */
 
 /**
- * 客户端环形缓冲上限。
- * 历史的真身在服务端（container-metrics-history），这里只是把它取回来画，
- * 外加把 5s 轮询的新点续在尾巴上。240 点够放「近 30 分钟 × 服务端 120 点降采样
- * + 之后十分钟的实时追加」，再多就该调窗口而不是把点堆在浏览器里。
+ * per service+metric 的序列。长度与窗口都由服务端 series 端点决定。
+ *
+ * 2026-09-02 起前端不再自己往尾巴上追加实时点：铺底用的是服务端的桶（每桶数十秒），
+ * 而实时点是 5 秒一个，两种粒度混进同一个按下标等距绘制的数组，X 轴就开始说谎，
+ * 且抽屉开得越久越离谱。现在整条数组每次由服务端重算，一条轴只有一个口径。
  */
-export const METRIC_RING_SIZE = 240;
-
-/** per service+metric 的滚动缓冲。窗口长度由服务端 series 端点决定，不再是写死的 5 分钟。 */
 export interface MetricSeries {
   cpu: number[];        // %
   mem: number[];        // % of limit
@@ -34,23 +32,31 @@ export interface MetricSeries {
   memBytes: number[];
   rxRate: number[];     // bytes/sec
   txRate: number[];     // bytes/sec
-}
-
-export function emptyMetricSeries(): MetricSeries {
-  return { cpu: [], mem: [], memBytes: [], rxRate: [], txRate: [] };
+  /** 块设备读写速率。docker stats 一直在返回，采集器此前丢弃（2026-09-02 补采）。 */
+  readRate: number[];
+  writeRate: number[];
+  /**
+   * 真有样本的桶数（服务端给 null 的不算）。
+   *
+   * 值里的 null 被映射成 0 才能参与堆叠，映射之后就分不出「没数据」和「用量为 0」了。
+   * 骨架屏要如实说「已经攒了几帧」，所以在丢失这个信息之前先数一遍。
+   */
+  filled: number;
 }
 
 /**
- * 用服务端历史序列铺底。
+ * 把服务端序列转成组件用的形状。
  *
- * 抽屉一打开就有完整曲线，不必再干等 10 秒攒两个点才出图；关掉再打开也接得上，
- * 因为点存在服务端不在这个组件里。速率已由服务端算好（累计差 / 间隔），
- * 前端不再从累计字节自己算 —— 那正是「关掉抽屉丢历史」时代的遗留做法。
+ * 抽屉一打开就有完整曲线，不必干等攒点；关掉再打开也接得上，因为点存在服务端。
+ * 速率已由服务端算好（累计差 / 间隔），前端不再从累计字节自己算。
  */
 export function seedMetricSeries(points: Array<{
   cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null;
+  readRate?: number | null; writeRate?: number | null;
 }>): MetricSeries {
-  const tail = points.length > METRIC_RING_SIZE ? points.slice(points.length - METRIC_RING_SIZE) : points;
+  // 服务端已按 points 上限分桶，这里不再二次截断——截断会让不同容器的数组长度
+  // 在边界上错开，正是「黑色缺口」那个缺陷的成因。
+  const tail = points;
   // null = 那一段这个容器没有样本（没起来 / 已停 / 断档）。堆叠图里它的贡献就是 0，
   // 于是那一段的色带自然收没——这正是「服务挂了」在图上该有的样子。
   const v = (x: number | null): number => (x == null ? 0 : x);
@@ -60,27 +66,9 @@ export function seedMetricSeries(points: Array<{
     memBytes: tail.map((p) => v(p.memUsedBytes)),
     rxRate: tail.map((p) => v(p.rxRate)),
     txRate: tail.map((p) => v(p.txRate)),
-  };
-}
-
-export function pushMetricRing(
-  series: MetricSeries,
-  cpu: number,
-  mem: number,
-  memBytes: number,
-  rxRate: number,
-  txRate: number,
-): MetricSeries {
-  const trim = (arr: number[], v: number): number[] => {
-    const next = [...arr, v];
-    return next.length > METRIC_RING_SIZE ? next.slice(next.length - METRIC_RING_SIZE) : next;
-  };
-  return {
-    cpu: trim(series.cpu, cpu),
-    mem: trim(series.mem, mem),
-    memBytes: trim(series.memBytes, memBytes),
-    rxRate: trim(series.rxRate, rxRate),
-    txRate: trim(series.txRate, txRate),
+    readRate: tail.map((p) => v(p.readRate ?? null)),
+    writeRate: tail.map((p) => v(p.writeRate ?? null)),
+    filled: tail.filter((p) => p.cpuPercent != null).length,
   };
 }
 
@@ -88,6 +76,9 @@ export function pushMetricRing(
  * 系列色按固定次序赋值，**不循环**（dataviz 硬约束：第 9 个系列不许生成新色）。
  * 超过 5 个服务时，占用最小的那些合并成一条「其他」，用中性色。
  */
+/** 常驻采样器的节奏。骨架屏用它算「还要等多久」，不编百分比。 */
+const SAMPLER_CADENCE_SECONDS = 45;
+
 const SERIES_SLOTS = 5;
 const seriesColor = (i: number): string => `hsl(var(--series-${i + 1}))`;
 /**
@@ -249,6 +240,64 @@ function HealthRing({ states }: { states: Array<'ok' | 'bad' | 'idle'> }): JSX.E
   );
 }
 
+/**
+ * 出图前的骨架，不是空盒子。
+ *
+ * 真人验收问「第一屏是不是空白」——原先这里是一个虚线空框写「正在读取指标历史…」，
+ * 那就是空白等待（CLAUDE.md §6：静止反馈超过 2 秒即缺陷）。
+ * artifact-is-experience 要的是「产物形状的骨架」而不是通用 spinner：所以这里画的是
+ * 一张真图的骨架——同样的外壳、同样的坐标轴、一条呼吸着的占位色带——外加一句
+ * **诚实的**进度（已经攒了几帧、还要等多久），不编造百分比。
+ */
+function MetricsSkeleton({
+  filled, cadenceSeconds, windowLabel, note,
+}: { filled: number; cadenceSeconds: number; windowLabel: string; note?: string }): JSX.Element {
+  const need = Math.max(0, 2 - filled);
+  const eta = need > 0 ? `约还需 ${need * cadenceSeconds} 秒出现曲线` : '正在读取';
+  return (
+    <section className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 pb-3 pt-3.5">
+      <header className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+        <h4 className="text-sm font-bold text-foreground">CPU 占用</h4>
+        <span className="text-[11px] text-muted-foreground">% · 按服务堆叠 · {windowLabel}</span>
+        <div className="flex-1" />
+        <span className="text-[11px] text-muted-foreground">
+          {note ?? `采样器每 ${cadenceSeconds} 秒写一帧 · 已有 ${filled} 帧 · ${eta}`}
+        </span>
+      </header>
+      <div className="flex gap-2">
+        <div className="flex w-12 shrink-0 flex-col justify-between text-right font-mono text-[10px] leading-none text-muted-foreground/50" style={{ height: 176 }}>
+          {['', '', '', ''].map((_, i) => <span key={i}>—</span>)}
+        </div>
+        <div className="relative min-w-0 flex-1 overflow-hidden rounded" style={{ height: 176 }}>
+          <div className="absolute inset-0 flex flex-col justify-between" aria-hidden>
+            {[0, 1, 2, 3].map((i) => <span key={i} className="h-px w-full bg-[hsl(var(--hairline))]" />)}
+          </div>
+          {/* 呼吸着的占位色带：形状就是将要出现的那张堆叠图，不是转圈 */}
+          <div
+            className="absolute inset-x-0 bottom-0 animate-pulse rounded-t"
+            style={{
+              height: '38%',
+              background: `linear-gradient(180deg, hsl(var(--series-4) / 0.16), hsl(var(--series-1) / 0.16))`,
+            }}
+            aria-hidden
+          />
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-x-5 gap-y-2 border-t border-[hsl(var(--hairline))] pt-2.5">
+        {[0, 1, 2].map((i) => (
+          <span key={i} className="flex gap-2">
+            <span className="w-[3px] rounded-full bg-[hsl(var(--hairline-strong))]" aria-hidden />
+            <span className="flex flex-col gap-1">
+              <span className="h-2 w-24 animate-pulse rounded bg-[hsl(var(--hairline-strong))]" />
+              <span className="h-3.5 w-12 animate-pulse rounded bg-[hsl(var(--hairline-strong))]" />
+            </span>
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ── 图表外壳（标题 / 大数 / 图例 / 脚注）────────────────────────────────
 
 function ChartShell({
@@ -336,12 +385,66 @@ interface StackedSeries {
   stopped?: boolean;
 }
 
+/**
+ * 数值插值：新数据到来时，把每条序列从旧值补间到新值，而不是一帧切过去。
+ *
+ * 为什么需要：改成「按桶推进」之后，图不再每 5 秒抖一下，但新桶落成的那一下
+ * 仍是整条曲线瞬移。miduo-review-lens 镜头 4（变化可感知）要的是「让人看见什么变了」，
+ * 一帧切过去等于没看见。
+ *
+ * 只在**形状不变**时补间（序列条数、id、点数都一致）。服务上线下线、窗口分辨率
+ * 重算都会改变形状，那种情况下逐点插值是在两组不同含义的数之间连线，宁可直接切。
+ * 尊重 prefers-reduced-motion。
+ */
+function useTweenedSeries(series: StackedSeries[], token: object, ms = 420): StackedSeries[] {
+  const [shown, setShown] = useState(series);
+  const fromRef = useRef(series);
+  const latestRef = useRef(series);
+  latestRef.current = series;
+
+  useEffect(() => {
+    const to = latestRef.current;
+    const from = fromRef.current;
+    const sameShape =
+      from.length === to.length &&
+      from.every((f, i) => f.id === to[i].id && f.values.length === to[i].values.length);
+    const reduced = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!sameShape || reduced) {
+      fromRef.current = to;
+      setShown(to);
+      return undefined;
+    }
+    let raf = 0;
+    const t0 = performance.now();
+    const step = (now: number): void => {
+      const k = Math.min(1, (now - t0) / ms);
+      const e = 1 - (1 - k) ** 3; // easeOutCubic
+      setShown(to.map((sr, i) => ({
+        ...sr,
+        values: sr.values.map((v, j) => {
+          const a = from[i].values[j] ?? v;
+          return a + (v - a) * e;
+        }),
+      })));
+      if (k < 1) raf = requestAnimationFrame(step);
+      else fromRef.current = to;
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [token, ms]);
+
+  return shown;
+}
+
 function StackedAreaChart({
-  height, max, series,
-}: { height: number; max: number; series: StackedSeries[] }): JSX.Element {
+  height, max, series, token,
+}: { height: number; max: number; series: StackedSeries[]; token: object }): JSX.Element {
+  const tweened = useTweenedSeries(series, token);
   const paths = useMemo(
-    () => stackAreas(series.map((s) => s.values), max, height),
-    [series, max, height],
+    () => stackAreas(tweened.map((s) => s.values), max, height),
+    [tweened, max, height],
   );
   return (
     <svg
@@ -351,7 +454,7 @@ function StackedAreaChart({
       aria-hidden
     >
       {paths.map((d, i) => (
-        d ? <path key={series[i].id} d={d} style={{ fill: series[i].color }} fillOpacity={0.8} /> : null
+        d ? <path key={tweened[i].id} d={d} style={{ fill: tweened[i].color }} fillOpacity={0.8} /> : null
       ))}
     </svg>
   );
@@ -452,54 +555,69 @@ function SeriesLegend({ series }: { series: StackedSeries[] }): JSX.Element {
  */
 const NET_COLOR = 'hsl(var(--series-net))';
 
-function NetworkChart({ rx, tx }: { rx: number[]; tx: number[] }): JSX.Element {
-  const peak = Math.max(1, ...rx, ...tx);
+/** 一条「上下镜像」的双向图：正向在上、反向在下，共用一根基线与一把标尺。 */
+function MirroredPair({
+  up, down, label, upName, downName, height = 46,
+}: { up: number[]; down: number[]; label: string; upName: string; downName: string; height?: number }): JSX.Element {
+  const peak = Math.max(1, ...up, ...down);
   const max = peak * 1.12;
-  const h = 62;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[11px] font-semibold text-foreground">{label}</span>
+        <span className="font-mono text-[10px] text-muted-foreground">峰值 {formatBytesShort(peak)}/s</span>
+        <div className="flex-1" />
+        <span className="font-mono text-[11px] text-muted-foreground">
+          {upName} {formatBytesShort(up.at(-1) ?? 0)}/s · {downName} {formatBytesShort(down.at(-1) ?? 0)}/s
+        </span>
+      </div>
+      <div className="relative" style={{ height: height * 2 + 2 }}>
+        <svg className="absolute inset-x-0 top-0 w-full" height={height} viewBox={`0 0 ${VB_W} ${height}`} preserveAspectRatio="none" aria-hidden>
+          <path d={areaPath(up, max, height)} style={{ fill: NET_COLOR }} fillOpacity={0.85} />
+        </svg>
+        <span className="absolute inset-x-0 h-px bg-[hsl(var(--hairline-strong))]" style={{ top: height }} aria-hidden />
+        <svg
+          className="absolute inset-x-0 w-full"
+          style={{ top: height + 2, transform: 'scaleY(-1)' }}
+          height={height}
+          viewBox={`0 0 ${VB_W} ${height}`}
+          preserveAspectRatio="none"
+          aria-hidden
+        >
+          <path d={areaPath(down, max, height)} style={{ fill: NET_COLOR }} fillOpacity={0.4} />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 吞吐：网络与磁盘各一行，共一张卡。
+ *
+ * 磁盘 I/O 是 2026-09-02 补上的——`docker stats` 一直在返回 BlockIO、`ContainerStats`
+ * 一直在解析它，只有历史存储没收，白丢了一整维。核对过它在本宿主机上不是常年 0
+ * （cgroup v2 的 io.stat 实测 rbytes=7360512 wbytes=1200128），不是又一个「常年显示
+ * 0 的方块」。
+ *
+ * 刻意**不新增卡片**：真人刚反馈过「页面非常乱」，多一张卡就是多一块要扫的区域。
+ * 两者本来就是同一个问题的两半——「这个分支在往外倒多少数据」。
+ */
+function ThroughputChart({
+  rx, tx, read, write,
+}: { rx: number[]; tx: number[]; read: number[]; write: number[] }): JSX.Element {
+  const hasDisk = read.some((v) => v > 0) || write.some((v) => v > 0);
   return (
     <ChartShell
-      title="网络吞吐"
-      unit="收在上、发在下"
+      title="吞吐"
+      unit="网络 · 磁盘"
       headline={`${formatBytesShort(rx.at(-1) ?? 0)}/s`}
-      headlineSuffix={`收 · 发 ${formatBytesShort(tx.at(-1) ?? 0)}/s`}
+      headlineSuffix="网络入站"
+      footnote={hasDisk ? undefined : '磁盘一行全为 0：可能是宿主内核没开块设备计量，或这些容器确实没落盘。'}
     >
-      <>
-        <div className="relative" style={{ height: h * 2 + 2 }}>
-          <span className="pointer-events-none absolute left-0 top-0 font-mono text-[10px] leading-none text-muted-foreground">
-            {formatBytesShort(peak)}/s
-          </span>
-          <svg className="absolute inset-x-0 top-0 w-full" height={h} viewBox={`0 0 ${VB_W} ${h}`} preserveAspectRatio="none" aria-hidden>
-            <path d={areaPath(rx, max, h)} style={{ fill: NET_COLOR }} fillOpacity={0.85} />
-          </svg>
-          <span className="absolute inset-x-0 h-px bg-[hsl(var(--hairline-strong))]" style={{ top: h }} aria-hidden />
-          <svg
-            className="absolute inset-x-0 w-full"
-            style={{ top: h + 2, transform: 'scaleY(-1)' }}
-            height={h}
-            viewBox={`0 0 ${VB_W} ${h}`}
-            preserveAspectRatio="none"
-            aria-hidden
-          >
-            <path d={areaPath(tx, max, h)} style={{ fill: NET_COLOR }} fillOpacity={0.4} />
-          </svg>
-        </div>
-        <div className="flex gap-4 border-t border-[hsl(var(--hairline))] pt-2.5">
-          <span className="flex items-center gap-2">
-            <span className="h-5 w-[3px] rounded-full" style={{ background: NET_COLOR }} aria-hidden />
-            <span className="flex flex-col">
-              <span className="text-[10.5px] text-muted-foreground">入站峰值</span>
-              <span className="font-mono text-[13px] font-bold text-foreground">{formatBytesShort(Math.max(0, ...rx))}/s</span>
-            </span>
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="h-5 w-[3px] rounded-full opacity-50" style={{ background: NET_COLOR }} aria-hidden />
-            <span className="flex flex-col">
-              <span className="text-[10.5px] text-muted-foreground">出站峰值</span>
-              <span className="font-mono text-[13px] font-bold text-foreground">{formatBytesShort(Math.max(0, ...tx))}/s</span>
-            </span>
-          </span>
-        </div>
-      </>
+      <div className="flex flex-col gap-3">
+        <MirroredPair up={rx} down={tx} label="网络" upName="收" downName="发" />
+        <MirroredPair up={read} down={write} label="磁盘" upName="读" downName="写" />
+      </div>
     </ChartShell>
   );
 }
@@ -679,7 +797,7 @@ function EntryCards({
 export function OverviewPanel({
   services, running, branchName, commitSha, commitMessage,
   lastReadyAt, lastDeployAt, deployDurationMs,
-  entries, deployments, metricSeries, metricsReady, metricsError,
+  entries, deployments, metricSeries, liveStats, metricsReady, metricsError,
   replicaSummary, infraSummary,
   now, windowMinutes, onRefreshMetrics, onConfigureEntries, onOpenDeployments,
 }: {
@@ -694,6 +812,13 @@ export function OverviewPanel({
   entries: OverviewEntry[];
   deployments: OverviewDeployment[];
   metricSeries: Record<string, MetricSeries>;
+  /**
+   * 实时快照（5s 轮询的 docker stats）。
+   *
+   * 图走服务端分桶的 series，数字走这里——两个口径分开。序列的最后一个桶是
+   * 数十秒的平均值，摆在「当前值」的位置上会比真实情况慢一拍。
+   */
+  liveStats?: Record<string, { cpuPercent: number; memUsedBytes: number }>;
   metricsReady: boolean;
   metricsError?: string;
   replicaSummary: string;
@@ -731,15 +856,29 @@ export function OverviewPanel({
   }, [services, metricSeries]);
 
   const sampleCount = picked.head[0]?.ring.cpu.length ?? 0;
-  const hasPlot = picked.head.length > 0 && sampleCount >= 2;
+  /** 真有样本的桶数（null 被映射成 0 之前数的）。骨架屏靠它如实说「已经攒了几帧」。 */
+  const filledSamples = Math.max(0, ...Object.values(metricSeries).map((m) => m.filled ?? 0));
+  /**
+   * 够不够画一张图，看的是**真有数据的桶数**，不是数组长度。
+   *
+   * 2026-09-02 渲染取证时抓到的缺陷：冷启动只有 1 个真样本、轴上却有 2 个桶（另一个是
+   * null），`sampleCount >= 2` 判真，于是画出一个从左上斜到零的大三角——那条下降沿
+   * 是 null 被映射成 0 画出来的，纯属虚构。
+   *
+   * 这和「空桶画成 0」是同一个病根：**数桶，不数数据**。判据必须落在 filled 上。
+   */
+  const hasPlot = picked.head.length > 0 && filledSamples >= 2;
 
   const buildSeries = (
     read: (m: MetricSeries) => number[],
+    readLive: (s: { cpuPercent: number; memUsedBytes: number }) => number,
     label: (v: number) => [string, string],
   ): StackedSeries[] => {
     const head = picked.head.map((x, i) => {
       const values = read(x.ring);
-      const [nowLabel, nowUnit] = label(values.at(-1) ?? 0);
+      const live = liveStats?.[x.svc.profileId];
+      const nowValue = live ? readLive(live) : values.at(-1) ?? 0;
+      const [nowLabel, nowUnit] = label(nowValue);
       return {
         id: x.svc.profileId,
         color: seriesColor(i),
@@ -752,12 +891,16 @@ export function OverviewPanel({
     if (picked.tail.length === 0) return head;
     const len = head[0]?.values.length ?? 0;
     const merged = Array.from({ length: len }, (_, i) => picked.tail.reduce((sum, x) => sum + (read(x.ring)[i] ?? 0), 0));
-    const [nowLabel, nowUnit] = label(merged.at(-1) ?? 0);
+    const tailNow = picked.tail.reduce((sum, x) => {
+      const live = liveStats?.[x.svc.profileId];
+      return sum + (live ? readLive(live) : read(x.ring).at(-1) ?? 0);
+    }, 0);
+    const [nowLabel, nowUnit] = label(tailNow);
     return [...head, { id: `其他 ${picked.tail.length} 个`, color: OTHER_COLOR, values: merged, nowLabel, nowUnit }];
   };
 
-  const cpuSeries = hasPlot ? buildSeries((m) => m.cpu, (v) => [v.toFixed(2), '%']) : [];
-  const memSeries = hasPlot ? buildSeries((m) => m.memBytes, (v) => {
+  const cpuSeries = hasPlot ? buildSeries((m) => m.cpu, (l) => l.cpuPercent, (v) => [v.toFixed(2), '%']) : [];
+  const memSeries = hasPlot ? buildSeries((m) => m.memBytes, (l) => l.memUsedBytes, (v) => {
     const parts = formatBytesShort(v).split(' ');
     return [parts[0], ` ${parts[1] ?? ''}`];
   }) : [];
@@ -769,8 +912,12 @@ export function OverviewPanel({
   // 改成把峰值交给 niceScale 吸附到整数步长，吸附本身就自带头部空间。
   const cpuPeak = Math.max(2, ...Array.from({ length: sampleCount }, (_, i) => cpuSeries.reduce((n, s) => n + (s.values[i] ?? 0), 0)));
 
-  const netRx = Array.from({ length: sampleCount }, (_, i) => picked.head.concat(picked.tail).reduce((n, x) => n + (x.ring.rxRate[i] ?? 0), 0));
-  const netTx = Array.from({ length: sampleCount }, (_, i) => picked.head.concat(picked.tail).reduce((n, x) => n + (x.ring.txRate[i] ?? 0), 0));
+  const sumOf = (read: (m: MetricSeries) => number[]): number[] =>
+    Array.from({ length: sampleCount }, (_, i) => picked.head.concat(picked.tail).reduce((n, x) => n + (read(x.ring)[i] ?? 0), 0));
+  const netRx = sumOf((m) => m.rxRate);
+  const netTx = sumOf((m) => m.txRate);
+  const diskRead = sumOf((m) => m.readRate);
+  const diskWrite = sumOf((m) => m.writeRate);
 
   // 判断句：先给结论，再给证据。
   const verdict = badServices.length > 0
@@ -810,6 +957,16 @@ export function OverviewPanel({
   };
 
   const cpuScale = niceScale(cpuPeak);
+
+  /*
+   * 补间的触发信号。
+   *
+   * cpuSeries 每次渲染都是新数组（里面还混着每 5 秒变一次的 liveStats 数字），
+   * 直接拿它当 effect 依赖会每帧重启动画。图上的**数值**只在 metricSeries 变化时
+   * 才变，所以用一个「只随 metricSeries 换新」的空对象当令牌。
+   */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const dataToken = useMemo(() => ({}), [metricSeries]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -882,13 +1039,26 @@ export function OverviewPanel({
          *
          * 现在：有历史就立刻画，实时快照到了再把新点续在尾巴上。
          */
-        <section className="rounded-xl border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-8 text-center text-sm text-muted-foreground">
-          {services.length === 0
-            ? '该分支还没有任何 service，先去构建配置 / 部署。'
-            : metricsReady
-              ? '这段窗口内还没有采集到样本，采样器每 45 秒写一帧，稍后自动出图。'
-              : '正在读取指标历史…'}
-        </section>
+        services.length === 0 ? (
+          <section className="rounded-xl border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-8 text-center text-sm text-muted-foreground">
+            该分支还没有任何 service，先去构建配置 / 部署。
+          </section>
+        ) : (
+          <MetricsSkeleton
+            filled={filledSamples}
+            cadenceSeconds={SAMPLER_CADENCE_SECONDS}
+            windowLabel={windowLabel}
+            /*
+             * metricsReady 只用来挑文案，**不参与是否出图的判断**——那正是「拿着历史
+             * 干等 docker stats」那个缺陷的成因，守卫钉着闸门里不许出现它。
+             */
+            note={
+              !running ? '分支未运行 · 没有容器可采样'
+                : !metricsReady ? '正在读取指标…'
+                  : undefined
+            }
+          />
+        )
       ) : (
         <>
           <ChartShell
@@ -908,7 +1078,7 @@ export function OverviewPanel({
               yTicks={cpuScale.labels}
               xLabels={[windowText.replace('近 ', '') + '前', '现在']}
             >
-              <StackedAreaChart height={176} max={cpuScale.max} series={cpuSeries} />
+              <StackedAreaChart height={176} max={cpuScale.max} series={cpuSeries} token={dataToken} />
             </PlotFrame>
           </ChartShell>
 
@@ -924,7 +1094,7 @@ export function OverviewPanel({
             >
               <CompositionBar series={memSeries} />
             </ChartShell>
-            <NetworkChart rx={netRx} tx={netTx} />
+            <ThroughputChart rx={netRx} tx={netTx} read={diskRead} write={diskWrite} />
           </div>
         </>
       )}
