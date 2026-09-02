@@ -59,6 +59,9 @@ import {
 import { broadcastSelfStatus } from './branches.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { isMachineCaller } from '../services/machine-caller.js';
+// 授权判据与 projects 路由共用同一处：这个路由改的是**项目**（绑/解绑仓库），
+// 判「这把钥匙能不能碰这个项目」的逻辑抄第二份，就是这个 PR 反复栽的那个跟头。
+import { assertProjectAccess } from './projects.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 
 export interface GitHubWebhookRouterDeps {
@@ -934,6 +937,18 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       res.status(404).json({ error: 'project_not_found' });
       return;
     }
+    /*
+     * 这条路由改的是**目标项目**，所以必须先问「这把钥匙能不能碰它」
+     * （2026-09-02 Codex P1）。这个 router 是单独挂载的，鉴权中间件只认出了
+     * 调用方是谁，没有做目标项目的授权——于是一把只授权了 A 项目的 `cdsp_` key
+     * 可以 POST 到 B 项目把 B 的仓库改掉。本 PR 新加的 `allowShared` 让它连
+     * 「已被别人绑走」这道拦截也一并绕过，等于把原有的洞开大了。
+     */
+    const denied = assertProjectAccess(req as never, project.id);
+    if (denied) {
+      res.status(denied.status).json(denied.body);
+      return;
+    }
     const body = (req.body || {}) as Partial<{
       installationId: number;
       repoFullName: string;
@@ -1087,6 +1102,12 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     const project = stateService.getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    // 解绑同样是改目标项目 —— 两条一起判，别只堵一半（同上）
+    const denied = assertProjectAccess(req as never, project.id);
+    if (denied) {
+      res.status(denied.status).json(denied.body);
       return;
     }
     stateService.updateProject(project.id, {
