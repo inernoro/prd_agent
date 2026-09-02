@@ -14,4 +14,5 @@
 | fix | cds | 「打开正在跑的预览」拆出独立的 open 操作类型，且部署去重把 preview / deploy / rebuild 三种构建叫法归一——前者防没发生的构建被算成失败，后者防同一次部署算两遍 |
 | fix | cds | 部署耗时柱状图改吃含操作日志的合并来源：原来那份按分支 id 作键、一个分支最多一条，柱状图要 3 条才画，这张卡从落地起就没渲染出来过 |
 | fix | cds | 补上 GET /branches/:id/metrics/series 的 Activity Monitor 中文 label（已有的 /metrics pattern 用 $ 收尾接不住子路径） |
+| fix | cds | 取指标失败给用户看的是分类中文文案 + 恢复动作，内部端点、HTTP 状态与 requestId 只进日志 |
 | test | cds | 新增 container-metrics-history 48 例与 branch-overview-panel 82 例，覆盖速率差分与回绕、时间等宽分桶与网格稳定性、缺口几何、当前值口径、kind 别名归一、模块顶层副作用等；新增判据均做过红绿闭环 |

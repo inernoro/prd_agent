@@ -788,6 +788,28 @@ export function sameOperationKind(a: BranchDeploymentItem['kind'], b: BranchDepl
   return a === b;
 }
 
+/**
+ * 取指标失败时给用户看的那句话（Codex P1，核对属实）。
+ *
+ * `ApiError.message` 是 `api.ts` 拼给开发者的诊断串：
+ * `GET /_cds/api/branches/xxx/metrics/series?after=-1800 失败：… (HTTP 500) · requestId=…`。
+ * 之前 `seriesError` / `metricsError` 直接存它、面板直接渲染，普通用户就在总览上
+ * 看到内部路径、HTTP 状态和 requestId —— 违反 `.Codex/rules/user-readable-errors.md`
+ * 第 1、2、9 条（不透传异常原文、不出现状态码与端点、前端不得直接展示 error.message）。
+ *
+ * 这里是那条规则要求的「统一错误映射入口」：对外只给「发生了什么 + 接下来怎么做」，
+ * 原始诊断留在 console。分类对齐规则第 5 条的可预期错误集合。
+ */
+export function describeMetricsFailure(err: unknown, what: '实时指标' | '指标历史'): string {
+  console.warn(`[overview] ${what}读取失败`, err);
+  if (!(err instanceof ApiError)) return `${what}读取失败，可能是网络中断，请检查网络后重试。`;
+  if (err.status === 401 || err.status === 403) return `没有权限读取${what}，请重新登录后重试。`;
+  if (err.status === 404) return `当前 CDS 版本没有${what}接口，更新 CDS 后即可显示。`;
+  if (err.status === 429) return `请求过于频繁，${what}稍后会自动恢复。`;
+  if (err.status >= 500) return `${what}服务暂时不可用，稍后会自动重试。`;
+  return `${what}读取失败，请刷新页面重试。`;
+}
+
 function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchDeploymentItem {
   const events = log.events || [];
   const lines = events.map(eventText);
@@ -1405,10 +1427,8 @@ export function BranchDetailDrawer({
         !('services' in raw) ||
         !Array.isArray((raw as { services: unknown }).services)
       ) {
-        setMetricsState({
-          status: 'error',
-          message: '后端响应格式异常 — 当前 CDS 可能没有 /api/branches/:id/metrics 端点,请先 self-update CDS 到最新分支。',
-        });
+        // 同样不向用户抛内部端点路径（Codex P1）。
+        setMetricsState({ status: 'error', message: '当前 CDS 版本没有实时指标接口，更新 CDS 后即可显示。' });
         return;
       }
       const data = raw as MetricsResponse;
@@ -1439,7 +1459,7 @@ export function BranchDetailDrawer({
     } catch (err) {
       // 同样保护:切分支后旧请求 reject 不要写到新 state
       if (branchIdRef.current !== requestForBranch) return;
-      setMetricsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      setMetricsState({ status: 'error', message: describeMetricsFailure(err, '实时指标') });
     }
   }, [branchId]);
 
@@ -1487,7 +1507,7 @@ export function BranchDetailDrawer({
       if (branchIdRef.current !== requestForBranch) return;
       // 老版本 CDS 没有这个端点也走这里——照样要说出来，否则骨架屏会一直
       // 承诺一条永远不会出现的曲线。面板拿到它就改画「只有实时数字」那一档。
-      setSeriesError(err instanceof ApiError ? err.message : String(err));
+      setSeriesError(describeMetricsFailure(err, '指标历史'));
     }
   }, [branchId]);
 

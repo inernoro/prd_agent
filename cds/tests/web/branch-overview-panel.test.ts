@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { areaPath, stackAreas, seedMetricSeries, OverviewPanel } from '@/components/branch/OverviewPanel';
-import { sameOperationKind } from '@/components/BranchDetailDrawer';
+import { sameOperationKind, describeMetricsFailure } from '@/components/BranchDetailDrawer';
+import { ApiError } from '@/lib/api';
 
 /**
  * 总览面板（2026-09-01 视觉化重排）的三条守卫。
@@ -248,11 +249,52 @@ describe('两个数据源就有两个错误面（Codex P2，核对属实）', ()
    * 上一次的结果，`hasPlot` 仍为真，于是两个错误分支都被 `!hasPlot` 挡掉，一条过期
    * 曲线顶着「近 30 分钟」的标签无限期挂着，一句提示都没有。
    */
+  /*
+   * 这条原本扫的是源码：`{seriesError` 之后 200 字符里不许出现 `seriesError && !hasPlot ?`，
+   * 外加 `toContain('已经不再更新')` 逐字钉那句文案（Codex P1，核对属实）。两头都不对——
+   * 把提示挪进一个 helper、或者只是改改措辞，行为没变它却红；反过来，把这两个字符串
+   * 留在一段永远走不到的代码里，它照样绿。本文件里这已经是第四条同病的守卫。
+   *
+   * 改成渲染两种状态直接看输出：有旧图时必须说曲线是旧的、且图还在；没图时必须说
+   * 画不出来了、且没有面积路径。
+   */
   it('历史失败的提示不被 hasPlot 挡住：有旧图时也要说这条曲线是旧的', () => {
-    const strip = PANEL_CODE.slice(PANEL_CODE.indexOf('{seriesError'), PANEL_CODE.indexOf('{seriesError') + 200);
-    expect(strip, '找不到历史错误提示，选择器过时了').toContain('seriesError');
-    expect(strip, '这一条不该被 hasPlot 门住——先成功后失败时它正是唯一的提示').not.toMatch(/seriesError\s*&&\s*!hasPlot\s*\?/);
-    expect(PANEL_CODE, '有旧图时要明说它不是当前的 30 分钟').toContain('已经不再更新');
+    const render = (plottable: boolean): string => renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: true,
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      // 两帧 => hasPlot 为真（先成功后失败那条路）；零帧 => 压根没图
+      metricSeries: plottable
+        ? {
+          api: seedMetricSeries([
+            { cpuPercent: 4, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+            { cpuPercent: 4, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+          ]),
+        }
+        : {},
+      seriesError: '指标历史服务暂时不可用，稍后会自动重试。',
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+
+    // 先成功、后持续失败：提示必须出现，且旧图仍在——这正是被 !hasPlot 挡掉的那一档
+    const stale = render(true);
+    expect(stale, '有旧图时提示被 hasPlot 门住了，用户看着一条过期曲线毫不知情')
+      .toContain('指标历史服务暂时不可用');
+    expect(stale, '必须说清这条曲线不是当前的').toMatch(/不再更新|不是当前/);
+    const staleAreas = [...stale.matchAll(/ d="([^"]+)"/g)].map((m) => m[1]).filter((d) => d.includes('Z'));
+    expect(staleAreas.length, '旧图应当还画着——它是仅有的历史，不该连同提示一起消失').toBeGreaterThan(0);
+
+    // 压根没图：提示同样要出现，并说明这一项不会自己好
+    const empty = render(false);
+    expect(empty).toContain('指标历史服务暂时不可用');
+    expect(empty, '没图时要说画不出来了，别让骨架屏继续承诺曲线').toMatch(/画不出来/);
   });
 
   it('实时采样失败不藏历史图：两个错误面互不牵连', () => {
@@ -786,6 +828,60 @@ describe('分支停了，兜底的实时读数也不端', () => {
  * 前四次我都是在**用到的那一处**补 `anyRunning`，补一处漏一处。这条守卫钉的是
  * 归一化本身：状态在入口就按分支运行态修正，下面所有读它的地方自动一致。
  */
+/**
+ * 错误文案不许把内部诊断端到用户脸上（2026-09-02，Codex P1，核对属实）。
+ *
+ * `ApiError.message` 是 api.ts 拼给开发者的串：
+ * `GET /_cds/api/branches/xxx/metrics/series?after=-1800 失败：… (HTTP 500) · requestId=…`
+ * 之前直接存进 seriesError / metricsError 并原样渲染，普通用户就在总览上看到内部
+ * 路径、HTTP 状态和 requestId。违反 .Codex/rules/user-readable-errors.md 第 1、2、9 条。
+ */
+describe('取指标失败给的是人话，不是诊断串', () => {
+  const raw = 'GET /_cds/api/branches/demo/metrics/series?after=-1800 失败：boom (HTTP 500) · requestId=abc123';
+
+  const leaks = (msg: string): string[] => ['/_cds/', 'HTTP ', 'requestId', 'metrics/series', 'GET ']
+    .filter((k) => msg.includes(k));
+
+  it('5xx 映射成人话，且不泄漏端点/状态码/requestId', () => {
+    const msg = describeMetricsFailure(new ApiError(500, null, raw, 'abc123'), '指标历史');
+    expect(leaks(msg), `诊断信息泄漏到用户文案：${msg}`).toEqual([]);
+    expect(msg, '必须说清是什么失败了').toContain('指标历史');
+    expect(msg, '必须给恢复动作（规则第 4 条）').toMatch(/重试|重新登录|更新 CDS|刷新/);
+  });
+
+  it('权限、缺接口、限流各有分类，不是一句「失败」了事', () => {
+    expect(describeMetricsFailure(new ApiError(403, null, raw), '指标历史')).toMatch(/权限/);
+    expect(describeMetricsFailure(new ApiError(404, null, raw), '指标历史')).toMatch(/更新 CDS/);
+    expect(describeMetricsFailure(new ApiError(429, null, raw), '实时指标')).toMatch(/频繁/);
+  });
+
+  it('非 ApiError（网络中断等）也不 String(err) 直出', () => {
+    const msg = describeMetricsFailure(new TypeError('Failed to fetch'), '实时指标');
+    expect(msg, '把原始异常字符串化直出正是规则第 9 条禁止的').not.toContain('Failed to fetch');
+    expect(msg).toMatch(/网络/);
+  });
+
+  it('面板渲染的是映射后的文案（端到端，不只测函数）', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: true,
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {},
+      seriesError: describeMetricsFailure(new ApiError(500, null, raw, 'abc123'), '指标历史'),
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(leaks(html.slice(html.indexOf('读取指标历史失败'), html.indexOf('读取指标历史失败') + 400)),
+      '渲染出来的那段里仍有诊断信息').toEqual([]);
+  });
+});
+
 describe('分支停了，就绪计数也不算陈旧的 running', () => {
   const render = (running: boolean): string => renderToStaticMarkup(createElement(OverviewPanel, {
     services: [
