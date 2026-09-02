@@ -60,13 +60,18 @@ export default function VisualAgentFullscreenPage() {
       </button>
       )}
 
-      {/* 编辑器(全屏画布,无页头行)的本页教程入口:与左上角返回按钮对称,属该页固定 chrome。
+      {/* 编辑器(全屏画布,无页头行)的本页教程入口,属该页固定 chrome。
           列表页(VisualAgentWorkspaceListPage)自己已在 HeroSection 内嵌入口,故此处仅编辑器渲染避免重复。
-          桌面端右侧有 420px 浮动对话面板(right-3 top-3 z-30),pill 若贴 right-5 会压住面板
-          右上角控件(用户反馈的右上角遮挡)——桌面端左移到面板左侧留 13px 间隙,移动端面板
-          全屏覆盖时本就盖住 chrome,维持 right-5。 */}
+
+          放左上角、紧挨返回按钮,而不是右上角。右上角是一叠**宽度会变**的浮层:对话面板
+          (420) 和 AI 分层面板 (300) 各自可开可关。这里原本写死 `md:right-[436px]` 去躲
+          对话面板,分层面板一上线(right 444、宽 300、z-40)就压在了它的收起按钮上——pill
+          是 z-50,正好盖住那个 X(2026-09-02 用户指出)。那个数字是魔数:它复制了浮层的几何,
+          却不会跟着浮层改,布局一动就漂,而且没有任何东西会因此变红。
+          放在返回钮**正下方**而不是它右边:画布顶部居中还挂着缩放浮层,它随画布列宽左右浮动,
+          贴右边就得再猜一个横向安全距离——又是同一类魔数。竖着排开与它天然不同高。 */}
       {isEditor && !hideFloatingChrome && (
-        <div className="fixed top-5 right-5 md:right-[436px] z-50">
+        <div className="fixed top-[68px] left-5 z-50">
           <TipsEntryButton compact />
         </div>
       )}

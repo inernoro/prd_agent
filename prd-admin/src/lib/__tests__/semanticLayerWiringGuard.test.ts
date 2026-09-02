@@ -578,3 +578,28 @@ describe('首页背景：素材来源与浅色主题的两条接线', () => {
     expect(read(PAGE)).toMatch(/<BackdropPhoto[^/]*dim=\{dimFor\(/s);
   });
 });
+
+describe('右上角浮层不许再被硬编码偏移的浮动 chrome 压住', () => {
+  const fullscreen = readFileSync(
+    resolve(__dirname, '../../pages/visual-agent/VisualAgentFullscreenPage.tsx'),
+    'utf8',
+  );
+
+  it('剥完注释还剩真代码（companion）', () => {
+    expect(fullscreen).toContain('TipsEntryButton');
+  });
+
+  it('【关键】教程 pill 不再用写死的 right 偏移去躲右侧浮层', () => {
+    // 那个数字复制了浮层几何却不跟着改：对话面板 420 时写 436，分层面板（right 444、
+    // 宽 300、z-40）一上线，z-50 的 pill 就压住了它的收起按钮，而没有任何东西会变红。
+    // 右上角是一叠宽度随开关变化的浮层，任何固定偏移都会再漂一次。
+    const chrome = fullscreen.slice(fullscreen.indexOf('isEditor && !hideFloatingChrome'));
+    const pill = chrome.slice(0, chrome.indexOf('</div>'));
+    // 判据是**不变量**（不靠右侧、不用像素级 right 偏移躲浮层），不是某一版的具体写法。
+    // 上一版写死 `left-\[\d+px\]`，我自己把落点从「返回钮右边」改到「返回钮下边」
+    // （left-5 top-[68px]）它就红了——又一次断言实现字面（形状 4a）。
+    expect(pill, '不许再用像素级 right 偏移去躲右侧浮层').not.toMatch(/right-\[\d+px\]/);
+    expect(pill, '不许贴右边缘（那里是浮层区）').not.toMatch(/\bright-\d+\b/);
+    expect(pill, '应从左边缘定位').toMatch(/\bleft-(\d+|\[\d+px\])\b/);
+  });
+});
