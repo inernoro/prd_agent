@@ -309,6 +309,7 @@
 - [CDS 构建闸（build-gate） · 债务台账](./debt.cds.build-gate.md) `debt.cds.build-gate`
 - [CDS 极速版（CI 预构建） · 债务台账](./debt.cds.ci-prebuilt.md) `debt.cds.ci-prebuilt`
 - [一仓多项目与身份层的工程债务](./debt.cds.multi-project-identity.md) `debt.cds.multi-project-identity`
+- [CDS 分支详情「总览」 · 债务台账](./debt.cds.overview.md) `debt.cds.overview`
 - [CDS 构建与前端性能 · 债务台账](./debt.cds.performance.md) `debt.cds.performance`
 - [CDS 生产发布系统 · 债务台账](./debt.cds.release-system.md) `debt.cds.release-system`
 - [CDS 自更新极速版（预构建产物） · 债务台账](./debt.cds.selfupdate-prebuilt.md) `debt.cds.selfupdate-prebuilt`
