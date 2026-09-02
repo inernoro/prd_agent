@@ -33,7 +33,7 @@ import type { BranchEntry, BuildProfile } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
 import { namedServiceLabel, occupiedHostOwners, publishedServiceLabels, subdomainWithLegacyAliases } from './preview-entrypoints.js';
-import { pickApiConventionProfile, pickDefaultProfile } from './route-conventions.js';
+import { isOperationalProbePrefix, pickApiConventionProfile, pickDefaultProfile } from './route-conventions.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
 /**
@@ -162,6 +162,17 @@ export class ForwarderRoutePublisher {
     }
   }
 
+  /** 最近一次写盘的路由表（路由判定查询用；未发布过返回空）。 */
+  getPublishedRoutes(): RouteRecord[] {
+    if (!this.lastPublishedJson) return [];
+    try {
+      const parsed = JSON.parse(this.lastPublishedJson) as { routes?: RouteRecord[] } | RouteRecord[];
+      return Array.isArray(parsed) ? parsed : (parsed.routes ?? []);
+    } catch {
+      return [];
+    }
+  }
+
   private buildRoutes(): RouteRecord[] {
     const records: RouteRecord[] = [];
     // 全部分支已保存的子域别名标签 → 拥有它的分支 id。
@@ -249,13 +260,18 @@ export class ForwarderRoutePublisher {
 
       if (routableServices.length === 0) continue;
 
-      // 默认入口优先挑 running 服务。若全部仍在 building/starting，则保留
-      // 路由到候选端口，让 forwarder 给出等待页/上游错误，而不是 host 消失。
-      const defaultCandidates = routableServices.some((s) => s.status === 'running')
-        ? routableServices.filter((s) => s.status === 'running')
-        : routableServices;
-      const defaultProfile = pickDefaultProfile(defaultCandidates.map((s) => s.profileId));
-      const defaultPort = defaultCandidates.find((s) => s.profileId === defaultProfile)!.hostPort;
+      // 可路由服务按 profileId 排序后再发前缀路由（plan.cds.service-relations 第二批）：
+      // 此前按 branch.services 的对象键序去重，键序随容器启动先后变化，两个服务声明同一前缀时
+      // 赢家会随部署翻转（「A 入口偶发进 B 端口」的机制之一）。排序后同一份配置永远发同一份路由。
+      routableServices.sort((a, b) => a.profileId.localeCompare(b.profileId));
+
+      // 默认站（承载主域名上未被任何前缀命中的路径）：按名兜底在**全部**可路由服务里选，不再只看
+      // running——否则 web 重建期间默认站会落到第一个 running 的服务（往往是 API 端口），用户打开 /
+      // 看到的是另一个应用。默认站没在跑时路由照发但 healthState 不是 running，forwarder 见状转 master
+      // 出该服务的等待页（proxy-handler），host 不消失、也不落到别的服务。
+      const defaultProfile = pickDefaultProfile(routableServices.map((s) => s.profileId));
+      const defaultSvc = routableServices.find((s) => s.profileId === defaultProfile)!;
+      const defaultPort = defaultSvc.hostPort;
 
       const hosts: string[] = [];
       for (const root of this.opts.rootDomains) {
@@ -277,6 +293,8 @@ export class ForwarderRoutePublisher {
         profileId: string,
         override?: { profileId: string; hostPort: number; replicaGroup?: string; replicaMemberId?: string },
       ): void => {
+        // 每条路由都带上它把流量交给谁：响应头 X-CDS-Profile 与路由判定查询据此回答「落到了谁」
+        base = { ...base, profileId };
         if (override) {
           // 成员直达路由必须带上副本身份（Codex 第二十八轮 P2）：第二十四轮把
           // X-CDS-Replica 改成「以路由为准」后，proxy 对**非副本路由**会显式删掉
@@ -328,10 +346,12 @@ export class ForwarderRoutePublisher {
         // convention 兜底可能冲突,前者优先)
         const writtenPrefixes = new Set<string>();
 
-        // 1) BuildProfile.pathPrefixes 配置驱动(显式覆盖,优先)
+        // 1) BuildProfile.pathPrefixes 配置驱动(显式覆盖,优先)。routableServices 已按 profileId 排序，
+        //    重复前缀确定性地归 id 最小者；探活前缀不发布（探活只打容器端口，公网不该有这条路由）。
         for (const svc of routableServices) {
           const bp = profileById.get(svc.profileId);
           for (const prefix of bp?.pathPrefixes ?? []) {
+            if (isOperationalProbePrefix(prefix)) continue;
             if (writtenPrefixes.has(prefix)) continue;
             writtenPrefixes.add(prefix);
             pushRoute({
@@ -387,7 +407,7 @@ export class ForwarderRoutePublisher {
           branchId: branch.id,
           branchName: branch.branch, // widget injection 需要 branchName,默认 route 也得带,否则 / 页面 widget 消失
           weight: 100,
-          healthState: defaultCandidates.find((s) => s.profileId === defaultProfile)?.status === 'running' ? 'running' : 'unknown',
+          healthState: defaultSvc.status === 'running' ? 'running' : 'unknown',
           // 不写 updatedAt(理由同前两处:dedup 失效防御)
         }, defaultProfile, override);
       };

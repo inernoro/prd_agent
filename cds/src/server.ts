@@ -528,6 +528,8 @@ export interface ServerDeps {
    */
   gracefulShutdown?: GracefulShutdownController;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
+  /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
+  getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
   httpLogStore?: HttpLogSink | null;
   /** Optional persistent diagnostics logger for container/docker/system events. */
   serverEventLogStore?: ServerEventLogSink | null;
@@ -958,6 +960,10 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cleanup-cross-project-services': '清理跨项目服务',
     'POST /compose/lint': '对 compose 做拓扑体检',
     'GET /branches/:id/service-graph': '分支服务关系图与体检',
+    'GET /branches/:id/route-lookup': '路由判定查询（转发器 vs master 兜底）',
+    'GET /branches/:id/references': '分支引用分区（地址类环境变量与跨项目引用）',
+    'GET /overview/topology': '全局概览：各项目关系与体检',
+    'PUT /branches/:id/references/:key': '切换某条引用指向的项目 / 服务 / 分支',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
     'GET /access-requests': '列出授权申请',
@@ -4449,6 +4455,8 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createTopologyRouter({
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
+    getPublishedRoutes: deps.getPublishedRoutes,
+    envConfig: { jwtIssuer: deps.config.jwt.issuer, previewHost: deps.config.previewDomain || deps.config.rootDomains?.[0] },
   }));
 
   app.use('/api', createManagedProjectsRouter({

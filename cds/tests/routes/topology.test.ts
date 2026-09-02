@@ -87,6 +87,114 @@ describe('topology router', () => {
     expect((await request(server, 'POST', '/api/compose/lint', { composeYaml: CONFLICT_YAML, projectId: 'p-x' })).status).toBe(403);
     denyProject = null;
   });
+  it('GET /branches/:id/route-lookup 给出转发器与 master 兜底的判定并标一致性', async () => {
+    const now = new Date().toISOString();
+    stateService.addProject({ id: 'proj', slug: 'demo', name: 'demo', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
+    for (const [id, prefixes] of [['admin', ['/']], ['api', ['/api/']]] as Array<[string, string[]]>) {
+      stateService.addBuildProfile({ id, name: id, projectId: 'proj', dockerImage: 'node:20', workDir: '.', command: 'node s.js', containerPort: 3000, pathPrefixes: prefixes } as Parameters<typeof stateService.addBuildProfile>[0]);
+    }
+    stateService.addBranch({ id: 'proj-main', projectId: 'proj', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now,
+      services: { admin: { profileId: 'admin', containerName: 'c1', hostPort: 9101, status: 'running' }, api: { profileId: 'api', containerName: 'c2', hostPort: 9102, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTopologyRouter({
+      stateService,
+      assertProjectAccess: () => null,
+      getPublishedRoutes: () => [
+        { _id: 'r1', host: 'main-demo.miduo.org', pathPrefix: '/', upstreamPort: 9101, weight: 100, branchId: 'proj-main', profileId: 'admin' },
+        { _id: 'r2', host: 'main-demo.miduo.org', pathPrefix: '/api/', upstreamPort: 9102, weight: 100, branchId: 'proj-main', profileId: 'api' },
+      ],
+    }));
+    const srv = app.listen(0);
+    try {
+      const res = await request(srv, 'GET', '/api/branches/proj-main/route-lookup?host=main-demo.miduo.org&path=/api/x');
+      expect(res.status).toBe(200);
+      expect(res.body.forwarder).toMatchObject({ routeId: 'r2', profileId: 'api', upstreamPort: 9102 });
+      expect(res.body.masterFallback.profileId).toBe('api');
+      expect(res.body.consistent).toBe(true);
+      const miss = await request(srv, 'GET', '/api/branches/proj-main/route-lookup?host=other.miduo.org&path=/');
+      expect(miss.body.forwarder).toBeNull();
+      expect(miss.body.consistent).toBeNull();
+      expect((await request(srv, 'GET', '/api/branches/proj-main/route-lookup?path=/')).status).toBe(400);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+
+  it('GET /branches/:id/references 抽出地址类键并解析引用；PUT 切换写入分支覆盖；service-graph 并入引用断裂', async () => {
+    const now = new Date().toISOString();
+    stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addBuildProfile({ id: 'llmgw-serve', name: 'llmgw', projectId: 'p-prd', dockerImage: 'node:20', workDir: '.', command: 'node s.js', containerPort: 8091, subdomain: 'llmgw' } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBuildProfile({ id: 'cb-web', name: 'cb-web', projectId: 'p-md', dockerImage: 'node:20', workDir: '.', command: 'node w.js', containerPort: 3000, pathPrefixes: ['/'], env: { LLMGW_BASE: '${CDS_REF:prd-agent/llmgw-serve}', MAP_API_BASE: 'https://main-prd-agent.miduo.org', PLAIN: 'x' } } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBranch({ id: 'prd-main', projectId: 'p-prd', branch: 'main', worktreePath: tmpDir, status: 'stopped', createdAt: now, services: { 'llmgw-serve': { profileId: 'llmgw-serve', containerName: 'c', hostPort: 1, status: 'stopped' } } } as Parameters<typeof stateService.addBranch>[0]);
+    stateService.addBranch({ id: 'prd-feat', projectId: 'p-prd', branch: 'feat/x', worktreePath: tmpDir, status: 'running', createdAt: now, services: { 'llmgw-serve': { profileId: 'llmgw-serve', containerName: 'c', hostPort: 1, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    stateService.addBranch({ id: 'md-main', projectId: 'p-md', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 2, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: () => null, envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
+    const srv = app.listen(0);
+    try {
+      const res = await request(srv, 'GET', '/api/branches/md-main/references');
+      expect(res.status).toBe(200);
+      const byKey = Object.fromEntries(res.body.references.map((r: { key: string }) => [r.key, r]));
+      expect(byKey.LLMGW_BASE).toMatchObject({ kind: 'cds-ref', profileId: 'cb-web', source: 'platform-injected', detail: 'cds-ref' });
+      expect(byKey.LLMGW_BASE.resolved[0]).toMatchObject({ status: 'stopped', target: { branchId: 'prd-main', isDefaultBranch: true } });
+      expect(byKey.MAP_API_BASE).toMatchObject({ kind: 'url', matchedBranch: { branchId: 'prd-main' } });
+      expect(byKey.PLAIN).toBeUndefined();
+      expect(byKey.CDS_PREVIEW_URL?.kind).toBe('platform');
+      expect(res.body.broken.map((f: { rule: string; severity: string }) => [f.rule, f.severity])).toEqual([['reference-broken', 'warn']]);
+
+      const bad = await request(srv, 'PUT', '/api/branches/md-main/references/LLMGW_BASE', { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'gone' });
+      expect(bad.status).toBe(409);
+      const ok = await request(srv, 'PUT', '/api/branches/md-main/references/LLMGW_BASE', { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'feat/x' });
+      expect(ok.status).toBe(200);
+      expect(ok.body.value).toBe('${CDS_REF:prd-agent/llmgw-serve@feat/x}');
+      expect(stateService.getBranch('md-main')?.profileOverrides?.['cb-web']?.env?.LLMGW_BASE).toBe('${CDS_REF:prd-agent/llmgw-serve@feat/x}');
+      const after = await request(srv, 'GET', '/api/branches/md-main/references');
+      const sw = after.body.references.find((r: { key: string }) => r.key === 'LLMGW_BASE');
+      expect(sw.resolved[0]).toMatchObject({ status: 'running', target: { branchId: 'prd-feat' } });
+      expect(after.body.broken).toEqual([]);
+
+      const graph = await request(srv, 'GET', '/api/branches/md-main/service-graph');
+      expect(graph.status).toBe(200);
+      expect(graph.body.references.length).toBeGreaterThan(0);
+      expect(graph.body.lint.findings.some((f: { rule: string }) => f.rule === 'reference-broken')).toBe(false);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+
+  it('GET /overview/topology 每个项目给代表分支、体检结论与跨项目引用边', async () => {
+    const now = new Date().toISOString();
+    stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addProject({ id: 'p-empty', slug: 'empty', name: 'empty', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addBuildProfile({ id: 'llmgw-serve', name: 'llmgw', projectId: 'p-prd', dockerImage: 'node:20', workDir: '.', command: 'node s.js', containerPort: 8091, subdomain: 'llmgw' } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBuildProfile({ id: 'cb-web', name: 'cb-web', projectId: 'p-md', dockerImage: 'node:20', workDir: '.', command: 'node w.js', containerPort: 3000, pathPrefixes: ['/'], env: { LLMGW_BASE: '${CDS_REF:prd-agent/llmgw-serve}' } } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBranch({ id: 'prd-main', projectId: 'p-prd', branch: 'main', worktreePath: tmpDir, status: 'stopped', createdAt: now, services: { 'llmgw-serve': { profileId: 'llmgw-serve', containerName: 'c', hostPort: 1, status: 'stopped' } } } as Parameters<typeof stateService.addBranch>[0]);
+    stateService.addBranch({ id: 'md-main', projectId: 'p-md', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 2, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: (_r, pid) => (pid === 'p-empty' ? { status: 403, body: { error: 'forbidden' } } : null), envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
+    const srv = app.listen(0);
+    try {
+      const res = await request(srv, 'GET', '/api/overview/topology');
+      expect(res.status).toBe(200);
+      expect(res.body.projects.map((p: { slug: string }) => p.slug).sort()).toEqual(['mdimp', 'prd-agent']);
+      const md = res.body.projects.find((p: { slug: string }) => p.slug === 'mdimp');
+      expect(md.branch).toMatchObject({ id: 'md-main', name: 'main' });
+      expect(md.edges).toEqual([expect.objectContaining({ toProjectId: 'p-prd', kind: 'cds-ref', status: 'stopped', fromService: 'cb-web', key: 'LLMGW_BASE' })]);
+      expect(md.lint.warnings).toBeGreaterThanOrEqual(1);
+      expect(md.headline).toContain('LLMGW_BASE');
+      const prd = res.body.projects.find((p: { slug: string }) => p.slug === 'prd-agent');
+      expect(prd.inboundEdges).toBe(1);
+      expect(res.body.summary.warnings).toBeGreaterThanOrEqual(1);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+
   it('GET /branches/:id/service-graph 分支不存在 404', async () => {
     const res = await request(server, 'GET', '/api/branches/nope/service-graph');
     expect(res.status).toBe(404);
