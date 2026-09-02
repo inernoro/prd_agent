@@ -216,6 +216,25 @@ describe('今日调度轴', () => {
     expect(timeline.hiddenCount).toBe(3);
   });
 
+  it('泳道先给今天真有动静的任务：手动任务不能把马上要跑的日常任务挤出轴', () => {
+    // 列表接口按 `nextRunAt || ''` 升序排，空串排头——所以没有下次触发的手动任务
+    // 天然排在最前。稳定排序会把这个顺序原样带进泳道，6 条槽位可能全是「今天什么
+    // 都不会发生」的任务。
+    const jobs = [
+      ...Array.from({ length: 6 }, (_, i) => job({ id: `manual${i}`, schedule: { type: 'manual' }, nextRuns: [] })),
+      job({ id: 'daily', schedule: { type: 'daily', timeOfDay: '20:00' }, nextRuns: [at(20)] }),
+      job({ id: 'ran', schedule: { type: 'daily', timeOfDay: '06:00' }, nextRuns: [] }),
+    ];
+    const runsByJob = new Map([[ 'ran', [run({ id: 'r1', jobId: 'ran', status: 'success', queuedAt: at(6) })] ]]);
+    const timeline = buildTimeline(jobs, runsByJob, NOW, '');
+
+    const ids = timeline.lanes.map((lane) => lane.id);
+    expect(ids).toContain('daily'); // 今天还要跑
+    expect(ids).toContain('ran');   // 今天跑过了
+    expect(ids.slice(0, 2)).toEqual(['daily', 'ran']);
+    expect(timeline.hiddenCount).toBe(2);
+  });
+
   it('越界的投影时刻不画：昨天的、明天的、已经过去的都不进轴', () => {
     const jobs = [job({
       id: 'x',

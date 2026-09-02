@@ -323,8 +323,29 @@ export function buildTimeline(
   // 因为排名只留 6 条，选中的任务排在第 7 位时后者会得到空数组——细带静默消失，
   // 页面照常渲染、测试照常绿。
   const pool = options.onlyJobId ? jobs.filter((job) => job.id === options.onlyJobId) : jobs;
+  // 「今天这条轴上有东西可画」= 今天跑过，或今天还有待触发。手动 / 外部触发的任务
+  // 通常两样都没有，可它们在列表接口里排在最前（按 `nextRunAt || ''` 升序，空串排头），
+  // 稳定排序会把这个顺序原样带进来——于是 6 条泳道可能全被「今天什么都不会发生」的
+  // 任务占满，而马上要跑的日常任务被算进「另有 N 条未显示」。这条轴就是来看调度的，
+  // 不能把调度挤出去（Codex #1471 P2）。
+  const hasTodayActivity = (job: ScheduledJob) => {
+    if ((runsByJob.get(job.id) || []).some((run) => Date.parse(run.queuedAt) >= dayStart)) return true;
+    return (job.nextRuns || []).some((iso) => {
+      const at = Date.parse(iso);
+      return Number.isFinite(at) && at > now && at < dayEnd;
+    });
+  };
   const ranked = [...pool].sort((a, b) => {
-    const weight = (job: ScheduledJob) => (job.autoDisabledReason ? 0 : (job.consecutiveFailureCount || 0) > 0 ? 1 : job.id === selectedId ? 2 : 3);
+    const weight = (job: ScheduledJob) =>
+      job.autoDisabledReason
+        ? 0
+        : (job.consecutiveFailureCount || 0) > 0
+          ? 1
+          : job.id === selectedId
+            ? 2
+            : hasTodayActivity(job)
+              ? 3
+              : 4;
     return weight(a) - weight(b);
   });
 
