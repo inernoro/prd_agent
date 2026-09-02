@@ -129,7 +129,10 @@ export function TaskSchedulePage(): JSX.Element {
    * 只用于「这个任务自己」的视图；今日统计仍然只看全局那份，否则同一屏的数字
    * 会随着选中谁而变。
    */
-  const [selectedRuns, setSelectedRuns] = useState<ScheduledJobRun[]>([]);
+  // 带上它属于哪个任务：只按数组存，切到 B 时 A 的记录还在，而下面的合并会先把 B 的
+  // 全局记录滤掉再贴上 A 的——B 在请求回来之前健康条 / P50 / 细带 / 运行流全是空的，
+  // 慢一点的请求就是在报假状态（Codex #1471 P2）。
+  const [selectedRuns, setSelectedRuns] = useState<{ jobId: string; runs: ScheduledJobRun[] }>({ jobId: '', runs: [] });
   const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<FormState>(() => emptyForm());
   const [loading, setLoading] = useState(true);
@@ -203,21 +206,25 @@ export function TaskSchedulePage(): JSX.Element {
   }, [projects]);
 
   useEffect(() => {
-    if (!selectedId) { setSelectedRuns([]); return; }
+    if (!selectedId) { setSelectedRuns({ jobId: '', runs: [] }); return; }
     let alive = true;
     void apiRequest<{ runs: ScheduledJobRun[] }>(
       `/api/scheduled-jobs/runs?jobId=${encodeURIComponent(selectedId)}&limit=200`,
     )
-      .then((res) => { if (alive) setSelectedRuns(res.runs || []); })
+      .then((res) => { if (alive) setSelectedRuns({ jobId: selectedId, runs: res.runs || [] }); })
       // 拉不到就退回全局切片：细带和健康条会少几条，但不能因此把整页打红。
-      .catch(() => { if (alive) setSelectedRuns([]); });
+      .catch(() => { if (alive) setSelectedRuns({ jobId: selectedId, runs: [] }); });
     return () => { alive = false; };
   }, [selectedId, runs]);
 
-  /** 全局切片 + 选中任务的完整史；选中那个任务的记录以完整史为准。 */
+  /**
+   * 全局切片 + 选中任务的完整史；选中那个任务的记录以完整史为准。
+   * 只有在完整史确实属于当前选中项时才替换——否则宁可用全局切片（少几条），
+   * 也不能拿上一个任务的记录顶替这一个。
+   */
   const mergedRuns = useMemo(() => {
-    if (!selectedId || selectedRuns.length === 0) return runs;
-    return [...runs.filter((run) => run.jobId !== selectedId), ...selectedRuns];
+    if (!selectedId || selectedRuns.jobId !== selectedId || selectedRuns.runs.length === 0) return runs;
+    return [...runs.filter((run) => run.jobId !== selectedId), ...selectedRuns.runs];
   }, [runs, selectedRuns, selectedId]);
 
   const runsByJob = useMemo(() => {

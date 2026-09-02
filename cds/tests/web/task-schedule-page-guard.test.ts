@@ -75,6 +75,10 @@ describe('任务调度页的接线', () => {
     // 合并后的池子要真的被「这个任务自己」的视图消费
     const merged = src.slice(src.indexOf('const mergedRuns'), src.indexOf('const healthOf'));
     expect(merged).toContain('selectedRuns');
+    // 完整史必须带着它属于哪个任务：切到 B 时 A 的记录还在，若无条件合并，
+    // 合并会先滤掉 B 的全局记录再贴上 A 的——B 在请求回来前是一片空白，
+    // 那是在报假状态（Codex #1471 P2）。红绿闭环：删掉这个判据，本用例红。
+    expect(merged, '完整史没有跟选中项对上号就直接合并了').toContain('selectedRuns.jobId !== selectedId');
     expect(src).toMatch(/\}, \[mergedRuns\]\);/);
 
     // 今日统计仍然只看全局那份：否则同一屏的数字会随着选中谁而变。
