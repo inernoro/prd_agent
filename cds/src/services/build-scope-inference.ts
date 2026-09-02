@@ -65,12 +65,15 @@ export function normalizeRepoRelativeDir(raw: string): string | null {
 /**
  * 从启动命令里读出服务待的目录。
  *
- * 只认**第一条** `cd`：命令后面常有 `cd dist && node server.js` 这种二次切换，
- * 那是产物目录不是源码目录，跟着它走会把范围缩到一个构建产物上。
+ * 只认**开头那一条** `cd`——它是在确立「这个服务从仓库的哪儿起步」。命令中段的
+ * `cd` 是另一回事：`pnpm build && cd dist && node server.js` 里的 `dist` 是构建
+ * 产物目录，跟着它走会把范围缩成 `dist/**`，于是改 `prd-admin/src` 反而被判成
+ * 「未波及」而静默跳过部署（2026-09-02 Codex P1）。上一版只取「第一条 cd」，
+ * 在这个例子里第一条恰好就是 `cd dist`，所以拦不住。
  */
 export function dirFromCommand(command: string | undefined): string | null {
   if (!command) return null;
-  const match = /(?:^|[;&|]|\bthen\b|\bdo\b)\s*cd\s+("[^"]+"|'[^']+'|[^\s;&|]+)/.exec(command);
+  const match = /^\s*cd\s+("[^"]+"|'[^']+'|[^\s;&|]+)/.exec(command);
   if (!match) return null;
   return normalizeRepoRelativeDir(match[1]);
 }
@@ -121,6 +124,14 @@ export function inferProfileScope(profile: ScopeSourceProfile): ScopeGuess | nul
     return { scope: declared, source: 'declared', why: '已经声明过' };
   }
 
+  // workDir 优先于命令里的 cd（2026-09-02 Codex P1）：命令是在 workDir 挂载出来的
+  // 目录里执行的，所以非仓库根的 workDir 本身就是更可信、更稳定的答案；命令里的
+  // cd 只是它的补充。反过来先信命令，就会被 `cd dist` 这类产物目录带偏。
+  const workDir = normalizeRepoRelativeDir(profile.workDir || '');
+  if (workDir) {
+    return { scope: [`${workDir}/**`], source: 'workDir', why: `工作目录是 ${workDir}` };
+  }
+
   // 各部署模式的命令也算数：dev 模式常带 cd，而 express 模式只有镜像没有命令。
   const commands = [profile.command, ...Object.values(profile.deployModes || {}).map((m) => m?.command)];
   for (const command of commands) {
@@ -128,11 +139,6 @@ export function inferProfileScope(profile: ScopeSourceProfile): ScopeGuess | nul
     if (dir) {
       return { scope: [`${dir}/**`], source: 'command', why: `启动命令里 cd ${dir}` };
     }
-  }
-
-  const workDir = normalizeRepoRelativeDir(profile.workDir || '');
-  if (workDir) {
-    return { scope: [`${workDir}/**`], source: 'workDir', why: `工作目录是 ${workDir}` };
   }
   return null;
 }

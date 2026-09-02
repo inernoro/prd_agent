@@ -32,8 +32,19 @@ const SECRET = 'whsec-test';
 class MockShell implements IShellExecutor {
   async exec() { return { stdout: '', stderr: '', exitCode: 0 }; }
 }
+/**
+ * 可注入失败的 worktree：目标目录含 `failFor` 时**每次**都抛。
+ *
+ * 只挡第一次是不够的——建分支路径自带一次重试，第二次成功的话这个项目照样建起来，
+ * 用例就测不到「失败项目挡住后续项目」那件事了（第一版夹具就是这么不成立的）。
+ */
 class MockWorktree extends WorktreeService {
-  override async create() { /* no-op */ }
+  failFor = '';
+  override async create(_repoRoot: string, _branch: string, targetDir: string) {
+    if (this.failFor && targetDir.includes(this.failFor)) {
+      throw new Error('simulated git worktree failure');
+    }
+  }
 }
 
 function post(server: http.Server, event: string, payload: unknown): Promise<number> {
@@ -66,6 +77,7 @@ describe('一仓多项目：清理请求要对每个项目都发出去', () => {
   /** 拦下来的内部清理调用：[method, branchId] */
   let calls: Array<{ method: string; branchId: string }>;
   let realFetch: typeof globalThis.fetch;
+  let worktree: MockWorktree;
 
   function addProject(id: string, slug: string, name: string): void {
     const now = new Date().toISOString();
@@ -100,11 +112,12 @@ describe('一仓多项目：清理请求要对每个项目都发出去', () => {
       jwt: { secret: 'x'.repeat(32), issuer: 'cds' }, mode: 'standalone', executorPort: 9901,
       githubApp: { appId: '1', privateKey: 'unused', webhookSecret: SECRET },
     };
+    worktree = new MockWorktree(shell);
     const app = express();
     app.use(express.json({ verify: (req, _res, buf) => { (req as { rawBody?: Buffer }).rawBody = buf; } }));
     app.use('/api', createGithubWebhookRouter({
       stateService,
-      worktreeService: new MockWorktree(shell),
+      worktreeService: worktree,
       shell,
       config,
       githubApp: null,
@@ -134,6 +147,28 @@ describe('一仓多项目：清理请求要对每个项目都发出去', () => {
     expect(stateService.findBranchByProjectAndName('p-self', 'feature/x')).toBeDefined();
     calls.length = 0;
   }
+
+  it('一个项目炸了，其余项目照常处理，而且失败仍然报出来', async () => {
+    // await 在循环里一抛，后面的项目直接不跑；而路由捕获后照样回 200（GitHub 不
+    // 重投），于是剩下的项目静默错过这次事件。这正是本 PR 从头在防的那种故障。
+    addProject('p-boom', 'boomp', '会炸的项目');
+    addProject('p-ok', 'okp', '正常项目');
+    worktree.failFor = 'boomp';
+
+    const status = await post(server, 'push', {
+      ref: 'refs/heads/feature/x',
+      after: SHA,
+      repository: { id: 1, full_name: REPO },
+      commits: [{ added: [], modified: ['src/app.ts'], removed: [] }],
+    });
+
+    // 不回 500（GitHub 不重投），但失败要摆出来 —— 只保住前一半等于削弱契约
+    expect(status).toBe(200);
+    // 判据是「后面的项目有没有被处理」，不是 create 被调了几次 —— 失败那个项目
+    // 内部还有一次重试，数次数会脆。
+    expect(stateService.findBranchByProjectAndName('p-ok', 'feature/x')).toBeDefined();
+    expect(stateService.findBranchByProjectAndName('p-boom', 'feature/x')).toBeUndefined();
+  });
 
   it('关 PR：两个项目的预览都收到停止请求，不是只停第一个', async () => {
     await seedTwoBranches();

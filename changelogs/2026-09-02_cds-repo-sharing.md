@@ -23,3 +23,7 @@
 | fix | cds | 同仓共享判定改读 getCustomEnv（继承的全局 + 旧 bucket），裸 project.customEnv 会漏掉真实共享 |
 | security | cds | 绑仓库 409 响应同样不向机器凭据端出兄弟项目明细；isMachineCaller 抽成唯一一处并加守卫 |
 | fix | cds | REDIS_PORT=6379 这类非地址取值不再被判成共享缓存，误报违背了「宁可漏报」的既定取舍 |
+| fix | cds | 逐项目分发时一个项目抛错不再中断其余项目；失败仍以 ok:false 报出，不回 500 让 GitHub 重投 |
+| fix | cds | 范围推断改为 workDir 优先、命令只认开头那条 cd；此前 `pnpm build && cd dist` 会把范围猜成 dist/** |
+| fix | cds | 库名相同但 host 不同不再判成共享数据库；上一轮只修了 redis 那一半 |
+| fix | cds | 共用仓库的确认文案按兄弟项目划没划范围分档，不再一律说「每次推送全部重建」 |

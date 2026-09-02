@@ -2994,7 +2994,7 @@ function AgentKeyRevokeDialog({
 interface RepoAlreadyLinked {
   repoFullName: string;
   /** 兄弟项目明细。机器凭据拿不到，所以可能是空数组——用 projectCount 兜底显示。 */
-  projects: Array<{ id: string; name: string }>;
+  projects: Array<{ id: string; name: string; scoped?: boolean }>;
   projectCount: number;
 }
 

@@ -3043,7 +3043,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       repoAlreadyLinked: githubRepoAlreadyLinked
         ? {
             repoFullName: githubRepoFullName,
-            projects: isMachineCaller(req) ? [] : repoLinkedProjects.map((p) => ({ id: p.id, name: p.name })),
+            projects: isMachineCaller(req) ? [] : repoLinkedProjects.map((p) => ({
+              id: p.id,
+              name: p.name,
+              // 同上：已划范围的兄弟不会每次推送都重建，确认文案要分档
+              scoped: resolveProjectScope(stateService.getBuildProfilesForProject(p.id)).length > 0,
+            })),
             projectCount: repoLinkedProjects.length,
           }
         : undefined,

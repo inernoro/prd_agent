@@ -236,12 +236,23 @@ export function RepoSharingConfirmBody({
   siblingCount,
 }: {
   repoFullName: string;
-  siblings: Array<{ id: string; name: string }>;
+  siblings: Array<{ id: string; name: string; scoped?: boolean }>;
   siblingCount?: number;
 }): JSX.Element {
   const who = siblings.length > 0
     ? siblings.map((s) => s.name).join('、')
     : `${siblingCount ?? 0} 个别的项目`;
+  // 已经划了范围的兄弟只在被改到时才重建 —— 在用户拍板的这一刻，把话说准，
+  // 不要一律吓成「每次推送全部重建」（2026-09-02 Codex P2）。
+  const unscoped = siblings.filter((s) => s.scoped === false);
+  const scoped = siblings.filter((s) => s.scoped === true);
+  const pushLine = siblings.length === 0
+    ? '往这个仓库推一次代码，这些项目会各自判断要不要建分支、要不要构建。'
+    : unscoped.length === 0
+      ? `往这个仓库推一次代码，${scoped.map((s) => s.name).join('、')} 只在被改到时才重建（它们都划了构建范围）。`
+      : scoped.length === 0
+        ? `往这个仓库推一次代码，这些项目会各自建分支、各自构建一遍（它们都没划构建范围）。`
+        : `往这个仓库推一次代码：${unscoped.map((s) => s.name).join('、')} 每次都会重建（没划范围），${scoped.map((s) => s.name).join('、')} 只在被改到时才重建。`;
   return (
     <div className="space-y-3 text-sm">
       <p>
@@ -251,12 +262,12 @@ export function RepoSharingConfirmBody({
         。再绑一个不是错误用法，但从这一刻起有三件事会变：
       </p>
       <ul className="space-y-1.5 pl-4 text-muted-foreground">
-        <li className="list-disc">往这个仓库推一次代码，这些项目会<strong className="font-semibold text-foreground">各自</strong>建分支、各自构建一遍。</li>
+        <li className="list-disc">{pushLine}</li>
         <li className="list-disc">删掉其中一个项目，不影响其它项目 —— 但它们的预览分支是各自独立的容器，占的是各自的资源。</li>
         <li className="list-disc">如果它们的环境变量指向同一个数据库，一边写坏另一边立刻可见。</li>
       </ul>
       <p className="text-muted-foreground">
-        想让每个项目只在被改到时才重建，给各自的构建配置声明「构建范围」即可。
+        本项目要只在被改到时才重建，给它的构建配置声明「构建范围」即可。
       </p>
     </div>
   );

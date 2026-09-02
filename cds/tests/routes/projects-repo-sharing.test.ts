@@ -272,7 +272,8 @@ describe('项目接口透出同仓关系', () => {
       name: '新项目二', gitRepoUrl: 'https://github.com/octocat/monorepo.git',
     }, { 'cds-cookie': '1' });
 
-    expect(res.body.repoAlreadyLinked.projects).toEqual([{ id: 'p-main', name: 'MAP' }]);
+    // 带上 scoped，确认文案才能按「划没划范围」分档说话
+    expect(res.body.repoAlreadyLinked.projects).toEqual([{ id: 'p-main', name: 'MAP', scoped: false }]);
   });
 
   it('不签会话的实例（CDS_AUTH_MODE=disabled）里，真人照样看得见', async () => {

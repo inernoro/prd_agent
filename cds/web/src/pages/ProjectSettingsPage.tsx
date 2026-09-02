@@ -1951,7 +1951,7 @@ function GithubRepoPickerDialog({
     {
       repoFullName: string;
       installationId: number;
-      siblings: Array<{ id: string; name: string }>;
+      siblings: Array<{ id: string; name: string; scoped?: boolean }>;
     } | null
   >(null);
 
@@ -2021,7 +2021,7 @@ function GithubRepoPickerDialog({
       setSharedConfirm(null);
       onOpenChange(false);
     } catch (err) {
-      const body = err instanceof ApiError ? (err.body as { error?: string; siblings?: Array<{ id: string; name: string }> } | null) : null;
+      const body = err instanceof ApiError ? (err.body as { error?: string; siblings?: Array<{ id: string; name: string; scoped?: boolean }> } | null) : null;
       if (body?.error === 'already_linked') {
         setSharedConfirm({ ...effective, siblings: body.siblings || [] });
       } else {

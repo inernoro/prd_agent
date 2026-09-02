@@ -97,6 +97,32 @@ export function isAllowedCdsBranchName(ref: string): boolean {
  *
  * 纯函数，与调用它的类无关，可直接单测。
  */
+/**
+ * 逐项目分发时的异常隔离（2026-09-02 Codex P1）。
+ *
+ * 一个项目处理失败（worktree 重试失败之类）不许连累其余：await 在循环里一抛，
+ * 后面的项目直接不跑，而路由捕获后**照样回 200**（GitHub 不重投），于是剩下的项目
+ * 静默错过这次事件——正是这个 PR 从头到尾在防的那种没有信号的故障。
+ *
+ * 所以每个项目单独兜住，把失败变成一条看得见的结果留在 fanout 里，循环继续。
+ */
+async function runPerProject(
+  project: { id: string; name: string },
+  run: () => Promise<WebhookDispatchResult>,
+): Promise<WebhookDispatchResult> {
+  try {
+    return await run();
+  } catch (err) {
+    const message = (err as Error)?.message || String(err);
+    // eslint-disable-next-line no-console
+    console.error(`[webhook] 项目 '${project.id}' 处理失败，其余项目继续:`, message);
+    return {
+      action: 'project-dispatch-failed',
+      message: `项目 '${project.name}' 处理失败：${message}`,
+    };
+  }
+}
+
 /** 这条结果有没有要求路由去做点什么（部署 / 停容器 / 删分支）。 */
 function carriesAction(r: WebhookDispatchResult): boolean {
   return !!(r.deployRequest || r.stopRequest || r.branchDeleteRequest);
@@ -171,7 +197,10 @@ export interface WebhookDispatchResult {
     | 'ci-image-failed'
     // 2026-07-09 入口校验：仓库缺 branch-image.yml，不进 waiting 直接归因失败
     | 'ci-image-workflow-missing'
-    | 'workflow-acknowledged';
+    | 'workflow-acknowledged'
+    // 2026-09-02 一仓多项目：某个项目处理时抛了异常，其余项目照常继续。
+    // 单独一个 action 而不是复用 ignored-*，是因为它绝不能被读成「按规则跳过」。
+    | 'project-dispatch-failed';
   /** Short human message for the response + logs. */
   message: string;
   /**
@@ -819,7 +848,7 @@ export class GitHubWebhookDispatcher {
     }
     const results: WebhookDispatchResult[] = [];
     for (const project of projects) {
-      results.push(await this.handleDeleteForProject(event, project));
+      results.push(await runPerProject(project, () => this.handleDeleteForProject(event, project)));
     }
     return mergeFanoutResults(results, projects, 'delete');
   }
@@ -1022,7 +1051,7 @@ export class GitHubWebhookDispatcher {
     }
     const wfResults: WebhookDispatchResult[] = [];
     for (const project of projects) {
-      wfResults.push(await this.handleWorkflowRunForProject(event, project, dryRun));
+      wfResults.push(await runPerProject(project, () => this.handleWorkflowRunForProject(event, project, dryRun)));
     }
     return mergeFanoutResults(wfResults, projects, 'workflow_run');
   }
@@ -1158,7 +1187,7 @@ export class GitHubWebhookDispatcher {
     }
     const prResults: WebhookDispatchResult[] = [];
     for (const project of prProjects) {
-      prResults.push(await this.handlePullRequestForProject(event, project, dryRun));
+      prResults.push(await runPerProject(project, () => this.handlePullRequestForProject(event, project, dryRun)));
     }
     return mergeFanoutResults(prResults, prProjects, 'pull_request');
   }
@@ -1365,14 +1394,12 @@ export class GitHubWebhookDispatcher {
         });
         continue;
       }
-      perProject.push(
-        await this.handlePushForProject(
-          event,
-          project,
-          { branchName, commitSha, repoFullName, receivedAt },
-          dryRun,
-        ),
-      );
+      perProject.push(await runPerProject(project, () => this.handlePushForProject(
+        event,
+        project,
+        { branchName, commitSha, repoFullName, receivedAt },
+        dryRun,
+      )));
     }
     return mergeFanoutResults(perProject, projects);
   }

@@ -65,12 +65,14 @@ function classifyValue(key: string, value: string): SharedInfraHit['kind'] | nul
   const lowerVal = v.toLowerCase();
   if (/^(mongodb|mysql|postgres(ql)?|sqlserver|mariadb):\/\//.test(lowerVal)) return 'database';
   if (/^redis(s)?:\/\//.test(lowerVal)) return 'cache';
-  // 连接串之外，DB 名这类 key 撞上同一个值同样是共享（配套的 host 往往在别处）
-  if (/(database|db)_?name$|^.*_db$|database$/.test(lowerKey)) return 'database';
-  // 按 key 名认 redis 时**必须再看值像不像一个地址**（2026-09-02 Codex P2）：
-  // `REDIS_PORT=6379` 两个项目当然会一样，但那说明不了它们连的是同一个 redis，
-  // 而报出去的话是「一边写坏，另一边立刻可见」——这正是我自己写下的「宁可漏报
-  // 也不误报」被自己破掉的地方。端口号 / 纯数字 / 布尔开关一律不算。
+  // 连接串之外，只按 key 名认（DB 名、redis 配置）时**必须再看取值像不像一个地址**。
+  //
+  // 光有名字证明不了「连的是同一处」：两个项目都写 `MYSQL_DATABASE=app` 但
+  // `MYSQL_HOST` 各不相同，是两个库；`REDIS_PORT=6379` 相同更是常态。而这里报出去
+  // 的话是「一边写坏，另一边立刻可见」，属于误报——直接违背本模块开头写的
+  // 「宁可漏报也不误报」。2026-09-02 连着两轮 review 各抓出一半：先是 redis，
+  // 再是 DB 名。所以这次两条一起收在同一个判据下，别再修一半。
+  if (/(database|db)_?name$|^.*_db$|database$/.test(lowerKey) && looksLikeEndpointValue(v)) return 'database';
   if (/^redis/.test(lowerKey) && looksLikeEndpointValue(v)) return 'cache';
   if (/^(https?):\/\//.test(lowerVal)) return 'endpoint';
   return null;

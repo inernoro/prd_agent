@@ -59,6 +59,7 @@ import {
 import { broadcastSelfStatus } from './branches.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { isMachineCaller } from '../services/machine-caller.js';
+import { resolveProjectScope } from '../services/project-scope.js';
 
 export interface GitHubWebhookRouterDeps {
   stateService: StateService;
@@ -453,6 +454,31 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         delivery: deliveryId,
         error: 'dispatch_error',
         message: (err as Error).message,
+      });
+      return;
+    }
+
+    /*
+     * 逐项目分发时某个项目抛了错：dispatcher 已把它兜成一条结果、其余项目照常跑完
+     * （见 runPerProject）。但**失败必须仍然看得见**——这条响应契约的本意是「不回
+     * 500 让 GitHub 重投，同时把失败摆出来」，只保住前一半就是把契约削弱了。
+     * 所以任一结果是 project-dispatch-failed，整条投递就报 ok:false，理由列全。
+     */
+    const failed = [result, ...(result.fanout || [])].filter((r) => r.action === 'project-dispatch-failed');
+    if (failed.length > 0) {
+      const reason = failed.map((r) => r.message).join('；');
+      outcome.dispatchAction = 'error';
+      outcome.dispatchReason = 'dispatcher 抛错';
+      outcome.error = reason;
+      // outcome 由 res.on('finish') 统一落库，这里只更新字段
+      res.status(200).json({
+        ok: false,
+        event: eventName,
+        delivery: deliveryId,
+        error: 'dispatch_error',
+        message: reason,
+        // 没炸的那些项目已经处理完了，别让调用方以为整条投递都没生效
+        handled: [result, ...(result.fanout || [])].length - failed.length,
       });
       return;
     }
@@ -954,7 +980,13 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         message: machine
           ? `${repoFullName} 已经绑定到另外 ${alreadyLinked.length} 个项目`
           : `${repoFullName} 已经绑定到项目 ${alreadyLinked.map((p) => p.name).join('、')}`,
-        siblings: machine ? [] : alreadyLinked.map((p) => ({ id: p.id, name: p.name })),
+        siblings: machine ? [] : alreadyLinked.map((p) => ({
+          id: p.id,
+          name: p.name,
+          // 已经划了范围的兄弟不会每次推送都重建 —— 确认弹窗要按这个分档说话，
+          // 否则在用户拍板的那一刻夸大了后果（2026-09-02 Codex P2）。
+          scoped: resolveProjectScope(stateService.getBuildProfilesForProject(p.id)).length > 0,
+        })),
         siblingCount: alreadyLinked.length,
         nextStep: '确认要让多个项目共用这个仓库，就带上 allowShared 再试一次；'
           + '推送会按各项目声明的构建范围分发，没声明范围的项目每次推送都会重建。',

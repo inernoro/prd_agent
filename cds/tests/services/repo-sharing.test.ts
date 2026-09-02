@@ -107,10 +107,21 @@ describe('findSharedInfra：共享是算出来的，不是假设的', () => {
     expect(hits).toEqual([]);
   });
 
-  it('库名 key 撞上同一个值同样算共享（配套 host 常常在别处）', () => {
+  it('光有库名不算共享：两边都叫 app，但 host 不同就是两个库', () => {
+    // 这条用例原本断言的是相反的行为（「库名撞上就算共享」），那是把一个误报
+    // 锁死在测试里 —— 而本模块开头写的是「宁可漏报也不误报」。2026-09-02 Codex
+    // 指出：库名只有连同 host / 连接串才构成身份。
     const hits = findSharedInfra([
-      proj('p1', 'A', [], { MYSQL_DATABASE: 'app' }),
-      proj('p2', 'B', [], { MYSQL_DATABASE: 'app' }),
+      proj('p1', 'A', [], { MYSQL_DATABASE: 'app', MYSQL_HOST: 'a-db.internal' }),
+      proj('p2', 'B', [], { MYSQL_DATABASE: 'app', MYSQL_HOST: 'b-db.internal' }),
+    ]);
+    expect(hits).toEqual([]);
+  });
+
+  it('完整连接串相同才算共享', () => {
+    const hits = findSharedInfra([
+      proj('p1', 'A', [], { MYSQL_URL: 'mysql://box:3306/app' }),
+      proj('p2', 'B', [], { MYSQL_URL: 'mysql://box:3306/app' }),
     ]);
     expect(hits).toHaveLength(1);
     expect(hits[0].kind).toBe('database');

@@ -38,6 +38,11 @@ describe('从启动命令读出目录', () => {
     expect(dirFromCommand('cd prd-admin && pnpm build && cd dist && node server.js')).toBe('prd-admin');
   });
 
+  it('中段的 cd 不算：pnpm build && cd dist 里的 dist 是产物目录', () => {
+    // 跟着它走会把范围缩成 dist/**，于是改 prd-admin/src 反被判「未波及」
+    expect(dirFromCommand('pnpm build && cd dist && node server.js')).toBeNull();
+  });
+
   it('仓库根本身不算范围 —— 那等于全通配，做不出任何区分', () => {
     expect(dirFromCommand('cd . && make')).toBeNull();
     expect(dirFromCommand('cd /repo && make')).toBeNull();
@@ -81,6 +86,21 @@ describe('已声明的范围优先于推断', () => {
     expect(guess?.scope).toEqual(['cds/**']);
     expect(guess?.source).toBe('command');
     expect(guess?.why).toContain('cd cds');
+  });
+
+  it('workDir 优先于命令里的 cd —— 命令是在 workDir 里执行的', () => {
+    const guess = inferProfileScope({
+      id: 'admin',
+      workDir: 'prd-admin',
+      command: 'pnpm build && cd dist && node server.js',
+    });
+    expect(guess).toEqual({ scope: ['prd-admin/**'], source: 'workDir', why: '工作目录是 prd-admin' });
+  });
+
+  it('workDir 是仓库根时才轮到命令（生产上普遍是 .）', () => {
+    const guess = inferProfileScope({ id: 'cds', workDir: '.', command: CMD_CDS_SELF });
+    expect(guess?.scope).toEqual(['cds/**']);
+    expect(guess?.source).toBe('command');
   });
 
   it('命令没线索时退到 workDir', () => {

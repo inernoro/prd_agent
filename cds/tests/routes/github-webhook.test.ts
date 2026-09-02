@@ -692,8 +692,27 @@ describe('POST /api/projects/:id/github/link', () => {
       JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
     );
     expect(res.status).toBe(409);
-    expect(res.body.siblings).toEqual([{ id: 'p2', name: 'Other' }]);
+    // 带上「划没划范围」，确认弹窗才能按分档说话，不一律吓成「每次全部重建」
+    expect(res.body.siblings).toEqual([{ id: 'p2', name: 'Other', scoped: false }]);
     expect(res.body.siblingCount).toBe(1);
+  });
+
+  it('已划范围的兄弟标 scoped，确认文案据此分档', async () => {
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    stateService.addBuildProfile({
+      id: 'p2-app', projectId: 'p2', name: 'app', dockerImage: 'node:22', workDir: '.',
+      containerPort: 3000, hostPortPreference: 0, buildCommand: 'echo build',
+      buildScope: ['other/**'],
+    } as never);
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
+    );
+    expect(res.body.siblings).toEqual([{ id: 'p2', name: 'Other', scoped: true }]);
   });
 
   it('机器凭据看不到兄弟项目的 id 与名字，只知道有几个', async () => {
