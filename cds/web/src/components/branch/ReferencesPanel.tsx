@@ -16,7 +16,7 @@ import { apiRequest, ApiError } from '@/lib/api';
 import { postSse, sseEventText } from '@/lib/sse';
 
 type RefKind = 'cds-ref' | 'url' | 'name-hint' | 'platform';
-type RefStatus = 'running' | 'stopped' | 'building' | 'error' | 'missing-service' | 'missing-branch' | 'missing-project';
+type RefStatus = 'running' | 'stopped' | 'building' | 'error' | 'missing-service' | 'missing-branch' | 'missing-project' | 'restricted';
 
 interface ResolvedRef {
   ref: { raw: string; projectRef: string; serviceId: string; branchRef?: string };
@@ -51,9 +51,9 @@ const KIND_LABEL: Record<RefKind, string> = { 'cds-ref': '引用变量', url: '�
 
 function StatusChip({ status }: { status: RefStatus | string }): JSX.Element {
   const ok = status === 'running';
-  const warn = status === 'building' || status === 'stopped';
+  const warn = status === 'building' || status === 'stopped' || status === 'restricted';
   const cls = ok ? 'border-ok/50 bg-ok-soft text-ok' : warn ? 'border-warn/60 bg-warn-soft text-warn' : 'border-destructive/60 bg-[hsl(var(--bad-soft))] text-destructive';
-  const label = ({ running: '运行中', stopped: '已停止', building: '构建中', error: '异常', 'missing-service': '没有该服务', 'missing-branch': '没有该分支', 'missing-project': '没有该项目' } as Record<string, string>)[status] ?? status;
+  const label = ({ running: '运行中', stopped: '已停止', building: '构建中', error: '异常', 'missing-service': '没有该服务', 'missing-branch': '没有该分支', 'missing-project': '没有该项目', restricted: '无权查看' } as Record<string, string>)[status] ?? status;
   return <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10px] font-semibold ${cls}`}>{label}</span>;
 }
 
@@ -217,7 +217,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
                     <td className="px-3 py-2 align-top">
                       {r ? (
                         <div className="flex flex-col gap-1">
-                          {resolvedList.map((x) => x.status !== 'missing-project' ? (
+                          {resolvedList.map((x) => x.status !== 'missing-project' && x.status !== 'restricted' ? (
                             <Button key={x.ref.raw} size="sm" variant="outline" className="h-6 text-[11px]" disabled={busy} onClick={() => void openPicker(item, x)} title={resolvedList.length > 1 ? `切换 ${x.ref.raw}` : undefined}>
                               切换分支{resolvedList.length > 1 ? <span className="font-mono text-[10px] text-muted-foreground">{x.ref.serviceId}{x.ref.branchRef ? `@${x.ref.branchRef}` : ''}</span> : null}
                             </Button>

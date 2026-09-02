@@ -3,7 +3,7 @@
  * 从 BranchDetailPage 抽出（2026-09-02）：引用分区「重新部署受影响服务」需要同一段逻辑，
  * 不再在组件里复制第四份。BranchListPage / MaintenanceTab 各自的变体与此并不相同，暂未合并。
  */
-import { ApiError } from '@/lib/api';
+import { ApiError, apiUrl } from '@/lib/api';
 
 export function parseSseBlock(raw: string): { event: string; data: unknown } | null {
   let event = 'message';
@@ -25,7 +25,9 @@ export async function postSse(
   body: unknown,
   onEvent: (event: string, data: unknown) => void,
 ): Promise<void> {
-  const res = await fetch(path, {
+  // 与 apiRequest 同一条控制面路径：预览域名上 /api/* 要改写成 /_cds/api/* 送回 CDS，
+  // 直接 fetch(path) 会打到预览应用自己（Codex 四轮 P1）
+  const res = await fetch(apiUrl(path), {
     method: 'POST',
     credentials: 'include',
     headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },

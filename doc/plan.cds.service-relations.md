@@ -58,7 +58,7 @@ CDS 上一个项目往往是前后端分离、多个 API、多个子域，现在
 - 规则只写一份放 CDS 后端，画布、导入审批页、cdscli verify 三处调同一个接口。错误级阻断导入。
 - cdscli 扫描生成器不再给所有 Java 模块复制同一份前缀清单；探活类路径不进前缀；删除从未被解析的复数前缀标签。
 - 验收：用 mdimp 当前 compose 跑 verify，必须报出 `/`、`/health`、`/open/` 三处冲突和探活前缀，并给出修正 diff；给 mdimp 生成的 PR 里每个 Java 服务的前缀各不相同。
-- 已落地（2026-09-02）：体检模块、导入审批闸门（错误级 409，可 force 放行）、`POST /api/compose/lint`、`GET /api/branches/:id/service-graph`、`cds.calls` 声明边、cdscli verify 接服务端体检、`cdscli topology` 文字树、生成器按模块扫控制器前缀并删除死标签。未落地：修正 diff 与一键开 PR（并入第四批「修正」）。
+- 已落地（2026-09-02）：体检模块；导入审批遇错误级体检即阻断，操作员可显式放行；体检与分支关系图各有一个对外接口供 cdscli、画布与概览共用；显式声明调用关系的标签；cdscli verify 接服务端体检；cdscli 拓扑文字树；生成器按模块扫控制器前缀并删除死标签。未落地：修正 diff 与一键开 PR（并入第四批「修正」）。
 
 ### 第二批 · 路由收敛与可观测
 

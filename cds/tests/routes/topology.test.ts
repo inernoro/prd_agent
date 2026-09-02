@@ -243,6 +243,44 @@ describe('topology router', () => {
     expect(res.body.projects[0].branch).toMatchObject({ id: 'md-feat', name: 'feature/y' });
   });
 
+  it('目标项目对当前凭据不可见时：引用读成 restricted 不下发地址与分支，PUT 指向它被拒，概览不画到它的边', async () => {
+    const now = new Date().toISOString();
+    stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addBuildProfile({ id: 'llmgw-serve', name: 'llmgw', projectId: 'p-prd', dockerImage: 'node:20', workDir: '.', command: 'node s.js', containerPort: 8091, subdomain: 'llmgw' } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBuildProfile({ id: 'cb-web', name: 'cb-web', projectId: 'p-md', dockerImage: 'node:20', workDir: '.', command: 'node w.js', containerPort: 3000, pathPrefixes: ['/'], env: { LLMGW_BASE: '${CDS_REF:prd-agent/llmgw-serve}', MAP_API_BASE: 'https://main-prd-agent.miduo.org' } } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBranch({ id: 'prd-main', projectId: 'p-prd', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, services: { 'llmgw-serve': { profileId: 'llmgw-serve', containerName: 'c', hostPort: 1, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    stateService.addBranch({ id: 'md-main', projectId: 'p-md', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 2, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    const app = express();
+    app.use(express.json());
+    // 模拟只对 mdimp 项目授权的项目级凭据
+    app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: (_r, pid) => (pid === 'p-md' ? null : { status: 403, body: { error: 'forbidden' } }), envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
+    const srv = app.listen(0);
+    try {
+      const refs = await request(srv, 'GET', '/api/branches/md-main/references');
+      expect(refs.status).toBe(200);
+      const byKey = Object.fromEntries(refs.body.references.map((r: { key: string }) => [r.key, r]));
+      expect(byKey.LLMGW_BASE.resolved[0]).toEqual({ ref: byKey.LLMGW_BASE.resolved[0].ref, url: null, status: 'restricted', target: { serviceId: 'llmgw-serve' }, reason: '当前凭据无权查看目标项目' });
+      expect(JSON.stringify(refs.body)).not.toContain('prd-main');
+      expect(byKey.MAP_API_BASE.matchedBranch).toBeNull();
+      expect(byKey.MAP_API_BASE.suggestion).toBeUndefined();
+      expect(refs.body.broken.map((f: { severity: string }) => f.severity)).toEqual(['warn']);
+
+      const put = await request(srv, 'PUT', '/api/branches/md-main/references/LLMGW_BASE', { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'main' });
+      expect(put.status).toBe(403);
+      expect(stateService.getBranch('md-main')?.profileOverrides?.['cb-web']?.env?.LLMGW_BASE).toBeUndefined();
+
+      const graph = await request(srv, 'GET', '/api/branches/md-main/service-graph');
+      expect(JSON.stringify(graph.body)).not.toContain('prd-main');
+
+      const overview = await request(srv, 'GET', '/api/overview/topology');
+      expect(overview.body.projects.map((p: { slug: string }) => p.slug)).toEqual(['mdimp']);
+      expect(overview.body.projects[0].edges).toEqual([]);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+
   it('GET /overview/topology 每个项目给代表分支、体检结论与跨项目引用边', async () => {
     const now = new Date().toISOString();
     stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);

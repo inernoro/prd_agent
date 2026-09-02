@@ -36,7 +36,8 @@ export function formatCdsRef(ref: Pick<CdsRef, 'projectRef' | 'serviceId' | 'bra
   return `\${CDS_REF:${ref.projectRef}/${ref.serviceId}${ref.branchRef ? `@${ref.branchRef}` : ''}}`;
 }
 
-export type RefTargetStatus = 'running' | 'stopped' | 'building' | 'error' | 'missing-service' | 'missing-branch' | 'missing-project';
+/** restricted：目标项目存在但当前凭据无权查看，地址与分支信息一律不下发（由路由层按 assertProjectAccess 打标） */
+export type RefTargetStatus = 'running' | 'stopped' | 'building' | 'error' | 'missing-service' | 'missing-branch' | 'missing-project' | 'restricted';
 
 export interface ResolvedCdsRef {
   ref: CdsRef;

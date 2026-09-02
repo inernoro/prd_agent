@@ -83,7 +83,12 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
    * 引用变量、值是网址、键名带 URL/BASE/ENDPOINT/HOST 后缀、平台注入的入口表——逐条给出
    * 来源层、指向哪个项目哪个分支哪个服务、目标现在活没活。
    */
-  function collectReferences(branchId: string) {
+  /** 目标项目对当前凭据不可见时，引用只保留服务名与「无权查看」，地址、分支、状态一律不下发 */
+  function restrictResolved(r: ResolvedCdsRef): ResolvedCdsRef {
+    return { ref: r.ref, url: null, status: 'restricted', target: { serviceId: r.ref.serviceId }, reason: '当前凭据无权查看目标项目' };
+  }
+
+  function collectReferences(branchId: string, canSeeProject: (projectId: string) => boolean) {
     const branch = deps.stateService.getBranch(branchId);
     if (!branch) return null;
     const envConfig = deps.envConfig ?? { jwtIssuer: 'cds' };
@@ -125,9 +130,18 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
           rawValue: maskSecretsInObject({ [p.key]: raw })[p.key] ?? raw, source: p.source, ...(p.detail ? { detail: p.detail } : {}),
         };
         if (kind === 'cds-ref') {
-          item.resolved = parseCdsRefs(raw).map((ref) => resolveCdsRef(refDeps, ref));
+          // 项目级凭据只看得到自己的项目：跨项目引用的目标不可见时打成 restricted，不泄露别人的分支与地址
+          // （与 preview-dispatch 的可见性判据同源，都走 assertProjectAccess）
+          item.resolved = parseCdsRefs(raw).map((ref) => {
+            const r = resolveCdsRef(refDeps, ref);
+            return r.target.projectId && !canSeeProject(r.target.projectId) ? restrictResolved(r) : r;
+          });
           for (const r of item.resolved) {
             if (r.status === 'running') continue;
+            if (r.status === 'restricted') {
+              broken.push({ rule: 'reference-broken', severity: 'warn', services: [prof.baseline.id], message: `${prof.baseline.id} 的 ${p.key} 引用了当前凭据无权查看的项目，目标状态未知`, fix: '用有目标项目权限的凭据查看，或让目标项目的负责人确认服务在跑' });
+              continue;
+            }
             broken.push({
               rule: 'reference-broken',
               severity: r.url ? 'warn' : 'error',
@@ -138,7 +152,9 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
           }
         } else if (kind === 'url') {
           const host = hostOf(p.value);
-          const hit = host ? branches.find((b) => hostsOfBranch(b).includes(host)) : undefined;
+          const hitAny = host ? branches.find((b) => hostsOfBranch(b).includes(host)) : undefined;
+          // 命中了不可见项目的分支：当作 CDS 外部地址，不下发别人的分支名与状态
+          const hit = hitAny && canSeeProject(hitAny.projectId) ? hitAny : undefined;
           item.matchedBranch = hit ? { branchId: hit.id, projectId: hit.projectId, branchName: hit.branch, status: String(hit.status) } : null;
           if (hit && hit.id === branch.id) item.suggestion = '这是本分支自己的入口，改成 ${CDS_PREVIEW_URL} 就不会随分支改名失效';
           else if (hit) item.suggestion = `这是 CDS 上另一条分支的地址，改成引用变量后可以在这里切换：${formatCdsRef({ projectRef: hit.projectId, serviceId: '<服务>', branchRef: hit.branch })}`;
@@ -151,7 +167,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
   }
 
   router.get('/branches/:id/references', (req, res) => {
-    const collected = collectReferences(req.params.id);
+    const collected = collectReferences(req.params.id, (pid) => !deps.assertProjectAccess(req, pid));
     if (!collected) { res.status(404).json({ error: 'not_found', message: `分支不存在: ${req.params.id}` }); return; }
     const denied = deps.assertProjectAccess(req, collected.branch.projectId);
     if (denied) { res.status(denied.status).json(denied.body); return; }
@@ -186,6 +202,11 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     if (!ref) { res.status(400).json({ error: 'validation', message: '引用写法不合法（项目、服务、分支只能含字母数字与 _ . ~ -）' }); return; }
     const envConfig = deps.envConfig ?? { jwtIssuer: 'cds' };
     const resolved = resolveCdsRef(cdsRefResolverDepsFromState(deps.stateService, envConfig.previewHost), ref);
+    // 目标项目必须对当前凭据可见：项目级凭据不能把自己的服务指向别人的项目，更不能借此读到别人的分支与地址（Codex 四轮 P1）
+    if (resolved.target.projectId) {
+      const deniedTarget = deps.assertProjectAccess(req, resolved.target.projectId);
+      if (deniedTarget) { res.status(deniedTarget.status).json(deniedTarget.body); return; }
+    }
     if (resolved.status === 'missing-project' || resolved.status === 'missing-branch' || resolved.status === 'missing-service') {
       res.status(409).json({ error: 'reference_unresolvable', message: resolved.reason, resolved });
       return;
@@ -216,7 +237,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
   });
 
   /** 分支服务图 + 体检 + 引用（service-graph 接口与全局概览共用同一份计算）。 */
-  function buildBranchGraphPayload(branch: NonNullable<ReturnType<StateService['getBranch']>>) {
+  function buildBranchGraphPayload(branch: NonNullable<ReturnType<StateService['getBranch']>>, canSeeProject: (projectId: string) => boolean) {
     // env 用生效合并结果（与 replica-sets 的服务图同一口径），只暴露键名
     const projectEnv = deps.stateService.getCustomEnv(branch.projectId);
     const branchEnv = deps.stateService.getCustomEnvScope(branch.id);
@@ -230,7 +251,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     const graph = buildServiceGraph(profiles, infra);
     const lint = lintTopology(graph);
     // 引用断裂并进同一份体检（关系图、缩略卡、cdscli topology 看到的是同一份）
-    const collected = collectReferences(branch.id);
+    const collected = collectReferences(branch.id, canSeeProject);
     const references = collected?.items ?? [];
     for (const f of collected?.broken ?? []) lint.findings.push(f);
     lint.findings.sort((a, b) => ({ error: 0, warn: 1, info: 2 })[a.severity] - ({ error: 0, warn: 1, info: 2 })[b.severity]);
@@ -247,7 +268,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     if (!branch) { res.status(404).json({ error: 'not_found', message: `分支不存在: ${req.params.id}` }); return; }
     const denied = deps.assertProjectAccess(req, branch.projectId);
     if (denied) { res.status(denied.status).json(denied.body); return; }
-    res.json(buildBranchGraphPayload(branch));
+    res.json(buildBranchGraphPayload(branch, (pid) => !deps.assertProjectAccess(req, pid)));
   });
 
   /**
@@ -266,7 +287,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
       if (!rep) {
         return { projectId: project.id, slug: project.slug, name: project.name, branch: null, branchCount: 0, counts: { services: 0, sites: 0, apis: 0, webs: 0, workers: 0 }, lint: { errors: 0, warnings: 0, infos: 0 }, headline: '还没有分支', findings: [], edges: [] };
       }
-      const payload = buildBranchGraphPayload(rep);
+      const payload = buildBranchGraphPayload(rep, (pid) => !deps.assertProjectAccess(req, pid));
       const services = payload.graph.nodes.filter((n) => n.kind === 'service');
       const edges: Array<{ toProjectId: string; toBranchId?: string; toBranchName?: string; kind: 'cds-ref' | 'url'; status: string; fromService: string; key: string }> = [];
       for (const r of payload.references) {
