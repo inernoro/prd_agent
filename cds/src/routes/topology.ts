@@ -60,6 +60,24 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     res.json(lint);
   });
 
+  type BranchEnvResolution = ReturnType<typeof resolveBranchEnvLayers>;
+  /** 某服务合并前各层的原始值（后层覆盖前层，与部署合并顺序一致） */
+  function rawEnvByKey(resolution: BranchEnvResolution, prof: BranchEnvResolution['profiles'][number]): Map<string, string> {
+    const rawByKey = new Map<string, string>();
+    for (const layer of [...resolution.customLayers, ...prof.profileLayers]) {
+      for (const [k, v] of Object.entries(layer.env)) rawByKey.set(k, String(v ?? ''));
+    }
+    return rawByKey;
+  }
+  /** 某服务某个键当前的原始值；键不存在返回 null */
+  function rawEnvValueFor(branch: NonNullable<ReturnType<StateService['getBranch']>>, profileId: string, key: string): string | null {
+    const envConfig = deps.envConfig ?? { jwtIssuer: 'cds' };
+    const resolution = resolveBranchEnvLayers(deps.stateService, branch, envConfig);
+    const prof = resolution.profiles.find((p) => p.baseline.id === profileId);
+    if (!prof) return null;
+    return rawEnvByKey(resolution, prof).get(key) ?? null;
+  }
+
   /**
    * 「引用」分区数据（plan.cds.service-relations 第三批）：从全部环境变量里单独抽出像地址的键——
    * 引用变量、值是网址、键名带 URL/BASE/ENDPOINT/HOST 后缀、平台注入的入口表——逐条给出
@@ -96,10 +114,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     const broken: LintFinding[] = [];
     for (const prof of resolution.profiles) {
       // 用合并前各层的原始值找引用（解析后的值已经是地址，看不出它原本是引用）
-      const rawByKey = new Map<string, string>();
-      for (const layer of [...resolution.customLayers, ...prof.profileLayers]) {
-        for (const [k, v] of Object.entries(layer.env)) rawByKey.set(k, String(v ?? ''));
-      }
+      const rawByKey = rawEnvByKey(resolution, prof);
       for (const p of prof.provenance) {
         const raw = rawByKey.get(p.key) ?? p.value;
         const kind = classifyReference(p.key, raw) ?? classifyReference(p.key, p.value);
@@ -153,8 +168,10 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     const denied = deps.assertProjectAccess(req, branch.projectId);
     if (denied) { res.status(denied.status).json(denied.body); return; }
     const key = String(req.params.key || '').trim();
-    const body = (req.body ?? {}) as { projectRef?: unknown; serviceId?: unknown; branchRef?: unknown; profileId?: unknown };
+    const body = (req.body ?? {}) as { projectRef?: unknown; serviceId?: unknown; branchRef?: unknown; profileId?: unknown; raw?: unknown };
     const profileId = typeof body.profileId === 'string' ? body.profileId.trim() : '';
+    // 被替换的那个引用 token 原文（前端从条目的 resolved[].ref.raw 取）；值里只有一个引用时可省略
+    const rawToken = typeof body.raw === 'string' ? body.raw.trim() : '';
     const projectRef = typeof body.projectRef === 'string' ? body.projectRef.trim() : '';
     const serviceId = typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
     const branchRef = typeof body.branchRef === 'string' && body.branchRef.trim() ? body.branchRef.trim() : undefined;
@@ -173,14 +190,29 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
       res.status(409).json({ error: 'reference_unresolvable', message: resolved.reason, resolved });
       return;
     }
+    // 引用可能嵌在更长的值里（`${CDS_REF:prd/api}/v1`）或一个值里有多个引用：只替换选中的那个 token，
+    // 其余原样保留；分不清替换哪个就拒绝，不能整个值覆盖掉（Codex 二轮 P1）。
+    const current = rawEnvValueFor(branch, profileId, key);
+    const currentRefs = current === null ? [] : parseCdsRefs(current);
+    let nextValue: string;
+    if (current === null || currentRefs.length === 0) {
+      nextValue = value;
+    } else if (rawToken && current.includes(rawToken)) {
+      nextValue = current.split(rawToken).join(value);
+    } else if (currentRefs.length === 1) {
+      nextValue = current.split(currentRefs[0].raw).join(value);
+    } else {
+      res.status(409).json({ error: 'reference_ambiguous', message: `${key} 里有 ${currentRefs.length} 个引用，请指明要替换的那个（raw）`, refs: currentRefs.map((r) => r.raw) });
+      return;
+    }
     // 写进该服务的分支级覆盖（profileOverrides.env）：它在合并顺序里压过项目根的 profile.env，
     // 分支级 customEnv 压不过 profile.env，写那里等于没切。不动项目根，别的分支不受影响。
     const existing = branch.profileOverrides?.[profileId] ?? {};
     deps.stateService.setBranchProfileOverride(branch.id, profileId, {
       ...existing,
-      env: { ...(existing.env ?? {}), [key]: value },
+      env: { ...(existing.env ?? {}), [key]: nextValue },
     });
-    res.json({ branchId: branch.id, profileId, key, value, resolved, scope: 'branch-override', restartHint: '切换写入该服务的分支覆盖，重新部署该服务后生效（原地重启不会刷新容器环境变量）' });
+    res.json({ branchId: branch.id, profileId, key, value: nextValue, token: value, resolved, scope: 'branch-override', restartHint: '切换写入该服务的分支覆盖，重新部署该服务后生效（原地重启不会刷新容器环境变量）' });
   });
 
   /** 分支服务图 + 体检 + 引用（service-graph 接口与全局概览共用同一份计算）。 */
@@ -229,7 +261,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
       const p = project as typeof project & { gitDefaultBranch?: string | null; defaultBranch?: string | null };
       const mine = branches.filter((b) => b.projectId === project.id);
       const wanted = (p.gitDefaultBranch || p.defaultBranch || 'main').trim();
-      const rep = mine.find((b) => b.branch === wanted)
+      const rep = mine.find((b) => b.id === wanted) ?? mine.find((b) => b.branch === wanted)
         ?? [...mine].sort((a, b) => String((b as { lastDeployAt?: string }).lastDeployAt ?? b.createdAt ?? '').localeCompare(String((a as { lastDeployAt?: string }).lastDeployAt ?? a.createdAt ?? '')))[0];
       if (!rep) {
         return { projectId: project.id, slug: project.slug, name: project.name, branch: null, branchCount: 0, counts: { services: 0, sites: 0, apis: 0, webs: 0, workers: 0 }, lint: { errors: 0, warnings: 0, infos: 0 }, headline: '还没有分支', findings: [], edges: [] };

@@ -11,6 +11,8 @@
 import type { BranchEntry, BuildProfile, Project } from '../types.js';
 import { resolveBranchEntrypointsEnv, branchEntrypointDepsFromState, type BranchEntrypointDeps, PREVIEW_URL_ENV_KEY, SERVICE_URLS_ENV_KEY } from './preview-entrypoints.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
+// container 也导入本模块；两边都只在调用时用到对方的函数，preview-entrypoints 与 container 早已是这种关系
+import { resolveEffectiveProfile } from './container.js';
 
 export const CDS_REF_RE = /\$\{CDS_REF:([A-Za-z0-9_.~-]+)\/([A-Za-z0-9_.~-]+)(?:@([^}\s]+))?\}/g;
 
@@ -160,7 +162,9 @@ export function cdsRefResolverDepsFromState(
   return {
     getProject: byIdOrSlug,
     getAllBranches: () => stateService.getAllBranches(),
-    getEffectiveProfilesForBranch: (entry) => stateService.getEffectiveProfilesForBranch(entry),
+    // 目标分支可能用 profileOverrides 改过 subdomain / 前缀：入口表按解析后的 profile 生成，
+    // 选 URL 也必须看解析后的，否则子域服务会被错给主入口（Codex 二轮 P1）
+    getEffectiveProfilesForBranch: (entry) => stateService.getEffectiveProfilesForBranch(entry).map((p) => resolveEffectiveProfile(p, entry)),
     entrypointDeps: branchEntrypointDepsFromState(stateService as Parameters<typeof branchEntrypointDepsFromState>[0], previewHost),
   };
 }

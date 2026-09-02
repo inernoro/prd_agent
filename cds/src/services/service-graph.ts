@@ -164,7 +164,9 @@ export function buildServiceSites(
   profiles: readonly RoleInput[],
   roles: ReadonlyMap<string, ServiceRoleVerdict>,
 ): { sites: ServiceGraphSite[]; internal: string[] } {
-  const ids = profiles.map((p) => p.id);
+  // 与发布器同序：forwarder-route-publisher 在套按名约定前先按 profileId 字典序排（localeCompare），
+  // 多个服务同时命中默认站 / `/api/` 约定时胜者必须和实际发布的一致（Codex 二轮 P2）
+  const ids = profiles.map((p) => p.id).sort((a, b) => a.localeCompare(b));
   const claims = new Map<string, string[]>(); // prefix → ids（主域名）
   const memberPrefixes = new Map<string, string[]>();
   for (const p of profiles) {

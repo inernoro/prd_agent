@@ -241,6 +241,11 @@ describe('buildServiceSites 站点分组与 forwarder 同源', () => {
     const r2 = buildServiceSites([profile('a-api', { pathPrefixes: ['/'], webEntry: { name: 'x', path: '/', primary: true } }), profile('b-web', { pathPrefixes: ['/'] })], roles);
     expect(r2.sites[0].shellId).toBe('a-api');
   });
+  it('多个服务同时命中按名约定时按 id 字典序取胜者，与发布器排序一致，不随存储顺序漂移', () => {
+    const g = buildServiceGraph([profile('web-b'), profile('web-a'), profile('api-z'), profile('api-y')], []);
+    expect(g.sites[0].shellId).toBe('web-a');
+    expect(g.sites[0].members).toEqual([{ id: 'api-y', prefixes: ['/api/'], viaConvention: true }]);
+  });
   it('没有服务时没有站点', () => {
     expect(buildServiceGraph([], []).sites).toEqual([]);
   });

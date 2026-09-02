@@ -93,7 +93,8 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
     try {
       await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/references/${encodeURIComponent(picker.item.key)}`, {
         method: 'PUT',
-        body: { profileId: picker.item.profileId, projectRef: picker.ref.ref.projectRef, serviceId: picker.ref.ref.serviceId, ...(branchName ? { branchRef: branchName } : {}) },
+        // raw = 被替换的那个引用 token 原文：值里嵌了前后缀或有多个引用时，服务端只换这一个
+        body: { profileId: picker.item.profileId, projectRef: picker.ref.ref.projectRef, serviceId: picker.ref.ref.serviceId, raw: picker.ref.ref.raw, ...(branchName ? { branchRef: branchName } : {}) },
       });
       setPendingRedeploy((prev) => new Set(prev).add(picker.item.profileId));
       onToast?.(`${picker.item.key} 已指向 ${picker.ref.ref.projectRef}/${picker.ref.ref.serviceId}${branchName ? `@${branchName}` : '（默认分支）'}，重新部署 ${picker.item.profileId} 后生效`);

@@ -198,6 +198,51 @@ describe('topology router', () => {
     }
   });
 
+  it('PUT /branches/:id/references/:key 只替换选中的引用 token，前后缀与其他引用原样保留；目标子域按分支覆盖解析', async () => {
+    const now = new Date().toISOString();
+    stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addBuildProfile({ id: 'llmgw-serve', name: 'llmgw', projectId: 'p-prd', dockerImage: 'node:20', workDir: '.', command: 'node s.js', containerPort: 8091, subdomain: 'llmgw' } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBuildProfile({ id: 'cb-web', name: 'cb-web', projectId: 'p-md', dockerImage: 'node:20', workDir: '.', command: 'node w.js', containerPort: 3000, pathPrefixes: ['/'],
+      env: { LLMGW_V1: '${CDS_REF:prd-agent/llmgw-serve}/v1', PAIR: '${CDS_REF:prd-agent/llmgw-serve}|${CDS_REF:prd-agent/llmgw-serve@feat/x}' } } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBranch({ id: 'prd-main', projectId: 'p-prd', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, services: { 'llmgw-serve': { profileId: 'llmgw-serve', containerName: 'c', hostPort: 1, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    stateService.addBranch({ id: 'prd-feat', projectId: 'p-prd', branch: 'feat/x', worktreePath: tmpDir, status: 'running', createdAt: now, services: { 'llmgw-serve': { profileId: 'llmgw-serve', containerName: 'c', hostPort: 1, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    stateService.addBranch({ id: 'md-main', projectId: 'p-md', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 2, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    // 目标分支 feat/x 用分支覆盖把子域改成 gw2：入口表与选 URL 必须都看覆盖后的值
+    stateService.setBranchProfileOverride('prd-feat', 'llmgw-serve', { subdomain: 'gw2' });
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: () => null, envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
+    const srv = app.listen(0);
+    try {
+      const embedded = await request(srv, 'PUT', '/api/branches/md-main/references/LLMGW_V1', { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'feat/x' });
+      expect(embedded.status, JSON.stringify(embedded.body)).toBe(200);
+      expect(embedded.body.value).toBe('${CDS_REF:prd-agent/llmgw-serve@feat/x}/v1');
+      expect(embedded.body.resolved.url).toContain('-gw2.');
+      expect(stateService.getBranch('md-main')?.profileOverrides?.['cb-web']?.env?.LLMGW_V1).toBe('${CDS_REF:prd-agent/llmgw-serve@feat/x}/v1');
+
+      const ambiguous = await request(srv, 'PUT', '/api/branches/md-main/references/PAIR', { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'feat/x' });
+      expect(ambiguous.status).toBe(409);
+      expect(ambiguous.body.error).toBe('reference_ambiguous');
+      const picked = await request(srv, 'PUT', '/api/branches/md-main/references/PAIR', { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'main', raw: '${CDS_REF:prd-agent/llmgw-serve@feat/x}' });
+      expect(picked.status).toBe(200);
+      expect(picked.body.value).toBe('${CDS_REF:prd-agent/llmgw-serve}|${CDS_REF:prd-agent/llmgw-serve@main}');
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+
+  it('GET /overview/topology 项目配置的默认分支是 CDS 分支 id 时也能认出代表分支', async () => {
+    const now = new Date().toISOString();
+    stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, defaultBranch: 'md-feat' } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addBuildProfile({ id: 'cb-web', name: 'cb-web', projectId: 'p-md', dockerImage: 'node:20', workDir: '.', command: 'node w.js', containerPort: 3000, pathPrefixes: ['/'] } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBranch({ id: 'md-main', projectId: 'p-md', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, lastDeployAt: '2026-09-02T10:00:00Z', services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 2, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    stateService.addBranch({ id: 'md-feat', projectId: 'p-md', branch: 'feature/y', worktreePath: tmpDir, status: 'running', createdAt: now, lastDeployAt: '2026-09-01T10:00:00Z', services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 3, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    const res = await request(server, 'GET', '/api/overview/topology');
+    expect(res.status).toBe(200);
+    expect(res.body.projects[0].branch).toMatchObject({ id: 'md-feat', name: 'feature/y' });
+  });
+
   it('GET /overview/topology 每个项目给代表分支、体检结论与跨项目引用边', async () => {
     const now = new Date().toISOString();
     stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);
