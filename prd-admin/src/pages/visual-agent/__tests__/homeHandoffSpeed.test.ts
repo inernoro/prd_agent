@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -144,11 +144,32 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
   });
 
   it('【关键】只有这两个文件读交接包；多出第三个必须同步适配', () => {
-    const consumers = [
-      'src/pages/ai-chat/AdvancedVisualAgentTab.tsx',
-      'src/pages/visual-agent/MobileVisualAgentEditor.tsx',
-    ].filter((rel) => readFileSync(resolve(ROOT, rel), 'utf8').includes('visual_agent_init_'));
-    expect(consumers).toHaveLength(2);
+    // 判据必须**先扫出真实消费方**再断言，不能拿一份写死的名单去过滤自己。
+    //
+    // 上一版是 `['A','B'].filter(读了交接包)` 然后 expect(length===2)：
+    // 第三个消费方无论怎么加都进不了这个数组，守卫永远绿——而它宣传的正是
+    // 「多出第三个必须同步适配」。一条不会红的守卫比没有守卫更糟：
+    // 它让下一个人以为这件事已经有人盯着了（Codex PR #1476 P2，
+    // 判据纪律形状 2：接线只建一半 + 形状 4：测试自己坏了）。
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = resolve(dir, e.name);
+        if (e.isDirectory()) return e.name === 'node_modules' ? [] : walk(full);
+        return /\.(ts|tsx)$/.test(e.name) ? [full] : [];
+      });
+    const SRC = resolve(ROOT, 'src');
+    const PRODUCER = resolve(SRC, 'pages/visual-agent/VisualAgentWorkspaceListPage.tsx');
+    const found = walk(SRC)
+      .filter((f) => f !== PRODUCER && !f.includes('__tests__') && !/\.test\.tsx?$/.test(f))
+      .filter((f) => readFileSync(f, 'utf8').includes('visual_agent_init_'))
+      .map((f) => f.slice(SRC.length + 1).split(sep).join('/'))
+      .sort();
+    // companion：扫描本身得能扫到东西，否则下面那条会对着空数组判绿。
+    expect(found.length, '应至少扫到消费方；扫不到说明遍历/过滤写坏了').toBeGreaterThan(0);
+    expect(found).toEqual([
+      'pages/ai-chat/AdvancedVisualAgentTab.tsx',
+      'pages/visual-agent/MobileVisualAgentEditor.tsx',
+    ]);
   });
 
   it('【关键】手机端也认交接包里的模型，不再退回第一个可用池', () => {
