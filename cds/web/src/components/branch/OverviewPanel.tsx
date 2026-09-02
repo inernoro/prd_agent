@@ -224,6 +224,23 @@ export function areaPath(vals: number[], present: boolean[], max: number, h: num
   }).join(' ');
 }
 
+/**
+ * 「现在是多少」——取**最后一个真有样本的桶**，不是数组的最后一格。
+ *
+ * 为了参与堆叠，`seedMetricSeries` 把 null 映射成了 0，所以数组末格常常是一个
+ * 「没采到」的空桶。直接读它，就会在最显眼的位置端出一个凭空的 0。
+ *
+ * 这件事我修过三次才修全：先是每服务的当前值，再是尾部聚合，最后是吞吐的读数与
+ * 大数——**同一个错法散在三处，只改了一处**。所以这里收成一个函数，三处共用；
+ * 守卫也从「某一行不许出现 at(-1)」改成「整个文件的当前值位置都不许出现」。
+ */
+function latestPresent(values: number[], mask: boolean[] | undefined): number | undefined {
+  for (let i = values.length - 1; i >= 0; i -= 1) {
+    if (mask?.[i] ?? true) return values[i];
+  }
+  return undefined;
+}
+
 /** 两位时分。轴的两端标真实钟点，比「N 分钟前 / 现在」准，也不用读的人换算。 */
 function clockLabel(ts: number): string {
   const d = new Date(ts);
@@ -691,6 +708,15 @@ const NET_COLOR = 'hsl(var(--series-net))';
 function MirroredPair({
   up, down, present, label, upName, downName, height = 46,
 }: { up: number[]; down: number[]; present: boolean[]; label: string; upName: string; downName: string; height?: number }): JSX.Element {
+  /*
+   * 读数取最后一个**算得出速率**的桶（Codex P2，核对属实）。
+   *
+   * 容器刚重建 / 刚断档 / 最新那格还没采到时，速率算不出来——数组里那一格是为了
+   * 参与几何被填成的 0。掩码已经把它挡在几何之外了，读数这里却还在读它，于是
+   * 图上是缺口、旁边写着 `0/s`。一个都没有就明说「暂不可用」，不编 0。
+   */
+  const upNow = latestPresent(up, present);
+  const downNow = latestPresent(down, present);
   const peak = Math.max(1, ...up, ...down);
   const max = peak * 1.12;
   return (
@@ -700,7 +726,9 @@ function MirroredPair({
         <span className="font-mono text-[10px] text-muted-foreground">峰值 {formatBytesShort(peak)}/s</span>
         <div className="flex-1" />
         <span className="font-mono text-[11px] text-muted-foreground">
-          {upName} {formatBytesShort(up.at(-1) ?? 0)}/s · {downName} {formatBytesShort(down.at(-1) ?? 0)}/s
+          {upNow == null || downNow == null
+            ? '当前速率暂不可用'
+            : `${upName} ${formatBytesShort(upNow)}/s · ${downName} ${formatBytesShort(downNow)}/s`}
         </span>
       </div>
       <div className="relative" style={{ height: height * 2 + 2 }}>
@@ -737,12 +765,14 @@ function MirroredPair({
 function ThroughputChart({
   rx, tx, read, write, present,
 }: { rx: number[]; tx: number[]; read: number[]; write: number[]; present: boolean[] }): JSX.Element {
+  // 大数与下面两行读数同一个口径：最后一个算得出速率的桶，没有就说暂不可用。
+  const rxNow = latestPresent(rx, present);
   const hasDisk = read.some((v) => v > 0) || write.some((v) => v > 0);
   return (
     <ChartShell
       title="吞吐"
       unit="网络 · 磁盘"
-      headline={`${formatBytesShort(rx.at(-1) ?? 0)}/s`}
+      headline={rxNow == null ? '暂不可用' : `${formatBytesShort(rxNow)}/s`}
       headlineSuffix="网络入站"
       footnote={hasDisk ? undefined : '磁盘一行全为 0：可能是宿主内核没开块设备计量，或这些容器确实没落盘。'}
     >
@@ -1063,14 +1093,7 @@ export function OverviewPanel({
        * 很可能是一个「没采到」的空桶——`/metrics` 还没回来或挂了的时候，
        * 图上明明画着历史，旁边的当前值却写着 0% / 0 B。掩码就在手边，这里没查。
        */
-      const lastPresent = (() => {
-        const mask = x.ring.present ?? [];
-        for (let i = values.length - 1; i >= 0; i -= 1) {
-          if (mask[i] ?? true) return values[i];
-        }
-        return undefined;
-      })();
-      const nowValue = live ? readLive(live) : lastPresent ?? 0;
+      const nowValue = live ? readLive(live) : latestPresent(values, x.ring.present) ?? 0;
       const [nowLabel, nowUnit] = label(nowValue);
       return {
         id: x.svc.profileId,
@@ -1098,7 +1121,8 @@ export function OverviewPanel({
     const tailNow = picked.tail.reduce((sum, x) => {
       if (x.svc.status !== 'running') return sum;
       const live = liveStats?.[x.svc.profileId];
-      return sum + (live ? readLive(live) : read(x.ring).at(-1) ?? 0);
+      // 尾部聚合同样不能读零填充的末格（Codex P2）——「其他 N 个」与顶部合计会一起少报。
+      return sum + (live ? readLive(live) : latestPresent(read(x.ring), x.ring.present) ?? 0);
     }, 0) + picked.liveOnly.reduce((sum, sv) => {
       // 历史不够画、但正在跑：当前值照算，几何不参与（上面 merged 不含它们）。
       const live = liveStats?.[sv.profileId];

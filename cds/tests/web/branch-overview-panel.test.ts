@@ -951,16 +951,23 @@ describe('抽屉模块能被加载（模块顶层不许有副作用）', () => {
  * 两条（2026-09-02，Codex P2，均核对属实）。
  */
 describe('当前值与轴标签不许含糊', () => {
-  it('没有实时快照时，当前值退回最后一个真有样本的桶', () => {
+  /*
+   * 判据从「某一行不许出现 at(-1)」升级成「整个文件的当前值位置都不许出现」。
+   *
+   * 这件事修过三次才修全：每服务当前值、尾部聚合、吞吐读数与大数——同一个错法散在
+   * 三处，我每次只改被指出的那一处（Codex 连着提了三轮）。所以判据也得覆盖全文件，
+   * 而不是钉住某一行。
+   */
+  it('当前值一律取最后一个真有样本的桶，全文件不许再读零填充的末格', () => {
     const code = stripComments(PANEL);
-    const at = code.indexOf('const nowValue = live');
-    expect(at, '找不到 nowValue').toBeGreaterThan(-1);
-    const line = code.slice(at, at + 120);
+    expect(code, '找不到共用的取值函数').toMatch(/function latestPresent\(/);
+    const offenders = code.split('\n')
+      .map((line, i) => ({ line: line.trim(), no: i + 1 }))
+      .filter(({ line }) => /\.at\(-1\)\s*\?\?\s*0/.test(line));
     expect(
-      line,
-      'values.at(-1) 很可能是被映射成 0 的空桶——/metrics 没回来时当前值会写成 0% / 0 B',
-    ).not.toContain('values.at(-1)');
-    expect(line).toContain('lastPresent');
+      offenders.map((o) => `${o.no}: ${o.line}`),
+      '数组末格常常是被映射成 0 的空桶，当作「现在」端出去就是凭空的读数',
+    ).toEqual([]);
   });
 
   it('轴两端标真实钟点，不是「N 分钟前 / 现在」', () => {
@@ -997,5 +1004,30 @@ describe('当前值与轴标签不许含糊', () => {
     expect(html).toContain('11:02');
     expect(html).toContain('11:34');
     expect(html, '仍在用含糊的「现在」标右端').not.toMatch(/>现在</);
+  });
+});
+
+describe('吞吐读数不把「算不出来」写成 0', () => {
+  it('速率掩码全为假时，读数与大数都说暂不可用', () => {
+    const oneFrameNoRate = seedMetricSeries([
+      { cpuPercent: 3, memUsedBytes: 100, rxRate: null, txRate: null },
+      { cpuPercent: 3, memUsedBytes: 100, rxRate: null, txRate: null },
+    ]);
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: true,
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: { api: oneFrameNoRate },
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '吞吐卡没渲染出来，这条断言会空跑').toContain('吞吐');
+    expect(html, '算不出速率却写成 0/s——图上是缺口、旁边却报了一个读数').toContain('暂不可用');
   });
 });
