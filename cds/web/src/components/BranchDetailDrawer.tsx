@@ -1373,8 +1373,15 @@ export function BranchDetailDrawer({
       for (const svc of data?.services ?? []) {
         if (svc.points && svc.points.length > 0) next[svc.profileId] = seedMetricSeries(svc.points);
       }
-      // 整体替换，不与旧值合并：合并会让不同批次的桶混进同一个数组。
-      if (Object.keys(next).length > 0) setMetricSeries(next);
+      /*
+       * 无条件整体替换。
+       *
+       * 「非空才替换」是「铺底不覆盖已追加点」那套逻辑的遗留，现在已经没有前端追加了。
+       * 留着它有害：loadSeries 成功返回空（服务全删了 / 历史过期了）本身就是事实，
+       * 跳过 setState 会让上一次的曲线一直挂在屏幕上冒充当前数据（Codex P2）。
+       * 合并同样不行——不同批次的桶混进同一个数组就是时间轴说谎的老病根。
+       */
+      setMetricSeries(next);
       setSeriesError(null);
     } catch (err) {
       if (branchIdRef.current !== requestForBranch) return;

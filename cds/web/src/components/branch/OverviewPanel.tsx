@@ -901,7 +901,18 @@ export function OverviewPanel({
     if (picked.tail.length === 0) return head;
     const len = head[0]?.values.length ?? 0;
     const merged = Array.from({ length: len }, (_, i) => picked.tail.reduce((sum, x) => sum + (read(x.ring)[i] ?? 0), 0));
+    /*
+     * 尾部聚合的**当前值只算还在跑的**（Codex P2，核对属实）。
+     *
+     * 「其他 N 个」是多个服务的合并项，没法带一个 stopped 标记，所以后面那道
+     * `s.stopped ? 0 : s.nowValue` 的过滤够不着它 —— 于是一个已停容器停机前的
+     * 旧读数会一直算进「其他」和顶部合计，谎称它还在吃资源。
+     *
+     * 历史那一条（merged）照旧包含所有尾部服务：它画的是过去，过去它确实在跑。
+     * 当前值与历史几何本来就是两个口径，这里正是它们该分开的地方。
+     */
     const tailNow = picked.tail.reduce((sum, x) => {
+      if (x.svc.status !== 'running') return sum;
       const live = liveStats?.[x.svc.profileId];
       return sum + (live ? readLive(live) : read(x.ring).at(-1) ?? 0);
     }, 0);
