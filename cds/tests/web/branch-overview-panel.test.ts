@@ -929,3 +929,20 @@ describe('hook 只能在组件里调用（形状：编译过、测试绿、打�
     expect(offenders, `hook 写在了模块顶层，打开页面即抛 invalid hook call：\n${offenders.join('\n')}`).toEqual([]);
   });
 });
+
+/**
+ * 直接 import 抽屉模块——**最强的那条判据**。
+ *
+ * 上面那条正则守卫是静态扫描，只能认它想得到的写法（第一版就漏了泛型）。而 hook
+ * 落到模块顶层时，`import` 这个动作本身就会抛 invalid hook call——所以只要把模块
+ * 真的加载一次，任何形态的越界都藏不住，不依赖任何正则。
+ *
+ * 这条本该一开始就有：6445 条用例全绿却让一个「打开就白屏」的改动上了线，根因是
+ * **没有任何一条用例真的加载过这个模块**。
+ */
+describe('抽屉模块能被加载（模块顶层不许有副作用）', () => {
+  it('import BranchDetailDrawer 不抛错', async () => {
+    const mod = await import('@/components/BranchDetailDrawer');
+    expect(typeof mod.BranchDetailDrawer, '导出的组件不见了').toBe('function');
+  });
+});
