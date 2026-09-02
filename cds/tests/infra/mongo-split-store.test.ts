@@ -510,6 +510,41 @@ describe('MongoSplitStateBackingStore', () => {
     expect(Buffer.byteLength(JSON.stringify(global), 'utf8')).toBeLessThan(2 * 1024 * 1024);
   });
 
+  /*
+   * Codex #1471 P1。定时任务运行史同属「诊断/历史」，也整段嵌在 global 文档里，
+   * 但 compact 的阶梯此前对它视而不见——运行史一旦把文档顶过上限，走完整条阶梯
+   * 也压不下来，global 文档就此写不进去，连分支/项目的后续变更一起丢。
+   * 这里只放运行史（别的诊断字段留空），确保压下去的功劳只能来自它。
+   * 红绿闭环：把 compact 里那段 scheduledJobRuns 删掉，本用例报文档仍超 12MiB。
+   */
+  it('compacts scheduled job runs so run history alone cannot make the doc unflushable', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.scheduledJobRuns = Array.from({ length: 4000 }, (_, i) => ({
+      id: `run-${i}`,
+      jobId: 'job',
+      projectId: 'demo',
+      trigger: 'schedule' as const,
+      status: 'success' as const,
+      queuedAt: new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString(),
+      log: 'L'.repeat(8 * 1024),
+    }));
+
+    store.save(state);
+    await store.flush();
+
+    const global = handle.global.docs.get('global')!.state;
+    expect(Buffer.byteLength(JSON.stringify(global), 'utf8')).toBeLessThanOrEqual(12 * 1024 * 1024);
+    expect((global.scheduledJobRuns || []).length).toBeLessThan(4000);
+    // 留下来的必须是最新的那些（越新越该留）
+    const kept = global.scheduledJobRuns || [];
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept[0].id).toBe('run-3999');
+  });
+
   it('compacts aggregate diagnostic state below the mongo single-document limit', async () => {
     const handle = new FakeSplitHandle();
     const store = new MongoSplitStateBackingStore(handle);

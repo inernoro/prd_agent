@@ -84,6 +84,12 @@ describe('任务调度页的接线', () => {
     // 红绿闭环：把 failed 分支或那块提示删掉，本用例红。
     expect(src, '完整史拉失败被静默吞掉了').toMatch(/\.catch\([\s\S]{0,200}failed: true/);
     expect(src, '降级没有在界面上说出来').toContain('data-history-degraded');
+    // 两边按 id 取并集，不是拿完整史整段替换：手动执行刚跑完、全局切片已带回新记录、
+    // 完整史还没重拉回来的那几百毫秒里，替换会把新记录先滤掉再被旧缓存盖上——
+    // 刚刚那次失败在健康条 / 细带 / 运行流里全看不到（Codex #1471 P2 第十九轮）。
+    // 红绿闭环：改回 `runs.filter((run) => run.jobId !== selectedId)` 拼接，本用例红。
+    expect(merged, '完整史是整段替换而不是按 id 取并集').not.toMatch(/runs\.filter\(\(run\) => run\.jobId !== selectedId\)/);
+    expect(merged, '合并没有按 id 去重').toMatch(/new Map<string, ScheduledJobRun>\(\)[\s\S]{0,300}byId\.has\(run\.id\)/);
     expect(src, '降级提示没有给重试').toContain('setHistoryRetry');
     expect(src).toMatch(/\}, \[mergedRuns\]\);/);
 

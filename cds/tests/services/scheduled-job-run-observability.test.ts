@@ -263,6 +263,43 @@ describe('定时任务运行记录的可观测性', () => {
   });
 
   /*
+   * Codex #1471 P1。条数上限管不住体积：日志长度无界，5000 条能把 global 文档顶过
+   * Mongo 的 16MiB 上限，而 global 文档写不进去时整份控制面状态都停止落库。
+   * 两道闸各测一次：单条日志被截到 8KiB 以内；运行史总体积不超过 4MiB。
+   * 红绿闭环：把 upsert 里的 truncateLogTail 去掉，第一条报日志仍是 200KiB；
+   * 把字节闸那段去掉，第二条报总体积超 4MiB。
+   */
+  it('单条运行日志被截断，运行史总体积有字节上限', () => {
+    const huge = 'L'.repeat(200 * 1024);
+    stateService.upsertScheduledJobRun({
+      id: 'big_1', jobId: 'job_big', projectId: 'demo', trigger: 'manual',
+      status: 'failed', queuedAt: new Date(Date.UTC(2026, 0, 9)).toISOString(), log: huge,
+    });
+    const stored = stateService.getState().scheduledJobRuns.find((r) => r.id === 'big_1');
+    expect(stored, '记录没落库').toBeTruthy();
+    expect(Buffer.byteLength(stored!.log || '', 'utf8'), '单条日志没被截断')
+      .toBeLessThanOrEqual(8 * 1024 + 64);
+    expect(stored!.log, '截断后没说明这是截断过的').toContain('日志已截断');
+
+    // 再灌一批带 8KiB 日志的记录，总体积必须被字节闸压住。
+    const fixture: ScheduledJobRun[] = [];
+    for (let i = 0; i < 1200; i += 1) {
+      fixture.push({
+        id: `bulk_${i}`, jobId: `job_bulk_${i % 30}`, projectId: 'demo', trigger: 'schedule',
+        status: 'success', queuedAt: new Date(Date.UTC(2026, 0, 10) + i * 1000).toISOString(),
+        log: 'B'.repeat(8 * 1024),
+      });
+    }
+    seedRuns(fixture);
+    stateService.upsertScheduledJobRun({
+      id: 'bulk_last', jobId: 'job_bulk_0', projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: new Date(Date.UTC(2026, 0, 11)).toISOString(),
+    });
+    const total = Buffer.byteLength(JSON.stringify(stateService.getState().scheduledJobRuns), 'utf8');
+    expect(total, '运行史总体积没有上限').toBeLessThanOrEqual(4 * 1024 * 1024);
+  });
+
+  /*
    * Codex #1471 P2（第三轮）。整组淘汰只按「最后一次运行的时刻」排，不看任务还在不在：
    * 一个刚建完就删掉的一次性任务会占着名额，而一个每天都在跑、只是上次运行时刻稍早的
    * **活任务**被整组清掉——它的健康度、细带、运行史全没了，恰恰是每任务保留要保护的对象。

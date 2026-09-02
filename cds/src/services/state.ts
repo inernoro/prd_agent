@@ -48,6 +48,29 @@ const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
    全局 5000 条兜底防状态文件无限膨胀。 */
 const SCHEDULED_JOB_RUNS_PER_JOB = 120;
 const SCHEDULED_JOB_RUNS_GLOBAL_CAP = 5000;
+/**
+ * 单条运行记录里日志的字节上限。运行史整段嵌在 global 文档里，而日志长度是无界的
+ * ——一次拉了一屏输出的命令动作就能顶掉几十条运行史的位置。
+ */
+const SCHEDULED_JOB_RUN_LOG_MAX_BYTES = 8 * 1024;
+/**
+ * 运行史这一段允许占的字节上限。条数上限管不住体积：5000 条 × 无界日志能把 global
+ * 文档顶过 Mongo 的 16MiB 上限，而 global 文档写不进去时**整份控制面状态都停止落库**
+ * ——不只是运行史丢，分支/项目的后续变更也丢（Codex #1471 P1）。
+ * 条数与字节两道闸都要有：条数保证低频任务的历史不被高频任务挤掉，字节保证再离谱的
+ * 日志也顶不破文档。
+ */
+const SCHEDULED_JOB_RUNS_MAX_BYTES = 4 * 1024 * 1024;
+
+/** 按 UTF-8 字节截断，保留尾部（失败原因通常在末尾）。 */
+function truncateLogTail(value: string | undefined, maxBytes: number): string | undefined {
+  if (!value) return value;
+  const buf = Buffer.from(value, 'utf8');
+  if (buf.length <= maxBytes) return value;
+  const marker = '…（日志已截断，只保留末尾）\n';
+  const keep = buf.subarray(buf.length - maxBytes).toString('utf8');
+  return marker + keep.slice(keep.indexOf('\n') + 1);
+}
 const MAX_DEPLOYMENT_VERSIONS_PER_PROJECT = 100;
 /** 容器日志黑匣子 per-branch 上限：条数与字节双闸，防止 state 无界膨胀
  *（JSON 模式每次 save 全量 stringify、mongo-split 每 tick structuredClone 都要背这份数据）。 */
@@ -905,7 +928,11 @@ export class StateService {
       .slice(0, limit);
   }
 
-  upsertScheduledJobRun(run: ScheduledJobRun): ScheduledJobRun {
+  upsertScheduledJobRun(input: ScheduledJobRun): ScheduledJobRun {
+    // 日志先截断再入库：它是这条记录里唯一无界的字段。
+    const run: ScheduledJobRun = input.log
+      ? { ...input, log: truncateLogTail(input.log, SCHEDULED_JOB_RUN_LOG_MAX_BYTES) }
+      : input;
     if (!this.state.scheduledJobRuns) this.state.scheduledJobRuns = [];
     const idx = this.state.scheduledJobRuns.findIndex((item) => item.id === run.id);
     if (idx >= 0) this.state.scheduledJobRuns[idx] = run;
@@ -980,9 +1007,17 @@ export class StateService {
       }
     }
 
-    this.state.scheduledJobRuns = kept
-      .flat()
-      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
+    // 第二道闸：条数达标了体积也得达标。按「新的先留」累加序列化字节，超了就不再收。
+    const ordered = kept.flat().sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
+    const bounded: ScheduledJobRun[] = [];
+    let bytes = 2; // []
+    for (const item of ordered) {
+      const size = Buffer.byteLength(JSON.stringify(item), 'utf8') + 1;
+      if (bytes + size > SCHEDULED_JOB_RUNS_MAX_BYTES) break;
+      bounded.push(item);
+      bytes += size;
+    }
+    this.state.scheduledJobRuns = bounded;
     this.save(HINT_GLOBAL);
     return run;
   }

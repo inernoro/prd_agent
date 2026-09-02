@@ -223,13 +223,18 @@ export function TaskSchedulePage(): JSX.Element {
   }, [selectedId, runs, historyRetry]);
 
   /**
-   * 全局切片 + 选中任务的完整史；选中那个任务的记录以完整史为准。
-   * 只有在完整史确实属于当前选中项时才替换——否则宁可用全局切片（少几条），
-   * 也不能拿上一个任务的记录顶替这一个。
+   * 全局切片 + 选中任务的完整史。两边**按 id 取并集**，不是拿完整史整段替换：
+   * 替换的话，刚跑完一次手动执行、全局切片已经带回新记录、而完整史还没重拉回来的
+   * 那几百毫秒里，新记录会被先滤掉再被旧缓存盖上——健康条、细带、运行流都看不到
+   * 刚刚那次失败（Codex #1471 P2）。并集里新记录立刻在，完整史回来只是补上更早的。
+   * 完整史对不上当前选中项就整份不用：宁可少几条，也不能拿上一个任务的记录顶替。
    */
   const mergedRuns = useMemo(() => {
     if (!selectedId || selectedRuns.jobId !== selectedId || selectedRuns.runs.length === 0) return runs;
-    return [...runs.filter((run) => run.jobId !== selectedId), ...selectedRuns.runs];
+    const byId = new Map<string, ScheduledJobRun>();
+    for (const run of runs) byId.set(run.id, run);
+    for (const run of selectedRuns.runs) if (!byId.has(run.id)) byId.set(run.id, run);
+    return [...byId.values()];
   }, [runs, selectedRuns, selectedId]);
 
   const runsByJob = useMemo(() => {

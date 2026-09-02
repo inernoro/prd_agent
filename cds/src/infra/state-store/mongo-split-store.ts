@@ -256,6 +256,14 @@ function compactGlobalRestToFit(restOfState: GlobalRest): GlobalRest {
     restOfState.containerLogArchives = takeLastRecordEntries(restOfState.containerLogArchives, maxEntries);
     restOfState.serviceDeployments = takeLastRecordEntries(restOfState.serviceDeployments, maxEntries);
     restOfState.releaseRuns = compactReleaseRuns(restOfState.releaseRuns, maxEntries, Math.min(20, Math.max(0, maxEntries)));
+    // 定时任务运行史同属「诊断/历史」，也整段嵌在 global 文档里。这道兜底此前对它
+    // 视而不见——运行史一旦把文档顶过上限，compact 走完整条阶梯也压不下来，
+    // global 文档就此写不进去，连分支/项目的后续变更一起丢（Codex #1471 P1）。
+    // state 层已有条数 + 字节两道闸，这里是最后一道：越新的越该留。
+    restOfState.scheduledJobRuns = (restOfState.scheduledJobRuns || [])
+      .slice()
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
+      .slice(0, maxEntries);
     if (jsonByteLength(restOfState) <= MAX_GLOBAL_REST_BYTES) return restOfState;
   }
 
