@@ -181,21 +181,23 @@ function resolveBound(value: number | undefined, nowMs: number, fallback: number
  *
  * 样本少于 3 个的容器不参与（算不出可信的间隔），全都算不出就返回 0 = 不做限制。
  */
-function observedCadenceMs(containers: string[], after: number, before: number): number {
-  let coarsest = 0;
+function observedCadence(containers: string[], after: number, before: number): { cadenceMs: number; maxSamples: number } {
+  let cadenceMs = 0;
+  let maxSamples = 0;
   for (const name of containers) {
     const all = store.get(name);
     if (!all) continue;
     const ts: number[] = [];
     for (const p of all) if (p.ts >= after && p.ts <= before) ts.push(p.ts);
+    if (ts.length > maxSamples) maxSamples = ts.length;
     if (ts.length < 3) continue;
     const gaps: number[] = [];
     for (let i = 1; i < ts.length; i += 1) gaps.push(ts[i] - ts[i - 1]);
     gaps.sort((a, b) => a - b);
     const p90 = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.9))];
-    if (p90 > coarsest) coarsest = p90;
+    if (p90 > cadenceMs) cadenceMs = p90;
   }
-  return coarsest;
+  return { cadenceMs, maxSamples };
 }
 
 function aggregate(bucket: StoredPoint[], group: 'average' | 'max'): Omit<SeriesPoint, 'ts'> {
@@ -243,10 +245,18 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
    * 下限 8 个点：真实断档会把 p90 抬高（比如 CDS 重启后窗口里只剩一段数据），
    * 不设下限的话一次长断档就能把整个窗口压成两三个点。
    */
-  const cadenceMs = observedCadenceMs(query.containers, after, before);
-  const wanted = cadenceMs > 0
-    ? Math.min(asked, Math.max(8, Math.ceil(span / (cadenceMs * 1.5))))
-    : asked;
+  const { cadenceMs, maxSamples } = observedCadence(query.containers, after, before);
+  const byCadence = cadenceMs > 0 ? Math.max(8, Math.ceil(span / (cadenceMs * 1.5))) : asked;
+  /*
+   * 第二道闸：点数不能超过样本数。
+   *
+   * 节奏要至少三个样本才算得出来，而 CDS 每次重启后历史是空的——头两分钟只有
+   * 一两个样本，算不出节奏就会退回按请求值切 120 个桶，于是冷启动那几分钟
+   * 又是锯齿。而且这一档本来就不该有细分辨率：手上只有 2 个样本，画 120 个点
+   * 是在无中生有。所以另外按样本数封顶（留 1.2 倍余量给容器间的错峰）。
+   */
+  const bySamples = maxSamples > 0 ? Math.max(1, Math.ceil(maxSamples * 1.2)) : asked;
+  const wanted = Math.min(asked, byCadence, bySamples);
   const bucketMs = span / wanted;
 
   // 先按桶归集每个容器的样本。桶边界对所有容器是同一套（同一个 after / bucketMs），
