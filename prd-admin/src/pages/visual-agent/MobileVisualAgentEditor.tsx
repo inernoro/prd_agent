@@ -144,7 +144,13 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
   const cardsRef = useRef<GenCard[]>([]);
   cardsRef.current = cards;
   const abortersRef = useRef<AbortController[]>([]);
-  const pendingInitRef = useRef<{ text: string; size: string | null; assetId?: string | null } | null>(null);
+  const pendingInitRef = useRef<{
+    text: string;
+    size: string | null;
+    assetId?: string | null;
+    /** 首页没有预先上传时带过来的原图（dataURL）。生成前必须先落盘，否则这次生成没有参考图。 */
+    inlineImage?: { src: string; name?: string } | null;
+  } | null>(null);
   const initFiredRef = useRef(false);
 
   const enabledPools = useMemo(
@@ -182,9 +188,23 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
       const stored = sessionStorage.getItem(sessionKey);
       if (!stored) return;
       sessionStorage.removeItem(sessionKey);
-      const data = JSON.parse(stored) as { messageText?: string; assetId?: string | null };
+      const data = JSON.parse(stored) as { messageText?: string; assetId?: string | null; modelId?: string };
       const parsed = parseInlinePrompt(String(data.messageText ?? ''));
-      if (parsed.text) pendingInitRef.current = { text: parsed.text, size: parsed.size, assetId: data.assetId };
+      if (parsed.text) {
+        pendingInitRef.current = {
+          text: parsed.text,
+          size: parsed.size,
+          assetId: data.assetId,
+          // 首页现在不再预先上传参考图（跳转不等那个往返），assetId 通常是空的，
+          // 图只存在于 messageText 里的 [IMAGE src=dataURL]。只认 assetId 的话，
+          // 手机用户传的照片会被整个忽略，还照样扣一次生成（Codex PR #1476 P1）。
+          inlineImage: parsed.inlineImage ?? null,
+        };
+      }
+      // 首页显式选过的模型：不认它就会退回「第一个可用池」，用户选了 A 却用 B 跑，
+      // 而这是一次要花钱的生成。桌面编辑器已经认了，这里是同一份交接包的第二个消费方。
+      const handedModelId = String(data.modelId || '').trim();
+      if (handedModelId) setPickedPoolId(handedModelId);
     } catch {
       // ignore
     }
@@ -466,12 +486,30 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
     if (!pending || !pickedPool) return;
     initFiredRef.current = true;
     pendingInitRef.current = null;
-    let ref: RefImage | null = null;
-    if (pending.assetId) {
-      const a = assetsRef.current.find((x) => x.id === pending.assetId);
-      if (a) ref = { assetId: a.id, sha256: a.sha256, url: a.url, label: a.prompt || '参考图' };
-    }
-    void handleGenerate(pending.text, { ref, sizeOverride: pending.size || undefined });
+    void (async () => {
+      let ref: RefImage | null = null;
+      if (pending.assetId) {
+        const a = assetsRef.current.find((x) => x.id === pending.assetId);
+        if (a) ref = { assetId: a.id, sha256: a.sha256, url: a.url, label: a.prompt || '参考图' };
+      }
+      // 没有 assetId 但带了原图：先落盘再生成。落盘失败就明说，不静默丢图去跑一次纯文字。
+      if (!ref && pending.inlineImage?.src) {
+        const up = await uploadVisualAgentWorkspaceAsset({
+          id: workspaceId,
+          data: pending.inlineImage.src,
+          prompt: pending.inlineImage.name || '参考图',
+          idempotencyKey: `mInit_${workspaceId}_${Date.now()}`,
+        });
+        if (up.success) {
+          const a = up.data.asset;
+          setAssets((prev) => [...prev, a]);
+          ref = { assetId: a.id, sha256: a.sha256, url: a.url, label: pending.inlineImage.name || '参考图' };
+        } else {
+          toast.error('参考图未能带入', `${up.error?.message || '未知错误'}。这次将只按文字生成。`);
+        }
+      }
+      await handleGenerate(pending.text, { ref, sizeOverride: pending.size || undefined });
+    })();
   }, [loading, pickedPool, handleGenerate]);
 
   const onPickFile = useCallback(

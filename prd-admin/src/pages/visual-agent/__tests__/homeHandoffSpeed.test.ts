@@ -17,6 +17,7 @@ const strip = (src: string) =>
 
 const PAGE = strip(readFileSync(resolve(ROOT, 'src/pages/visual-agent/VisualAgentWorkspaceListPage.tsx'), 'utf8'));
 const TAB = strip(readFileSync(resolve(ROOT, 'src/pages/ai-chat/AdvancedVisualAgentTab.tsx'), 'utf8'));
+const MOBILE = strip(readFileSync(resolve(ROOT, 'src/pages/visual-agent/MobileVisualAgentEditor.tsx'), 'utf8'));
 
 const submitBody = (() => {
   const at = PAGE.indexOf('const onQuickSubmit');
@@ -113,5 +114,41 @@ describe('画布落位：新图贴着参考图排', () => {
     const item = TAB.slice(TAB.indexOf('const inlineCanvasItem'), TAB.indexOf('setCanvas((prev) => [...prev, inlineCanvasItem])'));
     expect(item).toMatch(/syncStatus: 'pending'/);
     expect(TAB).toContain("refForInit.syncStatus !== 'synced'");
+  });
+});
+
+describe('交接包有两个消费方，改一个就得改另一个', () => {
+  // 这条守卫的由来：我给交接包加了 imageSize / modelId / 内联图三样，只教了桌面编辑器，
+  // 手机编辑器照旧只认 assetId、只按「第一个可用池」挑模型。结果手机用户传的照片被
+  // 整个忽略、模型也不是他选的那个——而这两件都要花钱（Codex PR #1476 两条 P1）。
+  // 形状 3：同一份数据有两个读者，改一处忘一处。
+
+  it('剥完注释还剩真代码（companion）', () => {
+    expect(MOBILE).toContain('pendingInitRef');
+  });
+
+  it('【关键】只有这两个文件读交接包；多出第三个必须同步适配', () => {
+    const consumers = [
+      'src/pages/ai-chat/AdvancedVisualAgentTab.tsx',
+      'src/pages/visual-agent/MobileVisualAgentEditor.tsx',
+    ].filter((rel) => readFileSync(resolve(ROOT, rel), 'utf8').includes('visual_agent_init_'));
+    expect(consumers).toHaveLength(2);
+  });
+
+  it('【关键】手机端也认交接包里的模型，不再退回第一个可用池', () => {
+    expect(MOBILE).toMatch(/data\.modelId/);
+    expect(MOBILE).toMatch(/setPickedPoolId\(handedModelId\)/);
+  });
+
+  it('【关键】手机端把内联图先落盘再生成，不静默丢图跑纯文字', () => {
+    expect(MOBILE).toMatch(/inlineImage: parsed\.inlineImage/);
+    // 落盘要真的发生，并且结果要用作这次生成的参考图。
+    const at = MOBILE.indexOf('if (!ref && pending.inlineImage?.src)');
+    expect(at, '缺 assetId 时应先上传').toBeGreaterThan(0);
+    const block = MOBILE.slice(at, at + 900);
+    expect(block).toContain('uploadVisualAgentWorkspaceAsset');
+    expect(block).toMatch(/ref = \{ assetId: a\.id/);
+    // 失败要说出来，不能悄悄跑一次没有参考图的付费生成。
+    expect(block).toMatch(/toast\.error\('参考图未能带入'/);
   });
 });
