@@ -62,17 +62,27 @@ const MAX_MATCHED_SAMPLES = 5;
  * 取一个项目的作用域：名下全部服务 buildScope（含各部署模式声明）的并集。
  *
  * 归一化复用 `normalizeBuildScope`（同一份判据）：它会拒掉仓库根等价物
- * （`.` / `**` 之类）与越界路径。被拒的条目对本模块的语义恰好也是「等于没声明」，
- * 所以直接跳过即可。
+ * （`.` / `**` 之类）与越界路径。被拒的条目对本模块的语义恰好也是「等于没声明」。
+ *
+ * **只要有一个服务没声明范围，整个项目就退回全通配**（返回空数组，2026-09-02
+ * Codex P1）。取并集看着自然，但半划状态下是错的：项目里 A 服务划了 `prd-api/**`、
+ * B 服务没划，并集就是 `prd-api/**`，于是只改到 B 目录的推送被判「未波及」，
+ * **整个项目静默不部署**——而没划范围的那个服务本来的语义恰恰是「什么都可能影响我」。
+ * 失败方向必须朝安全的一边：宁可多建一次，不能悄悄不建。
  */
 export function resolveProjectScope(profiles: readonly ScopedProfileLike[] | undefined): string[] {
+  const list = profiles || [];
   const out = new Set<string>();
-  for (const profile of profiles || []) {
+  for (const profile of list) {
+    const declared = new Set<string>();
     for (const candidate of [profile.buildScope, ...Object.values(profile.deployModes || {}).map((m) => m?.buildScope)]) {
       const normalized = normalizeBuildScope(candidate);
       if (!normalized) continue;
-      for (const entry of normalized) out.add(entry);
+      for (const entry of normalized) declared.add(entry);
     }
+    // 这个服务一条都没声明 → 它可能被任何改动影响 → 项目级判据只能全通配
+    if (declared.size === 0) return [];
+    for (const entry of declared) out.add(entry);
   }
   return [...out];
 }

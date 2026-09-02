@@ -117,6 +117,41 @@ describe('findSharedInfra：共享是算出来的，不是假设的', () => {
   });
 });
 
+describe('按 key 名认 redis 时要看值像不像地址', () => {
+  it('REDIS_PORT=6379 两边一样不算共享缓存 —— 那证明不了连的是同一个 redis', () => {
+    const hits = findSharedInfra([
+      { id: 'a', name: 'A', scope: [], env: { REDIS_PORT: '6379', REDIS_HOST: 'a-cache.internal' } },
+      { id: 'b', name: 'B', scope: [], env: { REDIS_PORT: '6379', REDIS_HOST: 'b-cache.internal' } },
+    ]);
+    // 端口相同是常态；主机各不相同，所以一条都不该报
+    expect(hits).toEqual([]);
+  });
+
+  it('REDIS_HOST 指向同一台才算共享', () => {
+    const hits = findSharedInfra([
+      { id: 'a', name: 'A', scope: [], env: { REDIS_HOST: 'shared-cache.internal' } },
+      { id: 'b', name: 'B', scope: [], env: { REDIS_HOST: 'shared-cache.internal' } },
+    ]);
+    expect(hits).toEqual([{ key: 'REDIS_HOST', kind: 'cache', projectIds: ['a', 'b'] }]);
+  });
+
+  it('host:port 认得出来', () => {
+    const hits = findSharedInfra([
+      { id: 'a', name: 'A', scope: [], env: { REDIS_ADDR: 'cache:6379' } },
+      { id: 'b', name: 'B', scope: [], env: { REDIS_ADDR: 'cache:6379' } },
+    ]);
+    expect(hits.map((h) => h.kind)).toEqual(['cache']);
+  });
+
+  it('布尔开关一律不算', () => {
+    const hits = findSharedInfra([
+      { id: 'a', name: 'A', scope: [], env: { REDIS_TLS: 'true' } },
+      { id: 'b', name: 'B', scope: [], env: { REDIS_TLS: 'true' } },
+    ]);
+    expect(hits).toEqual([]);
+  });
+});
+
 describe('describeSharedInfra：说清后果', () => {
   it('点名项目、变量与后果', () => {
     const text = describeSharedInfra(

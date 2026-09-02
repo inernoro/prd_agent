@@ -219,6 +219,22 @@ describe('项目接口透出同仓关系', () => {
     expect(res.body.repoSharing).toBeNull();
   });
 
+  it('共享判定读的是真正注入容器的 env：继承的全局变量也要算', async () => {
+    // 裸 project.customEnv 会漏掉「两个项目都继承同一个全局库地址」这一整类，
+    // 而真正进容器的是 getCustomEnv（继承的全局 + 旧 bucket + 项目自己的）。
+    addProject('p-main', 'MAP', REPO);
+    addProject('p-self', 'CDS Self', REPO);
+    for (const id of ['p-main', 'p-self']) {
+      stateService.updateProject(id, { inheritGlobalEnv: true });
+    }
+    stateService.setCustomEnv({ MONGO_URL: 'mongodb://box:27017/shared' }, '_global');
+
+    const res = await get(server, '/api/projects/p-main', { 'cds-cookie': '1' });
+    const hits = res.body.repoSharing.sharedInfra;
+    expect(hits).toHaveLength(1);
+    expect(hits[0].key).toBe('MONGO_URL');
+  });
+
   it('机器凭据拿不到同仓关系：它可能只被授权了本项目', async () => {
     addProject('p-main', 'MAP', REPO, { MONGO_URL: 'mongodb://box:27017/shared' });
     addProject('p-self', 'CDS Self', REPO, { MONGO_URL: 'mongodb://box:27017/shared' });

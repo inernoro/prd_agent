@@ -681,6 +681,54 @@ describe('POST /api/projects/:id/github/link', () => {
     expect(project.githubAutoDeploy).toBe(true);
   });
 
+  it('绑一个已被别的项目绑走的仓库：默认拦住，并回兄弟项目名', async () => {
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.siblings).toEqual([{ id: 'p2', name: 'Other' }]);
+    expect(res.body.siblingCount).toBe(1);
+  });
+
+  it('机器凭据看不到兄弟项目的 id 与名字，只知道有几个', async () => {
+    // 建项目那条路径上刚修过同一个泄露；同一份判断的第二处不能漏（Codex 第四轮）。
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
+      { 'X-AI-Access-Key': 'cdsp_someprojectkey' },
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.siblings).toEqual([]);
+    expect(res.body.siblingCount).toBe(1);
+    expect(res.body.message).not.toContain('Other');
+  });
+
+  it('带 allowShared 才放行，两个项目共用同一个仓库', async () => {
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo', allowShared: true }),
+    );
+    expect(res.status).toBe(200);
+    expect(stateService.findProjectsByRepoFullName('octocat/repo').map((p) => p.id).sort())
+      .toEqual(['p1', 'p2']);
+  });
+
   it('rejects linking a repo whose owner is not whitelisted', async () => {
     server = startServer();
     const res = await request(server, 'POST', '/api/projects/p1/github/link',

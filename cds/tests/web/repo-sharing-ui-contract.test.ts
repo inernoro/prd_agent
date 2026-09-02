@@ -105,3 +105,27 @@ describe('共用仓库的确认要绑在它描述的那个仓库上', () => {
     expect(source).toMatch(/useEffect\(\(\) => \{\s*setSharedConfirm\(null\);/);
   });
 });
+
+describe('「是不是机器凭据」这个判断只许有一处', () => {
+  /**
+   * 这条判断决定要不要把别的项目的信息端给调用方，至少三个消费方在用。抄两份、
+   * 只改一处，正是这个 PR 反复栽的跟头：建项目那处修了、绑仓库那处漏了，
+   * 第四轮 review 才抓出来。所以钉死「只有 machine-caller.ts 里有定义」。
+   */
+  it('全仓只有一个定义，其余都是 import', () => {
+    const SRV = path.resolve(process.cwd(), '../cds/src');
+    const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true })
+      .flatMap((e) => (e.isDirectory()
+        ? walk(path.join(dir, e.name))
+        : e.name.endsWith('.ts') ? [path.join(dir, e.name)] : []));
+
+    const definers: string[] = [];
+    for (const file of walk(SRV)) {
+      const src = fs.readFileSync(file, 'utf8');
+      if (/(?:export\s+)?function\s+isMachineCaller\s*\(/.test(src)) {
+        definers.push(path.relative(SRV, file));
+      }
+    }
+    expect(definers, '把它 import 过去，不要再写一份').toEqual(['services/machine-caller.ts']);
+  });
+});

@@ -16,6 +16,32 @@ import {
 } from '../../src/services/project-scope.js';
 
 describe('resolveProjectScope', () => {
+  it('半划状态退回全通配：一个服务没声明，整个项目就不许收窄', () => {
+    // 取并集看着自然，但会让「只改到没划范围那个服务的目录」的推送被判未波及，
+    // 整个项目静默不部署。失败方向必须朝安全的一边。
+    const scope = resolveProjectScope([
+      { id: 'api', buildScope: ['prd-api/**'] },
+      { id: 'web' },
+    ]);
+    expect(scope).toEqual([]);
+  });
+
+  it('部署模式上声明也算数，不算「没声明」', () => {
+    const scope = resolveProjectScope([
+      { id: 'api', buildScope: ['prd-api/**'] },
+      { id: 'gw', deployModes: { express: { buildScope: ['llmgw/**'] } } },
+    ]);
+    expect(new Set(scope)).toEqual(new Set(['prd-api/**', 'llmgw/**']));
+  });
+
+  it('声明了但归一化后被拒（等价于仓库根）也算没声明', () => {
+    const scope = resolveProjectScope([
+      { id: 'api', buildScope: ['prd-api/**'] },
+      { id: 'all', buildScope: ['**'] },
+    ]);
+    expect(scope).toEqual([]);
+  });
+
   it('取名下全部服务 buildScope 的并集并去重', () => {
     const scope = resolveProjectScope([
       { buildScope: ['prd-api/**', '.github/workflows/branch-image.yml'] },

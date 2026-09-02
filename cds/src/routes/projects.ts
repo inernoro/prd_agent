@@ -39,6 +39,7 @@ import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '
 import { repoNameFromGitRef } from '../services/preview-slug.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveProjectScope } from '../services/project-scope.js';
+import { isMachineCaller } from '../services/machine-caller.js';
 import { summarizeRepoSharing, type RepoSharingSummary } from '../services/repo-sharing.js';
 import { inferProjectScope, inferProfileScope, declaredScopeSources } from '../services/build-scope-inference.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
@@ -609,31 +610,6 @@ function hasOwnerAccess(req: unknown, projectId: string): boolean {
   return false;
 }
 
-/**
- * 调用方是不是机器凭据。
- *
- * 机器凭据一律通过 header 出示（`x-ai-access-key` / 兼容写法 `ai-access-key` /
- * `Authorization: Bearer`），浏览器则靠 cookie。所以看 header 就够，而且不依赖
- * 任何一种鉴权模式下才会有的会话标记 —— `CDS_AUTH_MODE=disabled` 的实例压根不签
- * 会话，用「是不是 cookie 会话」判会把真人也判成机器。
- *
- * 另外认已 stamp 的作用域标记：走到这里时它们已经证明了调用方是一把范围受限的钥匙。
- */
-function isMachineCaller(req: unknown): boolean {
-  const r = req as {
-    headers?: Record<string, unknown>;
-    cdsProjectKey?: unknown;
-    cdsPrincipal?: unknown;
-  };
-  if (r.cdsProjectKey || r.cdsPrincipal) return true;
-  const h = r.headers || {};
-  if (typeof h['x-ai-access-key'] === 'string' && h['x-ai-access-key']) return true;
-  if (typeof h['ai-access-key'] === 'string' && h['ai-access-key']) return true;
-  const auth = h['authorization'];
-  if (typeof auth === 'string' && /^bearer\s+\S/i.test(auth)) return true;
-  return false;
-}
-
 function maskEnvMap(env: Record<string, string> | undefined): Record<string, string> | undefined {
   if (!env) return env;
   const out: Record<string, string> = {};
@@ -735,7 +711,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       id: p.id,
       name: p.name,
       scope: resolveProjectScope(stateService.getBuildProfilesForProject(p.id)),
-      env: p.customEnv,
+      // 必须取 getCustomEnv（继承的全局 + 旧 bucket + project.customEnv），不能取裸
+      // project.customEnv（2026-09-02 Codex P2）：真正注入容器的是前者，按后者比对会
+      // 漏掉「两个项目都继承同一个全局库地址」和存量项目那一整类真实共享。
+      // 仓库里早有同样的先例（state.ts getCustomEnv 上方那条 Bugbot 注释）。
+      env: stateService.getCustomEnv(p.id),
     }));
     const summary = summarizeRepoSharing(facts);
     if (!summary) return null;

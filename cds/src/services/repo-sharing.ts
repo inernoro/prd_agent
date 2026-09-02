@@ -67,9 +67,30 @@ function classifyValue(key: string, value: string): SharedInfraHit['kind'] | nul
   if (/^redis(s)?:\/\//.test(lowerVal)) return 'cache';
   // 连接串之外，DB 名这类 key 撞上同一个值同样是共享（配套的 host 往往在别处）
   if (/(database|db)_?name$|^.*_db$|database$/.test(lowerKey)) return 'database';
-  if (/^redis/.test(lowerKey)) return 'cache';
+  // 按 key 名认 redis 时**必须再看值像不像一个地址**（2026-09-02 Codex P2）：
+  // `REDIS_PORT=6379` 两个项目当然会一样，但那说明不了它们连的是同一个 redis，
+  // 而报出去的话是「一边写坏，另一边立刻可见」——这正是我自己写下的「宁可漏报
+  // 也不误报」被自己破掉的地方。端口号 / 纯数字 / 布尔开关一律不算。
+  if (/^redis/.test(lowerKey) && looksLikeEndpointValue(v)) return 'cache';
   if (/^(https?):\/\//.test(lowerVal)) return 'endpoint';
   return null;
+}
+
+/**
+ * 这个取值像不像「指向某台机器的地址」。
+ *
+ * 认的是主机形态：含 `:` 的 host:port、含 `.` 的域名、或明确的 scheme。
+ * 纯数字（端口）、纯布尔、单个词（`true` / `default`）都不算 —— 它们在两个项目里
+ * 相同是常态，不构成「连的是同一处」的证据。
+ */
+function looksLikeEndpointValue(value: string): boolean {
+  const v = value.trim();
+  if (/^\d+$/.test(v)) return false;                    // 端口号
+  if (/^(true|false|yes|no|on|off)$/i.test(v)) return false;
+  if (/:\/\//.test(v)) return true;                     // 带 scheme
+  if (/^[a-z0-9._-]+:\d{2,5}$/i.test(v)) return true;    // host:port
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(v)) return true; // 域名 / 多段主机名
+  return false;
 }
 
 /**

@@ -58,6 +58,7 @@ import {
 } from '../services/comment-template.js';
 import { broadcastSelfStatus } from './branches.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
+import { isMachineCaller } from '../services/machine-caller.js';
 
 export interface GitHubWebhookRouterDeps {
   stateService: StateService;
@@ -944,10 +945,17 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       .filter((p) => p.id !== project.id);
     const allowShared = body.allowShared === true;
     if (alreadyLinked.length > 0 && !allowShared) {
+      // 机器凭据只知道「被占了、几个」，不给 id 与名字（2026-09-02 Codex P2）：
+      // 建项目那条路径上刚修过同一个泄露，这里是同一份判断的第二处——抄两份、
+      // 只改一处，是这个 PR 反复栽的那个跟头。
+      const machine = isMachineCaller(req);
       res.status(409).json({
         error: 'already_linked',
-        message: `${repoFullName} 已经绑定到项目 ${alreadyLinked.map((p) => p.name).join('、')}`,
-        siblings: alreadyLinked.map((p) => ({ id: p.id, name: p.name })),
+        message: machine
+          ? `${repoFullName} 已经绑定到另外 ${alreadyLinked.length} 个项目`
+          : `${repoFullName} 已经绑定到项目 ${alreadyLinked.map((p) => p.name).join('、')}`,
+        siblings: machine ? [] : alreadyLinked.map((p) => ({ id: p.id, name: p.name })),
+        siblingCount: alreadyLinked.length,
         nextStep: '确认要让多个项目共用这个仓库，就带上 allowShared 再试一次；'
           + '推送会按各项目声明的构建范围分发，没声明范围的项目每次推送都会重建。',
       });

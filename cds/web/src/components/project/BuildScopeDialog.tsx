@@ -246,7 +246,9 @@ export function BuildScopeDialog({
                   })}
                 </div>
                 {current.length === 0 && (extra[profile.id] || '').trim() === '' ? (
-                  <p className="text-xs text-muted-foreground">一个都不勾 = 全通配：任何一次推送都会重建。</p>
+                  <p className="text-xs text-muted-foreground">
+                    这个服务一个都不勾 = 全通配，而且会让整个项目退回全通配（哪怕别的服务划了范围）。
+                  </p>
                 ) : null}
               </div>
             );
