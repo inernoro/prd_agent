@@ -147,6 +147,17 @@ describe('本机生成的背景：存取与上限', () => {
     expect(readGeneratedBackdrops('user-a').map((x) => x.id)).toEqual(['secret']);
   });
 
+  it('【关键】storage 写不进时，传入的列表不能丢', () => {
+    // 隐私模式 / 配额满 / 没登录：这两个函数只能返回一个「仅本次会话有效」的列表。
+    // 调用方若不传 existing，下一次调用会重新从 storage 读到空，
+    // 上一张刚花钱生成的图就从界面上消失（Codex PR #1476 P2）。
+    const session = [mk('one')];
+    const next = pushGeneratedBackdrop('', mk('two'), session);
+    expect(next.map((x) => x.id), '新的在前，旧的仍在').toEqual(['two', 'one']);
+    // 删除同理：显式传入时只删指定那张，不清空其余。
+    expect(removeGeneratedBackdrop('', 'one', next).map((x) => x.id)).toEqual(['two']);
+  });
+
   it('【关键】拿不到账号时不落盘，也不读旧的全局桶', () => {
     // 未登录 / 水合未完成时宁可少显示，也不能写进一个人人可读的键。
     localStorage.setItem('visualAgent.backdrop.generated', JSON.stringify([mk('legacy')]));
@@ -195,6 +206,34 @@ describe('暗罩强度按素材来源分档', () => {
 
   it('没有背景时也返回一个合法值，调用方不必先判空', () => {
     expect(dimFor(null)).toBe(CATALOG_DIM);
+  });
+});
+
+describe('【关键】调用方把当前列表传给了两个写入函数', () => {
+  it('不传 existing 就等于「写不进时静默丢图」，必须钉住', () => {
+    const src = readFileSync(resolve(ROOT, 'src/components/visual-agent/BackdropSettings.tsx'), 'utf8');
+    const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    expect(code, '剥完注释还剩真代码').toContain('runGenerate');
+    expect(code).toMatch(/pushGeneratedBackdrop\(userId, asset, generated\)/);
+    expect(code).toMatch(/removeGeneratedBackdrop\(userId, id, generated\)/);
+  });
+});
+
+describe('【关键】背景面板浮层 Portal 到 body', () => {
+  it('不许再挂在触发器下面被祖先 overflow 裁掉', () => {
+    // 窄视口（~320px）下 320px 定宽右对齐会算出负的左边缘，被祖先 overflow-auto
+    // 裁掉，第一列控件点不到（Codex PR #1476 P1）。frontend-modal 规则第 2 条：
+    // 浮层必须 createPortal 到 body，物理脱离祖先的 overflow / transform。
+    const src = readFileSync(resolve(ROOT, 'src/components/visual-agent/BackdropSettings.tsx'), 'utf8');
+    const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    expect(code).toContain('createPortal');
+    expect(code).toMatch(/document\.body,/);
+    expect(code, '不再是触发器的 absolute 子元素').not.toMatch(/data-testid="backdrop-settings-panel"[\s\S]{0,120}absolute right-0/);
+    // 位置要夹回视口内，且高度留到底部自己滚（不能又长出屏幕）。
+    expect(code).toMatch(/maxHeight: panelPos\.maxHeight/);
+    expect(code).toMatch(/overscrollBehavior: 'contain'/);
+    // 点面板内部不能因为「不在 ref 里」就把自己关掉。
+    expect(code).toMatch(/panelRef\.current\?\.contains\(t\)/);
   });
 });
 

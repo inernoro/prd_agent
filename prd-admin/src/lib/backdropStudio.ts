@@ -88,7 +88,7 @@ export function readGeneratedBackdrops(userId: string): BackdropAsset[] {
 }
 
 /** 新的排在最前，超出上限的挤掉最旧的。返回写入后的完整列表，调用方直接拿去渲染。 */
-export function pushGeneratedBackdrop(userId: string, next: BackdropAsset, existing = readGeneratedBackdrops(userId)): BackdropAsset[] {
+export function pushGeneratedBackdrop(userId: string, next: BackdropAsset, existing: readonly BackdropAsset[] = readGeneratedBackdrops(userId)): BackdropAsset[] {
   const list = [next, ...existing.filter((x) => x.id !== next.id)].slice(0, MAX_GENERATED);
   const key = generatedKeyOf(userId);
   if (!key) return list;
@@ -100,7 +100,7 @@ export function pushGeneratedBackdrop(userId: string, next: BackdropAsset, exist
   return list;
 }
 
-export function removeGeneratedBackdrop(userId: string, id: string, existing = readGeneratedBackdrops(userId)): BackdropAsset[] {
+export function removeGeneratedBackdrop(userId: string, id: string, existing: readonly BackdropAsset[] = readGeneratedBackdrops(userId)): BackdropAsset[] {
   const list = existing.filter((x) => x.id !== id);
   const key = generatedKeyOf(userId);
   if (!key) return list;

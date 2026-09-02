@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ImageOff, Images, Sparkles, Trash2, Settings2, X } from 'lucide-react';
 import {
   ROTATION_DAYS,
@@ -86,6 +87,19 @@ export function BackdropSettings(props: {
   const { userId, assets, generated, onGeneratedChange, mode, onModeChange } = props;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  /**
+   * 面板改走 Portal 挂到 body，位置自己算。
+   *
+   * 原来它是触发器的 absolute 子元素：320px 定宽、右对齐，外层页头还有横向内边距，
+   * 窄视口（~320px）下左边缘会算成负数，再被祖先的 overflow-auto 裁掉——第一列的
+   * 控件直接点不到（Codex PR #1476 P1）。frontend-modal 规则第 2 条写明浮层必须
+   * createPortal 到 body，正是为了物理脱离祖先的 overflow / transform。
+   *
+   * 位置按视口夹紧：左右各留 8px 安全边，宽度取 min(320, 视口-16)，
+   * 高度上限留到视口底部，超出自己滚。
+   */
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
 
   // 生成态。氛围输入框预填一句建议——零摩擦：用户改的是差异，不是从空白开始想。
   const [mood, setMood] = useState(() => BACKDROP_MOOD_SUGGESTIONS[Math.floor(Math.random() * BACKDROP_MOOD_SUGGESTIONS.length)]!);
@@ -100,10 +114,37 @@ export function BackdropSettings(props: {
   const current = useMemo(() => resolveBackdrop(assets, mode), [assets, mode]);
   const rotating = mode === 'auto';
 
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = ref.current?.getBoundingClientRect();
+      if (!r) return;
+      const margin = 8;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const width = Math.min(320, Math.max(200, vw - margin * 2));
+      // 右对齐触发器，再夹回视口内——窄屏下这一夹就是「点不到」与「点得到」的区别。
+      const left = Math.min(Math.max(margin, r.right - width), Math.max(margin, vw - width - margin));
+      const top = r.bottom + 6;
+      setPanelPos({ top, left, width, maxHeight: Math.max(160, vh - top - margin) });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      // 面板 Portal 到了 body，不再是 ref 的子节点——只判 ref 会导致点面板内部就关掉。
+      if (ref.current?.contains(t)) return;
+      if (panelRef.current?.contains(t)) return;
+      setOpen(false);
     };
     const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onDown, true);
@@ -127,7 +168,10 @@ export function BackdropSettings(props: {
     setProgress({ phase: 'resolving', elapsedMs: 0 });
     try {
       const asset = await generateBackdrop({ mood, signal: ctrl.signal, onProgress: setProgress });
-      onGeneratedChange(pushGeneratedBackdrop(userId, asset));
+      // 必须把当前列表传进去。storage 写不进（隐私模式 / 配额满 / 没登录）时这两个
+      // 函数只返回一个「仅本次会话有效」的列表，没落盘；不传 existing 的话下一次调用
+      // 会重新从 storage 读到空，上一张刚花钱生成的图就从界面上消失了（Codex PR #1476 P2）。
+      onGeneratedChange(pushGeneratedBackdrop(userId, asset, generated));
       pick(asset.id); // 出图即钉住：用户点「生成」就是想看这一张，不该还要再点一下
     } catch (e) {
       setGenError(e instanceof Error ? e.message : '生成失败');
@@ -138,7 +182,7 @@ export function BackdropSettings(props: {
   };
 
   const dropGenerated = (id: string) => {
-    const next = removeGeneratedBackdrop(userId, id);
+    const next = removeGeneratedBackdrop(userId, id, generated); // 同上：不传就会把仅会话有效的那几张一起清掉
     onGeneratedChange(next);
     if (mode === id) pick('auto'); // 删掉的正是钉住的那张，退回轮换，别留一个指向空气的偏好
   };
@@ -168,13 +212,20 @@ export function BackdropSettings(props: {
         背景
       </button>
 
-      {open && (
+      {open && panelPos && createPortal(
         <div
+          ref={panelRef}
           data-testid="backdrop-settings-panel"
-          className="absolute right-0 z-50 mt-1.5"
           style={{
-            top: '100%',
-            width: 320,
+            position: 'fixed',
+            top: panelPos.top,
+            left: panelPos.left,
+            width: panelPos.width,
+            maxHeight: panelPos.maxHeight,
+            minHeight: 0,
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+            zIndex: 100,
             borderRadius: 8,
             border: '1px solid var(--border-subtle)',
             background: 'var(--panel-solid)',
@@ -367,7 +418,8 @@ export function BackdropSettings(props: {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
