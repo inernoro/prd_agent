@@ -356,12 +356,17 @@ describe('上传落位：只新增、不替换，且贴着锚点对齐', () => {
   });
 
   it('【关键】锚点取的是选中项的真实坐标，选多张/无坐标时不硬凑', () => {
+    // 断言的是行为与判定来源，不是某一段实现的字面写法：
+    // 「只有单选才有锚点」留在调用处；「没坐标就不当锚点」是 anchorRectOf 的职责，
+    // 它的行为由 canvasPlacement.test.ts 用真实调用断言（不硬凑 0,0）。
+    // 上一版把那个内联 IIFE 的三行逐字钉死，收敛到共享判定源时它就红了 —— 形状 4a：
+    // 断言实现的字面存在，会让重构者的 CI 红，而行为其实没变。
     const at = code.indexOf('let anchor: PlacementRect | null =');
     expect(at, '锚点应从选中项算出').toBeGreaterThan(0);
     const near = code.slice(at, at + 420);
     expect(near).toMatch(/selectedKeys\.length !== 1/);
-    expect(near).toMatch(/typeof x !== 'number' \|\| typeof y !== 'number'/);
-    expect(near).toMatch(/if \(!w \|\| !h\) return null;/);
+    expect(near).toMatch(/anchorRectOf\(/);
+    expect(code).toMatch(/anchorRectOf[\s\S]{0,200}from '@\/lib\/canvasPlacement'/);
   });
 
   it('【关键】首页带进来的参考图先认领画布上已有的那张，不再落第二份', () => {

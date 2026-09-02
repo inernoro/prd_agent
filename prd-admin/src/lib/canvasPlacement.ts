@@ -9,6 +9,67 @@
 
 export type PlacementRect = { x: number; y: number; w: number; h: number };
 
+/**
+ * 画布上任何「占了地方」的元素，落位时必须看得见它。
+ *
+ * 结构化最小类型：只声明落位需要的字段，不依赖画布组件里那个几十个字段的 CanvasImageItem。
+ */
+export type PlaceableItem = {
+  kind?: string;
+  src?: string;
+  status?: string;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  naturalW?: number;
+  naturalH?: number;
+};
+
+/**
+ * 尺寸未知时按多大算。
+ *
+ * **绝不能退到 1**。1×1 不是「小」，是「这个元素不存在」——落位搜索会把它所在的整片
+ * 区域当成空的，新图直接压上去。这正是「首页带图进画板，生成图和参考图叠在一起」的根因：
+ * 首页上传参考图没带 width/height，后端只在客户端给了才存，新画板从资产列表重建画布时
+ * w/h 就是 undefined，于是一张 2400×2400 的图在碰撞表里是原点上的一个点。
+ *
+ * 320 不是新数字，是画布组件里已经在用的同一档兜底（选中框、边界框都用它）。
+ */
+export const FALLBACK_ITEM_SIZE = 320;
+
+/** 单个元素占的矩形。尺寸优先取显式 w/h，其次图片本身的像素尺寸，最后才是兜底档。 */
+export function itemRect(it: PlaceableItem): PlacementRect {
+  return {
+    x: it.x ?? 0,
+    y: it.y ?? 0,
+    w: Math.max(1, Math.round(it.w ?? it.naturalW ?? FALLBACK_ITEM_SIZE)),
+    h: Math.max(1, Math.round(it.h ?? it.naturalH ?? FALLBACK_ITEM_SIZE)),
+  };
+}
+
+/** 这个元素在画布上占地方吗（空的图片占位、已删除的元素不算）。 */
+export function occupiesSpace(it: PlaceableItem): boolean {
+  const kind = it.kind ?? 'image';
+  return kind === 'generator' || kind === 'shape' || kind === 'text'
+    || !!it.src || it.status === 'running' || it.status === 'error';
+}
+
+/** 落位用的碰撞表。三处落位（生成 / 上传 / 拖入）必须走这一个，否则改一处漏两处。 */
+export function occupiedRects(items: readonly PlaceableItem[]): PlacementRect[] {
+  return items.filter(occupiesSpace).map(itemRect);
+}
+
+/**
+ * 把一个元素当作对齐锚点。没落过位（缺坐标）就不能当锚点——返回 null，
+ * 让调用方退回最近空位搜索，而不是拿 (0,0) 硬凑一个假锚点。
+ */
+export function anchorRectOf(it: PlaceableItem | null | undefined): PlacementRect | null {
+  if (!it) return null;
+  if (typeof it.x !== 'number' || typeof it.y !== 'number') return null;
+  return itemRect(it);
+}
+
 /** 落位方向的优先级：先左右（读起来是一排），放不下才上下。 */
 export const ALIGNED_DIRECTIONS = ['right', 'left', 'down', 'up'] as const;
 export type AlignedDirection = (typeof ALIGNED_DIRECTIONS)[number];

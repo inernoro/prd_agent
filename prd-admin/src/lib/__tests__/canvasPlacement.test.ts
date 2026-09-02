@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   ALIGNED_DIRECTIONS,
   PLACEMENT_PAD,
+  FALLBACK_ITEM_SIZE,
   alignedSlot,
+  anchorRectOf,
   findAlignedFreeTopLeft,
+  itemRect,
+  occupiedRects,
+  occupiesSpace,
   placementGap,
   type PlacementRect,
 } from '../canvasPlacement';
@@ -154,5 +159,58 @@ describe('findAlignedFreeTopLeft', () => {
         cand.y + cand.h + PLACEMENT_PAD > r.y;
       expect(hit).toBe(false);
     }
+  });
+});
+
+describe('itemRect / occupiedRects：尺寸未知的元素也必须占地方', () => {
+  it('【关键】尺寸未知时绝不退成 1×1', () => {
+    // 1×1 不是「小」，是「不存在」——落位搜索会把这块区域当空的，新图直接压上去。
+    // 这正是「首页带图进画板，生成图叠在参考图上」的根因。
+    const r = itemRect({ kind: 'image', src: 'x', x: 0, y: 0 });
+    expect(r.w).toBe(FALLBACK_ITEM_SIZE);
+    expect(r.h).toBe(FALLBACK_ITEM_SIZE);
+    expect(r.w).toBeGreaterThan(1);
+  });
+
+  it('显式 w/h 优先，其次图片自身像素尺寸', () => {
+    expect(itemRect({ src: 'x', w: 50, h: 60, naturalW: 900, naturalH: 900 })).toMatchObject({ w: 50, h: 60 });
+    expect(itemRect({ src: 'x', naturalW: 900, naturalH: 700 })).toMatchObject({ w: 900, h: 700 });
+  });
+
+  it('空占位不占地方，运行中的占位占', () => {
+    expect(occupiesSpace({ kind: 'image', src: '' })).toBe(false);
+    expect(occupiesSpace({ kind: 'image', src: '', status: 'running' })).toBe(true);
+    expect(occupiesSpace({ kind: 'text' })).toBe(true);
+  });
+
+  it('【关键】只有像素尺寸、没有显式 w/h 的参考图，必须挡住新图', () => {
+    // 复现真实那一幕：首页带图进画板，参考图从资产列表重建 —— 后端没存 width/height，
+    // 所以 w/h 是 undefined，只有图片加载后补上的 naturalW/H 是 2400×2400。
+    //
+    // 这条能区分两种实现：旧写法 `w: x.w ?? 1` 不看 naturalW，碰撞表里它是 1×1，
+    // 1024 的新图会落在真实边框内部；新写法退到 naturalW，落位才真的躲开。
+    // 断言比的是**它真正占的那块 2400 见方**，不随实现缩水，所以不会两边都绿。
+    const ref = { kind: 'image', src: 'ref', x: 0, y: 0, naturalW: 2400, naturalH: 2400 };
+    const trueBox = { x: 0, y: 0, w: 2400, h: 2400 };
+
+    const pos = findAlignedFreeTopLeft(occupiedRects([ref]), 1024, 1024, itemRect(ref));
+    expect(pos).not.toBeNull();
+
+    const placed = { x: pos!.x, y: pos!.y, w: 1024, h: 1024 };
+    const overlaps =
+      placed.x < trueBox.x + trueBox.w && placed.x + placed.w > trueBox.x &&
+      placed.y < trueBox.y + trueBox.h && placed.y + placed.h > trueBox.y;
+    expect(overlaps, '新图不得压在参考图真实边框内').toBe(false);
+  });
+});
+
+describe('anchorRectOf', () => {
+  it('没落过位的元素当不了锚点（不能拿 0,0 硬凑）', () => {
+    expect(anchorRectOf({ src: 'x', w: 100, h: 100 })).toBeNull();
+    expect(anchorRectOf(null)).toBeNull();
+  });
+
+  it('有坐标就能当锚点，尺寸未知也算数（走兜底档，不是不算）', () => {
+    expect(anchorRectOf({ src: 'x', x: 5, y: 6 })).toEqual({ x: 5, y: 6, w: FALLBACK_ITEM_SIZE, h: FALLBACK_ITEM_SIZE });
   });
 });

@@ -18,6 +18,12 @@ const strip = (src: string) =>
 const PAGE = strip(readFileSync(resolve(ROOT, 'src/pages/visual-agent/VisualAgentWorkspaceListPage.tsx'), 'utf8'));
 const PANEL = strip(readFileSync(resolve(ROOT, 'src/components/visual-agent/SizePickerPanel.tsx'), 'utf8'));
 
+/** 提交函数体。判「先后顺序」必须在这个范围内判，全文件搜会搜到别处的同名调用。 */
+const SUBMIT = (() => {
+  const at = PAGE.indexOf('const onQuickSubmit');
+  return at < 0 ? '' : PAGE.slice(at, PAGE.indexOf('\n  };', at));
+})();
+
 describe('首页能看见并选择绘图模型', () => {
   it('剥完注释还剩真代码（companion：防止下面几条对着空字符串判绿）', () => {
     expect(PAGE).toContain('function QuickInputBox');
@@ -39,14 +45,24 @@ describe('首页能看见并选择绘图模型', () => {
     expect(PAGE).toMatch(/options\.find\(\(o\) => o\.enabled && o\.isDefault\)/);
   });
 
-  it('【关键】提交时把模型写回偏好，且 await 之后才跳转', () => {
+  it('【关键】提交时把模型写回偏好，且跳转前一定已经落地', () => {
     // 先跳转再写就是竞态：编辑器挂载时读同一份偏好，可能读到上一次的值，
-    // 用户会看到「首页选了 A，进去却是 B」。判据盯 await 与顺序。
-    const at = PAGE.indexOf('updateVisualAgentPreferences({ modelAuto: false, modelId })');
+    // 用户会看到「首页选了 A，进去却是 B」。
+    //
+    // 判据只盯两件事：写回存在、且在跳转之前被 await 掉。**不盯 await 紧贴着它**——
+    // 上一版要求 await 出现在调用前 60 个字符内，等到这个调用被并进 Promise.all
+    // （和建工作区并行，省一个往返）就红了，而它其实仍然在跳转前落地。
+    // 形状 4a：断言实现的字面排布，会拦住不改变行为的重构。
+    // 必须在**提交函数体内**判序。整份文件里 navigate(getEditorPath(ws.id)) 出现不止一次
+    // （列表卡片的 onOpen 也有一处，且在提交函数之后）——从全文件搜就会搜到那一处，
+    // 于是把写偏好挪到跳转之后这条守卫照样绿。形状 6：判据读到的不是它以为的那一处。
+    const at = SUBMIT.indexOf('updateVisualAgentPreferences({ modelAuto: false, modelId })');
     expect(at, '提交路径应写回偏好').toBeGreaterThan(0);
-    expect(PAGE.slice(at - 60, at)).toContain('await');
-    const navAt = PAGE.indexOf('navigate(getEditorPath(ws.id))', at);
+    const navAt = SUBMIT.indexOf('navigate(getEditorPath(ws.id))');
+    expect(navAt, '提交函数里应有跳转').toBeGreaterThan(0);
     expect(navAt, '写回偏好必须发生在跳转之前').toBeGreaterThan(at);
+    // 跳转之前那一段里必须有 await 把它等掉（直接 await，或并进一个被 await 的 Promise.all）。
+    expect(SUBMIT.slice(0, navAt)).toMatch(/await (Promise\.all\(|updateVisualAgentPreferences)/);
   });
 
   it('【关键】尺寸跟着模型走：拉 adapter-info，并把清单传给尺寸表', () => {

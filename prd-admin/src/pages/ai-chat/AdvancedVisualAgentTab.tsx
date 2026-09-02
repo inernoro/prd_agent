@@ -7,7 +7,7 @@ import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { GenDevelopLoader } from '@/components/ui/GenDevelopLoader'; // 生图等待动效=显影（进度画在画框上，替换旧流光进度条）
-import { findAlignedFreeTopLeft, type PlacementRect } from '@/lib/canvasPlacement'; // 新图贴着锚点共边落位
+import { anchorRectOf, FALLBACK_ITEM_SIZE, findAlignedFreeTopLeft, occupiedRects, type PlacementRect } from '@/lib/canvasPlacement'; // 新图贴着锚点共边落位
 import { recordGenDurationMs } from '@/lib/genTiming';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
@@ -4781,25 +4781,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const key = generatorExistingKey ?? `gen_${Date.now()}`;
     // 获取参考图（选中图）的位置信息，用于联合适配
     const refItem = primaryRef ?? selectedAtSend;
-    const refRect = refItem && typeof refItem.x === 'number' && typeof refItem.y === 'number'
-      ? { x: refItem.x, y: refItem.y, w: refItem.w ?? 320, h: refItem.h ?? 220 }
-      : undefined;
+    const refRect = anchorRectOf(refItem) ?? undefined;
     // 保存参考图信息，用于重试时恢复
     const refImageKey = refItem?.key;
     const refImageSha256 = refItem?.originalSha256 ?? refItem?.sha256;
 
     setCanvas((prev) => {
-      const existingRects = prev
-        .filter(
-          (x) =>
-            ((x.kind ?? 'image') === 'generator' ||
-              (x.kind ?? 'image') === 'shape' ||
-              (x.kind ?? 'image') === 'text' ||
-              !!x.src ||
-              x.status === 'running' ||
-              x.status === 'error')
-        )
-        .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
+      const existingRects = occupiedRects(prev);
       // 占位尺寸随 requested size（保持比例），避免"永远 1K 方形"的观感
       const parsedSize = tryParseWxH(resolvedSizeForGen);
       const genW = parsedSize?.w ?? 1024;
@@ -4836,8 +4824,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         );
       }
 
-      // 否则：新建一张图（放在视口附近的最近空位）
-      const pos = findNearestFreeTopLeft(existingRects, genW, genH, near);
+      // 否则：新建一张图，**贴着参考图共边落位**（和上传路径同一套规则）。
+      //
+      // 这里以前直接用最近空位搜索，没有锚点：结果是新图落在「离视口中心最近的那个 48px 格子」，
+      // 和参考图的边差几十像素，用户看到的是「紧挨在一起」而不是「左右排排坐」。
+      // 对齐车道全占满时才退回最近空位（见 lib/canvasPlacement.ts）。
+      const alignedPos = refRect ? findAlignedFreeTopLeft(existingRects, genW, genH, refRect) : null;
+      const pos = alignedPos ?? findNearestFreeTopLeft(existingRects, genW, genH, near);
       const placeholder: CanvasImageItem = {
         key,
         kind: 'image',
@@ -5569,6 +5562,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
    * 而少的这一半正是「这张图是不是已经在画布上了」的唯一可靠判据。
    */
   const initialAssetIdRef = useRef<string | null>(null);
+  /**
+   * 首页量好的参考图像素尺寸。
+   *
+   * 没有它，这张卡在落位那一刻是「尺寸未知」，碰撞表只能给兜底档；
+   * 有它，第一帧就是真实体积，新生成的图才能真的贴着它的边排。
+   */
+  const initialImageSizeRef = useRef<{ w: number; h: number } | null>(null);
   const [initialPrompt, setInitialPrompt] = useState<{
     text: string;
     size: string | null;
@@ -5591,6 +5591,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       sessionStorage.removeItem(sessionKey);
       // assetId 是首页那张参考图在本 workspace 里的身份。首页一直在传，这里第一次读。
       initialAssetIdRef.current = String(data.assetId || '').trim() || null;
+      const sz = data.imageSize;
+      initialImageSizeRef.current =
+        sz && Number(sz.w) > 0 && Number(sz.h) > 0 ? { w: Number(sz.w), h: Number(sz.h) } : null;
       const messageText = String(data.messageText || '').trim();
       if (messageText) {
         setInitialPrompt(parseInlinePrompt(messageText));
@@ -5657,6 +5660,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const newRefId = Math.max(nextRefId, maxExisting + 1);
         setNextRefId(newRefId + 1);
 
+        // 首页量好的像素尺寸。缺了这张卡就是「尺寸未知」，落位时只能按兜底档算体积，
+        // 新生成的图排出来会偏；有了它，第一帧的体积就是真的。
+        const handedSize = initialImageSizeRef.current;
+        // 显式落位。不落位的元素坐标是 undefined，到处按 (0,0) 渲染，
+        // 更要命的是它当不了对齐锚点（anchorRectOf 要求真有坐标），
+        // 于是紧接着生成的那张图只能退回最近空位搜索——用户看到的就是「没排排坐」。
+        const inlineW = handedSize?.w ?? FALLBACK_ITEM_SIZE;
+        const inlineH = handedSize?.h ?? FALLBACK_ITEM_SIZE;
+        const inlinePos = findNearestFreeTopLeft(
+          occupiedRects(canvasRef.current),
+          inlineW,
+          inlineH,
+          stageCenterWorld()
+        );
         const inlineCanvasItem: CanvasImageItem = {
           key: inlineKey,
           createdAt: Date.now(),
@@ -5665,9 +5682,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           status: 'done',
           kind: 'image',
           refId: newRefId,
+          x: inlinePos.x,
+          y: inlinePos.y,
+          w: inlineW,
+          h: inlineH,
+          ...(handedSize ? { naturalW: handedSize.w, naturalH: handedSize.h } : {}),
           // assetId 已知就带上：它已经在后端了，不带会被当成「本地未持久化」，
           // 刷新后按 localOnlyImages 跳过（形状 1：判据少一个字段就漏一类输入）。
-          ...(initialAssetIdRef.current ? { assetId: initialAssetIdRef.current, syncStatus: 'synced' as const } : {}),
+          // 首页现在不再预先上传（跳转不等这个往返），所以这里通常没有 assetId：
+          // 这张图是 dataURL，标 pending，由生成前的 needEnsure 分支落盘。
+          ...(initialAssetIdRef.current
+            ? { assetId: initialAssetIdRef.current, syncStatus: 'synced' as const }
+            : { syncStatus: 'pending' as const }),
         };
         setCanvas((prev) => [...prev, inlineCanvasItem]);
         // 手动同步选中和 chip（因为 setCanvas 是异步的）
@@ -5963,17 +5989,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const prev = canvasRef.current;
       // 兜底仍是“最近空位”：只在四个方向的对齐车道全被占满时才用（见 lib/canvasPlacement.ts）
       const near = stageCenterWorld();
-      const existingRects = prev
-        .filter(
-          (x) =>
-            ((x.kind ?? 'image') === 'generator' ||
-              (x.kind ?? 'image') === 'shape' ||
-              (x.kind ?? 'image') === 'text' ||
-              !!x.src ||
-              x.status === 'running' ||
-              x.status === 'error')
-        )
-        .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
+      const existingRects = occupiedRects(prev);
       const placed: CanvasImageItem[] = [];
       let focus: { key: string; cx: number; cy: number; w?: number; h?: number } | null = null;
       // 锚点：选中的那张图。上传时选中一张，新图就贴着它摆，而不是丢到视口中心附近
@@ -5981,12 +5997,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 只认「已经有坐标和尺寸」的选中项；选了多张或选中的是没落位的对象就没有锚点。
       let anchor: PlacementRect | null = (() => {
         if (selectedKeys.length !== 1) return null;
-        const t = prev.find((x) => x.key === selectedKeys[0]);
-        if (!t) return null;
-        const { x, y, w, h } = t;
-        if (typeof x !== 'number' || typeof y !== 'number') return null;
-        if (!w || !h) return null;
-        return { x, y, w, h };
+        return anchorRectOf(prev.find((x) => x.key === selectedKeys[0]));
       })();
       for (const it of added) {
         const w = it.w ?? 1;
@@ -8919,17 +8930,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   const near = stageCenterWorld();
                   const key = `generator_${Date.now()}`;
                   setCanvas((prev) => {
-                    const existingRects = prev
-                      .filter(
-                        (x) =>
-                          ((x.kind ?? 'image') === 'generator' ||
-                            (x.kind ?? 'image') === 'shape' ||
-                            (x.kind ?? 'image') === 'text' ||
-                            !!x.src ||
-                            x.status === 'running' ||
-                            x.status === 'error')
-                      )
-                      .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
+                    const existingRects = occupiedRects(prev);
                     const pos = findNearestFreeTopLeft(existingRects, w, h, near);
                     const next: CanvasImageItem = {
                       key,

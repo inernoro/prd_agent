@@ -16,7 +16,6 @@ import {
   listVisualAgentWorkspaces,
   refreshVisualAgentWorkspaceCover,
   updateVisualAgentWorkspace,
-  uploadVisualAgentWorkspaceAsset,
 } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import type { VisualAgentWorkspace } from '@/services/contracts/visualAgent';
@@ -1106,6 +1105,30 @@ function ProjectCarousel(props: {
   );
 }
 
+/**
+ * 量出 dataURL 图片的像素尺寸。纯本地，不发网络。
+ *
+ * 这个值有两处用途，缺了都会出问题：
+ *   1. 画布落位——尺寸未知的元素在碰撞表里没有体积，新生成的图会直接压到参考图上；
+ *   2. 存进资产——后端不解码图片算尺寸，客户端不给就永远是空，下次重建画布还是没体积。
+ *
+ * 量不出来（解码失败 / 非图片）就返回 null，让下游走兜底档，不编一个尺寸。
+ */
+function measureDataUrl(dataUrl: string): Promise<{ w: number; h: number } | null> {
+  return new Promise((resolve) => {
+    if (!dataUrl) return resolve(null);
+    // 注意：这个文件从 lucide-react 引了名为 Image 的图标，遮住了全局构造器，必须走 window。
+    const img = new window.Image();
+    img.onload = () => {
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      resolve(w > 0 && h > 0 ? { w, h } : null);
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
 // ============ 主页面 ============
 export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: boolean }) {
   // fullscreenMode 参数保留用于兼容，但现在所有模式都是全屏
@@ -1334,11 +1357,25 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
     setInputLoading(true);
     try {
-      // 1. 创建 workspace
-      const res = await createVisualAgentWorkspace({
-        title: prompt.slice(0, 20) || '未命名',
-        idempotencyKey: `ws_quick_${Date.now()}`,
-      });
+      // 1. 创建 workspace。
+      //
+      // 这是跳转前**唯一**必须等的网络往返——没有 workspace id 就没有目的地。
+      // 偏好写回和它互不依赖，并行发，两个往返重叠成一个的时间。
+      // 参考图的上传不在这里等（见下面第 2 步）。
+      const [res] = await Promise.all([
+        createVisualAgentWorkspace({
+          title: prompt.slice(0, 20) || '未命名',
+          idempotencyKey: `ws_quick_${Date.now()}`,
+        }),
+        // 把这次选的模型写回账号偏好。必须在跳转前落地：编辑器挂载时会读同一份
+        // visualAgentPreferences，先跳转再写就是竞态，用户会看到「首页选了 A，进去却是 B」。
+        // modelAuto 置 false：用户在首页显式选过了，就不该再被自动挑选覆盖。
+        modelId
+          ? updateVisualAgentPreferences({ modelAuto: false, modelId }).catch(() => {
+            // 偏好写失败不阻断创作——这次生成仍按当前选择走，只是下次默认值可能还是旧的。
+          })
+          : Promise.resolve(),
+      ]);
       if (!res.success) {
         toast.error(res.error?.message || '创建失败');
         return;
@@ -1349,52 +1386,45 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       // 格式：${inlineRefToken}${uiSizeToken}${display || reqText}
       // 即：[IMAGE src=... name=...] (@size:1024x1024) 文本内容
       let messageText = prompt;
-      let assetId: string | null = null;
+      const assetId: string | null = null;
       let imageToken = '';
+      let imageSize: { w: number; h: number } | null = null;
 
-      // 如果有选中的图片，上传图片并添加到消息中
+      // 2. 参考图**不在这里上传**。
+      //
+      // 以前是「传完图才跳转」：一张手机照片转成 base64 要多传三分之一体积，用户就对着
+      // 一个不动的「生成中…」等十几秒，而这段时间画布明明已经可以打开了。
+      // 现在直接把 dataURL 交给画布，由画布在生成前的既有落盘逻辑上传
+      //（AdvancedVisualAgentTab 的 needEnsure 分支：dataURL 参考图先传一次拿 sha 再生成，
+      //  失败会把卡片标成「未持久化」并提示，不是静默丢图）。
+      //
+      // 顺带把像素尺寸量出来一起交过去：画布拿它当卡片的真实体积，
+      // 上传时也会带给后端，否则这张资产的 width/height 永远是空。
       if (selectedImage) {
-        const uploadRes = await uploadVisualAgentWorkspaceAsset({
-          id: ws.id,
-          data: selectedImage.previewUrl,
-          prompt: selectedImage.file.name || '参考图',
-          idempotencyKey: `ws_asset_${ws.id}_${Date.now()}`,
-        });
-        if (uploadRes.success) {
-          const asset = uploadRes.data.asset;
-          assetId = asset.id;
-          // 使用 [IMAGE src=... name=...] 标记（不是 @img1）
-          // 注意：buildInlineImageToken 会对 URL 进行 encodeURIComponent，这是正确的
-          imageToken = buildInlineImageToken(asset.url, selectedImage.file.name || asset.prompt || '参考图');
-        } else {
-          // 图片上传失败，但仍然继续（只使用文本提示）
-          toast.error('图片上传失败', `${uploadRes.error?.message || '未知错误'}。将仅使用文本提示创建项目。`);
-        }
+        imageSize = await measureDataUrl(selectedImage.previewUrl);
+        imageToken = buildInlineImageToken(selectedImage.previewUrl, selectedImage.file.name || '参考图');
       }
 
       // 构建最终消息：图片标记 + 尺寸标记 + 文本内容
       const sizeToken = selectedSize ? `(@size:${selectedSize}) ` : '';
       messageText = `${imageToken}${sizeToken}${messageText}`;
 
-      // 2.5 把这次选的模型写回账号偏好，**并且等它写完**再跳转。
-      //
-      // 这一步是「默认按上次生成的模型」能成立的唯一原因：编辑器挂载时会读同一份
-      // visualAgentPreferences，先跳转再写就是一场竞态——编辑器可能读到上一次的值，
-      // 用户会看到「我在首页选了 A，进去却是 B」。
-      // modelAuto 置 false：用户在首页显式选过了，就不该再被自动挑选覆盖。
-      if (modelId) {
-        await updateVisualAgentPreferences({ modelAuto: false, modelId }).catch(() => {
-          // 偏好写失败不阻断创作——这次生成仍按当前选择走，只是下次默认值可能还是旧的。
-        });
-      }
-
       // 3. 使用 sessionStorage 传递参数（避免刷新时重复创建）
+      //
+      // dataURL 可能有好几 MB，超配额时 setItem 会抛。抛了不能让整个提交挂掉——
+      // 退而存一份不带图的，用户至少还能带着文字进画板（参考图需要重新拖一次）。
       const sessionKey = `visual_agent_init_${ws.id}`;
-      sessionStorage.setItem(sessionKey, JSON.stringify({
-        messageText,
-        assetId,
-        timestamp: Date.now(),
-      }));
+      const payload = { messageText, assetId, imageSize, timestamp: Date.now() };
+      try {
+        sessionStorage.setItem(sessionKey, JSON.stringify(payload));
+      } catch {
+        try {
+          sessionStorage.setItem(sessionKey, JSON.stringify({ ...payload, messageText: `${sizeToken}${prompt}` }));
+          toast.error('参考图太大，未能带入画板', '已带入文字提示，请在画板里重新拖入这张图。');
+        } catch {
+          // sessionStorage 完全不可用：跳转后画板就是一个空工作区，不额外报错刷屏。
+        }
+      }
 
       // 4. 跳转到 workspace 页面（不传递 URL 参数，避免刷新重复创建）
       navigate(getEditorPath(ws.id));
