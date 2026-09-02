@@ -190,4 +190,24 @@ describe('【关键】项目暂停时，访问预览域名不许把它拉起来'
     expect(revert, '暂停时必须把刚拉起来的容器停回去').toMatch(/containerService\.stop\(/);
     expect(revert, '停回去要按 system 来源记账，与暂停路由那次 stop 同一档').toContain("lastStopSource = 'system'");
   });
+
+  it('【关键】停完要核实再落状态，不许账上停了进程还在跑', () => {
+    // containerService.stop 在 docker stop 非零退出时只记事件、**不抛异常**，
+    // 所以「try stop / catch 记日志」那个写法一次都不会进 catch，
+    // 无条件写 'stopped' 就是用一条假记录把资源泄漏藏起来——而这段回滚正是为了防它
+    //（Codex PR #1476 P1）。同样的坑副本停止链路上踩过（Codex 第三十五轮 P1），
+    // 判定已经抽成 services/replica-stop，这里必须复用那一份而不是再写一遍。
+    const src = read('src/index.ts');
+    const at = src.indexOf('proxyService.setOnReviveCooled');
+    const body = src.slice(at, src.indexOf('\n  });', at));
+    const revertAt = body.indexOf('if (isProjectPaused())');
+    const revert = body.slice(revertAt, body.indexOf("branch.status = 'running'"));
+    expect(revert, '必须复用共享的「停完核实」判定').toMatch(/settleMemberAfterStop\(/);
+    // 复核发现仍在跑时：分支不许记成 idle（那会让它从视野里消失），事件也不许说已停回。
+    expect(revert).toMatch(/stillRunning\.length > 0/);
+    expect(revert).toMatch(/branch\.status = 'error'/);
+    // 无条件写 stopped 的老写法必须消失。
+    const code = revert.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    expect(code, "不许再无条件 svc.status = 'stopped'").not.toMatch(/^\s*svc\.status = 'stopped';/m);
+  });
 });

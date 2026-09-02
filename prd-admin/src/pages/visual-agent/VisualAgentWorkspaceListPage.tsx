@@ -1395,34 +1395,37 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
     setInputLoading(true);
     try {
-      // 1. 创建 workspace。
+      // 1. 把这次选的模型写回账号偏好——**发了就不等**。
       //
-      // 这是跳转前**唯一**必须等的网络往返——没有 workspace id 就没有目的地。
-      // 偏好写回和它互不依赖，并行发，两个往返重叠成一个的时间。
-      // 参考图的上传不在这里等（见下面第 2 步）。
-      const [res] = await Promise.all([
-        createVisualAgentWorkspace({
-          title: prompt.slice(0, 20) || '未命名',
-          idempotencyKey: `ws_quick_${Date.now()}`,
-        }),
-        // 把这次选的模型写回账号偏好。必须在跳转前落地：编辑器挂载时会读同一份
-        // visualAgentPreferences，先跳转再写就是竞态，用户会看到「首页选了 A，进去却是 B」。
-        // modelAuto 置 false：用户在首页显式选过了，就不该再被自动挑选覆盖。
-        // 注意：这个接口**失败时返回 { success:false }，不 reject**（apiRequest 的统一约定，
-        // 见 AGENTS.md 规则 #7）。所以 .catch() 根本接不住普通失败——只挡网络层异常。
-        // 写失败本身不该阻断创作，真正的兜底是下面把 modelId 一起放进交接包：
-        // 编辑器优先用交接包里的值，不再依赖这次写有没有成功（Codex PR #1476 P1）。
-        modelId
-          ? updateVisualAgentPreferences({ modelAuto: false, modelId }).catch(() => null)
-          : Promise.resolve(null),
-      ]);
+      // 它的作用只是「下次回首页还默认这个模型」，与本次创作无关：
+      // 本次用哪个模型由交接包里的 modelId 直接决定（见下面第 5 步），
+      // 编辑器优先用它、不读偏好。
+      //
+      // 一开始把它并进 Promise.all 与建工作区一起等，理由是「避免编辑器读到旧偏好」。
+      // 交接包带上 modelId 之后那个理由就没了，而这句 await 的代价还在：
+      // 偏好接口慢或不返回时，工作区其实早就建好了，用户却还盯着一个不动的
+      // 「生成中…」——正是这次要治的那个症状（Codex PR #1476 P2）。
+      // 现在只等建工作区这一个往返，它是跳转前唯一必需的（没有 id 就没有目的地）。
+      //
+      // modelAuto 置 false：用户在首页显式选过了，不该再被自动挑选覆盖。
+      // .catch 只挡网络层异常——这个接口失败时返回 { success:false } 而不 reject
+      //（apiRequest 的统一约定，AGENTS.md 规则 #7），所以它接不住普通失败；
+      // 接不住也无所谓，本次创作不依赖它。
+      if (modelId) void updateVisualAgentPreferences({ modelAuto: false, modelId }).catch(() => null);
+
+      // 2. 创建 workspace —— 跳转前唯一必须等的网络往返。
+      // 参考图的上传也不在这里等（见下面第 4 步）。
+      const res = await createVisualAgentWorkspace({
+        title: prompt.slice(0, 20) || '未命名',
+        idempotencyKey: `ws_quick_${Date.now()}`,
+      });
       if (!res.success) {
         toast.error(res.error?.message || '创建失败');
         return;
       }
       const ws = res.data.workspace;
 
-      // 2. 构建消息文本（使用 [IMAGE src=... name=...] 和 (@size:...) 标记）
+      // 3. 构建消息文本（使用 [IMAGE src=... name=...] 和 (@size:...) 标记）
       // 格式：${inlineRefToken}${uiSizeToken}${display || reqText}
       // 即：[IMAGE src=... name=...] (@size:1024x1024) 文本内容
       let messageText = prompt;
@@ -1430,7 +1433,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       let imageToken = '';
       let imageSize: { w: number; h: number } | null = null;
 
-      // 2. 参考图**不在这里上传**。
+      // 4. 参考图**不在这里上传**。
       //
       // 以前是「传完图才跳转」：一张手机照片转成 base64 要多传三分之一体积，用户就对着
       // 一个不动的「生成中…」等十几秒，而这段时间画布明明已经可以打开了。
@@ -1449,7 +1452,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       const sizeToken = selectedSize ? `(@size:${selectedSize}) ` : '';
       messageText = `${imageToken}${sizeToken}${messageText}`;
 
-      // 3. 使用 sessionStorage 传递参数（避免刷新时重复创建）
+      // 5. 使用 sessionStorage 传递参数（避免刷新时重复创建）
       //
       // dataURL 可能有好几 MB，超配额时 setItem 会抛。抛了不能让整个提交挂掉——
       // 退而存一份不带图的，用户至少还能带着文字进画板（参考图需要重新拖一次）。
@@ -1482,7 +1485,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         return;
       }
 
-      // 4. 跳转到 workspace 页面（不传递 URL 参数，避免刷新重复创建）
+      // 6. 跳转到 workspace 页面（不传递 URL 参数，避免刷新重复创建）
       navigate(getEditorPath(ws.id));
 
       // 清空输入和图片

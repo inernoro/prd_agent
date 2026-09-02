@@ -3144,6 +3144,8 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         // 按 superseded 处理（不碰状态）。
         lease?.assertCurrent('auto-wake project-paused recheck');
         branchOperationFinalStatus = 'cancelled';
+        /** 停完复核仍在跑的容器。非空 = 这次回滚没做干净，不能记成「已停」。 */
+        const stillRunning: string[] = [];
         for (const svc of services) {
           try {
             await containerService.stop(svc.containerName, '项目已暂停，撤销本次自动唤醒', {
@@ -3159,19 +3161,49 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           } catch (stopErr) {
             console.warn(`[auto-wake] revert stop failed for "${svc.containerName}": ${(stopErr as Error).message}`);
           }
-          svc.status = 'stopped';
+          // **停完必须核实再落状态**。`containerService.stop` 在 `docker stop`
+          // 非零退出时只记一条 error 事件、**不抛异常**，所以上面那个 catch 一次都不会进；
+          // 无条件写 'stopped' 就是「账上停了、进程还在跑」——而这正是这段回滚要防的
+          // 资源泄漏，等于用一条假记录把它藏起来（Codex PR #1476 P1）。
+          //
+          // 判定复用 services/replica-stop 那一份：同样的坑在副本停止链路上已经踩过
+          // （Codex 第三十五轮 P1），那份的注释就写着「以后新增停止路径也只调它」——
+          // 这里就是新增的那条路径。用 shim 适配是因为分支服务把提示写在 errorMessage，
+          // 而那个接口用的是 statusMessage；判定逻辑一份，落盘字段各自负责。
+          const shim = { containerName: svc.containerName, status: String(svc.status) };
+          const settled = await settleMemberAfterStop(shim, {
+            isRunning: (name) => containerService.isRunning(name),
+            interruptedMessage: '项目已暂停，自动唤醒已撤销',
+            onStillRunning: (name, message) => {
+              svc.errorMessage = message;
+              stillRunning.push(name);
+            },
+          });
+          svc.status = settled === 'error' ? 'error' : 'stopped';
         }
-        branch.status = 'idle';
         branch.lastStoppedAt = new Date().toISOString();
         branch.lastStopReason = '项目已暂停，自动唤醒已撤销';
         branch.lastStopSource = 'system';
+        if (stillRunning.length > 0) {
+          // 有容器没停下来：分支不能记成 idle（那会让它从「需要处理」的视野里消失），
+          // 事件也不能说「已停回容器」——那句话此刻是假的。
+          branchOperationFinalStatus = 'failed';
+          branch.status = 'error';
+          branch.errorMessage = `项目已暂停，但 ${stillRunning.length} 个容器未能停止：${stillRunning.join(', ')}，请手动检查 docker`;
+        } else {
+          branch.status = 'idle';
+        }
         stateService.save();
         activeServerEventLogStore?.record({
           category: 'system',
-          severity: 'warn',
+          severity: stillRunning.length > 0 ? 'error' : 'warn',
           source: 'proxy.preview-auto-wake',
-          action: 'branch.auto-wake.reverted-project-paused',
-          message: `项目暂停，已撤销 ${slug} 的自动唤醒并停回容器`,
+          action: stillRunning.length > 0
+            ? 'branch.auto-wake.revert-stop-failed'
+            : 'branch.auto-wake.reverted-project-paused',
+          message: stillRunning.length > 0
+            ? `项目暂停，撤销 ${slug} 的自动唤醒时有容器未停止：${stillRunning.join(', ')}`
+            : `项目暂停，已撤销 ${slug} 的自动唤醒并停回容器`,
           projectId: branch.projectId,
           branchId: branch.id,
         });

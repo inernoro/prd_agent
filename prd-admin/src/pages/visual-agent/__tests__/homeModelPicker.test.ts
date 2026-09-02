@@ -45,24 +45,30 @@ describe('首页能看见并选择绘图模型', () => {
     expect(PAGE).toMatch(/options\.find\(\(o\) => o\.enabled && o\.isDefault\)/);
   });
 
-  it('【关键】提交时把模型写回偏好，且跳转前一定已经落地', () => {
-    // 先跳转再写就是竞态：编辑器挂载时读同一份偏好，可能读到上一次的值，
-    // 用户会看到「首页选了 A，进去却是 B」。
+  it('【关键】提交时把模型写回偏好，但**不等它**——跳转只等建工作区', () => {
+    // 这条判据换过两次，两次都是被自己钉死的实现拦住的：
     //
-    // 判据只盯两件事：写回存在、且在跳转之前被 await 掉。**不盯 await 紧贴着它**——
-    // 上一版要求 await 出现在调用前 60 个字符内，等到这个调用被并进 Promise.all
-    // （和建工作区并行，省一个往返）就红了，而它其实仍然在跳转前落地。
-    // 形状 4a：断言实现的字面排布，会拦住不改变行为的重构。
-    // 必须在**提交函数体内**判序。整份文件里 navigate(getEditorPath(ws.id)) 出现不止一次
-    // （列表卡片的 onOpen 也有一处，且在提交函数之后）——从全文件搜就会搜到那一处，
-    // 于是把写偏好挪到跳转之后这条守卫照样绿。形状 6：判据读到的不是它以为的那一处。
+    // v1 要求 await 紧贴着调用（前 60 字符内）→ 把它并进 Promise.all 就红了，
+    //    而行为没变。形状 4a：断言实现的字面排布。
+    // v2 改成「必须在跳转前被 await 掉」，理由是「编辑器会读同一份偏好，
+    //    先跳后写就是竞态」。那个理由在交接包带上 modelId 之后**就不成立了**——
+    //    本次用哪个模型完全由交接包决定，编辑器优先用它、不读偏好。
+    //    而这句 await 的代价还在：偏好接口慢或不返回时，工作区早就建好了，
+    //    用户还盯着不动的「生成中…」（Codex PR #1476 P2）。
+    //
+    // 所以现在钉的是新的不变量：写回照发，但跳转不等它。
+    // 判据必须在**提交函数体内**判序——整份文件里 navigate(getEditorPath(ws.id))
+    // 出现不止一次（列表卡片的 onOpen 也有一处），全文件搜会搜到那一处（形状 6）。
     const at = SUBMIT.indexOf('updateVisualAgentPreferences({ modelAuto: false, modelId })');
     expect(at, '提交路径应写回偏好').toBeGreaterThan(0);
     const navAt = SUBMIT.indexOf('navigate(getEditorPath(ws.id))');
     expect(navAt, '提交函数里应有跳转').toBeGreaterThan(0);
-    expect(navAt, '写回偏好必须发生在跳转之前').toBeGreaterThan(at);
-    // 跳转之前那一段里必须有 await 把它等掉（直接 await，或并进一个被 await 的 Promise.all）。
-    expect(SUBMIT.slice(0, navAt)).toMatch(/await (Promise\.all\(|updateVisualAgentPreferences)/);
+    // 发出去就不管：不许 await 它，也不许把它并进任何被 await 的聚合。
+    expect(SUBMIT).toMatch(/void updateVisualAgentPreferences\(/);
+    expect(SUBMIT, '不许 await 偏好写回').not.toMatch(/await\s+updateVisualAgentPreferences\(/);
+    expect(SUBMIT, '也不许并进被 await 的 Promise.all').not.toMatch(/await Promise\.all\(/);
+    // 跳转前必须等的只有建工作区那一个往返。
+    expect(SUBMIT.slice(0, navAt)).toMatch(/await createVisualAgentWorkspace\(/);
   });
 
   it('【关键】模型随交接包一起交给编辑器，不只靠偏好接口', () => {

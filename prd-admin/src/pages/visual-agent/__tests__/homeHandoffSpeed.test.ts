@@ -38,21 +38,24 @@ describe('首页点发送后立刻进画板', () => {
     expect(submitBody).not.toContain('uploadVisualAgentWorkspaceAsset');
   });
 
-  it('【关键】建工作区与写偏好并行发，不串成两个往返', () => {
-    const at = submitBody.indexOf('Promise.all');
-    expect(at, '两个互不依赖的往返应并行').toBeGreaterThan(0);
-    const block = submitBody.slice(at, at + 600);
-    expect(block).toContain('createVisualAgentWorkspace');
-    expect(block).toContain('updateVisualAgentPreferences');
-  });
-
-  it('【关键】偏好仍在跳转之前落地（不能为了快把竞态放回来）', () => {
-    // 编辑器挂载时读同一份偏好，先跳转再写，用户会看到「首页选了 A，进去却是 B」。
-    const prefAt = submitBody.indexOf('updateVisualAgentPreferences');
+  it('【关键】跳转前只等一个网络往返：建工作区', () => {
+    // 这条判据的前两版都在守一个后来不成立的理由。
+    //
+    // v1「建工作区与写偏好并行发」、v2「偏好必须在跳转前落地」，理由都是
+    // 「编辑器会读同一份偏好，先跳后写就是竞态」。交接包带上 modelId 之后，
+    // 本次用哪个模型完全由交接包决定、编辑器不读偏好——理由没了，
+    // 而那句 await 的代价还在：偏好接口慢或不返回时，工作区早已建好，
+    // 用户还盯着不动的「生成中…」，正是这个 PR 要治的症状（Codex PR #1476 P2）。
+    //
+    // 现在钉真正的不变量：**跳转前只准等建工作区这一个往返**。
     const navAt = submitBody.indexOf('navigate(getEditorPath(ws.id))');
-    expect(prefAt).toBeGreaterThan(0);
-    expect(navAt, '写偏好必须发生在跳转之前').toBeGreaterThan(prefAt);
-    expect(submitBody.slice(0, prefAt)).toContain('await');
+    expect(navAt, '提交函数里应有跳转').toBeGreaterThan(0);
+    const before = submitBody.slice(0, navAt);
+    expect(before).toMatch(/await createVisualAgentWorkspace\(/);
+    // 偏好写回照发，但不等；也不许并进任何被 await 的聚合。
+    expect(submitBody).toMatch(/void updateVisualAgentPreferences\(/);
+    expect(before, '不许 await 偏好写回').not.toMatch(/await\s+updateVisualAgentPreferences\(/);
+    expect(before, '不许把它并进被 await 的 Promise.all').not.toMatch(/await Promise\.all\(/);
   });
 
   it('【关键】参考图的像素尺寸要量出来并交给画板', () => {
