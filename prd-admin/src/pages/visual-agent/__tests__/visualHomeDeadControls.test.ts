@@ -124,6 +124,17 @@ describe('看得出是什么 / 看得出是空的', () => {
     expect(card).toContain('还没有图');
   });
 
+  it('输入台的高度是定值，不跟视口长', () => {
+    // 这块面的高度是拿内容换来的（打字区 + 参考图槽都在面内），不是按屏幕分配的空间。
+    // 写成 vw/vh/clamp 就会在宽屏上长出一块空白——真出过：clamp(190,19vw,360)
+    // 在 1950 的屏上顶到 360 上限，整块成了空荡荡的大方块。
+    const page = strip(read(PAGE));
+    const pad = page.slice(page.indexOf('className="relative px-5 pt-4 pb-2 flex flex-col"'));
+    const decl = pad.slice(0, pad.indexOf('>') + 1);
+    expect(decl).toMatch(/minHeight:\s*\d+\s*[,}]/);
+    expect(decl).not.toMatch(/minHeight:[^,}]*(vw|vh|clamp)/);
+  });
+
   it('输入台与预设行同宽，且只有一个宽度值', () => {
     // 这一页的中列宽度写在两处（输入台根 + 预设行）。它们必须相等，
     // 否则预设行会比输入框宽或窄一截，露出一条错位的边。
