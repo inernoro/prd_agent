@@ -25,6 +25,17 @@ describe('resolveApiLabel — GET /branches/:id segment safety (PR #522 Codex fi
     expect(resolveApiLabel('GET', '/branches/prd-agent-main')).toBe('查看分支详情');
   });
 
+  /**
+   * 2026-09-02（Codex P2，核对属实）：新增 `/metrics/series` 端点时漏了 label。
+   * 已有的 `/metrics` pattern 用 `$` 收尾，接不住 `/metrics/series`，于是
+   * Activity Monitor 上只显示一串裸 URL，启动时 auditApiLabels 也会打 warning
+   * （cds/CLAUDE.md §0.1 要求每条 /api/* 都有中文 label）。
+   */
+  it('GET /branches/:id/metrics 与 /metrics/series 各有各的 label，互不截胡', () => {
+    expect(resolveApiLabel('GET', '/branches/abc/metrics')).toBe('查看分支指标');
+    expect(resolveApiLabel('GET', '/branches/abc/metrics/series')).toBe('查看指标历史');
+  });
+
   it('GET /branches/:id/logs → 查看操作日志(不被详情吞)', () => {
     expect(resolveApiLabel('GET', '/branches/twenty-demo-main/logs')).toBe('查看操作日志');
     expect(resolveApiLabel('GET', '/branches/abc/logs')).toBe('查看操作日志');

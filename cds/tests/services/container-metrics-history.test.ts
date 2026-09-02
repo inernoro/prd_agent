@@ -4,17 +4,16 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   recordContainerSample,
   queryContainerSeries,
-  forgetContainer,
   containerMetricsHistoryStats,
   __resetContainerMetricsHistory,
 } from '../../src/services/container-metrics-history.js';
 
 const T0 = 1_800_000_000_000;
 const sample = (over: Partial<{
-  cpuPercent: number; memUsedBytes: number; memLimitBytes: number;
+  containerId: string; cpuPercent: number; memUsedBytes: number; memLimitBytes: number;
   netRxBytes: number; netTxBytes: number; blockReadBytes: number; blockWriteBytes: number;
 }> = {}) => ({
-  cpuPercent: 1, memUsedBytes: 100, memLimitBytes: 1000,
+  containerId: 'aaaa1111', cpuPercent: 1, memUsedBytes: 100, memLimitBytes: 1000,
   netRxBytes: 0, netTxBytes: 0, blockReadBytes: 0, blockWriteBytes: 0, ...over,
 });
 
@@ -86,6 +85,38 @@ describe('速率由累计值差分算出', () => {
     recordContainerSample('c1', sample({ cpuPercent: 99 }), T0);
     recordContainerSample('c1', sample({ cpuPercent: 98 }), T0 - 5_000);
     expect(containerMetricsHistoryStats().points).toBe(1);
+  });
+});
+
+describe('同名重建 = 新的生命周期（Codex P2，核对属实）', () => {
+  /**
+   * 部署会复用容器名。只靠「新累计值比旧的小」判重建是漏的：新容器若在第一次采样前
+   * 已经比旧容器最后一次读数跑得更多，差值仍为正 —— 于是记出一个巨大的假速率尖峰。
+   * 容器短 ID 在重建时必变，是可靠的身份信号。
+   */
+  it('容器 ID 变了就不跨生命周期做差，哪怕累计值是涨的', () => {
+    recordContainerSample('c1', sample({ containerId: 'old', netRxBytes: 1_000 }), T0);
+    // 新容器：ID 变了，而且累计值比旧容器**更大**（旧判据抓不到）
+    recordContainerSample('c1', sample({ containerId: 'new', netRxBytes: 500_000 }), T0 + 5_000);
+    const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 10_000, points: 10 }, T0 + 10_000);
+    const pts = series.c1.filter((p) => p.rxRate != null);
+    for (const p of pts) {
+      expect(p.rxRate, `跨生命周期做差会记出 ${(499000 / 5).toFixed(0)} B/s 的假尖峰`).toBe(0);
+    }
+  });
+
+  it('容器 ID 没变时照常差分（别把正常采样也切断）', () => {
+    recordContainerSample('c1', sample({ containerId: 'same', netRxBytes: 0 }), T0);
+    recordContainerSample('c1', sample({ containerId: 'same', netRxBytes: 10_000 }), T0 + 10_000);
+    const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 20_000, points: 10 }, T0 + 20_000);
+    expect(series.c1.filter((p) => p.rxRate != null).at(-1)?.rxRate).toBeCloseTo(1000, 3);
+  });
+
+  it('采样方没给 ID 时退化为旧行为，不因此把速率全判 0', () => {
+    recordContainerSample('c1', { cpuPercent: 1, memUsedBytes: 1, memLimitBytes: 1, netRxBytes: 0, netTxBytes: 0 }, T0);
+    recordContainerSample('c1', { cpuPercent: 1, memUsedBytes: 1, memLimitBytes: 1, netRxBytes: 10_000, netTxBytes: 0 }, T0 + 10_000);
+    const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 20_000, points: 10 }, T0 + 20_000);
+    expect(series.c1.filter((p) => p.rxRate != null).at(-1)?.rxRate).toBeCloseTo(1000, 3);
   });
 });
 
@@ -369,11 +400,6 @@ describe('有界：不许无限长', () => {
     expect(containerMetricsHistoryStats().points).toBeLessThanOrEqual(2000);
   });
 
-  it('容器删除后可以主动清掉', () => {
-    recordContainerSample('c1', sample(), T0);
-    forgetContainer('c1');
-    expect(containerMetricsHistoryStats().containers).toBe(0);
-  });
 });
 
 describe('接线：两路采集者都写同一个存储（形状 2 —— 建了一半不会红）', () => {

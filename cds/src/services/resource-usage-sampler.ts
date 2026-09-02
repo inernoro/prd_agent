@@ -44,6 +44,8 @@ export interface ResourceUsageSnapshot {
  * 以前这里把 net / limit 直接丢掉，导致「采了却没有历史」。
  */
 interface ContainerStatLite {
+  /** 容器短 ID：同名重建时会变，用来切断跨生命周期的速率差分。 */
+  id?: string;
   cpuPercent: number;
   memUsedBytes: number;
   memLimitBytes?: number;
@@ -192,6 +194,7 @@ export class ResourceUsageSampler {
       // 这是全宿主唯一的常驻采集点，抽屉不开也在攒，所以「关掉抽屉丢历史」不再成立。
       for (const [containerName, stat] of statsByContainer) {
         recordContainerSample(containerName, {
+          containerId: stat.id,
           cpuPercent: stat.cpuPercent,
           memUsedBytes: stat.memUsedBytes,
           memLimitBytes: stat.memLimitBytes ?? 0,
