@@ -390,6 +390,22 @@ describe('划范围的候选与一键采纳', () => {
     expect(byId.cds.declaredOnDeployModes).toEqual([]);
   });
 
+  it('顶层与部署模式都声明过时，顶层那份也要端出去 —— 看不见却在生效最糟', async () => {
+    // 判定取「顶层 ∪ 各模式」的并集。只渲染模式那一半，顶层那些路径就是看不见
+    // 却照样让项目重建的声明；用户对着对话框以为范围只有模式里那几条。
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'both', {
+      buildScope: ['legacy/**'],
+      deployModes: { express: { buildScope: ['llmgw/serving/**'] } },
+    } as any);
+
+    const res = await get(server, '/api/projects/p-self/scope-options');
+    const byId = Object.fromEntries(res.body.profiles.map((p: any) => [p.id, p]));
+    expect(byId.both.editable).toBe(false);
+    expect(byId.both.declaredOnDeployModes).toEqual(['llmgw/serving/**']);
+    expect(byId.both.declaredOnProfile).toEqual(['legacy/**']);
+  });
+
   it('一键采纳只写没声明过的那些，人做过的决定不被一次猜覆盖', async () => {
     addProject('p-self', 'CDS Self');
     addProfile('p-self', 'cds', { command: 'cd cds && ./exec_cds.sh start' });

@@ -151,3 +151,29 @@ describe('保存路径上的 repoSharing 保全接在唯一一处', () => {
     expect(source).toMatch(/setProject: \(project\) => \{[\s\S]{0,400}preserveRepoSharing\([\s\S]{0,200}void reloadSharing\(\);/);
   });
 });
+
+describe('划范围对话框换项目时不许留着上一个项目的状态', () => {
+  /**
+   * 换个项目重新打开时，上一个项目的 `options` 还在；这次要是取失败，`finally`
+   * 把 loading 放开，保存按钮就对着**上一个项目的 profileId** 可用了——点下去把
+   * 范围写到另一个项目上，而界面显示的是当前这个（2026-09-02 Codex P1）。
+   *
+   * 这条只能在源码这一层钉：状态藏在 useState 里，取失败那条路径也没有可断言的
+   * 产物。判据是「取之前先清空」与「没有 options 时保存不可用」两件事同时成立。
+   */
+  it('载入前先清空，且没有 options 时保存按钮不可用', () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), '../cds/web/src/components/project/BuildScopeDialog.tsx'),
+      'utf8',
+    );
+    const effect = source.slice(source.indexOf('useEffect(() => {'), source.indexOf('function toggle('));
+    const clearAt = effect.indexOf('setOptions(null)');
+    const fetchAt = effect.indexOf('apiRequest<ScopeOptionsResponse>');
+    expect(clearAt, '载入前要先把上一个项目的状态清掉').toBeGreaterThan(-1);
+    expect(clearAt, '清空要排在请求之前').toBeLessThan(fetchAt);
+    for (const setter of ['setPicked({})', 'setExtra({})']) {
+      expect(effect, `${setter} 也要一起清，否则勾选还是上一个项目的`).toContain(setter);
+    }
+    expect(source).toMatch(/disabled=\{saving \|\| loading \|\| !options/);
+  });
+});

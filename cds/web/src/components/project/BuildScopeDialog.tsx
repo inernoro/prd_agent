@@ -33,6 +33,8 @@ interface ScopeProfileOption {
   editable: boolean;
   /** 声明在部署模式上的那份，只读展示用 */
   declaredOnDeployModes: string[];
+  /** 顶层字段上的声明。与上面那份取并集才是真正生效的范围。 */
+  declaredOnProfile?: string[];
 }
 
 interface ScopeOptionsResponse {
@@ -72,6 +74,16 @@ export function BuildScopeDialog({
     let cancelled = false;
     setLoading(true);
     setError('');
+    /*
+     * 先清干净再取（2026-09-02 Codex P1）。换个项目重新打开时，上一个项目的
+     * `options` 还在；这次要是取失败，`finally` 把 loading 放开，保存按钮就对着
+     * **上一个项目的 profileId** 可用了——点下去会把范围写到另一个项目上，而界面
+     * 显示的是当前这个。这类「状态没跟着标的物一起换」的洞，界面上看不出来。
+     */
+    setOptions(null);
+    setPicked({});
+    setExtra({});
+    setShowExtra(false);
     apiRequest<ScopeOptionsResponse>(`/api/projects/${encodeURIComponent(projectId)}/scope-options`)
       .then((res) => {
         if (cancelled) return;
@@ -202,6 +214,23 @@ export function BuildScopeDialog({
                       </span>
                     ))}
                   </div>
+                  {/*
+                    顶层也声明过时必须一起摆出来：判定取并集，只显示模式那一半，
+                    顶层那些路径就是看不见却照样生效的声明。改不了是另一回事，
+                    看不见不行（2026-09-02 Codex P2）。
+                  */}
+                  {(profile.declaredOnProfile || []).length > 0 ? (
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">这个服务的顶层还声明了下面这些，一样在生效：</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(profile.declaredOnProfile || []).map((entry) => (
+                          <span key={`top-${entry}`} className="rounded border border-dashed border-border px-2 py-1 font-mono text-xs text-muted-foreground">
+                            {entry}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <p className="text-xs text-muted-foreground">
                     要改它，改这个服务在 compose 里的 <code className="font-mono">cds.build-scope</code> 标签后重新导入。
                   </p>

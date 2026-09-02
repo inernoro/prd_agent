@@ -1933,6 +1933,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           // 于是「清空」清不掉、「改窄」反而变宽。所以这种一律只读，别让界面说谎。
           editable: sources.onDeployModes.length === 0,
           declaredOnDeployModes: sources.onDeployModes,
+          // 顶层也声明过时同样要端出去：判定取的是「顶层 ∪ 各模式」的并集，只渲染
+          // 模式那一半，顶层那些路径就成了**看不见却照样生效**的声明——用户看着
+          // 对话框以为范围就是模式里那几条，实际推到顶层路径照样重建
+          // （2026-09-02 Codex P2）。改不了是另一回事，看不见不行。
+          declaredOnProfile: sources.onProfile,
         };
       }),
     });
