@@ -3211,17 +3211,17 @@ function ProjectComposeTab({
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" size="sm" asChild>
           <a href={apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose.yml`)} download="cds-compose.yml">
-            <Download className="h-3.5 w-3.5" /> 下载 cds-compose.yml
+            <Download /> 下载 cds-compose.yml
           </a>
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={() => { void navigator.clipboard?.writeText(draft); onToast('已复制到剪贴板'); }}>
           复制
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
-          <RefreshCw className="h-3.5 w-3.5" /> 重新加载
+          <RefreshCw /> 重新加载
         </Button>
         <Button type="button" variant="default" size="sm" onClick={() => void onSave()} disabled={busy || !dirty}>
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} 保存配置
+          {busy ? <Loader2 className="animate-spin" /> : <Save />} 保存配置
         </Button>
       </div>
 
@@ -3515,7 +3515,7 @@ function ProjectMigrationTab({
             <input className={monoInputClass} style={{ width: 240 }} type="password" autoComplete="off" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="目标 AI Access Key" />
           </div>
           <Button type="button" size="sm" onClick={() => void addPeer()} disabled={adding}>
-            {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} 添加目标
+            {adding ? <Loader2 className="animate-spin" /> : <Plus />} 添加目标
           </Button>
         </div>
 
@@ -3541,10 +3541,10 @@ function ProjectMigrationTab({
                   </div>
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={() => void verifyPeer(p.id)} disabled={verifyingId === p.id}>
-                  {verifyingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />} 测试连接
+                  {verifyingId === p.id ? <Loader2 className="animate-spin" /> : <ShieldCheck />} 测试连接
                 </Button>
                 <Button type="button" variant="ghost" size="sm" onClick={() => void deletePeer(p.id)}>
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 />
                 </Button>
               </div>
             ))}
@@ -3568,7 +3568,7 @@ function ProjectMigrationTab({
             <span className="rounded bg-[hsl(var(--surface-sunken))] px-2 py-1">路由规则 {preview.summary.routingRules}</span>
             <span className="text-muted-foreground">{preview.bytes} 字节</span>
             <Button type="button" variant="ghost" size="sm" onClick={() => setShowYaml((v) => !v)}>
-              <Eye className="h-3.5 w-3.5" /> {showYaml ? '隐藏' : '查看'} YAML
+              <Eye /> {showYaml ? '隐藏' : '查看'} YAML
             </Button>
           </div>
         ) : null}
@@ -3583,10 +3583,10 @@ function ProjectMigrationTab({
 
         <div className="mb-2 flex flex-wrap gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => void replicate(true)} disabled={replicating !== null || !selectedPeerId}>
-            {replicating === 'dry' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} 预演(dry-run)
+            {replicating === 'dry' ? <Loader2 className="animate-spin" /> : <Eye />} 预演(dry-run)
           </Button>
           <Button type="button" size="sm" onClick={() => void replicate(false)} disabled={replicating !== null || !selectedPeerId}>
-            {replicating === 'apply' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} 推送复刻
+            {replicating === 'apply' ? <Loader2 className="animate-spin" /> : <Send />} 推送复刻
           </Button>
         </div>
 
@@ -3615,7 +3615,7 @@ function ProjectMigrationTab({
         </summary>
 
         <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void runDataPlan()} disabled={scanning || !selectedPeerId}>
-          {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 扫描数据迁移计划
+          {scanning ? <Loader2 className="animate-spin" /> : <RefreshCw />} 扫描数据迁移计划
         </Button>
 
         {dataPlan ? (
@@ -3633,7 +3633,7 @@ function ProjectMigrationTab({
                   <div className="mt-1 flex flex-wrap gap-2">
                     <Button type="button" variant="outline" size="sm" asChild>
                       <a href={apiUrl(b.download)} download>
-                        <Download className="h-3.5 w-3.5" /> 下载源库快照
+                        <Download /> 下载源库快照
                       </a>
                     </Button>
                     <code className="self-center font-mono text-[11px] text-muted-foreground">恢复到 → {b.restore}</code>
@@ -3719,7 +3719,7 @@ function ProjectStorageTab({
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 刷新
+          {busy ? <Loader2 className="animate-spin" /> : <RefreshCw />} 刷新
         </Button>
       </div>
 
@@ -3964,7 +3964,7 @@ function ProjectInfraTab({
             重新同步配置
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={busy !== null}>
-            <RefreshCw className="h-3 w-3" /> 刷新
+            <RefreshCw /> 刷新
           </Button>
         </div>
       </div>
@@ -4027,12 +4027,12 @@ function ProjectInfraTab({
                   <div className="flex shrink-0 flex-wrap gap-2">
                     {svc.status === 'running' ? (
                       <Button type="button" variant="outline" size="sm" onClick={() => doStop(svc.id)} disabled={isBusy}>
-                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        {isBusy ? <Loader2 className="animate-spin" /> : null}
                         停止
                       </Button>
                     ) : (
                       <Button type="button" variant="outline" size="sm" onClick={() => doStart(svc.id)} disabled={isBusy}>
-                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        {isBusy ? <Loader2 className="animate-spin" /> : null}
                         启动
                       </Button>
                     )}
@@ -4043,7 +4043,7 @@ function ProjectInfraTab({
                       onClick={() => setConfirmDeleteId(svc.id)}
                       disabled={isBusy}
                     >
-                      <Trash2 className="h-3 w-3" />
+                      <Trash2 />
                       删除
                     </Button>
                   </div>
@@ -4074,7 +4074,7 @@ function ProjectInfraTab({
               onClick={() => confirmDeleteId && doDelete(confirmDeleteId)}
               disabled={busy !== null}
             >
-              {busy !== null ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              {busy !== null ? <Loader2 className="animate-spin" /> : null}
               确认删除
             </Button>
           </DialogFooter>
@@ -4290,7 +4290,7 @@ function InfraResyncDialog({
           {!diff ? (
             <div className="flex justify-end">
               <Button type="button" onClick={onPreview} disabled={busy || !yamlText.trim()}>
-                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                {busy ? <Loader2 className="animate-spin" /> : null}
                 预览 diff
               </Button>
             </div>
@@ -4383,7 +4383,7 @@ function InfraResyncDialog({
           {diff && (diff.adds.length + diff.updates.length + diff.removes.length) > 0 ? (
             <Button type="button" variant="default" onClick={onExecute}
               disabled={busy || (diff.removes.length > 0 && confirmTextInput.trim().toLowerCase() !== 'yes')}>
-              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              {busy ? <Loader2 className="animate-spin" /> : null}
               执行同步
             </Button>
           ) : null}

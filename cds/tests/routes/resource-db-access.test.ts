@@ -846,6 +846,98 @@ describe('resource database access', () => {
     expect(pgCommands.some((cmd) => cmd.includes('${'))).toBe(false);
   });
 
+  /**
+   * 归属判定只堵住「直接读分支 env」那一条路。服务自己的 env 还能写成模板
+   * （`POSTGRES_USER: ${POSTGRES_USER}` 是 CDS 支持的标准写法），而模板展开用的
+   * getMergedEnv 里照样躺着 A 的分支凭据 —— B 就这么绕过判定又拿到 A 的账号口令
+   * （Codex P1，2026-09-01）。这里钉的是：模板展开必须先把别人家的凭据摘掉，
+   * 并回落到项目层的同名值。
+   */
+  it('does not leak another service branch credentials through templated infra env', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'postgres-b',
+      projectId: 'prd-agent',
+      name: 'PostgreSQL B',
+      dockerImage: 'postgres:16',
+      containerPort: 5432,
+      hostPort: 5433,
+      containerName: 'cds-postgres-b',
+      status: 'running',
+      dbName: 'shared_b',
+      env: {
+        POSTGRES_USER: '${POSTGRES_USER}',
+        POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}',
+      },
+      volumes: [],
+    });
+    // 项目层：B 自己该用的那套（模板要展开成这个）
+    harness.stateService.setCustomEnvVar('POSTGRES_USER', 'service_b_user', 'prd-agent');
+    harness.stateService.setCustomEnvVar('POSTGRES_PASSWORD', 'service-b-pw', 'prd-agent');
+    // 分支层：派发给 **另一台** postgres（postgres-a）的凭据，HOST 就是归属标记
+    harness.stateService.setCustomEnvVar('POSTGRES_HOST', 'postgres-a', 'main-branch');
+    harness.stateService.setCustomEnvVar('POSTGRES_USER', 'cds_branch_a', 'main-branch');
+    harness.stateService.setCustomEnvVar('POSTGRES_PASSWORD', 'branch-a-pw', 'main-branch');
+    harness.shell.addResponsePattern(/information_schema\.tables/, () => ({
+      stdout: 'table_schema\ttable_name\ttable_type\npublic\tusers\tBASE TABLE\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const tables = await request(server!, 'GET', '/api/branches/main-branch/resources/infra%3Apostgres-b/data/tables');
+
+    expect(tables.status).toBe(200);
+    const pgCommands = harness.shell.commands.filter((cmd) => cmd.includes(' psql '));
+    expect(pgCommands.length).toBeGreaterThanOrEqual(1);
+    expect(pgCommands.some((cmd) => cmd.includes('cds_branch_a') || cmd.includes('branch-a-pw')), 'A 的分支凭据泄漏进了 B').toBe(false);
+    expect(pgCommands.every((cmd) => cmd.includes("-U 'service_b_user'"))).toBe(true);
+    expect(pgCommands.every((cmd) => cmd.includes("PGPASSWORD='service-b-pw'"))).toBe(true);
+  });
+
+  /**
+   * 首尾带空白的 root 口令是合法的。判空可以 trim，**拿去连库的那一份不许 trim**——
+   * 否则 available 报 true、实际认证失败，用户吃一条 root 的 1045（Codex P2，2026-09-01）。
+   */
+  it('preserves whitespace in the MySQL root password when resetting credentials', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mysql-ws',
+      projectId: 'prd-agent',
+      name: 'MySQL WS',
+      dockerImage: 'mysql:8',
+      containerPort: 3306,
+      hostPort: 3307,
+      containerName: 'cds-mysql-ws',
+      status: 'running',
+      dbName: 'shared_app',
+      env: { MYSQL_ROOT_PASSWORD: '  root pw  ', MYSQL_DATABASE: 'shared_app' },
+      volumes: [],
+    });
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const reset = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amysql-ws/credentials/reset',
+      { confirmResourceName: 'MySQL WS' },
+      { 'x-test-cookie-auth': '1' },
+    );
+
+    expect(reset.status).toBe(200);
+    const alter = harness.shell.commands.filter((cmd) => cmd.includes('ALTER USER'));
+    expect(alter.length).toBeGreaterThanOrEqual(1);
+    expect(alter.every((cmd) => cmd.includes("-p'  root pw  '")), `root 口令被改写了：${alter[0]}`).toBe(true);
+  });
+
   it('executes initialization SQL through the branch resource database, not the shared infra default', async () => {
     const harness = makeHarness();
     tmpDir = harness.tmpDir;

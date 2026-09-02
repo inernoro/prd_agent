@@ -555,7 +555,7 @@ type SlowHttpState =
   | { status: 'ok'; data: PerfOverviewResponse };
 
 type BranchAction = {
-  kind: 'preview' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
+  kind: 'preview' | 'open' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -1530,6 +1530,9 @@ export function BranchListPage(): JSX.Element {
   const [detailDrawerResourceFocus, setDetailDrawerResourceFocus] = useState<{
     resourceId: string;
     detailTab: BranchResourceDetailTab;
+    /* 从分支卡片的数据库 chip 直接进工作台：关掉工作台就一路退回分支列表，
+       不把用户丢在中间那层抽屉里（2026-09-01 用户反馈「点一次要走两步」）。 */
+    directWorkbench?: boolean;
   } | null>(null);
   const [releaseBranchId, setReleaseBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
@@ -2345,7 +2348,16 @@ export function BranchListPage(): JSX.Element {
 
   const openRunningPreview = useCallback(async (branch: BranchSummary, target?: PreviewTarget): Promise<void> => {
     if (state.status !== 'ok') return;
-    setAction(branch.id, createAction('preview', '正在打开预览'));
+    /*
+     * 「打开正在跑的预览」是 `open`，不是 `preview`（Codex P2，核对属实）。
+     *
+     * `preview` 这个 kind 同时被 deployBranch(openAfterDeploy=true) 用着，那是
+     * **真的构建一次再打开**；而这里一行构建都没有，只是拼个 URL 跳过去。失败时
+     * （最常见：缺预览域名配置）落一条 finished + error 的 `preview` 记录，总览
+     * 的部署柱状图按 kind 一收就把它算成一次构建失败，成功率与「上次构建耗时」
+     * 一起被污染。两件事共用一个 kind，本身就是这条缺陷的根。
+     */
+    setAction(branch.id, createAction('open', '正在打开预览'));
     try {
       let url = '';
       if (state.previewMode === 'port') {
@@ -2366,7 +2378,7 @@ export function BranchListPage(): JSX.Element {
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       closePreviewTarget(target || null);
-      setAction(branch.id, finishAction(actionRef.current[branch.id], 'preview', message, 'error'));
+      setAction(branch.id, finishAction(actionRef.current[branch.id], 'open', message, 'error'));
       setToast(message);
     }
   }, [setAction, state]);
@@ -2380,6 +2392,7 @@ export function BranchListPage(): JSX.Element {
     setDetailDrawerResourceFocus({
       resourceId: resource.id,
       detailTab: resource.kind === 'app' ? 'logs' : 'data',
+      directWorkbench: resource.kind === 'database',
     });
     setDetailDrawerBranchId(branch.id);
   }, []);
@@ -3579,6 +3592,7 @@ export function BranchListPage(): JSX.Element {
           previewMode={state.status === 'ok' ? state.previewMode : 'multi'}
           initialResourceId={detailDrawerResourceFocus?.resourceId || null}
           initialResourceDetailTab={detailDrawerResourceFocus?.detailTab || null}
+          resourceWorkbenchDirect={detailDrawerResourceFocus?.directWorkbench || false}
           branchStatus={(() => {
             if (state.status !== 'ok' || !detailDrawerBranchId) return undefined;
             const target = state.branches.find((b) => b.id === detailDrawerBranchId);
@@ -3817,7 +3831,7 @@ export function BranchListPage(): JSX.Element {
                       </div>
                       <div className="flex items-center gap-2">
                         <Button type="button" variant="ghost" size="icon" onClick={() => void refreshSlowHttp()} title="刷新请求观测">
-                          <RefreshCw className="h-4 w-4" />
+                          <RefreshCw />
                         </Button>
                         <Gauge className="h-4 w-4 text-muted-foreground" />
                       </div>
@@ -5051,7 +5065,7 @@ function CoolPolicyEditorModal({ onClose }: { onClose: () => void }): JSX.Elemen
         <div className="mt-4 flex justify-end gap-2">
           <Button type="button" size="sm" variant="outline" onClick={onClose}>取消</Button>
           <Button type="button" size="sm" disabled={phase !== 'ready'} onClick={() => void save()}>
-            {phase === 'saving' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            {phase === 'saving' ? <Loader2 className="animate-spin" /> : null}
             保存并生效
           </Button>
         </div>

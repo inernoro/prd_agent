@@ -146,7 +146,7 @@ export function AccessRequestInbox({
             onClick={() => { void reject(primary.id); }}
             disabled={primaryBusy}
           >
-            {primaryBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {primaryBusy ? <Loader2 className="animate-spin" /> : null}
             拒绝
           </Button>
           <Button
@@ -156,7 +156,7 @@ export function AccessRequestInbox({
             onClick={() => { void approve(primary.id); }}
             disabled={primaryBusy}
           >
-            {primaryBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+            {primaryBusy ? <Loader2 className="animate-spin" /> : <KeyRound />}
             {primary.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
           </Button>
         </div>
@@ -229,11 +229,11 @@ export function AccessRequestInbox({
                     </div>
                     <div className="mt-3 flex justify-end gap-2">
                       <Button type="button" variant="outline" size="sm" onClick={() => reject(item.id)} disabled={isBusy}>
-                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        {isBusy ? <Loader2 className="animate-spin" /> : null}
                         拒绝
                       </Button>
                       <Button type="button" variant="default" size="sm" onClick={() => approve(item.id)} disabled={isBusy}>
-                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        {isBusy ? <Loader2 className="animate-spin" /> : null}
                         {item.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
                       </Button>
                     </div>

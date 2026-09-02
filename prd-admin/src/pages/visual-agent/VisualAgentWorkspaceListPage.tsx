@@ -1,6 +1,7 @@
 
 import { GlassCard } from '@/components/design/GlassCard';
 import { SizePickerButton } from '@/components/visual-agent/SizePickerPanel';
+import { VisualModelSettings } from '@/components/visual-agent/VisualModelSettings';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { systemDialog } from '@/lib/systemDialog';
@@ -1811,6 +1812,11 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       <div className="flex flex-col items-center justify-center pt-[52px] pb-4 relative z-10 px-5">
         {/* Hero 区域 */}
         <div {...rise(570)}><HeroSection /></div>
+        {/* main 并行落的「模型设置」：管理员配「哪些模型对客户开放、默认哪个」，
+            只对有 settings.write 的人显示。它和工具行里那个模型选择器不是一回事——
+            那个是所有人每次生成时挑用哪个，这个是决定挑得到哪些。两个都要。
+            延迟取 760：夹在 hero(570) 与输入台(950) 之间，保持沿光路依次点亮。 */}
+        <div {...rise(760, 'my-3')}><VisualModelSettings /></div>
 
         {/* 快捷输入框 */}
         <div {...rise(950, 'w-full flex justify-center')}>

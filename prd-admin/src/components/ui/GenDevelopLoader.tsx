@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { getGenAvgMs } from '@/lib/genTiming';
+import { generationProgressPlacement } from './generationProgressPlacement';
 
 // build-marker: gen-develop-loader v2 (2026-08-30) — 强制 chunk 重编译，冲掉 CDS 构建缓存
 
@@ -178,6 +179,7 @@ export function GenDevelopLoader({
   worldH,
   sizeLabel,
   mode = 'image',
+  viewportRef,
 }: {
   createdAt?: number;
   className?: string;
@@ -196,9 +198,18 @@ export function GenDevelopLoader({
   /** 底边那行的尺寸段，如 `1024 × 1024`。原来它是左上角一枚独立徽章，现在并进这一行。 */
   sizeLabel?: string;
   mode?: GenDevelopMode;
+  /**
+   * 画布的裁切容器。传了就把底边那行夹在可见区域内：卡片被画布边缘裁掉一半时，
+   * 那行字本来会跟着跑到看不见的地方去，用户就只剩一张什么都不说的图在转
+   * （main 在 GenSweepLoader 上修过这件事，换成本组件时必须一起带过来，
+   *  否则这次合并等于把那个修复删掉了）。夹紧算术走共享的
+   *  generationProgressPlacement，两个宿主同一份。
+   */
+  viewportRef?: RefObject<HTMLElement | null>;
 }) {
   ensureStyles();
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const metaRef = useRef<HTMLDivElement | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [measured, setMeasured] = useState<{ w: number; h: number } | null>(null);
   // 兜底起点固定在挂载时刻（不随每秒 now 漂移）：createdAt 缺失时若用 now 当起点，elapsed 恒为 0。
@@ -208,6 +219,62 @@ export function GenDevelopLoader({
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  /**
+   * 底边那行必须留在画布的可见区域内。
+   *
+   * 卡片被画布边缘裁掉一半时，这行字会跟着跑到看不见的地方，用户就只剩一张
+   * 什么都不说的图在转——尺寸、阶段、剩余时间三样全看不到。main 在上一版
+   * loader（GenSweepLoader）上修过这件事，本组件替换它时必须把这条接线一起带过来，
+   * 否则这次合并等于悄悄把那个修复删掉了。夹紧算术走共享的
+   * generationProgressPlacement，两个宿主同一份，不各写一遍（形状 3）。
+   *
+   * 不传 viewportRef（普通卡片宿主，没有裁切容器）时整段不生效，保持原布局。
+   */
+  useEffect(() => {
+    const root = rootRef.current;
+    const meta = metaRef.current;
+    const viewport = viewportRef?.current;
+    if (!root || !meta || !viewport) return;
+    let frame = 0;
+    const place = () => {
+      frame = 0;
+      const rect = root.getBoundingClientRect();
+      const bounds = viewport.getBoundingClientRect();
+      const scale = rect.width / root.offsetWidth;
+      if (!Number.isFinite(scale) || scale <= 0) return;
+      const placement = generationProgressPlacement(rect, {
+        left: Math.max(0, bounds.left), top: Math.max(0, bounds.top),
+        right: Math.min(window.innerWidth, bounds.right), bottom: Math.min(window.innerHeight, bounds.bottom),
+      }, meta.offsetHeight * scale);
+      meta.style.visibility = placement ? 'visible' : 'hidden';
+      if (!placement) return;
+      meta.style.left = `${placement.left / scale}px`;
+      meta.style.right = 'auto';
+      meta.style.bottom = `${placement.bottom / scale}px`;
+      meta.style.width = `${placement.width / scale}px`;
+    };
+    const schedule = () => { if (!frame) frame = window.requestAnimationFrame(place); };
+    // 只观察祖先变换，不观察这一行自身的样式；否则测量与写入会互相触发成死循环。
+    const transforms = new MutationObserver(schedule);
+    for (let parent = root.parentElement; parent; parent = parent.parentElement) {
+      transforms.observe(parent, { attributes: true, attributeFilter: ['style', 'class'] });
+      if (parent === viewport) break;
+    }
+    const sizes = new ResizeObserver(schedule);
+    sizes.observe(root);
+    sizes.observe(viewport);
+    window.addEventListener('resize', schedule);
+    window.addEventListener('scroll', schedule, true);
+    schedule();
+    return () => {
+      transforms.disconnect();
+      sizes.disconnect();
+      window.removeEventListener('resize', schedule);
+      window.removeEventListener('scroll', schedule, true);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [viewportRef]);
 
   // useEffect 而不是 useLayoutEffect：后者在 SSR/静态渲染下会告警，而画布宿主一律显式传
   // worldW/worldH 走不到这条兜底路径，晚一帧拿到尺寸没有可感知代价。
@@ -267,6 +334,7 @@ export function GenDevelopLoader({
       {level !== 'pip' && <div className="gen-dev__scrim" />}
 
       <div
+        ref={metaRef}
         className="gen-dev__meta"
         data-testid={mode === 'layer' ? 'frame-layering-badge' : 'generation-progress-meta'}
       >

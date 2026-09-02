@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { buildVisualAgentModelOptions, isOperationOnlyPool, poolIdFromVisualModelOptionId } from '../visualAgentModelOptions';
+import { buildVisualAgentModelOptions, isOperationOnlyPool, poolIdFromVisualModelOptionId, visualModelOptionIdOf, selectVisualModel } from '../visualAgentModelOptions';
 import type { ModelGroupForApp } from '@/types/modelGroup';
 
 function pool(overrides: Partial<ModelGroupForApp>): ModelGroupForApp {
@@ -57,7 +57,7 @@ describe('生图模型选择器只放用户能挑来生图的模型', () => {
     const generation = pool({ capabilities: ['image_generation'] });
     expect(isOperationOnlyPool(generation)).toBe(false);
     expect(buildVisualAgentModelOptions([generation]).map((item) => item.modelName))
-      .toEqual(['openai/gpt-image-2']);
+      .toEqual(['gpt-image-2']);
   });
 
   it('旧后端不下发 capabilities 时不误伤正常模型', () => {
@@ -96,5 +96,40 @@ describe('【关键】选项 id 与模型池 id 差一个前缀，两个方向�
     const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
     expect(code.match(/'pool_'/g) ?? [], "'pool_' 字面量应只出现在常量定义那一处").toHaveLength(1);
     expect(code).not.toMatch(/`pool_\$\{/);
+  });
+});
+
+describe('【关键】交接包里的模型 id 归一之后必须能在目录里选中', () => {
+  // 这条是**行为**判据，不是源码守卫——因为源码守卫在这件事上已经失手过一次。
+  //
+  // 手机端存进 pickedPoolId 的值要拿去跟目录比。比较对象的口径被改过两次：
+  // 一开始比的是原始池的 id（不带前缀），后来 main 改成比选项的 id（带前缀）。
+  // 那次改动之后，「剥掉前缀再存」这个写法当场反了——存进去的再也匹配不上，
+  // 选中恒为 null，连自动发送都不会触发。而当时那条源码守卫断言的是
+  // 「调用了 poolIdFromVisualModelOptionId」，这句话在反了之后依然成立，所以它没红。
+  //
+  // 判据换成：把交接包里的值归一之后，selectVisualModel 必须真的选得中同一个模型。
+  const normalize = (raw: string) => (raw.trim() ? visualModelOptionIdOf(poolIdFromVisualModelOptionId(raw)) : '');
+
+  it('交接包给的选项 id：归一后选得中', () => {
+    const [option] = buildVisualAgentModelOptions([pool({ id: 'grp-77' })]);
+    expect(option).toBeTruthy();
+    const picked = selectVisualModel([option!], false, normalize(option!.id));
+    expect(picked?.id, '归一后应选中同一个模型').toBe(option!.id);
+  });
+
+  it('万一给的是裸池 id：归一后同样选得中', () => {
+    const [option] = buildVisualAgentModelOptions([pool({ id: 'grp-77' })]);
+    const picked = selectVisualModel([option!], false, normalize('grp-77'));
+    expect(picked?.id).toBe(option!.id);
+  });
+
+  it('归一是幂等的，反复套用不会越套越长', () => {
+    expect(normalize(normalize(normalize('grp-77')))).toBe(visualModelOptionIdOf('grp-77'));
+  });
+
+  it('空值仍是空值，不会变成一个只有前缀的假 id', () => {
+    expect(normalize('')).toBe('');
+    expect(normalize('   ')).toBe('');
   });
 });

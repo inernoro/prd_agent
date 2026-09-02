@@ -1,6 +1,8 @@
+using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -145,12 +147,78 @@ public sealed class SyntheticLoginControllerTests
 
     [Theory]
     [InlineData("POST", "/api/v1/auth/synthetic/ticket", true)]
+    [InlineData("POST", "/api/v1/auth/synthetic/gateway-ticket", true)]
     [InlineData("POST", "/api/dashboard/notifications/events", true)]
     [InlineData("GET", "/api/v1/auth/synthetic/ticket", false)]
     [InlineData("POST", "/api/users", false)]
     public void StableSmokeSignature_ShouldBeEndpointScoped(string method, string path, bool expected)
     {
         Assert.Equal(expected, StableSmokeAuthenticationHandler.IsAllowedRequest(method, path));
+    }
+
+    [Fact]
+    public void StableSmokeSignature_ShouldResolveDeploymentHostWithoutWildcardTrust()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CDS_PREVIEW_URL"] = "https://branch.example.test/visual-agent",
+            })
+            .Build();
+
+        Assert.True(StableSmokeAuthenticationHandler.IsAllowedHost(
+            "@deployment", "branch.example.test", configuration));
+        Assert.False(StableSmokeAuthenticationHandler.IsAllowedHost(
+            "@deployment", "other.example.test", configuration));
+        Assert.True(StableSmokeAuthenticationHandler.IsAllowedHost(
+            "fixed.example.test", "FIXED.EXAMPLE.TEST", configuration));
+    }
+
+    [Fact]
+    public void StableSmokeSignature_ShouldTrustForwardedHostOnlyFromPrivateProxy()
+    {
+        var proxied = new DefaultHttpContext();
+        proxied.Connection.RemoteIpAddress = IPAddress.Parse("10.240.24.1");
+        proxied.Request.Host = new HostString("127.0.0.1", 8080);
+        proxied.Request.Headers["X-Forwarded-Host"] = "branch.example.test, proxy.internal";
+        Assert.Equal(
+            "branch.example.test",
+            StableSmokeAuthenticationHandler.ResolveRequestHost(proxied.Request));
+
+        var direct = new DefaultHttpContext();
+        direct.Connection.RemoteIpAddress = IPAddress.Parse("203.0.113.20");
+        direct.Request.Host = new HostString("api.example.test");
+        direct.Request.Headers["X-Forwarded-Host"] = "spoofed.example.test";
+        Assert.Equal(
+            "api.example.test",
+            StableSmokeAuthenticationHandler.ResolveRequestHost(direct.Request));
+    }
+
+    [Fact]
+    public void GatewayFederation_ShouldAutoProvisionOnlyMissingStateAndCircuitBreakManualChanges()
+    {
+        var controller = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/SyntheticLoginController.cs"));
+        var federation = File.ReadAllText(LocateRepoFile(
+            "llmgw/console-api/Auth/StableSmokeFederation.cs"));
+        var gateway = File.ReadAllText(LocateRepoFile(
+            "llmgw/console-api/Program.cs"));
+
+        Assert.Contains("StableSmokeAuthenticationHandler.SchemeName", controller);
+        var gatewayTicketMethod = typeof(SyntheticLoginController).GetMethod(
+            nameof(SyntheticLoginController.IssueGatewayTicket));
+        Assert.NotNull(gatewayTicketMethod);
+        Assert.Equal(
+            StableSmokeAuthenticationHandler.SchemeName,
+            gatewayTicketMethod.GetCustomAttribute<AuthorizeAttribute>()?.AuthenticationSchemes);
+        Assert.Contains("if (!user.IsActive)", federation);
+        Assert.Contains("STABLE_SMOKE_ACCOUNT_DISABLED", federation);
+        Assert.Contains("STABLE_SMOKE_MEMBERSHIP_DISABLED", federation);
+        Assert.Contains("STABLE_SMOKE_ROLE_DRIFT", federation);
+        Assert.DoesNotContain(".Set(x => x.IsActive, true)", federation);
+        Assert.Contains("/gw/auth/failure-health", gateway);
+        Assert.Contains("single-refresh-single-retry", gateway);
+        Assert.Contains("one-time-ticket-auto-provision", gateway);
     }
 
     [Fact]

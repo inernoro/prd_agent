@@ -182,7 +182,11 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
     // 就当成契约已经满足（形状 8：把不成立的证据当成证据）。
     // 所以这里改盯「转换真的发生了」，转换本身的行为由
     // visualAgentModelOptions.test.ts 用真 builder 断言。
-    expect(MOBILE).toMatch(/poolIdFromVisualModelOptionId\(String\(data\.modelId/);
+    // 断言归一到**选项 id** 这个口径（与 selectVisualModel 的比较对象一致）。
+    // 只断言「调用了某个转换函数」是不够的——那句话在口径反过来之后依然成立，
+    // 上一版就是这么漏过去的。真正的行为判据在 visualAgentModelOptions.test.ts：
+    // 归一后必须真的能被 selectVisualModel 选中。
+    expect(MOBILE).toMatch(/visualModelOptionIdOf\(poolIdFromVisualModelOptionId\(raw\)\)/);
   });
 
   it('【关键】手机端把内联图先落盘再生成，不静默丢图跑纯文字', () => {

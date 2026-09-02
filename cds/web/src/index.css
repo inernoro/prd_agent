@@ -82,6 +82,10 @@
       0 12px 28px -12px rgb(0 0 0 / 0.5),
       0 40px 80px -32px rgb(0 0 0 / 0.6);
 
+    /* chip / 小控件的抬升配方（--shadow-card 的轻量版）。
+       暗色里靠顶边白高光把 chip 从凹陷带上"托"起来。 */
+    --shadow-chip: inset 0 1px 0 hsl(0 0% 100% / 0.05);
+
     /* ── 语义状态色 ────────────────────────────────────────────────
        组件侧已统一用 ok / warn / bad / info（1291 处，见 palette-contrast-guard），
        这一层只决定它们**长什么颜色**。这里的值刻意对齐改配色之前的观感：
@@ -102,6 +106,23 @@
        白天那四档是深色（30%~44%），反过来必须用白。写死 text-white 的
        黄底按钮「看不清」就是漏了这一层。 */
     --status-ink: 222 24% 8%;
+
+    /* 系列色（图表专用，2026-09-01）。语义四色 ok/warn/bad/info 是**保留**的状态色，
+       不参与系列配色，否则「第 4 个服务」会跟「警告」撞成同一个红。
+       这一组按 dataviz 六项校验选出来：亮度带 / 彩度下限 / 色盲相邻可分（最差
+       ΔE 20.5 protan）/ 常视相邻可分（最差 ΔE 24.4）/ 对底对比 ≥3:1，
+       **暗色与白天用同一组值**都通过，所以两个主题不分叉。
+       赋色按服务在列表里的固定次序，不循环；第 6 个及以后归入「其他」。 */
+    --series-1: 21 90% 48%;
+    --series-2: 200 98% 39%;
+    --series-3: 85 85% 35%;
+    --series-4: 258 90% 66%;
+    --series-5: 333 71% 51%;
+    /* 网络吞吐专用：收/发的主编码是基线上下的位置，色相只是辅助。
+       单独一档而不复用具名服务的五色，避免同屏里「蓝色=cloudbridge-web」
+       与「蓝色=入站」打架；也不用语义四色（那四档保留给状态）。
+       #0891b2，与五色同验：双主题六项全 PASS（deutan 最差邻对 ΔE 10.3）。 */
+    --series-net: 192 91% 36%;
 
     /* 主色的两个补充档。暗色下 ink 与 primary 同值（橙字在深底上够清楚）；
        白天必须分开，见 light 块的说明。 */
@@ -156,6 +177,10 @@
       0 8px 24px -12px hsl(24 30% 20% / 0.12),
       0 32px 64px -32px hsl(24 30% 20% / 0.15);
 
+    /* 白天的 chip 抬升：白高光落在白 chip 上等于没有（Codex P1，2026-09-01），
+       所以这一档改由接触影承担，观感上仍是"从凹陷带里浮起来"。 */
+    --shadow-chip: 0 1px 2px hsl(24 30% 20% / 0.07);
+
     /* 白天取 Tailwind 的 -600（原来 `text-x-600` 的实际取值），soft 是极淡同色底。 */
     --ok: 161 94% 30%;
     --ok-soft: 160 60% 95%;
@@ -167,6 +192,23 @@
     --info-soft: 199 85% 95%;
 
     --status-ink: 0 0% 100%;
+
+    /* 系列色（图表专用，2026-09-01）。语义四色 ok/warn/bad/info 是**保留**的状态色，
+       不参与系列配色，否则「第 4 个服务」会跟「警告」撞成同一个红。
+       这一组按 dataviz 六项校验选出来：亮度带 / 彩度下限 / 色盲相邻可分（最差
+       ΔE 20.5 protan）/ 常视相邻可分（最差 ΔE 24.4）/ 对底对比 ≥3:1，
+       **暗色与白天用同一组值**都通过，所以两个主题不分叉。
+       赋色按服务在列表里的固定次序，不循环；第 6 个及以后归入「其他」。 */
+    --series-1: 21 90% 48%;
+    --series-2: 200 98% 39%;
+    --series-3: 85 85% 35%;
+    --series-4: 258 90% 66%;
+    --series-5: 333 71% 51%;
+    /* 网络吞吐专用：收/发的主编码是基线上下的位置，色相只是辅助。
+       单独一档而不复用具名服务的五色，避免同屏里「蓝色=cloudbridge-web」
+       与「蓝色=入站」打架；也不用语义四色（那四档保留给状态）。
+       #0891b2，与五色同验：双主题六项全 PASS（deutan 最差邻对 ΔE 10.3）。 */
+    --series-net: 192 91% 36%;
 
     /* 白天的橙色主色（24 90% 50%）当文字落在浅底上对比度约 3:1，偏弱，
        所以 ink 压深两档专供文字用；填充仍用 primary 那一档。
@@ -1195,7 +1237,7 @@
   }
 
   .cds-rail {
-    @apply flex min-h-0 flex-col gap-4 overflow-y-auto px-2 py-4;
+    @apply flex min-h-0 flex-col gap-3 overflow-y-auto px-2 py-2.5;
     grid-column: 1;
     grid-row: 2;
     background-color: hsl(var(--surface-sunken));
@@ -1551,11 +1593,23 @@
   }
 
   .cds-rail-section {
-    @apply flex flex-col gap-1 border-t border-[hsl(var(--hairline))] pt-4;
+    @apply flex flex-col gap-0.5 border-t border-[hsl(var(--hairline))] pt-3;
   }
 
+  /* 首段上方没有内容，那根分割线是悬空的——栏顶已经有顶栏的边界了。 */
+  .cds-rail > .cds-rail-section:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  /* 工具组与 footer 同一段落语言；区别只在「工具跟着导航贴顶、footer 贴栏底」。 */
+  .cds-rail-tools,
   .cds-rail-footer {
-    @apply flex flex-col gap-1 border-t border-[hsl(var(--hairline))] pt-3;
+    @apply flex flex-col gap-0.5 border-t border-[hsl(var(--hairline))] pt-3;
+  }
+
+  .cds-rail-tools {
+    @apply mt-3;
   }
 
   .cds-rail-item {
@@ -1580,11 +1634,14 @@
     flex-shrink: 0;
   }
 
-  /* 左侧栏里的全局操作使用 24px SVG，44px 点击区内图标占比清晰可辨。 */
-  .cds-rail-action-entry svg {
-    width: 1.5rem;
-    height: 1.5rem;
+  /* 短标签只服务桌面栏，抽屉里显示完整中文名。 */
+  .cds-rail-short {
+    display: none;
   }
+
+  /* 2026-08-31 起底部动作不再比导航项大一档：同一根栏里出现 19.2 / 24 / 16
+     三种图标尺寸正是「怎么调都不协调」的来源。尺寸统一交给
+     .cds-rail .cds-rail-item svg（桌面栏 20px）与基础的 1.2rem（抽屉）。 */
 
   .cds-rail-item:hover {
     background-color: hsl(var(--surface-raised) / 0.7);
@@ -2854,11 +2911,142 @@
    * 之内,保留文字标签。每个 item 已有 aria-label + title,隐藏文字后无障碍 + 悬停提示不丢。
    */
   .cds-rail .cds-rail-item {
-    @apply justify-center gap-0 px-0;
+    /* 2026-09-01 定档（两位设计评审独立比对 60/64/68/72 四稿后一致选 72 这一档）：
+       上一版收到 60px 栏 / 44px 项是矫枉过正——47px 的项装进 60px 的栏，
+       左右只剩 6.5px，选中的实心块贴着栏边像「把栏染了一段色」，
+       容器反而比内容窄；标签 9.5px 已经在汉字的渲染下限以下，
+       「报」「缺」「设」的笔画并成灰块，那才是「失真」的来源。
+       现在：栏 72 ⊃ 项 56 ⊃ 内容，三层包含关系正过来；竖向 10+20+4+14+4=52。 */
+    @apply h-[52px] flex-col justify-center gap-1 rounded-xl px-1;
   }
-  .cds-rail .cds-rail-item > span {
+
+  /* 图标：全栏一档 20px + 描边 1.7。lucide 把 stroke-width 写成表现属性，
+     CSS 声明压得过它，所以不用改任何组件调用点。 */
+  .cds-rail .cds-rail-item svg {
+    width: 20px;
+    height: 20px;
+    /* lucide 默认 2 是照 24px 画的；20px 上用 2 会让「缺陷」「Agent」这类密纹图标糊成块。 */
+    stroke-width: 1.75;
+  }
+
+  /* 抽屉用完整中文名，桌面栏用两字短名；两边共用同一个 RailNav。 */
+  .cds-rail .cds-rail-item > span:not(.cds-rail-short) {
     display: none;
   }
+  /* 11px 是两个汉字在桌面端有余量的第一档：10.5 勉强立住、10 在临界、9.5 已经糊。 */
+  .cds-rail .cds-rail-item > .cds-rail-short {
+    display: block;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 14px;
+    letter-spacing: 0.02em;
+  }
+
+  /* 图标与标签在选中态分主辅：图标转主色、标签转满墨加粗。
+     两者不再同色同权重地说同一件事——这正是「图标 + 标签冗余」的由来。
+     标签**不能**跟着 item 染成主色：2026-08-31 否掉的那一档就是标签用
+     primary-ink 落在栏底，实测 4.24:1。 */
+  .cds-rail .cds-rail-item[data-active='true'] > .cds-rail-short {
+    color: hsl(var(--foreground));
+    font-weight: 600;
+  }
+
+  /* 非活动项走 --foreground-muted 而不是 --muted-foreground：
+     白天那一档从 4.72:1 抬到 6.43:1（对栏底 #EEE8E3），暗色 10.3:1。 */
+  .cds-rail .cds-rail-item {
+    color: hsl(var(--foreground-muted));
+  }
+
+  /* 当前页（2026-09-02 改为「竖条」，四稿比对后用户选定方向 A）：
+     一根 3px 竖条 + 抬升底 + 主色图标 + 满墨标签。
+
+     此前是整项实心橙。它的问题从来不是看不清（实心那档白天 5.13:1、暗色 7.67:1，
+     都过 AA），是**太清楚**：一个只表示「你在这」的指示物，主色铺了约 3400px²，
+     抢在页面上所有真正的操作前面；而底部的「接入 Agent」又是第二块橙，
+     同一根栏里两种高亮在互相抢。现在主色只剩竖条约 60px² 加图标描边，
+     是全栏唯一的彩色。
+
+     再往前一档（2026-08-31 之前）是「淡橙底 + 橙字」，白天 4.25:1，比非活动的
+     还低——那一档已经否掉，不要回去：判据见 palette-contrast-guard。
+
+     现在这一档的数值：图标对抬升底白天 5.13:1、暗色 6.74:1；标签走满墨
+     白天 15.04:1、暗色 12.91:1；竖条不是文字，判据取非文字构件的 3:1，
+     白天 4.22:1、暗色 8.16:1。 */
+  .cds-rail .cds-rail-item[data-active='true'] {
+    position: relative;
+    background-color: hsl(var(--surface-raised));
+    color: hsl(var(--primary-ink));
+    box-shadow: none;
+  }
+
+  .cds-rail .cds-rail-item[data-active='true']::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 3px;
+    height: 20px;
+    transform: translateY(-50%);
+    border-radius: 0 3px 3px 0;
+    background-color: hsl(var(--primary-ink));
+  }
+
+  /* 底部动作在栏里不再各自带盒子：强调只留颜色，边框与底色交给 hover/active，
+     否则「主导航是纯图标、底部动作是小按钮」两套语言会拼在同一根栏里。 */
+  .cds-rail .cds-agent-access-entry,
+  .cds-rail .cds-bug-report-entry {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  /* 2026-09-02：接入 Agent 在栏里不再用橙字。
+     它是一个入口，不是当前页；用主色写它，就是在和「你在这」抢同一种语言——
+     一根栏里两处橙，眼睛不知道该看哪个。强调改为图标右上一颗 5px 的点：
+     位置压在 20px 图标的右上角（图标顶边距项顶 7px、水平居中）。
+     抽屉里保留原来的主色文字，那里没有这场竞争。 */
+  .cds-rail .cds-agent-access-entry {
+    position: relative;
+    color: hsl(var(--foreground-muted)) !important;
+  }
+
+  .cds-rail .cds-agent-access-entry::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: calc(50% + 6px);
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    background-color: hsl(var(--primary-ink));
+  }
+
+  .cds-rail .cds-agent-access-entry:hover {
+    color: hsl(var(--foreground)) !important;
+  }
+
+  .cds-rail .cds-bug-report-entry {
+    color: hsl(var(--muted-foreground)) !important;
+  }
+
+  .cds-rail .cds-agent-access-entry:hover,
+  .cds-rail .cds-bug-report-entry:hover {
+    background-color: hsl(var(--surface-raised) / 0.7) !important;
+    border: 0 !important;
+  }
+
+  /* 头像跟着图标的节奏走，不再是 32px 的第三档。 */
+  .cds-rail .cds-user-avatar {
+    width: 22px;
+    height: 22px;
+    font-size: 9px;
+  }
+
+  .cds-rail .cds-user-avatar svg {
+    width: 14px;
+    height: 14px;
+  }
+
   .cds-rail .cds-rail-brand-title {
     display: none;
   }

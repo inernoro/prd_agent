@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ModelHealthStatus, PoolStrategyType, type ModelGroupForApp } from '@/types/modelGroup';
-import { buildVisualAgentModelOptions, resolveVisualResultModelLabel } from './visualAgentModelOptions';
+import { buildVisualAgentModelOptions, resolveVisualResultModelLabel, selectVisualModel, visualImageSizeChoices } from './visualAgentModelOptions';
 
 function pool(models: ModelGroupForApp['models']): ModelGroupForApp {
   return {
@@ -22,7 +22,7 @@ function pool(models: ModelGroupForApp['models']): ModelGroupForApp {
 }
 
 describe('buildVisualAgentModelOptions', () => {
-  it('一个网关池只暴露一个业务模型身份，池内成员由网关调度', () => {
+  it('混合模型池不再伪装成业务模型', () => {
     const options = buildVisualAgentModelOptions([
       pool([
         { modelId: 'openai/gpt-image-2', platformId: 'openrouter', priority: 10, healthStatus: ModelHealthStatus.Healthy, consecutiveFailures: 0, consecutiveSuccesses: 1 },
@@ -31,22 +31,17 @@ describe('buildVisualAgentModelOptions', () => {
       ]),
     ]);
 
-    expect(options.map((item) => item.name)).toEqual(['视觉创作测试池']);
-    expect(options.map((item) => item.modelName)).toEqual(['image-test-pool']);
-    expect(options[0]?.platformId).toBe('model-pool');
-    expect(options).toHaveLength(1);
-    expect(options.every((item) => item.enabled && item.isDedicated)).toBe(true);
+    expect(options).toEqual([]);
   });
 
-  it('单成员池继续显示原有池名称', () => {
+  it('单成员默认池也不能替代业务模型目录', () => {
     const options = buildVisualAgentModelOptions([
       pool([
         { modelId: 'default-generation-stub', platformId: 'stub', priority: 1, healthStatus: ModelHealthStatus.Healthy, consecutiveFailures: 0, consecutiveSuccesses: 0 },
       ]),
     ]);
 
-    expect(options[0]?.name).toBe('视觉创作测试池');
-    expect(options[0]?.modelName).toBe('image-test-pool');
+    expect(options).toEqual([]);
   });
 
   it('逻辑模型只暴露稳定公开标识，不暴露 Offering 上游', () => {
@@ -82,10 +77,42 @@ describe('resolveVisualResultModelLabel', () => {
     })).toBe('nanobanana-2');
   });
 
-  it('旧任务按实际模型池、上游模型、原消息依次兜底', () => {
+  it('旧任务展示实际模型而不是默认池', () => {
     expect(resolveVisualResultModelLabel({ actualModelPool: '旧默认图像池', actualModel: 'upstream' }, 'selected'))
-      .toBe('旧默认图像池');
+      .toBe('upstream');
     expect(resolveVisualResultModelLabel({ actualModel: 'upstream' }, 'selected')).toBe('upstream');
     expect(resolveVisualResultModelLabel(null, 'selected')).toBe('selected');
+  });
+});
+
+describe('业务默认和显式选择', () => {
+  const models = buildVisualAgentModelOptions([
+    { ...pool([]), id: 'image2', code: 'image2', resolutionType: 'LogicalModel' },
+    { ...pool([]), id: 'image1', code: 'image1', resolutionType: 'LogicalModel', isDefault: true },
+  ]);
+  it('默认不跟随首项，即使默认暂时不可用也保留身份', () => {
+    expect(selectVisualModel(models, true)?.modelName).toBe('image1');
+    expect(selectVisualModel(models, true)?.enabled).toBe(false);
+  });
+  it('失效的旧选择不回退到业务默认', () => {
+    expect(selectVisualModel(models, false, 'removed')).toBeNull();
+    expect(selectVisualModel(models, false, 'pool_image2')?.modelName).toBe('image2');
+  });
+  it('缺少业务默认时不选择任意模型', () => {
+    expect(selectVisualModel(models.slice(0, 1), true)).toBeNull();
+  });
+});
+
+describe('手机尺寸与授权目录一致', () => {
+  it('保留网关发布的尺寸且跨档位去重，不生成写死的 3:4 尺寸', () => {
+    expect(visualImageSizeChoices({matched:true,modelId:'image1',sizesByResolution:{
+      '1k':[{size:'1024x1024',aspectRatio:'1:1'},{size:'1024x1536',aspectRatio:'2:3'},{size:'1536x1024',aspectRatio:'3:2'}],
+      '2k':[{size:'1024x1024',aspectRatio:'1:1'}],
+    }}).map(x=>x.size)).toEqual(['1024x1024','1024x1536','1536x1024']);
+  });
+  it('目录未就绪或尺寸不适用时不伪造选项', () => {
+    expect(visualImageSizeChoices(null)).toEqual([]);
+    expect(visualImageSizeChoices({matched:false,modelId:'unknown'})).toEqual([]);
+    expect(visualImageSizeChoices({matched:true,modelId:'adaptive',sizesNotApplicable:true})).toEqual([]);
   });
 });

@@ -27,3 +27,6 @@
 | test | cds | 补回滚段租约复检的守卫 |
 | test | prd-admin | 补「锚点不许被目录条件挡掉」的守卫 |
 | test | prd-admin | 交接包消费方守卫改为真扫源码树，第三个消费方出现时才真的会红（旧写法永远绿） |
+| merge | prd-admin | 合入 main：保留 GenDevelopLoader 的同时把 main 在旧 loader 上的「进度行夹在可见区域内」一并带过来 |
+| fix | prd-admin | 手机端模型 id 归一到选项 id 口径——main 把比较对象换成选项 id 后，原先剥前缀的写法会让自动发送整个不触发 |
+| test | prd-admin | 进度行夹紧守卫从旧 loader 搬到新 loader；模型 id 归一改为行为断言（源码守卫在口径反转时不会红） |

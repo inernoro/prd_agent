@@ -1,4 +1,5 @@
 import type { BranchEntry, BuildProfile, InfraService, ResourceCloneTask, ResourceExternalAccessPolicy, ServiceState } from '../types.js';
+import { branchDbCredentialsBelongTo, type BranchDbRuntime } from './branch-db-identity.js';
 
 export type UnifiedResourceKind = 'app' | 'database' | 'cache' | 'queue' | 'storage' | 'service';
 export type UnifiedResourceStatus = ServiceState['status'] | 'stopped';
@@ -135,8 +136,20 @@ function internalInfraAddress(service: InfraService): string {
   return service.containerPort ? `${service.id}:${service.containerPort}` : service.id;
 }
 
-function infraConnectionString(runtime: string, service: InfraService, host: string, branchEnv: Record<string, string> = {}): string {
+function infraConnectionString(runtime: string, service: InfraService, host: string, rawBranchEnv: Record<string, string> = {}): string {
   const env = service.env || {};
+  // 分支 env 只有一份，而一个分支可以挂多台同类型库；不判归属就会把 A 库的账号/库名
+  // 显示成 B 库的连接串（同一处漏判在工作台上表现为 1045，见 branch-db-identity）。
+  const runtimeKey: BranchDbRuntime | null = runtime === 'MySQL'
+    ? 'mysql'
+    : runtime === 'PostgreSQL'
+      ? 'postgres'
+      : runtime === 'MongoDB'
+        ? 'mongodb'
+        : null;
+  const branchEnv = runtimeKey && !branchDbCredentialsBelongTo(rawBranchEnv, runtimeKey, service.id)
+    ? {}
+    : rawBranchEnv;
   const port = service.hostPort || service.containerPort || 0;
   if (runtime === 'MySQL') {
     const db = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || env.MARIADB_DATABASE || 'app';

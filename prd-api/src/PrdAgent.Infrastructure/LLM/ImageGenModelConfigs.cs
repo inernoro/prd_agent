@@ -28,7 +28,11 @@ public static class ImageGenModelConfigs
             "gpt-image-2-all（自适应）",
             "OpenAI 兼容（apiyi）"),
         BuildOpenRouterGptImage2Config(),
-        BuildOpenAiGptImage2Config(),
+        BuildOpenAiGptImageConfig("gpt-image-2*", "GPT Image 2", "2026-08-14",
+            "https://platform.openai.com/docs/api-reference/images/create"),
+        // 精确匹配当前默认模型，不覆盖 1.5 或其他兼容平台的独立策略。
+        BuildOpenAiGptImageConfig("gpt-image-1", "GPT Image 1", "2026-08-31",
+            "https://developers.openai.com/api/docs/models/gpt-image-1"),
 
         // ===== gpt-image-1.5（标准 size 参数）=====
         // 与传统 OpenAI 兼容：通过 size 字段控制尺寸
@@ -733,15 +737,16 @@ public static class ImageGenModelConfigs
             SupportsResponseFormat = false,
         };
 
-    private static ImageGenModelAdapterConfig BuildOpenAiGptImage2Config()
+    private static ImageGenModelAdapterConfig BuildOpenAiGptImageConfig(
+        string modelIdPattern, string displayName, string lastUpdated, string officialDocUrl)
         => new()
         {
-            ModelIdPattern = "gpt-image-2*",
-            DisplayName = "GPT Image 2",
+            ModelIdPattern = modelIdPattern,
+            DisplayName = displayName,
             Provider = "OpenAI",
             PlatformType = "openai",
-            OfficialDocUrl = "https://platform.openai.com/docs/api-reference/images/create",
-            LastUpdated = "2026-08-14",
+            OfficialDocUrl = officialDocUrl,
+            LastUpdated = lastUpdated,
             SizeConstraintType = SizeConstraintTypes.Whitelist,
             SizeConstraintDescription = "通过 size 参数控制尺寸（OpenAI GPT Image 白名单）",
             SizesByResolution = new Dictionary<string, List<SizeOption>>

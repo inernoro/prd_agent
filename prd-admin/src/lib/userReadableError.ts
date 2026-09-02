@@ -122,6 +122,7 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['PROVIDER_UNAVAILABLE', '上游模型服务暂时故障，请稍后重试。'],
   ['PROVIDER_QUOTA_EXCEEDED', '当前模型用量已达上限，请稍后再试或联系管理员调整配额。'],
   ['GATEWAY_CONFIG_UNAVAILABLE', '模型配置服务暂时不可用，请稍后重试。'],
+  ['MODEL_NOT_IN_CATALOG', '该功能选中的模型不在系统认可的模型名录里，重试无法解决，请联系管理员核对模型配置。'],
   ['IMAGE_GEN_REQUEST_REJECTED', '图片生成请求未被接受，请调整描述或素材后重试。'],
   ['IMAGE_GEN_TIMEOUT', '图片生成等待超时，请稍后查看结果或重新生成。'],
   ['ASSET_NOT_FOUND', '这张生成图片已失效，请重新生成预览后再使用。'],

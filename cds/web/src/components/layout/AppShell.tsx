@@ -2,7 +2,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Activity, Bot, Bug, CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, UserRound, X } from 'lucide-react';
+import { Activity, Check, CircleAlert, Clock, Contrast, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Search, Settings, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
@@ -452,7 +452,8 @@ function RailNav({
           onFocus={preloadProjectListPage}
         >
           <LayoutGrid />
-          <span>Projects</span>
+          <span className="cds-rail-full">项目列表</span>
+          <span className="cds-rail-short">项目</span>
         </Link>
         {/*
          * 落地页是发布控制台（发布这件事本身）；发布中心退居为低频的管理面
@@ -469,8 +470,9 @@ function RailNav({
           onMouseEnter={preloadReleaseConsolePage}
           onFocus={preloadReleaseConsolePage}
         >
-          <Rocket />
-          <span>Releases</span>
+          <Upload />
+          <span className="cds-rail-full">发布控制台</span>
+          <span className="cds-rail-short">发布</span>
         </Link>
         <Link
           to="/task-schedule"
@@ -482,8 +484,9 @@ function RailNav({
           onMouseEnter={preloadTaskSchedulePage}
           onFocus={preloadTaskSchedulePage}
         >
-          <CalendarClock />
-          <span>Tasks</span>
+          <Clock />
+          <span className="cds-rail-full">任务调度</span>
+          <span className="cds-rail-short">任务</span>
         </Link>
         <Link
           to="/reports"
@@ -495,8 +498,9 @@ function RailNav({
           onMouseEnter={preloadReportsPage}
           onFocus={preloadReportsPage}
         >
-          <ClipboardCheck />
-          <span>Reports</span>
+          <FileText />
+          <span className="cds-rail-full">验收报告</span>
+          <span className="cds-rail-short">报告</span>
         </Link>
         <Link
           to="/status"
@@ -509,11 +513,16 @@ function RailNav({
           onFocus={preloadStatusPage}
         >
           <Activity />
-          <span>Status</span>
+          <span className="cds-rail-full">存活状态</span>
+          <span className="cds-rail-short">状态</span>
         </Link>
       </div>
-      <div className="flex-1" />
-      <div className="cds-rail-footer">
+      {/*
+       * 工具组紧跟导航，不跟着 flex-1 一起被顶到栏底。
+       * 原来五项全在底部，中间空出约 190px：那不是留白，是把一根栏读成了两根。
+       * 现在只有「我的东西」（主题 / 账号）留在栏底，空隙下移且缩短。
+       */}
+      <div className="cds-rail-tools">
         <button
           type="button"
           className="cds-rail-item cds-rail-action-entry cds-agent-access-entry"
@@ -525,8 +534,9 @@ function RailNav({
           title="接入 Agent：把当前页面任务交给 Agent"
           data-agent-action="connect"
         >
-          <Bot />
-          <span>接入 Agent</span>
+          <SquareTerminal />
+          <span className="cds-rail-full">接入 Agent</span>
+          <span className="cds-rail-short">Agent</span>
         </button>
         <button
           type="button"
@@ -539,8 +549,9 @@ function RailNav({
           title="提交缺陷（Command/Ctrl + B）"
           data-shell-action="bug-report"
         >
-          <Bug />
-          <span>提交缺陷</span>
+          <CircleAlert />
+          <span className="cds-rail-full">提交缺陷</span>
+          <span className="cds-rail-short">缺陷</span>
         </button>
         <Link
           to="/cds-settings"
@@ -552,9 +563,13 @@ function RailNav({
           onMouseEnter={preloadCdsSettingsPage}
           onFocus={preloadCdsSettingsPage}
         >
-          <Settings />
-          <span>系统设置</span>
+          <SlidersHorizontal />
+          <span className="cds-rail-full">系统设置</span>
+          <span className="cds-rail-short">设置</span>
         </Link>
+      </div>
+      <div className="flex-1" />
+      <div className="cds-rail-footer">
         <RailThemeToggle />
         <UserAccountMenu
           authMode={authMode}
@@ -577,7 +592,7 @@ function RailNav({
 function RailThemeToggle(): JSX.Element {
   const { theme, toggleWithRipple } = useTheme();
   const toLight = theme === 'dark';
-  const Icon = toLight ? Sun : Moon;
+  const Icon = Contrast;
   return (
     <button
       type="button"
@@ -593,7 +608,8 @@ function RailThemeToggle(): JSX.Element {
       }}
     >
       <Icon />
-      <span>{toLight ? '白天' : '黑天'}</span>
+      <span className="cds-rail-full">{toLight ? '白天' : '黑天'}</span>
+      <span className="cds-rail-short">{toLight ? '白天' : '黑天'}</span>
     </button>
   );
 }
@@ -759,7 +775,8 @@ function UserAccountMenu({
         <div className="cds-user-avatar">
           {user?.avatarUrl ? <img src={user.avatarUrl} alt="" /> : canLogout ? <span>{userInitials(user)}</span> : <UserRound />}
         </div>
-        <span>{displayName}</span>
+        <span className="cds-rail-full">{displayName}</span>
+        <span className="cds-rail-short">账号</span>
       </button>
       {menu}
     </>

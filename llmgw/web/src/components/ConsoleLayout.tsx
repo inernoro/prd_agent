@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity, BookOpen, Boxes, Bug, Building2, ChevronDown, CircleDollarSign, Cpu, FileClock, Layers3,
-  Check, ExternalLink, GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings,
+  Check, ExternalLink, GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings, SlidersHorizontal,
   ShieldCheck, Shuffle, Sun, Tags, UserRound, X,
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -45,6 +45,9 @@ const NAV_GROUPS: NavGroup[] = [
     { to: '/governance', label: '系统运维', icon: <ShieldCheck size={16} />, page: 'governance' },
   ] },
   { label: '设置', items: [
+    // 服务网关设置排在控制台设置之前：它管的是「网关自己怎么调模型」，
+    // 比个人偏好更常被找（401 类问题的唯一自救入口就在这一页）。
+    { to: '/gateway-settings', label: '服务网关设置', icon: <SlidersHorizontal size={16} />, page: 'gatewaySettings' },
     { to: '/settings', label: '控制台设置', icon: <Settings size={16} />, page: 'settings' },
   ] },
 ];

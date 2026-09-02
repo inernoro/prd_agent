@@ -59,6 +59,15 @@ x-cds-env-meta:
   LLMGW_SERVE_API_KEY:
     kind: required
     hint: "LLM 网关 serving 内部调用密钥，由 CDS 项目 env scope 托管"
+  STABLE_SMOKE_KEY_ID:
+    kind: required
+    hint: "稳定冒烟 RSA 公钥标识，由 CDS 项目 env scope 托管"
+  STABLE_SMOKE_USERNAME:
+    kind: required
+    hint: "稳定冒烟专用用户名，由 CDS 项目 env scope 托管"
+  STABLE_SMOKE_PUBLIC_KEY:
+    kind: required
+    hint: "稳定冒烟 RSA 公钥正文，由 CDS 项目 env scope 托管；私钥禁止进入部署环境"
 
 # 部署模式 — 每个服务可在 CDS 左侧面板下拉切换
 # dev: 热重载开发模式（改代码自动刷新）
@@ -300,6 +309,13 @@ services:
       Deployment__LegacyOwnerCreatedBeforeUtc: ""
       # CDS 自动验收永久入口：仍需通过仓库登记的 RSA 公钥签名，显式开关可独立熔断。
       SYNTHETIC_LOGIN_ENABLED: "true"
+      StableSmokeAuthentication__Keys__0__KeyId: "${STABLE_SMOKE_KEY_ID}"
+      StableSmokeAuthentication__Keys__0__Username: "${STABLE_SMOKE_USERNAME}"
+      StableSmokeAuthentication__Keys__0__DisplayName: "CDS 稳定冒烟"
+      # @deployment 只接受 CDS 实际注入的 CDS_PREVIEW_URL 主机，分支变化时无需人工改白名单。
+      StableSmokeAuthentication__Keys__0__AllowedHost: "@deployment"
+      StableSmokeAuthentication__Keys__0__PublicKey: "${STABLE_SMOKE_PUBLIC_KEY}"
+      StableSmokeAuthentication__Keys__0__AutoProvision: "true"
       Changelog__RootPath: /repo
       Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
       Changelog__GitHubToken: "${GITHUB_PAT:-}"
@@ -423,6 +439,12 @@ services:
       # 预览/fork 都能自签 token 读日志。未注入时由 llmgw/console-api 生产守卫 fail-closed。
       LlmGwJwt__Secret: "${LLMGW_JWT_SECRET}"
       LlmGwJwt__Issuer: prdagent-llmgw
+      # 巡检身份由 MAP RSA 签名换 60 秒单次票据。CDS 需要执行模型路由故障注入，角色显式为 admin；
+      # 正式环境应单独配置 viewer。人工停用和角色漂移不会被自动覆盖。
+      StableSmokeFederation__Enabled: "true"
+      StableSmokeFederation__AllowedUsernames: "${STABLE_SMOKE_USERNAME}"
+      StableSmokeFederation__Role: "admin"
+      StableSmokeFederation__SessionMinutes: "30"
       # 默认由 llm_gateway.llmgw_console_users 托管账号；启用 LLMGW_ADMIN_ENV_AUTHORITY 后，env 长期托管
       # admin，并且只在发现漂移时修复。bare `${KEY}` 保留为可选透传，不带默认，避免 CDS 把
       # `${KEY:-default}` 解析成字面量覆盖项目变量。

@@ -282,3 +282,24 @@ describe('动效声明纪律', () => {
     expect(declarations).toContain('stroke:var(--gen-wait-progress)');
   });
 });
+
+describe('【关键】底边那行必须夹在画布可见区域内', () => {
+  // 这条是从 main 的 GenSweepLoader.test.tsx 搬过来的（那边守的是同一件事）。
+  // 本分支把 GenSweepLoader 整个换成了 GenDevelopLoader，如果只删不搬，
+  // 合并的净效果就是把 main 那个修复悄悄删掉——而且不会有任何测试变红。
+  // 卡片被画布边缘裁掉一半时，这行字会跑到看不见的地方，用户只剩一张
+  // 什么都不说的图在转。
+  const LOADER = readFileSync(resolve(__dirname, './GenDevelopLoader.tsx'), 'utf8');
+  const CANVAS = readFileSync(resolve(__dirname, '../../pages/ai-chat/AdvancedVisualAgentTab.tsx'), 'utf8');
+
+  it('夹紧走共享算术，不在组件里另写一份', () => {
+    expect(LOADER).toMatch(/generationProgressPlacement\(rect,/);
+  });
+
+  it('画布里两处等待态都把裁切容器传进来了', () => {
+    // 普通生图 + Frame 分层两处。少接一处那一处就静默失去夹紧。
+    const usages = CANVAS.match(/<GenDevelopLoader\b[\s\S]*?\/>/g) ?? [];
+    expect(usages.length, '画布应有两处 GenDevelopLoader').toBe(2);
+    for (const usage of usages) expect(usage).toContain('viewportRef={stageRef}');
+  });
+});
