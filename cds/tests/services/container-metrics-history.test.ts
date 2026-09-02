@@ -300,6 +300,60 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     expect(r.series.c1.filter((p) => p.cpuPercent != null).length).toBeGreaterThan(0);
   });
 
+  /**
+   * Codex P2（核对属实）：抽屉开够一刻钟，按数量取的分位数会被密的那一档吞掉。
+   *
+   * 30 分钟窗口里抽屉开 T 分钟：5s 样本 12T 个、45s 段 1.33(30−T) 个，
+   * 5s 间隔占比超过 90% 只需要 T > 15。也就是说 p90 到 16 分钟就变成 5s，
+   * 又切出 120 个 15s 的桶，老的那三分之二全空——锯齿原样回来。
+   */
+  it('抽屉开满 16 分钟后，稀疏那一档仍然决定分辨率（分位数会在这里失效）', () => {
+    const windowMs = 30 * 60_000;
+    const liveMs = 16 * 60_000;             // 抽屉开着的这一段是 5s 一帧
+    const sparseEnd = windowMs - liveMs;
+    for (let t = 0; t <= sparseEnd; t += 45_000) recordContainerSample('c1', sample({ cpuPercent: 2 }), T0 + t);
+    for (let t = sparseEnd; t <= windowMs; t += 5_000) recordContainerSample('c1', sample({ cpuPercent: 4 }), T0 + t);
+    const now = T0 + windowMs;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
+
+    expect(r.groupSeconds, '被 5s 那一档吞掉就会退回锯齿').toBeGreaterThanOrEqual(45);
+    const sparse = r.series.c1.filter((p) => p.ts < T0 + sparseEnd);
+    const empty = sparse.filter((p) => p.cpuPercent == null).length;
+    expect(
+      empty / sparse.length,
+      `稀疏段 ${sparse.length} 个桶里空了 ${empty} 个（桶宽 ${r.groupSeconds}s）`,
+    ).toBeLessThan(0.1);
+  });
+
+  it('偶发漏采一帧不会把整张图的分辨率减半（容忍两次抖动）', () => {
+    const windowMs = 30 * 60_000;
+    let t = 0;
+    let i = 0;
+    while (t <= windowMs) {
+      recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
+      // 第 5 帧后漏采一次，造出一个 90s 的双倍间隔
+      t += (i === 5 ? 90_000 : 45_000);
+      i += 1;
+    }
+    const now = T0 + windowMs;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
+    expect(r.groupSeconds, '一次抖动不该让桶宽翻倍').toBeLessThan(45 * 1.5 * 1.6);
+  });
+
+  it('真实断档不参与定分辨率（否则一次重启就把整窗压成几个点）', () => {
+    const windowMs = 30 * 60_000;
+    // 前 5 分钟有量，然后断 12 分钟（> MAX_RATE_GAP_MS），再恢复
+    for (let t = 0; t <= 5 * 60_000; t += 45_000) recordContainerSample('c1', sample({ cpuPercent: 2 }), T0 + t);
+    for (let t = 17 * 60_000; t <= windowMs; t += 45_000) recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
+    const now = T0 + windowMs;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
+    expect(r.groupSeconds, '12 分钟的断档不该被当成采集节奏').toBeLessThan(180);
+    // 断档本身仍以 null 缺口呈现
+    const hole = r.series.c1.filter((p) => p.ts > T0 + 7 * 60_000 && p.ts < T0 + 15 * 60_000);
+    expect(hole.length).toBeGreaterThan(0);
+    for (const p of hole) expect(p.cpuPercent).toBeNull();
+  });
+
   it('points=1（整窗聚成一个数）不受分辨率下限影响', () => {
     for (let t = 0; t <= 30 * 60_000; t += 45_000) recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
     const now = T0 + 30 * 60_000;

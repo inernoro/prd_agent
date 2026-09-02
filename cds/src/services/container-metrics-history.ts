@@ -203,22 +203,40 @@ function resolveBound(value: number | undefined, nowMs: number, fallback: number
 }
 
 /**
- * 观测到的最粗采集节奏（毫秒）。窗口里每个容器取自己相邻样本间隔的 p90，再取所有容器的最大值。
+ * 观测到的最粗采集节奏（毫秒）。
  *
  * 为什么需要它：图的分辨率不能比数据的节奏细。常驻采样器 45s 一帧，若按 120 点切
  * 30 分钟窗口（每桶 15s），三个桶里只有一个有样本，另外两个是空的——空桶在堆叠图里
  * 画成 0，于是整张图变成一片均匀锯齿：每个尖峰是一次真实采样，每个谷底是「没数据」
  * 被当成了「用量为零」。图画的是采集节奏，不是 CPU。
  *
- * 为什么取 p90 而不是中位数：抽屉打开时 5s 端点也在写，窗口里会混着 5s 与 45s 两种
- * 间隔。中位数会被密的那一段拉过去（开着抽屉五分钟就够了），于是older 的稀疏段照样
- * 锯齿。p90 抓的是「常规最大间隔」，同时又不会被一两次真实断档带偏。
+ * 判据是「**忽略真实断档之后的最大常规间隔**」，取法：把 ≤ MAX_RATE_GAP_MS 的间隔
+ * 降序排，取第 3 大（不足 3 个就取最大）。
+ *
+ * 为什么不是中位数、也不是 p90（2026-09-02 修）：抽屉打开时 5s 端点也在写，窗口里
+ * 混着 5s 与 45s 两种节奏。**任何按数量取的分位数最终都会被密的那一档吞掉**——
+ * 算一下就知道：30 分钟窗口里抽屉开 T 分钟，5s 样本 12T 个、45s 段 1.33(30−T) 个，
+ * 5s 间隔占比超过 90% 只需要 T > 15。也就是说抽屉开够一刻钟，p90 就变成 5s，
+ * 于是又切出 120 个 15s 的桶，老的那三分之二又空了——锯齿原样回来，
+ * 恰恰是这段逻辑要防的东西。
+ *
+ * 所以改成按「最大」取，只做两处修剪：
+ *   - 超过 MAX_RATE_GAP_MS 的间隔是**真实断档**，本来就该以 null 缺口的形式呈现，
+ *     不参与定分辨率（否则一次重启就把整窗压成几个点）；
+ *   - 取第 3 大而不是第 1 大，容忍最多两次偶发抖动（漏采一帧会造出一个双倍间隔，
+ *     不该让它把整张图的分辨率减半）。
  *
  * 为什么取容器间的最大值：一条轴要同时画所有容器，分辨率由最稀疏的那条决定；
  * 对更密的那条只是多平均几个点，不会失真。
  *
  * 样本少于 3 个的容器不参与（算不出可信的间隔），全都算不出就返回 0 = 不做限制。
  */
+/**
+ * 定分辨率时容忍几次偶发的大间隔（取降序第 N+1 大）。
+ * 2 = 漏采一两帧造出的双倍间隔不算数，但连续出现的稀疏节奏一定算数。
+ */
+const CADENCE_OUTLIER_TOLERANCE = 2;
+
 function observedCadence(containers: string[], after: number, before: number): { cadenceMs: number; maxSamples: number } {
   let cadenceMs = 0;
   let maxSamples = 0;
@@ -230,10 +248,15 @@ function observedCadence(containers: string[], after: number, before: number): {
     if (ts.length > maxSamples) maxSamples = ts.length;
     if (ts.length < 3) continue;
     const gaps: number[] = [];
-    for (let i = 1; i < ts.length; i += 1) gaps.push(ts[i] - ts[i - 1]);
-    gaps.sort((a, b) => a - b);
-    const p90 = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.9))];
-    if (p90 > cadenceMs) cadenceMs = p90;
+    for (let i = 1; i < ts.length; i += 1) {
+      const g = ts[i] - ts[i - 1];
+      // 真实断档不参与定分辨率：它该以 null 缺口出现，而不是把整窗的桶撑粗。
+      if (g <= MAX_RATE_GAP_MS) gaps.push(g);
+    }
+    if (gaps.length === 0) continue;
+    gaps.sort((a, b) => b - a);
+    const coarsest = gaps[Math.min(gaps.length - 1, CADENCE_OUTLIER_TOLERANCE)];
+    if (coarsest > cadenceMs) cadenceMs = coarsest;
   }
   return { cadenceMs, maxSamples };
 }

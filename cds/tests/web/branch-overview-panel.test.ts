@@ -159,6 +159,18 @@ describe('两个数据源就有两个错误面（Codex P2，核对属实）', ()
     expect(PANEL_CODE).toContain('seriesError');
   });
 
+  /**
+   * Codex P2（核对属实）：漏掉了「先成功、后持续失败」那条路——`metricSeries` 还留着
+   * 上一次的结果，`hasPlot` 仍为真，于是两个错误分支都被 `!hasPlot` 挡掉，一条过期
+   * 曲线顶着「近 30 分钟」的标签无限期挂着，一句提示都没有。
+   */
+  it('历史失败的提示不被 hasPlot 挡住：有旧图时也要说这条曲线是旧的', () => {
+    const strip = PANEL_CODE.slice(PANEL_CODE.indexOf('{seriesError'), PANEL_CODE.indexOf('{seriesError') + 200);
+    expect(strip, '找不到历史错误提示，选择器过时了').toContain('seriesError');
+    expect(strip, '这一条不该被 hasPlot 门住——先成功后失败时它正是唯一的提示').not.toMatch(/seriesError\s*&&\s*!hasPlot\s*\?/);
+    expect(PANEL_CODE, '有旧图时要明说它不是当前的 30 分钟').toContain('已经不再更新');
+  });
+
   it('实时采样失败不藏历史图：两个错误面互不牵连', () => {
     // metricsError 那一支必须是「提示条」而不是「取代整段」——判据是它之后仍会走到 hasPlot 分支
     const section = PANEL_CODE.slice(PANEL_CODE.indexOf('{metricsError ?'));
