@@ -500,6 +500,12 @@ export function applyDeployReadinessFloor(
 /** docker stats 单容器瞬时值(2026-05-04 Phase B) */
 export interface ContainerStats {
   name: string;
+  /**
+   * 容器短 ID。同名重建时它会变——这是判断「换了个容器」的唯一可靠信号。
+   * 累计计数器只在新值变小时才暴露重建；新容器抢先跑量时差值仍为正，
+   * 不看 ID 就会记出一个巨大的假速率尖峰。
+   */
+  id: string;
   /** 0-100,可超过 100(多核场景);UI 显示时按 cores 归一 */
   cpuPercent: number;
   memUsedBytes: number;
@@ -2473,7 +2479,10 @@ export class ContainerService {
     // \t 分隔字段,后续 JS split('\t') 解析。每行一条容器。
     // 字段顺序固定不能改 — 解析按 index 取值。
     // safeNames 已通过白名单 regex,不含任何 shell 元字符,直接拼接安全。
-    const cmd = `docker stats --no-stream --format "{{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}\\t{{.NetIO}}\\t{{.BlockIO}}\\t{{.PIDs}}" ${safeNames.join(' ')}`;
+    // {{.ID}} 排在末尾：容器 ID 在**同名重建**时会变，是判断「换了个容器」的唯一可靠信号。
+    // 累计计数器只在新值比旧值小的时候才暴露重建，新容器抢先跑量时差值仍为正，
+    // 就会记出一个巨大的假速率尖峰（Codex P2，核对属实）。
+    const cmd = `docker stats --no-stream --format "{{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}\\t{{.NetIO}}\\t{{.BlockIO}}\\t{{.PIDs}}\\t{{.ID}}" ${safeNames.join(' ')}`;
     const result = await this.shell.exec(cmd, { timeout: 5000 });
     if (result.exitCode !== 0) {
       // 容器全停 / 名字全错时 docker stats 返回非 0,但 stderr 一般是
@@ -2485,10 +2494,15 @@ export class ContainerService {
       const trimmed = line.trim();
       if (!trimmed) continue;
       const parts = trimmed.split('\t');
+      // 宽容到 7 段：ID 是 2026-09-02 新加的最后一段，缺了就退回「只靠计数器变小
+      // 判重建」的旧行为。硬要求 8 段的话，任何一次拿不到 ID 都会让整批指标静默消失
+      // ——那比漏判一次重建严重得多。
       if (parts.length < 7) continue;
       const [name, cpuPerc, memUsage, memPerc, netIO, blockIO, pids] = parts;
+      const id = parts[7] ?? '';
       out.set(name, {
         name,
+        id,
         cpuPercent: parseFloatSafe(cpuPerc.replace('%', '')),
         memUsedBytes: parseDockerSize((memUsage.split('/')[0] || '').trim()),
         memLimitBytes: parseDockerSize((memUsage.split('/')[1] || '').trim()),

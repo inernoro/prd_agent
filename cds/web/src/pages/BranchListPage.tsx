@@ -555,7 +555,7 @@ type SlowHttpState =
   | { status: 'ok'; data: PerfOverviewResponse };
 
 type BranchAction = {
-  kind: 'preview' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
+  kind: 'preview' | 'open' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -2348,7 +2348,16 @@ export function BranchListPage(): JSX.Element {
 
   const openRunningPreview = useCallback(async (branch: BranchSummary, target?: PreviewTarget): Promise<void> => {
     if (state.status !== 'ok') return;
-    setAction(branch.id, createAction('preview', '正在打开预览'));
+    /*
+     * 「打开正在跑的预览」是 `open`，不是 `preview`（Codex P2，核对属实）。
+     *
+     * `preview` 这个 kind 同时被 deployBranch(openAfterDeploy=true) 用着，那是
+     * **真的构建一次再打开**；而这里一行构建都没有，只是拼个 URL 跳过去。失败时
+     * （最常见：缺预览域名配置）落一条 finished + error 的 `preview` 记录，总览
+     * 的部署柱状图按 kind 一收就把它算成一次构建失败，成功率与「上次构建耗时」
+     * 一起被污染。两件事共用一个 kind，本身就是这条缺陷的根。
+     */
+    setAction(branch.id, createAction('open', '正在打开预览'));
     try {
       let url = '';
       if (state.previewMode === 'port') {
@@ -2369,7 +2378,7 @@ export function BranchListPage(): JSX.Element {
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       closePreviewTarget(target || null);
-      setAction(branch.id, finishAction(actionRef.current[branch.id], 'preview', message, 'error'));
+      setAction(branch.id, finishAction(actionRef.current[branch.id], 'open', message, 'error'));
       setToast(message);
     }
   }, [setAction, state]);

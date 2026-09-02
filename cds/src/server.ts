@@ -25,6 +25,8 @@ import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
+import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
+import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
@@ -1280,6 +1282,9 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/branches\/[^/]+\/effective-config$/, '查分支生效配置'],
     [/^POST \/branches\/[^/]+\/copy-config-from\/[^/]+$/, '拉取来源分支配置'],
     [/^GET \/branches\/[^/]+\/metrics$/, '查看分支指标'],
+    // 注意上一条用 $ 收尾，接不住 /metrics/series —— 少了这行，Activity Monitor
+    // 上只会显示一串裸 URL，启动时 auditApiLabels 也会打 [api-label] warning。
+    [/^GET \/branches\/[^/]+\/metrics\/series$/, '查看指标历史'],
     [/^GET \/branches\/[^/]+\/failure-diagnosis$/, '诊断失败原因'],
     // 构建 Profile 扩展
     [/^PUT \/build-profiles\/(.+)\/deploy-mode$/, '切换部署模式'],
@@ -1396,6 +1401,10 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   if (method === 'GET' && /^\/api\/bootstrap\/[a-z0-9-]+$/.test(path)) return true;
   if (method === 'GET' && path === '/api/skills/bundles') return true;
   if (method === 'GET' && /^\/api\/skills\/[a-z0-9-]+\/download$/.test(path)) return true;
+  // 凭据自检（2026-09-01）：诊断一把过不了鉴权的凭据，必须在鉴权之前放行，
+  // 否则它永远执行不到、只会再回一句「未授权」。出参不含明文与哈希。
+  // 与 middleware/github-auth.ts 的 PUBLIC_PATHS 保持同步。
+  if (method === 'GET' && path === '/api/credentials/self-check') return true;
   return false;
 }
 
@@ -1449,6 +1458,30 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
         };
       }
     }
+    // 用户级凭证（cdsu_<suffix>）—— 「发钥匙的钥匙」。
+    //
+    // 它的权限刻意最窄、寿命最长：只能建项目、列项目、为已授权项目签发项目级
+    // 凭证。可达路由由 userCredentialRouteAllowed 一处收口 —— 不在表里就**不签发
+    // 会话**，等同未授权。这是「只授权不操作」的落点：不这样做，「发钥匙的钥匙」
+    // 会悄悄长成万能钥匙，正是第一阶段那把 access key 的老路（权限太大、
+    // 多项目时容易删错项目）。
+    if (stateService && headerKey.startsWith('cdsu_')) {
+      if (!userCredentialRouteAllowed(req.method, req.path)) return null;
+      const principalCtx = resolveUserCredential(stateService, headerKey);
+      if (principalCtx) {
+        (req as unknown as { cdsPrincipal?: { principalId: string; credentialId: string } })
+          .cdsPrincipal = principalCtx;
+        return {
+          id: `principal:${principalCtx.principalId}`,
+          agentName: `AI (user credential ${principalCtx.principalId})`,
+          token: headerKey,
+          approvedAt: '',
+          expiresAt: '',
+        };
+      }
+      return null;
+    }
+
     // Project-scoped Agent Key (cdsp_<slugHead>_<suffix>). Matches the
     // per-project store seeded via POST /api/projects/:id/agent-keys;
     // returns a synthetic session AND stamps req.cdsProjectKey so the
@@ -3137,6 +3170,23 @@ export function createServer(deps: ServerDeps): express.Express {
           .cdsProjectKey = match;
       }
     }
+    // 用户级凭证（cdsu_）的同款兜底 —— stamp req.cdsPrincipal。
+    //
+    // 上面的鉴权中间件只在**启用鉴权**时跑；auth=disabled（本地 dev / 预览实例）
+    // 下它整段被跳过，于是 cdsPrincipal 永远不被 stamp，身份层的路由拿不到主体、
+    // 一律回 401 —— 路由在、鉴权分支也在，只有这一处没接上，页面照常渲染、
+    // 测试照常绿（predicate-and-wiring-discipline 形状 2）。本地端到端跑一遍才
+    // 撞出来，因此按 cdsp_ / cdsg_ 的同一形状补齐。
+    if (h && h.startsWith('cdsu_') && !(req as unknown as { cdsPrincipal?: unknown }).cdsPrincipal) {
+      if (userCredentialRouteAllowed(req.method, req.path)) {
+        const principalCtx = resolveUserCredential(deps.stateService, h);
+        if (principalCtx) {
+          (req as unknown as { cdsPrincipal?: { principalId: string; credentialId: string } })
+            .cdsPrincipal = principalCtx;
+        }
+      }
+    }
+
     // Parallel fallback for cdsg_ global keys — stamp req.cdsAccess so scope
     // enforcement works even when cookie auth is disabled (mirrors the cdsp_
     // fallback above). Cheap no-op when header absent / key malformed.
@@ -4055,6 +4105,13 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+
+  // 凭据自检：免鉴权（见 isPublicAccessRequestRoute / github-auth PUBLIC_PATHS），
+  // 把「未授权」拆成有效 / 已吊销 / 从未签发 / 项目前缀不符 / 查不了几种可分辨结论。
+  app.use('/api', createCredentialSelfCheckRouter({ stateService: deps.stateService }));
+
+  // 身份层：主体 / 用户级凭证 / 项目授权 / 权限总览。
+  app.use('/api', createIdentityRouter({ stateService: deps.stateService }));
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({

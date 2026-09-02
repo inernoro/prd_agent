@@ -59,6 +59,12 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   /^\/api\/bootstrap\/[a-z0-9-]+$/,
   '/api/skills/bundles',
   /^\/api\/skills\/[a-z0-9-]+\/download$/,
+  // 凭据自检：这条端点的全部意义就是诊断一把**过不了鉴权**的凭据，挂在鉴权
+  // 后面它永远执行不到，只会再回一句「未授权」——正是它要治的病。出参不含
+  // 明文与哈希，never-issued 不透露任何项目信息（判据在
+  // services/credential-self-check.ts，有不泄密用例守着）。
+  // 与 isPublicAccessRequestRoute in server.ts（basic-auth 模式白名单）保持同步。
+  '/api/credentials/self-check',
   // Static assets the login page needs before a session exists.
   /^\/assets\//,
   '/style.css',
