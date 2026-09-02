@@ -7,6 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  declaredScopeSources,
   dirFromCommand,
   normalizeRepoRelativeDir,
   declaredScope,
@@ -89,6 +90,21 @@ describe('已声明的范围优先于推断', () => {
 
   it('workDir 是仓库根（生产上普遍是 .）时不当线索', () => {
     expect(inferProfileScope({ id: 'x', command: CMD_API_NO_CD, workDir: '.' })).toBeNull();
+  });
+});
+
+describe('分清范围声明在哪儿', () => {
+  it('顶层与部署模式分开报，因为写回只能写对应那处', () => {
+    expect(declaredScopeSources({
+      id: 'x',
+      buildScope: ['cds/**'],
+      deployModes: { express: { buildScope: ['llmgw/serving/**', ' prd-api/** '] } },
+    })).toEqual({ onProfile: ['cds/**'], onDeployModes: ['llmgw/serving/**', 'prd-api/**'] });
+  });
+
+  it('都没声明时两边都空', () => {
+    expect(declaredScopeSources({ id: 'x', command: CMD_CDS_SELF }))
+      .toEqual({ onProfile: [], onDeployModes: [] });
   });
 });
 

@@ -242,6 +242,54 @@ describe('一仓多项目 push 分发', () => {
    * 后果各不相同但都**没有报错**：容器留着没人收、分支永远停在等待中、预览一直开着。
    * 没有信号的故障最贵，所以这三条各钉一个用例。
    */
+  describe('解绑类事件同样作用到仓库下每个项目', () => {
+    it('仓库改名：每个绑着它的项目都要解绑，不是只解第一个', async () => {
+      addProject('p-main', 'mainp', 'MAP');
+      addProject('p-self', 'selfp', 'CDS Self');
+
+      await dispatcher().handle('repository', {
+        action: 'renamed',
+        repository: { id: 1, full_name: `${REPO}-new`, name: 'monorepo-new', owner: { login: 'octocat' } },
+        changes: { repository: { name: { from: 'monorepo' } } },
+      });
+
+      // 只解第一个的话，剩下那个留着一条指向旧名字的死链接：改名之后推送带的是
+      // 新仓库名，永远匹配不上，于是静默停止部署，没有任何信号。
+      for (const id of ['p-main', 'p-self']) {
+        expect(stateService.getProject(id)?.githubRepoFullName, id).toBeUndefined();
+      }
+    });
+
+    it('仓库被删：两个项目都解绑', async () => {
+      addProject('p-main', 'mainp', 'MAP');
+      addProject('p-self', 'selfp', 'CDS Self');
+
+      await dispatcher().handle('repository', {
+        action: 'deleted',
+        repository: { id: 1, full_name: REPO, name: 'monorepo', owner: { login: 'octocat' } },
+      });
+
+      for (const id of ['p-main', 'p-self']) {
+        expect(stateService.getProject(id)?.githubRepoFullName, id).toBeUndefined();
+      }
+    });
+
+    it('安装被移除仓库访问权：两个项目都解绑', async () => {
+      addProject('p-main', 'mainp', 'MAP');
+      addProject('p-self', 'selfp', 'CDS Self');
+
+      await dispatcher().handle('installation_repositories', {
+        action: 'removed',
+        installation: { id: 42 },
+        repositories_removed: [{ full_name: REPO }],
+      });
+
+      for (const id of ['p-main', 'p-self']) {
+        expect(stateService.getProject(id)?.githubRepoFullName, id).toBeUndefined();
+      }
+    });
+  });
+
   describe('后续事件同样分发到仓库下每个项目', () => {
     it('删分支：每个项目的同名预览都要被清理，不是只清第一个', async () => {
       addProject('p-main', 'mainp', 'MAP');

@@ -899,22 +899,25 @@ export class GitHubWebhookDispatcher {
     // Try to find a project matching either the new OR the old full name
     // (renamed/transferred events pass the new name in repository but
     // include the old name in changes.repository.{name,owner}).
-    let project = this.deps.stateService.findProjectByRepoFullName(currentFullName);
-    if (!project && event.action === 'renamed') {
+    // 一仓多项目（2026-09-02 Codex P1）：仓库被改名 / 转移 / 删除时，**每一个**绑着它的
+    // 项目都得解绑。只解第一个的话，其余项目留着一条指向旧名字的死链接——改名之后
+    // 它们的推送带的是新仓库名，永远匹配不上，于是静默停止部署，没有任何信号。
+    let projects = this.deps.stateService.findProjectsByRepoFullName(currentFullName);
+    if (projects.length === 0 && event.action === 'renamed') {
       const oldName = event.changes?.repository?.name?.from;
       if (oldName) {
         const owner = event.repository.owner.login;
-        project = this.deps.stateService.findProjectByRepoFullName(`${owner}/${oldName}`);
+        projects = this.deps.stateService.findProjectsByRepoFullName(`${owner}/${oldName}`);
       }
     }
-    if (!project && event.action === 'transferred') {
+    if (projects.length === 0 && event.action === 'transferred') {
       const oldOwner = event.changes?.repository?.owner?.from?.user?.login
         || event.changes?.repository?.owner?.from?.organization?.login;
       if (oldOwner) {
-        project = this.deps.stateService.findProjectByRepoFullName(`${oldOwner}/${event.repository.name}`);
+        projects = this.deps.stateService.findProjectsByRepoFullName(`${oldOwner}/${event.repository.name}`);
       }
     }
-    if (!project) {
+    if (projects.length === 0) {
       return { action: 'ignored-event', message: `repository.${event.action} for ${currentFullName} — no linked project` };
     }
 
@@ -924,16 +927,19 @@ export class GitHubWebhookDispatcher {
     // re-binds via the UI, avoiding silent cross-wiring.
     if (event.action === 'deleted' || event.action === 'renamed' || event.action === 'transferred') {
       if (!dryRun) {
-        this.deps.stateService.updateProject(project.id, {
-          githubRepoFullName: undefined,
-          githubInstallationId: undefined,
-          githubAutoDeploy: undefined,
-          githubLinkedAt: undefined,
-        });
+        for (const project of projects) {
+          this.deps.stateService.updateProject(project.id, {
+            githubRepoFullName: undefined,
+            githubInstallationId: undefined,
+            githubAutoDeploy: undefined,
+            githubLinkedAt: undefined,
+          });
+        }
       }
+      const names = projects.map((p) => `'${p.name}'`).join('、');
       return {
         action: event.action === 'deleted' ? 'repo-detached' : 'repo-renamed',
-        message: `${dryRun ? '[dry-run] ' : ''}Project '${project.name}' unlinked because repository.${event.action} (${currentFullName})`,
+        message: `${dryRun ? '[dry-run] ' : ''}Project ${names} unlinked because repository.${event.action} (${currentFullName})`,
       };
     }
     return { action: 'ignored-event', message: `repository.${event.action} acknowledged` };
@@ -1809,8 +1815,9 @@ export class GitHubWebhookDispatcher {
     // project, detach the link so webhooks for it stop triggering deploys.
     if (event.action === 'removed' && !dryRun) {
       for (const repo of event.repositories_removed || []) {
-        const project = this.deps.stateService.findProjectByRepoFullName(repo.full_name);
-        if (project && project.githubInstallationId === instId) {
+        // 同上：一个仓库可能喂着多个项目，访问权被收回时它们都得解绑
+        for (const project of this.deps.stateService.findProjectsByRepoFullName(repo.full_name)) {
+          if (project.githubInstallationId !== instId) continue;
           this.deps.stateService.updateProject(project.id, {
             githubRepoFullName: undefined,
             githubInstallationId: undefined,

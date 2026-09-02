@@ -88,6 +88,28 @@ export function declaredScope(profile: ScopeSourceProfile): string[] {
 }
 
 /**
+ * 这条范围声明在**哪儿**。
+ *
+ * 同一份范围可以声明在 profile 顶层的 `buildScope`，也可以声明在某个部署模式下
+ * （compose 的 `cds.build-scope` 标签带上来的就是后者，本仓库线上五个服务全是）。
+ * 判定分发时两者取并集，所以「有没有声明」不分来源；但**写回**必须分：只更新顶层
+ * 而模式级那份还在，界面上看到的与真正生效的就对不上了（Codex P2）。
+ */
+export function declaredScopeSources(profile: ScopeSourceProfile): {
+  onProfile: string[];
+  onDeployModes: string[];
+} {
+  const onProfile = (profile.buildScope || []).map((e) => e.trim()).filter(Boolean);
+  const onDeployModes = [...new Set(
+    Object.values(profile.deployModes || {})
+      .flatMap((m) => m?.buildScope || [])
+      .map((e) => e.trim())
+      .filter(Boolean),
+  )];
+  return { onProfile, onDeployModes };
+}
+
+/**
  * 给一个服务出一条范围建议。
  *
  * 优先级：已声明 > 启动命令里的 `cd` > workDir。已声明就直接回声明值并标 `declared`

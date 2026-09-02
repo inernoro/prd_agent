@@ -198,13 +198,23 @@ export function RepoSharingBanner({
                 </button>
               ) : null}
             </div>
-          ) : warn && selfUnscoped && onDeclareScope ? (
+          ) : onDeclareScope ? (
+            /*
+             * 没有可用建议时也得留一个入口。此前这里还要求 warn && selfUnscoped，
+             * 于是「一部分服务划了、另一部分没划」的项目两个分支都不满足，用户
+             * 再也进不去那个对话框——而这种半划状态恰恰最需要进去看一眼。
+             * 已经全划好的项目按钮是低调的文字链，不喧宾夺主。
+             */
             <button
               type="button"
               onClick={onDeclareScope}
-              className="rounded border border-warn/50 px-2.5 py-1 text-xs font-medium text-warn hover:bg-warn-soft"
+              className={
+                warn && selfUnscoped
+                  ? 'rounded border border-warn/50 px-2.5 py-1 text-xs font-medium text-warn hover:bg-warn-soft'
+                  : 'text-xs text-muted-foreground underline-offset-2 hover:underline'
+              }
             >
-              挑一下本项目关心的目录
+              {warn && selfUnscoped ? '挑一下本项目关心的目录' : '看看本项目关心哪些目录'}
             </button>
           ) : null}
         </div>

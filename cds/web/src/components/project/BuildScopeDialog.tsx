@@ -26,6 +26,13 @@ interface ScopeProfileOption {
   suggested: string[];
   /** 凭什么这么建议，直接显示给用户核对 */
   why: string;
+  /**
+   * 这条范围能不能在这里改。范围声明在部署模式上时不能：本对话框写的是 profile
+   * 顶层字段，判定取两者并集，于是「清空」清不掉、「改窄」反而变宽（Codex P2）。
+   */
+  editable: boolean;
+  /** 声明在部署模式上的那份，只读展示用 */
+  declaredOnDeployModes: string[];
 }
 
 interface ScopeOptionsResponse {
@@ -118,6 +125,8 @@ export function BuildScopeDialog({
       // 接受默认值点保存 → 前后相等 → 一条 PUT 都不发 → 弹窗说「没有改动」，
       // 而范围依然没划，每次推送照样全量重建。
       const changed = options.profiles.filter((profile) => {
+        // 只读那些一律不发：发了也盖不掉部署模式上的那份，只会让提示说谎
+        if (!profile.editable) return false;
         const before = [...profile.declared].sort().join(' ');
         return before !== [...scopeFor(profile.id)].sort().join(' ');
       });
@@ -136,7 +145,18 @@ export function BuildScopeDialog({
     }
   }
 
-  const dirs = options?.repoDirs || [];
+  /**
+   * 可勾的目录 = 仓库一级目录 ∪ 当前已选中的目录。
+   *
+   * 后者不能少（Codex P2）：推断出来的范围常常是嵌套的（本仓库就有 `llmgw/serving`、
+   * `llmgw/web`），它们不在一级目录清单里。只渲染一级目录的话，这些值**看不见、
+   * 点不掉，保存时却照样写回去**——用户面对的就是一个说不清自己在干什么的界面。
+   */
+  const dirs = (() => {
+    const base = options?.repoDirs || [];
+    const extraDirs = Object.values(picked).flat().filter((d) => !base.includes(d));
+    return [...base, ...[...new Set(extraDirs)].sort()];
+  })();
   const allEmpty = !!options
     && options.profiles.length > 0
     && options.profiles.every((p) => scopeFor(p.id).length === 0);
@@ -166,6 +186,28 @@ export function BuildScopeDialog({
 
           {options?.profiles.map((profile) => {
             const current = picked[profile.id] || [];
+            if (!profile.editable) {
+              // 这条的范围写在部署模式里（多半来自 compose 的 cds.build-scope）。
+              // 在这里改盖不掉它，所以如实只读展示，而不是给一个改了不生效的开关。
+              return (
+                <div key={profile.id} className="space-y-1.5 rounded-md border border-border bg-muted/30 p-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="text-sm font-medium">{profile.name}</span>
+                    <span className="text-xs text-muted-foreground">范围写在部署模式里，这里改不了</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {profile.declaredOnDeployModes.map((entry) => (
+                      <span key={entry} className="rounded border border-border px-2 py-1 font-mono text-xs text-muted-foreground">
+                        {entry}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    要改它，改这个服务在 compose 里的 <code className="font-mono">cds.build-scope</code> 标签后重新导入。
+                  </p>
+                </div>
+              );
+            }
             return (
               <div key={profile.id} className="space-y-2 rounded-md border border-border p-3">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -195,6 +237,9 @@ export function BuildScopeDialog({
                         title={isSuggested ? '系统建议：这个服务看起来待在这里' : undefined}
                       >
                         {dir}
+                        {!(options?.repoDirs || []).includes(dir) ? (
+                          <span className="ml-1 opacity-70">子目录</span>
+                        ) : null}
                         {isSuggested && !on ? <span className="ml-1">建议</span> : null}
                       </button>
                     );
@@ -218,7 +263,7 @@ export function BuildScopeDialog({
               </button>
               {showExtra ? (
                 <div className="mt-2 space-y-3">
-                  {options.profiles.map((profile) => (
+                  {options.profiles.filter((p) => p.editable).map((profile) => (
                     <div key={profile.id} className="space-y-1">
                       <label className="text-xs text-muted-foreground" htmlFor={`extra-${profile.id}`}>
                         {profile.name} 的额外路径（一行一条，例如 <code className="font-mono">.github/workflows/**</code>）
@@ -249,7 +294,7 @@ export function BuildScopeDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>取消</Button>
           <Button
             onClick={() => void save()}
-            disabled={saving || loading || !options || options.profiles.length === 0}
+            disabled={saving || loading || !options || options.profiles.filter((p) => p.editable).length === 0}
           >
             {saving ? '保存中…' : '保存'}
           </Button>

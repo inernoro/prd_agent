@@ -277,6 +277,21 @@ describe('划范围的候选与一键采纳', () => {
     expect(byId.api).toMatchObject({ declared: ['prd-api/**'], suggested: [] });
   });
 
+  it('范围声明在部署模式上时标为不可改：这里写的是另一个字段，改了盖不掉它', async () => {
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'gw', { deployModes: { express: { buildScope: ['llmgw/serving/**'] } } as any });
+    addProfile('p-self', 'cds', { buildScope: ['cds/**'] });
+
+    const res = await get(server, '/api/projects/p-self/scope-options');
+    const byId = Object.fromEntries(res.body.profiles.map((p: any) => [p.id, p]));
+    // 判定取并集，所以「清空」清不掉、「改窄」反而变宽 —— 只能只读，别让界面说谎
+    expect(byId.gw.editable).toBe(false);
+    expect(byId.gw.declaredOnDeployModes).toEqual(['llmgw/serving/**']);
+    // 声明在 profile 顶层的那条照常可改
+    expect(byId.cds.editable).toBe(true);
+    expect(byId.cds.declaredOnDeployModes).toEqual([]);
+  });
+
   it('一键采纳只写没声明过的那些，人做过的决定不被一次猜覆盖', async () => {
     addProject('p-self', 'CDS Self');
     addProfile('p-self', 'cds', { command: 'cd cds && ./exec_cds.sh start' });

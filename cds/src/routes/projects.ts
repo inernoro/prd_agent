@@ -40,7 +40,7 @@ import { repoNameFromGitRef } from '../services/preview-slug.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 import { summarizeRepoSharing, type RepoSharingSummary } from '../services/repo-sharing.js';
-import { inferProjectScope, inferProfileScope } from '../services/build-scope-inference.js';
+import { inferProjectScope, inferProfileScope, declaredScopeSources } from '../services/build-scope-inference.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
 import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
@@ -1939,6 +1939,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         : null,
       profiles: profiles.map((profile) => {
         const guess = inferProfileScope(profile);
+        const sources = declaredScopeSources(profile);
         return {
           id: profile.id,
           name: profile.name || profile.id,
@@ -1947,6 +1948,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           declared: guess?.source === 'declared' ? guess.scope : [],
           suggested: guess && guess.source !== 'declared' ? guess.scope : [],
           why: guess?.why || '',
+          // 范围声明在部署模式上时（compose 的 cds.build-scope 带上来的就是这种），
+          // 这个对话框写的是 profile 顶层字段，改了也盖不掉模式那份 —— 判定取并集，
+          // 于是「清空」清不掉、「改窄」反而变宽。所以这种一律只读，别让界面说谎。
+          editable: sources.onDeployModes.length === 0,
+          declaredOnDeployModes: sources.onDeployModes,
         };
       }),
     });

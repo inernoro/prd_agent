@@ -73,3 +73,35 @@ describe('范围对话框的保存基线只能是已落库的值', () => {
     ).toBe('profile.declared');
   });
 });
+
+describe('范围对话框要让每个生效值都看得见、点得掉', () => {
+  const source = read('components/project/BuildScopeDialog.tsx');
+
+  it('可勾目录 = 仓库一级目录 ∪ 已选中的，否则嵌套范围看不见却照样被保存', () => {
+    // 推断出来的常常是嵌套的（本仓库就有 llmgw/serving、llmgw/web），它们不在
+    // 一级目录清单里。只渲染 repoDirs 的话这些值看不见、点不掉，保存时还写回去。
+    expect(source).toMatch(/Object\.values\(picked\)\.flat\(\)/);
+  });
+
+  it('不可改的那些一律不发 PUT，别让提示说谎', () => {
+    expect(source).toMatch(/if \(!profile\.editable\) return false;/);
+  });
+});
+
+describe('共用仓库的确认要绑在它描述的那个仓库上', () => {
+  const source = read('pages/ProjectSettingsPage.tsx');
+
+  it('确认按钮提交的是被确认的那个目标，不是当前选择', () => {
+    // 看到警告之后再去点另一个仓库，按钮上说的还是前一个，绑上的却是新选的，
+    // 而且绕过了它自己那道 409。
+    expect(source).toMatch(/linkRepo\(sharedConfirm\)/);
+    expect(source, '不该再回头读 selectedRepo 来发确认请求').not.toMatch(/linkRepo\(true\)/);
+  });
+
+  it('选择一变就清确认态，并且只收在一处', () => {
+    const clears = source.match(/setSharedConfirm\(null\)/g) || [];
+    // 一处 effect（选择变了）+ 关弹窗 + 取消按钮 + 成功后
+    expect(clears.length).toBeGreaterThanOrEqual(2);
+    expect(source).toMatch(/useEffect\(\(\) => \{\s*setSharedConfirm\(null\);/);
+  });
+});

@@ -1940,9 +1940,19 @@ function GithubRepoPickerDialog({
   const [autoDeploy, setAutoDeploy] = useState(true);
   const [linking, setLinking] = useState(false);
   const [linkError, setLinkError] = useState('');
-  /** 仓库已被别的项目绑走：非空时弹窗切到「确认共用」那一屏。 */
+  /**
+   * 仓库已被别的项目绑走：非空时弹窗切到「确认共用」那一屏。
+   *
+   * 必须把**被确认的那个目标**整个存下来（仓库 + 安装），不能等按下去再回头读当前
+   * 选择：用户完全可以在看到警告之后又去点另一个仓库，那时按钮上的「知道了」说的是
+   * 前一个仓库，绑上的却是新选的那个，而且绕过了它自己那道 409（Codex P2）。
+   */
   const [sharedConfirm, setSharedConfirm] = useState<
-    { repoFullName: string; siblings: Array<{ id: string; name: string }> } | null
+    {
+      repoFullName: string;
+      installationId: number;
+      siblings: Array<{ id: string; name: string }>;
+    } | null
   >(null);
 
   const loadInstallations = useCallback(async () => {
@@ -1961,6 +1971,15 @@ function GithubRepoPickerDialog({
     if (open) void loadInstallations();
   }, [open, loadInstallations]);
 
+  /*
+   * 选择一变就清掉确认态 —— 收在这一处，而不是散在「点仓库」「换安装」「重载列表」
+   * 三个调用点上：同一个判断抄三份，改一处忘两处是迟早的事。
+   */
+  useEffect(() => {
+    setSharedConfirm(null);
+    setLinkError('');
+  }, [selectedRepo]);
+
   async function loadRepos(installation: GithubInstallation): Promise<void> {
     setRepoState({ status: 'loading', installation });
     setSelectedRepo(null);
@@ -1977,18 +1996,25 @@ function GithubRepoPickerDialog({
    * 回答的问题（「你是要共用，还是填错了仓库」）。所以这里把 409 转成弹窗里的
    * 一次确认，而不是一句红字报错。
    */
-  async function linkRepo(allowShared = false): Promise<void> {
-    if (!selectedRepo || repoState.status !== 'ok') return;
+  async function linkRepo(
+    /** 显式目标：确认共用时传的是**被确认的那一个**，不是当前选择 */
+    target?: { repoFullName: string; installationId: number },
+  ): Promise<void> {
+    const effective = target
+      || (selectedRepo && repoState.status === 'ok'
+        ? { repoFullName: selectedRepo.fullName, installationId: repoState.installation.id }
+        : null);
+    if (!effective) return;
     setLinking(true);
     setLinkError('');
     try {
       const result = await apiRequest<GithubLinkResponse>(`/api/projects/${encodeURIComponent(projectId)}/github/link`, {
         method: 'POST',
         body: {
-          installationId: repoState.installation.id,
-          repoFullName: selectedRepo.fullName,
+          installationId: effective.installationId,
+          repoFullName: effective.repoFullName,
           autoDeploy,
-          ...(allowShared ? { allowShared: true } : {}),
+          ...(target ? { allowShared: true } : {}),
         },
       });
       onLinked(result.project);
@@ -1997,7 +2023,7 @@ function GithubRepoPickerDialog({
     } catch (err) {
       const body = err instanceof ApiError ? (err.body as { error?: string; siblings?: Array<{ id: string; name: string }> } | null) : null;
       if (body?.error === 'already_linked') {
-        setSharedConfirm({ repoFullName: selectedRepo.fullName, siblings: body.siblings || [] });
+        setSharedConfirm({ ...effective, siblings: body.siblings || [] });
       } else {
         setLinkError(messageFromError(err));
       }
@@ -2007,7 +2033,14 @@ function GithubRepoPickerDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Esc / 点遮罩关闭也要清确认态，否则下次打开还端着上一个仓库的警告
+        if (!next) { setSharedConfirm(null); setLinkError(''); }
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>绑定 GitHub 仓库</DialogTitle>
@@ -2111,7 +2144,7 @@ function GithubRepoPickerDialog({
             取消
           </Button>
           {sharedConfirm ? (
-            <Button type="button" onClick={() => void linkRepo(true)} disabled={linking}>
+            <Button type="button" onClick={() => void linkRepo(sharedConfirm)} disabled={linking}>
               {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
               知道了，共用这个仓库
             </Button>
