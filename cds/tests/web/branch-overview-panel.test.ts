@@ -230,6 +230,29 @@ describe('尾部聚合与陈旧序列（Codex P2，核对属实）', () => {
     expect(tail, '尾部当前值必须跳过已停容器').toMatch(/status !== 'running'/);
   });
 
+  /**
+   * Codex P2（核对属实），而且是上一个修复直接造出来的：把序列入选收紧到
+   * `filled >= 2` 之后，刚起来的服务进不了 cpuSeries，而合计正是在 cpuSeries 上
+   * 求和的——头部大数少报，要等 90 秒第二帧到了才对。
+   *
+   * 根因还是把两个问题混成一个：**能不能画是几何安全问题，当前是多少是事实问题。**
+   * 这些服务归进「其他」：当前值照算（实时快照就在手上），几何不参与
+   * （确实还没有它们的历史，凭空补一段才是撒谎）。
+   */
+  it('还在跑但历史不够画的服务，当前值仍计入合计', () => {
+    const picked = PANEL_CODE.slice(PANEL_CODE.indexOf('const picked = useMemo'), PANEL_CODE.indexOf('const sampleCount'));
+    expect(picked, '找不到 liveOnly，选择器过时了').toContain('liveOnly');
+    expect(picked).toMatch(/status === 'running' && !plottable\.has/);
+
+    const tail = PANEL_CODE.slice(PANEL_CODE.indexOf('const tailNow'), PANEL_CODE.indexOf('const otherCount'));
+    expect(tail, '当前值必须把它们加进来').toContain('picked.liveOnly.reduce');
+  });
+
+  it('这些服务不贡献几何：merged 只累加有历史的那些', () => {
+    const merged = PANEL_CODE.slice(PANEL_CODE.indexOf('const merged ='), PANEL_CODE.indexOf('const tailNow'));
+    expect(merged, '没有历史却补一段几何就是撒谎').not.toContain('liveOnly');
+  });
+
   it('历史那一条仍包含全部尾部服务（画的是过去，过去它确实在跑）', () => {
     const merged = PANEL_CODE.slice(PANEL_CODE.indexOf('const merged ='), PANEL_CODE.indexOf('const tailNow'));
     expect(merged.length).toBeGreaterThan(0);
