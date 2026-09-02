@@ -19,6 +19,11 @@
 
 /** 单次采样的原始值。net / block 是**容器生命周期累计**，速率由本模块算。 */
 export interface ContainerSample {
+  /**
+   * 容器短 ID。同名重建时会变；省略则退化为「只靠计数器变小判重建」，
+   * 那种判法在新容器抢先跑量时会漏，记出假尖峰。
+   */
+  containerId?: string;
   cpuPercent: number;
   memUsedBytes: number;
   memLimitBytes: number;
@@ -52,6 +57,7 @@ interface StoredPoint {
   netTxBytes: number;
   blockReadBytes: number;
   blockWriteBytes: number;
+  containerId: string;
 }
 
 /**
@@ -138,7 +144,19 @@ export function recordContainerSample(
   let txRate = 0;
   let readRate = 0;
   let writeRate = 0;
-  if (prev) {
+  /*
+   * 同名重建 = 新的生命周期，累计值从 0 重来，不能跨这条边界做差。
+   *
+   * 只靠「新值比旧值小」判重建是漏的：部署会复用容器名，若新容器在第一次采样前
+   * 已经比旧容器最后一次读数跑得更多，差值仍为正，于是记出一个巨大的假速率尖峰
+   * （Codex P2，核对属实）。容器短 ID 在重建时必变，是可靠的身份信号；它还能覆盖
+   * CDS 之外的销毁（外部 docker rm、宿主重启），比在七八处销毁点逐个挂钩子稳。
+   */
+  const sameLifecycle = !prev
+    || !sample.containerId
+    || !prev.containerId
+    || prev.containerId === sample.containerId;
+  if (prev && sameLifecycle) {
     const dtSec = (ts - prev.ts) / 1000;
     if (dtSec > 0 && ts - prev.ts <= MAX_RATE_GAP_MS) {
       // 容器重建后累计值归零，差为负 —— 这不是「负流量」，是换了个容器，记 0。
@@ -162,6 +180,7 @@ export function recordContainerSample(
     netTxBytes: sample.netTxBytes,
     blockReadBytes: sample.blockReadBytes ?? 0,
     blockWriteBytes: sample.blockWriteBytes ?? 0,
+    containerId: sample.containerId ?? '',
   });
   store.set(containerName, trim(existing, ts));
 
@@ -175,11 +194,6 @@ function evictColdest(): void {
     .sort((a, b) => a.last - b.last);
   const dropCount = store.size - MAX_CONTAINERS;
   for (let i = 0; i < dropCount; i += 1) store.delete(byLastSeen[i].name);
-}
-
-/** 容器被删除时主动清掉，不必等淘汰。 */
-export function forgetContainer(containerName: string): void {
-  store.delete(containerName);
 }
 
 function resolveBound(value: number | undefined, nowMs: number, fallback: number): number {

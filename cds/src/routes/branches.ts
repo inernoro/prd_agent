@@ -11258,6 +11258,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const sampledAt = Date.now();
     for (const [containerName, stat] of statsMap) {
       recordContainerSample(containerName, {
+        containerId: stat.id,
         cpuPercent: stat.cpuPercent,
         memUsedBytes: stat.memUsedBytes,
         memLimitBytes: stat.memLimitBytes,
