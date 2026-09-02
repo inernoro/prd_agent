@@ -51,6 +51,8 @@ import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { BackupTab } from '@/pages/project-settings/BackupTab';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
+import { RepoSharingBanner, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
+import { BuildScopeDialog } from '@/components/project/BuildScopeDialog';
 
 interface ProjectSummary {
   id: string;
@@ -94,6 +96,8 @@ interface ProjectSummary {
   autoPublishAfterMinutes?: number;
   /** Deprecated: 项目级自动停止已收敛到系统调度器，保存生命周期时会清零。 */
   autoStopAfterMinutes?: number;
+  /** 2026-09-02：这个仓库还喂着哪些别的项目（同仓 < 2 个时后端给 null）。 */
+  repoSharing?: RepoSharing | null;
 }
 
 type ResourceChipDisplay = {
@@ -431,6 +435,7 @@ export function ProjectSettingsPage(): JSX.Element {
   const { state, refresh, setProject } = useProject(projectId);
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
+  const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
 
   useEffect(() => {
     window.history.replaceState(null, '', `#${activeTab}`);
@@ -568,6 +573,19 @@ export function ProjectSettingsPage(): JSX.Element {
 
               <div className="cds-settings-content min-w-0">
                 <div className="cds-settings-section-body">
+                {/*
+                 * 同仓关系放在所有分区之上、每个分区都看得见：用户是在这个项目里
+                 * 干活时才需要知道「改这里会连累谁」，切到哪个 tab 都成立。
+                 */}
+                {project.repoSharing ? (
+                  <div className="mb-4">
+                    <RepoSharingBanner
+                      sharing={project.repoSharing}
+                      selfId={project.id}
+                      onDeclareScope={() => setScopeDialogOpen(true)}
+                    />
+                  </div>
+                ) : null}
                 <TabsContent value="general">
                   <GeneralTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
                 </TabsContent>
@@ -617,6 +635,15 @@ export function ProjectSettingsPage(): JSX.Element {
               </div>
             </div>
           </Tabs>
+        ) : null}
+
+        {project ? (
+          <BuildScopeDialog
+            open={scopeDialogOpen}
+            onOpenChange={setScopeDialogOpen}
+            projectId={project.id}
+            onSaved={(message) => { setToast(message); void refresh(); }}
+          />
         ) : null}
 
         {toast ? (
@@ -1876,6 +1903,11 @@ function GithubRepoPickerDialog({
   const [selectedRepo, setSelectedRepo] = useState<GithubRepo | null>(null);
   const [autoDeploy, setAutoDeploy] = useState(true);
   const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState('');
+  /** 仓库已被别的项目绑走：非空时弹窗切到「确认共用」那一屏。 */
+  const [sharedConfirm, setSharedConfirm] = useState<
+    { repoFullName: string; siblings: Array<{ id: string; name: string }> } | null
+  >(null);
 
   const loadInstallations = useCallback(async () => {
     setInstallationsState({ status: 'loading' });
@@ -1904,9 +1936,15 @@ function GithubRepoPickerDialog({
     }
   }
 
-  async function linkRepo(): Promise<void> {
+  /**
+   * 绑仓库。仓库已被别的项目绑走时后端回 409 —— 那不是错误，是一个必须由人当场
+   * 回答的问题（「你是要共用，还是填错了仓库」）。所以这里把 409 转成弹窗里的
+   * 一次确认，而不是一句红字报错。
+   */
+  async function linkRepo(allowShared = false): Promise<void> {
     if (!selectedRepo || repoState.status !== 'ok') return;
     setLinking(true);
+    setLinkError('');
     try {
       const result = await apiRequest<GithubLinkResponse>(`/api/projects/${encodeURIComponent(projectId)}/github/link`, {
         method: 'POST',
@@ -1914,10 +1952,19 @@ function GithubRepoPickerDialog({
           installationId: repoState.installation.id,
           repoFullName: selectedRepo.fullName,
           autoDeploy,
+          ...(allowShared ? { allowShared: true } : {}),
         },
       });
       onLinked(result.project);
+      setSharedConfirm(null);
       onOpenChange(false);
+    } catch (err) {
+      const body = err instanceof ApiError ? (err.body as { error?: string; siblings?: Array<{ id: string; name: string }> } | null) : null;
+      if (body?.error === 'already_linked') {
+        setSharedConfirm({ repoFullName: selectedRepo.fullName, siblings: body.siblings || [] });
+      } else {
+        setLinkError(messageFromError(err));
+      }
     } finally {
       setLinking(false);
     }
@@ -2007,14 +2054,37 @@ function GithubRepoPickerDialog({
           </span>
         </label>
 
+        {linkError ? <ErrorBlock message={linkError} /> : null}
+
+        {/*
+         * 打断这一档只留给「正要把仓库绑给第二个项目」这一刻：从这里往后，一次
+         * 推送会变成两个项目各构建一遍，用户有权在按下去之前知道。
+         */}
+        {sharedConfirm ? (
+          <div className="rounded-lg border border-warn/40 bg-warn-soft px-4 py-3">
+            <div className="mb-2 text-sm font-semibold text-warn">这个仓库已经绑给别的项目了</div>
+            <RepoSharingConfirmBody
+              repoFullName={sharedConfirm.repoFullName}
+              siblings={sharedConfirm.siblings}
+            />
+          </div>
+        ) : null}
+
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => { setSharedConfirm(null); onOpenChange(false); }}>
             取消
           </Button>
-          <Button type="button" onClick={() => void linkRepo()} disabled={!selectedRepo || linking}>
-            {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
-            确认绑定
-          </Button>
+          {sharedConfirm ? (
+            <Button type="button" onClick={() => void linkRepo(true)} disabled={linking}>
+              {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
+              知道了，共用这个仓库
+            </Button>
+          ) : (
+            <Button type="button" onClick={() => void linkRepo()} disabled={!selectedRepo || linking}>
+              {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
+              确认绑定
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

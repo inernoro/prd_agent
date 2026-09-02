@@ -878,6 +878,8 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       installationId: number;
       repoFullName: string;
       autoDeploy: boolean;
+      /** 显式确认「多个项目共用这个仓库」。不带则遇到已绑定一律拦住。 */
+      allowShared: boolean;
     }>;
     const installationId = typeof body.installationId === 'number' ? body.installationId : NaN;
     const repoFullName = typeof body.repoFullName === 'string' ? body.repoFullName.trim() : '';
@@ -914,11 +916,22 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       });
       return;
     }
-    const existing = stateService.findProjectByRepoFullName(repoFullName);
-    if (existing && existing.id !== project.id) {
+    // 一个仓库喂多个项目（2026-09-02）：默认仍然拦住，因为绝大多数「已被绑定」
+    // 都是填错了仓库地址，静默放行等于把误操作变成两个项目抢同一条 push。
+    // 但这条路必须走得通 —— 本仓库正是 llmgw / prdagent / cds 三块共处一个 repo。
+    // 所以要的是**显式说一声**：带上 allowShared 才放行，并把已在用的项目名回给
+    // 调用方，让界面能问「你是要加入，还是填错了」。
+    const alreadyLinked = stateService
+      .findProjectsByRepoFullName(repoFullName)
+      .filter((p) => p.id !== project.id);
+    const allowShared = body.allowShared === true;
+    if (alreadyLinked.length > 0 && !allowShared) {
       res.status(409).json({
         error: 'already_linked',
-        message: `${repoFullName} 已经绑定到项目 ${existing.name}`,
+        message: `${repoFullName} 已经绑定到项目 ${alreadyLinked.map((p) => p.name).join('、')}`,
+        siblings: alreadyLinked.map((p) => ({ id: p.id, name: p.name })),
+        nextStep: '确认要让多个项目共用这个仓库，就带上 allowShared 再试一次；'
+          + '推送会按各项目声明的构建范围分发，没声明范围的项目每次推送都会重建。',
       });
       return;
     }

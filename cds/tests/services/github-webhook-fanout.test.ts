@@ -21,7 +21,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import type { IShellExecutor, CdsConfig, BuildProfile } from '../../src/types.js';
 import {
   GitHubWebhookDispatcher,
-  mergePushResults,
+  mergeFanoutResults,
   type WebhookDispatchResult,
 } from '../../src/services/github-webhook-dispatcher.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -91,6 +91,21 @@ describe('一仓多项目 push 分发', () => {
     } as BuildProfile);
   }
 
+  function addPrebuiltProfile(projectId: string, profileId: string): void {
+    stateService.addBuildProfile({
+      id: profileId,
+      projectId,
+      name: profileId,
+      dockerImage: 'node:22',
+      workDir: '/app',
+      containerPort: 3000,
+      hostPortPreference: 0,
+      buildCommand: 'echo build',
+      activeDeployMode: 'express',
+      deployModes: { express: { prebuilt: true } },
+    } as BuildProfile);
+  }
+
   function dispatcher(): GitHubWebhookDispatcher {
     return new GitHubWebhookDispatcher({
       stateService,
@@ -129,7 +144,7 @@ describe('一仓多项目 push 分发', () => {
     expect(new Set(branchIds).size).toBe(2);
     // 投递记录要看得出这个仓库有几个项目、几个真的部署了
     expect(result.message).toContain('本仓库共 2 个项目');
-    expect(result.message).toContain('2 个触发部署');
+    expect(result.message).toContain('2 个触发处理');
   });
 
   it('项目级作用域挡掉无关改动，并且不建分支', async () => {
@@ -219,9 +234,107 @@ describe('一仓多项目 push 分发', () => {
     const result = await dispatcher().handle('push', push(['src/app.ts']));
     expect(result.action).toBe('ignored-no-project');
   });
+
+  /**
+   * 后续事件也要分发（2026-09-02）。
+   *
+   * push 分发修好之后，删分支 / 极速版镜像完成 / 关 PR 这三条仍然只认第一个项目。
+   * 后果各不相同但都**没有报错**：容器留着没人收、分支永远停在等待中、预览一直开着。
+   * 没有信号的故障最贵，所以这三条各钉一个用例。
+   */
+  describe('后续事件同样分发到仓库下每个项目', () => {
+    it('删分支：每个项目的同名预览都要被清理，不是只清第一个', async () => {
+      addProject('p-main', 'mainp', 'MAP');
+      addProject('p-self', 'selfp', 'CDS Self');
+      // 先让两个项目各有一条 feature/x
+      await dispatcher().handle('push', push(['src/app.ts']));
+      expect(stateService.findBranchByProjectAndName('p-main', 'feature/x')).toBeDefined();
+      expect(stateService.findBranchByProjectAndName('p-self', 'feature/x')).toBeDefined();
+
+      const result = await dispatcher().handle('delete', {
+        ref: 'feature/x',
+        ref_type: 'branch',
+        repository: { id: 1, full_name: REPO },
+      });
+
+      const actions = [result.action, ...(result.fanout || []).map((r) => r.action)];
+      expect(actions.filter((a) => a === 'branch-deleted')).toHaveLength(2);
+      // 两条清理请求都要发出去，否则第二个项目的容器没人收
+      const deleteIds = [result, ...(result.fanout || [])]
+        .map((r) => r.branchDeleteRequest?.branchId)
+        .filter(Boolean);
+      expect(deleteIds).toHaveLength(2);
+      expect(new Set(deleteIds).size).toBe(2);
+    });
+
+    it('关 PR：每个项目的预览都要停，不是只停第一个', async () => {
+      addProject('p-main', 'mainp', 'MAP');
+      addProject('p-self', 'selfp', 'CDS Self');
+      await dispatcher().handle('push', push(['src/app.ts']));
+
+      const result = await dispatcher().handle('pull_request', {
+        action: 'closed',
+        repository: { id: 1, full_name: REPO },
+        pull_request: { number: 7, head: { ref: 'feature/x' }, base: { ref: 'main' }, merged: false },
+      });
+
+      const stopIds = [result, ...(result.fanout || [])]
+        .map((r) => r.stopRequest?.branchId)
+        .filter(Boolean);
+      expect(stopIds).toHaveLength(2);
+      expect(new Set(stopIds).size).toBe(2);
+    });
+
+    it('极速版镜像完成：每个项目等这个 SHA 的分支都要就绪，不是只推进第一个', async () => {
+      addProject('p-main', 'mainp', 'MAP');
+      addProject('p-self', 'selfp', 'CDS Self');
+      addPrebuiltProfile('p-main', 'api');
+      addPrebuiltProfile('p-self', 'cds');
+
+      // push 让两个项目的分支都钉上「我在等这个 SHA 的镜像」
+      await dispatcher().handle('push', push(['src/app.ts']));
+      const waiting = ['p-main', 'p-self'].map((pid) =>
+        stateService.findBranchByProjectAndName(pid, 'feature/x'));
+      expect(waiting.map((b) => b?.ciImageStatus)).toEqual(['waiting', 'waiting']);
+
+      await dispatcher().handle('workflow_run', {
+        action: 'completed',
+        repository: { id: 1, full_name: REPO },
+        workflow_run: {
+          path: '.github/workflows/branch-image.yml',
+          name: 'Branch Image',
+          head_sha: SHA,
+          head_branch: 'feature/x',
+          conclusion: 'success',
+          html_url: 'https://example.invalid/run/1',
+        },
+      });
+
+      // 只推进第一个的话，第二个项目的分支永远停在 waiting——而且没有任何报错，
+      // 用户只能看着它一直转圈。
+      const after = ['p-main', 'p-self'].map((pid) =>
+        stateService.findBranchByProjectAndName(pid, 'feature/x'));
+      expect(after.map((b) => b?.ciImageStatus)).toEqual(['ready', 'ready']);
+    });
+
+    it('主结果挑真的在干活的那条，不是恰好排第一的那条', async () => {
+      addProject('p-main', 'mainp', 'MAP');
+      addProject('p-self', 'selfp', 'CDS Self');
+      addProfileWithScope('p-main', 'api', ['prd-api/**']);
+      addProfileWithScope('p-self', 'cds', ['cds/**']);
+
+      // 只改 cds/**：主项目应被判未波及，自托管项目该建分支
+      const complete = { ...push(['cds/src/server.ts']), size: 1, distinct_size: 1 };
+      const result = await dispatcher().handle('push', complete);
+
+      // 面板显示「已忽略」而后台正在给另一个项目构建，是最难查的那种不一致
+      expect(result.action).toBe('branch-created');
+      expect(result.deployRequest).toBeDefined();
+    });
+  });
 });
 
-describe('mergePushResults —— 谁当主结果', () => {
+describe('mergeFanoutResults —— 谁当主结果', () => {
   const projects = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }];
 
   it('有人要部署时，要部署的那条当主结果', () => {
@@ -229,7 +342,7 @@ describe('mergePushResults —— 谁当主结果', () => {
       { action: 'ignored-out-of-scope', message: '不相关' },
       { action: 'branch-created', message: '建好了', branchId: 'b1', deployRequest: { branchId: 'b1', commitSha: SHA } },
     ];
-    const merged = mergePushResults(results, projects);
+    const merged = mergeFanoutResults(results, projects);
     expect(merged.action).toBe('branch-created');
     expect(merged.fanout?.[0].action).toBe('ignored-out-of-scope');
   });
@@ -239,7 +352,7 @@ describe('mergePushResults —— 谁当主结果', () => {
       { action: 'ignored-out-of-scope', message: '不相关' },
       { action: 'ci-image-waiting', message: '等 CI', branchId: 'b1' },
     ];
-    expect(mergePushResults(results, projects).action).toBe('ci-image-waiting');
+    expect(mergeFanoutResults(results, projects).action).toBe('ci-image-waiting');
   });
 
   it('全是被忽略时取第一条，仍然带上仓库项目数', () => {
@@ -247,15 +360,15 @@ describe('mergePushResults —— 谁当主结果', () => {
       { action: 'ignored-out-of-scope', message: '不相关一' },
       { action: 'ignored-doc-only', message: '只改了文档' },
     ];
-    const merged = mergePushResults(results, projects);
+    const merged = mergeFanoutResults(results, projects);
     expect(merged.action).toBe('ignored-out-of-scope');
     expect(merged.message).toContain('本仓库共 2 个项目');
-    expect(merged.message).toContain('0 个触发部署');
+    expect(merged.message).toContain('0 个触发处理');
   });
 
   it('只有一条结果时原样返回，不加后缀也不加 fanout', () => {
     const single: WebhookDispatchResult = { action: 'branch-created', message: '建好了' };
-    const merged = mergePushResults([single], [{ id: 'a', name: 'A' }]);
+    const merged = mergeFanoutResults([single], [{ id: 'a', name: 'A' }]);
     expect(merged).toEqual(single);
   });
 });

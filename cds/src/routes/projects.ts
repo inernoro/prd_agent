@@ -38,6 +38,8 @@ import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef } from '../services/preview-slug.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
+import { resolveProjectScope } from '../services/project-scope.js';
+import { summarizeRepoSharing, type RepoSharingSummary } from '../services/repo-sharing.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
 import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
@@ -533,9 +535,25 @@ const EMPTY_STATS: ProjectStats = {
   lastDeployedAt: null,
 };
 
+/** 同仓兄弟项目：界面要能点进去，所以带上 id 和名字。 */
+interface RepoSiblingRef {
+  id: string;
+  name: string;
+  /** 该项目声明的构建范围并集；空 = 未声明 = 每次推送都重建它 */
+  scope: string[];
+}
+
 interface ProjectSummary extends Project, ProjectStats {
   /** 2026-06-23：项目级实时资源占用（CPU/内存/构建频次），由采样器周期写入。 */
   resourceUsage?: ProjectResourceUsage | null;
+  /**
+   * 2026-09-02：这个仓库还喂着哪些别的项目。
+   *
+   * 只在同仓项目 >= 2 时出现 —— 单项目仓库不该看见任何多项目字样，否则等于
+   * 给所有人凭空加一个要理解的概念。只发给浏览器会话：机器凭据可能只被授权
+   * 了本项目，不该顺带认识仓库里的别的项目。
+   */
+  repoSharing?: (RepoSharingSummary & { siblings: RepoSiblingRef[] }) | null;
 }
 
 function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
@@ -644,6 +662,32 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
     next();
   });
+
+  /**
+   * 这个项目和谁共用一个仓库。同仓项目少于两个时返回 null（界面据此什么都不显示）。
+   *
+   * 只给浏览器会话算：机器凭据可能只被授权了本项目，不该顺带认识仓库里的其它项目，
+   * 更不该看到它们的环境变量撞在了哪个 key 上。
+   */
+  function repoSharingFor(req: unknown, project: Project): ProjectSummary['repoSharing'] {
+    if ((req as { _cdsCookieAuth?: boolean })._cdsCookieAuth !== true) return null;
+    const repoFullName = project.githubRepoFullName;
+    if (!repoFullName) return null;
+    const siblings = stateService.findProjectsByRepoFullName(repoFullName);
+    if (siblings.length < 2) return null;
+    const facts = siblings.map((p) => ({
+      id: p.id,
+      name: p.name,
+      scope: resolveProjectScope(stateService.getBuildProfilesForProject(p.id)),
+      env: p.customEnv,
+    }));
+    const summary = summarizeRepoSharing(facts);
+    if (!summary) return null;
+    return {
+      ...summary,
+      siblings: facts.map((f) => ({ id: f.id, name: f.name, scope: f.scope })),
+    };
+  }
 
   function statsFor(project: Project): ProjectStats {
     // P4 Part 17 (G9 fix): use the project-scoped helper so non-legacy
@@ -1552,7 +1596,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.
       // Static AI_ACCESS_KEY / cdsg_ global key callers get key names but
       // not values. cdsp_ project key (matching) and cookie auth bypass.
-      const summaries = projects.map((p) => maskProjectSummary(req, toSummary(p, statsFor(p), usageMap.get(p.id) || null)));
+      const summaries = projects.map((p) => {
+        const summary = maskProjectSummary(req, toSummary(p, statsFor(p), usageMap.get(p.id) || null));
+        summary.repoSharing = repoSharingFor(req, p);
+        return summary;
+      });
       // Sort: legacy pinned first (existing UX), then by runtime liveness
       // so projects with running services bubble up — useful once you
       // have many projects and only a few are active.
@@ -1591,6 +1639,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         return;
       }
       const summary = maskProjectSummary(req, toSummary(project, statsFor(project), resourceUsageLookup().get(project.id) || null));
+      summary.repoSharing = repoSharingFor(req, project);
       // CDS-CLI-007 / #551 (a)：识别"半成品"项目（cloneStatus=error 或 git
       // 项目缺 repoPath）并在响应里附 recovery 指引，避免 Agent 反复尝试
       // clone 却拿不到具体下一步。这里只读不写，不会引入额外副作用。
@@ -2433,6 +2482,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       composeYaml: string;
       projectFiles: ProjectFilePayload[];
       autoDetectOnClone: boolean;
+      /** 显式确认「和已有项目共用同一个仓库」。不带则遇到已绑定就不绑，只回报实情。 */
+      allowSharedRepo: boolean;
       inheritGlobalEnv: boolean;
       infraPresets: string[];
       infraConfigs: Record<string, { dbName?: string; initSql?: string }>;
@@ -2504,7 +2555,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
 
     const githubRepoFullName = gitRepoUrl ? _githubFullNameFromCloneUrl(gitRepoUrl) : undefined;
-    const githubRepoAlreadyLinked = githubRepoFullName ? stateService.findProjectByRepoFullName(githubRepoFullName) : undefined;
+    // 一个仓库喂多个项目（2026-09-02）：默认维持既有行为 —— 仓库已被别的项目绑走
+    // 时不写绑定，建项目本身照常成功。改成直接报错会打断既有自动化，而静默丢掉
+    // 绑定又让用户完全不知道发生了什么，所以取第三条路：**照旧不绑，但把实情
+    // 回给调用方**，界面据此当场问「你是要加入，还是填错了仓库」。
+    // 调用方明确知道自己在干什么时，带 allowSharedRepo 直接绑上。
+    const repoLinkedProjects = githubRepoFullName
+      ? stateService.findProjectsByRepoFullName(githubRepoFullName)
+      : [];
+    const allowSharedRepo = body.allowSharedRepo === true;
+    const githubRepoAlreadyLinked = repoLinkedProjects.length > 0 && !allowSharedRepo
+      ? repoLinkedProjects[0]
+      : undefined;
     const description = typeof body.description === 'string' ? body.description.trim() : undefined;
     const gitDefaultBranch = typeof body.gitDefaultBranch === 'string' && body.gitDefaultBranch.trim()
       ? body.gitDefaultBranch.trim()
@@ -2853,6 +2915,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       infraPresetsApplied: appliedInfraPresets,
       // 被基建连接串覆盖的用户环境变量 key(非空时前端可提示"你粘贴的 X 被自动生成的连接串取代")。
       infraEnvOverrides: infraEnvOverrides.length > 0 ? infraEnvOverrides : undefined,
+      // 仓库已被别的项目绑走时把实情回给调用方：本项目**没有**绑上，
+      // 界面据此当场问「你是要和它们共用这个仓库，还是填错了」。
+      // 绝大多数情况是填错，所以默认不绑；真要共用，带 allowSharedRepo 重来一次。
+      repoAlreadyLinked: githubRepoAlreadyLinked
+        ? {
+            repoFullName: githubRepoFullName,
+            projects: repoLinkedProjects.map((p) => ({ id: p.id, name: p.name })),
+          }
+        : undefined,
       // 给 create-only 全局 Key 返回的新项目 scoped key(明文只此一次)。cdscli 建项目后
       // 可直接切到这把 key 做后续部署/操作。全权 key 或人类 cookie 建项目时不返回。
       issuedProjectKey,

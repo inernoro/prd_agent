@@ -64,6 +64,7 @@ import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { AgentKeyScopePanel, describeAgentKeyScope, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
+import { RepoSharingInline, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
 
 const PROJECT_DOCK_BASE_SIZE = 56;
 const PROJECT_DOCK_MAGNIFIED_SIZE = 68;
@@ -113,6 +114,8 @@ interface ProjectSummary {
   pausedAt?: string | null;
   pauseReason?: string | null;
   resourceUsage?: ProjectResourceUsage | null;
+  /** 2026-09-02：这个仓库还喂着哪些别的项目（同仓 < 2 个时后端给 null）。 */
+  repoSharing?: RepoSharing | null;
 }
 
 interface ProjectResourceUsage {
@@ -454,6 +457,10 @@ export function ProjectListPage(): JSX.Element {
   const lastKnownGoodProjectsRef = useRef<ProjectSummary[]>([]);
   const [toast, setToast] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  /** 建项目时填了个已被绑走的仓库：项目建好了但没绑上，这里当场问清楚。 */
+  const [repoSharePrompt, setRepoSharePrompt] = useState<
+    { project: ProjectSummary; info: RepoAlreadyLinked } | null
+  >(null);
   const [createAutoPickRepo, setCreateAutoPickRepo] = useState(false);
   const [sandboxOpen, setSandboxOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
@@ -840,7 +847,45 @@ export function ProjectListPage(): JSX.Element {
             if (project.cloneStatus === 'pending') setCloneTarget(project);
             await refresh(false);
           }}
+          onRepoAlreadyLinked={(project, info) => setRepoSharePrompt({ project, info })}
         />
+
+        {/*
+         * 建项目时填了一个已被绑走的仓库：项目建好了、仓库没绑上。默认不绑是对的
+         * （绝大多数是填错地址），但绝不能不说 —— 用户会一直等一个永远不会来的
+         * 自动部署。所以在这里当场问清楚是哪一种。
+         */}
+        <Dialog
+          open={repoSharePrompt !== null}
+          onOpenChange={(next) => { if (!next) setRepoSharePrompt(null); }}
+        >
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>仓库没有绑上</DialogTitle>
+              <DialogDescription>
+                {displayName(repoSharePrompt?.project || ({} as ProjectSummary))} 已创建，但仓库没有绑定。
+              </DialogDescription>
+            </DialogHeader>
+            {repoSharePrompt ? (
+              <RepoSharingConfirmBody
+                repoFullName={repoSharePrompt.info.repoFullName}
+                siblings={repoSharePrompt.info.projects}
+              />
+            ) : null}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRepoSharePrompt(null)}>填错了，先不绑</Button>
+              <Button
+                onClick={() => {
+                  const target = repoSharePrompt?.project.id;
+                  setRepoSharePrompt(null);
+                  if (target) navigate(`/settings/${encodeURIComponent(target)}#github`);
+                }}
+              >
+                去绑定，确认共用
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <SandboxProjectDialog
           open={sandboxOpen}
           onOpenChange={setSandboxOpen}
@@ -2032,6 +2077,16 @@ function ProjectCard({
 
       </a>
 
+      {/*
+       * 同仓关系放在整块链接**之外**：兄弟项目名本身要能点，而卡片整体已经是
+       * 一个 <a>，套嵌 <a> 是非法结构，点击行为也会打架。
+       */}
+      {project.repoSharing ? (
+        <div className="border-t border-[hsl(var(--hairline))] px-5 py-2">
+          <RepoSharingInline sharing={project.repoSharing} selfId={project.id} />
+        </div>
+      ) : null}
+
       <div
         className={`pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1 transition-opacity duration-150 ${
           paused ? 'opacity-100' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100'
@@ -2931,15 +2986,28 @@ function AgentKeyRevokeDialog({
   );
 }
 
+interface RepoAlreadyLinked {
+  repoFullName: string;
+  projects: Array<{ id: string; name: string }>;
+}
+
+interface CreateProjectResponse {
+  project: ProjectSummary;
+  /** 仓库已被别的项目绑走：本项目**没有**绑上，界面要当场说清楚。 */
+  repoAlreadyLinked?: RepoAlreadyLinked;
+}
+
 function CreateProjectDialog({
   open,
   onOpenChange,
   onCreated,
+  onRepoAlreadyLinked,
   autoOpenPicker = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (project: ProjectSummary) => Promise<void>;
+  onRepoAlreadyLinked?: (project: ProjectSummary, info: RepoAlreadyLinked) => void;
   autoOpenPicker?: boolean;
 }): JSX.Element {
   const [name, setName] = useState('');
@@ -3113,7 +3181,7 @@ function CreateProjectDialog({
     }
     setSubmitting(true);
     try {
-      const res = await apiRequest<{ project: ProjectSummary }>('/api/projects', {
+      const res = await apiRequest<CreateProjectResponse>('/api/projects', {
         method: 'POST',
         body: {
           name: trimmedName,
@@ -3148,6 +3216,10 @@ function CreateProjectDialog({
       setSelectedInfra([]);
       onOpenChange(false);
       await onCreated(res.project);
+      // 仓库已被别的项目绑走时，项目建好了但**仓库没绑上**（后端默认不绑，因为
+      // 绝大多数是填错了地址）。这件事必须当场说，否则用户会以为绑好了，直到
+      // 第一次 push 什么都没发生才发现。
+      if (res.repoAlreadyLinked) onRepoAlreadyLinked?.(res.project, res.repoAlreadyLinked);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {

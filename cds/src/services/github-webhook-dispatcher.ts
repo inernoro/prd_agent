@@ -97,25 +97,41 @@ export function isAllowedCdsBranchName(ref: string): boolean {
  *
  * 纯函数，与调用它的类无关，可直接单测。
  */
-export function mergePushResults(
+/** 这条结果有没有要求路由去做点什么（部署 / 停容器 / 删分支）。 */
+function carriesAction(r: WebhookDispatchResult): boolean {
+  return !!(r.deployRequest || r.stopRequest || r.branchDeleteRequest);
+}
+
+/**
+ * 把同一个仓库下各项目的处理结果合成一条对外结果。
+ *
+ * 主结果的挑法有讲究：**优先挑真的要干活的那条**。否则面板上显示「已忽略」，
+ * 而后台其实正在给另一个项目构建 —— 那种不一致比报错更难查。
+ *
+ * 挑出来之后其余的放进 `fanout`，路由必须与主结果同等对待。少了这一步，
+ * 第二个项目就是「收得到事件、没人替它干活」，而且没有任何信号。
+ */
+export function mergeFanoutResults(
   results: WebhookDispatchResult[],
   projects: readonly { id: string; name: string }[],
+  /** 事件名，用于凑那句可观测的后缀 */
+  eventLabel = 'push',
 ): WebhookDispatchResult {
   if (results.length === 0) {
-    return { action: 'ignored-no-project', message: '没有任何项目处理本次 push' };
+    return { action: 'ignored-no-project', message: `没有任何项目处理本次 ${eventLabel}` };
   }
   if (results.length === 1) return results[0];
 
-  let primaryIndex = results.findIndex((r) => !!r.deployRequest);
+  let primaryIndex = results.findIndex(carriesAction);
   if (primaryIndex < 0) primaryIndex = results.findIndex((r) => !r.action.startsWith('ignored-'));
   if (primaryIndex < 0) primaryIndex = 0;
 
   const primary = results[primaryIndex];
   const others = results.filter((_, index) => index !== primaryIndex);
-  const deployCount = results.filter((r) => !!r.deployRequest).length;
-  // 主结果的 message 要带上「这个仓库还有几个项目、其中几个要部署」，否则投递记录
-  // 里只看得见一个项目，多项目分发等于没有可观测性。
-  const suffix = `（本仓库共 ${projects.length} 个项目，本次 ${deployCount} 个触发部署）`;
+  const actingCount = results.filter(carriesAction).length;
+  // 主结果的 message 要带上「这个仓库还有几个项目、其中几个真的动了」，否则投递
+  // 记录里只看得见一个项目，多项目分发等于没有可观测性。
+  const suffix = `（本仓库共 ${projects.length} 个项目，本次 ${actingCount} 个触发处理）`;
   return {
     ...primary,
     message: `${primary.message}${suffix}`,
@@ -769,6 +785,12 @@ export class GitHubWebhookDispatcher {
    * stop the corresponding CDS preview container so the user deleting
    * on GitHub's side automatically cleans up CDS too.
    */
+  /**
+   * 删分支：仓库下每个项目各有一条同名预览分支，得逐个清理。
+   *
+   * 只清第一个的后果不会报错，只会留下一堆没人管的容器和分支卡 —— 而且用户
+   * 在 GitHub 上删了分支，本来预期的就是「都收拾干净」。
+   */
   private async handleDelete(event: GitHubDeleteEvent): Promise<WebhookDispatchResult> {
     if (event.ref_type !== 'branch') {
       return { action: 'ignored-event', message: `delete ref_type=${event.ref_type} ignored` };
@@ -776,10 +798,21 @@ export class GitHubWebhookDispatcher {
     if (!event.repository) {
       return { action: 'ignored-event', message: 'delete event missing repository' };
     }
-    const project = this.deps.stateService.findProjectByRepoFullName(event.repository.full_name);
-    if (!project) {
+    const projects = this.deps.stateService.findProjectsByRepoFullName(event.repository.full_name);
+    if (projects.length === 0) {
       return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
     }
+    const results: WebhookDispatchResult[] = [];
+    for (const project of projects) {
+      results.push(await this.handleDeleteForProject(event, project));
+    }
+    return mergeFanoutResults(results, projects, 'delete');
+  }
+
+  private async handleDeleteForProject(
+    event: GitHubDeleteEvent,
+    project: Project,
+  ): Promise<WebhookDispatchResult> {
     if (!isSafeGitRef(event.ref)) {
       return { action: 'ignored-event', message: `Rejected unsafe delete ref: ${event.ref.slice(0, 80)}` };
     }
@@ -963,10 +996,27 @@ export class GitHubWebhookDispatcher {
     if (!this.isPrebuiltImageWorkflow(run)) {
       return { action: 'workflow-acknowledged', message: `workflow_run '${run.name || run.path || '?'}' 非预构建镜像工作流,已 ack` };
     }
-    const project = this.deps.stateService.findProjectByRepoFullName(event.repository.full_name);
-    if (!project) {
+    // 极速版下这一步最不能只认第一个项目：多个项目的分支都在等同一个 head_sha
+    // 的镜像，只推进第一个，其余会**永远停在等待中**，而且没有任何报错。
+    const projects = this.deps.stateService.findProjectsByRepoFullName(event.repository.full_name);
+    if (projects.length === 0) {
       return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
     }
+    const wfResults: WebhookDispatchResult[] = [];
+    for (const project of projects) {
+      wfResults.push(await this.handleWorkflowRunForProject(event, project, dryRun));
+    }
+    return mergeFanoutResults(wfResults, projects, 'workflow_run');
+  }
+
+  private async handleWorkflowRunForProject(
+    event: GitHubWorkflowRunEvent,
+    project: Project,
+    dryRun: boolean,
+  ): Promise<WebhookDispatchResult> {
+    // 编排层已经确认过这两个字段，这里收窄类型，避免每处再判一次空。
+    const run = event.workflow_run!;
+    const repoFullName = event.repository!.full_name;
     const headSha = run.head_sha;
     if (typeof headSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(headSha)) {
       return { action: 'workflow-acknowledged', message: 'workflow_run head_sha 缺失/格式非法,已 ack' };
@@ -1005,7 +1055,7 @@ export class GitHubWebhookDispatcher {
       // 没有分支匹配:很可能是 push webhook 还没处理到(延迟/重试),分支尚未 stamp。
       // 暂存结果,等稍后 push 把分支置 express-waiting 时认领(takeCompletedRun)。
       if (!dryRun) {
-        this.rememberCompletedRun(event.repository.full_name, headSha, run.head_branch, run.conclusion || 'unknown', run.html_url);
+        this.rememberCompletedRun(repoFullName, headSha, run.head_branch, run.conclusion || 'unknown', run.html_url);
       }
       return {
         action: 'workflow-acknowledged',
@@ -1081,13 +1131,30 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-event', message: 'pull_request missing pull_request/repository' };
     }
     const repoFullName = event.repository.full_name;
-    const project = this.deps.stateService.findProjectByRepoFullName(repoFullName);
-    if (!project) {
+    // 关 PR 要把每个项目的预览都收掉。只收第一个，其余容器会一直挂着 ——
+    // 而用户关 PR 时的预期正是「相关的都停了」。
+    const prProjects = this.deps.stateService.findProjectsByRepoFullName(repoFullName);
+    if (prProjects.length === 0) {
       return { action: 'ignored-no-project', message: `No project linked to ${repoFullName}` };
     }
+    const prResults: WebhookDispatchResult[] = [];
+    for (const project of prProjects) {
+      prResults.push(await this.handlePullRequestForProject(event, project, dryRun));
+    }
+    return mergeFanoutResults(prResults, prProjects, 'pull_request');
+  }
+
+  private async handlePullRequestForProject(
+    event: GitHubPullRequestEvent,
+    project: Project,
+    dryRun: boolean,
+  ): Promise<WebhookDispatchResult> {
+    // 编排层已确认过这两个字段，这里收窄一次，后面就不用每处再判空。
+    const pr = event.pull_request!;
+    const repoFullName = event.repository!.full_name;
     if (!dryRun) this.rememberProjectInstallation(project, event.installation?.id);
 
-    const branchName = event.pull_request.head.ref;
+    const branchName = pr.head.ref;
     // PR head refs come from untrusted forks too — reject shell-unsafe
     // names. Note: pull_request handler doesn't itself shell-exec, but
     // downstream paths (stop/deploy routes) may, so enforce the
@@ -1109,7 +1176,7 @@ export class GitHubWebhookDispatcher {
 
     // `closed` action — tear down preview containers.
     if (event.action === 'closed') {
-      const merged = event.pull_request.merged === true;
+      const merged = pr.merged === true;
       // 墓碑（gone 页区分「已合并 → 切主分支」vs「已放弃 → 跳 PR」）是纯展示元数据，
       // 与 prClose「是否自动停容器」策略无关，任何关闭都要记。**必须独立于 prClose 闸门**：
       // 否则 prClose=false 时不写 merged 墓碑，而随后 GitHub 删分支的 delete 事件仍写
@@ -1125,10 +1192,10 @@ export class GitHubWebhookDispatcher {
         branch: entry?.branch || branchName,
         projectId: project.id,
         reason: (merged ? 'merged' : 'abandoned') as 'merged' | 'abandoned',
-        prNumber: event.pull_request.number,
-        prUrl: event.pull_request.html_url,
-        mergeCommitSha: merged ? event.pull_request.merge_commit_sha : undefined,
-        baseRef: event.pull_request.base?.ref,
+        prNumber: pr.number,
+        prUrl: pr.html_url,
+        mergeCommitSha: merged ? pr.merge_commit_sha : undefined,
+        baseRef: pr.base?.ref,
         aliases: entry?.subdomainAliases,
       };
 
@@ -1151,7 +1218,7 @@ export class GitHubWebhookDispatcher {
       }
       return {
         action: 'pr-branch-stopped',
-        message: `PR #${event.pull_request.number} ${merged ? 'merged' : 'closed'}; stopping preview`,
+        message: `PR #${pr.number} ${merged ? 'merged' : 'closed'}; stopping preview`,
         branchId,
         stopRequest: { branchId },
         tombstoneRequest,
@@ -1168,7 +1235,7 @@ export class GitHubWebhookDispatcher {
       }
       if (entry && !dryRun) {
         this.deps.stateService.updateBranchGithubMeta(branchId, {
-          githubPrNumber: event.pull_request.number,
+          githubPrNumber: pr.number,
           githubInstallationId: project.githubInstallationId ?? event.installation?.id,
           githubRepoFullName: repoFullName,
           githubSenderLogin: event.sender?.login,
@@ -1177,7 +1244,7 @@ export class GitHubWebhookDispatcher {
         // 波3 配置树:PR base 分支是可靠的派生信号 → **仅回填溯源指针,不拷贝配置**
         // (分支往往已按项目模板部署,静默改写 overrides 违反最小惊讶;要拷贝走显式
         // POST /branches/:id/copy-config-from/:sourceId)。已设指针不覆盖(idempotent)。
-        const baseRef = event.pull_request.base?.ref;
+        const baseRef = pr.base?.ref;
         if (baseRef && baseRef !== branchName) {
           const baseSlug = StateServiceClass.slugify(baseRef);
           const baseCanonicalId = project.legacyFlag ? baseSlug : `${project.slug}-${baseSlug}`;
@@ -1195,7 +1262,7 @@ export class GitHubWebhookDispatcher {
       }
       return {
         action: 'pr-comment-posted',
-        message: `${dryRun ? '[dry-run] ' : ''}PR #${event.pull_request.number} ${event.action}; marked branch '${branchId}' for comment`,
+        message: `${dryRun ? '[dry-run] ' : ''}PR #${pr.number} ${event.action}; marked branch '${branchId}' for comment`,
         branchId,
       };
     }
@@ -1288,7 +1355,7 @@ export class GitHubWebhookDispatcher {
         ),
       );
     }
-    return mergePushResults(perProject, projects);
+    return mergeFanoutResults(perProject, projects);
   }
 
   /**
