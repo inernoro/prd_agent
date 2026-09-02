@@ -262,11 +262,17 @@ export function TaskSchedulePage(): JSX.Element {
     setRunScopeAll(false);
   };
 
+  const openEditor = (): void => {
+    // 上一次操作留下的错误不该跟进这次编辑——否则一打开弹窗就顶着一条陈年报错。
+    setError('');
+    setEditorOpen(true);
+  };
+
   const newJob = (): void => {
     // 只重置表单，不动 selectedId —— 表单是不是「新建」由 form.id 决定。
     // 清掉选中的话，关掉浮层后右栏会塌成空状态，用户回不到刚才在看的那个任务。
     setForm(emptyForm(resolveTaskScheduleProjectId(location.search, projects)));
-    setEditorOpen(true);
+    openEditor();
   };
 
   const openActionDialog = (index: number | null = null): void => {
@@ -378,6 +384,7 @@ export function TaskSchedulePage(): JSX.Element {
     if (!form.id) return;
     if (!window.confirm(`删除任务 "${form.name}"?`)) return;
     setSaving(true);
+    setError('');
     try {
       await apiRequest(`/api/scheduled-jobs/${encodeURIComponent(form.id)}`, { method: 'DELETE' });
       setToast('任务已删除');
@@ -536,7 +543,7 @@ export function TaskSchedulePage(): JSX.Element {
                       scheduleText={scheduleLabel(selectedJob)}
                       running={runningId === selectedJob.id}
                       onRun={() => void runNow(selectedJob.id)}
-                      onEdit={() => { selectJob(selectedJob); setEditorOpen(true); }}
+                      onEdit={() => { selectJob(selectedJob); openEditor(); }}
                       onBack={() => setSelectedId('')}
                     />
                     {laneStrip ? (
@@ -555,7 +562,7 @@ export function TaskSchedulePage(): JSX.Element {
                           scheduleText={scheduleLabel(selectedJob)}
                           countdown={countdownTo(selectedJob.nextRunAt, now)}
                           health={healthOf(selectedJob.id)}
-                          onEdit={() => { selectJob(selectedJob); setEditorOpen(true); }}
+                          onEdit={() => { selectJob(selectedJob); openEditor(); }}
                         />
                       </div>
                       <div className="flex min-h-0 max-h-[60vh] flex-col overflow-hidden xl:max-h-none">
@@ -766,6 +773,22 @@ export function TaskSchedulePage(): JSX.Element {
             </section>
               </div>
             </div>
+            {/*
+              * 失败必须在弹窗里说话。页面级 ErrorBlock 渲染在弹窗**之后**、被遮罩盖住，
+              * 而失败时弹窗不会关（只有成功才 setEditorOpen(false)）——于是后端校验错、
+              * 网络失败、目标已被删除，用户看到的只是忙碌态停下，没有原因也没有下一步
+              * （Codex #1471 P2；违反 expectation-management：任何时刻都要知道现在什么情况）。
+              * 同一份 error 在这里再渲染一次：弹窗开着时看这条，关着时看页面那条。
+              */}
+            {error ? (
+              <div
+                role="alert"
+                data-editor-error
+                className="shrink-0 border-t border-destructive/40 bg-destructive/10 px-5 py-3 text-[12.5px] text-destructive"
+              >
+                {error}
+              </div>
+            ) : null}
           </DialogContent>
         </Dialog>
 
