@@ -723,3 +723,111 @@ describe('POST /api/projects/:id/github/link', () => {
     expect(project.githubInstallationId).toBeUndefined();
   });
 });
+
+describe('GitHub webhook route · 一仓多项目分发', () => {
+  let tmp: string;
+  let stateService: StateService;
+  let server: http.Server;
+  let deployCalls: Array<{ branchId: string; commitSha: string }>;
+
+  const REPO = 'octocat/monorepo';
+  const SHA = 'abc123def456789012345678901234567890aaaa';
+
+  function startServer(): http.Server {
+    const app = express();
+    app.use(express.json({
+      verify: (req, _res, buf) => { (req as { rawBody?: Buffer }).rawBody = buf; },
+    }));
+    const shell = new MockShell();
+    const worktree = new MockWorktree(shell);
+    deployCalls = [];
+    app.use('/api', createGithubWebhookRouter({
+      stateService,
+      worktreeService: worktree,
+      shell,
+      config: buildConfig(),
+      githubApp: null,
+      dispatchDeploy: async (branchId, commitSha) => { deployCalls.push({ branchId, commitSha }); },
+    }));
+    return app.listen(0);
+  }
+
+  function addProject(id: string, slug: string, name: string): void {
+    stateService.addProject({
+      id, slug, name, kind: 'git',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      githubRepoFullName: REPO,
+      githubInstallationId: 42,
+    });
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-webhook-fanout-'));
+    stateService = new StateService(path.join(tmp, 'state.json'), tmp);
+    stateService.load();
+    __resetWebhookDedupForTests();
+  });
+
+  afterEach(async () => {
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    flushAllJsonStateStores();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  /**
+   * 这是本次改动最容易静默退化的一处：dispatcher 会为第二个项目产出 deployRequest，
+   * 但如果路由只看主结果、不遍历 fanout，第二个项目就会「分支建好了、却没人替它
+   * 部署」——页面上看得见分支、永远是 idle，没有任何报错。
+   */
+  it('同仓库两个项目各自的部署都被真的派发出去', async () => {
+    addProject('p-main', 'main-proj', '主项目');
+    addProject('p-self', 'self-proj', '自托管项目');
+    server = startServer();
+
+    const body = JSON.stringify({
+      ref: 'refs/heads/feature/x',
+      after: SHA,
+      repository: { id: 1, full_name: REPO },
+      commits: [{ added: [], modified: ['src/app.ts'], removed: [] }],
+    });
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'x-github-event': 'push',
+      'x-github-delivery': 'd-fanout-1',
+      'x-hub-signature-256': sign('whsec-test', body),
+    });
+
+    expect(res.status).toBe(200);
+    expect(deployCalls).toHaveLength(2);
+    const dispatched = deployCalls.map((c) => c.branchId).sort();
+    expect(dispatched.some((id) => id.includes('main-proj'))).toBe(true);
+    expect(dispatched.some((id) => id.includes('self-proj'))).toBe(true);
+    expect(deployCalls.every((c) => c.commitSha === SHA)).toBe(true);
+
+    // 响应体要能看出发生了多项目分发，否则投递记录里这件事不可观测
+    expect(res.body.fanoutProjects).toBe(1);
+    expect(res.body.fanoutDeployDispatched).toBe(1);
+  });
+
+  it('单项目仓库：只派发一次，且响应体不出现 fanout 字段', async () => {
+    addProject('p-main', 'main-proj', '主项目');
+    server = startServer();
+
+    const body = JSON.stringify({
+      ref: 'refs/heads/feature/y',
+      after: SHA,
+      repository: { id: 1, full_name: REPO },
+      commits: [{ added: [], modified: ['src/app.ts'], removed: [] }],
+    });
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'x-github-event': 'push',
+      'x-github-delivery': 'd-fanout-2',
+      'x-hub-signature-256': sign('whsec-test', body),
+    });
+
+    expect(res.status).toBe(200);
+    expect(deployCalls).toHaveLength(1);
+    expect(res.body.fanoutProjects).toBeUndefined();
+    expect(res.body.fanoutDeployDispatched).toBeUndefined();
+  });
+});

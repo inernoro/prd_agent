@@ -1,11 +1,11 @@
 ---
 name: preview-url
-description: 调 cdscli 读取当前分支在 CDS 实际发布的预览验收地址。零参数，只使用 /api/branches 返回的 previewUrl / previewUrls；多入口全部输出，API 不可用时明确失败。AI / 任何 skill 一律不得自己 slugify 或猜测 host。触发词:"预览地址"、"验收地址"、"preview url"、"/preview"。
+description: 调 cdscli 读取当前分支在 CDS 实际发布的预览验收地址。默认零参数；项目归属与作用域判定在服务端完成，多项目仓库逐行输出 [项目 · 入口] URL，API 不可用时明确失败。AI / 任何 skill 一律不得自己 slugify 或猜测 host。触发词:"预览地址"、"验收地址"、"preview url"、"/preview"。
 ---
 
 # 预览验收地址生成
 
-> **版本**：v1.1.0 | **状态**：已落地 | **触发**：`/preview`、"预览地址"、"验收地址"、"preview url" | **运行时 SSOT**：`GET /api/branches` 的 `previewUrl` / `previewUrls`
+> **版本**：v1.2.0 | **状态**：已落地 | **触发**：`/preview`、"预览地址"、"验收地址"、"preview url" | **运行时 SSOT**：服务端 `POST /api/preview-dispatch`（老版本 CDS 回退 `GET /api/branches` 的 `previewUrl` / `previewUrls`）
 
 唯一执行入口：
 
@@ -13,9 +13,18 @@ description: 调 cdscli 读取当前分支在 CDS 实际发布的预览验收地
 python3 <当前项目技能根>/cds/cli/cdscli.py --human preview-url
 ```
 
-零参数。技能根必须按当前宿主的实际项目级安装位置解析：Codex / 通用 Agent Skills 通常是 `.agents/skills`，Cursor 是 `.cursor/skills`，Claude Code 是 `.claude/skills`。禁止在不知道宿主时硬编码某一个目录。
+默认零参数。可选 `--changed-since <ref>`：按「相对该 ref 的改动」把结果收窄到真正被波及的项目；不给就列出全部可见项目的入口。技能根必须按当前宿主的实际项目级安装位置解析：Codex / 通用 Agent Skills 通常是 `.agents/skills`，Cursor 是 `.cursor/skills`，Claude Code 是 `.claude/skills`。禁止在不知道宿主时硬编码某一个目录。
 
-`cdscli` 会读取当前项目 `.cds/credentials.json` 中的项目级连接，根据 git 分支请求 CDS API。只有一个入口时输出一行；CDS 实际发布多个入口时逐行输出全部 URL。
+`cdscli` 会读取当前项目 `.cds/credentials.json` 中的项目级连接，把仓库、分支（以及可选的改动清单）交给 CDS，由**服务端**判定项目归属与作用域。只有一个入口时输出一行；多个入口逐行输出。
+
+一个仓库可以同时喂多个 CDS 项目，同名分支天然可以属于好几个 —— 所以「我属于哪个项目」这件事**客户端不再推算**。多项目命中时每行带上项目名：
+
+```
+[MAP] https://<入口>/
+[CDS Self] https://<入口>/
+```
+
+某个项目有多个入口时，标签展开成 `[项目名 · 入口名]`，避免同项目两行同名分不出该点哪个。
 
 ## 触发词
 
@@ -28,9 +37,10 @@ CDS 的预览路由、根域、多入口和项目别名都是运行时状态。�
 `cdscli preview-url` 的内部决策：
 
 1. 加载项目级 CDS 连接上下文。
-2. `GET /api/branches?project=<projectId>` 匹配当前 git 分支。
-3. 直接输出 `previewUrls`；旧版 API 可兼容读取 `previewUrl`。
-4. 缺凭据、API 异常、分支未部署、地址字段缺失时直接失败，不输出推算值。
+2. `POST /api/preview-dispatch`：只交仓库、分支与可选改动清单；服务端算出「本次波及哪些项目、各自有哪些已发布入口」，并与 push 分发共用同一份作用域判据。可见性由服务端按凭据过滤（项目级凭据只看得到自己那个项目）。
+3. 直接输出服务端给的地址行。取不到地址时**分三种情形说清**：本次与该项目无关 / 波及但 CDS 上还没有这条分支 / 分支在但还没有已发布入口 —— 不压成一句「取不到地址」。
+4. 服务端不支持该端点（老版本 CDS）才回退到 `GET /api/branches` 匹配当前分支的旧路径。
+5. 缺凭据、API 异常、地址字段缺失时直接失败，不输出推算值。
 
 **任何 skill / 文档 / commit message 都不得**：
 - 手写 `tr '/' '-'` / 在脑子里 slugify
