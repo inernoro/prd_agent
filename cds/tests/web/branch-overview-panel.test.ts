@@ -54,12 +54,14 @@ describe('打开即出图（2026-09-02 真人验收：打开之后卡了很长�
    * 这条守卫钉住「闸门只看有没有历史」。改回去会立刻变红。
    */
   it('图表闸门不依赖实时快照，只看有没有画得出来的历史', () => {
-    // 闸门形如 `) : !hasPlot ? (` —— 取 metricsError 那条之后的第一个三元判断。
-    const tail = PANEL_CODE.slice(PANEL_CODE.indexOf('读取指标失败'));
-    const gate = tail.match(/\)\s*:\s*([^?]{1,80}?)\s*\?/);
-    expect(gate, '找不到图表闸门那段判断，可能被重构了——请同步这条守卫').not.toBeNull();
-    expect(gate?.[1], '实时快照（docker stats，可能要 5 秒）不该挡住已经拿到的历史').not.toContain('metricsReady');
-    expect(gate?.[1]).toContain('hasPlot');
+    /*
+     * 缺陷的确切形态是把 metricsReady 或进闸门（`!metricsReady || !hasPlot`）。
+     * 早先这条按「metricsError 文案之后的第一个三元」定位闸门，文案一改就找不着了
+     * ——判据不该挂在文案上。改成直接钉住那个形态本身。
+     */
+    expect(PANEL_CODE, '实时快照（docker stats，可能要 5 秒）不该挡住已经拿到的历史').not.toMatch(/!metricsReady\s*\|\|/);
+    expect(PANEL_CODE).not.toMatch(/\|\|\s*!metricsReady/);
+    expect(PANEL_CODE, '图表分支应当由 hasPlot 决定').toMatch(/!hasPlot\s*\?/);
   });
 
   it('抽屉一进总览就取服务端历史铺底，不是打开后自己攒点', () => {
@@ -131,6 +133,38 @@ describe('等待与变化（2026-09-02 真人验收：第一屏空白 / 不丝�
     expect(PANEL_CODE).toContain('prefers-reduced-motion');
     // 形状变了（服务上下线 / 分辨率重算）必须直接切，不能在两组不同含义的数之间连线
     expect(PANEL_CODE).toContain('sameShape');
+  });
+});
+
+describe('两个数据源就有两个错误面（Codex P2，核对属实）', () => {
+  /**
+   * 把图（服务端分桶）和数字（实时快照）劈成两个源之后，聚合与错误处理都得跟上。
+   * 这三条盯的正是「没跟上」的三种形态。
+   */
+  it('合计与构成条宽度走 nowValue，不再取桶末值', () => {
+    const totals = PANEL_CODE.match(/const (cpu|mem)TotalNow = [^;]+;/g) ?? [];
+    expect(totals.length, '找不到合计的计算，选择器过时了').toBe(2);
+    for (const t of totals) {
+      expect(t, '桶末值是数十秒的平均，比旁边每服务的实时数字慢一拍').not.toContain('values.at(-1)');
+      expect(t).toContain('nowValue');
+    }
+    const bar = PANEL_CODE.slice(PANEL_CODE.indexOf('function CompositionBar'), PANEL_CODE.indexOf('function SeriesLegend'));
+    expect(bar, '条按旧桶画、数字按实时写 = 同屏自相矛盾').not.toContain('values.at(-1)');
+  });
+
+  it('历史端点失败不再被静默吞掉', () => {
+    const code = stripComments(DRAWER);
+    const load = code.slice(code.indexOf('const loadSeries'), code.indexOf('const loadSeries') + 1600);
+    expect(load, 'catch 全吞会让骨架屏永远承诺一条不会出现的曲线').toMatch(/catch\s*\([\s\S]{0,40}\)\s*\{[\s\S]{0,300}setSeriesError/);
+    expect(PANEL_CODE).toContain('seriesError');
+  });
+
+  it('实时采样失败不藏历史图：两个错误面互不牵连', () => {
+    // metricsError 那一支必须是「提示条」而不是「取代整段」——判据是它之后仍会走到 hasPlot 分支
+    const section = PANEL_CODE.slice(PANEL_CODE.indexOf('{metricsError ?'));
+    const head = section.slice(0, 900);
+    expect(head, 'docker stats 挂了不该把还好好的历史图一起藏掉').not.toMatch(/metricsError \?[\s\S]{0,400}\) : !hasPlot \?/);
+    expect(head).toContain('实时采样失败');
   });
 });
 
@@ -254,7 +288,15 @@ describe('停掉的容器不许显示停机前的旧读数', () => {
   });
 
   it('当前合计跳过已停容器', () => {
-    expect(PANEL).toContain('s.stopped ? 0 : s.values.at(-1)');
+    /*
+     * 断言的是「合计里跳过停机的」这件事，不是它当时那一行字面量。
+     * 第一版写的是 toContain('s.stopped ? 0 : s.values.at(-1)')——后来「当前值」
+     * 合理地从桶末值改成实时快照（nowValue），这条就误红了：它锁的是实现不是行为
+     * （形状 4a）。现在只要求两个合计都带 stopped 分支。
+     */
+    const totals = PANEL_CODE.match(/const (cpu|mem)TotalNow = [^;]+;/g) ?? [];
+    expect(totals.length, '找不到合计的计算，选择器过时了').toBe(2);
+    for (const t of totals) expect(t, '停机容器的旧读数不能算进当前合计').toMatch(/stopped\s*\?\s*0\s*:/);
   });
 });
 
