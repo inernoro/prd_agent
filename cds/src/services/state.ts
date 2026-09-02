@@ -989,35 +989,49 @@ export class StateService {
       return lo;
     };
 
-    const kept: ScheduledJobRun[][] = [];
+    const keptLive: ScheduledJobRun[][] = [];
+    const keptOrphan: ScheduledJobRun[][] = [];
     const liveQuota = quotaWithin(live, SCHEDULED_JOB_RUNS_GLOBAL_CAP);
     if (liveQuota === 0) {
       // 现存任务数本身超过上限：每组一条都放不下，只能按「最后活跃时刻」整组淘汰。
-      for (const list of live.slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP)) kept.push(list.slice(0, 1));
+      for (const list of live.slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP)) keptLive.push(list.slice(0, 1));
     } else {
-      for (const list of live) kept.push(list.slice(0, liveQuota));
+      for (const list of live) keptLive.push(list.slice(0, liveQuota));
     }
-    const remaining = SCHEDULED_JOB_RUNS_GLOBAL_CAP - kept.reduce((sum, list) => sum + list.length, 0);
+    const remaining = SCHEDULED_JOB_RUNS_GLOBAL_CAP - keptLive.reduce((sum, list) => sum + list.length, 0);
     if (remaining > 0 && orphan.length > 0) {
       const orphanQuota = quotaWithin(orphan, remaining);
       if (orphanQuota === 0) {
-        for (const list of orphan.slice(0, remaining)) kept.push(list.slice(0, 1));
+        for (const list of orphan.slice(0, remaining)) keptOrphan.push(list.slice(0, 1));
       } else {
-        for (const list of orphan) kept.push(list.slice(0, orphanQuota));
+        for (const list of orphan) keptOrphan.push(list.slice(0, orphanQuota));
       }
     }
 
-    // 第二道闸：条数达标了体积也得达标。按「新的先留」累加序列化字节，超了就不再收。
-    const ordered = kept.flat().sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
+    // 第二道闸：条数达标了体积也得达标。分配方式必须**和第一道闸同一个口径**——
+    // 按全局新旧砍会把每任务保留整个抵消掉：几个日志接近上限的高频任务就能吃光预算，
+    // 一个低频活任务的历史被整段清零，健康度和细带全空（Codex #1471 P2 第二十轮）。
+    // 改成「每个任务轮流拿一条」：先现存任务转圈，再已删除任务转圈，预算耗尽即止。
+    // 低频任务的那几条在第一圈就拿到手，高频任务的第 120 条才最先被牺牲。
     const bounded: ScheduledJobRun[] = [];
     let bytes = 2; // []
-    for (const item of ordered) {
-      const size = Buffer.byteLength(JSON.stringify(item), 'utf8') + 1;
-      if (bytes + size > SCHEDULED_JOB_RUNS_MAX_BYTES) break;
-      bounded.push(item);
-      bytes += size;
-    }
-    this.state.scheduledJobRuns = bounded;
+    const fill = (columns: ScheduledJobRun[][]): boolean => {
+      const depthMax = columns.reduce((max, col) => Math.max(max, col.length), 0);
+      for (let depth = 0; depth < depthMax; depth += 1) {
+        for (const col of columns) {
+          if (depth >= col.length) continue;
+          const item = col[depth];
+          const size = Buffer.byteLength(JSON.stringify(item), 'utf8') + 1;
+          if (bytes + size > SCHEDULED_JOB_RUNS_MAX_BYTES) return false;
+          bounded.push(item);
+          bytes += size;
+        }
+      }
+      return true;
+    };
+    if (fill(keptLive)) fill(keptOrphan);
+    this.state.scheduledJobRuns = bounded
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
     this.save(HINT_GLOBAL);
     return run;
   }

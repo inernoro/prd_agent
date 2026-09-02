@@ -300,6 +300,52 @@ describe('定时任务运行记录的可观测性', () => {
   });
 
   /*
+   * Codex #1471 P2（第二十轮）。字节闸不能用「全局按新旧砍」——那样几个日志接近
+   * 上限的高频任务就能吃光 4MiB 预算，一个低频活任务的历史被整段清零，把第一道闸
+   * （每任务保留）整个抵消掉。
+   * 这里造 6 个高频活任务各 120 条 8KiB 日志（约 5.9MiB，必然触发字节闸），外加一个
+   * 只有 3 条、时刻最早的低频活任务：那 3 条必须一条不丢。
+   * 红绿闭环：把 fill 换回「flat + 全局按 queuedAt 降序 + 累加截断」，本用例报 0。
+   */
+  it('字节闸也按任务轮流分配，低频活任务不会被高频任务的日志挤空', () => {
+    const jobs = ['rare', 'h0', 'h1', 'h2', 'h3', 'h4', 'h5'];
+    for (const id of jobs) {
+      stateService.upsertScheduledJob(service.normalizeJob({
+        id: `job_${id}`, projectId: 'demo', name: id, enabled: true,
+        schedule: { type: 'daily', timeOfDay: '02:00' },
+        actions: [{ id: 'a1', name: 'step', type: 'command' as const, command: 'echo ok' }],
+      } as unknown as ScheduledJob));
+    }
+    const fixture: ScheduledJobRun[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      fixture.push({
+        id: `rare_${i}`, jobId: 'job_rare', projectId: 'demo', trigger: 'schedule',
+        status: 'success', queuedAt: new Date(Date.UTC(2026, 0, 1, i)).toISOString(),
+      });
+    }
+    for (let h = 0; h < 6; h += 1) {
+      for (let i = 0; i < 120; i += 1) {
+        fixture.push({
+          id: `h${h}_${i}`, jobId: `job_h${h}`, projectId: 'demo', trigger: 'schedule',
+          status: 'success', queuedAt: new Date(Date.UTC(2026, 0, 5) + (h * 120 + i) * 1000).toISOString(),
+          log: 'H'.repeat(8 * 1024),
+        });
+      }
+    }
+    seedRuns(fixture);
+    stateService.upsertScheduledJobRun({
+      id: 'h0_999', jobId: 'job_h0', projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: new Date(Date.UTC(2026, 0, 6)).toISOString(),
+    });
+
+    const stored = stateService.getState().scheduledJobRuns;
+    expect(Buffer.byteLength(JSON.stringify(stored), 'utf8'), '字节闸没生效')
+      .toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect(stored.filter((r) => r.jobId === 'job_rare'), '低频活任务的历史被高频任务的日志挤空了')
+      .toHaveLength(3);
+  });
+
+  /*
    * Codex #1471 P2（第三轮）。整组淘汰只按「最后一次运行的时刻」排，不看任务还在不在：
    * 一个刚建完就删掉的一次性任务会占着名额，而一个每天都在跑、只是上次运行时刻稍早的
    * **活任务**被整组清掉——它的健康度、细带、运行史全没了，恰恰是每任务保留要保护的对象。
