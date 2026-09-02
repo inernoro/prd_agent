@@ -7,7 +7,8 @@ import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
 import { GenDevelopLoader } from '@/components/ui/GenDevelopLoader'; // 生图等待动效=显影（进度画在画框上，替换旧流光进度条）
-import { anchorRectOf, FALLBACK_ITEM_SIZE, findAlignedFreeTopLeft, occupiedRects, type PlacementRect } from '@/lib/canvasPlacement'; // 新图贴着锚点共边落位
+import { anchorRectOf, FALLBACK_ITEM_SIZE, findAlignedFreeTopLeft, occupiedRects, type PlacementRect } from '@/lib/canvasPlacement';
+import { mergeSendCanvas } from '@/lib/sendCanvasMerge'; // 发送时把「刚加、还没刷」的元素并进画布 // 新图贴着锚点共边落位
 import { recordGenDurationMs } from '@/lib/genTiming';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
@@ -5617,6 +5618,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 延迟执行，确保 UI 已渲染完成
     const timer = window.setTimeout(() => {
       const inline = initialPrompt.inlineImage;
+      // 这一拍刚加进画布 / 刚选中的东西。setCanvas 与 setSelectedKeys 都要到下一次渲染
+      // 才生效，所以必须原样递给 sendText，否则解析器在旧画布里找不到它。
+      let pendingItem: CanvasImageItem | null = null;
+      let pendingKey = '';
 
       // 如果有内联图片，先添加到 canvas
       if (inline?.src) {
@@ -5648,6 +5653,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           const reuseRefId = typeof already.refId === 'number' ? already.refId : nextRefId;
           if (typeof already.refId !== 'number') setNextRefId(reuseRefId + 1);
           setSelectedKeys([already.key]);
+          pendingItem = already;
+          pendingKey = already.key;
           richComposerRef.current?.clearPending();
           richComposerRef.current?.insertImageChip(
             { key: already.key, refId: reuseRefId, src: already.src, label: inline.name || `img${reuseRefId}` },
@@ -5698,6 +5705,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         setCanvas((prev) => [...prev, inlineCanvasItem]);
         // 手动同步选中和 chip（因为 setCanvas 是异步的）
         setSelectedKeys([inlineKey]);
+        pendingItem = inlineCanvasItem;
+        pendingKey = inlineKey;
         richComposerRef.current?.clearPending();
         richComposerRef.current?.insertImageChip(
           { key: inlineKey, refId: newRefId, src: inline.src, label: inline.name || `img${newRefId}` },
@@ -5706,9 +5715,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }
       }
 
-      // 通过统一守门员发送（inlineImage 现在已在 canvas 中，会被 selectedKeys 引用）
+      // 通过统一守门员发送。
+      //
+      // **必须把刚加的那张图直接递进去**：上面的 setCanvas / setSelectedKeys 是异步的，
+      // sendText 闭包读到的 canvas 与 selectedKeys 都还是旧的，解析器在旧画布里找不到
+      // 这张图，第一次生成就会静默变成纯文字——用户在首页传的照片被整个忽略。
+      // 旧代码能侥幸工作是因为当时首页会先上传，图经由资产列表重建先进了画布；
+      // 现在跳转不再等上传，这条侥幸没了。
       void sendText(initialPrompt.text, {
         inlineImage: inline,
+        extraCanvas: pendingItem ? [pendingItem] : undefined,
+        selectedKeysOverride: pendingKey ? [pendingKey] : undefined,
       });
     }, 500);
 
@@ -5761,6 +5778,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const sendText = async (rawText: string, opts?: {
     chipRefs?: ChipRef[];
     inlineImage?: { src: string; name?: string };
+    /**
+     * 刚加进画布、但 setCanvas 还没刷出来的元素。
+     *
+     * setCanvas / setSelectedKeys 是异步的，同一个 tick 里紧接着调 sendText，
+     * 这个闭包读到的 `canvas` 和 `selectedKeys` 都还是旧的——首页带图进来那条路
+     * 正是这样：图刚 setCanvas 进去就发送，解析器在旧画布里找不到它，
+     * 于是**第一次生成完全没有参考图，静默退化成纯文字**（Codex PR #1476 P1）。
+     *
+     * canvasRef / selectedKeysRef 也救不了：它们是在 useEffect 里同步的，同一个 tick 同样是旧值。
+     * 所以只能由调用方把「刚加的这一个」直接递进来，不依赖任何刷新时机。
+     */
+    extraCanvas?: CanvasImageItem[];
+    /** 同上：刚设置、还没刷出来的选中键。 */
+    selectedKeysOverride?: string[];
   }) => {
     const raw = String(rawText ?? '').trim();
     if (!raw) return;
@@ -5772,8 +5803,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const cleanDisplay = String(sized.cleanText ?? '').trim();
     if (!cleanDisplay) return;
 
+    // 解析用的画布 = 已刷出来的 state + 调用方递进来的「刚加的、还没刷」。
+    // 后者去重放在前面之后，key 相同时以 extraCanvas 为准。
+    const sendCanvas: CanvasImageItem[] = mergeSendCanvas(canvas, opts?.extraCanvas);
+    const sendSelectedKeys = opts?.selectedKeysOverride ?? selectedKeys;
+
     // 使用统一解析器
-    const contractCanvas: ContractCanvasItem[] = canvas
+    const contractCanvas: ContractCanvasItem[] = sendCanvas
       .filter((it) => (it.kind ?? 'image') === 'image' && it.src)
       .map((it) => ({
         key: it.key,
@@ -5785,7 +5821,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const resolveResult = resolveImageRefs({
       rawText: cleanDisplay,
       chipRefs: opts?.chipRefs ?? [],
-      selectedKeys,
+      selectedKeys: sendSelectedKeys,
       inlineImage: opts?.inlineImage,
       canvas: contractCanvas,
     });
@@ -5797,11 +5833,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     );
 
     // 转换所有 refs 为 CanvasImageItem（用于 UI 显示和生成）
+    // 回查也必须走同一份合并后的画布：解析出了 ref 却在这里找不到实体，
+    // imageRefs 依旧是空的——半截修复比不修更难查。
     const imageRefs: CanvasImageItem[] = resolveResult.refs
-      .map((ref) => canvas.find((c) => c.key === ref.canvasKey))
+      .map((ref) => sendCanvas.find((c) => c.key === ref.canvasKey))
       .filter((c): c is CanvasImageItem => !!c);
 
-    const seedSelectedKey = String(selectedKeysRef.current?.[0] ?? '').trim();
+    const seedSelectedKey = String(sendSelectedKeys[0] ?? selectedKeysRef.current?.[0] ?? '').trim();
     const sizeOverride = sized.size ?? composerSize ?? autoSizeForSelectedImage ?? null;
     const job: GenJob = {
       id: `job_${Date.now()}_${Math.random().toString(16).slice(2)}`,

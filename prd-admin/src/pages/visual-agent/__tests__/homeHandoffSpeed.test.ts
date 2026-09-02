@@ -62,6 +62,24 @@ describe('首页点发送后立刻进画板', () => {
     expect(TAB).toMatch(/data\.imageSize/);
   });
 
+  it('【关键】首页带入的图必须直接递给发送，不靠 setState 刷新', () => {
+    // setCanvas / setSelectedKeys 是异步的，同一拍调 sendText 读到的是旧画布，
+    // 解析器找不到这张图就一个 ref 都不给——第一次生成静默变成纯文字，
+    // 用户在首页传的照片被整个忽略（Codex PR #1476 P1）。
+    // 这条接线删掉之后页面照常渲染、也照常出图，只是出的图跟参考图无关，
+    // 所以必须有守卫盯着。
+    const at = TAB.indexOf('void sendText(initialPrompt.text');
+    expect(at, '首页带入应走 sendText').toBeGreaterThan(0);
+    const call = TAB.slice(at, at + 320);
+    expect(call).toMatch(/extraCanvas:\s*pendingItem/);
+    expect(call).toMatch(/selectedKeysOverride:\s*pendingKey/);
+    // 发送端要真的把它并进解析用的画布，并且回查实体也走同一份合并结果，
+    // 否则解析出了 ref 却拿不到实体，imageRefs 依旧是空的。
+    expect(TAB).toMatch(/mergeSendCanvas\(canvas, opts\?\.extraCanvas\)/);
+    expect(TAB).toMatch(/sendCanvas\.find\(\(c\) => c\.key === ref\.canvasKey\)/);
+    expect(TAB).toMatch(/selectedKeys:\s*sendSelectedKeys/);
+  });
+
   it('交接包写不进 sessionStorage 时不能整个提交挂掉', () => {
     // dataURL 可能有好几 MB，超配额会抛。
     expect(submitBody).toMatch(/try\s*\{[\s\S]{0,200}sessionStorage\.setItem/);
