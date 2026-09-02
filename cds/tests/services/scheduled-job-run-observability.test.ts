@@ -204,6 +204,29 @@ describe('定时任务运行记录的可观测性', () => {
   });
 
   /*
+   * Codex #1471 P2（第二轮）。均分有一个失效档：任务数本身超过全局上限时，
+   * 「每个任务各留一条」都放不下，二分的下界 1 就成了假的可行解，总量突破上限。
+   * 删任务不删运行史，反复建删就能把不同 jobId 攒过 5000。
+   * 这里造 5200 个各 1 条的任务，断言总量仍不超上限、且淘汰的是最久没动静的那批。
+   * 红绿闭环：去掉整组淘汰那三行，本用例报总量 5200 > 5000。
+   */
+  it('任务数本身超过全局上限时整任务淘汰，最久没动静的先出局', () => {
+    const base = Date.UTC(2026, 0, 5);
+    for (let j = 0; j < 5200; j += 1) {
+      stateService.upsertScheduledJobRun({
+        id: `only_${j}`, jobId: `job_${j}`, projectId: 'demo', trigger: 'schedule',
+        status: 'success', queuedAt: new Date(base + j * 1000).toISOString(),
+      });
+    }
+
+    const all = stateService.listScheduledJobRuns({ limit: 100000 });
+    expect(all.length, '任务数超过上限时全局上限失守了').toBeLessThanOrEqual(5000);
+    // 最新的那批留着，最早的那批被整组淘汰。
+    expect(stateService.listScheduledJobRuns({ jobId: 'job_5199', limit: 5 })).toHaveLength(1);
+    expect(stateService.listScheduledJobRuns({ jobId: 'job_0', limit: 5 })).toHaveLength(0);
+  });
+
+  /*
    * 红绿闭环：删掉 computeNextRuns，或让它每轮不推进游标，
    * 本用例会红（前者编译不过，后者返回一串相同时刻）。
    */

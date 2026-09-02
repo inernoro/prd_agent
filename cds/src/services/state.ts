@@ -926,11 +926,21 @@ export class StateService {
       if (list) list.push(item);
       else byJob.set(item.jobId, [item]);
     }
-    const counts = [...byJob.values()].map((list) => Math.min(list.length, SCHEDULED_JOB_RUNS_PER_JOB));
+    // 任务数本身超过上限时，「每个任务各留一条」都放不下——均分在这一档失效，
+    // 只能整任务地淘汰。删任务不删运行史，反复建删就能把不同 jobId 攒过 5000，
+    // 那之后全局上限会彻底失守（Codex #1471 P2 第二轮）。
+    // 淘汰顺序按「最后一次运行的时刻」：最久没动静的任务先出局，活跃的留下。
+    // byJob 的插入顺序已经是「首条记录最新」在前（上面按 queuedAt 降序遍历建的），
+    // 所以直接按插入顺序取前 N 组即可。
+    let groups = [...byJob.values()];
+    if (groups.length > SCHEDULED_JOB_RUNS_GLOBAL_CAP) {
+      groups = groups.slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP);
+    }
+    const counts = groups.map((list) => Math.min(list.length, SCHEDULED_JOB_RUNS_PER_JOB));
     const total = (k: number): number => counts.reduce((sum, n) => sum + Math.min(n, k), 0);
     let quota = SCHEDULED_JOB_RUNS_PER_JOB;
     if (total(quota) > SCHEDULED_JOB_RUNS_GLOBAL_CAP) {
-      // 单调递减，二分找最大可行 k；k 可以低到 1（任务数比上限还多时只能各留一条）。
+      // 单调递减，二分找最大可行 k。经过上面的整组淘汰，k = 1 一定可行。
       let lo = 1;
       let hi = SCHEDULED_JOB_RUNS_PER_JOB;
       while (lo < hi) {
@@ -940,7 +950,7 @@ export class StateService {
       }
       quota = lo;
     }
-    this.state.scheduledJobRuns = [...byJob.values()]
+    this.state.scheduledJobRuns = groups
       .flatMap((list) => list.slice(0, quota))
       .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
     this.save(HINT_GLOBAL);
