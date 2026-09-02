@@ -889,3 +889,43 @@ describe('构成条不画不存在的占用', () => {
     expect(html, '停机服务应该写「停止」，而不是端出停机前的旧读数').toContain('停止');
   });
 });
+
+/**
+ * Hook 不许写在模块顶层（2026-09-02，Codex P1，核对属实）。
+ *
+ * 这条守卫的来历值得写下来：我把一个 `useState` 挪出了组件、落到了 import 之前的
+ * 模块顶层。`tsc --noEmit` 过、`pnpm build` 过、6445 条用例全绿——因为**没有任何
+ * 一条用例真的渲染过这个抽屉**，而模块顶层的 const 在类型与打包层面完全合法。
+ * 只有真人打开分支页才会炸（invalid hook call），而那时它已经上线了。
+ *
+ * 判据扫的是「零缩进的 hook 调用」，覆盖整个组件目录，不只这一个文件——
+ * 一个类，不是一处。
+ */
+describe('hook 只能在组件里调用（形状：编译过、测试绿、打开就炸）', () => {
+  /*
+   * 泛型要一起认：`useState<{ a: number }>(null)` 里 hook 名与左括号之间隔着一段
+   * 类型参数。第一版漏了这一档，于是把真实的越界写法放了过去——判据自己空跑
+   * （形状 4b），而它要防的恰恰就是那一行。
+   */
+  const HOOK_AT_MODULE_SCOPE = /^(?:const|let|var)\s+.*=\s*use[A-Z]\w*\s*(?:<[^=]*>)?\s*\(|^use[A-Z]\w*\s*(?:<[^=]*>)?\s*\(/;
+
+  const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true })
+    .flatMap((e) => {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) return walk(full);
+      return e.isFile() && full.endsWith('.tsx') ? [full] : [];
+    });
+
+  it('web/src 下没有任何 tsx 在模块顶层调用 hook', () => {
+    const files = walk(SRC);
+    expect(files.length, '一个文件都没扫到，判据会空跑').toBeGreaterThan(20);
+    const offenders: string[] = [];
+    for (const file of files) {
+      const lines = stripComments(fs.readFileSync(file, 'utf8')).split('\n');
+      lines.forEach((line, i) => {
+        if (HOOK_AT_MODULE_SCOPE.test(line)) offenders.push(`${path.relative(SRC, file)}:${i + 1} ${line.trim()}`);
+      });
+    }
+    expect(offenders, `hook 写在了模块顶层，打开页面即抛 invalid hook call：\n${offenders.join('\n')}`).toEqual([]);
+  });
+});

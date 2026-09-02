@@ -1,16 +1,3 @@
-  /**
-   * 服务端这次实际给了什么——桶宽（秒）与它真正覆盖的时间窗。
-   *
-   * 两样都不能由前端猜（Codex P2 ×2，均核对属实）：
-   *   - 桶宽是按观测节奏自适应算的，骨架屏拿采样器的标称 45s 去估「还要等多久」，
-   *     两个方向都会说谎；
-   *   - 窗口会被网格吸附撑宽（30 分钟的请求，45s 节奏那一档实际是 27 × 70s = 31.5 分钟），
-   *     而 x 轴却写死「30 分钟前 → 现在」，峰值因此对不上时间刻度。
-   *
-   * 一次请求返回什么就用什么，没拿到就是 null（骨架屏那边不给数字，轴退回请求值）。
-   */
-  const [seriesMeta, setSeriesMeta] = useState<{ groupSeconds: number; after: number; before: number } | null>(null);
-
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
@@ -913,6 +900,19 @@ export function BranchDetailDrawer({
    * 那一帧，别退回更陈的快照。切分支时随其它 state 一起清空。
    */
   const [lastGoodMetrics, setLastGoodMetrics] = useState<MetricsResponse | null>(null);
+
+  /**
+   * 服务端这次实际给了什么——桶宽（秒）与它真正覆盖的时间窗。
+   *
+   * 两样都不能由前端猜（Codex P2 ×2，均核对属实）：
+   *   - 桶宽是按观测节奏自适应算的，骨架屏拿采样器的标称 45s 去估「还要等多久」，
+   *     两个方向都会说谎；
+   *   - 窗口会被网格吸附撑宽（30 分钟的请求，45s 节奏那一档实际是 27 × 70s = 31.5 分钟），
+   *     而 x 轴却写死「30 分钟前 → 现在」，峰值因此对不上时间刻度。
+   *
+   * 一次请求返回什么就用什么，没拿到就是 null（骨架屏那边不给数字，轴退回请求值）。
+   */
+  const [seriesMeta, setSeriesMeta] = useState<{ groupSeconds: number; after: number; before: number } | null>(null);
   const [triggerLogsState, setTriggerLogsState] = useState<TriggerLogsState>({ status: 'idle' });
   // 2026-05-14 Codex review P2 修复：loadMore 的 offset 不能从 setState 的
   // updater 里"顺便"读出来（React 会 batch，updater 可能在 fetch 之后才跑，
