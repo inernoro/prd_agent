@@ -25,6 +25,22 @@ beforeEach(() => __resetContainerMetricsHistory());
  */
 const withData = (points: Array<{ rxRate: number | null }>) => points.filter((p) => p.rxRate != null);
 
+/**
+ * 「轴覆盖整个请求窗口」的判据。
+ *
+ * 早先这里写的是精确点数（toBe(60) / toBe(120)），那是把当时的实现锁死：
+ * 点数是由请求值、采集节奏、样本数三者取小算出来的，任何一档收紧都会让这些
+ * 断言变红，而轴该覆盖整个窗口这件事其实一点没变（形状 4a：反向锁死实现）。
+ * 现在只问两端——第一个桶贴着窗口起点、最后一个桶贴着窗口终点。
+ */
+const expectSpansWindow = (r: { after: number; before: number; timestamps: number[] }): void => {
+  const span = r.before - r.after;
+  const tolerance = span / Math.max(1, r.timestamps.length);
+  expect(r.timestamps.length).toBeGreaterThan(1);
+  expect(r.timestamps[0] - r.after, '第一个桶没贴着窗口起点，轴被压缩了').toBeLessThanOrEqual(tolerance);
+  expect(r.before - (r.timestamps.at(-1) ?? 0), '最后一个桶没贴着窗口终点').toBeLessThanOrEqual(tolerance);
+};
+
 describe('速率由累计值差分算出', () => {
   it('两点之间的累计差除以间隔 = bytes/sec', () => {
     recordContainerSample('c1', sample({ netRxBytes: 0 }), T0);
@@ -147,10 +163,13 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     const now = T0 + 1_200_000;
     const r = queryContainerSeries({ containers: ['a', 'b'], after: T0, before: now, points: 60 }, now);
 
-    expect(r.timestamps.length, '轴必须覆盖整个请求窗口，不能只留有数据的桶').toBe(60);
-    // 中间那 800s（第 10 到 49 桶）必须真的以 null 的形式留在轴上。
-    const holeA = r.series.a.slice(12, 48);
-    expect(holeA.length).toBeGreaterThan(0);
+    expectSpansWindow(r);
+    // 中间那 800s 必须真的以 null 的形式留在轴上。
+    // 按**时间**挑，不按下标挑：点数是算出来的，写死下标等于把当时的实现锁进断言。
+    // 两端各让开一个桶宽，避免边界桶同时吃到有数据的那一侧。
+    const bucketMs = (r.before - r.after) / r.timestamps.length;
+    const holeA = r.series.a.filter((p) => p.ts > T0 + 200_000 + bucketMs && p.ts < T0 + 1_000_000 - bucketMs);
+    expect(holeA.length, '断档区间里一个桶都没有，判据挑空了').toBeGreaterThan(0);
     for (const p of holeA) expect(p.cpuPercent).toBeNull();
     // 两端有量的桶还在。
     expect(r.series.a[0].cpuPercent).not.toBeNull();
@@ -203,6 +222,23 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     expect(emptyInSparse / sparse.length).toBeLessThan(0.1);
   });
 
+  /**
+   * 冷启动：CDS 每次重启历史清零，头两分钟只有一两个样本。样本不足三个就算不出
+   * 节奏，光靠节奏那道闸会退回按请求值切 120 个桶——冷启动那几分钟又是锯齿。
+   * 而且这一档本来就不该有细分辨率：手上 2 个样本画 120 个点是无中生有。
+   */
+  it('样本只有两三个时，点数按样本数封顶（冷启动不许无中生有）', () => {
+    recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + 29 * 60_000);
+    recordContainerSample('c1', sample({ cpuPercent: 4 }), T0 + 29 * 60_000 + 45_000);
+    const now = T0 + 30 * 60_000;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
+    // 这一档的不变量是「点数不超过样本数」，不是「空桶少」——窗口 30 分钟、
+    // 数据只覆盖 45 秒，空桶多是实话。区别在于 3 个点里空 2 个，和 120 个点里
+    // 空 118 个，后者看起来就是一片锯齿。
+    expect(r.series.c1.length, '两个样本不该摊成上百个点').toBeLessThanOrEqual(3);
+    expect(r.series.c1.filter((p) => p.cpuPercent != null).length).toBeGreaterThan(0);
+  });
+
   it('points=1（整窗聚成一个数）不受分辨率下限影响', () => {
     for (let t = 0; t <= 30 * 60_000; t += 45_000) recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
     const now = T0 + 30 * 60_000;
@@ -217,7 +253,7 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     }
     const now = T0 + 1_800_000;
     const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
-    expect(r.timestamps.length).toBe(120);
+    expectSpansWindow(r);
     expect(r.series.c1[0].cpuPercent, '窗口开头没有数据，必须是 null 而不是被裁掉').toBeNull();
     expect(r.series.c1.at(-1)?.cpuPercent).not.toBeNull();
     // 有数据的桶只该占窗口末尾的一小段（180/1800 = 10%）。
