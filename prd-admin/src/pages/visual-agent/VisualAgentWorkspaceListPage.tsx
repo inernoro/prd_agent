@@ -1425,15 +1425,28 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       // 编辑器再去读偏好就会拿到上一次的模型，用户在首页选的 A 会变成 B——
       // 而这是一次要花钱的生成。交接包直接带上，编辑器就不必依赖那次写。
       const payload = { messageText, assetId, imageSize, modelId, timestamp: Date.now() };
+      let handoffStored = false;
       try {
         sessionStorage.setItem(sessionKey, JSON.stringify(payload));
+        handoffStored = true;
       } catch {
         try {
           sessionStorage.setItem(sessionKey, JSON.stringify({ ...payload, messageText: `${sizeToken}${prompt}` }));
+          handoffStored = true;
           toast.error('参考图太大，未能带入画板', '已带入文字提示，请在画板里重新拖入这张图。');
         } catch {
-          // sessionStorage 完全不可用：跳转后画板就是一个空工作区，不额外报错刷屏。
+          handoffStored = false;
         }
+      }
+
+      // 交接包一个字都没存进去（站点存储被禁用等）时**不要跳转**。
+      //
+      // 跳过去只会得到一个空工作区：提示词、尺寸、模型全都没带过去，而这边又把
+      // 输入清空了——用户刚敲的那句话就这么没了，还得自己重打一遍（Codex PR #1476 P2）。
+      // 留在原地、保住输入、说清原因，比「看起来成功了其实什么都没带」强。
+      if (!handoffStored) {
+        toast.error('浏览器禁用了站点存储，无法把这次输入带进画板', '已为你建好空白项目，可在下方列表打开；或允许本站存储后重试。');
+        return;
       }
 
       // 4. 跳转到 workspace 页面（不传递 URL 参数，避免刷新重复创建）

@@ -85,6 +85,19 @@ describe('首页点发送后立刻进画板', () => {
     // dataURL 可能有好几 MB，超配额会抛。
     expect(submitBody).toMatch(/try\s*\{[\s\S]{0,200}sessionStorage\.setItem/);
   });
+
+  it('【关键】一个字都没存进去时不跳转，保住用户刚敲的那句话', () => {
+    // 站点存储被禁用时两次 setItem 都抛。照旧跳转的话，画板是空的、
+    // 而这边已经把输入清空——用户的话就没了，还得重打（Codex PR #1476 P2）。
+    const at = submitBody.indexOf('if (!handoffStored)');
+    expect(at, '应有「没存进去就别跳」的分支').toBeGreaterThan(0);
+    const block = submitBody.slice(at, at + 400);
+    expect(block).toContain('return;');
+    // 且这个分支必须在跳转之前，否则形同虚设。
+    expect(submitBody.indexOf('navigate(getEditorPath(ws.id))')).toBeGreaterThan(at);
+    // 清空输入只能发生在跳转之后那条路径上。
+    expect(submitBody.indexOf("setInputValue('')")).toBeGreaterThan(at);
+  });
 });
 
 describe('画布落位：新图贴着参考图排', () => {
