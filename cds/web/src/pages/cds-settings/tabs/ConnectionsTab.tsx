@@ -218,7 +218,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
               <div className="flex flex-wrap gap-2">
                 {integration.configured ? (
                   <Button type="button" variant="outline" onClick={() => void testConnection()} disabled={testing}>
-                    <RefreshCw className={testing ? 'mr-1 h-4 w-4 animate-spin' : 'mr-1 h-4 w-4'} />
+                    <RefreshCw className={testing ? 'animate-spin' : undefined} />
                     {testing ? '验证中' : '验证连接'}
                   </Button>
                 ) : null}

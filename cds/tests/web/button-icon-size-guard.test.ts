@@ -36,18 +36,42 @@ function lucideNames(source: string): Set<string> {
   );
 }
 
+/**
+ * 取出一个标签文本里所有字符串字面量（含表达式里的）。
+ * 只认双引号会漏掉 `className={busy ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}` 这种写法
+ * ——尺寸照样不生效，守卫却判绿（Codex #1471 P2）。
+ */
+function literalsIn(tagText: string): string[] {
+  return (tagText.match(/'[^']*'|"[^"]*"|`[^`]*`/g) || []).map((lit) => lit.slice(1, -1));
+}
+
+/** 从 `<Icon` 起按花括号配平扫到标签结束，避免 `onClick={() => ...}` 里的 `>` 提前截断。 */
+function tagTextAt(block: string, start: number): string {
+  let depth = 0;
+  for (let i = start; i < block.length; i += 1) {
+    const ch = block[i];
+    if (ch === '{') depth += 1;
+    else if (ch === '}') depth -= 1;
+    else if (ch === '>' && depth === 0) return block.slice(start, i + 1);
+  }
+  return block.slice(start);
+}
+
+const SIZE_RE = /\b(?:h-[\d.]+ w-[\d.]+|w-[\d.]+ h-[\d.]+)\b/;
+
 function findDeadSizes(source: string): string[] {
   const icons = lucideNames(source);
   if (icons.size === 0) return [];
   const hits: string[] = [];
   for (const block of source.match(/<Button\b[\s\S]*?<\/Button>/g) || []) {
-    const tagRe = /<([A-Z][A-Za-z0-9]*)\b[^>]*className="([^"]*)"/g;
-    let tag: RegExpExecArray | null;
-    while ((tag = tagRe.exec(block)) !== null) {
-      if (!icons.has(tag[1])) continue;
-      if (/\b(?:h-[\d.]+ w-[\d.]+|w-[\d.]+ h-[\d.]+)\b/.test(tag[2])) {
-        hits.push(`<${tag[1]} className="${tag[2]}">`);
-      }
+    const openRe = /<([A-Z][A-Za-z0-9]*)\b/g;
+    let open: RegExpExecArray | null;
+    while ((open = openRe.exec(block)) !== null) {
+      if (!icons.has(open[1])) continue;
+      const tagText = tagTextAt(block, open.index);
+      if (!/className\s*=/.test(tagText)) continue;
+      const offending = literalsIn(tagText).find((lit) => SIZE_RE.test(lit));
+      if (offending) hits.push(`<${open[1]} className=... "${offending}">`);
     }
   }
   return hits;
@@ -75,9 +99,14 @@ describe('按钮内的 lucide 图标不许自带尺寸', () => {
       '<Button><Button className="h-8 w-8" />嵌套</Button>',
       // 只有 animate-spin、没有尺寸的写法是正确写法
       '<Button><Trash2 className="animate-spin" />删除</Button>',
+      // 表达式写法照样不生效，必须认出来
+      "<Button><Trash2 className={busy ? 'mr-1 h-4 w-4 animate-spin' : 'mr-1 h-4 w-4'} />重试</Button>",
+      // 带 `>` 的属性（箭头函数）不该把标签提前截断
+      "<Button><Trash2 onClick={() => go()} className=\"animate-spin\" />继续</Button>",
     ].join('\n');
     const hits = findDeadSizes(sample);
-    expect(hits).toHaveLength(1);
+    expect(hits).toHaveLength(2);
     expect(hits[0]).toContain('Save');
+    expect(hits[1]).toContain('Trash2');
   });
 });
