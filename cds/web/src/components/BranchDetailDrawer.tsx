@@ -6932,11 +6932,16 @@ function SettingsPanel({
                       <span className={`rounded border px-1.5 py-0.5 ${hasBranchModeOverride ? 'border-warn/40 bg-warn-soft text-warn' : 'border-[hsl(var(--hairline))]'}`}>
                         {hasBranchModeOverride ? '本分支覆盖' : '继承默认'}
                       </span>
-                      {(dbScopeOverride ?? inheritedDbScope) === 'per-branch' ? (
-                        <span className="rounded border border-ok/30 bg-ok-soft px-1.5 py-0.5 text-ok">
-                          分支独立库
-                        </span>
-                      ) : null}
+                      {/* 数据库隔离来源必须一眼可辨：项目默认 vs 本分支覆盖（层级别再倒置） */}
+                      <span
+                        className={`rounded border px-1.5 py-0.5 ${dbScopeOverride !== undefined ? 'border-warn/40 bg-warn-soft text-warn' : 'border-[hsl(var(--hairline))]'}`}
+                        title={dbScopeOverride !== undefined ? '本分支钉住了自己的数据库隔离档位，不跟随项目默认' : '跟随项目设置 → 数据库隔离 里的项目默认'}
+                        data-db-scope-source={dbScopeOverride !== undefined ? 'branch-override' : 'project-default'}
+                      >
+                        {dbScopeOverride !== undefined
+                          ? `数据库：本分支覆盖 · ${dbScopeOverride === 'per-branch' ? '分支独立库' : '共享库'}`
+                          : `数据库：项目默认 · ${inheritedDbScope === 'per-branch' ? '分支独立库' : '共享库'}`}
+                      </span>
                     </div>
                   </div>
                   <select
@@ -6954,20 +6959,43 @@ function SettingsPanel({
                     ))}
                   </select>
                   <select
-                    className="h-9 min-w-[150px] rounded-md border border-input bg-background px-3 text-sm"
+                    className="h-9 min-w-[190px] rounded-md border border-input bg-background px-3 text-sm"
                     value={dbScopeOverride ?? ''}
                     onChange={(event) => onSetProfileDbScope(profile, event.target.value as '' | 'shared' | 'per-branch')}
                     disabled={modeSavingProfileId === profile.profileId}
-                    title="数据库隔离:分支独立库会给 DB 名追加分支后缀;切换后需重新部署生效"
+                    title="高级：只覆盖本分支的数据库隔离；项目默认在项目设置 → 数据库隔离 里改。切换后需重新部署生效"
                   >
-                    <option value="">{`数据库:继承(${inheritedDbScope === 'per-branch' ? '分支独立库' : '共享库'})`}</option>
-                    <option value="shared">数据库:共享库</option>
-                    <option value="per-branch">数据库:分支独立库</option>
+                    <option value="">{`数据库:继承项目默认(${inheritedDbScope === 'per-branch' ? '分支独立库' : '共享库'})`}</option>
+                    <option value="shared">数据库:本分支覆盖为共享库</option>
+                    <option value="per-branch">数据库:本分支覆盖为分支独立库</option>
                   </select>
+                  {dbScopeOverride !== undefined ? (
+                    <button
+                      type="button"
+                      className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60"
+                      disabled={modeSavingProfileId === profile.profileId}
+                      onClick={() => onSetProfileDbScope(profile, '')}
+                      title="删掉本分支的数据库隔离覆盖，重新跟随项目默认；重新部署后生效"
+                    >
+                      恢复继承
+                    </button>
+                  ) : null}
                   {modeSavingProfileId === profile.profileId ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
                 </div>
               );
             })}
+            {profileState.profiles.length > 0 ? (
+              <div className="text-xs text-muted-foreground">
+                数据库隔离的项目默认在
+                <a
+                  href={`/settings/${encodeURIComponent(projectId)}#db-isolation`}
+                  className="mx-1 text-primary underline-offset-2 hover:underline"
+                >
+                  项目设置 → 数据库隔离
+                </a>
+                里改；这里的下拉只是本分支的高级覆盖。
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

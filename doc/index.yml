@@ -77,6 +77,7 @@ docs:
   design.cds.replica-set: "CDS 复制集模式（一个入口，多个版本并行） · 设计"
   design.cds.resilience: "CDS 容量预算与故障隔离设计 · 设计"
   design.cds.self-hosting: "CDS Self-Hosting（CDS 托管 CDS）· 技术设计 · 设计"
+  design.cds.settings-taxonomy: "CDS 设置分组与数据分类 · 设计"
   design.cds.skill-version-update: "CDS 技能版本与更新架构 · 设计"
   design.cds.visual-deploy: "CDS 绝对可视化一键部署 · 设计"
   design.cds.web-entry: "CDS 多 Web 入口治理 · 设计"

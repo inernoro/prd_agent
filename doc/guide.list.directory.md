@@ -78,6 +78,7 @@
 - [CDS 复制集模式（一个入口，多个版本并行） · 设计](./design.cds.replica-set.md) `design.cds.replica-set`
 - [CDS 容量预算与故障隔离设计 · 设计](./design.cds.resilience.md) `design.cds.resilience`
 - [CDS Self-Hosting（CDS 托管 CDS）· 技术设计 · 设计](./design.cds.self-hosting.md) `design.cds.self-hosting`
+- [CDS 设置分组与数据分类 · 设计](./design.cds.settings-taxonomy.md) `design.cds.settings-taxonomy`
 - [CDS 技能版本与更新架构 · 设计](./design.cds.skill-version-update.md) `design.cds.skill-version-update`
 - [CDS 绝对可视化一键部署 · 设计](./design.cds.visual-deploy.md) `design.cds.visual-deploy`
 - [CDS 多 Web 入口治理 · 设计](./design.cds.web-entry.md) `design.cds.web-entry`

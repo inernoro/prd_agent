@@ -30,6 +30,7 @@ import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
+import { createProjectDbIsolationRouter } from './routes/project-db-isolation.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
@@ -814,6 +815,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /deployment-versions': '列出部署版本',
     'GET /projects/:id/delivery': '查看项目交付模式',
     'PUT /projects/:id/delivery': '更新项目交付模式',
+    'GET /projects/:id/db-isolation': '查看数据库隔离',
+    'PUT /projects/:id/db-isolation': '设置数据库隔离',
     'POST /projects/:id/managed-plan': '生成托管部署计划',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
@@ -1224,6 +1227,8 @@ export function resolveApiLabel(method: string, path: string): string {
     // 「查询项目 / 更新项目」。必须在通配条目之前给出 segment-safe pattern。
     [/^GET \/projects\/[^/]+\/agent-profile$/, '获取项目 Agent 角色'],
     [/^PUT \/projects\/[^/]+\/agent-profile$/, '更新项目 Agent 角色'],
+    [/^GET \/projects\/[^/]+\/db-isolation$/, '查看数据库隔离'],
+    [/^PUT \/projects\/[^/]+\/db-isolation$/, '设置数据库隔离'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],
@@ -4149,6 +4154,11 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createProjectStorageRouter({
     stateService: deps.stateService,
     shell: deps.shell,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+  // 项目级数据库隔离（BuildProfile.dbScope 的项目设置入口 + 原子批量写，2026-09-02）
+  app.use('/api', createProjectDbIsolationRouter({
+    stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
   }));
   // Cache diagnostics / repair / cross-server migration.

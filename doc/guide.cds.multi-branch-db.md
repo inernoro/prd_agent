@@ -38,28 +38,27 @@ Phase 5 给 `BuildProfile` 加了 `dbScope` 字段:
 
 ### 1.1 给整个项目开(推荐)
 
-修改 BuildProfile 的 `dbScope` 字段(目前手动改 yaml,UI 切换在后续 phase 加):
+项目默认值就是 `BuildProfile.dbScope`，入口在**项目设置 → 数据 → 数据库隔离**（2026-09-02 起）：
 
-```yaml
-services:
-  backend:
-    image: node:20
-    # ... 其它字段
-    # 后续 cds 会读这个 label 转成 BuildProfile.dbScope
-    labels:
-      cds.db-scope: "per-branch"
-```
+- 第一屏先给结论（几个服务共享库、几个分支独立库、几条分支有本分支覆盖）；
+- 可以「全部设为共享库 / 全部设为分支独立库」批量设，也可以逐服务切；
+- 每个服务会列出它会被改写的库名变量；**没声明库名变量的服务切了也不会有效果**，页面会直接提示；
+- 保存是原子的：任何一项不合法整批不落盘。保存前会说明影响面——所有继承项目配置的分支
+  重新部署后生效，已有本分支覆盖的分支保持不变。
 
-> **TODO Phase 5.5**:`cdscli scan` 自动给含 schemaful infra 的项目默认设 `dbScope: per-branch`,目前需要手改。
-
-或直接调 CDS API:
+对应 API（项目级，`assertProjectAccess` 守门，项目 key 只能改自己的项目）：
 
 ```bash
-curl -X PUT "$CDS/api/projects/<id>/build-profiles/backend" \
-  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"dbScope": "per-branch"}'
+# 读：每个服务的生效档位 + 来源 + 会改写的 key + 分支覆盖概况
+curl "$CDS/api/projects/<id>/db-isolation" -H "X-AI-Access-Key: $AI_ACCESS_KEY"
+
+# 写：批量（all）或逐服务（services），两者同时给时 services 优先
+curl -X PUT "$CDS/api/projects/<id>/db-isolation" \
+  -H "X-AI-Access-Key: $AI_ACCESS_KEY" -H "Content-Type: application/json" \
+  -d '{"all": "per-branch", "services": {"web": "shared"}}'
 ```
+
+托管交付（managed）项目的 profile 由 CDS 自动生成，这个页签只读。
 
 ### 1.2 给单个分支开(覆盖 baseline)
 
@@ -119,7 +118,7 @@ per-branch 模式下:
 | **不主动建库** | 假定 mysql/postgres 镜像或 ORM migration 阶段会自动 `CREATE DATABASE IF NOT EXISTS`。多数 ORM(Prisma/EF/Sequelize)自带此行为;原生 SQL 项目可能要在应用启动加 `mysql -e "CREATE DATABASE..."` | Phase 5.5+ scheduler 部署前主动建库 |
 | **不清理** | 分支删除后 `app_<slug>` 库残留,占 disk | Phase 5.5+ 加 GC,删分支时 drop 库 |
 | **migration 多分支冲突无警告** | 两个分支都改 schema 各自跑 migration,merge 时可能冲突 | Phase 5.5+ 部署前对比 git migration 文件 vs DB `__migrations` 表给警告 |
-| **dbScope UI 切换暂未做** | 现在手 PUT API 或改 yaml | Phase 5.5+ prd-admin 加切换 toggle |
+| **改项目默认不会自动重部署、不迁移存量数据** | 切到 per-branch 后旧共享库里的数据不会搬进分支库，分支要重新部署并重跑 migration | 有意设计：切库是重操作，重部署时机由用户决定；数据迁移走复制集「隔离库」能力 |
 | **不支持每分支独立 mysql 实例** | 所有分支共用同一容器,只是 db name 不同。disk 用一份 | 设计取舍:per-branch instance 太重,本 MVP 不做 |
 
 这些边界**不阻塞**北极星目标"多分支不互相破坏数据" — 核心隔离机制已 work。
