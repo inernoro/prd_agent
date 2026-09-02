@@ -364,6 +364,47 @@ describe('上传落位：只新增、不替换，且贴着锚点对齐', () => {
     expect(near).toMatch(/if \(!w \|\| !h\) return null;/);
   });
 
+  it('【关键】首页带进来的参考图先认领画布上已有的那张，不再落第二份', () => {
+    // 用户在首页传一张图 + 一句话跳进画板，画布上出现两张一样的参考图。
+    // 同一张图走了两条路各落一次：首页跳转前已 upload 进 workspace，新画布 boot 时
+    // 走「回退到资产列表重建画布」把它铺上去（第一张）；这里再把 messageText 里的
+    // [IMAGE src=...] 当新图加一遍（第二张）。用户只按了一次，系统落了两次。
+    //
+    // 判据钉三件事：assetId 真的被读了（首页一直在传，之前没人读，形状 2）、
+    // 落地前先按身份找、找到就复用而不是新增。
+    expect(code).toMatch(/initialAssetIdRef\.current = String\(data\.assetId/);
+    const at = code.indexOf('const wantAssetId = initialAssetIdRef.current;');
+    expect(at, '内联图落地前应先按 assetId 认领').toBeGreaterThan(0);
+    const near = code.slice(at, at + 900);
+    expect(near).toMatch(/x\.assetId === wantAssetId/);
+    // assetId 缺失（老数据）时退回 src 比对，不能直接放行变成必然重复。
+    expect(near).toMatch(/x\.src === inline\.src/);
+    expect(near).toMatch(/if \(already\)/);
+  });
+
+  it('【关键】上传路径不许去重：用户传几次就是几张', () => {
+    // 用户明确定的原则：「同图允许上传、上传多少次就多少张」。
+    // 这条守的是**我自己**——排查两张参考图时我一度打算给上传加内容去重，
+    // 那会把「用户按两次」也一起吞掉，方向正好反了。真正该修的是系统重复（见上一条）。
+    const at = code.indexOf('const onUploadImages = async (files: File[])');
+    expect(at).toBeGreaterThan(0);
+    const body = code.slice(at, code.indexOf('const onUploadImagesRef', at));
+    // 盯「拿新文件跟画布已有内容比」这个动作，不盯 sha256 这个词本身——
+    // 上传路径里本来就有两处合法的 sha256（持久化后记录服务端返回的哈希）。
+    // 第一版判据直接禁词，当场把合法用法判红了，那是判据比该管的范围宽。
+    for (const banned of ['crypto', 'digest(', 'dedup', '已在画布', 'sha256 ==', '.sha256 ===']) {
+      expect(body, `上传路径出现了去重痕迹「${banned}」`).not.toContain(banned);
+    }
+    // 正向断言：落位循环对每个文件都产出一个 item，中途不许跳过。
+    const loopAt = body.indexOf('for (const it of added) {');
+    expect(loopAt, '应有逐个落位的循环').toBeGreaterThan(0);
+    const loopEnd = body.indexOf('const merged = [...prev, ...placed]', loopAt);
+    expect(loopEnd, '落位循环后应紧跟合并').toBeGreaterThan(loopAt);
+    const loop = body.slice(loopAt, loopEnd);
+    expect(loop).toContain('placed.push(nextIt);');
+    expect(loop, '落位循环里不许有跳过分支').not.toContain('continue');
+  });
+
   it('【关键】卡片的上角只允许一个主人：选中标签要给 Frame 头部和 loader 让位', () => {
     // 同一张卡的两个上角有三个互不知情的图层在抢：Frame 头部（左上标题 + 右上面板按钮）、
     // 选中标签（左上名字 + 右上尺寸）、生成中的 loader（底行已含尺寸）。

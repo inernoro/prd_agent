@@ -5541,6 +5541,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   // 处理初始 prompt（从首页快捷输入跳转过来，或从 sessionStorage 读取）
   const initialPromptHandledRef = useRef(false);
+  /**
+   * 首页带进来的那张参考图，在这个 workspace 里的 assetId。
+   *
+   * 首页交接包（sessionStorage）一直带着它，但画板这边从来没读过——链路只建了一半，
+   * 而少的这一半正是「这张图是不是已经在画布上了」的唯一可靠判据。
+   */
+  const initialAssetIdRef = useRef<string | null>(null);
   const [initialPrompt, setInitialPrompt] = useState<{
     text: string;
     size: string | null;
@@ -5561,6 +5568,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const data = JSON.parse(stored);
       // 读取后立即删除，避免重复执行
       sessionStorage.removeItem(sessionKey);
+      // assetId 是首页那张参考图在本 workspace 里的身份。首页一直在传，这里第一次读。
+      initialAssetIdRef.current = String(data.assetId || '').trim() || null;
       const messageText = String(data.messageText || '').trim();
       if (messageText) {
         setInitialPrompt(parseInlinePrompt(messageText));
@@ -5587,6 +5596,40 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       // 如果有内联图片，先添加到 canvas
       if (inline?.src) {
+        /*
+         * 先认领，再新增。
+         *
+         * 用户在首页传一张图 + 一句话跳进来，画布上出现了**两张一样的参考图**。
+         * 根因是同一张图走了两条路，各落地一次：
+         *   1. 首页跳转前已经 uploadVisualAgentWorkspaceAsset 把它传进这个 workspace；
+         *      新 workspace 没有画布快照，boot 走「回退到资产列表重建画布」，
+         *      把 workspace 的全部 asset 铺上画布 —— 这是第一张。
+         *   2. 这里再把 messageText 里的 [IMAGE src=...] 当成新图加一遍 —— 第二张。
+         *
+         * 注意这**不违反**「同图允许上传、传几次就几张」：那条说的是用户按几次就有几张。
+         * 这里用户只按了一次，是系统落了两次，属于系统重复，不是用户重复。
+         *
+         * 判据用 assetId（首页交接包一直在传，之前没人读），它是这张图在本 workspace 里的
+         * 身份，比 URL 稳（URL 可能带签名或走变体）。assetId 缺失（老数据）时退回 src 比对。
+         */
+        const wantAssetId = initialAssetIdRef.current;
+        const already = canvasRef.current.find((x) => {
+          if ((x.kind ?? 'image') !== 'image') return false;
+          if (wantAssetId && x.assetId) return x.assetId === wantAssetId;
+          return Boolean(x.src) && x.src === inline.src;
+        });
+
+        if (already) {
+          // 已经在画布上了：复用它，只补选中与 chip。多出来的那张从来就不该存在。
+          const reuseRefId = typeof already.refId === 'number' ? already.refId : nextRefId;
+          if (typeof already.refId !== 'number') setNextRefId(reuseRefId + 1);
+          setSelectedKeys([already.key]);
+          richComposerRef.current?.clearPending();
+          richComposerRef.current?.insertImageChip(
+            { key: already.key, refId: reuseRefId, src: already.src, label: inline.name || `img${reuseRefId}` },
+            { preserveFocus: true }
+          );
+        } else {
         const inlineKey = `inline_${Date.now()}`;
         // 为新图片分配 refId
         const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
@@ -5601,6 +5644,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           status: 'done',
           kind: 'image',
           refId: newRefId,
+          // assetId 已知就带上：它已经在后端了，不带会被当成「本地未持久化」，
+          // 刷新后按 localOnlyImages 跳过（形状 1：判据少一个字段就漏一类输入）。
+          ...(initialAssetIdRef.current ? { assetId: initialAssetIdRef.current, syncStatus: 'synced' as const } : {}),
         };
         setCanvas((prev) => [...prev, inlineCanvasItem]);
         // 手动同步选中和 chip（因为 setCanvas 是异步的）
@@ -5610,6 +5656,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           { key: inlineKey, refId: newRefId, src: inline.src, label: inline.name || `img${newRefId}` },
           { preserveFocus: true }
         );
+        }
       }
 
       // 通过统一守门员发送（inlineImage 现在已在 canvas 中，会被 selectedKeys 引用）
