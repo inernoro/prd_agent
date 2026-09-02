@@ -1568,8 +1568,14 @@
     padding-top: 0;
   }
 
+  /* 工具组与 footer 同一段落语言；区别只在「工具跟着导航贴顶、footer 贴栏底」。 */
+  .cds-rail-tools,
   .cds-rail-footer {
     @apply flex flex-col gap-0.5 border-t border-[hsl(var(--hairline))] pt-3;
+  }
+
+  .cds-rail-tools {
+    @apply mt-3;
   }
 
   .cds-rail-item {
@@ -2902,7 +2908,12 @@
     letter-spacing: 0.02em;
   }
 
+  /* 图标与标签在选中态分主辅：图标转主色、标签转满墨加粗。
+     两者不再同色同权重地说同一件事——这正是「图标 + 标签冗余」的由来。
+     标签**不能**跟着 item 染成主色：2026-08-31 否掉的那一档就是标签用
+     primary-ink 落在栏底，实测 4.24:1。 */
   .cds-rail .cds-rail-item[data-active='true'] > .cds-rail-short {
+    color: hsl(var(--foreground));
     font-weight: 600;
   }
 
@@ -2912,15 +2923,38 @@
     color: hsl(var(--foreground-muted));
   }
 
-  /* 当前页：实心底 + 反色墨。
-     此前是「淡橙底 + 橙字」，白天实测 4.25:1 —— 比非活动的 4.72:1 还低，
-     选中项反而是全栏最弱的一个，「我在哪」只能靠色相和那根竖条撑着。
-     实色填充上的墨色必须用 --status-ink（白天=白、暗色=深墨），
-     两档都是自己那一档的正确反色：白天 4.97:1，暗色 7.63:1。 */
+  /* 当前页（2026-09-02 改为「竖条」，四稿比对后用户选定方向 A）：
+     一根 3px 竖条 + 抬升底 + 主色图标 + 满墨标签。
+
+     此前是整项实心橙。它的问题从来不是看不清（实心那档白天 5.13:1、暗色 7.67:1，
+     都过 AA），是**太清楚**：一个只表示「你在这」的指示物，主色铺了约 3400px²，
+     抢在页面上所有真正的操作前面；而底部的「接入 Agent」又是第二块橙，
+     同一根栏里两种高亮在互相抢。现在主色只剩竖条约 60px² 加图标描边，
+     是全栏唯一的彩色。
+
+     再往前一档（2026-08-31 之前）是「淡橙底 + 橙字」，白天 4.25:1，比非活动的
+     还低——那一档已经否掉，不要回去：判据见 palette-contrast-guard。
+
+     现在这一档的数值：图标对抬升底白天 5.13:1、暗色 6.74:1；标签走满墨
+     白天 15.04:1、暗色 12.91:1；竖条不是文字，判据取非文字构件的 3:1，
+     白天 4.22:1、暗色 8.16:1。 */
   .cds-rail .cds-rail-item[data-active='true'] {
-    background-color: hsl(var(--primary-ink));
-    color: hsl(var(--status-ink));
+    position: relative;
+    background-color: hsl(var(--surface-raised));
+    color: hsl(var(--primary-ink));
     box-shadow: none;
+  }
+
+  .cds-rail .cds-rail-item[data-active='true']::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 3px;
+    height: 20px;
+    transform: translateY(-50%);
+    border-radius: 0 3px 3px 0;
+    background-color: hsl(var(--primary-ink));
   }
 
   /* 底部动作在栏里不再各自带盒子：强调只留颜色，边框与底色交给 hover/active，
@@ -2930,6 +2964,31 @@
     border: 0 !important;
     background: transparent !important;
     box-shadow: none !important;
+  }
+
+  /* 2026-09-02：接入 Agent 在栏里不再用橙字。
+     它是一个入口，不是当前页；用主色写它，就是在和「你在这」抢同一种语言——
+     一根栏里两处橙，眼睛不知道该看哪个。强调改为图标右上一颗 5px 的点：
+     位置压在 20px 图标的右上角（图标顶边距项顶 7px、水平居中）。
+     抽屉里保留原来的主色文字，那里没有这场竞争。 */
+  .cds-rail .cds-agent-access-entry {
+    position: relative;
+    color: hsl(var(--foreground-muted)) !important;
+  }
+
+  .cds-rail .cds-agent-access-entry::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: calc(50% + 6px);
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    background-color: hsl(var(--primary-ink));
+  }
+
+  .cds-rail .cds-agent-access-entry:hover {
+    color: hsl(var(--foreground)) !important;
   }
 
   .cds-rail .cds-bug-report-entry {

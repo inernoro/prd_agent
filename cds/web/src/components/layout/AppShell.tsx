@@ -2,7 +2,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Activity, AlarmClock, Bot, Bug, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, UserRound, X } from 'lucide-react';
+import { Activity, Check, CircleAlert, Clock, Contrast, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Search, Settings, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
@@ -470,7 +470,7 @@ function RailNav({
           onMouseEnter={preloadReleaseConsolePage}
           onFocus={preloadReleaseConsolePage}
         >
-          <Rocket />
+          <Upload />
           <span className="cds-rail-full">发布控制台</span>
           <span className="cds-rail-short">发布</span>
         </Link>
@@ -484,7 +484,7 @@ function RailNav({
           onMouseEnter={preloadTaskSchedulePage}
           onFocus={preloadTaskSchedulePage}
         >
-          <AlarmClock />
+          <Clock />
           <span className="cds-rail-full">任务调度</span>
           <span className="cds-rail-short">任务</span>
         </Link>
@@ -498,7 +498,7 @@ function RailNav({
           onMouseEnter={preloadReportsPage}
           onFocus={preloadReportsPage}
         >
-          <ClipboardCheck />
+          <FileText />
           <span className="cds-rail-full">验收报告</span>
           <span className="cds-rail-short">报告</span>
         </Link>
@@ -517,8 +517,12 @@ function RailNav({
           <span className="cds-rail-short">状态</span>
         </Link>
       </div>
-      <div className="flex-1" />
-      <div className="cds-rail-footer">
+      {/*
+       * 工具组紧跟导航，不跟着 flex-1 一起被顶到栏底。
+       * 原来五项全在底部，中间空出约 190px：那不是留白，是把一根栏读成了两根。
+       * 现在只有「我的东西」（主题 / 账号）留在栏底，空隙下移且缩短。
+       */}
+      <div className="cds-rail-tools">
         <button
           type="button"
           className="cds-rail-item cds-rail-action-entry cds-agent-access-entry"
@@ -530,7 +534,7 @@ function RailNav({
           title="接入 Agent：把当前页面任务交给 Agent"
           data-agent-action="connect"
         >
-          <Bot />
+          <SquareTerminal />
           <span className="cds-rail-full">接入 Agent</span>
           <span className="cds-rail-short">Agent</span>
         </button>
@@ -545,7 +549,7 @@ function RailNav({
           title="提交缺陷（Command/Ctrl + B）"
           data-shell-action="bug-report"
         >
-          <Bug />
+          <CircleAlert />
           <span className="cds-rail-full">提交缺陷</span>
           <span className="cds-rail-short">缺陷</span>
         </button>
@@ -559,10 +563,13 @@ function RailNav({
           onMouseEnter={preloadCdsSettingsPage}
           onFocus={preloadCdsSettingsPage}
         >
-          <Settings />
+          <SlidersHorizontal />
           <span className="cds-rail-full">系统设置</span>
           <span className="cds-rail-short">设置</span>
         </Link>
+      </div>
+      <div className="flex-1" />
+      <div className="cds-rail-footer">
         <RailThemeToggle />
         <UserAccountMenu
           authMode={authMode}
@@ -585,7 +592,7 @@ function RailNav({
 function RailThemeToggle(): JSX.Element {
   const { theme, toggleWithRipple } = useTheme();
   const toLight = theme === 'dark';
-  const Icon = toLight ? Sun : Moon;
+  const Icon = Contrast;
   return (
     <button
       type="button"
