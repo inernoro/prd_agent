@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { areaPath, stackAreas, seedMetricSeries, OverviewPanel } from '@/components/branch/OverviewPanel';
+import { sameOperationKind } from '@/components/BranchDetailDrawer';
 
 /**
  * 总览面板（2026-09-01 视觉化重排）的三条守卫。
@@ -685,6 +686,81 @@ describe('总览渲染冒烟：缺口真的没被画成 0', () => {
  * 1 帧也在 liveOnly 里。`/metrics` 挂着或还没回来时，上一版让它整个贡献 0，于是
  * 顶部大数一边写着「合计 2 个服务」，一边把其中一个当成不存在。
  */
+describe('分支停了就没有「当前速率」', () => {
+  const withRates = seedMetricSeries([
+    { cpuPercent: 4, memUsedBytes: 100, rxRate: 1024, txRate: 2048 },
+    { cpuPercent: 4, memUsedBytes: 100, rxRate: 1024, txRate: 2048 },
+  ]);
+  const render = (status: 'running' | 'stopped', running: boolean): string =>
+    renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status }],
+      running,
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: { api: withRates },
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+
+  /** 只看吞吐卡那一段，别让别处的数字替这条断言作证。 */
+  const throughput = (html: string): string => {
+    const at = html.indexOf('吞吐');
+    expect(at, '吞吐卡没渲染出来（空切片必然绿）').toBeGreaterThan(-1);
+    return html.slice(at);
+  };
+
+  it('在跑时照常报当前速率', () => {
+    const t = throughput(render('running', true));
+    expect(t, '1024 B/s 应当出现在读数里').toContain('1.00 KiB');
+    expect(t).not.toContain('暂不可用');
+  });
+
+  it('停了之后大数与两行读数都说暂不可用，而不是端出停机前的速率', () => {
+    const t = throughput(render('stopped', false));
+    expect(t, '分支没在跑却仍在报当前速率').not.toContain('1.00 KiB/s');
+    expect(t, '大数应当说暂不可用').toContain('暂不可用');
+    expect(t, '网络与磁盘两行读数也该跟着').toContain('当前速率暂不可用');
+  });
+
+  it('历史几何仍然画出来（过去它确实在跑）', () => {
+    const t = throughput(render('stopped', false));
+    const paths = [...t.matchAll(/ d="([^"]+)"/g)].map((m) => m[1]);
+    expect(paths.filter((d) => d.includes('Z')).length, '把历史一起抹掉就过头了').toBeGreaterThan(0);
+  });
+});
+
+/**
+ * 同一次部署不许在柱状图里出现两根柱子（2026-09-02，Codex P2，核对属实）。
+ *
+ * 「部署并打开」的实时记录 kind 是 `preview`，它落库后回来却恒为 `deploy`；
+ * 按 kind 严格相等去重就两条都留下 —— 抽屉一 reload，中位线、成功率、趋势
+ * 全被同一次部署算了两遍。这条与「open 不算构建」是**同一个 kind 别名问题的
+ * 另一半**：那半管「不该进来的别进来」，这半管「同一件事别算两遍」。
+ */
+describe('构建类 kind 别名在去重时归一', () => {
+  it('preview 与 deploy 视作同一件事（这正是「部署并打开」的两种叫法）', () => {
+    expect(sameOperationKind('preview', 'deploy')).toBe(true);
+    expect(sameOperationKind('deploy', 'rebuild')).toBe(true);
+    expect(sameOperationKind('deploy', 'deploy')).toBe(true);
+  });
+
+  it('open 不是构建，不与构建类归并', () => {
+    expect(sameOperationKind('open', 'deploy'), 'open 只打开、不构建').toBe(false);
+    expect(sameOperationKind('open', 'preview')).toBe(false);
+    expect(sameOperationKind('open', 'open'), '同类仍应相等').toBe(true);
+  });
+
+  it('非构建类之间仍按严格相等', () => {
+    expect(sameOperationKind('restart', 'stop')).toBe(false);
+    expect(sameOperationKind('restart', 'restart')).toBe(true);
+  });
+});
+
 describe('只有一帧历史的服务，合计里照样算它', () => {
   const render = (live?: Record<string, { cpuPercent: number; memUsedBytes: number }>): string =>
     renderToStaticMarkup(createElement(OverviewPanel, {
@@ -953,7 +1029,13 @@ describe('分支状态与部署来源', () => {
       /const all\s*=\s*\[\.\.\.visibleDeployments,\s*\.\.\.legacy\]/,
     );
     expect(memo).toMatch(/START_TOLERANCE_MS/);
-    expect(memo).toMatch(/kept\.kind === item\.kind/);
+    /*
+     * 这里原本钉的是 `kept.kind === item.kind` 这段字面量——而那正是下一条要修的
+     * 缺陷本身（preview / deploy 是同一次部署的两种叫法，严格相等留成两条）。
+     * 判据钉在实现字面上，就会变成「谁修这个 bug 谁的 CI 红」（形状 4a）。
+     * 改成：比较必须走归一化函数，函数的行为另有直接断言。
+     */
+    expect(memo, '按 kind 严格相等去重，别名对留不住').toMatch(/sameOperationKind\(/);
   });
 });
 

@@ -706,8 +706,13 @@ const NET_COLOR = 'hsl(var(--series-net))';
 
 /** 一条「上下镜像」的双向图：正向在上、反向在下，共用一根基线与一把标尺。 */
 function MirroredPair({
-  up, down, present, label, upName, downName, height = 46,
-}: { up: number[]; down: number[]; present: boolean[]; label: string; upName: string; downName: string; height?: number }): JSX.Element {
+  up, down, present, anyRunning, label, upName, downName, height = 46,
+}: {
+  up: number[]; down: number[]; present: boolean[];
+  /** 没有服务在跑时不报「当前速率」，只留历史几何（Codex P2）。 */
+  anyRunning: boolean;
+  label: string; upName: string; downName: string; height?: number;
+}): JSX.Element {
   /*
    * 读数取最后一个**算得出速率**的桶（Codex P2，核对属实）。
    *
@@ -715,8 +720,8 @@ function MirroredPair({
    * 参与几何被填成的 0。掩码已经把它挡在几何之外了，读数这里却还在读它，于是
    * 图上是缺口、旁边写着 `0/s`。一个都没有就明说「暂不可用」，不编 0。
    */
-  const upNow = latestPresent(up, present);
-  const downNow = latestPresent(down, present);
+  const upNow = anyRunning ? latestPresent(up, present) : undefined;
+  const downNow = anyRunning ? latestPresent(down, present) : undefined;
   const peak = Math.max(1, ...up, ...down);
   const max = peak * 1.12;
   return (
@@ -763,10 +768,24 @@ function MirroredPair({
  * 两者本来就是同一个问题的两半——「这个分支在往外倒多少数据」。
  */
 function ThroughputChart({
-  rx, tx, read, write, present,
-}: { rx: number[]; tx: number[]; read: number[]; write: number[]; present: boolean[] }): JSX.Element {
-  // 大数与下面两行读数同一个口径：最后一个算得出速率的桶，没有就说暂不可用。
-  const rxNow = latestPresent(rx, present);
+  rx, tx, read, write, present, anyRunning,
+}: {
+  rx: number[]; tx: number[]; read: number[]; write: number[];
+  present: boolean[];
+  /** 还有没有服务在跑。没有的话「当前速率」就不存在，只剩历史几何（Codex P2）。 */
+  anyRunning: boolean;
+}): JSX.Element {
+  /*
+   * 大数与下面两行读数同一个口径：最后一个算得出速率的桶，没有就说暂不可用。
+   *
+   * 但「最后一个有速率的桶」不等于「现在的速率」——分支停掉之后那个桶还在窗口里，
+   * 上一版就照着它写「网络入站 1.2 MB/s」，而这个分支根本没有容器在跑
+   * （Codex P2，核对属实）。CPU / 内存两条路早就把已停服务从当前值里剔掉了
+   * （`s.stopped ? 0 : s.nowValue`），只有吞吐这条压根没收到状态。
+   *
+   * 历史几何照画不误——过去它确实在跑；变的只是「当前」这个词还成不成立。
+   */
+  const rxNow = anyRunning ? latestPresent(rx, present) : undefined;
   const hasDisk = read.some((v) => v > 0) || write.some((v) => v > 0);
   return (
     <ChartShell
@@ -777,8 +796,8 @@ function ThroughputChart({
       footnote={hasDisk ? undefined : '磁盘一行全为 0：可能是宿主内核没开块设备计量，或这些容器确实没落盘。'}
     >
       <div className="flex flex-col gap-3">
-        <MirroredPair up={rx} down={tx} present={present} label="网络" upName="收" downName="发" />
-        <MirroredPair up={read} down={write} present={present} label="磁盘" upName="读" downName="写" />
+        <MirroredPair up={rx} down={tx} present={present} anyRunning={anyRunning} label="网络" upName="收" downName="发" />
+        <MirroredPair up={read} down={write} present={present} anyRunning={anyRunning} label="磁盘" upName="读" downName="写" />
       </div>
     </ChartShell>
   );
@@ -1228,6 +1247,12 @@ export function OverviewPanel({
    * 一个判据三处消费，而不是三处各判各的，下次也就没有再分岔的余地。
    */
   const allServicesReady = running && services.length > 0 && okCount === services.length;
+  /*
+   * 「当前速率」成不成立看这个（Codex P2）。CPU / 内存靠每条序列自己的 `stopped`
+   * 逐个剔除，而吞吐是轴级合计、没有分服务的当前值可剔，所以只能整体判断：
+   * 一个在跑的服务都没有，就没有「当前」可言。
+   */
+  const anyRunning = running && services.some((sv) => sv.status === 'running');
   const verdict = badServices.length > 0
     ? `有 ${badServices.length} 个服务异常，${entries.length > 0 ? '入口可能打不开' : '分支未就绪'}`
     : allServicesReady
@@ -1448,7 +1473,11 @@ export function OverviewPanel({
             >
               <CompositionBar series={memSeries} />
             </ChartShell>
-            <ThroughputChart rx={netRx} tx={netTx} read={diskRead} write={diskWrite} present={axisRatePresent} />
+            <ThroughputChart
+              rx={netRx} tx={netTx} read={diskRead} write={diskWrite}
+              present={axisRatePresent}
+              anyRunning={anyRunning}
+            />
           </div>
         </>
       )}

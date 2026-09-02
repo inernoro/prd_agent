@@ -770,6 +770,24 @@ async function copyTextToClipboard(text: string): Promise<void> {
   document.body.removeChild(textarea);
 }
 
+/**
+ * 去重时把「同一次操作的不同叫法」归成一类（Codex P2，核对属实）。
+ *
+ * 一次「部署并打开」由 `deployBranch(..., openAfterDeploy=true)` 发起，实时那条
+ * 记录的 kind 是 `preview`；而它落库后经 `legacyLogToDeploymentItem` 回来时 kind
+ * 恒为 `deploy`。按 kind 严格相等去重就留下两条，抽屉一 reload 同一次部署在柱状图上
+ * 出现两根柱子，中位线、成功率、趋势全被带偏。
+ *
+ * `rebuild` 落库后同样回成 `deploy`，所以三种构建类叫法归一处。
+ * `open`（只打开、不构建）不在其中——它本来就不该进部署统计，见 openRunningPreview。
+ */
+const BUILD_KINDS = new Set<BranchDeploymentItem['kind']>(['deploy', 'preview', 'rebuild']);
+
+export function sameOperationKind(a: BranchDeploymentItem['kind'], b: BranchDeploymentItem['kind']): boolean {
+  if (BUILD_KINDS.has(a) && BUILD_KINDS.has(b)) return true;
+  return a === b;
+}
+
 function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchDeploymentItem {
   const events = log.events || [];
   const lines = events.map(eventText);
@@ -1726,7 +1744,7 @@ export function BranchDetailDrawer({
     const START_TOLERANCE_MS = 3_000;
     const all: BranchDeploymentItem[] = [];
     for (const item of [...visibleDeployments, ...legacy]) {
-      const dup = all.some((kept) => kept.kind === item.kind
+      const dup = all.some((kept) => sameOperationKind(kept.kind, item.kind)
         && Math.abs(kept.startedAt - item.startedAt) <= START_TOLERANCE_MS);
       if (!dup) all.push(item);
     }

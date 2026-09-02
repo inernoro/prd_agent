@@ -1276,8 +1276,6 @@ export function resolveApiLabel(method: string, path: string): string {
     // 注意上一条用 $ 收尾，接不住 /metrics/series —— 少了这行，Activity Monitor
     // 上只会显示一串裸 URL，启动时 auditApiLabels 也会打 [api-label] warning。
     [/^GET \/branches\/[^/]+\/metrics\/series$/, '查看指标历史'],
-    // 注意上一条用 $ 收尾，接不住 /metrics/series —— 少了这行，Activity Monitor
-    // 上只会显示一串裸 URL，启动时 auditApiLabels 也会打 [api-label] warning。
     [/^GET \/branches\/[^/]+\/failure-diagnosis$/, '诊断失败原因'],
     // 构建 Profile 扩展
     [/^PUT \/build-profiles\/(.+)\/deploy-mode$/, '切换部署模式'],
