@@ -79,6 +79,12 @@ describe('任务调度页的接线', () => {
     // 合并会先滤掉 B 的全局记录再贴上 A 的——B 在请求回来前是一片空白，
     // 那是在报假状态（Codex #1471 P2）。红绿闭环：删掉这个判据，本用例红。
     expect(merged, '完整史没有跟选中项对上号就直接合并了').toContain('selectedRuns.jobId !== selectedId');
+    // 拉失败要说出来：高频任务把这条任务挤出全局切片时，用户看到的是「没有历史」，
+    // 而真相是「没拉到」，两者的下一步完全不同（Codex #1471 P2 第十八轮）。
+    // 红绿闭环：把 failed 分支或那块提示删掉，本用例红。
+    expect(src, '完整史拉失败被静默吞掉了').toMatch(/\.catch\([\s\S]{0,200}failed: true/);
+    expect(src, '降级没有在界面上说出来').toContain('data-history-degraded');
+    expect(src, '降级提示没有给重试').toContain('setHistoryRetry');
     expect(src).toMatch(/\}, \[mergedRuns\]\);/);
 
     // 今日统计仍然只看全局那份：否则同一屏的数字会随着选中谁而变。

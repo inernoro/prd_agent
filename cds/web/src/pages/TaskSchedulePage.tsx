@@ -132,7 +132,9 @@ export function TaskSchedulePage(): JSX.Element {
   // 带上它属于哪个任务：只按数组存，切到 B 时 A 的记录还在，而下面的合并会先把 B 的
   // 全局记录滤掉再贴上 A 的——B 在请求回来之前健康条 / P50 / 细带 / 运行流全是空的，
   // 慢一点的请求就是在报假状态（Codex #1471 P2）。
-  const [selectedRuns, setSelectedRuns] = useState<{ jobId: string; runs: ScheduledJobRun[] }>({ jobId: '', runs: [] });
+  const [selectedRuns, setSelectedRuns] = useState<{ jobId: string; runs: ScheduledJobRun[]; failed: boolean }>({ jobId: '', runs: [], failed: false });
+  /** 完整史拉失败后的重试计数：进 effect 的依赖，加一次就重拉一次。 */
+  const [historyRetry, setHistoryRetry] = useState(0);
   const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<FormState>(() => emptyForm());
   const [loading, setLoading] = useState(true);
@@ -206,16 +208,19 @@ export function TaskSchedulePage(): JSX.Element {
   }, [projects]);
 
   useEffect(() => {
-    if (!selectedId) { setSelectedRuns({ jobId: '', runs: [] }); return; }
+    if (!selectedId) { setSelectedRuns({ jobId: '', runs: [], failed: false }); return; }
     let alive = true;
     void apiRequest<{ runs: ScheduledJobRun[] }>(
       `/api/scheduled-jobs/runs?jobId=${encodeURIComponent(selectedId)}&limit=200`,
     )
-      .then((res) => { if (alive) setSelectedRuns({ jobId: selectedId, runs: res.runs || [] }); })
+      .then((res) => { if (alive) setSelectedRuns({ jobId: selectedId, runs: res.runs || [], failed: false }); })
       // 拉不到就退回全局切片：细带和健康条会少几条，但不能因此把整页打红。
-      .catch(() => { if (alive) setSelectedRuns({ jobId: selectedId, runs: [] }); });
+      // 只是这个降级**必须说出来**——高频任务把这条任务挤出全局切片时，
+      // 用户看到的是「没有历史」，而真相是「没拉到」，两者的下一步完全不同
+      // （Codex #1471 P2；expectation-management：失败要给原因和下一步）。
+      .catch(() => { if (alive) setSelectedRuns({ jobId: selectedId, runs: [], failed: true }); });
     return () => { alive = false; };
-  }, [selectedId, runs]);
+  }, [selectedId, runs, historyRetry]);
 
   /**
    * 全局切片 + 选中任务的完整史；选中那个任务的记录以完整史为准。
@@ -601,6 +606,18 @@ export function TaskSchedulePage(): JSX.Element {
                       onEdit={() => { selectJob(selectedJob); openEditor(); }}
                       onBack={() => setSelectedId('')}
                     />
+                    {selectedRuns.jobId === selectedId && selectedRuns.failed ? (
+                      <div
+                        role="status"
+                        data-history-degraded
+                        className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-warn/40 bg-warn-soft px-4 py-2 text-xs text-warn"
+                      >
+                        <span>这条任务的完整运行史没拉到，下面是全局切片，可能不全。</span>
+                        <button type="button" className="underline underline-offset-2" onClick={() => setHistoryRetry((n) => n + 1)}>
+                          重试
+                        </button>
+                      </div>
+                    ) : null}
                     {laneStrip ? (
                       <TimelineBand
                         compact
