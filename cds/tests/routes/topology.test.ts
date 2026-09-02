@@ -281,6 +281,33 @@ describe('topology router', () => {
     }
   });
 
+  it('PUT /branches/:id/references/:key 在远端执行器分支或钉住提交的分支上拒绝（单服务部署没有分发且会解钉）', async () => {
+    const now = new Date().toISOString();
+    stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addBuildProfile({ id: 'llmgw-serve', name: 'llmgw', projectId: 'p-prd', dockerImage: 'node:20', workDir: '.', command: 'node s.js', containerPort: 8091, subdomain: 'llmgw' } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBuildProfile({ id: 'cb-web', name: 'cb-web', projectId: 'p-md', dockerImage: 'node:20', workDir: '.', command: 'node w.js', containerPort: 3000, pathPrefixes: ['/'], env: { LLMGW_BASE: '${CDS_REF:prd-agent/llmgw-serve}' } } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBranch({ id: 'prd-main', projectId: 'p-prd', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, services: { 'llmgw-serve': { profileId: 'llmgw-serve', containerName: 'c', hostPort: 1, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    stateService.addBranch({ id: 'md-pinned', projectId: 'p-md', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, pinnedCommit: 'abcdef1234567890', services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 2, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    stateService.addBranch({ id: 'md-remote', projectId: 'p-md', branch: 'feat/r', worktreePath: tmpDir, status: 'running', createdAt: now, executorId: 'exec-1', services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 3, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: () => null, envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' }, isRemoteExecutorBranch: (b) => b.id === 'md-remote' }));
+    const srv = app.listen(0);
+    try {
+      const body = { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'main' };
+      const pinned = await request(srv, 'PUT', '/api/branches/md-pinned/references/LLMGW_BASE', body);
+      expect(pinned.status).toBe(409);
+      expect(pinned.body.error).toBe('branch_pinned');
+      const remote = await request(srv, 'PUT', '/api/branches/md-remote/references/LLMGW_BASE', body);
+      expect(remote.status).toBe(409);
+      expect(remote.body.error).toBe('remote_executor_branch');
+      expect(stateService.getBranch('md-pinned')?.profileOverrides?.['cb-web']?.env?.LLMGW_BASE).toBeUndefined();
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+
   it('GET /overview/topology 每个项目给代表分支、体检结论与跨项目引用边', async () => {
     const now = new Date().toISOString();
     stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);

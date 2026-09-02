@@ -4514,6 +4514,12 @@ export function createServer(deps: ServerDeps): express.Express {
     assertProjectAccess: assertProjectAccess as any,
     getPublishedRoutes: deps.getPublishedRoutes,
     envConfig: { jwtIssuer: deps.config.jwt.issuer, previewHost: deps.config.previewDomain || deps.config.rootDomains?.[0] },
+    // 与复制集 isRemoteBranch 同口径：注册表查不到时保守视为远端
+    isRemoteExecutorBranch: (branch) => {
+      if (!isRemoteExecutorOwned(branch.executorId)) return false;
+      const node = deps.registry?.getAll().find((n) => n.id === branch.executorId);
+      return !node || node.role !== 'embedded';
+    },
   }));
 
   app.use('/api', createManagedProjectsRouter({

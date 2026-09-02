@@ -32,6 +32,8 @@ export interface TopologyRouterDeps {
   assertProjectAccess: (req: Request, projectId: string) => { status: number; body: unknown } | null;
   /** 最近一次发布给 forwarder 的路由表（路由判定查询用；省略时该接口只给 master 兜底的判定） */
   getPublishedRoutes?: () => RouteRecord[];
+  /** 分支是否归远端执行器（与复制集 isRemoteBranch 同口径）；省略时按本机处理 */
+  isRemoteExecutorBranch?: (branch: NonNullable<ReturnType<StateService['getBranch']>>) => boolean;
 }
 
 export function createTopologyRouter(deps: TopologyRouterDeps): Router {
@@ -192,6 +194,16 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     const serviceId = typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
     const branchRef = typeof body.branchRef === 'string' && body.branchRef.trim() ? body.branchRef.trim() : undefined;
     if (!/^[A-Z_][A-Z0-9_]*$/i.test(key)) { res.status(400).json({ error: 'validation', field: 'key', message: '键名不合法' }); return; }
+    // 切换随后要走单服务部署重建容器：该接口没有执行器分发、且会拉最新代码并解钉。
+    // 这两种分支不在本接口处理，明说让用户走完整重新部署（Codex 六轮 P1，扩范围项记 debt.cds）。
+    if (deps.isRemoteExecutorBranch?.(branch)) {
+      res.status(409).json({ error: 'remote_executor_branch', message: '该分支运行在远端执行器上，引用切换后的重建暂不支持在此进行，请改 compose / 项目环境变量后「重新部署」' });
+      return;
+    }
+    if (branch.pinnedCommit) {
+      res.status(409).json({ error: 'branch_pinned', message: `分支钉在提交 ${String(branch.pinnedCommit).slice(0, 12)}，切换引用会随单服务部署解钉并升级代码；请先取消钉住，或改走完整「重新部署」` });
+      return;
+    }
     if (!projectRef || !serviceId || !profileId) { res.status(400).json({ error: 'validation', message: 'profileId、projectRef 与 serviceId 必填' }); return; }
     if (!deps.stateService.getEffectiveProfilesForBranch(branch).some((p) => p.id === profileId)) {
       res.status(404).json({ error: 'not_found', message: `分支上没有服务 ${profileId}` });

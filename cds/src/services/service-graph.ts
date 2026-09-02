@@ -13,7 +13,7 @@
  * 安全边界：输出只含 env **键名**，env 值（可能含连接串 / 密钥）绝不出网。
  */
 import type { BuildProfile, InfraService, ServiceRole } from '../types.js';
-import { API_NAME_RE, WEB_NAME_RE, WORKER_NAME_RE, pickApiConventionProfile, pickDefaultProfile, resolveMainDomainRoutes } from './route-conventions.js';
+import { API_NAME_RE, WEB_NAME_RE, WORKER_NAME_RE, resolveMainDomainRoutes } from './route-conventions.js';
 import { handlesRootPath } from './web-entry.js';
 
 export interface ServiceGraphNode {
@@ -89,6 +89,8 @@ export interface ServiceGraph {
   sites: ServiceGraphSite[];
   /** 没有任何公网路由的服务：只能被别的服务经容器网络调用（画布挂在引用它的服务下面）。 */
   internal: string[];
+  /** cds.calls 里指向不存在服务的声明（写错或已删除），体检据此报 unknown-callee */
+  unresolvedCalls: Array<{ from: string; callee: string }>;
 }
 
 const OPERATIONAL_PROBE_RE = /(?:^|\/)(?:health|healthz|health-check|ready|readyz|readiness|live|livez|liveness|actuator|metrics)(?:\/|\?|$)/i;
@@ -258,11 +260,12 @@ export function parseNodeId(nodeId: string): { kind: 'service' | 'infra' | 'unkn
 
 export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[]): ServiceGraph {
   const ids = profiles.map((p) => p.id);
+  // 角色推断用的「按名兜底成为默认站 / 按名约定接管 /api/」取自与发布器同一份主域名判定，
+  // 否则输入顺序不同时徽标和站点壳会各说各话（Codex 六轮 P2）
+  const mainRoutes = resolveMainDomainRoutes(profiles);
   const roleCtx = {
-    apiConventionId: ids.some((id) => (profiles.find((p) => p.id === id)?.pathPrefixes || []).includes('/api/'))
-      ? undefined
-      : pickApiConventionProfile(ids),
-    defaultProfileId: profiles.some((p) => handlesRootPath(p)) ? undefined : (ids.length ? pickDefaultProfile(ids) : undefined),
+    apiConventionId: [...mainRoutes.viaConvention][0],
+    defaultProfileId: mainRoutes.shellSource === 'convention' ? mainRoutes.shellId : undefined,
   };
   const roles = new Map<string, ServiceRoleVerdict>(profiles.map((p) => [p.id, inferServiceRole(p, roleCtx)]));
   const nodes: ServiceGraphNode[] = [
@@ -297,6 +300,8 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
   const serviceIdSet = new Set(serviceIds);
 
   const edgeMap = new Map<string, ServiceGraphEdge>();
+
+  const unresolvedCalls: Array<{ from: string; callee: string }> = [];
   const upsert = (from: string, to: string, envKey?: string, viaDepends?: boolean, viaDeclared?: boolean): void => {
     if (from === to) return;
     const key = `${from}\u0000${to}`;
@@ -333,9 +338,13 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
       if (serviceIdSet.has(dep) && serviceNodeId(dep) !== self) upsert(self, serviceNodeId(dep), undefined, true);
       else if (infraIdSet.has(dep)) upsert(self, infraNodeId(dep), undefined, true);
     }
-    // 4) cds.calls 显式声明的调用（只认存在的服务；写错的 id 静默忽略，由体检的 orphan 规则兜住）
+    // 4) cds.calls 显式声明的调用；写错 / 已删除的被调方不画边但保留下来，由体检报 unknown-callee
     for (const callee of p.calls ?? []) {
-      if (serviceIdSet.has(callee) && serviceNodeId(callee) !== self) upsert(self, serviceNodeId(callee), undefined, false, true);
+      if (serviceIdSet.has(callee)) {
+        if (serviceNodeId(callee) !== self) upsert(self, serviceNodeId(callee), undefined, false, true);
+      } else if (!infraIdSet.has(callee)) {
+        unresolvedCalls.push({ from: p.id, callee });
+      }
     }
   }
 
@@ -368,5 +377,5 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
   }
 
   const { sites, internal } = buildServiceSites(profiles, roles);
-  return { nodes, edges, layers, sites, internal };
+  return { nodes, edges, layers, sites, internal, unresolvedCalls };
 }

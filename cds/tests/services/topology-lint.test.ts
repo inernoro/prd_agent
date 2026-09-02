@@ -124,3 +124,17 @@ services:
     expect(lintComposeYaml('hello: world')).toBeNull();
   });
 });
+
+describe('unknown-callee', () => {
+  it('cds.calls 指向不存在的服务时按 warn 报出，并点名调用方与写错的名字', () => {
+    const graph = buildServiceGraph([
+      { id: 'web', projectId: 'p', name: 'web', dockerImage: 'x', workDir: '.', containerPort: 3000, pathPrefixes: ['/'], calls: ['apii'] } as never,
+      { id: 'api', projectId: 'p', name: 'api', dockerImage: 'x', workDir: '.', containerPort: 8080, pathPrefixes: ['/api/'] } as never,
+    ], []);
+    const report = lintTopology(graph);
+    const f = report.findings.find((x) => x.rule === 'unknown-callee');
+    expect(f?.severity).toBe('warn');
+    expect(f?.services).toEqual(['web']);
+    expect(f?.message).toContain('apii');
+  });
+});

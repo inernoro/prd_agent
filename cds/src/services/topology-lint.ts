@@ -125,6 +125,17 @@ export function lintTopology(graph: ServiceGraph): TopologyLintReport {
     });
   }
 
+  // 5.5) cds.calls 指向不存在的服务（写错 / 已删除）→ warn：显式声明的边不能静默消失
+  for (const u of graph.unresolvedCalls ?? []) {
+    findings.push({
+      rule: 'unknown-callee',
+      severity: 'warn',
+      services: [u.from],
+      message: `${u.from} 的 cds.calls 声明调用 ${u.callee}，但 compose 里没有这个服务，这条关系不会出现在图上`,
+      fix: `把 cds.calls 里的 ${u.callee} 改成真实服务名，或删掉这条声明`,
+    });
+  }
+
   // 6) 角色靠名字或默认推断 → info（合并成一条，避免 N 张只差主语的卡）
   const guessed = services.filter((n) => n.roleSource === 'name' || n.roleSource === 'default').map((n) => n.rawId).sort();
   if (guessed.length > 0) {

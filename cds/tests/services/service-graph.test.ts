@@ -254,6 +254,17 @@ describe('buildServiceSites 站点分组与 forwarder 同源', () => {
 });
 
 describe('cds.calls 显式声明的调用边', () => {
+  it('指向不存在服务的声明不画边但保留在 unresolvedCalls，供体检报 unknown-callee', () => {
+    const g = buildServiceGraph([profile('web', { calls: ['api', 'mongodb', 'ghost'] }), profile('api')], [{ id: 'mongodb', projectId: 'p', name: 'm', dockerImage: 'mongo', containerPort: 27017, hostPort: 1, containerName: 'c', status: 'running', volumes: [], env: {} } as never]);
+    expect(g.unresolvedCalls).toEqual([{ from: 'web', callee: 'ghost' }]);
+    expect(g.edges.some((e) => e.to === 'service:api' && e.declared)).toBe(true);
+  });
+  it('角色推断用的默认站与站点壳同源：无根路径声明、名字判不出时都取 id 字典序第一', () => {
+    const g = buildServiceGraph([profile('zeta'), profile('alpha')], []);
+    expect(g.sites[0].shellId).toBe('alpha');
+    expect(g.nodes.find((n) => n.rawId === 'alpha')?.role).toBe('web');
+    expect(g.nodes.find((n) => n.rawId === 'zeta')?.role).not.toBe('web');
+  });
   it('声明的被调方存在时画边并标 declared；写错的 id 静默忽略', () => {
     const g = buildServiceGraph([profile('web', { calls: ['api', 'ghost'] }), profile('api')], []);
     const e = g.edges.find((x) => x.from === 'service:web' && x.to === 'service:api');
