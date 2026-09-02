@@ -49,6 +49,8 @@ interface ContainerStatLite {
   memLimitBytes?: number;
   netRxBytes?: number;
   netTxBytes?: number;
+  blockReadBytes?: number;
+  blockWriteBytes?: number;
 }
 interface StatsProvider {
   getServiceStats(names: string[]): Promise<Map<string, ContainerStatLite>>;
@@ -195,6 +197,8 @@ export class ResourceUsageSampler {
           memLimitBytes: stat.memLimitBytes ?? 0,
           netRxBytes: stat.netRxBytes ?? 0,
           netTxBytes: stat.netTxBytes ?? 0,
+          blockReadBytes: stat.blockReadBytes ?? 0,
+          blockWriteBytes: stat.blockWriteBytes ?? 0,
         }, nowMs);
       }
       const snapshot = computeResourceSnapshot(

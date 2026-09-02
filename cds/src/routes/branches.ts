@@ -11263,6 +11263,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         memLimitBytes: stat.memLimitBytes,
         netRxBytes: stat.netRxBytes,
         netTxBytes: stat.netTxBytes,
+        blockReadBytes: stat.blockReadBytes,
+        blockWriteBytes: stat.blockWriteBytes,
       }, sampledAt);
     }
 
