@@ -107,7 +107,10 @@ describe('方向性：幕从左上退到右下 + 元素沿路依次点亮', () =
     // （demo-causality-contract：先走到，再发生）。延迟必须铺满整个推进过程：
     // 上一版全挤在 40-600ms，光还在左上、右下的东西已经亮完了。
     const page = strip(read(PAGE));
-    const delays = [...page.matchAll(/rise\((\d+)\)/g)].map((m) => Number(m[1]));
+    // 尾随的 `[,)]` 是必须的：rise 现在有第二个参数（base className），
+    // 写死 `rise\((\d+)\)` 只匹配得到没传 base 的那几处，静默少数几站，
+    // 而 length 断言又只要求 >= 4，于是「漏了两站」这件事根本不会红。
+    const delays = [...page.matchAll(/rise\((\d+)\s*[,)]/g)].map((m) => Number(m[1]));
     const inline = [...page.matchAll(/'--wake-delay': '(\d+)ms'/g)].map((m) => Number(m[1]));
     const all = [...delays, ...inline].sort((a, b) => a - b);
     expect(all.length).toBeGreaterThanOrEqual(4);
@@ -116,6 +119,30 @@ describe('方向性：幕从左上退到右下 + 元素沿路依次点亮', () =
     // 最后一站要落在幕的行程之内，否则幕早退完了元素才亮，因果就断了。
     const beamMs = Number(read(GLOBALS).match(/animation: wake-illuminate (\d+)ms/)![1]);
     expect(Math.max(...all)).toBeLessThan(beamMs);
+  });
+
+  it('rise() 的 className 不许被元素自己的 className 覆盖', () => {
+    // 真实事故：<div className="w-full flex justify-center" {...rise(950)}>
+    // JSX 的 spread 在后面，rise 返回的 className 把前面那串整个覆盖掉；
+    // 包裹层丢了 w-full，父级又是 flex-col + items-center（块级子元素不拉伸），
+    // 于是塌成内容宽，1300 的长输入框缩成三百多。
+    //
+    // 最阴的是它只在 wake 为 true 时发生——也就是**只有整页刷新时**，
+    // SPA 内点进来完全正常，本地取证也照不出来（取证里宽度是写死的）。
+    //
+    // 所以判据盯形状：同一行里不许既有 className= 又有 {...rise(。
+    // base 要走 rise 的第二个参数，合并由函数负责。
+    //
+    // 必须先剥注释：本仓库这个坑已经踩到第五次——判据扫源码，而源码里解释这条判据的
+    // 注释本身就写着它要找的形状（上面第一行就是），于是守卫抓自己的说明文字。
+    const src = strip(read(PAGE));
+    // companion：确认剥完之后还剩真代码，否则上面那条会对着空字符串判绿。
+    expect(src).toContain('{...rise(');
+    const offenders = src
+      .split('\n')
+      .map((line, i) => [i + 1, line] as const)
+      .filter(([, line]) => line.includes('{...rise(') && line.includes('className='));
+    expect(offenders.map(([n, l]) => `${n}: ${l.trim()}`)).toEqual([]);
   });
 
   it('关掉动效时元素直接就位，不留下歪着或发暗的终态', () => {

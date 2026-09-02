@@ -1189,23 +1189,40 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     }
   };
 
-  // 场景标签选择
-  // 预设格：填词 + 把光标送进输入框。
-  //
-  // 两处都刚修过，原来这一排里有一格是死的：
-  // 1. ScenarioTags 的 onClick 写着 if (!tag.isPro)，MAP Pro 直接不进这个函数；
-  // 2. 就算进来了，这里第一行原本是 if (!prompt) return —— 空 prompt 照样被吞掉。
-  // 典型的「链路只建一半」：修了第一处不修第二处，那一格还是点了没反应。
-  // 整页刷新时那一束光。useState 的初始化函数只跑一次，正好消费掉那一次机会；
+  // 整页刷新时那一束光该不该放。useState 的初始化函数只跑一次，正好消费掉那一次机会；
   // 写成 useState(consumeWakeOnce()) 会在每次 render 求值（React 只用第一次的结果，
   // 但机会已经被后面的 render 白白消费掉了），SPA 内再进来就永远没有。
   const [wake] = useState(() => consumeWakeOnce());
-  // 沿光路依次点亮：左上先亮，右下最后。数值是光带 1150ms 行程上的取样点。
-  const rise = (delayMs: number) =>
-    wake ? { className: 'wake-rise', style: { '--wake-delay': `${delayMs}ms` } as React.CSSProperties } : {};
+  /**
+   * 沿光路依次点亮：左上先亮，右下最后。数值是幕 2500ms 行程上的取样点。
+   *
+   * **base 必须从这里传进去，不能写在元素的 className 上。**
+   * 上一版是 `<div className="w-full flex justify-center" {...rise(950)}>`——
+   * JSX 的 spread 在后面，`className: 'wake-rise'` 把前面那串整个覆盖掉了。
+   * 包裹层丢了 w-full，而它的父级是 flex-col + items-center，块级子元素在这里
+   * **不拉伸**，于是塌成内容宽；输入框的 min(100%, 1300px) 把 100% 解析到那个
+   * 内容宽的盒子上，1300 的长框缩成了三百多。
+   *
+   * 最阴的是它**只在整页刷新时发生**（wake 为 true 才走 rise），SPA 内点进来完全正常——
+   * 而用户正是在刷新页面看唤醒动画时撞上的。合并 className 这件事交给这个函数，
+   * 调用方就没有把它写在两个地方的机会。
+   */
+  const rise = (delayMs: number, base = '') =>
+    wake
+      ? {
+          className: base ? `${base} wake-rise` : 'wake-rise',
+          style: { '--wake-delay': `${delayMs}ms` } as React.CSSProperties,
+        }
+      : (base ? { className: base } : {});
 
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // 预设格：填词 + 把光标送进输入框。
+  //
+  // 两处都修过，原来这一排里有一格是死的：
+  // 1. ScenarioTags 的 onClick 写着 if (!tag.isPro)，MAP Pro 直接不进这个函数；
+  // 2. 就算进来了，这里第一行原本是 if (!prompt) return —— 空 prompt 照样被吞掉。
+  // 典型的「链路只建一半」：修了第一处不修第二处，那一格还是点了没反应。
   const onTagSelect = (prompt: string) => {
     setInputValue(prompt);
     setActiveTag(SCENARIO_TAGS.find((t) => t.prompt === prompt)?.key ?? null);
@@ -1448,7 +1465,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         <div {...rise(570)}><HeroSection /></div>
 
         {/* 快捷输入框 */}
-        <div className="w-full flex justify-center" {...rise(950)}>
+        <div {...rise(950, 'w-full flex justify-center')}>
         <QuickInputBox
           inputRef={promptRef}
           value={inputValue}
@@ -1468,7 +1485,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         </div>
 
         {/* 场景标签 */}
-        <div className="w-full flex justify-center" {...rise(1330)}>
+        <div {...rise(1330, 'w-full flex justify-center')}>
           <ScenarioTags onSelect={onTagSelect} activeKey={activeTag} />
         </div>
       </div>
