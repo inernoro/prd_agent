@@ -211,11 +211,55 @@ describe('定时任务运行记录的可观测性', () => {
     expect(rare, '低频任务的历史被全局上限吃掉了').toHaveLength(3);
 
     // 总量仍受上限约束，高频任务让位。
-    const all = stateService.listScheduledJobRuns({ limit: 100000 });
-    expect(all.length).toBeLessThanOrEqual(5000);
+    // listScheduledJobRuns 会把 limit 夹到 500，拿它断言 5000 的上限等于没断言
+    // （Codex #1471 P2 第四轮）——读未截断的 state。
+    expect(stateService.getState().scheduledJobRuns.length).toBeLessThanOrEqual(5000);
     const oneHot = stateService.listScheduledJobRuns({ jobId: 'job_hot_0', limit: 500 });
     expect(oneHot.length).toBeGreaterThan(0);
     expect(oneHot.length).toBeLessThan(120);
+  });
+
+  /*
+   * Codex #1471 P2（第四轮）。现存/已删除的分桶此前只在「组数超过上限」时才做，
+   * 而已删除任务的留档在没到上限时照样占容量：4950 个「建完就删、各留一条」的任务
+   * 加一个有 120 条的活任务，组数 4951 走不进整组淘汰那一档，均分的 k 被压到 50——
+   * 活任务被砍掉 70 条，而每一条留档一条不少。留档挤掉在跑的任务，方向反了。
+   * 红绿闭环：把 live/orphan 的分桶改回「只在 groups.length > CAP 时才做」，
+   * 本用例报活任务只剩 50 条。
+   */
+  it('已删除任务的留档不占现存任务的配额，即便总组数没到上限', () => {
+    const liveJob = service.normalizeJob({
+      id: 'job_live', projectId: 'demo', name: '每日备份', enabled: true,
+      schedule: { type: 'daily', timeOfDay: '02:00' },
+      actions: [{ id: 'a1', name: 'step', type: 'command' as const, command: 'echo ok' }],
+    } as unknown as ScheduledJob);
+    stateService.upsertScheduledJob(liveJob);
+
+    const base = Date.UTC(2026, 0, 8);
+    const fixture: ScheduledJobRun[] = [];
+    // 活任务 120 条（每任务上限），时刻最新。
+    for (let i = 0; i < 120; i += 1) {
+      fixture.push({
+        id: `live_${i}`, jobId: 'job_live', projectId: 'demo', trigger: 'schedule',
+        status: 'success', queuedAt: new Date(base + i * 1000).toISOString(),
+      });
+    }
+    // 4950 个已删除任务各一条，时刻更早。
+    for (let j = 0; j < 4950; j += 1) {
+      fixture.push({
+        id: `gone_${j}`, jobId: `job_gone_${j}`, projectId: 'demo', trigger: 'schedule',
+        status: 'success', queuedAt: new Date(base - (j + 1) * 1000).toISOString(),
+      });
+    }
+    seedRuns(fixture);
+    stateService.upsertScheduledJobRun({
+      id: 'live_new', jobId: 'job_live', projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: new Date(base + 200_000).toISOString(),
+    });
+
+    const alive = stateService.listScheduledJobRuns({ jobId: 'job_live', limit: 500 });
+    expect(alive.length, '活任务的历史被已删除任务的留档挤掉了').toBe(120);
+    expect(stateService.getState().scheduledJobRuns.length).toBeLessThanOrEqual(5000);
   });
 
   /*
@@ -255,7 +299,7 @@ describe('定时任务运行记录的可观测性', () => {
       stateService.listScheduledJobRuns({ jobId: 'job_live', limit: 5 }),
       '活任务的历史被已删除任务的记录挤掉了',
     ).toHaveLength(1);
-    expect(stateService.listScheduledJobRuns({ limit: 100000 }).length).toBeLessThanOrEqual(5000);
+    expect(stateService.getState().scheduledJobRuns.length).toBeLessThanOrEqual(5000);
   });
 
   /*
@@ -281,8 +325,8 @@ describe('定时任务运行记录的可观测性', () => {
       status: 'success', queuedAt: new Date(base + 5199 * 1000).toISOString(),
     });
 
-    const all = stateService.listScheduledJobRuns({ limit: 100000 });
-    expect(all.length, '任务数超过上限时全局上限失守了').toBeLessThanOrEqual(5000);
+    expect(stateService.getState().scheduledJobRuns.length, '任务数超过上限时全局上限失守了')
+      .toBeLessThanOrEqual(5000);
     // 最新的那批留着，最早的那批被整组淘汰。
     expect(stateService.listScheduledJobRuns({ jobId: 'job_5199', limit: 5 })).toHaveLength(1);
     expect(stateService.listScheduledJobRuns({ jobId: 'job_0', limit: 5 })).toHaveLength(0);

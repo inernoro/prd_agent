@@ -927,41 +927,61 @@ export class StateService {
       if (list) list.push(item);
       else byJob.set(item.jobId, [item]);
     }
-    // 任务数本身超过上限时，「每个任务各留一条」都放不下——均分在这一档失效，
-    // 只能整任务地淘汰。删任务不删运行史，反复建删就能把不同 jobId 攒过 5000，
-    // 那之后全局上限会彻底失守（Codex #1471 P2 第二轮）。
+    // 现存任务与已删除任务**永远**分开算配额，不是只在任务数超上限时才分
+    // （Codex #1471 P2 第四轮）：4950 个「建完就删、各留一条」的任务加一个活任务，
+    // 组数 4951 没到上限、走不进整组淘汰那一档，可它们照样占着容量——均分的 k 被压到
+    // 50，活任务 120 条被砍成 50，而每一条已删除任务的留档一条不少。留档挤掉在跑的
+    // 任务，方向正好反了。
     //
-    // 淘汰顺序分两级，**先看任务还在不在，再看谁更久没动静**（第三轮）：
-    // 只按新旧排的话，一个刚建完就删掉的一次性任务会占着名额，而一个每天都在跑、
-    // 只是上次运行时刻稍早的活任务被整组清掉——它的健康度、细带、运行史全没了，
-    // 恰恰是每任务保留要保护的对象。所以先保活着的任务，剩余名额才轮到已删除的
-    // 历史（它们只是留档，看不看得到都不影响值班）。
-    // byJob 的插入顺序已经是「首条记录最新」在前（上面按 queuedAt 降序遍历建的），
-    // 两个桶各自保持这个顺序即可。
-    let groups = [...byJob.values()];
-    if (groups.length > SCHEDULED_JOB_RUNS_GLOBAL_CAP) {
-      const liveIds = new Set((this.state.scheduledJobs || []).map((job) => job.id));
-      const live: ScheduledJobRun[][] = [];
-      const orphan: ScheduledJobRun[][] = [];
-      for (const list of groups) (liveIds.has(list[0].jobId) ? live : orphan).push(list);
-      groups = [...live, ...orphan].slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP);
-    }
-    const counts = groups.map((list) => Math.min(list.length, SCHEDULED_JOB_RUNS_PER_JOB));
-    const total = (k: number): number => counts.reduce((sum, n) => sum + Math.min(n, k), 0);
-    let quota = SCHEDULED_JOB_RUNS_PER_JOB;
-    if (total(quota) > SCHEDULED_JOB_RUNS_GLOBAL_CAP) {
-      // 单调递减，二分找最大可行 k。经过上面的整组淘汰，k = 1 一定可行。
+    // 所以顺序固定为：现存任务先按每任务上限拿配额（装不下才在它们之间均分），
+    // 剩下的容量才轮到已删除任务的留档；连一条都排不下就整组丢弃——留档看不看得到
+    // 都不影响值班。两个桶内部都保持「最后活跃时刻靠前」的顺序（byJob 的插入顺序
+    // 已经是按 queuedAt 降序建的）。
+    const liveIds = new Set((this.state.scheduledJobs || []).map((job) => job.id));
+    const live: ScheduledJobRun[][] = [];
+    const orphan: ScheduledJobRun[][] = [];
+    for (const list of byJob.values()) (liveIds.has(list[0].jobId) ? live : orphan).push(list);
+
+    /**
+     * 「每个任务最多留 k 条」里最大的可行 k，使总量不超 cap；记录数不足 k 的任务
+     * 一条不丢。返回 0 表示连「每组一条」都放不下，调用方要整组淘汰。
+     */
+    const quotaWithin = (lists: ScheduledJobRun[][], cap: number): number => {
+      if (lists.length === 0) return SCHEDULED_JOB_RUNS_PER_JOB;
+      if (lists.length > cap) return 0;
+      const counts = lists.map((list) => Math.min(list.length, SCHEDULED_JOB_RUNS_PER_JOB));
+      const total = (k: number): number => counts.reduce((sum, n) => sum + Math.min(n, k), 0);
+      if (total(SCHEDULED_JOB_RUNS_PER_JOB) <= cap) return SCHEDULED_JOB_RUNS_PER_JOB;
       let lo = 1;
       let hi = SCHEDULED_JOB_RUNS_PER_JOB;
       while (lo < hi) {
         const mid = Math.ceil((lo + hi) / 2);
-        if (total(mid) <= SCHEDULED_JOB_RUNS_GLOBAL_CAP) lo = mid;
+        if (total(mid) <= cap) lo = mid;
         else hi = mid - 1;
       }
-      quota = lo;
+      return lo;
+    };
+
+    const kept: ScheduledJobRun[][] = [];
+    const liveQuota = quotaWithin(live, SCHEDULED_JOB_RUNS_GLOBAL_CAP);
+    if (liveQuota === 0) {
+      // 现存任务数本身超过上限：每组一条都放不下，只能按「最后活跃时刻」整组淘汰。
+      for (const list of live.slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP)) kept.push(list.slice(0, 1));
+    } else {
+      for (const list of live) kept.push(list.slice(0, liveQuota));
     }
-    this.state.scheduledJobRuns = groups
-      .flatMap((list) => list.slice(0, quota))
+    const remaining = SCHEDULED_JOB_RUNS_GLOBAL_CAP - kept.reduce((sum, list) => sum + list.length, 0);
+    if (remaining > 0 && orphan.length > 0) {
+      const orphanQuota = quotaWithin(orphan, remaining);
+      if (orphanQuota === 0) {
+        for (const list of orphan.slice(0, remaining)) kept.push(list.slice(0, 1));
+      } else {
+        for (const list of orphan) kept.push(list.slice(0, orphanQuota));
+      }
+    }
+
+    this.state.scheduledJobRuns = kept
+      .flat()
       .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
     this.save(HINT_GLOBAL);
     return run;
