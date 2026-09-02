@@ -187,7 +187,7 @@ describe('撞上已被绑走的仓库时，先问清楚再开始 clone', () => {
    * 判据是两条路径都不在有冲突时启动 clone，且弹窗上「先不绑」那条出口负责把
    * 推迟的 clone 接上——推迟了却没人接，就是把 clone 弄丢了（形状 2）。
    */
-  it('两条建项目路径都在有冲突时推迟 clone，且推迟的那次有人接', () => {
+  it('两条建项目路径都在有冲突时推迟 clone，且「填错了」那条出口不去拉那个仓库', () => {
     const source = fs.readFileSync(
       path.resolve(process.cwd(), '../cds/web/src/pages/ProjectListPage.tsx'),
       'utf8',
@@ -195,8 +195,10 @@ describe('撞上已被绑走的仓库时，先问清楚再开始 clone', () => {
     // 顶栏快捷路径 + 完整表单路径，各一处「没冲突才开 clone」
     const guarded = source.match(/&& !(?:res\.)?repoAlreadyLinked\)/g) || [];
     expect(guarded.length, '两条建项目路径都要判').toBe(2);
-    // 推迟下来的 clone 必须有人接上
+    // 推迟的那次不能接在「填错了」这条出口上：用户刚说完地址是错的，
+    // 立刻去克隆那个错仓库比不推迟还糟（2026-09-02 Codex P2）。
     expect(source).toContain('pendingClone');
-    expect(source).toMatch(/pendingClone[\s\S]{0,200}setCloneTarget\(pending\)/);
+    const rejectBranch = source.slice(source.indexOf('填错了，先不绑') - 1200, source.indexOf('填错了，先不绑'));
+    expect(rejectBranch, '「填错了」这条出口不许开始克隆').not.toContain('setCloneTarget(');
   });
 });

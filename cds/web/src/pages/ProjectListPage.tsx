@@ -887,20 +887,32 @@ export function ProjectListPage(): JSX.Element {
               </DialogDescription>
             </DialogHeader>
             {repoSharePrompt ? (
-              <RepoSharingConfirmBody
-                repoFullName={repoSharePrompt.info.repoFullName}
-                siblings={repoSharePrompt.info.projects}
-                siblingCount={repoSharePrompt.info.projectCount}
-              />
+              <>
+                <RepoSharingConfirmBody
+                  repoFullName={repoSharePrompt.info.repoFullName}
+                  siblings={repoSharePrompt.info.projects}
+                  siblingCount={repoSharePrompt.info.projectCount}
+                />
+                {/* 两条出口各自会发生什么，先说清楚，别让用户点完才猜 */}
+                <p className="text-xs text-muted-foreground">
+                  {repoSharePrompt.pendingClone
+                    ? '选「填错了」就先不克隆这个仓库，项目留在未克隆状态，可以在项目卡上重新开始或直接删掉；选「去绑定」会先把仓库绑上，绑好再克隆。'
+                    : '选「填错了」只是不绑仓库，项目本身保持不变。'}
+                </p>
+              </>
             ) : null}
             <DialogFooter>
               <Button
                 variant="outline"
                 onClick={() => {
-                  // 决定不绑了：项目照旧要 clone，这时才开始
-                  const pending = repoSharePrompt?.pendingClone || null;
+                  /*
+                   * 「填错了」就是说这个仓库地址不对 —— 那就更不该去拉它
+                   * （2026-09-02 Codex P2）。上一版把推迟的 clone 接在这条出口上，
+                   * 等于用户刚说完「填错了」，系统立刻开始克隆并自动配置那个错仓库。
+                   * 这里只关掉弹窗；项目留在未克隆状态，用户可以在项目卡上改地址、
+                   * 手动开始克隆，或者直接删掉重来。
+                   */
                   setRepoSharePrompt(null);
-                  if (pending) setCloneTarget(pending);
                 }}
               >
                 填错了，先不绑

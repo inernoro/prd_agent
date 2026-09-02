@@ -21,6 +21,8 @@
  * 纯函数：不读状态、不碰磁盘、不碰网络。
  */
 
+import { hasRejectedScopeDeclaration } from './project-scope.js';
+
 /** 一条建议：范围本身，加上「凭什么这么说」。 */
 export interface ScopeGuess {
   scope: string[];
@@ -127,6 +129,16 @@ export function declaredScopeSources(profile: ScopeSourceProfile): {
  * —— 那不是猜的，界面据此不该再劝用户去填。
  */
 export function inferProfileScope(profile: ScopeSourceProfile): ScopeGuess | null {
+  /*
+   * 这条服务上写了「成不了有效范围」的声明（`**` / `.` / 绝对路径 / `..`）时，
+   * 一条建议都不给（2026-09-02 Codex P2）。
+   *
+   * 给了也白给：作用域解析看到那条声明就整体全通配，采纳建议只会更新别的服务，
+   * 横幅照旧劝、每次推送照旧全部重建，而用户收到的是一句「已固定为 …」的成功提示
+   * ——一个改了不生效的开关加一句会说谎的提示，正是本 PR 一直在拆的那种东西。
+   * 判据与作用域解析共用一处，免得两边对「什么算有效声明」各有一套。
+   */
+  if (hasRejectedScopeDeclaration(profile)) return null;
   const declared = declaredScope(profile);
   if (declared.length > 0) {
     return { scope: declared, source: 'declared', why: '已经声明过' };

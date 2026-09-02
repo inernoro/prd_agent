@@ -103,6 +103,23 @@ describe('已声明的范围优先于推断', () => {
     expect(guess?.why).toContain('cd cds');
   });
 
+  it('写了成不了有效范围的声明（`**` / 绝对路径）就一条建议都不给', () => {
+    // 给了也白给：作用域解析看到 `**` 就整体全通配，采纳只会更新别的服务，
+    // 横幅照旧劝，而用户收到的是一句成功提示。
+    expect(inferProfileScope({ id: 'x', buildScope: ['**'], command: 'cd cds && ./exec_cds.sh start' })).toBeNull();
+    expect(inferProfileScope({ id: 'x', buildScope: ['/etc'], workDir: 'prd-admin' })).toBeNull();
+    expect(inferProfileScope({
+      id: 'x',
+      deployModes: { express: { buildScope: ['.'] } },
+      command: 'cd cds && ./exec_cds.sh start',
+    })).toBeNull();
+    // 一个服务给不出建议，整个项目就不出建议（既有规则）
+    expect(inferProjectScope([
+      { id: 'a', buildScope: ['**'] },
+      { id: 'b', command: 'cd cds && ./exec_cds.sh start' },
+    ])).toBeNull();
+  });
+
   it('workDir 优先于命令里的 cd —— 命令是在 workDir 里执行的', () => {
     const guess = inferProfileScope({
       id: 'admin',

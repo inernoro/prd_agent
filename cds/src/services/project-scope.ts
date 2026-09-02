@@ -76,10 +76,30 @@ function hasDeclaredEntries(candidate: readonly string[] | undefined): boolean {
     && candidate.some((entry) => typeof entry === 'string' && entry.trim().length > 0);
 }
 
+/**
+ * 这条服务上有没有「写了、但成不了有效范围」的声明。
+ *
+ * 指仓库根等价物（`**` / `.`）、绝对路径、含 `..` 这几类——`normalizeBuildScope`
+ * 会拒掉它们。判据是唯一的：作用域解析据此整体退回全通配，推断据此干脆不出建议
+ * （出了也白出：采纳之后这条声明还在，项目照样全通配，而用户收到的是一句成功提示）。
+ */
+export function hasRejectedScopeDeclaration(profile: ScopedProfileLike): boolean {
+  for (const candidate of [
+    profile.buildScope,
+    ...Object.values(profile.deployModes || {}).map((m) => m?.buildScope),
+  ]) {
+    if (!hasDeclaredEntries(candidate)) continue;
+    if (!normalizeBuildScope(candidate)) return true;
+  }
+  return false;
+}
+
 export function resolveProjectScope(profiles: readonly ScopedProfileLike[] | undefined): string[] {
   const list = profiles || [];
   const out = new Set<string>();
   for (const profile of list) {
+    // 写了但成不了有效范围 → 语义是「整个仓库都可能影响我」→ 整体全通配
+    if (hasRejectedScopeDeclaration(profile)) return [];
     const declared = new Set<string>();
     for (const candidate of [profile.buildScope, ...Object.values(profile.deployModes || {}).map((m) => m?.buildScope)]) {
       const normalized = normalizeBuildScope(candidate);
