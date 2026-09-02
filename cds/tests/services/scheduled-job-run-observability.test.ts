@@ -165,6 +165,45 @@ describe('定时任务运行记录的可观测性', () => {
   });
 
   /*
+   * Codex #1471 P2。上一条只有两个任务，撞不到全局上限（5000）。
+   * 而全局上限此前是按「全局新旧」一刀切的：任务一多，低频任务的记录天然排在
+   * 最后面，会被整段砍掉——正好把每任务保留想防的事情又做了一遍。
+   * 这里造 60 个各 120 条的任务（7200 > 5000）再加一个只有 3 条的低频任务：
+   * 低频那个必须一条不丢。
+   * 红绿闭环：把收尾换回 `.slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP)`，
+   * 本用例报 `expected +0 to be 3`。
+   */
+  it('全局上限按任务均分，任务数多到撑满上限时也不吃掉低频任务的历史', () => {
+    const mk = (jobId: string, i: number, iso: string): ScheduledJobRun => ({
+      id: `${jobId}_${i}`, jobId, projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: iso,
+    });
+
+    // 低频任务：最早，只有 3 条——全局排序下它们永远在最末尾。
+    for (let i = 0; i < 3; i += 1) {
+      stateService.upsertScheduledJobRun(mk('job_rare', i, new Date(Date.UTC(2026, 0, 1, i)).toISOString()));
+    }
+    // 60 个高频任务各 120 条，全部更新。
+    for (let j = 0; j < 60; j += 1) {
+      for (let i = 0; i < 120; i += 1) {
+        stateService.upsertScheduledJobRun(
+          mk(`job_hot_${j}`, i, new Date(Date.UTC(2026, 0, 2) + (j * 120 + i) * 1000).toISOString()),
+        );
+      }
+    }
+
+    const rare = stateService.listScheduledJobRuns({ jobId: 'job_rare', limit: 50 });
+    expect(rare, '低频任务的历史被全局上限吃掉了').toHaveLength(3);
+
+    // 总量仍受上限约束，高频任务让位。
+    const all = stateService.listScheduledJobRuns({ limit: 100000 });
+    expect(all.length).toBeLessThanOrEqual(5000);
+    const oneHot = stateService.listScheduledJobRuns({ jobId: 'job_hot_0', limit: 500 });
+    expect(oneHot.length).toBeGreaterThan(0);
+    expect(oneHot.length).toBeLessThan(120);
+  });
+
+  /*
    * 红绿闭环：删掉 computeNextRuns，或让它每轮不推进游标，
    * 本用例会红（前者编译不过，后者返回一串相同时刻）。
    */

@@ -1129,7 +1129,15 @@ function TimelineBand({
         </div>
       </div>
 
-      <div className={compact ? 'px-4 pb-1 pt-1' : 'px-4 pb-3 pt-2'}>
+      {/*
+       * 名字列 176 + 两条沟槽 24×2 + 调度列 128 = 固定 352px。390px 视口扣掉
+       * 32px 内边距只剩 358px，时间轨道会被压到几乎没有，而外层是 overflow-hidden，
+       * 用户连横滚都滚不到（Codex #1471 P2；cds/.claude/rules/mobile-layout-fallback.md
+       * 要求 desktop-fill 必须配 mobile-flow 兜底）。
+       * 兜底取该规则点名的第 6 条：包一层横滚容器 + 内容自身 min-w，宽屏零变化。
+       */}
+      <div className={`overflow-x-auto ${compact ? 'px-4 pb-1 pt-1' : 'px-4 pb-3 pt-2'}`}>
+        <div className="min-w-[560px]">
         {/* 刻度行的三段必须与泳道逐段对齐，否则刻度和点位是两套坐标。 */}
         <div className={compact ? 'hidden' : 'flex'}>
           <div className="w-44 shrink-0" />
@@ -1211,6 +1219,7 @@ function TimelineBand({
         {compact ? null : hiddenCount > 0 ? (
           <div className="pl-[12.5rem] pt-7 text-[11px] text-muted-foreground">另有 {hiddenCount} 个任务未展开</div>
         ) : <div className="pt-6" />}
+        </div>
       </div>
     </section>
   );

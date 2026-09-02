@@ -912,17 +912,37 @@ export class StateService {
     // 保留策略按「每个任务各留 N 条」，不是全局一刀切。
     // 全局环形缓冲下，一个每 5 分钟的任务一天写 288 条，几天就能把日任务的
     // 历史整段挤掉——「最近 20 次成功率」会静默缩水成「最近 3 次」，
-    // 24 小时轴的左半边也只剩最近一两个小时。全局上限只作为兜底。
-    const perJob = new Map<string, number>();
-    this.state.scheduledJobRuns = this.state.scheduledJobRuns
-      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
-      .filter((item) => {
-        const seen = perJob.get(item.jobId) || 0;
-        if (seen >= SCHEDULED_JOB_RUNS_PER_JOB) return false;
-        perJob.set(item.jobId, seen + 1);
-        return true;
-      })
-      .slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP);
+    // 24 小时轴的左半边也只剩最近一两个小时。
+    //
+    // 全局上限仍然要有（防无限增长），但它**不能按全局新旧一刀切**：那样一排序，
+    // 低频任务的记录天然全部靠后，任务数一多就被整段砍掉，恰好把上面这段防的
+    // 事情又做了一遍（Codex #1471 P2：约 42 个任务各 120 条就撑满 5000）。
+    // 改成按任务均分——先算出「每个任务最多留 k 条」里最大的那个 k，使总量不超上限，
+    // 记录数不足 k 的任务一条不丢。高频任务先让位，低频任务的历史被完整保住。
+    const byJob = new Map<string, ScheduledJobRun[]>();
+    for (const item of [...this.state.scheduledJobRuns]
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))) {
+      const list = byJob.get(item.jobId);
+      if (list) list.push(item);
+      else byJob.set(item.jobId, [item]);
+    }
+    const counts = [...byJob.values()].map((list) => Math.min(list.length, SCHEDULED_JOB_RUNS_PER_JOB));
+    const total = (k: number): number => counts.reduce((sum, n) => sum + Math.min(n, k), 0);
+    let quota = SCHEDULED_JOB_RUNS_PER_JOB;
+    if (total(quota) > SCHEDULED_JOB_RUNS_GLOBAL_CAP) {
+      // 单调递减，二分找最大可行 k；k 可以低到 1（任务数比上限还多时只能各留一条）。
+      let lo = 1;
+      let hi = SCHEDULED_JOB_RUNS_PER_JOB;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (total(mid) <= SCHEDULED_JOB_RUNS_GLOBAL_CAP) lo = mid;
+        else hi = mid - 1;
+      }
+      quota = lo;
+    }
+    this.state.scheduledJobRuns = [...byJob.values()]
+      .flatMap((list) => list.slice(0, quota))
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
     this.save(HINT_GLOBAL);
     return run;
   }

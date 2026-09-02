@@ -93,23 +93,33 @@ describe('scrubParentSecretsFromEnv', () => {
     expect(env.JWT_SECRET).toBeUndefined();
   });
 
-  it('scrubs the parent AI key but remaps a child-specific CDS_PREVIEW_AI_ACCESS_KEY', () => {
-    // 红绿闭环：把 preview-instance.ts 里 `env.CDS_AI_ACCESS_KEY = previewAiAccessKey`
-    // 那行删掉，本用例第三条断言变红（拿到 undefined）——它测的是接线，不是常量。
+  /*
+   * Codex #1471 P1。这条通道曾在本 PR 里存在过一版：把项目级 env 里的
+   * CDS_PREVIEW_AI_ACCESS_KEY 重映射成子实例的 CDS_AI_ACCESS_KEY，好让 Agent
+   * 不用登录就能自测预览。它是错的——CDS 的项目级 env 是**整个项目共享**的
+   * （cross-project-isolation 通道 9），同一项目下每条分支预览都会拿到同一把；
+   * 而 resolveAiSession 对进程级静态钥匙返回的是不带项目作用域的 'static' 会话，
+   * 等价于管理员。结果就是任一条未合并分支能以管理员身份打到兄弟分支的预览。
+   *
+   * 所以现在的契约是：**子实例一律不从环境变量继承任何 AI 静态钥匙**。
+   * 要给 Agent 免登录的自测通道，得走已经有作用域的项目级 Agent Key
+   * （cdsp_ 前缀，assertProjectAccess 会拦跨项目访问），那是另一件事。
+   * 红绿闭环：把重映射那行加回去，本用例第三条断言变红。
+   */
+  it('子实例不从任何 CDS_PREVIEW_* 变量继承 AI 静态钥匙', () => {
     const env: NodeJS.ProcessEnv = {
       CDS_PREVIEW_INSTANCE: '1',
-      // 父实例那两把（能操作生产 CDS）
       AI_ACCESS_KEY: 'parent-key',
       CDS_AI_ACCESS_KEY: 'parent-key-canonical',
-      // 为子实例单独生成的那把
-      CDS_PREVIEW_AI_ACCESS_KEY: 'child-only-key',
+      // 即便有人在项目 env 里配了它，也不该有任何效果。
+      CDS_PREVIEW_AI_ACCESS_KEY: 'shared-across-branches',
     };
 
     const scrubbed = scrubParentSecretsFromEnv(env);
 
     expect(scrubbed).toContain('AI_ACCESS_KEY');
     expect(scrubbed).toContain('CDS_PREVIEW_AI_ACCESS_KEY');
-    expect(env.CDS_AI_ACCESS_KEY).toBe('child-only-key');
+    expect(env.CDS_AI_ACCESS_KEY).toBeUndefined();
     expect(env.AI_ACCESS_KEY).toBeUndefined();
   });
 
