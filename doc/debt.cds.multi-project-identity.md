@@ -221,3 +221,23 @@ webhook 投递记录也按它写。两条都要先拍板，属 §5.5 的 B 类�
 才算证据；不同则只有可路由的外部地址（公网域名 / 显式 IP:端口）才算。顺带把「凭什么这么判」
 写进提示，让用户能自己核。
 
+## 十六、fanout 里第二个项目派发失败，整条投递记录仍写成成功
+
+**状态**：已确认的缺陷，本 PR 熔断后不做。**影响**：webhook 投递日志把这次投递记成成功，
+不带失败原因；排障的人从投递记录看不出「有个项目没部署起来」。
+
+`runDeployDispatch` 里非主结果那一支只做 `fanoutDeployFailed += 1`：`outcome.dispatchAction`
+维持 `deploy`、`outcome.error` 不写，于是 `res.on('finish')` 落库的是一条 info 级的成功记录。
+
+**没那么糟的部分**（供排优先级）：失败并非全无痕迹——`markWebhookDeployDispatchFailed`
+会写到那条分支的记录上，`checkRunRunner.concludeWithoutDeploy` 也会在 GitHub 的 PR Checks
+面板上把那个 commit 点红；HTTP 响应体里也带着 `fanoutDeployFailed` 计数。丢的是**投递记录
+这一层的聚合结论**——而那正是人排障时先看的地方。
+
+**修法**：任一 fanout 派发失败就把聚合 `outcome` 提升为 error 并写明是哪个项目失败，
+HTTP 仍回 200（不让 GitHub 重投）。与第六轮那条「失败仍要以 ok:false 报出」同一条原则，
+当时只覆盖了 dispatcher 抛错，没覆盖派发阶段失败。
+
+**为什么不在本 PR 修**：见第十四、十五条的同一段理由（§5.5 熔断线已过，最近数轮的 finding
+多为前一轮修复带出）。
+
