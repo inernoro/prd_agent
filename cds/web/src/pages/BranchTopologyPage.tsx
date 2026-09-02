@@ -705,7 +705,7 @@ export function BranchTopologyPage(): JSX.Element {
         />
       }
     >
-      <Workspace wide>
+      <Workspace fluid>
         <div className="cds-surface-raised cds-hairline mb-4 overflow-hidden">
           <div className="grid gap-3 px-4 py-4 md:grid-cols-2 xl:grid-cols-5">
             <TopologyMetric label="应用服务" value={totalProfiles} detail={`${runningServices} 个运行实例`} icon={<Cloud className="h-4 w-4" />} />
@@ -796,18 +796,18 @@ export function BranchTopologyPage(): JSX.Element {
         </div>
 
         {state.status === 'loading' ? (
-          <div className="cds-workspace cds-workspace-wide">
+          <div className="w-full">
             <LoadingBlock label="加载服务拓扑" />
           </div>
         ) : null}
         {state.status === 'error' ? (
-          <div className="cds-workspace cds-workspace-wide">
+          <div className="w-full">
             <ErrorBlock message={state.message} />
           </div>
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="cds-workspace cds-workspace-wide grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
             <section className="min-h-[620px] cds-surface-raised cds-hairline p-4">
               {state.profiles.length === 0 && state.infra.length === 0 ? (
                 <div className="flex min-h-[540px] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
