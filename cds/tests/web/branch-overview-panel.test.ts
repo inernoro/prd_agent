@@ -510,9 +510,43 @@ describe('停掉的容器不许显示停机前的旧读数', () => {
    * 而图例取 values.at(-1)，于是「当前值」位上摆着停机前的 2.34% —— 看起来它还活着。
    * 合计同理，会把这份旧读数算进去虚报占用。
    */
+  /*
+   * 这条原本钉着 `stopped: x.svc.status !== 'running'` 这段字面量。分支级判据接进来
+   * 之后（停掉的分支整体不报当前值），那一行合理地变成
+   * `!anyRunning || x.svc.status !== 'running'`，于是它误红——锁的是实现不是行为
+   * （形状 4a，本文件里这已经是第三条同病的守卫）。改成从渲染结果断言。
+   */
   it('图例按 status 判停，不是拿末值当现值', () => {
-    expect(PANEL).toContain("stopped: x.svc.status !== 'running'");
-    expect(PANEL).toContain('s.stopped ?');
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [
+        { profileId: 'api', containerName: 'api-x', status: 'running' },
+        { profileId: 'web', containerName: 'web-x', status: 'stopped' },
+      ],
+      running: true,
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {
+        api: seedMetricSeries([
+          { cpuPercent: 5, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+          { cpuPercent: 5, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+        ]),
+        // web 停机前跑到 2.34%，序列尾巴就停在那里
+        web: seedMetricSeries([
+          { cpuPercent: 2.34, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+          { cpuPercent: 2.34, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+        ]),
+      },
+      metricsReady: true,
+      replicaSummary: '2 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '已停容器的图例摆着停机前的读数，看起来它还活着').not.toContain('2.34');
+    expect(html, '已停容器的图例该写「停止」').toContain('停止');
+    expect(html, '在跑的那个仍要照常显示').toContain('5.00');
   });
 
   it('当前合计跳过已停容器', () => {
@@ -686,6 +720,73 @@ describe('总览渲染冒烟：缺口真的没被画成 0', () => {
  * 1 帧也在 liveOnly 里。`/metrics` 挂着或还没回来时，上一版让它整个贡献 0，于是
  * 顶部大数一边写着「合计 2 个服务」，一边把其中一个当成不存在。
  */
+/**
+ * 分支停了，CPU / 内存也不许再报「当前值」（2026-09-02，Codex P2，核对属实）。
+ *
+ * `running` 来自 SSE 的分支状态，权威且新鲜；每条序列的 `stopped` 却取自
+ * `services[].status`，而那份清单在 `/metrics` 轮询失败时会一直停在
+ * `lastGoodMetrics` 的旧值上。两者分岔时上一版是：判断句已经写着「分支未运行」，
+ * 同屏的 CPU 大数、内存大数、构成条还在按停机前的残值报「当前」，而且只要轮询
+ * 一直失败就无限期这么报。
+ *
+ * 上一轮只把吞吐接上了这个判据，CPU / 内存两条还各用各的陈旧状态——同一个缺陷
+ * 在隔壁又被抓一次，正是「只改被指出的那一处」。
+ */
+describe('分支停了，CPU 与内存也不报当前值', () => {
+  const stale = (): string => renderToStaticMarkup(createElement(OverviewPanel, {
+    // 陈旧的 lastGoodMetrics：状态还写着 running
+    services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+    running: false,                      // SSE 权威：分支已停
+    branchName: 'demo',
+    entries: [],
+    deployments: [],
+    metricSeries: {
+      api: seedMetricSeries([
+        { cpuPercent: 33, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+        { cpuPercent: 33, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+      ]),
+    },
+    liveStats: { api: { cpuPercent: 33, memUsedBytes: 4096 } },  // 停机前的残值
+    metricsReady: true,
+    replicaSummary: '1 个副本',
+    infraSummary: '无',
+    now: Date.now(),
+    windowMinutes: 30,
+    onRefreshMetrics: () => {},
+  }));
+
+  it('判断句说「分支未运行」时，同屏不会还写着 33% CPU', () => {
+    const html = stale();
+    expect(html, '前提没成立：这一屏本该判定为未运行').toContain('分支未运行');
+    expect(html, '一屏之内自相矛盾：上面说停了，下面还在报当前用量').not.toContain('33.0%');
+    expect(html, '每服务图例同样不许端出停机前的残值').not.toContain('33.00');
+  });
+
+  it('分支在跑时照常报（防我把判据写死成永远不报）', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: true,
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {
+        api: seedMetricSeries([
+          { cpuPercent: 33, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+          { cpuPercent: 33, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+        ]),
+      },
+      liveStats: { api: { cpuPercent: 33, memUsedBytes: 4096 } },
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '在跑却不报，等于把守卫写成永远绿').toContain('33.0%');
+  });
+});
+
 describe('分支停了就没有「当前速率」', () => {
   const withRates = seedMetricSeries([
     { cpuPercent: 4, memUsedBytes: 100, rxRate: 1024, txRate: 2048 },

@@ -1047,6 +1047,20 @@ export function OverviewPanel({
    * 代价是超过 5 个服务时，第 6 个之后按字典序被并进「其他」，哪怕它很忙。
    * 想单看它去「资源」页签——总览这一屏保证颜色不会变。
    */
+  /*
+   * 「当前」这个词还成不成立（Codex P2，两轮）。
+   *
+   * `running` 来自 SSE 的分支状态，是权威且新鲜的；而每条序列的 `stopped` 取自
+   * `services[].status`，那份清单在 `/metrics` 轮询失败时会一直停留在
+   * `lastGoodMetrics` 的旧值上。两者分岔时，上一版是：判断句已经写着「分支未运行」，
+   * 同一屏的 CPU 大数、内存大数、构成条却还在按停机前的残值报「当前」——而且只要
+   * 轮询一直失败就无限期这么报下去。
+   *
+   * 第一轮只把吞吐接上了这个判据，CPU / 内存两条还各用各的陈旧状态，于是同一个
+   * 缺陷在隔壁又被抓一次。这次统一：分支没在跑，就没有任何「当前值」可言。
+   */
+  const anyRunning = running && services.some((sv) => sv.status === 'running');
+
   const picked = useMemo(() => {
     const withSeries = services
       .map((s) => ({ svc: s, ring: metricSeries[s.profileId] }))
@@ -1121,7 +1135,7 @@ export function OverviewPanel({
         nowValue,
         nowLabel,
         nowUnit,
-        stopped: x.svc.status !== 'running',
+        stopped: !anyRunning || x.svc.status !== 'running',
       };
     });
     if (picked.tail.length === 0 && picked.liveOnly.length === 0) return head;
@@ -1137,12 +1151,12 @@ export function OverviewPanel({
      * 历史那一条（merged）照旧包含所有尾部服务：它画的是过去，过去它确实在跑。
      * 当前值与历史几何本来就是两个口径，这里正是它们该分开的地方。
      */
-    const tailNow = picked.tail.reduce((sum, x) => {
+    const tailNow = !anyRunning ? 0 : picked.tail.reduce((sum, x) => {
       if (x.svc.status !== 'running') return sum;
       const live = liveStats?.[x.svc.profileId];
       // 尾部聚合同样不能读零填充的末格（Codex P2）——「其他 N 个」与顶部合计会一起少报。
       return sum + (live ? readLive(live) : latestPresent(read(x.ring), x.ring.present) ?? 0);
-    }, 0) + picked.liveOnly.reduce((sum, sv) => {
+    }, 0) + (!anyRunning ? 0 : picked.liveOnly.reduce((sum, sv) => {
       // 历史不够画、但正在跑：当前值照算，几何不参与（上面 merged 不含它们）。
       const live = liveStats?.[sv.profileId];
       if (live) return sum + readLive(live);
@@ -1159,7 +1173,7 @@ export function OverviewPanel({
        */
       const ring = metricSeries[sv.profileId];
       return sum + (ring ? latestPresent(read(ring), ring.present) ?? 0 : 0);
-    }, 0);
+    }, 0));
     const [nowLabel, nowUnit] = label(tailNow);
     const otherCount = picked.tail.length + picked.liveOnly.length;
     return [...head, { id: `其他 ${otherCount} 个`, color: OTHER_COLOR, values: merged, nowValue: tailNow, nowLabel, nowUnit }];
@@ -1247,12 +1261,6 @@ export function OverviewPanel({
    * 一个判据三处消费，而不是三处各判各的，下次也就没有再分岔的余地。
    */
   const allServicesReady = running && services.length > 0 && okCount === services.length;
-  /*
-   * 「当前速率」成不成立看这个（Codex P2）。CPU / 内存靠每条序列自己的 `stopped`
-   * 逐个剔除，而吞吐是轴级合计、没有分服务的当前值可剔，所以只能整体判断：
-   * 一个在跑的服务都没有，就没有「当前」可言。
-   */
-  const anyRunning = running && services.some((sv) => sv.status === 'running');
   const verdict = badServices.length > 0
     ? `有 ${badServices.length} 个服务异常，${entries.length > 0 ? '入口可能打不开' : '分支未就绪'}`
     : allServicesReady

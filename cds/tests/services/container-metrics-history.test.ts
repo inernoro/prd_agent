@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   recordContainerSample,
   queryContainerSeries,
-  containerMetricsHistoryStats,
+  __containerMetricsHistoryStats,
   __resetContainerMetricsHistory,
 } from '../../src/services/container-metrics-history.js';
 
@@ -105,7 +105,7 @@ describe('速率由累计值差分算出', () => {
     recordContainerSample('c1', sample({ cpuPercent: 1 }), T0);
     recordContainerSample('c1', sample({ cpuPercent: 99 }), T0);
     recordContainerSample('c1', sample({ cpuPercent: 98 }), T0 - 5_000);
-    expect(containerMetricsHistoryStats().points).toBe(1);
+    expect(__containerMetricsHistoryStats().points).toBe(1);
   });
 });
 
@@ -465,7 +465,7 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
   it('相隔正好 1 秒的写入仍然收下（去重不许误伤真实节奏）', () => {
     recordContainerSample('c1', sample({ cpuPercent: 1 }), T0);
     recordContainerSample('c1', sample({ cpuPercent: 9 }), T0 + 1_000);
-    expect(containerMetricsHistoryStats().points).toBe(2);
+    expect(__containerMetricsHistoryStats().points).toBe(2);
   });
 
   /**
@@ -551,22 +551,22 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
    */
   it('宿主再也没有写入时，一次查询也能把死容器清掉', () => {
     recordContainerSample('dead', sample({ cpuPercent: 1 }), T0);
-    expect(containerMetricsHistoryStats().containers).toBe(1);
+    expect(__containerMetricsHistoryStats().containers).toBe(1);
     // 之后**再没有任何写入**（最后一个容器也停了），只有人打开抽屉看了一眼。
     queryContainerSeries({ containers: ['dead'], after: -60, points: 20 }, T0 + 3 * 60 * 60_000);
     expect(
-      containerMetricsHistoryStats().containers,
+      __containerMetricsHistoryStats().containers,
       '没有写入就永远清不掉——「只在还有人写时才清理」和它要治的洞是同一个形状',
     ).toBe(0);
   });
 
   it('停掉的容器也会按保留期过期，不是只在它自己再写入时才清', () => {
     recordContainerSample('dead', sample({ cpuPercent: 1 }), T0);
-    expect(containerMetricsHistoryStats().containers).toBe(1);
+    expect(__containerMetricsHistoryStats().containers).toBe(1);
     // 'dead' 再也不写了；另一个容器在保留期之后继续写。
     recordContainerSample('alive', sample({ cpuPercent: 2 }), T0 + 3 * 60 * 60_000);
     expect(
-      containerMetricsHistoryStats().containers,
+      __containerMetricsHistoryStats().containers,
       '停掉的容器还占着内存——保留期只对还在写的容器生效',
     ).toBe(1);
   });
@@ -710,12 +710,12 @@ describe('有界：不许无限长', () => {
   it('超过保留时长的点被裁掉', () => {
     recordContainerSample('c1', sample(), T0);
     recordContainerSample('c1', sample(), T0 + 3 * 60 * 60_000);
-    expect(containerMetricsHistoryStats().points).toBe(1);
+    expect(__containerMetricsHistoryStats().points).toBe(1);
   });
 
   it('单容器点数有上限（高频采样撑不爆）', () => {
     for (let i = 0; i < 2500; i += 1) recordContainerSample('c1', sample(), T0 + i * 100);
-    expect(containerMetricsHistoryStats().points).toBeLessThanOrEqual(2000);
+    expect(__containerMetricsHistoryStats().points).toBeLessThanOrEqual(2000);
   });
 
 });

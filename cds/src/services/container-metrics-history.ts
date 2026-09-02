@@ -563,8 +563,15 @@ export function __resetContainerMetricsHistory(): void {
   lastSweepAt = 0;
 }
 
-/** 观测自身：当前跟踪多少容器、多少点。用于排查内存增长。 */
-export function containerMetricsHistoryStats(): { containers: number; points: number } {
+/*
+ * 测试用：当前跟踪多少容器、多少点。生产路径不调用（Codex P2，核对属实）。
+ *
+ * 原注释写着「用于排查内存增长」——那是一句兑现不了的承诺：全仓搜下来它只出现在
+ * 定义和单测里，没有任何端点 / 监控 / 日志消费它，等于又建了半条线（形状 2）。
+ * 真要接进诊断面是另一件事（本 PR 只做总览），已记进 doc/debt.cds.overview.md D8。
+ * 在那之前，命名与注释都如实说它是测试用的，不假装生产可观测。
+ */
+export function __containerMetricsHistoryStats(): { containers: number; points: number } {
   let points = 0;
   for (const list of store.values()) points += list.length;
   return { containers: store.size, points };
