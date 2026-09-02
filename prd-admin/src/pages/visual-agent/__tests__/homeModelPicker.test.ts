@@ -65,6 +65,18 @@ describe('首页能看见并选择绘图模型', () => {
     expect(SUBMIT.slice(0, navAt)).toMatch(/await (Promise\.all\(|updateVisualAgentPreferences)/);
   });
 
+  it('【关键】模型随交接包一起交给编辑器，不只靠偏好接口', () => {
+    // updateVisualAgentPreferences 失败时**返回 { success:false } 而不是 reject**
+    // （apiRequest 统一约定，AGENTS.md 规则 #7），所以 .catch() 接不住普通失败。
+    // 只靠那次写，写失败时编辑器会读到上一次的模型，用户在首页选了 A 却用 B
+    // 跑了一次要花钱的生成（Codex PR #1476 P1）。交接包直接带上就不依赖它。
+    expect(SUBMIT).toMatch(/const payload = \{[^}]*modelId/);
+    const TAB = strip(readFileSync(resolve(ROOT, 'src/pages/ai-chat/AdvancedVisualAgentTab.tsx'), 'utf8'));
+    expect(TAB).toMatch(/handedModelIdRef\.current = handedModelId/);
+    // 且服务端偏好不得把它覆盖回去。
+    expect(TAB).toMatch(/if \(!handedModelIdRef\.current\) \{/);
+  });
+
   it('【关键】尺寸跟着模型走：拉 adapter-info，并把清单传给尺寸表', () => {
     expect(PAGE).toContain('getVisualAgentAdapterInfo(modelCode)');
     // 查询必须用池内实际上游模型 ID，用池 ID 查不到适配器、尺寸会被错误清空。

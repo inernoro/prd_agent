@@ -1375,11 +1375,13 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         // 把这次选的模型写回账号偏好。必须在跳转前落地：编辑器挂载时会读同一份
         // visualAgentPreferences，先跳转再写就是竞态，用户会看到「首页选了 A，进去却是 B」。
         // modelAuto 置 false：用户在首页显式选过了，就不该再被自动挑选覆盖。
+        // 注意：这个接口**失败时返回 { success:false }，不 reject**（apiRequest 的统一约定，
+        // 见 AGENTS.md 规则 #7）。所以 .catch() 根本接不住普通失败——只挡网络层异常。
+        // 写失败本身不该阻断创作，真正的兜底是下面把 modelId 一起放进交接包：
+        // 编辑器优先用交接包里的值，不再依赖这次写有没有成功（Codex PR #1476 P1）。
         modelId
-          ? updateVisualAgentPreferences({ modelAuto: false, modelId }).catch(() => {
-            // 偏好写失败不阻断创作——这次生成仍按当前选择走，只是下次默认值可能还是旧的。
-          })
-          : Promise.resolve(),
+          ? updateVisualAgentPreferences({ modelAuto: false, modelId }).catch(() => null)
+          : Promise.resolve(null),
       ]);
       if (!res.success) {
         toast.error(res.error?.message || '创建失败');
@@ -1419,7 +1421,10 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       // dataURL 可能有好几 MB，超配额时 setItem 会抛。抛了不能让整个提交挂掉——
       // 退而存一份不带图的，用户至少还能带着文字进画板（参考图需要重新拖一次）。
       const sessionKey = `visual_agent_init_${ws.id}`;
-      const payload = { messageText, assetId, imageSize, timestamp: Date.now() };
+      // modelId 必须进交接包：偏好接口写失败时只返回 { success:false }，
+      // 编辑器再去读偏好就会拿到上一次的模型，用户在首页选的 A 会变成 B——
+      // 而这是一次要花钱的生成。交接包直接带上，编辑器就不必依赖那次写。
+      const payload = { messageText, assetId, imageSize, modelId, timestamp: Date.now() };
       try {
         sessionStorage.setItem(sessionKey, JSON.stringify(payload));
       } catch {

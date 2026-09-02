@@ -3339,8 +3339,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         if (cancelled) return;
         if (res.success && res.data.visualAgentPreferences) {
           const prefs = res.data.visualAgentPreferences;
-          setModelPrefAuto(prefs.modelAuto ?? true);
-          setModelPrefModelId(prefs.modelId ?? '');
+          // 首页刚交接过模型就不许回填：那次偏好写可能失败了，服务端还是旧值。
+          if (!handedModelIdRef.current) {
+            setModelPrefAuto(prefs.modelAuto ?? true);
+            setModelPrefModelId(prefs.modelId ?? '');
+          }
           // 加载 DIY 快捷指令
           if (Array.isArray(prefs.quickActions)) {
             setDiyQuickActions(prefs.quickActions);
@@ -5570,6 +5573,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
    * 有它，第一帧就是真实体积，新生成的图才能真的贴着它的边排。
    */
   const initialImageSizeRef = useRef<{ w: number; h: number } | null>(null);
+  /** 首页交接包里带来的模型。非空 = 用户刚显式选过，服务端偏好不得覆盖它。 */
+  const handedModelIdRef = useRef<string>('');
   const [initialPrompt, setInitialPrompt] = useState<{
     text: string;
     size: string | null;
@@ -5592,6 +5597,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       sessionStorage.removeItem(sessionKey);
       // assetId 是首页那张参考图在本 workspace 里的身份。首页一直在传，这里第一次读。
       initialAssetIdRef.current = String(data.assetId || '').trim() || null;
+      // 首页明确选过的模型：优先级高于服务端偏好。
+      // 偏好写失败时只返回 { success:false }（不 reject），此时服务端存的还是上一次的值；
+      // 若编辑器照读，用户在首页选了 A、这里却用 B 跑了一次要花钱的生成（Codex PR #1476 P1）。
+      // 这个 effect 在挂载时同步跑完，而偏好 effect 的赋值在 await 之后，所以标记一定先立起来。
+      const handedModelId = String(data.modelId || '').trim();
+      if (handedModelId) {
+        handedModelIdRef.current = handedModelId;
+        setModelPrefAuto(false);
+        setModelPrefModelId(handedModelId);
+      }
       const sz = data.imageSize;
       initialImageSizeRef.current =
         sz && Number(sz.w) > 0 && Number(sz.h) > 0 ? { w: Number(sz.w), h: Number(sz.h) } : null;
