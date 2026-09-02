@@ -164,6 +164,40 @@ function resolveBound(value: number | undefined, nowMs: number, fallback: number
   return value < 0 ? nowMs + value * 1000 : value;
 }
 
+/**
+ * 观测到的最粗采集节奏（毫秒）。窗口里每个容器取自己相邻样本间隔的 p90，再取所有容器的最大值。
+ *
+ * 为什么需要它：图的分辨率不能比数据的节奏细。常驻采样器 45s 一帧，若按 120 点切
+ * 30 分钟窗口（每桶 15s），三个桶里只有一个有样本，另外两个是空的——空桶在堆叠图里
+ * 画成 0，于是整张图变成一片均匀锯齿：每个尖峰是一次真实采样，每个谷底是「没数据」
+ * 被当成了「用量为零」。图画的是采集节奏，不是 CPU。
+ *
+ * 为什么取 p90 而不是中位数：抽屉打开时 5s 端点也在写，窗口里会混着 5s 与 45s 两种
+ * 间隔。中位数会被密的那一段拉过去（开着抽屉五分钟就够了），于是older 的稀疏段照样
+ * 锯齿。p90 抓的是「常规最大间隔」，同时又不会被一两次真实断档带偏。
+ *
+ * 为什么取容器间的最大值：一条轴要同时画所有容器，分辨率由最稀疏的那条决定；
+ * 对更密的那条只是多平均几个点，不会失真。
+ *
+ * 样本少于 3 个的容器不参与（算不出可信的间隔），全都算不出就返回 0 = 不做限制。
+ */
+function observedCadenceMs(containers: string[], after: number, before: number): number {
+  let coarsest = 0;
+  for (const name of containers) {
+    const all = store.get(name);
+    if (!all) continue;
+    const ts: number[] = [];
+    for (const p of all) if (p.ts >= after && p.ts <= before) ts.push(p.ts);
+    if (ts.length < 3) continue;
+    const gaps: number[] = [];
+    for (let i = 1; i < ts.length; i += 1) gaps.push(ts[i] - ts[i - 1]);
+    gaps.sort((a, b) => a - b);
+    const p90 = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.9))];
+    if (p90 > coarsest) coarsest = p90;
+  }
+  return coarsest;
+}
+
 function aggregate(bucket: StoredPoint[], group: 'average' | 'max'): Omit<SeriesPoint, 'ts'> {
   if (group === 'max') {
     return {
@@ -195,8 +229,24 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
   const after = resolveBound(query.after, nowMs, nowMs - 30 * 60_000);
   const group = query.group === 'max' ? 'max' : 'average';
   // 允许 points=1：这是「把整个窗口聚成一个数」的合法问法（顶部那个大数就用它）。
-  const wanted = Math.max(1, Math.min(1000, query.points ?? 120));
+  const asked = Math.max(1, Math.min(1000, query.points ?? 120));
   const span = Math.max(1, before - after);
+
+  /**
+   * 分辨率不细于采集节奏：桶宽至少是观测节奏的 1.5 倍，否则必然出现空桶。
+   *
+   * 调用方要多少点是它的期望，不是它对数据密度的判断——密度只有这里知道。
+   * 所以 points 是**上限**：能给的点数由 span / (节奏 × 余量) 决定，取两者较小的。
+   * 1.5 倍是给采样抖动留的余量：45s 的采集器实际落点会有几秒漂移，桶宽正好 45s
+   * 会让一部分桶落空、相邻桶吃到两帧。
+   *
+   * 下限 8 个点：真实断档会把 p90 抬高（比如 CDS 重启后窗口里只剩一段数据），
+   * 不设下限的话一次长断档就能把整个窗口压成两三个点。
+   */
+  const cadenceMs = observedCadenceMs(query.containers, after, before);
+  const wanted = cadenceMs > 0
+    ? Math.min(asked, Math.max(8, Math.ceil(span / (cadenceMs * 1.5))))
+    : asked;
   const bucketMs = span / wanted;
 
   // 先按桶归集每个容器的样本。桶边界对所有容器是同一套（同一个 after / bucketMs），

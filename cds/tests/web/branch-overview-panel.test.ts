@@ -14,6 +14,17 @@ const PANEL = fs.readFileSync(path.join(SRC, 'components/branch/OverviewPanel.ts
 const DRAWER = fs.readFileSync(path.join(SRC, 'components/BranchDetailDrawer.tsx'), 'utf8');
 const CSS = fs.readFileSync(path.join(SRC, 'index.css'), 'utf8');
 
+/**
+ * 去掉注释的源码视图。
+ *
+ * 扫源码的守卫必须扫**真正会执行的那部分**：注释里为了讲清病根，往往会原样引用
+ * 那个错误写法（本文件里就有一条守卫因此自己把自己判红）。这正是
+ * predicate-and-wiring-discipline 形状 6——判据读到的不是真正生效的那个值。
+ */
+const stripComments = (src: string): string =>
+  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+const PANEL_CODE = stripComments(PANEL);
+
 describe('总览面板接线（形状 2：建了一半不会红）', () => {
   it('抽屉真的在渲染 OverviewPanel，不是只 import 不用', () => {
     expect(DRAWER).toContain("from '@/components/branch/OverviewPanel'");
@@ -30,6 +41,29 @@ describe('总览面板接线（形状 2：建了一半不会红）', () => {
   it('入口卡只有一处（原先抽屉头部与总览计数各说各话）', () => {
     expect(DRAWER).not.toContain('应用已上线');
     expect(PANEL).toContain('function EntryCards');
+  });
+});
+
+describe('打开即出图（2026-09-02 真人验收：打开之后卡了很长时间）', () => {
+  /**
+   * 病根：图表闸门曾写成 `!metricsReady || !hasPlot`。metricsReady 要等
+   * `/api/branches/:id/metrics` 返回，而那个接口跑 `docker stats --no-stream`，
+   * 十个容器、超时上限 5 秒；与此同时纯内存的 `/metrics/series` 早就把整段历史
+   * 返回来了，图完全画得出来，却被按住不画。
+   *
+   * 这条守卫钉住「闸门只看有没有历史」。改回去会立刻变红。
+   */
+  it('图表闸门不依赖实时快照，只看有没有画得出来的历史', () => {
+    // 闸门形如 `) : !hasPlot ? (` —— 取 metricsError 那条之后的第一个三元判断。
+    const tail = PANEL_CODE.slice(PANEL_CODE.indexOf('读取指标失败'));
+    const gate = tail.match(/\)\s*:\s*([^?]{1,80}?)\s*\?/);
+    expect(gate, '找不到图表闸门那段判断，可能被重构了——请同步这条守卫').not.toBeNull();
+    expect(gate?.[1], '实时快照（docker stats，可能要 5 秒）不该挡住已经拿到的历史').not.toContain('metricsReady');
+    expect(gate?.[1]).toContain('hasPlot');
+  });
+
+  it('抽屉一进总览就取服务端历史铺底，不是打开后自己攒点', () => {
+    expect(stripComments(DRAWER)).toMatch(/metrics\/series\?after=/);
   });
 });
 

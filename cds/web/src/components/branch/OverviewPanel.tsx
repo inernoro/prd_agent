@@ -761,11 +761,24 @@ export function OverviewPanel({
             <RefreshCw className="h-3.5 w-3.5" />重试
           </button>
         </section>
-      ) : !metricsReady || !hasPlot ? (
+      ) : !hasPlot ? (
+        /*
+         * 闸门只看「有没有画得出来的历史」，**不看实时快照回来没有**。
+         *
+         * 2026-09-02 真人验收：「打开之后卡了很长时间」。原因是这里曾经写
+         * `!metricsReady || !hasPlot`——metricsReady 要等 /metrics 返回，而那个接口跑
+         * `docker stats --no-stream`，十个容器、超时上限 5 秒。与此同时纯内存的
+         * /metrics/series 早就把整段历史返回来了，图完全画得出来，却被按住不画，
+         * 干等一个只为了拿「此刻这一帧」的慢请求。
+         *
+         * 现在：有历史就立刻画，实时快照到了再把新点续在尾巴上。
+         */
         <section className="rounded-xl border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-8 text-center text-sm text-muted-foreground">
           {services.length === 0
             ? '该分支还没有任何 service，先去构建配置 / 部署。'
-            : `正在采集 docker stats，已有 ${sampleCount} / 2 个采样点…`}
+            : metricsReady
+              ? '这段窗口内还没有采集到样本，采样器每 45 秒写一帧，稍后自动出图。'
+              : '正在读取指标历史…'}
         </section>
       ) : (
         <>
