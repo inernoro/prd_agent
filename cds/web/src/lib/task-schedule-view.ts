@@ -16,12 +16,16 @@ export interface JobHealth {
   bars: RunStatus[];
 }
 
-/** 单个任务的健康度：只统计已判定（成功/失败）的样本，跳过不计入成功率。 */
+/**
+ * 单个任务的健康度：只统计已判定（成功/失败）的样本，跳过不计入成功率**也不计入耗时**。
+ * 跳过的运行被写成 `durationMs = 0`（任务停用 / 上一轮未结束），混进中位数会把
+ * 一个真跑二十分钟的任务显示成 P50 接近 0ms —— 分母必须和成功率同一批样本。
+ */
 export function computeHealth(list: ScheduledJobRun[]): JobHealth {
   const recent = list.slice(0, 20);
   const decided = recent.filter((run) => run.status === 'success' || run.status === 'failed');
   const ok = decided.filter((run) => run.status === 'success').length;
-  const durations = recent
+  const durations = decided
     .map((run) => run.durationMs)
     .filter((value): value is number => typeof value === 'number')
     .sort((a, b) => a - b);
@@ -162,10 +166,21 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
   const enabled = jobs.filter((job) => job.enabled && !job.autoDisabledReason);
   const disabledCount = jobs.length - enabled.length;
 
+  // 判「有没有复跑成功」只认还存在的任务。删掉一个任务不会删掉它的运行史
+  // （StateService.deleteScheduledJob 只删任务本身），而一个已经不存在的任务永远
+  // 不可能再跑成功一次——拿它当判据，结论条会一直停在「尚未复跑成功」直到跨零点。
+  // 今日统计（执行/成功/失败）仍算全部记录：那一栏说的是「今天系统干了什么」，
+  // 任务后来被删不改变它今天真的挂过。两个数字不一致时由 orphanTail 说明差在哪。
+  const liveJobIds = new Set(jobs.map((job) => job.id));
+  const todayFailures = today.filter((run) => run.status === 'failed');
+  const liveFailures = todayFailures.filter((run) => liveJobIds.has(run.jobId));
+  const failedLive = liveFailures.length;
+  const orphanFailed = todayFailures.length - failedLive;
+
   // 「恢复」要有证据：该任务今天挂过之后，确实还有一次成功的重跑。
   // 光看 consecutiveFailureCount 清零不够——patchJobAfterRun 对**跳过**也清零，
   // 一次失败的发布后面跟一次「目标忙」的跳过，计数就归零了，但它根本没跑成功过。
-  const failedJobIds = new Set(today.filter((run) => run.status === 'failed').map((run) => run.jobId));
+  const failedJobIds = new Set(liveFailures.map((run) => run.jobId));
   const unrecovered = [...failedJobIds].filter((jobId) => {
     const lastFail = Math.max(...today.filter((r) => r.jobId === jobId && r.status === 'failed').map((r) => Date.parse(r.queuedAt)));
     return !today.some((r) => r.jobId === jobId && r.status === 'success' && Date.parse(r.queuedAt) > lastFail);
@@ -177,7 +192,7 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
       ? 'failing'
       : enabled.length === 0
         ? 'all-disabled'
-        : failed === 0
+        : failedLive === 0
           ? 'clean'
           : unrecovered.length > 0
             ? 'unresolved'
@@ -185,6 +200,7 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
 
   const tail = disabledCount > 0 && state !== 'all-disabled' ? `；另有 ${disabledCount} 个任务已停用` : '';
   const skipTail = skipped ? `；今日有 ${skipped} 次因上一轮未结束而跳过` : '';
+  const orphanTail = orphanFailed ? `；另有 ${orphanFailed} 次失败来自已删除的任务` : '';
 
   let headline: string;
   let detail: string;
@@ -198,23 +214,26 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
     headline = disabled.length > 0
       ? `${failing.length} 个任务连续失败，其中 ${disabled.length} 个已被自动停用`
       : `${failing.length} 个任务连续失败`;
-    detail = `${failing.map((job) => job.name).slice(0, 3).join('、')}${failing.length > 3 ? ' 等' : ''}；其余 ${jobs.length - failing.length} 个任务今日${failed ? '' : '零失败'}${skipTail}。`;
+    detail = `${failing.map((job) => job.name).slice(0, 3).join('、')}${failing.length > 3 ? ' 等' : ''}；其余 ${jobs.length - failing.length} 个任务今日${failedLive ? '' : '零失败'}${skipTail}${orphanTail}。`;
   } else if (state === 'all-disabled') {
     tone = 'warn';
     headline = `${jobs.length} 个任务全部已停用`;
     detail = '没有任务会被自动触发。启用其中任意一个，或用「立即执行」手动跑一次。';
   } else if (state === 'unresolved') {
     tone = 'warn';
-    headline = `${enabled.length} 个任务在跑，今日 ${failed} 次失败尚未复跑成功`;
-    detail = `${unrecovered.length} 个任务挂过之后没有再成功跑过一次${skipTail}${tail}。`;
+    headline = `${enabled.length} 个任务在跑，今日 ${failedLive} 次失败尚未复跑成功`;
+    detail = `${unrecovered.length} 个任务挂过之后没有再成功跑过一次${skipTail}${orphanTail}${tail}。`;
   } else if (state === 'recovered') {
     tone = 'ok';
-    headline = `${enabled.length} 个任务在跑，今日 ${failed} 次失败均已恢复`;
-    detail = `挂过的任务之后都有成功的重跑${skipTail}${tail}；接下来 6 小时将触发 ${upcoming} 次。`;
+    headline = `${enabled.length} 个任务在跑，今日 ${failedLive} 次失败均已恢复`;
+    detail = `挂过的任务之后都有成功的重跑${skipTail}${orphanTail}${tail}；接下来 6 小时将触发 ${upcoming} 次。`;
   } else {
     tone = 'ok';
-    headline = `${enabled.length} 个任务在跑，今日无失败`;
-    detail = `接下来 6 小时将触发 ${upcoming} 次${skipTail}${tail}。`;
+    // 有孤儿失败时不能说「今日无失败」——紧挨着的统计段里「失败」那一栏是非零的。
+    headline = orphanFailed
+      ? `${enabled.length} 个任务在跑，现有任务今日无失败`
+      : `${enabled.length} 个任务在跑，今日无失败`;
+    detail = `接下来 6 小时将触发 ${upcoming} 次${skipTail}${orphanTail}${tail}。`;
   }
 
   return {

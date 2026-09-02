@@ -94,6 +94,23 @@ describe('健康度', () => {
     expect(health.bars).toEqual(['success', 'failed', 'skipped', 'success']);
   });
 
+  /*
+   * Codex #1471 第三轮 P2。跳过的运行被写成 durationMs = 0（任务停用 / 上一轮未结束），
+   * 混进中位数会把一个真跑二十分钟的任务显示成 P50 接近 0ms。
+   * 红绿闭环：把 durations 的来源换回 recent，本条报 `expected 0 to be 600000`。
+   */
+  it('P50 只看真的跑过的样本，跳过写的 durationMs=0 不许压低中位数', () => {
+    // 一个每 5 分钟触发、实际跑 10 分钟的任务：大部分调度被并发策略跳过。
+    const list: ScheduledJobRun[] = [
+      run({ id: 'r1', jobId: 'j', status: 'skipped', durationMs: 0 }),
+      run({ id: 'r2', jobId: 'j', status: 'skipped', durationMs: 0 }),
+      run({ id: 'r3', jobId: 'j', status: 'success', durationMs: 600_000 }),
+      run({ id: 'r4', jobId: 'j', status: 'skipped', durationMs: 0 }),
+      run({ id: 'r5', jobId: 'j', status: 'skipped', durationMs: 0 }),
+    ];
+    expect(computeHealth(list).p50Ms).toBe(600_000);
+  });
+
   it('没有已判定样本时成功率是 null，不是 0% —— 别把「没数据」画成「全挂」', () => {
     const health = computeHealth([run({ id: 'r1', jobId: 'j', status: 'queued' })]);
     expect(health.successRate).toBeNull();
@@ -342,5 +359,56 @@ describe('结论条的状态是有限枚举，不是越叠越长的条件链', (
     ], NOW);
     expect(o.headline).toContain('1 次失败');
     expect(o.stats.find((x) => x.label === '失败')?.value).toBe('1');
+  });
+
+  /*
+   * Codex #1471 第三轮 P2。deleteScheduledJob 只删任务、留下运行史，
+   * 而一个已经不存在的任务永远不可能再跑成功一次——拿它判「有没有复跑成功」，
+   * 结论条会一直停在 unresolved 直到跨零点。
+   * 红绿闭环：把 failedJobIds 的来源换回 today 全部失败记录，本条报
+   * `expected 'unresolved' to be 'clean'`。
+   */
+  it('已删除任务的失败不参与「复跑成功」判定，但仍计入今日统计', () => {
+    const o = buildOverview([j('a')], [
+      r('gone', 'deleted-job', 'failed', '2026-08-31T09:00:00.000Z'),
+      r('r1', 'a', 'success', '2026-08-31T10:00:00.000Z'),
+    ], NOW);
+    expect(o.state).toBe('clean');
+    // 统计段说的是「今天系统干了什么」，任务后来被删不改变它今天真的挂过。
+    expect(o.stats.find((x) => x.label === '失败')?.value).toBe('1');
+    // 两个数字不一致时必须当场说明差在哪，否则又是结论与支撑数据打架。
+    expect(o.detail).toContain('另有 1 次失败来自已删除的任务');
+    // 统计段「失败」非零时不许说「今日无失败」。
+    expect(o.headline).toBe('1 个任务在跑，现有任务今日无失败');
+  });
+
+  /*
+   * 上一条只证明了 failedLive 那道闸，证不了 failedJobIds 的过滤——它在
+   * failedLive === 0 时根本走不到。这一条才是判据本身：现存任务挂过又恢复了，
+   * 同一天还有一个已删除任务的失败悬着。
+   * 红绿闭环：failedJobIds 换回 todayFailures，本条报
+   * `expected 'unresolved' to be 'recovered'`。
+   */
+  it('现存任务已恢复时，已删除任务的旧失败不许把结论压在 unresolved', () => {
+    const o = buildOverview([j('a')], [
+      r('gone', 'deleted-job', 'failed', '2026-08-31T08:00:00.000Z'),
+      r('r1', 'a', 'failed', '2026-08-31T09:00:00.000Z'),
+      r('r2', 'a', 'success', '2026-08-31T10:00:00.000Z'),
+    ], NOW);
+    expect(o.state).toBe('recovered');
+    expect(o.headline).toContain('今日 1 次失败均已恢复');
+    expect(o.detail).toContain('另有 1 次失败来自已删除的任务');
+  });
+
+  it('删掉挂掉的那个任务之后，剩下任务自己的未复跑仍要报出来', () => {
+    const o = buildOverview([j('a')], [
+      r('gone', 'deleted-job', 'failed', '2026-08-31T08:00:00.000Z'),
+      r('r1', 'a', 'failed', '2026-08-31T09:00:00.000Z'),
+    ], NOW);
+    expect(o.state).toBe('unresolved');
+    // 结论条的数字只数现存任务的失败，孤儿那次由 detail 单列。
+    expect(o.headline).toContain('今日 1 次失败尚未复跑成功');
+    expect(o.detail).toContain('另有 1 次失败来自已删除的任务');
+    expect(o.stats.find((x) => x.label === '失败')?.value).toBe('2');
   });
 });
