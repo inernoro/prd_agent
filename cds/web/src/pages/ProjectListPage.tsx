@@ -632,7 +632,7 @@ export function ProjectListPage(): JSX.Element {
     }
     setQuickCreating(true);
     try {
-      const res = await apiRequest<{ project: ProjectSummary }>('/api/projects', {
+      const res = await apiRequest<CreateProjectResponse>('/api/projects', {
         method: 'POST',
         body: { name, gitRepoUrl },
       });
@@ -640,6 +640,10 @@ export function ProjectListPage(): JSX.Element {
       setToast(`已创建 ${displayName(res.project)}`);
       if (res.project.cloneStatus === 'pending') setCloneTarget(res.project);
       await refresh(false);
+      // 顶栏这条是建项目的**主**路径，撞上已被绑走的仓库同样要当场问清楚。
+      // 只在完整表单里处理会让主路径静默建出一个没绑仓库的项目，
+      // 而用户看到的是「已创建」，之后推送永远到不了它（Codex P1）。
+      if (res.repoAlreadyLinked) setRepoSharePrompt({ project: res.project, info: res.repoAlreadyLinked });
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : String(err));
     } finally {

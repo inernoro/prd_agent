@@ -578,8 +578,17 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         );
       });
     }
-    if (result.stopRequest) {
-      const stopReq = result.stopRequest;
+    /*
+     * 清理类副作用必须对**每一条**结果都跑一遍（2026-09-02 Codex P1）。
+     *
+     * 部署那条早就按 fanout 逐条派发了，停容器 / 墓碑 / 删分支这三条却只读主结果。
+     * 一仓多项目之后这就是：第二个项目的容器没人停、分支条目没人删，而且没有任何
+     * 报错——dispatcher 把请求算出来了，路由把它丢了。分发器单测只断言载荷，
+     * 断不到这一层，所以配套的用例钉在路由上。
+     */
+    const runStopDispatch = (r: WebhookDispatchResult): void => {
+      if (!r.stopRequest) return;
+      const stopReq = r.stopRequest;
       const stopBranch = stateService.getBranch(stopReq.branchId);
       serverEventLogStore?.record({
         category: 'container',
@@ -592,8 +601,8 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         details: {
           webhookEvent: eventName,
           deliveryId,
-          dispatchAction: result.action,
-          dispatchReason: result.message,
+          dispatchAction: r.action,
+          dispatchReason: r.message,
         },
       });
       void defaultLocalhostStop(config, stateService, stopReq.branchId).catch((err) => {
@@ -614,13 +623,14 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           (err as Error).message,
         );
       });
-    }
+    };
 
     // PR closed → 写一条分支墓碑（previewSlug 为键），让过期分支预览页能区分
     // "已合并到主分支"（引导切主分支）与"已放弃"（跳 PR/commit）。先于 stop/delete
     // 落库即可：墓碑独立于 branch entry，分支随后被删也不受影响。
-    if (result.tombstoneRequest) {
-      const tr = result.tombstoneRequest;
+    const runTombstone = (r: WebhookDispatchResult): void => {
+      if (!r.tombstoneRequest) return;
+      const tr = r.tombstoneRequest;
       try {
         const tombProject = stateService.getProject(tr.projectId);
         const previewSlug = buildPreviewUrlForProject(null, tr.branch, tombProject, tr.projectId).previewSlug;
@@ -648,15 +658,16 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           (err as Error).message,
         );
       }
-    }
+    };
 
     // 2026-05-07 用户反馈"分支已删除但 CDS 端没清理":handleDelete 现在
     // 同时返 stopRequest + branchDeleteRequest。stopRequest 已在上面 fire-and-
     // forget 跑;这里再 schedule 一次 DELETE /api/branches/:id 彻底清 entry +
     // worktree。延迟 3s 给 stop 一点时间先把容器干净停掉,再删 entry,避免
     // 野容器残留(虽然 DELETE 路由内部也会 stop,但顺序排好更可控)。
-    if (result.branchDeleteRequest) {
-      const delReq = result.branchDeleteRequest;
+    const runBranchDelete = (r: WebhookDispatchResult): void => {
+      if (!r.branchDeleteRequest) return;
+      const delReq = r.branchDeleteRequest;
       const deleteBranch = stateService.getBranch(delReq.branchId);
       serverEventLogStore?.record({
         category: 'container',
@@ -670,8 +681,8 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           webhookEvent: eventName,
           deliveryId,
           delayMs: 3000,
-          dispatchAction: result.action,
-          dispatchReason: result.message,
+          dispatchAction: r.action,
+          dispatchReason: r.message,
         },
       });
       setTimeout(() => {
@@ -694,6 +705,13 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           );
         });
       }, 3_000);
+    };
+
+    // 主结果与 fanout 同等对待——少了这一步，第二个项目就是「收得到事件、没人替它清理」。
+    for (const r of [result, ...(result.fanout || [])]) {
+      runStopDispatch(r);
+      runTombstone(r);
+      runBranchDelete(r);
     }
 
     // Slash commands — run the command + post a reply comment on the PR.

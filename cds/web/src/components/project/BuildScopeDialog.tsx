@@ -111,9 +111,14 @@ export function BuildScopeDialog({
     setSaving(true);
     setError('');
     try {
-      // 只发真的改了的：PUT 是整条构建配置的更新入口，没动过的不该走一遍写路径
+      // 只发真的改了的：PUT 是整条构建配置的更新入口，没动过的不该走一遍写路径。
+      //
+      // 基线只能是**已落库**的 declared，不能把 suggested 也算进去（Codex P2）：
+      // 建议只是预勾在界面上，库里那条仍是空的。拿 suggested 当基线的话，用户
+      // 接受默认值点保存 → 前后相等 → 一条 PUT 都不发 → 弹窗说「没有改动」，
+      // 而范围依然没划，每次推送照样全量重建。
       const changed = options.profiles.filter((profile) => {
-        const before = [...(profile.declared.length > 0 ? profile.declared : profile.suggested)].sort().join(' ');
+        const before = [...profile.declared].sort().join(' ');
         return before !== [...scopeFor(profile.id)].sort().join(' ');
       });
       for (const profile of changed) {
