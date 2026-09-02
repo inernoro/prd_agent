@@ -336,7 +336,7 @@ export interface BranchDeploymentItem {
   branchId: string;
   branchName: string;
   commitSha?: string;
-  kind: 'preview' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
+  kind: 'preview' | 'open' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -561,6 +561,7 @@ function deploymentStatusClass(status: BranchDeploymentItem['status']): string {
 function deploymentKindLabel(kind: BranchDeploymentItem['kind']): string {
   return ({
     preview: '预览部署',
+    open: '打开预览',
     deploy: '部署',
     restart: '启动',
     pull: '拉取',

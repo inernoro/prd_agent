@@ -93,9 +93,53 @@ describe('图的时间轴只有一个口径（2026-09-02：X 轴在说谎）', (
     expect(code).toMatch(/loadSeries[\s\S]{0,400}setInterval\(\(\)\s*=>\s*void\s+loadSeries/);
   });
 
+  /*
+   * 这条守卫的第一版扫的是源码里有没有 `liveStats` / `readLive(live)` 这两个名字
+   * （Codex P1，核对属实）：把 `readLive` 改个名它就红——虽然行为一个字没变；
+   * 反过来，保留这两个名字却把实时值算错（比如 `readLive(live) * 0`），它照样绿。
+   * 判据钉在实现的字面上，正好把两种错都判反了（形状 4a）。
+   *
+   * 改成从渲染结果进：喂一组「最后一个真样本 ≠ 实时快照」的数据，看图例上到底
+   * 印的是哪个数字。这样重命名不影响它，算错值一定红。
+   */
   it('图例的当前值走实时快照，不是序列最后一个桶（桶是数十秒的平均，慢一拍）', () => {
-    expect(PANEL_CODE).toContain('liveStats');
-    expect(PANEL_CODE).toMatch(/readLive\(live\)/);
+    const legend = (live?: Record<string, { cpuPercent: number; memUsedBytes: number }>): string => {
+      const html = renderToStaticMarkup(createElement(OverviewPanel, {
+        services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+        running: true,
+        branchName: 'demo',
+        entries: [],
+        deployments: [],
+        // 两帧真样本够画图（filled >= 2），最后一个真样本是 4%。
+        metricSeries: {
+          api: seedMetricSeries([
+            { cpuPercent: 4, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+            { cpuPercent: 4, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+          ]),
+        },
+        liveStats: live,
+        metricsReady: true,
+        replicaSummary: '1 个副本',
+        infraSummary: '无',
+        now: Date.now(),
+        windowMinutes: 30,
+        onRefreshMetrics: () => {},
+      }));
+      const cpuAt = html.indexOf('CPU 占用');
+      const memAt = html.indexOf('内存占用');
+      expect(cpuAt, 'CPU 卡没渲染出来，切片会是空的（空切片必然绿）').toBeGreaterThan(-1);
+      expect(memAt).toBeGreaterThan(cpuAt);
+      return html.slice(cpuAt, memAt);
+    };
+
+    // 有实时快照：印 42.00（快照），不是 4.00（最后一个桶）。
+    const withLive = legend({ api: { cpuPercent: 42, memUsedBytes: 100 } });
+    expect(withLive, '图例印的是桶的平均值，慢一拍').toContain('42.00');
+    expect(withLive, '实时快照在手上却仍印着旧桶').not.toContain('4.00');
+
+    // 没有实时快照：退回最后一个**真有样本**的桶，印 4.00。
+    const noLive = legend(undefined);
+    expect(noLive, '没有快照时应当退回最后一个真样本').toContain('4.00');
   });
 });
 
@@ -631,6 +675,93 @@ describe('总览渲染冒烟：缺口真的没被画成 0', () => {
       multi.length,
       'CPU 面积是一整段——缺口被补 0 连了过去，组件没把 present 掩码传给几何',
     ).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * 历史只有 1 帧的服务，不许在合计里被当成 0（2026-09-02，Codex P2，核对属实）。
+ *
+ * `liveOnly` 的判据是 `filled < 2`——那是**几何**判据（画不出线），不是「没有数据」。
+ * 1 帧也在 liveOnly 里。`/metrics` 挂着或还没回来时，上一版让它整个贡献 0，于是
+ * 顶部大数一边写着「合计 2 个服务」，一边把其中一个当成不存在。
+ */
+describe('只有一帧历史的服务，合计里照样算它', () => {
+  const render = (live?: Record<string, { cpuPercent: number; memUsedBytes: number }>): string =>
+    renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [
+        { profileId: 'api', containerName: 'api-x', status: 'running' },
+        // web 只有 1 帧：filled=1 < 2，进 liveOnly，不参与几何。
+        { profileId: 'web', containerName: 'web-x', status: 'running' },
+      ],
+      running: true,
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {
+        api: seedMetricSeries([
+          { cpuPercent: 10, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+          { cpuPercent: 10, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+        ]),
+        web: seedMetricSeries([{ cpuPercent: 7, memUsedBytes: 100, rxRate: 0, txRate: 0 }]),
+      },
+      liveStats: live,
+      metricsReady: true,
+      replicaSummary: '2 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+
+  /** 「其他 N 个」那条图例就是 liveOnly 的去处，两位小数，切出来单独看。 */
+  const otherLegend = (html: string): string => {
+    const at = html.indexOf('其他 1 个');
+    expect(at, '没渲染出「其他 1 个」——liveOnly 整个没进图例').toBeGreaterThan(-1);
+    return html.slice(at, at + 240);
+  };
+
+  it('/metrics 没回来时，那一帧照样算（其他 = 7.00，合计 17.0%）', () => {
+    const html = render(undefined);
+    expect(otherLegend(html), 'web 那 1 帧被当成 0').toContain('7.00');
+    expect(html, '顶部大数跟着少报').toContain('CPU 合计 17.0%');
+  });
+
+  it('实时快照在手上时优先用快照（其他 = 9.00，合计 19.0%）', () => {
+    const html = render({
+      api: { cpuPercent: 10, memUsedBytes: 100 },
+      web: { cpuPercent: 9, memUsedBytes: 100 },
+    });
+    expect(otherLegend(html)).toContain('9.00');
+    expect(html).toContain('CPU 合计 19.0%');
+  });
+});
+
+/**
+ * 「打开正在跑的预览」失败，不算一次构建失败（2026-09-02，Codex P2，核对属实）。
+ *
+ * openRunningPreview 一行都不构建，只拼 URL 跳过去；它失败时（最常见：缺预览域名
+ * 配置）此前落的是一条 finished + error 的 `preview` 记录，而柱状图按 kind 收，
+ * 于是成功率和「上次构建耗时」被一次根本没发生的构建污染。
+ */
+describe('部署统计只收真的构建', () => {
+  const LIST = fs.readFileSync(path.join(SRC, 'pages/BranchListPage.tsx'), 'utf8');
+
+  it('openRunningPreview 用的是 open，不是 preview', () => {
+    const code = stripComments(LIST);
+    const at = code.indexOf('const openRunningPreview');
+    expect(at, '找不到 openRunningPreview，选择器过时了').toBeGreaterThan(0);
+    const body = code.slice(at, code.indexOf('const openBranchDetail', at));
+    expect(body, '成功/失败两处 kind 都该是 open').not.toMatch(/Action\([^)]*'preview'/);
+    expect(body, '失败时应落 open 记录').toMatch(/finishAction\([^)]*'open'/);
+  });
+
+  it('柱状图的 kind 白名单不含 open', () => {
+    const code = stripComments(DRAWER);
+    const at = code.indexOf('const overviewDeployments');
+    expect(at).toBeGreaterThan(0);
+    const filter = code.slice(at, code.indexOf('[combinedDeployments]', at));
+    expect(filter, 'open 混进来就等于没修').not.toContain("kind === 'open'");
+    expect(filter, "构建类三种要还在").toContain("kind === 'deploy'");
   });
 });
 

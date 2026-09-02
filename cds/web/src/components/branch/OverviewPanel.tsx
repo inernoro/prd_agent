@@ -1126,7 +1126,20 @@ export function OverviewPanel({
     }, 0) + picked.liveOnly.reduce((sum, sv) => {
       // 历史不够画、但正在跑：当前值照算，几何不参与（上面 merged 不含它们）。
       const live = liveStats?.[sv.profileId];
-      return sum + (live ? readLive(live) : 0);
+      if (live) return sum + readLive(live);
+      /*
+       * 没有实时快照时，这里同样退回最后一个真样本（Codex P2，核对属实）。
+       *
+       * liveOnly 的判据是 `filled < 2`——**不是没有历史**，1 帧也在里面。
+       * `/metrics` 挂着或还没回来时，上一版让它整个贡献 0，于是顶部大数
+       * 声称合计了 N 个服务，却把其中一个当成不存在。
+       *
+       * 同一个错法这已经是第三处：head、tail 都改过了，只有这里没改——
+       * 「改被指出的那一处、不扫同类」正是 predicate-and-wiring-discipline
+       * 形状 6 收尾那段说的事。
+       */
+      const ring = metricSeries[sv.profileId];
+      return sum + (ring ? latestPresent(read(ring), ring.present) ?? 0 : 0);
     }, 0);
     const [nowLabel, nowUnit] = label(tailNow);
     const otherCount = picked.tail.length + picked.liveOnly.length;
