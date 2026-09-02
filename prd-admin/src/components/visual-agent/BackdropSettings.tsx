@@ -107,6 +107,17 @@ export function BackdropSettings(props: {
   const [progress, setProgress] = useState<BackdropGenProgress | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  /**
+   * 最新的那一份 generated。
+   *
+   * 生成要跑 40-60 秒，而 `generated` 是 prop：`runGenerate` 里 await 之后读到的
+   * 仍然是**发起那一帧**的数组。用户在等待期间删掉一张旧背景，落地时就会把那份
+   * 旧数组连同新图一起写回去——刚删掉的那张在界面和存储里双双复活（Codex PR #1476 P2）。
+   * 这是本会话反复出现的同一类问题：闭包读到的值真实存在，只是过期了。
+   * 每次渲染同步一次，异步路径一律读 ref，不读 prop。
+   */
+  const generatedRef = useRef(generated);
+  generatedRef.current = generated;
 
   // 关闭面板不取消生成（server-authority：任务在服务端，关个面板不该把它杀掉），
   // 但组件真正卸载时要断开轮询，免得 setState 打到已卸载的组件上。
@@ -174,7 +185,8 @@ export function BackdropSettings(props: {
       // 必须把当前列表传进去。storage 写不进（隐私模式 / 配额满 / 没登录）时这两个
       // 函数只返回一个「仅本次会话有效」的列表，没落盘；不传 existing 的话下一次调用
       // 会重新从 storage 读到空，上一张刚花钱生成的图就从界面上消失了（Codex PR #1476 P2）。
-      onGeneratedChange(pushGeneratedBackdrop(userId, asset, generated));
+      // 读 ref 不读 prop：等待期间用户删过东西的话，prop 里那份已经是旧的。
+      onGeneratedChange(pushGeneratedBackdrop(userId, asset, generatedRef.current));
       pick(asset.id); // 出图即钉住：用户点「生成」就是想看这一张，不该还要再点一下
     } catch (e) {
       setGenError(e instanceof Error ? e.message : '生成失败');

@@ -30,3 +30,6 @@
 | merge | prd-admin | 合入 main：保留 GenDevelopLoader 的同时把 main 在旧 loader 上的「进度行夹在可见区域内」一并带过来 |
 | fix | prd-admin | 手机端模型 id 归一到选项 id 口径——main 把比较对象换成选项 id 后，原先剥前缀的写法会让自动发送整个不触发 |
 | test | prd-admin | 进度行夹紧守卫从旧 loader 搬到新 loader；模型 id 归一改为行为断言（源码守卫在口径反转时不会红） |
+| fix | 全局 | 设计画布目录并入 .design/，修复根目录布局契约 CI 红灯 |
+| fix | prd-admin | 背景生成落地读最新列表：等待期间删掉的那张不再被写回来复活 |
+| test | prd-admin | 补复活场景的行为判据（用旧快照落地会复现缺陷，用最新列表不会） |

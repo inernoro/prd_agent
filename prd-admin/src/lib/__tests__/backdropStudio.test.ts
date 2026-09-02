@@ -214,8 +214,39 @@ describe('【关键】调用方把当前列表传给了两个写入函数', () =
     const src = readFileSync(resolve(ROOT, 'src/components/visual-agent/BackdropSettings.tsx'), 'utf8');
     const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
     expect(code, '剥完注释还剩真代码').toContain('runGenerate');
-    expect(code).toMatch(/pushGeneratedBackdrop\(userId, asset, generated\)/);
+    expect(code).toMatch(/pushGeneratedBackdrop\(userId, asset, generatedRef\.current\)/);
     expect(code).toMatch(/removeGeneratedBackdrop\(userId, id, generated\)/);
+  });
+
+  it('【关键】生成落地读的是最新列表，不是发起那一帧的快照', () => {
+    // 生成要 40-60 秒。`generated` 是 prop，await 之后闭包里还是**发起那一帧**的数组：
+    // 用户在等待期间删掉一张旧背景，落地时会把旧数组连同新图一起写回去，
+    // 刚删的那张在界面和存储里双双复活（Codex PR #1476 P2）。
+    // 删除是同步路径，读 prop 没问题；异步落地必须读 ref。
+    const src = readFileSync(resolve(ROOT, 'src/components/visual-agent/BackdropSettings.tsx'), 'utf8');
+    const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    expect(code, '应同步一份最新列表的 ref').toMatch(/generatedRef\.current = generated;/);
+    expect(code, 'await 之后不许再读 prop 那份').not.toMatch(/pushGeneratedBackdrop\(userId, asset, generated\)/);
+  });
+});
+
+describe('【关键】复活场景：删掉的那张不能被生成落地写回来', () => {
+  // 上面那条是源码守卫（盯「读的是不是 ref」）；这条是行为判据，
+  // 直接把两个纯函数按真实时序串一遍，证明「用最新列表」确实能防住复活。
+  const USER = 'user-resurrect';
+  const asset = (id: string) => ({ id, name: '我生成的', url: `https://cdn.test/${id}.png` });
+
+  it('等待期间删掉 A，落地写 B 时 A 不会回来', () => {
+    const before = [asset('A'), asset('B')];
+    // 等待期间：用户删掉 A。删除走同步路径，拿到的是最新列表。
+    const afterDelete = removeGeneratedBackdrop(USER, 'A', before);
+    expect(afterDelete.map((x) => x.id)).toEqual(['B']);
+    // 落地：**用最新列表**追加新图 → A 不该回来。
+    const landedFresh = pushGeneratedBackdrop(USER, asset('C'), afterDelete);
+    expect(landedFresh.map((x) => x.id), 'A 已被删除，不该复活').not.toContain('A');
+    // 反证：拿发起那一帧的快照落地 → A 复活，这正是修掉的那个形态。
+    const landedStale = pushGeneratedBackdrop(USER, asset('C'), before);
+    expect(landedStale.map((x) => x.id), '用旧快照就会复活（复现缺陷）').toContain('A');
   });
 });
 
