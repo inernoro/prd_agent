@@ -415,7 +415,15 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
     bucketsByContainer.set(name, buckets);
     if (!all) continue;
     for (const p of all) {
-      if (p.ts < gridAfter || p.ts > gridBefore) continue;
+      /*
+       * 收样本按**调用方问的那个区间**，不按吸附后的网格（Codex P2，核对属实）。
+       *
+       * 网格两端各自会溢出不到一个桶宽，那是为了让桶边界稳定；但它不该改变
+       * 「这次查询覆盖哪段时间」。显式问一段历史时，`before` 之后十秒发生的采样
+       * 若被算进最后一个桶，返回的就是**问的那一刻还没发生的数据**。
+       * 网格只管几何（桶落在哪），区间只管事实（哪些样本算数），两件事分开。
+       */
+      if (p.ts < after || p.ts > before) continue;
       const idx = Math.min(count - 1, Math.floor((p.ts - gridAfter) / bucketMs));
       const list = buckets.get(idx);
       if (list) list.push(p); else buckets.set(idx, [p]);

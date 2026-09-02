@@ -462,6 +462,31 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     }
   });
 
+  /**
+   * Codex P2（核对属实）：网格两端会溢出不到一个桶宽，但那只该影响几何，不该
+   * 改变「这次查询覆盖哪段时间」。显式问一段历史时，`before` 之后发生的采样若被
+   * 算进最后一个桶，返回的就是问的那一刻还没发生的数据。
+   */
+  it('显式指定的历史区间外的样本不算数（网格溢出只管几何，不管事实）', () => {
+    recordContainerSample('c1', sample({ cpuPercent: 5 }), T0 + 10_000);
+    /*
+     * 这一帧发生在 before 之后——问「到 T0+60.5s 为止」时它还没发生。
+     *
+     * 60_500 与 62_000 都是**量出来的**，不是随手写的：这一档桶宽 4s、右端吸附到
+     * T0+64s，网格溢出区间是 (60.5s, 64s]。第一版把 before 写成整 60s、把这一帧
+     * 放在 +10s，结果两端都正好落在桶边界上、根本没有溢出，**旧写法也会把它排除**
+     * ——用例永远绿，什么都没测（形状 4b：空跑的绿灯）。实测确认：改成这组数值后，
+     * 旧写法读到峰值 99，新写法读到 5。
+     */
+    recordContainerSample('c1', sample({ cpuPercent: 99 }), T0 + 62_000);
+    const r = queryContainerSeries(
+      { containers: ['c1'], after: T0, before: T0 + 60_500, points: 20, group: 'max' },
+      T0 + 120_000,
+    );
+    const peak = Math.max(...r.series.c1.map((p) => p.cpuPercent ?? 0));
+    expect(peak, '截止时刻之后的采样被算进来了').toBe(5);
+  });
+
   it('真实断档不参与定分辨率（否则一次重启就把整窗压成几个点）', () => {
     const windowMs = 30 * 60_000;
     // 前 5 分钟有量，然后断 12 分钟（> MAX_RATE_GAP_MS），再恢复
