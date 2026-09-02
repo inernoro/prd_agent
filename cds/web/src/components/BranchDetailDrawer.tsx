@@ -888,6 +888,18 @@ export function BranchDetailDrawer({
   const [systemLogsState, setSystemLogsState] = useState<SystemLogsState>({ status: 'idle' });
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
+  /**
+   * 最后一次**成功**的 /metrics 响应。
+   *
+   * 一次失败的轮询会把 metricsState 整个换成 error，于是总览的服务清单退回抽屉打开
+   * 那一刻的 branch.services 快照——抽屉开着期间起来/停掉/新增/删除的服务瞬间被
+   * 打回旧状态，健康环、判断句、合计一起跳一下，等下一次轮询成功再跳回来
+   * （Codex P2，核对属实）。而这一帧数据其实还在手里，只是被错误状态盖掉了。
+   *
+   * 错误归错误（照旧在图上方显示提示条），数据归数据：失败时继续用最后一次成功的
+   * 那一帧，别退回更陈的快照。切分支时随其它 state 一起清空。
+   */
+  const [lastGoodMetrics, setLastGoodMetrics] = useState<MetricsResponse | null>(null);
   const [triggerLogsState, setTriggerLogsState] = useState<TriggerLogsState>({ status: 'idle' });
   // 2026-05-14 Codex review P2 修复：loadMore 的 offset 不能从 setState 的
   // updater 里"顺便"读出来（React 会 batch，updater 可能在 fetch 之后才跑，
@@ -922,8 +934,10 @@ export function BranchDetailDrawer({
    * 必须一起取自同一处。`branch.services` 只在 metrics 尚未就绪时兜底，让首帧不空白。
    */
   const overviewServices = useMemo<OverviewService[]>(() => {
-    if (metricsState.status === 'ok') {
-      return metricsState.data.services.map((svc) => ({
+    // 优先这一帧；这一帧失败就用最后一次成功的那一帧；都没有才退回打开时的快照。
+    const fresh = metricsState.status === 'ok' ? metricsState.data : lastGoodMetrics;
+    if (fresh) {
+      return fresh.services.map((svc) => ({
         profileId: svc.profileId,
         containerName: svc.containerName,
         status: svc.status,
@@ -934,7 +948,7 @@ export function BranchDetailDrawer({
       containerName: sv.containerName,
       status: sv.status,
     }));
-  }, [metricsState, branch?.services]);
+  }, [metricsState, lastGoodMetrics, branch?.services]);
 
   /** 图例里的「当前值」走实时快照；图本身只认服务端分桶的 series，两者口径分开。 */
   const [liveStats, setLiveStats] = useState<Record<string, ContainerStatsResponse>>({});
@@ -1208,6 +1222,7 @@ export function BranchDetailDrawer({
     setEnvQuery('');
     setBranchEnvEditorOpen(false);
     setMetricsState({ status: 'idle' });
+    setLastGoodMetrics(null);
     setTriggerLogsState({ status: 'idle' });
     setCopiedFailurePrompt(false);
     // Codex review P1：切换分支必须重置系统日志状态，否则 status 仍是 'ok'
@@ -1367,6 +1382,7 @@ export function BranchDetailDrawer({
       }
       const data = raw as MetricsResponse;
       setMetricsState({ status: 'ok', data });
+      setLastGoodMetrics(data);
 
       /*
        * 这里**不再**往图的数组尾巴上追加实时点（2026-09-02 修）。
@@ -1658,24 +1674,6 @@ export function BranchDetailDrawer({
       .map((entry) => ({ name: entry.name, url: entry.url, subdomain: entry.subdomain, primary: false })),
   ]), [primaryEntry, primaryEntryUrl, webEntries]);
 
-  // 部署柱状图只认「构建类」记录：restart / stop / favorite 之类的耗时跟构建不可比，
-  // 混进同一张图会把中位线拉歪。
-  const overviewDeployments = useMemo<OverviewDeployment[]>(() => visibleDeployments
-    .filter((d) => d.kind === 'deploy' || d.kind === 'preview' || d.kind === 'rebuild')
-    .map((d) => ({
-      key: d.key,
-      kind: d.kind,
-      status: d.status,
-      commitSha: d.commitSha,
-      startedAt: d.startedAt,
-      finishedAt: d.finishedAt,
-    })), [visibleDeployments]);
-
-  const latestDeployDurationMs = useMemo(() => {
-    const latest = overviewDeployments.find((d) => d.finishedAt && d.finishedAt > d.startedAt);
-    return latest?.finishedAt ? latest.finishedAt - latest.startedAt : undefined;
-  }, [overviewDeployments]);
-
   const overviewReplicaSummary = useMemo(() => {
     const sets = Object.values(branch?.replicaSets ?? {}).filter((rs) => rs?.enabled);
     const members = sets.reduce((n, rs) => n + (rs.members?.length ?? 0), 0);
@@ -1709,6 +1707,37 @@ export function BranchDetailDrawer({
       return runtimeEndedAt ? { ...item, runtimeEndedAt } : item;
     });
   }, [branch?.lastStoppedAt, branchId, visibleDeployments, logs]);
+
+  /**
+   * 部署柱状图的数据源是 `combinedDeployments`，**不是 `visibleDeployments`**。
+   *
+   * 2026-09-02（Codex P2，核对属实）：`visibleDeployments` 来自 `deployments` prop，
+   * 而那个 prop 在 BranchListPage 里是 `Object.entries(actions)` 摊平来的——`actions`
+   * 按分支 id 作键，**一个分支最多一条**（本次操作的实时状态）。按当前分支一过滤就
+   * 只剩 0-1 条，而柱状图要 3 条才画。也就是说这张卡从落地那天起就没渲染出来过，
+   * 编译过、测试绿、通读也看不出来（形状 2：建了一半）。
+   *
+   * `combinedDeployments` 把抽屉打开时 `load()` 拉回来的操作日志并了进来，才是真正
+   * 有历史的那一份。它定义在下面，所以这个 memo 也挪到了它之后。
+   *
+   * 仍然只认「构建类」记录：restart / stop / favorite 的耗时跟构建不可比，混进同一张图
+   * 会把中位线拉歪。
+   */
+  const overviewDeployments = useMemo<OverviewDeployment[]>(() => combinedDeployments
+    .filter((d) => d.kind === 'deploy' || d.kind === 'preview' || d.kind === 'rebuild')
+    .map((d) => ({
+      key: d.key,
+      kind: d.kind,
+      status: d.status,
+      commitSha: d.commitSha,
+      startedAt: d.startedAt,
+      finishedAt: d.finishedAt,
+    })), [combinedDeployments]);
+
+  const latestDeployDurationMs = useMemo(() => {
+    const latest = overviewDeployments.find((d) => d.finishedAt && d.finishedAt > d.startedAt);
+    return latest?.finishedAt ? latest.finishedAt - latest.startedAt : undefined;
+  }, [overviewDeployments]);
 
   const activeDeployment = useMemo(
     () => pickActiveDeployment(combinedDeployments, now),

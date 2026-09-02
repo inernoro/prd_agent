@@ -237,9 +237,16 @@ describe('成员集合与状态同源且新鲜（Codex P2 ×2，均核对属实�
     expect(at, '找不到 overviewServices').toBeGreaterThan(-1);
     const memo = code.slice(at, at + 900);
     const ok = memo.slice(0, memo.indexOf('return Object.values('));
-    expect(ok, '成员集合必须来自 metricsState，而不只是拿它补 status').toContain(
-      'metricsState.data.services',
+    /*
+     * 断言的是「成员集合整份来自 /metrics 的响应」，不是某一句的字面写法。
+     * 这条第一版逐字要求 `metricsState.data.services`，后来加「失败时退回最后一次
+     * 成功的那一帧」时那句被拆成了 `fresh = ... ? metricsState.data : lastGoodMetrics`
+     * 再 `fresh.services`——代码更对了，守卫却红了（形状 4a：锁死了实现的写法）。
+     */
+    expect(ok, '成员集合必须来自 /metrics 的响应，而不只是拿它补 status').toMatch(
+      /metricsState\.data/,
     );
+    expect(ok).toMatch(/\.services\.map/);
     expect(ok).toMatch(/profileId:\s*svc\.profileId/);
     expect(ok).toMatch(/containerName:\s*svc\.containerName/);
     expect(ok).toMatch(/status:\s*svc\.status/);
@@ -723,5 +730,42 @@ describe('没有曲线时也要端出当前读数', () => {
       liveStats: {},
     }));
     expect(html).not.toContain('当前读数');
+  });
+});
+
+/**
+ * 两条接线守卫（2026-09-02，Codex P2，均核对属实）。
+ *
+ * 都是「编译过、测试绿、通读也看不出」的那一类：一个是整张卡从来没渲染过，
+ * 一个是一次网络抖动就把界面打回更陈的快照。
+ */
+describe('总览的数据源接对了地方', () => {
+  it('部署柱状图吃的是带历史的那一份，不是一个分支最多一条的那份', () => {
+    const code = stripComments(DRAWER);
+    const at = code.indexOf('const overviewDeployments');
+    expect(at, '找不到 overviewDeployments').toBeGreaterThan(-1);
+    const memo = code.slice(at, at + 600);
+    expect(
+      memo,
+      'visibleDeployments 来自按分支 id 作键的 actions，一个分支最多一条，'
+      + '而柱状图要 3 条才画——接它等于这张卡永远不渲染',
+    ).not.toMatch(/=>\s*visibleDeployments/);
+    expect(memo).toMatch(/=>\s*combinedDeployments/);
+    // 依赖顺序：combinedDeployments 必须在它之前定义，否则运行时直接炸。
+    expect(code.indexOf('const combinedDeployments')).toBeLessThan(at);
+  });
+
+  it('一次轮询失败不会把服务清单打回打开时的快照', () => {
+    const code = stripComments(DRAWER);
+    expect(code, '没有保留最后一次成功的响应').toMatch(/setLastGoodMetrics\(data\)/);
+    expect(code, '切分支时没清空，会把上一个分支的服务挂到新分支上').toMatch(/setLastGoodMetrics\(null\)/);
+    const at = code.indexOf('const overviewServices');
+    const memo = code.slice(at, at + 700);
+    /*
+     * 断言它出现在**兜底那一侧**，不是只出现在依赖数组里。
+     * 第一版写的是 toContain('lastGoodMetrics')——把三元的 else 改回 null，
+     * 依赖数组里那个名字还在，守卫照样绿（形状 4b：空跑的绿灯）。
+     */
+    expect(memo, '失败时没有退回最后一次成功的那一帧').toMatch(/:\s*lastGoodMetrics/);
   });
 });

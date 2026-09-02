@@ -528,6 +528,17 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
    * 容器一停，它那份数组就再没人碰，最多 2000 个点一直躺到「容器数超上限」——
    * 宿主上换过的容器名不到 400 个时那一天永远不来，声称的保留期对死掉的容器从未生效。
    */
+  it('宿主再也没有写入时，一次查询也能把死容器清掉', () => {
+    recordContainerSample('dead', sample({ cpuPercent: 1 }), T0);
+    expect(containerMetricsHistoryStats().containers).toBe(1);
+    // 之后**再没有任何写入**（最后一个容器也停了），只有人打开抽屉看了一眼。
+    queryContainerSeries({ containers: ['dead'], after: -60, points: 20 }, T0 + 3 * 60 * 60_000);
+    expect(
+      containerMetricsHistoryStats().containers,
+      '没有写入就永远清不掉——「只在还有人写时才清理」和它要治的洞是同一个形状',
+    ).toBe(0);
+  });
+
   it('停掉的容器也会按保留期过期，不是只在它自己再写入时才清', () => {
     recordContainerSample('dead', sample({ cpuPercent: 1 }), T0);
     expect(containerMetricsHistoryStats().containers).toBe(1);

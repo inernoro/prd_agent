@@ -108,10 +108,13 @@ CPU/内存图、吞吐图与部署耗时柱状图，并把容器指标历史从�
 
 ## 实现来源
 
-- `cds/src/services/container-metrics-history.ts` —— 指标历史 SSOT（两路采集的唯一落点、降采样与分辨率判定）
-- `cds/src/routes/branches.ts` —— `/branches/:id/metrics`（实时快照）与 `/branches/:id/metrics/series`（历史序列）
-- `cds/web/src/components/branch/OverviewPanel.tsx` —— 总览面板本体（健康环、图表、骨架屏文案）
-- `cds/web/src/components/BranchDetailDrawer.tsx` —— 抽屉侧的取数与服务清单
+> 只用来指路，不解释怎么改：接口签名、逐文件改法一律不写在这儿（AGENTS.md §10），
+> 要细节直接读源码。
+
+- `cds/src/services/container-metrics-history.ts` —— 指标历史 SSOT
+- `cds/src/routes/branches.ts` —— 指标的两个读取端点
+- `cds/web/src/components/branch/OverviewPanel.tsx` —— 总览面板本体
+- `cds/web/src/components/BranchDetailDrawer.tsx` —— 抽屉侧的取数与装配
 - `cds/tests/services/container-metrics-history.test.ts` / `cds/tests/web/branch-overview-panel.test.ts` —— 守卫
-- `.claude/rules/predicate-and-wiring-discipline.md` —— 本模块八次缺陷的共同形状
+- `.claude/rules/predicate-and-wiring-discipline.md` —— 本模块反复撞上的那几种形状
 - `.claude/rules/conclusion-before-numbers.md` —— 总览「先给结论再给数字」的依据

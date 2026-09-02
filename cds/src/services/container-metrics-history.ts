@@ -375,6 +375,17 @@ function aggregate(bucket: StoredPoint[], group: 'average' | 'max'): Omit<Series
  * 空桶不补零 —— 补零会画出并不存在的「掉到 0」。
  */
 export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.now()): SeriesResult {
+  /*
+   * 查询也触发一次过期清理（Codex P2，核对属实）。
+   *
+   * 上一版只在写入路径上扫。宿主上最后一个容器停掉之后**再也没有写入**，于是那些
+   * 停掉的容器一个都扫不到，点全留在内存里——「只在还有人写的时候才清理」和它要
+   * 治的那个洞（「只在这个容器还在写的时候才清理」）是同一个形状，只是范围大了一圈。
+   *
+   * 挂在查询上是有效的补充：sweepExpired 扫的是**全表**而不只是被查的那些容器，
+   * 所以只要还有人打开抽屉看一眼，全部死容器就都会被清掉。两条路都限流到 60 秒一次。
+   */
+  sweepExpired(nowMs);
   const before = resolveBound(query.before, nowMs, nowMs);
   const after = resolveBound(query.after, nowMs, nowMs - 30 * 60_000);
   const group = query.group === 'max' ? 'max' : 'average';
