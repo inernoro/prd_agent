@@ -959,6 +959,19 @@ export function OverviewPanel({
   }) : [];
 
   // 合计只算还在跑的：把停机前的旧读数加进「当前合计」会虚报占用。
+  /**
+   * 合计到底加了几个服务。
+   *
+   * 不能用 `cpuSeries.length`（Codex P2，核对属实）：超过 5 个服务时尾部全折进
+   * 一条「其他 N 个」，那个数组长度**恒等于 6**，不管实际是 6 个还是 20 个。
+   * 又是同一个形状——数渲染出来的行，不数实体。
+   *
+   * 而且必须与合计口径完全一致：合计跳过停机的，这个数也只数还在跑的，
+   * 否则「12 个服务合计 3.2%」里那个 12 会包含几个根本没计入的。
+   */
+  const totalledServiceCount = [...picked.head.map((x) => x.svc), ...picked.tail.map((x) => x.svc), ...picked.liveOnly]
+    .filter((sv) => sv.status === 'running').length;
+
   // 合计走 nowValue（实时优先），与旁边每服务的数字同一个口径。
   const cpuTotalNow = cpuSeries.reduce((n, s) => n + (s.stopped ? 0 : s.nowValue), 0);
   const memTotalNow = memSeries.reduce((n, s) => n + (s.stopped ? 0 : s.nowValue), 0);
@@ -1165,7 +1178,7 @@ export function OverviewPanel({
             title="CPU 占用"
             unit={`% · 按服务堆叠 · ${windowLabel}`}
             headline={`${cpuTotalNow.toFixed(1)}%`}
-            headlineSuffix={`${cpuSeries.length} 个服务合计`}
+            headlineSuffix={`${totalledServiceCount} 个在跑服务合计`}
             aside={(
               <button type="button" className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground" onClick={onRefreshMetrics}>
                 <RefreshCw className="h-3 w-3" />立即刷新
@@ -1189,7 +1202,7 @@ export function OverviewPanel({
               title="内存占用"
               unit="按服务构成 · 当前"
               headline={formatBytesShort(memTotalNow)}
-              headlineSuffix={`${memSeries.length} 个服务合计`}
+              headlineSuffix={`${totalledServiceCount} 个在跑服务合计`}
               footnote="不显示占比：没给容器配 mem_limit 时，Docker 报的限额是宿主机总量，除下来四舍五入全是 0.0%，读不出信息。要看水位先在项目设置里配 mem_limit。"
             >
               <CompositionBar series={memSeries} />
