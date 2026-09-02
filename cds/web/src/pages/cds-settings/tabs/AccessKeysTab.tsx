@@ -176,7 +176,7 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
               variant="outline"
               onClick={() => void copyToClipboard(freshKey.plaintext)}
             >
-              <Copy className="mr-1 h-3 w-3" />
+              <Copy className="mr-1" />
               复制
             </Button>
           </div>
@@ -208,7 +208,7 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs text-muted-foreground">范围：{describeAgentKeyScope(signScope)}</span>
           <Button type="button" onClick={() => void signKey()} disabled={signing || emptyScope}>
-            {signing ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Plus className="mr-1 h-3.5 w-3.5" />}
+            {signing ? <Loader2 className="mr-1 animate-spin" /> : <Plus className="mr-1" />}
             签发
           </Button>
         </div>
@@ -226,7 +226,7 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
             已签发 Key({activeKeys.length} 个有效{revokedKeys.length > 0 ? ` + ${revokedKeys.length} 已吊销` : ''})
           </div>
           <Button type="button" variant="outline" size="sm" onClick={() => void loadKeys()}>
-            <RefreshCw className="mr-1 h-3 w-3" />
+            <RefreshCw className="mr-1" />
             刷新
           </Button>
         </div>
@@ -279,7 +279,7 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
                         onConfirm={() => void revokeKey(key.id, key.label || key.id)}
                         trigger={
                           <Button type="button" variant="outline" size="sm">
-                            <Trash2 className="mr-1 h-3 w-3" />
+                            <Trash2 className="mr-1" />
                             吊销
                           </Button>
                         }

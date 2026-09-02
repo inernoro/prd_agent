@@ -266,7 +266,7 @@ export function PendingImportInbox({
                         onClick={() => reject(item.id)}
                         disabled={isBusy}
                       >
-                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        {isBusy ? <Loader2 className="animate-spin" /> : null}
                         拒绝
                       </Button>
                       <Button
@@ -276,7 +276,7 @@ export function PendingImportInbox({
                         onClick={() => approve(item.id)}
                         disabled={isBusy}
                       >
-                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        {isBusy ? <Loader2 className="animate-spin" /> : null}
                         批准
                       </Button>
                     </div>

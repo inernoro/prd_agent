@@ -157,7 +157,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
             重新部署受影响服务 ({pendingRedeploy.size})
           </Button>
         ) : null}
-        <Button size="sm" variant="ghost" onClick={() => void load()} title="刷新"><RefreshCw className="h-3.5 w-3.5" /></Button>
+        <Button size="sm" variant="ghost" onClick={() => void load()} title="刷新"><RefreshCw /></Button>
       </div>
       {references.length === 0 ? (
         <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-xs text-muted-foreground">
