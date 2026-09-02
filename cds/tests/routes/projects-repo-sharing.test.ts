@@ -66,9 +66,10 @@ describe('项目接口透出同仓关系', () => {
     stateService.load();
     const app = express();
     app.use(express.json());
-    // 默认模拟人类 cookie 登录；带 x-machine-key 时模拟机器凭据。
+    // 模拟 server.ts 的鉴权标记：带 cds-cookie 头的当人类 cookie 会话，其余不标记
+    // —— 后者同时覆盖「CDS_AUTH_MODE=disabled 的实例根本不签会话」这一档。
     app.use((req, _res, next) => {
-      if (req.headers['x-machine-key'] !== '1') (req as any)._cdsCookieAuth = true;
+      if (req.headers['cds-cookie'] === '1') (req as any)._cdsCookieAuth = true;
       next();
     });
     app.use('/api', createProjectsRouter({
@@ -142,7 +143,23 @@ describe('项目接口透出同仓关系', () => {
     addProject('p-main', 'MAP', REPO, { MONGO_URL: 'mongodb://box:27017/shared' });
     addProject('p-self', 'CDS Self', REPO, { MONGO_URL: 'mongodb://box:27017/shared' });
 
-    const res = await get(server, '/api/projects/p-main', { 'x-machine-key': '1' });
-    expect(res.body.repoSharing).toBeNull();
+    for (const headers of [
+      { 'x-ai-access-key': 'cdsp_someprojectkey' },
+      { 'ai-access-key': 'cdsg_someglobalkey' },
+      { authorization: 'Bearer cdsu_someusercredential' },
+    ]) {
+      const res = await get(server, '/api/projects/p-main', headers);
+      expect(res.body.repoSharing, JSON.stringify(headers)).toBeNull();
+    }
+  });
+
+  it('不签会话的实例（CDS_AUTH_MODE=disabled）里，真人照样看得见', async () => {
+    // 判据若写成「是不是 cookie 会话」，这一档永远为假 —— 真人用浏览器打开
+    // 什么都看不到，而且不会有任何报错。
+    addProject('p-main', 'MAP', REPO);
+    addProject('p-self', 'CDS Self', REPO);
+
+    const res = await get(server, '/api/projects/p-main');
+    expect(res.body.repoSharing?.total).toBe(2);
   });
 });

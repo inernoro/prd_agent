@@ -112,6 +112,9 @@ export function RepoSharingBanner({
   if (others.length === 0) return null;
   const warn = sharing.level === 'warn';
   const nameOf = (id: string): string => sharing.siblings.find((s) => s.id === id)?.name || id;
+  // 「去划范围」只对**自己没划**的项目才是下一步。已经划好的项目仍要看见这条横幅
+  // （它照样会被别人的推送连累），但让它去划一遍自己已经有的东西是句废话。
+  const selfUnscoped = (sharing.siblings.find((s) => s.id === selfId)?.scope.length ?? 0) === 0;
 
   return (
     <div
@@ -156,7 +159,7 @@ export function RepoSharingBanner({
             </ul>
           ) : null}
 
-          {warn && onDeclareScope ? (
+          {warn && selfUnscoped && onDeclareScope ? (
             <button
               type="button"
               onClick={onDeclareScope}

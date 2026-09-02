@@ -600,6 +600,31 @@ function hasOwnerAccess(req: unknown, projectId: string): boolean {
   return false;
 }
 
+/**
+ * 调用方是不是机器凭据。
+ *
+ * 机器凭据一律通过 header 出示（`x-ai-access-key` / 兼容写法 `ai-access-key` /
+ * `Authorization: Bearer`），浏览器则靠 cookie。所以看 header 就够，而且不依赖
+ * 任何一种鉴权模式下才会有的会话标记 —— `CDS_AUTH_MODE=disabled` 的实例压根不签
+ * 会话，用「是不是 cookie 会话」判会把真人也判成机器。
+ *
+ * 另外认已 stamp 的作用域标记：走到这里时它们已经证明了调用方是一把范围受限的钥匙。
+ */
+function isMachineCaller(req: unknown): boolean {
+  const r = req as {
+    headers?: Record<string, unknown>;
+    cdsProjectKey?: unknown;
+    cdsPrincipal?: unknown;
+  };
+  if (r.cdsProjectKey || r.cdsPrincipal) return true;
+  const h = r.headers || {};
+  if (typeof h['x-ai-access-key'] === 'string' && h['x-ai-access-key']) return true;
+  if (typeof h['ai-access-key'] === 'string' && h['ai-access-key']) return true;
+  const auth = h['authorization'];
+  if (typeof auth === 'string' && /^bearer\s+\S/i.test(auth)) return true;
+  return false;
+}
+
 function maskEnvMap(env: Record<string, string> | undefined): Record<string, string> | undefined {
   if (!env) return env;
   const out: Record<string, string> = {};
@@ -666,11 +691,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   /**
    * 这个项目和谁共用一个仓库。同仓项目少于两个时返回 null（界面据此什么都不显示）。
    *
-   * 只给浏览器会话算：机器凭据可能只被授权了本项目，不该顺带认识仓库里的其它项目，
+   * 不给机器凭据算：一把只被授权了本项目的凭据，不该顺带认识仓库里的其它项目，
    * 更不该看到它们的环境变量撞在了哪个 key 上。
+   *
+   * 判据是「有没有出示机器凭据」，不是「是不是 cookie 会话」—— 后者看着更直白，
+   * 但 `CDS_AUTH_MODE=disabled` 的实例根本不签会话，`_cdsCookieAuth` 永远是假，
+   * 于是真人用浏览器打开也什么都看不到。机器凭据一律走 header，浏览器走 cookie，
+   * 所以按 header 判在每种鉴权模式下都成立。
    */
   function repoSharingFor(req: unknown, project: Project): ProjectSummary['repoSharing'] {
-    if ((req as { _cdsCookieAuth?: boolean })._cdsCookieAuth !== true) return null;
+    if (isMachineCaller(req)) return null;
     const repoFullName = project.githubRepoFullName;
     if (!repoFullName) return null;
     const siblings = stateService.findProjectsByRepoFullName(repoFullName);
