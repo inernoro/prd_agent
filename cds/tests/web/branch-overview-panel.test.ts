@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { areaPath, stackAreas, seedMetricSeries, OverviewPanel } from '@/components/branch/OverviewPanel';
 
 /**
  * 总览面板（2026-09-01 视觉化重排）的三条守卫。
@@ -493,5 +496,109 @@ describe('内存按绝对值展示（百分比在没配 mem_limit 的机器上�
 
   it('脚注解释了为什么不给百分比', () => {
     expect(PANEL).toContain('mem_limit');
+  });
+});
+
+/**
+ * 缺口必须是缺口（2026-09-02 真人验收）。
+ *
+ * 线上截图里出现「掉到 0 又冲上去」的深谷，而那一刻没有任何服务空闲过——谷底是
+ * 一个没采到样本的桶被映射成 0 画出来的。Netdata 从不画自己没有的值：缺口就是
+ * 缺口，几何在那里断开。这几条断言的是几何本身，不是源码里写了什么。
+ */
+describe('缺口不入几何（Netdata 的画法）', () => {
+  it('中间一个空桶把面积切成两段，而不是画一条掉到 0 的谷', () => {
+    const vals = [3, 3, 3, 3, 3];
+    const present = [true, true, false, true, true];
+    const d = areaPath(vals, present, 4, 100);
+    expect((d.match(/M/g) ?? []).length, '空桶没有把路径切断，缺口被连了过去').toBe(2);
+    // 空桶在 x=500（5 个点均分 0..1000），任何一段都不该落点在那里。
+    expect(d, '几何落到了没有数据的那个桶上').not.toMatch(/(^|[ML])500\.0,/);
+  });
+
+  it('全都有数据时就是一整段，不会被无谓切碎', () => {
+    const d = areaPath([1, 2, 3], [true, true, true], 4, 100);
+    expect((d.match(/M/g) ?? []).length).toBe(1);
+  });
+
+  it('堆叠图同样断开，且每层断在同一处（层与层的下标不许错开）', () => {
+    const present = [true, false, true, true];
+    const paths = stackAreas([[1, 1, 1, 1], [2, 2, 2, 2]], present, 8, 100);
+    for (const d of paths) {
+      expect((d.match(/M/g) ?? []).length, '某一层没有在缺口处断开').toBe(2);
+      expect(d).not.toMatch(/(^|[ML])333\.3,/);
+    }
+  });
+
+  it('孤零零一个桶画成一个桶宽的方块，而不是宽度为 0 的隐形路径', () => {
+    const d = areaPath([5, 0, 0], [true, false, false], 8, 100);
+    expect(d, '单点没有被展开成可见宽度').not.toBe('');
+    const xs = [...d.matchAll(/([ML])(\d+\.\d)/g)].map((m) => Number(m[2]));
+    expect(Math.max(...xs) - Math.min(...xs), '单桶孤岛宽度为 0，等于没画').toBeGreaterThan(0);
+  });
+
+  it('seedMetricSeries 把 null 记进 present，而不是只留一个计数', () => {
+    const seeded = seedMetricSeries([
+      { cpuPercent: 1, memUsedBytes: 1, rxRate: 0, txRate: 0 },
+      { cpuPercent: null, memUsedBytes: null, rxRate: null, txRate: null },
+      { cpuPercent: 2, memUsedBytes: 2, rxRate: 0, txRate: 0 },
+    ]);
+    expect(seeded.present).toEqual([true, false, true]);
+    expect(seeded.filled).toBe(2);
+  });
+});
+
+/**
+ * 渲染冒烟：把带缺口的序列真的渲染一遍。
+ *
+ * 上面那几条测的是几何函数本身，证明不了「组件真的把掩码传下去了」——那正是
+ * 形状 2（建了一半：函数改对了、调用处没接上，编译过、测试绿、图照旧撒谎）。
+ * 这一条从组件顶层进，只看最终 SVG。
+ */
+describe('总览渲染冒烟：缺口真的没被画成 0', () => {
+  const seriesWithGap = seedMetricSeries([
+    { cpuPercent: 4, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+    { cpuPercent: 4, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+    // 中间这一桶没采到样本 —— 线上截图里那道「掉到 0」的谷就是它。
+    { cpuPercent: null, memUsedBytes: null, rxRate: null, txRate: null },
+    { cpuPercent: 4, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+    { cpuPercent: 4, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+  ]);
+
+  const render = (): string => renderToStaticMarkup(createElement(OverviewPanel, {
+    services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+    running: true,
+    branchName: 'demo',
+    entries: [],
+    deployments: [],
+    metricSeries: { api: seriesWithGap },
+    metricsReady: true,
+    replicaSummary: '1 个副本',
+    infraSummary: '无',
+    now: Date.now(),
+    windowMinutes: 30,
+    onRefreshMetrics: () => {},
+  }));
+
+  it('CPU 堆叠面积在缺口处断成两段', () => {
+    const html = render();
+    /*
+     * 必须只看 CPU 那一段。第一版这里数的是**整页**的多段路径，于是吞吐图（它另有
+     * 一条接线）一个人就能让断言成立——把 CPU 图的掩码拆掉照样绿。判据要回答
+     * 「这张图断没断」，不是「这一页上有没有哪张图断了」。
+     */
+    const cpuAt = html.indexOf('CPU 占用');
+    const memAt = html.indexOf('内存占用');
+    expect(cpuAt, 'CPU 卡没渲染出来，下面的切片会是空的（空切片必然绿）').toBeGreaterThan(-1);
+    expect(memAt, '内存卡没渲染出来，切不出 CPU 那一段').toBeGreaterThan(cpuAt);
+    const cpuSection = html.slice(cpuAt, memAt);
+    const paths = [...cpuSection.matchAll(/ d="([^"]+)"/g)].map((m) => m[1]);
+    const areas = paths.filter((d) => d.includes('Z'));
+    expect(areas.length, 'CPU 卡里一条面积路径都没有').toBeGreaterThan(0);
+    const multi = areas.filter((d) => (d.match(/M/g) ?? []).length >= 2);
+    expect(
+      multi.length,
+      'CPU 面积是一整段——缺口被补 0 连了过去，组件没把 present 掩码传给几何',
+    ).toBeGreaterThan(0);
   });
 });

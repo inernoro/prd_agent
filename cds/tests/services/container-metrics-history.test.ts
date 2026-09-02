@@ -157,9 +157,40 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     fill(60, 5_000);
     const now = T0 + 60 * 5_000;
     const r = queryContainerSeries({ containers: ['c1'], after: -60, points: 100 }, now);
-    expect(r.after).toBe(now - 60_000);
-    expect(r.before).toBe(now);
+    /*
+     * 返回的窗口是**吸附到桶网格之后**的那一个，不是逐字复述提问：桶边界固定在
+     * 桶宽的整数倍上（Netdata 的做法，见 queryContainerSeries 里的说明），
+     * 所以两端各自最多偏移一个桶宽。早先这里断言 `toBe(now - 60_000)`，那是把
+     * 「边界跟着 now 漂」这件事当成契约锁死了（形状 4a）——正是它让图每 5 秒
+     * 重新洗一次牌。这里改成断言语义：窗口确实盖住了请求的那 60 秒。
+     */
+    const bucketMs = r.groupSeconds * 1_000;
+    expect(r.after, '窗口起点没盖住请求的 60 秒前').toBeLessThanOrEqual(now - 60_000);
+    expect(now - 60_000 - r.after, '起点偏出去超过一个桶宽').toBeLessThan(bucketMs);
+    expect(r.before, '窗口终点没盖住现在').toBeGreaterThanOrEqual(now);
+    expect(r.before - now, '终点偏出去超过一个桶宽').toBeLessThan(bucketMs);
     for (const p of r.series.c1) expect(p.ts).toBeGreaterThanOrEqual(r.after);
+  });
+
+  /**
+   * 2026-09-02 真人验收：「这个图一直在变」。
+   *
+   * 病根是每次轮询都跟着 `now` 重新分桶——同一个采样点这一次落第 12 桶、
+   * 5 秒后落第 11 桶，整张图每 5 秒重洗一次牌。Netdata 把桶边界钉在绝对时间
+   * 网格上，时间往前走只是在右边追加新桶。
+   */
+  it('时间往前走时桶边界不动，已有的桶原地不动（图往左推进，不是每帧重画）', () => {
+    for (let t = 0; t <= 30 * 60_000; t += 45_000) recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
+    const base = T0 + 30 * 60_000;
+    const first = queryContainerSeries({ containers: ['c1'], after: -1800, points: 120 }, base);
+    // 5 秒后再问一次（前端就是这个节奏）——还没跨过一个桶宽。
+    const later = queryContainerSeries({ containers: ['c1'], after: -1800, points: 120 }, base + 5_000);
+    expect(later.groupSeconds).toBe(first.groupSeconds);
+    expect(
+      later.timestamps[0] - first.timestamps[0],
+      '桶边界跟着 now 漂了：同一个采样点会在两次查询里落进不同的桶，图因此每 5 秒重新洗牌',
+    ).toBe(0);
+    expect(later.timestamps.at(-1)).toBe(first.timestamps.at(-1));
   });
 
   it('点数不超过请求值，且窗口被等宽切分（x 轴恒等间隔）', () => {

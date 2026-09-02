@@ -42,6 +42,14 @@ export interface MetricSeries {
    * 骨架屏要如实说「已经攒了几帧」，所以在丢失这个信息之前先数一遍。
    */
   filled: number;
+  /**
+   * 每个桶「有没有真样本」。**几何只在这些桶上画**，其余留空。
+   *
+   * 2026-09-02 真人验收：图上出现「掉到 0 又冲上去」的深谷，而那一刻没有任何服务
+   * 空闲过——谷底是一个没采到样本的桶被映射成 0 画出来的。Netdata 从不画自己没有的
+   * 值：缺口就是缺口，线在那里断开。这个数组就是断点的依据；`filled` 是它的计数。
+   */
+  present: boolean[];
 }
 
 /**
@@ -69,6 +77,8 @@ export function seedMetricSeries(points: Array<{
     readRate: tail.map((p) => v(p.readRate ?? null)),
     writeRate: tail.map((p) => v(p.writeRate ?? null)),
     filled: tail.filter((p) => p.cpuPercent != null).length,
+    // 服务端整桶给 null（同一个桶里各字段要么全有要么全无），所以一个掩码够用。
+    present: tail.map((p) => p.cpuPercent != null),
   };
 }
 
@@ -130,7 +140,22 @@ function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): str
 }
 
 /** 堆叠面积：返回每层的闭合路径（层间留 1 单位缝，避免糊成一坨） */
-function stackAreas(values: number[][], max: number, h: number): string[] {
+/**
+ * 把「有样本的桶」切成一段段连续区间。缺口不入几何——这是 Netdata 的画法：
+ * 没有的值一律不画，线在那里断开，而不是补一个 0 连过去。
+ */
+export function presentRuns(present: boolean[]): Array<[number, number]> {
+  const runs: Array<[number, number]> = [];
+  let start = -1;
+  for (let i = 0; i < present.length; i += 1) {
+    if (present[i]) { if (start < 0) start = i; }
+    else if (start >= 0) { runs.push([start, i - 1]); start = -1; }
+  }
+  if (start >= 0) runs.push([start, present.length - 1]);
+  return runs;
+}
+
+export function stackAreas(values: number[][], present: boolean[], max: number, h: number): string[] {
   /**
    * 只取各条序列的**最短**长度，且逐点 ?? 0 兜底。
    *
@@ -143,29 +168,53 @@ function stackAreas(values: number[][], max: number, h: number): string[] {
   if (n < 2 || max <= 0) return values.map(() => '');
   const x = (i: number): number => (i / (n - 1)) * VB_W;
   const y = (v: number): number => h - Math.min(1, v / max) * h;
+  /** 单桶孤岛的半宽：一个点画不出面积，给它一个桶宽的方块，否则它等于不存在。 */
+  const half = VB_W / (n - 1) / 2;
+  const mask = present.length === n ? present : new Array<boolean>(n).fill(true);
+  const runs = presentRuns(mask);
   const cum = new Array<number>(n).fill(0);
   const last = values.length - 1;
   return values.map((row, band) => {
-    const top: string[] = [];
-    const bottom: string[] = [];
-    for (let i = 0; i < n; i += 1) {
-      const yBottom = y(cum[i]);
-      bottom.unshift(`${x(i).toFixed(1)},${yBottom.toFixed(1)}`);
-      cum[i] += row[i] ?? 0;
-      // 表面色的缝：把这一段的上沿压下去 2px，让它和上面那段之间露出底色。
-      // 最上面那段没有邻居，压下去只会凭空削掉总量，所以不压。
-      // 段本身比缝还薄时钳到下沿，宁可这一段不可见，也不要画出翻转的路径。
-      const yTop = band === last ? y(cum[i]) : Math.min(yBottom, y(cum[i]) + STACK_GAP);
-      top.push(`${x(i).toFixed(1)},${yTop.toFixed(1)}`);
+    const subpaths: string[] = [];
+    for (const [s, e] of runs) {
+      // 先按下标把这一段的上下沿算出来（cum 每个下标只累加一次），再决定画在哪些 x 上。
+      const geo: Array<{ yb: number; yt: number }> = [];
+      for (let i = s; i <= e; i += 1) {
+        const yBottom = y(cum[i]);
+        cum[i] += row[i] ?? 0;
+        // 表面色的缝：把这一段的上沿压下去 2px，让它和上面那段之间露出底色。
+        // 最上面那段没有邻居，压下去只会凭空削掉总量，所以不压。
+        // 段本身比缝还薄时钳到下沿，宁可这一段不可见，也不要画出翻转的路径。
+        const yTop = band === last ? y(cum[i]) : Math.min(yBottom, y(cum[i]) + STACK_GAP);
+        geo.push({ yb: yBottom, yt: yTop });
+      }
+      const xs = s === e
+        ? [Math.max(0, x(s) - half), Math.min(VB_W, x(s) + half)]
+        : Array.from({ length: e - s + 1 }, (_, k) => x(s + k));
+      const g = s === e ? [geo[0], geo[0]] : geo;
+      const top = xs.map((xp, k) => `${xp.toFixed(1)},${g[k].yt.toFixed(1)}`);
+      const bottom = xs.map((xp, k) => `${xp.toFixed(1)},${g[k].yb.toFixed(1)}`).reverse();
+      subpaths.push(`M${top.join(' L')} L${bottom.join(' L')} Z`);
     }
-    return `M${top.join(' L')} L${bottom.join(' L')} Z`;
+    return subpaths.join(' ');
   });
 }
 
-function areaPath(vals: number[], max: number, h: number): string {
-  if (vals.length < 2 || max <= 0) return '';
-  const pts = vals.map((v, i) => `${((i / (vals.length - 1)) * VB_W).toFixed(1)},${(h - Math.min(1, v / max) * h).toFixed(1)}`);
-  return `M${pts.join(' L')} L${VB_W},${h} L0,${h} Z`;
+export function areaPath(vals: number[], present: boolean[], max: number, h: number): string {
+  const n = vals.length;
+  if (n < 2 || max <= 0) return '';
+  const x = (i: number): number => (i / (n - 1)) * VB_W;
+  const y = (v: number): number => h - Math.min(1, v / max) * h;
+  const half = VB_W / (n - 1) / 2;
+  const mask = present.length === n ? present : new Array<boolean>(n).fill(true);
+  return presentRuns(mask).map(([s, e]) => {
+    const xs = s === e
+      ? [Math.max(0, x(s) - half), Math.min(VB_W, x(s) + half)]
+      : Array.from({ length: e - s + 1 }, (_, k) => x(s + k));
+    const ys = s === e ? [y(vals[s]), y(vals[s])] : xs.map((_, k) => y(vals[s + k]));
+    const pts = xs.map((xp, k) => `${xp.toFixed(1)},${ys[k].toFixed(1)}`);
+    return `M${pts.join(' L')} L${xs[xs.length - 1].toFixed(1)},${h} L${xs[0].toFixed(1)},${h} Z`;
+  }).join(' ');
 }
 
 export function formatBytesShort(bytes: number): string {
@@ -448,12 +497,12 @@ function useTweenedSeries(series: StackedSeries[], token: object, ms = 420): Sta
 }
 
 function StackedAreaChart({
-  height, max, series, token,
-}: { height: number; max: number; series: StackedSeries[]; token: object }): JSX.Element {
+  height, max, series, present, token,
+}: { height: number; max: number; series: StackedSeries[]; present: boolean[]; token: object }): JSX.Element {
   const tweened = useTweenedSeries(series, token);
   const paths = useMemo(
-    () => stackAreas(tweened.map((s) => s.values), max, height),
-    [tweened, max, height],
+    () => stackAreas(tweened.map((s) => s.values), present, max, height),
+    [tweened, present, max, height],
   );
   return (
     <svg
@@ -564,8 +613,8 @@ const NET_COLOR = 'hsl(var(--series-net))';
 
 /** 一条「上下镜像」的双向图：正向在上、反向在下，共用一根基线与一把标尺。 */
 function MirroredPair({
-  up, down, label, upName, downName, height = 46,
-}: { up: number[]; down: number[]; label: string; upName: string; downName: string; height?: number }): JSX.Element {
+  up, down, present, label, upName, downName, height = 46,
+}: { up: number[]; down: number[]; present: boolean[]; label: string; upName: string; downName: string; height?: number }): JSX.Element {
   const peak = Math.max(1, ...up, ...down);
   const max = peak * 1.12;
   return (
@@ -580,7 +629,7 @@ function MirroredPair({
       </div>
       <div className="relative" style={{ height: height * 2 + 2 }}>
         <svg className="absolute inset-x-0 top-0 w-full" height={height} viewBox={`0 0 ${VB_W} ${height}`} preserveAspectRatio="none" aria-hidden>
-          <path d={areaPath(up, max, height)} style={{ fill: NET_COLOR }} fillOpacity={0.85} />
+          <path d={areaPath(up, present, max, height)} style={{ fill: NET_COLOR }} fillOpacity={0.85} />
         </svg>
         <span className="absolute inset-x-0 h-px bg-[hsl(var(--hairline-strong))]" style={{ top: height }} aria-hidden />
         <svg
@@ -591,7 +640,7 @@ function MirroredPair({
           preserveAspectRatio="none"
           aria-hidden
         >
-          <path d={areaPath(down, max, height)} style={{ fill: NET_COLOR }} fillOpacity={0.4} />
+          <path d={areaPath(down, present, max, height)} style={{ fill: NET_COLOR }} fillOpacity={0.4} />
         </svg>
       </div>
     </div>
@@ -610,8 +659,8 @@ function MirroredPair({
  * 两者本来就是同一个问题的两半——「这个分支在往外倒多少数据」。
  */
 function ThroughputChart({
-  rx, tx, read, write,
-}: { rx: number[]; tx: number[]; read: number[]; write: number[] }): JSX.Element {
+  rx, tx, read, write, present,
+}: { rx: number[]; tx: number[]; read: number[]; write: number[]; present: boolean[] }): JSX.Element {
   const hasDisk = read.some((v) => v > 0) || write.some((v) => v > 0);
   return (
     <ChartShell
@@ -622,8 +671,8 @@ function ThroughputChart({
       footnote={hasDisk ? undefined : '磁盘一行全为 0：可能是宿主内核没开块设备计量，或这些容器确实没落盘。'}
     >
       <div className="flex flex-col gap-3">
-        <MirroredPair up={rx} down={tx} label="网络" upName="收" downName="发" />
-        <MirroredPair up={read} down={write} label="磁盘" upName="读" downName="写" />
+        <MirroredPair up={rx} down={tx} present={present} label="网络" upName="收" downName="发" />
+        <MirroredPair up={read} down={write} present={present} label="磁盘" upName="读" downName="写" />
       </div>
     </ChartShell>
   );
@@ -979,6 +1028,19 @@ export function OverviewPanel({
   // 改成把峰值交给 niceScale 吸附到整数步长，吸附本身就自带头部空间。
   const cpuPeak = Math.max(2, ...Array.from({ length: sampleCount }, (_, i) => cpuSeries.reduce((n, s) => n + (s.values[i] ?? 0), 0)));
 
+  /**
+   * 轴级「这一桶有没有采到样本」。
+   *
+   * 采样器是一把抓（同一次 docker stats 覆盖全部容器），所以缺口几乎总是整桶级的：
+   * 要么这一桶谁都没采到，要么大家都有。用一个共享掩码切几何，堆叠各层的下标
+   * 才对得齐——逐条序列各切各的会让层与层错开，那正是当初「黑色缺口」的成因。
+   *
+   * 桶内某个容器单独没有值（它当时还没起来 / 已经停了）仍按 0 计：那不是「没测到」，
+   * 是「它当时确实没在吃资源」，色带在那段自然收没才是对的读数。
+   */
+  const axisPresent = Array.from({ length: sampleCount }, (_, i) =>
+    picked.head.concat(picked.tail).some((x) => x.ring.present?.[i] ?? false));
+
   const sumOf = (read: (m: MetricSeries) => number[]): number[] =>
     Array.from({ length: sampleCount }, (_, i) => picked.head.concat(picked.tail).reduce((n, x) => n + (read(x.ring)[i] ?? 0), 0));
   const netRx = sumOf((m) => m.rxRate);
@@ -1191,7 +1253,7 @@ export function OverviewPanel({
               yTicks={cpuScale.labels}
               xLabels={[windowText.replace('近 ', '') + '前', '现在']}
             >
-              <StackedAreaChart height={176} max={cpuScale.max} series={cpuSeries} token={dataToken} />
+              <StackedAreaChart height={176} max={cpuScale.max} series={cpuSeries} present={axisPresent} token={dataToken} />
             </PlotFrame>
           </ChartShell>
 
@@ -1207,7 +1269,7 @@ export function OverviewPanel({
             >
               <CompositionBar series={memSeries} />
             </ChartShell>
-            <ThroughputChart rx={netRx} tx={netTx} read={diskRead} write={diskWrite} />
+            <ThroughputChart rx={netRx} tx={netTx} read={diskRead} write={diskWrite} present={axisPresent} />
           </div>
         </>
       )}

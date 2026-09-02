@@ -330,9 +330,35 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
    * 两道闸合成一道，少一个能各自漂移的判据。
    */
   const wanted = Math.min(asked, byCadence);
-  const bucketMs = span / wanted;
 
-  // 先按桶归集每个容器的样本。桶边界对所有容器是同一套（同一个 after / bucketMs），
+  /**
+   * 桶边界吸附到绝对时间网格（Netdata 的做法），不跟着 `now` 漂。
+   *
+   * 2026-09-02 真人验收：「这个图一直在变」。病根不是动画，是**每次轮询都重新分桶**：
+   * 前端每 5 秒问一次「最近 30 分钟」，`after` 跟着 `now` 走，于是所有桶边界整体
+   * 平移 5 秒，同一个采样点这一次落在第 12 桶、下一次落到第 11 桶——整张图的形状
+   * 每 5 秒重新洗一遍牌，看起来就是「一直在动，但动得没有道理」。
+   *
+   * Netdata 不这么做：它的桶宽是整秒，边界固定在「从纪元起算的整数倍」上，时间
+   * 往前走时只是**在右边追加一个新桶**，已有的桶原地不动。所以图是往左推进的，
+   * 不是每帧重画。这里照搬：桶宽先吸附到整秒，再把右端吸附到桶宽的整数倍，
+   * 窗口从右端往回数 `wanted` 个桶。
+   *
+   * 锚在右端而不是左端：右端是「现在」，是唯一每次都在变的一侧；把它吸附住，
+   * 新数据就只会进最后一个桶，前面的桶连内容带位置都不动。
+   */
+  const bucketMs = Math.max(1_000, Math.round((span / wanted) / 1_000) * 1_000);
+  const gridBefore = Math.ceil(before / bucketMs) * bucketMs;
+  /*
+   * 桶数由「网格右端回退到请求起点要几个桶」定，不是直接用 wanted：右端吸附之后
+   * 整条网格最多右移一个桶宽，若仍固定切 wanted 个，左边就会**少盖住**一段，
+   * 请求窗口内最早的那些样本会被静默丢掉（本地实测：两点相距 100s 的窗口里丢掉了
+   * 第一个点）。所以宁可多出一个桶，也不能丢调用方要的数据。
+   */
+  const count = Math.max(1, Math.ceil((gridBefore - after) / bucketMs));
+  const gridAfter = gridBefore - count * bucketMs;
+
+  // 先按桶归集每个容器的样本。桶边界对所有容器是同一套（同一个 gridAfter / bucketMs），
   // 这样下面才能拼出一条共享时间轴。
   const bucketsByContainer = new Map<string, Map<number, StoredPoint[]>>();
   for (const name of query.containers) {
@@ -341,8 +367,8 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
     bucketsByContainer.set(name, buckets);
     if (!all) continue;
     for (const p of all) {
-      if (p.ts < after || p.ts > before) continue;
-      const idx = Math.min(wanted - 1, Math.floor((p.ts - after) / bucketMs));
+      if (p.ts < gridAfter || p.ts > gridBefore) continue;
+      const idx = Math.min(count - 1, Math.floor((p.ts - gridAfter) / bucketMs));
       const list = buckets.get(idx);
       if (list) list.push(p); else buckets.set(idx, [p]);
     }
@@ -364,8 +390,8 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
    * 所以轴长恒等于请求的 points：没数据的桶留在轴上，整桶给 null。
    * 「没有数据」与「用量为 0」由 null / 0 区分，不靠点数多少暗示。
    */
-  const axis = Array.from({ length: wanted }, (_, idx) => idx);
-  const timestamps = axis.map((idx) => Math.round(after + (idx + 0.5) * bucketMs));
+  const axis = Array.from({ length: count }, (_, idx) => idx);
+  const timestamps = axis.map((idx) => Math.round(gridAfter + (idx + 0.5) * bucketMs));
 
   const series: Record<string, SeriesPoint[]> = {};
   for (const name of query.containers) {
@@ -379,7 +405,12 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
     });
   }
 
-  return { after, before, timestamps, groupSeconds: Math.round(bucketMs / 1000), group, series };
+  /*
+   * 返回吸附后的窗口，而不是调用方问的那个。差别不超过一个桶宽，但如实说出「这张图
+   * 实际画的是哪一段」比复述提问更有用——最后一个桶通常只填了一半（它还在进行中），
+   * 这也是 Netdata 的行为。
+   */
+  return { after: gridAfter, before: gridBefore, timestamps, groupSeconds: Math.round(bucketMs / 1000), group, series };
 }
 
 /** 测试用：清空全部历史。生产路径不调用。 */
