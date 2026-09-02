@@ -167,6 +167,7 @@ public class SiteContentSnapshotServiceTests
             <!doctype html><html><head><title>扫码风控</title></head><body>
             <div id="root"></div>
             <script type="module">
+            const quotePattern=/"/g;
             const page={className:"grid gap-8",children:["借鉴三元决策思想：",jsx("strong",{children:"风险分 + 置信度 + 业务价值"})]};
             </script></body></html>
             """;

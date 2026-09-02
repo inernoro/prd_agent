@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -374,13 +373,13 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
 
         foreach (Match script in scripts)
         {
-            var literals = Regex.Matches(script.Groups[1].Value, "\"(?:\\\\.|[^\"\\\\])*\"");
-            foreach (Match literal in literals)
+            // 不能用“完整 JS 字符串字面量”正则：真实压缩 bundle 含正则字面量和转义片段，
+            // 一处引号配对偏移就会让后续整段可见文案全部漏掉。按 JS/HTML 结构分隔符切段
+            // 更稳健；随后严格要求含中文、限制长度并去重，框架代码自然会被过滤掉。
+            var segments = Regex.Split(script.Groups[1].Value, "[\"'`<>{}\\[\\]\\r\\n]");
+            foreach (var segment in segments)
             {
-                string? value;
-                try { value = JsonSerializer.Deserialize<string>(literal.Value); }
-                catch (JsonException) { continue; }
-
+                var value = segment;
                 if (string.IsNullOrWhiteSpace(value)
                     || value.Length < 2
                     || value.Length > 1000
