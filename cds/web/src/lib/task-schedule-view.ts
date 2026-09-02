@@ -115,6 +115,35 @@ export function formatDuration(ms: number | null | undefined): string {
 }
 
 
+/**
+ * 任务分组。抽出来是为了可断言——判据全是「负数算不算」这类算术，
+ * 埋在组件的 useMemo 里写错了页面照样渲染。
+ *
+ * 已过点还没跑的任务（delta 为负）必须落「需要注意」：它同样满足「<= 2 小时」，
+ * 不显式挑出来就会安静地待在「即将触发」里，倒计时停在 00:00:00。
+ * 调度器 tick 是逐个 await 的，前一个跑很久就会把后面的顶过点，这不是罕见路径。
+ */
+export type JobGroupKey = 'attention' | 'soon' | 'normal';
+
+export function groupKeyOf(job: ScheduledJob, now: number): JobGroupKey {
+  if (!job.enabled || job.autoDisabledReason || (job.consecutiveFailureCount || 0) > 0) return 'attention';
+  const delta = msUntil(job.nextRunAt, now);
+  if (delta === null) return 'normal';
+  if (delta < 0) return 'attention';
+  return delta <= 2 * 60 * 60 * 1000 ? 'soon' : 'normal';
+}
+
+export function groupJobs(jobs: ScheduledJob[], now: number): Record<JobGroupKey, ScheduledJob[]> {
+  const out: Record<JobGroupKey, ScheduledJob[]> = { attention: [], soon: [], normal: [] };
+  for (const job of jobs) out[groupKeyOf(job, now)].push(job);
+  const byNext = (a: ScheduledJob, b: ScheduledJob) =>
+    (msUntil(a.nextRunAt, now) ?? Infinity) - (msUntil(b.nextRunAt, now) ?? Infinity);
+  out.soon.sort(byNext);
+  out.normal.sort(byNext);
+  return out;
+}
+
+
 export function startOfToday(now: number): number {
   const d = new Date(now);
   d.setHours(0, 0, 0, 0);

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration, msUntil,
+  buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration,
+  groupJobs, groupKeyOf, msUntil,
 } from '../../web/src/lib/task-schedule-view.js';
 import type { ScheduledJob, ScheduledJobRun } from '../../web/src/types/task-schedule.js';
 
@@ -272,6 +273,33 @@ describe('选中态的单泳道细带', () => {
   });
 });
 
+
+describe('任务分组', () => {
+  const j = (id: string, over: Partial<ScheduledJob> = {}) => job({ id, name: id, ...over });
+
+  /*
+   * Codex #1471 P2。已过点还没跑的任务 msUntil 返回负数，它同样满足
+   * 「<= 2 小时」，于是被归进「即将触发」——而它恰恰最该被看见。
+   * 调度器 tick 是逐个 await 的，前面一个跑很久就会把后面的顶过点。
+   * 红绿闭环：去掉 `delta < 0 → attention` 那一支，本用例报
+   * `expected 'soon' to be 'attention'`。
+   */
+  it('已过点还没跑的任务归「需要注意」，不是「即将触发」', () => {
+    const jobs = [
+      j('overdue', { nextRunAt: '2026-08-31T14:00:00.000Z' }),  // NOW 是 14:30，已过点 30 分钟
+      j('soon', { nextRunAt: '2026-08-31T15:00:00.000Z' }),     // 30 分钟后
+      j('later', { nextRunAt: '2026-08-31T20:00:00.000Z' }),    // 5.5 小时后
+    ];
+    const g = groupJobs(jobs, NOW);
+    expect(g.attention.map((x) => x.id)).toEqual(['overdue']);
+    expect(g.soon.map((x) => x.id)).toEqual(['soon']);
+    expect(g.normal.map((x) => x.id)).toEqual(['later']);
+    // 停用 / 连续失败仍然优先落「需要注意」，不被时间判据抢走
+    expect(groupKeyOf(job({ id: 'off', enabled: false, nextRunAt: '2026-08-31T15:00:00.000Z' }), NOW)).toBe('attention');
+    // 没有 nextRunAt（仅手动）落「正常运行」，不许被当成过期
+    expect(groupKeyOf(job({ id: 'manual', nextRunAt: undefined }), NOW)).toBe('normal');
+  });
+});
 
 describe('结论条的状态是有限枚举，不是越叠越长的条件链', () => {
   /*

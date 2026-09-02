@@ -14,7 +14,7 @@ import type {
 } from '@/types/task-schedule';
 import {
   buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration,
-  msUntil, runStatusLabel, scheduleLabel, statusTone,
+  groupJobs, runStatusLabel, scheduleLabel, statusTone,
   type JobHealth, type TimelineLane,
 } from '@/lib/task-schedule-view';
 
@@ -209,17 +209,8 @@ export function TaskSchedulePage(): JSX.Element {
   const selectedJob = useMemo(() => jobs.find((job) => job.id === selectedId) || null, [jobs, selectedId]);
 
   const groupedJobs = useMemo(() => {
-    const attention: ScheduledJob[] = [];
-    const soon: ScheduledJob[] = [];
-    const normal: ScheduledJob[] = [];
-    for (const job of jobs) {
-      if (!job.enabled || job.autoDisabledReason || (job.consecutiveFailureCount || 0) > 0) attention.push(job);
-      else if (msUntil(job.nextRunAt, now) !== null && msUntil(job.nextRunAt, now)! <= 2 * 60 * 60 * 1000) soon.push(job);
-      else normal.push(job);
-    }
-    const byNext = (a: ScheduledJob, b: ScheduledJob) => (msUntil(a.nextRunAt, now) ?? Infinity) - (msUntil(b.nextRunAt, now) ?? Infinity);
-    soon.sort(byNext);
-    normal.sort(byNext);
+    // 判据在 lib/task-schedule-view 里（可断言）；这里只负责渲染顺序与文案。
+    const { attention, soon, normal } = groupJobs(jobs, now);
     return [
       { key: 'attention', label: '需要注意', tone: 'text-bad', jobs: attention },
       { key: 'soon', label: '即将触发', tone: 'text-primary-ink', jobs: soon },
@@ -622,7 +613,13 @@ export function TaskSchedulePage(): JSX.Element {
             className="max-w-none"
             style={{ width: 'min(1080px, calc(100vw - 40px))', maxHeight: 'calc(100vh - 40px)' }}
           >
-            <DialogHeader className="shrink-0 border-b border-[hsl(var(--hairline))] px-5 py-3">
+            {/*
+              * 右内边距要给 DialogContent 自带的那枚关闭 X 让位：它是 absolute
+              * right-4 top-4（约占右起 16-32px），px-5 只留 20px，保存按钮会压在它上面
+              * ——尤其窄屏（Codex #1471 P2）。这里不再另加一个「关闭」按钮，
+              * 只留原语自带的那一个，并把头部右侧空出来。
+              */}
+            <DialogHeader className="shrink-0 border-b border-[hsl(var(--hairline))] py-3 pl-5 pr-12">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-left">
                   <DialogTitle className="text-[15px]">{form.id ? '编辑任务' : '新建任务'}</DialogTitle>
@@ -639,7 +636,6 @@ export function TaskSchedulePage(): JSX.Element {
                     <Save />
                     {saving ? '保存中' : '保存'}
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setEditorOpen(false)}>关闭</Button>
                 </div>
               </div>
             </DialogHeader>
