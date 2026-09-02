@@ -102,30 +102,70 @@ describe('scrubParentSecretsFromEnv', () => {
    * 等价于管理员。结果就是任一条未合并分支能以管理员身份打到兄弟分支的预览。
    *
    * 所以现在的契约是：**子实例一律不从环境变量继承任何 AI 静态钥匙**。
-   * 要给 Agent 免登录的自测通道，得走已经有作用域的项目级 Agent Key
-   * （cdsp_ 前缀，assertProjectAccess 会拦跨项目访问），那是另一件事。
+   * 也没有现成替代：项目级 Agent Key（cdsp_）比对的是收方实例自己库里的哈希，
+   * 子实例独立存储、首启 seed，父实例签的那把它不认。带作用域的自测凭据是后续事项。
    * 红绿闭环：把重映射那行加回去，本用例第三条断言变红。
    */
   /*
    * 这条通道被撤除后，「撤了一半」连着发生了三次：代码删了但事故台账仍记着它是
    * 「修复」（Codex 第六轮）、台账改了但源码注释仍写着「必须为它单独生成一把」
    * （第七轮）、以及一条 feat changelog 碎片会把它宣告进 CHANGELOG。
-   * 逐处被指出来三次之后，这里用一条扫描把它钉死：除了明确写着「不要照做」的
-   * 反向说明，仓库里不许再出现「为子实例生成 AI 静态钥匙」的指示。
-   * 红绿闭环：把那段注释改回「必须为它单独生成一把」，本用例立刻红。
+   *
+   * 所以扫描范围就是残留真出现过的那几处，而不是只扫 preview-instance.ts 一个文件
+   * —— 只扫它自己的守卫恰好防不住它自己记录的那三次复发（第十四轮指出）。
+   * 覆盖：cds/src 全部源码 + 两份 compose + 隔离规则台账 + debt 台账 + 全部
+   * changelog 碎片。清单里的文件必须存在，改名后覆盖会静默消失。
+   * 红绿闭环：把那段注释改回「必须为它单独生成一把」（或写进上述任一文件），本用例立刻红。
    */
   it('仓库里不许再有「给子实例生成 AI 静态钥匙」的指示', () => {
-    const src = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/services/preview-instance.ts'),
-      'utf8',
-    );
+    const repoRoot = path.resolve(process.cwd(), '..');
+    const anchors = [
+      'cds/src/services/preview-instance.ts',
+      'cds/cds-compose.selfhost.yml',
+      'cds-compose.yml',
+      '.claude/rules/cross-project-isolation.md',
+      'doc/debt.cds.md',
+    ];
+    for (const rel of anchors) {
+      expect(fs.existsSync(path.join(repoRoot, rel)), `扫描清单里的 ${rel} 不在了，改名后要同步这里`)
+        .toBe(true);
+    }
+    const walk = (dir: string, acc: string[]): string[] => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full, acc);
+        else if (entry.name.endsWith('.ts')) acc.push(full);
+      }
+      return acc;
+    };
+    const changelogDir = path.join(repoRoot, 'changelogs');
+    const targets = [
+      ...anchors.map((rel) => path.join(repoRoot, rel)),
+      ...walk(path.join(repoRoot, 'cds/src'), []),
+      ...fs
+        .readdirSync(changelogDir)
+        .filter((name) => name.endsWith('.md'))
+        .map((name) => path.join(changelogDir, name)),
+    ];
+
     // 反向说明必须在（否则下一个人不知道为什么不能做）
-    expect(src, 'preview-instance 里要留下「为什么不能给子实例发静态钥匙」的说明')
+    const previewSrc = fs.readFileSync(path.join(repoRoot, 'cds/src/services/preview-instance.ts'), 'utf8');
+    expect(previewSrc, 'preview-instance 里要留下「为什么不能给子实例发静态钥匙」的说明')
       .toContain('也不要为子实例单独生成一把');
-    // 正向指示不许在
-    expect(src).not.toMatch(/必须为它单独生成一把/);
-    // 代码层面：不许再有任何把 CDS_PREVIEW_* 映射到 AI 钥匙的赋值
-    expect(src).not.toMatch(/CDS_AI_ACCESS_KEY\s*=\s*preview/);
+
+    for (const file of targets) {
+      const text = fs.readFileSync(file, 'utf8');
+      const rel = path.relative(repoRoot, file);
+      // 正向指示不许在
+      expect(text, `${rel} 又出现了「为子实例单独生成一把静态钥匙」的指示`)
+        .not.toMatch(/必须为(它|子实例|预览实例)单独生成一把/);
+      // 配置层面：不许再有 CDS_PREVIEW_AI_ACCESS_KEY 的赋值（散文里提它没关系，钉死的是定义）
+      expect(text, `${rel} 又定义了 CDS_PREVIEW_AI_ACCESS_KEY`)
+        .not.toMatch(/CDS_PREVIEW_AI_ACCESS_KEY\s*[:=]\s*\S/);
+      // 代码层面：不许再有任何把 CDS_PREVIEW_* 映射到 AI 钥匙的赋值
+      expect(text, `${rel} 又把 CDS_PREVIEW_* 映射成了 AI 静态钥匙`)
+        .not.toMatch(/CDS_AI_ACCESS_KEY\s*=\s*[^;\n]*[Pp]review/);
+    }
   });
 
   it('子实例不从任何 CDS_PREVIEW_* 变量继承 AI 静态钥匙', () => {
