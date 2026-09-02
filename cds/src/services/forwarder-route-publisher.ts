@@ -33,6 +33,7 @@ import type { BranchEntry, BuildProfile } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
 import { namedServiceLabel, occupiedHostOwners, publishedServiceLabels, subdomainWithLegacyAliases } from './preview-entrypoints.js';
+import { pickApiConventionProfile, pickDefaultProfile } from './route-conventions.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
 /**
@@ -45,14 +46,6 @@ import type { RouteRecord } from '../forwarder/types.js';
  * 让 ['api', 'reporting'] 分支的 master 选 api,publisher 选 reporting,
  * 切流时路由不一致。已对齐为 master 的 case-sensitive includes + 直接 profileIds[0]。
  */
-function pickDefaultProfile(profileIds: string[]): string {
-  const webProfile = profileIds.find(
-    (id) => id.includes('web') || id.includes('frontend') || id.includes('admin'),
-  );
-  if (webProfile) return webProfile;
-  return profileIds[0];
-}
-
 // 可路由服务状态(SSOT)：forwarder 命名/前缀路由与 proxy.ts master 命名子域兜底共用同一口径，
 // 避免「停止/错误的服务仍被强制为上游」这类两条路径漂移(Cursor Bugbot)。
 export const ROUTABLE_SERVICE_STATUSES = new Set(['running', 'starting', 'building', 'restarting']);
@@ -360,9 +353,8 @@ export class ForwarderRoutePublisher {
         // 2) Convention:`/api/*` → 含 api/backend 的 profile(若 BuildProfile 没显式配)
         if (!writtenPrefixes.has('/api/')) {
           // Case-sensitive includes 与 master detectProfileFromRequest(proxy.ts:884)对齐
-          const apiSvc = routableServices.find(
-            (s) => s.profileId.includes('api') || s.profileId.includes('backend'),
-          );
+          const apiConventionId = pickApiConventionProfile(routableServices.map((s) => s.profileId));
+          const apiSvc = routableServices.find((s) => s.profileId === apiConventionId);
           // master detectProfileFromRequest(proxy.ts:884)无条件让 /api/* 走 api/backend
           // profile,即使它正好是 profileIds[0](= default profile)。删 apiSvc.profileId !==
           // defaultProfile guard,总是显式写 /api/ prefix route 与 master 一致(Cursor Bugbot Medium):

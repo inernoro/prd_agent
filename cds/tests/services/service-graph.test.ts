@@ -130,3 +130,118 @@ describe('buildServiceGraph', () => {
     ]);
   });
 });
+
+/* ── 角色推断 + 站点分组（2026-09-02 运行画布「入口 → 站点 → 壳 → 前缀成员」）── */
+import { buildServiceSites, inferServiceRole } from '../../src/services/service-graph.js';
+
+/** mdimp main 分支的真实声明（cdscli project show 抽出的 cds.* 标签），名字推导在这里会栽三次。 */
+function mdimpProfiles(): BuildProfile[] {
+  return [
+    profile('imp-database-bootstrap', { readinessProbe: { path: '/health' } }),
+    profile('imp-api', { pathPrefixes: ['/api/', '/open/', '/partner/', '/ops/', '/health', '/actuator/', '/health-api/'], readinessProbe: { path: '/health' } }),
+    profile('cloudbridge-api', { readinessProbe: { path: '/api/webhook/event/list?pageSize=1' } }),
+    profile('cloudbridge-web', { subdomain: 'cloudbridge', webEntry: { name: '云桥运维控制台', path: '/' }, readinessProbe: { path: '/' }, env: { API_BASE: 'http://cloudbridge-api-mdimp:8080' } }),
+    profile('imp-admin', { pathPrefixes: ['/'], readinessProbe: { path: '/' } }),
+    profile('imp-vendor-api', { pathPrefixes: ['/api/portal/', '/vendor-health-api/'], readinessProbe: { path: '/health' } }),
+    profile('imp-vendor', { pathPrefixes: ['/vendor/'], readinessProbe: { path: '/vendor/' } }),
+    profile('imp-open-platform-api', { subdomain: 'open-platform-api', pathPrefixes: ['/api/open-platform/', '/open/', '/health'], readinessProbe: { path: '/health' } }),
+    profile('imp-open-platform', { subdomain: 'open-platform', readinessProbe: { path: '/' } }),
+    profile('imp-scan-runtime-api', { subdomain: 'scan-runtime', pathPrefixes: ['/'], readinessProbe: { path: '/health' } }),
+  ];
+}
+
+describe('inferServiceRole 角色判定优先级', () => {
+  it('显式 cds.role 覆盖一切推断', () => {
+    const v = inferServiceRole(profile('cloudbridge-web', { role: 'worker', webEntry: { name: 'x', path: '/' } }));
+    expect(v).toEqual({ role: 'worker', source: 'declared', reason: '配置声明 cds.role: worker' });
+  });
+  it('声明了用户入口就是 web，与名字无关', () => {
+    const v = inferServiceRole(profile('thing-api', { webEntry: { name: '控制台', path: '/' } }));
+    expect(v.role).toBe('web');
+    expect(v.source).toBe('route');
+  });
+  it('不监听 HTTP 的就是 worker', () => {
+    expect(inferServiceRole(profile('foo', { readinessProbe: { noHttp: true } })).role).toBe('worker');
+  });
+  it('承载根路径且探活是页面 → web；承载根路径但探活是健康检查 → 交给名字', () => {
+    expect(inferServiceRole(profile('zzz', { pathPrefixes: ['/'], readinessProbe: { path: '/' } })))
+      .toMatchObject({ role: 'web', source: 'route' });
+    expect(inferServiceRole(profile('imp-scan-runtime-api', { subdomain: 'scan-runtime', pathPrefixes: ['/'], readinessProbe: { path: '/health' } })))
+      .toMatchObject({ role: 'api', source: 'name' });
+  });
+  it('名字两种词根都命中时取靠后的名词本体', () => {
+    expect(inferServiceRole(profile('admin-api')).role).toBe('api');
+    expect(inferServiceRole(profile('api-admin')).role).toBe('web');
+  });
+  it('名字判不出时看弱路由特征：接口样式前缀 / 健康检查探活 / 页面探活 / 独占子域', () => {
+    expect(inferServiceRole(profile('alpha', { pathPrefixes: ['/graphql', '/v2/'] }))).toMatchObject({ role: 'api', source: 'route' });
+    expect(inferServiceRole(profile('beta', { readinessProbe: { path: '/healthz' } }))).toMatchObject({ role: 'api', source: 'route' });
+    expect(inferServiceRole(profile('imp-vendor', { pathPrefixes: ['/vendor/'], readinessProbe: { path: '/vendor/' } }))).toMatchObject({ role: 'web', source: 'route' });
+    expect(inferServiceRole(profile('imp-open-platform', { subdomain: 'open-platform', readinessProbe: { path: '/' } }))).toMatchObject({ role: 'web', source: 'route' });
+  });
+  it('什么都判不出 → 默认 api 并如实标 default', () => {
+    expect(inferServiceRole(profile('zeta'))).toEqual({ role: 'api', source: 'default', reason: '无声明、无路由特征、名字无法判断，默认按接口显示' });
+  });
+  it('mdimp 十个服务全部判对，且每个都带来源与理由', () => {
+    const g = buildServiceGraph(mdimpProfiles(), []);
+    const roleOf = (id: string) => g.nodes.find((n) => n.rawId === id)!;
+    const expected: Record<string, string> = {
+      'imp-database-bootstrap': 'worker', 'imp-api': 'api', 'cloudbridge-api': 'api', 'cloudbridge-web': 'web',
+      'imp-admin': 'web', 'imp-vendor-api': 'api', 'imp-vendor': 'web', 'imp-open-platform-api': 'api',
+      'imp-open-platform': 'web', 'imp-scan-runtime-api': 'api',
+    };
+    for (const [id, role] of Object.entries(expected)) {
+      expect(roleOf(id).role, id).toBe(role);
+      expect(roleOf(id).roleSource, id).toBeDefined();
+      expect(roleOf(id).roleReason, id).toBeTruthy();
+    }
+    expect(roleOf('imp-admin').roleSource).toBe('route');
+    expect(roleOf('imp-database-bootstrap').roleSource).toBe('name');
+  });
+});
+
+describe('buildServiceSites 站点分组与 forwarder 同源', () => {
+  it('mdimp：主域名壳是 imp-admin，前缀成员挂在它下面；每个子域各一站；无路由的进 internal', () => {
+    const g = buildServiceGraph(mdimpProfiles(), []);
+    const main = g.sites.find((s) => s.kind === 'main')!;
+    expect(main.shellId).toBe('imp-admin');
+    expect(main.shellSource).toBe('declared');
+    expect(main.members.map((m) => m.id).sort()).toEqual(['imp-api', 'imp-open-platform-api', 'imp-vendor', 'imp-vendor-api']);
+    expect(main.members.find((m) => m.id === 'imp-api')!.prefixes).toContain('/api/');
+    expect(main.members.every((m) => !m.viaConvention)).toBe(true);
+    // 同一前缀被多个服务声明：forwarder 只能按 id 二选一，必须报成冲突而不是静默。
+    // mdimp 真实配置里有三处（`/` 两个壳抢；`/health` `/open/` 两个 api 抢），名字推导永远发现不了
+    expect(main.conflicts).toEqual([
+      { prefix: '/', ids: ['imp-admin', 'imp-scan-runtime-api'] },
+      { prefix: '/health', ids: ['imp-api', 'imp-open-platform-api'] },
+      { prefix: '/open/', ids: ['imp-api', 'imp-open-platform-api'] },
+    ]);
+    expect(g.sites.filter((s) => s.kind === 'subdomain').map((s) => [s.subdomain, s.shellId])).toEqual([
+      ['cloudbridge', 'cloudbridge-web'], ['open-platform-api', 'imp-open-platform-api'], ['open-platform', 'imp-open-platform'], ['scan-runtime', 'imp-scan-runtime-api'],
+    ]);
+    expect(g.internal.sort()).toEqual(['cloudbridge-api', 'imp-database-bootstrap']);
+    // 无路由的 cloudbridge-api 通过环境变量引用边挂在 cloudbridge-web 下
+    expect(g.edges.some((e) => e.from === 'service:cloudbridge-web' && e.to === 'service:cloudbridge-api')).toBe(true);
+  });
+  it('无人声明 `/` 时按名兜底选壳，无人声明 /api/ 时按名约定接管（与发布器同一份规则）', () => {
+    const g = buildServiceGraph([profile('backend'), profile('frontend')], []);
+    const main = g.sites[0];
+    expect(main.shellId).toBe('frontend');
+    expect(main.shellSource).toBe('convention');
+    expect(main.members).toEqual([{ id: 'backend', prefixes: ['/api/'], viaConvention: true }]);
+    expect(g.internal).toEqual([]);
+  });
+  it('多个服务声明 `/` 时优先 web-entry primary，其次角色为 web 的', () => {
+    const roles = new Map([
+      ['a-api', inferServiceRole(profile('a-api', { pathPrefixes: ['/'] }))],
+      ['b-web', inferServiceRole(profile('b-web', { pathPrefixes: ['/'] }))],
+    ]);
+    const r = buildServiceSites([profile('a-api', { pathPrefixes: ['/'] }), profile('b-web', { pathPrefixes: ['/'] })], roles);
+    expect(r.sites[0].shellId).toBe('b-web');
+    const r2 = buildServiceSites([profile('a-api', { pathPrefixes: ['/'], webEntry: { name: 'x', path: '/', primary: true } }), profile('b-web', { pathPrefixes: ['/'] })], roles);
+    expect(r2.sites[0].shellId).toBe('a-api');
+  });
+  it('没有服务时没有站点', () => {
+    expect(buildServiceGraph([], []).sites).toEqual([]);
+  });
+});

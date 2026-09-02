@@ -31,6 +31,10 @@ export interface RoutingRule {
   enabled: boolean;
 }
 
+/** 服务角色枚举（`cds.role` 合法值，也是推断结果的值域）。 */
+export type ServiceRole = 'web' | 'api' | 'worker';
+export const SERVICE_ROLES: readonly ServiceRole[] = ['web', 'api', 'worker'];
+
 /** A build profile defines how to build/run a specific type of project */
 export interface BuildProfile {
   id: string;
@@ -103,6 +107,13 @@ export interface BuildProfile {
    * called. Derived from the `cds.web-entry-*` compose labels.
    */
   webEntry?: WebEntryConfig;
+  /**
+   * 显式声明的服务角色（compose label `cds.role`）：web = 给人看的静态站 / 前端，
+   * api = 被前端或其他服务调用的接口，worker = 不对外提供 HTTP 的后台任务 / 一次性作业。
+   * 没有声明时 CDS 按路由事实 + 服务名推断（service-graph inferServiceRole），
+   * 推断结果会在画布上标成「推断」；声明后覆盖一切推断。
+   */
+  role?: ServiceRole;
   /**
    * Service dependencies — IDs of infra services or other profiles this app depends on.
    * Derived from compose `depends_on`. Used for startup ordering.

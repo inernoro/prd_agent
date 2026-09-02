@@ -14,7 +14,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig } from '../types.js';
+import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig, ServiceRole } from '../types.js';
+import { SERVICE_ROLES } from '../types.js';
 import { isValidServiceSubdomain } from './branch-extra-services.js';
 import { parseWebEntryLabels } from './web-entry.js';
 
@@ -524,6 +525,13 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         if (hasWebEntryLabels && !webEntry) {
           console.warn(`[compose-parser] service "${serviceId}" 的 cds.web-entry-* 声明不完整或指向探活路径，已忽略用户入口`);
         }
+        // cds.role label → BuildProfile.role：显式服务角色（web / api / worker）。非法值忽略并告警，
+        // 交给 service-graph 按路由事实 + 服务名推断（画布会标「推断」）。
+        const roleRaw = (labels['cds.role'] || '').trim().toLowerCase();
+        const role = (SERVICE_ROLES as readonly string[]).includes(roleRaw) ? (roleRaw as ServiceRole) : undefined;
+        if (roleRaw && !role) {
+          console.warn(`[compose-parser] service "${serviceId}" 的 cds.role "${roleRaw}" 不在 ${SERVICE_ROLES.join(' / ')} 之内，已忽略，改为自动推断`);
+        }
         // cds.subdomain label → BuildProfile.subdomain:该服务获得 `<previewSlug>-<subdomain>.<root>`
         // 命名 URL(独立入口,不埋在主应用路径下)。须单 DNS label,非法值忽略(不阻断解析)。
         const subdomainRaw = labels['cds.subdomain'];
@@ -572,6 +580,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           ...(entry.fallbackImage ? { fallbackImage: entry.fallbackImage } : {}),
           ...(subdomain ? { subdomain } : {}),
           ...(webEntry ? { webEntry } : {}),
+          ...(role ? { role } : {}),
         });
       } else {
         // Infra service — no source mount, possibly built-from-source custom
@@ -768,6 +777,10 @@ export function toCdsCompose(
       entryLabels['cds.web-entry-name'] = p.webEntry.name;
       entryLabels['cds.web-entry-path'] = p.webEntry.path;
       if (p.webEntry.primary) entryLabels['cds.web-entry-primary'] = 'true';
+    }
+    // 显式角色 round-trip（推断结果不回写：那是运行时算出来的，不是配置）。
+    if (p.role) {
+      entryLabels['cds.role'] = p.role;
     }
     // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
     if (p.prebuiltImage) {
