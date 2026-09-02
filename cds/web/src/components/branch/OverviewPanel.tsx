@@ -90,7 +90,17 @@ export function pushMetricRing(
  */
 const SERIES_SLOTS = 5;
 const seriesColor = (i: number): string => `hsl(var(--series-${i + 1}))`;
-const OTHER_COLOR = 'hsl(var(--hairline-strong))';
+/**
+ * 「其他 N 个」的颜色。
+ *
+ * 原来用 --hairline-strong，那是描边色，在深色底上明度够高、面积一大就成了图里
+ * 最抢眼的一块死灰，读起来像阴影不像数据。它是尾部聚合、天然是背景，必须退下去：
+ * 用去饱和的 muted-foreground 低透明度，明确比任何一个具名服务弱一档。
+ */
+const OTHER_COLOR = 'hsl(var(--muted-foreground) / 0.3)';
+
+/** 堆叠段之间的留白（px）。dataviz：分隔靠表面色的缝，不靠给每段描边。 */
+const STACK_GAP = 2;
 
 export interface OverviewService {
   profileId: string;
@@ -143,13 +153,19 @@ function stackAreas(values: number[][], max: number, h: number): string[] {
   const x = (i: number): number => (i / (n - 1)) * VB_W;
   const y = (v: number): number => h - Math.min(1, v / max) * h;
   const cum = new Array<number>(n).fill(0);
-  return values.map((row) => {
+  const last = values.length - 1;
+  return values.map((row, band) => {
     const top: string[] = [];
     const bottom: string[] = [];
     for (let i = 0; i < n; i += 1) {
-      bottom.unshift(`${x(i).toFixed(1)},${y(cum[i]).toFixed(1)}`);
+      const yBottom = y(cum[i]);
+      bottom.unshift(`${x(i).toFixed(1)},${yBottom.toFixed(1)}`);
       cum[i] += row[i] ?? 0;
-      top.push(`${x(i).toFixed(1)},${y(cum[i]).toFixed(1)}`);
+      // 表面色的缝：把这一段的上沿压下去 2px，让它和上面那段之间露出底色。
+      // 最上面那段没有邻居，压下去只会凭空削掉总量，所以不压。
+      // 段本身比缝还薄时钳到下沿，宁可这一段不可见，也不要画出翻转的路径。
+      const yTop = band === last ? y(cum[i]) : Math.min(yBottom, y(cum[i]) + STACK_GAP);
+      top.push(`${x(i).toFixed(1)},${yTop.toFixed(1)}`);
     }
     return `M${top.join(' L')} L${bottom.join(' L')} Z`;
   });
@@ -335,20 +351,73 @@ function StackedAreaChart({
       aria-hidden
     >
       {paths.map((d, i) => (
-        d ? <path key={series[i].id} d={d} style={{ fill: series[i].color }} fillOpacity={0.9} /> : null
+        d ? <path key={series[i].id} d={d} style={{ fill: series[i].color }} fillOpacity={0.8} /> : null
       ))}
     </svg>
   );
 }
 
+/**
+ * 构成条：一根横向堆叠条 + 一张能读全名的清单。
+ *
+ * 2026-09-02 真人验收：内存那张时间序列面积图「太丑」。回看数据才发现问题不在配色——
+ * 内存本来就几乎不随时间变，画成 30 分钟面积图就是四条水平直线，白占半屏，
+ * 而全部信息（谁占多少）图例里那几个数字早就说完了。
+ *
+ * dataviz 的形式表：这份数据的 job 是 part-to-whole，默认形式是 **stacked bar**，
+ * 而且「go horizontal for many / long-named categories」——服务名又多又长，正是这一档。
+ * 名字写全不截断，也顺带治了「图例挤成碎屑」。
+ */
+function CompositionBar({ series }: { series: StackedSeries[] }): JSX.Element {
+  const total = series.reduce((n, x) => n + (x.stopped ? 0 : x.values.at(-1) ?? 0), 0);
+  const rows = series.map((x) => ({
+    ...x,
+    value: x.stopped ? 0 : x.values.at(-1) ?? 0,
+  }));
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex h-3 w-full gap-[2px] overflow-hidden rounded-full" role="img" aria-label="内存占用构成">
+        {rows.map((r) => (
+          <span
+            key={r.id}
+            className="h-full first:rounded-l-full last:rounded-r-full"
+            style={{
+              // 分隔靠 flex 的 2px 缝（表面色），不给每段描边。
+              flex: total > 0 ? `${Math.max(r.value / total, 0.004)} 0 0` : '1 0 0',
+              background: r.color,
+              opacity: 0.85,
+            }}
+          />
+        ))}
+      </div>
+      <ul className="flex flex-col gap-1.5">
+        {rows.map((r) => (
+          <li key={r.id} className="flex items-baseline gap-2">
+            <span className="mt-[3px] h-2 w-2 shrink-0 self-start rounded-[2px]" style={{ background: r.color }} aria-hidden />
+            <span className="min-w-0 flex-1 break-all font-mono text-[11px] leading-[15px] text-muted-foreground">{r.id}</span>
+            {r.stopped ? (
+              <span className="shrink-0 font-mono text-[12px] font-bold text-bad">停止</span>
+            ) : (
+              <span className="shrink-0 font-mono text-[13px] font-bold tabular-nums text-foreground">
+                {r.nowLabel}<span className="text-[10px] font-medium text-muted-foreground">{r.nowUnit}</span>
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function SeriesLegend({ series }: { series: StackedSeries[] }): JSX.Element {
   return (
-    <div
-      className="grid gap-2 border-t border-[hsl(var(--hairline))] pt-2.5"
-      style={{ gridTemplateColumns: `repeat(${series.length}, minmax(0, 1fr))` }}
-    >
+    /*
+     * 等宽 N 列会把长服务名一律截断成「cloudbridge-...」，六个一排就是一行碎屑。
+     * 改成按内容换行的 chip 行：名字写得下就写全，写不下才换行，宽度自己找位置。
+     */
+    <div className="flex flex-wrap gap-x-5 gap-y-2 border-t border-[hsl(var(--hairline))] pt-2.5">
       {series.map((s) => (
-        <div key={s.id} className="flex min-w-0 gap-2">
+        <div key={s.id} className="flex min-w-0 max-w-full gap-2">
           <span className="w-[3px] shrink-0 rounded-full" style={{ background: s.color }} aria-hidden />
           <span className="flex min-w-0 flex-col gap-px">
             <span className="truncate font-mono text-[10.5px] text-muted-foreground" title={s.id}>{s.id}</span>
@@ -370,8 +439,22 @@ function SeriesLegend({ series }: { series: StackedSeries[] }): JSX.Element {
 
 // ── 网络双向面积图 ────────────────────────────────────────────────────────
 
+/**
+ * 网络吞吐：收在上、发在下，共用一根基线。
+ *
+ * 配色是**同一个色相的两档**，不是两个不同的颜色：收 / 发 的主编码是基线上下的位置，
+ * 颜色只是辅助，用两种色相反而暗示「两个不相干的实体」。
+ * 色相取 --series-net 单独一档，不复用具名服务那五色（同屏里「蓝色 = cloudbridge-web」
+ * 和「蓝色 = 入站」会打架），也不用语义四色——那四档保留给状态。
+ *
+ * 此前这里用的是 --info 和 --primary，正好违反本面板自己声明的不变量
+ * （语义四色状态专用、不参与系列配色）。
+ */
+const NET_COLOR = 'hsl(var(--series-net))';
+
 function NetworkChart({ rx, tx }: { rx: number[]; tx: number[] }): JSX.Element {
-  const max = Math.max(1, ...rx, ...tx) * 1.12;
+  const peak = Math.max(1, ...rx, ...tx);
+  const max = peak * 1.12;
   const h = 62;
   return (
     <ChartShell
@@ -382,8 +465,11 @@ function NetworkChart({ rx, tx }: { rx: number[]; tx: number[] }): JSX.Element {
     >
       <>
         <div className="relative" style={{ height: h * 2 + 2 }}>
+          <span className="pointer-events-none absolute left-0 top-0 font-mono text-[10px] leading-none text-muted-foreground">
+            {formatBytesShort(peak)}/s
+          </span>
           <svg className="absolute inset-x-0 top-0 w-full" height={h} viewBox={`0 0 ${VB_W} ${h}`} preserveAspectRatio="none" aria-hidden>
-            <path d={areaPath(rx, max, h)} style={{ fill: 'hsl(var(--info))' }} fillOpacity={0.85} />
+            <path d={areaPath(rx, max, h)} style={{ fill: NET_COLOR }} fillOpacity={0.85} />
           </svg>
           <span className="absolute inset-x-0 h-px bg-[hsl(var(--hairline-strong))]" style={{ top: h }} aria-hidden />
           <svg
@@ -394,19 +480,19 @@ function NetworkChart({ rx, tx }: { rx: number[]; tx: number[] }): JSX.Element {
             preserveAspectRatio="none"
             aria-hidden
           >
-            <path d={areaPath(tx, max, h)} style={{ fill: 'hsl(var(--primary))' }} fillOpacity={0.8} />
+            <path d={areaPath(tx, max, h)} style={{ fill: NET_COLOR }} fillOpacity={0.4} />
           </svg>
         </div>
         <div className="flex gap-4 border-t border-[hsl(var(--hairline))] pt-2.5">
           <span className="flex items-center gap-2">
-            <span className="h-5 w-[3px] rounded-full" style={{ background: 'hsl(var(--info))' }} aria-hidden />
+            <span className="h-5 w-[3px] rounded-full" style={{ background: NET_COLOR }} aria-hidden />
             <span className="flex flex-col">
               <span className="text-[10.5px] text-muted-foreground">入站峰值</span>
               <span className="font-mono text-[13px] font-bold text-foreground">{formatBytesShort(Math.max(0, ...rx))}/s</span>
             </span>
           </span>
           <span className="flex items-center gap-2">
-            <span className="h-5 w-[3px] rounded-full" style={{ background: 'hsl(var(--primary))' }} aria-hidden />
+            <span className="h-5 w-[3px] rounded-full opacity-50" style={{ background: NET_COLOR }} aria-hidden />
             <span className="flex flex-col">
               <span className="text-[10.5px] text-muted-foreground">出站峰值</span>
               <span className="font-mono text-[13px] font-bold text-foreground">{formatBytesShort(Math.max(0, ...tx))}/s</span>
@@ -679,8 +765,9 @@ export function OverviewPanel({
   // 合计只算还在跑的：把停机前的旧读数加进「当前合计」会虚报占用。
   const cpuTotalNow = cpuSeries.reduce((n, s) => n + (s.stopped ? 0 : s.values.at(-1) ?? 0), 0);
   const memTotalNow = memSeries.reduce((n, s) => n + (s.stopped ? 0 : s.values.at(-1) ?? 0), 0);
-  const cpuMax = Math.max(5, ...Array.from({ length: sampleCount }, (_, i) => cpuSeries.reduce((n, s) => n + (s.values[i] ?? 0), 0))) * 1.12;
-  const memMax = Math.max(1, ...Array.from({ length: sampleCount }, (_, i) => memSeries.reduce((n, s) => n + (s.values[i] ?? 0), 0))) * 1.12;
+  // 上限不再乘一个 1.12 的余量：余量会让刻度落在 13 / 9 / 4 这种不整的数上。
+  // 改成把峰值交给 niceScale 吸附到整数步长，吸附本身就自带头部空间。
+  const cpuPeak = Math.max(2, ...Array.from({ length: sampleCount }, (_, i) => cpuSeries.reduce((n, s) => n + (s.values[i] ?? 0), 0)));
 
   const netRx = Array.from({ length: sampleCount }, (_, i) => picked.head.concat(picked.tail).reduce((n, x) => n + (x.ring.rxRate[i] ?? 0), 0));
   const netTx = Array.from({ length: sampleCount }, (_, i) => picked.head.concat(picked.tail).reduce((n, x) => n + (x.ring.txRate[i] ?? 0), 0));
@@ -699,8 +786,30 @@ export function OverviewPanel({
     ? `近 ${(windowMinutes / 60).toFixed(windowMinutes % 60 === 0 ? 0 : 1)} 小时`
     : `近 ${Math.max(1, Math.round(windowMinutes))} 分钟`;
   const windowLabel = `服务端聚合 · ${windowText}`;
-  const yTicksOf = (max: number, fmt: (v: number) => string): string[] =>
-    [1, 0.66, 0.33, 0].map((f) => fmt(max * f));
+  /**
+   * 刻度取整。
+   *
+   * 原来是把上限直接乘 0.66 / 0.33 打出来，于是刻度长这样：13 / 9 / 4 / 0——
+   * 因为上限本身是「实际峰值 × 1.12」这么一个不整的数。dataviz 的要求是
+   * 「Y-axis ticks: round to clean numbers」：先把步长吸附到 1 / 2 / 2.5 / 5 / 10
+   * 这一档的整数上，再由步长决定上限，图和刻度就都落在整数上。
+   *
+   * 返回 [上限, …, 0]（从上往下），并把吸附后的上限一并给出去，让面积图用同一个
+   * 上限——不然刻度线和面积会对不齐。
+   */
+  const niceScale = (rawMax: number, ticks = 4): { max: number; steps: number[]; labels: string[] } => {
+    if (!Number.isFinite(rawMax) || rawMax <= 0) return { max: 1, steps: [1, 0], labels: ['1', '0'] };
+    const rough = rawMax / (ticks - 1);
+    const mag = 10 ** Math.floor(Math.log10(rough));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((v) => v >= rough) ?? 10 * mag;
+    const top = step * (ticks - 1);
+    const steps = Array.from({ length: ticks }, (_, i) => top - i * step);
+    // 小数位由**步长**定一次，整条轴统一。逐个值判断会打出 15 / 10 / 5.0 / 0.0 这种混排。
+    const digits = step >= 1 ? 0 : Math.min(2, Math.ceil(-Math.log10(step)));
+    return { max: top, steps, labels: steps.map((v) => v.toFixed(digits)) };
+  };
+
+  const cpuScale = niceScale(cpuPeak);
 
   return (
     <div className="flex flex-col gap-4">
@@ -795,30 +904,25 @@ export function OverviewPanel({
             legend={<SeriesLegend series={cpuSeries} />}
           >
             <PlotFrame
-              height={168}
-              yTicks={yTicksOf(cpuMax, (v) => v.toFixed(0))}
+              height={176}
+              yTicks={cpuScale.labels}
               xLabels={[windowText.replace('近 ', '') + '前', '现在']}
             >
-              <StackedAreaChart height={168} max={cpuMax} series={cpuSeries} />
+              <StackedAreaChart height={176} max={cpuScale.max} series={cpuSeries} />
             </PlotFrame>
           </ChartShell>
 
-          <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
+          {/* items-start：两张卡各按自身内容定高。拉伸对齐会在矮的那张里留出一大块空洞
+              （网络卡的图在顶、图例在底，中间空一截），空洞比高度不齐难看得多。 */}
+          <div className="grid items-start gap-4 lg:grid-cols-[1.35fr_1fr]">
             <ChartShell
               title="内存占用"
-              unit="按服务堆叠"
+              unit="按服务构成 · 当前"
               headline={formatBytesShort(memTotalNow)}
               headlineSuffix={`${memSeries.length} 个服务合计`}
-              legend={<SeriesLegend series={memSeries} />}
               footnote="不显示占比：没给容器配 mem_limit 时，Docker 报的限额是宿主机总量，除下来四舍五入全是 0.0%，读不出信息。要看水位先在项目设置里配 mem_limit。"
             >
-              <PlotFrame
-                height={120}
-                yTicks={yTicksOf(memMax, (v) => formatBytesShort(v).replace(/ (\w)\w*$/, "$1"))}
-                xLabels={[windowText.replace('近 ', '') + '前', '现在']}
-              >
-                <StackedAreaChart height={120} max={memMax} series={memSeries} />
-              </PlotFrame>
+              <CompositionBar series={memSeries} />
             </ChartShell>
             <NetworkChart rx={netRx} tx={netTx} />
           </div>
