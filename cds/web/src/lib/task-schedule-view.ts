@@ -214,7 +214,14 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
     headline = disabled.length > 0
       ? `${failing.length} 个任务连续失败，其中 ${disabled.length} 个已被自动停用`
       : `${failing.length} 个任务连续失败`;
-    detail = `${failing.map((job) => job.name).slice(0, 3).join('、')}${failing.length > 3 ? ' 等' : ''}；其余 ${jobs.length - failing.length} 个任务今日${failedLive ? '' : '零失败'}${skipTail}${orphanTail}。`;
+    // 这句此前写成 `今日${failedLive ? '' : '零失败'}`——有别的失败时三元返回空串，
+    // 句子就断在「其余 8 个任务今日。」（2026-09-02 预览域验收时一眼看到）。
+    // 有失败就说清剩下那些各挂了几次，没有才说零失败。
+    const othersFailed = failedLive - today.filter(
+      (run) => run.status === 'failed' && failing.some((job) => job.id === run.jobId),
+    ).length;
+    const othersTail = othersFailed > 0 ? `今日另有 ${othersFailed} 次失败` : '今日零失败';
+    detail = `${failing.map((job) => job.name).slice(0, 3).join('、')}${failing.length > 3 ? ' 等' : ''}；其余 ${jobs.length - failing.length} 个任务${othersTail}${skipTail}${orphanTail}。`;
   } else if (state === 'all-disabled') {
     tone = 'warn';
     headline = `${jobs.length} 个任务全部已停用`;

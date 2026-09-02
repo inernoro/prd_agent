@@ -288,6 +288,35 @@ describe('结论条的状态是有限枚举，不是越叠越长的条件链', (
     expect(buildOverview([], [], NOW).state).toBe('no-jobs');
   });
 
+  /*
+   * 2026-09-02 预览域验收时一眼看到的：结论条 detail 断成
+   * 「证书到期检查；其余 8 个任务今日。」——原写法是 `今日${failedLive ? '' : '零失败'}`，
+   * 有失败时三元返回空串，句子就没了下半截。类型和渲染都不会报。
+   * 红绿闭环：把 othersTail 换回那个三元，本用例报断言失败（detail 以「今日。」收尾）。
+   */
+  it('failing 档的 detail 是完整句子，不会断在「今日。」', () => {
+    const o = buildOverview(
+      [j('a', { consecutiveFailureCount: 2 }), j('b'), j('c')],
+      [
+        r('r1', 'a', 'failed', '2026-08-31T09:00:00.000Z'),
+        r('r2', 'b', 'failed', '2026-08-31T09:30:00.000Z'),
+      ],
+      NOW,
+    );
+    expect(o.state).toBe('failing');
+    expect(o.detail).not.toContain('今日。');
+    expect(o.detail).toContain('其余 2 个任务今日另有 1 次失败');
+  });
+
+  it('连续失败的任务之外没人挂 → 说「零失败」', () => {
+    const o = buildOverview(
+      [j('a', { consecutiveFailureCount: 2 }), j('b')],
+      [r('r1', 'a', 'failed', '2026-08-31T09:00:00.000Z')],
+      NOW,
+    );
+    expect(o.detail).toContain('其余 1 个任务今日零失败');
+  });
+
   it('有任务在连续失败 → failing，优先于其它档', () => {
     const o = buildOverview([j('a', { consecutiveFailureCount: 2 })], [r('r1', 'a', 'failed', '2026-08-31T10:00:00.000Z')], NOW);
     expect(o.state).toBe('failing');
