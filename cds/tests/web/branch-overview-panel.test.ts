@@ -619,3 +619,53 @@ describe('总览渲染冒烟：缺口真的没被画成 0', () => {
     ).toBeGreaterThan(0);
   });
 });
+
+/**
+ * 一屏之内不许自相矛盾（2026-09-02，Codex P2，核对属实）。
+ *
+ * 入口卡的绿灯此前判 `badServices.length === 0`，判断句判「全部就绪」。一个服务
+ * 只是 idle / stopped（不是 error）时两者分岔：顶上写「还有 1 个服务没起来」，
+ * 下面的入口卡却是绿的、写着可直达——而没起来的那个很可能正是入口指向的那个。
+ */
+describe('入口卡的绿灯与顶部判断句同源', () => {
+  it('一个服务没起来时，入口卡不再说可直达', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [
+        { profileId: 'api', containerName: 'api-x', status: 'running' },
+        { profileId: 'web', containerName: 'web-x', status: 'stopped' },
+      ],
+      running: true,
+      branchName: 'demo',
+      entries: [{ name: '主入口', url: 'https://example.test', primary: true }],
+      deployments: [],
+      metricSeries: {},
+      metricsReady: true,
+      replicaSummary: '2 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '判断句应该说还有服务没起来').toContain('还有 1 个服务没起来');
+    expect(html, '入口卡仍在说可直达，和上面那句话互相打脸').not.toContain('已就绪');
+  });
+
+  it('全部就绪时入口卡才给绿灯', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: true,
+      branchName: 'demo',
+      entries: [{ name: '主入口', url: 'https://example.test', primary: true }],
+      deployments: [],
+      metricSeries: {},
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html).toContain('一切正常');
+    expect(html, '全部就绪却没给绿灯——守卫会因此变成永远绿的摆设').toContain('已就绪');
+  });
+});

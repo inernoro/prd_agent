@@ -129,6 +129,34 @@ const MIN_WRITE_INTERVAL_MS = 1_000;
 
 const store = new Map<string, StoredPoint[]>();
 
+/**
+ * 全局过期清理的最小间隔。比这更密地扫全表没意义（保留期是小时级）。
+ */
+const SWEEP_INTERVAL_MS = 60_000;
+let lastSweepAt = 0;
+
+/**
+ * 按保留期清掉**所有**容器的陈旧点，不只是这次写入的那个。
+ *
+ * 原来的修剪只在「同一个容器再次写入」时发生（Codex P2，核对属实）：容器一旦停掉
+ * 或删掉，它那份数组就再也没人碰，最多 2000 个点会一直躺到「容器数超上限」才被整个
+ * 挤掉。宿主上换过的容器名不到 400 个时那一天永远不来——**声称的两小时保留期对
+ * 死掉的容器从来没有生效过**。
+ *
+ * 做成写入时顺带的惰性扫描，不起定时器：这个模块是纯内存的观测缓存，不值得为它
+ * 引入一个需要在测试里 mock、在关停时清理的 timer。扫描本身 O(容器数)，且按
+ * SWEEP_INTERVAL_MS 限流，代价可以忽略。
+ */
+function sweepExpired(nowMs: number): void {
+  if (nowMs - lastSweepAt < SWEEP_INTERVAL_MS) return;
+  lastSweepAt = nowMs;
+  for (const [name, points] of store) {
+    const kept = trim(points, nowMs);
+    if (kept.length === 0) store.delete(name);
+    else if (kept.length !== points.length) store.set(name, kept);
+  }
+}
+
 function trim(points: StoredPoint[], nowMs: number): StoredPoint[] {
   const cutoff = nowMs - RETENTION_MS;
   let start = 0;
@@ -198,6 +226,7 @@ export function recordContainerSample(
   });
   store.set(containerName, trim(existing, ts));
 
+  sweepExpired(ts);
   if (store.size > MAX_CONTAINERS) evictColdest();
 }
 
@@ -401,9 +430,20 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
     ? Math.max(1_000, Math.ceil(span / (wanted - 1) / 1_000) * 1_000)
     : Math.max(1_000, span);
   const gridBefore = aligned ? Math.ceil(before / bucketMs) * bucketMs : before;
-  const count = aligned
-    ? Math.min(wanted, Math.max(1, Math.ceil((gridBefore - after) / bucketMs)))
-    : 1;
+  /*
+   * 桶数**恒等于 wanted**，不跟着窗口位置算（Codex P2，核对属实）。
+   *
+   * 上一版写的是 `min(wanted, ceil((gridBefore - after) / bucketMs))`，看着更"精确"，
+   * 实际会在 wanted 与 wanted-1 之间来回跳：30 分钟窗口 / 45s 节奏这一档 wanted=27、
+   * 桶宽 70s，1800/70 = 25.71，右端吸附的位移 δ 在 0..70s 之间循环，δ 小时算出 26 个、
+   * δ 大时算出 27 个。而前端把返回的数组均摊到整个画幅、点数一变就关掉补间——
+   * 于是每隔几十秒整张图重排一次。**我为了「图不再每 5 秒重洗牌」做的对齐，
+   * 自己又造出了一个周期更长的重洗牌。**
+   *
+   * 固定成 wanted 是安全的：桶宽已经按 `span / (wanted - 1)` 取，所以
+   * `wanted × 桶宽 ≥ span + 桶宽 > span + δ`，右端吸附再怎么位移都盖得住请求窗口。
+   */
+  const count = aligned ? wanted : 1;
   const gridAfter = gridBefore - count * bucketMs;
 
   // 先按桶归集每个容器的样本。桶边界对所有容器是同一套（同一个 gridAfter / bucketMs），
@@ -472,6 +512,7 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
 /** 测试用：清空全部历史。生产路径不调用。 */
 export function __resetContainerMetricsHistory(): void {
   store.clear();
+  lastSweepAt = 0;
 }
 
 /** 观测自身：当前跟踪多少容器、多少点。用于排查内存增长。 */

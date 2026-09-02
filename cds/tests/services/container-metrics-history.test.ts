@@ -263,9 +263,18 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     const holeA = r.series.a.filter((p) => p.ts > T0 + 200_000 + bucketMs && p.ts < T0 + 1_000_000 - bucketMs);
     expect(holeA.length, '断档区间里一个桶都没有，判据挑空了').toBeGreaterThan(0);
     for (const p of holeA) expect(p.cpuPercent).toBeNull();
-    // 两端有量的桶还在。
-    expect(r.series.a[0].cpuPercent).not.toBeNull();
-    expect(r.series.a.at(-1)?.cpuPercent).not.toBeNull();
+    /*
+     * 两端有量的那两段还在——**按时间挑，不挑第 0 个桶**。
+     *
+     * 轴是右端对齐的固定桶数网格，左端因此会比请求起点早最多一两个桶（这是固定桶数
+     * 换来的代价，见 queryContainerSeries 里的说明），第 0 个桶可能正好落在数据开始
+     * 之前。原来那句 `series.a[0] 不为 null` 断言的是「轴恰好从数据处起头」，那是
+     * 实现细节不是契约（形状 4a）。这里问的是真正在意的事：前后两段各自有数据。
+     */
+    const headHasData = r.series.a.some((p) => p.ts >= T0 && p.ts < T0 + 200_000 && p.cpuPercent != null);
+    const tailHasData = r.series.a.some((p) => p.ts > T0 + 1_000_000 && p.cpuPercent != null);
+    expect(headHasData, '窗口前段（有量的那 200 秒）在轴上没有任何数据').toBe(true);
+    expect(tailHasData, '窗口后段（有量的那 200 秒）在轴上没有任何数据').toBe(true);
   });
 
   /**
@@ -485,6 +494,49 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     );
     const peak = Math.max(...r.series.c1.map((p) => p.cpuPercent ?? 0));
     expect(peak, '截止时刻之后的采样被算进来了').toBe(5);
+  });
+
+  /**
+   * Codex P2（核对属实）：桶数不能跟着窗口位置在 wanted 与 wanted-1 之间跳。
+   *
+   * 前端把返回的数组均摊到整个画幅、点数一变就关掉补间。桶数每隔几十秒变一次，
+   * 整张图就每隔几十秒重排一次——我为了「不再每 5 秒重洗牌」做的网格对齐，
+   * 自己造出了一个周期更长的重洗牌。
+   */
+  it('时间在一个桶宽内推进时，点数一个都不变（否则整张图周期性重排）', () => {
+    for (let t = 0; t <= 40 * 60_000; t += 45_000) recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
+    const base = T0 + 40 * 60_000;
+    const first = queryContainerSeries({ containers: ['c1'], after: -1800, points: 120 }, base);
+    const bucketMs = first.groupSeconds * 1_000;
+    // 扫过一整个桶宽：如果桶数跟位置有关，这一圈里必然出现不同的长度。
+    for (let step = 1; step <= 10; step += 1) {
+      const at = base + Math.round((step * bucketMs) / 10);
+      const r = queryContainerSeries({ containers: ['c1'], after: -1800, points: 120 }, at);
+      expect(
+        r.series.c1.length,
+        `now 前进 ${at - base}ms 后点数从 ${first.series.c1.length} 变成 ${r.series.c1.length}——图会整张重排`,
+      ).toBe(first.series.c1.length);
+      expect(r.groupSeconds).toBe(first.groupSeconds);
+      // 变不变都不许丢掉请求窗口。
+      expect(r.after).toBeLessThanOrEqual(at - 1800_000);
+      expect(r.before).toBeGreaterThanOrEqual(at);
+    }
+  });
+
+  /**
+   * Codex P2（核对属实）：保留期修剪原本只在「同一个容器再次写入」时发生。
+   * 容器一停，它那份数组就再没人碰，最多 2000 个点一直躺到「容器数超上限」——
+   * 宿主上换过的容器名不到 400 个时那一天永远不来，声称的保留期对死掉的容器从未生效。
+   */
+  it('停掉的容器也会按保留期过期，不是只在它自己再写入时才清', () => {
+    recordContainerSample('dead', sample({ cpuPercent: 1 }), T0);
+    expect(containerMetricsHistoryStats().containers).toBe(1);
+    // 'dead' 再也不写了；另一个容器在保留期之后继续写。
+    recordContainerSample('alive', sample({ cpuPercent: 2 }), T0 + 3 * 60 * 60_000);
+    expect(
+      containerMetricsHistoryStats().containers,
+      '停掉的容器还占着内存——保留期只对还在写的容器生效',
+    ).toBe(1);
   });
 
   it('真实断档不参与定分辨率（否则一次重启就把整窗压成几个点）', () => {

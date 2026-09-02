@@ -1070,14 +1070,25 @@ export function OverviewPanel({
   const diskWrite = sumOf((m) => m.writeRate);
 
   // 判断句：先给结论，再给证据。
+  /**
+   * 「这个分支到底能不能用」——**判断句、色调、入口卡的绿灯全部走这一个判据**。
+   *
+   * 2026-09-02（Codex P2，核对属实）：入口卡此前判的是 `badServices.length === 0`，
+   * 而判断句判的是「全部就绪」。一个服务只是 idle / stopped（不是 error）时两者分岔：
+   * 顶上写着「还有 1 个服务没起来」，下面的入口卡却是绿的、写着可直达——
+   * **同一屏里两句话互相打脸**。没起来的那个服务很可能正是入口指向的那个。
+   *
+   * 一个判据三处消费，而不是三处各判各的，下次也就没有再分岔的余地。
+   */
+  const allServicesReady = running && services.length > 0 && okCount === services.length;
   const verdict = badServices.length > 0
     ? `有 ${badServices.length} 个服务异常，${entries.length > 0 ? '入口可能打不开' : '分支未就绪'}`
-    : running && okCount === services.length && services.length > 0
+    : allServicesReady
       ? '一切正常，可以直接验收'
       : running
         ? `还有 ${services.length - okCount} 个服务没起来`
         : '分支未运行';
-  const verdictTone = badServices.length > 0 ? 'bad' : running && okCount === services.length && services.length > 0 ? 'ok' : 'idle';
+  const verdictTone = badServices.length > 0 ? 'bad' : allServicesReady ? 'ok' : 'idle';
 
   const windowText = windowMinutes >= 60
     ? `近 ${(windowMinutes / 60).toFixed(windowMinutes % 60 === 0 ? 0 : 1)} 小时`
@@ -1166,7 +1177,7 @@ export function OverviewPanel({
 
       {/* 2. 入口 —— 大多数人打开这个抽屉就是为了拿地址 */}
       {entries.length > 0 ? (
-        <EntryCards entries={entries} reachable={running && badServices.length === 0} onConfigure={onConfigureEntries} />
+        <EntryCards entries={entries} reachable={allServicesReady} onConfigure={onConfigureEntries} />
       ) : null}
 
       {/*
