@@ -66,6 +66,22 @@ describe('视觉创作首页：锚点与本页教程对账', () => {
     expect(steps, '真实步数应与标题一致').toBe(declared);
   });
 
+  it('【关键】模型锚点常驻，不跟着「目录拉回来了没有」一起挂载', () => {
+    // onboarding-tips 第二节：锚点必须是常驻元素（含空状态占位）。
+    // 上一版写的是 `modelOptions && modelOptions.length > 0 && (<span data-tour-id=...>)`，
+    // 目录慢或拉失败时整个锚点不存在，教程走到第 5 步找不到目标，
+    // 用户对着「正在定位」的气泡等到超时（Codex PR #1476 P2）。
+    const src = readFileSync(PAGE, 'utf8');
+    const at = src.indexOf('data-tour-id="visual-model-btn"');
+    expect(at, '工具行应有模型锚点').toBeGreaterThan(0);
+    // 锚点那一行之前不许有「目录非空才渲染」的条件把它一起挡住。
+    const guardLine = src.slice(src.lastIndexOf('{', at), at);
+    expect(guardLine, '锚点不许被 modelOptions.length 条件挡掉').not.toMatch(/modelOptions.*length/);
+    // 空目录时必须有占位，而且要能区分「还在读」与「读完了没有」。
+    const block = src.slice(at, at + 1200);
+    expect(block).toMatch(/modelsLoading/);
+  });
+
   it('模型选择这一步真的在讲模型，不是占个位', () => {
     const { block } = seedAnchors();
     const at = block.indexOf('[data-tour-id=visual-model-btn]');

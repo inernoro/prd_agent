@@ -425,12 +425,14 @@ function QuickInputBox(props: {
   modelOptions?: VisualAgentModelOption[];
   modelId?: string;
   onModelChange?: (id: string) => void;
+  /** 目录还在路上。用来区分「还没读到」与「读完了但一个都没有」两种占位文案。 */
+  modelsLoading?: boolean;
   /** 让页面拿到 textarea：选完预设格要把光标送进来。 */
   inputRef?: React.MutableRefObject<HTMLTextAreaElement | null>;
 }) {
   const {
     value, onChange, onSubmit, loading, onImageSelect, selectedImage, onRemoveImage,
-    size = '1024x1024', onSizeChange, availableSizes, modelOptions, modelId, onModelChange, inputRef,
+    size = '1024x1024', onSizeChange, availableSizes, modelOptions, modelId, onModelChange, modelsLoading, inputRef,
   } = props;
   const typingPlaceholder = useTypingPlaceholder();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -757,9 +759,27 @@ function QuickInputBox(props: {
                 却看不见也选不了用哪个模型，而换模型是用户能直接感知到结果差异的
                 （ai-model-visibility：这类功能必须让模型可见）。
                 默认值是用户上次生成用的那个，不是每次回到「自动」。 */}
-            {onModelChange && modelOptions && modelOptions.length > 0 && (
+            {/* 锚点常驻，不跟着「目录拉回来了没有」一起挂载。
+                onboarding-tips 第二节写着 Tour 锚点必须是页面常驻元素（含空状态占位），
+                否则教程走到那一步找不到目标，用户对着一个「正在定位」的气泡等到超时。
+                目录还没回来 / 拉失败时给一个禁用的占位，位置和文案都在，只是点不动
+                （Codex PR #1476 P2；no-rootless-tree：不假装有，但也别装作没这回事）。 */}
+            {onModelChange && (
               <span data-tour-id="visual-model-btn" className="inline-flex">
-                <ModelPickerButton options={modelOptions} modelId={modelId} onChange={onModelChange} />
+                {modelOptions && modelOptions.length > 0 ? (
+                  <ModelPickerButton options={modelOptions} modelId={modelId} onChange={onModelChange} />
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    title={modelsLoading ? '正在读取可用的绘图模型' : '暂时读不到可用的绘图模型'}
+                    className="inline-flex items-center gap-1.5"
+                    style={{ minHeight: 36, padding: '0 9px', borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-muted)', fontSize: 10, opacity: 0.55, cursor: 'not-allowed' }}
+                  >
+                    <Sparkles size={13} className="shrink-0" />
+                    {modelsLoading ? '读取模型…' : '模型暂不可用'}
+                  </button>
+                )}
               </span>
             )}
             {onSizeChange && (
@@ -1198,18 +1218,21 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   // 目录、偏好存储、尺寸能力三样都复用编辑器已有的那套，不另起炉灶：
   // 只有共用同一个 visualAgentPreferences.modelId，两边的「上次用的模型」才是同一个。
   const [modelOptions, setModelOptions] = useState<VisualAgentModelOption[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
   const [modelId, setModelId] = useState<string>('');
   const [availableSizes, setAvailableSizes] = useState<SizesByResolution | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      // catch 兜住网络层异常：拉挂了也必须把 modelsLoading 落下来，
+      // 否则工具行上那个占位会永远停在「读取模型…」——静止的加载态就是缺陷。
       const [poolsRes, prefRes] = await Promise.all([
-        getVisualAgentImageGenModels(),
+        getVisualAgentImageGenModels().catch(() => null),
         getUserPreferences().catch(() => null),
       ]);
       if (cancelled) return;
-      const options = poolsRes.success ? buildVisualAgentModelOptions(poolsRes.data ?? []) : [];
+      const options = poolsRes?.success ? buildVisualAgentModelOptions(poolsRes.data ?? []) : [];
       setModelOptions(options);
       // 默认值优先级：上次生成用的那个 → 服务端标记的默认池 → 第一个可用。
       // 注意 prefs 里存的是 option.id（pool_xxx），和编辑器同一套标识，不能换成 modelName。
@@ -1219,6 +1242,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         ?? options.find((o) => o.enabled)
         ?? null;
       setModelId(pick?.id ?? '');
+      setModelsLoading(false);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -1807,6 +1831,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           onSizeChange={onSelectedSizeChange}
           availableSizes={availableSizes}
           modelOptions={modelOptions}
+          modelsLoading={modelsLoading}
           modelId={modelId}
           onModelChange={onModelChange}
         />

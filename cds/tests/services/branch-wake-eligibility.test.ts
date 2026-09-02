@@ -210,4 +210,21 @@ describe('【关键】项目暂停时，访问预览域名不许把它拉起来'
     const code = revert.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
     expect(code, "不许再无条件 svc.status = 'stopped'").not.toMatch(/^\s*svc\.status = 'stopped';/m);
   });
+
+  it('【关键】回滚的每个 await 前后都要重新确认租约', () => {
+    // 入口判一次不够：stop 与存活复核都是 await，中间项目可能被恢复、又被一次
+    // 手动部署接管（优先级 80 抢得动我们的 35）。之后这个循环再往下走，停的就是
+    // 新主人刚拉起来的容器，最后还拿 idle/error 覆盖掉它的分支状态（Codex PR #1476 P1）。
+    // 上面那条重启循环每个服务前后都 assertCurrent，这段回滚是后加的、漏了同一道。
+    const src = read('src/index.ts');
+    const at = src.indexOf('proxyService.setOnReviveCooled');
+    const body = src.slice(at, src.indexOf('\n  });', at));
+    const revertAt = body.indexOf('if (isProjectPaused())');
+    const saveAt = body.indexOf('stateService.save();', revertAt);
+    const revert = body.slice(revertAt, saveAt);
+    // 循环内至少两道（stop 之前、复核之后），加上落盘前那一道。
+    const checks = [...revert.matchAll(/lease\?\.assertCurrent\(/g)].length;
+    expect(checks, '回滚段的 assertCurrent 不足：入口 + 每个 await 前后 + 落盘前').toBeGreaterThanOrEqual(4);
+    expect(revert, '落盘前必须再确认一次').toMatch(/assertCurrent\('auto-wake revert before save'\)/);
+  });
 });

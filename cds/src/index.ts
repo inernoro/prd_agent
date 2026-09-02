@@ -3147,6 +3147,14 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         /** 停完复核仍在跑的容器。非空 = 这次回滚没做干净，不能记成「已停」。 */
         const stillRunning: string[] = [];
         for (const svc of services) {
+          // 每个 await 前后都要重新确认租约还在我们手上。
+          //
+          // 入口判一次不够：stop 与随后的存活复核都是 await，中间项目可能被恢复、
+          // 又被一次手动部署接管（优先级 80，抢得动我们的 35）。那之后这个循环再往下走，
+          // 停的就是**新主人刚拉起来的容器**，最后还会拿 idle / error 覆盖掉它的分支状态
+          //（Codex PR #1476 P1）。上面那条重启循环每个服务前后都 assertCurrent，
+          // 这段回滚是后加的，漏了同一道。
+          lease?.assertCurrent(`auto-wake revert before ${svc.profileId}`);
           try {
             await containerService.stop(svc.containerName, '项目已暂停，撤销本次自动唤醒', {
               projectId: branch.projectId,
@@ -3179,8 +3187,12 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
               stillRunning.push(name);
             },
           });
+          lease?.assertCurrent(`auto-wake revert after ${svc.profileId}`);
           svc.status = settled === 'error' ? 'error' : 'stopped';
         }
+        // 落盘之前再确认一次：最后一个 await 到 save 之间同样可能被接管，
+        // 那时这几行就是拿我们的结论覆盖新主人的状态。
+        lease?.assertCurrent('auto-wake revert before save');
         branch.lastStoppedAt = new Date().toISOString();
         branch.lastStopReason = '项目已暂停，自动唤醒已撤销';
         branch.lastStopSource = 'system';
