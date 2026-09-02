@@ -85,6 +85,17 @@ describe('首页能看见并选择绘图模型', () => {
     expect(PANEL).toMatch(/availableSizes\?: SizesByResolution \| null/);
   });
 
+  it('【关键】换模型先丢掉上一个模型的尺寸清单，再去拉新的', () => {
+    // 不清空的话，新请求回来之前面板端的还是上一个模型的档位。这段窗口里点发送，
+    // 交出去的尺寸属于另一个模型，后端归一化会把输出悄悄改掉（Codex PR #1476 P2）。
+    // 判据盯顺序：清空必须发生在发起请求之前，写在 .then 里救不了那段窗口。
+    const at = PAGE.indexOf('const modelCode = currentModel?.actualModelId');
+    expect(at, '应有按模型拉尺寸的 effect').toBeGreaterThan(0);
+    const effect = PAGE.slice(at, PAGE.indexOf('}, [currentModel]);', at));
+    const clearAt = effect.indexOf('setAvailableSizes(null);\n    void getVisualAgentAdapterInfo');
+    expect(clearAt, '发起请求之前必须先清空上一个模型的清单').toBeGreaterThan(0);
+  });
+
   it('【关键】拿不到尺寸清单时退回静态表，不假装知道', () => {
     // no-rootless-tree：适配器没命中 / 该模型尺寸语义不适用 → 明确置 null。
     expect(PAGE).toMatch(/res\.data\.sizesNotApplicable !== true/);

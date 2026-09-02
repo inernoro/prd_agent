@@ -1194,6 +1194,15 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     // 尺寸会被错误清空（编辑器那边同一个坑，注释见 AdvancedVisualAgentTab 的 adapter-info effect）。
     const modelCode = currentModel?.actualModelId || currentModel?.modelName;
     if (!modelCode) { setAvailableSizes(null); return; }
+    // 换模型的第一件事是**先把上一个模型的尺寸清单丢掉**，再去拉新的。
+    //
+    // 不清空的话，这次请求回来之前，尺寸面板端出来的还是上一个模型的档位——
+    // 用户此刻选中的尺寸看着「这个模型支持」，其实属于另一个模型；这段窗口里点发送，
+    // 交给编辑器的就是一个新模型未必支持的尺寸，后端归一化会把输出悄悄改掉，
+    // 而用户以为自己选的是什么就出什么（Codex PR #1476 P2）。
+    // 置 null = 退回静态档位，也就是既有的「拿不到就不假装知道」那一档（no-rootless-tree），
+    // 比端着一份明确属于别人的清单诚实。
+    setAvailableSizes(null);
     void getVisualAgentAdapterInfo(modelCode)
       .then((res) => {
         if (cancelled) return;

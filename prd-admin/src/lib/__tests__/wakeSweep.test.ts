@@ -1,7 +1,25 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { consumeWakeOnce, resetWakeForTest } from '../wakeSweep';
+
+/**
+ * 这个文件跑在 node 环境（本仓库没装 jsdom），window / navigation timing 都得自己搭。
+ *
+ * `documentUrl` = 本 document **最初**加载的地址（PerformanceNavigationTiming.name，
+ * pushState 改不动它）；`currentPath` = 此刻地址栏的路径。两者相等即「刷新/深链直达本页」，
+ * 不等即「从别处 SPA 跳过来」。
+ */
+const LIST = 'https://map.example.com/visual-agent';
+type Stub = { documentUrl?: string | null; currentPath: string };
+const original = { window: (globalThis as Record<string, unknown>).window, perf: globalThis.performance };
+
+function stubNavigation({ documentUrl, currentPath }: Stub) {
+  (globalThis as Record<string, unknown>).window = { location: { origin: 'https://map.example.com', pathname: currentPath } };
+  (globalThis as Record<string, unknown>).performance = {
+    getEntriesByType: (type: string) => (type === 'navigation' && documentUrl ? [{ name: documentUrl }] : []),
+  };
+}
 
 const ROOT = resolve(__dirname, '../../..');
 const read = (rel: string) => readFileSync(resolve(ROOT, rel), 'utf8');
@@ -15,11 +33,45 @@ const PAGE = 'src/pages/visual-agent/VisualAgentWorkspaceListPage.tsx';
 const GLOBALS = 'src/styles/globals.css';
 
 describe('唤醒只发生在整页刷新', () => {
-  beforeEach(() => resetWakeForTest());
+  beforeEach(() => {
+    resetWakeForTest();
+    stubNavigation({ documentUrl: LIST, currentPath: '/visual-agent' });
+  });
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).window = original.window;
+    (globalThis as Record<string, unknown>).performance = original.perf;
+  });
 
-  it('第一次拿得到，之后一律拿不到', () => {
+  it('刷新到本页：第一次拿得到，之后一律拿不到', () => {
     expect(consumeWakeOnce()).toBe(true);
     expect(consumeWakeOnce()).toBe(false);
+    expect(consumeWakeOnce()).toBe(false);
+  });
+
+  it('【关键】从别的路由 SPA 跳进来不放——那不是刷新', () => {
+    // 文档在 `/` 打开，用户点进视觉创作：这是本 document 里第一次消费，
+    // 上一版只看「一生一次」，于是普通跳转放出了刷新才该有的动画（Codex PR #1476 P2）。
+    stubNavigation({ documentUrl: 'https://map.example.com/', currentPath: '/visual-agent' });
+    expect(consumeWakeOnce()).toBe(false);
+    // 而且不许把机会消费掉：这次没放，就不该影响别的判断。
+    stubNavigation({ documentUrl: LIST, currentPath: '/visual-agent' });
+    expect(consumeWakeOnce()).toBe(true);
+  });
+
+  it('【关键】深链进编辑器、再返回列表页也不放', () => {
+    // 初始文档是 /visual-agent/abc，返回列表是 SPA 跳转，同样不是刷新。
+    stubNavigation({ documentUrl: 'https://map.example.com/visual-agent/abc', currentPath: '/visual-agent' });
+    expect(consumeWakeOnce()).toBe(false);
+  });
+
+  it('结尾斜杠不算换了一页', () => {
+    stubNavigation({ documentUrl: 'https://map.example.com/visual-agent/', currentPath: '/visual-agent' });
+    expect(consumeWakeOnce()).toBe(true);
+  });
+
+  it('拿不到来源时不放，不假装刚刷新过', () => {
+    // no-rootless-tree：宁可少一个装饰动画，也不要给一个假的「刚刷新」信号。
+    stubNavigation({ documentUrl: null, currentPath: '/visual-agent' });
     expect(consumeWakeOnce()).toBe(false);
   });
 

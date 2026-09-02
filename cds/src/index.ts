@@ -3001,7 +3001,14 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     // proxy used — guards against a status change between the proxy's check and
     // this async entry. 曾经这里另写一份 lastStopSource 判断，两份都只认
     // 'scheduler'，改一处忘一处的风险白送（判据纪律形状 3）。
-    if (!isAutoWakeEligible(branch)) return;
+    //
+    // 项目暂停是**项目级**意图，停机来源那一档答不了它，必须把项目状态一起递进去。
+    // 上一版给 proxy 侧的 shouldAutoWakeCooled 加了这个参数，却没给这里加——
+    // 判据是一份了，喂给它的料却只喂了一处，等于这条复检对暂停完全不设防
+    // （判据纪律形状 2：接线只建一半，删掉不会红）。
+    const isProjectPaused = () =>
+      stateService.getProjects?.().find((p) => p.id === branch.projectId)?.paused === true;
+    if (!isAutoWakeEligible(branch, { projectPaused: isProjectPaused() })) return;
     const services = Object.values(branch.services);
 
     // executorId（远端执行器）那一条已经在 isAutoWakeEligible 里了，不在这里重复判——
@@ -3116,6 +3123,59 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           svc.errorMessage = `容器 ${svc.containerName} 就绪探测超时，请改用「重新部署」`;
           failed.push(svc.containerName);
         }
+      }
+
+      // 唤醒跑到一半，项目被暂停了——这条路租约拦不住，必须自己问一次。
+      //
+      // 暂停路由（PUT /api/projects/:id/paused）会给每个在跑的分支发一次
+      // POST /stop，带 X-CDS-Trigger: system。那次 stop 的优先级是 10，而我们此刻
+      // 正握着 'auto-restart' 租约（35），协调器只在**严格更高**优先级时才抢占，
+      // 于是它被拒了；而暂停路由发的是 void fetch(...).catch(...)，只看得到网络异常，
+      // 非 2xx 响应它根本不读。两边都「没报错」，结果是项目显示已暂停、容器却在跑，
+      // 而且是我们自己把它标成 running 的（Codex PR #1476 P1）。
+      //
+      // 所以落 running 之前再问一次项目状态：暂停了就把刚拉起来的容器停回去，
+      // 按 system 来源记账（与暂停路由那次 stop 同一档），本次操作记 cancelled。
+      // 这里只负责「不要由我们制造出一个跑着的暂停项目」；至于让低优先级的暂停 stop
+      // 反过来抢占高优先级操作，那是操作优先级仲裁的语义，不在本次改动范围内。
+      if (isProjectPaused()) {
+        // 先确认租约还是我们的：被更高优先级操作接管时，状态机已经不归我们管，
+        // 这里再去 stop 就是和新主人对打。assertCurrent 抛出后由下面的 catch
+        // 按 superseded 处理（不碰状态）。
+        lease?.assertCurrent('auto-wake project-paused recheck');
+        branchOperationFinalStatus = 'cancelled';
+        for (const svc of services) {
+          try {
+            await containerService.stop(svc.containerName, '项目已暂停，撤销本次自动唤醒', {
+              projectId: branch.projectId,
+              branchId: branch.id,
+              profileId: svc.profileId,
+              operationId: lease?.operationId || null,
+              actor: 'scheduler',
+              trigger: 'scheduler',
+              operation: 'branch-auto-wake-revert',
+              source: 'proxy.preview-auto-wake',
+            });
+          } catch (stopErr) {
+            console.warn(`[auto-wake] revert stop failed for "${svc.containerName}": ${(stopErr as Error).message}`);
+          }
+          svc.status = 'stopped';
+        }
+        branch.status = 'idle';
+        branch.lastStoppedAt = new Date().toISOString();
+        branch.lastStopReason = '项目已暂停，自动唤醒已撤销';
+        branch.lastStopSource = 'system';
+        stateService.save();
+        activeServerEventLogStore?.record({
+          category: 'system',
+          severity: 'warn',
+          source: 'proxy.preview-auto-wake',
+          action: 'branch.auto-wake.reverted-project-paused',
+          message: `项目暂停，已撤销 ${slug} 的自动唤醒并停回容器`,
+          projectId: branch.projectId,
+          branchId: branch.id,
+        });
+        return;
       }
 
       if (failed.length === 0) {
