@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -343,6 +344,12 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     /// </summary>
     internal static string HtmlToPlainText(string html)
     {
+        // Vite/React 生成的单文件站点没有静态正文，所有可见文案都在 type=module 的
+        // bundle 字符串里。直接删掉 script 会让预览页明明有内容，问答端却只读到标题。
+        // 这里先只摘取含中文的短字符串，既保住人类可见文案，也不把框架代码、CSS 和 URL
+        // 整包塞进上下文。来源仍是系统托管的原始对象，不接受访客传入正文。
+        var bundledText = ExtractHumanReadableScriptText(html);
+
         var s = Regex.Replace(html, @"<(script|style|noscript)\b[^>]*>[\s\S]*?</\1>", " ",
             RegexOptions.IgnoreCase);
         s = Regex.Replace(s, @"<!--[\s\S]*?-->", " ");
@@ -351,7 +358,41 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
             RegexOptions.IgnoreCase);
         s = Regex.Replace(s, @"<[^>]+>", " ");
         s = System.Net.WebUtility.HtmlDecode(s);
-        return Collapse(s);
+        var staticText = Collapse(s);
+
+        if (string.IsNullOrWhiteSpace(bundledText)) return staticText;
+        if (string.IsNullOrWhiteSpace(staticText)) return bundledText;
+        return Collapse($"{staticText}\n{bundledText}");
+    }
+
+    private static string ExtractHumanReadableScriptText(string html)
+    {
+        var output = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var scripts = Regex.Matches(html, @"<script\b[^>]*>([\s\S]*?)</script>",
+            RegexOptions.IgnoreCase);
+
+        foreach (Match script in scripts)
+        {
+            var literals = Regex.Matches(script.Groups[1].Value, "\"(?:\\\\.|[^\"\\\\])*\"");
+            foreach (Match literal in literals)
+            {
+                string? value;
+                try { value = JsonSerializer.Deserialize<string>(literal.Value); }
+                catch (JsonException) { continue; }
+
+                if (string.IsNullOrWhiteSpace(value)
+                    || value.Length < 2
+                    || value.Length > 1000
+                    || !Regex.IsMatch(value, @"[\u3400-\u9fff]"))
+                    continue;
+
+                value = Collapse(System.Net.WebUtility.HtmlDecode(value));
+                if (value.Length > 0 && seen.Add(value)) output.Add(value);
+            }
+        }
+
+        return string.Join('\n', output);
     }
 
     /// <summary>压掉多余空白：行内连续空白压成一个空格，连续空行压成一个。</summary>

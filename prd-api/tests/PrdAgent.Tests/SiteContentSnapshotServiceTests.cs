@@ -160,6 +160,26 @@ public class SiteContentSnapshotServiceTests
     }
 
     [Fact]
+    public async Task React单文件页面_提取模块脚本中的可见中文文案()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = """
+            <!doctype html><html><head><title>扫码风控</title></head><body>
+            <div id="root"></div>
+            <script type="module">
+            const page={className:"grid gap-8",children:["借鉴三元决策思想：",jsx("strong",{children:"风险分 + 置信度 + 业务价值"})]};
+            </script></body></html>
+            """;
+
+        var snap = await NewService(storage).GetAsync(SiteWith(("index.html", "entry")));
+
+        Assert.Null(snap.Unavailable);
+        Assert.Contains("借鉴三元决策思想", snap.Text);
+        Assert.Contains("风险分 + 置信度 + 业务价值", snap.Text);
+        Assert.DoesNotContain("grid gap-8", snap.Text);
+    }
+
+    [Fact]
     public async Task 当前存储缺少存量入口时_从落库站点地址读取正文()
     {
         var storage = new FakeAssetStorage();
