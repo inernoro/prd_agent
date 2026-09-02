@@ -229,7 +229,9 @@ function resolveBound(value: number | undefined, nowMs: number, fallback: number
  * 为什么取容器间的最大值：一条轴要同时画所有容器，分辨率由最稀疏的那条决定；
  * 对更密的那条只是多平均几个点，不会失真。
  *
- * 样本少于 3 个的容器不参与（算不出可信的间隔），全都算不出就返回 0 = 不做限制。
+ * 样本少于 2 个的容器不参与——**一个点没有间隔可言**。只要有两个点就有一个间隔，
+ * 那个间隔就是目前能观测到的全部节奏信息，用它比不用强得多（见下面 bySamples 的死因）。
+ * 全都算不出就返回 0 = 不做限制：此时任何容器最多只有 1 帧，前端本来就不画。
  */
 /**
  * 定分辨率时容忍几次偶发的大间隔（取降序第 N+1 大）。
@@ -237,16 +239,14 @@ function resolveBound(value: number | undefined, nowMs: number, fallback: number
  */
 const CADENCE_OUTLIER_TOLERANCE = 2;
 
-function observedCadence(containers: string[], after: number, before: number): { cadenceMs: number; maxSamples: number } {
+function observedCadence(containers: string[], after: number, before: number): { cadenceMs: number } {
   let cadenceMs = 0;
-  let maxSamples = 0;
   for (const name of containers) {
     const all = store.get(name);
     if (!all) continue;
     const ts: number[] = [];
     for (const p of all) if (p.ts >= after && p.ts <= before) ts.push(p.ts);
-    if (ts.length > maxSamples) maxSamples = ts.length;
-    if (ts.length < 3) continue;
+    if (ts.length < 2) continue;
     const gaps: number[] = [];
     for (let i = 1; i < ts.length; i += 1) {
       const g = ts[i] - ts[i - 1];
@@ -258,7 +258,7 @@ function observedCadence(containers: string[], after: number, before: number): {
     const coarsest = gaps[Math.min(gaps.length - 1, CADENCE_OUTLIER_TOLERANCE)];
     if (coarsest > cadenceMs) cadenceMs = coarsest;
   }
-  return { cadenceMs, maxSamples };
+  return { cadenceMs };
 }
 
 function aggregate(bucket: StoredPoint[], group: 'average' | 'max'): Omit<SeriesPoint, 'ts'> {
@@ -307,21 +307,29 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
    * 1.5 倍是给采样抖动留的余量：45s 的采集器实际落点会有几秒漂移，桶宽正好 45s
    * 会让一部分桶落空、相邻桶吃到两帧。
    *
-   * 下限 8 个点：真实断档会把 p90 抬高（比如 CDS 重启后窗口里只剩一段数据），
-   * 不设下限的话一次长断档就能把整个窗口压成两三个点。
+   * 下限 8 个点：观测到的节奏可能被一段异常稀疏的采样抬得很粗（比如 CDS 重启后
+   * 窗口里只剩一段数据），不设下限的话它就能把整个窗口压成两三个点。
    */
-  const { cadenceMs, maxSamples } = observedCadence(query.containers, after, before);
+  const { cadenceMs } = observedCadence(query.containers, after, before);
   const byCadence = cadenceMs > 0 ? Math.max(8, Math.ceil(span / (cadenceMs * 1.5))) : asked;
   /*
-   * 第二道闸：点数不能超过样本数。
+   * 这里曾有第二道闸「点数不超过样本数的 1.2 倍」，2026-09-02 拆掉（Codex P2，核对属实）。
    *
-   * 节奏要至少三个样本才算得出来，而 CDS 每次重启后历史是空的——头两分钟只有
-   * 一两个样本，算不出节奏就会退回按请求值切 120 个桶，于是冷启动那几分钟
-   * 又是锯齿。而且这一档本来就不该有细分辨率：手上只有 2 个样本，画 120 个点
-   * 是在无中生有。所以另外按样本数封顶（留 1.2 倍余量给容器间的错峰）。
+   * 它想防的是冷启动：节奏当时要三个样本才算得出来，重启后头两分钟算不出节奏，
+   * 就会退回按请求值切 120 个桶。但它防的方式是**按样本个数**封顶，而桶宽 =
+   * 窗口 / 桶数——窗口是完整的 30 分钟，样本却只覆盖了开头那几分钟。于是
+   * 6 个 45s 样本（共覆盖 225s）得到 8 个桶、每桶 225s，6 帧全落进同一个桶：
+   * `filled` 停在 1，前端继续藏图，骨架屏还在说「约还需 45 秒」——一个永远
+   * 兑现不了的承诺。**封顶该按样本覆盖了多长时间，不是按样本有几个。**
+   *
+   * 而「覆盖了多长时间 / 有几个间隔」正是节奏本身，byCadence 已经在算它了。
+   * 所以正解不是加第三道闸，是把节奏的门槛从 3 个样本降到 2 个（一个间隔就够）：
+   *   - 有 ≥2 帧 → 节奏可知 → byCadence 给出正确的桶宽，冷启动不再有锯齿；
+   *   - 只有 0-1 帧 → 桶数退回 asked，但前端此时 `filled ≤ 1` 本来就不画图，
+   *     切多少个空桶都不会显示成锯齿。
+   * 两道闸合成一道，少一个能各自漂移的判据。
    */
-  const bySamples = maxSamples > 0 ? Math.max(1, Math.ceil(maxSamples * 1.2)) : asked;
-  const wanted = Math.min(asked, byCadence, bySamples);
+  const wanted = Math.min(asked, byCadence);
   const bucketMs = span / wanted;
 
   // 先按桶归集每个容器的样本。桶边界对所有容器是同一套（同一个 after / bucketMs），

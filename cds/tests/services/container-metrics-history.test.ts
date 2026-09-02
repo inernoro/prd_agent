@@ -284,19 +284,38 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
   });
 
   /**
-   * 冷启动：CDS 每次重启历史清零，头两分钟只有一两个样本。样本不足三个就算不出
-   * 节奏，光靠节奏那道闸会退回按请求值切 120 个桶——冷启动那几分钟又是锯齿。
-   * 而且这一档本来就不该有细分辨率：手上 2 个样本画 120 个点是无中生有。
+   * Codex P2（核对属实）：冷启动那道闸按**样本个数**封顶，把仅有的几帧压进同一个桶。
+   *
+   * 桶宽 = 窗口 / 桶数，而窗口恒是完整的 30 分钟、样本却只覆盖开头那几分钟。
+   * 于是 6 个 45s 样本（共覆盖 225s）拿到 8 个桶、每桶 225s，6 帧全落进一个桶：
+   * 前端的 `filled >= 2` 永远不成立，图一直藏着，骨架屏还在说「约还需 45 秒」。
+   *
+   * 封顶该按**样本覆盖了多长时间**，不是按样本有几个——而那正是采集节奏本身。
    */
-  it('样本只有两三个时，点数按样本数封顶（冷启动不许无中生有）', () => {
+  it('攒够六帧就必须落进至少两个桶（冷启动不许把仅有的几帧压成一个）', () => {
+    const now = T0 + 30 * 60_000;
+    for (let i = 5; i >= 0; i -= 1) {
+      recordContainerSample('c1', sample({ cpuPercent: 2 + i }), now - i * 45_000);
+    }
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
+    const filled = r.series.c1.filter((p) => p.cpuPercent != null).length;
+    expect(
+      filled,
+      `6 帧 45s 样本只落进 ${filled} 个桶（桶宽 ${r.groupSeconds}s）——前端要两个非空桶才画图，`
+      + '压成一个就等于图永远出不来',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  /**
+   * 上面那条放宽了桶数，这条守住它放宽之后仍不该越的线：**桶宽不细于观测节奏**。
+   * 两者一起才是完整判据——只放宽会退回锯齿，只收紧会把几帧压成一个桶。
+   */
+  it('只有两帧时，桶宽仍不细于观测到的节奏', () => {
     recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + 29 * 60_000);
     recordContainerSample('c1', sample({ cpuPercent: 4 }), T0 + 29 * 60_000 + 45_000);
     const now = T0 + 30 * 60_000;
     const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
-    // 这一档的不变量是「点数不超过样本数」，不是「空桶少」——窗口 30 分钟、
-    // 数据只覆盖 45 秒，空桶多是实话。区别在于 3 个点里空 2 个，和 120 个点里
-    // 空 118 个，后者看起来就是一片锯齿。
-    expect(r.series.c1.length, '两个样本不该摊成上百个点').toBeLessThanOrEqual(3);
+    expect(r.groupSeconds, '两帧之间就是 45s，桶宽比它还细必然切出成片空桶').toBeGreaterThanOrEqual(45);
     expect(r.series.c1.filter((p) => p.cpuPercent != null).length).toBeGreaterThan(0);
   });
 
