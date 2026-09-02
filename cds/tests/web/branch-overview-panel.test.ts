@@ -946,3 +946,56 @@ describe('抽屉模块能被加载（模块顶层不许有副作用）', () => {
     expect(typeof mod.BranchDetailDrawer, '导出的组件不见了').toBe('function');
   });
 });
+
+/**
+ * 两条（2026-09-02，Codex P2，均核对属实）。
+ */
+describe('当前值与轴标签不许含糊', () => {
+  it('没有实时快照时，当前值退回最后一个真有样本的桶', () => {
+    const code = stripComments(PANEL);
+    const at = code.indexOf('const nowValue = live');
+    expect(at, '找不到 nowValue').toBeGreaterThan(-1);
+    const line = code.slice(at, at + 120);
+    expect(
+      line,
+      'values.at(-1) 很可能是被映射成 0 的空桶——/metrics 没回来时当前值会写成 0% / 0 B',
+    ).not.toContain('values.at(-1)');
+    expect(line).toContain('lastPresent');
+  });
+
+  it('轴两端标真实钟点，不是「N 分钟前 / 现在」', () => {
+    const code = stripComments(PANEL);
+    const at = code.indexOf('xLabels={');
+    const call = code.slice(at, at + 260);
+    expect(call, '右端是吸附后的 before，可能比此刻晚不到一个桶宽，说「现在」就有偏差').toContain('clockLabel');
+    expect(code).toMatch(/function clockLabel\(/);
+  });
+
+  it('渲染冒烟：给了真实区间就画出钟点', () => {
+    const twoFrames = seedMetricSeries([
+      { cpuPercent: 1, memUsedBytes: 1, rxRate: 1, txRate: 1 },
+      { cpuPercent: 2, memUsedBytes: 2, rxRate: 1, txRate: 1 },
+    ]);
+    const start = new Date(2026, 8, 2, 11, 2).getTime();
+    const end = new Date(2026, 8, 2, 11, 34).getTime();
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: true,
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: { api: twoFrames },
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: end,
+      windowMinutes: 32,
+      rangeStart: start,
+      rangeEnd: end,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html).toContain('11:02');
+    expect(html).toContain('11:34');
+    expect(html, '仍在用含糊的「现在」标右端').not.toMatch(/>现在</);
+  });
+});

@@ -2717,6 +2717,8 @@ export function BranchDetailDrawer({
                       ? (seriesMeta.before - seriesMeta.after) / 60_000
                       : HISTORY_WINDOW_MINUTES}
                     bucketSeconds={seriesMeta?.groupSeconds}
+                    rangeStart={seriesMeta?.after}
+                    rangeEnd={seriesMeta?.before}
                     onRefreshMetrics={() => void loadMetrics()}
                     onConfigureEntries={() => setWebEntryConfigOpen(true)}
                     onOpenDeployments={() => setActiveTab('deployments')}

@@ -224,6 +224,12 @@ export function areaPath(vals: number[], present: boolean[], max: number, h: num
   }).join(' ');
 }
 
+/** 两位时分。轴的两端标真实钟点，比「N 分钟前 / 现在」准，也不用读的人换算。 */
+function clockLabel(ts: number): string {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export function formatBytesShort(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0';
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
@@ -925,7 +931,8 @@ export function OverviewPanel({
   lastReadyAt, lastDeployAt, deployDurationMs,
   entries, deployments, metricSeries, liveStats, metricsReady, metricsError, seriesError,
   replicaSummary, infraSummary,
-  now, windowMinutes, bucketSeconds, onRefreshMetrics, onConfigureEntries, onOpenDeployments,
+  now, windowMinutes, bucketSeconds, rangeStart, rangeEnd,
+  onRefreshMetrics, onConfigureEntries, onOpenDeployments,
 }: {
   services: OverviewService[];
   running: boolean;
@@ -961,6 +968,15 @@ export function OverviewPanel({
    * 采样器的标称值去猜——猜出来的秒数兑现不了就是撒谎。没拿到就不给数字。
    */
   bucketSeconds?: number;
+  /**
+   * 服务端实际画的那一段（epoch ms）。有它就用真实钟点标两端。
+   *
+   * 只标「N 分钟前 → 现在」是不准的（Codex P2，核对属实）：右端是吸附后的
+   * `before`，可能比此刻晚不到一个桶宽，说「现在」就有最多约一个桶的偏差；
+   * 左端同理。给出钟点就没有这个含糊——读的人自己对得上。
+   */
+  rangeStart?: number;
+  rangeEnd?: number;
   onRefreshMetrics: () => void;
   onConfigureEntries?: () => void;
   onOpenDeployments?: () => void;
@@ -1039,7 +1055,22 @@ export function OverviewPanel({
     const head = picked.head.map((x, i) => {
       const values = read(x.ring);
       const live = liveStats?.[x.svc.profileId];
-      const nowValue = live ? readLive(live) : values.at(-1) ?? 0;
+      /*
+       * 没有实时快照时，退回**最后一个真有样本的桶**，不是数组的最后一格
+       * （Codex P2，核对属实）。
+       *
+       * `seedMetricSeries` 为了参与堆叠已经把 null 映射成 0，所以数组最后一格
+       * 很可能是一个「没采到」的空桶——`/metrics` 还没回来或挂了的时候，
+       * 图上明明画着历史，旁边的当前值却写着 0% / 0 B。掩码就在手边，这里没查。
+       */
+      const lastPresent = (() => {
+        const mask = x.ring.present ?? [];
+        for (let i = values.length - 1; i >= 0; i -= 1) {
+          if (mask[i] ?? true) return values[i];
+        }
+        return undefined;
+      })();
+      const nowValue = live ? readLive(live) : lastPresent ?? 0;
       const [nowLabel, nowUnit] = label(nowValue);
       return {
         id: x.svc.profileId,
@@ -1360,7 +1391,9 @@ export function OverviewPanel({
             <PlotFrame
               height={176}
               yTicks={cpuScale.labels}
-              xLabels={[windowText.replace('近 ', '') + '前', '现在']}
+              xLabels={rangeStart && rangeEnd
+                ? [clockLabel(rangeStart), clockLabel(rangeEnd)]
+                : [windowText.replace('近 ', '') + '前', '现在']}
             >
               <StackedAreaChart height={176} max={cpuScale.max} series={cpuSeries} present={axisPresent} token={dataToken} />
             </PlotFrame>
