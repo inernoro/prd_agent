@@ -29,6 +29,7 @@
  */
 
 import { Router } from 'express';
+import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { randomBytes } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { BuildProfile, InfraService, PendingImport } from '../types.js';
@@ -370,18 +371,14 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     // the project slug so two projects can share "api" and "admin"
     // without colliding. This matches the /quickstart convention.
     const idSuffix = project.legacyFlag ? '' : `-${project.slug}`;
-    // cds.calls 写的是 compose 里的服务名；profile id 加了项目后缀，被调用方也得跟着加，
-    // 否则 `web` 调 `api` 会落成 `web-foo` 调不存在的 `api`，边被丢、服务被判游离（Codex P2）。
-    const importedAppIds = new Set((parsed.buildProfiles as BuildProfile[]).map((p) => p.id));
-    const scopeServiceId = (serviceId: string): string => (importedAppIds.has(serviceId) ? `${serviceId}${idSuffix}` : serviceId);
+    // depends_on / cds.calls 写的是 compose 服务名；id 加了项目后缀后由同一个助手对齐（与克隆导入、
+    // Quickstart 同一份规则），否则 `web` 调 `api` 会落成 `web-foo` 调不存在的 `api`，边被丢、服务被判游离。
+    const scopedProfiles: BuildProfile[] = normalizeProjectProfileDependencies(
+      (parsed.buildProfiles as BuildProfile[]).map((profile) => ({ ...profile, id: `${profile.id}${idSuffix}`, projectId: project.id })),
+      idSuffix,
+    );
     const appliedProfiles: string[] = [];
-    for (const profile of parsed.buildProfiles as BuildProfile[]) {
-      const scoped: BuildProfile = {
-        ...profile,
-        id: scopeServiceId(profile.id),
-        projectId: project.id,
-        ...(profile.calls && profile.calls.length > 0 ? { calls: profile.calls.map(scopeServiceId) } : {}),
-      };
+    for (const scoped of scopedProfiles) {
       const existing = stateService.getBuildProfile(scoped.id);
       if (existing) {
         stateService.updateBuildProfile(scoped.id, scoped);

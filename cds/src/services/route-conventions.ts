@@ -43,6 +43,68 @@ export interface RoutableProfile {
   pathPrefixes?: readonly string[];
 }
 
+export interface MainDomainRoutes {
+  /** 主域名上承载根路径的服务（壳）；没有服务时为空 */
+  shellId?: string;
+  /** declared = 有人声明了 `/`；convention = 没人声明，按名兜底 */
+  shellSource?: 'declared' | 'convention';
+  /** 每个服务在主域名上的非根前缀（含按名约定补上的 `/api/`），探活前缀已剔除 */
+  prefixes: Map<string, string[]>;
+  /** 靠按名约定拿到 `/api/` 的服务 */
+  viaConvention: Set<string>;
+  /** 每个前缀（含 `/`）被哪些服务声明；多于一个即冲突 */
+  claims: Map<string, string[]>;
+}
+
+/**
+ * 「主域名上谁拥有哪条路由」的唯一判定，与发布器逐字一致：
+ *   - 前缀按声明；同一前缀多人声明时按 id 字典序第一个胜（发布器 writtenPrefixes 先到先得、
+ *     routableServices 先按 id 排），其余记入 claims 供体检报冲突；
+ *   - 没人声明 `/` 时默认站按名兜底；没人声明 `/api/` 时按名约定给 id 含 api / backend 的服务；
+ *   - 探活前缀不进路由。
+ * 服务图的站点分组、引用解析器判「这个服务有没有公网路由」都调这里，不各写一份。
+ */
+export function resolveMainDomainRoutes(profiles: readonly RoutableProfile[]): MainDomainRoutes {
+  const ids = profiles.map((p) => p.id).sort((a, b) => a.localeCompare(b));
+  const byId = new Map(profiles.map((p) => [p.id, p]));
+  const claims = new Map<string, string[]>();
+  const prefixes = new Map<string, string[]>();
+  for (const id of ids) {
+    for (const raw of byId.get(id)?.pathPrefixes || []) {
+      const prefix = raw.trim();
+      if (!prefix) continue;
+      // claims 保留探活前缀：体检要据此报「探活进前缀」与它们之间的冲突；路由归属（prefixes）才剔除
+      const owners = claims.get(prefix) ?? [];
+      if (!owners.includes(id)) owners.push(id);
+      claims.set(prefix, owners);
+      if (prefix !== '/' && !isOperationalProbePrefix(prefix)) {
+        const mine = prefixes.get(id) ?? [];
+        if (!mine.includes(prefix)) mine.push(prefix);
+        prefixes.set(id, mine);
+      }
+    }
+  }
+  const rootOwners = claims.get('/') ?? [];
+  let shellId: string | undefined;
+  let shellSource: MainDomainRoutes['shellSource'];
+  if (rootOwners.length > 0) {
+    shellId = [...rootOwners].sort((a, b) => a.localeCompare(b))[0];
+    shellSource = 'declared';
+  } else if (ids.length > 0) {
+    shellId = pickDefaultProfile(ids);
+    shellSource = 'convention';
+  }
+  const viaConvention = new Set<string>();
+  if (!claims.has('/api/')) {
+    const apiId = pickApiConventionProfile(ids);
+    if (apiId && apiId !== shellId) {
+      prefixes.set(apiId, [...(prefixes.get(apiId) ?? []), '/api/']);
+      viaConvention.add(apiId);
+    }
+  }
+  return { shellId, shellSource, prefixes, viaConvention, claims };
+}
+
 /**
  * 「这条路径在主域名上该给哪个服务」的唯一判定（plan.cds.service-relations 第二批）。
  *

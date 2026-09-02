@@ -83,6 +83,25 @@ describe('resolveCdsRef', () => {
     };
     expect(resolveCdsRef(d, parseCdsRefs('${CDS_REF:prd-agent/prd-api}')[0]).status).toBe('stopped');
   });
+  it('没有公网路由的服务（后台 worker）不给主入口，报 unroutable', () => {
+    const d = deps();
+    const base = d.getEffectiveProfilesForBranch;
+    d.getEffectiveProfilesForBranch = (entry) => [...base(entry), { id: 'prd-worker', projectId: 'p-prd', name: 'worker', dockerImage: 'x', workDir: '.', containerPort: 0 } as BuildProfile];
+    const r = resolveCdsRef(d, parseCdsRefs('${CDS_REF:prd-agent/prd-worker@feat/x}')[0]);
+    expect(r.status).toBe('unroutable');
+    expect(r.url).toBeNull();
+    // 有前缀的 prd-api 仍给主入口
+    expect(resolveCdsRef(d, parseCdsRefs('${CDS_REF:prd-agent/prd-api@feat/x}')[0]).url).toMatch(/^https:\/\//);
+  });
+  it('配置里有该服务但分支上没有它的容器记录：按 stopped，不继承分支整体的 running', () => {
+    const d = deps();
+    const feat = d.getAllBranches().find((b) => b.id === 'prd-feat')!;
+    delete (feat.services as Record<string, unknown>)['prd-api'];
+    const r = resolveCdsRef(d, parseCdsRefs('${CDS_REF:prd-agent/prd-api@feat/x}')[0]);
+    expect(r.status).toBe('stopped');
+    expect(r.reason).toContain('还没有部署');
+  });
+
   it('项目 / 分支 / 服务找不到时分别报 missing-*，url 为 null', () => {
     expect(resolveCdsRef(deps(), parseCdsRefs('${CDS_REF:nope/x}')[0]).status).toBe('missing-project');
     expect(resolveCdsRef(deps(), parseCdsRefs('${CDS_REF:prd-agent/prd-api@gone}')[0]).status).toBe('missing-branch');

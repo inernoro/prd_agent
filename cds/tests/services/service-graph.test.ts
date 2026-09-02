@@ -231,14 +231,16 @@ describe('buildServiceSites 站点分组与 forwarder 同源', () => {
     expect(main.members).toEqual([{ id: 'backend', prefixes: ['/api/'], viaConvention: true }]);
     expect(g.internal).toEqual([]);
   });
-  it('多个服务声明 `/` 时优先 web-entry primary，其次角色为 web 的', () => {
+  it('多个服务声明 `/` 时壳按发布器的先到先得（id 字典序第一）选，并记入冲突；webEntry / 角色不改变归属', () => {
     const roles = new Map([
       ['a-api', inferServiceRole(profile('a-api', { pathPrefixes: ['/'] }))],
       ['b-web', inferServiceRole(profile('b-web', { pathPrefixes: ['/'] }))],
     ]);
-    const r = buildServiceSites([profile('a-api', { pathPrefixes: ['/'] }), profile('b-web', { pathPrefixes: ['/'] })], roles);
-    expect(r.sites[0].shellId).toBe('b-web');
-    const r2 = buildServiceSites([profile('a-api', { pathPrefixes: ['/'], webEntry: { name: 'x', path: '/', primary: true } }), profile('b-web', { pathPrefixes: ['/'] })], roles);
+    // 发布器 routableServices 按 id 排、writtenPrefixes 先到先得：`/` 实际归 a-api，图必须说同一句话
+    const r = buildServiceSites([profile('b-web', { pathPrefixes: ['/'] }), profile('a-api', { pathPrefixes: ['/'] })], roles);
+    expect(r.sites[0].shellId).toBe('a-api');
+    expect(r.sites[0].conflicts).toEqual([{ prefix: '/', ids: ['a-api', 'b-web'] }]);
+    const r2 = buildServiceSites([profile('a-api', { pathPrefixes: ['/'] }), profile('b-web', { pathPrefixes: ['/'], webEntry: { name: 'x', path: '/', primary: true } })], roles);
     expect(r2.sites[0].shellId).toBe('a-api');
   });
   it('多个服务同时命中按名约定时按 id 字典序取胜者，与发布器排序一致，不随存储顺序漂移', () => {

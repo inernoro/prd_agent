@@ -16,7 +16,7 @@ import { apiRequest, ApiError } from '@/lib/api';
 import { postSse, sseEventText } from '@/lib/sse';
 
 type RefKind = 'cds-ref' | 'url' | 'name-hint' | 'platform';
-type RefStatus = 'running' | 'stopped' | 'building' | 'error' | 'missing-service' | 'missing-branch' | 'missing-project' | 'restricted';
+type RefStatus = 'running' | 'stopped' | 'building' | 'error' | 'missing-service' | 'missing-branch' | 'missing-project' | 'restricted' | 'unroutable';
 
 interface ResolvedRef {
   ref: { raw: string; projectRef: string; serviceId: string; branchRef?: string };
@@ -53,7 +53,7 @@ function StatusChip({ status }: { status: RefStatus | string }): JSX.Element {
   const ok = status === 'running';
   const warn = status === 'building' || status === 'stopped' || status === 'restricted';
   const cls = ok ? 'border-ok/50 bg-ok-soft text-ok' : warn ? 'border-warn/60 bg-warn-soft text-warn' : 'border-destructive/60 bg-[hsl(var(--bad-soft))] text-destructive';
-  const label = ({ running: '运行中', stopped: '已停止', building: '构建中', error: '异常', 'missing-service': '没有该服务', 'missing-branch': '没有该分支', 'missing-project': '没有该项目', restricted: '无权查看' } as Record<string, string>)[status] ?? status;
+  const label = ({ running: '运行中', stopped: '已停止', building: '构建中', error: '异常', 'missing-service': '没有该服务', 'missing-branch': '没有该分支', 'missing-project': '没有该项目', restricted: '无权查看', unroutable: '无公网路由' } as Record<string, string>)[status] ?? status;
   return <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10px] font-semibold ${cls}`}>{label}</span>;
 }
 

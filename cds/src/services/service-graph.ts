@@ -13,7 +13,7 @@
  * 安全边界：输出只含 env **键名**，env 值（可能含连接串 / 密钥）绝不出网。
  */
 import type { BuildProfile, InfraService, ServiceRole } from '../types.js';
-import { API_NAME_RE, WEB_NAME_RE, WORKER_NAME_RE, pickApiConventionProfile, pickDefaultProfile } from './route-conventions.js';
+import { API_NAME_RE, WEB_NAME_RE, WORKER_NAME_RE, pickApiConventionProfile, pickDefaultProfile, resolveMainDomainRoutes } from './route-conventions.js';
 import { handlesRootPath } from './web-entry.js';
 
 export interface ServiceGraphNode {
@@ -164,60 +164,22 @@ export function buildServiceSites(
   profiles: readonly RoleInput[],
   roles: ReadonlyMap<string, ServiceRoleVerdict>,
 ): { sites: ServiceGraphSite[]; internal: string[] } {
-  // 与发布器同序：forwarder-route-publisher 在套按名约定前先按 profileId 字典序排（localeCompare），
-  // 多个服务同时命中默认站 / `/api/` 约定时胜者必须和实际发布的一致（Codex 二轮 P2）
+  // 主域名归属（壳 / 前缀成员 / 按名约定 / 冲突）只在 route-conventions.resolveMainDomainRoutes 判一次，
+  // 与发布器逐字一致：同一前缀多人声明按 id 字典序先到先得，壳不再按 webEntry / 角色另挑一套
+  //（Codex 五轮 P2：图说 b-web 是壳、发布器却把 / 给了 a-api）。
   const ids = profiles.map((p) => p.id).sort((a, b) => a.localeCompare(b));
-  const claims = new Map<string, string[]>(); // prefix → ids（主域名）
-  const memberPrefixes = new Map<string, string[]>();
-  for (const p of profiles) {
-    for (const raw of p.pathPrefixes || []) {
-      const prefix = raw.trim();
-      if (!prefix) continue;
-      const list = claims.get(prefix) ?? [];
-      if (!list.includes(p.id)) list.push(p.id);
-      claims.set(prefix, list);
-      if (prefix !== '/') {
-        const mine = memberPrefixes.get(p.id) ?? [];
-        if (!mine.includes(prefix)) mine.push(prefix);
-        memberPrefixes.set(p.id, mine);
-      }
-    }
-  }
-  const conflicts = Array.from(claims.entries())
+  const routes = resolveMainDomainRoutes(profiles);
+  const conflicts = Array.from(routes.claims.entries())
     .filter(([, owners]) => owners.length > 1)
     .map(([prefix, owners]) => ({ prefix, ids: [...owners].sort() }))
     .sort((a, b) => a.prefix.localeCompare(b.prefix));
-
-  const rootOwners = claims.get('/') ?? [];
-  let shellId: string | undefined;
-  let shellSource: ServiceGraphSite['shellSource'];
-  if (rootOwners.length > 0) {
-    const sorted = [...rootOwners].sort();
-    const primary = profiles.find((p) => sorted.includes(p.id) && p.webEntry?.primary)?.id;
-    shellId = primary ?? sorted.find((id) => roles.get(id)?.role === 'web') ?? sorted[0];
-    shellSource = 'declared';
-  } else if (ids.length > 0) {
-    shellId = pickDefaultProfile(ids);
-    shellSource = 'convention';
-  }
-
+  const shellId = routes.shellId;
+  const shellSource = routes.shellSource;
   const members: ServiceGraphSiteMember[] = [];
   for (const id of ids) {
     if (id === shellId) continue;
-    const prefixes = memberPrefixes.get(id);
-    if (prefixes && prefixes.length > 0) members.push({ id, prefixes });
-  }
-  if (!claims.has('/api/')) {
-    const apiId = pickApiConventionProfile(ids);
-    if (apiId && apiId !== shellId) {
-      const existing = members.find((m) => m.id === apiId);
-      if (existing) {
-        existing.prefixes = [...existing.prefixes, '/api/'];
-        existing.viaConvention = true;
-      } else {
-        members.push({ id: apiId, prefixes: ['/api/'], viaConvention: true });
-      }
-    }
+    const prefixes = routes.prefixes.get(id);
+    if (prefixes && prefixes.length > 0) members.push({ id, prefixes, ...(routes.viaConvention.has(id) ? { viaConvention: true } : {}) });
   }
 
   const sites: ServiceGraphSite[] = [];

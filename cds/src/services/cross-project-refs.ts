@@ -13,6 +13,7 @@ import { resolveBranchEntrypointsEnv, branchEntrypointDepsFromState, type Branch
 import { buildPreviewUrlForProject } from './comment-template.js';
 // container 也导入本模块；两边都只在调用时用到对方的函数，preview-entrypoints 与 container 早已是这种关系
 import { resolveEffectiveProfile } from './container.js';
+import { resolveMainDomainRoutes } from './route-conventions.js';
 
 export const CDS_REF_RE = /\$\{CDS_REF:([A-Za-z0-9_.~-]+)\/([A-Za-z0-9_.~-]+)(?:@([^}\s]+))?\}/g;
 
@@ -37,7 +38,7 @@ export function formatCdsRef(ref: Pick<CdsRef, 'projectRef' | 'serviceId' | 'bra
 }
 
 /** restricted：目标项目存在但当前凭据无权查看，地址与分支信息一律不下发（由路由层按 assertProjectAccess 打标） */
-export type RefTargetStatus = 'running' | 'stopped' | 'building' | 'error' | 'missing-service' | 'missing-branch' | 'missing-project' | 'restricted';
+export type RefTargetStatus = 'running' | 'stopped' | 'building' | 'error' | 'missing-service' | 'missing-branch' | 'missing-project' | 'restricted' | 'unroutable';
 
 export interface ResolvedCdsRef {
   ref: CdsRef;
@@ -81,22 +82,34 @@ function findBranch(deps: CdsRefResolverDeps, project: Project, branchRef: strin
   return { entry, name: entry?.branch ?? wanted, isDefault };
 }
 
-/** 目标服务在目标分支上的公网地址：子域服务给子域，其余给主入口。 */
-export function serviceUrlOnBranch(deps: CdsRefResolverDeps, entry: BranchEntry, serviceId: string): string | null {
+/**
+ * 目标服务在目标分支上的公网地址：子域服务给子域；在主域名上拥有路由（壳、显式前缀、按名约定
+ * 拿到 /api/）的给主入口；两者都没有（后台 worker、只被内网调用的服务）返回 unroutable——
+ * 不能把主入口当它的地址，否则调用会静默打到壳上（Codex 五轮 P1）。
+ */
+export function serviceUrlOnBranch(
+  deps: CdsRefResolverDeps,
+  entry: BranchEntry,
+  serviceId: string,
+): { url: string } | { url: null; reason: 'missing-service' | 'unroutable' } {
   const profiles = deps.getEffectiveProfilesForBranch(entry);
   const profile = profiles.find((p) => p.id === serviceId);
-  if (!profile) return null;
+  if (!profile) return { url: null, reason: 'missing-service' };
   const env = resolveBranchEntrypointsEnv(entry, deps.entrypointDeps).env;
   if (profile.subdomain) {
     try {
       const table = JSON.parse(env[SERVICE_URLS_ENV_KEY] || '{}') as Record<string, string>;
-      if (table[profile.subdomain]) return table[profile.subdomain];
-    } catch { /* 表损坏按主入口兜底 */ }
+      if (table[profile.subdomain]) return { url: table[profile.subdomain] };
+    } catch { /* 表损坏按主域名路由继续判 */ }
   }
-  if (env[PREVIEW_URL_ENV_KEY]) return env[PREVIEW_URL_ENV_KEY];
+  const routes = resolveMainDomainRoutes(profiles);
+  const ownsMainRoute = routes.shellId === profile.id || (routes.prefixes.get(profile.id)?.length ?? 0) > 0;
+  if (!ownsMainRoute) return { url: null, reason: 'unroutable' };
+  if (env[PREVIEW_URL_ENV_KEY]) return { url: env[PREVIEW_URL_ENV_KEY] };
   const project = deps.getProject(entry.projectId);
   const built = buildPreviewUrlForProject(deps.entrypointDeps.previewHost, entry.branch, project, entry.projectId);
-  return (built as { url?: string }).url ?? null;
+  const url = (built as { url?: string }).url;
+  return url ? { url } : { url: null, reason: 'missing-service' };
 }
 
 export function resolveCdsRef(deps: CdsRefResolverDeps, ref: CdsRef): ResolvedCdsRef {
@@ -109,17 +122,25 @@ export function resolveCdsRef(deps: CdsRefResolverDeps, ref: CdsRef): ResolvedCd
   if (!entry) {
     return { ref, url: null, status: 'missing-branch', target: base, reason: `项目 ${project.slug} 没有分支 ${name}` };
   }
-  const url = serviceUrlOnBranch(deps, entry, ref.serviceId);
+  const located = serviceUrlOnBranch(deps, entry, ref.serviceId);
   const target = { ...base, branchId: entry.id };
-  if (!url) {
-    return { ref, url: null, status: 'missing-service', target, reason: `分支 ${name} 上没有服务 ${ref.serviceId}` };
+  if (located.url === null) {
+    return located.reason === 'unroutable'
+      ? { ref, url: null, status: 'unroutable', target, reason: `服务 ${ref.serviceId} 没有公网路由（无子域、无前缀、也不是默认站），不能当作地址引用` }
+      : { ref, url: null, status: 'missing-service', target, reason: `分支 ${name} 上没有服务 ${ref.serviceId}` };
   }
+  const url = located.url;
   const svc = entry.services?.[ref.serviceId];
   // 主容器停了 / 出错但复制集里还有在跑的成员时，转发器仍通过成员把该服务发布出去（与
   // forwarder-route-publisher 的成员兜底同口径），引用状态也按可达算（Codex 三轮 P2）
   const rs = entry.replicaSets?.[ref.serviceId];
   const memberRunning = !!rs && rs.enabled && rs.members.some((m) => m.status === 'running' && typeof m.hostPort === 'number' && m.hostPort > 0);
-  const raw = memberRunning && svc?.status !== 'running' ? 'running' : String(svc?.status ?? entry.status ?? 'stopped');
+  // 配置里有这个服务但分支上没有它的容器记录、也没有在跑的副本：它没被部署过或已经消失，
+  // 不能拿分支整体状态（别的服务撑着的 running）冒充（Codex 五轮 P1）
+  if (!svc && !memberRunning) {
+    return { ref, url, status: 'stopped', target, reason: `分支 ${name} 上还没有部署服务 ${ref.serviceId}` };
+  }
+  const raw = memberRunning && svc?.status !== 'running' ? 'running' : String(svc?.status ?? 'stopped');
   const status: RefTargetStatus = raw === 'running' ? 'running'
     : raw === 'error' ? 'error'
       : (raw === 'building' || raw === 'starting' || raw === 'restarting') ? 'building'
