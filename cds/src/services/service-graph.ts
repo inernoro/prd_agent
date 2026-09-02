@@ -118,8 +118,8 @@ function nameRole(id: string): { role: ServiceRole; hit: string } | null {
 /**
  * 服务角色判定（唯一定义处；前端只消费结果，不再自己按名字猜）。
  *
- * 优先级：① 显式 `cds.role` → ② 强路由事实（声明了用户入口 / 声明不监听 HTTP /
- * 承载根路径且探活是页面）→ ③ 服务名词根 → ④ 弱路由特征（前缀全是接口样式 /
+ * 优先级：① 显式 `cds.role` → ② 强路由事实（声明了用户入口 / 承载根路径且探活是页面）
+ * → ③ 服务名词根 → ④ 弱路由特征（不监听 HTTP 且无路由 → 后台任务 / 前缀全是接口样式 /
  * 探活是健康检查 / 探活是页面 / 按名兜底成了默认站）→ ⑤ 默认按 api。
  * 名字在中间：它比「探活路径长什么样」可信，但比「配置里写了什么」不可信。
  * 每个结论都带 source + reason，画布把非声明的标成「推断」。
@@ -137,13 +137,17 @@ export function inferServiceRole(
   const ownsRoot = handlesRootPath(p);
 
   if (p.webEntry?.name) return { role: 'web', source: 'route', reason: `声明了用户入口「${p.webEntry.name}」` };
-  if (p.readinessProbe?.noHttp) return { role: 'worker', source: 'route', reason: '声明不监听 HTTP（cds.no-http-readiness）' };
   if (ownsRoot && readinessIsPage) return { role: 'web', source: 'route', reason: '承载根路径且探活路径是页面' };
 
   const byName = nameRole(p.id);
   if (byName) return { role: byName.role, source: 'name', reason: `服务名含「${byName.hit}」` };
 
   const nonRoot = prefixes.filter((x) => x !== '/');
+  // cds.no-http-readiness 只是把探活换成 TCP，扫描器给每个 Java 服务都会打这个标；它不能压过
+  // 名字与路由证据，只有名字判不出、也没有任何公网路由时才据此当后台任务（Codex 八轮 P2）
+  if (p.readinessProbe?.noHttp && nonRoot.length === 0 && !ownsRoot && !p.subdomain) {
+    return { role: 'worker', source: 'route', reason: '不监听 HTTP 探活且没有任何公网路由' };
+  }
   if (nonRoot.length > 0 && nonRoot.every((x) => API_PREFIX_RE.test(x))) {
     return { role: 'api', source: 'route', reason: `路由前缀 ${nonRoot.join(' ')} 都是接口样式` };
   }

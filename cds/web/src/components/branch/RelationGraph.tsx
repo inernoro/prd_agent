@@ -19,7 +19,9 @@ export interface RelationPayload { branchId: string; projectId: string; branch: 
 
 const CARD_W = 200, CARD_H = 52, GAP_X = 28, GAP_Y = 64, SITE_PAD = 14, SITE_LABEL = 22, SITE_GAP = 36;
 const ROLE_LABEL: Record<RoleView, string> = { web: 'WEB', api: 'API', worker: 'JOB' };
-const ROLE_COLOR: Record<RoleView, string> = { web: '#10b981', api: '#3b82f6', worker: '#8b5cf6' };
+// 颜色只许走主题 token（cds-theme-tokens）：这里存 token 名，用到时包 hsl(var(...))，双主题各自成立
+const ROLE_TOKEN: Record<RoleView, string> = { web: '--role-web', api: '--role-api', worker: '--role-worker' };
+const tone = (token: string, alpha?: number): string => (alpha === undefined ? `hsl(var(${token}))` : `hsl(var(${token}) / ${alpha})`);
 
 interface Pos { x: number; y: number; w: number; h: number }
 interface Frame { key: string; label: string; sub: string; x: number; y: number; w: number; h: number; tone: 'site' | 'external' | 'infra' }
@@ -31,6 +33,8 @@ export interface RelationLayout {
   entry: Pos;
   edges: Array<{ from: Pos; to: Pos; kind: 'entry' | 'prefix' | 'call' | 'ref' | 'broken' | 'infra'; label?: string; key: string }>;
   externals: Array<{ id: string; label: string; sub: string; status: string; pos: Pos; broken: boolean }>;
+  /** 同一个服务同时是主域名壳和子域壳（double-public-surface）时，后一个站点里用别名节点，这里映射回真实 id */
+  aliasOf: Map<string, string>;
 }
 
 const svc = (id: string): string => id.replace(/^service:/, '');
@@ -40,21 +44,29 @@ export function layoutRelations(payload: RelationPayload, minWidth = 900): Relat
   const nodeById = new Map(graph.nodes.filter((n) => n.kind === 'service').map((n) => [n.rawId ?? svc(n.id), n]));
   const ids = Array.from(nodeById.keys());
   const placed = new Set<string>();
+  const aliasOf = new Map<string, string>();
+  const real = (id: string): string => aliasOf.get(id) ?? id;
+  // 一个服务既有主域名路由又有子域（后端会报 double-public-surface）时，两个站点都要画它：
+  // 第一次出现用真实 id，之后的站点用 `id@站点` 别名，别名映射回真实节点（Codex 八轮 P2）
+  const claim = (id: string, siteId: string): string => {
+    if (!placed.has(id)) { placed.add(id); return id; }
+    const alias = `${id}@${siteId}`;
+    aliasOf.set(alias, id);
+    return alias;
+  };
   const callers = (id: string): string[] => graph.edges.filter((e) => e.from.startsWith('service:') && svc(e.to) === id).map((e) => svc(e.from));
 
   // 站点块：壳 / 前缀成员 / 内网服务（只被本站服务调用的）
   const blocks = graph.sites.map((site) => {
-    const shell = site.shellId && nodeById.has(site.shellId) && !placed.has(site.shellId) ? site.shellId : undefined;
-    if (shell) placed.add(shell);
-    const members = site.members.filter((m) => nodeById.has(m.id) && !placed.has(m.id)).map((m) => m.id);
-    members.forEach((m) => placed.add(m));
+    const shell = site.shellId && nodeById.has(site.shellId) ? claim(site.shellId, site.id) : undefined;
+    const members = site.members.filter((m) => nodeById.has(m.id)).map((m) => claim(m.id, site.id));
     return { site, shell, members, attached: [] as string[] };
   }).filter((b) => b.shell || b.members.length > 0);
   for (const id of graph.internal) {
     if (!nodeById.has(id) || placed.has(id)) continue;
     const cs = callers(id);
     if (cs.length === 0) continue;
-    const owner = blocks.find((b) => cs.every((c) => c === b.shell || b.members.includes(c)));
+    const owner = blocks.find((b) => cs.every((c) => (b.shell && c === real(b.shell)) || b.members.some((m) => real(m) === c)));
     if (!owner) continue;
     owner.attached.push(id); placed.add(id);
   }
@@ -148,7 +160,7 @@ export function layoutRelations(payload: RelationPayload, minWidth = 900): Relat
       const sp = pos.get(b.shell)!;
       for (const m of b.members) {
         const mp = pos.get(m); if (!mp) continue;
-        const info = b.site.members.find((x) => x.id === m);
+        const info = b.site.members.find((x) => x.id === real(m));
         edges.push({ from: sp, to: mp, kind: 'prefix', label: (info?.prefixes ?? []).join(' ') + (info?.viaConvention ? ' · 按名约定' : ''), key: `prefix-${m}` });
       }
     }
@@ -163,7 +175,7 @@ export function layoutRelations(payload: RelationPayload, minWidth = 900): Relat
     if (!a || !e) continue;
     edges.push({ from: a, to: e.pos, kind: x.broken ? 'broken' : 'ref', label: x.label, key: `ref-${x.from}-${x.ext}-${x.label}` });
   }
-  return { width, height: Math.max(y, 320), pos, frames, entry, edges, externals };
+  return { width, height: Math.max(y, 320), pos, frames, entry, edges, externals, aliasOf };
 }
 
 function edgePath(a: Pos, b: Pos): string {
@@ -177,7 +189,7 @@ function edgePath(a: Pos, b: Pos): string {
 const EDGE_STYLE: Record<RelationLayout['edges'][number]['kind'], { stroke: string; dash: string; width: number; marker?: boolean }> = {
   entry: { stroke: 'hsl(var(--muted-foreground))', dash: '5 5', width: 1.4, marker: true },
   prefix: { stroke: 'hsl(var(--muted-foreground))', dash: '2 4', width: 1.4, marker: true },
-  call: { stroke: '#6366f1', dash: '5 5', width: 1.6, marker: true },
+  call: { stroke: 'hsl(var(--graph-call))', dash: '5 5', width: 1.6, marker: true },
   ref: { stroke: 'hsl(var(--info))', dash: '4 4', width: 1.5, marker: true },
   broken: { stroke: 'hsl(var(--bad))', dash: '4 4', width: 1.6, marker: true },
   infra: { stroke: 'hsl(var(--muted-foreground))', dash: '5 5', width: 1.2 },
@@ -238,24 +250,26 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
           })}
         </svg>
         <div className="cds-surface-raised cds-hairline" style={{ position: 'absolute', left: layout.entry.x, top: layout.entry.y, width: layout.entry.w, height: layout.entry.h, borderRadius: 12, padding: '8px 10px', fontSize: 12 }}>
-          <div className="flex items-center gap-2 font-bold"><span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground" style={{ background: '#6366f1' }}>GW</span>入口</div>
+          <div className="flex items-center gap-2 font-bold"><span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground" style={{ background: tone('--graph-call') }}>GW</span>入口</div>
           <div className="mt-1 truncate text-[10px] text-muted-foreground">{payload.branch} · forwarder 按 host 与前缀分流</div>
         </div>
         {Array.from(layout.pos.entries()).map(([id, p]) => {
-          const n = nodeById.get(id);
+          const realId = layout.aliasOf.get(id) ?? id;
+          const n = nodeById.get(realId);
           if (!n) return null;
           const isInfra = n.kind === 'infra';
           const role = n.role ?? 'api';
-          const bad = findingsOf(id);
-          const color = isInfra ? (/redis/i.test(n.dockerImage || n.id) ? '#ef4444' : '#10b981') : ROLE_COLOR[role];
+          const bad = findingsOf(realId);
+          const token = isInfra ? (/redis/i.test(n.dockerImage || n.id) ? '--bad' : '--ok') : ROLE_TOKEN[role];
+          const color = tone(token);
           return (
             <div key={id} className="bg-background" data-node={id} data-role={isInfra ? 'infra' : role}
-              style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, borderRadius: 12, border: `1.5px solid ${bad.some((f) => f.severity === 'error') ? 'hsl(var(--bad) / .7)' : bad.length ? 'hsl(var(--warn) / .7)' : `${color}59`}`, boxShadow: '0 4px 12px hsl(0 0% 0% / .25)', fontSize: 12, opacity: dim(!highlight || id === highlight) }}>
+              style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, borderRadius: 12, border: `1.5px solid ${bad.some((f) => f.severity === 'error') ? 'hsl(var(--bad) / .7)' : bad.length ? 'hsl(var(--warn) / .7)' : tone(token, 0.35)}`, boxShadow: '0 4px 12px hsl(0 0% 0% / .25)', fontSize: 12, opacity: dim(!highlight || realId === highlight) }}>
               <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
-                <span className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground ${!isInfra && n.roleSource && n.roleSource !== 'declared' ? 'border border-dashed border-white/70' : ''}`} style={{ background: color }} title={n.roleReason}>
+                <span className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground ${!isInfra && n.roleSource && n.roleSource !== 'declared' ? 'border border-dashed border-primary-foreground/70' : ''}`} style={{ background: color }} title={n.roleReason}>
                   {isInfra ? (/redis/i.test(n.dockerImage || n.id) ? 'R' : 'DB') : ROLE_LABEL[role]}
                 </span>
-                <span className="min-w-0 flex-1 truncate" title={id}>{n.name || id}</span>
+                <span className="min-w-0 flex-1 truncate" title={realId}>{n.name || realId}{id !== realId ? <span className="ml-1 text-[9px] font-normal text-muted-foreground">同一服务</span> : null}</span>
                 {bad.length > 0 ? <span className={`inline-flex h-[16px] shrink-0 items-center rounded-full border px-1.5 text-[9px] font-semibold ${bad.some((f) => f.severity === 'error') ? 'border-destructive/60 text-destructive' : 'border-warn/60 bg-warn-soft text-warn'}`} title={bad.map((f) => f.message).join('\n')}>{bad.length} 问题</span> : null}
               </div>
               <div className="truncate px-2.5 pb-1 text-[10px] text-muted-foreground">
@@ -267,7 +281,7 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
         {layout.externals.map((e) => (
           <div key={e.id} className="bg-background" data-node={e.id} style={{ position: 'absolute', left: e.pos.x, top: e.pos.y, width: e.pos.w, height: e.pos.h, borderRadius: 12, border: `1.5px solid ${e.broken ? 'hsl(var(--bad) / .7)' : 'hsl(var(--info) / .5)'}`, fontSize: 12, boxShadow: '0 4px 12px hsl(0 0% 0% / .25)' }}>
             <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
-              <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground" style={{ background: '#8b5cf6' }}>EXT</span>
+              <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground" style={{ background: tone('--graph-external') }}>EXT</span>
               <span className="min-w-0 flex-1 truncate">{e.label}</span>
               <span className={`inline-flex h-[16px] shrink-0 items-center rounded-full border px-1.5 text-[9px] font-semibold ${e.broken ? 'border-destructive/60 text-destructive' : 'border-ok/50 bg-ok-soft text-ok'}`}>{e.broken ? (e.status === 'running' ? '可达' : e.status === 'stopped' ? '已停止' : '断裂') : '可达'}</span>
             </div>
@@ -277,7 +291,7 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
       </div>
       {!compact ? (
         <div className="cds-surface-raised cds-hairline sticky bottom-2 left-2 mt-2 inline-flex items-center gap-4 rounded-md px-3 py-1.5 text-[10px] text-muted-foreground">
-          <span>虚线框 = 同一 host</span><span>灰线 = 入口分流 / 前缀分流</span><span style={{ color: '#6366f1' }}>紫线 = 环境变量引用 / 调用</span><span className="text-info">蓝线 = 跨项目引用</span><span className="text-destructive">红线 = 断裂</span><span>徽标虚边 = 角色是推断的</span>
+          <span>虚线框 = 同一 host</span><span>灰线 = 入口分流 / 前缀分流</span><span style={{ color: tone('--graph-call') }}>紫线 = 环境变量引用 / 调用</span><span className="text-info">蓝线 = 跨项目引用</span><span className="text-destructive">红线 = 断裂</span><span>徽标虚边 = 角色是推断的</span>
         </div>
       ) : null}
     </div>

@@ -160,8 +160,11 @@ describe('inferServiceRole 角色判定优先级', () => {
     expect(v.role).toBe('web');
     expect(v.source).toBe('route');
   });
-  it('不监听 HTTP 的就是 worker', () => {
+  it('不监听 HTTP 探活只是弱证据：名字和路由都判不出才当 worker，Spring API 打了这个标仍是 api', () => {
     expect(inferServiceRole(profile('foo', { readinessProbe: { noHttp: true } })).role).toBe('worker');
+    expect(inferServiceRole(profile('imp-vendor-api', { readinessProbe: { noHttp: true } })).role).toBe('api');
+    expect(inferServiceRole(profile('foo', { readinessProbe: { noHttp: true }, pathPrefixes: ['/open/'] })).role).toBe('api');
+    expect(inferServiceRole(profile('foo', { readinessProbe: { noHttp: true }, subdomain: 'foo' })).role).toBe('web');
   });
   it('承载根路径且探活是页面 → web；承载根路径但探活是健康检查 → 交给名字', () => {
     expect(inferServiceRole(profile('zzz', { pathPrefixes: ['/'], readinessProbe: { path: '/' } })))
