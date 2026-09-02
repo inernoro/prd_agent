@@ -58,6 +58,8 @@ import type {
   Project,
   ProjectActivityLog,
   ReleaseRun,
+  ScheduledJob,
+  ScheduledJobRun,
   SelfUpdateRecord,
   ServiceDeployment,
   ServiceDeploymentLogEntry,
@@ -244,6 +246,33 @@ function compactReleaseRuns(
   ]));
 }
 
+/**
+ * 按任务公平地收运行史：每个任务最多留 `perJob` 条（各自最新的），现存任务排在
+ * 已删除任务之前。与 state 层的保留策略同口径——那里保住的每任务历史，不该在
+ * 落库这一步被全局排序抹掉。
+ */
+function takeFairScheduledRuns(
+  runs: ScheduledJobRun[] | undefined,
+  jobs: ScheduledJob[] | undefined,
+  perJob: number,
+): ScheduledJobRun[] {
+  const all = runs || [];
+  if (perJob <= 0 || all.length === 0) return [];
+  const byJob = new Map<string, ScheduledJobRun[]>();
+  for (const run of [...all].sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))) {
+    const list = byJob.get(run.jobId);
+    if (list) list.push(run);
+    else byJob.set(run.jobId, [run]);
+  }
+  const liveIds = new Set((jobs || []).map((job) => job.id));
+  const live: ScheduledJobRun[][] = [];
+  const orphan: ScheduledJobRun[][] = [];
+  for (const list of byJob.values()) (liveIds.has(list[0].jobId) ? live : orphan).push(list);
+  return [...live, ...orphan]
+    .flatMap((list) => list.slice(0, perJob))
+    .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
+}
+
 function compactGlobalRestToFit(restOfState: GlobalRest): GlobalRest {
   if (jsonByteLength(restOfState) <= MAX_GLOBAL_REST_BYTES) return restOfState;
 
@@ -259,11 +288,14 @@ function compactGlobalRestToFit(restOfState: GlobalRest): GlobalRest {
     // 定时任务运行史同属「诊断/历史」，也整段嵌在 global 文档里。这道兜底此前对它
     // 视而不见——运行史一旦把文档顶过上限，compact 走完整条阶梯也压不下来，
     // global 文档就此写不进去，连分支/项目的后续变更一起丢（Codex #1471 P1）。
-    // state 层已有条数 + 字节两道闸，这里是最后一道：越新的越该留。
-    restOfState.scheduledJobRuns = (restOfState.scheduledJobRuns || [])
-      .slice()
-      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
-      .slice(0, maxEntries);
+    // 收的口径必须和 state 层的两道闸一致：**按任务各留 N 条、现存任务优先**。
+    // 全局按新旧砍会在落库这一刻把低频活任务的历史整段抹掉，而且抹掉就回不来了
+    // （Codex #1471 P2）——同一个「第二道闸抵消第一道闸」的形状，这是第三次。
+    restOfState.scheduledJobRuns = takeFairScheduledRuns(
+      restOfState.scheduledJobRuns,
+      restOfState.scheduledJobs,
+      maxEntries,
+    );
     if (jsonByteLength(restOfState) <= MAX_GLOBAL_REST_BYTES) return restOfState;
   }
 

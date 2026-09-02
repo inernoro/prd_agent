@@ -545,6 +545,48 @@ describe('MongoSplitStateBackingStore', () => {
     expect(kept[0].id).toBe('run-3999');
   });
 
+  /*
+   * Codex #1471 P2（第二十一轮）。这道兜底原本按全局新旧砍，会在**落库那一刻**
+   * 把低频活任务的历史整段抹掉，而且抹掉就回不来了——state 层刚按任务保住的东西，
+   * 在这里又被全局排序推翻。同一个「第二道闸抵消第一道闸」的形状，这是第三次。
+   * 红绿闭环：把 takeFairScheduledRuns 换回全局 sort+slice，本用例报低频任务 0 条。
+   */
+  it('compaction keeps per-job history instead of a global newest-first slice', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.scheduledJobs = ['rare', 'h0', 'h1', 'h2'].map((id) => ({
+      id: `job_${id}`, projectId: 'demo', name: id, enabled: true,
+      schedule: { type: 'daily', timeOfDay: '02:00' },
+      actions: [], createdAt: 't', updatedAt: 't',
+    })) as any;
+    // 低频活任务：3 条，且是全场最早的
+    state.scheduledJobRuns = [
+      ...Array.from({ length: 3 }, (_, i) => ({
+        id: `rare-${i}`, jobId: 'job_rare', projectId: 'demo', trigger: 'schedule' as const,
+        status: 'success' as const, queuedAt: new Date(Date.UTC(2026, 0, 1, i)).toISOString(),
+      })),
+      // 三个高频任务各 1500 条大日志，必然把文档顶过上限
+      ...[0, 1, 2].flatMap((h) => Array.from({ length: 1500 }, (_, i) => ({
+        id: `h${h}-${i}`, jobId: `job_h${h}`, projectId: 'demo', trigger: 'schedule' as const,
+        status: 'success' as const,
+        queuedAt: new Date(Date.UTC(2026, 0, 5) + (h * 1500 + i) * 1000).toISOString(),
+        log: 'H'.repeat(4 * 1024),
+      }))),
+    ];
+
+    store.save(state);
+    await store.flush();
+
+    const global = handle.global.docs.get('global')!.state;
+    expect(Buffer.byteLength(JSON.stringify(global), 'utf8')).toBeLessThanOrEqual(12 * 1024 * 1024);
+    const kept = global.scheduledJobRuns || [];
+    expect(kept.filter((r: { jobId: string }) => r.jobId === 'job_rare').length,
+      '低频活任务的历史在落库时被全局排序抹掉了').toBe(3);
+  });
+
   it('compacts aggregate diagnostic state below the mongo single-document limit', async () => {
     const handle = new FakeSplitHandle();
     const store = new MongoSplitStateBackingStore(handle);

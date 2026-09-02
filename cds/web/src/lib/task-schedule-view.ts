@@ -243,7 +243,11 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
             : 'recovered';
 
   const tail = disabledCount > 0 && state !== 'all-disabled' ? `；另有 ${disabledCount} 个任务已停用` : '';
-  const skipTail = skipped ? `；今日有 ${skipped} 次因上一轮未结束而跳过` : '';
+  // 跳过的成因不止一种（上一轮未结束 / 发布目标忙 / 版本没变 / 等审批 / 任务已停用），
+  // 而这句话此前一律写成「因上一轮未结束」——给的是一个错的诊断和错的下一步
+  // （Codex #1471 P2）。在跳过原因结构化落地之前，这里只报事实、不报成因；
+  // 想知道为什么，展开那条运行记录看它自己的日志。
+  const skipTail = skipped ? `；今日有 ${skipped} 次跳过（原因见运行记录）` : '';
   const orphanTail = orphanFailed ? `；另有 ${orphanFailed} 次失败来自已删除的任务` : '';
 
   let headline: string;

@@ -167,6 +167,23 @@ describe('结论条', () => {
     const byLabel = Object.fromEntries(overview.stats.map((s) => [s.label, s.value]));
     expect(byLabel['接下来 6H']).toBe('2');
   });
+
+  /*
+   * Codex #1471 P2（第二十一轮）。跳过的成因不止一种：上一轮未结束、发布目标忙、
+   * 版本没变、等审批、任务已停用。结论条此前一律写成「因上一轮未结束」——给的是
+   * 一个错的诊断和错的下一步。在跳过原因结构化落地之前只报事实、不报成因。
+   * 红绿闭环：把成因写回句子里，本用例红。
+   */
+  it('结论条不给跳过编一个成因', () => {
+    const jobs = [job({ id: 'a' })];
+    const runs = [
+      run({ id: 'r1', jobId: 'a', status: 'success', queuedAt: '2026-08-31T09:00:00.000Z' }),
+      run({ id: 'r2', jobId: 'a', status: 'skipped', queuedAt: '2026-08-31T10:00:00.000Z', durationMs: 0 }),
+    ];
+    const overview = buildOverview(jobs, runs, NOW);
+    expect(overview.detail, '还在给跳过编成因').not.toContain('上一轮未结束');
+    expect(overview.detail).toContain('1 次跳过');
+  });
 });
 
 describe('今日调度轴', () => {
