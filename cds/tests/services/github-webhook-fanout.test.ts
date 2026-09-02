@@ -153,6 +153,43 @@ describe('一仓多项目 push 分发', () => {
     expect(result.deployRequest?.branchId).toContain('self-proj');
   });
 
+  /**
+   * Codex P1：GitHub 的 push payload 会截断 commits（`size` / `distinct_size` 报的
+   * 才是真实条数）。截断之后改动清单是「非空但不全」——最危险的一种输入：它看起来
+   * 像证据，却会让作用域判据得出反向结论，把真被波及的项目判成「未被波及」而静默
+   * 跳过它的部署。漏部署没有任何信号，所以这里必须 fail-open。
+   */
+  it('push 清单被截断时两个项目都照建，不许拿不全的清单判「未被波及」', async () => {
+    addProject('p-main', 'main-proj', '主项目');
+    addProject('p-self', 'self-proj', '自托管项目');
+    addProfileWithScope('p-main', 'api', ['prd-api/**']);
+    addProfileWithScope('p-self', 'cds', ['cds/**']);
+
+    // 清单里只看得到一条改 cds 的 commit，但 size 说其实有 30 条 ——
+    // 那 29 条里完全可能有改 prd-api 的
+    const truncated = { ...push(['cds/src/server.ts']), size: 30, distinct_size: 30 };
+    const result = await dispatcher().handle('push', truncated);
+
+    expect(worktree.createdWorktrees).toHaveLength(2);
+    const actions = [result.action, ...(result.fanout || []).map((r) => r.action)];
+    expect(actions).not.toContain('ignored-out-of-scope');
+  });
+
+  it('清单完整时仍照范围判（fail-open 不是永远放行）', async () => {
+    addProject('p-main', 'main-proj', '主项目');
+    addProject('p-self', 'self-proj', '自托管项目');
+    addProfileWithScope('p-main', 'api', ['prd-api/**']);
+    addProfileWithScope('p-self', 'cds', ['cds/**']);
+
+    // size 与实际条数对得上 = 清单可信
+    const complete = { ...push(['cds/src/server.ts']), size: 1, distinct_size: 1 };
+    const result = await dispatcher().handle('push', complete);
+
+    expect(worktree.createdWorktrees).toHaveLength(1);
+    const actions = [result.action, ...(result.fanout || []).map((r) => r.action)];
+    expect(actions).toContain('ignored-out-of-scope');
+  });
+
   it('反过来只改主项目目录时，自托管项目不动', async () => {
     addProject('p-main', 'main-proj', '主项目');
     addProject('p-self', 'self-proj', '自托管项目');

@@ -189,7 +189,13 @@ def _load_local_credentials() -> dict[str, Any]:
 def _cds_base() -> str:
     host = os.environ.get("CDS_HOST", "").strip()
     if not host:
-        die("CDS_HOST 未设置。请 export CDS_HOST=cds.miduo.org", code=1)
+        # 新机器上照着签发页跑完 `identity save --host ...` 之后，CDS_HOST 通常
+        # 仍然没设。save 时已经把主机记进了用户级凭证档，这里回退用它 ——
+        # 否则那条一次性命令跑成功了，下一条命令还是「CDS_HOST 未设置」。
+        host = _default_user_credential_host()
+    if not host:
+        die("CDS_HOST 未设置。请 export CDS_HOST=cds.miduo.org，"
+            "或先跑一次 `cdscli identity save --host <CDS 主机>`", code=1)
     if not host.startswith("http"):
         # 本机/localhost/IP 默认 http(无 TLS),公网域名默认 https
         # 用户可以显式 export CDS_HOST=http://xxx 或 https://xxx 覆盖。
@@ -1790,14 +1796,40 @@ _USER_CREDENTIALS_PATH = os.path.join(
 
 
 def _load_user_credential(host: str) -> str:
-    """按 CDS 主机取本机的用户级凭证。一个人可能连多个 CDS 实例，所以按 host 索引。"""
+    """按 CDS 主机取本机的用户级凭证。一个人可能连多个 CDS 实例，所以按 host 索引。
+
+    没给 host（新机器上 CDS_HOST 常常没设）时按两级回退：先用 save 时记下的默认
+    主机，再在只存了一把的情况下直接用那一把。缺了这层，「签发页给一条命令、
+    照着跑一次就好」那条路会在下一条命令上断掉 —— save 成功了，whoami / heal
+    却说找不到凭证。存了多把又没给 host 时不猜，返回空由调用方报错。
+    """
     try:
         with open(_USER_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return ""
-    entry = (data.get("hosts") or {}).get(_normalize_host_key(host)) or {}
+    hosts = data.get("hosts") or {}
+    key = _normalize_host_key(host)
+    if not key:
+        key = _normalize_host_key(str(data.get("defaultHost") or ""))
+    if not key and len(hosts) == 1:
+        key = next(iter(hosts))
+    entry = hosts.get(key) or {}
     return str(entry.get("credential") or "").strip()
+
+
+def _default_user_credential_host() -> str:
+    """save 时记下的默认 CDS 主机；只存了一把时就是那一把的主机。"""
+    try:
+        with open(_USER_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+    hosts = data.get("hosts") or {}
+    default = str(data.get("defaultHost") or "").strip()
+    if default:
+        return default
+    return next(iter(hosts)) if len(hosts) == 1 else ""
 
 
 def _normalize_host_key(host: str) -> str:
@@ -1820,6 +1852,9 @@ def save_user_credential(host: str, credential: str) -> str:
         "credential": credential,
         "savedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    # 记下默认主机：后续 whoami / heal 不必再要求 CDS_HOST，否则「照着签发页
+    # 跑一次 save 就好」这条路会在下一条命令上断掉。
+    data["defaultHost"] = _normalize_host_key(host)
     tmp = _USER_CREDENTIALS_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -3652,6 +3687,12 @@ def cmd_connect(args: argparse.Namespace) -> None:
         if new_project
         else f"申请连接并操作项目 {project_id}。"
     )
+    # 带上本机已保存的用户级凭证（如果有）。这条路由是免鉴权的，但服务端会顺手
+    # 认一次主体，并在批准时据此写一条项目授权 —— 少了这个头，批准只会签出一把
+    # 无主的钥匙，钥匙一丢又得重新申请，「批一次就够」根本不成立。
+    # 上面刻意清掉了项目级 / 静态密钥（申请阶段不该带旧凭据），用户级是另一回事：
+    # 它代表「我是谁」，正是这次申请要登记的东西。
+    saved_user_cred = _load_user_credential(host)
     status, body, _ = _request(
         "POST",
         request_path,
@@ -3659,6 +3700,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
         # 创建请求会触发持久化与事件通知；共享控制面忙时可能超过 10 秒，
         # 但该 POST 不能盲目重试，否则响应丢失时会生成重复审批单。
         timeout=30,
+        extra_headers=({"x-ai-access-key": saved_user_cred} if saved_user_cred else None),
     )
     if status not in (200, 201) or not isinstance(body, dict):
         _restore_auth_env(previous)
@@ -9170,7 +9212,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ident = sub.add_parser("identity", help="身份层：用户级凭证 / 我是谁 / 凭据自愈").add_subparsers(dest="sub", required=True)
     isave = ident.add_parser("save", help="保存用户级凭证到用户目录（跟着人走，不跟着仓库走）")
-    isave.add_argument("--credential", required=True, help="在「权限总览」签发的 cdsu_ 明文")
+    # 明文**不走命令行参数**：argv 对同机任何进程可见，还会留在 shell 历史里。
+    # 默认从 stdin 读（管道）或交互式隐藏输入；--credential 保留只为兼容既有脚本，
+    # 用到时会明确警告一次。
+    isave.add_argument("--credential", default="", help="（不推荐）直接给明文；会进 argv 与 shell 历史，改用 stdin 或交互输入")
     isave.add_argument("--host", default="", help="CDS 主机（默认读 CDS_HOST）")
     isave.set_defaults(func=cmd_identity_save)
     iwho = ident.add_parser("whoami", help="我是谁 / 我对哪些项目有授权")
@@ -9219,6 +9264,22 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _read_secret_stdin_or_prompt(prompt: str) -> str:
+    """读一段不该出现在 argv 里的秘密。
+
+    管道进来（`echo ... | cdscli identity save`）就读 stdin；交互式终端就用
+    getpass 隐藏回显。两条路都不经过命令行参数，也就不进 shell 历史、不被
+    同机的 `ps` 看见。
+    """
+    if not sys.stdin.isatty():
+        return sys.stdin.readline().strip()
+    try:
+        import getpass
+        return getpass.getpass(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
+
+
 def cmd_identity_save(args: argparse.Namespace) -> None:
     """把一张用户级凭证存进用户目录（跟着人走，不跟着仓库走）。"""
     host = str(getattr(args, "host", "") or os.environ.get("CDS_HOST", "")).strip()
@@ -9226,6 +9287,12 @@ def cmd_identity_save(args: argparse.Namespace) -> None:
         die("--host 必填（或先 export CDS_HOST）", code=1)
         return
     credential = str(getattr(args, "credential", "") or "").strip()
+    if credential:
+        # 兼容既有脚本，但要说清代价：这条路径已经把明文写进 argv 和 shell 历史了。
+        print("[warn] --credential 会把明文留在 argv 与 shell 历史里；"
+              "改用 `... | cdscli identity save` 或不带参数交互输入。", file=sys.stderr)
+    else:
+        credential = _read_secret_stdin_or_prompt("粘贴用户级凭证（cdsu_，输入不回显）：")
     if not credential.startswith("cdsu_"):
         die("用户级凭证应以 cdsu_ 开头；在 CDS 系统设置「权限总览」里签发", code=1)
         return
@@ -9235,11 +9302,11 @@ def cmd_identity_save(args: argparse.Namespace) -> None:
 
 def cmd_identity_whoami(args: argparse.Namespace) -> None:
     """我是谁 / 我对哪些项目有授权。"""
-    host = os.environ.get("CDS_HOST", "").strip()
+    host = os.environ.get("CDS_HOST", "").strip() or _default_user_credential_host()
     cred = _load_user_credential(host)
     if not cred:
         die("本机没有该 CDS 主机的用户级凭证。先在「权限总览」签发，再 "
-            "`cdscli identity save --credential cdsu_...`", code=1)
+            "`cdscli identity save`（粘贴时不回显）", code=1)
         return
     status, resp, _ = _request("GET", "/api/identity/whoami", timeout=15,
                                extra_headers={"x-ai-access-key": cred},
@@ -9274,7 +9341,7 @@ def cmd_identity_heal(args: argparse.Namespace) -> None:
     cred = _load_user_credential(host)
     if not cred:
         die("本机没有该 CDS 主机的用户级凭证，无法自愈。先在「权限总览」签发一张，"
-            "再 `cdscli identity save --credential cdsu_...`", code=1)
+            "再 `cdscli identity save`（粘贴时不回显）", code=1)
         return
 
     project_id = str(getattr(args, "project", "") or os.environ.get("CDS_PROJECT_ID", "")).strip()

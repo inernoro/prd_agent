@@ -38,6 +38,7 @@ import {
   selectReleasePreflightsToPrune,
   selectReleaseRunsToPrune,
 } from './release-retention.js';
+import { credentialUsability, hasActiveGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
 
@@ -1753,13 +1754,14 @@ export class StateService {
     buildProfiles: string[];
     infraServices: string[];
     routingRules: string[];
+    projectGrants: string[];
   } {
     if (!this.state.projects) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [] };
     }
     const project = this.state.projects.find((p) => p.id === id);
     if (!project) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [] };
     }
     if (project.legacyFlag) {
       throw new Error('Cannot remove the legacy default project');
@@ -1781,6 +1783,12 @@ export class StateService {
     const routingRulesToRemove = (this.state.routingRules || [])
       .filter((r) => r.projectId === id)
       .map((r) => r.id);
+    // 项目没了，指向它的授权也就不再授予任何东西 —— 但**吊销而不是删除**：
+    // 权限总览只列未吊销的授权（所以界面上立刻消失），审计行按吊销留存期保留。
+    // 少了这一步，删项目会在总览里留下一枚指向空气、连名字都显示不出来的授权。
+    const projectGrantsToRevoke = (this.state.projectGrants || [])
+      .filter((g) => g.projectId === id && !g.revokedAt)
+      .map((g) => g.id);
 
     // ── Cascade mutate ──
     for (const bid of branchesToRemove) {
@@ -1804,6 +1812,12 @@ export class StateService {
     // leave behind a dangling bucket that would revive on re-create with
     // the same id. _global is never removed.
     this.dropCustomEnvScope(id);
+    for (const grant of this.state.projectGrants || []) {
+      if (grant.projectId === id && !grant.revokedAt) {
+        grant.revokedAt = new Date().toISOString();
+        grant.revokedBy = 'system:project-deleted';
+      }
+    }
 
     this.state.projects = this.state.projects.filter((p) => p.id !== id);
     this.save();
@@ -1813,6 +1827,7 @@ export class StateService {
       buildProfiles: buildProfilesToRemove,
       infraServices: infraServicesToRemove,
       routingRules: routingRulesToRemove,
+      projectGrants: projectGrantsToRevoke,
     };
   }
 
@@ -2724,6 +2739,17 @@ export class StateService {
         // 身份层（2026-09-01）：新签发的项目级凭证是短命的（用即续）。存量密钥
         // 没有 expiresAt，这里恒为 false —— 与启用前逐字节一致，零回归。
         if (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()) continue;
+        // 归属主体的凭据，撤销要**当场**生效：界面上写着「停用后它名下所有凭证
+        // 立刻不可用」，撤销授权同理。只按密钥自己的 revokedAt 判，等于让这两条
+        // 承诺落空最长 30 天。判据不在这里另写一份，直接借身份层那一份。
+        //
+        // 只对带 principalId 的密钥生效 —— 存量密钥没有主体、没有授权行，
+        // 这段整个跳过，与启用前逐字节一致。
+        if (entry.principalId) {
+          const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
+          if (!credentialUsability(entry, principal, Date.now(), true).usable) continue;
+          if (!hasActiveGrant(this.state.projectGrants || [], entry.principalId, project.id)) continue;
+        }
         try {
           const entryBuf = Buffer.from(entry.hash, 'hex');
           if (entryBuf.length !== hashBuf.length) continue;
@@ -2744,6 +2770,14 @@ export class StateService {
     const entry = project?.agentKeys?.find((k) => k.id === keyId);
     if (!entry) return;
     entry.lastUsedAt = new Date().toISOString();
+    // 「用即续」必须在这里兑现：只更新 lastUsedAt 而不推 expiresAt，一直在干活的
+    // Agent 也会在第 30 天被锁在门外，而文档与界面都写着用一次就续期。
+    // 存量密钥没有 expiresAt —— 不给它凭空造一个，否则等于给永不过期的密钥
+    // 强加一个到期日。slideExpiry 少于一天不返回新值，不会把 state 写爆。
+    if (entry.expiresAt) {
+      const next = slideExpiry(entry.expiresAt, PROJECT_CREDENTIAL_TTL_DAYS);
+      if (next) entry.expiresAt = next;
+    }
     // Save is best-effort — a failed save here shouldn't block the request.
     try { this.save(); } catch { /* ignore */ }
   }

@@ -20,6 +20,7 @@
 
 import { Router } from 'express';
 import type { StateService } from '../services/state.js';
+import { clientAddressOf } from '../services/client-address.js';
 import { checkCredential, hashCredential, type CredentialFacts } from '../services/credential-self-check.js';
 
 export interface CredentialSelfCheckRouterDeps {
@@ -88,6 +89,11 @@ export function createCredentialSelfCheckRouter(deps: CredentialSelfCheckRouterD
         agentKeys: project.agentKeys,
       })),
       globalAgentKeys: state.globalAgentKeys,
+      // 身份层没启用时 state.userCredentials 是 undefined，自检据此报 not-checkable
+      // 而不是 never-issued —— 「查不了」和「没签过」不是一回事。
+      ...(state.userCredentials ? { userCredentials: state.userCredentials } : {}),
+      ...(state.principals ? { principals: state.principals } : {}),
+      ...(state.projectGrants ? { grants: state.projectGrants } : {}),
       ...(staticKeys.length > 0 ? { staticKeyHashes: staticKeys.map(hashCredential) } : {}),
       // 一条 active 连接都没有时也给空数组：那是「查过了，没有」，
       // 与「本次没法查」是两回事，不能都退化成 not-checkable。
@@ -96,7 +102,9 @@ export function createCredentialSelfCheckRouter(deps: CredentialSelfCheckRouterD
   }
 
   router.get('/credentials/self-check', (req, res) => {
-    const source = String(req.ip || req.socket?.remoteAddress || 'unknown');
+    // 不能用 req.ip：nginx 后面它对所有外部调用方是同一个值，一个人打满配额
+    // 其他人全吃 429 —— 而这条端点存在的全部理由就是给「进不来的人」自查。
+    const source = clientAddressOf(req as never);
     if (throttled(source, Date.now())) {
       res.status(429).json({
         error: 'too_many_requests',

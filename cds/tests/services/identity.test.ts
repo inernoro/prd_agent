@@ -11,7 +11,13 @@
  * 外加一条零回归：存量凭证没有 expiresAt = 永不过期，不许被新逻辑判成过期。
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import nodeCrypto from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
+import { StateService } from '../../src/services/state.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import {
   buildPrincipalOverview,
   cascadeRevokeTargets,
@@ -215,5 +221,288 @@ describe('buildPrincipalOverview —— 按主体聚合，不按钥匙平铺', (
     const view = result.rows[0].activeCredentials[0];
     expect(view.issuedCount).toBe(7);
     expect(view.lastIssuedAt).toBe('2026-08-31T00:00:00Z');
+  });
+});
+
+/**
+ * 删项目要连带吊销它的授权 —— 发布当天拆验证现场时撞出来的。
+ *
+ * 用用户级凭证建了个探针项目（自动写了一条 created 授权），验完删掉项目，
+ * whoami 里那条授权还在，而且因为项目没了连名字都显示不出来。授权本身不再
+ * 授予任何东西（项目都没了），但它会在权限总览里堆成一排指向空气的芯片 ——
+ * 而总览正是这次要让人「能看清、能撤销」的那一屏。
+ */
+describe('removeProject：授权跟着项目一起谢幕', () => {
+  let tmpDir: string;
+  let svc: StateService;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-grant-cascade-'));
+    svc = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    svc.load();
+    svc.addProject({ id: 'p-doomed', slug: 'doomed', name: '待删项目', kind: 'git' } as never);
+    svc.addProject({ id: 'p-keep', slug: 'keep', name: '留着的项目', kind: 'git' } as never);
+    svc.addPrincipal({
+      id: 'pr_x', name: '某台机器', kind: 'machine', status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+    svc.addProjectGrant({
+      id: 'pg_doomed', projectId: 'p-doomed', principalId: 'pr_x',
+      origin: 'created', grantedAt: new Date().toISOString(),
+    });
+    svc.addProjectGrant({
+      id: 'pg_keep', projectId: 'p-keep', principalId: 'pr_x',
+      origin: 'approved', grantedAt: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => {
+    flushAllJsonStateStores();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('删项目时它的授权被吊销，别的项目的授权原样不动', () => {
+    const summary = svc.removeProject('p-doomed');
+    expect(summary.projectGrants).toEqual(['pg_doomed']);
+
+    const grants = svc.getProjectGrants();
+    const doomed = grants.find((g) => g.id === 'pg_doomed');
+    const keep = grants.find((g) => g.id === 'pg_keep');
+    expect(doomed?.revokedAt).toBeTruthy();
+    expect(doomed?.revokedBy).toBe('system:project-deleted');
+    expect(keep?.revokedAt).toBeUndefined();
+  });
+
+  it('吊销而不是删除：总览里不再出现，审计行还留着', () => {
+    svc.removeProject('p-doomed');
+    // 留痕：行还在
+    expect(svc.getProjectGrants().some((g) => g.id === 'pg_doomed')).toBe(true);
+    // 但总览只列未吊销的，所以界面上立刻消失
+    const overview = buildPrincipalOverview({
+      principals: svc.getPrincipals(),
+      userCredentials: svc.getUserCredentials(),
+      projectCredentials: svc.getAllAgentKeysWithProject(),
+      grants: svc.getProjectGrants(),
+    });
+    const row = overview.rows.find((r) => r.principal.id === 'pr_x');
+    expect(row?.grants.map((g) => g.projectId)).toEqual(['p-keep']);
+  });
+
+  it('授权对该主体不再成立（自愈会重新要求页面批准）', () => {
+    svc.removeProject('p-doomed');
+    expect(hasActiveGrant(svc.getProjectGrants(), 'pr_x', 'p-doomed')).toBe(false);
+    expect(hasActiveGrant(svc.getProjectGrants(), 'pr_x', 'p-keep')).toBe(true);
+  });
+});
+
+/**
+ * Codex 第一轮的三条 P1 —— 都不是逻辑写错，是**承诺与代码对不上**：
+ * 界面逐字写着「停用后它名下所有凭证立刻不可用」，文档写着项目级凭据「用即续」，
+ * 而鉴权路径只看密钥自己的 revokedAt 与一个固定到期日。这三条各自都能编译、
+ * 各自都有测试、通读也挑不出，只有把「界面说什么」和「代码做什么」并排放才现形。
+ */
+describe('findAgentKeyForAuth：撤销当场生效、用一次就续期', () => {
+  let tmpDir: string;
+  let svc: StateService;
+  const projectKey = 'cdsp_owned_' + 'a'.repeat(24);
+  const legacyKey = 'cdsp_owned_' + 'b'.repeat(24);
+  const sha = (v: string) => nodeCrypto.createHash('sha256').update(v).digest('hex');
+  const inDays = (n: number) => new Date(Date.now() + n * 86400_000).toISOString();
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-auth-revoke-'));
+    svc = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    svc.load();
+    svc.addProject({ id: 'p1', slug: 'owned', name: '有主项目', kind: 'git' } as never);
+    svc.addPrincipal({
+      id: 'pr_a', name: '某台机器', kind: 'machine', status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+    svc.addProjectGrant({
+      id: 'pg_a', projectId: 'p1', principalId: 'pr_a',
+      origin: 'approved', grantedAt: new Date().toISOString(),
+    });
+    svc.addAgentKey('p1', {
+      id: 'k_owned', label: '有主', hash: sha(projectKey), scope: 'rw',
+      createdAt: new Date().toISOString(),
+      principalId: 'pr_a', expiresAt: inDays(30),
+    });
+    // 存量密钥：没有主体、没有到期日 —— 下面每一条都要证明它不受影响
+    svc.addAgentKey('p1', {
+      id: 'k_legacy', label: '存量', hash: sha(legacyKey), scope: 'rw',
+      createdAt: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => {
+    flushAllJsonStateStores();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('停用主体后，它名下的项目级凭据立刻鉴权失败（界面就是这么写的）', () => {
+    expect(svc.findAgentKeyForAuth(projectKey)).not.toBeNull();
+    svc.setPrincipalStatus('pr_a', 'disabled');
+    expect(svc.findAgentKeyForAuth(projectKey)).toBeNull();
+    // 恢复后重新可用 —— 停用是可逆的，不是把密钥烧了
+    svc.setPrincipalStatus('pr_a', 'active');
+    expect(svc.findAgentKeyForAuth(projectKey)).not.toBeNull();
+  });
+
+  it('撤销项目授权后，该主体在这个项目上的凭据立刻失效', () => {
+    expect(svc.findAgentKeyForAuth(projectKey)).not.toBeNull();
+    svc.revokeProjectGrant('pg_a');
+    expect(svc.findAgentKeyForAuth(projectKey)).toBeNull();
+  });
+
+  it('存量密钥不受主体与授权影响（零回归的那条线）', () => {
+    svc.setPrincipalStatus('pr_a', 'disabled');
+    svc.revokeProjectGrant('pg_a');
+    expect(svc.findAgentKeyForAuth(legacyKey)).not.toBeNull();
+  });
+
+  it('用一次就把到期日往后推（否则一直在干活的 Agent 第 30 天被锁在门外）', () => {
+    const before = svc.getState().projects![0].agentKeys!.find((k) => k.id === 'k_owned')!.expiresAt!;
+    // 先把到期日改近，模拟已经用了一阵子
+    svc.getState().projects![0].agentKeys!.find((k) => k.id === 'k_owned')!.expiresAt = inDays(3);
+    svc.touchAgentKeyLastUsed('p1', 'k_owned');
+    const after = svc.getState().projects![0].agentKeys!.find((k) => k.id === 'k_owned')!.expiresAt!;
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(inDays(29)));
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(before) - 86400_000);
+  });
+
+  it('存量密钥用一次不会被凭空安上一个到期日', () => {
+    svc.touchAgentKeyLastUsed('p1', 'k_legacy');
+    const entry = svc.getState().projects![0].agentKeys!.find((k) => k.id === 'k_legacy')!;
+    expect(entry.expiresAt).toBeUndefined();
+    expect(entry.lastUsedAt).toBeTruthy();
+  });
+});
+
+/**
+ * 总览显示的状态必须与鉴权同一口径（Codex P2，同一形状第三次出现）。
+ *
+ * 停用主体 / 撤销授权之后鉴权会拒，而总览仍把那张凭据算进「有效凭证」——
+ * 管理员刚点了停用，界面却告诉他对方还有 N 张有效凭证。改鉴权没改展示，
+ * 与「改鉴权没改自检」是同一个洞的两个面。
+ */
+describe('权限总览：显示状态跟着实际能不能用走', () => {
+  const now = Date.now();
+  const iso = (d: number) => new Date(now + d * 86400_000).toISOString();
+
+  const build = (opts: { principalStatus?: 'active' | 'disabled'; grantRevoked?: boolean }) =>
+    buildPrincipalOverview({
+      principals: [{
+        id: 'pr_a', name: '某台机器', kind: 'machine',
+        status: opts.principalStatus || 'active', createdAt: iso(-10),
+      }],
+      userCredentials: [],
+      projectCredentials: [{
+        id: 'ak1', label: '自助补发', hash: 'x', scope: 'rw',
+        createdAt: iso(-1), expiresAt: iso(20),
+        principalId: 'pr_a', projectId: 'p1', projectName: '演示项目',
+      } as never],
+      grants: [{
+        id: 'pg1', projectId: 'p1', principalId: 'pr_a', origin: 'approved',
+        grantedAt: iso(-5), ...(opts.grantRevoked ? { revokedAt: iso(-1) } : {}),
+      }],
+    });
+
+  it('一切正常时算有效', () => {
+    const row = build({}).rows[0];
+    expect(row.activeCredentials).toHaveLength(1);
+    expect(row.activeCredentials[0].status).toBe('active');
+  });
+
+  it('主体被停用后不再算有效凭证，状态写明是主体被停用', () => {
+    const row = build({ principalStatus: 'disabled' }).rows[0];
+    expect(row.activeCredentials).toHaveLength(0);
+    expect(row.retiredCredentials[0].status).toBe('principal-disabled');
+  });
+
+  it('授权被撤后不再算有效凭证，状态写明是授权被撤', () => {
+    const row = build({ grantRevoked: true }).rows[0];
+    expect(row.activeCredentials).toHaveLength(0);
+    expect(row.retiredCredentials[0].status).toBe('grant-revoked');
+  });
+
+  it('存量凭证没有主体，不受这两条影响（零回归）', () => {
+    const out = buildPrincipalOverview({
+      principals: [],
+      userCredentials: [],
+      projectCredentials: [{
+        id: 'ak_legacy', hash: 'x', scope: 'rw', createdAt: iso(-400),
+        projectId: 'p1', projectName: '演示项目',
+      } as never],
+      grants: [],
+    });
+    expect(out.unclaimed).toHaveLength(1);
+    expect(out.unclaimed[0].status).toBe('active');
+  });
+});
+
+/**
+ * 接线守卫：凡是判「这条凭据还能不能用」的地方，都得看主体（形状 3 的机械化）。
+ *
+ * 这个洞连着栽了四轮：第一轮让鉴权看主体与授权，之后自检没跟上、总览的项目级
+ * 凭据没跟上、总览的用户级凭据又没跟上 —— 每次都只补被点名的那一处，下一处照旧。
+ * 判据不该是「这三处对了」，而该是「不许再有第四处漏」：`credentialUsability`
+ * 的第二个参数是主体，谁传 undefined 谁就是在用一份看不见主体的判断。
+ */
+describe('接线守卫：判可用性的地方都带上主体', () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), 'src', 'services', 'identity.ts'),
+    'utf-8',
+  );
+
+  it('identity.ts 里没有 credentialUsability(..., undefined, ...) 这种写法', () => {
+    const calls = [...source.matchAll(/credentialUsability\(([^)]*)\)/g)].map((m) => m[1]);
+    // 判据不是恒真：确实扫到了调用
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    const blind = calls.filter((args) => /,\s*undefined\s*,/.test(args));
+    expect(blind).toEqual([]);
+  });
+
+  it('两个视图函数都接收主体参数（漏一个就是下一轮的 review 意见）', () => {
+    for (const fn of ['viewOfUserCredential', 'viewOfProjectCredential']) {
+      const idx = source.indexOf(`function ${fn}(`);
+      expect(idx, fn).toBeGreaterThan(-1);
+      // 参数表到返回类型为止。不能简单找第一个 `{` —— 参数里就有内联对象类型。
+      const end = source.indexOf('): PrincipalCredentialView', idx);
+      expect(end, `${fn} 签名格式变了，守卫要跟着改`).toBeGreaterThan(idx);
+      const signature = source.slice(idx, end);
+      expect(signature, fn).toContain('principal');
+    }
+  });
+
+  it('项目级凭据的视图还要看授权（主体正常但授权被撤同样进不来）', () => {
+    const idx = source.indexOf('function viewOfProjectCredential(');
+    const body = source.slice(idx, idx + 1800);
+    expect(body).toContain('hasActiveGrant');
+  });
+});
+
+/**
+ * 用户级凭证在总览里同样要跟着主体走（Codex 第四轮）。
+ * 上一轮只把主体接进了项目级凭据那一侧，隔壁那个函数原样没动。
+ */
+describe('权限总览：用户级凭证也跟着主体状态走', () => {
+  const iso = (d: number) => new Date(Date.now() + d * 86400_000).toISOString();
+  const build = (status: 'active' | 'disabled') => buildPrincipalOverview({
+    principals: [{ id: 'pr_a', name: '某台机器', kind: 'machine', status, createdAt: iso(-10) }],
+    userCredentials: [{
+      id: 'uc1', principalId: 'pr_a', hash: 'x', createdAt: iso(-1), expiresAt: iso(80),
+    } as never],
+    projectCredentials: [],
+    grants: [],
+  });
+
+  it('主体正常时算有效', () => {
+    expect(build('active').rows[0].activeCredentials).toHaveLength(1);
+  });
+
+  it('主体被停用后不再算有效，且说得出为什么', () => {
+    const row = build('disabled').rows[0];
+    expect(row.activeCredentials).toHaveLength(0);
+    expect(row.retiredCredentials[0].status).toBe('principal-disabled');
   });
 });

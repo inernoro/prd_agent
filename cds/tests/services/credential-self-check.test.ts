@@ -287,3 +287,234 @@ describe('与真实鉴权路径不漂移', () => {
     expect(result.revokedAt).toBeTruthy();
   });
 });
+
+/**
+ * 用户级凭证（`cdsu_`）—— 这一段是发布当天在生产上撞出来的。
+ *
+ * P1 写自检时身份层还不存在，判据只认四种面。等 P2/P3 把 `cdsu_` 加进来，
+ * 自检没跟着扩，于是一把**刚签发、正在生效**的用户级凭证被自检答成
+ * 「从未签发」—— 恰恰是这个端点最不该给出的那句话（判据与凭据面漂移，
+ * 见 predicate-and-wiring-discipline 形状 1）。下面这组用例把每一种结论
+ * 都钉住，凭据面再扩时漏掉就会红。
+ */
+describe('credential-self-check：用户级凭证与到期', () => {
+  const now = Date.now();
+  const iso = (deltaMs: number) => new Date(now + deltaMs).toISOString();
+  const userKey = 'cdsu_' + crypto.randomBytes(18).toString('base64url');
+
+  const factsWith = (over: Partial<Parameters<typeof checkCredential>[1]> = {}) => ({
+    projects: [],
+    userCredentials: [
+      {
+        id: 'uc_live',
+        principalId: 'pr_alice',
+        hash: hashCredential(userKey),
+        createdAt: iso(-1000),
+        expiresAt: iso(30 * 86400_000),
+      },
+    ],
+    principals: [{ id: 'pr_alice', name: '爱丽丝的笔记本', status: 'active' }],
+    ...over,
+  });
+
+  it('形状识别：cdsu_ 单独成一类，不再落进 static/unrecognized', () => {
+    expect(classifyCredential(userKey)).toBe('user');
+  });
+
+  it('生效中的用户级凭证报 active —— 这是发布当天生产上答错的那一条', () => {
+    const r = checkCredential(userKey, factsWith());
+    expect(r.kind).toBe('user');
+    expect(r.status).toBe('active');
+    expect(r.keyId).toBe('uc_live');
+    // reach 必须同时说清「能到哪」和「到不了哪」——只写一半就是又一个含糊结论
+    expect(r.reach).toContain('签发项目级凭证');
+    expect(r.reach).toContain('不能');
+  });
+
+  it('到期与被吊销分得开：两者下一步不同，不许都答 revoked', () => {
+    const expired = checkCredential(userKey, factsWith({
+      userCredentials: [{
+        id: 'uc_old',
+        principalId: 'pr_alice',
+        hash: hashCredential(userKey),
+        createdAt: iso(-100 * 86400_000),
+        expiresAt: iso(-86400_000),
+      }],
+    }));
+    expect(expired.status).toBe('expired');
+    // 断言的是「两者结论与下一步不同」，不是文案里出不出现某个词
+    // （文案里刻意点明「到期与被吊销不同」，逐字禁词就成了反向锁死）
+    expect(expired.summary).toContain('到期');
+
+    const revoked = checkCredential(userKey, factsWith({
+      userCredentials: [{
+        id: 'uc_gone',
+        principalId: 'pr_alice',
+        hash: hashCredential(userKey),
+        createdAt: iso(-1000),
+        revokedAt: iso(-500),
+      }],
+    }));
+    expect(revoked.status).toBe('revoked');
+    expect(revoked.nextStep).not.toBe(expired.nextStep);
+    // 级联是这条凭据面的特有后果，必须在下一步里讲明白
+    expect(revoked.nextStep).toContain('级联');
+  });
+
+  it('主体被停用时报 principal-disabled，而不是 active —— 重新签发没用', () => {
+    const r = checkCredential(userKey, factsWith({
+      principals: [{ id: 'pr_alice', name: '爱丽丝的笔记本', status: 'disabled' }],
+    }));
+    expect(r.status).toBe('principal-disabled');
+    expect(r.summary).toContain('爱丽丝的笔记本');
+  });
+
+  it('身份层未启用时报 not-checkable，不许退化成 never-issued', () => {
+    const r = checkCredential(userKey, { projects: [] });
+    expect(r.kind).toBe('user');
+    expect(r.status).toBe('not-checkable');
+  });
+
+  it('身份层已启用但没这把 → never-issued', () => {
+    const r = checkCredential('cdsu_' + crypto.randomBytes(18).toString('base64url'), factsWith());
+    expect(r.status).toBe('never-issued');
+  });
+
+  it('项目级凭据同样认到期：新签发的项目级凭据是 30 天短命的', () => {
+    const projectKey = 'cdsp_demo_' + crypto.randomBytes(18).toString('base64url');
+    const r = checkCredential(projectKey, {
+      projects: [{
+        id: 'p1',
+        slug: 'demo',
+        name: '演示',
+        agentKeys: [{
+          id: 'ak_expired',
+          hash: hashCredential(projectKey),
+          createdAt: iso(-40 * 86400_000),
+          expiresAt: iso(-86400_000),
+        }],
+      }],
+    });
+    expect(r.status).toBe('expired');
+    expect(r.projectId).toBe('p1');
+    // 项目级到期是可自愈的，下一步必须指向自愈而不是「找管理员」
+    expect(r.nextStep).toContain('heal');
+  });
+
+  it('存量项目级凭据没有 expiresAt，判定与加这层之前逐字一致（零回归）', () => {
+    const projectKey = 'cdsp_demo_' + crypto.randomBytes(18).toString('base64url');
+    const r = checkCredential(projectKey, {
+      projects: [{
+        id: 'p1',
+        slug: 'demo',
+        agentKeys: [{ id: 'ak_legacy', hash: hashCredential(projectKey), createdAt: iso(-400 * 86400_000) }],
+      }],
+    });
+    expect(r.status).toBe('active');
+  });
+
+  it('结果里绝不出现明文或哈希', () => {
+    const serialized = JSON.stringify(checkCredential(userKey, factsWith()));
+    expect(serialized).not.toContain(userKey);
+    expect(serialized).not.toContain(hashCredential(userKey));
+  });
+});
+
+/**
+ * 接线守卫：凭据面再扩时，自检不许再落下（形状 2 / 形状 7）。
+ *
+ * 这次的洞不是逻辑写错，是 `server.ts` 加了第五种凭据面而自检没跟上——两处
+ * 各自成立、编译过、测试全绿，只有拿真凭据打一次生产才现形。所以判据不能停在
+ * 「cdsu_ 现在认得出」，得钉住「server 认得的每一种前缀，自检都认得出」，
+ * 否则下一种面照样漏。
+ */
+describe('credential-self-check：与鉴权路径的凭据面对齐', () => {
+  it('server.ts 鉴权分支认得的每一种前缀，classifyCredential 都必须单独归类', () => {
+    const serverSource = fs.readFileSync(
+      path.join(process.cwd(), 'src', 'server.ts'),
+      'utf-8',
+    );
+    const prefixes = Array.from(
+      new Set(
+        Array.from(serverSource.matchAll(/startsWith\('(cds[a-z]*_)'\)/g)).map((m) => m[1]),
+      ),
+    );
+    // 前缀一个都没扫到 = 正则跟源码漂了，不能当成「全都对齐」放过去
+    expect(prefixes.length).toBeGreaterThanOrEqual(3);
+    expect(prefixes).toContain('cdsu_');
+
+    const kinds = prefixes.map((p) => classifyCredential(p + 'x'.repeat(24)));
+    // 'static' 是「认不出前缀时的兜底」，任何一种被 server 显式识别的前缀
+    // 落到它上面，就说明自检漏了这一面
+    expect(kinds).not.toContain('static');
+    expect(kinds).not.toContain('unrecognized');
+    // 且必须彼此可分辨，不能几种面共用一个结论
+    expect(new Set(kinds).size).toBe(prefixes.length);
+  });
+});
+
+/**
+ * 自检必须认得「授权被撤」这一档（Codex P2）。
+ *
+ * 上一轮我让鉴权在授权被撤时拒掉一把没吊销、没过期的项目级凭据 —— 却没同步给
+ * 自检这份事实。于是自检对着**它自己造成的那个 401** 回答「有效」，正是这个端点
+ * 最不该给出的答案。同一个判断被拆在两处、只改了一处，是本仓库反复踩的形状。
+ */
+describe('credential-self-check：授权被撤要单独报出来', () => {
+  const projectKey = 'cdsp_demo_' + crypto.randomBytes(18).toString('base64url');
+  const iso = (d: number) => new Date(Date.now() + d * 86400_000).toISOString();
+
+  const facts = (grants: Array<{ principalId: string; projectId: string; revokedAt?: string }>) => ({
+    projects: [{
+      id: 'p1', slug: 'demo', name: '演示项目',
+      agentKeys: [{
+        id: 'ak1', principalId: 'pr_a', hash: hashCredential(projectKey),
+        createdAt: iso(-1), expiresAt: iso(20),
+      }],
+    }],
+    principals: [{ id: 'pr_a', name: '某台机器', status: 'active' }],
+    grants,
+  });
+
+  it('授权还在：active', () => {
+    const r = checkCredential(projectKey, facts([{ principalId: 'pr_a', projectId: 'p1' }]));
+    expect(r.status).toBe('active');
+  });
+
+  it('授权被撤：grant-revoked，而不是谎报 active', () => {
+    const r = checkCredential(projectKey, facts([
+      { principalId: 'pr_a', projectId: 'p1', revokedAt: iso(-1) },
+    ]));
+    expect(r.status).toBe('grant-revoked');
+    expect(r.projectId).toBe('p1');
+    // 下一步必须指向「重新批准」，而不是「重新签发」——换把钥匙照样进不来
+    expect(r.nextStep).toContain('批准');
+    expect(r.nextStep).toContain('重新签发也进不来');
+  });
+
+  it('压根没有授权行，也不是 active（自愈签出后授权被删的情形）', () => {
+    const r = checkCredential(projectKey, facts([]));
+    expect(r.status).toBe('grant-revoked');
+  });
+
+  it('存量密钥没有主体，不参与授权判定（零回归）', () => {
+    const legacyKey = 'cdsp_demo_' + crypto.randomBytes(18).toString('base64url');
+    const r = checkCredential(legacyKey, {
+      projects: [{
+        id: 'p1', slug: 'demo',
+        agentKeys: [{ id: 'ak_legacy', hash: hashCredential(legacyKey), createdAt: iso(-400) }],
+      }],
+      principals: [],
+      grants: [],
+    });
+    expect(r.status).toBe('active');
+  });
+
+  it('拿不到授权事实时不猜（旧实例 / 身份层未启用）', () => {
+    const r = checkCredential(projectKey, {
+      projects: facts([]).projects,
+      principals: [{ id: 'pr_a', name: '某台机器', status: 'active' }],
+    });
+    expect(r.status).toBe('active');
+  });
+});

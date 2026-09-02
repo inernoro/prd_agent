@@ -163,7 +163,14 @@ export interface PrincipalCredentialView {
   lastUsedAt?: string;
   revokedAt?: string;
   revokedBy?: string;
-  status: 'active' | 'expired' | 'revoked';
+  /**
+   * 这条凭据**当前实际能不能用**，与鉴权同一口径。
+   *
+   * 只看凭据自己的吊销与到期是不够的：主体被停用、项目授权被撤，鉴权都会拒，
+   * 而总览若仍把它算进「有效凭证」，这一屏就在骗管理员——他刚点了停用，界面
+   * 却告诉他对方还有 N 张有效凭证。
+   */
+  status: 'active' | 'expired' | 'revoked' | 'principal-disabled' | 'grant-revoked';
   /** 用户级凭证专有：累计签出过几张下游凭证（签发留痕） */
   issuedCount?: number;
   lastIssuedAt?: string;
@@ -196,8 +203,12 @@ export interface OverviewResult {
   archivedCount: number;
 }
 
-function viewOfUserCredential(cred: UserCredential, now: number): PrincipalCredentialView {
-  const usability = credentialUsability(cred, undefined, now);
+function viewOfUserCredential(
+  cred: UserCredential,
+  now: number,
+  principal?: Pick<Principal, 'status'>,
+): PrincipalCredentialView {
+  const usability = credentialUsability(cred, principal, now);
   return {
     id: cred.id,
     kind: 'user',
@@ -207,7 +218,13 @@ function viewOfUserCredential(cred: UserCredential, now: number): PrincipalCrede
     ...(cred.lastUsedAt ? { lastUsedAt: cred.lastUsedAt } : {}),
     ...(cred.revokedAt ? { revokedAt: cred.revokedAt } : {}),
     ...(cred.revokedBy ? { revokedBy: cred.revokedBy } : {}),
-    status: usability.usable ? 'active' : usability.reason === 'revoked' ? 'revoked' : 'expired',
+    status: usability.usable
+      ? 'active'
+      : usability.reason === 'revoked'
+        ? 'revoked'
+        : usability.reason === 'principal-disabled'
+          ? 'principal-disabled'
+          : 'expired',
     ...(cred.issuedCount !== undefined ? { issuedCount: cred.issuedCount } : {}),
     ...(cred.lastIssuedAt ? { lastIssuedAt: cred.lastIssuedAt } : {}),
   };
@@ -217,8 +234,14 @@ function viewOfProjectCredential(
   key: AgentKey & { projectId: string },
   projectName: string | undefined,
   now: number,
+  principal?: Pick<Principal, 'status'>,
+  grants?: readonly ProjectGrant[],
 ): PrincipalCredentialView {
-  const usability = credentialUsability(key, undefined, now);
+  const usability = credentialUsability(key, principal, now);
+  // 授权被撤时鉴权照样拒 —— 与 findAgentKeyForAuth 同一条判据，别让总览显示成有效。
+  const grantGone = Boolean(key.principalId) && Boolean(grants)
+    && usability.usable
+    && !hasActiveGrant(grants!, key.principalId!, key.projectId);
   return {
     id: key.id,
     kind: 'project',
@@ -229,7 +252,15 @@ function viewOfProjectCredential(
     ...(key.expiresAt ? { expiresAt: key.expiresAt } : {}),
     ...(key.lastUsedAt ? { lastUsedAt: key.lastUsedAt } : {}),
     ...(key.revokedAt ? { revokedAt: key.revokedAt } : {}),
-    status: usability.usable ? 'active' : usability.reason === 'revoked' ? 'revoked' : 'expired',
+    status: grantGone
+      ? 'grant-revoked'
+      : usability.usable
+        ? 'active'
+        : usability.reason === 'revoked'
+          ? 'revoked'
+          : usability.reason === 'principal-disabled'
+            ? 'principal-disabled'
+            : 'expired',
   };
 }
 
@@ -265,7 +296,9 @@ export function buildPrincipalOverview(input: OverviewInput): OverviewResult {
   const unclaimed: PrincipalCredentialView[] = [];
 
   for (const cred of input.userCredentials) {
-    const view = viewOfUserCredential(cred, now);
+    const view = viewOfUserCredential(
+      cred, now, input.principals.find((p) => p.id === cred.principalId),
+    );
     const target = bucket(cred.principalId);
     if (view.status === 'active') target.active.push(view);
     else if (withinRetention(view, now, retentionDays)) target.retired.push(view);
@@ -273,7 +306,12 @@ export function buildPrincipalOverview(input: OverviewInput): OverviewResult {
   }
 
   for (const key of input.projectCredentials) {
-    const view = viewOfProjectCredential(key, key.projectName || nameById[key.projectId], now);
+    const principal = key.principalId
+      ? input.principals.find((p) => p.id === key.principalId)
+      : undefined;
+    const view = viewOfProjectCredential(
+      key, key.projectName || nameById[key.projectId], now, principal, input.grants,
+    );
     if (!key.principalId) {
       // 存量凭证没有主体：明说「未认领」，不假装它们不存在，也不硬塞给某个主体。
       if (view.status === 'active' || withinRetention(view, now, retentionDays)) unclaimed.push(view);

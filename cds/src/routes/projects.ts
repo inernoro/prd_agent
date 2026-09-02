@@ -27,6 +27,7 @@
 import { Router } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
+import { hasActiveGrant } from '../services/identity.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
 import { processTeardownTombstones, computeCdsInstanceId } from '../services/orphan-container-reaper.js';
@@ -1535,9 +1536,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       const projectScope = (
         req as unknown as { cdsProjectKey?: { projectId: string } }
       ).cdsProjectKey?.projectId;
+      // 用户级凭证（cdsu_）走到这条路由时只被盖了 cdsPrincipal，上面那句按项目级
+      // 凭证过滤对它一律不生效 —— 它会看到**全部**项目的仓库地址与配置摘要。
+      // 这条路由是身份层放行的「发现自己能干什么」入口，所以可见范围必须等于
+      // 它的授权范围：判据与自愈签发同一条（未撤销的授权算数）。
+      const principalId = (
+        req as unknown as { cdsPrincipal?: { principalId: string } }
+      ).cdsPrincipal?.principalId;
+      const grants = principalId ? stateService.getProjectGrants() : [];
       const projects = stateService
         .getProjects()
-        .filter((project) => !projectScope || project.id === projectScope);
+        .filter((project) => !projectScope || project.id === projectScope)
+        .filter((project) => !principalId || hasActiveGrant(grants, principalId, project.id));
       const usageMap = resourceUsageLookup();
       // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.
       // Static AI_ACCESS_KEY / cdsg_ global key callers get key names but

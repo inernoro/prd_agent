@@ -30,7 +30,7 @@ interface CredentialView {
   expiresAt?: string;
   lastUsedAt?: string;
   revokedAt?: string;
-  status: 'active' | 'expired' | 'revoked';
+  status: 'active' | 'expired' | 'revoked' | 'principal-disabled' | 'grant-revoked';
   issuedCount?: number;
   lastIssuedAt?: string;
 }
@@ -97,6 +97,26 @@ function remaining(expiresAt?: string): string {
   return days >= 1 ? `还剩 ${days} 天` : '不足 1 天';
 }
 
+/**
+ * 这条退役凭证为什么不能用。
+ *
+ * 服务端把「主体被停用」「授权被撤」与「到期」分成了三种状态，界面若把非
+ * `revoked` 的一律当成到期，管理员看到的就是「过期于 —」（这两种情况根本没有
+ * 到期时间）—— 明明是他自己刚点的停用，界面却说不出原因。
+ */
+function retiredReason(cred: CredentialView): string {
+  switch (cred.status) {
+    case 'revoked':
+      return `吊销于 ${formatDate(cred.revokedAt)}`;
+    case 'principal-disabled':
+      return '主体已停用，名下凭证一律不可用';
+    case 'grant-revoked':
+      return '该项目的授权已被撤销';
+    default:
+      return `过期于 ${formatDate(cred.expiresAt)}`;
+  }
+}
+
 export function IdentityTab({ onToast }: Props): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'idle' });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -116,17 +136,25 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
 
   useEffect(() => { void load(); }, [load]);
 
-  const issue = useCallback(async () => {
+  /**
+   * 签一张用户级凭证。
+   *
+   * 传 principalId = 给**已有主体**补一张（换了机器、凭证丢了、到期了）——
+   * 这条路径是整套自愈的入口：新建主体名下没有任何项目授权，补签成新主体
+   * 等于把「批一次就够」作废，人得重新批一遍。
+   * 不传 = 新建一个主体。
+   */
+  const issue = useCallback(async (principalId?: string) => {
     const name = newName.trim();
-    if (!name) { onToast('先给这台机器 / 这个智能体起个名字'); return; }
+    if (!principalId && !name) { onToast('先给这台机器 / 这个智能体起个名字'); return; }
     setCreating(true);
     try {
       const res = await apiRequest<{ plaintext: string; reach: string }>('/api/identity/user-credentials', {
         method: 'POST',
-        body: { name },
+        body: principalId ? { principalId } : { name },
       });
       setIssued({ plaintext: res.plaintext, reach: res.reach });
-      setNewName('');
+      if (!principalId) setNewName('');
       await load();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
@@ -217,6 +245,28 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
               <Button type="button" size="sm" variant="ghost" onClick={() => setIssued(null)}>我已存好</Button>
             </div>
             <p className="mt-2 text-xs leading-6 text-muted-foreground">{issued.reach}</p>
+            {/*
+              光说「复制、存好」不够：whoami 与自愈只读用户目录下那个文件，
+              存进密码管理器或随手贴进别处，自愈会报「本机没有用户级凭证」——
+              这一屏只出现一次，所以要在这里就把落地方式说清（Codex P2）。
+            */}
+            <div className="mt-3 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--muted))]/40 p-3">
+              <p className="mb-1 text-xs font-semibold">在那台机器上执行一次，凭证才真正落地</p>
+              {/*
+                必须带上主机：新机器 / 新 clone 上没有仓库里那份凭据文件，
+                CDS_HOST 也往往没设，命令会在收凭证之前就先失败 —— 而这一屏
+                只出现一次，给一条跑不通的命令等于没给。主机就是当前这个页面
+                的域名，直接从地址栏取，不写死。
+              */}
+              <pre className="overflow-x-auto rounded bg-[hsl(var(--background))] px-2 py-1.5 font-mono text-[11px] leading-5">
+                {`cdscli identity save --host ${typeof window === 'undefined' ? '<CDS 主机>' : window.location.host}`}
+              </pre>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                回车后粘贴上面这串（不回显），会写进用户目录并设为仅本人可读。
+                它跟着人走、不跟着仓库走，所以挪目录、重新 clone 都不会丢。
+                <span className="font-medium">不要把明文写进命令行参数</span> —— 那样它会留在 shell 历史里。
+              </p>
+            </div>
           </div>
         ) : null}
       </section>
@@ -250,6 +300,16 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
                 有效凭证 {row.activeCredentials.length} · 项目授权 {row.grants.length}
               </span>
               <span className="ml-auto text-xs text-muted-foreground">最近活动 {formatDate(row.principal.lastSeenAt)}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={creating || disabled}
+                title={disabled ? '主体已停用，先恢复再补签' : '为这个主体再签一张用户级凭证（换机器 / 凭证丢了 / 到期）'}
+                onClick={() => void issue(row.principal.id)}
+              >
+                <KeyRound /> 补签凭证
+              </Button>
               <ConfirmAction
                 title={disabled ? '恢复该主体?' : '停用该主体?'}
                 description={disabled
@@ -335,7 +395,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
                 ? row.retiredCredentials.map((cred) => (
                     <div key={cred.id} className="flex flex-wrap items-center gap-3 px-3 py-1 text-xs text-muted-foreground">
                       <span className="font-mono text-[11px]">{cred.id}</span>
-                      <span>{cred.status === 'revoked' ? `吊销于 ${formatDate(cred.revokedAt)}` : `过期于 ${formatDate(cred.expiresAt)}`}</span>
+                      <span>{retiredReason(cred)}</span>
                     </div>
                   ))
                 : null}
@@ -349,7 +409,9 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
           <h4 className="mb-1 text-xs font-semibold text-[hsl(var(--warn))]">未认领的存量凭证 {unclaimed.length} 张</h4>
           <p className="mb-2 text-xs leading-6 text-muted-foreground">
             这些是身份层之前签发的项目级凭证，还没有归属主体。它们照常可用，只是不享受
-            「换机器自助补发」和「按主体聚合」。下次使用时认领，或在项目卡上重签一张即可。
+            「换机器自助补发」和「按主体聚合」。要让某台机器拿到这两样，让它用自己的用户级
+            凭证跑一次自愈、拿一张有主的新凭证，再吊销这张旧的。存量凭证不会自己认领 ——
+            光看它被使用，认不出背后是谁。
           </p>
           <div className="flex flex-wrap gap-2 text-xs">
             {unclaimed.slice(0, 30).map((cred) => (

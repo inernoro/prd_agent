@@ -407,6 +407,8 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="access-keys">
                   {activeTab === 'access-keys' ? <AccessKeysTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="identity">
                   {activeTab === 'identity' ? <IdentityTab onToast={setToast} /> : null}
                 </TabsContent>
                 <TabsContent value="github">
