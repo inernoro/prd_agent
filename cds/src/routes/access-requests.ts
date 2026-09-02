@@ -24,6 +24,7 @@ import type { StateService } from '../services/state.js';
 import type { AccessRequest, AgentKey, GlobalAgentKey } from '../types.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { resolveUserCredential } from './identity.js';
+import { PROJECT_CREDENTIAL_TTL_DAYS } from '../services/identity.js';
 
 export interface AccessRequestsRouterDeps {
   stateService: StateService;
@@ -371,7 +372,13 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
           grantedAt: now.toISOString(),
           ...(typeof decidedBy === 'string' ? { grantedBy: decidedBy } : {}),
         });
+        // 挂上主体就等于把它变成身份层凭据，到期策略必须一并生效：
+        // findAgentKeyForAuth 刻意把「没有 expiresAt」判为存量永不过期的密钥，
+        // 少了这一行，走批准这条路签出来的凭据会永久绕过 30 天闲置到期与用即续。
         keyEntry.principalId = item.principalId;
+        keyEntry.expiresAt = new Date(
+          now.getTime() + PROJECT_CREDENTIAL_TTL_DAYS * 24 * 60 * 60 * 1000,
+        ).toISOString();
       }
     } catch (err) {
       res.status(500).json({ error: 'state_save_failed', message: (err as Error).message });

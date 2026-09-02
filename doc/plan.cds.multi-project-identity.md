@@ -233,49 +233,8 @@ Review 修复提交达 8 个，命中 CLAUDE.md 5.5 的熔断条件。按规则�
 
 **没做的一件事**：修完之后要把这两处发上去，发现生产 CDS 已被另一条会话切走（它把本分支并进了自己那条分支再部署，所以身份层本身仍在线上跑，缺的只有这两个修复）。控制面切换闸门按设计拒绝了非快进覆盖 —— 抢回来会把对方正在跑的部署顶掉，那是要人来拍的板，不是我该自己决定的。这也顺带实测了隔离台账通道 5：生产 CDS 是单实例、所有 Agent 共用，谁 self-update 谁就替所有人换了版本。
 
-## 七、实现来源与关联
+## 七、关联文档
 
-P1 的代码与回归：
+- [debt.cds.multi-project-identity.md](debt.cds.multi-project-identity.md) —— 交付时声明的已知边界固化在这里：一个仓库绑不了第二个项目、作用域只有一类、撤销授权缺界面入口、存量凭据无法归属。
 
-- `cds/src/services/credential-self-check.ts` —— 六态判据（纯函数）
-- `cds/src/routes/credential-self-check.ts` —— 免鉴权端点与节流
-- `cds/src/server.ts`、`cds/src/middleware/github-auth.ts` —— 两处免鉴权白名单
-- `cds/tests/services/credential-self-check.test.ts` —— 判据回归 12 例（含红绿闭环、漂移守卫、不泄密）
-- `cds/tests/routes/credential-self-check.test.ts` —— 路由回归 9 例（含接线守卫）
-
-P4 的代码与回归：
-
-- `cds/src/services/project-scope.ts` —— 项目作用域判据（并集 + 匹配 + fail-open）
-- `cds/src/services/state.ts` —— `findProjectsByRepoFullName`（复数），单数版委托给它
-- `cds/src/services/github-webhook-dispatcher.ts` —— push 按项目分发、`mergePushResults`、`handlePushForProject`
-- `cds/src/routes/github-webhook.ts` —— 部署派发抽成函数，主结果与 fanout 一视同仁
-- `cds/src/services/compose-parser.ts` —— 服务级 `cds.build-scope` 标签
-- `cds/cds-compose.selfhost.yml` —— 自托管项目声明 `cds/**`
-- `cds/tests/services/project-scope.test.ts`、`cds/tests/services/github-webhook-fanout.test.ts`、`cds/tests/routes/github-webhook.test.ts`
-
-P2 / P3 的代码与回归：
-
-- `cds/src/types.ts` —— 主体 / 用户级凭证 / 项目授权三张表；AgentKey 增量加 `principalId`、`issuedByCredentialId`、`expiresAt`
-- `cds/src/services/identity.ts` —— 全部判据（可用性三态、滑动续期、授权判定、级联目标、总览聚合）
-- `cds/src/services/state.ts` —— 三张表的读写；项目级凭证鉴权加过期判定（存量无字段 = 永不过期）
-- `cds/src/routes/identity.ts` —— 签发 / 自愈 / 总览 / 撤销 / 停用 / 授权，以及用户级凭证可达路由的唯一一张表
-- `cds/src/server.ts` —— `cdsu_` 鉴权分支与 auth=disabled 下的同款兜底 stamp
-- `cds/src/routes/projects.ts` —— 建项目自动写「创建型」授权
-- `cds/web/src/pages/cds-settings/tabs/IdentityTab.tsx` —— 权限总览页
-- `.claude/skills/cds/cli/cdscli.py` —— `identity save / whoami / heal` 与用户目录凭证存储
-- `cds/tests/services/identity.test.ts`、`cds/tests/routes/identity.test.ts`
-
-P5 的代码与回归：
-
-- `cds/src/services/preview-dispatch.ts` —— 四态判定与地址行格式
-- `cds/src/routes/branches.ts` —— `POST /api/preview-dispatch`（入口 URL 取 `computeBranchWebEntries`，与 `GET /api/branches` 同源）
-- `.claude/skills/cds/cli/cdscli.py` —— `preview-url` 优先走服务端派定，老 CDS 自动回退
-- `.claude/skills/preview-url/SKILL.md` —— 决策链路与输出格式同步更新
-- `cds/tests/services/preview-dispatch.test.ts`、`cds/tests/routes/branches.test.ts`
-
-规则与设计：
-
-- `.claude/rules/predicate-and-wiring-discipline.md` —— 本计划的守卫全部照它的形状 2 / 3 / 7 设
-- `.claude/rules/cross-project-isolation.md` —— 数据类依赖为什么要单独确认
-- [doc/design.cds.config-tree.md](./design.cds.config-tree.md) —— 依赖声明为什么住 CDS 侧而不是 compose
-- [doc/design.cds.self-hosting.md](./design.cds.self-hosting.md) —— 自托管项目今天为什么收不到 push
+改动落在哪些文件，读源码与本 PR 的提交记录，本文不再复述 —— 逐文件清单会漂，而且它要求人去核对的正是机器自己就能给出的东西。

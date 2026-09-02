@@ -284,6 +284,31 @@ describe('接入申请批准 = 写授权，不只是发钥匙', () => {
     expect(decideProjectCredentialIssue(svc.getPrincipal('pr_a'), svc.getProjectGrants(), 'p1').allowed).toBe(true);
   });
 
+  it('批准时挂上主体的凭据要带 30 天到期（否则永久绕过用即续策略）', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'src', 'routes', 'access-requests.ts'),
+      'utf-8',
+    );
+    const idx = source.indexOf('keyEntry.principalId = item.principalId;');
+    expect(idx).toBeGreaterThan(-1);
+    // 挂主体与设到期必须在一起：findAgentKeyForAuth 把「没有 expiresAt」
+    // 判为存量永不过期的密钥，只挂主体不设到期 = 身份层凭据永不过期
+    expect(source.slice(idx, idx + 300)).toContain('expiresAt');
+    expect(source).toContain('PROJECT_CREDENTIAL_TTL_DAYS');
+  });
+
+  it('命令行发起接入申请时带上已保存的用户级凭证（否则批准写不出授权）', () => {
+    const cli = fs.readFileSync(
+      path.join(process.cwd(), '..', '.claude', 'skills', 'cds', 'cli', 'cdscli.py'),
+      'utf-8',
+    );
+    const idx = cli.indexOf('request_path,');
+    expect(idx).toBeGreaterThan(-1);
+    // connect 会刻意清掉项目级 / 静态密钥，但用户级代表「我是谁」，
+    // 正是这次申请要登记的东西；不带它，批准只会签出一把无主钥匙
+    expect(cli.slice(Math.max(0, idx - 800), idx + 600)).toContain('saved_user_cred');
+  });
+
   it('批准路由源码里真的写了授权（不是只在测试里手动补一行）', () => {
     const source = fs.readFileSync(
       path.join(process.cwd(), 'src', 'routes', 'access-requests.ts'),

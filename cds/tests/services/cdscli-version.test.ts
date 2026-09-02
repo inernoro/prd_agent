@@ -79,3 +79,36 @@ describe('cdscli identity save：明文不走命令行参数', () => {
     expect(tab).toContain('window.location.host');
   });
 });
+
+/**
+ * 新机器上那条一次性命令跑完之后，下一条命令还得能用（Codex 第六轮 P2）。
+ *
+ * `identity save --host ...` 之前只把 host 当索引键，不落成默认值；而
+ * whoami / heal 只读 CDS_HOST。于是签发页给的命令**成功了**，紧接着的
+ * `identity heal` 还是「CDS_HOST 未设置」——一条只出现一次的指引，照做之后
+ * 依然走不通。
+ */
+describe('cdscli identity：save 之后不必再设 CDS_HOST', () => {
+  const cliSource = fs.readFileSync(
+    path.join(repoRoot, '.claude', 'skills', 'cds', 'cli', 'cdscli.py'),
+    'utf-8',
+  );
+
+  it('save 会把主机记成默认值', () => {
+    expect(cliSource).toContain('data["defaultHost"]');
+  });
+
+  it('取主机时会回退到那个默认值（不是只读环境变量）', () => {
+    expect(cliSource).toContain('_default_user_credential_host');
+    const base = cliSource.slice(cliSource.indexOf('def _cds_base'), cliSource.indexOf('def _cds_base') + 900);
+    expect(base).toContain('_default_user_credential_host');
+  });
+
+  it('只存了一把凭证时，没给主机也认得出来', () => {
+    const loader = cliSource.slice(
+      cliSource.indexOf('def _load_user_credential'),
+      cliSource.indexOf('def _default_user_credential_host'),
+    );
+    expect(loader).toContain('len(hosts) == 1');
+  });
+});
