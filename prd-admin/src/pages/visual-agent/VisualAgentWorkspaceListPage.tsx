@@ -1189,6 +1189,23 @@ function measureDataUrl(dataUrl: string): Promise<{ w: number; h: number } | nul
 }
 
 // ============ 主页面 ============
+/**
+ * 站点存储此刻能不能写。
+ *
+ * 只写一个一次性小键再删掉——探的是「被禁用 / 隐私模式」这一类整体不可用，
+ * 不是配额：几 MB 的 dataURL 放不下要到真写那一刻才知道，那条路径另有降级。
+ */
+function canUseSessionStorage(): boolean {
+  try {
+    const probe = '__vaProbe__';
+    sessionStorage.setItem(probe, '1');
+    sessionStorage.removeItem(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: boolean }) {
   // fullscreenMode 参数保留用于兼容，但现在所有模式都是全屏
   const _fullscreenMode = props.fullscreenMode;
@@ -1431,6 +1448,19 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const onQuickSubmit = async () => {
     const prompt = inputValue.trim();
     if (!prompt) return;
+
+    // 0. 先探一下站点存储能不能写。
+    //
+    // 交接包存不进去就不该跳转（下面第 5 步会拦），但那个拦截发生在**工作区已经建好之后**：
+    // 用户看到错误、再点一次发送，就又建一个空项目，排查过程本身在制造垃圾数据
+    //（Codex PR #1476 P2）。所以把「能不能存」提到建工作区之前问，一个空项目都不留。
+    //
+    // 这里只探「存储可不可用」，探不出「这次的图太大放不下」——配额要到真写才知道。
+    // 那条路径不会留孤儿：它退化成不带图的那一份、照常跳转，见第 5 步。
+    if (!canUseSessionStorage()) {
+      toast.error('浏览器禁用了站点存储，没法把这次输入带进画板', '请允许本站存储后重试；输入已经留着。');
+      return;
+    }
 
     setInputLoading(true);
     try {

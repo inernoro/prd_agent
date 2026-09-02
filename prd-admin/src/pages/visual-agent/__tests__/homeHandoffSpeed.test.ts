@@ -89,6 +89,18 @@ describe('首页点发送后立刻进画板', () => {
     expect(submitBody).toMatch(/try\s*\{[\s\S]{0,200}sessionStorage\.setItem/);
   });
 
+  it('【关键】先探存储再建工作区，别让重试堆出一串空项目', () => {
+    // 「存不进就别跳」那条拦截发生在工作区已经建好之后：用户看到错误、再点一次发送，
+    // 就又建一个空项目——排查过程本身在制造垃圾数据（Codex PR #1476 P2）。
+    // 判据盯顺序：探针必须在建工作区之前。
+    const probeAt = submitBody.indexOf('canUseSessionStorage()');
+    expect(probeAt, '提交路径应先探一次站点存储').toBeGreaterThan(0);
+    const createAt = submitBody.indexOf('await createVisualAgentWorkspace(');
+    expect(createAt, '提交函数里应有建工作区').toBeGreaterThan(0);
+    expect(createAt, '探针必须排在建工作区之前').toBeGreaterThan(probeAt);
+    expect(submitBody.slice(probeAt, createAt)).toContain('return;');
+  });
+
   it('【关键】一个字都没存进去时不跳转，保住用户刚敲的那句话', () => {
     // 站点存储被禁用时两次 setItem 都抛。照旧跳转的话，画板是空的、
     // 而这边已经把输入清空——用户的话就没了，还得重打（Codex PR #1476 P2）。
@@ -189,6 +201,21 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
     expect(MOBILE).toMatch(/visualModelOptionIdOf\(poolIdFromVisualModelOptionId\(raw\)\)/);
   });
 
+  it('【关键】手机端参考图落盘失败时不替他跑一次纯文字生成', () => {
+    // 上一版只弹一句「这次将只按文字生成」然后照跑：用户要的是「按这张图改」，
+    // 拿到的是一次纯文字的付费生成，他既没同意也没机会取消（Codex PR #1476 P1）。
+    // 提示只是把语义变更通告了一遍，不是征得同意。
+    const at = MOBILE.indexOf("if (!ref && pending.inlineImage?.src)");
+    expect(at, '缺 assetId 时应先上传').toBeGreaterThan(0);
+    const genAt = MOBILE.indexOf('await handleGenerate(pending.text', at);
+    expect(genAt, '之后应有自动发送').toBeGreaterThan(at);
+    const failBranch = MOBILE.slice(at, genAt);
+    // 失败分支必须提前 return，不许走到 handleGenerate。
+    expect(failBranch, '落盘失败必须提前 return').toMatch(/toast\.error\([\s\S]*?return;/);
+    // 并且把提示词放回输入框，用户能直接重试。
+    expect(failBranch).toMatch(/setInput\(pending\.text\)/);
+  });
+
   it('【关键】手机端把内联图先落盘再生成，不静默丢图跑纯文字', () => {
     expect(MOBILE).toMatch(/inlineImage: parsed\.inlineImage/);
     // 落盘要真的发生，并且结果要用作这次生成的参考图。
@@ -198,6 +225,10 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
     expect(block).toContain('uploadVisualAgentWorkspaceAsset');
     expect(block).toMatch(/ref = \{ assetId: a\.id/);
     // 失败要说出来，不能悄悄跑一次没有参考图的付费生成。
-    expect(block).toMatch(/toast\.error\('参考图未能带入'/);
+    // 只断言「有 toast.error」，不锁文案：上一版把标题逐字钉死，
+    // 改文案（从「这次将只按文字生成」改成「这次没有发送」）就假红了——
+    // 而那次改的正是行为本身。形状 4a：断言字面存在而不是行为。
+    // 失败分支要做的事由上面那条专门的用例判。
+    expect(block).toMatch(/toast\.error\(/);
   });
 });

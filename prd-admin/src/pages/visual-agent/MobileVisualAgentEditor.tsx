@@ -539,7 +539,19 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           setAssets((prev) => [...prev, a]);
           ref = { assetId: a.id, sha256: a.sha256, url: a.url, label: pending.inlineImage.name || '参考图' };
         } else {
-          toast.error('参考图未能带入', `${up.error?.message || '未知错误'}。这次将只按文字生成。`);
+          // 落盘失败就**不要替他生成**。
+          //
+          // 上一版只弹一句「这次将只按文字生成」然后照跑：用户在首页选了一张图、
+          // 要的是「按这张图改」，结果拿到一次纯文字的付费生成，而他既没同意也没机会取消
+          //（Codex PR #1476 P1）。提示只是把语义变更**通告**了一遍，不是征得同意。
+          // 把提示词放回输入框、把图挂回参考位，他想重试就再点一次发送。
+          toast.error(
+            '参考图没能带进来，这次没有发送',
+            `${up.error?.message || '未知错误'}。提示词已经放回输入框，重新选一张参考图再发，或者直接发纯文字。`,
+          );
+          setInput(pending.text);
+          if (pending.size) setSize(pending.size);
+          return;
         }
       }
       await handleGenerate(pending.text, { ref, sizeOverride: pending.size || undefined });
