@@ -854,3 +854,36 @@ services:
     warn.mockRestore();
   });
 });
+
+describe('parseStandardCompose — cds.calls 与探活前缀', () => {
+  it('cds.calls 逗号分隔去重进 BuildProfile.calls，导出 round-trip 不丢', () => {
+    const cfg = parseCdsCompose(`
+services:
+  web:
+    build: ./web
+    ports: ["3000"]
+    labels:
+      cds.calls: "api, api ,worker"
+  api:
+    build: ./api
+    ports: ["8080"]
+`);
+    expect(cfg!.buildProfiles.find((p) => p.id === 'web')!.calls).toEqual(['api', 'worker']);
+    const back = parseCdsCompose(toCdsCompose(cfg!.buildProfiles, cfg!.envVars, cfg!.infraServices, cfg!.routingRules));
+    expect(back!.buildProfiles.find((p) => p.id === 'web')!.calls).toEqual(['api', 'worker']);
+  });
+  it('探活路径写进 cds.path-prefix 只告警、原样保留，交给拓扑体检阻断', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const cfg = parseCdsCompose(`
+services:
+  api:
+    build: ./api
+    ports: ["8080"]
+    labels:
+      cds.path-prefix: "/api/,/health"
+`);
+    expect(cfg!.buildProfiles[0].pathPrefixes).toEqual(['/api/', '/health']);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('探活路径 /health'))).toBe(true);
+    warn.mockRestore();
+  });
+});

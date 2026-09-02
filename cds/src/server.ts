@@ -21,6 +21,7 @@ import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
@@ -955,6 +956,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /projects': '列出项目',
     'POST /projects': '创建项目',
     'POST /cleanup-cross-project-services': '清理跨项目服务',
+    'POST /compose/lint': '对 compose 做拓扑体检',
+    'GET /branches/:id/service-graph': '分支服务关系图与体检',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
     'GET /access-requests': '列出授权申请',
@@ -4441,6 +4444,11 @@ export function createServer(deps: ServerDeps): express.Express {
     dispatchVersion,
     getDeploymentRunStatus: (runId) => deploymentRunService.get(runId)?.status,
     rootDomains: deps.config.rootDomains || [],
+  }));
+
+  app.use('/api', createTopologyRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
   }));
 
   app.use('/api', createManagedProjectsRouter({

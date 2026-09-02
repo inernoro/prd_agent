@@ -18,6 +18,7 @@ import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, Routing
 import { SERVICE_ROLES } from '../types.js';
 import { isValidServiceSubdomain } from './branch-extra-services.js';
 import { parseWebEntryLabels } from './web-entry.js';
+import { isProbePrefix } from './topology-lint.js';
 
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
@@ -494,6 +495,15 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         const containerPort = extractContainerPort(entry.ports) || 8080;
         const labels = extractLabels(entry.labels);
         const pathPrefix = labels['cds.path-prefix'];
+        // 探活路径不该进公网路由（plan.cds.service-relations 第一批）：这里只告警、原样保留，
+        // 让拓扑体检（topology-lint）能按 error 报出并阻断导入；解析器若静默剔除，体检就看不见了。
+        const probePrefixes = (pathPrefix || '').split(',').map((x) => x.trim()).filter((x) => x && x !== '/' && isProbePrefix(x));
+        if (probePrefixes.length > 0) {
+          console.warn(`[compose-parser] service "${serviceId}" 的 cds.path-prefix 含探活路径 ${probePrefixes.join('、')}，探活只走 cds.readiness-path，导入会被体检阻断`);
+        }
+        // cds.calls：显式声明「我调用哪些服务」（环境变量推不出调用关系时用）。逗号分隔的服务 id。
+        const callsRaw = (labels['cds.calls'] || '').trim();
+        const calls = callsRaw ? Array.from(new Set(callsRaw.split(',').map((x) => x.trim()).filter(Boolean))) : undefined;
         const dependsOn = extractDependsOn(entry.depends_on);
         const command = extractCommand(entry.command);
 
@@ -581,6 +591,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           ...(subdomain ? { subdomain } : {}),
           ...(webEntry ? { webEntry } : {}),
           ...(role ? { role } : {}),
+          ...(calls && calls.length ? { calls } : {}),
         });
       } else {
         // Infra service — no source mount, possibly built-from-source custom
@@ -781,6 +792,9 @@ export function toCdsCompose(
     // 显式角色 round-trip（推断结果不回写：那是运行时算出来的，不是配置）。
     if (p.role) {
       entryLabels['cds.role'] = p.role;
+    }
+    if (p.calls && p.calls.length > 0) {
+      entryLabels['cds.calls'] = p.calls.join(',');
     }
     // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
     if (p.prebuiltImage) {

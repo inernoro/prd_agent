@@ -92,9 +92,12 @@ CDS 扫描进度：
 | `labels.cds.web-entry-path` | 用户点击后到达的站内页面，默认 `/`；禁止健康检查路径 |
 | `labels.cds.web-entry-primary` | 仅路由歧义时显式指定主入口；通常 `cds.path-prefix: /` 会自动识别 |
 | `labels.cds.role` | 显式服务角色 `web` / `api` / `worker`；不写则 CDS 按入口、探活、前缀、服务名推断并标「推断」。名字看不出角色的服务（初始化作业、内网服务）请显式写 |
+| `labels.cds.calls` | 显式声明调用了哪些服务（逗号分隔）；环境变量推不出关系时用 |
 | `${CDS_HOST}` / `${CDS_<SERVICE>_PORT}` | 运行时替换 |
 
 提交前自检：`cdscli verify <repo-root>` exit code 必须 == 0（允许 WARNING/INFO，不允许 ERROR）。
+
+拓扑体检（前缀冲突 / 探活前缀 / 子域抢根路径 / 游离服务）由 CDS 后端统一判定，`verify` 已连接 CDS 时自动调用；未连接会注明跳过，此时报告不完整。Java 模块的 `cds.path-prefix` 由生成器从控制器注解或 context-path 扫出，扫不到会留 TODO，多个后端不得共用同一前缀；探活路径永远不进前缀。
 
 ### 多 Web 入口规范（强制）
 

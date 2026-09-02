@@ -6157,6 +6157,85 @@ def _detect_nacos_required_configs(root: str) -> list[str]:
     return found
 
 
+_PROBE_PREFIX_RE = re.compile(r"(?:^|/)(?:health|healthz|health-check|ready|readyz|readiness|live|livez|liveness|actuator|metrics)(?:/|\?|$)", re.I)
+
+
+def _is_probe_prefix(prefix: str) -> bool:
+    """探活语义的路径段（与 CDS 后端 topology-lint 同一份口径）。"""
+    return bool(_PROBE_PREFIX_RE.search(prefix.strip()))
+
+
+def _spring_context_path(module_root: str) -> str | None:
+    """application.yml / .properties 里的 server.servlet.context-path（有则整站都在它下面）。"""
+    res_dir = os.path.join(module_root, "src", "main", "resources")
+    if not os.path.isdir(res_dir):
+        return None
+    for name in ("application.yml", "application.yaml", "application.properties",
+                 "bootstrap.yml", "bootstrap.yaml"):
+        fp = os.path.join(res_dir, name)
+        if not os.path.isfile(fp):
+            continue
+        try:
+            with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        m = re.search(r"context-path\s*[:=]\s*['\"]?(/[A-Za-z0-9._~-]*)", text)
+        if m and m.group(1) and m.group(1) != "/":
+            return m.group(1).rstrip("/") + "/"
+    return None
+
+
+def _detect_spring_route_prefixes(module_root: str, max_files: int = 4000) -> list[str]:
+    """从模块源码扫出主域名路由前缀（plan.cds.service-relations 第一批）。
+
+    规则：
+      1. 有 server.servlet.context-path → 只返回它（整站都在它下面）；
+      2. 否则收集 @RestController / @Controller 类上的 @RequestMapping 第一段，
+         类上没写的看方法级 @XxxMapping 第一段；
+      3. 探活段（health / actuator / metrics ...）一律不进前缀；
+      4. 结果去重、按字典序，返回 `/seg/` 形态。扫不到返回 []，由调用方兜底 + TODO。
+    """
+    ctx = _spring_context_path(module_root)
+    if ctx:
+        return [ctx]
+    src = os.path.join(module_root, "src", "main", "java")
+    if not os.path.isdir(src):
+        return []
+    class_rm = re.compile(r"@RequestMapping\s*\(\s*(?:value\s*=|path\s*=)?\s*[\{]?\s*\"([^\"]*)\"")
+    method_rm = re.compile(r"@(?:Get|Post|Put|Delete|Patch|Request)Mapping\s*\(\s*(?:value\s*=|path\s*=)?\s*[\{]?\s*\"([^\"]*)\"")
+    prefixes: set[str] = set()
+    seen = 0
+    for dirpath, _dirs, files in os.walk(src):
+        for fn in files:
+            if not fn.endswith(".java"):
+                continue
+            seen += 1
+            if seen > max_files:
+                return sorted(prefixes)
+            fp = os.path.join(dirpath, fn)
+            try:
+                with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            if "@RestController" not in text and "@Controller" not in text:
+                continue
+            cls_idx = text.find("class ")
+            head = text[:cls_idx] if cls_idx > 0 else text
+            cls_maps = class_rm.findall(head)
+            candidates = cls_maps if cls_maps else method_rm.findall(text)
+            for raw in candidates:
+                seg = raw.strip().strip("/").split("/")[0].split("{")[0].strip()
+                if not seg:
+                    continue
+                prefix = f"/{seg}/"
+                if _is_probe_prefix(prefix):
+                    continue
+                prefixes.add(prefix)
+    return sorted(prefixes)
+
+
 def _yaml_from_modules(root: str, modules: list[dict],
                        infra_services: dict | None = None,
                        scan_signals: dict | None = None) -> str:
@@ -6300,6 +6379,7 @@ def _yaml_from_modules(root: str, modules: list[dict],
             primary_java_port = mod.get("port") or "8080"
             break
 
+    java_seen = 0  # 第几个 Java 模块（没扫到前缀时第一个兜底 /api/，其余按名字分前缀避免撞车）
     for i, mod in enumerate(modules):
         # Maven multi-module: use module name as service name, parent dir for volumes
         if mod.get("_service_name"):
@@ -6395,9 +6475,20 @@ def _yaml_from_modules(root: str, modules: list[dict],
         # Issue #560:Spring Boot 真实路由不是 /<module>/,而是 /api,/partner,/open,/actuator
         # 用 cds.path-prefixes 暴露完整列表,避免前端调 /api 打不到后端
         if kind == "java":
-            prefixes = "/api/,/partner/,/open/,/health,/actuator/"
-            lines.append(f"      cds.path-prefix: \"/api/\"  # 兼容:CDS 单 prefix 路由")
-            lines.append(f"      cds.path-prefixes: \"{prefixes}\"  # 多前缀:覆盖 Spring Boot 真实入口")
+            # plan.cds.service-relations 第一批：前缀按模块从源码扫控制器，不再给所有 Java 模块复制
+            # 同一份清单（那会让多个后端同时声明 /open/ /health，forwarder 只能按部署顺序二选一）。
+            # 探活路径（/health /actuator）永远不进前缀：探活只走 cds.readiness-path。
+            # 旧的 cds.path-prefixes（复数）从未被 CDS 解析，是死标签，不再输出。
+            module_root = os.path.join(root, mod["dir"]) if mod["dir"] != "." else root
+            if mod.get("maven_module"):
+                module_root = os.path.join(module_root, mod["maven_module"])
+            scanned = _detect_spring_route_prefixes(module_root)
+            if scanned:
+                lines.append(f"      cds.path-prefix: \"{','.join(scanned)}\"  # 从控制器 @RequestMapping / context-path 扫出")
+            else:
+                fallback = "/api/" if java_seen == 0 else f"/{clean_name}/"
+                lines.append(f"      cds.path-prefix: \"{fallback}\"  # TODO: 源码里没扫到路由前缀，请按真实入口填写，多个后端不能共用同一前缀")
+            java_seen += 1
             # v0.6.3:Maven 首次 build 要 3-5 分钟下依赖,CDS 默认 readiness 180s 不够
             # 写 600s(10min) — 单次部署足够,后续 .m2 缓存命中只需 30-60s
             lines.append(f"      cds.readiness-timeout: \"600\"  # v0.6.3:maven build 留 10min")
@@ -7372,6 +7463,142 @@ def _verify_autofix(compose_path: str, doc: dict, issues: list[dict]) -> dict:
     }
 
 
+def _verify_server_lint(compose_text: str) -> list[dict]:
+    """拓扑体检走 CDS 后端（SSOT：cds/src/services/topology-lint.ts）。
+
+    未连接 CDS 时不装作跑过：返回一条 INFO 说明跳过了哪些检查，让读者知道这份报告不完整。
+    网络或服务端错误同样降级为 INFO，不让 verify 因为体检接口不可达而整体失败。
+    """
+    if not compose_text.strip():
+        return []
+    if not os.environ.get("CDS_HOST", "").strip() or not _has_cds_auth():
+        return [{
+            "severity": "INFO",
+            "service": "(topology)",
+            "rule": "topology-lint-skipped",
+            "message": "未连接 CDS，拓扑体检（前缀冲突 / 探活前缀 / 子域抢根路径 / 游离服务）未运行",
+            "fix": "cdscli connect 完成项目授权后重跑 verify",
+        }]
+    status, body, _headers = _request("POST", "/api/compose/lint",
+                                      body={"composeYaml": compose_text},
+                                      timeout=20, fatal_network_errors=False)
+    if status != 200 or not isinstance(body, dict) or not isinstance(body.get("findings"), list):
+        msg = body.get("message") if isinstance(body, dict) else str(body)[:200]
+        return [{
+            "severity": "INFO",
+            "service": "(topology)",
+            "rule": "topology-lint-unavailable",
+            "message": f"拓扑体检接口不可用（HTTP {status}）：{msg}",
+            "fix": "检查 CDS_HOST 与 CDS 版本（需要含 POST /api/compose/lint 的版本）后重跑",
+        }]
+    sev_map = {"error": "ERROR", "warn": "WARNING", "info": "INFO"}
+    out: list[dict] = []
+    for f in body["findings"]:
+        if not isinstance(f, dict):
+            continue
+        out.append({
+            "severity": sev_map.get(str(f.get("severity")), "INFO"),
+            "service": ",".join(f.get("services") or []) or "(topology)",
+            "rule": f"topology/{f.get('rule')}",
+            "message": str(f.get("message") or ""),
+            "fix": str(f.get("fix") or ""),
+        })
+    return out
+
+
+def _resolve_branch_id_for_cwd() -> str:
+    """当前 git 分支 → CDS 分支 id（与 preview-url 同一套项目身份匹配，找不到就 die）。"""
+    try:
+        branch = subprocess.check_output(["git", "branch", "--show-current"], text=True, stderr=subprocess.DEVNULL).strip()
+        repo_root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True, stderr=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError:
+        die("当前目录不在 git 仓库内；请显式传分支 id", code=1)
+        return ""
+    if not branch:
+        die("当前没有分支（detached HEAD？）；请显式传分支 id", code=1)
+        return ""
+    body = _call_safe("GET", _branches_path(), timeout=10)
+    if not isinstance(body, dict) or body.get("__error__"):
+        die("调 /api/branches 失败，无法解析当前分支的 CDS id", code=3, extra={"response": body})
+        return ""
+    hints = _branch_lookup_project_slug_hints(repo_root)
+    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+    matches = _match_branches_for_project(body.get("branches") or [], branch, hints, project_scoped)
+    if not matches:
+        die(f"CDS 上没有当前分支 '{branch}' 的记录；请显式传分支 id（cdscli branch list 可查）", code=2)
+        return ""
+    return str(matches[0].get("id"))
+
+
+def _topology_tree_lines(payload: dict) -> list[str]:
+    """把 GET /api/branches/:id/service-graph 的结果画成文字树（与运行画布同一份分层）。"""
+    graph = payload.get("graph") or {}
+    lint = payload.get("lint") or {}
+    nodes = {n.get("rawId"): n for n in (graph.get("nodes") or []) if n.get("kind") == "service"}
+    role_src = {"declared": "声明", "route": "路由事实", "name": "名字", "default": "默认"}
+    findings_by_svc: dict[str, list[str]] = {}
+    for f in lint.get("findings") or []:
+        tag = {"error": "错误", "warn": "警告", "info": "建议"}.get(f.get("severity"), "?")
+        for svc in f.get("services") or []:
+            findings_by_svc.setdefault(svc, []).append(f"{tag}: {f.get('rule')}")
+
+    def node_label(sid: str) -> str:
+        n = nodes.get(sid) or {}
+        role = (n.get("role") or "?").upper()
+        src = role_src.get(n.get("roleSource"), "?")
+        marks = findings_by_svc.get(sid) or []
+        tail = f"   <{'; '.join(marks)}>" if marks else ""
+        return f"{sid} ({role}, {src}){tail}"
+
+    out = [f"入口 {payload.get('branch')} · 分支 {payload.get('branchId')}"]
+    sites = graph.get("sites") or []
+    for si, site in enumerate(sites):
+        last_site = si == len(sites) - 1 and not graph.get("internal")
+        head = "└─" if last_site else "├─"
+        title = "主域名" if site.get("kind") == "main" else f"子域 {site.get('subdomain')}"
+        shell = site.get("shellId")
+        shell_note = "（按名兜底）" if site.get("shellSource") == "convention" else ""
+        out.append(f"{head} {title}  壳 {node_label(shell) if shell else '（无）'}{shell_note}")
+        indent = "   " if last_site else "│  "
+        members = site.get("members") or []
+        for mi, m in enumerate(members):
+            mh = "└─" if mi == len(members) - 1 else "├─"
+            conv = "（按名约定）" if m.get("viaConvention") else ""
+            out.append(f"{indent}{mh} {' '.join(m.get('prefixes') or [])}{conv} → {node_label(m.get('id'))}")
+    internal = graph.get("internal") or []
+    callers: dict[str, list[str]] = {}
+    for e in graph.get("edges") or []:
+        if str(e.get("from", "")).startswith("service:") and str(e.get("to", "")).startswith("service:"):
+            callers.setdefault(e["to"][8:], []).append(e["from"][8:])
+    for ii, sid in enumerate(internal):
+        ih = "└─" if ii == len(internal) - 1 else "├─"
+        who = callers.get(sid)
+        rel = f"被 {', '.join(who)} 调用" if who else "游离"
+        out.append(f"{ih} 内网 {rel} → {node_label(sid)}")
+    summ = lint.get("summary") or {}
+    out.append(f"体检：{summ.get('errors', 0)} 错误 · {summ.get('warnings', 0)} 警告 · {summ.get('infos', 0)} 建议")
+    for f in lint.get("findings") or []:
+        tag = {"error": "错误", "warn": "警告", "info": "建议"}.get(f.get("severity"), "?")
+        out.append(f"  [{tag}] {f.get('rule')}  {f.get('message')}")
+        if f.get("fix"):
+            out.append(f"         修法：{f.get('fix')}")
+    return out
+
+
+def cmd_topology(args: argparse.Namespace) -> None:
+    """打印某分支的服务关系树 + 拓扑体检（数据与运行画布同源：GET /api/branches/:id/service-graph）。"""
+    branch_id = getattr(args, "id", None) or _resolve_branch_id_for_cwd()
+    body = _call("GET", f"/api/branches/{urllib.parse.quote(branch_id, safe='')}/service-graph", timeout=20)
+    if not isinstance(body, dict):
+        die("service-graph 返回非 JSON 响应", code=3, extra={"response": body})
+        return
+    tree = "\n".join(_topology_tree_lines(body))
+    if _HUMAN:
+        print(tree)
+        sys.exit(0)
+    ok({"branchId": body.get("branchId"), "graph": body.get("graph"), "lint": body.get("lint"), "tree": tree})
+
+
 def cmd_verify(args: argparse.Namespace) -> None:
     """校验 cds-compose 文件:三级严重度(ERROR / WARNING / INFO)分级输出 + 评分 + 自愈。
 
@@ -7406,6 +7633,15 @@ def cmd_verify(args: argparse.Namespace) -> None:
     compose_path, doc = found
 
     issues = _verify_run_all(doc, root)
+    # 拓扑体检（前缀冲突 / 探活前缀 / 子域抢根路径 / 游离服务）：规则只在 CDS 后端写一份，
+    # 这里把 compose 原文交给 POST /api/compose/lint，发现合并进同一份 issues 参与门禁。
+    if not getattr(args, "no_server_lint", False):
+        try:
+            with open(compose_path, "r", encoding="utf-8") as f:
+                compose_text = f.read()
+        except OSError:
+            compose_text = ""
+        issues += _verify_server_lint(compose_text)
     summary = {
         "errors":   sum(1 for i in issues if i["severity"] == "ERROR"),
         "warnings": sum(1 for i in issues if i["severity"] == "WARNING"),
@@ -8995,7 +9231,13 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="输出自愈修补(diff + 建议),默认不落盘")
     vf.add_argument("--write", action="store_true",
                     help="配合 --fix:把可自动修复的改动写回文件(先备份 .bak)")
+    vf.add_argument("--no-server-lint", action="store_true",
+                    help="跳过 CDS 后端的拓扑体检（默认走 POST /api/compose/lint；未连接 CDS 时自动跳过并注明）")
     vf.set_defaults(func=cmd_verify)
+
+    tp = sub.add_parser("topology", help="打印分支的服务关系树与拓扑体检（与运行画布同源，零参数时解析当前 git 分支）")
+    tp.add_argument("id", nargs="?", help="CDS 分支 id（缺省用当前 git 分支解析）")
+    tp.set_defaults(func=cmd_topology)
 
     sm = sub.add_parser("smoke", help="分层冒烟（L1+L2+L3）")
     sm.add_argument("id", help="branchId")

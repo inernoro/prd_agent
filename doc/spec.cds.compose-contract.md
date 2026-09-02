@@ -86,6 +86,7 @@ CDS 在项目根目录按下面顺序探测,**第一个命中即用**:
 | `labels.cds.web-entry-path:` | string | 否 | 用户落地页面，默认 `/`；禁止 readiness/liveness/health 路径 |
 | `labels.cds.web-entry-primary:` | bool string | 否 | 路由歧义时指定唯一主入口；通常 `cds.path-prefix: /` 自动识别 |
 | `labels.cds.role:` | `web` \| `api` \| `worker` | 否 | 显式服务角色。缺省由 CDS 按「用户入口 / 探活 / 前缀 / 服务名」推断并在运行画布标成推断；名字推不准的（如 `imp-database-bootstrap`）请显式声明 |
+| `labels.cds.calls:` | string | 否 | 显式声明「我调用哪些服务」（逗号分隔服务 id）。环境变量里推不出调用关系时用，画布按声明画边并标来源 |
 | `labels.cds.readiness-path:` | string | 否 | 就绪探测路径,默认 `/`,4xx 也算"HTTP 活" |
 | `labels.cds.readiness-timeout:` | int | 否 | 单位秒,默认 180 |
 | `labels.cds.readiness-interval:` | int | 否 | 单位秒,默认 2 |
@@ -93,6 +94,21 @@ CDS 在项目根目录按下面顺序探测,**第一个命中即用**:
 | `x-cds-resources:` | dict | 否 | CDS 优先扩展(`memoryMB: 512`, `cpus: 1.5`),与上面二选一,本字段优先 |
 
 运行画布的「入口 → 站点 → 壳 → 前缀成员」分层与 forwarder 发布规则同源：主域名上承载 `/` 的服务是壳（静态站），其余 `cds.path-prefix` 成员挂在壳下面按最长前缀分流，静态容器并不代理这些请求；每个 `cds.subdomain` 各成一站。同一 host 上同一前缀被多个服务声明会在画布上标「冲突」（forwarder 只能按 id 字典序二选一），请只保留一个声明方。
+
+### 2.2.0 拓扑体检（导入闸门）
+
+体检规则只在 CDS 后端写一份，导入审批、`POST /api/compose/lint`、`cdscli verify`（自动调该接口）、运行画布四处共用。错误级阻断审批（操作员可显式放行）。
+
+| 规则 | 级别 | 判据 | 修法 |
+|---|---|---|---|
+| `prefix-conflict` | 错误 | 同一 host 上同一前缀被多个服务声明 | 只保留一个声明方 |
+| `probe-in-prefix` | 错误 | `cds.path-prefix` 含探活段（health、actuator、metrics 等） | 删掉，探活只写 `cds.readiness-path` |
+| `subdomain-root-claim` | 警告 | 有 `cds.subdomain` 又在主域名声明 `/`，且不是主域名的壳 | 删掉根路径声明 |
+| `double-public-surface` | 警告 | 同一服务既有子域又有主域名前缀 | 二选一 |
+| `orphan-service` | 警告 | 无公网路由、无人调用、不调用任何服务或基础设施、无显式角色 | 声明 `cds.role` 或 `cds.calls` |
+| `role-by-name` | 建议 | 角色靠服务名或默认值推断 | 声明 `cds.role` |
+
+`cdscli verify` 未连接 CDS 时会注明体检跳过，报告不算完整；`cdscli topology` 打印同一份关系树与体检。
 
 用户入口与运行探针是两套独立合同：`cds.web-entry-*` 回答“人点击哪里、看到什么名字”，`cds.readiness-*` 回答“机器如何判断进程就绪”。不得从 readiness 路径反推入口。具有 `cds.path-prefix: /` 的已命名 Web 服务自动成为主入口；同一 profile 即使有 `cds.subdomain` 也不会重复列出。API-only 命名路由不声明 `cds.web-entry-name` 即可。
 

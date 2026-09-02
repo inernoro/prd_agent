@@ -31,6 +31,8 @@ export interface RoutingRule {
   enabled: boolean;
 }
 
+import type { TopologyLintReport } from './services/topology-lint.js';
+
 /** 服务角色枚举（`cds.role` 合法值，也是推断结果的值域）。 */
 export type ServiceRole = 'web' | 'api' | 'worker';
 export const SERVICE_ROLES: readonly ServiceRole[] = ['web', 'api', 'worker'];
@@ -114,6 +116,11 @@ export interface BuildProfile {
    * 推断结果会在画布上标成「推断」；声明后覆盖一切推断。
    */
   role?: ServiceRole;
+  /**
+   * 显式声明的调用关系（compose label `cds.calls`，逗号分隔的服务 id）。环境变量里推不出
+   * 「谁调用谁」时用它补上，画布按声明画边并标来源为声明。
+   */
+  calls?: string[];
   /**
    * Service dependencies — IDs of infra services or other profiles this app depends on.
    * Derived from compose `depends_on`. Used for startup ordering.
@@ -3039,6 +3046,8 @@ export interface PendingImport {
   purpose: string;
   /** Raw cds-compose YAML. Stored verbatim; parsed lazily on approve. */
   composeYaml: string;
+  /** 提交时算好的拓扑体检（plan.cds.service-relations）：审批页展示，error 级阻断审批。 */
+  lint?: TopologyLintReport;
   /** Precomputed summary so the dashboard can render without re-parsing. */
   summary: {
     addedProfiles: string[];

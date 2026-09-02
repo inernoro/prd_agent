@@ -76,6 +76,8 @@ export interface ServiceGraphEdge {
   envKeys: string[];
   /** 证据：compose depends_on 声明 */
   dependsOn: boolean;
+  /** 证据：调用方用 cds.calls 显式声明了这条调用 */
+  declared?: boolean;
 }
 
 export interface ServiceGraph {
@@ -331,7 +333,7 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
   const serviceIdSet = new Set(serviceIds);
 
   const edgeMap = new Map<string, ServiceGraphEdge>();
-  const upsert = (from: string, to: string, envKey?: string, viaDepends?: boolean): void => {
+  const upsert = (from: string, to: string, envKey?: string, viaDepends?: boolean, viaDeclared?: boolean): void => {
     if (from === to) return;
     const key = `${from}\u0000${to}`;
     let edge = edgeMap.get(key);
@@ -341,6 +343,7 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
     }
     if (envKey && !edge.envKeys.includes(envKey)) edge.envKeys.push(envKey);
     if (viaDepends) edge.dependsOn = true;
+    if (viaDeclared) edge.declared = true;
   };
 
   for (const p of profiles) {
@@ -365,6 +368,10 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
     for (const dep of p.dependsOn ?? []) {
       if (serviceIdSet.has(dep) && serviceNodeId(dep) !== self) upsert(self, serviceNodeId(dep), undefined, true);
       else if (infraIdSet.has(dep)) upsert(self, infraNodeId(dep), undefined, true);
+    }
+    // 4) cds.calls 显式声明的调用（只认存在的服务；写错的 id 静默忽略，由体检的 orphan 规则兜住）
+    for (const callee of p.calls ?? []) {
+      if (serviceIdSet.has(callee) && serviceNodeId(callee) !== self) upsert(self, serviceNodeId(callee), undefined, false, true);
     }
   }
 

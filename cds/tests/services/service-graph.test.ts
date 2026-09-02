@@ -245,3 +245,13 @@ describe('buildServiceSites 站点分组与 forwarder 同源', () => {
     expect(buildServiceGraph([], []).sites).toEqual([]);
   });
 });
+
+describe('cds.calls 显式声明的调用边', () => {
+  it('声明的被调方存在时画边并标 declared；写错的 id 静默忽略', () => {
+    const g = buildServiceGraph([profile('web', { calls: ['api', 'ghost'] }), profile('api')], []);
+    const e = g.edges.find((x) => x.from === 'service:web' && x.to === 'service:api');
+    expect(e).toMatchObject({ declared: true, dependsOn: false, envKeys: [] });
+    expect(g.edges.some((x) => x.to.endsWith('ghost'))).toBe(false);
+    expect(g.layers).toEqual([['web'], ['api']]);
+  });
+});
