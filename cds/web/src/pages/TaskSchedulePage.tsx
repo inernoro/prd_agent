@@ -118,6 +118,18 @@ export function TaskSchedulePage(): JSX.Element {
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [runs, setRuns] = useState<ScheduledJobRun[]>([]);
+  /*
+   * 选中任务的完整运行史，单独按 jobId 取。
+   *
+   * 页面那份 runs 是**全局最近 400 条**：高频任务把名额占满之后，低频任务在里面
+   * 只剩零星几条甚至一条都不剩——健康条、P50、单泳道细带、运行流全都被抽空，
+   * 而服务端明明为它保留了 120 条（Codex #1471 P2）。服务端的每任务保留修好了，
+   * 前端读的还是全局切片，等于那个修复到不了用户面前。
+   *
+   * 只用于「这个任务自己」的视图；今日统计仍然只看全局那份，否则同一屏的数字
+   * 会随着选中谁而变。
+   */
+  const [selectedRuns, setSelectedRuns] = useState<ScheduledJobRun[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<FormState>(() => emptyForm());
   const [loading, setLoading] = useState(true);
@@ -190,9 +202,27 @@ export function TaskSchedulePage(): JSX.Element {
     return project ? (project.aliasName || project.name || project.slug || project.id) : projectId;
   }, [projects]);
 
+  useEffect(() => {
+    if (!selectedId) { setSelectedRuns([]); return; }
+    let alive = true;
+    void apiRequest<{ runs: ScheduledJobRun[] }>(
+      `/api/scheduled-jobs/runs?jobId=${encodeURIComponent(selectedId)}&limit=200`,
+    )
+      .then((res) => { if (alive) setSelectedRuns(res.runs || []); })
+      // 拉不到就退回全局切片：细带和健康条会少几条，但不能因此把整页打红。
+      .catch(() => { if (alive) setSelectedRuns([]); });
+    return () => { alive = false; };
+  }, [selectedId, runs]);
+
+  /** 全局切片 + 选中任务的完整史；选中那个任务的记录以完整史为准。 */
+  const mergedRuns = useMemo(() => {
+    if (!selectedId || selectedRuns.length === 0) return runs;
+    return [...runs.filter((run) => run.jobId !== selectedId), ...selectedRuns];
+  }, [runs, selectedRuns, selectedId]);
+
   const runsByJob = useMemo(() => {
     const map = new Map<string, ScheduledJobRun[]>();
-    for (const run of runs) {
+    for (const run of mergedRuns) {
       const list = map.get(run.jobId);
       if (list) list.push(run); else map.set(run.jobId, [run]);
     }
@@ -200,7 +230,7 @@ export function TaskSchedulePage(): JSX.Element {
       list.sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
     }
     return map;
-  }, [runs]);
+  }, [mergedRuns]);
 
   const healthOf = useCallback((jobId: string): JobHealth => computeHealth(runsByJob.get(jobId) || []), [runsByJob]);
 
@@ -229,14 +259,15 @@ export function TaskSchedulePage(): JSX.Element {
   const runScopeJobId = runScopeAll ? '' : selectedId;
 
   const visibleRuns = useMemo(() => {
-    const base = runScopeJobId ? runs.filter((run) => run.jobId === runScopeJobId) : runs;
+    // 按任务筛选时用那个任务的完整史；「全部任务」仍看全局切片。
+    const base = runScopeJobId ? mergedRuns.filter((run) => run.jobId === runScopeJobId) : runs;
     const filtered = runFilter === 'failed'
       ? base.filter((run) => run.status === 'failed' || run.status === 'skipped')
       : runFilter === 'manual'
         ? base.filter((run) => run.trigger === 'manual')
         : base;
     return [...filtered].sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt)).slice(0, 200);
-  }, [runs, runFilter, runScopeJobId]);
+  }, [runs, mergedRuns, runFilter, runScopeJobId]);
 
   const runFilterCaption = useMemo(() => {
     const scope = runScopeJobId ? jobNameOf(runScopeJobId) : '全部任务';

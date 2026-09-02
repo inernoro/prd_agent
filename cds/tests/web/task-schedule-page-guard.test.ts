@@ -50,6 +50,26 @@ describe('任务调度页的接线', () => {
   });
 
   /*
+   * Codex #1471 P2。服务端为每个任务保留 120 条，但页面读的是**全局最近 400 条**：
+   * 高频任务把名额占满后，低频任务的健康条、P50、细带、运行流全被抽空——
+   * 服务端那个修复到不了用户面前。选中任务时必须按 jobId 单独取它的完整史。
+   * 红绿闭环：删掉那个 jobId 拉取的 effect，本用例报找不到 selectedRuns 的来源。
+   */
+  it('选中任务时按 jobId 取它的完整运行史，不只吃全局切片', () => {
+    expect(src, '没有按 jobId 取运行史').toMatch(/scheduled-jobs\/runs\?jobId=/);
+    expect(src, '拉回来的结果没有落到状态里').toContain('setSelectedRuns');
+    // 合并后的池子要真的被「这个任务自己」的视图消费
+    const merged = src.slice(src.indexOf('const mergedRuns'), src.indexOf('const healthOf'));
+    expect(merged).toContain('selectedRuns');
+    expect(src).toMatch(/\}, \[mergedRuns\]\);/);
+
+    // 今日统计仍然只看全局那份：否则同一屏的数字会随着选中谁而变。
+    const overview = src.slice(src.indexOf('const overview'), src.indexOf('const overview') + 160);
+    expect(overview, '今日统计不能吃 mergedRuns，否则数字随选中项漂移').toContain('buildOverview(jobs, runs, now)');
+    expect(overview).not.toContain('mergedRuns');
+  });
+
+  /*
    * 三个写操作在进入时都要先清 error，否则上一次的报错会伪装成这一次的结果。
    * 红绿闭环：删掉 deleteJob 里的 setError('')，本用例红。
    */
