@@ -21,6 +21,27 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 
 const REPO = 'octocat/monorepo';
 
+async function call(
+  server: http.Server,
+  method: string,
+  urlPath: string,
+  headers?: Record<string, string>,
+) {
+  return new Promise<{ status: number; body: any }>((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const req = http.request(
+      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers },
+      (res) => {
+        let raw = '';
+        res.on('data', (c: Buffer) => (raw += c.toString()));
+        res.on('end', () => resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 async function get(server: http.Server, urlPath: string, headers?: Record<string, string>) {
   return new Promise<{ status: number; body: any }>((resolve, reject) => {
     const addr = server.address() as { port: number };
@@ -50,6 +71,14 @@ describe('项目接口透出同仓关系', () => {
       githubRepoFullName: repo,
       customEnv: env,
     });
+  }
+
+  function addProfileWithCommand(projectId: string, id: string, name: string, command: string) {
+    stateService.addBuildProfile({
+      id, projectId, name,
+      dockerImage: 'node:22', workDir: '.', containerPort: 3000,
+      hostPortPreference: 0, buildCommand: 'echo build', command,
+    } as BuildProfile);
   }
 
   function addScope(projectId: string, buildScope: string[]) {
@@ -161,5 +190,123 @@ describe('项目接口透出同仓关系', () => {
 
     const res = await get(server, '/api/projects/p-main');
     expect(res.body.repoSharing?.total).toBe(2);
+  });
+
+  it('横幅拿得到「本项目看起来只关心哪儿」，用户不必从空白开始', async () => {
+    addProject('p-main', 'MAP', REPO);
+    addProject('p-self', 'CDS Self', REPO);
+    addProfileWithCommand('p-self', 'cds', 'cds', 'cd cds && ./exec_cds.sh start');
+
+    const res = await get(server, '/api/projects/p-self');
+    expect(res.body.repoSharing.scopeSuggestion.scope).toEqual(['cds/**']);
+    expect(res.body.repoSharing.scopeSuggestion.why).toContain('cd cds');
+  });
+
+  it('自己已经划过范围的项目不再被劝', async () => {
+    addProject('p-main', 'MAP', REPO);
+    addProject('p-self', 'CDS Self', REPO);
+    addScope('p-self', ['cds/**']);
+
+    const res = await get(server, '/api/projects/p-self');
+    expect(res.body.repoSharing.scopeSuggestion).toBeNull();
+  });
+});
+
+describe('划范围的候选与一键采纳', () => {
+  let tmpDir: string;
+  let stateService: StateService;
+  let server: http.Server;
+
+  function addProject(id: string, name: string) {
+    const now = new Date().toISOString();
+    stateService.addProject({
+      id, slug: id, name, kind: 'git',
+      dockerNetwork: `cds-${id}`, legacyFlag: false, createdAt: now, updatedAt: now,
+      githubRepoFullName: REPO, repoPath: tmpDir,
+    });
+  }
+
+  function addProfile(projectId: string, id: string, extra: Partial<BuildProfile>) {
+    stateService.addBuildProfile({
+      id, projectId, name: id,
+      dockerImage: 'node:22', workDir: '.', containerPort: 3000,
+      hostPortPreference: 0, buildCommand: 'echo build',
+      ...extra,
+    } as BuildProfile);
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-scopeopt-'));
+    stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    stateService.load();
+    // 仓库里真实存在的一级目录 —— 候选清单读的是磁盘，不是编的
+    for (const d of ['cds', 'prd-api', 'prd-admin', '.git', 'node_modules']) {
+      fs.mkdirSync(path.join(tmpDir, d), { recursive: true });
+    }
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createProjectsRouter({
+      stateService,
+      shell: new MockShellExecutor(),
+      githubApp: { getInstallationToken: async () => 't' } as GitHubAppClient,
+    }));
+    server = app.listen(0);
+  });
+
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    await new Promise<void>((r) => server.close(() => r()));
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it('候选目录来自仓库实际内容，且不含点目录与 node_modules', async () => {
+    addProject('p-self', 'CDS Self');
+    const res = await get(server, '/api/projects/p-self/scope-options');
+    expect(res.body.repoDirs).toEqual(['cds', 'prd-admin', 'prd-api']);
+  });
+
+  it('每个服务分开给「你定过的」和「我猜的」，让用户判断该不该信', async () => {
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'cds', { command: 'cd cds && ./exec_cds.sh start' });
+    addProfile('p-self', 'api', { deployModes: { express: { buildScope: ['prd-api/**'] } } as any });
+
+    const res = await get(server, '/api/projects/p-self/scope-options');
+    const byId = Object.fromEntries(res.body.profiles.map((p: any) => [p.id, p]));
+    expect(byId.cds).toMatchObject({ declared: [], suggested: ['cds/**'] });
+    expect(byId.cds.why).toContain('cd cds');
+    expect(byId.api).toMatchObject({ declared: ['prd-api/**'], suggested: [] });
+  });
+
+  it('一键采纳只写没声明过的那些，人做过的决定不被一次猜覆盖', async () => {
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'cds', { command: 'cd cds && ./exec_cds.sh start' });
+    addProfile('p-self', 'api', { buildScope: ['prd-api/**'], command: 'cd 别处 && x' });
+
+    const res = await call(server, 'POST', '/api/projects/p-self/scope-options/apply');
+    expect(res.status).toBe(200);
+    expect(res.body.applied).toEqual([{ profileId: 'cds', scope: ['cds/**'] }]);
+    expect(stateService.getBuildProfile('cds')?.buildScope).toEqual(['cds/**']);
+    // 已声明的那条原样不动
+    expect(stateService.getBuildProfile('api')?.buildScope).toEqual(['prd-api/**']);
+  });
+
+  it('有服务看不出待在哪时整个项目不给建议 —— 按已知的收窄会让它静默不重建', async () => {
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'cds', { command: 'cd cds && ./exec_cds.sh start' });
+    addProfile('p-self', 'mystery', { command: 'dotnet run' });
+
+    const options = await get(server, '/api/projects/p-self/scope-options');
+    expect(options.body.suggestion).toBeNull();
+
+    const applied = await call(server, 'POST', '/api/projects/p-self/scope-options/apply');
+    expect(applied.status).toBe(409);
+    expect(applied.body.error).toBe('no_suggestion');
+  });
+
+  it('全都已经声明过时没有可采纳的东西', async () => {
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'cds', { buildScope: ['cds/**'] });
+    const applied = await call(server, 'POST', '/api/projects/p-self/scope-options/apply');
+    expect(applied.status).toBe(409);
   });
 });

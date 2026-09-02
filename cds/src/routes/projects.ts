@@ -40,6 +40,7 @@ import { repoNameFromGitRef } from '../services/preview-slug.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 import { summarizeRepoSharing, type RepoSharingSummary } from '../services/repo-sharing.js';
+import { inferProjectScope, inferProfileScope } from '../services/build-scope-inference.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
 import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
@@ -553,7 +554,15 @@ interface ProjectSummary extends Project, ProjectStats {
    * 给所有人凭空加一个要理解的概念。只发给浏览器会话：机器凭据可能只被授权
    * 了本项目，不该顺带认识仓库里的别的项目。
    */
-  repoSharing?: (RepoSharingSummary & { siblings: RepoSiblingRef[] }) | null;
+  repoSharing?: (RepoSharingSummary & {
+    siblings: RepoSiblingRef[];
+    /**
+     * 本项目还没声明范围时，系统看出来的建议。有它，界面就不必让用户从空白开始
+     * ——直接说「看起来只关心 cds/**」并给一个采纳按钮。推断只做建议不自动生效，
+     * 理由见 build-scope-inference.ts 顶部。
+     */
+    scopeSuggestion?: { scope: string[]; why: string } | null;
+  }) | null;
 }
 
 function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
@@ -699,6 +708,23 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
    * 于是真人用浏览器打开也什么都看不到。机器凭据一律走 header，浏览器走 cookie，
    * 所以按 header 判在每种鉴权模式下都成立。
    */
+  /**
+   * 仓库根下的一级目录 —— 划范围时的候选。读不到就返回空数组：给不出候选是可以的，
+   * 编一份假的目录清单不行（用户会照着它填一个不存在的路径）。
+   */
+  function listRepoTopLevelDirs(projectId: string): string[] {
+    const root = stateService.getProjectRepoRoot(projectId, config?.repoRoot || '');
+    if (!root) return [];
+    try {
+      return nodeFs.readdirSync(root, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+        .map((e) => e.name)
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
   function repoSharingFor(req: unknown, project: Project): ProjectSummary['repoSharing'] {
     if (isMachineCaller(req)) return null;
     const repoFullName = project.githubRepoFullName;
@@ -713,9 +739,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }));
     const summary = summarizeRepoSharing(facts);
     if (!summary) return null;
+    // 只在本项目自己没划范围时才算建议：已经划过的不需要被劝。
+    const selfScope = facts.find((f) => f.id === project.id)?.scope || [];
+    let scopeSuggestion: { scope: string[]; why: string } | null = null;
+    if (selfScope.length === 0) {
+      const inferred = inferProjectScope(stateService.getBuildProfilesForProject(project.id));
+      if (inferred && inferred.guessedCount > 0) {
+        scopeSuggestion = { scope: inferred.scope, why: inferred.why };
+      }
+    }
     return {
       ...summary,
       siblings: facts.map((f) => ({ id: f.id, name: f.name, scope: f.scope })),
+      scopeSuggestion,
     };
   }
 
@@ -1880,6 +1916,72 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
    * 操作租约、归因、计数），fire-and-forget 不阻塞响应——暂停标记本身是同步落库的，
    * 新构建立刻被拦；容器停止由前端轮询反映。
    */
+  /**
+   * GET /api/projects/:id/scope-options —— 划范围这件事的全部备选。
+   *
+   * 为的是让界面不要摆一个空文本框。用户面对空框要先想「填什么」、填完还要担心
+   * 「填得对不对」，而这两个问题系统本来就有答案：仓库里有哪些目录是可以列的，
+   * 每个服务待在哪个目录是能从启动命令看出来的。所以这里一次给全：真实目录清单 +
+   * 每个服务的建议 + 建议的依据，界面只需要把建议预勾上。
+   */
+  router.get('/projects/:id/scope-options', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found', message: `项目 '${req.params.id}' 不存在` });
+      return;
+    }
+    const profiles = stateService.getBuildProfilesForProject(project.id);
+    const suggestion = inferProjectScope(profiles);
+    res.json({
+      repoDirs: listRepoTopLevelDirs(project.id),
+      suggestion: suggestion
+        ? { scope: suggestion.scope, why: suggestion.why, guessedCount: suggestion.guessedCount }
+        : null,
+      profiles: profiles.map((profile) => {
+        const guess = inferProfileScope(profile);
+        return {
+          id: profile.id,
+          name: profile.name || profile.id,
+          // 已声明的与建议的分开给：界面要区分「这是你定过的」和「这是我猜的」，
+          // 混成一个值就没法让用户判断该不该信。
+          declared: guess?.source === 'declared' ? guess.scope : [],
+          suggested: guess && guess.source !== 'declared' ? guess.scope : [],
+          why: guess?.why || '',
+        };
+      }),
+    });
+  });
+
+  /**
+   * POST /api/projects/:id/scope-options/apply —— 一键采纳建议。
+   *
+   * 只写那些**自己没声明过**的服务：已经定过的是人做的决定，不能被一次猜覆盖。
+   */
+  router.post('/projects/:id/scope-options/apply', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found', message: `项目 '${req.params.id}' 不存在` });
+      return;
+    }
+    const profiles = stateService.getBuildProfilesForProject(project.id);
+    const suggestion = inferProjectScope(profiles);
+    if (!suggestion || suggestion.guessedCount === 0) {
+      res.status(409).json({
+        error: 'no_suggestion',
+        message: '没有可采纳的建议：要么每个服务都已经声明过范围，要么有服务看不出待在哪个目录。',
+      });
+      return;
+    }
+    const applied: Array<{ profileId: string; scope: string[] }> = [];
+    for (const entry of suggestion.perProfile) {
+      if (!entry.guess || entry.guess.source === 'declared') continue;
+      stateService.updateBuildProfile(entry.profileId, { buildScope: entry.guess.scope });
+      applied.push({ profileId: entry.profileId, scope: entry.guess.scope });
+    }
+    stateService.save();
+    res.json({ applied, scope: suggestion.scope });
+  });
+
   router.put('/projects/:id/paused', (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) {

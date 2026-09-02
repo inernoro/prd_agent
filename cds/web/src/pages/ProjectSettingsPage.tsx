@@ -436,6 +436,28 @@ export function ProjectSettingsPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
   const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
+  const [applyingScope, setApplyingScope] = useState(false);
+
+  /**
+   * 一键采纳系统给的范围建议。系统看得出本项目待在哪个目录，也说得出凭什么，
+   * 所以这里只要一次确认，不必让用户去对话框里再挑一遍。
+   */
+  async function applyScopeSuggestion(): Promise<void> {
+    if (!projectId) return;
+    setApplyingScope(true);
+    try {
+      const res = await apiRequest<{ applied: Array<{ profileId: string }>; scope: string[] }>(
+        `/api/projects/${encodeURIComponent(projectId)}/scope-options/apply`,
+        { method: 'POST' },
+      );
+      setToast(`已固定为 ${res.scope.join('、')}；下次推送生效`);
+      await refresh();
+    } catch (err) {
+      setToast(messageFromError(err));
+    } finally {
+      setApplyingScope(false);
+    }
+  }
 
   useEffect(() => {
     window.history.replaceState(null, '', `#${activeTab}`);
@@ -583,6 +605,8 @@ export function ProjectSettingsPage(): JSX.Element {
                       sharing={project.repoSharing}
                       selfId={project.id}
                       onDeclareScope={() => setScopeDialogOpen(true)}
+                      onApplySuggestion={() => void applyScopeSuggestion()}
+                      applying={applyingScope}
                     />
                   </div>
                 ) : null}

@@ -1202,6 +1202,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/bridge\/handshake-status\/(.+)$/, '查询 Bridge 握手状态'],
     // 项目 (CRUD)
     [/^PUT \/projects\/(.+)\/paused$/, '暂停/恢复项目'],
+    [/^GET \/projects\/(.+)\/scope-options$/, '读构建范围候选'],
+    [/^POST \/projects\/(.+)\/scope-options\/apply$/, '采纳构建范围建议'],
     [/^GET \/projects\/(.+)\/agent-keys$/, '列出项目 Agent Keys'],
     [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
     [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],

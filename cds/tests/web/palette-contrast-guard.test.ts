@@ -60,6 +60,30 @@ describe('状态色只走 token，不再硬编码调色板', () => {
   });
 
   /**
+   * `bg-primary` 上不许压 `text-primary-ink`。
+   *
+   * `--primary-ink` 是「主色**文字**」——白天把橙色压深两档让它落在浅底上读得清；
+   * **暗色下它与 --primary 同值**。所以这对组合在暗色主题里是橙字压橙底，
+   * 按钮变成一块纯色，文字一个都看不见（2026-09-02 同仓关系横幅上真栽过一次：
+   * 断言「按钮存在」全绿，只有截图看得出来它是空白的）。
+   *
+   * 落在主色填充上的文字走 `text-primary-foreground`（shadcn Button 用的就是它）。
+   */
+  it('主色填充上不压主色文字（暗色下两者同值，等于隐形）', () => {
+    const bad: string[] = [];
+    for (const file of walk(SRC)) {
+      const src = fs.readFileSync(file, 'utf8');
+      // 同一段 class 串里同时出现两者即判红：跨行拼接的数组写法也照样命中
+      for (const chunk of src.split(/[`'"]/)) {
+        if (/\bbg-primary\b/.test(chunk) && /\btext-primary-ink\b/.test(chunk)) {
+          bad.push(`${path.relative(SRC, file)}: ${chunk.trim().slice(0, 80)}`);
+        }
+      }
+    }
+    expect(bad, `改用 text-primary-foreground：\n${bad.join('\n')}`).toEqual([]);
+  });
+
+  /**
    * 中性色（stone / slate / zinc / gray / neutral / bg-white）此前不在守卫范围里 ——
    * 判据太窄（predicate-and-wiring-discipline 形状 1）。真实事故：2026-08-25 用户报
    * 「接入 Agent 的上手助手在黑色皮肤下看不清」，根因是 AgentStarterTab 整块写死

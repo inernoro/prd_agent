@@ -26,6 +26,7 @@
 
 import { Link } from 'react-router-dom';
 import { GitBranch, Database, TriangleAlert } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 export interface RepoSiblingRef {
   id: string;
@@ -48,6 +49,11 @@ export interface RepoSharing {
   level: 'ok' | 'warn';
   sharedInfra: SharedInfraHit[];
   siblings: RepoSiblingRef[];
+  /**
+   * 本项目还没划范围时系统给的建议。有它就别再让用户去空白框里想 ——
+   * 直接说清「看起来只关心哪儿、凭什么这么说」，一下点掉。
+   */
+  scopeSuggestion?: { scope: string[]; why: string } | null;
 }
 
 function infraWhat(kind: SharedInfraHit['kind']): string {
@@ -102,10 +108,14 @@ export function RepoSharingBanner({
   sharing,
   selfId,
   onDeclareScope,
+  onApplySuggestion,
+  applying = false,
 }: {
   sharing: RepoSharing | null | undefined;
   selfId: string;
   onDeclareScope?: () => void;
+  onApplySuggestion?: () => void;
+  applying?: boolean;
 }): JSX.Element | null {
   if (!sharing) return null;
   const others = sharing.siblings.filter((s) => s.id !== selfId);
@@ -159,13 +169,42 @@ export function RepoSharingBanner({
             </ul>
           ) : null}
 
-          {warn && selfUnscoped && onDeclareScope ? (
+          {/*
+           * 有建议就直接给建议，别把「去划范围」当作业布置给用户。系统看得出
+           * 本项目只关心哪儿，也说得出凭什么，用户扫一眼依据就能决定点不点。
+           */}
+          {selfUnscoped && sharing.scopeSuggestion ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                本项目看起来只关心
+                {' '}
+                {sharing.scopeSuggestion.scope.map((entry) => (
+                  <code key={entry} className="mx-0.5 font-mono text-foreground">{entry}</code>
+                ))}
+                （{sharing.scopeSuggestion.why}）
+              </span>
+              {onApplySuggestion ? (
+                <Button size="sm" onClick={onApplySuggestion} disabled={applying}>
+                  {applying ? '固定中…' : '就按这个'}
+                </Button>
+              ) : null}
+              {onDeclareScope ? (
+                <button
+                  type="button"
+                  onClick={onDeclareScope}
+                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                >
+                  我自己挑
+                </button>
+              ) : null}
+            </div>
+          ) : warn && selfUnscoped && onDeclareScope ? (
             <button
               type="button"
               onClick={onDeclareScope}
               className="rounded border border-warn/50 px-2.5 py-1 text-xs font-medium text-warn hover:bg-warn-soft"
             >
-              去声明本项目的构建范围
+              挑一下本项目关心的目录
             </button>
           ) : null}
         </div>
