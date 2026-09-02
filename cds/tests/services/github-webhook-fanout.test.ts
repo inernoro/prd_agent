@@ -317,6 +317,40 @@ describe('一仓多项目 push 分发', () => {
       expect(after.map((b) => b?.ciImageStatus)).toEqual(['ready', 'ready']);
     });
 
+    it('镜像先于 push 到达：两个项目都要认领得到，不是第一个拿走就没了', async () => {
+      addProject('p-main', 'mainp', 'MAP');
+      addProject('p-self', 'selfp', 'CDS Self');
+      addPrebuiltProfile('p-main', 'api');
+      addPrebuiltProfile('p-self', 'cds');
+
+      // 缓存挂在分发器实例上，所以这条竞态必须用**同一个**实例走完，
+      // 否则测的是「新实例读不到旧实例的缓存」，与要防的东西无关。
+      const d = dispatcher();
+
+      // 竞态：CI 完成事件先到，此时两个项目都还没有这条分支 —— 结果进缓存
+      await d.handle('workflow_run', {
+        action: 'completed',
+        repository: { id: 1, full_name: REPO },
+        workflow_run: {
+          path: '.github/workflows/branch-image.yml',
+          name: 'Branch Image',
+          head_sha: SHA,
+          head_branch: 'feature/x',
+          conclusion: 'success',
+          html_url: 'https://example.invalid/run/1',
+        },
+      });
+
+      // push 随后到达，两个项目各建一条分支，都该认领到那次已完成的 CI
+      await d.handle('push', push(['src/app.ts']));
+
+      // 缓存是一次性消费的。键上不带项目，第一个项目拿走之后第二个永远认领不到，
+      // 于是它停在 waiting 等一个不会再来的事件 —— 没有任何报错。
+      const after = ['p-main', 'p-self'].map((pid) =>
+        stateService.findBranchByProjectAndName(pid, 'feature/x'));
+      expect(after.map((b) => b?.ciImageStatus)).toEqual(['ready', 'ready']);
+    });
+
     it('主结果挑真的在干活的那条，不是恰好排第一的那条', async () => {
       addProject('p-main', 'mainp', 'MAP');
       addProject('p-self', 'selfp', 'CDS Self');

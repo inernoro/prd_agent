@@ -487,8 +487,13 @@ export class GitHubWebhookDispatcher {
   // repo+sha 做键,第二条会覆盖第一条、且一次性消费会让另一分支永远认领不到
   // （Bugbot:shared CI cache single consume）。带上 branch 即可让两个分支各拿各的。
   // head_branch 缺省的旧 payload 退回 repo+sha(branch='')。
-  private recentRunKey(repoFullName: string, sha: string, branch?: string): string {
-    return `${repoFullName.toLowerCase()}::${(branch || '').toLowerCase()}::${sha.toLowerCase()}`;
+  //
+  // 还要带 projectId（2026-09-02）：一个仓库喂多个项目之后，同一条 head_branch
+  // 在每个项目下各有一条分支，它们要各自认领同一次 CI 完成。只按 repo+branch+sha
+  // 做键时是**一次性消费**——第一个项目拿走，第二个项目再也认领不到，于是永远停在
+  // 等待中且没有任何报错。这正是上面那条 Bugbot 修复在多项目下的同一形状。
+  private recentRunKey(repoFullName: string, sha: string, branch?: string, projectId?: string): string {
+    return `${(projectId || '').toLowerCase()}::${repoFullName.toLowerCase()}::${(branch || '').toLowerCase()}::${sha.toLowerCase()}`;
   }
 
   private rememberCompletedRun(
@@ -496,7 +501,8 @@ export class GitHubWebhookDispatcher {
     sha: string,
     branch: string | undefined,
     conclusion: string,
-    htmlUrl?: string,
+    htmlUrl: string | undefined,
+    projectId: string,
   ): void {
     const now = Date.now();
     // 顺手剪枝过期项,顺带把 Map 控制在上限内(超限删最旧)。
@@ -508,16 +514,20 @@ export class GitHubWebhookDispatcher {
       if (oldest === undefined) break;
       this.recentCompletedRuns.delete(oldest);
     }
-    this.recentCompletedRuns.set(this.recentRunKey(repoFullName, sha, branch), { conclusion, htmlUrl, at: now });
+    this.recentCompletedRuns.set(this.recentRunKey(repoFullName, sha, branch, projectId), { conclusion, htmlUrl, at: now });
   }
 
   private takeCompletedRun(
     repoFullName: string,
     sha: string,
     branch: string,
+    projectId: string,
   ): { conclusion: string; htmlUrl?: string } | undefined {
-    // 先认领「本分支专属」键,未命中再退回旧 payload 的无分支键(branch='')。
-    for (const key of [this.recentRunKey(repoFullName, sha, branch), this.recentRunKey(repoFullName, sha, '')]) {
+    // 先认领「本项目 + 本分支专属」键,未命中再退回旧 payload 的无分支键(branch='')。
+    for (const key of [
+      this.recentRunKey(repoFullName, sha, branch, projectId),
+      this.recentRunKey(repoFullName, sha, '', projectId),
+    ]) {
       const hit = this.recentCompletedRuns.get(key);
       if (!hit) continue;
       this.recentCompletedRuns.delete(key); // 一次性消费,避免下次 push 误用陈旧结果
@@ -540,7 +550,7 @@ export class GitHubWebhookDispatcher {
     repoFullName: string,
     commitSha: string,
   ): WebhookDispatchResult | null {
-    const cached = this.takeCompletedRun(repoFullName, commitSha, branchName);
+    const cached = this.takeCompletedRun(repoFullName, commitSha, branchName, projectId);
     if (!cached) return null;
     if (cached.conclusion === 'success') {
       this.deps.stateService.updateBranchGithubMeta(branchId, {
@@ -1055,7 +1065,7 @@ export class GitHubWebhookDispatcher {
       // 没有分支匹配:很可能是 push webhook 还没处理到(延迟/重试),分支尚未 stamp。
       // 暂存结果,等稍后 push 把分支置 express-waiting 时认领(takeCompletedRun)。
       if (!dryRun) {
-        this.rememberCompletedRun(repoFullName, headSha, run.head_branch, run.conclusion || 'unknown', run.html_url);
+        this.rememberCompletedRun(repoFullName, headSha, run.head_branch, run.conclusion || 'unknown', run.html_url, project.id);
       }
       return {
         action: 'workflow-acknowledged',
