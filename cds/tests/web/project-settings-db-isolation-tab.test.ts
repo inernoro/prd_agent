@@ -85,9 +85,9 @@ describe('数据库隔离面板：渲染出来的东西', () => {
   it('保存前把影响面说清：继承的分支变、覆盖的分支不变、重新部署后生效', () => {
     const html = render(view(), { api: 'per-branch', web: 'shared', worker: 'per-branch' });
     expect(html).toContain('所有继承项目配置的分支');
-    expect(html).toContain('当前 3 条');
+    expect(html).toContain('本项目 4 条分支');
     expect(html).toContain('重新部署后生效');
-    expect(html).toContain('已有 1 条分支的本分支覆盖保持不变');
+    expect(html).toContain('已有本分支覆盖的服务档位（1 条分支）保持不变');
     expect(html).toContain('保存 1 项改动');
     expect(html).toContain('未保存：共享库 变为 分支独立库');
   });

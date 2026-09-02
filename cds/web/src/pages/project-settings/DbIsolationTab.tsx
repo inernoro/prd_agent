@@ -171,7 +171,6 @@ export function DbIsolationPanel({
     for (const s of view.services) next[s.profileId] = scope;
     onDraftChange(next);
   };
-  const branchesInheriting = Math.max(0, view.summary.branches - view.summary.branchesWithOverride);
 
   return (
     <div className="space-y-6">
@@ -291,8 +290,8 @@ export function DbIsolationPanel({
               <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
               <div className="text-muted-foreground">
                 保存后影响<span className="text-foreground">所有继承项目配置的分支</span>
-                （当前 {branchesInheriting} 条），各分支<span className="text-foreground">重新部署后生效</span>；
-                已有 {view.summary.branchesWithOverride} 条分支的本分支覆盖保持不变。
+                （本项目 {view.summary.branches} 条分支），各分支<span className="text-foreground">重新部署后生效</span>；
+                已有本分支覆盖的服务档位（{view.summary.branchesWithOverride} 条分支）保持不变。
               </div>
             </div>
             {error ? <ErrorBlock message={error} /> : null}
@@ -305,7 +304,7 @@ export function DbIsolationPanel({
                   </Button>
                 )}
                 title="写入项目默认？"
-                description={`${changedCount} 个服务的档位会成为项目默认，${branchesInheriting} 条继承项目配置的分支重新部署后生效；${view.summary.branchesWithOverride} 条有本分支覆盖的分支不受影响。`}
+                description={`${changedCount} 个服务的档位会成为项目默认，继承项目配置的分支（本项目 ${view.summary.branches} 条）重新部署后生效；已写本分支覆盖的服务档位（${view.summary.branchesWithOverride} 条分支）不受影响。`}
                 confirmLabel="写入"
                 pending={saving}
                 onConfirm={onSave}
