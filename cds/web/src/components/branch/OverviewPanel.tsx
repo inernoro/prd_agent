@@ -871,7 +871,24 @@ export function OverviewPanel({
        */
       .filter((x): x is { svc: OverviewService; ring: MetricSeries } => Boolean(x.ring) && (x.ring.filled ?? 0) >= 2)
       .sort((a, b) => a.svc.profileId.localeCompare(b.svc.profileId));
-    return { head: withSeries.slice(0, SERIES_SLOTS), tail: withSeries.slice(SERIES_SLOTS) };
+    /*
+     * 还在跑、但历史不够画的服务（Codex P2，核对属实）。
+     *
+     * 上面那道 `filled >= 2` 是**几何安全**判据——它决定「能不能画」。
+     * 但合计问的是另一件事：「现在到底用了多少」。上一版把两者混成一个，
+     * 于是收紧入选之后，刚起来的服务被排除出 cpuSeries，头部大数跟着少报，
+     * 要等 90 秒第二帧到了才对。
+     *
+     * 这些服务归进「其他」：它们的**当前值**照算（实时快照就在手上），
+     * 但不贡献几何——我们确实还没有它们的历史，凭空补一段才是撒谎。
+     */
+    const plottable = new Set(withSeries.map((x) => x.svc.profileId));
+    const liveOnly = services.filter((sv) => sv.status === 'running' && !plottable.has(sv.profileId));
+    return {
+      head: withSeries.slice(0, SERIES_SLOTS),
+      tail: withSeries.slice(SERIES_SLOTS),
+      liveOnly,
+    };
   }, [services, metricSeries]);
 
   const sampleCount = picked.head[0]?.ring.cpu.length ?? 0;
@@ -908,7 +925,7 @@ export function OverviewPanel({
         stopped: x.svc.status !== 'running',
       };
     });
-    if (picked.tail.length === 0) return head;
+    if (picked.tail.length === 0 && picked.liveOnly.length === 0) return head;
     const len = head[0]?.values.length ?? 0;
     const merged = Array.from({ length: len }, (_, i) => picked.tail.reduce((sum, x) => sum + (read(x.ring)[i] ?? 0), 0));
     /*
@@ -925,9 +942,14 @@ export function OverviewPanel({
       if (x.svc.status !== 'running') return sum;
       const live = liveStats?.[x.svc.profileId];
       return sum + (live ? readLive(live) : read(x.ring).at(-1) ?? 0);
+    }, 0) + picked.liveOnly.reduce((sum, sv) => {
+      // 历史不够画、但正在跑：当前值照算，几何不参与（上面 merged 不含它们）。
+      const live = liveStats?.[sv.profileId];
+      return sum + (live ? readLive(live) : 0);
     }, 0);
     const [nowLabel, nowUnit] = label(tailNow);
-    return [...head, { id: `其他 ${picked.tail.length} 个`, color: OTHER_COLOR, values: merged, nowValue: tailNow, nowLabel, nowUnit }];
+    const otherCount = picked.tail.length + picked.liveOnly.length;
+    return [...head, { id: `其他 ${otherCount} 个`, color: OTHER_COLOR, values: merged, nowValue: tailNow, nowLabel, nowUnit }];
   };
 
   const cpuSeries = hasPlot ? buildSeries((m) => m.cpu, (l) => l.cpuPercent, (v) => [v.toFixed(2), '%']) : [];
