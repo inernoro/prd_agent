@@ -123,4 +123,17 @@ describe('看得出是什么 / 看得出是空的', () => {
     const card = page.slice(page.indexOf('const hasCover'), page.indexOf('formatDate(ws.updatedAt)'));
     expect(card).toContain('还没有图');
   });
+
+  it('输入台与预设行同宽，且只有一个宽度值', () => {
+    // 这一页的中列宽度写在两处（输入台根 + 预设行）。它们必须相等，
+    // 否则预设行会比输入框宽或窄一截，露出一条错位的边。
+    //
+    // 这条同时钉住「有几个值」：断言 set 只有一个成员，谁只改一处就红。
+    // 不锁具体数字——真要调宽，两处一起改，这条照样绿；用户认的是「和原来一样」，
+    // 不是某个特定数字，把数字写进判据只会在下次合理调整时假红。
+    const page = strip(read(PAGE));
+    const widths = [...page.matchAll(/width: 'min\(([^)]*)\)'/g)].map((m) => m[1].trim());
+    expect(widths.length).toBe(2);
+    expect(new Set(widths).size).toBe(1);
+  });
 });

@@ -366,20 +366,20 @@ function QuickInputBox(props: {
   // 靛蓝是这一页唯一和品牌色无关的颜色，删掉之后整页只剩 #D97757 一种强调色。
   const focused = isFocused || isDragging;
   /*
-   * 宽度 = 项目栅格的内容宽（栅格是 max-w-[1340px] + px-5，卡片实际跨 1300），
-   * 所以输入框的左右边缘和下面第一排卡片**严格对齐**，整页只有一条内容列。
+   * 宽度 880。这是这一页从暗房版式落地起一直用的值，不是新拍的一个数。
    *
-   * 这里我错了两次，记下来免得再犯：
-   *   第一次写死 min(880px, 100%)——1950 的宽屏上只占 45%，比下面的栅格（69%）还窄。
-   *   用户说「怎么变窄了？又短又小」之后，我改成 clamp(680, 58vw, 1180)，
-   *   宽屏上变成 58%——**仍然比栅格窄**，因为我自己加了一条「它是聚焦的输入区，
-   *   不该和列表一样宽」的判断。那是拿我的审美压用户的明确要求，
-   *   用户第二次指出「我已经说了一次了不要我继续说」。
+   * 中间它被我动过两轮，两轮都错在同一处**误判**：用户报「输入框怎么又短又小」，
+   * 我当成宽度值写小了，先后改成 clamp(680,58vw,1180) 和 min(100%,1300px)。
+   * 真正的原因是包裹层的 className 被 `{...rise()}` 覆盖掉、丢了 w-full 之后
+   * 塌成 350（详见 rise 上方那段），**宽度值自始至终是好的**。
+   * 于是两轮「修复」的结果是：塌陷还在，框倒被我越改越宽，
+   * 用户只好再说一次「确实变大了，但我要的是恢复原状」。
    *
-   * 所以不再留「窄一档」的余地：就是和内容列同宽的长框。
+   * 教训：症状是「变窄了」不等于「宽度写小了」。先量真实盒子，
+   * 判清是值的问题还是链路的问题，再决定改哪一个。
    */
   return (
-    <div className="w-full mx-auto mt-5" style={{ width: 'min(100%, 1300px)' }}>
+    <div className="w-full mx-auto mt-5" style={{ width: 'min(880px, 100%)' }}>
       <div
         // 磨砂玻璃：底色、模糊、顶边高光、投影全在 .glass-pane 里（见 globals.css）。
         // 聚焦态要盖掉 glass-pane 自带的 box-shadow，所以这里把高光那一段一起写回去，
@@ -635,7 +635,8 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
     <div
       data-tour-id="visual-scenarios"
       className="mt-3 grid grid-flow-col auto-cols-[minmax(96px,1fr)] sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-6 gap-1.5 overflow-x-auto no-scrollbar"
-      style={{ width: 'min(100%, 1300px)' }}
+      // 与上面输入台同宽，两者必须一起改——预设行比输入框宽或窄都会露出错位的边。
+      style={{ width: 'min(880px, 100%)' }}
     >
       {SCENARIO_TAGS.map((tag) => {
         const Icon = tag.icon;

@@ -125,7 +125,7 @@ describe('方向性：幕从左上退到右下 + 元素沿路依次点亮', () =
     // 真实事故：<div className="w-full flex justify-center" {...rise(950)}>
     // JSX 的 spread 在后面，rise 返回的 className 把前面那串整个覆盖掉；
     // 包裹层丢了 w-full，父级又是 flex-col + items-center（块级子元素不拉伸），
-    // 于是塌成内容宽，1300 的长输入框缩成三百多。
+    // 于是塌成内容宽，880 的长输入框缩成三百多。
     //
     // 最阴的是它只在 wake 为 true 时发生——也就是**只有整页刷新时**，
     // SPA 内点进来完全正常，本地取证也照不出来（取证里宽度是写死的）。
