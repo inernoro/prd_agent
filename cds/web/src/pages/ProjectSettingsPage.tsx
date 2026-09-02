@@ -398,6 +398,25 @@ function messageFromError(err: unknown): string {
   return err instanceof ApiError ? err.message : String(err);
 }
 
+/**
+ * 保存接口回的项目对象没有 `repoSharing`（那是 GET 才做的富化），直接拿它替换页面
+ * 状态会让同仓横幅在保存之后凭空消失。这里只做一件事：新对象没带这段富化时，把上
+ * 一次的值原样留着，别让它掉。权威值由调用方随后静默重取。
+ *
+ * 单独抽出来是为了能直接断言这个行为——它藏在 useState 的更新函数里就只能靠源码扫描
+ * 证明「写在那儿」，证明不了「算得对」。
+ */
+export function preserveRepoSharing(
+  prev: ProjectSummary | null,
+  next: ProjectSummary,
+): ProjectSummary {
+  if (!prev || prev.id !== next.id) return next;
+  // 新对象自己带了（哪怕是 undefined 以外的空值）就以它为准，不要拿旧的盖新的
+  if (next.repoSharing !== undefined) return next;
+  if (prev.repoSharing === undefined) return next;
+  return { ...next, repoSharing: prev.repoSharing };
+}
+
 function useProject(projectId: string | undefined): {
   state: ProjectState;
   refresh: () => Promise<void>;
@@ -419,6 +438,28 @@ function useProject(projectId: string | undefined): {
     }
   }, [projectId]);
 
+  /**
+   * 静默重取「只有 GET 才带」的富化字段（`repoSharing`）。
+   *
+   * 各个保存接口回的是裸 Project / toSummary，没有这一段——直接拿它整体替换页面状态，
+   * 同仓横幅就会在保存之后凭空消失，直到用户手动刷新（2026-09-02 Codex P2）。绑仓库
+   * 那条更糟：正是「这一刻该出现横幅」的操作，把横幅弄没了。
+   *
+   * 不走 `refresh()`：那会把状态打回 loading，整页闪一下（expectation-management
+   * 里的「变化必须可感知」反面：凭空消失再凭空出现）。这里只补差，不动 status。
+   */
+  const reloadSharing = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const fresh = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`);
+      setState((prev) => (prev.status === 'ok' && prev.project.id === fresh.id
+        ? { status: 'ok', project: { ...prev.project, repoSharing: fresh.repoSharing } }
+        : prev));
+    } catch {
+      // 富化字段取不到就维持现状，不要因此打断刚刚成功的那次保存
+    }
+  }, [projectId]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -426,7 +467,18 @@ function useProject(projectId: string | undefined): {
   return {
     state,
     refresh,
-    setProject: (project) => setState({ status: 'ok', project }),
+    /*
+     * 收在这一处，而不是让每个保存回调各自记得补 —— 保存路径有十来条，
+     * 「同一份处理抄十遍、改一处忘九处」在这个 PR 里已经栽过好几次。
+     * 先带着旧值落地（不闪），再静默取权威值（绑/解绑之后事实变了也能跟上）。
+     */
+    setProject: (project) => {
+      setState((prev) => ({
+        status: 'ok',
+        project: preserveRepoSharing(prev.status === 'ok' ? prev.project : null, project),
+      }));
+      void reloadSharing();
+    },
   };
 }
 

@@ -129,3 +129,25 @@ describe('「是不是机器凭据」这个判断只许有一处', () => {
     expect(definers, '把它 import 过去，不要再写一份').toEqual(['services/machine-caller.ts']);
   });
 });
+
+describe('保存路径上的 repoSharing 保全接在唯一一处', () => {
+  /**
+   * `preserveRepoSharing` 算得对由 project-sharing-state.test.ts 断言；这里只管
+   * **有没有人用它**——纯函数写好了没人调，页面照常渲染、测试照常绿，横幅照样消失
+   * （predicate-and-wiring-discipline 形状 2）。
+   *
+   * 另一半是「只此一处」：保存回调有十来条，让每条各自记得补，就是下一次「改一处
+   * 忘九处」的温床。所以钉住它收在 useProject 的 setter 里，并且那里还要静默重取
+   * 权威值（绑/解绑之后事实变了，光留旧值是不够的）。
+   */
+  it('setProject 既留住旧值也去取权威值，且只收在这一处', () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), '../cds/web/src/pages/ProjectSettingsPage.tsx'),
+      'utf8',
+    );
+    const uses = source.match(/preserveRepoSharing\(/g) || [];
+    // 一次定义 + 一次调用
+    expect(uses.length).toBe(2);
+    expect(source).toMatch(/setProject: \(project\) => \{[\s\S]{0,400}preserveRepoSharing\([\s\S]{0,200}void reloadSharing\(\);/);
+  });
+});

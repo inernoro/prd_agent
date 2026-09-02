@@ -462,26 +462,17 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
      * 逐项目分发时某个项目抛了错：dispatcher 已把它兜成一条结果、其余项目照常跑完
      * （见 runPerProject）。但**失败必须仍然看得见**——这条响应契约的本意是「不回
      * 500 让 GitHub 重投，同时把失败摆出来」，只保住前一半就是把契约削弱了。
-     * 所以任一结果是 project-dispatch-failed，整条投递就报 ok:false，理由列全。
+     *
+     * 只记下失败，**不能就此返回**（2026-09-02 Codex P1，同一处第二次栽）：没炸的
+     * 那些项目已经把 deployRequest / 停容器 / 删分支的请求算出来了，早退等于把它们
+     * 的载荷丢在这儿——分支建好了却没人部署、容器该停没人停，而响应里还把它们计进
+     * `handled`。第一次是路由只消费主结果，这次是错误分支绕过了那几个循环，形状同
+     * 一个（predicate-and-wiring-discipline 形状 2：链路只建一半）。
+     * 所以照常跑完全部派发，最后再用失败的形状回包。
      */
-    const failed = [result, ...(result.fanout || [])].filter((r) => r.action === 'project-dispatch-failed');
-    if (failed.length > 0) {
-      const reason = failed.map((r) => r.message).join('；');
-      outcome.dispatchAction = 'error';
-      outcome.dispatchReason = 'dispatcher 抛错';
-      outcome.error = reason;
-      // outcome 由 res.on('finish') 统一落库，这里只更新字段
-      res.status(200).json({
-        ok: false,
-        event: eventName,
-        delivery: deliveryId,
-        error: 'dispatch_error',
-        message: reason,
-        // 没炸的那些项目已经处理完了，别让调用方以为整条投递都没生效
-        handled: [result, ...(result.fanout || [])].length - failed.length,
-      });
-      return;
-    }
+    const failedResults = [result, ...(result.fanout || [])]
+      .filter((r) => r.action === 'project-dispatch-failed');
+    const dispatchFailureReason = failedResults.map((r) => r.message).join('；');
 
     // dispatcher 返回 → 决定 outcome.dispatchAction
     outcome.branchId = result.branchId || result.deployRequest?.branchId;
@@ -497,6 +488,13 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     } else {
       outcome.dispatchAction = 'skipped';
       outcome.dispatchReason = result.message || result.action || '无 deploy / 无 stop';
+    }
+
+    // 有项目炸了就把投递记录写成 error —— 放在判定链之后，否则会被上面的分支覆盖掉。
+    if (failedResults.length > 0) {
+      outcome.dispatchAction = 'error';
+      outcome.dispatchReason = 'dispatcher 抛错';
+      outcome.error = dispatchFailureReason;
     }
 
     // Kick off the deploy asynchronously. The webhook response is sent
@@ -797,6 +795,23 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           );
         });
       }
+    }
+
+    // 派发全部跑完了，这时候才轮到「这次投递整体算成功还是失败」。
+    if (failedResults.length > 0) {
+      res.status(200).json({
+        ok: false,
+        event: eventName,
+        delivery: deliveryId,
+        error: 'dispatch_error',
+        message: dispatchFailureReason,
+        // 没炸的那些项目已经处理完了，别让调用方以为整条投递都没生效
+        handled: [result, ...(result.fanout || [])].length - failedResults.length,
+        deployDispatched: Boolean(outcome.deployDispatched),
+        fanoutDeployDispatched: fanoutDeployDispatched || undefined,
+        fanoutDeployFailed: fanoutDeployFailed || undefined,
+      });
+      return;
     }
 
     res.json({

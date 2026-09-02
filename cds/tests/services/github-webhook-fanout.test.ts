@@ -65,6 +65,7 @@ describe('一仓多项目 push 分发', () => {
     stateService = new StateService(path.join(tmp, 'state.json'), tmp);
     stateService.load();
     worktree = new MockWorktree(new MockShell());
+    pushRuleFires = [];
   });
 
   function addProject(id: string, slug: string, name: string): void {
@@ -106,12 +107,19 @@ describe('一仓多项目 push 分发', () => {
     } as BuildProfile);
   }
 
+  /** 被点火的自动发布规则：[projectId, 分支] */
+  let pushRuleFires: Array<{ projectId: string; branch: string }>;
+
   function dispatcher(): GitHubWebhookDispatcher {
     return new GitHubWebhookDispatcher({
       stateService,
       worktreeService: worktree,
       shell: new MockShell(),
       config: buildConfig(),
+      runPushRules: async (ctx) => {
+        pushRuleFires.push({ projectId: ctx.projectId, branch: ctx.branch });
+        return 0;
+      },
     });
   }
 
@@ -203,6 +211,29 @@ describe('一仓多项目 push 分发', () => {
     expect(worktree.createdWorktrees).toHaveLength(1);
     const actions = [result.action, ...(result.fanout || []).map((r) => r.action)];
     expect(actions).toContain('ignored-out-of-scope');
+  });
+
+  /**
+   * 构建范围只该拦住「建分支 / 构建」，不该顺手把自动发布规则也拦掉。
+   *
+   * 这条约束文件里早就写着（docs-only 出口也必须点火，因为 `docs/** -> docs-site`
+   * 这类规则要的正好是那种 push）；我加项目级范围判定时把出口放在了更外层，于是
+   * 绕过了它——配置好的发布规则从此静默不触发（2026-09-02 Codex P1）。
+   */
+  it('范围没命中的项目，自动发布规则照样点火（范围管构建，不管发布）', async () => {
+    addProject('p-main', 'main-proj', '主项目');
+    addProfileWithScope('p-main', 'api', ['prd-api/**']);
+    // 分支得先在 CDS 里有记录，规则才发得出去；先用一次命中范围的 push 建出来
+    await dispatcher().handle('push', { ...push(['prd-api/src/Program.cs']), size: 1, distinct_size: 1 });
+    pushRuleFires.length = 0;
+
+    // 这一次只改 doc/，范围判定为「未被波及」
+    const result = await dispatcher().handle('push', { ...push(['doc/guide.md']), size: 1, distinct_size: 1 });
+
+    expect(result.action).toBe('ignored-out-of-scope');
+    expect(worktree.createdWorktrees).toHaveLength(1); // 没有新建第二条分支
+    // 但规则必须被点过 —— 否则 `doc/** -> docs-site` 这类规则永远不会触发
+    expect(pushRuleFires).toEqual([{ projectId: 'p-main', branch: 'feature/x' }]);
   });
 
   it('反过来只改主项目目录时，自托管项目不动', async () => {

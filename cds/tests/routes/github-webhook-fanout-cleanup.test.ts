@@ -47,7 +47,11 @@ class MockWorktree extends WorktreeService {
   }
 }
 
-function post(server: http.Server, event: string, payload: unknown): Promise<number> {
+function post(
+  server: http.Server,
+  event: string,
+  payload: unknown,
+): Promise<{ status: number; body: Record<string, unknown> }> {
   const body = JSON.stringify(payload);
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
@@ -62,7 +66,15 @@ function post(server: http.Server, event: string, payload: unknown): Promise<num
           'X-Hub-Signature-256': `sha256=${createHmac('sha256', SECRET).update(body).digest('hex')}`,
         },
       },
-      (res) => { res.resume(); res.on('end', () => resolve(res.statusCode!)); },
+      (res) => {
+        let raw = '';
+        res.on('data', (c) => { raw += c; });
+        res.on('end', () => {
+          let parsed: Record<string, unknown> = {};
+          try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { /* 非 JSON body 不是本用例的判据 */ }
+          resolve({ status: res.statusCode!, body: parsed });
+        });
+      },
     );
     req.on('error', reject);
     req.write(body);
@@ -78,6 +90,8 @@ describe('一仓多项目：清理请求要对每个项目都发出去', () => {
   let calls: Array<{ method: string; branchId: string }>;
   let realFetch: typeof globalThis.fetch;
   let worktree: MockWorktree;
+  /** 真正被派发出去的部署（branchId） */
+  let deployed: string[];
 
   function addProject(id: string, slug: string, name: string): void {
     const now = new Date().toISOString();
@@ -93,6 +107,7 @@ describe('一仓多项目：清理请求要对每个项目都发出去', () => {
     stateService.load();
     __resetWebhookDedupForTests();
     calls = [];
+    deployed = [];
 
     realFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -121,7 +136,7 @@ describe('一仓多项目：清理请求要对每个项目都发出去', () => {
       shell,
       config,
       githubApp: null,
-      dispatchDeploy: async () => { /* 部署那条早就分发了，这里不是本用例的判据 */ },
+      dispatchDeploy: async (branchId: string) => { deployed.push(branchId); },
     }));
     server = app.listen(0);
   });
@@ -155,7 +170,7 @@ describe('一仓多项目：清理请求要对每个项目都发出去', () => {
     addProject('p-ok', 'okp', '正常项目');
     worktree.failFor = 'boomp';
 
-    const status = await post(server, 'push', {
+    const res = await post(server, 'push', {
       ref: 'refs/heads/feature/x',
       after: SHA,
       repository: { id: 1, full_name: REPO },
@@ -163,11 +178,33 @@ describe('一仓多项目：清理请求要对每个项目都发出去', () => {
     });
 
     // 不回 500（GitHub 不重投），但失败要摆出来 —— 只保住前一半等于削弱契约
-    expect(status).toBe(200);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.error).toBe('dispatch_error');
+    // 没炸的那个项目已经处理完了，响应要如实说清「有一个是好的」
+    expect(res.body.handled).toBe(1);
     // 判据是「后面的项目有没有被处理」，不是 create 被调了几次 —— 失败那个项目
     // 内部还有一次重试，数次数会脆。
     expect(stateService.findBranchByProjectAndName('p-ok', 'feature/x')).toBeDefined();
     expect(stateService.findBranchByProjectAndName('p-boom', 'feature/x')).toBeUndefined();
+  });
+
+  it('一个项目炸了，没炸的那个部署仍然要真的派发出去', async () => {
+    // 早退版本在这里最阴：分支建好了、响应把它计进 handled，却没人替它部署。
+    // 判据必须是「派发有没有发生」，看响应体是看不出来的。
+    addProject('p-boom', 'boomp', '会炸的项目');
+    addProject('p-ok', 'okp', '正常项目');
+    worktree.failFor = 'boomp';
+
+    const res = await post(server, 'push', {
+      ref: 'refs/heads/feature/x',
+      after: SHA,
+      repository: { id: 1, full_name: REPO },
+      commits: [{ added: [], modified: ['src/app.ts'], removed: [] }],
+    });
+
+    expect(res.body.ok).toBe(false);
+    expect(deployed).toEqual([stateService.findBranchByProjectAndName('p-ok', 'feature/x')!.id]);
   });
 
   it('关 PR：两个项目的预览都收到停止请求，不是只停第一个', async () => {

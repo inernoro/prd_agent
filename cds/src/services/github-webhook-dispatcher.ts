@@ -1386,18 +1386,14 @@ export class GitHubWebhookDispatcher {
     const perProject: WebhookDispatchResult[] = [];
     for (const project of projects) {
       const scope = resolveProjectScope(this.deps.stateService.getBuildProfilesForProject(project.id));
-      const decision = decideProjectScope(scope, changedPaths);
-      if (!decision.matched) {
-        perProject.push({
-          action: 'ignored-out-of-scope',
-          message: `项目 '${project.name}' 未被本次改动波及：${decision.reason}`,
-        });
-        continue;
-      }
+      // 判据在这里算（只此一处），但**不在这里出口**：范围只该拦住「建分支 / 构建」，
+      // 不该顺手把自动发布规则也拦掉。所以决定往下传，出口放在 handlePushForProject
+      // 里 firePushRules 之后（2026-09-02 Codex P1，理由见那里）。
+      const scopeDecision = decideProjectScope(scope, changedPaths);
       perProject.push(await runPerProject(project, () => this.handlePushForProject(
         event,
         project,
-        { branchName, commitSha, repoFullName, receivedAt },
+        { branchName, commitSha, repoFullName, receivedAt, scopeDecision },
         dryRun,
       )));
     }
@@ -1413,7 +1409,14 @@ export class GitHubWebhookDispatcher {
   private async handlePushForProject(
     event: GitHubPushEvent,
     project: Project,
-    ctx: { branchName: string; commitSha: string; repoFullName: string; receivedAt: string },
+    ctx: {
+      branchName: string;
+      commitSha: string;
+      repoFullName: string;
+      receivedAt: string;
+      /** 本项目有没有被这次改动波及（项目级构建范围判定，由 handlePush 算好传进来） */
+      scopeDecision: { matched: boolean; reason: string };
+    },
     dryRun: boolean,
   ): Promise<WebhookDispatchResult> {
     const { branchName, commitSha, repoFullName, receivedAt } = ctx;
@@ -1481,6 +1484,23 @@ export class GitHubWebhookDispatcher {
         console.error('[webhook] 自动发布规则执行失败:', project.id, branchName, (err as Error).message);
       });
     };
+
+    /*
+     * 项目级构建范围的出口刻意排在这里 —— 与 docs-only 出口同一条约束。
+     *
+     * 范围管的是「这次改动要不要重建这个项目」，而自动发布规则管的是「这次改动要不要
+     * 发布点什么」，两者是不同的问题。把范围出口放在 firePushRules 之前，`docs/** →
+     * docs-site` 这类规则要的正好是「本项目不构建」的那种 push，于是它永远不会被触发，
+     * 而且没有任何信号——上面那段注释早就为 docs-only 写下了同一条约束，我加范围判定
+     * 时把它绕过去了（2026-09-02 Codex P1）。
+     */
+    if (!ctx.scopeDecision.matched) {
+      firePushRules();
+      return {
+        action: 'ignored-out-of-scope',
+        message: `项目 '${project.name}' 未被本次改动波及：${ctx.scopeDecision.reason}`,
+      };
+    }
 
     // Ensure branch exists — auto-create a worktree when the push hits a
     // branch CDS hasn't tracked yet. Uses the same id convention as the
