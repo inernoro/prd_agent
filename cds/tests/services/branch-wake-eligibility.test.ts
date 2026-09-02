@@ -134,3 +134,34 @@ describe('判据不许再分裂成两份（形状 3 守卫）', () => {
     expect(code).not.toMatch(/lastStopSource\s*!==\s*'scheduler'/);
   });
 });
+
+describe('【关键】项目暂停时，访问预览域名不许把它拉起来', () => {
+  // Codex PR #1476 P1：项目暂停停分支带的是 X-CDS-Trigger: system，
+  // 经 actor-resolver → state.ts 记成 lastStopSource='system'，正好落进
+  // 「CDS 自己决定的」白名单。于是用户一访问预览域名，暂停的项目就自己活了，
+  // 暂停要省的资源全回来，而且没人知道是谁开的。
+  const pausedCandidate = branch({ status: 'idle', lastStopSource: 'system' });
+
+  it('同一个分支：项目没暂停可以唤醒，暂停了就不行', () => {
+    // 两条断言必须并排：只断言暂停不唤醒，把整个函数改成 return false 也会绿。
+    expect(isAutoWakeEligible(pausedCandidate, { projectPaused: false })).toBe(true);
+    expect(isAutoWakeEligible(pausedCandidate, { projectPaused: true })).toBe(false);
+  });
+
+  it('不传这个参数时保持既有行为（视为未暂停）', () => {
+    expect(isAutoWakeEligible(pausedCandidate)).toBe(true);
+  });
+
+  it('暂停压倒所有来源分档，不是只挡 system', () => {
+    for (const source of ['scheduler', 'cds', 'system'] as const) {
+      const b = branch({ status: 'idle', lastStopSource: source });
+      expect(isAutoWakeEligible(b, { projectPaused: false }), `${source} 未暂停应可唤醒`).toBe(true);
+      expect(isAutoWakeEligible(b, { projectPaused: true }), `${source} 暂停中不得唤醒`).toBe(false);
+    }
+  });
+
+  it('唤醒调用点真的把项目暂停状态传进来了（形状 2：不传等于没修）', () => {
+    const code = read('src/services/proxy.ts').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    expect(code).toMatch(/isAutoWakeEligible\(branch,\s*\{\s*projectPaused:/);
+  });
+});

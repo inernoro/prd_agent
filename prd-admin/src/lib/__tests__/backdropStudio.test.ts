@@ -1,12 +1,16 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const ROOT = resolve(__dirname, '../../..');
 
 vi.mock('@/services', () => ({
   createImageGenRun: vi.fn(),
   getImageGenRun: vi.fn(),
-  getVisualAgentImageGenModels: vi.fn(),
+  getVisualAgentText2ImgModels: vi.fn(),
 }));
 
-import { createImageGenRun, getImageGenRun, getVisualAgentImageGenModels } from '@/services';
+import { createImageGenRun, getImageGenRun, getVisualAgentText2ImgModels } from '@/services';
 import {
   BACKDROP_MOOD_SUGGESTIONS,
   MAX_GENERATED,
@@ -99,37 +103,56 @@ describe('挑模型：不写死 image1', () => {
     expect(pickGenerationModel(null)).toBeNull();
   });
 });
-
 describe('本机生成的背景：存取与上限', () => {
+  const U = 'user-a';
   const mk = (id: string) => ({ id, name: '我生成的', url: `https://example.test/${id}.png` });
 
   it('新的排最前，重复 id 不会堆两份', () => {
-    pushGeneratedBackdrop(mk('a'));
-    pushGeneratedBackdrop(mk('b'));
-    const list = pushGeneratedBackdrop(mk('a'));
+    pushGeneratedBackdrop(U, mk('a'));
+    pushGeneratedBackdrop(U, mk('b'));
+    const list = pushGeneratedBackdrop(U, mk('a'));
     expect(list.map((x) => x.id)).toEqual(['a', 'b']);
   });
 
   it(`最多留 ${MAX_GENERATED} 张，超出挤掉最旧的`, () => {
     let list: ReturnType<typeof pushGeneratedBackdrop> = [];
-    for (let i = 0; i < MAX_GENERATED + 3; i++) list = pushGeneratedBackdrop(mk(`g${i}`));
+    for (let i = 0; i < MAX_GENERATED + 3; i++) list = pushGeneratedBackdrop(U, mk(`g${i}`));
     expect(list).toHaveLength(MAX_GENERATED);
     expect(list[0]!.id).toBe(`g${MAX_GENERATED + 2}`);
     expect(list.some((x) => x.id === 'g0')).toBe(false);
   });
 
   it('删除后确实读不回来', () => {
-    pushGeneratedBackdrop(mk('a'));
-    pushGeneratedBackdrop(mk('b'));
-    expect(removeGeneratedBackdrop('a').map((x) => x.id)).toEqual(['b']);
-    expect(readGeneratedBackdrops().map((x) => x.id)).toEqual(['b']);
+    pushGeneratedBackdrop(U, mk('a'));
+    pushGeneratedBackdrop(U, mk('b'));
+    expect(removeGeneratedBackdrop(U, 'a').map((x) => x.id)).toEqual(['b']);
+    expect(readGeneratedBackdrops(U).map((x) => x.id)).toEqual(['b']);
   });
 
   it('存的是坏数据时当作没有，不能让首页崩', () => {
-    localStorage.setItem('visualAgent.backdrop.generated', '{oops');
-    expect(readGeneratedBackdrops()).toEqual([]);
-    localStorage.setItem('visualAgent.backdrop.generated', '[{"id":"x"},{"url":""},null,3]');
-    expect(readGeneratedBackdrops()).toEqual([]);
+    localStorage.setItem(`visualAgent.backdrop.generated.${U}`, '{oops');
+    expect(readGeneratedBackdrops(U)).toEqual([]);
+    localStorage.setItem(`visualAgent.backdrop.generated.${U}`, '[{"id":"x"},{"url":""},null,3]');
+    expect(readGeneratedBackdrops(U)).toEqual([]);
+  });
+
+  it('【关键】换个账号读不到上一个人生成的图', () => {
+    // 共用电脑：A 生成过背景、退出，B 登录。用全局键存的话，B 会在首页和
+    // 背景设置里看到 A 的产物（Codex PR #1476 P1）。
+    pushGeneratedBackdrop('user-a', mk('secret'));
+    expect(readGeneratedBackdrops('user-a').map((x) => x.id)).toEqual(['secret']);
+    expect(readGeneratedBackdrops('user-b')).toEqual([]);
+    // 反向也不串：B 写的东西不会污染 A。
+    pushGeneratedBackdrop('user-b', mk('mine'));
+    expect(readGeneratedBackdrops('user-a').map((x) => x.id)).toEqual(['secret']);
+  });
+
+  it('【关键】拿不到账号时不落盘，也不读旧的全局桶', () => {
+    // 未登录 / 水合未完成时宁可少显示，也不能写进一个人人可读的键。
+    localStorage.setItem('visualAgent.backdrop.generated', JSON.stringify([mk('legacy')]));
+    expect(readGeneratedBackdrops(''), '旧的全局桶不再被读出来').toEqual([]);
+    pushGeneratedBackdrop('', mk('nope'));
+    expect(localStorage.getItem('visualAgent.backdrop.generated')).toBe(JSON.stringify([mk('legacy')]));
   });
 });
 
@@ -175,22 +198,34 @@ describe('暗罩强度按素材来源分档', () => {
   });
 });
 
+describe('【关键】背景生成查的是 text2img 专用目录', () => {
+  it('不查合并目录——那里混着 img2img / vision-only 池，选中就每次必败', () => {
+    // 这条不靠 mock 断言（mock 只有一个函数，怎么写都绿），而是读源码：
+    // 合并目录 getVisualAgentImageGenModels 一旦回来，就说明又退回去了（Codex PR #1476 P2）。
+    const src = readFileSync(resolve(ROOT, 'src/lib/backdropStudio.ts'), 'utf8');
+    const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    expect(code, '剥完注释还剩真代码').toContain('generateBackdrop');
+    expect(code).toContain('getVisualAgentText2ImgModels()');
+    expect(code).not.toContain('getVisualAgentImageGenModels(');
+  });
+});
+
 describe('生成流程：失败给得出下一步，不是一句「操作失败」', () => {
   it('没有可用生图模型时明说去哪配', async () => {
-    asMock(getVisualAgentImageGenModels).mockResolvedValue(ok([]));
+    asMock(getVisualAgentText2ImgModels).mockResolvedValue(ok([]));
     await expect(generateBackdrop({ mood: 'x', pollIntervalMs: 1 })).rejects.toThrow(/模型池/);
     expect(createImageGenRun).not.toHaveBeenCalled();
   });
 
   it('模型出错时把上游的原因透出来，不吞掉', async () => {
-    asMock(getVisualAgentImageGenModels).mockResolvedValue(ok([{ isDefaultForType: true, models: [{ platformId: 'p', modelId: 'm' }] }]));
+    asMock(getVisualAgentText2ImgModels).mockResolvedValue(ok([{ isDefaultForType: true, models: [{ platformId: 'p', modelId: 'm' }] }]));
     asMock(createImageGenRun).mockResolvedValue(ok({ runId: 'r1' }));
     asMock(getImageGenRun).mockResolvedValue(ok({ run: { status: 'Failed' }, items: [{ status: 'Failed', errorMessage: '内容被拒绝' }] }));
     await expect(generateBackdrop({ mood: 'x', pollIntervalMs: 1 })).rejects.toThrow('内容被拒绝');
   });
 
   it('走通时用的是任务化 run（同步接口会被边缘超时掐断），并回一张可用素材', async () => {
-    asMock(getVisualAgentImageGenModels).mockResolvedValue(ok([{ isDefaultForType: true, models: [{ platformId: 'p', modelId: 'm' }] }]));
+    asMock(getVisualAgentText2ImgModels).mockResolvedValue(ok([{ isDefaultForType: true, models: [{ platformId: 'p', modelId: 'm' }] }]));
     asMock(createImageGenRun).mockResolvedValue(ok({ runId: 'r2' }));
     asMock(getImageGenRun)
       .mockResolvedValueOnce(ok({ run: { status: 'Running' }, items: [{ status: 'Running' }] }))
@@ -211,7 +246,7 @@ describe('生成流程：失败给得出下一步，不是一句「操作失败�
   });
 
   it('单次查询失败不算整体失败，下一轮接着问', async () => {
-    asMock(getVisualAgentImageGenModels).mockResolvedValue(ok([{ isDefaultForType: true, models: [{ platformId: 'p', modelId: 'm' }] }]));
+    asMock(getVisualAgentText2ImgModels).mockResolvedValue(ok([{ isDefaultForType: true, models: [{ platformId: 'p', modelId: 'm' }] }]));
     asMock(createImageGenRun).mockResolvedValue(ok({ runId: 'r3' }));
     asMock(getImageGenRun)
       .mockResolvedValueOnce({ success: false, data: null, error: { message: '网络抖了一下' } })

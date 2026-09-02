@@ -1311,7 +1311,11 @@ export class ProxyService {
     // 曾经这里和 index.ts 各写一份 lastStopSource 判断，两份都只认 'scheduler'，
     // 于是 auto-lifecycle 停的分支（停机文案写着「下次访问重建」）永久 503。
     if (!this.onReviveCooled) return false;
-    return isAutoWakeEligible(branch);
+    // 项目暂停时一律不唤醒：暂停停分支带的是 X-CDS-Trigger: system，
+    // 会被记成 lastStopSource='system' 而落进「CDS 自己决定的」那一档，
+    // 光看来源分不出「谁让它停的」（Codex PR #1476 P1）。
+    const project = this.stateService.getProjects?.().find((p) => p.id === branch.projectId);
+    return isAutoWakeEligible(branch, { projectPaused: project?.paused === true });
   }
 
   /**

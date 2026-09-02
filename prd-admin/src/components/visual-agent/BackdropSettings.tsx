@@ -75,13 +75,15 @@ function genPhaseText(p: BackdropGenProgress): string {
 }
 
 export function BackdropSettings(props: {
+  /** 当前账号。生成的背景按账号分键存，共用电脑上不串号（见 backdropStudio.generatedKeyOf）。 */
+  userId: string;
   assets: readonly BackdropAsset[];
   generated: readonly BackdropAsset[];
   onGeneratedChange: (next: BackdropAsset[]) => void;
   mode: BackdropMode;
   onModeChange: (mode: BackdropMode) => void;
 }) {
-  const { assets, generated, onGeneratedChange, mode, onModeChange } = props;
+  const { userId, assets, generated, onGeneratedChange, mode, onModeChange } = props;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -125,7 +127,7 @@ export function BackdropSettings(props: {
     setProgress({ phase: 'resolving', elapsedMs: 0 });
     try {
       const asset = await generateBackdrop({ mood, signal: ctrl.signal, onProgress: setProgress });
-      onGeneratedChange(pushGeneratedBackdrop(asset));
+      onGeneratedChange(pushGeneratedBackdrop(userId, asset));
       pick(asset.id); // 出图即钉住：用户点「生成」就是想看这一张，不该还要再点一下
     } catch (e) {
       setGenError(e instanceof Error ? e.message : '生成失败');
@@ -136,7 +138,7 @@ export function BackdropSettings(props: {
   };
 
   const dropGenerated = (id: string) => {
-    const next = removeGeneratedBackdrop(id);
+    const next = removeGeneratedBackdrop(userId, id);
     onGeneratedChange(next);
     if (mode === id) pick('auto'); // 删掉的正是钉住的那张，退回轮换，别留一个指向空气的偏好
   };

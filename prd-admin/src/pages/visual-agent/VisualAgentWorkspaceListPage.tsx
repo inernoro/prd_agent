@@ -1214,7 +1214,12 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   // 压到暗罩底下整页从近黑变成一片平灰，暗房的黑没了，那张图自己也糊成一团认不出来。
   // 详见 backdropCatalog.ts 的注释。
   const [backdropMode, setBackdropMode] = useState<BackdropMode>(() => readBackdropMode());
-  const [generatedBackdrops, setGeneratedBackdrops] = useState<BackdropAsset[]>(() => readGeneratedBackdrops());
+  // 按账号读：userId 首帧可能还没水合出来，所以不能在 useState 初始值里读死一次，
+  // 否则拿到的是空键（= 空列表），登录完成后再也不会补上。
+  const [generatedBackdrops, setGeneratedBackdrops] = useState<BackdropAsset[]>([]);
+  useEffect(() => {
+    setGeneratedBackdrops(readGeneratedBackdrops(userId));
+  }, [userId]);
   const backdropAssets = useMemo<BackdropAsset[]>(
     () => [...BACKDROP_CATALOG, ...generatedBackdrops],
     [generatedBackdrops],
@@ -1707,6 +1712,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
         <div className="flex items-center gap-1.5 justify-self-end">
           <BackdropSettings
+            userId={userId}
             assets={backdropAssets}
             generated={generatedBackdrops}
             onGeneratedChange={setGeneratedBackdrops}

@@ -36,6 +36,21 @@ import type { BranchEntry } from '../types.js';
  *
  * 另外**一律不放行**「删除分支流程」留下的停机——那条链路正在拆这个分支，
  * 半路把它拉起来会和清理互相打架。
+ *
+ * ## 「项目已暂停」压倒一切（2026-09-02 修，Codex PR #1476 P1）
+ *
+ * 上面那句「`system` 运行时只有 auto-lifecycle 两处在写（已 grep 核过）」**是错的**。
+ * 项目暂停（`PUT /api/projects/:id/paused`）停每个分支时带的是
+ * `X-CDS-Trigger: system`（`routes/projects.ts`），actor-resolver 解成 `system:system`，
+ * `state.ts` 再把它记成 `lastStopSource='system'`。当初那次 grep 找的是直接给
+ * `lastStopSource` 赋值的地方，而这条路是经 HTTP 头写进去的，所以没被找到。
+ *
+ * 于是把 `system` 放进白名单，等于让「访问一下预览域名」就能把暂停的项目重新拉起来：
+ * 暂停要省的资源又回来了，而且用户完全不知道是谁开的。
+ *
+ * 所以停机来源这一档**判不了**这件事——暂停是项目级的意图，得由项目状态回答。
+ * 调用方必须把「这个分支所属项目是不是暂停中」告诉这里；拿不到就当没暂停
+ * （保持既有行为），但不允许静默略过这个参数。
  */
 
 /** 删除分支流程在 lastStopReason 里留下的标记。唯一定义处。 */
@@ -70,7 +85,16 @@ export function hasBranchDeleteIntentReason(branch: BranchEntry): boolean {
  * 注意它**不**判断「有没有接唤醒回调」和「是不是导航请求」——那两件是调用方的事
  * （proxy 侧判请求形态，index 侧判回调在不在），这里只回答分支本身够不够格。
  */
-export function isAutoWakeEligible(branch: BranchEntry): boolean {
+export function isAutoWakeEligible(
+  branch: BranchEntry,
+  opts?: {
+    /** 该分支所属项目是否处于暂停中。true = 一律不唤醒，无视停机来源。 */
+    projectPaused?: boolean;
+  },
+): boolean {
+  // 项目暂停是人明确表达的「让它停着」，优先级高于任何停机来源分档。
+  if (opts?.projectPaused === true) return false;
+
   if (branch.status !== 'idle') return false;
   if (!isCdsInitiatedStop(branch.lastStopSource)) return false;
   if (hasBranchDeleteIntentReason(branch)) return false;

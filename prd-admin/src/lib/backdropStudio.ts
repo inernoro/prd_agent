@@ -1,4 +1,4 @@
-import { createImageGenRun, getImageGenRun, getVisualAgentImageGenModels } from '@/services';
+import { createImageGenRun, getImageGenRun, getVisualAgentText2ImgModels } from '@/services';
 import type { BackdropAsset } from './backdropRotation';
 
 /**
@@ -50,12 +50,30 @@ export function buildBackdropPrompt(mood: string): string {
 /** 每台设备最多留几张自己生成的。留太多只会让钉图网格变成垃圾场。 */
 export const MAX_GENERATED = 8;
 
-const GEN_KEY = 'visualAgent.backdrop.generated';
+/**
+ * 按账号分键。
+ *
+ * 这里存的是**用户自己生成的图**的地址，不是主题、排序那类设备偏好。
+ * 用一个全局键存它，等于把 A 的产物留在浏览器里给下一个登录的人看：
+ * 共用电脑上 A 退出、B 登录，首页和背景设置里就会列出 A 生成的背景
+ * （Codex PR #1476 P1）。`no-localstorage.md` 允许 localStorage 的前提是
+ * 「非敏感 + 设备本地 + 旧值无害」，用户产物不满足第一条。
+ *
+ * 分键之后 B 读的是另一个键，天然看不到 A 的东西，不需要额外在登出时清理。
+ * 拿不到 userId（未登录）时返回空键，调用方一律当作没有数据——
+ * 宁可这一屏少几张自己生成的背景，也不要落到一个人人可读的桶里。
+ */
+function generatedKeyOf(userId: string): string {
+  const uid = String(userId ?? '').trim();
+  return uid ? `visualAgent.backdrop.generated.${uid}` : '';
+}
 
 /** 读本机生成过的背景。存的是 COS 地址——图挂了就加载不出来，那一层自己不渲染，页面照常成立。 */
-export function readGeneratedBackdrops(): BackdropAsset[] {
+export function readGeneratedBackdrops(userId: string): BackdropAsset[] {
+  const key = generatedKeyOf(userId);
+  if (!key) return [];
   try {
-    const raw = localStorage.getItem(GEN_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return [];
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
@@ -70,20 +88,24 @@ export function readGeneratedBackdrops(): BackdropAsset[] {
 }
 
 /** 新的排在最前，超出上限的挤掉最旧的。返回写入后的完整列表，调用方直接拿去渲染。 */
-export function pushGeneratedBackdrop(next: BackdropAsset, existing = readGeneratedBackdrops()): BackdropAsset[] {
+export function pushGeneratedBackdrop(userId: string, next: BackdropAsset, existing = readGeneratedBackdrops(userId)): BackdropAsset[] {
   const list = [next, ...existing.filter((x) => x.id !== next.id)].slice(0, MAX_GENERATED);
+  const key = generatedKeyOf(userId);
+  if (!key) return list;
   try {
-    localStorage.setItem(GEN_KEY, JSON.stringify(list));
+    localStorage.setItem(key, JSON.stringify(list));
   } catch {
     /* 存不下就只在本次会话生效，不打断用户 */
   }
   return list;
 }
 
-export function removeGeneratedBackdrop(id: string, existing = readGeneratedBackdrops()): BackdropAsset[] {
+export function removeGeneratedBackdrop(userId: string, id: string, existing = readGeneratedBackdrops(userId)): BackdropAsset[] {
   const list = existing.filter((x) => x.id !== id);
+  const key = generatedKeyOf(userId);
+  if (!key) return list;
   try {
-    localStorage.setItem(GEN_KEY, JSON.stringify(list));
+    localStorage.setItem(key, JSON.stringify(list));
   } catch {
     /* 同上 */
   }
@@ -134,7 +156,11 @@ export async function generateBackdrop(args: {
   const report = (phase: BackdropGenPhase) => args.onProgress?.({ phase, elapsedMs: now() - startedAt });
 
   report('resolving');
-  const poolsRes = await getVisualAgentImageGenModels();
+  // 背景生成从不给输入图，是纯文生图。必须查 text2img 专用目录：
+  // 合并目录里混着 img2img / vision-only 池，若其中之一恰好排在前面或被标为默认，
+  // pickGenerationModel 会选中它，之后每一次背景生成都必然失败——而画面上只会
+  // 显示「生成失败」，看不出是选错了池（Codex PR #1476 P2）。
+  const poolsRes = await getVisualAgentText2ImgModels();
   if (!poolsRes.success) throw new BackdropGenError(poolsRes.error?.message || '拿不到可用的生图模型');
   const model = pickGenerationModel(poolsRes.data);
   if (!model) throw new BackdropGenError('当前没有可用的生图模型，去「模型池」里给文生图配一个再来');
