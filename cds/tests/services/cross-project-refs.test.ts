@@ -69,6 +69,20 @@ describe('resolveCdsRef', () => {
     expect(r.target.isDefaultBranch).toBe(false);
     expect(r.url).toMatch(/feat/);
   });
+  it('主容器停了但复制集有在跑的成员时，服务仍经成员公网可达，状态按 running', () => {
+    const d = deps();
+    const stoppedMain = d.getAllBranches().find((b) => b.id === 'prd-main')!;
+    (stoppedMain as unknown as { replicaSets: unknown }).replicaSets = {
+      'prd-api': { profileId: 'prd-api', enabled: true, primaryWeight: 100, members: [{ id: 'm1', status: 'running', hostPort: 4101, weight: 100 }], updatedAt: 'x' },
+    };
+    const r = resolveCdsRef(d, parseCdsRefs('${CDS_REF:prd-agent/prd-api}')[0]);
+    expect(r.status).toBe('running');
+    // 复制集停用或成员没在跑时不算
+    (stoppedMain as unknown as { replicaSets: unknown }).replicaSets = {
+      'prd-api': { profileId: 'prd-api', enabled: false, primaryWeight: 100, members: [{ id: 'm1', status: 'running', hostPort: 4101, weight: 100 }], updatedAt: 'x' },
+    };
+    expect(resolveCdsRef(d, parseCdsRefs('${CDS_REF:prd-agent/prd-api}')[0]).status).toBe('stopped');
+  });
   it('项目 / 分支 / 服务找不到时分别报 missing-*，url 为 null', () => {
     expect(resolveCdsRef(deps(), parseCdsRefs('${CDS_REF:nope/x}')[0]).status).toBe('missing-project');
     expect(resolveCdsRef(deps(), parseCdsRefs('${CDS_REF:prd-agent/prd-api@gone}')[0]).status).toBe('missing-branch');

@@ -300,12 +300,16 @@ export class ForwarderRoutePublisher {
           // X-CDS-Replica 改成「以路由为准」后，proxy 对**非副本路由**会显式删掉
           // 这两个响应头——直达链接若只钉上游端口不带身份，用户点开就拿不到
           // 「这条请求落在哪个副本」，而这正是直达链接与观测流承诺的东西。
+          // 成员直达路由的健康态看成员自己：成员只在 running 时才被收进来，主容器正在
+          // building / restarting 不该把它的等待态贴到健康成员上，否则副本在主容器重建期间
+          // 全被 forwarder 转去等待页，副本的意义就没了（Codex 三轮 P1）
           records.push(profileId === override.profileId
             ? {
               ...base,
               upstreamPort: override.hostPort,
               ...(override.replicaGroup ? { replicaGroup: override.replicaGroup } : {}),
               ...(override.replicaMemberId ? { replicaMemberId: override.replicaMemberId } : {}),
+              ...(override.replicaMemberId && override.replicaMemberId !== 'primary' ? { healthState: 'running' as const } : {}),
             }
             : base);
           return;
@@ -333,6 +337,8 @@ export class ForwarderRoutePublisher {
             weight: member.weight,
             replicaGroup: replica.group,
             replicaMemberId: member.id,
+            // 成员健康态看成员自己（上面已按 running 过滤），不继承主容器的重建态
+            healthState: 'running',
           });
         }
       };

@@ -114,7 +114,11 @@ export function resolveCdsRef(deps: CdsRefResolverDeps, ref: CdsRef): ResolvedCd
     return { ref, url: null, status: 'missing-service', target, reason: `分支 ${name} 上没有服务 ${ref.serviceId}` };
   }
   const svc = entry.services?.[ref.serviceId];
-  const raw = String(svc?.status ?? entry.status ?? 'stopped');
+  // 主容器停了 / 出错但复制集里还有在跑的成员时，转发器仍通过成员把该服务发布出去（与
+  // forwarder-route-publisher 的成员兜底同口径），引用状态也按可达算（Codex 三轮 P2）
+  const rs = entry.replicaSets?.[ref.serviceId];
+  const memberRunning = !!rs && rs.enabled && rs.members.some((m) => m.status === 'running' && typeof m.hostPort === 'number' && m.hostPort > 0);
+  const raw = memberRunning && svc?.status !== 'running' ? 'running' : String(svc?.status ?? entry.status ?? 'stopped');
   const status: RefTargetStatus = raw === 'running' ? 'running'
     : raw === 'error' ? 'error'
       : (raw === 'building' || raw === 'starting' || raw === 'restarting') ? 'building'

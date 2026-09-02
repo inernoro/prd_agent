@@ -87,32 +87,10 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
     }
   };
 
-  const switchTo = async (branchName: string | null): Promise<void> => {
-    if (!picker) return;
-    setBusy(true);
-    try {
-      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/references/${encodeURIComponent(picker.item.key)}`, {
-        method: 'PUT',
-        // raw = 被替换的那个引用 token 原文：值里嵌了前后缀或有多个引用时，服务端只换这一个
-        body: { profileId: picker.item.profileId, projectRef: picker.ref.ref.projectRef, serviceId: picker.ref.ref.serviceId, raw: picker.ref.ref.raw, ...(branchName ? { branchRef: branchName } : {}) },
-      });
-      setPendingRedeploy((prev) => new Set(prev).add(picker.item.profileId));
-      onToast?.(`${picker.item.key} 已指向 ${picker.ref.ref.projectRef}/${picker.ref.ref.serviceId}${branchName ? `@${branchName}` : '（默认分支）'}，重新部署 ${picker.item.profileId} 后生效`);
-      setPicker(null);
-      await load();
-    } catch (err) {
-      onToast?.(`切换失败：${err instanceof ApiError ? err.message : String(err)}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   // 切换后的引用要进容器必须重建容器：逐个走单服务部署（SSE），每个服务成功一个就从待办里划掉，
   // 中途失败停在失败的那个，剩下的仍留在待办里可再点。
-  const redeploy = async (): Promise<void> => {
-    const ids = Array.from(pendingRedeploy);
-    if (ids.length === 0) return;
-    setBusy(true);
+  const redeployProfiles = async (ids: string[]): Promise<boolean> => {
+    if (ids.length === 0) return true;
     const done: string[] = [];
     try {
       for (const profileId of ids) {
@@ -128,12 +106,45 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
         setPendingRedeploy((prev) => { const next = new Set(prev); next.delete(profileId); return next; });
       }
       onToast?.(`已重新部署 ${done.join('、')}，新的引用已进入容器`);
+      return true;
+    } catch (err) {
+      onToast?.(`重新部署失败：${err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err)}，容器里仍是旧的引用值`);
+      return false;
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  // 切换与生效是一个动作：写完分支覆盖立刻重建该服务的容器。分开两步的话「已切换但没生效」
+  // 只存在于本页内存里，刷新就看不出来了（Codex 三轮 P1）。部署失败时保留待办按钮可重试。
+  const switchTo = async (branchName: string | null): Promise<void> => {
+    if (!picker) return;
+    setBusy(true);
+    try {
+      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/references/${encodeURIComponent(picker.item.key)}`, {
+        method: 'PUT',
+        // raw = 被替换的那个引用 token 原文：值里嵌了前后缀或有多个引用时，服务端只换这一个
+        body: { profileId: picker.item.profileId, projectRef: picker.ref.ref.projectRef, serviceId: picker.ref.ref.serviceId, raw: picker.ref.ref.raw, ...(branchName ? { branchRef: branchName } : {}) },
+      });
+      const profileId = picker.item.profileId;
+      setPendingRedeploy((prev) => new Set(prev).add(profileId));
+      setPicker(null);
+      onToast?.(`${picker.item.key} 已指向 ${picker.ref.ref.projectRef}/${picker.ref.ref.serviceId}${branchName ? `@${branchName}` : '（默认分支）'}，正在重新部署 ${profileId}`);
+      await redeployProfiles([profileId]);
       await load();
     } catch (err) {
-      onToast?.(`重新部署失败：${err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err)}`);
+      onToast?.(`切换失败：${err instanceof ApiError ? err.message : String(err)}`);
     } finally {
       setBusy(false);
-      setProgress(null);
+    }
+  };
+
+  const redeploy = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      if (await redeployProfiles(Array.from(pendingRedeploy))) await load();
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -178,8 +189,10 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
             </thead>
             <tbody>
               {references.map((item) => {
-                const r = item.resolved?.[0];
-                const rowBad = r && r.status !== 'running';
+                // 一个值里可能有多个引用（`${CDS_REF:a/x}|${CDS_REF:a/y}`）：每个 token 各自展示指向、状态与切换
+                const resolvedList = item.resolved ?? [];
+                const r = resolvedList[0];
+                const rowBad = resolvedList.some((x) => x.status !== 'running');
                 return (
                   <tr key={`${item.profileId}:${item.key}`} className={`border-t border-[hsl(var(--hairline))] ${rowBad ? 'bg-[hsl(var(--bad-soft))]/40' : ''}`} data-ref-kind={item.kind}>
                     <td className="px-3 py-2 align-top">
@@ -188,22 +201,28 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
                     </td>
                     <td className="max-w-[320px] truncate px-3 py-2 align-top font-mono text-muted-foreground" title={item.rawValue}>
                       {item.kind === 'cds-ref' ? item.rawValue : item.value}
-                      {item.kind === 'cds-ref' && r?.url ? <div className="truncate text-[10px]" title={r.url}>= {r.url}</div> : null}
+                      {resolvedList.filter((x) => x.url).map((x) => <div key={x.ref.raw} className="truncate text-[10px]" title={x.url ?? ''}>{resolvedList.length > 1 ? `${x.ref.raw} = ` : '= '}{x.url}</div>)}
                     </td>
                     <td className="px-3 py-2 align-top">
-                      {r ? (
-                        <span>{r.target.projectSlug ?? r.ref.projectRef} / <b>{r.target.branchName ?? '?'}</b>{r.target.isDefaultBranch ? <span className="text-[10px] text-muted-foreground">（默认）</span> : null} / {r.ref.serviceId}{r.reason ? <div className="text-[10px] text-destructive">{r.reason}</div> : null}</span>
-                      ) : item.matchedBranch ? (
+                      {r ? resolvedList.map((x) => (
+                        <div key={x.ref.raw}>{x.target.projectSlug ?? x.ref.projectRef} / <b>{x.target.branchName ?? '?'}</b>{x.target.isDefaultBranch ? <span className="text-[10px] text-muted-foreground">（默认）</span> : null} / {x.ref.serviceId}{x.reason ? <div className="text-[10px] text-destructive">{x.reason}</div> : null}</div>
+                      )) : item.matchedBranch ? (
                         <span>CDS 分支 <b>{item.matchedBranch.branchName}</b>{item.matchedBranch.branchId === branchId ? '（本分支）' : ''}</span>
                       ) : item.kind === 'platform' ? <span className="text-muted-foreground">本分支已发布入口表</span> : <span className="text-muted-foreground">CDS 外部或同分支内网</span>}
                     </td>
                     <td className="px-3 py-2 align-top">
-                      {r ? <StatusChip status={r.status} /> : item.matchedBranch ? <StatusChip status={item.matchedBranch.status} /> : <span className="text-muted-foreground">—</span>}
+                      {r ? <div className="flex flex-col gap-1">{resolvedList.map((x) => <StatusChip key={x.ref.raw} status={x.status} />)}</div> : item.matchedBranch ? <StatusChip status={item.matchedBranch.status} /> : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-3 py-2 align-top text-muted-foreground">{SOURCE_LABEL[item.source] ?? item.source}{item.detail === 'cds-ref' ? '' : item.detail ? ` · ${item.detail}` : ''}</td>
                     <td className="px-3 py-2 align-top">
-                      {r && r.status !== 'missing-project' ? (
-                        <Button size="sm" variant="outline" className="h-6 text-[11px]" disabled={busy} onClick={() => void openPicker(item, r)}>切换分支</Button>
+                      {r ? (
+                        <div className="flex flex-col gap-1">
+                          {resolvedList.map((x) => x.status !== 'missing-project' ? (
+                            <Button key={x.ref.raw} size="sm" variant="outline" className="h-6 text-[11px]" disabled={busy} onClick={() => void openPicker(item, x)} title={resolvedList.length > 1 ? `切换 ${x.ref.raw}` : undefined}>
+                              切换分支{resolvedList.length > 1 ? <span className="font-mono text-[10px] text-muted-foreground">{x.ref.serviceId}{x.ref.branchRef ? `@${x.ref.branchRef}` : ''}</span> : null}
+                            </Button>
+                          ) : null)}
+                        </div>
                       ) : item.suggestion ? (
                         <span className="text-[10px] text-warn" title={item.suggestion}>建议改成引用变量</span>
                       ) : item.kind === 'platform' ? <span className="text-[10px] text-muted-foreground">只读</span> : null}
@@ -236,7 +255,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
               ))}
             </div>
           )}
-          <div className="mt-2 text-[10px] text-muted-foreground">改动写入该服务的分支覆盖，不动项目根；切换后需重启该服务才生效。</div>
+          <div className="mt-2 text-[10px] text-muted-foreground">改动写入该服务的分支覆盖，不动项目根；选定后立即重新部署该服务（重建容器）让新地址生效。</div>
         </div>
       ) : null}
     </section>
