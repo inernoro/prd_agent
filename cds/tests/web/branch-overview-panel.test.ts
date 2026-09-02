@@ -732,6 +732,50 @@ describe('总览渲染冒烟：缺口真的没被画成 0', () => {
  * 上一轮只把吞吐接上了这个判据，CPU / 内存两条还各用各的陈旧状态——同一个缺陷
  * 在隔壁又被抓一次，正是「只改被指出的那一处」。
  */
+/**
+ * 没有曲线时的兜底读数，也要看分支运行态（2026-09-02，Codex P2，核对属实）。
+ *
+ * 分支停在「还没攒够两桶」或「series 端点正挂着」的时候，`hasPlot` 为假、
+ * `liveStats` 里却留着停机前的残值，于是判断句写着「分支未运行」，下面并排摆着
+ * 一组标着「当前读数」的旧数字。
+ *
+ * 这是同一个判据第四次没接上（前三次：吞吐、CPU/内存大数、图例）。守卫直接钉住
+ * 「停了就不渲染这块」，别再靠我记得。
+ */
+describe('分支停了，兜底的实时读数也不端', () => {
+  const oneFrame = { api: seedMetricSeries([{ cpuPercent: 7, memUsedBytes: 2048, rxRate: 0, txRate: 0 }]) };
+  const base = {
+    services: [{ profileId: 'api', containerName: 'api-x', status: 'running' as const }],
+    branchName: 'demo',
+    entries: [],
+    deployments: [],
+    metricSeries: oneFrame,          // 只有 1 帧 => hasPlot 为假
+    liveStats: { api: { cpuPercent: 7, memUsedBytes: 2048 } },
+    metricsReady: true,
+    replicaSummary: '1 个副本',
+    infraSummary: '无',
+    windowMinutes: 30,
+    onRefreshMetrics: () => {},
+  };
+
+  it('分支已停时不渲染「当前读数」那块', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      ...base, running: false, now: Date.now(),
+    }));
+    expect(html, '前提没成立：这一屏本该判定为未运行').toContain('分支未运行');
+    expect(html, '判断句说停了，下面却并排摆着标「当前读数」的停机前残值').not.toContain('当前读数');
+    expect(html, '停机前的 7% 不该以「当前」的名义出现').not.toContain('7.00');
+  });
+
+  it('分支在跑、曲线还在攒时照常端出来（防守卫写死成永不渲染）', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      ...base, running: true, now: Date.now(),
+    }));
+    expect(html, '攒曲线期间该端出已有读数，藏起来比不做还差一档').toContain('当前读数');
+    expect(html).toContain('7.00');
+  });
+});
+
 describe('分支停了，CPU 与内存也不报当前值', () => {
   const stale = (): string => renderToStaticMarkup(createElement(OverviewPanel, {
     // 陈旧的 lastGoodMetrics：状态还写着 running

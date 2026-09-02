@@ -1404,8 +1404,14 @@ export function OverviewPanel({
         历史还在攒（冷启动 / 刚部署的分支）。此前只端第一种——第二种下 `hasPlot`
         为假就只剩一个骨架屏，而 `liveStats` 里明明已经有 CPU 与内存的真实读数。
         那等于**为了等一条曲线，把手上已有的数字也藏起来**，比不做还差一档。
+
+        但前提是分支还在跑（Codex P2，第四次抓到同一个判据没接上）：分支停在
+        「还没攒够两桶」或「series 端点正挂着」的时候，`liveStats` 里留着停机前的
+        残值，这里照端不误，于是判断句写着「分支未运行」、下面并排摆着一组标着
+        「当前读数」的旧数字。头部大数、图例、构成条、吞吐都接了 `anyRunning`，
+        只有这条兜底路没接——又是「只改被指出的那一处」。
       */}
-      {!hasPlot && Object.keys(liveStats ?? {}).length > 0 ? (
+      {!hasPlot && anyRunning && Object.keys(liveStats ?? {}).length > 0 ? (
         <LiveReadings
           services={services}
           liveStats={liveStats!}
