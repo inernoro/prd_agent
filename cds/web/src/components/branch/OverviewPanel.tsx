@@ -1059,12 +1059,22 @@ export function OverviewPanel({
           </button>
         </section>
       ) : null}
-      {seriesError && !hasPlot ? (
+      {seriesError ? (
+        /*
+         * 这一条**不看 hasPlot**（Codex P2，核对属实）。
+         *
+         * 漏掉的是「先成功、后持续失败」那条路：`metricSeries` 还留着上一次的结果，
+         * `hasPlot` 仍为真，于是两个错误分支都被 `!hasPlot` 挡掉——一条过期的曲线
+         * 顶着「近 30 分钟」的标签无限期挂在那儿，一句提示都没有。
+         * 有图时说「这条曲线是旧的」，没图时说「画不出来了」，两句都得说。
+         */
         <section className="flex flex-col gap-2 rounded-xl border border-bad/30 bg-bad-soft px-4 py-3 text-sm text-bad">
           <span>读取指标历史失败：{seriesError}</span>
           <span className="text-[12px] text-foreground-muted">
-            曲线画不出来了（不是还没攒够——这一项不会自己好）。
-            {Object.keys(liveStats ?? {}).length > 0 ? '下面仍是实时读数。' : ''}
+            {hasPlot
+              ? '下面那条曲线是最后一次成功拉取的结果，已经不再更新——它不是当前的 30 分钟。'
+              : '曲线画不出来了（不是还没攒够——这一项不会自己好）。'}
+            {!hasPlot && Object.keys(liveStats ?? {}).length > 0 ? '下面仍是实时读数。' : ''}
           </span>
         </section>
       ) : null}
