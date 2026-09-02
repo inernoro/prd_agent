@@ -157,6 +157,59 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     expect(r.series.a.at(-1)?.cpuPercent).not.toBeNull();
   });
 
+  /**
+   * 2026-09-02 真人验收报出的缺陷（截图：一片均匀锯齿林）。
+   *
+   * 病象：常驻采样器 45s 一帧，前端按 120 点要 30 分钟窗口 → 每桶 15s → 三个桶里
+   * 只有一个有样本。空桶在堆叠图里画成 0，于是每个尖峰是一次真实采样、每个谷底是
+   * 「没数据」。**图画的是采集节奏，不是 CPU。**
+   *
+   * 修法：分辨率不细于观测到的采集节奏——points 只是上限，桶宽至少是节奏的 1.5 倍。
+   */
+  it('分辨率不细于采集节奏：45s 采样要 120 点也不会切出成片空桶', () => {
+    const cadence = 45_000;
+    const windowMs = 30 * 60_000;
+    for (let t = 0; t <= windowMs; t += cadence) {
+      recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
+    }
+    const now = T0 + windowMs;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
+
+    const empty = r.series.c1.filter((p) => p.cpuPercent == null).length;
+    const emptyShare = empty / r.series.c1.length;
+    expect(
+      emptyShare,
+      `${r.series.c1.length} 个桶里 ${empty} 个是空的（桶宽 ${r.groupSeconds}s，采集节奏 ${cadence / 1000}s）——空桶会被画成 0，成片锯齿`,
+    ).toBeLessThan(0.1);
+    expect(r.groupSeconds, '桶宽必须不小于采集节奏').toBeGreaterThanOrEqual(cadence / 1000);
+    expect(r.series.c1.length).toBeLessThanOrEqual(120);
+  });
+
+  /**
+   * 抽屉打开时 5s 端点也在写，窗口里混着两种间隔。取中位数会被密的那段拉过去
+   * （开着抽屉五分钟就够了），稀疏段照样锯齿——所以判据取 p90「常规最大间隔」。
+   */
+  it('混着 5s 与 45s 两种采集节奏时，分辨率跟稀疏的那一档走', () => {
+    const windowMs = 30 * 60_000;
+    for (let t = 0; t <= 25 * 60_000; t += 45_000) recordContainerSample('c1', sample({ cpuPercent: 2 }), T0 + t);
+    for (let t = 25 * 60_000; t <= windowMs; t += 5_000) recordContainerSample('c1', sample({ cpuPercent: 4 }), T0 + t);
+    const now = T0 + windowMs;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
+
+    expect(r.groupSeconds, '被 5s 那段带偏就会退回锯齿').toBeGreaterThanOrEqual(45);
+    // 稀疏段（前 25 分钟）里不该有成片空桶。
+    const sparse = r.series.c1.filter((p) => p.ts < T0 + 25 * 60_000);
+    const emptyInSparse = sparse.filter((p) => p.cpuPercent == null).length;
+    expect(emptyInSparse / sparse.length).toBeLessThan(0.1);
+  });
+
+  it('points=1（整窗聚成一个数）不受分辨率下限影响', () => {
+    for (let t = 0; t <= 30 * 60_000; t += 45_000) recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
+    const now = T0 + 30 * 60_000;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 1 }, now);
+    expect(r.series.c1.length).toBe(1);
+  });
+
   it('历史只覆盖窗口末尾时，轴仍是完整窗口（冷启动不许把 3 分钟摊成 30 分钟）', () => {
     // 只有最后 180s 有数据，窗口却要 1800s。
     for (let i = 0; i < 36; i += 1) {
