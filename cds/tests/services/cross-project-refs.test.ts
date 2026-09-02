@@ -54,13 +54,28 @@ function deps(): CdsRefResolverDeps {
 }
 
 describe('resolveCdsRef', () => {
-  it('不带分支绑默认分支；子域服务给子域地址，其余给主入口；目标停了状态为 stopped 但地址仍给', () => {
+  it('不带分支绑默认分支；目标停了状态为 stopped 且不给地址（路由没发布，给了会打到别的容器）', () => {
     const r = resolveCdsRef(deps(), parseCdsRefs('${CDS_REF:prd-agent/llmgw-serve}')[0]);
     expect(r.status).toBe('stopped');
     expect(r.target).toMatchObject({ projectSlug: 'prd-agent', branchId: 'prd-main', branchName: 'main', isDefaultBranch: true });
-    expect(r.url).toMatch(/^https:\/\/main-prd-agent-llmgw\.miduo\.org/);
-    const api = resolveCdsRef(deps(), parseCdsRefs('${CDS_REF:p-prd/prd-api}')[0]);
-    expect(api.url).toMatch(/^https:\/\/main-prd-agent\.miduo\.org/);
+    expect(r.url).toBeNull();
+    expect(r.reason).toContain('路由未发布');
+  });
+  it('目标在跑时：子域服务给子域地址，其余给主入口', () => {
+    const r = resolveCdsRef(deps(), parseCdsRefs('${CDS_REF:prd-agent/llmgw-serve@feat/x}')[0]);
+    expect(r.status).toBe('running');
+    expect(r.url).toMatch(/-llmgw\.miduo\.org/);
+    const api = resolveCdsRef(deps(), parseCdsRefs('${CDS_REF:p-prd/prd-api@feat/x}')[0]);
+    expect(api.url).toMatch(/^https:\/\//);
+    expect(api.url).not.toMatch(/-llmgw\./);
+  });
+  it('目标停了而同分支别的服务在跑：不把主入口当它的地址', () => {
+    const d = deps();
+    const feat = d.getAllBranches().find((b) => b.id === 'prd-feat')!;
+    (feat.services as Record<string, { status: string }>)['prd-api'].status = 'stopped';
+    const r = resolveCdsRef(d, parseCdsRefs('${CDS_REF:prd-agent/prd-api@feat/x}')[0]);
+    expect(r.status).toBe('stopped');
+    expect(r.url).toBeNull();
   });
   it('钉到某个分支时按该分支解析，running 即可用', () => {
     const r = resolveCdsRef(deps(), parseCdsRefs('${CDS_REF:prd-agent/prd-api@feat/x}')[0]);
@@ -87,6 +102,9 @@ describe('resolveCdsRef', () => {
     const d = deps();
     const base = d.getEffectiveProfilesForBranch;
     d.getEffectiveProfilesForBranch = (entry) => [...base(entry), { id: 'prd-worker', projectId: 'p-prd', name: 'worker', dockerImage: 'x', workDir: '.', containerPort: 0 } as BuildProfile];
+    // worker 容器在跑（可路由），但它在主域名上没有任何路由归属
+    const feat = d.getAllBranches().find((b) => b.id === 'prd-feat')!;
+    (feat.services as Record<string, unknown>)['prd-worker'] = { profileId: 'prd-worker', containerName: 'w', hostPort: 3, status: 'running' };
     const r = resolveCdsRef(d, parseCdsRefs('${CDS_REF:prd-agent/prd-worker@feat/x}')[0]);
     expect(r.status).toBe('unroutable');
     expect(r.url).toBeNull();

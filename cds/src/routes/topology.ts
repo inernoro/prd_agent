@@ -245,6 +245,8 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
       ...existing,
       env: { ...(existing.env ?? {}), [key]: nextValue },
     });
+    // 与既有的 profile-overrides 写接口同口径：写完就落盘，进程重启不丢（Codex 七轮 P2）
+    deps.stateService.save();
     res.json({ branchId: branch.id, profileId, key, value: nextValue, token: value, resolved, scope: 'branch-override', restartHint: '切换写入该服务的分支覆盖，重新部署该服务后生效（原地重启不会刷新容器环境变量）' });
   });
 

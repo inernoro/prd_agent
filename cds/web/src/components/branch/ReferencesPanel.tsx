@@ -95,13 +95,16 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
     try {
       for (const profileId of ids) {
         setProgress(`正在重新部署 ${profileId}（${done.length + 1}/${ids.length}）…`);
-        let ok = true;
+        // 只有收到终态事件（complete 且 ok、或 error）才下结论：流被服务端重启 / 连接切断提前收尾时，
+        // 不能把「没听到坏消息」当成功（Codex 七轮 P2）
+        let terminal: 'ok' | 'failed' | null = null;
         await postSse(`/api/branches/${encodeURIComponent(branchId)}/deploy/${encodeURIComponent(profileId)}`, {}, (event, data) => {
-          if (event === 'error') ok = false;
-          if (event === 'complete' && data && typeof data === 'object' && 'ok' in data) ok = Boolean((data as { ok?: unknown }).ok);
+          if (event === 'error') terminal = 'failed';
+          if (event === 'complete') terminal = data && typeof data === 'object' && 'ok' in data && !(data as { ok?: unknown }).ok ? 'failed' : 'ok';
           setProgress(`${profileId}（${done.length + 1}/${ids.length}）：${sseEventText(event, data)}`);
         });
-        if (!ok) throw new Error(`${profileId} 重新部署失败，请看分支日志`);
+        if (terminal === 'failed') throw new Error(`${profileId} 重新部署失败，请看分支日志`);
+        if (terminal === null) throw new Error(`${profileId} 的部署流在结束前中断，结果未知，请到分支日志确认后再重试`);
         done.push(profileId);
         setPendingRedeploy((prev) => { const next = new Set(prev); next.delete(profileId); return next; });
       }

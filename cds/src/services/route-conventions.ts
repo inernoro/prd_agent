@@ -38,6 +38,9 @@ export function isOperationalProbePrefix(prefix: string): boolean {
   return p !== '/' && OPERATIONAL_PROBE_PREFIX_RE.test(p);
 }
 
+/** 发布器只给这些状态的服务发路由（与 proxy / 引用解析器共用同一份口径） */
+export const ROUTABLE_SERVICE_STATUSES = new Set(['running', 'starting', 'building', 'restarting']);
+
 export interface RoutableProfile {
   id: string;
   pathPrefixes?: readonly string[];

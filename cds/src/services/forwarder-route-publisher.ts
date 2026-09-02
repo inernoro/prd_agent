@@ -33,7 +33,7 @@ import type { BranchEntry, BuildProfile } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
 import { namedServiceLabel, occupiedHostOwners, publishedServiceLabels, subdomainWithLegacyAliases } from './preview-entrypoints.js';
-import { isOperationalProbePrefix, pickApiConventionProfile, pickDefaultProfile } from './route-conventions.js';
+import { isOperationalProbePrefix, pickApiConventionProfile, pickDefaultProfile, ROUTABLE_SERVICE_STATUSES } from './route-conventions.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
 /**
@@ -48,7 +48,8 @@ import type { RouteRecord } from '../forwarder/types.js';
  */
 // 可路由服务状态(SSOT)：forwarder 命名/前缀路由与 proxy.ts master 命名子域兜底共用同一口径，
 // 避免「停止/错误的服务仍被强制为上游」这类两条路径漂移(Cursor Bugbot)。
-export const ROUTABLE_SERVICE_STATUSES = new Set(['running', 'starting', 'building', 'restarting']);
+// 定义在 route-conventions（叶子模块），这里再导出以保留既有引用方
+export { ROUTABLE_SERVICE_STATUSES } from './route-conventions.js';
 
 export interface ForwarderRoutePublisherOptions {
   state: StateService;

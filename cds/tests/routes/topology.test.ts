@@ -171,12 +171,14 @@ describe('topology router', () => {
       const res = await request(srv, 'GET', '/api/branches/md-main/references');
       expect(res.status).toBe(200);
       const byKey = Object.fromEntries(res.body.references.map((r: { key: string }) => [r.key, r]));
-      expect(byKey.LLMGW_BASE).toMatchObject({ kind: 'cds-ref', profileId: 'cb-web', source: 'platform-injected', detail: 'cds-ref' });
+      // 目标停了 → 没有可用地址 → 部署期不替换，来源明细标 unresolved
+      expect(byKey.LLMGW_BASE).toMatchObject({ kind: 'cds-ref', profileId: 'cb-web', source: 'platform-injected', detail: 'cds-ref-unresolved' });
       expect(byKey.LLMGW_BASE.resolved[0]).toMatchObject({ status: 'stopped', target: { branchId: 'prd-main', isDefaultBranch: true } });
       expect(byKey.MAP_API_BASE).toMatchObject({ kind: 'url', matchedBranch: { branchId: 'prd-main' } });
       expect(byKey.PLAIN).toBeUndefined();
       expect(byKey.CDS_PREVIEW_URL?.kind).toBe('platform');
-      expect(res.body.broken.map((f: { rule: string; severity: string }) => [f.rule, f.severity])).toEqual([['reference-broken', 'warn']]);
+      // 目标停了 → 路由没发布 → 没有可用地址，按 error（部署时这个引用会原样留在容器里）
+      expect(res.body.broken.map((f: { rule: string; severity: string }) => [f.rule, f.severity])).toEqual([['reference-broken', 'error']]);
 
       const bad = await request(srv, 'PUT', '/api/branches/md-main/references/LLMGW_BASE', { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'gone' });
       expect(bad.status).toBe(409);
@@ -328,11 +330,11 @@ describe('topology router', () => {
       const md = res.body.projects.find((p: { slug: string }) => p.slug === 'mdimp');
       expect(md.branch).toMatchObject({ id: 'md-main', name: 'main' });
       expect(md.edges).toEqual([expect.objectContaining({ toProjectId: 'p-prd', kind: 'cds-ref', status: 'stopped', fromService: 'cb-web', key: 'LLMGW_BASE' })]);
-      expect(md.lint.warnings).toBeGreaterThanOrEqual(1);
+      expect(md.lint.errors).toBeGreaterThanOrEqual(1);
       expect(md.headline).toContain('LLMGW_BASE');
       const prd = res.body.projects.find((p: { slug: string }) => p.slug === 'prd-agent');
       expect(prd.inboundEdges).toBe(1);
-      expect(res.body.summary.warnings).toBeGreaterThanOrEqual(1);
+      expect(res.body.summary.errors).toBeGreaterThanOrEqual(1);
     } finally {
       await new Promise<void>((r) => srv.close(() => r()));
     }

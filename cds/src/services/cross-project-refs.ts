@@ -13,7 +13,7 @@ import { resolveBranchEntrypointsEnv, branchEntrypointDepsFromState, type Branch
 import { buildPreviewUrlForProject } from './comment-template.js';
 // container 也导入本模块；两边都只在调用时用到对方的函数，preview-entrypoints 与 container 早已是这种关系
 import { resolveEffectiveProfile } from './container.js';
-import { resolveMainDomainRoutes } from './route-conventions.js';
+import { resolveMainDomainRoutes, ROUTABLE_SERVICE_STATUSES } from './route-conventions.js';
 
 export const CDS_REF_RE = /\$\{CDS_REF:([A-Za-z0-9_.~-]+)\/([A-Za-z0-9_.~-]+)(?:@([^}\s]+))?\}/g;
 
@@ -87,14 +87,25 @@ function findBranch(deps: CdsRefResolverDeps, project: Project, branchRef: strin
  * 拿到 /api/）的给主入口；两者都没有（后台 worker、只被内网调用的服务）返回 unroutable——
  * 不能把主入口当它的地址，否则调用会静默打到壳上（Codex 五轮 P1）。
  */
+/** 发布器会不会给这个服务发路由：容器可路由（有端口且状态在可路由集合里），或复制集有在跑的成员 */
+export function isServiceRoutableOnBranch(entry: BranchEntry, serviceId: string): boolean {
+  const svc = entry.services?.[serviceId];
+  if (svc && (svc.hostPort ?? 0) > 0 && ROUTABLE_SERVICE_STATUSES.has(String(svc.status))) return true;
+  const rs = entry.replicaSets?.[serviceId];
+  return !!rs && rs.enabled && rs.members.some((m) => m.status === 'running' && typeof m.hostPort === 'number' && m.hostPort > 0);
+}
+
 export function serviceUrlOnBranch(
   deps: CdsRefResolverDeps,
   entry: BranchEntry,
   serviceId: string,
-): { url: string } | { url: null; reason: 'missing-service' | 'unroutable' } {
+): { url: string } | { url: null; reason: 'missing-service' | 'unroutable' | 'not-published' } {
   const profiles = deps.getEffectiveProfilesForBranch(entry);
   const profile = profiles.find((p) => p.id === serviceId);
   if (!profile) return { url: null, reason: 'missing-service' };
+  // 地址只在发布器真的会发它的路由时才给：目标停了 / 出错时主域名可能已被别的在跑服务接管，
+  // 把主入口当它的地址会让调用静默打到别的容器（Codex 七轮 P1）
+  if (!isServiceRoutableOnBranch(entry, serviceId)) return { url: null, reason: 'not-published' };
   const env = resolveBranchEntrypointsEnv(entry, deps.entrypointDeps).env;
   if (profile.subdomain) {
     try {
@@ -102,7 +113,8 @@ export function serviceUrlOnBranch(
       if (table[profile.subdomain]) return { url: table[profile.subdomain] };
     } catch { /* 表损坏按主域名路由继续判 */ }
   }
-  const routes = resolveMainDomainRoutes(profiles);
+  // 主域名归属与发布器同口径：只在当前可路由的服务之间分配
+  const routes = resolveMainDomainRoutes(profiles.filter((p) => isServiceRoutableOnBranch(entry, p.id)));
   const ownsMainRoute = routes.shellId === profile.id || (routes.prefixes.get(profile.id)?.length ?? 0) > 0;
   if (!ownsMainRoute) return { url: null, reason: 'unroutable' };
   if (env[PREVIEW_URL_ENV_KEY]) return { url: env[PREVIEW_URL_ENV_KEY] };
@@ -124,22 +136,24 @@ export function resolveCdsRef(deps: CdsRefResolverDeps, ref: CdsRef): ResolvedCd
   }
   const located = serviceUrlOnBranch(deps, entry, ref.serviceId);
   const target = { ...base, branchId: entry.id };
+  const svc = entry.services?.[ref.serviceId];
   if (located.url === null) {
-    return located.reason === 'unroutable'
-      ? { ref, url: null, status: 'unroutable', target, reason: `服务 ${ref.serviceId} 没有公网路由（无子域、无前缀、也不是默认站），不能当作地址引用` }
-      : { ref, url: null, status: 'missing-service', target, reason: `分支 ${name} 上没有服务 ${ref.serviceId}` };
+    if (located.reason === 'unroutable') {
+      return { ref, url: null, status: 'unroutable', target, reason: `服务 ${ref.serviceId} 没有公网路由（无子域、无前缀、也不是默认站），不能当作地址引用` };
+    }
+    if (located.reason === 'missing-service') {
+      return { ref, url: null, status: 'missing-service', target, reason: `分支 ${name} 上没有服务 ${ref.serviceId}` };
+    }
+    // 没发布路由：没部署过 / 停了 / 出错。地址不给（给了会打到别的容器），状态如实
+    if (!svc) return { ref, url: null, status: 'stopped', target, reason: `分支 ${name} 上还没有部署服务 ${ref.serviceId}` };
+    const status: RefTargetStatus = String(svc.status) === 'error' ? 'error' : 'stopped';
+    return { ref, url: null, status, target, reason: `服务 ${ref.serviceId} 在分支 ${name} 上${status === 'error' ? '出错' : '已停止'}，路由未发布，没有可用地址` };
   }
   const url = located.url;
-  const svc = entry.services?.[ref.serviceId];
   // 主容器停了 / 出错但复制集里还有在跑的成员时，转发器仍通过成员把该服务发布出去（与
   // forwarder-route-publisher 的成员兜底同口径），引用状态也按可达算（Codex 三轮 P2）
   const rs = entry.replicaSets?.[ref.serviceId];
   const memberRunning = !!rs && rs.enabled && rs.members.some((m) => m.status === 'running' && typeof m.hostPort === 'number' && m.hostPort > 0);
-  // 配置里有这个服务但分支上没有它的容器记录、也没有在跑的副本：它没被部署过或已经消失，
-  // 不能拿分支整体状态（别的服务撑着的 running）冒充（Codex 五轮 P1）
-  if (!svc && !memberRunning) {
-    return { ref, url, status: 'stopped', target, reason: `分支 ${name} 上还没有部署服务 ${ref.serviceId}` };
-  }
   const raw = memberRunning && svc?.status !== 'running' ? 'running' : String(svc?.status ?? 'stopped');
   const status: RefTargetStatus = raw === 'running' ? 'running'
     : raw === 'error' ? 'error'
