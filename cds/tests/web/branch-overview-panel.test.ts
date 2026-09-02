@@ -776,6 +776,55 @@ describe('分支停了，兜底的实时读数也不端', () => {
   });
 });
 
+/**
+ * 就绪计数也归一（2026-09-02，Codex P2，核对属实，同一判据第五次）。
+ *
+ * 分支停掉而 `/metrics` 正挂着时，陈旧清单里每个服务都还写着 running，于是健康环
+ * 写「2 / 2 个服务就绪」、底部写「2 个在跑」、合计后缀写「2 个在跑服务合计」，
+ * 而同一屏的判断句写着「分支未运行」。
+ *
+ * 前四次我都是在**用到的那一处**补 `anyRunning`，补一处漏一处。这条守卫钉的是
+ * 归一化本身：状态在入口就按分支运行态修正，下面所有读它的地方自动一致。
+ */
+describe('分支停了，就绪计数也不算陈旧的 running', () => {
+  const render = (running: boolean): string => renderToStaticMarkup(createElement(OverviewPanel, {
+    services: [
+      { profileId: 'api', containerName: 'api-x', status: 'running' },
+      { profileId: 'web', containerName: 'web-x', status: 'running' },
+    ],
+    running,
+    branchName: 'demo',
+    entries: [],
+    deployments: [],
+    metricSeries: {
+      api: seedMetricSeries([
+        { cpuPercent: 3, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+        { cpuPercent: 3, memUsedBytes: 100, rxRate: 0, txRate: 0 },
+      ]),
+    },
+    metricsReady: true,
+    replicaSummary: '2 个副本',
+    infraSummary: '无',
+    now: Date.now(),
+    windowMinutes: 30,
+    onRefreshMetrics: () => {},
+  }));
+
+  it('分支已停时不写「2 / 2 个服务就绪」，也不写「2 个在跑」', () => {
+    const html = render(false);
+    expect(html, '前提没成立：这一屏本该判定为未运行').toContain('分支未运行');
+    expect(html, '健康环仍按陈旧清单报满员，和判断句同屏打架').not.toContain('2 / 2 个服务就绪');
+    expect(html, '底部仍写「2 个在跑」').not.toContain('2 个在跑');
+    expect(html, '应当如实写 0 个就绪').toContain('0 / 2 个服务就绪');
+  });
+
+  it('分支在跑时照常满员（防归一化写成永远清零）', () => {
+    const html = render(true);
+    expect(html).toContain('2 / 2 个服务就绪');
+    expect(html).toContain('一切正常');
+  });
+});
+
 describe('分支停了，CPU 与内存也不报当前值', () => {
   const stale = (): string => renderToStaticMarkup(createElement(OverviewPanel, {
     // 陈旧的 lastGoodMetrics：状态还写着 running

@@ -976,7 +976,7 @@ function EntryCards({
 // ── 面板本体 ──────────────────────────────────────────────────────────────
 
 export function OverviewPanel({
-  services, running, branchName, commitSha, commitMessage,
+  services: rawServices, running, branchName, commitSha, commitMessage,
   lastReadyAt, lastDeployAt, deployDurationMs,
   entries, deployments, metricSeries, liveStats, metricsReady, metricsError, seriesError,
   replicaSummary, infraSummary,
@@ -1030,6 +1030,22 @@ export function OverviewPanel({
   onConfigureEntries?: () => void;
   onOpenDeployments?: () => void;
 }): JSX.Element {
+  /*
+   * 服务状态先按分支的权威运行态归一，再往下用（Codex P2，第五次抓到同一个判据）。
+   *
+   * `running` 来自 SSE，权威且新鲜；`services[].status` 来自 `/metrics`，轮询失败时
+   * 会一直停在 lastGoodMetrics 的旧值上。分支停掉而轮询正挂着的时候，那份旧清单里
+   * 每个服务都还写着 running，于是健康环写「2 / 2 个服务就绪」、底部写「2 个在跑」、
+   * 合计后缀写「2 个在跑服务合计」——同一屏的判断句却写着「分支未运行」。
+   *
+   * 前四次（吞吐、CPU/内存大数、每服务图例、兜底读数）我都是在**用到的那一处**补
+   * `anyRunning`，补一处漏一处。这次改成在入口归一：分支没在跑，这份清单里的
+   * running 一律不作数，下面所有读它的地方自动一致，不再依赖我记得补第六处。
+   */
+  const services = useMemo<OverviewService[]>(() => (
+    running ? rawServices : rawServices.map((s) => (s.status === 'running' ? { ...s, status: 'stopped' } : s))
+  ), [rawServices, running]);
+
   const okCount = services.filter((s) => s.status === 'running').length;
   const badServices = services.filter((s) => s.status === 'error');
   const ringStates = services.map((s): 'ok' | 'bad' | 'idle' => (
@@ -1059,7 +1075,7 @@ export function OverviewPanel({
    * 第一轮只把吞吐接上了这个判据，CPU / 内存两条还各用各的陈旧状态，于是同一个
    * 缺陷在隔壁又被抓一次。这次统一：分支没在跑，就没有任何「当前值」可言。
    */
-  const anyRunning = running && services.some((sv) => sv.status === 'running');
+  const anyRunning = services.some((sv) => sv.status === 'running');
 
   const picked = useMemo(() => {
     const withSeries = services
