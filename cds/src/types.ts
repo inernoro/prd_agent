@@ -1908,6 +1908,12 @@ export interface CdsState {
    * no-op that just ensures the array exists when needed.
    */
   globalAgentKeys?: GlobalAgentKey[];
+  /** 身份层：主体表。缺省为空 = 尚未有任何主体，一切按存量行为走。 */
+  principals?: Principal[];
+  /** 身份层：用户级凭证（「发钥匙的钥匙」）。 */
+  userCredentials?: UserCredential[];
+  /** 身份层：项目授权表，「要不要再批一次」的唯一判据。 */
+  projectGrants?: ProjectGrant[];
   /**
    * Legacy single-slot GitHub Device Flow token. Kept for installations
    * without CDS user sessions and for backwards-compatible state loading.
@@ -3621,6 +3627,27 @@ export interface AgentKey {
   lastUsedAt?: string;
   /** ISO timestamp set by DELETE — revoked keys stay in state for audit. */
   revokedAt?: string;
+  /**
+   * 身份层（2026-09-01）—— 这把凭证属于哪个**主体**。
+   *
+   * 纯增量、可选：存量密钥没有这个字段，一切照旧，只是在权限总览里显示为
+   * 「未认领」。有了它，吊销列表才能按主体聚合（十几个主体，而不是几十上百把
+   * 钥匙平铺），运维审批记忆也才能记在主体上 —— 换一把钥匙不再让已批的授权
+   * 集体失配，那是「莫名其妙又要审批」的最大来源。
+   */
+  principalId?: string;
+  /**
+   * 由哪张用户级凭证签出来的。级联撤销靠它：撤掉一张用户级凭证，它签出去的
+   * 全部下游凭证同时失效 —— 否则撤了等于没撤。
+   */
+  issuedByCredentialId?: string;
+  /**
+   * 到期时间。**存量密钥没有这个字段 = 永不过期**，与今天逐字节一致。
+   *
+   * 新签发的项目级凭证是短命的（用即续）：今天它永不过期，是因为丢了很麻烦；
+   * 有了自愈补发，丢了不麻烦了，所以没理由再让它长生。
+   */
+  expiresAt?: string;
 }
 
 /**
@@ -3655,6 +3682,14 @@ export interface AccessRequest {
   decidedBy?: string;
   /** 拒绝原因(status='rejected' 时可选)。 */
   rejectReason?: string;
+  /**
+   * 发起方的主体 id（身份层，2026-09-01）。发起时带了用户级凭证才有。
+   *
+   * 批准时据此写一条 `approved` 项目授权 —— 「人批一次，此后同一主体换机器、
+   * 丢凭据都不必再批」这条承诺全靠它落地：没有这个字段，批准只会签出一把
+   * 无主的密钥，密钥一丢又得重新申请，自愈根本无从谈起。
+   */
+  principalId?: string;
   /** 批准时签发的授权密钥(项目 AgentKey)的 id,留作审计/吊销。 */
   issuedKeyId?: string;
   /**
@@ -3692,6 +3727,80 @@ export interface AccessRequest {
  * state.ts resolveGlobalAgentKeyAccess()。bootstrap 静态 AI_ACCESS_KEY 不进
  * globalAgentKeys、永不被 stamp access → 始终全权(见 server.ts)。
  */
+/**
+ * 身份层（2026-09-01）—— 主体。
+ *
+ * 此前系统里只有钥匙、没有持有者：钥匙即身份。于是钥匙丢了等于身份没了、要
+ * 重新申请重新批；钥匙换了，之前批过的运维授权全部失配；吊销列表看不出哪把是
+ * 谁的；「从没签发」与「被吊销」只能靠列表里有没有那一行来区分。四笔债长在
+ * 同一个根上，补一层很轻的主体就一起松开。
+ *
+ * 一台机器一个、一个智能体一个，**不是一把钥匙一个**。
+ */
+export interface Principal {
+  /** `pr_` + 12 hex */
+  id: string;
+  name: string;
+  kind: 'human' | 'machine' | 'agent';
+  status: 'active' | 'disabled';
+  createdAt: string;
+  /** 谁创建/批准的（dashboard 用户名或批准人） */
+  createdBy?: string;
+  lastSeenAt?: string;
+  /** 停用时间；停用的主体所有凭证一律不可用 */
+  disabledAt?: string;
+  disabledBy?: string;
+}
+
+/**
+ * 用户级凭证 —— 「发钥匙的钥匙」。
+ *
+ * 权限刻意最窄、寿命最长：能建项目、能列出我可见的项目、能为**我已获授权的
+ * 项目**签发项目级凭证；**不能**删分支、改配置、跑运维指令。第一阶段那把万能
+ * 钥匙的伤（权限太大、容易删错项目）因此不会复发 —— 它根本没有删东西的能力。
+ *
+ * 它换来的不是「拦得住」（拿到它的人仍可以先签一张项目级再去删东西，只是多走
+ * 一步），而是**每一次签发都必然留痕** + **一处可一键切断的总闸**。所以有效期与
+ * 级联撤销不是可选项，是这套设计成立的前提。
+ */
+export interface UserCredential {
+  /** `uc_` + 12 hex */
+  id: string;
+  principalId: string;
+  /** sha256(明文 `cdsu_<suffix>`) */
+  hash: string;
+  label?: string;
+  createdAt: string;
+  createdBy?: string;
+  /** 90 天，用一次自动续 90 天：天天在用的永不打断，闲置三个月的自动失效 */
+  expiresAt: string;
+  lastUsedAt?: string;
+  /** 签发留痕：这张凭证累计签出过几张项目级凭证 */
+  issuedCount?: number;
+  lastIssuedAt?: string;
+  revokedAt?: string;
+  revokedBy?: string;
+}
+
+/**
+ * 项目授权 —— 「要不要再批一次」的唯一判据。
+ *
+ * 判据刻意不是「是不是我创建的」：项目是别人建的、后来授权给我了，按创建判我
+ * 永远不是创建者，每次换机器都要重批，团队协作会一直卡。所以建项目写一条
+ * created 型授权、页面批准写一条 approved 型授权，**同表同权**。
+ */
+export interface ProjectGrant {
+  /** `pg_` + 12 hex */
+  id: string;
+  projectId: string;
+  principalId: string;
+  origin: 'created' | 'approved';
+  grantedAt: string;
+  grantedBy?: string;
+  revokedAt?: string;
+  revokedBy?: string;
+}
+
 export interface AgentKeyAccess {
   /** 允许创建新项目(POST /api/projects)。 */
   canCreateProjects: boolean;

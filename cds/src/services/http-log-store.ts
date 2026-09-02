@@ -115,7 +115,14 @@ const HEADER_SECRET = /(token|secret|password|passwd|api[-_]?key|access[-_]?key|
 // `authoriz` 覆盖 authorizationKey(被动授权一次性交付的 cdsp_ 明文)等字段 ——
 // 否则一次性密钥会落进 cds_http_logs 的 response body 预览、被 /api/http-logs 取回,
 // 破坏「明文只交付一次」。redactor 只动日志副本,不影响真实 HTTP 响应。
-const BODY_SECRET_KEY = /(token|secret|password|passwd|api[-_]?key|access[-_]?key|authoriz|session|jwt|credential)/i;
+// `plaintext` 是身份层签发接口交付明文用的字段名（用户级 cdsu_ / 项目级 cdsp_），
+// 它一个敏感词都不含，靠上面那串正则一个都匹配不上 —— 于是一把 90 天滑动、能为
+// 主体名下所有授权换项目凭据的长期密钥，会原样落进 cds_http_logs，而 /api/http-logs
+// 把 body 预览返回给任何已鉴权调用方。按字段名列举必然漏，所以下面再加一道按
+// **值的形状**兜底：凡是长得像 CDS 凭据的串，不管挂在哪个字段名下一律抹掉。
+const BODY_SECRET_KEY = /(token|secret|password|passwd|api[-_]?key|access[-_]?key|authoriz|session|jwt|credential|plaintext)/i;
+/** CDS 自己签发的凭据明文形状：cdsu_ / cdsp_ / cdsg_ / ct_ 加足够长的随机段。 */
+const CDS_CREDENTIAL_VALUE = /\b(cds[upg]_[A-Za-z0-9_.~+/=-]{12,}|ct_[A-Za-z0-9_.~+/=-]{12,})/g;
 const MAX_HEADER_VALUE = 300;
 const MAX_BODY_PREVIEW_BYTES = 8 * 1024;
 const MAX_ERROR_MESSAGE = 1200;
@@ -259,6 +266,10 @@ function truncateUtf8(value: string, maxBytes: number): string {
 
 function redactStructuredValue(value: unknown, key = '', depth = 0, seen = new WeakSet<object>()): unknown {
   if (key && BODY_SECRET_KEY.test(key)) return '[redacted]';
+  // 值形状兜底：字段名没被上面认出来，但值本身就是一把 CDS 凭据时照样抹掉。
+  if (typeof value === 'string' && looksLikeCdsCredential(value)) {
+    return value.replace(CDS_CREDENTIAL_VALUE, '[redacted]');
+  }
   if (value == null || typeof value !== 'object') return value;
   if (depth >= MAX_REDACT_DEPTH) return '[cds http log redaction depth limit]';
   if (seen.has(value)) return '[cds http log circular]';
@@ -285,6 +296,12 @@ function redactJsonText(value: string): string | null {
   }
 }
 
+/** 这串文本里有没有 CDS 凭据形状的东西。正则带 g，用前必须重置 lastIndex。 */
+function looksLikeCdsCredential(value: string): boolean {
+  CDS_CREDENTIAL_VALUE.lastIndex = 0;
+  return CDS_CREDENTIAL_VALUE.test(value);
+}
+
 export function redactBodyText(value: string): string {
   const jsonRedacted = redactJsonText(value);
   if (jsonRedacted != null) return jsonRedacted;
@@ -295,6 +312,8 @@ export function redactBodyText(value: string): string {
     (_match, prefix: string, key: string) => `${prefix}${key}[redacted]`,
   );
   out = out.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, 'Bearer [redacted]');
+  // 非 JSON 正文（表单、纯文本、错误页）同样按值形状兜一道。
+  out = out.replace(CDS_CREDENTIAL_VALUE, '[redacted]');
   return out;
 }
 

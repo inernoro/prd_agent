@@ -17,6 +17,7 @@ import yaml from 'js-yaml';
 import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig } from '../types.js';
 import { isValidServiceSubdomain } from './branch-extra-services.js';
 import { parseWebEntryLabels } from './web-entry.js';
+import { normalizeBuildScope } from './prebuilt-reuse.js';
 
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
@@ -524,6 +525,18 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         if (hasWebEntryLabels && !webEntry) {
           console.warn(`[compose-parser] service "${serviceId}" 的 cds.web-entry-* 声明不完整或指向探活路径，已忽略用户入口`);
         }
+        // cds.build-scope label → BuildProfile.buildScope（逗号分隔）。
+        //
+        // 此前只有 `x-cds-deploy-modes.<svc>.<mode>.buildScope` 能声明构建输入范围，
+        // 于是没有部署模式的服务（比如自托管项目那个唯一的 cds 服务）根本没地方声明。
+        // 而项目级作用域取的正是名下全部服务 buildScope 的并集 —— 声明不了，作用域就
+        // 恒为空、恒等于全通配，一仓多项目分发之后每个 push 都会把它重编一遍。
+        // 语义与 mode 级完全一致，归一化同样交给 normalizeBuildScope（拒收仓库根等价物）。
+        const buildScopeRaw = labels['cds.build-scope'];
+        const buildScope = normalizeBuildScope(
+          buildScopeRaw ? buildScopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+        );
+
         // cds.subdomain label → BuildProfile.subdomain:该服务获得 `<previewSlug>-<subdomain>.<root>`
         // 命名 URL(独立入口,不埋在主应用路径下)。须单 DNS label,非法值忽略(不阻断解析)。
         const subdomainRaw = labels['cds.subdomain'];
@@ -572,6 +585,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           ...(entry.fallbackImage ? { fallbackImage: entry.fallbackImage } : {}),
           ...(subdomain ? { subdomain } : {}),
           ...(webEntry ? { webEntry } : {}),
+          ...(buildScope ? { buildScope } : {}),
         });
       } else {
         // Infra service — no source mount, possibly built-from-source custom

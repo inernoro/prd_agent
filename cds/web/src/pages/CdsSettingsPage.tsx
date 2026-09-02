@@ -28,6 +28,7 @@ import { fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 const AccessKeysTab = lazy(() => import('@/pages/cds-settings/tabs/AccessKeysTab').then((m) => ({ default: m.AccessKeysTab })));
+const IdentityTab = lazy(() => import('@/pages/cds-settings/tabs/IdentityTab').then((m) => ({ default: m.IdentityTab })));
 const AuthTab = lazy(() => import('@/pages/cds-settings/tabs/AuthTab').then((m) => ({ default: m.AuthTab })));
 const UsersTab = lazy(() => import('@/pages/cds-settings/tabs/UsersTab').then((m) => ({ default: m.UsersTab })));
 const ActivityTab = lazy(() => import('@/pages/cds-settings/tabs/ActivityTab').then((m) => ({ default: m.ActivityTab })));
@@ -61,6 +62,7 @@ type TabValue =
   | 'users'
   | 'activity'
   | 'access-keys'
+  | 'identity'
   | 'github'
   | 'github-whitelist'
   | 'webhook-log'
@@ -104,6 +106,7 @@ const tabGroups: TabGroup[] = [
       // 功能重叠,且暴露面更大。AI 发起请求 → 右下角弹窗 → 一键允许的流程
       // 已覆盖所有 op,Tab 上点击执行的入口反而有误操作风险。后端注册表保留。
       { value: 'access-keys', label: 'AI Access Key', icon: KeyRound },
+      { value: 'identity', label: '权限总览', icon: Users },
       { value: 'overview', label: '概览', icon: Settings },
     ],
   },
@@ -404,6 +407,9 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="access-keys">
                   {activeTab === 'access-keys' ? <AccessKeysTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="identity">
+                  {activeTab === 'identity' ? <IdentityTab onToast={setToast} /> : null}
                 </TabsContent>
                 <TabsContent value="github">
                   {activeTab === 'github' ? <GitHubAppTab onToast={setToast} /> : null}
