@@ -295,6 +295,38 @@ function HealthRing({ states }: { states: Array<'ok' | 'bad' | 'idle'> }): JSX.E
  * 一张真图的骨架——同样的外壳、同样的坐标轴、一条呼吸着的占位色带——外加一句
  * **诚实的**进度（已经攒了几帧、还要等多久），不编造百分比。
  */
+/**
+ * 当前读数清单：没有曲线可画时，把手上已有的实时快照端出来。
+ *
+ * 曲线出不来有两种原因（历史端点挂了 / 历史还在攒），但对看的人来说是同一件事：
+ * 「这一刻各服务吃多少」。所以两种情况共用这一块，只有副标题不同。
+ */
+function LiveReadings({
+  services, liveStats, subtitle,
+}: {
+  services: OverviewService[];
+  liveStats: Record<string, { cpuPercent: number; memUsedBytes: number }>;
+  subtitle: string;
+}): JSX.Element {
+  return (
+    <section className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
+      <h4 className="mb-2 text-sm font-bold text-foreground">当前读数<span className="ml-2 text-[11px] font-normal text-muted-foreground">{subtitle}</span></h4>
+      <ul className="flex flex-col gap-1.5">
+        {services.filter((sv) => liveStats[sv.profileId]).map((sv) => {
+          const l = liveStats[sv.profileId];
+          return (
+            <li key={sv.profileId} className="flex items-baseline gap-2">
+              <span className="min-w-0 flex-1 break-all font-mono text-[11px] text-muted-foreground">{sv.profileId}</span>
+              <span className="shrink-0 font-mono text-[13px] font-bold tabular-nums text-foreground">{l.cpuPercent.toFixed(2)}<span className="text-[10px] font-medium text-muted-foreground">%</span></span>
+              <span className="w-24 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums text-foreground">{formatBytesShort(l.memUsedBytes)}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function MetricsSkeleton({
   filled, bucketSeconds, windowLabel, note,
 }: { filled: number; bucketSeconds?: number; windowLabel: string; note?: string }): JSX.Element {
@@ -1217,22 +1249,20 @@ export function OverviewPanel({
           </span>
         </section>
       ) : null}
-      {seriesError && !hasPlot && Object.keys(liveStats ?? {}).length > 0 ? (
-        <section className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
-          <h4 className="mb-2 text-sm font-bold text-foreground">当前读数<span className="ml-2 text-[11px] font-normal text-muted-foreground">实时快照 · 无历史曲线</span></h4>
-          <ul className="flex flex-col gap-1.5">
-            {services.filter((sv) => liveStats?.[sv.profileId]).map((sv) => {
-              const l = liveStats![sv.profileId];
-              return (
-                <li key={sv.profileId} className="flex items-baseline gap-2">
-                  <span className="min-w-0 flex-1 break-all font-mono text-[11px] text-muted-foreground">{sv.profileId}</span>
-                  <span className="shrink-0 font-mono text-[13px] font-bold tabular-nums text-foreground">{l.cpuPercent.toFixed(2)}<span className="text-[10px] font-medium text-muted-foreground">%</span></span>
-                  <span className="w-24 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums text-foreground">{formatBytesShort(l.memUsedBytes)}</span>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
+      {/*
+        没有曲线可画时，把手上**已经有的**实时读数端出来。
+        
+        两种情况都要端（Codex P2，核对属实）：历史端点挂了（seriesError），以及
+        历史还在攒（冷启动 / 刚部署的分支）。此前只端第一种——第二种下 `hasPlot`
+        为假就只剩一个骨架屏，而 `liveStats` 里明明已经有 CPU 与内存的真实读数。
+        那等于**为了等一条曲线，把手上已有的数字也藏起来**，比不做还差一档。
+      */}
+      {!hasPlot && Object.keys(liveStats ?? {}).length > 0 ? (
+        <LiveReadings
+          services={services}
+          liveStats={liveStats!}
+          subtitle={seriesError ? '实时快照 · 无历史曲线' : '实时快照 · 曲线还在攒'}
+        />
       ) : null}
       {seriesError && !hasPlot ? null : !hasPlot ? (
         /*

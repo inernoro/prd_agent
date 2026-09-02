@@ -276,33 +276,50 @@ function resolveBound(value: number | undefined, nowMs: number, fallback: number
  * 那个间隔就是目前能观测到的全部节奏信息，用它比不用强得多（见下面 bySamples 的死因）。
  * 全都算不出就返回 0 = 不做限制：此时任何容器最多只有 1 帧，前端本来就不画。
  */
-/** 判两个间隔「是不是同一档节奏」的相似带：差在 1.5 倍以内算同档。 */
+/** 判一个间隔是不是「比邻居明显大」的相似带：超过邻居 1.5 倍才算突出。 */
 const CADENCE_SIMILARITY = 1.5;
 
 /**
- * 从降序排好的间隔里挑出「最粗的那一档持续存在的节奏」。
+ * 从**按时间排好**的间隔里挑出最粗的那一档真实节奏。
  *
- * 判据：**最大的那个间隔，如果找不到同量级的同伴（1.5 倍以内），就是偶发抖动**
- * （漏采一帧会造出一个双倍间隔），退到第二大；否则它就是一档真实的节奏。
+ * 判据：**孤立的大间隔是抖动，处在边缘或挨着同量级邻居的大间隔是一档节奏。**
+ * 具体说，一个间隔只有在「两侧都有邻居、且比两侧邻居里较大的那个还大 1.5 倍以上」
+ * 时才算抖动（漏采一帧正是这个形状：前后都是 45s，中间冒出一个 90s）；其余一律算数。
  *
- * 这里换过两版，两版都栽在同一个地方——**按位置丢弃**会连同一整档节奏一起丢掉：
+ * 这个判据换过三版，前两版都是**只看间隔的大小分布、不看它在时间上处在哪**，
+ * 于是每一版都能被一个新的形状绕过去：
  *
- *   1. 第一版取 p90：抽屉开满 15 分钟后 5s 样本占比就超过 90%，稀疏档被整个吞掉；
- *   2. 第二版改成「降序第 3 大」（容忍两次抖动）：抽屉在后台采样器攒够 4 帧之前
- *      就打开时，窗口里只有 1-2 个 45s 间隔，它们正好被当成两个离群点丢掉，
- *      节奏又变成 5s（Codex P2，核对属实）。
+ *   1. p90 —— 抽屉开满 15 分钟后 5s 样本占比超 90%，稀疏档被整个吞掉；
+ *   2. 降序第 3 大 —— 稀疏档只出现 1-2 次时，正好被当成离群点丢掉；
+ *   3. 「最大的那个要有同量级同伴」—— 抽屉在后台只写过两帧时打开，稀疏档**只有
+ *      一个间隔**、找不到同伴，又被判成抖动（Codex P2，核对属实：实测切出 16s 的桶，
+ *      前 10 个桶空了 8 个）。
  *
- * 病根一样：**「出现次数少」不等于「是异常」**。一档节奏可以只出现两次，
- * 而一次漏采只会出现一次。所以判据不能数位置，要看它有没有同伴。
+ * 三次都栽在同一件事上：**「大小分布」区分不了「一次漏采」和「一段更稀疏的历史」**，
+ * 因为两者都可能只出现一次。真正能区分它们的是**位置**——漏采的那个间隔前后都是
+ * 密的，而一段稀疏历史的间隔一定挨着窗口边缘或挨着同样稀疏的邻居。
  *
- * 代价：真的连着漏采两帧（造出两个同量级的双倍间隔）时，桶宽会翻倍。那是如实反映
- * 「这段时间确实只采到这么密」，比把稀疏档当噪声丢掉安全。
+ * 代价：连续两帧都漏采时（造出一个 3 倍间隔且两侧仍是 45s），它仍会被当成抖动排除，
+ * 分辨率不受影响；反过来若真有一段只含单个间隔的稀疏历史被误判……它挨着边缘，
+ * 按本判据不会被误判。宁可偶尔画粗一点，也不要让整段历史变成一排空桶——
+ * 前者只是少一点细节，后者是画面上看得见的梳齿。
  */
-function coarsestSustained(gapsDesc: number[]): number {
-  if (gapsDesc.length === 1) return gapsDesc[0];
-  const largest = gapsDesc[0];
-  const hasTwin = gapsDesc.some((g, i) => i > 0 && g >= largest / CADENCE_SIMILARITY);
-  return hasTwin ? largest : gapsDesc[1];
+function coarsestSustained(gapsInTimeOrder: number[]): number {
+  const n = gapsInTimeOrder.length;
+  if (n === 1) return gapsInTimeOrder[0];
+  let coarsest = 0;
+  for (let i = 0; i < n; i += 1) {
+    const g = gapsInTimeOrder[i];
+    const atEdge = i === 0 || i === n - 1;
+    if (!atEdge) {
+      const neighbour = Math.max(gapsInTimeOrder[i - 1], gapsInTimeOrder[i + 1]);
+      // 两侧都比它小得多 —— 这是一次漏采造出来的孤峰，不是一档节奏。
+      if (g > neighbour * CADENCE_SIMILARITY) continue;
+    }
+    if (g > coarsest) coarsest = g;
+  }
+  // 全被判成抖动（例如恰好三个间隔、中间那个是孤峰）时退回最大值，不返回 0。
+  return coarsest > 0 ? coarsest : Math.max(...gapsInTimeOrder);
 }
 
 function observedCadence(containers: string[], after: number, before: number): { cadenceMs: number } {
@@ -320,7 +337,7 @@ function observedCadence(containers: string[], after: number, before: number): {
       if (g <= MAX_RATE_GAP_MS) gaps.push(g);
     }
     if (gaps.length === 0) continue;
-    gaps.sort((a, b) => b - a);
+    // 不排序：判据要看每个间隔在**时间上**的邻居，排一次序这个信息就没了。
     const coarsest = coarsestSustained(gaps);
     if (coarsest > cadenceMs) cadenceMs = coarsest;
   }

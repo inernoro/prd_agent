@@ -669,3 +669,59 @@ describe('入口卡的绿灯与顶部判断句同源', () => {
     expect(html, '全部就绪却没给绿灯——守卫会因此变成永远绿的摆设').toContain('已就绪');
   });
 });
+
+/**
+ * 曲线还在攒的时候，手上已有的实时读数不许藏起来（2026-09-02，Codex P2，核对属实）。
+ *
+ * 冷启动 / 刚部署的分支上，每个服务的历史都不足两帧，`hasPlot` 为假，此前就只剩
+ * 一个骨架屏——而 `liveStats` 里明明已经有真实的 CPU 与内存读数。为了等一条曲线
+ * 把手上已有的数字也藏起来，比不做还差一档。
+ */
+describe('没有曲线时也要端出当前读数', () => {
+  const oneFrame = seedMetricSeries([{ cpuPercent: 4, memUsedBytes: 1048576, rxRate: 0, txRate: 0 }]);
+  const props = {
+    services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+    running: true,
+    branchName: 'demo',
+    entries: [],
+    deployments: [],
+    metricsReady: true,
+    replicaSummary: '1 个副本',
+    infraSummary: '无',
+    now: Date.now(),
+    windowMinutes: 30,
+    onRefreshMetrics: () => {},
+  };
+
+  it('历史还在攒时，实时读数与骨架屏同时在场', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      ...props,
+      metricSeries: { api: oneFrame },
+      liveStats: { api: { cpuPercent: 12.5, memUsedBytes: 3145728 } },
+    }));
+    expect(html, '骨架屏应该还在（它给的是「还要等多久」）').toMatch(/约还需|攒够两帧/);
+    expect(html, '手上已有的实时读数被藏起来了').toContain('当前读数');
+    expect(html).toContain('实时快照 · 曲线还在攒');
+    expect(html, '真实读数没渲染出来').toContain('12.50');
+  });
+
+  it('历史端点挂了时，副标题说的是「无历史曲线」而不是「还在攒」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      ...props,
+      metricSeries: {},
+      liveStats: { api: { cpuPercent: 7, memUsedBytes: 1048576 } },
+      seriesError: '端点 500',
+    }));
+    expect(html).toContain('实时快照 · 无历史曲线');
+    expect(html, '这一档不该说「还在攒」——它不会自己好').not.toContain('实时快照 · 曲线还在攒');
+  });
+
+  it('连实时读数都没有时不渲染这块空壳', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      ...props,
+      metricSeries: { api: oneFrame },
+      liveStats: {},
+    }));
+    expect(html).not.toContain('当前读数');
+  });
+});

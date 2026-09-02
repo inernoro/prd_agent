@@ -539,6 +539,39 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     ).toBe(1);
   });
 
+  /**
+   * Codex P2（核对属实）：稀疏档**只有一个间隔**的情形。
+   *
+   * 抽屉在后台采样器只写过两帧时打开——窗口里恰好一个 45s 间隔，后面全是 5s 的。
+   * 「最大的那个要有同量级同伴」那一版判据在这里找不到同伴，把它当成抖动丢掉，
+   * 于是又切出十几秒的桶，前面那段全是空桶。
+   *
+   * 三版判据都栽在同一件事上：只看间隔的大小分布，区分不了「一次漏采」和
+   * 「一段更稀疏的历史」——两者都可能只出现一次。能区分的是**位置**。
+   */
+  it('稀疏档只有一个间隔（挨着窗口边缘）也算一档节奏', () => {
+    for (const t of [0, 45_000]) recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
+    for (let t = 50_000; t <= 30 * 60_000; t += 5_000) recordContainerSample('c1', sample({ cpuPercent: 4 }), T0 + t);
+    const now = T0 + 30 * 60_000;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
+    expect(
+      r.groupSeconds,
+      `桶宽 ${r.groupSeconds}s 比稀疏档的 45s 还细——那唯一一个 45s 间隔被当成抖动丢了`,
+    ).toBeGreaterThanOrEqual(45);
+  });
+
+  it('夹在密集档中间的孤峰仍算抖动（不能为了上一条把漏采也当成节奏）', () => {
+    // 45s 一帧，中间漏采一帧造出 90s 的孤峰，前后邻居都是 45s。
+    let t = 0;
+    for (let i = 0; t <= 30 * 60_000; i += 1) {
+      recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
+      t += i === 8 ? 90_000 : 45_000;
+    }
+    const now = T0 + 30 * 60_000;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
+    expect(r.groupSeconds, '一次漏采把桶宽顶到了 90s 那一档').toBeLessThan(45 * 1.5 * 1.6);
+  });
+
   it('真实断档不参与定分辨率（否则一次重启就把整窗压成几个点）', () => {
     const windowMs = 30 * 60_000;
     // 前 5 分钟有量，然后断 12 分钟（> MAX_RATE_GAP_MS），再恢复
