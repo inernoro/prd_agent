@@ -2,3 +2,4 @@
 | feat | cds | 服务角色（web / api / worker）改由服务端判定：cds.role 声明优先，其次路由事实、服务名、默认；画布徽标标出推断并悬停给出依据 |
 | feat | cds | 同一 host 上被多个服务声明的路由前缀在画布标「冲突」并给修法 |
 | refactor | cds | forwarder 的按名约定（默认站 / `/api/` 接管）抽成 route-conventions 唯一模块，发布器与服务图共用 |
+| docs | cds | 新增「CDS 服务关系与跨项目引用」计划文档（活看板 + 四批次验收标准 + 设计稿链接） |
