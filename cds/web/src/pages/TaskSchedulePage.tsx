@@ -492,7 +492,15 @@ export function TaskSchedulePage(): JSX.Element {
                   </div>
                   <div className="mt-1 truncate text-xs leading-5 text-muted-foreground">{overview.detail}</div>
                 </div>
-                <div className="hidden shrink-0 items-stretch md:flex">
+                {/*
+                  * 从 lg 起才露，不是 md：这一条统计段是固定宽的（5 个 86px 格 + 188px
+                  * 的下一次触发 = 618px）。768px 那一档扣掉 72px 左栏与主区左右内边距，
+                  * 剩下的宽度几乎全被它吃掉，结论条被压到接近零并被父级 overflow-hidden
+                  * 裁掉——而结论条正是这一页存在的理由（Codex #1471 P2）。
+                  * 1024px 起才有余量：888 − 618 ≈ 270px 留给结论条。
+                  * 露不出来的那一档不是信息丢失：统计值在下面的调度轴与运行流里都还在。
+                  */}
+                <div className="hidden shrink-0 items-stretch lg:flex">
                   {overview.stats.map((stat) => (
                     <div key={stat.label} className="flex w-[86px] flex-col justify-center border-l border-[hsl(var(--hairline))] px-3 py-2">
                       <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">{stat.label}</div>

@@ -70,6 +70,17 @@ describe('任务调度页的接线', () => {
   });
 
   /*
+   * Codex #1471 P2。值班条右侧那段统计是固定宽的（5×86 + 188 = 618px）。
+   * 它此前从 md（768px）就露，那一档扣掉左栏与内边距后几乎没有余量，
+   * 结论条被压到接近零并被父级 overflow-hidden 裁掉——而结论条是这一页存在的理由。
+   * 红绿闭环：把 lg:flex 换回 md:flex，本用例立刻红。
+   */
+  it('固定宽的统计段要等到宽度够了才露，不能挤掉结论条', () => {
+    expect(src, '统计段仍从 md 就露，768px 那一档会挤掉结论条').not.toMatch(/hidden shrink-0 items-stretch md:flex/);
+    expect(src).toContain('hidden shrink-0 items-stretch lg:flex');
+  });
+
+  /*
    * 三个写操作在进入时都要先清 error，否则上一次的报错会伪装成这一次的结果。
    * 红绿闭环：删掉 deleteJob 里的 setError('')，本用例红。
    */

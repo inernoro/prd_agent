@@ -219,6 +219,46 @@ describe('定时任务运行记录的可观测性', () => {
   });
 
   /*
+   * Codex #1471 P2（第三轮）。整组淘汰只按「最后一次运行的时刻」排，不看任务还在不在：
+   * 一个刚建完就删掉的一次性任务会占着名额，而一个每天都在跑、只是上次运行时刻稍早的
+   * **活任务**被整组清掉——它的健康度、细带、运行史全没了，恰恰是每任务保留要保护的对象。
+   * 红绿闭环：把 live/orphan 两级排序换回纯按新旧，本用例报活任务的记录为 0。
+   */
+  it('整组淘汰先保还存在的任务，已删除任务的历史先出局', () => {
+    const base = Date.UTC(2026, 0, 6);
+    // 活任务：上次运行较早（在纯按新旧的排序里排在很后面）
+    const liveJob = service.normalizeJob({
+      id: 'job_live', projectId: 'demo', name: '每日备份', enabled: true,
+      schedule: { type: 'daily', timeOfDay: '02:00' },
+      actions: [{ id: 'a1', name: 'step', type: 'command' as const, command: 'echo ok' }],
+    } as unknown as ScheduledJob);
+    stateService.upsertScheduledJob(liveJob);
+
+    const fixture: ScheduledJobRun[] = [{
+      id: 'live_1', jobId: 'job_live', projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: new Date(base).toISOString(),
+    }];
+    // 5200 个「建完就删」的一次性任务，运行时刻全都更新——纯按新旧的话它们会把活任务挤掉
+    for (let j = 0; j < 5200; j += 1) {
+      fixture.push({
+        id: `gone_${j}`, jobId: `job_gone_${j}`, projectId: 'demo', trigger: 'manual',
+        status: 'success', queuedAt: new Date(base + (j + 1) * 1000).toISOString(),
+      });
+    }
+    seedRuns(fixture);
+    stateService.upsertScheduledJobRun({
+      id: 'gone_last', jobId: 'job_gone_last', projectId: 'demo', trigger: 'manual',
+      status: 'success', queuedAt: new Date(base + 6000 * 1000).toISOString(),
+    });
+
+    expect(
+      stateService.listScheduledJobRuns({ jobId: 'job_live', limit: 5 }),
+      '活任务的历史被已删除任务的记录挤掉了',
+    ).toHaveLength(1);
+    expect(stateService.listScheduledJobRuns({ limit: 100000 }).length).toBeLessThanOrEqual(5000);
+  });
+
+  /*
    * Codex #1471 P2（第二轮）。均分有一个失效档：任务数本身超过全局上限时，
    * 「每个任务各留一条」都放不下，二分的下界 1 就成了假的可行解，总量突破上限。
    * 删任务不删运行史，反复建删就能把不同 jobId 攒过 5000。
