@@ -151,6 +151,14 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
   it('【关键】手机端也认交接包里的模型，不再退回第一个可用池', () => {
     expect(MOBILE).toMatch(/data\.modelId/);
     expect(MOBILE).toMatch(/setPickedPoolId\(handedModelId\)/);
+    // **读了还得读对**。上一版守卫到上一行为止就收工了，而那两行当时都成立：
+    // 交接包确实读了、setPickedPoolId 确实调了——存进去的却是带前缀的选项 id
+    // （`pool_xxx`），而 pickedPool 拿它跟原始池的 `id`（`xxx`）比，一次都比不中，
+    // 照样退回第一个可用池。守卫找到了一份真实存在、写法完全合法的语句，
+    // 就当成契约已经满足（形状 8：把不成立的证据当成证据）。
+    // 所以这里改盯「转换真的发生了」，转换本身的行为由
+    // visualAgentModelOptions.test.ts 用真 builder 断言。
+    expect(MOBILE).toMatch(/poolIdFromVisualModelOptionId\(String\(data\.modelId/);
   });
 
   it('【关键】手机端把内联图先落盘再生成，不静默丢图跑纯文字', () => {

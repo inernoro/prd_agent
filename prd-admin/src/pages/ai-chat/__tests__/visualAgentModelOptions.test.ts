@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildVisualAgentModelOptions, isOperationOnlyPool } from '../visualAgentModelOptions';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import { buildVisualAgentModelOptions, isOperationOnlyPool, poolIdFromVisualModelOptionId } from '../visualAgentModelOptions';
 import type { ModelGroupForApp } from '@/types/modelGroup';
 
 function pool(overrides: Partial<ModelGroupForApp>): ModelGroupForApp {
@@ -63,5 +66,35 @@ describe('生图模型选择器只放用户能挑来生图的模型', () => {
     const legacy = pool({ capabilities: undefined });
     expect(isOperationOnlyPool(legacy)).toBe(false);
     expect(buildVisualAgentModelOptions([legacy])).toHaveLength(1);
+  });
+});
+
+describe('【关键】选项 id 与模型池 id 差一个前缀，两个方向都得走同一处', () => {
+  // 首页把用户选的是 `option.id`（`pool_xxx`）放进交接包；手机端编辑器拿它去跟
+  // 原始池列表的 `pool.id`（`xxx`）比，永远比不中，于是静默退回「第一个可用池」——
+  // 界面显示 A、真跑 B，一次要花钱的生成，且违反 ai-model-visibility
+  //（显示的必须是真正在用的那个）。不报错、不变红（Codex PR #1476 P1）。
+
+  it('构造出来的选项 id 确实带前缀，能原样还原成池 id', () => {
+    // 用真正的 builder 产出，不手写 'pool_' —— 手写就是把被测的那个常量抄了第二份。
+    const [option] = buildVisualAgentModelOptions([pool({ id: 'grp-77' })]);
+    expect(option, '应产出一个可选模型').toBeTruthy();
+    expect(option!.id).not.toBe('grp-77');
+    expect(poolIdFromVisualModelOptionId(option!.id), '还原后必须等于池 id').toBe('grp-77');
+  });
+
+  it('已经是裸池 id 的原样返回，不会被削掉一段', () => {
+    // 偏好里可能存着别处写的裸 id，认不出来就当它已经是池 id，
+    // 比判空退回「第一个可用」强。
+    expect(poolIdFromVisualModelOptionId('grp-77')).toBe('grp-77');
+    expect(poolIdFromVisualModelOptionId('  grp-77  ')).toBe('grp-77');
+    expect(poolIdFromVisualModelOptionId('')).toBe('');
+  });
+
+  it('前缀只有一处定义，没人再手写第二份', () => {
+    const src = readFileSync(resolve(__dirname, '../visualAgentModelOptions.ts'), 'utf8');
+    const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    expect(code.match(/'pool_'/g) ?? [], "'pool_' 字面量应只出现在常量定义那一处").toHaveLength(1);
+    expect(code).not.toMatch(/`pool_\$\{/);
   });
 });

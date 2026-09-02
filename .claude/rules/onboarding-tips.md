@@ -30,7 +30,7 @@ paths:
   | 页面 | route | seed id | 步数 |
   |------|-------|---------|------|
   | 网页托管 | `/web-pages` | `webpages-page-guide` | 14 |
-  | 视觉创作 | `/visual-agent` | `visual-page-guide` | 11（+ 进编辑器步骤见下） |
+  | 视觉创作 | `/visual-agent` | `visual-page-guide` | 12（+ 进编辑器步骤见下） |
   | 知识库 | `/document-store` | `document-store-page-guide` | 8 |
   | 文学创作 | `/literary-agent` | `literary-page-guide` | 8（+ 进编辑器步骤见下） |
   | 海鲜市场 | `/marketplace` | `marketplace-page-guide` | 6 |

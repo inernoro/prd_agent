@@ -18,6 +18,7 @@ import { useSmartBack } from '@/hooks/useSmartBack';
 import { ArrowLeft, Download, Expand, ImagePlus, LayoutGrid, RefreshCw, Send, Wand2, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { poolIdFromVisualModelOptionId } from '@/pages/ai-chat/visualAgentModelOptions';
 import {
   createWorkspaceImageGenRun,
   getImageGenRun,
@@ -203,7 +204,13 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
       }
       // 首页显式选过的模型：不认它就会退回「第一个可用池」，用户选了 A 却用 B 跑，
       // 而这是一次要花钱的生成。桌面编辑器已经认了，这里是同一份交接包的第二个消费方。
-      const handedModelId = String(data.modelId || '').trim();
+      //
+      // 必须先把选项 id 还原成池 id 再存。交接包里是首页的 `option.id`（`pool_xxx`），
+      // 而这里的 pickedPool 拿它去跟原始池列表的 `pool.id`（`xxx`）比——
+      // 上一版直接存了带前缀的值，于是「认了交接包」认了个寂寞：一次都比不中，
+      // 照样退回第一个可用池（Codex PR #1476 P1）。读了一个真实存在的值、
+      // 却不是这里真正生效的那个口径，判据纪律形状 6。
+      const handedModelId = poolIdFromVisualModelOptionId(String(data.modelId || ''));
       if (handedModelId) setPickedPoolId(handedModelId);
     } catch {
       // ignore

@@ -17,6 +17,36 @@ export type VisualAgentModelOption = Model & {
   averageDurationMs?: number | null;
 };
 
+/**
+ * 选项 id 的前缀。**选项 id ≠ 模型池 id**，差一个前缀。
+ *
+ * 这个差别咬过一次：首页把用户选的 `option.id`（`pool_xxx`）放进交接包，
+ * 手机端编辑器拿过去直接跟原始池列表的 `pool.id`（`xxx`）比，永远比不中，
+ * 于是**静默退回「第一个可用池」**——界面上显示的是 A、真正跑的是 B，
+ * 而这是一次要花钱的生成，还违反 ai-model-visibility（显示的必须是真正在用的）。
+ * 它不会报错、不会红，只有对着账单或日志才看得出来（Codex PR #1476 P1）。
+ *
+ * 所以两个方向都收在这里：构造走 `visualModelOptionIdOf`，还原走
+ * `poolIdFromVisualModelOptionId`。谁都别在别处手写这五个字符。
+ */
+const VISUAL_MODEL_OPTION_ID_PREFIX = 'pool_';
+
+/** 池 id → 选项 id。 */
+export function visualModelOptionIdOf(poolId: string): string {
+  return `${VISUAL_MODEL_OPTION_ID_PREFIX}${poolId}`;
+}
+
+/**
+ * 选项 id → 池 id。没有前缀的原样返回：偏好里可能存着别处写的裸池 id，
+ * 认不出来就当它已经是池 id，比直接判空退回「第一个可用」强。
+ */
+export function poolIdFromVisualModelOptionId(optionId: string): string {
+  const id = String(optionId ?? '').trim();
+  return id.startsWith(VISUAL_MODEL_OPTION_ID_PREFIX)
+    ? id.slice(VISUAL_MODEL_OPTION_ID_PREFIX.length)
+    : id;
+}
+
 export type VisualResultModelMeta = {
   logicalModelPublicId?: string;
   modelPool?: string;
@@ -76,7 +106,7 @@ export function buildVisualAgentModelOptions(pools: ModelGroupForApp[]): VisualA
       ?? members[0];
     const logicalModel = pool.resolutionType === 'LogicalModel';
     return {
-      id: `pool_${pool.id}`,
+      id: visualModelOptionIdOf(pool.id),
       name: pool.name,
       modelName: logicalModel ? (preferredMember?.modelId || pool.code) : pool.id,
       actualModelId: preferredMember?.modelId,

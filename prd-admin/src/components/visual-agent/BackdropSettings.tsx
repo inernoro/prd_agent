@@ -16,6 +16,7 @@ import {
   type BackdropGenProgress,
 } from '@/lib/backdropStudio';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { placeAnchoredPanel, type AnchoredPanelPlacement } from '@/lib/anchoredPanel';
 
 /**
  * 首页背景的轮换与设置。
@@ -99,7 +100,7 @@ export function BackdropSettings(props: {
    * 位置按视口夹紧：左右各留 8px 安全边，宽度取 min(320, 视口-16)，
    * 高度上限留到视口底部，超出自己滚。
    */
-  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
+  const [panelPos, setPanelPos] = useState<AnchoredPanelPlacement | null>(null);
 
   // 生成态。氛围输入框预填一句建议——零摩擦：用户改的是差异，不是从空白开始想。
   const [mood, setMood] = useState(() => BACKDROP_MOOD_SUGGESTIONS[Math.floor(Math.random() * BACKDROP_MOOD_SUGGESTIONS.length)]!);
@@ -119,14 +120,16 @@ export function BackdropSettings(props: {
     const place = () => {
       const r = ref.current?.getBoundingClientRect();
       if (!r) return;
-      const margin = 8;
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const width = Math.min(320, Math.max(200, vw - margin * 2));
-      // 右对齐触发器，再夹回视口内——窄屏下这一夹就是「点不到」与「点得到」的区别。
-      const left = Math.min(Math.max(margin, r.right - width), Math.max(margin, vw - width - margin));
-      const top = r.bottom + 6;
-      setPanelPos({ top, left, width, maxHeight: Math.max(160, vh - top - margin) });
+      // 夹紧算术走 lib/anchoredPanel 那一份：同样的算术在首页模型选择器也要用，
+      // 抄第二份就会漂，而漂掉的表现是浮层跑出屏幕、用户点不到（形状 3）。
+      setPanelPos(placeAnchoredPanel({
+        anchor: { top: r.top, bottom: r.bottom, left: r.left, right: r.right },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        prefer: 'below',
+        align: 'end',
+        width: 320,
+        minHeight: 160,
+      }));
     };
     place();
     window.addEventListener('resize', place);

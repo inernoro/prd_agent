@@ -52,6 +52,7 @@ import { BackdropSettings, readBackdropMode, resolveBackdrop, type BackdropMode 
 import type { BackdropAsset } from '@/lib/backdropRotation';
 import { BACKDROP_CATALOG, dimFor } from '@/lib/backdropCatalog';
 import { readGeneratedBackdrops } from '@/lib/backdropStudio';
+import { placeAnchoredPanel, type AnchoredPanelPlacement } from '@/lib/anchoredPanel';
 import { consumeWakeOnce } from '@/lib/wakeSweep';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { getNextWorkspaceSkip, isVisibleWorkspace } from './workspaceListPaging';
@@ -273,12 +274,34 @@ function ModelPickerButton(props: {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [pos, setPos] = useState<AnchoredPanelPlacement | null>(null);
 
+  // 落点交给 lib/anchoredPanel 算：上方装不下就翻到下方，宽高一律夹回视口。
+  // 上一版是恒定 `top: rect.top - 8` + CSS translateY(-100%)——页面往下滚、
+  // 工具行接近视口顶部时，面板整个跑到屏幕上方，一个选项都点不到；
+  // 而且只在打开那一刻算一次，滚动/改窗口都不重算，浮层会和按钮脱开
+  //（Codex PR #1476 P1）。scroll 用捕获阶段：真正在滚的往往是某个内层容器，
+  // 冒泡阶段收不到它的 scroll 事件。
   useLayoutEffect(() => {
-    if (!open || !btnRef.current) return;
-    const rect = btnRef.current.getBoundingClientRect();
-    setPos({ top: rect.top - 8, left: rect.left });
+    if (!open) return;
+    const place = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (!r) return;
+      setPos(placeAnchoredPanel({
+        anchor: { top: r.top, bottom: r.bottom, left: r.left, right: r.right },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        prefer: 'above',
+        width: 260,
+        maxHeight: 320,
+      }));
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -320,17 +343,18 @@ function ModelPickerButton(props: {
         </span>
         <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>▾</span>
       </button>
-      {open && createPortal(
+      {open && pos && createPortal(
         <div
           ref={panelRef}
-          style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translateY(-100%)', zIndex: 9999 }}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999 }}
         >
           <div
             className="rounded-[12px] overflow-hidden"
             style={{
-              width: 260,
-              maxHeight: 320,
+              width: pos.width,
+              maxHeight: pos.maxHeight,
               overflowY: 'auto',
+              overscrollBehavior: 'contain',
               background: 'var(--panel-solid)',
               border: '1px solid var(--border-default)',
               boxShadow: 'var(--shadow-card)',
