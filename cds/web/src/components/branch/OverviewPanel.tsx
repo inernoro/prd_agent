@@ -859,7 +859,17 @@ export function OverviewPanel({
   const picked = useMemo(() => {
     const withSeries = services
       .map((s) => ({ svc: s, ring: metricSeries[s.profileId] }))
-      .filter((x): x is { svc: OverviewService; ring: MetricSeries } => Boolean(x.ring) && x.ring.cpu.length >= 2)
+      /*
+       * 每条序列按**自己的真样本数**入选，不看数组长度（Codex P2，核对属实）。
+       *
+       * 数组长度是服务端对齐后的桶数，所有容器都一样长；一个刚起来的服务只有 1 个
+       * 真样本、其余全是 null，靠长度判就会把它放进图里，而 null 在几何里被映射成 0
+       * ——画出来是一个虚构的三角尖峰。这和之前那次「整屏一个大三角」是同一个病，
+       * 只是降到了单条序列的粒度：**数桶，不数数据**。
+       *
+       * 代价：新起的服务要攒够两帧（约 90 秒）才进图。比画一根假尖峰诚实。
+       */
+      .filter((x): x is { svc: OverviewService; ring: MetricSeries } => Boolean(x.ring) && (x.ring.filled ?? 0) >= 2)
       .sort((a, b) => a.svc.profileId.localeCompare(b.svc.profileId));
     return { head: withSeries.slice(0, SERIES_SLOTS), tail: withSeries.slice(SERIES_SLOTS) };
   }, [services, metricSeries]);

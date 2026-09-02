@@ -120,6 +120,18 @@ describe('等待与变化（2026-09-02 真人验收：第一屏空白 / 不丝�
    * 按数组长度判「够画图了」，于是画出一个从左上斜到零的大三角——那条下降沿
    * 是 null 被映射成 0 画出来的，纯属虚构。判据必须落在真数据上。
    */
+  /**
+   * Codex P2（核对属实）：filledSamples 是全局最大值。老服务攒了 27 帧、新起的只有
+   * 1 帧时，hasPlot 全局判真，新服务照样进图——它那唯一一个真值加一堆 null→0，
+   * 画出来就是一个虚构的三角尖峰。与「整屏一个大三角」同病，只是降到单条序列粒度。
+   */
+  it('每条序列按自己的真样本数入选，不看数组长度', () => {
+    const picked = PANEL_CODE.slice(PANEL_CODE.indexOf('const picked = useMemo'), PANEL_CODE.indexOf('const sampleCount'));
+    expect(picked.length, '找不到序列选取，选择器过时了').toBeGreaterThan(0);
+    expect(picked, '数组长度是对齐后的桶数，所有容器都一样长，判不出谁有数据').not.toContain('cpu.length >= 2');
+    expect(picked).toMatch(/filled\b/);
+  });
+
   it('「够不够画图」看真有数据的桶数，不看数组长度', () => {
     const gate = PANEL_CODE.match(/const hasPlot = [^;]+;/)?.[0];
     expect(gate, '找不到 hasPlot，选择器过时了').toBeTruthy();
