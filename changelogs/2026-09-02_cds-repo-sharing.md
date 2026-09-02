@@ -27,3 +27,4 @@
 | fix | cds | 范围推断改为 workDir 优先、命令只认开头那条 cd；此前 `pnpm build && cd dist` 会把范围猜成 dist/** |
 | fix | cds | 库名相同但 host 不同不再判成共享数据库；上一轮只修了 redis 那一半 |
 | fix | cds | 共用仓库的确认文案按兄弟项目划没划范围分档，不再一律说「每次推送全部重建」 |
+| fix | cds | 主色对比守卫的判据收窄：`\b` 让它把正确的 `bg-primary-soft text-primary-ink` 也判红，只该抓实心主色填充 |

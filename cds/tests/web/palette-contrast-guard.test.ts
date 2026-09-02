@@ -75,7 +75,12 @@ describe('状态色只走 token，不再硬编码调色板', () => {
       const src = fs.readFileSync(file, 'utf8');
       // 同一段 class 串里同时出现两者即判红：跨行拼接的数组写法也照样命中
       for (const chunk of src.split(/[`'"]/)) {
-        if (/\bbg-primary\b/.test(chunk) && /\btext-primary-ink\b/.test(chunk)) {
+        // `(?![\w-])` 不能省：`\b` 在 `bg-primary-soft` 的 `y` 与 `-` 之间照样成立，
+        // 于是把 `bg-primary-soft text-primary-ink` 也判红——而那一对恰恰是**对的**
+        // 配色（--primary-soft 暗色下是极深的橙底，--primary-ink 是亮橙字）。
+        // 要抓的只有实心主色填充：`bg-primary` 本身与 `bg-primary/90` 这类透明度变体。
+        // 判据太宽会误伤，太窄会漏，两边都是 predicate-and-wiring-discipline 形状 1。
+        if (/\bbg-primary(?![\w-])/.test(chunk) && /\btext-primary-ink\b/.test(chunk)) {
           bad.push(`${path.relative(SRC, file)}: ${chunk.trim().slice(0, 80)}`);
         }
       }
