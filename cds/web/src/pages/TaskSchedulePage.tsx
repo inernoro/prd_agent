@@ -783,7 +783,7 @@ export function TaskSchedulePage(): JSX.Element {
                     ) : null}
                   </div>
                   {form.actions.length === 0 ? (
-                    <div className="flex min-h-40 flex-1 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))]/45 px-6 py-8 text-center">
+                    <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-md border border-dashed lg:flex-1 border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))]/45 px-6 py-8 text-center">
                       <div className="text-sm">这个任务触发后要做什么</div>
                       <div className="max-w-[340px] text-xs text-muted-foreground">按顺序执行；任一步失败后面的步骤不再继续。</div>
                       <div className="mt-1 flex flex-wrap justify-center gap-2">
@@ -798,7 +798,7 @@ export function TaskSchedulePage(): JSX.Element {
                       </div>
                     </div>
                   ) : (
-                    <div className="min-h-0 flex-1 space-y-2 lg:overflow-y-auto">
+                    <div className="space-y-2 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
                       {form.actions.map((action, index) => (
                         <div key={action.id} className="flex items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/30 px-3 py-2">
                           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-[hsl(var(--hairline))] bg-background text-xs font-semibold">
@@ -1011,7 +1011,11 @@ function SegmentButton({
   return (
     <button
       type="button"
-      className={`${segmentClass} ${active ? 'border-primary bg-primary/10 text-primary' : 'border-[hsl(var(--hairline))] bg-background text-muted-foreground hover:text-foreground'}`}
+      /*
+       * 选中态不再整块染橙：一屏只留一处强调，那一处是保存。这里改成「抬升底 + 满墨
+       * 字 + 左侧一道 2px 主色标记」，与左侧栏当前页同一套语言（主色面积从整块降到一道）。
+       */
+      className={`${segmentClass} ${active ? "relative border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] font-semibold text-foreground before:absolute before:left-0 before:top-1/2 before:h-3.5 before:w-0.5 before:-translate-y-1/2 before:rounded-r-sm before:bg-primary before:content-['']" : 'border-[hsl(var(--hairline))] bg-background text-muted-foreground hover:text-foreground'}`}
       onClick={onClick}
     >
       <Icon className="h-3.5 w-3.5" />
