@@ -101,10 +101,15 @@ describe('新建项目不再有第三个入口', () => {
   });
 
   it('新建文件夹挪到了列表标题行，且带文字', () => {
+    // 判据盯「它在标题行、带文字」——那是当初把它从匿名浮动图标搬过来的理由。
+    // 上一版还钉着 `onClick={onCreateFolder}`，把「它必须可点」也一并锁死了；
+    // 后端还没有文件夹，那个 onClick 走完取名对话框只会回一句「开发中」，
+    // 该被禁用而不是被守卫要求存在（形状 4a：断言实现的字面写法，
+    // 连带把一个不该有的行为一起钉住）。
     const page = strip(read(PAGE));
     const header = page.slice(page.indexOf('data-tour-id="visual-projects"'), page.indexOf('<NewProjectCard'));
-    expect(header).toContain('onClick={onCreateFolder}');
     expect(header).toContain('新建文件夹');
+    expect(header).toContain('FolderPlus');
   });
 });
 

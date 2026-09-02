@@ -109,6 +109,29 @@ describe('首页能看见并选择绘图模型', () => {
     expect(PANEL).toMatch(/flattenSizes\(availableSizes\)\.length > 0 \? availableSizes : null/);
   });
 
+  it('【关键】「暂不可用」的模型点不动，不只是压暗', () => {
+    // 压暗 ≠ 点不了。上一版只调透明度，那一行照样能点中：选中之后交接包里带的
+    // 就是一个没有健康成员的池，手机端把它过滤掉、静默退回「第一个可用池」——
+    // 用户明明选了 A，花钱跑的是 B（Codex PR #1476 P1）。
+    // 两件事都要断言：按钮真的 disabled，且点击回调自己也拦一道。
+    const at = PAGE.indexOf('function ModelPickerButton');
+    const body = PAGE.slice(at, PAGE.indexOf('\nfunction ', at + 10));
+    expect(body).toMatch(/disabled=\{!opt\.enabled\}/);
+    expect(body).toMatch(/onClick=\{\(\) => \{ if \(!opt\.enabled\) return;/);
+  });
+
+  it('【关键】文件夹按钮不假装能创建（后端还没有它）', () => {
+    // 上一版点下去会弹取名框、让用户认真起个名、点「创建」，然后回一句
+    // 「功能正在开发中」——一整套看着像真的流程，什么都没发生。而这条工具栏
+    // 原来被 !isMobile 挡着，搬进标题行之后手机上也露出来了（Codex PR #1476 P2）。
+    const at = PAGE.indexOf('新建文件夹');
+    expect(at, '列表标题行应有文件夹入口').toBeGreaterThan(0);
+    const btn = PAGE.slice(PAGE.lastIndexOf('<button', at), at + 200);
+    expect(btn, '后端没有它之前必须是禁用的').toMatch(/\n\s*disabled\n/);
+    // 那个空转的取名流程必须消失，不能只是把按钮禁掉、handler 还留着给别处调。
+    expect(PAGE, '不许再有假装创建的占位流程').not.toContain('文件夹功能正在开发中');
+  });
+
   it('尺寸 chip 不再是那枚靛蓝药丸，与同行控件同一档', () => {
     // 用户指着它说「这个地方是旧的」：整条行只有它带色块，也是整页唯一
     // 和品牌色无关的颜色。判据盯「按钮上不再有靛蓝底」，不锁具体样式写法。

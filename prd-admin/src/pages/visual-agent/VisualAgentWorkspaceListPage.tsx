@@ -377,12 +377,18 @@ function ModelPickerButton(props: {
                     border: 0,
                     background: active ? 'var(--bg-secondary)' : 'transparent',
                     color: 'var(--text-primary)',
-                    cursor: 'pointer',
+                    cursor: opt.enabled ? 'pointer' : 'not-allowed',
                     // 不可用的模型不隐藏、只压暗并说明：藏起来用户会以为「怎么少了一个」，
                     // 而看见「暂不可用」至少知道发生了什么（no-rootless-tree：暴露缺失）。
                     opacity: opt.enabled ? 1 : 0.45,
                   }}
-                  onClick={() => { onChange(opt.id); setOpen(false); }}
+                  // 压暗不等于点不了。上一版只调了透明度，这一行照样能点中：
+                  // 选了之后交接包里带的就是一个没有健康成员的池，手机端把它过滤掉，
+                  // 静默退回「第一个可用池」——用户明明选了 A，花钱跑的是 B
+                  //（Codex PR #1476 P1）。看得见的「不可用」和点不动必须一起给。
+                  disabled={!opt.enabled}
+                  title={opt.enabled ? undefined : '该模型池当前没有健康成员，暂时不能选'}
+                  onClick={() => { if (!opt.enabled) return; onChange(opt.id); setOpen(false); }}
                 >
                   <span style={{ fontSize: 12, fontWeight: active ? 600 : 500 }}>
                     {opt.name || opt.modelName}
@@ -1041,7 +1047,6 @@ function ProjectCardSkeleton({ index }: { index: number }) {
 }
 
 function ProjectCarousel(props: {
-  onCreateFolder: () => void;
   items: VisualAgentWorkspace[];
   loading: boolean;
   loadingMore: boolean;
@@ -1053,7 +1058,7 @@ function ProjectCarousel(props: {
   onDelete: (ws: VisualAgentWorkspace) => void;
   onOpen: (ws: VisualAgentWorkspace) => void;
 }) {
-  const { items, loading, loadingMore, hasMore, onLoadMore, onCreate, onCreateFolder, onRename, onShare, onDelete, onOpen } = props;
+  const { items, loading, loadingMore, hasMore, onLoadMore, onCreate, onRename, onShare, onDelete, onOpen } = props;
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   // 无限滚动：当哨兵元素进入视口时加载更多
@@ -1089,15 +1094,24 @@ function ProjectCarousel(props: {
             最近项目
           </h2>
           {/* 从左侧那条浮动工具栏搬过来的。带文字——匿名图标悬在页面左缘时
-              没人认得出它是什么，也跟它要操作的这个列表隔着大半个屏幕。 */}
+              没人认得出它是什么，也跟它要操作的这个列表隔着大半个屏幕。
+
+              后端还没有文件夹，所以它是**禁用**的，不是能点的。
+              上一版点下去会弹出取名对话框、让用户认真起个名字、点「创建」，
+              然后回一句「功能正在开发中」——一整套看着像真的流程，什么都没发生。
+              而这条工具栏原来被 !isMobile 挡着，这次搬进标题行之后手机上也露出来了，
+              等于把这个空转流程推给了更多人（Codex PR #1476 P2）。
+              禁用 + 「开发中」标签是诚实的那一档：能看见规划，但不假装做得到
+              （no-rootless-tree）。接上后端时把 disabled 去掉即可。 */}
           <button
             type="button"
-            onClick={onCreateFolder}
-            className="glass-sub inline-flex items-center gap-1.5 rounded-md px-2.5 h-7 text-[11px] transition-colors"
-            style={{ color: 'var(--text-secondary)' }}
+            disabled
+            title="后端尚未支持文件夹，敬请期待"
+            className="glass-sub inline-flex items-center gap-1.5 rounded-md px-2.5 h-7 text-[11px]"
+            style={{ color: 'var(--text-muted)', opacity: 0.55, cursor: 'not-allowed' }}
           >
             <FolderPlus size={12} />
-            新建文件夹
+            新建文件夹（开发中）
           </button>
         </div>
       </div>
@@ -1596,20 +1610,6 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableSizes]);
 
-  // 新建文件夹（目前作为占位功能，后续可接入后端）
-  const onCreateFolder = async () => {
-    const folderName = await systemDialog.prompt({
-      title: '新建文件夹',
-      message: '请输入文件夹名称',
-      defaultValue: '新文件夹',
-      confirmText: '创建',
-      cancelText: '取消',
-    });
-    if (folderName == null) return;
-    // TODO: 后端尚未支持文件夹功能，暂时提示
-    toast.info(`文件夹功能正在开发中，将创建名为「${folderName.trim() || '新文件夹'}」的文件夹。`);
-  };
-
   const onRename = async (ws: VisualAgentWorkspace) => {
     const title = await systemDialog.prompt({
       title: '重命名',
@@ -1838,7 +1838,6 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         style={wake ? ({ '--wake-delay': '1740ms' } as React.CSSProperties) : undefined}
       >
         <ProjectCarousel
-          onCreateFolder={onCreateFolder}
           items={items}
           loading={loading}
           loadingMore={loadingMore}
