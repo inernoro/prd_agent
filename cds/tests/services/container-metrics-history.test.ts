@@ -390,6 +390,54 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     expect(r.groupSeconds, '一次抖动不该让桶宽翻倍').toBeLessThan(45 * 1.5 * 1.6);
   });
 
+  /**
+   * Codex P2（核对属实）：抽屉在后台采样器攒够 4 帧之前就打开。
+   *
+   * 此时窗口里只有 1-2 个 45s 间隔，后面全是 5s 的。上一版判据是「降序取第 3 大」
+   * （容忍两次抖动），这两个稀疏间隔正好被当成离群点丢掉，节奏又变成 5s——
+   * 于是 30 分钟切 120 个 15s 的桶，前面那段稀疏数据三分之二是空桶。
+   *
+   * 「出现次数少」不等于「是异常」：一档节奏可以只出现两次。
+   */
+  it('稀疏档只出现两次也算一档节奏，不许当离群点丢掉', () => {
+    // 后台采样器只来得及写 3 帧（造出**恰好 2 个** 45s 间隔），随后抽屉打开、5s 端点接管。
+    // 三帧写在 0 / 45s / 90s，密集档紧接着从 95s 开始——中间不能再留出第三个 45s 间隔，
+    // 否则就凑够三个、连旧判据都能挑中，这条用例会变成永远绿的摆设。
+    for (const t of [0, 45_000, 90_000]) recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
+    for (let t = 95_000; t <= 30 * 60_000; t += 5_000) recordContainerSample('c1', sample({ cpuPercent: 4 }), T0 + t);
+    const now = T0 + 30 * 60_000;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 120 }, now);
+    expect(
+      r.groupSeconds,
+      `桶宽 ${r.groupSeconds}s 比稀疏档的 45s 还细——那两个 45s 间隔被当成离群点丢了`,
+    ).toBeGreaterThanOrEqual(45);
+  });
+
+  /**
+   * Codex P2（核对属实）：两个写入方（45s 采样器 / 5s 端点）可能相隔几毫秒落点。
+   *
+   * 速率 = 累计差 / 间隔。除以 0.001 秒能把一次普通增量放大成几十 MB/s 的假尖峰。
+   */
+  it('相隔不到 1 秒的第二次写入被丢弃（否则除出天文数字的假速率）', () => {
+    recordContainerSample('c1', sample({ netRxBytes: 0 }), T0);
+    recordContainerSample('c1', sample({ netRxBytes: 100_000 }), T0 + 45_000);
+    // 另一个写入方在 3 毫秒后也落了一条：累计值只多了一点点，间隔却是 0.003 秒。
+    recordContainerSample('c1', sample({ netRxBytes: 100_300 }), T0 + 45_003);
+    const now = T0 + 45_010;
+    const r = queryContainerSeries({ containers: ['c1'], after: T0, before: now, points: 60 }, now);
+    const peak = Math.max(...r.series.c1.map((p) => p.rxRate ?? 0));
+    expect(
+      peak,
+      `峰值 ${Math.round(peak)} B/s——300 字节除以 3 毫秒造出来的假尖峰，真实速率只有约 2222 B/s`,
+    ).toBeLessThan(10_000);
+  });
+
+  it('相隔正好 1 秒的写入仍然收下（去重不许误伤真实节奏）', () => {
+    recordContainerSample('c1', sample({ cpuPercent: 1 }), T0);
+    recordContainerSample('c1', sample({ cpuPercent: 9 }), T0 + 1_000);
+    expect(containerMetricsHistoryStats().points).toBe(2);
+  });
+
   it('真实断档不参与定分辨率（否则一次重启就把整窗压成几个点）', () => {
     const windowMs = 30 * 60_000;
     // 前 5 分钟有量，然后断 12 分钟（> MAX_RATE_GAP_MS），再恢复

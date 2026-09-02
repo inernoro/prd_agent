@@ -113,6 +113,20 @@ const MAX_CONTAINERS = 400;
 /** 两次采样间隔超过这个值就不算速率（中间断档，差值除以大间隔会得到假的低速率）。 */
 const MAX_RATE_GAP_MS = 5 * 60_000;
 
+/**
+ * 两次写入之间的最小间隔。比这更近的第二条直接丢弃。
+ *
+ * 有两个写入方在采同一批容器：45s 的常驻采样器，和抽屉打开时 5s 的端点。它们各自
+ * 独立跑 `docker stats`，完全可能在相隔几毫秒时先后落点（Codex P2，核对属实）。
+ * 原来的护栏只挡「时间戳没往前走」，挡不住「往前走了 1 毫秒」——而速率是
+ * 累计差 / 间隔，除以 0.001 秒能把一次普通的字节增量放大成几十 MB/s 的假尖峰。
+ * 反过来，两次快照若乱序到达，负增量会被 clamp 成 0，下一次差分又会被撑大。
+ *
+ * 相隔不到 1 秒的两条记录，测的本来就是同一个瞬间，留一条即可。取 1 秒而不是更大：
+ * 两个写入方最密的是 5 秒那一档，1 秒既足够挡住撞车，又不会误伤任何真实节奏。
+ */
+const MIN_WRITE_INTERVAL_MS = 1_000;
+
 const store = new Map<string, StoredPoint[]>();
 
 function trim(points: StoredPoint[], nowMs: number): StoredPoint[] {
@@ -138,7 +152,7 @@ export function recordContainerSample(
   if (!containerName) return;
   const existing = store.get(containerName) ?? [];
   const prev = existing.length > 0 ? existing[existing.length - 1] : null;
-  if (prev && ts <= prev.ts) return;
+  if (prev && ts - prev.ts < MIN_WRITE_INTERVAL_MS) return;
 
   let rxRate = 0;
   let txRate = 0;
@@ -233,11 +247,34 @@ function resolveBound(value: number | undefined, nowMs: number, fallback: number
  * 那个间隔就是目前能观测到的全部节奏信息，用它比不用强得多（见下面 bySamples 的死因）。
  * 全都算不出就返回 0 = 不做限制：此时任何容器最多只有 1 帧，前端本来就不画。
  */
+/** 判两个间隔「是不是同一档节奏」的相似带：差在 1.5 倍以内算同档。 */
+const CADENCE_SIMILARITY = 1.5;
+
 /**
- * 定分辨率时容忍几次偶发的大间隔（取降序第 N+1 大）。
- * 2 = 漏采一两帧造出的双倍间隔不算数，但连续出现的稀疏节奏一定算数。
+ * 从降序排好的间隔里挑出「最粗的那一档持续存在的节奏」。
+ *
+ * 判据：**最大的那个间隔，如果找不到同量级的同伴（1.5 倍以内），就是偶发抖动**
+ * （漏采一帧会造出一个双倍间隔），退到第二大；否则它就是一档真实的节奏。
+ *
+ * 这里换过两版，两版都栽在同一个地方——**按位置丢弃**会连同一整档节奏一起丢掉：
+ *
+ *   1. 第一版取 p90：抽屉开满 15 分钟后 5s 样本占比就超过 90%，稀疏档被整个吞掉；
+ *   2. 第二版改成「降序第 3 大」（容忍两次抖动）：抽屉在后台采样器攒够 4 帧之前
+ *      就打开时，窗口里只有 1-2 个 45s 间隔，它们正好被当成两个离群点丢掉，
+ *      节奏又变成 5s（Codex P2，核对属实）。
+ *
+ * 病根一样：**「出现次数少」不等于「是异常」**。一档节奏可以只出现两次，
+ * 而一次漏采只会出现一次。所以判据不能数位置，要看它有没有同伴。
+ *
+ * 代价：真的连着漏采两帧（造出两个同量级的双倍间隔）时，桶宽会翻倍。那是如实反映
+ * 「这段时间确实只采到这么密」，比把稀疏档当噪声丢掉安全。
  */
-const CADENCE_OUTLIER_TOLERANCE = 2;
+function coarsestSustained(gapsDesc: number[]): number {
+  if (gapsDesc.length === 1) return gapsDesc[0];
+  const largest = gapsDesc[0];
+  const hasTwin = gapsDesc.some((g, i) => i > 0 && g >= largest / CADENCE_SIMILARITY);
+  return hasTwin ? largest : gapsDesc[1];
+}
 
 function observedCadence(containers: string[], after: number, before: number): { cadenceMs: number } {
   let cadenceMs = 0;
@@ -255,7 +292,7 @@ function observedCadence(containers: string[], after: number, before: number): {
     }
     if (gaps.length === 0) continue;
     gaps.sort((a, b) => b - a);
-    const coarsest = gaps[Math.min(gaps.length - 1, CADENCE_OUTLIER_TOLERANCE)];
+    const coarsest = coarsestSustained(gaps);
     if (coarsest > cadenceMs) cadenceMs = coarsest;
   }
   return { cadenceMs };
