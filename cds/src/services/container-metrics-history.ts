@@ -46,12 +46,19 @@ interface StoredPoint {
   cpuPercent: number;
   memUsedBytes: number;
   memLimitBytes: number;
-  /** bytes/sec，由与上一点的累计差除以间隔得出；首点或计数器回绕时为 0。 */
-  rxRate: number;
-  txRate: number;
-  /** bytes/sec，块设备读写。口径与 net 完全一致（累计差 / 间隔，回绕与断档记 0）。 */
-  readRate: number;
-  writeRate: number;
+  /**
+   * bytes/sec，由与上一点的累计差除以间隔得出。
+   *
+   * **算不出来时是 null，不是 0**（Codex P2，核对属实）：首点、同名重建换了生命周期、
+   * 间隔超过 MAX_RATE_GAP_MS 这三种情况下都没有可减的前一点。记 0 等于说「这一刻
+   * 一个字节都没走」，而吞吐图会照着画出一次「掉到零又爬回来」——和最初那道
+   * 「掉到 0」的谷是同一种谎，只是发生在速率这一维上。
+   */
+  rxRate: number | null;
+  txRate: number | null;
+  /** bytes/sec，块设备读写。口径与 net 完全一致，算不出来同样是 null。 */
+  readRate: number | null;
+  writeRate: number | null;
   /** 保留累计值，供下一点算速率。 */
   netRxBytes: number;
   netTxBytes: number;
@@ -182,10 +189,11 @@ export function recordContainerSample(
   const prev = existing.length > 0 ? existing[existing.length - 1] : null;
   if (prev && ts - prev.ts < MIN_WRITE_INTERVAL_MS) return;
 
-  let rxRate = 0;
-  let txRate = 0;
-  let readRate = 0;
-  let writeRate = 0;
+  // 算不出速率就是 null（首点 / 换生命周期 / 断档），不是 0。
+  let rxRate: number | null = null;
+  let txRate: number | null = null;
+  let readRate: number | null = null;
+  let writeRate: number | null = null;
   /*
    * 同名重建 = 新的生命周期，累计值从 0 重来，不能跨这条边界做差。
    *
@@ -345,24 +353,36 @@ function observedCadence(containers: string[], after: number, before: number): {
 }
 
 function aggregate(bucket: StoredPoint[], group: 'average' | 'max'): Omit<SeriesPoint, 'ts'> {
+  /**
+   * 速率可能为 null（首点 / 换生命周期 / 断档算不出来）。聚合时把 null **跳过**，
+   * 一整桶都是 null 才给 null——不能当成 0 参与平均，否则「没测到」会被摊进读数里，
+   * 把一个真实的速率往下拉。
+   */
+  const rate = (pick: (p: StoredPoint) => number | null): number | null => {
+    const vals = bucket.map(pick).filter((v): v is number => v != null);
+    if (vals.length === 0) return null;
+    return group === 'max'
+      ? Math.max(...vals)
+      : vals.reduce((s, v) => s + v, 0) / vals.length;
+  };
   if (group === 'max') {
     return {
       cpuPercent: Math.max(...bucket.map((p) => p.cpuPercent)),
       memUsedBytes: Math.max(...bucket.map((p) => p.memUsedBytes)),
-      rxRate: Math.max(...bucket.map((p) => p.rxRate)),
-      txRate: Math.max(...bucket.map((p) => p.txRate)),
-      readRate: Math.max(...bucket.map((p) => p.readRate)),
-      writeRate: Math.max(...bucket.map((p) => p.writeRate)),
+      rxRate: rate((p) => p.rxRate),
+      txRate: rate((p) => p.txRate),
+      readRate: rate((p) => p.readRate),
+      writeRate: rate((p) => p.writeRate),
     };
   }
   const n = bucket.length;
   return {
     cpuPercent: bucket.reduce((s, p) => s + p.cpuPercent, 0) / n,
     memUsedBytes: bucket.reduce((s, p) => s + p.memUsedBytes, 0) / n,
-    rxRate: bucket.reduce((s, p) => s + p.rxRate, 0) / n,
-    txRate: bucket.reduce((s, p) => s + p.txRate, 0) / n,
-    readRate: bucket.reduce((s, p) => s + p.readRate, 0) / n,
-    writeRate: bucket.reduce((s, p) => s + p.writeRate, 0) / n,
+    rxRate: rate((p) => p.rxRate),
+    txRate: rate((p) => p.txRate),
+    readRate: rate((p) => p.readRate),
+    writeRate: rate((p) => p.writeRate),
   };
 }
 

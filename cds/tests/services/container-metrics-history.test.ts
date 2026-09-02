@@ -26,7 +26,7 @@ beforeEach(() => __resetContainerMetricsHistory());
  * 拿到的往往是窗口两端的空桶，而不是最早/最新的那次采样。速率相关的用例问的是
  * 差分算得对不对，跟轴上有多少空桶无关，所以先滤掉空桶再断言。
  */
-const withData = (points: Array<{ rxRate: number | null }>) => points.filter((p) => p.rxRate != null);
+const withData = (points: Array<{ cpuPercent: number | null }>) => points.filter((p) => p.cpuPercent != null);
 
 /**
  * 「轴覆盖整个请求窗口」的判据。
@@ -52,10 +52,19 @@ describe('速率由累计值差分算出', () => {
     expect(withData(series.c1).at(-1)?.rxRate).toBeCloseTo(1000, 3);
   });
 
-  it('首点没有前一点，速率是 0 而不是 NaN', () => {
+  /**
+   * 首点没有可减的前一点，速率**算不出来**——那是 null，不是 0（Codex P2，核对属实）。
+   *
+   * 这条原来断言 `toBe(0)`，等于把「没测到当成测到了 0」锁死成契约（形状 4a）：
+   * 那一桶的 CPU 是有值的、桶被标成 present，于是吞吐图照着画出一次「掉到零又爬回来」
+   * ——和最初那道谷是同一种谎，只是发生在速率这一维上。
+   */
+  it('首点算不出速率，给 null 而不是 0', () => {
     recordContainerSample('c1', sample({ netRxBytes: 999 }), T0);
     const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 1000, points: 4 }, T0 + 1000);
-    expect(withData(series.c1)[0].rxRate).toBe(0);
+    const first = withData(series.c1)[0];
+    expect(first.cpuPercent, '这一桶本身是有样本的').not.toBeNull();
+    expect(first.rxRate, '把「算不出来」写成 0，图上就会多一次凭空的掉零').toBeNull();
   });
 
   /**
@@ -66,18 +75,30 @@ describe('速率由累计值差分算出', () => {
     recordContainerSample('c1', sample({ netRxBytes: 5_000_000 }), T0);
     recordContainerSample('c1', sample({ netRxBytes: 1_000 }), T0 + 5_000);
     const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 10_000, points: 10 }, T0 + 10_000);
-    for (const p of withData(series.c1)) expect(p.rxRate).toBeGreaterThanOrEqual(0);
+    // 速率现在可能是 null（算不出来），断言只针对**算得出来**的那些：一个负数都不许有。
+    const rates = withData(series.c1).map((p) => p.rxRate).filter((v): v is number => v != null);
+    expect(rates.length, '一个算得出来的速率都没有，这条断言会空跑').toBeGreaterThan(0);
+    for (const v of rates) expect(v).toBeGreaterThanOrEqual(0);
   });
 
   /**
    * 中间断档（CDS 重启 / docker 不可用）后，用「大差值 ÷ 大间隔」算出来的速率
    * 是假的平均值，会把一段根本没有观测的时间画成平坦流量。
    */
-  it('间隔超过上限就不算速率（断档不编数）', () => {
+  it('间隔超过上限就不算速率（断档给 null，不编 0）', () => {
     recordContainerSample('c1', sample({ netRxBytes: 0 }), T0);
     recordContainerSample('c1', sample({ netRxBytes: 100_000_000 }), T0 + 30 * 60_000);
     const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 31 * 60_000, points: 50 }, T0 + 31 * 60_000);
-    expect(withData(series.c1).at(-1)?.rxRate).toBe(0);
+    const last = withData(series.c1).at(-1);
+    expect(last?.cpuPercent).not.toBeNull();
+    expect(last?.rxRate, '断档后的第一帧没有可减的前一点，是 null 不是 0').toBeNull();
+  });
+
+  it('同名重建后的第一帧也是 null（换了生命周期，没有可减的前一点）', () => {
+    recordContainerSample('c1', sample({ containerId: 'aaaa1111', netRxBytes: 5_000 }), T0);
+    recordContainerSample('c1', sample({ containerId: 'bbbb2222', netRxBytes: 9_000 }), T0 + 45_000);
+    const { series } = queryContainerSeries({ containers: ['c1'], after: T0 - 1000, before: T0 + 46_000, points: 20 }, T0 + 46_000);
+    expect(withData(series.c1).at(-1)?.rxRate, '跨生命周期不能做差，也不能记 0').toBeNull();
   });
 
   it('同一毫秒或更旧的点被忽略（两路采集者可能同时落点）', () => {

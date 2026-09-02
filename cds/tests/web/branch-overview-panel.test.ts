@@ -769,3 +769,52 @@ describe('总览的数据源接对了地方', () => {
     expect(memo, '失败时没有退回最后一次成功的那一帧').toMatch(/:\s*lastGoodMetrics/);
   });
 });
+
+/**
+ * 三条（2026-09-02，Codex P2，均核对属实）。
+ *
+ * 第一条又是「掉到 0」那种谎，只是发生在速率这一维上——上一轮只把 CPU 那条路修好了。
+ */
+describe('速率算不出来时不许当成 0', () => {
+  it('首帧的速率是 null，掩码上也标成没有', () => {
+    const seeded = seedMetricSeries([
+      { cpuPercent: 3, memUsedBytes: 100, rxRate: null, txRate: null },
+      { cpuPercent: 3, memUsedBytes: 100, rxRate: 2048, txRate: 1024 },
+    ]);
+    expect(seeded.present, '这两桶都有样本').toEqual([true, true]);
+    expect(seeded.ratePresent, '首帧算不出速率，速率掩码必须与样本掩码分开').toEqual([false, true]);
+  });
+
+  it('吞吐图吃的是速率掩码，不是样本掩码', () => {
+    const code = stripComments(PANEL);
+    const at = code.indexOf('<ThroughputChart');
+    expect(at).toBeGreaterThan(-1);
+    const call = code.slice(at, code.indexOf('/>', at));
+    expect(call, '用样本掩码画吞吐图，算不出速率的那几帧会被画成测到了 0').toMatch(
+      /present=\{axisRatePresent\}/,
+    );
+  });
+});
+
+describe('分支状态与部署来源', () => {
+  it('running 优先用实时状态，不是「有一边说在跑就算在跑」', () => {
+    const code = stripComments(DRAWER);
+    const at = code.indexOf('<OverviewPanel');
+    const call = code.slice(at, code.indexOf('/>', at));
+    expect(call, '或运算会让停掉的分支因为陈快照继续显示为运行中').not.toMatch(
+      /running=\{[^}]*\|\|[^}]*\}/,
+    );
+    expect(call).toMatch(/running=\{branchStatus \? branchStatus === 'running'/);
+  });
+
+  it('两个部署来源合并时去重，否则最近那次会出现两根柱子', () => {
+    const code = stripComments(DRAWER);
+    const at = code.indexOf('const combinedDeployments');
+    const memo = code.slice(at, at + 1400);
+    expect(memo, '直接拼接会让同一次部署出现两次，带偏中位线与成功率').not.toMatch(
+      /const all\s*=\s*\[\.\.\.visibleDeployments,\s*\.\.\.legacy\]/,
+    );
+    expect(memo).toMatch(/START_TOLERANCE_MS/);
+    expect(memo).toMatch(/kept\.kind === item\.kind/);
+  });
+});

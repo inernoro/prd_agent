@@ -1693,7 +1693,24 @@ export function BranchDetailDrawer({
       .reverse()
       .slice(0, 6)
       .map((log) => legacyLogToDeploymentItem(log, branchId));
-    const all = [...visibleDeployments, ...legacy];
+    /*
+     * 两个来源会重复：一次部署结束后，BranchListPage 的 actions 里仍留着它的完成态，
+     * 而 /branches/:id/logs 里也已经落了同一次部署的持久记录（Codex P2，核对属实）。
+     * 直接拼起来，最近那次部署会在柱状图里出现两根柱子，把中位线、成功率、趋势
+     * 一起带偏——而且只偏最近这一次，看起来像是「刚才那次特别慢/特别快」。
+     *
+     * 按「操作类型 + 起始时刻」去重：同一次部署的两份记录，kind 相同、startedAt 同源，
+     * 差别只在一个还带着实时进度。留先出现的那条（visibleDeployments 在前，它带实时
+     * 状态，正在跑的那次要靠它更新）。允许几秒误差——两边的时间戳来自同一个事件，
+     * 但序列化路径不同，不做精确相等。
+     */
+    const START_TOLERANCE_MS = 3_000;
+    const all: BranchDeploymentItem[] = [];
+    for (const item of [...visibleDeployments, ...legacy]) {
+      const dup = all.some((kept) => kept.kind === item.kind
+        && Math.abs(kept.startedAt - item.startedAt) <= START_TOLERANCE_MS);
+      if (!dup) all.push(item);
+    }
     const sorted = all.sort((left, right) => right.startedAt - left.startedAt);
     return sorted.map((item, index) => {
       if (!item.runtimeStartedAt) return item;
@@ -2648,7 +2665,16 @@ export function BranchDetailDrawer({
                 {activeTab === 'overview' ? (
                   <OverviewPanel
                     services={overviewServices}
-                    running={branch.status === 'running' || branchStatus === 'running'}
+                    /*
+                     * running 优先用 SSE 带回来的实时状态（Codex P2，核对属实）。
+                     *
+                     * 原来是 `branch.status === 'running' || branchStatus === 'running'`——
+                     * 或运算意味着**只要有一边说在跑就算在跑**，而 `branch` 是抽屉打开时
+                     * 那一次加载的快照、之后不再更新。分支停掉之后快照仍写着 running，
+                     * 于是判断句说「还有服务没起来」、已运行时长继续往上涨，而实际上
+                     * 整个分支已经停了。有实时值就用实时值，没有才退回快照。
+                     */
+                    running={branchStatus ? branchStatus === 'running' : branch.status === 'running'}
                     branchName={branch.branch}
                     commitSha={branch.commitSha}
                     commitMessage={branch.subject}

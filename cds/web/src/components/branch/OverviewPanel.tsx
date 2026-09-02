@@ -50,6 +50,13 @@ export interface MetricSeries {
    * 值：缺口就是缺口，线在那里断开。这个数组就是断点的依据；`filled` 是它的计数。
    */
   present: boolean[];
+  /**
+   * 每个桶「速率算不算得出来」。**与 present 是两回事**：一个桶可以有 CPU 样本
+   * （present 为真）却没有速率——首帧、同名重建后的第一帧、断档后的第一帧都没有
+   * 可减的前一点。用 present 去画吞吐图，那几帧会被当成「测到了 0」，图上多出一次
+   * 凭空的掉零（Codex P2，核对属实）。
+   */
+  ratePresent: boolean[];
 }
 
 /**
@@ -79,6 +86,9 @@ export function seedMetricSeries(points: Array<{
     filled: tail.filter((p) => p.cpuPercent != null).length,
     // 服务端整桶给 null（同一个桶里各字段要么全有要么全无），所以一个掩码够用。
     present: tail.map((p) => p.cpuPercent != null),
+    // 速率单独一份掩码：有样本 ≠ 算得出速率。
+    ratePresent: tail.map((p) => p.rxRate != null || p.txRate != null
+      || (p.readRate ?? null) != null || (p.writeRate ?? null) != null),
   };
 }
 
@@ -1093,6 +1103,14 @@ export function OverviewPanel({
    */
   const axisPresent = Array.from({ length: sampleCount }, (_, i) =>
     picked.head.concat(picked.tail).some((x) => x.ring.present?.[i] ?? false));
+  /**
+   * 吞吐图用的是**速率掩码**，不是样本掩码。
+   *
+   * 有样本不等于算得出速率：首帧、同名重建后的第一帧、断档后的第一帧都没有可减的
+   * 前一点。拿样本掩码去画，那几帧会被当成「测到了 0」，图上多出一次凭空的掉零。
+   */
+  const axisRatePresent = Array.from({ length: sampleCount }, (_, i) =>
+    picked.head.concat(picked.tail).some((x) => x.ring.ratePresent?.[i] ?? false));
 
   const sumOf = (read: (m: MetricSeries) => number[]): number[] =>
     Array.from({ length: sampleCount }, (_, i) => picked.head.concat(picked.tail).reduce((n, x) => n + (read(x.ring)[i] ?? 0), 0));
@@ -1331,7 +1349,7 @@ export function OverviewPanel({
             >
               <CompositionBar series={memSeries} />
             </ChartShell>
-            <ThroughputChart rx={netRx} tx={netTx} read={diskRead} write={diskWrite} present={axisPresent} />
+            <ThroughputChart rx={netRx} tx={netTx} read={diskRead} write={diskWrite} present={axisRatePresent} />
           </div>
         </>
       )}
