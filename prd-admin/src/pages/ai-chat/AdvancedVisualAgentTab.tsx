@@ -5968,6 +5968,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         animateCameraToWorldCenter(f.cx, f.cy);
       }
     });
+    // 「新增而不是替换」这件事必须说在**画布上**。
+    //
+    // 上一版只写进了 pushMsg（聊天面板）。在全画布视图里那个面板根本不在视野内，
+    // 于是用户看到的是：选中一张图、传了一张，画布上无声地多出一张一模一样的——
+    // 原话「怎么变成两个参考图了」。改成替换前是「原图无声消失」，改完成了
+    // 「副本无声出现」，两头都是同一个毛病：动作发生了，说明去了用户看不见的地方。
+    if (placedAlongsideSelection) showUploadToast(`已在选中图旁新增 ${added.length} 张，原图保留`);
     pushMsg(
       'Assistant',
       placedAlongsideSelection

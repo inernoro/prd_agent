@@ -363,6 +363,19 @@ describe('上传落位：只新增、不替换，且贴着锚点对齐', () => {
     expect(near).toMatch(/typeof x !== 'number' \|\| typeof y !== 'number'/);
     expect(near).toMatch(/if \(!w \|\| !h\) return null;/);
   });
+
+  it('【关键】「新增而非替换」要说在画布上，不能只写进聊天面板', () => {
+    // 用户在全画布视图里看不见聊天面板。上一版只 pushMsg，于是他看到的是
+    // 「选中一张、传了一张，画布上无声多出一模一样的第二张」——原话
+    // 「怎么变成两个参考图了」。改替换为新增本身是对的（替换会让原图无声消失），
+    // 但两版都把说明放到了他看不见的地方。
+    //
+    // 判据盯「同一个条件下有没有走画布 toast」，不锁文案：
+    // 措辞以后可以改，说给谁听不能改。
+    const at = code.indexOf('if (placedAlongsideSelection)');
+    expect(at, '贴着选中图落位时应有画布 toast').toBeGreaterThan(0);
+    expect(code.slice(at, at + 160)).toMatch(/showUploadToast\(/);
+  });
 });
 
 describe('生成中的占位卡不许被系统自动选中', () => {
