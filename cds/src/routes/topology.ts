@@ -16,11 +16,14 @@ import { resolveEffectiveProfile } from '../services/container.js';
 import type { RouteRecord } from '../forwarder/types.js';
 import { resolveBranchEnvLayers } from '../services/branch-env-layers.js';
 import { classifyReference, cdsRefResolverDepsFromState, formatCdsRef, parseCdsRefs, resolveCdsRef, type ResolvedCdsRef } from '../services/cross-project-refs.js';
-import { PREVIEW_URL_ENV_KEY, SERVICE_URLS_ENV_KEY, resolveBranchEntrypointsEnv } from '../services/preview-entrypoints.js';
+import { PREVIEW_URL_ENV_KEY, SERVICE_URLS_ENV_KEY, resolveBranchEntrypointsEnv, subdomainWithLegacyAliases } from '../services/preview-entrypoints.js';
+import { ROUTABLE_SERVICE_STATUSES } from '../services/forwarder-route-publisher.js';
 import { maskSecretsInObject } from '../services/secret-masker.js';
 import type { LintFinding } from '../services/topology-lint.js';
 
 const MAX_YAML_BYTES = 512 * 1024;
+
+const hostOf = (url: string): string | null => { try { return new URL(url).hostname.toLowerCase(); } catch { return null; } };
 
 export interface TopologyRouterDeps {
   stateService: StateService;
@@ -69,7 +72,6 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     const resolution = resolveBranchEnvLayers(deps.stateService, branch, envConfig);
     const refDeps = cdsRefResolverDepsFromState(deps.stateService, envConfig.previewHost);
     const branches = deps.stateService.getAllBranches();
-    const hostOf = (url: string): string | null => { try { return new URL(url).hostname.toLowerCase(); } catch { return null; } };
     // 每条分支实际发布的 host（主入口 + 各子域），与容器注入的入口表同一份口径；按需算、算一次
     const branchHosts = new Map<string, string[]>();
     const hostsOfBranch = (b: (typeof branches)[number]): string[] => {
@@ -178,7 +180,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
       ...existing,
       env: { ...(existing.env ?? {}), [key]: value },
     });
-    res.json({ branchId: branch.id, profileId, key, value, resolved, scope: 'branch-override', restartHint: '切换写入该服务的分支覆盖，重启它后生效' });
+    res.json({ branchId: branch.id, profileId, key, value, resolved, scope: 'branch-override', restartHint: '切换写入该服务的分支覆盖，重新部署该服务后生效（原地重启不会刷新容器环境变量）' });
   });
 
   /** 分支服务图 + 体检 + 引用（service-graph 接口与全局概览共用同一份计算）。 */
@@ -186,7 +188,10 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     // env 用生效合并结果（与 replica-sets 的服务图同一口径），只暴露键名
     const projectEnv = deps.stateService.getCustomEnv(branch.projectId);
     const branchEnv = deps.stateService.getCustomEnvScope(branch.id);
+    // 先按分支解析 profileOverrides（前缀 / 子域 / 入口 / 部署模式），再合并 env：转发器与 master 兜底
+    // 路由用的都是 resolveEffectiveProfile 之后的 profile，图、体检、概览、cdscli topology 必须看同一份
     const profiles = deps.stateService.getEffectiveProfilesForBranch(branch)
+      .map((p) => resolveEffectiveProfile(p, branch))
       .map((p) => ({ ...p, env: { ...projectEnv, ...branchEnv, ...(p.env || {}) } }));
     const infra = (deps.stateService.getState().infraServices || [])
       .filter((s) => s.projectId === branch.projectId && (s.scope ?? 'project') === 'project');
@@ -291,7 +296,24 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     const profiles = deps.stateService.getEffectiveProfilesForBranch(branch)
       .map((p) => resolveEffectiveProfile(p, branch))
       .filter((p) => Object.keys(branch.services ?? {}).includes(p.id));
-    const masterPick = resolveProfileForPath(profiles, path);
+    // master 兜底先看 host：命名子域 `<previewSlug>-<subdomain>.<root>` 会被强制交给声明了该子域的
+    // 可路由服务（proxy.resolvePreviewServiceSubdomain），路径判定只在主域名上才用。入口表与发布器
+    // 同一份口径（含历史别名），这里据表反查 host 对应的子域名，再落到 profile。
+    const envConfig = deps.envConfig ?? { jwtIssuer: 'cds' };
+    let forcedBySubdomain: string | null = null;
+    try {
+      const table = JSON.parse(resolveBranchEntrypointsEnv(branch, cdsRefResolverDepsFromState(deps.stateService, envConfig.previewHost).entrypointDeps).env[SERVICE_URLS_ENV_KEY] || '{}') as Record<string, string>;
+      const subForHost = Object.entries(table).find(([, u]) => hostOf(u) === host)?.[0];
+      if (subForHost) {
+        const owner = profiles.find((p) => {
+          if (!p.subdomain || !subdomainWithLegacyAliases(p.subdomain).includes(subForHost)) return false;
+          const svc = branch.services?.[p.id];
+          return (svc?.hostPort ?? 0) > 0 && ROUTABLE_SERVICE_STATUSES.has(String(svc?.status));
+        });
+        forcedBySubdomain = owner?.id ?? null;
+      }
+    } catch { /* 入口表算不出来就按主域名路径判定 */ }
+    const masterPick = forcedBySubdomain ?? resolveProfileForPath(profiles, path);
     res.json({
       branchId: branch.id,
       host,
@@ -299,7 +321,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
       forwarder: hit
         ? { routeId: hit._id, profileId: hit.profileId ?? null, pathPrefix: hit.pathPrefix ?? '', upstreamPort: hit.upstreamPort, replicaMemberId: hit.replicaMemberId ?? null }
         : null,
-      masterFallback: { profileId: masterPick ?? null },
+      masterFallback: { profileId: masterPick ?? null, bySubdomain: forcedBySubdomain !== null },
       consistent: hit ? (hit.profileId ?? null) === (masterPick ?? null) : null,
       publishedRoutes: routes.length,
     });

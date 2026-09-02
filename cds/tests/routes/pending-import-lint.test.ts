@@ -60,6 +60,39 @@ services:
       cds.path-prefix: "/open/"
 `;
 
+const CALLS_YAML = `
+services:
+  web:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - ./web:/app
+    command: node web.js
+    ports: ["3000"]
+    labels:
+      cds.path-prefix: "/"
+      cds.readiness-path: "/"
+      cds.calls: "api, worker"
+  api:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - ./api:/app
+    command: node api.js
+    ports: ["8080"]
+    labels:
+      cds.path-prefix: "/api/"
+  worker:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - ./worker:/app
+    command: node worker.js
+    ports: ["9000"]
+    labels:
+      cds.role: "worker"
+`;
+
 describe('pending-import 拓扑体检闸门', () => {
   let tmpDir: string;
   let stateService: StateService;
@@ -96,5 +129,15 @@ describe('pending-import 拓扑体检闸门', () => {
 
     const forced = await request(server, 'POST', `/api/pending-imports/${create.body.importId}/approve`, { force: true });
     expect(forced.status).toBe(200);
+  });
+
+  it('审批给 profile id 加项目后缀时，cds.calls 指向的服务名跟着加后缀（边不落空）', async () => {
+    const create = await request(server, 'POST', '/api/projects/proj1/pending-import', { agentName: 'A', composeYaml: CALLS_YAML });
+    expect(create.status, JSON.stringify(create.body)).toBe(201);
+    const approved = await request(server, 'POST', `/api/pending-imports/${create.body.importId}/approve`);
+    expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+    expect(stateService.getBuildProfile('web-sample')?.calls).toEqual(['api-sample', 'worker-sample']);
+    expect(stateService.getBuildProfile('api-sample')).toBeTruthy();
+    expect(stateService.getBuildProfile('api')).toBeUndefined();
   });
 });

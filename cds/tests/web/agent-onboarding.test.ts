@@ -237,7 +237,7 @@ describe('CDS Agent 接入口令', () => {
     // 43 = 40 + uptime（自建存活监控只读能力）+ bug-reports（快捷提 bug，2026-07-27）
     //    + bootstrap（项目初始化路由，匿名只读，2026-07-28）
     //    + cds-system-offsite-backup（离机备份配置入口，2026-08-19）
-    //    + topology（服务关系图与拓扑体检，只读，2026-09-02）
+    //    + topology（服务关系图、拓扑体检与引用切换，含 PUT 故按写能力登记，2026-09-02）
     //    + credential-self-check（凭据自检，匿名只读诊断，2026-09-01）
     //    + identity（身份层：主体 / 用户级凭证 / 项目授权，2026-09-01）
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(48);

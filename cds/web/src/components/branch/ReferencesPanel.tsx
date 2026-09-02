@@ -3,13 +3,17 @@
  *
  * 从全部环境变量里单独抽出「指向别的服务、分支或项目的地址」：引用变量、手写网址、
  * 键名带 URL/BASE/ENDPOINT/HOST 后缀的、平台注入的入口表。每条给出来源层、指向哪里、
- * 目标现在活没活；引用变量可以在这里切换目标分支并重启受影响的服务。
- * 数据源：GET /api/branches/:id/references；切换：PUT /api/branches/:id/references/:key。
+ * 目标现在活没活；引用变量可以在这里切换目标分支并重新部署受影响的服务。
+ * 数据源：GET /api/branches/:id/references；切换：PUT /api/branches/:id/references/:key；
+ * 生效：POST /api/branches/:id/deploy/:profileId（逐个服务重建容器）。
+ * 为什么是重新部署而不是重启：分支级重启走 docker restart，容器保留旧环境变量，
+ * 切换后的引用值根本进不了容器（Codex P1，2026-09-02）。
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
+import { postSse, sseEventText } from '@/lib/sse';
 
 type RefKind = 'cds-ref' | 'url' | 'name-hint' | 'platform';
 type RefStatus = 'running' | 'stopped' | 'building' | 'error' | 'missing-service' | 'missing-branch' | 'missing-project';
@@ -56,8 +60,9 @@ function StatusChip({ status }: { status: RefStatus | string }): JSX.Element {
 export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToast?: (message: string) => void }): JSX.Element {
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ok'; data: ReferencesResponse } | { status: 'error'; message: string }>({ status: 'loading' });
   const [picker, setPicker] = useState<{ item: ReferenceItem; ref: ResolvedRef; branches: BranchRow[] | null } | null>(null);
-  const [pendingRestart, setPendingRestart] = useState<Set<string>>(new Set());
+  const [pendingRedeploy, setPendingRedeploy] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -90,8 +95,8 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
         method: 'PUT',
         body: { profileId: picker.item.profileId, projectRef: picker.ref.ref.projectRef, serviceId: picker.ref.ref.serviceId, ...(branchName ? { branchRef: branchName } : {}) },
       });
-      setPendingRestart((prev) => new Set(prev).add(picker.item.profileId));
-      onToast?.(`${picker.item.key} 已指向 ${picker.ref.ref.projectRef}/${picker.ref.ref.serviceId}${branchName ? `@${branchName}` : '（默认分支）'}，重启 ${picker.item.profileId} 后生效`);
+      setPendingRedeploy((prev) => new Set(prev).add(picker.item.profileId));
+      onToast?.(`${picker.item.key} 已指向 ${picker.ref.ref.projectRef}/${picker.ref.ref.serviceId}${branchName ? `@${branchName}` : '（默认分支）'}，重新部署 ${picker.item.profileId} 后生效`);
       setPicker(null);
       await load();
     } catch (err) {
@@ -101,18 +106,33 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
     }
   };
 
-  const restart = async (): Promise<void> => {
-    const ids = Array.from(pendingRestart);
+  // 切换后的引用要进容器必须重建容器：逐个走单服务部署（SSE），每个服务成功一个就从待办里划掉，
+  // 中途失败停在失败的那个，剩下的仍留在待办里可再点。
+  const redeploy = async (): Promise<void> => {
+    const ids = Array.from(pendingRedeploy);
     if (ids.length === 0) return;
     setBusy(true);
+    const done: string[] = [];
     try {
-      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/restart`, { method: 'POST', body: { profileIds: ids } });
-      onToast?.(`已重启 ${ids.join('、')}`);
-      setPendingRestart(new Set());
+      for (const profileId of ids) {
+        setProgress(`正在重新部署 ${profileId}（${done.length + 1}/${ids.length}）…`);
+        let ok = true;
+        await postSse(`/api/branches/${encodeURIComponent(branchId)}/deploy/${encodeURIComponent(profileId)}`, {}, (event, data) => {
+          if (event === 'error') ok = false;
+          if (event === 'complete' && data && typeof data === 'object' && 'ok' in data) ok = Boolean((data as { ok?: unknown }).ok);
+          setProgress(`${profileId}（${done.length + 1}/${ids.length}）：${sseEventText(event, data)}`);
+        });
+        if (!ok) throw new Error(`${profileId} 重新部署失败，请看分支日志`);
+        done.push(profileId);
+        setPendingRedeploy((prev) => { const next = new Set(prev); next.delete(profileId); return next; });
+      }
+      onToast?.(`已重新部署 ${done.join('、')}，新的引用已进入容器`);
+      await load();
     } catch (err) {
-      onToast?.(`重启失败：${err instanceof ApiError ? err.message : String(err)}`);
+      onToast?.(`重新部署失败：${err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err)}`);
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
 
@@ -130,9 +150,10 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
         <span className="text-xs text-muted-foreground">指向别的服务、分支或项目的地址，从全部环境变量里单独抽出来</span>
         {broken.length > 0 ? <span className="inline-flex h-[18px] items-center rounded-full border border-destructive/60 px-1.5 text-[10px] font-semibold text-destructive">{broken.length} 条断裂</span> : null}
         <span className="flex-1" />
-        {pendingRestart.size > 0 ? (
-          <Button size="sm" onClick={() => void restart()} disabled={busy} title={`重启 ${Array.from(pendingRestart).join('、')} 让新的引用生效`}>
-            重启受影响容器 ({pendingRestart.size})
+        {progress ? <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="references-redeploy-progress"><Loader2 className="h-3.5 w-3.5 animate-spin" />{progress}</span> : null}
+        {pendingRedeploy.size > 0 ? (
+          <Button size="sm" onClick={() => void redeploy()} disabled={busy} title={`重新部署 ${Array.from(pendingRedeploy).join('、')} 让新的引用进入容器（原地重启不会刷新环境变量）`}>
+            重新部署受影响服务 ({pendingRedeploy.size})
           </Button>
         ) : null}
         <Button size="sm" variant="ghost" onClick={() => void load()} title="刷新"><RefreshCw className="h-3.5 w-3.5" /></Button>

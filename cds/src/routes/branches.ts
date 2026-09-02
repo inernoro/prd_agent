@@ -14885,12 +14885,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(409).json({ error: '该分支运行在远端执行器，请使用「重新部署」' });
       return;
     }
-    // 可选只重启部分服务（引用分区「切换并重启受影响容器」用）：body.profileIds
-    const wantedProfileIds = (() => {
-      const raw = (req.body as { profileIds?: unknown } | undefined)?.profileIds;
-      return Array.isArray(raw) ? new Set(raw.filter((x): x is string => typeof x === 'string')) : null;
-    })();
-    const services = Object.values(entry.services).filter((svc) => !wantedProfileIds || wantedProfileIds.has(svc.profileId));
+    const services = Object.values(entry.services);
     if (services.length === 0) {
       res.status(409).json({ error: '还没有已构建的容器可重启，请先「重新部署」' });
       return;

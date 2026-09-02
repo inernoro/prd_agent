@@ -121,6 +121,39 @@ describe('topology router', () => {
     }
   });
 
+  it('GET /branches/:id/route-lookup 命名子域 host 由声明该子域的服务接管，不按主域名路径判定', async () => {
+    const now = new Date().toISOString();
+    stateService.addProject({ id: 'proj', slug: 'demo', name: 'demo', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
+    stateService.addBuildProfile({ id: 'admin', name: 'admin', projectId: 'proj', dockerImage: 'node:20', workDir: '.', command: 'node s.js', containerPort: 3000, pathPrefixes: ['/'] } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBuildProfile({ id: 'llmgw', name: 'llmgw', projectId: 'proj', dockerImage: 'node:20', workDir: '.', command: 'node g.js', containerPort: 8091, subdomain: 'llmgw' } as Parameters<typeof stateService.addBuildProfile>[0]);
+    stateService.addBranch({ id: 'proj-main', projectId: 'proj', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now,
+      services: { admin: { profileId: 'admin', containerName: 'c1', hostPort: 9101, status: 'running' }, llmgw: { profileId: 'llmgw', containerName: 'c3', hostPort: 9103, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTopologyRouter({
+      stateService,
+      assertProjectAccess: () => null,
+      envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' },
+      getPublishedRoutes: () => [
+        { _id: 'r1', host: 'main-demo.miduo.org', pathPrefix: '/', upstreamPort: 9101, weight: 100, branchId: 'proj-main', profileId: 'admin' },
+        { _id: 'r3', host: 'main-demo-llmgw.miduo.org', pathPrefix: '/', upstreamPort: 9103, weight: 100, branchId: 'proj-main', profileId: 'llmgw' },
+      ],
+    }));
+    const srv = app.listen(0);
+    try {
+      const named = await request(srv, 'GET', '/api/branches/proj-main/route-lookup?host=main-demo-llmgw.miduo.org&path=/gw/v1/x');
+      expect(named.status).toBe(200);
+      expect(named.body.forwarder.profileId).toBe('llmgw');
+      expect(named.body.masterFallback).toEqual({ profileId: 'llmgw', bySubdomain: true });
+      expect(named.body.consistent).toBe(true);
+      const main = await request(srv, 'GET', '/api/branches/proj-main/route-lookup?host=main-demo.miduo.org&path=/gw/v1/x');
+      expect(main.body.masterFallback).toEqual({ profileId: 'admin', bySubdomain: false });
+      expect(main.body.consistent).toBe(true);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+
   it('GET /branches/:id/references 抽出地址类键并解析引用；PUT 切换写入分支覆盖；service-graph 并入引用断裂', async () => {
     const now = new Date().toISOString();
     stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);
@@ -193,6 +226,25 @@ describe('topology router', () => {
     } finally {
       await new Promise<void>((r) => srv.close(() => r()));
     }
+  });
+
+  it('GET /branches/:id/service-graph 按分支覆盖后的 profile 构图（与转发路由同一口径）', async () => {
+    const now = new Date().toISOString();
+    stateService.addProject({ id: 'proj', slug: 'demo', name: 'demo', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
+    for (const [id, prefixes] of [['admin', ['/']], ['api', ['/api/']]] as Array<[string, string[]]>) {
+      stateService.addBuildProfile({ id, name: id, projectId: 'proj', dockerImage: 'node:20', workDir: '.', command: 'node s.js', containerPort: 3000, pathPrefixes: prefixes } as Parameters<typeof stateService.addBuildProfile>[0]);
+    }
+    stateService.addBranch({ id: 'proj-main', projectId: 'proj', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now,
+      services: { admin: { profileId: 'admin', containerName: 'c1', hostPort: 9101, status: 'running' }, api: { profileId: 'api', containerName: 'c2', hostPort: 9102, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
+    const clean = await request(server, 'GET', '/api/branches/proj-main/service-graph');
+    expect(clean.status).toBe(200);
+    expect(clean.body.lint.findings.map((f: { rule: string }) => f.rule)).not.toContain('prefix-conflict');
+    // 分支级把 api 的前缀改成 `/`：运行中的转发路由就是这么发布的，图与体检必须跟着看到冲突
+    stateService.setBranchProfileOverride('proj-main', 'api', { pathPrefixes: ['/'] });
+    const overridden = await request(server, 'GET', '/api/branches/proj-main/service-graph');
+    expect(overridden.status).toBe(200);
+    expect(overridden.body.lint.findings.map((f: { rule: string }) => f.rule)).toContain('prefix-conflict');
+    expect(overridden.body.graph.sites[0].conflicts.map((c: { prefix: string }) => c.prefix)).toContain('/');
   });
 
   it('GET /branches/:id/service-graph 分支不存在 404', async () => {
