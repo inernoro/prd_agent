@@ -874,6 +874,7 @@ export function ProjectListPage(): JSX.Element {
               <RepoSharingConfirmBody
                 repoFullName={repoSharePrompt.info.repoFullName}
                 siblings={repoSharePrompt.info.projects}
+                siblingCount={repoSharePrompt.info.projectCount}
               />
             ) : null}
             <DialogFooter>
@@ -2992,7 +2993,9 @@ function AgentKeyRevokeDialog({
 
 interface RepoAlreadyLinked {
   repoFullName: string;
+  /** 兄弟项目明细。机器凭据拿不到，所以可能是空数组——用 projectCount 兜底显示。 */
   projects: Array<{ id: string; name: string }>;
+  projectCount: number;
 }
 
 interface CreateProjectResponse {

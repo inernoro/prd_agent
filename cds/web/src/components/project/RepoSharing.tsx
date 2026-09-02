@@ -232,16 +232,22 @@ export function RepoSharingBanner({
 export function RepoSharingConfirmBody({
   repoFullName,
   siblings,
+  /** 兄弟项目数。明细拿不到时（机器凭据）靠它把话说完整。 */
+  siblingCount,
 }: {
   repoFullName: string;
   siblings: Array<{ id: string; name: string }>;
+  siblingCount?: number;
 }): JSX.Element {
+  const who = siblings.length > 0
+    ? siblings.map((s) => s.name).join('、')
+    : `${siblingCount ?? 0} 个别的项目`;
   return (
     <div className="space-y-3 text-sm">
       <p>
         <code className="font-mono">{repoFullName}</code> 已经绑给了
         {' '}
-        {siblings.map((s) => s.name).join('、')}
+        {who}
         。再绑一个不是错误用法，但从这一刻起有三件事会变：
       </p>
       <ul className="space-y-1.5 pl-4 text-muted-foreground">

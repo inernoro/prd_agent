@@ -21,6 +21,36 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 
 const REPO = 'octocat/monorepo';
 
+async function post(
+  server: http.Server,
+  urlPath: string,
+  body: unknown,
+  headers?: Record<string, string>,
+) {
+  const payload = JSON.stringify(body);
+  return new Promise<{ status: number; body: any }>((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const req = http.request(
+      {
+        hostname: '127.0.0.1', port: addr.port, path: urlPath, method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+          ...(headers || {}),
+        },
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', (c: Buffer) => (raw += c.toString()));
+        res.on('end', () => resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }));
+      },
+    );
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 async function call(
   server: http.Server,
   method: string,
@@ -55,6 +85,23 @@ async function get(server: http.Server, urlPath: string, headers?: Record<string
     );
     req.on('error', reject);
     req.end();
+  });
+}
+
+/** 建项目会创建 docker 网络；这里把它 mock 成成功，与 projects.test.ts 一致。 */
+function mockDockerNetwork(shell: MockShellExecutor): void {
+  const existing = new Set<string>();
+  const nameOf = (cmd: string): string => cmd.split(/\s+/).pop() || '';
+  shell.addResponsePattern(/^docker network inspect /, (m) => (existing.has(nameOf(m[0]))
+    ? { stdout: 'exists', stderr: '', exitCode: 0 }
+    : { stdout: '', stderr: 'no network', exitCode: 1 }));
+  shell.addResponsePattern(/^docker network create /, (m) => {
+    existing.add(nameOf(m[0]));
+    return { stdout: 'network-id', stderr: '', exitCode: 0 };
+  });
+  shell.addResponsePattern(/^docker network rm /, (m) => {
+    existing.delete(nameOf(m[0]));
+    return { stdout: 'removed', stderr: '', exitCode: 0 };
   });
 }
 
@@ -101,10 +148,14 @@ describe('项目接口透出同仓关系', () => {
       if (req.headers['cds-cookie'] === '1') (req as any)._cdsCookieAuth = true;
       next();
     });
+    const shell = new MockShellExecutor();
+    mockDockerNetwork(shell);
     app.use('/api', createProjectsRouter({
       stateService,
-      shell: new MockShellExecutor(),
+      shell,
       githubApp: { getInstallationToken: async () => 't' } as GitHubAppClient,
+      // 建「带 git 仓库」的项目要求 CDS 配过源码根目录，否则直接 503
+      config: { reposBase: path.join(tmpDir, 'repos') } as any,
     }));
     server = app.listen(0);
   });
@@ -182,6 +233,32 @@ describe('项目接口透出同仓关系', () => {
     }
   });
 
+  it('机器凭据建项目撞上已绑仓库时，只知道「没绑上」，不知道是被谁绑的', async () => {
+    // 同一个 PR 里一边给 repoSharing 加隔离、一边从建项目响应里端出兄弟项目的
+    // id 与名字，就是自己给自己开后门：create-only 的钥匙本来读不到别的项目。
+    addProject('p-main', 'MAP', REPO);
+
+    const res = await post(server, '/api/projects', {
+      name: '新项目', gitRepoUrl: 'https://github.com/octocat/monorepo.git',
+    }, { 'x-ai-access-key': 'cdsg_createonly' });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.repoAlreadyLinked).toBeTruthy();
+    expect(res.body.repoAlreadyLinked.projects).toEqual([]);
+    // 但「有几个」还是要说，否则界面连话都说不完整
+    expect(res.body.repoAlreadyLinked.projectCount).toBe(1);
+  });
+
+  it('浏览器会话照常拿到兄弟项目明细，才点得进去', async () => {
+    addProject('p-main', 'MAP', REPO);
+
+    const res = await post(server, '/api/projects', {
+      name: '新项目二', gitRepoUrl: 'https://github.com/octocat/monorepo.git',
+    }, { 'cds-cookie': '1' });
+
+    expect(res.body.repoAlreadyLinked.projects).toEqual([{ id: 'p-main', name: 'MAP' }]);
+  });
+
   it('不签会话的实例（CDS_AUTH_MODE=disabled）里，真人照样看得见', async () => {
     // 判据若写成「是不是 cookie 会话」，这一档永远为假 —— 真人用浏览器打开
     // 什么都看不到，而且不会有任何报错。
@@ -245,10 +322,14 @@ describe('划范围的候选与一键采纳', () => {
     }
     const app = express();
     app.use(express.json());
+    const shell = new MockShellExecutor();
+    mockDockerNetwork(shell);
     app.use('/api', createProjectsRouter({
       stateService,
-      shell: new MockShellExecutor(),
+      shell,
       githubApp: { getInstallationToken: async () => 't' } as GitHubAppClient,
+      // 建「带 git 仓库」的项目要求 CDS 配过源码根目录，否则直接 503
+      config: { reposBase: path.join(tmpDir, 'repos') } as any,
     }));
     server = app.listen(0);
   });

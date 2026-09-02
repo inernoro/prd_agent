@@ -3056,10 +3056,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // 仓库已被别的项目绑走时把实情回给调用方：本项目**没有**绑上，
       // 界面据此当场问「你是要和它们共用这个仓库，还是填错了」。
       // 绝大多数情况是填错，所以默认不绑；真要共用，带 allowSharedRepo 重来一次。
+      //
+      // 机器凭据只告诉它「没绑上、为什么」，不报兄弟项目的 id 与名字（2026-09-02
+      // Codex P2）：一把 create-only 的钥匙读不到别的项目，这里端出来就绕开了同一
+      // 份隔离判据（见 isMachineCaller）——同一个 PR 里一边加隔离一边开后门。
       repoAlreadyLinked: githubRepoAlreadyLinked
         ? {
             repoFullName: githubRepoFullName,
-            projects: repoLinkedProjects.map((p) => ({ id: p.id, name: p.name })),
+            projects: isMachineCaller(req) ? [] : repoLinkedProjects.map((p) => ({ id: p.id, name: p.name })),
+            projectCount: repoLinkedProjects.length,
           }
         : undefined,
       // 给 create-only 全局 Key 返回的新项目 scoped key(明文只此一次)。cdscli 建项目后
