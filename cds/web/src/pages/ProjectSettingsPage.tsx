@@ -1825,6 +1825,18 @@ function GithubProjectTab({
               解除后，GitHub webhook 不再把该仓库事件路由到此项目。已有分支和 Check Run 不会被删除。
             </DialogDescription>
           </DialogHeader>
+          {/*
+           * 共用同一个仓库时，用户最容易担心的是「我解绑会不会把别人也断了」。
+           * 答案是不会 —— 但这句话必须写出来，让人敢按下去。
+           */}
+          {project.repoSharing && project.repoSharing.siblings.length > 1 ? (
+            <p className="text-sm text-muted-foreground">
+              这个仓库还绑着
+              {' '}
+              {project.repoSharing.siblings.filter((s) => s.id !== project.id).map((s) => s.name).join('、')}
+              。解绑只影响本项目，它们照常收 push。
+            </p>
+          ) : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setUnlinkOpen(false)}>
               取消
