@@ -7719,6 +7719,27 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         // 如果名字中包含 @imgN 引用，则尝试使用 MessageContentRenderer 渲染为 Chip
                         const isChipLabel = name.match(/@img\d+/);
 
+                        // ── 一张卡的同一个角只允许一个主人 ──
+                        //
+                        // 这张卡的两个上角各有**三个互不知情的图层**在抢：Frame 头部（左上标题 +
+                        // 右上「图层面板」按钮）、这里的选中标签（左上名字 + 右上尺寸）、
+                        // 以及生成中的 loader。三者都按 scale(1/zoom) 反缩放贴同一个角。
+                        //
+                        // 上一版只把 loader **自己**的三个标签合并成底行，就宣称「四个角全部
+                        // 还给卡片、冲突结构上不存在了」——只修了三个主张者里的一个，
+                        // 另外两层根本没动，于是「给我换成正面」和 Frame 标题叠在一起、
+                        // 「1024 × 1024」压在「图层面板」按钮上（后者还是同一个数字的第二份，
+                        // 底行已经写过一遍，是我上次亲手造出来的重复）。
+                        //
+                        // 所以判据改成归属而不是位置：谁占了这个角，别人就得让开。
+                        const inFrame = Boolean(it.frameId || it.layerGroupId);
+                        const isRunning = it.status === 'running';
+                        // 左上：属于 Frame 就归 Frame 标题。它和 item 名字内容本来就近乎重复
+                        // （headline 取的就是这条 prompt），让位不丢信息。
+                        const showNameLabel = !inFrame;
+                        // 右上：生成中归 loader 底行（那里已有尺寸）；属于 Frame 归面板按钮。
+                        const showSizeLabel = !isRunning && !inFrame;
+
                         return (
                           <div
                             key={`ui_sel_${it.key}`}
@@ -7730,6 +7751,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               height: selH,
                             }}
                           >
+                            {showNameLabel ? (
                             <div
                               className="absolute text-[11px] font-semibold"
                               style={{
@@ -7774,7 +7796,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 )}
                               </span>
                             </div>
+                            ) : null}
 
+                            {showSizeLabel ? (
                             <div
                               className="absolute text-[11px] font-semibold"
                               style={{
@@ -7802,6 +7826,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             >
                               {sizeText}
                             </div>
+                            ) : null}
                           </div>
                         );
                       })

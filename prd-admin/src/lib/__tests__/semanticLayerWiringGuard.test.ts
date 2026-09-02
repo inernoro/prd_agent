@@ -364,6 +364,21 @@ describe('上传落位：只新增、不替换，且贴着锚点对齐', () => {
     expect(near).toMatch(/if \(!w \|\| !h\) return null;/);
   });
 
+  it('【关键】卡片的上角只允许一个主人：选中标签要给 Frame 头部和 loader 让位', () => {
+    // 同一张卡的两个上角有三个互不知情的图层在抢：Frame 头部（左上标题 + 右上面板按钮）、
+    // 选中标签（左上名字 + 右上尺寸）、生成中的 loader（底行已含尺寸）。
+    // 三者都 scale(1/zoom) 贴同一个角，叠上去就是用户截图里那两坨糊字。
+    //
+    // 上一版只合并了 loader 自己的标签就宣称冲突「结构上不存在了」——修了三分之一。
+    // 判据盯归属：两个让位条件必须存在，且两个标签都真的挂在条件上。
+    expect(code).toMatch(/const showNameLabel = !inFrame;/);
+    expect(code).toMatch(/const showSizeLabel = !isRunning && !inFrame;/);
+    expect(code).toMatch(/inFrame = Boolean\(it\.frameId \|\| it\.layerGroupId\)/);
+    // 形状 2：条件算出来了却没人用，是最容易的半截接线。
+    expect(code).toMatch(/\{showNameLabel \? \(/);
+    expect(code).toMatch(/\{showSizeLabel \? \(/);
+  });
+
   it('【关键】「新增而非替换」要说在画布上，不能只写进聊天面板', () => {
     // 用户在全画布视图里看不见聊天面板。上一版只 pushMsg，于是他看到的是
     // 「选中一张、传了一张，画布上无声多出一模一样的第二张」——原话
