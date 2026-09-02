@@ -8,7 +8,11 @@ import { toast } from '@/lib/toast';
 import {
   createVisualAgentWorkspace,
   deleteVisualAgentWorkspace,
+  getUserPreferences,
   getUsers,
+  getVisualAgentAdapterInfo,
+  getVisualAgentImageGenModels,
+  updateVisualAgentPreferences,
   listVisualAgentWorkspaces,
   refreshVisualAgentWorkspaceCover,
   updateVisualAgentWorkspace,
@@ -37,7 +41,10 @@ import {
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useAuthStore } from '@/stores/authStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { buildVisualAgentModelOptions, type VisualAgentModelOption } from '@/pages/ai-chat/visualAgentModelOptions';
+import { normalizeSizesByResolution, reconcileSize, type SizesByResolution } from '@/lib/visualModelSizes';
 import { useNavigate } from 'react-router-dom';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
@@ -249,6 +256,129 @@ function useTypingPlaceholder() {
   return displayText;
 }
 
+// ============ 绘图模型选择（工具行 chip） ============
+/**
+ * 首页这条工具行上的模型 chip。
+ *
+ * 刻意**不是**编辑器那个大面板的搬运：那边挂着智能切换/严格模式/健康统计，
+ * 是「我要精调这次生成」的场景；首页是「我要开始」，只需要看见用哪个模型、
+ * 能换一个（好用四原则 #2 奥卡姆：首屏只暴露 80% 场景需要的）。
+ * 数据源和偏好存储与编辑器完全一致，所以两边看到的默认值必然是同一个。
+ */
+function ModelPickerButton(props: {
+  options: VisualAgentModelOption[];
+  modelId?: string;
+  onChange: (id: string) => void;
+}) {
+  const { options, modelId, onChange } = props;
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+
+  useLayoutEffect(() => {
+    if (!open || !btnRef.current) return;
+    const rect = btnRef.current.getBoundingClientRect();
+    setPos({ top: rect.top - 8, left: rect.left });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t)) return;
+      if (panelRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const current = options.find((o) => o.id === modelId) ?? null;
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className="inline-flex items-center gap-1.5 hover-bg-soft transition-colors"
+        style={{
+          minHeight: 36,
+          padding: '0 9px',
+          borderRadius: 7,
+          border: 0,
+          background: open ? 'var(--bg-secondary)' : 'transparent',
+          color: open ? 'var(--text-primary)' : 'var(--text-secondary)',
+          fontSize: 10,
+          cursor: 'pointer',
+        }}
+        title="选择绘图模型"
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+      >
+        <Sparkles size={13} className="shrink-0" />
+        <span className="truncate" style={{ maxWidth: 120, whiteSpace: 'nowrap' }}>
+          {current?.name || current?.modelName || '选择模型'}
+        </span>
+        <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>▾</span>
+      </button>
+      {open && createPortal(
+        <div
+          ref={panelRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, transform: 'translateY(-100%)', zIndex: 9999 }}
+        >
+          <div
+            className="rounded-[12px] overflow-hidden"
+            style={{
+              width: 260,
+              maxHeight: 320,
+              overflowY: 'auto',
+              background: 'var(--panel-solid)',
+              border: '1px solid var(--border-default)',
+              boxShadow: 'var(--shadow-card)',
+              padding: 5,
+            }}
+          >
+            {options.map((opt) => {
+              const active = opt.id === modelId;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className="w-full text-left hover-bg-soft transition-colors"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                    padding: '7px 9px',
+                    borderRadius: 8,
+                    border: 0,
+                    background: active ? 'var(--bg-secondary)' : 'transparent',
+                    color: 'var(--text-primary)',
+                    cursor: 'pointer',
+                    // 不可用的模型不隐藏、只压暗并说明：藏起来用户会以为「怎么少了一个」，
+                    // 而看见「暂不可用」至少知道发生了什么（no-rootless-tree：暴露缺失）。
+                    opacity: opt.enabled ? 1 : 0.45,
+                  }}
+                  onClick={() => { onChange(opt.id); setOpen(false); }}
+                >
+                  <span style={{ fontSize: 12, fontWeight: active ? 600 : 500 }}>
+                    {opt.name || opt.modelName}
+                    {opt.isDefault ? <span style={{ marginLeft: 6, fontSize: 9.5, color: 'var(--text-muted)' }}>默认</span> : null}
+                  </span>
+                  <span style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
+                    {opt.enabled ? (opt.subtitle || opt.actualModelId || '') : '暂不可用'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 // ============ 快捷输入框（深色卡片样式） ============
 function QuickInputBox(props: {
   value: string;
@@ -260,10 +390,19 @@ function QuickInputBox(props: {
   onRemoveImage?: () => void;
   size?: string;
   onSizeChange?: (size: string) => void;
+  /** 该模型支持的尺寸（来自 adapter-info）。给不出就传 null，尺寸表退回静态档位。 */
+  availableSizes?: SizesByResolution | null;
+  /** 绘图模型：目录 + 当前选中 + 切换。默认值来自用户上次生成用的那个模型。 */
+  modelOptions?: VisualAgentModelOption[];
+  modelId?: string;
+  onModelChange?: (id: string) => void;
   /** 让页面拿到 textarea：选完预设格要把光标送进来。 */
   inputRef?: React.MutableRefObject<HTMLTextAreaElement | null>;
 }) {
-  const { value, onChange, onSubmit, loading, onImageSelect, selectedImage, onRemoveImage, size = '1024x1024', onSizeChange, inputRef } = props;
+  const {
+    value, onChange, onSubmit, loading, onImageSelect, selectedImage, onRemoveImage,
+    size = '1024x1024', onSizeChange, availableSizes, modelOptions, modelId, onModelChange, inputRef,
+  } = props;
   const typingPlaceholder = useTypingPlaceholder();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -585,9 +724,18 @@ function QuickInputBox(props: {
               <Image size={13} />
               参考图
             </button>
+            {/* 绘图模型。这条工具行原来没有它——首页是「开始生成」的入口，
+                却看不见也选不了用哪个模型，而换模型是用户能直接感知到结果差异的
+                （ai-model-visibility：这类功能必须让模型可见）。
+                默认值是用户上次生成用的那个，不是每次回到「自动」。 */}
+            {onModelChange && modelOptions && modelOptions.length > 0 && (
+              <span data-tour-id="visual-model-btn" className="inline-flex">
+                <ModelPickerButton options={modelOptions} modelId={modelId} onChange={onModelChange} />
+              </span>
+            )}
             {onSizeChange && (
               <span data-tour-id="visual-size-btn" className="inline-flex">
-                <SizePickerButton size={size} onSizeChange={onSizeChange} />
+                <SizePickerButton size={size} onSizeChange={onSizeChange} availableSizes={availableSizes} />
               </span>
             )}
             <button
@@ -985,6 +1133,58 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [inputLoading, setInputLoading] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
 
+  // ---- 绘图模型（首页也要能看见、能选）----
+  // 目录、偏好存储、尺寸能力三样都复用编辑器已有的那套，不另起炉灶：
+  // 只有共用同一个 visualAgentPreferences.modelId，两边的「上次用的模型」才是同一个。
+  const [modelOptions, setModelOptions] = useState<VisualAgentModelOption[]>([]);
+  const [modelId, setModelId] = useState<string>('');
+  const [availableSizes, setAvailableSizes] = useState<SizesByResolution | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [poolsRes, prefRes] = await Promise.all([
+        getVisualAgentImageGenModels(),
+        getUserPreferences().catch(() => null),
+      ]);
+      if (cancelled) return;
+      const options = poolsRes.success ? buildVisualAgentModelOptions(poolsRes.data ?? []) : [];
+      setModelOptions(options);
+      // 默认值优先级：上次生成用的那个 → 服务端标记的默认池 → 第一个可用。
+      // 注意 prefs 里存的是 option.id（pool_xxx），和编辑器同一套标识，不能换成 modelName。
+      const preferred = prefRes?.success ? String(prefRes.data?.visualAgentPreferences?.modelId ?? '') : '';
+      const pick = options.find((o) => o.id === preferred && o.enabled)
+        ?? options.find((o) => o.enabled && o.isDefault)
+        ?? options.find((o) => o.enabled)
+        ?? null;
+      setModelId(pick?.id ?? '');
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 选定模型 → 拉它支持的尺寸 → 当前尺寸不被支持就纠正。
+  // 纠正规则在 lib/visualModelSizes（比例优先、拿不到就不动），那里有单测。
+  const currentModel = useMemo(() => modelOptions.find((o) => o.id === modelId) ?? null, [modelOptions, modelId]);
+  useEffect(() => {
+    let cancelled = false;
+    // 生成请求用池 ID，但尺寸能力必须按池内**实际上游模型**查，否则适配器命中不了、
+    // 尺寸会被错误清空（编辑器那边同一个坑，注释见 AdvancedVisualAgentTab 的 adapter-info effect）。
+    const modelCode = currentModel?.actualModelId || currentModel?.modelName;
+    if (!modelCode) { setAvailableSizes(null); return; }
+    void getVisualAgentAdapterInfo(modelCode)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.success && res.data?.matched && res.data.sizesNotApplicable !== true && res.data.sizesByResolution) {
+          setAvailableSizes(normalizeSizesByResolution(res.data.sizesByResolution));
+        } else {
+          // 没命中 / 该模型尺寸语义不适用 → 明确置空，让尺寸表退回静态档位，不假装知道。
+          setAvailableSizes(null);
+        }
+      })
+      .catch(() => { if (!cancelled) setAvailableSizes(null); });
+    return () => { cancelled = true; };
+  }, [currentModel]);
+
   // ---- 首页背景 ----
   // 素材池 = 随包四张专门为「当背景」而画的暗调图 + 用户自己生成的。
   // 第一版把池子接成「你自己项目的封面图」，取证之后推翻了：真实封面绝大多数是白底产品图，
@@ -1176,6 +1376,18 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       const sizeToken = selectedSize ? `(@size:${selectedSize}) ` : '';
       messageText = `${imageToken}${sizeToken}${messageText}`;
 
+      // 2.5 把这次选的模型写回账号偏好，**并且等它写完**再跳转。
+      //
+      // 这一步是「默认按上次生成的模型」能成立的唯一原因：编辑器挂载时会读同一份
+      // visualAgentPreferences，先跳转再写就是一场竞态——编辑器可能读到上一次的值，
+      // 用户会看到「我在首页选了 A，进去却是 B」。
+      // modelAuto 置 false：用户在首页显式选过了，就不该再被自动挑选覆盖。
+      if (modelId) {
+        await updateVisualAgentPreferences({ modelAuto: false, modelId }).catch(() => {
+          // 偏好写失败不阻断创作——这次生成仍按当前选择走，只是下次默认值可能还是旧的。
+        });
+      }
+
       // 3. 使用 sessionStorage 传递参数（避免刷新时重复创建）
       const sessionKey = `visual_agent_init_${ws.id}`;
       sessionStorage.setItem(sessionKey, JSON.stringify({
@@ -1279,6 +1491,21 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     setSelectedSize(size);
     if (defaultSizeKey) { try { sessionStorage.setItem(defaultSizeKey, size); } catch { /* ignore */ } }
   };
+
+  const onModelChange = (id: string) => {
+    setModelId(id);
+  };
+
+  // 换模型之后把尺寸纠正到新模型支持的那一个。
+  // 放在 effect 里而不是 onModelChange 里：尺寸清单是异步拉回来的，
+  // 在点击那一刻还不知道新模型支持什么，当场纠正必然是拿旧清单算的（形状 6：读的不是生效的那个值）。
+  useEffect(() => {
+    const next = reconcileSize(selectedSize, availableSizes);
+    if (next && next !== selectedSize) onSelectedSizeChange(next);
+    // selectedSize 不进依赖：这里只在「模型的尺寸清单变了」时纠正一次，
+    // 把它加进来会让用户随后手选的尺寸被同一条规则再纠一遍，选不动。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableSizes]);
 
   // 新建文件夹（目前作为占位功能，后续可接入后端）
   const onCreateFolder = async () => {
@@ -1488,6 +1715,10 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           onRemoveImage={onRemoveImage}
           size={selectedSize}
           onSizeChange={onSelectedSizeChange}
+          availableSizes={availableSizes}
+          modelOptions={modelOptions}
+          modelId={modelId}
+          onModelChange={onModelChange}
         />
         </div>
 

@@ -166,3 +166,13 @@ LLMGW 图片分层能力卡的「已验证」判据是：请求日志里存在�
 - 前端 PSD 组装与分层请求：`prd-admin/src/lib/layeredPsd.ts`
 - 图层归属与导出选层：`prd-admin/src/lib/semanticLayerFrame.ts`、`prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx`
 - 网关侧能力判定与守卫：`llmgw/console-api/Provisioning/ImageLayeringCapabilityRules.cs`、`prd-api/tests/PrdAgent.Api.Tests/Gateway/ImageLayeringCapabilityRulesTests.cs`
+
+### 编辑器仍自带一份模型目录与尺寸联动，与首页各写各的
+
+2026-09-02 给首页工具行补模型选择器时，把「模型清单构建 → 查适配器拿可用尺寸 → 纠正当前尺寸」抽成了共享模块（`prd-admin/src/lib/visualModelSizes.ts` 与既有的 `visualAgentModelOptions.ts`），首页走的是这一份。**编辑器没有跟着改**——它自己那份仍留在 `AdvancedVisualAgentTab.tsx` 里。
+
+不动它是当次的有意取舍：编辑器那份和智能兜底、严格模式、水印设置缠在一起，一并重构会让这个只为「首页看不到模型」而起的改动膨胀出好几倍，超出本次范围。
+
+代价是判据分裂：同一件事现在有两处实现，改一处忘一处就会漂移（比如尺寸纠正的排序口径，共享模块是「先比例后面积」，编辑器那份是另写的）。**下次动编辑器的模型或尺寸逻辑时，第一件事是把它切到共享模块**，而不是在原地再改一次。切完之后应补一条守卫，钉住这套判定只允许存在于共享模块里。
+
+两端目前靠两个共享存储位对齐：账号偏好 `visualAgentPreferences.modelId`（首页提交时写、编辑器挂载时读）和尺寸默认值的会话存储键。这两处是当前唯一的一致性来源，改动任一端都要确认另一端仍读得到。
