@@ -15,7 +15,7 @@ import type {
 import {
   buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration,
   groupJobs, runStatusLabel, scheduleLabel, statusTone,
-  type JobHealth, type TimelineLane,
+  type JobHealth, type TimelineHourTick, type TimelineLane,
 } from '@/lib/task-schedule-view';
 
 
@@ -589,6 +589,7 @@ export function TaskSchedulePage(): JSX.Element {
                       <TimelineBand
                         compact
                         lanes={laneStrip.lanes}
+                        hourTicks={laneStrip.hourTicks}
                         nowRatio={laneStrip.nowRatio}
                         nowLabel={laneStrip.nowLabel}
                         hiddenCount={0}
@@ -624,6 +625,7 @@ export function TaskSchedulePage(): JSX.Element {
                   <div className="flex min-h-0 flex-1 flex-col overflow-auto">
                     <TimelineBand
                       lanes={timeline.lanes}
+                      hourTicks={timeline.hourTicks}
                       nowRatio={timeline.nowRatio}
                       nowLabel={timeline.nowLabel}
                       hiddenCount={timeline.hiddenCount}
@@ -826,6 +828,20 @@ export function TaskSchedulePage(): JSX.Element {
                 className="shrink-0 border-t border-destructive/40 bg-destructive/10 px-5 py-3 text-[12.5px] text-destructive"
               >
                 {error}
+              </div>
+            ) : toast ? (
+              /*
+               * 成功也要在弹窗里说话。保存和删除成功后弹窗会关掉，页面级 toast 看得见；
+               * 只有「立即执行」是留在弹窗里的——它的成功提示同样被遮罩盖住，用户看到的
+               * 只是忙碌态停下（Codex #1471 P2）。上一轮我把失败复制进来了却漏了成功，
+               * 两边不对称本身就是缺陷。
+               */
+              <div
+                role="status"
+                data-editor-toast
+                className="shrink-0 border-t border-ok/40 bg-ok/10 px-5 py-3 text-[12.5px] text-ok"
+              >
+                {toast}
               </div>
             ) : null}
           </DialogContent>
@@ -1160,9 +1176,10 @@ function normalizeJobActions(job: ScheduledJob): ActionForm[] {
 
 /** 今日调度轴。左侧已发生，右侧待触发，橙线是现在。 */
 function TimelineBand({
-  lanes, nowRatio, nowLabel, hiddenCount, compact = false,
+  lanes, hourTicks, nowRatio, nowLabel, hiddenCount, compact = false,
 }: {
   lanes: TimelineLane[];
+  hourTicks: TimelineHourTick[];
   nowRatio: number;
   nowLabel: string;
   hiddenCount: number;
@@ -1170,7 +1187,6 @@ function TimelineBand({
   compact?: boolean;
 }): JSX.Element | null {
   if (lanes.length === 0) return null;
-  const hours = [0, 3, 6, 9, 12, 15, 18, 21, 24];
   return (
     <section className={compact
       ? 'shrink-0 overflow-hidden border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))]'
@@ -1201,11 +1217,11 @@ function TimelineBand({
           <div className="w-44 shrink-0" />
           <div className="w-6 shrink-0" />
           <div className="relative h-4 flex-1">
-            {hours.map((hour) => (
+            {hourTicks.map(({ hour, leftPct }) => (
               <span
                 key={hour}
                 className="absolute top-0 font-mono text-[10px] text-muted-foreground"
-                style={{ left: `${(hour / 24) * 100}%`, transform: hour === 0 ? 'none' : hour === 24 ? 'translateX(-100%)' : 'translateX(-50%)' }}
+                style={{ left: `${leftPct}%`, transform: hour === 0 ? 'none' : hour === 24 ? 'translateX(-100%)' : 'translateX(-50%)' }}
               >
                 {String(hour).padStart(2, '0')}
               </span>
@@ -1227,8 +1243,8 @@ function TimelineBand({
               {/* 沟槽：轨道右端此前直接贴着调度列（实测 0px），虚线带压在「每 10 分钟」上。 */}
               <div className="box-border h-full w-6 shrink-0 border-l border-[hsl(var(--hairline))]" />
               <div className={`relative h-6 flex-1 rounded ${lane.selected ? 'bg-primary/[0.07]' : ''}`}>
-                {[3, 6, 9, 12, 15, 18, 21].map((hour) => (
-                  <span key={hour} className="absolute inset-y-0 w-px bg-[hsl(var(--hairline))]/80" style={{ left: `${(hour / 24) * 100}%` }} />
+                {hourTicks.filter(({ hour }) => hour > 0 && hour < 24).map(({ hour, leftPct }) => (
+                  <span key={hour} className="absolute inset-y-0 w-px bg-[hsl(var(--hairline))]/80" style={{ left: `${leftPct}%` }} />
                 ))}
                 <span className="absolute inset-y-0 right-0 bg-[hsl(var(--surface-sunken))]/55" style={{ left: `${nowRatio}%` }} />
                 {lane.dense && !lane.disabled ? (

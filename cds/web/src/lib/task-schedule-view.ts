@@ -357,13 +357,29 @@ export function buildTimeline(
     };
   });
 
+  // 刻度也要走同一套时间基准。此前刻度写死 hour/24，而事件与「现在」游标已经改成
+  // 按真实本地日长度换算——DST 那两天两者就对不上了：点位挪了，03 的刻度还钉在 12.5%
+  // （Codex #1471 P2）。这是上一轮那个修复只做了一半。
+  // 取当天该整点的**本地时刻**再用同一个 ratio 换算；春季不存在的那一小时由
+  // setHours 自然落到跳变之后，刻度正好落在时钟跳过去的位置。
+  const hourTicks = [0, 3, 6, 9, 12, 15, 18, 21, 24].map((hour) => {
+    if (hour === 24) return { hour, leftPct: 100 };
+    const at = new Date(dayStart);
+    at.setHours(hour, 0, 0, 0);
+    return { hour, leftPct: ratio(at.getTime()) };
+  });
+
   return {
     lanes,
+    hourTicks,
     nowRatio: ratio(now),
     nowLabel: new Date(now).toTimeString().slice(0, 5),
     hiddenCount: Math.max(0, pool.length - lanes.length),
   };
 }
+
+
+export interface TimelineHourTick { hour: number; leftPct: number; }
 
 
 export interface TimelineEvent { leftPct: number; status: RunStatus | 'pending'; title: string; }

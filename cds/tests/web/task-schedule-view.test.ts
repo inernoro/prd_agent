@@ -309,6 +309,54 @@ describe('本地日边界', () => {
   });
 });
 
+describe('调度轴刻度与事件同一套时间基准', () => {
+  /*
+   * Codex #1471 P2。上一轮把事件与「现在」游标改成按真实本地日长度换算，
+   * 却把刻度留在 hour/24 —— DST 那两天点位挪了、刻度没挪，两者对不上。
+   * 那次修复只做了一半。
+   * 判据必须在有 DST 的时区里断言，否则 UTC 下 hour/24 与真实基准恰好相等，
+   * 错误实现照样判绿（形状 4，本 PR 里第三次踩）。
+   * 红绿闭环：把刻度换回 `(hour / 24) * 100`，本用例报 03 刻度是 12.5 而不是 8.7。
+   */
+  it('夏令时那天刻度按真实经过时间放置，不是按 hour/24', () => {
+    const saved = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      // 2026-03-08 本地 12:00（春季前移那天，本地日只有 23 小时）
+      const now = new Date(2026, 2, 8, 12, 0, 0).getTime();
+      const tl = buildTimeline([job({ id: 'a', name: 'a' })], new Map(), now, '');
+      const tick = (h: number) => tl.hourTicks.find((t) => t.hour === h)!.leftPct;
+
+      // 本地 03:00 距当天零点只过了 2 小时（02:00 那一小时不存在），23 小时的日子里 = 8.70%
+      expect(Math.round(tick(3) * 100) / 100, '03 刻度没按真实经过时间放').toBe(8.7);
+      // 按 hour/24 会是 12.5——明确钉死不许回去
+      expect(tick(3)).not.toBe(12.5);
+      // 两端仍然是 0 与 100
+      expect(tick(0)).toBe(0);
+      expect(tick(24)).toBe(100);
+      // 单调递增
+      const pcts = tl.hourTicks.map((t) => t.leftPct);
+      expect(pcts.every((v, i) => i === 0 || v > pcts[i - 1]), '刻度不是单调递增').toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved;
+    }
+  });
+
+  it('平常日刻度与 hour/24 一致，改动不影响非 DST 的日子', () => {
+    const saved = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      const now = new Date(2026, 5, 15, 12, 0, 0).getTime();
+      const tl = buildTimeline([job({ id: 'a', name: 'a' })], new Map(), now, '');
+      for (const t of tl.hourTicks) {
+        expect(Math.round(t.leftPct * 100) / 100, `平常日 ${t.hour} 点刻度偏了`).toBe(Math.round((t.hour / 24) * 10000) / 100);
+      }
+    } finally {
+      if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved;
+    }
+  });
+});
+
 describe('任务分组', () => {
   const j = (id: string, over: Partial<ScheduledJob> = {}) => job({ id, name: id, ...over });
 

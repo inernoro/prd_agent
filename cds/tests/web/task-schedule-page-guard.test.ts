@@ -35,6 +35,20 @@ describe('任务调度页的接线', () => {
   });
 
   /*
+   * Codex #1471 P2。上一轮把失败复制进弹窗却漏了成功：保存/删除成功会关弹窗、
+   * 页面级 toast 看得见，只有「立即执行」留在弹窗里——它的成功提示同样被遮罩盖住。
+   * 失败有出口而成功没有，这种不对称本身就是缺陷。
+   * 红绿闭环：删掉弹窗里的 data-editor-toast 块，本用例立刻红。
+   */
+  it('编辑弹窗内部也要能显示成功，不只是失败', () => {
+    const dialogStart = src.indexOf('<Dialog open={editorOpen}');
+    const dialog = src.slice(dialogStart, src.indexOf('</Dialog>', dialogStart));
+    expect(dialog, '弹窗里只有失败出口、没有成功出口').toContain('data-editor-toast');
+    expect(dialog).toMatch(/toast \?[\s\S]{0,600}data-editor-toast/);
+    expect(dialog).toContain('role="status"');
+  });
+
+  /*
    * 打开编辑器时不清 error，上一次操作的报错会顶在新弹窗里。
    * 红绿闭环：把 openEditor 里的 setError('') 删掉，本用例红。
    */
