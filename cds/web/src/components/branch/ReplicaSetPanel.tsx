@@ -1078,13 +1078,25 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   }
   // 壳可能同时是别的站点的成员（子域服务又在主域名声明了前缀）：卡片只画一次，归第一个用到它的站点
   const placed = new Set<string>();
+  const edgeSvcId = (endpoint: string): string => endpoint.replace(/^service:/, '');
   const siteBlocks = sites.map((site) => {
     const shell = site.shellId && profileIds.includes(site.shellId) && !placed.has(site.shellId) ? site.shellId : undefined;
     if (shell) placed.add(shell);
     const members = site.members.filter((m) => profileIds.includes(m.id) && !placed.has(m.id)).map((m) => m.id);
     for (const m of members) placed.add(m);
-    return { site, shell, members };
+    return { site, shell, members, attached: [] as string[] };
   }).filter((b) => b.shell || b.members.length > 0);
+  // 没有公网路由、只被本站服务经容器网络调用的服务（静态站背后的 API）：挂进同一个站点框，
+  // 落在调用它的服务正下方——静态站在上、API 在下、箭头指向被调方，不平铺到画布底部。
+  const internalIds = (graph.internal ?? profileIds.filter((id) => !sitedIds.has(id))).filter((id) => profileIds.includes(id) && !placed.has(id));
+  for (const id of internalIds) {
+    const callers = graph.edges.filter((e) => e.from.startsWith('service:') && edgeSvcId(e.to) === id).map((e) => edgeSvcId(e.from));
+    if (callers.length === 0) continue;
+    const owner = siteBlocks.find((b) => callers.every((c) => c === b.shell || b.members.includes(c)));
+    if (!owner) continue;
+    owner.attached.push(id);
+    placed.add(id);
+  }
   const layered = new Set(graph.layers.flat());
   const layers = graph.layers.map((l) => l.filter((id) => profileIds.includes(id) && !placed.has(id)));
   const missing = profileIds.filter((p) => !layered.has(p) && !placed.has(p));
@@ -1108,7 +1120,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   // 站点块：壳在上、成员一排在下；块宽取两行较宽者。块外留 sitePad 画虚线框，块间 siteGap
   const sitePad = 14, siteGap = 36, siteLabelH = 22;
   const rowWidth = (n: number): number => (n <= 0 ? 0 : n * BOX_W + (n - 1) * gap);
-  const blockW = (b: typeof siteBlocks[number]): number => Math.max(b.shell ? BOX_W : 0, rowWidth(b.members.length));
+  const blockW = (b: typeof siteBlocks[number]): number => Math.max(b.shell ? BOX_W : 0, rowWidth(b.members.length), rowWidth(b.attached.length));
   const sitesRowW = siteBlocks.length > 0
     ? siteBlocks.reduce((sum, b) => sum + blockW(b) + sitePad * 2, 0) + (siteBlocks.length - 1) * siteGap
     : 0;
@@ -1118,13 +1130,15 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   const entryX = (canvasW - CW) / 2, entryY = 14;
 
   const pos = new Map<string, { x: number; cx: number; y: number; h: number }>();
-  const frames: Array<{ site: GraphSiteView; x: number; y: number; w: number; h: number; shell?: string; members: string[] }> = [];
+  const frames: Array<{ site: GraphSiteView; x: number; y: number; w: number; h: number; shell?: string; members: string[]; attached: string[] }> = [];
   let cursorY = layerTop;
   if (siteBlocks.length > 0) {
     const shellY = cursorY + siteLabelH;
     const shellRowH = Math.max(0, ...siteBlocks.filter((b) => b.shell).map((b) => boxH(b.shell!)));
     const memberY = shellY + (shellRowH > 0 ? shellRowH + layerGap : 0);
-    let memberRowH = 0;
+    // 三行：壳 / 前缀成员 / 站内内网服务。各站的行高对齐，站点框各自只包到自己最后一行
+    const memberRowH = Math.max(0, ...siteBlocks.flatMap((b) => b.members.map(boxH)));
+    const attachedRowH = Math.max(0, ...siteBlocks.flatMap((b) => b.attached.map(boxH)));
     let x = Math.max(8, (canvasW - sitesRowW) / 2);
     for (const b of siteBlocks) {
       const bw = blockW(b);
@@ -1134,23 +1148,32 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
         const sx = innerX + (bw - BOX_W) / 2;
         pos.set(b.shell, { x: sx, cx: sx + BOX_W / 2, y: shellY, h });
       }
-      const mw = rowWidth(b.members.length);
-      const mStart = innerX + (bw - mw) / 2;
-      b.members.forEach((id, i) => {
-        const h = boxH(id);
-        memberRowH = Math.max(memberRowH, h);
-        const mx = mStart + i * (BOX_W + gap);
-        pos.set(id, { x: mx, cx: mx + BOX_W / 2, y: memberY, h });
-      });
-      frames.push({ site: b.site, x, y: cursorY, w: bw + sitePad * 2, h: 0, shell: b.shell, members: b.members });
+      const placeRow = (ids: string[], y: number): void => {
+        const rw = rowWidth(ids.length);
+        const start = innerX + (bw - rw) / 2;
+        ids.forEach((id, i) => {
+          const mx = start + i * (BOX_W + gap);
+          pos.set(id, { x: mx, cx: mx + BOX_W / 2, y, h: boxH(id) });
+        });
+      };
+      placeRow(b.members, memberY);
+      // 没有前缀成员的站点，内网服务紧贴壳下方，不为别的站点的成员行留空
+      const attachedY = b.members.length > 0 ? memberY + memberRowH + layerGap : shellY + shellRowH + layerGap;
+      // 站内内网服务尽量对齐到调用它的那一列（单个时直接居中在调用方正下方）
+      if (b.attached.length === 1 && b.members.length <= 1) {
+        const id = b.attached[0];
+        const caller = graph.edges.find((e) => e.from.startsWith('service:') && edgeSvcId(e.to) === id);
+        const callerPos = caller ? pos.get(edgeSvcId(caller.from)) : undefined;
+        const ax = callerPos ? callerPos.x : innerX + (bw - BOX_W) / 2;
+        pos.set(id, { x: ax, cx: ax + BOX_W / 2, y: attachedY, h: boxH(id) });
+      } else {
+        placeRow(b.attached, attachedY);
+      }
+      const lastY = b.attached.length > 0 ? attachedY + attachedRowH : b.members.length > 0 ? memberY + memberRowH : shellY + (b.shell ? boxH(b.shell) : 0);
+      frames.push({ site: b.site, x, y: cursorY, w: bw + sitePad * 2, h: lastY + sitePad - cursorY, shell: b.shell, members: b.members, attached: b.attached });
       x += bw + sitePad * 2 + siteGap;
     }
-    const bottom = (memberRowH > 0 ? memberY + memberRowH : shellY + shellRowH) + sitePad;
-    // 没有成员的站点框只包住壳，不跟着别的站点一起拉长
-    for (const f of frames) {
-      const own = f.members.length > 0 ? bottom : (f.shell ? shellY + boxH(f.shell) + sitePad : bottom);
-      f.h = own - f.y;
-    }
+    const bottom = Math.max(...frames.map((f) => f.y + f.h));
     cursorY = bottom + layerGap;
   }
   // 无公网路由的服务：尽量落在调用它的服务正下方（同列即同链路），没人调用的居中；同排按目标 x 排序后左右推开避免重叠
@@ -1234,7 +1257,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
               <marker id="rsArrAmber" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#f59e0b" /></marker>
             </defs>
             {frames.map((f) => {
-              const touching = selected === null || selected === 'entry' || selected === f.shell || f.members.includes(selected);
+              const touching = selected === null || selected === 'entry' || selected === f.shell || f.members.includes(selected) || f.attached.includes(selected);
               const label = f.site.kind === 'main' ? `主域名 ${entryHost}` : `子域 ${f.site.subdomain}`;
               const sub = f.site.kind === 'main'
                 ? (f.site.shellSource === 'convention' ? '默认站按名兜底 · 前缀分流' : '按前缀分流')
@@ -1258,7 +1281,8 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
               const lx = a.cx + (b.cx - a.cx) * t, ly = (a.y + a.h) + (b.y - (a.y + a.h)) * t + 3;
               return (
                 <g key={`prefix-${e.from}-${e.to}`} opacity={dimIf(selected === e.from || selected === e.to || selected === 'entry')}>
-                  <path d={edgeD(a.cx, a.y + a.h, b.cx, b.y)} fill="none" stroke={e.viaConvention ? '#f59e0b' : 'hsl(var(--muted-foreground))'} strokeWidth="1.3" strokeDasharray="2 4" opacity="0.7">
+                  <path d={edgeD(a.cx, a.y + a.h, b.cx, b.y)} fill="none" stroke={e.viaConvention ? '#f59e0b' : 'hsl(var(--muted-foreground))'} strokeWidth="1.4" strokeDasharray="2 4" opacity="0.8"
+                    markerEnd={e.viaConvention ? 'url(#rsArrAmber)' : 'url(#rsArr)'}>
                     <title>{`同一 host：forwarder 按最长前缀把 ${e.prefixes.join('、')} 直接转给 ${e.to}，${e.from} 的静态容器不经手这些请求${e.viaConvention ? '\n无人声明 /api/，由「服务名含 api/backend」的约定接管；建议显式写 cds.path-prefix' : ''}`}</title>
                   </path>
                   <rect x={lx - 4 - label.length * 2.8} y={ly - 9} width={label.length * 5.6 + 8} height={13} rx={3} fill="hsl(var(--surface-sunken))" opacity="0.92" />
@@ -1329,7 +1353,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
           </div>
           <EntryLinks x={entryX + CW + 12} y={entryY + 4} entries={entries} />
 
-          {[...frames.flatMap((f) => [...(f.shell ? [f.shell] : []), ...f.members]), ...rows.flatMap((ids) => ids)].map((pid) => {
+          {[...frames.flatMap((f) => [...(f.shell ? [f.shell] : []), ...f.members, ...f.attached]), ...rows.flatMap((ids) => ids)].map((pid) => {
             const p = pos.get(pid)!;
             const node = nodeById.get(pid);
             const conflicts = conflictsOf(pid);
