@@ -405,6 +405,30 @@ describe('上传落位：只新增、不替换，且贴着锚点对齐', () => {
     expect(loop, '落位循环里不许有跳过分支').not.toContain('continue');
   });
 
+  it('【关键】右侧两个浮层不许抢同一片区域：图层面板要给对话让位', () => {
+    // 这一页右边有两个浮层都锚在右边：对话（z-30）和图层面板（z-40）。
+    // 层级高的直接盖住低的，用户截图里对话被切掉半句就是这么来的。
+    //
+    // 方案 B：面板从画布右缘推出，让开整个对话浮层。判据盯**几何同源**，不盯数字——
+    // 数字以后可能调，但「对话有多宽」只能有一份定义，抄成两份必漂（形状 3）。
+    expect(code).toMatch(/const CHAT_PANEL_INSET = \d+;/);
+    expect(code).toMatch(/const CHAT_PANEL_WIDTH = \d+;/);
+    expect(code).toMatch(/const LAYER_PANEL_RIGHT = CHAT_PANEL_INSET \+ CHAT_PANEL_WIDTH \+ PANEL_GAP;/);
+    // 对话浮层必须用这两个常量，不许再写死 right-3 / width: 420。
+    expect(code).toMatch(/right: isMobile \? undefined : CHAT_PANEL_INSET/);
+    expect(code).toMatch(/width: isMobile \? '100%' : CHAT_PANEL_WIDTH/);
+    // 断言必须收进对话浮层那一段：`absolute right-3 top-3` 在别处（画布卡片里的徽章）
+    // 也合法出现，全文禁词会把无关的地方判红——第一版就是这么假红的。
+    const chatAt = code.indexOf('ref={chatPanelRef}');
+    expect(chatAt, '应找得到对话浮层').toBeGreaterThan(0);
+    const chatBlock = code.slice(chatAt - 200, chatAt + 700);
+    expect(chatBlock, '对话浮层不该再有写死的 right-3').not.toMatch(/absolute right-3 top-3/);
+    // 形状 2：常量算出来没人用是最容易的半截接线——面板必须真的收到它。
+    expect(code).toMatch(/rightInset=\{isMobile \? 16 : LAYER_PANEL_RIGHT\}/);
+    // 预留宽度必须跟着面板一起挪，否则产物会被摆到面板底下。
+    expect(code).toMatch(/const LAYER_PANEL_RESERVED_WIDTH = LAYER_PANEL_RIGHT \+ LAYER_PANEL_WIDTH;/);
+  });
+
   it('【关键】卡片的上角只允许一个主人：选中标签要给 Frame 头部和 loader 让位', () => {
     // 同一张卡的两个上角有三个互不知情的图层在抢：Frame 头部（左上标题 + 右上面板按钮）、
     // 选中标签（左上名字 + 右上尺寸）、生成中的 loader（底行已含尺寸）。

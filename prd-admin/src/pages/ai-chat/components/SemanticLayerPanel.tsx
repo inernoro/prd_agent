@@ -45,6 +45,17 @@ export type SemanticLayerPanelLayer = {
 };
 
 export type SemanticLayerPanelProps = {
+  /**
+   * 距画布右缘多远（px）。
+   *
+   * 这一页右侧其实有**两个浮层**：对话（absolute right-3，宽 420，z-30）和这块面板
+   * （z-40）。两个都锚在右边、面板层级更高，于是面板直接盖住对话——用户截图里
+   * 「Hi，我是你的 AI 设计师」被切掉半句就是这么来的。
+   *
+   * 所以这个值不是留白，是**让位**：调用方按对话浮层的实际占位算出来传进来。
+   * 写死在这里等于把对话的几何抄第二份，改一边忘一边（判据分裂）。
+   */
+  rightInset?: number;
   /** 从下到上排好序的图层（数组末尾 = 最上层）。 */
   layers: SemanticLayerPanelLayer[];
   sourceSrc: string;
@@ -125,6 +136,7 @@ const CHECKERBOARD: React.CSSProperties = {
 };
 
 export function SemanticLayerPanel({
+  rightInset = 16,
   layers,
   sourceSrc,
   title,
@@ -164,8 +176,14 @@ export function SemanticLayerPanel({
 
   return (
     <div
-      className="absolute right-4 top-4 bottom-4 z-40 w-[300px] flex flex-col rounded-[14px] overflow-hidden"
+      className="absolute top-4 bottom-4 z-40 w-[300px] flex flex-col rounded-[14px] overflow-hidden"
       style={{
+        // right 由调用方给（见 rightInset 的注释）：面板要给右侧的对话浮层让位。
+        right: rightInset,
+        // 让位之后面板离左边更近了。窗口很窄时（可用宽 < rightInset + 316）宁可让它变窄，
+        // 也不要溢出被 stage 的 overflow-hidden 悄悄切掉半截——切掉是看不出原因的，
+        // 变窄至少是能看见的退化。
+        maxWidth: `calc(100% - ${rightInset + 16}px)`,
         background: 'var(--panel-solid)',
         border: '1px solid var(--border-default)',
         boxShadow: 'var(--shadow-glass-toast)',

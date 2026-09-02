@@ -274,8 +274,29 @@ type CanvasImageItem = {
  */
 const AI_LAYER_COUNT = LAYER_COUNT_DEFAULT;
 
-/** 图层面板占掉的右侧宽度（面板 300 + 右边距 16）。视角适配要把它让出来，不能把产物摆到面板底下。 */
-const LAYER_PANEL_RESERVED_WIDTH = 316;
+/*
+ * 右侧浮层的几何，一处定义。
+ *
+ * 这一页右边其实有**两个**浮层，都锚在右边：对话（absolute right-3、宽 420、z-30）
+ * 和图层面板（z-40）。层级高的那个直接盖住低的——用户截图里「Hi，我是你的 AI 设计师」
+ * 被切掉半句就是这么来的。和刚修完的「卡片上角三层抢同一个角」是同一个形状，
+ * 只是搬到了页面级。
+ *
+ * 所以图层面板要给对话让位：贴在对话左侧，两者留一个间距。下面三个值都从同一组
+ * 常量推导——把「对话有多宽」抄成两份，是这类布局最典型的漂移源。
+ */
+const CHAT_PANEL_INSET = 12; // 对话浮层的 right-3
+const CHAT_PANEL_WIDTH = 420; // 对话浮层桌面端宽度
+const PANEL_GAP = 12;
+/** 图层面板距画布右缘多远：让开整个对话浮层。手机端对话是全屏浮层，不参与，见挂载处。 */
+const LAYER_PANEL_RIGHT = CHAT_PANEL_INSET + CHAT_PANEL_WIDTH + PANEL_GAP;
+const LAYER_PANEL_WIDTH = 300;
+/**
+ * 图层面板占掉的右侧宽度：视角适配要让出来，不能把产物摆到面板底下。
+ * 让位之后这个值必须跟着变大，否则产物会被摆到面板（甚至对话）底下——
+ * 面板挪了、预留没挪，是典型的「改一处忘一处」。
+ */
+const LAYER_PANEL_RESERVED_WIDTH = LAYER_PANEL_RIGHT + LAYER_PANEL_WIDTH;
 
 /** 透明底纹：与图层面板同一套，保证画布和面板里的「透明」长得一样。 */
 const CANVAS_CHECKERBOARD: React.CSSProperties = {
@@ -7981,6 +8002,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             {/* 图层面板（组装台）：画布 Frame 管单层编辑，这里管叠放、显隐与导出 */}
             {layerPanelGroupId && layerPanelModel.length > 0 ? (
               <SemanticLayerPanel
+                // 方案 B：从画布右缘推出，让开右侧的对话浮层——两个浮层不再抢同一片区域。
+                // 手机端对话是覆盖全屏、可开关的（mobileShowChat），没有「常驻占位」可让，
+                // 硬让 444 只会把面板挤到左半屏，所以那一档仍贴右缘。
+                rightInset={isMobile ? 16 : LAYER_PANEL_RIGHT}
                 layers={layerPanelModel}
                 sourceSrc={String(layerPanelSource?.originalSrc || layerPanelSource?.src || '')}
                 title={cleanDisplayTitle(layerPanelSource?.prompt || '') || 'AI 分层'}
@@ -9037,9 +9062,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           {/* 右侧：浮动对话面板（液态大玻璃效果）— 移动端全屏覆盖 / 桌面端浮动 */}
           <div
             ref={chatPanelRef}
-            className={`${isMobile ? 'absolute inset-0' : 'absolute right-3 top-3'} z-30 flex flex-col`}
+            className={`${isMobile ? 'absolute inset-0' : 'absolute top-3'} z-30 flex flex-col`}
             style={{
-              width: isMobile ? '100%' : 420,
+              // right / width 走同一组常量：图层面板要按它们算让位量，抄成两份必漂。
+              right: isMobile ? undefined : CHAT_PANEL_INSET,
+              width: isMobile ? '100%' : CHAT_PANEL_WIDTH,
               height: isMobile ? '100%' : 'calc(100% - 24px)',
               display: isMobile && !mobileShowChat ? 'none' : undefined,
               // 移动端：底部留出工具栏空间
