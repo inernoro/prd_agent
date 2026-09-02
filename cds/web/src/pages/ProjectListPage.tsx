@@ -3704,7 +3704,7 @@ function SandboxProjectDialog({
                   setExtraFiles((current) => [...current, { relativePath: '', content: '' }])
                 }
               >
-                <Plus className="mr-1 h-3.5 w-3.5" />
+                <Plus className="mr-1" />
                 添加文件
               </Button>
             </div>
@@ -3740,7 +3740,7 @@ function SandboxProjectDialog({
                           setExtraFiles((current) => current.filter((_, i) => i !== idx))
                         }
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 />
                       </Button>
                     </div>
                     <textarea
@@ -3775,7 +3775,7 @@ function SandboxProjectDialog({
             onClick={() => formRef.current?.requestSubmit()}
             disabled={submitting}
           >
-            {submitting ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Beaker className="mr-1 h-3.5 w-3.5" />}
+            {submitting ? <Loader2 className="mr-1 animate-spin" /> : <Beaker className="mr-1" />}
             创建沙盒项目
           </Button>
         </DialogFooter>
@@ -4244,11 +4244,11 @@ function ResourceUsageDialog({
                           title={row.paused ? '恢复项目' : '暂停项目（停止容器并冻结构建）'}
                         >
                           {busyId === row.projectId ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <Loader2 className="animate-spin" />
                           ) : row.paused ? (
-                            <Play className="h-3.5 w-3.5" />
+                            <Play />
                           ) : (
-                            <Pause className="h-3.5 w-3.5" />
+                            <Pause />
                           )}
                           {row.paused ? '恢复' : '暂停'}
                         </Button>

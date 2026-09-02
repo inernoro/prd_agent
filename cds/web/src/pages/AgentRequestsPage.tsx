@@ -202,7 +202,7 @@ export function AgentRequestsPage(): JSX.Element {
         />
       }
     >
-      <Workspace className="flex flex-col gap-4">
+      <Workspace fluid className="flex flex-col gap-4">
       {/* 筛选条：按用户 / 按应用 / 状态 / 关键字 */}
       <div className="flex items-center gap-2 flex-wrap rounded-lg border border-border bg-card px-3 py-2" data-testid="request-filters">
         <select

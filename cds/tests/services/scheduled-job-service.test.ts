@@ -44,6 +44,61 @@ describe('ScheduledJobService', () => {
     });
   });
 
+  describe('projectUpcomingRuns：待触发序列锚在已存的 nextRunAt 上', () => {
+    /*
+     * Codex #1471 P2。interval 的 computeNextRunAt 是「from + 间隔」，
+     * 拿 now 当起点会把真正的下一次算成一个整间隔之后：一个每小时的任务
+     * 若还有 10 分钟到期，第一个待触发点被画到 60 分钟后，真正那次直接消失，
+     * 时间轴右半边所有点整体后移 50 分钟。
+     * 红绿闭环：把路由改回 computeNextRuns(job.schedule, horizon, now)，
+     * 或把本方法里的锚点分支删掉，第一条断言立刻红。
+     */
+    const now = new Date('2026-08-31T10:00:00.000Z');
+
+    const mk = (over: Partial<ScheduledJob>): ScheduledJob => ({
+      id: 'sjob_x',
+      projectId: 'demo',
+      name: 'x',
+      enabled: true,
+      schedule: { type: 'interval', intervalMinutes: 60 },
+      timeoutSeconds: 300,
+      retryCount: 0,
+      ...over,
+    } as ScheduledJob);
+
+    it('间隔任务：第一个点就是已存的 nextRunAt，不是 now + 一个间隔', () => {
+      // 还有 10 分钟到期
+      const job = mk({ nextRunAt: '2026-08-31T10:10:00.000Z' });
+      const out = service.projectUpcomingRuns(job, 3, now);
+      expect(out[0]).toBe('2026-08-31T10:10:00.000Z');
+      expect(out[1]).toBe('2026-08-31T11:10:00.000Z');
+      expect(out[2]).toBe('2026-08-31T12:10:00.000Z');
+    });
+
+    it('已存的 nextRunAt 已过期（调度器还没追上）时，退回从 now 起算', () => {
+      const job = mk({ nextRunAt: '2026-08-31T09:00:00.000Z' });
+      const out = service.projectUpcomingRuns(job, 2, now);
+      expect(out[0]).toBe('2026-08-31T11:00:00.000Z');
+    });
+
+    it('每日任务：锚在当次之后顺延到第二天，不会把同一时刻算两遍', () => {
+      const job = mk({
+        schedule: { type: 'daily', timeOfDay: '18:00', timezone: 'UTC' },
+        nextRunAt: '2026-08-31T18:00:00.000Z',
+      });
+      const out = service.projectUpcomingRuns(job, 3, now);
+      expect(out).toEqual([
+        '2026-08-31T18:00:00.000Z',
+        '2026-09-01T18:00:00.000Z',
+        '2026-09-02T18:00:00.000Z',
+      ]);
+    });
+
+    it('停用的任务不给待触发序列', () => {
+      expect(service.projectUpcomingRuns(mk({ enabled: false, nextRunAt: '2026-08-31T10:10:00.000Z' }), 3, now)).toEqual([]);
+    });
+  });
+
   afterEach(async () => {
     await flushAllJsonStateStores();
     vi.restoreAllMocks();
