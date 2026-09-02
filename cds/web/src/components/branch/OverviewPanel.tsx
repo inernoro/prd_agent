@@ -378,7 +378,16 @@ function PlotFrame({
 interface StackedSeries {
   id: string;
   color: string;
+  /** 桶序列，**只用来画几何**。末值是数十秒的平均，不能当「当前值」。 */
   values: number[];
+  /**
+   * 当前值：有实时快照就用它，否则退回桶末值。
+   *
+   * 合计、构成条宽度、图例数字必须全部走这一个字段。此前图例走实时、合计走
+   * 桶末值，同一屏上大数比它旁边的每服务数字慢 30-70 秒（Codex P2，核对属实）
+   * ——这是把图与数字劈成两个源之后，聚合那一侧没跟上。
+   */
+  nowValue: number;
   nowLabel: string;
   nowUnit: string;
   /** 容器已经不在跑了。序列尾巴停在它停机那一刻，末值是**停机前的旧读数**，不能当现值显示。 */
@@ -472,11 +481,9 @@ function StackedAreaChart({
  * 名字写全不截断，也顺带治了「图例挤成碎屑」。
  */
 function CompositionBar({ series }: { series: StackedSeries[] }): JSX.Element {
-  const total = series.reduce((n, x) => n + (x.stopped ? 0 : x.values.at(-1) ?? 0), 0);
-  const rows = series.map((x) => ({
-    ...x,
-    value: x.stopped ? 0 : x.values.at(-1) ?? 0,
-  }));
+  // 条宽与清单数字同走 nowValue，别让条按旧桶画、数字按实时写。
+  const total = series.reduce((n, x) => n + (x.stopped ? 0 : x.nowValue), 0);
+  const rows = series.map((x) => ({ ...x, value: x.stopped ? 0 : x.nowValue }));
   return (
     <div className="flex flex-col gap-3">
       <div className="flex h-3 w-full gap-[2px] overflow-hidden rounded-full" role="img" aria-label="内存占用构成">
@@ -797,7 +804,7 @@ function EntryCards({
 export function OverviewPanel({
   services, running, branchName, commitSha, commitMessage,
   lastReadyAt, lastDeployAt, deployDurationMs,
-  entries, deployments, metricSeries, liveStats, metricsReady, metricsError,
+  entries, deployments, metricSeries, liveStats, metricsReady, metricsError, seriesError,
   replicaSummary, infraSummary,
   now, windowMinutes, onRefreshMetrics, onConfigureEntries, onOpenDeployments,
 }: {
@@ -820,6 +827,8 @@ export function OverviewPanel({
    */
   liveStats?: Record<string, { cpuPercent: number; memUsedBytes: number }>;
   metricsReady: boolean;
+  /** 历史端点自己的失败。与 metricsError（实时快照失败）是两个独立的错误面。 */
+  seriesError?: string;
   metricsError?: string;
   replicaSummary: string;
   infraSummary: string;
@@ -883,6 +892,7 @@ export function OverviewPanel({
         id: x.svc.profileId,
         color: seriesColor(i),
         values,
+        nowValue,
         nowLabel,
         nowUnit,
         stopped: x.svc.status !== 'running',
@@ -896,7 +906,7 @@ export function OverviewPanel({
       return sum + (live ? readLive(live) : read(x.ring).at(-1) ?? 0);
     }, 0);
     const [nowLabel, nowUnit] = label(tailNow);
-    return [...head, { id: `其他 ${picked.tail.length} 个`, color: OTHER_COLOR, values: merged, nowLabel, nowUnit }];
+    return [...head, { id: `其他 ${picked.tail.length} 个`, color: OTHER_COLOR, values: merged, nowValue: tailNow, nowLabel, nowUnit }];
   };
 
   const cpuSeries = hasPlot ? buildSeries((m) => m.cpu, (l) => l.cpuPercent, (v) => [v.toFixed(2), '%']) : [];
@@ -906,8 +916,9 @@ export function OverviewPanel({
   }) : [];
 
   // 合计只算还在跑的：把停机前的旧读数加进「当前合计」会虚报占用。
-  const cpuTotalNow = cpuSeries.reduce((n, s) => n + (s.stopped ? 0 : s.values.at(-1) ?? 0), 0);
-  const memTotalNow = memSeries.reduce((n, s) => n + (s.stopped ? 0 : s.values.at(-1) ?? 0), 0);
+  // 合计走 nowValue（实时优先），与旁边每服务的数字同一个口径。
+  const cpuTotalNow = cpuSeries.reduce((n, s) => n + (s.stopped ? 0 : s.nowValue), 0);
+  const memTotalNow = memSeries.reduce((n, s) => n + (s.stopped ? 0 : s.nowValue), 0);
   // 上限不再乘一个 1.12 的余量：余量会让刻度落在 13 / 9 / 4 这种不整的数上。
   // 改成把峰值交给 niceScale 吸附到整数步长，吸附本身就自带头部空间。
   const cpuPeak = Math.max(2, ...Array.from({ length: sampleCount }, (_, i) => cpuSeries.reduce((n, s) => n + (s.values[i] ?? 0), 0)));
@@ -1019,15 +1030,51 @@ export function OverviewPanel({
         <EntryCards entries={entries} reachable={running && badServices.length === 0} onConfigure={onConfigureEntries} />
       ) : null}
 
-      {/* 3. 资源占用 —— 堆叠面积图同时回答「总共多少」和「谁占的」 */}
+      {/*
+        3. 资源占用。
+
+        两个数据源就有两个错误面，别互相牵连（Codex P2，核对属实）：
+        - `metricsError` 是实时快照（docker stats）挂了 —— 历史图**照画**，
+          只在上面加一条提示。此前它会把整段还好好的历史图一起藏掉。
+        - `seriesError` 是历史端点挂了 —— 这时才没有曲线可画，但仍然把实时
+          数字端出来，并且**明说曲线来不了**；此前 catch 全吞，骨架屏会永远
+          承诺一条不会出现的曲线。
+      */}
       {metricsError ? (
-        <section className="flex items-center gap-2 rounded-xl border border-bad/30 bg-bad-soft px-4 py-3 text-sm text-bad">
-          <span className="flex-1">读取指标失败：{metricsError}</span>
+        <section className="flex items-center gap-2 rounded-xl border border-warn/30 bg-warn-soft px-4 py-2.5 text-[13px] text-warn">
+          <span className="flex-1">实时采样失败：{metricsError}。下面是历史曲线，数字可能不是最新的。</span>
           <button type="button" className="inline-flex items-center gap-1.5 text-xs font-semibold hover:underline" onClick={onRefreshMetrics}>
             <RefreshCw className="h-3.5 w-3.5" />重试
           </button>
         </section>
-      ) : !hasPlot ? (
+      ) : null}
+      {seriesError && !hasPlot ? (
+        <section className="flex flex-col gap-2 rounded-xl border border-bad/30 bg-bad-soft px-4 py-3 text-sm text-bad">
+          <span>读取指标历史失败：{seriesError}</span>
+          <span className="text-[12px] text-foreground-muted">
+            曲线画不出来了（不是还没攒够——这一项不会自己好）。
+            {Object.keys(liveStats ?? {}).length > 0 ? '下面仍是实时读数。' : ''}
+          </span>
+        </section>
+      ) : null}
+      {seriesError && !hasPlot && Object.keys(liveStats ?? {}).length > 0 ? (
+        <section className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
+          <h4 className="mb-2 text-sm font-bold text-foreground">当前读数<span className="ml-2 text-[11px] font-normal text-muted-foreground">实时快照 · 无历史曲线</span></h4>
+          <ul className="flex flex-col gap-1.5">
+            {services.filter((sv) => liveStats?.[sv.profileId]).map((sv) => {
+              const l = liveStats![sv.profileId];
+              return (
+                <li key={sv.profileId} className="flex items-baseline gap-2">
+                  <span className="min-w-0 flex-1 break-all font-mono text-[11px] text-muted-foreground">{sv.profileId}</span>
+                  <span className="shrink-0 font-mono text-[13px] font-bold tabular-nums text-foreground">{l.cpuPercent.toFixed(2)}<span className="text-[10px] font-medium text-muted-foreground">%</span></span>
+                  <span className="w-24 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums text-foreground">{formatBytesShort(l.memUsedBytes)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+      {seriesError && !hasPlot ? null : !hasPlot ? (
         /*
          * 闸门只看「有没有画得出来的历史」，**不看实时快照回来没有**。
          *

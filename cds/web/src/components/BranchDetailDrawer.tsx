@@ -901,6 +901,15 @@ export function BranchDetailDrawer({
   const [metricSeries, setMetricSeries] = useState<Record<string, MetricSeries>>({});
   /** 图例里的「当前值」走实时快照；图本身只认服务端分桶的 series，两者口径分开。 */
   const [liveStats, setLiveStats] = useState<Record<string, ContainerStatsResponse>>({});
+  /**
+   * series 端点自己的失败。
+   *
+   * 此前 loadSeries 的 catch 把一切都吞了，于是它持续失败时骨架屏会一直说
+   * 「约还需 45 秒出现曲线」——那是撒谎，曲线永远不会来（Codex P2，核对属实）。
+   * 两个数据源就要有两个错误面：docker stats 挂了不该藏历史图，历史挂了也不该
+   * 假装还在攒点。
+   */
+  const [seriesError, setSeriesError] = useState<string | null>(null);
   // 上次响应快照,用来算 rx/tx 速率(后端只给累计值,前端做 delta/dt)。
   // 必须用 ref 而不是 state:setInterval 在 useEffect [activeTab, branchId]
   // 内创建,只会捕获**首次** loadMetrics 闭包。state 变了之后,新 loadMetrics
@@ -1161,6 +1170,7 @@ export function BranchDetailDrawer({
     setSystemLogsState({ status: 'idle' });
     setMetricSeries({});
     setLiveStats({});
+    setSeriesError(null);
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
     void load();
@@ -1365,8 +1375,12 @@ export function BranchDetailDrawer({
       }
       // 整体替换，不与旧值合并：合并会让不同批次的桶混进同一个数组。
       if (Object.keys(next).length > 0) setMetricSeries(next);
-    } catch {
-      // 老版本 CDS 没有这个端点 —— 静默降级成「只有实时数字、没有曲线」，不弹错。
+      setSeriesError(null);
+    } catch (err) {
+      if (branchIdRef.current !== requestForBranch) return;
+      // 老版本 CDS 没有这个端点也走这里——照样要说出来，否则骨架屏会一直
+      // 承诺一条永远不会出现的曲线。面板拿到它就改画「只有实时数字」那一档。
+      setSeriesError(err instanceof ApiError ? err.message : String(err));
     }
   }, [branchId]);
 
@@ -2566,6 +2580,7 @@ export function BranchDetailDrawer({
                     deployments={overviewDeployments}
                     metricSeries={metricSeries}
                     liveStats={liveStats}
+                    seriesError={seriesError ?? undefined}
                     metricsReady={metricsState.status === 'ok'}
                     metricsError={metricsState.status === 'error' ? metricsState.message : undefined}
                     replicaSummary={overviewReplicaSummary}
