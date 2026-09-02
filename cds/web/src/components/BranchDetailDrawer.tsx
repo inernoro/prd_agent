@@ -1016,6 +1016,15 @@ export function BranchDetailDrawer({
    */
   const [seriesError, setSeriesError] = useState<string | null>(null);
   /**
+   * 历史请求的序号（Codex P2，核对属实）。
+   *
+   * 5 秒一轮，而一次请求可能跑过 5 秒：两个请求同时在飞时，只判分支 id 是不够的
+   * ——新的先回、旧的后回，旧响应会把 series 和窗口元信息一起覆盖回更早的一段，
+   * 图往回跳。这正是「图一直在变」那类病的另一种形态，只是成因在请求竞态。
+   * 只认序号最大的那次响应。
+   */
+  const seriesSeqRef = useRef(0);
+  /**
    * 服务端这次实际用的桶宽（秒）。骨架屏用它算「还要等多久」。
    *
    * 分辨率是服务端按观测到的采集节奏自适应定的：抽屉开着时 5s 端点也在写，桶宽会
@@ -1476,6 +1485,8 @@ export function BranchDetailDrawer({
   const loadSeries = useCallback(async () => {
     if (!branchId) return;
     const requestForBranch = branchId;
+    seriesSeqRef.current += 1;
+    const seq = seriesSeqRef.current;
     try {
       const data = await apiRequest<{
         groupSeconds?: number;
@@ -1484,6 +1495,8 @@ export function BranchDetailDrawer({
         services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null }> }>;
       }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
       if (branchIdRef.current !== requestForBranch) return;
+      // 慢请求后回不许覆盖快请求（Codex P2）：窗口会被拽回更早的一段，图往回跳。
+      if (seq !== seriesSeqRef.current) return;
       setSeriesMeta(
         typeof data?.groupSeconds === 'number' && typeof data?.after === 'number' && typeof data?.before === 'number'
           ? { groupSeconds: data.groupSeconds, after: data.after, before: data.before }
@@ -1505,6 +1518,8 @@ export function BranchDetailDrawer({
       setSeriesError(null);
     } catch (err) {
       if (branchIdRef.current !== requestForBranch) return;
+      // 同上：旧请求的失败不该抹掉新请求刚拿回来的曲线。
+      if (seq !== seriesSeqRef.current) return;
       // 老版本 CDS 没有这个端点也走这里——照样要说出来，否则骨架屏会一直
       // 承诺一条永远不会出现的曲线。面板拿到它就改画「只有实时数字」那一档。
       setSeriesError(describeMetricsFailure(err, '指标历史'));
@@ -2732,6 +2747,9 @@ export function BranchDetailDrawer({
                      * 整个分支已经停了。有实时值就用实时值，没有才退回快照。
                      */
                     running={branchStatus ? branchStatus === 'running' : branch.status === 'running'}
+                    // 原始七档状态一并传下去：折叠成布尔值会让「正在部署」和「已停机」
+                    // 变成同一件事，部署途中总览会谎报「分支未运行」（Codex P2）。
+                    lifecycle={branchStatus || branch.status}
                     branchName={branch.branch}
                     commitSha={branch.commitSha}
                     commitMessage={branch.subject}

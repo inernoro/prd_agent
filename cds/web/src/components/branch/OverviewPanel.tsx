@@ -976,7 +976,7 @@ function EntryCards({
 // ── 面板本体 ──────────────────────────────────────────────────────────────
 
 export function OverviewPanel({
-  services: rawServices, running, branchName, commitSha, commitMessage,
+  services: rawServices, running, lifecycle, branchName, commitSha, commitMessage,
   lastReadyAt, lastDeployAt, deployDurationMs,
   entries, deployments, metricSeries, liveStats, metricsReady, metricsError, seriesError,
   replicaSummary, infraSummary,
@@ -985,6 +985,16 @@ export function OverviewPanel({
 }: {
   services: OverviewService[];
   running: boolean;
+  /**
+   * 分支的原始生命周期状态（Codex P2，核对属实）。
+   *
+   * `running` 是它折叠出来的布尔值，而那个枚举有七档：
+   * idle / building / starting / running / restarting / stopping / error。
+   * 折叠之后「正在部署」和「已停机」变成同一个 false —— 部署进行中打开总览，
+   * 判断句会说「分支未运行」、就绪计数被清成 0/N、当前值全被抹掉，而它明明正在起。
+   * 传原始状态进来，面板才分得开「还没起来」和「不会起来了」。
+   */
+  lifecycle?: string;
   branchName: string;
   commitSha?: string;
   commitMessage?: string;
@@ -1042,9 +1052,19 @@ export function OverviewPanel({
    * `anyRunning`，补一处漏一处。这次改成在入口归一：分支没在跑，这份清单里的
    * running 一律不作数，下面所有读它的地方自动一致，不再依赖我记得补第六处。
    */
+  /**
+   * 部署在途（building / starting / restarting）不算「已停」。
+   *
+   * 这三档下容器可能正好好跑着（旧容器还在服务，或新容器已起来），`/metrics` 的
+   * 读数是真的。上一版把七档状态折叠成一个布尔值就一刀切归零，等于在部署过程中
+   * 谎报「分支未运行 / 0 个就绪 / 没有当前值」。
+   */
+  const transitioning = lifecycle === 'building' || lifecycle === 'starting' || lifecycle === 'restarting';
   const services = useMemo<OverviewService[]>(() => (
-    running ? rawServices : rawServices.map((s) => (s.status === 'running' ? { ...s, status: 'stopped' } : s))
-  ), [rawServices, running]);
+    running || transitioning
+      ? rawServices
+      : rawServices.map((s) => (s.status === 'running' ? { ...s, status: 'stopped' } : s))
+  ), [rawServices, running, transitioning]);
 
   const okCount = services.filter((s) => s.status === 'running').length;
   const badServices = services.filter((s) => s.status === 'error');
@@ -1283,7 +1303,9 @@ export function OverviewPanel({
       ? '一切正常，可以直接验收'
       : running
         ? `还有 ${services.length - okCount} 个服务没起来`
-        : '分支未运行';
+        : transitioning
+          ? `正在部署，${services.length - okCount} 个服务还没起来`
+          : '分支未运行';
   const verdictTone = badServices.length > 0 ? 'bad' : allServicesReady ? 'ok' : 'idle';
 
   const windowText = windowMinutes >= 60

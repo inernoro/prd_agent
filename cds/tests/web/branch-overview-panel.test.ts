@@ -882,6 +882,88 @@ describe('取指标失败给的是人话，不是诊断串', () => {
   });
 });
 
+/**
+ * 部署在途不等于「分支未运行」（2026-09-02，Codex P2，核对属实）。
+ *
+ * 分支状态是七档枚举（idle / building / starting / running / restarting /
+ * stopping / error），抽屉却把它折叠成一个布尔 `running` 传下来。折叠之后
+ * 「正在部署」和「已停机」变成同一个 false —— 部署途中打开总览，判断句说
+ * 「分支未运行」、就绪计数被清成 0/N、当前值全被抹掉，而它明明正在起。
+ *
+ * 这是入口归一那一版**放大出来的**：归一之前各服务还留着自己的 status，环上
+ * 至少是真的；归一之后被一刀切成 stopped。修法是把原始状态传下来，不再只给布尔。
+ */
+/**
+ * 慢请求后回不许覆盖快请求（2026-09-02，Codex P2，核对属实）。
+ *
+ * 5 秒一轮，而一次 `/metrics/series` 可能跑过 5 秒；两个请求同时在飞时只判分支 id
+ * 是不够的——新的先回、旧的后回，旧响应会把 series 与窗口元信息一起覆盖回更早的
+ * 一段，图往回跳。和「图一直在变」同族，只是成因在请求竞态。
+ */
+describe('历史轮询按序号收口，旧响应不许后发制人', () => {
+  it('loadSeries 每次自增序号，且成功与失败两条路都比对序号', () => {
+    const code = stripComments(DRAWER);
+    const at = code.indexOf('const loadSeries');
+    expect(at, '找不到 loadSeries，选择器过时了').toBeGreaterThan(0);
+    const body = code.slice(at, code.indexOf('const loadDeployments', at) > at
+      ? code.indexOf('const loadDeployments', at)
+      : at + 2600);
+    expect(body, '没有取序号，只判分支 id 拦不住同分支的并发轮询')
+      .toMatch(/seriesSeqRef\.current \+= 1/);
+    const seqChecks = body.match(/seq !== seriesSeqRef\.current/g) ?? [];
+    expect(seqChecks.length, '成功与失败两条路都要比对：旧的失败同样会抹掉新的曲线')
+      .toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('部署在途不谎报「分支未运行」', () => {
+  const render = (lifecycle?: string): string => renderToStaticMarkup(createElement(OverviewPanel, {
+    services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+    running: lifecycle === 'running',
+    lifecycle,
+    branchName: 'demo',
+    entries: [],
+    deployments: [],
+    metricSeries: {
+      api: seedMetricSeries([
+        { cpuPercent: 12, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+        { cpuPercent: 12, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+      ]),
+    },
+    liveStats: { api: { cpuPercent: 12, memUsedBytes: 4096 } },
+    metricsReady: true,
+    replicaSummary: '1 个副本',
+    infraSummary: '无',
+    now: Date.now(),
+    windowMinutes: 30,
+    onRefreshMetrics: () => {},
+  }));
+
+  for (const st of ['building', 'starting', 'restarting']) {
+    it(`${st} 时不说「分支未运行」，也不把读数抹掉`, () => {
+      const html = render(st);
+      expect(html, `${st} 是部署在途，不是停机`).not.toContain('分支未运行');
+      expect(html, '就绪计数被清零了').not.toContain('0 / 1 个服务就绪');
+      expect(html, '当前值被抹掉了——容器可能正好好跑着').toContain('12.0%');
+      expect(html, '应当说清正在部署').toContain('正在部署');
+    });
+  }
+
+  it('真的停了（stopping / idle）仍按停机处理，归一化没被架空', () => {
+    for (const st of ['stopping', 'idle', 'error']) {
+      const html = render(st);
+      expect(html, `${st} 应当仍判为未运行`).toContain('分支未运行');
+      expect(html, `${st} 不该再报当前值`).not.toContain('12.0%');
+    }
+  });
+
+  it('running 时一切正常（防修成永远「正在部署」）', () => {
+    const html = render('running');
+    expect(html).toContain('一切正常');
+    expect(html).toContain('12.0%');
+  });
+});
+
 describe('分支停了，就绪计数也不算陈旧的 running', () => {
   const render = (running: boolean): string => renderToStaticMarkup(createElement(OverviewPanel, {
     services: [
