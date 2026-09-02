@@ -38,6 +38,21 @@ describe('从启动命令读出目录', () => {
     expect(dirFromCommand('cd prd-admin && pnpm build && cd dist && node server.js')).toBe('prd-admin');
   });
 
+  it('动态表达式不是路径：$VAR / ~ / 命令替换一律不当线索', () => {
+    // 照抄成 `$APP_DIR/**` 会得到一条匹配不到任何真实路径的范围，而这条建议是
+    // 摆在用户面前劝他一键采纳的——采纳之后每次推送都判「未波及」，静默不部署。
+    expect(dirFromCommand('cd "$APP_DIR" && pnpm start')).toBeNull();
+    expect(dirFromCommand('cd $APP_DIR && pnpm start')).toBeNull();
+    expect(dirFromCommand('cd ~ && pnpm start')).toBeNull();
+    expect(dirFromCommand('cd ~/app && pnpm start')).toBeNull();
+    expect(dirFromCommand('cd `pwd` && pnpm start')).toBeNull();
+    expect(dirFromCommand('cd - && pnpm start')).toBeNull();
+    // 带通配的也不当线索：范围判据自己会解释 *，推断吐通配只会更难核对
+    expect(dirFromCommand('cd packages/* && pnpm start')).toBeNull();
+    // 字面路径照常认得出来
+    expect(dirFromCommand('cd prd-admin && pnpm start')).toBe('prd-admin');
+  });
+
   it('中段的 cd 不算：pnpm build && cd dist 里的 dist 是产物目录', () => {
     // 跟着它走会把范围缩成 dist/**，于是改 prd-admin/src 反被判「未波及」
     expect(dirFromCommand('pnpm build && cd dist && node server.js')).toBeNull();

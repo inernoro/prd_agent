@@ -177,3 +177,26 @@ describe('划范围对话框换项目时不许留着上一个项目的状态', (
     expect(source).toMatch(/disabled=\{saving \|\| loading \|\| !options/);
   });
 });
+
+describe('撞上已被绑走的仓库时，先问清楚再开始 clone', () => {
+  /**
+   * 冲突弹窗是让用户拿主意的；先把 clone 开起来再问，用户还没回答，仓库已经在拉、
+   * 自动配置已经在跑。私有仓库更糟：拉取凭据正是从那条还没建立的仓库绑定来的，
+   * 这时拉多半失败，而失败会先于问题出现在用户眼前（2026-09-02 Codex P1）。
+   *
+   * 判据是两条路径都不在有冲突时启动 clone，且弹窗上「先不绑」那条出口负责把
+   * 推迟的 clone 接上——推迟了却没人接，就是把 clone 弄丢了（形状 2）。
+   */
+  it('两条建项目路径都在有冲突时推迟 clone，且推迟的那次有人接', () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), '../cds/web/src/pages/ProjectListPage.tsx'),
+      'utf8',
+    );
+    // 顶栏快捷路径 + 完整表单路径，各一处「没冲突才开 clone」
+    const guarded = source.match(/&& !(?:res\.)?repoAlreadyLinked\)/g) || [];
+    expect(guarded.length, '两条建项目路径都要判').toBe(2);
+    // 推迟下来的 clone 必须有人接上
+    expect(source).toContain('pendingClone');
+    expect(source).toMatch(/pendingClone[\s\S]{0,200}setCloneTarget\(pending\)/);
+  });
+});

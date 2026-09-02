@@ -193,3 +193,31 @@ describe('compose 服务级 cds.build-scope 能真的落进 profile', () => {
     expect(resolveProjectScope(parsed.buildProfiles)).toEqual([]);
   });
 });
+
+describe('被拒的声明不能被同一条服务上更窄的声明顶掉', () => {
+  it('顶层写 ** + 模式写 cds/** → 整体全通配，不是只留 cds/**', () => {
+    // `**` 是用户显式写下的「整个仓库都可能影响我」。让 cds/** 把它顶掉，
+    // 就是把 fail-open 反转成 fail-closed：改别处会静默不部署。
+    expect(resolveProjectScope([
+      { id: 'p', buildScope: ['**'], deployModes: { express: { buildScope: ['cds/**'] } } },
+    ])).toEqual([]);
+  });
+
+  it('绝对路径 / .. 这类越界声明同样让整体退回全通配', () => {
+    expect(resolveProjectScope([
+      { id: 'p', buildScope: ['/etc'], deployModes: { express: { buildScope: ['cds/**'] } } },
+    ])).toEqual([]);
+    expect(resolveProjectScope([
+      { id: 'p', buildScope: ['../outside'], deployModes: { express: { buildScope: ['cds/**'] } } },
+    ])).toEqual([]);
+  });
+
+  it('压根没写（undefined / 空数组 / 全空串）不算「被拒」，照常由另一份声明作数', () => {
+    expect(resolveProjectScope([
+      { id: 'p', buildScope: [], deployModes: { express: { buildScope: ['cds/**'] } } },
+    ])).toEqual(['cds/**']);
+    expect(resolveProjectScope([
+      { id: 'p', buildScope: ['  '], deployModes: { express: { buildScope: ['cds/**'] } } },
+    ])).toEqual(['cds/**']);
+  });
+});

@@ -459,7 +459,8 @@ export function ProjectListPage(): JSX.Element {
   const [createOpen, setCreateOpen] = useState(false);
   /** 建项目时填了个已被绑走的仓库：项目建好了但没绑上，这里当场问清楚。 */
   const [repoSharePrompt, setRepoSharePrompt] = useState<
-    { project: ProjectSummary; info: RepoAlreadyLinked } | null
+    /** pendingClone：这个项目还没 clone，等用户对冲突拿定主意再开始 */
+    { project: ProjectSummary; info: RepoAlreadyLinked; pendingClone: ProjectSummary | null } | null
   >(null);
   const [createAutoPickRepo, setCreateAutoPickRepo] = useState(false);
   const [sandboxOpen, setSandboxOpen] = useState(false);
@@ -638,12 +639,20 @@ export function ProjectListPage(): JSX.Element {
       });
       setQuickRepoUrl('');
       setToast(`已创建 ${displayName(res.project)}`);
-      if (res.project.cloneStatus === 'pending') setCloneTarget(res.project);
+      const needsClone = res.project.cloneStatus === 'pending';
+      // 有冲突就先别开始 clone —— 见下面那条注释与完整表单里的同一处判断。
+      if (needsClone && !res.repoAlreadyLinked) setCloneTarget(res.project);
       await refresh(false);
       // 顶栏这条是建项目的**主**路径，撞上已被绑走的仓库同样要当场问清楚。
       // 只在完整表单里处理会让主路径静默建出一个没绑仓库的项目，
       // 而用户看到的是「已创建」，之后推送永远到不了它（Codex P1）。
-      if (res.repoAlreadyLinked) setRepoSharePrompt({ project: res.project, info: res.repoAlreadyLinked });
+      if (res.repoAlreadyLinked) {
+        setRepoSharePrompt({
+          project: res.project,
+          info: res.repoAlreadyLinked,
+          pendingClone: needsClone ? res.project : null,
+        });
+      }
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -846,12 +855,19 @@ export function ProjectListPage(): JSX.Element {
             if (!next) setCreateAutoPickRepo(false);
           }}
           autoOpenPicker={createAutoPickRepo}
-          onCreated={async (project) => {
+          onCreated={async (project, repoAlreadyLinked) => {
             setToast(`已创建 ${displayName(project)}`);
-            if (project.cloneStatus === 'pending') setCloneTarget(project);
+            // 有冲突就先别开始 clone —— 让用户先回答「是要共用还是填错了」。
+            // clone 会顺手做自动配置，而私有仓库这时还没拿到共享的 GitHub App
+            // 绑定，拉取本来就可能失败（2026-09-02 Codex P1）。
+            if (project.cloneStatus === 'pending' && !repoAlreadyLinked) setCloneTarget(project);
             await refresh(false);
           }}
-          onRepoAlreadyLinked={(project, info) => setRepoSharePrompt({ project, info })}
+          onRepoAlreadyLinked={(project, info) => setRepoSharePrompt({
+            project,
+            info,
+            pendingClone: project.cloneStatus === 'pending' ? project : null,
+          })}
         />
 
         {/*
@@ -878,9 +894,22 @@ export function ProjectListPage(): JSX.Element {
               />
             ) : null}
             <DialogFooter>
-              <Button variant="outline" onClick={() => setRepoSharePrompt(null)}>填错了，先不绑</Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  // 决定不绑了：项目照旧要 clone，这时才开始
+                  const pending = repoSharePrompt?.pendingClone || null;
+                  setRepoSharePrompt(null);
+                  if (pending) setCloneTarget(pending);
+                }}
+              >
+                填错了，先不绑
+              </Button>
               <Button
                 onClick={() => {
+                  // 去绑定：先把仓库绑上再 clone —— 私有仓库的拉取凭据正是从那个
+                  // 绑定来的，反过来先拉多半会失败。clone 入口在项目卡上，绑完
+                  // 随时可以点。
                   const target = repoSharePrompt?.project.id;
                   setRepoSharePrompt(null);
                   if (target) navigate(`/settings/${encodeURIComponent(target)}#github`);
@@ -3013,7 +3042,7 @@ function CreateProjectDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (project: ProjectSummary) => Promise<void>;
+  onCreated: (project: ProjectSummary, repoAlreadyLinked?: RepoAlreadyLinked) => Promise<void>;
   onRepoAlreadyLinked?: (project: ProjectSummary, info: RepoAlreadyLinked) => void;
   autoOpenPicker?: boolean;
 }): JSX.Element {
@@ -3222,7 +3251,10 @@ function CreateProjectDialog({
       setAppServices(defaultOnboardingServices());
       setSelectedInfra([]);
       onOpenChange(false);
-      await onCreated(res.project);
+      // 冲突信息与项目一起交出去：父组件要据此决定「现在就开始 clone」还是
+      // 「等用户拿定主意再开始」——先开 clone 再问，用户还没回答，仓库已经在
+      // 拉了（2026-09-02 Codex P1）。
+      await onCreated(res.project, res.repoAlreadyLinked);
       // 仓库已被别的项目绑走时，项目建好了但**仓库没绑上**（后端默认不绑，因为
       // 绝大多数是填错了地址）。这件事必须当场说，否则用户会以为绑好了，直到
       // 第一次 push 什么都没发生才发现。

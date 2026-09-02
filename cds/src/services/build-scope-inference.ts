@@ -53,6 +53,14 @@ const CONTAINER_REPO_ROOT = /^\/repo\//;
 export function normalizeRepoRelativeDir(raw: string): string | null {
   let dir = raw.trim().replace(/^['"]|['"]$/g, '');
   if (!dir) return null;
+  /*
+   * 只认字面路径（2026-09-02 Codex P2）。`cd "$APP_DIR"` / `cd ~` / `cd $(pwd)`
+   * 里的那一段不是路径，是运行时才求值的表达式；照抄成 `$APP_DIR/**` 会得到一条
+   * **匹配不到任何真实路径**的范围，而这条建议是摆在用户面前劝他一键采纳的。
+   * 采纳之后每一次推送都判「未波及」，整个项目静默不部署——比不给建议糟得多。
+   * 通配符同理：范围判据自己会解释 `*`，让推断吐出带通配的目录只会更难核对。
+   */
+  if (/[$`~*?]/.test(dir) || dir === '-') return null;
   if (dir === '/repo' || dir === '/repo/') return null;
   if (CONTAINER_REPO_ROOT.test(dir)) dir = dir.replace(CONTAINER_REPO_ROOT, '');
   if (dir.startsWith('/')) return null;

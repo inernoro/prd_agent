@@ -70,6 +70,12 @@ const MAX_MATCHED_SAMPLES = 5;
  * **整个项目静默不部署**——而没划范围的那个服务本来的语义恰恰是「什么都可能影响我」。
  * 失败方向必须朝安全的一边：宁可多建一次，不能悄悄不建。
  */
+/** 这份声明里到底有没有写东西（区分「没声明」与「声明了但被归一化拒掉」）。 */
+function hasDeclaredEntries(candidate: readonly string[] | undefined): boolean {
+  return Array.isArray(candidate)
+    && candidate.some((entry) => typeof entry === 'string' && entry.trim().length > 0);
+}
+
 export function resolveProjectScope(profiles: readonly ScopedProfileLike[] | undefined): string[] {
   const list = profiles || [];
   const out = new Set<string>();
@@ -77,7 +83,19 @@ export function resolveProjectScope(profiles: readonly ScopedProfileLike[] | und
     const declared = new Set<string>();
     for (const candidate of [profile.buildScope, ...Object.values(profile.deployModes || {}).map((m) => m?.buildScope)]) {
       const normalized = normalizeBuildScope(candidate);
-      if (!normalized) continue;
+      if (!normalized) {
+        /*
+         * 「压根没声明」与「声明了但被拒」不是一回事（2026-09-02 Codex P1）。
+         *
+         * 被拒的那些（`**` / `.` 这类仓库根等价物、绝对路径、含 `..`）是用户**显式
+         * 写下的**声明，语义是「整个仓库都可能影响我」。让同一条服务上另一份更窄的
+         * 声明把它顶掉，就把 fail-open 反转成了 fail-closed：顶层写着 `**`、某个
+         * 部署模式写着 `cds/**`，结果只留 `cds/**`，改别处就静默不部署。
+         * 所以只要出现一条被拒的声明，整个项目退回全通配。
+         */
+        if (hasDeclaredEntries(candidate)) return [];
+        continue;
+      }
       for (const entry of normalized) declared.add(entry);
     }
     // 这个服务一条都没声明 → 它可能被任何改动影响 → 项目级判据只能全通配
