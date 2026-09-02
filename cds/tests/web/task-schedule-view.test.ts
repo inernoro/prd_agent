@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration,
-  groupJobs, groupKeyOf, msUntil,
+  groupJobs, groupKeyOf, msUntil, startOfNextDay, startOfToday,
 } from '../../web/src/lib/task-schedule-view.js';
 import type { ScheduledJob, ScheduledJobRun } from '../../web/src/types/task-schedule.js';
 
@@ -273,6 +273,41 @@ describe('选中态的单泳道细带', () => {
   });
 });
 
+
+describe('本地日边界', () => {
+  /*
+   * Codex #1471 P2。时间轴此前把一天写死成 24 小时，而 DST 切换那两天的本地日
+   * 是 23 或 25 小时：点位会相对 00-24 刻度整体偏移，春季那天还会把次日凌晨的
+   * 事件放进来，秋季那天会丢掉当天最后一小时的事件。
+   *
+   * 这条用例只在**真的处于有 DST 的时区**时断言 23/25，否则只断言「等于两个
+   * 本地零点之差」——不打印跳过原因的空跑用例比没有用例更糟（形状 4），
+   * 所以两条路都有断言，没有静默跳过。
+   * 红绿闭环：把 dayMs 换回写死的 24h，`不变量` 那条在任何时区都红。
+   */
+  it('一天的长度取两个本地零点之差，不是写死的 24 小时', () => {
+    // CI 跑在 UTC，而 UTC 没有 DST——不切时区的话这条用例把 24h 的错误实现也判绿
+    // （形状 4：passing for the wrong reason）。这里显式切到一个有 DST 的时区再断言。
+    const saved = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      const hours = (iso: string) => (startOfNextDay(Date.parse(iso)) - startOfToday(Date.parse(iso))) / 3_600_000;
+      // 2026-03-08 春季前移 = 23 小时；11-01 秋季回拨 = 25 小时；平常日 24 小时
+      expect(hours('2026-03-08T12:00:00Z'), '春季前移那天不是 23 小时').toBe(23);
+      expect(hours('2026-11-01T12:00:00Z'), '秋季回拨那天不是 25 小时').toBe(25);
+      expect(hours('2026-06-15T12:00:00Z'), '平常日不是 24 小时').toBe(24);
+
+      // 归零彻底：跨过 DST 之后仍落在本地 00:00:00.000
+      for (const iso of ['2026-03-08T12:00:00Z', '2026-11-01T12:00:00Z']) {
+        const d = new Date(startOfNextDay(Date.parse(iso)));
+        expect([d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds()], `${iso} 的下一个零点没有归零`)
+          .toEqual([0, 0, 0, 0]);
+      }
+    } finally {
+      if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved;
+    }
+  });
+});
 
 describe('任务分组', () => {
   const j = (id: string, over: Partial<ScheduledJob> = {}) => job({ id, name: id, ...over });

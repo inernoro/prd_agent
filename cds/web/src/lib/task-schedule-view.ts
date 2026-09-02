@@ -152,6 +152,21 @@ export function startOfToday(now: number): number {
 
 
 /**
+ * 下一个本地零点。**不是** `startOfToday + 24h`：夏令时切换那两天，一个本地日是
+ * 23 或 25 小时（Codex #1471 P2）。写死 24 小时会让当天所有点位相对 00-24 刻度整体
+ * 偏移，春季那天还会把次日凌晨的事件放进来，秋季那天会把当天最后一小时的事件丢掉。
+ * 用「日期 +1 再归零」让运行时按真实本地日历算。
+ */
+export function startOfNextDay(now: number): number {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 1);
+  d.setHours(0, 0, 0, 0);  // 跨过 DST 之后再归零一次，防止 setDate 把时间带偏
+  return d.getTime();
+}
+
+
+/**
  * 结论条。先给一句带数字的判断，再给统计 —— 而不是让人自己读一排数字去算。
  * 失败归因只在「多条任务撞同一个上游」时才敢下，判据是失败记录里的目标是否同源。
  */
@@ -299,7 +314,9 @@ export function buildTimeline(
   options: { onlyJobId?: string } = {},
 ) {
   const dayStart = startOfToday(now);
-  const dayMs = 24 * 60 * 60 * 1000;
+  // 本地日长度按真实日历算，不是写死 24 小时——DST 那两天是 23 / 25 小时。
+  const dayEnd = startOfNextDay(now);
+  const dayMs = dayEnd - dayStart;
   const ratio = (at: number) => Math.max(0, Math.min(100, ((at - dayStart) / dayMs) * 100));
 
   // onlyJobId：选中态的 44px 细带只画这一条。走「先筛后取前 N」而不是「取前 N 再筛」，
@@ -326,7 +343,7 @@ export function buildTimeline(
     }
     for (const iso of job.nextRuns || []) {
       const at = Date.parse(iso);
-      if (!Number.isFinite(at) || at <= now || at - dayStart >= dayMs) continue;
+      if (!Number.isFinite(at) || at <= now || at >= dayEnd) continue;
       events.push({ leftPct: ratio(at), status: 'pending', title: `${formatTime(iso)} · 待触发` });
     }
     return {
