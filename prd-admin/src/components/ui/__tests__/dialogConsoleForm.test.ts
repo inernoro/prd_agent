@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -108,9 +108,20 @@ describe('--dialog-* token 双写', () => {
 });
 
 describe('没有调用方在容器上再叠内边距', () => {
-  it('contentClassName 里不出现整体 padding（会和分区内边距叠起来）', async () => {
-    const { globSync } = await import('node:fs');
-    const files = globSync('src/**/*.tsx', { cwd: ROOT }) as string[];
+  it('contentClassName 里不出现整体 padding（会和分区内边距叠起来）', () => {
+    // 自己走一遍目录，不用 fs.globSync：那是 Node 22 才有的 API，
+    // 本地跑 22、CI 跑 20，于是本地全绿、CI 直接 TypeError（不是断言失败，是测试崩了）。
+    // 「本地过了就以为过了」在这条上栽过一次——判据依赖的 API 也要看运行环境。
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = resolve(dir, e.name);
+        if (e.isDirectory()) return e.name === 'node_modules' ? [] : walk(full);
+        return e.name.endsWith('.tsx') ? [full] : [];
+      });
+    const SRC = resolve(ROOT, 'src');
+    const files = walk(SRC).map((f) => `src/${f.slice(SRC.length + 1).split(sep).join('/')}`);
+    // companion：扫描得能扫到东西，否则下面那条会对着空数组判绿。
+    expect(files.length, '应扫到 .tsx 文件').toBeGreaterThan(50);
     const offenders: string[] = [];
     for (const rel of files) {
       if (rel.endsWith('Dialog.tsx')) continue;

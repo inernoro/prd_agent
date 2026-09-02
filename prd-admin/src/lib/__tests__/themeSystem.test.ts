@@ -207,9 +207,49 @@ describe('主题系统契约', () => {
     };
     walkSrc(path.resolve(TEST_DIR, '../..'));
 
+    /*
+     * 消费关系不止 `var()` 一种写法。
+     *
+     * 上一版只数岛内文件里直接写的 var(--x)，于是**经由 CSS 类**的消费全看不见：
+     * 视觉创作首页用的是 className="glass-pane" / "glass-sub"，真正读 --glass-surface
+     * 的是 globals.css 里那两条规则。结果 --glass-surface 在暗岛里没覆盖，
+     * 浅色档下近白字压在浅色玻璃底上（Codex PR #1476 P1）。
+     * 判据自己的注释写着「族名清单是猜的，会漏；消费关系是真的」——但它只认了
+     * 消费关系的一种形态，还是太窄（形状 1，同一个坑第三次）。
+     *
+     * 所以先从样式文件里建一张「类名 → 它读了哪些 token」的表，
+     * 岛内文件提到某个类名，就算它消费了那些 token。
+     */
+    const classTokens = new Map<string, string[]>();
+    const stylesDir = path.resolve(TEST_DIR, '../../styles');
+    for (const name of fs.readdirSync(stylesDir)) {
+      if (!name.endsWith('.css')) continue;
+      const full = path.join(stylesDir, name);
+      if (full === TOKENS_PATH) continue;
+      const text = fs.readFileSync(full, 'utf8');
+      for (const m of text.matchAll(/\.([\w-]+)[^{]*\{([^}]*)\}/g)) {
+        // 只认带连字符的类名。单词类名有两类噪音：这个粗糙的 CSS 解析会把
+        // `0.01ms` `.ts` 这种小数与后缀也当成类名；更要紧的是 Tailwind 的
+        // `group` —— 它出现在几乎每个文件里，会把它那两个 token 报成「处处在用」。
+        // 我们自己承载主题 token 的类一律是复合名（glass-pane / button-primary /
+        // surface-popover…），这条收窄不误伤。代价：将来若出现单词命名的自有类会漏，
+        // 那时把它显式列进来，别把这条放宽回去。
+        if (!m[1].includes('-')) continue;
+        const used = [...m[2].matchAll(/var\((--[\w-]+)/g)].map((v) => v[1]);
+        if (!used.length) continue;
+        classTokens.set(m[1], [...(classTokens.get(m[1]) ?? []), ...used]);
+      }
+    }
+    const consumedViaClass = new Set<string>();
+    for (const text of islandFiles) {
+      for (const [cls, toks] of classTokens) {
+        if (new RegExp(`[\\s"'\`]${cls}[\\s"'\`]`).test(text)) toks.forEach((t) => consumedViaClass.add(t));
+      }
+    }
+
     const missing = themed
       .filter((t) => !island.has(t))
-      .filter((t) => islandFiles.some((text) => text.includes(`var(${t}`)))
+      .filter((t) => consumedViaClass.has(t) || islandFiles.some((text) => text.includes(`var(${t}`)))
       .sort();
 
     expect(

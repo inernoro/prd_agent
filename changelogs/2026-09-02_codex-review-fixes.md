@@ -33,3 +33,7 @@
 | fix | 全局 | 设计画布目录并入 .design/，修复根目录布局契约 CI 红灯 |
 | fix | prd-admin | 背景生成落地读最新列表：等待期间删掉的那张不再被写回来复活 |
 | test | prd-admin | 补复活场景的行为判据（用旧快照落地会复现缺陷，用最新列表不会） |
+| fix | prd-admin | 守卫改用手写目录遍历替代 Node 22 才有的 fs.globSync，CI 的 Node 20 不再直接崩 |
+| fix | 全局 | debt 文档的源码路径收进「实现来源」小节，文档可读性棘轮回到基线 |
+| fix | prd-admin | 暗岛补齐 11 个经由 CSS 类被消费的主题 token，浅色档下首页不再近白字压浅色玻璃底 |
+| test | prd-admin | 暗岛守卫从「只数直接 var()」扩到「类名 → token」的消费关系 |

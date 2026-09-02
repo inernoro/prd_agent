@@ -1204,6 +1204,25 @@
 .surface-tone-dark {
   /* 与 :root 同批新增：岛内也要有值，否则浅色页里的暗岛会退回浅色档的描边 */
   --border-strong: rgba(255, 255, 255, 0.24);
+  /* 下面这一组是「经由 CSS 类被消费」的那种漏网之鱼（Codex PR #1476 P1）。
+     岛内文件里搜不到 var(--glass-surface)——真正读它的是 globals.css 的
+     .glass-pane / .glass-sub，页面只写了 className。守卫原来只数直接的 var()，
+     于是浅色档下暗岛拿到的是浅色玻璃底，配上岛内翻回的近白字，几乎读不出来。
+     守卫已连同这批一起收紧（themeSystem.test.ts：类名 → token 的消费关系）。 */
+  --glass-surface: rgba(30, 30, 36, 0.618);
+  --glass-surface-sub: rgba(38, 38, 46, 0.618);
+  --button-primary-bg-hover: #E08A6B;
+  --modal-overlay: rgba(0, 0, 0, 0.5);
+  --selection-icon-bg: rgba(217, 119, 87, 0.22);
+  --semantic-info-text: #93c5fd;
+  --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.45);
+  /* 骨架与唤醒幕同理：读它们的是 globals.css 的 .wake-veil / 骨架类，页面只写 className。
+     浅色档的取值是为纸面调的（幕是「变暗一下再回来」、骨架是深色打底），
+     照搬到暗岛上方向正好相反。 */
+  --skeleton-base: rgba(255, 255, 255, 0.055);
+  --skeleton-sheen: rgba(255, 236, 222, 0.085);
+  --wake-beam-core: rgba(255, 236, 222, 0.16);
+  --wake-beam-soft: rgba(255, 236, 222, 0.06);
   --nested-block-border: rgba(255, 255, 255, 0.09);
   color-scheme: dark;
   --bg-card: rgba(255, 255, 255, 0.08);

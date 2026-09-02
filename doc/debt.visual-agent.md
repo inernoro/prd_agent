@@ -192,7 +192,7 @@ LLMGW 图片分层能力卡的「已验证」判据是：请求日志里存在�
 
 ### 编辑器仍自带一份模型目录与尺寸联动，与首页各写各的
 
-2026-09-02 给首页工具行补模型选择器时，把「模型清单构建 → 查适配器拿可用尺寸 → 纠正当前尺寸」抽成了共享模块（`prd-admin/src/lib/visualModelSizes.ts` 与既有的 `visualAgentModelOptions.ts`），首页走的是这一份。**编辑器没有跟着改**——它自己那份仍留在 `AdvancedVisualAgentTab.tsx` 里。
+2026-09-02 给首页工具行补模型选择器时，把「模型清单构建 → 查适配器拿可用尺寸 → 纠正当前尺寸」抽成了共享模块，首页走的是这一份。**编辑器没有跟着改**——它自己仍留着一份等价实现。
 
 不动它是当次的有意取舍：编辑器那份和智能兜底、严格模式、水印设置缠在一起，一并重构会让这个只为「首页看不到模型」而起的改动膨胀出好几倍，超出本次范围。
 
@@ -211,6 +211,12 @@ LLMGW 图片分层能力卡的「已验证」判据是：请求日志里存在�
 现在这样「既不收也不取消」是两头不落地。本轮没做：它是一块功能（run 生命周期），
 不是当前 PR 目标（首页交接与画布落位）内的缺陷，硬塞进来会把这个 PR 撑成另一件事。
 
-同一处还有一条更小的：`pickGenerationModel` 挑池成员时不看 `healthStatus`，
-默认池里若排在前面的成员不可用，每次背景生成都会失败——而模型目录是带健康状态的，
-视觉创作自己的选择器就按 Healthy → Degraded 排。补的时候两条一起做。
+同一处还有一条更小的：挑池成员时不看健康状态，默认池里若排在前面的成员不可用，
+每次背景生成都会失败——而模型目录是带健康状态的，视觉创作自己的选择器就按
+Healthy → Degraded 排。补的时候两条一起做。
+
+## 实现来源
+
+- 共享的模型清单与尺寸联动：`prd-admin/src/lib/visualModelSizes.ts`、`prd-admin/src/pages/ai-chat/visualAgentModelOptions.ts`
+- 编辑器里那份未切走的等价实现：`prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx`
+- 背景生成的 run 轮询与挑池：`prd-admin/src/lib/backdropStudio.ts`
