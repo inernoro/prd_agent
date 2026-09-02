@@ -218,6 +218,34 @@ describe('服务状态要新鲜（Codex P2，核对属实）', () => {
   });
 });
 
+describe('计数必须数实体，不数渲染出来的行（Codex P2，核对属实）', () => {
+  /**
+   * `${cpuSeries.length} 个服务合计` 数的是渲染行数：超过 5 个服务时尾部全折进
+   * 一条「其他 N 个」，那个数组长度**恒等于 6**，不管实际是 6 个还是 20 个。
+   *
+   * 这是本模块反复出现的同一个形状——数格子，不数数据。这条守卫连同
+   * 「hasPlot 看 filled」「序列入选看 filled」一起，把它钉在三个粒度上。
+   */
+  it('大数旁边的服务数来自实体，不是系列数组长度', () => {
+    const suffixes = PANEL_CODE.match(/headlineSuffix=\{`[^`]*`\}/g) ?? [];
+    expect(suffixes.length, '找不到 headlineSuffix，选择器过时了').toBeGreaterThan(0);
+    for (const x of suffixes) {
+      expect(x, 'Series 数组长度在折叠「其他」之后恒为 6，不是服务数').not.toMatch(/(cpu|mem)Series\.length/);
+    }
+    expect(PANEL_CODE).toContain('totalledServiceCount');
+  });
+
+  it('这个数与合计口径一致：只数还在跑的（合计也只加还在跑的）', () => {
+    const decl = PANEL_CODE.slice(PANEL_CODE.indexOf('const totalledServiceCount'), PANEL_CODE.indexOf('const cpuTotalNow'));
+    expect(decl.length).toBeGreaterThan(0);
+    expect(decl, "「12 个服务合计」里那个 12 不能包含没计入的").toMatch(/status === 'running'/);
+    // 三个来源都要数到，漏一个就会低报
+    expect(decl).toContain('picked.head');
+    expect(decl).toContain('picked.tail');
+    expect(decl).toContain('picked.liveOnly');
+  });
+});
+
 describe('尾部聚合与陈旧序列（Codex P2，核对属实）', () => {
   /**
    * 「其他 N 个」是多个服务的合并项，带不了 stopped 标记，后面那道
