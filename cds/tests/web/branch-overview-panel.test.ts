@@ -67,6 +67,70 @@ describe('打开即出图（2026-09-02 真人验收：打开之后卡了很长�
   });
 });
 
+describe('图形与配色（2026-09-02 真人验收：太丑、非常乱）', () => {
+  /**
+   * 内存几乎不随时间变，画成 30 分钟面积图就是几条水平直线，白占半屏，
+   * 而全部信息（谁占多少）图例里的数字早就说完了。
+   * dataviz 形式表：这份数据的 job 是 part-to-whole → stacked bar，
+   * 且「go horizontal for many / long-named categories」。
+   */
+  it('内存用构成条（part-to-whole），不是时间序列面积图', () => {
+    expect(PANEL_CODE).toContain('function CompositionBar');
+    const memCard = PANEL_CODE.slice(PANEL_CODE.indexOf('title="内存占用"'), PANEL_CODE.indexOf('<NetworkChart'));
+    expect(memCard, '内存卡不该再画时间序列').not.toContain('StackedAreaChart');
+    expect(memCard).toContain('CompositionBar');
+  });
+
+  /**
+   * 本面板自己声明的不变量：语义四色 ok / warn / bad / info 是状态专用，不参与系列配色
+   * （dataviz 同款硬规则：Status colors are reserved）。
+   * 网络图此前用了 --info 与 --primary，正好违反它——这条守卫钉住不许再犯。
+   */
+  it('图形取色不使用语义四色与品牌色', () => {
+    /*
+     * 扫的是「图形从哪里取色」这几处，不是全文件：
+     * 判断行、健康环、失败柱用状态色是**对的**（那正是状态）。
+     * 第一版守卫按引号字面量找 `fill: '...'`，而填充早就是常量引用了，
+     * 一个都没匹配到——靠下面这句「找不到就红」才没变成空跑的绿灯（形状 4b）。
+     */
+    const pick = (from: string, to: string): string =>
+      PANEL_CODE.slice(PANEL_CODE.indexOf(from), PANEL_CODE.indexOf(to));
+    const regions = [
+      PANEL_CODE.slice(PANEL_CODE.indexOf('const seriesColor'), PANEL_CODE.indexOf('const STACK_GAP')),
+      pick('const NET_COLOR', 'function NetworkChart'),
+      pick('function StackedAreaChart', 'function CompositionBar'),
+      pick('function CompositionBar', 'function SeriesLegend'),
+    ];
+    expect(regions.every((r) => r.length > 0), '取色区域一个都没定位到，选择器过时了').toBe(true);
+    for (const region of regions) {
+      const tokens = region.match(/--[a-z-]+/g) ?? [];
+      for (const t of tokens) {
+        expect(t, `${t} 是保留色：状态色与品牌色不参与系列配色`).not.toMatch(/^--(info|primary|ok|warn|bad)$/);
+      }
+    }
+  });
+
+  it('网络专用色在两个主题都有定义（缺一个主题会静默失效）', () => {
+    const dark = CSS.slice(CSS.indexOf("[data-theme='dark']"), CSS.indexOf("[data-theme='light']"));
+    const light = CSS.slice(CSS.indexOf("[data-theme='light']"));
+    expect(dark).toContain('--series-net:');
+    expect(light).toContain('--series-net:');
+  });
+
+  /** 堆叠段之间靠表面色的缝分开，不靠给每段描边（dataviz: the gap is the mechanism）。 */
+  it('堆叠段之间留缝，不描边', () => {
+    expect(PANEL_CODE).toContain('STACK_GAP');
+    const chart = PANEL_CODE.slice(PANEL_CODE.indexOf('function StackedAreaChart'), PANEL_CODE.indexOf('function CompositionBar'));
+    expect(chart, '分隔应该靠缝，不该给面积描边').not.toMatch(/stroke=/);
+  });
+
+  /** 刻度取整：小数位由步长定一次，逐值判断会打出 15 / 10 / 5.0 / 0.0 这种混排。 */
+  it('Y 轴刻度落在整数步长上', () => {
+    expect(PANEL_CODE).toContain('niceScale');
+    expect(PANEL_CODE, '旧的「上限 × 0.66 / 0.33」会打出不整的刻度').not.toMatch(/\[1,\s*0\.66,\s*0\.33,\s*0\]/);
+  });
+});
+
 describe('系列色跟实体走，不跟名次走', () => {
   /**
    * 真实缺陷的回归：第一版按当前 CPU 排名选取并赋色，指标每 5s 刷一次，
