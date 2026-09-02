@@ -1,3 +1,16 @@
+  /**
+   * 服务端这次实际给了什么——桶宽（秒）与它真正覆盖的时间窗。
+   *
+   * 两样都不能由前端猜（Codex P2 ×2，均核对属实）：
+   *   - 桶宽是按观测节奏自适应算的，骨架屏拿采样器的标称 45s 去估「还要等多久」，
+   *     两个方向都会说谎；
+   *   - 窗口会被网格吸附撑宽（30 分钟的请求，45s 节奏那一档实际是 27 × 70s = 31.5 分钟），
+   *     而 x 轴却写死「30 分钟前 → 现在」，峰值因此对不上时间刻度。
+   *
+   * 一次请求返回什么就用什么，没拿到就是 null（骨架屏那边不给数字，轴退回请求值）。
+   */
+  const [seriesMeta, setSeriesMeta] = useState<{ groupSeconds: number; after: number; before: number } | null>(null);
+
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
@@ -968,7 +981,6 @@ export function BranchDetailDrawer({
    * 自己收窄；窗口里只剩稀疏样本时又会变粗。前端拿采样器的标称 45s 去算，两个方向
    * 都会说谎（Codex P2，核对属实）。没拿到就是 null，骨架屏那边不给数字。
    */
-  const [seriesGroupSeconds, setSeriesGroupSeconds] = useState<number | null>(null);
   // 上次响应快照,用来算 rx/tx 速率(后端只给累计值,前端做 delta/dt)。
   // 必须用 ref 而不是 state:setInterval 在 useEffect [activeTab, branchId]
   // 内创建,只会捕获**首次** loadMetrics 闭包。state 变了之后,新 loadMetrics
@@ -1428,10 +1440,16 @@ export function BranchDetailDrawer({
     try {
       const data = await apiRequest<{
         groupSeconds?: number;
+        after?: number;
+        before?: number;
         services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null }> }>;
       }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
       if (branchIdRef.current !== requestForBranch) return;
-      setSeriesGroupSeconds(typeof data?.groupSeconds === 'number' ? data.groupSeconds : null);
+      setSeriesMeta(
+        typeof data?.groupSeconds === 'number' && typeof data?.after === 'number' && typeof data?.before === 'number'
+          ? { groupSeconds: data.groupSeconds, after: data.after, before: data.before }
+          : null,
+      );
       const next: Record<string, MetricSeries> = {};
       for (const svc of data?.services ?? []) {
         if (svc.points && svc.points.length > 0) next[svc.profileId] = seedMetricSeries(svc.points);
@@ -2691,8 +2709,14 @@ export function BranchDetailDrawer({
                     replicaSummary={overviewReplicaSummary}
                     infraSummary={overviewInfraSummary}
                     now={now}
-                    windowMinutes={HISTORY_WINDOW_MINUTES}
-                    bucketSeconds={seriesGroupSeconds ?? undefined}
+                    /*
+                     * 轴的长度用服务端实际返回的窗口，不是请求值——网格吸附会把
+                     * 30 分钟撑成 31.5 分钟，写死 30 会让峰值对不上刻度。
+                     */
+                    windowMinutes={seriesMeta
+                      ? (seriesMeta.before - seriesMeta.after) / 60_000
+                      : HISTORY_WINDOW_MINUTES}
+                    bucketSeconds={seriesMeta?.groupSeconds}
                     onRefreshMetrics={() => void loadMetrics()}
                     onConfigureEntries={() => setWebEntryConfigOpen(true)}
                     onOpenDeployments={() => setActiveTab('deployments')}

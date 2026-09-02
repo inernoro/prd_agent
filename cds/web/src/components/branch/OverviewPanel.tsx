@@ -591,19 +591,33 @@ function CompositionBar({ series }: { series: StackedSeries[] }): JSX.Element {
   const rows = series.map((x) => ({ ...x, value: x.stopped ? 0 : x.nowValue }));
   return (
     <div className="flex flex-col gap-3">
+      {/*
+        条只画**当前真的在占内存**的那些行（Codex P2，核对属实）。
+
+        两处会画出与数字自相矛盾的条：
+          - `total === 0` 时给每行等分 → 服务全停、大数写着「0 B」，旁边却是一整条
+            画满的彩色条；
+          - `Math.max(..., 0.004)` 的最小宽度对**已停**的行也生效 → 值是 0 的行照样
+            分到一小条颜色。
+        最小宽度只该保护「很小但不是 0」的行不至于消失，不该给「就是 0」的行凭空
+        造出面积。
+      */}
       <div className="flex h-3 w-full gap-[2px] overflow-hidden rounded-full" role="img" aria-label="内存占用构成">
-        {rows.map((r) => (
+        {rows.filter((r) => r.value > 0).map((r) => (
           <span
             key={r.id}
             className="h-full first:rounded-l-full last:rounded-r-full"
             style={{
               // 分隔靠 flex 的 2px 缝（表面色），不给每段描边。
-              flex: total > 0 ? `${Math.max(r.value / total, 0.004)} 0 0` : '1 0 0',
+              flex: `${Math.max(r.value / total, 0.004)} 0 0`,
               background: r.color,
               opacity: 0.85,
             }}
           />
         ))}
+        {total > 0 ? null : (
+          <span className="h-full flex-1 rounded-full bg-[hsl(var(--hairline))]" aria-hidden />
+        )}
       </div>
       <ul className="flex flex-col gap-1.5">
         {rows.map((r) => (
@@ -1109,8 +1123,23 @@ export function OverviewPanel({
    * 有样本不等于算得出速率：首帧、同名重建后的第一帧、断档后的第一帧都没有可减的
    * 前一点。拿样本掩码去画，那几帧会被当成「测到了 0」，图上多出一次凭空的掉零。
    */
-  const axisRatePresent = Array.from({ length: sampleCount }, (_, i) =>
-    picked.head.concat(picked.tail).some((x) => x.ring.ratePresent?.[i] ?? false));
+  const axisRatePresent = Array.from({ length: sampleCount }, (_, i) => {
+    /*
+     * 合计要么完整、要么不画（Codex P2，核对属实）。
+     *
+     * 上一版用 `some`：只要有一个服务算得出速率就把这一桶标成有数据，而 `sumOf` 会把
+     * 算不出速率的那个服务当成 0 加进去——于是**一份残缺的合计被端成了完整的**。
+     * 最典型的时刻正是某个容器刚重建：它这一桶有 CPU 样本、没有速率，别人有速率，
+     * 图上就画出一个凭空偏低的总量。
+     *
+     * 改成：这一桶里**凡是有样本的服务都得算得出速率**，才算这一桶的合计成立；
+     * 有任何一个缺，就当作缺口不画。宁可少画一格，也不端一个偏低的总数。
+     */
+    const inBucket = picked.head.concat(picked.tail)
+      .filter((x) => x.ring.present?.[i] ?? false);
+    if (inBucket.length === 0) return false;
+    return inBucket.every((x) => x.ring.ratePresent?.[i] ?? false);
+  });
 
   const sumOf = (read: (m: MetricSeries) => number[]): number[] =>
     Array.from({ length: sampleCount }, (_, i) => picked.head.concat(picked.tail).reduce((n, x) => n + (read(x.ring)[i] ?? 0), 0));

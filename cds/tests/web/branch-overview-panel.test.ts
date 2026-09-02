@@ -122,12 +122,19 @@ describe('等待与变化（2026-09-02 真人验收：第一屏空白 / 不丝�
   it('桶宽真的从 series 响应接到了骨架屏（不是只在面板里留个参数）', () => {
     const code = stripComments(DRAWER);
     expect(code, 'loadSeries 没有读响应里的 groupSeconds').toMatch(/groupSeconds\?:\s*number/);
-    expect(code, '读到了却没存').toMatch(/setSeriesGroupSeconds\(/);
+    expect(code, '读到了却没存').toMatch(/setSeriesMeta\(/);
     // 切到这个元素的收尾，而不是拍一个字符数：属性一多就切不到最后几个，
     // 守卫会在「代码明明是对的」时候变红，然后被人放宽成永远绿的样子。
     const at = code.indexOf('<OverviewPanel');
     const call = code.slice(at, code.indexOf('/>', at));
-    expect(call, '存了却没传给面板——典型的建了一半').toMatch(/bucketSeconds=\{seriesGroupSeconds/);
+    expect(call, '存了却没传给面板——典型的建了一半').toMatch(/bucketSeconds=\{seriesMeta\?\.groupSeconds\}/);
+    /*
+     * 轴长同样要用服务端**实际返回**的窗口：网格吸附会把 30 分钟撑成 31.5 分钟，
+     * 写死请求值会让峰值对不上刻度（Codex P2，核对属实）。
+     */
+    expect(call, 'x 轴写死了请求值，没用服务端实际返回的窗口').toMatch(
+      /windowMinutes=\{seriesMeta[\s\S]{0,200}seriesMeta\.before - seriesMeta\.after/,
+    );
   });
 
   it('骨架说的帧数来自真样本数，不是把 null 当成有数据', () => {
@@ -816,5 +823,69 @@ describe('分支状态与部署来源', () => {
     );
     expect(memo).toMatch(/START_TOLERANCE_MS/);
     expect(memo).toMatch(/kept\.kind === item\.kind/);
+  });
+});
+
+/**
+ * 两条（2026-09-02，Codex P2，均核对属实）。
+ * 第一条是我上一轮加速率掩码时留下的；第二条是一屏内数字与图形自相矛盾。
+ */
+describe('合计要么完整要么不画', () => {
+  it('本桶有样本却算不出速率的服务，会把这一桶的合计判为不完整', () => {
+    const code = stripComments(PANEL);
+    const at = code.indexOf('const axisRatePresent');
+    expect(at, '找不到 axisRatePresent').toBeGreaterThan(-1);
+    const memo = code.slice(at, at + 700);
+    expect(
+      memo,
+      '用 some 只要有一个服务算得出速率就判有数据，而 sumOf 会把算不出的那个当 0 加进去——'
+      + '端出一份残缺的合计',
+    ).not.toMatch(/axisRatePresent[\s\S]{0,200}\.some\(/);
+    expect(memo).toMatch(/\.every\(/);
+  });
+});
+
+describe('构成条不画不存在的占用', () => {
+  const base = {
+    running: true,
+    branchName: 'demo',
+    entries: [],
+    deployments: [],
+    metricSeries: {},
+    metricsReady: true,
+    replicaSummary: '1 个副本',
+    infraSummary: '无',
+    now: Date.now(),
+    windowMinutes: 30,
+    onRefreshMetrics: () => {},
+  };
+
+  it('服务全停时构成条不是一整条彩色，旁边的大数也是 0', () => {
+    const code = stripComments(PANEL);
+    const bar = code.slice(code.indexOf('function CompositionBar'), code.indexOf('function SeriesLegend'));
+    expect(
+      bar,
+      'total 为 0 时给每行等分，会在「0 B」旁边画出一整条画满的彩色条',
+    ).not.toMatch(/total > 0 \?[\s\S]{0,80}: '1 0 0'/);
+    expect(bar, '值为 0 的行不该进条').toMatch(/filter\(\(r\) => r\.value > 0\)/);
+  });
+
+  it('渲染冒烟：停掉的服务在清单里写「停止」，不给它一段颜色', () => {
+    /*
+     * 要让构成条真的渲染出来，得先有画得出来的历史（hasPlot 要两帧真样本）——
+     * 只给一个 status 而不给序列，整段图区会被换成骨架屏，这条就成了空跑的绿灯。
+     */
+    const twoFrames = seedMetricSeries([
+      { cpuPercent: 1, memUsedBytes: 2_000_000, rxRate: 1, txRate: 1 },
+      { cpuPercent: 1, memUsedBytes: 2_000_000, rxRate: 1, txRate: 1 },
+    ]);
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      ...base,
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'stopped' }],
+      metricSeries: { api: twoFrames },
+      liveStats: {},
+    }));
+    expect(html, '构成条没渲染出来，这条断言会空跑').toContain('内存占用');
+    expect(html, '停机服务应该写「停止」，而不是端出停机前的旧读数').toContain('停止');
   });
 });
