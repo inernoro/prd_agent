@@ -808,6 +808,11 @@ export class GitHubWebhookDispatcher {
     if (!event.repository) {
       return { action: 'ignored-event', message: 'delete event missing repository' };
     }
+    // ref 合不合法是仓库级的事，不是项目级的 —— 放进循环会让一次仓库级拒绝
+    // 被报成「N 个项目各拒了一次」。
+    if (!isSafeGitRef(event.ref)) {
+      return { action: 'ignored-event', message: `Rejected unsafe delete ref: ${event.ref.slice(0, 80)}` };
+    }
     const projects = this.deps.stateService.findProjectsByRepoFullName(event.repository.full_name);
     if (projects.length === 0) {
       return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
@@ -823,9 +828,6 @@ export class GitHubWebhookDispatcher {
     event: GitHubDeleteEvent,
     project: Project,
   ): Promise<WebhookDispatchResult> {
-    if (!isSafeGitRef(event.ref)) {
-      return { action: 'ignored-event', message: `Rejected unsafe delete ref: ${event.ref.slice(0, 80)}` };
-    }
     const slugified = StateServiceClass.slugify(event.ref);
     const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
     // Prefer the canonical id, but fall back to a (projectId, branch)
@@ -1028,6 +1030,7 @@ export class GitHubWebhookDispatcher {
     const run = event.workflow_run!;
     const repoFullName = event.repository!.full_name;
     const headSha = run.head_sha;
+    // 这一条既是校验也是收窄类型，所以留在这里，不上提到编排层。
     if (typeof headSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(headSha)) {
       return { action: 'workflow-acknowledged', message: 'workflow_run head_sha 缺失/格式非法,已 ack' };
     }
