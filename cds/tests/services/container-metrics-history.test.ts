@@ -438,6 +438,30 @@ describe('查询窗口与降采样（借 Netdata 的 after / points / group 形�
     expect(containerMetricsHistoryStats().points).toBe(2);
   });
 
+  /**
+   * Codex P2（核对属实）：网格吸附不许突破 points 上限。
+   *
+   * `before` 默认是 `Date.now()`，几乎不可能正好落在桶边界上；右端向上吸附之后
+   * 整条网格右移不到一个桶宽，若桶宽仍按 `span / points` 取，就需要 points + 1 个桶
+   * 才能盖住请求窗口——上一版正是这样，未对齐的 30 分钟查询 points=1 返回 2 个点、
+   * points=120 返回 121 个。
+   */
+  it('窗口未对齐到桶边界时，点数仍不超过请求值', () => {
+    for (let t = 0; t <= 30 * 60_000; t += 45_000) recordContainerSample('c1', sample({ cpuPercent: 3 }), T0 + t);
+    // 故意让 before 落在桶边界之间（+1234ms），这是真实调用的常态。
+    const now = T0 + 30 * 60_000 + 1_234;
+    for (const points of [1, 5, 20, 120]) {
+      const r = queryContainerSeries({ containers: ['c1'], after: now - 30 * 60_000, before: now, points }, now);
+      expect(
+        r.series.c1.length,
+        `points=${points} 却返回了 ${r.series.c1.length} 个点（桶宽 ${r.groupSeconds}s）`,
+      ).toBeLessThanOrEqual(points);
+      // 同时仍要盖住请求窗口，不能靠砍点数达标。
+      expect(r.after).toBeLessThanOrEqual(now - 30 * 60_000);
+      expect(r.before).toBeGreaterThanOrEqual(now);
+    }
+  });
+
   it('真实断档不参与定分辨率（否则一次重启就把整窗压成几个点）', () => {
     const windowMs = 30 * 60_000;
     // 前 5 分钟有量，然后断 12 分钟（> MAX_RATE_GAP_MS），再恢复

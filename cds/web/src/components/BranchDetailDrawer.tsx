@@ -947,6 +947,14 @@ export function BranchDetailDrawer({
    * 假装还在攒点。
    */
   const [seriesError, setSeriesError] = useState<string | null>(null);
+  /**
+   * 服务端这次实际用的桶宽（秒）。骨架屏用它算「还要等多久」。
+   *
+   * 分辨率是服务端按观测到的采集节奏自适应定的：抽屉开着时 5s 端点也在写，桶宽会
+   * 自己收窄；窗口里只剩稀疏样本时又会变粗。前端拿采样器的标称 45s 去算，两个方向
+   * 都会说谎（Codex P2，核对属实）。没拿到就是 null，骨架屏那边不给数字。
+   */
+  const [seriesGroupSeconds, setSeriesGroupSeconds] = useState<number | null>(null);
   // 上次响应快照,用来算 rx/tx 速率(后端只给累计值,前端做 delta/dt)。
   // 必须用 ref 而不是 state:setInterval 在 useEffect [activeTab, branchId]
   // 内创建,只会捕获**首次** loadMetrics 闭包。state 变了之后,新 loadMetrics
@@ -1403,9 +1411,11 @@ export function BranchDetailDrawer({
     const requestForBranch = branchId;
     try {
       const data = await apiRequest<{
+        groupSeconds?: number;
         services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null }> }>;
       }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
       if (branchIdRef.current !== requestForBranch) return;
+      setSeriesGroupSeconds(typeof data?.groupSeconds === 'number' ? data.groupSeconds : null);
       const next: Record<string, MetricSeries> = {};
       for (const svc of data?.services ?? []) {
         if (svc.points && svc.points.length > 0) next[svc.profileId] = seedMetricSeries(svc.points);
@@ -2627,6 +2637,7 @@ export function BranchDetailDrawer({
                     infraSummary={overviewInfraSummary}
                     now={now}
                     windowMinutes={HISTORY_WINDOW_MINUTES}
+                    bucketSeconds={seriesGroupSeconds ?? undefined}
                     onRefreshMetrics={() => void loadMetrics()}
                     onConfigureEntries={() => setWebEntryConfigOpen(true)}
                     onOpenDeployments={() => setActiveTab('deployments')}

@@ -86,9 +86,6 @@ export function seedMetricSeries(points: Array<{
  * 系列色按固定次序赋值，**不循环**（dataviz 硬约束：第 9 个系列不许生成新色）。
  * 超过 5 个服务时，占用最小的那些合并成一条「其他」，用中性色。
  */
-/** 常驻采样器的节奏。骨架屏用它算「还要等多久」，不编百分比。 */
-const SAMPLER_CADENCE_SECONDS = 45;
-
 const SERIES_SLOTS = 5;
 const seriesColor = (i: number): string => `hsl(var(--series-${i + 1}))`;
 /**
@@ -299,10 +296,25 @@ function HealthRing({ states }: { states: Array<'ok' | 'bad' | 'idle'> }): JSX.E
  * **诚实的**进度（已经攒了几帧、还要等多久），不编造百分比。
  */
 function MetricsSkeleton({
-  filled, cadenceSeconds, windowLabel, note,
-}: { filled: number; cadenceSeconds: number; windowLabel: string; note?: string }): JSX.Element {
+  filled, bucketSeconds, windowLabel, note,
+}: { filled: number; bucketSeconds?: number; windowLabel: string; note?: string }): JSX.Element {
   const need = Math.max(0, 2 - filled);
-  const eta = need > 0 ? `约还需 ${need * cadenceSeconds} 秒出现曲线` : '正在读取';
+  /*
+   * 「还要等多久」按**服务端实际用的桶宽**算，不按采样器的标称节奏（Codex P2，核对属实）。
+   *
+   * 曲线要两个非空桶才出得来，所以等待时间是「还差几个桶 × 桶宽」。而桶宽是服务端
+   * 按观测到的节奏自适应算出来的：抽屉开着时 5s 端点也在写，桶宽会自己收窄到十几秒，
+   * 此时还拿采样器的 45s 去算就会把 30 秒说成 90 秒。反过来窗口里只有稀疏样本时，
+   * 桶宽可能比 45s 更粗，45s 又成了低估。
+   *
+   * 桶宽还没拿到（第一次请求尚未返回）时**不给数字**——宁可说「攒够两帧就出现」，
+   * 也不编一个兑现不了的秒数。这个骨架已经因为撒谎被抓过两次了。
+   */
+  const eta = need === 0
+    ? '正在读取'
+    : bucketSeconds
+      ? `约还需 ${need * bucketSeconds} 秒出现曲线`
+      : '攒够两帧就出现曲线';
   return (
     <section className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 pb-3 pt-3.5">
       <header className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
@@ -310,7 +322,9 @@ function MetricsSkeleton({
         <span className="text-[11px] text-muted-foreground">% · 按服务堆叠 · {windowLabel}</span>
         <div className="flex-1" />
         <span className="text-[11px] text-muted-foreground">
-          {note ?? `采样器每 ${cadenceSeconds} 秒写一帧 · 已有 ${filled} 帧 · ${eta}`}
+          {note ?? (bucketSeconds
+            ? `每 ${bucketSeconds} 秒落一个数据点 · 已有 ${filled} 帧 · ${eta}`
+            : `已有 ${filled} 帧 · ${eta}`)}
         </span>
       </header>
       <div className="flex gap-2">
@@ -855,7 +869,7 @@ export function OverviewPanel({
   lastReadyAt, lastDeployAt, deployDurationMs,
   entries, deployments, metricSeries, liveStats, metricsReady, metricsError, seriesError,
   replicaSummary, infraSummary,
-  now, windowMinutes, onRefreshMetrics, onConfigureEntries, onOpenDeployments,
+  now, windowMinutes, bucketSeconds, onRefreshMetrics, onConfigureEntries, onOpenDeployments,
 }: {
   services: OverviewService[];
   running: boolean;
@@ -884,6 +898,13 @@ export function OverviewPanel({
   now: number;
   /** 图表窗口长度（分钟）。由服务端 series 端点的 after/before 决定，前端不猜。 */
   windowMinutes: number;
+  /**
+   * 服务端这次实际用的桶宽（秒），来自 series 响应的 groupSeconds。
+   *
+   * 骨架屏用它算「还要等多久」。分辨率是服务端按观测节奏自适应定的，前端不许拿
+   * 采样器的标称值去猜——猜出来的秒数兑现不了就是撒谎。没拿到就不给数字。
+   */
+  bucketSeconds?: number;
   onRefreshMetrics: () => void;
   onConfigureEntries?: () => void;
   onOpenDeployments?: () => void;
@@ -1221,7 +1242,7 @@ export function OverviewPanel({
         ) : (
           <MetricsSkeleton
             filled={filledSamples}
-            cadenceSeconds={SAMPLER_CADENCE_SECONDS}
+            bucketSeconds={bucketSeconds}
             windowLabel={windowLabel}
             /*
              * metricsReady 只用来挑文案，**不参与是否出图的判断**——那正是「拿着历史

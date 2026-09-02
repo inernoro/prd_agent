@@ -384,15 +384,26 @@ export function queryContainerSeries(query: SeriesQuery, nowMs: number = Date.no
    * 锚在右端而不是左端：右端是「现在」，是唯一每次都在变的一侧；把它吸附住，
    * 新数据就只会进最后一个桶，前面的桶连内容带位置都不动。
    */
-  const bucketMs = Math.max(1_000, Math.round((span / wanted) / 1_000) * 1_000);
-  const gridBefore = Math.ceil(before / bucketMs) * bucketMs;
   /*
-   * 桶数由「网格右端回退到请求起点要几个桶」定，不是直接用 wanted：右端吸附之后
-   * 整条网格最多右移一个桶宽，若仍固定切 wanted 个，左边就会**少盖住**一段，
-   * 请求窗口内最早的那些样本会被静默丢掉（本地实测：两点相距 100s 的窗口里丢掉了
-   * 第一个点）。所以宁可多出一个桶，也不能丢调用方要的数据。
+   * 桶宽按 `span / (wanted - 1)` 取，而不是 `span / wanted`。
+   *
+   * 右端吸附之后整条网格最多右移一个桶宽，所以要盖住请求窗口，需要的桶数是
+   * `ceil((span + 位移) / 桶宽)`，最坏情况比 `span / 桶宽` 多一个。先把这一个桶的
+   * 余量算进桶宽里，`wanted` 个桶就永远够用——**既不会少盖住左边（丢掉调用方要的
+   * 样本），也不会多出一个桶突破 points 上限**（Codex P2，核对属实：上一版按
+   * `span / wanted` 取，未对齐的窗口会返回 wanted + 1 个点）。
+   *
+   * points=1 是「整窗聚成一个数」的问法，它根本没有 x 轴，网格吸附对它没有意义，
+   * 而吸附必然让它多出一个桶。这一档直接用请求的窗口原样。
    */
-  const count = Math.max(1, Math.ceil((gridBefore - after) / bucketMs));
+  const aligned = wanted > 1;
+  const bucketMs = aligned
+    ? Math.max(1_000, Math.ceil(span / (wanted - 1) / 1_000) * 1_000)
+    : Math.max(1_000, span);
+  const gridBefore = aligned ? Math.ceil(before / bucketMs) * bucketMs : before;
+  const count = aligned
+    ? Math.min(wanted, Math.max(1, Math.ceil((gridBefore - after) / bucketMs)))
+    : 1;
   const gridAfter = gridBefore - count * bucketMs;
 
   // 先按桶归集每个容器的样本。桶边界对所有容器是同一套（同一个 gridAfter / bucketMs），

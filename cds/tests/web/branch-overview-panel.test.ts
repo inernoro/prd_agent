@@ -109,8 +109,25 @@ describe('等待与变化（2026-09-02 真人验收：第一屏空白 / 不丝�
     expect(PANEL_CODE).toMatch(/function MetricsSkeleton\(/);
     expect(PANEL_CODE, '旧的虚线空框已经不该存在').not.toContain('正在读取指标历史…');
     // 骨架必须给出「还要等多久」，不能只写「加载中」
-    expect(PANEL_CODE).toContain('SAMPLER_CADENCE_SECONDS');
     expect(PANEL_CODE).toMatch(/约还需/);
+    /*
+     * 而且那个秒数必须按**服务端实际用的桶宽**算，不许写死采样器的标称节奏
+     * （Codex P2）：抽屉开着时 5s 端点也在写，桶宽会自己收窄到十几秒，拿 45s
+     * 去算就把 30 秒说成 90 秒。守卫钉住「常量已经不存在」+「用的是传进来的桶宽」。
+     */
+    expect(PANEL_CODE, '写死的采样器节奏常量应该已经删掉').not.toContain('SAMPLER_CADENCE_SECONDS');
+    expect(PANEL_CODE).toMatch(/need \* bucketSeconds/);
+  });
+
+  it('桶宽真的从 series 响应接到了骨架屏（不是只在面板里留个参数）', () => {
+    const code = stripComments(DRAWER);
+    expect(code, 'loadSeries 没有读响应里的 groupSeconds').toMatch(/groupSeconds\?:\s*number/);
+    expect(code, '读到了却没存').toMatch(/setSeriesGroupSeconds\(/);
+    // 切到这个元素的收尾，而不是拍一个字符数：属性一多就切不到最后几个，
+    // 守卫会在「代码明明是对的」时候变红，然后被人放宽成永远绿的样子。
+    const at = code.indexOf('<OverviewPanel');
+    const call = code.slice(at, code.indexOf('/>', at));
+    expect(call, '存了却没传给面板——典型的建了一半').toMatch(/bucketSeconds=\{seriesGroupSeconds/);
   });
 
   it('骨架说的帧数来自真样本数，不是把 null 当成有数据', () => {
