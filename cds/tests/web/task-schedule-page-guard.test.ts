@@ -95,6 +95,39 @@ describe('任务调度页的接线', () => {
   });
 
   /*
+   * 编辑弹窗改成双栏（左「什么时候跑」、右动作画布）后要钉住三件事，否则它会悄悄
+   * 退回「一栏塞四层套盒」：
+   *   1. 双栏只在 lg 起生效，窄屏必须是单栏自然流（mobile-layout-fallback）；
+   *   2. 动作区在右栏撑满高度，而不是排在第三块（content-fills-canvas）；
+   *   3. 保存在底栏，且旁边那句话说清还差什么——灰按钮自己不会解释自己。
+   * 红绿闭环：把 lg:grid-cols 那行删掉、或把 editorBlocker 从底栏文案里拿掉，本用例红。
+   */
+  it('编辑弹窗是双栏，动作占右栏并撑满，保存与「还差什么」在底栏', () => {
+    const dialog = src.slice(src.indexOf('<Dialog open={editorOpen}'), src.indexOf('<Dialog open={actionDialogOpen}'));
+    expect(dialog, '弹窗不再是双栏').toContain('lg:grid-cols-[300px_minmax(0,1fr)]');
+    expect(dialog, '窄屏没有单栏回退').toMatch(/flex min-h-0 flex-col lg:grid/);
+    expect(dialog, '动作区没有撑满右栏').toMatch(/flex min-h-0 flex-col p-4/);
+    expect(dialog, '保存旁边没有说清还差什么').toContain('{editorBlocker ||');
+    expect(dialog, '保存的可用性没有跟「还差什么」同源').toContain('disabled={saving || Boolean(editorBlocker)}');
+    for (const reason of ['还要选一个所属项目', '还要给任务起个名字', '还差 1 个动作才能保存']) {
+      expect(src, `少了「${reason}」这一档`).toContain(reason);
+    }
+  });
+
+  /*
+   * 空态直接给两个类型入口，省掉「先点添加、再在里面选类型」。preset 必须真的落到
+   * actionDraft 上，否则点「命令脚本」打开的还是 HTTP 表单——接了一半的线
+   * （predicate-and-wiring-discipline 形状 2）。
+   * 红绿闭环：把 openActionDialog 里的 preset 分支删掉，本用例红。
+   */
+  it('动作空态的两个入口真的会预置动作类型', () => {
+    expect(src).toContain("openActionDialog(null, 'http')");
+    expect(src).toContain("openActionDialog(null, 'command')");
+    const fn = src.slice(src.indexOf('const openActionDialog'), src.indexOf('const applyActionDraft'));
+    expect(fn, 'preset 没有落到 actionDraft 上').toMatch(/preset === 'command'[\s\S]{0,200}targetType: 'command'/);
+  });
+
+  /*
    * 三个写操作在进入时都要先清 error，否则上一次的报错会伪装成这一次的结果。
    * 红绿闭环：删掉 deleteJob 里的 setError('')，本用例红。
    */
