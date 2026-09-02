@@ -147,6 +147,19 @@ public class SiteContentSnapshotServiceTests
     }
 
     [Fact]
+    public async Task 单文件长页面_使用完整总预算而不是固定截在八千字()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = new string('前', 9_000) + "三元决策思想：风险分、置信度、业务价值";
+
+        var snap = await NewService(storage).GetAsync(SiteWith(("index.html", "entry")));
+
+        Assert.Null(snap.Unavailable);
+        Assert.Contains("风险分、置信度、业务价值", snap.Text);
+        Assert.False(snap.Truncated, "不足总预算的单页正文不应在 8000 字处被截断");
+    }
+
+    [Fact]
     public async Task 当前存储缺少存量入口时_从落库站点地址读取正文()
     {
         var storage = new FakeAssetStorage();

@@ -153,9 +153,15 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
             if (string.IsNullOrWhiteSpace(text)) continue;
 
             totalChars += text.Length;
-            if (text.Length > PerFileBudget)
+            // 单文件站点就是一个完整长页面，不能仍按 8000 字截断：用户问到页面后半段时，
+            // 模型虽然“读到了正文”，实际却永远看不到答案。多文件站按文件数公平分配总预算，
+            // 至少保留原有 8000 字下限，既用满上下文，又不让一个大文件吞掉其它文件。
+            var perFileBudget = picked.Count == 1
+                ? TotalBudget
+                : Math.Max(PerFileBudget, TotalBudget / picked.Count);
+            if (text.Length > perFileBudget)
             {
-                text = text[..PerFileBudget];
+                text = text[..perFileBudget];
                 result.Truncated = true;
             }
 
