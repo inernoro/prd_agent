@@ -106,6 +106,28 @@ describe('scrubParentSecretsFromEnv', () => {
    * （cdsp_ 前缀，assertProjectAccess 会拦跨项目访问），那是另一件事。
    * 红绿闭环：把重映射那行加回去，本用例第三条断言变红。
    */
+  /*
+   * 这条通道被撤除后，「撤了一半」连着发生了三次：代码删了但事故台账仍记着它是
+   * 「修复」（Codex 第六轮）、台账改了但源码注释仍写着「必须为它单独生成一把」
+   * （第七轮）、以及一条 feat changelog 碎片会把它宣告进 CHANGELOG。
+   * 逐处被指出来三次之后，这里用一条扫描把它钉死：除了明确写着「不要照做」的
+   * 反向说明，仓库里不许再出现「为子实例生成 AI 静态钥匙」的指示。
+   * 红绿闭环：把那段注释改回「必须为它单独生成一把」，本用例立刻红。
+   */
+  it('仓库里不许再有「给子实例生成 AI 静态钥匙」的指示', () => {
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/services/preview-instance.ts'),
+      'utf8',
+    );
+    // 反向说明必须在（否则下一个人不知道为什么不能做）
+    expect(src, 'preview-instance 里要留下「为什么不能给子实例发静态钥匙」的说明')
+      .toContain('也不要为子实例单独生成一把');
+    // 正向指示不许在
+    expect(src).not.toMatch(/必须为它单独生成一把/);
+    // 代码层面：不许再有任何把 CDS_PREVIEW_* 映射到 AI 钥匙的赋值
+    expect(src).not.toMatch(/CDS_AI_ACCESS_KEY\s*=\s*preview/);
+  });
+
   it('子实例不从任何 CDS_PREVIEW_* 变量继承 AI 静态钥匙', () => {
     const env: NodeJS.ProcessEnv = {
       CDS_PREVIEW_INSTANCE: '1',

@@ -1428,7 +1428,14 @@ function JobDetailHeader({
 }): JSX.Element {
   const disabled = Boolean(job.autoDisabledReason) || !job.enabled;
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
+    /*
+     * 窄屏（375-390px）下三个带文字的按钮 shrink-0 挤在标题同一行里，
+     * 合起来就吃掉整条详情栏：标题被压没，最后一个按钮还会被外层
+     * overflow-hidden 裁掉（Codex #1471 P2）。
+     * 按 cds mobile-layout-fallback：默认竖向堆叠、按钮自成一行并允许换行，
+     * sm 起再叠回单行。桌面观感零变化。
+     */
+    <div className="flex shrink-0 flex-col gap-2 border-b border-[hsl(var(--hairline))] px-4 py-2.5 sm:flex-row sm:items-center sm:gap-3">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="truncate text-[15px] font-semibold">{job.name}</span>
@@ -1442,8 +1449,8 @@ function JobDetailHeader({
           <span className="truncate">{scheduleText}</span>
         </div>
       </div>
-      <div className="flex-1" />
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="hidden flex-1 sm:block" />
+      <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
         <Button size="sm" onClick={onRun} disabled={running}>
           <Play />
           {running ? '执行中' : '立即执行'}

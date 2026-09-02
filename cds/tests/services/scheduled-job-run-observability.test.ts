@@ -67,6 +67,17 @@ describe('定时任务运行记录的可观测性', () => {
     })),
   } as unknown as ScheduledJob);
 
+  /**
+   * 保留策略的用例需要上千条历史。逐条走 upsertScheduledJobRun 会让每一次插入都
+   * 重排全量并排一次落盘 —— 两条用例合起来一万两千次调用，实测把这个文件拖到
+   * 约 60 秒（Codex #1471 P2）。历史是**夹具**不是被测行为，直接铺进 state；
+   * 被测的那一次仍然走公开方法，保留策略照常在那一次上生效。
+   */
+  const seedRuns = (rows: ScheduledJobRun[]): void => {
+    const state = stateService.getState() as { scheduledJobRuns?: ScheduledJobRun[] };
+    state.scheduledJobRuns = [...(state.scheduledJobRuns || []), ...rows];
+  };
+
   /*
    * 红绿闭环：把 executeActions 里写 steps 的那几行去掉（或把 run.steps 的赋值删掉），
    * 本用例第一条 expect 就会红——run.steps 变成 undefined。
@@ -179,18 +190,22 @@ describe('定时任务运行记录的可观测性', () => {
       status: 'success', queuedAt: iso,
     });
 
+    const fixture: ScheduledJobRun[] = [];
     // 低频任务：最早，只有 3 条——全局排序下它们永远在最末尾。
     for (let i = 0; i < 3; i += 1) {
-      stateService.upsertScheduledJobRun(mk('job_rare', i, new Date(Date.UTC(2026, 0, 1, i)).toISOString()));
+      fixture.push(mk('job_rare', i, new Date(Date.UTC(2026, 0, 1, i)).toISOString()));
     }
     // 60 个高频任务各 120 条，全部更新。
     for (let j = 0; j < 60; j += 1) {
       for (let i = 0; i < 120; i += 1) {
-        stateService.upsertScheduledJobRun(
-          mk(`job_hot_${j}`, i, new Date(Date.UTC(2026, 0, 2) + (j * 120 + i) * 1000).toISOString()),
-        );
+        fixture.push(mk(`job_hot_${j}`, i, new Date(Date.UTC(2026, 0, 2) + (j * 120 + i) * 1000).toISOString()));
       }
     }
+    seedRuns(fixture);
+    // 被测的那一次走公开方法，保留策略在这一次上生效。
+    stateService.upsertScheduledJobRun(
+      mk('job_hot_0', 999, new Date(Date.UTC(2026, 0, 3)).toISOString()),
+    );
 
     const rare = stateService.listScheduledJobRuns({ jobId: 'job_rare', limit: 50 });
     expect(rare, '低频任务的历史被全局上限吃掉了').toHaveLength(3);
@@ -212,12 +227,19 @@ describe('定时任务运行记录的可观测性', () => {
    */
   it('任务数本身超过全局上限时整任务淘汰，最久没动静的先出局', () => {
     const base = Date.UTC(2026, 0, 5);
-    for (let j = 0; j < 5200; j += 1) {
-      stateService.upsertScheduledJobRun({
+    const fixture: ScheduledJobRun[] = [];
+    for (let j = 0; j < 5199; j += 1) {
+      fixture.push({
         id: `only_${j}`, jobId: `job_${j}`, projectId: 'demo', trigger: 'schedule',
         status: 'success', queuedAt: new Date(base + j * 1000).toISOString(),
       });
     }
+    seedRuns(fixture);
+    // 最后一条走公开方法触发保留策略。
+    stateService.upsertScheduledJobRun({
+      id: 'only_5199', jobId: 'job_5199', projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: new Date(base + 5199 * 1000).toISOString(),
+    });
 
     const all = stateService.listScheduledJobRuns({ limit: 100000 });
     expect(all.length, '任务数超过上限时全局上限失守了').toBeLessThanOrEqual(5000);

@@ -118,10 +118,15 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
   // 先抄下子实例专用凭据（本身命中 PASSWORD 模式，会在下面的循环里被删）。
   const previewUsername = env.CDS_PREVIEW_USERNAME;
   const previewPassword = env.CDS_PREVIEW_PASSWORD;
-  // 子实例专用 AI 静态钥匙。父实例的 AI_ACCESS_KEY / CDS_AI_ACCESS_KEY 命中
-  // ACCESS_KEY 模式，照旧被下面的循环删掉——那把钥匙能操作生产 CDS，绝不能
-  // 留给未合并代码。要让 Agent 在子实例上自测（无头浏览器登录之外的唯一路径），
-  // 必须为它单独生成一把，走 CDS_PREVIEW_ 前缀，与门禁凭据同一套规矩。
+  // AI 静态钥匙一律不留给子实例。父实例的 AI_ACCESS_KEY / CDS_AI_ACCESS_KEY 命中
+  // ACCESS_KEY 模式，被下面的循环删掉——那把钥匙能操作生产 CDS。
+  //
+  // **也不要为子实例单独生成一把走 CDS_PREVIEW_ 前缀的**（这里曾经就是那么做的，
+  // 合并前撤除）：项目级 env 是同项目所有分支预览共用的一份（见
+  // .claude/rules/cross-project-isolation.md 通道 9），而进程级静态钥匙在
+  // resolveAiSession 里不带项目作用域、等价管理员——任一条未合并分支就能以管理员
+  // 身份打到兄弟分支的预览。Agent 要免登录自测，得走本来就带作用域的项目级
+  // Agent Key（cdsp_ 前缀），台账见 doc/debt.cds.md。
   const previewPublicBaseUrl = normalizePreviewPublicBaseUrl(env.CDS_PREVIEW_PUBLIC_BASE_URL);
   const previewSso = {
     enabled: env.CDS_PREVIEW_SSO_ENABLED,
