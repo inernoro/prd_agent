@@ -21,6 +21,7 @@ import {
   seedMetricSeries,
   type MetricSeries,
   type OverviewDeployment,
+  type OverviewService,
 } from '@/components/branch/OverviewPanel';
 import { Layers, Lock, Plus } from 'lucide-react';
 import { createPortal } from 'react-dom';
@@ -905,22 +906,35 @@ export function BranchDetailDrawer({
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
   const [metricSeries, setMetricSeries] = useState<Record<string, MetricSeries>>({});
   /**
-   * 服务状态的新鲜来源。
+   * 总览的服务清单：**成员集合与状态出自同一个新鲜来源**。
    *
-   * `branch.services` 是抽屉打开时那一次加载的快照，之后不随 SSE / 轮询更新；
-   * 而 `/metrics` 每 5 秒返回的 services 里带着服务端当下读到的 status。
-   * 用陈的那份会两头出错（Codex P2，核对属实）：刚启动完的服务有实时读数却被标
-   * 「停止」并被排除出合计；被外部停掉的服务还挂着停机前的旧值。
+   * `branch.services` 是抽屉打开时那一次加载的快照，`load()` 之后不再轮询；
+   * 而 `/metrics` 每 5 秒返回的 services 既是当下真实的成员集合，也带着服务端
+   * 当下读到的 status。
    *
-   * 这一条尤其要紧——总览里好几处「跳过停机容器」的判断都建立在 status 上，
-   * 判据本身是陈的，那些修复就都白做了。
+   * 这里栽过两次，是同一个洞的两半（Codex P2 ×2，均核对属实）：
+   *   1. 先是拿陈快照的 **status** 判「跳过停机容器」——刚启动完的服务有实时读数
+   *      却被标「停止」并被排除出合计，被外部停掉的服务还挂着停机前的旧值；
+   *   2. 修完 status 之后，**成员集合**仍留在陈快照里——部署期间新增的 profile 在
+   *      总览上根本不存在（健康环、服务数、堆叠层都没有它），删掉的 profile 赖着不走。
+   *
+   * 教训是别再只刷新「每个成员的某个字段」：成员集合和它的状态是同一个问题的两面，
+   * 必须一起取自同一处。`branch.services` 只在 metrics 尚未就绪时兜底，让首帧不空白。
    */
-  const overviewLiveStatus = useMemo(() => {
-    if (metricsState.status !== 'ok') return {} as Record<string, ServiceState['status']>;
-    const map: Record<string, ServiceState['status']> = {};
-    for (const svc of metricsState.data.services) map[svc.profileId] = svc.status;
-    return map;
-  }, [metricsState]);
+  const overviewServices = useMemo<OverviewService[]>(() => {
+    if (metricsState.status === 'ok') {
+      return metricsState.data.services.map((svc) => ({
+        profileId: svc.profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+      }));
+    }
+    return Object.values(branch?.services || {}).map((sv) => ({
+      profileId: sv.profileId,
+      containerName: sv.containerName,
+      status: sv.status,
+    }));
+  }, [metricsState, branch?.services]);
 
   /** 图例里的「当前值」走实时快照；图本身只认服务端分桶的 series，两者口径分开。 */
   const [liveStats, setLiveStats] = useState<Record<string, ContainerStatsResponse>>({});
@@ -2594,12 +2608,7 @@ export function BranchDetailDrawer({
                     状态/服务/复制集/版本/CPU/内存/流量 一屏仪表块，不再是文字堆砌 */}
                 {activeTab === 'overview' ? (
                   <OverviewPanel
-                    services={Object.values(branch.services || {}).map((sv) => ({
-                      profileId: sv.profileId,
-                      containerName: sv.containerName,
-                      // 状态优先取 /metrics 每 5 秒带回来的那一份，见 overviewLiveStatus。
-                      status: overviewLiveStatus[sv.profileId] ?? sv.status,
-                    }))}
+                    services={overviewServices}
                     running={branch.status === 'running' || branchStatus === 'running'}
                     branchName={branch.branch}
                     commitSha={branch.commitSha}
