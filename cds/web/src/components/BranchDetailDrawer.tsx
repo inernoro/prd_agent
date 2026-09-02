@@ -449,7 +449,12 @@ interface MetricsResponse {
   services: Array<{
     profileId: string;
     containerName: string;
-    status: string;
+    /**
+     * 服务端在**本次请求时刻**读到的状态，比抽屉打开时那份 branch.services 快照新鲜。
+     * 这里如实声明成 ServiceState['status'] 而不是宽泛的 string：服务端返回的就是它，
+     * 声明宽了只会逼调用方去断言。
+     */
+    status: ServiceState['status'];
     stats: ContainerStatsResponse | null;
   }>;
 }
@@ -899,6 +904,24 @@ export function BranchDetailDrawer({
   const [modeSavingProfileId, setModeSavingProfileId] = useState<string | null>(null);
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
   const [metricSeries, setMetricSeries] = useState<Record<string, MetricSeries>>({});
+  /**
+   * 服务状态的新鲜来源。
+   *
+   * `branch.services` 是抽屉打开时那一次加载的快照，之后不随 SSE / 轮询更新；
+   * 而 `/metrics` 每 5 秒返回的 services 里带着服务端当下读到的 status。
+   * 用陈的那份会两头出错（Codex P2，核对属实）：刚启动完的服务有实时读数却被标
+   * 「停止」并被排除出合计；被外部停掉的服务还挂着停机前的旧值。
+   *
+   * 这一条尤其要紧——总览里好几处「跳过停机容器」的判断都建立在 status 上，
+   * 判据本身是陈的，那些修复就都白做了。
+   */
+  const overviewLiveStatus = useMemo(() => {
+    if (metricsState.status !== 'ok') return {} as Record<string, ServiceState['status']>;
+    const map: Record<string, ServiceState['status']> = {};
+    for (const svc of metricsState.data.services) map[svc.profileId] = svc.status;
+    return map;
+  }, [metricsState]);
+
   /** 图例里的「当前值」走实时快照；图本身只认服务端分桶的 series，两者口径分开。 */
   const [liveStats, setLiveStats] = useState<Record<string, ContainerStatsResponse>>({});
   /**
@@ -2574,7 +2597,8 @@ export function BranchDetailDrawer({
                     services={Object.values(branch.services || {}).map((sv) => ({
                       profileId: sv.profileId,
                       containerName: sv.containerName,
-                      status: sv.status,
+                      // 状态优先取 /metrics 每 5 秒带回来的那一份，见 overviewLiveStatus。
+                      status: overviewLiveStatus[sv.profileId] ?? sv.status,
                     }))}
                     running={branch.status === 'running' || branchStatus === 'running'}
                     branchName={branch.branch}

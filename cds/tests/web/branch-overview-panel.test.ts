@@ -192,6 +192,32 @@ describe('两个数据源就有两个错误面（Codex P2，核对属实）', ()
   });
 });
 
+describe('服务状态要新鲜（Codex P2，核对属实）', () => {
+  /**
+   * `branch.services` 是抽屉打开时那一次加载的快照，之后不随 SSE / 轮询更新；
+   * 而 `/metrics` 每 5 秒返回的 services 带着服务端当下读到的 status。
+   * 用陈的那份会两头出错：刚启动完的服务有实时读数却被标「停止」并排除出合计；
+   * 被外部停掉的服务还挂着停机前的旧值。
+   *
+   * 这条尤其要紧——面板里好几处「跳过停机容器」的判断都建立在 status 上，
+   * 判据本身是陈的，那些修复就都白做了。
+   */
+  it('传给面板的 status 取自每 5 秒刷新的 /metrics，不是打开时的快照', () => {
+    const code = stripComments(DRAWER);
+    expect(code, '找不到新鲜状态的映射').toContain('overviewLiveStatus');
+    const prop = code.slice(code.indexOf('services={Object.values(branch.services'), code.indexOf('services={Object.values(branch.services') + 400);
+    expect(prop, 'status 不能直接用 branch.services 的快照').not.toMatch(/status:\s*sv\.status\s*,/);
+    expect(prop).toMatch(/overviewLiveStatus\[sv\.profileId\]\s*\?\?\s*sv\.status/);
+  });
+
+  it('新鲜状态来自 metricsState 而不是别的快照', () => {
+    const code = stripComments(DRAWER);
+    const memo = code.slice(code.indexOf('const overviewLiveStatus'), code.indexOf('const overviewLiveStatus') + 500);
+    expect(memo).toContain('metricsState');
+    expect(memo).toMatch(/svc\.status/);
+  });
+});
+
 describe('尾部聚合与陈旧序列（Codex P2，核对属实）', () => {
   /**
    * 「其他 N 个」是多个服务的合并项，带不了 stopped 标记，后面那道
