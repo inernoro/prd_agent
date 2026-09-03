@@ -219,6 +219,7 @@ public static class McpBuiltinTools
             {
                 new() { Name = "name", In = "body", Required = true, Description = "知识库名称" },
                 new() { Name = "description", In = "body", Description = "一句话说明这个库放什么" },
+                new() { Name = "clientRequestId", In = "body", Description = "幂等键：重试时带同一个值不会建两个库" },
             },
         },
         new McpToolDef

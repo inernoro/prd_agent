@@ -236,6 +236,8 @@ public class DocumentStoreOpenApiController : ControllerBase
         public string? Name { get; set; }
         public string? Description { get; set; }
         public List<string>? Tags { get; set; }
+        /// <summary>幂等键：同一把密钥用同一个值重复提交只会建一个库。</summary>
+        public string? ClientRequestId { get; set; }
     }
 
     /// <summary>新建一个知识库（归当前密钥主人所有，默认私有）。</summary>
@@ -247,6 +249,9 @@ public class DocumentStoreOpenApiController : ControllerBase
         if (string.IsNullOrWhiteSpace(req?.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "知识库名称不能为空"));
 
+        // 幂等走确定性 id，不走「先查后建」：后者在两次重试叠在一起时两边都查不到，各建一个库。
+        // 撞主键就是命中，把既有的那个回去。
+        var deterministicId = DeterministicId("kb-store", BuildIdempotencyKey(req.ClientRequestId));
         var store = new DocumentStore
         {
             Name = req.Name.Trim(),
@@ -255,7 +260,19 @@ public class DocumentStoreOpenApiController : ControllerBase
             Tags = req.Tags ?? new List<string>(),
             IsPublic = false,
         };
-        await _db.DocumentStores.InsertOneAsync(store, cancellationToken: ct);
+        if (deterministicId != null) store.Id = deterministicId;
+        try
+        {
+            await _db.DocumentStores.InsertOneAsync(store, cancellationToken: ct);
+        }
+        catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && deterministicId != null)
+        {
+            var existed = await _db.DocumentStores
+                .Find(s => s.Id == deterministicId && s.OwnerId == userId)
+                .FirstOrDefaultAsync(ct);
+            if (existed == null) throw;
+            return Ok(ApiResponse<object>.Ok(new { storeId = existed.Id, name = existed.Name, deduplicated = true }));
+        }
         return Ok(ApiResponse<object>.Ok(new { storeId = store.Id, name = store.Name }));
     }
 
@@ -286,15 +303,16 @@ public class DocumentStoreOpenApiController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"正文超过 {MaxContentChars} 字上限，请拆成多篇或先精简"));
 
-        // 幂等：同一把密钥 + 同一个 clientRequestId 只写一次
+        // 幂等：同一把密钥 + 同一个 clientRequestId 只写一次。
+        // 判据走**确定性 id**（撞主键即命中），不走「先查后建」—— 后者在两次重试叠在一起时
+        // 两边都查不到，各写一篇、计数各加一次，而幂等键正是为了不发生这件事。
         var idempotencyKey = BuildIdempotencyKey(req.ClientRequestId);
-        if (idempotencyKey != null)
+        var deterministicId = DeterministicId("kb-entry", idempotencyKey);
+        if (deterministicId != null)
         {
-            // 用字符串字段名过滤：Metadata 是 Dictionary，索引器写法在表达式树里翻不成 Mongo 查询
-            var dedupFilter = Builders<DocumentEntry>.Filter.And(
-                Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
-                Builders<DocumentEntry>.Filter.Eq("Metadata.mcpRequestId", idempotencyKey));
-            var existed = await _db.DocumentEntries.Find(dedupFilter).FirstOrDefaultAsync(ct);
+            var existed = await _db.DocumentEntries
+                .Find(e => e.Id == deterministicId && e.StoreId == storeId)
+                .FirstOrDefaultAsync(ct);
             if (existed != null)
                 return Ok(ApiResponse<object>.Ok(new { entryId = existed.Id, title = existed.Title, deduplicated = true }));
         }
@@ -317,7 +335,19 @@ public class DocumentStoreOpenApiController : ControllerBase
             UpdatedByName = displayName,
             LastChangedAt = DateTime.UtcNow,
         };
-        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
+        if (deterministicId != null) entry.Id = deterministicId;
+        try
+        {
+            await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
+        }
+        catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && deterministicId != null)
+        {
+            var raced = await _db.DocumentEntries
+                .Find(e => e.Id == deterministicId && e.StoreId == storeId)
+                .FirstOrDefaultAsync(ct);
+            if (raced == null) throw;
+            return Ok(ApiResponse<object>.Ok(new { entryId = raced.Id, title = raced.Title, deduplicated = true }));
+        }
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == storeId,
             Builders<DocumentStore>.Update.Inc(s => s.DocumentCount, 1).Set(s => s.UpdatedAt, DateTime.UtcNow),
@@ -378,6 +408,13 @@ public class DocumentStoreOpenApiController : ControllerBase
 
     /// <summary>单篇正文上限。挡住智能体一次糊一本书进来，也挡住它把上下文里的垃圾整个倒进知识库。</summary>
     private const int MaxContentChars = 200_000;
+
+    /// <summary>把幂等键压成确定性文档 id（32 位十六进制，与随机 id 同形）。没给幂等键就返回 null。</summary>
+    private static string? DeterministicId(string kind, string? idempotencyKey)
+        => idempotencyKey == null
+            ? null
+            : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes($"mcp-{kind}:{idempotencyKey}"))).ToLowerInvariant()[..32];
 
     /// <summary>幂等键带上密钥 id，避免两把密钥用了同一个 clientRequestId 互相吞掉对方的写入。</summary>
     private string? BuildIdempotencyKey(string? clientRequestId)

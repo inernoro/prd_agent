@@ -40,6 +40,21 @@ public class McpArtifactExtractorTests
     }
 
     [Fact]
+    public void Extract_列表类工具的_items_地址_不算这次的产物()
+    {
+        // 下探数组只对已认出的生图任务做。无差别扫会把 map_web_list_pages 坑掉：
+        // 第一条既有站点的地址会被当成「这次做出来的东西」，记录上长出一个指向别处的「打开」。
+        var body = """
+        {"success":true,"data":{"total":2,"items":[{"siteId":"s1","url":"https://x/old.html"}]}}
+        """;
+
+        var art = McpArtifactExtractor.Extract("map_web_list_pages", body);
+
+        art.Url.ShouldBeNull();
+        art.Kind.ShouldBeNull();
+    }
+
+    [Fact]
     public void Extract_读类工具拿到的既有对象_不算这次的产物()
     {
         var body = """{"success":true,"data":{"skillId":"k1","title":"某个技能"}}""";

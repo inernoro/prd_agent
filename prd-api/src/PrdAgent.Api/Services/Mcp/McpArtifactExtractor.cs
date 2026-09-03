@@ -54,7 +54,11 @@ public static class McpArtifactExtractor
         // 生图这类工具的地址挂在数组里（data.images[].url），顶层没有 url。
         // 只认顶层的话，跑完的生图记录永远是「有 runId、没有可点开的产物」——
         // 而「一点就打开刚做出来的东西」正是这条记录存在的理由。
-        if (string.IsNullOrWhiteSpace(url)) url = ReadFirstUrlInArrays(data);
+        //
+        // 但下探只对**已经认出是生图任务**的响应做。无差别扫所有数组会把列表类工具坑掉：
+        // map_web_list_pages 回的是 data.items[]，第一条既有站点的地址会被当成「这次做出来的东西」，
+        // 记录上于是长出一个指向别处的「打开」按钮 —— 产物是这次做出来的，不是这次看到的。
+        if (string.IsNullOrWhiteSpace(url) && kind == "image-run") url = ReadFirstUrlInArrays(data);
 
         string? title = null;
         foreach (var key in TitleKeys)
@@ -99,7 +103,7 @@ public static class McpArtifactExtractor
         return Trim(responseBody);
     }
 
-    /// <summary>在 data 的数组字段里找第一个带 url 的元素（生图 images[]、附件列表这类）。只下探一层，不做深搜。</summary>
+    /// <summary>在 data 的数组字段里找第一个带 url 的元素（生图 images[]）。只下探一层，不做深搜，且只在已认出生图任务时调用。</summary>
     private static string? ReadFirstUrlInArrays(JsonObject data)
     {
         foreach (var kv in data)
