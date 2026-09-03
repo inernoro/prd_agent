@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -31,6 +32,10 @@ public class HostedSiteService : IHostedSiteService
     // 文件数仍保留硬上限以避免用海量空条目消耗解析与对象存储资源；解压总量另由
     // MaxExtractedSize 独立限制，不能用提高文件数上限绕过 zip bomb 防护。
     public const int MaxZipFileCount = 20000;
+    // MongoDB 单文档硬上限是 16MB。HostedSite 除 Files 外还有标题、分享、提问配置等字段，
+    // 因此把文件清单单独限制在 12MB，至少预留 4MB 给其余字段。必须在任何对象上传前检查，
+    // 否则创建会留下孤儿对象，重传会先覆盖线上文件、再因 DB 更新失败而破坏旧站点。
+    internal const int MaxZipManifestBsonSize = 12 * 1024 * 1024;
 
     // 网页托管对象的 Cache-Control。配合 SiteUrl 上的 ?v={UpdatedAt.Ticks} 版本指纹形成
     // 「内容指纹缓存」：内容不变 → URL 不变 → 命中浏览器/CDN 缓存（满足"没更新就用缓存"）；
@@ -353,7 +358,7 @@ public class HostedSiteService : IHostedSiteService
 
         if (ext == ".zip")
         {
-            var validationError = ValidateZip(fileBytes);
+            var validationError = ValidateZip(siteId, fileBytes);
             if (validationError != null)
                 throw new InvalidOperationException(validationError);
             // 校验已通过，此处仅可能因基础设施异常失败（与改动前行为一致）
@@ -2574,8 +2579,19 @@ public class HostedSiteService : IHostedSiteService
 
     internal static string? ValidateZipFileCount(int fileCount)
         => fileCount > MaxZipFileCount
-            ? $"ZIP 包含的文件数超过上限（{MaxZipFileCount}），请删除无用文件或拆分后再上传"
+            ? $"ZIP 包含的文件数超过上限（{MaxZipFileCount}），请删除无用文件后再上传"
             : null;
+
+    internal static string? ValidateZipManifestSize(IReadOnlyCollection<HostedSiteFile> files)
+    {
+        var filesDocument = new BsonDocument(
+            nameof(HostedSite.Files),
+            new BsonArray(files.Select(file => file.ToBsonDocument())));
+
+        return filesDocument.ToBson().Length > MaxZipManifestBsonSize
+            ? "ZIP 文件路径信息过多，无法安全保存。请缩短文件名和目录层级，或删除无用文件后再上传"
+            : null;
+    }
 
     /// <summary>
     /// ZIP 过滤/计数/限额逻辑的唯一来源（路径穿越、__MACOSX、黑名单后缀、文件数、
@@ -2583,7 +2599,7 @@ public class HostedSiteService : IHostedSiteService
     /// 结构上保证「校验通过」⇔「上传阶段产出 ≥1 文件且不超限」，杜绝两份逻辑各自漂移。
     /// 返回的 Entry 仅在传入 archive 的生命周期内有效。
     /// </summary>
-    private ZipPlan PlanZipEntries(ZipArchive archive)
+    private ZipPlan PlanZipEntries(ZipArchive archive, string siteId)
     {
         var plan = new ZipPlan();
 
@@ -2627,7 +2643,19 @@ public class HostedSiteService : IHostedSiteService
         }
 
         if (plan.Items.Count == 0)
+        {
             plan.Error = "ZIP 中没有有效文件";
+            return plan;
+        }
+
+        var plannedFiles = plan.Items.Select(item => new HostedSiteFile
+        {
+            Path = item.RelativePath,
+            CosKey = _storage.BuildSiteKey(siteId, item.RelativePath),
+            Size = item.Entry.Length,
+            MimeType = item.Mime,
+        }).ToList();
+        plan.Error = ValidateZipManifestSize(plannedFiles);
 
         return plan;
     }
@@ -2651,7 +2679,7 @@ public class HostedSiteService : IHostedSiteService
             using var zipStream = new MemoryStream(zipBytes);
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
 
-            var plan = PlanZipEntries(archive);
+            var plan = PlanZipEntries(archive, siteId);
             if (plan.Error != null)
                 return new ZipExtractResult { Error = plan.Error };
 
@@ -2730,13 +2758,13 @@ public class HostedSiteService : IHostedSiteService
     /// 纯元数据校验 ZIP（不解压内容、不写任何 COS）。与 ExtractAndUploadZip 共用
     /// PlanZipEntries，条件结构上一致。用于重传替换：先校验后写入，失败时零副作用。
     /// </summary>
-    private string? ValidateZip(byte[] zipBytes)
+    private string? ValidateZip(string siteId, byte[] zipBytes)
     {
         try
         {
             using var zipStream = new MemoryStream(zipBytes);
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
-            return PlanZipEntries(archive).Error;
+            return PlanZipEntries(archive, siteId).Error;
         }
         catch (InvalidDataException)
         {
