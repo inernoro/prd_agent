@@ -75,6 +75,18 @@ public sealed class McpUsageService
     public static bool IsWriteTool(McpToolDef tool) =>
         tool.WritesData ?? !string.Equals(tool.Method, "GET", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// 这次调用会不会「做出/取到一件东西」（决定记录里给不给可点开的产物地址）。
+    ///
+    /// **与 <see cref="IsWriteTool"/> 是两件事，别合用一个值。** 后者管的是扣不扣写入额度，
+    /// 可以被 WritesData 按语义压掉：取用技能是 POST 但本质是读，不该占额度 ——
+    /// 可它确实把一个技能包取到了用户名下，还回了 zip 地址，那就是一件实实在在的产物。
+    /// 两者合成一个值的话，fork 的记录会丢掉下载地址，用户点不开自己刚取的东西。
+    /// 判据回到 HTTP 动词：非 GET 即「这次动了什么」。
+    /// </summary>
+    public static bool ProducesArtifacts(McpToolDef tool) =>
+        !string.Equals(tool.Method, "GET", StringComparison.OrdinalIgnoreCase);
+
     public static bool IsImageTool(McpToolDef tool) =>
         string.Equals(tool.Name, "map_visual_generate_image", StringComparison.Ordinal);
 

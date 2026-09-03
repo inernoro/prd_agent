@@ -308,7 +308,8 @@ public class McpGatewayController : ControllerBase
             }
 
             var (status, respBody) = await LoopbackAsync(bt.Method, path, body, ct);
-            await RecordFinishedAsync(log, status, respBody, startedAt, verdict, ct);
+            await RecordFinishedAsync(log, status, respBody, startedAt, verdict,
+                McpUsageService.ProducesArtifacts(bt), ct);
             return ToolCallResult(id, status, respBody);
         }
 
@@ -340,7 +341,7 @@ public class McpGatewayController : ControllerBase
         var pathAndQuery = isGetDyn ? AppendQuery(dynPath, args, consumed) : dynPath;
         JsonNode? dynBody = isGetDyn ? null : BodyExcluding(args, consumed);
         var (st, rb) = await LoopbackAsync(match.HttpMethod, pathAndQuery, dynBody, ct);
-        await RecordFinishedAsync(log, st, rb, startedAt, dynVerdict, ct);
+        await RecordFinishedAsync(log, st, rb, startedAt, dynVerdict, !isGetDyn, ct);
         return ToolCallResult(id, st, rb);
     }
 
@@ -368,7 +369,8 @@ public class McpGatewayController : ControllerBase
     /// 没有新的副作用，再扣一次额度等于惩罚「响应丢了所以重试」这件本来就正常的事。
     /// </summary>
     private async Task RecordFinishedAsync(
-        McpCallLog log, int status, string respBody, DateTime startedAt, McpQuotaVerdict verdict, CancellationToken ct)
+        McpCallLog log, int status, string respBody, DateTime startedAt, McpQuotaVerdict verdict,
+        bool producesArtifacts, CancellationToken ct)
     {
         log.HttpStatus = status;
         log.Status = status is >= 200 and < 300 ? "success" : "error";
@@ -383,11 +385,8 @@ public class McpGatewayController : ControllerBase
         {
             await ReleaseReservationAsync(log.KeyId, verdict, ct);
             log.Deduplicated = true;
-            // 记账清零（这次没有新副作用），但**产物分类不能跟着清**：
-            // 「这个工具会不会做出东西」是工具本身的属性，跟这一次扣不扣额度是两回事。
-            // 一起清掉的话，幂等重试的记录会丢掉既有站点/文档的地址，用户点不开 ——
-            // 而他重试的原因恰恰是想拿到那个地址。
-            var producesArtifacts = log.IsWrite;
+            // 记账清零（这次没有新副作用），但产物分类不跟着清 —— 它由 producesArtifacts
+            // 单独传进来，跟扣不扣额度无关。幂等重试要的正是那个既有产物的地址。
             log.ImageCount = 0;
             log.IsWrite = false;
             var dedupArtifact = McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody);
@@ -398,7 +397,7 @@ public class McpGatewayController : ControllerBase
         }
         else
         {
-            var artifact = McpArtifactExtractor.Extract(log.ToolName, log.IsWrite, respBody);
+            var artifact = McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody);
             log.ArtifactKind = artifact.Kind;
             log.ArtifactId = artifact.Id;
             log.ArtifactUrl = artifact.Url;

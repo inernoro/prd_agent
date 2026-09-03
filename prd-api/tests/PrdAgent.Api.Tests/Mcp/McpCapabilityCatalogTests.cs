@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using PrdAgent.Api.Mcp;
+using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Security;
 using Shouldly;
 using Xunit;
@@ -67,6 +68,29 @@ public class McpCapabilityCatalogTests
         {
             var known = McpCapabilityCatalog.AllScopes.Contains(tool.RequiredScope) || legacy.Contains(tool.RequiredScope);
             known.ShouldBeTrue($"工具 {tool.Name} 要求的 scope {tool.RequiredScope} 不属于任何能力卡，用户在接入向导里永远勾不到它");
+        }
+    }
+
+    [Fact]
+    public void 扣额度与出产物是两个判据_不许合成一个()
+    {
+        // 事故形状：map_market_fork_skill 用 WritesData=false 压掉了写入额度（POST 但语义是读），
+        // 而产物识别当时读的是同一个值 —— 于是它返回的 zip 地址被从调用记录里抹掉，
+        // 用户点不开自己刚取到的技能。两个判据必须各算各的。
+        var fork = McpBuiltinTools.All.Single(t => t.Name == "map_market_fork_skill");
+
+        McpUsageService.IsWriteTool(fork).ShouldBeFalse("取用技能不该占写入额度");
+        McpUsageService.ProducesArtifacts(fork).ShouldBeTrue("取用技能确实把东西取到了用户名下，记录要给得出地址");
+    }
+
+    [Fact]
+    public void 纯读工具既不扣额度也不出产物()
+    {
+        foreach (var t in McpBuiltinTools.All.Where(x =>
+                     string.Equals(x.Method, "GET", StringComparison.OrdinalIgnoreCase)))
+        {
+            McpUsageService.IsWriteTool(t).ShouldBeFalse($"{t.Name} 是 GET，不该算写入");
+            McpUsageService.ProducesArtifacts(t).ShouldBeFalse($"{t.Name} 是 GET，不该被记成这次做出了东西");
         }
     }
 
