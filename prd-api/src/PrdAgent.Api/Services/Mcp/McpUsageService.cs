@@ -69,8 +69,18 @@ public sealed class McpUsageService
     /// 在里面写副作用（或捕获局部变量当结论）会让多个调用方同时认为自己是第一个 ——
     /// 于是「一分钟只落一条」退化成「每个并发都落一条」，等于没限。
     /// TryAdd 对同一个键全局只成功一次，这才是真正的原子胜出。
+    ///
+    /// 值存的是那一分钟的起点，供 <see cref="SweepRateStateIfDue"/> 判过期用 —— 键里虽然也有
+    /// ticks，但从字符串里回解时间是「同一件事存两份」，改一处忘一处就漂了。
     /// </summary>
-    private static readonly ConcurrentDictionary<string, byte> RateDenialLogged = new();
+    private static readonly ConcurrentDictionary<string, DateTime> RateDenialLogged = new();
+
+    /// <summary>上一次清扫过期速率状态的时刻（进程内，UTC ticks）。</summary>
+    private static long _lastRateSweepTicks = DateTime.UtcNow.Ticks;
+
+    /// <summary>清扫间隔与保留窗口：只留最近两分钟，其余都是死数据。</summary>
+    private static readonly TimeSpan RateSweepInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan RateStateRetention = TimeSpan.FromMinutes(2);
 
     public McpUsageService(MongoDbContext db, ILogger<McpUsageService> logger)
     {
@@ -123,8 +133,7 @@ public sealed class McpUsageService
             _ => (minute, 1),
             (_, cur) => cur.MinuteStart == minute ? (minute, cur.Count + 1) : (minute, 1));
 
-        // 顺手清掉两分钟前的标记，标记表不随时间无界增长（每把活跃密钥最多留一两条）
-        RateDenialLogged.TryRemove($"{keyId}|{minute.AddMinutes(-2).Ticks}", out _);
+        SweepRateStateIfDue(now);
 
         if (window.Count <= ratePerMin) return McpQuotaVerdict.Ok;
 
@@ -132,8 +141,41 @@ public sealed class McpUsageService
         // 一分钟内只为超限落一条审计。每一条都落的话，限流就保护不了它本来要保护的那张表：
         // 被挡住的洪水照样一条一条写进去。第一条留着，用户才看得到「被限流了」这件事。
         // 胜负由 TryAdd 定 —— 同一个键全局只成功一次，并发的其余调用方一律拿到 false。
-        var firstDenial = RateDenialLogged.TryAdd($"{keyId}|{minute.Ticks}", 0);
+        var firstDenial = RateDenialLogged.TryAdd($"{keyId}|{minute.Ticks}", minute);
         return firstDenial ? McpQuotaVerdict.Deny(reason) : McpQuotaVerdict.DenyQuietly(reason);
+    }
+
+    /// <summary>
+    /// 清掉过期的速率窗口与拒绝标记。
+    ///
+    /// 两张表都以 keyId 为键，进程不重启就一直留着：密钥可以被撤销、被硬删，也可以被反复轮换，
+    /// 而条目只增不减 —— 换句话说，内存占用跟「这个进程见过多少把密钥」成正比，没有上限。
+    /// 密钥创建本身不设上限，所以正常轮换或者一个客户端反复建删就能把它撑起来。
+    ///
+    /// 只由抢到这一轮的那个调用方来扫（CompareExchange 定胜负），其余调用方原样往下走，
+    /// 不为清扫付等待成本。删除用 KeyValuePair 重载：值变了说明这把密钥刚刚又被用过，那就别删，
+    /// 否则会把它当前这一分钟的计数清零、白送一轮额度。
+    /// </summary>
+    private static void SweepRateStateIfDue(DateTime now)
+    {
+        var lastTicks = Interlocked.Read(ref _lastRateSweepTicks);
+        if (now - new DateTime(lastTicks, DateTimeKind.Utc) < RateSweepInterval) return;
+        if (Interlocked.CompareExchange(ref _lastRateSweepTicks, now.Ticks, lastTicks) != lastTicks) return;
+
+        foreach (var kv in RateWindows)
+            if (IsStaleRateState(kv.Value.MinuteStart, now))
+                RateWindows.TryRemove(kv);
+        foreach (var kv in RateDenialLogged)
+            if (IsStaleRateState(kv.Value, now))
+                RateDenialLogged.TryRemove(kv);
+    }
+
+    /// <summary>
+    /// 这条速率状态是不是已经过期、该清掉。纯函数，两张表读同一个判据，也让守卫钉得住保留窗口 ——
+    /// 窗口被谁改短到一分钟以内，正在计数的当前分钟就会被自己扫掉，等于速率闸周期性失效。
+    /// </summary>
+    internal static bool IsStaleRateState(DateTime entryMinute, DateTime now) =>
+        entryMinute < now - RateStateRetention;
     }
 
     /// <summary>

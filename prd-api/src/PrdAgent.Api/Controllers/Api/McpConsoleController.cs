@@ -95,14 +95,15 @@ public class McpConsoleController : ControllerBase
                 writeScope = cap.WriteScope,
                 writeNeedsApproval = cap.WriteNeedsApproval,
                 // 我自己有没有这块能力的权限位 —— 没有的话向导里勾了也签不出密钥，得先说清楚。
-                // 不受权限位把关的能力（海鲜市场、知识库这类老 scope）恒为可用：它们的闸门在接口自己身上，
-                // 拿权限位去判会把「其实签得出来」的能力显示成灰的。
+                // 判据与签发校验同一个（IsIssuancePermissionChecked）：真正没有权限位的 scope
+                //（海鲜市场：闸门在接口自己身上）恒为可用，拿权限位去判会把「其实签得出来」的显示成灰的；
+                // 而 document-store 有真实权限位、且等价于文档空间的读写权限，签发要查，这里就得跟着灰。
                 //
                 // 读与写要分开报：只有 web-pages.read 的人，整张卡是可用的，但写入那一档签不出来。
                 // 合成一个 Any() 会让向导把写入勾选框也点亮，勾了之后在后端交集校验那里才失败 ——
                 // 用户在最后一步才知道自己不该勾，这是把系统本来就知道的事推给他去撞。
-                availableToMe = ScopeAvailable(cap, cap.ReadScope ?? cap.WriteScope, ownedPermissions),
-                writeAvailableToMe = ScopeAvailable(cap, cap.WriteScope, ownedPermissions),
+                availableToMe = ScopeAvailable(cap.ReadScope ?? cap.WriteScope, ownedPermissions),
+                writeAvailableToMe = ScopeAvailable(cap.WriteScope, ownedPermissions),
                 granted = scopes.Any(s => McpCapabilityCatalog.ScopeSatisfies(grantedScopes, s)),
                 todayCalls = tally.ByCapability.TryGetValue(cap.Key, out var capCalls) ? capCalls : 0,
                 tools = tools.Select(t => new
@@ -273,11 +274,17 @@ public class McpConsoleController : ControllerBase
     /// <summary>自检里的一行工具。内置与动态两路要合成一张清单，所以给它一个名字，不用匿名类型。</summary>
     private sealed record VisibleTool(string Name, string Description, string? Capability, bool IsWrite);
 
-    /// <summary>某个 scope 我自己签不签得出来：不受权限位把关的能力恒真，受把关的看权限位。</summary>
-    private static bool ScopeAvailable(McpCapability cap, string? scope, IReadOnlyCollection<string> ownedPermissions)
+    /// <summary>
+    /// 某个 scope 我自己签不签得出来：不受权限位把关的恒真，受把关的看权限位。
+    ///
+    /// 判据按 **scope** 而不是按能力整块判，且用的是签发口径（IsIssuancePermissionChecked）——
+    /// 与 AgentApiKeysController.ValidateScopeAsync 同一个函数。两处不同口径的后果是
+    /// 面板上写着「可以开通」，一点却被签发接口打回来：把用户请到门口再关门。
+    /// </summary>
+    private static bool ScopeAvailable(string? scope, IReadOnlyCollection<string> ownedPermissions)
     {
         if (string.IsNullOrEmpty(scope)) return false;
-        if (!McpCapabilityCatalog.IsPermissionChecked(cap)) return true;
+        if (!McpCapabilityCatalog.IsIssuancePermissionChecked(scope!)) return true;
         return McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope!);
     }
 

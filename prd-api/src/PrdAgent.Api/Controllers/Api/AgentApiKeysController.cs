@@ -80,10 +80,15 @@ public class AgentApiKeysController : ControllerBase
     {
         // 受权限位把关的 scope：必须是用户自己就有的权限位，不能靠签发密钥凭空长出来。
         //
-        // 只查 PermissionCheckedScopes，不查整个能力目录：`marketplace.skills:read` 这类历史 scope
-        // 在权限目录里没有对应的权限位（它的闸门是 [RequireScope] 自己），拿它去查交集会把所有人
-        // ——包括 root——挡在门外，等于把已经在跑的市场接入打死。
-        if (McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope))
+        // 查的是「签发口径」（IsIssuancePermissionChecked），比鉴权口径宽一档：
+        //   - PermissionCheckedScopes：本轮新接的四个，签发查、鉴权也查
+        //   - IssuanceOnlyPermissionCheckedScopes：document-store 两个，只在签发时查。
+        //     它们等价于 document-store.read/.write 权限位（见 HasScopeGrant），谁能自签就等于
+        //     自己长出了文档空间写权限；但存量密钥早就在跑，鉴权时才开始查会把它们当场打死，
+        //     所以只收住「从现在起新签的」。
+        // 不查整个能力目录：`marketplace.skills:read` 这类历史 scope 在权限目录里没有对应权限位
+        //（它的闸门是 [RequireScope] 自己），拿它去查交集会把所有人——包括 root——挡在门外。
+        if (McpCapabilityCatalog.IsIssuancePermissionChecked(scope))
         {
             if (!McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope))
             {

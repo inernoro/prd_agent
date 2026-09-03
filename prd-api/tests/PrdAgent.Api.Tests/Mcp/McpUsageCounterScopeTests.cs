@@ -66,3 +66,31 @@ public class McpUsageCounterScopeTests
         return File.ReadAllText(full);
     }
 }
+
+/// <summary>
+/// 速率状态的保留窗口。
+///
+/// 两张进程内静态表（速率窗口 / 拒绝标记）以 keyId 为键，只增不减：密钥可以被撤销、被硬删、
+/// 被反复轮换，而条目一直留着，内存占用跟「这个进程见过多少把密钥」成正比。清扫是为它加的上限。
+///
+/// 这里测的是纯判据，不去动那两张静态表 —— 动了会跨用例串味，造出一个自己会飘的守卫。
+/// 判据被谁改短到一分钟以内，正在计数的当前分钟会被自己扫掉，速率闸就周期性失效了。
+/// </summary>
+public class McpRateStateRetentionTests
+{
+    private static readonly DateTime Now = new(2026, 9, 3, 12, 30, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void 当前这一分钟绝不能被扫掉()
+    {
+        McpUsageService.IsStaleRateState(Now, Now).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 上一分钟还留着_两分钟前才清()
+    {
+        // 保留窗口必须严格大于一分钟：跨分钟边界的调用要还能读到刚过去那一分钟的状态
+        McpUsageService.IsStaleRateState(Now.AddMinutes(-1), Now).ShouldBeFalse();
+        McpUsageService.IsStaleRateState(Now.AddMinutes(-3), Now).ShouldBeTrue();
+    }
+}

@@ -133,12 +133,39 @@ public class McpCapabilityCatalogTests
     }
 
     [Fact]
-    public void DocumentStoreScopes_AreExcludedFromPermissionCheck_ForBackwardCompatibility()
+    public void DocumentStoreScopes_签发要查权限_鉴权不查_才能既收住新签又不打死存量()
     {
-        // 权限位是有的（document-store.read / .write），排除的理由是存量：这类密钥早就在跑，
-        // 突然要求权限交集会让已经在用的接入签不出、也调不动。要收紧得单独一轮，配数据盘点。
+        // 权限位是有的（document-store.read / .write），而 AdminPermissionMiddleware.HasScopeGrant
+        // 认这两个 scope 等价于那两个权限位 —— 也就是说，谁能给自己签一把带 document-store:write
+        // 的密钥，谁就凭空长出了文档空间写权限。所以**签发必须查**。
+        McpCapabilityCatalog.IsIssuancePermissionChecked(McpCapabilityCatalog.ScopeDocStoreRead).ShouldBeTrue();
+        McpCapabilityCatalog.IsIssuancePermissionChecked(McpCapabilityCatalog.ScopeDocStoreWrite).ShouldBeTrue();
+
+        // 但鉴权不能查：这类密钥早就在跑，鉴权时开始查交集会让已经在用的接入当场调不动。
+        // 两个集合分开，正是为了「收住从现在起新签的」而不动存量。
         McpCapabilityCatalog.PermissionCheckedScopes.ShouldNotContain(McpCapabilityCatalog.ScopeDocStoreRead);
         McpCapabilityCatalog.PermissionCheckedScopes.ShouldNotContain(McpCapabilityCatalog.ScopeDocStoreWrite);
+    }
+
+    [Fact]
+    public void 每个签发要查的_scope_都对得上一个真实权限位()
+    {
+        // 与 EveryPermissionCheckedScope_MapsToARealAdminPermission 同理：换算不出真实权限位的 scope
+        // 一旦进了签发校验，连 root 都签不出来。这条把新加的那半边也钉住。
+        var permissions = AdminPermissionCatalog.All.Select(p => p.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var scope in McpCapabilityCatalog.IssuanceOnlyPermissionCheckedScopes)
+        {
+            var perm = McpCapabilityCatalog.ToPermission(scope);
+            permissions.Contains(perm).ShouldBeTrue($"scope {scope} 对应的权限位 {perm} 在权限目录里不存在，拿它做签发校验等于谁都签不出来");
+        }
+    }
+
+    [Fact]
+    public void 市场_scope_两个口径都不查_因为它压根没有权限位()
+    {
+        // 它的闸门是 [RequireScope] 自己。纳进任一口径都会把所有人挡在门外。
+        McpCapabilityCatalog.IsIssuancePermissionChecked(McpCapabilityCatalog.ScopeMarketplaceRead).ShouldBeFalse();
+        McpCapabilityCatalog.IsIssuancePermissionChecked(McpCapabilityCatalog.ScopeMarketplaceWrite).ShouldBeFalse();
     }
 
     // ── 授权判据 ──

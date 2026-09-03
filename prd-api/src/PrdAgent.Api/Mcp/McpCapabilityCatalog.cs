@@ -147,9 +147,24 @@ public static class McpCapabilityCatalog
         ScopeVisualUse, ScopeLiteraryUse, ScopeWebPagesRead, ScopeWebPagesWrite,
     };
 
-    /// <summary>这块能力的 scope 是否受后台权限位把关（决定接入向导里要不要提示「你还没有这个权限」）。</summary>
-    public static bool IsPermissionChecked(McpCapability capability) =>
-        capability.AllScopes().Any(PermissionCheckedScopes.Contains);
+    /// <summary>
+    /// 只在**签发**时按权限位把关的 scope —— 鉴权时不查，存量密钥照常能用。
+    ///
+    /// 为什么要有第二个集合，而不是把它们并进 <see cref="PermissionCheckedScopes"/>：
+    /// `document-store:read` / `:write` 有真实权限位，但这类密钥早就在跑，鉴权时开始查交集
+    /// 会让已经在用的接入当场调不动。而签发是「从现在起新发的」，没有存量包袱。
+    ///
+    /// 为什么非查不可：`AdminPermissionMiddleware.HasScopeGrant` 认这两个 scope 等价于
+    /// `document-store.read/.write` 权限位。也就是说，谁能给自己签一把带 `document-store:write`
+    /// 的密钥，谁就拿到了文档空间的写权限——哪怕后台从没给过他这个权限位。这道口子早于本次改动
+    /// 就存在（走原始密钥接口就能签），但接入台把它变成了一次点击，所以这里必须收住。
+    /// </summary>
+    public static readonly IReadOnlySet<string> IssuanceOnlyPermissionCheckedScopes =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ScopeDocStoreRead, ScopeDocStoreWrite };
+
+    /// <summary>签发一把带这个 scope 的密钥时，要不要先看密钥主人自己有没有对应权限位。</summary>
+    public static bool IsIssuancePermissionChecked(string scope) =>
+        PermissionCheckedScopes.Contains(scope) || IssuanceOnlyPermissionCheckedScopes.Contains(scope);
 
     public static McpCapability? ByScope(string scope) =>
         All.FirstOrDefault(c => c.AllScopes().Contains(scope, StringComparer.OrdinalIgnoreCase));
