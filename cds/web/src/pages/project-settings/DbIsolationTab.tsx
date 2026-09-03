@@ -243,11 +243,11 @@ export function DbIsolationPanel({
               return (
                 <div
                   key={service.profileId}
-                  className={`flex flex-wrap items-center gap-3 rounded-md border px-3 py-2.5 ${
+                  className={`flex flex-col gap-3 rounded-md border px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center ${
                     isChanged ? 'border-warn/40 bg-warn-soft/40' : 'border-[hsl(var(--hairline))] bg-card'
                   }`}
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 sm:flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-sm font-medium">{service.name}</span>
                       <span className="font-mono text-xs text-muted-foreground">{service.profileId}</span>
