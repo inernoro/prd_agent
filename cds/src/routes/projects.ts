@@ -25,6 +25,7 @@
  */
 
 import { Router } from 'express';
+import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
 import { hasActiveGrant } from '../services/identity.js';
@@ -38,6 +39,10 @@ import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef } from '../services/preview-slug.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
+import { resolveProjectScope } from '../services/project-scope.js';
+import { isMachineCaller } from '../services/machine-caller.js';
+import { summarizeRepoSharing, type RepoSharingSummary } from '../services/repo-sharing.js';
+import { inferProjectScope, inferProfileScope, declaredScopeSources } from '../services/build-scope-inference.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
 import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
@@ -533,9 +538,33 @@ const EMPTY_STATS: ProjectStats = {
   lastDeployedAt: null,
 };
 
+/** 同仓兄弟项目：界面要能点进去，所以带上 id 和名字。 */
+interface RepoSiblingRef {
+  id: string;
+  name: string;
+  /** 该项目声明的构建范围并集；空 = 未声明 = 每次推送都重建它 */
+  scope: string[];
+}
+
 interface ProjectSummary extends Project, ProjectStats {
   /** 2026-06-23：项目级实时资源占用（CPU/内存/构建频次），由采样器周期写入。 */
   resourceUsage?: ProjectResourceUsage | null;
+  /**
+   * 2026-09-02：这个仓库还喂着哪些别的项目。
+   *
+   * 只在同仓项目 >= 2 时出现 —— 单项目仓库不该看见任何多项目字样，否则等于
+   * 给所有人凭空加一个要理解的概念。只发给浏览器会话：机器凭据可能只被授权
+   * 了本项目，不该顺带认识仓库里的别的项目。
+   */
+  repoSharing?: (RepoSharingSummary & {
+    siblings: RepoSiblingRef[];
+    /**
+     * 本项目还没声明范围时，系统看出来的建议。有它，界面就不必让用户从空白开始
+     * ——直接说「看起来只关心 cds/**」并给一个采纳按钮。推断只做建议不自动生效，
+     * 理由见 build-scope-inference.ts 顶部。
+     */
+    scopeSuggestion?: { scope: string[]; why: string } | null;
+  }) | null;
 }
 
 function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
@@ -644,6 +673,68 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
     next();
   });
+
+  /**
+   * 这个项目和谁共用一个仓库。同仓项目少于两个时返回 null（界面据此什么都不显示）。
+   *
+   * 不给机器凭据算：一把只被授权了本项目的凭据，不该顺带认识仓库里的其它项目，
+   * 更不该看到它们的环境变量撞在了哪个 key 上。
+   *
+   * 判据是「有没有出示机器凭据」，不是「是不是 cookie 会话」—— 后者看着更直白，
+   * 但 `CDS_AUTH_MODE=disabled` 的实例根本不签会话，`_cdsCookieAuth` 永远是假，
+   * 于是真人用浏览器打开也什么都看不到。机器凭据一律走 header，浏览器走 cookie，
+   * 所以按 header 判在每种鉴权模式下都成立。
+   */
+  /**
+   * 仓库根下的一级目录 —— 划范围时的候选。读不到就返回空数组：给不出候选是可以的，
+   * 编一份假的目录清单不行（用户会照着它填一个不存在的路径）。
+   */
+  function listRepoTopLevelDirs(projectId: string): string[] {
+    const root = stateService.getProjectRepoRoot(projectId, config?.repoRoot || '');
+    if (!root) return [];
+    try {
+      return nodeFs.readdirSync(root, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+        .map((e) => e.name)
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  function repoSharingFor(req: unknown, project: Project): ProjectSummary['repoSharing'] {
+    if (isMachineCaller(req)) return null;
+    const repoFullName = project.githubRepoFullName;
+    if (!repoFullName) return null;
+    const siblings = stateService.findProjectsByRepoFullName(repoFullName);
+    if (siblings.length < 2) return null;
+    const facts = siblings.map((p) => ({
+      id: p.id,
+      name: p.name,
+      scope: resolveProjectScope(stateService.getBuildProfilesForProject(p.id)),
+      // 必须取 getCustomEnv（继承的全局 + 旧 bucket + project.customEnv），不能取裸
+      // project.customEnv（2026-09-02 Codex P2）：真正注入容器的是前者，按后者比对会
+      // 漏掉「两个项目都继承同一个全局库地址」和存量项目那一整类真实共享。
+      // 仓库里早有同样的先例（state.ts getCustomEnv 上方那条 Bugbot 注释）。
+      env: stateService.getCustomEnv(p.id),
+    }));
+    const summary = summarizeRepoSharing(facts);
+    if (!summary) return null;
+    // 只在本项目自己没划范围时才算建议：已经划过的不需要被劝。
+    const selfScope = facts.find((f) => f.id === project.id)?.scope || [];
+    let scopeSuggestion: { scope: string[]; why: string } | null = null;
+    if (selfScope.length === 0) {
+      const inferred = inferProjectScope(stateService.getBuildProfilesForProject(project.id));
+      if (inferred && inferred.guessedCount > 0) {
+        scopeSuggestion = { scope: inferred.scope, why: inferred.why };
+      }
+    }
+    return {
+      ...summary,
+      siblings: facts.map((f) => ({ id: f.id, name: f.name, scope: f.scope })),
+      scopeSuggestion,
+    };
+  }
 
   function statsFor(project: Project): ProjectStats {
     // P4 Part 17 (G9 fix): use the project-scoped helper so non-legacy
@@ -1158,13 +1249,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     // ── BuildProfiles ──
     const appliedProfiles: string[] = [];
-    for (const candidate of parsed.buildProfiles) {
-      const runnableCandidate = inferRunnableComposeProfile(candidate as BuildProfile);
-      const scoped: BuildProfile = {
-        ...runnableCandidate,
+    // id 加项目后缀后，depends_on / cds.calls 里的 compose 服务名由同一个助手对齐（与导入审批同一份规则）
+    const scopedProfiles: BuildProfile[] = normalizeProjectProfileDependencies(
+      parsed.buildProfiles.map((candidate) => ({
+        ...inferRunnableComposeProfile(candidate as BuildProfile),
         id: `${candidate.id}${idSuffix}`,
         projectId: project.id,
-      };
+      })),
+      idSuffix,
+    );
+    for (const scoped of scopedProfiles) {
       const existing = stateService.getBuildProfile(scoped.id);
       if (existing) {
         stateService.updateBuildProfile(scoped.id, scoped);
@@ -1552,7 +1646,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.
       // Static AI_ACCESS_KEY / cdsg_ global key callers get key names but
       // not values. cdsp_ project key (matching) and cookie auth bypass.
-      const summaries = projects.map((p) => maskProjectSummary(req, toSummary(p, statsFor(p), usageMap.get(p.id) || null)));
+      const summaries = projects.map((p) => {
+        const summary = maskProjectSummary(req, toSummary(p, statsFor(p), usageMap.get(p.id) || null));
+        summary.repoSharing = repoSharingFor(req, p);
+        return summary;
+      });
       // Sort: legacy pinned first (existing UX), then by runtime liveness
       // so projects with running services bubble up — useful once you
       // have many projects and only a few are active.
@@ -1591,6 +1689,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         return;
       }
       const summary = maskProjectSummary(req, toSummary(project, statsFor(project), resourceUsageLookup().get(project.id) || null));
+      summary.repoSharing = repoSharingFor(req, project);
       // CDS-CLI-007 / #551 (a)：识别"半成品"项目（cloneStatus=error 或 git
       // 项目缺 repoPath）并在响应里附 recovery 指引，避免 Agent 反复尝试
       // clone 却拿不到具体下一步。这里只读不写，不会引入额外副作用。
@@ -1801,6 +1900,83 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
    * 操作租约、归因、计数），fire-and-forget 不阻塞响应——暂停标记本身是同步落库的，
    * 新构建立刻被拦；容器停止由前端轮询反映。
    */
+  /**
+   * GET /api/projects/:id/scope-options —— 划范围这件事的全部备选。
+   *
+   * 为的是让界面不要摆一个空文本框。用户面对空框要先想「填什么」、填完还要担心
+   * 「填得对不对」，而这两个问题系统本来就有答案：仓库里有哪些目录是可以列的，
+   * 每个服务待在哪个目录是能从启动命令看出来的。所以这里一次给全：真实目录清单 +
+   * 每个服务的建议 + 建议的依据，界面只需要把建议预勾上。
+   */
+  router.get('/projects/:id/scope-options', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found', message: `项目 '${req.params.id}' 不存在` });
+      return;
+    }
+    const profiles = stateService.getBuildProfilesForProject(project.id);
+    const suggestion = inferProjectScope(profiles);
+    res.json({
+      repoDirs: listRepoTopLevelDirs(project.id),
+      suggestion: suggestion
+        ? { scope: suggestion.scope, why: suggestion.why, guessedCount: suggestion.guessedCount }
+        : null,
+      profiles: profiles.map((profile) => {
+        const guess = inferProfileScope(profile);
+        const sources = declaredScopeSources(profile);
+        return {
+          id: profile.id,
+          name: profile.name || profile.id,
+          // 已声明的与建议的分开给：界面要区分「这是你定过的」和「这是我猜的」，
+          // 混成一个值就没法让用户判断该不该信。
+          declared: guess?.source === 'declared' ? guess.scope : [],
+          suggested: guess && guess.source !== 'declared' ? guess.scope : [],
+          why: guess?.why || '',
+          // 范围声明在部署模式上时（compose 的 cds.build-scope 带上来的就是这种），
+          // 这个对话框写的是 profile 顶层字段，改了也盖不掉模式那份 —— 判定取并集，
+          // 于是「清空」清不掉、「改窄」反而变宽。所以这种一律只读，别让界面说谎。
+          editable: sources.onDeployModes.length === 0,
+          declaredOnDeployModes: sources.onDeployModes,
+          // 顶层也声明过时同样要端出去：判定取的是「顶层 ∪ 各模式」的并集，只渲染
+          // 模式那一半，顶层那些路径就成了**看不见却照样生效**的声明——用户看着
+          // 对话框以为范围就是模式里那几条，实际推到顶层路径照样重建
+          // （2026-09-02 Codex P2）。改不了是另一回事，看不见不行。
+          declaredOnProfile: sources.onProfile,
+        };
+      }),
+    });
+  });
+
+  /**
+   * POST /api/projects/:id/scope-options/apply —— 一键采纳建议。
+   *
+   * 只写那些**自己没声明过**的服务：已经定过的是人做的决定，不能被一次猜覆盖。
+   */
+  router.post('/projects/:id/scope-options/apply', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found', message: `项目 '${req.params.id}' 不存在` });
+      return;
+    }
+    const profiles = stateService.getBuildProfilesForProject(project.id);
+    const suggestion = inferProjectScope(profiles);
+    if (!suggestion || suggestion.guessedCount === 0) {
+      res.status(409).json({
+        error: 'no_suggestion',
+        message: '没有可采纳的建议：要么每个服务都已经声明过范围，要么有服务看不出待在哪个目录。',
+      });
+      return;
+    }
+    const applied: Array<{ profileId: string; scope: string[] }> = [];
+    for (const entry of suggestion.perProfile) {
+      if (!entry.guess || entry.guess.source === 'declared') continue;
+      stateService.updateBuildProfile(entry.profileId, { buildScope: entry.guess.scope });
+      applied.push({ profileId: entry.profileId, scope: entry.guess.scope });
+    }
+    stateService.save();
+    res.json({ applied, scope: suggestion.scope });
+  });
+
   router.put('/projects/:id/paused', (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) {
@@ -2433,6 +2609,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       composeYaml: string;
       projectFiles: ProjectFilePayload[];
       autoDetectOnClone: boolean;
+      /** 显式确认「和已有项目共用同一个仓库」。不带则遇到已绑定就不绑，只回报实情。 */
+      allowSharedRepo: boolean;
       inheritGlobalEnv: boolean;
       infraPresets: string[];
       infraConfigs: Record<string, { dbName?: string; initSql?: string }>;
@@ -2504,7 +2682,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
 
     const githubRepoFullName = gitRepoUrl ? _githubFullNameFromCloneUrl(gitRepoUrl) : undefined;
-    const githubRepoAlreadyLinked = githubRepoFullName ? stateService.findProjectByRepoFullName(githubRepoFullName) : undefined;
+    // 一个仓库喂多个项目（2026-09-02）：默认维持既有行为 —— 仓库已被别的项目绑走
+    // 时不写绑定，建项目本身照常成功。改成直接报错会打断既有自动化，而静默丢掉
+    // 绑定又让用户完全不知道发生了什么，所以取第三条路：**照旧不绑，但把实情
+    // 回给调用方**，界面据此当场问「你是要加入，还是填错了仓库」。
+    // 调用方明确知道自己在干什么时，带 allowSharedRepo 直接绑上。
+    const repoLinkedProjects = githubRepoFullName
+      ? stateService.findProjectsByRepoFullName(githubRepoFullName)
+      : [];
+    const allowSharedRepo = body.allowSharedRepo === true;
+    const githubRepoAlreadyLinked = repoLinkedProjects.length > 0 && !allowSharedRepo
+      ? repoLinkedProjects[0]
+      : undefined;
     const description = typeof body.description === 'string' ? body.description.trim() : undefined;
     const gitDefaultBranch = typeof body.gitDefaultBranch === 'string' && body.gitDefaultBranch.trim()
       ? body.gitDefaultBranch.trim()
@@ -2853,6 +3042,25 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       infraPresetsApplied: appliedInfraPresets,
       // 被基建连接串覆盖的用户环境变量 key(非空时前端可提示"你粘贴的 X 被自动生成的连接串取代")。
       infraEnvOverrides: infraEnvOverrides.length > 0 ? infraEnvOverrides : undefined,
+      // 仓库已被别的项目绑走时把实情回给调用方：本项目**没有**绑上，
+      // 界面据此当场问「你是要和它们共用这个仓库，还是填错了」。
+      // 绝大多数情况是填错，所以默认不绑；真要共用，带 allowSharedRepo 重来一次。
+      //
+      // 机器凭据只告诉它「没绑上、为什么」，不报兄弟项目的 id 与名字（2026-09-02
+      // Codex P2）：一把 create-only 的钥匙读不到别的项目，这里端出来就绕开了同一
+      // 份隔离判据（见 isMachineCaller）——同一个 PR 里一边加隔离一边开后门。
+      repoAlreadyLinked: githubRepoAlreadyLinked
+        ? {
+            repoFullName: githubRepoFullName,
+            projects: isMachineCaller(req) ? [] : repoLinkedProjects.map((p) => ({
+              id: p.id,
+              name: p.name,
+              // 同上：已划范围的兄弟不会每次推送都重建，确认文案要分档
+              scoped: resolveProjectScope(stateService.getBuildProfilesForProject(p.id)).length > 0,
+            })),
+            projectCount: repoLinkedProjects.length,
+          }
+        : undefined,
       // 给 create-only 全局 Key 返回的新项目 scoped key(明文只此一次)。cdscli 建项目后
       // 可直接切到这把 key 做后续部署/操作。全权 key 或人类 cookie 建项目时不返回。
       issuedProjectKey,

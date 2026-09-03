@@ -44,6 +44,33 @@ import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
+/* 定时任务运行记录：按任务各留 120 条（每 5 分钟的任务约 10 小时，日任务约 4 个月），
+   全局 5000 条兜底防状态文件无限膨胀。 */
+const SCHEDULED_JOB_RUNS_PER_JOB = 120;
+const SCHEDULED_JOB_RUNS_GLOBAL_CAP = 5000;
+/**
+ * 单条运行记录里日志的字节上限。运行史整段嵌在 global 文档里，而日志长度是无界的
+ * ——一次拉了一屏输出的命令动作就能顶掉几十条运行史的位置。
+ */
+const SCHEDULED_JOB_RUN_LOG_MAX_BYTES = 8 * 1024;
+/**
+ * 运行史这一段允许占的字节上限。条数上限管不住体积：5000 条 × 无界日志能把 global
+ * 文档顶过 Mongo 的 16MiB 上限，而 global 文档写不进去时**整份控制面状态都停止落库**
+ * ——不只是运行史丢，分支/项目的后续变更也丢（Codex #1471 P1）。
+ * 条数与字节两道闸都要有：条数保证低频任务的历史不被高频任务挤掉，字节保证再离谱的
+ * 日志也顶不破文档。
+ */
+const SCHEDULED_JOB_RUNS_MAX_BYTES = 4 * 1024 * 1024;
+
+/** 按 UTF-8 字节截断，保留尾部（失败原因通常在末尾）。 */
+function truncateLogTail(value: string | undefined, maxBytes: number): string | undefined {
+  if (!value) return value;
+  const buf = Buffer.from(value, 'utf8');
+  if (buf.length <= maxBytes) return value;
+  const marker = '…（日志已截断，只保留末尾）\n';
+  const keep = buf.subarray(buf.length - maxBytes).toString('utf8');
+  return marker + keep.slice(keep.indexOf('\n') + 1);
+}
 const MAX_DEPLOYMENT_VERSIONS_PER_PROJECT = 100;
 /** 容器日志黑匣子 per-branch 上限：条数与字节双闸，防止 state 无界膨胀
  *（JSON 模式每次 save 全量 stringify、mongo-split 每 tick structuredClone 都要背这份数据）。 */
@@ -901,14 +928,110 @@ export class StateService {
       .slice(0, limit);
   }
 
-  upsertScheduledJobRun(run: ScheduledJobRun): ScheduledJobRun {
+  upsertScheduledJobRun(input: ScheduledJobRun): ScheduledJobRun {
+    // 日志先截断再入库：它是这条记录里唯一无界的字段。
+    const run: ScheduledJobRun = input.log
+      ? { ...input, log: truncateLogTail(input.log, SCHEDULED_JOB_RUN_LOG_MAX_BYTES) }
+      : input;
     if (!this.state.scheduledJobRuns) this.state.scheduledJobRuns = [];
     const idx = this.state.scheduledJobRuns.findIndex((item) => item.id === run.id);
     if (idx >= 0) this.state.scheduledJobRuns[idx] = run;
     else this.state.scheduledJobRuns.push(run);
-    this.state.scheduledJobRuns = this.state.scheduledJobRuns
-      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
-      .slice(0, 1000);
+    // 保留策略按「每个任务各留 N 条」，不是全局一刀切。
+    // 全局环形缓冲下，一个每 5 分钟的任务一天写 288 条，几天就能把日任务的
+    // 历史整段挤掉——「最近 20 次成功率」会静默缩水成「最近 3 次」，
+    // 24 小时轴的左半边也只剩最近一两个小时。
+    //
+    // 全局上限仍然要有（防无限增长），但它**不能按全局新旧一刀切**：那样一排序，
+    // 低频任务的记录天然全部靠后，任务数一多就被整段砍掉，恰好把上面这段防的
+    // 事情又做了一遍（Codex #1471 P2：约 42 个任务各 120 条就撑满 5000）。
+    // 改成按任务均分——先算出「每个任务最多留 k 条」里最大的那个 k，使总量不超上限，
+    // 记录数不足 k 的任务一条不丢。高频任务先让位，低频任务的历史被完整保住。
+    const byJob = new Map<string, ScheduledJobRun[]>();
+    for (const item of [...this.state.scheduledJobRuns]
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))) {
+      const list = byJob.get(item.jobId);
+      if (list) list.push(item);
+      else byJob.set(item.jobId, [item]);
+    }
+    // 现存任务与已删除任务**永远**分开算配额，不是只在任务数超上限时才分
+    // （Codex #1471 P2 第四轮）：4950 个「建完就删、各留一条」的任务加一个活任务，
+    // 组数 4951 没到上限、走不进整组淘汰那一档，可它们照样占着容量——均分的 k 被压到
+    // 50，活任务 120 条被砍成 50，而每一条已删除任务的留档一条不少。留档挤掉在跑的
+    // 任务，方向正好反了。
+    //
+    // 所以顺序固定为：现存任务先按每任务上限拿配额（装不下才在它们之间均分），
+    // 剩下的容量才轮到已删除任务的留档；连一条都排不下就整组丢弃——留档看不看得到
+    // 都不影响值班。两个桶内部都保持「最后活跃时刻靠前」的顺序（byJob 的插入顺序
+    // 已经是按 queuedAt 降序建的）。
+    const liveIds = new Set((this.state.scheduledJobs || []).map((job) => job.id));
+    const live: ScheduledJobRun[][] = [];
+    const orphan: ScheduledJobRun[][] = [];
+    for (const list of byJob.values()) (liveIds.has(list[0].jobId) ? live : orphan).push(list);
+
+    /**
+     * 「每个任务最多留 k 条」里最大的可行 k，使总量不超 cap；记录数不足 k 的任务
+     * 一条不丢。返回 0 表示连「每组一条」都放不下，调用方要整组淘汰。
+     */
+    const quotaWithin = (lists: ScheduledJobRun[][], cap: number): number => {
+      if (lists.length === 0) return SCHEDULED_JOB_RUNS_PER_JOB;
+      if (lists.length > cap) return 0;
+      const counts = lists.map((list) => Math.min(list.length, SCHEDULED_JOB_RUNS_PER_JOB));
+      const total = (k: number): number => counts.reduce((sum, n) => sum + Math.min(n, k), 0);
+      if (total(SCHEDULED_JOB_RUNS_PER_JOB) <= cap) return SCHEDULED_JOB_RUNS_PER_JOB;
+      let lo = 1;
+      let hi = SCHEDULED_JOB_RUNS_PER_JOB;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (total(mid) <= cap) lo = mid;
+        else hi = mid - 1;
+      }
+      return lo;
+    };
+
+    const keptLive: ScheduledJobRun[][] = [];
+    const keptOrphan: ScheduledJobRun[][] = [];
+    const liveQuota = quotaWithin(live, SCHEDULED_JOB_RUNS_GLOBAL_CAP);
+    if (liveQuota === 0) {
+      // 现存任务数本身超过上限：每组一条都放不下，只能按「最后活跃时刻」整组淘汰。
+      for (const list of live.slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP)) keptLive.push(list.slice(0, 1));
+    } else {
+      for (const list of live) keptLive.push(list.slice(0, liveQuota));
+    }
+    const remaining = SCHEDULED_JOB_RUNS_GLOBAL_CAP - keptLive.reduce((sum, list) => sum + list.length, 0);
+    if (remaining > 0 && orphan.length > 0) {
+      const orphanQuota = quotaWithin(orphan, remaining);
+      if (orphanQuota === 0) {
+        for (const list of orphan.slice(0, remaining)) keptOrphan.push(list.slice(0, 1));
+      } else {
+        for (const list of orphan) keptOrphan.push(list.slice(0, orphanQuota));
+      }
+    }
+
+    // 第二道闸：条数达标了体积也得达标。分配方式必须**和第一道闸同一个口径**——
+    // 按全局新旧砍会把每任务保留整个抵消掉：几个日志接近上限的高频任务就能吃光预算，
+    // 一个低频活任务的历史被整段清零，健康度和细带全空（Codex #1471 P2 第二十轮）。
+    // 改成「每个任务轮流拿一条」：先现存任务转圈，再已删除任务转圈，预算耗尽即止。
+    // 低频任务的那几条在第一圈就拿到手，高频任务的第 120 条才最先被牺牲。
+    const bounded: ScheduledJobRun[] = [];
+    let bytes = 2; // []
+    const fill = (columns: ScheduledJobRun[][]): boolean => {
+      const depthMax = columns.reduce((max, col) => Math.max(max, col.length), 0);
+      for (let depth = 0; depth < depthMax; depth += 1) {
+        for (const col of columns) {
+          if (depth >= col.length) continue;
+          const item = col[depth];
+          const size = Buffer.byteLength(JSON.stringify(item), 'utf8') + 1;
+          if (bytes + size > SCHEDULED_JOB_RUNS_MAX_BYTES) return false;
+          bounded.push(item);
+          bytes += size;
+        }
+      }
+      return true;
+    };
+    if (fill(keptLive)) fill(keptOrphan);
+    this.state.scheduledJobRuns = bounded
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
     this.save(HINT_GLOBAL);
     return run;
   }

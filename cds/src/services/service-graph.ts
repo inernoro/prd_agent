@@ -12,7 +12,9 @@
  *
  * 安全边界：输出只含 env **键名**，env 值（可能含连接串 / 密钥）绝不出网。
  */
-import type { BuildProfile, InfraService } from '../types.js';
+import type { BuildProfile, InfraService, ServiceRole } from '../types.js';
+import { API_NAME_RE, WEB_NAME_RE, WORKER_NAME_RE, resolveMainDomainRoutes } from './route-conventions.js';
+import { handlesRootPath } from './web-entry.js';
 
 export interface ServiceGraphNode {
   /** 带命名空间前缀的唯一 id（`service:<id>` / `infra:<id>`），跨两类节点不撞名。 */
@@ -27,6 +29,42 @@ export interface ServiceGraphNode {
   subdomain?: string;
   containerPort?: number;
   dockerImage?: string;
+  /** 服务角色（web / api / worker）：声明优先，否则按路由事实与服务名推断。 */
+  role?: ServiceRole;
+  /** 角色的来源：声明 / 路由事实 / 服务名 / 兜底默认。前端据此标「推断」。 */
+  roleSource?: RoleSource;
+  /** 一句话说明角色是怎么得出的（给人看的证据）。 */
+  roleReason?: string;
+}
+
+export type RoleSource = 'declared' | 'route' | 'name' | 'default';
+export interface ServiceRoleVerdict { role: ServiceRole; source: RoleSource; reason: string }
+
+/** 站点成员：同一 host 下按前缀分流给它的服务。 */
+export interface ServiceGraphSiteMember {
+  id: string;
+  /** 主域名上命中它的前缀（子域站点的壳不列前缀：整个 host 都是它的）。 */
+  prefixes: string[];
+  /** true = 没人声明 `/api/`，由「id 含 api/backend」的按名约定接管。 */
+  viaConvention?: boolean;
+}
+
+/**
+ * 站点 = 一个公网 host。主域名一个站点，每个 `cds.subdomain` 各一个站点。
+ * 站点里承载根路径（或按名兜底承载未匹配路径）的服务是「壳」，通常就是静态站；
+ * 其余成员按前缀挂在壳下面——这就是「API 在静态文件之下」在路由事实上的含义：
+ * 同一个 host，forwarder 按最长前缀分流，静态容器并不代理这些请求。
+ */
+export interface ServiceGraphSite {
+  id: string;
+  kind: 'main' | 'subdomain';
+  subdomain?: string;
+  shellId?: string;
+  /** declared = 显式 `cds.path-prefix: /`；convention = 无人声明根路径，按名兜底（pickDefaultProfile）。 */
+  shellSource?: 'declared' | 'convention';
+  members: ServiceGraphSiteMember[];
+  /** 同一 host 上被多个服务同时声明的前缀（forwarder 只能按 id 字典序二选一，属配置缺陷）。 */
+  conflicts: Array<{ prefix: string; ids: string[] }>;
 }
 
 export interface ServiceGraphEdge {
@@ -38,6 +76,8 @@ export interface ServiceGraphEdge {
   envKeys: string[];
   /** 证据：compose depends_on 声明 */
   dependsOn: boolean;
+  /** 证据：调用方用 cds.calls 显式声明了这条调用 */
+  declared?: boolean;
 }
 
 export interface ServiceGraph {
@@ -45,6 +85,128 @@ export interface ServiceGraph {
   edges: ServiceGraphEdge[];
   /** 服务节点自上而下分层：第 0 层没人调用（入口直达面），被调服务逐层下沉。环路兜底封顶。 */
   layers: string[][];
+  /** 公网站点分组（入口 → 站点 → 壳 → 前缀成员），与 forwarder 发布规则同源。 */
+  sites: ServiceGraphSite[];
+  /** 没有任何公网路由的服务：只能被别的服务经容器网络调用（画布挂在引用它的服务下面）。 */
+  internal: string[];
+  /** cds.calls 里指向不存在服务的声明（写错或已删除），体检据此报 unknown-callee */
+  unresolvedCalls: Array<{ from: string; callee: string }>;
+}
+
+const OPERATIONAL_PROBE_RE = /(?:^|\/)(?:health|healthz|health-check|ready|readyz|readiness|live|livez|liveness|actuator|metrics)(?:\/|\?|$)/i;
+/** 「一看就是接口」的前缀：全部命中才算路由层面的 api 证据。 */
+const API_PREFIX_RE = /^\/(?:api|graphql|gw|gateway|rpc|ws|socket|v\d+|health|healthz|actuator|metrics|swagger|openapi)(?:[\/\-?]|$)/i;
+
+type RoleInput = Pick<BuildProfile, 'id' | 'role' | 'pathPrefixes' | 'subdomain' | 'webEntry' | 'readinessProbe'>;
+
+function nameRole(id: string): { role: ServiceRole; hit: string } | null {
+  const worker = WORKER_NAME_RE.exec(id);
+  if (worker) return { role: 'worker', hit: worker[0] };
+  const api = API_NAME_RE.exec(id);
+  const web = WEB_NAME_RE.exec(id);
+  if (api && web) {
+    // 两种词根都命中时取靠后的那个：后缀才是名词本体（admin-api 是接口，api-admin 是页面）
+    const apiLast = id.toLowerCase().lastIndexOf(api[0].toLowerCase());
+    const webLast = id.toLowerCase().lastIndexOf(web[0].toLowerCase());
+    return apiLast >= webLast ? { role: 'api', hit: api[0] } : { role: 'web', hit: web[0] };
+  }
+  if (api) return { role: 'api', hit: api[0] };
+  if (web) return { role: 'web', hit: web[0] };
+  return null;
+}
+
+/**
+ * 服务角色判定（唯一定义处；前端只消费结果，不再自己按名字猜）。
+ *
+ * 优先级：① 显式 `cds.role` → ② 强路由事实（声明了用户入口 / 承载根路径且探活是页面）
+ * → ③ 服务名词根 → ④ 弱路由特征（不监听 HTTP 且无路由 → 后台任务 / 前缀全是接口样式 /
+ * 探活是健康检查 / 探活是页面 / 按名兜底成了默认站）→ ⑤ 默认按 api。
+ * 名字在中间：它比「探活路径长什么样」可信，但比「配置里写了什么」不可信。
+ * 每个结论都带 source + reason，画布把非声明的标成「推断」。
+ */
+export function inferServiceRole(
+  p: RoleInput,
+  ctx: { apiConventionId?: string; defaultProfileId?: string } = {},
+): ServiceRoleVerdict {
+  if (p.role) return { role: p.role, source: 'declared', reason: `配置声明 cds.role: ${p.role}` };
+
+  const readiness = (p.readinessProbe?.path || '').trim();
+  const readinessIsProbe = readiness !== '' && OPERATIONAL_PROBE_RE.test(readiness);
+  const readinessIsPage = readiness !== '' && !readinessIsProbe;
+  const prefixes = (p.pathPrefixes || []).map((x) => x.trim()).filter(Boolean);
+  const ownsRoot = handlesRootPath(p);
+
+  if (p.webEntry?.name) return { role: 'web', source: 'route', reason: `声明了用户入口「${p.webEntry.name}」` };
+  if (ownsRoot && readinessIsPage) return { role: 'web', source: 'route', reason: '承载根路径且探活路径是页面' };
+
+  const byName = nameRole(p.id);
+  if (byName) return { role: byName.role, source: 'name', reason: `服务名含「${byName.hit}」` };
+
+  const nonRoot = prefixes.filter((x) => x !== '/');
+  // cds.no-http-readiness 只是把探活换成 TCP，扫描器给每个 Java 服务都会打这个标；它不能压过
+  // 名字与路由证据，只有名字判不出、也没有任何公网路由时才据此当后台任务（Codex 八轮 P2）
+  if (p.readinessProbe?.noHttp && nonRoot.length === 0 && !ownsRoot && !p.subdomain) {
+    return { role: 'worker', source: 'route', reason: '不监听 HTTP 探活且没有任何公网路由' };
+  }
+  if (nonRoot.length > 0 && nonRoot.every((x) => API_PREFIX_RE.test(x))) {
+    return { role: 'api', source: 'route', reason: `路由前缀 ${nonRoot.join(' ')} 都是接口样式` };
+  }
+  if (readinessIsProbe) return { role: 'api', source: 'route', reason: `探活路径 ${readiness} 是健康检查` };
+  if (readinessIsPage) return { role: 'web', source: 'route', reason: `探活路径 ${readiness} 是页面` };
+  if (ownsRoot || p.subdomain) return { role: 'web', source: 'route', reason: ownsRoot ? '承载根路径' : `独占子域 ${p.subdomain}` };
+  if (ctx.defaultProfileId === p.id) return { role: 'web', source: 'route', reason: '按名兜底成为主域名默认站' };
+  if (ctx.apiConventionId === p.id) return { role: 'api', source: 'route', reason: '按名约定接管 /api/' };
+  return { role: 'api', source: 'default', reason: '无声明、无路由特征、名字无法判断，默认按接口显示' };
+}
+
+/**
+ * 站点分组（与 forwarder-route-publisher 的主域名三层路由 + 命名子域路由同源）：
+ *   主域名：显式前缀 → 按名约定 `/api/`（无人声明时）→ 默认站兜底；
+ *   子域：每个 `cds.subdomain` 一个站点，整个 host 归该服务。
+ * 壳的选择：显式 `/` 的服务；多个都声明 `/` 时优先 web-entry primary，再优先角色为 web 的，
+ * 最后按 id 排序取第一，并记入 conflicts；无人声明 `/` 时按名兜底（pickDefaultProfile）。
+ */
+export function buildServiceSites(
+  profiles: readonly RoleInput[],
+  roles: ReadonlyMap<string, ServiceRoleVerdict>,
+): { sites: ServiceGraphSite[]; internal: string[] } {
+  // 主域名归属（壳 / 前缀成员 / 按名约定 / 冲突）只在 route-conventions.resolveMainDomainRoutes 判一次，
+  // 与发布器逐字一致：同一前缀多人声明按 id 字典序先到先得，壳不再按 webEntry / 角色另挑一套
+  //（Codex 五轮 P2：图说 b-web 是壳、发布器却把 / 给了 a-api）。
+  const ids = profiles.map((p) => p.id).sort((a, b) => a.localeCompare(b));
+  const routes = resolveMainDomainRoutes(profiles);
+  const conflicts = Array.from(routes.claims.entries())
+    .filter(([, owners]) => owners.length > 1)
+    .map(([prefix, owners]) => ({ prefix, ids: [...owners].sort() }))
+    .sort((a, b) => a.prefix.localeCompare(b.prefix));
+  const shellId = routes.shellId;
+  const shellSource = routes.shellSource;
+  const members: ServiceGraphSiteMember[] = [];
+  for (const id of ids) {
+    if (id === shellId) continue;
+    const prefixes = routes.prefixes.get(id);
+    if (prefixes && prefixes.length > 0) members.push({ id, prefixes, ...(routes.viaConvention.has(id) ? { viaConvention: true } : {}) });
+  }
+
+  const sites: ServiceGraphSite[] = [];
+  if (ids.length > 0) {
+    sites.push({ id: 'main', kind: 'main', shellId, shellSource, members, conflicts });
+  }
+  const seenSub = new Set<string>();
+  for (const p of profiles) {
+    const sub = (p.subdomain || '').trim();
+    if (!sub || seenSub.has(sub)) continue;
+    seenSub.add(sub);
+    sites.push({ id: `sub:${sub}`, kind: 'subdomain', subdomain: sub, shellId: p.id, shellSource: 'declared', members: [], conflicts: [] });
+  }
+
+  const routed = new Set<string>();
+  for (const site of sites) {
+    if (site.shellId) routed.add(site.shellId);
+    for (const m of site.members) routed.add(m.id);
+  }
+  const internal = ids.filter((id) => !routed.has(id));
+  return { sites, internal };
 }
 
 /** 从 env 值里提取「像主机名的 token」：`://host`、`@host`、`host:port` 三种上下文。 */
@@ -101,16 +263,31 @@ export function parseNodeId(nodeId: string): { kind: 'service' | 'infra' | 'unkn
 }
 
 export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[]): ServiceGraph {
+  const ids = profiles.map((p) => p.id);
+  // 角色推断用的「按名兜底成为默认站 / 按名约定接管 /api/」取自与发布器同一份主域名判定，
+  // 否则输入顺序不同时徽标和站点壳会各说各话（Codex 六轮 P2）
+  const mainRoutes = resolveMainDomainRoutes(profiles);
+  const roleCtx = {
+    apiConventionId: [...mainRoutes.viaConvention][0],
+    defaultProfileId: mainRoutes.shellSource === 'convention' ? mainRoutes.shellId : undefined,
+  };
+  const roles = new Map<string, ServiceRoleVerdict>(profiles.map((p) => [p.id, inferServiceRole(p, roleCtx)]));
   const nodes: ServiceGraphNode[] = [
-    ...profiles.map((p): ServiceGraphNode => ({
-      id: serviceNodeId(p.id),
-      rawId: p.id,
-      name: p.name || p.id,
-      kind: 'service',
-      pathPrefixes: p.pathPrefixes,
-      subdomain: p.subdomain,
-      containerPort: p.containerPort,
-    })),
+    ...profiles.map((p): ServiceGraphNode => {
+      const verdict = roles.get(p.id)!;
+      return {
+        id: serviceNodeId(p.id),
+        rawId: p.id,
+        name: p.name || p.id,
+        kind: 'service',
+        pathPrefixes: p.pathPrefixes,
+        subdomain: p.subdomain,
+        containerPort: p.containerPort,
+        role: verdict.role,
+        roleSource: verdict.source,
+        roleReason: verdict.reason,
+      };
+    }),
     ...infra.map((s): ServiceGraphNode => ({
       id: infraNodeId(s.id),
       rawId: s.id,
@@ -127,7 +304,9 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
   const serviceIdSet = new Set(serviceIds);
 
   const edgeMap = new Map<string, ServiceGraphEdge>();
-  const upsert = (from: string, to: string, envKey?: string, viaDepends?: boolean): void => {
+
+  const unresolvedCalls: Array<{ from: string; callee: string }> = [];
+  const upsert = (from: string, to: string, envKey?: string, viaDepends?: boolean, viaDeclared?: boolean): void => {
     if (from === to) return;
     const key = `${from}\u0000${to}`;
     let edge = edgeMap.get(key);
@@ -137,6 +316,7 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
     }
     if (envKey && !edge.envKeys.includes(envKey)) edge.envKeys.push(envKey);
     if (viaDepends) edge.dependsOn = true;
+    if (viaDeclared) edge.declared = true;
   };
 
   for (const p of profiles) {
@@ -161,6 +341,14 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
     for (const dep of p.dependsOn ?? []) {
       if (serviceIdSet.has(dep) && serviceNodeId(dep) !== self) upsert(self, serviceNodeId(dep), undefined, true);
       else if (infraIdSet.has(dep)) upsert(self, infraNodeId(dep), undefined, true);
+    }
+    // 4) cds.calls 显式声明的调用；写错 / 已删除的被调方不画边但保留下来，由体检报 unknown-callee
+    for (const callee of p.calls ?? []) {
+      if (serviceIdSet.has(callee)) {
+        if (serviceNodeId(callee) !== self) upsert(self, serviceNodeId(callee), undefined, false, true);
+      } else if (!infraIdSet.has(callee)) {
+        unresolvedCalls.push({ from: p.id, callee });
+      }
     }
   }
 
@@ -192,5 +380,6 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
     if (layer.length) layers.push(layer);
   }
 
-  return { nodes, edges, layers };
+  const { sites, internal } = buildServiceSites(profiles, roles);
+  return { nodes, edges, layers, sites, internal, unresolvedCalls };
 }

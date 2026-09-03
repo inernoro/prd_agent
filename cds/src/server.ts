@@ -21,6 +21,7 @@ import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
@@ -531,6 +532,8 @@ export interface ServerDeps {
    */
   gracefulShutdown?: GracefulShutdownController;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
+  /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
+  getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
   httpLogStore?: HttpLogSink | null;
   /** Optional persistent diagnostics logger for container/docker/system events. */
   serverEventLogStore?: ServerEventLogSink | null;
@@ -962,6 +965,12 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /projects': '列出项目',
     'POST /projects': '创建项目',
     'POST /cleanup-cross-project-services': '清理跨项目服务',
+    'POST /compose/lint': '对 compose 做拓扑体检',
+    'GET /branches/:id/service-graph': '分支服务关系图与体检',
+    'GET /branches/:id/route-lookup': '路由判定查询（转发器 vs master 兜底）',
+    'GET /branches/:id/references': '分支引用分区（地址类环境变量与跨项目引用）',
+    'GET /overview/topology': '全局概览：各项目关系与体检',
+    'PUT /branches/:id/references/:key': '切换某条引用指向的项目 / 服务 / 分支',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
     'GET /access-requests': '列出授权申请',
@@ -1207,6 +1216,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/bridge\/handshake-status\/(.+)$/, '查询 Bridge 握手状态'],
     // 项目 (CRUD)
     [/^PUT \/projects\/(.+)\/paused$/, '暂停/恢复项目'],
+    [/^GET \/projects\/(.+)\/scope-options$/, '读构建范围候选'],
+    [/^POST \/projects\/(.+)\/scope-options\/apply$/, '采纳构建范围建议'],
     [/^GET \/projects\/(.+)\/agent-keys$/, '列出项目 Agent Keys'],
     [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
     [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],
@@ -1281,6 +1292,9 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/branches\/[^/]+\/effective-config$/, '查分支生效配置'],
     [/^POST \/branches\/[^/]+\/copy-config-from\/[^/]+$/, '拉取来源分支配置'],
     [/^GET \/branches\/[^/]+\/metrics$/, '查看分支指标'],
+    // 注意上一条用 $ 收尾，接不住 /metrics/series —— 少了这行，Activity Monitor
+    // 上只会显示一串裸 URL，启动时 auditApiLabels 也会打 [api-label] warning。
+    [/^GET \/branches\/[^/]+\/metrics\/series$/, '查看指标历史'],
     [/^GET \/branches\/[^/]+\/failure-diagnosis$/, '诊断失败原因'],
     // 构建 Profile 扩展
     [/^PUT \/build-profiles\/(.+)\/deploy-mode$/, '切换部署模式'],
@@ -4512,6 +4526,19 @@ export function createServer(deps: ServerDeps): express.Express {
     dispatchVersion,
     getDeploymentRunStatus: (runId) => deploymentRunService.get(runId)?.status,
     rootDomains: deps.config.rootDomains || [],
+  }));
+
+  app.use('/api', createTopologyRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+    getPublishedRoutes: deps.getPublishedRoutes,
+    envConfig: { jwtIssuer: deps.config.jwt.issuer, previewHost: deps.config.previewDomain || deps.config.rootDomains?.[0] },
+    // 与复制集 isRemoteBranch 同口径：注册表查不到时保守视为远端
+    isRemoteExecutorBranch: (branch) => {
+      if (!isRemoteExecutorOwned(branch.executorId)) return false;
+      const node = deps.registry?.getAll().find((n) => n.id === branch.executorId);
+      return !node || node.role !== 'embedded';
+    },
   }));
 
   app.use('/api', createManagedProjectsRouter({

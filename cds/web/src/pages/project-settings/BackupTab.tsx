@@ -256,7 +256,7 @@ export function BackupPanel({
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={busy}>
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 刷新
+          {busy ? <Loader2 className="animate-spin" /> : <RefreshCw />} 刷新
         </Button>
       </div>
 

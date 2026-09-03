@@ -12,6 +12,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router, type Request, type Response } from 'express';
 import { StateService } from '../services/state.js';
+import { recordContainerSample, queryContainerSeries } from '../services/container-metrics-history.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
@@ -25,6 +26,7 @@ import {
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
+import { resolveBranchEnvLayers } from '../services/branch-env-layers.js';
 import {
   branchEntrypointDepsFromState,
   isPublishableNamedLabel,
@@ -10977,76 +10979,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const project = stateService.getProject(projectId);
 
     // ── 段A:customEnv 六层(顺序 = 合并顺序,与 getMergedEnv/buildBranchEnvMap 一致)──
-    const cdsEnv = stateService.getCdsEnvVars(projectId);
-    const mirrorEnv = stateService.getMirrorEnvVars();
-    const rawGlobal = project?.inheritGlobalEnv === true
-      ? stateService.getCustomEnvScope('_global')
-      : {};
-    const rawProjectScoped = projectId === '_global' ? {} : stateService.getCustomEnvScope(projectId);
-    const rawBranchScoped = stateService.getCustomEnvScope(entry.id);
-    const derivedReserved: Record<string, string> = {};
-    if (project) {
-      derivedReserved.CDS_PROJECT_ID = project.id;
-      derivedReserved.CDS_PROJECT_SLUG = project.slug;
-    }
-    const customLayers: EnvLayer[] = [
-      { source: 'cds-builtin' as const, env: cdsEnv },
-      { source: 'mirror' as const, env: mirrorEnv },
-      { source: 'global' as const, env: rawGlobal },
-      { source: 'project' as const, env: rawProjectScoped },
-      { source: 'branch' as const, env: rawBranchScoped },
-      // 项目身份保留 key 放最后 —— 即便 global/project 写了同名 key,生效的也是系统派生真值
-      { source: 'cds-derived' as const, env: derivedReserved },
-    ].filter((l) => Object.keys(l.env).length > 0);
-
+    // 分层装配抽到 branch-env-layers（与引用分区共用一份，plan.cds.service-relations 第三批）
+    const resolution = resolveBranchEnvLayers(stateService, entry, {
+      jwtIssuer: config.jwt.issuer,
+      previewHost: config.previewDomain || config.rootDomains?.[0],
+    });
+    const customLayers = resolution.customLayers;
     const envLayers = customLayers.map((l) => ({
       source: l.source,
       count: Object.keys(l.env).length,
       keys: Object.keys(l.env).sort(),
     }));
-
-    // ── 每个有效 profile(项目底座 + 分支临时额外服务)的逐 key 溯源 ──
-    const extraIds = new Set((entry.extraProfiles || []).map((p) => p.id));
     const effectiveProfiles = stateService.getEffectiveProfilesForBranch(entry);
-    const profiles = effectiveProfiles.map((baseline) => {
-      const isExtra = extraIds.has(baseline.id);
+    const profiles = resolution.profiles.map((r) => {
+      const { baseline, effective, isExtra, envError } = r;
       const override = entry.profileOverrides?.[baseline.id];
-      const effective = resolveEffectiveProfile(baseline, entry);
-      // profile env 三层拆分,相对顺序与部署合并链一致:
-      // baseline.env → override.env(applyProfileOverride) → deployModes[mode].env(resolveProfileWithMode)
-      const activeMode = override?.activeDeployMode !== undefined
-        ? override.activeDeployMode
-        : baseline.activeDeployMode;
-      const modeEnv = (activeMode && baseline.deployModes?.[activeMode]?.env) || undefined;
-      const profileLayers: EnvLayer[] = [
-        { source: (isExtra ? 'extra-service' : 'profile') as EnvSource, env: baseline.env || {} },
-        { source: 'branch-override' as const, env: override?.env || {} },
-        { source: 'deploy-mode' as const, env: modeEnv || {} },
-      ].filter((l) => Object.keys(l.env).length > 0);
-
-      let envProvenance: EnvKeyProvenance[] = [];
-      let envError: string | undefined;
-      try {
-        const resolved = resolveProfileRuntimeEnvWithProvenance(
-          entry, effective, customLayers, profileLayers,
-          // injectBullmqPrefix / publishedEntrypoints 与部署路径（container.ts
-          // resolveProfileRuntimeEnv）同源同值,否则检查器显示的 env ≠ 容器实际拿到的 env
-          {
-            jwtIssuer: config.jwt.issuer,
-            injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0',
-            publishedEntrypoints: resolveBranchEntrypointsEnv(
-              entry,
-              branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
-            ),
-          },
-        );
-        // 脱敏走 maskSecrets SSOT:按 key 名或 URL 凭据值判定,provenance 的 value 同步替换
-        const maskedEnv = maskSecrets(resolved.env);
-        envProvenance = resolved.provenance.map((p) => ({ ...p, value: maskedEnv[p.key] ?? p.value }));
-      } catch (err) {
-        // 缺模板值等解析失败:不 fail 整个端点,把缺口显性化(这正是检查器要暴露的问题)
-        envError = (err as Error).message;
-      }
+      const maskedEnv = maskSecrets(Object.fromEntries(r.provenance.map((p) => [p.key, p.value])));
+      const envProvenance = r.provenance.map((p) => ({ ...p, value: maskedEnv[p.key] ?? p.value }));
       return {
         profileId: baseline.id,
         profileName: baseline.name || baseline.id,
@@ -11252,6 +11201,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     const statsMap = await containerService.getServiceStats(runningContainers);
 
+    // 抽屉打开期间这里是 5s 一帧，比后台采样器（45s）密得多。两路都写进同一个
+    // 历史存储：读的一侧只认 container-metrics-history，不存在「谁的数据更新」的问题。
+    const sampledAt = Date.now();
+    for (const [containerName, stat] of statsMap) {
+      recordContainerSample(containerName, {
+        containerId: stat.id,
+        cpuPercent: stat.cpuPercent,
+        memUsedBytes: stat.memUsedBytes,
+        memLimitBytes: stat.memLimitBytes,
+        netRxBytes: stat.netRxBytes,
+        netTxBytes: stat.netTxBytes,
+        blockReadBytes: stat.blockReadBytes,
+        blockWriteBytes: stat.blockWriteBytes,
+      }, sampledAt);
+    }
+
     const result = services.map(([profileId, svc]) => ({
       profileId,
       containerName: svc.containerName,
@@ -11267,6 +11232,65 @@ export function createBranchRouter(deps: RouterDeps): Router {
       services: result,
       runningCount: runningContainers.length,
       totalCount: services.length,
+    });
+  });
+
+  // GET /api/branches/:id/metrics/series — 该分支各 service 的历史序列（2026-09-01）
+  //
+  // 查询契约借 Netdata 的形状：调用方声明「多长的窗口、要多少个点、怎么聚合」，
+  // 降采样在服务端做完再下发。以前是前端每 5s 打一次瞬时值、自己在 React state
+  // 里攒 60 点 ring —— 关掉抽屉就全丢，窗口最长只有 5 分钟，图上画不了部署竖线
+  // （部署几乎不会正好落在那 5 分钟里）。
+  //
+  //   after   窗口起点。负数 = 相对现在往前多少秒（-3600 = 近一小时）；正数 = 毫秒时间戳
+  //   before  窗口终点，省略或 0 = 现在
+  //   points  期望点数（默认 120，上限 1000）；实际点数不超过它
+  //   group   average（看趋势，默认）| max（找毛刺）
+  //
+  // 数据来自 container-metrics-history：45s 常驻采样器 + 抽屉打开时的 5s 端点
+  // 两路都往那里写，所以抽屉没开的时段也有基线，打开就有图，不用等攒点。
+  // 历史在内存里、进程重启即丢——这是观测视图不是审计账本。
+  router.get('/branches/:id/metrics/series', async (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const m2 = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m2) {
+      res.status(m2.status).json(m2.body);
+      return;
+    }
+
+    const num = (raw: unknown, fallback: number): number => {
+      const v = Number.parseInt(String(raw ?? ''), 10);
+      return Number.isFinite(v) ? v : fallback;
+    };
+    const services = Object.entries(branch.services || {});
+    const byContainer = new Map(services.map(([profileId, svc]) => [svc.containerName, profileId]));
+
+    const result = queryContainerSeries({
+      containers: [...byContainer.keys()],
+      after: num(req.query.after, -1800),
+      before: num(req.query.before, 0),
+      points: num(req.query.points, 120),
+      group: req.query.group === 'max' ? 'max' : 'average',
+    });
+
+    res.json({
+      branchId: branch.id,
+      after: result.after,
+      before: result.before,
+      groupSeconds: result.groupSeconds,
+      group: result.group,
+      // 按 profileId 下发，前端不必再认容器名
+      services: services.map(([profileId, svc]) => ({
+        profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+        points: result.series[svc.containerName] ?? [],
+      })),
     });
   });
 

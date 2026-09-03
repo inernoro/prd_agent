@@ -136,7 +136,7 @@ export function CapacityFullDialog({
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={submitting}>取消</Button>
           <Button onClick={() => void handleConfirm()} disabled={!enough || submitting}>
-            {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {submitting ? <Loader2 className="mr-2 animate-spin" /> : null}
             停止 {selected.size} 个并重试部署
           </Button>
         </DialogFooter>

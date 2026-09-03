@@ -1,0 +1,147 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Inter', -apple-system, 'PingFang SC', sans-serif; }
+    a { color: #D97757; } a:hover { color: #E8A87C; }
+    .sd-h1 { font-family: 'Space Grotesk', 'Inter', sans-serif; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+    .sd-eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; }
+    .sd-lede { font-size: 13px; line-height: 1.7; margin: 10px 0 0; max-width: 860px; }
+    .sd-colhead { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+    .sd-spec td { padding: 7px 14px 7px 0; font-size: 12px; vertical-align: top; line-height: 1.6; }
+    .sd-spec td:first-child { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+    .sd-obj { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+  </style>
+</helmet>
+
+<div style="padding: 40px; background: #101014; color: #f7f7fb; min-height: 1180px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: baseline; gap: 14px;">
+    <span class="sd-eyebrow" style="color: #E8A87C;">方向 C</span>
+    <h1 class="sd-h1">回执</h1>
+  </div>
+  <p class="sd-lede" style="color: rgba(247,247,251,0.68);">
+    弹窗是一张回执：标题下一道细横线，被操作的对象用等宽单独列出来，正文按阅读排（13px / 行高 1.85）。
+    圆角收到 4px，次操作退成文字。它不像控件，像一份要你签字的单子。
+  </p>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px; margin-top: 30px;">
+
+    <div style="display: flex; flex-direction: column; gap: 18px;">
+      <div class="sd-colhead" style="color: rgba(247,247,251,0.45);">暗色 · 默认</div>
+
+      <!-- ALERT -->
+      <div style="border-radius: 4px; background: #1e1e24; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 10px 34px rgba(0,0,0,0.30); padding: 20px;">
+        <div style="font-family: 'Space Grotesk','Inter',sans-serif; font-size: 15px; font-weight: 600; color: #f7f7fb;">平台密钥自检失败</div>
+        <div style="height: 1px; background: rgba(255,255,255,0.12); margin: 12px 0 14px;"></div>
+        <div style="font-size: 13px; line-height: 1.85; color: rgba(247,247,251,0.80);">
+          有 2 个平台的 API key 解密失败，模型池会跳过它们继续调度。多半是签名密钥轮换后存量密文没有一起迁移，去「模型平台」重新填一次密钥即可。
+        </div>
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 20px; margin-top: 20px;">
+          <div style="height: 32px; padding: 0 16px; border-radius: 4px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #f7f7fb; color: #141418;">知道了</div>
+        </div>
+      </div>
+
+      <!-- CONFIRM -->
+      <div style="border-radius: 4px; background: #1e1e24; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 10px 34px rgba(0,0,0,0.30); padding: 20px;">
+        <div style="font-family: 'Space Grotesk','Inter',sans-serif; font-size: 15px; font-weight: 600; color: #f7f7fb;">确认删除</div>
+        <div style="height: 1px; background: rgba(252,165,165,0.34); margin: 12px 0 14px;"></div>
+        <div style="font-size: 13px; line-height: 1.85; color: rgba(247,247,251,0.80);">删除后不可恢复。将要移除：</div>
+        <div style="margin-top: 12px; padding: 10px 12px; border-left: 2px solid #fca5a5; background: rgba(255,255,255,0.03);">
+          <div class="sd-obj" style="color: #f7f7fb;">白桃</div>
+          <div style="margin-top: 3px; font-size: 11px; color: rgba(247,247,251,0.68);">项目 · 12 张图 · 昨天 21:14</div>
+        </div>
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 20px; margin-top: 20px;">
+          <div style="font-size: 12px; font-weight: 500; color: rgba(247,247,251,0.68); text-decoration: underline; text-underline-offset: 3px;">取消</div>
+          <div style="height: 32px; padding: 0 16px; border-radius: 4px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #b91c1c; color: #fff;">删除</div>
+        </div>
+      </div>
+
+      <!-- PROMPT -->
+      <div style="border-radius: 4px; background: #1e1e24; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 10px 34px rgba(0,0,0,0.30); padding: 20px;">
+        <div style="font-family: 'Space Grotesk','Inter',sans-serif; font-size: 15px; font-weight: 600; color: #f7f7fb;">重命名</div>
+        <div style="height: 1px; background: rgba(255,255,255,0.12); margin: 12px 0 14px;"></div>
+        <div style="font-size: 13px; line-height: 1.85; color: rgba(247,247,251,0.80);">请输入新名称</div>
+        <div style="margin-top: 12px; height: 38px; border-radius: 4px; background: #141418; box-shadow: inset 0 0 0 1px rgba(217,119,87,0.55); display: flex; align-items: center; padding: 0 12px;">
+          <span class="sd-obj" style="color: #f7f7fb; font-size: 13px;">白桃</span><span style="width: 1px; height: 16px; background: #D97757; margin-left: 1px;"></span>
+        </div>
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 20px; margin-top: 20px;">
+          <div style="font-size: 12px; font-weight: 500; color: rgba(247,247,251,0.68); text-decoration: underline; text-underline-offset: 3px;">取消</div>
+          <div style="height: 32px; padding: 0 16px; border-radius: 4px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #f7f7fb; color: #141418;">保存</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 18px;">
+      <div class="sd-colhead" style="color: rgba(247,247,251,0.45);">浅色</div>
+
+      <!-- ALERT light -->
+      <div style="border-radius: 4px; background: #F8F5EF; border: 1px solid rgba(26,26,31,0.12); box-shadow: 0 10px 30px rgba(60,44,36,0.10); padding: 20px;">
+        <div style="font-family: 'Space Grotesk','Inter',sans-serif; font-size: 15px; font-weight: 600; color: #0F172A;">平台密钥自检失败</div>
+        <div style="height: 1px; background: rgba(26,26,31,0.12); margin: 12px 0 14px;"></div>
+        <div style="font-size: 13px; line-height: 1.85; color: rgba(15,23,42,0.78);">
+          有 2 个平台的 API key 解密失败，模型池会跳过它们继续调度。多半是签名密钥轮换后存量密文没有一起迁移，去「模型平台」重新填一次密钥即可。
+        </div>
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 20px; margin-top: 20px;">
+          <div style="height: 32px; padding: 0 16px; border-radius: 4px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #0F172A; color: #F8F5EF;">知道了</div>
+        </div>
+      </div>
+
+      <!-- CONFIRM light -->
+      <div style="border-radius: 4px; background: #F8F5EF; border: 1px solid rgba(26,26,31,0.12); box-shadow: 0 10px 30px rgba(60,44,36,0.10); padding: 20px;">
+        <div style="font-family: 'Space Grotesk','Inter',sans-serif; font-size: 15px; font-weight: 600; color: #0F172A;">确认删除</div>
+        <div style="height: 1px; background: rgba(185,28,28,0.34); margin: 12px 0 14px;"></div>
+        <div style="font-size: 13px; line-height: 1.85; color: rgba(15,23,42,0.78);">删除后不可恢复。将要移除：</div>
+        <div style="margin-top: 12px; padding: 10px 12px; border-left: 2px solid #b91c1c; background: rgba(26,26,31,0.035);">
+          <div class="sd-obj" style="color: #0F172A;">白桃</div>
+          <div style="margin-top: 3px; font-size: 11px; color: rgba(15,23,42,0.68);">项目 · 12 张图 · 昨天 21:14</div>
+        </div>
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 20px; margin-top: 20px;">
+          <div style="font-size: 12px; font-weight: 500; color: rgba(15,23,42,0.68); text-decoration: underline; text-underline-offset: 3px;">取消</div>
+          <div style="height: 32px; padding: 0 16px; border-radius: 4px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #b91c1c; color: #fff;">删除</div>
+        </div>
+      </div>
+
+      <!-- PROMPT light -->
+      <div style="border-radius: 4px; background: #F8F5EF; border: 1px solid rgba(26,26,31,0.12); box-shadow: 0 10px 30px rgba(60,44,36,0.10); padding: 20px;">
+        <div style="font-family: 'Space Grotesk','Inter',sans-serif; font-size: 15px; font-weight: 600; color: #0F172A;">重命名</div>
+        <div style="height: 1px; background: rgba(26,26,31,0.12); margin: 12px 0 14px;"></div>
+        <div style="font-size: 13px; line-height: 1.85; color: rgba(15,23,42,0.78);">请输入新名称</div>
+        <div style="margin-top: 12px; height: 38px; border-radius: 4px; background: #EEEAE3; box-shadow: inset 0 0 0 1px rgba(217,119,87,0.55); display: flex; align-items: center; padding: 0 12px;">
+          <span class="sd-obj" style="color: #0F172A; font-size: 13px;">白桃</span><span style="width: 1px; height: 16px; background: #D97757; margin-left: 1px;"></span>
+        </div>
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 20px; margin-top: 20px;">
+          <div style="font-size: 12px; font-weight: 500; color: rgba(15,23,42,0.68); text-decoration: underline; text-underline-offset: 3px;">取消</div>
+          <div style="height: 32px; padding: 0 16px; border-radius: 4px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #0F172A; color: #F8F5EF;">保存</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 36px; margin-top: 34px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.08);">
+    <table class="sd-spec" style="border-collapse: collapse;">
+      <tr><td style="color: rgba(247,247,251,0.45);">容器</td><td style="color: rgba(247,247,251,0.80);">圆角 4px · 内边距 20 · 宽 460 · 无分区底色</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">标题</td><td style="color: rgba(247,247,251,0.80);">Space Grotesk 15/600，下方 1px 横线（危险态转红）</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">正文</td><td style="color: rgba(247,247,251,0.80);">13px / 行高 1.85——为长文案设计，不是压密度</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">对象块</td><td style="color: rgba(247,247,251,0.80);">等宽名 + 一行元信息，左侧 2px 竖条；只在有具体对象时出现</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">按钮</td><td style="color: rgba(247,247,251,0.80);">主操作 32/4；次操作是**下划线文字**，不是按钮</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">遮罩</td><td style="color: rgba(247,247,251,0.80);">纯压暗，稍重一档（这一档要人停下来读）</td></tr>
+    </table>
+    <div style="font-size: 12px; line-height: 1.85; color: rgba(247,247,251,0.68);">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: #E8A87C; margin-bottom: 8px;">取舍</div>
+      牺牲的是**可点性**。次操作退成下划线文字，好看，但点击热区变小、在触屏上够不着 44px 下限——手机端必须退回按钮形态，等于这套在窄屏上不成立。<br><br>
+      「对象块」是它最值钱的地方（删之前先看清删的是什么），但 54 个调用点里只有小半数传得出具体对象；其余的那块要么省略、要么空着，一致性会打折。它更适合当**危险确认的专用形态**，而不是三态通用。
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

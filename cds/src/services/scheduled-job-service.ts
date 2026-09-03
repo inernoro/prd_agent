@@ -10,6 +10,7 @@ import type {
   ReleaseRunStatus,
   ScheduledJob,
   ScheduledJobAction,
+  ScheduledJobRunStep,
   ScheduledJobRun,
   ScheduledJobSchedule,
   ScheduledJobTarget,
@@ -56,6 +57,8 @@ export interface ScheduledJobServiceDeps {
 }
 
 export interface ScheduledJobTargetCheckResult {
+  /** 逐个动作的结果。只有整单执行（executeActions）会填，单点检测不填。 */
+  steps?: ScheduledJobRunStep[];
   ok: boolean;
   exitCode?: number;
   httpStatus?: number;
@@ -253,6 +256,7 @@ export class ScheduledJobService {
       );
       run.exitCode = result.exitCode;
       run.httpStatus = result.httpStatus;
+      if (result.steps) run.steps = result.steps;
       run.log = truncateLog(result.log);
       if (result.releaseId) run.releaseId = result.releaseId;
       if (result.releaseStatus) run.releaseStatus = result.releaseStatus;
@@ -286,6 +290,47 @@ export class ScheduledJobService {
       `check-${crypto.randomBytes(8).toString('hex')}`,
       { mode: 'check' },
     );
+  }
+
+  /**
+   * 往后推算若干次触发时刻。
+   *
+   * 前端要在时间轴右半边画「待触发」的点，只有一个 nextRunAt 是不够的；
+   * 让前端自己按 schedule 投影则等于把 isJobDue 的到期判定复制一份到浏览器，
+   * 两边早晚漂移。所以序列由这里出，仍然只走 computeNextRunAt 一个判定源。
+   */
+  computeNextRuns(schedule: ScheduledJobSchedule, count: number, from = new Date()): string[] {
+    const out: string[] = [];
+    let cursor = from;
+    for (let i = 0; i < Math.max(0, count); i += 1) {
+      const next = this.computeNextRunAt(schedule, cursor);
+      if (!next) break;
+      const parsed = Date.parse(next);
+      if (!Number.isFinite(parsed)) break;
+      // 单调性由这里保证，而不是靠给游标加 1ms —— 那个偏移每步累加，
+      // 第 N 个点会带 (N-1)ms 的漂移（实测第 3 个点是 ...:00.001Z）。
+      // interval 本来就是 cursor + 间隔、daily 的 candidate <= from 会顺延到第二天，
+      // 两者拿上一个时刻当游标都不会原地打转；真原地打转就在这里断开。
+      if (parsed <= cursor.getTime() && out.length > 0) break;
+      out.push(next);
+      cursor = new Date(parsed);
+    }
+    return out;
+  }
+
+  /**
+   * 时间轴右半边那串待触发点：必须锚在任务**已存的** nextRunAt 上，不能拿 now 起算。
+   * interval 的 computeNextRunAt 是「from + 间隔」——一个每小时的任务若还有 10 分钟到期，
+   * 从 now 起算会把第一个点画在 60 分钟后，真正的下一次直接消失，后面每个点整体后移 50 分钟。
+   */
+  projectUpcomingRuns(job: ScheduledJob, count: number, now = new Date()): string[] {
+    if (!job.enabled || count <= 0) return [];
+    const stored = Date.parse(job.nextRunAt || '');
+    if (!Number.isFinite(stored) || stored <= now.getTime()) {
+      return this.computeNextRuns(job.schedule, count, now);
+    }
+    const anchor = new Date(stored);
+    return [anchor.toISOString(), ...this.computeNextRuns(job.schedule, count - 1, anchor)];
   }
 
   computeNextRunAt(schedule: ScheduledJobSchedule, from = new Date()): string | null {
@@ -464,6 +509,14 @@ export class ScheduledJobService {
     }
 
     const logs: string[] = [];
+    // 逐步结果：先按「未执行」铺满，跑到哪一步就把哪一步覆盖掉。
+    // 这样失败/跳过后面的动作天然记成 not-run，不用在每个 return 分支里补。
+    const steps: ScheduledJobRunStep[] = actions.map((action, index) => ({
+      index: index + 1,
+      name: action.name || defaultActionName(action),
+      type: action.type,
+      status: 'not-run',
+    }));
     let lastExitCode: number | undefined;
     let lastHttpStatus: number | undefined;
     let releaseId: string | undefined;
@@ -473,23 +526,43 @@ export class ScheduledJobService {
       const title = action.name || defaultActionName(action);
       logs.push(`[${index + 1}/${actions.length}] ${title}`);
       const sandboxKey = actions.length === 1 ? job.id : `${job.id}-${index + 1}-${action.id}`;
-      const result = await this.executeTargetWithRetry(
-        action, deadlineMs, sandboxKey, retryCount,
-        {
-          mode: 'run',
-          jobId: job.id,
-          ...(overrideBranchId ? { overrideBranchId } : {}),
-          ...(overrideCommitSha ? { overrideCommitSha } : {}),
-        },
-      );
+      const startedAt = Date.now();
+      // 动作级兜底：http 分支只有 try/finally，DNS 解析失败或 AbortController 超时
+      // 会让 fetch **reject**，异常一路穿出 executeActions，steps 根本没机会挂到 run 上
+      // ——「断在哪一步」这个功能恰好在最常见的故障（网络）下失效。
+      // 把抛出转成一个失败结果，下面的记账与「后续动作记 not-run」原样走。
+      let result: ScheduledJobTargetCheckResult;
+      try {
+        result = await this.executeTargetWithRetry(
+          action, deadlineMs, sandboxKey, retryCount,
+          {
+            mode: 'run',
+            jobId: job.id,
+            ...(overrideBranchId ? { overrideBranchId } : {}),
+            ...(overrideCommitSha ? { overrideCommitSha } : {}),
+          },
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        result = { ok: false, exitCode: 1, log: '', error: `动作执行抛出异常：${message}` };
+      }
       lastExitCode = result.exitCode;
       lastHttpStatus = result.httpStatus;
+      steps[index] = {
+        ...steps[index],
+        status: result.skipped ? 'skipped' : result.ok ? 'success' : 'failed',
+        durationMs: Date.now() - startedAt,
+        ...(result.httpStatus !== undefined ? { httpStatus: result.httpStatus } : {}),
+        ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+        ...(result.ok || result.skipped ? {} : { error: result.error }),
+      };
       if (result.log) logs.push(result.log);
       // 任一动作被跳过 → 整单跳过，后续动作一律不跑（前提已不成立）。
       if (result.skipped) {
         return {
           ok: true,
           skipped: true,
+          steps,
           exitCode: result.exitCode,
           httpStatus: result.httpStatus,
           log: logs.join('\n'),
@@ -501,6 +574,7 @@ export class ScheduledJobService {
         if (result.error) logs.push(result.error);
         return {
           ok: false,
+          steps,
           exitCode: result.exitCode,
           httpStatus: result.httpStatus,
           log: logs.join('\n'),
@@ -514,6 +588,7 @@ export class ScheduledJobService {
     }
     return {
       ok: true,
+      steps,
       exitCode: lastExitCode,
       httpStatus: lastHttpStatus,
       log: logs.join('\n'),
