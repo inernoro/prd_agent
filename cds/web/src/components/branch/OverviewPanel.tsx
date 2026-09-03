@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, RefreshCw, Rocket, Server, Settings } from 'lucide-react';
+import { isTransitioning, overviewCopy } from '@/lib/overview-state';
 
 /**
  * 分支总览（2026-09-01 重排）。
@@ -930,13 +931,13 @@ function EntryCard({ e, reachable }: { e: OverviewEntry; reachable: boolean }): 
 }
 
 function EntryCards({
-  entries, reachable, deploying, onConfigure,
+  entries, reachable, statusLabel, onConfigure,
 }: {
   entries: OverviewEntry[];
-  /** 服务本身就绪没有——只看服务，不掺分支的生命周期。 */
+  /** 入口卡点不点亮（纯视觉）。与 statusLabel 同源，都由总览状态决定。 */
   reachable: boolean;
-  /** 部署在途。入口可能短暂不可达，但那不等于「服务未就绪」（Codex P2）。 */
-  deploying: boolean;
+  /** 「· 服务已就绪」这一句。文案不在这里拼，由状态表给（台账 D11）。 */
+  statusLabel: string;
   onConfigure?: () => void;
 }): JSX.Element {
   const primary = entries.find((e) => e.primary);
@@ -947,13 +948,12 @@ function EntryCards({
         <h4 className="text-sm font-bold text-foreground">入口</h4>
         <span className="text-xs text-muted-foreground">
           {/*
-            三档，各说各的事实（Codex P2，核对属实）：服务就绪与否是一件事，
-            部署在途是另一件事。上一版把两者压进一个布尔，于是重新部署时同屏
-            出现「当前服务仍在运行」「1 / 1 个服务就绪」和「服务未就绪」三句话。
+            这句话曾经在这里现拼：一个 reachable 一个 deploying，两个布尔四种组合，
+            而顶上的判断句在另一处拼另一套条件，于是重新部署时同屏出现
+            「当前服务仍在运行」「1 / 1 个服务就绪」和「服务未就绪」三句话
+            （Codex P2，核对属实）。现在两处都从同一张状态表取（台账 D11）。
           */}
-          {entries.length} 个{reachable
-            ? (deploying ? ' · 正在部署，入口可能短暂不可达' : ' · 服务已就绪')
-            : ' · 服务未就绪，暂不可达'}
+          {entries.length} 个{statusLabel}
         </span>
         <div className="flex-1" />
         {onConfigure ? (
@@ -1073,7 +1073,7 @@ export function OverviewPanel({
    * 读数是真的。上一版把七档状态折叠成一个布尔值就一刀切归零，等于在部署过程中
    * 谎报「分支未运行 / 0 个就绪 / 没有当前值」。
    */
-  const transitioning = lifecycle === 'building' || lifecycle === 'starting' || lifecycle === 'restarting';
+  const transitioning = isTransitioning(lifecycle);
   const services = useMemo<OverviewService[]>(() => (
     running || transitioning
       ? rawServices
@@ -1301,30 +1301,29 @@ export function OverviewPanel({
 
   // 判断句：先给结论，再给证据。
   /**
-   * 「这个分支到底能不能用」——**判断句、色调、入口卡的绿灯全部走这一个判据**。
+   * 判断句、色调、入口卡副标题、骨架屏注解——**四处文案同一个来源**。
    *
-   * 2026-09-02（Codex P2，核对属实）：入口卡此前判的是 `badServices.length === 0`，
-   * 而判断句判的是「全部就绪」。一个服务只是 idle / stopped（不是 error）时两者分岔：
-   * 顶上写着「还有 1 个服务没起来」，下面的入口卡却是绿的、写着可直达——
-   * **同一屏里两句话互相打脸**。没起来的那个服务很可能正是入口指向的那个。
+   * 这里原先是一串五层嵌套三元（内含一层三元），入口卡与骨架屏各自另写一套条件。
+   * 同一片区域连续六轮 review 都在报「同屏两句话互相打脸」：顶上说「还有 1 个服务
+   * 没起来」而入口卡是绿的；顶上说「正在部署」而骨架屏说「分支未运行」；在跑却一个
+   * 服务都没配时顶上说「还有 0 个服务没起来」。每一轮都是给被点名的那一处再加一个
+   * 条件，而条件树越深，下一处分岔越难看见。
    *
-   * 一个判据三处消费，而不是三处各判各的，下次也就没有再分岔的余地。
+   * 现在先把事实归约成一个有限状态，再由状态查表取四处文案（台账 D11）。新增一档
+   * 只动表、不动条件树，每一档都被 tests/web/overview-state.test.ts 穷举钉住。
    */
-  const allServicesReady = running && services.length > 0 && okCount === services.length;
-  const verdict = badServices.length > 0
-    ? `有 ${badServices.length} 个服务异常，${entries.length > 0 ? '入口可能打不开' : '分支未就绪'}`
-    : allServicesReady
-      ? '一切正常，可以直接验收'
-      : running
-        ? `还有 ${services.length - okCount} 个服务没起来`
-        : transitioning
-          ? (services.length - okCount > 0
-            ? `正在部署，${services.length - okCount} 个服务还没起来`
-            // 重新部署时旧容器往往还在服务：此时「还没起来」是 0，说出来就是假话
-            // （Codex P2，核对属实）。
-            : '正在部署，当前服务仍在运行')
-          : '分支未运行';
-  const verdictTone = badServices.length > 0 ? 'bad' : allServicesReady ? 'ok' : 'idle';
+  const copy = overviewCopy({
+    lifecycle,
+    running,
+    serviceCount: services.length,
+    readyCount: okCount,
+    badCount: badServices.length,
+    entryCount: entries.length,
+    metricsReady,
+  });
+  const { verdict, tone: verdictTone } = copy;
+  /** 入口卡点不点亮：与副标题同源，不再另判一次 `badServices.length === 0`。 */
+  const entriesReachable = copy.state === 'healthy' || copy.state === 'redeploying';
 
   const windowText = windowMinutes >= 60
     ? `近 ${(windowMinutes / 60).toFixed(windowMinutes % 60 === 0 ? 0 : 1)} 小时`
@@ -1379,7 +1378,7 @@ export function OverviewPanel({
             <h3 className="text-xl font-extrabold tracking-tight text-foreground">{verdict}</h3>
           </div>
           <p className="text-sm leading-6 text-foreground-muted">
-            {services.length > 0 ? `${okCount} / ${services.length} 个服务就绪` : '尚未配置服务'}
+            {services.length > 0 ? `${okCount} / ${services.length} 个服务就绪` : '还没有任何 service'}
             {entries.length > 0 ? <>，<strong className="font-bold text-foreground">{entries.length} 个入口</strong></> : null}
             {hasPlot ? `，CPU 合计 ${cpuTotalNow.toFixed(1)}%、内存 ${formatBytesShort(memTotalNow)}` : ''}
             {badServices.length > 0 ? `。异常服务：${badServices.map((s) => s.profileId).join('、')}` : '。'}
@@ -1415,9 +1414,8 @@ export function OverviewPanel({
       {entries.length > 0 ? (
         <EntryCards
           entries={entries}
-          // 只看服务，不掺 running：在途时服务可能已经全就绪
-          reachable={services.length > 0 && okCount === services.length && badServices.length === 0}
-          deploying={transitioning}
+          reachable={entriesReachable}
+          statusLabel={copy.entryLabel}
           onConfigure={onConfigureEntries}
         />
       ) : null}
@@ -1493,8 +1491,13 @@ export function OverviewPanel({
          * 现在：有历史就立刻画，实时快照到了再把新点续在尾巴上。
          */
         services.length === 0 ? (
+          /*
+           * 一个 service 都没有时，「为什么没有曲线」这句话由状态表给：分支正在开通
+           * （执行器还没把服务集分配出来）和用户压根没配过，是两件事，前者不该被劝去
+           * 「先去构建配置」。
+           */
           <section className="rounded-xl border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-8 text-center text-sm text-muted-foreground">
-            该分支还没有任何 service，先去构建配置 / 部署。
+            {copy.skeletonNote}
           </section>
         ) : (
           <MetricsSkeleton
@@ -1504,32 +1507,13 @@ export function OverviewPanel({
             /*
              * metricsReady 只用来挑文案，**不参与是否出图的判断**——那正是「拿着历史
              * 干等 docker stats」那个缺陷的成因，守卫钉着闸门里不许出现它。
-             */
-            /*
-             * 走**同一个** transitioning 判据（Codex P2，核对属实）。
              *
-             * 上一版只把判断句改成「正在部署」，骨架屏这条注解还留着 `!running`——
-             * 首次部署（在途 + 历史不足两桶）时同屏一句「正在部署」、一句
-             * 「分支未运行」，而后者正是这次要消灭的那句假话。同一个判据，
-             * 又是只改了被点名的那一处。
+             * 这条注解回答的是「为什么现在没有曲线」，和顶上的判断句必须是同一套说法：
+             * 它曾经自己判 `!running`，于是首次部署时同屏一句「正在部署」、一句
+             * 「分支未运行」（Codex P2，核对属实）。`undefined` 表示交回骨架屏自己讲
+             * 「已攒 N 帧 · 约还需 X 秒」——有容器在跑时那才是真相。
              */
-            /*
-             * 注解回答的是「为什么现在没有曲线」，判据因此是**有没有容器在跑**，
-             * 不是分支处在哪一档生命周期（Codex P2，核对属实）。
-             *
-             * 上一版一看到 transitioning 就无条件说「容器起来后开始采样」——可重新
-             * 部署时旧容器常常还在服务，同一屏既显示已就绪的服务、又显示实时读数，
-             * 却告诉用户采样还没开始。有容器在跑就交回骨架屏自己讲「已攒 N 帧 ·
-             * 约还需 X 秒」，那才是这一档的真相。
-             */
-            note={
-              okCount === 0
-                ? (transitioning ? '正在部署 · 容器起来后开始采样'
-                  : running ? '没有容器可采样'
-                    : '分支未运行 · 没有容器可采样')
-                : !metricsReady ? '正在读取指标…'
-                  : undefined
-            }
+            note={copy.skeletonNote}
           />
         )
       ) : (
