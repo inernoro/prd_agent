@@ -21,6 +21,9 @@ export default function McpConsolePage() {
   const [connectOpen, setConnectOpen] = useState(false);
   const [tab, setTab] = useState<'overview' | 'calls'>('overview');
   const [quotaTarget, setQuotaTarget] = useState<McpClientDto | null>(null);
+  // 「刷新」按钮只能刷自己拉的数据。调用记录面板自己管自己的分页与筛选，
+  // 靠这个计数把刷新意图传下去 —— 否则用户停在记录页点刷新，列表纹丝不动。
+  const [refreshToken, setRefreshToken] = useState(0);
 
   const load = useCallback(async () => {
     const res = await getMcpConsoleOverview();
@@ -83,7 +86,10 @@ export default function McpConsolePage() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => void load()}
+            onClick={() => {
+              setRefreshToken((n) => n + 1);
+              void load();
+            }}
             className="flex h-9 items-center gap-2 rounded-[10px] px-3 text-[13px] font-medium transition-colors"
             style={{
               background: 'var(--bg-card)',
@@ -137,7 +143,7 @@ export default function McpConsolePage() {
       </div>
 
       {tab === 'calls' ? (
-        <McpCallsPanel clients={overview?.clients ?? []} />
+        <McpCallsPanel clients={overview?.clients ?? []} refreshToken={refreshToken} />
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
           {/* 能力清单：自己撑高自己滚，不把整页顶出去 */}

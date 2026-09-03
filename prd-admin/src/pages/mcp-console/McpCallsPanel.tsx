@@ -30,7 +30,14 @@ const STATUS_STYLE: Record<string, { label: string; color: string; bg: string; b
  * 调用记录：智能体替你做的每一件事，包括它想做但被挡下来的。
  * 有产物的直接给可点开的地址 —— 记录不给产物入口就等于让人自己去翻。
  */
-export function McpCallsPanel({ clients }: { clients: McpClientDto[] }) {
+export function McpCallsPanel({
+  clients,
+  refreshToken = 0,
+}: {
+  clients: McpClientDto[];
+  /** 页面顶部「刷新」每点一次加一。记录列表自己拉自己的数据，不进依赖就永远是旧的。 */
+  refreshToken?: number;
+}) {
   const [items, setItems] = useState<McpCallLogDto[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -53,7 +60,7 @@ export function McpCallsPanel({ clients }: { clients: McpClientDto[] }) {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, refreshToken]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">

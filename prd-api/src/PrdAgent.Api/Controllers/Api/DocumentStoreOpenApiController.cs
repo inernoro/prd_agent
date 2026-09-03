@@ -313,8 +313,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             var existed = await _db.DocumentEntries
                 .Find(e => e.Id == deterministicId && e.StoreId == storeId)
                 .FirstOrDefaultAsync(ct);
-            if (existed != null)
-                return Ok(ApiResponse<object>.Ok(new { entryId = existed.Id, title = existed.Title, deduplicated = true }));
+            if (existed != null) return DedupOrInProgress(existed);
         }
 
         var entry = new DocumentEntry
@@ -326,9 +325,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             SourceType = DocumentSourceType.Upload,
             ContentType = "text/markdown",
             Tags = req.Tags ?? new List<string>(),
-            Metadata = idempotencyKey == null
-                ? new Dictionary<string, string> { ["createdVia"] = "mcp" }
-                : new Dictionary<string, string> { ["createdVia"] = "mcp", ["mcpRequestId"] = idempotencyKey },
+            Metadata = BuildEntryMetadata(idempotencyKey, contentPending: content.Length > 0),
             CreatedBy = userId,
             CreatedByName = displayName,
             UpdatedBy = userId,
@@ -346,7 +343,7 @@ public class DocumentStoreOpenApiController : ControllerBase
                 .Find(e => e.Id == deterministicId && e.StoreId == storeId)
                 .FirstOrDefaultAsync(ct);
             if (raced == null) throw;
-            return Ok(ApiResponse<object>.Ok(new { entryId = raced.Id, title = raced.Title, deduplicated = true }));
+            return DedupOrInProgress(raced);
         }
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == storeId,
@@ -374,6 +371,12 @@ public class DocumentStoreOpenApiController : ControllerBase
                 return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR,
                     "正文没有写进去，这篇文档已经撤回，请用同一个 clientRequestId 重试"));
             }
+
+            // 正文落盘了，这条才算完整 —— 在此之前撞上来的重试只会拿到 409，不会拿到「成功」
+            await _db.DocumentEntries.UpdateOneAsync(
+                e => e.Id == entry.Id,
+                Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
+                cancellationToken: CancellationToken.None);
         }
 
         return Ok(ApiResponse<object>.Ok(new { entryId = entry.Id, storeId, title = entry.Title }));
@@ -408,6 +411,29 @@ public class DocumentStoreOpenApiController : ControllerBase
 
     /// <summary>单篇正文上限。挡住智能体一次糊一本书进来，也挡住它把上下文里的垃圾整个倒进知识库。</summary>
     private const int MaxContentChars = 200_000;
+
+    /// <summary>条目「正文还没落盘」的标记字段（Mongo 路径写法，供 Unset 用）。</summary>
+    private const string EntryContentPendingField = "Metadata.mcpContentPending";
+
+    private static Dictionary<string, string> BuildEntryMetadata(string? idempotencyKey, bool contentPending)
+    {
+        var meta = new Dictionary<string, string> { ["createdVia"] = "mcp" };
+        if (idempotencyKey != null) meta["mcpRequestId"] = idempotencyKey;
+        // 先落条目、再写正文，中间有个窗口。带同一个幂等键的重试如果正好落在这个窗口里，
+        // 看到的是一条「已存在但还是空的」条目 —— 报成功等于交给它一篇空文档，
+        // 而万一头一次的正文写失败、条目被撤回，它拿到的还是一个不存在的 id。
+        if (contentPending) meta["mcpContentPending"] = "1";
+        return meta;
+    }
+
+    /// <summary>幂等命中：已经完整的回既有条目，还在写正文的回 409 让调用方稍后重试。</summary>
+    private IActionResult DedupOrInProgress(DocumentEntry existed)
+    {
+        if (existed.Metadata != null && existed.Metadata.ContainsKey("mcpContentPending"))
+            return Conflict(ApiResponse<object>.Fail("ENTRY_WRITE_IN_PROGRESS",
+                "同一个 clientRequestId 的上一次写入还在落正文，这次没有重复写。稍等一两秒用同一个键再试一次即可。"));
+        return Ok(ApiResponse<object>.Ok(new { entryId = existed.Id, title = existed.Title, deduplicated = true }));
+    }
 
     /// <summary>把幂等键压成确定性文档 id（32 位十六进制，与随机 id 同形）。没给幂等键就返回 null。</summary>
     private static string? DeterministicId(string kind, string? idempotencyKey)

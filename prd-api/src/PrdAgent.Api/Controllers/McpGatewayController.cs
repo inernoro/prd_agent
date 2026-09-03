@@ -283,7 +283,7 @@ public class McpGatewayController : ControllerBase
 
             // 闸门放行时会为日额度原子占坑；下面任何一条没真跑成的路径都要把坑退回去，
             // 否则一次参数写错就白扣一张图的额度。
-            var verdict = await _usage.CheckAsync(log.KeyId, bt, log.ImageCount, ct);
+            var verdict = await _usage.CheckAsync(log.KeyId, log.ImageCount, log.IsWrite, ct);
             if (!verdict.Allowed)
                 return await DeniedAsync(id, log, verdict.Reason!, ct);
 
@@ -315,8 +315,9 @@ public class McpGatewayController : ControllerBase
         var isGetDyn = string.Equals(match.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase);
         log.IsWrite = !isGetDyn;
 
-        // 动态工具没有内置工具那样的能力归属，只过速率闸（传 null 跳过日额度）
-        var dynVerdict = await _usage.CheckAsync(log.KeyId, null, 0, ct);
+        // 动态工具没有能力归属，但**写入照样算写入**：闸门读的就是上面记进日志的那个 IsWrite。
+        // 早先这里传 null 让闸门整个跳过日额度，等于给登记表接口开了一道无上限的后门。
+        var dynVerdict = await _usage.CheckAsync(log.KeyId, 0, log.IsWrite, ct);
         if (!dynVerdict.Allowed)
             return await DeniedAsync(id, log, dynVerdict.Reason!, ct);
 

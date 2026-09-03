@@ -76,8 +76,15 @@ public sealed class McpUsageService
     /// 调用前的闸门：过速率窗口，再为日额度原子占坑。
     /// 返回不允许时，Reason 是直接给智能体看的中文说明（它会转述给用户）。
     /// 放行时若占了坑，调用失败要用 <see cref="ReleaseAsync"/> 退还。
+    ///
+    /// 入参就是**记录里记的那两个值**（<c>McpCallLog.ImageCount</c> / <c>IsWrite</c>），不是工具定义 ——
+    /// 早先这里收 McpToolDef?，动态工具没有定义只能传 null，于是走到「tool == null 直接放行」那一支：
+    /// 一把日写入上限为 1 的密钥，用登记表里的 POST 接口可以无限写，而面板上的已用数一直是 0。
+    /// 闸门与账本读同一个值，才不会出现「记了但没扣」。
     /// </summary>
-    public async Task<McpQuotaVerdict> CheckAsync(string keyId, McpToolDef? tool, int imageCount, CancellationToken ct)
+    /// <param name="imageCount">这次要生几张图；&gt; 0 即按生图计额度。</param>
+    /// <param name="isWrite">这次算不算写入类动作（非生图时才看它）。</param>
+    public async Task<McpQuotaVerdict> CheckAsync(string keyId, int imageCount, bool isWrite, CancellationToken ct)
     {
         var key = await _db.AgentApiKeys.Find(k => k.Id == keyId).FirstOrDefaultAsync(ct);
         var ratePerMin = key?.McpRateLimitPerMin ?? DefaultRateLimitPerMin;
@@ -91,13 +98,11 @@ public sealed class McpUsageService
         if (window.Count > ratePerMin)
             return McpQuotaVerdict.Deny($"调用太频繁：这把密钥每分钟最多 {ratePerMin} 次工具调用，请等一分钟再试。");
 
-        if (tool == null) return McpQuotaVerdict.Ok;
-
         // 2. 日额度：原子占坑
-        if (IsImageTool(tool))
+        if (imageCount > 0)
         {
             var quota = key?.McpDailyImageQuota ?? DefaultDailyImageQuota;
-            var amount = Math.Max(imageCount, 1);
+            var amount = imageCount;
             var day = TodayStartUtc();
             var (ok, used) = await TryReserveAsync(keyId, KindImage, amount, quota, day, ct);
             if (!ok)
@@ -106,7 +111,7 @@ public sealed class McpUsageService
             return McpQuotaVerdict.Reserved(KindImage, amount, day);
         }
 
-        if (IsWriteTool(tool))
+        if (isWrite)
         {
             var quota = key?.McpDailyWriteQuota ?? DefaultDailyWriteQuota;
             var day = TodayStartUtc();
