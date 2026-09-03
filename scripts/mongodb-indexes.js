@@ -1468,6 +1468,21 @@ db.document_entries.createIndex(
 // 卡片预览（每库最近 3 条）走的是同一条索引，不另建。
 // end collection: document_entries
 
+// collection: mcp_call_logs
+// 智能体接入台的调用记录。两个读法都很热：
+//   1. 面板按「我的 + 本部署 + 时间倒序」翻页（Overview 与 calls 列表）
+//   2. 用量闸门按「这把密钥 + 今天 + 成功」算日额度，每次工具调用前都要查一次
+// 没有索引时，第 2 条会随着记录增长把每一次工具调用都拖慢。
+db.mcp_call_logs.createIndex(
+  { "OwnerUserId": 1, "DeploymentSlug": 1, "CreatedAt": -1 },
+  { name: "idx_mcp_call_logs_owner_scope_created" }
+)
+db.mcp_call_logs.createIndex(
+  { "KeyId": 1, "CreatedAt": -1 },
+  { name: "idx_mcp_call_logs_key_created" }
+)
+// end collection: mcp_call_logs
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

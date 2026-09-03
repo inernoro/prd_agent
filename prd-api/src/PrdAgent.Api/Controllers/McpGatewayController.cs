@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Mcp;
+using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -39,17 +40,20 @@ public class McpGatewayController : ControllerBase
     private readonly IHttpClientFactory _httpFactory;
     private readonly IServer _server;
     private readonly ILogger<McpGatewayController> _logger;
+    private readonly McpUsageService _usage;
 
     public McpGatewayController(
         MongoDbContext db,
         IHttpClientFactory httpFactory,
         IServer server,
-        ILogger<McpGatewayController> logger)
+        ILogger<McpGatewayController> logger,
+        McpUsageService usage)
     {
         _db = db;
         _httpFactory = httpFactory;
         _server = server;
         _logger = logger;
+        _usage = usage;
     }
 
     /// <summary>MCP 主端点。接收 JSON-RPC（单条或批量），返回 JSON-RPC 响应。</summary>
@@ -238,41 +242,113 @@ public class McpGatewayController : ControllerBase
             return RpcError(id, -32602, "Missing tool name");
 
         var scopes = OwnedScopes();
+        var boundUserId = User.FindFirst("boundUserId")?.Value;
+        var startedAt = DateTime.UtcNow;
+
+        // 每一次工具调用都记一笔：接入台「刚刚发生了什么」要能回答「谁、用什么、做了什么、产出在哪」。
+        // 被挡下来的（scope 不足 / 配额触顶）同样记，否则用户只会看到智能体那边一句语焉不详的失败。
+        var log = new McpCallLog
+        {
+            OwnerUserId = boundUserId ?? string.Empty,
+            KeyId = User.FindFirst("agentApiKeyId")?.Value ?? User.FindFirst("appId")?.Value ?? string.Empty,
+            KeyName = User.FindFirst("appName")?.Value ?? string.Empty,
+            ToolName = name!,
+            ArgumentsPreview = McpUsageService.SummarizeArguments(args),
+            CreatedAt = startedAt,
+        };
 
         // 内置工具
         var bt = McpBuiltinTools.All.FirstOrDefault(t => t.Name == name);
         if (bt != null)
         {
+            log.Capability = McpCapabilityCatalog.ByScope(bt.RequiredScope)?.Key;
+            log.IsWrite = McpUsageService.IsWriteTool(bt);
+            log.ImageCount = McpUsageService.IsImageTool(bt) ? ReadRequestedImageCount(args) : 0;
+
             if (!ScopeSatisfies(scopes, bt.RequiredScope))
-                return ToolError(id, $"权限不足：此工具需要 scope {bt.RequiredScope}，当前密钥未授权。");
+                return await DeniedAsync(id, log, $"权限不足：此工具需要 scope {bt.RequiredScope}，当前密钥未授权。", ct);
+
+            var verdict = await _usage.CheckAsync(log.KeyId, bt, log.ImageCount, ct);
+            if (!verdict.Allowed)
+                return await DeniedAsync(id, log, verdict.Reason!, ct);
+
             var (path, body, err) = BuildBuiltinRequest(bt, args);
-            if (err != null) return ToolError(id, err);
+            if (err != null) return await DeniedAsync(id, log, err, ct);
+
             var (status, respBody) = await LoopbackAsync(bt.Method, path, body, ct);
+            await RecordFinishedAsync(log, status, respBody, startedAt, ct);
             return ToolCallResult(id, status, respBody);
         }
 
         // 动态工具
-        var boundUserId = User.FindFirst("boundUserId")?.Value;
         var endpoints = await _db.AgentOpenEndpoints.Find(e => e.IsActive).ToListAsync(ct);
         var match = endpoints.FirstOrDefault(e => DynamicToolName(e) == name);
         if (match == null)
-            return ToolError(id, $"工具不存在或不可用: {name}");
+            return await DeniedAsync(id, log, $"工具不存在或不可用: {name}", ct);
 
         var ms = match.RequiredScopes ?? new List<string>();
         if (!ms.Any(scopes.Contains))
-            return ToolError(id, "权限不足：当前密钥未授权此工具所需 scope。");
+            return await DeniedAsync(id, log, "权限不足：当前密钥未授权此工具所需 scope。", ct);
         if (match.AllowedCallerUserIds is { Count: > 0 } wl &&
             (boundUserId == null || !wl.Contains(boundUserId)))
-            return ToolError(id, "调用方不在此接口的白名单内。");
+            return await DeniedAsync(id, log, "调用方不在此接口的白名单内。", ct);
+
+        var isGetDyn = string.Equals(match.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase);
+        log.IsWrite = !isGetDyn;
+
+        // 动态工具没有内置工具那样的能力归属，只过速率闸（传 null 跳过日额度）
+        var dynVerdict = await _usage.CheckAsync(log.KeyId, null, 0, ct);
+        if (!dynVerdict.Allowed)
+            return await DeniedAsync(id, log, dynVerdict.Reason!, ct);
 
         // 先替换 Path 中的 {param} 占位（取自 arguments），已用于路径的键不再进 query/body
         var consumed = new HashSet<string>(StringComparer.Ordinal);
         var dynPath = SubstitutePathParams(match.Path, args, consumed);
-        var isGet = string.Equals(match.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase);
-        var pathAndQuery = isGet ? AppendQuery(dynPath, args, consumed) : dynPath;
-        JsonNode? dynBody = isGet ? null : BodyExcluding(args, consumed);
+        var pathAndQuery = isGetDyn ? AppendQuery(dynPath, args, consumed) : dynPath;
+        JsonNode? dynBody = isGetDyn ? null : BodyExcluding(args, consumed);
         var (st, rb) = await LoopbackAsync(match.HttpMethod, pathAndQuery, dynBody, ct);
+        await RecordFinishedAsync(log, st, rb, startedAt, ct);
         return ToolCallResult(id, st, rb);
+    }
+
+    /// <summary>被闸门挡下：记一条 denied，再把原因原样回给智能体（它会转述给用户）。</summary>
+    private async Task<JsonObject> DeniedAsync(JsonNode? id, McpCallLog log, string reason, CancellationToken ct)
+    {
+        log.Status = "denied";
+        log.ErrorMessage = reason;
+        log.DurationMs = (int)(DateTime.UtcNow - log.CreatedAt).TotalMilliseconds;
+        await _usage.LogAsync(log, ct);
+        return ToolError(id, reason);
+    }
+
+    /// <summary>调用完成：记成败、耗时，并从响应里认一下产物（站点 / 文档 / 工作区 / 生图任务）。</summary>
+    private async Task RecordFinishedAsync(McpCallLog log, int status, string respBody, DateTime startedAt, CancellationToken ct)
+    {
+        log.HttpStatus = status;
+        log.Status = status is >= 200 and < 300 ? "success" : "error";
+        log.DurationMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+        if (log.Status == "error")
+            log.ErrorMessage = McpArtifactExtractor.ExtractErrorMessage(respBody);
+        else
+        {
+            var artifact = McpArtifactExtractor.Extract(log.ToolName, respBody);
+            log.ArtifactKind = artifact.Kind;
+            log.ArtifactId = artifact.Id;
+            log.ArtifactUrl = artifact.Url;
+            log.ArtifactTitle = artifact.Title;
+        }
+        await _usage.LogAsync(log, ct);
+    }
+
+    /// <summary>生图工具的张数（用于日额度预判）；缺省 1，越界交给下游收敛。</summary>
+    private static int ReadRequestedImageCount(JsonObject args)
+    {
+        if (args.TryGetPropertyValue("count", out var node) && node is JsonValue v)
+        {
+            if (v.TryGetValue<int>(out var i)) return Math.Clamp(i, 1, 4);
+            if (v.TryGetValue<double>(out var d)) return Math.Clamp((int)d, 1, 4);
+        }
+        return 1;
     }
 
     internal static (string path, JsonNode? body, string? err) BuildBuiltinRequest(McpToolDef t, JsonObject args)

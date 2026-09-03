@@ -490,6 +490,8 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AutoLinkProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EntryContentWriteService>();
+// 接入台（MCP）：用量闸门 + 调用记录
+builder.Services.AddScoped<PrdAgent.Api.Services.Mcp.McpUsageService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.TutorialLinkGraphService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreAssetNormalizer>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreLiveTranscriptionRelay>();
