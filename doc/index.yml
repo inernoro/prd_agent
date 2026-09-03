@@ -268,6 +268,7 @@ docs:
   plan.cds.multi-project-phases: "CDS 多项目剩余交付 · 计划"
   plan.cds.release-system: "CDS 发布系统改进 · 计划"
   plan.cds.resilience-rollout: "CDS 高可用运行验证 · 计划"
+  plan.cds.service-relations: "CDS 服务关系与跨项目引用 · 计划"
   plan.cds.status: "CDS 当前工作看板 · 计划"
   plan.cds.web-migration: "CDS Legacy 前端退场 · 计划"
   plan.daily-tips.scenarios-and-staleness: "每日小贴士场景统一与过时检测 · 计划"

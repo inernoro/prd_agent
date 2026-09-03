@@ -1,0 +1,210 @@
+/**
+ * 跨项目引用变量（plan.cds.service-relations 第三批）。
+ *
+ * 写法：`${CDS_REF:<项目 id 或 slug>/<服务 id>[@<分支名或分支 id>]}`，可出现在环境变量值的任意位置。
+ * 部署时由平台解析成目标项目那条分支上该服务的**公网入口**（子域服务给子域地址，其余给主入口）。
+ * 必须走公网入口：各项目容器网络互相隔离，容器名在跨项目时不可达。
+ * 不带 @ 时绑目标项目的默认分支；分支级可以钉到目标项目的某个分支（写进分支覆盖）。
+ *
+ * 解析结果带来源与目标状态，配置页「引用」分区、关系图的「引用断裂」都从这里取数。
+ */
+import type { BranchEntry, BuildProfile, Project } from '../types.js';
+import { resolveBranchEntrypointsEnv, branchEntrypointDepsFromState, type BranchEntrypointDeps, PREVIEW_URL_ENV_KEY, SERVICE_URLS_ENV_KEY } from './preview-entrypoints.js';
+import { buildPreviewUrlForProject } from './comment-template.js';
+// container 也导入本模块；两边都只在调用时用到对方的函数，preview-entrypoints 与 container 早已是这种关系
+import { resolveEffectiveProfile } from './container.js';
+import { resolveMainDomainRoutes, ROUTABLE_SERVICE_STATUSES } from './route-conventions.js';
+
+export const CDS_REF_RE = /\$\{CDS_REF:([A-Za-z0-9_.~-]+)\/([A-Za-z0-9_.~-]+)(?:@([^}\s]+))?\}/g;
+
+export interface CdsRef {
+  raw: string;
+  projectRef: string;
+  serviceId: string;
+  branchRef?: string;
+}
+
+/** 从一个环境变量值里抽出全部引用（同一值可以含多个）。 */
+export function parseCdsRefs(value: string): CdsRef[] {
+  const out: CdsRef[] = [];
+  for (const m of String(value ?? '').matchAll(CDS_REF_RE)) {
+    out.push({ raw: m[0], projectRef: m[1], serviceId: m[2], ...(m[3] ? { branchRef: m[3] } : {}) });
+  }
+  return out;
+}
+
+export function formatCdsRef(ref: Pick<CdsRef, 'projectRef' | 'serviceId' | 'branchRef'>): string {
+  return `\${CDS_REF:${ref.projectRef}/${ref.serviceId}${ref.branchRef ? `@${ref.branchRef}` : ''}}`;
+}
+
+/** restricted：目标项目存在但当前凭据无权查看，地址与分支信息一律不下发（由路由层按 assertProjectAccess 打标） */
+export type RefTargetStatus = 'running' | 'stopped' | 'building' | 'error' | 'missing-service' | 'missing-branch' | 'missing-project' | 'restricted' | 'unroutable';
+
+export interface ResolvedCdsRef {
+  ref: CdsRef;
+  /** 解析成功时的公网地址 */
+  url: string | null;
+  status: RefTargetStatus;
+  target: {
+    projectId?: string;
+    projectSlug?: string;
+    branchId?: string;
+    branchName?: string;
+    serviceId: string;
+    /** 目标分支是不是目标项目的默认分支（未钉分支时永远是） */
+    isDefaultBranch?: boolean;
+  };
+  reason?: string;
+}
+
+export interface CdsRefResolverDeps {
+  getProject: (idOrSlug: string) => Project | undefined;
+  getAllBranches: () => BranchEntry[];
+  getEffectiveProfilesForBranch: (entry: BranchEntry) => BuildProfile[];
+  /** 用来算目标分支的已发布入口（与容器注入的入口表同一份） */
+  entrypointDeps: BranchEntrypointDeps;
+}
+
+function findProject(deps: CdsRefResolverDeps, ref: string): Project | undefined {
+  return deps.getProject(ref);
+}
+
+function projectDefaultBranch(project: Project): string {
+  const p = project as Project & { gitDefaultBranch?: string | null; defaultBranch?: string | null };
+  return (p.gitDefaultBranch || p.defaultBranch || 'main').trim() || 'main';
+}
+
+function findBranch(deps: CdsRefResolverDeps, project: Project, branchRef: string | undefined): { entry?: BranchEntry; name: string; isDefault: boolean } {
+  const wanted = branchRef || projectDefaultBranch(project);
+  const isDefault = !branchRef || wanted === projectDefaultBranch(project);
+  const all = deps.getAllBranches().filter((b) => b.projectId === project.id);
+  const entry = all.find((b) => b.id === wanted) ?? all.find((b) => b.branch === wanted);
+  return { entry, name: entry?.branch ?? wanted, isDefault };
+}
+
+/**
+ * 目标服务在目标分支上的公网地址：子域服务给子域；在主域名上拥有路由（壳、显式前缀、按名约定
+ * 拿到 /api/）的给主入口；两者都没有（后台 worker、只被内网调用的服务）返回 unroutable——
+ * 不能把主入口当它的地址，否则调用会静默打到壳上（Codex 五轮 P1）。
+ */
+/** 发布器会不会给这个服务发路由：容器可路由（有端口且状态在可路由集合里），或复制集有在跑的成员 */
+export function isServiceRoutableOnBranch(entry: BranchEntry, serviceId: string): boolean {
+  const svc = entry.services?.[serviceId];
+  if (svc && (svc.hostPort ?? 0) > 0 && ROUTABLE_SERVICE_STATUSES.has(String(svc.status))) return true;
+  const rs = entry.replicaSets?.[serviceId];
+  return !!rs && rs.enabled && rs.members.some((m) => m.status === 'running' && typeof m.hostPort === 'number' && m.hostPort > 0);
+}
+
+export function serviceUrlOnBranch(
+  deps: CdsRefResolverDeps,
+  entry: BranchEntry,
+  serviceId: string,
+): { url: string } | { url: null; reason: 'missing-service' | 'unroutable' | 'not-published' } {
+  const profiles = deps.getEffectiveProfilesForBranch(entry);
+  const profile = profiles.find((p) => p.id === serviceId);
+  if (!profile) return { url: null, reason: 'missing-service' };
+  // 地址只在发布器真的会发它的路由时才给：目标停了 / 出错时主域名可能已被别的在跑服务接管，
+  // 把主入口当它的地址会让调用静默打到别的容器（Codex 七轮 P1）
+  if (!isServiceRoutableOnBranch(entry, serviceId)) return { url: null, reason: 'not-published' };
+  const env = resolveBranchEntrypointsEnv(entry, deps.entrypointDeps).env;
+  if (profile.subdomain) {
+    try {
+      const table = JSON.parse(env[SERVICE_URLS_ENV_KEY] || '{}') as Record<string, string>;
+      if (table[profile.subdomain]) return { url: table[profile.subdomain] };
+    } catch { /* 表损坏按主域名路由继续判 */ }
+  }
+  // 主域名归属与发布器同口径：只在当前可路由的服务之间分配
+  const routes = resolveMainDomainRoutes(profiles.filter((p) => isServiceRoutableOnBranch(entry, p.id)));
+  const ownsMainRoute = routes.shellId === profile.id || (routes.prefixes.get(profile.id)?.length ?? 0) > 0;
+  if (!ownsMainRoute) return { url: null, reason: 'unroutable' };
+  if (env[PREVIEW_URL_ENV_KEY]) return { url: env[PREVIEW_URL_ENV_KEY] };
+  const project = deps.getProject(entry.projectId);
+  const built = buildPreviewUrlForProject(deps.entrypointDeps.previewHost, entry.branch, project, entry.projectId);
+  const url = (built as { url?: string }).url;
+  return url ? { url } : { url: null, reason: 'missing-service' };
+}
+
+export function resolveCdsRef(deps: CdsRefResolverDeps, ref: CdsRef): ResolvedCdsRef {
+  const project = findProject(deps, ref.projectRef);
+  if (!project) {
+    return { ref, url: null, status: 'missing-project', target: { serviceId: ref.serviceId }, reason: `找不到项目 ${ref.projectRef}` };
+  }
+  const { entry, name, isDefault } = findBranch(deps, project, ref.branchRef);
+  const base = { projectId: project.id, projectSlug: project.slug, serviceId: ref.serviceId, branchName: name, isDefaultBranch: isDefault };
+  if (!entry) {
+    return { ref, url: null, status: 'missing-branch', target: base, reason: `项目 ${project.slug} 没有分支 ${name}` };
+  }
+  const located = serviceUrlOnBranch(deps, entry, ref.serviceId);
+  const target = { ...base, branchId: entry.id };
+  const svc = entry.services?.[ref.serviceId];
+  if (located.url === null) {
+    if (located.reason === 'unroutable') {
+      return { ref, url: null, status: 'unroutable', target, reason: `服务 ${ref.serviceId} 没有公网路由（无子域、无前缀、也不是默认站），不能当作地址引用` };
+    }
+    if (located.reason === 'missing-service') {
+      return { ref, url: null, status: 'missing-service', target, reason: `分支 ${name} 上没有服务 ${ref.serviceId}` };
+    }
+    // 没发布路由：没部署过 / 停了 / 出错。地址不给（给了会打到别的容器），状态如实
+    if (!svc) return { ref, url: null, status: 'stopped', target, reason: `分支 ${name} 上还没有部署服务 ${ref.serviceId}` };
+    const status: RefTargetStatus = String(svc.status) === 'error' ? 'error' : 'stopped';
+    return { ref, url: null, status, target, reason: `服务 ${ref.serviceId} 在分支 ${name} 上${status === 'error' ? '出错' : '已停止'}，路由未发布，没有可用地址` };
+  }
+  const url = located.url;
+  // 主容器停了 / 出错但复制集里还有在跑的成员时，转发器仍通过成员把该服务发布出去（与
+  // forwarder-route-publisher 的成员兜底同口径），引用状态也按可达算（Codex 三轮 P2）
+  const rs = entry.replicaSets?.[ref.serviceId];
+  const memberRunning = !!rs && rs.enabled && rs.members.some((m) => m.status === 'running' && typeof m.hostPort === 'number' && m.hostPort > 0);
+  const raw = memberRunning && svc?.status !== 'running' ? 'running' : String(svc?.status ?? 'stopped');
+  const status: RefTargetStatus = raw === 'running' ? 'running'
+    : raw === 'error' ? 'error'
+      : (raw === 'building' || raw === 'starting' || raw === 'restarting') ? 'building'
+        : 'stopped';
+  return { ref, url, status, target };
+}
+
+/** 把值里的引用全部换成地址；任一引用解析失败则原样保留该 token（由体检报「引用断裂」）。 */
+export function substituteCdsRefs(value: string, resolve: (ref: CdsRef) => ResolvedCdsRef): { value: string; resolved: ResolvedCdsRef[] } {
+  const resolved: ResolvedCdsRef[] = [];
+  const out = String(value ?? '').replace(CDS_REF_RE, (raw, projectRef: string, serviceId: string, branchRef?: string) => {
+    const r = resolve({ raw, projectRef, serviceId, ...(branchRef ? { branchRef } : {}) });
+    resolved.push(r);
+    return r.url ?? raw;
+  });
+  return { value: out, resolved };
+}
+
+/** 环境变量里「像地址」的键：引用变量、值是网址、键名带 URL/BASE/ENDPOINT/HOST 后缀。 */
+export type ReferenceKind = 'cds-ref' | 'url' | 'name-hint' | 'platform';
+const URL_VALUE_RE = /^https?:\/\/[^\s]+$/i;
+const NAME_HINT_RE = /(_URL|_BASE|_BASE_URL|_ENDPOINT|_HOST|_ORIGIN)$/;
+export const PLATFORM_ADDRESS_KEYS = new Set([PREVIEW_URL_ENV_KEY, SERVICE_URLS_ENV_KEY, 'CDS_CONSOLE_URL', 'CDS_HOST']);
+
+export function classifyReference(key: string, value: string): ReferenceKind | null {
+  if (PLATFORM_ADDRESS_KEYS.has(key)) return 'platform';
+  if (parseCdsRefs(value).length > 0) return 'cds-ref';
+  if (URL_VALUE_RE.test(String(value ?? '').trim())) return 'url';
+  if (NAME_HINT_RE.test(key)) return 'name-hint';
+  return null;
+}
+
+/** 从 StateService 造解析依赖（与容器注入的入口表同一份口径）。 */
+export function cdsRefResolverDepsFromState(
+  stateService: {
+    getProject: (id: string) => Project | undefined;
+    getAllBranches: () => BranchEntry[];
+    getEffectiveProfilesForBranch: (entry: BranchEntry) => BuildProfile[];
+    getState: () => { projects?: Project[] };
+  },
+  previewHost?: string,
+): CdsRefResolverDeps {
+  const byIdOrSlug = (ref: string): Project | undefined =>
+    stateService.getProject(ref) ?? (stateService.getState().projects ?? []).find((p) => p.slug === ref || (p as { aliasSlug?: string }).aliasSlug === ref);
+  return {
+    getProject: byIdOrSlug,
+    getAllBranches: () => stateService.getAllBranches(),
+    // 目标分支可能用 profileOverrides 改过 subdomain / 前缀：入口表按解析后的 profile 生成，
+    // 选 URL 也必须看解析后的，否则子域服务会被错给主入口（Codex 二轮 P1）
+    getEffectiveProfilesForBranch: (entry) => stateService.getEffectiveProfilesForBranch(entry).map((p) => resolveEffectiveProfile(p, entry)),
+    entrypointDeps: branchEntrypointDepsFromState(stateService as Parameters<typeof branchEntrypointDepsFromState>[0], previewHost),
+  };
+}
