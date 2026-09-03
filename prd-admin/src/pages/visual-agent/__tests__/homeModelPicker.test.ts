@@ -132,6 +132,25 @@ describe('首页能看见并选择绘图模型', () => {
     expect(PAGE, '不许再有假装创建的占位流程').not.toContain('文件夹功能正在开发中');
   });
 
+  it('【关键】375px 上工具行放不下时横滚，不是把「反馈」裁掉', () => {
+    // 这条行现在是四个控件 + 主按钮，375px 放不下；外层面板 overflow-hidden，
+    // 放不下不会换行、只会裁掉，最右边的「反馈」直接没了、也够不到
+    //（Codex PR #1476 P1）。mobile-first-density 二.5 的做法是单行横滚。
+    const at = PAGE.indexOf('data-tour-id="visual-image-btn"');
+    expect(at, '工具行应有参考图按钮').toBeGreaterThan(0);
+    const groupAt = PAGE.lastIndexOf('<div className="flex items-center', at);
+    const openTag = PAGE.slice(groupAt, PAGE.indexOf('\n', groupAt));
+    expect(openTag, '控件组必须能横滚').toMatch(/overflow-x-auto/);
+    expect(openTag, '要能滚，容器自己得允许被压到内容宽度以下').toMatch(/min-w-0/);
+    // 横滚的前提是子项自己不被压扁——少一个 shrink-0，它就被挤成一坨而不是滚出去。
+    for (const anchor of ['visual-image-btn', 'visual-model-btn', 'visual-size-btn', 'visual-defect-btn', 'visual-submit-btn']) {
+      const a = PAGE.indexOf(`data-tour-id="${anchor}"`);
+      const el = PAGE.slice(PAGE.lastIndexOf('<', a), a + 700);
+      const cls = /className="([^"]*)"/.exec(el)?.[1] ?? '';
+      expect(cls, `${anchor} 不能被压扁`).toContain('shrink-0');
+    }
+  });
+
   it('尺寸 chip 不再是那枚靛蓝药丸，与同行控件同一档', () => {
     // 用户指着它说「这个地方是旧的」：整条行只有它带色块，也是整页唯一
     // 和品牌色无关的颜色。判据盯「按钮上不再有靛蓝底」，不锁具体样式写法。

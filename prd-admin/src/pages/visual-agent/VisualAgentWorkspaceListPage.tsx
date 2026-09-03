@@ -735,7 +735,13 @@ function QuickInputBox(props: {
             borderTop: '1px solid var(--border-faint)',
           }}
         >
-          <div className="flex items-center gap-[3px]">
+          {/* 375px 上这一排是「参考图 + 模型 + 尺寸 + 反馈」四个控件，加上右边的
+              主按钮已经放不下；而外层面板是 overflow-hidden，放不下不会换行、
+              只会被裁掉——「反馈」直接消失在屏幕外，且没有任何办法够到它。
+              mobile-first-density 二.5 对这种情况写死了做法：单行横滚 +
+              子项 shrink-0 whitespace-nowrap，不换行也不竖排（Codex PR #1476 P1）。
+              两个下拉都 createPortal 到 body，不会被这里的 overflow 裁掉。 */}
+          <div className="flex items-center gap-[3px] min-w-0 flex-1 overflow-x-auto no-scrollbar">
             <input
               ref={fileInputRef}
               type="file"
@@ -749,7 +755,7 @@ function QuickInputBox(props: {
               data-tour-id="visual-image-btn"
               onClick={handleImageButtonClick}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ minHeight: 36, padding: '0 9px', borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-secondary)', fontSize: 10, cursor: 'pointer' }}
               title="添加参考图（也可粘贴或拖入）"
             >
@@ -766,7 +772,7 @@ function QuickInputBox(props: {
                 目录还没回来 / 拉失败时给一个禁用的占位，位置和文案都在，只是点不动
                 （Codex PR #1476 P2；no-rootless-tree：不假装有，但也别装作没这回事）。 */}
             {onModelChange && (
-              <span data-tour-id="visual-model-btn" className="inline-flex">
+              <span data-tour-id="visual-model-btn" className="inline-flex shrink-0 whitespace-nowrap">
                 {modelOptions && modelOptions.length > 0 ? (
                   <ModelPickerButton options={modelOptions} modelId={modelId} onChange={onModelChange} />
                 ) : (
@@ -784,7 +790,7 @@ function QuickInputBox(props: {
               </span>
             )}
             {onSizeChange && (
-              <span data-tour-id="visual-size-btn" className="inline-flex">
+              <span data-tour-id="visual-size-btn" className="inline-flex shrink-0 whitespace-nowrap">
                 <SizePickerButton size={size} onSizeChange={onSizeChange} availableSizes={availableSizes} />
               </span>
             )}
@@ -792,7 +798,7 @@ function QuickInputBox(props: {
               type="button"
               data-tour-id="visual-defect-btn"
               onClick={(e) => { e.stopPropagation(); openDefectDialog(); }}
-              className="inline-flex items-center gap-1.5 hover-bg-soft"
+              className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap hover-bg-soft"
               style={{ minHeight: 36, padding: '0 9px', borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-secondary)', fontSize: 10, cursor: 'pointer' }}
               title="提交缺陷 (Cmd/Ctrl+B)"
             >
@@ -807,7 +813,7 @@ function QuickInputBox(props: {
             onClick={(e) => { e.stopPropagation(); onSubmit(); }}
             disabled={!canSubmit}
             data-tour-id="visual-submit-btn"
-            className="inline-flex items-center gap-[7px] transition-opacity"
+            className="inline-flex items-center gap-[7px] shrink-0 whitespace-nowrap transition-opacity"
             style={{
               minHeight: 40,
               padding: '0 16px',
@@ -1242,26 +1248,51 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      // catch 兜住网络层异常：拉挂了也必须把 modelsLoading 落下来，
-      // 否则工具行上那个占位会永远停在「读取模型…」——静止的加载态就是缺陷。
-      const [poolsRes, prefRes] = await Promise.all([
-        getVisualAgentImageGenModels().catch(() => null),
-        getUserPreferences().catch(() => null),
-      ]);
-      if (cancelled) return;
-      const options = poolsRes?.success ? buildVisualAgentModelOptions(poolsRes.data ?? []) : [];
-      setModelOptions(options);
+    /**
+     * 目录和偏好**各走各的**，不再 Promise.all 一起等。
+     *
+     * 目录决定「有没有模型可选」，偏好只决定「默认选中哪个」——后者拿不到时，
+     * 前者照样能用（退到服务端默认池 / 第一个可用）。并成一个 await 之后，
+     * 偏好接口慢或不返回就把整块拖住：modelsLoading 一直是 true，
+     * 工具行上那个占位永远停在「读取模型…」而且是禁用的，
+     * 用户连模型都看不到、更选不了（Codex PR #1476 P2）。
+     * apiRequest 默认没有超时，这不是理论情况。
+     *
+     * 这个占位是我上一轮为「教程锚点必须常驻」加的——它把这条隐患
+     * 从「短暂没有选择器」变成了「一个永远转不完的禁用按钮」，更该修。
+     */
+    const applyPreferred = (options: VisualAgentModelOption[], preferred: string) => {
       // 默认值优先级：上次生成用的那个 → 服务端标记的默认池 → 第一个可用。
       // 注意 prefs 里存的是 option.id（pool_xxx），和编辑器同一套标识，不能换成 modelName。
-      const preferred = prefRes?.success ? String(prefRes.data?.visualAgentPreferences?.modelId ?? '') : '';
       const pick = options.find((o) => o.id === preferred && o.enabled)
         ?? options.find((o) => o.enabled && o.isDefault)
         ?? options.find((o) => o.enabled)
         ?? null;
       setModelId(pick?.id ?? '');
+    };
+    let loaded: VisualAgentModelOption[] = [];
+    let prefApplied = false;
+    // 目录先到先用：catch 兜网络层异常，拉挂了也要把 modelsLoading 落下来，
+    // 否则占位停在静止的加载态——静止的加载态就是缺陷。
+    const catalog = getVisualAgentImageGenModels().catch(() => null).then((poolsRes) => {
+      if (cancelled) return;
+      loaded = poolsRes?.success ? buildVisualAgentModelOptions(poolsRes.data ?? []) : [];
+      setModelOptions(loaded);
       setModelsLoading(false);
-    })();
+      // 偏好还没回来就先按服务端默认选一个，等它回来再纠正（下面那条）。
+      if (!prefApplied) applyPreferred(loaded, '');
+    });
+    void Promise.all([
+      catalog,
+      getUserPreferences().catch(() => null).then((prefRes) => {
+        if (cancelled) return;
+        prefApplied = true;
+        const preferred = prefRes?.success ? String(prefRes.data?.visualAgentPreferences?.modelId ?? '') : '';
+        // 偏好可能比目录先回来：那就等目录（catalog 已 await 在同一个 all 里），
+        // 这里只用它算一次最终选中。preferred 为空时结果与上面那次一致，不会跳。
+        void catalog.then(() => { if (!cancelled) applyPreferred(loaded, preferred); });
+      }),
+    ]);
     return () => { cancelled = true; };
   }, []);
 
