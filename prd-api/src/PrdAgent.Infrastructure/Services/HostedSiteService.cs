@@ -287,7 +287,6 @@ public class HostedSiteService : IHostedSiteService
             System.Text.Encoding.UTF8.GetBytes(htmlContent), "index.html"));
 
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
-        await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
 
         var site = new HostedSite
         {
@@ -314,7 +313,32 @@ public class HostedSiteService : IHostedSiteService
             SlideNavCompatVersion = SlideNavVersion, // 创建即注入当前版垫片
         };
 
+        // 先占坑、再上传。顺序不能反：siteId 带幂等键时是**确定性**的，两个并发请求算出同一个
+        // COS key，先传后插的话，输掉数据库竞争的那一方已经把赢家的 index.html 覆盖掉了 ——
+        // 元数据是赢家的、页面内容是输家的，两边对不上，而两边都收到「去重成功」。
+        // 插入是原子的，让它先定胜负：输的那个在这里就抛主键冲突，根本走不到上传。
+        // 站点的每个字段都不依赖上传结果（key 由 siteId 定、大小与是否幻灯片由字节定），所以调得动这个顺序。
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
+
+        try
+        {
+            await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
+        }
+        catch
+        {
+            // 上传没成，占的坑要退掉：留着就是一条指向不存在对象的站点记录，
+            // 而带幂等键时它还会把那个 id 永久占住 —— 重试只会命中这条坏记录，再也建不出来。
+            try
+            {
+                await _db.HostedSites.DeleteOneAsync(s => s.Id == siteId, CancellationToken.None);
+            }
+            catch (Exception cleanupEx)
+            {
+                _logger.LogError(cleanupEx, "上传失败后没能撤回站点占位记录 {SiteId}，这个 id 会被占住", siteId);
+            }
+            throw;
+        }
+
         _logger.LogInformation("用户 {UserId} 通过 {SourceType} 创建托管站点 {SiteId}: {Title}",
             userId, site.SourceType, siteId, site.Title);
 

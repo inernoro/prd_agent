@@ -389,7 +389,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             // 智能体拿同一个 clientRequestId 重试要么命中去重拿到一篇空文档，
             // 要么永远撞上「还在落正文」的 409。一次存储抖动就此变成永久的残缺数据。
             var cleaned = await CleanupRolledBackEntryAsync(entry.Id);
-            if (countedIn)
+            if (ShouldRestoreDocumentCount(countedIn, cleaned))
                 await _db.DocumentStores.UpdateOneAsync(
                     s => s.Id == storeId,
                     Builders<DocumentStore>.Update.Inc(s => s.DocumentCount, -1).Set(s => s.UpdatedAt, DateTime.UtcNow),
@@ -433,6 +433,14 @@ public class DocumentStoreOpenApiController : ControllerBase
 
     /// <summary>单篇正文上限。挡住智能体一次糊一本书进来，也挡住它把上下文里的垃圾整个倒进知识库。</summary>
     private const int MaxContentChars = 200_000;
+
+    /// <summary>
+    /// 回滚时要不要把库里的文档计数减回去。
+    ///
+    /// 只有条目**真的删掉了**才减：清理失败时条目是被刻意留下来占住确定性 id 的，它还在列表里
+    /// 看得见，这时候减计数会让库摘要少算一条，而且永远补不回来 —— 计数得跟着「条目还在不在」走。
+    /// </summary>
+    internal static bool ShouldRestoreDocumentCount(bool countedIn, bool entryDeleted) => countedIn && entryDeleted;
 
     /// <summary>
     /// 撤回一条没建成的条目。
