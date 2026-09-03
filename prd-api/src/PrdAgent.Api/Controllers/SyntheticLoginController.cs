@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Authentication;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
@@ -414,7 +415,7 @@ public sealed class SyntheticLoginController : ControllerBase
 
     private IActionResult? ValidateTestingAccess(out string userId)
     {
-        userId = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value?.Trim() ?? string.Empty;
+        userId = string.Empty;
         if (!IsEnabled(_configuration))
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable,
@@ -422,12 +423,13 @@ public sealed class SyntheticLoginController : ControllerBase
         }
 
         var username = User.FindFirst(JwtRegisteredClaimNames.UniqueName)?.Value?.Trim();
-        if (!IsAllowedUser(username, ReadAllowedUsers(_configuration)) || string.IsNullOrWhiteSpace(userId))
+        if (!IsAllowedUser(username, ReadAllowedUsers(_configuration)))
         {
             return StatusCode(StatusCodes.Status403Forbidden,
                 ApiResponse<object>.Fail("SYNTHETIC_LOGIN_ACCOUNT_NOT_ALLOWED", "当前账号不是合成测试专用账号，请更换已授权账号后重试"));
         }
 
+        userId = this.GetRequiredUserId().Trim();
         return null;
     }
 

@@ -20,6 +20,34 @@ function escapeHtmlAttr(value: string) {
     .replace(/>/g, '&gt;');
 }
 
+/**
+ * 解码 href 分类所需的 HTML 字符引用。
+ *
+ * 属性扫描拿到的是源文本，但浏览器会在 URL 解析前解码字符引用。因此
+ * `href="&#35;risk"`、`href="&#x23;risk"` 和 `href="&num;risk"`
+ * 在浏览器里都等价于 `#risk`，必须按同一条页内锚点规则处理。
+ */
+function decodeHtmlCharacterReferences(value: string): string {
+  const named: Record<string, string> = {
+    amp: '&',
+    apos: "'",
+    gt: '>',
+    lt: '<',
+    num: '#',
+    quot: '"',
+  };
+
+  return value.replace(/&(?:#([0-9]+)|#x([0-9a-f]+)|([a-z][a-z0-9]+));?/gi, (match, decimal, hex, entity) => {
+    if (decimal || hex) {
+      const codePoint = Number.parseInt(decimal || hex, decimal ? 10 : 16);
+      return Number.isSafeInteger(codePoint) && codePoint > 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : match;
+    }
+    return named[String(entity).toLowerCase()] ?? match;
+  });
+}
+
 function isHtmlEntry(siteUrl: string, entryFile?: string) {
   const target = entryFile || siteUrl.split('?')[0].split('#')[0];
   return /\.html?$/i.test(target);
@@ -306,7 +334,7 @@ export function preserveSrcDocFragmentLinks(html: string): string {
   for (const tag of tags) {
     output += html.slice(lastEnd, tag.start);
     const hrefAttr = findHtmlAttribute(tag.text, 'href');
-    const href = hrefAttr?.value.trim() ?? '';
+    const href = hrefAttr ? decodeHtmlCharacterReferences(hrefAttr.value).trim() : '';
     output += !hrefAttr || !href.startsWith('#')
       ? tag.text
       : `${tag.text.slice(0, hrefAttr.start)}href="${escapeHtmlAttr(`about:srcdoc${href}`)}"${tag.text.slice(hrefAttr.end)}`;

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Authorization;
@@ -8,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Controllers;
+using PrdAgent.Api.Extensions;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Controllers;
@@ -171,6 +173,28 @@ public sealed class SyntheticLoginControllerTests
     }
 
     [Fact]
+    public void FixtureAuthorization_ShouldUseSharedIdentityResolverWithNameIdentifier()
+    {
+        var source = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/SyntheticLoginController.cs"));
+        var controller = new IdentityProbeController
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        new[] { new Claim(ClaimTypes.NameIdentifier, "stable-smoke-user-id") },
+                        "test")),
+                },
+            },
+        };
+
+        Assert.Contains("userId = this.GetRequiredUserId().Trim();", source);
+        Assert.Equal("stable-smoke-user-id", controller.GetRequiredUserId());
+    }
+
+    [Fact]
     public void StableSmokeSignature_ShouldResolveDeploymentHostWithoutWildcardTrust()
     {
         var configuration = new ConfigurationBuilder()
@@ -305,5 +329,9 @@ public sealed class SyntheticLoginControllerTests
             BindingFlags.Static | BindingFlags.NonPublic);
         Assert.NotNull(method);
         return Assert.IsAssignableFrom<T>(method.Invoke(null, args));
+    }
+
+    private sealed class IdentityProbeController : ControllerBase
+    {
     }
 }

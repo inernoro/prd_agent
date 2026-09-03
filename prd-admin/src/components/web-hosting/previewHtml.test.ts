@@ -124,6 +124,21 @@ describe('srcDoc 页内锚点', () => {
     expect(out).toContain('href="https://example.test/#part"');
   });
 
+  it('先解码 HTML 字符引用，再识别并保护页内锚点', () => {
+    const html = [
+      '<a href="&#35;risk">十进制</a>',
+      '<a href="&#x23;summary">十六进制</a>',
+      '<area href="&num;map">命名实体</area>',
+      '<a href="&amp;not-fragment">非锚点</a>',
+    ].join('');
+    const out = preserveSrcDocFragmentLinks(html);
+
+    expect(out).toContain('href="about:srcdoc#risk"');
+    expect(out).toContain('href="about:srcdoc#summary"');
+    expect(out).toContain('href="about:srcdoc#map"');
+    expect(out).toContain('href="&amp;not-fragment"');
+  });
+
   it('页面自带绝对 base 时同样保护纯片段链接', () => {
     const out = withPreviewBase(
       '<html><head><base href="https://cdn.example/assets/"></head><body><a href="#summary">摘要</a></body></html>',

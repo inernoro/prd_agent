@@ -901,7 +901,8 @@ type StableWebFolder = {
 
 async function uploadStableHostedSite(page: Page, token: string, title: string) {
   const marker = `${title}-正文标记`;
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title></head><body><a id="jump" href="#target">跳到验收锚点</a><div style="height:900px"></div><section id="target">${marker}</section></body></html>`;
+  // 用实体编码的 # 覆盖浏览器会解码、源码扫描器容易漏判的真实锚点形态。
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title></head><body><a id="jump" href="&#35;target">跳到验收锚点</a><div style="height:900px"></div><section id="target">${marker}</section></body></html>`;
   const response = await page.request.post('/api/web-pages/upload', {
     headers: authHeaders(token),
     multipart: {
