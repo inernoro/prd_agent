@@ -44,6 +44,16 @@ public sealed class McpToolDef
     public required string PathTemplate { get; init; }
 
     public IReadOnlyList<McpToolParam> Params { get; init; } = new List<McpToolParam>();
+
+    /// <summary>
+    /// 这个工具会不会在平台里留下东西（决定它算不算「写入」、要不要扣每日写入额度）。
+    ///
+    /// 默认按 HTTP 动词推（非 GET 即写入），但**动词不等于语义**：取用技能是 POST，
+    /// 可它只是把公开技能下载到自己名下、顺带记一次去重过的下载量，本质是读。
+    /// 一个只读客户端多取几个技能就被写入额度挡住，是判据太宽（形状 1）。
+    /// 语义与动词不一致时，在这里显式写出来。
+    /// </summary>
+    public bool? WritesData { get; init; }
 }
 
 /// <summary>
@@ -303,6 +313,7 @@ public static class McpBuiltinTools
             Name = "map_market_fork_skill",
             Description = "取用海鲜市场里的某个技能包（下载量 +1，返回 zip 下载地址）。id 来自 marketplace_search_skills。",
             RequiredScope = ScopeMarketplaceRead,
+            WritesData = false,   // POST，但语义是取用（下载到自己名下），不占写入额度
             Method = "POST",
             PathTemplate = "/api/open/marketplace/skills/{id}/fork",
             Params = new List<McpToolParam>

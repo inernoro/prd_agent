@@ -27,11 +27,14 @@ namespace PrdAgent.Api.Controllers.Api;
 public class AgentApiKeysController : ControllerBase
 {
     // 固定 scope 白名单 = 接入台能力目录（视觉创作 / 文学创作 / 知识库 / 网页托管 / 海鲜市场）
-    // 加上不属于任何能力卡的历史 scope（缺陷协作、OpenAI 兼容网关）。
-    // 能力目录是 SSOT，这里不再手抄第二份清单。
+    // 加上不属于任何能力卡的既有 scope。能力目录是 SSOT，这里不再手抄第二份清单。
+    //
+    // marketplace.skills:write 单列在这里：它没有任何 MCP 工具（上传走 multipart，MCP 传不了二进制），
+    // 所以从能力卡上摘掉了；但市场上传的 REST 接口一直在用它，签发白名单不能跟着摘 —— 那会打断存量用法。
     private static readonly HashSet<string> FixedAllowedScopes = new HashSet<string>(
         McpCapabilityCatalog.AllScopes, StringComparer.OrdinalIgnoreCase)
     {
+        MarketplaceSkillsOpenApiController.ScopeWrite,
         DefectAgentController.AgentFixScope,
         DefectAgentController.AgentShareScope,
         OpenApiController.ScopeCall,

@@ -103,7 +103,10 @@ export function ConnectAgentDialog({
         2,
       );
     }
-    return `[mcp_servers.map]\nurl = "${endpointUrl}"\n\n[mcp_servers.map.headers]\nAuthorization = "Bearer ${key}"`;
+    // Codex 的键是 http_headers（map<string,string>），不是嵌套的 [mcp_servers.map.headers] 表 ——
+    // 写成嵌套表 TOML 照样解析得过，但 Codex 认不出来，鉴权头被静默丢掉，
+    // 请求会以匿名身份打到需要密钥的 MCP 端点。见 Codex 配置参考 mcp_servers.<id>.http_headers。
+    return `[mcp_servers.map]\nurl = "${endpointUrl}"\nhttp_headers = { Authorization = "Bearer ${key}" }`;
   }, [configTab, endpointUrl, plaintext]);
 
   return (

@@ -345,38 +345,43 @@ public class DocumentStoreOpenApiController : ControllerBase
             if (raced == null) throw;
             return DedupOrInProgress(raced);
         }
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == storeId,
-            Builders<DocumentStore>.Update.Inc(s => s.DocumentCount, 1).Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
-
-        if (content.Length > 0)
+        // 计数与正文一起纳入同一段补偿：计数那一步失败时若不回滚，条目会永远停在
+        // mcpContentPending，此后同键的每一次重试都拿到 409 —— 一条谁也救不回来的死记录。
+        var countedIn = false;
+        try
         {
-            try
+            await _db.DocumentStores.UpdateOneAsync(
+                s => s.Id == storeId,
+                Builders<DocumentStore>.Update.Inc(s => s.DocumentCount, 1).Set(s => s.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+            countedIn = true;
+
+            if (content.Length > 0)
             {
                 await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
                     DocumentVersionSource.Edit, contentTypeOverride: "text/markdown");
+
+                // 正文落盘了，这条才算完整 —— 在此之前撞上来的重试只会拿到 409，不会拿到「成功」
+                await _db.DocumentEntries.UpdateOneAsync(
+                    e => e.Id == entry.Id,
+                    Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
+                    cancellationToken: CancellationToken.None);
             }
-            catch (Exception ex)
-            {
-                // 正文没落盘就把条目撤回去。留着的话，条目上已经带着幂等键了 ——
-                // 智能体拿同一个 clientRequestId 重试会命中去重、拿到「成功」，
-                // 而那篇文档永远是空的，计数也多了一。一次存储抖动就此变成永久的残缺数据。
-                await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 没走完就把条目撤回去。留着的话，条目上已经带着幂等键了 ——
+            // 智能体拿同一个 clientRequestId 重试要么命中去重拿到一篇空文档，
+            // 要么永远撞上「还在落正文」的 409。一次存储抖动就此变成永久的残缺数据。
+            await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, CancellationToken.None);
+            if (countedIn)
                 await _db.DocumentStores.UpdateOneAsync(
                     s => s.Id == storeId,
                     Builders<DocumentStore>.Update.Inc(s => s.DocumentCount, -1).Set(s => s.UpdatedAt, DateTime.UtcNow),
                     cancellationToken: CancellationToken.None);
-                _logger.LogWarning(ex, "[mcp] 知识库写入正文失败，已撤回条目 entryId={EntryId} storeId={StoreId}", entry.Id, storeId);
-                return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR,
-                    "正文没有写进去，这篇文档已经撤回，请用同一个 clientRequestId 重试"));
-            }
-
-            // 正文落盘了，这条才算完整 —— 在此之前撞上来的重试只会拿到 409，不会拿到「成功」
-            await _db.DocumentEntries.UpdateOneAsync(
-                e => e.Id == entry.Id,
-                Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
-                cancellationToken: CancellationToken.None);
+            _logger.LogWarning(ex, "[mcp] 知识库建文档未走完，已撤回条目 entryId={EntryId} storeId={StoreId}", entry.Id, storeId);
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR,
+                "这篇文档没有建成，已经撤回，请用同一个 clientRequestId 重试"));
         }
 
         return Ok(ApiResponse<object>.Ok(new { entryId = entry.Id, storeId, title = entry.Title }));

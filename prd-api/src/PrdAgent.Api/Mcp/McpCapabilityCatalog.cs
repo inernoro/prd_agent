@@ -111,12 +111,16 @@ public static class McpCapabilityCatalog
         new()
         {
             Key = "market",
+            // 只有读这一档。上传技能包走 multipart，MCP 传不了二进制，所以没有任何工具挂在
+            // marketplace.skills:write 上 —— 之前把它摆成能力卡的写入档，等于让用户勾一个
+            // 「勾了也多不出任何工具」的空头 scope，卡片文案还写着「能把技能包发上去」。
+            // 那个 scope 本身仍然有效（市场上传 REST 接口在用），只是不该出现在接入台的向导里。
             Title = "海鲜市场",
-            Summary = "去技能市场找技能、取用技能，也能把你写好的技能包发上去。",
+            Summary = "去技能市场找技能、把技能取到自己名下。上传技能包要传 zip，MCP 传不了二进制，这一期只能在网页里发。",
             ReadScope = ScopeMarketplaceRead,
-            WriteScope = ScopeMarketplaceWrite,
-            WriteNeedsApproval = true,
-            WriteImpliesRead = false,  // 市场的读端点是 [RequireScope(read)] 精确匹配，持写 scope 打过去会 403
+            WriteScope = null,
+            WriteNeedsApproval = false,
+            WriteImpliesRead = false,
         },
     };
 

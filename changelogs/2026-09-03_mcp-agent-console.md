@@ -54,3 +54,8 @@
 | fix | prd-api | 密钥的元数据与配额合成同一次写入，PATCH 不再出现「报错了但名字已经改了」的半截状态 |
 | fix | prd-api | 今日用量统计包含当天被撤销的密钥，today.calls 与 today.images/writes 不再自己跟自己对不上 |
 | test | prd-api | 新增外部地址解析守卫，含「只有 X-Forwarded-Proto、没有 X-Forwarded-Host」这条真实 nginx 形态 |
+| fix | prd-admin | Codex 配置改用 http_headers（官方键名），此前写成嵌套 headers 表会被静默丢弃、请求以匿名身份打到 MCP 端点 |
+| fix | prd-api | 海鲜市场能力卡去掉写入档：上传走 multipart、MCP 传不了二进制，那个 scope 挂零个工具；scope 本身在签发白名单里保留（市场上传 REST 接口仍在用） |
+| fix | prd-api | 工具的写入语义可显式声明（WritesData），取用技能虽是 POST 但不再占用每日写入额度 |
+| fix | prd-api | 知识库建文档把计数与正文纳入同一段补偿，计数失败不再留下永远 409 的死记录 |
+| test | prd-api | 守卫从「每块能力有工具」收紧到「每个声明的 scope 都有工具」，空头 scope 不再能摆进向导 |

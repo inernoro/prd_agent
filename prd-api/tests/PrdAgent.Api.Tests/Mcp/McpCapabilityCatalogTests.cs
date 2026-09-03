@@ -33,6 +33,31 @@ public class McpCapabilityCatalogTests
     }
 
     [Fact]
+    public void EveryDeclaredScope_HasAtLeastOneTool_NotJustEveryCapability()
+    {
+        // 上面那条只管到「能力」这一层，一块能力只要有**任意一个** scope 挂着工具就绿。
+        // 于是「读档有工具、写档一个都没有」的卡片能一路过关：海鲜市场的写 scope 就是这么
+        // 摆到向导里的 —— 上传技能包走 multipart、MCP 传不了二进制，那个勾选框勾了也多不出
+        // 任何工具，卡片文案还写着「能把技能包发上去」。判据比它该管的范围窄（形状 1）。
+        //
+        // 注意：这条只管**能力卡上声明的 scope**。像 marketplace.skills:write 这种
+        // 「REST 接口在用、但没有 MCP 工具」的 scope，正确做法是不摆进能力卡（签发白名单里另行保留），
+        // 而不是为它编一个工具出来。
+        foreach (var cap in McpCapabilityCatalog.All)
+        {
+            foreach (var scope in cap.AllScopes())
+            {
+                var tools = McpBuiltinTools.All
+                    .Where(t => string.Equals(t.RequiredScope, scope, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                tools.Count.ShouldBeGreaterThan(0,
+                    $"能力「{cap.Title}」声明了 scope {scope}，却没有任何工具要求它 —— " +
+                    "用户在向导里勾得到，勾完智能体那边一个工具都不多。要么补工具，要么把这一档从能力卡上摘掉");
+            }
+        }
+    }
+
+    [Fact]
     public void EveryBuiltinTool_BelongsToADeclaredCapabilityOrLegacyScope()
     {
         // 历史 scope：不在能力卡上，但确实有工具/接口在用

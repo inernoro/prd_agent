@@ -63,9 +63,13 @@ public sealed class McpUsageService
         _logger = logger;
     }
 
-    /// <summary>某工具算不算「写入类动作」：判据取自工具定义本身的 HTTP 方法，不另维护一张名单。</summary>
+    /// <summary>
+    /// 某工具算不算「写入类动作」。默认按工具定义的 HTTP 方法推（非 GET 即写入），不另维护一张名单；
+    /// 但工具可以用 <see cref="McpToolDef.WritesData"/> 显式改写 —— 动词不等于语义，
+    /// 取用技能是 POST 却本质是读，按动词判会让只读客户端被写入额度挡住。
+    /// </summary>
     public static bool IsWriteTool(McpToolDef tool) =>
-        !string.Equals(tool.Method, "GET", StringComparison.OrdinalIgnoreCase);
+        tool.WritesData ?? !string.Equals(tool.Method, "GET", StringComparison.OrdinalIgnoreCase);
 
     public static bool IsImageTool(McpToolDef tool) =>
         string.Equals(tool.Name, "map_visual_generate_image", StringComparison.Ordinal);
