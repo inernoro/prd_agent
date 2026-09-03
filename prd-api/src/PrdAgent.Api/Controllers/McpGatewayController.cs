@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
@@ -484,20 +485,21 @@ public class McpGatewayController : ControllerBase
         if (!string.IsNullOrWhiteSpace(aiKey))
             req.Headers.TryAddWithoutValidation("X-AI-Access-Key", aiKey);
 
-        // 转发外部主机信息，让下游 ResolveServerUrl 构造公网绝对 URL（而非回环 127.0.0.1）。
-        // 否则海鲜市场 official skills / 任何按请求 host 拼 URL 的接口会在结果里返回 localhost 链接。
-        var clientBase = Request.Headers["X-Client-Base-Url"].ToString();
-        if (!string.IsNullOrWhiteSpace(clientBase))
-            req.Headers.TryAddWithoutValidation("X-Client-Base-Url", clientBase);
-        var fwdHost = Request.Headers["X-Forwarded-Host"].ToString();
-        if (string.IsNullOrWhiteSpace(fwdHost) && Request.Host.HasValue)
-            fwdHost = Request.Host.Value;
-        if (!string.IsNullOrWhiteSpace(fwdHost))
+        // 下游要拼公网绝对 URL（海鲜市场的下载地址、分享链…），否则结果里会出现 localhost。
+        // 但外部主机信息一律**由我们自己算**，绝不转发调用方填的那几个头：
+        // nginx 既不覆盖 X-Forwarded-Host 也不覆盖 X-Client-Base-Url，而 ResolveServerUrl
+        // 把 X-Client-Base-Url 排在第一优先级 —— 转发它等于让调用方决定下游拼出来的地址，
+        // 而那些地址会写进调用记录、日后被密钥主人从接入台点开。
+        //（本仓库另一处早有同样的判断：DataSyncConsumerController 明确写着「刻意不收
+        // X-Client-Base-Url」。上一轮我只堵了 X-Forwarded-Host 那一个实例，没堵这一类。）
+        // ResolveExternalBaseUrl 取的是 nginx 覆盖过的 proto + 被 nginx 清洗的 Request.Host。
+        var trustedBase = Request.ResolveExternalBaseUrl();
+        req.Headers.TryAddWithoutValidation("X-Client-Base-Url", trustedBase);
+        if (Uri.TryCreate(trustedBase, UriKind.Absolute, out var trustedUri))
         {
-            req.Headers.TryAddWithoutValidation("X-Forwarded-Host", fwdHost);
-            var fwdProto = Request.Headers["X-Forwarded-Proto"].ToString();
-            if (string.IsNullOrWhiteSpace(fwdProto)) fwdProto = Request.Scheme;
-            req.Headers.TryAddWithoutValidation("X-Forwarded-Proto", fwdProto);
+            req.Headers.TryAddWithoutValidation("X-Forwarded-Host",
+                trustedUri.IsDefaultPort ? trustedUri.Host : $"{trustedUri.Host}:{trustedUri.Port}");
+            req.Headers.TryAddWithoutValidation("X-Forwarded-Proto", trustedUri.Scheme);
         }
 
         if (body != null && !string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))

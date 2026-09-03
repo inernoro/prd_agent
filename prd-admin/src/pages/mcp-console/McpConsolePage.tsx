@@ -25,13 +25,21 @@ export default function McpConsolePage() {
   // 靠这个计数把刷新意图传下去 —— 否则用户停在记录页点刷新，列表纹丝不动。
   const [refreshToken, setRefreshToken] = useState(0);
 
+  // 加载失败要留一个**持续存在**的错误态，不能只弹一下 toast 就放用户进正常页面 ——
+  // overview 为 null 时正常页面会渲染成「0 个客户端、0 次调用、连接地址空白」，
+  // 那和「账号是新的、什么都还没接」长得一模一样。toast 一消失，用户就以为接入台是空的，
+  // 而实际上是它没读到数据（网络断了 / 没权限 / 服务端 500）。
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
+    setLoading(true);
     const res = await getMcpConsoleOverview();
     if (!res.success || !res.data) {
-      toast.error('接入台数据加载失败', res.error?.message);
+      setLoadError(res.error?.message || '接入台数据没读到，可能是网络断开或服务端异常。');
       setLoading(false);
       return;
     }
+    setLoadError(null);
     setOverview(res.data);
     setLoading(false);
   }, []);
@@ -49,6 +57,32 @@ export default function McpConsolePage() {
     return (
       <div className="flex h-full items-center justify-center">
         <PrdLoader size={44} />
+      </div>
+    );
+  }
+
+  if (loadError || !overview) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          接入台数据没读到
+        </div>
+        <div className="max-w-[420px] text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
+          {loadError || '服务端没有返回数据。'}
+          <br />
+          这一屏显示的不是「你还没接入」，而是这次没读到 —— 已授权的客户端与调用记录都还在。
+        </div>
+        <button
+          type="button"
+          onClick={() => void load()}
+          className="rounded-[8px] px-3.5 py-1.5 text-[12.5px] font-medium"
+          style={{
+            background: 'var(--accent-primary)',
+            color: 'var(--accent-on-solid)',
+          }}
+        >
+          重试
+        </button>
       </div>
     );
   }

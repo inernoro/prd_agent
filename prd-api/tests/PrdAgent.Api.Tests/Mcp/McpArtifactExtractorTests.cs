@@ -84,4 +84,39 @@ public class McpArtifactExtractorTests
         McpArtifactExtractor.ExtractErrorMessage("""{"success":false,"error":{"code":"X","message":"额度用完了"}}""")
             .ShouldBe("额度用完了");
     }
+
+    [Fact]
+    public void 只回_id_的写入工具_按类型反推站内深链()
+    {
+        // 建库 / 建条目 / 建文学工作区都只回 id，没有任何 url。
+        // 不反推的话，这几条记录在面板上既没有「打开」也看不到 id ——
+        // 而「一点就打开智能体刚做出来的东西」正是这块面板存在的理由。
+        McpArtifactExtractor.Extract("map_kb_create_store", true,
+                """{"success":true,"data":{"storeId":"st1","name":"资料库"}}""")
+            .Url.ShouldBe("/document-store?store=st1");
+
+        // 条目要带上它所属的库：DocumentStorePage 的深链解析只在 store 存在时才读 entry
+        McpArtifactExtractor.Extract("map_kb_create_entry", true,
+                """{"success":true,"data":{"entryId":"e1","storeId":"st1","title":"稿子"}}""")
+            .Url.ShouldBe("/document-store?store=st1&entry=e1");
+
+        McpArtifactExtractor.Extract("map_literary_create_workspace", true,
+                """{"success":true,"data":{"workspaceId":"w1","title":"长文"}}""")
+            .Url.ShouldBe("/literary-agent/w1");
+    }
+
+    [Fact]
+    public void 反推不出来的一律不编地址()
+    {
+        // 缺 storeId 的条目：给一个点开是空白页的链接，比没有链接更糟。
+        McpArtifactExtractor.Extract("map_kb_create_entry", true,
+                """{"success":true,"data":{"entryId":"e1","title":"稿子"}}""")
+            .Url.ShouldBeNull();
+
+        // 还没跑完的生图 run 没有可点的地址，也不许拿 runId 拼一个
+        var run = McpArtifactExtractor.Extract("map_visual_generate_image", true,
+            """{"success":true,"data":{"runId":"r1","status":"Queued"}}""");
+        run.Id.ShouldBe("r1");
+        run.Url.ShouldBeNull();
+    }
 }

@@ -200,6 +200,15 @@ export function McpCallsPanel({
                     {item.artifact?.url && (
                       <DetailRow label="产物地址" value={item.artifact.url} mono />
                     )}
+                    {/* 没有可点地址时至少把 id 露出来（如还没跑完的生图 run）：
+                        既没有「打开」又看不到 id，这条记录就等于只告诉用户「有个东西」。 */}
+                    {!item.artifact?.url && item.artifact?.id && (
+                      <DetailRow
+                        label="产物"
+                        value={`${item.artifact.kind ?? '产物'} · ${item.artifact.id}`}
+                        mono
+                      />
+                    )}
                     <div className="flex flex-wrap gap-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                       <span>HTTP {item.httpStatus || '—'}</span>
                       <span>{item.isWrite ? '写入类动作' : '只读动作'}</span>

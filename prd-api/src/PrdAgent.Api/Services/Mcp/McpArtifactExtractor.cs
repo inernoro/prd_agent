@@ -75,6 +75,12 @@ public static class McpArtifactExtractor
             if (!string.IsNullOrWhiteSpace(title)) break;
         }
 
+        // 有些写入工具压根不返回地址：建库、建条目、建文学工作区回的只有 id。
+        // 那几条记录于是只有「产物类型 + id」，面板上既没有「打开」也看不到 id ——
+        // 而「一点就打开智能体刚做出来的东西」正是这块面板存在的理由。
+        // 所以按 kind + 手上的 id 反推站内路由（都是本仓库真实在用的深链形态，见下）。
+        if (string.IsNullOrWhiteSpace(url)) url = BuildInternalRoute(kind, id, data);
+
         if (kind == null && string.IsNullOrWhiteSpace(url)) return new Artifact(null, null, null, null);
         return new Artifact(kind, id, url, title);
     }
@@ -128,6 +134,42 @@ public static class McpArtifactExtractor
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// 只回地址的产物没有外链，就按类型反推站内深链。
+    ///
+    /// 三种形态都是仓库里真实在用的，不是我编的：
+    ///   store     → `/document-store?store={id}`（DocumentStorePage 的 ?store= 深链）
+    ///   entry     → `/document-store?store={storeId}&entry={id}`
+    ///               —— parseDocumentStoreDeepLink 只在 store 存在时才读 entry，所以缺 storeId 就不给链接
+    ///   workspace → `/literary-agent/{id}`（LiteraryAgentWorkspaceListPage 就是这么跳的）
+    ///
+    /// workspace 这一支依赖一个当前成立的事实：只有文学创作的开放接口会在响应里回 workspaceId
+    ///（视觉创作那边 workspaceId 只在服务端内部用、不回给调用方）。哪天有别的场景开始回它，
+    /// 这条映射就得跟着分场景，否则会把用户送到一个空白的文学工作区。
+    ///
+    /// 认不出来的（如还没跑完的生图 run）**不编地址**：给一个点开是 404 的按钮比没有按钮更糟。
+    /// </summary>
+    private static string? BuildInternalRoute(string? kind, string? id, JsonObject data)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        switch (kind)
+        {
+            case "store":
+                return $"/document-store?store={Uri.EscapeDataString(id)}";
+            case "entry":
+            {
+                var storeId = ReadString(data, "storeId");
+                return string.IsNullOrWhiteSpace(storeId)
+                    ? null
+                    : $"/document-store?store={Uri.EscapeDataString(storeId)}&entry={Uri.EscapeDataString(id)}";
+            }
+            case "workspace":
+                return $"/literary-agent/{Uri.EscapeDataString(id)}";
+            default:
+                return null;
+        }
     }
 
     private static JsonObject? ReadDataObject(string? responseBody)
