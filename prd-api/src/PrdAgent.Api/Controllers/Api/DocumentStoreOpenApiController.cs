@@ -430,10 +430,45 @@ public class DocumentStoreOpenApiController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"正文超过 {MaxContentChars} 字上限，请拆成多篇或先精简"));
 
-        await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
-            DocumentVersionSource.Edit, contentTypeOverride: entry.ContentType);
-        return Ok(ApiResponse<object>.Ok(new { entryId = entry.Id, title = entry.Title }));
+        // 两件事都是接现成的机制，不是新造：写入服务本来就支持乐观并发与「正文已提交但派生失败」，
+        // 这里此前既没传条件、也没看返回值 —— 建了一半的线。
+        //
+        // 1) expectedUpdatedAt：两个智能体（或同一个智能体的两次重试）同时覆盖同一篇时，
+        //    没有条件的话两次各写各的，最后正文、摘要、双链、版本快照可能来自不同的请求。
+        // 2) derivedStateMetadataKey：不传这个键时，派生步骤（重锚评论 / 重算双链 / 版本快照）
+        //    抛出的异常会一路上抛成 500 —— 而正文**早就提交了**。网关据此退还写入额度，
+        //    智能体则被鼓励去重试一件已经生效的事。传了键，写入服务把它转成 DerivedFailed
+        //    并在条目上留一个 failed 标记，这里就能如实回「正文写进去了，派生没刷成」。
+        var write = await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
+            DocumentVersionSource.Edit, contentTypeOverride: entry.ContentType,
+            expectedUpdatedAt: entry.UpdatedAt,
+            derivedStateMetadataKey: McpDerivedStateKey);
+
+        if (write.Conflicted)
+            // 与本文件里另一处 409 同风格用字面量：ErrorCodes 里没有通用的 CONFLICT，
+            // 而给它新添一个通用码会牵动全站的错误码语义，不值当。
+            return Conflict(ApiResponse<object>.Fail("ENTRY_CHANGED_SINCE_READ",
+                "这篇文档在你读到它之后被别人改过，本次覆盖没有执行。先重新读一遍正文，再决定要不要覆盖。"));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entryId = entry.Id,
+            title = entry.Title,
+            updatedAt = write.UpdatedAt,
+            // 正文是提交了的。派生没刷成只影响划词评论锚点、双链账本与版本快照，
+            // 报成失败会让智能体重试一件已经生效的事，比这三样暂时不准更糟。
+            derivedState = write.DerivedFailed ? "failed" : write.DerivedMarkerPersisted ? "ready" : "pending",
+        }));
     }
+
+    /// <summary>
+    /// 智能体覆盖正文时的派生状态标记键。
+    ///
+    /// 与受控发布器那把键分开：那把键是发布器用来认它自己管的节点的，共用会让它把
+    /// 智能体写的条目也算进自己的账。这里只求两件事 —— 让写入服务把派生失败转成返回值
+    /// 而不是异常，以及在条目上留下一个人能查到的痕迹。
+    /// </summary>
+    private const string McpDerivedStateKey = "mcpDerivedState";
 
     /// <summary>单篇正文上限。挡住智能体一次糊一本书进来，也挡住它把上下文里的垃圾整个倒进知识库。</summary>
     private const int MaxContentChars = 200_000;

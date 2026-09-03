@@ -50,7 +50,7 @@ public class McpUsageCounterScopeTests
         // 这一条只能扫源码：正确与否取决于**取了哪一个属性**，而两个属性的值都来自进程
         // 环境变量，在测试里改 env 会跨用例串味（xUnit 默认并行），造出的守卫自己会飘。
         // 扫源码换来的是「删掉/改回去必然变红」，比没有守卫强，也比一个会飘的守卫强。
-        var source = ReadSource("prd-api/src/PrdAgent.Api/Services/Mcp/McpUsageService.cs");
+        var source = McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Services/Mcp/McpUsageService.cs");
 
         source.ShouldContain("DeploymentScope.CurrentDurable");
         System.Text.RegularExpressions.Regex.IsMatch(source, @"DeploymentScope\.Current\b")
@@ -66,7 +66,7 @@ public class McpUsageCounterScopeTests
         //
         // 本仓库禁止应用自动建索引（no-auto-index 规则），所以回收策略的唯一落点是
         // DBA 执行的那份脚本。守卫盯的就是「它还在那份脚本里」。
-        var script = ReadSource("scripts/mongodb-indexes.js");
+        var script = McpSourceGuard.Read("scripts/mongodb-indexes.js");
         var begin = script.IndexOf("// collection: mcp_usage_counters", StringComparison.Ordinal);
         var end = script.IndexOf("// end collection: mcp_usage_counters", StringComparison.Ordinal);
         (begin >= 0 && end > begin).ShouldBeTrue("计数器的索引段落不在脚本里（段落标记别改名，守卫按它定位）");
@@ -84,29 +84,16 @@ public class McpUsageCounterScopeTests
         // 异常一路上抛，谁也拿不到「占了多少坑」这个结论，于是没人去退 —— 用户白扣一天额度，
         // 而那次调用根本没跑（server-authority：写库不跟 RequestAborted 走）。
         // 只能扫源码：真要复现得让 Mongo 与驱动在同一微秒里赛跑。
-        var source = ReadSource("prd-api/src/PrdAgent.Api/Services/Mcp/McpUsageService.cs");
-        var begin = source.IndexOf("private async Task<(bool Ok, int Used)> TryReserveAsync", StringComparison.Ordinal);
-        begin.ShouldBeGreaterThanOrEqualTo(0, "占坑方法改名了就同步改这里，别把断言删掉");
         // 去掉注释行再判：解释文字里同样会出现这几个词，让注释满足断言等于守卫失效
-        var body = StripCommentLines(
-            source[begin..source.IndexOf("private async Task<int> ReadUsedAsync", StringComparison.Ordinal)]);
+        var body = McpSourceGuard.StripComments(McpSourceGuard.Slice(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Services/Mcp/McpUsageService.cs"),
+            "private async Task<(bool Ok, int Used)> TryReserveAsync",
+            "private async Task<int> ReadUsedAsync"));
 
         body.ShouldContain("ct = CancellationToken.None",
             customMessage: "占坑是服务端自己的记账，客户端断开不能让它半途而废");
     }
 
-    private static string StripCommentLines(string source) => string.Join('\n',
-        source.Split('\n').Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
-
-    private static string ReadSource(string repoRelativePath)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
-        dir.ShouldNotBeNull("找不到仓库根，无法做源码守卫");
-        var full = Path.Combine(dir!.FullName, repoRelativePath);
-        File.Exists(full).ShouldBeTrue($"被守的文件不在了：{repoRelativePath}（改名了就同步改这里，别把断言删掉）");
-        return File.ReadAllText(full);
-    }
 }
 
 /// <summary>

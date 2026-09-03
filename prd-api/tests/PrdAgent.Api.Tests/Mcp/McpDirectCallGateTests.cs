@@ -216,30 +216,11 @@ public class McpAgentKeyCredentialDetectionTests
         // 匿名端点上 HttpContext.User 是空的（ApiKey 是非默认 scheme，授权环节不选它）。
         // 从它取 boundUserId，记录就写成「没有主人」，而接入台按主人过滤 ——
         // 额度扣了、列表里查无此事。这条判据坏掉不会红：记录照样写进库，只是谁也看不到。
-        var source = SourceOf("prd-api/src/PrdAgent.Api/Filters/AgentApiKeyUsageFilter.cs");
-        var body = StripComments(source[source.IndexOf("private Task LogAsync", StringComparison.Ordinal)..]);
+        var source = McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Filters/AgentApiKeyUsageFilter.cs");
+        var body = McpSourceGuard.StripComments(
+            source[source.IndexOf("private Task LogAsync", StringComparison.Ordinal)..]);
         body.ShouldNotContain("http.User",
             customMessage: "审计行要用闸门认出来的那个主体，不是 HttpContext.User");
-    }
-
-    /// <summary>
-    /// 扫源码前先去掉注释行。
-    ///
-    /// 第一版没去，于是被守的那处**注释里**写着「不是 http.User」这几个字，守卫立刻判红 ——
-    /// 判据读到了一个真实存在的字符串，只是它不是真正生效的那个东西（形状 6）。
-    /// 一条会因为解释文字而变红的守卫，下一个人只会把注释改掉，而不是把代码改对。
-    /// </summary>
-    private static string StripComments(string source) => string.Join('\n',
-        source.Split('\n').Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
-
-    private static string SourceOf(string repoRelativePath)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
-        dir.ShouldNotBeNull("找不到仓库根，无法做源码守卫");
-        var full = Path.Combine(dir!.FullName, repoRelativePath);
-        File.Exists(full).ShouldBeTrue($"被守的文件不在了：{repoRelativePath}");
-        return File.ReadAllText(full);
     }
 
     [Fact]
@@ -251,5 +232,84 @@ public class McpAgentKeyCredentialDetectionTests
         AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("Bearer sk-0123456789abcdef")).ShouldBeFalse();
         AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith(null)).ShouldBeFalse();
         AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("")).ShouldBeFalse();
+    }
+}
+
+/// <summary>
+/// 第 30 轮那三处接线的守卫。
+///
+/// 三条的共同形状：机制早就有（写入服务的乐观并发与派生失败返回值、回环令牌），
+/// 只是调用处没接上。接线删掉之后编译过、全量测试绿、页面照常渲染 —— 只有并发、
+/// 只有派生步骤抛异常、只有用户去看「累计请求数」的那一刻才显形。
+/// </summary>
+public class McpRound30WiringTests
+{
+    private const string OpenApiPath = "prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs";
+
+    [Fact]
+    public void 覆盖正文必须带乐观并发条件并处理冲突()
+    {
+        var body = McpSourceGuard.StripComments(McpSourceGuard.Slice(
+            McpSourceGuard.Read(OpenApiPath),
+            "public async Task<IActionResult> UpdateEntryContent",
+            "private const int MaxContentChars"));
+
+        body.ShouldContain("expectedUpdatedAt:",
+            customMessage: "两个智能体同时覆盖同一篇时，没有这个条件就会各写各的，最后正文与派生数据来自不同请求");
+        body.ShouldContain("write.Conflicted",
+            customMessage: "带了条件却不看返回值，等于没带 —— 冲突时会当成写成功回给智能体");
+    }
+
+    [Fact]
+    public void 覆盖正文必须把派生失败转成返回值而不是_500()
+    {
+        var body = McpSourceGuard.StripComments(McpSourceGuard.Slice(
+            McpSourceGuard.Read(OpenApiPath),
+            "public async Task<IActionResult> UpdateEntryContent",
+            "private const int MaxContentChars"));
+
+        // 不传这个键，写入服务里那段 catch 的 when 条件不成立，派生异常会一路上抛成 500——
+        // 而正文早就提交了。网关据此退还写入额度，智能体被鼓励去重试一件已经生效的事。
+        body.ShouldContain("derivedStateMetadataKey:",
+            customMessage: "没有这个键，派生失败会变成 500，而正文已经写进去了");
+        body.ShouldContain("write.DerivedFailed",
+            customMessage: "派生状态要如实回给调用方，否则它只知道成功、不知道有三样东西没刷成");
+    }
+
+    [Fact]
+    public void 回环那一跳不许再记一次用量()
+    {
+        var body = McpSourceGuard.StripComments(McpSourceGuard.Slice(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Authentication/ApiKeyAuthenticationHandler.cs"),
+            "if (apiKey.StartsWith(\"sk-ak-\"",
+            "var agentIdentity"));
+
+        // 一次工具调用认证两遍（外面 /api/mcp 一遍、回环转发一遍）。两遍都记，
+        // 密钥管理页上的「累计请求数」对一次调用涨 2、对一批 N 个工具涨 N+1。
+        body.ShouldContain("IsGatewayContinuation",
+            customMessage: "回环那一跳要跳过用量计数，判据与限流、配额闸门放行它的那个一致");
+    }
+}
+
+/// <summary>
+/// 网页托管的大小上限按**字节**判。
+///
+/// 按 string.Length 判等于给中文页面开了三倍的口子：一个汉字 3 个 UTF-8 字节，
+/// 四百万字符的中文页面实际是十二兆，而工具描述里写的是 4MB，落进对象存储的也是字节。
+/// </summary>
+public class WebPageSizeLimitTests
+{
+    [Fact]
+    public void 中文页面不许绕过_4MB_上限()
+    {
+        var body = McpSourceGuard.StripComments(McpSourceGuard.Slice(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesOpenApiController.cs"),
+            "public async Task<IActionResult> PublishPage",
+            "/// <summary>列出我托管的站点"));
+
+        body.ShouldContain("Encoding.UTF8.GetByteCount",
+            customMessage: "上限要按字节判：一个汉字 3 字节，按字符数判等于中文页面能塞三倍");
+        body.ShouldNotContain("html.Length >",
+            customMessage: "字符数判据要整条去掉，留着就是下一个人照着它改回去");
     }
 }

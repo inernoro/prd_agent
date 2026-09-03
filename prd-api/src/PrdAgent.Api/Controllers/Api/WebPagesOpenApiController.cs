@@ -29,8 +29,14 @@ public class WebPagesOpenApiController : ControllerBase
     public const string ScopeRead = "web-pages:read";
     public const string ScopeWrite = "web-pages:write";
 
-    /// <summary>单页 HTML 上限 4MB —— 再大的东西不该由一次工具调用塞过来。</summary>
-    private const int MaxHtmlChars = 4_000_000;
+    /// <summary>
+    /// 单页 HTML 上限 4MB —— 再大的东西不该由一次工具调用塞过来。
+    ///
+    /// 按**字节**算，不按字符数：一页中文 HTML 里一个汉字是 3 个 UTF-8 字节，
+    /// 拿 string.Length 判等于给中文页面开了三倍的口子，而对外承诺的、真正落进对象存储的
+    /// 都是字节。工具描述里写着 4MB，这里就得是 4MB。
+    /// </summary>
+    private const int MaxHtmlBytes = 4 * 1024 * 1024;
 
     private readonly IHostedSiteService _sites;
     private readonly MongoDbContext _db;
@@ -75,9 +81,10 @@ public class WebPagesOpenApiController : ControllerBase
         var html = req?.HtmlContent ?? string.Empty;
         if (string.IsNullOrWhiteSpace(html))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "htmlContent 不能为空"));
-        if (html.Length > MaxHtmlChars)
+        var htmlBytes = System.Text.Encoding.UTF8.GetByteCount(html);
+        if (htmlBytes > MaxHtmlBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                $"HTML 超过 {MaxHtmlChars / 1000} KB 上限，请精简或拆成多页"));
+                $"HTML 超过 {MaxHtmlBytes / 1024 / 1024} MB 上限（按 UTF-8 字节算，中文一个字约 3 字节），请精简或拆成多页"));
 
         // 幂等：同一把密钥 + 同一个 clientRequestId 只建一次站
         var sourceRef = BuildSourceRef(req!.ClientRequestId);
