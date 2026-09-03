@@ -66,6 +66,7 @@
 - [CDS 配置树 · 技术设计 · 设计](./design.cds.config-tree.md) `design.cds.config-tree`
 - [CDS 控制面 / 数据面分离设计(蓝绿部分已废弃) · 设计](./design.cds.control-data-split.md) `design.cds.control-data-split`
 - [CDS 数据迁移设计 · 设计](./design.cds.data-migration.md) `design.cds.data-migration`
+- [CDS 数据库隔离三档（共享库 / 分支独立库 / 隔离库） · 设计](./design.cds.database-isolation.md) `design.cds.database-isolation`
 - [CDS FU-02 MapAuthStore（Mongo 后端） · 设计](./design.cds.fu-02-auth-store-mongo.md) `design.cds.fu-02-auth-store-mongo`
 - [CDS 生命周期原子性 · 架构设计（对账收敛取代命令式级联） · 设计](./design.cds.lifecycle-atomicity.md) `design.cds.lifecycle-atomicity`
 - [CDS 托管交付契约 · 设计](./design.cds.managed-delivery.md) `design.cds.managed-delivery`
