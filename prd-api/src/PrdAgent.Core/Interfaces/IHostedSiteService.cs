@@ -39,8 +39,7 @@ public interface IHostedSiteService
         string? title, string? description,
         string sourceType, string? sourceRef,
         List<string>? tags, string? folder,
-        CancellationToken ct = default,
-        string? siteId = null);
+        CancellationToken ct = default);
 
     // ── 替换内容 ──
 
@@ -128,10 +127,11 @@ public interface IHostedSiteService
         List<string>? askSuggestedQuestions = null);
 
     /// <summary>
-    /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方这条链接是**复用**来的还是新建的。
-    /// 复用意味着这次调用没产生新副作用，调用方据此可以把已占的额度退回去。
+    /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方这次**有没有真的写下什么**。
+    /// 只有「复用了既有链接且一个字段都没动」才为 true —— 复用路径会刷新有效期并追一条续期审计，
+    /// 那是有副作用的，不能报成幂等命中（否则同一个键可以无限续期而不扣额度）。
     /// </summary>
-    Task<(WebPageShareLink Link, bool Reused)> CreateShareWithReuseInfoAsync(
+    Task<(WebPageShareLink Link, bool ReusedWithoutChange)> CreateShareWithReuseInfoAsync(
         string userId, string displayName,
         string? siteId, List<string>? siteIds, string shareType,
         string? title, string? description,

@@ -36,13 +36,6 @@ public class HostedSiteService : IHostedSiteService
     // 「内容指纹缓存」：内容不变 → URL 不变 → 命中浏览器/CDN 缓存（满足"没更新就用缓存"）；
     // 重新上传 → UpdatedAt 变化 → ?v 变化 → URL 变化 → 击穿缓存拿到新内容。
     // max-age=3600 是兜底——万一某些 CDN 配置忽略查询串，最长 1 小时后也会回源刷新。
-    /// <summary>
-    /// 占坑租约的存活时间。超过这个时间还没收尾的坑，视为持有者已经死了，可以被抢。
-    /// 取值要明显长于一次入口对象上传的耗时（否则正常的慢上传会被别人抢走），
-    /// 又不能长到让一次进程崩溃把幂等键锁上半天。
-    /// </summary>
-    internal static readonly TimeSpan PublishLeaseTtl = TimeSpan.FromMinutes(2);
-
     private const string SiteCacheControl = "public, max-age=3600";
 
     // 给入口 URL 追加版本指纹。version 取站点的 ContentVersion：只在创建 / 重新上传
@@ -283,10 +276,9 @@ public class HostedSiteService : IHostedSiteService
         string? title, string? description,
         string sourceType, string? sourceRef,
         List<string>? tags, string? folder,
-        CancellationToken ct,
-        string? siteId = null)
+        CancellationToken ct)
     {
-        siteId = string.IsNullOrWhiteSpace(siteId) ? Guid.NewGuid().ToString("N") : siteId.Trim();
+        var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
         // API/工作流/工作空间发布的页面同样要注入当前版翻页垫片（与 CreateFromHtml/Reupload 一致），
         // 否则这类站点要等下次服务重启的 backfill 才有 shim。
@@ -294,8 +286,7 @@ public class HostedSiteService : IHostedSiteService
             System.Text.Encoding.UTF8.GetBytes(htmlContent), "index.html"));
 
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
-        // 这次发布尝试的租约标识。占坑、接手、收尾、撤回全都认它，见 HostedSite.PublishLeaseOwner。
-        var leaseOwner = Guid.NewGuid().ToString("N");
+        await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
 
         var site = new HostedSite
         {
@@ -320,89 +311,19 @@ public class HostedSiteService : IHostedSiteService
             Folder = folder?.Trim(),
             OwnerUserId = userId,
             SlideNavCompatVersion = SlideNavVersion, // 创建即注入当前版垫片
-            // 占坑标记：行已经在、对象还没传。上传成功后清掉，见 PublishPendingAt 的说明。
-            PublishPendingAt = now,
-            PublishLeaseOwner = leaseOwner,
         };
 
-        // 先占坑、再上传。顺序不能反：siteId 带幂等键时是**确定性**的，两个并发请求算出同一个
-        // COS key，先传后插的话，输掉数据库竞争的那一方已经把赢家的 index.html 覆盖掉了 ——
-        // 元数据是赢家的、页面内容是输家的，两边对不上，而两边都收到「去重成功」。
-        // 插入是原子的，让它先定胜负：输的那个在这里就抛主键冲突，根本走不到上传。
-        // 站点的每个字段都不依赖上传结果（key 由 siteId 定、大小与是否幻灯片由字节定），所以调得动这个顺序。
-        try
-        {
-            await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
-        }
-        catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey)
-        {
-            // 这个 id 已经有人占了。分三种情况，只有第三种才轮到这次动手：
-            //   1. 对方已经发布完成 → 原样抛，调用方走它的去重分支（回既有站点）。
-            //   2. 对方**正在传**（租约还新鲜）→ 也原样抛。不能接手：两边各传一次、各自收尾，
-            //      失败的那边还会把共用记录删掉，成功的那边收尾落空却照样回成功。
-            //      调用方据此回「正在发布中，请稍后用同一个键重试」。
-            //   3. 那条坑**已经放了很久**（租约过期，多半是上一次的进程在窗口里挂了）→ 抢租约。
-            //      抢到才接手；抢不到说明刚被别人抢走，同样抛出去。
-            var claimed = await _db.HostedSites.FindOneAndUpdateAsync<HostedSite>(
-                Builders<HostedSite>.Filter.And(
-                    Builders<HostedSite>.Filter.Eq(x => x.Id, siteId),
-                    Builders<HostedSite>.Filter.Eq(x => x.OwnerUserId, userId),
-                    Builders<HostedSite>.Filter.Ne(x => x.PublishPendingAt, (DateTime?)null),
-                    // 值要显式转成 DateTime?：字段是可空的，泛型参数从「字段类型」和「值类型」
-                    // 两边同时推断，一边 DateTime? 一边 DateTime 会推不出来（CS0411）。
-                    Builders<HostedSite>.Filter.Lt(x => x.PublishPendingAt, (DateTime?)(now - PublishLeaseTtl))),
-                Builders<HostedSite>.Update
-                    .Set(x => x.PublishPendingAt, (DateTime?)now)
-                    .Set(x => x.PublishLeaseOwner, leaseOwner),
-                new FindOneAndUpdateOptions<HostedSite, HostedSite> { ReturnDocument = ReturnDocument.After },
-                ct);
-            if (claimed == null) throw;
-            _logger.LogInformation("站点 {SiteId} 上一次发布没传完且租约已过期，本次抢到租约接手补传", siteId);
-        }
-
-        try
-        {
-            await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
-        }
-        catch
-        {
-            // 上传没成，占的坑要退掉：留着就是一条指向不存在对象的站点记录，
-            // 而带幂等键时它还会把那个 id 永久占住 —— 重试只会命中这条坏记录，再也建不出来。
-            try
-            {
-                // 只删**我这次**占的那条坑：租约已经被别人抢走的话，那条记录归他，删了就是把
-                // 正在成功推进的那次连根拔掉（他随后的收尾会匹配到 0 行，还以为自己成了）。
-                await _db.HostedSites.DeleteOneAsync(
-                    Builders<HostedSite>.Filter.And(
-                        Builders<HostedSite>.Filter.Eq(x => x.Id, siteId),
-                        Builders<HostedSite>.Filter.Eq(x => x.PublishLeaseOwner, leaseOwner)),
-                    CancellationToken.None);
-            }
-            catch (Exception cleanupEx)
-            {
-                _logger.LogError(cleanupEx, "上传失败后没能撤回站点占位记录 {SiteId}，这个 id 会被占住", siteId);
-            }
-            throw;
-        }
-
-        // 对象到位了，坑转成正式发布。清掉标记之前，这条记录对幂等查询与列表都是不可见的。
+        // 站点 id 是随机的，所以这条 insert 不会和任何人撞。
         //
-        // 整行覆盖而不是只清标记：接手补传那条路上，库里躺的是**上一次**尝试写的元数据
-        //（标题、大小、是不是幻灯片），而对象里现在装的是这一次的内容。只清标记的话，
-        // 行说的和页面显示的对不上——正是「先传后插」那个毛病换了个地方长出来。
-        //
-        // 收尾也认租约：匹配到 0 行说明这条坑已经不归我了（被抢走或被撤回），那就不能报成功 ——
-        // 库里现在那份内容不是我传的，回一个「发布成功」等于把别人的结果说成自己的。
-        site.PublishPendingAt = null;
-        site.PublishLeaseOwner = null;
-        var finalized = await _db.HostedSites.ReplaceOneAsync(
-            Builders<HostedSite>.Filter.And(
-                Builders<HostedSite>.Filter.Eq(x => x.Id, siteId),
-                Builders<HostedSite>.Filter.Eq(x => x.PublishLeaseOwner, leaseOwner)),
-            site, cancellationToken: CancellationToken.None);
-        if (finalized.MatchedCount == 0)
-            throw new PublishLeaseLostException(
-                "这次发布的占位记录已经被另一次同键的调用接手，这次不算发布成功；请用同一个 clientRequestId 重试一次确认结果。");
+        // 这里曾经有一整套「确定性 id + 占坑 + 租约 + 接手补传」，为的是让带 clientRequestId 的
+        // 并发重试收敛到同一个站点。它连续三轮 review 都在长新洞（先传后插会互相覆盖 → 先插后传
+        // 多出一段行在对象不在的窗口 → 接手没有围栏 → 有了围栏还是挡不住慢上传覆盖已收尾的对象），
+        // 根因是「发布」要跨对象存储与 Mongo 两套系统做原子动作，而对象存储这层没有条件写入原语
+        //（IAssetStorage 只有 Save/Read/Delete/UploadToKey，没有 copy/move，也没有 If-None-Match）。
+        // 所以整套撤掉：**先后**两次重试仍由控制器按 SourceRef 查一次挡住（这是真实重试的常态），
+        // **叠在一起**的两次会各建一个站 —— 多一个站是浪费，不是坏数据，比上面那些形态都安全。
+        // 真要收敛得先让发布变成单一存储的原子动作，那是新的语义类别，见 doc/debt.platform.md 边界 12。
+        await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
 
         _logger.LogInformation("用户 {UserId} 通过 {SourceType} 创建托管站点 {SiteId}: {Title}",
             userId, site.SourceType, siteId, site.Title);
@@ -592,10 +513,6 @@ public class HostedSiteService : IHostedSiteService
             // 个人作用域：与改动前字节一致
             filter = fb.Eq(x => x.OwnerUserId, userId);
         }
-
-        // 还在占坑的站点（行已建、入口对象还没传完）不进列表：它的地址此刻打不开，
-        // 列出来就是给用户一条坏链接。== null 同时命中缺这个字段的存量记录。
-        filter &= fb.Eq(x => x.PublishPendingAt, (DateTime?)null);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -959,13 +876,15 @@ public class HostedSiteService : IHostedSiteService
             allocateShortLink, askSuggestedQuestions)).Link;
 
     /// <summary>
-    /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方**这条链接是复用来的还是新建的**。
+    /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方**这次有没有真的写下什么**。
     ///
-    /// 为什么要把这个事实透出去：复用意味着这次调用没产生新副作用。接入台的日额度是「先占坑、
-    /// 幂等命中就退还」，而判据是响应里的 deduplicated —— 服务端知道却不说，网关只能当成一次新写入，
-    /// 智能体每重试一次就白扣一格，而它其实只拿到了同一条链接。
+    /// 为什么透出的是「复用且一个字没改」而不是单纯的「复用了」：接入台的日额度是「先占坑、
+    /// 幂等命中就退还」，判据是响应里的 deduplicated。而复用这条路**不是只读的** —— 它会把
+    /// 有效期刷成本次所选、必要时改密码/标题，并往 RenewalHistory 里追一条续期审计。
+    /// 把这些都报成「没有副作用」，等于让同一个键无限次续期、无限撑大那条审计数组而不扣额度。
+    /// 所以只有 ups 为空（真的一个字段都没动）才算幂等命中。
     /// </summary>
-    public async Task<(WebPageShareLink Link, bool Reused)> CreateShareWithReuseInfoAsync(
+    public async Task<(WebPageShareLink Link, bool ReusedWithoutChange)> CreateShareWithReuseInfoAsync(
         string userId, string displayName,
         string? siteId, List<string>? siteIds, string shareType,
         string? title, string? description,
@@ -1172,7 +1091,9 @@ public class HostedSiteService : IHostedSiteService
                 await TryAllocateShortSeqAsync(reuse, ct);
             _logger.LogInformation("用户 {UserId} 复用站点分享 {ShareId}, type={Type}",
                 userId, reuse.Id, reuse.ShareType);
-            return (reuse, true);
+            // ups 为空 = 复用且一个字段都没动，这才是真正的幂等命中；
+            // 只要写了（哪怕只是刷新有效期 + 追一条续期审计），这次就是有副作用的，额度照扣。
+            return (reuse, ups.Count == 0);
         }
 
         // 新分享：同时写明文（去重 + 展示给分享者）和 Hash/Salt（校验主路径）

@@ -83,11 +83,8 @@ public class WebPagesOpenApiController : ControllerBase
         var sourceRef = BuildSourceRef(req!.ClientRequestId);
         if (sourceRef != null)
         {
-            // PublishPendingAt == null：只认**已经传完**的站点。还在占坑的那条不算数 ——
-            // 回它就是把一个还打不开的地址当「去重成功」交出去。落到下面的创建路径上，
-            // 服务端会接手把内容补传完（Mongo 的 == null 同时命中缺字段的存量记录）。
             var existed = await _db.HostedSites
-                .Find(s => s.OwnerUserId == userId && s.SourceRef == sourceRef && s.PublishPendingAt == null)
+                .Find(s => s.OwnerUserId == userId && s.SourceRef == sourceRef)
                 .FirstOrDefaultAsync(ct);
             if (existed != null)
                 return Ok(ApiResponse<object>.Ok(new
@@ -99,53 +96,18 @@ public class WebPagesOpenApiController : ControllerBase
                 }));
         }
 
-        // 上面那次查询只挡得住「先后两次」的重试；超时重试与原请求叠在一起时两边都查不到，
-        // 于是各建一个站。所以带幂等键时把站点 id 也压成确定性的：并发的第二次会在 _id 上撞主键，
-        // 捕获后回既有站点。COS 对象 key 由 siteId 决定，两次写的是同一个 key，不会留孤儿。
-        var deterministicId = sourceRef == null ? null : DeterministicSiteId(sourceRef);
-        HostedSite site;
-        try
-        {
-            site = await _sites.CreateFromContentAsync(
-                userId, html,
-                string.IsNullOrWhiteSpace(req.Title) ? null : req.Title!.Trim(),
-                string.IsNullOrWhiteSpace(req.Description) ? null : req.Description!.Trim(),
-                sourceType: "api", sourceRef: sourceRef,
-                tags: req.Tags, folder: string.IsNullOrWhiteSpace(req.Folder) ? null : req.Folder!.Trim(),
-                ct: ct, siteId: deterministicId);
-        }
-        catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && deterministicId != null)
-        {
-            var raced = await _db.HostedSites
-                .Find(x => x.Id == deterministicId && x.OwnerUserId == userId && x.PublishPendingAt == null)
-                .FirstOrDefaultAsync(ct);
-            // 找不到「已传完」的那条，就要分清是哪种情况：
-            //   - 撞上的是**别人正在传**的占坑记录（服务端只在租约过期时才接手，所以它抛到这里）
-            //     → 回 409 让智能体稍后拿同一个键再试一次，别报 500，也别报成功；
-            //   - 其余（根本不是这个 id 撞的）→ 原样抛。
-            if (raced == null)
-            {
-                var stillPublishing = await _db.HostedSites
-                    .Find(x => x.Id == deterministicId && x.OwnerUserId == userId && x.PublishPendingAt != null)
-                    .AnyAsync(ct);
-                if (!stillPublishing) throw;
-                return Conflict(ApiResponse<object>.Fail("SITE_PUBLISH_IN_PROGRESS",
-                    "同一个 clientRequestId 的上一次发布还没完成 —— 可能仍在进行，也可能刚好中断了。"
-                    + "等一两分钟用同一个键再调一次：成了就直接拿到那次的结果，断了则由这一次接着传完。"));
-            }
-            return Ok(ApiResponse<object>.Ok(new
-            {
-                siteId = raced.Id,
-                title = raced.Title,
-                url = raced.SiteUrl,
-                deduplicated = true,
-            }));
-        }
-        catch (PublishLeaseLostException ex)
-        {
-            // 收尾时租约已经不在这次手上：库里那份内容不是这次传的，不能算成功。
-            return Conflict(ApiResponse<object>.Fail("SITE_PUBLISH_IN_PROGRESS", ex.Message));
-        }
+        // 上面那次查询挡的是「先后两次」的重试 —— 那是真实重试的常态（丢了回应、几秒后再来一次）。
+        // **叠在一起**的两次两边都查不到，于是各建一个站。这一点是明知的取舍，不再在应用层收敛：
+        // 曾经用「确定性 id + 占坑 + 租约 + 接手补传」去收敛它，连续三轮 review 都在长新洞，
+        // 根因是发布要跨对象存储与 Mongo 两套系统做原子动作，而对象存储没有条件写入原语。
+        // 多出一个站是浪费，不是坏数据。收敛方案见 doc/debt.platform.md 边界 12。
+        var site = await _sites.CreateFromContentAsync(
+            userId, html,
+            string.IsNullOrWhiteSpace(req.Title) ? null : req.Title!.Trim(),
+            string.IsNullOrWhiteSpace(req.Description) ? null : req.Description!.Trim(),
+            sourceType: "api", sourceRef: sourceRef,
+            tags: req.Tags, folder: string.IsNullOrWhiteSpace(req.Folder) ? null : req.Folder!.Trim(),
+            ct: ct);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -205,7 +167,7 @@ public class WebPagesOpenApiController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或不属于你"));
 
         var days = req?.ExpiresInDays is > 0 and <= 90 ? req!.ExpiresInDays!.Value : 7;
-        var (share, reused) = await _sites.CreateShareWithReuseInfoAsync(
+        var (share, reusedUnchanged) = await _sites.CreateShareWithReuseInfoAsync(
             userId, await ResolveDisplayNameAsync(userId, ct),
             siteId, siteIds: null, shareType: "single",
             title: string.IsNullOrWhiteSpace(req?.Title) ? site.Title : req!.Title!.Trim(),
@@ -230,16 +192,12 @@ public class WebPagesOpenApiController : ControllerBase
             shareUrl = $"{baseUrl}/s/wp/{share.Token}",
             expiresAt = share.ExpiresAt,
             visibility = share.Visibility,
-            // 复用了既有链接 = 这次没产生新副作用。必须如实报出来：网关按这个字段把已占的
-            // 日写入额度退回去，不报的话，智能体每重试一次就白扣一格，而它只拿到同一条链接。
-            deduplicated = reused,
+            // 只有「复用且一个字段都没动」才报幂等命中：网关按这个字段把已占的日写入额度退回去。
+            // 复用路径会刷新有效期、必要时改密码/标题并追一条续期审计 —— 那些都是真写入，
+            // 报成没副作用就等于让同一个键无限续期而不扣额度。
+            deduplicated = reusedUnchanged,
         }));
     }
-
-    /// <summary>把幂等键压成确定性站点 id（32 位十六进制，与随机 id 同形）。</summary>
-    private static string DeterministicSiteId(string sourceRef)
-        => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes($"mcp-site:{sourceRef}"))).ToLowerInvariant()[..32];
 
     private string? BuildSourceRef(string? clientRequestId)
     {
