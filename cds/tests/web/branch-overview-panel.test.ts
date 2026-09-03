@@ -1782,3 +1782,68 @@ describe('吞吐读数不把「算不出来」写成 0', () => {
     expect(html, '算不出速率却写成 0/s——图上是缺口、旁边却报了一个读数').toContain('暂不可用');
   });
 });
+
+describe('四处文案真的接上了状态表（台账 D11，形状 2）', () => {
+  /**
+   * overview-state.test.ts 穷举的是**表**；这里量的是**面板有没有在用它**。
+   * 抽掉那次接线，模块与它的单测仍然全绿，只有这里会红——形状 2 的典型。
+   *
+   * 断言的是渲染出来的话，不是源码里的写法（形状 4a：不许钉实现字面量）。
+   */
+  const render = (over: Record<string, unknown>): string => renderToStaticMarkup(createElement(OverviewPanel, {
+    services: [],
+    running: false,
+    branchName: 'demo',
+    entries: [],
+    deployments: [],
+    metricSeries: {},
+    metricsReady: true,
+    replicaSummary: '无',
+    infraSummary: '无',
+    now: Date.now(),
+    windowMinutes: 30,
+    onRefreshMetrics: () => {},
+    ...over,
+  }));
+
+  it('在跑却一个服务都没配时，不谎报「还有 0 个服务没起来」', () => {
+    const html = render({ running: true, lifecycle: 'running' });
+    expect(html, '同屏另一句写着「还没有任何 service」，这句却在数缺口').not.toContain('0 个服务没起来');
+    expect(html, '应当直接说清根因').toContain('尚未配置服务');
+  });
+
+  it('正在开通（在途 + 服务集还没分配）不劝用户「先去构建配置」', () => {
+    const html = render({ lifecycle: 'building' });
+    expect(html, '分配服务集的是执行器，不是用户').not.toContain('先去构建配置');
+    expect(html, '应当说清正在开通').toContain('正在开通');
+  });
+
+  it('静止态、没配服务：仍然给得出可执行的下一步', () => {
+    const html = render({ lifecycle: 'idle' });
+    expect(html).toContain('尚未配置服务');
+    expect(html, '这一档才该劝去配置').toContain('先去构建配置');
+  });
+
+  /**
+   * webhook 派发失败会把刚建出来的空分支置成 error（Codex P2，核对属实）。
+   * 没有这一档时，失败横幅底下会写「尚未配置服务 · 先去构建配置」——而没配置根本
+   * 不是原因，用户照做也修不好。
+   */
+  it('派发失败的空分支：说的是失败，不是「尚未配置服务」', () => {
+    const html = render({ lifecycle: 'error' });
+    expect(html, '没配置不是原因，照做也修不好').not.toContain('先去构建配置');
+    expect(html).toContain('上次部署失败');
+    expect(html, '失败该是红点，不是灰点').toContain('bg-bad');
+  });
+
+  it('入口卡副标题与顶上的判断句同源：在途且全就绪时两句话不打架', () => {
+    const html = render({
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      lifecycle: 'restarting',
+      entries: [{ name: '主入口', url: 'https://example.test', primary: true }],
+    });
+    expect(html).toContain('正在部署，当前服务仍在运行');
+    expect(html, '入口卡不该说服务未就绪').not.toContain('服务未就绪，暂不可达');
+    expect(html).toContain('正在部署，入口可能短暂不可达');
+  });
+});
