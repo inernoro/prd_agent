@@ -71,6 +71,26 @@ public class AgentApiKey
     /// </summary>
     public int GracePeriodDays { get; set; } = 7;
 
+    /// <summary>
+    /// 这把钥匙此刻还打不打得开门 —— 「能用」的唯一判据。
+    ///
+    /// 鉴权（<c>LookupByPlaintextAsync</c>）、接入台面板、密钥列表的状态标签都读这一处：
+    /// 各自照着 <c>IsActive</c> 判会让面板把一把过了宽限期的钥匙显示成「已连接、已授权」，
+    /// 而它发的每一个请求都被鉴权拒掉 —— 用户看到的和智能体遇到的是两回事。
+    /// </summary>
+    /// <param name="inGrace">true 表示已过期但还在宽限期内（可用，但该提示续期）。</param>
+    public static bool IsUsableAt(AgentApiKey key, DateTime nowUtc, out bool inGrace)
+    {
+        inGrace = false;
+        if (!key.IsActive || key.RevokedAt.HasValue) return false;
+        if (!key.ExpiresAt.HasValue) return true;
+        if (key.ExpiresAt.Value >= nowUtc) return true;
+        var graceEnd = key.ExpiresAt.Value.AddDays(Math.Max(0, key.GracePeriodDays));
+        if (graceEnd < nowUtc) return false;
+        inGrace = true;
+        return true;
+    }
+
     // ── OpenApi 对外网关：按 Key 模型白名单（客户可在白名单内自选，避免总池调度误伤客户） ──
     //
     // 白名单元素 = 客户在请求 body 的 model 字段可填的模型 id（如 "deepseek/deepseek-v3.2"），

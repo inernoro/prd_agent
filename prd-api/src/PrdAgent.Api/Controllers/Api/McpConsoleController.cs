@@ -58,10 +58,14 @@ public class McpConsoleController : ControllerBase
         var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
         var ownedPermissions = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
 
+        var nowUtc = DateTime.UtcNow;
         var keys = (await _keyService.ListByOwnerAsync(userId, ct))
             .Where(k => k.RevokedAt == null)
             .ToList();
-        var activeKeys = keys.Where(k => k.IsActive).ToList();
+        // 「还能用吗」走鉴权那一处判据（AgentApiKey.IsUsableAt），不是光看 IsActive ——
+        // 过了宽限期的钥匙 IsActive 仍是 true，照着它判会把一台每个请求都被拒的客户端
+        // 显示成「已连接、能力已授权」。面板和智能体遇到的必须是同一件事。
+        var activeKeys = keys.Where(k => AgentApiKey.IsUsableAt(k, nowUtc, out _)).ToList();
         // 「已授权」要跟鉴权口径一致：受权限位把关的 scope，权限被回收后鉴权时就会被剥掉，
         // 面板不能还显示成已授权 —— 否则用户看到的和智能体实际能用的是两回事。
         var grantedScopes = activeKeys.SelectMany(k => k.Scopes ?? new List<string>())
@@ -118,7 +122,7 @@ public class McpConsoleController : ControllerBase
             name = k.Name,
             keyPrefix = k.KeyPrefix,
             scopes = k.Scopes ?? new List<string>(),
-            isActive = k.IsActive,
+            isActive = AgentApiKey.IsUsableAt(k, nowUtc, out _),
             expiresAt = k.ExpiresAt,
             lastUsedAt = k.LastUsedAt,
             todayCalls = tally.ByKey.TryGetValue(k.Id, out var keyCalls) ? keyCalls : 0,
@@ -222,14 +226,22 @@ public class McpConsoleController : ControllerBase
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var visible = McpBuiltinTools.All
             .Where(t => McpCapabilityCatalog.ScopeSatisfies(scopes, t.RequiredScope))
-            .Select(t => new
-            {
-                name = t.Name,
-                description = t.Description,
-                capability = McpCapabilityCatalog.ByScope(t.RequiredScope)?.Key,
-                isWrite = McpUsageService.IsWriteTool(t),
-            })
+            .Select(t => new VisibleTool(
+                t.Name, t.Description, McpCapabilityCatalog.ByScope(t.RequiredScope)?.Key, McpUsageService.IsWriteTool(t)))
             .ToList();
+
+        // tools/list 除了内置工具还会列出登记表里的动态开放接口（agent.* scope）。
+        // 自检只扫内置的话，一把只带动态 scope 的钥匙会被报成「0 个工具」，
+        // 而它连上去其实好好的 —— 自检的用处就是回答「授权对不对」，报少了比不报还糟。
+        // 可见性判据复用网关那一处 McpGatewayController.DynamicToolVisible，不另写一份。
+        var endpoints = await _db.AgentOpenEndpoints.Find(e => e.IsActive).ToListAsync(ct);
+        visible.AddRange(endpoints
+            .Where(e => McpGatewayController.DynamicToolVisible(e, scopes, key.OwnerUserId))
+            .Select(e => new VisibleTool(
+                McpGatewayController.DynamicToolName(e),
+                string.IsNullOrWhiteSpace(e.Description) ? e.Title : $"{e.Title} — {e.Description}",
+                null,
+                !string.Equals(e.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase))));
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -237,12 +249,15 @@ public class McpConsoleController : ControllerBase
             keyId = key.Id,
             keyName = key.Name,
             keyPrefix = key.KeyPrefix,
-            isActive = key.IsActive && key.RevokedAt == null,
+            isActive = AgentApiKey.IsUsableAt(key, DateTime.UtcNow, out _),
             expiresAt = key.ExpiresAt,
             toolCount = visible.Count,
             tools = visible,
         }));
     }
+
+    /// <summary>自检里的一行工具。内置与动态两路要合成一张清单，所以给它一个名字，不用匿名类型。</summary>
+    private sealed record VisibleTool(string Name, string Description, string? Capability, bool IsWrite);
 
     /// <summary>某个 scope 我自己签不签得出来：不受权限位把关的能力恒真，受把关的看权限位。</summary>
     private static bool ScopeAvailable(McpCapability cap, string? scope, IReadOnlyCollection<string> ownedPermissions)

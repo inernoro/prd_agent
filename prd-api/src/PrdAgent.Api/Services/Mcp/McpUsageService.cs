@@ -7,11 +7,18 @@ using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Services.Mcp;
 
-/// <summary>闸门结论。放行时带上占了多少坑，调用失败要按这个退还。</summary>
-public sealed record McpQuotaVerdict(bool Allowed, string? Reason, string? ReservedKind = null, int ReservedAmount = 0)
+/// <summary>
+/// 闸门结论。放行时带上占了多少坑，调用失败要按这个退还。
+///
+/// <see cref="ReservedDay"/> 是**占坑那一刻**的 UTC 日，退还时必须按它算计数器 id：
+/// 一次调用在午夜前占坑、午夜后才失败的话，按「现在是哪天」退会把新一天的计数器减成负数
+/// （旧那天的坑还占着），那把密钥当天就能超额。
+/// </summary>
+public sealed record McpQuotaVerdict(
+    bool Allowed, string? Reason, string? ReservedKind = null, int ReservedAmount = 0, DateTime ReservedDay = default)
 {
     public static readonly McpQuotaVerdict Ok = new(true, null);
-    public static McpQuotaVerdict Reserved(string kind, int amount) => new(true, null, kind, amount);
+    public static McpQuotaVerdict Reserved(string kind, int amount, DateTime day) => new(true, null, kind, amount, day);
     public static McpQuotaVerdict Deny(string reason) => new(false, reason);
 }
 
@@ -91,30 +98,32 @@ public sealed class McpUsageService
         {
             var quota = key?.McpDailyImageQuota ?? DefaultDailyImageQuota;
             var amount = Math.Max(imageCount, 1);
-            var (ok, used) = await TryReserveAsync(keyId, KindImage, amount, quota, ct);
+            var day = TodayStartUtc();
+            var (ok, used) = await TryReserveAsync(keyId, KindImage, amount, quota, day, ct);
             if (!ok)
                 return McpQuotaVerdict.Deny(
                     $"今天的生图额度用完了（已用 {used}/{quota} 张，按 UTC 自然日计）。可以在密钥管理里把这把密钥的上限调高，或者明天再来。");
-            return McpQuotaVerdict.Reserved(KindImage, amount);
+            return McpQuotaVerdict.Reserved(KindImage, amount, day);
         }
 
         if (IsWriteTool(tool))
         {
             var quota = key?.McpDailyWriteQuota ?? DefaultDailyWriteQuota;
-            var (ok, used) = await TryReserveAsync(keyId, KindWrite, 1, quota, ct);
+            var day = TodayStartUtc();
+            var (ok, used) = await TryReserveAsync(keyId, KindWrite, 1, quota, day, ct);
             if (!ok)
                 return McpQuotaVerdict.Deny(
                     $"今天的写入额度用完了（已用 {used}/{quota} 次，按 UTC 自然日计）。可以在密钥管理里把这把密钥的上限调高。");
-            return McpQuotaVerdict.Reserved(KindWrite, 1);
+            return McpQuotaVerdict.Reserved(KindWrite, 1, day);
         }
 
         return McpQuotaVerdict.Ok;
     }
 
     /// <summary>原子占坑：$inc + upsert 一次拿到新值；超限就把自己那份退回去。</summary>
-    private async Task<(bool Ok, int Used)> TryReserveAsync(string keyId, string kind, int amount, int quota, CancellationToken ct)
+    private async Task<(bool Ok, int Used)> TryReserveAsync(
+        string keyId, string kind, int amount, int quota, DateTime day, CancellationToken ct)
     {
-        var day = TodayStartUtc();
         var id = BuildCounterId(keyId, day, kind);
         var update = Builders<McpUsageCounter>.Update
             .Inc(x => x.Count, amount)
@@ -137,17 +146,24 @@ public sealed class McpUsageService
         if (used <= quota) return (true, used);
 
         // 超了：退还自己占的这份，返回「占坑前已用多少」给文案用
-        await ReleaseAsync(keyId, kind, amount, ct);
+        await ReleaseAsync(keyId, kind, amount, day, ct);
         return (false, Math.Max(used - amount, 0));
     }
 
-    /// <summary>退还占坑（调用没真的发生时）。退到负数没有意义，这里只做减法，读的时候按下限 0 取。</summary>
-    public async Task ReleaseAsync(string keyId, string kind, int amount, CancellationToken ct)
+    /// <summary>
+    /// 退还占坑（调用没真的发生时）。退到负数没有意义，这里只做减法，读的时候按下限 0 取。
+    ///
+    /// <paramref name="reservedDay"/> 必须是**占坑那一刻**的 UTC 日，不能现算：
+    /// 午夜前占坑、午夜后失败时，现算会去减新一天的计数器（减成负数），而旧那天的坑没退 ——
+    /// 一边白扣了昨天的额度，一边把今天的闸门放松了。
+    /// </summary>
+    public async Task ReleaseAsync(string keyId, string kind, int amount, DateTime reservedDay, CancellationToken ct)
     {
         if (amount <= 0 || string.IsNullOrEmpty(kind)) return;
         try
         {
-            var id = BuildCounterId(keyId, TodayStartUtc(), kind);
+            var day = reservedDay == default ? TodayStartUtc() : reservedDay.Date;
+            var id = BuildCounterId(keyId, day, kind);
             // 同 LogAsync：退还是服务端自己的收尾动作，不跟客户端的取消令牌走，
             // 否则客户端一断开就退不回去，用户白扣一天额度。
             await _db.McpUsageCounters.UpdateOneAsync(

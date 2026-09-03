@@ -156,14 +156,27 @@ public class McpGatewayController : ControllerBase
         var endpoints = await _db.AgentOpenEndpoints.Find(e => e.IsActive).ToListAsync(ct);
         foreach (var e in endpoints)
         {
-            var reqScopes = e.RequiredScopes ?? new List<string>();
-            if (!reqScopes.Any(scopes.Contains)) continue;
-            if (e.AllowedCallerUserIds is { Count: > 0 } wl &&
-                (boundUserId == null || !wl.Contains(boundUserId))) continue;
+            if (!DynamicToolVisible(e, scopes, boundUserId)) continue;
             tools.Add(DynamicToolToJson(e));
         }
 
         return new JsonObject { ["tools"] = tools };
+    }
+
+    /// <summary>
+    /// 这条登记的开放接口，对持这组 scope 的密钥可不可见。
+    ///
+    /// 判据只此一处：接入台的「这把钥匙能看到什么」自检要跟 tools/list 报同一份清单，
+    /// 各写一份必然漂 —— 自检说 0 个工具、实际连上去有一堆，或者反过来。
+    /// </summary>
+    internal static bool DynamicToolVisible(AgentOpenEndpoint e, HashSet<string> scopes, string? boundUserId)
+    {
+        if (!e.IsActive) return false;
+        var reqScopes = e.RequiredScopes ?? new List<string>();
+        if (!reqScopes.Any(scopes.Contains)) return false;
+        if (e.AllowedCallerUserIds is { Count: > 0 } wl && (boundUserId == null || !wl.Contains(boundUserId)))
+            return false;
+        return true;
     }
 
     internal static JsonObject BuiltinToolToJson(McpToolDef t)
@@ -321,7 +334,8 @@ public class McpGatewayController : ControllerBase
     private Task ReleaseReservationAsync(string keyId, McpQuotaVerdict verdict, CancellationToken ct)
         => verdict.ReservedKind == null
             ? Task.CompletedTask
-            : _usage.ReleaseAsync(keyId, verdict.ReservedKind, verdict.ReservedAmount, ct);
+            // 按占坑那天退，不按现在是哪天 —— 跨过 UTC 午夜的调用会退错日子
+            : _usage.ReleaseAsync(keyId, verdict.ReservedKind, verdict.ReservedAmount, verdict.ReservedDay, ct);
 
     /// <summary>被闸门挡下：记一条 denied，再把原因原样回给智能体（它会转述给用户）。</summary>
     private async Task<JsonObject> DeniedAsync(JsonNode? id, McpCallLog log, string reason, CancellationToken ct)

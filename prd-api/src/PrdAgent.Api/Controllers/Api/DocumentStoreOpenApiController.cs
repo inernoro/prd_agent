@@ -213,6 +213,14 @@ public class DocumentStoreOpenApiController : ControllerBase
         if (store.OwnerId != userId)
             return (null, StatusCode(StatusCodes.Status403Forbidden,
                 ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只能写入你自己的知识库；别人共享给你的库是只读的")));
+        // 带结构模板的库（如验收报告库）第一期不开放给智能体写。
+        // 人工那条路径会过 AcceptanceTemplateRegistry 校必填元数据与章节、并记 templateCompliant；
+        // 这里没有那一层，放行等于让智能体往结构化库里塞不合规的记录，而且看不出来。
+        // 与其复制一份校验（判据迟早各漂各的），不如先把门关上、说清楚为什么。补法记在 debt.platform.md。
+        if (!string.IsNullOrWhiteSpace(store.TemplateKey))
+            return (null, StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(
+                ErrorCodes.PERMISSION_DENIED,
+                $"这个知识库绑了结构模板（{store.TemplateKey}），第一期不开放给智能体写入 —— 模板的必填元数据与章节校验只在人工编辑那条路径上。请在界面里写，或换一个没有模板的库。")));
         return (store, null);
     }
 

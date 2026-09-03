@@ -299,10 +299,8 @@ public class AgentApiKeysController : ControllerBase
         if (k.RevokedAt.HasValue) status = "revoked";
         else if (!k.IsActive) status = "disabled";
         else if (k.ExpiresAt.HasValue && k.ExpiresAt.Value < now)
-        {
-            var graceEnd = k.ExpiresAt.Value.AddDays(k.GracePeriodDays);
-            status = graceEnd < now ? "expired" : "grace";
-        }
+            // 能不能用走 AgentApiKey.IsUsableAt（与鉴权同一处判据），这里只负责把它翻成标签
+            status = AgentApiKey.IsUsableAt(k, now, out _) ? "grace" : "expired";
         else if (daysLeft is <= 30) status = "expiring-soon";
         else status = "active";
 

@@ -64,20 +64,10 @@ public class AgentApiKeyService : IAgentApiKeyService
         var hash = ComputeSha256(plaintext);
         var key = await _db.AgentApiKeys.Find(k => k.ApiKeyHash == hash).FirstOrDefaultAsync(ct);
         if (key == null) return null;
-        if (!key.IsActive || key.RevokedAt.HasValue) return null;
 
-        // 过期检查（含宽限期）
-        var now = DateTime.UtcNow;
-        bool inGrace = false;
-        if (key.ExpiresAt.HasValue)
-        {
-            if (key.ExpiresAt.Value < now)
-            {
-                var graceEnd = key.ExpiresAt.Value.AddDays(Math.Max(0, key.GracePeriodDays));
-                if (graceEnd < now) return null; // 过了宽限期，拒绝
-                inGrace = true;
-            }
-        }
+        // 停用 / 撤销 / 过了宽限期 —— 判据在 AgentApiKey.IsUsableAt 一处，
+        // 接入台面板读的也是它，免得面板说「已连接」而这里在拒。
+        if (!AgentApiKey.IsUsableAt(key, DateTime.UtcNow, out var inGrace)) return null;
 
         return new AgentApiKeyLookupResult(key, inGrace);
     }
