@@ -200,8 +200,6 @@ public class HostedSiteService : IHostedSiteService
         var now = DateTime.UtcNow;
         var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(htmlBytes, "index.html"));
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
-        // 这次发布尝试的租约标识。占坑、接手、收尾、撤回全都认它，见 HostedSite.PublishLeaseOwner。
-        var leaseOwner = Guid.NewGuid().ToString("N");
         await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
 
         var site = new HostedSite
@@ -296,6 +294,8 @@ public class HostedSiteService : IHostedSiteService
             System.Text.Encoding.UTF8.GetBytes(htmlContent), "index.html"));
 
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
+        // 这次发布尝试的租约标识。占坑、接手、收尾、撤回全都认它，见 HostedSite.PublishLeaseOwner。
+        var leaseOwner = Guid.NewGuid().ToString("N");
 
         var site = new HostedSite
         {
@@ -348,9 +348,11 @@ public class HostedSiteService : IHostedSiteService
                     Builders<HostedSite>.Filter.Eq(x => x.Id, siteId),
                     Builders<HostedSite>.Filter.Eq(x => x.OwnerUserId, userId),
                     Builders<HostedSite>.Filter.Ne(x => x.PublishPendingAt, (DateTime?)null),
-                    Builders<HostedSite>.Filter.Lt(x => x.PublishPendingAt, now - PublishLeaseTtl)),
+                    // 值要显式转成 DateTime?：字段是可空的，泛型参数从「字段类型」和「值类型」
+                    // 两边同时推断，一边 DateTime? 一边 DateTime 会推不出来（CS0411）。
+                    Builders<HostedSite>.Filter.Lt(x => x.PublishPendingAt, (DateTime?)(now - PublishLeaseTtl))),
                 Builders<HostedSite>.Update
-                    .Set(x => x.PublishPendingAt, now)
+                    .Set(x => x.PublishPendingAt, (DateTime?)now)
                     .Set(x => x.PublishLeaseOwner, leaseOwner),
                 new FindOneAndUpdateOptions<HostedSite, HostedSite> { ReturnDocument = ReturnDocument.After },
                 ct);
