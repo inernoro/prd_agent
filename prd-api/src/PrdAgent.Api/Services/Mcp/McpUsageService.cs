@@ -236,6 +236,12 @@ public sealed class McpUsageService
     private async Task<(bool Ok, int Used)> TryReserveAsync(
         string keyId, string kind, int amount, int quota, DateTime day, CancellationToken ct)
     {
+        // 占坑是**服务端自己的记账**，不跟客户端的取消令牌走（server-authority 规则）：
+        // 客户端在这一笔在途时断开，Mongo 完全可能已经把自增落下去了，而驱动这边抛的是取消 ——
+        // 异常一路上抛，谁也拿不到「占了多少坑」这个结论，于是没人去退。用户白扣一天额度，
+        // 而那次调用根本没跑。退还与写记录早就是 CancellationToken.None，占坑这一步漏了。
+        ct = CancellationToken.None;
+
         var id = BuildCounterId(keyId, day, kind);
         var ceiling = ReservationCeiling(quota, amount);
         // 一次就要得比上限还多（比如上限 2 张却要 4 张）：无论今天用了多少都放不过去
@@ -453,6 +459,64 @@ public sealed class McpUsageService
         return SensitiveArgumentNeedles.Any(needle => normalized.Contains(needle));
     }
 
+    /// <summary>
+    /// 摘要序列化用的编码器。默认那个会把所有非 ASCII 转义，于是中文入参在调用记录里
+    /// 长成 `\u5468\u62A5` —— 而这块面板存在的理由就是「一眼看懂智能体刚才要干什么」，
+    /// 中文正是这里最常见的入参。放宽转义在这里安全：这串东西只作为文本存库、由前端按文本渲染，
+    /// 不会被当作 HTML 拼进页面。
+    /// </summary>
+    private static readonly System.Text.Json.JsonSerializerOptions PreviewJson = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>摘要里能走到多深。再深的东西本来也进不了 600 字的成品，卡住只为不让病态输入走爆栈。</summary>
+    private const int MaxRedactDepth = 6;
+    internal const string Redacted = "[已隐去]";
+    private const string TooDeep = "[层级过深]";
+
+    /// <summary>
+    /// 递归隐去嵌套在对象/数组里的凭据。
+    ///
+    /// 判据仍然是**键名**，只是不再只看顶层那一层：`config={ apiKey: "..." }` 里那个顶层键
+    /// 一点也不敏感，而里面那串东西会被原样存进记录、再显示在接入台上。
+    ///
+    /// 名字之外的启发式（看着像 JWT、熵值够高）不做：那是另一类判据，误伤与漏判都难说清，
+    /// 要做也该单独一轮（记在 debt.platform 里）。
+    /// </summary>
+    internal static JsonNode? RedactSensitive(JsonNode? node, int depth)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+            {
+                var copy = new JsonObject();
+                foreach (var kv in obj)
+                {
+                    if (IsSensitiveArgumentName(kv.Key)) copy[kv.Key] = JsonValue.Create(Redacted);
+                    else if (depth >= MaxRedactDepth) copy[kv.Key] = JsonValue.Create(TooDeep);
+                    else copy[kv.Key] = RedactSensitive(kv.Value, depth + 1);
+                }
+                return copy;
+            }
+            case JsonArray arr:
+            {
+                var copy = new JsonArray();
+                foreach (var item in arr)
+                {
+                    JsonNode? redacted = depth >= MaxRedactDepth
+                        ? JsonValue.Create(TooDeep)
+                        : RedactSensitive(item, depth + 1);
+                    copy.Add(redacted);
+                }
+                return copy;
+            }
+            default:
+                // 叶子照抄。必须是副本 —— JsonNode 认爹，把原节点挂到新容器上会抛。
+                return node?.DeepClone();
+        }
+    }
+
     /// <summary>入参摘要：够用户看懂它当时要干什么，又不至于把整篇正文存进记录。</summary>
     public static string? SummarizeArguments(JsonObject? args)
     {
@@ -463,11 +527,13 @@ public sealed class McpUsageService
             if (IsSensitiveArgumentName(kv.Key))
             {
                 // 连长度都不透出：短口令的长度本身就是线索
-                parts.Add($"{kv.Key}=[已隐去]");
+                parts.Add($"{kv.Key}={Redacted}");
                 if (parts.Count >= 6) break;
                 continue;
             }
-            var v = kv.Value?.ToJsonString() ?? "null";
+            // 只看顶层键不够：`config={ apiKey: "..." }` 这种，顶层那个键叫 config，
+            // 一点也不敏感，而里面那串凭据会被原样序列化进记录、再显示在接入台上。
+            var v = RedactSensitive(kv.Value, 0)?.ToJsonString(PreviewJson) ?? "null";
             if (v.Length > 120) v = v[..120] + "…";
             parts.Add($"{kv.Key}={v}");
             if (parts.Count >= 6) break;

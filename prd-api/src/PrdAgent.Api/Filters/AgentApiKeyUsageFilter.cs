@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -63,8 +64,21 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
         var http = context.HttpContext;
-        var keyId = http.User?.FindFirst("agentApiKeyId")?.Value
-            ?? await ResolveKeyIdForAnonymousEndpointAsync(http);
+        // 主体与 keyId 必须一起取：审计行里的「谁的调用」「哪把钥匙」都从主体上读，
+        // 只把 keyId 捞出来、主体还是那个空的匿名主体，记录就会写成「没有主人」，
+        // 而接入台按主人过滤 —— 额度扣了，列表里查无此事。
+        var principal = http.User;
+        var keyId = principal?.FindFirst("agentApiKeyId")?.Value;
+        if (string.IsNullOrEmpty(keyId))
+        {
+            var resolved = await ResolveAgentPrincipalForAnonymousEndpointAsync(http);
+            if (resolved != null)
+            {
+                principal = resolved;
+                keyId = resolved.FindFirst("agentApiKeyId")?.Value;
+            }
+        }
+
         if (string.IsNullOrEmpty(keyId) || _loopback.IsGatewayContinuation(http.Request))
         {
             await next();
@@ -115,7 +129,7 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter
             context.Result = Reject(rate.Reason!);
             // SuppressLog：同一分钟内已经落过一条同类拒绝，再落就是被挡住的洪水一条条进库
             if (!rate.SuppressLog)
-                await LogAsync(http, keyId, toolName, capability, isWrite, imageCount, "denied", 0,
+                await LogAsync(http, principal, keyId, toolName, capability, isWrite, imageCount, "denied", 0,
                     rate.Reason!, startedAt);
             return;
         }
@@ -124,7 +138,7 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter
         if (!verdict.Allowed)
         {
             context.Result = Reject(verdict.Reason!);
-            await LogAsync(http, keyId, toolName, capability, isWrite, imageCount, "denied", 0,
+            await LogAsync(http, principal, keyId, toolName, capability, isWrite, imageCount, "denied", 0,
                 verdict.Reason!, startedAt);
             return;
         }
@@ -138,7 +152,7 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter
             await _usage.ReleaseAsync(keyId, verdict.ReservedKind, verdict.ReservedAmount, verdict.ReservedDay,
                 CancellationToken.None);
 
-        await LogAsync(http, keyId, toolName, capability, isWrite, imageCount,
+        await LogAsync(http, principal, keyId, toolName, capability, isWrite, imageCount,
             ok ? "success" : "error", status,
             ok ? null
                 : threw ? "直连开放接口抛了异常，原因见服务端日志。"
@@ -168,17 +182,28 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter
     /// 且结果只在闸门内部用、不写回 HttpContext.User：那些端点本来就允许匿名，
     /// 替它们改主体会顺手改掉下游看到的身份，属于本轮不该动的东西。
     /// </summary>
-    private static async Task<string?> ResolveKeyIdForAnonymousEndpointAsync(HttpContext http)
+    private static async Task<ClaimsPrincipal?> ResolveAgentPrincipalForAnonymousEndpointAsync(HttpContext http)
     {
         if (!HasAgentKeyCredential(http.Request)) return null;
         var result = await http.AuthenticateAsync("ApiKey");
-        return result.Succeeded ? result.Principal?.FindFirst("agentApiKeyId")?.Value : null;
+        // 只在闸门与审计里用，不写回 HttpContext.User：那些端点本来就允许匿名，
+        // 替它们改主体会顺手改掉下游看到的身份。
+        return result.Succeeded ? result.Principal : null;
     }
 
-    /// <summary>请求头里带的是 sk-ak- 密钥吗（JWT 会话与别的 key 形态一律不算）。</summary>
+    /// <summary>
+    /// 请求头里带的是 sk-ak- 密钥吗（JWT 会话与别的 key 形态一律不算）。
+    ///
+    /// 取头的顺序必须与 ApiKeyAuthenticationHandler 完全一致：先 Authorization，
+    /// 它整个缺席时才退到 X-AI-Access-Key。少认一个头，等于「换个写法就绕过闸门」——
+    /// 判据比它该管的范围窄，是本仓库反复栽的那个形状。
+    /// </summary>
     internal static bool HasAgentKeyCredential(HttpRequest request)
     {
-        if (!request.Headers.TryGetValue("Authorization", out var auth)) return false;
+        if (!request.Headers.TryGetValue("Authorization", out var auth)
+            && !request.Headers.TryGetValue("X-AI-Access-Key", out auth))
+            return false;
+
         var raw = auth.ToString();
         var token = raw.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
             ? raw["Bearer ".Length..].Trim()
@@ -227,13 +252,15 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter
     /// 直连也要落记录：接入台的「今日用量」和「调用记录」读的是两份数据，只扣数不留记录的话，
     /// 用户会看到额度在掉、列表里却什么都没发生。
     /// </summary>
-    private Task LogAsync(HttpContext http, string keyId, string toolName, string? capability,
+    private Task LogAsync(HttpContext http, ClaimsPrincipal? principal, string keyId, string toolName,
+        string? capability,
         bool isWrite, int imageCount, string status, int httpStatus, string? error, long startedAt)
         => _usage.LogAsync(new McpCallLog
         {
-            OwnerUserId = http.User?.FindFirst("boundUserId")?.Value ?? string.Empty,
+            // 用闸门认出来的那个主体，不是 http.User —— 匿名端点上后者是空的
+            OwnerUserId = principal?.FindFirst("boundUserId")?.Value ?? string.Empty,
             KeyId = keyId,
-            KeyName = http.User?.FindFirst("appName")?.Value ?? string.Empty,
+            KeyName = principal?.FindFirst("appName")?.Value ?? string.Empty,
             // 记成工具名本身，接入台按工具聚合时直连与走网关的算同一件事；
             // 「怎么进来的」放进入参摘要，需要区分时看得见。
             ToolName = toolName,

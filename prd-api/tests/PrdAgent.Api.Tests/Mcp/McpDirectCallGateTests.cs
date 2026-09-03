@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
@@ -190,6 +191,45 @@ public class McpAgentKeyCredentialDetectionTests
         // 大小写不同的 Bearer、以及不带 Bearer 前缀直接给密钥，都算
         AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("bearer sk-ak-abc123")).ShouldBeTrue();
         AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("sk-ak-abc123")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void 认证处理器认哪些头_这里就得认哪些()
+    {
+        // ApiKeyAuthenticationHandler 在 Authorization **整个缺席**时退到 X-AI-Access-Key。
+        // 这里少认一个头，就等于「换个写法就绕过闸门」——判据比它该管的范围窄的那个老形状。
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Headers["X-AI-Access-Key"] = "sk-ak-abc123";
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(ctx.Request).ShouldBeTrue();
+
+        // 但顺序也得一样：Authorization 在场时就只看它（处理器正是这么取的），
+        // 否则两边对同一个请求给出不同的身份判断。
+        var both = new DefaultHttpContext();
+        both.Request.Headers["Authorization"] = "Bearer eyJhbGciOiJIUzI1NiJ9.x.y";
+        both.Request.Headers["X-AI-Access-Key"] = "sk-ak-abc123";
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(both.Request).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 审计行不许再从_HttpContext_User_取主人()
+    {
+        // 匿名端点上 HttpContext.User 是空的（ApiKey 是非默认 scheme，授权环节不选它）。
+        // 从它取 boundUserId，记录就写成「没有主人」，而接入台按主人过滤 ——
+        // 额度扣了、列表里查无此事。这条判据坏掉不会红：记录照样写进库，只是谁也看不到。
+        var source = SourceOf("prd-api/src/PrdAgent.Api/Filters/AgentApiKeyUsageFilter.cs");
+        var body = source[source.IndexOf("private Task LogAsync", StringComparison.Ordinal)..];
+        body.ShouldNotContain("http.User",
+            customMessage: "审计行要用闸门认出来的那个主体，不是 HttpContext.User");
+    }
+
+    private static string SourceOf(string repoRelativePath)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+        dir.ShouldNotBeNull("找不到仓库根，无法做源码守卫");
+        var full = Path.Combine(dir!.FullName, repoRelativePath);
+        File.Exists(full).ShouldBeTrue($"被守的文件不在了：{repoRelativePath}");
+        return File.ReadAllText(full);
     }
 
     [Fact]

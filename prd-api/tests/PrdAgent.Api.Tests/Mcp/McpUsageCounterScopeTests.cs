@@ -76,6 +76,22 @@ public class McpUsageCounterScopeTests
         section.ShouldContain("\"DayUtc\": 1", customMessage: "TTL 必须挂在 DayUtc 上：那是这一行属于哪一天的唯一依据");
     }
 
+    [Fact]
+    public void 占坑不许跟着客户端的取消令牌走()
+    {
+        // 客户端在这一笔在途时断开，Mongo 完全可能已经把自增落下去了，而驱动这边抛的是取消：
+        // 异常一路上抛，谁也拿不到「占了多少坑」这个结论，于是没人去退 —— 用户白扣一天额度，
+        // 而那次调用根本没跑（server-authority：写库不跟 RequestAborted 走）。
+        // 只能扫源码：真要复现得让 Mongo 与驱动在同一微秒里赛跑。
+        var source = ReadSource("prd-api/src/PrdAgent.Api/Services/Mcp/McpUsageService.cs");
+        var begin = source.IndexOf("private async Task<(bool Ok, int Used)> TryReserveAsync", StringComparison.Ordinal);
+        begin.ShouldBeGreaterThanOrEqualTo(0, "占坑方法改名了就同步改这里，别把断言删掉");
+        var body = source[begin..source.IndexOf("private async Task<int> ReadUsedAsync", StringComparison.Ordinal)];
+
+        body.ShouldContain("ct = CancellationToken.None",
+            customMessage: "占坑是服务端自己的记账，客户端断开不能让它半途而废");
+    }
+
     private static string ReadSource(string repoRelativePath)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -195,5 +211,58 @@ public class McpArgumentRedactionTests
         summary!.ShouldContain("keyword=", customMessage: "正常参数照旧要看得见");
         summary.ShouldContain("apiKey=[已隐去]");
         summary.ShouldNotContain("sk-live");
+    }
+}
+
+/// <summary>
+/// 嵌套在对象/数组里的凭据也要隐去。
+///
+/// 上一轮只隐了顶层键，而 `config={ apiKey: "..." }` 这种，顶层那个键叫 config、一点也不敏感，
+/// 里面那串凭据照样被原样序列化进记录、显示在接入台上 —— 判据比它该管的范围窄的那个老形状。
+/// </summary>
+public class McpNestedRedactionTests
+{
+    private static string Summarize(string json)
+        => McpUsageService.SummarizeArguments(
+            System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject()) ?? string.Empty;
+
+    [Fact]
+    public void 藏在对象里的凭据不许漏出来()
+    {
+        var summary = Summarize("""{"config":{"baseUrl":"https://x","apiKey":"sk-live-secret"}}""");
+
+        summary.ShouldNotContain("sk-live-secret");
+        summary.ShouldContain(McpUsageService.Redacted);
+        // 同一个对象里不敏感的字段照旧看得见，摘要才有用
+        summary.ShouldContain("baseUrl");
+    }
+
+    [Fact]
+    public void 藏在数组里的对象也要走一遍()
+    {
+        var summary = Summarize("""{"targets":[{"name":"a","token":"tok-secret"}]}""");
+
+        summary.ShouldNotContain("tok-secret");
+        summary.ShouldContain("name");
+    }
+
+    [Fact]
+    public void 深到超过上限的层级整块不再展开()
+    {
+        // 第七层往下一律不展开：摘要只有 600 字，深到那里的东西本来也进不了成品，
+        // 而不设上限就等于让病态输入决定这一趟走多深。
+        var deep = """{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"apiKey":"sk-deep-secret"}}}}}}}}""";
+
+        Summarize(deep).ShouldNotContain("sk-deep-secret");
+    }
+
+    [Fact]
+    public void 普通入参不受影响()
+    {
+        var summary = Summarize("""{"keyword":"周报","limit":10}""");
+
+        summary.ShouldContain("keyword");
+        summary.ShouldContain("周报");
+        summary.ShouldNotContain(McpUsageService.Redacted);
     }
 }
