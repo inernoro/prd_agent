@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using MongoDB.Bson;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Controllers;
 using PrdAgent.Api.Extensions;
@@ -170,6 +171,9 @@ public sealed class SyntheticLoginControllerTests
         var next = Invoke<DateTime>("NextContentVersion", futureVersion);
 
         Assert.True(next > futureVersion);
+        Assert.True(
+            new BsonDateTime(next).MillisecondsSinceEpoch >
+            new BsonDateTime(futureVersion).MillisecondsSinceEpoch);
     }
 
     [Fact]

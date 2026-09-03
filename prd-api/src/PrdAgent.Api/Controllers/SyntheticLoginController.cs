@@ -410,7 +410,8 @@ public sealed class SyntheticLoginController : ControllerBase
     private static DateTime NextContentVersion(DateTime current)
     {
         var now = DateTime.UtcNow;
-        return now > current ? now : current.AddTicks(1);
+        var minimumNext = current.AddMilliseconds(1);
+        return now > minimumNext ? now : minimumNext;
     }
 
     private IActionResult? ValidateTestingAccess(out string userId)

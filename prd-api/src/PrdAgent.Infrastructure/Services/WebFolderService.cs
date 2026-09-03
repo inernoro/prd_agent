@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Markdig;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -21,6 +22,8 @@ namespace PrdAgent.Infrastructure.Services;
 /// </summary>
 public class WebFolderService : IWebFolderService
 {
+    private const string NameClaimCollection = "web_folder_name_claims";
+    private const string ClaimFolderIdField = "FolderId";
     private readonly MongoDbContext _db;
     private readonly IHostedSiteService _hostedSites;
     private readonly IDocumentService _documents;
@@ -46,13 +49,20 @@ public class WebFolderService : IWebFolderService
                 .Find(folder => folder.OwnerUserId == userId)
                 .ToListAsync(ct))
             .FirstOrDefault(folder => NormalizeName(folder.Name) == normalizedName);
-        if (existing != null) return existing;
+        if (existing != null)
+        {
+            await ResolveFolderIdAsync(userId, normalizedName, existing.Id, ct);
+            return existing;
+        }
+
+        // 名称 claim 与文件夹实体分离：claim 的 _id 负责跨实例并发串行化，FolderId
+        // 仍是稳定的随机身份。这样文件夹重命名后可以释放旧名称，而不会改写实体 ID。
+        var candidateId = Guid.NewGuid().ToString("N");
+        var folderId = await ResolveFolderIdAsync(userId, normalizedName, candidateId, ct);
 
         var category = new WebFolder
         {
-            // 同一用户、同一归一化名称固定得到同一个 _id。两个 API 实例或两个浏览器标签
-            // 并发创建时，MongoDB 的单文档 upsert 会落到同一条记录，不依赖前端缓存。
-            Id = BuildIdempotentId(userId, normalizedName),
+            Id = folderId,
             OwnerUserId = userId,
             Name = (input.Name ?? string.Empty).Trim(),
             Description = input.Description?.Trim(),
@@ -101,10 +111,51 @@ public class WebFolderService : IWebFolderService
     internal static string NormalizeName(string? name) =>
         (name ?? string.Empty).Trim().Normalize(NormalizationForm.FormC).ToUpperInvariant();
 
-    internal static string BuildIdempotentId(string userId, string normalizedName)
+    internal static string BuildNameClaimId(string userId, string normalizedName)
     {
         var digest = SHA256.HashData(Encoding.UTF8.GetBytes($"{userId}\0{normalizedName}"));
         return Convert.ToHexString(digest.AsSpan(0, 16)).ToLowerInvariant();
+    }
+
+    private async Task<string> ResolveFolderIdAsync(
+        string userId,
+        string normalizedName,
+        string preferredFolderId,
+        CancellationToken ct)
+    {
+        var claims = _db.Database.GetCollection<BsonDocument>(NameClaimCollection);
+        var claimId = BuildNameClaimId(userId, normalizedName);
+        var now = DateTime.UtcNow;
+        var update = Builders<BsonDocument>.Update.Combine(
+            Builders<BsonDocument>.Update.SetOnInsert("_id", claimId),
+            Builders<BsonDocument>.Update.SetOnInsert(ClaimFolderIdField, preferredFolderId),
+            Builders<BsonDocument>.Update.SetOnInsert("OwnerUserId", userId),
+            Builders<BsonDocument>.Update.SetOnInsert("NormalizedName", normalizedName),
+            Builders<BsonDocument>.Update.SetOnInsert("CreatedAt", now),
+            Builders<BsonDocument>.Update.Set("UpdatedAt", now));
+        var claim = await claims.FindOneAndUpdateAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", claimId),
+            update,
+            new FindOneAndUpdateOptions<BsonDocument>
+            {
+                IsUpsert = true,
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        return claim[ClaimFolderIdField].AsString;
+    }
+
+    private Task ReleaseNameClaimAsync(
+        string userId,
+        string normalizedName,
+        string folderId,
+        CancellationToken ct)
+    {
+        var claims = _db.Database.GetCollection<BsonDocument>(NameClaimCollection);
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", BuildNameClaimId(userId, normalizedName)),
+            Builders<BsonDocument>.Filter.Eq(ClaimFolderIdField, folderId));
+        return claims.DeleteOneAsync(filter, ct);
     }
 
     public async Task<List<WebFolder>> ListAsync(string userId, CancellationToken ct = default)
@@ -126,6 +177,17 @@ public class WebFolderService : IWebFolderService
 
         var ub = Builders<WebFolder>.Update;
         var updates = new List<UpdateDefinition<WebFolder>>();
+        var previousNormalizedName = NormalizeName(existing.Name);
+        var nextNormalizedName = patch.Name == null
+            ? previousNormalizedName
+            : NormalizeName(patch.Name);
+
+        if (nextNormalizedName != previousNormalizedName)
+        {
+            var claimedFolderId = await ResolveFolderIdAsync(userId, nextNormalizedName, existing.Id, ct);
+            if (!string.Equals(claimedFolderId, existing.Id, StringComparison.Ordinal))
+                throw new InvalidOperationException("同名文件夹已存在，请换一个名称");
+        }
 
         if (patch.Name != null)
             updates.Add(ub.Set(c => c.Name, patch.Name.Trim()));
@@ -148,6 +210,9 @@ public class WebFolderService : IWebFolderService
             ub.Combine(updates),
             cancellationToken: ct);
 
+        if (nextNormalizedName != previousNormalizedName)
+            await ReleaseNameClaimAsync(userId, previousNormalizedName, existing.Id, ct);
+
         return await _db.WebFolders
             .Find(c => c.Id == id && c.OwnerUserId == userId)
             .FirstOrDefaultAsync(ct);
@@ -155,8 +220,15 @@ public class WebFolderService : IWebFolderService
 
     public async Task<bool> DeleteAsync(string id, string userId, CancellationToken ct = default)
     {
+        var existing = await _db.WebFolders
+            .Find(c => c.Id == id && c.OwnerUserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (existing == null) return false;
+
         var result = await _db.WebFolders.DeleteOneAsync(
             c => c.Id == id && c.OwnerUserId == userId, ct);
+        if (result.DeletedCount > 0)
+            await ReleaseNameClaimAsync(userId, NormalizeName(existing.Name), existing.Id, ct);
         return result.DeletedCount > 0;
     }
 

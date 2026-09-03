@@ -1081,6 +1081,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const runKey = `stsmk-${Date.now().toString(36)}-folder`;
     let siteId = '';
     let folderId = '';
+    let recreatedFolderId = '';
     try {
       const uploaded = await uploadStableHostedSite(page, token, `${runKey}-site`);
       siteId = uploaded.site.id;
@@ -1135,6 +1136,39 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         '并发 API 创建后仍只能存在一条持久记录',
       ).toHaveLength(1);
 
+      const renamedName = `${runKey}-renamed`;
+      const renamedFolder = await readEnvelope<StableWebFolder>(
+        await page.request.put(`/api/web-folders/${folderId}`, {
+          headers: authHeaders(token),
+          data: { ...concurrentPayload, name: renamedName },
+        }),
+      );
+      expect(renamedFolder.id, '重命名不能改变文件夹身份').toBe(folderId);
+      expect(renamedFolder.name).toBe(renamedName);
+
+      const recreatedOriginal = await readEnvelope<StableWebFolder>(
+        await page.request.post('/api/web-folders', {
+          headers: authHeaders(token),
+          data: concurrentPayload,
+        }),
+      );
+      recreatedFolderId = recreatedOriginal.id;
+      expect(recreatedFolderId, '重命名后原名称必须可以重新创建').not.toBe(folderId);
+      const deletedRecreated = await page.request.delete(`/api/web-folders/${recreatedFolderId}`, {
+        headers: authHeaders(token),
+      });
+      expect(deletedRecreated.ok(), '重命名回归夹具清理失败').toBe(true);
+      recreatedFolderId = '';
+
+      const restoredName = await readEnvelope<StableWebFolder>(
+        await page.request.put(`/api/web-folders/${folderId}`, {
+          headers: authHeaders(token),
+          data: concurrentPayload,
+        }),
+      );
+      expect(restoredName.id, '恢复名称不能改变文件夹身份').toBe(folderId);
+      expect(restoredName.name).toBe(runKey);
+
       const folderTarget = page.locator('[data-tour-id="webpages-folder-drop-target"]').filter({ hasText: runKey });
       await expect(folderTarget).toBeVisible();
       await expect(folderTarget.locator('.web-folder-drop-target__count')).toHaveText('0');
@@ -1177,6 +1211,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(persisted.locator('.web-folder-drop-target__count')).toHaveText('1');
     } finally {
       if (siteId) await deleteStableHostedSite(page, token, siteId);
+      if (recreatedFolderId) {
+        await page.request.delete(`/api/web-folders/${recreatedFolderId}`, { headers: authHeaders(token) });
+      }
       if (folderId) {
         const deleted = await page.request.delete(`/api/web-folders/${folderId}`, { headers: authHeaders(token) });
         expect(deleted.ok(), '稳定冒烟文件夹清理失败').toBe(true);
