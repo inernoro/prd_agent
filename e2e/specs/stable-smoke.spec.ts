@@ -1169,6 +1169,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(restoredName.id, '恢复名称不能改变文件夹身份').toBe(folderId);
       expect(restoredName.name).toBe(runKey);
 
+      const sharedRenameName = `${runKey}-parallel-same`;
+      await Promise.all([0, 1].map(() => page.request.put(`/api/web-folders/${folderId}`, {
+        headers: authHeaders(token),
+        data: { ...concurrentPayload, name: sharedRenameName },
+      })));
+      const sharedNameCreate = await readEnvelope<StableWebFolder>(
+        await page.request.post('/api/web-folders', {
+          headers: authHeaders(token),
+          data: { ...concurrentPayload, name: sharedRenameName },
+        }),
+      );
+      expect(sharedNameCreate.id, '同名并发重命名不能释放赢家的名称占用').toBe(folderId);
+      await readEnvelope<StableWebFolder>(
+        await page.request.put(`/api/web-folders/${folderId}`, {
+          headers: authHeaders(token),
+          data: concurrentPayload,
+        }),
+      );
+
       const renameCandidates = [`${runKey}-parallel-a`, `${runKey}-parallel-b`];
       await Promise.all(renameCandidates.map((name) => page.request.put(`/api/web-folders/${folderId}`, {
         headers: authHeaders(token),

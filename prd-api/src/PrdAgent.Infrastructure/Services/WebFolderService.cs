@@ -23,6 +23,7 @@ namespace PrdAgent.Infrastructure.Services;
 public class WebFolderService : IWebFolderService
 {
     private const string NameClaimCollection = "web_folder_name_claims";
+    private const string RenameLockCollection = "web_folder_rename_locks";
     private const string ClaimFolderIdField = "FolderId";
     private readonly MongoDbContext _db;
     private readonly IHostedSiteService _hostedSites;
@@ -51,14 +52,14 @@ public class WebFolderService : IWebFolderService
             .FirstOrDefault(folder => NormalizeName(folder.Name) == normalizedName);
         if (existing != null)
         {
-            await ResolveFolderIdAsync(userId, normalizedName, existing.Id, ct);
+            await ResolveFolderIdAsync(userId, normalizedName, existing.Id, CancellationToken.None);
             return existing;
         }
 
         // 名称 claim 与文件夹实体分离：claim 的 _id 负责跨实例并发串行化，FolderId
         // 仍是稳定的随机身份。这样文件夹重命名后可以释放旧名称，而不会改写实体 ID。
         var candidateId = Guid.NewGuid().ToString("N");
-        var folderId = await ResolveFolderIdAsync(userId, normalizedName, candidateId, ct);
+        var folderId = await ResolveFolderIdAsync(userId, normalizedName, candidateId, CancellationToken.None);
 
         var category = new WebFolder
         {
@@ -102,7 +103,7 @@ public class WebFolderService : IWebFolderService
                 IsUpsert = true,
                 ReturnDocument = ReturnDocument.After,
             },
-            ct) ?? throw new InvalidOperationException("文件夹创建后未能读取，请稍后重试");
+            CancellationToken.None) ?? throw new InvalidOperationException("文件夹创建后未能读取，请稍后重试");
 
         _logger.LogInformation("[web-folder] Resolved idempotent folder {Id} '{Name}' by {UserId}", created.Id, created.Name, userId);
         return created;
@@ -158,6 +159,52 @@ public class WebFolderService : IWebFolderService
         return claims.DeleteOneAsync(filter, ct);
     }
 
+    private async Task<string> AcquireRenameLockAsync(string folderId, string userId)
+    {
+        var locks = _db.Database.GetCollection<BsonDocument>(RenameLockCollection);
+        var operationId = Guid.NewGuid().ToString("N");
+        for (var attempt = 0; attempt < 400; attempt++)
+        {
+            var now = DateTime.UtcNow;
+            var lockDocument = new BsonDocument
+            {
+                { "_id", folderId },
+                { "OperationId", operationId },
+                { "OwnerUserId", userId },
+                { "ExpiresAt", now.AddSeconds(30) },
+            };
+            try
+            {
+                await locks.InsertOneAsync(lockDocument, cancellationToken: CancellationToken.None);
+                return operationId;
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                var takeover = await locks.ReplaceOneAsync(
+                    Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("_id", folderId),
+                        Builders<BsonDocument>.Filter.Lt("ExpiresAt", now)),
+                    lockDocument,
+                    new ReplaceOptions { IsUpsert = false },
+                    CancellationToken.None);
+                if (takeover.MatchedCount == 1) return operationId;
+                await Task.Delay(25, CancellationToken.None);
+            }
+        }
+
+        throw new InvalidOperationException("文件夹正在被修改，请稍后重试");
+    }
+
+    private Task ReleaseRenameLockAsync(string folderId, string operationId)
+    {
+        var locks = _db.Database.GetCollection<BsonDocument>(RenameLockCollection);
+        return locks.DeleteOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", folderId),
+                Builders<BsonDocument>.Filter.Eq("OperationId", operationId)),
+            CancellationToken.None);
+    }
+
     public async Task<List<WebFolder>> ListAsync(string userId, CancellationToken ct = default)
     {
         return await _db.WebFolders
@@ -170,9 +217,24 @@ public class WebFolderService : IWebFolderService
 
     public async Task<WebFolder?> UpdateAsync(string id, string userId, WebFolder patch, CancellationToken ct = default)
     {
+        // 名称 claim、实体改名、旧 claim 释放必须由服务端完整执行；客户端断开不能
+        // 取消其中任一步。Mongo `_id` 锁同时串行化同一文件夹的跨实例重命名。
+        var operationId = await AcquireRenameLockAsync(id, userId);
+        try
+        {
+            return await UpdateUnderRenameLockAsync(id, userId, patch);
+        }
+        finally
+        {
+            await ReleaseRenameLockAsync(id, operationId);
+        }
+    }
+
+    private async Task<WebFolder?> UpdateUnderRenameLockAsync(string id, string userId, WebFolder patch)
+    {
         var existing = await _db.WebFolders
             .Find(c => c.Id == id && c.OwnerUserId == userId)
-            .FirstOrDefaultAsync(ct);
+            .FirstOrDefaultAsync(CancellationToken.None);
         if (existing == null) return null;
 
         var ub = Builders<WebFolder>.Update;
@@ -184,7 +246,8 @@ public class WebFolderService : IWebFolderService
 
         if (nextNormalizedName != previousNormalizedName)
         {
-            var claimedFolderId = await ResolveFolderIdAsync(userId, nextNormalizedName, existing.Id, ct);
+            var claimedFolderId = await ResolveFolderIdAsync(
+                userId, nextNormalizedName, existing.Id, CancellationToken.None);
             if (!string.Equals(claimedFolderId, existing.Id, StringComparison.Ordinal))
                 throw new InvalidOperationException("同名文件夹已存在，请换一个名称");
         }
@@ -205,33 +268,18 @@ public class WebFolderService : IWebFolderService
             string.IsNullOrWhiteSpace(patch.GenerateStoreId) ? null : patch.GenerateStoreId.Trim()));
         updates.Add(ub.Set(c => c.UpdatedAt, DateTime.UtcNow));
 
-        var updateFilter = nextNormalizedName == previousNormalizedName
-            ? Builders<WebFolder>.Filter.Where(c => c.Id == id && c.OwnerUserId == userId)
-            : Builders<WebFolder>.Filter.Where(c =>
-                c.Id == id && c.OwnerUserId == userId && c.Name == existing.Name);
-        var updateResult = await _db.WebFolders.UpdateOneAsync(
-            updateFilter,
+        await _db.WebFolders.UpdateOneAsync(
+            c => c.Id == id && c.OwnerUserId == userId,
             ub.Combine(updates),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         if (nextNormalizedName != previousNormalizedName)
-        {
-            if (updateResult.MatchedCount == 0)
-            {
-                // 另一个重命名请求已经先改掉旧名称。释放本请求刚取得的新名称 claim，
-                // 避免它永久指向实际名称不同的文件夹。
-                await ReleaseNameClaimAsync(userId, nextNormalizedName, existing.Id, ct);
-                return await _db.WebFolders
-                    .Find(c => c.Id == id && c.OwnerUserId == userId)
-                    .FirstOrDefaultAsync(ct);
-            }
-
-            await ReleaseNameClaimAsync(userId, previousNormalizedName, existing.Id, ct);
-        }
+            await ReleaseNameClaimAsync(
+                userId, previousNormalizedName, existing.Id, CancellationToken.None);
 
         return await _db.WebFolders
             .Find(c => c.Id == id && c.OwnerUserId == userId)
-            .FirstOrDefaultAsync(ct);
+            .FirstOrDefaultAsync(CancellationToken.None);
     }
 
     public async Task<bool> DeleteAsync(string id, string userId, CancellationToken ct = default)
@@ -242,9 +290,10 @@ public class WebFolderService : IWebFolderService
         if (existing == null) return false;
 
         var result = await _db.WebFolders.DeleteOneAsync(
-            c => c.Id == id && c.OwnerUserId == userId, ct);
+            c => c.Id == id && c.OwnerUserId == userId, CancellationToken.None);
         if (result.DeletedCount > 0)
-            await ReleaseNameClaimAsync(userId, NormalizeName(existing.Name), existing.Id, ct);
+            await ReleaseNameClaimAsync(
+                userId, NormalizeName(existing.Name), existing.Id, CancellationToken.None);
         return result.DeletedCount > 0;
     }
 
