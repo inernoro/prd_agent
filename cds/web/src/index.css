@@ -6101,7 +6101,14 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
     flex-direction: column !important;
     gap: 0 !important;
     min-height: 0 !important;
-    overflow: clip !important;
+    /*
+     * 横向照旧裁死（弹窗全屏，不该出现横向滚动），纵向留 auto 当兜底：
+     * 高度链完好时内容不溢出、这里根本不会滚；一旦哪天再断一环，用户至少
+     * 还能滚到主操作，而不是像 2026-09-03 那样面对一屏没有出口的卡片。
+     */
+    overflow-x: clip !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
     padding: 0 !important;
   }
 
@@ -6109,8 +6116,19 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
     display: none !important;
   }
 
-  [role='dialog']:has([data-agent-starter='true']) > div:first-child > :last-child {
+  /*
+   * 高度链的最后两环。断一环，面板就长成内容自然高、突破视口，底栏被上面那条
+   * overflow:clip 裁掉——而链上没有任何可滚容器，用户连滚过去都做不到。
+   *
+   * `> div:first-child > :last-child` 是按位置数出来的，tab 区一旦多插一层
+   * 或换顺序就静默失效（正是 2026-09-03 那次移动端「没有下一步」的形态）。
+   * 所以 slot 那一环改认标记 data-agent-starter-slot，不认位置。
+   */
+  [role='dialog']:has([data-agent-starter='true']) > div:first-child > :last-child,
+  [data-agent-starter-slot='true'] {
+    display: flex !important;
     flex: 1 1 auto !important;
+    flex-direction: column !important;
     min-height: 0 !important;
     height: 100% !important;
   }

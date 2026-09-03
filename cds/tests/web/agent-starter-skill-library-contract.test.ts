@@ -70,6 +70,13 @@ describe('Agent 上手助手技能库契约', () => {
      *
      * 彻底的做法是渲染向导、真的点一遍——本仓库 cds 侧还没有 DOM 测试环境
      * （无 jsdom / testing-library），已记入 doc/debt.cds.md。
+     *
+     * 2026-09-03 补：这条源码守卫拦不住的那一半，已经由真浏览器判据补上——
+     * scripts/agent-starter-mobile-probe.mjs 在四档窄屏下量每一步主操作的
+     * rect，接在 cds.yml 的每个 PR 上。它抓的正是这条守卫看不见的形态：
+     * 按钮确实写在 JSX 里（这里全绿），却因为窄屏高度链断了而落在视口外、
+     * 且滚不到。两条判据分工——这条锁「按钮在不在源码里」，那条锁
+     * 「按钮在不在屏幕上」。
      */
     expect(source).not.toMatch(/\{\s*!\s*\w*[lL]ibrary\w*\s*&&\s*<PrimaryNext/);
     expect(source).not.toMatch(/\w*[lL]ibrary\w*\s*\?[^:]{0,80}:\s*<PrimaryNext/);

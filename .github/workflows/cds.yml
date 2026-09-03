@@ -86,6 +86,23 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      # 上手向导的窄屏可达性只有真浏览器量得出来：源码守卫能证明主按钮写在
+      # JSX 里，证明不了它在 390px 的手机上够不够得着。2026-09-03 那次
+      # 「步骤 03 没有下一步、也滑不动」编译、类型、单测、源码守卫全绿。
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-cds-${{ hashFiles('cds/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-cds-
+
+      - name: Install Chromium for layout probes
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Agent starter mobile reachability
+        run: pnpm run smoke:agent-starter-mobile
+
   docker-build:
     name: Docker Build Check
     runs-on: ubuntu-latest
