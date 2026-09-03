@@ -29,6 +29,8 @@ export interface DbIsolationService {
   dbScope: DbScope;
   dbScopeSource: 'explicit' | 'default';
   dbEnvKeys: string[];
+  /** 分类器认出的全部库名变量；rewritten=false 的只识别不改写（收敛 1） */
+  dbEnvKeyDetails?: Array<{ key: string; engine: 'mongo' | 'mysql' | 'postgres'; family: 'whitelist' | 'framework' | 'neutral'; rewritten: boolean }>;
   branchOverrideCount: number;
 }
 
@@ -262,18 +264,39 @@ export function DbIsolationPanel({
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       {service.dockerImage ? <span className="font-mono">{service.dockerImage}</span> : null}
-                      {service.dbEnvKeys.length > 0 ? (
-                        <span>
-                          会改写：
-                          {service.dbEnvKeys.map((key) => (
-                            <span key={key} className="ml-1"><CodePill>{key}</CodePill></span>
-                          ))}
-                        </span>
-                      ) : (
-                        <span className="text-warn" title="分支独立库只改写 CDS_POSTGRES_DB / CDS_MYSQL_DATABASE / CDS_MONGO_INITDB_DATABASE 这类库名变量">
-                          没声明库名变量，切分支独立库不会改写任何东西
-                        </span>
-                      )}
+                      {(() => {
+                        const details = service.dbEnvKeyDetails
+                          ?? service.dbEnvKeys.map((key) => ({ key, engine: 'mysql' as const, family: 'whitelist' as const, rewritten: true }));
+                        const rewritten = details.filter((k) => k.rewritten);
+                        const recognized = details.filter((k) => !k.rewritten);
+                        if (details.length === 0) {
+                          return (
+                            <span className="text-warn" title="分支独立库只改写 CDS_POSTGRES_DB / CDS_MYSQL_DATABASE / CDS_MONGO_INITDB_DATABASE 这类库名变量；框架变量（如 MongoDB__DatabaseName）与 DB_NAME 只识别不改写">
+                              没声明库名变量，切分支独立库不会改写任何东西
+                            </span>
+                          );
+                        }
+                        return (
+                          <>
+                            {rewritten.length > 0 ? (
+                              <span>
+                                会改写：
+                                {rewritten.map((k) => (
+                                  <span key={k.key} className="ml-1"><CodePill>{k.key}</CodePill></span>
+                                ))}
+                              </span>
+                            ) : null}
+                            {recognized.length > 0 ? (
+                              <span title="分类器认得这个变量并据此定位库（引擎、实例），但分支独立库按项目约定不给它加后缀；复制集与库探测看到的也是同一份清单">
+                                已识别，按项目约定不加后缀：
+                                {recognized.map((k) => (
+                                  <span key={k.key} className="ml-1"><CodePill>{k.key}</CodePill><span className="ml-0.5 text-muted-foreground">{k.engine}</span></span>
+                                ))}
+                              </span>
+                            ) : null}
+                          </>
+                        );
+                      })()}
                       {service.branchOverrideCount > 0 ? (
                         <span title="这些分支写了自己的档位，不受项目默认影响">
                           {service.branchOverrideCount} 条分支覆盖

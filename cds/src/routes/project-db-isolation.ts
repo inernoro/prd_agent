@@ -20,7 +20,7 @@
 import { Router } from 'express';
 import type { StateService } from '../services/state.js';
 import type { BranchEntry, BuildProfile, Project } from '../types.js';
-import { PER_BRANCH_DB_ENV_KEYS } from '../services/db-scope-isolation.js';
+import { classifyDbEnvKeys, type DbEnvKeyClassification } from '../services/replica-db-clone.js';
 
 export type DbScope = 'shared' | 'per-branch';
 
@@ -47,6 +47,12 @@ export interface ProjectDbIsolationService {
    * 发现「修了像没修」。
    */
   dbEnvKeys: string[];
+  /**
+   * 分类器认出的全部库名变量（收敛 1）：白名单家族会被改写；框架家族（.NET 双下划线）与
+   * 引擎中立家族（DB_NAME）只识别不改写，前端标「已识别，按项目约定不加后缀」。
+   * 与复制集定位、库探测同一份分类器，三入口口径一致。
+   */
+  dbEnvKeyDetails: DbEnvKeyClassification[];
   /** 有多少条分支对这个服务写了自己的覆盖（这些分支不受项目默认影响）。 */
   branchOverrideCount: number;
 }
@@ -133,6 +139,8 @@ export function buildProjectDbIsolationView(
   project: Pick<Project, 'id' | 'deliveryMode'>,
   profiles: BuildProfile[],
   branches: BranchEntry[],
+  /** 项目级 customEnv：库名变量常放在这里（灌给全部服务），定位时与 profile.env 合并，profile 优先 */
+  projectEnv: Record<string, string> = {},
 ): ProjectDbIsolationView {
   const branchOverrides: ProjectDbIsolationBranchOverride[] = [];
   const overrideCountByProfile = new Map<string, number>();
@@ -150,8 +158,9 @@ export function buildProjectDbIsolationView(
   }
 
   const services: ProjectDbIsolationService[] = profiles.map((profile) => {
-    const env = profile.env || {};
-    const dbEnvKeys = PER_BRANCH_DB_ENV_KEYS.filter((key) => typeof env[key] === 'string' && env[key] !== '');
+    // 与 resolveReplicaDbTarget 同口径：项目 customEnv → profile.env（分支层在项目视图里不存在）
+    const dbEnvKeyDetails = classifyDbEnvKeys({ ...projectEnv, ...(profile.env || {}) });
+    const dbEnvKeys = dbEnvKeyDetails.filter((k) => k.rewritten).map((k) => k.key);
     return {
       profileId: profile.id,
       name: profile.name || profile.id,
@@ -159,6 +168,7 @@ export function buildProjectDbIsolationView(
       dbScope: effectiveDbScope(profile),
       dbScopeSource: isDbScope(profile.dbScope) ? 'explicit' : 'default',
       dbEnvKeys,
+      dbEnvKeyDetails,
       branchOverrideCount: overrideCountByProfile.get(profile.id) || 0,
     };
   });
@@ -276,7 +286,7 @@ export function createProjectDbIsolationRouter(deps: ProjectDbIsolationDeps): Ro
     if (!project) return null;
     const profiles = stateService.getBuildProfilesForProject(projectId);
     const branches = stateService.getBranchesForProject(projectId);
-    return { project, view: buildProjectDbIsolationView(project, profiles, branches) };
+    return { project, view: buildProjectDbIsolationView(project, profiles, branches, stateService.getCustomEnv(project.id) || {}) };
   }
 
   router.get('/projects/:id/db-isolation', (req, res) => {
@@ -320,7 +330,7 @@ export function createProjectDbIsolationRouter(deps: ProjectDbIsolationDeps): Ro
         affectedBranches: 0,
         keptBranchOverrides: 0,
         message: '没有需要写入的变更',
-        view: buildProjectDbIsolationView(project, profiles, branches),
+        view: buildProjectDbIsolationView(project, profiles, branches, stateService.getCustomEnv(project.id) || {}),
       } satisfies ProjectDbIsolationWriteResult);
       return;
     }
@@ -377,7 +387,7 @@ export function createProjectDbIsolationRouter(deps: ProjectDbIsolationDeps): Ro
       keptBranchOverrides,
       snapshotId: snapshot.id,
       message: `${parts.join('；')}。`,
-      view: buildProjectDbIsolationView(project, nextProfiles, branches),
+      view: buildProjectDbIsolationView(project, nextProfiles, branches, stateService.getCustomEnv(project.id) || {}),
     } satisfies ProjectDbIsolationWriteResult);
   });
 

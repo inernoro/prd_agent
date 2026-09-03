@@ -82,6 +82,21 @@ describe('数据库隔离面板：渲染出来的东西', () => {
     expect(html).toContain('全部设为分支独立库');
   });
 
+  it('收敛 1：框架变量被识别并标「已识别，按项目约定不加后缀」，不再说没声明库名变量', () => {
+    const v = view();
+    v.services = [
+      ...v.services,
+      { profileId: 'dotnet', name: 'DotNet', dockerImage: 'mcr/dotnet', dbScope: 'shared', dbScopeSource: 'default', dbEnvKeys: [], branchOverrideCount: 0,
+        dbEnvKeyDetails: [{ key: 'MongoDB__DatabaseName', engine: 'mongo', family: 'framework', rewritten: false }] },
+    ];
+    v.summary = { ...v.summary, services: 4, shared: 3 };
+    const html = render(v);
+    expect(html).toContain('MongoDB__DatabaseName');
+    expect(html).toContain('已识别，按项目约定不加后缀');
+    // 只有前端 web 一行该提示没声明库名变量
+    expect(html.split('没声明库名变量').length - 1).toBe(1);
+  });
+
   it('保存前把影响面说清：继承的分支变、覆盖的分支不变、重新部署后生效', () => {
     const html = render(view(), { api: 'per-branch', web: 'shared', worker: 'per-branch' });
     expect(html).toContain('所有继承项目配置的分支');

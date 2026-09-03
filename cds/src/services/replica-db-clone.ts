@@ -189,6 +189,43 @@ function classifyDbEnvKey(key: string, neutralEngine?: ReplicaDbEngine | null): 
   return null;
 }
 
+export type DbEnvKeyFamily = 'whitelist' | 'framework' | 'neutral';
+
+export interface DbEnvKeyClassification {
+  key: string;
+  engine: ReplicaDbEngine;
+  /** whitelist = PER_BRANCH_DB_ENV_KEYS；framework = .NET 双下划线等框架风格；neutral = DB_NAME 类（引擎从连接串读） */
+  family: DbEnvKeyFamily;
+  /** 分支独立库会不会给它加后缀——只有白名单家族会；其余「已识别，按项目约定不加后缀」 */
+  rewritten: boolean;
+}
+
+/**
+ * 一份 env 里全部库名变量的分类（收敛 1 的 SSOT）。
+ *
+ * 项目设置页签、复制集定位、库探测三处对「这个服务用哪些库名变量」必须给同一个答案，
+ * 答案只能从这里出。此前项目设置页签自己拿 PER_BRANCH_DB_ENV_KEYS 过滤，于是 .NET 项目
+ * 在那里被提示「没声明库名变量」、复制集却能定位——口径分裂就是从两份清单开始的。
+ *
+ * 引擎中立 key（DB_NAME）的引擎只从同一份 env 的关系型连接串读，读不出唯一引擎就不认。
+ * 空值不算声明。顺序保持 env 插入顺序，供调用方按来源层级再排。
+ */
+export function classifyDbEnvKeys(env: Record<string, string>): DbEnvKeyClassification[] {
+  const neutralEngine = engineFromRelationalUrls(env);
+  const out: DbEnvKeyClassification[] = [];
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value !== 'string' || value === '') continue;
+    const engine = classifyDbEnvKey(key, neutralEngine);
+    if (!engine) continue;
+    const whitelisted = (PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key);
+    const family: DbEnvKeyFamily = whitelisted ? 'whitelist'
+      : ENGINE_NEUTRAL_DB_ENV_PATTERN.test(key) && !FRAMEWORK_DB_ENV_PATTERNS.some((f) => f.re.test(key)) ? 'neutral'
+        : 'framework';
+    out.push({ key, engine, family, rewritten: whitelisted });
+  }
+  return out;
+}
+
 /** 框架风格 key（应用真正消费的配置）排在白名单 key 之前——两者值冲突时以应用视角为准。 */
 function isFrameworkDbKey(key: string, neutralEngine?: ReplicaDbEngine | null): boolean {
   return !(PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key)

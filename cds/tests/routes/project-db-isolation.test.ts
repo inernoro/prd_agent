@@ -23,6 +23,7 @@ import {
   planProjectDbIsolationWrite,
 } from '../../src/routes/project-db-isolation.js';
 import { resolveEffectiveProfile } from '../../src/services/container.js';
+import { resolveReplicaDbTarget } from '../../src/services/replica-db-clone.js';
 import { applyPerBranchDbIsolation } from '../../src/services/db-scope-isolation.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import type { BuildProfile } from '../../src/types.js';
@@ -101,6 +102,24 @@ describe('项目级数据库隔离路由', () => {
     }));
     stateService.addBuildProfile(profile({ id: 'b-api', projectId: 'proj-b' }));
 
+    // proj-c：收敛 1 的口径样本——.NET 框架变量、项目级 DB_NAME + JDBC 串、纯白名单
+    stateService.addProject({ id: 'proj-c', slug: 'c', name: 'C', kind: 'git', createdAt: NOW, updatedAt: NOW });
+    stateService.addBuildProfile(profile({ id: 'dotnet', projectId: 'proj-c', env: { MongoDB__DatabaseName: 'prdagent' } }));
+    stateService.addBuildProfile(profile({ id: 'java', projectId: 'proj-c', env: { DB_NAME: 'imp', SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/imp' } }));
+    stateService.addBuildProfile(profile({ id: 'node', projectId: 'proj-c', env: { CDS_MYSQL_DATABASE: 'shop' } }));
+    stateService.addInfraService({
+      id: 'mongo', name: 'mongo', projectId: 'proj-c', scope: 'project', dockerImage: 'mongo:8',
+      containerName: 'cds-infra-mongo', hostPort: 0, containerPort: 27017, status: 'running', env: {},
+    } as any);
+    stateService.addInfraService({
+      id: 'mysql', name: 'mysql', projectId: 'proj-c', scope: 'project', dockerImage: 'mysql:8',
+      containerName: 'cds-infra-mysql', hostPort: 0, containerPort: 3306, status: 'running', env: {},
+    } as any);
+    stateService.addBranch({
+      id: 'c-main', projectId: 'proj-c', branch: 'main', worktreePath: path.join(tmpDir, 'c-main'),
+      services: {}, status: 'idle', createdAt: NOW,
+    } as any);
+
     // 三条分支：main 继承；feat 对 api 钉了 shared；hotfix 对 worker 钉了 shared。
     for (const [id, branch, profileOverrides] of [
       ['b-main', 'main', undefined],
@@ -161,6 +180,51 @@ describe('项目级数据库隔离路由', () => {
       ]);
       // 不泄露 env 值：视图只给 key 名
       expect(JSON.stringify(res.body)).not.toContain('postgres://');
+    });
+
+    it('收敛 1：框架变量与引擎中立变量被识别并标「不加后缀」，而不是提示没声明库名变量', async () => {
+      const res = await request(server, 'GET', '/api/projects/proj-c/db-isolation');
+      expect(res.status).toBe(200);
+      const byId = Object.fromEntries(res.body.services.map((s: any) => [s.profileId, s]));
+      // .NET 双下划线：分类器认得（mongo），但白名单不改写 → dbEnvKeys 仍空，dbEnvKeyDetails 标 rewritten=false
+      expect(byId.dotnet.dbEnvKeys).toEqual([]);
+      expect(byId.dotnet.dbEnvKeyDetails).toEqual([
+        { key: 'MongoDB__DatabaseName', engine: 'mongo', family: 'framework', rewritten: false },
+      ]);
+      // DB_NAME + JDBC 串：引擎从连接串读出
+      expect(byId.java.dbEnvKeyDetails).toEqual([
+        { key: 'DB_NAME', engine: 'mysql', family: 'neutral', rewritten: false },
+      ]);
+      // 纯白名单：两处一致
+      expect(byId.node.dbEnvKeys).toEqual(['CDS_MYSQL_DATABASE']);
+      expect(byId.node.dbEnvKeyDetails).toEqual([
+        { key: 'CDS_MYSQL_DATABASE', engine: 'mysql', family: 'whitelist', rewritten: true },
+      ]);
+      // 值不外泄
+      expect(JSON.stringify(res.body)).not.toContain('jdbc:mysql');
+    });
+
+    it('收敛 1：项目级 customEnv 也算进「配置说的」（与定位器同口径，profile 优先）', () => {
+      const view = buildProjectDbIsolationView(
+        { id: 'p', deliveryMode: undefined } as any,
+        [profile({ id: 'svc', projectId: 'p', env: { CDS_MYSQL_DATABASE: 'own' } })],
+        [],
+        { CDS_MYSQL_DATABASE: 'project_default', MongoDB__DatabaseName: 'legacy' },
+      );
+      expect(view.services[0].dbEnvKeyDetails.map((k) => k.key).sort()).toEqual(['CDS_MYSQL_DATABASE', 'MongoDB__DatabaseName']);
+    });
+
+    it('收敛 1：三个入口口径一致——项目视图列出的变量与复制集定位器认的是同一批', async () => {
+      const branch = stateService.getBranch('c-main')!;
+      const res = await request(server, 'GET', '/api/projects/proj-c/db-isolation');
+      for (const id of ['dotnet', 'java', 'node']) {
+        const svc = res.body.services.find((s: any) => s.profileId === id);
+        const p = stateService.getBuildProfile(id)!;
+        const { target } = resolveReplicaDbTarget(stateService, branch, resolveEffectiveProfile(p, branch));
+        expect(target, `${id} 应能被定位器定位`).not.toBeNull();
+        expect(svc.dbEnvKeyDetails.map((k: any) => k.key).sort()).toEqual([...target!.envKeys].sort());
+        expect(svc.dbEnvKeyDetails[0].engine).toBe(target!.engine);
+      }
     });
 
     it('别的项目的服务不混进来', async () => {
