@@ -92,13 +92,17 @@ public class RateLimitMiddleware
         if (!string.IsNullOrEmpty(userId))
             return $"user:{userId}";
 
-        // sk-ak（智能体密钥）故意不带 sub —— 它不是「某个人在操作」。落到 IP 桶的话，同一个出口
-        // 地址后面的所有密钥共用一份配额，而密钥 id 来自鉴权结果、调用方伪造不了，用它分桶才是
-        // 接入台上写的那句「每把密钥各算各的」。只认 agentApiKeyId：老的开放平台 appId 密钥维持
-        // 原样，不在这次改动里改它们的分桶行为。
-        var agentKeyId = context.User?.FindFirst("agentApiKeyId")?.Value;
-        if (!string.IsNullOrEmpty(agentKeyId))
-            return $"agentkey:{agentKeyId}";
+        // 这里**不能**按 sk-ak 的密钥 id 分桶，尽管那看起来更合理。原因在管线顺序上：
+        // UseAuthentication() 只跑默认方案（JWT），ApiKey 是端点上显式指定的非默认方案，
+        // 要等 UseAuthorization() 才被选中，而它排在本中间件之后。所以这一刻 context.User
+        // 里根本没有 agentApiKeyId —— 曾经在这里加过一条 agentkey 分支，它一次也没生效过，
+        // 是条看着对、永远走不到的死路（第 31 轮 Review 指出）。
+        //
+        // 那「每把密钥各算各的」怎么办？它由另一层兑现：接入台的每分钟窗口
+        // （McpUsageService.CheckRateAsync，默认 60/min，可按密钥调），那一层跑在鉴权之后，
+        // 拿得到密钥身份，网关与直连两条路都过它。本中间件是更粗的防滥用层，按 IP 分桶。
+        // 想让它也认密钥，得把 ApiKey 并进默认认证方案（policy scheme 按 token 前缀转发），
+        // 那会改变全站每个端点看到的身份，是另一个语义类别 —— 见 debt.platform 边界 15。
 
         // 走 GetAbuseControlClientIp 而不是裸的 RemoteIpAddress：生产是 Nginx + Docker，
         // 裸取到的是反代共享地址，所有匿名访客共用一个桶 —— 海鲜市场的读接口 2026-07-28

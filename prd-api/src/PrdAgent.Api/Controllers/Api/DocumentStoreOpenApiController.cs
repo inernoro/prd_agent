@@ -354,7 +354,12 @@ public class DocumentStoreOpenApiController : ControllerBase
         if (deterministicId != null) entry.Id = deterministicId;
         try
         {
-            await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
+            // 这一笔不跟客户端的取消令牌走（server-authority）：它落在下面那段补偿之外，
+            // 而且只接住撞主键。客户端在它在途时断开的话，Mongo 完全可能已经写进去了，
+            // 而驱动抛的是取消 —— 于是留下一条空的、带着 mcpContentPending 的条目，
+            // 正文没写、计数没加，此后同一个 clientRequestId 的每次重试都拿到
+            // ENTRY_WRITE_IN_PROGRESS，永远。谁也救不回来的死记录，正是幂等键要避免的东西。
+            await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
         }
         catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && deterministicId != null)
         {
@@ -380,10 +385,21 @@ public class DocumentStoreOpenApiController : ControllerBase
                 await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
                     DocumentVersionSource.Edit, contentTypeOverride: "text/markdown");
 
+                // 调用方明确给了摘要就把它写回去。写入服务无条件用正文前 200 字当摘要
+                // （那是给在线编辑准备的默认行为），于是「同时给 summary 和 content」这种最自然的
+                // 用法会静默丢掉 summary：接口回成功，库里存的却是另一段文字。
+                // 不走写入服务的 entryFields：那条要求把标题/父级/标签/元数据整套一起给，
+                // 而这里只有摘要一个字段要纠正，整套重写反而多出几处能写错的地方。
+                var explicitSummary = string.IsNullOrWhiteSpace(req.Summary) ? null : req.Summary.Trim();
+
                 // 正文落盘了，这条才算完整 —— 在此之前撞上来的重试只会拿到 409，不会拿到「成功」
+                var finish = Builders<DocumentEntry>.Update.Unset(EntryContentPendingField);
+                if (explicitSummary != null)
+                    finish = Builders<DocumentEntry>.Update.Combine(
+                        finish, Builders<DocumentEntry>.Update.Set(e => e.Summary, explicitSummary));
                 await _db.DocumentEntries.UpdateOneAsync(
                     e => e.Id == entry.Id,
-                    Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
+                    finish,
                     cancellationToken: CancellationToken.None);
             }
         }

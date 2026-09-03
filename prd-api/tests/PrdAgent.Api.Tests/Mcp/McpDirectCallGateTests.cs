@@ -313,3 +313,71 @@ public class WebPageSizeLimitTests
             customMessage: "字符数判据要整条去掉，留着就是下一个人照着它改回去");
     }
 }
+
+/// <summary>
+/// 第 31 轮那三处。前两条是「写库跟着客户端断开走 / 调用方给的值被静默顶掉」，
+/// 第三条相反 —— 是一条**看着对、永远走不到**的分支，删掉它比留着更诚实。
+/// </summary>
+public class McpRound31WiringTests
+{
+    private const string OpenApiPath = "prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs";
+
+    private static string CreateEntryBody() => McpSourceGuard.StripComments(McpSourceGuard.Slice(
+        McpSourceGuard.Read(OpenApiPath),
+        "public async Task<IActionResult> CreateEntry",
+        "public class UpdateEntryContentRequest"));
+
+    [Fact]
+    public void 建条目那一笔插入不跟请求取消走()
+    {
+        // 它落在补偿段之外，且只接住撞主键。客户端在它在途时断开，Mongo 可能已经写进去了，
+        // 而驱动抛的是取消 —— 留下一条空的、带 mcpContentPending 的条目，此后同一个
+        // clientRequestId 的每次重试都拿到 409，永远。
+        CreateEntryBody().ShouldContain("InsertOneAsync(entry, cancellationToken: CancellationToken.None)",
+            customMessage: "建条目是服务端自己的写入，客户端断开不能让它半途而废");
+    }
+
+    [Fact]
+    public void 调用方给的摘要不许被正文派生的摘要顶掉()
+    {
+        // 写入服务无条件把正文前 200 字写成摘要（在线编辑的默认行为）。
+        // 「同时给 summary 和 content」是最自然的用法，而它此前会被静默丢掉：
+        // 接口回成功，库里存的却是另一段文字。
+        var body = CreateEntryBody();
+        body.ShouldContain("explicitSummary",
+            customMessage: "调用方明确给了摘要就得存他给的那个");
+        body.ShouldContain("e.Summary",
+            customMessage: "摘要要真的写回条目，光算出来不写等于没做");
+    }
+
+    [Fact]
+    public void 限流中间件不许再按密钥_id_分桶()
+    {
+        // 不是「不该按密钥分桶」，是**在这一层做不到**：UseAuthentication() 只跑默认方案（JWT），
+        // ApiKey 要等 UseAuthorization() 才被选中，而它排在限流之后。这里读不到密钥身份，
+        // 加了分支也一次都走不到。要做得先把 ApiKey 并进默认方案，那是另一个语义类别。
+        var source = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Middleware/RateLimitMiddleware.cs"));
+
+        source.ShouldNotContain("agentApiKeyId",
+            customMessage: "这一层拿不到密钥身份；要按密钥分桶得先改认证方案，见 debt.platform 边界 15");
+    }
+
+    [Fact]
+    public void 管线顺序变了要重新想这件事()
+    {
+        // 上一条的前提是「限流排在授权之前」。哪天有人调换了顺序，前提就不成立了，
+        // 那条「不许按密钥分桶」的结论也该重新审 —— 所以把前提本身钉住。
+        var program = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Program.cs"));
+
+        var auth = program.IndexOf("app.UseAuthentication();", StringComparison.Ordinal);
+        var rate = program.IndexOf("app.UseRateLimiting();", StringComparison.Ordinal);
+        var authz = program.IndexOf("app.UseAuthorization();", StringComparison.Ordinal);
+
+        auth.ShouldBeGreaterThanOrEqualTo(0);
+        rate.ShouldBeGreaterThan(auth);
+        authz.ShouldBeGreaterThan(rate,
+            "限流不再排在授权之前了：那上一条守卫的前提就没了，按密钥分桶这件事要重新审一遍");
+    }
+}
