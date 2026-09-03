@@ -7,9 +7,11 @@ using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Services.Mcp;
 
-public sealed record McpQuotaVerdict(bool Allowed, string? Reason)
+/// <summary>闸门结论。放行时带上占了多少坑，调用失败要按这个退还。</summary>
+public sealed record McpQuotaVerdict(bool Allowed, string? Reason, string? ReservedKind = null, int ReservedAmount = 0)
 {
     public static readonly McpQuotaVerdict Ok = new(true, null);
+    public static McpQuotaVerdict Reserved(string kind, int amount) => new(true, null, kind, amount);
     public static McpQuotaVerdict Deny(string reason) => new(false, reason);
 }
 
@@ -23,6 +25,10 @@ public sealed record McpQuotaVerdict(bool Allowed, string? Reason)
 ///
 /// 三个上限都能按密钥单独调（AgentApiKey.Mcp* 字段），空值走默认。
 ///
+/// 日额度是**先原子占坑、失败再退还**，不是「查历史再放行」：后者在并发下每个请求都读到
+/// 同一个旧值，一把 50 张的密钥能同时放行上百个生图，闸门等于没有。占坑走 McpUsageCounter
+/// 的 $inc + upsert，一次操作拿到新值，超了就把自己那份退回去。
+///
 /// 日界按 UTC 自然日切 —— 与记录里的 CreatedAt 同一把尺子；用户看到的「今日」也按这个口径，
 /// 面板上要写明白，别让人以为是本地零点。
 ///
@@ -34,6 +40,9 @@ public sealed class McpUsageService
     public const int DefaultDailyImageQuota = 50;
     public const int DefaultDailyWriteQuota = 200;
     public const int DefaultRateLimitPerMin = 60;
+
+    public const string KindImage = "image";
+    public const string KindWrite = "write";
 
     private readonly MongoDbContext _db;
     private readonly ILogger<McpUsageService> _logger;
@@ -56,7 +65,11 @@ public sealed class McpUsageService
 
     public static DateTime TodayStartUtc() => DateTime.UtcNow.Date;
 
-    /// <summary>调用前的闸门。返回不允许时，Reason 是直接给智能体看的中文说明（它会转述给用户）。</summary>
+    /// <summary>
+    /// 调用前的闸门：过速率窗口，再为日额度原子占坑。
+    /// 返回不允许时，Reason 是直接给智能体看的中文说明（它会转述给用户）。
+    /// 放行时若占了坑，调用失败要用 <see cref="ReleaseAsync"/> 退还。
+    /// </summary>
     public async Task<McpQuotaVerdict> CheckAsync(string keyId, McpToolDef? tool, int imageCount, CancellationToken ct)
     {
         var key = await _db.AgentApiKeys.Find(k => k.Id == keyId).FirstOrDefaultAsync(ct);
@@ -73,50 +86,93 @@ public sealed class McpUsageService
 
         if (tool == null) return McpQuotaVerdict.Ok;
 
-        // 2. 日额度（跨实例准确，走记录表）
-        var since = TodayStartUtc();
+        // 2. 日额度：原子占坑
         if (IsImageTool(tool))
         {
             var quota = key?.McpDailyImageQuota ?? DefaultDailyImageQuota;
-            var used = await SumImagesTodayAsync(keyId, since, ct);
-            if (used + Math.Max(imageCount, 1) > quota)
+            var amount = Math.Max(imageCount, 1);
+            var (ok, used) = await TryReserveAsync(keyId, KindImage, amount, quota, ct);
+            if (!ok)
                 return McpQuotaVerdict.Deny(
-                    $"今天的生图额度用完了（已用 {used}/{quota} 张，按 UTC 自然日计）。可以在接入台把这把密钥的上限调高，或者明天再来。");
+                    $"今天的生图额度用完了（已用 {used}/{quota} 张，按 UTC 自然日计）。可以在密钥管理里把这把密钥的上限调高，或者明天再来。");
+            return McpQuotaVerdict.Reserved(KindImage, amount);
         }
-        else if (IsWriteTool(tool))
+
+        if (IsWriteTool(tool))
         {
             var quota = key?.McpDailyWriteQuota ?? DefaultDailyWriteQuota;
-            var used = await CountWritesTodayAsync(keyId, since, ct);
-            if (used + 1 > quota)
+            var (ok, used) = await TryReserveAsync(keyId, KindWrite, 1, quota, ct);
+            if (!ok)
                 return McpQuotaVerdict.Deny(
-                    $"今天的写入额度用完了（已用 {used}/{quota} 次，按 UTC 自然日计）。可以在接入台调高这把密钥的上限。");
+                    $"今天的写入额度用完了（已用 {used}/{quota} 次，按 UTC 自然日计）。可以在密钥管理里把这把密钥的上限调高。");
+            return McpQuotaVerdict.Reserved(KindWrite, 1);
         }
 
         return McpQuotaVerdict.Ok;
     }
 
-    public async Task<long> CountWritesTodayAsync(string keyId, DateTime sinceUtc, CancellationToken ct)
+    /// <summary>原子占坑：$inc + upsert 一次拿到新值；超限就把自己那份退回去。</summary>
+    private async Task<(bool Ok, int Used)> TryReserveAsync(string keyId, string kind, int amount, int quota, CancellationToken ct)
     {
-        var f = Builders<McpCallLog>.Filter;
-        var filter = f.And(
-            f.Eq(x => x.KeyId, keyId),
-            f.Eq(x => x.Status, "success"),
-            f.Gte(x => x.CreatedAt, sinceUtc),
-            f.Eq(x => x.IsWrite, true));
-        return await _db.McpCallLogs.CountDocumentsAsync(filter, cancellationToken: ct);
+        var day = TodayStartUtc();
+        var id = BuildCounterId(keyId, day, kind);
+        var update = Builders<McpUsageCounter>.Update
+            .Inc(x => x.Count, amount)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow)
+            .SetOnInsert(x => x.KeyId, keyId)
+            .SetOnInsert(x => x.Kind, kind)
+            .SetOnInsert(x => x.DayUtc, day);
+
+        var after = await _db.McpUsageCounters.FindOneAndUpdateAsync<McpUsageCounter>(
+            x => x.Id == id,
+            update,
+            new FindOneAndUpdateOptions<McpUsageCounter, McpUsageCounter>
+            {
+                IsUpsert = true,
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+
+        var used = after?.Count ?? amount;
+        if (used <= quota) return (true, used);
+
+        // 超了：退还自己占的这份，返回「占坑前已用多少」给文案用
+        await ReleaseAsync(keyId, kind, amount, ct);
+        return (false, Math.Max(used - amount, 0));
     }
 
-    public async Task<int> SumImagesTodayAsync(string keyId, DateTime sinceUtc, CancellationToken ct)
+    /// <summary>退还占坑（调用没真的发生时）。退到负数没有意义，这里只做减法，读的时候按下限 0 取。</summary>
+    public async Task ReleaseAsync(string keyId, string kind, int amount, CancellationToken ct)
     {
-        var f = Builders<McpCallLog>.Filter;
-        var filter = f.And(
-            f.Eq(x => x.KeyId, keyId),
-            f.Eq(x => x.Status, "success"),
-            f.Gte(x => x.CreatedAt, sinceUtc),
-            f.Gt(x => x.ImageCount, 0));
-        var docs = await _db.McpCallLogs.Find(filter).Project(x => x.ImageCount).ToListAsync(ct);
-        return docs.Sum();
+        if (amount <= 0 || string.IsNullOrEmpty(kind)) return;
+        try
+        {
+            var id = BuildCounterId(keyId, TodayStartUtc(), kind);
+            await _db.McpUsageCounters.UpdateOneAsync(
+                x => x.Id == id,
+                Builders<McpUsageCounter>.Update.Inc(x => x.Count, -amount).Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            // 退不回去只会让今天的额度偏紧，绝不能因此把已经跑完的调用报成失败
+            _logger.LogWarning(ex, "[mcp] 退还配额失败 key={KeyId} kind={Kind} amount={Amount}", keyId, kind, amount);
+        }
     }
+
+    /// <summary>今日已用（面板展示口径与闸门同源，读的是同一份计数器）。</summary>
+    public async Task<(int Images, int Writes)> GetTodayUsageAsync(string keyId, CancellationToken ct)
+    {
+        var day = TodayStartUtc();
+        var ids = new[] { BuildCounterId(keyId, day, KindImage), BuildCounterId(keyId, day, KindWrite) };
+        var docs = await _db.McpUsageCounters.Find(Builders<McpUsageCounter>.Filter.In(x => x.Id, ids)).ToListAsync(ct);
+        var images = docs.FirstOrDefault(d => d.Kind == KindImage)?.Count ?? 0;
+        var writes = docs.FirstOrDefault(d => d.Kind == KindWrite)?.Count ?? 0;
+        return (Math.Max(images, 0), Math.Max(writes, 0));
+    }
+
+    internal static string BuildCounterId(string keyId, DateTime dayUtc, string kind)
+        => $"{keyId}:{dayUtc:yyyyMMdd}:{kind}";
 
     /// <summary>写一条调用记录。记录失败绝不影响工具调用本身 —— 记账坏了不能把业务打挂。</summary>
     public async Task LogAsync(McpCallLog log, CancellationToken ct)

@@ -95,9 +95,12 @@ public class LiteraryOpenApiController : ControllerBase
 
         var now = DateTime.UtcNow;
         var assetsHash = Guid.NewGuid().ToString("N");
+        // 幂等：带了 clientRequestId 就用确定性 id，重复提交自然撞主键，不会攒出一堆同名工作区。
+        // 智能体超时重试是常态，声明了幂等键就得真的兑现。
+        var deterministicId = BuildDeterministicId(req?.ClientRequestId);
         var ws = new ImageMasterWorkspace
         {
-            Id = Guid.NewGuid().ToString("N"),
+            Id = deterministicId ?? Guid.NewGuid().ToString("N"),
             OwnerUserId = userId,
             Title = title,
             ScenarioType = ScenarioType,
@@ -109,9 +112,31 @@ public class LiteraryOpenApiController : ControllerBase
             CreatedAt = now,
             UpdatedAt = now,
         };
-        await _db.ImageMasterWorkspaces.InsertOneAsync(ws, cancellationToken: ct);
+        try
+        {
+            await _db.ImageMasterWorkspaces.InsertOneAsync(ws, cancellationToken: ct);
+        }
+        catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && deterministicId != null)
+        {
+            var existed = await _db.ImageMasterWorkspaces
+                .Find(x => x.Id == deterministicId && x.OwnerUserId == userId)
+                .FirstOrDefaultAsync(ct);
+            if (existed != null)
+                return Ok(ApiResponse<object>.Ok(new { workspaceId = existed.Id, title = existed.Title, deduplicated = true }));
+            throw;
+        }
 
         return Ok(ApiResponse<object>.Ok(new { workspaceId = ws.Id, title = ws.Title }));
+    }
+
+    /// <summary>把「这把密钥 + 这个 clientRequestId」压成确定性工作区 id；没给幂等键就返回 null 走随机 id。</summary>
+    private string? BuildDeterministicId(string? clientRequestId)
+    {
+        if (string.IsNullOrWhiteSpace(clientRequestId)) return null;
+        var keyId = User.FindFirst("agentApiKeyId")?.Value ?? "unknown";
+        var raw = clientRequestId.Trim();
+        if (raw.Length > 120) raw = raw[..120];
+        return LiteraryWorkspaceHash.Sha256Hex($"literary-ws:{keyId}:{raw}")[..32];
     }
 
     public class WriteContentRequest

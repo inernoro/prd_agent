@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Authentication;
 
@@ -126,7 +127,12 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
                 .ToList();
             IReadOnlyList<string>? ownerPermissions = null;
             if (declaredScopes.Any(McpCapabilityCatalog.PermissionCheckedScopes.Contains))
-                ownerPermissions = await _permissionService.GetEffectivePermissionsAsync(key.OwnerUserId, isRoot: false);
+            {
+                // root 破窗账户不在 Mongo 里，按 isRoot:false 去查它的权限只会拿到空集合，
+                // 于是刚在控制台签出来的密钥下一秒就被剥光 scope。身份按 owner id 认，与 JwtService 同一个判据。
+                var ownerIsRoot = string.Equals(key.OwnerUserId, AdminPermissionCatalog.RootUserId, StringComparison.Ordinal);
+                ownerPermissions = await _permissionService.GetEffectivePermissionsAsync(key.OwnerUserId, ownerIsRoot);
+            }
 
             foreach (var scope in declaredScopes)
             {

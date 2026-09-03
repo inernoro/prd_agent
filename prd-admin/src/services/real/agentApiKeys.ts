@@ -33,6 +33,9 @@ export const updateAgentApiKeyReal: UpdateAgentApiKeyContract = async (input) =>
       description: input.description,
       scopes: input.scopes,
       isActive: input.isActive,
+      mcpDailyImageQuota: input.mcpDailyImageQuota,
+      mcpDailyWriteQuota: input.mcpDailyWriteQuota,
+      mcpRateLimitPerMin: input.mcpRateLimitPerMin,
     },
   });
 };

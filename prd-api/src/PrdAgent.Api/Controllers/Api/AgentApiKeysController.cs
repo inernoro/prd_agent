@@ -180,6 +180,12 @@ public class AgentApiKeysController : ControllerBase
         public string? Description { get; set; }
         public List<string>? Scopes { get; set; }
         public bool? IsActive { get; set; }
+
+        // 接入台（MCP）配额上限。null = 不改；配额触顶时的提示就是指这里，
+        // 光有提示没有入口等于告诉用户一条走不通的路。
+        public int? McpDailyImageQuota { get; set; }
+        public int? McpDailyWriteQuota { get; set; }
+        public int? McpRateLimitPerMin { get; set; }
     }
 
     [HttpPatch("{id}")]
@@ -203,6 +209,31 @@ public class AgentApiKeysController : ControllerBase
         }
 
         await _keyService.UpdateMetadataAsync(id, req.Name, req.Description, req.Scopes, req.IsActive, ct);
+
+        // 配额上限：给出的值必须落在合理区间，避免「调成 0 把自己锁死」或「调成天文数字等于没有闸门」
+        var quotaUpdates = new List<UpdateDefinition<AgentApiKey>>();
+        if (req.McpDailyImageQuota is { } img)
+        {
+            if (img is < 1 or > 500)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每日生图上限需在 1-500 之间"));
+            quotaUpdates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpDailyImageQuota, img));
+        }
+        if (req.McpDailyWriteQuota is { } wr)
+        {
+            if (wr is < 1 or > 2000)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每日写入上限需在 1-2000 之间"));
+            quotaUpdates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpDailyWriteQuota, wr));
+        }
+        if (req.McpRateLimitPerMin is { } rate)
+        {
+            if (rate is < 1 or > 600)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每分钟调用上限需在 1-600 之间"));
+            quotaUpdates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpRateLimitPerMin, rate));
+        }
+        if (quotaUpdates.Count > 0)
+            await _db.AgentApiKeys.UpdateOneAsync(k => k.Id == id,
+                Builders<AgentApiKey>.Update.Combine(quotaUpdates), cancellationToken: ct);
+
         var reloaded = await _keyService.GetByIdAsync(id, ct);
         return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded) }));
     }

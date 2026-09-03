@@ -268,14 +268,22 @@ public class McpGatewayController : ControllerBase
             if (!ScopeSatisfies(scopes, bt.RequiredScope))
                 return await DeniedAsync(id, log, $"权限不足：此工具需要 scope {bt.RequiredScope}，当前密钥未授权。", ct);
 
+            // 闸门放行时会为日额度原子占坑；下面任何一条没真跑成的路径都要把坑退回去，
+            // 否则一次参数写错就白扣一张图的额度。
             var verdict = await _usage.CheckAsync(log.KeyId, bt, log.ImageCount, ct);
             if (!verdict.Allowed)
                 return await DeniedAsync(id, log, verdict.Reason!, ct);
 
             var (path, body, err) = BuildBuiltinRequest(bt, args);
-            if (err != null) return await DeniedAsync(id, log, err, ct);
+            if (err != null)
+            {
+                await ReleaseReservationAsync(log.KeyId, verdict, ct);
+                return await DeniedAsync(id, log, err, ct);
+            }
 
             var (status, respBody) = await LoopbackAsync(bt.Method, path, body, ct);
+            if (status is < 200 or >= 300)
+                await ReleaseReservationAsync(log.KeyId, verdict, ct);
             await RecordFinishedAsync(log, status, respBody, startedAt, ct);
             return ToolCallResult(id, status, respBody);
         }
@@ -307,9 +315,17 @@ public class McpGatewayController : ControllerBase
         var pathAndQuery = isGetDyn ? AppendQuery(dynPath, args, consumed) : dynPath;
         JsonNode? dynBody = isGetDyn ? null : BodyExcluding(args, consumed);
         var (st, rb) = await LoopbackAsync(match.HttpMethod, pathAndQuery, dynBody, ct);
+        if (st is < 200 or >= 300)
+            await ReleaseReservationAsync(log.KeyId, dynVerdict, ct);
         await RecordFinishedAsync(log, st, rb, startedAt, ct);
         return ToolCallResult(id, st, rb);
     }
+
+    /// <summary>把闸门占的日额度退回去（调用没真的跑成时）。</summary>
+    private Task ReleaseReservationAsync(string keyId, McpQuotaVerdict verdict, CancellationToken ct)
+        => verdict.ReservedKind == null
+            ? Task.CompletedTask
+            : _usage.ReleaseAsync(keyId, verdict.ReservedKind, verdict.ReservedAmount, ct);
 
     /// <summary>被闸门挡下：记一条 denied，再把原因原样回给智能体（它会转述给用户）。</summary>
     private async Task<JsonObject> DeniedAsync(JsonNode? id, McpCallLog log, string reason, CancellationToken ct)

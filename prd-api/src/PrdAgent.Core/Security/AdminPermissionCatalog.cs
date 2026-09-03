@@ -373,6 +373,12 @@ public static class AdminPermissionCatalog
     /// </summary>
     public const string Super = "super";
 
+    /// <summary>
+    /// 破窗 root 账户的用户 id。它不落 Mongo，身份只由这个固定 id 认（JwtService 据此打 isRoot claim）。
+    /// 任何「这个人是不是 root」的判断都引用这里，别再各写一遍字面量。
+    /// </summary>
+    public const string RootUserId = "root";
+
     public static readonly IReadOnlyList<AdminPermissionDef> All = new List<AdminPermissionDef>
     {
         new(Access, "后台访问", "允许进入管理后台"),

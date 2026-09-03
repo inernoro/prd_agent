@@ -3,10 +3,11 @@ import { Activity, KeyRound, Plug, Plus, RefreshCw, ShieldCheck } from 'lucide-r
 import { PrdLoader } from '@/components/ui/PrdLoader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { getMcpConsoleOverview } from '@/services';
-import type { McpCapabilityDto, McpConsoleOverviewDto } from '@/services/contracts/mcpConsole';
+import type { McpCapabilityDto, McpClientDto, McpConsoleOverviewDto } from '@/services/contracts/mcpConsole';
 import { toast } from '@/lib/toast';
 import { ConnectAgentDialog } from './ConnectAgentDialog';
 import { McpCallsPanel } from './McpCallsPanel';
+import { QuotaEditorDialog } from './QuotaEditorDialog';
 
 /**
  * 智能体接入台。
@@ -19,6 +20,7 @@ export default function McpConsolePage() {
   const [loading, setLoading] = useState(true);
   const [connectOpen, setConnectOpen] = useState(false);
   const [tab, setTab] = useState<'overview' | 'calls'>('overview');
+  const [quotaTarget, setQuotaTarget] = useState<McpClientDto | null>(null);
 
   const load = useCallback(async () => {
     const res = await getMcpConsoleOverview();
@@ -206,18 +208,25 @@ export default function McpConsolePage() {
               )}
             </SectionCard>
 
-            <SectionCard
-              title="今日额度"
-              hint="按 UTC 自然日切"
-            >
+            <SectionCard title="今日额度" hint="按 UTC 自然日切">
               {(overview?.clients ?? []).length === 0 ? (
                 <EmptyHint text="接入客户端后，这里会显示它今天用掉多少。" />
               ) : (
                 (overview?.clients ?? []).map((client) => (
                   <div key={client.keyId} className="flex flex-col gap-2">
-                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-                      {client.name}
-                    </span>
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                        {client.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setQuotaTarget(client)}
+                        className="text-[11px] font-medium"
+                        style={{ color: 'var(--accent-primary)' }}
+                      >
+                        调整上限
+                      </button>
+                    </div>
                     <QuotaBar
                       label="生图"
                       used={client.todayImages}
@@ -268,6 +277,15 @@ export default function McpConsolePage() {
           </div>
         </div>
       )}
+
+      <QuotaEditorDialog
+        client={quotaTarget}
+        open={quotaTarget !== null}
+        onOpenChange={(next) => {
+          if (!next) setQuotaTarget(null);
+        }}
+        onSaved={() => void load()}
+      />
 
       <ConnectAgentDialog
         open={connectOpen}

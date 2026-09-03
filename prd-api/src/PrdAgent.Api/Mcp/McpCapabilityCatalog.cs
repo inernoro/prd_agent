@@ -156,6 +156,12 @@ public static class McpCapabilityCatalog
     public static bool PermissionsAllowScope(IReadOnlyCollection<string> ownedPermissions, string scope)
     {
         var required = ToPermission(scope);
+        // super 是全站通配（AdminPermissionMiddleware 就是这么认的）。不认它的话，
+        // 持 super 的管理员界面上用得了这些功能、却签不出对应的密钥，接入台还把能力显示成灰的。
+        foreach (var owned in ownedPermissions)
+            if (string.Equals(owned, AdminPermissionCatalog.Super, StringComparison.OrdinalIgnoreCase))
+                return true;
+
         foreach (var owned in ownedPermissions)
         {
             if (string.Equals(owned, required, StringComparison.OrdinalIgnoreCase)) return true;

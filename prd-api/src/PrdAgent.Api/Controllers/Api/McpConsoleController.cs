@@ -28,12 +28,18 @@ public class McpConsoleController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IAgentApiKeyService _keyService;
     private readonly IAdminPermissionService _permissions;
+    private readonly Services.Mcp.McpUsageService _usage;
 
-    public McpConsoleController(MongoDbContext db, IAgentApiKeyService keyService, IAdminPermissionService permissions)
+    public McpConsoleController(
+        MongoDbContext db,
+        IAgentApiKeyService keyService,
+        IAdminPermissionService permissions,
+        Services.Mcp.McpUsageService usage)
     {
         _db = db;
         _keyService = keyService;
         _permissions = permissions;
+        _usage = usage;
     }
 
     /// <summary>
@@ -53,7 +59,10 @@ public class McpConsoleController : ControllerBase
             .Where(k => k.RevokedAt == null)
             .ToList();
         var activeKeys = keys.Where(k => k.IsActive).ToList();
+        // 「已授权」要跟鉴权口径一致：受权限位把关的 scope，权限被回收后鉴权时就会被剥掉，
+        // 面板不能还显示成已授权 —— 否则用户看到的和智能体实际能用的是两回事。
         var grantedScopes = activeKeys.SelectMany(k => k.Scopes ?? new List<string>())
+            .Where(s => EffectiveForOwner(s, ownedPermissions))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var since = McpUsageService.TodayStartUtc();
@@ -89,6 +98,10 @@ public class McpConsoleController : ControllerBase
             };
         }).ToList();
 
+        var usageByKey = new Dictionary<string, (int Images, int Writes)>(StringComparer.Ordinal);
+        foreach (var k in keys)
+            usageByKey[k.Id] = await _usage.GetTodayUsageAsync(k.Id, ct);
+
         var clients = keys.Select(k => new
         {
             keyId = k.Id,
@@ -102,8 +115,10 @@ public class McpConsoleController : ControllerBase
             dailyImageQuota = k.McpDailyImageQuota ?? McpUsageService.DefaultDailyImageQuota,
             dailyWriteQuota = k.McpDailyWriteQuota ?? McpUsageService.DefaultDailyWriteQuota,
             rateLimitPerMin = k.McpRateLimitPerMin ?? McpUsageService.DefaultRateLimitPerMin,
-            todayImages = todayLogs.Where(l => l.KeyId == k.Id && l.Status == "success").Sum(l => l.ImageCount),
-            todayWrites = todayLogs.Count(l => l.KeyId == k.Id && l.Status == "success" && l.IsWrite),
+            // 已用数读闸门那份计数器，不再由日志推算：两边口径必须是同一个，
+            // 否则面板显示还剩很多、智能体那边却已经被挡（或反过来）。
+            todayImages = usageByKey.TryGetValue(k.Id, out var u1) ? u1.Images : 0,
+            todayWrites = usageByKey.TryGetValue(k.Id, out var u2) ? u2.Writes : 0,
         }).ToList();
 
         return Ok(ApiResponse<object>.Ok(new
@@ -116,8 +131,8 @@ public class McpConsoleController : ControllerBase
                 // 「今天」按 UTC 自然日切，与额度口径一致；界面上要写明白，别让人以为是本地零点
                 sinceUtc = since,
                 calls = todayLogs.Count,
-                images = todayLogs.Where(l => l.Status == "success").Sum(l => l.ImageCount),
-                writes = todayLogs.Count(l => l.Status == "success" && l.IsWrite),
+                images = usageByKey.Values.Sum(u => u.Images),
+                writes = usageByKey.Values.Sum(u => u.Writes),
                 denied = todayLogs.Count(l => l.Status == "denied"),
                 failed = todayLogs.Count(l => l.Status == "error"),
             },
@@ -191,7 +206,13 @@ public class McpConsoleController : ControllerBase
         if (key == null || key.OwnerUserId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "密钥不存在或无权访问"));
 
-        var scopes = (key.Scopes ?? new List<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // 与 /api/mcp 的 tools/list 同口径：权限被回收的 scope 在鉴权时就被剥掉了，
+        // 自检不能照着存下来的 scope 报一串对方其实看不见的工具。
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        var ownedPermissions = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
+        var scopes = (key.Scopes ?? new List<string>())
+            .Where(s => EffectiveForOwner(s, ownedPermissions))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var visible = McpBuiltinTools.All
             .Where(t => McpCapabilityCatalog.ScopeSatisfies(scopes, t.RequiredScope))
             .Select(t => new
@@ -215,6 +236,14 @@ public class McpConsoleController : ControllerBase
             tools = visible,
         }));
     }
+
+    /// <summary>
+    /// 这个 scope 此刻对密钥主人还成立吗。受权限位把关的按当前权限判，其余（老 scope）原样成立。
+    /// 与 ApiKeyAuthenticationHandler 的剥离逻辑同一口径，面板才不会跟实际能力对不上。
+    /// </summary>
+    private static bool EffectiveForOwner(string scope, IReadOnlyList<string> ownedPermissions)
+        => !McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope)
+           || McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope);
 
     private async Task<List<McpCallLog>> TodayLogsAsync(string userId, DateTime since, CancellationToken ct)
     {

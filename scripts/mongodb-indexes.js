@@ -1483,6 +1483,11 @@ db.mcp_call_logs.createIndex(
 )
 // end collection: mcp_call_logs
 
+// collection: mcp_usage_counters
+// 接入台的当日用量计数器。_id 是确定性的 `{keyId}:{yyyyMMdd}:{kind}`，
+// 读写都按主键定位，不需要额外索引 —— 这里留一行是为了让人知道有这个集合。
+
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`
