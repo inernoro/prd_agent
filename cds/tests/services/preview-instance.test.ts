@@ -93,6 +93,105 @@ describe('scrubParentSecretsFromEnv', () => {
     expect(env.JWT_SECRET).toBeUndefined();
   });
 
+  /*
+   * Codex #1471 P1。这条通道曾在本 PR 里存在过一版：把项目级 env 里的
+   * CDS_PREVIEW_AI_ACCESS_KEY 重映射成子实例的 CDS_AI_ACCESS_KEY，好让 Agent
+   * 不用登录就能自测预览。它是错的——CDS 的项目级 env 是**整个项目共享**的
+   * （cross-project-isolation 通道 9），同一项目下每条分支预览都会拿到同一把；
+   * 而 resolveAiSession 对进程级静态钥匙返回的是不带项目作用域的 'static' 会话，
+   * 等价于管理员。结果就是任一条未合并分支能以管理员身份打到兄弟分支的预览。
+   *
+   * 所以现在的契约是：**子实例一律不从环境变量继承任何 AI 静态钥匙**。
+   * 也没有现成替代：项目级 Agent Key（cdsp_）比对的是收方实例自己库里的哈希，
+   * 子实例独立存储、首启 seed，父实例签的那把它不认。带作用域的自测凭据是后续事项。
+   * 红绿闭环：把重映射那行加回去，本用例第三条断言变红。
+   */
+  /*
+   * 这条通道被撤除后，「撤了一半」连着发生了三次：代码删了但事故台账仍记着它是
+   * 「修复」（Codex 第六轮）、台账改了但源码注释仍写着「必须为它单独生成一把」
+   * （第七轮）、以及一条 feat changelog 碎片会把它宣告进 CHANGELOG。
+   *
+   * 所以扫描范围就是残留真出现过的那几处，而不是只扫 preview-instance.ts 一个文件
+   * —— 只扫它自己的守卫恰好防不住它自己记录的那三次复发（第十四轮指出）。
+   * 覆盖：cds/src 全部源码 + 两份 compose + 隔离规则台账 + debt 台账 + 全部
+   * changelog 碎片。清单里的文件必须存在，改名后覆盖会静默消失。
+   * 红绿闭环：把那段注释改回「必须为它单独生成一把」（或写进上述任一文件），本用例立刻红。
+   */
+  it('仓库里不许再有「给子实例生成 AI 静态钥匙」的指示', () => {
+    const repoRoot = path.resolve(process.cwd(), '..');
+    const anchors = [
+      'cds/src/services/preview-instance.ts',
+      'cds/cds-compose.selfhost.yml',
+      'cds-compose.yml',
+      '.claude/rules/cross-project-isolation.md',
+      'doc/debt.cds.md',
+    ];
+    for (const rel of anchors) {
+      expect(fs.existsSync(path.join(repoRoot, rel)), `扫描清单里的 ${rel} 不在了，改名后要同步这里`)
+        .toBe(true);
+    }
+    const walk = (dir: string, acc: string[]): string[] => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full, acc);
+        else if (entry.name.endsWith('.ts')) acc.push(full);
+      }
+      return acc;
+    };
+    const changelogDir = path.join(repoRoot, 'changelogs');
+    const targets = [
+      ...anchors.map((rel) => path.join(repoRoot, rel)),
+      ...walk(path.join(repoRoot, 'cds/src'), []),
+      ...fs
+        .readdirSync(changelogDir)
+        .filter((name) => name.endsWith('.md'))
+        .map((name) => path.join(changelogDir, name)),
+    ];
+
+    // 反向说明必须在（否则下一个人不知道为什么不能做）
+    const previewSrc = fs.readFileSync(path.join(repoRoot, 'cds/src/services/preview-instance.ts'), 'utf8');
+    expect(previewSrc, 'preview-instance 里要留下「为什么不能给子实例发静态钥匙」的说明')
+      .toContain('也不要为子实例单独生成一把');
+
+    for (const file of targets) {
+      const text = fs.readFileSync(file, 'utf8');
+      const rel = path.relative(repoRoot, file);
+      // 正向指示不许在
+      expect(text, `${rel} 又出现了「为子实例单独生成一把静态钥匙」的指示`)
+        .not.toMatch(/必须为(它|子实例|预览实例)单独生成一把/);
+      // 配置层面：不许再有 CDS_PREVIEW_AI_ACCESS_KEY 的赋值（散文里提它没关系，钉死的是定义）
+      expect(text, `${rel} 又定义了 CDS_PREVIEW_AI_ACCESS_KEY`)
+        .not.toMatch(/CDS_PREVIEW_AI_ACCESS_KEY\s*[:=]\s*\S/);
+      // 代码层面：不许再有任何把 CDS_PREVIEW_* 映射到 AI 钥匙的赋值
+      expect(text, `${rel} 又把 CDS_PREVIEW_* 映射成了 AI 静态钥匙`)
+        .not.toMatch(/CDS_AI_ACCESS_KEY\s*=\s*[^;\n]*[Pp]review/);
+    }
+  });
+
+  it('子实例不从任何 CDS_PREVIEW_* 变量继承 AI 静态钥匙', () => {
+    const env: NodeJS.ProcessEnv = {
+      CDS_PREVIEW_INSTANCE: '1',
+      AI_ACCESS_KEY: 'parent-key',
+      CDS_AI_ACCESS_KEY: 'parent-key-canonical',
+      // 即便有人在项目 env 里配了它，也不该有任何效果。
+      CDS_PREVIEW_AI_ACCESS_KEY: 'shared-across-branches',
+    };
+
+    const scrubbed = scrubParentSecretsFromEnv(env);
+
+    expect(scrubbed).toContain('AI_ACCESS_KEY');
+    expect(scrubbed).toContain('CDS_PREVIEW_AI_ACCESS_KEY');
+    expect(env.CDS_AI_ACCESS_KEY).toBeUndefined();
+    expect(env.AI_ACCESS_KEY).toBeUndefined();
+  });
+
+  it('leaves no AI key at all when only the parent key was inherited', () => {
+    const env: NodeJS.ProcessEnv = { CDS_PREVIEW_INSTANCE: '1', AI_ACCESS_KEY: 'parent-key' };
+    scrubParentSecretsFromEnv(env);
+    expect(env.AI_ACCESS_KEY).toBeUndefined();
+    expect(env.CDS_AI_ACCESS_KEY).toBeUndefined();
+  });
+
   it('keeps preview SSO disabled when no trusted preview public base URL is provided', () => {
     const env: NodeJS.ProcessEnv = {
       CDS_PREVIEW_INSTANCE: '1',
@@ -207,18 +306,121 @@ describe('seedPreviewInstanceDemoData', () => {
     const project = service.getProject(PREVIEW_DEMO_PROJECT_ID);
     expect(project?.name).toContain('演示');
     const branches = service.getAllBranches();
-    expect(branches).toHaveLength(3);
-    expect(new Set(branches.map((b) => b.status))).toEqual(new Set(['running', 'error', 'idle']));
+    // 不写死条数：加一条演示数据不该让这条用例红。要成立的是「状态有覆盖面」，
+    // 那才是这份 seed 存在的理由（空 dashboard 什么都验收不了）。
+    expect(branches.length).toBeGreaterThanOrEqual(3);
+    for (const status of ['running', 'error', 'idle']) {
+      expect(branches.some((b) => b.status === status)).toBe(true);
+    }
     // 每条演示分支都显式标注，不冒充真实部署（no-rootless-tree）
     for (const b of branches) expect(b.notes).toContain('演示数据');
     expect(service.getBuildProfiles().filter((p) => p.projectId === PREVIEW_DEMO_PROJECT_ID)).toHaveLength(2);
     expect(service.getActivityLogs(PREVIEW_DEMO_PROJECT_ID).length).toBeGreaterThan(0);
   });
 
+  it('seeds 任务调度 / 验收报告，让那两页不是空状态', () => {
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const jobs = service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID);
+    // 三种 schedule 都要有：分段控件和列表的三种形态都得能看到
+    for (const type of ['daily', 'interval', 'manual']) {
+      expect(jobs.some((j) => j.schedule.type === type)).toBe(true);
+    }
+    for (const j of jobs) expect(j.name).toContain('演示数据');
+    /*
+     * Codex 第二轮 P2：演示任务不许自己跑起来。
+     *
+     * 调度器在预览实例上照样启动，enabled 的演示任务会被它真的执行——实机验到
+     * 「每 30 分钟同步」的 lastRunAt 被改成了当天的真实执行时间。那会把 seed 摆
+     * 出来的成功/失败示例状态覆盖掉，还往运行历史里灌噪音。演示数据是给人看的，
+     * 不是给调度器跑的。
+     */
+    for (const j of jobs) expect(j.enabled).toBe(false);
+    // 但「上次运行」的示例状态要保住，否则列表那一列全空、看不出成功/失败长什么样
+    expect(jobs.some((j) => j.lastRunStatus === 'success')).toBe(true);
+    expect(jobs.some((j) => j.lastRunStatus === 'failed')).toBe(true);
+
+    const reports = service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID);
+    for (const verdict of ['pass', 'conditional', 'fail']) {
+      expect(reports.some((r) => r.verdict === verdict)).toBe(true);
+    }
+    for (const r of reports) expect(r.title).toContain('演示数据');
+  });
+
+  it('给「已经播过首播的老实例」补播新增的演示数据', () => {
+    // 复现旧版本播下的库：演示项目 + 一条分支，但没有定时任务与验收报告。
+    // 预览实例的 state 跨部署保留，如果 seed 是全有或全无的，这种库升级之后
+    // 任务调度和验收报告两页会永远空着——这条用例就是钉这个。
+    const now = new Date().toISOString();
+    service.addProject({
+      id: PREVIEW_DEMO_PROJECT_ID, slug: PREVIEW_DEMO_PROJECT_ID,
+      name: '演示项目（预览实例）', kind: 'git', createdAt: now, updatedAt: now,
+    });
+    service.addBranch({
+      id: `${PREVIEW_DEMO_PROJECT_ID}-old`, projectId: PREVIEW_DEMO_PROJECT_ID,
+      branch: 'feat/old', worktreePath: '/tmp/preview-demo/old', status: 'idle',
+      createdAt: now, notes: '演示数据：旧版本播下的分支。', services: {},
+    });
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(0);
+
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID).length).toBeGreaterThan(0);
+    expect(service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID).length).toBeGreaterThan(0);
+
+    const branches = service.getAllBranches();
+    // 老实例已有的那条原样保留（补播只补缺的，不重写既有条目）
+    expect(branches.find((b) => b.id === `${PREVIEW_DEMO_PROJECT_ID}-old`)?.branch).toBe('feat/old');
+    // 而当前清单里的状态覆盖面必须补齐——线上真的踩过这个洞：预览实例停在
+    // 旧版本播下的三条分支上，清单扩到五条之后「构建中 / 冷分支」两种卡片
+    // 在实例里从来没出现过。判据钉覆盖面，不钉条数。
+    for (const status of ['running', 'error', 'building', 'idle']) {
+      expect(branches.some((b) => b.status === status)).toBe(true);
+    }
+  });
+
+  /*
+   * Codex 第四轮 P2：任务和报告仍是整类守卫，只有分支那一档真按 id 补。
+   * 这直接违反本文件注释里写的口径（「不能只判这一类有没有」）——老实例只要
+   * 已经有任意一条任务，后来新增的演示任务就永远补不进去，而这个函数存在的
+   * 理由就是给老实例补东西。
+   *
+   * 判据钉「删掉其中一条能补回来，且没被补的那些不受影响」。
+   */
+  it('任务和报告也按身份逐条补，不是整类有无', () => {
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const jobs = service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID);
+    const reports = service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID);
+    expect(jobs.length).toBeGreaterThan(1);
+    expect(reports.length).toBeGreaterThan(1);
+
+    // 模拟「老实例只有一条」：删到只剩一条，整类守卫在这种库上会一条都不补。
+    const keptJob = jobs[0];
+    for (const j of jobs.slice(1)) service.deleteScheduledJob(j.id);
+    const keptReport = reports[0];
+    for (const r of reports.slice(1)) service.deleteAcceptanceReport(r.id);
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(1);
+
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(jobs.length);
+    expect(service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID)).toHaveLength(reports.length);
+    // 留下的那条原样不动，没有被重播成新的
+    expect(service.listScheduledJobs(PREVIEW_DEMO_PROJECT_ID).find((j) => j.id === keptJob.id)?.name)
+      .toBe(keptJob.name);
+    expect(service.listAcceptanceReports(PREVIEW_DEMO_PROJECT_ID).some((r) => r.id === keptReport.id))
+      .toBe(true);
+  });
+
+  it('补播只补缺的分支，第二次调用不再产生副作用', () => {
+    expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const first = service.getAllBranches().map((b) => b.id).sort();
+    expect(seedPreviewInstanceDemoData(service)).toBe(false);
+    expect(service.getAllBranches().map((b) => b.id).sort()).toEqual(first);
+  });
+
   it('is idempotent — second call is a no-op', () => {
     expect(seedPreviewInstanceDemoData(service)).toBe(true);
+    const seeded = service.getAllBranches().length;
     expect(seedPreviewInstanceDemoData(service)).toBe(false);
-    expect(service.getAllBranches()).toHaveLength(3);
+    expect(service.getAllBranches()).toHaveLength(seeded);
   });
 
   it('never touches a store that already has data', () => {

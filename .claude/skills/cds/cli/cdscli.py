@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.14.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -189,7 +189,13 @@ def _load_local_credentials() -> dict[str, Any]:
 def _cds_base() -> str:
     host = os.environ.get("CDS_HOST", "").strip()
     if not host:
-        die("CDS_HOST 未设置。请 export CDS_HOST=cds.miduo.org", code=1)
+        # 新机器上照着签发页跑完 `identity save --host ...` 之后，CDS_HOST 通常
+        # 仍然没设。save 时已经把主机记进了用户级凭证档，这里回退用它 ——
+        # 否则那条一次性命令跑成功了，下一条命令还是「CDS_HOST 未设置」。
+        host = _default_user_credential_host()
+    if not host:
+        die("CDS_HOST 未设置。请 export CDS_HOST=cds.miduo.org，"
+            "或先跑一次 `cdscli identity save --host <CDS 主机>`", code=1)
     if not host.startswith("http"):
         # 本机/localhost/IP 默认 http(无 TLS),公网域名默认 https
         # 用户可以显式 export CDS_HOST=http://xxx 或 https://xxx 覆盖。
@@ -1775,6 +1781,114 @@ def _has_cds_auth() -> bool:
                 or os.environ.get("AI_ACCESS_KEY", "").strip())
 
 
+# ── 身份层：用户级凭证与自愈回落（2026-09-01）────────────────────────────
+#
+# 项目级凭据存在**仓库根**的 .cds/credentials.json 里。挪个目录、换台机器、
+# 重新 clone，它就不在了 —— 而报出来是一句「未授权」，于是人开始猜，管理员去
+# 项目卡上一看「key 明明还在」。密钥其实没失效，是文件没跟着走。
+#
+# 用户级凭证放**用户目录**、按 CDS 主机索引，因此跟着人走。凭据文件丢了就回落到
+# 它，用它为「我已获授权的项目」当场补一张项目级凭证写回仓库根 —— 全程零人工。
+# 没授权才走页面批准，这正是「默认只对自己创建的项目有权限，其余手动批一次」。
+
+_USER_CREDENTIALS_PATH = os.path.join(
+    os.path.expanduser("~"), ".cds", "user-credentials.json")
+
+
+def _load_user_credential(host: str) -> str:
+    """按 CDS 主机取本机的用户级凭证。一个人可能连多个 CDS 实例，所以按 host 索引。
+
+    没给 host（新机器上 CDS_HOST 常常没设）时按两级回退：先用 save 时记下的默认
+    主机，再在只存了一把的情况下直接用那一把。缺了这层，「签发页给一条命令、
+    照着跑一次就好」那条路会在下一条命令上断掉 —— save 成功了，whoami / heal
+    却说找不到凭证。存了多把又没给 host 时不猜，返回空由调用方报错。
+    """
+    try:
+        with open(_USER_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+    hosts = data.get("hosts") or {}
+    key = _normalize_host_key(host)
+    if not key:
+        key = _normalize_host_key(str(data.get("defaultHost") or ""))
+    if not key and len(hosts) == 1:
+        key = next(iter(hosts))
+    entry = hosts.get(key) or {}
+    return str(entry.get("credential") or "").strip()
+
+
+def _default_user_credential_host() -> str:
+    """save 时记下的默认 CDS 主机；只存了一把时就是那一把的主机。"""
+    try:
+        with open(_USER_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+    hosts = data.get("hosts") or {}
+    default = str(data.get("defaultHost") or "").strip()
+    if default:
+        return default
+    return next(iter(hosts)) if len(hosts) == 1 else ""
+
+
+def _normalize_host_key(host: str) -> str:
+    return (host or "").strip().rstrip("/").replace("https://", "").replace("http://", "").lower()
+
+
+def save_user_credential(host: str, credential: str) -> str:
+    """把用户级凭证写进用户目录（0600）。不进仓库、不打印、不进日志。"""
+    os.makedirs(os.path.dirname(_USER_CREDENTIALS_PATH), exist_ok=True)
+    data: dict[str, Any] = {"version": 1, "hosts": {}}
+    try:
+        with open(_USER_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+            if isinstance(existing, dict):
+                data = existing
+                data.setdefault("hosts", {})
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    data["hosts"][_normalize_host_key(host)] = {
+        "credential": credential,
+        "savedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    # 记下默认主机：后续 whoami / heal 不必再要求 CDS_HOST，否则「照着签发页
+    # 跑一次 save 就好」这条路会在下一条命令上断掉。
+    data["defaultHost"] = _normalize_host_key(host)
+    tmp = _USER_CREDENTIALS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, _USER_CREDENTIALS_PATH)
+    return _USER_CREDENTIALS_PATH
+
+
+def try_self_heal_project_credential(host: str, project_id: str) -> dict[str, Any] | None:
+    """仓库里的项目级凭据读不到时，用用户级凭证当场补一张。
+
+    返回 None = 没有用户级凭证、或该主体对这个项目没有授权（那就该走页面批准）。
+    绝不静默失败成「未授权」——调用方拿到 None 要把原因说清楚。
+    """
+    user_cred = _load_user_credential(host)
+    if not user_cred:
+        return None
+    status, resp, _ = _request(
+        "POST", "/api/identity/project-credentials",
+        body={"projectId": project_id}, timeout=20,
+        extra_headers={"x-ai-access-key": user_cred},
+        fatal_network_errors=False,
+    )
+    if status == 201 and isinstance(resp, dict) and resp.get("plaintext"):
+        _save_local_credentials(host=host, project_id=project_id,
+                                project_key=str(resp["plaintext"]))
+        return {"projectId": project_id, "healed": True,
+                "grantOrigin": resp.get("grantOrigin")}
+    if isinstance(resp, dict) and resp.get("error") == "no_grant":
+        return {"projectId": project_id, "healed": False,
+                "reason": "no-grant", "nextStep": resp.get("nextStep")}
+    return None
+
+
 def _call_safe(method: str, path: str, timeout: int = 10,
                auth_key_override: str = "") -> Any:
     """像 _call(quiet=True) 但**网络错误也走 __error__ 包**而不是 _request.die()。
@@ -1976,6 +2090,66 @@ def _preview_urls_from_branch(branch: dict[str, Any]) -> list[str]:
     return urls
 
 
+def _git_repo_full_name(repo_root: str) -> str:
+    """从 origin remote 解析 `owner/repo`。拿不到就返回空串，绝不猜。"""
+    try:
+        url = subprocess.check_output(
+            ["git", "-C", repo_root, "remote", "get-url", "origin"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+    if not url:
+        return ""
+    # 支持 https://host/owner/repo(.git) 与 git@host:owner/repo(.git)
+    tail = url.split(":")[-1] if url.startswith("git@") else url.split("//", 1)[-1]
+    parts = [p for p in tail.replace(".git", "").split("/") if p]
+    if len(parts) < 2:
+        return ""
+    return f"{parts[-2]}/{parts[-1]}"
+
+
+def _changed_paths_since(repo_root: str, base_ref: str) -> list[str]:
+    """本分支相对 base_ref 的改动文件清单。取不到就返回空 —— 服务端对空清单
+    fail-open（算全部命中），宁可多列一条地址也不能漏掉一个真的被波及的项目。"""
+    if not base_ref:
+        return []
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", repo_root, "diff", "--name-only", f"{base_ref}...HEAD"],
+            text=True, stderr=subprocess.DEVNULL)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _try_preview_dispatch(repo_root: str, branch: str, base_ref: str) -> dict[str, Any] | None:
+    """走服务端的「这次提交该给哪些预览地址」判定。
+
+    这条路径的意义是**取消客户端的项目归属推算权**：一个仓库可以同时喂多个 CDS
+    项目，同名分支天然可以属于好几个，本地怎么猜都是错的（下面那条旧路径里已经
+    长出「自托管项目专用」的特判分支，就是判据开始分裂的症状）。客户端只交仓库、
+    分支和可选的改动清单，项目归属与作用域判定全在服务端，与 push 分发同一份判据。
+
+    返回 None 表示服务端不支持（老版本 CDS），调用方回退旧路径。
+    """
+    repo = _git_repo_full_name(repo_root)
+    if not repo:
+        return None
+    body: dict[str, Any] = {"repo": repo, "branch": branch}
+    changed = _changed_paths_since(repo_root, base_ref)
+    if changed:
+        body["changedPaths"] = changed
+    # fatal_network_errors=False：新链路一旦网络抖动就 die() 会把它变成新的单点，
+    # 而它本来只是「更好的那条路」——任何异常都该安静退回旧路径。
+    status, resp, _ = _request("POST", "/api/preview-dispatch", body=body,
+                               timeout=15, fatal_network_errors=False)
+    if status == 404 or status == 405:
+        return None          # 老版本 CDS 没有这条端点
+    if status != 200 or not isinstance(resp, dict) or not resp.get("ok"):
+        return None          # 任何异常都退回旧路径，不让新链路成为新的单点
+    return resp
+
+
 def cmd_preview_url(args: argparse.Namespace) -> None:
     """打印当前分支在 CDS 已发布的真实预览 URL。
 
@@ -2014,6 +2188,34 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
             "拒绝本地推算预览地址；请先从 CDS 右上角快速接入，"
             "或运行 cdscli connect 完成项目授权。",
             code=1)
+        return
+
+    # Step 1.5（2026-09-01）：优先走服务端派定。一个仓库可以同时喂多个 CDS 项目，
+    # 「我这条分支属于哪个项目」在本地没有唯一答案；下面 Step 3 那套本地推算是历史
+    # 路径，服务端支持时不再使用它。服务端不支持（老版本 CDS）才回退。
+    dispatch = _try_preview_dispatch(repo_root, branch, str(getattr(args, "changed_since", "") or ""))
+    if dispatch is not None:
+        lines = [str(x) for x in (dispatch.get("lines") or [])]
+        if lines:
+            if _HUMAN:
+                print("\n".join(lines))
+            else:
+                ok({"branch": branch, "repo": dispatch.get("repo"),
+                    "lines": lines, "projects": dispatch.get("projects") or []},
+                   note=f"{len(lines)} 个已发布入口")
+            return
+        # 没有地址不等于出错：要把三种情形分开说，别压成一句「取不到地址」。
+        projects = dispatch.get("projects") or []
+        if not projects:
+            die(dispatch.get("message") or "该仓库下没有当前凭据可见的项目",
+                code=2, extra={"repo": dispatch.get("repo"), "branch": branch})
+            return
+        detail = "；".join(
+            f"{p.get('projectName') or p.get('projectId')}：{p.get('summary')}"
+            for p in projects if isinstance(p, dict)
+        )
+        die(f"分支 '{branch}' 当前没有可用的预览入口。{detail}",
+            code=4, extra={"branch": branch, "projects": projects})
         return
 
     # Step 2: 只读 CDS API。网络、鉴权、代理或 JSON 异常都是硬失败，
@@ -3485,6 +3687,12 @@ def cmd_connect(args: argparse.Namespace) -> None:
         if new_project
         else f"申请连接并操作项目 {project_id}。"
     )
+    # 带上本机已保存的用户级凭证（如果有）。这条路由是免鉴权的，但服务端会顺手
+    # 认一次主体，并在批准时据此写一条项目授权 —— 少了这个头，批准只会签出一把
+    # 无主的钥匙，钥匙一丢又得重新申请，「批一次就够」根本不成立。
+    # 上面刻意清掉了项目级 / 静态密钥（申请阶段不该带旧凭据），用户级是另一回事：
+    # 它代表「我是谁」，正是这次申请要登记的东西。
+    saved_user_cred = _load_user_credential(host)
     status, body, _ = _request(
         "POST",
         request_path,
@@ -3492,6 +3700,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
         # 创建请求会触发持久化与事件通知；共享控制面忙时可能超过 10 秒，
         # 但该 POST 不能盲目重试，否则响应丢失时会生成重复审批单。
         timeout=30,
+        extra_headers=({"x-ai-access-key": saved_user_cred} if saved_user_cred else None),
     )
     if status not in (200, 201) or not isinstance(body, dict):
         _restore_auth_env(previous)
@@ -6157,6 +6366,85 @@ def _detect_nacos_required_configs(root: str) -> list[str]:
     return found
 
 
+_PROBE_PREFIX_RE = re.compile(r"(?:^|/)(?:health|healthz|health-check|ready|readyz|readiness|live|livez|liveness|actuator|metrics)(?:/|\?|$)", re.I)
+
+
+def _is_probe_prefix(prefix: str) -> bool:
+    """探活语义的路径段（与 CDS 后端 topology-lint 同一份口径）。"""
+    return bool(_PROBE_PREFIX_RE.search(prefix.strip()))
+
+
+def _spring_context_path(module_root: str) -> str | None:
+    """application.yml / .properties 里的 server.servlet.context-path（有则整站都在它下面）。"""
+    res_dir = os.path.join(module_root, "src", "main", "resources")
+    if not os.path.isdir(res_dir):
+        return None
+    for name in ("application.yml", "application.yaml", "application.properties",
+                 "bootstrap.yml", "bootstrap.yaml"):
+        fp = os.path.join(res_dir, name)
+        if not os.path.isfile(fp):
+            continue
+        try:
+            with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        m = re.search(r"context-path\s*[:=]\s*['\"]?(/[A-Za-z0-9._~-]*)", text)
+        if m and m.group(1) and m.group(1) != "/":
+            return m.group(1).rstrip("/") + "/"
+    return None
+
+
+def _detect_spring_route_prefixes(module_root: str, max_files: int = 4000) -> list[str]:
+    """从模块源码扫出主域名路由前缀（plan.cds.service-relations 第一批）。
+
+    规则：
+      1. 有 server.servlet.context-path → 只返回它（整站都在它下面）；
+      2. 否则收集 @RestController / @Controller 类上的 @RequestMapping 第一段，
+         类上没写的看方法级 @XxxMapping 第一段；
+      3. 探活段（health / actuator / metrics ...）一律不进前缀；
+      4. 结果去重、按字典序，返回 `/seg/` 形态。扫不到返回 []，由调用方兜底 + TODO。
+    """
+    ctx = _spring_context_path(module_root)
+    if ctx:
+        return [ctx]
+    src = os.path.join(module_root, "src", "main", "java")
+    if not os.path.isdir(src):
+        return []
+    class_rm = re.compile(r"@RequestMapping\s*\(\s*(?:value\s*=|path\s*=)?\s*[\{]?\s*\"([^\"]*)\"")
+    method_rm = re.compile(r"@(?:Get|Post|Put|Delete|Patch|Request)Mapping\s*\(\s*(?:value\s*=|path\s*=)?\s*[\{]?\s*\"([^\"]*)\"")
+    prefixes: set[str] = set()
+    seen = 0
+    for dirpath, _dirs, files in os.walk(src):
+        for fn in files:
+            if not fn.endswith(".java"):
+                continue
+            seen += 1
+            if seen > max_files:
+                return sorted(prefixes)
+            fp = os.path.join(dirpath, fn)
+            try:
+                with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            if "@RestController" not in text and "@Controller" not in text:
+                continue
+            cls_idx = text.find("class ")
+            head = text[:cls_idx] if cls_idx > 0 else text
+            cls_maps = class_rm.findall(head)
+            candidates = cls_maps if cls_maps else method_rm.findall(text)
+            for raw in candidates:
+                seg = raw.strip().strip("/").split("/")[0].split("{")[0].strip()
+                if not seg:
+                    continue
+                prefix = f"/{seg}/"
+                if _is_probe_prefix(prefix):
+                    continue
+                prefixes.add(prefix)
+    return sorted(prefixes)
+
+
 def _yaml_from_modules(root: str, modules: list[dict],
                        infra_services: dict | None = None,
                        scan_signals: dict | None = None) -> str:
@@ -6300,6 +6588,7 @@ def _yaml_from_modules(root: str, modules: list[dict],
             primary_java_port = mod.get("port") or "8080"
             break
 
+    java_seen = 0  # 第几个 Java 模块（没扫到前缀时第一个兜底 /api/，其余按名字分前缀避免撞车）
     for i, mod in enumerate(modules):
         # Maven multi-module: use module name as service name, parent dir for volumes
         if mod.get("_service_name"):
@@ -6395,9 +6684,20 @@ def _yaml_from_modules(root: str, modules: list[dict],
         # Issue #560:Spring Boot 真实路由不是 /<module>/,而是 /api,/partner,/open,/actuator
         # 用 cds.path-prefixes 暴露完整列表,避免前端调 /api 打不到后端
         if kind == "java":
-            prefixes = "/api/,/partner/,/open/,/health,/actuator/"
-            lines.append(f"      cds.path-prefix: \"/api/\"  # 兼容:CDS 单 prefix 路由")
-            lines.append(f"      cds.path-prefixes: \"{prefixes}\"  # 多前缀:覆盖 Spring Boot 真实入口")
+            # plan.cds.service-relations 第一批：前缀按模块从源码扫控制器，不再给所有 Java 模块复制
+            # 同一份清单（那会让多个后端同时声明 /open/ /health，forwarder 只能按部署顺序二选一）。
+            # 探活路径（/health /actuator）永远不进前缀：探活只走 cds.readiness-path。
+            # 旧的 cds.path-prefixes（复数）从未被 CDS 解析，是死标签，不再输出。
+            module_root = os.path.join(root, mod["dir"]) if mod["dir"] != "." else root
+            if mod.get("maven_module"):
+                module_root = os.path.join(module_root, mod["maven_module"])
+            scanned = _detect_spring_route_prefixes(module_root)
+            if scanned:
+                lines.append(f"      cds.path-prefix: \"{','.join(scanned)}\"  # 从控制器 @RequestMapping / context-path 扫出")
+            else:
+                fallback = "/api/" if java_seen == 0 else f"/{clean_name}/"
+                lines.append(f"      cds.path-prefix: \"{fallback}\"  # TODO: 源码里没扫到路由前缀，请按真实入口填写，多个后端不能共用同一前缀")
+            java_seen += 1
             # v0.6.3:Maven 首次 build 要 3-5 分钟下依赖,CDS 默认 readiness 180s 不够
             # 写 600s(10min) — 单次部署足够,后续 .m2 缓存命中只需 30-60s
             lines.append(f"      cds.readiness-timeout: \"600\"  # v0.6.3:maven build 留 10min")
@@ -7372,6 +7672,142 @@ def _verify_autofix(compose_path: str, doc: dict, issues: list[dict]) -> dict:
     }
 
 
+def _verify_server_lint(compose_text: str) -> list[dict]:
+    """拓扑体检走 CDS 后端（SSOT：cds/src/services/topology-lint.ts）。
+
+    未连接 CDS 时不装作跑过：返回一条 INFO 说明跳过了哪些检查，让读者知道这份报告不完整。
+    网络或服务端错误同样降级为 INFO，不让 verify 因为体检接口不可达而整体失败。
+    """
+    if not compose_text.strip():
+        return []
+    if not os.environ.get("CDS_HOST", "").strip() or not _has_cds_auth():
+        return [{
+            "severity": "INFO",
+            "service": "(topology)",
+            "rule": "topology-lint-skipped",
+            "message": "未连接 CDS，拓扑体检（前缀冲突 / 探活前缀 / 子域抢根路径 / 游离服务）未运行",
+            "fix": "cdscli connect 完成项目授权后重跑 verify",
+        }]
+    status, body, _headers = _request("POST", "/api/compose/lint",
+                                      body={"composeYaml": compose_text},
+                                      timeout=20, fatal_network_errors=False)
+    if status != 200 or not isinstance(body, dict) or not isinstance(body.get("findings"), list):
+        msg = body.get("message") if isinstance(body, dict) else str(body)[:200]
+        return [{
+            "severity": "INFO",
+            "service": "(topology)",
+            "rule": "topology-lint-unavailable",
+            "message": f"拓扑体检接口不可用（HTTP {status}）：{msg}",
+            "fix": "检查 CDS_HOST 与 CDS 版本（需要含 POST /api/compose/lint 的版本）后重跑",
+        }]
+    sev_map = {"error": "ERROR", "warn": "WARNING", "info": "INFO"}
+    out: list[dict] = []
+    for f in body["findings"]:
+        if not isinstance(f, dict):
+            continue
+        out.append({
+            "severity": sev_map.get(str(f.get("severity")), "INFO"),
+            "service": ",".join(f.get("services") or []) or "(topology)",
+            "rule": f"topology/{f.get('rule')}",
+            "message": str(f.get("message") or ""),
+            "fix": str(f.get("fix") or ""),
+        })
+    return out
+
+
+def _resolve_branch_id_for_cwd() -> str:
+    """当前 git 分支 → CDS 分支 id（与 preview-url 同一套项目身份匹配，找不到就 die）。"""
+    try:
+        branch = subprocess.check_output(["git", "branch", "--show-current"], text=True, stderr=subprocess.DEVNULL).strip()
+        repo_root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True, stderr=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError:
+        die("当前目录不在 git 仓库内；请显式传分支 id", code=1)
+        return ""
+    if not branch:
+        die("当前没有分支（detached HEAD？）；请显式传分支 id", code=1)
+        return ""
+    body = _call_safe("GET", _branches_path(), timeout=10)
+    if not isinstance(body, dict) or body.get("__error__"):
+        die("调 /api/branches 失败，无法解析当前分支的 CDS id", code=3, extra={"response": body})
+        return ""
+    hints = _branch_lookup_project_slug_hints(repo_root)
+    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+    matches = _match_branches_for_project(body.get("branches") or [], branch, hints, project_scoped)
+    if not matches:
+        die(f"CDS 上没有当前分支 '{branch}' 的记录；请显式传分支 id（cdscli branch list 可查）", code=2)
+        return ""
+    return str(matches[0].get("id"))
+
+
+def _topology_tree_lines(payload: dict) -> list[str]:
+    """把 GET /api/branches/:id/service-graph 的结果画成文字树（与运行画布同一份分层）。"""
+    graph = payload.get("graph") or {}
+    lint = payload.get("lint") or {}
+    nodes = {n.get("rawId"): n for n in (graph.get("nodes") or []) if n.get("kind") == "service"}
+    role_src = {"declared": "声明", "route": "路由事实", "name": "名字", "default": "默认"}
+    findings_by_svc: dict[str, list[str]] = {}
+    for f in lint.get("findings") or []:
+        tag = {"error": "错误", "warn": "警告", "info": "建议"}.get(f.get("severity"), "?")
+        for svc in f.get("services") or []:
+            findings_by_svc.setdefault(svc, []).append(f"{tag}: {f.get('rule')}")
+
+    def node_label(sid: str) -> str:
+        n = nodes.get(sid) or {}
+        role = (n.get("role") or "?").upper()
+        src = role_src.get(n.get("roleSource"), "?")
+        marks = findings_by_svc.get(sid) or []
+        tail = f"   <{'; '.join(marks)}>" if marks else ""
+        return f"{sid} ({role}, {src}){tail}"
+
+    out = [f"入口 {payload.get('branch')} · 分支 {payload.get('branchId')}"]
+    sites = graph.get("sites") or []
+    for si, site in enumerate(sites):
+        last_site = si == len(sites) - 1 and not graph.get("internal")
+        head = "└─" if last_site else "├─"
+        title = "主域名" if site.get("kind") == "main" else f"子域 {site.get('subdomain')}"
+        shell = site.get("shellId")
+        shell_note = "（按名兜底）" if site.get("shellSource") == "convention" else ""
+        out.append(f"{head} {title}  壳 {node_label(shell) if shell else '（无）'}{shell_note}")
+        indent = "   " if last_site else "│  "
+        members = site.get("members") or []
+        for mi, m in enumerate(members):
+            mh = "└─" if mi == len(members) - 1 else "├─"
+            conv = "（按名约定）" if m.get("viaConvention") else ""
+            out.append(f"{indent}{mh} {' '.join(m.get('prefixes') or [])}{conv} → {node_label(m.get('id'))}")
+    internal = graph.get("internal") or []
+    callers: dict[str, list[str]] = {}
+    for e in graph.get("edges") or []:
+        if str(e.get("from", "")).startswith("service:") and str(e.get("to", "")).startswith("service:"):
+            callers.setdefault(e["to"][8:], []).append(e["from"][8:])
+    for ii, sid in enumerate(internal):
+        ih = "└─" if ii == len(internal) - 1 else "├─"
+        who = callers.get(sid)
+        rel = f"被 {', '.join(who)} 调用" if who else "游离"
+        out.append(f"{ih} 内网 {rel} → {node_label(sid)}")
+    summ = lint.get("summary") or {}
+    out.append(f"体检：{summ.get('errors', 0)} 错误 · {summ.get('warnings', 0)} 警告 · {summ.get('infos', 0)} 建议")
+    for f in lint.get("findings") or []:
+        tag = {"error": "错误", "warn": "警告", "info": "建议"}.get(f.get("severity"), "?")
+        out.append(f"  [{tag}] {f.get('rule')}  {f.get('message')}")
+        if f.get("fix"):
+            out.append(f"         修法：{f.get('fix')}")
+    return out
+
+
+def cmd_topology(args: argparse.Namespace) -> None:
+    """打印某分支的服务关系树 + 拓扑体检（数据与运行画布同源：GET /api/branches/:id/service-graph）。"""
+    branch_id = getattr(args, "id", None) or _resolve_branch_id_for_cwd()
+    body = _call("GET", f"/api/branches/{urllib.parse.quote(branch_id, safe='')}/service-graph", timeout=20)
+    if not isinstance(body, dict):
+        die("service-graph 返回非 JSON 响应", code=3, extra={"response": body})
+        return
+    tree = "\n".join(_topology_tree_lines(body))
+    if _HUMAN:
+        print(tree)
+        sys.exit(0)
+    ok({"branchId": body.get("branchId"), "graph": body.get("graph"), "lint": body.get("lint"), "tree": tree})
+
+
 def cmd_verify(args: argparse.Namespace) -> None:
     """校验 cds-compose 文件:三级严重度(ERROR / WARNING / INFO)分级输出 + 评分 + 自愈。
 
@@ -7406,6 +7842,15 @@ def cmd_verify(args: argparse.Namespace) -> None:
     compose_path, doc = found
 
     issues = _verify_run_all(doc, root)
+    # 拓扑体检（前缀冲突 / 探活前缀 / 子域抢根路径 / 游离服务）：规则只在 CDS 后端写一份，
+    # 这里把 compose 原文交给 POST /api/compose/lint，发现合并进同一份 issues 参与门禁。
+    if not getattr(args, "no_server_lint", False):
+        try:
+            with open(compose_path, "r", encoding="utf-8") as f:
+                compose_text = f.read()
+        except OSError:
+            compose_text = ""
+        issues += _verify_server_lint(compose_text)
     summary = {
         "errors":   sum(1 for i in issues if i["severity"] == "ERROR"),
         "warnings": sum(1 for i in issues if i["severity"] == "WARNING"),
@@ -8995,17 +9440,39 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="输出自愈修补(diff + 建议),默认不落盘")
     vf.add_argument("--write", action="store_true",
                     help="配合 --fix:把可自动修复的改动写回文件(先备份 .bak)")
+    vf.add_argument("--no-server-lint", action="store_true",
+                    help="跳过 CDS 后端的拓扑体检（默认走 POST /api/compose/lint；未连接 CDS 时自动跳过并注明）")
     vf.set_defaults(func=cmd_verify)
+
+    tp = sub.add_parser("topology", help="打印分支的服务关系树与拓扑体检（与运行画布同源，零参数时解析当前 git 分支）")
+    tp.add_argument("id", nargs="?", help="CDS 分支 id（缺省用当前 git 分支解析）")
+    tp.set_defaults(func=cmd_topology)
 
     sm = sub.add_parser("smoke", help="分层冒烟（L1+L2+L3）")
     sm.add_argument("id", help="branchId")
     sm.set_defaults(func=cmd_smoke)
+
+    ident = sub.add_parser("identity", help="身份层：用户级凭证 / 我是谁 / 凭据自愈").add_subparsers(dest="sub", required=True)
+    isave = ident.add_parser("save", help="保存用户级凭证到用户目录（跟着人走，不跟着仓库走）")
+    # 明文**不走命令行参数**：argv 对同机任何进程可见，还会留在 shell 历史里。
+    # 默认从 stdin 读（管道）或交互式隐藏输入；--credential 保留只为兼容既有脚本，
+    # 用到时会明确警告一次。
+    isave.add_argument("--credential", default="", help="（不推荐）直接给明文；会进 argv 与 shell 历史，改用 stdin 或交互输入")
+    isave.add_argument("--host", default="", help="CDS 主机（默认读 CDS_HOST）")
+    isave.set_defaults(func=cmd_identity_save)
+    iwho = ident.add_parser("whoami", help="我是谁 / 我对哪些项目有授权")
+    iwho.set_defaults(func=cmd_identity_whoami)
+    iheal = ident.add_parser("heal", help="凭据丢了就自己补回来（挪目录 / 换机器 / 新 clone 后用）")
+    iheal.add_argument("--project", default="", help="项目 id（默认按 git 仓库反查）")
+    iheal.set_defaults(func=cmd_identity_heal)
 
     pu = sub.add_parser(
         "preview-url",
         help="打印当前分支在 CDS 实际发布的全部预览 URL"
              "（零参数，只读 /api/branches 的 previewUrl/previewUrls）",
     )
+    pu.add_argument("--changed-since", default="",
+                    help="按「相对该 ref 的改动」收窄到被波及的项目（如 origin/main）；不给则列出全部可见项目的入口")
     pu.set_defaults(func=cmd_preview_url)
 
     bid = sub.add_parser(
@@ -9037,6 +9504,127 @@ def _build_parser() -> argparse.ArgumentParser:
     sy.set_defaults(func=cmd_sync_from_cds)
 
     return p
+
+
+def _read_secret_stdin_or_prompt(prompt: str) -> str:
+    """读一段不该出现在 argv 里的秘密。
+
+    管道进来（`echo ... | cdscli identity save`）就读 stdin；交互式终端就用
+    getpass 隐藏回显。两条路都不经过命令行参数，也就不进 shell 历史、不被
+    同机的 `ps` 看见。
+    """
+    if not sys.stdin.isatty():
+        return sys.stdin.readline().strip()
+    try:
+        import getpass
+        return getpass.getpass(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
+
+
+def cmd_identity_save(args: argparse.Namespace) -> None:
+    """把一张用户级凭证存进用户目录（跟着人走，不跟着仓库走）。"""
+    host = str(getattr(args, "host", "") or os.environ.get("CDS_HOST", "")).strip()
+    if not host:
+        die("--host 必填（或先 export CDS_HOST）", code=1)
+        return
+    credential = str(getattr(args, "credential", "") or "").strip()
+    if credential:
+        # 兼容既有脚本，但要说清代价：这条路径已经把明文写进 argv 和 shell 历史了。
+        print("[warn] --credential 会把明文留在 argv 与 shell 历史里；"
+              "改用 `... | cdscli identity save` 或不带参数交互输入。", file=sys.stderr)
+    else:
+        credential = _read_secret_stdin_or_prompt("粘贴用户级凭证（cdsu_，输入不回显）：")
+    if not credential.startswith("cdsu_"):
+        die("用户级凭证应以 cdsu_ 开头；在 CDS 系统设置「权限总览」里签发", code=1)
+        return
+    path = save_user_credential(host, credential)
+    ok({"host": host, "path": path}, note=f"用户级凭证已保存到 {path}（0600，不进仓库）")
+
+
+def cmd_identity_whoami(args: argparse.Namespace) -> None:
+    """我是谁 / 我对哪些项目有授权。"""
+    host = os.environ.get("CDS_HOST", "").strip() or _default_user_credential_host()
+    cred = _load_user_credential(host)
+    if not cred:
+        die("本机没有该 CDS 主机的用户级凭证。先在「权限总览」签发，再 "
+            "`cdscli identity save`（粘贴时不回显）", code=1)
+        return
+    status, resp, _ = _request("GET", "/api/identity/whoami", timeout=15,
+                               extra_headers={"x-ai-access-key": cred},
+                               fatal_network_errors=False)
+    if status != 200 or not isinstance(resp, dict):
+        die(f"读取身份失败: HTTP {status}", code=2, extra={"response": resp})
+        return
+    if _HUMAN:
+        principal = resp.get("principal") or {}
+        print(f"主体：{principal.get('name')}（{principal.get('id')}，{principal.get('status')}）")
+        grants = resp.get("grants") or []
+        if not grants:
+            print("项目授权：无 —— 只能建新项目；操作别人建的项目要先批准一次")
+        for g in grants:
+            print(f"  - {g.get('projectName') or g.get('projectId')}"
+                  f"（{'创建' if g.get('origin') == 'created' else '批准'}）")
+    else:
+        ok(resp, note="身份与授权")
+
+
+def cmd_identity_heal(args: argparse.Namespace) -> None:
+    """凭据丢了就自己补回来。
+
+    这条命令存在的理由：项目级凭据存在仓库根，挪个目录 / 换台机器 / 重新 clone
+    它就不在了，而报出来是一句「未授权」。密钥其实没失效，是文件没跟着走。
+    有用户级凭证 + 该项目的授权，就当场补一张写回仓库根，全程零人工。
+    """
+    host = os.environ.get("CDS_HOST", "").strip()
+    if not host:
+        die("CDS_HOST 未设置", code=1)
+        return
+    cred = _load_user_credential(host)
+    if not cred:
+        die("本机没有该 CDS 主机的用户级凭证，无法自愈。先在「权限总览」签发一张，"
+            "再 `cdscli identity save`（粘贴时不回显）", code=1)
+        return
+
+    project_id = str(getattr(args, "project", "") or os.environ.get("CDS_PROJECT_ID", "")).strip()
+    if not project_id:
+        # 不知道项目 id 时按仓库反查：用户级凭证可以列出它看得见的项目。
+        try:
+            repo_root = subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"], text=True,
+                stderr=subprocess.DEVNULL).strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            repo_root = ""
+        repo = _git_repo_full_name(repo_root) if repo_root else ""
+        if not repo:
+            die("既没有 --project 也解析不出 git 仓库，无法确定要补哪个项目的凭据", code=1)
+            return
+        status, resp, _ = _request("GET", "/api/projects", timeout=20,
+                                   extra_headers={"x-ai-access-key": cred},
+                                   fatal_network_errors=False)
+        projects = (resp or {}).get("projects") if isinstance(resp, dict) else None
+        candidates = [
+            p for p in (projects or [])
+            if isinstance(p, dict) and str(p.get("githubRepoFullName") or "").lower() == repo.lower()
+        ]
+        if len(candidates) != 1:
+            die(f"仓库 {repo} 对应 {len(candidates)} 个可见项目，请用 --project 指定要补哪一个",
+                code=2, extra={"candidates": [p.get("id") for p in candidates]})
+            return
+        project_id = str(candidates[0].get("id"))
+
+    result = try_self_heal_project_credential(host, project_id)
+    if result is None:
+        die("自愈失败：用户级凭证不可用（已吊销 / 已过期 / 主体被停用），"
+            "或该项目不存在。先跑 `cdscli identity whoami` 看看这张凭证还认不认。",
+            code=3, extra={"projectId": project_id})
+        return
+    if not result.get("healed"):
+        die(f"该主体对项目 {project_id} 没有授权。{result.get('nextStep') or ''}",
+            code=4, extra=result)
+        return
+    ok(result, note=f"已为项目 {project_id} 补发项目级凭据并写回仓库根"
+                    f"（授权来源：{'创建' if result.get('grantOrigin') == 'created' else '批准'}）")
 
 
 def main(argv: list[str] | None = None) -> None:

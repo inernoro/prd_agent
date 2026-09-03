@@ -8,6 +8,7 @@ import {
 } from '@/components/AgentAccessMap';
 import { AgentStarterTab } from '@/components/AgentStarterTab';
 import { Button } from '@/components/ui/button';
+import { AGENT_ROLE_PROFILES } from '@/lib/agent-starter';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   buildCdsAgentPrompt,
@@ -227,9 +228,20 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
         </nav>
 
         <div className="min-h-[260px]">
-          {active === 'starter'
-            ? <AgentStarterTab cdsPrompt={prompt} projectId={targetKind === 'existing' ? effectiveProjectId : ''} />
-            : null}
+          {/*
+           * 上手助手切走时只藏不卸：卸载会把用户在向导里选的技能、交付方式连同
+           * 所在步骤一起丢掉，回来直接退回步骤 01。而「去技能市场」这个入口正好
+           * 开在完成页——那一屏的状态最贵，用户可能还没把结果抄走。
+           * starter 本来就是默认 tab、进弹窗即挂载，藏起来不额外产生开销。
+           */}
+          <div className={active === 'starter' ? undefined : 'hidden'}>
+            <AgentStarterTab
+              active={active === 'starter'}
+              cdsPrompt={prompt}
+              projectId={targetKind === 'existing' ? effectiveProjectId : ''}
+              onOpenMarketplace={() => setActive('marketplace')}
+            />
+          </div>
           {active === 'init' ? <ProjectInitTab /> : null}
           {active === 'connect' ? <ConnectTab prompt={prompt} /> : null}
           {active === 'manual' ? <ManualTab /> : null}
@@ -264,7 +276,7 @@ function ConnectTab({ prompt }: { prompt: string }): JSX.Element {
           {prompt}
         </pre>
         <Button size="sm" variant={copied ? 'default' : 'outline'} className="absolute right-2 top-2" onClick={() => void copy()}>
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? <Check /> : <Copy />}
           {copied ? '已复制' : '复制接入口令'}
         </Button>
       </div>
@@ -278,7 +290,7 @@ function ManualTab(): JSX.Element {
       <p>技能包采用通用的 SKILL.md 结构。下载后把 skills/ 下的五个目录复制到当前项目对应的技能目录。</p>
       <Button asChild>
         <a href="/api/export-skill" download>
-          <Download className="h-4 w-4" />
+          <Download />
           下载技能包
         </a>
       </Button>
@@ -310,9 +322,9 @@ function MarketplaceTab(): JSX.Element {
     let alive = true;
     fetch('/api/skills/bundles')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((data: { data?: { items?: BundleView[] } }) => {
+      .then((payload: unknown) => {
         if (!alive) return;
-        setBundles(data?.data?.items || []);
+        setBundles(normalizeBundleViews(payload));
         setState('ready');
       })
       .catch(() => { if (alive) setState('error'); });
@@ -329,7 +341,7 @@ function MarketplaceTab(): JSX.Element {
         {MARKETPLACE_URL ? (
           <Button asChild variant="outline">
             <a href={MARKETPLACE_URL} target="_blank" rel="noreferrer">
-              <ExternalLink className="h-4 w-4" />
+              <ExternalLink />
               在浏览器打开来源站点
             </a>
           </Button>
@@ -376,6 +388,43 @@ interface BundleView {
   skills: BundleSkillView[];
 }
 
+/**
+ * 把 `/api/skills/bundles` 的响应读成界面要的形状。
+ *
+ * 两处调用方原先各写一份 `data?.data?.items`，而这个端点从来返回的是
+ * `{ bundles: [{ key, label, skills: [{ key, name, description }] }] }`——
+ * 于是两处都恒定拿到空数组：技能市场 tab 渲染出一片空白、项目初始化里的
+ * 「这套装里有什么」永远列不出来，全程无报错。收成一个函数，别再有第二份。
+ */
+export function normalizeBundleViews(payload: unknown): BundleView[] {
+  const value = payload as any;
+  const bundles = value?.data?.bundles ?? value?.bundles;
+  if (!Array.isArray(bundles)) return [];
+  const roleLabel = (id: unknown): string =>
+    AGENT_ROLE_PROFILES.find((profile) => profile.id === id)?.label ?? String(id ?? '');
+  return bundles.flatMap((bundle: any) => {
+    const key = typeof bundle?.key === 'string' ? bundle.key : '';
+    if (!key) return [];
+    const rawSkills = Array.isArray(bundle?.skills) ? bundle.skills : [];
+    const skills: BundleSkillView[] = rawSkills.flatMap((skill: any) => {
+      const skillKey = typeof skill === 'string' ? skill : skill?.key;
+      if (typeof skillKey !== 'string' || !skillKey) return [];
+      return [{
+        key: skillKey,
+        title: typeof skill?.name === 'string' ? skill.name : skillKey,
+        description: typeof skill?.description === 'string' ? skill.description : '',
+      }];
+    });
+    return [{
+      key,
+      title: typeof bundle?.label === 'string' ? bundle.label : key,
+      roleLabels: (Array.isArray(bundle?.roles) ? bundle.roles : []).map(roleLabel).filter(Boolean),
+      skillCount: skills.length,
+      skills,
+    }];
+  });
+}
+
 interface BootstrapPresetView {
   key: string;
   label: string;
@@ -416,8 +465,8 @@ function ProjectInitTab(): JSX.Element {
       .catch(() => { if (alive) setLoadError('预设清单暂时读不到，请稍后重试。'); });
     fetch('/api/skills/bundles')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((data: { data?: { items?: BundleView[] } }) => {
-        if (alive) setBundles(data?.data?.items || []);
+      .then((payload: unknown) => {
+        if (alive) setBundles(normalizeBundleViews(payload));
       })
       // 技能清单拉不到不阻塞安装：命令照给，只是列不出明细
       .catch(() => { if (alive) setBundles([]); });
@@ -500,7 +549,7 @@ function ProjectInitTab(): JSX.Element {
                 className="absolute right-2 top-2"
                 onClick={() => void copy(twoStep, 'two')}
               >
-                {copied === 'two' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copied === 'two' ? <Check /> : <Copy />}
               </Button>
             </div>
             <button
@@ -519,7 +568,7 @@ function ProjectInitTab(): JSX.Element {
                   className="absolute right-2 top-2"
                   onClick={() => void copy(oneLine, 'one')}
                 >
-                  {copied === 'one' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  {copied === 'one' ? <Check /> : <Copy />}
                 </Button>
               </div>
             ) : null}
@@ -535,7 +584,7 @@ function ProjectInitTab(): JSX.Element {
                 className="absolute right-2 top-2"
                 onClick={() => void copy(active.nextStep, 'next')}
               >
-                {copied === 'next' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copied === 'next' ? <Check /> : <Copy />}
               </Button>
             </div>
           </div>

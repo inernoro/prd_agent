@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, Principal, UserCredential, ProjectGrant, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -38,11 +38,39 @@ import {
   selectReleasePreflightsToPrune,
   selectReleaseRunsToPrune,
 } from './release-retention.js';
+import { credentialUsability, hasActiveGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
+/* 定时任务运行记录：按任务各留 120 条（每 5 分钟的任务约 10 小时，日任务约 4 个月），
+   全局 5000 条兜底防状态文件无限膨胀。 */
+const SCHEDULED_JOB_RUNS_PER_JOB = 120;
+const SCHEDULED_JOB_RUNS_GLOBAL_CAP = 5000;
+/**
+ * 单条运行记录里日志的字节上限。运行史整段嵌在 global 文档里，而日志长度是无界的
+ * ——一次拉了一屏输出的命令动作就能顶掉几十条运行史的位置。
+ */
+const SCHEDULED_JOB_RUN_LOG_MAX_BYTES = 8 * 1024;
+/**
+ * 运行史这一段允许占的字节上限。条数上限管不住体积：5000 条 × 无界日志能把 global
+ * 文档顶过 Mongo 的 16MiB 上限，而 global 文档写不进去时**整份控制面状态都停止落库**
+ * ——不只是运行史丢，分支/项目的后续变更也丢（Codex #1471 P1）。
+ * 条数与字节两道闸都要有：条数保证低频任务的历史不被高频任务挤掉，字节保证再离谱的
+ * 日志也顶不破文档。
+ */
+const SCHEDULED_JOB_RUNS_MAX_BYTES = 4 * 1024 * 1024;
+
+/** 按 UTF-8 字节截断，保留尾部（失败原因通常在末尾）。 */
+function truncateLogTail(value: string | undefined, maxBytes: number): string | undefined {
+  if (!value) return value;
+  const buf = Buffer.from(value, 'utf8');
+  if (buf.length <= maxBytes) return value;
+  const marker = '…（日志已截断，只保留末尾）\n';
+  const keep = buf.subarray(buf.length - maxBytes).toString('utf8');
+  return marker + keep.slice(keep.indexOf('\n') + 1);
+}
 const MAX_DEPLOYMENT_VERSIONS_PER_PROJECT = 100;
 /** 容器日志黑匣子 per-branch 上限：条数与字节双闸，防止 state 无界膨胀
  *（JSON 模式每次 save 全量 stringify、mongo-split 每 tick structuredClone 都要背这份数据）。 */
@@ -900,14 +928,110 @@ export class StateService {
       .slice(0, limit);
   }
 
-  upsertScheduledJobRun(run: ScheduledJobRun): ScheduledJobRun {
+  upsertScheduledJobRun(input: ScheduledJobRun): ScheduledJobRun {
+    // 日志先截断再入库：它是这条记录里唯一无界的字段。
+    const run: ScheduledJobRun = input.log
+      ? { ...input, log: truncateLogTail(input.log, SCHEDULED_JOB_RUN_LOG_MAX_BYTES) }
+      : input;
     if (!this.state.scheduledJobRuns) this.state.scheduledJobRuns = [];
     const idx = this.state.scheduledJobRuns.findIndex((item) => item.id === run.id);
     if (idx >= 0) this.state.scheduledJobRuns[idx] = run;
     else this.state.scheduledJobRuns.push(run);
-    this.state.scheduledJobRuns = this.state.scheduledJobRuns
-      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
-      .slice(0, 1000);
+    // 保留策略按「每个任务各留 N 条」，不是全局一刀切。
+    // 全局环形缓冲下，一个每 5 分钟的任务一天写 288 条，几天就能把日任务的
+    // 历史整段挤掉——「最近 20 次成功率」会静默缩水成「最近 3 次」，
+    // 24 小时轴的左半边也只剩最近一两个小时。
+    //
+    // 全局上限仍然要有（防无限增长），但它**不能按全局新旧一刀切**：那样一排序，
+    // 低频任务的记录天然全部靠后，任务数一多就被整段砍掉，恰好把上面这段防的
+    // 事情又做了一遍（Codex #1471 P2：约 42 个任务各 120 条就撑满 5000）。
+    // 改成按任务均分——先算出「每个任务最多留 k 条」里最大的那个 k，使总量不超上限，
+    // 记录数不足 k 的任务一条不丢。高频任务先让位，低频任务的历史被完整保住。
+    const byJob = new Map<string, ScheduledJobRun[]>();
+    for (const item of [...this.state.scheduledJobRuns]
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))) {
+      const list = byJob.get(item.jobId);
+      if (list) list.push(item);
+      else byJob.set(item.jobId, [item]);
+    }
+    // 现存任务与已删除任务**永远**分开算配额，不是只在任务数超上限时才分
+    // （Codex #1471 P2 第四轮）：4950 个「建完就删、各留一条」的任务加一个活任务，
+    // 组数 4951 没到上限、走不进整组淘汰那一档，可它们照样占着容量——均分的 k 被压到
+    // 50，活任务 120 条被砍成 50，而每一条已删除任务的留档一条不少。留档挤掉在跑的
+    // 任务，方向正好反了。
+    //
+    // 所以顺序固定为：现存任务先按每任务上限拿配额（装不下才在它们之间均分），
+    // 剩下的容量才轮到已删除任务的留档；连一条都排不下就整组丢弃——留档看不看得到
+    // 都不影响值班。两个桶内部都保持「最后活跃时刻靠前」的顺序（byJob 的插入顺序
+    // 已经是按 queuedAt 降序建的）。
+    const liveIds = new Set((this.state.scheduledJobs || []).map((job) => job.id));
+    const live: ScheduledJobRun[][] = [];
+    const orphan: ScheduledJobRun[][] = [];
+    for (const list of byJob.values()) (liveIds.has(list[0].jobId) ? live : orphan).push(list);
+
+    /**
+     * 「每个任务最多留 k 条」里最大的可行 k，使总量不超 cap；记录数不足 k 的任务
+     * 一条不丢。返回 0 表示连「每组一条」都放不下，调用方要整组淘汰。
+     */
+    const quotaWithin = (lists: ScheduledJobRun[][], cap: number): number => {
+      if (lists.length === 0) return SCHEDULED_JOB_RUNS_PER_JOB;
+      if (lists.length > cap) return 0;
+      const counts = lists.map((list) => Math.min(list.length, SCHEDULED_JOB_RUNS_PER_JOB));
+      const total = (k: number): number => counts.reduce((sum, n) => sum + Math.min(n, k), 0);
+      if (total(SCHEDULED_JOB_RUNS_PER_JOB) <= cap) return SCHEDULED_JOB_RUNS_PER_JOB;
+      let lo = 1;
+      let hi = SCHEDULED_JOB_RUNS_PER_JOB;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (total(mid) <= cap) lo = mid;
+        else hi = mid - 1;
+      }
+      return lo;
+    };
+
+    const keptLive: ScheduledJobRun[][] = [];
+    const keptOrphan: ScheduledJobRun[][] = [];
+    const liveQuota = quotaWithin(live, SCHEDULED_JOB_RUNS_GLOBAL_CAP);
+    if (liveQuota === 0) {
+      // 现存任务数本身超过上限：每组一条都放不下，只能按「最后活跃时刻」整组淘汰。
+      for (const list of live.slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP)) keptLive.push(list.slice(0, 1));
+    } else {
+      for (const list of live) keptLive.push(list.slice(0, liveQuota));
+    }
+    const remaining = SCHEDULED_JOB_RUNS_GLOBAL_CAP - keptLive.reduce((sum, list) => sum + list.length, 0);
+    if (remaining > 0 && orphan.length > 0) {
+      const orphanQuota = quotaWithin(orphan, remaining);
+      if (orphanQuota === 0) {
+        for (const list of orphan.slice(0, remaining)) keptOrphan.push(list.slice(0, 1));
+      } else {
+        for (const list of orphan) keptOrphan.push(list.slice(0, orphanQuota));
+      }
+    }
+
+    // 第二道闸：条数达标了体积也得达标。分配方式必须**和第一道闸同一个口径**——
+    // 按全局新旧砍会把每任务保留整个抵消掉：几个日志接近上限的高频任务就能吃光预算，
+    // 一个低频活任务的历史被整段清零，健康度和细带全空（Codex #1471 P2 第二十轮）。
+    // 改成「每个任务轮流拿一条」：先现存任务转圈，再已删除任务转圈，预算耗尽即止。
+    // 低频任务的那几条在第一圈就拿到手，高频任务的第 120 条才最先被牺牲。
+    const bounded: ScheduledJobRun[] = [];
+    let bytes = 2; // []
+    const fill = (columns: ScheduledJobRun[][]): boolean => {
+      const depthMax = columns.reduce((max, col) => Math.max(max, col.length), 0);
+      for (let depth = 0; depth < depthMax; depth += 1) {
+        for (const col of columns) {
+          if (depth >= col.length) continue;
+          const item = col[depth];
+          const size = Buffer.byteLength(JSON.stringify(item), 'utf8') + 1;
+          if (bytes + size > SCHEDULED_JOB_RUNS_MAX_BYTES) return false;
+          bounded.push(item);
+          bytes += size;
+        }
+      }
+      return true;
+    };
+    if (fill(keptLive)) fill(keptOrphan);
+    this.state.scheduledJobRuns = bounded
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
     this.save(HINT_GLOBAL);
     return run;
   }
@@ -1753,13 +1877,14 @@ export class StateService {
     buildProfiles: string[];
     infraServices: string[];
     routingRules: string[];
+    projectGrants: string[];
   } {
     if (!this.state.projects) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [] };
     }
     const project = this.state.projects.find((p) => p.id === id);
     if (!project) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [] };
     }
     if (project.legacyFlag) {
       throw new Error('Cannot remove the legacy default project');
@@ -1781,6 +1906,12 @@ export class StateService {
     const routingRulesToRemove = (this.state.routingRules || [])
       .filter((r) => r.projectId === id)
       .map((r) => r.id);
+    // 项目没了，指向它的授权也就不再授予任何东西 —— 但**吊销而不是删除**：
+    // 权限总览只列未吊销的授权（所以界面上立刻消失），审计行按吊销留存期保留。
+    // 少了这一步，删项目会在总览里留下一枚指向空气、连名字都显示不出来的授权。
+    const projectGrantsToRevoke = (this.state.projectGrants || [])
+      .filter((g) => g.projectId === id && !g.revokedAt)
+      .map((g) => g.id);
 
     // ── Cascade mutate ──
     for (const bid of branchesToRemove) {
@@ -1804,6 +1935,12 @@ export class StateService {
     // leave behind a dangling bucket that would revive on re-create with
     // the same id. _global is never removed.
     this.dropCustomEnvScope(id);
+    for (const grant of this.state.projectGrants || []) {
+      if (grant.projectId === id && !grant.revokedAt) {
+        grant.revokedAt = new Date().toISOString();
+        grant.revokedBy = 'system:project-deleted';
+      }
+    }
 
     this.state.projects = this.state.projects.filter((p) => p.id !== id);
     this.save();
@@ -1813,6 +1950,7 @@ export class StateService {
       buildProfiles: buildProfilesToRemove,
       infraServices: infraServicesToRemove,
       routingRules: routingRulesToRemove,
+      projectGrants: projectGrantsToRevoke,
     };
   }
 
@@ -1928,11 +2066,34 @@ export class StateService {
    * projects shouldn't happen in practice (the link endpoint refuses that),
    * but this picks the first match defensively.
    */
-  findProjectByRepoFullName(repoFullName: string): Project | undefined {
-    const needle = repoFullName.toLowerCase();
-    return (this.state.projects || []).find(
+  /**
+   * 同一个仓库下的**全部**项目。
+   *
+   * 一个 git 仓库可以同时喂多个 CDS 项目（本仓库就是：主项目与自托管项目共用
+   * 同一个 repo）。这才是「按仓库名找项目」的真实语义；只取第一个是历史遗留，
+   * 它让第二个及以后的项目永远收不到 webhook 事件。
+   *
+   * 顺序沿用 projects 数组顺序，因此第一个元素与旧的
+   * {@link findProjectByRepoFullName} 逐字节一致。
+   */
+  findProjectsByRepoFullName(repoFullName: string): Project[] {
+    const needle = String(repoFullName || '').toLowerCase();
+    if (!needle) return [];
+    return (this.state.projects || []).filter(
       (p) => p.githubRepoFullName?.toLowerCase() === needle,
     );
+  }
+
+  /**
+   * 单个项目版本。**只在语义确实是「任取一个」时用**（例如仅需要项目的
+   * installation id 这类同仓库共享的信息）；凡是「这个仓库的每个项目都该
+   * 收到」的场景，一律改用 {@link findProjectsByRepoFullName}。
+   *
+   * 内部委托给复数版，保证两者的匹配口径永远是同一份
+   * （predicate-and-wiring-discipline 形状 3：同一个判断不许有两份实现）。
+   */
+  findProjectByRepoFullName(repoFullName: string): Project | undefined {
+    return this.findProjectsByRepoFullName(repoFullName)[0];
   }
 
   /**
@@ -2491,6 +2652,147 @@ export class StateService {
     return true;
   }
 
+  // ── 身份层：主体 / 用户级凭证 / 项目授权（2026-09-01）──
+  //
+  // 三张表都是**纯增量**：缺省为空数组，任何存量安装的行为不变。它们回答的是
+  // 此前系统答不上来的一个问题——「这把钥匙是谁的」。没有它，钥匙就是身份，
+  // 于是丢钥匙等于丢身份、换钥匙等于作废已批的授权、吊销列表看不出归属。
+
+  getPrincipals(): Principal[] {
+    return this.state.principals || [];
+  }
+
+  getPrincipal(id: string): Principal | undefined {
+    return (this.state.principals || []).find((p) => p.id === id);
+  }
+
+  addPrincipal(entry: Principal): void {
+    if (!this.state.principals) this.state.principals = [];
+    this.state.principals.push(entry);
+    this.save();
+  }
+
+  /** 停用一个主体：它名下所有凭证立刻不可用，但记录保留（审计）。 */
+  setPrincipalStatus(id: string, status: Principal['status'], actor?: string): boolean {
+    const entry = (this.state.principals || []).find((p) => p.id === id);
+    if (!entry) return false;
+    entry.status = status;
+    if (status === 'disabled') {
+      entry.disabledAt = new Date().toISOString();
+      if (actor) entry.disabledBy = actor;
+    } else {
+      delete entry.disabledAt;
+      delete entry.disabledBy;
+    }
+    this.save();
+    return true;
+  }
+
+  touchPrincipalSeen(id: string): void {
+    const entry = (this.state.principals || []).find((p) => p.id === id);
+    if (!entry) return;
+    entry.lastSeenAt = new Date().toISOString();
+    try { this.save(); } catch { /* best-effort */ }
+  }
+
+  getUserCredentials(): UserCredential[] {
+    return this.state.userCredentials || [];
+  }
+
+  addUserCredential(entry: UserCredential): void {
+    if (!this.state.userCredentials) this.state.userCredentials = [];
+    this.state.userCredentials.push(entry);
+    this.save();
+  }
+
+  /**
+   * 解析明文 `cdsu_<suffix>` 找到未吊销的用户级凭证。
+   *
+   * 与项目级同一套做法：只存 sha256、定长比较。**过期判定不在这里做** ——
+   * 这里只回答「是哪一张」，能不能用由 identity.credentialUsability 统一判，
+   * 免得两处各写一份过期逻辑然后漂移。
+   */
+  findUserCredentialByPlaintext(plaintextKey: string): UserCredential | undefined {
+    if (!plaintextKey || !plaintextKey.startsWith('cdsu_')) return undefined;
+    const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
+    const hashBuf = Buffer.from(hash, 'hex');
+    for (const entry of this.state.userCredentials || []) {
+      if (entry.revokedAt) continue;
+      try {
+        const entryBuf = Buffer.from(entry.hash, 'hex');
+        if (entryBuf.length !== hashBuf.length) continue;
+        if (crypto.timingSafeEqual(entryBuf, hashBuf)) return entry;
+      } catch { /* malformed hash in state, skip */ }
+    }
+    return undefined;
+  }
+
+  /** 记一次使用；`newExpiresAt` 有值时同时滑动续期（用一次自动续）。 */
+  touchUserCredential(id: string, newExpiresAt?: string): void {
+    const entry = (this.state.userCredentials || []).find((c) => c.id === id);
+    if (!entry) return;
+    entry.lastUsedAt = new Date().toISOString();
+    if (newExpiresAt) entry.expiresAt = newExpiresAt;
+    try { this.save(); } catch { /* best-effort */ }
+  }
+
+  /** 记一次签发（签发留痕：留痕是这套设计唯一的安全收益，看不见就等于没留）。 */
+  recordUserCredentialIssue(id: string): void {
+    const entry = (this.state.userCredentials || []).find((c) => c.id === id);
+    if (!entry) return;
+    entry.issuedCount = (entry.issuedCount || 0) + 1;
+    entry.lastIssuedAt = new Date().toISOString();
+    try { this.save(); } catch { /* best-effort */ }
+  }
+
+  revokeUserCredential(id: string, actor?: string): boolean {
+    const entry = (this.state.userCredentials || []).find((c) => c.id === id);
+    if (!entry) return false;
+    if (!entry.revokedAt) {
+      entry.revokedAt = new Date().toISOString();
+      if (actor) entry.revokedBy = actor;
+      this.save();
+    }
+    return true;
+  }
+
+  getProjectGrants(): ProjectGrant[] {
+    return this.state.projectGrants || [];
+  }
+
+  addProjectGrant(entry: ProjectGrant): void {
+    if (!this.state.projectGrants) this.state.projectGrants = [];
+    // 同一 (主体, 项目) 已有未撤销授权时不重复写 —— 授权是集合语义，不是流水。
+    const existing = this.state.projectGrants.find(
+      (g) => g.principalId === entry.principalId && g.projectId === entry.projectId && !g.revokedAt,
+    );
+    if (existing) return;
+    this.state.projectGrants.push(entry);
+    this.save();
+  }
+
+  revokeProjectGrant(id: string, actor?: string): boolean {
+    const entry = (this.state.projectGrants || []).find((g) => g.id === id);
+    if (!entry) return false;
+    if (!entry.revokedAt) {
+      entry.revokedAt = new Date().toISOString();
+      if (actor) entry.revokedBy = actor;
+      this.save();
+    }
+    return true;
+  }
+
+  /** 全部项目级凭证（带上所属项目），供权限总览按主体聚合。 */
+  getAllAgentKeysWithProject(): Array<AgentKey & { projectId: string; projectName: string }> {
+    const out: Array<AgentKey & { projectId: string; projectName: string }> = [];
+    for (const project of this.state.projects || []) {
+      for (const key of project.agentKeys || []) {
+        out.push({ ...key, projectId: project.id, projectName: project.aliasName || project.name });
+      }
+    }
+    return out;
+  }
+
   // ── Project-scoped Agent Keys ──
   //
   // Each AgentKey stores only the sha256 of the plaintext key; the key
@@ -2557,6 +2859,20 @@ export class StateService {
       if (projectSlugHead !== slugHead) continue;
       for (const entry of project.agentKeys || []) {
         if (entry.revokedAt) continue;
+        // 身份层（2026-09-01）：新签发的项目级凭证是短命的（用即续）。存量密钥
+        // 没有 expiresAt，这里恒为 false —— 与启用前逐字节一致，零回归。
+        if (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()) continue;
+        // 归属主体的凭据，撤销要**当场**生效：界面上写着「停用后它名下所有凭证
+        // 立刻不可用」，撤销授权同理。只按密钥自己的 revokedAt 判，等于让这两条
+        // 承诺落空最长 30 天。判据不在这里另写一份，直接借身份层那一份。
+        //
+        // 只对带 principalId 的密钥生效 —— 存量密钥没有主体、没有授权行，
+        // 这段整个跳过，与启用前逐字节一致。
+        if (entry.principalId) {
+          const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
+          if (!credentialUsability(entry, principal, Date.now(), true).usable) continue;
+          if (!hasActiveGrant(this.state.projectGrants || [], entry.principalId, project.id)) continue;
+        }
         try {
           const entryBuf = Buffer.from(entry.hash, 'hex');
           if (entryBuf.length !== hashBuf.length) continue;
@@ -2577,6 +2893,14 @@ export class StateService {
     const entry = project?.agentKeys?.find((k) => k.id === keyId);
     if (!entry) return;
     entry.lastUsedAt = new Date().toISOString();
+    // 「用即续」必须在这里兑现：只更新 lastUsedAt 而不推 expiresAt，一直在干活的
+    // Agent 也会在第 30 天被锁在门外，而文档与界面都写着用一次就续期。
+    // 存量密钥没有 expiresAt —— 不给它凭空造一个，否则等于给永不过期的密钥
+    // 强加一个到期日。slideExpiry 少于一天不返回新值，不会把 state 写爆。
+    if (entry.expiresAt) {
+      const next = slideExpiry(entry.expiresAt, PROJECT_CREDENTIAL_TTL_DAYS);
+      if (next) entry.expiresAt = next;
+    }
     // Save is best-effort — a failed save here shouldn't block the request.
     try { this.save(); } catch { /* ignore */ }
   }

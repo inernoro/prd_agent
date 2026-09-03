@@ -38,7 +38,7 @@ describe('ContainerService.getServiceStats — docker stats parsing', () => {
     const shell = new MockShellExecutor();
     // docker stats output: name\tcpu%\tmem-used / mem-limit\tmem%\tnet-rx / net-tx\tblock-r / block-w\tpids
     shell.addResponsePattern(/docker stats/, () => ({
-      stdout: 'cds-foo-main-api\t12.34%\t128MiB / 512MiB\t25.00%\t1.5kB / 800B\t0B / 0B\t8',
+      stdout: 'cds-foo-main-api\t12.34%\t128MiB / 512MiB\t25.00%\t1.5kB / 800B\t0B / 0B\t8\ta1b2c3d4e5f6',
       stderr: '',
       exitCode: 0,
     }));
@@ -59,8 +59,8 @@ describe('ContainerService.getServiceStats — docker stats parsing', () => {
     const shell = new MockShellExecutor();
     shell.addResponsePattern(/docker stats/, () => ({
       stdout: [
-        'cds-foo-main-api\t5.0%\t100MiB / 1GiB\t9.77%\t0B / 0B\t0B / 0B\t3',
-        'cds-foo-main-db\t1.2%\t50MiB / 512MiB\t9.77%\t0B / 0B\t0B / 0B\t1',
+        'cds-foo-main-api\t5.0%\t100MiB / 1GiB\t9.77%\t0B / 0B\t0B / 0B\t3\taaaa1111',
+        'cds-foo-main-db\t1.2%\t50MiB / 512MiB\t9.77%\t0B / 0B\t0B / 0B\t1\tbbbb2222',
       ].join('\n'),
       stderr: '',
       exitCode: 0,
@@ -87,7 +87,7 @@ describe('ContainerService.getServiceStats — docker stats parsing', () => {
   it('handles GiB / kB / B units', async () => {
     const shell = new MockShellExecutor();
     shell.addResponsePattern(/docker stats/, () => ({
-      stdout: 'cds-x\t0%\t1GiB / 2GiB\t50%\t2kB / 0B\t512B / 256B\t10',
+      stdout: 'cds-x\t0%\t1GiB / 2GiB\t50%\t2kB / 0B\t512B / 256B\t10\tcccc3333',
       stderr: '',
       exitCode: 0,
     }));
@@ -99,5 +99,26 @@ describe('ContainerService.getServiceStats — docker stats parsing', () => {
     expect(stats.netRxBytes).toBe(2 * 1024);
     expect(stats.blockReadBytes).toBe(512);
     expect(stats.blockWriteBytes).toBe(256);
+    expect(stats.id).toBe('cccc3333');
+  });
+
+  /**
+   * ID 是 2026-09-02 才加到 format 末尾的（用来识别同名重建）。
+   * 解析必须宽容到 7 段：硬要求 8 段的话，任何一次拿不到 ID 都会让整批指标
+   * 静默消失——那比漏判一次重建严重得多。
+   */
+  it('缺 ID 的老格式仍能解析，只是 id 为空（降级而不是整批消失）', async () => {
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/docker stats/, () => ({
+      stdout: 'cds-legacy\t3%\t64MiB / 128MiB\t50%\t1kB / 2kB\t0B / 0B\t4',
+      stderr: '',
+      exitCode: 0,
+    }));
+    const svc = new ContainerService(shell, makeConfig());
+    const result = await svc.getServiceStats(['cds-legacy']);
+    const stats = result.get('cds-legacy');
+    expect(stats, '少一段就整批丢弃 = 指标静默消失').toBeDefined();
+    expect(stats!.cpuPercent).toBe(3);
+    expect(stats!.id).toBe('');
   });
 });

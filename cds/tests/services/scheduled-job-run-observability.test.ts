@@ -1,0 +1,444 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { StateService } from '../../src/services/state.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { ScheduledJobService } from '../../src/services/scheduled-job-service.js';
+import type { Project, ScheduledJob, ScheduledJobRun } from '../../src/types.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+
+/*
+ * 任务调度页要画「运行流里的动作链缩略」「详情里每步耗时」「24 小时轴」，
+ * 依赖三件此前不存在的东西。这三条守卫就是为它们设的 —— 把对应实现改回去，
+ * 用例必须变红（见每条用例头部注释里的红绿闭环说明）。
+ */
+describe('定时任务运行记录的可观测性', () => {
+  let tmpDir: string;
+  let stateService: StateService;
+  let shell: MockShellExecutor;
+  let service: ScheduledJobService;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-run-observability-'));
+    stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    stateService.load();
+    const project: Project = {
+      id: 'demo',
+      slug: 'demo',
+      name: 'Demo',
+      kind: 'git',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    stateService.addProject(project);
+    shell = new MockShellExecutor();
+    service = new ScheduledJobService({
+      stateService,
+      shell,
+      config: { masterPort: 9900, repoRoot: tmpDir },
+      release: {
+        isTargetBusy: () => ({ busy: false }),
+        preflight: async () => { throw new Error('本套件不应触发发布前检查'); },
+        startRelease: async () => { throw new Error('本套件不应触发发布'); },
+        startRollback: async () => { throw new Error('本套件不应触发回滚'); },
+        getRun: () => undefined,
+      },
+    });
+  });
+
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const commandJob = (id: string, commands: string[]): ScheduledJob => service.normalizeJob({
+    id,
+    projectId: 'demo',
+    name: id,
+    enabled: true,
+    schedule: { type: 'manual' },
+    actions: commands.map((command, index) => ({
+      id: `a${index + 1}`,
+      name: `第 ${index + 1} 步`,
+      type: 'command' as const,
+      command,
+    })),
+  } as unknown as ScheduledJob);
+
+  /**
+   * 保留策略的用例需要上千条历史。逐条走 upsertScheduledJobRun 会让每一次插入都
+   * 重排全量并排一次落盘 —— 两条用例合起来一万两千次调用，实测把这个文件拖到
+   * 约 60 秒（Codex #1471 P2）。历史是**夹具**不是被测行为，直接铺进 state；
+   * 被测的那一次仍然走公开方法，保留策略照常在那一次上生效。
+   */
+  const seedRuns = (rows: ScheduledJobRun[]): void => {
+    const state = stateService.getState() as { scheduledJobRuns?: ScheduledJobRun[] };
+    state.scheduledJobRuns = [...(state.scheduledJobRuns || []), ...rows];
+  };
+
+  /*
+   * 红绿闭环：把 executeActions 里写 steps 的那几行去掉（或把 run.steps 的赋值删掉），
+   * 本用例第一条 expect 就会红——run.steps 变成 undefined。
+   */
+  it('逐个动作各留一条结果，失败之后的动作记成 not-run', async () => {
+    shell.addResponsePattern(/step-ok/, () => ({ stdout: 'ok\n', stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/step-bad/, () => ({ stdout: '', stderr: 'boom\n', exitCode: 1 }));
+    shell.addResponsePattern(/step-never/, () => ({ stdout: 'never\n', stderr: '', exitCode: 0 }));
+
+    const job = commandJob('job_steps', ['echo step-ok', 'echo step-bad', 'echo step-never']);
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.steps).toBeDefined();
+    expect(run.steps).toHaveLength(3);
+    expect(run.steps!.map((s) => s.status)).toEqual(['success', 'failed', 'not-run']);
+    expect(run.steps!.map((s) => s.index)).toEqual([1, 2, 3]);
+    expect(run.steps!.map((s) => s.name)).toEqual(['第 1 步', '第 2 步', '第 3 步']);
+    expect(run.steps![0].type).toBe('command');
+    // 成功那步要有耗时，没跑的那步不该凭空有耗时。
+    expect(typeof run.steps![0].durationMs).toBe('number');
+    expect(run.steps![2].durationMs).toBeUndefined();
+    expect(run.steps![1].exitCode).toBe(1);
+    expect(run.status).toBe('failed');
+  });
+
+  /*
+   * Codex #1471 P2。http 分支只有 try/finally，DNS 解析失败或 AbortController 超时
+   * 会让 fetch **reject**，异常一路穿出 executeActions —— steps 根本没机会挂到 run 上，
+   * 「断在哪一步」在最常见的故障（网络）下正好失效。
+   * 红绿闭环：把 executeActions 里那个动作级 try/catch 去掉，本用例立刻红
+   * （run.steps 变成 undefined，或整个 runJob 直接抛出去）。
+   */
+  it('动作抛异常（网络失败 / 超时）时，逐步结果照样留下来', async () => {
+    shell.addResponsePattern(/step-ok/, () => ({ stdout: 'ok\n', stderr: '', exitCode: 0 }));
+    // 第二步走 http，直接让 fetch 抛出——等价于 DNS 解析失败或 abort 超时
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('getaddrinfo ENOTFOUND nowhere.invalid'));
+
+    const job = service.normalizeJob({
+      id: 'job_throw',
+      projectId: 'demo',
+      name: 'job_throw',
+      enabled: true,
+      schedule: { type: 'manual' },
+      actions: [
+        { id: 'a1', name: '第 1 步', type: 'command' as const, command: 'echo step-ok' },
+        { id: 'a2', name: '第 2 步', type: 'http' as const, method: 'GET' as const, url: 'http://nowhere.invalid/x' },
+        { id: 'a3', name: '第 3 步', type: 'command' as const, command: 'echo step-never' },
+      ],
+    } as unknown as ScheduledJob);
+    stateService.upsertScheduledJob(job);
+
+    const run = await service.runJob(job.id, 'manual');
+
+    expect(run.steps).toBeDefined();
+    expect(run.steps!.map((s) => s.status)).toEqual(['success', 'failed', 'not-run']);
+    expect(run.steps![1].error).toContain('ENOTFOUND');
+    expect(run.status).toBe('failed');
+  });
+
+  /*
+   * 红绿闭环：把 upsertScheduledJobRun 的保留策略改回全局 .slice(0, 1000)，
+   * 本用例会红——日任务的历史会被高频任务挤光。
+   */
+  it('运行记录按任务各自保留，高频任务挤不掉低频任务的历史', () => {
+    const mkRun = (jobId: string, i: number): ScheduledJobRun => ({
+      id: `${jobId}_${i}`,
+      jobId,
+      projectId: 'demo',
+      trigger: 'schedule',
+      status: 'success',
+      // 高频任务全部比日任务新，全局环形缓冲下会把日任务整段挤掉。
+      queuedAt: new Date(Date.UTC(2026, 0, 2, 0, 0, 0) + i * 1000).toISOString(),
+    });
+
+    // 日任务先写 5 条（时间更早）
+    for (let i = 0; i < 5; i += 1) {
+      stateService.upsertScheduledJobRun({
+        ...mkRun('job_daily', i),
+        queuedAt: new Date(Date.UTC(2026, 0, 1, i, 0, 0)).toISOString(),
+      });
+    }
+    // 高频任务再写 3000 条（时间更新）
+    for (let i = 0; i < 3000; i += 1) {
+      stateService.upsertScheduledJobRun(mkRun('job_hot', i));
+    }
+
+    const daily = stateService.listScheduledJobRuns({ jobId: 'job_daily', limit: 500 });
+    const hot = stateService.listScheduledJobRuns({ jobId: 'job_hot', limit: 500 });
+
+    expect(daily).toHaveLength(5);
+    // 高频任务自己被截到每任务上限，而不是把别人挤掉。
+    expect(hot.length).toBeLessThanOrEqual(120);
+    expect(hot.length).toBeGreaterThan(0);
+  });
+
+  /*
+   * Codex #1471 P2。上一条只有两个任务，撞不到全局上限（5000）。
+   * 而全局上限此前是按「全局新旧」一刀切的：任务一多，低频任务的记录天然排在
+   * 最后面，会被整段砍掉——正好把每任务保留想防的事情又做了一遍。
+   * 这里造 60 个各 120 条的任务（7200 > 5000）再加一个只有 3 条的低频任务：
+   * 低频那个必须一条不丢。
+   * 红绿闭环：把收尾换回 `.slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP)`，
+   * 本用例报 `expected +0 to be 3`。
+   */
+  it('全局上限按任务均分，任务数多到撑满上限时也不吃掉低频任务的历史', () => {
+    const mk = (jobId: string, i: number, iso: string): ScheduledJobRun => ({
+      id: `${jobId}_${i}`, jobId, projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: iso,
+    });
+
+    const fixture: ScheduledJobRun[] = [];
+    // 低频任务：最早，只有 3 条——全局排序下它们永远在最末尾。
+    for (let i = 0; i < 3; i += 1) {
+      fixture.push(mk('job_rare', i, new Date(Date.UTC(2026, 0, 1, i)).toISOString()));
+    }
+    // 60 个高频任务各 120 条，全部更新。
+    for (let j = 0; j < 60; j += 1) {
+      for (let i = 0; i < 120; i += 1) {
+        fixture.push(mk(`job_hot_${j}`, i, new Date(Date.UTC(2026, 0, 2) + (j * 120 + i) * 1000).toISOString()));
+      }
+    }
+    seedRuns(fixture);
+    // 被测的那一次走公开方法，保留策略在这一次上生效。
+    stateService.upsertScheduledJobRun(
+      mk('job_hot_0', 999, new Date(Date.UTC(2026, 0, 3)).toISOString()),
+    );
+
+    const rare = stateService.listScheduledJobRuns({ jobId: 'job_rare', limit: 50 });
+    expect(rare, '低频任务的历史被全局上限吃掉了').toHaveLength(3);
+
+    // 总量仍受上限约束，高频任务让位。
+    // listScheduledJobRuns 会把 limit 夹到 500，拿它断言 5000 的上限等于没断言
+    // （Codex #1471 P2 第四轮）——读未截断的 state。
+    expect(stateService.getState().scheduledJobRuns.length).toBeLessThanOrEqual(5000);
+    const oneHot = stateService.listScheduledJobRuns({ jobId: 'job_hot_0', limit: 500 });
+    expect(oneHot.length).toBeGreaterThan(0);
+    expect(oneHot.length).toBeLessThan(120);
+  });
+
+  /*
+   * Codex #1471 P2（第四轮）。现存/已删除的分桶此前只在「组数超过上限」时才做，
+   * 而已删除任务的留档在没到上限时照样占容量：4950 个「建完就删、各留一条」的任务
+   * 加一个有 120 条的活任务，组数 4951 走不进整组淘汰那一档，均分的 k 被压到 50——
+   * 活任务被砍掉 70 条，而每一条留档一条不少。留档挤掉在跑的任务，方向反了。
+   * 红绿闭环：把 live/orphan 的分桶改回「只在 groups.length > CAP 时才做」，
+   * 本用例报活任务只剩 50 条。
+   */
+  it('已删除任务的留档不占现存任务的配额，即便总组数没到上限', () => {
+    const liveJob = service.normalizeJob({
+      id: 'job_live', projectId: 'demo', name: '每日备份', enabled: true,
+      schedule: { type: 'daily', timeOfDay: '02:00' },
+      actions: [{ id: 'a1', name: 'step', type: 'command' as const, command: 'echo ok' }],
+    } as unknown as ScheduledJob);
+    stateService.upsertScheduledJob(liveJob);
+
+    const base = Date.UTC(2026, 0, 8);
+    const fixture: ScheduledJobRun[] = [];
+    // 活任务 120 条（每任务上限），时刻最新。
+    for (let i = 0; i < 120; i += 1) {
+      fixture.push({
+        id: `live_${i}`, jobId: 'job_live', projectId: 'demo', trigger: 'schedule',
+        status: 'success', queuedAt: new Date(base + i * 1000).toISOString(),
+      });
+    }
+    // 4950 个已删除任务各一条，时刻更早。
+    for (let j = 0; j < 4950; j += 1) {
+      fixture.push({
+        id: `gone_${j}`, jobId: `job_gone_${j}`, projectId: 'demo', trigger: 'schedule',
+        status: 'success', queuedAt: new Date(base - (j + 1) * 1000).toISOString(),
+      });
+    }
+    seedRuns(fixture);
+    stateService.upsertScheduledJobRun({
+      id: 'live_new', jobId: 'job_live', projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: new Date(base + 200_000).toISOString(),
+    });
+
+    const alive = stateService.listScheduledJobRuns({ jobId: 'job_live', limit: 500 });
+    expect(alive.length, '活任务的历史被已删除任务的留档挤掉了').toBe(120);
+    expect(stateService.getState().scheduledJobRuns.length).toBeLessThanOrEqual(5000);
+  });
+
+  /*
+   * Codex #1471 P1。条数上限管不住体积：日志长度无界，5000 条能把 global 文档顶过
+   * Mongo 的 16MiB 上限，而 global 文档写不进去时整份控制面状态都停止落库。
+   * 两道闸各测一次：单条日志被截到 8KiB 以内；运行史总体积不超过 4MiB。
+   * 红绿闭环：把 upsert 里的 truncateLogTail 去掉，第一条报日志仍是 200KiB；
+   * 把字节闸那段去掉，第二条报总体积超 4MiB。
+   */
+  it('单条运行日志被截断，运行史总体积有字节上限', () => {
+    const huge = 'L'.repeat(200 * 1024);
+    stateService.upsertScheduledJobRun({
+      id: 'big_1', jobId: 'job_big', projectId: 'demo', trigger: 'manual',
+      status: 'failed', queuedAt: new Date(Date.UTC(2026, 0, 9)).toISOString(), log: huge,
+    });
+    const stored = stateService.getState().scheduledJobRuns.find((r) => r.id === 'big_1');
+    expect(stored, '记录没落库').toBeTruthy();
+    expect(Buffer.byteLength(stored!.log || '', 'utf8'), '单条日志没被截断')
+      .toBeLessThanOrEqual(8 * 1024 + 64);
+    expect(stored!.log, '截断后没说明这是截断过的').toContain('日志已截断');
+
+    // 再灌一批带 8KiB 日志的记录，总体积必须被字节闸压住。
+    const fixture: ScheduledJobRun[] = [];
+    for (let i = 0; i < 1200; i += 1) {
+      fixture.push({
+        id: `bulk_${i}`, jobId: `job_bulk_${i % 30}`, projectId: 'demo', trigger: 'schedule',
+        status: 'success', queuedAt: new Date(Date.UTC(2026, 0, 10) + i * 1000).toISOString(),
+        log: 'B'.repeat(8 * 1024),
+      });
+    }
+    seedRuns(fixture);
+    stateService.upsertScheduledJobRun({
+      id: 'bulk_last', jobId: 'job_bulk_0', projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: new Date(Date.UTC(2026, 0, 11)).toISOString(),
+    });
+    const total = Buffer.byteLength(JSON.stringify(stateService.getState().scheduledJobRuns), 'utf8');
+    expect(total, '运行史总体积没有上限').toBeLessThanOrEqual(4 * 1024 * 1024);
+  });
+
+  /*
+   * Codex #1471 P2（第二十轮）。字节闸不能用「全局按新旧砍」——那样几个日志接近
+   * 上限的高频任务就能吃光 4MiB 预算，一个低频活任务的历史被整段清零，把第一道闸
+   * （每任务保留）整个抵消掉。
+   * 这里造 6 个高频活任务各 120 条 8KiB 日志（约 5.9MiB，必然触发字节闸），外加一个
+   * 只有 3 条、时刻最早的低频活任务：那 3 条必须一条不丢。
+   * 红绿闭环：把 fill 换回「flat + 全局按 queuedAt 降序 + 累加截断」，本用例报 0。
+   */
+  it('字节闸也按任务轮流分配，低频活任务不会被高频任务的日志挤空', () => {
+    const jobs = ['rare', 'h0', 'h1', 'h2', 'h3', 'h4', 'h5'];
+    for (const id of jobs) {
+      stateService.upsertScheduledJob(service.normalizeJob({
+        id: `job_${id}`, projectId: 'demo', name: id, enabled: true,
+        schedule: { type: 'daily', timeOfDay: '02:00' },
+        actions: [{ id: 'a1', name: 'step', type: 'command' as const, command: 'echo ok' }],
+      } as unknown as ScheduledJob));
+    }
+    const fixture: ScheduledJobRun[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      fixture.push({
+        id: `rare_${i}`, jobId: 'job_rare', projectId: 'demo', trigger: 'schedule',
+        status: 'success', queuedAt: new Date(Date.UTC(2026, 0, 1, i)).toISOString(),
+      });
+    }
+    for (let h = 0; h < 6; h += 1) {
+      for (let i = 0; i < 120; i += 1) {
+        fixture.push({
+          id: `h${h}_${i}`, jobId: `job_h${h}`, projectId: 'demo', trigger: 'schedule',
+          status: 'success', queuedAt: new Date(Date.UTC(2026, 0, 5) + (h * 120 + i) * 1000).toISOString(),
+          log: 'H'.repeat(8 * 1024),
+        });
+      }
+    }
+    seedRuns(fixture);
+    stateService.upsertScheduledJobRun({
+      id: 'h0_999', jobId: 'job_h0', projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: new Date(Date.UTC(2026, 0, 6)).toISOString(),
+    });
+
+    const stored = stateService.getState().scheduledJobRuns;
+    expect(Buffer.byteLength(JSON.stringify(stored), 'utf8'), '字节闸没生效')
+      .toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect(stored.filter((r) => r.jobId === 'job_rare'), '低频活任务的历史被高频任务的日志挤空了')
+      .toHaveLength(3);
+  });
+
+  /*
+   * Codex #1471 P2（第三轮）。整组淘汰只按「最后一次运行的时刻」排，不看任务还在不在：
+   * 一个刚建完就删掉的一次性任务会占着名额，而一个每天都在跑、只是上次运行时刻稍早的
+   * **活任务**被整组清掉——它的健康度、细带、运行史全没了，恰恰是每任务保留要保护的对象。
+   * 红绿闭环：把 live/orphan 两级排序换回纯按新旧，本用例报活任务的记录为 0。
+   */
+  it('整组淘汰先保还存在的任务，已删除任务的历史先出局', () => {
+    const base = Date.UTC(2026, 0, 6);
+    // 活任务：上次运行较早（在纯按新旧的排序里排在很后面）
+    const liveJob = service.normalizeJob({
+      id: 'job_live', projectId: 'demo', name: '每日备份', enabled: true,
+      schedule: { type: 'daily', timeOfDay: '02:00' },
+      actions: [{ id: 'a1', name: 'step', type: 'command' as const, command: 'echo ok' }],
+    } as unknown as ScheduledJob);
+    stateService.upsertScheduledJob(liveJob);
+
+    const fixture: ScheduledJobRun[] = [{
+      id: 'live_1', jobId: 'job_live', projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: new Date(base).toISOString(),
+    }];
+    // 5200 个「建完就删」的一次性任务，运行时刻全都更新——纯按新旧的话它们会把活任务挤掉
+    for (let j = 0; j < 5200; j += 1) {
+      fixture.push({
+        id: `gone_${j}`, jobId: `job_gone_${j}`, projectId: 'demo', trigger: 'manual',
+        status: 'success', queuedAt: new Date(base + (j + 1) * 1000).toISOString(),
+      });
+    }
+    seedRuns(fixture);
+    stateService.upsertScheduledJobRun({
+      id: 'gone_last', jobId: 'job_gone_last', projectId: 'demo', trigger: 'manual',
+      status: 'success', queuedAt: new Date(base + 6000 * 1000).toISOString(),
+    });
+
+    expect(
+      stateService.listScheduledJobRuns({ jobId: 'job_live', limit: 5 }),
+      '活任务的历史被已删除任务的记录挤掉了',
+    ).toHaveLength(1);
+    expect(stateService.getState().scheduledJobRuns.length).toBeLessThanOrEqual(5000);
+  });
+
+  /*
+   * Codex #1471 P2（第二轮）。均分有一个失效档：任务数本身超过全局上限时，
+   * 「每个任务各留一条」都放不下，二分的下界 1 就成了假的可行解，总量突破上限。
+   * 删任务不删运行史，反复建删就能把不同 jobId 攒过 5000。
+   * 这里造 5200 个各 1 条的任务，断言总量仍不超上限、且淘汰的是最久没动静的那批。
+   * 红绿闭环：去掉整组淘汰那三行，本用例报总量 5200 > 5000。
+   */
+  it('任务数本身超过全局上限时整任务淘汰，最久没动静的先出局', () => {
+    const base = Date.UTC(2026, 0, 5);
+    const fixture: ScheduledJobRun[] = [];
+    for (let j = 0; j < 5199; j += 1) {
+      fixture.push({
+        id: `only_${j}`, jobId: `job_${j}`, projectId: 'demo', trigger: 'schedule',
+        status: 'success', queuedAt: new Date(base + j * 1000).toISOString(),
+      });
+    }
+    seedRuns(fixture);
+    // 最后一条走公开方法触发保留策略。
+    stateService.upsertScheduledJobRun({
+      id: 'only_5199', jobId: 'job_5199', projectId: 'demo', trigger: 'schedule',
+      status: 'success', queuedAt: new Date(base + 5199 * 1000).toISOString(),
+    });
+
+    expect(stateService.getState().scheduledJobRuns.length, '任务数超过上限时全局上限失守了')
+      .toBeLessThanOrEqual(5000);
+    // 最新的那批留着，最早的那批被整组淘汰。
+    expect(stateService.listScheduledJobRuns({ jobId: 'job_5199', limit: 5 })).toHaveLength(1);
+    expect(stateService.listScheduledJobRuns({ jobId: 'job_0', limit: 5 })).toHaveLength(0);
+  });
+
+  /*
+   * 红绿闭环：删掉 computeNextRuns，或让它每轮不推进游标，
+   * 本用例会红（前者编译不过，后者返回一串相同时刻）。
+   */
+  it('往后推算的触发序列严格递增，且与单次 computeNextRunAt 同源', () => {
+    const from = new Date('2026-03-01T00:00:00.000Z');
+
+    const interval = service.computeNextRuns({ type: 'interval', intervalMinutes: 30 }, 4, from);
+    expect(interval).toHaveLength(4);
+    const asMs = interval.map((iso) => Date.parse(iso));
+    expect(asMs.every((v, i) => i === 0 || v > asMs[i - 1])).toBe(true);
+    // 第一个时刻必须与既有的单次判定一致 —— 序列不另起一套到期逻辑。
+    expect(interval[0]).toBe(service.computeNextRunAt({ type: 'interval', intervalMinutes: 30 }, from));
+
+    const daily = service.computeNextRuns(
+      { type: 'daily', timeOfDay: '03:00', timezone: 'UTC' },
+      3,
+      from,
+    );
+    expect(daily).toHaveLength(3);
+    const dailyMs = daily.map((iso) => Date.parse(iso));
+    expect(dailyMs.every((v, i) => i === 0 || v > dailyMs[i - 1])).toBe(true);
+
+    // 手动任务没有下一次，序列必须是空的，不能编一个出来。
+    expect(service.computeNextRuns({ type: 'manual' }, 5, from)).toEqual([]);
+  });
+});

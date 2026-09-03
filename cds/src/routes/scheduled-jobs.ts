@@ -19,7 +19,16 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
     if (projectId === false) return;
     const jobs = stateService.listScheduledJobs(projectId)
       .sort((a, b) => String(a.nextRunAt || '').localeCompare(String(b.nextRunAt || '')));
-    res.json({ jobs });
+    // 时间轴右半边要画一串待触发点。序列一律由服务端出，前端不复制到期判定。
+    const horizon = Math.min(Math.max(Number(req.query.nextRuns || 0), 0), 64);
+    if (!horizon) { res.json({ jobs }); return; }
+    const now = new Date();
+    res.json({
+      jobs: jobs.map((job) => ({
+        ...job,
+        nextRuns: scheduledJobService.projectUpcomingRuns(job, horizon, now),
+      })),
+    });
   });
 
   router.get('/scheduled-jobs/runs', (req, res) => {

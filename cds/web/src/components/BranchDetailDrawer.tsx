@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Server, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
+import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
+import { createLatestWinsGate } from '@/lib/latest-wins';
 import { resolveWebEntryPresentation, type PreviewMode, type WebEntryCollectionLike } from '@/lib/previewUrl';
 import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
@@ -16,9 +17,18 @@ import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplit
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { ReplicaSetPanel, type ProfileReplicaSetView } from '@/components/branch/ReplicaSetPanel';
 import { WebEntryConfigDialog } from '@/components/branch/WebEntryConfigDialog';
+import {
+  OverviewPanel,
+  seedMetricSeries,
+  type MetricSeries,
+  type OverviewDeployment,
+  type OverviewService,
+} from '@/components/branch/OverviewPanel';
 import { Layers, Lock, Plus } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
+import { ReferencesPanel } from '@/components/branch/ReferencesPanel';
+import { RelationCard } from '@/components/branch/RelationCard';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import { pickActiveDeployment } from './branchDeploymentSelection';
@@ -329,7 +339,7 @@ export interface BranchDeploymentItem {
   branchId: string;
   branchName: string;
   commitSha?: string;
-  kind: 'preview' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
+  kind: 'preview' | 'open' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -391,7 +401,7 @@ const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = 
 ];
 
 /** 配置页签内三分区（方案 A：变量/检查器/设置读写同域合并） */
-type ConfigSection = 'variables' | 'inspector' | 'settings';
+type ConfigSection = 'variables' | 'references' | 'inspector' | 'settings';
 
 // Phase A (2026-05-04):分支生效环境变量
 type EnvSource = 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | 'branch';
@@ -443,7 +453,12 @@ interface MetricsResponse {
   services: Array<{
     profileId: string;
     containerName: string;
-    status: string;
+    /**
+     * 服务端在**本次请求时刻**读到的状态，比抽屉打开时那份 branch.services 快照新鲜。
+     * 这里如实声明成 ServiceState['status'] 而不是宽泛的 string：服务端返回的就是它，
+     * 声明宽了只会逼调用方去断言。
+     */
+    status: ServiceState['status'];
     stats: ContainerStatsResponse | null;
   }>;
 }
@@ -502,31 +517,9 @@ type TriggerLogsState =
 // 2026-05-14: webhook 日志分页 — 每页 20 条，懒加载下一页，与 buffer 1000 配合。
 const TRIGGER_LOGS_PAGE_SIZE = 20;
 
-/** 5-min ring buffer (60 points × 5s 间隔) per service+metric — UI sparkline 用 */
-interface MetricSeries {
-  cpu: number[];        // %
-  mem: number[];        // % of limit
-  rxRate: number[];     // bytes/sec(由两次响应间 delta / dt 算出)
-  txRate: number[];     // bytes/sec
-}
-const METRIC_RING_SIZE = 60;
+// MetricSeries / 环形缓冲 / 系列色都在 OverviewPanel —— 图表与它的数据结构同处一地，
+// 免得改了一边忘另一边（predicate-and-wiring-discipline 形状 3）。
 
-/** 总览仪表块（2026-07-26「让总览像一个总览」）：大数字 + 语义色点 + 一句副文案 */
-function OverviewTile({ label, value, sub, tone = 'muted', mono }: {
-  label: string; value: string; sub?: string; tone?: 'good' | 'bad' | 'muted'; mono?: boolean;
-}): JSX.Element {
-  const dot = tone === 'good' ? '#10b981' : tone === 'bad' ? '#ef4444' : 'hsl(var(--muted-foreground))';
-  return (
-    <div className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-3.5 py-3">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        <span className="h-1.5 w-1.5 rounded-full" style={{ background: dot }} aria-hidden />
-        {label}
-      </div>
-      <div className={`mt-1 truncate text-lg font-bold ${tone === 'bad' ? 'text-destructive' : ''} ${mono ? 'font-mono' : ''}`} title={value}>{value}</div>
-      {sub ? <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={sub}>{sub}</div> : null}
-    </div>
-  );
-}
 
 function DrawerTabButton({
   tab,
@@ -571,6 +564,7 @@ function deploymentStatusClass(status: BranchDeploymentItem['status']): string {
 function deploymentKindLabel(kind: BranchDeploymentItem['kind']): string {
   return ({
     preview: '预览部署',
+    open: '打开预览',
     deploy: '部署',
     restart: '启动',
     pull: '拉取',
@@ -779,6 +773,46 @@ async function copyTextToClipboard(text: string): Promise<void> {
   document.body.removeChild(textarea);
 }
 
+/**
+ * 去重时把「同一次操作的不同叫法」归成一类（Codex P2，核对属实）。
+ *
+ * 一次「部署并打开」由 `deployBranch(..., openAfterDeploy=true)` 发起，实时那条
+ * 记录的 kind 是 `preview`；而它落库后经 `legacyLogToDeploymentItem` 回来时 kind
+ * 恒为 `deploy`。按 kind 严格相等去重就留下两条，抽屉一 reload 同一次部署在柱状图上
+ * 出现两根柱子，中位线、成功率、趋势全被带偏。
+ *
+ * `rebuild` 落库后同样回成 `deploy`，所以三种构建类叫法归一处。
+ * `open`（只打开、不构建）不在其中——它本来就不该进部署统计，见 openRunningPreview。
+ */
+const BUILD_KINDS = new Set<BranchDeploymentItem['kind']>(['deploy', 'preview', 'rebuild']);
+
+export function sameOperationKind(a: BranchDeploymentItem['kind'], b: BranchDeploymentItem['kind']): boolean {
+  if (BUILD_KINDS.has(a) && BUILD_KINDS.has(b)) return true;
+  return a === b;
+}
+
+/**
+ * 取指标失败时给用户看的那句话（Codex P1，核对属实）。
+ *
+ * `ApiError.message` 是 `api.ts` 拼给开发者的诊断串：
+ * `GET /_cds/api/branches/xxx/metrics/series?after=-1800 失败：… (HTTP 500) · requestId=…`。
+ * 之前 `seriesError` / `metricsError` 直接存它、面板直接渲染，普通用户就在总览上
+ * 看到内部路径、HTTP 状态和 requestId —— 违反 `.Codex/rules/user-readable-errors.md`
+ * 第 1、2、9 条（不透传异常原文、不出现状态码与端点、前端不得直接展示 error.message）。
+ *
+ * 这里是那条规则要求的「统一错误映射入口」：对外只给「发生了什么 + 接下来怎么做」，
+ * 原始诊断留在 console。分类对齐规则第 5 条的可预期错误集合。
+ */
+export function describeMetricsFailure(err: unknown, what: '实时指标' | '指标历史'): string {
+  console.warn(`[overview] ${what}读取失败`, err);
+  if (!(err instanceof ApiError)) return `${what}读取失败，可能是网络中断，请检查网络后重试。`;
+  if (err.status === 401 || err.status === 403) return `没有权限读取${what}，请重新登录后重试。`;
+  if (err.status === 404) return `当前 CDS 版本没有${what}接口，更新 CDS 后即可显示。`;
+  if (err.status === 429) return `请求过于频繁，${what}稍后会自动恢复。`;
+  if (err.status >= 500) return `${what}服务暂时不可用，稍后会自动重试。`;
+  return `${what}读取失败，请刷新页面重试。`;
+}
+
 function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchDeploymentItem {
   const events = log.events || [];
   const lines = events.map(eventText);
@@ -898,6 +932,31 @@ export function BranchDetailDrawer({
   const [systemLogsState, setSystemLogsState] = useState<SystemLogsState>({ status: 'idle' });
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
+  /**
+   * 最后一次**成功**的 /metrics 响应。
+   *
+   * 一次失败的轮询会把 metricsState 整个换成 error，于是总览的服务清单退回抽屉打开
+   * 那一刻的 branch.services 快照——抽屉开着期间起来/停掉/新增/删除的服务瞬间被
+   * 打回旧状态，健康环、判断句、合计一起跳一下，等下一次轮询成功再跳回来
+   * （Codex P2，核对属实）。而这一帧数据其实还在手里，只是被错误状态盖掉了。
+   *
+   * 错误归错误（照旧在图上方显示提示条），数据归数据：失败时继续用最后一次成功的
+   * 那一帧，别退回更陈的快照。切分支时随其它 state 一起清空。
+   */
+  const [lastGoodMetrics, setLastGoodMetrics] = useState<MetricsResponse | null>(null);
+
+  /**
+   * 服务端这次实际给了什么——桶宽（秒）与它真正覆盖的时间窗。
+   *
+   * 两样都不能由前端猜（Codex P2 ×2，均核对属实）：
+   *   - 桶宽是按观测节奏自适应算的，骨架屏拿采样器的标称 45s 去估「还要等多久」，
+   *     两个方向都会说谎；
+   *   - 窗口会被网格吸附撑宽（30 分钟的请求，45s 节奏那一档实际是 27 × 70s = 31.5 分钟），
+   *     而 x 轴却写死「30 分钟前 → 现在」，峰值因此对不上时间刻度。
+   *
+   * 一次请求返回什么就用什么，没拿到就是 null（骨架屏那边不给数字，轴退回请求值）。
+   */
+  const [seriesMeta, setSeriesMeta] = useState<{ groupSeconds: number; after: number; before: number } | null>(null);
   const [triggerLogsState, setTriggerLogsState] = useState<TriggerLogsState>({ status: 'idle' });
   // 2026-05-14 Codex review P2 修复：loadMore 的 offset 不能从 setState 的
   // updater 里"顺便"读出来（React 会 batch，updater 可能在 fetch 之后才跑，
@@ -915,6 +974,65 @@ export function BranchDetailDrawer({
   const [modeSavingProfileId, setModeSavingProfileId] = useState<string | null>(null);
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
   const [metricSeries, setMetricSeries] = useState<Record<string, MetricSeries>>({});
+  /**
+   * 总览的服务清单：**成员集合与状态出自同一个新鲜来源**。
+   *
+   * `branch.services` 是抽屉打开时那一次加载的快照，`load()` 之后不再轮询；
+   * 而 `/metrics` 每 5 秒返回的 services 既是当下真实的成员集合，也带着服务端
+   * 当下读到的 status。
+   *
+   * 这里栽过两次，是同一个洞的两半（Codex P2 ×2，均核对属实）：
+   *   1. 先是拿陈快照的 **status** 判「跳过停机容器」——刚启动完的服务有实时读数
+   *      却被标「停止」并被排除出合计，被外部停掉的服务还挂着停机前的旧值；
+   *   2. 修完 status 之后，**成员集合**仍留在陈快照里——部署期间新增的 profile 在
+   *      总览上根本不存在（健康环、服务数、堆叠层都没有它），删掉的 profile 赖着不走。
+   *
+   * 教训是别再只刷新「每个成员的某个字段」：成员集合和它的状态是同一个问题的两面，
+   * 必须一起取自同一处。`branch.services` 只在 metrics 尚未就绪时兜底，让首帧不空白。
+   */
+  const overviewServices = useMemo<OverviewService[]>(() => {
+    // 优先这一帧；这一帧失败就用最后一次成功的那一帧；都没有才退回打开时的快照。
+    const fresh = metricsState.status === 'ok' ? metricsState.data : lastGoodMetrics;
+    if (fresh) {
+      return fresh.services.map((svc) => ({
+        profileId: svc.profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+      }));
+    }
+    return Object.values(branch?.services || {}).map((sv) => ({
+      profileId: sv.profileId,
+      containerName: sv.containerName,
+      status: sv.status,
+    }));
+  }, [metricsState, lastGoodMetrics, branch?.services]);
+
+  /** 图例里的「当前值」走实时快照；图本身只认服务端分桶的 series，两者口径分开。 */
+  const [liveStats, setLiveStats] = useState<Record<string, ContainerStatsResponse>>({});
+  /**
+   * series 端点自己的失败。
+   *
+   * 此前 loadSeries 的 catch 把一切都吞了，于是它持续失败时骨架屏会一直说
+   * 「约还需 45 秒出现曲线」——那是撒谎，曲线永远不会来（Codex P2，核对属实）。
+   * 两个数据源就要有两个错误面：docker stats 挂了不该藏历史图，历史挂了也不该
+   * 假装还在攒点。
+   */
+  const [seriesError, setSeriesError] = useState<string | null>(null);
+  /**
+   * 历史轮询的并发取舍（Codex P2 ×3，核对属实）。
+   *
+   * 语义与理由都写在 `lib/latest-wins.ts`——抽出去是因为它必须被**真正测到**：
+   * 这套取舍此前散在下面的 loadSeries 里，守卫只能扫源码字符串，而扫字符串
+   * 证明不了行为（把记账挪到请求之前就会丢弃每个响应，那种守卫照样全绿）。
+   */
+  const seriesGateRef = useRef(createLatestWinsGate());
+  /**
+   * 服务端这次实际用的桶宽（秒）。骨架屏用它算「还要等多久」。
+   *
+   * 分辨率是服务端按观测到的采集节奏自适应定的：抽屉开着时 5s 端点也在写，桶宽会
+   * 自己收窄；窗口里只剩稀疏样本时又会变粗。前端拿采样器的标称 45s 去算，两个方向
+   * 都会说谎（Codex P2，核对属实）。没拿到就是 null，骨架屏那边不给数字。
+   */
   // 上次响应快照,用来算 rx/tx 速率(后端只给累计值,前端做 delta/dt)。
   // 必须用 ref 而不是 state:setInterval 在 useEffect [activeTab, branchId]
   // 内创建,只会捕获**首次** loadMetrics 闭包。state 变了之后,新 loadMetrics
@@ -1168,12 +1286,17 @@ export function BranchDetailDrawer({
     setEnvQuery('');
     setBranchEnvEditorOpen(false);
     setMetricsState({ status: 'idle' });
+    setLastGoodMetrics(null);
     setTriggerLogsState({ status: 'idle' });
     setCopiedFailurePrompt(false);
     // Codex review P1：切换分支必须重置系统日志状态，否则 status 仍是 'ok'
     // 时 effect 不会重新拉取，UI 会把上一个分支的生命周期事件错挂到新分支。
     setSystemLogsState({ status: 'idle' });
     setMetricSeries({});
+    setLiveStats({});
+    setSeriesError(null);
+    // 换分支开新会话：在飞的旧请求作废，水位清零，序号仍全局单调。
+    seriesGateRef.current.newSession();
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
     void load();
@@ -1317,51 +1440,101 @@ export function BranchDetailDrawer({
         !('services' in raw) ||
         !Array.isArray((raw as { services: unknown }).services)
       ) {
-        setMetricsState({
-          status: 'error',
-          message: '后端响应格式异常 — 当前 CDS 可能没有 /api/branches/:id/metrics 端点,请先 self-update CDS 到最新分支。',
-        });
+        // 同样不向用户抛内部端点路径（Codex P1）。
+        setMetricsState({ status: 'error', message: '当前 CDS 版本没有实时指标接口，更新 CDS 后即可显示。' });
         return;
       }
       const data = raw as MetricsResponse;
       setMetricsState({ status: 'ok', data });
-      // 算 rate + 推 ring buffer
-      const prevTs = lastMetricsTsRef.current;
-      const prevByService = lastMetricsByServiceRef.current;
-      setMetricSeries((prev) => {
-        const next = { ...prev };
-        const dt = prevTs > 0 ? (data.ts - prevTs) / 1000 : 0;
-        for (const svc of data.services) {
-          const series = next[svc.profileId] || { cpu: [], mem: [], rxRate: [], txRate: [] };
-          const stats = svc.stats;
-          if (!stats) {
-            // 容器没在跑,push 0 占位让 sparkline 有连续 60 点
-            next[svc.profileId] = pushRing(series, 0, 0, 0, 0);
-            continue;
-          }
-          const lastStats = prevByService[svc.profileId];
-          let rxRate = 0;
-          let txRate = 0;
-          if (lastStats && dt > 0) {
-            rxRate = Math.max(0, (stats.netRxBytes - lastStats.netRxBytes) / dt);
-            txRate = Math.max(0, (stats.netTxBytes - lastStats.netTxBytes) / dt);
-          }
-          next[svc.profileId] = pushRing(series, stats.cpuPercent, stats.memPercent, rxRate, txRate);
-        }
-        return next;
-      });
-      lastMetricsTsRef.current = data.ts;
-      const lastMap: Record<string, ContainerStatsResponse> = {};
+      setLastGoodMetrics(data);
+
+      /*
+       * 这里**不再**往图的数组尾巴上追加实时点（2026-09-02 修）。
+       *
+       * 病象：X 轴在说谎，而且抽屉开得越久越离谱——恰好就是真人验收时的姿势。
+       * 病根：铺底用的是服务端的桶（自适应后每桶约 67 秒），而这里每 5 秒 append
+       * 一个点；图按数组下标等距画，于是抽屉开 5 分钟后，右边 60 个点占了 69% 的
+       * 宽度却只代表 5 分钟，左边 27 个点占 31% 却代表 30 分钟，横跨全宽差七倍。
+       * 这和最初那片锯齿是同一类病（图的几何与数据的时间对不上），只是藏在实时
+       * 更新这条路上。
+       *
+       * 现在职责分开：**图只认服务端统一分桶的 series**（一条轴一个口径），
+       * **数字认这里的实时快照**。这一趟请求仍然有用——它顺带把 5 秒一帧写进
+       * 服务端历史，也提供图例里的「当前值」。
+       */
+      const liveMap: Record<string, ContainerStatsResponse> = {};
       for (const svc of data.services) {
-        if (svc.stats) lastMap[svc.profileId] = svc.stats;
+        if (svc.stats) liveMap[svc.profileId] = svc.stats;
       }
-      lastMetricsByServiceRef.current = lastMap;
+      lastMetricsTsRef.current = data.ts;
+      lastMetricsByServiceRef.current = liveMap;
+      setLiveStats(liveMap);
     } catch (err) {
       // 同样保护:切分支后旧请求 reject 不要写到新 state
       if (branchIdRef.current !== requestForBranch) return;
-      setMetricsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      setMetricsState({ status: 'error', message: describeMetricsFailure(err, '实时指标') });
     }
   }, [branchId]);
+
+  /*
+   * 图的唯一数据源：服务端分桶的 series（2026-09-02 起）。
+   *
+   * 以前是「打开时铺一次底，之后前端每 5 秒往数组尾巴 append」——两种时间粒度
+   * 混在同一个按下标等距绘制的数组里，X 轴就开始说谎（详见 loadMetrics 里的注释）。
+   * 现在整条数组每次都由服务端重算，一条轴只有一个口径；这个端点是纯内存的，
+   * 5 秒一拉不心疼，而且返回值只在新桶落成时才变，图因此是「按桶推进」而不是
+   * 每 5 秒抖一下。
+   */
+  const HISTORY_WINDOW_MINUTES = 30;
+  const loadSeries = useCallback(async () => {
+    if (!branchId) return;
+    const requestForBranch = branchId;
+    const ticket = seriesGateRef.current.begin();
+    try {
+      const data = await apiRequest<{
+        groupSeconds?: number;
+        after?: number;
+        before?: number;
+        services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null }> }>;
+      }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
+      if (branchIdRef.current !== requestForBranch) return;
+      // 换过会话、或比已贴上去的更旧 → 丢弃；慢但仍是最新的照常采用。
+      if (!seriesGateRef.current.accept(ticket)) return;
+      setSeriesMeta(
+        typeof data?.groupSeconds === 'number' && typeof data?.after === 'number' && typeof data?.before === 'number'
+          ? { groupSeconds: data.groupSeconds, after: data.after, before: data.before }
+          : null,
+      );
+      const next: Record<string, MetricSeries> = {};
+      for (const svc of data?.services ?? []) {
+        if (svc.points && svc.points.length > 0) next[svc.profileId] = seedMetricSeries(svc.points);
+      }
+      /*
+       * 无条件整体替换。
+       *
+       * 「非空才替换」是「铺底不覆盖已追加点」那套逻辑的遗留，现在已经没有前端追加了。
+       * 留着它有害：loadSeries 成功返回空（服务全删了 / 历史过期了）本身就是事实，
+       * 跳过 setState 会让上一次的曲线一直挂在屏幕上冒充当前数据（Codex P2）。
+       * 合并同样不行——不同批次的桶混进同一个数组就是时间轴说谎的老病根。
+       */
+      setMetricSeries(next);
+      setSeriesError(null);
+    } catch (err) {
+      if (branchIdRef.current !== requestForBranch) return;
+      // 同上：旧请求的失败不该抹掉新请求刚拿回来的曲线。
+      if (!seriesGateRef.current.accept(ticket)) return;
+      // 老版本 CDS 没有这个端点也走这里——照样要说出来，否则骨架屏会一直
+      // 承诺一条永远不会出现的曲线。面板拿到它就改画「只有实时数字」那一档。
+      setSeriesError(describeMetricsFailure(err, '指标历史'));
+    }
+  }, [branchId]);
+
+  useEffect(() => {
+    if (activeTab !== 'overview' || !branchId) return;
+    void loadSeries();
+    const timer = window.setInterval(() => void loadSeries(), 5000);
+    return () => window.clearInterval(timer);
+  }, [activeTab, branchId, loadSeries]);
 
   useEffect(() => {
     // 方案 A：指标并入总览（原独立「指标」页签取消）——总览打开时轮询
@@ -1564,6 +1737,30 @@ export function BranchDetailDrawer({
     return scoped.sort((left, right) => right.startedAt - left.startedAt);
   }, [branchId, deployments]);
 
+  // ── 总览面板的派生数据 ───────────────────────────────────────────────
+  // 入口：主入口 + cds.web-entry-* 声明的页面，主入口置顶。readiness/health 探针
+  // 不是用户入口，不进这个列表。
+  const overviewEntries = useMemo(() => ([
+    ...(primaryEntryUrl
+      ? [{ name: primaryEntry?.name || '主应用入口', url: primaryEntryUrl, subdomain: primaryEntry?.subdomain, primary: true }]
+      : []),
+    ...[...webEntries]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((entry) => ({ name: entry.name, url: entry.url, subdomain: entry.subdomain, primary: false })),
+  ]), [primaryEntry, primaryEntryUrl, webEntries]);
+
+  const overviewReplicaSummary = useMemo(() => {
+    const sets = Object.values(branch?.replicaSets ?? {}).filter((rs) => rs?.enabled);
+    const members = sets.reduce((n, rs) => n + (rs.members?.length ?? 0), 0);
+    if (members === 0) return '未启用 · 单副本';
+    const bad = sets.some((rs) => (rs.members ?? []).some((m) => m.status === 'error'));
+    return `${members} 副本${bad ? ' · 有异常' : ' · 入口按权重分流'}`;
+  }, [branch?.replicaSets]);
+
+  const overviewInfraSummary = useMemo(() => (
+    infraServices.length === 0 ? '无' : infraServices.map((svc) => svc.name).join(' · ')
+  ), [infraServices]);
+
   const combinedDeployments = useMemo<BranchDeploymentItem[]>(() => {
     if (!branchId) return visibleDeployments;
     const legacy = logs
@@ -1571,7 +1768,24 @@ export function BranchDetailDrawer({
       .reverse()
       .slice(0, 6)
       .map((log) => legacyLogToDeploymentItem(log, branchId));
-    const all = [...visibleDeployments, ...legacy];
+    /*
+     * 两个来源会重复：一次部署结束后，BranchListPage 的 actions 里仍留着它的完成态，
+     * 而 /branches/:id/logs 里也已经落了同一次部署的持久记录（Codex P2，核对属实）。
+     * 直接拼起来，最近那次部署会在柱状图里出现两根柱子，把中位线、成功率、趋势
+     * 一起带偏——而且只偏最近这一次，看起来像是「刚才那次特别慢/特别快」。
+     *
+     * 按「操作类型 + 起始时刻」去重：同一次部署的两份记录，kind 相同、startedAt 同源，
+     * 差别只在一个还带着实时进度。留先出现的那条（visibleDeployments 在前，它带实时
+     * 状态，正在跑的那次要靠它更新）。允许几秒误差——两边的时间戳来自同一个事件，
+     * 但序列化路径不同，不做精确相等。
+     */
+    const START_TOLERANCE_MS = 3_000;
+    const all: BranchDeploymentItem[] = [];
+    for (const item of [...visibleDeployments, ...legacy]) {
+      const dup = all.some((kept) => sameOperationKind(kept.kind, item.kind)
+        && Math.abs(kept.startedAt - item.startedAt) <= START_TOLERANCE_MS);
+      if (!dup) all.push(item);
+    }
     const sorted = all.sort((left, right) => right.startedAt - left.startedAt);
     return sorted.map((item, index) => {
       if (!item.runtimeStartedAt) return item;
@@ -1585,6 +1799,37 @@ export function BranchDetailDrawer({
       return runtimeEndedAt ? { ...item, runtimeEndedAt } : item;
     });
   }, [branch?.lastStoppedAt, branchId, visibleDeployments, logs]);
+
+  /**
+   * 部署柱状图的数据源是 `combinedDeployments`，**不是 `visibleDeployments`**。
+   *
+   * 2026-09-02（Codex P2，核对属实）：`visibleDeployments` 来自 `deployments` prop，
+   * 而那个 prop 在 BranchListPage 里是 `Object.entries(actions)` 摊平来的——`actions`
+   * 按分支 id 作键，**一个分支最多一条**（本次操作的实时状态）。按当前分支一过滤就
+   * 只剩 0-1 条，而柱状图要 3 条才画。也就是说这张卡从落地那天起就没渲染出来过，
+   * 编译过、测试绿、通读也看不出来（形状 2：建了一半）。
+   *
+   * `combinedDeployments` 把抽屉打开时 `load()` 拉回来的操作日志并了进来，才是真正
+   * 有历史的那一份。它定义在下面，所以这个 memo 也挪到了它之后。
+   *
+   * 仍然只认「构建类」记录：restart / stop / favorite 的耗时跟构建不可比，混进同一张图
+   * 会把中位线拉歪。
+   */
+  const overviewDeployments = useMemo<OverviewDeployment[]>(() => combinedDeployments
+    .filter((d) => d.kind === 'deploy' || d.kind === 'preview' || d.kind === 'rebuild')
+    .map((d) => ({
+      key: d.key,
+      kind: d.kind,
+      status: d.status,
+      commitSha: d.commitSha,
+      startedAt: d.startedAt,
+      finishedAt: d.finishedAt,
+    })), [combinedDeployments]);
+
+  const latestDeployDurationMs = useMemo(() => {
+    const latest = overviewDeployments.find((d) => d.finishedAt && d.finishedAt > d.startedAt);
+    return latest?.finishedAt ? latest.finishedAt - latest.startedAt : undefined;
+  }, [overviewDeployments]);
 
   const activeDeployment = useMemo(
     () => pickActiveDeployment(combinedDeployments, now),
@@ -2051,69 +2296,11 @@ export function BranchDetailDrawer({
                   只看 branch.status 会让 URL 卡在部署完成后仍隐藏(Codex review P2)。 */}
               {/* 2026-07-26 用户拍板：入口卡不再常驻抽屉头部占每个页签 ~180px——
                   只在「总览」（现在怎么样）保留；「运行」页签由画布入口节点承载同一组入口 */}
-              {activeTab === 'overview' && (branch.status === 'running' || branchStatus === 'running') && primaryEntryUrl ? (
-                <div className="mx-5 mt-4 rounded-xl border border-ok/40 bg-ok-soft p-3">
-                  <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-ok">
-                    <Rocket className="h-4 w-4" />
-                    应用已上线
-                    {/* 多出口不再只能由 Agent 改 compose：用户自己在这里加/改「域名前缀 → 服务端口」 */}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="ml-auto text-ok hover:bg-ok-soft hover:text-ok dark:hover:text-ok"
-                      onClick={() => setWebEntryConfigOpen(true)}
-                      title="手动配置入口（新增子域入口 / 改名 / 改落地路径）"
-                    >
-                      <Settings />
-                      配置入口
-                    </Button>
-                  </div>
-                  {/* 入口卡片列：主入口在上，其余由 cds.web-entry-* 声明的页面在下。
-                      readiness/health URL 不属于用户入口，不在这里渲染。 */}
-                  <div className="flex flex-col gap-1.5">
-                    <a
-                      href={primaryEntryUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={`打开 ${primaryEntry?.name || '主应用入口'}`}
-                      className="group flex items-center gap-3 rounded-lg border border-ok/30 bg-ok-soft px-3 py-2 transition hover:border-ok/60 hover:bg-ok-soft"
-                    >
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-ok text-white">
-                        <Rocket className="h-4 w-4" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-xs font-semibold text-ok">{primaryEntry?.name || '主应用入口'}</span>
-                        <span className="block min-w-0 truncate font-mono text-[11px] text-ok/70 /70">{primaryEntryUrl}</span>
-                      </span>
-                      <ExternalLink className="h-4 w-4 shrink-0 text-ok/60 transition group-hover:text-ok/60 dark:group-hover:text-ok" />
-                    </a>
-                    {[...webEntries]
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map((entry) => (
-                          <a
-                            key={entry.serviceId || entry.subdomain || entry.url}
-                            href={entry.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            title={`打开 ${entry.name}`}
-                            className="group flex items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 transition hover:border-ok/40 hover:bg-ok-soft"
-                          >
-                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--surface-raised))] text-muted-foreground">
-                              <Server className="h-4 w-4" />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5">
-                                <span className="text-xs font-semibold text-foreground">{entry.name}</span>
-                                {entry.subdomain ? <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{entry.subdomain}</span> : null}
-                              </span>
-                              <span className="block min-w-0 truncate font-mono text-[11px] text-muted-foreground">{entry.url}</span>
-                            </span>
-                            <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground/60 transition group-hover:text-ok" />
-                          </a>
-                      ))}
-                  </div>
-                </div>
-              ) : null}
+              {/* 入口卡已并入总览面板（OverviewPanel）——原先它常驻在页签之上，
+                  和总览里的「入口 N 个」计数各说各话；现在只有一处。 */}
+
+              {/* 关系缩略卡（plan.cds.service-relations 第四批）：先写结论再画缩略图，半屏 / 全屏看细节 */}
+              {activeTab === 'overview' && branchId ? <RelationCard branchId={branchId} /> : null}
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
                 {(() => {
                   const origin = branchOriginInsight(branch);
@@ -2163,9 +2350,9 @@ export function BranchDetailDrawer({
                     </div>
                   );
                 })()}
-                {/* 「运行中 + production URL」卡已删除(2026-07-15 用户反馈冗余):
-                    URL 与顶部「应用已上线 · 主应用入口」重复,状态/commit/服务数
-                    已上移到上方 origin 卡。 */}
+                {/* 「运行中 + production URL」卡已删除(2026-07-15 用户反馈冗余)。
+                    入口 URL 现在只在总览面板的入口卡组里出现一次(2026-09-01 重排),
+                    状态 / commit / 服务数由总览的判断行承载。 */}
                 {currentFailureReason ? (
                   <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2553,46 +2740,53 @@ export function BranchDetailDrawer({
 
                 {/* 总览 = 仪表盘（2026-07-26 用户拍板「让总览像一个总览」）：
                     状态/服务/复制集/版本/CPU/内存/流量 一屏仪表块，不再是文字堆砌 */}
-                {activeTab === 'overview' ? (() => {
-                  const svcList = Object.values(branch.services || {});
-                  const upCount = svcList.filter((sv) => sv.status === 'running').length;
-                  const svcBad = svcList.some((sv) => sv.status === 'error');
-                  const rsMap = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {};
-                  const rsList = Object.values(rsMap).filter((rs) => rs?.enabled);
-                  const memberCount = rsList.reduce((n, rs) => n + (rs.members?.length ?? 0), 0);
-                  const memberBad = rsList.some((rs) => (rs.members ?? []).some((m) => m.status === 'error'));
-                  const rsMode = (branch as { replicaMode?: 'container' | 'project' }).replicaMode;
-                  const latest = (arr?: number[]): number | null => (arr && arr.length > 0 ? arr[arr.length - 1] : null);
-                  const seriesList = Object.values(metricSeries);
-                  const cpuNow = seriesList.length > 0 ? Math.max(...seriesList.map((sv) => latest(sv.cpu) ?? 0)) : null;
-                  const memNow = seriesList.length > 0 ? Math.max(...seriesList.map((sv) => latest(sv.mem) ?? 0)) : null;
-                  const netNow = seriesList.length > 0
-                    ? seriesList.reduce((n, sv) => n + (latest(sv.rxRate) ?? 0) + (latest(sv.txRate) ?? 0), 0)
-                    : null;
-                  const running = branch.status === 'running' || branchStatus === 'running';
-                  return (
-                    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                      <OverviewTile label="状态" value={statusLabel(branch.status)} sub={branch.branch}
-                        tone={branch.status === 'error' ? 'bad' : running ? 'good' : 'muted'} />
-                      <OverviewTile label="服务" value={`${upCount} / ${svcList.length}`} sub={svcBad ? '有服务异常' : '运行中 / 总数'}
-                        tone={svcBad ? 'bad' : upCount === svcList.length && svcList.length > 0 ? 'good' : 'muted'} />
-                      <OverviewTile label="复制集" value={memberCount > 0 ? `${memberCount} 副本` : '未启用'}
-                        sub={memberCount > 0 ? `${rsMode === 'project' ? '项目级' : '容器级'}${memberBad ? ' · 有异常' : ' · 入口按权重分流'}` : '在「运行」页签开启'}
-                        tone={memberBad ? 'bad' : memberCount > 0 ? 'good' : 'muted'} />
-                      <OverviewTile label="版本" value={branch.commitSha?.slice(0, 7) || '-'} sub="当前部署提交" mono />
-                      <OverviewTile label="CPU" value={cpuNow != null ? `${cpuNow.toFixed(0)}%` : '—'}
-                        sub={cpuNow != null ? '最忙服务瞬时值' : '监控采样中…'}
-                        tone={cpuNow != null && cpuNow > 85 ? 'bad' : 'muted'} />
-                      <OverviewTile label="内存" value={memNow != null ? `${memNow.toFixed(0)}%` : '—'}
-                        sub={memNow != null ? '最高服务占限额比' : '监控采样中…'}
-                        tone={memNow != null && memNow > 85 ? 'bad' : 'muted'} />
-                      <OverviewTile label="网络" value={netNow != null ? `${formatBytes(netNow)}/s` : '—'}
-                        sub={netNow != null ? '全服务收发合计' : '监控采样中…'} />
-                      <OverviewTile label="入口" value={running && primaryEntryUrl ? `${1 + webEntries.length} 个` : '未上线'}
-                        sub={running ? '上方入口卡直达' : '部署成功后出现'} tone={running ? 'good' : 'muted'} />
-                    </div>
-                  );
-                })() : null}
+                {activeTab === 'overview' ? (
+                  <OverviewPanel
+                    services={overviewServices}
+                    /*
+                     * running 优先用 SSE 带回来的实时状态（Codex P2，核对属实）。
+                     *
+                     * 原来是 `branch.status === 'running' || branchStatus === 'running'`——
+                     * 或运算意味着**只要有一边说在跑就算在跑**，而 `branch` 是抽屉打开时
+                     * 那一次加载的快照、之后不再更新。分支停掉之后快照仍写着 running，
+                     * 于是判断句说「还有服务没起来」、已运行时长继续往上涨，而实际上
+                     * 整个分支已经停了。有实时值就用实时值，没有才退回快照。
+                     */
+                    running={branchStatus ? branchStatus === 'running' : branch.status === 'running'}
+                    // 原始七档状态一并传下去：折叠成布尔值会让「正在部署」和「已停机」
+                    // 变成同一件事，部署途中总览会谎报「分支未运行」（Codex P2）。
+                    lifecycle={branchStatus || branch.status}
+                    branchName={branch.branch}
+                    commitSha={branch.commitSha}
+                    commitMessage={branch.subject}
+                    lastReadyAt={branch.lastReadyAt}
+                    lastDeployAt={branch.lastDeployAt}
+                    deployDurationMs={latestDeployDurationMs}
+                    entries={overviewEntries}
+                    deployments={overviewDeployments}
+                    metricSeries={metricSeries}
+                    liveStats={liveStats}
+                    seriesError={seriesError ?? undefined}
+                    metricsReady={metricsState.status === 'ok'}
+                    metricsError={metricsState.status === 'error' ? metricsState.message : undefined}
+                    replicaSummary={overviewReplicaSummary}
+                    infraSummary={overviewInfraSummary}
+                    now={now}
+                    /*
+                     * 轴的长度用服务端实际返回的窗口，不是请求值——网格吸附会把
+                     * 30 分钟撑成 31.5 分钟，写死 30 会让峰值对不上刻度。
+                     */
+                    windowMinutes={seriesMeta
+                      ? (seriesMeta.before - seriesMeta.after) / 60_000
+                      : HISTORY_WINDOW_MINUTES}
+                    bucketSeconds={seriesMeta?.groupSeconds}
+                    rangeStart={seriesMeta?.after}
+                    rangeEnd={seriesMeta?.before}
+                    onRefreshMetrics={() => void loadMetrics()}
+                    onConfigureEntries={() => setWebEntryConfigOpen(true)}
+                    onOpenDeployments={() => setActiveTab('deployments')}
+                  />
+                ) : null}
 
                 {/* 方案 A：配置页签三分区（读生效值 / 逐 key 溯源 / 写分支行为）——
                     原「变量 / 配置 / 设置」三个近义页签合并，进哪儿不再靠猜 */}
@@ -2600,6 +2794,7 @@ export function BranchDetailDrawer({
                   <div className="mb-4 inline-flex rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
                     {([
                       ['variables', '生效变量', '当前分支实际生效的环境变量（读，含来源标签）'],
+                      ['references', '引用', '指向别的服务、分支或项目的地址；跨项目引用在这里切换分支'],
                       ['inspector', '配置检查器', '逐 key 溯源 + 部署计划'],
                       ['settings', '分支设置', '分支行为设置（写）'],
                     ] as Array<[ConfigSection, string, string]>).map(([key, label, hint]) => (
@@ -2680,6 +2875,10 @@ export function BranchDetailDrawer({
                   />
                 ) : null}
 
+                {activeTab === 'config' && configSection === 'references' && branchId ? (
+                  <ReferencesPanel branchId={branchId} onToast={onToast} />
+                ) : null}
+
                 {activeTab === 'config' && configSection === 'inspector' && branchId ? (
                   <EffectiveConfigPanel branchId={branchId} onToast={onToast} />
                 ) : null}
@@ -2698,18 +2897,6 @@ export function BranchDetailDrawer({
                     onSetProfileDbScope={setProfileDbScope}
                     onToast={onToast}
                   />
-                ) : null}
-
-                {/* 方案 A：指标并入总览（现在怎么样 = 状态 + 指标一屏看全） */}
-                {activeTab === 'overview' ? (
-                  <section className="mt-4">
-                    <h4 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">监控</h4>
-                    <MetricsPanel
-                      state={metricsState}
-                      series={metricSeries}
-                      onRefresh={() => void loadMetrics()}
-                    />
-                  </section>
                 ) : null}
 
                 <div className="mt-5 shrink-0 text-center text-xs text-muted-foreground">
@@ -4548,7 +4735,7 @@ function ResourceWorkbenchLauncher({
           </div>
         </div>
         <Button type="button" onClick={onOpen}>
-          <Maximize2 className="h-4 w-4" />
+          <Maximize2 />
           打开工作台
         </Button>
       </div>
@@ -4579,7 +4766,7 @@ function ResourceWorkbenchModal({
             <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{subtitle}</div>
           </div>
           <Button type="button" size="sm" variant="ghost" onClick={onClose} aria-label="关闭工作台">
-            <X className="h-4 w-4" />
+            <X />
           </Button>
         </div>
         {/* Body: on phones the panes stack and the whole body scrolls vertically
@@ -7168,145 +7355,8 @@ function SettingsActionButton({
 // 不持久化(关抽屉就丢)— 这是观测视图,不是审计。
 // ──────────────────────────────────────────────────────────────────────────
 
-function pushRing(
-  series: MetricSeries,
-  cpu: number,
-  mem: number,
-  rxRate: number,
-  txRate: number,
-): MetricSeries {
-  const trim = (arr: number[], v: number): number[] => {
-    const next = [...arr, v];
-    return next.length > METRIC_RING_SIZE ? next.slice(next.length - METRIC_RING_SIZE) : next;
-  };
-  return {
-    cpu: trim(series.cpu, cpu),
-    mem: trim(series.mem, mem),
-    rxRate: trim(series.rxRate, rxRate),
-    txRate: trim(series.txRate, txRate),
-  };
-}
 
-function MetricsPanel({
-  state,
-  series,
-  onRefresh,
-}: {
-  state: MetricsState;
-  series: Record<string, MetricSeries>;
-  onRefresh: () => void;
-}): JSX.Element {
-  if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在采集 docker stats…
-      </section>
-    );
-  }
-  if (state.status === 'error') {
-    return (
-      <section className="rounded-md border border-destructive/30 bg-destructive/10 px-5 py-4 text-sm text-destructive">
-        <div className="flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          <span>读取失败:{state.message}</span>
-          <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={onRefresh}>
-            <RefreshCw />重试
-          </Button>
-        </div>
-      </section>
-    );
-  }
-  const data = state.data;
-  if (data.services.length === 0) {
-    return (
-      <section className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        该分支没有任何 service。先去构建配置 / 部署。
-      </section>
-    );
-  }
 
-  return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span>共 {data.totalCount} 个 service · 运行中 {data.runningCount} · 每 5s 自动刷新 · 5min 滚动窗口</span>
-        <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={onRefresh}>
-          <RefreshCw />立即刷新
-        </Button>
-      </div>
-      {data.services.map((svc) => (
-        <ServiceMetricCard
-          key={svc.profileId}
-          profileId={svc.profileId}
-          containerName={svc.containerName}
-          status={svc.status}
-          stats={svc.stats}
-          series={series[svc.profileId]}
-        />
-      ))}
-    </section>
-  );
-}
-
-function ServiceMetricCard({
-  profileId,
-  containerName,
-  status,
-  stats,
-  series,
-}: {
-  profileId: string;
-  containerName: string;
-  status: string;
-  stats: ContainerStatsResponse | null;
-  series: MetricSeries | undefined;
-}): JSX.Element {
-  const isRunning = status === 'running' && stats !== null;
-  return (
-    <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(status)}`} aria-hidden />
-            <span className="font-mono text-sm font-medium">{profileId}</span>
-            <span className={`inline-flex h-5 items-center rounded-md border px-1.5 text-[10px] ${statusClass(status)}`}>
-              {status}
-            </span>
-          </div>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground" title={containerName}>
-            {containerName}
-          </div>
-        </div>
-      </div>
-
-      {!isRunning ? (
-        <div className="text-xs text-muted-foreground">服务未运行,无指标可读。</div>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          <MetricBar label="CPU" value={stats!.cpuPercent} unit="%" max={100} />
-          <MetricBar
-            label="内存"
-            value={stats!.memPercent}
-            unit="%"
-            max={100}
-            sub={`${formatBytes(stats!.memUsedBytes)} / ${formatBytes(stats!.memLimitBytes)}`}
-          />
-          <MetricRate label="网络入站(rx)" rate={series?.rxRate.at(-1) || 0} />
-          <MetricRate label="网络出站(tx)" rate={series?.txRate.at(-1) || 0} />
-        </div>
-      )}
-
-      {/* CPU sparkline — 5min 滚动窗口 */}
-      {isRunning && series && series.cpu.length >= 2 ? (
-        <div className="mt-3 flex items-center gap-3">
-          <span className="text-[11px] text-muted-foreground">CPU 5min 趋势</span>
-          <Sparkline data={series.cpu} max={Math.max(100, ...series.cpu)} />
-          <span className="text-[11px] text-muted-foreground">峰值 {Math.max(...series.cpu).toFixed(1)}%</span>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 function MetricBar({
   label,
@@ -7340,50 +7390,7 @@ function MetricBar({
   );
 }
 
-function MetricRate({ label, rate }: { label: string; rate: number }): JSX.Element {
-  return (
-    <div>
-      <div className="mb-1 text-xs text-muted-foreground">{label}</div>
-      <div className="font-mono text-sm font-medium">{formatBytes(rate)}/s</div>
-    </div>
-  );
-}
 
-/**
- * 极简内联 SVG sparkline。zero-dep,~30 行,viewBox 0..100 × 0..30,
- * 父容器用 className 控制实际像素尺寸。data 不足 2 点时不渲染。
- */
-function Sparkline({ data, max, className }: { data: number[]; max: number; className?: string }): JSX.Element | null {
-  if (data.length < 2) return null;
-  const width = 100;
-  const height = 30;
-  const safeMax = max > 0 ? max : 1;
-  const points = data
-    .map((v, i) => {
-      const x = (i / (data.length - 1)) * width;
-      const y = height - (v / safeMax) * height;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
-  return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      className={`flex-1 h-6 ${className || ''}`}
-      aria-label="趋势"
-    >
-      <polyline
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        points={points}
-        className="text-primary"
-      />
-    </svg>
-  );
-}
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';

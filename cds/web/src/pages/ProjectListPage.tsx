@@ -64,6 +64,7 @@ import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { AgentKeyScopePanel, describeAgentKeyScope, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
+import { RepoSharingInline, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
 
 const PROJECT_DOCK_BASE_SIZE = 56;
 const PROJECT_DOCK_MAGNIFIED_SIZE = 68;
@@ -113,6 +114,8 @@ interface ProjectSummary {
   pausedAt?: string | null;
   pauseReason?: string | null;
   resourceUsage?: ProjectResourceUsage | null;
+  /** 2026-09-02：这个仓库还喂着哪些别的项目（同仓 < 2 个时后端给 null）。 */
+  repoSharing?: RepoSharing | null;
 }
 
 interface ProjectResourceUsage {
@@ -454,6 +457,11 @@ export function ProjectListPage(): JSX.Element {
   const lastKnownGoodProjectsRef = useRef<ProjectSummary[]>([]);
   const [toast, setToast] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  /** 建项目时填了个已被绑走的仓库：项目建好了但没绑上，这里当场问清楚。 */
+  const [repoSharePrompt, setRepoSharePrompt] = useState<
+    /** pendingClone：这个项目还没 clone，等用户对冲突拿定主意再开始 */
+    { project: ProjectSummary; info: RepoAlreadyLinked; pendingClone: ProjectSummary | null } | null
+  >(null);
   const [createAutoPickRepo, setCreateAutoPickRepo] = useState(false);
   const [sandboxOpen, setSandboxOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
@@ -625,14 +633,26 @@ export function ProjectListPage(): JSX.Element {
     }
     setQuickCreating(true);
     try {
-      const res = await apiRequest<{ project: ProjectSummary }>('/api/projects', {
+      const res = await apiRequest<CreateProjectResponse>('/api/projects', {
         method: 'POST',
         body: { name, gitRepoUrl },
       });
       setQuickRepoUrl('');
       setToast(`已创建 ${displayName(res.project)}`);
-      if (res.project.cloneStatus === 'pending') setCloneTarget(res.project);
+      const needsClone = res.project.cloneStatus === 'pending';
+      // 有冲突就先别开始 clone —— 见下面那条注释与完整表单里的同一处判断。
+      if (needsClone && !res.repoAlreadyLinked) setCloneTarget(res.project);
       await refresh(false);
+      // 顶栏这条是建项目的**主**路径，撞上已被绑走的仓库同样要当场问清楚。
+      // 只在完整表单里处理会让主路径静默建出一个没绑仓库的项目，
+      // 而用户看到的是「已创建」，之后推送永远到不了它（Codex P1）。
+      if (res.repoAlreadyLinked) {
+        setRepoSharePrompt({
+          project: res.project,
+          info: res.repoAlreadyLinked,
+          pendingClone: needsClone ? res.project : null,
+        });
+      }
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -835,12 +855,83 @@ export function ProjectListPage(): JSX.Element {
             if (!next) setCreateAutoPickRepo(false);
           }}
           autoOpenPicker={createAutoPickRepo}
-          onCreated={async (project) => {
+          onCreated={async (project, repoAlreadyLinked) => {
             setToast(`已创建 ${displayName(project)}`);
-            if (project.cloneStatus === 'pending') setCloneTarget(project);
+            // 有冲突就先别开始 clone —— 让用户先回答「是要共用还是填错了」。
+            // clone 会顺手做自动配置，而私有仓库这时还没拿到共享的 GitHub App
+            // 绑定，拉取本来就可能失败（2026-09-02 Codex P1）。
+            if (project.cloneStatus === 'pending' && !repoAlreadyLinked) setCloneTarget(project);
             await refresh(false);
           }}
+          onRepoAlreadyLinked={(project, info) => setRepoSharePrompt({
+            project,
+            info,
+            pendingClone: project.cloneStatus === 'pending' ? project : null,
+          })}
         />
+
+        {/*
+         * 建项目时填了一个已被绑走的仓库：项目建好了、仓库没绑上。默认不绑是对的
+         * （绝大多数是填错地址），但绝不能不说 —— 用户会一直等一个永远不会来的
+         * 自动部署。所以在这里当场问清楚是哪一种。
+         */}
+        <Dialog
+          open={repoSharePrompt !== null}
+          onOpenChange={(next) => { if (!next) setRepoSharePrompt(null); }}
+        >
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>仓库没有绑上</DialogTitle>
+              <DialogDescription>
+                {displayName(repoSharePrompt?.project || ({} as ProjectSummary))} 已创建，但仓库没有绑定。
+              </DialogDescription>
+            </DialogHeader>
+            {repoSharePrompt ? (
+              <>
+                <RepoSharingConfirmBody
+                  repoFullName={repoSharePrompt.info.repoFullName}
+                  siblings={repoSharePrompt.info.projects}
+                  siblingCount={repoSharePrompt.info.projectCount}
+                />
+                {/* 两条出口各自会发生什么，先说清楚，别让用户点完才猜 */}
+                <p className="text-xs text-muted-foreground">
+                  {repoSharePrompt.pendingClone
+                    ? '选「填错了」就先不克隆这个仓库，项目留在未克隆状态，可以在项目卡上重新开始或直接删掉；选「去绑定」会先把仓库绑上，绑好再克隆。'
+                    : '选「填错了」只是不绑仓库，项目本身保持不变。'}
+                </p>
+              </>
+            ) : null}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  /*
+                   * 「填错了」就是说这个仓库地址不对 —— 那就更不该去拉它
+                   * （2026-09-02 Codex P2）。上一版把推迟的 clone 接在这条出口上，
+                   * 等于用户刚说完「填错了」，系统立刻开始克隆并自动配置那个错仓库。
+                   * 这里只关掉弹窗；项目留在未克隆状态，用户可以在项目卡上改地址、
+                   * 手动开始克隆，或者直接删掉重来。
+                   */
+                  setRepoSharePrompt(null);
+                }}
+              >
+                填错了，先不绑
+              </Button>
+              <Button
+                onClick={() => {
+                  // 去绑定：先把仓库绑上再 clone —— 私有仓库的拉取凭据正是从那个
+                  // 绑定来的，反过来先拉多半会失败。clone 入口在项目卡上，绑完
+                  // 随时可以点。
+                  const target = repoSharePrompt?.project.id;
+                  setRepoSharePrompt(null);
+                  if (target) navigate(`/settings/${encodeURIComponent(target)}#github`);
+                }}
+              >
+                去绑定，确认共用
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <SandboxProjectDialog
           open={sandboxOpen}
           onOpenChange={setSandboxOpen}
@@ -2032,6 +2123,16 @@ function ProjectCard({
 
       </a>
 
+      {/*
+       * 同仓关系放在整块链接**之外**：兄弟项目名本身要能点，而卡片整体已经是
+       * 一个 <a>，套嵌 <a> 是非法结构，点击行为也会打架。
+       */}
+      {project.repoSharing ? (
+        <div className="border-t border-[hsl(var(--hairline))] px-5 py-2">
+          <RepoSharingInline sharing={project.repoSharing} selfId={project.id} />
+        </div>
+      ) : null}
+
       <div
         className={`pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1 transition-opacity duration-150 ${
           paused ? 'opacity-100' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100'
@@ -2931,15 +3032,30 @@ function AgentKeyRevokeDialog({
   );
 }
 
+interface RepoAlreadyLinked {
+  repoFullName: string;
+  /** 兄弟项目明细。机器凭据拿不到，所以可能是空数组——用 projectCount 兜底显示。 */
+  projects: Array<{ id: string; name: string; scoped?: boolean }>;
+  projectCount: number;
+}
+
+interface CreateProjectResponse {
+  project: ProjectSummary;
+  /** 仓库已被别的项目绑走：本项目**没有**绑上，界面要当场说清楚。 */
+  repoAlreadyLinked?: RepoAlreadyLinked;
+}
+
 function CreateProjectDialog({
   open,
   onOpenChange,
   onCreated,
+  onRepoAlreadyLinked,
   autoOpenPicker = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (project: ProjectSummary) => Promise<void>;
+  onCreated: (project: ProjectSummary, repoAlreadyLinked?: RepoAlreadyLinked) => Promise<void>;
+  onRepoAlreadyLinked?: (project: ProjectSummary, info: RepoAlreadyLinked) => void;
   autoOpenPicker?: boolean;
 }): JSX.Element {
   const [name, setName] = useState('');
@@ -3113,7 +3229,7 @@ function CreateProjectDialog({
     }
     setSubmitting(true);
     try {
-      const res = await apiRequest<{ project: ProjectSummary }>('/api/projects', {
+      const res = await apiRequest<CreateProjectResponse>('/api/projects', {
         method: 'POST',
         body: {
           name: trimmedName,
@@ -3147,7 +3263,14 @@ function CreateProjectDialog({
       setAppServices(defaultOnboardingServices());
       setSelectedInfra([]);
       onOpenChange(false);
-      await onCreated(res.project);
+      // 冲突信息与项目一起交出去：父组件要据此决定「现在就开始 clone」还是
+      // 「等用户拿定主意再开始」——先开 clone 再问，用户还没回答，仓库已经在
+      // 拉了（2026-09-02 Codex P1）。
+      await onCreated(res.project, res.repoAlreadyLinked);
+      // 仓库已被别的项目绑走时，项目建好了但**仓库没绑上**（后端默认不绑，因为
+      // 绝大多数是填错了地址）。这件事必须当场说，否则用户会以为绑好了，直到
+      // 第一次 push 什么都没发生才发现。
+      if (res.repoAlreadyLinked) onRepoAlreadyLinked?.(res.project, res.repoAlreadyLinked);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -3704,7 +3827,7 @@ function SandboxProjectDialog({
                   setExtraFiles((current) => [...current, { relativePath: '', content: '' }])
                 }
               >
-                <Plus className="mr-1 h-3.5 w-3.5" />
+                <Plus className="mr-1" />
                 添加文件
               </Button>
             </div>
@@ -3740,7 +3863,7 @@ function SandboxProjectDialog({
                           setExtraFiles((current) => current.filter((_, i) => i !== idx))
                         }
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 />
                       </Button>
                     </div>
                     <textarea
@@ -3775,7 +3898,7 @@ function SandboxProjectDialog({
             onClick={() => formRef.current?.requestSubmit()}
             disabled={submitting}
           >
-            {submitting ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Beaker className="mr-1 h-3.5 w-3.5" />}
+            {submitting ? <Loader2 className="mr-1 animate-spin" /> : <Beaker className="mr-1" />}
             创建沙盒项目
           </Button>
         </DialogFooter>
@@ -4244,11 +4367,11 @@ function ResourceUsageDialog({
                           title={row.paused ? '恢复项目' : '暂停项目（停止容器并冻结构建）'}
                         >
                           {busyId === row.projectId ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <Loader2 className="animate-spin" />
                           ) : row.paused ? (
-                            <Play className="h-3.5 w-3.5" />
+                            <Play />
                           ) : (
-                            <Pause className="h-3.5 w-3.5" />
+                            <Pause />
                           )}
                           {row.paused ? '恢复' : '暂停'}
                         </Button>

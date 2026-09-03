@@ -1,5 +1,7 @@
 import http from 'node:http';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
+import { resolveProjectScope } from '../services/project-scope.js';
+import { resolvePreviewDispatch, type PreviewProjectFacts } from '../services/preview-dispatch.js';
 import https from 'node:https';
 import { isIP } from 'node:net';
 import fs from 'node:fs';
@@ -10,6 +12,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router, type Request, type Response } from 'express';
 import { StateService } from '../services/state.js';
+import { recordContainerSample, queryContainerSeries } from '../services/container-metrics-history.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
@@ -23,6 +26,7 @@ import {
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
+import { resolveBranchEnvLayers } from '../services/branch-env-layers.js';
 import {
   branchEntrypointDepsFromState,
   isPublishableNamedLabel,
@@ -10975,76 +10979,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const project = stateService.getProject(projectId);
 
     // ── 段A:customEnv 六层(顺序 = 合并顺序,与 getMergedEnv/buildBranchEnvMap 一致)──
-    const cdsEnv = stateService.getCdsEnvVars(projectId);
-    const mirrorEnv = stateService.getMirrorEnvVars();
-    const rawGlobal = project?.inheritGlobalEnv === true
-      ? stateService.getCustomEnvScope('_global')
-      : {};
-    const rawProjectScoped = projectId === '_global' ? {} : stateService.getCustomEnvScope(projectId);
-    const rawBranchScoped = stateService.getCustomEnvScope(entry.id);
-    const derivedReserved: Record<string, string> = {};
-    if (project) {
-      derivedReserved.CDS_PROJECT_ID = project.id;
-      derivedReserved.CDS_PROJECT_SLUG = project.slug;
-    }
-    const customLayers: EnvLayer[] = [
-      { source: 'cds-builtin' as const, env: cdsEnv },
-      { source: 'mirror' as const, env: mirrorEnv },
-      { source: 'global' as const, env: rawGlobal },
-      { source: 'project' as const, env: rawProjectScoped },
-      { source: 'branch' as const, env: rawBranchScoped },
-      // 项目身份保留 key 放最后 —— 即便 global/project 写了同名 key,生效的也是系统派生真值
-      { source: 'cds-derived' as const, env: derivedReserved },
-    ].filter((l) => Object.keys(l.env).length > 0);
-
+    // 分层装配抽到 branch-env-layers（与引用分区共用一份，plan.cds.service-relations 第三批）
+    const resolution = resolveBranchEnvLayers(stateService, entry, {
+      jwtIssuer: config.jwt.issuer,
+      previewHost: config.previewDomain || config.rootDomains?.[0],
+    });
+    const customLayers = resolution.customLayers;
     const envLayers = customLayers.map((l) => ({
       source: l.source,
       count: Object.keys(l.env).length,
       keys: Object.keys(l.env).sort(),
     }));
-
-    // ── 每个有效 profile(项目底座 + 分支临时额外服务)的逐 key 溯源 ──
-    const extraIds = new Set((entry.extraProfiles || []).map((p) => p.id));
     const effectiveProfiles = stateService.getEffectiveProfilesForBranch(entry);
-    const profiles = effectiveProfiles.map((baseline) => {
-      const isExtra = extraIds.has(baseline.id);
+    const profiles = resolution.profiles.map((r) => {
+      const { baseline, effective, isExtra, envError } = r;
       const override = entry.profileOverrides?.[baseline.id];
-      const effective = resolveEffectiveProfile(baseline, entry);
-      // profile env 三层拆分,相对顺序与部署合并链一致:
-      // baseline.env → override.env(applyProfileOverride) → deployModes[mode].env(resolveProfileWithMode)
-      const activeMode = override?.activeDeployMode !== undefined
-        ? override.activeDeployMode
-        : baseline.activeDeployMode;
-      const modeEnv = (activeMode && baseline.deployModes?.[activeMode]?.env) || undefined;
-      const profileLayers: EnvLayer[] = [
-        { source: (isExtra ? 'extra-service' : 'profile') as EnvSource, env: baseline.env || {} },
-        { source: 'branch-override' as const, env: override?.env || {} },
-        { source: 'deploy-mode' as const, env: modeEnv || {} },
-      ].filter((l) => Object.keys(l.env).length > 0);
-
-      let envProvenance: EnvKeyProvenance[] = [];
-      let envError: string | undefined;
-      try {
-        const resolved = resolveProfileRuntimeEnvWithProvenance(
-          entry, effective, customLayers, profileLayers,
-          // injectBullmqPrefix / publishedEntrypoints 与部署路径（container.ts
-          // resolveProfileRuntimeEnv）同源同值,否则检查器显示的 env ≠ 容器实际拿到的 env
-          {
-            jwtIssuer: config.jwt.issuer,
-            injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0',
-            publishedEntrypoints: resolveBranchEntrypointsEnv(
-              entry,
-              branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
-            ),
-          },
-        );
-        // 脱敏走 maskSecrets SSOT:按 key 名或 URL 凭据值判定,provenance 的 value 同步替换
-        const maskedEnv = maskSecrets(resolved.env);
-        envProvenance = resolved.provenance.map((p) => ({ ...p, value: maskedEnv[p.key] ?? p.value }));
-      } catch (err) {
-        // 缺模板值等解析失败:不 fail 整个端点,把缺口显性化(这正是检查器要暴露的问题)
-        envError = (err as Error).message;
-      }
+      const maskedEnv = maskSecrets(Object.fromEntries(r.provenance.map((p) => [p.key, p.value])));
+      const envProvenance = r.provenance.map((p) => ({ ...p, value: maskedEnv[p.key] ?? p.value }));
       return {
         profileId: baseline.id,
         profileName: baseline.name || baseline.id,
@@ -11250,6 +11201,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     const statsMap = await containerService.getServiceStats(runningContainers);
 
+    // 抽屉打开期间这里是 5s 一帧，比后台采样器（45s）密得多。两路都写进同一个
+    // 历史存储：读的一侧只认 container-metrics-history，不存在「谁的数据更新」的问题。
+    const sampledAt = Date.now();
+    for (const [containerName, stat] of statsMap) {
+      recordContainerSample(containerName, {
+        containerId: stat.id,
+        cpuPercent: stat.cpuPercent,
+        memUsedBytes: stat.memUsedBytes,
+        memLimitBytes: stat.memLimitBytes,
+        netRxBytes: stat.netRxBytes,
+        netTxBytes: stat.netTxBytes,
+        blockReadBytes: stat.blockReadBytes,
+        blockWriteBytes: stat.blockWriteBytes,
+      }, sampledAt);
+    }
+
     const result = services.map(([profileId, svc]) => ({
       profileId,
       containerName: svc.containerName,
@@ -11265,6 +11232,65 @@ export function createBranchRouter(deps: RouterDeps): Router {
       services: result,
       runningCount: runningContainers.length,
       totalCount: services.length,
+    });
+  });
+
+  // GET /api/branches/:id/metrics/series — 该分支各 service 的历史序列（2026-09-01）
+  //
+  // 查询契约借 Netdata 的形状：调用方声明「多长的窗口、要多少个点、怎么聚合」，
+  // 降采样在服务端做完再下发。以前是前端每 5s 打一次瞬时值、自己在 React state
+  // 里攒 60 点 ring —— 关掉抽屉就全丢，窗口最长只有 5 分钟，图上画不了部署竖线
+  // （部署几乎不会正好落在那 5 分钟里）。
+  //
+  //   after   窗口起点。负数 = 相对现在往前多少秒（-3600 = 近一小时）；正数 = 毫秒时间戳
+  //   before  窗口终点，省略或 0 = 现在
+  //   points  期望点数（默认 120，上限 1000）；实际点数不超过它
+  //   group   average（看趋势，默认）| max（找毛刺）
+  //
+  // 数据来自 container-metrics-history：45s 常驻采样器 + 抽屉打开时的 5s 端点
+  // 两路都往那里写，所以抽屉没开的时段也有基线，打开就有图，不用等攒点。
+  // 历史在内存里、进程重启即丢——这是观测视图不是审计账本。
+  router.get('/branches/:id/metrics/series', async (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const m2 = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m2) {
+      res.status(m2.status).json(m2.body);
+      return;
+    }
+
+    const num = (raw: unknown, fallback: number): number => {
+      const v = Number.parseInt(String(raw ?? ''), 10);
+      return Number.isFinite(v) ? v : fallback;
+    };
+    const services = Object.entries(branch.services || {});
+    const byContainer = new Map(services.map(([profileId, svc]) => [svc.containerName, profileId]));
+
+    const result = queryContainerSeries({
+      containers: [...byContainer.keys()],
+      after: num(req.query.after, -1800),
+      before: num(req.query.before, 0),
+      points: num(req.query.points, 120),
+      group: req.query.group === 'max' ? 'max' : 'average',
+    });
+
+    res.json({
+      branchId: branch.id,
+      after: result.after,
+      before: result.before,
+      groupSeconds: result.groupSeconds,
+      group: result.group,
+      // 按 profileId 下发，前端不必再认容器名
+      services: services.map(([profileId, svc]) => ({
+        profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+        points: result.series[svc.containerName] ?? [],
+      })),
     });
   });
 
@@ -15719,6 +15745,78 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     return conflicts;
   };
+
+  /**
+   * POST /preview-dispatch —— 「这次提交该给哪些预览地址」。
+   *
+   * 客户端只交事实（仓库、分支、可选的改动清单），项目归属与作用域判定全在这里，
+   * 与 push 分发**共用同一份作用域判据**。命令行因此不再需要在本地推断「我这条分支
+   * 属于哪个项目」—— 一个仓库喂多个项目时，那个推断必然要么猜错要么硬失败。
+   *
+   * 可见性：项目级凭据只看得到自己那个项目，全局凭据看得到该仓库下全部项目。
+   * 下拉别人的项目名与地址属于越权，判据直接复用 assertProjectAccess，不另写一份。
+   *
+   * 入口 URL 一律取 computeBranchWebEntries —— 与 GET /api/branches 同一个来源，
+   * 绝不在这里另拼一次域名。
+   */
+  router.post('/preview-dispatch', (req, res) => {
+    const body = (req.body || {}) as { repo?: string; branch?: string; changedPaths?: unknown };
+    const repo = typeof body.repo === 'string' ? body.repo.trim() : '';
+    const branch = typeof body.branch === 'string' ? body.branch.trim() : '';
+    if (!repo || !branch) {
+      res.status(400).json({ error: 'bad_request', message: 'repo 与 branch 均为必填' });
+      return;
+    }
+    const changedPaths = Array.isArray(body.changedPaths)
+      ? body.changedPaths.filter((p): p is string => typeof p === 'string')
+      : [];
+
+    const candidates = stateService.findProjectsByRepoFullName(repo);
+    // 可见性过滤在**判定之前**：不可见的项目连「未波及」都不该出现在结果里，
+    // 否则等于把别人的项目名泄露出去。
+    const visible = candidates.filter((project) => assertProjectAccess(req as never, project.id) === null);
+    if (visible.length === 0) {
+      res.json({
+        ok: true,
+        repo,
+        branch,
+        projects: [],
+        lines: [],
+        message: candidates.length > 0
+          ? '该仓库下有项目，但当前凭据都无权查看'
+          : `没有任何项目绑定到仓库 ${repo}`,
+      });
+      return;
+    }
+
+    const primaryRoot = config.previewDomain || config.rootDomains?.[0] || '';
+    const facts: PreviewProjectFacts[] = visible.map((project) => {
+      const entry = stateService.findBranchByProjectAndName(project.id, branch);
+      // 光有分支不等于有能打开的地址：computeBranchWebEntries 只要配了预览域名就
+      // 无条件造一条默认入口（那条默认入口是面板的正常行为，绝大多数项目并不显式
+      // 声明 web-entry，所以不能去动它），于是「分支在、但还没跑起来」这一档永远
+      // 走不到，命令行会打印一个打不开的 URL。
+      //
+      // 判据要的是「这个地址背后真有东西在接」，光看分支总状态不够（Codex 两轮）：
+      // 只跑后台 worker 的分支同样是 running，却没有任何可路由服务。所以用与转发器
+      // 发布路由**同一条**判据 —— 有 hostPort 且状态可路由的服务至少一个。
+      const routableUp = Object.values(entry?.services ?? {}).some(
+        (svc) => svc?.hostPort && ROUTABLE_SERVICE_STATUSES.has(String(svc.status)),
+      );
+      const webEntries = entry && routableUp && primaryRoot ? computeBranchWebEntries(entry, primaryRoot) : [];
+      return {
+        projectId: project.id,
+        projectSlug: project.slug,
+        projectName: project.aliasName || project.name,
+        scope: resolveProjectScope(stateService.getBuildProfilesForProject(project.id)),
+        ...(entry ? { branchId: entry.id } : {}),
+        entries: webEntries.map((webEntry) => ({ name: webEntry.name, url: webEntry.url })),
+      };
+    });
+
+    const dispatch = resolvePreviewDispatch(branch, facts, changedPaths);
+    res.json({ ok: true, repo, ...dispatch });
+  });
 
   router.get('/branches/:id/subdomain-aliases', (req, res) => {
     const { id } = req.params;
