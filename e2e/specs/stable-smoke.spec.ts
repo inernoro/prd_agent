@@ -106,6 +106,29 @@ async function issueTicketDetails(request: APIRequestContext, returnUrl: string)
   return body.data!;
 }
 
+function testingAuthHeaders(method: 'POST' | 'DELETE', url: string) {
+  return buildStableSmokeAuthHeaders({
+    method,
+    url,
+    body: '',
+    username: requiredEnv('STABLE_SMOKE_USER'),
+    aiAccessKey: process.env.STABLE_SMOKE_AI_ACCESS_KEY?.trim(),
+    keyId: process.env.STABLE_SMOKE_SIGNING_KEY_ID?.trim(),
+    privateKey: process.env.STABLE_SMOKE_SIGNING_PRIVATE_KEY?.trim(),
+  });
+}
+
+async function setLegacyStorageFixture(page: Page, siteId: string, prepare: boolean) {
+  const path = `/api/v1/auth/synthetic/testing/web-pages/${siteId}/legacy-entry`;
+  const response = prepare
+    ? await page.request.post(path, { headers: testingAuthHeaders('POST', path) })
+    : await page.request.delete(path, { headers: testingAuthHeaders('DELETE', path) });
+  const body = await response.json() as ApiEnvelope<{ prepared?: boolean; restored?: boolean }>;
+  expect(response.ok(), body.error?.message || '旧存储稳定冒烟夹具切换失败').toBe(true);
+  expect(body.success, body.error?.message || '旧存储稳定冒烟夹具切换失败').toBe(true);
+  expect(prepare ? body.data.prepared : body.data.restored).toBe(true);
+}
+
 async function loginAndReadToken(page: Page, request: APIRequestContext, returnUrl = '/') {
   const loginUrl = await issueTicket(request, returnUrl);
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
@@ -1049,6 +1072,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const created = createdBody.data;
       folderId = created.id;
 
+      await page.locator('[data-tour-id="webpages-create-folder"]').click();
+      await page.getByRole('textbox', { name: '文件夹名称' }).fill(runKey);
+      await page.getByRole('button', { name: '创建', exact: true }).click();
+      await expect(page.getByText('文件夹已存在', { exact: true })).toBeVisible();
+      const foldersAfterDuplicate = await readEnvelope<{ items: StableWebFolder[] }>(
+        await page.request.get('/api/web-folders', { headers: authHeaders(token) }),
+      );
+      expect(
+        foldersAfterDuplicate.items.filter((folder) => folder.name === runKey),
+        '同名文件夹重复创建后只能保留一条持久记录',
+      ).toHaveLength(1);
+
       const folderTarget = page.locator('[data-tour-id="webpages-folder-drop-target"]').filter({ hasText: runKey });
       await expect(folderTarget).toBeVisible();
       await expect(folderTarget.locator('.web-folder-drop-target__count')).toHaveText('0');
@@ -1147,9 +1182,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(unexpectedNavigations, '片段点击不应向对象存储目录发起导航').toEqual([]);
       await testInfo.attach('web-share-srcdoc-anchor', { body: await page.screenshot(), contentType: 'image/png' });
 
-      const ask = await page.request.post(`/api/web-pages/${siteId}/ask/stream`, {
+      await setLegacyStorageFixture(page, siteId, true);
+      const ask = await page.request.post(`/api/web-pages/shares/view/${share.token}/ask/stream`, {
         headers: { ...authHeaders(token), Accept: 'text/event-stream' },
-        data: { question: '页面中的正文标记是什么？' },
+        data: { siteId, question: '页面中的正文标记是什么？' },
         timeout: 120_000,
       });
       const stream = await ask.text();
@@ -1162,6 +1198,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(stream).not.toContain('ASK_NO_CONTENT');
       expect(stream).not.toContain('event: error');
     } finally {
+      if (siteId) {
+        await setLegacyStorageFixture(page, siteId, false);
+      }
       if (shareId) {
         const revoked = await page.request.delete(`/api/web-pages/shares/${shareId}?reason=stable-smoke-cleanup`, {
           headers: authHeaders(token),

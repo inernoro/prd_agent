@@ -181,6 +181,27 @@ public class SiteContentSnapshotServiceTests
     }
 
     [Fact]
+    public async Task 服务端已有可见正文时_不把隐藏脚本字符串当成页面内容()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = """
+            <!doctype html><html><head><title>公开报告</title></head><body>
+            <main><h1>访客可见结论</h1></main>
+            <script type="module">
+            const hiddenAdminLabel="管理员专用密钥已失效";
+            const hydrationCopy="访客可见结论";
+            </script></body></html>
+            """;
+
+        var snap = await NewService(storage).GetAsync(SiteWith(("index.html", "entry")));
+
+        Assert.Null(snap.Unavailable);
+        Assert.Contains("访客可见结论", snap.Text);
+        Assert.DoesNotContain("管理员专用密钥已失效", snap.Text);
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(snap.Text, "访客可见结论").Count);
+    }
+
+    [Fact]
     public async Task 当前存储缺少存量入口时_从落库站点地址读取正文()
     {
         var storage = new FakeAssetStorage();

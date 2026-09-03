@@ -91,6 +91,7 @@ import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real
 import {
   buildWebPageGroupSlot,
   canDropSiteIntoTeamGroup,
+  planPersonalFolderCreate,
   parseWebPageDropSlot,
 } from '@/components/web-hosting/folderDrop';
 
@@ -853,17 +854,20 @@ export default function WebPagesPage() {
   // ── 团队空间分组（专题/日常分类）操作 ──
 
   const handleCreatePersonalFolder = async (name: string): Promise<boolean> => {
-    const normalized = name.trim();
-    if (!normalized) return false;
-    const existing = personalFolderOptions.find((folder) => folder.localeCompare(normalized, 'zh-CN', { sensitivity: 'accent' }) === 0);
-    if (existing) {
-      setActiveFolder(existing);
-      toast.success('文件夹已存在', `已切换到「${existing}」`);
+    const plan = planPersonalFolderCreate(
+      name,
+      managedFolders.map((folder) => folder.name),
+      personalFolderOptions,
+    );
+    if (plan.kind === 'invalid') return false;
+    if (plan.kind === 'select') {
+      setActiveFolder(plan.name);
+      toast.success('文件夹已存在', `已切换到「${plan.name}」`);
       return true;
     }
 
     const res = await createWebFolder({
-      name: normalized,
+      name: plan.name,
       generatorType: 'none',
       generateTarget: 'web',
     });

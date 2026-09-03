@@ -4,6 +4,29 @@ import { canEditInWebHosting } from '@/lib/webHostingRole';
 export const WEB_PAGE_FOLDER_SLOT_PREFIX = 'web-page-folder:';
 export const WEB_PAGE_GROUP_SLOT_PREFIX = 'web-page-group:';
 
+export type PersonalFolderCreatePlan =
+  | { kind: 'invalid' }
+  | { kind: 'select'; name: string }
+  | { kind: 'create'; name: string };
+
+/**
+ * 区分“已经持久化的文件夹”和“仅由站点旧 folder 字段推导出的同名选项”。
+ * 后者仍必须创建 WebFolder 记录，否则最后一个站点移走后文件夹会凭空消失。
+ */
+export function planPersonalFolderCreate(
+  requestedName: string,
+  managedFolderNames: readonly string[],
+  visibleFolderNames: readonly string[],
+): PersonalFolderCreatePlan {
+  const normalized = requestedName.trim();
+  if (!normalized) return { kind: 'invalid' };
+  const matches = (name: string) => name.localeCompare(normalized, 'zh-CN', { sensitivity: 'accent' }) === 0;
+  const managed = managedFolderNames.find(matches);
+  if (managed) return { kind: 'select', name: managed };
+  const legacy = visibleFolderNames.find(matches);
+  return { kind: 'create', name: legacy ?? normalized };
+}
+
 export function canDropSiteIntoTeamGroup(
   role: WebHostingRole | null | undefined,
   ownerUserId: string | null | undefined,

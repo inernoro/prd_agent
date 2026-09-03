@@ -3,6 +3,7 @@ import {
   buildWebPageFolderSlot,
   buildWebPageGroupSlot,
   canDropSiteIntoTeamGroup,
+  planPersonalFolderCreate,
   parseWebPageDropSlot,
 } from './folderDrop';
 
@@ -27,5 +28,16 @@ describe('网页卡片文件夹拖拽协议', () => {
     expect(canDropSiteIntoTeamGroup('viewer', 'user-1', 'user-1')).toBe(true);
     expect(canDropSiteIntoTeamGroup('viewer', 'user-2', 'user-1')).toBe(false);
     expect(canDropSiteIntoTeamGroup('editor', 'user-2', 'user-1')).toBe(true);
+  });
+
+  it('同名旧文件夹仍会补建持久记录，已有持久记录则只切换', () => {
+    expect(planPersonalFolderCreate('历史归档', [], ['历史归档'])).toEqual({
+      kind: 'create',
+      name: '历史归档',
+    });
+    expect(planPersonalFolderCreate('历史归档', ['历史归档'], ['历史归档'])).toEqual({
+      kind: 'select',
+      name: '历史归档',
+    });
   });
 });

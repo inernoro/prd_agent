@@ -149,6 +149,10 @@ public sealed class SyntheticLoginControllerTests
     [InlineData("POST", "/api/v1/auth/synthetic/ticket", true)]
     [InlineData("POST", "/api/v1/auth/synthetic/gateway-ticket", true)]
     [InlineData("POST", "/api/dashboard/notifications/events", true)]
+    [InlineData("POST", "/api/v1/auth/synthetic/testing/web-pages/0123456789abcdef0123456789abcdef/legacy-entry", true)]
+    [InlineData("DELETE", "/api/v1/auth/synthetic/testing/web-pages/0123456789abcdef0123456789abcdef/legacy-entry", true)]
+    [InlineData("GET", "/api/v1/auth/synthetic/testing/web-pages/0123456789abcdef0123456789abcdef/legacy-entry", false)]
+    [InlineData("POST", "/api/v1/auth/synthetic/testing/web-pages/not-a-site/legacy-entry", false)]
     [InlineData("GET", "/api/v1/auth/synthetic/ticket", false)]
     [InlineData("POST", "/api/users", false)]
     public void StableSmokeSignature_ShouldBeEndpointScoped(string method, string path, bool expected)

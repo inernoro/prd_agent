@@ -144,4 +144,41 @@ describe('srcDoc 页内锚点', () => {
     expect(out).toContain('href="about:srcdoc#section"');
     expect(out).not.toContain('data-href="about:srcdoc#tracking"');
   });
+
+  it('引号内的大于号不会截断开始标签，后面的真实 href 仍会被保护', () => {
+    const out = preserveSrcDocFragmentLinks(
+      '<a title="score > 0" data-href="#tracking" href="#risk">风险</a>',
+    );
+
+    expect(out).toContain('title="score > 0"');
+    expect(out).toContain('data-href="#tracking"');
+    expect(out).toContain('href="about:srcdoc#risk"');
+  });
+
+  it('base 与 head 的属性里出现大于号时仍能正确改写或注入', () => {
+    const rewrittenBase = withPreviewBase(
+      '<html><head><base title="score > 0" href="./assets/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    expect(rewrittenBase).toContain('title="score > 0" href="https://storage.example/site/assets/"');
+
+    const injectedBase = withPreviewBase(
+      '<html><head data-note="score > 0"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    expect(injectedBase).toContain('<head data-note="score > 0"><base href="https://storage.example/site/">');
+  });
+
+  it('脚本字符串与 HTML 注释里的伪锚点不会被当成真实标签改写', () => {
+    const html = [
+      '<script>const sample = `<a href="#script-fake">`;</script>',
+      '<!-- <a href="#comment-fake"> -->',
+      '<a href="#real">正文</a>',
+    ].join('');
+    const out = preserveSrcDocFragmentLinks(html);
+
+    expect(out).toContain('href="#script-fake"');
+    expect(out).toContain('href="#comment-fake"');
+    expect(out).toContain('href="about:srcdoc#real"');
+  });
 });

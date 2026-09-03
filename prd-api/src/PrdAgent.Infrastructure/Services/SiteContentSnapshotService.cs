@@ -346,12 +346,21 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     /// </summary>
     internal static string HtmlToPlainText(string html)
     {
-        // Vite/React 生成的单文件站点没有静态正文，所有可见文案都在 type=module 的
-        // bundle 字符串里。直接删掉 script 会让预览页明明有内容，问答端却只读到标题。
-        // 这里先只摘取含中文的短字符串，既保住人类可见文案，也不把框架代码、CSS 和 URL
-        // 整包塞进上下文。来源仍是系统托管的原始对象，不接受访客传入正文。
-        var bundledText = ExtractHumanReadableScriptText(html);
+        var staticText = ExtractStaticMarkupText(html);
+        // 只有“空挂载节点 + module 脚本 + body 没有可见正文”三个条件同时成立，
+        // 才确认它是纯客户端壳子并从 bundle 补文案。服务端已渲染页面即使带 hydration
+        // 脚本也不读取脚本字符串，避免隐藏错误、管理文案或重复 hydration 数据混进正文。
+        var bundledText = IsConfirmedClientRenderedShell(html)
+            ? ExtractHumanReadableScriptText(html)
+            : string.Empty;
 
+        if (string.IsNullOrWhiteSpace(bundledText)) return staticText;
+        if (string.IsNullOrWhiteSpace(staticText)) return bundledText;
+        return Collapse($"{staticText}\n{bundledText}");
+    }
+
+    private static string ExtractStaticMarkupText(string html)
+    {
         var s = Regex.Replace(html, @"<(script|style|noscript)\b[^>]*>[\s\S]*?</\1>", " ",
             RegexOptions.IgnoreCase);
         s = Regex.Replace(s, @"<!--[\s\S]*?-->", " ");
@@ -360,11 +369,26 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
             RegexOptions.IgnoreCase);
         s = Regex.Replace(s, @"<[^>]+>", " ");
         s = System.Net.WebUtility.HtmlDecode(s);
-        var staticText = Collapse(s);
+        return Collapse(s);
+    }
 
-        if (string.IsNullOrWhiteSpace(bundledText)) return staticText;
-        if (string.IsNullOrWhiteSpace(staticText)) return bundledText;
-        return Collapse($"{staticText}\n{bundledText}");
+    private static bool IsConfirmedClientRenderedShell(string html)
+    {
+        var bodyMatch = Regex.Match(html, @"<body\b[^>]*>([\s\S]*?)</body>", RegexOptions.IgnoreCase);
+        if (!bodyMatch.Success) return false;
+
+        var body = bodyMatch.Groups[1].Value;
+        var hasKnownMount = Regex.IsMatch(
+            body,
+            @"\bid\s*=\s*(?:""(?:root|app|__next)""|'(?:root|app|__next)'|(?:root|app|__next)\b)",
+            RegexOptions.IgnoreCase);
+        var hasModuleScript = Regex.IsMatch(
+            html,
+            @"<script\b[^>]*\btype\s*=\s*(?:""module""|'module'|module\b)",
+            RegexOptions.IgnoreCase);
+        var visibleBodyText = ExtractStaticMarkupText(body);
+
+        return hasKnownMount && hasModuleScript && string.IsNullOrWhiteSpace(visibleBodyText);
     }
 
     private static string ExtractHumanReadableScriptText(string html)

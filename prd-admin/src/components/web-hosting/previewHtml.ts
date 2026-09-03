@@ -170,6 +170,73 @@ type HtmlAttributeMatch = {
   value: string;
 };
 
+type HtmlStartTag = {
+  start: number;
+  end: number;
+  name: string;
+  text: string;
+};
+
+/**
+ * 扫描完整 HTML 开始标签，结束位置必须在引号外的 `>`。
+ *
+ * 不能再用 `<a\b[^>]*>`：`title="score > 0"` 里的大于号是合法属性值，
+ * 正则会把标签截成半截，后面的真实 href 永远看不到。这个扫描器是开始标签
+ * 边界的唯一来源，a/area/base/head 都复用它。
+ */
+function scanHtmlStartTags(html: string, acceptedNames?: ReadonlySet<string>): HtmlStartTag[] {
+  const tags: HtmlStartTag[] = [];
+  let cursor = 0;
+
+  while (cursor < html.length) {
+    const start = html.indexOf('<', cursor);
+    if (start < 0) break;
+    if (html.startsWith('<!--', start)) {
+      const commentEnd = html.indexOf('-->', start + 4);
+      cursor = commentEnd < 0 ? html.length : commentEnd + 3;
+      continue;
+    }
+    const nameStart = start + 1;
+    if (!/[a-z]/i.test(html[nameStart] ?? '')) {
+      cursor = start + 1;
+      continue;
+    }
+
+    let nameEnd = nameStart + 1;
+    while (nameEnd < html.length && /[a-z0-9:-]/i.test(html[nameEnd])) nameEnd += 1;
+    const name = html.slice(nameStart, nameEnd).toLowerCase();
+    let quote: '"' | "'" | null = null;
+    let end = nameEnd;
+    for (; end < html.length; end += 1) {
+      const char = html[end];
+      if (quote) {
+        if (char === quote) quote = null;
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        quote = char;
+        continue;
+      }
+      if (char === '>') {
+        end += 1;
+        break;
+      }
+    }
+
+    if (end > html.length || html[end - 1] !== '>') break;
+    if (!acceptedNames || acceptedNames.has(name)) {
+      tags.push({ start, end, name, text: html.slice(start, end) });
+    }
+    cursor = end;
+    if (name === 'script' || name === 'style') {
+      const rawTextEnd = html.toLowerCase().indexOf(`</${name}`, cursor);
+      if (rawTextEnd >= 0) cursor = rawTextEnd;
+    }
+  }
+
+  return tags;
+}
+
 /**
  * 在一个开始标签里按 HTML 属性边界查找属性。
  *
@@ -231,13 +298,21 @@ function findHtmlAttribute(tag: string, targetName: string): HtmlAttributeMatch 
  */
 export function preserveSrcDocFragmentLinks(html: string): string {
   if (!html) return html;
-  return html.replace(/<(a|area)\b[^>]*>/gi, (tag) => {
-    const hrefAttr = findHtmlAttribute(tag, 'href');
-    if (!hrefAttr) return tag;
-    const href = hrefAttr.value.trim();
-    if (!href.startsWith('#')) return tag;
-    return `${tag.slice(0, hrefAttr.start)}href="${escapeHtmlAttr(`about:srcdoc${href}`)}"${tag.slice(hrefAttr.end)}`;
-  });
+  const tags = scanHtmlStartTags(html, new Set(['a', 'area']));
+  if (tags.length === 0) return html;
+
+  let output = '';
+  let lastEnd = 0;
+  for (const tag of tags) {
+    output += html.slice(lastEnd, tag.start);
+    const hrefAttr = findHtmlAttribute(tag.text, 'href');
+    const href = hrefAttr?.value.trim() ?? '';
+    output += !hrefAttr || !href.startsWith('#')
+      ? tag.text
+      : `${tag.text.slice(0, hrefAttr.start)}href="${escapeHtmlAttr(`about:srcdoc${href}`)}"${tag.text.slice(hrefAttr.end)}`;
+    lastEnd = tag.end;
+  }
+  return output + html.slice(lastEnd);
 }
 
 export function withPreviewBase(html: string, siteUrl: string) {
@@ -249,8 +324,9 @@ export function withPreviewBase(html: string, siteUrl: string) {
   // 先找到那个 <base> 标签本身，再看它有没有 href —— 两件事分开判。
   // 合成一条正则要求 href 必须存在，会让 `<base target="_blank">` 这种「有标签、没 href」
   // 的页面整个漏过去：不改写，也不注入，相对资源在 srcDoc 下全部解析到 MAP 自己的页面。
-  const tag = html.match(/<base\b[^>]*>/i)?.[0];
-  if (tag) {
+  const baseTagMatch = scanHtmlStartTags(html, new Set(['base']))[0];
+  if (baseTagMatch) {
+    const tag = baseTagMatch.text;
     const hrefAttr = findHtmlAttribute(tag, 'href');
     const href = hrefAttr?.value ?? null;
 
@@ -264,12 +340,13 @@ export function withPreviewBase(html: string, siteUrl: string) {
     const rewritten = hrefAttr
       ? `${tag.slice(0, hrefAttr.start)}href="${escapeHtmlAttr(resolved)}"${tag.slice(hrefAttr.end)}`
       : tag.replace(/^<\s*base\b/i, (m) => `${m} href="${escapeHtmlAttr(resolved)}"`);
-    return html.replace(tag, rewritten);
+    return `${html.slice(0, baseTagMatch.start)}${rewritten}${html.slice(baseTagMatch.end)}`;
   }
 
   const baseTag = `<base href="${escapeHtmlAttr(baseHref)}">`;
-  if (/<head\b[^>]*>/i.test(html)) {
-    return html.replace(/<head\b([^>]*)>/i, `<head$1>${baseTag}`);
+  const headTag = scanHtmlStartTags(html, new Set(['head']))[0];
+  if (headTag) {
+    return `${html.slice(0, headTag.end)}${baseTag}${html.slice(headTag.end)}`;
   }
   return `${baseTag}${html}`;
 }
