@@ -129,6 +129,29 @@ async function setLegacyStorageFixture(page: Page, siteId: string, prepare: bool
   expect(prepare ? body.data.prepared : body.data.restored).toBe(true);
 }
 
+async function expectAnonymousShareAnswer(
+  request: APIRequestContext,
+  shareToken: string,
+  siteId: string,
+  marker: string,
+  storagePath: 'current' | 'legacy',
+) {
+  const ask = await request.post(`/api/web-pages/shares/view/${shareToken}/ask/stream`, {
+    headers: { Accept: 'text/event-stream' },
+    data: { siteId, question: '页面中的正文标记是什么？' },
+    timeout: 120_000,
+  });
+  const stream = await ask.text();
+  expect(ask.status(), `${storagePath} storage: ${stream}`).toBe(200);
+  expect(ask.headers()['content-type']).toContain('text/event-stream');
+  expect(stream).toContain('event: phase');
+  expect(stream).toContain('event: typing');
+  expect(stream).toContain('event: done');
+  expect(readSseTypingText(stream), `${storagePath} storage answer`).toContain(marker);
+  expect(stream).not.toContain('ASK_NO_CONTENT');
+  expect(stream).not.toContain('event: error');
+}
+
 async function loginAndReadToken(page: Page, request: APIRequestContext, returnUrl = '/') {
   const loginUrl = await issueTicket(request, returnUrl);
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
@@ -1138,14 +1161,24 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[WEB-004][WEB-005][WEB-006] 分享页片段留在 srcDoc 且页面提问可读正文', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
-    test.setTimeout(180_000);
+    const environment = requiredEnv('STABLE_SMOKE_ENVIRONMENT');
+    test.setTimeout(environment === 'cds' ? 300_000 : 180_000);
     const token = await loginAndReadToken(page, request, '/web-pages');
     const runKey = `stsmk-${Date.now().toString(36)}-share`;
     let siteId = '';
     let shareId = '';
+    let legacyFixturePrepared = false;
     try {
       const uploaded = await uploadStableHostedSite(page, token, runKey);
       siteId = uploaded.site.id;
+      await readEnvelope(await page.request.put(`/api/web-pages/${siteId}/ask/config`, {
+        headers: authHeaders(token),
+        data: {
+          enabled: true,
+          allowAnonymous: true,
+          dailyLimit: 0,
+        },
+      }));
       const share = await readEnvelope<{ id: string; token: string; shareUrl: string }>(
         await page.request.post('/api/web-pages/share', {
           headers: authHeaders(token),
@@ -1182,23 +1215,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(unexpectedNavigations, '片段点击不应向对象存储目录发起导航').toEqual([]);
       await testInfo.attach('web-share-srcdoc-anchor', { body: await page.screenshot(), contentType: 'image/png' });
 
-      await setLegacyStorageFixture(page, siteId, true);
-      const ask = await page.request.post(`/api/web-pages/shares/view/${share.token}/ask/stream`, {
-        headers: { ...authHeaders(token), Accept: 'text/event-stream' },
-        data: { siteId, question: '页面中的正文标记是什么？' },
-        timeout: 120_000,
-      });
-      const stream = await ask.text();
-      expect(ask.status(), stream).toBe(200);
-      expect(ask.headers()['content-type']).toContain('text/event-stream');
-      expect(stream).toContain('event: phase');
-      expect(stream).toContain('event: typing');
-      expect(stream).toContain('event: done');
-      expect(readSseTypingText(stream)).toContain(uploaded.marker);
-      expect(stream).not.toContain('ASK_NO_CONTENT');
-      expect(stream).not.toContain('event: error');
+      await expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'current');
+
+      if (environment === 'cds') {
+        await setLegacyStorageFixture(page, siteId, true);
+        legacyFixturePrepared = true;
+        await expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'legacy');
+      }
     } finally {
-      if (siteId) {
+      if (siteId && legacyFixturePrepared) {
         await setLegacyStorageFixture(page, siteId, false);
       }
       if (shareId) {

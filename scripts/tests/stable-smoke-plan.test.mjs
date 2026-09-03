@@ -183,6 +183,24 @@ test('网页托管变更进入功能台账并绑定六个操作锚点', () => {
   assert.deepEqual(feature.requiredCaseIds, ['WEB-001', 'WEB-002', 'WEB-003', 'WEB-004', 'WEB-005', 'WEB-006']);
 });
 
+test('网页托管问答先走匿名主存储，旧存储夹具只在 CDS 环境启用', () => {
+  const source = readFileSync(resolve(repoRoot, 'e2e/specs/stable-smoke.spec.ts'), 'utf8');
+  const testStart = source.indexOf("test('[WEB-004][WEB-005][WEB-006]");
+  const testEnd = source.indexOf("\n  test(", testStart + 1);
+  const block = source.slice(testStart, testEnd);
+  const currentAsk = block.indexOf("expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'current')");
+  const fixtureGuard = block.indexOf("if (environment === 'cds')");
+  const legacyAsk = block.indexOf("expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'legacy')");
+
+  assert.ok(testStart >= 0, '缺少 WEB-005 稳定冒烟用例');
+  assert.ok(currentAsk >= 0 && fixtureGuard > currentAsk && legacyAsk > fixtureGuard,
+    '必须先验证当前存储，再只在 CDS 环境切换旧存储夹具');
+  assert.match(block, /if \(siteId && legacyFixturePrepared\)/,
+    '未准备旧存储夹具时不得调用恢复端点');
+  assert.match(source, /async function expectAnonymousShareAnswer[\s\S]*?headers: \{ Accept: 'text\/event-stream' \}/,
+    '分享问答必须使用不带 Authorization 的独立 request 上下文');
+});
+
 test('正式环境禁止项不得混入可被正式环境选中的组合用例', () => {
   const source = readFileSync(resolve(repoRoot, 'e2e/specs/stable-smoke.spec.ts'), 'utf8');
   const starts = [...source.matchAll(/\n  test\(/g)].map((match) => match.index);
