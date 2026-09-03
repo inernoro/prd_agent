@@ -116,7 +116,7 @@ per-branch 模式下:
 | 限制 | 影响 | 后续解决方案 |
 |------|------|-------------|
 | **不主动建库** | 假定 mysql/postgres 镜像或 ORM migration 阶段会自动 `CREATE DATABASE IF NOT EXISTS`。多数 ORM(Prisma/EF/Sequelize)自带此行为;原生 SQL 项目可能要在应用启动加 `mysql -e "CREATE DATABASE..."` | Phase 5.5+ scheduler 部署前主动建库 |
-| **不清理** | 分支删除后 `app_<slug>` 库残留,占 disk | Phase 5.5+ 加 GC,删分支时 drop 库 |
+| **删分支默认保留派生库** | 分支删除后 `app_<slug>` 库不自动 drop，转为项目设置「数据库隔离 → 派生库台账」里的孤儿条目 | 有意设计（2026-09-03 起）：数据不丢是第一位；在台账里先备份并演练验证，再丢弃；确实不要就复述库名强制丢弃。「扫描补录」能把历史残留库找回台账 |
 | **migration 多分支冲突无警告** | 两个分支都改 schema 各自跑 migration,merge 时可能冲突 | Phase 5.5+ 部署前对比 git migration 文件 vs DB `__migrations` 表给警告 |
 | **改项目默认不会自动重部署、不迁移存量数据** | 切到 per-branch 后旧共享库里的数据不会搬进分支库，分支要重新部署并重跑 migration | 有意设计：切库是重操作，重部署时机由用户决定；数据迁移走复制集「隔离库」能力 |
 | **不支持每分支独立 mysql 实例** | 所有分支共用同一容器,只是 db name 不同。disk 用一份 | 设计取舍:per-branch instance 太重,本 MVP 不做 |

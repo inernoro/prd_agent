@@ -33,6 +33,7 @@ import { createProjectMigrationRouter } from './routes/project-migration.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createProjectDbIsolationRouter } from './routes/project-db-isolation.js';
 import { createDbProbeRouter } from './routes/db-probe.js';
+import { createDbLedgerRouter } from './routes/db-ledger.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
@@ -822,6 +823,12 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /projects/:id/db-isolation': '查看数据库隔离',
     'PUT /projects/:id/db-isolation': '设置数据库隔离',
     'GET /branches/:id/db-probe': '实测数据库连接',
+    'GET /projects/:id/db-ledger': '查看数据台账',
+    'POST /projects/:id/db-ledger/scan': '扫描补录派生库',
+    'POST /projects/:id/db-ledger/:entryId/backup': '备份派生库',
+    'POST /projects/:id/db-ledger/:entryId/backups/:backupId/verify': '演练验证备份',
+    'DELETE /projects/:id/db-ledger/:entryId': '丢弃派生库',
+    'GET /branches/:id/db-ledger': '查看分支派生库',
     'POST /projects/:id/managed-plan': '生成托管部署计划',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
@@ -1243,6 +1250,12 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/[^/]+\/db-isolation$/, '查看数据库隔离'],
     [/^PUT \/projects\/[^/]+\/db-isolation$/, '设置数据库隔离'],
     [/^GET \/branches\/[^/]+\/db-probe$/, '实测数据库连接'],
+    [/^GET \/projects\/[^/]+\/db-ledger$/, '查看数据台账'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/scan$/, '扫描补录派生库'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/backup$/, '备份派生库'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/backups\/[^/]+\/verify$/, '演练验证备份'],
+    [/^DELETE \/projects\/[^/]+\/db-ledger\/[^/]+$/, '丢弃派生库'],
+    [/^GET \/branches\/[^/]+\/db-ledger$/, '查看分支派生库'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],
@@ -4181,6 +4194,11 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createDbProbeRouter({
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
+  }));
+  app.use('/api', createDbLedgerRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+    repoRoot: deps.config.repoRoot,
   }));
   // Cache diagnostics / repair / cross-server migration.
   // See routes/cache.ts for why this exists (挂载失效诊断 + 换机器预热).

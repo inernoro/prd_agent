@@ -687,6 +687,63 @@ export interface ReplicaDbSnapshot {
   clonedAt: string;
 }
 
+/** 数据台账里一条派生库的备份记录（文件在 CDS 宿主的备份目录） */
+export interface DbLedgerBackup {
+  id: string;
+  /** 宿主上的绝对路径 */
+  file: string;
+  bytes: number;
+  sha256: string;
+  createdAt: string;
+  /** 备份时源库的对象数（表 / 集合），演练时用来比对 */
+  objects?: number;
+  /** 演练验证：还原到临时库并核对对象数成功的时间；没有这个字段的备份不算备份 */
+  verifiedAt?: string;
+  verifyDetail?: string;
+}
+
+export type DbLedgerKind = 'per-branch' | 'isolated' | 'unknown';
+export type DbLedgerStatus = 'active' | 'orphaned' | 'dropped';
+
+/**
+ * 数据台账条目：一条派生库「从谁来、什么时候、多大、备份在哪、现在去哪了」。
+ */
+export interface DbLedgerEntry {
+  id: string;
+  projectId: string;
+  kind: DbLedgerKind;
+  engine: 'mongo' | 'mysql' | 'postgres';
+  dbName: string;
+  infraId?: string;
+  infraContainer: string;
+  /** 血缘：从哪个库派生（分支独立库 = 去掉后缀的库；隔离库 = 克隆源库；扫描补录 = 未知） */
+  sourceDb?: string;
+  branchId?: string;
+  branch?: string;
+  profileId?: string;
+  memberId?: string;
+  /** 隔离库快照 id（与 branch.replicaDbSnapshots 对应） */
+  snapshotId?: string;
+  dedicatedContainer?: string;
+  dedicatedHostPort?: number;
+  dedicatedAuth?: 'source-infra';
+  /** cds = CDS 自己派生的；scan = 扫描实例补录的存量库，来源未知 */
+  origin: 'cds' | 'scan';
+  status: DbLedgerStatus;
+  createdAt: string;
+  updatedAt: string;
+  /** 分支删除后转孤儿的时间 */
+  orphanedAt?: string;
+  droppedAt?: string;
+  droppedBy?: string;
+  /** 没有验证过的备份、用户复述库名强制丢弃 */
+  droppedForced?: boolean;
+  backups: DbLedgerBackup[];
+  /** 最近一次量到的对象数（表 / 集合） */
+  lastObjects?: { count: number; measuredAt: string };
+  note?: string;
+}
+
 /** 复制集执行计划的步骤类型（草稿-保存模型：用户先排操作，保存后串行执行） */
 export type ReplicaPlanStepKind =
   | 'add-replica'      // params: versionId?（缺省=当前版本）, dbMode?
@@ -2028,6 +2085,13 @@ export interface CdsState {
    * 由 DestructiveOperationLog 单独追踪（见 undoable 字段）。
    */
   configSnapshots?: ConfigSnapshot[];
+  /**
+   * 数据台账（数据库隔离收敛 3，2026-09-03）：分支独立库、隔离库、备份、演练、丢弃、
+   * 扫描补录全部记在这一本里，按血缘成树。隔离库快照仍在 branch.replicaDbSnapshots
+   * （运行时真相），台账只补它的备份与去向；分支删掉后快照随分支消失，台账里的
+   * 条目转「孤儿」留下来——派生库不许失踪。
+   */
+  dbLedger?: DbLedgerEntry[];
   /**
    * 2026-04-22 新增 —— 破坏性操作审计 + 撤销。
    *

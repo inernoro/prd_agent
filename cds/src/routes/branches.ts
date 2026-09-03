@@ -86,6 +86,8 @@ import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
 import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
 import { dropReplicaDb } from '../services/replica-db-clone.js';
+import { markDropped, settleBranchDbsOnDelete, type BranchDbDeleteChoice } from '../services/db-ledger.js';
+import { realDbLedgerOps } from '../services/db-ledger-ops.js';
 import { getInfraCatalogPublic } from '../services/infra-catalog.js';
 import { assertInfraAuthenticationConfigured } from '../services/infra-auth-policy.js';
 import { assertProjectAccess, assertScopedSweep } from './projects.js';
@@ -11527,11 +11529,45 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 容器 + 留存一份数据。必须在删台账前逐个 drop。best-effort：单个失败记
       // 服务器事件不阻断删除主流程（dropReplicaDb 自带 cds-rsdb-/_rs_ 命名双保险，
       // 不会误删共享主库）。
-      for (const snapshot of entry.replicaDbSnapshots ?? []) {
+      // 数据台账（收敛 3，2026-09-03）：删分支**默认保留**派生库——隔离库与分支独立库转为
+      // 台账里的孤儿条目，随时可备份 / 丢弃；只有请求体里明确勾选丢弃、且过了「演练验证过的
+      // 备份或复述库名」门禁的才真删。级联清理只对这些条目跑（下面沿用既有的墓碑 / 重试逻辑）。
+      const dbChoices: BranchDbDeleteChoice[] = Array.isArray((req.body as any)?.dbs) ? (req.body as any).dbs : [];
+      const dbSettlement = settleBranchDbsOnDelete(stateService, entry, dbChoices, new Date());
+      const dropSnapshotIds = new Set(dbSettlement.toDrop.filter((e) => e.snapshotId).map((e) => e.snapshotId!));
+      for (const derived of dbSettlement.toDrop.filter((e) => !e.snapshotId)) {
+        try {
+          const infra = stateService.getInfraServicesForProject(entry.projectId)
+            .find((svc) => svc.containerName === derived.infraContainer || svc.id === derived.infraId);
+          if (!infra) throw new Error(`找不到承载 ${derived.dbName} 的基础设施实例`);
+          await realDbLedgerOps.dropDb(derived.engine, infra, derived);
+          markDropped(stateService, derived, actor, new Date());
+        } catch (err) {
+          serverEventLogStore?.record({
+            category: 'container', severity: 'warn', source: 'branch-delete', action: 'branch.delete.derived-db-drop-failed',
+            message: `删分支丢弃分支独立库失败: ${derived.dbName} — ${(err as Error).message}（条目保留为孤儿，可在数据台账重试）`,
+            projectId: entry.projectId, branchId: entry.id, requestId: requestId || null,
+            operationId: branchOperationLease?.operationId || null, ...operationAuditFields,
+            details: { dbName: derived.dbName, engine: derived.engine },
+          });
+        }
+      }
+      if (dbSettlement.kept.length > 0 || dbSettlement.refused.length > 0) {
+        serverEventLogStore?.record({
+          category: 'container', severity: 'info', source: 'branch-delete', action: 'branch.delete.derived-db-kept',
+          message: `删分支保留 ${dbSettlement.kept.length} 个派生库为台账孤儿条目${dbSettlement.refused.length ? `；${dbSettlement.refused.length} 个丢弃请求被门禁拒绝（${dbSettlement.refused.map((r) => r.dbName).join(', ')}）` : ''}`,
+          projectId: entry.projectId, branchId: entry.id, requestId: requestId || null,
+          operationId: branchOperationLease?.operationId || null, ...operationAuditFields,
+          details: { kept: dbSettlement.kept.map((e) => e.dbName), refused: dbSettlement.refused },
+        });
+      }
+      for (const snapshot of (entry.replicaDbSnapshots ?? []).filter((s) => dropSnapshotIds.has(s.id))) {
         try {
           const snapshotInfra = stateService.getInfraServicesForProject(entry.projectId)
             .find((svc) => svc.containerName === snapshot.infraContainer);
           await dropReplicaDb(snapshot, snapshotInfra?.env || {});
+          const ledgerEntry = dbSettlement.toDrop.find((e) => e.snapshotId === snapshot.id);
+          if (ledgerEntry) markDropped(stateService, ledgerEntry, actor, new Date());
         } catch (err) {
           // 失败不能只记事件（Codex P2）：台账马上随分支状态删除，瞬时 Docker/DB
           // 故障会让专用实例容器从此彻底无主。专用实例失败 → 写墓碑，收割器按

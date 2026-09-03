@@ -27,6 +27,7 @@ import {
 import { Layers, Lock, Plus } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
+import { BranchDbKeepList, type BranchDbChoice } from '@/components/branch/BranchDbKeepList';
 import { DbProbePanel } from '@/components/branch/DbProbePanel';
 import { ReferencesPanel } from '@/components/branch/ReferencesPanel';
 import { RelationCard } from '@/components/branch/RelationCard';
@@ -1558,6 +1559,7 @@ export function BranchDetailDrawer({
   const runBranchAction = useCallback(async (
     action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete',
     label: string,
+    extra?: { dbs?: BranchDbChoice[] },
   ): Promise<void> => {
     if (!branchId) return;
     const actionBranchId = branchId;
@@ -1567,7 +1569,8 @@ export function BranchDetailDrawer({
         action === 'delete' ? '' : `/${action}`
       );
       const method = action === 'delete' ? 'DELETE' : 'POST';
-      await apiRequest(path, { method });
+      // 删分支带上派生库的去向（收敛 3）：默认保留，勾选丢弃的走后端门禁
+      await apiRequest(path, extra?.dbs ? { method, body: { dbs: extra.dbs.map((d) => ({ entryId: d.entryId, dbName: d.dbName, action: d.action, ...(d.confirmDbName ? { confirmDbName: d.confirmDbName } : {}) })) } } : { method });
       onToast?.(`${label} 已提交`);
       onActionComplete?.(action);
       if (action === 'delete') {
@@ -7051,11 +7054,13 @@ function SettingsPanel({
   onRunAction: (
     action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete',
     label: string,
+    extra?: { dbs?: BranchDbChoice[] },
   ) => void;
   onSetProfileDeployMode: (profile: ProfileRow, mode: string) => void;
   onSetProfileDbScope: (profile: ProfileRow, scope: '' | 'shared' | 'per-branch') => void;
   onToast?: (message: string) => void;
 }): JSX.Element {
+  const [dbChoices, setDbChoices] = useState<BranchDbChoice[]>([]);
   if (!branch) {
     return (
       <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
@@ -7304,12 +7309,14 @@ function SettingsPanel({
             <div className="text-sm text-destructive">
               将停止 {Object.keys(branch.services || {}).length} 个服务并删除该分支的工作区。**git 历史不会被删**(只是 CDS 端忘记这个分支)。继续?
             </div>
+            {/* 收敛 3：删之前先展示会留下什么——派生库默认保留，丢弃走门禁 */}
+            <BranchDbKeepList branchId={branch.id} choices={dbChoices} onChange={setDbChoices} />
             <div className="flex gap-2">
               <Button
                 type="button"
                 variant="destructive"
                 size="sm"
-                onClick={() => onRunAction('delete', '删除分支')}
+                onClick={() => onRunAction('delete', '删除分支', { dbs: dbChoices })}
                 disabled={isAnyBusy}
               >
                 {busy === 'delete' ? <Loader2 className="animate-spin" /> : <Trash2 />}

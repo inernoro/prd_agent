@@ -5,6 +5,7 @@ import { ConfirmAction } from '@/components/ui/confirm-action';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { apiRequest, ApiError } from '@/lib/api';
 import { DbProbePanel } from '@/components/branch/DbProbePanel';
+import { DbLedgerSection } from '@/components/branch/DbLedgerSection';
 
 /**
  * 项目设置 →「数据库隔离」。
@@ -522,14 +523,18 @@ export function DbIsolationTab({
   if (!view) return <ErrorBlock message="没有拿到数据库隔离配置" />;
 
   return (
-    <DbIsolationPanel
-      view={view}
-      draft={draft}
-      saving={saving}
-      error={saveError}
-      onDraftChange={setDraft}
-      onSave={save}
-      onReload={() => void load()}
-    />
+    <div className="space-y-8">
+      <DbIsolationPanel
+        view={view}
+        draft={draft}
+        saving={saving}
+        error={saveError}
+        onDraftChange={setDraft}
+        onSave={save}
+        onReload={() => void load()}
+      />
+      {/* 收敛 3：一本数据台账（派生库从谁来、在哪、备份在哪、丢弃门禁） */}
+      <DbLedgerSection projectId={projectId} onToast={onToast} />
+    </div>
   );
 }

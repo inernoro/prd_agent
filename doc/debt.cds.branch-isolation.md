@@ -64,7 +64,7 @@ brandai 项目已临时用分支级 env 兜底:`AI_SERVICE_URL=http://cds-<branc
 | BNI-cleanup | low | 2026-06-29 | 分支级网络隔离的 `removeBranchNetwork()` 已实现但未接全 `removeBranch` 调用点;空的 `cds-br-*` 网会随分支删除缓慢堆积 | 长期运行 + 大量分支增删 | 已修复 | 2026-07-09:台账原记「4 处未接」已过时,对账后实剩 2 处(index.ts janitor setRemoveFn + 启动残留 prune),均已在 removeBranch 前补 `await removeBranchNetwork(slug).catch(()=>{})`,清网失败不阻断删除(janitor.test.ts 有守卫用例) |
 | BNI-prune-network | low | 2026-06-29 | `pruneStaleAppContainersForProfile` 曾按共享网扫描,隔离后 app 别名在分支网 | 隔离开启后的陈旧容器清理 | 已修复 | 2026-06-29 review:已改按 `netPlan.runNetwork`(隔离=分支网)扫别名,与别名实际所在网一致 |
 | BNI-legacy-shared-alias | low | 2026-06-29 | 渐进迁移过渡窗口:已迁移分支 connect 共享网以可达 infra,若兄弟分支旧容器仍跑在共享网,其残留 app `--network-alias` 仍可被解析,隔离要等所有兄弟重部署后才完全生效 | 隔离 rollout 期 + 兄弟分支未重部署 + 解析本分支网缺失的 app 名 | open（已知边界） | 无 flag day 渐进迁移固有过渡态,非新代码 bug。缓解:兄弟下次部署即落分支网/旧别名消失、运营可批量重部署或 prune 共享网存量 app 别名、逃生开关整体回退。根治=app 只连 infra-only 专网(共享网不再承载 app 别名),属更大架构改动,待专项。见 `design.cds.branch-network-isolation` §6 |
-| DBI-project-default-stale-build | low | 2026-09-02 | 项目设置「数据库隔离」改的是 `BuildProfile.dbScope` 底座，保存只写配置不重部署：改完之后、分支重新部署之前，跑着的旧容器仍连着改前的库；分支删除后 `app_<slug>` 独立库也不会自动 drop（与 `guide.cds.multi-branch-db` §4 一致） | 改项目默认后不重部署 / 频繁增删分支 | open（已知边界） | 有意设计：切库是重操作，重部署时机交给用户；页面与 API 回包都写明「重新部署后生效」并给出受影响分支数。独立库 GC 待专项 |
+| DBI-project-default-stale-build | low | 2026-09-02 | 项目设置「数据库隔离」改的是 `BuildProfile.dbScope` 底座，保存只写配置不重部署：改完之后、分支重新部署之前，跑着的旧容器仍连着改前的库；分支删除后 `app_<slug>` 独立库也不会自动 drop（与 `guide.cds.multi-branch-db` §4 一致） | 改项目默认后不重部署 / 频繁增删分支 | open（已知边界） | 有意设计：切库是重操作，重部署时机交给用户；页面与 API 回包都写明「重新部署后生效」并给出受影响分支数。独立库的去向已由数据台账接管（2026-09-03 收敛 3）：删分支默认保留转孤儿，备份 / 演练 / 丢弃门禁在项目设置「派生库台账」里 |
 
 ---
 
