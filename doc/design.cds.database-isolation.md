@@ -336,6 +336,7 @@ CDS 现在有两条彼此独立长出来的数据隔离路径：
 
 ## 十六、关联
 
+- [CDS 数据库隔离三档收敛 · 计划](./plan.cds.database-isolation.md) —— 看板、目标、轨道拆分与待拍板事项
 - [CDS 复制集模式](./design.cds.replica-set.md) —— 隔离库的来龙去脉、克隆三适配、波 4 保护罩与波 5 回写
 - [CDS 多分支数据库隔离指南](./guide.cds.multi-branch-db.md) —— 分支独立库的用法、自动加后缀的变量清单、已知边界
 - [CDS 配置树](./design.cds.config-tree.md) —— 项目默认与分支覆盖两层，以及配置检查器的逐 key 溯源

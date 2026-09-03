@@ -269,6 +269,7 @@
 - [AI 百宝箱文本辅助 · 计划](./plan.ai-toolbox.text-assist.md) `plan.ai-toolbox.text-assist`
 - [CDS Agent 官方 SDK 商业闭环 · 计划](./plan.cds.agent.official-sdk-migration.md) `plan.cds.agent.official-sdk-migration`
 - [CDS 未完成事项矩阵 · 计划](./plan.cds.backlog-matrix.md) `plan.cds.backlog-matrix`
+- [CDS 数据库隔离三档收敛 · 计划](./plan.cds.database-isolation.md) `plan.cds.database-isolation`
 - [录音交付页设计稿还原工程](./plan.prd-admin.recording-design-restoration.md) `plan.prd-admin.recording-design-restoration`
 - [CDS 基础设施加固 · 计划](./plan.cds.infra-hardening.md) `plan.cds.infra-hardening`
 - [CDS 一仓多项目与身份层 · 计划](./plan.cds.multi-project-identity.md) `plan.cds.multi-project-identity`
