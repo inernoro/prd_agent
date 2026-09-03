@@ -130,6 +130,153 @@ async function checkLayout(page, label) {
   console.log(`PASS ${label} ${result.url}`);
 }
 
+/*
+ * 桌面高度契约：任务调度页的主操作「立即执行」必须在视野里，不能靠滚动去够。
+ *
+ * 它坏过一次，而且不是「偏下」这么轻：网格行是 auto，会长到最高那一栏的内容高
+ * （实测 1027px）撑破 flex 容器，于是按钮被钉在 y=986 不随视口变；1536px 以下
+ * 第三栏整个 `hidden`，rect 直接是 0x0——那台 14 寸笔记本上根本没有这个按钮。
+ * 编译、类型、单测全都拦不住，只有真浏览器量得出来。
+ *
+ * 红绿闭环：把 Workspace 的 cds-workspace--fill 去掉，或把网格的
+ * xl:grid-rows-[minmax(0,1fr)] 去掉，四档里至少两档立刻变红。
+ */
+const TASK_SCHEDULE_VIEWPORTS = [
+  { label: '1280x720', width: 1280, height: 720 },
+  { label: '1512x860', width: 1512, height: 860 },
+  { label: '1920x860', width: 1920, height: 860 },
+  { label: '1920x1080', width: 1920, height: 1080 },
+];
+
+async function checkTaskScheduleAction(browser, viewport) {
+  const context = await browser.newContext({
+    viewport: { width: viewport.width, height: viewport.height },
+    ignoreHTTPSErrors: true,
+  });
+  const page = await context.newPage();
+  await page.goto(`${baseUrl}/task-schedule`, { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await page.waitForTimeout(1500);
+  const label = `task-schedule:${viewport.label}`;
+
+  /*
+   * 主从布局的骨架判据。任务索引是这一屏的脊柱：它必须满高、必须在首屏上半部，
+   * 不能像改版前那样被时间轴压到 y=445（52% 屏高）再挤成 280×367。
+   * 红绿闭环：把左栏改回 `max-h-[60vh]` 且把时间轴搬回值班条下面（即改版前的样子），
+   * 四档全红。
+   */
+  const spine = await page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent.trim() === '新建' && b.getBoundingClientRect().height > 0);
+    const index = btn ? btn.closest('section') : null;
+    if (!index) return { found: false };
+    const rect = index.getBoundingClientRect();
+    const groups = Array.from(index.querySelectorAll('span'))
+      .filter((s) => ['需要注意', '即将触发', '正常运行'].includes(s.textContent.trim()));
+    return {
+      found: true,
+      top: Math.round(rect.top),
+      height: Math.round(rect.height),
+      viewportHeight: window.innerHeight,
+      // 分组标题必须首屏就在视野里，不需要先在窄槽里滚动才能看见全部三组
+      groupsInView: groups.length > 0 && groups.every((s) => {
+        const r = s.getBoundingClientRect();
+        return r.top >= 0 && r.bottom <= window.innerHeight;
+      }),
+      groupCount: groups.length,
+      // 未选中任务时右侧是值班概览，时间轴在这里满高展开
+      overviewBand: document.body.innerText.includes('今日调度轴'),
+      rows: document.querySelectorAll('[data-job-row]').length,
+      emptyState: document.body.innerText.includes('还没有定时任务'),
+      overflowX: document.body.scrollWidth > window.innerWidth,
+    };
+  });
+  assertOk(spine.found, `${label}: 找不到任务索引（以「新建」按钮所在的 section 为锚）`);
+  assertOk(spine.top < spine.viewportHeight * 0.4, `${label}: 任务索引起点落在首屏下半部`, spine);
+  assertOk(spine.height > spine.viewportHeight * 0.5, `${label}: 任务索引没有满高——脊柱被压扁了`, spine);
+  assertOk(!spine.overflowX, `${label}: 出现横向溢出`, spine);
+
+  /*
+   * 空实例（全新装、还没建任何定时任务）是受支持的状态，页面渲染的是空状态。
+   * 上一版把「三个分组首屏全露」「点任务行」当成无条件前提，于是这套冒烟在全新
+   * 实例上会因为「没有数据」而红——那是判据坏了，不是页面坏了。
+   * 现在按有没有任务分两条路走，并且**跳过时必须打印原因**：一个不会红也不说话的
+   * 用例，比没有用例更糟（predicate-and-wiring 形状 4b）。
+   */
+  const hasJobs = spine.rows > 0;
+  if (hasJobs) {
+    assertOk(spine.groupsInView, `${label}: 分组标题没在首屏全部露出`, spine);
+    assertOk(spine.overviewBand, `${label}: 未选中任务时右侧不是值班概览（找不到「今日调度轴」）`, spine);
+  } else {
+    console.log(`${label}: 实例里没有定时任务，跳过「分组/调度轴/两态切换」三组断言，只验空状态与新建浮层`);
+    assertOk(spine.emptyState, `${label}: 没有任务时也没渲染空状态引导`, spine);
+  }
+
+  /*
+   * 两态切换。点任务 → 右栏换成这一个任务（主操作「立即执行」出现，时间轴收成细带，
+   * 概览的表头随之消失）；点「返回值班概览」→ 换回去。
+   * 红绿闭环：把右栏改成恒为 JobOverview（不分两态），第二组断言里
+   * bandCollapsed 立刻红——「今日调度轴」不会消失。
+   */
+  const detail = hasJobs ? await page.evaluate(async () => {
+    const row = document.querySelector('[data-job-row]') || Array.from(document.querySelectorAll('button, [role="button"]'))
+      .find((el) => el.closest('section') && el.textContent.includes('每天'));
+    if (!row) return { clicked: false };
+    row.click();
+    await new Promise((r) => setTimeout(r, 500));
+    const find = (text) => Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent.trim().startsWith(text) && b.getBoundingClientRect().height > 0);
+    const act = find('立即执行');
+    const back = find('返回值班概览');
+    return {
+      clicked: true,
+      actionVisible: Boolean(act) && act.getBoundingClientRect().bottom <= window.innerHeight,
+      backVisible: Boolean(back),
+      bandCollapsed: !document.body.innerText.includes('今日调度轴'),
+      runStream: document.body.innerText.includes('运行流'),
+    };
+  }) : null;
+  if (detail) {
+  assertOk(detail.clicked, `${label}: 左栏点不到任务行`);
+  assertOk(detail.actionVisible, `${label}: 选中任务后「立即执行」不在视野里`, detail);
+  assertOk(detail.backVisible, `${label}: 选中态没有「返回值班概览」的出口`, detail);
+  assertOk(detail.bandCollapsed, `${label}: 选中后时间轴没有收成细带`, detail);
+  assertOk(detail.runStream, `${label}: 选中态看不到运行流`, detail);
+
+  const restored = detail ? await page.evaluate(async () => {
+    const back = Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent.trim() === '返回值班概览');
+    if (!back) return { clicked: false };
+    back.click();
+    await new Promise((r) => setTimeout(r, 500));
+    return { clicked: true, overviewBand: document.body.innerText.includes('今日调度轴') };
+  }) : { clicked: true, overviewBand: true };
+  assertOk(restored.clicked && restored.overviewBand, `${label}: 「返回值班概览」没有回到概览态`, restored);
+  }
+
+  /*
+   * 「新建」曾经是死按钮：表单渲染在 2xl 才存在的第三栏里，1512px 下点它一个字都不出现。
+   * 现在它开的是浮层，不依赖任何断点。红绿闭环：把浮层改回渲染在栏里，1512 与 1280 两档立刻红。
+   */
+  const created = await page.evaluate(async () => {
+    const btn = Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent.trim() === '新建' && b.getBoundingClientRect().height > 0);
+    if (!btn) return { clicked: false };
+    btn.click();
+    await new Promise((r) => setTimeout(r, 500));
+    const save = Array.from(document.querySelectorAll('button')).find((b) => b.textContent.trim() === '保存');
+    const rect = save ? save.getBoundingClientRect() : null;
+    return {
+      clicked: true,
+      formVisible: document.body.innerText.includes('触发器启动任务'),
+      saveVisible: rect ? rect.height > 0 && rect.bottom <= window.innerHeight : false,
+    };
+  });
+  assertOk(created.clicked, `${label}: 页面上找不到「新建」按钮`);
+  assertOk(created.formVisible, `${label}: 点了「新建」表单没出现——按钮是死的`, created);
+  assertOk(created.saveVisible, `${label}: 新建表单的「保存」不在视野里`, created);
+  await context.close();
+}
+
 async function runViewport(browser, project, viewport) {
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
@@ -175,12 +322,20 @@ async function runViewport(browser, project, viewport) {
 }
 
 async function main() {
-  const browser = await chromium.launch({ args: ['--no-sandbox'] });
-  const probe = await browser.newPage();
-  const project = await getFirstProject(probe);
-  await probe.close();
-  for (const viewport of viewports) {
-    await runViewport(browser, project, viewport);
+  // 沙箱/CI 里 Playwright 自带的浏览器版本未必与镜像预装的一致，允许显式指定。
+  const executablePath = process.env.CDS_CHROMIUM_PATH || undefined;
+  const only = process.env.CDS_SMOKE_ONLY || '';
+  const browser = await chromium.launch({ args: ['--no-sandbox'], executablePath });
+  if (only !== 'task-schedule') {
+    const probe = await browser.newPage();
+    const project = await getFirstProject(probe);
+    await probe.close();
+    for (const viewport of viewports) {
+      await runViewport(browser, project, viewport);
+    }
+  }
+  for (const viewport of TASK_SCHEDULE_VIEWPORTS) {
+    await checkTaskScheduleAction(browser, viewport);
   }
   await browser.close();
 }

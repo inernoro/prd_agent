@@ -68,16 +68,27 @@ const serverSource = fs.readFileSync(
 );
 
 describe('CDS 壳层用户入口与授权提醒契约', () => {
-  it('把系统设置和用户头像固定在侧栏底部，并将退出收进用户菜单', () => {
+  /*
+   * 2026-09-02 契约变更（用户选定方向 A）：栏底不再是「五项一起被顶下去」。
+   * 工具组（Agent / 缺陷 / 设置）跟着导航贴顶，flex-1 之后的 footer 只留主题与账号——
+   * 原来中间空出约 190px，一根栏被读成两根。
+   * 仍然钉住的是：撑开的 spacer 存在、footer 在它之后、账号在 footer 里且是最后一项。
+   * 设置属于工具组，它的位置由「常驻 Agent 接入入口」那条用例钉。
+   */
+  it('主题与账号固定在侧栏底部，工具组不跟着被顶下去，退出收进用户菜单', () => {
     const spacerIndex = shellSource.indexOf('<div className="flex-1" />');
+    const toolsIndex = shellSource.indexOf('<div className="cds-rail-tools">');
     const footerIndex = shellSource.indexOf('<div className="cds-rail-footer">');
-    const settingsIndex = shellSource.indexOf('aria-label="CDS 系统设置"', footerIndex);
+    const themeIndex = shellSource.indexOf('<RailThemeToggle />', footerIndex);
     const accountIndex = shellSource.indexOf('<UserAccountMenu', footerIndex);
 
     expect(spacerIndex).toBeGreaterThan(-1);
+    // 工具组在 spacer 之前——这就是「不跟着被顶到栏底」的机读判据。
+    expect(toolsIndex, '工具组不见了').toBeGreaterThan(-1);
+    expect(toolsIndex, '工具组跑到 spacer 后面了，中间那段断裂会回来').toBeLessThan(spacerIndex);
     expect(footerIndex).toBeGreaterThan(spacerIndex);
-    expect(settingsIndex).toBeGreaterThan(footerIndex);
-    expect(accountIndex).toBeGreaterThan(settingsIndex);
+    expect(themeIndex).toBeGreaterThan(footerIndex);
+    expect(accountIndex).toBeGreaterThan(themeIndex);
     expect(shellSource).toContain('className="cds-rail-item cds-account-trigger"');
     expect(shellSource).toContain('用户与认证');
     expect(shellSource).toContain('退出登录');
@@ -86,13 +97,16 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
   });
 
   it('在侧栏常驻 Agent 接入入口，并由全局壳层提供上下文弹窗', () => {
-    const footerIndex = shellSource.indexOf('<div className="cds-rail-footer">');
-    const agentIndex = shellSource.indexOf('aria-label="接入 Agent"', footerIndex);
-    const bugIndex = shellSource.indexOf('aria-label="提交缺陷"', footerIndex);
-    const settingsIndex = shellSource.indexOf('aria-label="CDS 系统设置"', footerIndex);
-    const accountIndex = shellSource.indexOf('<UserAccountMenu', footerIndex);
+    // 2026-09-02：工具组（Agent / 缺陷 / 设置）跟着导航贴顶，栏底只留主题与账号。
+    // 顺序契约不变——Agent → 缺陷 → 设置 → 账号，账号仍在最后。
+    const toolsIndex = shellSource.indexOf('<div className="cds-rail-tools">');
+    const agentIndex = shellSource.indexOf('aria-label="接入 Agent"', toolsIndex);
+    const bugIndex = shellSource.indexOf('aria-label="提交缺陷"', toolsIndex);
+    const settingsIndex = shellSource.indexOf('aria-label="CDS 系统设置"', toolsIndex);
+    const accountIndex = shellSource.indexOf('<UserAccountMenu', toolsIndex);
 
-    expect(agentIndex).toBeGreaterThan(footerIndex);
+    expect(toolsIndex, '工具组没了？三个全局动作应当在同一段里').toBeGreaterThan(-1);
+    expect(agentIndex).toBeGreaterThan(toolsIndex);
     expect(bugIndex).toBeGreaterThan(agentIndex);
     expect(settingsIndex).toBeGreaterThan(bugIndex);
     expect(accountIndex).toBeGreaterThan(settingsIndex);

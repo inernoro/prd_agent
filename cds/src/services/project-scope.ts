@@ -62,17 +62,65 @@ const MAX_MATCHED_SAMPLES = 5;
  * 取一个项目的作用域：名下全部服务 buildScope（含各部署模式声明）的并集。
  *
  * 归一化复用 `normalizeBuildScope`（同一份判据）：它会拒掉仓库根等价物
- * （`.` / `**` 之类）与越界路径。被拒的条目对本模块的语义恰好也是「等于没声明」，
- * 所以直接跳过即可。
+ * （`.` / `**` 之类）与越界路径。被拒的条目对本模块的语义恰好也是「等于没声明」。
+ *
+ * **只要有一个服务没声明范围，整个项目就退回全通配**（返回空数组，2026-09-02
+ * Codex P1）。取并集看着自然，但半划状态下是错的：项目里 A 服务划了 `prd-api/**`、
+ * B 服务没划，并集就是 `prd-api/**`，于是只改到 B 目录的推送被判「未波及」，
+ * **整个项目静默不部署**——而没划范围的那个服务本来的语义恰恰是「什么都可能影响我」。
+ * 失败方向必须朝安全的一边：宁可多建一次，不能悄悄不建。
  */
+/** 这份声明里到底有没有写东西（区分「没声明」与「声明了但被归一化拒掉」）。 */
+function hasDeclaredEntries(candidate: readonly string[] | undefined): boolean {
+  return Array.isArray(candidate)
+    && candidate.some((entry) => typeof entry === 'string' && entry.trim().length > 0);
+}
+
+/**
+ * 这条服务上有没有「写了、但成不了有效范围」的声明。
+ *
+ * 指仓库根等价物（`**` / `.`）、绝对路径、含 `..` 这几类——`normalizeBuildScope`
+ * 会拒掉它们。判据是唯一的：作用域解析据此整体退回全通配，推断据此干脆不出建议
+ * （出了也白出：采纳之后这条声明还在，项目照样全通配，而用户收到的是一句成功提示）。
+ */
+export function hasRejectedScopeDeclaration(profile: ScopedProfileLike): boolean {
+  for (const candidate of [
+    profile.buildScope,
+    ...Object.values(profile.deployModes || {}).map((m) => m?.buildScope),
+  ]) {
+    if (!hasDeclaredEntries(candidate)) continue;
+    if (!normalizeBuildScope(candidate)) return true;
+  }
+  return false;
+}
+
 export function resolveProjectScope(profiles: readonly ScopedProfileLike[] | undefined): string[] {
+  const list = profiles || [];
   const out = new Set<string>();
-  for (const profile of profiles || []) {
+  for (const profile of list) {
+    // 写了但成不了有效范围 → 语义是「整个仓库都可能影响我」→ 整体全通配
+    if (hasRejectedScopeDeclaration(profile)) return [];
+    const declared = new Set<string>();
     for (const candidate of [profile.buildScope, ...Object.values(profile.deployModes || {}).map((m) => m?.buildScope)]) {
       const normalized = normalizeBuildScope(candidate);
-      if (!normalized) continue;
-      for (const entry of normalized) out.add(entry);
+      if (!normalized) {
+        /*
+         * 「压根没声明」与「声明了但被拒」不是一回事（2026-09-02 Codex P1）。
+         *
+         * 被拒的那些（`**` / `.` 这类仓库根等价物、绝对路径、含 `..`）是用户**显式
+         * 写下的**声明，语义是「整个仓库都可能影响我」。让同一条服务上另一份更窄的
+         * 声明把它顶掉，就把 fail-open 反转成了 fail-closed：顶层写着 `**`、某个
+         * 部署模式写着 `cds/**`，结果只留 `cds/**`，改别处就静默不部署。
+         * 所以只要出现一条被拒的声明，整个项目退回全通配。
+         */
+        if (hasDeclaredEntries(candidate)) return [];
+        continue;
+      }
+      for (const entry of normalized) declared.add(entry);
     }
+    // 这个服务一条都没声明 → 它可能被任何改动影响 → 项目级判据只能全通配
+    if (declared.size === 0) return [];
+    for (const entry of declared) out.add(entry);
   }
   return [...out];
 }

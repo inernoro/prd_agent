@@ -30,6 +30,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
+import { postSse } from '@/lib/sse';
 import { multiPreviewUrl, resolveWebEntryPresentation, resolveWebEntryUrl, simplePreviewUrl, type PreviewMode } from '@/lib/previewUrl';
 import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
@@ -378,69 +379,6 @@ function eventMessage(event: string, data: unknown): string {
   }
   if (typeof data === 'string') return data;
   return event;
-}
-
-function parseSseBlock(raw: string): { event: string; data: unknown } | null {
-  let event = 'message';
-  let data = '';
-  for (const line of raw.split('\n')) {
-    if (line.startsWith('event: ')) event = line.slice(7).trim();
-    if (line.startsWith('data: ')) data += line.slice(6);
-  }
-  if (!data) return { event, data: null };
-  try {
-    return { event, data: JSON.parse(data) };
-  } catch {
-    return { event, data };
-  }
-}
-
-async function postSse(
-  path: string,
-  body: unknown,
-  onEvent: (event: string, data: unknown) => void,
-): Promise<void> {
-  const res = await fetch(path, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    let parsed: unknown = text;
-    try { parsed = JSON.parse(text); } catch { /* keep text */ }
-    const message =
-      typeof parsed === 'object' && parsed !== null && 'message' in parsed && (parsed as { message: unknown }).message
-        ? String((parsed as { message: unknown }).message)
-        : typeof parsed === 'object' && parsed !== null && 'error' in parsed
-          ? String((parsed as { error: unknown }).error)
-          : `${path} -> ${res.status}`;
-    throw new ApiError(res.status, parsed, message);
-  }
-
-  if (!res.body) return;
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (value) {
-      buffer += decoder.decode(value, { stream: !done });
-      let index = buffer.indexOf('\n\n');
-      while (index >= 0) {
-        const block = buffer.slice(0, index);
-        buffer = buffer.slice(index + 2);
-        if (block.trim() && !block.startsWith(':')) {
-          const parsed = parseSseBlock(block);
-          if (parsed) onEvent(parsed.event, parsed.data);
-        }
-        index = buffer.indexOf('\n\n');
-      }
-    }
-    if (done) break;
-  }
 }
 
 function branchProxyLabels(branch: BranchSummary, aliases: AliasResponse): Set<string> {
@@ -1305,7 +1243,7 @@ export function BranchDetailPage(): JSX.Element {
         />
       }
     >
-      <Workspace wide>
+      <Workspace fluid>
         {state.status === 'loading' ? <BranchDetailLoadingSkeleton className="rounded-md" /> : null}
         {state.status === 'error' ? (
           // 2026-07-09：错误码翻译成人话 + 给出路（旧版把 branch_not_found 机器码
@@ -2126,7 +2064,7 @@ function LogPanel({ title, lines, status = 'running' }: { title: string; lines: 
           <span className="truncate">{title}</span>
         </div>
         <Button size="sm" variant="ghost" className="h-7 shrink-0 px-2 text-xs" onClick={() => void copy()}>
-          <Copy className="h-3.5 w-3.5" />
+          <Copy />
           {copied ? '已复制' : '复制'}
         </Button>
       </div>

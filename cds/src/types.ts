@@ -31,6 +31,12 @@ export interface RoutingRule {
   enabled: boolean;
 }
 
+import type { TopologyLintReport } from './services/topology-lint.js';
+
+/** 服务角色枚举（`cds.role` 合法值，也是推断结果的值域）。 */
+export type ServiceRole = 'web' | 'api' | 'worker';
+export const SERVICE_ROLES: readonly ServiceRole[] = ['web', 'api', 'worker'];
+
 /** A build profile defines how to build/run a specific type of project */
 export interface BuildProfile {
   id: string;
@@ -103,6 +109,18 @@ export interface BuildProfile {
    * called. Derived from the `cds.web-entry-*` compose labels.
    */
   webEntry?: WebEntryConfig;
+  /**
+   * 显式声明的服务角色（compose label `cds.role`）：web = 给人看的静态站 / 前端，
+   * api = 被前端或其他服务调用的接口，worker = 不对外提供 HTTP 的后台任务 / 一次性作业。
+   * 没有声明时 CDS 按路由事实 + 服务名推断（service-graph inferServiceRole），
+   * 推断结果会在画布上标成「推断」；声明后覆盖一切推断。
+   */
+  role?: ServiceRole;
+  /**
+   * 显式声明的调用关系（compose label `cds.calls`，逗号分隔的服务 id）。环境变量里推不出
+   * 「谁调用谁」时用它补上，画布按声明画边并标来源为声明。
+   */
+  calls?: string[];
   /**
    * Service dependencies — IDs of infra services or other profiles this app depends on.
    * Derived from compose `depends_on`. Used for startup ordering.
@@ -2281,6 +2299,24 @@ export interface ScheduledJob {
 
 export type ScheduledJobRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
 
+/**
+ * 一次运行里单个动作的结果。
+ *
+ * 在此之前一次运行只留一个 status / httpStatus / exitCode / log —— 三步的任务
+ * 挂了只知道「整条失败」，要读整段拼接日志才知道挂在第几步、前面几步花了多久。
+ * 运行流里的动作链缩略与详情里的逐步耗时都依赖这个数组。
+ */
+export interface ScheduledJobRunStep {
+  index: number;
+  name: string;
+  type: ScheduledJobTarget['type'];
+  status: 'success' | 'failed' | 'skipped' | 'not-run';
+  durationMs?: number;
+  httpStatus?: number;
+  exitCode?: number;
+  error?: string;
+}
+
 export interface ScheduledJobRun {
   id: string;
   jobId: string;
@@ -2302,6 +2338,8 @@ export interface ScheduledJobRun {
   releaseId?: string;
   /** 观察到的发布终态（或超时时的最后一次观察值）。 */
   releaseStatus?: ReleaseRunStatus;
+  /** 逐个动作的结果；失败或跳过之后的动作记为 not-run。 */
+  steps?: ScheduledJobRunStep[];
 }
 
 /**
@@ -3034,6 +3072,8 @@ export interface PendingImport {
   purpose: string;
   /** Raw cds-compose YAML. Stored verbatim; parsed lazily on approve. */
   composeYaml: string;
+  /** 提交时算好的拓扑体检（plan.cds.service-relations）：审批页展示，error 级阻断审批。 */
+  lint?: TopologyLintReport;
   /** Precomputed summary so the dashboard can render without re-parsing. */
   summary: {
     addedProfiles: string[];

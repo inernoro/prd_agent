@@ -166,11 +166,11 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
           <Button size="sm" onClick={() => setShowCreate(v => !v)}>
             {showCreate ? (
               <>
-                <X className="mr-1 h-4 w-4" /> 取消新增
+                <X className="mr-1" /> 取消新增
               </>
             ) : (
               <>
-                <Plus className="mr-1 h-4 w-4" /> 新增主机
+                <Plus className="mr-1" /> 新增主机
               </>
             )}
           </Button>
@@ -296,9 +296,9 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
                             title="测试 SSH 连接"
                           >
                             {testingId === h.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <Loader2 className="animate-spin" />
                             ) : (
-                              <TestTube2 className="h-4 w-4" />
+                              <TestTube2 />
                             )}
                           </Button>
                           <Button
@@ -308,7 +308,7 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
                             disabled={!h.isEnabled}
                             title="部署 Sidecar"
                           >
-                            <Rocket className="h-4 w-4" />
+                            <Rocket />
                           </Button>
                           <ConfirmAction
                             title="删除远程主机"
@@ -317,7 +317,7 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
                             onConfirm={() => handleDelete(h)}
                             trigger={(
                               <Button variant="ghost" size="sm" title="删除">
-                                <Trash2 className="h-4 w-4" />
+                                <Trash2 />
                               </Button>
                             )}
                           />
@@ -500,7 +500,7 @@ function DeploySidecarDialog({
             </Field>
             <div className="flex items-center gap-3 pt-1">
               <Button type="submit">
-                <Rocket className="mr-1 h-4 w-4" /> 开始部署
+                <Rocket className="mr-1" /> 开始部署
               </Button>
               <Button type="button" variant="ghost" onClick={() => onClose(false)}>
                 取消

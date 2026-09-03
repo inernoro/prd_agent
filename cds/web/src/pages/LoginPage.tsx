@@ -251,11 +251,11 @@ function AuthForm(): JSX.Element {
 
       {loginMethodsReady && showLocalLogin ? (
         <Button type="submit" disabled={busy} className="cds-auth-submit">
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          {busy ? <Loader2 className="animate-spin" /> : null}
           {busy
             ? (needsBootstrap ? '正在创建…' : '正在验证…')
             : (needsBootstrap ? '创建并进入控制台' : '登录')}
-          {busy ? null : <ArrowRight className="h-4 w-4" />}
+          {busy ? null : <ArrowRight />}
         </Button>
       ) : null}
 
@@ -270,7 +270,7 @@ function AuthForm(): JSX.Element {
             {ssoLogin.enabled ? (
               <Button asChild type="button" variant="outline" className="cds-auth-github">
                 <a href={apiUrl(`/api/auth/sso/start?redirect=${encodeURIComponent(target)}`)}>
-                  <KeyRound className="h-4 w-4" />
+                  <KeyRound />
                   {ssoLogin.label}
                 </a>
               </Button>
@@ -278,7 +278,7 @@ function AuthForm(): JSX.Element {
             {githubLoginEnabled ? (
               <Button asChild type="button" variant="outline" className="cds-auth-github">
                 <a href={githubLoginHref}>
-                  <Github className="h-4 w-4" />
+                  <Github />
                   使用 GitHub 登录
                 </a>
               </Button>

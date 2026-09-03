@@ -64,6 +64,8 @@ export interface RouteRecord {
   replicaGroup?: string;
   /** 组内成员 id：'primary'（主容器）或成员短 id（rs 开头）。 */
   replicaMemberId?: string;
+  /** 这条路由把流量交给哪个服务（profileId）。响应头 X-CDS-Profile 与路由判定查询据此回答「落到了谁」。 */
+  profileId?: string;
 }
 
 /** 复制集选择上下文：由 forwarder-main 从请求提取，传给 resolveRoute。 */
