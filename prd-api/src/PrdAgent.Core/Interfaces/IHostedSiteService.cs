@@ -128,6 +128,22 @@ public interface IHostedSiteService
         List<string>? askSuggestedQuestions = null);
 
     /// <summary>
+    /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方这条链接是**复用**来的还是新建的。
+    /// 复用意味着这次调用没产生新副作用，调用方据此可以把已占的额度退回去。
+    /// </summary>
+    Task<(WebPageShareLink Link, bool Reused)> CreateShareWithReuseInfoAsync(
+        string userId, string displayName,
+        string? siteId, List<string>? siteIds, string shareType,
+        string? title, string? description,
+        string? password, int expiresInDays,
+        CancellationToken ct = default,
+        string purpose = "share",
+        bool forceNew = false,
+        string visibility = "owner-only",
+        bool allocateShortLink = false,
+        List<string>? askSuggestedQuestions = null);
+
+    /// <summary>
     /// 事后为某条已存在的分享按需分配数字短链 /s/{seq}（用户在分享面板点「生成数字短链」）。
     /// 幂等：已有则返回原 Seq。返回分配后的 ShortSeq（&gt;0 成功）。
     /// 仅创建者可调用；visit 便捷链不支持。

@@ -311,6 +311,8 @@ public class HostedSiteService : IHostedSiteService
             Folder = folder?.Trim(),
             OwnerUserId = userId,
             SlideNavCompatVersion = SlideNavVersion, // 创建即注入当前版垫片
+            // 占坑标记：行已经在、对象还没传。上传成功后清掉，见 PublishPendingAt 的说明。
+            PublishPendingAt = now,
         };
 
         // 先占坑、再上传。顺序不能反：siteId 带幂等键时是**确定性**的，两个并发请求算出同一个
@@ -318,7 +320,20 @@ public class HostedSiteService : IHostedSiteService
         // 元数据是赢家的、页面内容是输家的，两边对不上，而两边都收到「去重成功」。
         // 插入是原子的，让它先定胜负：输的那个在这里就抛主键冲突，根本走不到上传。
         // 站点的每个字段都不依赖上传结果（key 由 siteId 定、大小与是否幻灯片由字节定），所以调得动这个顺序。
-        await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
+        try
+        {
+            await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
+        }
+        catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 这个 id 已经有人占了。占的是**还没传完**的坑（对方正在传，或者对方的进程在窗口里挂了），
+            // 就由这次把内容传完 —— 不能回「去重成功」，那等于把一个还打不开的地址当成功交出去，
+            // 更不能让那条残留记录把这个幂等键永久占死。
+            // 对方已经发布完成的话，原样抛出去，由调用方走它的去重分支。
+            var occupying = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
+            if (occupying is not { PublishPendingAt: not null } || occupying.OwnerUserId != userId) throw;
+            _logger.LogInformation("站点 {SiteId} 上一次发布没传完，本次接手补传", siteId);
+        }
 
         try
         {
@@ -338,6 +353,15 @@ public class HostedSiteService : IHostedSiteService
             }
             throw;
         }
+
+        // 对象到位了，坑转成正式发布。清掉标记之前，这条记录对幂等查询与列表都是不可见的。
+        //
+        // 整行覆盖而不是只清标记：接手补传那条路上，库里躺的是**上一次**尝试写的元数据
+        //（标题、大小、是不是幻灯片），而对象里现在装的是这一次的内容。只清标记的话，
+        // 行说的和页面显示的对不上——正是「先传后插」那个毛病换了个地方长出来。
+        site.PublishPendingAt = null;
+        await _db.HostedSites.ReplaceOneAsync(
+            x => x.Id == siteId, site, cancellationToken: CancellationToken.None);
 
         _logger.LogInformation("用户 {UserId} 通过 {SourceType} 创建托管站点 {SiteId}: {Title}",
             userId, site.SourceType, siteId, site.Title);
@@ -527,6 +551,10 @@ public class HostedSiteService : IHostedSiteService
             // 个人作用域：与改动前字节一致
             filter = fb.Eq(x => x.OwnerUserId, userId);
         }
+
+        // 还在占坑的站点（行已建、入口对象还没传完）不进列表：它的地址此刻打不开，
+        // 列出来就是给用户一条坏链接。== null 同时命中缺这个字段的存量记录。
+        filter &= fb.Eq(x => x.PublishPendingAt, (DateTime?)null);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -885,6 +913,28 @@ public class HostedSiteService : IHostedSiteService
         string visibility = "owner-only",
         bool allocateShortLink = false,
         List<string>? askSuggestedQuestions = null)
+        => (await CreateShareWithReuseInfoAsync(userId, displayName, siteId, siteIds, shareType,
+            title, description, password, expiresInDays, ct, purpose, forceNew, visibility,
+            allocateShortLink, askSuggestedQuestions)).Link;
+
+    /// <summary>
+    /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方**这条链接是复用来的还是新建的**。
+    ///
+    /// 为什么要把这个事实透出去：复用意味着这次调用没产生新副作用。接入台的日额度是「先占坑、
+    /// 幂等命中就退还」，而判据是响应里的 deduplicated —— 服务端知道却不说，网关只能当成一次新写入，
+    /// 智能体每重试一次就白扣一格，而它其实只拿到了同一条链接。
+    /// </summary>
+    public async Task<(WebPageShareLink Link, bool Reused)> CreateShareWithReuseInfoAsync(
+        string userId, string displayName,
+        string? siteId, List<string>? siteIds, string shareType,
+        string? title, string? description,
+        string? password, int expiresInDays,
+        CancellationToken ct = default,
+        string purpose = "share",
+        bool forceNew = false,
+        string visibility = "owner-only",
+        bool allocateShortLink = false,
+        List<string>? askSuggestedQuestions = null)
     {
         // 开场问题保持三态：null（调用方没提这茬）不动存量值，非 null（含空数组）按用户本次所选落库。
         //
@@ -1081,7 +1131,7 @@ public class HostedSiteService : IHostedSiteService
                 await TryAllocateShortSeqAsync(reuse, ct);
             _logger.LogInformation("用户 {UserId} 复用站点分享 {ShareId}, type={Type}",
                 userId, reuse.Id, reuse.ShareType);
-            return reuse;
+            return (reuse, true);
         }
 
         // 新分享：同时写明文（去重 + 展示给分享者）和 Hash/Salt（校验主路径）
@@ -1133,7 +1183,7 @@ public class HostedSiteService : IHostedSiteService
         _logger.LogInformation("用户 {UserId} 创建站点分享 {ShareId}, type={Type}, shortSeq={Seq}",
             userId, share.Id, share.ShareType, share.ShortSeq);
 
-        return share;
+        return (share, false);
     }
 
     /// <summary>

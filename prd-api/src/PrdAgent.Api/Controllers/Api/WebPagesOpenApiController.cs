@@ -83,8 +83,11 @@ public class WebPagesOpenApiController : ControllerBase
         var sourceRef = BuildSourceRef(req!.ClientRequestId);
         if (sourceRef != null)
         {
+            // PublishPendingAt == null：只认**已经传完**的站点。还在占坑的那条不算数 ——
+            // 回它就是把一个还打不开的地址当「去重成功」交出去。落到下面的创建路径上，
+            // 服务端会接手把内容补传完（Mongo 的 == null 同时命中缺字段的存量记录）。
             var existed = await _db.HostedSites
-                .Find(s => s.OwnerUserId == userId && s.SourceRef == sourceRef)
+                .Find(s => s.OwnerUserId == userId && s.SourceRef == sourceRef && s.PublishPendingAt == null)
                 .FirstOrDefaultAsync(ct);
             if (existed != null)
                 return Ok(ApiResponse<object>.Ok(new
@@ -114,8 +117,10 @@ public class WebPagesOpenApiController : ControllerBase
         catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && deterministicId != null)
         {
             var raced = await _db.HostedSites
-                .Find(x => x.Id == deterministicId && x.OwnerUserId == userId)
+                .Find(x => x.Id == deterministicId && x.OwnerUserId == userId && x.PublishPendingAt == null)
                 .FirstOrDefaultAsync(ct);
+            // 找不到「已传完」的那条就原样抛：要么根本不是这个 id 撞的，要么撞上的是还在占坑的记录，
+            // 两种情况都不该报成功（服务端只在自己能接手补传时才不抛）。
             if (raced == null) throw;
             return Ok(ApiResponse<object>.Ok(new
             {
@@ -184,7 +189,7 @@ public class WebPagesOpenApiController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或不属于你"));
 
         var days = req?.ExpiresInDays is > 0 and <= 90 ? req!.ExpiresInDays!.Value : 7;
-        var share = await _sites.CreateShareAsync(
+        var (share, reused) = await _sites.CreateShareWithReuseInfoAsync(
             userId, await ResolveDisplayNameAsync(userId, ct),
             siteId, siteIds: null, shareType: "single",
             title: string.IsNullOrWhiteSpace(req?.Title) ? site.Title : req!.Title!.Trim(),
@@ -209,6 +214,9 @@ public class WebPagesOpenApiController : ControllerBase
             shareUrl = $"{baseUrl}/s/wp/{share.Token}",
             expiresAt = share.ExpiresAt,
             visibility = share.Visibility,
+            // 复用了既有链接 = 这次没产生新副作用。必须如实报出来：网关按这个字段把已占的
+            // 日写入额度退回去，不报的话，智能体每重试一次就白扣一格，而它只拿到同一条链接。
+            deduplicated = reused,
         }));
     }
 
