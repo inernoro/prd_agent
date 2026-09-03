@@ -240,10 +240,30 @@ describe('主题系统契约', () => {
         classTokens.set(m[1], [...(classTokens.get(m[1]) ?? []), ...used]);
       }
     }
+    /*
+     * 还有一种消费关系，扫类名字面量永远看不见：**类名是算出来的**。
+     *
+     * design/Button 的 className 是 `button-${variant}` 拼出来的，所以岛内文件里
+     * 只有 `<Button variant="secondary">`，从头到尾不会出现 "button-secondary"
+     * 这七个字。判据于是判「没人在用」，而真机上那颗「模型设置」按钮在浅色档下
+     * 白字压白底、整个读不出来（2026-09-03 真视觉验收拍到）。
+     *
+     * 这是形状 6 的老形态：扫的是源码字面量，不是求值结果。凡是这样拼类名的组件
+     * 都得在这里点名——名单短，且加新组件时忘了点名只会漏报、不会误报。
+     */
+    const COMPUTED_CLASSES: Array<[RegExp, string[]]> = [
+      [/<Button[\s/>]/, ['button-primary', 'button-secondary', 'button-ghost', 'button-danger',
+        'map-btn', 'map-btn-primary', 'map-btn-secondary', 'map-btn-ghost', 'map-btn-danger']],
+    ];
+
     const consumedViaClass = new Set<string>();
     for (const text of islandFiles) {
       for (const [cls, toks] of classTokens) {
         if (new RegExp(`[\\s"'\`]${cls}[\\s"'\`]`).test(text)) toks.forEach((t) => consumedViaClass.add(t));
+      }
+      for (const [probe, classes] of COMPUTED_CLASSES) {
+        if (!probe.test(text)) continue;
+        for (const cls of classes) (classTokens.get(cls) ?? []).forEach((t) => consumedViaClass.add(t));
       }
     }
 

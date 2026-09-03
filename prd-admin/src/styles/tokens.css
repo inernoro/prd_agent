@@ -1304,6 +1304,26 @@
   --accent-primary-rgb: 217, 119, 87;
   --button-primary-bg: #D97757;
   --button-primary-shadow: 0 4px 16px -4px rgba(217, 119, 87, 0.42);
+  /*
+   * 次要 / 危险 / ghost 按钮的底色边框。漏了它们的后果在真机上是「模型设置」
+   * 变成一枚近白药丸、白字压白底，整颗按钮读不出来（2026-09-03 真视觉验收拍到）。
+   *
+   * 为什么单独说一句：浅色档里 --button-secondary-bg 写的是 var(--bg-card)，
+   * 而 --bg-card 暗岛**已经覆盖过**了——看着像会跟着变深。并不会：带 var() 的
+   * 自定义属性在**声明它的那个元素上**就完成替换，所以它拿的是 html 上那份浅色
+   * --bg-card，之后只是把结果继承下来。叶子 token 必须自己在岛里再写一遍。
+   *
+   * danger / ghost 是判据放宽之后一起点出来的兄弟，一次补齐——
+   * 不然又是「修了撞见的那一个，剩下的下次再撞」。
+   */
+  --button-secondary-bg: rgba(255, 255, 255, 0.05);
+  --button-secondary-bg-hover: rgba(255, 255, 255, 0.10);
+  --button-secondary-border: rgba(255, 255, 255, 0.10);
+  --button-danger-bg: rgba(239, 68, 68, 0.10);
+  --button-danger-bg-hover: rgba(239, 68, 68, 0.15);
+  --button-danger-border: rgba(239, 68, 68, 0.25);
+  --button-danger-fg: #fca5a5;
+  --button-ghost-bg-hover: rgba(255, 255, 255, 0.06);
   --gold-gradient: linear-gradient(135deg, #F0C9A8 0%, #C8623A 45%, #E8A87C 100%);
   --glass-edge: rgba(255, 236, 222, 0.13);
   --hairline: rgba(255, 255, 255, 0.08);

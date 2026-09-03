@@ -169,3 +169,5 @@
 | fix | prd-admin | 首页选完模型后，晚到的账号偏好不再把用户的选择改回去 |
 | fix | prd-admin | 浮层落点按视口夹紧：视口比 minHeight 还矮时也不再把面板撑出屏幕 |
 | fix | prd-admin | 两个探针脚本改从自身位置解析路径，换个 clone / CI 也跑得起来 |
+| fix | prd-admin | 视觉创作首页「模型设置」按钮在浅色档下白字压白底，暗岛补齐次要/危险/ghost 按钮 token |
+| fix | prd-admin | 暗岛 token 判据补「算出来的类名」一层，Button 这类拼类名的组件不再漏判 |
