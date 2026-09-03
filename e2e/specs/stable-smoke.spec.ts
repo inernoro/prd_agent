@@ -1169,6 +1169,41 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(restoredName.id, '恢复名称不能改变文件夹身份').toBe(folderId);
       expect(restoredName.name).toBe(runKey);
 
+      const renameCandidates = [`${runKey}-parallel-a`, `${runKey}-parallel-b`];
+      await Promise.all(renameCandidates.map((name) => page.request.put(`/api/web-folders/${folderId}`, {
+        headers: authHeaders(token),
+        data: { ...concurrentPayload, name },
+      })));
+      const foldersAfterRenameRace = await readEnvelope<{ items: StableWebFolder[] }>(
+        await page.request.get('/api/web-folders', { headers: authHeaders(token) }),
+      );
+      const folderAfterRenameRace = foldersAfterRenameRace.items.find((folder) => folder.id === folderId);
+      expect(folderAfterRenameRace, '并发重命名后文件夹不能丢失').toBeTruthy();
+      expect(renameCandidates).toContain(folderAfterRenameRace!.name);
+      const losingName = renameCandidates.find((name) => name !== folderAfterRenameRace!.name)!;
+      const recreatedLosingName = await readEnvelope<StableWebFolder>(
+        await page.request.post('/api/web-folders', {
+          headers: authHeaders(token),
+          data: { ...concurrentPayload, name: losingName },
+        }),
+      );
+      recreatedFolderId = recreatedLosingName.id;
+      expect(recreatedFolderId, '并发重命名失败方不能留下幽灵名称占用').not.toBe(folderId);
+      const deletedRaceFixture = await page.request.delete(`/api/web-folders/${recreatedFolderId}`, {
+        headers: authHeaders(token),
+      });
+      expect(deletedRaceFixture.ok(), '并发重命名回归夹具清理失败').toBe(true);
+      recreatedFolderId = '';
+
+      const restoredAfterRace = await readEnvelope<StableWebFolder>(
+        await page.request.put(`/api/web-folders/${folderId}`, {
+          headers: authHeaders(token),
+          data: concurrentPayload,
+        }),
+      );
+      expect(restoredAfterRace.id, '并发重命名后恢复名称不能改变文件夹身份').toBe(folderId);
+      expect(restoredAfterRace.name).toBe(runKey);
+
       const folderTarget = page.locator('[data-tour-id="webpages-folder-drop-target"]').filter({ hasText: runKey });
       await expect(folderTarget).toBeVisible();
       await expect(folderTarget.locator('.web-folder-drop-target__count')).toHaveText('0');

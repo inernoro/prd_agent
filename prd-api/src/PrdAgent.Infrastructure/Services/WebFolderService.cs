@@ -205,13 +205,29 @@ public class WebFolderService : IWebFolderService
             string.IsNullOrWhiteSpace(patch.GenerateStoreId) ? null : patch.GenerateStoreId.Trim()));
         updates.Add(ub.Set(c => c.UpdatedAt, DateTime.UtcNow));
 
-        await _db.WebFolders.UpdateOneAsync(
-            c => c.Id == id && c.OwnerUserId == userId,
+        var updateFilter = nextNormalizedName == previousNormalizedName
+            ? Builders<WebFolder>.Filter.Where(c => c.Id == id && c.OwnerUserId == userId)
+            : Builders<WebFolder>.Filter.Where(c =>
+                c.Id == id && c.OwnerUserId == userId && c.Name == existing.Name);
+        var updateResult = await _db.WebFolders.UpdateOneAsync(
+            updateFilter,
             ub.Combine(updates),
             cancellationToken: ct);
 
         if (nextNormalizedName != previousNormalizedName)
+        {
+            if (updateResult.MatchedCount == 0)
+            {
+                // 另一个重命名请求已经先改掉旧名称。释放本请求刚取得的新名称 claim，
+                // 避免它永久指向实际名称不同的文件夹。
+                await ReleaseNameClaimAsync(userId, nextNormalizedName, existing.Id, ct);
+                return await _db.WebFolders
+                    .Find(c => c.Id == id && c.OwnerUserId == userId)
+                    .FirstOrDefaultAsync(ct);
+            }
+
             await ReleaseNameClaimAsync(userId, previousNormalizedName, existing.Id, ct);
+        }
 
         return await _db.WebFolders
             .Find(c => c.Id == id && c.OwnerUserId == userId)
