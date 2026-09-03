@@ -47,6 +47,20 @@ public interface IHostedSiteService
         CancellationToken ct = default,
         string? uploadId = null);
 
+    /// <summary>
+    /// 读取可微调的入口 HTML。会执行站点编辑权限与形态校验，且限制正文最多 2MB。
+    /// </summary>
+    Task<HostedSiteEditableEntry> GetEditableEntryHtmlAsync(
+        string siteId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 只替换入口 HTML，保留 ZIP 站点里的 CSS、图片等其余文件。
+    /// </summary>
+    Task<HostedSite> ReplaceEntryHtmlAsync(
+        string siteId, string userId, string html,
+        DateTime? expectedContentVersion = null,
+        CancellationToken ct = default);
+
     /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
     Task<int> BackfillPdfWrapperMarkersAsync(CancellationToken ct = default);
 
@@ -269,6 +283,11 @@ public interface IHostedSiteService
     Task<ShareSiteResolveResult> ResolveShareSiteAsync(
         string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default);
 }
+
+public record HostedSiteEditableEntry(
+    HostedSite Site,
+    string Html,
+    DateTime ContentVersion);
 
 /// <summary>站点「向我提问」配置的写入入参（owner 在提问设置抽屉里改的那几项）。</summary>
 public class AskConfigUpdate

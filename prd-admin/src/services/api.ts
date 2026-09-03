@@ -1230,6 +1230,12 @@ export const api = {
     askStreamByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/stream`,
     // 剩余额度旁路：与提问走同一套门禁与同一个计数桶，但只读不加一
     askQuotaByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/quota`,
+    editRuns: (siteId: string) => `/api/web-pages/${siteId}/edits/runs`,
+    editRunStream: (siteId: string, runId: string) => `/api/web-pages/${siteId}/edits/runs/${runId}/stream`,
+    revisions: (siteId: string) => `/api/web-pages/${siteId}/edits/revisions`,
+    revisionPreview: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/preview`,
+    publishRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/publish`,
+    rollbackRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/rollback`,
   },
   // ============ Short Video Materials 短视频素材解析 ============
   shortVideoMaterials: {

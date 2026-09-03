@@ -1894,6 +1894,10 @@ export default function WebPagesPage() {
             setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, askEnabled: enabled } : prev));
             setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, askEnabled: enabled } : x)));
           }}
+          onSiteChange={(updated) => {
+            setCommentSite(updated);
+            setSites((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+          }}
         />
       )}
 

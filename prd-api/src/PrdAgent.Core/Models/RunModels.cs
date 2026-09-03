@@ -8,6 +8,7 @@ public static class RunKinds
     public const string VideoGen = "videoGen";
     public const string VideoToDoc = "videoToDoc";
     public const string Arena = "arena";
+    public const string HostedSiteEdit = "hostedSiteEdit";
 }
 
 public static class RunStatuses
@@ -69,5 +70,4 @@ public class RunSnapshot
     public string SnapshotJson { get; set; } = "{}";
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
-
 

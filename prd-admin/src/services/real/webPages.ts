@@ -3,6 +3,8 @@ import type { WebHostingRole } from '@/services/real/teams';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
+import { connectSse } from '@/lib/useSseStream';
+import type { SseEvent } from '@/lib/sse';
 
 // ─── Types ───
 
@@ -66,6 +68,28 @@ export interface HostedSite {
   askAllowAnonymous?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface HostedSiteRevision {
+  id: string;
+  siteId: string;
+  status: 'draft' | 'published';
+  source: 'baseline' | 'ai-edit' | 'rollback';
+  parentRevisionId?: string | null;
+  sourceRunId?: string | null;
+  instruction?: string | null;
+  runtime: 'map-gateway' | 'codex';
+  knowledgeEntryIds: string[];
+  basedOnContentVersion: string;
+  publishedContentVersion?: string | null;
+  createdAt: string;
+  publishedAt?: string | null;
+  isCurrent: boolean;
+}
+
+export interface HostedSiteRevisionMutation {
+  revision: HostedSiteRevision;
+  site: HostedSite;
 }
 
 export interface ShareLinkItem {
@@ -934,4 +958,62 @@ export async function regenerateSiteAskQuestions(
   siteId: string,
 ): Promise<ApiResponse<AskQuestionRegenResult>> {
   return apiRequest(api.webPages.askRegenerateQuestions(siteId), { method: 'POST' });
+}
+
+// ─── 帮我修改 / 版本 ───
+
+export async function createHostedSiteEditRun(
+  siteId: string,
+  instruction: string,
+  knowledgeReferences: Array<{ entryId: string; title: string; content: string }> = [],
+): Promise<ApiResponse<{ runId: string; status: string; runtime: string }>> {
+  return apiRequest(api.webPages.editRuns(siteId), {
+    method: 'POST',
+    body: { instruction, runtime: 'map-gateway', knowledgeReferences },
+  });
+}
+
+export async function streamHostedSiteEditRun(input: {
+  siteId: string;
+  runId: string;
+  afterSeq?: number;
+  signal: AbortSignal;
+  onEvent: (event: SseEvent) => void;
+}): Promise<void> {
+  const suffix = input.afterSeq && input.afterSeq > 0 ? `?afterSeq=${input.afterSeq}` : '';
+  const result = await connectSse({
+    url: `${api.webPages.editRunStream(input.siteId, input.runId)}${suffix}`,
+    method: 'GET',
+    signal: input.signal,
+    onEvent: input.onEvent,
+  });
+  if (!result.success && !input.signal.aborted)
+    throw new Error(result.errorMessage || '修改进度连接中断');
+}
+
+export async function listHostedSiteRevisions(
+  siteId: string,
+): Promise<ApiResponse<HostedSiteRevision[]>> {
+  return apiRequest(api.webPages.revisions(siteId));
+}
+
+export async function previewHostedSiteRevision(
+  siteId: string,
+  revisionId: string,
+): Promise<ApiResponse<{ revision: HostedSiteRevision; html: string }>> {
+  return apiRequest(api.webPages.revisionPreview(siteId, revisionId));
+}
+
+export async function publishHostedSiteRevision(
+  siteId: string,
+  revisionId: string,
+): Promise<ApiResponse<HostedSiteRevisionMutation>> {
+  return apiRequest(api.webPages.publishRevision(siteId, revisionId), { method: 'POST' });
+}
+
+export async function rollbackHostedSiteRevision(
+  siteId: string,
+  revisionId: string,
+): Promise<ApiResponse<HostedSiteRevisionMutation>> {
+  return apiRequest(api.webPages.rollbackRevision(siteId, revisionId), { method: 'POST' });
 }

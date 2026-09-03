@@ -438,6 +438,135 @@ public class HostedSiteService : IHostedSiteService
         return AttachDerivedFields(reloaded)!;
     }
 
+    private const int MaxEditableEntryBytes = 2 * 1024 * 1024;
+
+    public async Task<HostedSiteEditableEntry> GetEditableEntryHtmlAsync(
+        string siteId,
+        string userId,
+        CancellationToken ct = default)
+    {
+        var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
+        if (site == null)
+            throw new KeyNotFoundException("站点不存在");
+
+        var role = await ResolveSiteRoleAsync(site, userId, ct);
+        if (!WebHostingPermission.Can(role, WebHostingAction.Edit, site.OwnerUserId == userId))
+            throw new KeyNotFoundException("站点不存在");
+
+        if (!string.IsNullOrWhiteSpace(site.WrappedAssetType))
+            throw new InvalidOperationException("PDF、视频和 Markdown 包装站暂不支持直接微调，请先转换为普通 HTML 站点");
+
+        var extension = Path.GetExtension(site.EntryFile).ToLowerInvariant();
+        if (extension is not ".html" and not ".htm")
+            throw new InvalidOperationException("该站点的入口不是 HTML，暂不支持直接微调");
+
+        var entry = (site.Files ?? new List<HostedSiteFile>())
+            .FirstOrDefault(x => string.Equals(x.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        if (entry == null || string.IsNullOrWhiteSpace(entry.CosKey))
+            throw new InvalidOperationException("站点入口文件缺失，请重新上传后再试");
+        if (entry.Size > MaxEditableEntryBytes)
+            throw new InvalidOperationException("站点入口 HTML 超过 2MB，暂不支持直接微调");
+
+        var bytes = await _storage.TryDownloadBytesAsync(entry.CosKey, ct);
+        if (bytes == null)
+            throw new InvalidOperationException("站点入口文件读取失败，请稍后重试");
+        if (bytes.Length > MaxEditableEntryBytes)
+            throw new InvalidOperationException("站点入口 HTML 超过 2MB，暂不支持直接微调");
+
+        var html = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
+            ? System.Text.Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3)
+            : System.Text.Encoding.UTF8.GetString(bytes);
+        if (string.IsNullOrWhiteSpace(html))
+            throw new InvalidOperationException("站点入口 HTML 为空，请重新上传后再试");
+
+        return new HostedSiteEditableEntry(site, html, EffectiveContentVersion(site));
+    }
+
+    public async Task<HostedSite> ReplaceEntryHtmlAsync(
+        string siteId,
+        string userId,
+        string html,
+        DateTime? expectedContentVersion = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            throw new InvalidOperationException("待发布的 HTML 为空");
+
+        var current = await GetEditableEntryHtmlAsync(siteId, userId, ct);
+        if (expectedContentVersion.HasValue && current.ContentVersion != expectedContentVersion.Value)
+            throw new InvalidOperationException("站点在草稿生成后已经发布过其他内容，请基于最新版本重新修改");
+
+        var site = current.Site;
+        var bytes = System.Text.Encoding.UTF8.GetBytes(html);
+        if (bytes.Length > MaxEditableEntryBytes)
+            throw new InvalidOperationException("待发布的入口 HTML 超过 2MB");
+
+        var entry = site.Files.First(x => string.Equals(x.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(bytes, site.EntryFile));
+        var isSlideDeck = DetectSlideDeck(rewritten);
+        // 不覆盖当前线上对象：先写同目录下的新入口，再通过 Mongo 条件更新原子切换指针。
+        // 若并发发布输掉 CAS，只留下一个未引用对象，不会把赢家的线上正文反向覆盖。
+        var nextEntryKey = BuildVersionedEntryKey(entry.CosKey, site.EntryFile);
+        await _storage.UploadToKeyAsync(
+            nextEntryKey,
+            rewritten,
+            "text/html; charset=utf-8",
+            CancellationToken.None,
+            SiteCacheControl);
+
+        var now = DateTime.UtcNow;
+        var updatedFiles = site.Files.Select(file =>
+        {
+            if (!string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase)) return file;
+            return new HostedSiteFile
+            {
+                Path = file.Path,
+                CosKey = nextEntryKey,
+                Size = rewritten.LongLength,
+                MimeType = "text/html",
+            };
+        }).ToList();
+        var totalSize = Math.Max(0, site.TotalSize - entry.Size + rewritten.LongLength);
+        var siteUrl = AppendVersion(_storage.BuildUrlForKey(nextEntryKey), now);
+
+        var filter = Builders<HostedSite>.Filter.Eq(x => x.Id, siteId);
+        if (expectedContentVersion.HasValue)
+        {
+            filter &= Builders<HostedSite>.Filter.Or(
+                Builders<HostedSite>.Filter.Eq(x => x.ContentVersion, expectedContentVersion.Value),
+                Builders<HostedSite>.Filter.And(
+                    Builders<HostedSite>.Filter.Eq(x => x.ContentVersion, default(DateTime)),
+                    Builders<HostedSite>.Filter.Eq(x => x.CreatedAt, expectedContentVersion.Value)));
+        }
+
+        var update = Builders<HostedSite>.Update
+            .Set(x => x.Files, updatedFiles)
+            .Set(x => x.TotalSize, totalSize)
+            .Set(x => x.SiteUrl, siteUrl)
+            .Set(x => x.IsSlideDeck, isSlideDeck)
+            .Set(x => x.SlideNavCompatVersion, SlideNavVersion)
+            .Set(x => x.ContentVersion, now)
+            .Set(x => x.UpdatedAt, now);
+        var result = await _db.HostedSites.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
+        if (result.ModifiedCount == 0)
+            throw new InvalidOperationException("站点在发布时已经发生变化，请刷新后重试");
+
+        var reloaded = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(CancellationToken.None)
+            ?? throw new KeyNotFoundException("站点不存在");
+        _askOpeners.QueueEnsure(reloaded);
+        return AttachDerivedFields(reloaded)!;
+    }
+
+    private static string BuildVersionedEntryKey(string currentKey, string entryFile)
+    {
+        var slash = currentKey.LastIndexOf('/');
+        var directory = slash >= 0 ? currentKey[..(slash + 1)] : string.Empty;
+        var fileName = Path.GetFileName(entryFile);
+        var extension = Path.GetExtension(fileName);
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        return $"{directory}{stem}.v{Guid.NewGuid():N}{extension}";
+    }
+
     // ─────────────────────────────────────────────
     // 查询
     // ─────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, ExternalLink, FileWarning, MessageSquare, MessageCircleQuestion, Settings2 } from 'lucide-react';
+import { X, ExternalLink, FileWarning, MessageSquare, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
 import { setSiteCommentsEnabled } from '../../services/real/webPages';
@@ -10,6 +10,7 @@ import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
 import { DIRECT_PREVIEW_SANDBOX, SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
 import { useSitePreviewHtml } from './useSitePreviewHtml';
+import SiteEditPanel from './SiteEditPanel';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
 const SLOW_HINT_MS = 8000;
@@ -27,6 +28,8 @@ interface Props {
   onCommentsEnabledChange?: (siteId: string, enabled: boolean) => void;
   /** 提问开关同理：只改弹窗内的 state，关掉再打开会从 stale site.askEnabled 退回旧值 */
   onAskEnabledChange?: (siteId: string, enabled: boolean) => void;
+  /** 页面内容发布后回填父级站点 SSOT，使预览与卡片立即切到新版本。 */
+  onSiteChange?: (site: HostedSite) => void;
   /** 是否可改「允许访客评论」开关（仅 owner/editor）。viewer 角色只读评论、不显示开关 */
   canToggleComments?: boolean;
 }
@@ -35,14 +38,14 @@ interface Props {
  * 站点预览模态框 —— 在 iframe 中加载站点入口 URL，右侧可展开评论面板
  * 遵循 frontend-modal.md 三硬约束: inline style 高度 + createPortal + min-h-0
  */
-export default function SitePreviewModal({ site, onClose, onCommentsEnabledChange, onAskEnabledChange, canToggleComments = true }: Props) {
+export default function SitePreviewModal({ site, onClose, onCommentsEnabledChange, onAskEnabledChange, onSiteChange, canToggleComments = true }: Props) {
   const [loading, setLoading] = useState(true);
   /** 只在 iframe 真的 onError 时为 true —— 不由超时推断（见下方 effect 注释） */
   const [errored, setErrored] = useState(false);
   /** 加载偏慢：只挂一条角标提示，不遮挡已经绘制出来的内容 */
   const [slow, setSlow] = useState(false);
   // 右侧面板同一时刻只开一个：评论与提问互斥，两个都塞进来会把 iframe 挤成窄条
-  const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask'>('none');
+  const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask' | 'edit'>('none');
   const showComments = rightPanel === 'comments';
   const setShowComments = (next: boolean | ((v: boolean) => boolean)) => {
     const want = typeof next === 'function' ? next(rightPanel === 'comments') : next;
@@ -52,6 +55,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   const [showAskConfig, setShowAskConfig] = useState(false);
   /** 提问面板打开过至少一次；之后常驻挂载，切走只藏不卸（见渲染处注释） */
   const [askEverOpened, setAskEverOpened] = useState(false);
+  const [editEverOpened, setEditEverOpened] = useState(false);
   /** 站点提问开关的本地镜像：配置抽屉保存后即时回填，不必等父级刷新列表 */
   // 三态：undefined = owner 从没表过态（默认开），true = 明确开，false = 明确关。
   // 曾经写的是 === true，于是「没表过态」被当成关——默认全开的口径下这会让
@@ -84,11 +88,18 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
     if (srcDoc) { setRenderMode('srcdoc'); return; }
     if (!htmlLoading) setRenderMode('direct');
   }, [renderMode, srcDoc, htmlLoading]);
-  useEffect(() => {
-    const timer = setTimeout(() => setRenderMode((m) => (m === 'waiting' ? 'direct' : m)), SRCDOC_WAIT_MS);
-    return () => clearTimeout(timer);
-  }, []);
   const useSrcDoc = renderMode === 'srcdoc';
+
+  // 发布新版本后 siteUrl 的版本指纹会变化。预览组件不卸载，因此必须显式重开
+  // srcDoc/direct 的一次性判定，否则 iframe 会继续停在发布前的旧内容。
+  useEffect(() => {
+    setRenderMode('waiting');
+    setLoading(true);
+    setErrored(false);
+    setSlow(false);
+    const timer = window.setTimeout(() => setRenderMode((mode) => (mode === 'waiting' ? 'direct' : mode)), SRCDOC_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [site.siteUrl]);
 
   const focusPreviewFrame = () => {
     const frame = iframeRef.current;
@@ -118,7 +129,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   useEffect(() => {
     const timer = setTimeout(() => setSlow(true), SLOW_HINT_MS);
     return () => clearTimeout(timer);
-  }, []);
+  }, [site.siteUrl]);
 
   const handleOpenExternal = () => {
     // 与 iframe 同源同 URL：PDF 站在新窗口里也直接给原始 PDF，和 ShareViewPage 顶栏一致
@@ -176,6 +187,20 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
               >
                 <MessageCircleQuestion className="w-3.5 h-3.5" />
                 提问
+              </button>
+            )}
+            {canToggleComments && !site.wrappedAssetType && (
+              <button
+                onClick={() => {
+                  setEditEverOpened(true);
+                  setRightPanel((panel) => (panel === 'edit' ? 'none' : 'edit'));
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                  rightPanel === 'edit' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
+                }`}
+              >
+                <WandSparkles className="w-3.5 h-3.5" />
+                帮我修改
               </button>
             )}
             {canToggleComments && (
@@ -326,6 +351,21 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
               }}
             >
               <AskPanelInline siteId={site.id} title={site.title} />
+            </aside>
+          )}
+
+          {editEverOpened && (
+            <aside
+              className="w-[440px] shrink-0 border-l border-token-subtle flex flex-col min-h-0"
+              style={{
+                background: 'var(--panel-solid, var(--bg-elevated))',
+                display: rightPanel === 'edit' ? 'flex' : 'none',
+              }}
+            >
+              <SiteEditPanel
+                site={site}
+                onPublished={(updated) => onSiteChange?.(updated)}
+              />
             </aside>
           )}
         </div>
