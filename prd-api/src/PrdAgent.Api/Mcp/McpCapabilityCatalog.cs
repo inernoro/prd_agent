@@ -112,16 +112,27 @@ public static class McpCapabilityCatalog
         All.SelectMany(c => c.AllScopes()).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// 运行时需要按「密钥主人当前还有没有这个权限位」二次校验的 scope。
+    /// 要按「密钥主人当前还有没有这个权限位」把关的 scope —— 签发时取交集、鉴权时再核一遍，两处同一份名单。
     ///
-    /// 只覆盖本轮新接进来的四个 scope：老 scope（marketplace / document-store / open-api）
-    /// 的存量密钥签发时没有过权限交集校验，把它们一并纳入会让已经在跑的接入静默失效。
-    /// 新 scope 从第一天就带校验，不留这笔债。
+    /// 只覆盖本轮新接进来的四个 scope，两条理由缺一不可：
+    ///   1. 存量兼容：marketplace / document-store 的密钥早就在跑，它们签发时从来没过权限交集，
+    ///      纳进来会让已经在用的接入突然签不出、也调不动。
+    ///   2. 判据得站得住：这四个 scope 对应的权限位（visual-agent.use / literary-agent.use /
+    ///      web-pages.read / web-pages.write）在权限目录里真实存在，而 `marketplace.skills:read`
+    ///      压根没有对应的权限位 —— 海鲜市场开放接口的闸门是 `[RequireScope]` 自己，不走后台权限位。
+    ///      拿一个不存在的权限位去要求用户，等于谁都签不出来（连 root 都不行）。
+    ///
+    /// 换句话说：这个集合 = 「既受后台权限位管、又没有存量包袱」的那部分。
+    /// 往里加 scope 前先确认权限目录里真有对应的 key，否则 McpCapabilityCatalogTests 会红。
     /// </summary>
-    public static readonly IReadOnlySet<string> RuntimeCheckedScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    public static readonly IReadOnlySet<string> PermissionCheckedScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         ScopeVisualUse, ScopeLiteraryUse, ScopeWebPagesRead, ScopeWebPagesWrite,
     };
+
+    /// <summary>这块能力的 scope 是否受后台权限位把关（决定接入向导里要不要提示「你还没有这个权限」）。</summary>
+    public static bool IsPermissionChecked(McpCapability capability) =>
+        capability.AllScopes().Any(PermissionCheckedScopes.Contains);
 
     public static McpCapability? ByScope(string scope) =>
         All.FirstOrDefault(c => c.AllScopes().Contains(scope, StringComparer.OrdinalIgnoreCase));

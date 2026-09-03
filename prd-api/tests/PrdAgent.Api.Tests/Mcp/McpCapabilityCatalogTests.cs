@@ -55,16 +55,41 @@ public class McpCapabilityCatalogTests
     }
 
     [Fact]
-    public void EveryCapabilityScope_MapsToARealAdminPermission()
+    public void EveryPermissionCheckedScope_MapsToARealAdminPermission()
     {
-        // scope `a:b` 换算出来的权限位必须真实存在于权限目录里，
-        // 否则签发时的交集校验会把所有人都挡在门外（或者更糟：谁都能拿到）
+        // 拿去跟用户权限取交集的每个 scope，换算出来的权限位必须真实存在于权限目录里。
+        // 不存在的话，这条校验会把所有人——包括 root——挡在门外：root 拿到的是「权限目录里的全部 key」，
+        // 一个不在目录里的 key，root 也没有。
         var permissions = AdminPermissionCatalog.All.Select(p => p.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var scope in McpCapabilityCatalog.AllScopes)
+        foreach (var scope in McpCapabilityCatalog.PermissionCheckedScopes)
         {
             var perm = McpCapabilityCatalog.ToPermission(scope);
-            permissions.Contains(perm).ShouldBeTrue($"scope {scope} 对应的权限位 {perm} 在权限目录里不存在");
+            permissions.Contains(perm).ShouldBeTrue($"scope {scope} 对应的权限位 {perm} 在权限目录里不存在，拿它做交集校验等于谁都签不出来");
         }
+    }
+
+    [Fact]
+    public void MarketplaceScopes_AreExcludedFromPermissionCheck_BecauseNoSuchPermissionExists()
+    {
+        // 海鲜市场开放接口的闸门是它自己的 [RequireScope]，从来不走后台权限位。
+        // 这里把「为什么排除」钉成判据：哪天有人给市场加了权限位，这条会红，提醒把它纳入校验；
+        // 反过来，谁把市场 scope 塞进校验集合，上一条会红。
+        var permissions = AdminPermissionCatalog.All.Select(p => p.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var scope in new[] { McpCapabilityCatalog.ScopeMarketplaceRead, McpCapabilityCatalog.ScopeMarketplaceWrite })
+        {
+            McpCapabilityCatalog.PermissionCheckedScopes.ShouldNotContain(scope);
+            permissions.Contains(McpCapabilityCatalog.ToPermission(scope))
+                .ShouldBeFalse($"权限目录里出现了 {McpCapabilityCatalog.ToPermission(scope)}，那就该把 {scope} 纳入权限交集校验");
+        }
+    }
+
+    [Fact]
+    public void DocumentStoreScopes_AreExcludedFromPermissionCheck_ForBackwardCompatibility()
+    {
+        // 权限位是有的（document-store.read / .write），排除的理由是存量：这类密钥早就在跑，
+        // 突然要求权限交集会让已经在用的接入签不出、也调不动。要收紧得单独一轮，配数据盘点。
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldNotContain(McpCapabilityCatalog.ScopeDocStoreRead);
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldNotContain(McpCapabilityCatalog.ScopeDocStoreWrite);
     }
 
     // ── 授权判据 ──
@@ -109,14 +134,14 @@ public class McpCapabilityCatalogTests
     }
 
     [Fact]
-    public void RuntimeCheckedScopes_CoverTheNewlyAddedScopesOnly()
+    public void PermissionCheckedScopes_CoverTheNewlyAddedScopesOnly()
     {
-        // 新 scope 从第一天就带运行时二次校验；老 scope 不纳入（存量密钥不能被静默打哑）
-        McpCapabilityCatalog.RuntimeCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeVisualUse);
-        McpCapabilityCatalog.RuntimeCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeLiteraryUse);
-        McpCapabilityCatalog.RuntimeCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeWebPagesWrite);
-        McpCapabilityCatalog.RuntimeCheckedScopes.ShouldNotContain(McpCapabilityCatalog.ScopeDocStoreWrite);
-        McpCapabilityCatalog.RuntimeCheckedScopes.ShouldNotContain(McpCapabilityCatalog.ScopeMarketplaceRead);
+        // 新 scope 从第一天就带校验（签发取交集 + 鉴权二次核对）；老 scope 不纳入
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeVisualUse);
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeLiteraryUse);
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeWebPagesRead);
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeWebPagesWrite);
+        McpCapabilityCatalog.PermissionCheckedScopes.Count.ShouldBe(4);
     }
 
     // ── 工具接线：每块能力的工具都指向真实存在的开放接口路径前缀 ──

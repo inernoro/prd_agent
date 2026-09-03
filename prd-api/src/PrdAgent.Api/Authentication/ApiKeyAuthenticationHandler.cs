@@ -125,12 +125,12 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .ToList();
             IReadOnlyList<string>? ownerPermissions = null;
-            if (declaredScopes.Any(McpCapabilityCatalog.RuntimeCheckedScopes.Contains))
+            if (declaredScopes.Any(McpCapabilityCatalog.PermissionCheckedScopes.Contains))
                 ownerPermissions = await _permissionService.GetEffectivePermissionsAsync(key.OwnerUserId, isRoot: false);
 
             foreach (var scope in declaredScopes)
             {
-                if (McpCapabilityCatalog.RuntimeCheckedScopes.Contains(scope)
+                if (McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope)
                     && !McpCapabilityCatalog.PermissionsAllowScope(ownerPermissions ?? Array.Empty<string>(), scope))
                 {
                     Logger.LogWarning("AgentApiKey {KeyId} 携带的 scope {Scope} 已失效：主人 {UserId} 当前没有对应权限位，本次请求按未授权处理",

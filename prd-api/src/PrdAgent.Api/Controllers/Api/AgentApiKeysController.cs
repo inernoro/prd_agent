@@ -75,8 +75,12 @@ public class AgentApiKeysController : ControllerBase
     private async Task<(bool ok, string? reason)> ValidateScopeAsync(
         string scope, IReadOnlyList<string> ownedPermissions, CancellationToken ct)
     {
-        // 能力目录里的 scope：必须是用户自己就有的权限位，不能靠签发密钥凭空长出来
-        if (McpCapabilityCatalog.AllScopes.Contains(scope))
+        // 受权限位把关的 scope：必须是用户自己就有的权限位，不能靠签发密钥凭空长出来。
+        //
+        // 只查 PermissionCheckedScopes，不查整个能力目录：`marketplace.skills:read` 这类历史 scope
+        // 在权限目录里没有对应的权限位（它的闸门是 [RequireScope] 自己），拿它去查交集会把所有人
+        // ——包括 root——挡在门外，等于把已经在跑的市场接入打死。
+        if (McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope))
         {
             if (!McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope))
             {

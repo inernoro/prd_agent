@@ -71,8 +71,11 @@ public class McpConsoleController : ControllerBase
                 readScope = cap.ReadScope,
                 writeScope = cap.WriteScope,
                 writeNeedsApproval = cap.WriteNeedsApproval,
-                // 我自己有没有这块能力的权限位 —— 没有的话向导里勾了也签不出密钥，得先说清楚
-                availableToMe = scopes.Any(s => McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, s)),
+                // 我自己有没有这块能力的权限位 —— 没有的话向导里勾了也签不出密钥，得先说清楚。
+                // 不受权限位把关的能力（海鲜市场、知识库这类老 scope）恒为可用：它们的闸门在接口自己身上，
+                // 拿权限位去判会把「其实签得出来」的能力显示成灰的。
+                availableToMe = !McpCapabilityCatalog.IsPermissionChecked(cap)
+                    || scopes.Any(s => McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, s)),
                 granted = scopes.Any(s => McpCapabilityCatalog.ScopeSatisfies(grantedScopes, s)),
                 todayCalls = todayLogs.Count(l => l.Capability == cap.Key),
                 tools = tools.Select(t => new
