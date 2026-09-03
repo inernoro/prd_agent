@@ -1645,6 +1645,23 @@ export default function AppShell() {
                   style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
                 />
 
+                {/* 智能体接入台：把平台接进用户自己的智能体（MCP）。放在最上面 ——
+                    这是「让 agent 替我干活」的总入口，比设置类条目更常用。 */}
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => navigate('/mcp-console')}
+                >
+                  <Plug size={16} className="shrink-0" />
+                  <span className="text-[13px]">智能体接入台</span>
+                  <span
+                    className="ml-auto text-[10px]"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    连接 / 记录
+                  </span>
+                </DropdownMenu.Item>
+
                 {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account。 */}
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
