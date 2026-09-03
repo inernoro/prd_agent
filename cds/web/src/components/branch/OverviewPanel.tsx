@@ -930,8 +930,15 @@ function EntryCard({ e, reachable }: { e: OverviewEntry; reachable: boolean }): 
 }
 
 function EntryCards({
-  entries, reachable, onConfigure,
-}: { entries: OverviewEntry[]; reachable: boolean; onConfigure?: () => void }): JSX.Element {
+  entries, reachable, deploying, onConfigure,
+}: {
+  entries: OverviewEntry[];
+  /** 服务本身就绪没有——只看服务，不掺分支的生命周期。 */
+  reachable: boolean;
+  /** 部署在途。入口可能短暂不可达，但那不等于「服务未就绪」（Codex P2）。 */
+  deploying: boolean;
+  onConfigure?: () => void;
+}): JSX.Element {
   const primary = entries.find((e) => e.primary);
   const rest = entries.filter((e) => e !== primary);
   return (
@@ -939,7 +946,14 @@ function EntryCards({
       <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <h4 className="text-sm font-bold text-foreground">入口</h4>
         <span className="text-xs text-muted-foreground">
-          {entries.length} 个{reachable ? ' · 服务已就绪' : ' · 服务未就绪，暂不可达'}
+          {/*
+            三档，各说各的事实（Codex P2，核对属实）：服务就绪与否是一件事，
+            部署在途是另一件事。上一版把两者压进一个布尔，于是重新部署时同屏
+            出现「当前服务仍在运行」「1 / 1 个服务就绪」和「服务未就绪」三句话。
+          */}
+          {entries.length} 个{reachable
+            ? (deploying ? ' · 正在部署，入口可能短暂不可达' : ' · 服务已就绪')
+            : ' · 服务未就绪，暂不可达'}
         </span>
         <div className="flex-1" />
         {onConfigure ? (
@@ -976,7 +990,7 @@ function EntryCards({
 // ── 面板本体 ──────────────────────────────────────────────────────────────
 
 export function OverviewPanel({
-  services: rawServices, running, branchName, commitSha, commitMessage,
+  services: rawServices, running, lifecycle, branchName, commitSha, commitMessage,
   lastReadyAt, lastDeployAt, deployDurationMs,
   entries, deployments, metricSeries, liveStats, metricsReady, metricsError, seriesError,
   replicaSummary, infraSummary,
@@ -985,6 +999,16 @@ export function OverviewPanel({
 }: {
   services: OverviewService[];
   running: boolean;
+  /**
+   * 分支的原始生命周期状态（Codex P2，核对属实）。
+   *
+   * `running` 是它折叠出来的布尔值，而那个枚举有七档：
+   * idle / building / starting / running / restarting / stopping / error。
+   * 折叠之后「正在部署」和「已停机」变成同一个 false —— 部署进行中打开总览，
+   * 判断句会说「分支未运行」、就绪计数被清成 0/N、当前值全被抹掉，而它明明正在起。
+   * 传原始状态进来，面板才分得开「还没起来」和「不会起来了」。
+   */
+  lifecycle?: string;
   branchName: string;
   commitSha?: string;
   commitMessage?: string;
@@ -1042,9 +1066,19 @@ export function OverviewPanel({
    * `anyRunning`，补一处漏一处。这次改成在入口归一：分支没在跑，这份清单里的
    * running 一律不作数，下面所有读它的地方自动一致，不再依赖我记得补第六处。
    */
+  /**
+   * 部署在途（building / starting / restarting）不算「已停」。
+   *
+   * 这三档下容器可能正好好跑着（旧容器还在服务，或新容器已起来），`/metrics` 的
+   * 读数是真的。上一版把七档状态折叠成一个布尔值就一刀切归零，等于在部署过程中
+   * 谎报「分支未运行 / 0 个就绪 / 没有当前值」。
+   */
+  const transitioning = lifecycle === 'building' || lifecycle === 'starting' || lifecycle === 'restarting';
   const services = useMemo<OverviewService[]>(() => (
-    running ? rawServices : rawServices.map((s) => (s.status === 'running' ? { ...s, status: 'stopped' } : s))
-  ), [rawServices, running]);
+    running || transitioning
+      ? rawServices
+      : rawServices.map((s) => (s.status === 'running' ? { ...s, status: 'stopped' } : s))
+  ), [rawServices, running, transitioning]);
 
   const okCount = services.filter((s) => s.status === 'running').length;
   const badServices = services.filter((s) => s.status === 'error');
@@ -1283,7 +1317,13 @@ export function OverviewPanel({
       ? '一切正常，可以直接验收'
       : running
         ? `还有 ${services.length - okCount} 个服务没起来`
-        : '分支未运行';
+        : transitioning
+          ? (services.length - okCount > 0
+            ? `正在部署，${services.length - okCount} 个服务还没起来`
+            // 重新部署时旧容器往往还在服务：此时「还没起来」是 0，说出来就是假话
+            // （Codex P2，核对属实）。
+            : '正在部署，当前服务仍在运行')
+          : '分支未运行';
   const verdictTone = badServices.length > 0 ? 'bad' : allServicesReady ? 'ok' : 'idle';
 
   const windowText = windowMinutes >= 60
@@ -1373,7 +1413,13 @@ export function OverviewPanel({
 
       {/* 2. 入口 —— 大多数人打开这个抽屉就是为了拿地址 */}
       {entries.length > 0 ? (
-        <EntryCards entries={entries} reachable={allServicesReady} onConfigure={onConfigureEntries} />
+        <EntryCards
+          entries={entries}
+          // 只看服务，不掺 running：在途时服务可能已经全就绪
+          reachable={services.length > 0 && okCount === services.length && badServices.length === 0}
+          deploying={transitioning}
+          onConfigure={onConfigureEntries}
+        />
       ) : null}
 
       {/*
@@ -1459,8 +1505,28 @@ export function OverviewPanel({
              * metricsReady 只用来挑文案，**不参与是否出图的判断**——那正是「拿着历史
              * 干等 docker stats」那个缺陷的成因，守卫钉着闸门里不许出现它。
              */
+            /*
+             * 走**同一个** transitioning 判据（Codex P2，核对属实）。
+             *
+             * 上一版只把判断句改成「正在部署」，骨架屏这条注解还留着 `!running`——
+             * 首次部署（在途 + 历史不足两桶）时同屏一句「正在部署」、一句
+             * 「分支未运行」，而后者正是这次要消灭的那句假话。同一个判据，
+             * 又是只改了被点名的那一处。
+             */
+            /*
+             * 注解回答的是「为什么现在没有曲线」，判据因此是**有没有容器在跑**，
+             * 不是分支处在哪一档生命周期（Codex P2，核对属实）。
+             *
+             * 上一版一看到 transitioning 就无条件说「容器起来后开始采样」——可重新
+             * 部署时旧容器常常还在服务，同一屏既显示已就绪的服务、又显示实时读数，
+             * 却告诉用户采样还没开始。有容器在跑就交回骨架屏自己讲「已攒 N 帧 ·
+             * 约还需 X 秒」，那才是这一档的真相。
+             */
             note={
-              !running ? '分支未运行 · 没有容器可采样'
+              okCount === 0
+                ? (transitioning ? '正在部署 · 容器起来后开始采样'
+                  : running ? '没有容器可采样'
+                    : '分支未运行 · 没有容器可采样')
                 : !metricsReady ? '正在读取指标…'
                   : undefined
             }
