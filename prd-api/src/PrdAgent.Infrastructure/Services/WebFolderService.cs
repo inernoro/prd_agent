@@ -30,6 +30,8 @@ public class WebFolderService : IWebFolderService
     private readonly IDocumentService _documents;
     private readonly ILogger<WebFolderService> _logger;
 
+    private sealed record NameClaimResolution(string FolderId, bool WasCreated);
+
     public WebFolderService(
         MongoDbContext db,
         IHostedSiteService hostedSites,
@@ -59,7 +61,8 @@ public class WebFolderService : IWebFolderService
         // 名称 claim 与文件夹实体分离：claim 的 _id 负责跨实例并发串行化，FolderId
         // 仍是稳定的随机身份。这样文件夹重命名后可以释放旧名称，而不会改写实体 ID。
         var candidateId = Guid.NewGuid().ToString("N");
-        var folderId = await ResolveFolderIdAsync(userId, normalizedName, candidateId, CancellationToken.None);
+        var claim = await ResolveFolderIdAsync(userId, normalizedName, candidateId, CancellationToken.None);
+        var folderId = claim.FolderId;
 
         var category = new WebFolder
         {
@@ -118,7 +121,7 @@ public class WebFolderService : IWebFolderService
         return Convert.ToHexString(digest.AsSpan(0, 16)).ToLowerInvariant();
     }
 
-    private async Task<string> ResolveFolderIdAsync(
+    private async Task<NameClaimResolution> ResolveFolderIdAsync(
         string userId,
         string normalizedName,
         string preferredFolderId,
@@ -134,16 +137,38 @@ public class WebFolderService : IWebFolderService
             Builders<BsonDocument>.Update.SetOnInsert("NormalizedName", normalizedName),
             Builders<BsonDocument>.Update.SetOnInsert("CreatedAt", now),
             Builders<BsonDocument>.Update.Set("UpdatedAt", now));
-        var claim = await claims.FindOneAndUpdateAsync(
+        var previousClaim = await claims.FindOneAndUpdateAsync(
             Builders<BsonDocument>.Filter.Eq("_id", claimId),
             update,
             new FindOneAndUpdateOptions<BsonDocument>
             {
                 IsUpsert = true,
-                ReturnDocument = ReturnDocument.After,
+                ReturnDocument = ReturnDocument.Before,
             },
             ct);
-        return claim[ClaimFolderIdField].AsString;
+        return previousClaim == null
+            ? new NameClaimResolution(preferredFolderId, true)
+            : new NameClaimResolution(previousClaim[ClaimFolderIdField].AsString, false);
+    }
+
+    private Task RepairNameClaimAsync(
+        string userId,
+        string normalizedName,
+        string folderId)
+    {
+        var claims = _db.Database.GetCollection<BsonDocument>(NameClaimCollection);
+        var now = DateTime.UtcNow;
+        var update = Builders<BsonDocument>.Update.Combine(
+            Builders<BsonDocument>.Update.Set(ClaimFolderIdField, folderId),
+            Builders<BsonDocument>.Update.Set("OwnerUserId", userId),
+            Builders<BsonDocument>.Update.Set("NormalizedName", normalizedName),
+            Builders<BsonDocument>.Update.SetOnInsert("CreatedAt", now),
+            Builders<BsonDocument>.Update.Set("UpdatedAt", now));
+        return claims.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", BuildNameClaimId(userId, normalizedName)),
+            update,
+            new UpdateOptions { IsUpsert = true },
+            CancellationToken.None);
     }
 
     private Task ReleaseNameClaimAsync(
@@ -238,7 +263,6 @@ public class WebFolderService : IWebFolderService
         if (existing == null) return null;
 
         var ub = Builders<WebFolder>.Update;
-        var updates = new List<UpdateDefinition<WebFolder>>();
         var previousNormalizedName = NormalizeName(existing.Name);
         var nextNormalizedName = patch.Name == null
             ? previousNormalizedName
@@ -246,12 +270,64 @@ public class WebFolderService : IWebFolderService
 
         if (nextNormalizedName != previousNormalizedName)
         {
-            var claimedFolderId = await ResolveFolderIdAsync(
-                userId, nextNormalizedName, existing.Id, CancellationToken.None);
-            if (!string.Equals(claimedFolderId, existing.Id, StringComparison.Ordinal))
+            var ownerFolders = await _db.WebFolders
+                .Find(folder => folder.OwnerUserId == userId && folder.Id != existing.Id)
+                .ToListAsync(CancellationToken.None);
+            var persistedCollision = ownerFolders.FirstOrDefault(folder =>
+                NormalizeName(folder.Name) == nextNormalizedName);
+            if (persistedCollision != null)
+            {
+                // 老数据没有名称 claim。先把真实占用回填为权威映射，再拒绝本次改名，
+                // 避免两个持久文件夹得到同一个归一化名称。
+                await RepairNameClaimAsync(userId, nextNormalizedName, persistedCollision.Id);
                 throw new InvalidOperationException("同名文件夹已存在，请换一个名称");
+            }
+
+            var targetClaim = await ResolveFolderIdAsync(
+                userId, nextNormalizedName, existing.Id, CancellationToken.None);
+            if (!string.Equals(targetClaim.FolderId, existing.Id, StringComparison.Ordinal))
+                throw new InvalidOperationException("同名文件夹已存在，请换一个名称");
+
+            try
+            {
+                await _db.WebFolders.UpdateOneAsync(
+                    folder => folder.Id == id && folder.OwnerUserId == userId,
+                    ub.Combine(BuildFolderUpdates(ub, patch)),
+                    cancellationToken: CancellationToken.None);
+            }
+            catch
+            {
+                if (targetClaim.WasCreated)
+                {
+                    await ReleaseNameClaimAsync(
+                        userId, nextNormalizedName, existing.Id, CancellationToken.None);
+                }
+                throw;
+            }
+
+            await ReleaseNameClaimAsync(
+                userId, previousNormalizedName, existing.Id, CancellationToken.None);
+
+            return await _db.WebFolders
+                .Find(folder => folder.Id == id && folder.OwnerUserId == userId)
+                .FirstOrDefaultAsync(CancellationToken.None);
         }
 
+        await _db.WebFolders.UpdateOneAsync(
+            c => c.Id == id && c.OwnerUserId == userId,
+            ub.Combine(BuildFolderUpdates(ub, patch)),
+            cancellationToken: CancellationToken.None);
+
+        return await _db.WebFolders
+            .Find(c => c.Id == id && c.OwnerUserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+    }
+
+    private static IEnumerable<UpdateDefinition<WebFolder>> BuildFolderUpdates(
+        UpdateDefinitionBuilder<WebFolder> ub,
+        WebFolder patch)
+    {
+        var updates = new List<UpdateDefinition<WebFolder>>();
         if (patch.Name != null)
             updates.Add(ub.Set(c => c.Name, patch.Name.Trim()));
         if (patch.Description != null)
@@ -267,19 +343,7 @@ public class WebFolderService : IWebFolderService
         updates.Add(ub.Set(c => c.GenerateStoreId,
             string.IsNullOrWhiteSpace(patch.GenerateStoreId) ? null : patch.GenerateStoreId.Trim()));
         updates.Add(ub.Set(c => c.UpdatedAt, DateTime.UtcNow));
-
-        await _db.WebFolders.UpdateOneAsync(
-            c => c.Id == id && c.OwnerUserId == userId,
-            ub.Combine(updates),
-            cancellationToken: CancellationToken.None);
-
-        if (nextNormalizedName != previousNormalizedName)
-            await ReleaseNameClaimAsync(
-                userId, previousNormalizedName, existing.Id, CancellationToken.None);
-
-        return await _db.WebFolders
-            .Find(c => c.Id == id && c.OwnerUserId == userId)
-            .FirstOrDefaultAsync(CancellationToken.None);
+        return updates;
     }
 
     public async Task<bool> DeleteAsync(string id, string userId, CancellationToken ct = default)

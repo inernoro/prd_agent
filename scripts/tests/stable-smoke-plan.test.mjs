@@ -175,7 +175,9 @@ test('矩阵解析保留双环境原始策略并按模块只取一条轮换用�
 test('网页托管变更进入功能台账并绑定六个操作锚点', () => {
   const result = selectFeatureLines(catalog, [
     'prd-admin/src/components/web-hosting/LibraryRail.tsx',
+    'prd-admin/src/pages/WebPagesPage.mobileFolder.test.ts',
     'prd-api/src/PrdAgent.Infrastructure/Services/SiteContentSnapshotService.cs',
+    'prd-api/src/PrdAgent.Infrastructure/Services/WebFolderService.cs',
   ], [], 'changed');
   assert.deepEqual(result.unmappedFiles, []);
   const feature = result.selected.find((item) => item.id === 'web-hosting-sharing');
