@@ -168,12 +168,39 @@ public class LiteraryOpenApiController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"正文超过 {MaxContentChars} 字上限（追加后 {merged.Length} 字），请精简或分篇"));
 
-        await _db.ImageMasterWorkspaces.UpdateOneAsync(
-            x => x.Id == ws.Id,
-            Builders<ImageMasterWorkspace>.Update
-                .Set(x => x.ArticleContent, merged)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+        var changed = !string.Equals(merged, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
+        var update = Builders<ImageMasterWorkspace>.Update
+            .Set(x => x.ArticleContent, merged)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        if (changed)
+        {
+            // 正文换了，之前那轮配图的标记就不再对应这篇文章了。界面侧（ImageMasterController）
+            // 在正文提交时会 version++、清标记、清带标记正文，并删掉旧配图资产。
+            // 这里做同样的复位，但**不删资产** —— 删除是收不回来的动作，本期不开放给智能体；
+            // 图还留在工作区里，只是不再挂在已经变了的正文上。差异记在 debt.platform.md。
+            var history = ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>();
+            if (ws.ArticleWorkflow != null)
+            {
+                history.Insert(0, ws.ArticleWorkflow);
+                if (history.Count > 10) history = history.Take(10).ToList();
+            }
+            update = update
+                .Set(x => x.ArticleWorkflow, new ArticleIllustrationWorkflow
+                {
+                    Version = (ws.ArticleWorkflow?.Version ?? 0) + 1,
+                    Phase = 1,
+                    Markers = new List<ArticleIllustrationMarker>(),
+                    ExpectedImageCount = null,
+                    DoneImageCount = 0,
+                    AssetIdByMarkerIndex = new Dictionary<string, string>(),
+                    UpdatedAt = DateTime.UtcNow,
+                })
+                .Set(x => x.ArticleWorkflowHistory, history)
+                .Set(x => x.ArticleContentWithMarkers, null);
+        }
+
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id, update, cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new
         {

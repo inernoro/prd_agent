@@ -282,9 +282,7 @@ public class McpGatewayController : ControllerBase
             }
 
             var (status, respBody) = await LoopbackAsync(bt.Method, path, body, ct);
-            if (status is < 200 or >= 300)
-                await ReleaseReservationAsync(log.KeyId, verdict, ct);
-            await RecordFinishedAsync(log, status, respBody, startedAt, ct);
+            await RecordFinishedAsync(log, status, respBody, startedAt, verdict, ct);
             return ToolCallResult(id, status, respBody);
         }
 
@@ -315,9 +313,7 @@ public class McpGatewayController : ControllerBase
         var pathAndQuery = isGetDyn ? AppendQuery(dynPath, args, consumed) : dynPath;
         JsonNode? dynBody = isGetDyn ? null : BodyExcluding(args, consumed);
         var (st, rb) = await LoopbackAsync(match.HttpMethod, pathAndQuery, dynBody, ct);
-        if (st is < 200 or >= 300)
-            await ReleaseReservationAsync(log.KeyId, dynVerdict, ct);
-        await RecordFinishedAsync(log, st, rb, startedAt, ct);
+        await RecordFinishedAsync(log, st, rb, startedAt, dynVerdict, ct);
         return ToolCallResult(id, st, rb);
     }
 
@@ -337,14 +333,36 @@ public class McpGatewayController : ControllerBase
         return ToolError(id, reason);
     }
 
-    /// <summary>调用完成：记成败、耗时，并从响应里认一下产物（站点 / 文档 / 工作区 / 生图任务）。</summary>
-    private async Task RecordFinishedAsync(McpCallLog log, int status, string respBody, DateTime startedAt, CancellationToken ct)
+    /// <summary>
+    /// 调用完成：记成败、耗时，认产物，并把不该算数的配额退回去。
+    ///
+    /// 两种要退：调用没跑成（非 2xx），以及幂等命中 —— 后者下游只是把已存在的东西原样回来，
+    /// 没有新的副作用，再扣一次额度等于惩罚「响应丢了所以重试」这件本来就正常的事。
+    /// </summary>
+    private async Task RecordFinishedAsync(
+        McpCallLog log, int status, string respBody, DateTime startedAt, McpQuotaVerdict verdict, CancellationToken ct)
     {
         log.HttpStatus = status;
         log.Status = status is >= 200 and < 300 ? "success" : "error";
         log.DurationMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+
         if (log.Status == "error")
+        {
+            await ReleaseReservationAsync(log.KeyId, verdict, ct);
             log.ErrorMessage = McpArtifactExtractor.ExtractErrorMessage(respBody);
+        }
+        else if (McpArtifactExtractor.IsDeduplicated(respBody))
+        {
+            await ReleaseReservationAsync(log.KeyId, verdict, ct);
+            log.Deduplicated = true;
+            log.ImageCount = 0;
+            log.IsWrite = false;
+            var dedupArtifact = McpArtifactExtractor.Extract(log.ToolName, respBody);
+            log.ArtifactKind = dedupArtifact.Kind;
+            log.ArtifactId = dedupArtifact.Id;
+            log.ArtifactUrl = dedupArtifact.Url;
+            log.ArtifactTitle = dedupArtifact.Title;
+        }
         else
         {
             var artifact = McpArtifactExtractor.Extract(log.ToolName, respBody);

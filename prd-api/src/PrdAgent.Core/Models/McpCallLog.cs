@@ -64,6 +64,13 @@ public class McpCallLog
     /// <summary>这次请求了几张图（生图工具专用，用于日额度统计）</summary>
     public int ImageCount { get; set; }
 
+    /// <summary>
+    /// 这次是幂等命中（同一个 clientRequestId 重试，下游把已存在的东西原样回给它）。
+    /// 命中时不算新的副作用：占的配额要退回去，ImageCount / IsWrite 也归零，
+    /// 否则一次丢响应的重试会被当成两次真实产出扣两回额度。
+    /// </summary>
+    public bool Deduplicated { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>

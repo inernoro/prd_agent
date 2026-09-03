@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Mcp;
@@ -43,10 +44,12 @@ public class McpConsoleController : ControllerBase
     }
 
     /// <summary>
-    /// MCP 端点地址。反代把 /api/* 转给后端，所以这里读到的 Host 就是用户看到的域名。
-    /// 不自己拼预览域名（那是 cdscli 的活），只如实回当前请求打进来的地址。
+    /// MCP 端点地址 —— 用户要把它复制进客户端配置，所以必须是对外真实可达的那个。
+    ///
+    /// 不能用 Request.Scheme/Host：nginx 终止 TLS 后转给 Kestrel 的是明文 HTTP，
+    /// 直接拼会给出一个 http:// 的地址，粘进客户端就连不上。走转发头解析。
     /// </summary>
-    private string BuildEndpointUrl() => $"{Request.Scheme}://{Request.Host}/api/mcp";
+    private string BuildEndpointUrl() => $"{Request.ResolveExternalBaseUrl()}/api/mcp";
 
     [HttpGet("overview")]
     public async Task<IActionResult> Overview(CancellationToken ct)
@@ -66,7 +69,10 @@ public class McpConsoleController : ControllerBase
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var since = McpUsageService.TodayStartUtc();
-        var todayLogs = await TodayLogsAsync(userId, since, ct);
+        // 计数走聚合，不再靠「取最近 N 条再在内存里数」：按每分钟 60 次的上限，
+        // 十几分钟就能超过任何截断阈值，之后面板会系统性少报。列表只取要展示的那几条。
+        var tally = await TodayTallyAsync(userId, since, ct);
+        var recentLogs = await RecentLogsAsync(userId, since, 5, ct);
 
         var capabilities = McpCapabilityCatalog.All.Select(cap =>
         {
@@ -86,7 +92,7 @@ public class McpConsoleController : ControllerBase
                 availableToMe = !McpCapabilityCatalog.IsPermissionChecked(cap)
                     || scopes.Any(s => McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, s)),
                 granted = scopes.Any(s => McpCapabilityCatalog.ScopeSatisfies(grantedScopes, s)),
-                todayCalls = todayLogs.Count(l => l.Capability == cap.Key),
+                todayCalls = tally.ByCapability.TryGetValue(cap.Key, out var capCalls) ? capCalls : 0,
                 tools = tools.Select(t => new
                 {
                     name = t.Name,
@@ -111,7 +117,7 @@ public class McpConsoleController : ControllerBase
             isActive = k.IsActive,
             expiresAt = k.ExpiresAt,
             lastUsedAt = k.LastUsedAt,
-            todayCalls = todayLogs.Count(l => l.KeyId == k.Id),
+            todayCalls = tally.ByKey.TryGetValue(k.Id, out var keyCalls) ? keyCalls : 0,
             dailyImageQuota = k.McpDailyImageQuota ?? McpUsageService.DefaultDailyImageQuota,
             dailyWriteQuota = k.McpDailyWriteQuota ?? McpUsageService.DefaultDailyWriteQuota,
             rateLimitPerMin = k.McpRateLimitPerMin ?? McpUsageService.DefaultRateLimitPerMin,
@@ -130,16 +136,13 @@ public class McpConsoleController : ControllerBase
             {
                 // 「今天」按 UTC 自然日切，与额度口径一致；界面上要写明白，别让人以为是本地零点
                 sinceUtc = since,
-                calls = todayLogs.Count,
+                calls = tally.Total,
                 images = usageByKey.Values.Sum(u => u.Images),
                 writes = usageByKey.Values.Sum(u => u.Writes),
-                denied = todayLogs.Count(l => l.Status == "denied"),
-                failed = todayLogs.Count(l => l.Status == "error"),
+                denied = tally.ByStatus.TryGetValue("denied", out var denied) ? denied : 0,
+                failed = tally.ByStatus.TryGetValue("error", out var failed) ? failed : 0,
             },
-            recentCalls = todayLogs
-                .OrderByDescending(l => l.CreatedAt)
-                .Take(5)
-                .Select(ToLogDto),
+            recentCalls = recentLogs.Select(ToLogDto),
         }));
     }
 
@@ -245,15 +248,71 @@ public class McpConsoleController : ControllerBase
         => !McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope)
            || McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope);
 
-    private async Task<List<McpCallLog>> TodayLogsAsync(string userId, DateTime since, CancellationToken ct)
+    private sealed record TodayTally(
+        long Total,
+        IReadOnlyDictionary<string, long> ByStatus,
+        IReadOnlyDictionary<string, long> ByKey,
+        IReadOnlyDictionary<string, long> ByCapability);
+
+    private FilterDefinition<McpCallLog> TodayFilter(string userId, DateTime since)
     {
         var f = Builders<McpCallLog>.Filter;
-        var filter = f.And(
+        return f.And(
             f.Eq(x => x.OwnerUserId, userId),
             f.Eq(x => x.DeploymentSlug, DeploymentScope.Current),
             f.Gte(x => x.CreatedAt, since));
-        return await _db.McpCallLogs.Find(filter).SortByDescending(x => x.CreatedAt).Limit(1000).ToListAsync(ct);
     }
+
+    /// <summary>今日计数：交给 Mongo 分组统计，条数再多也是准的。</summary>
+    private async Task<TodayTally> TodayTallyAsync(string userId, DateTime since, CancellationToken ct)
+    {
+        var groups = await _db.McpCallLogs.Aggregate()
+            .Match(TodayFilter(userId, since))
+            .Group(new BsonDocument
+            {
+                { "_id", new BsonDocument
+                    {
+                        { "status", "$Status" },
+                        { "keyId", "$KeyId" },
+                        { "capability", "$Capability" },
+                    }
+                },
+                { "n", new BsonDocument("$sum", 1) },
+            })
+            .ToListAsync(ct);
+
+        long total = 0;
+        var byStatus = new Dictionary<string, long>(StringComparer.Ordinal);
+        var byKey = new Dictionary<string, long>(StringComparer.Ordinal);
+        var byCapability = new Dictionary<string, long>(StringComparer.Ordinal);
+
+        foreach (var doc in groups)
+        {
+            var n = doc["n"].ToInt64();
+            total += n;
+            var id = doc["_id"].AsBsonDocument;
+            Accumulate(byStatus, ReadKey(id, "status"), n);
+            Accumulate(byKey, ReadKey(id, "keyId"), n);
+            Accumulate(byCapability, ReadKey(id, "capability"), n);
+        }
+
+        return new TodayTally(total, byStatus, byKey, byCapability);
+
+        static string? ReadKey(BsonDocument id, string name)
+            => id.TryGetValue(name, out var v) && !v.IsBsonNull ? v.AsString : null;
+
+        static void Accumulate(Dictionary<string, long> map, string? key, long n)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+            map[key] = map.TryGetValue(key, out var cur) ? cur + n : n;
+        }
+    }
+
+    private async Task<List<McpCallLog>> RecentLogsAsync(string userId, DateTime since, int limit, CancellationToken ct)
+        => await _db.McpCallLogs.Find(TodayFilter(userId, since))
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(limit)
+            .ToListAsync(ct);
 
     private static object ToLogDto(McpCallLog l) => new
     {
@@ -264,6 +323,7 @@ public class McpConsoleController : ControllerBase
         capability = l.Capability,
         status = l.Status,
         isWrite = l.IsWrite,
+        deduplicated = l.Deduplicated,
         imageCount = l.ImageCount,
         httpStatus = l.HttpStatus,
         durationMs = l.DurationMs,

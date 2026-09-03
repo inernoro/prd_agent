@@ -31,6 +31,16 @@ public sealed class McpCapability
     /// <summary>写入动作是否默认需要用户逐次放行（接入台「等我拍板」）</summary>
     public bool WriteNeedsApproval { get; init; }
 
+    /// <summary>
+    /// 持写 scope 能不能顺带用只读工具。
+    ///
+    /// 这条**必须跟真实闸门一致**，不能按 `{res}:write / {res}:read` 的字面规律推：
+    /// 知识库与网页托管的读端点写成 `[RequireScope(read, write)]`，写确实能读；
+    /// 海鲜市场的读端点是 `[RequireScope(read)]` 精确匹配，持写 scope 打过去会 403。
+    /// 网关这边要是自作主张放行，tools/list 会列出一批调用即 403 的工具。
+    /// </summary>
+    public bool WriteImpliesRead { get; init; }
+
     public IEnumerable<string> AllScopes()
     {
         if (!string.IsNullOrEmpty(ReadScope)) yield return ReadScope!;
@@ -86,6 +96,7 @@ public static class McpCapabilityCatalog
             ReadScope = ScopeDocStoreRead,
             WriteScope = ScopeDocStoreWrite,
             WriteNeedsApproval = true,
+            WriteImpliesRead = true,   // /api/open/document-store 的读端点是 [RequireScope(read, write)]
         },
         new()
         {
@@ -95,6 +106,7 @@ public static class McpCapabilityCatalog
             ReadScope = ScopeWebPagesRead,
             WriteScope = ScopeWebPagesWrite,
             WriteNeedsApproval = true,
+            WriteImpliesRead = true,   // /api/open/web-pages 的列表端点是 [RequireScope(read, write)]
         },
         new()
         {
@@ -104,6 +116,7 @@ public static class McpCapabilityCatalog
             ReadScope = ScopeMarketplaceRead,
             WriteScope = ScopeMarketplaceWrite,
             WriteNeedsApproval = true,
+            WriteImpliesRead = false,  // 市场的读端点是 [RequireScope(read)] 精确匹配，持写 scope 打过去会 403
         },
     };
 
@@ -175,19 +188,23 @@ public static class McpCapabilityCatalog
 
     /// <summary>
     /// 持有 <paramref name="owned"/> 这些 scope 的密钥，能不能用要求 <paramref name="required"/> 的工具。
-    /// 写蕴含读（`{res}:write` 满足 `{res}:read`）——写入流程通常要先读，
-    /// 与 AdminPermissionMiddleware.HasScopeGrant 同口径。
+    /// 精确匹配优先；写蕴含读**按能力声明**，不按命名规律（见 McpCapability.WriteImpliesRead）。
     /// </summary>
     public static bool ScopeSatisfies(IReadOnlyCollection<string> owned, string required)
     {
         foreach (var s in owned)
-        {
-            if (string.Equals(s, required, StringComparison.OrdinalIgnoreCase)) return true;
-            if (s.EndsWith(":write", StringComparison.OrdinalIgnoreCase)
-                && required.EndsWith(":read", StringComparison.OrdinalIgnoreCase)
-                && string.Equals(s[..^6], required[..^5], StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(s, required, StringComparison.OrdinalIgnoreCase))
                 return true;
-        }
+
+        // 写蕴含读只在那块能力的真实闸门也蕴含时才成立（见 McpCapability.WriteImpliesRead）。
+        // 早先这里按 `:write` / `:read` 的字面规律一刀切，等于替海鲜市场做了它并不认的决定 ——
+        // tools/list 会列出一批调用即 403 的工具。判据要认真实闸门，不认命名规律。
+        var cap = All.FirstOrDefault(c =>
+            !string.IsNullOrEmpty(c.ReadScope) && string.Equals(c.ReadScope, required, StringComparison.OrdinalIgnoreCase));
+        if (cap is { WriteImpliesRead: true } && !string.IsNullOrEmpty(cap.WriteScope)
+            && owned.Any(o => string.Equals(o, cap.WriteScope, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
         return false;
     }
 

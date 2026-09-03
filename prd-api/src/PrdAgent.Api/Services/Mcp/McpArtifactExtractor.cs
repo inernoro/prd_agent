@@ -63,6 +63,17 @@ public static class McpArtifactExtractor
         return new Artifact(kind, id, url, title);
     }
 
+    /// <summary>下游是不是把幂等命中的既有产物原样回来了（各开放层统一回 data.deduplicated=true）。</summary>
+    public static bool IsDeduplicated(string? responseBody)
+    {
+        var data = ReadDataObject(responseBody);
+        return data != null
+               && data.TryGetPropertyValue("deduplicated", out var node)
+               && node is JsonValue v
+               && v.TryGetValue<bool>(out var flag)
+               && flag;
+    }
+
     /// <summary>失败时给用户看的原因：优先接口自己的中文 message，退回一小段原文。</summary>
     public static string? ExtractErrorMessage(string? responseBody)
     {

@@ -125,12 +125,31 @@ public class McpCapabilityCatalogTests
     }
 
     [Fact]
-    public void ScopeSatisfies_WriteImpliesRead_ForEveryCapability_NotJustDocumentStore()
+    public void ScopeSatisfies_WriteImpliesRead_OnlyWhereTheRealGateAlsoImplies()
     {
-        // 早先这个判据把 document-store 写死了一对，新增 web-pages 读写档时就会漏
-        var owned = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { McpCapabilityCatalog.ScopeWebPagesWrite };
-        McpCapabilityCatalog.ScopeSatisfies(owned, McpCapabilityCatalog.ScopeWebPagesRead).ShouldBeTrue();
-        McpCapabilityCatalog.ScopeSatisfies(owned, McpCapabilityCatalog.ScopeDocStoreRead).ShouldBeFalse();
+        // 判据要跟真实闸门一致，不能按 `:write` / `:read` 的字面规律一刀切：
+        //   知识库 / 网页托管的读端点是 [RequireScope(read, write)]  → 写能读
+        //   海鲜市场的读端点是 [RequireScope(read)] 精确匹配          → 写不能读（放行只会列出一批 403 的工具）
+        var web = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { McpCapabilityCatalog.ScopeWebPagesWrite };
+        McpCapabilityCatalog.ScopeSatisfies(web, McpCapabilityCatalog.ScopeWebPagesRead).ShouldBeTrue();
+        McpCapabilityCatalog.ScopeSatisfies(web, McpCapabilityCatalog.ScopeDocStoreRead).ShouldBeFalse();
+
+        var doc = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { McpCapabilityCatalog.ScopeDocStoreWrite };
+        McpCapabilityCatalog.ScopeSatisfies(doc, McpCapabilityCatalog.ScopeDocStoreRead).ShouldBeTrue();
+
+        var market = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { McpCapabilityCatalog.ScopeMarketplaceWrite };
+        McpCapabilityCatalog.ScopeSatisfies(market, McpCapabilityCatalog.ScopeMarketplaceRead).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void CapabilitiesDeclaringWriteImpliesRead_HaveBothScopes()
+    {
+        // 声明了「写能读」却没有读 scope 的能力，这个标志就是死的 —— 说明声明写错了地方
+        foreach (var cap in McpCapabilityCatalog.All.Where(c => c.WriteImpliesRead))
+        {
+            string.IsNullOrEmpty(cap.ReadScope).ShouldBeFalse($"能力「{cap.Title}」声明了写蕴含读，却没有只读 scope");
+            string.IsNullOrEmpty(cap.WriteScope).ShouldBeFalse($"能力「{cap.Title}」声明了写蕴含读，却没有写 scope");
+        }
     }
 
     [Fact]

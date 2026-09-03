@@ -42,8 +42,6 @@ export function ConnectAgentDialog({
       if (!pick) continue;
       if (pick.read && cap.readScope) list.push(cap.readScope);
       if (pick.write && cap.writeScope) list.push(cap.writeScope);
-      // 没有独立只读档的能力（视觉/文学），勾上就是那一个 scope
-      if (pick.read && !cap.readScope && cap.writeScope && !pick.write) list.push(cap.writeScope);
     }
     return Array.from(new Set(list));
   }, [capabilities, selected]);
@@ -119,11 +117,14 @@ export function ConnectAgentDialog({
           {step === 'capabilities' && (
             <div className="flex flex-col gap-2.5">
               <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                默认只给「看」的权限。要它动手写，得在卡片里单独再点一次。
+                有只读档的能力，勾选只给「看」；要它动手写，得在卡片里单独再点一次。
+                只有写入档的能力（视觉创作、文学创作）会在卡片上标出来 —— 勾上即授予写入。
               </p>
               {capabilities.map((cap) => {
                 const pick = selected[cap.key] ?? { read: false, write: false };
                 const disabled = !cap.availableToMe;
+                // 只有写入档、没有只读档的能力：勾选即授予写入，卡片上必须写明白
+                const writeOnly = !cap.readScope && !!cap.writeScope;
                 return (
                   <div
                     key={cap.key}
@@ -141,12 +142,17 @@ export function ConnectAgentDialog({
                         type="checkbox"
                         disabled={disabled}
                         checked={pick.read}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const on = e.target.checked;
                           setSelected((prev) => ({
                             ...prev,
-                            [cap.key]: { read: e.target.checked, write: e.target.checked ? pick.write : false },
-                          }))
-                        }
+                            // 没有只读档的能力（视觉创作、文学创作），勾上就是把写入交出去 ——
+                            // 这里直接落成 write，别用「读」的名义给出改动权限。
+                            [cap.key]: writeOnly
+                              ? { read: on, write: on }
+                              : { read: on, write: on ? pick.write : false },
+                          }));
+                        }}
                         className="mt-0.5"
                       />
                       <span className="flex flex-col gap-1">
@@ -156,6 +162,14 @@ export function ConnectAgentDialog({
                         <span className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                           {cap.summary}
                         </span>
+                        {writeOnly && (
+                          <span
+                            className="text-[11.5px] leading-relaxed"
+                            style={{ color: 'var(--semantic-warning-text)' }}
+                          >
+                            这块能力没有「只看」的档位：勾上就是允许它生成内容、写进你的空间。
+                          </span>
+                        )}
                       </span>
                     </label>
 

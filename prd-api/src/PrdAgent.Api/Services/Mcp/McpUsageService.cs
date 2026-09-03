@@ -148,10 +148,12 @@ public sealed class McpUsageService
         try
         {
             var id = BuildCounterId(keyId, TodayStartUtc(), kind);
+            // 同 LogAsync：退还是服务端自己的收尾动作，不跟客户端的取消令牌走，
+            // 否则客户端一断开就退不回去，用户白扣一天额度。
             await _db.McpUsageCounters.UpdateOneAsync(
                 x => x.Id == id,
                 Builders<McpUsageCounter>.Update.Inc(x => x.Count, -amount).Set(x => x.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: ct);
+                cancellationToken: CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -174,13 +176,19 @@ public sealed class McpUsageService
     internal static string BuildCounterId(string keyId, DateTime dayUtc, string kind)
         => $"{keyId}:{dayUtc:yyyyMMdd}:{kind}";
 
-    /// <summary>写一条调用记录。记录失败绝不影响工具调用本身 —— 记账坏了不能把业务打挂。</summary>
-    public async Task LogAsync(McpCallLog log, CancellationToken ct)
+    /// <summary>
+    /// 写一条调用记录。记录失败绝不影响工具调用本身 —— 记账坏了不能把业务打挂。
+    ///
+    /// 落库**不跟客户端的取消令牌走**：MCP 客户端超时断开时下游动作照跑（LoopbackAsync 用的是
+    /// CancellationToken.None），这时候拿一个已取消的令牌去写记录，副作用发生了、账没记上，
+    /// 审计面板和配额都看不到它。服务端自己的动作用服务端自己的令牌（server-authority）。
+    /// </summary>
+    public async Task LogAsync(McpCallLog log, CancellationToken ct = default)
     {
         try
         {
             log.DeploymentSlug = DeploymentScope.Current;
-            await _db.McpCallLogs.InsertOneAsync(log, cancellationToken: ct);
+            await _db.McpCallLogs.InsertOneAsync(log, cancellationToken: CancellationToken.None);
         }
         catch (Exception ex)
         {
