@@ -123,10 +123,15 @@ async function setLegacyStorageFixture(page: Page, siteId: string, prepare: bool
   const response = prepare
     ? await page.request.post(path, { headers: testingAuthHeaders('POST', path) })
     : await page.request.delete(path, { headers: testingAuthHeaders('DELETE', path) });
-  const body = await response.json() as ApiEnvelope<{ prepared?: boolean; restored?: boolean }>;
+  const body = await response.json() as ApiEnvelope<{
+    prepared?: boolean;
+    restored?: boolean;
+    contentVersionChanged?: boolean;
+  }>;
   expect(response.ok(), body.error?.message || '旧存储稳定冒烟夹具切换失败').toBe(true);
   expect(body.success, body.error?.message || '旧存储稳定冒烟夹具切换失败').toBe(true);
   expect(prepare ? body.data.prepared : body.data.restored).toBe(true);
+  if (prepare) expect(body.data.contentVersionChanged, '旧存储夹具必须击穿正文快照缓存').toBe(true);
 }
 
 async function expectAnonymousShareAnswer(
@@ -1218,8 +1223,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'current');
 
       if (environment === 'cds') {
-        await setLegacyStorageFixture(page, siteId, true);
         legacyFixturePrepared = true;
+        await setLegacyStorageFixture(page, siteId, true);
         await expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'legacy');
       }
     } finally {

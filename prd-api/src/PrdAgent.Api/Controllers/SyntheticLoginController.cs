@@ -356,16 +356,23 @@ public sealed class SyntheticLoginController : ControllerBase
         if (entry is null || string.IsNullOrWhiteSpace(entry.CosKey))
             return BadRequest(ApiResponse<object>.Fail("STABLE_SMOKE_ENTRY_NOT_FOUND", "站点入口记录不完整，请重新上传后再试"));
 
+        var previousContentVersion = site.ContentVersion;
         if (!entry.CosKey.EndsWith(LegacyEntryMissingSuffix, StringComparison.Ordinal))
-        {
             entry.CosKey += LegacyEntryMissingSuffix;
-            await _db.HostedSites.ReplaceOneAsync(
-                item => item.Id == site.Id && item.OwnerUserId == userId,
-                site,
-                cancellationToken: ct);
-        }
+        // 第一次主存储提问已经按 ContentVersion 缓存了正文。夹具只改 CosKey 而不换版本，
+        // 第二次提问会直接命中旧缓存，根本不会经过“当前 key 缺失 -> 历史 URL 回源”。
+        site.ContentVersion = NextContentVersion(site.ContentVersion);
+        await _db.HostedSites.ReplaceOneAsync(
+            item => item.Id == site.Id && item.OwnerUserId == userId,
+            site,
+            cancellationToken: ct);
 
-        return Ok(ApiResponse<object>.Ok(new { prepared = true, siteId = site.Id }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            prepared = true,
+            contentVersionChanged = site.ContentVersion > previousContentVersion,
+            siteId = site.Id,
+        }));
     }
 
     /// <summary>恢复 WEB-005 临时改写的入口 key，确保站点删除时能清掉真实对象。</summary>
@@ -389,6 +396,7 @@ public sealed class SyntheticLoginController : ControllerBase
         if (changed)
         {
             entry!.CosKey = entry.CosKey[..^LegacyEntryMissingSuffix.Length];
+            site.ContentVersion = NextContentVersion(site.ContentVersion);
             await _db.HostedSites.ReplaceOneAsync(
                 item => item.Id == site.Id && item.OwnerUserId == userId,
                 site,
@@ -396,6 +404,12 @@ public sealed class SyntheticLoginController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.Ok(new { restored = true, changed, siteId = site.Id }));
+    }
+
+    private static DateTime NextContentVersion(DateTime current)
+    {
+        var now = DateTime.UtcNow;
+        return now > current ? now : current.AddTicks(1);
     }
 
     private IActionResult? ValidateTestingAccess(out string userId)

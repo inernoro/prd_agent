@@ -161,6 +161,16 @@ public sealed class SyntheticLoginControllerTests
     }
 
     [Fact]
+    public void LegacyStorageFixture_ShouldAlwaysAdvanceContentVersion()
+    {
+        var futureVersion = DateTime.UtcNow.AddMinutes(1);
+
+        var next = Invoke<DateTime>("NextContentVersion", futureVersion);
+
+        Assert.True(next > futureVersion);
+    }
+
+    [Fact]
     public void StableSmokeSignature_ShouldResolveDeploymentHostWithoutWildcardTrust()
     {
         var configuration = new ConfigurationBuilder()
