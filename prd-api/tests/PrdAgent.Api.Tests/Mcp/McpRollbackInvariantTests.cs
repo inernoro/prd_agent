@@ -32,3 +32,38 @@ public class McpRollbackInvariantTests
             .ShouldBeFalse();
     }
 }
+
+/// <summary>
+/// 幂等键推出来的确定性 id 必须带上它所属的库。
+///
+/// 这条坏掉的表现不是「幂等失效」，是**合法调用报 500**：确定性 id 就是主键，主键在整个集合里
+/// 唯一、不分库。智能体拿同一个 clientRequestId 往两个库各写一篇（批处理里每库一次、请求 id
+/// 按批取，很自然），第二篇的先查后判会因为库不同而查不到，接着插入撞主键，按库过滤又捞不回来，
+/// 最后抛出去。而这条判据被改回去之后，全量测试照样绿。
+/// </summary>
+public class McpEntryIdempotencyScopeTests
+{
+    [Fact]
+    public void 同一个幂等键在两个库里推出不同的_id()
+    {
+        var a = DocumentStoreOpenApiController.DeterministicId("kb-entry:store-a", "mcp:key1:req-1");
+        var b = DocumentStoreOpenApiController.DeterministicId("kb-entry:store-b", "mcp:key1:req-1");
+
+        a.ShouldNotBeNull();
+        a.ShouldNotBe(b, "同一个 clientRequestId 写进两个库，必须是两条不同的条目");
+    }
+
+    [Fact]
+    public void 同库同幂等键必须稳定推出同一个_id()
+    {
+        // 幂等的全部意义在这一条：重试落回同一个主键，撞上就是命中
+        DocumentStoreOpenApiController.DeterministicId("kb-entry:store-a", "mcp:key1:req-1")
+            .ShouldBe(DocumentStoreOpenApiController.DeterministicId("kb-entry:store-a", "mcp:key1:req-1"));
+    }
+
+    [Fact]
+    public void 没给幂等键就不推确定性_id()
+    {
+        DocumentStoreOpenApiController.DeterministicId("kb-entry:store-a", null).ShouldBeNull();
+    }
+}

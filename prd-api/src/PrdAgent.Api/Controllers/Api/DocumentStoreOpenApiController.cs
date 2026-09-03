@@ -322,7 +322,11 @@ public class DocumentStoreOpenApiController : ControllerBase
         // 判据走**确定性 id**（撞主键即命中），不走「先查后建」—— 后者在两次重试叠在一起时
         // 两边都查不到，各写一篇、计数各加一次，而幂等键正是为了不发生这件事。
         var idempotencyKey = BuildIdempotencyKey(req.ClientRequestId);
-        var deterministicId = DeterministicId("kb-entry", idempotencyKey);
+        // 库 id 必须进这个哈希：条目的确定性 id 是主键，而主键在整个集合里唯一，不分库。
+        // 只用「密钥 + clientRequestId」的话，智能体拿同一个 clientRequestId 往两个库各写一篇
+        // （批处理里每库一次、请求 id 按批取，很自然），第二篇的先查后判会因为库不同而查不到，
+        // 接着插入撞主键、按库过滤又捞不回来，最后抛出去变成 500 —— 一次合法调用被幂等键坑死。
+        var deterministicId = DeterministicId($"kb-entry:{storeId}", idempotencyKey);
         if (deterministicId != null)
         {
             var existed = await _db.DocumentEntries
@@ -504,7 +508,7 @@ public class DocumentStoreOpenApiController : ControllerBase
     }
 
     /// <summary>把幂等键压成确定性文档 id（32 位十六进制，与随机 id 同形）。没给幂等键就返回 null。</summary>
-    private static string? DeterministicId(string kind, string? idempotencyKey)
+    internal static string? DeterministicId(string kind, string? idempotencyKey)
         => idempotencyKey == null
             ? null
             : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(

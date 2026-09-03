@@ -16,7 +16,7 @@
 |---|---|---|---|---|---|
 | P0 方案定稿 | 100 | 已完成 | 无 | 拍板结论：默认只读、破坏性动作不做、配额 50 张/200 次/60 次每分钟、OAuth 延后 | 本文档 + 设计画布 |
 | P1 授权收口 | 100 | 已部署 | 无 | 权限交集校验 + 运行时二次核对 + 按 Key 配额都已上线 | CDS 构建通过（commit a4bfce42 / f417fae8） |
-| P2 能力开放层 | 100 | 已部署 | 无 | 四个 `/api/open/*` 薄控制器 + 内置工具 5 → 18 | 同上，能力目录守卫测试随构建跑 |
+| P2 能力开放层 | 100 | 已部署 | 无 | 四块能力各一层薄开放面 + 工具由 5 个扩到 18 个 | 同上，能力目录守卫测试随构建跑 |
 | P3 接入台与入口 | 100 | 已部署 | 无 | `/mcp-console` 面板 + 三步向导 + 左下角菜单入口 | 前端全量 2355 用例通过（commit 8e82f575） |
 | P4 真人验收 | 20 | 阻塞 | **管理员口令在库里、但不在任何人手里**。证据（2026-09-03 10:23 容器启动日志 + CDS env 只读）：① `MAP_ADMIN_FORCE_RESET` 是开着的，日志打出了它的影响面警告；② 紧接着**没有**「凭据不合法」也**没有**「已重置」——按 `DatabaseInitializer.MaybeForceResetAdminAsync` 的分支，说明它在「这个开关值已经用过了」那一步返回了（`deployment_markers` 里的 marker 等于当前值）；③ 而 `MAP_INITIAL_ADMIN_PASSWORD` 在 `_global` 与 `project` 两个作用域都不存在（`cdscli env get --metadata-only` 只列出 `MAP_INITIAL_ADMIN_USERNAME`）。合起来：那次救场早就执行过了，用的口令来自当时的配置，现在环境里已经没有那一半，于是谁也再推不出来。root 破窗账户是启用的（日志「Root 破窗账户已启用，用户名: root」），但 `ROOT_ACCESS_PASSWORD` 同样不在我读得到的 env 里。 | 需要用户拍板：在 CDS 给这个项目补 `MAP_INITIAL_ADMIN_PASSWORD`（与已有的 `MAP_INITIAL_ADMIN_USERNAME` 配对），并把 `MAP_ADMIN_FORCE_RESET` 换成一个没用过的新值（如 `2`）重新武装救场；下次部署即生效。**影响面**：改的是共库那一份管理员，同项目其它分支会跟着变（代码注释里写明这是有意为之，CDS 上都是测试环境）。所以这一步由用户做，不由我自作主张。 | 待补 |
 | P4.1 C# 单测 | 100 | 已通过 | 无 | 开 PR 后 `Server Build & Test` 首次真实跑到这批守卫；前两次红灯（数据同步分类缺失、写蕴含读判据写错）已修 | CI run 33739666505 全绿（commit 700a8923） |
@@ -29,14 +29,14 @@
 
 后端的 MCP 协议层**已经落地并在跑**，不需要从零建：
 
-| 已有件 | 位置 | 说明 |
-|---|---|---|
-| MCP 网关 | `POST /api/mcp`（`McpGatewayController`） | Streamable HTTP + JSON-RPC 2.0，支持 initialize / ping / tools/list / tools/call，无状态 |
-| 鉴权 | `sk-ak-*` AgentApiKey + `scope` claim | 网关只读 claim，不自己验密钥 |
-| 内置工具 | `McpBuiltinTools` | 5 个：海鲜市场搜索、技能详情、知识库列库、列条目、读正文（全是只读） |
-| 动态工具 | `AgentOpenEndpoint` 登记表 | 登记一条开放接口 = 自动多一个工具，零代码 |
-| 权限桥 | `AdminPermissionMiddleware.HasScopeGrant` | scope `a:b` 自动满足后台权限位 `a.b`，且写蕴含读 |
-| 用户文档 | [doc/guide.platform.mcp-connector.md](./guide.platform.mcp-connector.md) | 三步接入 + curl 验证 + 排障表 |
+| 已有件 | 说明 |
+|---|---|
+| 协议层 | 智能体那边看到的是一条标准 MCP 端点：握手、列工具、调工具都通，且不保存会话 —— 断线重连即可，不需要恢复什么 |
+| 密钥鉴权 | 一把密钥代表「某个用户授权出去的某几项能力」，能力清单随密钥签发；协议层只读这份清单，不自己判权 |
+| 内置工具 | 已有 5 个，全是只读：海鲜市场搜索与技能详情，知识库列库、列条目、读正文 |
+| 动态工具 | 在后台登记一条开放接口，工具清单里就自动多一个工具，不用改代码 |
+| 权限桥 | 密钥上的能力项会自动折算成后台的权限位，且「能写」蕴含「能读」，两套权限体系不必各配一遍 |
+| 用户文档 | [doc/guide.platform.mcp-connector.md](./guide.platform.mcp-connector.md) —— 三步接入 + 命令行验证 + 排障表 |
 
 **缺口正好是用户这次点名的部分**：
 
@@ -46,25 +46,25 @@
 
 ### 五块能力现状对照
 
-| 能力 | 现有接口 | 认证形态 | 差什么 |
-|---|---|---|---|
-| 海鲜市场 | `/api/open/marketplace/skills`（搜索/详情/下载/上传/收藏） | sk-ak + scope，已就绪 | 只差把写工具接进 MCP |
-| 知识库 | 读走 `/api/open/document-store`；写走 `DocumentStoreController`（JWT） | 读就绪；写不对 sk-ak 开放 | 需要一个写入开放层 |
-| 视觉创作 | `/api/visual-agent/image-gen/*`（异步 run 队列） | JWT + `visual-agent.use` + 读 `sub` | 需要开放层，且要把复杂契约收敛 |
-| 文学创作 | `/api/literary-agent/*`（工作区、提示词、配图 run） | 同上 + `literary-agent.use` | 同上 |
-| 网页托管 | `/api/web-pages/*`，其中 `from-content` 是纯 JSON 建站 | JWT + `web-pages.read/write` | 同上，`from-content` 天然适配 MCP |
+| 能力 | 已经能被密钥调到什么 | 差什么 |
+|---|---|---|
+| 海鲜市场 | 搜索、详情、下载、上传、收藏全都对密钥开放了 | 只差把写入那几件接进工具清单 |
+| 知识库 | 读（列库、列条目、读正文）已开放 | 写只认登录态，需要一层写入开放面 |
+| 视觉创作 | 尚未开放，只认登录态；生图本身是异步任务，先入队再查结果 | 需要开放层，且要把一长串参数收敛成「给一句话就出图」 |
+| 文学创作 | 尚未开放，只认登录态（工作区、提示词、配图任务） | 同上 |
+| 网页托管 | 尚未开放，只认登录态；其中「直接提交一段 HTML 就建站」这条天然适配智能体 | 同上 |
 
 ---
 
 ## 三、拦路的那一件事，以及为什么这么选
 
-三块创作类能力的接口全部用 `GetRequiredUserId()` 取身份，而它只读 JWT 的 `sub`；`sk-ak` **有意不注入 `sub`**（避免最小权限密钥摇身变成账号主人）。所以密钥直接打过去必然 401。三条路：
+三块创作类能力都从登录票据里取「你是谁」，而智能体密钥**有意不携带账号身份** —— 否则一把只授了一项能力的密钥，摇身就是账号主人。所以密钥直接打过去必然被拒。三条路：
 
 | 方案 | 做法 | 判断 |
 |---|---|---|
-| A 薄开放层 | 每块建 `/api/open/*` 控制器，显式 scope + 读 `boundUserId`，内部调同一套 Service | **推荐** |
-| B 回环降权票据 | 网关回环时签发 60 秒内部票据（`sub` = 密钥主人，权限位取 scope 子集） | 常数工作量，但等于新造一套鉴权面，一处判据有洞即全权限泄漏 |
-| C 给 sk-ak 注入 sub | 一行改动 | 否决。全站走 JWT 的接口对密钥敞开，越权面无法枚举 |
+| A 薄开放层 | 每块能力单开一层薄接口：进门先验这把密钥有没有这一项，身份取「这把密钥绑给了谁」，业务照旧交给原来那套服务 | **推荐** |
+| B 回环降权票据 | 协议层回环时现签一张一分钟有效的内部票据，身份是密钥主人、权限只取密钥那几项 | 工作量是常数，但等于新造一套鉴权面，任一处判据有洞就是全权限泄漏 |
+| C 让密钥直接带上账号身份 | 一行改动 | 否决。全站认登录态的接口一次性对密钥敞开，越权面无法枚举 |
 
 选 A 的关键理由不是安全（那是底线），而是**开放层同时是契约收敛层**：现有生图接口要 `platformId + modelId + size + items + responseFormat + maxConcurrency`，直接暴露给智能体只会让它猜参数猜到失败。MCP 工具必须收敛成「给一句话就出图」（最小输入原则：系统查得到的值不许摆成输入框，对智能体同理）。这层收敛无论走哪条路都要写，那就写在有权限闸门的地方。
 
@@ -72,8 +72,8 @@
 
 ## 四、第一期开放哪些能力
 
-按能力讲，不逐个列工具名与 scope —— 那份清单在 `McpCapabilityCatalog` 与 `McpBuiltinTools` 里，
-是唯一事实源，也只有它跟得上代码。这里写的是「用户勾了这块能力，智能体能替他做什么」。
+按能力讲，不逐个列工具名与授权项 —— 那份清单在代码里的能力目录与工具注册表里，
+是唯一事实源，也只有它跟得上代码（位置见文末「实现来源」）。这里写的是「用户勾了这块能力，智能体能替他做什么」。
 
 | 能力 | 勾了它，智能体能做什么 | 第一期不做什么 |
 |---|---|---|
@@ -134,7 +134,7 @@
 
 14. **分支预览与生产共享同一套数据**（跨项目隔离规则的通道 4 与通道 8）。在预览环境生成的密钥能读写共享库里的真实数据；新增的 run 类工具必须沿用 `DeploymentSlug` 作用域，禁止裸状态认领。
 15. **端点地址不能手拼**。向导展示的 URL 只能来自 CDS 的 `previewUrl`，本地 slugify 有专门的守卫在扫。
-16. **sk-ak 打 JWT 接口必 401** 这个坑已经踩过一次并记在指南里；新增开放层时必须走 `boundUserId`，不要图省事登记一条指向 JWT 接口的动态工具。
+16. **密钥打认登录态的接口必然被拒**，这坑已经踩过一次并记在指南里。新增开放层时身份一律取「这把密钥绑给了谁」；不要图省事登记一条指向登录态接口的动态工具。
 
 ---
 
@@ -142,8 +142,8 @@
 
 | 期 | 内容 | 判据（缺一不算完） |
 |---|---|---|
-| P1 授权收口 | scope 白名单扩容、用户权限交集校验、调用时二次校验、按 Key 配额与速率 | 单元测试证明「用户无 `visual-agent.use` 时签发该 scope 被拒」且「权限回收后旧密钥调用被拒」 |
-| P2 能力开放层 | 四个 `/api/open/*` 薄控制器 + 14 个新工具接进 `McpBuiltinTools` | 每个工具有 curl 级冒烟；生图走完「入队 → 出图 → 可访问」全程 |
+| P1 授权收口 | 可授权项扩容、签发时按用户自己的权限取交集、调用时再核一遍、按密钥的配额与速率 | 单元测试证明「用户自己没有视觉创作权限时，签不出这一项」且「权限回收后旧密钥调用被拒」 |
+| P2 能力开放层 | 四块能力各一层薄开放面 + 14 个新工具接进工具清单 | 每个工具有命令行级冒烟；生图走完「入队 → 出图 → 可访问」全程 |
 | P3 左下角入口 | 账号菜单入口 + 三步向导 + 连通自检 + 密钥管理 tab | 真人路径进入，双主题各看一遍 |
 | P4 验收 | 真实客户端（Claude Code 与 Codex 各一）连上并跑通五块能力各一条链路 | 产物真的出现在截图里，不接受停在「生成中」的图（验收闭环原则：截图里必须出现真实产物） |
 | P5 OAuth | 标准授权流，用户不再手工贴密钥 | 点「连接」跳授权页勾能力回跳即用 |
@@ -166,4 +166,10 @@ P1 与 P3 弱耦合，可并线；P2 内部四块彼此也不阻塞，可各占�
 - [doc/design.platform.map-mcp-connector.md](./design.platform.map-mcp-connector.md) —— 已落地的网关设计与债务
 - [doc/guide.platform.mcp-connector.md](./guide.platform.mcp-connector.md) —— 现有用户接入指南（本计划落地后需同步扩写）
 - [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— AgentApiKey 与开放接口的上游设计
+### 实现来源
+
+- 协议层与工具注册：`prd-api/src/PrdAgent.Api/Controllers/McpGatewayController.cs`、`prd-api/src/PrdAgent.Api/Mcp/McpBuiltinTools.cs`、`prd-api/src/PrdAgent.Api/Mcp/McpCapabilityCatalog.cs`
+- 四层开放面：`prd-api/src/PrdAgent.Api/Controllers/Api/`（`VisualOpenApiController` / `LiteraryOpenApiController` / `WebPagesOpenApiController` / `DocumentStoreOpenApiController`）
+- 配额、用量与审计：`prd-api/src/PrdAgent.Api/Services/Mcp/`、`prd-api/src/PrdAgent.Api/Filters/AgentApiKeyUsageFilter.cs`
+- 接入台前端：`prd-admin/src/pages/mcp-console/`
 - 相关规则：`.claude/rules/minimal-user-input.md`、`.claude/rules/cross-project-isolation.md`、`.claude/rules/closed-loop-acceptance.md`、`.claude/rules/parallel-workstreams.md`、`.claude/rules/server-authority.md`

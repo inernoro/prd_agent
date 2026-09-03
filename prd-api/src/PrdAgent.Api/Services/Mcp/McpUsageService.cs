@@ -36,9 +36,9 @@ public sealed record McpQuotaVerdict(
 ///
 /// 三个上限都能按密钥单独调（AgentApiKey.Mcp* 字段），空值走默认。
 ///
-/// 日额度是**先原子占坑、失败再退还**，不是「查历史再放行」：后者在并发下每个请求都读到
-/// 同一个旧值，一把 50 张的密钥能同时放行上百个生图，闸门等于没有。占坑走 McpUsageCounter
-/// 的 $inc + upsert，一次操作拿到新值，超了就把自己那份退回去。
+/// 日额度走**条件自增**（加完不超才加得上），不是「查历史再放行」：后者在并发下每个请求都读到
+/// 同一个旧值，一把 50 张的密钥能同时放行上百个生图，闸门等于没有。判断与自增合成一次原子操作，
+/// 于是超限的那些请求压根没写进计数器，不需要事后退还。
 ///
 /// 日界按 UTC 自然日切 —— 与记录里的 CreatedAt 同一把尺子；用户看到的「今日」也按这个口径，
 /// 面板上要写明白，别让人以为是本地零点。
@@ -222,11 +222,28 @@ public sealed class McpUsageService
         return McpQuotaVerdict.Ok;
     }
 
-    /// <summary>原子占坑：$inc + upsert 一次拿到新值；超限就把自己那份退回去。</summary>
+    /// <summary>
+    /// 条件自增占坑：只有「加完还不超上限」时才加得上，加不上就是超限。
+    ///
+    /// 为什么不是「先加、超了再退」：那个写法有一个真实的误判窗口 —— 别人失败退还的那一笔
+    /// 还没落库时，我这一笔读到的是退还前的数，于是被判超限，而额度其实是够的
+    /// （用户看到「额度用完了」，重试一次又好了）。条件自增把判断与自增合成一次原子操作，
+    /// 顺带把「加了再退」这一整套补偿面也省掉了：超限的请求压根没写进计数器。
+    ///
+    /// 上界写成「加之前 Count ≤ quota - amount」，与「加之后 ≤ quota」等价，但它是个能进
+    /// 查询条件的谓词 —— Mongo 只能按更新**前**的值筛。
+    /// </summary>
     private async Task<(bool Ok, int Used)> TryReserveAsync(
         string keyId, string kind, int amount, int quota, DateTime day, CancellationToken ct)
     {
         var id = BuildCounterId(keyId, day, kind);
+        var ceiling = ReservationCeiling(quota, amount);
+        // 一次就要得比上限还多（比如上限 2 张却要 4 张）：无论今天用了多少都放不过去
+        if (ceiling < 0) return (false, await ReadUsedAsync(id, ct));
+
+        var filter = Builders<McpUsageCounter>.Filter.And(
+            Builders<McpUsageCounter>.Filter.Eq(x => x.Id, id),
+            Builders<McpUsageCounter>.Filter.Lte(x => x.Count, ceiling));
         var update = Builders<McpUsageCounter>.Update
             .Inc(x => x.Count, amount)
             .Set(x => x.UpdatedAt, DateTime.UtcNow)
@@ -234,23 +251,68 @@ public sealed class McpUsageService
             .SetOnInsert(x => x.Kind, kind)
             .SetOnInsert(x => x.DayUtc, day);
 
-        var after = await _db.McpUsageCounters.FindOneAndUpdateAsync<McpUsageCounter>(
-            x => x.Id == id,
-            update,
-            new FindOneAndUpdateOptions<McpUsageCounter, McpUsageCounter>
+        // 两轮：第一轮允许 upsert（这把密钥今天还没有计数器），撞主键说明计数器刚被别人建出来，
+        // 第二轮不再 upsert —— 匹配上就是额度够、加成了；匹配不上才是真超限。
+        // 少了第二轮，就把「同一秒里第二个到的请求」误判成超限，而它正是要修的那种误判。
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
             {
-                IsUpsert = true,
-                ReturnDocument = ReturnDocument.After,
-            },
-            ct);
+                var after = await _db.McpUsageCounters.FindOneAndUpdateAsync<McpUsageCounter>(
+                    filter,
+                    update,
+                    new FindOneAndUpdateOptions<McpUsageCounter, McpUsageCounter>
+                    {
+                        IsUpsert = attempt == 0,
+                        ReturnDocument = ReturnDocument.After,
+                    },
+                    ct);
+                if (after != null) return (true, after.Count);
+                return (false, await ReadUsedAsync(id, ct));
+            }
+            catch (MongoException ex) when (IsDuplicateKey(ex) && attempt == 0)
+            {
+                // 落到第二轮
+            }
+        }
 
-        var used = after?.Count ?? amount;
-        if (used <= quota) return (true, used);
-
-        // 超了：退还自己占的这份，返回「占坑前已用多少」给文案用
-        await ReleaseAsync(keyId, kind, amount, day, ct);
-        return (false, Math.Max(used - amount, 0));
+        return (false, await ReadUsedAsync(id, ct));
     }
+
+    /// <summary>
+    /// 条件自增的上界：「加之前的 Count 最多是多少」。
+    ///
+    /// 单独拎出来是因为它是这段逻辑里唯一会差一格的地方，而差一格的后果是闸门多放一次或少放一次，
+    /// 两边都不会报错、也不会被任何现有用例照亮。负数表示「这一次要的比上限本身还多」，永远放不过去。
+    /// </summary>
+    internal static int ReservationCeiling(int quota, int amount) => quota - amount;
+
+    /// <summary>拒绝时读一次真实已用数，纯给文案用（「已用 X/Y」）。读不到按 0 算。</summary>
+    private async Task<int> ReadUsedAsync(string counterId, CancellationToken ct)
+    {
+        try
+        {
+            var doc = await _db.McpUsageCounters.Find(x => x.Id == counterId).FirstOrDefaultAsync(ct);
+            return Math.Max(doc?.Count ?? 0, 0);
+        }
+        catch (Exception ex)
+        {
+            // 文案里少一个数字，不值得把已经判定的拒绝变成 500
+            _logger.LogWarning(ex, "[mcp] 读配额已用数失败 counter={CounterId}", counterId);
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// upsert 撞主键。findAndModify 走的是 MongoCommandException（不是 MongoWriteException），
+    /// 两种都认，免得换个驱动路径就漏。
+    /// </summary>
+    private static bool IsDuplicateKey(MongoException ex) => ex switch
+    {
+        MongoWriteException w => w.WriteError?.Category == ServerErrorCategory.DuplicateKey,
+        MongoCommandException c => c.Code == 11000,
+        _ => false,
+    };
 
     /// <summary>
     /// 退还占坑（调用没真的发生时）。退到负数没有意义，这里只做减法，读的时候按下限 0 取。

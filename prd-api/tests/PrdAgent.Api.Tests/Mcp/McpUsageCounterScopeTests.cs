@@ -94,3 +94,29 @@ public class McpRateStateRetentionTests
         McpUsageService.IsStaleRateState(Now.AddMinutes(-3), Now).ShouldBeTrue();
     }
 }
+
+/// <summary>
+/// 条件自增的上界。
+///
+/// 闸门从「先加、超了再退」改成「加完不超才加得上」之后，唯一会差一格的地方就是这个上界，
+/// 而差一格的两种后果（多放一次 / 少放一次）都不报错、也照不亮任何现有用例。
+/// </summary>
+public class McpQuotaCeilingTests
+{
+    [Fact]
+    public void 上界是_加之前最多能有多少()
+    {
+        // 上限 50 张、这次要 1 张：加之前最多 49，也就是第 50 张放行、第 51 张挡下
+        McpUsageService.ReservationCeiling(50, 1).ShouldBe(49);
+        // 一次要 4 张：加之前最多 46，第 47 张起就该挡（不能让它跨过 50）
+        McpUsageService.ReservationCeiling(50, 4).ShouldBe(46);
+    }
+
+    [Fact]
+    public void 一次要得比上限还多_上界为负_永远放不过去()
+    {
+        McpUsageService.ReservationCeiling(2, 4).ShouldBeLessThan(0);
+        // 上限为 0 等于关掉这项能力，任何一次都不许过
+        McpUsageService.ReservationCeiling(0, 1).ShouldBeLessThan(0);
+    }
+}

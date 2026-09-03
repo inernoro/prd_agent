@@ -30,9 +30,13 @@ export default function McpConsolePage() {
   // 那和「账号是新的、什么都还没接」长得一模一样。toast 一消失，用户就以为接入台是空的，
   // 而实际上是它没读到数据（网络断了 / 没权限 / 服务端 500）。
   const [loadError, setLoadError] = useState<string | null>(null);
+  // 手动刷新的 pending 只挂在按钮上。它**不能**是那个 loading ——
+  // loading 会把整页换成 loader，而「连接新客户端」的弹窗就活在这一页里：
+  // 发钥匙成功后弹窗回调父级刷新，整页一换，弹窗连带卸载，那把只出现一次的明文
+  // 就跟着 state 一起没了，而钥匙已经在服务端生效了。
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
     const res = await getMcpConsoleOverview();
     if (!res.success || !res.data) {
       setLoadError(res.error?.message || '接入台数据没读到，可能是网络断开或服务端异常。');
@@ -43,6 +47,15 @@ export default function McpConsolePage() {
     setOverview(res.data);
     setLoading(false);
   }, []);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await load();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [load]);
 
   useEffect(() => {
     void load();
@@ -61,7 +74,8 @@ export default function McpConsolePage() {
     );
   }
 
-  if (loadError || !overview) {
+  // 整页错误态只给首屏用：手里已经有数据时刷新失败，不该把用户正在看的东西抹掉。
+  if (!overview) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -74,14 +88,15 @@ export default function McpConsolePage() {
         </div>
         <button
           type="button"
-          onClick={() => void load()}
-          className="rounded-[8px] px-3.5 py-1.5 text-[12.5px] font-medium"
+          disabled={refreshing}
+          onClick={() => void refresh()}
+          className="rounded-[8px] px-3.5 py-1.5 text-[12.5px] font-medium disabled:opacity-60"
           style={{
             background: 'var(--accent-primary)',
             color: 'var(--accent-on-solid)',
           }}
         >
-          重试
+          {refreshing ? '正在重试…' : '重试'}
         </button>
       </div>
     );
@@ -120,9 +135,10 @@ export default function McpConsolePage() {
         <div className="flex items-center gap-2">
           <button
             type="button"
+            disabled={refreshing}
             onClick={() => {
               setRefreshToken((n) => n + 1);
-              void load();
+              void refresh();
             }}
             className="flex h-9 items-center gap-2 rounded-[10px] px-3 text-[13px] font-medium transition-colors"
             style={{
@@ -131,8 +147,8 @@ export default function McpConsolePage() {
               color: 'var(--text-secondary)',
             }}
           >
-            <RefreshCw size={15} aria-hidden />
-            刷新
+            <RefreshCw size={15} aria-hidden className={refreshing ? 'animate-spin' : undefined} />
+            {refreshing ? '刷新中' : '刷新'}
           </button>
           <button
             type="button"
@@ -145,6 +161,28 @@ export default function McpConsolePage() {
           </button>
         </div>
       </div>
+
+      {loadError ? (
+        <div
+          className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] px-3 py-2 text-[12.5px]"
+          style={{
+            background: 'var(--semantic-warning-soft)',
+            border: '1px solid var(--semantic-warning-border)',
+            color: 'var(--semantic-warning-text)',
+          }}
+        >
+          <span>这次没刷上：{loadError} 下面显示的是上一次读到的数据。</span>
+          <button
+            type="button"
+            disabled={refreshing}
+            onClick={() => void refresh()}
+            className="rounded-[7px] px-2.5 py-1 text-[12px] font-medium disabled:opacity-60"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+          >
+            {refreshing ? '正在重试…' : '重试'}
+          </button>
+        </div>
+      ) : null}
 
       {/* tab */}
       <div
