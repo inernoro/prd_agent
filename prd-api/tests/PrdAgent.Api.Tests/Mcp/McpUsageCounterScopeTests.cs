@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using PrdAgent.Api.Services.Mcp;
 using Shouldly;
 using Xunit;
@@ -86,11 +87,16 @@ public class McpUsageCounterScopeTests
         var source = ReadSource("prd-api/src/PrdAgent.Api/Services/Mcp/McpUsageService.cs");
         var begin = source.IndexOf("private async Task<(bool Ok, int Used)> TryReserveAsync", StringComparison.Ordinal);
         begin.ShouldBeGreaterThanOrEqualTo(0, "占坑方法改名了就同步改这里，别把断言删掉");
-        var body = source[begin..source.IndexOf("private async Task<int> ReadUsedAsync", StringComparison.Ordinal)];
+        // 去掉注释行再判：解释文字里同样会出现这几个词，让注释满足断言等于守卫失效
+        var body = StripCommentLines(
+            source[begin..source.IndexOf("private async Task<int> ReadUsedAsync", StringComparison.Ordinal)]);
 
         body.ShouldContain("ct = CancellationToken.None",
             customMessage: "占坑是服务端自己的记账，客户端断开不能让它半途而废");
     }
+
+    private static string StripCommentLines(string source) => string.Join('\n',
+        source.Split('\n').Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
 
     private static string ReadSource(string repoRelativePath)
     {

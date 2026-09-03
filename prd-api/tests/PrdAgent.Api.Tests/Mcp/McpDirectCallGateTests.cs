@@ -217,10 +217,20 @@ public class McpAgentKeyCredentialDetectionTests
         // 从它取 boundUserId，记录就写成「没有主人」，而接入台按主人过滤 ——
         // 额度扣了、列表里查无此事。这条判据坏掉不会红：记录照样写进库，只是谁也看不到。
         var source = SourceOf("prd-api/src/PrdAgent.Api/Filters/AgentApiKeyUsageFilter.cs");
-        var body = source[source.IndexOf("private Task LogAsync", StringComparison.Ordinal)..];
+        var body = StripComments(source[source.IndexOf("private Task LogAsync", StringComparison.Ordinal)..]);
         body.ShouldNotContain("http.User",
             customMessage: "审计行要用闸门认出来的那个主体，不是 HttpContext.User");
     }
+
+    /// <summary>
+    /// 扫源码前先去掉注释行。
+    ///
+    /// 第一版没去，于是被守的那处**注释里**写着「不是 http.User」这几个字，守卫立刻判红 ——
+    /// 判据读到了一个真实存在的字符串，只是它不是真正生效的那个东西（形状 6）。
+    /// 一条会因为解释文字而变红的守卫，下一个人只会把注释改掉，而不是把代码改对。
+    /// </summary>
+    private static string StripComments(string source) => string.Join('\n',
+        source.Split('\n').Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
 
     private static string SourceOf(string repoRelativePath)
     {
