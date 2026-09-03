@@ -20,7 +20,6 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     private const int MaxArchiveEntries = 20_000;
     private const long MaxUncompressedBytes = 500L * 1024 * 1024;
     private const long MaxOptimizationBytes = 200L * 1024 * 1024;
-    private const long MaxManifestBytes = 12L * 1024 * 1024;
     private const long MaxScannedTextFileBytes = 8L * 1024 * 1024;
     private const long MaxScannedTextBytes = 32L * 1024 * 1024;
     private static readonly TimeSpan SessionLifetime = TimeSpan.FromHours(2);
@@ -168,9 +167,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             }
 
             var totalSize = uploaded.Sum(x => x.Size);
-            var manifestEstimate = uploaded.Sum(x => Encoding.UTF8.GetByteCount(x.Path) * 2L + 160L);
-            if (manifestEstimate > MaxManifestBytes)
-                throw new InvalidOperationException("优化后的文件清单仍然过大，请继续精简后重试");
+            var manifestError = HostedSiteService.ValidateZipManifestSize(uploaded);
+            if (manifestError != null)
+                throw new InvalidOperationException(manifestError);
 
             session.PreviewFiles = uploaded;
             session.PreviewEntryFile = build.EntryFile;
