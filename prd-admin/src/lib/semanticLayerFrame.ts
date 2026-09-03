@@ -190,12 +190,27 @@ export function planLayeredCopyRect(input: {
     }))
     .filter((box) => box.w > 0 && box.h > 0);
 
-  const intersects = (x: number) => boxes.some((box) => (
+  const hitAt = (x: number) => boxes.filter((box) => (
     x + w > box.x && box.x + box.w > x && y + h > box.y && box.y + box.h > y
   ));
 
+  // 撞上了就**跨过挡路的那个**，而不是整整跳一个原图宽度。
+  //
+  // 旧写法是 `x += w + gap`：原图 2400 宽时，哪怕挡路的只是一张 1024 的小图，
+  // 副本也要往右挪 2520px，中间留下一大片空。原图若是带透明边距的方图（可见内容
+  // 只占中间一条），用户看到的就是「副本飞到了视野之外」——2026-09-02 反馈
+  // 「隔得太远了吧，我记得应该就在附近啊，怎么算的这是」。
+  //
+  // 跨过挡路者的右边缘再加一个间距，既保住「副本在原图右侧、并排可比较」这条
+  // 用户口述的规则，又不会凭空多留一整幅图的空白。
   let x = Math.round(sourceX + w + gap);
-  for (let step = 0; step < 24 && intersects(x); step += 1) x += w + gap;
+  for (let step = 0; step < 24; step += 1) {
+    const hits = hitAt(x);
+    if (hits.length === 0) break;
+    const nextX = Math.round(Math.max(...hits.map((box) => box.x + box.w)) + gap);
+    // 防呆：挡路者的右边缘若不比当前候选更靠右（异常尺寸），仍按老办法推进，避免原地死循环。
+    x = nextX > x ? nextX : Math.round(x + w + gap);
+  }
   return { x, y, w, h };
 }
 

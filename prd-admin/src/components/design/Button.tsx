@@ -29,7 +29,11 @@ export const Button = React.forwardRef<
     <button
       ref={ref}
       type={type}
-      className={cn(base, sizeCls, `map-btn map-btn-${variant} button-${variant}`, className)}
+      // map-btn-size-* 只是给 CSS 用的尺寸钩子，本身不带任何样式。
+      // 弹窗（.prd-dialog-content）靠它把默认 md 按钮压到控制台的 32px 档，
+      // 而 xs/sm 本来就是 28px，不该被再改一次——没有这个钩子就只能在 CSS 里
+      // 反选 Tailwind 的 h-[28px]，那是把工具类当接口用，改一次尺寸就断。
+      className={cn(base, sizeCls, `map-btn map-btn-${variant} map-btn-size-${size} button-${variant}`, className)}
       {...props}
     />
   );
