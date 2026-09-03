@@ -5,6 +5,7 @@ using PrdAgent.Api.Authorization;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -37,6 +38,7 @@ public class DocumentStoreOpenApiController : ControllerBase
     private readonly ITeamService _teams;
     private readonly IDocumentService _documentService;
     private readonly Services.EntryContentWriteService _entryContentWriter;
+    private readonly DocStoreServices.MentionService _mentions;
     private readonly ILogger<DocumentStoreOpenApiController> _logger;
 
     public DocumentStoreOpenApiController(
@@ -44,12 +46,14 @@ public class DocumentStoreOpenApiController : ControllerBase
         ITeamService teams,
         IDocumentService documentService,
         Services.EntryContentWriteService entryContentWriter,
+        DocStoreServices.MentionService mentions,
         ILogger<DocumentStoreOpenApiController> logger)
     {
         _db = db;
         _teams = teams;
         _documentService = documentService;
         _entryContentWriter = entryContentWriter;
+        _mentions = mentions;
         _logger = logger;
     }
 
@@ -373,7 +377,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             // 没走完就把条目撤回去。留着的话，条目上已经带着幂等键了 ——
             // 智能体拿同一个 clientRequestId 重试要么命中去重拿到一篇空文档，
             // 要么永远撞上「还在落正文」的 409。一次存储抖动就此变成永久的残缺数据。
-            await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, CancellationToken.None);
+            await CleanupRolledBackEntryAsync(entry.Id);
             if (countedIn)
                 await _db.DocumentStores.UpdateOneAsync(
                     s => s.Id == storeId,
@@ -416,6 +420,31 @@ public class DocumentStoreOpenApiController : ControllerBase
 
     /// <summary>单篇正文上限。挡住智能体一次糊一本书进来，也挡住它把上下文里的垃圾整个倒进知识库。</summary>
     private const int MaxContentChars = 200_000;
+
+    /// <summary>
+    /// 撤回一条没建成的条目。
+    ///
+    /// 只删 DocumentEntries 不够：WriteAsync 是分几次写落库的，抛在半路时前面几步已经提交了 ——
+    /// 版本快照（DocumentEntryVersions）与双链账本（mentions）都可能已经有行，指向一个马上要
+    /// 被删掉的条目。留着它们，接口却回「已经撤回」，就是说了句不算数的话。
+    ///
+    /// 不动 Documents：它按内容 hash 寻址、多个条目共享同一份，删了会把别人的正文一起弄没
+    /// （DeleteEntry 的级联里也是先确认无人引用才删）。刚建的条目留下一份可复用的内容记录无害。
+    /// 清理本身尽力而为：清不掉不能反过来把「已撤回」变成别的结论。
+    /// </summary>
+    private async Task CleanupRolledBackEntryAsync(string entryId)
+    {
+        await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entryId, CancellationToken.None);
+        try
+        {
+            await _db.DocumentEntryVersions.DeleteManyAsync(v => v.EntryId == entryId, CancellationToken.None);
+            await _mentions.CascadeDeleteAsync(MentionEntityType.Document, new[] { entryId }, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[mcp] 撤回条目时派生记录没清干净 entryId={EntryId}", entryId);
+        }
+    }
 
     /// <summary>条目「正文还没落盘」的标记字段（Mongo 路径写法，供 Unset 用）。</summary>
     private const string EntryContentPendingField = "Metadata.mcpContentPending";

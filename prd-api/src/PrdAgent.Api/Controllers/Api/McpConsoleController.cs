@@ -116,10 +116,16 @@ public class McpConsoleController : ControllerBase
             };
         }).ToList();
 
-        // 用量按 allKeys 取（含今天被撤销的），列表只展示 keys 里的那几把
+        // 今日用量要覆盖「今天有过调用」的**全部**密钥，不只是现在还列得出来的那几把。
+        // 密钥可以被撤销，也可以被硬删（AgentApiKeysController.Delete 只删密钥，不动日志与计数器）——
+        // 两种情况下 today.calls 都还算着它的调用，而 today.images/writes 会把它的量整个抹掉，
+        // 同一屏两个数字自己跟自己对不上。用不着另存一份「历史密钥」：今天出现过的 keyId
+        // 就在调用记录的聚合里，取并集即可。
+        var usageKeyIds = new HashSet<string>(allKeys.Select(k => k.Id), StringComparer.Ordinal);
+        foreach (var loggedKeyId in tally.ByKey.Keys) usageKeyIds.Add(loggedKeyId);
         var usageByKey = new Dictionary<string, (int Images, int Writes)>(StringComparer.Ordinal);
-        foreach (var k in allKeys)
-            usageByKey[k.Id] = await _usage.GetTodayUsageAsync(k.Id, ct);
+        foreach (var kid in usageKeyIds)
+            usageByKey[kid] = await _usage.GetTodayUsageAsync(kid, ct);
 
         var clients = keys.Select(k => new
         {
@@ -202,7 +208,12 @@ public class McpConsoleController : ControllerBase
     public async Task<IActionResult> CallDetail(string id, CancellationToken ct)
     {
         var userId = this.GetRequiredUserId();
-        var log = await _db.McpCallLogs.Find(x => x.Id == id && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        // 部署作用域跟列表/概览同一把尺子。只判 OwnerUserId 的话，同一个人拿另一条分支预览
+        // 里的记录 id 打过来照样读得到 —— 共享 Mongo 下这就绕开了列表那边的分支隔离。
+        var log = await _db.McpCallLogs
+            .Find(x => x.Id == id && x.OwnerUserId == userId
+                       && x.DeploymentSlug == DeploymentScope.CurrentDurable)
+            .FirstOrDefaultAsync(ct);
         if (log == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "记录不存在"));
         return Ok(ApiResponse<object>.Ok(ToLogDto(log)));
