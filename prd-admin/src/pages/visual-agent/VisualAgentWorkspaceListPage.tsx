@@ -1245,6 +1245,17 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelId, setModelId] = useState<string>('');
   const [availableSizes, setAvailableSizes] = useState<SizesByResolution | null>(null);
+  /**
+   * 用户有没有自己动过模型选择。
+   *
+   * 目录和偏好拆开之后多了一段新窗口：目录先回来，选择器已经能点了，
+   * 偏好还在路上。用户在这段窗口里选了 A，偏好晚到时若无条件套用，
+   * 界面会**自己跳回** B——而这是一次要花钱的生成，且违反
+   * ai-model-visibility（显示的必须是真正在用的）。慢偏好接口越慢，
+   * 这段窗口越长（Codex PR #1476 P1）。
+   * 用 ref 不用 state：它只在异步回调里被读，不需要触发重渲染。
+   */
+  const userPickedModelRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1262,6 +1273,8 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
      * 从「短暂没有选择器」变成了「一个永远转不完的禁用按钮」，更该修。
      */
     const applyPreferred = (options: VisualAgentModelOption[], preferred: string) => {
+      // 用户已经自己选过就不再动他的选择——晚到的偏好只能填空白，不能改主意。
+      if (userPickedModelRef.current) return;
       // 默认值优先级：上次生成用的那个 → 服务端标记的默认池 → 第一个可用。
       // 注意 prefs 里存的是 option.id（pool_xxx），和编辑器同一套标识，不能换成 modelName。
       const pick = options.find((o) => o.id === preferred && o.enabled)
@@ -1690,6 +1703,8 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   };
 
   const onModelChange = (id: string) => {
+    // 这一笔是「用户自己选的」，从此不许被晚到的偏好覆盖回去。
+    userPickedModelRef.current = true;
     setModelId(id);
   };
 

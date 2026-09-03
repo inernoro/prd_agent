@@ -132,6 +132,20 @@ describe('首页能看见并选择绘图模型', () => {
     expect(PAGE, '不许再有假装创建的占位流程').not.toContain('文件夹功能正在开发中');
   });
 
+  it('【关键】晚到的偏好只能填空白，不能改用户已经做过的选择', () => {
+    // 目录与偏好拆开之后多了一段窗口：目录先回来、选择器已经能点，偏好还在路上。
+    // 用户在这段窗口里选了 A，偏好晚到时若无条件套用，界面自己跳回 B——
+    // 而这是一次要花钱的生成（Codex PR #1476 P1）。
+    // 判据盯两头：选中回调要留痕，套用默认值的那个函数要先看这个痕。
+    const at = PAGE.indexOf('const applyPreferred =');
+    expect(at, '应有套用默认模型的函数').toBeGreaterThan(0);
+    const body = PAGE.slice(at, PAGE.indexOf('setModelId(pick?.id', at));
+    expect(body, '套用前必须先让用户的选择优先').toMatch(/if \(userPickedModelRef\.current\) return;/);
+    const cb = PAGE.indexOf('const onModelChange = (id: string)');
+    expect(cb, '应有模型选中回调').toBeGreaterThan(0);
+    expect(PAGE.slice(cb, cb + 300), '用户选中必须留痕').toMatch(/userPickedModelRef\.current = true/);
+  });
+
   it('【关键】375px 上工具行放不下时横滚，不是把「反馈」裁掉', () => {
     // 这条行现在是四个控件 + 主按钮，375px 放不下；外层面板 overflow-hidden，
     // 放不下不会换行、只会裁掉，最右边的「反馈」直接没了、也够不到
