@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildWebPageFolderSlot,
   buildWebPageGroupSlot,
+  canDropSiteIntoTeamGroup,
   parseWebPageDropSlot,
 } from './folderDrop';
 
@@ -20,5 +21,11 @@ describe('网页卡片文件夹拖拽协议', () => {
     expect(parseWebPageDropSlot('share:folder')).toBeNull();
     expect(parseWebPageDropSlot('web-page-folder:')).toBeNull();
     expect(parseWebPageDropSlot('web-page-folder:%E0%A4%A')).toBeNull();
+  });
+
+  it('团队查看者只能移动自己创建的站点，编辑者可移动团队站点', () => {
+    expect(canDropSiteIntoTeamGroup('viewer', 'user-1', 'user-1')).toBe(true);
+    expect(canDropSiteIntoTeamGroup('viewer', 'user-2', 'user-1')).toBe(false);
+    expect(canDropSiteIntoTeamGroup('editor', 'user-2', 'user-1')).toBe(true);
   });
 });

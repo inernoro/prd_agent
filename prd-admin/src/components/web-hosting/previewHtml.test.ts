@@ -133,4 +133,15 @@ describe('srcDoc 页内锚点', () => {
     expect(out).toContain('<base href="https://cdn.example/assets/">');
     expect(out).toContain('href="about:srcdoc#summary"');
   });
+
+  it('忽略 data-href 等同名后缀属性，只改真正的 href', () => {
+    const out = preserveSrcDocFragmentLinks(
+      `<a data-note=" href='#quoted-fake'" data-href="#tracking" aria-label="章节" href="#section">正文</a>`,
+    );
+
+    expect(out).toContain(`data-note=" href='#quoted-fake'"`);
+    expect(out).toContain('data-href="#tracking"');
+    expect(out).toContain('href="about:srcdoc#section"');
+    expect(out).not.toContain('data-href="about:srcdoc#tracking"');
+  });
 });

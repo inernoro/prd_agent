@@ -23,7 +23,7 @@ public class SiteContentSnapshotServiceTests
             new MemoryCache(new MemoryCacheOptions()),
             NullLogger<SiteContentSnapshotService>.Instance);
 
-    private static SiteContentSnapshotService NewService(FakeAssetStorage storage, HttpMessageHandler handler) =>
+    private static SiteContentSnapshotService NewService(FakeAssetStorage storage, StubHttpHandler handler) =>
         new(storage,
             new FakeExtractor(),
             new MemoryCache(new MemoryCacheOptions()),
@@ -184,18 +184,24 @@ public class SiteContentSnapshotServiceTests
     public async Task 当前存储缺少存量入口时_从落库站点地址读取正文()
     {
         var storage = new FakeAssetStorage();
-        var handler = new StubHttpHandler(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        var factory = new FakeHttpClientFactory(new StubHttpHandler(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
         {
             Content = new StringContent("旧腾讯云入口仍可读取的正文"),
-        });
+        }));
 
-        var snap = await NewService(storage, handler).GetAsync(SiteWith(("index.html", "old-cos-key")));
+        var snap = await new SiteContentSnapshotService(
+            storage,
+            new FakeExtractor(),
+            new MemoryCache(new MemoryCacheOptions()),
+            NullLogger<SiteContentSnapshotService>.Instance,
+            factory).GetAsync(SiteWith(("index.html", "old-cos-key")));
 
         Assert.Null(snap.Unavailable);
         Assert.False(snap.TransientFailure);
         Assert.Contains("旧腾讯云入口仍可读取的正文", snap.Text);
-        Assert.Single(handler.Requests);
-        Assert.Equal("legacy-storage.example", handler.Requests[0].RequestUri?.Host);
+        Assert.Equal(new[] { "SafeOutbound" }, factory.ClientNames);
+        Assert.Single(factory.Handler.Requests);
+        Assert.Equal("legacy-storage.example", factory.Handler.Requests[0].RequestUri?.Host);
     }
 
     [Fact]
@@ -356,9 +362,16 @@ public class SiteContentSnapshotServiceTests
         public bool IsSupported(string mimeType) => true;
     }
 
-    private sealed class FakeHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    private sealed class FakeHttpClientFactory(StubHttpHandler handler) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+        public StubHttpHandler Handler { get; } = handler;
+        public List<string> ClientNames { get; } = new();
+
+        public HttpClient CreateClient(string name)
+        {
+            ClientNames.Add(name);
+            return new HttpClient(Handler, disposeHandler: false);
+        }
     }
 
     private sealed class StubHttpHandler(HttpResponseMessage response) : HttpMessageHandler

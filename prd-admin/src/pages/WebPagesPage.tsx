@@ -90,6 +90,7 @@ import { MobileFab } from '@/components/mobile/MobileFab';
 import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real/webFolders';
 import {
   buildWebPageGroupSlot,
+  canDropSiteIntoTeamGroup,
   parseWebPageDropSlot,
 } from '@/components/web-hosting/folderDrop';
 
@@ -447,6 +448,9 @@ export default function WebPagesPage() {
   // 用户在列表里找遍菜单也找不到提问配置（形状 2：接线只建了一半）。
   const [askConfigSite, setAskConfigSite] = useState<HostedSite | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const [showMobileFolderCreate, setShowMobileFolderCreate] = useState(false);
+  const [mobileFolderName, setMobileFolderName] = useState('');
+  const [mobileFolderPending, setMobileFolderPending] = useState(false);
   // 桌面工具条上同时只展开一个气泡（显示 / 筛选），避免两块浮层互相盖住
   const [openToolbarPanel, setOpenToolbarPanel] = useState<'display' | 'filter' | null>(null);
   /**
@@ -874,6 +878,21 @@ export default function WebPagesPage() {
     return true;
   };
 
+  const submitMobileFolder = async () => {
+    const name = mobileFolderName.trim();
+    if (!name || mobileFolderPending) return;
+    setMobileFolderPending(true);
+    try {
+      const created = await handleCreatePersonalFolder(name);
+      if (created) {
+        setMobileFolderName('');
+        setShowMobileFolderCreate(false);
+      }
+    } finally {
+      setMobileFolderPending(false);
+    }
+  };
+
   const handleCreateGroup = async (kind: 'topic' | 'daily', name: string) => {
     if (currentSpace.kind !== 'team') return;
     const res = await createSiteGroup({ teamId: currentSpace.teamId, kind, name });
@@ -944,7 +963,7 @@ export default function WebPagesPage() {
     const site = sites.find((item) => item.id === siteId);
     const group = teamGroups.find((item) => item.id === groupId);
     if (!site || !group || site.groupId === groupId) return;
-    if (myWebHostingRole !== null && !canEditInWebHosting(myWebHostingRole)) {
+    if (!canDropSiteIntoTeamGroup(myWebHostingRole, site.ownerUserId, currentUserId)) {
       toast.error('无权限', '你在该团队空间是只读角色，无法移动网页');
       return;
     }
@@ -958,7 +977,7 @@ export default function WebPagesPage() {
     setSites((prev) => prev.map((item) => item.id === siteId ? { ...item, groupId } : item));
     toast.success('已移入分组', `「${site.title}」已移入「${group.name}」`);
     await loadGroups();
-  }, [currentSpace.kind, sites, teamGroups, myWebHostingRole, loadGroups]);
+  }, [currentSpace.kind, sites, teamGroups, myWebHostingRole, currentUserId, loadGroups]);
 
   useEffect(() => {
     const onFolderDrop = (event: Event) => {
@@ -1471,8 +1490,25 @@ export default function WebPagesPage() {
                 )}
 
                 <section className="space-y-2">
-                  <div className="text-[12px] font-semibold text-token-muted">
-                    {currentSpace.kind === 'team' ? '团队分组' : '文件夹'}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[12px] font-semibold text-token-muted">
+                      {currentSpace.kind === 'team' ? '团队分组' : '文件夹'}
+                    </div>
+                    {currentSpace.kind === 'personal' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowMobileFolderCreate((value) => !value);
+                          setMobileFolderName('');
+                        }}
+                        className="inline-flex h-7 items-center gap-1 rounded-[8px] px-2 text-[11px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
+                        data-tour-id="webpages-mobile-create-folder"
+                        aria-label="创建文件夹"
+                      >
+                        {showMobileFolderCreate ? <X size={12} /> : <Plus size={12} />}
+                        {showMobileFolderCreate ? '取消' : '新建文件夹'}
+                      </button>
+                    )}
                   </div>
                   {currentSpace.kind === 'team' ? (
                     <TeamGroupsTree
@@ -1491,30 +1527,61 @@ export default function WebPagesPage() {
                       fullWidth
                     />
                   ) : (
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setActiveFolder(null)}
-                        className="h-8 px-3 rounded-full text-[13px]"
-                        style={activeFolder === null
-                          ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
-                          : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
-                      >
-                        全部文件夹
-                      </button>
-                      {personalFolderOptions.map((f) => (
+                    <div className="space-y-2">
+                      {showMobileFolderCreate && (
+                        <div className="flex items-center gap-2" data-tour-id="webpages-mobile-folder-form">
+                          <input
+                            autoFocus
+                            value={mobileFolderName}
+                            disabled={mobileFolderPending}
+                            onChange={(event) => setMobileFolderName(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') void submitMobileFolder();
+                              if (event.key === 'Escape') {
+                                setShowMobileFolderCreate(false);
+                                setMobileFolderName('');
+                              }
+                            }}
+                            placeholder="文件夹名称"
+                            aria-label="文件夹名称"
+                            className="h-9 min-w-0 flex-1 rounded-[10px] px-3 text-[13px] outline-none bg-token-nested text-token-primary border border-token-default"
+                          />
+                          <button
+                            type="button"
+                            disabled={!mobileFolderName.trim() || mobileFolderPending}
+                            onClick={() => void submitMobileFolder()}
+                            className="h-9 shrink-0 rounded-[10px] px-3 text-[12px] font-semibold disabled:opacity-40"
+                            style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
+                          >
+                            {mobileFolderPending ? <MapSpinner size={12} /> : '创建'}
+                          </button>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-2">
                         <button
-                          key={f}
                           type="button"
-                          onClick={() => setActiveFolder(f)}
+                          onClick={() => setActiveFolder(null)}
                           className="h-8 px-3 rounded-full text-[13px]"
-                          style={activeFolder === f
+                          style={activeFolder === null
                             ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
                             : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
                         >
-                          {f}
+                          全部文件夹
                         </button>
-                      ))}
+                        {personalFolderOptions.map((f) => (
+                          <button
+                            key={f}
+                            type="button"
+                            onClick={() => setActiveFolder(f)}
+                            className="h-8 px-3 rounded-full text-[13px]"
+                            style={activeFolder === f
+                              ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
+                              : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
+                          >
+                            {f}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </section>

@@ -164,6 +164,62 @@ function isAbsoluteBaseHref(href: string): boolean {
   return v.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(v);
 }
 
+type HtmlAttributeMatch = {
+  start: number;
+  end: number;
+  value: string;
+};
+
+/**
+ * 在一个开始标签里按 HTML 属性边界查找属性。
+ *
+ * `\bhref` 会命中 data-href，`\shref` 仍可能命中带引号属性值内部的文本。
+ * 这里逐段跳过属性值，只在属性名位置比较，返回可原地替换的精确范围。
+ */
+function findHtmlAttribute(tag: string, targetName: string): HtmlAttributeMatch | null {
+  let cursor = 1;
+  if (tag[cursor] === '/') cursor += 1;
+  while (cursor < tag.length && !/[\s/>]/.test(tag[cursor])) cursor += 1;
+
+  while (cursor < tag.length) {
+    while (cursor < tag.length && /\s/.test(tag[cursor])) cursor += 1;
+    if (cursor >= tag.length || tag[cursor] === '>' || tag[cursor] === '/') break;
+
+    const nameStart = cursor;
+    while (cursor < tag.length && !/[\s=/>]/.test(tag[cursor])) cursor += 1;
+    const name = tag.slice(nameStart, cursor);
+    while (cursor < tag.length && /\s/.test(tag[cursor])) cursor += 1;
+
+    if (tag[cursor] !== '=') {
+      if (name.toLowerCase() === targetName.toLowerCase()) return null;
+      continue;
+    }
+
+    cursor += 1;
+    while (cursor < tag.length && /\s/.test(tag[cursor])) cursor += 1;
+    const quote = tag[cursor] === '"' || tag[cursor] === "'" ? tag[cursor] : null;
+    let value = '';
+
+    if (quote) {
+      cursor += 1;
+      const valueStart = cursor;
+      while (cursor < tag.length && tag[cursor] !== quote) cursor += 1;
+      value = tag.slice(valueStart, cursor);
+      if (tag[cursor] === quote) cursor += 1;
+    } else {
+      const valueStart = cursor;
+      while (cursor < tag.length && !/[\s>]/.test(tag[cursor])) cursor += 1;
+      value = tag.slice(valueStart, cursor);
+    }
+
+    if (name.toLowerCase() === targetName.toLowerCase()) {
+      return { start: nameStart, end: cursor, value };
+    }
+  }
+
+  return null;
+}
+
 /**
  * srcDoc 中的纯片段链接必须继续指向当前文档。
  *
@@ -176,11 +232,11 @@ function isAbsoluteBaseHref(href: string): boolean {
 export function preserveSrcDocFragmentLinks(html: string): string {
   if (!html) return html;
   return html.replace(/<(a|area)\b[^>]*>/gi, (tag) => {
-    const hrefAttr = tag.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/i);
+    const hrefAttr = findHtmlAttribute(tag, 'href');
     if (!hrefAttr) return tag;
-    const href = (hrefAttr[1] ?? hrefAttr[2] ?? hrefAttr[3] ?? '').trim();
+    const href = hrefAttr.value.trim();
     if (!href.startsWith('#')) return tag;
-    return tag.replace(hrefAttr[0], `href="${escapeHtmlAttr(`about:srcdoc${href}`)}"`);
+    return `${tag.slice(0, hrefAttr.start)}href="${escapeHtmlAttr(`about:srcdoc${href}`)}"${tag.slice(hrefAttr.end)}`;
   });
 }
 
@@ -195,8 +251,8 @@ export function withPreviewBase(html: string, siteUrl: string) {
   // 的页面整个漏过去：不改写，也不注入，相对资源在 srcDoc 下全部解析到 MAP 自己的页面。
   const tag = html.match(/<base\b[^>]*>/i)?.[0];
   if (tag) {
-    const hrefAttr = tag.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/i);
-    const href = hrefAttr ? (hrefAttr[1] ?? hrefAttr[2] ?? hrefAttr[3] ?? '') : null;
+    const hrefAttr = findHtmlAttribute(tag, 'href');
+    const href = hrefAttr?.value ?? null;
 
     // 已经是绝对地址：人家指的就是别处，不该动
     if (href !== null && isAbsoluteBaseHref(href)) return html;
@@ -206,7 +262,7 @@ export function withPreviewBase(html: string, siteUrl: string) {
     // 其余属性（target 等）原样保留。
     const resolved = href ? new URL(href.trim() || '.', baseHref).toString() : baseHref;
     const rewritten = hrefAttr
-      ? tag.replace(hrefAttr[0], `href="${escapeHtmlAttr(resolved)}"`)
+      ? `${tag.slice(0, hrefAttr.start)}href="${escapeHtmlAttr(resolved)}"${tag.slice(hrefAttr.end)}`
       : tag.replace(/^<\s*base\b/i, (m) => `${m} href="${escapeHtmlAttr(resolved)}"`);
     return html.replace(tag, rewritten);
   }

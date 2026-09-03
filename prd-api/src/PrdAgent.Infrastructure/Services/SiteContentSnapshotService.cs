@@ -226,7 +226,10 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(10));
-            using var response = await _httpClientFactory.CreateClient()
+            // 历史 SiteUrl 不是当前请求直接传入，但其 CDN/DNS 状态仍可能在落库后变化。
+            // 必须走 SafeOutbound：它在建连时拒绝内网/保留地址，并关闭自动重定向，
+            // 避免旧 CDN 通过 DNS 或 3xx 把正文读取导向内部服务或云元数据地址。
+            using var response = await _httpClientFactory.CreateClient("SafeOutbound")
                 .GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength is > MaxFileDownloadBytes)
                 return null;

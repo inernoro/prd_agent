@@ -1,5 +1,17 @@
+import type { WebHostingRole } from '@/services/real/teams';
+import { canEditInWebHosting } from '@/lib/webHostingRole';
+
 export const WEB_PAGE_FOLDER_SLOT_PREFIX = 'web-page-folder:';
 export const WEB_PAGE_GROUP_SLOT_PREFIX = 'web-page-group:';
+
+export function canDropSiteIntoTeamGroup(
+  role: WebHostingRole | null | undefined,
+  ownerUserId: string | null | undefined,
+  currentUserId: string | null | undefined,
+): boolean {
+  const isSiteOwner = !!currentUserId && ownerUserId === currentUserId;
+  return isSiteOwner || canEditInWebHosting(role);
+}
 
 export function buildWebPageFolderSlot(folder: string): string {
   return `${WEB_PAGE_FOLDER_SLOT_PREFIX}${encodeURIComponent(folder)}`;
