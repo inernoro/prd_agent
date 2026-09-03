@@ -152,4 +152,26 @@ describe('看得出是什么 / 看得出是空的', () => {
     expect(widths.length).toBe(2);
     expect(new Set(widths).size).toBe(1);
   });
+  it('【关键】列表页只有一颗返回钮，且它自己带兜底', () => {
+    // 外壳那颗是 fixed + z-50，正好压在页头里那颗上面：屏幕上看着只有一颗，
+    // 实际是旧的圆形 chrome 盖住了新页头那颗，点到的一直是旧的（Codex PR #1476 P2）。
+    // 我自己的 375px 验收截图里就是它，当时没认出来。
+    const shell = strip(read('src/pages/visual-agent/VisualAgentFullscreenPage.tsx'));
+    const at = shell.indexOf('<ArrowLeft size={18} />');
+    expect(at, '外壳应仍有那颗浮动返回钮（给编辑器用）').toBeGreaterThan(0);
+    const guard = shell.slice(0, at);
+    // 它只能在编辑器渲染；列表页自带页头返回钮，不许再出一颗。
+    const btnAt = guard.lastIndexOf('<button');
+    expect(btnAt, '应能定位到那颗按钮').toBeGreaterThan(0);
+    expect(guard.slice(Math.max(0, btnAt - 200), btnAt), '浮动返回钮必须限定在编辑器')
+      .toMatch(/isEditor && !hideFloatingChrome/);
+
+    // 留下的那颗必须自己带兜底：原来它是裸 navigate(-1)，
+    // 深链直达 / 刷新后没有站内上一条，按下去要么不动要么退到站外。
+    const page = strip(read(PAGE));
+    expect(page, '页头返回钮要走智能返回').toMatch(/const onHeaderBack = useSmartBack\('\/'\)/);
+    const btn = page.slice(page.lastIndexOf('<button', page.indexOf('<ArrowLeft size={16} />')), page.indexOf('<ArrowLeft size={16} />'));
+    expect(btn).toContain('onClick={onHeaderBack}');
+    expect(btn, '不许再退回裸 navigate(-1)').not.toMatch(/navigate\(-1\)/);
+  });
 });
