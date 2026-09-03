@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { apiRequest, ApiError } from '@/lib/api';
+import { DbProbePanel } from '@/components/branch/DbProbePanel';
 
 /**
  * 项目设置 →「数据库隔离」。
@@ -37,12 +38,20 @@ export interface DbIsolationBranchOverride {
   overrides: Record<string, DbScope>;
 }
 
+export interface DbIsolationBranch {
+  branchId: string;
+  branch: string;
+  status: string;
+  hasOverride: boolean;
+}
+
 export interface DbIsolationView {
   projectId: string;
   readOnly: boolean;
   readOnlyReason?: string;
   services: DbIsolationService[];
   branchOverrides: DbIsolationBranchOverride[];
+  branches?: DbIsolationBranch[];
   summary: {
     services: number;
     shared: number;
@@ -346,7 +355,50 @@ export function DbIsolationPanel({
           </ul>
         )}
       </section>
+
+      <BranchProbeSection branches={view.branches ?? []} />
     </div>
+  );
+}
+
+/**
+ * 各分支实测（收敛 0）：上面两节全是「配置说的」。这一节逐分支给「容器持有 / 连上的库」
+ * 实测值——项目默认改完、分支重新部署后，在这里核对每条分支真的连到了哪个库。
+ * 默认不自动探测（多分支时一开页就全量 docker inspect 太重），点「实测」再跑。
+ */
+export function BranchProbeSection({ branches }: { branches: DbIsolationBranch[] }): JSX.Element {
+  const [probeAllToken, setProbeAllToken] = useState(0);
+  return (
+    <section>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-base font-semibold">各分支实测</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            上面两节是配置说的；这里读每条分支容器的真实 env，并用应用自己的凭据连一次库，只读不写。
+          </p>
+        </div>
+        {branches.length > 0 ? (
+          <Button size="sm" variant="outline" onClick={() => setProbeAllToken((t) => t + 1)} title="逐条分支 docker inspect + 连库实测">
+            实测全部分支
+          </Button>
+        ) : null}
+      </div>
+      {branches.length === 0 ? (
+        <div className="mt-3 text-sm text-muted-foreground">这个项目还没有分支，部署一条后再来实测。</div>
+      ) : (
+        <div className="mt-3 space-y-2">
+          {branches.map((b) => (
+            <DbProbePanel
+              key={b.branchId}
+              branchId={b.branchId}
+              autoLoad={false}
+              reloadToken={probeAllToken}
+              title={`${b.branch}${b.hasOverride ? '（有本分支覆盖）' : ''} · ${b.status}`}
+            />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

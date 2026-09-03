@@ -58,6 +58,14 @@ export interface ProjectDbIsolationBranchOverride {
   overrides: Record<string, DbScope>;
 }
 
+export interface ProjectDbIsolationBranch {
+  branchId: string;
+  branch: string;
+  status: string;
+  /** 这条分支对本项目服务写过覆盖（与 branchOverrides 对应） */
+  hasOverride: boolean;
+}
+
 export interface ProjectDbIsolationView {
   projectId: string;
   /** 托管交付项目的 profile 由 StackDetector 生成、只读，不允许在这里改。 */
@@ -65,6 +73,8 @@ export interface ProjectDbIsolationView {
   readOnlyReason?: string;
   services: ProjectDbIsolationService[];
   branchOverrides: ProjectDbIsolationBranchOverride[];
+  /** 项目下全部分支（供「各分支实测」逐条探测；探测本体走 GET /api/branches/:id/db-probe） */
+  branches: ProjectDbIsolationBranch[];
   summary: {
     services: number;
     shared: number;
@@ -160,6 +170,10 @@ export function buildProjectDbIsolationView(
     ...(readOnly ? { readOnlyReason: '托管交付项目的服务配置由 CDS 自动生成，数据库隔离档位不在这里修改' } : {}),
     services,
     branchOverrides,
+    branches: branches.map((b) => ({
+      branchId: b.id, branch: b.branch, status: b.status,
+      hasOverride: branchOverrides.some((o) => o.branchId === b.id),
+    })),
     summary: {
       services: services.length,
       shared: services.filter((s) => s.dbScope === 'shared').length,

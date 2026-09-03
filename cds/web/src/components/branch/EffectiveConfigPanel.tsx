@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Layers, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
+import { DbProbePanel } from '@/components/branch/DbProbePanel';
 
 type EnvSource =
   | 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | 'branch'
@@ -299,6 +300,9 @@ export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; 
               </div>
             ) : null}
           </div>
+
+          {/* 收敛 0：配置说的 / 容器持有 / 连上的库并排——上面的溯源只是「配置说的」，这里给实测值 */}
+          <DbProbePanel branchId={branchId} onToast={onToast} />
 
           {/* CDS 预计做什么(部署计划预览,记录态) */}
           <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">

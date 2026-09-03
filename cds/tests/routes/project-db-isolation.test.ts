@@ -149,6 +149,12 @@ describe('项目级数据库隔离路由', () => {
       expect(byId.worker).toMatchObject({ dbScope: 'per-branch', dbScopeSource: 'explicit', dbEnvKeys: ['CDS_MYSQL_DATABASE'], branchOverrideCount: 1 });
 
       expect(res.body.summary).toEqual({ services: 3, shared: 2, perBranch: 1, branches: 3, branchesWithOverride: 2 });
+      // 各分支实测要逐条列分支（探测本体走 /api/branches/:id/db-probe，这里只给清单）
+      expect(res.body.branches).toEqual([
+        { branchId: 'b-main', branch: 'main', status: 'idle', hasOverride: false },
+        { branchId: 'b-feat', branch: 'feat/x', status: 'idle', hasOverride: true },
+        { branchId: 'b-hotfix', branch: 'hotfix/y', status: 'idle', hasOverride: true },
+      ]);
       expect(res.body.branchOverrides).toEqual([
         { branchId: 'b-feat', branch: 'feat/x', overrides: { api: 'shared' } },
         { branchId: 'b-hotfix', branch: 'hotfix/y', overrides: { worker: 'shared' } },

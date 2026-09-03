@@ -19,6 +19,7 @@ import { WebEntryConfigDialog } from '@/components/branch/WebEntryConfigDialog';
 import { Layers, Lock, Plus } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
+import { DbProbePanel } from '@/components/branch/DbProbePanel';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import { pickActiveDeployment } from './branchDeploymentSelection';
@@ -6995,6 +6996,10 @@ function SettingsPanel({
                 </a>
                 里改；这里的下拉只是本分支的高级覆盖。
               </div>
+            ) : null}
+            {profileState.profiles.length > 0 ? (
+              /* 收敛 0：档位是「配置说的」，紧挨着给「容器持有 / 连上的库」实测值，切完档位重新部署后在这里核对 */
+              <DbProbePanel branchId={branch.id} onToast={onToast} />
             ) : null}
           </div>
         ) : null}

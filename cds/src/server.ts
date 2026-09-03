@@ -31,6 +31,7 @@ import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createProjectDbIsolationRouter } from './routes/project-db-isolation.js';
+import { createDbProbeRouter } from './routes/db-probe.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
@@ -817,6 +818,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'PUT /projects/:id/delivery': '更新项目交付模式',
     'GET /projects/:id/db-isolation': '查看数据库隔离',
     'PUT /projects/:id/db-isolation': '设置数据库隔离',
+    'GET /branches/:id/db-probe': '实测数据库连接',
     'POST /projects/:id/managed-plan': '生成托管部署计划',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
@@ -1229,6 +1231,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^PUT \/projects\/[^/]+\/agent-profile$/, '更新项目 Agent 角色'],
     [/^GET \/projects\/[^/]+\/db-isolation$/, '查看数据库隔离'],
     [/^PUT \/projects\/[^/]+\/db-isolation$/, '设置数据库隔离'],
+    [/^GET \/branches\/[^/]+\/db-probe$/, '实测数据库连接'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],
@@ -4158,6 +4161,10 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
   // 项目级数据库隔离（BuildProfile.dbScope 的项目设置入口 + 原子批量写，2026-09-02）
   app.use('/api', createProjectDbIsolationRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+  app.use('/api', createDbProbeRouter({
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
   }));
