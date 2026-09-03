@@ -910,9 +910,18 @@ describe('历史轮询按序号收口，旧响应不许后发制人', () => {
       : at + 2600);
     expect(body, '没有取序号，只判分支 id 拦不住同分支的并发轮询')
       .toMatch(/seriesSeqRef\.current \+= 1/);
-    const seqChecks = body.match(/seq !== seriesSeqRef\.current/g) ?? [];
+    /*
+     * 判据必须是「比已应用的更旧才丢」，不是「不等于最后发出的就丢」（Codex P2）。
+     * 后者在每次请求都超过轮询间隔时会把自己饿死——每个响应都被判过期，图永远
+     * 停在初始态且不报错，比它要修的竞态更糟。
+     */
+    expect(body, '等值比较会在慢请求下丢弃每一个响应，把轮询饿死')
+      .not.toMatch(/seq !== seriesSeqRef\.current/);
+    const seqChecks = body.match(/seq <= seriesAppliedRef\.current/g) ?? [];
     expect(seqChecks.length, '成功与失败两条路都要比对：旧的失败同样会抹掉新的曲线')
       .toBeGreaterThanOrEqual(2);
+    expect(body, '应用之后要抬高水位，否则后续响应全被放行、竞态没修掉')
+      .toMatch(/seriesAppliedRef\.current = seq/);
   });
 });
 
@@ -961,6 +970,51 @@ describe('部署在途不谎报「分支未运行」', () => {
     const html = render('running');
     expect(html).toContain('一切正常');
     expect(html).toContain('12.0%');
+  });
+
+  /*
+   * 骨架屏那条注解走同一个判据（Codex P2，核对属实）。
+   * 上一版只改了判断句，注解还留着 `!running`——首次部署（在途 + 历史不足两桶）
+   * 同屏一句「正在部署」、一句「分支未运行」，后者正是这次要消灭的那句假话。
+   */
+  it('首次部署（在途且历史不足两桶）时，骨架屏也不说「分支未运行」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: false,
+      lifecycle: 'building',
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {},            // 零帧 => 走骨架屏
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '骨架屏注解仍在说「分支未运行」，与同屏的「正在部署」打架')
+      .not.toContain('分支未运行');
+    expect(html, '在途应当说清是在等容器起来').toContain('正在部署');
+  });
+
+  it('真停且无历史时，骨架屏仍如实说「分支未运行」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: false,
+      lifecycle: 'idle',
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {},
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '停机时这句是真话，不该被一起改掉').toContain('分支未运行');
   });
 });
 

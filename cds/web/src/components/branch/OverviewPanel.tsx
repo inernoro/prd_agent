@@ -1481,10 +1481,19 @@ export function OverviewPanel({
              * metricsReady 只用来挑文案，**不参与是否出图的判断**——那正是「拿着历史
              * 干等 docker stats」那个缺陷的成因，守卫钉着闸门里不许出现它。
              */
+            /*
+             * 走**同一个** transitioning 判据（Codex P2，核对属实）。
+             *
+             * 上一版只把判断句改成「正在部署」，骨架屏这条注解还留着 `!running`——
+             * 首次部署（在途 + 历史不足两桶）时同屏一句「正在部署」、一句
+             * 「分支未运行」，而后者正是这次要消灭的那句假话。同一个判据，
+             * 又是只改了被点名的那一处。
+             */
             note={
-              !running ? '分支未运行 · 没有容器可采样'
-                : !metricsReady ? '正在读取指标…'
-                  : undefined
+              !running && !transitioning ? '分支未运行 · 没有容器可采样'
+                : transitioning ? '正在部署 · 容器起来后开始采样'
+                  : !metricsReady ? '正在读取指标…'
+                    : undefined
             }
           />
         )

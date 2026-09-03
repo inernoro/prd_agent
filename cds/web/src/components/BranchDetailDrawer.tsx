@@ -1021,9 +1021,15 @@ export function BranchDetailDrawer({
    * 5 秒一轮，而一次请求可能跑过 5 秒：两个请求同时在飞时，只判分支 id 是不够的
    * ——新的先回、旧的后回，旧响应会把 series 和窗口元信息一起覆盖回更早的一段，
    * 图往回跳。这正是「图一直在变」那类病的另一种形态，只是成因在请求竞态。
-   * 只认序号最大的那次响应。
+   *
+   * 判据是「比**已经应用过的**那次新」，不是「等于最后发出的那次」（Codex P2，
+   * 核对属实）。后者在「每次请求都超过 5 秒」时会把自己饿死：下一轮总在上一轮
+   * 回来之前把序号又推走，于是每个响应都被判成过期，图永远停在初始态且不报错
+   * ——比它要修的那个竞态更糟。
    */
   const seriesSeqRef = useRef(0);
+  /** 已经应用到界面上的最大序号。晚回的旧响应只跟它比。 */
+  const seriesAppliedRef = useRef(0);
   /**
    * 服务端这次实际用的桶宽（秒）。骨架屏用它算「还要等多久」。
    *
@@ -1293,6 +1299,9 @@ export function BranchDetailDrawer({
     setMetricSeries({});
     setLiveStats({});
     setSeriesError(null);
+    // 换分支后序号重来，否则上一个分支的高水位会挡掉新分支的第一个响应。
+    seriesSeqRef.current = 0;
+    seriesAppliedRef.current = 0;
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
     void load();
@@ -1495,8 +1504,9 @@ export function BranchDetailDrawer({
         services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null }> }>;
       }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
       if (branchIdRef.current !== requestForBranch) return;
-      // 慢请求后回不许覆盖快请求（Codex P2）：窗口会被拽回更早的一段，图往回跳。
-      if (seq !== seriesSeqRef.current) return;
+      // 只丢弃「比已应用的更旧」的响应；慢但仍是最新结果的照常采用。
+      if (seq <= seriesAppliedRef.current) return;
+      seriesAppliedRef.current = seq;
       setSeriesMeta(
         typeof data?.groupSeconds === 'number' && typeof data?.after === 'number' && typeof data?.before === 'number'
           ? { groupSeconds: data.groupSeconds, after: data.after, before: data.before }
@@ -1519,7 +1529,8 @@ export function BranchDetailDrawer({
     } catch (err) {
       if (branchIdRef.current !== requestForBranch) return;
       // 同上：旧请求的失败不该抹掉新请求刚拿回来的曲线。
-      if (seq !== seriesSeqRef.current) return;
+      if (seq <= seriesAppliedRef.current) return;
+      seriesAppliedRef.current = seq;
       // 老版本 CDS 没有这个端点也走这里——照样要说出来，否则骨架屏会一直
       // 承诺一条永远不会出现的曲线。面板拿到它就改画「只有实时数字」那一档。
       setSeriesError(describeMetricsFailure(err, '指标历史'));
