@@ -42,6 +42,52 @@ public class VisualOpenApiController : ControllerBase
         _visualModels = visualModels;
     }
 
+    /// <summary>智能体生图落在哪个工作区：找不到就建一个，用户在视觉创作里能直接看到它。</summary>
+    private const string AgentWorkspaceTitle = "智能体生图";
+
+    /// <summary>
+    /// 找到（或建出）这把密钥主人的「智能体生图」工作区。
+    ///
+    /// 用确定性 id，避免并发的两次生图各建一个：同一个用户永远只有这一个。
+    /// 不复用他手动建的工作区 —— 智能体产出的图混进用户正在编的画布里，是他没要求过的副作用。
+    /// </summary>
+    private async Task<string> EnsureAgentWorkspaceAsync(string userId, CancellationToken ct)
+    {
+        var wsId = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"mcp-visual-ws:{userId}"))).ToLowerInvariant()[..32];
+
+        var existed = await _db.ImageMasterWorkspaces
+            .Find(x => x.Id == wsId && x.OwnerUserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (existed != null) return existed.Id;
+
+        var now = DateTime.UtcNow;
+        var assetsHash = Guid.NewGuid().ToString("N");
+        var ws = new ImageMasterWorkspace
+        {
+            Id = wsId,
+            OwnerUserId = userId,
+            Title = AgentWorkspaceTitle,
+            ScenarioType = "image-gen",
+            MemberUserIds = new List<string>(),
+            AssetsHash = assetsHash,
+            CanvasHash = string.Empty,
+            ContentHash = LiteraryWorkspaceHash.ComputeContentHash(string.Empty, assetsHash),
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastOpenedAt = now,
+        };
+        try
+        {
+            await _db.ImageMasterWorkspaces.InsertOneAsync(ws, cancellationToken: ct);
+        }
+        catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 并发的另一次生图先建好了，用它的就行
+        }
+        return wsId;
+    }
+
     private string GetBoundUserId()
     {
         var id = User.FindFirst("boundUserId")?.Value;
@@ -109,9 +155,16 @@ public class VisualOpenApiController : ControllerBase
                 return Ok(ApiResponse<object>.Ok(new { runId = existed.Id, deduplicated = true }));
         }
 
+        // 必须绑一个真实工作区。ImageGenRunWorker 只在 run.WorkspaceId 非空时才把结果落进
+        // 资产存储并回填画布；不绑的话，配着 ResponseFormat=b64_json 的这条 run 跑完只会把
+        // base64 留在 run item 里，而 GetRun 只回 Url —— 智能体拿到 url: null，
+        // 「图片进你自己的视觉创作工作区」这句承诺也一个字都没兑现。
+        var workspaceId = await EnsureAgentWorkspaceAsync(userId, ct);
+
         var run = new ImageGenRun
         {
             OwnerAdminId = userId,
+            WorkspaceId = workspaceId,
             Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,
             PlatformId = "logical-model",

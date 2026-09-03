@@ -159,7 +159,15 @@ public class LiteraryOpenApiController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "工作区不存在或不属于你"));
 
         var incoming = req?.Content ?? string.Empty;
-        var append = string.Equals(req?.Mode, "append", StringComparison.OrdinalIgnoreCase);
+
+        // mode 只认三种：不给（默认整篇覆盖）、replace、append。写错一个字母不能默默走覆盖 ——
+        // 智能体想追加一段、结果整篇正文被那一段替换掉，是这条接口能造成的最大破坏，
+        // 而 MCP 的 inputSchema 只是描述性的，网关不拿它校验参数，直连 API 的调用方更是想传什么传什么。
+        var rawMode = (req?.Mode ?? string.Empty).Trim();
+        var append = string.Equals(rawMode, "append", StringComparison.OrdinalIgnoreCase);
+        if (!append && rawMode.Length > 0 && !string.Equals(rawMode, "replace", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"mode 只能是 replace 或 append，收到的是「{rawMode}」。不传 mode 默认整篇覆盖。"));
         var merged = append
             ? (string.IsNullOrEmpty(ws.ArticleContent) ? incoming : ws.ArticleContent + "\n\n" + incoming)
             : incoming;

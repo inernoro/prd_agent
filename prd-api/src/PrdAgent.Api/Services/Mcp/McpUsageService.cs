@@ -205,12 +205,43 @@ public sealed class McpUsageService
     /// <summary>今日已用（面板展示口径与闸门同源，读的是同一份计数器）。</summary>
     public async Task<(int Images, int Writes)> GetTodayUsageAsync(string keyId, CancellationToken ct)
     {
+        var map = await GetTodayUsageAsync(new[] { keyId }, ct);
+        return map.TryGetValue(keyId, out var u) ? u : (0, 0);
+    }
+
+    /// <summary>
+    /// 一次把多把密钥的今日已用查回来。
+    ///
+    /// 面板要为每把密钥显示已用数，逐把查就是一把密钥一次往返 —— 密钥数量没有上限
+    /// （撤销的还要留着算历史），键多了首屏就得等上几百次往返。计数器 id 是确定性的，
+    /// 一条 In 查询取回来在内存里分组即可。
+    /// </summary>
+    public async Task<Dictionary<string, (int Images, int Writes)>> GetTodayUsageAsync(
+        IReadOnlyCollection<string> keyIds, CancellationToken ct)
+    {
+        var result = new Dictionary<string, (int Images, int Writes)>(StringComparer.Ordinal);
+        if (keyIds.Count == 0) return result;
+
         var day = TodayStartUtc();
-        var ids = new[] { BuildCounterId(keyId, day, KindImage), BuildCounterId(keyId, day, KindWrite) };
-        var docs = await _db.McpUsageCounters.Find(Builders<McpUsageCounter>.Filter.In(x => x.Id, ids)).ToListAsync(ct);
-        var images = docs.FirstOrDefault(d => d.Kind == KindImage)?.Count ?? 0;
-        var writes = docs.FirstOrDefault(d => d.Kind == KindWrite)?.Count ?? 0;
-        return (Math.Max(images, 0), Math.Max(writes, 0));
+        var idToKey = new Dictionary<string, (string KeyId, string Kind)>(StringComparer.Ordinal);
+        foreach (var keyId in keyIds)
+        {
+            foreach (var kind in new[] { KindImage, KindWrite })
+                idToKey[BuildCounterId(keyId, day, kind)] = (keyId, kind);
+            result[keyId] = (0, 0);
+        }
+
+        var docs = await _db.McpUsageCounters
+            .Find(Builders<McpUsageCounter>.Filter.In(x => x.Id, idToKey.Keys))
+            .ToListAsync(ct);
+        foreach (var d in docs)
+        {
+            if (!idToKey.TryGetValue(d.Id, out var owner)) continue;
+            var cur = result[owner.KeyId];
+            var v = Math.Max(d.Count, 0);
+            result[owner.KeyId] = owner.Kind == KindImage ? (v, cur.Writes) : (cur.Images, v);
+        }
+        return result;
     }
 
     /// <summary>

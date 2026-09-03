@@ -123,9 +123,7 @@ public class McpConsoleController : ControllerBase
         // 就在调用记录的聚合里，取并集即可。
         var usageKeyIds = new HashSet<string>(allKeys.Select(k => k.Id), StringComparer.Ordinal);
         foreach (var loggedKeyId in tally.ByKey.Keys) usageKeyIds.Add(loggedKeyId);
-        var usageByKey = new Dictionary<string, (int Images, int Writes)>(StringComparer.Ordinal);
-        foreach (var kid in usageKeyIds)
-            usageByKey[kid] = await _usage.GetTodayUsageAsync(kid, ct);
+        var usageByKey = await _usage.GetTodayUsageAsync(usageKeyIds, ct);
 
         var clients = keys.Select(k => new
         {

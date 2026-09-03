@@ -307,6 +307,17 @@ public class DocumentStoreOpenApiController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"正文超过 {MaxContentChars} 字上限，请拆成多篇或先精简"));
 
+        // parentId 必须是**同一个库里的文件夹**。不校验的话，智能体给一个别的库的 id、
+        // 或者给一篇普通文档的 id，都会插出一条挂在错地方的条目 —— 界面按文件夹展开时
+        // 它既不在根上也不在任何文件夹下，用户看不见也删不掉。
+        if (!string.IsNullOrWhiteSpace(req.ParentId))
+        {
+            var parent = await _db.DocumentEntries.Find(e => e.Id == req.ParentId).FirstOrDefaultAsync(ct);
+            if (parent == null || parent.StoreId != storeId || !parent.IsFolder)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "parentId 必须是这个知识库里的一个文件夹；不确定就别传，文档会落在根目录。"));
+        }
+
         // 幂等：同一把密钥 + 同一个 clientRequestId 只写一次。
         // 判据走**确定性 id**（撞主键即命中），不走「先查后建」—— 后者在两次重试叠在一起时
         // 两边都查不到，各写一篇、计数各加一次，而幂等键正是为了不发生这件事。
