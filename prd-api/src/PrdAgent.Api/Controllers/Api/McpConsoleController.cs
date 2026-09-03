@@ -59,9 +59,13 @@ public class McpConsoleController : ControllerBase
         var ownedPermissions = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
 
         var nowUtc = DateTime.UtcNow;
-        var keys = (await _keyService.ListByOwnerAsync(userId, ct))
-            .Where(k => k.RevokedAt == null)
-            .ToList();
+        // 两份名单，用途不同，别合成一份：
+        //   allKeys —— 今日用量统计用。今天用掉额度、之后被撤销的钥匙也得算进去，
+        //              否则 today.calls 还算着它的调用、today.images/writes 却把它的量抹掉，
+        //              同一屏的两个数字自己跟自己对不上。
+        //   keys    —— 客户端列表与「已授权」用。撤销的不该再出现在「连着的客户端」里。
+        var allKeys = await _keyService.ListByOwnerAsync(userId, ct);
+        var keys = allKeys.Where(k => k.RevokedAt == null).ToList();
         // 「还能用吗」走鉴权那一处判据（AgentApiKey.IsUsableAt），不是光看 IsActive ——
         // 过了宽限期的钥匙 IsActive 仍是 true，照着它判会把一台每个请求都被拒的客户端
         // 显示成「已连接、能力已授权」。面板和智能体遇到的必须是同一件事。
@@ -112,8 +116,9 @@ public class McpConsoleController : ControllerBase
             };
         }).ToList();
 
+        // 用量按 allKeys 取（含今天被撤销的），列表只展示 keys 里的那几把
         var usageByKey = new Dictionary<string, (int Images, int Writes)>(StringComparer.Ordinal);
-        foreach (var k in keys)
+        foreach (var k in allKeys)
             usageByKey[k.Id] = await _usage.GetTodayUsageAsync(k.Id, ct);
 
         var clients = keys.Select(k => new

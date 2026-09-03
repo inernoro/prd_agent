@@ -209,33 +209,19 @@ public class AgentApiKeysController : ControllerBase
         }
 
         // 配额上限：给出的值必须落在合理区间，避免「调成 0 把自己锁死」或「调成天文数字等于没有闸门」。
-        // 校验必须排在**任何一次写库之前**：一次 PATCH 同时改名字和配额、而配额越界时，
-        // 若先写名字再校验，返回的是 400「更新失败」，名字却已经改掉了 —— 用户按报错重试，
-        // 状态和提示对不上。要么整笔生效，要么整笔不生效。
-        var quotaUpdates = new List<UpdateDefinition<AgentApiKey>>();
-        if (req.McpDailyImageQuota is { } img)
-        {
-            if (img is < 1 or > 500)
-                return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每日生图上限需在 1-500 之间"));
-            quotaUpdates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpDailyImageQuota, img));
-        }
-        if (req.McpDailyWriteQuota is { } wr)
-        {
-            if (wr is < 1 or > 2000)
-                return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每日写入上限需在 1-2000 之间"));
-            quotaUpdates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpDailyWriteQuota, wr));
-        }
-        if (req.McpRateLimitPerMin is { } rate)
-        {
-            if (rate is < 1 or > 600)
-                return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每分钟调用上限需在 1-600 之间"));
-            quotaUpdates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpRateLimitPerMin, rate));
-        }
+        // 校验排在写库之前，且配额与元数据**合成同一次 Mongo 写**：
+        // 分两次写的话，第二次失败会留下「接口报错了、但名字已经改了」的半截状态，
+        // 用户照报错重试，状态和提示对不上。要么整笔生效，要么整笔不生效。
+        if (req.McpDailyImageQuota is < 1 or > 500)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每日生图上限需在 1-500 之间"));
+        if (req.McpDailyWriteQuota is < 1 or > 2000)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每日写入上限需在 1-2000 之间"));
+        if (req.McpRateLimitPerMin is < 1 or > 600)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每分钟调用上限需在 1-600 之间"));
 
-        await _keyService.UpdateMetadataAsync(id, req.Name, req.Description, req.Scopes, req.IsActive, ct);
-        if (quotaUpdates.Count > 0)
-            await _db.AgentApiKeys.UpdateOneAsync(k => k.Id == id,
-                Builders<AgentApiKey>.Update.Combine(quotaUpdates), cancellationToken: ct);
+        await _keyService.UpdateMetadataAsync(
+            id, req.Name, req.Description, req.Scopes, req.IsActive, ct,
+            new AgentApiKeyQuotaPatch(req.McpDailyImageQuota, req.McpDailyWriteQuota, req.McpRateLimitPerMin));
 
         var reloaded = await _keyService.GetByIdAsync(id, ct);
         return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded) }));

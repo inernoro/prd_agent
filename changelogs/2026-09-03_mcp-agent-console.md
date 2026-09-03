@@ -50,3 +50,7 @@
 | fix | prd-api | 动态开放接口的写入也计日额度：闸门改读记录里的 ImageCount/IsWrite，不再因「没有工具定义」整个跳过日额度 |
 | fix | prd-api | 知识库建文档的幂等命中区分「已完整」与「正文还在落盘」，撞在写入窗口里的重试回 409 而不是交出一篇空文档 |
 | fix | prd-admin | 接入台刷新按钮同时刷新调用记录列表，停在记录页点刷新不再纹丝不动 |
+| fix | prd-api | 外部地址解析改为协议与主机分开取：本仓库 nginx 从不设 X-Forwarded-Host，上一版的判据在真实部署里永远走不到，连接地址仍是 http:// |
+| fix | prd-api | 密钥的元数据与配额合成同一次写入，PATCH 不再出现「报错了但名字已经改了」的半截状态 |
+| fix | prd-api | 今日用量统计包含当天被撤销的密钥，today.calls 与 today.images/writes 不再自己跟自己对不上 |
+| test | prd-api | 新增外部地址解析守卫，含「只有 X-Forwarded-Proto、没有 X-Forwarded-Host」这条真实 nginx 形态 |

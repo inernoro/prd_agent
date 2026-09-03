@@ -119,7 +119,8 @@ public class AgentApiKeyService : IAgentApiKeyService
         string? description,
         IEnumerable<string>? scopes,
         bool? isActive,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        AgentApiKeyQuotaPatch? quota = null)
     {
         var updates = new List<UpdateDefinition<AgentApiKey>>();
         if (name != null) updates.Add(Builders<AgentApiKey>.Update.Set(k => k.Name, name.Trim()));
@@ -131,6 +132,18 @@ public class AgentApiKeyService : IAgentApiKeyService
                 scopes.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Distinct().ToList()));
         if (isActive.HasValue)
             updates.Add(Builders<AgentApiKey>.Update.Set(k => k.IsActive, isActive.Value));
+
+        // 配额与元数据必须落在同一次写里：分两次写时第二次失败，调用方收到的是「更新失败」，
+        // 而名字/scope 已经改了 —— 用户照报错重试，状态和提示对不上。
+        if (quota is { IsEmpty: false })
+        {
+            if (quota.DailyImageQuota is { } img)
+                updates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpDailyImageQuota, img));
+            if (quota.DailyWriteQuota is { } wr)
+                updates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpDailyWriteQuota, wr));
+            if (quota.RateLimitPerMin is { } rate)
+                updates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpRateLimitPerMin, rate));
+        }
 
         if (updates.Count == 0) return true;
 
