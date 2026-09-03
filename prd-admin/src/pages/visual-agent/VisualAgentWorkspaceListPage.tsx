@@ -1530,18 +1530,21 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       // 编辑器再去读偏好就会拿到上一次的模型，用户在首页选的 A 会变成 B——
       // 而这是一次要花钱的生成。交接包直接带上，编辑器就不必依赖那次写。
       const payload = { messageText, assetId, imageSize, modelId, timestamp: Date.now() };
+      // 图太大存不下时**不再退化成「只带文字」**。
+      //
+      // 上一版是：丢掉 [IMAGE] 标记、只存文字、照常跳转，然后提示「请在画板里重新拖入」。
+      // 但两个编辑器消费方拿到交接包都会**自动发送**——用户还没来得及照提示做，
+      // 一次纯文字的付费生成已经跑掉了，而他要的是「按这张图改」（Codex PR #1476 P1）。
+      // 这和上一轮手机端那条是同一个错：把语义变更通告一遍，当成了征得同意。
+      //
+      // 现在只留一条路径：整份交接包存不进去（配额不够 / 站点存储被禁用）就不跳转，
+      // 留在原地、保住输入、说清原因。想要纯文字的话，把图去掉再发一次——那是他的选择。
       let handoffStored = false;
       try {
         sessionStorage.setItem(sessionKey, JSON.stringify(payload));
         handoffStored = true;
       } catch {
-        try {
-          sessionStorage.setItem(sessionKey, JSON.stringify({ ...payload, messageText: `${sizeToken}${prompt}` }));
-          handoffStored = true;
-          toast.error('参考图太大，未能带入画板', '已带入文字提示，请在画板里重新拖入这张图。');
-        } catch {
-          handoffStored = false;
-        }
+        handoffStored = false;
       }
 
       // 交接包一个字都没存进去（站点存储被禁用等）时**不要跳转**。
@@ -1550,7 +1553,12 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       // 输入清空了——用户刚敲的那句话就这么没了，还得自己重打一遍（Codex PR #1476 P2）。
       // 留在原地、保住输入、说清原因，比「看起来成功了其实什么都没带」强。
       if (!handoffStored) {
-        toast.error('浏览器禁用了站点存储，无法把这次输入带进画板', '已为你建好空白项目，可在下方列表打开；或允许本站存储后重试。');
+        toast.error(
+          selectedImage ? '这张参考图太大，没能带进画板' : '浏览器存不下这次输入，没能带进画板',
+          selectedImage
+            ? '这次没有发送。换一张小一点的图再发；或者去掉图片只发文字。输入已经留着。'
+            : '这次没有发送。允许本站存储后重试，输入已经留着。',
+        );
         return;
       }
 

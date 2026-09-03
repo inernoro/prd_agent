@@ -92,7 +92,10 @@
      而不是随机地压在标题底下。 */
   background-position: var(--backdrop-focus, center);
   background-repeat: no-repeat;
-  transition: opacity .9s ease-out;
+  /* 260ms：解码完当帧点亮，留一点点过渡免得「啪」地砸出来，但读起来是「点亮」不是「淡入」。
+     上一版 .9s 叠在「onload 之后还要再解一次码」上面，从准备好到看清接近一秒
+     （2026-09-02 用户：出现的太慢了，应该在元素加载完成的瞬间显示，就和点亮手机一样）。 */
+  transition: opacity .26s ease-out;
 }
 
 /*
@@ -210,4 +213,19 @@
  */
 [data-theme="light"] .backdrop-photo-layer {
   display: none;
+}
+
+/*
+ * 但**暗岛例外**：视觉创作首页是 .surface-tone-dark，它钉死深色、不跟文档主题走。
+ * 上面那条按 `[data-theme="light"]` 从文档根匹配，会连暗岛里的背景一起藏掉——
+ * 于是浅色主题的用户打开首页，看到的是一整块纯底色，背景「凭空消失」
+ * （2026-09-02 用户截图）。那条规则的理由是「近黑素材压在浅底上只会糊成一片灰」，
+ * 而暗岛的底本来就是深的，理由在这里不成立。
+ *
+ * 这和刚修的 --glass-surface 是同一个形状：**按文档主题写的规则，撞上钉死主题的局部区域**。
+ * token 那半已经在 tokens.css 的 .surface-tone-dark 里补齐了，这半是 display 规则，
+ * token 覆盖不到，得单独把它放回来。
+ */
+[data-theme="light"] .surface-tone-dark .backdrop-photo-layer {
+  display: block;
 }

@@ -325,3 +325,28 @@ describe('生成流程：失败给得出下一步，不是一句「操作失败�
     await expect(generateBackdrop({ mood: 'x', pollIntervalMs: 1 })).resolves.toMatchObject({ url: 'https://cdn.test/ok.png' });
   });
 });
+
+describe('【关键】背景在暗岛里不许被浅色主题藏掉', () => {
+  // 用户截图：浅色主题下打开视觉创作首页，背景整个不见了，只剩一块纯底色。
+  // 根因是一条按文档主题写的规则 `[data-theme="light"] .backdrop-photo-layer{display:none}`——
+  // 它从文档根匹配，连 .surface-tone-dark（钉死深色、不跟文档主题走）里的背景一起藏了。
+  // 这与 --glass-surface 那条是同一个形状：按文档主题写的规则撞上钉死主题的局部区域。
+  const CSS = readFileSync(resolve(ROOT, 'src/styles/globals.css'), 'utf8');
+
+  it('暗岛里的背景层被显式放回来', () => {
+    expect(CSS, '浅色下默认仍然不放照片').toMatch(/\[data-theme="light"\]\s*\.backdrop-photo-layer\s*\{\s*display:\s*none/);
+    expect(CSS, '但暗岛必须例外').toMatch(/\[data-theme="light"\]\s*\.surface-tone-dark\s*\.backdrop-photo-layer\s*\{\s*display:\s*block/);
+    // 顺序要紧：放回来那条必须写在藏起来那条之后，否则同特异性下后写的赢、又被藏回去。
+    expect(CSS.indexOf('.surface-tone-dark .backdrop-photo-layer'))
+      .toBeGreaterThan(CSS.indexOf('[data-theme="light"] .backdrop-photo-layer'));
+  });
+
+  it('解码完当帧点亮，不再等 onload 之后再解一次码', () => {
+    // onload 只保证字节到齐、没解码；那段时间 opacity 已经是 1 而屏幕还是空的。
+    const SRC = readFileSync(resolve(ROOT, 'src/components/effects/PageBackdrop.tsx'), 'utf8');
+    expect(SRC, '应走 decode() 而不是只等 onload').toMatch(/img\.decode\(\)/);
+    // 过渡要短：读起来是「点亮」不是「淡入」。
+    const ms = Number(CSS.match(/\.backdrop-photo\s*\{[\s\S]*?transition:\s*opacity\s*\.(\d+)s/)?.[1]);
+    expect(ms, '背景淡入应短于 0.4s').toBeLessThan(40);
+  });
+});

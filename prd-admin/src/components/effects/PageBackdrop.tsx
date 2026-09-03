@@ -53,21 +53,41 @@ export function BackdropPhoto({
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
 
-  // 图片解码完再淡入。直接挂 background-image 的话，大图会「啪」地一下出现，
-  // 在一个主打克制的页面上那一下非常显眼。
+  /**
+   * 解码完**立刻**点亮，不再等一次长淡入。
+   *
+   * 上一版是 onload 后把 opacity 切到 1，靠 CSS 的 .9s 过渡淡进来。两个问题叠在一起，
+   * 用户的原话是「出现的太慢了，应该在页面元素加载完成的瞬间显示，就和点亮手机一样」：
+   *
+   *   1. onload 只保证字节到齐，**没解码**。真正能画出来还要等浏览器解一次码，
+   *      那一段时间里我们已经把 opacity 切成 1 了，屏幕上却还是空的——
+   *      所以「亮起来」的时刻比「准备好」的时刻晚了一截，而且晚多少不可控。
+   *   2. 再叠 .9s 的淡入，从准备好到看清接近一秒。手机点亮不是这样的。
+   *
+   * 改成 `img.decode()`：它兑现的时刻**就是这一帧能画出来的时刻**，
+   * 此时切 opacity，屏幕当帧就有东西。过渡缩到 260ms——留一点，
+   * 是因为完全不留会「啪」地一下砸出来，那是另一个方向的难看；但 260ms 读起来是
+   * 「点亮」，不是「淡入」。decode 不被支持或失败时退回 onload，行为不比原来差。
+   */
   useEffect(() => {
     const el = ref.current;
     if (!el || !src) return;
+    let cancelled = false;
     el.style.opacity = '0';
-    const img = new Image();
-    img.decoding = 'async';
-    img.onload = () => {
-      if (!ref.current) return;
+    const paint = () => {
+      if (cancelled || !ref.current) return;
       ref.current.style.backgroundImage = `url(${JSON.stringify(src)})`;
       ref.current.style.opacity = '1';
     };
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => { if (typeof img.decode !== 'function') paint(); };
     img.src = src;
+    if (typeof img.decode === 'function') {
+      img.decode().then(paint).catch(paint);
+    }
     return () => {
+      cancelled = true;
       img.onload = null;
     };
   }, [src]);

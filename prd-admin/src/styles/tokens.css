@@ -1223,6 +1223,13 @@
   --skeleton-sheen: rgba(255, 236, 222, 0.085);
   --wake-beam-core: rgba(255, 236, 222, 0.16);
   --wake-beam-soft: rgba(255, 236, 222, 0.06);
+  /* 背景照片在暗岛里是可见的（globals.css 把浅色主题那条 display:none 在暗岛里放回来了），
+     那么压在它上面的罩与渐晕也必须是深色档的值——否则浅色主题下，
+     一张近黑的照片上盖着为纸面调的浅罩，两边都不成立。
+     这三个是上面那条守卫在放回背景之后立刻抓出来的，属于同一次修复的连带项。 */
+  --backdrop-scrim: 10, 10, 12;
+  --vignette-core: rgba(217, 119, 87, 0.055);
+  --vignette-edge: rgba(0, 0, 0, 0.34);
   --nested-block-border: rgba(255, 255, 255, 0.09);
   color-scheme: dark;
   --bg-card: rgba(255, 255, 255, 0.08);
