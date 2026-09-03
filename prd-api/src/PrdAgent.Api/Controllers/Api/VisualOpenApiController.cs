@@ -123,6 +123,12 @@ public class VisualOpenApiController : ControllerBase
         public string? ClientRequestId { get; set; }
     }
 
+    /// <summary>
+    /// 本次要出几张图。闸门（AgentApiKeyUsageFilter）与真正入队必须读同一个数：
+    /// 两处各 clamp 一遍的话，占的坑早晚和实际出图数对不上。
+    /// </summary>
+    internal static int ResolveImageCount(GenerateImageRequest? req) => Math.Clamp(req?.Count ?? 1, 1, MaxImagesPerCall);
+
     /// <summary>入队一次生图。返回 runId，用 runs/{runId} 查结果。</summary>
     [HttpPost("images")]
     [RequireScope(ScopeUse)]
@@ -135,7 +141,7 @@ public class VisualOpenApiController : ControllerBase
         if (prompt.Length > 4000)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "prompt 超过 4000 字，请精简"));
 
-        var count = Math.Clamp(req!.Count ?? 1, 1, MaxImagesPerCall);
+        var count = ResolveImageCount(req);
         var size = string.IsNullOrWhiteSpace(req.Size) ? "1024x1024" : req.Size!.Trim();
 
         // 模型：与 ImageGenController 同一个判据 —— 视觉创作只跑策略允许的那个模型

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace PrdAgent.Api.Mcp;
@@ -67,6 +68,36 @@ public static class McpBuiltinTools
     public const string ScopeMarketplaceRead = "marketplace.skills:read";
     public const string ScopeDocStoreRead = "document-store:read";
     public const string ScopeDocStoreWrite = "document-store:write";
+
+    /// <summary>
+    /// 按真实 HTTP 请求（方法 + 路径）反查内置工具。
+    ///
+    /// 直连开放接口时要认出「这一次等价于哪个工具」，才能套同一套用量闸门。反查回到这张注册表，
+    /// 而不是在过滤器里另写一份路径清单——两份清单迟早各走各的（形状 3：判据分裂后漂移）。
+    /// </summary>
+    public static McpToolDef? MatchRequest(string method, string path)
+    {
+        foreach (var t in All)
+        {
+            if (!string.Equals(t.Method, method, StringComparison.OrdinalIgnoreCase)) continue;
+            if (PathMatches(t.PathTemplate, path)) return t;
+        }
+        return null;
+    }
+
+    /// <summary>路径模板匹配：{xxx} 占位吃掉任意一个路径段，其余段逐段相等。</summary>
+    private static bool PathMatches(string template, string path)
+    {
+        var tpl = template.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var seg = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (tpl.Length != seg.Length) return false;
+        for (var i = 0; i < tpl.Length; i++)
+        {
+            if (tpl[i].Length > 1 && tpl[i][0] == '{' && tpl[i][^1] == '}') continue;
+            if (!string.Equals(tpl[i], seg[i], StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        return true;
+    }
 
     public static readonly IReadOnlyList<McpToolDef> All = new List<McpToolDef>
     {

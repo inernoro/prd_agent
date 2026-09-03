@@ -94,6 +94,9 @@ builder.Services.AddControllers(options =>
         // 模型管理退场：api/mds 下的写操作一律 410，配置改由 LLM Gateway 控制台承担。
         // 挂在 ActivityLog 之后：被挡下的请求本来就没发生写入，不该留一条动态。
         options.Filters.Add<PrdAgent.Api.Filters.MdsWriteRetiredFilter>();
+        // 接入台配额：sk-ak 直连内置工具接口（绕开 /api/mcp）时套同一套闸门，
+        // 否则「每日 50 张」只拦得住走网关的那条路。
+        options.Filters.Add<PrdAgent.Api.Filters.AgentApiKeyUsageFilter>();
     })
     .AddJsonOptions(options =>
     {
@@ -492,6 +495,8 @@ builder.Services.AddScoped<PrdAgent.Api.Services.AutoLinkProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EntryContentWriteService>();
 // 接入台（MCP）：用量闸门 + 调用记录
 builder.Services.AddScoped<PrdAgent.Api.Services.Mcp.McpUsageService>();
+// 网关回环续跳的自证令牌：每进程一份，随进程生灭，不落库
+builder.Services.AddSingleton<PrdAgent.Api.Services.Mcp.McpLoopbackSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.TutorialLinkGraphService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreAssetNormalizer>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreLiveTranscriptionRelay>();

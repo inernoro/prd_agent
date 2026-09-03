@@ -41,19 +41,22 @@ public class McpGatewayController : ControllerBase
     private readonly IServer _server;
     private readonly ILogger<McpGatewayController> _logger;
     private readonly McpUsageService _usage;
+    private readonly McpLoopbackSignal _loopback;
 
     public McpGatewayController(
         MongoDbContext db,
         IHttpClientFactory httpFactory,
         IServer server,
         ILogger<McpGatewayController> logger,
-        McpUsageService usage)
+        McpUsageService usage,
+        McpLoopbackSignal loopback)
     {
         _db = db;
         _httpFactory = httpFactory;
         _server = server;
         _logger = logger;
         _usage = usage;
+        _loopback = loopback;
     }
 
     /// <summary>MCP 主端点。接收 JSON-RPC（单条或批量），返回 JSON-RPC 响应。</summary>
@@ -406,15 +409,23 @@ public class McpGatewayController : ControllerBase
         await _usage.LogAsync(log, ct);
     }
 
-    /// <summary>生图工具的张数（用于日额度预判）；缺省 1，越界交给下游收敛。</summary>
-    private static int ReadRequestedImageCount(JsonObject args)
+    /// <summary>
+    /// 生图工具的张数（用于日额度预判）；缺省 1。
+    ///
+    /// clamp 不在这里自己写一遍：收敛区间归 VisualOpenApiController.ResolveImageCount 管，
+    /// 它才是真正决定「这次到底出几张」的那处。两边各 clamp 一遍的话，哪天上限从 4 改成 8，
+    /// 闸门还按 4 占坑，扣的额度和实际出图数就对不上了。
+    /// </summary>
+    internal static int ReadRequestedImageCount(JsonObject args)
     {
+        int? requested = null;
         if (args.TryGetPropertyValue("count", out var node) && node is JsonValue v)
         {
-            if (v.TryGetValue<int>(out var i)) return Math.Clamp(i, 1, 4);
-            if (v.TryGetValue<double>(out var d)) return Math.Clamp((int)d, 1, 4);
+            if (v.TryGetValue<int>(out var i)) requested = i;
+            else if (v.TryGetValue<double>(out var d)) requested = (int)d;
         }
-        return 1;
+        return PrdAgent.Api.Controllers.Api.VisualOpenApiController.ResolveImageCount(
+            new PrdAgent.Api.Controllers.Api.VisualOpenApiController.GenerateImageRequest { Count = requested });
     }
 
     internal static (string path, JsonNode? body, string? err) BuildBuiltinRequest(McpToolDef t, JsonObject args)
@@ -460,6 +471,10 @@ public class McpGatewayController : ControllerBase
         var client = _httpFactory.CreateClient("McpLoopback");
         using var req = new HttpRequestMessage(new HttpMethod(method), baseUrl + pathAndQuery);
 
+        // 自证「这一跳是网关的续跳」：下游的用量闸门与全局限流据此不再重复计一次。
+        // 用进程内随机令牌而不是「对端是不是 127.0.0.1」，见 McpLoopbackSignal 的说明。
+        req.Headers.TryAddWithoutValidation(McpLoopbackSignal.HeaderName, _loopback.Token);
+
         var auth = Request.Headers["Authorization"].ToString();
         if (!string.IsNullOrWhiteSpace(auth))
             req.Headers.TryAddWithoutValidation("Authorization", auth);
@@ -500,8 +515,12 @@ public class McpGatewayController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[MCP] 回环调用失败 {Method} {Path}", method, pathAndQuery);
-            // 用 JsonObject 序列化，ex.Message 里的引号/反斜杠/换行会被正确转义，不破坏 JSON 信封
-            var errBody = new JsonObject { ["error"] = $"回环调用失败: {ex.Message}" }.ToJsonString();
+            // 只回一句稳定的说明：异常原文里带着回环主机名、端口、传输层细节，那是部署形态，
+            // 不该顺着 MCP 响应流到外部客户端手里。真正的原因上一行已经进服务端日志了。
+            var errBody = new JsonObject
+            {
+                ["error"] = "内部转发没能完成（超时或连接被拒），请稍后重试；具体原因见服务端日志。",
+            }.ToJsonString();
             return (502, errBody);
         }
     }

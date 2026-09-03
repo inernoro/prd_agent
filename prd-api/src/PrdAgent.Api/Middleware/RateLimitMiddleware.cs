@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Json;
+using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
@@ -23,8 +24,18 @@ public class RateLimitMiddleware
         _logger = logger;
     }
 
-    public async Task InvokeAsync(HttpContext context, IRateLimitService rateLimitService)
+    public async Task InvokeAsync(HttpContext context, IRateLimitService rateLimitService,
+        McpLoopbackSignal loopback)
     {
+        // MCP 网关的回环续跳：外层那一跳已经计过一次，这里再计一次等于一次工具调用占两格。
+        // 更要命的是续跳的对端恒为 127.0.0.1 —— sk-ak 身份故意不带 sub，分桶会落到 IP 上，
+        // 于是所有密钥挤进同一个回环桶，一把密钥刷满就把别人的调用一起 429 掉。
+        if (loopback.IsGatewayContinuation(context.Request))
+        {
+            await _next(context);
+            return;
+        }
+
         var clientId = GetClientId(context);
 
         // 检查是否为 root 用户（豁免限流）
@@ -80,6 +91,14 @@ public class RateLimitMiddleware
         var userId = context.User?.FindFirst("sub")?.Value;
         if (!string.IsNullOrEmpty(userId))
             return $"user:{userId}";
+
+        // sk-ak（智能体密钥）故意不带 sub —— 它不是「某个人在操作」。落到 IP 桶的话，同一个出口
+        // 地址后面的所有密钥共用一份配额，而密钥 id 来自鉴权结果、调用方伪造不了，用它分桶才是
+        // 接入台上写的那句「每把密钥各算各的」。只认 agentApiKeyId：老的开放平台 appId 密钥维持
+        // 原样，不在这次改动里改它们的分桶行为。
+        var agentKeyId = context.User?.FindFirst("agentApiKeyId")?.Value;
+        if (!string.IsNullOrEmpty(agentKeyId))
+            return $"agentkey:{agentKeyId}";
 
         // 走 GetAbuseControlClientIp 而不是裸的 RemoteIpAddress：生产是 Nginx + Docker，
         // 裸取到的是反代共享地址，所有匿名访客共用一个桶 —— 海鲜市场的读接口 2026-07-28
