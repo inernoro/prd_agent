@@ -132,6 +132,18 @@ describe('首页能看见并选择绘图模型', () => {
     expect(PAGE, '不许再有假装创建的占位流程').not.toContain('文件夹功能正在开发中');
   });
 
+  it('【关键】交接包存不下时把刚建的空工作区收掉，不要越攒越多', () => {
+    // 工作区先建、交接包后存，中间失败就会留下一个没标题没内容的空画板；
+    // 而这条路径的设计正是「保住输入让他重试」，于是重试一次多一个
+    //（Codex PR #1476 P2）。判据盯：那条 return 之前必须先删掉它。
+    const at = SUBMIT.indexOf('if (!handoffStored) {');
+    expect(at, '应有交接包存不下的分支').toBeGreaterThan(0);
+    const branch = SUBMIT.slice(at, SUBMIT.indexOf('return;', at));
+    expect(branch, '走人之前先把刚建的空工作区删掉').toMatch(/deleteVisualAgentWorkspace\(\{ id: ws\.id/);
+    // 删失败不该再弹一次错——真正要紧的是不发送、不丢输入。
+    expect(branch, '收尾是尽力而为，不许 await 它挡住提示').not.toMatch(/await\s+deleteVisualAgentWorkspace/);
+  });
+
   it('【关键】晚到的偏好只能填空白，不能改用户已经做过的选择', () => {
     // 目录与偏好拆开之后多了一段窗口：目录先回来、选择器已经能点，偏好还在路上。
     // 用户在这段窗口里选了 A，偏好晚到时若无条件套用，界面自己跳回 B——

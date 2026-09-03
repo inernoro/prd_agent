@@ -1597,6 +1597,14 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       // 输入清空了——用户刚敲的那句话就这么没了，还得自己重打一遍（Codex PR #1476 P2）。
       // 留在原地、保住输入、说清原因，比「看起来成功了其实什么都没带」强。
       if (!handoffStored) {
+        // 工作区在上面**已经建出来了**，这里一走了之就把它留在列表里：
+        // 一个没标题、没内容的空画板。而这条路径的设计正是「保住输入让他重试」——
+        // 重试一次多一个，最后是一串空画板要用户自己去删（Codex PR #1476 P2）。
+        //
+        // 存储探针探不出这一档：它只写得下几个字节，判得出「站点存储被禁用」，
+        // 判不出「整份交接包超了剩余配额」。所以这里必须自己收尾。
+        // 删失败就算了——真正要紧的是不发送、不丢输入，多一个空画板不该再报一次错。
+        void deleteVisualAgentWorkspace({ id: ws.id, idempotencyKey: `ws_del_handoff_${ws.id}` });
         toast.error(
           selectedImage ? '这张参考图太大，没能带进画板' : '浏览器存不下这次输入，没能带进画板',
           selectedImage

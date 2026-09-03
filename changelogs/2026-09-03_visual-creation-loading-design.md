@@ -171,3 +171,4 @@
 | fix | prd-admin | 两个探针脚本改从自身位置解析路径，换个 clone / CI 也跑得起来 |
 | fix | prd-admin | 视觉创作首页「模型设置」按钮在浅色档下白字压白底，暗岛补齐次要/危险/ghost 按钮 token |
 | fix | prd-admin | 暗岛 token 判据补「算出来的类名」一层，Button 这类拼类名的组件不再漏判 |
+| fix | prd-admin | 交接包存不下时把刚建的空工作区收掉，重试不再攒出一串空画板 |
