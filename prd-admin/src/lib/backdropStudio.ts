@@ -155,17 +155,40 @@ export async function generateBackdrop(args: {
   const startedAt = now();
   const report = (phase: BackdropGenPhase) => args.onProgress?.({ phase, elapsedMs: now() - startedAt });
 
+  /**
+   * 给「开跑之前」那几次请求也套上同一条死线。
+   *
+   * TIMEOUT_MS 和 args.signal 原来只在轮询循环里生效，而目录查询和建任务这两次
+   * 请求发生在进入循环**之前**：它们走 apiRequest，没有默认超时，挂住就永远不返回，
+   * 界面卡在「生成中」，取消按不动、也重试不了（Codex PR #1476 P2）。
+   *
+   * 说清它做到什么程度：这是死线，不是取消——底层那次 fetch 仍在飞，只是不再
+   * 挡着用户。要真取消得把 signal 一路穿过三个 service 契约，那是另一件事。
+   */
+  const withDeadline = <T>(p: Promise<T>, what: string): Promise<T> => new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const done = (fn: () => void) => { if (settled) return; settled = true; clearTimeout(timer); args.signal?.removeEventListener('abort', onAbort); fn(); };
+    const onAbort = () => done(() => reject(new BackdropGenError('已取消')));
+    const timer = setTimeout(
+      () => done(() => reject(new BackdropGenError(`${what}等太久了，先放着吧，稍后再试`))),
+      Math.max(0, TIMEOUT_MS - (now() - startedAt)),
+    );
+    if (args.signal?.aborted) return onAbort();
+    args.signal?.addEventListener('abort', onAbort);
+    p.then((v) => done(() => resolve(v)), (e) => done(() => reject(e)));
+  });
+
   report('resolving');
   // 背景生成从不给输入图，是纯文生图。必须查 text2img 专用目录：
   // 合并目录里混着 img2img / vision-only 池，若其中之一恰好排在前面或被标为默认，
   // pickGenerationModel 会选中它，之后每一次背景生成都必然失败——而画面上只会
   // 显示「生成失败」，看不出是选错了池（Codex PR #1476 P2）。
-  const poolsRes = await getVisualAgentText2ImgModels();
+  const poolsRes = await withDeadline(getVisualAgentText2ImgModels(), '查可用模型');
   if (!poolsRes.success) throw new BackdropGenError(poolsRes.error?.message || '拿不到可用的生图模型');
   const model = pickGenerationModel(poolsRes.data);
   if (!model) throw new BackdropGenError('当前没有可用的生图模型，去「模型池」里给文生图配一个再来');
 
-  const createRes = await createImageGenRun({
+  const createRes = await withDeadline(createImageGenRun({
     input: {
       platformId: model.platformId,
       modelId: model.modelId,
@@ -175,7 +198,7 @@ export async function generateBackdrop(args: {
       maxConcurrency: 1,
       items: [{ prompt: buildBackdropPrompt(args.mood), count: 1, size: '1536x1024' }],
     },
-  });
+  }), '建生成任务');
   if (!createRes.success || !createRes.data?.runId) {
     throw new BackdropGenError(createRes.error?.message || '生成任务没建起来');
   }

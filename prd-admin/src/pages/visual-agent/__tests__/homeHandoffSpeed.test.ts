@@ -216,6 +216,24 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
     expect(failBranch).toMatch(/setInput\(pending\.text\)/);
   });
 
+  it('【关键】桌面端同理：参考图一张都没带上去就不发这次生成', () => {
+    // 上一条修的是手机端那个消费方，桌面端这条是它的兄弟，当时没一起改——
+    // 「修了一个消费方、漏了兄弟」这个形状本轮已经重复出现好几次了（Codex PR #1476 P1）。
+    //
+    // 桌面端的形态不一样：上传失败分支把 sha 清成 undefined 继续往下走，
+    // 于是 imageRefsForBackend 被过滤成空数组，`imageRefs: undefined` 交出去，
+    // 后端照常跑一次纯文字生成。所以判据盯的是「建 run 之前有没有这道闸」。
+    const runAt = TAB.indexOf('const runRes = await createWorkspaceImageGenRun(');
+    expect(runAt, '桌面端应有建 run 的调用').toBeGreaterThan(0);
+    const refsAt = TAB.indexOf('const imageRefsForBackend = unifiedImageRefs');
+    expect(refsAt, '应有 imageRefs 构建').toBeGreaterThan(0);
+    const between = TAB.slice(refsAt, runAt);
+    // 闸必须在「构建完 refs」和「建 run」之间，且是提前 return，不是只提示一句。
+    expect(between, '参考图掉光了就不许建 run')
+      .toMatch(/unifiedImageRefs\.length > 0 && imageRefsForBackend\.length === 0/);
+    expect(between, '必须提前 return，不能只弹一句然后照跑').toMatch(/return;/);
+  });
+
   it('【关键】手机端把内联图先落盘再生成，不静默丢图跑纯文字', () => {
     expect(MOBILE).toMatch(/inlineImage: parsed\.inlineImage/);
     // 落盘要真的发生，并且结果要用作这次生成的参考图。

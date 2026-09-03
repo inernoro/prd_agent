@@ -4956,6 +4956,26 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           label: `第${idx + 1}张图`,
         }));
 
+      // 用户给了参考图，但一张都没能带到后端 —— 停在这里，不要发这次生成。
+      //
+      // 上面那个失败分支把 initImageAssetSha256 清成 undefined 再往下走，于是
+      // imageRefsForBackend 被过滤成空数组，`imageRefs: undefined` 交出去，
+      // 后端照常跑一次**纯文字**生成：用户要的是「按这张图改」，拿到的是照着
+      // 文字重画的另一张图，而且是花了钱的（Codex PR #1476 P1）。
+      //
+      // 手机端那条上一轮已经改成失败即停，桌面端这条是它的兄弟，当时没一起改——
+      // 「修了一个消费方、漏了兄弟」这个形状本轮已经重复出现过好几次。
+      //
+      // 判据用「有没有参考图掉光了」而不是「是不是从首页交接过来的」：
+      // 后者要知道来路，前者直接说的就是要防的那件事，编辑器内选图重绘同样成立。
+      if (unifiedImageRefs.length > 0 && imageRefsForBackend.length === 0) {
+        const msg = '参考图没能带上来，这次没有生成';
+        setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+        pushMsg('Assistant', `${msg}。提示词留着了，重试一次；或者去掉参考图，改成纯文字生成——那是另一件事，得你自己定。`);
+        triggerDefectFlash();
+        return;
+      }
+
       const runRes = await createWorkspaceImageGenRun({
         id: workspaceId,
         input: {

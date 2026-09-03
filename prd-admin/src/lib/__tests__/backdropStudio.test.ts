@@ -326,6 +326,46 @@ describe('生成流程：失败给得出下一步，不是一句「操作失败�
   });
 });
 
+describe('【关键】开跑之前那几次请求也归死线管', () => {
+  // TIMEOUT_MS 和 signal 原来只在轮询循环里生效，而查目录、建任务发生在进入循环之前。
+  // 它们走 apiRequest，没有默认超时；挂住就永远不返回，界面卡在「生成中」，
+  // 取消按不动也重试不了（Codex PR #1476 P2）。
+  const 永不返回 = () => new Promise<never>(() => {});
+
+  it('查目录挂住时，取消按得动', async () => {
+    asMock(getVisualAgentText2ImgModels).mockReturnValue(永不返回());
+    const ac = new AbortController();
+    const p = generateBackdrop({ mood: 'x', pollIntervalMs: 1, signal: ac.signal });
+    ac.abort();
+    await expect(p).rejects.toThrow('已取消');
+    expect(createImageGenRun, '取消了就不该再去建任务').not.toHaveBeenCalled();
+  });
+
+  it('建任务挂住时，取消同样按得动', async () => {
+    asMock(getVisualAgentText2ImgModels).mockResolvedValue(ok([{ isDefaultForType: true, models: [{ platformId: 'p', modelId: 'm' }] }]));
+    asMock(createImageGenRun).mockReturnValue(永不返回());
+    const ac = new AbortController();
+    const p = generateBackdrop({ mood: 'x', pollIntervalMs: 1, signal: ac.signal });
+    await Promise.resolve();
+    await Promise.resolve();
+    ac.abort();
+    await expect(p).rejects.toThrow('已取消');
+  });
+
+  it('谁也不取消时，到点了自己放手（不是永远转下去）', async () => {
+    vi.useFakeTimers();
+    try {
+      asMock(getVisualAgentText2ImgModels).mockReturnValue(永不返回());
+      const p = generateBackdrop({ mood: 'x', pollIntervalMs: 1 });
+      const assertion = expect(p).rejects.toThrow(/等太久了/);
+      await vi.advanceTimersByTimeAsync(300_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('【关键】背景在暗岛里不许被浅色主题藏掉', () => {
   // 用户截图：浅色主题下打开视觉创作首页，背景整个不见了，只剩一块纯底色。
   // 根因是一条按文档主题写的规则 `[data-theme="light"] .backdrop-photo-layer{display:none}`——
