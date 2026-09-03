@@ -23,6 +23,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class WebPagesController : ControllerBase
 {
     private readonly IHostedSiteService _siteService;
+    private readonly IHostedSiteOptimizationService _optimizationService;
     private readonly IUploadProgressService _uploadProgress;
 
     // 500MB —— 视频 / PDF 等媒体文件比 HTML 大几个量级
@@ -45,16 +46,172 @@ public class WebPagesController : ControllerBase
 
     public WebPagesController(
         IHostedSiteService siteService,
+        IHostedSiteOptimizationService optimizationService,
         IUploadProgressService uploadProgress,
         PrdAgent.Infrastructure.Database.MongoDbContext db,
         ITeamService teams,
         IHttpClientFactory httpClientFactory)
     {
         _siteService = siteService;
+        _optimizationService = optimizationService;
         _uploadProgress = uploadProgress;
         _db = db;
         _teams = teams;
         _httpClientFactory = httpClientFactory;
+    }
+
+    /// <summary>
+    /// 上传 ZIP 并先做确定性检查。只有命中可安全剪枝的冗余内容时才返回优化建议；
+    /// 否则直接按原文件保存，避免让每次上传都多一次确认。
+    /// </summary>
+    [HttpPost("upload-reviewed")]
+    [RequestSizeLimit(MaxSingleFileSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
+    public async Task<IActionResult> UploadReviewed(
+        IFormFile file,
+        [FromForm] string? title,
+        [FromForm] string? description,
+        [FromForm] string? folder,
+        [FromForm] string? tags,
+        [FromForm] string? uploadId,
+        [FromForm] string? targetSiteId)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传 ZIP 文件"));
+        if (file.Length > MaxSingleFileSize)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxSingleFileSize / 1024 / 1024}MB"));
+        if (!string.Equals(Path.GetExtension(file.FileName), ".zip", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "智能优化目前只支持 ZIP 文件"));
+
+        using var ms = new MemoryStream();
+        await file.CopyToAsync(ms);
+        var fileBytes = ms.ToArray();
+        var tagList = string.IsNullOrWhiteSpace(tags)
+            ? new List<string>()
+            : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        var userId = GetUserId();
+
+        try
+        {
+            var analysis = _optimizationService.Analyze(fileBytes);
+            if (analysis.Blocked)
+                return BadRequest(ApiResponse<object>.Fail(
+                    ErrorCodes.INVALID_FORMAT,
+                    analysis.Error ?? "ZIP 文件无法通过安全检查，请重新导出后再试"));
+
+            if (analysis.Recommended)
+            {
+                var session = await _optimizationService.CreateSessionAsync(
+                    userId,
+                    fileBytes,
+                    file.FileName,
+                    targetSiteId,
+                    title,
+                    description,
+                    folder,
+                    tagList,
+                    analysis,
+                    HttpContext.RequestAborted);
+                return Ok(ApiResponse<object>.Ok(new HostedSiteOptimizationReviewResult
+                {
+                    Outcome = "optimization-recommended",
+                    SessionId = session.Id,
+                    ExpiresAt = session.ExpiresAt,
+                    Analysis = session.Analysis,
+                }));
+            }
+
+            HostedSite saved;
+            if (string.IsNullOrWhiteSpace(targetSiteId))
+            {
+                saved = await _siteService.CreateFromZipAsync(
+                    userId, fileBytes, title, description, folder, tagList, uploadId: uploadId);
+            }
+            else
+            {
+                saved = await _siteService.ReuploadAsync(
+                    targetSiteId, userId, fileBytes, file.FileName, uploadId: uploadId);
+                var metadata = await _siteService.UpdateAsync(
+                    saved.Id, userId, title, description, tagList, folder, coverImageUrl: null);
+                if (metadata != null) saved = metadata;
+            }
+
+            return Ok(ApiResponse<object>.Ok(new HostedSiteOptimizationReviewResult
+            {
+                Outcome = "saved",
+                Site = saved,
+                Analysis = analysis,
+            }));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        finally
+        {
+            await _uploadProgress.CompleteAsync(uploadId);
+        }
+    }
+
+    /// <summary>生成私有临时优化版本，供用户确认效果。</summary>
+    [HttpPost("optimization/{sessionId}/preview")]
+    public async Task<IActionResult> PrepareOptimizationPreview(string sessionId)
+    {
+        try
+        {
+            var result = await _optimizationService.PreparePreviewAsync(
+                sessionId, GetUserId(), HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(result));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "优化任务不存在或已经过期"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>用户确认后才保存原文件或已预览的优化版本。</summary>
+    [HttpPost("optimization/{sessionId}/confirm")]
+    public async Task<IActionResult> ConfirmOptimization(
+        string sessionId,
+        [FromBody] ConfirmHostedSiteOptimizationRequest request)
+    {
+        try
+        {
+            var site = await _optimizationService.ConfirmAsync(
+                sessionId, GetUserId(), request.Variant, HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(site));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "优化任务不存在或已经过期"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>放弃优化任务并清理私有临时文件。</summary>
+    [HttpDelete("optimization/{sessionId}")]
+    public async Task<IActionResult> CancelOptimization(string sessionId)
+    {
+        try
+        {
+            await _optimizationService.CancelAsync(sessionId, GetUserId(), HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(new { cancelled = true }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
     }
 
     private string GetUserId() => this.GetRequiredUserId();

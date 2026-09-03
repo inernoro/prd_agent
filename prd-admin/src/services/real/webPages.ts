@@ -68,6 +68,43 @@ export interface HostedSite {
   updatedAt: string;
 }
 
+export interface HostedSiteOptimizationAnalysis {
+  blocked: boolean;
+  error?: string;
+  recommended: boolean;
+  originalEntries: number;
+  originalFiles: number;
+  originalArchiveBytes: number;
+  originalUncompressedBytes: number;
+  optimizedFiles: number;
+  optimizedUncompressedBytes: number;
+  removedFiles: number;
+  savedUncompressedBytes: number;
+  nodeModulesFiles: number;
+  developmentFiles: number;
+  localizedDependencies: number;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface HostedSiteOptimizationReviewResult {
+  outcome: 'saved' | 'optimization-recommended';
+  site?: HostedSite;
+  sessionId?: string;
+  expiresAt?: string;
+  analysis?: HostedSiteOptimizationAnalysis;
+}
+
+export interface HostedSiteOptimizationPreviewResult {
+  sessionId: string;
+  previewUrl: string;
+  entryFile: string;
+  fileCount: number;
+  totalSize: number;
+  expiresAt: string;
+  analysis: HostedSiteOptimizationAnalysis;
+}
+
 export interface ShareLinkItem {
   id: string;
   token: string;
@@ -283,6 +320,84 @@ export async function uploadSite(input: {
     input.onStart?.(xhr);
     xhr.send(fd);
   });
+}
+
+/**
+ * ZIP 专用的审查式上传。干净的包会直接保存；命中确定性冗余时只创建临时会话，
+ * 由调用方展示建议并让用户预览后再确认。
+ */
+export async function reviewSiteZip(input: {
+  file: File;
+  title?: string;
+  description?: string;
+  folder?: string;
+  tags?: string;
+  targetSiteId?: string;
+  uploadId?: string;
+  onProgress?: (loaded: number, total: number) => void;
+  onStart?: (xhr: XMLHttpRequest) => void;
+}): Promise<ApiResponse<HostedSiteOptimizationReviewResult>> {
+  const token = useAuthStore.getState().token;
+  const fd = new FormData();
+  fd.append('file', input.file);
+  if (input.title) fd.append('title', input.title);
+  if (input.description) fd.append('description', input.description);
+  if (input.folder) fd.append('folder', input.folder);
+  if (input.tags) fd.append('tags', input.tags);
+  if (input.targetSiteId) fd.append('targetSiteId', input.targetSiteId);
+  if (input.uploadId) fd.append('uploadId', input.uploadId);
+
+  const url = joinUrl(getApiBaseUrl(), api.webPages.reviewedUpload());
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Accept', 'application/json');
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    if (input.onProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) input.onProgress!(event.loaded, event.total);
+      };
+    }
+    xhr.onload = () => {
+      try {
+        resolve(JSON.parse(xhr.responseText) as ApiResponse<HostedSiteOptimizationReviewResult>);
+      } catch {
+        resolve({ success: false, data: null as never, error: { code: 'INVALID_FORMAT', message: `响应解析失败（HTTP ${xhr.status}）` } });
+      }
+    };
+    xhr.onerror = () => resolve({
+      success: false,
+      data: null as never,
+      error: { code: 'NETWORK_ERROR', message: '网络异常，上传未完成' },
+    });
+    xhr.onabort = () => resolve({
+      success: false,
+      data: null as never,
+      error: { code: 'ABORTED', message: '已中止上传' },
+    });
+    input.onStart?.(xhr);
+    xhr.send(fd);
+  });
+}
+
+export async function prepareSiteOptimizationPreview(
+  sessionId: string,
+): Promise<ApiResponse<HostedSiteOptimizationPreviewResult>> {
+  return apiRequest(api.webPages.optimizationPreview(encodeURIComponent(sessionId)), { method: 'POST' });
+}
+
+export async function confirmSiteOptimization(
+  sessionId: string,
+  variant: 'original' | 'optimized',
+): Promise<ApiResponse<HostedSite>> {
+  return apiRequest(api.webPages.optimizationConfirm(encodeURIComponent(sessionId)), {
+    method: 'POST',
+    body: { variant },
+  });
+}
+
+export async function cancelSiteOptimization(sessionId: string): Promise<ApiResponse<{ cancelled: boolean }>> {
+  return apiRequest(api.webPages.optimizationCancel(encodeURIComponent(sessionId)), { method: 'DELETE' });
 }
 
 /**

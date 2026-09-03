@@ -295,6 +295,8 @@ public class MongoDbContext
 
     // Web Hosting 网页托管与分享
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
+    public IMongoCollection<HostedSiteOptimizationSession> HostedSiteOptimizationSessions =>
+        _database.GetCollection<HostedSiteOptimizationSession>("hosted_site_optimization_sessions");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
     public IMongoCollection<WebPageGroup> WebPageGroups => _database.GetCollection<WebPageGroup>("web_page_groups");
@@ -1683,6 +1685,19 @@ public class MongoDbContext
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Folder),
             new CreateIndexOptions { Name = "idx_hosted_sites_owner_folder" }));
+        HostedSiteOptimizationSessions.Indexes.CreateOne(new CreateIndexModel<HostedSiteOptimizationSession>(
+            Builders<HostedSiteOptimizationSession>.IndexKeys
+                .Ascending(x => x.OwnerUserId)
+                .Ascending(x => x.ExpiresAt),
+            new CreateIndexOptions { Name = "idx_hosted_site_optimization_owner_expiry" }));
+        // 业务清理器会在 ExpiresAt 到期后先删对象存储，再删记录；TTL 多留一天只做宕机兜底，
+        // 避免数据库先删记录导致临时对象失去清理线索。
+        EnsureTtlIndex(
+            HostedSiteOptimizationSessions,
+            "hosted_site_optimization_sessions",
+            nameof(HostedSiteOptimizationSession.ExpiresAt),
+            TimeSpan.FromDays(1),
+            "ttl_hosted_site_optimization_expiry");
 
         // WebPageShareLinks：按 Token 唯一
         try

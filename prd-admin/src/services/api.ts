@@ -1189,6 +1189,10 @@ export const api = {
   // ============ Web Hosting 网页托管 ============
   webPages: {
     upload: () => '/api/web-pages/upload',
+    reviewedUpload: () => '/api/web-pages/upload-reviewed',
+    optimizationPreview: (sessionId: string) => `/api/web-pages/optimization/${sessionId}/preview`,
+    optimizationConfirm: (sessionId: string) => `/api/web-pages/optimization/${sessionId}/confirm`,
+    optimizationCancel: (sessionId: string) => `/api/web-pages/optimization/${sessionId}`,
     uploadProgress: (uploadId: string) => `/api/web-pages/upload-progress/${uploadId}`,
     fromContent: () => '/api/web-pages/from-content',
     list: () => '/api/web-pages',
