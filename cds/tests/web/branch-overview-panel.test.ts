@@ -237,10 +237,27 @@ describe('两个数据源就有两个错误面（Codex P2，核对属实）', ()
     expect(bar, '条按旧桶画、数字按实时写 = 同屏自相矛盾').not.toContain('values.at(-1)');
   });
 
+  /*
+   * 这条原本要求 `catch` 之后 300 字符内出现 `setSeriesError`——一个按**字符距离**
+   * 写的判据。catch 里多加两行守卫（会话号、水位）就把它挤出窗口，行为一个字没变
+   * 却误红。改成钉「catch 块里到底做没做那件事」：按花括号配对切出块，再看内容。
+   */
   it('历史端点失败不再被静默吞掉', () => {
     const code = stripComments(DRAWER);
-    const load = code.slice(code.indexOf('const loadSeries'), code.indexOf('const loadSeries') + 1600);
-    expect(load, 'catch 全吞会让骨架屏永远承诺一条不会出现的曲线').toMatch(/catch\s*\([\s\S]{0,40}\)\s*\{[\s\S]{0,300}setSeriesError/);
+    const at = code.indexOf('const loadSeries');
+    expect(at, '找不到 loadSeries，选择器过时了').toBeGreaterThan(0);
+    const catchAt = code.indexOf('catch', at);
+    expect(catchAt, 'loadSeries 里没有 catch —— 失败会变成未捕获拒绝').toBeGreaterThan(at);
+    // 从 catch 的 `{` 起按配对切出整个块，不依赖长度
+    let i = code.indexOf('{', catchAt);
+    let depth = 0;
+    let end = i;
+    for (; end < code.length; end += 1) {
+      if (code[end] === '{') depth += 1;
+      else if (code[end] === '}') { depth -= 1; if (depth === 0) break; }
+    }
+    const block = code.slice(i, end + 1);
+    expect(block, 'catch 全吞会让骨架屏永远承诺一条不会出现的曲线').toContain('setSeriesError');
     expect(PANEL_CODE).toContain('seriesError');
   });
 
@@ -879,6 +896,237 @@ describe('取指标失败给的是人话，不是诊断串', () => {
     }));
     expect(leaks(html.slice(html.indexOf('读取指标历史失败'), html.indexOf('读取指标历史失败') + 400)),
       '渲染出来的那段里仍有诊断信息').toEqual([]);
+  });
+});
+
+/**
+ * 部署在途不等于「分支未运行」（2026-09-02，Codex P2，核对属实）。
+ *
+ * 分支状态是七档枚举（idle / building / starting / running / restarting /
+ * stopping / error），抽屉却把它折叠成一个布尔 `running` 传下来。折叠之后
+ * 「正在部署」和「已停机」变成同一个 false —— 部署途中打开总览，判断句说
+ * 「分支未运行」、就绪计数被清成 0/N、当前值全被抹掉，而它明明正在起。
+ *
+ * 这是入口归一那一版**放大出来的**：归一之前各服务还留着自己的 status，环上
+ * 至少是真的；归一之后被一刀切成 stopped。修法是把原始状态传下来，不再只给布尔。
+ */
+/**
+ * 轮询的并发取舍已抽成 `lib/latest-wins.ts`，**行为**由
+ * `tests/web/latest-wins.test.ts` 用受控延迟响应真正跑一遍（Codex P2，核对属实）。
+ *
+ * 这里只留一条接线守卫：抽出去的东西必须真的被用上，否则就是「建了一半」
+ * （形状 2）——闸门写得再对，抽屉不调它也白搭。
+ */
+describe('历史轮询走 latest-wins 闸门（接线）', () => {
+  it('抽屉真的在用这个闸门，不是各写一套', () => {
+    const code = stripComments(DRAWER);
+    expect(code, '没接上就等于没修').toContain("from '@/lib/latest-wins'");
+    expect(code, '换分支要开新会话').toMatch(/seriesGateRef\.current\.newSession\(\)/);
+    const at = code.indexOf('const loadSeries');
+    expect(at).toBeGreaterThan(0);
+    const body = code.slice(at, at + 2600);
+    expect(body, 'loadSeries 要领票').toMatch(/seriesGateRef\.current\.begin\(\)/);
+    const accepts = body.match(/seriesGateRef\.current\.accept\(ticket\)/g) ?? [];
+    expect(accepts.length, '成功与失败两条路都要过闸门').toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('部署在途不谎报「分支未运行」', () => {
+  const render = (lifecycle?: string): string => renderToStaticMarkup(createElement(OverviewPanel, {
+    services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+    running: lifecycle === 'running',
+    lifecycle,
+    branchName: 'demo',
+    entries: [],
+    deployments: [],
+    metricSeries: {
+      api: seedMetricSeries([
+        { cpuPercent: 12, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+        { cpuPercent: 12, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+      ]),
+    },
+    liveStats: { api: { cpuPercent: 12, memUsedBytes: 4096 } },
+    metricsReady: true,
+    replicaSummary: '1 个副本',
+    infraSummary: '无',
+    now: Date.now(),
+    windowMinutes: 30,
+    onRefreshMetrics: () => {},
+  }));
+
+  for (const st of ['building', 'starting', 'restarting']) {
+    it(`${st} 时不说「分支未运行」，也不把读数抹掉`, () => {
+      const html = render(st);
+      expect(html, `${st} 是部署在途，不是停机`).not.toContain('分支未运行');
+      expect(html, '就绪计数被清零了').not.toContain('0 / 1 个服务就绪');
+      expect(html, '当前值被抹掉了——容器可能正好好跑着').toContain('12.0%');
+      expect(html, '应当说清正在部署').toContain('正在部署');
+    });
+  }
+
+  it('真的停了（stopping / idle）仍按停机处理，归一化没被架空', () => {
+    for (const st of ['stopping', 'idle', 'error']) {
+      const html = render(st);
+      expect(html, `${st} 应当仍判为未运行`).toContain('分支未运行');
+      expect(html, `${st} 不该再报当前值`).not.toContain('12.0%');
+    }
+  });
+
+  /*
+   * 入口卡的标签也要分开说（Codex P2，核对属实）。
+   * `reachable` 原本吃的是 allServicesReady，而那里含 running，于是重新部署时同一屏
+   * 出现三句话：「当前服务仍在运行」「1 / 1 个服务就绪」「服务未就绪，暂不可达」。
+   * 服务就绪与否是一件事，部署在途是另一件事，压进一个布尔就会互相打脸。
+   * 按 Codex 的要求，这条用例带一个非空 entry。
+   */
+  it('在途且服务已就绪时，入口卡不说「服务未就绪」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: false,
+      lifecycle: 'restarting',
+      branchName: 'demo',
+      entries: [{ name: '主入口', url: 'https://example.test', primary: true }],
+      deployments: [],
+      metricSeries: {
+        api: seedMetricSeries([
+          { cpuPercent: 12, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+          { cpuPercent: 12, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+        ]),
+      },
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '服务明明就绪，入口卡却说未就绪').not.toContain('服务未就绪');
+    expect(html, '在途该说的是入口可能短暂不可达').toContain('正在部署，入口可能短暂不可达');
+  });
+
+  it('一个服务没起来时，入口卡仍如实说「服务未就绪」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [
+        { profileId: 'api', containerName: 'api-x', status: 'running' },
+        { profileId: 'web', containerName: 'web-x', status: 'idle' },
+      ],
+      running: false,
+      lifecycle: 'building',
+      branchName: 'demo',
+      entries: [{ name: '主入口', url: 'https://example.test', primary: true }],
+      deployments: [],
+      metricSeries: {},
+      metricsReady: true,
+      replicaSummary: '2 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '真没就绪时这句是真话，不能连真话一起改掉').toContain('服务未就绪');
+  });
+
+  it('running 时一切正常（防修成永远「正在部署」）', () => {
+    const html = render('running');
+    expect(html).toContain('一切正常');
+    expect(html).toContain('12.0%');
+  });
+
+  /*
+   * 骨架屏那条注解走同一个判据（Codex P2，核对属实）。
+   * 上一版只改了判断句，注解还留着 `!running`——首次部署（在途 + 历史不足两桶）
+   * 同屏一句「正在部署」、一句「分支未运行」，后者正是这次要消灭的那句假话。
+   */
+  it('首次部署（在途且历史不足两桶）时，骨架屏也不说「分支未运行」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: false,
+      lifecycle: 'building',
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {},            // 零帧 => 走骨架屏
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '骨架屏注解仍在说「分支未运行」，与同屏的「正在部署」打架')
+      .not.toContain('分支未运行');
+    expect(html, '在途应当说清是在等容器起来').toContain('正在部署');
+  });
+
+  /*
+   * 状态空间摊开测（Codex P2 ×2，核对属实）。前两轮我按单一维度加分支，于是
+   * 「在途 × 服务已就绪」这一格连着出了两个假话：判断句说「0 个服务还没起来」，
+   * 骨架屏说「容器起来后开始采样」——而那一刻服务就绪、读数也在。
+   */
+  it('在途但服务已全就绪时，判断句不说「0 个服务还没起来」', () => {
+    const html = render('building');   // services 里那一个是 running
+    expect(html, '缺口是 0 还说「0 个服务还没起来」，与下面「1 / 1 就绪」打架')
+      .not.toContain('0 个服务还没起来');
+    expect(html).toContain('正在部署');
+    expect(html, '应当如实说当前服务仍在跑').toContain('当前服务仍在运行');
+  });
+
+  it('在途但服务已就绪、且还没攒够历史时，骨架屏不说「容器起来后开始采样」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: false,
+      lifecycle: 'restarting',
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {},          // 零帧 => 骨架屏
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '容器就绪却说采样还没开始').not.toContain('容器起来后开始采样');
+    expect(html).not.toContain('分支未运行');
+  });
+
+  it('在途且一个容器都没起来时，才说「容器起来后开始采样」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'idle' }],
+      running: false,
+      lifecycle: 'building',
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {},
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '这一格才是那句话成立的时候').toContain('容器起来后开始采样');
+  });
+
+  it('真停且无历史时，骨架屏仍如实说「分支未运行」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: false,
+      lifecycle: 'idle',
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {},
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '停机时这句是真话，不该被一起改掉').toContain('分支未运行');
   });
 });
 

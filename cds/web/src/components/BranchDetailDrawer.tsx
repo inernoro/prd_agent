@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
+import { createLatestWinsGate } from '@/lib/latest-wins';
 import { resolveWebEntryPresentation, type PreviewMode, type WebEntryCollectionLike } from '@/lib/previewUrl';
 import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
@@ -26,6 +27,8 @@ import {
 import { Layers, Lock, Plus } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
+import { ReferencesPanel } from '@/components/branch/ReferencesPanel';
+import { RelationCard } from '@/components/branch/RelationCard';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import { pickActiveDeployment } from './branchDeploymentSelection';
@@ -398,7 +401,7 @@ const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = 
 ];
 
 /** 配置页签内三分区（方案 A：变量/检查器/设置读写同域合并） */
-type ConfigSection = 'variables' | 'inspector' | 'settings';
+type ConfigSection = 'variables' | 'references' | 'inspector' | 'settings';
 
 // Phase A (2026-05-04):分支生效环境变量
 type EnvSource = 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | 'branch';
@@ -1016,6 +1019,14 @@ export function BranchDetailDrawer({
    */
   const [seriesError, setSeriesError] = useState<string | null>(null);
   /**
+   * 历史轮询的并发取舍（Codex P2 ×3，核对属实）。
+   *
+   * 语义与理由都写在 `lib/latest-wins.ts`——抽出去是因为它必须被**真正测到**：
+   * 这套取舍此前散在下面的 loadSeries 里，守卫只能扫源码字符串，而扫字符串
+   * 证明不了行为（把记账挪到请求之前就会丢弃每个响应，那种守卫照样全绿）。
+   */
+  const seriesGateRef = useRef(createLatestWinsGate());
+  /**
    * 服务端这次实际用的桶宽（秒）。骨架屏用它算「还要等多久」。
    *
    * 分辨率是服务端按观测到的采集节奏自适应定的：抽屉开着时 5s 端点也在写，桶宽会
@@ -1284,6 +1295,8 @@ export function BranchDetailDrawer({
     setMetricSeries({});
     setLiveStats({});
     setSeriesError(null);
+    // 换分支开新会话：在飞的旧请求作废，水位清零，序号仍全局单调。
+    seriesGateRef.current.newSession();
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
     void load();
@@ -1476,6 +1489,7 @@ export function BranchDetailDrawer({
   const loadSeries = useCallback(async () => {
     if (!branchId) return;
     const requestForBranch = branchId;
+    const ticket = seriesGateRef.current.begin();
     try {
       const data = await apiRequest<{
         groupSeconds?: number;
@@ -1484,6 +1498,8 @@ export function BranchDetailDrawer({
         services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null }> }>;
       }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
       if (branchIdRef.current !== requestForBranch) return;
+      // 换过会话、或比已贴上去的更旧 → 丢弃；慢但仍是最新的照常采用。
+      if (!seriesGateRef.current.accept(ticket)) return;
       setSeriesMeta(
         typeof data?.groupSeconds === 'number' && typeof data?.after === 'number' && typeof data?.before === 'number'
           ? { groupSeconds: data.groupSeconds, after: data.after, before: data.before }
@@ -1505,6 +1521,8 @@ export function BranchDetailDrawer({
       setSeriesError(null);
     } catch (err) {
       if (branchIdRef.current !== requestForBranch) return;
+      // 同上：旧请求的失败不该抹掉新请求刚拿回来的曲线。
+      if (!seriesGateRef.current.accept(ticket)) return;
       // 老版本 CDS 没有这个端点也走这里——照样要说出来，否则骨架屏会一直
       // 承诺一条永远不会出现的曲线。面板拿到它就改画「只有实时数字」那一档。
       setSeriesError(describeMetricsFailure(err, '指标历史'));
@@ -2280,6 +2298,9 @@ export function BranchDetailDrawer({
                   只在「总览」（现在怎么样）保留；「运行」页签由画布入口节点承载同一组入口 */}
               {/* 入口卡已并入总览面板（OverviewPanel）——原先它常驻在页签之上，
                   和总览里的「入口 N 个」计数各说各话；现在只有一处。 */}
+
+              {/* 关系缩略卡（plan.cds.service-relations 第四批）：先写结论再画缩略图，半屏 / 全屏看细节 */}
+              {activeTab === 'overview' && branchId ? <RelationCard branchId={branchId} /> : null}
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
                 {(() => {
                   const origin = branchOriginInsight(branch);
@@ -2732,6 +2753,9 @@ export function BranchDetailDrawer({
                      * 整个分支已经停了。有实时值就用实时值，没有才退回快照。
                      */
                     running={branchStatus ? branchStatus === 'running' : branch.status === 'running'}
+                    // 原始七档状态一并传下去：折叠成布尔值会让「正在部署」和「已停机」
+                    // 变成同一件事，部署途中总览会谎报「分支未运行」（Codex P2）。
+                    lifecycle={branchStatus || branch.status}
                     branchName={branch.branch}
                     commitSha={branch.commitSha}
                     commitMessage={branch.subject}
@@ -2770,6 +2794,7 @@ export function BranchDetailDrawer({
                   <div className="mb-4 inline-flex rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
                     {([
                       ['variables', '生效变量', '当前分支实际生效的环境变量（读，含来源标签）'],
+                      ['references', '引用', '指向别的服务、分支或项目的地址；跨项目引用在这里切换分支'],
                       ['inspector', '配置检查器', '逐 key 溯源 + 部署计划'],
                       ['settings', '分支设置', '分支行为设置（写）'],
                     ] as Array<[ConfigSection, string, string]>).map(([key, label, hint]) => (
@@ -2848,6 +2873,10 @@ export function BranchDetailDrawer({
                     onEnvChanged={() => void loadEnv()}
                     onToast={(message) => onToast?.(message)}
                   />
+                ) : null}
+
+                {activeTab === 'config' && configSection === 'references' && branchId ? (
+                  <ReferencesPanel branchId={branchId} onToast={onToast} />
                 ) : null}
 
                 {activeTab === 'config' && configSection === 'inspector' && branchId ? (

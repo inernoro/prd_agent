@@ -58,6 +58,11 @@ import {
 } from '../services/comment-template.js';
 import { broadcastSelfStatus } from './branches.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
+import { isMachineCaller } from '../services/machine-caller.js';
+// 授权判据与 projects 路由共用同一处：这个路由改的是**项目**（绑/解绑仓库），
+// 判「这把钥匙能不能碰这个项目」的逻辑抄第二份，就是这个 PR 反复栽的那个跟头。
+import { assertProjectAccess } from './projects.js';
+import { resolveProjectScope } from '../services/project-scope.js';
 
 export interface GitHubWebhookRouterDeps {
   stateService: StateService;
@@ -456,6 +461,22 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       return;
     }
 
+    /*
+     * 逐项目分发时某个项目抛了错：dispatcher 已把它兜成一条结果、其余项目照常跑完
+     * （见 runPerProject）。但**失败必须仍然看得见**——这条响应契约的本意是「不回
+     * 500 让 GitHub 重投，同时把失败摆出来」，只保住前一半就是把契约削弱了。
+     *
+     * 只记下失败，**不能就此返回**（2026-09-02 Codex P1，同一处第二次栽）：没炸的
+     * 那些项目已经把 deployRequest / 停容器 / 删分支的请求算出来了，早退等于把它们
+     * 的载荷丢在这儿——分支建好了却没人部署、容器该停没人停，而响应里还把它们计进
+     * `handled`。第一次是路由只消费主结果，这次是错误分支绕过了那几个循环，形状同
+     * 一个（predicate-and-wiring-discipline 形状 2：链路只建一半）。
+     * 所以照常跑完全部派发，最后再用失败的形状回包。
+     */
+    const failedResults = [result, ...(result.fanout || [])]
+      .filter((r) => r.action === 'project-dispatch-failed');
+    const dispatchFailureReason = failedResults.map((r) => r.message).join('；');
+
     // dispatcher 返回 → 决定 outcome.dispatchAction
     outcome.branchId = result.branchId || result.deployRequest?.branchId;
     if (result.deployRequest) {
@@ -470,6 +491,13 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     } else {
       outcome.dispatchAction = 'skipped';
       outcome.dispatchReason = result.message || result.action || '无 deploy / 无 stop';
+    }
+
+    // 有项目炸了就把投递记录写成 error —— 放在判定链之后，否则会被上面的分支覆盖掉。
+    if (failedResults.length > 0) {
+      outcome.dispatchAction = 'error';
+      outcome.dispatchReason = 'dispatcher 抛错';
+      outcome.error = dispatchFailureReason;
     }
 
     // Kick off the deploy asynchronously. The webhook response is sent
@@ -578,8 +606,17 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         );
       });
     }
-    if (result.stopRequest) {
-      const stopReq = result.stopRequest;
+    /*
+     * 清理类副作用必须对**每一条**结果都跑一遍（2026-09-02 Codex P1）。
+     *
+     * 部署那条早就按 fanout 逐条派发了，停容器 / 墓碑 / 删分支这三条却只读主结果。
+     * 一仓多项目之后这就是：第二个项目的容器没人停、分支条目没人删，而且没有任何
+     * 报错——dispatcher 把请求算出来了，路由把它丢了。分发器单测只断言载荷，
+     * 断不到这一层，所以配套的用例钉在路由上。
+     */
+    const runStopDispatch = (r: WebhookDispatchResult): void => {
+      if (!r.stopRequest) return;
+      const stopReq = r.stopRequest;
       const stopBranch = stateService.getBranch(stopReq.branchId);
       serverEventLogStore?.record({
         category: 'container',
@@ -592,8 +629,8 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         details: {
           webhookEvent: eventName,
           deliveryId,
-          dispatchAction: result.action,
-          dispatchReason: result.message,
+          dispatchAction: r.action,
+          dispatchReason: r.message,
         },
       });
       void defaultLocalhostStop(config, stateService, stopReq.branchId).catch((err) => {
@@ -614,13 +651,14 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           (err as Error).message,
         );
       });
-    }
+    };
 
     // PR closed → 写一条分支墓碑（previewSlug 为键），让过期分支预览页能区分
     // "已合并到主分支"（引导切主分支）与"已放弃"（跳 PR/commit）。先于 stop/delete
     // 落库即可：墓碑独立于 branch entry，分支随后被删也不受影响。
-    if (result.tombstoneRequest) {
-      const tr = result.tombstoneRequest;
+    const runTombstone = (r: WebhookDispatchResult): void => {
+      if (!r.tombstoneRequest) return;
+      const tr = r.tombstoneRequest;
       try {
         const tombProject = stateService.getProject(tr.projectId);
         const previewSlug = buildPreviewUrlForProject(null, tr.branch, tombProject, tr.projectId).previewSlug;
@@ -648,15 +686,16 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           (err as Error).message,
         );
       }
-    }
+    };
 
     // 2026-05-07 用户反馈"分支已删除但 CDS 端没清理":handleDelete 现在
     // 同时返 stopRequest + branchDeleteRequest。stopRequest 已在上面 fire-and-
     // forget 跑;这里再 schedule 一次 DELETE /api/branches/:id 彻底清 entry +
     // worktree。延迟 3s 给 stop 一点时间先把容器干净停掉,再删 entry,避免
     // 野容器残留(虽然 DELETE 路由内部也会 stop,但顺序排好更可控)。
-    if (result.branchDeleteRequest) {
-      const delReq = result.branchDeleteRequest;
+    const runBranchDelete = (r: WebhookDispatchResult): void => {
+      if (!r.branchDeleteRequest) return;
+      const delReq = r.branchDeleteRequest;
       const deleteBranch = stateService.getBranch(delReq.branchId);
       serverEventLogStore?.record({
         category: 'container',
@@ -670,8 +709,8 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           webhookEvent: eventName,
           deliveryId,
           delayMs: 3000,
-          dispatchAction: result.action,
-          dispatchReason: result.message,
+          dispatchAction: r.action,
+          dispatchReason: r.message,
         },
       });
       setTimeout(() => {
@@ -694,6 +733,13 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           );
         });
       }, 3_000);
+    };
+
+    // 主结果与 fanout 同等对待——少了这一步，第二个项目就是「收得到事件、没人替它清理」。
+    for (const r of [result, ...(result.fanout || [])]) {
+      runStopDispatch(r);
+      runTombstone(r);
+      runBranchDelete(r);
     }
 
     // Slash commands — run the command + post a reply comment on the PR.
@@ -752,6 +798,23 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           );
         });
       }
+    }
+
+    // 派发全部跑完了，这时候才轮到「这次投递整体算成功还是失败」。
+    if (failedResults.length > 0) {
+      res.status(200).json({
+        ok: false,
+        event: eventName,
+        delivery: deliveryId,
+        error: 'dispatch_error',
+        message: dispatchFailureReason,
+        // 没炸的那些项目已经处理完了，别让调用方以为整条投递都没生效
+        handled: [result, ...(result.fanout || [])].length - failedResults.length,
+        deployDispatched: Boolean(outcome.deployDispatched),
+        fanoutDeployDispatched: fanoutDeployDispatched || undefined,
+        fanoutDeployFailed: fanoutDeployFailed || undefined,
+      });
+      return;
     }
 
     res.json({
@@ -874,10 +937,24 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       res.status(404).json({ error: 'project_not_found' });
       return;
     }
+    /*
+     * 这条路由改的是**目标项目**，所以必须先问「这把钥匙能不能碰它」
+     * （2026-09-02 Codex P1）。这个 router 是单独挂载的，鉴权中间件只认出了
+     * 调用方是谁，没有做目标项目的授权——于是一把只授权了 A 项目的 `cdsp_` key
+     * 可以 POST 到 B 项目把 B 的仓库改掉。本 PR 新加的 `allowShared` 让它连
+     * 「已被别人绑走」这道拦截也一并绕过，等于把原有的洞开大了。
+     */
+    const denied = assertProjectAccess(req as never, project.id);
+    if (denied) {
+      res.status(denied.status).json(denied.body);
+      return;
+    }
     const body = (req.body || {}) as Partial<{
       installationId: number;
       repoFullName: string;
       autoDeploy: boolean;
+      /** 显式确认「多个项目共用这个仓库」。不带则遇到已绑定一律拦住。 */
+      allowShared: boolean;
     }>;
     const installationId = typeof body.installationId === 'number' ? body.installationId : NaN;
     const repoFullName = typeof body.repoFullName === 'string' ? body.repoFullName.trim() : '';
@@ -914,11 +991,35 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       });
       return;
     }
-    const existing = stateService.findProjectByRepoFullName(repoFullName);
-    if (existing && existing.id !== project.id) {
+    // 一个仓库喂多个项目（2026-09-02）：默认仍然拦住，因为绝大多数「已被绑定」
+    // 都是填错了仓库地址，静默放行等于把误操作变成两个项目抢同一条 push。
+    // 但这条路必须走得通 —— 本仓库正是 llmgw / prdagent / cds 三块共处一个 repo。
+    // 所以要的是**显式说一声**：带上 allowShared 才放行，并把已在用的项目名回给
+    // 调用方，让界面能问「你是要加入，还是填错了」。
+    const alreadyLinked = stateService
+      .findProjectsByRepoFullName(repoFullName)
+      .filter((p) => p.id !== project.id);
+    const allowShared = body.allowShared === true;
+    if (alreadyLinked.length > 0 && !allowShared) {
+      // 机器凭据只知道「被占了、几个」，不给 id 与名字（2026-09-02 Codex P2）：
+      // 建项目那条路径上刚修过同一个泄露，这里是同一份判断的第二处——抄两份、
+      // 只改一处，是这个 PR 反复栽的那个跟头。
+      const machine = isMachineCaller(req);
       res.status(409).json({
         error: 'already_linked',
-        message: `${repoFullName} 已经绑定到项目 ${existing.name}`,
+        message: machine
+          ? `${repoFullName} 已经绑定到另外 ${alreadyLinked.length} 个项目`
+          : `${repoFullName} 已经绑定到项目 ${alreadyLinked.map((p) => p.name).join('、')}`,
+        siblings: machine ? [] : alreadyLinked.map((p) => ({
+          id: p.id,
+          name: p.name,
+          // 已经划了范围的兄弟不会每次推送都重建 —— 确认弹窗要按这个分档说话，
+          // 否则在用户拍板的那一刻夸大了后果（2026-09-02 Codex P2）。
+          scoped: resolveProjectScope(stateService.getBuildProfilesForProject(p.id)).length > 0,
+        })),
+        siblingCount: alreadyLinked.length,
+        nextStep: '确认要让多个项目共用这个仓库，就带上 allowShared 再试一次；'
+          + '推送会按各项目声明的构建范围分发，没声明范围的项目每次推送都会重建。',
       });
       return;
     }
@@ -1001,6 +1102,12 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     const project = stateService.getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    // 解绑同样是改目标项目 —— 两条一起判，别只堵一半（同上）
+    const denied = assertProjectAccess(req as never, project.id);
+    if (denied) {
+      res.status(denied.status).json(denied.body);
       return;
     }
     stateService.updateProject(project.id, {

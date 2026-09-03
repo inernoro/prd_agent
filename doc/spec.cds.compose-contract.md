@@ -85,11 +85,38 @@ CDS 在项目根目录按下面顺序探测,**第一个命中即用**:
 | `labels.cds.web-entry-name:` | string | 否 | 用户在 CDS 入口列表看到的名称；声明后才是用户可见页面 |
 | `labels.cds.web-entry-path:` | string | 否 | 用户落地页面，默认 `/`；禁止 readiness/liveness/health 路径 |
 | `labels.cds.web-entry-primary:` | bool string | 否 | 路由歧义时指定唯一主入口；通常 `cds.path-prefix: /` 自动识别 |
+| `labels.cds.role:` | `web` \| `api` \| `worker` | 否 | 显式服务角色。缺省由 CDS 按「用户入口 / 探活 / 前缀 / 服务名」推断并在运行画布标成推断；名字推不准的（如 `imp-database-bootstrap`）请显式声明 |
+| `labels.cds.calls:` | string | 否 | 显式声明「我调用哪些服务」（逗号分隔服务 id）。环境变量里推不出调用关系时用，画布按声明画边并标来源 |
 | `labels.cds.readiness-path:` | string | 否 | 就绪探测路径,默认 `/`,4xx 也算"HTTP 活" |
 | `labels.cds.readiness-timeout:` | int | 否 | 单位秒,默认 180 |
 | `labels.cds.readiness-interval:` | int | 否 | 单位秒,默认 2 |
 | `deploy.resources.limits:` | dict | 否 | 标准 cgroup 限制(`memory: "512M"`, `cpus: "1.5"`) |
 | `x-cds-resources:` | dict | 否 | CDS 优先扩展(`memoryMB: 512`, `cpus: 1.5`),与上面二选一,本字段优先 |
+
+运行画布的「入口 → 站点 → 壳 → 前缀成员」分层与 forwarder 发布规则同源：主域名上承载 `/` 的服务是壳（静态站），其余 `cds.path-prefix` 成员挂在壳下面按最长前缀分流，静态容器并不代理这些请求；每个 `cds.subdomain` 各成一站。同一 host 上同一前缀被多个服务声明会在画布上标「冲突」（forwarder 只能按 id 字典序二选一），请只保留一个声明方。
+
+### 2.2.0 拓扑体检（导入闸门）
+
+体检规则只在 CDS 后端写一份，导入审批、`POST /api/compose/lint`、`cdscli verify`（自动调该接口）、运行画布四处共用。错误级阻断审批（操作员可显式放行）。
+
+| 规则 | 级别 | 判据 | 修法 |
+|---|---|---|---|
+| `prefix-conflict` | 错误 | 同一 host 上同一前缀被多个服务声明 | 只保留一个声明方 |
+| `probe-in-prefix` | 错误 | `cds.path-prefix` 含探活段（health、actuator、metrics 等） | 删掉，探活只写 `cds.readiness-path` |
+| `subdomain-root-claim` | 警告 | 有 `cds.subdomain` 又在主域名声明 `/`，且不是主域名的壳 | 删掉根路径声明 |
+| `double-public-surface` | 警告 | 同一服务既有子域又有主域名前缀 | 二选一 |
+| `orphan-service` | 警告 | 无公网路由、无人调用、不调用任何服务或基础设施、无显式角色 | 声明 `cds.role` 或 `cds.calls` |
+| `role-by-name` | 建议 | 角色靠服务名或默认值推断 | 声明 `cds.role` |
+
+`cdscli verify` 未连接 CDS 时会注明体检跳过，报告不算完整；`cdscli topology` 打印同一份关系树与体检。
+
+### 2.2.0.1 跨项目引用变量
+
+环境变量值里写 `${CDS_REF:<项目 id 或 slug>/<服务 id>[@<分支>]}`，部署时由平台换成目标项目那条分支上该服务的公网入口（子域服务给子域地址，其余给主入口）。不带 `@` 绑目标项目默认分支；分支级可在配置页签「引用」分区切换指向的分支，写进该服务的分支覆盖，不动项目根。解析失败原样保留并由体检报 `reference-broken`（目标分支未运行为警告，找不到项目、分支或服务为错误）。必须走公网入口，各项目容器网络互相隔离。
+
+### 2.2.0.2 路由判定的可观测
+
+每个经 CDS 转发的响应带 `X-CDS-Resolver`（`forwarder` 或 `master-fallback`）与 `X-CDS-Profile`（落到哪个服务）。分支详情有路由判定查询接口（输入 host 与路径，返回转发器命中的路由、master 兜底会选的服务以及两者是否一致）。主域名前缀去重按服务 id 排序，探活前缀不发布，默认站没在跑时转发器把请求交给 master 出等待页而不是落到别的服务。
 
 用户入口与运行探针是两套独立合同：`cds.web-entry-*` 回答“人点击哪里、看到什么名字”，`cds.readiness-*` 回答“机器如何判断进程就绪”。不得从 readiness 路径反推入口。具有 `cds.path-prefix: /` 的已命名 Web 服务自动成为主入口；同一 profile 即使有 `cds.subdomain` 也不会重复列出。API-only 命名路由不声明 `cds.web-entry-name` 即可。
 

@@ -23,6 +23,7 @@ import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entr
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
+import { parseCdsRefs, resolveCdsRef, cdsRefResolverDepsFromState } from './services/cross-project-refs.js';
 import { describeListenDecision, resolveListenHost, type ListenHostDecision } from './services/listen-host.js';
 import {
   auditInfraExposure, detectInfraKind, renderExposureReport, resolveRuntimeFirewallGuard,
@@ -2471,6 +2472,12 @@ const containerService = new ContainerService(shell, config, {
     entry,
     branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
   ),
+  // 跨项目引用（plan.cds.service-relations 第三批）：`${CDS_REF:项目/服务[@分支]}` → 目标公网入口
+  resolveCdsRef: (_entry, raw) => {
+    const [ref] = parseCdsRefs(raw);
+    if (!ref) return null;
+    return resolveCdsRef(cdsRefResolverDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]), ref).url;
+  },
   // infra 端口的绑定地址必须与注入给应用的 CDS_HOST 同源（都来自
   // StateService 的网桥地址解析），否则连接串指向的地址上根本没有监听。
   getInfraPublishHosts: () => stateService.getInfraPublishHosts(),
@@ -5267,6 +5274,7 @@ function stateStorageLabel(): string {
 
 // ── Master server (dashboard + API on masterPort) ──
 const app = createServer({
+  getPublishedRoutes: () => forwarderRoutePublisher?.getPublishedRoutes() ?? [],
   stateService,
   worktreeService,
   containerService,

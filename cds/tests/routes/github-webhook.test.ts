@@ -617,6 +617,21 @@ describe('POST /api/projects/:id/github/link', () => {
         (req as { rawBody?: Buffer }).rawBody = buf;
       },
     }));
+    /*
+     * 生产上鉴权中间件会把「这把钥匙绑在哪个项目」盖到 req 上；这个测试只挂了
+     * 路由，所以用一个测试头模拟那一步。不模拟的话 assertProjectAccess 走的是
+     * 「bootstrap / cookie，无作用域」那一档，永远放行——用例就测不到越权。
+     */
+    app.use((req, _res, next) => {
+      const bound = req.headers['x-test-project-key'];
+      if (typeof bound === 'string' && bound) {
+        (req as { cdsProjectKey?: { projectId: string; keyId: string } }).cdsProjectKey = {
+          projectId: bound,
+          keyId: 'k-test',
+        };
+      }
+      next();
+    });
     const shell = new MockShell();
     const worktree = new MockWorktree(shell);
     app.use('/api', createGithubWebhookRouter({
@@ -679,6 +694,110 @@ describe('POST /api/projects/:id/github/link', () => {
     expect(project.githubRepoFullName).toBe('octocat/repo');
     expect(project.githubInstallationId).toBe(42);
     expect(project.githubAutoDeploy).toBe(true);
+  });
+
+  it('绑一个已被别的项目绑走的仓库：默认拦住，并回兄弟项目名', async () => {
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
+    );
+    expect(res.status).toBe(409);
+    // 带上「划没划范围」，确认弹窗才能按分档说话，不一律吓成「每次全部重建」
+    expect(res.body.siblings).toEqual([{ id: 'p2', name: 'Other', scoped: false }]);
+    expect(res.body.siblingCount).toBe(1);
+  });
+
+  it('已划范围的兄弟标 scoped，确认文案据此分档', async () => {
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    stateService.addBuildProfile({
+      id: 'p2-app', projectId: 'p2', name: 'app', dockerImage: 'node:22', workDir: '.',
+      containerPort: 3000, hostPortPreference: 0, buildCommand: 'echo build',
+      buildScope: ['other/**'],
+    } as never);
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
+    );
+    expect(res.body.siblings).toEqual([{ id: 'p2', name: 'Other', scoped: true }]);
+  });
+
+  it('机器凭据看不到兄弟项目的 id 与名字，只知道有几个', async () => {
+    // 建项目那条路径上刚修过同一个泄露；同一份判断的第二处不能漏（Codex 第四轮）。
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
+      { 'X-AI-Access-Key': 'cdsp_someprojectkey' },
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.siblings).toEqual([]);
+    expect(res.body.siblingCount).toBe(1);
+    expect(res.body.message).not.toContain('Other');
+  });
+
+  it('带 allowShared 才放行，两个项目共用同一个仓库', async () => {
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo', allowShared: true }),
+    );
+    expect(res.status).toBe(200);
+    expect(stateService.findProjectsByRepoFullName('octocat/repo').map((p) => p.id).sort())
+      .toEqual(['p1', 'p2']);
+  });
+
+  it('只授权了别的项目的 key 不能绑本项目的仓库 —— allowShared 也不行', async () => {
+    /*
+     * 这个 router 单独挂载，鉴权中间件只认出调用方是谁，没判目标项目。于是一把
+     * 只授权了 p2 的项目级 key 能 POST 到 p1 把 p1 的仓库改掉；本 PR 新加的
+     * allowShared 让它连「已被别人绑走」那道拦截也绕过（Codex 第九轮 P1）。
+     */
+    const res = await request(server = startServer(), 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo', allowShared: true }),
+      { 'X-Test-Project-Key': 'p2' },
+    );
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('project_mismatch');
+    // 关键是**没改成**，不只是回了 403
+    expect(stateService.getProject('p1')!.githubRepoFullName).toBeUndefined();
+  });
+
+  it('解绑同样要判目标项目 —— 别只堵一半', async () => {
+    stateService.updateProject('p1', {
+      githubRepoFullName: 'octocat/repo',
+      githubInstallationId: 42,
+    });
+    const res = await request(server = startServer(), 'DELETE', '/api/projects/p1/github/link', '',
+      { 'X-Test-Project-Key': 'p2' },
+    );
+    expect(res.status).toBe(403);
+    expect(stateService.getProject('p1')!.githubRepoFullName).toBe('octocat/repo');
+  });
+
+  it('授权的就是本项目时照常放行', async () => {
+    const res = await request(server = startServer(), 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
+      { 'X-Test-Project-Key': 'p1' },
+    );
+    expect(res.status).toBe(200);
+    expect(stateService.getProject('p1')!.githubRepoFullName).toBe('octocat/repo');
   });
 
   it('rejects linking a repo whose owner is not whitelisted', async () => {
