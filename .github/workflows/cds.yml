@@ -103,6 +103,13 @@ jobs:
       - name: Agent starter mobile reachability
         run: pnpm run smoke:agent-starter-mobile
 
+      # 整页窄屏布局冒烟。它 2026-09-03 之前从未被任何 workflow 调用过——判据不弱，
+      # 只是前置（真实 CDS 实例 + 项目数据 + Docker）在 CI 上凑不齐。离线模式把数据
+      # 依赖换成合成 fixture，判据本身原样跑：三档窄屏 × 六个页面，外加桌面四档的
+      # 任务调度主操作可见性。
+      - name: Mobile layout smoke (offline)
+        run: pnpm run smoke:mobile-layout:offline
+
   docker-build:
     name: Docker Build Check
     runs-on: ubuntu-latest

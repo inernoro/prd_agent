@@ -1,5 +1,24 @@
 #!/usr/bin/env node
+/*
+ * 窄屏布局冒烟，两种模式：
+ *
+ *   真实实例模式（默认，给 baseUrl 或 CDS_HOST）——打一个跑着的 CDS，数据是真的，
+ *     覆盖登录之后的页面。本地排障和部署后巡检用它。
+ *   离线模式（--offline）——自起 vite dev、把 /api/* 换成合成数据。不需要 Docker、
+ *     不需要 Mongo、不需要项目数据，所以它能进每个 PR 的 CI。
+ *
+ * 为什么要有离线模式：这个脚本写好之后很长一段时间没有被任何 workflow 调用过
+ * （2026-09-03 查证：搜它的名字在 .github/ 下零命中），因为它的前置在 CI 上凑不齐。
+ * 一条从不运行的守卫等于没有守卫，所以把数据依赖拆掉，让判据本身跑起来。
+ *
+ * 离线模式测得到什么、测不到什么，说清楚：布局判据（横向溢出 / 文字被压成竖排 /
+ * 可点目标被遮挡）量的是元素怎么排，合成数据一样成立；测不到的是「真实数据的
+ * 长度与数量把布局撑成什么样」——那仍然要靠真实实例模式或视觉验收。
+ */
 import { createRequire } from 'node:module';
+
+import { startViteDevServer } from './lib/vite-dev-server.mjs';
+import { resolveFixture, isEventStream, FIXTURE_PROJECT_ID } from './fixtures/mobile-layout-fixtures.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -18,7 +37,29 @@ function loadPlaywright() {
 
 const { chromium } = loadPlaywright();
 
-const baseUrl = (process.argv[2] || process.env.CDS_HOST || 'http://127.0.0.1:9900').replace(/\/+$/, '');
+const OFFLINE = process.argv.includes('--offline');
+const positional = process.argv.slice(2).find((a) => !a.startsWith('--'));
+let baseUrl = (positional || process.env.CDS_HOST || 'http://127.0.0.1:9900').replace(/\/+$/, '');
+
+/*
+ * 离线模式把 /api/* 全部接管。装在 context 上而不是 page 上：一个 context 里
+ * 后开的页面同样要被喂到，漏一个就是半条链路走真网络、然后在 CI 里超时。
+ */
+async function installFixtures(context) {
+  await context.route('**/api/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (isEventStream(pathname)) {
+      // EventSource 拿到非 text/event-stream 会立刻 abort 并刷一条控制台错误。
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': fixture\n\n' });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(resolveFixture(pathname)),
+    });
+  });
+}
 const viewports = [
   { label: '390', width: 390, height: 844 },
   { label: '600', width: 600, height: 844 },
@@ -33,6 +74,7 @@ function assertOk(condition, message, details = {}) {
 }
 
 async function getFirstProject(page) {
+  if (OFFLINE) return { id: FIXTURE_PROJECT_ID };
   const response = await page.request.get(`${baseUrl}/api/projects`);
   assertOk(response.ok(), 'GET /api/projects failed', { status: response.status() });
   const body = await response.json();
@@ -153,6 +195,7 @@ async function checkTaskScheduleAction(browser, viewport) {
     viewport: { width: viewport.width, height: viewport.height },
     ignoreHTTPSErrors: true,
   });
+  if (OFFLINE) await installFixtures(context);
   const page = await context.newPage();
   await page.goto(`${baseUrl}/task-schedule`, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForTimeout(1500);
@@ -274,6 +317,8 @@ async function checkTaskScheduleAction(browser, viewport) {
   assertOk(created.clicked, `${label}: 页面上找不到「新建」按钮`);
   assertOk(created.formVisible, `${label}: 点了「新建」表单没出现——按钮是死的`, created);
   assertOk(created.saveVisible, `${label}: 新建表单的「保存」不在视野里`, created);
+  // 通过时也要出声：一条只在失败时说话的检查，跑没跑过在 CI 日志里看不出来。
+  console.log(`PASS ${label} ${hasJobs ? '脊柱 + 两态切换 + 新建浮层' : '空状态 + 新建浮层'}`);
   await context.close();
 }
 
@@ -283,6 +328,7 @@ async function runViewport(browser, project, viewport) {
     deviceScaleFactor: 2,
     ignoreHTTPSErrors: true,
   });
+  if (OFFLINE) await installFixtures(context);
   const page = await context.newPage();
   page.on('pageerror', (err) => {
     throw err;
@@ -325,19 +371,29 @@ async function main() {
   // 沙箱/CI 里 Playwright 自带的浏览器版本未必与镜像预装的一致，允许显式指定。
   const executablePath = process.env.CDS_CHROMIUM_PATH || undefined;
   const only = process.env.CDS_SMOKE_ONLY || '';
+  let devServer = null;
+  if (OFFLINE) {
+    devServer = await startViteDevServer();
+    baseUrl = devServer.url;
+    console.log(`离线模式：前端起在 ${baseUrl}，/api/* 走合成数据`);
+  }
   const browser = await chromium.launch({ args: ['--no-sandbox'], executablePath });
-  if (only !== 'task-schedule') {
-    const probe = await browser.newPage();
-    const project = await getFirstProject(probe);
-    await probe.close();
-    for (const viewport of viewports) {
-      await runViewport(browser, project, viewport);
+  try {
+    if (only !== 'task-schedule') {
+      const probe = await browser.newPage();
+      const project = await getFirstProject(probe);
+      await probe.close();
+      for (const viewport of viewports) {
+        await runViewport(browser, project, viewport);
+      }
     }
+    for (const viewport of TASK_SCHEDULE_VIEWPORTS) {
+      await checkTaskScheduleAction(browser, viewport);
+    }
+  } finally {
+    await browser.close();
+    if (devServer) devServer.stop();
   }
-  for (const viewport of TASK_SCHEDULE_VIEWPORTS) {
-    await checkTaskScheduleAction(browser, viewport);
-  }
-  await browser.close();
 }
 
 main().catch(async (err) => {

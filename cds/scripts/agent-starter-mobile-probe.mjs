@@ -22,13 +22,10 @@
  * 不给 baseUrl 就自己起一个 vite dev server（需要 cds/web 已装依赖）。
  */
 import { createRequire } from 'node:module';
-import { spawn } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { startViteDevServer } from './lib/vite-dev-server.mjs';
 
 const require = createRequire(import.meta.url);
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const WEB_DIR = path.resolve(HERE, '../web');
 
 function loadPlaywright() {
   // 沙箱与 CI 装 playwright 的位置不同，允许显式指定（同 mobile-layout-smoke.mjs）。
@@ -115,32 +112,9 @@ const measure = (page, action, heading) => page.evaluate(([t, h]) => {
   };
 }, [action, heading]);
 
-async function startDevServer() {
-  const port = 5100 + Math.floor(Math.random() * 400);
-  const child = spawn('pnpm', ['exec', 'vite', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
-    cwd: WEB_DIR, stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const url = `http://127.0.0.1:${port}`;
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('vite dev server 30s 没起来')), 30000);
-    const onData = (buf) => {
-      if (buf.toString().includes('ready in') || buf.toString().includes(String(port))) {
-        clearTimeout(timer);
-        resolve();
-      }
-    };
-    child.stdout.on('data', onData);
-    child.stderr.on('data', onData);
-    child.on('exit', (code) => { clearTimeout(timer); reject(new Error(`vite 退出，code=${code}`)); });
-  });
-  // dev server 首个请求要现编译，给它一点时间。
-  await new Promise((r) => setTimeout(r, 1500));
-  return { url, stop: () => child.kill('SIGTERM') };
-}
-
 async function main() {
   const explicitBase = process.argv[2];
-  const server = explicitBase ? { url: explicitBase.replace(/\/+$/, ''), stop: () => {} } : await startDevServer();
+  const server = explicitBase ? { url: explicitBase.replace(/\/+$/, ''), stop: () => {} } : await startViteDevServer();
   const { chromium } = loadPlaywright();
   const browser = await chromium.launch({
     args: ['--no-sandbox', '--no-proxy-server'],
