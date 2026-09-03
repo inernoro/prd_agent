@@ -1031,6 +1031,15 @@ export function BranchDetailDrawer({
   /** 已经应用到界面上的最大序号。晚回的旧响应只跟它比。 */
   const seriesAppliedRef = useRef(0);
   /**
+   * 抽屉这一次「看某个分支」的会话号，换分支就 +1（Codex P2，核对属实）。
+   *
+   * 光靠分支 id 判不出 A → B → A：回到 A 时 id 又对上了，那个还在飞的旧 A 请求
+   * 会被放行。上一版为此把序号清零，反而开了新洞——旧请求的序号比新会话的还大，
+   * 它不但能贴上陈数据，还会把水位抬高到吃掉后面好几轮。
+   * 所以序号改为**全局单调、永不重置**，另用会话号认「是不是这一次的」。
+   */
+  const seriesSessionRef = useRef(0);
+  /**
    * 服务端这次实际用的桶宽（秒）。骨架屏用它算「还要等多久」。
    *
    * 分辨率是服务端按观测到的采集节奏自适应定的：抽屉开着时 5s 端点也在写，桶宽会
@@ -1299,8 +1308,9 @@ export function BranchDetailDrawer({
     setMetricSeries({});
     setLiveStats({});
     setSeriesError(null);
-    // 换分支后序号重来，否则上一个分支的高水位会挡掉新分支的第一个响应。
-    seriesSeqRef.current = 0;
+    // 换分支开新会话：序号保持全局单调（重置会让旧请求的序号反超），
+    // 只清空水位，并让在飞的旧请求因会话号对不上而作废。
+    seriesSessionRef.current += 1;
     seriesAppliedRef.current = 0;
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
@@ -1496,6 +1506,7 @@ export function BranchDetailDrawer({
     const requestForBranch = branchId;
     seriesSeqRef.current += 1;
     const seq = seriesSeqRef.current;
+    const session = seriesSessionRef.current;
     try {
       const data = await apiRequest<{
         groupSeconds?: number;
@@ -1504,6 +1515,8 @@ export function BranchDetailDrawer({
         services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null }> }>;
       }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
       if (branchIdRef.current !== requestForBranch) return;
+      // 换过分支（含 A → B → A，分支 id 判不出来）就整条丢弃。
+      if (session !== seriesSessionRef.current) return;
       // 只丢弃「比已应用的更旧」的响应；慢但仍是最新结果的照常采用。
       if (seq <= seriesAppliedRef.current) return;
       seriesAppliedRef.current = seq;
@@ -1528,6 +1541,7 @@ export function BranchDetailDrawer({
       setSeriesError(null);
     } catch (err) {
       if (branchIdRef.current !== requestForBranch) return;
+      if (session !== seriesSessionRef.current) return;
       // 同上：旧请求的失败不该抹掉新请求刚拿回来的曲线。
       if (seq <= seriesAppliedRef.current) return;
       seriesAppliedRef.current = seq;

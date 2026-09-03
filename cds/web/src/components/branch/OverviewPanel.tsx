@@ -1304,7 +1304,11 @@ export function OverviewPanel({
       : running
         ? `还有 ${services.length - okCount} 个服务没起来`
         : transitioning
-          ? `正在部署，${services.length - okCount} 个服务还没起来`
+          ? (services.length - okCount > 0
+            ? `正在部署，${services.length - okCount} 个服务还没起来`
+            // 重新部署时旧容器往往还在服务：此时「还没起来」是 0，说出来就是假话
+            // （Codex P2，核对属实）。
+            : '正在部署，当前服务仍在运行')
           : '分支未运行';
   const verdictTone = badServices.length > 0 ? 'bad' : allServicesReady ? 'ok' : 'idle';
 
@@ -1489,11 +1493,22 @@ export function OverviewPanel({
              * 「分支未运行」，而后者正是这次要消灭的那句假话。同一个判据，
              * 又是只改了被点名的那一处。
              */
+            /*
+             * 注解回答的是「为什么现在没有曲线」，判据因此是**有没有容器在跑**，
+             * 不是分支处在哪一档生命周期（Codex P2，核对属实）。
+             *
+             * 上一版一看到 transitioning 就无条件说「容器起来后开始采样」——可重新
+             * 部署时旧容器常常还在服务，同一屏既显示已就绪的服务、又显示实时读数，
+             * 却告诉用户采样还没开始。有容器在跑就交回骨架屏自己讲「已攒 N 帧 ·
+             * 约还需 X 秒」，那才是这一档的真相。
+             */
             note={
-              !running && !transitioning ? '分支未运行 · 没有容器可采样'
-                : transitioning ? '正在部署 · 容器起来后开始采样'
-                  : !metricsReady ? '正在读取指标…'
-                    : undefined
+              okCount === 0
+                ? (transitioning ? '正在部署 · 容器起来后开始采样'
+                  : running ? '没有容器可采样'
+                    : '分支未运行 · 没有容器可采样')
+                : !metricsReady ? '正在读取指标…'
+                  : undefined
             }
           />
         )

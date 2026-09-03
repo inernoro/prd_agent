@@ -237,10 +237,27 @@ describe('两个数据源就有两个错误面（Codex P2，核对属实）', ()
     expect(bar, '条按旧桶画、数字按实时写 = 同屏自相矛盾').not.toContain('values.at(-1)');
   });
 
+  /*
+   * 这条原本要求 `catch` 之后 300 字符内出现 `setSeriesError`——一个按**字符距离**
+   * 写的判据。catch 里多加两行守卫（会话号、水位）就把它挤出窗口，行为一个字没变
+   * 却误红。改成钉「catch 块里到底做没做那件事」：按花括号配对切出块，再看内容。
+   */
   it('历史端点失败不再被静默吞掉', () => {
     const code = stripComments(DRAWER);
-    const load = code.slice(code.indexOf('const loadSeries'), code.indexOf('const loadSeries') + 1600);
-    expect(load, 'catch 全吞会让骨架屏永远承诺一条不会出现的曲线').toMatch(/catch\s*\([\s\S]{0,40}\)\s*\{[\s\S]{0,300}setSeriesError/);
+    const at = code.indexOf('const loadSeries');
+    expect(at, '找不到 loadSeries，选择器过时了').toBeGreaterThan(0);
+    const catchAt = code.indexOf('catch', at);
+    expect(catchAt, 'loadSeries 里没有 catch —— 失败会变成未捕获拒绝').toBeGreaterThan(at);
+    // 从 catch 的 `{` 起按配对切出整个块，不依赖长度
+    let i = code.indexOf('{', catchAt);
+    let depth = 0;
+    let end = i;
+    for (; end < code.length; end += 1) {
+      if (code[end] === '{') depth += 1;
+      else if (code[end] === '}') { depth -= 1; if (depth === 0) break; }
+    }
+    const block = code.slice(i, end + 1);
+    expect(block, 'catch 全吞会让骨架屏永远承诺一条不会出现的曲线').toContain('setSeriesError');
     expect(PANEL_CODE).toContain('seriesError');
   });
 
@@ -922,6 +939,18 @@ describe('历史轮询按序号收口，旧响应不许后发制人', () => {
       .toBeGreaterThanOrEqual(2);
     expect(body, '应用之后要抬高水位，否则后续响应全被放行、竞态没修掉')
       .toMatch(/seriesAppliedRef\.current = seq/);
+    /*
+     * A → B → A：回到 A 时分支 id 又对上了，在飞的旧 A 请求会被放行（Codex P2）。
+     * 所以要另有会话号，且序号必须全局单调——重置会让旧请求的序号反超新会话，
+     * 它不但贴上陈数据，还会把水位抬高到吃掉后面好几轮。
+     */
+    const sessionChecks = body.match(/session !== seriesSessionRef\.current/g) ?? [];
+    expect(sessionChecks.length, '成功与失败两条路都要认会话号')
+      .toBeGreaterThanOrEqual(2);
+    const reset = stripComments(DRAWER);
+    expect(reset, '序号一旦重置，旧请求的序号就会反超新会话')
+      .not.toMatch(/seriesSeqRef\.current = 0/);
+    expect(reset, '换分支要开新会话').toMatch(/seriesSessionRef\.current \+= 1/);
   });
 });
 
@@ -996,6 +1025,58 @@ describe('部署在途不谎报「分支未运行」', () => {
     expect(html, '骨架屏注解仍在说「分支未运行」，与同屏的「正在部署」打架')
       .not.toContain('分支未运行');
     expect(html, '在途应当说清是在等容器起来').toContain('正在部署');
+  });
+
+  /*
+   * 状态空间摊开测（Codex P2 ×2，核对属实）。前两轮我按单一维度加分支，于是
+   * 「在途 × 服务已就绪」这一格连着出了两个假话：判断句说「0 个服务还没起来」，
+   * 骨架屏说「容器起来后开始采样」——而那一刻服务就绪、读数也在。
+   */
+  it('在途但服务已全就绪时，判断句不说「0 个服务还没起来」', () => {
+    const html = render('building');   // services 里那一个是 running
+    expect(html, '缺口是 0 还说「0 个服务还没起来」，与下面「1 / 1 就绪」打架')
+      .not.toContain('0 个服务还没起来');
+    expect(html).toContain('正在部署');
+    expect(html, '应当如实说当前服务仍在跑').toContain('当前服务仍在运行');
+  });
+
+  it('在途但服务已就绪、且还没攒够历史时，骨架屏不说「容器起来后开始采样」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: false,
+      lifecycle: 'restarting',
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {},          // 零帧 => 骨架屏
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '容器就绪却说采样还没开始').not.toContain('容器起来后开始采样');
+    expect(html).not.toContain('分支未运行');
+  });
+
+  it('在途且一个容器都没起来时，才说「容器起来后开始采样」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'idle' }],
+      running: false,
+      lifecycle: 'building',
+      branchName: 'demo',
+      entries: [],
+      deployments: [],
+      metricSeries: {},
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '这一格才是那句话成立的时候').toContain('容器起来后开始采样');
   });
 
   it('真停且无历史时，骨架屏仍如实说「分支未运行」', () => {
