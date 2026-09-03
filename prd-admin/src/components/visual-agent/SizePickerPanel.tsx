@@ -1,4 +1,6 @@
 import { ASPECT_OPTIONS, detectTierFromSize, detectAspectFromSize } from '@/lib/imageAspectOptions';
+import { flattenSizes, RESOLUTION_TIERS, type ResolutionTier, type SizesByResolution } from '@/lib/visualModelSizes';
+import { RectangleHorizontal } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -9,15 +11,41 @@ type SizePickerPanelProps = {
   onSizeChange: (size: string) => void;
   /** 面板宽度，默认 260 */
   width?: number;
+  /**
+   * 当前模型支持的尺寸（adapter-info 返回）。给了就只显示这些档位和比例，
+   * **拿不到就传 null**——退回静态表，而不是编一份「这个模型大概支持这些」。
+   */
+  availableSizes?: SizesByResolution | null;
 };
 
 /**
  * 尺寸选择面板（分辨率 + 比例网格），可复用于编辑器和首页。
  * 弹出层定位由调用方控制（absolute/popover），此组件仅渲染面板内容。
  */
-export function SizePickerPanel({ size, onSizeChange, width = 260 }: SizePickerPanelProps) {
+export function SizePickerPanel({ size, onSizeChange, width = 260, availableSizes }: SizePickerPanelProps) {
   const currentTier = detectTierFromSize(size) ?? '1k';
   const currentAspect = detectAspectFromSize(size) ?? '1:1';
+
+  // 模型给了尺寸清单就按它渲染：档位只留有内容的，比例只留该档真支持的。
+  // 静态 ASPECT_OPTIONS 是所有模型的并集，直接摆出来等于让用户选一个会失败的组合。
+  const model = availableSizes && flattenSizes(availableSizes).length > 0 ? availableSizes : null;
+  const tiers = model
+    ? RESOLUTION_TIERS.filter((t) => model[t].length > 0)
+    : (['1k', '2k', '4k'] as const).filter(() => true);
+  const tierForGrid: ResolutionTier = model && !model[currentTier as ResolutionTier]?.length
+    ? (tiers[0] ?? '1k')
+    : (currentTier as ResolutionTier);
+  // 同一比例可能有多个尺寸，取第一个即可（编辑器那边也是这个口径）。
+  const modelAspects = model
+    ? (() => {
+      const seen = new Map<string, string>();
+      for (const opt of model[tierForGrid]) {
+        const ratio = opt.aspectRatio || '1:1';
+        if (!seen.has(ratio)) seen.set(ratio, opt.size);
+      }
+      return [...seen.entries()].map(([id, sizeStr]) => ({ id, sizeStr }));
+    })()
+    : null;
 
   return (
     <div
@@ -32,8 +60,8 @@ export function SizePickerPanel({ size, onSizeChange, width = 260 }: SizePickerP
       {/* 分辨率（档位） */}
       <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
       <div className="flex gap-1.5 mb-3">
-        {(['1k', '2k', '4k'] as const).map((tier) => {
-          const isSelected = currentTier === tier;
+        {tiers.map((tier) => {
+          const isSelected = tierForGrid === tier;
           const label = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
           return (
             <button
@@ -46,6 +74,13 @@ export function SizePickerPanel({ size, onSizeChange, width = 260 }: SizePickerP
                 color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
               }}
               onClick={() => {
+                if (model) {
+                  // 换档时尽量保住当前比例；该档没有这个比例就退该档第一个。
+                  const inTier = model[tier];
+                  const keep = inTier.find((o) => (o.aspectRatio || '1:1') === currentAspect);
+                  onSizeChange((keep ?? inTier[0])?.size ?? size);
+                  return;
+                }
                 const targetOpt = ASPECT_OPTIONS.find((o) => o.id === currentAspect);
                 if (targetOpt) {
                   const newSize = tier === '1k' ? targetOpt.size1k : tier === '2k' ? targetOpt.size2k : targetOpt.size4k;
@@ -67,8 +102,11 @@ export function SizePickerPanel({ size, onSizeChange, width = 260 }: SizePickerP
       {/* 比例 */}
       <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
       <div className="grid grid-cols-4 gap-1.5">
-        {ASPECT_OPTIONS.map((opt) => {
-          const sizeStr = currentTier === '1k' ? opt.size1k : currentTier === '2k' ? opt.size2k : opt.size4k;
+        {(modelAspects ?? ASPECT_OPTIONS.map((o) => ({
+          id: o.id,
+          sizeStr: tierForGrid === '1k' ? o.size1k : tierForGrid === '2k' ? o.size2k : o.size4k,
+        }))).map((opt) => {
+          const sizeStr = opt.sizeStr;
           const isSelected = opt.id === currentAspect;
           const [rw, rh] = opt.id.includes(':') ? opt.id.split(':').map(Number) : [1, 1];
           const aspectVal = rw && rh ? rw / rh : 1;
@@ -100,7 +138,7 @@ export function SizePickerPanel({ size, onSizeChange, width = 260 }: SizePickerP
  * 尺寸选择按钮 + 弹出面板，用于底部工具栏等场景。
  * 使用 Portal 渲染到 body，避免被父级 overflow:hidden 裁剪。
  */
-export function SizePickerButton({ size, onSizeChange }: { size: string; onSizeChange: (s: string) => void }) {
+export function SizePickerButton({ size, onSizeChange, availableSizes }: { size: string; onSizeChange: (s: string) => void; availableSizes?: SizesByResolution | null }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -132,14 +170,25 @@ export function SizePickerButton({ size, onSizeChange }: { size: string; onSizeC
 
   return (
     <>
+      {/*
+        和同一条工具行上的「参考图」「模型」「反馈」同一档：透明底、36px 高、
+        radius 7、10px 字。原来这里是一枚靛蓝药丸——那是这条行里唯一一个
+        带色块的控件，也是整页唯一和品牌色无关的颜色，用户一眼就看出它是旧的。
+        它并不比旁边两个更重要，不该是唯一被强调的那个。
+      */}
       <button
         ref={btnRef}
         type="button"
-        className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover-bg-soft"
+        className="inline-flex items-center gap-1.5 hover-bg-soft transition-colors"
         style={{
-          background: open ? 'rgba(99, 102, 241, 0.18)' : 'rgba(99, 102, 241, 0.1)',
-          color: open ? 'var(--accent-fg-violet-strong)' : 'var(--accent-fg-violet)',
-          border: open ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(99, 102, 241, 0.15)',
+          minHeight: 36,
+          padding: '0 9px',
+          borderRadius: 7,
+          border: 0,
+          background: open ? 'var(--bg-secondary)' : 'transparent',
+          color: open ? 'var(--text-primary)' : 'var(--text-secondary)',
+          fontSize: 10,
+          cursor: 'pointer',
         }}
         title="选择分辨率和尺寸比例"
         onClick={(e) => {
@@ -147,7 +196,8 @@ export function SizePickerButton({ size, onSizeChange }: { size: string; onSizeC
           setOpen((v) => !v);
         }}
       >
-        <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{tierLabel} · {aspect}</span>
+        <RectangleHorizontal size={13} className="shrink-0" />
+        <span style={{ whiteSpace: 'nowrap' }}>{tierLabel} · {aspect}</span>
         <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>▾</span>
       </button>
       {open && createPortal(
@@ -162,6 +212,7 @@ export function SizePickerButton({ size, onSizeChange }: { size: string; onSizeC
           }}
         >
           <SizePickerPanel
+            availableSizes={availableSizes}
             size={size}
             onSizeChange={(s) => {
               onSizeChange(s);
