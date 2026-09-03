@@ -40,6 +40,8 @@ export interface DbProbeConfigured {
   /** 定位不到时区分：none = 不涉及数据库（正常）；unrecognized = 有疑似变量但认不出（要处理） */
   involvement?: 'db' | 'unrecognized' | 'none';
   suspectEnvKeys?: string[];
+  /** 只从项目级灌下来的疑似变量（按不涉及数据库处理） */
+  inheritedSuspectEnvKeys?: string[];
 }
 
 export interface DbProbeContainer {
@@ -106,7 +108,13 @@ export function judgeDbProbe(
 ): { verdict: DbProbeVerdict; reasons: string[] } {
   if (!configured.dbName) {
     if (configured.involvement === 'none') {
-      return { verdict: 'not-applicable', reasons: ['没有任何数据库相关变量，不涉及数据库'] };
+      const inherited = configured.inheritedSuspectEnvKeys ?? [];
+      return {
+        verdict: 'not-applicable',
+        reasons: [inherited.length > 0
+          ? `本服务没有声明任何库名变量；项目级变量 ${inherited.join(', ')} 灌给了它，是否使用由服务决定，不据此实测`
+          : '没有任何数据库相关变量，不涉及数据库'],
+      };
     }
     return { verdict: 'no-db', reasons: [configured.reason || '配置里定位不到这个服务的数据库'] };
   }
@@ -297,7 +305,7 @@ export async function probeBranchDb(
     const effective = resolveEffectiveProfile(baseline, branch);
     // 台账里的基础设施状态不是真相（error 可能只是上次重建失败），定位库时不按它过滤；
     // 容器到底在不在跑，由下面的 docker inspect / 客户端实测说了算。
-    const { target, reason, involvement, suspects } = resolveReplicaDbTarget(state, branch, effective, { infraStatus: 'any' });
+    const { target, reason, involvement, suspects, inheritedSuspects } = resolveReplicaDbTarget(state, branch, effective, { infraStatus: 'any' });
     const configured: DbProbeConfigured = {
       dbScope: effective.dbScope === 'per-branch' ? 'per-branch' : 'shared',
       dbScopeSource: scopeSource(baseline, branch),
@@ -309,6 +317,7 @@ export async function probeBranchDb(
         reason: (reason || '').replace(/，无法定位要隔离的库/, '，无法定位要实测的库'),
         involvement: involvement ?? 'unrecognized',
         suspectEnvKeys: suspects ?? [],
+        inheritedSuspectEnvKeys: inheritedSuspects ?? [],
       }),
     };
 

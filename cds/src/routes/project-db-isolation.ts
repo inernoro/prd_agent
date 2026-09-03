@@ -61,6 +61,8 @@ export interface ProjectDbIsolationService {
   dbInvolvement: DbInvolvement;
   /** involvement=unrecognized 时列出疑似变量名（只报 key，不报值） */
   suspectDbEnvKeys: string[];
+  /** 只从项目级 env 灌下来、服务自己没声明的疑似变量（按不涉及数据库处理，但注明来源） */
+  inheritedSuspectDbEnvKeys: string[];
   /** 有多少条分支对这个服务写了自己的覆盖（这些分支不受项目默认影响）。 */
   branchOverrideCount: number;
 }
@@ -172,7 +174,7 @@ export function buildProjectDbIsolationView(
     const mergedEnv = { ...projectEnv, ...(profile.env || {}) };
     const dbEnvKeyDetails = classifyDbEnvKeys(mergedEnv);
     const dbEnvKeys = dbEnvKeyDetails.filter((k) => k.rewritten).map((k) => k.key);
-    const { involvement, suspects } = dbInvolvementOf(mergedEnv);
+    const { involvement, suspects, inheritedSuspects } = dbInvolvementOf(mergedEnv, new Set(Object.keys(profile.env || {})));
     return {
       profileId: profile.id,
       name: profile.name || profile.id,
@@ -183,6 +185,7 @@ export function buildProjectDbIsolationView(
       dbEnvKeyDetails,
       dbInvolvement: involvement,
       suspectDbEnvKeys: suspects,
+      inheritedSuspectDbEnvKeys: inheritedSuspects,
       branchOverrideCount: overrideCountByProfile.get(profile.id) || 0,
     };
   });

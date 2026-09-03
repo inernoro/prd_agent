@@ -217,6 +217,17 @@ describe('项目级数据库隔离路由', () => {
       expect(view.summary).toMatchObject({ shared: 1, withoutDb: 0 });
     });
 
+    it('项目级 DATABASE_URL 灌给没声明库名的 web → 不涉及数据库并注明来源，不当缺库', () => {
+      const view = buildProjectDbIsolationView(
+        { id: 'p', deliveryMode: undefined } as any,
+        [profile({ id: 'web', projectId: 'p', env: { PORT: '80' } })],
+        [],
+        { DATABASE_URL: 'mongodb://mongo:27017/prdagent' },
+      );
+      expect(view.services[0]).toMatchObject({ dbInvolvement: 'none', suspectDbEnvKeys: [], inheritedSuspectDbEnvKeys: ['DATABASE_URL'] });
+      expect(view.summary.withoutDb).toBe(1);
+    });
+
     it('收敛 1：项目级 customEnv 也算进「配置说的」（与定位器同口径，profile 优先）', () => {
       const view = buildProjectDbIsolationView(
         { id: 'p', deliveryMode: undefined } as any,

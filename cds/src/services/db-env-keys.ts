@@ -136,11 +136,32 @@ export function suspectDbEnvKeys(env: Record<string, string>): string[] {
 
 export type DbInvolvement = 'db' | 'unrecognized' | 'none';
 
-/** 一份 env 涉不涉及数据库：认得库名变量 → db；只有疑似变量 → unrecognized；什么都没有 → none */
-export function dbInvolvementOf(env: Record<string, string>): { involvement: DbInvolvement; suspects: string[] } {
-  if (classifyDbEnvKeys(env).length > 0) return { involvement: 'db', suspects: [] };
-  const suspects = suspectDbEnvKeys(env);
-  return { involvement: suspects.length > 0 ? 'unrecognized' : 'none', suspects };
+export interface DbInvolvementResult {
+  involvement: DbInvolvement;
+  /** involvement=unrecognized 时：服务自己声明的疑似变量 */
+  suspects: string[];
+  /**
+   * 只从项目级 env 灌下来、服务自己没声明的疑似变量（如项目级 DATABASE_URL 灌给了 web）。
+   * 这种情况按「不涉及数据库」处理——不是所有容器都连库，项目级变量灌到谁头上不代表谁在用；
+   * 但要注明来源，让用户知道这个判断是怎么来的。
+   */
+  inheritedSuspects: string[];
+}
+
+/**
+ * 一份 env 涉不涉及数据库：认得库名变量 → db；服务自己声明了疑似变量但认不出 → unrecognized；
+ * 什么都没有，或疑似变量全是项目级灌下来的 → none。
+ * @param ownKeys 服务自己（profile / 分支层）声明的 key；不传则所有疑似变量都算服务自己的
+ */
+export function dbInvolvementOf(env: Record<string, string>, ownKeys?: ReadonlySet<string>): DbInvolvementResult {
+  if (classifyDbEnvKeys(env).length > 0) return { involvement: 'db', suspects: [], inheritedSuspects: [] };
+  const all = suspectDbEnvKeys(env);
+  if (all.length === 0) return { involvement: 'none', suspects: [], inheritedSuspects: [] };
+  if (!ownKeys) return { involvement: 'unrecognized', suspects: all, inheritedSuspects: [] };
+  const own = all.filter((k) => ownKeys.has(k));
+  const inherited = all.filter((k) => !ownKeys.has(k));
+  if (own.length > 0) return { involvement: 'unrecognized', suspects: own, inheritedSuspects: inherited };
+  return { involvement: 'none', suspects: [], inheritedSuspects: inherited };
 }
 
 const DB_URL_RE = /^([a-zA-Z][a-zA-Z0-9+.:-]*:\/\/[^/?#]*)\/([^/?#]*)([?#].*)?$/;

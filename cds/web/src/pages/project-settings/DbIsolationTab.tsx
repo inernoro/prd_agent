@@ -34,6 +34,8 @@ export interface DbIsolationService {
   /** db = 涉及数据库；unrecognized = 有疑似变量但认不出；none = 不涉及数据库（档位对它无意义） */
   dbInvolvement?: 'db' | 'unrecognized' | 'none';
   suspectDbEnvKeys?: string[];
+  /** 只从项目级灌下来、服务自己没声明的疑似变量 */
+  inheritedSuspectDbEnvKeys?: string[];
   branchOverrideCount: number;
 }
 
@@ -284,9 +286,12 @@ export function DbIsolationPanel({
                           const suspects = service.suspectDbEnvKeys ?? [];
                           const involvement = service.dbInvolvement ?? (suspects.length > 0 ? 'unrecognized' : 'none');
                           if (involvement === 'none') {
+                            const inherited = service.inheritedSuspectDbEnvKeys ?? [];
                             return (
-                              <span className="text-muted-foreground" title="这个服务没有任何数据库相关变量（web / 静态服务），共享库还是分支独立库对它都没有意义">
-                                不涉及数据库
+                              <span className="text-muted-foreground" title={inherited.length > 0
+                                ? `项目级变量 ${inherited.join(', ')} 灌给了这个服务，但它自己没有声明任何库名变量——不是所有容器都连库，不据此当它连库，也不把它算进共享库 / 独立库计数`
+                                : '这个服务没有任何数据库相关变量（web / 静态服务），共享库还是分支独立库对它都没有意义'}>
+                                {inherited.length > 0 ? `未声明库名变量（项目级 ${inherited.join(', ')} 灌入，是否使用由服务决定）` : '不涉及数据库'}
                               </span>
                             );
                           }

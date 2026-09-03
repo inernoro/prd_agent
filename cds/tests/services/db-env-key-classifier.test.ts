@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyDbEnvKeys } from '../../src/services/replica-db-clone.js';
+import { classifyDbEnvKeys, dbInvolvementOf } from '../../src/services/replica-db-clone.js';
 
 const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -50,5 +50,19 @@ describe('来源守卫：项目设置视图的清单必须来自这一份分类�
   it('project-db-isolation.ts 引用 classifyDbEnvKeys，不再自己拿白名单过滤', () => {
     expect(src).toContain("classifyDbEnvKeys");
     expect(src).not.toMatch(/PER_BRANCH_DB_ENV_KEYS\.filter/);
+  });
+});
+
+describe('dbInvolvementOf：不是所有容器都连库', () => {
+  it('疑似变量只从项目级灌下来、服务自己没声明 → none，并注明 inheritedSuspects', () => {
+    const r = dbInvolvementOf({ DATABASE_URL: 'mongodb://mongo/prdagent', PORT: '80' }, new Set(['PORT']));
+    expect(r).toEqual({ involvement: 'none', suspects: [], inheritedSuspects: ['DATABASE_URL'] });
+  });
+  it('服务自己声明了疑似变量但认不出 → unrecognized', () => {
+    const r = dbInvolvementOf({ DATABASE_URL: 'mongodb://mongo/prdagent' }, new Set(['DATABASE_URL']));
+    expect(r).toEqual({ involvement: 'unrecognized', suspects: ['DATABASE_URL'], inheritedSuspects: [] });
+  });
+  it('不传 ownKeys 时所有疑似变量都算服务自己的', () => {
+    expect(dbInvolvementOf({ DATABASE_URL: 'mysql://h/x' }).involvement).toBe('unrecognized');
   });
 });

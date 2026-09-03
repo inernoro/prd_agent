@@ -406,7 +406,7 @@ describe('多引擎项目里中立库名 key 的引擎收敛', () => {
   it('没有 dependsOn → 仍然 fail-closed，不瞎猜引擎', () => {
     const { target, reason } = resolveReplicaDbTarget(state, branch(), profile());
     expect(target).toBeNull();
-    expect(reason).toContain('没有数据库名');
+    expect(reason).toMatch(/没有数据库名|是否使用由服务决定/);
   });
 
   it('dependsOn 同时声明两种引擎 → 依旧判不出唯一引擎，fail-closed', () => {

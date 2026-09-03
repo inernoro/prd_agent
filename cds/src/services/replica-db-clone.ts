@@ -23,7 +23,7 @@ import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 import { detectInfraDataKind, runDockerExec, maskSecretValues } from '../routes/infra-data.js';
 
 import {
-  PER_BRANCH_DB_ENV_KEYS, classifyDbEnvKey, suspectDbEnvKeys, engineFromRelationalUrls, relationalEnginesFromUrls,
+  PER_BRANCH_DB_ENV_KEYS, classifyDbEnvKey, dbInvolvementOf, engineFromRelationalUrls, relationalEnginesFromUrls,
   isRelationalUrl, rewriteRelationalUrlDb, type DbEngine, type DbInvolvement,
 } from './db-env-keys.js';
 
@@ -215,7 +215,7 @@ export function resolveReplicaDbTarget(
      */
     infraStatus?: 'running' | 'any';
   } = {},
-): { target: ReplicaDbTarget | null; reason?: string; involvement?: DbInvolvement; suspects?: string[] } {
+): { target: ReplicaDbTarget | null; reason?: string; involvement?: DbInvolvement; suspects?: string[]; inheritedSuspects?: string[] } {
   const infraOk = (svc: InfraService): boolean => opts.infraStatus === 'any' || svc.status === 'running';
   // 与部署路径 getMergedEnv（branches.ts）同优先级：project customEnv → 分支 scope
   // → profile.env。分支级 env 覆写过库名/连接串时（Codex P1），不合入会把隔离目标
@@ -250,7 +250,10 @@ export function resolveReplicaDbTarget(
     // 是「真没配」还是「配了但 CDS 不认」。这里把**看到了什么**如实报出来：
     // 疑似库名 key（只报 key 名，不报值，值可能含凭据）、以及引擎能否从连接 URL 推出。
     // 用户据此一眼知道该补 URL 还是该改 key 名；排障也不必再去猜。
-    const suspects = suspectDbEnvKeys(runtimeEnv);
+    // 服务自己声明的（profile / 分支层）才算「有疑似变量」；只从项目级灌下来的按不涉及数据库处理
+    const ownKeys = new Set([...Object.keys(profileEnv), ...Object.keys(scopeEnv)]);
+    const inv = dbInvolvementOf(runtimeEnv, ownKeys);
+    const suspects = inv.suspects;
     const detail = suspects.length > 0
       ? `。检测到疑似数据库相关变量：${suspects.slice(0, 12).join(', ')}`
         + (neutralEngine
@@ -259,10 +262,13 @@ export function resolveReplicaDbTarget(
       : '';
     return {
       target: null,
-      involvement: suspects.length > 0 ? 'unrecognized' : 'none',
+      involvement: inv.involvement,
       suspects,
-      reason: suspects.length === 0
-        ? '该服务没有任何数据库相关变量，不涉及数据库'
+      inheritedSuspects: inv.inheritedSuspects,
+      reason: inv.involvement === 'none'
+        ? (inv.inheritedSuspects.length > 0
+          ? `该服务自己没有声明任何库名变量；项目级变量 ${inv.inheritedSuspects.slice(0, 6).join(', ')} 灌给了它，是否使用由服务决定，不据此定位库`
+          : '该服务没有任何数据库相关变量，不涉及数据库')
         : '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库'
           + detail,
     };
