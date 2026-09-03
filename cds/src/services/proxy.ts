@@ -9,6 +9,7 @@ import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug
 import { classifyDeployRuntime } from './deploy-runtime.js';
 import { computeWaitTiming } from './wait-timing.js';
 import { GEM_STORY_CSS, buildGemStorySvg, serverGemMineralForStatus } from '../loading-pages/gem.js';
+import { resolveProfileForPath } from './route-conventions.js';
 import { resolveEffectiveProfile } from './container.js';
 import { ROUTABLE_SERVICE_STATUSES } from './forwarder-route-publisher.js';
 import type { DeployDurationMode } from '../types.js';
@@ -2377,47 +2378,19 @@ ${shouldAutoRefresh ? `;(function(){
   private detectProfileFromRequest(req: http.IncomingMessage, branch: BranchEntry): string | undefined {
     const url = req.url || '/';
     const profileIds = Object.keys(branch.services);
-
-    // Phase 1: Check explicit pathPrefixes on build profiles (config-driven routing).
-    // Use the branch's EFFECTIVE profiles (project profiles + branch-local extraProfiles), not the
-    // global getBuildProfiles() — otherwise a branch-local extra service's pathPrefixes (now persisted
-    // by PUT /extra-services) is invisible to the proxy and its traffic falls through to convention/
-    // default routing, leaving the extra service unreachable (Codex P2 "Route branch-local path
-    // prefixes in the proxy"). Effective-profiles is also project-scoped, avoiding cross-project id mixups.
-    // Resolve each effective profile against the branch so profileOverrides apply (Codex P2 "Resolve
-    // overrides before routing path prefixes"): pathPrefixes supplied via PUT /profile-overrides are only
-    // merged by resolveEffectiveProfile, not by getEffectiveProfilesForBranch. Without this, an extra
-    // service can be running while requests for its override prefix fall through to convention/default
-    // routing (mirrored in forwarder-route-publisher.ts, which uses the same resolution).
+    // 判定只有一份（plan.cds.service-relations 第二批）：与 forwarder 对已发布路由的解析逐字一致——
+    // 最长声明前缀胜、同前缀按 id 排序、探活前缀不算、再按名约定 /api/、最后默认站。
+    // 此前这里自己排序「每个服务的最长前缀」再取第一个能匹配的服务，不是按请求做最长匹配，
+    // 转发器暂时没路由回落到这里时，同一 URL 会落到与稳态不同的服务。
+    // profile 用分支的生效集合并套上 profileOverrides（与发布器同一口径），只认分支里真有容器的。
     const profiles = this.stateService
       .getEffectiveProfilesForBranch(branch)
-      .map(p => resolveEffectiveProfile(p, branch));
-    // Sort: longer prefixes first (most specific match wins)
-    const profilesWithRoutes = profiles
-      .filter(p => p.pathPrefixes && p.pathPrefixes.length > 0 && profileIds.includes(p.id))
-      .sort((a, b) => {
-        const maxA = Math.max(...(a.pathPrefixes || []).map(s => s.length));
-        const maxB = Math.max(...(b.pathPrefixes || []).map(s => s.length));
-        return maxB - maxA;
-      });
-
-    for (const profile of profilesWithRoutes) {
-      if (profile.pathPrefixes!.some(prefix => url.startsWith(prefix))) {
-        return profile.id;
-      }
-    }
-
-    // Phase 2: Convention-based fallback (backward compatible)
-    if (url.startsWith('/api/')) {
-      const apiProfile = profileIds.find(id => id.includes('api') || id.includes('backend'));
-      if (apiProfile) return apiProfile;
-    }
-
-    const webProfile = profileIds.find(id => id.includes('web') || id.includes('frontend') || id.includes('admin'));
-    if (webProfile) return webProfile;
-
-    // Fallback to first profile
-    return profileIds[0];
+      .map(p => resolveEffectiveProfile(p, branch))
+      .filter(p => profileIds.includes(p.id));
+    // 分支里有容器但没有 profile 记录的（历史残留）也要能路由：补成无前缀的候选
+    const known = new Set(profiles.map(p => p.id));
+    const candidates = [...profiles, ...profileIds.filter(id => !known.has(id)).map(id => ({ id }))];
+    return resolveProfileForPath(candidates, url);
   }
 
   /**
@@ -2435,6 +2408,9 @@ ${shouldAutoRefresh ? `;(function(){
     clientReq.headers['x-cds-request-id'] = requestId;
     if (typeof clientRes.setHeader === 'function') {
       clientRes.setHeader('X-CDS-Request-Id', requestId);
+      // 判定来源（master 兜底）与落点服务：与 forwarder 的 X-CDS-Resolver / X-CDS-Profile 同名
+      clientRes.setHeader('X-CDS-Resolver', 'master-fallback');
+      if (branchCtx?.profileId) clientRes.setHeader('X-CDS-Profile', branchCtx.profileId);
     }
     const requestCapture = createBodyCapture(undefined, clientReq.headers['content-type']);
     if (typeof clientReq.on === 'function') {

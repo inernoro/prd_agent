@@ -26,6 +26,7 @@ import {
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
+import { resolveBranchEnvLayers } from '../services/branch-env-layers.js';
 import {
   branchEntrypointDepsFromState,
   isPublishableNamedLabel,
@@ -10978,76 +10979,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const project = stateService.getProject(projectId);
 
     // ── 段A:customEnv 六层(顺序 = 合并顺序,与 getMergedEnv/buildBranchEnvMap 一致)──
-    const cdsEnv = stateService.getCdsEnvVars(projectId);
-    const mirrorEnv = stateService.getMirrorEnvVars();
-    const rawGlobal = project?.inheritGlobalEnv === true
-      ? stateService.getCustomEnvScope('_global')
-      : {};
-    const rawProjectScoped = projectId === '_global' ? {} : stateService.getCustomEnvScope(projectId);
-    const rawBranchScoped = stateService.getCustomEnvScope(entry.id);
-    const derivedReserved: Record<string, string> = {};
-    if (project) {
-      derivedReserved.CDS_PROJECT_ID = project.id;
-      derivedReserved.CDS_PROJECT_SLUG = project.slug;
-    }
-    const customLayers: EnvLayer[] = [
-      { source: 'cds-builtin' as const, env: cdsEnv },
-      { source: 'mirror' as const, env: mirrorEnv },
-      { source: 'global' as const, env: rawGlobal },
-      { source: 'project' as const, env: rawProjectScoped },
-      { source: 'branch' as const, env: rawBranchScoped },
-      // 项目身份保留 key 放最后 —— 即便 global/project 写了同名 key,生效的也是系统派生真值
-      { source: 'cds-derived' as const, env: derivedReserved },
-    ].filter((l) => Object.keys(l.env).length > 0);
-
+    // 分层装配抽到 branch-env-layers（与引用分区共用一份，plan.cds.service-relations 第三批）
+    const resolution = resolveBranchEnvLayers(stateService, entry, {
+      jwtIssuer: config.jwt.issuer,
+      previewHost: config.previewDomain || config.rootDomains?.[0],
+    });
+    const customLayers = resolution.customLayers;
     const envLayers = customLayers.map((l) => ({
       source: l.source,
       count: Object.keys(l.env).length,
       keys: Object.keys(l.env).sort(),
     }));
-
-    // ── 每个有效 profile(项目底座 + 分支临时额外服务)的逐 key 溯源 ──
-    const extraIds = new Set((entry.extraProfiles || []).map((p) => p.id));
     const effectiveProfiles = stateService.getEffectiveProfilesForBranch(entry);
-    const profiles = effectiveProfiles.map((baseline) => {
-      const isExtra = extraIds.has(baseline.id);
+    const profiles = resolution.profiles.map((r) => {
+      const { baseline, effective, isExtra, envError } = r;
       const override = entry.profileOverrides?.[baseline.id];
-      const effective = resolveEffectiveProfile(baseline, entry);
-      // profile env 三层拆分,相对顺序与部署合并链一致:
-      // baseline.env → override.env(applyProfileOverride) → deployModes[mode].env(resolveProfileWithMode)
-      const activeMode = override?.activeDeployMode !== undefined
-        ? override.activeDeployMode
-        : baseline.activeDeployMode;
-      const modeEnv = (activeMode && baseline.deployModes?.[activeMode]?.env) || undefined;
-      const profileLayers: EnvLayer[] = [
-        { source: (isExtra ? 'extra-service' : 'profile') as EnvSource, env: baseline.env || {} },
-        { source: 'branch-override' as const, env: override?.env || {} },
-        { source: 'deploy-mode' as const, env: modeEnv || {} },
-      ].filter((l) => Object.keys(l.env).length > 0);
-
-      let envProvenance: EnvKeyProvenance[] = [];
-      let envError: string | undefined;
-      try {
-        const resolved = resolveProfileRuntimeEnvWithProvenance(
-          entry, effective, customLayers, profileLayers,
-          // injectBullmqPrefix / publishedEntrypoints 与部署路径（container.ts
-          // resolveProfileRuntimeEnv）同源同值,否则检查器显示的 env ≠ 容器实际拿到的 env
-          {
-            jwtIssuer: config.jwt.issuer,
-            injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0',
-            publishedEntrypoints: resolveBranchEntrypointsEnv(
-              entry,
-              branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
-            ),
-          },
-        );
-        // 脱敏走 maskSecrets SSOT:按 key 名或 URL 凭据值判定,provenance 的 value 同步替换
-        const maskedEnv = maskSecrets(resolved.env);
-        envProvenance = resolved.provenance.map((p) => ({ ...p, value: maskedEnv[p.key] ?? p.value }));
-      } catch (err) {
-        // 缺模板值等解析失败:不 fail 整个端点,把缺口显性化(这正是检查器要暴露的问题)
-        envError = (err as Error).message;
-      }
+      const maskedEnv = maskSecrets(Object.fromEntries(r.provenance.map((p) => [p.key, p.value])));
+      const envProvenance = r.provenance.map((p) => ({ ...p, value: maskedEnv[p.key] ?? p.value }));
       return {
         profileId: baseline.id,
         profileName: baseline.name || baseline.id,

@@ -20,6 +20,9 @@ import type { BuildProfile, EnvKeyProvenance, EnvSource } from '../types.js';
 import { resolveEnvTemplates, ENV_TEMPLATE_RE, envTemplateDefault } from './compose-parser.js';
 import { applyPerBranchDbIsolation, slugifyBranchForDb } from './db-scope-isolation.js';
 
+/** 与 cross-project-refs 的 CDS_REF_RE 同形（这里不能反向 import：那条链经 preview-entrypoints 会成环） */
+const CDS_REF_TOKEN_RE = /\$\{CDS_REF:[A-Za-z0-9_.~-]+\/[A-Za-z0-9_.~-]+(?:@[^}\s]+)?\}/g;
+
 /**
  * 平台注入的已发布入口表。
  *
@@ -131,6 +134,9 @@ export function resolveProfileRuntimeEnvWithProvenance(
     jwtIssuer: string;
     injectBullmqPrefix?: boolean;
     publishedEntrypoints?: PublishedEntrypointsEnv;
+    /** 跨项目引用解析：把 `${CDS_REF:项目/服务[@分支]}` 换成目标公网地址；返回 null 表示解析失败（原样保留） */
+    resolveCdsRef?: (raw: string) => string | null;
+
   },
 ): EnvResolveResult {
   const tracked = new Map<string, TrackedEntry>();
@@ -223,6 +229,22 @@ export function resolveProfileRuntimeEnvWithProvenance(
   const deployTime = entry.lastDeployDispatchAt || entry.lastPushAt || entry.createdAt;
   if (deployTime) {
     trackSet(tracked, 'CDS_BUILD_TIME', deployTime, 'platform-injected', 'version-metadata');
+  }
+
+  // 5.5 跨项目引用（plan.cds.service-relations 第三批）：`${CDS_REF:...}` 换成目标公网地址。
+  // 放在模板展开之前，让引用出来的地址还能参与 ${VAR} 拼接；解析失败原样保留、只打标，
+  // 不阻断部署——断裂由体检的 reference-broken 报出，比让整次部署失败对用户更可控。
+  if (opts.resolveCdsRef) {
+    for (const [k, v] of Object.entries(view())) {
+      if (!v.includes('${CDS_REF:')) continue;
+      let unresolved = false;
+      const next = v.replace(CDS_REF_TOKEN_RE, (raw) => {
+        const url = opts.resolveCdsRef!(raw);
+        if (url == null) { unresolved = true; return raw; }
+        return url;
+      });
+      trackSet(tracked, k, next, 'platform-injected', unresolved ? 'cds-ref-unresolved' : 'cds-ref');
+    }
   }
 
   // 6. per-branch DB 隔离改写(复用 SSOT applyPerBranchDbIsolation,对比 diff 打标)

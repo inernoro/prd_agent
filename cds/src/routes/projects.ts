@@ -25,6 +25,7 @@
  */
 
 import { Router } from 'express';
+import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
 import { hasActiveGrant } from '../services/identity.js';
@@ -1158,13 +1159,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     // ── BuildProfiles ──
     const appliedProfiles: string[] = [];
-    for (const candidate of parsed.buildProfiles) {
-      const runnableCandidate = inferRunnableComposeProfile(candidate as BuildProfile);
-      const scoped: BuildProfile = {
-        ...runnableCandidate,
+    // id 加项目后缀后，depends_on / cds.calls 里的 compose 服务名由同一个助手对齐（与导入审批同一份规则）
+    const scopedProfiles: BuildProfile[] = normalizeProjectProfileDependencies(
+      parsed.buildProfiles.map((candidate) => ({
+        ...inferRunnableComposeProfile(candidate as BuildProfile),
         id: `${candidate.id}${idSuffix}`,
         projectId: project.id,
-      };
+      })),
+      idSuffix,
+    );
+    for (const scoped of scopedProfiles) {
       const existing = stateService.getBuildProfile(scoped.id);
       if (existing) {
         stateService.updateBuildProfile(scoped.id, scoped);

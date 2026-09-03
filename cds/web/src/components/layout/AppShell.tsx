@@ -2,7 +2,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Activity, Check, CircleAlert, Clock, Contrast, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Search, Settings, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X } from 'lucide-react';
+import { Activity, Check, CircleAlert, Clock, Contrast, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Search, Settings, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
@@ -157,6 +157,7 @@ function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/task-schedule')) return 'task-schedule';
   if (pathname.startsWith('/reports')) return 'reports';
   if (pathname.startsWith('/status')) return 'status';
+  if (pathname.startsWith('/overview')) return 'overview';
   return 'projects';
 }
 
@@ -454,6 +455,18 @@ function RailNav({
           <LayoutGrid />
           <span className="cds-rail-full">项目列表</span>
           <span className="cds-rail-short">项目</span>
+        </Link>
+        {/* 概览（plan.cds.service-relations 第四批）：全部项目的关系与体检，一眼看出配置错在哪、引用断在哪 */}
+        <Link
+          to="/overview"
+          className="cds-rail-item"
+          data-active={active === 'overview' ? 'true' : 'false'}
+          aria-label="概览"
+          title="概览：全部项目的关系与体检"
+          onClick={onNavigate}
+        >
+          <Waypoints />
+          <span>Overview</span>
         </Link>
         {/*
          * 落地页是发布控制台（发布这件事本身）；发布中心退居为低频的管理面
