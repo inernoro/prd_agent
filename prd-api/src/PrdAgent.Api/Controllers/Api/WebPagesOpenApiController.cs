@@ -1,0 +1,194 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
+using PrdAgent.Api.Authorization;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+
+namespace PrdAgent.Api.Controllers.Api;
+
+/// <summary>
+/// 网页托管开放接口 —— 供外部智能体（MCP 连接器）把写好的一页 HTML 直接托管出来。
+///
+/// 鉴权：Authorization: Bearer sk-ak-xxxx（AgentApiKey）+ scope web-pages:read / web-pages:write。
+///
+/// 为什么单独建：WebPagesController 走 JWT + GetRequiredUserId()（只读 sub），sk-ak 没有 sub 会 401。
+/// 这里走 ApiKey + RequireScope + boundUserId，业务落盘复用 IHostedSiteService（与人工上传同一条路径）。
+///
+/// 收敛掉的东西（智能体不需要、也不该碰）：
+/// - 只收 HTML 文本，不收 zip / 二进制上传（MCP 传不了二进制，见接入台设计的「暂不支持」）
+/// - 不提供删除、不提供公开（public）分享：分享一律 owner-only，收不回来的动作第一期不开放
+/// </summary>
+[ApiController]
+[Route("api/open/web-pages")]
+[Authorize(AuthenticationSchemes = "ApiKey")]
+public class WebPagesOpenApiController : ControllerBase
+{
+    public const string ScopeRead = "web-pages:read";
+    public const string ScopeWrite = "web-pages:write";
+
+    /// <summary>单页 HTML 上限 4MB —— 再大的东西不该由一次工具调用塞过来。</summary>
+    private const int MaxHtmlChars = 4_000_000;
+
+    private readonly IHostedSiteService _sites;
+    private readonly MongoDbContext _db;
+
+    public WebPagesOpenApiController(IHostedSiteService sites, MongoDbContext db)
+    {
+        _sites = sites;
+        _db = db;
+    }
+
+    private string GetBoundUserId()
+    {
+        var id = User.FindFirst("boundUserId")?.Value;
+        if (string.IsNullOrWhiteSpace(id))
+            throw new UnauthorizedAccessException("Missing boundUserId claim");
+        return id;
+    }
+
+    private async Task<string> ResolveDisplayNameAsync(string userId, CancellationToken ct)
+    {
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        return user?.DisplayName ?? user?.Username ?? userId;
+    }
+
+    public class PublishPageRequest
+    {
+        public string? HtmlContent { get; set; }
+        public string? Title { get; set; }
+        public string? Description { get; set; }
+        public string? Folder { get; set; }
+        public List<string>? Tags { get; set; }
+        /// <summary>幂等键：智能体重试时不会重复建站。</summary>
+        public string? ClientRequestId { get; set; }
+    }
+
+    /// <summary>把一段 HTML 托管成站点，返回可访问地址。</summary>
+    [HttpPost("pages")]
+    [RequireScope(ScopeWrite)]
+    public async Task<IActionResult> PublishPage([FromBody] PublishPageRequest req, CancellationToken ct)
+    {
+        var userId = GetBoundUserId();
+        var html = req?.HtmlContent ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(html))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "htmlContent 不能为空"));
+        if (html.Length > MaxHtmlChars)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"HTML 超过 {MaxHtmlChars / 1000} KB 上限，请精简或拆成多页"));
+
+        // 幂等：同一把密钥 + 同一个 clientRequestId 只建一次站
+        var sourceRef = BuildSourceRef(req!.ClientRequestId);
+        if (sourceRef != null)
+        {
+            var existed = await _db.HostedSites
+                .Find(s => s.OwnerUserId == userId && s.SourceRef == sourceRef)
+                .FirstOrDefaultAsync(ct);
+            if (existed != null)
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    siteId = existed.Id,
+                    title = existed.Title,
+                    url = existed.SiteUrl,
+                    deduplicated = true,
+                }));
+        }
+
+        var site = await _sites.CreateFromContentAsync(
+            userId, html,
+            string.IsNullOrWhiteSpace(req.Title) ? null : req.Title!.Trim(),
+            string.IsNullOrWhiteSpace(req.Description) ? null : req.Description!.Trim(),
+            sourceType: "api", sourceRef: sourceRef,
+            tags: req.Tags, folder: string.IsNullOrWhiteSpace(req.Folder) ? null : req.Folder!.Trim(),
+            ct: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            siteId = site.Id,
+            title = site.Title,
+            url = site.SiteUrl,
+            visibility = site.Visibility,
+        }));
+    }
+
+    /// <summary>列出我托管的站点（最新在前）。</summary>
+    [HttpGet("pages")]
+    [RequireScope(ScopeRead, ScopeWrite)]
+    public async Task<IActionResult> ListPages([FromQuery] string? keyword, [FromQuery] int limit, CancellationToken ct)
+    {
+        var userId = GetBoundUserId();
+        var resolved = limit is > 0 and <= 100 ? limit : 20;
+        var (items, total) = await _sites.ListAsync(
+            userId, keyword, folder: null, tag: null, sourceType: null,
+            sort: "newest", skip: 0, limit: resolved, ct: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            total,
+            items = items.Select(s => new
+            {
+                siteId = s.Id,
+                title = s.Title,
+                description = s.Description,
+                url = s.SiteUrl,
+                folder = s.Folder,
+                tags = s.Tags ?? new List<string>(),
+                createdAt = s.CreatedAt,
+            })
+        }));
+    }
+
+    public class CreateShareRequest
+    {
+        public string? Title { get; set; }
+        public string? Description { get; set; }
+        /// <summary>有效期天数，1-90，默认 7。</summary>
+        public int? ExpiresInDays { get; set; }
+    }
+
+    /// <summary>
+    /// 给某个站点建一条分享链接。
+    /// 一律 owner-only（只有我和我的团队打得开）—— 公开发布不在第一期开放给智能体的动作里。
+    /// </summary>
+    [HttpPost("pages/{siteId}/share")]
+    [RequireScope(ScopeWrite)]
+    public async Task<IActionResult> CreateShare(string siteId, [FromBody] CreateShareRequest? req, CancellationToken ct)
+    {
+        var userId = GetBoundUserId();
+        var site = await _sites.GetByIdAsync(siteId, userId, ct);
+        if (site == null || site.OwnerUserId != userId)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或不属于你"));
+
+        var days = req?.ExpiresInDays is > 0 and <= 90 ? req!.ExpiresInDays!.Value : 7;
+        var share = await _sites.CreateShareAsync(
+            userId, await ResolveDisplayNameAsync(userId, ct),
+            siteId, siteIds: null, shareType: "single",
+            title: string.IsNullOrWhiteSpace(req?.Title) ? site.Title : req!.Title!.Trim(),
+            description: string.IsNullOrWhiteSpace(req?.Description) ? null : req!.Description!.Trim(),
+            password: null, expiresInDays: days,
+            ct: ct,
+            purpose: "share",
+            forceNew: true,
+            visibility: "owner-only");
+
+        // 分享地址的拼法与 WebPagesController.CreateShare 保持一致（/s/wp/{token}）
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            shareId = share.Id,
+            token = share.Token,
+            shareUrl = $"/s/wp/{share.Token}",
+            expiresAt = share.ExpiresAt,
+            visibility = share.Visibility,
+        }));
+    }
+
+    private string? BuildSourceRef(string? clientRequestId)
+    {
+        if (string.IsNullOrWhiteSpace(clientRequestId)) return null;
+        var keyId = User.FindFirst("agentApiKeyId")?.Value ?? "unknown";
+        var raw = clientRequestId.Trim();
+        if (raw.Length > 120) raw = raw[..120];
+        return $"mcp:{keyId}:{raw}";
+    }
+}

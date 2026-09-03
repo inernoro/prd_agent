@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
+using PrdAgent.Api.Mcp;
 using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Api.Authentication;
@@ -14,6 +15,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
     private readonly IOpenPlatformService _openPlatformService;
     private readonly IAgentApiKeyService _agentApiKeyService;
     private readonly IConfiguration _configuration;
+    private readonly IAdminPermissionService _permissionService;
 
     public ApiKeyAuthenticationHandler(
         IOptionsMonitor<ApiKeyAuthenticationOptions> options,
@@ -21,12 +23,14 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         UrlEncoder encoder,
         IOpenPlatformService openPlatformService,
         IAgentApiKeyService agentApiKeyService,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IAdminPermissionService permissionService)
         : base(options, logger, encoder)
     {
         _openPlatformService = openPlatformService;
         _agentApiKeyService = agentApiKeyService;
         _configuration = configuration;
+        _permissionService = permissionService;
     }
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -114,10 +118,26 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
                 new Claim("authType", "agent-apikey"),
                 new Claim("agentApiKeyId", key.Id)
             };
-            foreach (var scope in key.Scopes ?? new List<string>())
+            // 接入台能力目录里的 scope 要按「密钥主人此刻还有没有那个权限位」二次核对：
+            // 签发时校验过一次，但权限随后可能被管理员回收，而密钥还在外面跑。
+            // 只查一次权限（而且只在密钥确实带了这类 scope 时才查），老 scope 不受影响。
+            var declaredScopes = (key.Scopes ?? new List<string>())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToList();
+            IReadOnlyList<string>? ownerPermissions = null;
+            if (declaredScopes.Any(McpCapabilityCatalog.RuntimeCheckedScopes.Contains))
+                ownerPermissions = await _permissionService.GetEffectivePermissionsAsync(key.OwnerUserId, isRoot: false);
+
+            foreach (var scope in declaredScopes)
             {
-                if (!string.IsNullOrWhiteSpace(scope))
-                    keyClaims.Add(new Claim("scope", scope));
+                if (McpCapabilityCatalog.RuntimeCheckedScopes.Contains(scope)
+                    && !McpCapabilityCatalog.PermissionsAllowScope(ownerPermissions ?? Array.Empty<string>(), scope))
+                {
+                    Logger.LogWarning("AgentApiKey {KeyId} 携带的 scope {Scope} 已失效：主人 {UserId} 当前没有对应权限位，本次请求按未授权处理",
+                        key.Id, scope, key.OwnerUserId);
+                    continue;
+                }
+                keyClaims.Add(new Claim("scope", scope));
             }
 
             // 若处于宽限期，通过响应头提示续期（不阻断请求）

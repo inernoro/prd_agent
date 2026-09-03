@@ -57,19 +57,11 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         return new ImageMasterWorkspace { Id = ws.Id, OwnerUserId = "__FORBIDDEN__" };
     }
 
-    private static string Sha256Hex(string s)
-    {
-        var bytes = Encoding.UTF8.GetBytes(s ?? string.Empty);
-        var hash = SHA256.HashData(bytes);
-        return Convert.ToHexString(hash).ToLowerInvariant();
-    }
+    // 指纹计算搬到 Services.LiteraryWorkspaceHash：开放接口那边建工作区要用同一份判据
+    private static string Sha256Hex(string s) => Services.LiteraryWorkspaceHash.Sha256Hex(s);
 
     private static string ComputeContentHash(string? canvasHash, string? assetsHash)
-    {
-        var ch = (canvasHash ?? string.Empty).Trim();
-        var ah = (assetsHash ?? string.Empty).Trim();
-        return Sha256Hex($"{ch}|{ah}");
-    }
+        => Services.LiteraryWorkspaceHash.ComputeContentHash(canvasHash, assetsHash);
 
     /// <summary>
     /// 列出当前用户的工作区（文学创作场景）

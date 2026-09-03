@@ -402,16 +402,12 @@ public class McpGatewayController : ControllerBase
         n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
     /// <summary>
-    /// scope 满足判断。镜像 AdminPermissionMiddleware.HasScopeGrant：document-store:write 隐含 read，
-    /// 让只持有写 scope 的密钥也能用 knowledge_base_* 只读工具（与 REST 行为一致）。
+    /// scope 满足判断。判据只此一处，落在 McpCapabilityCatalog：`{res}:write` 隐含 `{res}:read`，
+    /// 让只持有写 scope 的密钥也能用同一块能力的只读工具（与 REST 行为一致）。
+    /// 早先这里写死了 document-store 一对，新增 web-pages 读写档时就会漏 —— 判据别按资源名硬编码。
     /// </summary>
     internal static bool ScopeSatisfies(HashSet<string> owned, string required)
-    {
-        if (owned.Contains(required)) return true;
-        if (required == McpBuiltinTools.ScopeDocStoreRead && owned.Contains(McpBuiltinTools.ScopeDocStoreWrite))
-            return true;
-        return false;
-    }
+        => McpCapabilityCatalog.ScopeSatisfies(owned, required);
 
     internal static string DynamicToolName(AgentOpenEndpoint e)
     {

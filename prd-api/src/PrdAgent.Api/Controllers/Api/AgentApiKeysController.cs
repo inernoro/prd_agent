@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers; // OpenApiController.ScopeCall（位于父命名空间，显式 using 让跨命名空间引用更清晰）
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Mcp;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -25,15 +26,14 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public class AgentApiKeysController : ControllerBase
 {
-    // 固定 scope 白名单（市场开放接口核心 scope）
-    private static readonly HashSet<string> FixedAllowedScopes = new(StringComparer.OrdinalIgnoreCase)
+    // 固定 scope 白名单 = 接入台能力目录（视觉创作 / 文学创作 / 知识库 / 网页托管 / 海鲜市场）
+    // 加上不属于任何能力卡的历史 scope（缺陷协作、OpenAI 兼容网关）。
+    // 能力目录是 SSOT，这里不再手抄第二份清单。
+    private static readonly HashSet<string> FixedAllowedScopes = new HashSet<string>(
+        McpCapabilityCatalog.AllScopes, StringComparer.OrdinalIgnoreCase)
     {
-        MarketplaceSkillsOpenApiController.ScopeRead,
-        MarketplaceSkillsOpenApiController.ScopeWrite,
         DefectAgentController.AgentFixScope,
         DefectAgentController.AgentShareScope,
-        DocumentStoreController.ScopeRead,
-        DocumentStoreController.ScopeWrite,
         OpenApiController.ScopeCall,
     };
 
@@ -46,11 +46,24 @@ public class AgentApiKeysController : ControllerBase
 
     private readonly IAgentApiKeyService _keyService;
     private readonly MongoDbContext _db;
+    private readonly IAdminPermissionService _permissions;
 
-    public AgentApiKeysController(IAgentApiKeyService keyService, MongoDbContext db)
+    public AgentApiKeysController(IAgentApiKeyService keyService, MongoDbContext db, IAdminPermissionService permissions)
     {
         _keyService = keyService;
         _db = db;
+        _permissions = permissions;
+    }
+
+    /// <summary>
+    /// 当前登录用户的有效权限位。签发密钥时用它跟请求的 scope 取交集 ——
+    /// 没有这一步，任何人都能自己签一把带 `visual-agent:use` 的密钥，
+    /// 绕过管理员分配的权限位（scope 在 AdminPermissionMiddleware 里是直接放行的）。
+    /// </summary>
+    private Task<IReadOnlyList<string>> OwnedPermissionsAsync(string userId, CancellationToken ct)
+    {
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        return _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
     }
 
     /// <summary>
@@ -59,8 +72,19 @@ public class AgentApiKeysController : ControllerBase
     /// 2. AgentScopeFormat.Pattern 匹配的 agent.* scope，且该 scope 必须
     ///    已经被某条 AgentOpenEndpoint 登记过（防止用户创建"空头"scope）
     /// </summary>
-    private async Task<(bool ok, string? reason)> ValidateScopeAsync(string scope, CancellationToken ct)
+    private async Task<(bool ok, string? reason)> ValidateScopeAsync(
+        string scope, IReadOnlyList<string> ownedPermissions, CancellationToken ct)
     {
+        // 能力目录里的 scope：必须是用户自己就有的权限位，不能靠签发密钥凭空长出来
+        if (McpCapabilityCatalog.AllScopes.Contains(scope))
+        {
+            if (!McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope))
+            {
+                var perm = McpCapabilityCatalog.ToPermission(scope);
+                return (false, $"你自己还没有「{McpCapabilityCatalog.DescribePermission(perm)}」权限，不能把 `{scope}` 授权给智能体。请先找管理员开通。");
+            }
+            return (true, null);
+        }
         if (FixedAllowedScopes.Contains(scope)) return (true, null);
         if (!AgentScopeFormat.Pattern.IsMatch(scope))
             return (false, $"scope 格式无效: {scope}（允许 {string.Join(" / ", FixedAllowedScopes)} 或 `agent.{{agent-key}}:{{action}}`）");
@@ -132,9 +156,10 @@ public class AgentApiKeysController : ControllerBase
             .ToList();
         if (scopes.Count == 0)
             return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", "至少选择一个 scope（如 marketplace.skills:read）"));
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
         foreach (var s in scopes)
         {
-            var (ok, reason) = await ValidateScopeAsync(s, ct);
+            var (ok, reason) = await ValidateScopeAsync(s, ownedPermissions, ct);
             if (!ok) return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", reason!));
         }
 
@@ -164,9 +189,10 @@ public class AgentApiKeysController : ControllerBase
         if (req.Scopes != null)
         {
             var scopes = req.Scopes.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
+            var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
             foreach (var s in scopes)
             {
-                var (ok, reason) = await ValidateScopeAsync(s, ct);
+                var (ok, reason) = await ValidateScopeAsync(s, ownedPermissions, ct);
                 if (!ok) return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", reason!));
             }
             req.Scopes = scopes;

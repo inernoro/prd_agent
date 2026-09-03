@@ -20,6 +20,10 @@ namespace PrdAgent.Api.Controllers.Api;
 ///
 /// 可见性：owner ‖ public ‖ team-shared（DocumentStoreController.CanReadStoreAsync 的安全子集，
 /// 绝不越权）。不覆盖 shitu/product/pmProject 专用库——那些走各自专用 Agent，不在通用 MCP 范围。
+///
+/// 写入（document-store:write）只允许 owner 自己的通用库：读能读到 team-shared，写不行 ——
+/// 智能体替我写东西，落点必须是我自己的库，不该悄悄改到别人共享给我的库里。
+/// 正文落盘复用 EntryContentWriteService（与人工编辑、版本恢复同一条路径），不另写一份。
 /// </summary>
 [ApiController]
 [Route("api/open/document-store")]
@@ -32,12 +36,18 @@ public class DocumentStoreOpenApiController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ITeamService _teams;
     private readonly IDocumentService _documentService;
+    private readonly Services.EntryContentWriteService _entryContentWriter;
 
-    public DocumentStoreOpenApiController(MongoDbContext db, ITeamService teams, IDocumentService documentService)
+    public DocumentStoreOpenApiController(
+        MongoDbContext db,
+        ITeamService teams,
+        IDocumentService documentService,
+        Services.EntryContentWriteService entryContentWriter)
     {
         _db = db;
         _teams = teams;
         _documentService = documentService;
+        _entryContentWriter = entryContentWriter;
     }
 
     /// <summary>从 AgentApiKey 鉴权结果取绑定用户。失败抛 401。</summary>
@@ -185,5 +195,167 @@ public class DocumentStoreOpenApiController : ControllerBase
             fileUrl,
             hasContent = !string.IsNullOrEmpty(content),
         }));
+    }
+
+    // ======================================================================
+    // 写入：智能体把整理好的东西放回我的知识库
+    // ======================================================================
+
+    /// <summary>写入落点：必须是我自己的通用库。</summary>
+    private async Task<(DocumentStore? store, IActionResult? error)> LoadWritableStoreAsync(string storeId, string userId, CancellationToken ct)
+    {
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync(ct);
+        if (store == null || !IsGenericStore(store))
+            return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在")));
+        if (store.OwnerId != userId)
+            return (null, StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只能写入你自己的知识库；别人共享给你的库是只读的")));
+        return (store, null);
+    }
+
+    private async Task<(string userId, string? displayName)> GetActorAsync(CancellationToken ct)
+    {
+        var userId = GetBoundUserId();
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        return (userId, user?.DisplayName ?? user?.Username);
+    }
+
+    public class CreateStoreRequest
+    {
+        public string? Name { get; set; }
+        public string? Description { get; set; }
+        public List<string>? Tags { get; set; }
+    }
+
+    /// <summary>新建一个知识库（归当前密钥主人所有，默认私有）。</summary>
+    [HttpPost("stores")]
+    [RequireScope(ScopeWrite)]
+    public async Task<IActionResult> CreateStore([FromBody] CreateStoreRequest req, CancellationToken ct)
+    {
+        var userId = GetBoundUserId();
+        if (string.IsNullOrWhiteSpace(req?.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "知识库名称不能为空"));
+
+        var store = new DocumentStore
+        {
+            Name = req.Name.Trim(),
+            Description = string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim(),
+            OwnerId = userId,
+            Tags = req.Tags ?? new List<string>(),
+            IsPublic = false,
+        };
+        await _db.DocumentStores.InsertOneAsync(store, cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { storeId = store.Id, name = store.Name }));
+    }
+
+    public class CreateEntryRequest
+    {
+        public string? Title { get; set; }
+        public string? Content { get; set; }
+        public string? Summary { get; set; }
+        public List<string>? Tags { get; set; }
+        public string? ParentId { get; set; }
+        /// <summary>幂等键：同一把密钥用同一个值重复提交只会写进去一次（智能体重试很常见）。</summary>
+        public string? ClientRequestId { get; set; }
+    }
+
+    /// <summary>往我的知识库写一篇文档（标题 + Markdown 正文一次到位）。</summary>
+    [HttpPost("stores/{storeId}/entries")]
+    [RequireScope(ScopeWrite)]
+    public async Task<IActionResult> CreateEntry(string storeId, [FromBody] CreateEntryRequest req, CancellationToken ct)
+    {
+        var (userId, displayName) = await GetActorAsync(ct);
+        var (store, error) = await LoadWritableStoreAsync(storeId, userId, ct);
+        if (error != null) return error;
+        if (string.IsNullOrWhiteSpace(req?.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档标题不能为空"));
+
+        var content = req.Content ?? string.Empty;
+        if (content.Length > MaxContentChars)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"正文超过 {MaxContentChars} 字上限，请拆成多篇或先精简"));
+
+        // 幂等：同一把密钥 + 同一个 clientRequestId 只写一次
+        var idempotencyKey = BuildIdempotencyKey(req.ClientRequestId);
+        if (idempotencyKey != null)
+        {
+            // 用字符串字段名过滤：Metadata 是 Dictionary，索引器写法在表达式树里翻不成 Mongo 查询
+            var dedupFilter = Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
+                Builders<DocumentEntry>.Filter.Eq("Metadata.mcpRequestId", idempotencyKey));
+            var existed = await _db.DocumentEntries.Find(dedupFilter).FirstOrDefaultAsync(ct);
+            if (existed != null)
+                return Ok(ApiResponse<object>.Ok(new { entryId = existed.Id, title = existed.Title, deduplicated = true }));
+        }
+
+        var entry = new DocumentEntry
+        {
+            StoreId = storeId,
+            ParentId = string.IsNullOrWhiteSpace(req.ParentId) ? null : req.ParentId,
+            Title = req.Title.Trim(),
+            Summary = string.IsNullOrWhiteSpace(req.Summary) ? null : req.Summary.Trim(),
+            SourceType = DocumentSourceType.Upload,
+            ContentType = "text/markdown",
+            Tags = req.Tags ?? new List<string>(),
+            Metadata = idempotencyKey == null
+                ? new Dictionary<string, string> { ["createdVia"] = "mcp" }
+                : new Dictionary<string, string> { ["createdVia"] = "mcp", ["mcpRequestId"] = idempotencyKey },
+            CreatedBy = userId,
+            CreatedByName = displayName,
+            UpdatedBy = userId,
+            UpdatedByName = displayName,
+            LastChangedAt = DateTime.UtcNow,
+        };
+        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update.Inc(s => s.DocumentCount, 1).Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        if (content.Length > 0)
+            await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
+                DocumentVersionSource.Edit, contentTypeOverride: "text/markdown");
+
+        return Ok(ApiResponse<object>.Ok(new { entryId = entry.Id, storeId, title = entry.Title }));
+    }
+
+    public class UpdateEntryContentRequest
+    {
+        public string? Content { get; set; }
+    }
+
+    /// <summary>覆盖某篇文档的正文（会留一版历史，可在界面里回滚）。</summary>
+    [HttpPut("entries/{entryId}/content")]
+    [RequireScope(ScopeWrite)]
+    public async Task<IActionResult> UpdateEntryContent(string entryId, [FromBody] UpdateEntryContentRequest req, CancellationToken ct)
+    {
+        var (userId, displayName) = await GetActorAsync(ct);
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync(ct);
+        if (entry == null || entry.IsFolder)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        var (store, error) = await LoadWritableStoreAsync(entry.StoreId, userId, ct);
+        if (error != null) return error;
+
+        var content = req?.Content ?? string.Empty;
+        if (content.Length > MaxContentChars)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"正文超过 {MaxContentChars} 字上限，请拆成多篇或先精简"));
+
+        await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
+            DocumentVersionSource.Edit, contentTypeOverride: entry.ContentType);
+        return Ok(ApiResponse<object>.Ok(new { entryId = entry.Id, title = entry.Title }));
+    }
+
+    /// <summary>单篇正文上限。挡住智能体一次糊一本书进来，也挡住它把上下文里的垃圾整个倒进知识库。</summary>
+    private const int MaxContentChars = 200_000;
+
+    /// <summary>幂等键带上密钥 id，避免两把密钥用了同一个 clientRequestId 互相吞掉对方的写入。</summary>
+    private string? BuildIdempotencyKey(string? clientRequestId)
+    {
+        if (string.IsNullOrWhiteSpace(clientRequestId)) return null;
+        var keyId = User.FindFirst("agentApiKeyId")?.Value ?? "unknown";
+        var raw = clientRequestId.Trim();
+        if (raw.Length > 120) raw = raw[..120];
+        return $"{keyId}:{raw}";
     }
 }
