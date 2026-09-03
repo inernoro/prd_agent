@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using Markdig;
 using Microsoft.Extensions.Logging;
@@ -40,8 +41,18 @@ public class WebFolderService : IWebFolderService
     public async Task<WebFolder> CreateAsync(string userId, WebFolder input, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
+        var normalizedName = NormalizeName(input.Name);
+        var existing = (await _db.WebFolders
+                .Find(folder => folder.OwnerUserId == userId)
+                .ToListAsync(ct))
+            .FirstOrDefault(folder => NormalizeName(folder.Name) == normalizedName);
+        if (existing != null) return existing;
+
         var category = new WebFolder
         {
+            // 同一用户、同一归一化名称固定得到同一个 _id。两个 API 实例或两个浏览器标签
+            // 并发创建时，MongoDB 的单文档 upsert 会落到同一条记录，不依赖前端缓存。
+            Id = BuildIdempotentId(userId, normalizedName),
             OwnerUserId = userId,
             Name = (input.Name ?? string.Empty).Trim(),
             Description = input.Description?.Trim(),
@@ -59,9 +70,41 @@ public class WebFolderService : IWebFolderService
             UpdatedAt = now,
         };
 
-        await _db.WebFolders.InsertOneAsync(category, cancellationToken: ct);
-        _logger.LogInformation("[web-folder] Created {Id} '{Name}' by {UserId}", category.Id, category.Name, userId);
-        return category;
+        var ub = Builders<WebFolder>.Update;
+        var created = await IMongoCollectionExtensions.FindOneAndUpdateAsync<WebFolder, WebFolder>(
+            _db.WebFolders,
+            folder => folder.Id == category.Id,
+            ub.Combine(
+                ub.SetOnInsert(folder => folder.Id, category.Id),
+                ub.SetOnInsert(folder => folder.OwnerUserId, category.OwnerUserId),
+                ub.SetOnInsert(folder => folder.Name, category.Name),
+                ub.SetOnInsert(folder => folder.Description, category.Description),
+                ub.SetOnInsert(folder => folder.SortOrder, category.SortOrder),
+                ub.SetOnInsert(folder => folder.GeneratorType, category.GeneratorType),
+                ub.SetOnInsert(folder => folder.GeneratorSkillId, category.GeneratorSkillId),
+                ub.SetOnInsert(folder => folder.GeneratorMarkdown, category.GeneratorMarkdown),
+                ub.SetOnInsert(folder => folder.GenerateTarget, category.GenerateTarget),
+                ub.SetOnInsert(folder => folder.GenerateStoreId, category.GenerateStoreId),
+                ub.SetOnInsert(folder => folder.CreatedAt, category.CreatedAt),
+                ub.SetOnInsert(folder => folder.UpdatedAt, category.UpdatedAt)),
+            new FindOneAndUpdateOptions<WebFolder, WebFolder>
+            {
+                IsUpsert = true,
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct) ?? throw new InvalidOperationException("文件夹创建后未能读取，请稍后重试");
+
+        _logger.LogInformation("[web-folder] Resolved idempotent folder {Id} '{Name}' by {UserId}", created.Id, created.Name, userId);
+        return created;
+    }
+
+    internal static string NormalizeName(string? name) =>
+        (name ?? string.Empty).Trim().Normalize(NormalizationForm.FormC).ToUpperInvariant();
+
+    internal static string BuildIdempotentId(string userId, string normalizedName)
+    {
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes($"{userId}\0{normalizedName}"));
+        return Convert.ToHexString(digest.AsSpan(0, 16)).ToLowerInvariant();
     }
 
     public async Task<List<WebFolder>> ListAsync(string userId, CancellationToken ct = default)

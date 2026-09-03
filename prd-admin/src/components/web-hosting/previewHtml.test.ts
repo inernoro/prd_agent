@@ -184,6 +184,21 @@ describe('srcDoc 页内锚点', () => {
     expect(injectedBase).toContain('<head data-note="score > 0"><base href="https://storage.example/site/">');
   });
 
+  it('忽略 RCDATA、模板与 body 中的伪 base，只向真实 head 注入', () => {
+    const html = [
+      '<html><head><title><base href="/title-fake"></title></head>',
+      '<body><textarea><base href="/textarea-fake"></textarea>',
+      '<template><base href="/template-fake"></template>',
+      '<base href="/body-fake"><img src="asset.png"></body></html>',
+    ].join('');
+    const out = withPreviewBase(html, 'https://storage.example/site/index.html');
+
+    expect(out).toContain('<head><base href="https://storage.example/site/">');
+    expect(out).toContain('<textarea><base href="/textarea-fake"></textarea>');
+    expect(out).toContain('<template><base href="/template-fake"></template>');
+    expect(out).toContain('<base href="/body-fake">');
+  });
+
   it('脚本字符串与 HTML 注释里的伪锚点不会被当成真实标签改写', () => {
     const html = [
       '<script>const sample = `<a href="#script-fake">`;</script>',

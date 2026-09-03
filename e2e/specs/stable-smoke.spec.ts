@@ -1113,6 +1113,28 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         '同名文件夹重复创建后只能保留一条持久记录',
       ).toHaveLength(1);
 
+      const concurrentPayload = {
+        name: runKey,
+        generatorType: 'none',
+        generateTarget: 'web',
+      };
+      const concurrentCreates = await Promise.all([
+        page.request.post('/api/web-folders', { headers: authHeaders(token), data: concurrentPayload }),
+        page.request.post('/api/web-folders', { headers: authHeaders(token), data: concurrentPayload }),
+      ]);
+      const concurrentFolders = await Promise.all(
+        concurrentCreates.map((response) => readEnvelope<StableWebFolder>(response)),
+      );
+      expect(new Set(concurrentFolders.map((folder) => folder.id)).size, '并发创建必须返回同一文件夹').toBe(1);
+      expect(concurrentFolders[0].id).toBe(folderId);
+      const foldersAfterConcurrentCreate = await readEnvelope<{ items: StableWebFolder[] }>(
+        await page.request.get('/api/web-folders', { headers: authHeaders(token) }),
+      );
+      expect(
+        foldersAfterConcurrentCreate.items.filter((folder) => folder.name === runKey),
+        '并发 API 创建后仍只能存在一条持久记录',
+      ).toHaveLength(1);
+
       const folderTarget = page.locator('[data-tour-id="webpages-folder-drop-target"]').filter({ hasText: runKey });
       await expect(folderTarget).toBeVisible();
       await expect(folderTarget.locator('.web-folder-drop-target__count')).toHaveText('0');

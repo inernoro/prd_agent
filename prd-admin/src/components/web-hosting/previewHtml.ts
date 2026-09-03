@@ -205,6 +205,36 @@ type HtmlStartTag = {
   text: string;
 };
 
+type HtmlTag = HtmlStartTag & {
+  closing: boolean;
+};
+
+const RAW_OR_RCDATA_ELEMENTS = new Set([
+  'iframe',
+  'noembed',
+  'noframes',
+  'noscript',
+  'script',
+  'style',
+  'textarea',
+  'title',
+  'xmp',
+]);
+
+function findClosingTagStart(html: string, name: string, from: number): number {
+  const lower = html.toLowerCase();
+  const prefix = `</${name}`;
+  let cursor = from;
+  while (cursor < html.length) {
+    const start = lower.indexOf(prefix, cursor);
+    if (start < 0) return -1;
+    const boundary = lower[start + prefix.length] ?? '';
+    if (!boundary || /[\s/>]/.test(boundary)) return start;
+    cursor = start + prefix.length;
+  }
+  return -1;
+}
+
 /**
  * 扫描完整 HTML 开始标签，结束位置必须在引号外的 `>`。
  *
@@ -212,8 +242,8 @@ type HtmlStartTag = {
  * 正则会把标签截成半截，后面的真实 href 永远看不到。这个扫描器是开始标签
  * 边界的唯一来源，a/area/base/head 都复用它。
  */
-function scanHtmlStartTags(html: string, acceptedNames?: ReadonlySet<string>): HtmlStartTag[] {
-  const tags: HtmlStartTag[] = [];
+function scanHtmlTags(html: string, acceptedNames?: ReadonlySet<string>): HtmlTag[] {
+  const tags: HtmlTag[] = [];
   let cursor = 0;
 
   while (cursor < html.length) {
@@ -224,7 +254,8 @@ function scanHtmlStartTags(html: string, acceptedNames?: ReadonlySet<string>): H
       cursor = commentEnd < 0 ? html.length : commentEnd + 3;
       continue;
     }
-    const nameStart = start + 1;
+    const closing = html[start + 1] === '/';
+    const nameStart = start + (closing ? 2 : 1);
     if (!/[a-z]/i.test(html[nameStart] ?? '')) {
       cursor = start + 1;
       continue;
@@ -253,16 +284,47 @@ function scanHtmlStartTags(html: string, acceptedNames?: ReadonlySet<string>): H
 
     if (end > html.length || html[end - 1] !== '>') break;
     if (!acceptedNames || acceptedNames.has(name)) {
-      tags.push({ start, end, name, text: html.slice(start, end) });
+      tags.push({ start, end, name, text: html.slice(start, end), closing });
     }
     cursor = end;
-    if (name === 'script' || name === 'style') {
-      const rawTextEnd = html.toLowerCase().indexOf(`</${name}`, cursor);
+    if (!closing && RAW_OR_RCDATA_ELEMENTS.has(name)) {
+      const rawTextEnd = findClosingTagStart(html, name, cursor);
       if (rawTextEnd >= 0) cursor = rawTextEnd;
     }
+    if (!closing && name === 'plaintext') cursor = html.length;
   }
 
   return tags;
+}
+
+function scanHtmlStartTags(html: string, acceptedNames?: ReadonlySet<string>): HtmlStartTag[] {
+  return scanHtmlTags(html, acceptedNames).filter((tag) => !tag.closing);
+}
+
+/** 只认真实 head 上下文里的首个 base；模板、RCDATA 与 raw-text 中的字样均为惰性文本。 */
+function findActiveHeadBase(html: string): HtmlStartTag | undefined {
+  const tags = scanHtmlTags(html, new Set(['base', 'body', 'head', 'template']));
+  const hasExplicitHead = tags.some((tag) => tag.name === 'head' && !tag.closing);
+  let inHead = !hasExplicitHead;
+  let templateDepth = 0;
+
+  for (const tag of tags) {
+    if (tag.name === 'template') {
+      templateDepth = Math.max(0, templateDepth + (tag.closing ? -1 : 1));
+      continue;
+    }
+    if (templateDepth > 0) continue;
+    if (tag.name === 'head') {
+      inHead = !tag.closing;
+      continue;
+    }
+    if (tag.name === 'body' && !tag.closing) {
+      inHead = false;
+      continue;
+    }
+    if (tag.name === 'base' && !tag.closing && inHead) return tag;
+  }
+  return undefined;
 }
 
 /**
@@ -352,7 +414,7 @@ export function withPreviewBase(html: string, siteUrl: string) {
   // 先找到那个 <base> 标签本身，再看它有没有 href —— 两件事分开判。
   // 合成一条正则要求 href 必须存在，会让 `<base target="_blank">` 这种「有标签、没 href」
   // 的页面整个漏过去：不改写，也不注入，相对资源在 srcDoc 下全部解析到 MAP 自己的页面。
-  const baseTagMatch = scanHtmlStartTags(html, new Set(['base']))[0];
+  const baseTagMatch = findActiveHeadBase(html);
   if (baseTagMatch) {
     const tag = baseTagMatch.text;
     const hrefAttr = findHtmlAttribute(tag, 'href');
