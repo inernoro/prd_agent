@@ -176,7 +176,6 @@ public sealed class McpUsageService
     /// </summary>
     internal static bool IsStaleRateState(DateTime entryMinute, DateTime now) =>
         entryMinute < now - RateStateRetention;
-    }
 
     /// <summary>
     /// 日额度的原子占坑。放行时若占了坑，调用失败要用 <see cref="ReleaseAsync"/> 退还。
