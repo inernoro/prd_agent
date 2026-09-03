@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
@@ -62,7 +63,8 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
         var http = context.HttpContext;
-        var keyId = http.User?.FindFirst("agentApiKeyId")?.Value;
+        var keyId = http.User?.FindFirst("agentApiKeyId")?.Value
+            ?? await ResolveKeyIdForAnonymousEndpointAsync(http);
         if (string.IsNullOrEmpty(keyId) || _loopback.IsGatewayContinuation(http.Request))
         {
             await next();
@@ -153,6 +155,36 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter
     /// </summary>
     internal static int ResolveLoggedStatus(int? resultStatus, bool threw)
         => resultStatus ?? (threw ? StatusCodes.Status500InternalServerError : StatusCodes.Status200OK);
+
+    /// <summary>
+    /// 标了 [AllowAnonymous] 的端点上，带着密钥的调用方也拿不到身份。
+    ///
+    /// 原因：ApiKey 是非默认 scheme，AllowAnonymous 让授权环节不去选它，于是认证中间件
+    /// 不会填 HttpContext.User。海鲜市场的读端点（搜索 / 详情 / 取用）正是这一类，
+    /// 而它们背后挂着三个内置工具。结果是「带钥匙直连这三个端点」既不进每分钟窗口、
+    /// 也不进调用记录 —— 本 PR 宣称的「两条路同一套闸门」在这三个工具上是假的。
+    ///
+    /// 所以这里补跑一次认证，但**只对确实带了 sk-ak- 的请求**（别的请求一次都不多跑），
+    /// 且结果只在闸门内部用、不写回 HttpContext.User：那些端点本来就允许匿名，
+    /// 替它们改主体会顺手改掉下游看到的身份，属于本轮不该动的东西。
+    /// </summary>
+    private static async Task<string?> ResolveKeyIdForAnonymousEndpointAsync(HttpContext http)
+    {
+        if (!HasAgentKeyCredential(http.Request)) return null;
+        var result = await http.AuthenticateAsync("ApiKey");
+        return result.Succeeded ? result.Principal?.FindFirst("agentApiKeyId")?.Value : null;
+    }
+
+    /// <summary>请求头里带的是 sk-ak- 密钥吗（JWT 会话与别的 key 形态一律不算）。</summary>
+    internal static bool HasAgentKeyCredential(HttpRequest request)
+    {
+        if (!request.Headers.TryGetValue("Authorization", out var auth)) return false;
+        var raw = auth.ToString();
+        var token = raw.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? raw["Bearer ".Length..].Trim()
+            : raw.Trim();
+        return token.StartsWith("sk-ak-", StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// 反查动态工具（AgentOpenEndpoint 登记表）。登记表在 Mongo 里，每个请求都查一次太贵，

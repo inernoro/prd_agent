@@ -163,3 +163,43 @@ public class McpLoggedStatusTests
         AgentApiKeyUsageFilter.ResolveLoggedStatus(404, threw: false).ShouldBe(404);
     }
 }
+
+/// <summary>
+/// 匿名端点上的密钥识别。
+///
+/// 海鲜市场的读端点（搜索 / 详情 / 取用）标了 [AllowAnonymous]，而 ApiKey 是非默认 scheme ——
+/// 授权环节不去选它，认证中间件也就不填主体。于是「带钥匙直连这三个端点」在闸门眼里是匿名的：
+/// 不进每分钟窗口，也不进调用记录，而这三个端点背后正挂着三个内置工具。
+///
+/// 补认证只能针对**确实带了 sk-ak- 的请求**：放宽了就等于给全站每个匿名请求都多跑一次认证。
+/// 两个方向都要钉，缺哪边都不会红。
+/// </summary>
+public class McpAgentKeyCredentialDetectionTests
+{
+    private static HttpRequest RequestWith(string? authorization)
+    {
+        var ctx = new DefaultHttpContext();
+        if (authorization != null) ctx.Request.Headers["Authorization"] = authorization;
+        return ctx.Request;
+    }
+
+    [Fact]
+    public void 带_sk_ak_的_Bearer_要认出来()
+    {
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("Bearer sk-ak-abc123")).ShouldBeTrue();
+        // 大小写不同的 Bearer、以及不带 Bearer 前缀直接给密钥，都算
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("bearer sk-ak-abc123")).ShouldBeTrue();
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("sk-ak-abc123")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void 别的凭据形态一律不补认证()
+    {
+        // JWT 会话：它走默认 scheme，本来就有主体，不需要这条路
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("Bearer eyJhbGciOiJIUzI1NiJ9.x.y")).ShouldBeFalse();
+        // 旧版 sk-{32} App key 与平台访问钥匙都不是接入台的密钥
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("Bearer sk-0123456789abcdef")).ShouldBeFalse();
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith(null)).ShouldBeFalse();
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("")).ShouldBeFalse();
+    }
+}

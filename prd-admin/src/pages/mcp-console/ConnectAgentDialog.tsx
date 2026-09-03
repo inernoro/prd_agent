@@ -8,6 +8,24 @@ import { toast } from '@/lib/toast';
 type Step = 'capabilities' | 'key' | 'connect';
 
 /**
+ * 授权自检的等待上限。
+ *
+ * 它是可选的加分项，不该有能力扣住那把已经生效的钥匙。超时后只是「没跑完」，
+ * 钥匙照旧可见可复制 —— 判据是「用户手里有没有那串明文」，不是「自检有没有结论」。
+ */
+const SelfCheckTimeoutMs = 15_000;
+
+/** 给一个不带超时的请求套上上限。超时返回 null，底下那条请求随它跑完，结果不再采用。 */
+function withTimeout<T>(task: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    task,
+    new Promise<null>((resolve) => {
+      setTimeout(() => resolve(null), ms);
+    }),
+  ]);
+}
+
+/**
  * 三步接入向导：勾能力 → 出钥匙 → 接上。
  *
  * 两条硬规矩落在这里：
@@ -33,6 +51,10 @@ export function ConnectAgentDialog({
   const [creating, setCreating] = useState(false);
   const [plaintext, setPlaintext] = useState('');
   const [visible, setVisible] = useState<McpVisibleToolsDto | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkTimedOut, setCheckTimedOut] = useState(false);
+  // 留着密钥 id 才能重试自检。明文不能重来，自检可以。
+  const [issuedKeyId, setIssuedKeyId] = useState<string | null>(null);
   const [configTab, setConfigTab] = useState<'claude-code' | 'claude-desktop' | 'codex'>('claude-code');
 
   const scopes = useMemo(() => {
@@ -52,6 +74,18 @@ export function ConnectAgentDialog({
     setClientName('我的 Claude Code');
     setPlaintext('');
     setVisible(null);
+    setChecking(false);
+    setCheckTimedOut(false);
+    setIssuedKeyId(null);
+  }, []);
+
+  const runSelfCheck = useCallback(async (keyId: string) => {
+    setChecking(true);
+    setCheckTimedOut(false);
+    const check = await withTimeout(getMcpVisibleTools(keyId), SelfCheckTimeoutMs);
+    if (check === null) setCheckTimedOut(true);
+    else if (check.success && check.data) setVisible(check.data);
+    setChecking(false);
   }, []);
 
   const handleClose = useCallback(
@@ -77,18 +111,22 @@ export function ConnectAgentDialog({
       toast.error('密钥创建失败', res.error?.message);
       return;
     }
+    // 钥匙已经在服务端生效，而明文只在这一次响应里出现 —— 先把它交到用户手上，再做别的。
+    // 上一版把自检 await 在这中间（为的是不让用户连点两次签出两把钥匙），代价是：
+    // 自检那条请求没有超时，一旦挂住，用户既看不到已经生效的钥匙、也关不掉弹窗
+    // （关闭在签发期间被锁着），刷新一次那串明文就永久没了。
+    // 连点的洞用另一种方式堵：跟着切到「接上」那一步，签发按钮随上一步一起卸载，
+    // 压根不存在第二次可点 —— 两个性质同时成立，不用二选一。
     setPlaintext(res.data.apiKey);
-    const keyId = res.data.item?.id;
-    // 自检这一段还在网络里，按钮不能先解锁 —— 解锁了用户再点一次就又签出一把钥匙，
-    // 而且后签的那把会把界面上显示的明文覆盖掉，他手里就多了一把自己不知道的钥匙。
-    if (keyId) {
-      const check = await getMcpVisibleTools(keyId);
-      if (check.success && check.data) setVisible(check.data);
-    }
-    onCreated();
     setStep('connect');
     setCreating(false);
-  }, [clientName, scopes, onCreated]);
+    onCreated();
+
+    const keyId = res.data.item?.id;
+    if (!keyId) return;
+    setIssuedKeyId(keyId);
+    await runSelfCheck(keyId);
+  }, [clientName, scopes, onCreated, runSelfCheck]);
 
   const configSnippet = useMemo(() => {
     const key = plaintext || 'sk-ak-你的密钥';
@@ -354,6 +392,47 @@ export function ConnectAgentDialog({
                   {configSnippet}
                 </pre>
               </div>
+
+              {checking && (
+                <div
+                  className="flex items-center gap-2 rounded-[12px] px-3.5 py-3"
+                  style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-faint)' }}
+                >
+                  <span
+                    className="block h-1.5 w-1.5 animate-pulse rounded-full"
+                    style={{ background: 'var(--accent-primary)' }}
+                  />
+                  <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                    正在核对这把钥匙能看到哪些工具…（钥匙已经生效，先复制上面那串就行）
+                  </span>
+                </div>
+              )}
+
+              {checkTimedOut && (
+                <div
+                  className="rounded-[12px] px-3.5 py-3 text-[12px] leading-relaxed"
+                  style={{
+                    background: 'var(--semantic-warning-soft)',
+                    border: '1px solid var(--semantic-warning-border)',
+                    color: 'var(--semantic-warning-text)',
+                  }}
+                >
+                  <div>
+                    授权自检这次没跑完（超过 15 秒没有回应）。这不影响上面那把钥匙 ——
+                    它已经生效，复制走就能用。自检只是替你先核一遍授权对不对。
+                  </div>
+                  {issuedKeyId && (
+                    <button
+                      type="button"
+                      onClick={() => void runSelfCheck(issuedKeyId)}
+                      className="mt-2 rounded-[7px] px-2.5 py-1 text-[12px] font-medium"
+                      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+                    >
+                      重试自检
+                    </button>
+                  )}
+                </div>
+              )}
 
               {visible && (
                 <div
