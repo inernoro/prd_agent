@@ -20,6 +20,8 @@ export interface BranchEnvProfileResolution {
   profileLayers: EnvLayer[];
   /** 明文；输出到 API 前必须过 maskSecrets */
   provenance: EnvKeyProvenance[];
+  /** 分支独立库没跟随的连接串（收敛 2） */
+  perBranchDb?: { unfollowedUrls: Array<{ key: string; reason: string }> };
   envError?: string;
 }
 
@@ -74,21 +76,24 @@ export function resolveBranchEnvLayers(
       { source: 'deploy-mode' as const, env: modeEnv || {} },
     ].filter((l) => Object.keys(l.env).length > 0);
     let provenance: EnvKeyProvenance[] = [];
+    let perBranchDb: BranchEnvProfileResolution['perBranchDb'];
     let envError: string | undefined;
     try {
-      provenance = resolveProfileRuntimeEnvWithProvenance(entry, effective, customLayers, profileLayers, {
+      const resolved = resolveProfileRuntimeEnvWithProvenance(entry, effective, customLayers, profileLayers, {
         jwtIssuer: opts.jwtIssuer,
         injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0',
         publishedEntrypoints: resolveBranchEntrypointsEnv(entry, entrypointDeps),
         resolveCdsRef: resolveRef,
-      }).provenance;
+      });
+      provenance = resolved.provenance;
+      perBranchDb = resolved.perBranchDb;
     } catch (err) {
       envError = (err as Error).message;
     }
     return {
       baseline, effective, isExtra,
       hasOverride: !!override && Object.keys(override).some((k) => k !== 'updatedAt' && k !== 'notes'),
-      profileLayers, provenance, ...(envError ? { envError } : {}),
+      profileLayers, provenance, ...(perBranchDb ? { perBranchDb } : {}), ...(envError ? { envError } : {}),
     };
   });
   return { customLayers, profiles };

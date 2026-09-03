@@ -19,88 +19,24 @@
 import { createHash } from 'node:crypto';
 import type { BranchEntry, BuildProfile, InfraService, ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
-import { PER_BRANCH_DB_ENV_KEYS, applyPerBranchDbIsolation } from './db-scope-isolation.js';
+import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 import { detectInfraDataKind, runDockerExec, maskSecretValues } from '../routes/infra-data.js';
 
-export type ReplicaDbEngine = 'mongo' | 'mysql' | 'postgres';
+import {
+  PER_BRANCH_DB_ENV_KEYS, classifyDbEnvKey, suspectDbEnvKeys, engineFromRelationalUrls, relationalEnginesFromUrls,
+  isRelationalUrl, rewriteRelationalUrlDb, type DbEngine, type DbInvolvement,
+} from './db-env-keys.js';
 
-/** env key 家族 → 引擎（PER_BRANCH_DB_ENV_KEYS 的引擎归类） */
-function engineForEnvKey(key: string): ReplicaDbEngine | null {
-  if (key.includes('MONGO')) return 'mongo';
-  if (key.includes('MYSQL') || key.includes('MARIADB')) return 'mysql';
-  if (key.includes('POSTGRES')) return 'postgres';
-  return null;
-}
+export type ReplicaDbEngine = DbEngine;
+// 规则 SSOT 在 db-env-keys.ts；这里保留同名导出，老调用方不必改 import
+export {
+  classifyDbEnvKeys, suspectDbEnvKeys, dbInvolvementOf, isRelationalUrl, relationalEnginesFromUrls,
+  engineFromRelationalUrls, rewriteRelationalUrlDb,
+} from './db-env-keys.js';
+export type { DbEnvKeyFamily, DbEnvKeyClassification, DbInvolvement } from './db-env-keys.js';
 
 /** 库名白名单：只允许 [a-z0-9_]，防 shell/SQL 注入 + 三引擎通吃的安全字符集。 */
 const DB_NAME_SAFE = /^[a-z0-9_]+$/i;
-
-/**
- * 补充家族：应用框架风格的库名 env key（如 .NET 双下划线 `MongoDB__DatabaseName`）。
- * 只用于复制集隔离时的库定位，**不进 PER_BRANCH_DB_ENV_KEYS**——那份白名单驱动
- * per-branch 库名改写，部分项目（如 prd-agent）刻意让框架 key 不随分支加后缀。
- * （验收 P1-1：此前只认白名单家族，prd-agent 的 MongoDB__DatabaseName 直接 409。）
- */
-const FRAMEWORK_DB_ENV_PATTERNS: Array<{ engine: ReplicaDbEngine; re: RegExp }> = [
-  { engine: 'mongo', re: /^(CDS_)?MONGO(DB)?_{1,2}DATABASE(_?NAME)?$/i },
-  { engine: 'mysql', re: /^(CDS_)?(MYSQL|MARIADB)_{1,2}DATABASE(_?NAME)?$/i },
-  { engine: 'postgres', re: /^(CDS_)?(POSTGRES(QL)?|PG)_{1,2}(DB|DATABASE)(_?NAME)?$/i },
-];
-
-/**
- * 引擎中立的库名 key（2026-07-28 真机验收补）。
- *
- * Spring / 通用配置风格把库名写成 `DB_NAME` / `DATABASE_NAME` —— 名字里**不含引擎**。
- * 上面那三条模式全靠 key 名带 MYSQL / POSTGRES / MONGO 才能归类，于是这类项目在
- * 隔离入口就被判「环境变量里没有数据库名」，功能整个不可用。生产 CDS 上的标识中台
- * (IMP) 正是如此：DB_NAME + SPRING_DATASOURCE_URL / *_DATASOURCE_URL / *_DB_URL，
- * 六个服务全部 dbIsolatable.ok=false —— JDBC 改写修好了也永远走不到。
- *
- * 这类 key 的引擎不能猜，只能从同一份 env 里的**关系型连接 URL scheme** 读出来
- *（`jdbc:mysql://…` 就是 mysql，明写在那里）。读不出唯一引擎时保持原样拒绝，
- * 绝不臆断——克隆错引擎的库比不能隔离危险得多。
- */
-const ENGINE_NEUTRAL_DB_ENV_PATTERN = /^(CDS_)?(DB|DATABASE)_{1,2}(NAME)$/i;
-
-/**
- * 关系型连接 URL 的 scheme —— **识别与改写共用这一条**（Codex PR #1275 二轮 P1）。
- *
- * 曾经是两条各写各的：引擎探测认 `(jdbc:)?(mysql|mariadb|postgres(ql)?)`，而下游
- * 决定「哪些 URL 要跟着改库名」的那条只列了 `mysql|mariadb|postgres|postgresql|
- * jdbc:mysql|jdbc:postgresql`，漏掉 `jdbc:mariadb` 与 `jdbc:postgres`。后果是最坏的
- * 那种：用 `DB_NAME` + `SPRING_DATASOURCE_URL=jdbc:mariadb://…` 的 Java 服务被判为
- * 可隔离（探测认得），克隆照跑、库名 key 照改，但那条 JDBC URL 进不了改写集合——
- * 应用读的正是它，于是副本流量继续打在源库上，控制面还报「隔离成功」。这正是
- * 已经修过两轮的「隔离是假的」原样复活。合成一条 SSOT，从根上不给漂移留缝。
- */
-const RELATIONAL_URL_SCHEME = /^(jdbc:)?(mysql|mariadb|postgres(ql)?):\/\//i;
-
-/**
- * 这个值是不是关系型连接 URL —— 「能否据此判引擎」与「要不要跟着改库名」必须是
- * 同一个答案，所以两处都调这个函数，不各自 test 各自的正则。
- */
-export function isRelationalUrl(value: unknown): boolean {
-  return typeof value === 'string' && RELATIONAL_URL_SCHEME.test(value.trim());
-}
-
-/** 一份 env 里出现过的全部关系型引擎（去重）。 */
-export function relationalEnginesFromUrls(env: Record<string, string>): ReplicaDbEngine[] {
-  const found = new Set<ReplicaDbEngine>();
-  for (const value of Object.values(env)) {
-    if (typeof value !== 'string') continue;
-    const m = RELATIONAL_URL_SCHEME.exec(value.trim());
-    if (!m) continue;
-    const scheme = m[2].toLowerCase();
-    found.add(scheme.startsWith('postgres') ? 'postgres' : 'mysql');
-  }
-  return [...found];
-}
-
-/** 从一份 env 的关系型连接 URL 里读出唯一引擎；零个或多于一个都返回 null。 */
-export function engineFromRelationalUrls(env: Record<string, string>): ReplicaDbEngine | null {
-  const found = relationalEnginesFromUrls(env);
-  return found.length === 1 ? found[0] : null;
-}
 
 /**
  * 关系型连接 URL 的主机名（小写，去端口去凭据）。解析不出返回 null。
@@ -174,56 +110,6 @@ function resolveNeutralEngine(
       .filter((e): e is ReplicaDbEngine => e !== null && candidates.includes(e)),
   )];
   return byDepends.length === 1 ? byDepends[0] : null;
-}
-
-/**
- * 判定某个 env key 是否为库名 key，并归类引擎（白名单 → 框架风格 → 引擎中立三路）。
- * 引擎中立那一路必须由调用方提供 env 上下文，否则无从判断引擎，直接不认。
- */
-function classifyDbEnvKey(key: string, neutralEngine?: ReplicaDbEngine | null): ReplicaDbEngine | null {
-  if ((PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key)) return engineForEnvKey(key);
-  for (const { engine, re } of FRAMEWORK_DB_ENV_PATTERNS) {
-    if (re.test(key)) return engine;
-  }
-  if (neutralEngine && ENGINE_NEUTRAL_DB_ENV_PATTERN.test(key)) return neutralEngine;
-  return null;
-}
-
-export type DbEnvKeyFamily = 'whitelist' | 'framework' | 'neutral';
-
-export interface DbEnvKeyClassification {
-  key: string;
-  engine: ReplicaDbEngine;
-  /** whitelist = PER_BRANCH_DB_ENV_KEYS；framework = .NET 双下划线等框架风格；neutral = DB_NAME 类（引擎从连接串读） */
-  family: DbEnvKeyFamily;
-  /** 分支独立库会不会给它加后缀——只有白名单家族会；其余「已识别，按项目约定不加后缀」 */
-  rewritten: boolean;
-}
-
-/**
- * 一份 env 里全部库名变量的分类（收敛 1 的 SSOT）。
- *
- * 项目设置页签、复制集定位、库探测三处对「这个服务用哪些库名变量」必须给同一个答案，
- * 答案只能从这里出。此前项目设置页签自己拿 PER_BRANCH_DB_ENV_KEYS 过滤，于是 .NET 项目
- * 在那里被提示「没声明库名变量」、复制集却能定位——口径分裂就是从两份清单开始的。
- *
- * 引擎中立 key（DB_NAME）的引擎只从同一份 env 的关系型连接串读，读不出唯一引擎就不认。
- * 空值不算声明。顺序保持 env 插入顺序，供调用方按来源层级再排。
- */
-export function classifyDbEnvKeys(env: Record<string, string>): DbEnvKeyClassification[] {
-  const neutralEngine = engineFromRelationalUrls(env);
-  const out: DbEnvKeyClassification[] = [];
-  for (const [key, value] of Object.entries(env)) {
-    if (typeof value !== 'string' || value === '') continue;
-    const engine = classifyDbEnvKey(key, neutralEngine);
-    if (!engine) continue;
-    const whitelisted = (PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key);
-    const family: DbEnvKeyFamily = whitelisted ? 'whitelist'
-      : ENGINE_NEUTRAL_DB_ENV_PATTERN.test(key) && !FRAMEWORK_DB_ENV_PATTERNS.some((f) => f.re.test(key)) ? 'neutral'
-        : 'framework';
-    out.push({ key, engine, family, rewritten: whitelisted });
-  }
-  return out;
 }
 
 /** 框架风格 key（应用真正消费的配置）排在白名单 key 之前——两者值冲突时以应用视角为准。 */
@@ -300,37 +186,6 @@ const MONGO_CONN_ENV_PATTERN = /^(CDS_)?MONGO(DB)?_{1,2}(CONNECTION_?STRING|URI|
  * 解析某服务的数据库目标：库名 env key、运行时真实库名、承载它的 infra 容器。
  * 找不到（无 DB env / infra 未运行 / 引擎不支持）返回带原因的 null 结果。
  */
-/**
- * 关系型连接 URL 里把库名段换成隔离库（Codex 第三十二轮 P1）。
- *
- * CDS 的 mysql/postgres 预设注入的是 `DATABASE_URL / MYSQL_URL / POSTGRES_URL`，
- * 形如 `mysql://app:pw@mysql:3306/<db>`——**库名是 URL 路径里的字面量**，而应用
- * 真正读的就是这个 URL。此前隔离只改 `MYSQL_DATABASE` / `POSTGRES_DB`（那是
- * 服务端初始化变量，不是应用的连接配置），于是副本照旧写主库，控制面与隔离审计
- * 却双双报告「已隔离」——隔离在关系型上一直是假的。
- *
- * 只改路径段：主机/端口/凭据/查询参数原样保留（关系型隔离走同实例建新库，
- * 不像 mongo 那样另起专用实例）。无法解析或路径段对不上源库时返回 null，
- * 由调用方按「不认识就不动」处理，绝不瞎改用户的连接串。
- *
- * scheme 允许内嵌冒号（2026-07-27 真机核对补）：Java/Spring 项目的连接串是
- * `jdbc:mysql://host:3306/db?useSSL=false` 这种**复合 scheme**。下面的
- * RELATIONAL_URL_SCHEME 一直把 `jdbc:mysql` / `jdbc:postgresql` 列为已识别，
- * 但此处的 scheme 段原本写成 `[a-zA-Z][a-zA-Z0-9+.-]*`（不含冒号），JDBC URL
- * 一律解析失败 → 收集阶段的探测也失败 → 这些 key 根本进不了 urlEnvValues →
- * **静默不改写**。于是第三十二轮修好的「关系型隔离是假的」在 Java 项目上原样
- * 复活：控制面报告已隔离，Spring 应用照旧写主库。核对生产 CDS 上的标识中台
- * (IMP) 项目环境变量时发现——它的库连接全部走 SPRING_DATASOURCE_URL /
- * *_DATASOURCE_URL / *_DB_URL 这类 JDBC 形态。
- */
-export function rewriteRelationalUrlDb(url: string, sourceDb: string, isolatedDb: string): string | null {
-  const m = /^([a-zA-Z][a-zA-Z0-9+.:-]*:\/\/[^/?#]*)\/([^/?#]*)([?#].*)?$/.exec(url);
-  if (!m) return null;
-  const [, prefix, dbSegment, tail] = m;
-  if (dbSegment !== sourceDb) return null;
-  return `${prefix}/${isolatedDb}${tail || ''}`;
-}
-
 // 「值看起来像关系型连接 URL」的判定与引擎探测共用上面那条 RELATIONAL_URL_SCHEME，
 // 不再各写一份（两份漂移过一次，见该常量的注释）。
 
@@ -346,28 +201,6 @@ function baseIsolationEnvOverride(target: ReplicaDbTarget, dbName: string): Reco
     if (rewritten) envOverride[key] = rewritten;
   }
   return envOverride;
-}
-
-/**
- * 疑似数据库相关、但分类器认不出的变量名（只报 key，不报值）。
- * 用途：把「不涉及数据库」与「有疑似变量但无法识别」分开——前者是正常的 web / 静态服务，
- * 不该被当成缺库提示；后者才需要用户去补连接串或改 key 名。
- */
-export function suspectDbEnvKeys(env: Record<string, string>): string[] {
-  const classified = new Set(classifyDbEnvKeys(env).map((k) => k.key));
-  return Object.keys(env).filter(
-    (k) => !classified.has(k) && typeof env[k] === 'string' && env[k] !== ''
-      && (/(^|_)(DB|DATABASE)(_|$)/i.test(k) || /DATASOURCE|JDBC/i.test(k)),
-  );
-}
-
-export type DbInvolvement = 'db' | 'unrecognized' | 'none';
-
-/** 一份 env 涉不涉及数据库：认得库名变量 → db；只有疑似变量 → unrecognized；什么都没有 → none */
-export function dbInvolvementOf(env: Record<string, string>): { involvement: DbInvolvement; suspects: string[] } {
-  if (classifyDbEnvKeys(env).length > 0) return { involvement: 'db', suspects: [] };
-  const suspects = suspectDbEnvKeys(env);
-  return { involvement: suspects.length > 0 ? 'unrecognized' : 'none', suspects };
 }
 
 export function resolveReplicaDbTarget(

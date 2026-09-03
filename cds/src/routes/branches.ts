@@ -11008,6 +11008,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         dbScope: effective.dbScope || 'shared',
         dbScopeSource: override?.dbScope !== undefined ? 'branch-override' : (baseline.dbScope !== undefined ? 'baseline' : 'default'),
         envProvenance,
+        // 收敛 2：分支独立库没跟随的连接串（库名段指向别的库），配置检查器标「连接串未跟随」
+        dbUrlUnfollowed: r.perBranchDb?.unfollowedUrls ?? [],
         ...(envError ? { envError } : {}),
       };
     });

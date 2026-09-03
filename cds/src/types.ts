@@ -313,7 +313,7 @@ export interface EnvKeyProvenance {
   value: string;
   /** 最终生效值来自哪一层(last-writer-wins) */
   source: EnvSource;
-  /** 细分说明:'jwt-fallback' | 'node-runtime' | 'version-metadata' | 'per-branch-db-suffix' 等 */
+  /** 细分说明:'jwt-fallback' | 'node-runtime' | 'version-metadata' | 'per-branch-db-suffix' | 'per-branch-db-url' 等 */
   detail?: string;
   /** 被更高层覆盖(shadow)的更低层来源,按合并顺序排列 — 继承链展示用 */
   shadowed?: EnvSource[];

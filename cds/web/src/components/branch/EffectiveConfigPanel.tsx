@@ -42,6 +42,8 @@ interface EffectiveConfigProfile {
   dbScope: 'shared' | 'per-branch';
   dbScopeSource: 'branch-override' | 'baseline' | 'default';
   envProvenance: EnvKeyProvenance[];
+  /** 分支独立库没跟随的连接串（收敛 2）：库名段指向别的库，CDS 没改它 */
+  dbUrlUnfollowed?: Array<{ key: string; reason: string }>;
   envError?: string;
 }
 
@@ -130,6 +132,16 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
               该服务 env 解析失败(部署时也会以同样原因被拦):{profile.envError}
             </div>
           ) : null}
+          {profile.dbUrlUnfollowed && profile.dbUrlUnfollowed.length > 0 ? (
+            <div className="mb-2 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn" data-db-url-unfollowed={profile.dbUrlUnfollowed.length}>
+              <div className="font-medium">连接串未跟随分支独立库：</div>
+              <ul className="mt-1 space-y-0.5">
+                {profile.dbUrlUnfollowed.map((u) => (
+                  <li key={u.key}><span className="font-mono">{u.key}</span>：{u.reason}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {profile.envProvenance.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[520px] text-xs">
@@ -152,6 +164,7 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
                       <td className="py-1.5 pr-3">
                         <SourceBadge source={p.source} />
                         {p.detail === 'per-branch-db-suffix' ? <span className="ml-1 text-[10px] text-muted-foreground">库名加分支后缀</span> : null}
+                        {p.detail === 'per-branch-db-url' ? <span className="ml-1 text-[10px] text-ok">连接串已跟随库名</span> : null}
                       </td>
                       <td className="py-1.5">
                         {p.shadowed && p.shadowed.length > 0 ? (
