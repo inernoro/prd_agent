@@ -7,8 +7,9 @@ using Xunit;
 namespace PrdAgent.Api.Tests.Mcp;
 
 /// <summary>
-/// 幂等回滚的两条不变量。两条都坏在「补偿写了一半」上，而且都不会红：接口照常返回、
-/// 页面照常打开，只是数字对不上或者内容被别人盖了。
+/// 幂等回滚与占坑租约的不变量。它们坏起来都是同一种形状——「补偿写了一半」，
+/// 而且都不会红：接口照常返回、页面照常打开，只是数字对不上、内容被别人盖了，
+/// 或者两次调用都以为自己发布成功了。
 /// </summary>
 public class McpRollbackInvariantTests
 {
@@ -45,6 +46,35 @@ public class McpRollbackInvariantTests
         upload.ShouldBeGreaterThan(-1, customMessage: "CreateFromContentAsync 里找不到上传对象那一步");
         insert.ShouldBeLessThan(upload,
             customMessage: "建站必须先插入站点记录（原子地定胜负）再上传对象，否则并发的输家会覆盖赢家的页面");
+    }
+
+    [Fact]
+    public void 占坑租约窗口要明显长于一次上传()
+    {
+        // 窗口被谁改短到接近 0，就等于「随时可以抢别人正在用的坑」——两个并发请求各传一次、
+        // 各自收尾，其中一边失败还会把共用记录删掉。租约存在的全部意义就是不许这样。
+        PrdAgent.Infrastructure.Services.HostedSiteService.PublishLeaseTtl
+            .ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMinutes(1));
+    }
+
+    [Fact]
+    public void 撤回与收尾都必须按租约持有者过滤()
+    {
+        // 不按持有者过滤的话：上传失败的那一方会把已经被别人抢走的记录删掉（把正在成功推进的
+        // 那次连根拔掉），而收尾方匹配到 0 行却照样回成功——库里那份内容根本不是它传的。
+        //
+        // 读源码断言，理由同上一条：要复现得同时有 Mongo 与对象存储、还要卡住两次请求的时序。
+        var body = MethodBody("CreateFromContentAsync");
+        var delete = body.IndexOf("DeleteOneAsync", StringComparison.Ordinal);
+        var replace = body.IndexOf("ReplaceOneAsync", StringComparison.Ordinal);
+        delete.ShouldBeGreaterThan(-1, customMessage: "找不到上传失败后的撤回那一步");
+        replace.ShouldBeGreaterThan(-1, customMessage: "找不到发布收尾那一步");
+
+        // 两处各自往后一段里都得出现租约字段（过滤条件就写在紧邻的几行里）
+        body.Substring(delete, Math.Min(400, body.Length - delete))
+            .ShouldContain("PublishLeaseOwner", customMessage: "撤回没按租约持有者过滤");
+        body.Substring(replace, Math.Min(400, body.Length - replace))
+            .ShouldContain("PublishLeaseOwner", customMessage: "收尾没按租约持有者过滤");
     }
 
     private const string SiteServicePath = "HostedSiteService.cs";

@@ -220,6 +220,17 @@ public class HostedSite
     public DateTime? PublishPendingAt { get; set; }
 
     /// <summary>
+    /// 谁持有这条占坑记录的租约（每次发布尝试自己生成的一个随机值）。null = 没在占坑。
+    ///
+    /// 为什么光有 <see cref="PublishPendingAt"/> 不够：两个并发请求都看见「有一条没传完的坑」，
+    /// 就都会去接手 —— 两边各传一次、各自收尾，其中一边上传失败还会把共用的那条记录删掉，
+    /// 而另一边其实传成了，却因为记录已经没了而收尾落空、照样回成功。
+    /// 所以接手要抢租约（原子地把 owner 改成自己），收尾与删除都只对**当前 owner** 生效：
+    /// 抢不到就不接手，抢到又被别人抢走的，收尾会匹配到 0 行，那就不能报成功。
+    /// </summary>
+    public string? PublishLeaseOwner { get; set; }
+
+    /// <summary>
     /// 已注入的「幻灯片翻页方向兼容垫片」版本号。0 = 从未注入（存量旧站）。
     /// 上传时注入当前版本；startup backfill 把 &lt; 当前版本的站点重新注入并升级，
     /// 让垫片代码升级后存量站点自动获得新版（无需用户重传）。详见 HostedSiteService.SlideNavVersion。

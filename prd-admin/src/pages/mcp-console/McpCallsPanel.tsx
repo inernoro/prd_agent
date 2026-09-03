@@ -204,6 +204,13 @@ export function McpCallsPanel({
                       <span>HTTP {item.httpStatus || '—'}</span>
                       <span>{item.isWrite ? '写入类动作' : '只读动作'}</span>
                       {item.imageCount > 0 && <span>{item.imageCount} 张图</span>}
+                      {/* 这一行的动作分类照实写（这次要干的确实是写入/出图），额度没动的事实由这个标记说出来。
+                          不这么分开的话，只能把分类抹成「只读动作·0 张图」——记录就跟它实际干的事不符了。 */}
+                      {item.deduplicated && (
+                        <span style={{ color: 'var(--semantic-info-text)' }}>
+                          幂等命中 · 未计额度
+                        </span>
+                      )}
                       <span>{new Date(item.createdAt).toLocaleString('zh-CN')}</span>
                     </div>
                   </div>

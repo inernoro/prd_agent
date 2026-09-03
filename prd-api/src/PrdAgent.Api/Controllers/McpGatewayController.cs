@@ -388,10 +388,10 @@ public class McpGatewayController : ControllerBase
         {
             await ReleaseReservationAsync(log.KeyId, verdict, ct);
             log.Deduplicated = true;
-            // 记账清零（这次没有新副作用），但产物分类不跟着清 —— 它由 producesArtifacts
-            // 单独传进来，跟扣不扣额度无关。幂等重试要的正是那个既有产物的地址。
-            log.ImageCount = 0;
-            log.IsWrite = false;
+            // 分类不抹：这次要干的确实是写入 / 出图，记录该照实写。抹成「只读动作·0 张图」，
+            // 接入台的调用记录就跟它实际干的事不符了（那一行的文案直接读 IsWrite / ImageCount）。
+            // 「没产生新副作用、额度已退回」这件事由 Deduplicated 单独表达 —— 日额度的账本是
+            // McpUsageCounter，从来不从这两个字段里加，所以不抹也不会重复计数。
             var dedupArtifact = McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody);
             log.ArtifactKind = dedupArtifact.Kind;
             log.ArtifactId = dedupArtifact.Id;

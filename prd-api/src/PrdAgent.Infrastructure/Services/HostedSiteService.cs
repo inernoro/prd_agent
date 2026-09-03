@@ -36,6 +36,13 @@ public class HostedSiteService : IHostedSiteService
     // 「内容指纹缓存」：内容不变 → URL 不变 → 命中浏览器/CDN 缓存（满足"没更新就用缓存"）；
     // 重新上传 → UpdatedAt 变化 → ?v 变化 → URL 变化 → 击穿缓存拿到新内容。
     // max-age=3600 是兜底——万一某些 CDN 配置忽略查询串，最长 1 小时后也会回源刷新。
+    /// <summary>
+    /// 占坑租约的存活时间。超过这个时间还没收尾的坑，视为持有者已经死了，可以被抢。
+    /// 取值要明显长于一次入口对象上传的耗时（否则正常的慢上传会被别人抢走），
+    /// 又不能长到让一次进程崩溃把幂等键锁上半天。
+    /// </summary>
+    internal static readonly TimeSpan PublishLeaseTtl = TimeSpan.FromMinutes(2);
+
     private const string SiteCacheControl = "public, max-age=3600";
 
     // 给入口 URL 追加版本指纹。version 取站点的 ContentVersion：只在创建 / 重新上传
@@ -193,6 +200,8 @@ public class HostedSiteService : IHostedSiteService
         var now = DateTime.UtcNow;
         var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(htmlBytes, "index.html"));
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
+        // 这次发布尝试的租约标识。占坑、接手、收尾、撤回全都认它，见 HostedSite.PublishLeaseOwner。
+        var leaseOwner = Guid.NewGuid().ToString("N");
         await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
 
         var site = new HostedSite
@@ -313,6 +322,7 @@ public class HostedSiteService : IHostedSiteService
             SlideNavCompatVersion = SlideNavVersion, // 创建即注入当前版垫片
             // 占坑标记：行已经在、对象还没传。上传成功后清掉，见 PublishPendingAt 的说明。
             PublishPendingAt = now,
+            PublishLeaseOwner = leaseOwner,
         };
 
         // 先占坑、再上传。顺序不能反：siteId 带幂等键时是**确定性**的，两个并发请求算出同一个
@@ -326,13 +336,26 @@ public class HostedSiteService : IHostedSiteService
         }
         catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            // 这个 id 已经有人占了。占的是**还没传完**的坑（对方正在传，或者对方的进程在窗口里挂了），
-            // 就由这次把内容传完 —— 不能回「去重成功」，那等于把一个还打不开的地址当成功交出去，
-            // 更不能让那条残留记录把这个幂等键永久占死。
-            // 对方已经发布完成的话，原样抛出去，由调用方走它的去重分支。
-            var occupying = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
-            if (occupying is not { PublishPendingAt: not null } || occupying.OwnerUserId != userId) throw;
-            _logger.LogInformation("站点 {SiteId} 上一次发布没传完，本次接手补传", siteId);
+            // 这个 id 已经有人占了。分三种情况，只有第三种才轮到这次动手：
+            //   1. 对方已经发布完成 → 原样抛，调用方走它的去重分支（回既有站点）。
+            //   2. 对方**正在传**（租约还新鲜）→ 也原样抛。不能接手：两边各传一次、各自收尾，
+            //      失败的那边还会把共用记录删掉，成功的那边收尾落空却照样回成功。
+            //      调用方据此回「正在发布中，请稍后用同一个键重试」。
+            //   3. 那条坑**已经放了很久**（租约过期，多半是上一次的进程在窗口里挂了）→ 抢租约。
+            //      抢到才接手；抢不到说明刚被别人抢走，同样抛出去。
+            var claimed = await _db.HostedSites.FindOneAndUpdateAsync<HostedSite>(
+                Builders<HostedSite>.Filter.And(
+                    Builders<HostedSite>.Filter.Eq(x => x.Id, siteId),
+                    Builders<HostedSite>.Filter.Eq(x => x.OwnerUserId, userId),
+                    Builders<HostedSite>.Filter.Ne(x => x.PublishPendingAt, (DateTime?)null),
+                    Builders<HostedSite>.Filter.Lt(x => x.PublishPendingAt, now - PublishLeaseTtl)),
+                Builders<HostedSite>.Update
+                    .Set(x => x.PublishPendingAt, now)
+                    .Set(x => x.PublishLeaseOwner, leaseOwner),
+                new FindOneAndUpdateOptions<HostedSite, HostedSite> { ReturnDocument = ReturnDocument.After },
+                ct);
+            if (claimed == null) throw;
+            _logger.LogInformation("站点 {SiteId} 上一次发布没传完且租约已过期，本次抢到租约接手补传", siteId);
         }
 
         try
@@ -345,7 +368,13 @@ public class HostedSiteService : IHostedSiteService
             // 而带幂等键时它还会把那个 id 永久占住 —— 重试只会命中这条坏记录，再也建不出来。
             try
             {
-                await _db.HostedSites.DeleteOneAsync(s => s.Id == siteId, CancellationToken.None);
+                // 只删**我这次**占的那条坑：租约已经被别人抢走的话，那条记录归他，删了就是把
+                // 正在成功推进的那次连根拔掉（他随后的收尾会匹配到 0 行，还以为自己成了）。
+                await _db.HostedSites.DeleteOneAsync(
+                    Builders<HostedSite>.Filter.And(
+                        Builders<HostedSite>.Filter.Eq(x => x.Id, siteId),
+                        Builders<HostedSite>.Filter.Eq(x => x.PublishLeaseOwner, leaseOwner)),
+                    CancellationToken.None);
             }
             catch (Exception cleanupEx)
             {
@@ -359,9 +388,19 @@ public class HostedSiteService : IHostedSiteService
         // 整行覆盖而不是只清标记：接手补传那条路上，库里躺的是**上一次**尝试写的元数据
         //（标题、大小、是不是幻灯片），而对象里现在装的是这一次的内容。只清标记的话，
         // 行说的和页面显示的对不上——正是「先传后插」那个毛病换了个地方长出来。
+        //
+        // 收尾也认租约：匹配到 0 行说明这条坑已经不归我了（被抢走或被撤回），那就不能报成功 ——
+        // 库里现在那份内容不是我传的，回一个「发布成功」等于把别人的结果说成自己的。
         site.PublishPendingAt = null;
-        await _db.HostedSites.ReplaceOneAsync(
-            x => x.Id == siteId, site, cancellationToken: CancellationToken.None);
+        site.PublishLeaseOwner = null;
+        var finalized = await _db.HostedSites.ReplaceOneAsync(
+            Builders<HostedSite>.Filter.And(
+                Builders<HostedSite>.Filter.Eq(x => x.Id, siteId),
+                Builders<HostedSite>.Filter.Eq(x => x.PublishLeaseOwner, leaseOwner)),
+            site, cancellationToken: CancellationToken.None);
+        if (finalized.MatchedCount == 0)
+            throw new PublishLeaseLostException(
+                "这次发布的占位记录已经被另一次同键的调用接手，这次不算发布成功；请用同一个 clientRequestId 重试一次确认结果。");
 
         _logger.LogInformation("用户 {UserId} 通过 {SourceType} 创建托管站点 {SiteId}: {Title}",
             userId, site.SourceType, siteId, site.Title);

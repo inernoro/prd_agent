@@ -119,9 +119,20 @@ public class WebPagesOpenApiController : ControllerBase
             var raced = await _db.HostedSites
                 .Find(x => x.Id == deterministicId && x.OwnerUserId == userId && x.PublishPendingAt == null)
                 .FirstOrDefaultAsync(ct);
-            // 找不到「已传完」的那条就原样抛：要么根本不是这个 id 撞的，要么撞上的是还在占坑的记录，
-            // 两种情况都不该报成功（服务端只在自己能接手补传时才不抛）。
-            if (raced == null) throw;
+            // 找不到「已传完」的那条，就要分清是哪种情况：
+            //   - 撞上的是**别人正在传**的占坑记录（服务端只在租约过期时才接手，所以它抛到这里）
+            //     → 回 409 让智能体稍后拿同一个键再试一次，别报 500，也别报成功；
+            //   - 其余（根本不是这个 id 撞的）→ 原样抛。
+            if (raced == null)
+            {
+                var stillPublishing = await _db.HostedSites
+                    .Find(x => x.Id == deterministicId && x.OwnerUserId == userId && x.PublishPendingAt != null)
+                    .AnyAsync(ct);
+                if (!stillPublishing) throw;
+                return Conflict(ApiResponse<object>.Fail("SITE_PUBLISH_IN_PROGRESS",
+                    "同一个 clientRequestId 的上一次发布还没完成 —— 可能仍在进行，也可能刚好中断了。"
+                    + "等一两分钟用同一个键再调一次：成了就直接拿到那次的结果，断了则由这一次接着传完。"));
+            }
             return Ok(ApiResponse<object>.Ok(new
             {
                 siteId = raced.Id,
@@ -129,6 +140,11 @@ public class WebPagesOpenApiController : ControllerBase
                 url = raced.SiteUrl,
                 deduplicated = true,
             }));
+        }
+        catch (PublishLeaseLostException ex)
+        {
+            // 收尾时租约已经不在这次手上：库里那份内容不是这次传的，不能算成功。
+            return Conflict(ApiResponse<object>.Fail("SITE_PUBLISH_IN_PROGRESS", ex.Message));
         }
 
         return Ok(ApiResponse<object>.Ok(new
