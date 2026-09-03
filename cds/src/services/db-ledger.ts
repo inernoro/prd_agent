@@ -141,6 +141,7 @@ export function buildDbLedgerView(input: {
         infraId: d.infraId, infraContainer: d.infraContainer, sourceDb: d.sourceDb,
         branchId: d.branchId, branch: d.branch, profileId: d.profileId,
         origin: 'cds', status: 'active', createdAt: now.toISOString(), updatedAt: now.toISOString(), backups: [],
+        note: '按当前配置折算（分支部署后才真正建库）；「扫描补录」可核实实例上是否已存在',
       });
     }
   }
