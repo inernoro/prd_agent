@@ -348,6 +348,28 @@ function baseIsolationEnvOverride(target: ReplicaDbTarget, dbName: string): Reco
   return envOverride;
 }
 
+/**
+ * 疑似数据库相关、但分类器认不出的变量名（只报 key，不报值）。
+ * 用途：把「不涉及数据库」与「有疑似变量但无法识别」分开——前者是正常的 web / 静态服务，
+ * 不该被当成缺库提示；后者才需要用户去补连接串或改 key 名。
+ */
+export function suspectDbEnvKeys(env: Record<string, string>): string[] {
+  const classified = new Set(classifyDbEnvKeys(env).map((k) => k.key));
+  return Object.keys(env).filter(
+    (k) => !classified.has(k) && typeof env[k] === 'string' && env[k] !== ''
+      && (/(^|_)(DB|DATABASE)(_|$)/i.test(k) || /DATASOURCE|JDBC/i.test(k)),
+  );
+}
+
+export type DbInvolvement = 'db' | 'unrecognized' | 'none';
+
+/** 一份 env 涉不涉及数据库：认得库名变量 → db；只有疑似变量 → unrecognized；什么都没有 → none */
+export function dbInvolvementOf(env: Record<string, string>): { involvement: DbInvolvement; suspects: string[] } {
+  if (classifyDbEnvKeys(env).length > 0) return { involvement: 'db', suspects: [] };
+  const suspects = suspectDbEnvKeys(env);
+  return { involvement: suspects.length > 0 ? 'unrecognized' : 'none', suspects };
+}
+
 export function resolveReplicaDbTarget(
   state: StateService,
   branch: BranchEntry,
@@ -360,7 +382,7 @@ export function resolveReplicaDbTarget(
      */
     infraStatus?: 'running' | 'any';
   } = {},
-): { target: ReplicaDbTarget | null; reason?: string } {
+): { target: ReplicaDbTarget | null; reason?: string; involvement?: DbInvolvement; suspects?: string[] } {
   const infraOk = (svc: InfraService): boolean => opts.infraStatus === 'any' || svc.status === 'running';
   // 与部署路径 getMergedEnv（branches.ts）同优先级：project customEnv → 分支 scope
   // → profile.env。分支级 env 覆写过库名/连接串时（Codex P1），不合入会把隔离目标
@@ -395,9 +417,7 @@ export function resolveReplicaDbTarget(
     // 是「真没配」还是「配了但 CDS 不认」。这里把**看到了什么**如实报出来：
     // 疑似库名 key（只报 key 名，不报值，值可能含凭据）、以及引擎能否从连接 URL 推出。
     // 用户据此一眼知道该补 URL 还是该改 key 名；排障也不必再去猜。
-    const suspects = Object.keys(runtimeEnv).filter(
-      (k) => /(^|_)(DB|DATABASE)(_|$)/i.test(k) || /DATASOURCE|JDBC/i.test(k),
-    );
+    const suspects = suspectDbEnvKeys(runtimeEnv);
     const detail = suspects.length > 0
       ? `。检测到疑似数据库相关变量：${suspects.slice(0, 12).join(', ')}`
         + (neutralEngine
@@ -406,8 +426,12 @@ export function resolveReplicaDbTarget(
       : '';
     return {
       target: null,
-      reason: '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库'
-        + detail,
+      involvement: suspects.length > 0 ? 'unrecognized' : 'none',
+      suspects,
+      reason: suspects.length === 0
+        ? '该服务没有任何数据库相关变量，不涉及数据库'
+        : '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库'
+          + detail,
     };
   }
 

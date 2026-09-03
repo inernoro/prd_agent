@@ -109,7 +109,13 @@ describe('三列表：渲染出来的东西', () => {
 
   it('头条：没服务 / 全无库 / 有失败 各说各的，不是一句「整体正常」', () => {
     expect(dbProbeHeadline(report([]))).toContain('没有可实测的数据库');
-    expect(dbProbeHeadline(report([svc({ profileId: 'web', verdict: 'no-db' })]))).toContain('没声明数据库');
+    expect(dbProbeHeadline(report([svc({ profileId: 'web', verdict: 'no-db' })]))).toContain('有疑似数据库变量但无法识别');
+    const na = report([svc({ profileId: 'a' }), svc({ profileId: 'web', verdict: 'not-applicable' })]);
+    na.summary.notApplicable = 1;
+    expect(dbProbeHeadline(na)).toBe('1 个服务实测到的库与配置说的一致；1 个服务不涉及数据库。');
+    const html = renderToStaticMarkup(createElement(DbProbeTable, { report: na, now: NOW }));
+    expect(html).toContain('data-db-probe-verdict="not-applicable"');
+    expect(html).toContain('不涉及数据库');
     expect(dbProbeHeadline(report([svc({ profileId: 'a' }), svc({ profileId: 'b', verdict: 'probe-failed' })]))).toContain('1 个服务没能连上确认，1 个一致');
   });
 

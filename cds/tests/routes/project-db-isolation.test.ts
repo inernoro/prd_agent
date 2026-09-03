@@ -163,11 +163,12 @@ describe('项目级数据库隔离路由', () => {
       expect(Object.keys(byId).sort()).toEqual(['api', 'web', 'worker']);
       // 没写 = 默认 shared，来源标 default
       expect(byId.api).toMatchObject({ dbScope: 'shared', dbScopeSource: 'default', dbEnvKeys: ['CDS_POSTGRES_DB'], branchOverrideCount: 1 });
-      // 没声明库名变量 → dbEnvKeys 空，前端据此提示「切了也不会生效」
-      expect(byId.web).toMatchObject({ dbScope: 'shared', dbScopeSource: 'default', dbEnvKeys: [], branchOverrideCount: 0 });
+      // 没有任何数据库变量 → 不涉及数据库，不是缺库；档位对它无意义，不进 shared 计数
+      expect(byId.web).toMatchObject({ dbScope: 'shared', dbScopeSource: 'default', dbEnvKeys: [], dbInvolvement: 'none', suspectDbEnvKeys: [], branchOverrideCount: 0 });
+      expect(byId.api.dbInvolvement).toBe('db');
       expect(byId.worker).toMatchObject({ dbScope: 'per-branch', dbScopeSource: 'explicit', dbEnvKeys: ['CDS_MYSQL_DATABASE'], branchOverrideCount: 1 });
 
-      expect(res.body.summary).toEqual({ services: 3, shared: 2, perBranch: 1, branches: 3, branchesWithOverride: 2 });
+      expect(res.body.summary).toEqual({ services: 3, shared: 1, perBranch: 1, withoutDb: 1, branches: 3, branchesWithOverride: 2 });
       // 各分支实测要逐条列分支（探测本体走 /api/branches/:id/db-probe，这里只给清单）
       expect(res.body.branches).toEqual([
         { branchId: 'b-main', branch: 'main', status: 'idle', hasOverride: false },
@@ -202,6 +203,18 @@ describe('项目级数据库隔离路由', () => {
       ]);
       // 值不外泄
       expect(JSON.stringify(res.body)).not.toContain('jdbc:mysql');
+    });
+
+    it('有疑似数据库变量但认不出（如只有 DATABASE_URL=mongodb://…）→ unrecognized，列出疑似变量名不报值', () => {
+      const view = buildProjectDbIsolationView(
+        { id: 'p', deliveryMode: undefined } as any,
+        [profile({ id: 'admin', projectId: 'p', env: { DATABASE_URL: 'mongodb://u:pw@mongo:27017/prdagent' } })],
+        [],
+      );
+      expect(view.services[0]).toMatchObject({ dbInvolvement: 'unrecognized', suspectDbEnvKeys: ['DATABASE_URL'], dbEnvKeyDetails: [] });
+      expect(JSON.stringify(view)).not.toContain('u:pw');
+      // unrecognized 仍算涉及数据库（要用户处理），进 shared 计数
+      expect(view.summary).toMatchObject({ shared: 1, withoutDb: 0 });
     });
 
     it('收敛 1：项目级 customEnv 也算进「配置说的」（与定位器同口径，profile 优先）', () => {
@@ -263,7 +276,8 @@ describe('项目级数据库隔离路由', () => {
       expect(typeof res.body.snapshotId).toBe('string');
       expect(res.body.message).toContain('重新部署后生效');
       expect(res.body.message).toContain('本分支覆盖保持不变');
-      expect(res.body.view.summary).toMatchObject({ shared: 0, perBranch: 3 });
+      // web 不涉及数据库，不进档位计数
+      expect(res.body.view.summary).toMatchObject({ shared: 0, perBranch: 2, withoutDb: 1 });
 
       // SSOT 仍是 BuildProfile.dbScope
       expect(stateService.getBuildProfile('api')!.dbScope).toBe('per-branch');
@@ -386,7 +400,7 @@ describe('纯函数：plan / view / 影响面', () => {
     expect(view.readOnly).toBe(false);
     expect(view.services.map((s) => s.dbScopeSource)).toEqual(['default', 'explicit']);
     expect(view.branchOverrides).toEqual([]);
-    expect(view.summary).toEqual({ services: 2, shared: 2, perBranch: 0, branches: 1, branchesWithOverride: 0 });
+    expect(view.summary).toEqual({ services: 2, shared: 1, perBranch: 0, withoutDb: 1, branches: 1, branchesWithOverride: 0 });
   });
 
   it('影响面：同一分支既继承某服务又覆盖另一服务时两边都计数', () => {

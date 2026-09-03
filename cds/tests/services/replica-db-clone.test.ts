@@ -61,10 +61,16 @@ function addInfra(id: string, image: string, env: Record<string, string> = {}, s
 }
 
 describe('resolveReplicaDbTarget', () => {
-  it('env 无数据库名 key 时带原因失败', () => {
-    const { target, reason } = resolveReplicaDbTarget(state, branch(), profile());
-    expect(target).toBeNull();
-    expect(reason).toContain('没有数据库名');
+  it('env 无数据库名 key 时带原因失败：什么库变量都没有 → 不涉及数据库；有疑似变量 → 没有数据库名 + 疑似清单', () => {
+    const none = resolveReplicaDbTarget(state, branch(), profile());
+    expect(none.target).toBeNull();
+    expect(none.involvement).toBe('none');
+    expect(none.reason).toContain('不涉及数据库');
+    const unrecognized = resolveReplicaDbTarget(state, branch(), profile({ env: { DATABASE_URL: 'mongodb://mongo/x' } }));
+    expect(unrecognized.target).toBeNull();
+    expect(unrecognized.involvement).toBe('unrecognized');
+    expect(unrecognized.suspects).toEqual(['DATABASE_URL']);
+    expect(unrecognized.reason).toContain('没有数据库名');
   });
 
   it('per-branch dbScope 折算运行时真实库名 + 收集同引擎全部 key', () => {

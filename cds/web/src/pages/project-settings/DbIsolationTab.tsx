@@ -31,6 +31,9 @@ export interface DbIsolationService {
   dbEnvKeys: string[];
   /** 分类器认出的全部库名变量；rewritten=false 的只识别不改写（收敛 1） */
   dbEnvKeyDetails?: Array<{ key: string; engine: 'mongo' | 'mysql' | 'postgres'; family: 'whitelist' | 'framework' | 'neutral'; rewritten: boolean }>;
+  /** db = 涉及数据库；unrecognized = 有疑似变量但认不出；none = 不涉及数据库（档位对它无意义） */
+  dbInvolvement?: 'db' | 'unrecognized' | 'none';
+  suspectDbEnvKeys?: string[];
   branchOverrideCount: number;
 }
 
@@ -60,6 +63,8 @@ export interface DbIsolationView {
     perBranch: number;
     branches: number;
     branchesWithOverride: number;
+    /** 不涉及数据库的服务数（shared / perBranch 只数涉及数据库的） */
+    withoutDb?: number;
   };
 }
 
@@ -79,6 +84,9 @@ export const DB_SCOPE_LABEL: Record<DbScope, string> = {
 /** 第一屏那句判断：先给结论，数字挂在句子里。 */
 export function dbIsolationHeadline(view: Pick<DbIsolationView, 'summary'>): { headline: string; subline: string } {
   const { services, shared, perBranch, branches, branchesWithOverride } = view.summary;
+  const withoutDb = view.summary.withoutDb ?? 0;
+  const withDb = services - withoutDb;
+  const tail = withoutDb > 0 ? `；${withoutDb} 个服务不涉及数据库` : '';
   const subline = branches === 0
     ? '这个项目还没有分支'
     : branchesWithOverride === 0
@@ -87,13 +95,16 @@ export function dbIsolationHeadline(view: Pick<DbIsolationView, 'summary'>): { h
   if (services === 0) {
     return { headline: '这个项目还没有服务配置，先在「项目配置」里接入服务', subline };
   }
+  if (withDb === 0) {
+    return { headline: `${services} 个服务都不涉及数据库，没有需要隔离的库`, subline };
+  }
   if (perBranch === 0) {
-    return { headline: `${services} 个服务全部共享库：所有分支读写同一个库，一条分支跑 migration 会影响其它分支`, subline };
+    return { headline: `${withDb} 个服务全部共享库：所有分支读写同一个库，一条分支跑 migration 会影响其它分支${tail}`, subline };
   }
   if (shared === 0) {
-    return { headline: `${services} 个服务全部分支独立库：每条分支各用一个库，互不影响；新分支首次部署要重跑 migration`, subline };
+    return { headline: `${withDb} 个服务全部分支独立库：每条分支各用一个库，互不影响；新分支首次部署要重跑 migration${tail}`, subline };
   }
-  return { headline: `${shared} 个服务共享库、${perBranch} 个分支独立库，分支之间只在共享库那几个服务上互相可见`, subline };
+  return { headline: `${shared} 个服务共享库、${perBranch} 个分支独立库，分支之间只在共享库那几个服务上互相可见${tail}`, subline };
 }
 
 function draftFromView(view: DbIsolationView): Record<string, DbScope> {
@@ -270,9 +281,21 @@ export function DbIsolationPanel({
                         const rewritten = details.filter((k) => k.rewritten);
                         const recognized = details.filter((k) => !k.rewritten);
                         if (details.length === 0) {
+                          const suspects = service.suspectDbEnvKeys ?? [];
+                          const involvement = service.dbInvolvement ?? (suspects.length > 0 ? 'unrecognized' : 'none');
+                          if (involvement === 'none') {
+                            return (
+                              <span className="text-muted-foreground" title="这个服务没有任何数据库相关变量（web / 静态服务），共享库还是分支独立库对它都没有意义">
+                                不涉及数据库
+                              </span>
+                            );
+                          }
                           return (
-                            <span className="text-warn" title="分支独立库只改写 CDS_POSTGRES_DB / CDS_MYSQL_DATABASE / CDS_MONGO_INITDB_DATABASE 这类库名变量；框架变量（如 MongoDB__DatabaseName）与 DB_NAME 只识别不改写">
-                              没声明库名变量，切分支独立库不会改写任何东西
+                            <span className="text-warn" title="有疑似数据库变量但分类器认不出：库名变量要用 CDS_MYSQL_DATABASE / POSTGRES_DB / MongoDB__DatabaseName 这类家族名，或 DB_NAME 配一条 mysql:// / jdbc:mysql:// 连接串">
+                              有疑似数据库变量但无法识别：
+                              {suspects.map((key) => (
+                                <span key={key} className="ml-1"><CodePill>{key}</CodePill></span>
+                              ))}
                             </span>
                           );
                         }
@@ -307,7 +330,7 @@ export function DbIsolationPanel({
                   <ScopeSwitch
                     name={service.name}
                     value={value}
-                    disabled={disabled}
+                    disabled={disabled || service.dbInvolvement === 'none'}
                     onChange={(next) => onDraftChange({ ...draft, [service.profileId]: next })}
                   />
                 </div>

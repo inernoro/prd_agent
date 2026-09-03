@@ -85,9 +85,18 @@ describe('judgeDbProbe：判定是纯函数，原因必须说人话', () => {
     expect(r.reasons.join('\n')).toContain('连接串');
   });
 
-  it('配置里定位不到库 → no-db，原因来自定位器', () => {
+  it('不涉及数据库（没有任何库相关变量）→ not-applicable，不是缺库', () => {
     const r = judgeDbProbe(
-      configured({ engine: null, dbName: null, envKeys: [], infraId: null, reason: '该服务的环境变量里没有数据库名' }),
+      configured({ engine: null, dbName: null, envKeys: [], infraId: null, involvement: 'none' }),
+      container(), live({ attempted: false, ok: false, currentDb: null }),
+    );
+    expect(r.verdict).toBe('not-applicable');
+    expect(r.reasons[0]).toContain('不涉及数据库');
+  });
+
+  it('配置里有疑似变量但定位不到库 → no-db，原因来自定位器', () => {
+    const r = judgeDbProbe(
+      configured({ engine: null, dbName: null, envKeys: [], infraId: null, involvement: 'unrecognized', reason: '该服务的环境变量里没有数据库名' }),
       container(), live({ attempted: false, ok: false, currentDb: null }),
     );
     expect(r.verdict).toBe('no-db');
@@ -163,10 +172,11 @@ describe('probeBranchDb：docker inspect 容器真身 + 应用凭据实测', () 
     expect(api.container).toMatchObject({ containerName: 'cds-proj-feat-x-api', running: true, dbName: 'app_feat_x', inspectedAt: NOW });
     expect(api.live).toMatchObject({ ok: true, currentDb: 'app_feat_x', serverVersion: '8.0.36', objectCount: 12, credentialSource: 'app-url', probedAt: NOW });
     expect(report.probedAt).toBe(NOW);
-    // 没声明库名变量的服务如实标 no-db，而不是缺席
+    // 没有任何数据库变量的服务标「不涉及数据库」，不是缺库，也不去 inspect 它的容器
     const web = report.services.find((s) => s.profileId === 'web')!;
-    expect(web.verdict).toBe('no-db');
-    expect(report.summary).toMatchObject({ services: 2, match: 1, noDb: 1 });
+    expect(web.verdict).toBe('not-applicable');
+    expect(web.configured.involvement).toBe('none');
+    expect(report.summary).toMatchObject({ services: 2, match: 1, noDb: 0, notApplicable: 1 });
   });
 
   it('实测走应用自己的凭据（拍板 A）：mysql 客户端用 app 用户、密码进 env 不进 argv，且不用 root', async () => {

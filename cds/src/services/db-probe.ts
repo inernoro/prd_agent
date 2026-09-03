@@ -24,7 +24,7 @@ import { resolveEffectiveProfile } from './container.js';
 
 export type DbProbeExec = (argv: string[], stdin: string, timeoutMs?: number, maxBytes?: number) => Promise<DockerExecResult>;
 
-export type DbProbeVerdict = 'match' | 'mismatch' | 'not-running' | 'probe-failed' | 'no-db';
+export type DbProbeVerdict = 'match' | 'mismatch' | 'not-running' | 'probe-failed' | 'no-db' | 'not-applicable';
 
 export interface DbProbeConfigured {
   dbScope: 'shared' | 'per-branch';
@@ -37,6 +37,9 @@ export interface DbProbeConfigured {
   infraId: string | null;
   /** 定位失败原因（来自 resolveReplicaDbTarget） */
   reason?: string;
+  /** 定位不到时区分：none = 不涉及数据库（正常）；unrecognized = 有疑似变量但认不出（要处理） */
+  involvement?: 'db' | 'unrecognized' | 'none';
+  suspectEnvKeys?: string[];
 }
 
 export interface DbProbeContainer {
@@ -88,6 +91,8 @@ export interface DbProbeReport {
     notRunning: number;
     probeFailed: number;
     noDb: number;
+    /** 不涉及数据库的服务（web / 静态），不算缺库 */
+    notApplicable: number;
   };
 }
 
@@ -100,6 +105,9 @@ export function judgeDbProbe(
   live: DbProbeLive,
 ): { verdict: DbProbeVerdict; reasons: string[] } {
   if (!configured.dbName) {
+    if (configured.involvement === 'none') {
+      return { verdict: 'not-applicable', reasons: ['没有任何数据库相关变量，不涉及数据库'] };
+    }
     return { verdict: 'no-db', reasons: [configured.reason || '配置里定位不到这个服务的数据库'] };
   }
   if (!container.containerName) {
@@ -289,7 +297,7 @@ export async function probeBranchDb(
     const effective = resolveEffectiveProfile(baseline, branch);
     // 台账里的基础设施状态不是真相（error 可能只是上次重建失败），定位库时不按它过滤；
     // 容器到底在不在跑，由下面的 docker inspect / 客户端实测说了算。
-    const { target, reason } = resolveReplicaDbTarget(state, branch, effective, { infraStatus: 'any' });
+    const { target, reason, involvement, suspects } = resolveReplicaDbTarget(state, branch, effective, { infraStatus: 'any' });
     const configured: DbProbeConfigured = {
       dbScope: effective.dbScope === 'per-branch' ? 'per-branch' : 'shared',
       dbScopeSource: scopeSource(baseline, branch),
@@ -297,13 +305,17 @@ export async function probeBranchDb(
       dbName: target?.sourceDb ?? null,
       envKeys: target?.envKeys ?? [],
       infraId: target?.infra.id ?? null,
-      ...(target ? {} : { reason: (reason || '').replace(/，无法定位要隔离的库/, '，无法定位要实测的库') }),
+      ...(target ? { involvement: 'db' as const } : {
+        reason: (reason || '').replace(/，无法定位要隔离的库/, '，无法定位要实测的库'),
+        involvement: involvement ?? 'unrecognized',
+        suspectEnvKeys: suspects ?? [],
+      }),
     };
 
     const containerName = branch.services?.[baseline.id]?.containerName || null;
     let container: DbProbeContainer = { containerName, status: 'missing', running: false, dbName: null, inspectedAt: now().toISOString() };
     let appEnv: Record<string, string> | null = null;
-    if (containerName) {
+    if (containerName && configured.involvement !== 'none') {
       const ins = await inspectContainer(exec, containerName);
       appEnv = ins.env;
       const values = configured.envKeys.map((k) => ins.env?.[k]).filter((v): v is string => typeof v === 'string' && v !== '');
@@ -332,7 +344,7 @@ export async function probeBranchDb(
     summary: {
       services: services.length,
       match: count('match'), mismatch: count('mismatch'), notRunning: count('not-running'),
-      probeFailed: count('probe-failed'), noDb: count('no-db'),
+      probeFailed: count('probe-failed'), noDb: count('no-db'), notApplicable: count('not-applicable'),
     },
   };
 }

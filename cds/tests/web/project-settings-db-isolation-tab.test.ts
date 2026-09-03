@@ -36,7 +36,7 @@ function view(overrides: Partial<DbIsolationView> = {}): DbIsolationView {
     branchOverrides: [
       { branchId: 'demo-feat-x', branch: 'feat/x', overrides: { api: 'shared' } },
     ],
-    summary: { services: 3, shared: 2, perBranch: 1, branches: 4, branchesWithOverride: 1 },
+    summary: { services: 3, shared: 1, perBranch: 1, withoutDb: 1, branches: 4, branchesWithOverride: 1 },
     ...overrides,
   };
 }
@@ -56,7 +56,8 @@ function render(v: DbIsolationView, draft?: Record<string, 'shared' | 'per-branc
 describe('数据库隔离面板：渲染出来的东西', () => {
   it('第一屏是一句判断，数字挂在句子里', () => {
     const html = render(view());
-    expect(html).toContain('2 个服务共享库、1 个分支独立库');
+    expect(html).toContain('1 个服务共享库、1 个分支独立库');
+    expect(html).toContain('1 个服务不涉及数据库');
     expect(html).toContain('4 条分支，其中 1 条有本分支覆盖，不受项目默认影响');
   });
 
@@ -67,6 +68,11 @@ describe('数据库隔离面板：渲染出来的东西', () => {
       .toContain('全部分支独立库');
     expect(dbIsolationHeadline({ summary: { services: 0, shared: 0, perBranch: 0, branches: 0, branchesWithOverride: 0 } }).headline)
       .toContain('还没有服务配置');
+    // 不涉及数据库的服务不进「N 个服务共享库」，单独说
+    expect(dbIsolationHeadline({ summary: { services: 5, shared: 3, perBranch: 0, withoutDb: 2, branches: 1, branchesWithOverride: 0 } }).headline)
+      .toBe('3 个服务全部共享库：所有分支读写同一个库，一条分支跑 migration 会影响其它分支；2 个服务不涉及数据库');
+    expect(dbIsolationHeadline({ summary: { services: 2, shared: 0, perBranch: 0, withoutDb: 2, branches: 1, branchesWithOverride: 0 } }).headline)
+      .toContain('都不涉及数据库');
   });
 
   it('逐服务：看得到来源、会改写的 key、没声明库名变量的警告、分支覆盖数', () => {
@@ -74,7 +80,10 @@ describe('数据库隔离面板：渲染出来的东西', () => {
     expect(html).toContain('默认值');
     expect(html).toContain('CDS_POSTGRES_DB');
     expect(html).toContain('CDS_MYSQL_DATABASE');
-    expect(html).toContain('没声明库名变量，切分支独立库不会改写任何东西');
+    // web 没有任何数据库变量：标「不涉及数据库」而不是缺库警告，档位开关禁用
+    expect(html).toContain('不涉及数据库');
+    expect(html).not.toContain('没声明库名变量');
+    expect(html).toMatch(/aria-label="Web 的数据库隔离"[\s\S]*?disabled=""/);
     expect(html).toContain('1 条分支覆盖');
     // 两档都是可点的 radio，批量按钮也在
     expect(html).toContain('role="radiogroup"');
@@ -82,19 +91,29 @@ describe('数据库隔离面板：渲染出来的东西', () => {
     expect(html).toContain('全部设为分支独立库');
   });
 
+  it('有疑似变量但认不出：标警告并列出变量名', () => {
+    const v = view();
+    v.services = [{ profileId: 'admin', name: 'Admin', dockerImage: 'node:20', dbScope: 'shared', dbScopeSource: 'default', dbEnvKeys: [], dbEnvKeyDetails: [], dbInvolvement: 'unrecognized', suspectDbEnvKeys: ['DATABASE_URL'], branchOverrideCount: 0 }];
+    v.summary = { services: 1, shared: 1, perBranch: 0, withoutDb: 0, branches: 1, branchesWithOverride: 0 };
+    const html = render(v);
+    expect(html).toContain('有疑似数据库变量但无法识别');
+    expect(html).toContain('DATABASE_URL');
+  });
+
   it('收敛 1：框架变量被识别并标「已识别，按项目约定不加后缀」，不再说没声明库名变量', () => {
     const v = view();
     v.services = [
       ...v.services,
       { profileId: 'dotnet', name: 'DotNet', dockerImage: 'mcr/dotnet', dbScope: 'shared', dbScopeSource: 'default', dbEnvKeys: [], branchOverrideCount: 0,
-        dbEnvKeyDetails: [{ key: 'MongoDB__DatabaseName', engine: 'mongo', family: 'framework', rewritten: false }] },
+        dbEnvKeyDetails: [{ key: 'MongoDB__DatabaseName', engine: 'mongo', family: 'framework', rewritten: false }], dbInvolvement: 'db', suspectDbEnvKeys: [] },
     ];
-    v.summary = { ...v.summary, services: 4, shared: 3 };
+    v.summary = { ...v.summary, services: 4, shared: 2 };
     const html = render(v);
     expect(html).toContain('MongoDB__DatabaseName');
     expect(html).toContain('已识别，按项目约定不加后缀');
-    // 只有前端 web 一行该提示没声明库名变量
-    expect(html.split('没声明库名变量').length - 1).toBe(1);
+    // 前端 web 标不涉及数据库；dotnet 不再被当成缺库
+    expect(html).toContain('不涉及数据库');
+    expect(html).not.toContain('没声明库名变量');
   });
 
   it('保存前把影响面说清：继承的分支变、覆盖的分支不变、重新部署后生效', () => {

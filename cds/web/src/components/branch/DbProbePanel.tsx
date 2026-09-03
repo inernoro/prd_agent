@@ -14,7 +14,7 @@ import { Activity, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 
-export type DbProbeVerdict = 'match' | 'mismatch' | 'not-running' | 'probe-failed' | 'no-db';
+export type DbProbeVerdict = 'match' | 'mismatch' | 'not-running' | 'probe-failed' | 'no-db' | 'not-applicable';
 
 export interface DbProbeServiceResult {
   profileId: string;
@@ -27,6 +27,8 @@ export interface DbProbeServiceResult {
     envKeys: string[];
     infraId: string | null;
     reason?: string;
+    involvement?: 'db' | 'unrecognized' | 'none';
+    suspectEnvKeys?: string[];
   };
   container: {
     containerName: string | null;
@@ -56,7 +58,7 @@ export interface DbProbeReport {
   branch: string;
   probedAt: string;
   services: DbProbeServiceResult[];
-  summary: { services: number; match: number; mismatch: number; notRunning: number; probeFailed: number; noDb: number };
+  summary: { services: number; match: number; mismatch: number; notRunning: number; probeFailed: number; noDb: number; notApplicable?: number };
 }
 
 /** 超过这个时长的实测值视为可能过期：灰掉 + 提示 */
@@ -67,7 +69,8 @@ export const DB_PROBE_VERDICT_META: Record<DbProbeVerdict, { label: string; cls:
   mismatch: { label: '不一致', cls: 'border-destructive/40 bg-destructive/10 text-destructive' },
   'not-running': { label: '未运行', cls: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
   'probe-failed': { label: '实测失败', cls: 'border-warn/40 bg-warn-soft text-warn' },
-  'no-db': { label: '无数据库', cls: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
+  'no-db': { label: '无法识别', cls: 'border-warn/40 bg-warn-soft text-warn' },
+  'not-applicable': { label: '不涉及', cls: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
 };
 
 const SCOPE_LABEL = { shared: '共享库', 'per-branch': '分支独立库' } as const;
@@ -78,13 +81,16 @@ const CREDENTIAL_LABEL = { 'app-url': '应用连接串凭据', 'app-env': '应�
 export function dbProbeHeadline(report: Pick<DbProbeReport, 'summary'>): string {
   const s = report.summary;
   if (s.services === 0) return '这条分支还没有服务配置，没有可实测的数据库。';
-  const withDb = s.services - s.noDb;
-  if (withDb === 0) return `${s.services} 个服务都没声明数据库，没有可实测的库。`;
-  if (s.mismatch > 0) return `${s.mismatch} 个服务实测到的库与配置说的不一致，先看原因再决定是否重新部署。`;
-  if (s.probeFailed > 0) return `${s.probeFailed} 个服务没能连上确认，${s.match} 个一致；实测失败前不要把配置值当真。`;
-  if (s.notRunning > 0 && s.match === 0) return `${s.notRunning} 个服务的容器没在跑，还没有实测值；配置值只是配置。`;
-  if (s.notRunning > 0) return `${s.match} 个服务实测与配置一致，${s.notRunning} 个容器没在跑、尚无实测值。`;
-  return `${s.match} 个服务实测到的库与配置说的一致。`;
+  const notApplicable = s.notApplicable ?? 0;
+  const withDb = s.services - s.noDb - notApplicable;
+  const tail = notApplicable > 0 ? `；${notApplicable} 个服务不涉及数据库` : '';
+  if (withDb === 0 && s.noDb === 0) return `${s.services} 个服务都不涉及数据库，没有可实测的库。`;
+  if (withDb === 0) return `${s.noDb} 个服务有疑似数据库变量但无法识别，没有可实测的库${tail}。`;
+  if (s.mismatch > 0) return `${s.mismatch} 个服务实测到的库与配置说的不一致，先看原因再决定是否重新部署${tail}。`;
+  if (s.probeFailed > 0) return `${s.probeFailed} 个服务没能连上确认，${s.match} 个一致；实测失败前不要把配置值当真${tail}。`;
+  if (s.notRunning > 0 && s.match === 0) return `${s.notRunning} 个服务的容器没在跑，还没有实测值；配置值只是配置${tail}。`;
+  if (s.notRunning > 0) return `${s.match} 个服务实测与配置一致，${s.notRunning} 个容器没在跑、尚无实测值${tail}。`;
+  return `${s.match} 个服务实测到的库与配置说的一致${tail}。`;
 }
 
 /** 探测时间的人话：刚刚 / N 分钟前（超过阈值提示可能过期） */
@@ -151,7 +157,9 @@ export function DbProbeTable({ report, now = new Date() }: { report: DbProbeRepo
                   <div className="font-mono text-[11px] text-muted-foreground">{svc.profileId}</div>
                 </td>
                 <td className="py-1.5 pr-3">
-                  {svc.configured.dbName ? (
+                  {svc.verdict === 'not-applicable' ? (
+                    <div className="text-muted-foreground">不涉及数据库</div>
+                  ) : svc.configured.dbName ? (
                     <>
                       <div><Mono>{svc.configured.dbName}</Mono>{svc.configured.engine ? <span className="ml-1 text-muted-foreground">{svc.configured.engine}</span> : null}</div>
                       <div className="text-[11px] text-muted-foreground">{SCOPE_LABEL[svc.configured.dbScope]} · {SOURCE_LABEL[svc.configured.dbScopeSource]}</div>
@@ -161,7 +169,9 @@ export function DbProbeTable({ report, now = new Date() }: { report: DbProbeRepo
                   )}
                 </td>
                 <td className={`py-1.5 pr-3 ${valueCls}`}>
-                  {!svc.container.containerName ? (
+                  {svc.verdict === 'not-applicable' ? (
+                    <div className="text-muted-foreground">—</div>
+                  ) : !svc.container.containerName ? (
                     <div className="text-muted-foreground">还没有容器</div>
                   ) : !svc.container.running ? (
                     <div className="text-muted-foreground">容器 {svc.container.status}</div>
@@ -173,7 +183,9 @@ export function DbProbeTable({ report, now = new Date() }: { report: DbProbeRepo
                   )}
                 </td>
                 <td className={`py-1.5 pr-3 ${valueCls}`}>
-                  {svc.live.ok ? (
+                  {svc.verdict === 'not-applicable' ? (
+                    <div className="text-muted-foreground">—</div>
+                  ) : svc.live.ok ? (
                     <>
                       <div><Mono>{svc.live.currentDb ?? ''}</Mono></div>
                       <div className="text-[11px] text-muted-foreground">

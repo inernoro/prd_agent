@@ -20,7 +20,7 @@
 import { Router } from 'express';
 import type { StateService } from '../services/state.js';
 import type { BranchEntry, BuildProfile, Project } from '../types.js';
-import { classifyDbEnvKeys, type DbEnvKeyClassification } from '../services/replica-db-clone.js';
+import { classifyDbEnvKeys, dbInvolvementOf, type DbEnvKeyClassification, type DbInvolvement } from '../services/replica-db-clone.js';
 
 export type DbScope = 'shared' | 'per-branch';
 
@@ -53,6 +53,14 @@ export interface ProjectDbIsolationService {
    * 与复制集定位、库探测同一份分类器，三入口口径一致。
    */
   dbEnvKeyDetails: DbEnvKeyClassification[];
+  /**
+   * 涉不涉及数据库：db = 认得库名变量；unrecognized = 只有疑似变量（如 DATABASE_URL）但分类器认不出，
+   * 需要用户补连接串或改 key 名；none = 什么数据库变量都没有（web / 静态服务），档位对它无意义，
+   * 前端不许再把它当「缺库」提示。
+   */
+  dbInvolvement: DbInvolvement;
+  /** involvement=unrecognized 时列出疑似变量名（只报 key，不报值） */
+  suspectDbEnvKeys: string[];
   /** 有多少条分支对这个服务写了自己的覆盖（这些分支不受项目默认影响）。 */
   branchOverrideCount: number;
 }
@@ -88,6 +96,8 @@ export interface ProjectDbIsolationView {
     branches: number;
     /** 至少有一个服务写了分支覆盖的分支数 */
     branchesWithOverride: number;
+    /** 不涉及数据库的服务数（shared / perBranch 只数涉及数据库的服务） */
+    withoutDb: number;
   };
 }
 
@@ -159,8 +169,10 @@ export function buildProjectDbIsolationView(
 
   const services: ProjectDbIsolationService[] = profiles.map((profile) => {
     // 与 resolveReplicaDbTarget 同口径：项目 customEnv → profile.env（分支层在项目视图里不存在）
-    const dbEnvKeyDetails = classifyDbEnvKeys({ ...projectEnv, ...(profile.env || {}) });
+    const mergedEnv = { ...projectEnv, ...(profile.env || {}) };
+    const dbEnvKeyDetails = classifyDbEnvKeys(mergedEnv);
     const dbEnvKeys = dbEnvKeyDetails.filter((k) => k.rewritten).map((k) => k.key);
+    const { involvement, suspects } = dbInvolvementOf(mergedEnv);
     return {
       profileId: profile.id,
       name: profile.name || profile.id,
@@ -169,6 +181,8 @@ export function buildProjectDbIsolationView(
       dbScopeSource: isDbScope(profile.dbScope) ? 'explicit' : 'default',
       dbEnvKeys,
       dbEnvKeyDetails,
+      dbInvolvement: involvement,
+      suspectDbEnvKeys: suspects,
       branchOverrideCount: overrideCountByProfile.get(profile.id) || 0,
     };
   });
@@ -186,8 +200,10 @@ export function buildProjectDbIsolationView(
     })),
     summary: {
       services: services.length,
-      shared: services.filter((s) => s.dbScope === 'shared').length,
-      perBranch: services.filter((s) => s.dbScope === 'per-branch').length,
+      // 只数涉及数据库的服务：web / 静态服务的档位没有意义，不该进「N 个服务共享库」的判断句
+      shared: services.filter((s) => s.dbInvolvement !== 'none' && s.dbScope === 'shared').length,
+      perBranch: services.filter((s) => s.dbInvolvement !== 'none' && s.dbScope === 'per-branch').length,
+      withoutDb: services.filter((s) => s.dbInvolvement === 'none').length,
       branches: branches.length,
       branchesWithOverride: branchOverrides.length,
     },
