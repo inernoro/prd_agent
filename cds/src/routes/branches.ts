@@ -16241,9 +16241,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 服务都不在全局表里，裸 id 全局查会拿到别的项目那条）。
         const baselineEntry = stateService.getEffectiveProfilesForBranch(entry)
           .find((p) => p.id === item.serviceId)?.webEntry;
+        const branchOverrideEntry = entry.profileOverrides?.[item.serviceId]?.webEntry;
+        // 分支档的隐藏占位（空名 webEntry）不是一个真实入口，不携带 primary 语义——
+        // 用它做继承判定会在「隐藏 → 重新启用」这条路径上把 primary 冲掉，主入口被
+        // 静默换成别的服务（issue #1463）。空名占位一律回落到 baseline 取 primary。
+        const isHiddenPlaceholder = Boolean(branchOverrideEntry) && !branchOverrideEntry!.name;
         const effectiveEntry = scope === 'project'
           ? baselineEntry
-          : (entry.profileOverrides?.[item.serviceId]?.webEntry ?? baselineEntry);
+          : (isHiddenPlaceholder ? baselineEntry : (branchOverrideEntry ?? baselineEntry));
         const buildEntry = (primary?: boolean) => (
           item.name ? { name: item.name, path: item.path, ...(primary ? { primary: true } : {}) } : undefined
         );
