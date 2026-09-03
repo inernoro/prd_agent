@@ -129,16 +129,30 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter
 
         var executed = await next();
 
-        var status = (executed.Result as IStatusCodeActionResult)?.StatusCode ?? StatusCodes.Status200OK;
-        var ok = executed.Exception == null && status >= 200 && status < 300;
+        var threw = executed.Exception != null;
+        var status = ResolveLoggedStatus((executed.Result as IStatusCodeActionResult)?.StatusCode, threw);
+        var ok = !threw && status >= 200 && status < 300;
         if (!ok && verdict.ReservedKind != null)
             await _usage.ReleaseAsync(keyId, verdict.ReservedKind, verdict.ReservedAmount, verdict.ReservedDay,
                 CancellationToken.None);
 
         await LogAsync(http, keyId, toolName, capability, isWrite, imageCount,
             ok ? "success" : "error", status,
-            ok ? null : "直连开放接口返回了非 2xx，详情见接口自身的返回体。", startedAt);
+            ok ? null
+                : threw ? "直连开放接口抛了异常，原因见服务端日志。"
+                : "直连开放接口返回了非 2xx，详情见接口自身的返回体。",
+            startedAt);
     }
+
+    /// <summary>
+    /// 记进审计的那个 HTTP 状态码。
+    ///
+    /// 动作抛出去的时候 <c>executed.Result</c> 是 null，取默认值就会记成 HTTP 200 —— 而同一行
+    /// 记录的状态是「失败」。面板上于是长出「失败 · HTTP 200」这种自相矛盾的审计，
+    /// 排障的人第一件事得先怀疑记录本身。抛出去的最终由异常管道翻成 500，这里就按 500 记。
+    /// </summary>
+    internal static int ResolveLoggedStatus(int? resultStatus, bool threw)
+        => resultStatus ?? (threw ? StatusCodes.Status500InternalServerError : StatusCodes.Status200OK);
 
     /// <summary>
     /// 反查动态工具（AgentOpenEndpoint 登记表）。登记表在 Mongo 里，每个请求都查一次太贵，

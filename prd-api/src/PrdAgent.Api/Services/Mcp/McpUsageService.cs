@@ -430,6 +430,29 @@ public sealed class McpUsageService
         }
     }
 
+    /// <summary>
+    /// 看着像凭据的参数名。动态工具（登记表里的开放接口）的入参形状由登记的人决定，
+    /// 里面完全可能有 password / token / apiKey —— 而这份摘要会落进 mcp_call_logs、
+    /// 再原样显示在接入台上。截断到 120 字对短口令没有任何保护作用，所以按名字隐去。
+    ///
+    /// 名单是**归一化之后**的针（去掉 `-`/`_`、转小写再比包含），所以 `api-key`、`API_KEY`、
+    /// `apiKey` 三种写法都命中。不放宽到裸 `key`/`auth`：那会连带隐去 `keyword`、`author`
+    /// 这类正常参数，把摘要变得看不懂 —— 摘要看不懂，这块面板也就没用了。
+    /// </summary>
+    private static readonly string[] SensitiveArgumentNeedles =
+    {
+        "password", "passwd", "secret", "token", "credential",
+        "apikey", "accesskey", "privatekey", "signature", "cookie", "authorization",
+    };
+
+    /// <summary>参数名看着像凭据吗（归一化后按包含判定）。</summary>
+    internal static bool IsSensitiveArgumentName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        var normalized = name.Replace("-", string.Empty).Replace("_", string.Empty).ToLowerInvariant();
+        return SensitiveArgumentNeedles.Any(needle => normalized.Contains(needle));
+    }
+
     /// <summary>入参摘要：够用户看懂它当时要干什么，又不至于把整篇正文存进记录。</summary>
     public static string? SummarizeArguments(JsonObject? args)
     {
@@ -437,6 +460,13 @@ public sealed class McpUsageService
         var parts = new List<string>();
         foreach (var kv in args)
         {
+            if (IsSensitiveArgumentName(kv.Key))
+            {
+                // 连长度都不透出：短口令的长度本身就是线索
+                parts.Add($"{kv.Key}=[已隐去]");
+                if (parts.Count >= 6) break;
+                continue;
+            }
             var v = kv.Value?.ToJsonString() ?? "null";
             if (v.Length > 120) v = v[..120] + "…";
             parts.Add($"{kv.Key}={v}");

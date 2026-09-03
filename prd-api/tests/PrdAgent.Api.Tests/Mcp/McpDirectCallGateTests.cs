@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using PrdAgent.Api.Controllers;
 using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Api.Filters;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Api.Services.Mcp;
 using Shouldly;
@@ -130,5 +131,35 @@ public class McpDirectCallGateTests
             if (parts[i].Length > 1 && parts[i][0] == '{' && parts[i][^1] == '}')
                 parts[i] = "abc123";
         return string.Join('/', parts);
+    }
+}
+
+/// <summary>
+/// 记进审计的 HTTP 状态码。
+///
+/// 这条坏掉的样子不是报错，是**记录自己说谎**：动作抛出去时结果对象是 null，取默认值就记成
+/// HTTP 200，而同一行的状态是「失败」。面板上于是出现「失败 · HTTP 200」，排障的人第一件事
+/// 得先怀疑记录本身 —— 一份会撒谎的审计比没有审计更费时间。
+/// </summary>
+public class McpLoggedStatusTests
+{
+    [Fact]
+    public void 抛出去的调用记成_500_不是_200()
+    {
+        AgentApiKeyUsageFilter.ResolveLoggedStatus(null, threw: true).ShouldBe(500);
+    }
+
+    [Fact]
+    public void 正常返回但没带状态码的记成_200()
+    {
+        AgentApiKeyUsageFilter.ResolveLoggedStatus(null, threw: false).ShouldBe(200);
+    }
+
+    [Fact]
+    public void 结果自己带了状态码就照它记_异常已被接住的情形()
+    {
+        // 异常被前面的过滤器接住并换成了一个结果：那个结果才是用户真正收到的东西
+        AgentApiKeyUsageFilter.ResolveLoggedStatus(403, threw: true).ShouldBe(403);
+        AgentApiKeyUsageFilter.ResolveLoggedStatus(404, threw: false).ShouldBe(404);
     }
 }

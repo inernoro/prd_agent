@@ -56,6 +56,26 @@ public class McpUsageCounterScopeTests
             .ShouldBeFalse("额度与调用记录都不该用带 commit revision 的 DeploymentScope.Current");
     }
 
+    [Fact]
+    public void 计数器集合必须登记回收策略()
+    {
+        // 每把密钥每天每种额度各留一行，而读的只有「今天」那几行（闸门与面板都按当天的
+        // 确定性 _id 直接定位，从不扫历史）。没有回收路径时这个集合只会单向变大，
+        // 长出来的全是死数据 —— 而这件事不会让任何测试变红，也不会让任何请求报错。
+        //
+        // 本仓库禁止应用自动建索引（no-auto-index 规则），所以回收策略的唯一落点是
+        // DBA 执行的那份脚本。守卫盯的就是「它还在那份脚本里」。
+        var script = ReadSource("scripts/mongodb-indexes.js");
+        var begin = script.IndexOf("// collection: mcp_usage_counters", StringComparison.Ordinal);
+        var end = script.IndexOf("// end collection: mcp_usage_counters", StringComparison.Ordinal);
+        (begin >= 0 && end > begin).ShouldBeTrue("计数器的索引段落不在脚本里（段落标记别改名，守卫按它定位）");
+
+        var section = script[begin..end];
+        section.ShouldContain("db.mcp_usage_counters.createIndex");
+        section.ShouldContain("expireAfterSeconds", customMessage: "回收靠 TTL，删了它这个集合就再没有回收路径");
+        section.ShouldContain("\"DayUtc\": 1", customMessage: "TTL 必须挂在 DayUtc 上：那是这一行属于哪一天的唯一依据");
+    }
+
     private static string ReadSource(string repoRelativePath)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -118,5 +138,62 @@ public class McpQuotaCeilingTests
         McpUsageService.ReservationCeiling(2, 4).ShouldBeLessThan(0);
         // 上限为 0 等于关掉这项能力，任何一次都不许过
         McpUsageService.ReservationCeiling(0, 1).ShouldBeLessThan(0);
+    }
+}
+
+/// <summary>
+/// 入参摘要里的凭据隐去。
+///
+/// 动态工具（登记表里的开放接口）的入参形状由登记的人决定，里面完全可能有 password / token /
+/// apiKey，而这份摘要会落进调用记录、再原样显示在接入台上。截断到 120 字对短口令毫无保护。
+///
+/// 这条判据的两个方向都要钉：漏了就把凭据写进库；过宽就把 keyword、author 这类正常参数也
+/// 隐掉，摘要变得看不懂 —— 而摘要看不懂，这块面板就没用了。
+/// </summary>
+public class McpArgumentRedactionTests
+{
+    [Theory]
+    [InlineData("password")]
+    [InlineData("Password")]
+    [InlineData("api_key")]
+    [InlineData("api-key")]
+    [InlineData("apiKey")]
+    [InlineData("accessToken")]
+    [InlineData("clientSecret")]
+    [InlineData("Authorization")]
+    [InlineData("cookie")]
+    [InlineData("privateKey")]
+    public void 看着像凭据的参数名一律隐去(string name)
+    {
+        McpUsageService.IsSensitiveArgumentName(name).ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("keyword")]
+    [InlineData("author")]
+    [InlineData("title")]
+    [InlineData("clientRequestId")]
+    [InlineData("storeId")]
+    [InlineData("prompt")]
+    public void 正常参数不许被隐掉(string name)
+    {
+        McpUsageService.IsSensitiveArgumentName(name).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 摘要里凭据的值与长度都不透出()
+    {
+        var args = new System.Text.Json.Nodes.JsonObject
+        {
+            ["keyword"] = "周报",
+            ["apiKey"] = "sk-live-0123456789abcdef",
+        };
+
+        var summary = McpUsageService.SummarizeArguments(args);
+
+        summary.ShouldNotBeNull();
+        summary!.ShouldContain("keyword=", customMessage: "正常参数照旧要看得见");
+        summary.ShouldContain("apiKey=[已隐去]");
+        summary.ShouldNotContain("sk-live");
     }
 }
