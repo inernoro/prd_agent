@@ -51,6 +51,8 @@ import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { BackupTab } from '@/pages/project-settings/BackupTab';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
+import { RepoSharingBanner, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
+import { BuildScopeDialog } from '@/components/project/BuildScopeDialog';
 
 interface ProjectSummary {
   id: string;
@@ -94,6 +96,8 @@ interface ProjectSummary {
   autoPublishAfterMinutes?: number;
   /** Deprecated: 项目级自动停止已收敛到系统调度器，保存生命周期时会清零。 */
   autoStopAfterMinutes?: number;
+  /** 2026-09-02：这个仓库还喂着哪些别的项目（同仓 < 2 个时后端给 null）。 */
+  repoSharing?: RepoSharing | null;
 }
 
 type ResourceChipDisplay = {
@@ -394,6 +398,25 @@ function messageFromError(err: unknown): string {
   return err instanceof ApiError ? err.message : String(err);
 }
 
+/**
+ * 保存接口回的项目对象没有 `repoSharing`（那是 GET 才做的富化），直接拿它替换页面
+ * 状态会让同仓横幅在保存之后凭空消失。这里只做一件事：新对象没带这段富化时，把上
+ * 一次的值原样留着，别让它掉。权威值由调用方随后静默重取。
+ *
+ * 单独抽出来是为了能直接断言这个行为——它藏在 useState 的更新函数里就只能靠源码扫描
+ * 证明「写在那儿」，证明不了「算得对」。
+ */
+export function preserveRepoSharing(
+  prev: ProjectSummary | null,
+  next: ProjectSummary,
+): ProjectSummary {
+  if (!prev || prev.id !== next.id) return next;
+  // 新对象自己带了（哪怕是 undefined 以外的空值）就以它为准，不要拿旧的盖新的
+  if (next.repoSharing !== undefined) return next;
+  if (prev.repoSharing === undefined) return next;
+  return { ...next, repoSharing: prev.repoSharing };
+}
+
 function useProject(projectId: string | undefined): {
   state: ProjectState;
   refresh: () => Promise<void>;
@@ -415,6 +438,28 @@ function useProject(projectId: string | undefined): {
     }
   }, [projectId]);
 
+  /**
+   * 静默重取「只有 GET 才带」的富化字段（`repoSharing`）。
+   *
+   * 各个保存接口回的是裸 Project / toSummary，没有这一段——直接拿它整体替换页面状态，
+   * 同仓横幅就会在保存之后凭空消失，直到用户手动刷新（2026-09-02 Codex P2）。绑仓库
+   * 那条更糟：正是「这一刻该出现横幅」的操作，把横幅弄没了。
+   *
+   * 不走 `refresh()`：那会把状态打回 loading，整页闪一下（expectation-management
+   * 里的「变化必须可感知」反面：凭空消失再凭空出现）。这里只补差，不动 status。
+   */
+  const reloadSharing = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const fresh = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`);
+      setState((prev) => (prev.status === 'ok' && prev.project.id === fresh.id
+        ? { status: 'ok', project: { ...prev.project, repoSharing: fresh.repoSharing } }
+        : prev));
+    } catch {
+      // 富化字段取不到就维持现状，不要因此打断刚刚成功的那次保存
+    }
+  }, [projectId]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -422,7 +467,18 @@ function useProject(projectId: string | undefined): {
   return {
     state,
     refresh,
-    setProject: (project) => setState({ status: 'ok', project }),
+    /*
+     * 收在这一处，而不是让每个保存回调各自记得补 —— 保存路径有十来条，
+     * 「同一份处理抄十遍、改一处忘九处」在这个 PR 里已经栽过好几次。
+     * 先带着旧值落地（不闪），再静默取权威值（绑/解绑之后事实变了也能跟上）。
+     */
+    setProject: (project) => {
+      setState((prev) => ({
+        status: 'ok',
+        project: preserveRepoSharing(prev.status === 'ok' ? prev.project : null, project),
+      }));
+      void reloadSharing();
+    },
   };
 }
 
@@ -431,6 +487,29 @@ export function ProjectSettingsPage(): JSX.Element {
   const { state, refresh, setProject } = useProject(projectId);
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
+  const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
+  const [applyingScope, setApplyingScope] = useState(false);
+
+  /**
+   * 一键采纳系统给的范围建议。系统看得出本项目待在哪个目录，也说得出凭什么，
+   * 所以这里只要一次确认，不必让用户去对话框里再挑一遍。
+   */
+  async function applyScopeSuggestion(): Promise<void> {
+    if (!projectId) return;
+    setApplyingScope(true);
+    try {
+      const res = await apiRequest<{ applied: Array<{ profileId: string }>; scope: string[] }>(
+        `/api/projects/${encodeURIComponent(projectId)}/scope-options/apply`,
+        { method: 'POST' },
+      );
+      setToast(`已固定为 ${res.scope.join('、')}；下次推送生效`);
+      await refresh();
+    } catch (err) {
+      setToast(messageFromError(err));
+    } finally {
+      setApplyingScope(false);
+    }
+  }
 
   useEffect(() => {
     window.history.replaceState(null, '', `#${activeTab}`);
@@ -568,6 +647,21 @@ export function ProjectSettingsPage(): JSX.Element {
 
               <div className="cds-settings-content min-w-0">
                 <div className="cds-settings-section-body">
+                {/*
+                 * 同仓关系放在所有分区之上、每个分区都看得见：用户是在这个项目里
+                 * 干活时才需要知道「改这里会连累谁」，切到哪个 tab 都成立。
+                 */}
+                {project.repoSharing ? (
+                  <div className="mb-4">
+                    <RepoSharingBanner
+                      sharing={project.repoSharing}
+                      selfId={project.id}
+                      onDeclareScope={() => setScopeDialogOpen(true)}
+                      onApplySuggestion={() => void applyScopeSuggestion()}
+                      applying={applyingScope}
+                    />
+                  </div>
+                ) : null}
                 <TabsContent value="general">
                   <GeneralTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
                 </TabsContent>
@@ -617,6 +711,15 @@ export function ProjectSettingsPage(): JSX.Element {
               </div>
             </div>
           </Tabs>
+        ) : null}
+
+        {project ? (
+          <BuildScopeDialog
+            open={scopeDialogOpen}
+            onOpenChange={setScopeDialogOpen}
+            projectId={project.id}
+            onSaved={(message) => { setToast(message); void refresh(); }}
+          />
         ) : null}
 
         {toast ? (
@@ -1798,6 +1901,18 @@ function GithubProjectTab({
               解除后，GitHub webhook 不再把该仓库事件路由到此项目。已有分支和 Check Run 不会被删除。
             </DialogDescription>
           </DialogHeader>
+          {/*
+           * 共用同一个仓库时，用户最容易担心的是「我解绑会不会把别人也断了」。
+           * 答案是不会 —— 但这句话必须写出来，让人敢按下去。
+           */}
+          {project.repoSharing && project.repoSharing.siblings.length > 1 ? (
+            <p className="text-sm text-muted-foreground">
+              这个仓库还绑着
+              {' '}
+              {project.repoSharing.siblings.filter((s) => s.id !== project.id).map((s) => s.name).join('、')}
+              。解绑只影响本项目，它们照常收 push。
+            </p>
+          ) : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setUnlinkOpen(false)}>
               取消
@@ -1876,6 +1991,21 @@ function GithubRepoPickerDialog({
   const [selectedRepo, setSelectedRepo] = useState<GithubRepo | null>(null);
   const [autoDeploy, setAutoDeploy] = useState(true);
   const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState('');
+  /**
+   * 仓库已被别的项目绑走：非空时弹窗切到「确认共用」那一屏。
+   *
+   * 必须把**被确认的那个目标**整个存下来（仓库 + 安装），不能等按下去再回头读当前
+   * 选择：用户完全可以在看到警告之后又去点另一个仓库，那时按钮上的「知道了」说的是
+   * 前一个仓库，绑上的却是新选的那个，而且绕过了它自己那道 409（Codex P2）。
+   */
+  const [sharedConfirm, setSharedConfirm] = useState<
+    {
+      repoFullName: string;
+      installationId: number;
+      siblings: Array<{ id: string; name: string; scoped?: boolean }>;
+    } | null
+  >(null);
 
   const loadInstallations = useCallback(async () => {
     setInstallationsState({ status: 'loading' });
@@ -1893,6 +2023,15 @@ function GithubRepoPickerDialog({
     if (open) void loadInstallations();
   }, [open, loadInstallations]);
 
+  /*
+   * 选择一变就清掉确认态 —— 收在这一处，而不是散在「点仓库」「换安装」「重载列表」
+   * 三个调用点上：同一个判断抄三份，改一处忘两处是迟早的事。
+   */
+  useEffect(() => {
+    setSharedConfirm(null);
+    setLinkError('');
+  }, [selectedRepo]);
+
   async function loadRepos(installation: GithubInstallation): Promise<void> {
     setRepoState({ status: 'loading', installation });
     setSelectedRepo(null);
@@ -1904,27 +2043,56 @@ function GithubRepoPickerDialog({
     }
   }
 
-  async function linkRepo(): Promise<void> {
-    if (!selectedRepo || repoState.status !== 'ok') return;
+  /**
+   * 绑仓库。仓库已被别的项目绑走时后端回 409 —— 那不是错误，是一个必须由人当场
+   * 回答的问题（「你是要共用，还是填错了仓库」）。所以这里把 409 转成弹窗里的
+   * 一次确认，而不是一句红字报错。
+   */
+  async function linkRepo(
+    /** 显式目标：确认共用时传的是**被确认的那一个**，不是当前选择 */
+    target?: { repoFullName: string; installationId: number },
+  ): Promise<void> {
+    const effective = target
+      || (selectedRepo && repoState.status === 'ok'
+        ? { repoFullName: selectedRepo.fullName, installationId: repoState.installation.id }
+        : null);
+    if (!effective) return;
     setLinking(true);
+    setLinkError('');
     try {
       const result = await apiRequest<GithubLinkResponse>(`/api/projects/${encodeURIComponent(projectId)}/github/link`, {
         method: 'POST',
         body: {
-          installationId: repoState.installation.id,
-          repoFullName: selectedRepo.fullName,
+          installationId: effective.installationId,
+          repoFullName: effective.repoFullName,
           autoDeploy,
+          ...(target ? { allowShared: true } : {}),
         },
       });
       onLinked(result.project);
+      setSharedConfirm(null);
       onOpenChange(false);
+    } catch (err) {
+      const body = err instanceof ApiError ? (err.body as { error?: string; siblings?: Array<{ id: string; name: string; scoped?: boolean }> } | null) : null;
+      if (body?.error === 'already_linked') {
+        setSharedConfirm({ ...effective, siblings: body.siblings || [] });
+      } else {
+        setLinkError(messageFromError(err));
+      }
     } finally {
       setLinking(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Esc / 点遮罩关闭也要清确认态，否则下次打开还端着上一个仓库的警告
+        if (!next) { setSharedConfirm(null); setLinkError(''); }
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>绑定 GitHub 仓库</DialogTitle>
@@ -2007,14 +2175,37 @@ function GithubRepoPickerDialog({
           </span>
         </label>
 
+        {linkError ? <ErrorBlock message={linkError} /> : null}
+
+        {/*
+         * 打断这一档只留给「正要把仓库绑给第二个项目」这一刻：从这里往后，一次
+         * 推送会变成两个项目各构建一遍，用户有权在按下去之前知道。
+         */}
+        {sharedConfirm ? (
+          <div className="rounded-lg border border-warn/40 bg-warn-soft px-4 py-3">
+            <div className="mb-2 text-sm font-semibold text-warn">这个仓库已经绑给别的项目了</div>
+            <RepoSharingConfirmBody
+              repoFullName={sharedConfirm.repoFullName}
+              siblings={sharedConfirm.siblings}
+            />
+          </div>
+        ) : null}
+
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => { setSharedConfirm(null); onOpenChange(false); }}>
             取消
           </Button>
-          <Button type="button" onClick={() => void linkRepo()} disabled={!selectedRepo || linking}>
-            {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
-            确认绑定
-          </Button>
+          {sharedConfirm ? (
+            <Button type="button" onClick={() => void linkRepo(sharedConfirm)} disabled={linking}>
+              {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
+              知道了，共用这个仓库
+            </Button>
+          ) : (
+            <Button type="button" onClick={() => void linkRepo()} disabled={!selectedRepo || linking}>
+              {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
+              确认绑定
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
