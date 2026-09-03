@@ -167,3 +167,5 @@
 | chore | 全局 | 本分支 31 份 changelog 碎片按规则 #4 合并成一份 |
 | test | prd-admin | 新增 375px 工具行像素探针，量「能不能横滚 + 五个控件能否完整露出」，不只看类名 |
 | fix | prd-admin | 首页选完模型后，晚到的账号偏好不再把用户的选择改回去 |
+| fix | prd-admin | 浮层落点按视口夹紧：视口比 minHeight 还矮时也不再把面板撑出屏幕 |
+| fix | prd-admin | 两个探针脚本改从自身位置解析路径，换个 clone / CI 也跑得起来 |

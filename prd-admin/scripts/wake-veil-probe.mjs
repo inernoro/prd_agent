@@ -13,9 +13,15 @@
  * 用法：node scripts/wake-veil-probe.mjs
  * 改 globals.css 里 .wake-veil 的 inset / translate / 渐变停靠点之后必须重跑。
  */
-import { chromium } from '/home/user/prd_agent/e2e/node_modules/@playwright/test/index.mjs';
 import { readFileSync } from 'node:fs';
-const admin='/home/user/prd_agent/prd-admin';
+import { fileURLToPath } from 'node:url';
+
+// 路径一律从本文件的位置推出来，不写死绝对路径——写死的话换一个 clone 或到 CI 上
+// 就是 ERR_MODULE_NOT_FOUND，等于提交了一个只在作者机器上跑得起来的脚本
+//（Codex PR #1476 P2）。本文件在 prd-admin/scripts/，Playwright 装在仓库根的 e2e/ 下。
+const admin = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
+const { chromium } = await import(
+  new URL('../../e2e/node_modules/@playwright/test/index.mjs', import.meta.url).href);
 const tokens=readFileSync(`${admin}/src/styles/tokens.css`,'utf8');
 const photo='data:image/webp;base64,'+readFileSync(`${admin}/src/assets/backdrops/contour.webp`).toString('base64');
 const CONFIGS=[

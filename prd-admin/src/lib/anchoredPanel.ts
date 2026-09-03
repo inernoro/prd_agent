@@ -43,7 +43,10 @@ export type AnchoredPanelOptions = {
   margin?: number;
   /** 面板与触发器之间的间隙。 */
   gap?: number;
-  /** 高度不肯低于这个值——低于它的浮层已经没法用了，宁可压过安全边也要留住。 */
+  /**
+   * 高度不肯低于这个值——低于它的浮层已经没法用了，宁可压过触发器也要留住。
+   * 但**留不住就不留**：视口本身装不下这么高时以视口为准（见下面的 available）。
+   */
   minHeight?: number;
 };
 
@@ -76,8 +79,19 @@ export function placeAnchoredPanel(opts: AnchoredPanelOptions): AnchoredPanelPla
     : (prefer === 'above' ? 'below' : 'above');
 
   const space = side === 'above' ? spaceAbove : spaceBelow;
-  const maxHeight = Math.max(minHeight, Math.min(desired, space));
-  const top = side === 'above' ? anchor.top - gap - maxHeight : anchor.bottom + gap;
+  // minHeight 是「别缩得没法用」的下限，但它不能凌驾于视口之上：
+  // 横屏手机、或者输入法弹起来之后，视觉视口可能连 minHeight 都装不下。
+  // 那时 Math.max(minHeight, ...) 会把面板撑成比屏幕还高，而它是 fixed 定位——
+  // 自己的 overflowY 救不了露在屏幕外的那半截，用户根本滚不到（Codex PR #1476 P2）。
+  // 所以最后再夹一道：面板永远不高于「视口减两条安全边」。
+  const available = Math.max(0, viewport.height - margin * 2);
+  const maxHeight = Math.min(desired, Math.max(minHeight, space), available);
+
+  // 同理，top 也要夹回视口。空间不够时宁可盖住触发器，也不能把内容顶到屏幕外。
+  // 右界可能小于左界（视口比面板还矮），先取 max 保证区间非空。
+  const rawTop = side === 'above' ? anchor.top - gap - maxHeight : anchor.bottom + gap;
+  const maxTop = Math.max(margin, viewport.height - maxHeight - margin);
+  const top = Math.min(Math.max(margin, rawTop), maxTop);
 
   return { top, left, width, maxHeight, side };
 }

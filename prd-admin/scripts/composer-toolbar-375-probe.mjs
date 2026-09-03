@@ -17,9 +17,15 @@
  * 都连不上）。要打真实站点时给 launch 加 args:['--ssl-version-max=tls1.2']，
  * 证书校验照常开着。本探针只用 setContent，不需要它。
  */
-import { chromium } from '/home/user/prd_agent/e2e/node_modules/@playwright/test/index.mjs';
 import { readFileSync } from 'node:fs';
-const admin='/home/user/prd_agent/prd-admin';
+import { fileURLToPath } from 'node:url';
+
+// 路径一律从本文件的位置推出来，不写死绝对路径——写死的话换一个 clone 或到 CI 上
+// 就是 ERR_MODULE_NOT_FOUND，等于提交了一个只在作者机器上跑得起来的脚本
+//（Codex PR #1476 P2）。本文件在 prd-admin/scripts/，Playwright 装在仓库根的 e2e/ 下。
+const admin = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
+const { chromium } = await import(
+  new URL('../../e2e/node_modules/@playwright/test/index.mjs', import.meta.url).href);
 const tokens=readFileSync(`${admin}/src/styles/tokens.css`,'utf8');
 const OUT=process.env.OUT_DIR || '/tmp';
 const CTRL="display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 9px;border-radius:7px;border:0;background:transparent;color:var(--text-secondary);font-size:10px;white-space:nowrap;";

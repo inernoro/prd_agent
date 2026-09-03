@@ -80,6 +80,45 @@ describe('贴着触发器弹出的浮层落点', () => {
       anchor: anchor({ top: 10, bottom: 790 }), viewport: VIEWPORT, prefer: 'below', width: 260, maxHeight: 320, minHeight: 120,
     });
     expect(p.maxHeight).toBe(120);
+    // 但 minHeight 撑出来的那部分也得留在屏幕里：触发器几乎贴着底边时，
+    // 面板要往上盖住它，而不是把 120px 全挂到视口外面去。
+    expect(box(p).bottom).toBeLessThanOrEqual(VIEWPORT.height);
+  });
+
+  it('【关键】视口比 minHeight 还矮时以视口为准，不许把面板撑出屏幕', () => {
+    // 输入法弹起来 / 横屏手机：视觉视口可能只剩一两百 px，两侧都装不下 minHeight。
+    // 老写法 Math.max(minHeight, ...) 在这里会强行给 120，面板比屏幕还高；
+    // 它是 fixed 定位，自己的 overflowY 救不了露在屏幕外的那半截（Codex PR #1476 P2）。
+    const squashed = { width: 375, height: 190 };
+    for (const prefer of ['above', 'below'] as const) {
+      const p = placeAnchoredPanel({
+        anchor: anchor({ top: 120, bottom: 156, left: 20, right: 140 }),
+        viewport: squashed, prefer, width: 260, maxHeight: 320, minHeight: 120,
+      });
+      expect(p.maxHeight, `${prefer}: 不许高过视口减两条安全边`).toBeLessThanOrEqual(190 - 16);
+      expect(box(p).top, `${prefer}: 顶边不许越过视口上沿`).toBeGreaterThanOrEqual(0);
+      expect(box(p).bottom, `${prefer}: 底边不许越过视口下沿`).toBeLessThanOrEqual(squashed.height);
+    }
+  });
+
+  it('【关键】任意极端视口下，面板都留在屏幕里（扫一遍，不挑一两个点)', () => {
+    // 单点用例只能证明我想到的那几种情形。这里把触发器沿着视口从上扫到下，
+    // 视口高度也从「装得下」扫到「比 minHeight 还矮」，逐个断言不出屏。
+    for (const height of [1000, 800, 400, 190, 120, 60, 20]) {
+      for (let top = 0; top <= height; top += 17) {
+        for (const prefer of ['above', 'below'] as const) {
+          const p = placeAnchoredPanel({
+            anchor: anchor({ top, bottom: top + 36, left: 20, right: 140 }),
+            viewport: { width: 375, height }, prefer, width: 260, maxHeight: 320, minHeight: 120,
+          });
+          const b = box(p);
+          expect(b.top, `h=${height} top=${top} ${prefer}`).toBeGreaterThanOrEqual(0);
+          expect(b.bottom, `h=${height} top=${top} ${prefer}`).toBeLessThanOrEqual(height);
+          expect(p.left).toBeGreaterThanOrEqual(0);
+          expect(p.left + p.width).toBeLessThanOrEqual(375);
+        }
+      }
+    }
   });
 });
 
