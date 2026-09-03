@@ -43,6 +43,7 @@ describe('生命周期归约', () => {
 describe('事实 → 状态（八档全覆盖）', () => {
   const cases: Array<[OverviewState, OverviewFacts]> = [
     ['broken', facts({ running: true, serviceCount: 3, readyCount: 2, badCount: 1 })],
+    ['failed', facts({ lifecycle: 'error', serviceCount: 0 })],
     ['provisioning', facts({ lifecycle: 'building', serviceCount: 0 })],
     ['unconfigured', facts({ running: true, serviceCount: 0 })],
     ['redeploying', facts({ lifecycle: 'building', serviceCount: 2, readyCount: 2 })],
@@ -56,11 +57,23 @@ describe('事实 → 状态（八档全覆盖）', () => {
     expect(deriveOverviewState(f)).toBe(expected);
   });
 
-  it('八档一个不少，且这张表真的覆盖了全部档位', () => {
+  it('九档一个不少，且这张表真的覆盖了全部档位', () => {
     const covered = new Set(cases.map(([s]) => s));
     const produced = new Set(cases.map(([, f]) => deriveOverviewState(f)));
-    expect(covered.size).toBe(8);
+    expect(covered.size).toBe(9);
     expect([...produced].sort()).toEqual([...covered].sort());
+  });
+
+  /**
+   * webhook 派发失败会把刚建出来的空分支置成 error（Codex P2，核对属实）。
+   * 有服务时不改判：那时每个服务自己的状态更具体，也更新。
+   */
+  it('分支级 error：没有服务时单独成档，有服务时仍由服务状态说了算', () => {
+    expect(deriveOverviewState(facts({ lifecycle: 'error', serviceCount: 0 }))).toBe('failed');
+    expect(deriveOverviewState(facts({ lifecycle: 'error', serviceCount: 2, readyCount: 0 }))).toBe('stopped');
+    expect(deriveOverviewState(facts({
+      lifecycle: 'error', serviceCount: 2, readyCount: 1, badCount: 1,
+    })), '有具体的异常服务时，broken 更具体').toBe('broken');
   });
 
   it('异常优先级最高：不管在跑还是在途，有 error 就是 broken', () => {
@@ -77,7 +90,10 @@ describe('事实 → 状态（八档全覆盖）', () => {
 /** 逐一枚举出真实可能的事实组合，供不变量断言遍历。 */
 const allFacts = (): OverviewFacts[] => {
   const out: OverviewFacts[] = [];
-  for (const lifecycle of [undefined, 'building', 'starting', 'restarting', 'running', 'stopped']) {
+  // 分支生命周期的完整枚举（见 cds/src/types.ts 的 BranchEntry.status）+ 缺省
+  for (const lifecycle of [
+    undefined, 'idle', 'building', 'starting', 'running', 'restarting', 'stopping', 'stopped', 'error',
+  ]) {
     for (const running of [true, false]) {
       for (const serviceCount of [0, 1, 3]) {
         for (let readyCount = 0; readyCount <= serviceCount; readyCount += 1) {
@@ -105,8 +121,9 @@ const claimedMissing = (verdict: string): number | undefined => {
 describe('不变量：判断句不许说假话', () => {
   const combos = allFacts();
 
-  it('组合表本身不是空的（空遍历必然绿）', () => {
+  it('组合表本身不是空的，且九档全被走到（空遍历、漏档都必然绿）', () => {
     expect(combos.length).toBeGreaterThan(200);
+    expect(new Set(combos.map((f) => deriveOverviewState(f))).size).toBe(9);
   });
 
   it('判断句从不宣称「0 个服务没起来」', () => {
@@ -131,7 +148,7 @@ describe('不变量：判断句不许说假话', () => {
   it('色调：bad 当且仅当有异常，ok 当且仅当在跑且全就绪', () => {
     for (const f of combos) {
       const { tone, state } = overviewCopy(f);
-      expect(tone === 'bad', JSON.stringify(f)).toBe(f.badCount > 0);
+      expect(tone === 'bad', JSON.stringify(f)).toBe(state === 'broken' || state === 'failed');
       expect(tone === 'ok', JSON.stringify(f)).toBe(state === 'healthy');
     }
   });

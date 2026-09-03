@@ -1824,6 +1824,18 @@ describe('四处文案真的接上了状态表（台账 D11，形状 2）', () =
     expect(html, '这一档才该劝去配置').toContain('先去构建配置');
   });
 
+  /**
+   * webhook 派发失败会把刚建出来的空分支置成 error（Codex P2，核对属实）。
+   * 没有这一档时，失败横幅底下会写「尚未配置服务 · 先去构建配置」——而没配置根本
+   * 不是原因，用户照做也修不好。
+   */
+  it('派发失败的空分支：说的是失败，不是「尚未配置服务」', () => {
+    const html = render({ lifecycle: 'error' });
+    expect(html, '没配置不是原因，照做也修不好').not.toContain('先去构建配置');
+    expect(html).toContain('上次部署失败');
+    expect(html, '失败该是红点，不是灰点').toContain('bg-bad');
+  });
+
   it('入口卡副标题与顶上的判断句同源：在途且全就绪时两句话不打架', () => {
     const html = render({
       services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],

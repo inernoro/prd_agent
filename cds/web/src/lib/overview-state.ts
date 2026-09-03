@@ -17,6 +17,15 @@ const TRANSITIONING = new Set(['building', 'starting', 'restarting']);
 export type OverviewState =
   /** 有服务处于 error。优先级最高——它盖过其它一切描述。 */
   | 'broken'
+  /**
+   * 分支级失败，且服务集还没建立起来。
+   *
+   * 只在**一个服务都没有**时才有这一档：有服务时它们各自的状态更具体，分支上那个
+   * error 标记反而是旧消息。webhook 派发失败会把刚建出来的空分支置成 error，这一档
+   * 就是为它准备的——否则会在失败横幅底下写「尚未配置服务 · 先去构建配置」，而没
+   * 配置根本不是原因（Codex P2，核对属实）。
+   */
+  | 'failed'
   /** 正在开通：分支在途，但服务集还没分配出来（执行器建分支时就是这一档）。 */
   | 'provisioning'
   /** 静止态但一个服务都没配。 */
@@ -33,7 +42,11 @@ export type OverviewState =
   | 'stopped';
 
 export interface OverviewFacts {
-  /** 分支原始生命周期状态。缺省视为不在途——老调用方行为不变。 */
+  /**
+   * 分支原始生命周期状态（`idle` / `building` / `starting` / `running` /
+   * `restarting` / `stopping` / `stopped` / `error`）。缺省视为不在途——老调用方
+   * 行为不变。
+   */
   lifecycle?: string;
   /** SSE 给的权威运行态。 */
   running: boolean;
@@ -71,7 +84,11 @@ export function isTransitioning(lifecycle?: string): boolean {
 export function deriveOverviewState(f: OverviewFacts): OverviewState {
   const moving = isTransitioning(f.lifecycle);
   if (f.badCount > 0) return 'broken';
-  if (f.serviceCount === 0) return moving ? 'provisioning' : 'unconfigured';
+  if (f.serviceCount === 0) {
+    // 有服务时不看这个标记：那时每个服务自己的状态更具体，也更新。
+    if (f.lifecycle === 'error') return 'failed';
+    return moving ? 'provisioning' : 'unconfigured';
+  }
   if (moving) return f.readyCount === f.serviceCount ? 'redeploying' : 'deploying';
   if (f.running) return f.readyCount === f.serviceCount ? 'healthy' : 'partial';
   return 'stopped';
@@ -101,6 +118,14 @@ export function overviewCopy(f: OverviewFacts): OverviewCopy {
         tone: 'bad',
         entryLabel: ENTRY_NOT_READY,
         skeletonNote: sampling ? pendingNote : '服务异常 · 没有容器可采样',
+      };
+    case 'failed':
+      return {
+        state,
+        verdict: '上次部署失败，服务还没建立起来',
+        tone: 'bad',
+        entryLabel: ENTRY_NOT_READY,
+        skeletonNote: '上次部署失败，服务集还没建立起来。修好后重新部署。',
       };
     case 'provisioning':
       return {
