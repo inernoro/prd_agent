@@ -930,8 +930,15 @@ function EntryCard({ e, reachable }: { e: OverviewEntry; reachable: boolean }): 
 }
 
 function EntryCards({
-  entries, reachable, onConfigure,
-}: { entries: OverviewEntry[]; reachable: boolean; onConfigure?: () => void }): JSX.Element {
+  entries, reachable, deploying, onConfigure,
+}: {
+  entries: OverviewEntry[];
+  /** 服务本身就绪没有——只看服务，不掺分支的生命周期。 */
+  reachable: boolean;
+  /** 部署在途。入口可能短暂不可达，但那不等于「服务未就绪」（Codex P2）。 */
+  deploying: boolean;
+  onConfigure?: () => void;
+}): JSX.Element {
   const primary = entries.find((e) => e.primary);
   const rest = entries.filter((e) => e !== primary);
   return (
@@ -939,7 +946,14 @@ function EntryCards({
       <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <h4 className="text-sm font-bold text-foreground">入口</h4>
         <span className="text-xs text-muted-foreground">
-          {entries.length} 个{reachable ? ' · 服务已就绪' : ' · 服务未就绪，暂不可达'}
+          {/*
+            三档，各说各的事实（Codex P2，核对属实）：服务就绪与否是一件事，
+            部署在途是另一件事。上一版把两者压进一个布尔，于是重新部署时同屏
+            出现「当前服务仍在运行」「1 / 1 个服务就绪」和「服务未就绪」三句话。
+          */}
+          {entries.length} 个{reachable
+            ? (deploying ? ' · 正在部署，入口可能短暂不可达' : ' · 服务已就绪')
+            : ' · 服务未就绪，暂不可达'}
         </span>
         <div className="flex-1" />
         {onConfigure ? (
@@ -1399,7 +1413,13 @@ export function OverviewPanel({
 
       {/* 2. 入口 —— 大多数人打开这个抽屉就是为了拿地址 */}
       {entries.length > 0 ? (
-        <EntryCards entries={entries} reachable={allServicesReady} onConfigure={onConfigureEntries} />
+        <EntryCards
+          entries={entries}
+          // 只看服务，不掺 running：在途时服务可能已经全就绪
+          reachable={services.length > 0 && okCount === services.length && badServices.length === 0}
+          deploying={transitioning}
+          onConfigure={onConfigureEntries}
+        />
       ) : null}
 
       {/*

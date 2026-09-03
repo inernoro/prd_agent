@@ -972,6 +972,60 @@ describe('部署在途不谎报「分支未运行」', () => {
     }
   });
 
+  /*
+   * 入口卡的标签也要分开说（Codex P2，核对属实）。
+   * `reachable` 原本吃的是 allServicesReady，而那里含 running，于是重新部署时同一屏
+   * 出现三句话：「当前服务仍在运行」「1 / 1 个服务就绪」「服务未就绪，暂不可达」。
+   * 服务就绪与否是一件事，部署在途是另一件事，压进一个布尔就会互相打脸。
+   * 按 Codex 的要求，这条用例带一个非空 entry。
+   */
+  it('在途且服务已就绪时，入口卡不说「服务未就绪」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ profileId: 'api', containerName: 'api-x', status: 'running' }],
+      running: false,
+      lifecycle: 'restarting',
+      branchName: 'demo',
+      entries: [{ name: '主入口', url: 'https://example.test', primary: true }],
+      deployments: [],
+      metricSeries: {
+        api: seedMetricSeries([
+          { cpuPercent: 12, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+          { cpuPercent: 12, memUsedBytes: 4096, rxRate: 0, txRate: 0 },
+        ]),
+      },
+      metricsReady: true,
+      replicaSummary: '1 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '服务明明就绪，入口卡却说未就绪').not.toContain('服务未就绪');
+    expect(html, '在途该说的是入口可能短暂不可达').toContain('正在部署，入口可能短暂不可达');
+  });
+
+  it('一个服务没起来时，入口卡仍如实说「服务未就绪」', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [
+        { profileId: 'api', containerName: 'api-x', status: 'running' },
+        { profileId: 'web', containerName: 'web-x', status: 'idle' },
+      ],
+      running: false,
+      lifecycle: 'building',
+      branchName: 'demo',
+      entries: [{ name: '主入口', url: 'https://example.test', primary: true }],
+      deployments: [],
+      metricSeries: {},
+      metricsReady: true,
+      replicaSummary: '2 个副本',
+      infraSummary: '无',
+      now: Date.now(),
+      windowMinutes: 30,
+      onRefreshMetrics: () => {},
+    }));
+    expect(html, '真没就绪时这句是真话，不能连真话一起改掉').toContain('服务未就绪');
+  });
+
   it('running 时一切正常（防修成永远「正在部署」）', () => {
     const html = render('running');
     expect(html).toContain('一切正常');
