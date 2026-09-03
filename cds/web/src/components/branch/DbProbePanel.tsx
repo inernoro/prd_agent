@@ -125,7 +125,15 @@ export function DbProbeTable({ report, now = new Date() }: { report: DbProbeRepo
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] text-xs">
+        {/* 固定列宽 + 换行：判定列的原因是这张表最重要的信息，不能被挤到容器外面去 */}
+        <table className="w-full min-w-[760px] table-fixed text-xs [&_td]:break-words">
+          <colgroup>
+            <col className="w-[13%]" />
+            <col className="w-[19%]" />
+            <col className="w-[22%]" />
+            <col className="w-[20%]" />
+            <col className="w-[26%]" />
+          </colgroup>
           <thead>
             <tr className="text-left text-muted-foreground">
               <th className="py-1 pr-3 font-medium">服务</th>
@@ -160,7 +168,7 @@ export function DbProbeTable({ report, now = new Date() }: { report: DbProbeRepo
                   ) : (
                     <>
                       <div><Mono>{svc.container.dbName ?? '(未设置)'}</Mono></div>
-                      <div className="truncate font-mono text-[11px] text-muted-foreground" title={svc.container.containerName}>{svc.container.containerName}</div>
+                      <div className="break-all font-mono text-[11px] text-muted-foreground" title={svc.container.containerName}>{svc.container.containerName}</div>
                     </>
                   )}
                 </td>
