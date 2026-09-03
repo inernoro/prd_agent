@@ -18,6 +18,7 @@ import { useSmartBack } from '@/hooks/useSmartBack';
 import { ArrowLeft, Download, Expand, ImagePlus, LayoutGrid, RefreshCw, Send, Wand2, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { poolIdFromVisualModelOptionId, visualModelOptionIdOf } from '@/pages/ai-chat/visualAgentModelOptions';
 import {
   createWorkspaceImageGenRun,
   getImageGenRun,
@@ -143,7 +144,13 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
   const cardsRef = useRef<GenCard[]>([]);
   cardsRef.current = cards;
   const abortersRef = useRef<AbortController[]>([]);
-  const pendingInitRef = useRef<{ text: string; size: string | null; assetId?: string | null } | null>(null);
+  const pendingInitRef = useRef<{
+    text: string;
+    size: string | null;
+    assetId?: string | null;
+    /** 首页没有预先上传时带过来的原图（dataURL）。生成前必须先落盘，否则这次生成没有参考图。 */
+    inlineImage?: { src: string; name?: string } | null;
+  } | null>(null);
   const initFiredRef = useRef(false);
 
   const modelOptions = useMemo(() => buildVisualAgentModelOptions(pools), [pools]);
@@ -191,9 +198,40 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
       const stored = sessionStorage.getItem(sessionKey);
       if (!stored) return;
       sessionStorage.removeItem(sessionKey);
-      const data = JSON.parse(stored) as { messageText?: string; assetId?: string | null };
+      const data = JSON.parse(stored) as { messageText?: string; assetId?: string | null; modelId?: string };
       const parsed = parseInlinePrompt(String(data.messageText ?? ''));
-      if (parsed.text) pendingInitRef.current = { text: parsed.text, size: parsed.size, assetId: data.assetId };
+      if (parsed.text) {
+        pendingInitRef.current = {
+          text: parsed.text,
+          size: parsed.size,
+          assetId: data.assetId,
+          // 首页现在不再预先上传参考图（跳转不等那个往返），assetId 通常是空的，
+          // 图只存在于 messageText 里的 [IMAGE src=dataURL]。只认 assetId 的话，
+          // 手机用户传的照片会被整个忽略，还照样扣一次生成（Codex PR #1476 P1）。
+          inlineImage: parsed.inlineImage ?? null,
+        };
+      }
+      // 首页显式选过的模型：不认它就会退回「第一个可用池」，用户选了 A 却用 B 跑，
+      // 而这是一次要花钱的生成。桌面编辑器已经认了，这里是同一份交接包的第二个消费方。
+      //
+      // **存进去的口径必须和比较用的口径一致**，而这个口径被改过两次：
+      //
+      //   本分支最初直接存交接包里的值（`option.id`，形如 `pool_xxx`），
+      //   而当时 pickedPool 拿它跟**原始池**的 `id`（`xxx`）比，一次都比不中，
+      //   于是「认了交接包」认了个寂寞，照样退回第一个可用池（Codex PR #1476 P1）。
+      //   改法是剥掉前缀存池 id。
+      //
+      //   随后 main 把这里重写成 `selectVisualModel(modelOptions, ...)` ——
+      //   比较对象换成了**选项**的 id（带前缀）。剥前缀的写法在合并那一刻就反了：
+      //   存进去的池 id 再也匹配不上，pickedPool 恒为 null，
+      //   连自动发送那一步都不会触发（`!pickedPool?.enabled` 直接 return）。
+      //
+      // 所以这里不再手写方向，而是**归一到选项 id 这个口径**：先剥再加，
+      // 无论交接包给的是哪一种写法，结果都是同一个规范形式。判据纪律形状 6：
+      // 读到的值真实存在不代表它是这里真正生效的那个。
+      const raw = String(data.modelId || '').trim();
+      const handedModelId = raw ? visualModelOptionIdOf(poolIdFromVisualModelOptionId(raw)) : '';
+      if (handedModelId) setPickedPoolId(handedModelId);
     } catch {
       // ignore
     }
@@ -482,12 +520,42 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
     if (!pending || !pickedPool?.enabled || !capabilitiesReady) return;
     initFiredRef.current = true;
     pendingInitRef.current = null;
-    let ref: RefImage | null = null;
-    if (pending.assetId) {
-      const a = assetsRef.current.find((x) => x.id === pending.assetId);
-      if (a) ref = { assetId: a.id, sha256: a.sha256, url: a.url, label: a.prompt || '参考图' };
-    }
-    void handleGenerate(pending.text, { ref, sizeOverride: pending.size || undefined });
+    void (async () => {
+      let ref: RefImage | null = null;
+      if (pending.assetId) {
+        const a = assetsRef.current.find((x) => x.id === pending.assetId);
+        if (a) ref = { assetId: a.id, sha256: a.sha256, url: a.url, label: a.prompt || '参考图' };
+      }
+      // 没有 assetId 但带了原图：先落盘再生成。落盘失败就明说，不静默丢图去跑一次纯文字。
+      if (!ref && pending.inlineImage?.src) {
+        const up = await uploadVisualAgentWorkspaceAsset({
+          id: workspaceId,
+          data: pending.inlineImage.src,
+          prompt: pending.inlineImage.name || '参考图',
+          idempotencyKey: `mInit_${workspaceId}_${Date.now()}`,
+        });
+        if (up.success) {
+          const a = up.data.asset;
+          setAssets((prev) => [...prev, a]);
+          ref = { assetId: a.id, sha256: a.sha256, url: a.url, label: pending.inlineImage.name || '参考图' };
+        } else {
+          // 落盘失败就**不要替他生成**。
+          //
+          // 上一版只弹一句「这次将只按文字生成」然后照跑：用户在首页选了一张图、
+          // 要的是「按这张图改」，结果拿到一次纯文字的付费生成，而他既没同意也没机会取消
+          //（Codex PR #1476 P1）。提示只是把语义变更**通告**了一遍，不是征得同意。
+          // 把提示词放回输入框、把图挂回参考位，他想重试就再点一次发送。
+          toast.error(
+            '参考图没能带进来，这次没有发送',
+            `${up.error?.message || '未知错误'}。提示词已经放回输入框，重新选一张参考图再发，或者直接发纯文字。`,
+          );
+          setInput(pending.text);
+          if (pending.size) setSize(pending.size);
+          return;
+        }
+      }
+      await handleGenerate(pending.text, { ref, sizeOverride: pending.size || undefined });
+    })();
   }, [loading, pickedPool, capabilitiesReady, handleGenerate]);
 
   const onPickFile = useCallback(

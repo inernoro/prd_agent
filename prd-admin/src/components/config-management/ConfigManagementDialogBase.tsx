@@ -419,7 +419,7 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
         }
         description={viewMode === 'mine' ? mineDescription : marketplaceDescription}
         maxWidth={maxWidth}
-        contentClassName="overflow-hidden !p-4"
+        contentClassName="overflow-hidden"
         contentStyle={{ maxHeight: '75vh', height: '75vh' }}
         titleCenter={
           showMarketplaceTab ? (

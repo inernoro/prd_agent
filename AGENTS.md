@@ -82,7 +82,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | 改动范围 | 必跑校验 |
 |----------|----------|
 | `prd-api/` `.cs` | `dotnet build --no-restore`（零 `error CS*`） |
-| `prd-admin/` `prd-desktop/` `.ts` `.tsx` | `pnpm tsc --noEmit` + `pnpm lint`（改动文件零新增告警） |
+| `prd-admin/` `prd-desktop/` 前端源码 | `.ts` `.tsx`：`pnpm tsc --noEmit` + `pnpm lint`（改动文件零新增告警）。改到 `.css` **另跑 `pnpm build`**——tsc/lint/vitest 一个都不解析 CSS（2026-08-30 tokens.css 多一个 `*/`，本地三样全绿、CI 构建炸、分支停 idle、预览 503） |
 | `llmgw/` | 见 `llmgw/AGENTS.md` 的模块校验表 |
 | 含测试的模块 | `pnpm test` / `dotnet test` 全绿 |
 | 本地缺 SDK | 走 `/cds-deploy` 远端编译，CDS 绿灯后才推送 |
