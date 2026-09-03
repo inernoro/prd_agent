@@ -18,7 +18,7 @@
 | P1 授权收口 | 100 | 已部署 | 无 | 权限交集校验 + 运行时二次核对 + 按 Key 配额都已上线 | CDS 构建通过（commit a4bfce42 / f417fae8） |
 | P2 能力开放层 | 100 | 已部署 | 无 | 四个 `/api/open/*` 薄控制器 + 内置工具 5 → 18 | 同上，能力目录守卫测试随构建跑 |
 | P3 接入台与入口 | 100 | 已部署 | 无 | `/mcp-console` 面板 + 三步向导 + 左下角菜单入口 | 前端全量 2355 用例通过（commit 8e82f575） |
-| P4 真人验收 | 20 | 阻塞 | 打不开预览实例的门：库里的账号口令与 CDS 项目 env 记录的三套凭据（初始管理员 / root 破窗 / AI 超级密钥）都对不上，容器日志确认「AI Access Key 无效」「Failed login attempt」。按跨项目隔离通道 9，不该为自测去轮换项目级门禁 env（那会打断同项目其它分支） | 需要一组能登进这条预览的账号口令；拿到后跑：真人路径进接入台 → 双主题截图 → 向导发一把钥匙 → 用它 tools/list → 发一个网页 → 打开产物 → 回看调用记录 | 待补 |
+| P4 真人验收 | 20 | 阻塞 | **管理员口令在库里、但不在任何人手里**。证据（2026-09-03 10:23 容器启动日志 + CDS env 只读）：① `MAP_ADMIN_FORCE_RESET` 是开着的，日志打出了它的影响面警告；② 紧接着**没有**「凭据不合法」也**没有**「已重置」——按 `DatabaseInitializer.MaybeForceResetAdminAsync` 的分支，说明它在「这个开关值已经用过了」那一步返回了（`deployment_markers` 里的 marker 等于当前值）；③ 而 `MAP_INITIAL_ADMIN_PASSWORD` 在 `_global` 与 `project` 两个作用域都不存在（`cdscli env get --metadata-only` 只列出 `MAP_INITIAL_ADMIN_USERNAME`）。合起来：那次救场早就执行过了，用的口令来自当时的配置，现在环境里已经没有那一半，于是谁也再推不出来。root 破窗账户是启用的（日志「Root 破窗账户已启用，用户名: root」），但 `ROOT_ACCESS_PASSWORD` 同样不在我读得到的 env 里。 | 需要用户拍板：在 CDS 给这个项目补 `MAP_INITIAL_ADMIN_PASSWORD`（与已有的 `MAP_INITIAL_ADMIN_USERNAME` 配对），并把 `MAP_ADMIN_FORCE_RESET` 换成一个没用过的新值（如 `2`）重新武装救场；下次部署即生效。**影响面**：改的是共库那一份管理员，同项目其它分支会跟着变（代码注释里写明这是有意为之，CDS 上都是测试环境）。所以这一步由用户做，不由我自作主张。 | 待补 |
 | P4.1 C# 单测 | 100 | 已通过 | 无 | 开 PR 后 `Server Build & Test` 首次真实跑到这批守卫；前两次红灯（数据同步分类缺失、写蕴含读判据写错）已修 | CI run 33739666505 全绿（commit 700a8923） |
 | P4.2 Review 处置 | 100 | 已完成 | 无 | 三轮共 23 条：A 类当场修（22 条），B 类只做数据丢失那一半并记债（文学 append 重试），百宝箱登记因缺插画素材明确不做并说明 | [PR #1484](https://github.com/inernoro/prd_agent/pull/1484) 评论 5523688095 / 5523898341 |
 | P5 OAuth 授权 | 0 | 未开始 | 无（按拍板延后） | 等密钥方案跑一段时间收反馈 | 待补 |
