@@ -176,7 +176,7 @@ public class McpConsoleController : ControllerBase
         var f = Builders<McpCallLog>.Filter;
         var filter = f.And(
             f.Eq(x => x.OwnerUserId, userId),
-            f.Eq(x => x.DeploymentSlug, DeploymentScope.Current));
+            f.Eq(x => x.DeploymentSlug, DeploymentScope.CurrentDurable));
         if (!string.IsNullOrWhiteSpace(keyId)) filter = f.And(filter, f.Eq(x => x.KeyId, keyId));
         if (!string.IsNullOrWhiteSpace(capability)) filter = f.And(filter, f.Eq(x => x.Capability, capability));
         if (!string.IsNullOrWhiteSpace(status)) filter = f.And(filter, f.Eq(x => x.Status, status));
@@ -291,7 +291,7 @@ public class McpConsoleController : ControllerBase
         var f = Builders<McpCallLog>.Filter;
         return f.And(
             f.Eq(x => x.OwnerUserId, userId),
-            f.Eq(x => x.DeploymentSlug, DeploymentScope.Current),
+            f.Eq(x => x.DeploymentSlug, DeploymentScope.CurrentDurable),
             f.Gte(x => x.CreatedAt, since));
     }
 

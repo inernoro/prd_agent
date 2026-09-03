@@ -198,8 +198,27 @@ public sealed class McpUsageService
         return (Math.Max(images, 0), Math.Max(writes, 0));
     }
 
+    /// <summary>
+    /// 计数器 id 必须带**部署作用域**。
+    ///
+    /// 同一个 CDS 项目下所有分支预览与生产共用一个 Mongo 库，连 AgentApiKey 那几行都是同一份
+    /// （cross-project-isolation 通道 4/8）。id 只由「密钥 + 日期 + 类别」组成的话，
+    /// 在预览上跑几张图，扣的是那把密钥在**所有部署**上的当日额度 —— 生产那边可能一整天再也
+    /// 生不出图，而且面板的调用数（已按部署过滤）和已用数（没过滤）对不上。
+    ///
+    /// 取 CurrentDurable 不取 Current：Current 带 commit revision，是给「入队 fencing」用的
+    /// （防止滚动发布时旧 worker 抢新任务）；额度是按天的预算，不该因为重新部署一次就清零。
+    /// 生产/本地作用域为 null，id 保持原样（与存量兼容）。
+    /// </summary>
     internal static string BuildCounterId(string keyId, DateTime dayUtc, string kind)
-        => $"{keyId}:{dayUtc:yyyyMMdd}:{kind}";
+        => BuildCounterId(keyId, dayUtc, kind, DeploymentScope.CurrentDurable);
+
+    /// <summary>纯函数版：作用域由调用方给。守卫测试打这一个，不去改进程 env（那会跨用例串味）。</summary>
+    internal static string BuildCounterId(string keyId, DateTime dayUtc, string kind, string? deploymentScope)
+    {
+        var baseId = $"{keyId}:{dayUtc:yyyyMMdd}:{kind}";
+        return deploymentScope is null ? baseId : $"{deploymentScope}::{baseId}";
+    }
 
     /// <summary>
     /// 写一条调用记录。记录失败绝不影响工具调用本身 —— 记账坏了不能把业务打挂。
@@ -212,7 +231,11 @@ public sealed class McpUsageService
     {
         try
         {
-            log.DeploymentSlug = DeploymentScope.Current;
+            // 稳定分支作用域，不带 commit revision：Current 每次重新部署都变，
+            // 而查询是精确等值匹配 —— 用它的话，同一条分支每部署一次，之前的调用记录就
+            // 从面板上整批消失、今日计数归零，尽管审计行还在库里躺着。
+            // 隔离要的是「别的分支/生产的记录不要混进来」，不是「上一次部署的记录也不算数」。
+            log.DeploymentSlug = DeploymentScope.CurrentDurable;
             await _db.McpCallLogs.InsertOneAsync(log, cancellationToken: CancellationToken.None);
         }
         catch (Exception ex)
