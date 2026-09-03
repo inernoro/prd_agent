@@ -56,10 +56,13 @@ export function ConnectAgentDialog({
 
   const handleClose = useCallback(
     (next: boolean) => {
+      // 签发在途时不许关。密钥明文只在这一次响应里出现，关掉就 reset 掉了 ——
+      // 而后台那把钥匙已经建出来了，用户手里多一把自己看不到、也找不回来的钥匙。
+      if (!next && creating) return;
       onOpenChange(next);
       if (!next) reset();
     },
-    [onOpenChange, reset],
+    [onOpenChange, reset, creating],
   );
 
   const createKey = useCallback(async () => {

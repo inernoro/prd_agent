@@ -70,32 +70,24 @@
 
 ---
 
-## 四、首批工具清单
+## 四、第一期开放哪些能力
 
-命名统一 `map_<域>_<动作>`，只有密钥持有对应 scope 时才在 `tools/list` 里出现。
+按能力讲，不逐个列工具名与 scope —— 那份清单在 `McpCapabilityCatalog` 与 `McpBuiltinTools` 里，
+是唯一事实源，也只有它跟得上代码。这里写的是「用户勾了这块能力，智能体能替他做什么」。
 
-| 工具 | 作用 | scope | 形态 |
-|---|---|---|---|
-| `map_visual_generate_image` | 一句话生图，可选尺寸与张数 | `visual-agent:use` | 有界等待，超时转 runId |
-| `map_visual_get_run` | 查生图任务进度与结果 | `visual-agent:use` | 同步 |
-| `map_visual_list_models` | 列当前可用生图模型 | `visual-agent:use` | 同步 |
-| `map_literary_list_workspaces` | 列我的创作工作区 | `literary-agent:use` | 同步 |
-| `map_literary_create_workspace` | 建工作区并写入初稿 | `literary-agent:use` | 同步 |
-| `map_literary_append_content` | 往工作区追加/替换正文 | `literary-agent:use` | 同步 |
-| `map_kb_create_entry` | 往知识库写一篇文档（Markdown） | `document-store:write` | 同步 |
-| `map_kb_update_entry` | 更新已有文档正文 | `document-store:write` | 同步 |
-| `map_kb_create_store` | 新建知识库 | `document-store:write` | 同步 |
-| `map_web_publish_page` | 把一段 HTML 托管成站点并返回访问地址 | `web-pages:write` | 同步 |
-| `map_web_list_pages` | 列我的托管站点 | `web-pages:read` | 同步 |
-| `map_web_create_share` | 生成站点分享链接（可设有效期/口令） | `web-pages:write` | 同步 |
-| `map_market_upload_skill` | 上传技能包到海鲜市场 | `marketplace.skills:write` | 同步 |
-| `map_market_fork_skill` | 取用市场技能到我的账号 | `marketplace.skills:read` | 同步 |
+| 能力 | 勾了它，智能体能做什么 | 第一期不做什么 |
+|---|---|---|
+| 视觉创作 | 一句话生图，图落进用户自己的视觉创作空间；任务在服务端跑，关掉客户端也不会断 | 不做图片编辑与批量重跑 |
+| 文学创作 | 开工作区、写正文、接着往下写，产出留在文学创作空间 | 追加写不可重试（见「已知边界」），删除不开放 |
+| 知识库 | 读用户的文档空间，把整理好的稿子写回自己的库 | 只收纯文本；带结构模板的库（如验收报告库）不开放写 |
+| 网页托管 | 写完一页 HTML 直接托管，回一条能点开的地址；建 owner-only 分享链 | 不做删除、不做公开发布、不收 zip |
+| 海鲜市场 | 找技能、把技能取到自己名下 | 不做上传：技能包是 zip，MCP 传不了二进制 |
 
-加上已有的 5 个只读工具，全量 19 个。**不建议默认全开**：接入向导按能力勾选，只签发被勾选的 scope，未勾选的工具在该密钥下根本不出现，既省智能体的上下文，也是最小权限。
+**默认不全开**。接入向导按能力勾选，只签发被勾中的 scope；没勾的能力在那把密钥下根本不出现 ——
+既省智能体的上下文，也是最小权限。写入档要单独再确认一次。
 
-异步任务（生图）的 MCP 契约固定为：先有界等待（默认 90 秒内出结果就直接返回），超时返回 `runId` 与「用 `map_visual_get_run` 继续查」的明确指引，任务在服务端照跑不误（服务端权威原则：客户端断开不取消服务端任务）。图片默认返回可访问 URL 加一张受限尺寸的缩略图，原图 base64 只在显式索取时给——否则一次四张图就能把智能体的上下文顶满。
-
----
+**异步任务的契约**：生图入队即返回 `runId`，用户与智能体都靠它查进度；服务端权威 ——
+客户端断开不取消任务。图片回可访问地址，不回 base64（一次几张就能把智能体的上下文顶满）。
 
 ## 五、左下角入口长什么样
 

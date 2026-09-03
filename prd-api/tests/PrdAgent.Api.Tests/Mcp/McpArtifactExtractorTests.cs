@@ -15,7 +15,7 @@ public class McpArtifactExtractorTests
     {
         var body = """{"success":true,"data":{"siteId":"s1","title":"周报","url":"https://x/y.html"}}""";
 
-        var art = McpArtifactExtractor.Extract("map_web_publish_page", body);
+        var art = McpArtifactExtractor.Extract("map_web_publish_page", producesArtifacts: true, body);
 
         art.Kind.ShouldBe("site");
         art.Id.ShouldBe("s1");
@@ -32,7 +32,7 @@ public class McpArtifactExtractorTests
         {"success":true,"data":{"runId":"r1","status":"Completed","images":[{"assetId":"a1","url":"https://cdn/1.png"}]}}
         """;
 
-        var art = McpArtifactExtractor.Extract("map_visual_get_run", body);
+        var art = McpArtifactExtractor.Extract("map_visual_get_run", producesArtifacts: false, body);
 
         art.Kind.ShouldBe("image-run");
         art.Id.ShouldBe("r1");
@@ -48,7 +48,7 @@ public class McpArtifactExtractorTests
         {"success":true,"data":{"total":2,"items":[{"siteId":"s1","url":"https://x/old.html"}]}}
         """;
 
-        var art = McpArtifactExtractor.Extract("map_web_list_pages", body);
+        var art = McpArtifactExtractor.Extract("map_web_list_pages", producesArtifacts: false, body);
 
         art.Url.ShouldBeNull();
         art.Kind.ShouldBeNull();
@@ -57,9 +57,12 @@ public class McpArtifactExtractorTests
     [Fact]
     public void Extract_读类工具拿到的既有对象_不算这次的产物()
     {
-        var body = """{"success":true,"data":{"skillId":"k1","title":"某个技能"}}""";
+        // 判据是工具的写入语义，不是名字里有没有 _get_ ——
+        // knowledge_base_read_entry 名字里没有那个片段，但它同样是纯读，
+        // 回的 data.entryId 不该被记成「这次做出来的东西」。
+        var body = """{"success":true,"data":{"entryId":"k1","title":"某篇文档"}}""";
 
-        var art = McpArtifactExtractor.Extract("marketplace_get_skill", body);
+        var art = McpArtifactExtractor.Extract("knowledge_base_read_entry", producesArtifacts: false, body);
 
         art.Kind.ShouldBeNull();
         art.Url.ShouldBeNull();

@@ -26,7 +26,13 @@ public static class McpArtifactExtractor
     private static readonly string[] UrlKeys = { "url", "shareUrl", "downloadUrl", "siteUrl" };
     private static readonly string[] TitleKeys = { "title", "name" };
 
-    public static Artifact Extract(string toolName, string? responseBody)
+    /// <param name="producesArtifacts">
+    /// 这次调用是不是「做出了东西」。取工具的写入语义（<c>McpUsageService.IsWriteTool</c>），
+    /// 不再看工具名里有没有 `_get_` —— 名字片段判不准：knowledge_base_read_entry 是纯读，
+    /// 名字里却没有 `_get_`，它回的 data.entryId 会被当成这次的产物；将来加个
+    /// map_kb_fetch_xxx 一样漏。判据要跟着语义走，不跟着命名习惯走。
+    /// </param>
+    public static Artifact Extract(string toolName, bool producesArtifacts, string? responseBody)
     {
         var data = ReadDataObject(responseBody);
         if (data == null) return new Artifact(null, null, null, null);
@@ -41,8 +47,10 @@ public static class McpArtifactExtractor
             break;
         }
 
-        // 读类工具即使带 id 也不算产物：产物是「这次做出来的东西」，不是「这次看了的东西」
-        if (kind != null && toolName.Contains("_get_", StringComparison.Ordinal) && kind != "image-run")
+        // 读类工具即使带 id 也不算产物：产物是「这次做出来的东西」，不是「这次看了的东西」。
+        // 例外是生图任务：图是上一次 generate 做出来的，但那次调用只拿得到 runId，
+        // 地址要等跑完才有 —— 不在这里放行，用户就永远没有一个能点开图的记录。
+        if (!producesArtifacts && kind != "image-run")
             return new Artifact(null, null, null, null);
 
         string? url = null;

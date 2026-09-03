@@ -270,6 +270,13 @@ public class McpGatewayController : ControllerBase
             CreatedAt = startedAt,
         };
 
+        // 速率闸排在**工具解析之前**。被拒的调用同样要计次：工具名不存在、scope 不足、
+        // 不在白名单，这几条路径都在认出工具之前就返回了，却每次都要查一遍登记表、写一行审计记录。
+        // 闸门排在后面的话，拿着合法密钥刷不存在的工具名就能绕过它，把审计集合刷爆。
+        var rate = await _usage.CheckRateAsync(log.KeyId, ct);
+        if (!rate.Allowed)
+            return await DeniedAsync(id, log, rate.Reason!, ct);
+
         // 内置工具
         var bt = McpBuiltinTools.All.FirstOrDefault(t => t.Name == name);
         if (bt != null)
@@ -372,7 +379,7 @@ public class McpGatewayController : ControllerBase
             log.Deduplicated = true;
             log.ImageCount = 0;
             log.IsWrite = false;
-            var dedupArtifact = McpArtifactExtractor.Extract(log.ToolName, respBody);
+            var dedupArtifact = McpArtifactExtractor.Extract(log.ToolName, log.IsWrite, respBody);
             log.ArtifactKind = dedupArtifact.Kind;
             log.ArtifactId = dedupArtifact.Id;
             log.ArtifactUrl = dedupArtifact.Url;
@@ -380,7 +387,7 @@ public class McpGatewayController : ControllerBase
         }
         else
         {
-            var artifact = McpArtifactExtractor.Extract(log.ToolName, respBody);
+            var artifact = McpArtifactExtractor.Extract(log.ToolName, log.IsWrite, respBody);
             log.ArtifactKind = artifact.Kind;
             log.ArtifactId = artifact.Id;
             log.ArtifactUrl = artifact.Url;

@@ -77,9 +77,34 @@ public sealed class McpUsageService
     public static DateTime TodayStartUtc() => DateTime.UtcNow.Date;
 
     /// <summary>
-    /// 调用前的闸门：过速率窗口，再为日额度原子占坑。
+    /// 只过分钟级速率窗口，不碰日额度。
+    ///
+    /// 必须能单独调，因为**被拒的调用也要计次**：工具名不存在、scope 不足、不在白名单，
+    /// 这些路径都在「知道这是哪个工具」之前就返回了，够不着按工具分类的日额度，
+    /// 但它们每一次都要查一遍登记表、写一行审计记录。速率闸如果排在工具解析之后，
+    /// 一个拿着合法密钥的客户端刷不存在的工具名就能绕开它，把审计集合刷爆。
+    /// </summary>
+    public async Task<McpQuotaVerdict> CheckRateAsync(string keyId, CancellationToken ct)
+    {
+        var key = await _db.AgentApiKeys.Find(k => k.Id == keyId).FirstOrDefaultAsync(ct);
+        var ratePerMin = key?.McpRateLimitPerMin ?? DefaultRateLimitPerMin;
+
+        var now = DateTime.UtcNow;
+        var minute = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+        var window = RateWindows.AddOrUpdate(keyId,
+            _ => (minute, 1),
+            (_, cur) => cur.MinuteStart == minute ? (minute, cur.Count + 1) : (minute, 1));
+        if (window.Count > ratePerMin)
+            return McpQuotaVerdict.Deny($"调用太频繁：这把密钥每分钟最多 {ratePerMin} 次工具调用，请等一分钟再试。");
+        return McpQuotaVerdict.Ok;
+    }
+
+    /// <summary>
+    /// 日额度的原子占坑。放行时若占了坑，调用失败要用 <see cref="ReleaseAsync"/> 退还。
     /// 返回不允许时，Reason 是直接给智能体看的中文说明（它会转述给用户）。
-    /// 放行时若占了坑，调用失败要用 <see cref="ReleaseAsync"/> 退还。
+    ///
+    /// 速率窗口已由 <see cref="CheckRateAsync"/> 在更早处过掉，这里不再重复计次 ——
+    /// 一次调用只该占一格速率。
     ///
     /// 入参就是**记录里记的那两个值**（<c>McpCallLog.ImageCount</c> / <c>IsWrite</c>），不是工具定义 ——
     /// 早先这里收 McpToolDef?，动态工具没有定义只能传 null，于是走到「tool == null 直接放行」那一支：
@@ -91,18 +116,8 @@ public sealed class McpUsageService
     public async Task<McpQuotaVerdict> CheckAsync(string keyId, int imageCount, bool isWrite, CancellationToken ct)
     {
         var key = await _db.AgentApiKeys.Find(k => k.Id == keyId).FirstOrDefaultAsync(ct);
-        var ratePerMin = key?.McpRateLimitPerMin ?? DefaultRateLimitPerMin;
 
-        // 1. 分钟级速率（进程内）
-        var now = DateTime.UtcNow;
-        var minute = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
-        var window = RateWindows.AddOrUpdate(keyId,
-            _ => (minute, 1),
-            (_, cur) => cur.MinuteStart == minute ? (minute, cur.Count + 1) : (minute, 1));
-        if (window.Count > ratePerMin)
-            return McpQuotaVerdict.Deny($"调用太频繁：这把密钥每分钟最多 {ratePerMin} 次工具调用，请等一分钟再试。");
-
-        // 2. 日额度：原子占坑
+        // 日额度：原子占坑
         if (imageCount > 0)
         {
             var quota = key?.McpDailyImageQuota ?? DefaultDailyImageQuota;
