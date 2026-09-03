@@ -15,11 +15,15 @@ namespace PrdAgent.Api.Services.Mcp;
 /// （旧那天的坑还占着），那把密钥当天就能超额。
 /// </summary>
 public sealed record McpQuotaVerdict(
-    bool Allowed, string? Reason, string? ReservedKind = null, int ReservedAmount = 0, DateTime ReservedDay = default)
+    bool Allowed, string? Reason, string? ReservedKind = null, int ReservedAmount = 0, DateTime ReservedDay = default,
+    bool SuppressLog = false)
 {
     public static readonly McpQuotaVerdict Ok = new(true, null);
     public static McpQuotaVerdict Reserved(string kind, int amount, DateTime day) => new(true, null, kind, amount, day);
     public static McpQuotaVerdict Deny(string reason) => new(false, reason);
+
+    /// <summary>拒绝，且这一条不必再落审计（同一分钟内已经落过一条同类拒绝）。</summary>
+    public static McpQuotaVerdict DenyQuietly(string reason) => new(false, reason, SuppressLog: true);
 }
 
 /// <summary>
@@ -54,8 +58,8 @@ public sealed class McpUsageService
     private readonly MongoDbContext _db;
     private readonly ILogger<McpUsageService> _logger;
 
-    /// <summary>keyId → (当前分钟起点, 该分钟内已调用次数)</summary>
-    private static readonly ConcurrentDictionary<string, (DateTime MinuteStart, int Count)> RateWindows = new();
+    /// <summary>keyId → (当前分钟起点, 该分钟内已调用次数, 这一分钟是否已经为超限落过一条审计)</summary>
+    private static readonly ConcurrentDictionary<string, (DateTime MinuteStart, int Count, bool DeniedLogged)> RateWindows = new();
 
     public McpUsageService(MongoDbContext db, ILogger<McpUsageService> logger)
     {
@@ -92,11 +96,23 @@ public sealed class McpUsageService
         var now = DateTime.UtcNow;
         var minute = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
         var window = RateWindows.AddOrUpdate(keyId,
-            _ => (minute, 1),
-            (_, cur) => cur.MinuteStart == minute ? (minute, cur.Count + 1) : (minute, 1));
-        if (window.Count > ratePerMin)
-            return McpQuotaVerdict.Deny($"调用太频繁：这把密钥每分钟最多 {ratePerMin} 次工具调用，请等一分钟再试。");
-        return McpQuotaVerdict.Ok;
+            _ => (minute, 1, false),
+            (_, cur) => cur.MinuteStart == minute ? (minute, cur.Count + 1, cur.DeniedLogged) : (minute, 1, false));
+        if (window.Count <= ratePerMin) return McpQuotaVerdict.Ok;
+
+        var reason = $"调用太频繁：这把密钥每分钟最多 {ratePerMin} 次工具调用，请等一分钟再试。";
+        // 一分钟内只为超限落一条审计。每一条都落的话，限流就保护不了它本来要保护的那张表：
+        // 被挡住的洪水照样一条一条写进去。第一条留着，用户才看得到「被限流了」这件事。
+        var firstDenial = false;
+        RateWindows.AddOrUpdate(keyId,
+            _ => (minute, 1, true),
+            (_, cur) =>
+            {
+                if (cur.MinuteStart != minute) { firstDenial = true; return (minute, cur.Count, true); }
+                if (!cur.DeniedLogged) { firstDenial = true; return (cur.MinuteStart, cur.Count, true); }
+                return cur;
+            });
+        return firstDenial ? McpQuotaVerdict.Deny(reason) : McpQuotaVerdict.DenyQuietly(reason);
     }
 
     /// <summary>

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Authorization;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -197,12 +198,15 @@ public class WebPagesOpenApiController : ControllerBase
             forceNew: false,
             visibility: "owner-only");
 
-        // 分享地址的拼法与 WebPagesController.CreateShare 保持一致（/s/wp/{token}）
+        // 路径与 WebPagesController.CreateShare 一致（/s/wp/{token}），但**必须回绝对地址**：
+        // 智能体拿到的相对路径会被它自己的客户端按自己的域名解析（Claude / Codex 那边），
+        // 用户点开只会 404 —— 这条链接的全部意义就是「能点开」。
+        var baseUrl = Request.ResolveExternalBaseUrl();
         return Ok(ApiResponse<object>.Ok(new
         {
             shareId = share.Id,
             token = share.Token,
-            shareUrl = $"/s/wp/{share.Token}",
+            shareUrl = $"{baseUrl}/s/wp/{share.Token}",
             expiresAt = share.ExpiresAt,
             visibility = share.Visibility,
         }));

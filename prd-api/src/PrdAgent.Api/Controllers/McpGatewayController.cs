@@ -275,7 +275,13 @@ public class McpGatewayController : ControllerBase
         // 闸门排在后面的话，拿着合法密钥刷不存在的工具名就能绕过它，把审计集合刷爆。
         var rate = await _usage.CheckRateAsync(log.KeyId, ct);
         if (!rate.Allowed)
+        {
+            // 超限的每一次都写一行审计，等于限流没能保护它本来要保护的那张表 ——
+            // 被挡住的洪水照样一条一条落库。所以一分钟内只落**第一条**：
+            // 用户仍看得到「这把密钥被限流了」，后续同一分钟的重复不再堆进去。
+            if (rate.SuppressLog) return ToolError(id, rate.Reason!);
             return await DeniedAsync(id, log, rate.Reason!, ct);
+        }
 
         // 内置工具
         var bt = McpBuiltinTools.All.FirstOrDefault(t => t.Name == name);
@@ -377,9 +383,14 @@ public class McpGatewayController : ControllerBase
         {
             await ReleaseReservationAsync(log.KeyId, verdict, ct);
             log.Deduplicated = true;
+            // 记账清零（这次没有新副作用），但**产物分类不能跟着清**：
+            // 「这个工具会不会做出东西」是工具本身的属性，跟这一次扣不扣额度是两回事。
+            // 一起清掉的话，幂等重试的记录会丢掉既有站点/文档的地址，用户点不开 ——
+            // 而他重试的原因恰恰是想拿到那个地址。
+            var producesArtifacts = log.IsWrite;
             log.ImageCount = 0;
             log.IsWrite = false;
-            var dedupArtifact = McpArtifactExtractor.Extract(log.ToolName, log.IsWrite, respBody);
+            var dedupArtifact = McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody);
             log.ArtifactKind = dedupArtifact.Kind;
             log.ArtifactId = dedupArtifact.Id;
             log.ArtifactUrl = dedupArtifact.Url;

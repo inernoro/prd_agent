@@ -445,7 +445,10 @@ public class DocumentStoreOpenApiController : ControllerBase
     /// </summary>
     private async Task CleanupRolledBackEntryAsync(string entryId)
     {
-        await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entryId, CancellationToken.None);
+        // 顺序要紧：**先清派生，最后删条目**。
+        // 反过来的话，条目一删，那个确定性 id 就空出来了；等在旁边的重试可以立刻插入新条目
+        // 并写出它自己的版本与双链，而这边接着执行的清理会按同一个 entryId 把**新那次**的
+        // 派生记录删掉。条目留到最后删，这段窗口里 id 一直被占着，重试撞主键、乖乖等着。
         try
         {
             await _db.DocumentEntryVersions.DeleteManyAsync(v => v.EntryId == entryId, CancellationToken.None);
@@ -455,6 +458,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         {
             _logger.LogWarning(ex, "[mcp] 撤回条目时派生记录没清干净 entryId={EntryId}", entryId);
         }
+        await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entryId, CancellationToken.None);
     }
 
     /// <summary>条目「正文还没落盘」的标记字段（Mongo 路径写法，供 Unset 用）。</summary>

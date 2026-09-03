@@ -152,11 +152,15 @@ public class LiteraryOpenApiController : ControllerBase
     public async Task<IActionResult> WriteContent(string workspaceId, [FromBody] WriteContentRequest? req, CancellationToken ct)
     {
         var userId = GetBoundUserId();
+        // 场景必须一起判。只判 owner + id 的话，用户名下别的场景的工作区（比如智能体生图那个）
+        // 也能被当成文学工作区写进正文、复位配图流程 —— 那是另一个功能的数据，
+        // 用户既没要求过，也不会想到去那里找。列表端点本来就按场景过滤，写入这边要对齐。
         var ws = await _db.ImageMasterWorkspaces
-            .Find(x => x.Id == workspaceId && x.OwnerUserId == userId)
+            .Find(x => x.Id == workspaceId && x.OwnerUserId == userId && x.ScenarioType == ScenarioType)
             .FirstOrDefaultAsync(ct);
         if (ws == null)
-            return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "工作区不存在或不属于你"));
+            return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND",
+                "工作区不存在、不属于你，或者不是文学创作的工作区"));
 
         var incoming = req?.Content ?? string.Empty;
 
