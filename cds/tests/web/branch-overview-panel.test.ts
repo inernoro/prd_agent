@@ -911,46 +911,23 @@ describe('取指标失败给的是人话，不是诊断串', () => {
  * 至少是真的；归一之后被一刀切成 stopped。修法是把原始状态传下来，不再只给布尔。
  */
 /**
- * 慢请求后回不许覆盖快请求（2026-09-02，Codex P2，核对属实）。
+ * 轮询的并发取舍已抽成 `lib/latest-wins.ts`，**行为**由
+ * `tests/web/latest-wins.test.ts` 用受控延迟响应真正跑一遍（Codex P2，核对属实）。
  *
- * 5 秒一轮，而一次 `/metrics/series` 可能跑过 5 秒；两个请求同时在飞时只判分支 id
- * 是不够的——新的先回、旧的后回，旧响应会把 series 与窗口元信息一起覆盖回更早的
- * 一段，图往回跳。和「图一直在变」同族，只是成因在请求竞态。
+ * 这里只留一条接线守卫：抽出去的东西必须真的被用上，否则就是「建了一半」
+ * （形状 2）——闸门写得再对，抽屉不调它也白搭。
  */
-describe('历史轮询按序号收口，旧响应不许后发制人', () => {
-  it('loadSeries 每次自增序号，且成功与失败两条路都比对序号', () => {
+describe('历史轮询走 latest-wins 闸门（接线）', () => {
+  it('抽屉真的在用这个闸门，不是各写一套', () => {
     const code = stripComments(DRAWER);
+    expect(code, '没接上就等于没修').toContain("from '@/lib/latest-wins'");
+    expect(code, '换分支要开新会话').toMatch(/seriesGateRef\.current\.newSession\(\)/);
     const at = code.indexOf('const loadSeries');
-    expect(at, '找不到 loadSeries，选择器过时了').toBeGreaterThan(0);
-    const body = code.slice(at, code.indexOf('const loadDeployments', at) > at
-      ? code.indexOf('const loadDeployments', at)
-      : at + 2600);
-    expect(body, '没有取序号，只判分支 id 拦不住同分支的并发轮询')
-      .toMatch(/seriesSeqRef\.current \+= 1/);
-    /*
-     * 判据必须是「比已应用的更旧才丢」，不是「不等于最后发出的就丢」（Codex P2）。
-     * 后者在每次请求都超过轮询间隔时会把自己饿死——每个响应都被判过期，图永远
-     * 停在初始态且不报错，比它要修的竞态更糟。
-     */
-    expect(body, '等值比较会在慢请求下丢弃每一个响应，把轮询饿死')
-      .not.toMatch(/seq !== seriesSeqRef\.current/);
-    const seqChecks = body.match(/seq <= seriesAppliedRef\.current/g) ?? [];
-    expect(seqChecks.length, '成功与失败两条路都要比对：旧的失败同样会抹掉新的曲线')
-      .toBeGreaterThanOrEqual(2);
-    expect(body, '应用之后要抬高水位，否则后续响应全被放行、竞态没修掉')
-      .toMatch(/seriesAppliedRef\.current = seq/);
-    /*
-     * A → B → A：回到 A 时分支 id 又对上了，在飞的旧 A 请求会被放行（Codex P2）。
-     * 所以要另有会话号，且序号必须全局单调——重置会让旧请求的序号反超新会话，
-     * 它不但贴上陈数据，还会把水位抬高到吃掉后面好几轮。
-     */
-    const sessionChecks = body.match(/session !== seriesSessionRef\.current/g) ?? [];
-    expect(sessionChecks.length, '成功与失败两条路都要认会话号')
-      .toBeGreaterThanOrEqual(2);
-    const reset = stripComments(DRAWER);
-    expect(reset, '序号一旦重置，旧请求的序号就会反超新会话')
-      .not.toMatch(/seriesSeqRef\.current = 0/);
-    expect(reset, '换分支要开新会话').toMatch(/seriesSessionRef\.current \+= 1/);
+    expect(at).toBeGreaterThan(0);
+    const body = code.slice(at, at + 2600);
+    expect(body, 'loadSeries 要领票').toMatch(/seriesGateRef\.current\.begin\(\)/);
+    const accepts = body.match(/seriesGateRef\.current\.accept\(ticket\)/g) ?? [];
+    expect(accepts.length, '成功与失败两条路都要过闸门').toBeGreaterThanOrEqual(2);
   });
 });
 

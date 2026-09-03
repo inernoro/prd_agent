@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
+import { createLatestWinsGate } from '@/lib/latest-wins';
 import { resolveWebEntryPresentation, type PreviewMode, type WebEntryCollectionLike } from '@/lib/previewUrl';
 import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
@@ -1016,29 +1017,13 @@ export function BranchDetailDrawer({
    */
   const [seriesError, setSeriesError] = useState<string | null>(null);
   /**
-   * 历史请求的序号（Codex P2，核对属实）。
+   * 历史轮询的并发取舍（Codex P2 ×3，核对属实）。
    *
-   * 5 秒一轮，而一次请求可能跑过 5 秒：两个请求同时在飞时，只判分支 id 是不够的
-   * ——新的先回、旧的后回，旧响应会把 series 和窗口元信息一起覆盖回更早的一段，
-   * 图往回跳。这正是「图一直在变」那类病的另一种形态，只是成因在请求竞态。
-   *
-   * 判据是「比**已经应用过的**那次新」，不是「等于最后发出的那次」（Codex P2，
-   * 核对属实）。后者在「每次请求都超过 5 秒」时会把自己饿死：下一轮总在上一轮
-   * 回来之前把序号又推走，于是每个响应都被判成过期，图永远停在初始态且不报错
-   * ——比它要修的那个竞态更糟。
+   * 语义与理由都写在 `lib/latest-wins.ts`——抽出去是因为它必须被**真正测到**：
+   * 这套取舍此前散在下面的 loadSeries 里，守卫只能扫源码字符串，而扫字符串
+   * 证明不了行为（把记账挪到请求之前就会丢弃每个响应，那种守卫照样全绿）。
    */
-  const seriesSeqRef = useRef(0);
-  /** 已经应用到界面上的最大序号。晚回的旧响应只跟它比。 */
-  const seriesAppliedRef = useRef(0);
-  /**
-   * 抽屉这一次「看某个分支」的会话号，换分支就 +1（Codex P2，核对属实）。
-   *
-   * 光靠分支 id 判不出 A → B → A：回到 A 时 id 又对上了，那个还在飞的旧 A 请求
-   * 会被放行。上一版为此把序号清零，反而开了新洞——旧请求的序号比新会话的还大，
-   * 它不但能贴上陈数据，还会把水位抬高到吃掉后面好几轮。
-   * 所以序号改为**全局单调、永不重置**，另用会话号认「是不是这一次的」。
-   */
-  const seriesSessionRef = useRef(0);
+  const seriesGateRef = useRef(createLatestWinsGate());
   /**
    * 服务端这次实际用的桶宽（秒）。骨架屏用它算「还要等多久」。
    *
@@ -1308,10 +1293,8 @@ export function BranchDetailDrawer({
     setMetricSeries({});
     setLiveStats({});
     setSeriesError(null);
-    // 换分支开新会话：序号保持全局单调（重置会让旧请求的序号反超），
-    // 只清空水位，并让在飞的旧请求因会话号对不上而作废。
-    seriesSessionRef.current += 1;
-    seriesAppliedRef.current = 0;
+    // 换分支开新会话：在飞的旧请求作废，水位清零，序号仍全局单调。
+    seriesGateRef.current.newSession();
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
     void load();
@@ -1504,9 +1487,7 @@ export function BranchDetailDrawer({
   const loadSeries = useCallback(async () => {
     if (!branchId) return;
     const requestForBranch = branchId;
-    seriesSeqRef.current += 1;
-    const seq = seriesSeqRef.current;
-    const session = seriesSessionRef.current;
+    const ticket = seriesGateRef.current.begin();
     try {
       const data = await apiRequest<{
         groupSeconds?: number;
@@ -1515,11 +1496,8 @@ export function BranchDetailDrawer({
         services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null }> }>;
       }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
       if (branchIdRef.current !== requestForBranch) return;
-      // 换过分支（含 A → B → A，分支 id 判不出来）就整条丢弃。
-      if (session !== seriesSessionRef.current) return;
-      // 只丢弃「比已应用的更旧」的响应；慢但仍是最新结果的照常采用。
-      if (seq <= seriesAppliedRef.current) return;
-      seriesAppliedRef.current = seq;
+      // 换过会话、或比已贴上去的更旧 → 丢弃；慢但仍是最新的照常采用。
+      if (!seriesGateRef.current.accept(ticket)) return;
       setSeriesMeta(
         typeof data?.groupSeconds === 'number' && typeof data?.after === 'number' && typeof data?.before === 'number'
           ? { groupSeconds: data.groupSeconds, after: data.after, before: data.before }
@@ -1541,10 +1519,8 @@ export function BranchDetailDrawer({
       setSeriesError(null);
     } catch (err) {
       if (branchIdRef.current !== requestForBranch) return;
-      if (session !== seriesSessionRef.current) return;
       // 同上：旧请求的失败不该抹掉新请求刚拿回来的曲线。
-      if (seq <= seriesAppliedRef.current) return;
-      seriesAppliedRef.current = seq;
+      if (!seriesGateRef.current.accept(ticket)) return;
       // 老版本 CDS 没有这个端点也走这里——照样要说出来，否则骨架屏会一直
       // 承诺一条永远不会出现的曲线。面板拿到它就改画「只有实时数字」那一档。
       setSeriesError(describeMetricsFailure(err, '指标历史'));
