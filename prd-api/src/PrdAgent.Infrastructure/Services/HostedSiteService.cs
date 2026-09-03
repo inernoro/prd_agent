@@ -276,9 +276,10 @@ public class HostedSiteService : IHostedSiteService
         string? title, string? description,
         string sourceType, string? sourceRef,
         List<string>? tags, string? folder,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? siteId = null)
     {
-        var siteId = Guid.NewGuid().ToString("N");
+        siteId = string.IsNullOrWhiteSpace(siteId) ? Guid.NewGuid().ToString("N") : siteId.Trim();
         var now = DateTime.UtcNow;
         // API/工作流/工作空间发布的页面同样要注入当前版翻页垫片（与 CreateFromHtml/Reupload 一致），
         // 否则这类站点要等下次服务重启的 backfill 才有 shim。

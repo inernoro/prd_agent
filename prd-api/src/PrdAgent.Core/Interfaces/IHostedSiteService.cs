@@ -29,12 +29,18 @@ public interface IHostedSiteService
         string? uploadId = null);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
+    /// <param name="siteId">
+    /// 可选：由调用方指定站点 id。用于幂等 —— 调用方把幂等键压成确定性 id 传进来，
+    /// 并发重复请求会在 _id 上撞主键（而不是各自建出一个站），调用方捕获后返回既有站点。
+    /// 不传则随机生成。
+    /// </param>
     Task<HostedSite> CreateFromContentAsync(
         string userId, string htmlContent,
         string? title, string? description,
         string sourceType, string? sourceRef,
         List<string>? tags, string? folder,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? siteId = null);
 
     // ── 替换内容 ──
 

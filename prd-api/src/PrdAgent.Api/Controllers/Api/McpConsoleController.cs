@@ -89,8 +89,12 @@ public class McpConsoleController : ControllerBase
                 // 我自己有没有这块能力的权限位 —— 没有的话向导里勾了也签不出密钥，得先说清楚。
                 // 不受权限位把关的能力（海鲜市场、知识库这类老 scope）恒为可用：它们的闸门在接口自己身上，
                 // 拿权限位去判会把「其实签得出来」的能力显示成灰的。
-                availableToMe = !McpCapabilityCatalog.IsPermissionChecked(cap)
-                    || scopes.Any(s => McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, s)),
+                //
+                // 读与写要分开报：只有 web-pages.read 的人，整张卡是可用的，但写入那一档签不出来。
+                // 合成一个 Any() 会让向导把写入勾选框也点亮，勾了之后在后端交集校验那里才失败 ——
+                // 用户在最后一步才知道自己不该勾，这是把系统本来就知道的事推给他去撞。
+                availableToMe = ScopeAvailable(cap, cap.ReadScope ?? cap.WriteScope, ownedPermissions),
+                writeAvailableToMe = ScopeAvailable(cap, cap.WriteScope, ownedPermissions),
                 granted = scopes.Any(s => McpCapabilityCatalog.ScopeSatisfies(grantedScopes, s)),
                 todayCalls = tally.ByCapability.TryGetValue(cap.Key, out var capCalls) ? capCalls : 0,
                 tools = tools.Select(t => new
@@ -238,6 +242,14 @@ public class McpConsoleController : ControllerBase
             toolCount = visible.Count,
             tools = visible,
         }));
+    }
+
+    /// <summary>某个 scope 我自己签不签得出来：不受权限位把关的能力恒真，受把关的看权限位。</summary>
+    private static bool ScopeAvailable(McpCapability cap, string? scope, IReadOnlyCollection<string> ownedPermissions)
+    {
+        if (string.IsNullOrEmpty(scope)) return false;
+        if (!McpCapabilityCatalog.IsPermissionChecked(cap)) return true;
+        return McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope!);
     }
 
     /// <summary>

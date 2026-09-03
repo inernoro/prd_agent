@@ -208,9 +208,10 @@ public class AgentApiKeysController : ControllerBase
             req.Scopes = scopes;
         }
 
-        await _keyService.UpdateMetadataAsync(id, req.Name, req.Description, req.Scopes, req.IsActive, ct);
-
-        // 配额上限：给出的值必须落在合理区间，避免「调成 0 把自己锁死」或「调成天文数字等于没有闸门」
+        // 配额上限：给出的值必须落在合理区间，避免「调成 0 把自己锁死」或「调成天文数字等于没有闸门」。
+        // 校验必须排在**任何一次写库之前**：一次 PATCH 同时改名字和配额、而配额越界时，
+        // 若先写名字再校验，返回的是 400「更新失败」，名字却已经改掉了 —— 用户按报错重试，
+        // 状态和提示对不上。要么整笔生效，要么整笔不生效。
         var quotaUpdates = new List<UpdateDefinition<AgentApiKey>>();
         if (req.McpDailyImageQuota is { } img)
         {
@@ -230,6 +231,8 @@ public class AgentApiKeysController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每分钟调用上限需在 1-600 之间"));
             quotaUpdates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpRateLimitPerMin, rate));
         }
+
+        await _keyService.UpdateMetadataAsync(id, req.Name, req.Description, req.Scopes, req.IsActive, ct);
         if (quotaUpdates.Count > 0)
             await _db.AgentApiKeys.UpdateOneAsync(k => k.Id == id,
                 Builders<AgentApiKey>.Update.Combine(quotaUpdates), cancellationToken: ct);

@@ -51,6 +51,10 @@ public static class McpArtifactExtractor
             url = ReadString(data, key);
             if (!string.IsNullOrWhiteSpace(url)) break;
         }
+        // 生图这类工具的地址挂在数组里（data.images[].url），顶层没有 url。
+        // 只认顶层的话，跑完的生图记录永远是「有 runId、没有可点开的产物」——
+        // 而「一点就打开刚做出来的东西」正是这条记录存在的理由。
+        if (string.IsNullOrWhiteSpace(url)) url = ReadFirstUrlInArrays(data);
 
         string? title = null;
         foreach (var key in TitleKeys)
@@ -93,6 +97,25 @@ public static class McpArtifactExtractor
         }
         catch { /* 不是 JSON 就退回原文截断 */ }
         return Trim(responseBody);
+    }
+
+    /// <summary>在 data 的数组字段里找第一个带 url 的元素（生图 images[]、附件列表这类）。只下探一层，不做深搜。</summary>
+    private static string? ReadFirstUrlInArrays(JsonObject data)
+    {
+        foreach (var kv in data)
+        {
+            if (kv.Value is not JsonArray arr) continue;
+            foreach (var item in arr)
+            {
+                if (item is not JsonObject obj) continue;
+                foreach (var key in UrlKeys)
+                {
+                    var v = ReadString(obj, key);
+                    if (!string.IsNullOrWhiteSpace(v)) return v;
+                }
+            }
+        }
+        return null;
     }
 
     private static JsonObject? ReadDataObject(string? responseBody)

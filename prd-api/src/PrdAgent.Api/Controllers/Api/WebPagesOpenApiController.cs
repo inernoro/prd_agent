@@ -95,13 +95,35 @@ public class WebPagesOpenApiController : ControllerBase
                 }));
         }
 
-        var site = await _sites.CreateFromContentAsync(
-            userId, html,
-            string.IsNullOrWhiteSpace(req.Title) ? null : req.Title!.Trim(),
-            string.IsNullOrWhiteSpace(req.Description) ? null : req.Description!.Trim(),
-            sourceType: "api", sourceRef: sourceRef,
-            tags: req.Tags, folder: string.IsNullOrWhiteSpace(req.Folder) ? null : req.Folder!.Trim(),
-            ct: ct);
+        // 上面那次查询只挡得住「先后两次」的重试；超时重试与原请求叠在一起时两边都查不到，
+        // 于是各建一个站。所以带幂等键时把站点 id 也压成确定性的：并发的第二次会在 _id 上撞主键，
+        // 捕获后回既有站点。COS 对象 key 由 siteId 决定，两次写的是同一个 key，不会留孤儿。
+        var deterministicId = sourceRef == null ? null : DeterministicSiteId(sourceRef);
+        HostedSite site;
+        try
+        {
+            site = await _sites.CreateFromContentAsync(
+                userId, html,
+                string.IsNullOrWhiteSpace(req.Title) ? null : req.Title!.Trim(),
+                string.IsNullOrWhiteSpace(req.Description) ? null : req.Description!.Trim(),
+                sourceType: "api", sourceRef: sourceRef,
+                tags: req.Tags, folder: string.IsNullOrWhiteSpace(req.Folder) ? null : req.Folder!.Trim(),
+                ct: ct, siteId: deterministicId);
+        }
+        catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && deterministicId != null)
+        {
+            var raced = await _db.HostedSites
+                .Find(x => x.Id == deterministicId && x.OwnerUserId == userId)
+                .FirstOrDefaultAsync(ct);
+            if (raced == null) throw;
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                siteId = raced.Id,
+                title = raced.Title,
+                url = raced.SiteUrl,
+                deduplicated = true,
+            }));
+        }
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -169,7 +191,10 @@ public class WebPagesOpenApiController : ControllerBase
             password: null, expiresInDays: days,
             ct: ct,
             purpose: "share",
-            forceNew: true,
+            // 走服务端的复用路径（同用户 + 同站点 + 同访问级别 + 未吊销即复用，并把有效期刷新为本次所选）。
+            // forceNew=true 是给「用户在面板上明确点了新建」用的；智能体超时重试可不是那个意思 ——
+            // 每重试一次多一条链接、多扣一次写入额度，而它本来只想要一条。
+            forceNew: false,
             visibility: "owner-only");
 
         // 分享地址的拼法与 WebPagesController.CreateShare 保持一致（/s/wp/{token}）
@@ -182,6 +207,11 @@ public class WebPagesOpenApiController : ControllerBase
             visibility = share.Visibility,
         }));
     }
+
+    /// <summary>把幂等键压成确定性站点 id（32 位十六进制，与随机 id 同形）。</summary>
+    private static string DeterministicSiteId(string sourceRef)
+        => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"mcp-site:{sourceRef}"))).ToLowerInvariant()[..32];
 
     private string? BuildSourceRef(string? clientRequestId)
     {

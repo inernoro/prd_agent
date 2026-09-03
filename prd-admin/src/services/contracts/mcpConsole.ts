@@ -25,6 +25,8 @@ export interface McpCapabilityDto {
   writeNeedsApproval: boolean;
   /** 我自己有没有这块能力的权限位；没有的话勾了也签不出密钥 */
   availableToMe: boolean;
+  /** 写入档我自己签不签得出来：只有读权限位的人，卡片可用但写入不可勾 */
+  writeAvailableToMe: boolean;
   /** 我名下有没有哪把活跃密钥拿到了这块能力 */
   granted: boolean;
   todayCalls: number;

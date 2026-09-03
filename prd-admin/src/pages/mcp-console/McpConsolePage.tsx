@@ -51,7 +51,7 @@ export default function McpConsolePage() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-4 p-4 md:p-6">
+    <div className="flex h-full min-h-0 flex-col gap-4 p-4 md:p-6">
       {/* 顶栏 */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1.5">
@@ -140,8 +140,8 @@ export default function McpConsolePage() {
         <McpCallsPanel clients={overview?.clients ?? []} />
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-          {/* 能力清单 */}
-          <div className="flex flex-col gap-3">
+          {/* 能力清单：自己撑高自己滚，不把整页顶出去 */}
+          <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-0.5">
             <div className="flex items-baseline justify-between">
               <h2 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                 它能替我做什么
@@ -158,7 +158,7 @@ export default function McpConsolePage() {
           </div>
 
           {/* 右列 */}
-          <div className="flex flex-col gap-3">
+          <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-0.5">
             <SectionCard title="连着的客户端" hint="一台一把钥匙">
               {(overview?.clients ?? []).length === 0 ? (
                 <EmptyHint text="还没有客户端接进来。点右上角「连接新客户端」，两分钟就能连上。" />

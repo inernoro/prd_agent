@@ -195,7 +195,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_write_content",
-            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。先用 map_literary_list_workspaces 拿 workspaceId。",
+            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。先用 map_literary_list_workspaces 拿 workspaceId。append 不可重试（重试会把同一段再接一遍）：没收到回应时请改用 replace 提交完整正文。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST",
             PathTemplate = "/api/open/literary/workspaces/{workspaceId}/content",

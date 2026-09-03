@@ -37,17 +37,20 @@ public class DocumentStoreOpenApiController : ControllerBase
     private readonly ITeamService _teams;
     private readonly IDocumentService _documentService;
     private readonly Services.EntryContentWriteService _entryContentWriter;
+    private readonly ILogger<DocumentStoreOpenApiController> _logger;
 
     public DocumentStoreOpenApiController(
         MongoDbContext db,
         ITeamService teams,
         IDocumentService documentService,
-        Services.EntryContentWriteService entryContentWriter)
+        Services.EntryContentWriteService entryContentWriter,
+        ILogger<DocumentStoreOpenApiController> logger)
     {
         _db = db;
         _teams = teams;
         _documentService = documentService;
         _entryContentWriter = entryContentWriter;
+        _logger = logger;
     }
 
     /// <summary>从 AgentApiKey 鉴权结果取绑定用户。失败抛 401。</summary>
@@ -313,8 +316,27 @@ public class DocumentStoreOpenApiController : ControllerBase
             cancellationToken: ct);
 
         if (content.Length > 0)
-            await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
-                DocumentVersionSource.Edit, contentTypeOverride: "text/markdown");
+        {
+            try
+            {
+                await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
+                    DocumentVersionSource.Edit, contentTypeOverride: "text/markdown");
+            }
+            catch (Exception ex)
+            {
+                // 正文没落盘就把条目撤回去。留着的话，条目上已经带着幂等键了 ——
+                // 智能体拿同一个 clientRequestId 重试会命中去重、拿到「成功」，
+                // 而那篇文档永远是空的，计数也多了一。一次存储抖动就此变成永久的残缺数据。
+                await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, CancellationToken.None);
+                await _db.DocumentStores.UpdateOneAsync(
+                    s => s.Id == storeId,
+                    Builders<DocumentStore>.Update.Inc(s => s.DocumentCount, -1).Set(s => s.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                _logger.LogWarning(ex, "[mcp] 知识库写入正文失败，已撤回条目 entryId={EntryId} storeId={StoreId}", entry.Id, storeId);
+                return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR,
+                    "正文没有写进去，这篇文档已经撤回，请用同一个 clientRequestId 重试"));
+            }
+        }
 
         return Ok(ApiResponse<object>.Ok(new { entryId = entry.Id, storeId, title = entry.Title }));
     }

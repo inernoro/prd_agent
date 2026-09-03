@@ -200,7 +200,19 @@ public class LiteraryOpenApiController : ControllerBase
                 .Set(x => x.ArticleContentWithMarkers, null);
         }
 
-        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id, update, cancellationToken: ct);
+        // append 是「读出来 + 拼上去 + 写回去」，两次并发会各自读到同一份旧正文，
+        // 后写的那次把先写的整段盖掉 —— 用户看到的是「有一段凭空没了」。
+        // 所以写回时带上「正文还是我读到的那份」这个条件；不成立就不写，让调用方重读再来。
+        // replace 是调用方明确要整篇覆盖，不加这个条件（否则正常的连续覆盖会互相打架）。
+        var filter = append
+            ? Builders<ImageMasterWorkspace>.Filter.And(
+                Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, ws.Id),
+                Builders<ImageMasterWorkspace>.Filter.Eq(x => x.ArticleContent, ws.ArticleContent))
+            : Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, ws.Id);
+        var result = await _db.ImageMasterWorkspaces.UpdateOneAsync(filter, update, cancellationToken: ct);
+        if (append && result.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
+                "追加期间正文被另一次写入改过，这次没有写进去。请重新读一遍正文再追加。"));
 
         return Ok(ApiResponse<object>.Ok(new
         {

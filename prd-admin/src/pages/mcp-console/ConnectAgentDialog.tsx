@@ -69,19 +69,22 @@ export function ConnectAgentDialog({
     }
     setCreating(true);
     const res = await createAgentApiKey({ name: clientName.trim() || '未命名客户端', scopes, ttlDays: 90 });
-    setCreating(false);
     if (!res.success || !res.data) {
+      setCreating(false);
       toast.error('密钥创建失败', res.error?.message);
       return;
     }
     setPlaintext(res.data.apiKey);
     const keyId = res.data.item?.id;
+    // 自检这一段还在网络里，按钮不能先解锁 —— 解锁了用户再点一次就又签出一把钥匙，
+    // 而且后签的那把会把界面上显示的明文覆盖掉，他手里就多了一把自己不知道的钥匙。
     if (keyId) {
       const check = await getMcpVisibleTools(keyId);
       if (check.success && check.data) setVisible(check.data);
     }
     onCreated();
     setStep('connect');
+    setCreating(false);
   }, [clientName, scopes, onCreated]);
 
   const configSnippet = useMemo(() => {
@@ -122,9 +125,13 @@ export function ConnectAgentDialog({
               </p>
               {capabilities.map((cap) => {
                 const pick = selected[cap.key] ?? { read: false, write: false };
-                const disabled = !cap.availableToMe;
                 // 只有写入档、没有只读档的能力：勾选即授予写入，卡片上必须写明白
                 const writeOnly = !cap.readScope && !!cap.writeScope;
+                // 整张卡的可用性看「入口那一档」；写入单独看写入档 ——
+                // 只有 web-pages.read 的人卡片能用，但写入勾选框必须是灰的，
+                // 否则他勾完走到最后一步才被后端交集校验拒掉。
+                const disabled = !cap.availableToMe;
+                const writeDisabled = !cap.writeAvailableToMe;
                 return (
                   <div
                     key={cap.key}
@@ -185,15 +192,17 @@ export function ConnectAgentDialog({
 
                     {!disabled && pick.read && cap.writeScope && cap.readScope && (
                       <label
-                        className="flex cursor-pointer items-center gap-2 rounded-[9px] px-2.5 py-2"
+                        className={`flex items-center gap-2 rounded-[9px] px-2.5 py-2 ${writeDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
                         style={{
                           background: 'var(--semantic-orange-soft)',
                           border: '1px solid var(--semantic-orange-border)',
+                          opacity: writeDisabled ? 0.6 : 1,
                         }}
                       >
                         <input
                           type="checkbox"
-                          checked={pick.write}
+                          disabled={writeDisabled}
+                          checked={pick.write && !writeDisabled}
                           onChange={(e) =>
                             setSelected((prev) => ({
                               ...prev,
@@ -202,7 +211,9 @@ export function ConnectAgentDialog({
                           }
                         />
                         <span className="text-[12px]" style={{ color: 'var(--semantic-warning-text)' }}>
-                          也允许它写入（会在平台里留下东西）
+                          {writeDisabled
+                            ? '你只有这块能力的只读权限，写入得先找管理员开通'
+                            : '也允许它写入（会在平台里留下东西）'}
                         </span>
                       </label>
                     )}
