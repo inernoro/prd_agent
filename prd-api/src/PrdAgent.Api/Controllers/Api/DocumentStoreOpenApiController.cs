@@ -388,15 +388,17 @@ public class DocumentStoreOpenApiController : ControllerBase
             // 没走完就把条目撤回去。留着的话，条目上已经带着幂等键了 ——
             // 智能体拿同一个 clientRequestId 重试要么命中去重拿到一篇空文档，
             // 要么永远撞上「还在落正文」的 409。一次存储抖动就此变成永久的残缺数据。
-            await CleanupRolledBackEntryAsync(entry.Id);
+            var cleaned = await CleanupRolledBackEntryAsync(entry.Id);
             if (countedIn)
                 await _db.DocumentStores.UpdateOneAsync(
                     s => s.Id == storeId,
                     Builders<DocumentStore>.Update.Inc(s => s.DocumentCount, -1).Set(s => s.UpdatedAt, DateTime.UtcNow),
                     cancellationToken: CancellationToken.None);
-            _logger.LogWarning(ex, "[mcp] 知识库建文档未走完，已撤回条目 entryId={EntryId} storeId={StoreId}", entry.Id, storeId);
-            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR,
-                "这篇文档没有建成，已经撤回，请用同一个 clientRequestId 重试"));
+            _logger.LogWarning(ex, "[mcp] 知识库建文档未走完 entryId={EntryId} storeId={StoreId} cleaned={Cleaned}",
+                entry.Id, storeId, cleaned);
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, cleaned
+                ? "这篇文档没有建成，已经撤回，请用同一个 clientRequestId 重试"
+                : "这篇文档没有建成，且残留记录没能清干净；这个 clientRequestId 暂时不能复用，请换一个键重试，并让管理员看一下服务端日志"));
         }
 
         return Ok(ApiResponse<object>.Ok(new { entryId = entry.Id, storeId, title = entry.Title }));
@@ -443,7 +445,8 @@ public class DocumentStoreOpenApiController : ControllerBase
     /// （DeleteEntry 的级联里也是先确认无人引用才删）。刚建的条目留下一份可复用的内容记录无害。
     /// 清理本身尽力而为：清不掉不能反过来把「已撤回」变成别的结论。
     /// </summary>
-    private async Task CleanupRolledBackEntryAsync(string entryId)
+    /// <returns>true = 条目与派生都清干净了；false = 派生没清掉，条目被刻意保留占着 id。</returns>
+    private async Task<bool> CleanupRolledBackEntryAsync(string entryId)
     {
         // 顺序要紧：**先清派生，最后删条目**。
         // 反过来的话，条目一删，那个确定性 id 就空出来了；等在旁边的重试可以立刻插入新条目
@@ -456,9 +459,17 @@ public class DocumentStoreOpenApiController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[mcp] 撤回条目时派生记录没清干净 entryId={EntryId}", entryId);
+            // 派生没清干净就**不能把 id 让出来**。删掉条目等于释放这个确定性 id，
+            // 重试会用同一个 id 建出新条目，然后继承这些残留的版本与双链 ——
+            // 用户看到的是「我刚写的这篇怎么带着别的历史」，而且无从解释。
+            // 宁可把这条留在库里（带着 mcpContentPending，同键重试拿 409），
+            // 也不要让脏数据悄悄挂到下一篇上。
+            _logger.LogError(ex,
+                "[mcp] 撤回条目时派生记录没清干净，已保留条目占位以免 id 被重用 entryId={EntryId}", entryId);
+            return false;
         }
         await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entryId, CancellationToken.None);
+        return true;
     }
 
     /// <summary>条目「正文还没落盘」的标记字段（Mongo 路径写法，供 Unset 用）。</summary>

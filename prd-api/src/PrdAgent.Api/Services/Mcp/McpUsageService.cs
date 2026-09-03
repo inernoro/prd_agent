@@ -58,8 +58,19 @@ public sealed class McpUsageService
     private readonly MongoDbContext _db;
     private readonly ILogger<McpUsageService> _logger;
 
-    /// <summary>keyId → (当前分钟起点, 该分钟内已调用次数, 这一分钟是否已经为超限落过一条审计)</summary>
-    private static readonly ConcurrentDictionary<string, (DateTime MinuteStart, int Count, bool DeniedLogged)> RateWindows = new();
+    /// <summary>keyId → (当前分钟起点, 该分钟内已调用次数)</summary>
+    private static readonly ConcurrentDictionary<string, (DateTime MinuteStart, int Count)> RateWindows = new();
+
+    /// <summary>
+    /// 「这把密钥这一分钟已经为超限落过审计了」的原子标记，键是 keyId|分钟。
+    ///
+    /// 单独一张表、用 TryAdd 判胜负，而不是塞进 RateWindows 的元组里靠更新委托设标志：
+    /// ConcurrentDictionary 的更新委托在竞争下**可能被调用多次**、失败的那几次结果会被丢弃，
+    /// 在里面写副作用（或捕获局部变量当结论）会让多个调用方同时认为自己是第一个 ——
+    /// 于是「一分钟只落一条」退化成「每个并发都落一条」，等于没限。
+    /// TryAdd 对同一个键全局只成功一次，这才是真正的原子胜出。
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, byte> RateDenialLogged = new();
 
     public McpUsageService(MongoDbContext db, ILogger<McpUsageService> logger)
     {
@@ -107,23 +118,21 @@ public sealed class McpUsageService
 
         var now = DateTime.UtcNow;
         var minute = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+        // 更新委托保持无副作用：它在竞争下可能被调用多次，任何写在里面的结论都不可信。
         var window = RateWindows.AddOrUpdate(keyId,
-            _ => (minute, 1, false),
-            (_, cur) => cur.MinuteStart == minute ? (minute, cur.Count + 1, cur.DeniedLogged) : (minute, 1, false));
+            _ => (minute, 1),
+            (_, cur) => cur.MinuteStart == minute ? (minute, cur.Count + 1) : (minute, 1));
+
+        // 顺手清掉两分钟前的标记，标记表不随时间无界增长（每把活跃密钥最多留一两条）
+        RateDenialLogged.TryRemove($"{keyId}|{minute.AddMinutes(-2).Ticks}", out _);
+
         if (window.Count <= ratePerMin) return McpQuotaVerdict.Ok;
 
         var reason = $"调用太频繁：这把密钥每分钟最多 {ratePerMin} 次工具调用，请等一分钟再试。";
         // 一分钟内只为超限落一条审计。每一条都落的话，限流就保护不了它本来要保护的那张表：
         // 被挡住的洪水照样一条一条写进去。第一条留着，用户才看得到「被限流了」这件事。
-        var firstDenial = false;
-        RateWindows.AddOrUpdate(keyId,
-            _ => (minute, 1, true),
-            (_, cur) =>
-            {
-                if (cur.MinuteStart != minute) { firstDenial = true; return (minute, cur.Count, true); }
-                if (!cur.DeniedLogged) { firstDenial = true; return (cur.MinuteStart, cur.Count, true); }
-                return cur;
-            });
+        // 胜负由 TryAdd 定 —— 同一个键全局只成功一次，并发的其余调用方一律拿到 false。
+        var firstDenial = RateDenialLogged.TryAdd($"{keyId}|{minute.Ticks}", 0);
         return firstDenial ? McpQuotaVerdict.Deny(reason) : McpQuotaVerdict.DenyQuietly(reason);
     }
 
