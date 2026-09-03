@@ -235,3 +235,57 @@ describe('probeBranchDb：docker inspect 容器真身 + 应用凭据实测', () 
     await expect(probeBranchDb(state, 'nope', { exec })).rejects.toThrow('分支不存在');
   });
 });
+
+describe('台账状态不是真相：基础设施台账 error 时仍定位库并实测', () => {
+  let tmpDir: string;
+  let state: StateService;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-db-probe-ledger-'));
+    state = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    state.load();
+    state.addProject({ id: 'proj', slug: 'proj', name: 'proj', kind: 'git', createdAt: NOW, updatedAt: NOW } as any);
+    state.addBuildProfile({
+      id: 'api', projectId: 'proj', name: 'API', dockerImage: 'node:20', workDir: '.', containerPort: 3000,
+      env: { CDS_POSTGRES_DB: 'shop', DATABASE_URL: `postgres://shop_app:${APP_PW}@cds-infra-pg:5432/shop` },
+    } as BuildProfile);
+    state.addInfraService({
+      id: 'pg', name: 'pg', projectId: 'proj', scope: 'project', dockerImage: 'postgres:16',
+      containerName: 'cds-infra-pg', hostPort: 0, containerPort: 5432, status: 'error', env: { POSTGRES_PASSWORD: ROOT_PW },
+    } as unknown as InfraService);
+    state.addBranch({
+      id: 'proj-main', projectId: 'proj', branch: 'main', worktreePath: path.join(tmpDir, 'wt'), status: 'running', createdAt: NOW,
+      services: { api: { profileId: 'api', containerName: 'cds-proj-main-api', hostPort: 40001, status: 'running' } },
+    } as unknown as BranchEntry);
+    state.save();
+  });
+
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it('台账把 pg 记成 error，探测照样定位到 shop 并用 psql 实测；实测结果才是真相', async () => {
+    const calls: string[][] = [];
+    const exec: DbProbeExec = async (argv) => {
+      calls.push(argv);
+      if (argv[0] === 'inspect') return { code: 0, stdout: `running\t${JSON.stringify(['CDS_POSTGRES_DB=shop', `DATABASE_URL=postgres://shop_app:${APP_PW}@cds-infra-pg:5432/shop`])}`, stderr: '', truncated: false };
+      return { code: 0, stdout: 'shop\t16.3\t27\n', stderr: '', truncated: false };
+    };
+    const report = await probeBranchDb(state, 'proj-main', { exec, now: () => new Date(NOW) });
+    const api = report.services[0];
+    expect(api.configured).toMatchObject({ engine: 'postgres', dbName: 'shop', infraId: 'pg' });
+    expect(api.verdict).toBe('match');
+    const psql = calls.find((c) => c.includes('psql'))!;
+    expect(psql).toContain('-U'); expect(psql[psql.indexOf('-U') + 1]).toBe('shop_app');
+    expect(psql).toContain(`PGPASSWORD=${APP_PW}`);
+    expect(psql[psql.indexOf('-c') + 1]).toMatch(/^SELECT current_database\(\)/);
+  });
+
+  it('项目里根本没有该引擎的实例 → no-db，原因说「无法定位这个库在哪」', async () => {
+    state.removeInfraService('pg', 'proj');
+    const report = await probeBranchDb(state, 'proj-main', { exec: async () => ({ code: 1, stdout: '', stderr: '', truncated: false }) });
+    expect(report.services[0].verdict).toBe('no-db');
+    expect(report.services[0].reasons[0]).toContain('无法定位这个库在哪');
+  });
+});

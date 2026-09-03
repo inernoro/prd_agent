@@ -287,7 +287,9 @@ export async function probeBranchDb(
   const services: DbProbeServiceResult[] = [];
   for (const baseline of profiles) {
     const effective = resolveEffectiveProfile(baseline, branch);
-    const { target, reason } = resolveReplicaDbTarget(state, branch, effective);
+    // 台账里的基础设施状态不是真相（error 可能只是上次重建失败），定位库时不按它过滤；
+    // 容器到底在不在跑，由下面的 docker inspect / 客户端实测说了算。
+    const { target, reason } = resolveReplicaDbTarget(state, branch, effective, { infraStatus: 'any' });
     const configured: DbProbeConfigured = {
       dbScope: effective.dbScope === 'per-branch' ? 'per-branch' : 'shared',
       dbScopeSource: scopeSource(baseline, branch),
@@ -295,7 +297,7 @@ export async function probeBranchDb(
       dbName: target?.sourceDb ?? null,
       envKeys: target?.envKeys ?? [],
       infraId: target?.infra.id ?? null,
-      ...(target ? {} : { reason }),
+      ...(target ? {} : { reason: (reason || '').replace(/，无法定位要隔离的库/, '，无法定位要实测的库') }),
     };
 
     const containerName = branch.services?.[baseline.id]?.containerName || null;

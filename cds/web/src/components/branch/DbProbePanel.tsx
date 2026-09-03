@@ -8,6 +8,7 @@
  * 数据源：GET /api/branches/:id/db-probe（只读；docker inspect + 应用凭据实测；不落密码）。
  * 挂载点：分支抽屉「配置检查器」与「分支设置」、项目设置「数据库隔离」页签的各分支实测。
  */
+import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -206,7 +207,7 @@ export function DbProbePanel({
   branchId,
   autoLoad = true,
   reloadToken = 0,
-  title = '数据库：配置说的 / 实测到的',
+  title,
   onToast,
 }: {
   branchId: string;
@@ -214,7 +215,8 @@ export function DbProbePanel({
   autoLoad?: boolean;
   /** 外部递增即触发一次实测（项目页签「实测全部分支」） */
   reloadToken?: number;
-  title?: string;
+  /** 自定义标题（如分支名）按原样渲染，不套默认的大写眉标样式 */
+  title?: React.ReactNode;
   onToast?: (message: string) => void;
 }): JSX.Element {
   const [state, setState] = useState<PanelState>({ status: 'idle' });
@@ -249,10 +251,17 @@ export function DbProbePanel({
   return (
     <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3" data-db-probe-panel={branchId}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          <Activity className="h-3.5 w-3.5" />
-          {title}
-        </div>
+        {title !== undefined ? (
+          <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground">
+            <Activity className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 truncate">{title}</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <Activity className="h-3.5 w-3.5" />
+            数据库：配置说的 / 实测到的
+          </div>
+        )}
         <Button size="sm" variant={state.status === 'idle' ? 'outline' : 'ghost'} onClick={() => void load()} disabled={state.status === 'loading'} title="重新实测：docker inspect 容器 env，并用应用自己的凭据连一次库">
           {state.status === 'idle' ? '实测' : <RefreshCw className={state.status === 'loading' ? 'animate-spin' : ''} />}
         </Button>

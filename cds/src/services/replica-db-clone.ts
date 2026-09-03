@@ -315,7 +315,16 @@ export function resolveReplicaDbTarget(
   state: StateService,
   branch: BranchEntry,
   profile: BuildProfile,
+  opts: {
+    /**
+     * 基础设施实例的筛选口径。克隆默认只认台账 running（不往停掉的实例里写）；
+     * 库探测（db-probe）传 'any'：台账状态不是真相，容器是否真在跑由 docker 实测说了算，
+     * 探测只读、失败无害，不该被台账里一个过期的 error 挡在门外。
+     */
+    infraStatus?: 'running' | 'any';
+  } = {},
 ): { target: ReplicaDbTarget | null; reason?: string } {
+  const infraOk = (svc: InfraService): boolean => opts.infraStatus === 'any' || svc.status === 'running';
   // 与部署路径 getMergedEnv（branches.ts）同优先级：project customEnv → 分支 scope
   // → profile.env。分支级 env 覆写过库名/连接串时（Codex P1），不合入会把隔离目标
   // 解析到项目级默认库——克隆的不是该分支实际在用的库，或漏掉分支级连接串 key。
@@ -375,8 +384,7 @@ export function resolveReplicaDbTarget(
   )];
   let engine: ReplicaDbEngine | null = enginesPresent[0] ?? null;
   if (enginesPresent.length > 1) {
-    const running = state.getInfraServicesForProject(branch.projectId)
-      .filter((svc) => svc.status === 'running');
+    const running = state.getInfraServicesForProject(branch.projectId).filter(infraOk);
     const engineOf = engineOfInfra;
     const declared = new Set(profile.dependsOn || []);
     const byDepends = [...new Set(
@@ -415,9 +423,14 @@ export function resolveReplicaDbTarget(
   const envKeys = presentKeys.filter((key) => classifyDbEnvKey(key, neutralEngine) === engine && runtimeEnv[key] === sourceDb);
 
   const infraCandidates = state.getInfraServicesForProject(branch.projectId)
-    .filter((svc) => svc.status === 'running' && detectInfraDataKindForEngine(svc, engine));
+    .filter((svc) => infraOk(svc) && detectInfraDataKindForEngine(svc, engine));
   if (infraCandidates.length === 0) {
-    return { target: null, reason: `项目里没有运行中的 ${engine} 基础设施容器，无法执行克隆` };
+    return {
+      target: null,
+      reason: opts.infraStatus === 'any'
+        ? `项目里没有 ${engine} 基础设施实例，无法定位这个库在哪`
+        : `项目里没有运行中的 ${engine} 基础设施容器，无法执行克隆`,
+    };
   }
   // 实例定位（Codex P1）：优先 profile.dependsOn 显式声明；多实例同引擎且未声明时
   // 不再盲选第一个——按 env 原始值里的 CDS_<实例ID>_PORT/HOST 模板 token 关联

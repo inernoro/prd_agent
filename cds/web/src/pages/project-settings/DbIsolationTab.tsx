@@ -366,6 +366,11 @@ export function DbIsolationPanel({
  * 实测值——项目默认改完、分支重新部署后，在这里核对每条分支真的连到了哪个库。
  * 默认不自动探测（多分支时一开页就全量 docker inspect 太重），点「实测」再跑。
  */
+const BRANCH_STATUS_LABEL: Record<string, string> = {
+  idle: '待部署', building: '构建中', starting: '启动中', running: '运行中', restarting: '重启中',
+  stopping: '停止中', stopped: '已停止', error: '异常',
+};
+
 export function BranchProbeSection({ branches }: { branches: DbIsolationBranch[] }): JSX.Element {
   const [probeAllToken, setProbeAllToken] = useState(0);
   return (
@@ -393,7 +398,13 @@ export function BranchProbeSection({ branches }: { branches: DbIsolationBranch[]
               branchId={b.branchId}
               autoLoad={false}
               reloadToken={probeAllToken}
-              title={`${b.branch}${b.hasOverride ? '（有本分支覆盖）' : ''} · ${b.status}`}
+              title={(
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate font-mono text-sm">{b.branch}</span>
+                  {b.hasOverride ? <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">有本分支覆盖</span> : null}
+                  <span className="text-xs text-muted-foreground">{BRANCH_STATUS_LABEL[b.status] ?? b.status}</span>
+                </span>
+              )}
             />
           ))}
         </div>
