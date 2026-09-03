@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import importlib.util
+import subprocess
+import sys
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+
+
+SCRIPT = Path(__file__).parents[1] / "scripts" / "audit_prototype_package.py"
+SPEC = importlib.util.spec_from_file_location("prototype_audit", SCRIPT)
+assert SPEC and SPEC.loader
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+
+
+def make_zip(path: Path, entries: dict[str, bytes]) -> None:
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+
+
+class AuditPrototypePackageTests(unittest.TestCase):
+    def test_clean_static_package_is_strict_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "clean.zip"
+            make_zip(source, {
+                "index.html": b'<link rel="stylesheet" href="src/app.css"><script src="src/app.js"></script>',
+                "src/app.css": b"body{color:#111}",
+                "src/app.js": b"document.body.dataset.ready='1'",
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertTrue(report["strictReady"])
+            self.assertEqual("index.html", report["preferredEntry"])
+            self.assertEqual(2, report["localReferenceCount"])
+            self.assertEqual([], report["missingLocalReferences"])
+
+    def test_node_modules_and_external_cdn_trigger_optimization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.zip"
+            make_zip(source, {
+                "prototype/": b"",
+                "prototype/index.html": b'<script src="https://cdn.example/vue.js"></script><script src="src/app.js"></script><img src="/assets/logo.png">',
+                "prototype/src/app.js": b"new Vue({el:'#app'})",
+                "prototype/assets/logo.png": b"image",
+                "prototype/node_modules/vue/package.json": b"{}",
+                "prototype/package-lock.json": b"{}",
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertFalse(report["strictReady"])
+            self.assertTrue(report["optimizationRecommended"])
+            self.assertEqual(1, report["nodeModulesEntries"])
+            self.assertEqual(1, report["externalReferenceCount"])
+            self.assertEqual(2, report["localReferenceCount"])
+            self.assertEqual([], report["missingLocalReferences"])
+            self.assertEqual("prototype/", report["rootPrefix"])
+
+    def test_unsafe_paths_duplicates_and_missing_refs_are_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "unsafe.zip"
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("index.html", b'<script src="missing.js"></script>')
+                archive.writestr("../outside.txt", b"blocked")
+                archive.writestr("Asset.js", b"one")
+                archive.writestr("asset.js", b"two")
+                archive.writestr("same.txt", b"first")
+                archive.writestr("same.txt", b"second")
+
+            report = MODULE.audit_zip(source)
+
+            self.assertFalse(report["strictReady"])
+            self.assertIn("../outside.txt", report["unsafePaths"])
+            self.assertIn("same.txt", report["duplicatePaths"])
+            self.assertIn("asset.js", report["caseCollisions"])
+            self.assertEqual(["missing.js"], report["missingLocalReferences"])
+
+    def test_cli_strict_returns_two_for_source_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.zip"
+            make_zip(source, {
+                "index.html": b"<main>prototype</main>",
+                "node_modules/pkg/index.js": b"module.exports = {}",
+            })
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), str(source), "--strict", "--json"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(2, result.returncode)
+            self.assertFalse(__import__("json").loads(result.stdout)["strictReady"])
+
+
+if __name__ == "__main__":
+    unittest.main()
