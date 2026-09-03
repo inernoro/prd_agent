@@ -80,13 +80,18 @@ public static class McpBuiltinTools
         foreach (var t in All)
         {
             if (!string.Equals(t.Method, method, StringComparison.OrdinalIgnoreCase)) continue;
-            if (PathMatches(t.PathTemplate, path)) return t;
+            if (PathTemplateMatches(t.PathTemplate, path)) return t;
         }
         return null;
     }
 
-    /// <summary>路径模板匹配：{xxx} 占位吃掉任意一个路径段，其余段逐段相等。</summary>
-    private static bool PathMatches(string template, string path)
+    /// <summary>
+    /// 路径模板匹配：{xxx} 占位吃掉任意一个路径段，其余段逐段相等。
+    ///
+    /// 动态工具（AgentOpenEndpoint.Path）的直连反查也用这一个，别再写第二份 —— 两份匹配
+    /// 迟早在占位语义上各走各的，而其中一份走偏的后果是「某条路悄悄没了闸门」。
+    /// </summary>
+    internal static bool PathTemplateMatches(string template, string path)
     {
         var tpl = template.Split('/', StringSplitOptions.RemoveEmptyEntries);
         var seg = path.Split('/', StringSplitOptions.RemoveEmptyEntries);

@@ -86,6 +86,22 @@ public class McpDirectCallGateTests
     }
 
     [Fact]
+    public void 动态工具的登记路径_也能被同一个模板匹配认出来()
+    {
+        // 动态工具（AgentOpenEndpoint）在网关那条路上是扣写入额度的；直连闸门必须用同一个
+        // 匹配器认出它，否则登记表接口在直连这条路上仍是无上限的后门。
+        McpBuiltinTools.PathTemplateMatches("/api/report/weekly/generate", "/api/report/weekly/generate")
+            .ShouldBeTrue();
+        McpBuiltinTools.PathTemplateMatches("/api/report/{id}/publish", "/api/report/abc123/publish")
+            .ShouldBeTrue();
+        // 段数不同不算命中，占位不许跨段吃
+        McpBuiltinTools.PathTemplateMatches("/api/report/{id}", "/api/report/abc123/publish")
+            .ShouldBeFalse();
+        McpBuiltinTools.PathTemplateMatches("/api/report/weekly", "/api/report/monthly")
+            .ShouldBeFalse();
+    }
+
+    [Fact]
     public void 回环令牌_只认本进程自己那一份()
     {
         var signal = new McpLoopbackSignal();
