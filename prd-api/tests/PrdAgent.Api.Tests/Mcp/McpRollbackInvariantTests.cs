@@ -84,7 +84,7 @@ public class McpRollbackInvariantTests
     {
         var src = McpSourceGuard.StripComments(
             McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
-        const string call = "CleanupRolledBackEntryAsync(entry.Id)";
+        const string call = "CleanupRolledBackEntryAsync(entry.Id";
         var sites = 0;
         for (var i = src.IndexOf(call, StringComparison.Ordinal); i >= 0; i = src.IndexOf(call, i + 1, StringComparison.Ordinal))
         {
@@ -95,6 +95,50 @@ public class McpRollbackInvariantTests
                 customMessage: $"第 {sites} 处撤回没按清理结果说话：清理失败时它仍会说「已经撤回」，而条目还带着未落盘标记留在库里");
         }
         sites.ShouldBe(3, "撤回路径数量变了 —— 新增的那条也要按清理结果说话，确认后再改这个数");
+    }
+
+    /// <summary>
+    /// 正文已经提交的条目，撤回一个字都不许删。
+    ///
+    /// 写正文那一步是「先提交正文，再重锚评论、重算双链、拍版本快照」。派生那几步抛出来时，
+    /// 正文其实已经落库了 —— 而上一版一律走撤回，于是把一篇**已经可见、用户可能还编辑过**的
+    /// 文档连同版本与双链一起删掉。撤回是为了不留半成品，不是为了删用户的东西。
+    ///
+    /// 行为面能测的是说法与计数；「删不删」依赖 Mongo，由下面那条源码守卫盯判据的形状。
+    /// </summary>
+    [Fact]
+    public void 正文已经提交时_既不删也不许说没建成()
+    {
+        var msg = DocumentStoreOpenApiController.RollbackMessage(
+            "这篇文档没有建成", "请用同一个 clientRequestId 重试。",
+            DocumentStoreOpenApiController.RollbackOutcome.KeptCommitted);
+        msg.ShouldNotContain("没有建成", customMessage: "正文在库里，说没建成就是假的");
+        msg.ShouldNotContain("已经撤回");
+        msg.ShouldContain("已经写进去", customMessage: "得让调用方知道这篇在他的知识库里，别再建一遍");
+        msg.ShouldNotContain("请用同一个 clientRequestId 重试");
+
+        // 条目还在库里看得见，计数就不能退 —— 退了库摘要会少算一条，而且永远补不回来。
+        DocumentStoreOpenApiController.ShouldRestoreDocumentCount(
+            countedIn: true, DocumentStoreOpenApiController.RollbackOutcome.KeptCommitted).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// 撤回必须拿「插进去时那一刻的样子」当条件，而且判据与删除是同一条原子操作。
+    ///
+    /// 回读一次判、再无条件删，中间那段窗口里正文正好提交成功的话，删的就是刚落库的正文
+    /// （形状 1：判据比它该管的范围窄）。所以删除本身也得带同一个条件。
+    /// </summary>
+    [Fact]
+    public void 撤回的条件是插进去时那一刻的样子()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
+        src.ShouldContain("CleanupRolledBackEntryAsync(string entryId, DateTime placeholderUpdatedAt)",
+            customMessage: "撤回得知道「原封不动」长什么样，否则无从判断该不该删");
+        src.ShouldContain("e.Id == entryId && e.UpdatedAt == placeholderUpdatedAt",
+            customMessage: "删除必须带条件：回读与删除之间还有窗口，判据和写入要是同一条原子操作");
+        src.ShouldNotContain("DeleteOneAsync(e => e.Id == entryId, ",
+            customMessage: "又回到无条件删了 —— 正文提交成功的那一瞬会被删掉");
     }
 
     /// <summary>

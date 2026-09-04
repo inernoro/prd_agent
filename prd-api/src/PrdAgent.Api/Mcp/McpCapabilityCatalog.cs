@@ -194,6 +194,15 @@ public static class McpCapabilityCatalog
             if (string.Equals(owned, AdminPermissionCatalog.Super, StringComparison.OrdinalIgnoreCase))
                 return true;
 
+        // access 是所有功能权限的前置闸（AdminPermissionMiddleware：除 root/super 外，
+        // 没有 access 则一切功能权限一律不算数）。这里原来只比对应的那条功能权限，于是
+        // 「管理员把 access 收走、角色里那条 visual-agent.use 还留着」的人，界面上进不去，
+        // 却照样签得出密钥、也照样能拿旧密钥打那些**要花钱**的开放接口 ——
+        // 同一个判据在两条路上不一致，而这条路绕过的恰好是收权限那次操作的本意。
+        var hasAccess = ownedPermissions.Any(p =>
+            string.Equals(p, AdminPermissionCatalog.Access, StringComparison.OrdinalIgnoreCase));
+        if (!hasAccess) return false;
+
         foreach (var owned in ownedPermissions)
         {
             if (string.Equals(owned, required, StringComparison.OrdinalIgnoreCase)) return true;

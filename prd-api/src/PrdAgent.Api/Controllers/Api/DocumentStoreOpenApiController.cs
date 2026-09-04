@@ -467,7 +467,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         {
             // 条目在正文落盘期间被删掉了。撤回收尾照走（派生可能已经写了几行），
             // 但计数不退：删除那条路径自己已经扣过一次。
-            var outcome = await CleanupRolledBackEntryAsync(entry.Id);
+            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt);
             return Conflict(ApiResponse<object>.Fail("ENTRY_DELETED", RollbackMessage(
                 "这篇文档在正文落盘期间被删除了，内容没有写进去", "请用一个新的 clientRequestId 重新建。", outcome)));
         }
@@ -475,7 +475,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         {
             // 库没了，这条也不该留。回滚与下面那段同一套，只是给调用方的说法不同：
             // 让它「用同一个键重试」是错的指引 —— 库已经不在，重试只会一路 404。
-            var outcome = await CleanupRolledBackEntryAsync(entry.Id);
+            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt);
             return Conflict(ApiResponse<object>.Fail("STORE_DELETED", RollbackMessage(
                 "这个知识库在写入过程中被删除了，文档没有建成", "请换一个库再写。", outcome)));
         }
@@ -484,7 +484,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             // 没走完就把条目撤回去。留着的话，条目上已经带着幂等键了 ——
             // 智能体拿同一个 clientRequestId 重试要么命中去重拿到一篇空文档，
             // 要么永远撞上「还在落正文」的 409。一次存储抖动就此变成永久的残缺数据。
-            var outcome = await CleanupRolledBackEntryAsync(entry.Id);
+            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt);
             // 只有「这次真的是我删的」才退计数：条目早已被别人删掉时，扣减也早已由那条路径做过。
             if (ShouldRestoreDocumentCount(countedIn, outcome))
                 await _db.DocumentStores.UpdateOneAsync(
@@ -605,10 +605,17 @@ public class DocumentStoreOpenApiController : ControllerBase
     /// 用同一个键重试」，两句都是不算数的话（形状 3：同一个判据只长在一条路上）。
     /// </summary>
     internal static string RollbackMessage(string situation, string cleanAdvice, RollbackOutcome outcome)
-        => outcome == RollbackOutcome.Retained
-            ? situation + "；而且这次撤回没清干净，库里还留着一条带「正文未落盘」标记的残留记录 —— "
-              + "这个 clientRequestId 暂时不能复用，请换一个键重试，并让管理员看一下服务端日志。"
-            : situation + "，已经撤回。" + cleanAdvice;
+        => outcome switch
+        {
+            // 正文已经在库里了，说「没有建成」就是假的。这一支不用 situation：那句话的前提不成立。
+            RollbackOutcome.KeptCommitted =>
+                "正文其实已经写进去了，只是这次调用的收尾没走完（评论重锚、双链、版本快照可能不全）。"
+                + "这篇文档就在你的知识库里，不要用同一个键重试，也不要再建一遍。",
+            RollbackOutcome.Retained =>
+                situation + "；而且这次撤回没清干净，库里还留着一条带「正文未落盘」标记的残留记录 —— "
+                + "这个 clientRequestId 暂时不能复用，请换一个键重试，并让管理员看一下服务端日志。",
+            _ => situation + "，已经撤回。" + cleanAdvice,
+        };
 
     /// <summary>
     /// 回滚时要不要把库里的文档计数减回去。
@@ -638,8 +645,29 @@ public class DocumentStoreOpenApiController : ControllerBase
     /// 清理本身尽力而为：清不掉不能反过来把「已撤回」变成别的结论。
     /// </summary>
     /// <returns>见 <see cref="RollbackOutcome"/>。</returns>
-    private async Task<RollbackOutcome> CleanupRolledBackEntryAsync(string entryId)
+    private async Task<RollbackOutcome> CleanupRolledBackEntryAsync(string entryId, DateTime placeholderUpdatedAt)
     {
+        // **先确认这条还是那条原封不动的占位**，再谈撤回。
+        //
+        // 正文那一步是「先提交正文，再重锚评论、重算双链、拍版本快照」。派生那几步抛出来时，
+        // 正文其实已经落库了 —— 而这条路以前一律走撤回，于是把一篇**已经可见、用户可能还编辑过**
+        // 的文档连同版本与双链一起删掉。撤回是为了不留半成品，不是为了删用户的东西：
+        // 判断「该不该删」只能看这条现在是什么样，不能看「是我建的」。
+        //
+        // UpdatedAt 变了就说明它不再是我插进去的那条占位（正文提交会改它，用户保存也会改它），
+        // 一个字都不删；只把「正文未落盘」的标记摘掉，免得同键重试永远撞 409。
+        var current = await _db.DocumentEntries
+            .Find(e => e.Id == entryId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (current != null && current.UpdatedAt != placeholderUpdatedAt)
+        {
+            await _db.DocumentEntries.UpdateOneAsync(
+                e => e.Id == entryId,
+                Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
+                cancellationToken: CancellationToken.None);
+            return RollbackOutcome.KeptCommitted;
+        }
+
         // 顺序要紧：**先清派生，最后删条目**。
         // 反过来的话，条目一删，那个确定性 id 就空出来了；等在旁边的重试可以立刻插入新条目
         // 并写出它自己的版本与双链，而这边接着执行的清理会按同一个 entryId 把**新那次**的
@@ -663,8 +691,18 @@ public class DocumentStoreOpenApiController : ControllerBase
         // 必须看 DeletedCount，不能一律报「删掉了」：正文还在落盘时用户可能已经在界面上把这条删了，
         // 而那条路径（DocumentStoreController.DeleteEntry）自己已经把 DocumentCount 扣过一次。
         // 这里再报一次「是我删的」，回滚就会第二次扣同一篇，计数能被扣成负数。
-        var deleted = await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entryId, CancellationToken.None);
-        return deleted.DeletedCount == 1 ? RollbackOutcome.Removed : RollbackOutcome.AlreadyGone;
+        // 删除本身也带上同一个条件：回读与删除之间还有一段窗口，正文正好在那儿提交成功的话，
+        // 无条件删等于把刚落库的正文删掉 —— 判据和写入必须是同一条原子操作。
+        var deleted = await _db.DocumentEntries.DeleteOneAsync(
+            e => e.Id == entryId && e.UpdatedAt == placeholderUpdatedAt, CancellationToken.None);
+        if (deleted.DeletedCount == 1) return RollbackOutcome.Removed;
+        // 没删掉：要么它早就不在了（用户删的，那条路径已经扣过计数），要么它在这一瞬变了。
+        // 后一种情况下派生记录已经被上面清掉了 —— 条目本身保住了，版本与双链可能缺一段。
+        // 这个窗口窄且代价可控（正文还在，重新保存一次就会重算），比把整条删掉好得多。
+        var after = await _db.DocumentEntries
+            .Find(e => e.Id == entryId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        return after == null ? RollbackOutcome.AlreadyGone : RollbackOutcome.KeptCommitted;
     }
 
     /// <summary>条目在正文落盘期间被删掉了。同样单独一个类型，收尾与说法都与库被删那条不同。</summary>
@@ -684,6 +722,12 @@ public class DocumentStoreOpenApiController : ControllerBase
         AlreadyGone,
         /// <summary>派生没清干净，条目被刻意留着占住那个确定性 id —— 计数也不退。</summary>
         Retained,
+
+        /// <summary>
+        /// 条目已经不是那条原封不动的占位了 —— 正文其实提交成功了，或者用户在界面上动过它。
+        /// 一个字都不许删，计数也不退（它还在库里看得见）。
+        /// </summary>
+        KeptCommitted,
     }
 
     /// <summary>条目「正文还没落盘」的标记字段（Mongo 路径写法，供 Unset 用）。</summary>

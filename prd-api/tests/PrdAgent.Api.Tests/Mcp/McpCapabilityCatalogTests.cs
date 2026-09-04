@@ -173,7 +173,7 @@ public class McpCapabilityCatalogTests
     [Fact]
     public void PermissionsAllowScope_RejectsScopeTheUserDoesNotOwn()
     {
-        var owned = new[] { "document-store.read" };
+        var owned = new[] { "access", "document-store.read" };
         McpCapabilityCatalog.PermissionsAllowScope(owned, McpCapabilityCatalog.ScopeVisualUse)
             .ShouldBeFalse("用户自己没有视觉创作权限，就不该能签出一把带 visual-agent:use 的密钥");
     }
@@ -181,14 +181,35 @@ public class McpCapabilityCatalogTests
     [Fact]
     public void PermissionsAllowScope_AcceptsExactPermission()
     {
-        var owned = new[] { "visual-agent.use" };
+        var owned = new[] { "access", "visual-agent.use" };
         McpCapabilityCatalog.PermissionsAllowScope(owned, McpCapabilityCatalog.ScopeVisualUse).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// access 是所有功能权限的前置闸，签密钥这条路也得认。
+    ///
+    /// 管理员把 access 收走、角色里那条功能权限还留着的人，界面上已经进不去了；
+    /// 而这个判据原来只比功能权限，于是他照样签得出密钥、照样能拿旧密钥打那些要花钱的
+    /// 开放接口 —— 同一个判据在两条路上不一致，绕过的恰好是收权限那次操作的本意。
+    /// 签发与鉴权读的都是这一个函数，所以补在这里两条路一起收。
+    /// </summary>
+    [Fact]
+    public void PermissionsAllowScope_没有access就一律不给()
+    {
+        McpCapabilityCatalog.PermissionsAllowScope(new[] { "visual-agent.use" },
+            McpCapabilityCatalog.ScopeVisualUse).ShouldBeFalse(
+            "access 被收走的人，界面上进不去，就不该还能签出密钥去打要花钱的接口");
+        McpCapabilityCatalog.PermissionsAllowScope(new[] { "web-pages.write" },
+            McpCapabilityCatalog.ScopeWebPagesRead).ShouldBeFalse("写蕴含读也绕不过前置闸");
+        // super 是全站兜底，不受前置闸约束（AdminPermissionMiddleware 就是这么认的）
+        McpCapabilityCatalog.PermissionsAllowScope(new[] { "super" },
+            McpCapabilityCatalog.ScopeVisualUse).ShouldBeTrue();
     }
 
     [Fact]
     public void PermissionsAllowScope_WriteImpliesRead()
     {
-        var owned = new[] { "web-pages.write" };
+        var owned = new[] { "access", "web-pages.write" };
         McpCapabilityCatalog.PermissionsAllowScope(owned, McpCapabilityCatalog.ScopeWebPagesRead).ShouldBeTrue();
         McpCapabilityCatalog.PermissionsAllowScope(owned, McpCapabilityCatalog.ScopeWebPagesWrite).ShouldBeTrue();
     }
@@ -196,7 +217,7 @@ public class McpCapabilityCatalogTests
     [Fact]
     public void PermissionsAllowScope_ReadDoesNotImplyWrite()
     {
-        var owned = new[] { "web-pages.read" };
+        var owned = new[] { "access", "web-pages.read" };
         McpCapabilityCatalog.PermissionsAllowScope(owned, McpCapabilityCatalog.ScopeWebPagesWrite).ShouldBeFalse();
     }
 
