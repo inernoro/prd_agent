@@ -56,9 +56,7 @@ public sealed class AuthorizationHealthController : ControllerBase
             x.ExpiresAt is null || x.ExpiresAt.Value.AddDays(x.GracePeriodDays) > now);
         var enabledPlatforms = enabledPlatformsTask.Result;
         var externalAuthorizations = externalAuthorizationsTask.Result;
-        var genericFailures = failures.Count(x => x.StatusCode == 401
-            && (string.IsNullOrWhiteSpace(x.ErrorCode)
-                || string.Equals(x.ErrorCode, ErrorCodes.UNAUTHORIZED, StringComparison.OrdinalIgnoreCase)));
+        var genericFailures = failures.Count(x => x.StatusCode == 401 && !IsClassifiedFailure(x));
 
         var modelKeyFailures = enabledPlatforms.Count(platform =>
             !PlatformApiKeyPolicy.IsApiKeyOptional(platform)
@@ -144,7 +142,7 @@ public sealed class AuthorizationHealthController : ControllerBase
                 GenericUnauthorized = genericFailures,
                 ClassifiedRate = failures.Count == 0
                     ? 1
-                    : Math.Round((double)(failures.Count - genericFailures) / failures.Count, 4),
+                    : Math.Round((double)failures.Count(IsClassifiedFailure) / failures.Count, 4),
             },
             Systems = systems,
             RecentFailures = failures.Select(ToFailure).ToList(),
@@ -290,6 +288,11 @@ public sealed class AuthorizationHealthController : ControllerBase
             Action = action,
         };
     }
+
+    internal static bool IsClassifiedFailure(ApiRequestLog item) =>
+        !string.IsNullOrWhiteSpace(item.ErrorCode)
+        && !(item.StatusCode == StatusCodes.Status401Unauthorized
+            && string.Equals(item.ErrorCode, ErrorCodes.UNAUTHORIZED, StringComparison.OrdinalIgnoreCase));
 
     private static bool IsTruthy(string? value) => value is not null
         && (value.Equals("1", StringComparison.OrdinalIgnoreCase)
