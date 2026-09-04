@@ -514,6 +514,11 @@ try {
     version: 0,
   };
   const ctx = await browser.newContext({
+    // 只有这一个视口——整个脚本里视口就出现这一次，即这条每日验收**没有任何
+    // 移动端档**。2026-09-04 用户在手机上撞到 CDS 控制台向导步骤 03 没有前进出口，
+    // 追根源发现：就算当初把那一屏加进下面的 PAGES，桌面单档照样抓不到它。
+    // 窄屏档已先在 CDS 控制台那条验收上落地；这边等它稳定跑一周再补，判据与
+    // 计时口径见 doc/debt.acceptance.system.md「每日验收从来没有窄屏档」。
     viewport: { width: 1600, height: 1000 },
     storageState: { cookies: [], origins: [{ origin: BASE, localStorage: [{ name: 'prd-admin-auth', value: JSON.stringify(auth) }] }] },
   });
