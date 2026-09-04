@@ -193,6 +193,24 @@ describe('数据台账路由', () => {
     expect(again.body.added).toEqual([]);
   });
 
+  it('扫描补录核实：记成已丢弃的库还在实例上 → 复活为活跃并注明（真实分支复验：删分支丢库后重建分支）', async () => {
+    state.upsertDbLedgerEntry({ id: 'dbl_gone', projectId: 'p', kind: 'per-branch', engine: 'mysql', dbName: 'shop_feat_x', infraId: 'mysql', infraContainer: 'cds-infra-mysql', sourceDb: 'shop', branchId: 'p-feat-x', branch: 'feat/x', profileId: 'api', origin: 'cds', status: 'dropped', droppedAt: NOW, droppedBy: 'admin', droppedForced: true, createdAt: NOW, updatedAt: NOW, backups: [] });
+    state.save();
+    const res = await request(server, 'POST', '/api/projects/p/db-ledger/scan');
+    expect(res.status).toBe(200);
+    expect(res.body.revived.map((e: any) => e.dbName)).toEqual(['shop_feat_x']);
+    const rec = state.getDbLedgerEntry('dbl_gone')!;
+    expect(rec.status).toBe('active');
+    expect(rec.droppedAt).toBeUndefined();
+    expect(rec.note).toMatch(/复活/);
+    // 丢弃后实例上真没有了的库不复活
+    state.upsertDbLedgerEntry({ ...rec, id: 'dbl_really_gone', dbName: 'shop_feat_gone', status: 'dropped', droppedAt: NOW });
+    state.save();
+    const again = await request(server, 'POST', '/api/projects/p/db-ledger/scan');
+    expect(again.body.revived).toEqual([]);
+    expect(state.getDbLedgerEntry('dbl_really_gone')!.status).toBe('dropped');
+  });
+
   it('备份运行时条目（还没有台账记录的隔离库）会先固化成台账记录', async () => {
     const view = await request(server, 'GET', '/api/projects/p/db-ledger');
     const iso = view.body.entries.find((e: any) => e.dbName === 'shop_feat_x_rs_ab12cd_r1');

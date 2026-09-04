@@ -253,6 +253,7 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
     try {
       const view = buildProjectDbLedgerView(stateService, p.id, now());
       const known = new Set<string>(view.entries.map((e) => e.dbName));
+      const revivedEntries: DbLedgerEntry[] = [];
       // 项目内所有服务的源库（共享库本体）也算已知
       for (const d of collectDerivedDbs(stateService, p.id)) known.add(d.sourceDb);
       for (const branch of stateService.getBranchesForProject(p.id)) {
@@ -268,6 +269,15 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
           // 这里把 known 里所有条目的 sourceDb 也算进去
           const listed = await ops.listDatabases(engine, infra);
           scanned.push({ infraId: infra.id, engine, databases: listed });
+          // 扫描核实：台账记成「已丢弃」的库又出现在实例上（删分支丢库后又重建、或丢弃其实没成功）→ 复活为活跃
+          for (const rec of stateService.getDbLedger(p.id)) {
+            if (rec.status !== 'dropped' || rec.infraContainer !== infra.containerName || !listed.includes(rec.dbName)) continue;
+            const t = now().toISOString();
+            const { droppedAt: _da, droppedBy: _db, droppedForced: _df, ...rest } = rec;
+            const revived: DbLedgerEntry = { ...rest, status: 'active', updatedAt: t, note: `扫描 ${infra.id} 核实：库仍在实例上，已从「已丢弃」复活（${t}）` };
+            stateService.upsertDbLedgerEntry(revived);
+            revivedEntries.push(revived);
+          }
           const sourceDbs = new Set(view.entries.map((e) => e.sourceDb).filter((x): x is string => !!x));
           for (const db of unknownDatabases(listed, new Set([...known, ...sourceDbs]), new Set(SYSTEM_DBS[engine]))) {
             const t = now().toISOString();
@@ -284,8 +294,8 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
           scanned.push({ infraId: infra.id, engine, databases: [], error: (err as Error).message });
         }
       }
-      if (added.length > 0) stateService.save();
-      res.json({ added, scanned, view: buildProjectDbLedgerView(stateService, p.id, now()) });
+      if (added.length > 0 || revivedEntries.length > 0) stateService.save();
+      res.json({ added, revived: revivedEntries, scanned, view: buildProjectDbLedgerView(stateService, p.id, now()) });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
