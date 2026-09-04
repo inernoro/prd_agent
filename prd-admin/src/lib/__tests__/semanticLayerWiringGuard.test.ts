@@ -593,8 +593,14 @@ describe('右上角浮层不许再被硬编码偏移的浮动 chrome 压住', ()
     // 那个数字复制了浮层几何却不跟着改：对话面板 420 时写 436，分层面板（right 444、
     // 宽 300、z-40）一上线，z-50 的 pill 就压住了它的收起按钮，而没有任何东西会变红。
     // 右上角是一叠宽度随开关变化的浮层，任何固定偏移都会再漂一次。
-    const chrome = fullscreen.slice(fullscreen.indexOf('isEditor && !hideFloatingChrome'));
-    const pill = chrome.slice(0, chrome.indexOf('</div>'));
+    // 锚在 pill 自己身上（TipsEntryButton），不要锚在渲染条件上：
+    // 那个条件原本只有 pill 用，所以 indexOf 恰好命中；后来浮动返回钮也限定成
+    // 「只在编辑器渲染」、用了同一个条件，indexOf 就先命中了返回钮，
+    // 这条守卫开始对着一颗按钮判「pill 有没有靠右」——读的不是要判的那个东西
+    //（判据纪律形状 6：取了第一处而不是该取的那处）。
+    const tipsAt = fullscreen.indexOf('<TipsEntryButton');
+    expect(tipsAt, '全屏页应有教程 pill').toBeGreaterThan(0);
+    const pill = fullscreen.slice(fullscreen.lastIndexOf('<div', tipsAt), tipsAt);
     // 判据是**不变量**（不靠右侧、不用像素级 right 偏移躲浮层），不是某一版的具体写法。
     // 上一版写死 `left-\[\d+px\]`，我自己把落点从「返回钮右边」改到「返回钮下边」
     // （left-5 top-[68px]）它就红了——又一次断言实现字面（形状 4a）。
