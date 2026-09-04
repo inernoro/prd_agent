@@ -478,14 +478,23 @@ public class DocumentStoreOpenApiController : ControllerBase
     internal static RevisionCheck CheckRevision(string? expected, DateTime actual)
     {
         if (string.IsNullOrWhiteSpace(expected)) return RevisionCheck.NotProvided;
+        // 只用 RoundtripKind。它与 AdjustToUniversal 是互斥的组合，凑在一起 TryParse 会直接抛
+        // ArgumentException —— 不是返回 false，是把这条判据整个炸掉。上一版就是这么写的，
+        // 本地没有 dotnet 编译不了，靠这条守卫在 CI 上照出来的。
         if (!DateTime.TryParse(expected, System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.RoundtripKind
-                | System.Globalization.DateTimeStyles.AdjustToUniversal, out var parsed))
+                System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
             return RevisionCheck.Unparsable;
-        return Math.Abs((parsed.ToUniversalTime() - actual.ToUniversalTime()).TotalMilliseconds) < 1
+        // 没带时区信息的按 UTC 认：库里存的就是 UTC，按本机时区解释会凭空差几个小时，
+        // 于是一个正确的令牌被判成冲突 —— 比不校验更糟，因为它把能写的写不进去了。
+        return Math.Abs((AsUtc(parsed) - AsUtc(actual)).TotalMilliseconds) < 1
             ? RevisionCheck.Match
             : RevisionCheck.Mismatch;
     }
+
+    private static DateTime AsUtc(DateTime value)
+        => value.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(value, DateTimeKind.Utc)
+            : value.ToUniversalTime();
 
     /// <summary>覆盖某篇文档的正文（会留一版历史，可在界面里回滚）。</summary>
     [HttpPut("entries/{entryId}/content")]
