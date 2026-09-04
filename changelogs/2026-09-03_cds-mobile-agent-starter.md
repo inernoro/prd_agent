@@ -15,6 +15,7 @@
 | test | cds | 抽屉的内容锚点限定在抽屉容器内、且取抽屉独有的值（分支 previewSlug）——原来在整页 body 找分支名，那个串在抽屉背后的分支卡标题上也有，抽屉退化成空壳照样绿；容器找不到判失败，不静默放行 |
 | test | cds | 内容锚点改用各页自己响应里的值：project-settings 取环境变量键名、cds-settings 取自更新分支名、发布中心取 /api/releases/center 自己的数据，不再用共享项目名或页面硬编码标题 |
 | fix | cds | 探针跑失败时不再泄漏 dev server：浏览器启动挪进 cleanup guard，且 stop 改收整个进程组——只杀 `pnpm exec vite` 这个包装进程的话，真正的 vite 是孙进程会活下来占着 strictPort，下一次直接起不来 |
+| fix | cds | dev server 的就绪判据改成带词边界的 `\bready in \d+`——端口被占时 vite 打的 `Port N is already in use` 里，`already in` 含有子串 `ready in`，旧判据据此判「起来了」，整套布局判据会对着另一个进程的响应跑完并全绿 |
 | fix | cds | dev server 在就绪超时那条路径上也收进程组——上一处修复只覆盖了「浏览器起不来」，vite 起来了却没吐出就绪字样时 stop 还没构造出来就抛了，进程组照样没人收 |
 | refactor | cds | 抽出 scripts/lib/vite-dev-server.mjs，两个布局探针共用一份 dev server 启动逻辑 |
 | ops | cds | cds.yml 补 Chromium 安装与窄屏可达性判据步骤 |

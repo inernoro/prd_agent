@@ -51,7 +51,16 @@ export async function startViteDevServer({ timeoutMs = 30000 } = {}) {
       const timer = setTimeout(() => reject(new Error(`vite dev server ${timeoutMs}ms 没起来`)), timeoutMs);
       const onData = (buf) => {
         const text = buf.toString();
-        if (text.includes('ready in') || text.includes(String(port))) {
+        /*
+         * 只认 vite 自己那行 `ready in <n> ms`，而且必须带词边界。
+         *
+         * 两个坑叠在一起：① 旧判据把「输出里出现了端口号」也当就绪，而端口
+         * 被占时的错误信息里同样带着端口号；② 去掉 ① 之后仍然误判——因为
+         * `Port 5299 is already in use` 里 **already in** 含有子串 `ready in`。
+         * 两者任一命中，整套布局判据就会对着**另一个进程**的响应跑完并全绿
+         * （实测：拿到占位服务器返回的 IMPOSTOR，判据无一报错）。
+         */
+        if (/\bready in \d+/.test(text)) {
           clearTimeout(timer);
           resolve();
         }
@@ -61,6 +70,7 @@ export async function startViteDevServer({ timeoutMs = 30000 } = {}) {
       child.on('exit', (code) => { clearTimeout(timer); reject(new Error(`vite 退出，code=${code}`)); });
     });
   } catch (err) {
+    stop();
     throw err;
   }
   // dev server 的第一个请求要现编译，给它一点时间再开始量。
