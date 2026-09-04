@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, KeyRound, Plug, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { PrdLoader } from '@/components/ui/PrdLoader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -37,8 +37,16 @@ export default function McpConsolePage() {
   // 就跟着 state 一起没了，而钥匙已经在服务端生效了。
   const [refreshing, setRefreshing] = useState(false);
 
+  // 代次令牌：顶部刷新还在飞的时候发一把新钥匙，onCreated 会再触发一次 load ——
+  // 两次请求可以乱序回来，而先发的那次看到的还是「还没有这把钥匙」的世界。
+  // 它后落地就会把新客户端与它的配额从界面上抹掉，用户刚发的钥匙一关弹窗就不见了。
+  // 调用记录那一列上一轮已经用了同样的做法，这一处是同族里漏掉的兄弟。
+  const loadGenRef = useRef(0);
+
   const load = useCallback(async () => {
+    const gen = ++loadGenRef.current;
     const res = await getMcpConsoleOverview();
+    if (gen !== loadGenRef.current) return;   // 号过期：期间又发起了一次，丢弃这份旧结果
     if (!res.success || !res.data) {
       setLoadError(res.error?.message || '接入台数据没读到，可能是网络断开或服务端异常。');
       setLoading(false);

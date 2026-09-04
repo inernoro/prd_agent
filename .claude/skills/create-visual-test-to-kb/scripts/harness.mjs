@@ -617,10 +617,17 @@ export async function shot(page, outDir, name, caption, opts = {}) {
   // 现在无论调用方传没传 theme，都以页面当时真实渲染出来的为准。
   const resolvedTheme = await page.evaluate(() => {
     const root = document.documentElement;
-    const declared = root.getAttribute('data-theme') || document.body?.getAttribute('data-theme');
-    if (declared === 'light' || declared === 'dark') return declared;
-    if (root.classList.contains('dark') || document.body?.classList.contains('dark')) return 'dark';
-    if (root.classList.contains('light') || document.body?.classList.contains('light')) return 'light';
+    // 标记只当**线索**，不当结论。切主题时 data-theme / class 先翻，对应的 CSS 没生效
+    // （变量没加载、样式表 404、选择器写错）是完全可能的 —— 而那恰恰是双主题验收要抓的
+    // 那一种失败：标记说 light、屏幕上是暗的，证据却按 light 记账，覆盖检查还判通过。
+    // 所以先量真实底色；量得出来就以量到的为准，量不出来才退回标记。
+    const marker = (() => {
+      const declared = root.getAttribute('data-theme') || document.body?.getAttribute('data-theme');
+      if (declared === 'light' || declared === 'dark') return declared;
+      if (root.classList.contains('dark') || document.body?.classList.contains('dark')) return 'dark';
+      if (root.classList.contains('light') || document.body?.classList.contains('light')) return 'light';
+      return null;
+    })();
     // 兜底量真实底色，而不是问 prefers-color-scheme —— 无头浏览器默认答 light，
     // 于是一整套暗色截图会被记成 light（这正是那次 20 张全记错的成因）。
     //
@@ -641,6 +648,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     };
     const measured = opaqueTheme(document.body) || opaqueTheme(root);
     if (measured) return measured;
+    if (marker) return marker;
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }).catch(() => null);
   const actualPageUrl = page.url();

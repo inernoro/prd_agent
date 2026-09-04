@@ -224,8 +224,13 @@ public class LiteraryOpenApiController : ControllerBase
         // replace 是整篇覆盖，此前只按 workspaceId 过滤、无条件写下去：智能体 T0 读到、
         // 用户 T1 在界面上改了、智能体 T2 拿旧稿覆盖 —— 用户那次编辑就没了。
         // append 那一路本来就带「正文还是我读到的那份」这个条件，缺的一直是 replace 这一半。
+        var revisionChecked = false;
         switch (McpRevision.Check(req?.ExpectedUpdatedAt, ws.UpdatedAt))
         {
+            case RevisionCheck.Match:
+                // 记下来：真正那条 UpdateOne 必须带上同一个条件，否则这次校验只是个说法。
+                revisionChecked = true;
+                break;
             case RevisionCheck.Unparsable:
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                     "expectedUpdatedAt 认不出来。把 map_literary_get_workspace 回的 updatedAt 原样传回来即可。"));
@@ -274,19 +279,28 @@ public class LiteraryOpenApiController : ControllerBase
                 .Set(x => x.ArticleContentWithMarkers, null);
         }
 
-        // append 是「读出来 + 拼上去 + 写回去」，两次并发会各自读到同一份旧正文，
-        // 后写的那次把先写的整段盖掉 —— 用户看到的是「有一段凭空没了」。
-        // 所以写回时带上「正文还是我读到的那份」这个条件；不成立就不写，让调用方重读再来。
-        // replace 是调用方明确要整篇覆盖，不加这个条件（否则正常的连续覆盖会互相打架）。
+        // 写回一律带条件，只是条件不同：
+        // - append 是「读出来 + 拼上去 + 写回去」，条件是「正文还是我读到的那份」，
+        //   否则两次并发各读到同一份旧正文，后写的把先写的整段盖掉。
+        // - replace 带了版本令牌时，条件是「UpdatedAt 还是我刚校验过的那个」。
+        //   上一版只在**进函数时**比了一次令牌，真正那条 UpdateOne 却只按 id 过滤 ——
+        //   校验和写入之间那段窗口里用户改一次，照样被盖掉。检查和写入必须是同一个条件，
+        //   否则那次检查只是个说法（predicate-and-wiring-discipline 形状 2：链路只建一半）。
+        var idFilter = Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, ws.Id);
+        var guarded = append || revisionChecked;
         var filter = append
-            ? Builders<ImageMasterWorkspace>.Filter.And(
-                Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, ws.Id),
+            ? Builders<ImageMasterWorkspace>.Filter.And(idFilter,
                 Builders<ImageMasterWorkspace>.Filter.Eq(x => x.ArticleContent, ws.ArticleContent))
-            : Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, ws.Id);
+            : revisionChecked
+                ? Builders<ImageMasterWorkspace>.Filter.And(idFilter,
+                    Builders<ImageMasterWorkspace>.Filter.Eq(x => x.UpdatedAt, ws.UpdatedAt))
+                : idFilter;
         var result = await _db.ImageMasterWorkspaces.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
-        if (append && result.MatchedCount == 0)
+        if (guarded && result.MatchedCount == 0)
             return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
-                "追加期间正文被另一次写入改过，这次没有写进去。请先用 map_literary_get_workspace 重新读一遍正文，再决定怎么写。"));
+                append
+                    ? "追加期间正文被另一次写入改过，这次没有写进去。请先用 map_literary_get_workspace 重新读一遍正文，再决定怎么写。"
+                    : "这篇正文在你准备覆盖的这段时间里被改过，本次覆盖没有执行。请先用 map_literary_get_workspace 重新读一遍，再决定怎么写。"));
 
         return Ok(ApiResponse<object>.Ok(new
         {

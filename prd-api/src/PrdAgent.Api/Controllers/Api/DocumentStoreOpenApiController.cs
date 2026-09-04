@@ -399,8 +399,14 @@ public class DocumentStoreOpenApiController : ControllerBase
 
             if (content.Length > 0)
             {
-                await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
-                    DocumentVersionSource.Edit, contentTypeOverride: "text/markdown");
+                // 带上刚插进去的那条的 UpdatedAt 并看返回值：用户可以在这一步刚起头时就把
+                // 这条占位条目删掉（界面上它已经可见）。写入服务按 id 更新，只有在给了
+                // expectedUpdatedAt 时才把「一行没命中」当成冲突 —— 不给的话它会照常往下写，
+                // 于是留下一批指向一条已经不存在的条目的正文与版本，接口还回成功。
+                var placed = await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
+                    DocumentVersionSource.Edit, contentTypeOverride: "text/markdown",
+                    expectedUpdatedAt: entry.UpdatedAt);
+                if (placed.Conflicted) throw new EntryVanishedException(entry.Id);
 
                 // 调用方明确给了摘要就把它写回去。写入服务无条件用正文前 200 字当摘要
                 // （那是给在线编辑准备的默认行为），于是「同时给 summary 和 content」这种最自然的
@@ -419,6 +425,14 @@ public class DocumentStoreOpenApiController : ControllerBase
                     finish,
                     cancellationToken: CancellationToken.None);
             }
+        }
+        catch (EntryVanishedException)
+        {
+            // 条目在正文落盘期间被删掉了。撤回收尾照走（派生可能已经写了几行），
+            // 但计数不退：删除那条路径自己已经扣过一次。
+            await CleanupRolledBackEntryAsync(entry.Id);
+            return Conflict(ApiResponse<object>.Fail("ENTRY_DELETED",
+                "这篇文档在正文落盘期间被删除了，内容没有写进去。请用一个新的 clientRequestId 重新建。"));
         }
         catch (StoreVanishedException)
         {
@@ -590,6 +604,10 @@ public class DocumentStoreOpenApiController : ControllerBase
         var deleted = await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entryId, CancellationToken.None);
         return deleted.DeletedCount == 1 ? RollbackOutcome.Removed : RollbackOutcome.AlreadyGone;
     }
+
+    /// <summary>条目在正文落盘期间被删掉了。同样单独一个类型，收尾与说法都与库被删那条不同。</summary>
+    private sealed class EntryVanishedException(string entryId)
+        : InvalidOperationException($"条目在正文落盘期间被删除（entryId={entryId}）");
 
     /// <summary>库在写入过程中被主人删掉了。单独一个类型，是为了让它走自己的收尾与说法。</summary>
     private sealed class StoreVanishedException(string storeId)
