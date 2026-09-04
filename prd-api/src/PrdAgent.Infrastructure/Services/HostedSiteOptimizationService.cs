@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
@@ -851,7 +852,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         var now = DateTime.UtcNow;
         var queued = await _db.HostedSiteOptimizationSessions
             .Find(x => x.Status == HostedSiteOptimizationStatuses.Queued)
-            .SortBy(x => x.CreatedAt)
+            .SortBy(x => x.UpdatedAt)
             .Limit(QueueBacklogThreshold + 1)
             .ToListAsync(ct);
         var holders = await _db.HostedSiteOptimizationSessions
@@ -861,7 +862,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             .SortBy(x => x.UpdatedAt)
             .Limit(100)
             .ToListAsync(ct);
-        var oldestQueuedAt = queued.FirstOrDefault()?.CreatedAt;
+        var oldestQueuedAt = queued.FirstOrDefault()?.UpdatedAt;
         var oldestAge = oldestQueuedAt.HasValue ? now - oldestQueuedAt.Value : (TimeSpan?)null;
         var expiredHolderCount = holders.Count(x => x.LeaseExpiresAt.HasValue && x.LeaseExpiresAt <= now);
         var healthy = IsQueueHealthy(queued.Count, oldestAge, expiredHolderCount);
@@ -1724,6 +1725,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 var value = match.Groups["path"].Value;
                 if (value.StartsWith('.') || value.StartsWith('/')) yield return value;
             }
+            foreach (var reference in ImportMapReferences(text))
+                yield return reference;
             yield break;
         }
         if (extension == ".css")
@@ -1743,6 +1746,52 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             yield return match.Groups["path"].Value;
         foreach (Match match in CssImportReferenceRegex().Matches(text))
             yield return match.Groups["path"].Value;
+    }
+
+    private static IReadOnlyList<string> ImportMapReferences(string html)
+    {
+        var references = new List<string>();
+        foreach (Match block in ImportMapScriptRegex().Matches(html))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(block.Groups["body"].Value);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) continue;
+                AddImportMapTargets(document.RootElement, "imports", references);
+                if (!document.RootElement.TryGetProperty("scopes", out var scopes)
+                    || scopes.ValueKind != JsonValueKind.Object)
+                    continue;
+                foreach (var scope in scopes.EnumerateObject())
+                {
+                    if (scope.Value.ValueKind != JsonValueKind.Object) continue;
+                    foreach (var mapping in scope.Value.EnumerateObject())
+                    {
+                        if (mapping.Value.ValueKind == JsonValueKind.String)
+                            references.Add(mapping.Value.GetString()!);
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // 浏览器同样会忽略无效 import map；不把无效 JSON 当作运行依赖。
+            }
+        }
+        return references;
+    }
+
+    private static void AddImportMapTargets(
+        JsonElement root,
+        string propertyName,
+        ICollection<string> references)
+    {
+        if (!root.TryGetProperty(propertyName, out var imports)
+            || imports.ValueKind != JsonValueKind.Object)
+            return;
+        foreach (var mapping in imports.EnumerateObject())
+        {
+            if (mapping.Value.ValueKind == JsonValueKind.String)
+                references.Add(mapping.Value.GetString()!);
+        }
     }
 
     private static void RestoreReferencedRuntimeFiles(
@@ -1993,6 +2042,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
     [GeneratedRegex("<script\\b[^>]*>(?<body>[\\s\\S]*?)</script\\s*>", RegexOptions.IgnoreCase)]
     private static partial Regex InlineScriptRegex();
+
+    [GeneratedRegex("<script\\b(?=[^>]*\\btype\\s*=\\s*(?:\\\"importmap\\\"|'importmap'|importmap(?:\\s|>)))[^>]*>(?<body>[\\s\\S]*?)</script\\s*>", RegexOptions.IgnoreCase)]
+    private static partial Regex ImportMapScriptRegex();
 
     [GeneratedRegex("<style\\b[^>]*>(?<body>[\\s\\S]*?)</style\\s*>", RegexOptions.IgnoreCase)]
     private static partial Regex InlineStyleRegex();

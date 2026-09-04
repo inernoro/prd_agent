@@ -141,6 +141,30 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_ImportMapTargetsIntoNodeModules_RestoresRequiredDependencies()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = """
+                <script type="importmap">
+                {"imports":{"pkg":"./node_modules/pkg/index.js"},"scopes":{"./feature/":{"scoped":"./node_modules/scoped/index.js"}}}
+                </script>
+                <script type="module">import 'pkg'; import 'scoped';</script>
+                """,
+            ["node_modules/pkg/index.js"] = "export const ready = true;",
+            ["node_modules/scoped/index.js"] = "export const scoped = true;",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeTrue();
+        result.OptimizedFiles.ShouldBe(3);
+    }
+
+    [Fact]
     public void Analyze_UnquotedHtmlResourceAttribute_RestoresRequiredDependency()
     {
         var files = new Dictionary<string, string>
@@ -657,6 +681,9 @@ public class HostedSiteOptimizationServiceTests
             source.IndexOf("public async Task<HostedSiteOptimizationQueueHealth>", StringComparison.Ordinal)..
             source.IndexOf("internal static bool IsQueueHealthy", StringComparison.Ordinal)];
         healthQuery.ShouldContain("HostedSiteOptimizationStatuses.Previewing");
+        healthQuery.ShouldContain(".SortBy(x => x.UpdatedAt)");
+        healthQuery.ShouldContain("queued.FirstOrDefault()?.UpdatedAt");
+        healthQuery.ShouldNotContain("queued.FirstOrDefault()?.CreatedAt");
 
         var hostedSiteSource = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs"));
