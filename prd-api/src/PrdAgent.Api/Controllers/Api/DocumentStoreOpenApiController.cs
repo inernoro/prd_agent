@@ -490,7 +490,12 @@ public class DocumentStoreOpenApiController : ControllerBase
         var (store, error) = await LoadWritableStoreAsync(entry.StoreId, userId, ct);
         if (error != null) return error;
 
-        var content = req?.Content ?? string.Empty;
+        // 与文学写正文同一个判据：省略字段不等于清空。这条端点本身就是整篇覆盖，
+        // 把 {} 当成「清空」等于让一次拼错的请求擦掉整篇文档。
+        var contentError = McpInputBounds.RequireContent(req?.Content);
+        if (contentError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, contentError));
+        var content = req!.Content!;
         if (content.Length > MaxContentChars)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"正文超过 {MaxContentChars} 字上限，请拆成多篇或先精简"));

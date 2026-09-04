@@ -211,7 +211,13 @@ public class LiteraryOpenApiController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND",
                 "工作区不存在、不属于你，或者不是文学创作的工作区"));
 
-        var incoming = req?.Content ?? string.Empty;
+        // 省略 content 与显式给空串是两件事：前者是「没说要写什么」，后者是「明确要清空」。
+        // 合成一件的话，直连打一个 {} 过来（mode 默认 replace）就把整篇正文清空、配图流程复位，
+        // 接口还回成功 —— 一次拼错的请求造成的破坏，比这条接口能做的任何事都大。
+        var contentError = McpInputBounds.RequireContent(req?.Content);
+        if (contentError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, contentError));
+        var incoming = req!.Content!;
 
         // mode 只认三种：不给（默认整篇覆盖）、replace、append。写错一个字母不能默默走覆盖 ——
         // 智能体想追加一段、结果整篇正文被那一段替换掉，是这条接口能造成的最大破坏，

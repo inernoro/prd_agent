@@ -198,4 +198,38 @@ public class McpInputBoundsTests
         DocumentStoreOpenApiController.ValidateEntryMetadata(
             new DocumentStoreOpenApiController.CreateEntryRequest { Title = over }).ShouldNotBeNull();
     }
+
+    [Fact]
+    public void 省略content与显式空串_必须是两件事()
+    {
+        // 直连打一个 {} 过来时 Content 是 null，而 mode 默认 replace ——
+        // 把它当成空串就是「一次拼错的请求擦掉整篇正文，接口还回成功」。
+        McpInputBounds.RequireContent(null)
+            .ShouldNotBeNull("省略 content 被当成了清空");
+
+        // 显式清空是合法意图，只是必须说出口
+        McpInputBounds.RequireContent("").ShouldBeNull();
+        McpInputBounds.RequireContent("正文").ShouldBeNull();
+    }
+
+    [Fact]
+    public void 整篇覆盖的端点_都要走同一条必填判据()
+    {
+        // 判据挂在**被声明为覆盖**的那些内容字段上，不是全仓扫一个字符串：
+        // 新建类端点（建工作区带初稿、建文档带正文）省略 content 是完全合法的，
+        // 一刀切会把它们也判红 —— 守卫误伤同样是缺陷，它会逼着人做错的改动。
+        //
+        // 这条判据不能各写各的：Codex 报文学那处时，同样的写法在知识库那处也在
+        // ——「省略即清空」一旦分成两份，修一处永远漏一处。
+        foreach (var (key, dto, _) in TextFields())
+        {
+            if (!ContentSemantics.TryGetValue(key, out var kind) || kind != ContentKind.Overwrite) continue;
+            var controller = dto.DeclaringType!.Name;
+            var source = McpSourceGuard.StripComments(McpSourceGuard.Read(
+                $"prd-api/src/PrdAgent.Api/Controllers/Api/{controller}.cs"));
+            source.ShouldContain("McpInputBounds.RequireContent",
+                customMessage: $"{controller} 有整篇覆盖的端点（{key}），却没走 RequireContent。" +
+                    "省略 content 会被当成空串，一次拼错的请求就把正文擦了。");
+        }
+    }
 }

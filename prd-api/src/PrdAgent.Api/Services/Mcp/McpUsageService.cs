@@ -482,6 +482,9 @@ public sealed class McpUsageService
     /// </summary>
     private const int MaxRedactNodes = 256;
 
+    /// <summary>单个字符串叶子最多留多少字符。成品摘要每个值只留 120 字，这里给得宽一点即可。</summary>
+    private const int MaxScalarChars = 256;
+
     internal const string Redacted = "[已隐去]";
     private const string TooDeep = "[层级过深]";
     private const string TooWide = "[已截断]";
@@ -533,8 +536,16 @@ public sealed class McpUsageService
                 return copy;
             }
             default:
-                // 叶子照抄。必须是副本 —— JsonNode 认爹，把原节点挂到新容器上会抛。
+            {
+                // 叶子照抄，但**字符串要先截**。宽度预算按节点数算，而一个几 MB 的字符串
+                // 只占一个节点 —— 照抄再序列化，最后仍然只留 120 个字符，白克隆一遍。
+                // 摘要构造在限流之前，所以这条路是调用方用自己的 body 放大服务端开销的杠杆。
+                if (node is JsonValue leaf && leaf.TryGetValue<string>(out var text)
+                    && text is { Length: > MaxScalarChars })
+                    return JsonValue.Create(text[..MaxScalarChars] + "…");
+                // 必须是副本 —— JsonNode 认爹，把原节点挂到新容器上会抛。
                 return node?.DeepClone();
+            }
         }
     }
 

@@ -285,4 +285,18 @@ public class McpNestedRedactionTests
         for (var i = 0; i < n; i++) arr.Add(i);
         return arr;
     }
+
+    [Fact]
+    public void 单个巨大的字符串_也不许被整个克隆()
+    {
+        // 宽度预算按**节点数**算，而一个几 MB 的字符串只占一个节点 —— 只堵节点数
+        // 堵不住它：照抄再序列化，最后仍然只留 120 个字符，整块内存白走一遍。
+        var huge = new string('x', 2_000_000);
+        var redacted = McpUsageService.RedactSensitive(
+            System.Text.Json.Nodes.JsonValue.Create(huge), 0);
+
+        redacted.ShouldNotBeNull();
+        var text = redacted!.GetValue<string>();
+        (text.Length < 1000).ShouldBeTrue($"叶子字符串没截断（留下 {text.Length} 个字符）");
+    }
 }

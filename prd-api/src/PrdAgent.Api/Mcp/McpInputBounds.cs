@@ -31,6 +31,21 @@ internal static class McpInputBounds
             ? $"{field} 超过 {maxBytes} 字节（按 UTF-8 算，中文一个字约 3 字节），请精简"
             : null;
 
+    /// <summary>
+    /// 「整篇覆盖」类端点的 content 必填判据 —— 唯一判定源。
+    ///
+    /// 省略字段与显式给空串是**两件事**，而 `req?.Content ?? string.Empty` 把它们合成了一件：
+    /// 直连打一个 `{}` 过来，mode 又默认 replace，于是整篇正文被清空、配图流程被复位，
+    /// 接口还回成功。MCP schema 里 content 标了 required，但网关不拿 schema 校验参数，
+    /// 直连调用方更是想传什么传什么 —— schema 是描述，不是闸门。
+    ///
+    /// 显式传空串仍然放行：清空是合法意图，只是必须是**说出口的**那一种。
+    /// </summary>
+    internal static string? RequireContent(string? content)
+        => content is null
+            ? "content 必填。要把正文清空，请显式传 content: \"\"（省略这个字段不等于清空）。"
+            : null;
+
     internal static string? Tags(List<string>? tags)
     {
         if (tags == null) return null;
