@@ -10,4 +10,9 @@ describe('网页托管移动端文件夹入口', () => {
     expect(source).toContain('const created = await handleCreatePersonalFolder(name)');
     expect(source).toContain("currentSpace.kind === 'personal'");
   });
+
+  it('拖拽成功后用服务端响应刷新名称与权威键', () => {
+    expect(source).toContain('item.id === siteId ? res.data : item');
+    expect(source).not.toContain('{ ...item, folder, updatedAt: res.data.updatedAt }');
+  });
 });

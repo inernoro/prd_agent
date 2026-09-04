@@ -14,6 +14,7 @@ const plan = {
   featureLines: [
     { id: 'identity-access', label: '身份与访问', breadcrumb: ['登录', '会话', '首页'], requiredCaseIds: ['CORE-001'], regressionCaseIds: [] },
     { id: 'visual-creation', label: '视觉创作', breadcrumb: ['首页', '视觉创作', '参考图', '结果'], requiredCaseIds: ['VIS-003'], regressionCaseIds: [] },
+    { id: 'web-hosting-sharing', label: '网页托管与分享', breadcrumb: ['首页', '网页托管'], requiredCaseIds: ['WEB-004'], regressionCaseIds: [] },
   ],
 };
 
@@ -22,6 +23,19 @@ test('测试矩阵解析场景、断言和双环境策略', () => {
   assert.equal(parsed.get('VIS-003')?.scenario, '单图参考');
   assert.equal(parsed.get('VIS-003')?.productionPolicy, '最小图片档');
   assert.equal(parsed.get('WEB-004')?.scenario, '分享锚点');
+});
+
+test('网页托管失败会路由给网页托管负责人', () => {
+  const report = renderSupervisorReport({
+    plan,
+    matrixMarkdown: matrix,
+    runId: 'stsmk-web-owner',
+    rows: [{ caseId: 'WEB-004', environment: 'cds', status: 'fail', durationMs: 10, error: '片段导航离开页面' }],
+    selectedEnvironments: ['cds'],
+  });
+
+  assert.match(report, /网页托管负责人/);
+  assert.doesNotMatch(report, /WEB-004[^\n]*质量负责人/);
 });
 
 test('主管报告把异常提前并保留全量逐项账本', () => {

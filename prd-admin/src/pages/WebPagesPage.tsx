@@ -997,7 +997,7 @@ export default function WebPagesPage() {
       return;
     }
 
-    setSites((prev) => prev.map((item) => item.id === siteId ? { ...item, folder, updatedAt: res.data.updatedAt } : item));
+    setSites((prev) => prev.map((item) => item.id === siteId ? res.data : item));
     setFolders((prev) => Array.from(new Set([...prev, folder])).sort((a, b) => a.localeCompare(b, 'zh-CN')));
     toast.success('已移入文件夹', `「${site.title}」已移入「${folder}」`);
     await loadMeta();

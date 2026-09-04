@@ -177,7 +177,9 @@ test('网页托管变更进入功能台账并绑定七个操作锚点', () => {
   const result = selectFeatureLines(catalog, [
     'prd-admin/src/components/web-hosting/LibraryRail.tsx',
     'prd-admin/src/pages/WebPagesPage.mobileFolder.test.ts',
+    'prd-admin/src/pages/WebPagesPage.siteCard.test.tsx',
     'prd-api/src/PrdAgent.Core/Models/WebFolder.cs',
+    'prd-api/src/PrdAgent.Core/Models/WebPage.cs',
     'prd-api/src/PrdAgent.Infrastructure/Services/SiteContentSnapshotService.cs',
     'prd-api/src/PrdAgent.Infrastructure/Services/WebFolderService.cs',
     'prd-api/tests/PrdAgent.Api.Tests/Services/WebFolderRenameFenceTests.cs',

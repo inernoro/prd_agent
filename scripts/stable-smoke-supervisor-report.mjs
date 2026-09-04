@@ -9,7 +9,7 @@ const PRIMARY_FEATURE_BY_PREFIX = {
   VIS: 'visual-creation',
   MVIS: 'multi-image-creation',
   GW: 'llm-gateway',
-  WEB: 'web-hosting',
+  WEB: 'web-hosting-sharing',
 };
 
 const OWNER_BY_FEATURE = {
@@ -23,7 +23,7 @@ const OWNER_BY_FEATURE = {
   'visual-creation': '视觉创作负责人',
   'multi-image-creation': '视觉创作负责人',
   'llm-gateway': '模型网关负责人',
-  'web-hosting': '网页托管负责人',
+  'web-hosting-sharing': '网页托管负责人',
 };
 
 function escapeCell(value) {
