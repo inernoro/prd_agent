@@ -41,8 +41,20 @@ namespace PrdAgent.Api.Filters;
 /// 在授权阶段就 403 了，到不了这里，所以那类拒绝不进调用记录；动态工具的调用方白名单同样只在
 /// 网关那条路上生效（这一条早于本次改动就是如此）。
 /// </summary>
-public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter
+public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
 {
+    /// <summary>
+    /// 必须排在 [ApiController] 的自动模型校验之前（那个过滤器的 Order 是 -2000）。
+    ///
+    /// 普通动作过滤器是 Order 0，跑在它后面；于是 body 传坏的直连请求（比如给整型
+    /// count 传个字符串）会被模型校验直接短路成 400，**既不过每分钟窗口、也不进调用
+    /// 记录** —— 而这道闸门宣称覆盖所有直连调用，等于给刷接口留了一条不留痕的路。
+    ///
+    /// 排到前面之后，next() 里包着模型校验：它短路返回的 400 会被下面那段收尾逻辑
+    /// 当成非 2xx 正常处理（退还已占额度 + 记一条失败审计），语义与其它失败一致。
+    /// </summary>
+    public int Order => -2001;
+
     /// <summary>动态工具登记表的缓存键与存活时间。新登记的接口最多 30 秒后进闸门。</summary>
     private const string DynamicEndpointsCacheKey = "mcp:usage-gate:active-open-endpoints";
     private static readonly TimeSpan DynamicEndpointsTtl = TimeSpan.FromSeconds(30);

@@ -225,9 +225,19 @@ public class WebPagesOpenApiController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 幂等键压成定长指纹再进库。去掉 120 字截断之后，这一路成了唯一把调用方原文
+    /// 存进 Mongo（HostedSite.SourceRef，还要当查询键）的地方 —— nginx 收 30MB body，
+    /// 一个超长键就能造出一条同样大的文档。知识库与文学创作本来就哈希，这里对齐它们：
+    /// 哈希保住「长键互不坍缩」，同时不把无界输入落库。
+    /// </summary>
     private string? BuildSourceRef(string? clientRequestId)
     {
         var scoped = McpIdempotency.ScopedByKey(User, clientRequestId);
-        return scoped == null ? null : $"mcp:{scoped}";
+        if (scoped == null) return null;
+        var digest = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes($"mcp-site:{scoped}"))).ToLowerInvariant()[..32];
+        return $"mcp:{digest}";
     }
 }

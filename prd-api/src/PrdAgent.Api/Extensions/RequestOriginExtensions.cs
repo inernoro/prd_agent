@@ -80,7 +80,12 @@ public static class RequestOriginExtensions
     {
         if (string.IsNullOrWhiteSpace(url)) return url;
         var raw = url.Trim();
-        if (Uri.TryCreate(raw, UriKind.Absolute, out _)) return raw;
+        // 必须带 scheme 判断，不能裸用 Uri.TryCreate(UriKind.Absolute)：
+        // Linux 上「/local-assets/a/b.png」会被解析成合法的 file:// 绝对 URI，于是走进
+        // 「本来就是绝对地址」这条早退分支，原样回给调用方 —— 而那恰恰是这个助手唯一
+        // 要治的输入。Windows 上同一句返回 false，所以本地全绿、CI 与生产（都是 Linux）
+        // 静默失效（predicate-and-wiring-discipline 形状 6：判据读的不是真正生效的值）。
+        if (IsUsableBaseUrl(raw)) return raw;
         return $"{request.ResolveExternalBaseUrl()}{(raw.StartsWith('/') ? raw : "/" + raw)}";
     }
 

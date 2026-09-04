@@ -170,6 +170,9 @@ public class RequestOriginExtensionsTests
     {
         var req = RequestWithDeclared("http", "127.0.0.1:48798", "ServerUrl", "https://map.example.com");
 
+        // 这条不是凑数：裸用 Uri.TryCreate(UriKind.Absolute) 时，Linux 会把「/local-assets/...」
+        // 解析成合法的 file:// 绝对 URI，助手就此早退、原样返回 —— 而这正是它唯一要治的输入。
+        // Windows 上返回 false，所以只有 CI 与生产（都是 Linux）会踩到。它抓到过一次真缺陷。
         req.ResolveAbsoluteUrl("/local-assets/a/b.png")
             .ShouldBe("https://map.example.com/local-assets/a/b.png");
         req.ResolveAbsoluteUrl("local-assets/a/b.png")
@@ -206,5 +209,33 @@ public class RequestOriginExtensionsTests
             "CreateShareWithReuseInfoAsync", "purpose: \"share\"");
         McpSourceGuard.StripComments(slice).ShouldContain("ct: CancellationToken.None",
             customMessage: "分享链写库又跟着 RequestAborted 走了（server-authority）");
+    }
+
+    [Fact]
+    public void 网页托管的幂等指纹_定长且长键互不坍缩()
+    {
+        // 去掉 120 字截断之后，这一路成了唯一把调用方原文往库里存的地方（SourceRef 还要当
+        // 查询键）。哈希既保住「长键不坍缩」，又不把无界输入落库。
+        // 不切片：BuildSourceRef 是文件最后一个成员，用 "}" 当结束标记会切在插值的花括号上，
+        // 那种守卫下一次改动就会莫名其妙地飘。整文件断言在这里已经足够精确。
+        var slice = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesOpenApiController.cs"));
+        slice.ShouldContain("SHA256.HashData",
+            customMessage: "SourceRef 又直接存调用方原文了：30MB 的 body 能造出一条同样大的 Mongo 文档");
+        slice.ShouldNotContain("$\"mcp:{scoped}\"",
+            customMessage: "SourceRef 又回到了拼接原文的写法");
+    }
+
+    [Fact]
+    public void 直连闸门_必须排在自动模型校验之前()
+    {
+        // [ApiController] 的模型校验过滤器 Order = -2000，普通动作过滤器是 0。
+        // 闸门排在它后面的话，body 传坏的直连请求会被 400 短路，既不限流也不留审计。
+        var source = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Filters/AgentApiKeyUsageFilter.cs"));
+        source.ShouldContain("IOrderedFilter",
+            customMessage: "闸门不再声明顺序，会退回到模型校验之后（Order 0）");
+        source.ShouldContain("Order => -2001",
+            customMessage: "闸门的 Order 必须小于 -2000，否则模型校验会抢在它前面短路");
     }
 }

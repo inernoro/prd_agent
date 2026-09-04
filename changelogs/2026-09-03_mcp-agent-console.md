@@ -169,3 +169,7 @@
 | chore | prd-api | 重跑 bundle-official-skills 同步 official-skills.generated.json：验收技能的 harness 改过，而它的全文内嵌在这份生成物里，不同步 CI 的「生成物新鲜度」会红 |
 | fix | prd-api | 视觉创作与知识库开放层补 using PrdAgent.Api.Extensions：上一轮把绝对地址助手推广到四个控制器时漏了这两处的 using，编译不过 |
 | fix | prd-api | 视觉创作生图的尺寸参数改用 req?.Size：同一个方法里上面已按可空处理 req，这里不该再直接解引用（本轮新引入的 CS8602） |
+| fix | prd-api | 绝对地址助手补 scheme 判断：裸用 Uri.TryCreate(UriKind.Absolute) 时 Linux 会把 /local-assets/… 当成合法的 file:// 绝对地址原样返回，于是它对唯一要治的那种输入在 CI 与生产上完全不生效 |
+| fix | prd-api | 网页托管的幂等键压成定长指纹再进库：去掉截断后它成了唯一把调用方原文存进 Mongo 并当查询键的一路，30MB body 能造出同样大的文档 |
+| fix | prd-api | 直连闸门排到自动模型校验之前（Order = -2001）：body 传坏的 sk-ak 请求原来会被 400 短路，既不过每分钟窗口也不进调用记录 |
+| test | prd-api | 补三条守卫：绝对地址助手对 Linux file:// 那种输入的行为、SourceRef 必须是定长指纹、闸门顺序必须小于 -2000 |
