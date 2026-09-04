@@ -307,6 +307,11 @@ describe('接线守卫：一条克隆管线，两个调用方', () => {
     const s = read('src/routes/branches.ts');
     expect(s).toContain('ensurePerBranchDbInitialized(');
   });
+  it('台账路由的每一条 docker 路（infraOf、扫描补录）都拿解析过模板的实例记录', () => {
+    const s = read('src/routes/db-ledger.ts');
+    expect(s).toContain('return raw ? resolveInfraForDb(stateService, raw) : raw;');
+    expect(s).toContain('.map((s) => resolveInfraForDb(stateService, s));');
+  });
   it('删分支丢弃派生库也按项目环境变量解析实例密码，丢弃失败时条目转孤儿而不是留着「活跃」', () => {
     const s = read('src/routes/branches.ts');
     expect(s).toContain('realDbLedgerOps.dropDb(derived.engine, resolveInfraForDb(stateService, rawInfra), derived)');

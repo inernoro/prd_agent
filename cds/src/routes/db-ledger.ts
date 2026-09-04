@@ -259,7 +259,10 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
       for (const branch of stateService.getBranchesForProject(p.id)) {
         for (const s of branch.replicaDbSnapshots ?? []) known.add(s.sourceDb);
       }
-      const infras = stateService.getInfraServicesForProject(p.id).filter((s) => ['mysql', 'postgres', 'mongo'].includes(detectInfraDataKind(s.dockerImage) || ''));
+      const infras = stateService.getInfraServicesForProject(p.id)
+        .filter((s) => ['mysql', 'postgres', 'mongo'].includes(detectInfraDataKind(s.dockerImage) || ''))
+        // 记录里的密码常是 ${CDS_...} 模板，列库前按项目环境变量解析
+        .map((s) => resolveInfraForDb(stateService, s));
       const added: DbLedgerEntry[] = [];
       const scanned: Array<{ infraId: string; engine: ReplicaDbEngine; databases: string[]; error?: string }> = [];
       for (const infra of infras) {
