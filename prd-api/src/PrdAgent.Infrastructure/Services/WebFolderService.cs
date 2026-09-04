@@ -26,6 +26,7 @@ public class WebFolderService : IWebFolderService
     private const string RenameLockCollection = "web_folder_rename_locks";
     private const string ClaimFolderIdField = "FolderId";
     private const string RenameFenceField = "Fence";
+    private const string RenameOperationIdField = "RenameOperationId";
     private readonly MongoDbContext _db;
     private readonly IHostedSiteService _hostedSites;
     private readonly IDocumentService _documents;
@@ -170,6 +171,94 @@ public class WebFolderService : IWebFolderService
         return previousClaim == null
             ? new NameClaimResolution(preferredFolderId, true)
             : new NameClaimResolution(previousClaim[ClaimFolderIdField].AsString, false);
+    }
+
+    internal static FilterDefinition<BsonDocument> BuildNameClaimOwnershipFilter(
+        string userId,
+        string normalizedName,
+        string folderId,
+        string operationId,
+        long fence)
+    {
+        var filter = Builders<BsonDocument>.Filter;
+        return filter.And(
+            filter.Eq("_id", BuildNameClaimId(userId, normalizedName)),
+            filter.Eq(ClaimFolderIdField, folderId),
+            filter.Or(
+                filter.Exists(RenameFenceField, false),
+                filter.Lt(RenameFenceField, fence),
+                filter.And(
+                    filter.Eq(RenameFenceField, fence),
+                    filter.Or(
+                        filter.Exists(RenameOperationIdField, false),
+                        filter.Eq(RenameOperationIdField, operationId)))));
+    }
+
+    internal static FilterDefinition<BsonDocument> BuildOwnedNameClaimFilter(
+        string userId,
+        string normalizedName,
+        string folderId,
+        string operationId,
+        long fence)
+    {
+        var filter = Builders<BsonDocument>.Filter;
+        return filter.And(
+            filter.Eq("_id", BuildNameClaimId(userId, normalizedName)),
+            filter.Eq(ClaimFolderIdField, folderId),
+            filter.Eq(RenameOperationIdField, operationId),
+            filter.Eq(RenameFenceField, fence));
+    }
+
+    private async Task OwnNameClaimAsync(
+        string userId,
+        string normalizedName,
+        string folderId,
+        RenameLease lease)
+    {
+        var claims = _db.Database.GetCollection<BsonDocument>(NameClaimCollection);
+        var owned = await claims.UpdateOneAsync(
+            BuildNameClaimOwnershipFilter(
+                userId, normalizedName, folderId, lease.OperationId, lease.Fence),
+            Builders<BsonDocument>.Update.Combine(
+                Builders<BsonDocument>.Update.Set(RenameOperationIdField, lease.OperationId),
+                Builders<BsonDocument>.Update.Set(RenameFenceField, lease.Fence),
+                Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow)),
+            cancellationToken: CancellationToken.None);
+        if (owned.MatchedCount != 1)
+            throw new InvalidOperationException("文件夹已被另一个操作接管，请重试");
+    }
+
+    private async Task FinalizeOwnedNameClaimAsync(
+        string userId,
+        string normalizedName,
+        string folderId,
+        RenameLease lease)
+    {
+        var claims = _db.Database.GetCollection<BsonDocument>(NameClaimCollection);
+        var finalized = await claims.UpdateOneAsync(
+            BuildOwnedNameClaimFilter(
+                userId, normalizedName, folderId, lease.OperationId, lease.Fence),
+            Builders<BsonDocument>.Update.Combine(
+                Builders<BsonDocument>.Update.Set(ClaimFolderIdField, folderId),
+                Builders<BsonDocument>.Update.Set("OwnerUserId", userId),
+                Builders<BsonDocument>.Update.Set("NormalizedName", normalizedName),
+                Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow)),
+            cancellationToken: CancellationToken.None);
+        if (finalized.MatchedCount != 1)
+            throw new InvalidOperationException("文件夹已被另一个操作接管，请重试");
+    }
+
+    private Task ReleaseOwnedNameClaimAsync(
+        string userId,
+        string normalizedName,
+        string folderId,
+        RenameLease lease)
+    {
+        var claims = _db.Database.GetCollection<BsonDocument>(NameClaimCollection);
+        return claims.DeleteOneAsync(
+            BuildOwnedNameClaimFilter(
+                userId, normalizedName, folderId, lease.OperationId, lease.Fence),
+            CancellationToken.None);
     }
 
     private async Task<WebFolder?> WaitForClaimedFolderAsync(
@@ -419,6 +508,8 @@ public class WebFolderService : IWebFolderService
             if (!string.Equals(targetClaim.FolderId, existing.Id, StringComparison.Ordinal))
                 throw new InvalidOperationException("同名文件夹已存在，请换一个名称");
 
+            await RenewRenameLockAsync(id, lease);
+            await OwnNameClaimAsync(userId, nextNormalizedName, existing.Id, lease);
             try
             {
                 await RenewRenameLockAsync(id, lease);
@@ -428,25 +519,24 @@ public class WebFolderService : IWebFolderService
                     cancellationToken: CancellationToken.None);
                 if (renamed.MatchedCount != 1)
                     throw new InvalidOperationException("文件夹已被另一个操作接管，请重试");
+
+                await RenewRenameLockAsync(id, lease);
+                await FinalizeOwnedNameClaimAsync(userId, nextNormalizedName, existing.Id, lease);
+                await ReleaseNameClaimAsync(
+                    userId, previousNormalizedName, existing.Id, CancellationToken.None);
+
+                return await _db.WebFolders
+                    .Find(BuildRenameFenceOwnerFilter(id, userId, lease.Fence))
+                    .FirstOrDefaultAsync(CancellationToken.None);
             }
             catch
             {
                 if (targetClaim.WasCreated)
                 {
-                    await ReleaseNameClaimAsync(
-                        userId, nextNormalizedName, existing.Id, CancellationToken.None);
+                    await ReleaseOwnedNameClaimAsync(userId, nextNormalizedName, existing.Id, lease);
                 }
                 throw;
             }
-
-            await RenewRenameLockAsync(id, lease);
-            await RepairNameClaimAsync(userId, nextNormalizedName, existing.Id);
-            await ReleaseNameClaimAsync(
-                userId, previousNormalizedName, existing.Id, CancellationToken.None);
-
-            return await _db.WebFolders
-                .Find(BuildRenameFenceOwnerFilter(id, userId, lease.Fence))
-                .FirstOrDefaultAsync(CancellationToken.None);
         }
 
         await RenewRenameLockAsync(id, lease);

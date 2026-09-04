@@ -126,6 +126,46 @@ public sealed class WebFolderRenameFenceTests
         WebFolderService.NormalizeName(persisted[0].Name).ShouldBe(normalizedTarget);
     }
 
+    [Fact]
+    public async Task 新租约接管名称占用后_旧租约不能再次修复该占用()
+    {
+        await using var fixture = await RenameFenceMongoFixture.CreateAsync();
+        const string userId = "owner-claim-fence";
+        const string folderId = "folder-claim-fence";
+        var normalizedName = WebFolderService.NormalizeName("围栏目标");
+        var claimId = WebFolderService.BuildNameClaimId(userId, normalizedName);
+        var claims = fixture.Db.Database.GetCollection<BsonDocument>("web_folder_name_claims");
+        await claims.InsertOneAsync(new BsonDocument
+        {
+            ["_id"] = claimId,
+            ["FolderId"] = folderId,
+            ["OwnerUserId"] = userId,
+            ["NormalizedName"] = normalizedName,
+            ["RenameOperationId"] = "operation-old",
+            ["Fence"] = 1L,
+        });
+
+        var takeover = await claims.UpdateOneAsync(
+            WebFolderService.BuildNameClaimOwnershipFilter(
+                userId, normalizedName, folderId, "operation-new", 2),
+            Builders<BsonDocument>.Update
+                .Set("RenameOperationId", "operation-new")
+                .Set("Fence", 2L));
+        takeover.ModifiedCount.ShouldBe(1);
+
+        var expiredRepair = await claims.UpdateOneAsync(
+            WebFolderService.BuildOwnedNameClaimFilter(
+                userId, normalizedName, folderId, "operation-old", 1),
+            Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
+        expiredRepair.MatchedCount.ShouldBe(0);
+
+        var currentRepair = await claims.UpdateOneAsync(
+            WebFolderService.BuildOwnedNameClaimFilter(
+                userId, normalizedName, folderId, "operation-new", 2),
+            Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
+        currentRepair.MatchedCount.ShouldBe(1);
+    }
+
     private sealed class RenameFenceMongoFixture : IAsyncDisposable
     {
         private readonly MongoClient _client;
