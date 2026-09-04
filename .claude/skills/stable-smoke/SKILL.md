@@ -1,6 +1,6 @@
 ---
 name: stable-smoke
-version: 1.10.0
+version: 1.10.1
 description: 'Runs a recurring dual-environment synthetic regression suite for critical PRD Agent journeys and converts every escaped defect into a permanent smoke case. Trigger words: "/稳测", "稳定冒烟", "每两日测试", "stable smoke", "synthetic monitoring".'
 ---
 
@@ -66,6 +66,7 @@ description: 'Runs a recurring dual-environment synthetic regression suite for c
 21. 完整 `/稳测` 禁止直接用空 manifest 进入视觉门禁。必须先用固定 runId 执行 `--dry-run` 生成仅含 CDS 的 `visual-plan.json`，再调用 `/验收` 的真人浏览器 harness 逐项取证，并通过 `--visual-manifest` 交给主运行器。只有 CDS 功能、清理和视觉门禁全部通过后，运行器才可生成 `visual-plan-production.json`；正式环境取证必须使用该计划，并通过 `--production-visual-manifest` 进入最终双环境门禁。缺少清单或路径不存在时必须在对应阶段前阻断；只有正式环境单独只读检查可使用空清单并判定视觉不适用。
 22. 双环境矩阵必须保留每个 caseId 的 CDS 与正式环境策略，分别生成必跑集合、grep 和覆盖账本。正式环境不得执行标记为“不主动”“不改正式配置”的用例；仅标记为“轮换”的用例按模块和固定 commit 确定性选择一条。用户定向 grep 只能缩小本环境允许集合，不能越权重新加入 CDS 专属故障或计费动作。
 23. 任何稳定冒烟验收报告必须归档到 CDS 验收中心，并以线上直达深链通过 `verify-open` 后才算完成。`/tmp`、`file://`、本机 HTML 和 Markdown 只能是生成过程中的临时草稿，不得作为报告入口、通知链接或交付结果。CDS 归档或打开校验失败时，必须标记验收链路失败并保持未完成，不得回退本地交付。
+24. 每轮测试结束后的最终回复必须给出“验收结果表”，至少包含“标题、导航链接、验收图片、验收状态”四列。导航链接必须是本轮实际验证过的业务入口或 CDS 线上报告深链；验收图片必须是可点击的线上图片或线上报告中的对应证据入口，禁止使用 `/tmp`、`file://` 或本机路径。每个验收项逐行列出，状态只允许 `pass` 或 `fail`；缺少导航、缺少图片、未走真人业务路径或证据未通过 `verify-open` 时，该行只能标记为 `fail`。整轮仍可按既有规则判定为 `conditional`，但表内受影响的具体项目必须落为 `fail`，不得用 `conditional` 掩盖证据缺口。
 
 ## 每轮工作流
 
@@ -184,6 +185,12 @@ Verdict: pass | conditional | fail
 
 | 模块 | 完整面包屑 | 冒烟 | 功能 | 视觉 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
 |---|---|---|---|---|---|---|---|---|---|
+
+## 验收结果表
+
+| 标题 | 导航链接 | 验收图片 | 验收状态 |
+|---|---|---|---|
+| {人类可读验收项} | [打开已验证入口]({verified-navigation-url}) | [查看本轮线上证据]({verified-evidence-url}) | pass \| fail |
 
 ## 执行覆盖账本
 

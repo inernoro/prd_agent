@@ -98,6 +98,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             {
                 Logger.LogWarning("[401] AgentApiKey 无效/过期/已撤销 - Path: {Path}, Method: {Method}, IP: {IP}, KeyPrefix: {KeyPrefix}",
                     requestPath, requestMethod, clientIp, apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
+                AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.AgentKeyInvalid);
                 return AuthenticateResult.Fail("Invalid, expired or revoked AgentApiKey");
             }
 
@@ -151,6 +152,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         {
             Logger.LogWarning("[401] API Key无效或未激活 - Path: {Path}, Method: {Method}, IP: {IP}, KeyPrefix: {KeyPrefix}",
                 requestPath, requestMethod, clientIp, apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
+            AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.OpenPlatformKeyInvalid);
             return AuthenticateResult.Fail("Invalid or inactive API Key");
         }
 
@@ -174,6 +176,9 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
 
         return AuthenticateResult.Success(ticket);
     }
+
+    protected override Task HandleChallengeAsync(AuthenticationProperties properties) =>
+        AuthorizationFailureContract.WriteChallengeAsync(Context);
 }
 
 /// <summary>

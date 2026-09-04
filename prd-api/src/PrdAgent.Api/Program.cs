@@ -854,6 +854,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     {
                         logger.LogWarning("[401] Token claims无效 - Path: {Path}, Method: {Method}, IP: {IP}, sub: {Sub}, clientType: {ClientType}, tv: {Tv}",
                             requestPath, requestMethod, clientIp, sub ?? "null", clientType ?? "null", tvStr ?? "null");
+                        PrdAgent.Api.Authentication.AuthorizationFailureContract.Set(
+                            context.HttpContext,
+                            PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionInvalid);
                         context.Fail("Invalid auth session claims");
                         return;
                     }
@@ -864,6 +867,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     {
                         logger.LogWarning("[401] Token版本不匹配(已被撤销) - Path: {Path}, Method: {Method}, IP: {IP}, UserId: {UserId}, ClientType: {ClientType}, TokenVersion: {Tv}, CurrentVersion: {CurrentTv}",
                             requestPath, requestMethod, clientIp, sub, clientType, tv, currentTv);
+                        PrdAgent.Api.Authentication.AuthorizationFailureContract.Set(
+                            context.HttpContext,
+                            PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionRevoked);
                         context.Fail("Token revoked");
                     }
                 }
@@ -872,6 +878,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     // 安全兜底：依赖服务异常时不直接放行
                     logger.LogWarning(ex, "[401] Token验证异常 - Path: {Path}, Method: {Method}, IP: {IP}",
                         requestPath, requestMethod, clientIp);
+                    PrdAgent.Api.Authentication.AuthorizationFailureContract.Set(
+                        context.HttpContext,
+                        PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionValidationUnavailable);
                     context.Fail("Token validation failed");
                 }
             },
@@ -890,10 +899,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
                 // 跳过默认 challenge 响应（会覆盖 body）
                 context.HandleResponse();
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                context.Response.ContentType = "application/json; charset=utf-8";
-                var payload = ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权");
-                await context.Response.WriteAsync(JsonSerializer.Serialize(payload, jsonOptions));
+                await PrdAgent.Api.Authentication.AuthorizationFailureContract.WriteChallengeAsync(
+                    context.HttpContext,
+                    jsonOptions);
             },
             OnForbidden = async context =>
             {

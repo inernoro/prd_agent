@@ -61,6 +61,7 @@ const UsersPage = lazy(() => import('@/pages/UsersPage'));
 // 2026-08-25：MAP 侧模型管理整套下线，`/mds` 只剩一块指向 LLM Gateway 控制台的墓碑页。
 const ModelManageMovedPage = lazy(() => import('@/pages/ModelManageMovedPage').then(m => ({ default: m.ModelManageMovedPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
+const AuthorizationHealthPage = lazy(() => import('@/pages/AuthorizationHealthPage'));
 const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPage'));
 const LabPage = lazy(() => import('@/pages/LabPage'));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
@@ -709,6 +710,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       icon: 'ScrollText',
       section: 'utility',
       tags: ['日志', 'logs', '审计'],
+    },
+  },
+  {
+    path: '/authorization-health',
+    permission: 'logs.read',
+    element: shellGuarded('logs.read', <AuthorizationHealthPage />),
+    nav: {
+      label: '授权健康中心',
+      shortLabel: '授权',
+      description: '统一诊断用户、Agent、验收、LLMGW 与部署身份',
+      icon: 'ShieldCheck',
+      section: 'utility',
+      tags: ['授权', '401', 'Agent', '验收', 'LLMGW', 'CDS', '健康'],
+      wip: true,
     },
   },
   {

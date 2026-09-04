@@ -175,6 +175,10 @@ export const api = {
     },
   },
 
+  authorizationHealth: {
+    overview: () => '/api/authorization-health',
+  },
+
   // ============ Team Activity 团队动态 ============
   teamActivity: {
     logs: () => '/api/team-activity/logs',
