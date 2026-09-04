@@ -145,8 +145,13 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             cancellationToken: CancellationToken.None);
         if (update.MatchedCount == 0)
         {
-            // 分片键是确定性的：另一个幂等重试可能已用同一键完成上传并推进状态。
-            // 这里不能删除共享键；会话取消或过期时由统一清理流程回收。
+            // 状态已推进时，同一确定性分片键仍可能被 worker 使用，不能删除。
+            // 但会话已取消或被清理后，这次晚到写入只能由当前请求收尾，否则对象会永久失去账本。
+            var current = await _db.HostedSiteOptimizationSessions
+                .Find(x => x.Id == session.Id && x.OwnerUserId == userId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (current == null || current.Status == HostedSiteOptimizationStatuses.CleanupPending)
+                await TryDeleteAsync(key);
             throw new InvalidOperationException("这个上传任务已经结束，请重新选择文件");
         }
     }
@@ -1172,6 +1177,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     return match.Groups["prefix"].Value + proxyBase;
                 },
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            text = RewriteHtmlEmbeddedRootReferences(
+                text,
+                path => proxyBase + path.TrimStart('/'));
         }
         else if (mimeType.StartsWith("text/css", StringComparison.OrdinalIgnoreCase))
         {
@@ -1213,6 +1221,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 "(?<prefix>\\b(?:src|href|poster|data)\\s*=\\s*[\\\"'])(?<path>/(?!/)[^\\\"']*)",
                 Rewrite,
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            text = RewriteHtmlEmbeddedRootReferences(
+                text,
+                path => RelativeReference(ownerPath, path.TrimStart('/')));
         }
         else if (mimeType.StartsWith("text/css", StringComparison.OrdinalIgnoreCase))
         {
@@ -1231,6 +1242,40 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
         return Encoding.UTF8.GetBytes(text);
+    }
+
+    private static string RewriteHtmlEmbeddedRootReferences(
+        string html,
+        Func<string, string> rewritePath)
+    {
+        html = HtmlSrcSetAttributeRegex().Replace(html, match =>
+        {
+            var paths = match.Groups["paths"];
+            var rewritten = Regex.Replace(
+                paths.Value,
+                "(?<prefix>(?:^|,)\\s*)(?<path>/(?!/)[^\\s,]+)",
+                candidate => candidate.Groups["prefix"].Value
+                             + rewritePath(candidate.Groups["path"].Value),
+                RegexOptions.CultureInvariant);
+            var offset = paths.Index - match.Index;
+            return match.Value[..offset] + rewritten + match.Value[(offset + paths.Length)..];
+        });
+
+        string RewriteCssBody(Match match)
+        {
+            var body = match.Groups["body"];
+            var rewritten = Regex.Replace(
+                body.Value,
+                "(?<prefix>(?:url\\(\\s*|@import\\s+)[\\\"']?)(?<path>/(?!/)[^\\)\\\"']*)",
+                reference => reference.Groups["prefix"].Value
+                             + rewritePath(reference.Groups["path"].Value),
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            var offset = body.Index - match.Index;
+            return match.Value[..offset] + rewritten + match.Value[(offset + body.Length)..];
+        }
+
+        html = HtmlStyleAttributeRegex().Replace(html, RewriteCssBody);
+        return InlineStyleRegex().Replace(html, RewriteCssBody);
     }
 
     internal static bool SecretEquals(string expected, string supplied)
@@ -1612,6 +1657,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         {
             var extension = Path.GetExtension(owner).ToLowerInvariant();
             if (!TryDecodeUtf8(bytes, out var text)) continue;
+            if (extension is ".html" or ".htm")
+                text = VisibleHtmlText(text);
             var htmlBase = extension is ".html" or ".htm"
                 ? HtmlBaseHrefRegex().Match(text).Groups["path"].Value
                 : null;
@@ -1635,6 +1682,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     {
         if (extension is ".html" or ".htm")
         {
+            text = VisibleHtmlText(text);
             foreach (Match tag in HtmlResourceTagRegex().Matches(text))
             {
                 foreach (Match attribute in HtmlResourceAttributeRegex().Matches(tag.Value))
@@ -1703,6 +1751,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             if (extension is not (".html" or ".htm" or ".css" or ".js" or ".mjs")) continue;
             if (!TryDecodeUtf8(ReadEntry(file.Entry), out var text)) return true;
             if (extension == ".css") continue;
+            if (extension is ".html" or ".htm")
+                text = VisibleHtmlText(text);
             var scripts = extension is ".html" or ".htm"
                 ? InlineScriptRegex().Matches(text).Select(x => x.Groups["body"].Value)
                 : new[] { text };
@@ -1715,6 +1765,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         }
         return false;
     }
+
+    private static string VisibleHtmlText(string text)
+        => HtmlCommentRegex().Replace(text, string.Empty);
 
     private static bool TryDecodeUtf8(byte[] bytes, out string text)
     {
@@ -1877,8 +1930,11 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     [GeneratedRegex("<base\\b[^>]*?href\\s*=\\s*[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlBaseHrefRegex();
 
-    [GeneratedRegex("<(?:script|link|img|source|video|audio|iframe|object)\\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    [GeneratedRegex("<(?:script|link|img|source|video|audio|iframe|object|use|image)\\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlResourceTagRegex();
+
+    [GeneratedRegex("<!--[\\s\\S]*?-->", RegexOptions.CultureInvariant)]
+    private static partial Regex HtmlCommentRegex();
 
     [GeneratedRegex("\\b(?:src|href|poster|data)\\s*=\\s*[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
     private static partial Regex HtmlResourceAttributeRegex();

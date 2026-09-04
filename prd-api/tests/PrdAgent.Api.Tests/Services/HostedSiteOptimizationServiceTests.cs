@@ -316,6 +316,36 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_CommentedResource_DoesNotBlockOnStaleDependency()
+    {
+        var result = CreateService().Analyze(CreateZip(new Dictionary<string, string>
+        {
+            ["index.html"] = "<!-- <script src=\"./old.js\"></script> --><main>ready</main>",
+        }));
+
+        result.Blocked.ShouldBeFalse();
+        result.OriginalFiles.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Analyze_SvgUse_RestoresSpriteDependency()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<svg><use href=\"./node_modules/pkg/icons.svg#check\"></use></svg>",
+            ["node_modules/pkg/icons.svg"] = "<svg><symbol id=\"check\"></symbol></svg>",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeTrue();
+        result.OptimizedFiles.ShouldBe(2);
+    }
+
+    [Fact]
     public void Analyze_HtmlBaseHref_ResolvesDependenciesFromEffectiveBase()
     {
         var files = new Dictionary<string, string>
@@ -402,6 +432,26 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void RewriteRootReferences_CoversSrcSetAndEmbeddedCss()
+    {
+        const string input = "<img srcset=\"/assets/a.png 1x, /assets/b.png 2x\" style=\"background:url('/assets/bg.png')\"><style>.hero{mask:url('/assets/mask.svg')}</style>";
+
+        var artifact = Encoding.UTF8.GetString(
+            HostedSiteOptimizationService.RewriteRootReferencesForArtifact(
+                Encoding.UTF8.GetBytes(input), "text/html", "pages/index.html"));
+        artifact.ShouldContain("srcset=\"../assets/a.png 1x, ../assets/b.png 2x\"");
+        artifact.ShouldContain("url('../assets/bg.png')");
+        artifact.ShouldContain("url('../assets/mask.svg')");
+
+        var preview = Encoding.UTF8.GetString(
+            HostedSiteOptimizationService.RewriteRootReferencesForPreview(
+                Encoding.UTF8.GetBytes(input), "text/html", "/preview/", "pages/index.html"));
+        preview.ShouldContain("srcset=\"/preview/assets/a.png 1x, /preview/assets/b.png 2x\"");
+        preview.ShouldContain("url('/preview/assets/bg.png')");
+        preview.ShouldContain("url('/preview/assets/mask.svg')");
+    }
+
+    [Fact]
     public void OptimizationSessionIndexes_PreserveCleanupLedgerUntilWorkerDeletesIt()
     {
         var catalog = File.ReadAllText(LocateRepoFile("scripts/mongodb-indexes.js"));
@@ -483,6 +533,8 @@ public class HostedSiteOptimizationServiceTests
         source.ShouldContain("var sourceBytes = new byte[checked((int)session.SourceFileSize)]");
         source.ShouldNotContain("var sourceBytes = source.ToArray()");
         source.ShouldContain("var cleanupAfter = DateTime.UtcNow.Add(WorkerLeaseLifetime)");
+        source.ShouldContain("current == null || current.Status == HostedSiteOptimizationStatuses.CleanupPending");
+        source.ShouldContain("await TryDeleteAsync(key)");
         source.ShouldContain("session.ExpiresAt = cleanupAfter");
         source.ShouldContain("session.Status = HostedSiteOptimizationStatuses.Saved");
         source.ShouldContain("Previewing,\n                            HostedSiteOptimizationStatuses.Saving");
