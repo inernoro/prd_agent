@@ -83,8 +83,13 @@ function recordClone(
     branchId: spec.scope.branchId, profileId: spec.scope.profileId,
     origin: 'cds', status: 'active', createdAt: now.toISOString(), updatedAt: now.toISOString(), backups: [],
   };
+  // 刚克隆出来的库一定活着：同名条目哪怕之前被丢弃过（真实分支复验：删分支丢库后又重建），
+  // 也从「已丢弃」复活，清掉丢弃 / 孤儿痕迹——否则回写门禁会把它当已丢弃拒绝
+  const { droppedAt: _da, droppedBy: _db, droppedForced: _df, orphanedAt: _oa, ...revived } = base;
   const entry: DbLedgerEntry = {
-    ...base,
+    ...revived,
+    status: 'active',
+    branchId: spec.scope.branchId, profileId: spec.scope.profileId,
     clone: { sourceDb: spec.sourceDb, clonedAt, verification },
     lastObjects: { count: verification.tables.length + verification.targetOnly.length, measuredAt: verification.measuredAt },
     note: undefined,

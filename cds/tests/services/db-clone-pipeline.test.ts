@@ -276,6 +276,19 @@ describe('分支独立库时间点克隆初始化', () => {
     expect(log.filter((l) => l.startsWith('clone:'))).toHaveLength(1);
   });
 
+  it('同名条目之前被丢弃过（删分支丢库后又重建分支）：克隆后条目复活为活跃，丢弃痕迹清掉', async () => {
+    state.upsertDbLedgerEntry({ id: 'dbl_old', projectId: 'p', kind: 'per-branch', engine: 'mysql', dbName: 'shop_feat_x', infraId: 'mysql', infraContainer: 'cds-infra-mysql', sourceDb: 'shop', branchId: 'p-feat-x', branch: 'feat/x', profileId: 'api', origin: 'cds', status: 'dropped', droppedAt: NOW.toISOString(), droppedBy: 'admin', droppedForced: true, createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(), backups: [] });
+    state.save();
+    const out = await ensurePerBranchDbInitialized(state, branch(), effective('api'), { exec: fakeExec({ shop: { users: 3 } }), listDatabases: async () => ['shop'], now: () => NOW });
+    expect(out.kind).toBe('cloned');
+    const entry = state.getDbLedger('p').find((e) => e.dbName === 'shop_feat_x')!;
+    expect(entry.id).toBe('dbl_old');
+    expect(entry.status).toBe('active');
+    expect(entry.droppedAt).toBeUndefined();
+    expect(entry.droppedForced).toBeUndefined();
+    expect(entry.clone?.sourceDb).toBe('shop');
+  });
+
   it('克隆脚本失败：抛错（部署据此中止），不写台账', async () => {
     const exec: DbCloneExec = async (argv) => argv[0] === 'run' ? { code: 1, stdout: '', stderr: 'disk full' } : { code: 0, stdout: '', stderr: '' };
     await expect(ensurePerBranchDbInitialized(state, branch(), effective('api'), { exec, listDatabases: async () => ['shop'], now: () => NOW })).rejects.toThrow(/disk full/);
