@@ -406,7 +406,27 @@ public class DocumentStoreOpenApiController : ControllerBase
                 var placed = await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
                     DocumentVersionSource.Edit, contentTypeOverride: "text/markdown",
                     expectedUpdatedAt: entry.UpdatedAt);
-                if (placed.Conflicted) throw new EntryVanishedException(entry.Id);
+                if (placed.Conflicted)
+                {
+                    // Conflicted 不等于「被删了」：任何 UpdatedAt 变化都会让条件写入落空，
+                    // 用户在界面上**编辑**这条刚出现的占位条目同样会命中。
+                    // 上一版把两者合成一件，于是回滚会把用户刚写的东西连同版本、双链一起删掉 ——
+                    // 修一个竞态修出了一个更坏的：数据是真没了。
+                    var still = await _db.DocumentEntries
+                        .Find(e => e.Id == entry.Id).FirstOrDefaultAsync(CancellationToken.None);
+                    if (still == null) throw new EntryVanishedException(entry.Id);
+
+                    // 条目还在，只是被人改过。绝不删：那是用户的内容。
+                    // 只摘掉「正文还没落盘」这个标记，否则同键重试会永远撞 409。
+                    // 计数也不退 —— 条目确实存在，这一次递增没错。
+                    await _db.DocumentEntries.UpdateOneAsync(
+                        e => e.Id == entry.Id,
+                        Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
+                        cancellationToken: CancellationToken.None);
+                    return Conflict(ApiResponse<object>.Fail("ENTRY_CHANGED_SINCE_CREATE",
+                        "这篇文档在正文落盘期间被别人改过，你的正文没有写进去 —— 对方的内容保留着。"
+                        + "先读一遍现在的正文，再决定要不要用 map_kb_update_entry 覆盖。"));
+                }
 
                 // 调用方明确给了摘要就把它写回去。写入服务无条件用正文前 200 字当摘要
                 // （那是给在线编辑准备的默认行为），于是「同时给 summary 和 content」这种最自然的

@@ -299,4 +299,24 @@ public class McpNestedRedactionTests
         var text = redacted!.GetValue<string>();
         (text.Length < 1000).ShouldBeTrue($"叶子字符串没截断（留下 {text.Length} 个字符）");
     }
+
+    [Fact]
+    public void 巨大的键名_也不许被反复复制进摘要()
+    {
+        // 上一轮截了**值**，没截**键**：同一个杠杆换个位置照旧成立 ——
+        // 一个几 MB 的键会被 Replace 复制两遍、ToLowerInvariant 再一遍，最后还要拼进摘要。
+        var hugeKey = new string('k', 1_000_000);
+        McpUsageService.BoundName(hugeKey).Length.ShouldBeLessThan(200,
+            customMessage: "键名进归一化之前没截");
+
+        var summary = McpUsageService.SummarizeArguments(
+            new System.Text.Json.Nodes.JsonObject { [hugeKey] = "v" });
+        summary.ShouldNotBeNull();
+        // 总长本来就有 600 的上限，这里要确认的是「键没有原样走完一遍复制」——
+        // 判据落在 BoundName 上；这条只是顺带确认摘要仍然出得来、没被截坏。
+        summary!.ShouldContain("=", customMessage: "摘要本身还得能用");
+
+        // 短键不受影响
+        McpUsageService.BoundName("apiKey").ShouldBe("apiKey");
+    }
 }

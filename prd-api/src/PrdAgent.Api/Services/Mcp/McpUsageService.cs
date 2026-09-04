@@ -451,13 +451,27 @@ public sealed class McpUsageService
         "apikey", "accesskey", "privatekey", "signature", "cookie", "authorization",
     };
 
-    /// <summary>参数名看着像凭据吗（归一化后按包含判定）。</summary>
+    /// <summary>
+    /// 参数名看着像凭据吗（归一化后按包含判定）。
+    ///
+    /// 先截再归一：JSON 的**键名**同样是调用方给的、同样无界。不截的话，一个几 MB 的键
+    /// 会被 `Replace` 复制两遍、`ToLowerInvariant` 再复制一遍，随后还要插进摘要文本里，
+    /// 最后才被 600 字的总长截掉 —— 而摘要构造在限流之前。上一轮我截了值，没截键：
+    /// 同一个杠杆换个位置照旧成立。真实的敏感键名都很短，截到 128 不影响判定。
+    /// </summary>
     internal static bool IsSensitiveArgumentName(string name)
     {
         if (string.IsNullOrEmpty(name)) return false;
-        var normalized = name.Replace("-", string.Empty).Replace("_", string.Empty).ToLowerInvariant();
+        var bounded = BoundName(name);
+        var normalized = bounded.Replace("-", string.Empty).Replace("_", string.Empty).ToLowerInvariant();
         return SensitiveArgumentNeedles.Any(needle => normalized.Contains(needle));
     }
+
+    /// <summary>键名进入任何复制/归一化/拼接之前先截到这个长度。</summary>
+    private const int MaxNameChars = 128;
+
+    internal static string BoundName(string name)
+        => name.Length > MaxNameChars ? name[..MaxNameChars] + "…" : name;
 
     /// <summary>
     /// 摘要序列化用的编码器。默认那个会把所有非 ASCII 转义，于是中文入参在调用记录里
@@ -515,10 +529,12 @@ public sealed class McpUsageService
                 var copy = new JsonObject();
                 foreach (var kv in obj)
                 {
-                    if (budget <= 0) { copy[kv.Key] = JsonValue.Create(TooWide); break; }
-                    if (IsSensitiveArgumentName(kv.Key)) copy[kv.Key] = JsonValue.Create(Redacted);
-                    else if (depth >= MaxRedactDepth) copy[kv.Key] = JsonValue.Create(TooDeep);
-                    else copy[kv.Key] = RedactSensitive(kv.Value, depth + 1, ref budget);
+                    // 键名也先截：它同样是调用方给的无界输入，而这里每个键都要复制一次。
+                    var key = BoundName(kv.Key);
+                    if (budget <= 0) { copy[key] = JsonValue.Create(TooWide); break; }
+                    if (IsSensitiveArgumentName(kv.Key)) copy[key] = JsonValue.Create(Redacted);
+                    else if (depth >= MaxRedactDepth) copy[key] = JsonValue.Create(TooDeep);
+                    else copy[key] = RedactSensitive(kv.Value, depth + 1, ref budget);
                 }
                 return copy;
             }
@@ -556,10 +572,11 @@ public sealed class McpUsageService
         var parts = new List<string>();
         foreach (var kv in args)
         {
+            var name = BoundName(kv.Key);
             if (IsSensitiveArgumentName(kv.Key))
             {
                 // 连长度都不透出：短口令的长度本身就是线索
-                parts.Add($"{kv.Key}={Redacted}");
+                parts.Add($"{name}={Redacted}");
                 if (parts.Count >= 6) break;
                 continue;
             }
@@ -567,7 +584,7 @@ public sealed class McpUsageService
             // 一点也不敏感，而里面那串凭据会被原样序列化进记录、再显示在接入台上。
             var v = RedactSensitive(kv.Value, 0)?.ToJsonString(PreviewJson) ?? "null";
             if (v.Length > 120) v = v[..120] + "…";
-            parts.Add($"{kv.Key}={v}");
+            parts.Add($"{name}={v}");
             if (parts.Count >= 6) break;
         }
         var text = string.Join(" · ", parts);
