@@ -1502,6 +1502,45 @@ db.document_entries.createIndex(
 // 卡片预览（每库最近 3 条）走的是同一条索引，不另建。
 // end collection: document_entries
 
+// collection: mcp_call_logs
+// 智能体接入台的调用记录。两个读法都很热：
+//   1. 面板按「我的 + 本部署 + 时间倒序」翻页（Overview 与 calls 列表）
+//   2. 日额度由 mcp_usage_counters 的确定性 _id 承担，不查这张表；这里的索引服务的是接入台面板的翻页与筛选
+// 没有索引时，第 2 条会随着记录增长把每一次工具调用都拖慢。
+db.mcp_call_logs.createIndex(
+  { "OwnerUserId": 1, "DeploymentSlug": 1, "CreatedAt": -1 },
+  { name: "idx_mcp_call_logs_owner_scope_created" }
+)
+db.mcp_call_logs.createIndex(
+  { "KeyId": 1, "CreatedAt": -1 },
+  { name: "idx_mcp_call_logs_key_created" }
+)
+// end collection: mcp_call_logs
+
+// collection: mcp_usage_counters
+// 接入台的当日用量计数器。_id 是确定性的 `{keyId}:{yyyyMMdd}:{kind}`，
+// 读写都按主键定位，不需要查询索引。
+//
+// 但它需要一条 TTL：每把密钥每天每种额度各留一行，而读的只有「今天」那几行
+// （闸门与面板都按当天的确定性 _id 直接定位，从不扫历史）。没有回收路径的话，
+// 这个集合只会随「这个库见过多少把密钥、过了多少天」单向变大，且长出来的全是死数据。
+// 90 天远超唯一的读路径（当天），留这么久只是为了人工排查上个月的用量还查得到。
+db.mcp_usage_counters.createIndex(
+  { "DayUtc": 1 },
+  {
+    name: "ttl_mcp_usage_counters_90d",
+    expireAfterSeconds: 7776000
+  }
+)
+// end collection: mcp_usage_counters
+
+// mcp_call_logs 的保留期（可选 TTL）
+// 注意别把下面这段写成 `// collection: mcp_call_logs` —— 上面那个段落标记是守卫用来定位的
+// 调用记录是用户的审计流水，删多久算合适是产品决定（用户要能回看自己的智能体做过什么），
+// 不在这里替他定。库大到要治的时候由 DBA 按策略开这一行（示例 180 天）：
+// db.mcp_call_logs.createIndex({ "CreatedAt": 1 }, { expireAfterSeconds: 15552000 })
+
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

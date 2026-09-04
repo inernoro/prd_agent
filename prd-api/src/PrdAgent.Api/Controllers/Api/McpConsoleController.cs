@@ -1,0 +1,400 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Mcp;
+using PrdAgent.Api.Services.Mcp;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+
+namespace PrdAgent.Api.Controllers.Api;
+
+/// <summary>
+/// 智能体接入台 —— 用户自己看的那一页：我授权了什么、连着哪几台客户端、它们刚才做了什么。
+///
+/// 鉴权走用户 JWT（这是给人用的界面，不是给智能体用的）。智能体那侧走 /api/mcp。
+///
+/// 三个问题必须在这一页里答完，用户不该再去别处翻：
+///   1. 我的智能体能替我做什么（能力卡 + 每块能力挂着哪些工具）
+///   2. 它刚才做了什么（调用记录 + 产物直达）
+///   3. 它还能做多少（今日额度）
+/// </summary>
+[ApiController]
+[Route("api/mcp-console")]
+[Authorize]
+public class McpConsoleController : ControllerBase
+{
+    private readonly MongoDbContext _db;
+    private readonly IAgentApiKeyService _keyService;
+    private readonly IAdminPermissionService _permissions;
+    private readonly Services.Mcp.McpUsageService _usage;
+
+    public McpConsoleController(
+        MongoDbContext db,
+        IAgentApiKeyService keyService,
+        IAdminPermissionService permissions,
+        Services.Mcp.McpUsageService usage)
+    {
+        _db = db;
+        _keyService = keyService;
+        _permissions = permissions;
+        _usage = usage;
+    }
+
+    /// <summary>
+    /// MCP 端点地址 —— 用户要把它复制进客户端配置，所以必须是对外真实可达的那个。
+    ///
+    /// 不能用 Request.Scheme/Host：nginx 终止 TLS 后转给 Kestrel 的是明文 HTTP，
+    /// 直接拼会给出一个 http:// 的地址，粘进客户端就连不上。走转发头解析。
+    /// </summary>
+    private string BuildEndpointUrl() => $"{Request.ResolveExternalBaseUrl()}/api/mcp";
+
+    [HttpGet("overview")]
+    public async Task<IActionResult> Overview(CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        var ownedPermissions = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
+
+        var nowUtc = DateTime.UtcNow;
+        // 两份名单，用途不同，别合成一份：
+        //   allKeys —— 今日用量统计用。今天用掉额度、之后被撤销的钥匙也得算进去，
+        //              否则 today.calls 还算着它的调用、today.images/writes 却把它的量抹掉，
+        //              同一屏的两个数字自己跟自己对不上。
+        //   keys    —— 客户端列表与「已授权」用。撤销的不该再出现在「连着的客户端」里。
+        var allKeys = await _keyService.ListByOwnerAsync(userId, ct);
+        var keys = allKeys.Where(k => k.RevokedAt == null).ToList();
+        // 「还能用吗」走鉴权那一处判据（AgentApiKey.IsUsableAt），不是光看 IsActive ——
+        // 过了宽限期的钥匙 IsActive 仍是 true，照着它判会把一台每个请求都被拒的客户端
+        // 显示成「已连接、能力已授权」。面板和智能体遇到的必须是同一件事。
+        var activeKeys = keys.Where(k => AgentApiKey.IsUsableAt(k, nowUtc, out _)).ToList();
+        // 「已授权」要跟鉴权口径一致：受权限位把关的 scope，权限被回收后鉴权时就会被剥掉，
+        // 面板不能还显示成已授权 —— 否则用户看到的和智能体实际能用的是两回事。
+        var grantedScopes = activeKeys.SelectMany(k => k.Scopes ?? new List<string>())
+            .Where(s => EffectiveForOwner(s, ownedPermissions))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var since = McpUsageService.TodayStartUtc();
+        // 计数走聚合，不再靠「取最近 N 条再在内存里数」：按每分钟 60 次的上限，
+        // 十几分钟就能超过任何截断阈值，之后面板会系统性少报。列表只取要展示的那几条。
+        var tally = await TodayTallyAsync(userId, since, ct);
+        var recentLogs = await RecentLogsAsync(userId, since, 5, ct);
+
+        var capabilities = McpCapabilityCatalog.All.Select(cap =>
+        {
+            var tools = McpCapabilityCatalog.ToolsOf(cap);
+            var scopes = cap.AllScopes().ToList();
+            return new
+            {
+                key = cap.Key,
+                title = cap.Title,
+                summary = cap.Summary,
+                readScope = cap.ReadScope,
+                writeScope = cap.WriteScope,
+                writeNeedsApproval = cap.WriteNeedsApproval,
+                // 我自己有没有这块能力的权限位 —— 没有的话向导里勾了也签不出密钥，得先说清楚。
+                // 判据与签发校验同一个（IsIssuancePermissionChecked）：真正没有权限位的 scope
+                //（海鲜市场：闸门在接口自己身上）恒为可用，拿权限位去判会把「其实签得出来」的显示成灰的；
+                // 而 document-store 有真实权限位、且等价于文档空间的读写权限，签发要查，这里就得跟着灰。
+                //
+                // 读与写要分开报：只有 web-pages.read 的人，整张卡是可用的，但写入那一档签不出来。
+                // 合成一个 Any() 会让向导把写入勾选框也点亮，勾了之后在后端交集校验那里才失败 ——
+                // 用户在最后一步才知道自己不该勾，这是把系统本来就知道的事推给他去撞。
+                availableToMe = ScopeAvailable(cap.ReadScope ?? cap.WriteScope, ownedPermissions),
+                writeAvailableToMe = ScopeAvailable(cap.WriteScope, ownedPermissions),
+                granted = scopes.Any(s => McpCapabilityCatalog.ScopeSatisfies(grantedScopes, s)),
+                todayCalls = tally.ByCapability.TryGetValue(cap.Key, out var capCalls) ? capCalls : 0,
+                tools = tools.Select(t => new
+                {
+                    name = t.Name,
+                    description = t.Description,
+                    requiredScope = t.RequiredScope,
+                    isWrite = McpUsageService.IsWriteTool(t),
+                    granted = McpCapabilityCatalog.ScopeSatisfies(grantedScopes, t.RequiredScope),
+                }),
+            };
+        }).ToList();
+
+        // 今日用量要覆盖「今天有过调用」的**全部**密钥，不只是现在还列得出来的那几把。
+        // 密钥可以被撤销，也可以被硬删（AgentApiKeysController.Delete 只删密钥，不动日志与计数器）——
+        // 两种情况下 today.calls 都还算着它的调用，而 today.images/writes 会把它的量整个抹掉，
+        // 同一屏两个数字自己跟自己对不上。用不着另存一份「历史密钥」：今天出现过的 keyId
+        // 就在调用记录的聚合里，取并集即可。
+        var usageKeyIds = new HashSet<string>(allKeys.Select(k => k.Id), StringComparer.Ordinal);
+        foreach (var loggedKeyId in tally.ByKey.Keys) usageKeyIds.Add(loggedKeyId);
+        var usageByKey = await _usage.GetTodayUsageAsync(usageKeyIds, ct);
+
+        var clients = keys.Select(k => new
+        {
+            keyId = k.Id,
+            name = k.Name,
+            keyPrefix = k.KeyPrefix,
+            scopes = k.Scopes ?? new List<string>(),
+            isActive = AgentApiKey.IsUsableAt(k, nowUtc, out _),
+            expiresAt = k.ExpiresAt,
+            lastUsedAt = k.LastUsedAt,
+            todayCalls = tally.ByKey.TryGetValue(k.Id, out var keyCalls) ? keyCalls : 0,
+            dailyImageQuota = k.McpDailyImageQuota ?? McpUsageService.DefaultDailyImageQuota,
+            dailyWriteQuota = k.McpDailyWriteQuota ?? McpUsageService.DefaultDailyWriteQuota,
+            rateLimitPerMin = k.McpRateLimitPerMin ?? McpUsageService.DefaultRateLimitPerMin,
+            // 已用数读闸门那份计数器，不再由日志推算：两边口径必须是同一个，
+            // 否则面板显示还剩很多、智能体那边却已经被挡（或反过来）。
+            todayImages = usageByKey.TryGetValue(k.Id, out var u1) ? u1.Images : 0,
+            todayWrites = usageByKey.TryGetValue(k.Id, out var u2) ? u2.Writes : 0,
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            endpointUrl = BuildEndpointUrl(),
+            capabilities,
+            clients,
+            today = new
+            {
+                // 「今天」按 UTC 自然日切，与额度口径一致；界面上要写明白，别让人以为是本地零点
+                sinceUtc = since,
+                calls = tally.Total,
+                images = usageByKey.Values.Sum(u => u.Images),
+                writes = usageByKey.Values.Sum(u => u.Writes),
+                denied = tally.ByStatus.TryGetValue("denied", out var denied) ? denied : 0,
+                failed = tally.ByStatus.TryGetValue("error", out var failed) ? failed : 0,
+            },
+            recentCalls = recentLogs.Select(ToLogDto),
+        }));
+    }
+
+    /// <summary>调用记录（分页，最新在前）。</summary>
+    [HttpGet("calls")]
+    public async Task<IActionResult> Calls(
+        [FromQuery] string? keyId,
+        [FromQuery] string? capability,
+        [FromQuery] string? status,
+        [FromQuery] int skip,
+        [FromQuery] int limit,
+        CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var resolvedLimit = limit is > 0 and <= 200 ? limit : 50;
+        var resolvedSkip = skip > 0 ? skip : 0;
+
+        var f = Builders<McpCallLog>.Filter;
+        var filter = f.And(
+            f.Eq(x => x.OwnerUserId, userId),
+            f.Eq(x => x.DeploymentSlug, DeploymentScope.CurrentDurable));
+        if (!string.IsNullOrWhiteSpace(keyId)) filter = f.And(filter, f.Eq(x => x.KeyId, keyId));
+        if (!string.IsNullOrWhiteSpace(capability)) filter = f.And(filter, f.Eq(x => x.Capability, capability));
+        if (!string.IsNullOrWhiteSpace(status)) filter = f.And(filter, f.Eq(x => x.Status, status));
+
+        var total = await _db.McpCallLogs.CountDocumentsAsync(filter, cancellationToken: ct);
+        var items = await _db.McpCallLogs.Find(filter)
+            .SortByDescending(x => x.CreatedAt)
+            .Skip(resolvedSkip)
+            .Limit(resolvedLimit)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            total,
+            skip = resolvedSkip,
+            limit = resolvedLimit,
+            items = items.Select(ToLogDto),
+        }));
+    }
+
+    /// <summary>
+    /// 能力自检：这把密钥现在能看到哪些工具。
+    ///
+    /// 服务端按 scope 直接算，与 /api/mcp 的 tools/list 同一个判据 —— 不发网络请求，
+    /// 所以它回答的是「授权对不对」，不是「你的客户端能不能连上」。界面上要如实这么写。
+    /// </summary>
+    [HttpGet("keys/{keyId}/visible-tools")]
+    public async Task<IActionResult> VisibleTools(string keyId, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var key = await _keyService.GetByIdAsync(keyId, ct);
+        if (key == null || key.OwnerUserId != userId)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "密钥不存在或无权访问"));
+
+        // 先问「这把钥匙现在还用得了吗」，再算它能看见什么。
+        //
+        // 停用、撤销、过了宽限期的钥匙，/api/mcp 在 LookupByPlaintextAsync 那一步就直接拒了，
+        // 一个工具也调不动。而这里原来只按存下来的 scope 算清单，照样能算出一串名字，
+        // 弹窗接着报「授权自检通过」—— 用户拿着一把已经作废的钥匙去接，接不上还找不着原因。
+        // isActive 字段当时是回了的，但没人拿它拦这段计算：算出来的东西本身就是错的，
+        // 不该指望展示层去补救（形状 1：判据比它该管的范围窄）。
+        var usable = AgentApiKey.IsUsableAt(key, DateTime.UtcNow, out var inGrace);
+        if (!usable)
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                endpointUrl = BuildEndpointUrl(),
+                keyId = key.Id,
+                keyName = key.Name,
+                keyPrefix = key.KeyPrefix,
+                isActive = false,
+                expiresAt = key.ExpiresAt,
+                unusableReason = key.RevokedAt.HasValue ? "这把钥匙已经吊销了"
+                    : !key.IsActive ? "这把钥匙被停用了"
+                    : "这把钥匙已经过期，连宽限期也过了",
+                toolCount = 0,
+                tools = Array.Empty<VisibleTool>(),
+            }));
+
+        // 与 /api/mcp 的 tools/list 同口径：权限被回收的 scope 在鉴权时就被剥掉了，
+        // 自检不能照着存下来的 scope 报一串对方其实看不见的工具。
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        var ownedPermissions = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
+        var scopes = (key.Scopes ?? new List<string>())
+            .Where(s => EffectiveForOwner(s, ownedPermissions))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var visible = McpBuiltinTools.All
+            .Where(t => McpCapabilityCatalog.ScopeSatisfies(scopes, t.RequiredScope))
+            .Select(t => new VisibleTool(
+                t.Name, t.Description, McpCapabilityCatalog.ByScope(t.RequiredScope)?.Key, McpUsageService.IsWriteTool(t)))
+            .ToList();
+
+        // tools/list 除了内置工具还会列出登记表里的动态开放接口（agent.* scope）。
+        // 自检只扫内置的话，一把只带动态 scope 的钥匙会被报成「0 个工具」，
+        // 而它连上去其实好好的 —— 自检的用处就是回答「授权对不对」，报少了比不报还糟。
+        // 可见性判据复用网关那一处 McpGatewayController.DynamicToolVisible，不另写一份。
+        var endpoints = await _db.AgentOpenEndpoints.Find(e => e.IsActive).ToListAsync(ct);
+        visible.AddRange(endpoints
+            .Where(e => McpGatewayController.DynamicToolVisible(e, scopes, key.OwnerUserId))
+            .Select(e => new VisibleTool(
+                McpGatewayController.DynamicToolName(e),
+                string.IsNullOrWhiteSpace(e.Description) ? e.Title : $"{e.Title} — {e.Description}",
+                null,
+                !string.Equals(e.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase))));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            endpointUrl = BuildEndpointUrl(),
+            keyId = key.Id,
+            keyName = key.Name,
+            keyPrefix = key.KeyPrefix,
+            isActive = true,
+            expiresAt = key.ExpiresAt,
+            // 宽限期内还能用，但用户得知道它正在倒计时 —— 不说的话，某天突然全部调不动。
+            unusableReason = inGrace ? "这把钥匙已经过期，正在宽限期里，续期之前随时会停" : null,
+            toolCount = visible.Count,
+            tools = visible,
+        }));
+    }
+
+    /// <summary>自检里的一行工具。内置与动态两路要合成一张清单，所以给它一个名字，不用匿名类型。</summary>
+    private sealed record VisibleTool(string Name, string Description, string? Capability, bool IsWrite);
+
+    /// <summary>
+    /// 某个 scope 我自己签不签得出来：不受权限位把关的恒真，受把关的看权限位。
+    ///
+    /// 判据按 **scope** 而不是按能力整块判，且用的是签发口径（IsIssuancePermissionChecked）——
+    /// 与 AgentApiKeysController.ValidateScopeAsync 同一个函数。两处不同口径的后果是
+    /// 面板上写着「可以开通」，一点却被签发接口打回来：把用户请到门口再关门。
+    /// </summary>
+    private static bool ScopeAvailable(string? scope, IReadOnlyCollection<string> ownedPermissions)
+    {
+        if (string.IsNullOrEmpty(scope)) return false;
+        if (!McpCapabilityCatalog.IsIssuancePermissionChecked(scope!)) return true;
+        return McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope!);
+    }
+
+    /// <summary>
+    /// 这个 scope 此刻对密钥主人还成立吗。受权限位把关的按当前权限判，其余（老 scope）原样成立。
+    /// 与 ApiKeyAuthenticationHandler 的剥离逻辑同一口径，面板才不会跟实际能力对不上。
+    /// </summary>
+    private static bool EffectiveForOwner(string scope, IReadOnlyList<string> ownedPermissions)
+        => !McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope)
+           || McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope);
+
+    private sealed record TodayTally(
+        long Total,
+        IReadOnlyDictionary<string, long> ByStatus,
+        IReadOnlyDictionary<string, long> ByKey,
+        IReadOnlyDictionary<string, long> ByCapability);
+
+    private FilterDefinition<McpCallLog> TodayFilter(string userId, DateTime since)
+    {
+        var f = Builders<McpCallLog>.Filter;
+        return f.And(
+            f.Eq(x => x.OwnerUserId, userId),
+            f.Eq(x => x.DeploymentSlug, DeploymentScope.CurrentDurable),
+            f.Gte(x => x.CreatedAt, since));
+    }
+
+    /// <summary>今日计数：交给 Mongo 分组统计，条数再多也是准的。</summary>
+    private async Task<TodayTally> TodayTallyAsync(string userId, DateTime since, CancellationToken ct)
+    {
+        var groups = await _db.McpCallLogs.Aggregate()
+            .Match(TodayFilter(userId, since))
+            .Group(new BsonDocument
+            {
+                { "_id", new BsonDocument
+                    {
+                        { "status", "$Status" },
+                        { "keyId", "$KeyId" },
+                        { "capability", "$Capability" },
+                    }
+                },
+                { "n", new BsonDocument("$sum", 1) },
+            })
+            .ToListAsync(ct);
+
+        long total = 0;
+        var byStatus = new Dictionary<string, long>(StringComparer.Ordinal);
+        var byKey = new Dictionary<string, long>(StringComparer.Ordinal);
+        var byCapability = new Dictionary<string, long>(StringComparer.Ordinal);
+
+        foreach (var doc in groups)
+        {
+            var n = doc["n"].ToInt64();
+            total += n;
+            var id = doc["_id"].AsBsonDocument;
+            Accumulate(byStatus, ReadKey(id, "status"), n);
+            Accumulate(byKey, ReadKey(id, "keyId"), n);
+            Accumulate(byCapability, ReadKey(id, "capability"), n);
+        }
+
+        return new TodayTally(total, byStatus, byKey, byCapability);
+
+        static string? ReadKey(BsonDocument id, string name)
+            => id.TryGetValue(name, out var v) && !v.IsBsonNull ? v.AsString : null;
+
+        static void Accumulate(Dictionary<string, long> map, string? key, long n)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+            map[key] = map.TryGetValue(key, out var cur) ? cur + n : n;
+        }
+    }
+
+    private async Task<List<McpCallLog>> RecentLogsAsync(string userId, DateTime since, int limit, CancellationToken ct)
+        => await _db.McpCallLogs.Find(TodayFilter(userId, since))
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(limit)
+            .ToListAsync(ct);
+
+    private static object ToLogDto(McpCallLog l) => new
+    {
+        id = l.Id,
+        keyId = l.KeyId,
+        keyName = l.KeyName,
+        toolName = l.ToolName,
+        capability = l.Capability,
+        status = l.Status,
+        isWrite = l.IsWrite,
+        deduplicated = l.Deduplicated,
+        imageCount = l.ImageCount,
+        // 原始状态码不发给这个页面：它是普通用户（access 权限）的页面，不是管理员诊断面。
+        // 结果由 status 说，失败原因由 errorMessage 用人话说；状态码留在 mcp_call_logs 里备查。
+        durationMs = l.DurationMs,
+        argumentsPreview = l.ArgumentsPreview,
+        errorMessage = l.ErrorMessage,
+        artifact = l.ArtifactKind == null && l.ArtifactUrl == null ? null : new
+        {
+            kind = l.ArtifactKind,
+            id = l.ArtifactId,
+            url = l.ArtifactUrl,
+            title = l.ArtifactTitle,
+        },
+        createdAt = l.CreatedAt,
+    };
+}

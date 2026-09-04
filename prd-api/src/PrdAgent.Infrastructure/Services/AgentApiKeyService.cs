@@ -64,20 +64,10 @@ public class AgentApiKeyService : IAgentApiKeyService
         var hash = ComputeSha256(plaintext);
         var key = await _db.AgentApiKeys.Find(k => k.ApiKeyHash == hash).FirstOrDefaultAsync(ct);
         if (key == null) return null;
-        if (!key.IsActive || key.RevokedAt.HasValue) return null;
 
-        // 过期检查（含宽限期）
-        var now = DateTime.UtcNow;
-        bool inGrace = false;
-        if (key.ExpiresAt.HasValue)
-        {
-            if (key.ExpiresAt.Value < now)
-            {
-                var graceEnd = key.ExpiresAt.Value.AddDays(Math.Max(0, key.GracePeriodDays));
-                if (graceEnd < now) return null; // 过了宽限期，拒绝
-                inGrace = true;
-            }
-        }
+        // 停用 / 撤销 / 过了宽限期 —— 判据在 AgentApiKey.IsUsableAt 一处，
+        // 接入台面板读的也是它，免得面板说「已连接」而这里在拒。
+        if (!AgentApiKey.IsUsableAt(key, DateTime.UtcNow, out var inGrace)) return null;
 
         return new AgentApiKeyLookupResult(key, inGrace);
     }
@@ -129,7 +119,8 @@ public class AgentApiKeyService : IAgentApiKeyService
         string? description,
         IEnumerable<string>? scopes,
         bool? isActive,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        AgentApiKeyQuotaPatch? quota = null)
     {
         var updates = new List<UpdateDefinition<AgentApiKey>>();
         if (name != null) updates.Add(Builders<AgentApiKey>.Update.Set(k => k.Name, name.Trim()));
@@ -141,6 +132,18 @@ public class AgentApiKeyService : IAgentApiKeyService
                 scopes.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Distinct().ToList()));
         if (isActive.HasValue)
             updates.Add(Builders<AgentApiKey>.Update.Set(k => k.IsActive, isActive.Value));
+
+        // 配额与元数据必须落在同一次写里：分两次写时第二次失败，调用方收到的是「更新失败」，
+        // 而名字/scope 已经改了 —— 用户照报错重试，状态和提示对不上。
+        if (quota is { IsEmpty: false })
+        {
+            if (quota.DailyImageQuota is { } img)
+                updates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpDailyImageQuota, img));
+            if (quota.DailyWriteQuota is { } wr)
+                updates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpDailyWriteQuota, wr));
+            if (quota.RateLimitPerMin is { } rate)
+                updates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpRateLimitPerMin, rate));
+        }
 
         if (updates.Count == 0) return true;
 

@@ -376,6 +376,7 @@
   --agent-card-artwork-front-end-agent: url('../assets/agent-card-art/front-end-agent.webp');
   --agent-card-artwork-chat-agent: url('../assets/agent-card-art/chat-agent.webp');
   --agent-card-artwork-literary-agent: url('../assets/agent-card-art/literary-agent.webp');
+  --agent-card-artwork-mcp-console: url('../assets/agent-card-art/mcp-console.webp');
   --agent-card-artwork-md-to-ppt-agent: url('../assets/agent-card-art/md-to-ppt-agent.webp');
   --agent-card-artwork-pa-agent: url('../assets/agent-card-art/pa-agent.webp');
   --agent-card-artwork-pm-agent: url('../assets/agent-card-art/pm-agent.webp');
@@ -1032,6 +1033,7 @@
   --agent-card-artwork-front-end-agent: url('../assets/agent-card-art/front-end-agent-light.webp');
   --agent-card-artwork-chat-agent: url('../assets/agent-card-art/chat-agent-light.webp');
   --agent-card-artwork-literary-agent: url('../assets/agent-card-art/literary-agent-light.webp');
+  --agent-card-artwork-mcp-console: url('../assets/agent-card-art/mcp-console-light.webp');
   --agent-card-artwork-md-to-ppt-agent: url('../assets/agent-card-art/md-to-ppt-agent-light.webp');
   --agent-card-artwork-pa-agent: url('../assets/agent-card-art/pa-agent-light.webp');
   --agent-card-artwork-pm-agent: url('../assets/agent-card-art/pm-agent-light.webp');

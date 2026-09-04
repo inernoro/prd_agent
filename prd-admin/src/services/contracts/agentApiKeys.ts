@@ -59,6 +59,12 @@ export type UpdateAgentApiKeyContract = (input: {
   description?: string;
   scopes?: string[];
   isActive?: boolean;
+  /** 接入台配额上限（每日生图张数，1-500） */
+  mcpDailyImageQuota?: number;
+  /** 接入台配额上限（每日写入次数，1-2000） */
+  mcpDailyWriteQuota?: number;
+  /** 接入台配额上限（每分钟调用次数，1-600） */
+  mcpRateLimitPerMin?: number;
 }) => Promise<ApiResponse<{ item: AgentApiKeyDto | null }>>;
 
 export type RenewAgentApiKeyContract = (input: {

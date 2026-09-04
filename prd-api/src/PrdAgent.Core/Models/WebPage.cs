@@ -332,6 +332,7 @@ public class WebPageShareLink
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ExpiresAt { get; set; }
+
     public bool IsRevoked { get; set; }
 
     /// <summary>

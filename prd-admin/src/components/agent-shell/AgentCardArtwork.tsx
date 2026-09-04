@@ -9,6 +9,7 @@ const AGENT_CARD_PRESENTATION: Readonly<Record<string, AgentCardPresentation>> =
   'visual-storyboard': { task: '生成视频分镜' },
   'chat-agent': { task: '随时开口对话' },
   'literary-agent': { task: '撰写完整文章' },
+  'mcp-console': { task: '接上你的智能体' },
   'defect-agent': { task: '闭环产品缺陷' },
   'video-agent': { task: '生成成片视频' },
   'report-agent': { task: '汇总本周进展' },

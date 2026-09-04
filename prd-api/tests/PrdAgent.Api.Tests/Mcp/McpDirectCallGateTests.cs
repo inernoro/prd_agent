@@ -1,0 +1,435 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Http;
+using PrdAgent.Api.Controllers;
+using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Api.Filters;
+using PrdAgent.Api.Mcp;
+using PrdAgent.Api.Services.Mcp;
+using Shouldly;
+using Xunit;
+
+namespace PrdAgent.Api.Tests.Mcp;
+
+/// <summary>
+/// 直连开放接口时的闸门判据。
+///
+/// 背景：同一把 sk-ak 有两条路能做同一件事 —— 走 /api/mcp 的 tools/call，或者直接 POST
+/// /api/open/visual/images。闸门原先只长在网关里，直连那条路完全没有上限，接入台上写着的
+/// 「每日 50 张」对它是假的。堵法是让直连也认出「这一次等价于哪个内置工具」，再套同一套闸门。
+///
+/// 这几条判据坏掉都不会红：接口照常返回、图照常出，只是额度不扣或者扣两回。
+/// </summary>
+public class McpDirectCallGateTests
+{
+    [Fact]
+    public void 直连生图接口_能被反查成生图工具()
+    {
+        var tool = McpBuiltinTools.MatchRequest("POST", "/api/open/visual/images");
+        tool.ShouldNotBeNull();
+        tool!.Name.ShouldBe("map_visual_generate_image");
+        McpUsageService.IsImageTool(tool).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void 同一条路径不同动词_不算同一个工具()
+    {
+        // 反查必须带上动词：知识库同一条路径上 POST 建条目、GET 列条目，
+        // 只按路径认的话，一次读会被当成写扣额度。
+        McpBuiltinTools.MatchRequest("GET", "/api/open/visual/images").ShouldBeNull();
+    }
+
+    [Fact]
+    public void 网关自身入口不会被反查成工具_否则每次调用扣两回()
+    {
+        McpBuiltinTools.MatchRequest("POST", "/api/mcp").ShouldBeNull();
+    }
+
+    [Fact]
+    public void 每个内置工具都反查得回它自己()
+    {
+        // 接线守卫（形状 2）：新增一条工具时，如果它的路径模板长成反查看不懂的样子，
+        // 直连那条路就悄悄没了闸门 —— 没有这条用例的话，全量测试照样全绿。
+        foreach (var tool in McpBuiltinTools.All)
+        {
+            var concrete = ConcretePath(tool.PathTemplate);
+            var back = McpBuiltinTools.MatchRequest(tool.Method, concrete);
+            back.ShouldNotBeNull($"{tool.Name} 的路径模板 {tool.PathTemplate} 反查不回来");
+            // 同一条 (动词, 路径) 只该对应一个工具；反查回别的工具说明注册表里撞车了
+            back!.Name.ShouldBe(tool.Name);
+        }
+    }
+
+    [Fact]
+    public void 取用技能是POST但按读计_直连与走网关必须给同一个答案()
+    {
+        var tool = McpBuiltinTools.All.Single(t => t.Name == "map_market_fork_skill");
+        // 网关读 IsWriteTool，直连闸门读的也必须是它，不能自己按动词再判一次
+        McpUsageService.IsWriteTool(tool).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 生图张数_网关与控制器读同一个收敛区间()
+    {
+        // 两处各 clamp 一遍的话，上限改动只落一边，闸门占的坑和实际出图数就对不上。
+        for (var n = -3; n <= 9; n++)
+        {
+            var viaGateway = McpGatewayController.ReadRequestedImageCount(
+                new JsonObject { ["count"] = n });
+            var viaController = VisualOpenApiController.ResolveImageCount(
+                new VisualOpenApiController.GenerateImageRequest { Count = n });
+            viaGateway.ShouldBe(viaController, customMessage: $"count={n} 时两边不一致");
+        }
+
+        McpGatewayController.ReadRequestedImageCount(new JsonObject())
+            .ShouldBe(VisualOpenApiController.ResolveImageCount(null));
+    }
+
+    [Fact]
+    public void 动态工具的登记路径_也能被同一个模板匹配认出来()
+    {
+        // 动态工具（AgentOpenEndpoint）在网关那条路上是扣写入额度的；直连闸门必须用同一个
+        // 匹配器认出它，否则登记表接口在直连这条路上仍是无上限的后门。
+        McpBuiltinTools.PathTemplateMatches("/api/report/weekly/generate", "/api/report/weekly/generate")
+            .ShouldBeTrue();
+        McpBuiltinTools.PathTemplateMatches("/api/report/{id}/publish", "/api/report/abc123/publish")
+            .ShouldBeTrue();
+        // 段数不同不算命中，占位不许跨段吃
+        McpBuiltinTools.PathTemplateMatches("/api/report/{id}", "/api/report/abc123/publish")
+            .ShouldBeFalse();
+        McpBuiltinTools.PathTemplateMatches("/api/report/weekly", "/api/report/monthly")
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 回环令牌_只认本进程自己那一份()
+    {
+        var signal = new McpLoopbackSignal();
+        var other = new McpLoopbackSignal();
+
+        signal.IsGatewayContinuation(RequestWith(null)).ShouldBeFalse();
+        signal.IsGatewayContinuation(RequestWith("")).ShouldBeFalse();
+        signal.IsGatewayContinuation(RequestWith("1")).ShouldBeFalse();
+        // 换一个进程的令牌不认：这道判据要挡的正是「外部客户端自称是回环续跳」
+        signal.IsGatewayContinuation(RequestWith(other.Token)).ShouldBeFalse();
+        signal.IsGatewayContinuation(RequestWith(signal.Token)).ShouldBeTrue();
+    }
+
+    private static HttpRequest RequestWith(string? token)
+    {
+        var ctx = new DefaultHttpContext();
+        if (token != null) ctx.Request.Headers[McpLoopbackSignal.HeaderName] = token;
+        return ctx.Request;
+    }
+
+    /// <summary>把 {xxx} 占位换成一个具体段，模拟真实请求路径。</summary>
+    private static string ConcretePath(string template)
+    {
+        var parts = template.Split('/');
+        for (var i = 0; i < parts.Length; i++)
+            if (parts[i].Length > 1 && parts[i][0] == '{' && parts[i][^1] == '}')
+                parts[i] = "abc123";
+        return string.Join('/', parts);
+    }
+}
+
+/// <summary>
+/// 记进审计的 HTTP 状态码。
+///
+/// 这条坏掉的样子不是报错，是**记录自己说谎**：动作抛出去时结果对象是 null，取默认值就记成
+/// HTTP 200，而同一行的状态是「失败」。面板上于是出现「失败 · HTTP 200」，排障的人第一件事
+/// 得先怀疑记录本身 —— 一份会撒谎的审计比没有审计更费时间。
+/// </summary>
+public class McpLoggedStatusTests
+{
+    [Fact]
+    public void 抛出去的调用记成_500_不是_200()
+    {
+        AgentApiKeyUsageFilter.ResolveLoggedStatus(null, threw: true).ShouldBe(500);
+    }
+
+    [Fact]
+    public void 正常返回但没带状态码的记成_200()
+    {
+        AgentApiKeyUsageFilter.ResolveLoggedStatus(null, threw: false).ShouldBe(200);
+    }
+
+    [Fact]
+    public void 结果自己带了状态码就照它记_异常已被接住的情形()
+    {
+        // 异常被前面的过滤器接住并换成了一个结果：那个结果才是用户真正收到的东西
+        AgentApiKeyUsageFilter.ResolveLoggedStatus(403, threw: true).ShouldBe(403);
+        AgentApiKeyUsageFilter.ResolveLoggedStatus(404, threw: false).ShouldBe(404);
+    }
+}
+
+/// <summary>
+/// 匿名端点上的密钥识别。
+///
+/// 海鲜市场的读端点（搜索 / 详情 / 取用）标了 [AllowAnonymous]，而 ApiKey 是非默认 scheme ——
+/// 授权环节不去选它，认证中间件也就不填主体。于是「带钥匙直连这三个端点」在闸门眼里是匿名的：
+/// 不进每分钟窗口，也不进调用记录，而这三个端点背后正挂着三个内置工具。
+///
+/// 补认证只能针对**确实带了 sk-ak- 的请求**：放宽了就等于给全站每个匿名请求都多跑一次认证。
+/// 两个方向都要钉，缺哪边都不会红。
+/// </summary>
+public class McpAgentKeyCredentialDetectionTests
+{
+    private static HttpRequest RequestWith(string? authorization)
+    {
+        var ctx = new DefaultHttpContext();
+        if (authorization != null) ctx.Request.Headers["Authorization"] = authorization;
+        return ctx.Request;
+    }
+
+    [Fact]
+    public void 带_sk_ak_的_Bearer_要认出来()
+    {
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("Bearer sk-ak-abc123")).ShouldBeTrue();
+        // 大小写不同的 Bearer、以及不带 Bearer 前缀直接给密钥，都算
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("bearer sk-ak-abc123")).ShouldBeTrue();
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("sk-ak-abc123")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void 认证处理器认哪些头_这里就得认哪些()
+    {
+        // ApiKeyAuthenticationHandler 在 Authorization **整个缺席**时退到 X-AI-Access-Key。
+        // 这里少认一个头，就等于「换个写法就绕过闸门」——判据比它该管的范围窄的那个老形状。
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Headers["X-AI-Access-Key"] = "sk-ak-abc123";
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(ctx.Request).ShouldBeTrue();
+
+        // 但顺序也得一样：Authorization 在场时就只看它（处理器正是这么取的），
+        // 否则两边对同一个请求给出不同的身份判断。
+        var both = new DefaultHttpContext();
+        both.Request.Headers["Authorization"] = "Bearer eyJhbGciOiJIUzI1NiJ9.x.y";
+        both.Request.Headers["X-AI-Access-Key"] = "sk-ak-abc123";
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(both.Request).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 审计行不许再从_HttpContext_User_取主人()
+    {
+        // 匿名端点上 HttpContext.User 是空的（ApiKey 是非默认 scheme，授权环节不选它）。
+        // 从它取 boundUserId，记录就写成「没有主人」，而接入台按主人过滤 ——
+        // 额度扣了、列表里查无此事。这条判据坏掉不会红：记录照样写进库，只是谁也看不到。
+        var source = McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Filters/AgentApiKeyUsageFilter.cs");
+        var body = McpSourceGuard.StripComments(
+            source[source.IndexOf("private Task LogAsync", StringComparison.Ordinal)..]);
+        body.ShouldNotContain("http.User",
+            customMessage: "审计行要用闸门认出来的那个主体，不是 HttpContext.User");
+    }
+
+    [Fact]
+    public void 别的凭据形态一律不补认证()
+    {
+        // JWT 会话：它走默认 scheme，本来就有主体，不需要这条路
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("Bearer eyJhbGciOiJIUzI1NiJ9.x.y")).ShouldBeFalse();
+        // 旧版 sk-{32} App key 与平台访问钥匙都不是接入台的密钥
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("Bearer sk-0123456789abcdef")).ShouldBeFalse();
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith(null)).ShouldBeFalse();
+        AgentApiKeyUsageFilter.HasAgentKeyCredential(RequestWith("")).ShouldBeFalse();
+    }
+}
+
+/// <summary>
+/// 第 30 轮那三处接线的守卫。
+///
+/// 三条的共同形状：机制早就有（写入服务的乐观并发与派生失败返回值、回环令牌），
+/// 只是调用处没接上。接线删掉之后编译过、全量测试绿、页面照常渲染 —— 只有并发、
+/// 只有派生步骤抛异常、只有用户去看「累计请求数」的那一刻才显形。
+/// </summary>
+public class McpRound30WiringTests
+{
+    private const string OpenApiPath = "prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs";
+
+    [Fact]
+    public void 覆盖正文必须带乐观并发条件并处理冲突()
+    {
+        var body = McpSourceGuard.StripComments(McpSourceGuard.Slice(
+            McpSourceGuard.Read(OpenApiPath),
+            "public async Task<IActionResult> UpdateEntryContent",
+            "private const int MaxContentChars"));
+
+        body.ShouldContain("expectedUpdatedAt:",
+            customMessage: "两个智能体同时覆盖同一篇时，没有这个条件就会各写各的，最后正文与派生数据来自不同请求");
+        body.ShouldContain("write.Conflicted",
+            customMessage: "带了条件却不看返回值，等于没带 —— 冲突时会当成写成功回给智能体");
+    }
+
+    [Fact]
+    public void 覆盖正文必须把派生失败转成返回值而不是_500()
+    {
+        var body = McpSourceGuard.StripComments(McpSourceGuard.Slice(
+            McpSourceGuard.Read(OpenApiPath),
+            "public async Task<IActionResult> UpdateEntryContent",
+            "private const int MaxContentChars"));
+
+        // 不传这个键，写入服务里那段 catch 的 when 条件不成立，派生异常会一路上抛成 500——
+        // 而正文早就提交了。网关据此退还写入额度，智能体被鼓励去重试一件已经生效的事。
+        body.ShouldContain("derivedStateMetadataKey:",
+            customMessage: "没有这个键，派生失败会变成 500，而正文已经写进去了");
+        body.ShouldContain("write.DerivedFailed",
+            customMessage: "派生状态要如实回给调用方，否则它只知道成功、不知道有三样东西没刷成");
+    }
+
+    [Fact]
+    public void 回环那一跳不许再记一次用量()
+    {
+        var body = McpSourceGuard.StripComments(McpSourceGuard.Slice(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Authentication/ApiKeyAuthenticationHandler.cs"),
+            "if (apiKey.StartsWith(\"sk-ak-\"",
+            "var agentIdentity"));
+
+        // 一次工具调用认证两遍（外面 /api/mcp 一遍、回环转发一遍）。两遍都记，
+        // 密钥管理页上的「累计请求数」对一次调用涨 2、对一批 N 个工具涨 N+1。
+        body.ShouldContain("IsGatewayContinuation",
+            customMessage: "回环那一跳要跳过用量计数，判据与限流、配额闸门放行它的那个一致");
+    }
+}
+
+/// <summary>
+/// 网页托管的大小上限按**字节**判。
+///
+/// 按 string.Length 判等于给中文页面开了三倍的口子：一个汉字 3 个 UTF-8 字节，
+/// 四百万字符的中文页面实际是十二兆，而工具描述里写的是 4MB，落进对象存储的也是字节。
+/// </summary>
+public class WebPageSizeLimitTests
+{
+    [Fact]
+    public void 中文页面不许绕过_4MB_上限()
+    {
+        var body = McpSourceGuard.StripComments(McpSourceGuard.Slice(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesOpenApiController.cs"),
+            "public async Task<IActionResult> PublishPage",
+            "/// <summary>列出我托管的站点"));
+
+        body.ShouldContain("Encoding.UTF8.GetByteCount",
+            customMessage: "上限要按字节判：一个汉字 3 字节，按字符数判等于中文页面能塞三倍");
+        body.ShouldNotContain("html.Length >",
+            customMessage: "字符数判据要整条去掉，留着就是下一个人照着它改回去");
+    }
+}
+
+/// <summary>
+/// 第 31 轮那三处。前两条是「写库跟着客户端断开走 / 调用方给的值被静默顶掉」，
+/// 第三条相反 —— 是一条**看着对、永远走不到**的分支，删掉它比留着更诚实。
+/// </summary>
+public class McpRound31WiringTests
+{
+    private const string OpenApiPath = "prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs";
+
+    private static string CreateEntryBody() => McpSourceGuard.StripComments(McpSourceGuard.Slice(
+        McpSourceGuard.Read(OpenApiPath),
+        "public async Task<IActionResult> CreateEntry",
+        "public class UpdateEntryContentRequest"));
+
+    [Fact]
+    public void 建条目那一笔插入不跟请求取消走()
+    {
+        // 它落在补偿段之外，且只接住撞主键。客户端在它在途时断开，Mongo 可能已经写进去了，
+        // 而驱动抛的是取消 —— 留下一条空的、带 mcpContentPending 的条目，此后同一个
+        // clientRequestId 的每次重试都拿到 409，永远。
+        CreateEntryBody().ShouldContain("InsertOneAsync(entry, cancellationToken: CancellationToken.None)",
+            customMessage: "建条目是服务端自己的写入，客户端断开不能让它半途而废");
+    }
+
+    [Fact]
+    public void 调用方给的摘要不许被正文派生的摘要顶掉()
+    {
+        // 写入服务无条件把正文前 200 字写成摘要（在线编辑的默认行为）。
+        // 「同时给 summary 和 content」是最自然的用法，而它此前会被静默丢掉：
+        // 接口回成功，库里存的却是另一段文字。
+        var body = CreateEntryBody();
+        body.ShouldContain("explicitSummary",
+            customMessage: "调用方明确给了摘要就得存他给的那个");
+        body.ShouldContain("e.Summary",
+            customMessage: "摘要要真的写回条目，光算出来不写等于没做");
+    }
+
+    [Fact]
+    public void 限流中间件不许再按密钥_id_分桶()
+    {
+        // 不是「不该按密钥分桶」，是**在这一层做不到**：UseAuthentication() 只跑默认方案（JWT），
+        // ApiKey 要等 UseAuthorization() 才被选中，而它排在限流之后。这里读不到密钥身份，
+        // 加了分支也一次都走不到。要做得先把 ApiKey 并进默认方案，那是另一个语义类别。
+        var source = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Middleware/RateLimitMiddleware.cs"));
+
+        source.ShouldNotContain("agentApiKeyId",
+            customMessage: "这一层拿不到密钥身份；要按密钥分桶得先改认证方案，见 debt.platform 边界 15");
+    }
+
+    [Fact]
+    public void 管线顺序变了要重新想这件事()
+    {
+        // 上一条的前提是「限流排在授权之前」。哪天有人调换了顺序，前提就不成立了，
+        // 那条「不许按密钥分桶」的结论也该重新审 —— 所以把前提本身钉住。
+        var program = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Program.cs"));
+
+        var auth = program.IndexOf("app.UseAuthentication();", StringComparison.Ordinal);
+        var rate = program.IndexOf("app.UseRateLimiting();", StringComparison.Ordinal);
+        var authz = program.IndexOf("app.UseAuthorization();", StringComparison.Ordinal);
+
+        auth.ShouldBeGreaterThanOrEqualTo(0);
+        rate.ShouldBeGreaterThan(auth);
+        authz.ShouldBeGreaterThan(rate,
+            "限流不再排在授权之前了：那上一条守卫的前提就没了，按密钥分桶这件事要重新审一遍");
+    }
+
+    [Fact]
+    public void 同级的静态路由_不许被占位段吃掉()
+    {
+        // GET /api/open/marketplace/skills/tags 是一条真实存在、但**不是** MCP 工具的接口。
+        // 按原始路径反查时它会被 marketplace_get_skill 的 /skills/{id} 认领，于是白扣一次
+        // 这把密钥的分钟窗口、还在调用记录里留下一条没发生过的调用，反复请求能把人限到 429。
+        // 认领了就是缺陷：非工具接口会白扣额度并在调用记录里留一条假审计。
+        McpBuiltinTools.MatchRouteTemplate("GET", "api/open/marketplace/skills/tags")
+            .ShouldBeNull();
+
+        // 真正那条工具照旧认得出（占位对占位）。
+        // 不写成 `?.Name.ShouldBe(...)`：那样一旦返回 null，整个断言会被静默跳过（形状 4b）。
+        var matched = McpBuiltinTools.MatchRouteTemplate("GET", "api/open/marketplace/skills/{id}");
+        matched.ShouldNotBeNull("真正的工具路由反而认不出来了");
+        matched.Name.ShouldBe("marketplace_get_skill");
+
+        // 占位符叫什么、带不带路由约束都不影响它是同一条路由。
+        McpBuiltinTools.RouteTemplatesEqual("/api/open/marketplace/skills/{id}",
+            "api/open/marketplace/skills/{skillId}").ShouldBeTrue();
+        McpBuiltinTools.RouteTemplatesEqual("/api/open/marketplace/skills/{id}",
+            "api/open/marketplace/skills/tags").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 网页托管的元数据_必须在传对象之前就判上限()
+    {
+        // 幂等键压成指纹之后，title/description/folder/tags 是这一路仅剩的无界调用方输入。
+        // 服务是先传对象、后插库，所以超限必须在**调用服务之前**就判掉，
+        // 否则对象已经传上去、插库时顶破文档上限失败，留下一个没人指向的孤儿。
+        var ok = new WebPagesOpenApiController.PublishPageRequest
+        {
+            Title = "正常标题", Description = "正常说明", Folder = "demo",
+            Tags = new List<string> { "a", "b" },
+        };
+        WebPagesOpenApiController.ValidateMetadata(ok).ShouldBeNull();
+
+        WebPagesOpenApiController.ValidateMetadata(new WebPagesOpenApiController.PublishPageRequest
+        { Title = new string('x', 1000) }).ShouldNotBeNull("超长 title 没被拦住");
+
+        WebPagesOpenApiController.ValidateMetadata(new WebPagesOpenApiController.PublishPageRequest
+        { Tags = Enumerable.Range(0, 100).Select(i => i.ToString()).ToList() })
+            .ShouldNotBeNull("tag 个数没被拦住");
+
+        WebPagesOpenApiController.ValidateMetadata(new WebPagesOpenApiController.PublishPageRequest
+        { Tags = new List<string> { new('y', 500) } })
+            .ShouldNotBeNull("超长单个 tag 没被拦住");
+
+        // 中文按字节算：一个汉字 3 字节，512 字节的 title 上限对中文是约 170 字。
+        WebPagesOpenApiController.ValidateMetadata(new WebPagesOpenApiController.PublishPageRequest
+        { Title = new string('标', 300) }).ShouldNotBeNull("中文 title 按字符数放行了，上限对中文形同虚设");
+    }
+}

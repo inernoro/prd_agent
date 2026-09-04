@@ -46,6 +46,7 @@ const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(
 const KnowledgeDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.KnowledgeDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
+const McpConsolePage = lazy(() => import('@/pages/mcp-console/McpConsolePage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
@@ -659,7 +660,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
 
-  // ╔══════════════ 实用工具（5）═══════════════════════════
+  // ╔══════════════ 实用工具（6）═══════════════════════════
+  {
+    path: '/mcp-console',
+    permission: 'access',
+    element: shellGuarded('access', <McpConsolePage />),
+    nav: {
+      label: '智能体接入台',
+      shortLabel: '接入台',
+      description: '把平台接进你的智能体：授权哪些能力、连着哪几台客户端、它们刚才做了什么',
+      icon: 'Plug',
+      section: 'utility',
+      tags: ['MCP', '接入', '智能体', 'agent', '密钥', '连接器', 'connector'],
+    },
+  },
   {
     path: '/skill-agent',
     permission: 'access',

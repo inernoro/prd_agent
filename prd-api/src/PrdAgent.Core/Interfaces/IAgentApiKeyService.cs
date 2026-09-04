@@ -5,6 +5,18 @@ namespace PrdAgent.Core.Interfaces;
 /// <summary>
 /// Agent 开放接口 API Key 管理服务。
 /// </summary>
+/// <summary>
+/// 接入台配额的一次性补丁。null 表示这一项不改。
+///
+/// 单独拎成一个入参，是为了让它和名字/scope/启停**合成同一次 Mongo 写**：
+/// 分两次写时，第二次失败会留下「接口报错了、但名字已经改了」的半截状态。
+/// 放在 Core 是因为接口层用不了 MongoDB.Driver 的 UpdateDefinition。
+/// </summary>
+public sealed record AgentApiKeyQuotaPatch(int? DailyImageQuota, int? DailyWriteQuota, int? RateLimitPerMin)
+{
+    public bool IsEmpty => DailyImageQuota is null && DailyWriteQuota is null && RateLimitPerMin is null;
+}
+
 public interface IAgentApiKeyService
 {
     /// <summary>
@@ -43,7 +55,8 @@ public interface IAgentApiKeyService
         string? description,
         IEnumerable<string>? scopes,
         bool? isActive,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        AgentApiKeyQuotaPatch? quota = null);
 
     /// <summary>删除 Key（硬删除；撤销用 RevokeAsync）</summary>
     Task<bool> DeleteAsync(string id, CancellationToken ct = default);

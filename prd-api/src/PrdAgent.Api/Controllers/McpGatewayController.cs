@@ -7,7 +7,9 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Mcp;
+using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -39,18 +41,32 @@ public class McpGatewayController : ControllerBase
     private readonly IHttpClientFactory _httpFactory;
     private readonly IServer _server;
     private readonly ILogger<McpGatewayController> _logger;
+    private readonly McpUsageService _usage;
+    private readonly McpLoopbackSignal _loopback;
 
     public McpGatewayController(
         MongoDbContext db,
         IHttpClientFactory httpFactory,
         IServer server,
-        ILogger<McpGatewayController> logger)
+        ILogger<McpGatewayController> logger,
+        McpUsageService usage,
+        McpLoopbackSignal loopback)
     {
         _db = db;
         _httpFactory = httpFactory;
         _server = server;
         _logger = logger;
+        _usage = usage;
+        _loopback = loopback;
     }
+
+    /// <summary>
+    /// 一个 JSON-RPC 批量请求里最多几条。
+    ///
+    /// 取 50：真实客户端的批量是「把几个初始化调用打个包」，个位数到十几条；
+    /// 而它要挡的是「一个包里塞几千条」——两者之间差着两个数量级，不必卡得很紧。
+    /// </summary>
+    internal const int MaxBatchItems = 50;
 
     /// <summary>MCP 主端点。接收 JSON-RPC（单条或批量），返回 JSON-RPC 响应。</summary>
     [HttpPost]
@@ -66,6 +82,19 @@ public class McpGatewayController : ControllerBase
 
         if (root is JsonArray arr)
         {
+            // 批量条数先收住，再开始逐条派发。
+            //
+            // 外层那道限流看到的是**一个** HTTP 请求，而这个数组里可以装几千条 tools/call ——
+            // 每一条都会走一遍 CheckRateAsync，那里是先查一次 Mongo 拿密钥、再看内存窗口，
+            // 于是「这把钥匙这一分钟早就超了」也拦不住前面那几千次数据库往返；
+            // 装的若是 ping，则是几千条响应拼成一个巨大的 body。
+            // 一个还没超过请求体上限的包，就能把这两样各来一遍。
+            //
+            // 收在派发之前而不是派发之中：进了循环再判，前面那部分已经打出去了。
+            if (arr.Count > MaxBatchItems)
+                return JsonRpc(RpcError(null, -32600,
+                    $"一次最多 {MaxBatchItems} 条，收到 {arr.Count} 条。请拆成多个请求分批发。"));
+
             var responses = new JsonArray();
             foreach (var item in arr)
             {
@@ -152,15 +181,46 @@ public class McpGatewayController : ControllerBase
         var endpoints = await _db.AgentOpenEndpoints.Find(e => e.IsActive).ToListAsync(ct);
         foreach (var e in endpoints)
         {
-            var reqScopes = e.RequiredScopes ?? new List<string>();
-            if (!reqScopes.Any(scopes.Contains)) continue;
-            if (e.AllowedCallerUserIds is { Count: > 0 } wl &&
-                (boundUserId == null || !wl.Contains(boundUserId))) continue;
+            if (!DynamicToolVisible(e, scopes, boundUserId)) continue;
             tools.Add(DynamicToolToJson(e));
         }
 
         return new JsonObject { ["tools"] = tools };
     }
+
+    /// <summary>
+    /// 这条登记的开放接口，对持这组 scope 的密钥可不可见。
+    ///
+    /// 判据只此一处：接入台的「这把钥匙能看到什么」自检要跟 tools/list 报同一份清单，
+    /// 各写一份必然漂 —— 自检说 0 个工具、实际连上去有一堆，或者反过来。
+    /// </summary>
+    internal static bool DynamicToolVisible(AgentOpenEndpoint e, HashSet<string> scopes, string? boundUserId)
+    {
+        if (!e.IsActive) return false;
+        // 收不回来的动作，这一版一律不给智能体 —— 见 IsDestructiveMethod。
+        if (IsDestructiveMethod(e.HttpMethod)) return false;
+        var reqScopes = e.RequiredScopes ?? new List<string>();
+        if (!reqScopes.Any(scopes.Contains)) return false;
+        if (e.AllowedCallerUserIds is { Count: > 0 } wl && (boundUserId == null || !wl.Contains(boundUserId)))
+            return false;
+        return true;
+    }
+
+    /// <summary>
+    /// 这条登记接口做的是不是「收不回来」的事。
+    ///
+    /// 接入向导底部对用户白纸黑字写着：删除和公开发布这类收不回来的动作，这一版一律不开放给智能体，
+    /// 不管你怎么勾。内置工具那边靠「压根没登记这类工具」来兑现，而登记表这条路是敞开的 ——
+    /// <c>AgentOpenEndpointsController</c> 的 AllowedMethods 明确收 DELETE，一旦有人登记一条，
+    /// 它就会跟着普通 <c>agent.*</c> scope 一起出现在 tools/list 里、也能被 tools/call 打到。
+    /// 那等于用户在向导里读到的承诺，从另一扇门被绕过去了。
+    ///
+    /// 破坏性动作要开放，需要的是它自己那一档 scope + 一次显式确认（计划里的第二阶段），
+    /// 在那份契约落地之前，列举和调用两处都不给。判据只此一处，两处共用同一个函数 ——
+    /// 各写一份的话，早晚出现「列表里看不见、直接按名字调却能打通」。
+    /// </summary>
+    internal static bool IsDestructiveMethod(string? httpMethod)
+        => string.Equals(httpMethod?.Trim(), "DELETE", StringComparison.OrdinalIgnoreCase);
 
     internal static JsonObject BuiltinToolToJson(McpToolDef t)
     {
@@ -236,43 +296,240 @@ public class McpGatewayController : ControllerBase
         var args = prms?["arguments"] as JsonObject ?? new JsonObject();
         if (string.IsNullOrWhiteSpace(name))
             return RpcError(id, -32602, "Missing tool name");
+        // 认出工具之前先截。下面认不出来的那条路会照样写一行审计，而这个名字同时进 ToolName
+        // 和拒绝语 —— 原样带着，拿合法密钥刷几 MB 的工具名就能按每分钟的速率把审计集合撑爆，
+        // 大到超过 Mongo 单文档上限时那行还插不进去，且写审计包了 try，连失败都没有声音。
+        name = McpInputBounds.ToolNameForAudit(name!);
 
         var scopes = OwnedScopes();
+        var boundUserId = User.FindFirst("boundUserId")?.Value;
+        var startedAt = DateTime.UtcNow;
+
+        // 每一次工具调用都记一笔：接入台「刚刚发生了什么」要能回答「谁、用什么、做了什么、产出在哪」。
+        // 被挡下来的（scope 不足 / 配额触顶）同样记，否则用户只会看到智能体那边一句语焉不详的失败。
+        var log = new McpCallLog
+        {
+            OwnerUserId = boundUserId ?? string.Empty,
+            KeyId = User.FindFirst("agentApiKeyId")?.Value ?? User.FindFirst("appId")?.Value ?? string.Empty,
+            // 密钥名也是调用方给的、也没有上限，而它**每一次调用**都被整个抄进这一行 ——
+            // 工具名那条至少还得先想个名字刷，这条是建一把名字几 MB 的密钥，此后每笔调用自动放大。
+            KeyName = McpInputBounds.ForAudit(User.FindFirst("appName")?.Value, McpInputBounds.KeyNameChars) ?? string.Empty,
+            ToolName = name!,
+            ArgumentsPreview = McpUsageService.SummarizeArguments(args),
+            CreatedAt = startedAt,
+        };
+
+        // 速率闸排在**工具解析之前**。被拒的调用同样要计次：工具名不存在、scope 不足、
+        // 不在白名单，这几条路径都在认出工具之前就返回了，却每次都要查一遍登记表、写一行审计记录。
+        // 闸门排在后面的话，拿着合法密钥刷不存在的工具名就能绕过它，把审计集合刷爆。
+        var rate = await _usage.CheckRateAsync(log.KeyId, ct);
+        if (!rate.Allowed)
+        {
+            // 超限的每一次都写一行审计，等于限流没能保护它本来要保护的那张表 ——
+            // 被挡住的洪水照样一条一条落库。所以一分钟内只落**第一条**：
+            // 用户仍看得到「这把密钥被限流了」，后续同一分钟的重复不再堆进去。
+            if (rate.SuppressLog) return ToolError(id, rate.Reason!);
+            return await DeniedAsync(id, log, rate.Reason!, ct);
+        }
 
         // 内置工具
         var bt = McpBuiltinTools.All.FirstOrDefault(t => t.Name == name);
         if (bt != null)
         {
+            log.Capability = McpCapabilityCatalog.ByScope(bt.RequiredScope)?.Key;
+            log.IsWrite = McpUsageService.IsWriteTool(bt);
+            log.ImageCount = McpUsageService.IsImageTool(bt) ? ReadRequestedImageCount(args) : 0;
+
             if (!ScopeSatisfies(scopes, bt.RequiredScope))
-                return ToolError(id, $"权限不足：此工具需要 scope {bt.RequiredScope}，当前密钥未授权。");
+                return await DeniedAsync(id, log, $"权限不足：此工具需要 scope {bt.RequiredScope}，当前密钥未授权。", ct);
+
+            // 闸门放行时会为日额度原子占坑；下面任何一条没真跑成的路径都要把坑退回去，
+            // 否则一次参数写错就白扣一张图的额度。
+            var verdict = await _usage.CheckAsync(log.KeyId, log.ImageCount, log.IsWrite, ct);
+            if (!verdict.Allowed)
+                return await DeniedAsync(id, log, verdict.Reason!, ct);
+
             var (path, body, err) = BuildBuiltinRequest(bt, args);
-            if (err != null) return ToolError(id, err);
+            if (err != null)
+            {
+                await ReleaseReservationAsync(log.KeyId, verdict, ct);
+                return await DeniedAsync(id, log, err, ct);
+            }
+
             var (status, respBody) = await LoopbackAsync(bt.Method, path, body, ct);
+            await RecordFinishedAsync(log, status, respBody, startedAt, verdict,
+                McpUsageService.ProducesArtifacts(bt), ct);
             return ToolCallResult(id, status, respBody);
         }
 
         // 动态工具
-        var boundUserId = User.FindFirst("boundUserId")?.Value;
         var endpoints = await _db.AgentOpenEndpoints.Find(e => e.IsActive).ToListAsync(ct);
         var match = endpoints.FirstOrDefault(e => DynamicToolName(e) == name);
         if (match == null)
-            return ToolError(id, $"工具不存在或不可用: {name}");
+            return await DeniedAsync(id, log, $"工具不存在或不可用: {name}", ct);
 
+        // 能不能调，跟能不能看见走同一个判据（DynamicToolVisible）——两处各写一份的老毛病是
+        // 「列表里看不见、直接按名字调却打得通」。拒绝语仍分开给，用户得知道是权限不够、
+        // 不在白名单、还是这类动作压根不开放。
+        if (IsDestructiveMethod(match.HttpMethod))
+            return await DeniedAsync(id, log,
+                "这个接口做的是删除类、收不回来的动作，这一版不开放给智能体 —— 请在网页里自己操作。", ct);
         var ms = match.RequiredScopes ?? new List<string>();
         if (!ms.Any(scopes.Contains))
-            return ToolError(id, "权限不足：当前密钥未授权此工具所需 scope。");
+            return await DeniedAsync(id, log, "权限不足：当前密钥未授权此工具所需 scope。", ct);
         if (match.AllowedCallerUserIds is { Count: > 0 } wl &&
             (boundUserId == null || !wl.Contains(boundUserId)))
-            return ToolError(id, "调用方不在此接口的白名单内。");
+            return await DeniedAsync(id, log, "调用方不在此接口的白名单内。", ct);
+        if (!DynamicToolVisible(match, scopes, boundUserId))
+            return await DeniedAsync(id, log, $"工具不存在或不可用: {name}", ct);
+
+        var isGetDyn = string.Equals(match.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase);
+        log.IsWrite = !isGetDyn;
+
+        // 动态工具没有能力归属，但**写入照样算写入**：闸门读的就是上面记进日志的那个 IsWrite。
+        // 早先这里传 null 让闸门整个跳过日额度，等于给登记表接口开了一道无上限的后门。
+        var dynVerdict = await _usage.CheckAsync(log.KeyId, 0, log.IsWrite, ct);
+        if (!dynVerdict.Allowed)
+            return await DeniedAsync(id, log, dynVerdict.Reason!, ct);
 
         // 先替换 Path 中的 {param} 占位（取自 arguments），已用于路径的键不再进 query/body
         var consumed = new HashSet<string>(StringComparer.Ordinal);
         var dynPath = SubstitutePathParams(match.Path, args, consumed);
-        var isGet = string.Equals(match.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase);
-        var pathAndQuery = isGet ? AppendQuery(dynPath, args, consumed) : dynPath;
-        JsonNode? dynBody = isGet ? null : BodyExcluding(args, consumed);
+        var pathAndQuery = isGetDyn ? AppendQuery(dynPath, args, consumed) : dynPath;
+        JsonNode? dynBody = isGetDyn ? null : BodyExcluding(args, consumed);
         var (st, rb) = await LoopbackAsync(match.HttpMethod, pathAndQuery, dynBody, ct);
+        await RecordFinishedAsync(log, st, rb, startedAt, dynVerdict, !isGetDyn, ct);
         return ToolCallResult(id, st, rb);
+    }
+
+    /// <summary>把闸门占的日额度退回去（调用没真的跑成时）。</summary>
+    private Task ReleaseReservationAsync(string keyId, McpQuotaVerdict verdict, CancellationToken ct)
+        => verdict.ReservedKind == null
+            ? Task.CompletedTask
+            // 按占坑那天退，不按现在是哪天 —— 跨过 UTC 午夜的调用会退错日子
+            : _usage.ReleaseAsync(keyId, verdict.ReservedKind, verdict.ReservedAmount, verdict.ReservedDay, ct);
+
+    /// <summary>被闸门挡下：记一条 denied，再把原因原样回给智能体（它会转述给用户）。</summary>
+    private async Task<JsonObject> DeniedAsync(JsonNode? id, McpCallLog log, string reason, CancellationToken ct)
+    {
+        log.Status = "denied";
+        log.ErrorMessage = reason;
+        log.DurationMs = (int)(DateTime.UtcNow - log.CreatedAt).TotalMilliseconds;
+        await _usage.LogAsync(log, ct);
+        return ToolError(id, reason);
+    }
+
+    /// <summary>
+    /// 调用完成：记成败、耗时，认产物，并把不该算数的配额退回去。
+    ///
+    /// 两种要退：调用没跑成（非 2xx），以及幂等命中 —— 后者下游只是把已存在的东西原样回来，
+    /// 没有新的副作用，再扣一次额度等于惩罚「响应丢了所以重试」这件本来就正常的事。
+    /// </summary>
+    /// <summary>
+    /// 认不出结构的响应体，能进日志的只有这两样：一段有界的开头，和整体的指纹。
+    ///
+    /// 上一版把整个 <c>respBody</c> 原样打进日志，而紧挨着的那段注释自己就写明了
+    /// 「这种响应往往是代理页或框架错误页」—— 那类页面里装着用户内容、带签名的地址、
+    /// 请求细节，偶尔还有凭据；一个几 MB 的错误页还会连着放大日志存储。
+    /// 排障真正需要的是「长什么样、是不是同一种」，前者取开头 512 字节够了，
+    /// 后者靠指纹比对：同一个哈希反复出现就是同一个故障，不需要留全文。
+    /// 要看全文的人自己那一侧就拿得到真实响应。
+    /// </summary>
+    private static string BoundedBodyHead(string? body)
+    {
+        if (string.IsNullOrEmpty(body)) return "(空)";
+        var head = body.Length > 512 ? body[..512] + "…" : body;
+        // 开头这 512 字节里同样可能带凭据（错误页会把请求头回显出来），先按行内标志擦一遍。
+        return CredentialLike.Replace(head, "***");
+    }
+
+    /// <summary>整体指纹：只用来判「是不是同一种故障」，不可逆、不含内容。</summary>
+    private static string BodyDigest(string? body)
+    {
+        if (string.IsNullOrEmpty(body)) return "-";
+        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(body));
+        return Convert.ToHexString(bytes, 0, 8).ToLowerInvariant();
+    }
+
+    /// <summary>形如 `Authorization: Bearer xxx` / `api_key=xxx` / `sk-xxxx` 的片段，进日志前擦掉。</summary>
+    private static readonly System.Text.RegularExpressions.Regex CredentialLike = new(
+        @"(?i)(bearer\s+[A-Za-z0-9._\-]+|sk-[A-Za-z0-9._\-]{6,}|(api[_\-]?key|password|secret|token)\s*[=:]\s*""?[^""\s,&}]+)",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private async Task RecordFinishedAsync(
+        McpCallLog log, int status, string respBody, DateTime startedAt, McpQuotaVerdict verdict,
+        bool producesArtifacts, CancellationToken ct)
+    {
+        log.HttpStatus = status;
+        log.Status = status is >= 200 and < 300 ? "success" : "error";
+        log.DurationMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+
+        if (log.Status == "error")
+        {
+            await ReleaseReservationAsync(log.KeyId, verdict, ct);
+            log.ErrorMessage = McpArtifactExtractor.ExtractErrorMessage(respBody);
+            // 原始响应体只留在服务端日志里。面板上那条 ErrorMessage 是给普通用户看的，
+            // 而认不出结构的响应往往是代理页或框架错误页，带着内部主机名与调用栈。
+            if (log.ErrorMessage == McpArtifactExtractor.UnrecognizedFailure)
+                _logger.LogWarning(
+                    "[mcp] 回环失败且响应体认不出结构 tool={Tool} status={Status} bodyBytes={Bytes} bodyHash={Hash} bodyHead={Head}",
+                    log.ToolName, status,
+                    System.Text.Encoding.UTF8.GetByteCount(respBody ?? string.Empty),
+                    BodyDigest(respBody), BoundedBodyHead(respBody));
+        }
+        else if (McpArtifactExtractor.IsDeduplicated(respBody))
+        {
+            await ReleaseReservationAsync(log.KeyId, verdict, ct);
+            log.Deduplicated = true;
+            // 分类不抹：这次要干的确实是写入 / 出图，记录该照实写。抹成「只读动作·0 张图」，
+            // 接入台的调用记录就跟它实际干的事不符了（那一行的文案直接读 IsWrite / ImageCount）。
+            // 「没产生新副作用、额度已退回」这件事由 Deduplicated 单独表达 —— 日额度的账本是
+            // McpUsageCounter，从来不从这两个字段里加，所以不抹也不会重复计数。
+            ApplyArtifact(log, McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody));
+        }
+        else
+        {
+            ApplyArtifact(log, McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody));
+        }
+        await _usage.LogAsync(log, ct);
+    }
+
+    /// <summary>
+    /// 把产物字段写进审计行 —— 唯一一处，且一律先截。
+    ///
+    /// 这三个值来自**下游的响应体**：登记的动态写入接口想回多长的 id / url / title 就回多长，
+    /// 而它们每一次调用都被整个抄进这一行。够大的一条会顶破 Mongo 单文档上限，而写审计包了 try，
+    /// 于是一次**已经扣过额度的成功调用**从审计里凭空消失；不到上限的也在白占存储与面板宽度。
+    ///
+    /// 原来去重与正常两条分支各抄一遍同样的四行赋值 —— 那是判据分裂的现成温床：
+    /// 截了一处、漏了另一处，谁也看不出来。收敛成一处，两条分支都从这儿走。
+    /// </summary>
+    private static void ApplyArtifact(McpCallLog log, McpArtifactExtractor.Artifact artifact)
+    {
+        // Kind 是我方枚举（不是调用方给的），原样留着。
+        log.ArtifactKind = artifact.Kind;
+        log.ArtifactId = McpInputBounds.ForAudit(artifact.Id, McpInputBounds.ArtifactIdChars);
+        log.ArtifactUrl = McpInputBounds.ForAudit(artifact.Url, McpInputBounds.ArtifactUrlChars);
+        log.ArtifactTitle = McpInputBounds.ForAudit(artifact.Title, McpInputBounds.ArtifactTitleChars);
+    }
+
+    /// <summary>
+    /// 生图工具的张数（用于日额度预判）；缺省 1。
+    ///
+    /// clamp 不在这里自己写一遍：收敛区间归 VisualOpenApiController.ResolveImageCount 管，
+    /// 它才是真正决定「这次到底出几张」的那处。两边各 clamp 一遍的话，哪天上限从 4 改成 8，
+    /// 闸门还按 4 占坑，扣的额度和实际出图数就对不上了。
+    /// </summary>
+    internal static int ReadRequestedImageCount(JsonObject args)
+    {
+        int? requested = null;
+        if (args.TryGetPropertyValue("count", out var node) && node is JsonValue v)
+        {
+            if (v.TryGetValue<int>(out var i)) requested = i;
+            else if (v.TryGetValue<double>(out var d)) requested = (int)d;
+        }
+        return PrdAgent.Api.Controllers.Api.VisualOpenApiController.ResolveImageCount(
+            new PrdAgent.Api.Controllers.Api.VisualOpenApiController.GenerateImageRequest { Count = requested });
     }
 
     internal static (string path, JsonNode? body, string? err) BuildBuiltinRequest(McpToolDef t, JsonObject args)
@@ -318,6 +575,10 @@ public class McpGatewayController : ControllerBase
         var client = _httpFactory.CreateClient("McpLoopback");
         using var req = new HttpRequestMessage(new HttpMethod(method), baseUrl + pathAndQuery);
 
+        // 自证「这一跳是网关的续跳」：下游的用量闸门与全局限流据此不再重复计一次。
+        // 用进程内随机令牌而不是「对端是不是 127.0.0.1」，见 McpLoopbackSignal 的说明。
+        req.Headers.TryAddWithoutValidation(McpLoopbackSignal.HeaderName, _loopback.Token);
+
         var auth = Request.Headers["Authorization"].ToString();
         if (!string.IsNullOrWhiteSpace(auth))
             req.Headers.TryAddWithoutValidation("Authorization", auth);
@@ -327,20 +588,21 @@ public class McpGatewayController : ControllerBase
         if (!string.IsNullOrWhiteSpace(aiKey))
             req.Headers.TryAddWithoutValidation("X-AI-Access-Key", aiKey);
 
-        // 转发外部主机信息，让下游 ResolveServerUrl 构造公网绝对 URL（而非回环 127.0.0.1）。
-        // 否则海鲜市场 official skills / 任何按请求 host 拼 URL 的接口会在结果里返回 localhost 链接。
-        var clientBase = Request.Headers["X-Client-Base-Url"].ToString();
-        if (!string.IsNullOrWhiteSpace(clientBase))
-            req.Headers.TryAddWithoutValidation("X-Client-Base-Url", clientBase);
-        var fwdHost = Request.Headers["X-Forwarded-Host"].ToString();
-        if (string.IsNullOrWhiteSpace(fwdHost) && Request.Host.HasValue)
-            fwdHost = Request.Host.Value;
-        if (!string.IsNullOrWhiteSpace(fwdHost))
+        // 下游要拼公网绝对 URL（海鲜市场的下载地址、分享链…），否则结果里会出现 localhost。
+        // 但外部主机信息一律**由我们自己算**，绝不转发调用方填的那几个头：
+        // nginx 既不覆盖 X-Forwarded-Host 也不覆盖 X-Client-Base-Url，而 ResolveServerUrl
+        // 把 X-Client-Base-Url 排在第一优先级 —— 转发它等于让调用方决定下游拼出来的地址，
+        // 而那些地址会写进调用记录、日后被密钥主人从接入台点开。
+        //（本仓库另一处早有同样的判断：DataSyncConsumerController 明确写着「刻意不收
+        // X-Client-Base-Url」。上一轮我只堵了 X-Forwarded-Host 那一个实例，没堵这一类。）
+        // ResolveExternalBaseUrl 取的是 nginx 覆盖过的 proto + 被 nginx 清洗的 Request.Host。
+        var trustedBase = Request.ResolveExternalBaseUrl();
+        req.Headers.TryAddWithoutValidation("X-Client-Base-Url", trustedBase);
+        if (Uri.TryCreate(trustedBase, UriKind.Absolute, out var trustedUri))
         {
-            req.Headers.TryAddWithoutValidation("X-Forwarded-Host", fwdHost);
-            var fwdProto = Request.Headers["X-Forwarded-Proto"].ToString();
-            if (string.IsNullOrWhiteSpace(fwdProto)) fwdProto = Request.Scheme;
-            req.Headers.TryAddWithoutValidation("X-Forwarded-Proto", fwdProto);
+            req.Headers.TryAddWithoutValidation("X-Forwarded-Host",
+                trustedUri.IsDefaultPort ? trustedUri.Host : $"{trustedUri.Host}:{trustedUri.Port}");
+            req.Headers.TryAddWithoutValidation("X-Forwarded-Proto", trustedUri.Scheme);
         }
 
         if (body != null && !string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
@@ -358,8 +620,12 @@ public class McpGatewayController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[MCP] 回环调用失败 {Method} {Path}", method, pathAndQuery);
-            // 用 JsonObject 序列化，ex.Message 里的引号/反斜杠/换行会被正确转义，不破坏 JSON 信封
-            var errBody = new JsonObject { ["error"] = $"回环调用失败: {ex.Message}" }.ToJsonString();
+            // 只回一句稳定的说明：异常原文里带着回环主机名、端口、传输层细节，那是部署形态，
+            // 不该顺着 MCP 响应流到外部客户端手里。真正的原因上一行已经进服务端日志了。
+            var errBody = new JsonObject
+            {
+                ["error"] = "内部转发没能完成（超时或连接被拒），请稍后重试；具体原因见服务端日志。",
+            }.ToJsonString();
             return (502, errBody);
         }
     }
@@ -402,16 +668,12 @@ public class McpGatewayController : ControllerBase
         n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
     /// <summary>
-    /// scope 满足判断。镜像 AdminPermissionMiddleware.HasScopeGrant：document-store:write 隐含 read，
-    /// 让只持有写 scope 的密钥也能用 knowledge_base_* 只读工具（与 REST 行为一致）。
+    /// scope 满足判断。判据只此一处，落在 McpCapabilityCatalog：`{res}:write` 隐含 `{res}:read`，
+    /// 让只持有写 scope 的密钥也能用同一块能力的只读工具（与 REST 行为一致）。
+    /// 早先这里写死了 document-store 一对，新增 web-pages 读写档时就会漏 —— 判据别按资源名硬编码。
     /// </summary>
     internal static bool ScopeSatisfies(HashSet<string> owned, string required)
-    {
-        if (owned.Contains(required)) return true;
-        if (required == McpBuiltinTools.ScopeDocStoreRead && owned.Contains(McpBuiltinTools.ScopeDocStoreWrite))
-            return true;
-        return false;
-    }
+        => McpCapabilityCatalog.ScopeSatisfies(owned, required);
 
     internal static string DynamicToolName(AgentOpenEndpoint e)
     {

@@ -30,12 +30,18 @@ public interface IHostedSiteService
         string? sourceRef = null);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
+    /// <param name="maxStoredBytes">
+    /// 落盘上限（字节）。服务端还会重写绝对路径并注入翻页垫片，**存下去的那份比调用方给的大**；
+    /// 对外承诺过「单页不超过 N」的调用方（如 MCP 开放层）把 N 传进来，由实现按变换后的真实字节判，
+    /// 超了直接拒绝上传。传 null 维持原行为（不限）。
+    /// </param>
     Task<HostedSite> CreateFromContentAsync(
         string userId, string htmlContent,
         string? title, string? description,
         string sourceType, string? sourceRef,
         List<string>? tags, string? folder,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        int? maxStoredBytes = null);
 
     // ── 替换内容 ──
 
@@ -112,6 +118,23 @@ public interface IHostedSiteService
     /// - visibility：owner-only（默认，仅创建者/团队成员可访问）/ logged-in / public
     /// </summary>
     Task<WebPageShareLink> CreateShareAsync(
+        string userId, string displayName,
+        string? siteId, List<string>? siteIds, string shareType,
+        string? title, string? description,
+        string? password, int expiresInDays,
+        CancellationToken ct = default,
+        string purpose = "share",
+        bool forceNew = false,
+        string visibility = "owner-only",
+        bool allocateShortLink = false,
+        List<string>? askSuggestedQuestions = null);
+
+    /// <summary>
+    /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方这次**有没有真的写下什么**。
+    /// 只有「复用了既有链接且一个字段都没动」才为 true —— 复用路径会刷新有效期并追一条续期审计，
+    /// 那是有副作用的，不能报成幂等命中（否则同一个键可以无限续期而不扣额度）。
+    /// </summary>
+    Task<(WebPageShareLink Link, bool ReusedWithoutChange)> CreateShareWithReuseInfoAsync(
         string userId, string displayName,
         string? siteId, List<string>? siteIds, string shareType,
         string? title, string? description,

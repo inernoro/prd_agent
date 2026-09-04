@@ -2,7 +2,10 @@ using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
+using PrdAgent.Api.Mcp;
+using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Authentication;
 
@@ -14,6 +17,8 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
     private readonly IOpenPlatformService _openPlatformService;
     private readonly IAgentApiKeyService _agentApiKeyService;
     private readonly IConfiguration _configuration;
+    private readonly IAdminPermissionService _permissionService;
+    private readonly McpLoopbackSignal _mcpLoopback;
 
     public ApiKeyAuthenticationHandler(
         IOptionsMonitor<ApiKeyAuthenticationOptions> options,
@@ -21,12 +26,16 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         UrlEncoder encoder,
         IOpenPlatformService openPlatformService,
         IAgentApiKeyService agentApiKeyService,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IAdminPermissionService permissionService,
+        McpLoopbackSignal mcpLoopback)
         : base(options, logger, encoder)
     {
         _openPlatformService = openPlatformService;
         _agentApiKeyService = agentApiKeyService;
         _configuration = configuration;
+        _permissionService = permissionService;
+        _mcpLoopback = mcpLoopback;
     }
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -115,10 +124,31 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
                 new Claim("authType", "agent-apikey"),
                 new Claim("agentApiKeyId", key.Id)
             };
-            foreach (var scope in key.Scopes ?? new List<string>())
+            // 接入台能力目录里的 scope 要按「密钥主人此刻还有没有那个权限位」二次核对：
+            // 签发时校验过一次，但权限随后可能被管理员回收，而密钥还在外面跑。
+            // 只查一次权限（而且只在密钥确实带了这类 scope 时才查），老 scope 不受影响。
+            var declaredScopes = (key.Scopes ?? new List<string>())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToList();
+            IReadOnlyList<string>? ownerPermissions = null;
+            if (declaredScopes.Any(McpCapabilityCatalog.PermissionCheckedScopes.Contains))
             {
-                if (!string.IsNullOrWhiteSpace(scope))
-                    keyClaims.Add(new Claim("scope", scope));
+                // root 破窗账户不在 Mongo 里，按 isRoot:false 去查它的权限只会拿到空集合，
+                // 于是刚在控制台签出来的密钥下一秒就被剥光 scope。身份按 owner id 认，与 JwtService 同一个判据。
+                var ownerIsRoot = string.Equals(key.OwnerUserId, AdminPermissionCatalog.RootUserId, StringComparison.Ordinal);
+                ownerPermissions = await _permissionService.GetEffectivePermissionsAsync(key.OwnerUserId, ownerIsRoot);
+            }
+
+            foreach (var scope in declaredScopes)
+            {
+                if (McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope)
+                    && !McpCapabilityCatalog.PermissionsAllowScope(ownerPermissions ?? Array.Empty<string>(), scope))
+                {
+                    Logger.LogWarning("AgentApiKey {KeyId} 携带的 scope {Scope} 已失效：主人 {UserId} 当前没有对应权限位，本次请求按未授权处理",
+                        key.Id, scope, key.OwnerUserId);
+                    continue;
+                }
+                keyClaims.Add(new Claim("scope", scope));
             }
 
             // 若处于宽限期，通过响应头提示续期（不阻断请求）
@@ -139,7 +169,12 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             }
 
             // 记录使用（同步 await —— 不能 fire-and-forget，scoped 服务会被回收导致异常）
-            await _agentApiKeyService.TouchUsageAsync(key.Id);
+            // 一次 MCP 工具调用会认证两遍：外面那次打在 /api/mcp 上，网关随后把同一把钥匙
+            // 回环转给真正的接口，于是这里又认一遍。两遍都记一次用量的话，密钥管理页上的
+            // 「累计请求数」对一次调用涨 2、对一批 N 个工具涨 N+1 —— 用户看到的数字不是他做的事。
+            // 回环那一跳凭进程内令牌自证（外部无从伪造），和限流、配额闸门放行它是同一个判据。
+            if (!_mcpLoopback.IsGatewayContinuation(Request))
+                await _agentApiKeyService.TouchUsageAsync(key.Id);
 
             var agentIdentity = new ClaimsIdentity(keyClaims, Scheme.Name);
             var agentPrincipal = new ClaimsPrincipal(agentIdentity);

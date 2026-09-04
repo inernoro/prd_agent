@@ -851,6 +851,14 @@ export const api = {
     byId: (id: string) => `/api/agent-api-keys/${id}`,
   },
 
+  // ============ 智能体接入台（MCP）—— 给人看的那一面，智能体侧走 /api/mcp ============
+  mcpConsole: {
+    overview: () => '/api/mcp-console/overview',
+    calls: (queryString: string) => `/api/mcp-console/calls${queryString}`,
+    callDetail: (id: string) => `/api/mcp-console/calls/${id}`,
+    visibleTools: (keyId: string) => `/api/mcp-console/keys/${keyId}/visible-tools`,
+  },
+
   // ============ Infra Connections 基础设施连接（剪贴板配对密钥与 CDS 等部署平台建立信任） ============
   infraConnections: {
     list: () => '/api/infra-connections',

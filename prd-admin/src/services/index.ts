@@ -1462,6 +1462,21 @@ export const renewAgentApiKey: RenewAgentApiKeyContract = withAuth(renewAgentApi
 export const revokeAgentApiKey: RevokeAgentApiKeyContract = withAuth(revokeAgentApiKeyReal);
 export const deleteAgentApiKey: DeleteAgentApiKeyContract = withAuth(deleteAgentApiKeyReal);
 
+// 智能体接入台（MCP）：能力清单 / 客户端 / 今日额度 / 调用记录
+import type {
+  GetMcpConsoleOverviewContract,
+  GetMcpVisibleToolsContract,
+  ListMcpCallsContract,
+} from '@/services/contracts/mcpConsole';
+import {
+  getMcpConsoleOverviewReal,
+  getMcpVisibleToolsReal,
+  listMcpCallsReal,
+} from '@/services/real/mcpConsole';
+export const getMcpConsoleOverview: GetMcpConsoleOverviewContract = withAuth(getMcpConsoleOverviewReal);
+export const listMcpCalls: ListMcpCallsContract = withAuth(listMcpCallsReal);
+export const getMcpVisibleTools: GetMcpVisibleToolsContract = withAuth(getMcpVisibleToolsReal);
+
 // 限流配置服务
 import type {
   GetGlobalRateLimitContract,

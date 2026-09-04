@@ -103,6 +103,12 @@ public class MongoDbContext
     // Agent 开放接口 API Key（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权）
     public IMongoCollection<AgentApiKey> AgentApiKeys => _database.GetCollection<AgentApiKey>("agent_api_keys");
 
+    /// <summary>智能体经 MCP 调用平台能力的流水（接入台的调用记录）</summary>
+    public IMongoCollection<McpCallLog> McpCallLogs => _database.GetCollection<McpCallLog>("mcp_call_logs");
+
+    /// <summary>接入台按密钥的当日用量计数器（配额闸门的原子占坑处）</summary>
+    public IMongoCollection<McpUsageCounter> McpUsageCounters => _database.GetCollection<McpUsageCounter>("mcp_usage_counters");
+
     // OpenApi 对外网关请求日志（按 Key 聚合用量/降级，与 OpenPlatform 日志分离）
     public IMongoCollection<OpenApiRequestLog> OpenApiRequestLogs => _database.GetCollection<OpenApiRequestLog>("open_api_request_logs");
 
