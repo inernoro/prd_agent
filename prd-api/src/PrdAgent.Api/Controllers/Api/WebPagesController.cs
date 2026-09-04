@@ -23,10 +23,12 @@ namespace PrdAgent.Api.Controllers.Api;
 public class WebPagesController : ControllerBase
 {
     private readonly IHostedSiteService _siteService;
+    private readonly IHostedSiteOptimizationService _optimizationService;
     private readonly IUploadProgressService _uploadProgress;
 
     // 500MB —— 视频 / PDF 等媒体文件比 HTML 大几个量级
     private const long MaxSingleFileSize = 500L * 1024 * 1024;
+    private const long MaxOptimizationChunkRequestSize = 3L * 1024 * 1024;
 
     // 视频扩展名（浏览器原生 <video> 支持）
     private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -45,16 +47,215 @@ public class WebPagesController : ControllerBase
 
     public WebPagesController(
         IHostedSiteService siteService,
+        IHostedSiteOptimizationService optimizationService,
         IUploadProgressService uploadProgress,
         PrdAgent.Infrastructure.Database.MongoDbContext db,
         ITeamService teams,
         IHttpClientFactory httpClientFactory)
     {
         _siteService = siteService;
+        _optimizationService = optimizationService;
         _uploadProgress = uploadProgress;
         _db = db;
         _teams = teams;
         _httpClientFactory = httpClientFactory;
+    }
+
+    /// <summary>旧的整包审查入口已停用，避免大文件在 API 内存中形成多份副本。</summary>
+    [HttpPost("upload-reviewed")]
+    [RequestSizeLimit(1024)]
+    public IActionResult UploadReviewed() => StatusCode(
+        StatusCodes.Status410Gone,
+        ApiResponse<object>.Fail(
+            ErrorCodes.INVALID_FORMAT,
+            "旧上传入口已停用，请刷新页面后使用分片安全检查"));
+
+    /// <summary>创建 ZIP 分片上传任务。只登记元数据，不创建或覆盖站点。</summary>
+    [HttpPost("optimization/uploads")]
+    public async Task<IActionResult> CreateOptimizationUpload(
+        [FromBody] CreateHostedSiteOptimizationUploadRequest request)
+    {
+        try
+        {
+            var session = await _optimizationService.CreateUploadAsync(
+                GetUserId(), request, HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(new HostedSiteOptimizationUploadCreatedResult
+            {
+                SessionId = session.Id,
+                ChunkSize = session.ChunkSize,
+                TotalChunks = session.TotalChunks,
+                ExpiresAt = session.ExpiresAt,
+            }));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>上传一个固定大小的 ZIP 分片。重复提交同一序号会安全覆盖。</summary>
+    [HttpPost("optimization/uploads/{sessionId}/chunks/{chunkIndex:int}")]
+    [RequestSizeLimit(MaxOptimizationChunkRequestSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxOptimizationChunkRequestSize)]
+    public async Task<IActionResult> UploadOptimizationChunk(
+        string sessionId,
+        int chunkIndex,
+        IFormFile chunk)
+    {
+        if (chunk == null || chunk.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上传分片为空，请重试"));
+        if (chunk.Length > MaxOptimizationChunkRequestSize)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上传分片过大，请重新开始上传"));
+
+        try
+        {
+            using var output = new MemoryStream(checked((int)chunk.Length));
+            await chunk.CopyToAsync(output, HttpContext.RequestAborted);
+            await _optimizationService.UploadChunkAsync(
+                sessionId, GetUserId(), chunkIndex, output.ToArray(), HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(new { uploaded = true, chunkIndex }));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上传任务不存在或已经过期"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>确认所有分片已经送达，并把安全检查交给后台任务。</summary>
+    [HttpPost("optimization/uploads/{sessionId}/complete")]
+    public async Task<IActionResult> CompleteOptimizationUpload(string sessionId)
+    {
+        try
+        {
+            await _optimizationService.QueueUploadAsync(
+                sessionId, GetUserId(), HttpContext.RequestAborted);
+            return Accepted(ApiResponse<object>.Ok(new { queued = true, sessionId }));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上传任务不存在或已经过期"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>查询分片上传和后台检查状态。</summary>
+    [HttpGet("optimization/uploads/{sessionId}")]
+    public async Task<IActionResult> GetOptimizationUploadStatus(string sessionId)
+    {
+        try
+        {
+            var result = await _optimizationService.GetUploadStatusAsync(
+                sessionId, GetUserId(), HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(result));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上传任务不存在或已经过期"));
+        }
+    }
+
+    /// <summary>检查优化队列积压和持有者租约，退化时返回 503 供监控探测。</summary>
+    [HttpGet("optimization/health")]
+    public async Task<IActionResult> GetOptimizationQueueHealth()
+    {
+        var health = await _optimizationService.GetQueueHealthAsync(HttpContext.RequestAborted);
+        var response = ApiResponse<object>.Ok(health);
+        return health.Healthy
+            ? Ok(response)
+            : StatusCode(StatusCodes.Status503ServiceUnavailable, response);
+    }
+
+    /// <summary>生成私有临时优化版本，供用户确认效果。</summary>
+    [HttpPost("optimization/{sessionId}/preview")]
+    public async Task<IActionResult> PrepareOptimizationPreview(string sessionId)
+    {
+        try
+        {
+            var result = await _optimizationService.PreparePreviewAsync(
+                sessionId, GetUserId(), HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(result));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "优化任务不存在或已经过期"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>用短期随机令牌读取优化预览文件，不暴露底层对象地址。</summary>
+    [AllowAnonymous]
+    [HttpGet("optimization/{sessionId}/preview-content/{accessToken}/{**filePath}")]
+    public async Task<IActionResult> GetOptimizationPreviewFile(
+        string sessionId,
+        string accessToken,
+        string filePath)
+    {
+        var result = await _optimizationService.GetPreviewFileAsync(
+            sessionId, accessToken, filePath, HttpContext.RequestAborted);
+        if (result == null) return NotFound();
+        Response.Headers.CacheControl = "private, no-store";
+        Response.Headers.AccessControlAllowOrigin = "*";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        Response.Headers["Referrer-Policy"] = "no-referrer";
+        Response.Headers["Content-Security-Policy"] =
+            "sandbox allow-scripts; default-src 'self' data: blob:; "
+            + "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
+            + "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+            + "font-src 'self' data:; media-src 'self' data: blob:; "
+            + "connect-src 'self'; worker-src 'self' blob:; frame-src 'self' data: blob:; "
+            + "form-action 'none'; frame-ancestors 'self'; base-uri 'self'; object-src 'none'";
+        return File(result.Bytes, result.MimeType);
+    }
+
+    /// <summary>用户确认后才保存原文件或已预览的优化版本。</summary>
+    [HttpPost("optimization/{sessionId}/confirm")]
+    public async Task<IActionResult> ConfirmOptimization(
+        string sessionId,
+        [FromBody] ConfirmHostedSiteOptimizationRequest request)
+    {
+        try
+        {
+            var site = await _optimizationService.ConfirmAsync(
+                sessionId, GetUserId(), request.Variant, HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(site));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "优化任务不存在或已经过期"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>放弃优化任务并清理私有临时文件。</summary>
+    [HttpDelete("optimization/{sessionId}")]
+    public async Task<IActionResult> CancelOptimization(string sessionId)
+    {
+        try
+        {
+            await _optimizationService.CancelAsync(sessionId, GetUserId(), HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(new { cancelled = true }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
     }
 
     private string GetUserId() => this.GetRequiredUserId();
