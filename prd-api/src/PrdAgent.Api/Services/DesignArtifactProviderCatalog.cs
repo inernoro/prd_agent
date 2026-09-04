@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Caching.Memory;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
@@ -114,14 +115,33 @@ public sealed class BuiltInDesignArtifactProviderDefinitionSource : IDesignArtif
 
 public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatalog
 {
+    private static readonly TimeSpan PositiveCapabilityCacheDuration = TimeSpan.FromSeconds(60);
     private readonly IReadOnlyList<DesignArtifactProviderDefinition> _definitions;
     private readonly HashSet<string> _executorRuntimes;
     private readonly IReadOnlyDictionary<string, IDesignArtifactProviderProbe> _probes;
+    private readonly IMemoryCache _cache;
+    private readonly TimeSpan _positiveCapabilityCacheDuration;
 
     public DesignArtifactProviderCatalog(
         IEnumerable<IDesignArtifactProviderDefinitionSource> definitionSources,
         IEnumerable<IDesignArtifactExecutor> executors,
-        IEnumerable<IDesignArtifactProviderProbe> probes)
+        IEnumerable<IDesignArtifactProviderProbe> probes,
+        IMemoryCache cache)
+        : this(
+            definitionSources,
+            executors,
+            probes,
+            cache,
+            PositiveCapabilityCacheDuration)
+    {
+    }
+
+    internal DesignArtifactProviderCatalog(
+        IEnumerable<IDesignArtifactProviderDefinitionSource> definitionSources,
+        IEnumerable<IDesignArtifactExecutor> executors,
+        IEnumerable<IDesignArtifactProviderProbe> probes,
+        IMemoryCache cache,
+        TimeSpan positiveCapabilityCacheDuration)
     {
         _definitions = definitionSources
             .SelectMany(source => source.GetDefinitions())
@@ -132,6 +152,8 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
         _probes = probes
             .GroupBy(probe => probe.Runtime, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        _cache = cache;
+        _positiveCapabilityCacheDuration = positiveCapabilityCacheDuration;
     }
 
     public async Task<IReadOnlyList<DesignArtifactProviderCapability>> ListAsync(
@@ -188,9 +210,19 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
                 reason: "MAP 中尚未注册该远程执行器的运行事实探针");
         }
 
+        var cacheKey = new PositiveCapabilityCacheKey(userId, definition.Id);
         try
         {
             var result = await probe.ProbeAsync(userId, ct);
+            if (result.Enabled)
+            {
+                _cache.Set(cacheKey, result, _positiveCapabilityCacheDuration);
+            }
+            else
+            {
+                // CDS 明确返回 disabled 是新的权威事实，不能被旧的正向快照遮蔽。
+                _cache.Remove(cacheKey);
+            }
             return ToCapability(
                 definition,
                 result.Configured,
@@ -200,6 +232,8 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            if (TryGetRecentPositiveCapability(cacheKey, out var cached))
+                return ToCapability(definition, cached.Configured, cached.Healthy, cached.Enabled, cached.Reason);
             return ToCapability(
                 definition,
                 configured: false,
@@ -207,8 +241,15 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
                 enabled: false,
                 reason: "CDS Remote Agent 运行事实探测超时，请稍后重试");
         }
+        catch (OperationCanceledException)
+        {
+            // 请求自身已取消时必须向上传递，不能把过期请求伪装成可用能力。
+            throw;
+        }
         catch (Exception)
         {
+            if (TryGetRecentPositiveCapability(cacheKey, out var cached))
+                return ToCapability(definition, cached.Configured, cached.Healthy, cached.Enabled, cached.Reason);
             return ToCapability(
                 definition,
                 configured: false,
@@ -216,6 +257,21 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
                 enabled: false,
                 reason: "暂时无法读取 CDS Remote Agent 运行事实，请检查系统连接");
         }
+    }
+
+    private bool TryGetRecentPositiveCapability(
+        PositiveCapabilityCacheKey cacheKey,
+        out DesignArtifactProviderProbeResult capability)
+    {
+        if (_cache.TryGetValue(cacheKey, out DesignArtifactProviderProbeResult? cached)
+            && cached is { Enabled: true })
+        {
+            capability = cached;
+            return true;
+        }
+
+        capability = default!;
+        return false;
     }
 
     private static DesignArtifactProviderCapability ToCapability(
@@ -236,4 +292,6 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
             healthy,
             enabled,
             reason);
+
+    private readonly record struct PositiveCapabilityCacheKey(string UserId, string Runtime);
 }

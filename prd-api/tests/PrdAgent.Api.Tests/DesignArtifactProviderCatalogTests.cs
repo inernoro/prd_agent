@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PrdAgent.Api.Services;
@@ -14,10 +15,12 @@ public class DesignArtifactProviderCatalogTests
     [Fact]
     public async Task CatalogAcceptsAdditionalProviderWithoutChangingController()
     {
+        using var cache = NewCache();
         var catalog = new DesignArtifactProviderCatalog(
             [new BuiltInDesignArtifactProviderDefinitionSource(), new ClosedDesignDefinitionSource()],
             [new StubExecutor("map-gateway"), new StubExecutor("closed-design")],
-            []);
+            [],
+            cache);
 
         var capability = await catalog.FindAsync("user-1", "closed-design");
 
@@ -30,6 +33,7 @@ public class DesignArtifactProviderCatalogTests
     [Fact]
     public async Task RemoteProviderUsesCdsRuntimeFactAndKeepsPlannedRuntimeDisabled()
     {
+        using var cache = NewCache();
         var catalog = new DesignArtifactProviderCatalog(
             [new BuiltInDesignArtifactProviderDefinitionSource()],
             [new StubExecutor("map-gateway"), new StubExecutor(DesignArtifactRuntimes.OpenDesign)],
@@ -39,7 +43,8 @@ public class DesignArtifactProviderCatalogTests
                     Configured: false,
                     Healthy: false,
                     Enabled: false,
-                    Reason: "OpenDesign daemon 与会话级容器分配器尚未部署"))]);
+                    Reason: "OpenDesign daemon 与会话级容器分配器尚未部署"))],
+            cache);
 
         var capability = await catalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
 
@@ -55,6 +60,7 @@ public class DesignArtifactProviderCatalogTests
     [Fact]
     public async Task RemoteProviderBecomesEnabledOnlyWhenCdsReportsSelectableContract()
     {
+        using var cache = NewCache();
         var catalog = new DesignArtifactProviderCatalog(
             [new BuiltInDesignArtifactProviderDefinitionSource()],
             [new StubExecutor("map-gateway"), new StubExecutor(DesignArtifactRuntimes.OpenDesign)],
@@ -64,7 +70,8 @@ public class DesignArtifactProviderCatalogTests
                     Configured: true,
                     Healthy: true,
                     Enabled: true,
-                    Reason: null))]);
+                    Reason: null))],
+            cache);
 
         var capability = await catalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
 
@@ -73,6 +80,137 @@ public class DesignArtifactProviderCatalogTests
         Assert.True(capability.Healthy);
         Assert.True(capability.Enabled);
         Assert.Null(capability.Reason);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RemoteProviderUsesRecentPositiveFactAcrossCatalogScopesWhenProbeFails(bool timesOut)
+    {
+        using var cache = NewCache();
+        var firstCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(
+                DesignArtifactRuntimes.OpenDesign,
+                EnabledProbeResult()));
+        var first = await firstCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+        Exception failure = timesOut
+            ? new OperationCanceledException("probe timed out")
+            : new InvalidOperationException("probe transport failed");
+        var nextCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(
+                DesignArtifactRuntimes.OpenDesign,
+                _ => Task.FromException<DesignArtifactProviderProbeResult>(failure)));
+
+        var fallback = await nextCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+
+        Assert.NotNull(first);
+        Assert.True(first.Enabled);
+        Assert.NotNull(fallback);
+        Assert.True(fallback.Enabled);
+        Assert.True(fallback.Configured);
+        Assert.True(fallback.Healthy);
+    }
+
+    [Fact]
+    public async Task RemoteProviderValidDisabledFactInvalidatesRecentPositiveSnapshot()
+    {
+        using var cache = NewCache();
+        var firstCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(DesignArtifactRuntimes.OpenDesign, EnabledProbeResult()));
+        await firstCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+        var disabledCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(
+                DesignArtifactRuntimes.OpenDesign,
+                new DesignArtifactProviderProbeResult(
+                    Configured: true,
+                    Healthy: false,
+                    Enabled: false,
+                    Reason: "CDS 正在维护")));
+
+        var disabled = await disabledCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+        var failingCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(
+                DesignArtifactRuntimes.OpenDesign,
+                _ => Task.FromException<DesignArtifactProviderProbeResult>(new InvalidOperationException("probe failed"))));
+        var afterFailure = await failingCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+
+        Assert.NotNull(disabled);
+        Assert.False(disabled.Enabled);
+        Assert.Equal("CDS 正在维护", disabled.Reason);
+        Assert.NotNull(afterFailure);
+        Assert.False(afterFailure.Enabled);
+        Assert.Contains("暂时无法读取", afterFailure.Reason);
+    }
+
+    [Fact]
+    public async Task RemoteProviderDoesNotUseExpiredPositiveSnapshot()
+    {
+        using var cache = NewCache();
+        var cacheDuration = TimeSpan.FromMilliseconds(20);
+        var firstCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(DesignArtifactRuntimes.OpenDesign, EnabledProbeResult()),
+            cacheDuration);
+        await firstCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+        await Task.Delay(80);
+        var failingCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(
+                DesignArtifactRuntimes.OpenDesign,
+                _ => Task.FromException<DesignArtifactProviderProbeResult>(new InvalidOperationException("probe failed"))),
+            cacheDuration);
+
+        var capability = await failingCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+
+        Assert.NotNull(capability);
+        Assert.False(capability.Enabled);
+        Assert.Contains("暂时无法读取", capability.Reason);
+    }
+
+    [Fact]
+    public async Task RemoteProviderDoesNotSharePositiveSnapshotAcrossUsers()
+    {
+        using var cache = NewCache();
+        var firstCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(DesignArtifactRuntimes.OpenDesign, EnabledProbeResult()));
+        await firstCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+        var failingCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(
+                DesignArtifactRuntimes.OpenDesign,
+                _ => Task.FromException<DesignArtifactProviderProbeResult>(new InvalidOperationException("probe failed"))));
+
+        var capability = await failingCatalog.FindAsync("user-2", DesignArtifactRuntimes.OpenDesign);
+
+        Assert.NotNull(capability);
+        Assert.False(capability.Enabled);
+        Assert.Contains("暂时无法读取", capability.Reason);
+    }
+
+    [Fact]
+    public async Task RemoteProviderDoesNotMaskCallerCancellationWithPositiveSnapshot()
+    {
+        using var cache = NewCache();
+        var firstCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(DesignArtifactRuntimes.OpenDesign, EnabledProbeResult()));
+        await firstCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var cancelledCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(
+                DesignArtifactRuntimes.OpenDesign,
+                ct => Task.FromCanceled<DesignArtifactProviderProbeResult>(ct)));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            cancelledCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign, cancellation.Token));
     }
 
     [Fact]
@@ -280,6 +418,24 @@ public class DesignArtifactProviderCatalogTests
         null,
         DateTime.UtcNow.AddYears(1));
 
+    private static MemoryCache NewCache() => new(new MemoryCacheOptions());
+
+    private static DesignArtifactProviderCatalog BuildOpenDesignCatalog(
+        IMemoryCache cache,
+        IDesignArtifactProviderProbe probe,
+        TimeSpan? positiveCapabilityCacheDuration = null) => new(
+            [new BuiltInDesignArtifactProviderDefinitionSource()],
+            [new StubExecutor("map-gateway"), new StubExecutor(DesignArtifactRuntimes.OpenDesign)],
+            [probe],
+            cache,
+            positiveCapabilityCacheDuration ?? TimeSpan.FromSeconds(60));
+
+    private static DesignArtifactProviderProbeResult EnabledProbeResult() => new(
+        Configured: true,
+        Healthy: true,
+        Enabled: true,
+        Reason: null);
+
     private static InfraAgentSessionView BuildSession() => new(
         Id: "session-1",
         UserId: "user-1",
@@ -371,13 +527,26 @@ public class DesignArtifactProviderCatalogTests
         }
     }
 
-    private sealed class StubProbe(
-        string runtime,
-        DesignArtifactProviderProbeResult result) : IDesignArtifactProviderProbe
+    private sealed class StubProbe : IDesignArtifactProviderProbe
     {
-        public string Runtime { get; } = runtime;
+        private readonly Func<CancellationToken, Task<DesignArtifactProviderProbeResult>> _probe;
+
+        public StubProbe(string runtime, DesignArtifactProviderProbeResult result)
+            : this(runtime, _ => Task.FromResult(result))
+        {
+        }
+
+        public StubProbe(
+            string runtime,
+            Func<CancellationToken, Task<DesignArtifactProviderProbeResult>> probe)
+        {
+            Runtime = runtime;
+            _probe = probe;
+        }
+
+        public string Runtime { get; }
 
         public Task<DesignArtifactProviderProbeResult> ProbeAsync(string userId, CancellationToken ct) =>
-            Task.FromResult(result);
+            _probe(ct);
     }
 }

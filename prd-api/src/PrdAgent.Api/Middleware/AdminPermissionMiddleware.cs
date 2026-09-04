@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
@@ -126,6 +127,15 @@ public sealed class AdminPermissionMiddleware
 
     public async Task Invoke(HttpContext context, IAdminPermissionService permissionService)
     {
+        // OpenDesign 运行时数据面由控制器用短期票据自鉴权，不能先被 AdminController 的
+        // 裸路径前缀误判为管理接口。这里只放行四条已知数据面路由及其既定方法；其他
+        // [AllowAnonymous] 端点、近似路径和额外后缀仍完整经过管理权限判定。
+        if (IsDesignArtifactRuntimeDataPlaneRequest(context))
+        {
+            await _next(context);
+            return;
+        }
+
         var path = context.Request.Path.Value ?? string.Empty;
         var method = context.Request.Method;
 
@@ -219,5 +229,32 @@ public sealed class AdminPermissionMiddleware
         }
 
         await _next(context);
+    }
+
+    private static bool IsDesignArtifactRuntimeDataPlaneRequest(HttpContext context)
+    {
+        if (context.GetEndpoint()?.Metadata.GetMetadata<IAllowAnonymous>() == null)
+            return false;
+
+        var path = context.Request.Path.Value;
+        if (string.IsNullOrEmpty(path))
+            return false;
+
+        const string prefix = "/api/design-artifacts/runtime/";
+        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var remainder = path[prefix.Length..];
+        var runIdSeparator = remainder.IndexOf('/');
+        if (runIdSeparator <= 0 || runIdSeparator == remainder.Length - 1)
+            return false;
+
+        var operationPath = remainder[(runIdSeparator + 1)..];
+        return (HttpMethods.IsGet(context.Request.Method)
+                && (string.Equals(operationPath, "workspace/input", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(operationPath, "llm/v1/models", StringComparison.OrdinalIgnoreCase)))
+               || (HttpMethods.IsPost(context.Request.Method)
+                   && (string.Equals(operationPath, "workspace/result", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(operationPath, "llm/v1/chat/completions", StringComparison.OrdinalIgnoreCase)));
     }
 }
