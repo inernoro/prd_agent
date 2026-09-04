@@ -7,6 +7,9 @@
 //   DELETE /api/projects/:id/db-ledger/:entryId                         丢弃（门禁：演练验证过的备份，或复述库名强制）
 //   GET    /api/branches/:id/db-ledger                                  某条分支的派生库（删分支对话框用）
 //   POST   /api/branches/:id/db-init/:profileId                         分支独立库时间点克隆初始化（收敛 4；部署前钩子的手动入口）
+//   GET    /api/projects/:id/db-ledger/:entryId/write-back/preview       回写预览：两边逐表行数 + 冲突清单（收敛 5）
+//   POST   /api/projects/:id/db-ledger/:entryId/write-back               回写：自动备份目标库并演练 → 整库替换 → 逐表校验 → 记台账
+//   POST   /api/projects/:id/db-ledger/:entryId/write-backs/:wbId/rollback 回退：用回写前快照还原目标库
 //
 // 有副作用的 docker 操作全部经 deps.ops 注入（真实实现 db-ledger-ops.ts），路由测试用桩。
 
@@ -25,7 +28,10 @@ import { detectInfraDataKind } from './infra-data.js';
 import type { ReplicaDbEngine } from '../services/replica-db-clone.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import { ensurePerBranchDbInitialized, type PerBranchDbInitOutcome } from '../services/per-branch-db-init.js';
-import { describeCloneVerification, type DbCloneExec } from '../services/db-clone-pipeline.js';
+import { describeCloneVerification, compareTableCounts, type DbCloneExec } from '../services/db-clone-pipeline.js';
+import { assertWriteBackAllowed, buildWriteBackPreview } from '../services/db-write-back.js';
+import { randomUUID } from 'node:crypto';
+import type { DbLedgerBackup, DbWriteBackRecord, InfraService } from '../types.js';
 
 export interface DbLedgerRouterDeps {
   stateService: StateService;
@@ -124,6 +130,106 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
       });
     } catch (err) {
       res.status(500).json({ error: `时间点克隆失败：${(err as Error).message}`, lines });
+    }
+  });
+
+  /** 目标库自动备份 + 演练验证（回写 / 回退前的共同门禁）：演练不通过就不许动目标库 */
+  async function backupAndDrill(p: { id: string; slug: string }, engine: ReplicaDbEngine, infra: InfraService, dbName: string, tag: string): Promise<{ ok: true; backup: DbLedgerBackup } | { ok: false; backup: DbLedgerBackup; detail: string }> {
+    const dir = pickBackupDir(p.slug, deps.repoRoot);
+    const stamp = now().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+    const file = path.join(dir, `db-ledger--${p.id}--${dbName}-${stamp}-${tag}.${BACKUP_EXT[engine]}`);
+    const objects = await ops.countObjects(engine, infra, dbName).catch(() => undefined);
+    const meta = await ops.dumpToFile(engine, infra, dbName, file);
+    const backup = backupRecord(file, { ...meta, objects }, now());
+    const scratch = scratchDbName(dbName, now());
+    const drill = await ops.restoreDrill(engine, infra, file, scratch);
+    const ok = objects === undefined ? drill.objects > 0 : drill.objects === objects;
+    const detail = objects === undefined
+      ? `还原到临时库 ${scratch} 得到 ${drill.objects} 个表/集合（备份时未记录对象数）`
+      : `还原到临时库 ${scratch} 得到 ${drill.objects} 个表/集合，备份时 ${dbName} 有 ${objects} 个${ok ? '，一致' : '，不一致'}`;
+    const verified: DbLedgerBackup = { ...backup, verifyDetail: detail, ...(ok ? { verifiedAt: now().toISOString() } : {}) };
+    return ok ? { ok: true, backup: verified } : { ok: false, backup: verified, detail };
+  }
+
+  function resolveWriteBackTarget(req: Request, res: any): { p: { id: string; slug: string }; live: DbLedgerEntry; infra: InfraService; targetDb: string; view: DbLedgerView } | null {
+    const p = guardProject(req, res); if (!p) return null;
+    const view = buildProjectDbLedgerView(stateService, p.id, now());
+    const live = view.entries.find((e) => e.id === req.params.entryId);
+    if (!live) { res.status(404).json({ error: `台账条目不存在: ${req.params.entryId}` }); return null; }
+    const gate = assertWriteBackAllowed(live);
+    if (!gate.ok) { res.status(409).json({ error: gate.reason }); return null; }
+    const infra = infraOf(p.id, live);
+    if (!infra) { res.status(409).json({ error: `找不到承载 ${live.dbName} 的基础设施实例（${live.infraContainer}）` }); return null; }
+    return { p, live, infra, targetDb: gate.targetDb, view };
+  }
+
+  router.get('/projects/:id/db-ledger/:entryId/write-back/preview', async (req, res) => {
+    const t = resolveWriteBackTarget(req, res); if (!t) return;
+    try {
+      const [parent, derived] = await Promise.all([ops.tableCounts(t.live.engine, t.infra, t.targetDb), ops.tableCounts(t.live.engine, t.infra, t.live.dbName)]);
+      res.json({ entryId: t.live.id, ...buildWriteBackPreview(t.live, t.targetDb, parent, derived) });
+    } catch (err) {
+      res.status(500).json({ error: `回写预览失败：${(err as Error).message}` });
+    }
+  });
+
+  router.post('/projects/:id/db-ledger/:entryId/write-back', async (req, res) => {
+    const t = resolveWriteBackTarget(req, res); if (!t) return;
+    const confirm = typeof req.body?.confirmDbName === 'string' ? req.body.confirmDbName : '';
+    if (confirm !== t.targetDb) { res.status(400).json({ error: `回写会用 ${t.live.dbName} 的内容整库覆盖 ${t.targetDb}，请一字不差复述目标库名 ${t.targetDb}` }); return; }
+    const { engine } = t.live;
+    try {
+      const [parentBefore, derivedBefore] = await Promise.all([ops.tableCounts(engine, t.infra, t.targetDb), ops.tableCounts(engine, t.infra, t.live.dbName)]);
+      const preview = buildWriteBackPreview(t.live, t.targetDb, parentBefore, derivedBefore);
+      // 门禁：目标库先自动备份且演练通过；演练不通过整个回写中止，目标库一个字节没动
+      const guard = await backupAndDrill(t.p, engine, t.infra, t.targetDb, 'pre-writeback');
+      if (!guard.ok) { res.status(422).json({ error: `回写中止：目标库 ${t.targetDb} 的回写前备份演练未通过（${guard.detail}），目标库未动；备份文件 ${guard.backup.file}` }); return; }
+      const entry = materializeEntry(stateService, t.view, t.live.id, now())!;
+      await ops.replaceDbFrom(engine, t.infra, entry.dbName, t.targetDb);
+      const [parentAfter, derivedAfter] = await Promise.all([ops.tableCounts(engine, t.infra, t.targetDb), ops.tableCounts(engine, t.infra, entry.dbName)]);
+      const verification = compareTableCounts(parentAfter, derivedAfter, now());
+      const actor = String((req as any).cdsPrincipal?.name || (req as any).cdsProjectKey?.keyId || 'admin');
+      const record: DbWriteBackRecord = {
+        id: `wb_${randomUUID().replace(/-/g, '').slice(0, 12)}`, targetDb: t.targetDb, at: now().toISOString(), by: actor,
+        snapshot: guard.backup, conflicts: preview.conflicts, baselineKind: preview.baselineKind, verification,
+      };
+      const next: DbLedgerEntry = { ...entry, writeBacks: [...(entry.writeBacks ?? []), record], updatedAt: now().toISOString() };
+      stateService.upsertDbLedgerEntry(next);
+      stateService.save();
+      const overwritten = preview.conflicts.length > 0 ? `；覆盖了 ${preview.conflicts.length} 张主库改过的表（${preview.conflicts.map((c) => c.table).join('、')}）` : '';
+      res.json({ entry: next, record, message: `已回写 ${entry.dbName} → ${t.targetDb}：${describeCloneVerification(verification)}${overwritten}；回写前快照已演练验证，可回退到 ${guard.backup.createdAt}` });
+    } catch (err) {
+      res.status(500).json({ error: `回写失败：${(err as Error).message}` });
+    }
+  });
+
+  router.post('/projects/:id/db-ledger/:entryId/write-backs/:wbId/rollback', async (req, res) => {
+    const p = guardProject(req, res); if (!p) return;
+    const entry = stateService.getDbLedgerEntry(req.params.entryId);
+    if (!entry || entry.projectId !== p.id) { res.status(404).json({ error: `台账条目不存在: ${req.params.entryId}` }); return; }
+    const record = (entry.writeBacks ?? []).find((w) => w.id === req.params.wbId);
+    if (!record) { res.status(404).json({ error: `回写记录不存在: ${req.params.wbId}` }); return; }
+    if (record.rolledBackAt) { res.status(409).json({ error: `这次回写已于 ${record.rolledBackAt} 回退过` }); return; }
+    const confirm = typeof req.body?.confirmDbName === 'string' ? req.body.confirmDbName : '';
+    if (confirm !== record.targetDb) { res.status(400).json({ error: `回退会用回写前快照整库覆盖 ${record.targetDb}，请一字不差复述目标库名 ${record.targetDb}` }); return; }
+    const infra = infraOf(p.id, entry);
+    if (!infra) { res.status(409).json({ error: `找不到承载 ${entry.dbName} 的基础设施实例` }); return; }
+    if (!fs.existsSync(record.snapshot.file)) { res.status(409).json({ error: `回写前快照已不在宿主上：${record.snapshot.file}` }); return; }
+    try {
+      // 回退也是一次替换：目标库先再拍一次快照并演练，不做静默覆盖
+      const guard = await backupAndDrill(p, entry.engine, infra, record.targetDb, 'pre-rollback');
+      if (!guard.ok) { res.status(422).json({ error: `回退中止：目标库 ${record.targetDb} 的回退前备份演练未通过（${guard.detail}），目标库未动` }); return; }
+      await ops.restoreInto(entry.engine, infra, record.snapshot.file, record.targetDb);
+      const objects = await ops.countObjects(entry.engine, infra, record.targetDb);
+      const expected = record.snapshot.objects;
+      const rollbackCheck = { ok: expected === undefined ? objects > 0 : objects === expected, objects, expected, measuredAt: now().toISOString() };
+      const nextRecord: DbWriteBackRecord = { ...record, rolledBackAt: now().toISOString(), rollbackSnapshot: guard.backup, rollbackCheck };
+      const next: DbLedgerEntry = { ...entry, writeBacks: (entry.writeBacks ?? []).map((w) => (w.id === record.id ? nextRecord : w)), updatedAt: now().toISOString() };
+      stateService.upsertDbLedgerEntry(next);
+      stateService.save();
+      res.json({ entry: next, record: nextRecord, message: `已把 ${record.targetDb} 回退到 ${record.snapshot.createdAt} 的快照：${objects} 个表/集合${expected !== undefined ? `（快照时 ${expected} 个${rollbackCheck.ok ? '，一致' : '，不一致'}）` : ''}` });
+    } catch (err) {
+      res.status(500).json({ error: `回退失败：${(err as Error).message}` });
     }
   });
 

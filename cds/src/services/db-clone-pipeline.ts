@@ -102,6 +102,69 @@ export function relationalCloneArgv(spec: DbCloneSpec): { argv: string[]; secret
   };
 }
 
+/**
+ * 整库替换（回写 / 用另一个库刷新当前库）：dump 来源库 → 删掉并重建目标库 → 导入。
+ * 目标库会短暂不存在，调用方必须先备份目标库并演练验证（见 db-write-back.ts 的门禁）。
+ * postgres 先踢掉目标库上的连接，否则 DROP DATABASE 会因为有会话而失败。
+ */
+export function relationalReplaceArgv(spec: DbCloneSpec): { argv: string[]; secrets: string[] } {
+  assertSpec(spec);
+  const conn = connOf(spec);
+  const c = spec.infra.containerName;
+  const helper = (script: string): string[] => [
+    'run', '--rm', '-i', '--pull', 'never',
+    '--network', `container:${c}`,
+    '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
+    '--entrypoint', 'sh',
+    ...conn.envFlags,
+    spec.infra.dockerImage,
+    '-c', script,
+  ];
+  if (spec.engine === 'mysql') {
+    const flags = `-h127.0.0.1 -P${conn.port} -u${conn.user}`;
+    return {
+      argv: helper(
+        `set -e; mysqldump ${flags} --single-transaction --routines --triggers ${spec.sourceDb} > /tmp/rsclone.sql; ` +
+        `mysql ${flags} -e 'DROP DATABASE IF EXISTS \`${spec.targetDb}\`; CREATE DATABASE \`${spec.targetDb}\`'; ` +
+        `mysql ${flags} ${spec.targetDb} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`,
+      ),
+      secrets: conn.secrets,
+    };
+  }
+  const flags = `-h 127.0.0.1 -p ${conn.port} -U ${conn.user}`;
+  return {
+    argv: helper(
+      `set -e; pg_dump ${flags} ${spec.sourceDb} > /tmp/rsclone.sql; ` +
+      `psql ${flags} -d postgres -v ON_ERROR_STOP=1 -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${spec.targetDb}' AND pid <> pg_backend_pid()" >/dev/null; ` +
+      `psql ${flags} -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS "${spec.targetDb}"' -c 'CREATE DATABASE "${spec.targetDb}"'; ` +
+      `psql ${flags} -q -v ON_ERROR_STOP=1 -d ${spec.targetDb} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`,
+    ),
+    secrets: conn.secrets,
+  };
+}
+
+/**
+ * 还原脚本（备份文件经 stdin 喂给 docker exec）：目标库先删后建，再把 gunzip 流灌进去。
+ * 返回的是 `sh -c` 的脚本正文与 exec 前缀；调用方用 streamDockerExec 把宿主文件接到 stdin。
+ */
+export function relationalRestoreScript(engine: DbEngine, infra: InfraService, targetDb: string): { argv: string[]; script: string; secrets: string[] } {
+  if (!DB_NAME_SAFE.test(targetDb)) throw new Error(`目标库名不合法: ${targetDb}`);
+  const conn = connOf({ engine, infra });
+  let script: string;
+  if (engine === 'mysql') {
+    const flags = `-u${conn.user} -h127.0.0.1 -P${conn.port}`;
+    // mysqldump --databases 带 CREATE DATABASE / USE 原库名；还原到指定目标时统一改成目标库名
+    script = `set -e; mysql ${flags} -e 'DROP DATABASE IF EXISTS \`${targetDb}\`; CREATE DATABASE \`${targetDb}\`'; ` +
+      `gunzip -c | sed -E 's/^(CREATE DATABASE[^\`]*\`)[^\`]+(\`)/\\1${targetDb}\\2/; s/^USE \`[^\`]+\`;/USE \`${targetDb}\`;/' | mysql ${flags} ${targetDb}`;
+  } else {
+    const flags = `-U ${conn.user} -h 127.0.0.1 -p ${conn.port}`;
+    script = `set -e; psql ${flags} -d postgres -v ON_ERROR_STOP=1 -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${targetDb}' AND pid <> pg_backend_pid()" >/dev/null; ` +
+      `psql ${flags} -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS "${targetDb}"' -c 'CREATE DATABASE "${targetDb}"'; ` +
+      `gunzip -c | psql ${flags} -q -v ON_ERROR_STOP=1 -d ${targetDb} >/dev/null`;
+  }
+  return { argv: ['exec', '-i', ...conn.envFlags, infra.containerName, 'sh', '-c', script], script, secrets: conn.secrets };
+}
+
 function dropDbArgv(spec: DbCloneSpec): string[] {
   const conn = connOf(spec);
   const c = spec.infra.containerName;
@@ -189,6 +252,13 @@ async function tableCountsOf(spec: DbCloneSpec, dbName: string, exec: DbCloneExe
   const c = await exec(count.argv, '', 600_000, 1024 * 1024);
   if (c.code !== 0) throw new Error(`数 ${dbName} 的行失败：${maskSecretValues((c.stderr || c.stdout).trim().slice(-300), count.secrets)}`);
   return parseTableCounts(c.stdout);
+}
+
+/** 某个库的逐表行数（回写预览、回写后校验共用） */
+export async function relationalTableCounts(engine: DbEngine, infra: InfraService, dbName: string, exec: DbCloneExec = runDockerExec): Promise<Record<string, number>> {
+  if (engine === 'mongo') throw new Error('mongo 不走关系型逐表行数');
+  if (!DB_NAME_SAFE.test(dbName)) throw new Error(`库名不合法: ${dbName}`);
+  return tableCountsOf({ engine, infra, sourceDb: dbName, targetDb: dbName, scope: { kind: 'per-branch', branchId: '', profileId: '' } }, dbName, exec);
 }
 
 /** 克隆后逐表行数校验：源库与目标库各数一遍，比对 */

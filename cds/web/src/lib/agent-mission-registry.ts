@@ -182,7 +182,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['project-compose', 'Compose 与配置漂移', 'project-compose.ts', 'project', 'project', 'write', 'direct', 'cds-project-scan', 'scan / verify', '变更 Compose 前先读取当前 SSOT 并执行 drift scan'],
   ['project-infra-resync', '基础设施重新同步', 'project-infra-resync.ts', 'project', 'project', 'destructive', 'guided', 'cds-project-scan', '', '必须先 preview，再批准 execute'],
   ['project-migration', '项目与数据迁移', 'project-migration.ts', 'project', 'project', 'destructive', 'guided', 'cds', '', '迁移需要来源、目标、快照、进度和可回滚证据'],
-  ['db-ledger', '数据台账：派生库备份、演练与丢弃', 'db-ledger.ts', 'project', 'project', 'destructive', 'guided', 'cds', '', '一本血缘台账：查看与扫描补录可直接执行；丢弃派生库必须先有演练验证过的备份，或用户复述库名强制——不许绕过门禁'],
+  ['db-ledger', '数据台账：派生库备份、演练、丢弃、时间点克隆与回写', 'db-ledger.ts', 'project', 'project', 'destructive', 'guided', 'cds', '', '一本血缘台账：查看、扫描补录、预览回写可直接执行；丢弃派生库必须先有演练验证过的备份或用户复述库名强制；回写 / 回退会整库覆盖源库，必须用户复述目标库名，系统先自动备份并演练——不许绕过门禁'],
   ['db-probe', '分支数据库实测', 'db-probe.ts', 'project', 'project', 'read-only', 'direct', 'cds', '', '只读：配置说的 / 容器持有 / 连上的库三列并排，回答「这个分支现在真的连着哪个库」；判定 mismatch 时先看原因再决定重新部署'],
   ['project-db-isolation', '项目数据库隔离', 'project-db-isolation.ts', 'project', 'project', 'write', 'direct', 'cds', '', '改的是项目默认（BuildProfile.dbScope），先全量校验再一次落盘；分支覆盖不受影响，重新部署后才生效'],
   ['project-storage', '项目存储占用', 'project-storage.ts', 'project', 'project', 'read-only', 'direct', 'cds', '', '只读容量检查可直接执行，清理必须转入对应破坏性能力'],

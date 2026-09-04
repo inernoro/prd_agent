@@ -32,6 +32,7 @@ const NOW = '2026-09-03T08:00:00.000Z';
 describe('数据台账路由', () => {
   let tmpDir: string; let server: http.Server; let state: StateService;
   let calls: string[]; let listed: string[]; let drillObjects: number; let dropFail: boolean;
+  let counts: Record<string, Record<string, number>>;
   const cloneExec = async (argv: string[]) => {
     const sql = argv[argv.length - 1];
     if (argv[0] === 'run') { calls.push('clone'); return { code: 0, stdout: '', stderr: '' }; }
@@ -40,6 +41,9 @@ describe('数据台账路由', () => {
     return { code: 1, stdout: '', stderr: `unexpected ${argv.join(' ')}` };
   };
   const ops: DbLedgerOps = {
+    async tableCounts(_e, _i, dbName) { calls.push(`counts:${dbName}`); return { ...(counts[dbName] ?? {}) }; },
+    async replaceDbFrom(_e, _i, sourceDb, targetDb) { calls.push(`replace:${sourceDb}->${targetDb}`); counts[targetDb] = { ...(counts[sourceDb] ?? {}) }; },
+    async restoreInto(_e, _i, file, targetDb) { calls.push(`restore:${path.basename(file)}->${targetDb}`); counts[targetDb] = { ...(counts[`snapshot:${targetDb}`] ?? {}) }; },
     async dumpToFile(_e, _i, dbName, file) { calls.push(`dump:${dbName}`); fs.writeFileSync(file, Buffer.alloc(200, 1)); return { bytes: 200, sha256: 'abc' }; },
     async countObjects(_e, _i, dbName) { calls.push(`count:${dbName}`); return dbName.startsWith('cds_drill_') ? drillObjects : 12; },
     async restoreDrill(_e, _i, file, scratch) { calls.push(`drill:${path.basename(file)}->${scratch}`); return { objects: drillObjects }; },
@@ -60,6 +64,7 @@ describe('数据台账路由', () => {
     // 孤儿：已删分支留下的独立库
     state.upsertDbLedgerEntry({ id: 'orphan-1', projectId: 'p', kind: 'per-branch', engine: 'mysql', dbName: 'shop_old', infraId: 'mysql', infraContainer: 'cds-infra-mysql', sourceDb: 'shop', branch: 'old', origin: 'cds', status: 'orphaned', orphanedAt: NOW, createdAt: NOW, updatedAt: NOW, backups: [] });
     state.save();
+    counts = { shop: { users: 3, orders: 58 }, shop_feat_x: { users: 3, orders: 57 }, 'snapshot:shop': { users: 3, orders: 58 } };
     calls = []; listed = ['mysql', 'sys', 'information_schema', 'performance_schema', 'shop', 'shop_feat_x', 'shop_feat_x_rs_ab12cd_r1', 'shop_old', 'legacy_2024', 'cds_drill_deadbeef']; drillObjects = 12; dropFail = false;
     const app = express(); app.use(express.json());
     app.use((req, _res, next) => { const h = req.headers['x-test-key'] as string | undefined; if (h === 'KEY-Q') (req as any).cdsProjectKey = { projectId: 'q', keyId: 'k-q' }; next(); });
@@ -200,5 +205,58 @@ describe('数据台账路由', () => {
     const iso2 = view2.body.entries.filter((e: any) => e.dbName === 'shop_feat_x_rs_ab12cd_r1');
     expect(iso2).toHaveLength(1);
     expect(iso2[0].backups).toHaveLength(1);
+  });
+
+  describe('回写（收敛 5）：派生库整库写回源库，回写前自动备份并演练，冲突清单人工确认，可回退', () => {
+    const live = 'live_db_p-feat-x_api';
+    it('预览：目标库、两边逐表行数、冲突清单；没有克隆基线时按当前差异列出', async () => {
+      const res = await request(server, 'GET', `/api/projects/p/db-ledger/${live}/write-back/preview`);
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ targetDb: 'shop', derivedDb: 'shop_feat_x', baselineKind: 'none' });
+      expect(res.body.conflicts).toEqual([{ table: 'orders', parentNow: 58, derived: 57, reason: 'differs' }]);
+      expect(res.body.tables).toEqual([{ table: 'orders', parent: 58, derived: 57 }, { table: 'users', parent: 3, derived: 3 }]);
+      expect(res.body.headline).toContain('shop_feat_x');
+    });
+    it('执行：必须复述目标库名；演练不通过整个回写中止，目标库一个字节没动', async () => {
+      const noConfirm = await request(server, 'POST', `/api/projects/p/db-ledger/${live}/write-back`, {});
+      expect(noConfirm.status).toBe(400);
+      const wrong = await request(server, 'POST', `/api/projects/p/db-ledger/${live}/write-back`, { confirmDbName: 'shop_feat_x' });
+      expect(wrong.status).toBe(400);
+      drillObjects = 3;
+      const bad = await request(server, 'POST', `/api/projects/p/db-ledger/${live}/write-back`, { confirmDbName: 'shop' });
+      expect(bad.status).toBe(422);
+      expect(bad.body.error).toMatch(/演练/);
+      expect(calls.some((c) => c.startsWith('replace:'))).toBe(false);
+      expect(calls).toContain('dump:shop');
+    });
+    it('执行成功：备份 → 演练 → 替换 → 逐表校验 → 台账记回写与可回退快照；再回退还原目标库', async () => {
+      const res = await request(server, 'POST', `/api/projects/p/db-ledger/${live}/write-back`, { confirmDbName: 'shop' });
+      expect(res.status).toBe(200);
+      expect(calls).toContain('dump:shop');
+      expect(calls).toContain('replace:shop_feat_x->shop');
+      expect(calls.indexOf('replace:shop_feat_x->shop')).toBeGreaterThan(calls.findIndex((c) => c.startsWith('drill:')));
+      expect(res.body.record).toMatchObject({ targetDb: 'shop', conflicts: [{ table: 'orders' }], verification: { ok: true } });
+      expect(res.body.record.snapshot.verifiedAt).toBeTruthy();
+      expect(res.body.message).toMatch(/已回写/);
+      const entry = state.getDbLedger('p').find((e) => e.dbName === 'shop_feat_x')!;
+      expect(entry.writeBacks).toHaveLength(1);
+      const wbId = entry.writeBacks![0].id;
+      const view = await request(server, 'GET', '/api/projects/p/db-ledger');
+      expect(view.body.entries.find((e: any) => e.dbName === 'shop_feat_x').writeBacks).toHaveLength(1);
+      const noConfirm = await request(server, 'POST', `/api/projects/p/db-ledger/${entry.id}/write-backs/${wbId}/rollback`, {});
+      expect(noConfirm.status).toBe(400);
+      const rb = await request(server, 'POST', `/api/projects/p/db-ledger/${entry.id}/write-backs/${wbId}/rollback`, { confirmDbName: 'shop' });
+      expect(rb.status).toBe(200);
+      expect(calls.some((c) => c.startsWith('restore:') && c.endsWith('->shop'))).toBe(true);
+      expect(rb.body.record.rolledBackAt).toBeTruthy();
+      expect(rb.body.record.rollbackCheck.ok).toBe(true);
+      expect(counts.shop).toEqual({ users: 3, orders: 58 });
+      const again = await request(server, 'POST', `/api/projects/p/db-ledger/${entry.id}/write-backs/${wbId}/rollback`, { confirmDbName: 'shop' });
+      expect(again.status).toBe(409);
+    });
+    it('来源未知的扫描条目不能回写', async () => {
+      const res = await request(server, 'GET', '/api/projects/p/db-ledger/dbl_scan_mysql_legacy_2024/write-back/preview');
+      expect([404, 409]).toContain(res.status);
+    });
   });
 });

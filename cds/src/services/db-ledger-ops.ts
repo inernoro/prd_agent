@@ -12,6 +12,7 @@ import type { InfraService, DbLedgerEntry } from '../types.js';
 import { runDockerExec, maskSecretValues } from '../routes/infra-data.js';
 import type { ReplicaDbEngine } from './replica-db-clone.js';
 import type { DbLedgerOps } from './db-ledger.js';
+import { relationalReplaceArgv, relationalRestoreScript, relationalTableCounts } from './db-clone-pipeline.js';
 
 const DB_NAME_SAFE = /^[A-Za-z0-9_]+$/;
 
@@ -164,6 +165,28 @@ export const realDbLedgerOps: DbLedgerOps = {
     else argv = ['exec', '-i', name, 'mongosh', mongoUri(c, entry.dbName), '--quiet', '--eval', 'db.dropDatabase()'];
     const r = await runDockerExec(argv, '', 120_000, 16 * 1024);
     if (r.code !== 0) throw new Error(`删除库失败: ${maskSecretValues((r.stderr || r.stdout).trim().slice(-300), c.secrets)}`);
+  },
+
+  async tableCounts(engine, infra, dbName) {
+    assertSafe(dbName);
+    return relationalTableCounts(engine, infra, dbName);
+  },
+
+  async replaceDbFrom(engine, infra, sourceDb, targetDb) {
+    assertSafe(sourceDb); assertSafe(targetDb);
+    const { argv, secrets } = relationalReplaceArgv({ engine, infra, sourceDb, targetDb, scope: { kind: 'per-branch', branchId: '', profileId: '' } });
+    const r = await runDockerExec(argv, '', 600_000, 64 * 1024);
+    if (r.code !== 0) {
+      const raw = `${r.stderr || r.stdout}`.trim();
+      throw new Error(maskSecretValues(raw.length > 900 ? `${raw.slice(0, 300)}\n…\n${raw.slice(-500)}` : raw, secrets) || `exit ${r.code}`);
+    }
+  },
+
+  async restoreInto(engine, infra, file, targetDb) {
+    assertSafe(targetDb);
+    if (engine === 'mongo') throw new Error('mongo 的还原走复制集通道，暂不支持整库还原');
+    const { argv, secrets } = relationalRestoreScript(engine, infra, targetDb);
+    await streamDockerExec(argv, { fromFile: file, secrets, timeoutMs: 30 * 60_000 });
   },
 
   async listDatabases(engine, infra) {

@@ -753,7 +753,37 @@ export interface DbLedgerEntry {
   clone?: DbLedgerClone;
   /** 视图字段（不落盘）：按当前配置折算的初始化方式，分支独立库条目才有 */
   initMode?: 'empty' | 'clone';
+  /** 回写记录（收敛 5）：派生库整库写回源库的每一次，含回写前快照、冲突清单、校验与回退 */
+  writeBacks?: DbWriteBackRecord[];
   note?: string;
+}
+
+/** 回写冲突：源库（主库）在克隆之后被写过、回写会覆盖的表；没有基线时按当前差异列 */
+export interface DbWriteBackConflict {
+  table: string;
+  /** 克隆时主库的行数（有克隆基线才有） */
+  baseline?: number;
+  parentNow: number;
+  derived?: number;
+  reason: 'parent-changed' | 'parent-only' | 'differs';
+}
+
+export interface DbWriteBackRecord {
+  id: string;
+  /** 被覆盖的源库（主库） */
+  targetDb: string;
+  at: string;
+  by?: string;
+  /** 回写前目标库的自动备份（必须演练验证过才会走到替换那一步） */
+  snapshot: DbLedgerBackup;
+  conflicts: DbWriteBackConflict[];
+  baselineKind: 'clone-time' | 'none';
+  /** 回写后逐表校验：目标库（source 列）对派生库（target 列） */
+  verification: DbCloneVerification;
+  /** 回退：用回写前快照还原目标库（回退前再拍一次目标库快照，回退本身也可回退） */
+  rolledBackAt?: string;
+  rollbackSnapshot?: DbLedgerBackup;
+  rollbackCheck?: { ok: boolean; objects: number; expected?: number; measuredAt: string };
 }
 
 /** 克隆后的逐表行数校验：源库与目标库各数一遍，差异逐表列出 */

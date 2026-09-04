@@ -9,7 +9,7 @@
  * DELETE …/:entryId、POST …/scan。所有判定在后端，这里只把它们摆清楚、把门禁说清楚。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Archive, Loader2, RefreshCw, ScanSearch, ShieldCheck, Trash2, Copy } from 'lucide-react';
+import { Archive, Loader2, RefreshCw, ScanSearch, ShieldCheck, Trash2, Copy, Upload, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 
@@ -24,6 +24,27 @@ export interface DbLedgerEntry {
   clone?: DbLedgerClone;
   /** 视图字段：按当前配置折算的初始化方式（分支独立库才有） */
   initMode?: 'empty' | 'clone';
+  /** 回写记录（收敛 5） */
+  writeBacks?: DbWriteBackRecord[];
+}
+export interface DbWriteBackConflict { table: string; baseline?: number; parentNow: number; derived?: number; reason: 'parent-changed' | 'parent-only' | 'differs' }
+export interface DbWriteBackRecord {
+  id: string; targetDb: string; at: string; by?: string; snapshot: DbLedgerBackup; conflicts: DbWriteBackConflict[];
+  baselineKind: 'clone-time' | 'none'; verification: DbCloneVerification;
+  rolledBackAt?: string; rollbackSnapshot?: DbLedgerBackup; rollbackCheck?: { ok: boolean; objects: number; expected?: number; measuredAt: string };
+}
+export interface WriteBackPreview {
+  targetDb: string; derivedDb: string; baselineKind: 'clone-time' | 'none'; headline: string;
+  conflicts: DbWriteBackConflict[]; tables: Array<{ table: string; parent?: number; derived?: number }>;
+}
+const CONFLICT_REASON: Record<DbWriteBackConflict['reason'], string> = {
+  'parent-changed': '主库在克隆之后改过，回写会覆盖',
+  'parent-only': '主库新建的表，派生库没有，回写后会丢',
+  differs: '两边行数不同（没有克隆基线，按当前差异算）',
+};
+/** 能不能回写：与后端 assertWriteBackAllowed 同口径（只决定按钮显不显示，真正的门禁在后端） */
+export function canWriteBack(e: Pick<DbLedgerEntry, 'kind' | 'status' | 'engine' | 'sourceDb' | 'dbName' | 'dedicatedContainer'>): boolean {
+  return e.status !== 'dropped' && e.kind !== 'unknown' && !!e.sourceDb && e.sourceDb !== e.dbName && e.engine !== 'mongo' && !e.dedicatedContainer;
 }
 export interface DbCloneVerification {
   ok: boolean; measuredAt: string;
@@ -77,11 +98,14 @@ function fmtBytes(n: number): string {
   return `${n} B`;
 }
 
-function EntryRow({ e, busy, onBackup, onVerify, onDrop, onClone }: {
+function EntryRow({ e, busy, onBackup, onVerify, onDrop, onClone, onWriteBack, onRollback }: {
   e: DbLedgerEntry; busy: string | null;
   onBackup?: (e: DbLedgerEntry) => void; onVerify?: (e: DbLedgerEntry, b: DbLedgerBackup) => void; onDrop?: (e: DbLedgerEntry) => void;
   onClone?: (e: DbLedgerEntry) => void;
+  onWriteBack?: (e: DbLedgerEntry) => void; onRollback?: (e: DbLedgerEntry, wb: DbWriteBackRecord) => void;
 }): JSX.Element {
+  const lastWriteBack = [...(e.writeBacks ?? [])].sort((a, b) => b.at.localeCompare(a.at))[0];
+  const writeBackAllowed = canWriteBack(e);
   const clonePending = e.kind === 'per-branch' && e.status === 'active' && e.initMode === 'clone' && !e.clone && !!e.branchId && !!e.profileId;
   const latest = [...e.backups].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   const verified = hasVerifiedBackup(e);
@@ -109,6 +133,16 @@ function EntryRow({ e, busy, onBackup, onVerify, onDrop, onClone }: {
             ) : clonePending ? (
               <span className="mr-2" data-db-ledger-clone="pending">初始化方式：时间点克隆（首次部署前从 <span className="font-mono">{e.sourceDb}</span> 克隆；库已在实例上则跳过、不覆盖）</span>
             ) : null}
+            {lastWriteBack ? (
+              <span className={`mr-2 ${lastWriteBack.rolledBackAt ? 'text-muted-foreground' : lastWriteBack.verification.ok ? 'text-ok' : 'text-warn'}`} data-db-ledger-writeback={lastWriteBack.id}
+                title={lastWriteBack.conflicts.length ? `被覆盖的表：${lastWriteBack.conflicts.map((c) => `${c.table}（${CONFLICT_REASON[c.reason]}）`).join('；')}` : '主库在回写前没有会被覆盖的改动'}>
+                已回写到 <span className="font-mono">{lastWriteBack.targetDb}</span>（{new Date(lastWriteBack.at).toLocaleString('zh-CN')}），{describeCloneVerification(lastWriteBack.verification)}
+                {lastWriteBack.conflicts.length > 0 ? `；覆盖了 ${lastWriteBack.conflicts.length} 张主库改过的表` : ''}
+                {lastWriteBack.rolledBackAt
+                  ? `；已于 ${new Date(lastWriteBack.rolledBackAt).toLocaleString('zh-CN')} 回退到回写前快照${lastWriteBack.rollbackCheck ? `（${lastWriteBack.rollbackCheck.ok ? '对象数一致' : '对象数不一致'}）` : ''}`
+                  : `；可回退到 ${new Date(lastWriteBack.snapshot.createdAt).toLocaleString('zh-CN')}`}
+              </span>
+            ) : null}
             {e.droppedAt ? <span className="mr-2">已于 {new Date(e.droppedAt).toLocaleString('zh-CN')} 丢弃{e.droppedForced ? '（强制，未备份）' : ''}</span> : null}
             {e.note ? <span className="mr-2">{e.note}</span> : null}
           </div>
@@ -135,6 +169,16 @@ function EntryRow({ e, busy, onBackup, onVerify, onDrop, onClone }: {
                 {busy === `verify:${e.id}` ? <Loader2 className="animate-spin" /> : <ShieldCheck />} 演练验证
               </Button>
             ) : null}
+            {onWriteBack && writeBackAllowed ? (
+              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => onWriteBack(e)} title="把这个派生库的内容整库写回源库：先看两边逐表行数与冲突清单，源库先自动备份并演练验证，复述库名后才执行，可回退">
+                {busy === `writeback:${e.id}` ? <Loader2 className="animate-spin" /> : <Upload />} 回写到 <span className="font-mono">{e.sourceDb}</span>
+              </Button>
+            ) : null}
+            {onRollback && lastWriteBack && !lastWriteBack.rolledBackAt ? (
+              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => onRollback(e, lastWriteBack)} title="用回写前的快照把源库还原回去（还原前会再拍一次快照）">
+                {busy === `rollback:${e.id}` ? <Loader2 className="animate-spin" /> : <Undo2 />} 回退
+              </Button>
+            ) : null}
             {onClone && clonePending ? (
               <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => onClone(e)} title="现在就从共享库时间点克隆到这个独立库（目标库已存在则不会覆盖）">
                 {busy === `clone:${e.id}` ? <Loader2 className="animate-spin" /> : <Copy />} 现在克隆
@@ -154,10 +198,11 @@ function EntryRow({ e, busy, onBackup, onVerify, onDrop, onClone }: {
 }
 
 /** 血缘树（纯展示，可离线渲染测试） */
-export function DbLedgerTree({ view, busy = null, onBackup, onVerify, onDrop, onClone }: {
+export function DbLedgerTree({ view, busy = null, onBackup, onVerify, onDrop, onClone, onWriteBack, onRollback }: {
   view: DbLedgerView; busy?: string | null;
   onBackup?: (e: DbLedgerEntry) => void; onVerify?: (e: DbLedgerEntry, b: DbLedgerBackup) => void; onDrop?: (e: DbLedgerEntry) => void;
   onClone?: (e: DbLedgerEntry) => void;
+  onWriteBack?: (e: DbLedgerEntry) => void; onRollback?: (e: DbLedgerEntry, wb: DbWriteBackRecord) => void;
 }): JSX.Element {
   return (
     <div className="space-y-3">
@@ -168,7 +213,7 @@ export function DbLedgerTree({ view, busy = null, onBackup, onVerify, onDrop, on
             {node.sourceDb ? <>源库 <span className="font-mono text-foreground">{node.sourceDb}</span> 派生出 {node.children.length} 个库</> : <>来源未知（扫描补录，CDS 台账里没有它们的派生记录）</>}
           </div>
           <ul className="space-y-1.5 border-l border-[hsl(var(--hairline))] pl-3">
-            {node.children.map((e) => <EntryRow key={e.id} e={e} busy={busy} onBackup={onBackup} onVerify={onVerify} onDrop={onDrop} onClone={onClone} />)}
+            {node.children.map((e) => <EntryRow key={e.id} e={e} busy={busy} onBackup={onBackup} onVerify={onVerify} onDrop={onDrop} onClone={onClone} onWriteBack={onWriteBack} onRollback={onRollback} />)}
           </ul>
         </div>
       ))}
@@ -202,11 +247,89 @@ export function DropConfirm({ entry, pending, onCancel, onConfirm }: { entry: Db
   );
 }
 
+/** 回写确认：先看两边逐表行数与冲突清单，复述目标库名才能按下 */
+export function WriteBackConfirm({ entry, preview, pending, onCancel, onConfirm }: { entry: DbLedgerEntry; preview: WriteBackPreview | null; pending: boolean; onCancel: () => void; onConfirm: (confirmDbName: string) => void }): JSX.Element {
+  const [typed, setTyped] = useState('');
+  const conflictOf = (table: string) => preview?.conflicts.find((c) => c.table === table);
+  return (
+    <div className="rounded-md border border-warn/40 bg-warn-soft/40 px-4 py-3 text-sm" data-db-ledger-writeback-confirm={entry.dbName}>
+      <div className="font-medium">把 {entry.dbName} 整库写回 <span className="font-mono">{entry.sourceDb}</span>？</div>
+      {!preview ? (
+        <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在数两边每张表的行数…</div>
+      ) : (
+        <>
+          <div className="mt-1 text-xs text-muted-foreground">{preview.headline}</div>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full min-w-[420px] table-fixed text-xs">
+              <colgroup><col className="w-[34%]" /><col className="w-[14%]" /><col className="w-[14%]" /><col /></colgroup>
+              <thead><tr className="text-left text-muted-foreground"><th className="py-1 font-normal">表</th><th className="py-1 font-normal">主库 {preview.targetDb}</th><th className="py-1 font-normal">派生库</th><th className="py-1 font-normal">回写后</th></tr></thead>
+              <tbody>
+                {preview.tables.map((t) => {
+                  const c = conflictOf(t.table);
+                  return (
+                    <tr key={t.table} className={c ? 'text-warn' : ''} data-db-ledger-writeback-conflict={c ? c.reason : undefined}>
+                      <td className="py-0.5 font-mono break-words">{t.table}</td>
+                      <td className="py-0.5">{t.parent ?? '无'}{c?.baseline !== undefined ? <span className="text-muted-foreground">（克隆时 {c.baseline}）</span> : null}</td>
+                      <td className="py-0.5">{t.derived ?? '无'}</td>
+                      <td className="py-0.5 break-words">{c ? CONFLICT_REASON[c.reason] : '按派生库内容替换'}</td>
+                    </tr>
+                  );
+                })}
+                {preview.tables.length === 0 ? <tr><td colSpan={4} className="py-1 text-muted-foreground">两边都没有基表</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">回写前会先自动备份 <span className="font-mono">{preview.targetDb}</span> 并演练还原一次，演练不通过就不动目标库；快照进台账，随时可回退。替换期间目标库短暂不可用。</div>
+          <div className="mt-2 text-warn">
+            请一字不差复述要被覆盖的目标库名：
+            <input className="mt-1 block h-8 w-full rounded-md border border-input bg-background px-2 font-mono text-xs" placeholder={preview.targetDb} value={typed} onChange={(ev) => setTyped(ev.target.value)} aria-label="复述目标库名" />
+          </div>
+        </>
+      )}
+      <div className="mt-2 flex gap-2">
+        <Button size="sm" disabled={pending || !preview || typed !== preview.targetDb} onClick={() => preview && onConfirm(typed)}>
+          {pending ? <Loader2 className="animate-spin" /> : <Upload />} 回写到 {preview?.targetDb ?? entry.sourceDb}
+        </Button>
+        <Button size="sm" variant="outline" disabled={pending} onClick={onCancel}>取消</Button>
+      </div>
+    </div>
+  );
+}
+
+/** 回退确认：用回写前快照还原目标库，同样复述目标库名 */
+export function RollbackConfirm({ entry, record, pending, onCancel, onConfirm }: { entry: DbLedgerEntry; record: DbWriteBackRecord; pending: boolean; onCancel: () => void; onConfirm: (confirmDbName: string) => void }): JSX.Element {
+  const [typed, setTyped] = useState('');
+  return (
+    <div className="rounded-md border border-warn/40 bg-warn-soft/40 px-4 py-3 text-sm" data-db-ledger-rollback-confirm={record.id}>
+      <div className="font-medium">把 <span className="font-mono">{record.targetDb}</span> 回退到 {new Date(record.snapshot.createdAt).toLocaleString('zh-CN')} 的回写前快照？</div>
+      <div className="mt-1 text-xs text-muted-foreground">快照 {fmtBytes(record.snapshot.bytes)}{record.snapshot.objects !== undefined ? `，${record.snapshot.objects} 个表/集合` : ''}，已演练验证。回退前会再拍一次 {record.targetDb} 的快照，{entry.dbName} 回写进去的内容会被还原掉。</div>
+      <div className="mt-2 text-warn">
+        请一字不差复述目标库名：
+        <input className="mt-1 block h-8 w-full rounded-md border border-input bg-background px-2 font-mono text-xs" placeholder={record.targetDb} value={typed} onChange={(ev) => setTyped(ev.target.value)} aria-label="复述目标库名" />
+      </div>
+      <div className="mt-2 flex gap-2">
+        <Button size="sm" disabled={pending || typed !== record.targetDb} onClick={() => onConfirm(typed)}>
+          {pending ? <Loader2 className="animate-spin" /> : <Undo2 />} 回退 {record.targetDb}
+        </Button>
+        <Button size="sm" variant="outline" disabled={pending} onClick={onCancel}>取消</Button>
+      </div>
+    </div>
+  );
+}
+
 export function DbLedgerSection({ projectId, onToast, reloadToken = 0 }: { projectId: string; onToast?: (m: string) => void; /** 外部改了配置（如初始化方式）后递增，让台账按新配置重算 */ reloadToken?: number }): JSX.Element {
   const [state, setState] = useState<{ status: 'idle' | 'loading' } | { status: 'ok'; view: DbLedgerView } | { status: 'error'; message: string }>({ status: 'idle' });
   const [busy, setBusy] = useState<string | null>(null);
   const [dropping, setDropping] = useState<DbLedgerEntry | null>(null);
+  const [writingBack, setWritingBack] = useState<{ entry: DbLedgerEntry; preview: WriteBackPreview | null } | null>(null);
+  const [rollingBack, setRollingBack] = useState<{ entry: DbLedgerEntry; record: DbWriteBackRecord } | null>(null);
   const base = `/api/projects/${encodeURIComponent(projectId)}/db-ledger`;
+
+  const openWriteBack = async (e: DbLedgerEntry): Promise<void> => {
+    setWritingBack({ entry: e, preview: null });
+    try { setWritingBack({ entry: e, preview: await apiRequest<WriteBackPreview>(`${base}/${encodeURIComponent(e.id)}/write-back/preview`) }); }
+    catch (err) { setWritingBack(null); onToast?.(err instanceof ApiError ? err.message : String(err)); }
+  };
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -247,8 +370,22 @@ export function DbLedgerSection({ projectId, onToast, reloadToken = 0 }: { proje
                   onConfirm={(force) => void run(`drop:${dropping.id}`, () => apiRequest<{ message: string }>(`${base}/${encodeURIComponent(dropping.id)}`, { method: 'DELETE', body: force ? { force: { confirmDbName: force } } : {} })).then((ok) => { if (ok) setDropping(null); })} />
               </div>
             ) : null}
+            {writingBack ? (
+              <div className="mb-3">
+                <WriteBackConfirm entry={writingBack.entry} preview={writingBack.preview} pending={busy === `writeback:${writingBack.entry.id}`} onCancel={() => setWritingBack(null)}
+                  onConfirm={(confirmDbName) => void run(`writeback:${writingBack.entry.id}`, () => apiRequest<{ message: string }>(`${base}/${encodeURIComponent(writingBack.entry.id)}/write-back`, { method: 'POST', body: { confirmDbName } })).then((ok) => { if (ok) setWritingBack(null); })} />
+              </div>
+            ) : null}
+            {rollingBack ? (
+              <div className="mb-3">
+                <RollbackConfirm entry={rollingBack.entry} record={rollingBack.record} pending={busy === `rollback:${rollingBack.entry.id}`} onCancel={() => setRollingBack(null)}
+                  onConfirm={(confirmDbName) => void run(`rollback:${rollingBack.entry.id}`, () => apiRequest<{ message: string }>(`${base}/${encodeURIComponent(rollingBack.entry.id)}/write-backs/${encodeURIComponent(rollingBack.record.id)}/rollback`, { method: 'POST', body: { confirmDbName } })).then((ok) => { if (ok) setRollingBack(null); })} />
+              </div>
+            ) : null}
             <DbLedgerTree
               view={state.view} busy={busy}
+              onWriteBack={(e) => void openWriteBack(e)}
+              onRollback={(e, wb) => setRollingBack({ entry: e, record: wb })}
               onBackup={(e) => void run(`backup:${e.id}`, () => apiRequest<{ message: string }>(`${base}/${encodeURIComponent(e.id)}/backup`, { method: 'POST' }))}
               onVerify={(e, b) => void run(`verify:${e.id}`, () => apiRequest<{ message: string }>(`${base}/${encodeURIComponent(e.id)}/backups/${encodeURIComponent(b.id)}/verify`, { method: 'POST' }))}
               onDrop={(e) => setDropping(e)}

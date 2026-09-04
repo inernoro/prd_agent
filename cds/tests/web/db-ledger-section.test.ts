@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DbLedgerTree, DropConfirm, dbLedgerHeadline, type DbLedgerEntry, type DbLedgerView } from '../../web/src/components/branch/DbLedgerSection.js';
+import { DbLedgerTree, DropConfirm, WriteBackConfirm, dbLedgerHeadline, type DbLedgerEntry, type DbLedgerView } from '../../web/src/components/branch/DbLedgerSection.js';
 
 const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const T = '2026-09-03T08:00:00.000Z';
@@ -65,6 +65,36 @@ describe('台账血缘树', () => {
     expect(html).toContain('首次部署前从');
     expect(html).toContain('库已在实例上则跳过');
     expect((html.match(/现在克隆/g) ?? []).length).toBe(1);
+  });
+
+  it('回写（收敛 5）：可回写的派生库给「回写到 源库」；回写过的条目写明时间、覆盖了几张表、可回退到什么时候，并给「回退」', () => {
+    const fresh = entry({ dbName: 'shop_feat_a', branchId: 'b-a', branch: 'feat/a', profileId: 'api' });
+    const written = entry({ dbName: 'shop_feat_b', branchId: 'b-b', branch: 'feat/b', profileId: 'api', writeBacks: [{
+      id: 'wb1', targetDb: 'shop', at: T, snapshot: { id: 'b', file: '/b', bytes: 2048, sha256: 's', createdAt: T, objects: 2, verifiedAt: T },
+      conflicts: [{ table: 'orders', baseline: 57, parentNow: 58, derived: 57, reason: 'parent-changed' }], baselineKind: 'clone-time',
+      verification: { ok: true, measuredAt: T, tables: [{ table: 'orders', source: 57, target: 57 }], mismatched: [], sourceOnly: [], targetOnly: [] },
+    }] });
+    const unknown = entry({ dbName: 'legacy', kind: 'unknown', sourceDb: undefined, origin: 'scan' });
+    const html = renderToStaticMarkup(createElement(DbLedgerTree, { view: view([fresh, written, unknown]), onWriteBack: () => {}, onRollback: () => {} }));
+    // 两个可回写条目各一个按钮；「已回写到」那句不是按钮
+    expect((html.match(/回写到 <span class="font-mono">shop<\/span><\/button>/g) ?? []).length).toBe(2);
+    expect(html).toContain('data-db-ledger-writeback="wb1"');
+    expect(html).toContain('已回写到');
+    expect(html).toContain('覆盖了 1 张主库改过的表');
+    expect(html).toContain('可回退到');
+    expect((html.match(/ 回退<\/button>/g) ?? []).length).toBe(1);
+    expect(html).not.toContain('回写到 <span class="font-mono">legacy');
+  });
+
+  it('回写确认：先看两边逐表行数与冲突清单，复述目标库名才能按下「回写」', () => {
+    const preview = { targetDb: 'shop', derivedDb: 'shop_feat_a', baselineKind: 'clone-time' as const, headline: 'x', conflicts: [{ table: 'orders', baseline: 57, parentNow: 58, derived: 57, reason: 'parent-changed' as const }], tables: [{ table: 'orders', parent: 58, derived: 57 }, { table: 'users', parent: 3, derived: 3 }] };
+    const html = renderToStaticMarkup(createElement(WriteBackConfirm, { entry: entry({ dbName: 'shop_feat_a' }), preview, pending: false, onCancel: () => {}, onConfirm: () => {} }));
+    expect(html).toContain('data-db-ledger-writeback-confirm="shop_feat_a"');
+    expect(html).toContain('orders');
+    expect(html).toContain('58');
+    expect(html).toContain('主库在克隆之后改过');
+    expect(html).toContain('先自动备份');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?回写到 shop/);
   });
 
   it('已丢弃的条目不再给动作按钮，但留有丢弃时间与是否强制', () => {
