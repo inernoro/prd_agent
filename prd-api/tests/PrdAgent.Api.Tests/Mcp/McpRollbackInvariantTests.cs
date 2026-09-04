@@ -142,6 +142,36 @@ public class McpRollbackInvariantTests
     }
 
     /// <summary>
+    /// 每一处「摘掉正文未落盘标记」都必须带上刚读到的版本。
+    ///
+    /// 这个 id 是幂等键推出来的**确定性** id：回读之后、更新之前，它完全可能被删掉、又被同键
+    /// 重试插进一条新的占位。只按 id 摘的话，摘掉的是**新那次**的标记 —— 于是再一次重试拿到
+    /// 「已去重、成功」，而那条的正文还没写、甚至最终会失败。
+    ///
+    /// 逐个出口枚举，不数总数：这个标记有四处出口（收尾成功、收尾撞上用户编辑、正文被别人改过、
+    /// 撤回时发现正文已提交），新增第五处时它自动进闸 —— 上一轮就是只修了其中一处，
+    /// 另外两处原样留着，靠 review 才捞出来。
+    /// </summary>
+    [Fact]
+    public void 摘标记的每一处出口都要带版本条件()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
+        const string unset = "Update.Unset(EntryContentPendingField)";
+        var exits = 0;
+        for (var i = src.IndexOf(unset, StringComparison.Ordinal); i >= 0;
+             i = src.IndexOf(unset, i + 1, StringComparison.Ordinal))
+        {
+            exits++;
+            // 过滤器写在这一句之前，取够长的一段（跨得过 Combine 那种多行写法）。
+            var filter = src[Math.Max(0, i - 260)..i];
+            filter.ShouldContain("UpdatedAt",
+                customMessage: $"第 {exits} 处摘标记只认 id：确定性 id 被同键重试重用时，摘掉的是新那次的标记");
+        }
+        exits.ShouldBe(4, "摘标记的出口数量变了 —— 新增那处也要带版本条件，确认后再改这个数");
+    }
+
+    /// <summary>
     /// 文学写正文：写没写进去一律要判，且「没了」与「被改了」要给不同的说法。
     ///
     /// 上一版把这个判断挂在一个标志位上（只有带条件写入时才看 MatchedCount）。

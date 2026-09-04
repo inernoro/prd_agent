@@ -26,6 +26,9 @@ internal static class McpInputBounds
     /// <summary>工具名按字符数收 —— 它不落进业务字段，只进审计行与回给调用方的那句话。</summary>
     internal const int ToolNameChars = 200;
 
+    /// <summary>密钥名按字符数收。它是主人自己起的名字，进的也只是审计行与面板。</summary>
+    internal const int KeyNameChars = 200;
+
     internal static int Bytes(string? value) => value == null ? 0 : Encoding.UTF8.GetByteCount(value);
 
     /// <summary>超限返回一句能照着改的说明；合规返回 null。</summary>
@@ -59,9 +62,17 @@ internal static class McpInputBounds
     ///
     /// 截而不是拒：拒得越早，越会把「有人在刷」这件事从审计里一起抹掉。真实工具名 30 字上下，
     /// 200 字之后的部分对判断「他刚才想调什么」没有任何贡献。
+    ///
+    /// 做成通用的一处，是因为审计行里不止工具名一个字段是调用方给的：密钥名同样是用户自己起的、
+    /// 同样没有上限，而它**每一次调用**都被整个抄进那一行。抄两个一模一样的单行函数，
+    /// 就是下一次判据分裂的起点。新增任何进审计行的调用方文本，都从这里走。
     /// </summary>
-    internal static string ToolNameForAudit(string name)
-        => name.Length > ToolNameChars ? name[..ToolNameChars] + "…" : name;
+    internal static string ForAudit(string? value, int maxChars)
+        => value is null ? string.Empty
+            : value.Length > maxChars ? value[..maxChars] + "…" : value;
+
+    /// <summary>工具名的那一份（见上）。</summary>
+    internal static string ToolNameForAudit(string name) => ForAudit(name, ToolNameChars);
 
     internal static string? Tags(List<string>? tags)
     {

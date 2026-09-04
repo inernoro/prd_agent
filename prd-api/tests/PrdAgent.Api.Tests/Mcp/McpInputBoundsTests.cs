@@ -254,6 +254,31 @@ public class McpInputBoundsTests
     }
 
     /// <summary>
+    /// 审计行里每一个调用方给的文本都得先截。
+    ///
+    /// 工具名那条至少还要有人主动去刷；密钥名更狠 —— 建一把名字几 MB 的密钥，此后**每一笔调用**
+    /// 都把它整个抄进那一行，等于给自己配了个放大器。而超过 Mongo 单文档上限的那些行插不进去，
+    /// 写审计又包了 try，于是审计静静地缺了一段。
+    ///
+    /// 逐个字段点名而不是数总数：新增一个调用方给的字段时，这里会红。
+    /// </summary>
+    [Fact]
+    public void 审计行里调用方给的文本都得先截()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/McpGatewayController.cs"));
+        var init = McpSourceGuard.Slice(src, "var log = new McpCallLog", "};");
+
+        // KeyName 来自密钥自己的名字（claim），当场截。
+        var keyLine = init.Split('\n').FirstOrDefault(l => l.Contains("KeyName =", StringComparison.Ordinal));
+        keyLine.ShouldNotBeNull("审计行不再有 KeyName？改名了就同步改这里");
+        keyLine!.ShouldContain("ForAudit(", customMessage: "密钥名没截：每一次调用都会把它整个抄进审计行");
+
+        // ToolName 在更早的位置就截过了（见下一条守卫盯的顺序），这里只确认它没被换回原始值。
+        init.ShouldContain("ToolName = name", customMessage: "ToolName 换源了，顺序守卫可能已经盯错东西");
+    }
+
+    /// <summary>
     /// 而且必须截在**认工具之前**：认出来之后再截，认不出来的那条路（正是无界名字唯一能走的路）
     /// 就绕过了它。这条只能盯源码——判据的位置本身就是判据。
     /// </summary>

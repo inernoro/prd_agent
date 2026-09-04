@@ -161,6 +161,10 @@ public class AgentApiKeysController : ControllerBase
         var userId = this.GetRequiredUserId();
         if (string.IsNullOrWhiteSpace(req.Name))
             return BadRequest(ApiResponse<object>.Fail("INVALID_NAME", "Key 名称不能为空"));
+        // 名字没有上限的话，它会顺着每一次调用被整个抄进审计行 —— 一把名字几 MB 的密钥
+        // 等于给自己配了个放大器。审计那头也截，但源头收住才是根治。
+        var nameTooLong = McpInputBounds.Text(req.Name, McpInputBounds.TitleBytes, "name");
+        if (nameTooLong != null) return BadRequest(ApiResponse<object>.Fail("INVALID_NAME", nameTooLong));
 
         var scopes = (req.Scopes ?? new List<string>())
             .Where(s => !string.IsNullOrWhiteSpace(s))
@@ -220,6 +224,9 @@ public class AgentApiKeysController : ControllerBase
         // 校验排在写库之前，且配额与元数据**合成同一次 Mongo 写**：
         // 分两次写的话，第二次失败会留下「接口报错了、但名字已经改了」的半截状态，
         // 用户照报错重试，状态和提示对不上。要么整笔生效，要么整笔不生效。
+        var nameTooLong = McpInputBounds.Text(req.Name, McpInputBounds.TitleBytes, "name");
+        if (nameTooLong != null) return BadRequest(ApiResponse<object>.Fail("INVALID_NAME", nameTooLong));
+
         if (req.McpDailyImageQuota is < 1 or > 500)
             return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每日生图上限需在 1-500 之间"));
         if (req.McpDailyWriteQuota is < 1 or > 2000)

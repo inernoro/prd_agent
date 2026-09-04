@@ -420,8 +420,9 @@ public class DocumentStoreOpenApiController : ControllerBase
                     // 条目还在，只是被人改过。绝不删：那是用户的内容。
                     // 只摘掉「正文还没落盘」这个标记，否则同键重试会永远撞 409。
                     // 计数也不退 —— 条目确实存在，这一次递增没错。
+                    // 摘的时候带上刚读到的版本（确定性 id 可能已被同键重试重用，见另两处出口）。
                     await _db.DocumentEntries.UpdateOneAsync(
-                        e => e.Id == entry.Id,
+                        e => e.Id == entry.Id && e.UpdatedAt == still.UpdatedAt,
                         Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
                         cancellationToken: CancellationToken.None);
                     return Conflict(ApiResponse<object>.Fail("ENTRY_CHANGED_SINCE_CREATE",
@@ -455,10 +456,19 @@ public class DocumentStoreOpenApiController : ControllerBase
                 {
                     // 用户在这几步之间改过了。**不覆盖他的 summary**，但那个「正文还没落盘」的标记
                     // 必须摘掉 —— 留着的话同键重试会永远撞 409，这条记录再没人能收尾。
-                    await _db.DocumentEntries.UpdateOneAsync(
-                        e => e.Id == entry.Id,
-                        Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
-                        cancellationToken: CancellationToken.None);
+                    //
+                    // 摘的时候也要带上刚读到的版本：这个 id 是幂等键推出来的**确定性** id，
+                    // 它完全可能已经被删掉、又被同键重试插进一条新的占位。只按 id 摘的话，
+                    // 摘掉的是新那次的标记，于是再一次重试拿到「已去重、成功」，而那条的正文还没写。
+                    // 与撤回那条出口同一个道理，两处都不能只认 id。
+                    var latest = await _db.DocumentEntries
+                        .Find(e => e.Id == entry.Id)
+                        .FirstOrDefaultAsync(CancellationToken.None);
+                    if (latest != null)
+                        await _db.DocumentEntries.UpdateOneAsync(
+                            e => e.Id == entry.Id && e.UpdatedAt == latest.UpdatedAt,
+                            Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
+                            cancellationToken: CancellationToken.None);
                     summaryApplied = explicitSummary == null;
                 }
             }
@@ -661,8 +671,13 @@ public class DocumentStoreOpenApiController : ControllerBase
             .FirstOrDefaultAsync(CancellationToken.None);
         if (current != null && current.UpdatedAt != placeholderUpdatedAt)
         {
+            // 摘标记也得带上刚读到的那个版本。这个 id 是幂等键推出来的**确定性** id：
+            // 回读之后、这一步之前，它完全可能被删掉、又被同键重试插进一条新的占位 ——
+            // 只按 id 摘的话，摘掉的是**新那次**的「正文未落盘」标记，于是再一次重试会
+            // 拿到「已去重、成功」，而那条的正文还没写、甚至最终会失败。
+            // 下面那条删除已经带了条件，这条也得带 —— 同一处判据，两条出口。
             await _db.DocumentEntries.UpdateOneAsync(
-                e => e.Id == entryId,
+                e => e.Id == entryId && e.UpdatedAt == current.UpdatedAt,
                 Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
                 cancellationToken: CancellationToken.None);
             return RollbackOutcome.KeptCommitted;

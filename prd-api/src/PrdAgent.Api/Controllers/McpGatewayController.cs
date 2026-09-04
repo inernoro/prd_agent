@@ -272,7 +272,9 @@ public class McpGatewayController : ControllerBase
         {
             OwnerUserId = boundUserId ?? string.Empty,
             KeyId = User.FindFirst("agentApiKeyId")?.Value ?? User.FindFirst("appId")?.Value ?? string.Empty,
-            KeyName = User.FindFirst("appName")?.Value ?? string.Empty,
+            // 密钥名也是调用方给的、也没有上限，而它**每一次调用**都被整个抄进这一行 ——
+            // 工具名那条至少还得先想个名字刷，这条是建一把名字几 MB 的密钥，此后每笔调用自动放大。
+            KeyName = McpInputBounds.ForAudit(User.FindFirst("appName")?.Value, McpInputBounds.KeyNameChars),
             ToolName = name!,
             ArgumentsPreview = McpUsageService.SummarizeArguments(args),
             CreatedAt = startedAt,
