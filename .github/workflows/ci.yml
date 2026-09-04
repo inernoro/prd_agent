@@ -151,6 +151,15 @@ jobs:
               # 每日验收的锚点与导航 label 的交叉核对：被守的是脚本与 navRegistry 两侧
               - 'scripts/smoke/daily-acceptance.mjs'
               - 'prd-admin/src/app/navRegistry.tsx'
+              # CDS 控制台那份日常验收的同类守卫：锚点不许与外壳导航重名、必须真的
+              # 出现在它声称的页面组件里、向导不许推进到会往生产写的那一步。四个被守
+              # 页面组件与外壳都登记进来——只改页面文案的 PR 才是真正会引入漂移的那种。
+              - 'scripts/smoke/cds-console-acceptance.mjs'
+              - 'cds/web/src/components/layout/AppShell.tsx'
+              - 'cds/web/src/pages/ProjectListPage.tsx'
+              - 'cds/web/src/pages/BranchListPage.tsx'
+              - 'cds/web/src/pages/CdsSettingsPage.tsx'
+              - 'cds/web/src/pages/ReleaseCenterPage.tsx'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
             acceptance_report:
