@@ -191,6 +191,34 @@ public class MdToPptSectionSanitizeTests
         Assert.Equal("md-to-ppt-test::chat", request.AppCallerCode);
         Assert.Equal("req1", request.Context?.RequestId);
         Assert.Equal("u1", request.Context?.UserId);
+        Assert.Equal(4096, request.RequestBody?["max_tokens"]?.GetValue<int>());
+    }
+
+    [Fact]
+    public void SystemGatewayProfile_ProvidesZeroConfigurationFallback()
+    {
+        var profile = MdToPptController.CreateSystemGatewayProfile("user-1");
+
+        Assert.Equal(MdToPptController.SystemGatewayProfileId, profile.Id);
+        Assert.Equal(string.Empty, profile.Model);
+        Assert.True(profile.IsDefault);
+        Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
+    }
+
+    [Fact]
+    public void GatewayPageRequest_CanExposeThinkingForWholeDeck()
+    {
+        var profile = MdToPptController.CreateSystemGatewayProfile("user-1");
+
+        var request = MdToPptController.BuildGatewayPageRequest(
+            profile,
+            "sys",
+            "usr",
+            "md-to-ppt-test::chat",
+            includeThinking: true);
+
+        Assert.True(request.IncludeThinking);
+        Assert.Null(request.ExpectedModel);
     }
 
     [Fact]

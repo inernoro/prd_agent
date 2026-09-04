@@ -30,14 +30,16 @@ namespace PrdAgent.Api.Controllers.Api;
 ///   event: done   — data: {"html":"..."}  完整 HTML
 ///   event: error  — data: {"message":"..."}
 ///
-/// 生成引擎：优先走 LLM Gateway 直出页面片段；仅对 anthropic/CDS Agent 运行配置保留
-/// CDS Agent 兼容路径。大纲规划同样走 ILlmGateway。
+/// 生成引擎：优先走 LLM Gateway 直出页面片段；仅对 Codex/custom/CDS Agent 运行配置保留
+/// 动态容器兼容路径。大纲规划同样走 ILlmGateway。
 /// </summary>
 [ApiController]
 [Route("api/md-to-ppt")]
 [Authorize]
 public class MdToPptController : ControllerBase
 {
+    internal const string SystemGatewayProfileId = "system-gateway-default";
+
     private readonly IInfraAgentSessionService _sessions;
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
@@ -989,7 +991,11 @@ public class MdToPptController : ControllerBase
         var userId = this.GetRequiredUserId();
         var visible = await ListVisibleRuntimeProfilesAsync(userId, CancellationToken.None);
         var def = await ResolveRuntimeProfileAsync(userId, CancellationToken.None);
-        return Ok(visible.Select(p => new
+        var profiles = visible
+            .Append(CreateSystemGatewayProfile(userId))
+            .GroupBy(x => x.Id, StringComparer.Ordinal)
+            .Select(x => x.First());
+        return Ok(profiles.Select(p => new
         {
             id = p.Id,
             name = p.Name,
@@ -998,7 +1004,7 @@ public class MdToPptController : ControllerBase
             protocol = p.Protocol,
             isDefault = p.IsDefault,
             isEffectiveDefault = def != null && def.Id == p.Id,
-            owned = p.CreatedByUserId == userId,
+            owned = p.CreatedByUserId == userId && p.Id != SystemGatewayProfileId,
         }));
     }
 
@@ -2171,7 +2177,8 @@ public class MdToPptController : ControllerBase
         string appCallerCode,
         string? requestId = null,
         string? userId = null,
-        string? title = null)
+        string? title = null,
+        bool includeThinking = false)
     {
         return new GatewayRequest
         {
@@ -2179,7 +2186,7 @@ public class MdToPptController : ControllerBase
             ModelType = ModelTypes.Chat,
             ExpectedModel = string.IsNullOrWhiteSpace(profile.Model) ? null : profile.Model.Trim(),
             Stream = true,
-            IncludeThinking = false,
+            IncludeThinking = includeThinking,
             TimeoutSeconds = Math.Clamp(profile.TimeoutSeconds > 0 ? profile.TimeoutSeconds : 180, 60, 300),
             RequestBody = new JsonObject
             {
@@ -2189,7 +2196,9 @@ public class MdToPptController : ControllerBase
                     new JsonObject { ["role"] = "user",   ["content"] = userPrompt },
                 },
                 ["temperature"] = 0.48,
-                ["max_tokens"] = 6144,
+                // 默认模型池可能回落到 4K 输出模型；单页与两页短 deck 先保证可运行。
+                // 更长输出由并行逐页生成承接，不用超限参数换取表面上的一次性长输出。
+                ["max_tokens"] = 4096,
             },
             Context = new GatewayRequestContext
             {
@@ -2717,6 +2726,88 @@ public class MdToPptController : ControllerBase
         }
     }
 
+    private async Task RunGatewayDeckStreamAsync(
+        string userId,
+        InfraAgentRuntimeProfile profile,
+        string systemPrompt,
+        string userPrompt,
+        string title,
+        MdToPptRun run)
+    {
+        var requestId = Guid.NewGuid().ToString("N");
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: requestId,
+            GroupId: null,
+            SessionId: run.Id,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: userPrompt.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "[MdToPpt-Deck]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate));
+
+        var request = BuildGatewayPageRequest(
+            profile,
+            systemPrompt,
+            userPrompt,
+            AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+            requestId,
+            userId,
+            title,
+            includeThinking: true);
+        var fullText = new StringBuilder();
+        var model = string.IsNullOrWhiteSpace(profile.Model) ? "自动选择" : profile.Model.Trim();
+
+        await WriteEventAsync("model", new { model, platform = "LLM Gateway" });
+        await WriteDiagAsync(new { stage = "gateway_direct", route = "gateway-direct", runId = run.Id });
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(request, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                {
+                    model = chunk.Resolution.ActualModel;
+                    await WriteEventAsync("model", new { model, platform = "LLM Gateway" });
+                }
+                else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    await WriteEventAsync("thinking", new { text = chunk.Content });
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    fullText.Append(chunk.Content);
+                    await WriteEventAsync("delta", new { text = chunk.Content });
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    var message = chunk.Error ?? chunk.Content ?? "LLM Gateway 生成失败";
+                    await PersistRunErrorAsync(run, message);
+                    await WriteEventAsync("error", new { message });
+                    return;
+                }
+            }
+
+            var html = StripCodeFences(fullText.ToString());
+            if (string.IsNullOrWhiteSpace(html))
+            {
+                const string message = "LLM Gateway 未返回 PPT HTML";
+                await PersistRunErrorAsync(run, message);
+                await WriteEventAsync("error", new { message });
+                return;
+            }
+
+            await PersistRunDoneAsync(run, html, model, "LLM Gateway");
+            await WriteEventAsync("done", new { html });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MdToPpt-Gateway] generation failed userId={UserId}", userId);
+            await PersistRunErrorAsync(run, ex.Message);
+            await WriteEventAsync("error", new { message = ex.Message });
+        }
+    }
+
     private async Task RunAgentStreamAsync(string userId, string systemPrompt, string userPrompt, string title, MdToPptRun run, string? runtimeProfileId = null)
     {
         var overallStart = DateTime.UtcNow;
@@ -2735,21 +2826,8 @@ public class MdToPptController : ControllerBase
 
         try
         {
-            // 1. 解析 CDS 连接
+            // 1. 先解析运行配置；系统默认配置走 LLM Gateway，不要求用户额外绑定 CDS。
             var t0 = DateTime.UtcNow;
-            connection = await ResolveCdsConnectionAsync(CancellationToken.None);
-            if (connection == null)
-            {
-                await PersistRunErrorAsync(run, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
-                await WriteEventAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
-                return;
-            }
-            var connMs = (int)(DateTime.UtcNow - t0).TotalMilliseconds;
-            _logger.LogInformation("[MdToPpt-Agent] connection resolved elapsedMs={Ms}", connMs);
-            await WriteDiagAsync(new { stage = "connection", elapsedMs = connMs, connectionId = connection.Id });
-
-            // 2. 解析运行配置
-            var t1 = DateTime.UtcNow;
             runtimeProfile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, runtimeProfileId);
             if (runtimeProfile == null)
             {
@@ -2757,10 +2835,29 @@ public class MdToPptController : ControllerBase
                 await WriteEventAsync("error", new { message = "没有可用的模型运行配置，请先配置 baseUrl、model 和 API key" });
                 return;
             }
-            var profileMs = (int)(DateTime.UtcNow - t1).TotalMilliseconds;
+            var profileMs = (int)(DateTime.UtcNow - t0).TotalMilliseconds;
             _logger.LogInformation("[MdToPpt-Agent] profile resolved elapsedMs={Ms} runtime={Runtime} model={Model}",
                 profileMs, runtimeProfile.Runtime, runtimeProfile.Model);
             await WriteDiagAsync(new { stage = "profile", elapsedMs = profileMs, runtime = runtimeProfile.Runtime, model = runtimeProfile.Model });
+
+            if (ShouldUseGatewayDirect(runtimeProfile))
+            {
+                await RunGatewayDeckStreamAsync(userId, runtimeProfile, systemPrompt, userPrompt, title, run);
+                return;
+            }
+
+            // 2. 只有明确选择 Codex/custom/CDS Agent runtime 时才需要 CDS 连接。
+            var t1 = DateTime.UtcNow;
+            connection = await ResolveCdsConnectionAsync(CancellationToken.None);
+            if (connection == null)
+            {
+                await PersistRunErrorAsync(run, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
+                await WriteEventAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
+                return;
+            }
+            var connMs = (int)(DateTime.UtcNow - t1).TotalMilliseconds;
+            _logger.LogInformation("[MdToPpt-Agent] connection resolved elapsedMs={Ms}", connMs);
+            await WriteDiagAsync(new { stage = "connection", elapsedMs = connMs, connectionId = connection.Id });
 
             var runtime = runtimeProfile.Runtime;
             var model = runtimeProfile.Model;
@@ -3146,6 +3243,8 @@ public class MdToPptController : ControllerBase
         var visible = await ListVisibleRuntimeProfilesAsync(userId, ct);
         if (!string.IsNullOrWhiteSpace(requestedProfileId))
         {
+            if (requestedProfileId == SystemGatewayProfileId)
+                return CreateSystemGatewayProfile(userId);
             var requested = visible.FirstOrDefault(x => x.Id == requestedProfileId);
             if (requested != null) return requested;
             // 指定的配置不可见/已删除：按默认链兜底，不让请求直接失败
@@ -3154,8 +3253,21 @@ public class MdToPptController : ControllerBase
         return visible.FirstOrDefault(x => x.CreatedByUserId == userId && x.IsDefault)
             ?? visible.FirstOrDefault(x => x.IsDefault)
             ?? visible.FirstOrDefault(x => x.CreatedByUserId == userId)
-            ?? visible.FirstOrDefault();
+            ?? visible.FirstOrDefault()
+            ?? CreateSystemGatewayProfile(userId);
     }
+
+    internal static InfraAgentRuntimeProfile CreateSystemGatewayProfile(string userId) => new()
+    {
+        Id = SystemGatewayProfileId,
+        Name = "MAP 默认模型",
+        Runtime = InfraAgentRuntimes.ClaudeSdk,
+        Protocol = InfraAgentRuntimeProtocols.OpenAiCompatible,
+        Model = string.Empty,
+        TimeoutSeconds = 180,
+        IsDefault = true,
+        CreatedByUserId = userId,
+    };
 
     // ─────────────────────────────────────────────
     // SSE 工具方法
