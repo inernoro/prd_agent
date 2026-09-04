@@ -112,7 +112,10 @@ export default function McpConsolePage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 p-4 md:p-6">
+    // 手机端不再自己加左右 padding：外层 gutter 由 AppShell 统一给（--mobile-padding，
+    // ≤479px 8px / 其余 10px）。再叠一层 16px 的话，375 宽下外边距变成 24px，
+    // 卡片自己的 padding 还要再吃一层——正是密度规则点名禁止的三层叠加。
+    <div className="flex h-full min-h-0 flex-col gap-4 py-3 md:p-6">
       {/* 顶栏 */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1.5">

@@ -200,7 +200,13 @@ public class WebPagesOpenApiController : ControllerBase
         if (site == null || site.OwnerUserId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或不属于你"));
 
-        var days = req?.ExpiresInDays is > 0 and <= 90 ? req!.ExpiresInDays!.Value : 7;
+        // 省略 = 用默认 7 天；**显式给一个范围外的值**是另一回事，不能默默替换成 7 ——
+        // 调用方拿到的链接寿命和它要的不一样，而它多半要到链接提前失效那天才发现。
+        // 与 content 那条同一个道理：「没说」和「说了但说错了」是两件事，不能合成一件。
+        if (req?.ExpiresInDays is { } requestedDays && requestedDays is < 1 or > 90)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"expiresInDays 需要在 1-90 之间，收到 {requestedDays}。想用默认的 7 天就别传这个字段。"));
+        var days = req?.ExpiresInDays ?? 7;
         var (share, reusedUnchanged) = await _sites.CreateShareWithReuseInfoAsync(
             userId, await ResolveDisplayNameAsync(userId, ct),
             siteId, siteIds: null, shareType: "single",

@@ -54,6 +54,14 @@ export function McpCallsPanel({
   // 回来时不是最新那次就整段丢弃（错误态同理，否则旧请求的失败会盖掉新请求的成功）。
   const loadGenRef = useRef(0);
 
+  // 选中的客户端被吊销/删除之后，它不再出现在 clients 里，而 keyId 还留着 ——
+  // 受控 <select> 找不到对应 option 时浏览器会显示第一项「全部客户端」，
+  // 请求却还带着那个 keyId：**看到的筛选条件和实际在筛的不是一回事**，
+  // 而这块面板是审计用的，它一旦开始说谎就不如没有。所以跟着 clients 收回来。
+  useEffect(() => {
+    if (keyId && !clients.some((c) => c.keyId === keyId)) setKeyId('');
+  }, [clients, keyId]);
+
   const load = useCallback(async () => {
     const gen = ++loadGenRef.current;
     setLoading(true);
