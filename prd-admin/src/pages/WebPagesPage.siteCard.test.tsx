@@ -18,6 +18,7 @@ const baseSite: HostedSite = {
   files: [{ path: 'index.html', cosKey: 'sites/site-1/index.html', size: 1024, mimeType: 'text/html' }],
   totalSize: 1024,
   tags: [],
+  folderCanonicalName: '',
   ownerUserId: 'user-1',
   viewCount: 3,
   visibility: 'private',
