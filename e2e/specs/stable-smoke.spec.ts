@@ -1075,7 +1075,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[WEB-001][WEB-002][WEB-003][WEB-006] 创建空文件夹并高亮拖入站点后刷新保持归属', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[WEB-001][WEB-002][WEB-003][WEB-006][WEB-007][REG-web-folder-canonical-001][REG-web-folder-fence-001] 创建空文件夹并高亮拖入站点后刷新保持归属', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/web-pages');
     const runKey = `stsmk-${Date.now().toString(36)}-folder`;
@@ -1135,6 +1135,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         foldersAfterConcurrentCreate.items.filter((folder) => folder.name === runKey),
         '并发 API 创建后仍只能存在一条持久记录',
       ).toHaveLength(1);
+
+      const legacySpelling = runKey.toUpperCase();
+      const assignedLegacyFolder = await page.request.put(`/api/web-pages/${siteId}`, {
+        headers: authHeaders(token),
+        data: { folder: legacySpelling },
+      });
+      expect(assignedLegacyFolder.ok(), '构造历史文件夹拼写失败').toBe(true);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      const canonicalTarget = page.locator('[data-tour-id="webpages-folder-drop-target"]').filter({ hasText: runKey });
+      await expect(canonicalTarget, '持久名与历史大小写变体必须合并为一项').toHaveCount(1);
+      await expect(canonicalTarget.locator('.web-folder-drop-target__count')).toHaveText('1');
+      const clearedLegacyFolder = await page.request.put(`/api/web-pages/${siteId}`, {
+        headers: authHeaders(token),
+        data: { folder: '' },
+      });
+      expect(clearedLegacyFolder.ok(), '历史文件夹拼写夹具清理失败').toBe(true);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
 
       const renamedName = `${runKey}-renamed`;
       const renamedFolder = await readEnvelope<StableWebFolder>(

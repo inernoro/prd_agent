@@ -34,6 +34,8 @@
 | REG-web-share-anchor-001 | 网页托管分享页 | 2026-09-01 | srcDoc 为相对资源注入绝对 base 后，纯片段 href 被解析成对象存储目录请求，腾讯 COS 与 R2 都返回 NoSuchKey | 含 href="#target" 与同页 id="target" 的最小 HTML | 用户截图已在腾讯 COS 与 R2 稳定复现；CDS `stsmk-web-20260901-complete` 真实点击后 frame 保持 `about:srcdoc#target`、无对象存储导航并完成清理 | 专用合成站点创建公开分享，点击片段链接后只核对 frame URL 与网络请求并立即清理 | WEB-004、WEB-006 | 0 | candidate |
 | REG-web-ask-content-001 | 网页托管向我提问 | 2026-09-01 | 站点迁移存储 Provider 后仍保存旧 SiteUrl，但快照只按当前 Provider 读取 CosKey，正文实际存在却被判 ASK_NO_CONTENT | 当前 Provider 返回空、持久化旧入口 URL 返回 HTML；普通站点作为对照 | 存量入口回退与非入口文件不回退单测通过；CDS `stsmk-web-20260901-complete` 当前 Provider 流式回答命中正文标记并完成清理，存量 Provider 真实夹具仍待补 | 专用合成站点执行一个最小问题，确认流式阶段与非空答案后清理 | WEB-005、WEB-006 | 0 | candidate |
 | REG-web-folder-drop-001 | 网页托管文件夹 | 2026-09-01 | 个人空间没有显式创建文件夹入口，拖拽目标仅弱色变化，用户无法判断是否命中；空文件夹也不能持久显示 | 新建空文件夹并把一个 stsmk- HTML 卡片拖入 | CDS `stsmk-web-20260901-complete` 真实指针轨迹验证强高亮与“松开移入”，刷新回读归属后删除站点和文件夹 | 专用账号创建一个空文件夹、拖入一个站点、回读后立即删除 | WEB-002、WEB-003、WEB-006 | 0 | candidate |
+| REG-web-folder-canonical-001 | 网页托管文件夹 | 2026-09-04 | 持久文件夹与历史站点文件夹用精确字符串合并、计数和筛选，导致 `Reports` 与 `reports` 显示为两个逻辑文件夹 | 持久 `Reports`，站点保留 `reports` 与 `REPORTS`，同时加入中文首尾空白对照 | 前端单测已完成失败到通过，真实 CDS 页面用例已接入、待新提交部署后取证 | 专用站点使用大写变体，核对左栏只有一项且计数为 1，随后清空归属 | WEB-002、WEB-003 | 0 | candidate |
+| REG-web-folder-fence-001 | 网页托管文件夹 | 2026-09-04 | 重命名锁允许 30 秒过期接管，但旧请求恢复后的实体写入不校验租约所有权，可覆盖新请求并留下名称 claim 不一致 | 真实 MongoDB 中先写围栏 1，接管到围栏 2，再分别用旧新围栏覆盖名称 | 本地 MongoDB 集成测试已证明旧围栏匹配 0、新围栏写入并持久；CDS 新提交端到端取证待执行 | 正式环境只执行最小并发创建与重命名，不故意停顿服务或注入延迟 | WEB-007 | 0 | candidate |
 
 ## 新增模板
 

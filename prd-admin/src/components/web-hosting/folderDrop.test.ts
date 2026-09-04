@@ -3,6 +3,7 @@ import {
   buildWebPageFolderSlot,
   buildWebPageGroupSlot,
   canDropSiteIntoTeamGroup,
+  mergePersonalFolderOptions,
   planPersonalFolderCreate,
   parseWebPageDropSlot,
 } from './folderDrop';
@@ -39,5 +40,12 @@ describe('网页卡片文件夹拖拽协议', () => {
       kind: 'select',
       name: '历史归档',
     });
+  });
+
+  it('持久文件夹与历史文件夹按服务端同一口径去重并保留持久名称', () => {
+    expect(mergePersonalFolderOptions(
+      ['Reports', ' 运营简报 '],
+      ['reports', 'REPORTS', '运营简报', '历史归档'],
+    )).toEqual(['历史归档', '运营简报', 'Reports']);
   });
 });

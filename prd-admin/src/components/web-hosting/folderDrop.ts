@@ -9,6 +9,32 @@ export type PersonalFolderCreatePlan =
   | { kind: 'select'; name: string }
   | { kind: 'create'; name: string };
 
+function canonicalPersonalFolderName(name: string): string {
+  return name.trim().normalize('NFC').toUpperCase();
+}
+
+export function personalFolderNamesEqual(left: string, right: string): boolean {
+  return canonicalPersonalFolderName(left) === canonicalPersonalFolderName(right);
+}
+
+/**
+ * 持久文件夹优先提供显示名称，历史站点只补不存在的逻辑文件夹。
+ * 去重口径与服务端 Trim + FormC + ToUpperInvariant 保持一致。
+ */
+export function mergePersonalFolderOptions(
+  managedFolderNames: readonly string[],
+  legacyFolderNames: readonly string[],
+): string[] {
+  const byCanonicalName = new Map<string, string>();
+  for (const sourceName of [...managedFolderNames, ...legacyFolderNames]) {
+    const displayName = sourceName.trim();
+    if (!displayName) continue;
+    const canonicalName = canonicalPersonalFolderName(displayName);
+    if (!byCanonicalName.has(canonicalName)) byCanonicalName.set(canonicalName, displayName);
+  }
+  return [...byCanonicalName.values()].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+}
+
 /**
  * 区分“已经持久化的文件夹”和“仅由站点旧 folder 字段推导出的同名选项”。
  * 后者仍必须创建 WebFolder 记录，否则最后一个站点移走后文件夹会凭空消失。
@@ -20,7 +46,7 @@ export function planPersonalFolderCreate(
 ): PersonalFolderCreatePlan {
   const normalized = requestedName.trim();
   if (!normalized) return { kind: 'invalid' };
-  const matches = (name: string) => name.localeCompare(normalized, 'zh-CN', { sensitivity: 'accent' }) === 0;
+  const matches = (name: string) => personalFolderNamesEqual(name, normalized);
   const managed = managedFolderNames.find(matches);
   if (managed) return { kind: 'select', name: managed };
   const legacy = visibleFolderNames.find(matches);

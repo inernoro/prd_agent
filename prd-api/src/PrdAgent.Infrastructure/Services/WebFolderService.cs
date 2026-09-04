@@ -25,12 +25,14 @@ public class WebFolderService : IWebFolderService
     private const string NameClaimCollection = "web_folder_name_claims";
     private const string RenameLockCollection = "web_folder_rename_locks";
     private const string ClaimFolderIdField = "FolderId";
+    private const string RenameFenceField = "Fence";
     private readonly MongoDbContext _db;
     private readonly IHostedSiteService _hostedSites;
     private readonly IDocumentService _documents;
     private readonly ILogger<WebFolderService> _logger;
 
     private sealed record NameClaimResolution(string FolderId, bool WasCreated);
+    private sealed record RenameLease(string OperationId, long Fence);
 
     public WebFolderService(
         MongoDbContext db,
@@ -184,35 +186,47 @@ public class WebFolderService : IWebFolderService
         return claims.DeleteOneAsync(filter, ct);
     }
 
-    private async Task<string> AcquireRenameLockAsync(string folderId, string userId)
+    private async Task<RenameLease> AcquireRenameLockAsync(string folderId, string userId)
     {
         var locks = _db.Database.GetCollection<BsonDocument>(RenameLockCollection);
         var operationId = Guid.NewGuid().ToString("N");
         for (var attempt = 0; attempt < 400; attempt++)
         {
             var now = DateTime.UtcNow;
-            var lockDocument = new BsonDocument
-            {
-                { "_id", folderId },
-                { "OperationId", operationId },
-                { "OwnerUserId", userId },
-                { "ExpiresAt", now.AddSeconds(30) },
-            };
+            var filter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", folderId),
+                Builders<BsonDocument>.Filter.Or(
+                    Builders<BsonDocument>.Filter.Lt("ExpiresAt", now),
+                    Builders<BsonDocument>.Filter.Exists("ExpiresAt", false)));
+            var update = Builders<BsonDocument>.Update.Combine(
+                Builders<BsonDocument>.Update.SetOnInsert("_id", folderId),
+                Builders<BsonDocument>.Update.Set("OperationId", operationId),
+                Builders<BsonDocument>.Update.Set("OwnerUserId", userId),
+                Builders<BsonDocument>.Update.Set("ExpiresAt", now.AddSeconds(30)),
+                Builders<BsonDocument>.Update.Set("UpdatedAt", now),
+                Builders<BsonDocument>.Update.Inc(RenameFenceField, 1));
             try
             {
-                await locks.InsertOneAsync(lockDocument, cancellationToken: CancellationToken.None);
-                return operationId;
+                var acquired = await locks.FindOneAndUpdateAsync(
+                    filter,
+                    update,
+                    new FindOneAndUpdateOptions<BsonDocument>
+                    {
+                        IsUpsert = true,
+                        ReturnDocument = ReturnDocument.After,
+                    },
+                    CancellationToken.None);
+                if (acquired != null)
+                    return new RenameLease(operationId, acquired[RenameFenceField].ToInt64());
             }
             catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
             {
-                var takeover = await locks.ReplaceOneAsync(
-                    Builders<BsonDocument>.Filter.And(
-                        Builders<BsonDocument>.Filter.Eq("_id", folderId),
-                        Builders<BsonDocument>.Filter.Lt("ExpiresAt", now)),
-                    lockDocument,
-                    new ReplaceOptions { IsUpsert = false },
-                    CancellationToken.None);
-                if (takeover.MatchedCount == 1) return operationId;
+                await Task.Delay(25, CancellationToken.None);
+            }
+            catch (MongoCommandException ex) when (ex.Code == 11000)
+            {
+                // findAndModify + upsert 在锁仍有效时会尝试插入同一 _id；
+                // 驱动会把这条路径包成 MongoCommandException，等待当前租约即可。
                 await Task.Delay(25, CancellationToken.None);
             }
         }
@@ -220,14 +234,61 @@ public class WebFolderService : IWebFolderService
         throw new InvalidOperationException("文件夹正在被修改，请稍后重试");
     }
 
-    private Task ReleaseRenameLockAsync(string folderId, string operationId)
+    private Task ReleaseRenameLockAsync(string folderId, RenameLease lease)
     {
         var locks = _db.Database.GetCollection<BsonDocument>(RenameLockCollection);
-        return locks.DeleteOneAsync(
+        return locks.UpdateOneAsync(
             Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Eq("_id", folderId),
-                Builders<BsonDocument>.Filter.Eq("OperationId", operationId)),
-            CancellationToken.None);
+                Builders<BsonDocument>.Filter.Eq("OperationId", lease.OperationId),
+                Builders<BsonDocument>.Filter.Eq(RenameFenceField, lease.Fence)),
+            Builders<BsonDocument>.Update.Combine(
+                Builders<BsonDocument>.Update.Set("ExpiresAt", DateTime.MinValue),
+                Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow)),
+            cancellationToken: CancellationToken.None);
+    }
+
+    private async Task RenewRenameLockAsync(string folderId, RenameLease lease)
+    {
+        var locks = _db.Database.GetCollection<BsonDocument>(RenameLockCollection);
+        var now = DateTime.UtcNow;
+        var renewed = await locks.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", folderId),
+                Builders<BsonDocument>.Filter.Eq("OperationId", lease.OperationId),
+                Builders<BsonDocument>.Filter.Eq(RenameFenceField, lease.Fence)),
+            Builders<BsonDocument>.Update.Combine(
+                Builders<BsonDocument>.Update.Set("ExpiresAt", now.AddSeconds(30)),
+                Builders<BsonDocument>.Update.Set("UpdatedAt", now)),
+            cancellationToken: CancellationToken.None);
+        if (renewed.MatchedCount != 1)
+            throw new InvalidOperationException("文件夹已被另一个操作接管，请重试");
+    }
+
+    internal static FilterDefinition<WebFolder> BuildRenameFenceAdvanceFilter(
+        string folderId,
+        string userId,
+        long nextFence)
+    {
+        var filter = Builders<WebFolder>.Filter;
+        return filter.And(
+            filter.Eq(folder => folder.Id, folderId),
+            filter.Eq(folder => folder.OwnerUserId, userId),
+            filter.Or(
+                filter.Exists(nameof(WebFolder.RenameFence), false),
+                filter.Lt(folder => folder.RenameFence, nextFence)));
+    }
+
+    internal static FilterDefinition<WebFolder> BuildRenameFenceOwnerFilter(
+        string folderId,
+        string userId,
+        long fence)
+    {
+        var filter = Builders<WebFolder>.Filter;
+        return filter.And(
+            filter.Eq(folder => folder.Id, folderId),
+            filter.Eq(folder => folder.OwnerUserId, userId),
+            filter.Eq(folder => folder.RenameFence, fence));
     }
 
     public async Task<List<WebFolder>> ListAsync(string userId, CancellationToken ct = default)
@@ -244,23 +305,42 @@ public class WebFolderService : IWebFolderService
     {
         // 名称 claim、实体改名、旧 claim 释放必须由服务端完整执行；客户端断开不能
         // 取消其中任一步。Mongo `_id` 锁同时串行化同一文件夹的跨实例重命名。
-        var operationId = await AcquireRenameLockAsync(id, userId);
+        var lease = await AcquireRenameLockAsync(id, userId);
         try
         {
-            return await UpdateUnderRenameLockAsync(id, userId, patch);
+            var fenced = await _db.WebFolders.UpdateOneAsync(
+                BuildRenameFenceAdvanceFilter(id, userId, lease.Fence),
+                Builders<WebFolder>.Update.Set(folder => folder.RenameFence, lease.Fence),
+                cancellationToken: CancellationToken.None);
+            if (fenced.MatchedCount != 1)
+            {
+                var exists = await _db.WebFolders
+                    .Find(folder => folder.Id == id && folder.OwnerUserId == userId)
+                    .AnyAsync(CancellationToken.None);
+                if (!exists) return null;
+                throw new InvalidOperationException("文件夹已被另一个操作接管，请重试");
+            }
+
+            return await UpdateUnderRenameLockAsync(id, userId, patch, lease);
         }
         finally
         {
-            await ReleaseRenameLockAsync(id, operationId);
+            await ReleaseRenameLockAsync(id, lease);
         }
     }
 
-    private async Task<WebFolder?> UpdateUnderRenameLockAsync(string id, string userId, WebFolder patch)
+    private async Task<WebFolder?> UpdateUnderRenameLockAsync(
+        string id,
+        string userId,
+        WebFolder patch,
+        RenameLease lease)
     {
+        await RenewRenameLockAsync(id, lease);
         var existing = await _db.WebFolders
-            .Find(c => c.Id == id && c.OwnerUserId == userId)
+            .Find(BuildRenameFenceOwnerFilter(id, userId, lease.Fence))
             .FirstOrDefaultAsync(CancellationToken.None);
-        if (existing == null) return null;
+        if (existing == null)
+            throw new InvalidOperationException("文件夹已被另一个操作接管，请重试");
 
         var ub = Builders<WebFolder>.Update;
         var previousNormalizedName = NormalizeName(existing.Name);
@@ -279,10 +359,12 @@ public class WebFolderService : IWebFolderService
             {
                 // 老数据没有名称 claim。先把真实占用回填为权威映射，再拒绝本次改名，
                 // 避免两个持久文件夹得到同一个归一化名称。
+                await RenewRenameLockAsync(id, lease);
                 await RepairNameClaimAsync(userId, nextNormalizedName, persistedCollision.Id);
                 throw new InvalidOperationException("同名文件夹已存在，请换一个名称");
             }
 
+            await RenewRenameLockAsync(id, lease);
             var targetClaim = await ResolveFolderIdAsync(
                 userId, nextNormalizedName, existing.Id, CancellationToken.None);
             if (!string.Equals(targetClaim.FolderId, existing.Id, StringComparison.Ordinal))
@@ -290,10 +372,13 @@ public class WebFolderService : IWebFolderService
 
             try
             {
-                await _db.WebFolders.UpdateOneAsync(
-                    folder => folder.Id == id && folder.OwnerUserId == userId,
+                await RenewRenameLockAsync(id, lease);
+                var renamed = await _db.WebFolders.UpdateOneAsync(
+                    BuildRenameFenceOwnerFilter(id, userId, lease.Fence),
                     ub.Combine(BuildFolderUpdates(ub, patch)),
                     cancellationToken: CancellationToken.None);
+                if (renamed.MatchedCount != 1)
+                    throw new InvalidOperationException("文件夹已被另一个操作接管，请重试");
             }
             catch
             {
@@ -305,21 +390,26 @@ public class WebFolderService : IWebFolderService
                 throw;
             }
 
+            await RenewRenameLockAsync(id, lease);
+            await RepairNameClaimAsync(userId, nextNormalizedName, existing.Id);
             await ReleaseNameClaimAsync(
                 userId, previousNormalizedName, existing.Id, CancellationToken.None);
 
             return await _db.WebFolders
-                .Find(folder => folder.Id == id && folder.OwnerUserId == userId)
+                .Find(BuildRenameFenceOwnerFilter(id, userId, lease.Fence))
                 .FirstOrDefaultAsync(CancellationToken.None);
         }
 
-        await _db.WebFolders.UpdateOneAsync(
-            c => c.Id == id && c.OwnerUserId == userId,
+        await RenewRenameLockAsync(id, lease);
+        var updated = await _db.WebFolders.UpdateOneAsync(
+            BuildRenameFenceOwnerFilter(id, userId, lease.Fence),
             ub.Combine(BuildFolderUpdates(ub, patch)),
             cancellationToken: CancellationToken.None);
+        if (updated.MatchedCount != 1)
+            throw new InvalidOperationException("文件夹已被另一个操作接管，请重试");
 
         return await _db.WebFolders
-            .Find(c => c.Id == id && c.OwnerUserId == userId)
+            .Find(BuildRenameFenceOwnerFilter(id, userId, lease.Fence))
             .FirstOrDefaultAsync(CancellationToken.None);
     }
 
