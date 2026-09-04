@@ -373,7 +373,10 @@ async function runViewport(browser, project, viewport) {
     // 取 /api/self-branches 里的分支名。原来用的「Docker 网络容量」是这一页
     // 硬编码的小标题，响应挂掉照样能过，等于没有锚点。
     ['cds-settings', `${baseUrl}/cds-settings#maintenance`, 'fixture-self-branch'],
-    ['release-center', `${baseUrl}/release-center?project=${encodeURIComponent(projectId)}`, '窄屏样例项目（fixture-project）'],
+    // 取 /api/releases/center 里的发布目标名。原来用的项目名加 slug 是从
+    // /api/projects **列表**渲染出来的（项目下拉选项），center 响应整个是空的
+    // 也照样能过——那个锚点连「这一页自己的请求成功」都证明不了。
+    ['release-center', `${baseUrl}/release-center?project=${encodeURIComponent(projectId)}`, 'fixture-release-target'],
   ];
 
   for (const [label, url, anchor] of pages) {

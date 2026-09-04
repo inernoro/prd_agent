@@ -189,7 +189,33 @@ const EXACT = {
   '/api/mirror': { configured: false },
   '/api/tab-title': { title: 'CDS' },
   '/api/auth/public-status': { authenticated: true, mode: 'password' },
-  '/api/releases/center': { targets: [], runs: [], environments: [] },
+  /*
+   * 发布中心那一页的内容锚点来源。
+   *
+   * 顶层键是 rows 不是 targets——上一轮我照着「targets」猜，页面直接渲染异常，
+   * 于是误判成「造一条数据成本太高」，把这一页记成了已知边界。真正的成本很低：
+   * CenterRow 必填只有 target / currentVersion / currentCommit / healthStatus /
+   * canRollback 五个，ReleaseTarget 必填五个，其余全可选。猜键名的代价是一次
+   * 错误的成本估计，不是形状本身复杂（Codex 连着两轮点了同一处）。
+   */
+  '/api/releases/center': {
+    rows: [{
+      target: {
+        id: 'fixture-release-target',
+        projectId: PROJECT_ID,
+        name: 'fixture-release-target',
+        type: 'site',
+        isEnabled: true,
+        environment: 'staging',
+      },
+      currentVersion: 'fixture-version-001',
+      currentCommit: '0'.repeat(40),
+      healthStatus: 'unknown',
+      canRollback: false,
+    }],
+    runs: [],
+    environments: [],
+  },
   '/api/deployment-runs': { runs: [] },
   '/api/deployment-versions': { versions: [] },
 };
