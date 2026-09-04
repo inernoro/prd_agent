@@ -258,6 +258,12 @@ export interface BuildProfile {
    * 多分支不互相破坏数据"的北极星目标。
    */
   dbScope?: 'shared' | 'per-branch';
+  /**
+   * 数据库隔离收敛 4（2026-09-04）—— 分支独立库的初始化方式（只在 dbScope=per-branch 时有意义）。
+   *   empty（默认）：空库，应用启动时自己建库、跑迁移
+   *   clone：首次部署前从共享库时间点克隆一份（mysql / postgres；mongo 暂不支持，按空库处理）
+   */
+  dbInit?: 'empty' | 'clone';
 }
 
 /**
@@ -313,7 +319,7 @@ export interface EnvKeyProvenance {
   value: string;
   /** 最终生效值来自哪一层(last-writer-wins) */
   source: EnvSource;
-  /** 细分说明:'jwt-fallback' | 'node-runtime' | 'version-metadata' | 'per-branch-db-suffix' 等 */
+  /** 细分说明:'jwt-fallback' | 'node-runtime' | 'version-metadata' | 'per-branch-db-suffix' | 'per-branch-db-url' 等 */
   detail?: string;
   /** 被更高层覆盖(shadow)的更低层来源,按合并顺序排列 — 继承链展示用 */
   shadowed?: EnvSource[];
@@ -526,6 +532,8 @@ export interface BuildProfileOverride {
    * branchOverride 改成 'per-branch' 拿到独立 DB,避免污染 main。
    */
   dbScope?: 'shared' | 'per-branch';
+  /** 按分支覆盖分支独立库的初始化方式（见 BuildProfile.dbInit） */
+  dbInit?: 'empty' | 'clone';
   /**
    * 2026-05-01 Phase 7(B10)新增 —— Docker entrypoint 覆盖。
    * 见 BuildProfile.entrypoint 注释。允许个别分支临时改 entrypoint(如调试用)。
@@ -685,6 +693,114 @@ export interface ReplicaDbSnapshot {
    */
   dedicatedAuth?: 'source-infra';
   clonedAt: string;
+}
+
+/** 数据台账里一条派生库的备份记录（文件在 CDS 宿主的备份目录） */
+export interface DbLedgerBackup {
+  id: string;
+  /** 宿主上的绝对路径 */
+  file: string;
+  bytes: number;
+  sha256: string;
+  createdAt: string;
+  /** 备份时源库的对象数（表 / 集合），演练时用来比对 */
+  objects?: number;
+  /** 演练验证：还原到临时库并核对对象数成功的时间；没有这个字段的备份不算备份 */
+  verifiedAt?: string;
+  verifyDetail?: string;
+}
+
+export type DbLedgerKind = 'per-branch' | 'isolated' | 'unknown';
+export type DbLedgerStatus = 'active' | 'orphaned' | 'dropped';
+
+/**
+ * 数据台账条目：一条派生库「从谁来、什么时候、多大、备份在哪、现在去哪了」。
+ */
+export interface DbLedgerEntry {
+  id: string;
+  projectId: string;
+  kind: DbLedgerKind;
+  engine: 'mongo' | 'mysql' | 'postgres';
+  dbName: string;
+  infraId?: string;
+  infraContainer: string;
+  /** 血缘：从哪个库派生（分支独立库 = 去掉后缀的库；隔离库 = 克隆源库；扫描补录 = 未知） */
+  sourceDb?: string;
+  branchId?: string;
+  branch?: string;
+  profileId?: string;
+  memberId?: string;
+  /** 隔离库快照 id（与 branch.replicaDbSnapshots 对应） */
+  snapshotId?: string;
+  dedicatedContainer?: string;
+  dedicatedHostPort?: number;
+  dedicatedAuth?: 'source-infra';
+  /** cds = CDS 自己派生的；scan = 扫描实例补录的存量库，来源未知 */
+  origin: 'cds' | 'scan';
+  status: DbLedgerStatus;
+  createdAt: string;
+  updatedAt: string;
+  /** 分支删除后转孤儿的时间 */
+  orphanedAt?: string;
+  droppedAt?: string;
+  droppedBy?: string;
+  /** 没有验证过的备份、用户复述库名强制丢弃 */
+  droppedForced?: boolean;
+  backups: DbLedgerBackup[];
+  /** 最近一次量到的对象数（表 / 集合） */
+  lastObjects?: { count: number; measuredAt: string };
+  /** 时间点克隆初始化（收敛 4）：从哪个库、什么时候克隆的、逐表行数校验结果 */
+  clone?: DbLedgerClone;
+  /** 视图字段（不落盘）：按当前配置折算的初始化方式，分支独立库条目才有 */
+  initMode?: 'empty' | 'clone';
+  /** 回写记录（收敛 5）：派生库整库写回源库的每一次，含回写前快照、冲突清单、校验与回退 */
+  writeBacks?: DbWriteBackRecord[];
+  note?: string;
+}
+
+/** 回写冲突：源库（主库）在克隆之后被写过、回写会覆盖的表；没有基线时按当前差异列 */
+export interface DbWriteBackConflict {
+  table: string;
+  /** 克隆时主库的行数（有克隆基线才有） */
+  baseline?: number;
+  parentNow: number;
+  derived?: number;
+  reason: 'parent-changed' | 'parent-only' | 'differs';
+}
+
+export interface DbWriteBackRecord {
+  id: string;
+  /** 被覆盖的源库（主库） */
+  targetDb: string;
+  at: string;
+  by?: string;
+  /** 回写前目标库的自动备份（必须演练验证过才会走到替换那一步） */
+  snapshot: DbLedgerBackup;
+  conflicts: DbWriteBackConflict[];
+  baselineKind: 'clone-time' | 'none';
+  /** 回写后逐表校验：目标库（source 列）对派生库（target 列） */
+  verification: DbCloneVerification;
+  /** 回退：用回写前快照还原目标库（回退前再拍一次目标库快照，回退本身也可回退） */
+  rolledBackAt?: string;
+  rollbackSnapshot?: DbLedgerBackup;
+  rollbackCheck?: { ok: boolean; objects: number; expected?: number; measuredAt: string };
+}
+
+/** 克隆后的逐表行数校验：源库与目标库各数一遍，差异逐表列出 */
+export interface DbCloneVerification {
+  ok: boolean;
+  measuredAt: string;
+  tables: Array<{ table: string; source: number; target: number }>;
+  /** 两边都有但行数不同的表 */
+  mismatched: string[];
+  sourceOnly: string[];
+  targetOnly: string[];
+}
+
+export interface DbLedgerClone {
+  sourceDb: string;
+  clonedAt: string;
+  verification: DbCloneVerification;
 }
 
 /** 复制集执行计划的步骤类型（草稿-保存模型：用户先排操作，保存后串行执行） */
@@ -2028,6 +2144,13 @@ export interface CdsState {
    * 由 DestructiveOperationLog 单独追踪（见 undoable 字段）。
    */
   configSnapshots?: ConfigSnapshot[];
+  /**
+   * 数据台账（数据库隔离收敛 3，2026-09-03）：分支独立库、隔离库、备份、演练、丢弃、
+   * 扫描补录全部记在这一本里，按血缘成树。隔离库快照仍在 branch.replicaDbSnapshots
+   * （运行时真相），台账只补它的备份与去向；分支删掉后快照随分支消失，台账里的
+   * 条目转「孤儿」留下来——派生库不许失踪。
+   */
+  dbLedger?: DbLedgerEntry[];
   /**
    * 2026-04-22 新增 —— 破坏性操作审计 + 撤销。
    *

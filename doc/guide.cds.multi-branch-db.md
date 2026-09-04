@@ -38,28 +38,53 @@ Phase 5 给 `BuildProfile` 加了 `dbScope` 字段:
 
 ### 1.1 给整个项目开(推荐)
 
-修改 BuildProfile 的 `dbScope` 字段(目前手动改 yaml,UI 切换在后续 phase 加):
+项目默认值就是 `BuildProfile.dbScope`，入口在**项目设置 → 数据 → 数据库隔离**（2026-09-02 起）：
 
-```yaml
-services:
-  backend:
-    image: node:20
-    # ... 其它字段
-    # 后续 cds 会读这个 label 转成 BuildProfile.dbScope
-    labels:
-      cds.db-scope: "per-branch"
-```
+- 第一屏先给结论（几个服务共享库、几个分支独立库、几条分支有本分支覆盖）；
+- 可以「全部设为共享库 / 全部设为分支独立库」批量设，也可以逐服务切；
+- 每个服务会列出它会被改写的库名变量；**没声明库名变量的服务切了也不会有效果**，页面会直接提示；
+- 保存是原子的：任何一项不合法整批不落盘。保存前会说明影响面——所有继承项目配置的分支
+  重新部署后生效，已有本分支覆盖的分支保持不变。
 
-> **TODO Phase 5.5**:`cdscli scan` 自动给含 schemaful infra 的项目默认设 `dbScope: per-branch`,目前需要手改。
-
-或直接调 CDS API:
+对应 API（项目级，`assertProjectAccess` 守门，项目 key 只能改自己的项目）：
 
 ```bash
-curl -X PUT "$CDS/api/projects/<id>/build-profiles/backend" \
-  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"dbScope": "per-branch"}'
+# 读：每个服务的生效档位 + 来源 + 会改写的 key + 分支覆盖概况
+curl "$CDS/api/projects/<id>/db-isolation" -H "X-AI-Access-Key: $AI_ACCESS_KEY"
+
+# 写：批量（all）或逐服务（services），两者同时给时 services 优先
+curl -X PUT "$CDS/api/projects/<id>/db-isolation" \
+  -H "X-AI-Access-Key: $AI_ACCESS_KEY" -H "Content-Type: application/json" \
+  -d '{"all": "per-branch", "services": {"web": "shared"}}'
 ```
+
+托管交付（managed）项目的 profile 由 CDS 自动生成，这个页签只读。
+
+**新分支的独立库从哪来（2026-09-04 起）**：每个分支独立库的服务多一个「新分支初始化」下拉——
+
+- **空库重跑迁移**（默认）：库由应用启动时自己建、自己跑 migration；
+- **从共享库时间点克隆**：分支首次部署前，CDS 先把共享库整库复制到折算后的独立库（`app` → `app_feat_x`），
+  应用一起来就能读到克隆时间点之前的数据，不必重跑迁移。克隆是时间点快照，之后共享库的写入不会同步。
+  克隆完成后逐表数行数、与共享库比对，结果连同克隆时间点记进「派生库台账」；不一致的表会列出两边行数
+  （最常见原因是克隆期间共享库又有写入），不会自动判死。目标库已经在实例上就跳过，不覆盖分支自己的数据。
+
+只有认出 mysql / postgres 库名变量的服务能选克隆；mongo 的分支独立库暂时只有空库一条路（共享 mongo 实例
+大批量写入会崩，复制集通道为此改用了专用实例，分支独立库还没接）。写法上与档位同一个 PUT：
+`{"inits": {"api": "clone"}}`；分支覆盖也支持 `dbInit`。台账里选了克隆但还没建库的条目有「现在克隆」按钮，
+走的是和部署前钩子同一条路径（`POST /api/branches/<id>/db-init/<profileId>`）。
+
+**把分支里的数据写回共享库（2026-09-04 起，收敛 5）**：派生库台账里每条分支独立库 / 隔离库都有「回写到 源库」。
+回写就是整库替换（派生库赢），按设计文档第十节的铁律走：
+
+1. 先看预览——两边逐表行数并排，外加冲突清单：有克隆时基线的条目列出「主库在克隆之后改过的表」
+  （回写会覆盖它们），没有基线的按当前差异列并注明是保守估计；
+2. 回写前 CDS 自动备份目标库并演练还原一次，演练不通过整个回写中止、目标库一个字节不动；
+3. 必须一字不差复述目标库名才执行；替换期间目标库短暂不可用（postgres 会先踢掉连接）；
+4. 回写后逐表校验目标库与派生库，结果连同回写前快照记进台账，条目上写着「可回退到 时间」；
+5. 「回退」用回写前快照整库还原目标库，回退前再拍一次快照，回退本身也留痕。
+
+只支持 mysql / postgres；mongo 与专用实例上的隔离库暂不能回写。增量回写（binlog / oplog）属复制集波 5，
+现在的回写是时间点整库替换，不合并两边的改动——冲突清单就是让你在按下之前看清会丢什么。
 
 ### 1.2 给单个分支开(覆盖 baseline)
 
@@ -108,7 +133,7 @@ per-branch 模式下:
 - `${MYSQL_DATABASE}` 在连接串里展开成 `app_feat_x`
 - 应用拿到 `mysql://...:.../app_feat_x` 自动连对库
 
-**不要硬编码 DB 名**:如果你写 `DATABASE_URL: mysql://.../app`(硬编码 `app` 而不是 `${MYSQL_DATABASE}`),per-branch 模式就失效。改成引用形式即可。
+**硬编码库名也会跟随（2026-09-03 起）**：写成 `DATABASE_URL: mysql://.../app`（库名段写死）的连接串，只要库名段等于某个会加后缀的库名变量的原值，就跟着一起改成 `app_feat_x`；服务里根本没有库名变量、只有一条硬编码的 JDBC / mysql / postgres / mongodb 串，串里的库名段直接加后缀。三种情况不动：库名段是 `${VAR}` 模板（展开后自然跟随）；库名段对不上本服务任何库名变量（指向别的库）——这条会在分支详情的配置检查器里标「连接串未跟随」，请核对；库名变量属于按项目约定不加后缀的框架家族（如 `MongoDB__DatabaseName`），它的连接串同样保持不动。引用形式仍是推荐写法，硬编码只是兜底。
 
 ---
 
@@ -116,10 +141,12 @@ per-branch 模式下:
 
 | 限制 | 影响 | 后续解决方案 |
 |------|------|-------------|
-| **不主动建库** | 假定 mysql/postgres 镜像或 ORM migration 阶段会自动 `CREATE DATABASE IF NOT EXISTS`。多数 ORM(Prisma/EF/Sequelize)自带此行为;原生 SQL 项目可能要在应用启动加 `mysql -e "CREATE DATABASE..."` | Phase 5.5+ scheduler 部署前主动建库 |
-| **不清理** | 分支删除后 `app_<slug>` 库残留,占 disk | Phase 5.5+ 加 GC,删分支时 drop 库 |
+| **空库方式不主动建库** | 初始化方式为「空库重跑迁移」时假定 mysql/postgres 镜像或 ORM migration 阶段会自动 `CREATE DATABASE IF NOT EXISTS`。多数 ORM(Prisma/EF/Sequelize)自带此行为;原生 SQL 项目可能要在应用启动加 `mysql -e "CREATE DATABASE..."` | 选「从共享库时间点克隆」则由 CDS 部署前建库并灌数据（2026-09-04 起）；空库方式的主动建库仍待 Phase 5.5+ |
+| **回写是整库替换，不合并改动** | 回写用派生库内容整库覆盖源库；主库在克隆之后的写入会被覆盖（冲突清单会列出），替换期间目标库短暂不可用 | 增量回写（mysql binlog / mongo oplog / postgres 逻辑复制）与冲突合并属复制集波 5；现在靠回写前快照可回退兜底 |
+| **mongo 独立库不支持时间点克隆** | mongo 服务只能选空库；共享 mongod 大批量写入会随机段错误（复制集隔离库为此改用专用实例） | 分支独立库接专用实例通道，或等共享实例升级到稳定版本后放开 |
+| **删分支默认保留派生库** | 分支删除后 `app_<slug>` 库不自动 drop，转为项目设置「数据库隔离 → 派生库台账」里的孤儿条目 | 有意设计（2026-09-03 起）：数据不丢是第一位；在台账里先备份并演练验证，再丢弃；确实不要就复述库名强制丢弃。「扫描补录」能把历史残留库找回台账 |
 | **migration 多分支冲突无警告** | 两个分支都改 schema 各自跑 migration,merge 时可能冲突 | Phase 5.5+ 部署前对比 git migration 文件 vs DB `__migrations` 表给警告 |
-| **dbScope UI 切换暂未做** | 现在手 PUT API 或改 yaml | Phase 5.5+ prd-admin 加切换 toggle |
+| **改项目默认不会自动重部署、不迁移存量数据** | 切到 per-branch 后旧共享库里的数据不会搬进分支库，分支要重新部署并重跑 migration | 有意设计：切库是重操作，重部署时机由用户决定；数据迁移走复制集「隔离库」能力 |
 | **不支持每分支独立 mysql 实例** | 所有分支共用同一容器,只是 db name 不同。disk 用一份 | 设计取舍:per-branch instance 太重,本 MVP 不做 |
 
 这些边界**不阻塞**北极星目标"多分支不互相破坏数据" — 核心隔离机制已 work。

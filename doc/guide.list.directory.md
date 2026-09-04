@@ -66,6 +66,7 @@
 - [CDS 配置树 · 技术设计 · 设计](./design.cds.config-tree.md) `design.cds.config-tree`
 - [CDS 控制面 / 数据面分离设计(蓝绿部分已废弃) · 设计](./design.cds.control-data-split.md) `design.cds.control-data-split`
 - [CDS 数据迁移设计 · 设计](./design.cds.data-migration.md) `design.cds.data-migration`
+- [CDS 数据库隔离三档（共享库 / 分支独立库 / 隔离库）· 设计](./design.cds.database-isolation.md) `design.cds.database-isolation`
 - [CDS FU-02 MapAuthStore（Mongo 后端） · 设计](./design.cds.fu-02-auth-store-mongo.md) `design.cds.fu-02-auth-store-mongo`
 - [CDS 生命周期原子性 · 架构设计（对账收敛取代命令式级联） · 设计](./design.cds.lifecycle-atomicity.md) `design.cds.lifecycle-atomicity`
 - [CDS 托管交付契约 · 设计](./design.cds.managed-delivery.md) `design.cds.managed-delivery`
@@ -78,6 +79,7 @@
 - [CDS 复制集模式（一个入口，多个版本并行） · 设计](./design.cds.replica-set.md) `design.cds.replica-set`
 - [CDS 容量预算与故障隔离设计 · 设计](./design.cds.resilience.md) `design.cds.resilience`
 - [CDS Self-Hosting（CDS 托管 CDS）· 技术设计 · 设计](./design.cds.self-hosting.md) `design.cds.self-hosting`
+- [CDS 设置分组与数据分类 · 设计](./design.cds.settings-taxonomy.md) `design.cds.settings-taxonomy`
 - [CDS 技能版本与更新架构 · 设计](./design.cds.skill-version-update.md) `design.cds.skill-version-update`
 - [CDS 绝对可视化一键部署 · 设计](./design.cds.visual-deploy.md) `design.cds.visual-deploy`
 - [CDS 多 Web 入口治理 · 设计](./design.cds.web-entry.md) `design.cds.web-entry`
@@ -267,6 +269,7 @@
 - [AI 百宝箱文本辅助 · 计划](./plan.ai-toolbox.text-assist.md) `plan.ai-toolbox.text-assist`
 - [CDS Agent 官方 SDK 商业闭环 · 计划](./plan.cds.agent.official-sdk-migration.md) `plan.cds.agent.official-sdk-migration`
 - [CDS 未完成事项矩阵 · 计划](./plan.cds.backlog-matrix.md) `plan.cds.backlog-matrix`
+- [CDS 数据库隔离三档收敛 · 计划](./plan.cds.database-isolation.md) `plan.cds.database-isolation`
 - [录音交付页设计稿还原工程](./plan.prd-admin.recording-design-restoration.md) `plan.prd-admin.recording-design-restoration`
 - [CDS 基础设施加固 · 计划](./plan.cds.infra-hardening.md) `plan.cds.infra-hardening`
 - [CDS 一仓多项目与身份层 · 计划](./plan.cds.multi-project-identity.md) `plan.cds.multi-project-identity`
