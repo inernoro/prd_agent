@@ -327,6 +327,16 @@ public class WebPageShareLink
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ExpiresAt { get; set; }
+
+    /// <summary>
+    /// 这条链接当初**要的是多少天**（null = 永久）。
+    ///
+    /// 存它是因为 ExpiresAt 是「当时那一刻 + 天数」算出来的绝对时刻：同一个请求重试一次，
+    /// 算出来的值必然不同，于是拿绝对时刻比大小永远得出「变了」—— 幂等重试因此每次都被
+    /// 记成一次真实改动。要判「这次和上次要的是不是同一件事」，就得比当初要的那个量。
+    /// 存量链接没有这个值，第一次复用会补上（那一次算一次改动，之后稳定）。
+    /// </summary>
+    public int? ExpiresInDays { get; set; }
     public bool IsRevoked { get; set; }
 
     /// <summary>

@@ -1033,10 +1033,24 @@ public class HostedSiteService : IHostedSiteService
             var ups = new List<UpdateDefinition<WebPageShareLink>>();
             // 保留 mutate 前的 ExpiresAt，供下方审计 RenewalHistory.OldExpiresAt 使用
             var oldExpiresAtForAudit = reuse.ExpiresAt;
-            if (reuse.ExpiresAt != newExpiresAt)
+            // 有效期比的是「**当初要的是多少天**」，不是算出来的那个绝对时刻。
+            //
+            // ExpiresAt = 当时那一刻 + 天数：同一个请求重试一次，算出来的值必然不同，
+            // 于是拿绝对时刻比大小**永远**得出「变了」—— 幂等重试每次都刷一遍有效期、
+            // 追一条续期审计，并且把「这次没产生副作用」这个信号彻底废掉（网关据它退额度，
+            // 于是同一个键可以无限次续期、无限撑大那条审计数组，还每次都扣额度）。
+            //
+            // 三种情况才算真的变了：要的天数不一样、存量链接还没记过天数、或者它已经过期了
+            //（过期那条要救活，否则「同一个键再要一次」拿到的是一条死链）。
+            var requestedDays = expiresInDays > 0 ? expiresInDays : (int?)null;
+            var expiryChanged = reuse.ExpiresInDays != requestedDays
+                || (reuse.ExpiresAt is { } cur && cur <= nowUtc);
+            if (expiryChanged)
             {
                 ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, newExpiresAt));
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresInDays, requestedDays));
                 reuse.ExpiresAt = newExpiresAt;
+                reuse.ExpiresInDays = requestedDays;
             }
             if (wantAccess == "password" && reuse.Password != wantPassword)
             {
@@ -1069,16 +1083,20 @@ public class HostedSiteService : IHostedSiteService
                 reuse.AskSuggestedQuestions = effAskQuestions;
             }
             // 复用即视为续期事件 —— 写一条审计记录，便于事后排查"为什么过期时间变了"
-            if (oldExpiresAtForAudit != newExpiresAt || ups.Count > 0)
+            // 审计跟着「有没有真的改」走，不跟着「算出来的时刻不一样」走 —— 否则每次幂等
+            // 重试都往 RenewalHistory 里追一条，这个数组会被无限撑大。
+            if (ups.Count > 0)
             {
                 var renewEvent = new ShareRenewalEvent
                 {
                     Action = "reused",
                     ByUserId = userId,
                     OldExpiresAt = oldExpiresAtForAudit,
-                    NewExpiresAt = newExpiresAt,
-                    Note = oldExpiresAtForAudit != newExpiresAt
-                        ? $"create-share reused link, ExpiresAt {oldExpiresAtForAudit?.ToString("o") ?? "null"} -> {newExpiresAt?.ToString("o") ?? "null"}"
+                    // 记的是这条链接**现在**的到期时刻。没改有效期时它就等于旧值 ——
+                    // 写 newExpiresAt 会在审计里留下一个从未生效过的时刻，比不记还误导。
+                    NewExpiresAt = reuse.ExpiresAt,
+                    Note = expiryChanged
+                        ? $"create-share reused link, ExpiresAt {oldExpiresAtForAudit?.ToString("o") ?? "null"} -> {reuse.ExpiresAt?.ToString("o") ?? "null"}"
                         : "create-share reused link (metadata refreshed, expiry unchanged)",
                 };
                 ups.Add(Builders<WebPageShareLink>.Update.Push(x => x.RenewalHistory, renewEvent));
@@ -1120,6 +1138,9 @@ public class HostedSiteService : IHostedSiteService
             PasswordHash = pwdHash?.Hash,
             PasswordSalt = pwdHash?.Salt,
             ExpiresAt = newExpiresAt,
+            // 记下「要的是多少天」：下次同一个键重试时，判「是不是同一件事」比的是这个，
+            // 不是算出来的绝对时刻（那个每次都不一样）。
+            ExpiresInDays = expiresInDays > 0 ? expiresInDays : (int?)null,
             Visibility = effVisibility,
             // 保持 null（而不是 new List）当"没选过" —— 读取侧据此继承站点题库
             AskSuggestedQuestions = effAskQuestions,

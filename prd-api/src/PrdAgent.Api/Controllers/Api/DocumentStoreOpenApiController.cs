@@ -347,6 +347,8 @@ public class DocumentStoreOpenApiController : ControllerBase
             if (existed != null) return await DedupOrInProgressAsync(existed, content);
         }
 
+        // 一次取值、三处共用：三个字段各调一次会拿到三个略微不同的时刻，读起来像是三件事。
+        var stamp = BsonNow();
         var entry = new DocumentEntry
         {
             StoreId = storeId,
@@ -361,7 +363,17 @@ public class DocumentStoreOpenApiController : ControllerBase
             CreatedByName = displayName,
             UpdatedBy = userId,
             UpdatedByName = displayName,
-            LastChangedAt = DateTime.UtcNow,
+            // 时间戳统一用**毫秒精度**的这一刻。
+            //
+            // 下面整套撤回都拿 entry.UpdatedAt 当「原封不动的占位长什么样」的判据 —— 既用来
+            // 在内存里比，也直接当 Mongo 的过滤条件。而 DateTime.UtcNow 是 100 纳秒刻度，
+            // BSON 的日期只有毫秒：原样带着的话，写进去再读出来就已经不等于手里这个值了。
+            // 后果不是偶发而是**常态**：一条谁也没碰过的占位会被判成「被人改过」，于是不删、
+            // 只摘标记，留下一条空的确定性 id 条目，此后同键重试再也收不了尾；正文为空时
+            // 还会被判成「写成了」，把一次失败报成成功。
+            CreatedAt = stamp,
+            UpdatedAt = stamp,
+            LastChangedAt = stamp,
         };
         if (deterministicId != null) entry.Id = deterministicId;
         try
@@ -625,6 +637,19 @@ public class DocumentStoreOpenApiController : ControllerBase
 
     /// <summary>单篇正文上限。挡住智能体一次糊一本书进来，也挡住它把上下文里的垃圾整个倒进知识库。</summary>
     private const int MaxContentChars = 200_000;
+
+    /// <summary>
+    /// 毫秒精度的「现在」—— 凡是要拿来和库里的值比较的时间戳都从这儿取。
+    ///
+    /// BSON 的日期是毫秒，而 <see cref="DateTime.UtcNow"/> 是 100 纳秒刻度。中间那几位在
+    /// 写进 Mongo 时被丢掉，于是「内存里的这个值」和「读回来的同一个值」并不相等 ——
+    /// 拿它当乐观并发的条件，条件永远不成立，而且**每次都不成立**，不是偶尔。
+    /// </summary>
+    internal static DateTime BsonNow()
+    {
+        var now = DateTime.UtcNow;
+        return new DateTime(now.Ticks - now.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
+    }
 
     /// <summary>
     /// 这条条目现在装的，是不是**这次请求要写的那份正文** —— 唯一判定源。

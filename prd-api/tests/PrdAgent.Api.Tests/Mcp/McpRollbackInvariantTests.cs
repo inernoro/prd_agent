@@ -124,6 +124,71 @@ public class McpRollbackInvariantTests
     }
 
     /// <summary>
+    /// 分享链复用要比「当初要的是多少天」，不能比算出来的到期时刻。
+    ///
+    /// ExpiresAt = 当时那一刻 + 天数：同一个请求重试一次，算出来的值必然不同，于是拿绝对
+    /// 时刻比大小**永远**得出「变了」——幂等重试每次都刷有效期、追一条续期审计，
+    /// 并且把「这次没产生副作用」这个信号彻底废掉。网关正是据它退额度的，
+    /// 结果就是同一个键能无限次续期、无限撑大那条审计数组，还每次都扣额度。
+    ///
+    /// 与占位时间戳那条同源：**拿一个每次都不同的派生值去判「是不是同一件事」**。
+    /// </summary>
+    [Fact]
+    public void 分享链复用比的是要的天数_不是算出来的时刻()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs"));
+        src.ShouldNotContain("if (reuse.ExpiresAt != newExpiresAt)",
+            customMessage: "又回到比绝对时刻了：幂等重试会每次都被判成真实改动");
+        src.ShouldContain("reuse.ExpiresInDays != requestedDays",
+            customMessage: "判「是不是同一件事」要比当初要的那个量");
+        // 续期审计也得跟着「有没有真的改」走，否则每次重试都往 RenewalHistory 里追一条
+        src.ShouldNotContain("if (oldExpiresAtForAudit != newExpiresAt || ups.Count > 0)",
+            customMessage: "审计条件还挂在绝对时刻上，那个数组会被无限撑大");
+    }
+
+    /// <summary>
+    /// 占位的时间戳必须是**毫秒精度**，否则整套撤回的条件永远不成立。
+    ///
+    /// BSON 的日期只有毫秒，而 DateTime.UtcNow 是 100 纳秒刻度。拿后者当乐观并发的条件，
+    /// 写进去再读出来就已经不等于手里那个值 —— 于是一条谁也没碰过的占位**每次**都被判成
+    /// 「被人改过」：不删、只摘标记，留下一条空的确定性 id 条目，同键重试再也收不了尾；
+    /// 正文为空时还会被判成「写成了」，把一次失败报成成功。
+    ///
+    /// 这类坑不会偶发、只会常态发生，但代码通读一百遍也看不出来 —— 两个 DateTime 比大小，
+    /// 哪儿都不像有问题。
+    /// </summary>
+    [Fact]
+    public void 占位的时间戳必须是毫秒精度()
+    {
+        for (var i = 0; i < 50; i++)
+        {
+            var stamp = DocumentStoreOpenApiController.BsonNow();
+            (stamp.Ticks % TimeSpan.TicksPerMillisecond).ShouldBe(0,
+                "带着亚毫秒的时间戳当乐观并发条件，条件永远不成立");
+            stamp.Kind.ShouldBe(DateTimeKind.Utc);
+        }
+    }
+
+    /// <summary>
+    /// 而且占位那三个时间戳必须从这儿取 —— 直接写 DateTime.UtcNow 就把上面那个坑请回来了。
+    /// </summary>
+    [Fact]
+    public void 占位不许直接用_UtcNow_当时间戳()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
+        var init = McpSourceGuard.Slice(src, "var entry = new DocumentEntry", "if (deterministicId != null)");
+        foreach (var field in new[] { "CreatedAt", "UpdatedAt", "LastChangedAt" })
+        {
+            var line = init.Split('\n').FirstOrDefault(l => l.TrimStart().StartsWith(field + " =", StringComparison.Ordinal));
+            line.ShouldNotBeNull($"占位不再设置 {field}？撤回的判据就是拿它比的");
+            line!.ShouldNotContain("DateTime.UtcNow",
+                customMessage: $"{field} 直接用了 UtcNow：亚毫秒位写进 Mongo 会丢，条件永远不成立");
+        }
+    }
+
+    /// <summary>
     /// 撤回必须拿「插进去时那一刻的样子」当条件，而且判据与删除是同一条原子操作。
     ///
     /// 回读一次判、再无条件删，中间那段窗口里正文正好提交成功的话，删的就是刚落库的正文
