@@ -176,7 +176,16 @@ const EXACT = {
   },
   '/api/activity-stream': { events: [] },
   '/api/self-update-history': { history: [] },
-  '/api/self-branches': { branches: [], current: 'main', recommended: 'main' },
+  /*
+   * 这里的分支名故意起得不像真名：它是 cds-settings 那一页的内容锚点。
+   * 锚点必须是「只有喂对这一页自己的数据才会出现」的字符串——用 'main'
+   * 或页面上硬编码的标题都不行，那种锚点在响应挂掉时照样能过（Codex P2）。
+   */
+  '/api/self-branches': {
+    branches: ['fixture-self-branch'],
+    current: 'fixture-self-branch',
+    recommended: 'fixture-self-branch',
+  },
   '/api/mirror': { configured: false },
   '/api/tab-title': { title: 'CDS' },
   '/api/auth/public-status': { authenticated: true, mode: 'password' },
@@ -222,7 +231,23 @@ const PREFIX = [
   [/^\/api\/projects\/[^/]+\/profiles$/, () => ({ profiles: [] })],
   [/^\/api\/profiles/, () => ({ profiles: [] })],
   [/^\/api\/infra\//, () => ({ services: [] })],
-  [/^\/api\/branches\/[^/]+/, () => branches[0]],
+  /*
+   * 分支子路由逐条登记，末尾那条**必须锚定**。
+   *
+   * 原来这里是 /^\/api\/branches\/[^/]+/（没有 $），于是 /logs、/metrics、
+   * /resources、/subdomain-aliases 这些子路由全被它吞下去、拿到一个分支对象，
+   * resolveFixture 永远不返回 null，上面那道「未登记路径」判据就被绕过了
+   * （Codex P2）。一条为了省事写宽的正则，正好废掉了刚加的守卫。
+   *
+   * 这 6 条是把 catch-all 摘掉之后，让判据自己报出来的——它该有的用法。
+   */
+  [/^\/api\/branches\/[^/]+\/logs$/, () => ({ logs: [], lines: [] })],
+  [/^\/api\/branches\/[^/]+\/metrics$/, () => ({ cpu: null, memory: null, samples: [] })],
+  [/^\/api\/branches\/[^/]+\/metrics\/series$/, () => ({ series: [] })],
+  [/^\/api\/branches\/[^/]+\/profile-overrides$/, () => ({ overrides: [] })],
+  [/^\/api\/branches\/[^/]+\/resources$/, () => ({ resources: [] })],
+  [/^\/api\/branches\/[^/]+\/subdomain-aliases$/, () => ({ aliases: [] })],
+  [/^\/api\/branches\/[^/]+$/, () => branches[0]],
 ];
 
 /*

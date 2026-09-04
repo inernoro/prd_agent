@@ -367,9 +367,13 @@ async function runViewport(browser, project, viewport) {
   const pages = [
     ['project-list', `${baseUrl}/project-list`, '窄屏样例项目'],
     ['branch-list', `${baseUrl}/branches/${encodeURIComponent(projectId)}`, 'feature/alpha'],
-    ['project-settings', `${baseUrl}/settings/${encodeURIComponent(projectId)}#env`, '窄屏样例项目'],
-    ['cds-settings', `${baseUrl}/cds-settings#maintenance`, 'Docker 网络容量'],
-    ['release-center', `${baseUrl}/release-center?project=${encodeURIComponent(projectId)}`, '窄屏样例项目'],
+    // 取 /api/env 里的键名，不取项目名：项目名只能证明共享的项目 fixture 到位了，
+    // 证明不了这一页自己那个请求成功（Codex P2）。
+    ['project-settings', `${baseUrl}/settings/${encodeURIComponent(projectId)}#env`, 'FIXTURE_SAMPLE_KEY'],
+    // 取 /api/self-branches 里的分支名。原来用的「Docker 网络容量」是这一页
+    // 硬编码的小标题，响应挂掉照样能过，等于没有锚点。
+    ['cds-settings', `${baseUrl}/cds-settings#maintenance`, 'fixture-self-branch'],
+    ['release-center', `${baseUrl}/release-center?project=${encodeURIComponent(projectId)}`, '窄屏样例项目（fixture-project）'],
   ];
 
   for (const [label, url, anchor] of pages) {
