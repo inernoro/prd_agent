@@ -88,6 +88,16 @@ public class McpDownstreamSafetyTests
     // 凭据形状：一个字都不许上面板
     [InlineData("upstream rejected: Authorization: Bearer abc.def.ghi")]
     [InlineData("api_key=sk-live-1234567890 无效")]
+    // 凭据词换个分隔符就绕过去了：上一版列了 `token=` 却没列 `token:`
+    [InlineData("upstream rejected: access token: ghp_16C7e42F292c6912E7710c838347Ae178B4a")]
+    [InlineData("api key: abcdef 无效")]
+    // 短到长度闸拦不住的固定开头（sk-live-… 只有 18 个字符）
+    [InlineData("上游拒绝了 sk-live-1234567890")]
+    [InlineData("密钥已过期")]
+    [InlineData("Secret 不匹配")]
+    // 不像人话的长串：JWT、摘要、随机 id 都是这个形状
+    [InlineData("拒绝：eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")]
+    [InlineData("校验失败 9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c")]
     // 内部端点：用户对它无从下手，管理员看日志即可
     [InlineData("connect failed: http://10.0.3.17:8080/internal/v2/render")]
     public void 堆栈凭据与内部地址一律换成固定说法(string msg)
@@ -347,6 +357,48 @@ public class McpDownstreamSafetyTests
             new ImageGenRun { Status = ImageGenRunStatus.Failed }, itemCount: 0);
         legacy.ShouldNotBeNull();
         legacy!.Code.ShouldBe(ErrorCodes.INTERNAL_ERROR);
+    }
+
+    // ── 产物地址的协议 ────────────────────────────────────────────
+
+    /// <summary>
+    /// 产物地址是下游给的，而接入台会把它直接放进 `&lt;a href&gt;`。
+    /// `javascript:` 与 `data:text/html,` 在 React 18 下并不会被可靠拦住 ——
+    /// 于是「点开刚做出来的东西」变成点开对方塞的一段脚本。落库前就该拦掉。
+    /// </summary>
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("JavaScript:alert(1)")]
+    [InlineData(" javascript:alert(1)")]
+    [InlineData("data:text/html,<script>alert(1)</script>")]
+    [InlineData("vbscript:msgbox(1)")]
+    [InlineData("file:///etc/passwd")]
+    // 协议相对：看着像站内路径，实际跟着当前页协议去了外站
+    [InlineData("//evil.example.com/x")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void 危险协议的产物地址一律当没给(string? url)
+        => McpArtifactExtractor.SafeArtifactUrl(url).ShouldBeNull();
+
+    [Theory]
+    [InlineData("/web-pages?site=abc")]
+    [InlineData("https://x.example.com/a.png")]
+    [InlineData("http://x.example.com/a.png")]
+    public void 站内路由与http地址照常放行(string url)
+        => McpArtifactExtractor.SafeArtifactUrl(url).ShouldBe(url);
+
+    /// <summary>
+    /// 闸要装在取地址那条路上，不是只提供一个没人调的函数（接线只建一半的老形状）。
+    /// 下游给了危险协议时退回站内路由，用户仍有得点。
+    /// </summary>
+    [Fact]
+    public void 下游给危险协议时退回站内路由()
+    {
+        var artifact = McpArtifactExtractor.Extract(
+            "map_kb_create_store", producesArtifacts: true,
+            responseBody: """{"success":true,"data":{"storeId":"abc","url":"javascript:alert(1)"}}""");
+        artifact.Url.ShouldBe("/document-store?store=abc",
+            "危险协议被原样收下了 —— 它该被当成没给，退回按 kind + id 反推的站内路由");
     }
 
     /// <summary>整条失败的原因必须真的落库，否则轮询端点永远读到 null。</summary>

@@ -3,6 +3,7 @@ import { ExternalLink } from 'lucide-react';
 import { PrdLoader } from '@/components/ui/PrdLoader';
 import { listMcpCalls } from '@/services';
 import type { McpCallLogDto, McpClientDto } from '@/services/contracts/mcpConsole';
+import { safeArtifactHref } from './artifactHref';
 
 const STATUS_STYLE: Record<string, { label: string; color: string; bg: string; border: string }> = {
   success: {
@@ -210,9 +211,9 @@ export function McpCallsPanel({
                       ? item.artifact?.title || item.argumentsPreview || '—'
                       : item.errorMessage || item.argumentsPreview || '—'}
                   </span>
-                  {item.artifact?.url && (
+                  {safeArtifactHref(item.artifact?.url) && (
                     <a
-                      href={item.artifact.url}
+                      href={safeArtifactHref(item.artifact?.url)!}
                       target="_blank"
                       rel="noreferrer"
                       onClick={(e) => e.stopPropagation()}

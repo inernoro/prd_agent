@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace PrdAgent.Api.Services.Mcp;
 
@@ -67,6 +68,9 @@ public static class McpArtifactExtractor
         // map_web_list_pages 回的是 data.items[]，第一条既有站点的地址会被当成「这次做出来的东西」，
         // 记录上于是长出一个指向别处的「打开」按钮 —— 产物是这次做出来的，不是这次看到的。
         if (string.IsNullOrWhiteSpace(url) && kind == "image-run") url = ReadFirstUrlInArrays(data);
+        // 下游给的地址先过一道协议闸再往下走：不合格就当它没给，
+        // 下面还能按 kind + id 反推一条站内路由，用户仍有得点。
+        url = SafeArtifactUrl(url);
 
         string? title = null;
         foreach (var key in TitleKeys)
@@ -225,18 +229,95 @@ public static class McpArtifactExtractor
         foreach (var marker in LeakMarkers)
             if (s.Contains(marker, StringComparison.OrdinalIgnoreCase))
                 return false;
+        // 凭据这一类不能靠列字面量：上一版列了 `token=` 却没列 `token:`，
+        // 于是 `{"error":{"message":"access token: ghp_..."}}` 被判成「像人话」原样上了面板。
+        // 列表天生漏，而漏的代价是把密钥端给 access 级用户看 —— 所以这一类改成
+        // 「沾边就拒」：只要句子里出现凭据词，或者出现一段不像人话的长串，一律换成固定那句。
+        if (CredentialWords.IsMatch(s)) return false;
+        if (HasOpaqueRun(s)) return false;
         return true;
     }
 
     /// <summary>
-    /// 一出现就判定「这不是给用户看的话」的标志。分三类：
-    /// 堆栈与错误页（说明这是异常原文而不是提示语）、凭据形状（绝不能上面板）、
-    /// 地址（下游的内部端点；用户对它无从下手，管理员看日志即可）。
+    /// 一出现就判定「这不是给用户看的话」的标志。两类：
+    /// 堆栈与错误页（说明这是异常原文而不是提示语）、地址（下游的内部端点；
+    /// 用户对它无从下手，管理员看日志即可）。凭据那一类见 <see cref="CredentialWords"/>。
     /// </summary>
     private static readonly string[] LeakMarkers =
     {
         "exception", "traceback", "stack trace", "stacktrace", " at ", "system.", "<html", "<!doctype",
-        "bearer ", "authorization", "api_key", "apikey", "api-key", "password", "secret", "token=", "sk-",
         "http://", "https://",
     };
+
+    /// <summary>
+    /// 凭据词：出现即拒，不管后面跟的是 <c>=</c>、<c>:</c>、全角冒号还是一个空格。
+    ///
+    /// 故意宽：这里判错的代价不对称 —— 误拒只是把一句本可以显示的原文换成固定说明
+    /// （原文照旧进服务端日志，调用方自己那一侧也拿得到真实响应），误放却是把密钥
+    /// 挂到面板上给普通用户看。所以宁可多拒。
+    /// </summary>
+    private static readonly Regex CredentialWords = new(
+        "(?i)("
+        // 凭据词本身：出现即拒，不看后面跟的是什么分隔符
+        + "token|secret|password|passwd|credential|bearer|cookie|signature|"
+        + "api[ _-]?key|access[ _-]?key|private[ _-]?key|session[ _-]?id|auth(?:orization)?|"
+        + "凭据|凭证|密钥|口令|密码|"
+        // 常见密钥的固定开头：短到 HasOpaqueRun 的长度闸拦不住的那些（sk-live-… 才 18 个字符）
+        + "sk-|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|xox[abprs]-|AKIA|ASIA|AIza|ya29\\.|eyJ|-----BEGIN"
+        + ")",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// 句子里有没有一段「不像人话」的长串 —— 密钥、JWT、摘要、随机 id 都长这样。
+    ///
+    /// 判据是长度 + 同时含字母与数字：`ENTRY_CHANGED_SINCE_CREATE` 这种没有数字的错误码照过，
+    /// 而 `ghp_16C7e42F292c6912E7710c838347Ae178B4a` / `eyJhbGciOi...` / 32 位十六进制摘要一律拒。
+    /// 不做熵计算：那是猜，而这条判据要能一眼看懂、能写死在测试里。
+    /// </summary>
+    internal static bool HasOpaqueRun(string s)
+    {
+        var run = 0;
+        var hasDigit = false;
+        var hasLetter = false;
+        foreach (var ch in s + " ")
+        {
+            if (ch is >= 'A' and <= 'Z' or >= 'a' and <= 'z')
+            {
+                run++; hasLetter = true;
+            }
+            else if (ch is >= '0' and <= '9')
+            {
+                run++; hasDigit = true;
+            }
+            else if (ch is '+' or '/' or '=' or '_' or '-' or '.')
+            {
+                run++;
+            }
+            else
+            {
+                if (run >= 20 && hasDigit && hasLetter) return true;
+                run = 0; hasDigit = false; hasLetter = false;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 产物地址只认站内相对路由与 http/https，别的一律当没有。
+    ///
+    /// 这个地址是**登记表里的动态接口**回来的，谁登记的谁决定它是什么；而接入台会把它
+    /// 直接放进 <c>&lt;a href&gt;</c>。`javascript:` 与 `data:text/html,` 在 React 18 下并不会被
+    /// 可靠拦住 —— 于是「点开刚做出来的东西」变成点开对方塞的一段脚本。
+    /// 协议相对（<c>//host</c>）也不收：它跟着当前页的协议走，看着像站内路径，其实是外站。
+    /// </summary>
+    internal static string? SafeArtifactUrl(string? url)
+    {
+        var s = url?.Trim();
+        if (string.IsNullOrEmpty(s)) return null;
+        if (s.StartsWith("//", StringComparison.Ordinal)) return null;
+        if (s.StartsWith('/')) return s;
+        if (s.StartsWith("http://", StringComparison.OrdinalIgnoreCase)) return s;
+        if (s.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return s;
+        return null;
+    }
 }
