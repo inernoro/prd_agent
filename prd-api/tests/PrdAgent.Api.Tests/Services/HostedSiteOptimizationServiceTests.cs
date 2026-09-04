@@ -278,6 +278,44 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_CssImportUrlWrapper_RestoresActualStylesheet()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<link rel=\"stylesheet\" href=\"./styles/app.css\">",
+            ["styles/app.css"] = "@import url(\"./theme.css\");",
+            ["styles/theme.css"] = "body { color: black; }",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeTrue();
+        result.OptimizedFiles.ShouldBe(3);
+    }
+
+    [Fact]
+    public void Analyze_MultipleResourceAttributes_RestoreEveryDependency()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<video src=\"./node_modules/pkg/movie.mp4\" poster=\"./node_modules/pkg/poster.jpg\"></video>",
+            ["node_modules/pkg/movie.mp4"] = "movie",
+            ["node_modules/pkg/poster.jpg"] = "poster",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeTrue();
+        result.OptimizedFiles.ShouldBe(3);
+    }
+
+    [Fact]
     public void Analyze_HtmlBaseHref_ResolvesDependenciesFromEffectiveBase()
     {
         var files = new Dictionary<string, string>
@@ -364,14 +402,18 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
-    public void OptimizationSessionIndexes_AreRegisteredInExecutableCatalog()
+    public void OptimizationSessionIndexes_PreserveCleanupLedgerUntilWorkerDeletesIt()
     {
         var catalog = File.ReadAllText(LocateRepoFile("scripts/mongodb-indexes.js"));
+        var context = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs"));
 
         catalog.ShouldContain("idx_hosted_site_optimization_owner_expiry");
         catalog.ShouldContain("idx_hosted_site_optimization_status_updated");
-        catalog.ShouldContain("ttl_hosted_site_optimization_expiry");
-        catalog.ShouldContain("expireAfterSeconds: 86400");
+        catalog.ShouldContain("collection.dropIndex(index.name)");
+        catalog.ShouldNotContain("ttl_hosted_site_optimization_expiry");
+        catalog.ShouldNotContain("expireAfterSeconds: 86400");
+        context.ShouldNotContain("ttl_hosted_site_optimization_expiry");
     }
 
     [Fact]

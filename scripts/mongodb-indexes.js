@@ -1155,11 +1155,22 @@ db.hosted_site_optimization_sessions.createIndex(
   { name: "idx_hosted_site_optimization_status_updated" }
 )
 
-// 业务清理器先删除对象存储；TTL 多保留一天，仅作为清理器停机时的数据库兜底。
-db.hosted_site_optimization_sessions.createIndex(
-  { "ExpiresAt": 1 },
-  { name: "ttl_hosted_site_optimization_expiry", expireAfterSeconds: 86400 }
-)
+// 优化会话是对象存储清理账本，只能由业务清理器在对象删除成功后移除。
+// 清除存量 TTL，避免清理器停机期间 MongoDB 先删记录并永久遗失对象清理线索。
+if (db.getCollectionInfos({ name: "hosted_site_optimization_sessions" }).length > 0) {
+  const collection = db.hosted_site_optimization_sessions
+  collection.getIndexes()
+    .filter(index => index.expireAfterSeconds !== undefined)
+    .forEach(index => {
+      try {
+        collection.dropIndex(index.name)
+      } catch (error) {
+        tightenedUniqueIndexMigrationFailures.push(
+          `hosted_site_optimization_sessions.${index.name}: failed to drop forbidden TTL index: ${error.message || error}`
+        )
+      }
+    })
+}
 
 // collection: document_store_share_links
 // 按 Token 唯一；按创建者或知识库倒序查询

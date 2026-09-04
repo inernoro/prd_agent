@@ -1467,9 +1467,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             {
                 var (sourcePath, outputPath) = pendingStyles.Dequeue();
                 var css = Encoding.UTF8.GetString(output[outputPath]);
-                foreach (Match match in CssReferenceRegex().Matches(css))
+                foreach (var reference in CssReferences(css))
                 {
-                    var value = match.Groups["path"].Value.Trim().Trim('"', '\'');
+                    var value = reference.Trim().Trim('"', '\'');
                     if (IsIgnoredReference(value) || IsExternalReference(value)) continue;
                     var nestedSource = ResolveReference(sourcePath, value);
                     if (nestedSource == null || !byPath.ContainsKey(nestedSource)) continue;
@@ -1602,21 +1602,24 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     {
         if (extension is ".html" or ".htm")
         {
-            foreach (Match match in HtmlReferenceRegex().Matches(text))
-                yield return match.Groups["path"].Value;
-            foreach (Match match in HtmlSrcSetRegex().Matches(text))
-            foreach (var candidate in match.Groups["paths"].Value.Split(','))
+            foreach (Match tag in HtmlResourceTagRegex().Matches(text))
             {
-                var value = candidate.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-                    .FirstOrDefault();
-                if (!string.IsNullOrWhiteSpace(value)) yield return value;
+                foreach (Match attribute in HtmlResourceAttributeRegex().Matches(tag.Value))
+                    yield return attribute.Groups["path"].Value;
+                foreach (Match attribute in HtmlSrcSetAttributeRegex().Matches(tag.Value))
+                foreach (var candidate in attribute.Groups["paths"].Value.Split(','))
+                {
+                    var value = candidate.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                        .FirstOrDefault();
+                    if (!string.IsNullOrWhiteSpace(value)) yield return value;
+                }
             }
             foreach (Match attribute in HtmlStyleAttributeRegex().Matches(text))
-            foreach (Match match in CssReferenceRegex().Matches(attribute.Groups["body"].Value))
-                yield return match.Groups["path"].Value;
+            foreach (var reference in CssReferences(attribute.Groups["body"].Value))
+                yield return reference;
             foreach (Match block in InlineStyleRegex().Matches(text))
-            foreach (Match match in CssReferenceRegex().Matches(block.Groups["body"].Value))
-                yield return match.Groups["path"].Value;
+            foreach (var reference in CssReferences(block.Groups["body"].Value))
+                yield return reference;
             foreach (Match block in InlineScriptRegex().Matches(text))
             foreach (Match match in JavaScriptImportRegex().Matches(block.Groups["body"].Value))
             {
@@ -1625,14 +1628,22 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             }
             yield break;
         }
-        var regex = extension switch
+        if (extension == ".css")
         {
-            ".css" => CssReferenceRegex(),
-            ".js" or ".mjs" => JavaScriptImportRegex(),
-            _ => null,
-        };
-        if (regex == null) yield break;
-        foreach (Match match in regex.Matches(text))
+            foreach (var reference in CssReferences(text))
+                yield return reference;
+            yield break;
+        }
+        if (extension is not (".js" or ".mjs")) yield break;
+        foreach (Match match in JavaScriptImportRegex().Matches(text))
+            yield return match.Groups["path"].Value;
+    }
+
+    private static IEnumerable<string> CssReferences(string text)
+    {
+        foreach (Match match in CssUrlReferenceRegex().Matches(text))
+            yield return match.Groups["path"].Value;
+        foreach (Match match in CssImportReferenceRegex().Matches(text))
             yield return match.Groups["path"].Value;
     }
 
@@ -1833,17 +1844,23 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     [GeneratedRegex("<base\\b[^>]*?href\\s*=\\s*[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlBaseHrefRegex();
 
-    [GeneratedRegex("<(?:script|link|img|source|video|audio|iframe|object)\\b[^>]*?(?:src|href|poster|data)\\s*=\\s*[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
-    private static partial Regex HtmlReferenceRegex();
+    [GeneratedRegex("<(?:script|link|img|source|video|audio|iframe|object)\\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex HtmlResourceTagRegex();
 
-    [GeneratedRegex("<(?:img|source)\\b[^>]*?srcset\\s*=\\s*[\\\"'](?<paths>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
-    private static partial Regex HtmlSrcSetRegex();
+    [GeneratedRegex("\\b(?:src|href|poster|data)\\s*=\\s*[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
+    private static partial Regex HtmlResourceAttributeRegex();
+
+    [GeneratedRegex("\\bsrcset\\s*=\\s*[\\\"'](?<paths>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
+    private static partial Regex HtmlSrcSetAttributeRegex();
 
     [GeneratedRegex("\\bstyle\\s*=\\s*(?<quote>[\\\"'])(?<body>.*?)\\k<quote>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlStyleAttributeRegex();
 
-    [GeneratedRegex("(?:url\\(\\s*|@import\\s+)[\\\"']?(?<path>[^\\)\\\"']+)", RegexOptions.IgnoreCase)]
-    private static partial Regex CssReferenceRegex();
+    [GeneratedRegex("url\\(\\s*(?:[\\\"'](?<path>[^\\\"']+)[\\\"']|(?<path>[^\\s)]+))\\s*\\)", RegexOptions.IgnoreCase)]
+    private static partial Regex CssUrlReferenceRegex();
+
+    [GeneratedRegex("@import\\s+[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
+    private static partial Regex CssImportReferenceRegex();
 
     [GeneratedRegex("(?:from\\s+|import\\s*(?:\\(\\s*)?|require\\s*\\(\\s*|fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|navigator\\.serviceWorker\\.register\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
     private static partial Regex JavaScriptImportRegex();

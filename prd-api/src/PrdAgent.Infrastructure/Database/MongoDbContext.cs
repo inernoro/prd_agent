@@ -474,71 +474,6 @@ public class MongoDbContext
                 || message.Contains("IndexAlreadyExists", StringComparison.OrdinalIgnoreCase);
         }
 
-        void EnsureTtlIndex<TDocument>(
-            IMongoCollection<TDocument> collection,
-            string collectionName,
-            string fieldName,
-            TimeSpan expireAfter,
-            string? indexName = null)
-        {
-            var options = new CreateIndexOptions
-            {
-                ExpireAfter = expireAfter
-            };
-            if (!string.IsNullOrWhiteSpace(indexName))
-            {
-                options.Name = indexName;
-            }
-
-            try
-            {
-                collection.Indexes.CreateOne(new CreateIndexModel<TDocument>(
-                    Builders<TDocument>.IndexKeys.Ascending(fieldName),
-                    options));
-            }
-            catch (MongoCommandException ex) when (IsIndexConflict(ex))
-            {
-                // 兼容历史环境：旧索引可能已存在（同 key 但非 TTL），此时 createIndexes 会因选项冲突失败并导致进程启动中断。
-                // 优先按 name 执行 collMod 升级 TTL，若名称不匹配则回退到 keyPattern 升级。
-                var ttlSeconds = (long)Math.Floor(expireAfter.TotalSeconds);
-                try
-                {
-                    var collModByName = new BsonDocument
-                    {
-                        { "collMod", collectionName },
-                        { "index", new BsonDocument
-                            {
-                                { "name", indexName ?? $"{fieldName}_1" },
-                                { "expireAfterSeconds", ttlSeconds }
-                            }
-                        }
-                    };
-                    _database.RunCommand<BsonDocument>(collModByName);
-                }
-                catch (MongoCommandException)
-                {
-                    try
-                    {
-                        var collModByPattern = new BsonDocument
-                        {
-                            { "collMod", collectionName },
-                            { "index", new BsonDocument
-                                {
-                                    { "keyPattern", new BsonDocument(fieldName, 1) },
-                                    { "expireAfterSeconds", ttlSeconds }
-                                }
-                            }
-                        };
-                        _database.RunCommand<BsonDocument>(collModByPattern);
-                    }
-                    catch (MongoCommandException ex2) when (IsIndexConflict(ex2))
-                    {
-                        // ignore
-                    }
-                }
-            }
-        }
-
         // Users索引
         try
         {
@@ -1695,14 +1630,7 @@ public class MongoDbContext
                 .Ascending(x => x.Status)
                 .Ascending(x => x.UpdatedAt),
             new CreateIndexOptions { Name = "idx_hosted_site_optimization_status_updated" }));
-        // 业务清理器会在 ExpiresAt 到期后先删对象存储，再删记录；TTL 多留一天只做宕机兜底，
-        // 避免数据库先删记录导致临时对象失去清理线索。
-        EnsureTtlIndex(
-            HostedSiteOptimizationSessions,
-            "hosted_site_optimization_sessions",
-            nameof(HostedSiteOptimizationSession.ExpiresAt),
-            TimeSpan.FromDays(1),
-            "ttl_hosted_site_optimization_expiry");
+        // 不为优化会话创建 TTL：记录是对象存储清理账本，只能由业务清理器在对象删除成功后移除。
 
         // WebPageShareLinks：按 Token 唯一
         try
