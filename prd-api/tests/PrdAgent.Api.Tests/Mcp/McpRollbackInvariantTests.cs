@@ -1,6 +1,7 @@
 using System;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Mcp;
+using PrdAgent.Core.Models;
 using Shouldly;
 using Xunit;
 
@@ -169,6 +170,30 @@ public class McpRollbackInvariantTests
                 customMessage: $"第 {exits} 处摘标记只认 id：确定性 id 被同键重试重用时，摘掉的是新那次的标记");
         }
         exits.ShouldBe(4, "摘标记的出口数量变了 —— 新增那处也要带版本条件，确认后再改这个数");
+    }
+
+    /// <summary>
+    /// 生图「跑完了没有」必须先认终态，不能只数计数器。
+    ///
+    /// 用户中途取消时，还没开始的那几张既不算 done 也不算 failed —— 计数器永远凑不齐，
+    /// 于是这个标志永远是 false。跟着它轮询的智能体会一直问下去，直到被限流挡住，
+    /// 而这次生图其实早就结束了：判据看不见「取消」这种结束方式（形状 1：判据比它该管的范围窄）。
+    /// </summary>
+    [Fact]
+    public void 生图跑完了没有_先认终态()
+    {
+        // 取消：还没开始的那两张谁也没记上，只数计数器就会永远说「没跑完」
+        VisualOpenApiController.IsRunFinished(ImageGenRunStatus.Cancelled, done: 1, failed: 0, total: 3)
+            .ShouldBeTrue("取消了就是结束了，别让调用方一直轮询到被限流");
+        VisualOpenApiController.IsRunFinished(ImageGenRunStatus.Failed, done: 0, failed: 0, total: 4).ShouldBeTrue();
+        VisualOpenApiController.IsRunFinished(ImageGenRunStatus.Completed, done: 4, failed: 0, total: 4).ShouldBeTrue();
+
+        // 还在跑就是没跑完
+        VisualOpenApiController.IsRunFinished(ImageGenRunStatus.Running, done: 1, failed: 0, total: 4).ShouldBeFalse();
+        VisualOpenApiController.IsRunFinished(ImageGenRunStatus.Queued, done: 0, failed: 0, total: 4).ShouldBeFalse();
+
+        // 计数器凑齐也算：worker 落终态与写计数之间有一小段，别让调用方在那儿多问一轮
+        VisualOpenApiController.IsRunFinished(ImageGenRunStatus.Running, done: 3, failed: 1, total: 4).ShouldBeTrue();
     }
 
     /// <summary>

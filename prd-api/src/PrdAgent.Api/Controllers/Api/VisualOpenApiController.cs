@@ -258,9 +258,23 @@ public class VisualOpenApiController : ControllerBase
                 revisedPrompt = x.RevisedPrompt,
                 errorMessage = x.ErrorMessage,
             }),
-            finished = run.Done + run.Failed >= run.Total,
+            // 「跑完了没有」必须先认终态，不能只数计数器：用户中途取消时，还没开始的那几张
+            // 既不算 done 也不算 failed，于是 done + failed 永远小于 total —— 跟着这个标志轮询的
+            // 智能体会一直问下去，直到被限流挡住。它其实早就结束了，只是这个判据看不见。
+            finished = IsRunFinished(run.Status, run.Done, run.Failed, run.Total),
         }));
     }
+
+    /// <summary>
+    /// 这次生图跑完了没有 —— 唯一判定源。
+    ///
+    /// 两条都要：状态到了终态就是结束（取消、失败、完成），这是权威的那一条；
+    /// 计数器凑齐了也算（worker 落终态与写计数之间有一小段，别让调用方在那儿多问一轮）。
+    /// 只认计数器就会漏掉取消，只认状态就会在收尾那一瞬多轮询一次。
+    /// </summary>
+    internal static bool IsRunFinished(ImageGenRunStatus status, int done, int failed, int total)
+        => status is ImageGenRunStatus.Completed or ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled
+            || done + failed >= total;
 
     private string? BuildIdempotencyKey(string? clientRequestId)
     {
