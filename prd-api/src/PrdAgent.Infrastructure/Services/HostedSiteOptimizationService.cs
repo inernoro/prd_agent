@@ -247,6 +247,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     public async Task<bool> ProcessNextQueuedAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
+        await FailExpiredWorkerSavesAsync(now);
         var leaseOwner = Guid.NewGuid().ToString("N");
         var expiredLease = Builders<HostedSiteOptimizationSession>.Filter.Or(
             Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.LeaseExpiresAt, null),
@@ -994,6 +995,24 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 cancellationToken: CancellationToken.None);
             if (renewed.MatchedCount == 0) return;
         }
+    }
+
+    private async Task FailExpiredWorkerSavesAsync(DateTime now)
+    {
+        await _db.HostedSiteOptimizationSessions.UpdateManyAsync(
+            Builders<HostedSiteOptimizationSession>.Filter.And(
+                Builders<HostedSiteOptimizationSession>.Filter.Eq(
+                    x => x.Status, HostedSiteOptimizationStatuses.Saving),
+                Builders<HostedSiteOptimizationSession>.Filter.Ne(x => x.LeaseOwner, null),
+                Builders<HostedSiteOptimizationSession>.Filter.Lt(x => x.LeaseExpiresAt, now)),
+            Builders<HostedSiteOptimizationSession>.Update
+                .Set(x => x.Status, HostedSiteOptimizationStatuses.Failed)
+                .Set(x => x.Error, "保存进程意外中断，请先刷新站点列表；如果未出现新站点，请重新上传")
+                .Set(x => x.LeaseOwner, null)
+                .Set(x => x.LeaseExpiresAt, null)
+                .Set(x => x.UpdatedAt, now)
+                .Set(x => x.ExpiresAt, now.Add(SessionLifetime)),
+            cancellationToken: CancellationToken.None);
     }
 
     private static string StageFor(string status) => status switch

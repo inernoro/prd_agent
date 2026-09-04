@@ -285,6 +285,7 @@ public class WebPagesController : ControllerBase
             sessionId, accessToken, filePath, HttpContext.RequestAborted);
         if (result == null) return NotFound();
         Response.Headers.CacheControl = "private, no-store";
+        Response.Headers.AccessControlAllowOrigin = "*";
         Response.Headers["X-Content-Type-Options"] = "nosniff";
         Response.Headers["Referrer-Policy"] = "no-referrer";
         Response.Headers["Content-Security-Policy"] = "sandbox allow-scripts allow-forms; base-uri 'none'; object-src 'none'";

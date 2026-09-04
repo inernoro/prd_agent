@@ -119,6 +119,7 @@ public class WebPagesOptimizationGateTests
         file.ContentType.ShouldBe("text/javascript");
         Encoding.UTF8.GetString(file.FileContents).ShouldBe("console.log('preview')");
         controller.Response.Headers.CacheControl.ToString().ShouldBe("private, no-store");
+        controller.Response.Headers.AccessControlAllowOrigin.ToString().ShouldBe("*");
         controller.Response.Headers["Referrer-Policy"].ToString().ShouldBe("no-referrer");
         optimization.VerifyAll();
     }

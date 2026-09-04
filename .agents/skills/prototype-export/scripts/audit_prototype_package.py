@@ -39,6 +39,7 @@ JS_REFERENCE_RE = re.compile(
     r"import\(\s*|require\(\s*)['\"]([^'\"]+)['\"]",
     re.IGNORECASE,
 )
+RUNTIME_TEXT_SUFFIXES = {".html", ".htm", ".css", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"}
 
 
 class ReferenceParser(HTMLParser):
@@ -183,6 +184,7 @@ def audit_zip(
         external_references = 0
         local_references = 0
         missing_local_references: set[str] = set()
+        unscanned_runtime_paths: set[str] = set()
         if preferred_entry:
             pending = [preferred_entry]
             inspected: set[str] = set()
@@ -193,6 +195,10 @@ def audit_zip(
                 inspected.add(owner)
                 info = info_by_name.get(owner)
                 if info is None:
+                    continue
+                if PurePosixPath(owner).suffix.casefold() in RUNTIME_TEXT_SUFFIXES \
+                        and info.file_size > MAX_INSPECT_BYTES:
+                    unscanned_runtime_paths.add(owner)
                     continue
                 for reference in runtime_references(archive, info, owner):
                     if is_external_reference(reference):
@@ -227,6 +233,8 @@ def audit_zip(
             blockers.append("缺少 index.html 或 index.htm")
         if missing_local_references:
             blockers.append("入口引用的本地资源缺失")
+        if unscanned_runtime_paths:
+            blockers.append("运行文本超过安全扫描上限")
         if suspicious_compression_paths:
             blockers.append("包含异常压缩比文件")
         if len(infos) > entry_limit:
@@ -270,6 +278,7 @@ def audit_zip(
             "externalReferenceCount": external_references,
             "localReferenceCount": local_references,
             "missingLocalReferences": sorted(missing_local_references),
+            "unscannedRuntimePaths": sorted(unscanned_runtime_paths),
             "unsafePaths": unsafe_paths,
             "symlinks": symlinks,
             "duplicatePaths": duplicate_paths,

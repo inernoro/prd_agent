@@ -38,7 +38,8 @@ describe('网页托管 ZIP 优化确认门', () => {
 
   it('后台检查没有固定超时，重新打开上传窗口可以恢复待处理会话', () => {
     expect(serviceSource).toContain("const PENDING_OPTIMIZATION_SESSION_KEY = 'web-pages:pending-optimization-session'");
-    expect(serviceSource).toContain('rememberPendingOptimizationSession(sessionId)');
+    expect(serviceSource.indexOf('rememberPendingOptimizationSession(sessionId)'))
+      .toBeGreaterThan(serviceSource.indexOf('if (!queued.success) return queued'));
     expect(serviceSource).toContain('export async function resumePendingSiteOptimization');
     expect(serviceSource).not.toContain('Date.now() + 15 * 60 * 1000');
     expect(pageSource).toContain('resumePendingSiteOptimization({');

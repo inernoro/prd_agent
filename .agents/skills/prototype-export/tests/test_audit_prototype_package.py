@@ -112,6 +112,19 @@ class AuditPrototypePackageTests(unittest.TestCase):
             self.assertEqual(["payload.bin"], report["suspiciousCompressionPaths"])
             self.assertIn("包含异常压缩比文件", report["blockers"])
 
+    def test_oversized_runtime_text_is_not_silently_certified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "oversized-runtime.zip"
+            make_zip(source, {
+                "index.html": b'<script src="missing.js"></script>' + b" " * (2 * 1024 * 1024),
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertFalse(report["strictReady"])
+            self.assertEqual(["index.html"], report["unscannedRuntimePaths"])
+            self.assertIn("运行文本超过安全扫描上限", report["blockers"])
+
     def test_cli_strict_returns_two_for_source_package(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.zip"

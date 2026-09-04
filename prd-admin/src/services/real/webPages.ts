@@ -396,7 +396,6 @@ export async function reviewSiteZip(input: {
   if (!created.success) return created;
 
   const { sessionId, chunkSize, totalChunks } = created.data;
-  rememberPendingOptimizationSession(sessionId);
   const token = useAuthStore.getState().token;
   const cancelAndAbort = (): ApiResponse<HostedSiteOptimizationReviewResult> => {
     void cancelSiteOptimization(sessionId);
@@ -443,6 +442,7 @@ export async function reviewSiteZip(input: {
     );
   }
   if (!queued.success) return queued;
+  rememberPendingOptimizationSession(sessionId);
 
   return pollSiteOptimization(sessionId, {
     signal: input.signal,
