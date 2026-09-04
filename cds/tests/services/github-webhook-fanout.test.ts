@@ -486,6 +486,6 @@ describe('mergeFanoutResults —— 谁当主结果', () => {
   });
 });
 
-afterEach(() => {
-  flushAllJsonStateStores();
+afterEach(async () => {
+  await flushAllJsonStateStores();
 });

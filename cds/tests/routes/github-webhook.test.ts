@@ -890,7 +890,7 @@ describe('GitHub webhook route · 一仓多项目分发', () => {
 
   afterEach(async () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-    flushAllJsonStateStores();
+    await flushAllJsonStateStores();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
