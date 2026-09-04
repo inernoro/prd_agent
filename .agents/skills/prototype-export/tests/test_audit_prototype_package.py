@@ -98,6 +98,20 @@ class AuditPrototypePackageTests(unittest.TestCase):
                 report["missingLocalReferences"],
             )
 
+    def test_excessive_compression_ratio_is_blocked_in_strict_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "compression-bomb.zip"
+            make_zip(source, {
+                "index.html": b"<main>prototype</main>",
+                "payload.bin": b"x" * (2 * 1024 * 1024),
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertFalse(report["strictReady"])
+            self.assertEqual(["payload.bin"], report["suspiciousCompressionPaths"])
+            self.assertIn("包含异常压缩比文件", report["blockers"])
+
     def test_cli_strict_returns_two_for_source_package(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.zip"

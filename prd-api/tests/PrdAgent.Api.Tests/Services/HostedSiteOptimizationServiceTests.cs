@@ -96,6 +96,44 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_StaticRuntimeFetchIntoNodeModules_BlocksBeforeRemovingDependency()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<html><script src=\"./app.js\"></script></html>",
+            ["app.js"] = "fetch('./node_modules/pkg/data.json').then(response => response.json());",
+            ["node_modules/pkg/data.json"] = "{\"ready\":true}",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeTrue();
+        (result.Error ?? string.Empty).ShouldContain("node_modules/pkg/data.json");
+    }
+
+    [Fact]
+    public void Analyze_ComputedRuntimeLoader_PreservesPotentialDependencies()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<html><script src=\"./app.js\"></script></html>",
+            ["app.js"] = "const path = './node_modules/pkg/data.json'; fetch(path);",
+            ["node_modules/pkg/data.json"] = "{\"ready\":true}",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeFalse();
+        result.OptimizedFiles.ShouldBe(result.OriginalFiles);
+        result.Warnings.ShouldContain(x => x.Contains("保留所有潜在依赖", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Analyze_UnsafeArchivePath_BlocksBeforeAnySave()
     {
         var result = CreateService().Analyze(CreateZip(new Dictionary<string, string>

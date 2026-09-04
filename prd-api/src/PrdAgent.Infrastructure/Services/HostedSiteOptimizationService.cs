@@ -141,7 +141,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             cancellationToken: CancellationToken.None);
         if (update.MatchedCount == 0)
         {
-            await TryDeleteAsync(key);
+            // 分片键是确定性的：另一个幂等重试可能已用同一键完成上传并推进状态。
+            // 这里不能删除共享键；会话取消或过期时由统一清理流程回收。
             throw new InvalidOperationException("这个上传任务已经结束，请重新选择文件");
         }
     }
@@ -154,6 +155,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             if (session.Status is HostedSiteOptimizationStatuses.Queued
                 or HostedSiteOptimizationStatuses.Analyzing
                 or HostedSiteOptimizationStatuses.AwaitingDecision
+                or HostedSiteOptimizationStatuses.Previewing
                 or HostedSiteOptimizationStatuses.PreviewReady
                 or HostedSiteOptimizationStatuses.Saving
                 or HostedSiteOptimizationStatuses.Saved)
@@ -178,6 +180,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             if (current.Status is HostedSiteOptimizationStatuses.Queued
                 or HostedSiteOptimizationStatuses.Analyzing
                 or HostedSiteOptimizationStatuses.AwaitingDecision
+                or HostedSiteOptimizationStatuses.Previewing
                 or HostedSiteOptimizationStatuses.PreviewReady
                 or HostedSiteOptimizationStatuses.Saving
                 or HostedSiteOptimizationStatuses.Saved)
@@ -493,28 +496,38 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             return ToPreviewResult(session);
         }
 
+        if (session.Status != HostedSiteOptimizationStatuses.AwaitingDecision)
+            throw new InvalidOperationException("当前优化任务不能生成预览，请刷新后重试");
+
         session.ExpiresAt = DateTime.UtcNow.Add(SessionLifetime);
         session.UpdatedAt = DateTime.UtcNow;
-        await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-            x => x.Id == session.Id && x.OwnerUserId == userId,
+        var previewClaim = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+            x => x.Id == session.Id
+                 && x.OwnerUserId == userId
+                 && x.Status == HostedSiteOptimizationStatuses.AwaitingDecision,
             Builders<HostedSiteOptimizationSession>.Update
+                .Set(x => x.Status, HostedSiteOptimizationStatuses.Previewing)
                 .Set(x => x.ExpiresAt, session.ExpiresAt)
                 .Set(x => x.UpdatedAt, session.UpdatedAt),
-            cancellationToken: ct);
-
-        var sourceBytes = await _storage.TryDownloadBytesAsync(session.SourceObjectKey, ct)
-            ?? throw new InvalidOperationException("临时源文件已经过期，请重新选择文件");
-        var sourceSha = Convert.ToHexString(SHA256.HashData(sourceBytes)).ToLowerInvariant();
-        if (!string.Equals(sourceSha, session.SourceSha256, StringComparison.Ordinal))
-            throw new InvalidOperationException("临时源文件校验失败，请重新选择文件");
-
-        var build = BuildOptimizedPackage(sourceBytes);
-        if (build.Analysis.Blocked || !build.Analysis.Recommended || build.Files.Count == 0)
-            throw new InvalidOperationException(build.Analysis.Error ?? "当前文件无法安全自动优化，请保留原文件");
+            cancellationToken: CancellationToken.None);
+        if (previewClaim.ModifiedCount != 1)
+            throw new InvalidOperationException("优化任务状态已变化，请刷新后查看最新结果");
+        session.Status = HostedSiteOptimizationStatuses.Previewing;
 
         var uploaded = new List<HostedSiteFile>();
         try
         {
+            var sourceBytes = await _storage.TryDownloadBytesAsync(
+                                  session.SourceObjectKey, CancellationToken.None)
+                              ?? throw new InvalidOperationException("临时源文件已经过期，请重新选择文件");
+            var sourceSha = Convert.ToHexString(SHA256.HashData(sourceBytes)).ToLowerInvariant();
+            if (!string.Equals(sourceSha, session.SourceSha256, StringComparison.Ordinal))
+                throw new InvalidOperationException("临时源文件校验失败，请重新选择文件");
+
+            var build = BuildOptimizedPackage(sourceBytes);
+            if (build.Analysis.Blocked || !build.Analysis.Recommended || build.Files.Count == 0)
+                throw new InvalidOperationException(build.Analysis.Error ?? "当前文件无法安全自动优化，请保留原文件");
+
             foreach (var (path, bytes) in build.Files.OrderBy(x => x.Key, StringComparer.Ordinal))
             {
                 var key = _storage.BuildSiteKey(StorageScope(session), $"__preview/{path}");
@@ -544,13 +557,25 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             session.PreviewAccessToken = NewSecretToken();
             session.PreviewTotalSize = totalSize;
             session.Analysis = build.Analysis;
-            session.Status = HostedSiteOptimizationStatuses.PreviewReady;
             session.UpdatedAt = DateTime.UtcNow;
 
-            await _db.HostedSiteOptimizationSessions.ReplaceOneAsync(
-                x => x.Id == session.Id && x.OwnerUserId == userId,
-                session,
-                cancellationToken: ct);
+            var completed = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                x => x.Id == session.Id
+                     && x.OwnerUserId == userId
+                     && x.Status == HostedSiteOptimizationStatuses.Previewing,
+                Builders<HostedSiteOptimizationSession>.Update
+                    .Set(x => x.PreviewFiles, session.PreviewFiles)
+                    .Set(x => x.PreviewEntryFile, session.PreviewEntryFile)
+                    .Set(x => x.PreviewAccessToken, session.PreviewAccessToken)
+                    .Set(x => x.PreviewTotalSize, session.PreviewTotalSize)
+                    .Set(x => x.Analysis, session.Analysis)
+                    .Set(x => x.Status, HostedSiteOptimizationStatuses.PreviewReady)
+                    .Set(x => x.UpdatedAt, session.UpdatedAt)
+                    .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
+                cancellationToken: CancellationToken.None);
+            if (completed.ModifiedCount != 1)
+                throw new InvalidOperationException("优化任务状态已变化，未保存本次预览");
+            session.Status = HostedSiteOptimizationStatuses.PreviewReady;
             return ToPreviewResult(session);
         }
         catch
@@ -558,10 +583,24 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             var cleaned = true;
             foreach (var file in uploaded)
                 cleaned = await TryDeleteAsync(file.CosKey) && cleaned;
-            if (!cleaned)
+            if (cleaned)
             {
                 await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                    x => x.Id == session.Id && x.OwnerUserId == userId,
+                    x => x.Id == session.Id
+                         && x.OwnerUserId == userId
+                         && x.Status == HostedSiteOptimizationStatuses.Previewing,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.Status, HostedSiteOptimizationStatuses.AwaitingDecision)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                        .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
+                    cancellationToken: CancellationToken.None);
+            }
+            else
+            {
+                await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id
+                         && x.OwnerUserId == userId
+                         && x.Status == HostedSiteOptimizationStatuses.Previewing,
                     Builders<HostedSiteOptimizationSession>.Update
                         .Set(x => x.Status, HostedSiteOptimizationStatuses.CleanupPending)
                         .Set(x => x.PreviewFiles, uploaded)
@@ -699,6 +738,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             .FirstOrDefaultAsync(ct);
         if (session == null) return;
         if (session.Status is HostedSiteOptimizationStatuses.Analyzing
+            or HostedSiteOptimizationStatuses.Previewing
             or HostedSiteOptimizationStatuses.Saving)
             throw new InvalidOperationException("文件正在后台处理，请等待当前步骤完成");
 
@@ -708,7 +748,12 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.OwnerUserId, userId),
                 Builders<HostedSiteOptimizationSession>.Filter.Nin(
                     x => x.Status,
-                    new[] { HostedSiteOptimizationStatuses.Analyzing, HostedSiteOptimizationStatuses.Saving })),
+                    new[]
+                    {
+                        HostedSiteOptimizationStatuses.Analyzing,
+                        HostedSiteOptimizationStatuses.Previewing,
+                        HostedSiteOptimizationStatuses.Saving,
+                    })),
             Builders<HostedSiteOptimizationSession>.Update
                 .Set(x => x.Status, HostedSiteOptimizationStatuses.CleanupPending)
                 .Set(x => x.ExpiresAt, DateTime.UtcNow)
@@ -769,6 +814,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             throw new InvalidOperationException("优化任务已经过期，请重新选择文件");
         if (session.Status == HostedSiteOptimizationStatuses.Saving)
             throw new InvalidOperationException("优化版本正在保存，请稍后查看结果");
+        if (session.Status == HostedSiteOptimizationStatuses.Previewing)
+            throw new InvalidOperationException("正在生成优化预览，请稍后再试");
         if (session.Status == HostedSiteOptimizationStatuses.CleanupPending)
             throw new InvalidOperationException("这个优化任务已经结束，请刷新站点列表查看结果");
         if (session.Status is HostedSiteOptimizationStatuses.Uploading
@@ -954,6 +1001,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         HostedSiteOptimizationStatuses.Uploading => "正在分片上传",
         HostedSiteOptimizationStatuses.Queued => "文件已送达，等待安全检查",
         HostedSiteOptimizationStatuses.Analyzing => "正在检查文件结构与可安全精简内容",
+        HostedSiteOptimizationStatuses.Previewing => "正在生成优化预览",
         HostedSiteOptimizationStatuses.Saving => "检查完成，正在保存原文件",
         HostedSiteOptimizationStatuses.AwaitingDecision => "发现可安全精简的内容，等待确认",
         HostedSiteOptimizationStatuses.PreviewReady => "优化预览已经生成",
@@ -1044,6 +1092,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 analysis.Warnings.Add("运行文本规模过大，本次跳过自动优化并按原文件保存");
                 return new OptimizedBuild { Analysis = analysis };
             }
+            var preservePotentialRuntimeFiles = HasUnresolvedDynamicRuntimeLoading(runtimeTextEntries);
+            if (preservePotentialRuntimeFiles)
+                analysis.Warnings.Add("检测到无法静态确认的运行时加载，本次保留所有潜在依赖");
 
             var output = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             foreach (var file in files)
@@ -1051,12 +1102,12 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 if (IsNodeModules(file.LogicalPath))
                 {
                     analysis.NodeModulesFiles++;
-                    continue;
+                    if (!preservePotentialRuntimeFiles) continue;
                 }
-                if (IsDevelopmentFile(file.LogicalPath))
+                else if (IsDevelopmentFile(file.LogicalPath))
                 {
                     analysis.DevelopmentFiles++;
-                    continue;
+                    if (!preservePotentialRuntimeFiles) continue;
                 }
                 output[file.LogicalPath] = ReadEntry(file.Entry);
             }
@@ -1215,6 +1266,20 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         return missing.Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
     }
 
+    private static bool HasUnresolvedDynamicRuntimeLoading(IEnumerable<ArchiveFile> runtimeTextEntries)
+    {
+        foreach (var file in runtimeTextEntries)
+        {
+            var extension = Path.GetExtension(file.LogicalPath).ToLowerInvariant();
+            if (extension is not (".js" or ".mjs")) continue;
+            var text = Encoding.UTF8.GetString(ReadEntry(file.Entry));
+            if (DynamicRuntimeLoaderRegex().Matches(text).Count
+                > StaticDynamicRuntimeReferenceRegex().Matches(text).Count)
+                return true;
+        }
+        return false;
+    }
+
     private static byte[] ReadEntry(ZipArchiveEntry entry)
     {
         using var source = entry.Open();
@@ -1365,6 +1430,12 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     [GeneratedRegex("(?:url\\(\\s*|@import\\s+)[\\\"']?(?<path>[^\\)\\\"']+)", RegexOptions.IgnoreCase)]
     private static partial Regex CssReferenceRegex();
 
-    [GeneratedRegex("(?:from\\s+|import\\s*(?:\\(\\s*)?|require\\s*\\(\\s*)[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("(?:from\\s+|import\\s*(?:\\(\\s*)?|require\\s*\\(\\s*|fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
     private static partial Regex JavaScriptImportRegex();
+
+    [GeneratedRegex("(?:fetch\\s*\\(|new\\s+(?:Shared)?Worker\\s*\\(|importScripts\\s*\\()", RegexOptions.IgnoreCase)]
+    private static partial Regex DynamicRuntimeLoaderRegex();
+
+    [GeneratedRegex("(?:fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'][^\\\"']+[\\\"']", RegexOptions.IgnoreCase)]
+    private static partial Regex StaticDynamicRuntimeReferenceRegex();
 }

@@ -150,6 +150,11 @@ def audit_zip(
         total_uncompressed = sum(info.file_size for info, _ in files)
         total_compressed = sum(info.compress_size for info, _ in files)
         max_ratio = max((info.file_size / max(1, info.compress_size) for info, _ in files), default=0.0)
+        suspicious_compression_paths = sorted(
+            name for info, name in files
+            if info.file_size > 1024 * 1024
+            and info.file_size / max(1, info.compress_size) > 1000
+        )
         longest_path_bytes = max((len(name.encode("utf-8")) for name in names), default=0)
         manifest_estimate = sum(len(name.encode("utf-8")) * 2 + 160 for _, name in files)
 
@@ -222,6 +227,8 @@ def audit_zip(
             blockers.append("缺少 index.html 或 index.htm")
         if missing_local_references:
             blockers.append("入口引用的本地资源缺失")
+        if suspicious_compression_paths:
+            blockers.append("包含异常压缩比文件")
         if len(infos) > entry_limit:
             blockers.append(f"条目数超过 {entry_limit}")
         if total_uncompressed > extracted_limit:
@@ -257,6 +264,7 @@ def audit_zip(
             "uncompressedBytes": total_uncompressed,
             "compressedPayloadBytes": total_compressed,
             "maxCompressionRatio": round(max_ratio, 2),
+            "suspiciousCompressionPaths": suspicious_compression_paths,
             "longestPathBytes": longest_path_bytes,
             "manifestEstimateBytes": manifest_estimate,
             "externalReferenceCount": external_references,
