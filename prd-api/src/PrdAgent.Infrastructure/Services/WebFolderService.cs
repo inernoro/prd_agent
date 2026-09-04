@@ -79,68 +79,95 @@ public class WebFolderService : IWebFolderService
         // 名称 claim 与文件夹实体分离：claim 的 _id 负责跨实例并发串行化，FolderId
         // 仍是稳定的随机身份。这样文件夹重命名后可以释放旧名称，而不会改写实体 ID。
         var candidateId = Guid.NewGuid().ToString("N");
-        var claim = await ResolveFolderIdAsync(userId, normalizedName, candidateId, CancellationToken.None);
-        if (!claim.WasCreated)
+        var lease = await AcquireRenameLockAsync(candidateId, userId);
+        var ownsNameClaim = false;
+        var keepLockRecord = false;
+        try
         {
-            // 已有 claim 的实体由原创建、重命名或删除操作负责。这里仅等待其落定，
-            // 不再按 claim 中的旧 ID upsert，避免删除释放名称后把旧实体复活。
-            return await WaitForClaimedFolderAsync(userId, normalizedName);
-        }
-        var folderId = claim.FolderId;
-
-        var category = new WebFolder
-        {
-            Id = folderId,
-            OwnerUserId = userId,
-            Name = (input.Name ?? string.Empty).Trim(),
-            Description = input.Description?.Trim(),
-            SortOrder = input.SortOrder,
-            GeneratorType = WebFolderGeneratorType.All.Contains(input.GeneratorType)
-                ? input.GeneratorType
-                : WebFolderGeneratorType.None,
-            GeneratorSkillId = string.IsNullOrWhiteSpace(input.GeneratorSkillId) ? null : input.GeneratorSkillId.Trim(),
-            GeneratorMarkdown = input.GeneratorMarkdown,
-            GenerateTarget = WebFolderGenerateTarget.All.Contains(input.GenerateTarget)
-                ? input.GenerateTarget
-                : WebFolderGenerateTarget.Web,
-            GenerateStoreId = string.IsNullOrWhiteSpace(input.GenerateStoreId) ? null : input.GenerateStoreId.Trim(),
-            CreatedAt = now,
-            UpdatedAt = now,
-        };
-
-        var ub = Builders<WebFolder>.Update;
-        var created = await IMongoCollectionExtensions.FindOneAndUpdateAsync<WebFolder, WebFolder>(
-            _db.WebFolders,
-            folder => folder.Id == category.Id,
-            ub.Combine(
-                ub.SetOnInsert(folder => folder.Id, category.Id),
-                ub.SetOnInsert(folder => folder.OwnerUserId, category.OwnerUserId),
-                ub.SetOnInsert(folder => folder.Name, category.Name),
-                ub.SetOnInsert(folder => folder.Description, category.Description),
-                ub.SetOnInsert(folder => folder.SortOrder, category.SortOrder),
-                ub.SetOnInsert(folder => folder.GeneratorType, category.GeneratorType),
-                ub.SetOnInsert(folder => folder.GeneratorSkillId, category.GeneratorSkillId),
-                ub.SetOnInsert(folder => folder.GeneratorMarkdown, category.GeneratorMarkdown),
-                ub.SetOnInsert(folder => folder.GenerateTarget, category.GenerateTarget),
-                ub.SetOnInsert(folder => folder.GenerateStoreId, category.GenerateStoreId),
-                ub.SetOnInsert(folder => folder.CreatedAt, category.CreatedAt),
-                ub.SetOnInsert(folder => folder.UpdatedAt, category.UpdatedAt)),
-            new FindOneAndUpdateOptions<WebFolder, WebFolder>
+            // 新 claim 从第一笔写入起就带 operationId + fence。进程若在实体写入前退出，
+            // 等租约过期后即可被既有回收流程安全接管，不会留下永久 bare claim。
+            var claim = await ResolveFolderIdAsync(
+                userId, normalizedName, candidateId, CancellationToken.None, lease);
+            if (!claim.WasCreated)
             {
-                IsUpsert = true,
-                ReturnDocument = ReturnDocument.After,
-            },
-            CancellationToken.None) ?? throw new InvalidOperationException("文件夹创建后未能读取，请稍后重试");
+                // 已有 claim 的实体由原创建、重命名或删除操作负责。这里仅等待其落定，
+                // 不再按 claim 中的旧 ID upsert，避免删除释放名称后把旧实体复活。
+                return await WaitForClaimedFolderAsync(userId, normalizedName);
+            }
+            ownsNameClaim = true;
 
-        if (NormalizeName(created.Name) == normalizedName)
-        {
-            _logger.LogInformation("[web-folder] Resolved idempotent folder {Id} '{Name}' by {UserId}", created.Id, created.Name, userId);
+            var category = new WebFolder
+            {
+                Id = candidateId,
+                OwnerUserId = userId,
+                Name = (input.Name ?? string.Empty).Trim(),
+                Description = input.Description?.Trim(),
+                SortOrder = input.SortOrder,
+                GeneratorType = WebFolderGeneratorType.All.Contains(input.GeneratorType)
+                    ? input.GeneratorType
+                    : WebFolderGeneratorType.None,
+                GeneratorSkillId = string.IsNullOrWhiteSpace(input.GeneratorSkillId) ? null : input.GeneratorSkillId.Trim(),
+                GeneratorMarkdown = input.GeneratorMarkdown,
+                GenerateTarget = WebFolderGenerateTarget.All.Contains(input.GenerateTarget)
+                    ? input.GenerateTarget
+                    : WebFolderGenerateTarget.Web,
+                GenerateStoreId = string.IsNullOrWhiteSpace(input.GenerateStoreId) ? null : input.GenerateStoreId.Trim(),
+                CreatedAt = now,
+                UpdatedAt = now,
+                RenameFence = lease.Fence,
+            };
+
+            var ub = Builders<WebFolder>.Update;
+            var created = await IMongoCollectionExtensions.FindOneAndUpdateAsync<WebFolder, WebFolder>(
+                _db.WebFolders,
+                folder => folder.Id == category.Id,
+                ub.Combine(
+                    ub.SetOnInsert(folder => folder.Id, category.Id),
+                    ub.SetOnInsert(folder => folder.OwnerUserId, category.OwnerUserId),
+                    ub.SetOnInsert(folder => folder.Name, category.Name),
+                    ub.SetOnInsert(folder => folder.Description, category.Description),
+                    ub.SetOnInsert(folder => folder.SortOrder, category.SortOrder),
+                    ub.SetOnInsert(folder => folder.GeneratorType, category.GeneratorType),
+                    ub.SetOnInsert(folder => folder.GeneratorSkillId, category.GeneratorSkillId),
+                    ub.SetOnInsert(folder => folder.GeneratorMarkdown, category.GeneratorMarkdown),
+                    ub.SetOnInsert(folder => folder.GenerateTarget, category.GenerateTarget),
+                    ub.SetOnInsert(folder => folder.GenerateStoreId, category.GenerateStoreId),
+                    ub.SetOnInsert(folder => folder.CreatedAt, category.CreatedAt),
+                    ub.SetOnInsert(folder => folder.UpdatedAt, category.UpdatedAt),
+                    ub.SetOnInsert(folder => folder.RenameFence, category.RenameFence)),
+                new FindOneAndUpdateOptions<WebFolder, WebFolder>
+                {
+                    IsUpsert = true,
+                    ReturnDocument = ReturnDocument.After,
+                },
+                CancellationToken.None) ?? throw new InvalidOperationException("文件夹创建后未能读取，请稍后重试");
+
+            if (NormalizeName(created.Name) != normalizedName)
+                throw new InvalidOperationException("文件夹身份发生冲突，请稍后重试");
+
+            await FinalizeOwnedNameClaimAsync(userId, normalizedName, candidateId, lease);
+            ownsNameClaim = false;
+            keepLockRecord = true;
+            _logger.LogInformation(
+                "[web-folder] Resolved idempotent folder {Id} '{Name}' by {UserId}",
+                created.Id, created.Name, userId);
             return created;
         }
-
-        // 重命名会先占用目标名称，再写实体名称。创建请求撞上这个短暂窗口时，
-        // 不能把同 ID 的旧名称实体当成创建成功；等待 claim 与实体重新一致。
-        return await WaitForClaimedFolderAsync(userId, normalizedName);
+        catch
+        {
+            if (ownsNameClaim)
+            {
+                await ReleaseOwnedNameClaimAsync(userId, normalizedName, candidateId, lease);
+            }
+            throw;
+        }
+        finally
+        {
+            if (keepLockRecord)
+                await ReleaseRenameLockAsync(candidateId, lease);
+            else
+                await DeleteRenameLockAsync(candidateId, lease);
+        }
     }
 
     internal static string NormalizeName(string? name) =>
@@ -173,7 +200,7 @@ public class WebFolderService : IWebFolderService
         };
         if (initialLease != null)
         {
-            // 重命名目标 claim 首次创建时就带恢复身份，消除“claim 已落库但围栏尚未写入”
+            // 创建或重命名目标 claim 首次写入时就带恢复身份，消除“claim 已落库但围栏尚未写入”
             // 的进程退出窗口。后续 Own 仍会复核同一 operationId + fence。
             updates.Add(Builders<BsonDocument>.Update.SetOnInsert(
                 RenameOperationIdField, initialLease.OperationId));
@@ -457,6 +484,17 @@ public class WebFolderService : IWebFolderService
                 Builders<BsonDocument>.Update.Set("ExpiresAt", DateTime.MinValue),
                 Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow)),
             cancellationToken: CancellationToken.None);
+    }
+
+    private Task DeleteRenameLockAsync(string folderId, RenameLease lease)
+    {
+        var locks = _db.Database.GetCollection<BsonDocument>(RenameLockCollection);
+        return locks.DeleteOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", folderId),
+                Builders<BsonDocument>.Filter.Eq("OperationId", lease.OperationId),
+                Builders<BsonDocument>.Filter.Eq(RenameFenceField, lease.Fence)),
+            CancellationToken.None);
     }
 
     private async Task RenewRenameLockAsync(string folderId, RenameLease lease)

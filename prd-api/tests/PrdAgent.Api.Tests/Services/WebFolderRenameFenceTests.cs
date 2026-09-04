@@ -331,6 +331,43 @@ public sealed class WebFolderRenameFenceTests
     }
 
     [Fact]
+    public async Task 并发创建同名文件夹_只保留获胜实体的锁并最终化名称占用()
+    {
+        await using var fixture = await RenameFenceMongoFixture.CreateAsync();
+        const string userId = "owner-concurrent-create";
+        const string name = "并发创建";
+        var service = CreateService(fixture.Db);
+
+        var createTasks = Enumerable.Range(0, 12)
+            .Select(_ => service.CreateAsync(userId, new WebFolder { Name = name }));
+        var created = await Task.WhenAll(createTasks);
+        var folderId = created.Select(folder => folder.Id).Distinct().ShouldHaveSingleItem();
+
+        var folders = await fixture.Db.WebFolders
+            .Find(folder => folder.OwnerUserId == userId)
+            .ToListAsync();
+        folders.ShouldHaveSingleItem();
+        folders[0].Id.ShouldBe(folderId);
+
+        var locks = await fixture.Db.Database
+            .GetCollection<BsonDocument>("web_folder_rename_locks")
+            .Find(FilterDefinition<BsonDocument>.Empty)
+            .ToListAsync();
+        locks.ShouldHaveSingleItem();
+        locks[0]["_id"].AsString.ShouldBe(folderId);
+
+        var normalizedName = WebFolderService.NormalizeName(name);
+        var claim = await fixture.Db.Database
+            .GetCollection<BsonDocument>("web_folder_name_claims")
+            .Find(Builders<BsonDocument>.Filter.Eq(
+                "_id", WebFolderService.BuildNameClaimId(userId, normalizedName)))
+            .SingleAsync();
+        claim["FolderId"].AsString.ShouldBe(folderId);
+        claim.Contains("RenameOperationId").ShouldBeFalse();
+        claim.Contains("Fence").ShouldBeFalse();
+    }
+
+    [Fact]
     public void 服务端权威名称键不会把兼容连字扩成普通字母()
     {
         WebFolderService.NormalizeName("ﬃ").ShouldNotBe(WebFolderService.NormalizeName("FFI"));
