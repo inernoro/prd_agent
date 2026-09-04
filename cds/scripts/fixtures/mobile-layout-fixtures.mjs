@@ -270,7 +270,35 @@ const PREFIX = [
   [/^\/api\/branches\/[^/]+\/logs$/, () => ({ logs: [], lines: [] })],
   [/^\/api\/branches\/[^/]+\/metrics$/, () => ({ cpu: null, memory: null, samples: [] })],
   [/^\/api\/branches\/[^/]+\/metrics\/series$/, () => ({ series: [] })],
-  [/^\/api\/branches\/[^/]+\/profile-overrides$/, () => ({ overrides: [] })],
+  /*
+   * 键名是 `profiles` 不是 `overrides`——抽屉读的是 `profilesRes.profiles`，
+   * 回错键名会被 `|| []` 吞成空列表：请求成功、判据全绿、profile 卡却永远
+   * 是空的，冒烟声称覆盖了那块布局其实没有（Codex P2）。
+   * 形状对齐 GET /branches/:id/profile-overrides 的真实返回。
+   */
+  [/^\/api\/branches\/[^/]+\/profile-overrides$/, () => ({
+    branchId: 'fixture-branch-alpha',
+    profiles: [
+      {
+        profileId: 'api',
+        profileName: '窄屏样例 API',
+        baseline: { id: 'api', name: '窄屏样例 API', activeDeployMode: 'docker', dbScope: 'shared' },
+        override: null,
+        effective: { dockerImage: 'fixture/api:latest', containerPort: 8080 },
+        cdsEnvKeys: [],
+        hasOverride: false,
+      },
+      {
+        profileId: 'web',
+        profileName: '窄屏样例 Web',
+        baseline: { id: 'web', name: '窄屏样例 Web', activeDeployMode: 'docker', dbScope: 'shared' },
+        override: { notes: '合成覆盖，用于让 profile 卡渲染出「已覆盖」那一态' },
+        effective: { dockerImage: 'fixture/web:latest', containerPort: 5173 },
+        cdsEnvKeys: [],
+        hasOverride: true,
+      },
+    ],
+  })],
   [/^\/api\/branches\/[^/]+\/resources$/, () => ({ resources: [] })],
   [/^\/api\/branches\/[^/]+\/subdomain-aliases$/, () => ({ aliases: [] })],
   [/^\/api\/branches\/[^/]+$/, () => branches[0]],
