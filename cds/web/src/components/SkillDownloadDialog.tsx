@@ -243,8 +243,14 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
              * 「确认这些技能」被外层的 overflow:clip 裁在屏幕外，且全链没有
              * 一个可滚容器，滚都滚不到。给它一个标记，让窄屏规则认得它，
              * 不再靠 `> div:first-child > :last-child` 这种数位置的选择器。
+             *
+             * 标记只在这个 tab 激活时挂：窄屏那条规则带 `display: flex !important`，
+             * 打得过 `hidden` 的 `display: none`。标记要是常驻，切到别的 tab 时
+             * 上手助手藏不掉，会和新 tab 一起铺在屏幕上（Codex P1，真机 390px 量到
+             * 加了 hidden 之后 display 仍是 flex、高度仍有 826px）。所以标记表达的是
+             * 「当前激活的 starter slot」，不是「这里有个 slot」。
              */
-            data-agent-starter-slot="true"
+            data-agent-starter-slot={active === 'starter' ? 'true' : undefined}
             className={active === 'starter' ? undefined : 'hidden'}
           >
             <AgentStarterTab
