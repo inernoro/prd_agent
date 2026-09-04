@@ -61,6 +61,49 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return items.Select(ToView).ToList();
     }
 
+    public async Task<List<InfraAgentRuntimeProviderView>> ListRuntimeProvidersAsync(
+        string userId,
+        string connectionId,
+        CancellationToken ct)
+    {
+        _ = userId;
+        var connection = await GetActiveConnectionAsync(connectionId, ct);
+        var token = await GetLongTokenAsync(connection.Id, ct);
+        using var response = await SendCdsJsonAsync(
+            HttpMethod.Get,
+            connection,
+            token,
+            $"/api/projects/{Uri.EscapeDataString(connection.ProjectId)}/agent-runtime-providers",
+            body: null,
+            ct);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        if (!doc.RootElement.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                "CDS 运行时目录响应缺少 items",
+                StatusCodes.Status502BadGateway);
+        }
+
+        return items.EnumerateArray().Select(item => new InfraAgentRuntimeProviderView(
+            GetString(item, "id") ?? string.Empty,
+            GetString(item, "label") ?? string.Empty,
+            GetString(item, "adapterKind") ?? string.Empty,
+            GetString(item, "executionOwner") ?? string.Empty,
+            GetString(item, "implementationStatus") ?? string.Empty,
+            GetBool(item, "productEligible"),
+            GetStringList(item, "workloadKinds"),
+            GetStringList(item, "supportedIsolationModes"),
+            GetString(item, "requiredIsolationMode") ?? string.Empty,
+            GetString(item, "runtimeProtocol") ?? string.Empty,
+            GetBool(item, "configured"),
+            GetBool(item, "healthy"),
+            GetBool(item, "selectable"),
+            GetString(item, "isolationOwnedBy") ?? string.Empty,
+            GetBool(item, "resourcePolicyEnforcedPerSession"),
+            GetString(item, "reason"))).ToList();
+    }
+
     public async Task<InfraAgentSlaDashboardView> GetSlaDashboardAsync(string userId, int days, CancellationToken ct)
     {
         var windowDays = NormalizeSlaWindowDays(days);
@@ -208,6 +251,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             HookProfileId = NormalizeOptional(request.HookProfileId),
             Title = NormalizeTitle(request.Title),
             ClientApp = NormalizeOptional(request.ClientApp),
+            WorkloadKind = NormalizeWorkloadKind(request.WorkloadKind),
+            IsolationMode = NormalizeIsolationMode(request.IsolationMode),
             Status = InfraAgentSessionStatuses.Idle,
             CreatedAt = now,
             UpdatedAt = now
@@ -287,7 +332,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     autoCleanupMinutes
                 },
                 toolPolicy = session.ToolPolicy,
-                hookProfileId = session.HookProfileId
+                hookProfileId = session.HookProfileId,
+                workloadKind = session.WorkloadKind,
+                isolationMode = session.IsolationMode
             };
             using var response = await SendCdsJsonAsync(
                 HttpMethod.Post,
@@ -1236,6 +1283,34 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         await TryImportCdsStreamEventsAsync(session, ct);
 
+        return await ReadPersistedEventsAsync(sessionId, afterSeq, limit, ct);
+    }
+
+    public async Task<List<InfraAgentEventView>> ListPersistedEventsAsync(
+        string userId,
+        string sessionId,
+        long afterSeq,
+        int limit,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, sessionId, ct);
+        if (session == null)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.SessionNotFound,
+                "会话不存在",
+                StatusCodes.Status404NotFound);
+        }
+
+        return await ReadPersistedEventsAsync(sessionId, afterSeq, limit, ct);
+    }
+
+    private async Task<List<InfraAgentEventView>> ReadPersistedEventsAsync(
+        string sessionId,
+        long afterSeq,
+        int limit,
+        CancellationToken ct)
+    {
         var take = Math.Clamp(limit <= 0 ? 100 : limit, 1, 500);
         var items = await _db.InfraAgentEvents
             .Find(x => x.SessionId == sessionId && x.Seq > afterSeq)
@@ -2703,6 +2778,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             InfraAgentRuntimes.ClaudeSdk => InfraAgentRuntimes.ClaudeSdk,
             InfraAgentRuntimes.OpenAiCompatible => InfraAgentRuntimes.ClaudeSdk,
             InfraAgentRuntimes.Codex => InfraAgentRuntimes.Codex,
+            InfraAgentRuntimes.OpenDesign => InfraAgentRuntimes.OpenDesign,
             InfraAgentRuntimes.Custom => InfraAgentRuntimes.Custom,
             _ => InfraAgentRuntimes.ClaudeSdk
         };
@@ -2712,6 +2788,19 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         return InfraAgentToolPolicies.Normalize(policy);
     }
+
+    private static string NormalizeWorkloadKind(string? value) => NormalizeOptional(value) switch
+    {
+        InfraAgentWorkloadKinds.RepositoryChange => InfraAgentWorkloadKinds.RepositoryChange,
+        InfraAgentWorkloadKinds.DesignArtifact => InfraAgentWorkloadKinds.DesignArtifact,
+        _ => InfraAgentWorkloadKinds.General
+    };
+
+    private static string NormalizeIsolationMode(string? value) => NormalizeOptional(value) switch
+    {
+        InfraAgentIsolationModes.SessionContainer => InfraAgentIsolationModes.SessionContainer,
+        _ => InfraAgentIsolationModes.SharedRuntime
+    };
 
     private static object BuildResourcePolicy(InfraAgentSession session) => new
     {
@@ -2909,7 +2998,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         session.StartedAt,
         session.StoppedAt,
         session.RuntimeProfileId,
-        session.ModelBaseUrl);
+        session.ModelBaseUrl,
+        session.WorkloadKind,
+        session.IsolationMode);
 
     private static InfraAgentEventView ToEventView(InfraAgentEvent evt) => new(
         evt.Id,
@@ -3834,6 +3925,24 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             : null;
     }
 
+    private static bool GetBool(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.True;
+
+    private static IReadOnlyList<string> GetStringList(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var value) || value.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<string>();
+        }
+
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String)
+            .Select(item => item.GetString())
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item!)
+            .ToList();
+    }
+
     private static InfraAgentSession FromView(InfraAgentSessionView view)
     {
         return new InfraAgentSession
@@ -3863,6 +3972,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ToolPolicy = view.ToolPolicy,
             HookProfileId = view.HookProfileId,
             Title = view.Title,
+            WorkloadKind = view.WorkloadKind,
+            IsolationMode = view.IsolationMode,
             Status = view.Status,
             ManualTakeoverEnabled = view.ManualTakeoverEnabled,
             ManualTakeoverAt = view.ManualTakeoverAt,

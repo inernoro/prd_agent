@@ -49,7 +49,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     [HttpGet("runtime-capabilities")]
     public async Task<IActionResult> RuntimeCapabilities()
     {
-        var runtimes = (await _providers.ListAsync(CancellationToken.None))
+        var runtimes = (await _providers.ListAsync(this.GetRequiredUserId(), CancellationToken.None))
             .Where(item => item.ArtifactTypes.Contains(DesignArtifactTypes.WebPage, StringComparer.Ordinal)
                            && item.Operations.Contains(DesignArtifactOperations.Edit, StringComparer.Ordinal))
             .ToList();
@@ -63,6 +63,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     [HttpPost("runs")]
     public async Task<IActionResult> CreateRun(string siteId, [FromBody] CreateHostedSiteEditRunRequest request)
     {
+        var userId = this.GetRequiredUserId();
         var instruction = (request.Instruction ?? string.Empty).Trim();
         if (instruction.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请描述想修改什么"));
@@ -80,7 +81,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         var runtime = string.IsNullOrWhiteSpace(request.Runtime)
             ? HostedSiteEditRuntimes.MapGateway
             : request.Runtime.Trim().ToLowerInvariant();
-        var capability = await _providers.FindAsync(runtime, CancellationToken.None);
+        var capability = await _providers.FindAsync(userId, runtime, CancellationToken.None);
         if (capability == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的页面修改运行时"));
         if (!capability.ArtifactTypes.Contains(DesignArtifactTypes.WebPage, StringComparer.Ordinal)
@@ -91,7 +92,6 @@ public sealed class HostedSiteEditsController : ControllerBase
                 "RUNTIME_NOT_READY",
                 capability.Reason ?? "所选页面修改执行器尚未部署并通过健康检查"));
 
-        var userId = this.GetRequiredUserId();
         try
         {
             await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);

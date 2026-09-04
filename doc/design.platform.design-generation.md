@@ -1,6 +1,6 @@
 # 知识驱动设计生成体系 · 设计
 
-> **版本**：v2.0 | **日期**：2026-09-04 | **状态**：MVP 实施中
+> **版本**：v2.1 | **日期**：2026-09-04 | **状态**：MVP 实施中
 
 **一句话**：把知识、用户意图、设计执行器和可发布产物拆成稳定协议，使同一个生成任务可从不同业务入口发起并持续演进。
 **谁该读**：维护知识库、网页托管、HTML PPT、LLM Gateway、CDS Agent 运行时的产品与研发人员。
@@ -12,7 +12,7 @@
 
 MAP 负责“为什么生成、用什么知识、谁有权限、任务进行到哪、产物如何保存和发布”；设计 Provider 只负责“根据规范化输入产出或修改设计产物”。OpenDesign、未来的 ClosedDesign、代码改造型 Agent 都是 Provider，不是 MAP 内核。
 
-首版已经建立可注册的 Provider 目录：运行时名称、支持的产物和操作、执行归属、隔离方式、配置、健康与适配器状态均由目录给出，统一控制器不再逐个认识外部产品名称。普通网页由 MAP LLM Gateway 生成，HTML PPT 复用现有专用链路；OpenDesign、Codex、Claude 只有真实部署、健康和适配器同时成立时才能参与调度。
+首版已经建立可注册的 Provider 目录：运行时名称、支持的产物和操作、执行归属、隔离方式、配置、健康与适配器状态均由目录给出，统一控制器不再逐个认识外部产品名称。普通网页由 MAP LLM Gateway 生成，HTML PPT 复用现有专用链路；OpenDesign 已有 MAP 到 CDS 的薄适配器，但 CDS 端运行时和会话容器未部署，因此仍不可选择。Codex、Claude 同样只有真实部署、健康和适配器同时成立时才能参与调度。
 
 ## OpenDesign 的角色
 
@@ -23,7 +23,7 @@ OpenDesign 在 MAP 中定位为“无头设计 Provider”。它不承担以下�
 - 不决定用户从网页托管还是知识库发起任务。
 - 不替代 LLM Gateway 的模型治理和调用审计。
 
-MAP 向 CDS Remote Agent 提交已经整理好的设计任务包；CDS 为 OpenDesign 分配隔离运行时并把阶段事件、思考、HTML 增量和最终产物传回 MAP。OpenDesign 自身依赖可用的 Agent CLI，因此守护进程存在不等于设计能力可用，必须同时验证 Agent、工作区和隔离策略。
+MAP 向 CDS Remote Agent 提交 `map-design-artifact-v1` 任务包，其中只包含本次知识快照、用户要求、当前 HTML、操作类型和响应合同；CDS 为 OpenDesign 分配隔离运行时，并通过 `cds-design-artifact-events-v1` 把阶段事件、思考、HTML 增量和最终产物传回 MAP。OpenDesign 自身依赖可用的 Agent CLI，因此守护进程存在不等于设计能力可用，必须同时验证 Agent、工作区、事件协议和隔离策略。
 
 ## 统一调用链
 
@@ -107,9 +107,9 @@ CDS 不照搬 OpenDesign 的本地单用户 MCP 登录方式。MAP/CDS 是多租
 
 | 层 | 来源 | 当前结论 |
 |----|------|----------|
-| OpenDesign 设计循环 | OpenDesign 项目 | 尚未部署到 CDS，不宣称已接通 |
+| OpenDesign 设计循环 | OpenDesign 项目 | MAP 薄适配器已落地；CDS daemon 与会话容器未部署，不宣称可执行 |
 | Codex 或 Claude Agent 循环 | 对应 CLI 或 SDK | 仅部署并验证的运行时可用；名称不代表已集成 |
-| Provider 目录与调度 | MAP 自研 | MVP 已落地，可追加 Provider |
+| Provider 目录、探针与调度 | MAP 自研 | MVP 已落地；运行事实来自 CDS，不使用 MAP 静态健康开关 |
 | Remote Agent 会话与事件 | CDS 自研 | 共享运行时链路可用，Provider 事实接口已落地 |
 | 会话级容器分配和资源强制 | CDS 自研 | 尚未落地，是启用 OpenDesign 的发布门 |
 | 工具审批、知识权限、版本发布 | MAP 自研 | 继续由 MAP 持有，不委托给外部 Provider |

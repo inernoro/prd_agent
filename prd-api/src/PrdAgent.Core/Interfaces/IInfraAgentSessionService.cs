@@ -6,6 +6,11 @@ public interface IInfraAgentSessionService
 {
     Task<List<InfraAgentSessionView>> ListAsync(string userId, int limit, CancellationToken ct);
 
+    Task<List<InfraAgentRuntimeProviderView>> ListRuntimeProvidersAsync(
+        string userId,
+        string connectionId,
+        CancellationToken ct);
+
     Task<InfraAgentSlaDashboardView> GetSlaDashboardAsync(string userId, int days, CancellationToken ct);
 
     Task<InfraAgentScheduleDashboardView> GetScheduleDashboardAsync(string userId, int days, CancellationToken ct);
@@ -51,6 +56,17 @@ public interface IInfraAgentSessionService
 
     Task<List<InfraAgentEventView>> ListEventsAsync(string userId, string sessionId, long afterSeq, int limit, CancellationToken ct);
 
+    /// <summary>
+    /// 只读取已经由后台 runtime worker 落库的事件，不再主动连接 CDS SSE。
+    /// 供同属服务器权威任务的上层 worker 消费，避免多个读取者并发抢占同一远程流。
+    /// </summary>
+    Task<List<InfraAgentEventView>> ListPersistedEventsAsync(
+        string userId,
+        string sessionId,
+        long afterSeq,
+        int limit,
+        CancellationToken ct);
+
     Task<List<InfraAgentMessageView>> ListMessagesAsync(string userId, string sessionId, int limit, CancellationToken ct);
 
     Task<string?> GetLogsAsync(string userId, string sessionId, CancellationToken ct);
@@ -87,7 +103,9 @@ public record CreateInfraAgentSessionRequest(
     string? WorkspaceRoot = null,
     string? GitRepository = null,
     string? GitRef = null,
-    string? ClientApp = null
+    string? ClientApp = null,
+    string? WorkloadKind = null,
+    string? IsolationMode = null
 );
 
 public record StartInfraAgentSessionRequest(
@@ -166,7 +184,28 @@ public record InfraAgentSessionView(
     DateTime? StartedAt,
     DateTime? StoppedAt,
     string? RuntimeProfileId = null,
-    string? ModelBaseUrl = null
+    string? ModelBaseUrl = null,
+    string WorkloadKind = "general",
+    string IsolationMode = "shared-runtime"
+);
+
+public record InfraAgentRuntimeProviderView(
+    string Id,
+    string Label,
+    string AdapterKind,
+    string ExecutionOwner,
+    string ImplementationStatus,
+    bool ProductEligible,
+    IReadOnlyList<string> WorkloadKinds,
+    IReadOnlyList<string> SupportedIsolationModes,
+    string RequiredIsolationMode,
+    string RuntimeProtocol,
+    bool Configured,
+    bool Healthy,
+    bool Selectable,
+    string IsolationOwnedBy,
+    bool ResourcePolicyEnforcedPerSession,
+    string? Reason
 );
 
 public record InfraAgentEventView(

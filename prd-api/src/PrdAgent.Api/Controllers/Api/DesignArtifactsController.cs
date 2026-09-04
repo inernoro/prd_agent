@@ -41,7 +41,7 @@ public sealed class DesignArtifactsController : ControllerBase
     [HttpGet("runtime-capabilities")]
     public async Task<IActionResult> RuntimeCapabilities()
     {
-        var runtimes = (await _providers.ListAsync(CancellationToken.None))
+        var runtimes = (await _providers.ListAsync(this.GetRequiredUserId(), CancellationToken.None))
             .Where(item => item.ArtifactTypes.Contains(DesignArtifactTypes.WebPage, StringComparer.Ordinal))
             .ToList();
         return Ok(ApiResponse<object>.Ok(new
@@ -54,6 +54,7 @@ public sealed class DesignArtifactsController : ControllerBase
     [HttpPost("runs")]
     public async Task<IActionResult> CreateRun([FromBody] CreateDesignArtifactRunRequest request)
     {
+        var userId = this.GetRequiredUserId();
         var instruction = (request.Instruction ?? string.Empty).Trim();
         if (instruction.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请用两句话说明网页用途和期望效果"));
@@ -65,7 +66,7 @@ public sealed class DesignArtifactsController : ControllerBase
         var runtime = string.IsNullOrWhiteSpace(request.Runtime)
             ? DesignArtifactRuntimes.MapGateway
             : request.Runtime.Trim().ToLowerInvariant();
-        var capability = await _providers.FindAsync(runtime, CancellationToken.None);
+        var capability = await _providers.FindAsync(userId, runtime, CancellationToken.None);
         if (capability == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的设计执行器"));
         if (!capability.ArtifactTypes.Contains(DesignArtifactTypes.WebPage, StringComparer.Ordinal)
@@ -90,7 +91,6 @@ public sealed class DesignArtifactsController : ControllerBase
             ? DesignArtifactSourceSurfaces.KnowledgeBase
             : DesignArtifactSourceSurfaces.WebHosting;
         var runId = Guid.NewGuid().ToString("N");
-        var userId = this.GetRequiredUserId();
         var snapshots = references.Select(x =>
         {
             var content = x.Content!.Trim();

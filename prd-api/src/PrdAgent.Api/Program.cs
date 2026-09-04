@@ -393,7 +393,14 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Servi
 
 // 对话 Run 后台任务执行器（断线不影响服务端闭环）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
-builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor, PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor>(sp =>
+    sp.GetRequiredService<PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>());
+builder.Services.AddScoped<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor>(sp =>
+    sp.GetRequiredService<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>());
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderProbe>(sp =>
+    sp.GetRequiredService<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>());
 builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignArtifactProviderDefinitionSource, PrdAgent.Api.Services.BuiltInDesignArtifactProviderDefinitionSource>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderCatalog, PrdAgent.Api.Services.DesignArtifactProviderCatalog>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteEditRunWorker>();

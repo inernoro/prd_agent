@@ -61,6 +61,12 @@ public class InfraAgentSession
     /// <summary>调用方应用标识（CDS 观测台按 app 筛选用，如 md-to-ppt / infra-console）</summary>
     public string? ClientApp { get; set; }
 
+    /// <summary>CDS 运行时工作负载类别；由业务适配器声明，CDS 负责校验。</summary>
+    public string WorkloadKind { get; set; } = InfraAgentWorkloadKinds.General;
+
+    /// <summary>运行时隔离要求；MAP 只声明，容器分配与强制执行归 CDS。</summary>
+    public string IsolationMode { get; set; } = InfraAgentIsolationModes.SharedRuntime;
+
     public string Status { get; set; } = InfraAgentSessionStatuses.Idle;
 
     public bool IsArchived { get; set; }
@@ -87,7 +93,21 @@ public static class InfraAgentRuntimes
     public const string ClaudeSdk = "claude-sdk";
     public const string OpenAiCompatible = "openai-compatible";
     public const string Codex = "codex";
+    public const string OpenDesign = "open-design";
     public const string Custom = "custom";
+}
+
+public static class InfraAgentWorkloadKinds
+{
+    public const string General = "general";
+    public const string RepositoryChange = "repository-change";
+    public const string DesignArtifact = "design-artifact";
+}
+
+public static class InfraAgentIsolationModes
+{
+    public const string SharedRuntime = "shared-runtime";
+    public const string SessionContainer = "session-container";
 }
 
 public static class InfraAgentSessionStatuses

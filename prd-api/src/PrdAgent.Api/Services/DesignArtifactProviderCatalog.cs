@@ -28,9 +28,7 @@ public sealed record DesignArtifactProviderDefinition(
     string IsolationMode,
     IReadOnlyList<string> ArtifactTypes,
     IReadOnlyList<string> Operations,
-    IReadOnlyList<string> SourceSurfaces,
-    string? ConfigurationSection = null,
-    string HealthPath = "health");
+    IReadOnlyList<string> SourceSurfaces);
 
 public sealed record DesignArtifactProviderCapability(
     string Id,
@@ -54,9 +52,23 @@ public interface IDesignArtifactProviderDefinitionSource
 
 public interface IDesignArtifactProviderCatalog
 {
-    Task<IReadOnlyList<DesignArtifactProviderCapability>> ListAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<DesignArtifactProviderCapability>> ListAsync(string userId, CancellationToken ct = default);
 
-    Task<DesignArtifactProviderCapability?> FindAsync(string runtime, CancellationToken ct = default);
+    Task<DesignArtifactProviderCapability?> FindAsync(string userId, string runtime, CancellationToken ct = default);
+}
+
+public sealed record DesignArtifactProviderProbeResult(
+    bool Configured,
+    bool Healthy,
+    bool Enabled,
+    string? Reason);
+
+/// <summary>远程 Provider 的运行事实探针。事实必须来自执行归属方，不能由 MAP 静态开关代替。</summary>
+public interface IDesignArtifactProviderProbe
+{
+    string Runtime { get; }
+
+    Task<DesignArtifactProviderProbeResult> ProbeAsync(string userId, CancellationToken ct);
 }
 
 /// <summary>内置目录只定义产品已知的初始提供者；外部包可以追加定义源与执行器。</summary>
@@ -80,19 +92,16 @@ public sealed class BuiltInDesignArtifactProviderDefinitionSource : IDesignArtif
             WebPageSources);
         yield return Remote(
             DesignArtifactRuntimes.OpenDesign,
-            "OpenDesign",
-            "DesignGeneration:Runtimes:OpenDesign");
+            "OpenDesign");
         yield return Remote(
             DesignArtifactRuntimes.Codex,
-            "Codex",
-            "DesignGeneration:Runtimes:Codex");
+            "Codex");
         yield return Remote(
             DesignArtifactRuntimes.Claude,
-            "Claude",
-            "DesignGeneration:Runtimes:Claude");
+            "Claude");
     }
 
-    private static DesignArtifactProviderDefinition Remote(string id, string label, string configurationSection) => new(
+    private static DesignArtifactProviderDefinition Remote(string id, string label) => new(
         id,
         label,
         DesignArtifactAdapterKinds.RemoteAgent,
@@ -100,22 +109,19 @@ public sealed class BuiltInDesignArtifactProviderDefinitionSource : IDesignArtif
         DesignArtifactIsolationModes.SessionContainer,
         [DesignArtifactTypes.WebPage],
         WebPageOperations,
-        WebPageSources,
-        configurationSection);
+        WebPageSources);
 }
 
 public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatalog
 {
     private readonly IReadOnlyList<DesignArtifactProviderDefinition> _definitions;
     private readonly HashSet<string> _executorRuntimes;
-    private readonly IConfiguration _configuration;
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IReadOnlyDictionary<string, IDesignArtifactProviderProbe> _probes;
 
     public DesignArtifactProviderCatalog(
         IEnumerable<IDesignArtifactProviderDefinitionSource> definitionSources,
         IEnumerable<IDesignArtifactExecutor> executors,
-        IConfiguration configuration,
-        IHttpClientFactory httpClientFactory)
+        IEnumerable<IDesignArtifactProviderProbe> probes)
     {
         _definitions = definitionSources
             .SelectMany(source => source.GetDefinitions())
@@ -123,75 +129,93 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
             .Select(group => group.Last())
             .ToList();
         _executorRuntimes = executors.Select(executor => executor.Runtime).ToHashSet(StringComparer.Ordinal);
-        _configuration = configuration;
-        _httpClientFactory = httpClientFactory;
+        _probes = probes
+            .GroupBy(probe => probe.Runtime, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
     }
 
-    public async Task<IReadOnlyList<DesignArtifactProviderCapability>> ListAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<DesignArtifactProviderCapability>> ListAsync(
+        string userId,
+        CancellationToken ct = default)
     {
-        var capabilities = await Task.WhenAll(_definitions.Select(InspectAsync));
+        var capabilities = await Task.WhenAll(_definitions.Select(definition => InspectAsync(userId, definition, ct)));
         return capabilities;
     }
 
-    public async Task<DesignArtifactProviderCapability?> FindAsync(string runtime, CancellationToken ct = default)
+    public async Task<DesignArtifactProviderCapability?> FindAsync(
+        string userId,
+        string runtime,
+        CancellationToken ct = default)
     {
         var definition = _definitions.FirstOrDefault(item =>
             string.Equals(item.Id, runtime, StringComparison.OrdinalIgnoreCase));
-        return definition == null ? null : await InspectAsync(definition);
+        return definition == null ? null : await InspectAsync(userId, definition, ct);
     }
 
-    private async Task<DesignArtifactProviderCapability> InspectAsync(DesignArtifactProviderDefinition definition)
+    private async Task<DesignArtifactProviderCapability> InspectAsync(
+        string userId,
+        DesignArtifactProviderDefinition definition,
+        CancellationToken ct)
     {
         var hasAdapter = _executorRuntimes.Contains(definition.Id);
-        if (definition.ConfigurationSection == null)
-        {
-            return ToCapability(
-                definition,
-                configured: true,
-                healthy: hasAdapter,
-                enabled: hasAdapter,
-                reason: hasAdapter ? null : "MAP 中尚未注册该执行器适配器");
-        }
-
-        Uri? baseUri = null;
-        var configured = _configuration.GetValue<bool>($"{definition.ConfigurationSection}:Enabled")
-                         && Uri.TryCreate(
-                             _configuration[$"{definition.ConfigurationSection}:BaseUrl"],
-                             UriKind.Absolute,
-                             out baseUri);
-        if (!configured)
+        if (!hasAdapter)
         {
             return ToCapability(
                 definition,
                 configured: false,
                 healthy: false,
                 enabled: false,
-                reason: "CDS Remote Agent 中尚未配置该执行器运行时");
+                reason: "MAP 中尚未注册该执行器适配器");
         }
 
-        var healthy = false;
+        if (definition.AdapterKind == DesignArtifactAdapterKinds.InProcess)
+        {
+            return ToCapability(
+                definition,
+                configured: true,
+                healthy: true,
+                enabled: true,
+                reason: null);
+        }
+
+        if (!_probes.TryGetValue(definition.Id, out var probe))
+        {
+            return ToCapability(
+                definition,
+                configured: false,
+                healthy: false,
+                enabled: false,
+                reason: "MAP 中尚未注册该远程执行器的运行事实探针");
+        }
+
         try
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            var client = _httpClientFactory.CreateClient();
-            using var response = await client.GetAsync(new Uri(baseUri!, definition.HealthPath), timeout.Token);
-            healthy = response.IsSuccessStatusCode;
+            var result = await probe.ProbeAsync(userId, ct);
+            return ToCapability(
+                definition,
+                result.Configured,
+                result.Healthy,
+                result.Enabled,
+                result.Reason);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            healthy = false;
+            return ToCapability(
+                definition,
+                configured: false,
+                healthy: false,
+                enabled: false,
+                reason: "CDS Remote Agent 运行事实探测超时，请稍后重试");
         }
-
-        return ToCapability(
-            definition,
-            configured: true,
-            healthy,
-            enabled: healthy && hasAdapter,
-            reason: !healthy
-                ? "运行时已配置但健康检查未通过"
-                : hasAdapter
-                    ? null
-                    : "运行时已探测到，但 MAP 提供者适配器尚未安装");
+        catch (Exception)
+        {
+            return ToCapability(
+                definition,
+                configured: false,
+                healthy: false,
+                enabled: false,
+                reason: "暂时无法读取 CDS Remote Agent 运行事实，请检查系统连接");
+        }
     }
 
     private static DesignArtifactProviderCapability ToCapability(
