@@ -87,6 +87,12 @@ public class WebPagesOptimizationGateTests
         controller.Response.Headers.CacheControl.ToString().ShouldBe("private, no-store");
         controller.Response.Headers.AccessControlAllowOrigin.ToString().ShouldBe("*");
         controller.Response.Headers["Referrer-Policy"].ToString().ShouldBe("no-referrer");
+        var policy = controller.Response.Headers["Content-Security-Policy"].ToString();
+        policy.ShouldContain("sandbox allow-scripts;");
+        policy.ShouldContain("default-src 'self' data: blob:");
+        policy.ShouldContain("connect-src 'self'");
+        policy.ShouldContain("form-action 'none'");
+        policy.ShouldNotContain("allow-forms");
         optimization.VerifyAll();
     }
 

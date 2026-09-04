@@ -105,8 +105,7 @@ def is_unsafe_path(name: str) -> bool:
 
 
 def is_external_reference(value: str) -> bool:
-    lowered = value.lower()
-    return lowered.startswith(("http://", "https://", "//"))
+    return value.startswith("//") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", value) is not None
 
 
 def resolve_local_reference(owner: str, value: str, base_href: str | None = None) -> str | None:

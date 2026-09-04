@@ -1270,25 +1270,18 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         Func<string, string> rewritePath,
         bool skipBaseTag)
     {
-        return HtmlResourceAttributeRegex().Replace(html, match =>
+        return HtmlStartTagRegex().Replace(html, tag =>
         {
-            var path = match.Groups["path"];
-            if (!path.Value.StartsWith('/') || path.Value.StartsWith("//", StringComparison.Ordinal))
-                return match.Value;
-            if (skipBaseTag)
+            if (skipBaseTag && HtmlBaseTagRegex().IsMatch(tag.Value)) return tag.Value;
+            return HtmlResourceAttributeRegex().Replace(tag.Value, match =>
             {
-                var tagStart = html.LastIndexOf('<', match.Index);
-                var tagEnd = html.LastIndexOf('>', match.Index);
-                if (tagStart > tagEnd
-                    && Regex.IsMatch(
-                        html[(tagStart + 1)..match.Index],
-                        "^\\s*base\\b",
-                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                var path = match.Groups["path"];
+                if (!path.Value.StartsWith('/') || path.Value.StartsWith("//", StringComparison.Ordinal))
                     return match.Value;
-            }
-            var offset = path.Index - match.Index;
-            return match.Value[..offset] + rewritePath(path.Value)
-                   + match.Value[(offset + path.Length)..];
+                var offset = path.Index - match.Index;
+                return match.Value[..offset] + rewritePath(path.Value)
+                       + match.Value[(offset + path.Length)..];
+            });
         });
     }
 
@@ -1968,8 +1961,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     [GeneratedRegex("<base\\b[^>]*?href\\s*=\\s*(?:\\\"(?<path>[^\\\"]*)\\\"|'(?<path>[^']*)'|(?<path>[^\\s\\\"'=<>`]+))", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlBaseHrefRegex();
 
-    [GeneratedRegex("<(?:script|link|img|source|video|audio|iframe|object|use|image)\\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    [GeneratedRegex("<(?:a|area|script|link|img|source|video|audio|iframe|object|use|image)\\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlResourceTagRegex();
+
+    [GeneratedRegex("<[A-Za-z][^>]*>", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex HtmlStartTagRegex();
+
+    [GeneratedRegex("^<\\s*base\\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex HtmlBaseTagRegex();
 
     [GeneratedRegex("<!--[\\s\\S]*?-->", RegexOptions.CultureInvariant)]
     private static partial Regex HtmlCommentRegex();

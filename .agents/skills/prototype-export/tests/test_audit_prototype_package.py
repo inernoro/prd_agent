@@ -110,6 +110,18 @@ class AuditPrototypePackageTests(unittest.TestCase):
                 report["missingLocalReferences"],
             )
 
+    def test_non_file_uri_schemes_are_external(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "browser-schemes.zip"
+            make_zip(source, {
+                "index.html": b'<iframe src="about:blank"></iframe><img src="blob:preview">',
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertTrue(report["strictReady"])
+            self.assertEqual([], report["missingLocalReferences"])
+
     def test_html_style_attribute_references_are_checked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "inline-style.zip"

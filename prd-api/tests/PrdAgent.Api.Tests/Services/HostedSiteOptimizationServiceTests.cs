@@ -371,6 +371,25 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_LocalNavigation_RestoresLinkedPageAndItsDependencies()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<a href=\"./tests/help.html\">help</a>",
+            ["tests/help.html"] = "<script src=\"./help.js\"></script>",
+            ["tests/help.js"] = "document.body.dataset.ready = 'true';",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeTrue();
+        result.OptimizedFiles.ShouldBe(3);
+    }
+
+    [Fact]
     public void Analyze_CommentedResource_DoesNotBlockOnStaleDependency()
     {
         var result = CreateService().Analyze(CreateZip(new Dictionary<string, string>
@@ -501,13 +520,15 @@ public class HostedSiteOptimizationServiceTests
     [Fact]
     public void RewriteRootReferences_CoversSrcSetAndEmbeddedCss()
     {
-        const string input = "<script src=/assets/app.js></script><img srcset=\"/assets/a.png 1x, /assets/b.png 2x\" style=\"background:url('/assets/bg.png')\"><style>.hero{mask:url('/assets/mask.svg')}</style>";
+        const string input = "<pre>href=/api/items</pre><script>const sample = 'href=/api/items';</script><script src=/assets/app.js></script><img srcset=\"/assets/a.png 1x, /assets/b.png 2x\" style=\"background:url('/assets/bg.png')\"><style>.hero{mask:url('/assets/mask.svg')}</style>";
 
         var artifact = Encoding.UTF8.GetString(
             HostedSiteOptimizationService.RewriteRootReferencesForArtifact(
                 Encoding.UTF8.GetBytes(input), "text/html", "pages/index.html"));
         artifact.ShouldContain("srcset=\"../assets/a.png 1x, ../assets/b.png 2x\"");
         artifact.ShouldContain("src=../assets/app.js");
+        artifact.ShouldContain("<pre>href=/api/items</pre>");
+        artifact.ShouldContain("const sample = 'href=/api/items'");
         artifact.ShouldContain("url('../assets/bg.png')");
         artifact.ShouldContain("url('../assets/mask.svg')");
 
@@ -516,6 +537,8 @@ public class HostedSiteOptimizationServiceTests
                 Encoding.UTF8.GetBytes(input), "text/html", "/preview/", "pages/index.html"));
         preview.ShouldContain("srcset=\"/preview/assets/a.png 1x, /preview/assets/b.png 2x\"");
         preview.ShouldContain("src=/preview/assets/app.js");
+        preview.ShouldContain("<pre>href=/api/items</pre>");
+        preview.ShouldContain("const sample = 'href=/api/items'");
         preview.ShouldContain("url('/preview/assets/bg.png')");
         preview.ShouldContain("url('/preview/assets/mask.svg')");
     }
