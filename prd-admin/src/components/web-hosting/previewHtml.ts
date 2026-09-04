@@ -28,13 +28,24 @@ function escapeHtmlAttr(value: string) {
  * 在浏览器里都等价于 `#risk`，必须按同一条页内锚点规则处理。
  */
 function decodeHtmlCharacterReferences(value: string): string {
+  // 生产路径交给浏览器的 HTML 解析器，覆盖完整 named character reference 集合。
+  // textarea 是 raw-text 元素，不会把用户内容当标签或脚本执行。
+  if (typeof document !== 'undefined') {
+    const decoder = document.createElement('textarea');
+    decoder.innerHTML = value;
+    return decoder.value;
+  }
+
+  // Node 单测环境没有 DOM；覆盖 URL 分类会用到的字符，其余数字引用由通用分支处理。
   const named: Record<string, string> = {
     amp: '&',
     apos: "'",
+    colon: ':',
     gt: '>',
     lt: '<',
     num: '#',
     quot: '"',
+    sol: '/',
   };
 
   return value.replace(/&(?:#([0-9]+)|#x([0-9a-f]+)|([a-z][a-z0-9]+));?/gi, (match, decimal, hex, entity) => {
@@ -418,7 +429,7 @@ export function withPreviewBase(html: string, siteUrl: string) {
   if (baseTagMatch) {
     const tag = baseTagMatch.text;
     const hrefAttr = findHtmlAttribute(tag, 'href');
-    const href = hrefAttr?.value ?? null;
+    const href = hrefAttr ? decodeHtmlCharacterReferences(hrefAttr.value).trim() : null;
 
     // 已经是绝对地址：人家指的就是别处，不该动
     if (href !== null && isAbsoluteBaseHref(href)) return html;
@@ -426,7 +437,7 @@ export function withPreviewBase(html: string, siteUrl: string) {
     // 相对值按站点地址重解析；压根没写 href 就直接补上站点目录。
     // 原地改写而不是另插一个 <base>：浏览器只认第一个 base，追加的那个不生效。
     // 其余属性（target 等）原样保留。
-    const resolved = href ? new URL(href.trim() || '.', baseHref).toString() : baseHref;
+    const resolved = href ? new URL(href || '.', baseHref).toString() : baseHref;
     const rewritten = hrefAttr
       ? `${tag.slice(0, hrefAttr.start)}href="${escapeHtmlAttr(resolved)}"${tag.slice(hrefAttr.end)}`
       : tag.replace(/^<\s*base\b/i, (m) => `${m} href="${escapeHtmlAttr(resolved)}"`);

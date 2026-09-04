@@ -39,6 +39,7 @@ import {
   resolveServiceRuntimeCommits,
   resolveCdsPreviewUrls,
   requireAuthoritativeCdsAddress,
+  runFolderRegressionTests,
   runCdsGatewayPersistenceProbe,
   buildReportVerificationArgs,
   selectCoverageCaseIds,
@@ -675,6 +676,35 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.ok(source.indexOf('cdsVisualGate.result.verdict') < source.indexOf('const productionVisualPlanResult'));
   assert.match(source, /summaryDocument\.notification\.status === 'delivery-failed'/);
   assert.match(source, /await deliverUnhandledFailure\(process\.argv\.slice\(2\), error\)/);
+});
+
+test('文件夹永久回归由真实 MongoDB 集成测试产生证据而非浏览器标题冒领', () => {
+  const source = readFileSync(resolve('scripts/stable-smoke-run.mjs'), 'utf8');
+  const e2eSource = readFileSync(resolve('e2e/specs/stable-smoke.spec.ts'), 'utf8');
+  const calls = [];
+  const result = runFolderRegressionTests('/tmp/stable-smoke-folder-regression-test', (name, args, options) => {
+    calls.push({ name, args, options });
+    return { status: 0 };
+  });
+
+  assert.match(source, /FullyQualifiedName~WebFolderRenameFenceTests/);
+  assert.match(source, /runFolderRegressionTests\(runDir\)/);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'dotnet');
+  assert.equal(result.execution.resultPath, null);
+  assert.match(result.execution.artifactPath, /web-folder-regressions\.trx$/);
+  assert.deepEqual(
+    result.rows.map((row) => [row.caseId, row.environment, row.status]),
+    [
+      ['REG-web-folder-canonical-001', 'cds', 'pass'],
+      ['REG-web-folder-fence-001', 'cds', 'pass'],
+      ['REG-web-folder-create-rename-001', 'cds', 'pass'],
+    ],
+  );
+  assert.doesNotMatch(
+    e2eSource,
+    /test\('\[WEB-001\][^']*\[REG-web-folder-(?:canonical|fence|create-rename)-001\]/,
+  );
 });
 
 test('未捕获异常会持久化失败摘要并进入失败交付路径', async () => {

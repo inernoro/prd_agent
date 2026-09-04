@@ -149,6 +149,26 @@ describe('srcDoc 页内锚点', () => {
     expect(out).toContain('href="about:srcdoc#summary"');
   });
 
+  it('base 地址按浏览器语义解码字符引用后再分类和解析', () => {
+    const relative = withPreviewBase(
+      '<html><head><base href="&#47;assets/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    const absolute = withPreviewBase(
+      '<html><head><base href="https&colon;//cdn.example/assets/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    const namedSlash = withPreviewBase(
+      '<html><head><base href="&sol;shared/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+
+    expect(relative).toContain('<base href="https://storage.example/assets/">');
+    expect(relative).not.toContain('&amp;#47;assets/');
+    expect(absolute).toContain('<base href="https&colon;//cdn.example/assets/">');
+    expect(namedSlash).toContain('<base href="https://storage.example/shared/">');
+  });
+
   it('忽略 data-href 等同名后缀属性，只改真正的 href', () => {
     const out = preserveSrcDocFragmentLinks(
       `<a data-note=" href='#quoted-fake'" data-href="#tracking" aria-label="章节" href="#section">正文</a>`,

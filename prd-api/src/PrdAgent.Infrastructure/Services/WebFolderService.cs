@@ -147,18 +147,31 @@ public class WebFolderService : IWebFolderService
         string userId,
         string normalizedName,
         string preferredFolderId,
-        CancellationToken ct)
+        CancellationToken ct,
+        RenameLease? initialLease = null)
     {
         var claims = _db.Database.GetCollection<BsonDocument>(NameClaimCollection);
         var claimId = BuildNameClaimId(userId, normalizedName);
         var now = DateTime.UtcNow;
-        var update = Builders<BsonDocument>.Update.Combine(
+        var updates = new List<UpdateDefinition<BsonDocument>>
+        {
             Builders<BsonDocument>.Update.SetOnInsert("_id", claimId),
             Builders<BsonDocument>.Update.SetOnInsert(ClaimFolderIdField, preferredFolderId),
             Builders<BsonDocument>.Update.SetOnInsert("OwnerUserId", userId),
             Builders<BsonDocument>.Update.SetOnInsert("NormalizedName", normalizedName),
             Builders<BsonDocument>.Update.SetOnInsert("CreatedAt", now),
-            Builders<BsonDocument>.Update.Set("UpdatedAt", now));
+            Builders<BsonDocument>.Update.Set("UpdatedAt", now),
+        };
+        if (initialLease != null)
+        {
+            // 重命名目标 claim 首次创建时就带恢复身份，消除“claim 已落库但围栏尚未写入”
+            // 的进程退出窗口。后续 Own 仍会复核同一 operationId + fence。
+            updates.Add(Builders<BsonDocument>.Update.SetOnInsert(
+                RenameOperationIdField, initialLease.OperationId));
+            updates.Add(Builders<BsonDocument>.Update.SetOnInsert(
+                RenameFenceField, initialLease.Fence));
+        }
+        var update = Builders<BsonDocument>.Update.Combine(updates);
         var previousClaim = await claims.FindOneAndUpdateAsync(
             Builders<BsonDocument>.Filter.Eq("_id", claimId),
             update,
@@ -553,7 +566,7 @@ public class WebFolderService : IWebFolderService
 
             await RenewRenameLockAsync(id, lease);
             var targetClaim = await ResolveFolderIdAsync(
-                userId, nextNormalizedName, existing.Id, CancellationToken.None);
+                userId, nextNormalizedName, existing.Id, CancellationToken.None, lease);
             if (!string.Equals(targetClaim.FolderId, existing.Id, StringComparison.Ordinal))
                 throw new InvalidOperationException("同名文件夹已存在，请换一个名称");
 
