@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using PrdAgent.Api.Controllers.Api;
@@ -254,28 +255,63 @@ public class McpInputBoundsTests
     }
 
     /// <summary>
-    /// 审计行里每一个调用方给的文本都得先截。
+    /// 审计行里每一个调用方给的文本都得先截 —— **每一个建这行的地方**。
     ///
-    /// 工具名那条至少还要有人主动去刷；密钥名更狠 —— 建一把名字几 MB 的密钥，此后**每一笔调用**
+    /// 工具名那条至少还要有人主动去刷；密钥名更狠：建一把名字几 MB 的密钥，此后**每一笔调用**
     /// 都把它整个抄进那一行，等于给自己配了个放大器。而超过 Mongo 单文档上限的那些行插不进去，
-    /// 写审计又包了 try，于是审计静静地缺了一段。
+    /// 写审计又包了 try，于是额度扣了、审计静静地缺一段。
     ///
-    /// 逐个字段点名而不是数总数：新增一个调用方给的字段时，这里会红。
+    /// 这条守卫的上一版只看网关那一个文件 —— 而这行审计有**两个**建法（走网关一个、直连一个）。
+    /// 于是我在网关截了、直连没截，守卫照样绿：判据只长在一条路上，守卫也只盯着那一条
+    /// （形状 3 套着形状 7）。现在扫全仓找 `new McpCallLog`，每一处都逐字段过 ——
+    /// 第三个建法出现时它自动进闸。
     /// </summary>
     [Fact]
     public void 审计行里调用方给的文本都得先截()
     {
-        var src = McpSourceGuard.StripComments(
-            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/McpGatewayController.cs"));
-        var init = McpSourceGuard.Slice(src, "var log = new McpCallLog", "};");
+        // 建这行审计的地方（扫全仓，不写死清单）。
+        var sites = new[]
+            {
+                "prd-api/src/PrdAgent.Api/Controllers",
+                "prd-api/src/PrdAgent.Api/Filters",
+            }
+            .SelectMany(dir => Directory.GetFiles(RepoPath(dir), "*.cs", SearchOption.AllDirectories))
+            .Where(f => File.ReadAllText(f).Contains("new McpCallLog", StringComparison.Ordinal))
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .ToArray();
+        sites.Length.ShouldBe(2, "建审计行的地方变了 —— 新增那处也要逐字段截，确认后再改这个数");
 
-        // KeyName 来自密钥自己的名字（claim），当场截。
-        var keyLine = init.Split('\n').FirstOrDefault(l => l.Contains("KeyName =", StringComparison.Ordinal));
-        keyLine.ShouldNotBeNull("审计行不再有 KeyName？改名了就同步改这里");
-        keyLine!.ShouldContain("ForAudit(", customMessage: "密钥名没截：每一次调用都会把它整个抄进审计行");
+        foreach (var file in sites)
+        {
+            var src = McpSourceGuard.StripComments(File.ReadAllText(file));
+            // 取初始化器之后的一段窗口，不找结束花括号：两处的收尾写法不一样
+            // （一处 `};`，一处 `}, CancellationToken.None);`），而字段里还有带花括号的插值串。
+            var begin = src.IndexOf("new McpCallLog", StringComparison.Ordinal);
+            var init = src[begin..Math.Min(src.Length, begin + 1600)];
+            var name = Path.GetFileName(file);
 
-        // ToolName 在更早的位置就截过了（见下一条守卫盯的顺序），这里只确认它没被换回原始值。
-        init.ShouldContain("ToolName = name", customMessage: "ToolName 换源了，顺序守卫可能已经盯错东西");
+            // 密钥名：两条路上都来自同一个 claim，两边都得截。
+            var keyLine = init.Split('\n').FirstOrDefault(l => l.Contains("KeyName =", StringComparison.Ordinal));
+            keyLine.ShouldNotBeNull($"{name} 的审计行不再有 KeyName？改名了就同步改这里");
+            keyLine!.ShouldContain("ForAudit(",
+                customMessage: $"{name}：密钥名没截，每一次调用都会把它整个抄进审计行");
+
+            // 工具名：网关那条在更早的位置就截过（见下一条守卫盯的顺序），直连这条当场截。
+            var toolLine = init.Split('\n').FirstOrDefault(l => l.Contains("ToolName =", StringComparison.Ordinal));
+            toolLine.ShouldNotBeNull($"{name} 的审计行不再有 ToolName？");
+            (toolLine!.Contains("ForAudit(", StringComparison.Ordinal)
+             || toolLine.Contains("ToolName = name", StringComparison.Ordinal))
+                .ShouldBeTrue($"{name}：工具名既没当场截、也不是网关那条已经截过的那个变量");
+        }
+    }
+
+    /// <summary>仓库内相对路径 → 绝对路径。</summary>
+    private static string RepoPath(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+        dir.ShouldNotBeNull("找不到仓库根");
+        return Path.Combine(dir!.FullName, relative);
     }
 
     /// <summary>
