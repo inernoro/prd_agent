@@ -238,6 +238,99 @@ public sealed class WebFolderRenameFenceTests
     }
 
     [Fact]
+    public async Task 创建与改名并发后_旧名称仍可创建且名称占用指向当前实体()
+    {
+        await using var fixture = await RenameFenceMongoFixture.CreateAsync();
+        const string userId = "owner-create-rename-snapshot";
+        var service = CreateService(fixture.Db);
+
+        for (var index = 0; index < 6; index++)
+        {
+            var oldName = $"旧名称-{index}";
+            var nextName = $"新名称-{index}";
+            var original = await service.CreateAsync(userId, new WebFolder { Name = oldName });
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var renameTask = Task.Run(async () =>
+            {
+                await gate.Task;
+                return await service.UpdateAsync(original.Id, userId, new WebFolder { Name = nextName });
+            });
+            var createTask = Task.Run(async () =>
+            {
+                await gate.Task;
+                return await service.CreateAsync(userId, new WebFolder { Name = oldName });
+            });
+
+            gate.SetResult();
+            await Task.WhenAll((Task)renameTask, createTask);
+            await service.CreateAsync(userId, new WebFolder { Name = oldName });
+
+            var persisted = await fixture.Db.WebFolders
+                .Find(folder => folder.OwnerUserId == userId)
+                .ToListAsync();
+            persisted.Count(folder => WebFolderService.NormalizeName(folder.Name) == WebFolderService.NormalizeName(oldName))
+                .ShouldBe(1);
+            persisted.Count(folder => WebFolderService.NormalizeName(folder.Name) == WebFolderService.NormalizeName(nextName))
+                .ShouldBe(1);
+        }
+    }
+
+    [Fact]
+    public async Task 无权更新不存在的文件夹_不创建重命名锁记录()
+    {
+        await using var fixture = await RenameFenceMongoFixture.CreateAsync();
+        var service = CreateService(fixture.Db);
+
+        var result = await service.UpdateAsync(
+            "missing-folder", "owner-missing", new WebFolder { Name = "不会写入" });
+
+        result.ShouldBeNull();
+        var lockCount = await fixture.Db.Database
+            .GetCollection<BsonDocument>("web_folder_rename_locks")
+            .CountDocumentsAsync(FilterDefinition<BsonDocument>.Empty);
+        lockCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task 删除与同名创建并发_不会复活旧实体形成重复文件夹()
+    {
+        await using var fixture = await RenameFenceMongoFixture.CreateAsync();
+        const string userId = "owner-delete-create";
+        var service = CreateService(fixture.Db);
+
+        for (var index = 0; index < 8; index++)
+        {
+            var name = $"删除并发-{index}";
+            var original = await service.CreateAsync(userId, new WebFolder { Name = name });
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var deleteTask = Task.Run(async () =>
+            {
+                await gate.Task;
+                return await service.DeleteAsync(original.Id, userId);
+            });
+            var createTasks = Enumerable.Range(0, 8).Select(_ => Task.Run(async () =>
+            {
+                await gate.Task;
+                return await service.CreateAsync(userId, new WebFolder { Name = name });
+            })).ToArray();
+
+            gate.SetResult();
+            await Task.WhenAll(createTasks.Cast<Task>().Append(deleteTask));
+            var final = await service.CreateAsync(userId, new WebFolder { Name = name });
+
+            var normalizedName = WebFolderService.NormalizeName(name);
+            var persisted = await fixture.Db.WebFolders
+                .Find(folder => folder.OwnerUserId == userId)
+                .ToListAsync();
+            var matching = persisted
+                .Where(folder => WebFolderService.NormalizeName(folder.Name) == normalizedName)
+                .ToList();
+            matching.ShouldHaveSingleItem();
+            matching[0].Id.ShouldBe(final.Id);
+        }
+    }
+
+    [Fact]
     public void 服务端权威名称键不会把兼容连字扩成普通字母()
     {
         WebFolderService.NormalizeName("ﬃ").ShouldNotBe(WebFolderService.NormalizeName("FFI"));

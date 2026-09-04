@@ -69,14 +69,23 @@ public class WebFolderService : IWebFolderService
             .FirstOrDefault(folder => NormalizeName(folder.Name) == normalizedName);
         if (existing != null)
         {
-            await ResolveFolderIdAsync(userId, normalizedName, existing.Id, CancellationToken.None);
-            return existing;
+            // 列表快照与 claim 写入之间，文件夹可能已被并发改名。复用历史 claim
+            // 修复路径做二次实体+围栏复核，绝不能把旧名称快照直接当创建成功。
+            if (!await RepairNameClaimIfCurrentOwnerAsync(userId, normalizedName, existing.Id))
+                return null;
+            return await WaitForClaimedFolderAsync(userId, normalizedName);
         }
 
         // 名称 claim 与文件夹实体分离：claim 的 _id 负责跨实例并发串行化，FolderId
         // 仍是稳定的随机身份。这样文件夹重命名后可以释放旧名称，而不会改写实体 ID。
         var candidateId = Guid.NewGuid().ToString("N");
         var claim = await ResolveFolderIdAsync(userId, normalizedName, candidateId, CancellationToken.None);
+        if (!claim.WasCreated)
+        {
+            // 已有 claim 的实体由原创建、重命名或删除操作负责。这里仅等待其落定，
+            // 不再按 claim 中的旧 ID upsert，避免删除释放名称后把旧实体复活。
+            return await WaitForClaimedFolderAsync(userId, normalizedName);
+        }
         var folderId = claim.FolderId;
 
         var category = new WebFolder
@@ -368,7 +377,10 @@ public class WebFolderService : IWebFolderService
             && NormalizeName(current.Name) == normalizedName;
         if (stillOwnsName) return true;
 
-        await ReleaseNameClaimAsync(userId, normalizedName, folderId, CancellationToken.None);
+        // 只回滚本次修复刚创建的 claim。若 claim 在 Resolve 前已存在，它可能已经
+        // 被并发重命名或删除租约接管，按 folderId 删除会破坏对方的围栏。
+        if (resolution.WasCreated)
+            await ReleaseNameClaimAsync(userId, normalizedName, folderId, CancellationToken.None);
         return false;
     }
 
@@ -502,6 +514,11 @@ public class WebFolderService : IWebFolderService
 
     public async Task<WebFolder?> UpdateAsync(string id, string userId, WebFolder patch, CancellationToken ct = default)
     {
+        var owned = await _db.WebFolders
+            .Find(folder => folder.Id == id && folder.OwnerUserId == userId)
+            .AnyAsync(ct);
+        if (!owned) return null;
+
         // 名称 claim、实体改名、旧 claim 释放必须由服务端完整执行；客户端断开不能
         // 取消其中任一步。Mongo `_id` 锁同时串行化同一文件夹的跨实例重命名。
         var lease = await AcquireRenameLockAsync(id, userId);
@@ -639,17 +656,71 @@ public class WebFolderService : IWebFolderService
 
     public async Task<bool> DeleteAsync(string id, string userId, CancellationToken ct = default)
     {
-        var existing = await _db.WebFolders
-            .Find(c => c.Id == id && c.OwnerUserId == userId)
-            .FirstOrDefaultAsync(ct);
-        if (existing == null) return false;
+        var owned = await _db.WebFolders
+            .Find(folder => folder.Id == id && folder.OwnerUserId == userId)
+            .AnyAsync(ct);
+        if (!owned) return false;
 
-        var result = await _db.WebFolders.DeleteOneAsync(
-            c => c.Id == id && c.OwnerUserId == userId, CancellationToken.None);
-        if (result.DeletedCount > 0)
-            await ReleaseNameClaimAsync(
-                userId, NormalizeName(existing.Name), existing.Id, CancellationToken.None);
-        return result.DeletedCount > 0;
+        // 删除与重命名共用同一把实体锁，并在删实体前把名称 claim 标记为本租约持有。
+        // 并发创建看到已有 claim 时只等待、不再 upsert 旧 ID，因此不会在 claim 释放后
+        // 复活已删除实体并与新建文件夹形成同名双份。
+        var lease = await AcquireRenameLockAsync(id, userId);
+        var ownsClaim = false;
+        var normalizedName = string.Empty;
+        try
+        {
+            var fenced = await _db.WebFolders.UpdateOneAsync(
+                BuildRenameFenceAdvanceFilter(id, userId, lease.Fence),
+                Builders<WebFolder>.Update.Set(folder => folder.RenameFence, lease.Fence),
+                cancellationToken: CancellationToken.None);
+            if (fenced.MatchedCount != 1) return false;
+
+            var existing = await _db.WebFolders
+                .Find(BuildRenameFenceOwnerFilter(id, userId, lease.Fence))
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (existing == null) return false;
+
+            normalizedName = NormalizeName(existing.Name);
+            var claim = await ResolveFolderIdAsync(
+                userId, normalizedName, existing.Id, CancellationToken.None, lease);
+            if (string.Equals(claim.FolderId, existing.Id, StringComparison.Ordinal))
+            {
+                await OwnNameClaimAsync(userId, normalizedName, existing.Id, lease);
+                ownsClaim = true;
+            }
+
+            var result = await _db.WebFolders.DeleteOneAsync(
+                BuildRenameFenceOwnerFilter(id, userId, lease.Fence),
+                CancellationToken.None);
+            if (result.DeletedCount != 1)
+            {
+                if (ownsClaim)
+                    await FinalizeOwnedNameClaimAsync(userId, normalizedName, existing.Id, lease);
+                return false;
+            }
+
+            if (ownsClaim)
+                await ReleaseOwnedNameClaimAsync(userId, normalizedName, existing.Id, lease);
+            return true;
+        }
+        catch
+        {
+            if (ownsClaim)
+            {
+                var stillExists = await _db.WebFolders
+                    .Find(BuildRenameFenceOwnerFilter(id, userId, lease.Fence))
+                    .AnyAsync(CancellationToken.None);
+                if (stillExists)
+                    await FinalizeOwnedNameClaimAsync(userId, normalizedName, id, lease);
+                else
+                    await ReleaseOwnedNameClaimAsync(userId, normalizedName, id, lease);
+            }
+            throw;
+        }
+        finally
+        {
+            await ReleaseRenameLockAsync(id, lease);
+        }
     }
 
     public async Task<object> GenerateAsync(string id, string userId, CancellationToken ct = default)
