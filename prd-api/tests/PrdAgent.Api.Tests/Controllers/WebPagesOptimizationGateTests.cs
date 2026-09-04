@@ -15,6 +15,38 @@ namespace PrdAgent.Api.Tests.Controllers;
 public class WebPagesOptimizationGateTests
 {
     [Fact]
+    public async Task CreateOptimizationUpload_ReturnsFixedChunkContractWithoutSavingSite()
+    {
+        var session = new HostedSiteOptimizationSession
+        {
+            Id = "session-upload",
+            ChunkSize = 2 * 1024 * 1024,
+            TotalChunks = 9,
+            ExpiresAt = DateTime.UtcNow.AddHours(2),
+        };
+        var optimization = new Mock<IHostedSiteOptimizationService>();
+        optimization.Setup(x => x.CreateUploadAsync(
+                "user-1", It.IsAny<CreateHostedSiteOptimizationUploadRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        var hostedSites = new Mock<IHostedSiteService>();
+        var controller = BuildController(hostedSites.Object, optimization.Object, Mock.Of<IUploadProgressService>());
+
+        var result = await controller.CreateOptimizationUpload(new CreateHostedSiteOptimizationUploadRequest
+        {
+            FileName = "prototype.zip",
+            FileSize = 17 * 1024 * 1024,
+        });
+
+        var response = result.ShouldBeOfType<OkObjectResult>()
+            .Value.ShouldBeOfType<ApiResponse<object>>();
+        var created = response.Data.ShouldBeOfType<HostedSiteOptimizationUploadCreatedResult>();
+        created.SessionId.ShouldBe("session-upload");
+        created.ChunkSize.ShouldBe(2 * 1024 * 1024);
+        created.TotalChunks.ShouldBe(9);
+        hostedSites.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task ReviewedUpload_WhenOptimizationIsRecommended_DoesNotCreateOrReplaceSite()
     {
         var analysis = new HostedSiteOptimizationAnalysis

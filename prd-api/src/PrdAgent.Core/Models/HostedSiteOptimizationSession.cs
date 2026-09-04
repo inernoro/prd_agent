@@ -15,7 +15,12 @@ public class HostedSiteOptimizationSession
     public string SourceObjectKey { get; set; } = string.Empty;
     public string SourceSha256 { get; set; } = string.Empty;
     public string Status { get; set; } = HostedSiteOptimizationStatuses.AwaitingDecision;
+    public string? Error { get; set; }
     public string? CompletedSiteId { get; set; }
+    public long SourceFileSize { get; set; }
+    public int ChunkSize { get; set; }
+    public int TotalChunks { get; set; }
+    public List<int> UploadedChunkIndexes { get; set; } = new();
     public string? Title { get; set; }
     public string? Description { get; set; }
     public string? Folder { get; set; }
@@ -31,10 +36,47 @@ public class HostedSiteOptimizationSession
 
 public static class HostedSiteOptimizationStatuses
 {
+    public const string Uploading = "uploading";
+    public const string Queued = "queued";
+    public const string Analyzing = "analyzing";
     public const string AwaitingDecision = "awaiting-decision";
     public const string PreviewReady = "preview-ready";
     public const string Saving = "saving";
+    public const string Saved = "saved";
+    public const string Failed = "failed";
     public const string CleanupPending = "cleanup-pending";
+}
+
+public class CreateHostedSiteOptimizationUploadRequest
+{
+    public string FileName { get; set; } = string.Empty;
+    public long FileSize { get; set; }
+    public string? TargetSiteId { get; set; }
+    public string? Title { get; set; }
+    public string? Description { get; set; }
+    public string? Folder { get; set; }
+    public List<string> Tags { get; set; } = new();
+}
+
+public class HostedSiteOptimizationUploadCreatedResult
+{
+    public string SessionId { get; set; } = string.Empty;
+    public int ChunkSize { get; set; }
+    public int TotalChunks { get; set; }
+    public DateTime ExpiresAt { get; set; }
+}
+
+public class HostedSiteOptimizationUploadStatusResult
+{
+    public string SessionId { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string Stage { get; set; } = string.Empty;
+    public int UploadedChunks { get; set; }
+    public int TotalChunks { get; set; }
+    public long UploadedBytes { get; set; }
+    public long TotalBytes { get; set; }
+    public string? Error { get; set; }
+    public HostedSiteOptimizationReviewResult? Review { get; set; }
 }
 
 public class HostedSiteOptimizationAnalysis

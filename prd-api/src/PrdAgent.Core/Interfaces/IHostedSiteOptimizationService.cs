@@ -4,6 +4,27 @@ namespace PrdAgent.Core.Interfaces;
 
 public interface IHostedSiteOptimizationService
 {
+    Task<HostedSiteOptimizationSession> CreateUploadAsync(
+        string userId,
+        CreateHostedSiteOptimizationUploadRequest request,
+        CancellationToken ct = default);
+
+    Task UploadChunkAsync(
+        string sessionId,
+        string userId,
+        int chunkIndex,
+        byte[] chunkBytes,
+        CancellationToken ct = default);
+
+    Task QueueUploadAsync(string sessionId, string userId, CancellationToken ct = default);
+
+    Task<HostedSiteOptimizationUploadStatusResult> GetUploadStatusAsync(
+        string sessionId,
+        string userId,
+        CancellationToken ct = default);
+
+    Task<bool> ProcessNextQueuedAsync(CancellationToken ct = default);
+
     HostedSiteOptimizationAnalysis Analyze(byte[] zipBytes);
 
     Task<HostedSiteOptimizationSession> CreateSessionAsync(

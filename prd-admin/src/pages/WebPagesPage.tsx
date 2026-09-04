@@ -57,6 +57,7 @@ import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
 import { SiteContextPanel, SiteSelectionPanel, SiteBatchPanel } from '@/components/web-hosting/SiteContextPanel';
 import { SharePreviewPane, VISIBILITY_LABEL as SHARE_VISIBILITY_LABEL } from '@/components/web-hosting/SharePreviewPane';
 import { buildUploadProgress, fmtDuration, showsUploadProgress, type UnpackFrame } from '@/components/web-hosting/uploadProgress';
+import { DIRECT_PREVIEW_SANDBOX } from '@/components/web-hosting/previewHtml';
 import { resolveSiteForm } from '@/components/web-hosting/siteFormRegistry';
 import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
@@ -2815,6 +2816,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   const [optimization, setOptimization] = useState<HostedSiteOptimizationReviewResult | null>(null);
   const [optimizationPreview, setOptimizationPreview] = useState<HostedSiteOptimizationPreviewResult | null>(null);
   const [optimizationBusy, setOptimizationBusy] = useState<'preview' | 'original' | 'optimized' | null>(null);
+  const [optimizationStage, setOptimizationStage] = useState('');
 
   useEffect(() => {
     if (!saving) return;
@@ -2924,6 +2926,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     setElapsed(0);
     setSent({ loaded: 0, total: file?.size ?? 0 });
     setUnpack(null);
+    setOptimizationStage('');
     uploadIdRef.current = crypto.randomUUID();
     abortRef.current = new AbortController();
     setSaving(true);
@@ -2941,6 +2944,8 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
           uploadId: uploadIdRef.current,
           onProgress: (loaded, total) => setSent({ loaded, total }),
           onStart: (xhr) => { xhrRef.current = xhr; },
+          onStage: setOptimizationStage,
+          signal: abortRef.current.signal,
         });
         if (!reviewed.success) {
           if (reviewed.error?.code !== 'ABORTED') {
@@ -3156,7 +3161,12 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
             </div>
 
             <div className="min-h-0 flex-1 overflow-hidden rounded-xl" style={{ minHeight: 300, border: '1px solid var(--border-default)', background: 'var(--bg-card)' }}>
-              <SitePreview url={optimizationPreview.previewUrl} className="h-full w-full" />
+              <iframe
+                title="优化版本预览"
+                src={optimizationPreview.previewUrl}
+                sandbox={DIRECT_PREVIEW_SANDBOX}
+                className="h-full w-full border-0"
+              />
             </div>
 
             <div className="grid grid-cols-3 gap-2 text-center">
@@ -3280,6 +3290,10 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 <span className="text-[15px]" style={{ color: 'var(--text-muted)' }}>%</span>
               </div>
               <span className="pb-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>{progress.detail}</span>
+            </div>
+
+            <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+              {optimizationStage || progress.title}
             </div>
 
             <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-tertiary)' }}>

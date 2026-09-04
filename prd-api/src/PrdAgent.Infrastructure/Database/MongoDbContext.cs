@@ -1690,6 +1690,11 @@ public class MongoDbContext
                 .Ascending(x => x.OwnerUserId)
                 .Ascending(x => x.ExpiresAt),
             new CreateIndexOptions { Name = "idx_hosted_site_optimization_owner_expiry" }));
+        HostedSiteOptimizationSessions.Indexes.CreateOne(new CreateIndexModel<HostedSiteOptimizationSession>(
+            Builders<HostedSiteOptimizationSession>.IndexKeys
+                .Ascending(x => x.Status)
+                .Ascending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_hosted_site_optimization_status_updated" }));
         // 业务清理器会在 ExpiresAt 到期后先删对象存储，再删记录；TTL 多留一天只做宕机兜底，
         // 避免数据库先删记录导致临时对象失去清理线索。
         EnsureTtlIndex(

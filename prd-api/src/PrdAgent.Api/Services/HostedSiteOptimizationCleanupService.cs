@@ -2,10 +2,11 @@ using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Api.Services;
 
-/// <summary>清理用户未确认的网页托管优化临时文件。失败只记日志，下轮继续。</summary>
+/// <summary>处理网页托管 ZIP 后台检查，并清理过期临时文件。失败只记日志，下轮继续。</summary>
 public sealed class HostedSiteOptimizationCleanupService : BackgroundService
 {
-    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
+    private const int CleanupEveryTicks = 600;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<HostedSiteOptimizationCleanupService> _logger;
 
@@ -20,15 +21,21 @@ public sealed class HostedSiteOptimizationCleanupService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(Interval);
+        var ticks = CleanupEveryTicks;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 using var scope = _scopeFactory.CreateScope();
                 var service = scope.ServiceProvider.GetRequiredService<IHostedSiteOptimizationService>();
-                var cleaned = await service.CleanupExpiredAsync(stoppingToken);
-                if (cleaned > 0)
-                    _logger.LogInformation("清理了 {Count} 个过期网页托管优化任务", cleaned);
+                await service.ProcessNextQueuedAsync(CancellationToken.None);
+                if (++ticks >= CleanupEveryTicks)
+                {
+                    ticks = 0;
+                    var cleaned = await service.CleanupExpiredAsync(CancellationToken.None);
+                    if (cleaned > 0)
+                        _logger.LogInformation("清理了 {Count} 个过期网页托管优化任务", cleaned);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

@@ -105,6 +105,25 @@ export interface HostedSiteOptimizationPreviewResult {
   analysis: HostedSiteOptimizationAnalysis;
 }
 
+interface HostedSiteOptimizationUploadCreatedResult {
+  sessionId: string;
+  chunkSize: number;
+  totalChunks: number;
+  expiresAt: string;
+}
+
+interface HostedSiteOptimizationUploadStatusResult {
+  sessionId: string;
+  status: string;
+  stage: string;
+  uploadedChunks: number;
+  totalChunks: number;
+  uploadedBytes: number;
+  totalBytes: number;
+  error?: string;
+  review?: HostedSiteOptimizationReviewResult;
+}
+
 export interface ShareLinkItem {
   id: string;
   token: string;
@@ -336,47 +355,164 @@ export async function reviewSiteZip(input: {
   uploadId?: string;
   onProgress?: (loaded: number, total: number) => void;
   onStart?: (xhr: XMLHttpRequest) => void;
+  onStage?: (stage: string) => void;
+  signal?: AbortSignal;
 }): Promise<ApiResponse<HostedSiteOptimizationReviewResult>> {
-  const token = useAuthStore.getState().token;
-  const fd = new FormData();
-  fd.append('file', input.file);
-  if (input.title) fd.append('title', input.title);
-  if (input.description) fd.append('description', input.description);
-  if (input.folder) fd.append('folder', input.folder);
-  if (input.tags) fd.append('tags', input.tags);
-  if (input.targetSiteId) fd.append('targetSiteId', input.targetSiteId);
-  if (input.uploadId) fd.append('uploadId', input.uploadId);
+  const created = await apiRequest<HostedSiteOptimizationUploadCreatedResult>(
+    api.webPages.optimizationUploads(),
+    {
+      method: 'POST',
+      signal: input.signal,
+      body: {
+        fileName: input.file.name,
+        fileSize: input.file.size,
+        title: input.title,
+        description: input.description,
+        folder: input.folder,
+        tags: input.tags?.split(',').map(x => x.trim()).filter(Boolean) ?? [],
+        targetSiteId: input.targetSiteId,
+      },
+    },
+  );
+  if (!created.success) return created;
 
-  const url = joinUrl(getApiBaseUrl(), api.webPages.reviewedUpload());
+  const { sessionId, chunkSize, totalChunks } = created.data;
+  const token = useAuthStore.getState().token;
+  const cancelAndAbort = (): ApiResponse<HostedSiteOptimizationReviewResult> => {
+    void cancelSiteOptimization(sessionId);
+    return { success: false, data: null as never, error: { code: 'ABORTED', message: '已中止上传' } };
+  };
+
+  for (let index = 0; index < totalChunks; index += 1) {
+    if (input.signal?.aborted) return cancelAndAbort();
+    const start = index * chunkSize;
+    const chunk = input.file.slice(start, Math.min(input.file.size, start + chunkSize));
+    let uploaded: ApiResponse<{ uploaded: boolean; chunkIndex: number }> | null = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      uploaded = await uploadOptimizationChunk({
+        sessionId,
+        chunkIndex: index,
+        chunk,
+        token,
+        signal: input.signal,
+        onStart: input.onStart,
+        onProgress: loaded => input.onProgress?.(start + loaded, input.file.size),
+      });
+      if (uploaded.success || uploaded.error?.code === 'ABORTED') break;
+      if (attempt < 2) await waitForUploadPoll(input.signal);
+    }
+    if (!uploaded) return cancelAndAbort();
+    if (!uploaded.success) {
+      if (uploaded.error?.code === 'ABORTED') return cancelAndAbort();
+      void cancelSiteOptimization(sessionId);
+      return uploaded;
+    }
+    input.onProgress?.(Math.min(input.file.size, start + chunk.size), input.file.size);
+  }
+
+  input.onStage?.('文件已送达，正在提交安全检查');
+  let queued = await apiRequest<{ queued: boolean; sessionId: string }>(
+    api.webPages.optimizationUploadComplete(encodeURIComponent(sessionId)),
+    { method: 'POST', signal: input.signal },
+  );
+  if (!queued.success && !input.signal?.aborted) {
+    await waitForUploadPoll(input.signal);
+    queued = await apiRequest<{ queued: boolean; sessionId: string }>(
+      api.webPages.optimizationUploadComplete(encodeURIComponent(sessionId)),
+      { method: 'POST', signal: input.signal },
+    );
+  }
+  if (!queued.success) return queued;
+
+  const deadline = Date.now() + 15 * 60 * 1000;
+  while (Date.now() < deadline) {
+    if (input.signal?.aborted) return cancelAndAbort();
+    const status = await apiRequest<HostedSiteOptimizationUploadStatusResult>(
+      api.webPages.optimizationUploadStatus(encodeURIComponent(sessionId)),
+      { signal: input.signal },
+    );
+    if (!status.success) return status;
+    input.onStage?.(status.data.stage);
+    if (status.data.status === 'failed') {
+      return {
+        success: false,
+        data: null as never,
+        error: { code: 'INVALID_FORMAT', message: status.data.error || '文件处理未完成，请重新上传' },
+      };
+    }
+    if (status.data.review) return { success: true, data: status.data.review, error: null };
+    await waitForUploadPoll(input.signal);
+  }
+
+  return {
+    success: false,
+    data: null as never,
+    error: { code: 'TIMEOUT', message: '后台检查仍在继续，请稍后刷新站点列表查看结果' },
+  };
+}
+
+function uploadOptimizationChunk(input: {
+  sessionId: string;
+  chunkIndex: number;
+  chunk: Blob;
+  token?: string | null;
+  signal?: AbortSignal;
+  onStart?: (xhr: XMLHttpRequest) => void;
+  onProgress?: (loaded: number) => void;
+}): Promise<ApiResponse<{ uploaded: boolean; chunkIndex: number }>> {
   return new Promise((resolve) => {
+    const fd = new FormData();
+    fd.append('chunk', input.chunk, `chunk-${input.chunkIndex}.part`);
+    const url = joinUrl(getApiBaseUrl(), api.webPages.optimizationUploadChunk(
+      encodeURIComponent(input.sessionId), input.chunkIndex));
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
     xhr.setRequestHeader('Accept', 'application/json');
-    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-    if (input.onProgress) {
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) input.onProgress!(event.loaded, event.total);
-      };
-    }
+    if (input.token) xhr.setRequestHeader('Authorization', `Bearer ${input.token}`);
+    xhr.upload.onprogress = event => input.onProgress?.(Math.min(input.chunk.size, event.loaded));
+    const abort = () => xhr.abort();
+    input.signal?.addEventListener('abort', abort, { once: true });
+    const cleanup = () => input.signal?.removeEventListener('abort', abort);
     xhr.onload = () => {
+      cleanup();
       try {
-        resolve(JSON.parse(xhr.responseText) as ApiResponse<HostedSiteOptimizationReviewResult>);
+        resolve(JSON.parse(xhr.responseText) as ApiResponse<{ uploaded: boolean; chunkIndex: number }>);
       } catch {
         resolve({ success: false, data: null as never, error: { code: 'INVALID_FORMAT', message: `响应解析失败（HTTP ${xhr.status}）` } });
       }
     };
-    xhr.onerror = () => resolve({
-      success: false,
-      data: null as never,
-      error: { code: 'NETWORK_ERROR', message: '网络异常，上传未完成' },
-    });
-    xhr.onabort = () => resolve({
-      success: false,
-      data: null as never,
-      error: { code: 'ABORTED', message: '已中止上传' },
-    });
+    xhr.onerror = () => {
+      cleanup();
+      resolve({
+        success: false,
+        data: null as never,
+        error: { code: 'NETWORK_ERROR', message: '网络异常，上传未完成' },
+      });
+    };
+    xhr.onabort = () => {
+      cleanup();
+      resolve({
+        success: false,
+        data: null as never,
+        error: { code: 'ABORTED', message: '已中止上传' },
+      });
+    };
     input.onStart?.(xhr);
     xhr.send(fd);
+  });
+}
+
+function waitForUploadPoll(signal?: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    if (signal?.aborted) { resolve(); return; }
+    const timer = window.setTimeout(done, 800);
+    const abort = () => done();
+    function done() {
+      window.clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }
+    signal?.addEventListener('abort', abort, { once: true });
   });
 }
 

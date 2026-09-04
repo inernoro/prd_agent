@@ -1190,6 +1190,10 @@ export const api = {
   webPages: {
     upload: () => '/api/web-pages/upload',
     reviewedUpload: () => '/api/web-pages/upload-reviewed',
+    optimizationUploads: () => '/api/web-pages/optimization/uploads',
+    optimizationUploadChunk: (sessionId: string, chunkIndex: number) => `/api/web-pages/optimization/uploads/${sessionId}/chunks/${chunkIndex}`,
+    optimizationUploadComplete: (sessionId: string) => `/api/web-pages/optimization/uploads/${sessionId}/complete`,
+    optimizationUploadStatus: (sessionId: string) => `/api/web-pages/optimization/uploads/${sessionId}`,
     optimizationPreview: (sessionId: string) => `/api/web-pages/optimization/${sessionId}/preview`,
     optimizationConfirm: (sessionId: string) => `/api/web-pages/optimization/${sessionId}/confirm`,
     optimizationCancel: (sessionId: string) => `/api/web-pages/optimization/${sessionId}`,

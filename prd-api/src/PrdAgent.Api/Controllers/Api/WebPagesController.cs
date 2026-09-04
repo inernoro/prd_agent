@@ -28,6 +28,7 @@ public class WebPagesController : ControllerBase
 
     // 500MB —— 视频 / PDF 等媒体文件比 HTML 大几个量级
     private const long MaxSingleFileSize = 500L * 1024 * 1024;
+    private const long MaxOptimizationChunkRequestSize = 3L * 1024 * 1024;
 
     // 视频扩展名（浏览器原生 <video> 支持）
     private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -154,6 +155,101 @@ public class WebPagesController : ControllerBase
         finally
         {
             await _uploadProgress.CompleteAsync(uploadId);
+        }
+    }
+
+    /// <summary>创建 ZIP 分片上传任务。只登记元数据，不创建或覆盖站点。</summary>
+    [HttpPost("optimization/uploads")]
+    public async Task<IActionResult> CreateOptimizationUpload(
+        [FromBody] CreateHostedSiteOptimizationUploadRequest request)
+    {
+        try
+        {
+            var session = await _optimizationService.CreateUploadAsync(
+                GetUserId(), request, HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(new HostedSiteOptimizationUploadCreatedResult
+            {
+                SessionId = session.Id,
+                ChunkSize = session.ChunkSize,
+                TotalChunks = session.TotalChunks,
+                ExpiresAt = session.ExpiresAt,
+            }));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>上传一个固定大小的 ZIP 分片。重复提交同一序号会安全覆盖。</summary>
+    [HttpPost("optimization/uploads/{sessionId}/chunks/{chunkIndex:int}")]
+    [RequestSizeLimit(MaxOptimizationChunkRequestSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxOptimizationChunkRequestSize)]
+    public async Task<IActionResult> UploadOptimizationChunk(
+        string sessionId,
+        int chunkIndex,
+        IFormFile chunk)
+    {
+        if (chunk == null || chunk.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上传分片为空，请重试"));
+        if (chunk.Length > MaxOptimizationChunkRequestSize)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上传分片过大，请重新开始上传"));
+
+        try
+        {
+            using var output = new MemoryStream(checked((int)chunk.Length));
+            await chunk.CopyToAsync(output, HttpContext.RequestAborted);
+            await _optimizationService.UploadChunkAsync(
+                sessionId, GetUserId(), chunkIndex, output.ToArray(), HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(new { uploaded = true, chunkIndex }));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上传任务不存在或已经过期"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>确认所有分片已经送达，并把安全检查交给后台任务。</summary>
+    [HttpPost("optimization/uploads/{sessionId}/complete")]
+    public async Task<IActionResult> CompleteOptimizationUpload(string sessionId)
+    {
+        try
+        {
+            await _optimizationService.QueueUploadAsync(
+                sessionId, GetUserId(), HttpContext.RequestAborted);
+            return Accepted(ApiResponse<object>.Ok(new { queued = true, sessionId }));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上传任务不存在或已经过期"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>查询分片上传和后台检查状态。</summary>
+    [HttpGet("optimization/uploads/{sessionId}")]
+    public async Task<IActionResult> GetOptimizationUploadStatus(string sessionId)
+    {
+        try
+        {
+            var result = await _optimizationService.GetUploadStatusAsync(
+                sessionId, GetUserId(), HttpContext.RequestAborted);
+            return Ok(ApiResponse<object>.Ok(result));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上传任务不存在或已经过期"));
         }
     }
 

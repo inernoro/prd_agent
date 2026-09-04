@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using Shouldly;
 using Xunit;
 
@@ -9,6 +10,22 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class HostedSiteOptimizationServiceTests
 {
+    [Theory]
+    [InlineData("web-hosting/sites/0123456789abcdef0123456789abcdef/__chunks/000000.part", null, true)]
+    [InlineData("data/web-hosting/sites/0123456789abcdef0123456789abcdef/__source/source.zip", "data", true)]
+    [InlineData("data/web-hosting/sites/0123456789abcdef0123456789abcdef/__preview/assets/app.js", "data", true)]
+    [InlineData("data/web-hosting/sites/0123456789abcdef0123456789abcdef/index.html", "data", false)]
+    [InlineData("data/web-hosting/sites/not-a-session/__source/source.zip", "data", false)]
+    [InlineData("data/web-hosting/sites/0123456789abcdef0123456789abcdef/__chunks/all.part", "data", false)]
+    [InlineData("data/web-hosting/sites/0123456789abcdef0123456789abcdef/__preview/../index.html", "data", false)]
+    public void TemporaryDeletePolicy_AllowsOnlyOptimizerOwnedObjectShapes(
+        string key,
+        string? prefix,
+        bool expected)
+    {
+        AssetStorageDeletePolicy.IsHostedSiteOptimizationTemporaryKey(key, prefix).ShouldBe(expected);
+    }
+
     [Fact]
     public void Analyze_CleanRuntimePackage_DoesNotInterruptUpload()
     {

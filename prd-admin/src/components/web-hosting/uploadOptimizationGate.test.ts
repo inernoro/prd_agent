@@ -17,14 +17,22 @@ describe('网页托管 ZIP 优化确认门', () => {
     expect(pageSource).toContain("reviewed.data.outcome === 'optimization-recommended'");
     expect(pageSource).toContain('setOptimization(reviewed.data)');
     expect(pageSource).toContain('optimizationPreview ? (');
+    expect(pageSource).toContain('title="优化版本预览"');
+    expect(pageSource).toContain('sandbox={DIRECT_PREVIEW_SANDBOX}');
     expect(pageSource).toContain("confirmOptimization('optimized')");
     expect(pageSource).toContain('请先等待检查完成，或点击“中止”后再关闭');
   });
 
-  it('上传审查、生成预览和确认保存是三条独立请求', () => {
+  it('大 ZIP 使用分片上传和后台轮询，生成预览与确认保存仍是独立请求', () => {
     expect(serviceSource).toContain('export async function reviewSiteZip');
+    expect(serviceSource).toContain('optimizationUploads()');
+    expect(serviceSource).toContain('optimizationUploadChunk(');
+    expect(serviceSource).toContain('optimizationUploadComplete(');
+    expect(serviceSource).toContain('optimizationUploadStatus(');
+    expect(serviceSource).toContain("status.data.status === 'failed'");
     expect(serviceSource).toContain('export async function prepareSiteOptimizationPreview');
     expect(serviceSource).toContain('export async function confirmSiteOptimization');
     expect(serviceSource).toContain('export async function cancelSiteOptimization');
+    expect(pageSource).toContain('onStage: setOptimizationStage');
   });
 });

@@ -17,6 +17,8 @@ namespace PrdAgent.Infrastructure.Services;
 /// </summary>
 public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizationService
 {
+    private const int UploadChunkSize = 2 * 1024 * 1024;
+    private const long MaxSourceFileBytes = 500L * 1024 * 1024;
     private const int MaxArchiveEntries = 20_000;
     private const long MaxUncompressedBytes = 500L * 1024 * 1024;
     private const long MaxOptimizationBytes = 200L * 1024 * 1024;
@@ -55,6 +57,319 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
     public HostedSiteOptimizationAnalysis Analyze(byte[] zipBytes)
         => BuildOptimizedPackage(zipBytes).Analysis;
+
+    public async Task<HostedSiteOptimizationSession> CreateUploadAsync(
+        string userId,
+        CreateHostedSiteOptimizationUploadRequest request,
+        CancellationToken ct = default)
+    {
+        if (request.FileSize <= 0)
+            throw new InvalidOperationException("请选择非空 ZIP 文件");
+        if (request.FileSize > MaxSourceFileBytes)
+            throw new InvalidOperationException("ZIP 文件不能超过 500 MB");
+        if (!string.Equals(Path.GetExtension(request.FileName), ".zip", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("智能优化目前只支持 ZIP 文件");
+        if (!string.IsNullOrWhiteSpace(request.TargetSiteId)
+            && await _hostedSites.GetByIdAsync(request.TargetSiteId, userId, ct) == null)
+            throw new KeyNotFoundException("站点不存在");
+
+        var now = DateTime.UtcNow;
+        var session = new HostedSiteOptimizationSession
+        {
+            OwnerUserId = userId,
+            TargetSiteId = string.IsNullOrWhiteSpace(request.TargetSiteId) ? null : request.TargetSiteId.Trim(),
+            SourceFileName = Path.GetFileName(request.FileName),
+            SourceFileSize = request.FileSize,
+            ChunkSize = UploadChunkSize,
+            TotalChunks = checked((int)((request.FileSize + UploadChunkSize - 1) / UploadChunkSize)),
+            Status = HostedSiteOptimizationStatuses.Uploading,
+            Title = request.Title?.Trim(),
+            Description = request.Description?.Trim(),
+            Folder = request.Folder?.Trim(),
+            Tags = (request.Tags ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct()
+                .ToList(),
+            CreatedAt = now,
+            UpdatedAt = now,
+            ExpiresAt = now.Add(SessionLifetime),
+        };
+        await _db.HostedSiteOptimizationSessions.InsertOneAsync(
+            session,
+            cancellationToken: CancellationToken.None);
+        return session;
+    }
+
+    public async Task UploadChunkAsync(
+        string sessionId,
+        string userId,
+        int chunkIndex,
+        byte[] chunkBytes,
+        CancellationToken ct = default)
+    {
+        var session = await GetOwnedSessionAsync(sessionId, userId, ct);
+        if (session.Status != HostedSiteOptimizationStatuses.Uploading)
+            throw new InvalidOperationException("这个上传任务已经结束，请重新选择文件");
+        if (chunkIndex < 0 || chunkIndex >= session.TotalChunks)
+            throw new InvalidOperationException("分片序号无效，请重新上传");
+
+        var expected = chunkIndex == session.TotalChunks - 1
+            ? session.SourceFileSize - (long)session.ChunkSize * (session.TotalChunks - 1)
+            : session.ChunkSize;
+        if (chunkBytes.LongLength != expected)
+            throw new InvalidOperationException("上传分片不完整，请重试当前文件");
+
+        var key = BuildChunkKey(session, chunkIndex);
+        await _storage.UploadToKeyAsync(
+            key,
+            chunkBytes,
+            "application/octet-stream",
+            CancellationToken.None,
+            "private, no-store");
+        var update = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+            x => x.Id == session.Id
+                 && x.OwnerUserId == userId
+                 && x.Status == HostedSiteOptimizationStatuses.Uploading,
+            Builders<HostedSiteOptimizationSession>.Update
+                .AddToSet(x => x.UploadedChunkIndexes, chunkIndex)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
+            cancellationToken: CancellationToken.None);
+        if (update.MatchedCount == 0)
+        {
+            await TryDeleteAsync(key);
+            throw new InvalidOperationException("这个上传任务已经结束，请重新选择文件");
+        }
+    }
+
+    public async Task QueueUploadAsync(string sessionId, string userId, CancellationToken ct = default)
+    {
+        var session = await GetOwnedSessionAsync(sessionId, userId, ct);
+        if (session.Status != HostedSiteOptimizationStatuses.Uploading)
+        {
+            if (session.Status is HostedSiteOptimizationStatuses.Queued
+                or HostedSiteOptimizationStatuses.Analyzing
+                or HostedSiteOptimizationStatuses.AwaitingDecision
+                or HostedSiteOptimizationStatuses.PreviewReady
+                or HostedSiteOptimizationStatuses.Saving
+                or HostedSiteOptimizationStatuses.Saved)
+                return;
+            throw new InvalidOperationException("这个上传任务已经结束，请重新选择文件");
+        }
+        if (session.UploadedChunkIndexes.Distinct().Count() != session.TotalChunks)
+            throw new InvalidOperationException("文件尚未完整上传，请重试未完成的分片");
+
+        var update = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+            x => x.Id == session.Id
+                 && x.OwnerUserId == userId
+                 && x.Status == HostedSiteOptimizationStatuses.Uploading,
+            Builders<HostedSiteOptimizationSession>.Update
+                .Set(x => x.Status, HostedSiteOptimizationStatuses.Queued)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
+            cancellationToken: CancellationToken.None);
+        if (update.ModifiedCount != 1)
+        {
+            var current = await GetOwnedSessionAsync(sessionId, userId, ct);
+            if (current.Status is HostedSiteOptimizationStatuses.Queued
+                or HostedSiteOptimizationStatuses.Analyzing
+                or HostedSiteOptimizationStatuses.AwaitingDecision
+                or HostedSiteOptimizationStatuses.PreviewReady
+                or HostedSiteOptimizationStatuses.Saving
+                or HostedSiteOptimizationStatuses.Saved)
+                return;
+            throw new InvalidOperationException("这个上传任务已经结束，请重新选择文件");
+        }
+    }
+
+    public async Task<HostedSiteOptimizationUploadStatusResult> GetUploadStatusAsync(
+        string sessionId,
+        string userId,
+        CancellationToken ct = default)
+    {
+        var session = await GetOwnedSessionAsync(sessionId, userId, ct);
+        HostedSite? site = null;
+        if (session.Status == HostedSiteOptimizationStatuses.Saved
+            && !string.IsNullOrWhiteSpace(session.CompletedSiteId))
+        {
+            site = await _hostedSites.GetByIdAsync(session.CompletedSiteId, userId, ct);
+        }
+
+        HostedSiteOptimizationReviewResult? review = null;
+        if (session.Status is HostedSiteOptimizationStatuses.AwaitingDecision
+            or HostedSiteOptimizationStatuses.PreviewReady)
+        {
+            review = new HostedSiteOptimizationReviewResult
+            {
+                Outcome = "optimization-recommended",
+                SessionId = session.Id,
+                ExpiresAt = session.ExpiresAt,
+                Analysis = session.Analysis,
+            };
+        }
+        else if (session.Status == HostedSiteOptimizationStatuses.Saved && site != null)
+        {
+            review = new HostedSiteOptimizationReviewResult
+            {
+                Outcome = "saved",
+                Site = site,
+                Analysis = session.Analysis,
+            };
+        }
+
+        var uploadedBytes = session.UploadedChunkIndexes
+            .Distinct()
+            .Where(x => x >= 0 && x < session.TotalChunks)
+            .Sum(x => x == session.TotalChunks - 1
+                ? session.SourceFileSize - (long)session.ChunkSize * (session.TotalChunks - 1)
+                : session.ChunkSize);
+        return new HostedSiteOptimizationUploadStatusResult
+        {
+            SessionId = session.Id,
+            Status = session.Status,
+            Stage = StageFor(session.Status),
+            UploadedChunks = session.UploadedChunkIndexes.Distinct().Count(),
+            TotalChunks = session.TotalChunks,
+            UploadedBytes = uploadedBytes,
+            TotalBytes = session.SourceFileSize,
+            Error = session.Error,
+            Review = review,
+        };
+    }
+
+    public async Task<bool> ProcessNextQueuedAsync(CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var filter = Builders<HostedSiteOptimizationSession>.Filter.Or(
+            Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Status, HostedSiteOptimizationStatuses.Queued),
+            Builders<HostedSiteOptimizationSession>.Filter.And(
+                Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Status, HostedSiteOptimizationStatuses.Analyzing),
+                Builders<HostedSiteOptimizationSession>.Filter.Lt(x => x.UpdatedAt, now.AddMinutes(-10))));
+        var session = await _db.HostedSiteOptimizationSessions.FindOneAndUpdateAsync(
+            filter,
+            Builders<HostedSiteOptimizationSession>.Update
+                .Set(x => x.Status, HostedSiteOptimizationStatuses.Analyzing)
+                .Set(x => x.Error, null)
+                .Set(x => x.UpdatedAt, now)
+                .Set(x => x.ExpiresAt, now.Add(SessionLifetime)),
+            new FindOneAndUpdateOptions<HostedSiteOptimizationSession>
+            {
+                ReturnDocument = ReturnDocument.After,
+                Sort = Builders<HostedSiteOptimizationSession>.Sort.Ascending(x => x.CreatedAt),
+            },
+            CancellationToken.None);
+        if (session == null) return false;
+
+        try
+        {
+            using var source = new MemoryStream(
+                session.SourceFileSize <= int.MaxValue ? (int)session.SourceFileSize : 0);
+            for (var index = 0; index < session.TotalChunks; index++)
+            {
+                var bytes = await _storage.TryDownloadBytesAsync(BuildChunkKey(session, index), CancellationToken.None)
+                    ?? throw new InvalidOperationException("临时上传分片已经过期，请重新选择文件");
+                await source.WriteAsync(bytes, CancellationToken.None);
+            }
+            if (source.Length != session.SourceFileSize)
+                throw new InvalidOperationException("上传文件校验失败，请重新选择文件");
+
+            var sourceBytes = source.ToArray();
+            var analysis = Analyze(sourceBytes);
+            if (analysis.Blocked)
+                throw new InvalidOperationException(analysis.Error ?? "ZIP 文件无法通过安全检查，请重新导出后再试");
+
+            if (analysis.Recommended)
+            {
+                session.SourceObjectKey = _storage.BuildSiteKey(session.Id, "__source/source.zip");
+                session.SourceSha256 = Convert.ToHexString(SHA256.HashData(sourceBytes)).ToLowerInvariant();
+                await _storage.UploadToKeyAsync(
+                    session.SourceObjectKey,
+                    sourceBytes,
+                    "application/zip",
+                    CancellationToken.None,
+                    "private, no-store");
+                await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id && x.Status == HostedSiteOptimizationStatuses.Analyzing,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.SourceObjectKey, session.SourceObjectKey)
+                        .Set(x => x.SourceSha256, session.SourceSha256)
+                        .Set(x => x.Analysis, analysis)
+                        .Set(x => x.Status, HostedSiteOptimizationStatuses.AwaitingDecision)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                        .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
+                    cancellationToken: CancellationToken.None);
+                await CleanupChunkFilesAsync(session);
+                return true;
+            }
+
+            await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                x => x.Id == session.Id && x.Status == HostedSiteOptimizationStatuses.Analyzing,
+                Builders<HostedSiteOptimizationSession>.Update
+                    .Set(x => x.Analysis, analysis)
+                    .Set(x => x.Status, HostedSiteOptimizationStatuses.Saving)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+
+            HostedSite saved;
+            if (string.IsNullOrWhiteSpace(session.TargetSiteId))
+            {
+                saved = await _hostedSites.CreateFromZipAsync(
+                    session.OwnerUserId,
+                    sourceBytes,
+                    session.Title,
+                    session.Description,
+                    session.Folder,
+                    session.Tags,
+                    ct: CancellationToken.None);
+            }
+            else
+            {
+                saved = await _hostedSites.ReuploadAsync(
+                    session.TargetSiteId,
+                    session.OwnerUserId,
+                    sourceBytes,
+                    session.SourceFileName,
+                    ct: CancellationToken.None);
+                var metadata = await _hostedSites.UpdateAsync(
+                    saved.Id,
+                    session.OwnerUserId,
+                    session.Title,
+                    session.Description,
+                    session.Tags,
+                    session.Folder,
+                    coverImageUrl: null,
+                    ct: CancellationToken.None);
+                if (metadata != null) saved = metadata;
+            }
+
+            await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                x => x.Id == session.Id && x.Status == HostedSiteOptimizationStatuses.Saving,
+                Builders<HostedSiteOptimizationSession>.Update
+                    .Set(x => x.CompletedSiteId, saved.Id)
+                    .Set(x => x.Status, HostedSiteOptimizationStatuses.Saved)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                    .Set(x => x.ExpiresAt, DateTime.UtcNow.AddMinutes(10)),
+                cancellationToken: CancellationToken.None);
+            await CleanupChunkFilesAsync(session);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "网页托管 ZIP 后台分析失败: {SessionId}", session.Id);
+            var message = ex is InvalidOperationException
+                ? ex.Message
+                : "文件处理未完成，请重新上传；原文件和既有站点均未被修改";
+            await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                x => x.Id == session.Id,
+                Builders<HostedSiteOptimizationSession>.Update
+                    .Set(x => x.Status, HostedSiteOptimizationStatuses.Failed)
+                    .Set(x => x.Error, message)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                    .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
+                cancellationToken: CancellationToken.None);
+        }
+        return true;
+    }
 
     public async Task<HostedSiteOptimizationSession> CreateSessionAsync(
         string userId,
@@ -329,14 +644,32 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             .Find(x => x.Id == sessionId && x.OwnerUserId == userId)
             .FirstOrDefaultAsync(ct);
         if (session == null) return;
-        if (session.Status == HostedSiteOptimizationStatuses.Saving)
-            throw new InvalidOperationException("优化版本正在保存，请稍后查看结果");
+        if (session.Status is HostedSiteOptimizationStatuses.Analyzing
+            or HostedSiteOptimizationStatuses.Saving)
+            throw new InvalidOperationException("文件正在后台处理，请等待当前步骤完成");
+
+        var claim = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+            Builders<HostedSiteOptimizationSession>.Filter.And(
+                Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Id, session.Id),
+                Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.OwnerUserId, userId),
+                Builders<HostedSiteOptimizationSession>.Filter.Nin(
+                    x => x.Status,
+                    new[] { HostedSiteOptimizationStatuses.Analyzing, HostedSiteOptimizationStatuses.Saving })),
+            Builders<HostedSiteOptimizationSession>.Update
+                .Set(x => x.Status, HostedSiteOptimizationStatuses.CleanupPending)
+                .Set(x => x.ExpiresAt, DateTime.UtcNow)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        if (claim.MatchedCount == 0)
+            throw new InvalidOperationException("文件正在后台处理，请等待当前步骤完成");
 
         session.Status = HostedSiteOptimizationStatuses.CleanupPending;
         session.ExpiresAt = DateTime.UtcNow;
         if (await CleanupSessionFilesAsync(session))
         {
-            await _db.HostedSiteOptimizationSessions.DeleteOneAsync(x => x.Id == session.Id, ct);
+            await _db.HostedSiteOptimizationSessions.DeleteOneAsync(
+                x => x.Id == session.Id && x.Status == HostedSiteOptimizationStatuses.CleanupPending,
+                CancellationToken.None);
         }
         else
         {
@@ -345,7 +678,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 Builders<HostedSiteOptimizationSession>.Update
                     .Set(x => x.Status, session.Status)
                     .Set(x => x.ExpiresAt, session.ExpiresAt),
-                cancellationToken: ct);
+                cancellationToken: CancellationToken.None);
         }
     }
 
@@ -384,6 +717,12 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             throw new InvalidOperationException("优化版本正在保存，请稍后查看结果");
         if (session.Status == HostedSiteOptimizationStatuses.CleanupPending)
             throw new InvalidOperationException("这个优化任务已经结束，请刷新站点列表查看结果");
+        if (session.Status is HostedSiteOptimizationStatuses.Uploading
+            or HostedSiteOptimizationStatuses.Queued
+            or HostedSiteOptimizationStatuses.Analyzing)
+            throw new InvalidOperationException("文件仍在后台分析，请稍后再试");
+        if (session.Status == HostedSiteOptimizationStatuses.Failed)
+            throw new InvalidOperationException(session.Error ?? "文件处理未完成，请重新上传");
     }
 
     private HostedSiteOptimizationPreviewResult ToPreviewResult(HostedSiteOptimizationSession session)
@@ -425,10 +764,34 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     private async Task<bool> CleanupSessionFilesAsync(HostedSiteOptimizationSession session)
     {
         var cleaned = await TryDeleteAsync(session.SourceObjectKey);
+        for (var index = 0; index < session.TotalChunks; index++)
+            cleaned = await TryDeleteAsync(BuildChunkKey(session, index)) && cleaned;
         foreach (var file in session.PreviewFiles)
             cleaned = await TryDeleteAsync(file.CosKey) && cleaned;
         return cleaned;
     }
+
+    private async Task CleanupChunkFilesAsync(HostedSiteOptimizationSession session)
+    {
+        for (var index = 0; index < session.TotalChunks; index++)
+            await TryDeleteAsync(BuildChunkKey(session, index));
+    }
+
+    private string BuildChunkKey(HostedSiteOptimizationSession session, int chunkIndex)
+        => _storage.BuildSiteKey(session.Id, $"__chunks/{chunkIndex:D6}.part");
+
+    private static string StageFor(string status) => status switch
+    {
+        HostedSiteOptimizationStatuses.Uploading => "正在分片上传",
+        HostedSiteOptimizationStatuses.Queued => "文件已送达，等待安全检查",
+        HostedSiteOptimizationStatuses.Analyzing => "正在检查文件结构与可安全精简内容",
+        HostedSiteOptimizationStatuses.Saving => "检查完成，正在保存原文件",
+        HostedSiteOptimizationStatuses.AwaitingDecision => "发现可安全精简的内容，等待确认",
+        HostedSiteOptimizationStatuses.PreviewReady => "优化预览已经生成",
+        HostedSiteOptimizationStatuses.Saved => "文件已保存",
+        HostedSiteOptimizationStatuses.Failed => "文件处理未完成",
+        _ => "正在收尾",
+    };
 
     private async Task<bool> TryDeleteAsync(string? key)
     {
