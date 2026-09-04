@@ -124,6 +124,40 @@ public class McpRollbackInvariantTests
     }
 
     /// <summary>
+    /// 每一处要动那条条目的地方，都得先核「它是不是我插的那一条」。
+    ///
+    /// 确定性 id 是会被重用的：原来那条被删掉之后，同键重试可以用同一个 id 插一条新的。
+    /// 于是「这个 id 存不存在」「它的时间戳变没变」都答不了真正的问题 —— 重试插的新条目
+    /// 在这两件事上跟我的旧条目长得一模一样。只按 id + 时间戳去摘标记，摘掉的是**新那次**
+    /// 的标记，而这一次还照样回成功；去删，删掉的是**别人的**条目。
+    ///
+    /// 前面几轮的补丁（带版本条件、回读判空、毫秒精度）都是在逼近这件事，代次才是它本身。
+    /// </summary>
+    [Fact]
+    public void 动那条条目之前先核代次()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
+
+        // 插入时盖代次
+        src.ShouldContain("var generation = Guid.NewGuid().ToString(\"N\");",
+            customMessage: "没有代次，后面所有「是不是我那条」的判断都无从谈起");
+        src.ShouldContain("[EntryGenerationKey] = generation",
+            customMessage: "代次没写进条目，核对时读不到");
+
+        // 三处回读之后都要核代次：收尾摘标记、正文被别人改过、撤回
+        var checks = 0;
+        for (var i = src.IndexOf("IsMyGeneration(", StringComparison.Ordinal); i >= 0;
+             i = src.IndexOf("IsMyGeneration(", i + 1, StringComparison.Ordinal)) checks++;
+        checks.ShouldBeGreaterThanOrEqualTo(5,
+            "判据定义 1 处 + 回读核对至少 4 处（收尾、被改过、撤回入口、撤回晚检出）");
+
+        // 删除那一下最狠，代次必须进过滤器本身 —— 只在上面判一次挡不住那一瞬的重用
+        src.ShouldContain("Builders<DocumentEntry>.Filter.Eq(EntryGenerationField, generation)",
+            customMessage: "删除没把代次写进过滤器：判完到删掉之间被重用，删的就是别人的条目");
+    }
+
+    /// <summary>
     /// 分享链复用要比「当初要的是多少天」，不能比算出来的到期时刻。
     ///
     /// ExpiresAt = 当时那一刻 + 天数：同一个请求重试一次，算出来的值必然不同，于是拿绝对
@@ -145,6 +179,33 @@ public class McpRollbackInvariantTests
         // 续期审计也得跟着「有没有真的改」走，否则每次重试都往 RenewalHistory 里追一条
         src.ShouldNotContain("if (oldExpiresAtForAudit != newExpiresAt || ups.Count > 0)",
             customMessage: "审计条件还挂在绝对时刻上，那个数组会被无限撑大");
+    }
+
+    /// <summary>
+    /// 有效期的意图字段，凡是改到期时刻的地方都得一起维护。
+    ///
+    /// 它是「当初要的是多少天」的唯一记录，而复用那条路正是拿它判「这次和上次是不是同一件事」。
+    /// 别处改了到期时刻却不同步它，它就变成一份**过期的说法**：一条建成 7 天、后来被面板改成
+    /// 30 天的链接仍然记着 7，此后「我要 7 天」会被判成没变，于是返回去重成功、链接却还是 30 天。
+    /// 加一个字段就是加一个要维护的地方 —— 逐个写点枚举，新增第五处自动进闸。
+    /// </summary>
+    [Fact]
+    public void 改有效期的每一处都要同步意图字段()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs"));
+        const string setExpiry = "Set(x => x.ExpiresAt";
+        var sites = 0;
+        for (var i = src.IndexOf(setExpiry, StringComparison.Ordinal); i >= 0;
+             i = src.IndexOf(setExpiry, i + 1, StringComparison.Ordinal))
+        {
+            sites++;
+            // 同一段里必须也写意图字段（前后各取一段，Set 的顺序两种写法都有）
+            var window = src[Math.Max(0, i - 400)..Math.Min(src.Length, i + 700)];
+            window.ShouldContain("ExpiresInDays",
+                customMessage: $"第 {sites} 处改了到期时刻却没同步意图字段：复用判据会拿一份过期的说法去比");
+        }
+        sites.ShouldBe(4, "改到期时刻的地方数量变了 —— 新增那处也要同步意图字段，确认后再改这个数");
     }
 
     /// <summary>

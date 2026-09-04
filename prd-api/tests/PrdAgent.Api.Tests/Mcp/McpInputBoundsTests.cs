@@ -255,6 +255,28 @@ public class McpInputBoundsTests
     }
 
     /// <summary>
+    /// 显式给了范围外的张数要报错，不能默默改成 4。
+    ///
+    /// 与分享链有效期同一个道理：「没说」走默认，「说了但说错了」要说出来。而这条更实在 ——
+    /// 调用方拿到的图数和它要的不一样，**而且是要花钱的那种不一样**。
+    /// clamp 留着不动：闸门要在入队前算出占几个坑，那个数必须和控制器用的一致。
+    /// </summary>
+    [Fact]
+    public void 显式给范围外的张数要报错()
+    {
+        VisualOpenApiController.ValidateImageCount(new VisualOpenApiController.GenerateImageRequest { Count = 8 })
+            .ShouldNotBeNull("要 8 张却只出 4 张、还按 4 张扣钱，调用方无从知道");
+        VisualOpenApiController.ValidateImageCount(new VisualOpenApiController.GenerateImageRequest { Count = 0 })
+            .ShouldNotBeNull();
+        // 省略仍然走默认，不报错
+        VisualOpenApiController.ValidateImageCount(new VisualOpenApiController.GenerateImageRequest()).ShouldBeNull();
+        VisualOpenApiController.ValidateImageCount(null).ShouldBeNull();
+        // 区间内照常放行
+        VisualOpenApiController.ValidateImageCount(new VisualOpenApiController.GenerateImageRequest { Count = 4 })
+            .ShouldBeNull();
+    }
+
+    /// <summary>
     /// 审计行里每一个调用方给的文本都得先截 —— **每一个建这行的地方**。
     ///
     /// 工具名那条至少还要有人主动去刷；密钥名更狠：建一把名字几 MB 的密钥，此后**每一笔调用**

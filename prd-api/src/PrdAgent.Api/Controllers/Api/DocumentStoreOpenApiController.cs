@@ -349,6 +349,9 @@ public class DocumentStoreOpenApiController : ControllerBase
 
         // 一次取值、三处共用：三个字段各调一次会拿到三个略微不同的时刻，读起来像是三件事。
         var stamp = BsonNow();
+        // 这一次插入的代次（见 EntryGenerationKey）：确定性 id 会被重用，所以后面每一处
+        // 要动这条条目的地方，判据都是「它是不是我插的那一条」，而不是「这个 id 存不存在」。
+        var generation = Guid.NewGuid().ToString("N");
         var entry = new DocumentEntry
         {
             StoreId = storeId,
@@ -358,7 +361,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             SourceType = DocumentSourceType.Upload,
             ContentType = "text/markdown",
             Tags = req.Tags ?? new List<string>(),
-            Metadata = BuildEntryMetadata(idempotencyKey, contentPending: content.Length > 0),
+            Metadata = BuildEntryMetadata(idempotencyKey, contentPending: content.Length > 0, generation),
             CreatedBy = userId,
             CreatedByName = displayName,
             UpdatedBy = userId,
@@ -427,7 +430,8 @@ public class DocumentStoreOpenApiController : ControllerBase
                     // 修一个竞态修出了一个更坏的：数据是真没了。
                     var still = await _db.DocumentEntries
                         .Find(e => e.Id == entry.Id).FirstOrDefaultAsync(CancellationToken.None);
-                    if (still == null) throw new EntryVanishedException(entry.Id);
+                    // 同上：不是我插的那一条，就当我的那条已经没了 —— 绝不去动别人的。
+                    if (!IsMyGeneration(still, generation)) throw new EntryVanishedException(entry.Id);
 
                     // 条目还在，只是被人改过。绝不删：那是用户的内容。
                     // 只摘掉「正文还没落盘」这个标记，否则同键重试会永远撞 409。
@@ -480,9 +484,12 @@ public class DocumentStoreOpenApiController : ControllerBase
                     // 上一版这里只是「没有标记可摘」就往下走，最后照样回成功 —— 调用方被告知
                     // 文档建好了、额度也照扣，而那条根本不在了。收尾没做成就不能报成功：
                     // 交给下面那条既有的「条目没了」出口去收尾（清派生 + 409）。
-                    if (latest == null) throw new EntryVanishedException(entry.Id);
+                    // 回读不到、或者读到的**不是我插的那一条**，都算「我的那条没了」。
+                    // 后者是确定性 id 被重用：原来那条被删掉、同键重试插了一条新的，
+                    // 只按 id + 时间戳摘标记的话，摘掉的是**新那次**的标记，而这一次还照样回成功。
+                    if (!IsMyGeneration(latest, generation)) throw new EntryVanishedException(entry.Id);
                     await _db.DocumentEntries.UpdateOneAsync(
-                        e => e.Id == entry.Id && e.UpdatedAt == latest.UpdatedAt,
+                        e => e.Id == entry.Id && e.UpdatedAt == latest!.UpdatedAt,
                         Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
                         cancellationToken: CancellationToken.None);
                     summaryApplied = explicitSummary == null;
@@ -493,7 +500,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         {
             // 条目在正文落盘期间被删掉了。撤回收尾照走（派生可能已经写了几行），
             // 但计数不退：删除那条路径自己已经扣过一次。
-            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt, content);
+            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt, content, generation);
             return Conflict(ApiResponse<object>.Fail("ENTRY_DELETED", RollbackMessage(
                 "这篇文档在正文落盘期间被删除了，内容没有写进去", "请用一个新的 clientRequestId 重新建。", outcome)));
         }
@@ -501,7 +508,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         {
             // 库没了，这条也不该留。回滚与下面那段同一套，只是给调用方的说法不同：
             // 让它「用同一个键重试」是错的指引 —— 库已经不在，重试只会一路 404。
-            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt, content);
+            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt, content, generation);
             return Conflict(ApiResponse<object>.Fail("STORE_DELETED", RollbackMessage(
                 "这个知识库在写入过程中被删除了，文档没有建成", "请换一个库再写。", outcome)));
         }
@@ -510,7 +517,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             // 没走完就把条目撤回去。留着的话，条目上已经带着幂等键了 ——
             // 智能体拿同一个 clientRequestId 重试要么命中去重拿到一篇空文档，
             // 要么永远撞上「还在落正文」的 409。一次存储抖动就此变成永久的残缺数据。
-            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt, content);
+            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt, content, generation);
             // 只有「这次真的是我删的」才退计数：条目早已被别人删掉时，扣减也早已由那条路径做过。
             if (ShouldRestoreDocumentCount(countedIn, outcome))
                 await _db.DocumentStores.UpdateOneAsync(
@@ -724,7 +731,7 @@ public class DocumentStoreOpenApiController : ControllerBase
     /// </summary>
     /// <returns>见 <see cref="RollbackOutcome"/>。</returns>
     private async Task<RollbackOutcome> CleanupRolledBackEntryAsync(
-        string entryId, DateTime placeholderUpdatedAt, string requestedContent)
+        string entryId, DateTime placeholderUpdatedAt, string requestedContent, string generation)
     {
         // **先确认这条还是那条原封不动的占位**，再谈撤回。
         //
@@ -744,7 +751,9 @@ public class DocumentStoreOpenApiController : ControllerBase
         // 插一条新的并开始写它自己的版本与双链。这时候再按同一个 entryId 清一遍派生，
         // 清掉的是**新那次**的东西，而那次还会照常报成功 —— 用户拿到一篇没有历史的文档。
         // 原来那条的派生不用我操心：把它删掉的那条路径自己做过级联。
-        if (current == null) return RollbackOutcome.AlreadyGone;
+        // 「不是我插的那一条」和「已经不在了」等价：确定性 id 被同键重试重用之后，
+        // 这个 id 上坐着的是**别人的**条目 —— 一个字都不许动，更不能按它的样子去清派生。
+        if (!IsMyGeneration(current, generation)) return RollbackOutcome.AlreadyGone;
         if (current.UpdatedAt != placeholderUpdatedAt)
         {
             // 「变了」有两种，后果完全相反，不能合成一件事：
@@ -790,8 +799,15 @@ public class DocumentStoreOpenApiController : ControllerBase
         // 这里再报一次「是我删的」，回滚就会第二次扣同一篇，计数能被扣成负数。
         // 删除本身也带上同一个条件：回读与删除之间还有一段窗口，正文正好在那儿提交成功的话，
         // 无条件删等于把刚落库的正文删掉 —— 判据和写入必须是同一条原子操作。
+        // 代次也进过滤器，不只在上面判一次：回读与删除之间那一瞬，这条完全可能被删掉、
+        // 又被同键重试插进一条新的 —— 只按 id + 时间戳删，删掉的会是**别人的**条目。
+        // 判据与写入是同一条原子操作，这是唯一说得清的做法。
         var deleted = await _db.DocumentEntries.DeleteOneAsync(
-            e => e.Id == entryId && e.UpdatedAt == placeholderUpdatedAt, CancellationToken.None);
+            Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.Eq(e => e.Id, entryId),
+                Builders<DocumentEntry>.Filter.Eq(e => e.UpdatedAt, placeholderUpdatedAt),
+                Builders<DocumentEntry>.Filter.Eq(EntryGenerationField, generation)),
+            CancellationToken.None);
         if (deleted.DeletedCount == 1) return RollbackOutcome.Removed;
         // 没删掉：要么它早就不在了（用户删的，那条路径已经扣过计数），要么它在这一瞬变了。
         // 后一种情况下派生记录已经被上面清掉了 —— 条目本身保住了，版本与双链可能缺一段。
@@ -799,7 +815,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         var after = await _db.DocumentEntries
             .Find(e => e.Id == entryId)
             .FirstOrDefaultAsync(CancellationToken.None);
-        if (after == null) return RollbackOutcome.AlreadyGone;
+        if (!IsMyGeneration(after, generation)) return RollbackOutcome.AlreadyGone;
         return await HoldsRequestedContentAsync(after, requestedContent)
             ? RollbackOutcome.KeptCommitted
             : RollbackOutcome.ChangedByOthers;
@@ -839,9 +855,26 @@ public class DocumentStoreOpenApiController : ControllerBase
     /// <summary>条目「正文还没落盘」的标记字段（Mongo 路径写法，供 Unset 用）。</summary>
     private const string EntryContentPendingField = "Metadata.mcpContentPending";
 
-    private static Dictionary<string, string> BuildEntryMetadata(string? idempotencyKey, bool contentPending)
+    /// <summary>
+    /// 这一次插入的**代次**。同一个幂等键推出来的确定性 id 是会被重用的（删掉之后重试可以
+    /// 用同一个 id 插一条新的），所以「这条还是不是我插的那条」不能靠 id 判，也不能靠时间戳判
+    /// —— 时间戳只说「有没有被动过」，而重试插的新条目跟我的旧条目在这两件事上长得一模一样。
+    /// 每次插入盖一个随机代次，之后每一处要动这条条目的地方都先核对它。
+    /// </summary>
+    private const string EntryGenerationKey = "mcpGeneration";
+
+    /// <summary>代次字段的 Mongo 路径写法（供过滤器用）。</summary>
+    private const string EntryGenerationField = "Metadata.mcpGeneration";
+
+    /// <summary>这条条目是不是我这一次插进去的那条。核不上就一个字都不许动。</summary>
+    private static bool IsMyGeneration(DocumentEntry? entry, string generation)
+        => entry?.Metadata != null
+           && entry.Metadata.TryGetValue(EntryGenerationKey, out var g)
+           && string.Equals(g, generation, StringComparison.Ordinal);
+
+    private static Dictionary<string, string> BuildEntryMetadata(string? idempotencyKey, bool contentPending, string generation)
     {
-        var meta = new Dictionary<string, string> { ["createdVia"] = "mcp" };
+        var meta = new Dictionary<string, string> { ["createdVia"] = "mcp", [EntryGenerationKey] = generation };
         if (idempotencyKey != null) meta["mcpRequestId"] = idempotencyKey;
         // 先落条目、再写正文，中间有个窗口。带同一个幂等键的重试如果正好落在这个窗口里，
         // 看到的是一条「已存在但还是空的」条目 —— 报成功等于交给它一篇空文档，

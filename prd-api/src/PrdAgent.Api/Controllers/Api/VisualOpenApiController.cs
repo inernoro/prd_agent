@@ -134,6 +134,19 @@ public class VisualOpenApiController : ControllerBase
     /// </summary>
     internal static int ResolveImageCount(GenerateImageRequest? req) => Math.Clamp(req?.Count ?? 1, 1, MaxImagesPerCall);
 
+    /// <summary>
+    /// 显式给了范围外的张数就报错 —— 省略仍然按 1 张。
+    ///
+    /// clamp 留着（闸门要在真正入队之前算出要占几个坑，那个数必须和控制器用的一致），
+    /// 但**悄悄把 8 改成 4** 是另一回事：调用方拿到的图数和它要的不一样，而且是要花钱的那种不一样。
+    /// 与分享链有效期同一个道理：「没说」和「说了但说错了」是两件事，schema 里写着 1-4
+    /// 只是描述，网关不拿 schema 校验参数。
+    /// </summary>
+    internal static string? ValidateImageCount(GenerateImageRequest? req)
+        => req?.Count is { } c && (c < 1 || c > MaxImagesPerCall)
+            ? $"count 需要在 1-{MaxImagesPerCall} 之间，收到 {c}。想用默认的 1 张就别传这个字段。"
+            : null;
+
     /// <summary>入队一次生图。返回 runId，用 runs/{runId} 查结果。</summary>
     [HttpPost("images")]
     [RequireScope(ScopeUse)]
@@ -146,6 +159,9 @@ public class VisualOpenApiController : ControllerBase
         if (prompt.Length > 4000)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "prompt 超过 4000 字，请精简"));
 
+        var countError = ValidateImageCount(req);
+        if (countError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, countError));
         var count = ResolveImageCount(req);
         // req 上面已经按可空处理（req?.Prompt），这里保持同一口径：body 缺失时走默认尺寸。
         var size = string.IsNullOrWhiteSpace(req?.Size) ? "1024x1024" : req.Size!.Trim();
