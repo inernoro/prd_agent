@@ -40,8 +40,14 @@ export default function VisualAgentFullscreenPage() {
       {/* GlobalDefectSubmitDialog - 全局缺陷提交对话框 */}
       <GlobalDefectSubmitDialog />
 
-      {/* 返回按钮 - 固定在左上角 */}
-      {!hideFloatingChrome && (
+      {/* 返回按钮 - 固定在左上角。**只有编辑器渲染它**。
+          列表页自己的页头里已经有一颗返回钮了，而这颗是 fixed + z-50，正好压在它上面：
+          屏幕上看着只有一颗，实际是旧的圆形 chrome 盖住了新页头里那颗，
+          点到的也一直是旧的（Codex PR #1476 P2）。
+          这跟下面教程 pill 的处理是同一条理由——列表页自带入口，这里就不要再出一份。
+          注意它不是「隐藏一颗」那么简单：两颗的返回语义原来还不一样，旧的走 useSmartBack、
+          新的是裸 navigate(-1)，所以留下的那颗必须补上兜底，见列表页那一处。 */}
+      {isEditor && !hideFloatingChrome && (
       <button
         type="button"
         onClick={onBack}

@@ -613,25 +613,31 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, activ
                   * 两者正好叠在一起——「返回」压着「已选择 N 项」。步骤 02 是靠网格
                   * 的 pb-14 给它让位的，这一屏没有任何东西让位。
                   */}
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] pt-4">
-                  <div className="flex items-center gap-3">
+                {/*
+                  * shrink-0：底栏是这一屏唯一的前进出口，绝不允许被上面的卡片区压缩。
+                  * 窄屏排成两行——次要动作一行、主操作独占一行满宽。挤在一行时
+                  * 「已选择 6 项」会折成两行、次要的「打开技能库」反而比主操作还大，
+                  * 主次颠倒（真机 390px 量出来的）。
+                  */}
+                <div className="mt-4 flex shrink-0 flex-col gap-3 border-t border-[hsl(var(--hairline))] pt-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2 sm:gap-3">
                     <button
                       type="button"
                       onClick={() => advance(1)}
-                      className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
+                      className="inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
                     >
                       <ArrowLeft className="h-4 w-4" /> 返回
                     </button>
-                    <span className="text-sm font-medium text-muted-foreground">已选择 {selectedSkills.length} 项</span>
+                    <span className="whitespace-nowrap text-sm font-medium text-muted-foreground">已选择 {selectedSkills.length} 项</span>
                     <button
                       type="button"
                       onClick={openSkillLibrary}
-                      className="rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm font-bold text-foreground hover:border-[hsl(var(--hairline-strong))]"
+                      className="shrink-0 whitespace-nowrap rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm font-bold text-foreground hover:border-[hsl(var(--hairline-strong))]"
                     >
-                      打开技能库（共 {availableSkills.length} 项）
+                      打开技能库<span className="hidden sm:inline">（共 {availableSkills.length} 项）</span><span className="sm:hidden">（{availableSkills.length}）</span>
                     </button>
                   </div>
-                  <PrimaryNext onClick={() => advance(3)}>确认这些技能</PrimaryNext>
+                  <PrimaryNext onClick={() => advance(3)} className="w-full sm:w-auto">确认这些技能</PrimaryNext>
                 </div>
               </>
             )}
@@ -660,8 +666,8 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, activ
                     </div>
                   </button>
                 </div>
-                <div className="mt-4 flex justify-end border-t border-[hsl(var(--hairline))] pt-4">
-                  <PrimaryNext onClick={() => { advance(4); syncAgentProfile(projectId) }}>生成我的上手包</PrimaryNext>
+                <div className="mt-4 flex shrink-0 justify-end border-t border-[hsl(var(--hairline))] pt-4">
+                  <PrimaryNext onClick={() => { advance(4); syncAgentProfile(projectId) }} className="w-full sm:w-auto">生成我的上手包</PrimaryNext>
                 </div>
               </>
             )}
@@ -1335,9 +1341,9 @@ function ChoiceCard({ selected, title, eyebrow, description, chips, icon, compac
   )
 }
 
-function PrimaryNext({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+function PrimaryNext({ children, onClick, className = '' }: { children: React.ReactNode; onClick: () => void; className?: string }) {
   return (
-    <button type="button" onClick={onClick} className="inline-flex items-center gap-2 rounded-xl bg-foreground px-5 py-3 text-sm font-bold text-background shadow-lg transition-transform hover:-translate-y-0.5 hover:opacity-90">
+    <button type="button" onClick={onClick} className={`inline-flex items-center justify-center gap-2 rounded-xl bg-foreground px-5 py-3 text-sm font-bold text-background shadow-lg transition-transform hover:-translate-y-0.5 hover:opacity-90 ${className}`}>
       {children} <ArrowRight className="h-4 w-4" />
     </button>
   )

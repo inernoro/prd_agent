@@ -42,6 +42,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useAuthStore } from '@/stores/authStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useSmartBack } from '@/hooks/useSmartBack';
 import { createPortal } from 'react-dom';
 import { buildVisualAgentModelOptions, type VisualAgentModelOption } from '@/pages/ai-chat/visualAgentModelOptions';
 import { normalizeSizesByResolution, reconcileSize, type SizesByResolution } from '@/lib/visualModelSizes';
@@ -1217,6 +1218,16 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const _fullscreenMode = props.fullscreenMode;
   void _fullscreenMode; // 避免 TS6133 警告
   const navigate = useNavigate();
+  /**
+   * 返回：有站内上一条就弹栈，没有就兜底回首页。
+   *
+   * 原来这里是裸 navigate(-1)。它在「新标签页直达 / 刷新后 / 登录跳转后」没有站内
+   * 上一条，按下去要么原地不动，要么退到登录页甚至外站——useSmartBack 的注释里
+   * 写的正是这个坑。之前没暴露出来，是因为外层还有一颗走 useSmartBack 的浮动返回钮
+   * 压在它上面，用户点到的一直是那颗；现在那颗只留给编辑器了，兜底得由这颗自己带
+   *（Codex PR #1476 P2）。
+   */
+  const onHeaderBack = useSmartBack('/');
   const userId = useAuthStore((s) => s.user?.userId ?? '');
 
   // 统一使用 /visual-agent 路径（现在所有模式都是全屏）
@@ -1835,7 +1846,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           <button
             type="button"
             aria-label="返回"
-            onClick={() => navigate(-1)}
+            onClick={onHeaderBack}
             className="grid place-items-center hover-bg-soft"
             style={{ width: 30, height: 30, borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
           >

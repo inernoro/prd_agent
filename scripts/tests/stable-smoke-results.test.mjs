@@ -53,6 +53,21 @@ test('同一条真实旅程可为多个相关 caseId 提供共同证据', () => 
   );
 });
 
+test('网页托管用例会进入执行证据而不是被静默丢弃', () => {
+  const report = {
+    suites: [{
+      specs: [{
+        title: '[WEB-004][WEB-005] 分享锚点与正文问答',
+        tests: [{ results: [{ status: 'passed', duration: 30 }] }],
+      }],
+    }],
+  };
+  assert.deepEqual(
+    collectPlaywrightCases(report, 'cds').map((row) => row.caseId),
+    ['WEB-004', 'WEB-005'],
+  );
+});
+
 test('带模块名称的永久回归 caseId 能从组合旅程提取', () => {
   const report = {
     suites: [{
