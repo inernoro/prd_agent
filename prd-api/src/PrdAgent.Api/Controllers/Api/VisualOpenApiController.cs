@@ -31,6 +31,10 @@ public class VisualOpenApiController : ControllerBase
 {
     public const string ScopeUse = McpCapabilityCatalog.ScopeVisualUse;
 
+    /// <summary>size 的形状：两个 2-5 位数字，中间一个 x。有限形状用正则钉死，不当自由文本存。</summary>
+    private static readonly System.Text.RegularExpressions.Regex SizePattern =
+        new(@"^\d{2,5}x\d{2,5}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     /// <summary>一次最多几张。比人工界面的 20 张收得更紧：智能体重试成本低，别让它一口气烧掉整天额度。</summary>
     private const int MaxImagesPerCall = 4;
 
@@ -145,6 +149,12 @@ public class VisualOpenApiController : ControllerBase
         var count = ResolveImageCount(req);
         // req 上面已经按可空处理（req?.Prompt），这里保持同一口径：body 缺失时走默认尺寸。
         var size = string.IsNullOrWhiteSpace(req?.Size) ? "1024x1024" : req.Size!.Trim();
+        // size 是有限形状，不是自由文本：它会原样落进 ImageGenRun.Size 并被送去上游。
+        // 不校验的话，这里就是又一处「调用方给什么就存什么」——上游只会回一个看不懂的错，
+        // 而智能体拿不到「你把尺寸写错了」这个能照着改的说法。
+        if (!SizePattern.IsMatch(size))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"size 只能是「宽x高」这种形状（如 1024x1024 / 1024x1536），收到的是「{size}」"));
 
         // 模型：与 ImageGenController 同一个判据 —— 视觉创作只跑策略允许的那个模型
         var policy = await _visualModels.ReadAsync(ct);

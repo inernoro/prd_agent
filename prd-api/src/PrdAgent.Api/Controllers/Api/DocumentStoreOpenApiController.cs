@@ -255,6 +255,10 @@ public class DocumentStoreOpenApiController : ControllerBase
         if (string.IsNullOrWhiteSpace(req?.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "知识库名称不能为空"));
 
+        var metaError = ValidateStoreMetadata(req);
+        if (metaError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, metaError));
+
         // 幂等走确定性 id，不走「先查后建」：后者在两次重试叠在一起时两边都查不到，各建一个库。
         // 撞主键就是命中，把既有的那个回去。
         var deterministicId = DeterministicId("kb-store", BuildIdempotencyKey(req.ClientRequestId));
@@ -303,6 +307,9 @@ public class DocumentStoreOpenApiController : ControllerBase
         if (error != null) return error;
         if (string.IsNullOrWhiteSpace(req?.Title))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档标题不能为空"));
+        var entryMetaError = ValidateEntryMetadata(req);
+        if (entryMetaError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, entryMetaError));
 
         var content = req.Content ?? string.Empty;
         if (content.Length > MaxContentChars)
@@ -376,10 +383,15 @@ public class DocumentStoreOpenApiController : ControllerBase
         var countedIn = false;
         try
         {
-            await _db.DocumentStores.UpdateOneAsync(
+            var counted = await _db.DocumentStores.UpdateOneAsync(
                 s => s.Id == storeId,
                 Builders<DocumentStore>.Update.Inc(s => s.DocumentCount, 1).Set(s => s.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
+            // 必须看 MatchedCount：库是在 LoadWritableStoreAsync 之后、这一步之前被主人删掉的话，
+            // 这次递增一行也没命中，而代码原来照样往下走 —— 结果是给调用方回「建好了」，
+            // 而那篇文档挂在一个已经不存在的库上（DeleteStore 早就把它的条目删过一轮了），
+            // 正文非空时还会顺带写出一批指向它的孤儿正文与版本。
+            if (counted.MatchedCount == 0) throw new StoreVanishedException(storeId);
             countedIn = true;
 
             if (content.Length > 0)
@@ -404,6 +416,14 @@ public class DocumentStoreOpenApiController : ControllerBase
                     finish,
                     cancellationToken: CancellationToken.None);
             }
+        }
+        catch (StoreVanishedException)
+        {
+            // 库没了，这条也不该留。回滚与下面那段同一套，只是给调用方的说法不同：
+            // 让它「用同一个键重试」是错的指引 —— 库已经不在，重试只会一路 404。
+            await CleanupRolledBackEntryAsync(entry.Id);
+            return Conflict(ApiResponse<object>.Fail("STORE_DELETED",
+                "这个知识库在写入过程中被删除了，文档没有建成，也已经撤回。请换一个库再写。"));
         }
         catch (Exception ex)
         {
@@ -550,6 +570,10 @@ public class DocumentStoreOpenApiController : ControllerBase
         return deleted.DeletedCount == 1 ? RollbackOutcome.Removed : RollbackOutcome.AlreadyGone;
     }
 
+    /// <summary>库在写入过程中被主人删掉了。单独一个类型，是为了让它走自己的收尾与说法。</summary>
+    private sealed class StoreVanishedException(string storeId)
+        : InvalidOperationException($"知识库在写入过程中被删除（storeId={storeId}）");
+
     /// <summary>撤回一条没建成的条目之后，这条条目现在是什么状态。</summary>
     internal enum RollbackOutcome
     {
@@ -583,6 +607,20 @@ public class DocumentStoreOpenApiController : ControllerBase
                 "同一个 clientRequestId 的上一次写入还在落正文，这次没有重复写。稍等一两秒用同一个键再试一次即可。"));
         return Ok(ApiResponse<object>.Ok(new { entryId = existed.Id, title = existed.Title, deduplicated = true }));
     }
+
+    /// <summary>建库元数据的上限。与网页托管走同一个判定源 —— 「调用方给的无界文本原样落库」
+    /// 这个形状在本轮 Review 里反复复发，判据必须只有一处。</summary>
+    internal static string? ValidateStoreMetadata(CreateStoreRequest req)
+        => McpInputBounds.Text(req.Name, McpInputBounds.TitleBytes, "name")
+           ?? McpInputBounds.Text(req.Description, McpInputBounds.DescriptionBytes, "description")
+           ?? McpInputBounds.Tags(req.Tags);
+
+    /// <summary>建条目元数据的上限。正文（content）不在这里 —— 它有自己更大的上限。</summary>
+    internal static string? ValidateEntryMetadata(CreateEntryRequest req)
+        => McpInputBounds.Text(req.Title, McpInputBounds.TitleBytes, "title")
+           ?? McpInputBounds.Text(req.Summary, McpInputBounds.DescriptionBytes, "summary")
+           ?? McpInputBounds.Text(req.ParentId, McpInputBounds.FolderBytes, "parentId")
+           ?? McpInputBounds.Tags(req.Tags);
 
     /// <summary>把幂等键压成确定性文档 id（32 位十六进制，与随机 id 同形）。没给幂等键就返回 null。</summary>
     internal static string? DeterministicId(string kind, string? idempotencyKey)
