@@ -47,7 +47,9 @@ function grantScript(engine: DbEngine, flags: string, targetDb: string, user: st
   if (!user) return '';
   if (!DB_USER_SAFE.test(user)) throw new Error(`应用数据库用户名含不安全字符，拒绝授权: ${user}`);
   if (engine === 'mysql') {
-    return ` mysql ${flags} -e "GRANT ALL PRIVILEGES ON \`${targetDb}\`.* TO '${user}'@'%'; FLUSH PRIVILEGES";`;
+    // 外层单引号：sh 里双引号内的反引号会被当成命令替换执行（2026-09-04 真实分支复验：
+    // 「app_consolidate_…: command not found」）。库名已过 DB_NAME_SAFE，不需要反引号；账号用双引号（mysql 接受）。
+    return ` mysql ${flags} -e 'GRANT ALL PRIVILEGES ON ${targetDb}.* TO "${user}"@"%"; FLUSH PRIVILEGES';`;
   }
   return ` psql ${flags} -d postgres -v ON_ERROR_STOP=1 -c 'GRANT ALL PRIVILEGES ON DATABASE "${targetDb}" TO "${user}"';` +
     ` psql ${flags} -d ${targetDb} -v ON_ERROR_STOP=1 -c 'GRANT ALL ON SCHEMA public TO "${user}"' -c 'GRANT ALL ON ALL TABLES IN SCHEMA public TO "${user}"' -c 'GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO "${user}"' -c 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "${user}"' -c 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "${user}"';`;

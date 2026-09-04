@@ -82,7 +82,9 @@ describe('克隆三元组：脚本只从来源库、目标库、实例取值', (
   it('带 grantTo：克隆完把目标库授权给应用用户（真实 mysql 分支复验的 ERROR 1044 根因）；用户名不安全拒绝', () => {
     const my = relationalCloneArgv(spec({ grantTo: 'shop_app' }));
     const myScript = my.argv[my.argv.length - 1];
-    expect(myScript).toContain("GRANT ALL PRIVILEGES ON `shop_feat_x`.* TO 'shop_app'@'%'");
+    // sh 单引号包住整条 -e：双引号里的反引号会被 sh 当命令替换（真实分支复验踩过）
+    expect(myScript).toContain(`-e 'GRANT ALL PRIVILEGES ON shop_feat_x.* TO "shop_app"@"%"; FLUSH PRIVILEGES'`);
+    expect(myScript).not.toMatch(/"[^"]*\`shop_feat_x\`[^"]*"/);
     expect(myScript.indexOf('GRANT')).toBeGreaterThan(myScript.indexOf('< /tmp/rsclone.sql'));
     const pg = relationalCloneArgv(spec({ engine: 'postgres', infra: pgInfra, grantTo: 'shop_app' }));
     const pgScript = pg.argv[pg.argv.length - 1];
