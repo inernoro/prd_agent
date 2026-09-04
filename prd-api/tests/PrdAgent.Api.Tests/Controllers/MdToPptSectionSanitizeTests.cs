@@ -203,6 +203,7 @@ public class MdToPptSectionSanitizeTests
         Assert.Equal(string.Empty, profile.Model);
         Assert.True(profile.IsDefault);
         Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
+        Assert.Equal("自动选择", MdToPptController.GenerationModelLabel(profile));
     }
 
     [Fact]

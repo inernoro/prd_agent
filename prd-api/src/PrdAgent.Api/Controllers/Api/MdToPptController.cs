@@ -2170,6 +2170,9 @@ public class MdToPptController : ControllerBase
     private static string GenerationPlatformLabel(InfraAgentRuntimeProfile profile)
         => ShouldUseGatewayDirect(profile) ? "LLM Gateway" : "CDS Agent";
 
+    internal static string GenerationModelLabel(InfraAgentRuntimeProfile profile)
+        => string.IsNullOrWhiteSpace(profile.Model) ? "自动选择" : profile.Model.Trim();
+
     internal static GatewayRequest BuildGatewayPageRequest(
         InfraAgentRuntimeProfile profile,
         string systemPrompt,
@@ -2435,7 +2438,7 @@ public class MdToPptController : ControllerBase
             await EmitAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
             return;
         }
-        await EmitAsync("model", new { model = profile.Model, platform });
+        await EmitAsync("model", new { model = GenerationModelLabel(profile), platform });
 
         var deckTitle = pages[0].Title is { Length: > 0 } t ? t : (req.Summary ?? "PPT 演示");
         // 锚定 deck 模式（2026-06-12）：人工精调成品模板做壳子与版式范本；
@@ -2603,7 +2606,7 @@ public class MdToPptController : ControllerBase
             var totalMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
             var fallbackCount = fallbackFlags.Count(b => b);
             _logger.LogInformation("[MdToPpt-Pages] DONE userId={UserId} totalMs={Ms} htmlLen={Len} degraded={Degraded}/{Total}", userId, totalMs, html.Length, fallbackCount, total);
-            await PersistRunDoneAsync(run, html, profile.Model, platform, fallbackCount, total);
+            await PersistRunDoneAsync(run, html, GenerationModelLabel(profile), platform, fallbackCount, total);
             await EmitAsync("done", new { html, degraded = fallbackCount, total });
         }
         catch (Exception ex)
@@ -2643,7 +2646,7 @@ public class MdToPptController : ControllerBase
         if (!ShouldUseGatewayDirect(profile) && connection == null) return false; // 回落整篇路径（它有自己的错误提示）
 
         var platform = GenerationPlatformLabel(profile);
-        await WriteEventAsync("model", new { model = profile.Model, platform });
+        await WriteEventAsync("model", new { model = GenerationModelLabel(profile), platform });
         await WriteDiagAsync(new
         {
             stage = "page_patch_start",
@@ -2706,7 +2709,7 @@ public class MdToPptController : ControllerBase
             }
 
             var newHtml = html[..blocks[idx].Start] + section + html[(blocks[idx].Start + blocks[idx].Length)..];
-            await PersistRunDoneAsync(run, newHtml, profile.Model, platform);
+            await PersistRunDoneAsync(run, newHtml, GenerationModelLabel(profile), platform);
             await WriteEventAsync("page", new { index = idx, total = blocks.Count, html = section, done = 1 });
             await WriteEventAsync("done", new { html = newHtml });
             _logger.LogInformation("[MdToPpt-PagePatch] DONE userId={UserId} page={Page} newLen={Len}", userId, oneBasedIndex, newHtml.Length);
@@ -2757,7 +2760,7 @@ public class MdToPptController : ControllerBase
             title,
             includeThinking: true);
         var fullText = new StringBuilder();
-        var model = string.IsNullOrWhiteSpace(profile.Model) ? "自动选择" : profile.Model.Trim();
+        var model = GenerationModelLabel(profile);
 
         await WriteEventAsync("model", new { model, platform = "LLM Gateway" });
         await WriteDiagAsync(new { stage = "gateway_direct", route = "gateway-direct", runId = run.Id });
