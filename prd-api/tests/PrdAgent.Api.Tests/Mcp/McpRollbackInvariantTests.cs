@@ -2,6 +2,7 @@ using System;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services;
 using Shouldly;
 using Xunit;
 
@@ -155,57 +156,59 @@ public class McpRollbackInvariantTests
         // 删除那一下最狠，代次必须进过滤器本身 —— 只在上面判一次挡不住那一瞬的重用
         src.ShouldContain("Builders<DocumentEntry>.Filter.Eq(EntryGenerationField, generation)",
             customMessage: "删除没把代次写进过滤器：判完到删掉之间被重用，删的就是别人的条目");
+
+        // 正文那条**原子写**同理，而且它最要紧：时间戳只回答「有没有被动过」，
+        // 同一毫秒内被删掉再重建的两条在 Id + UpdatedAt 上一模一样，
+        // 正文会落进别人那一代里，还接着参与它的收尾。
+        var write = McpSourceGuard.Slice(src, "_entryContentWriter.WriteAsync(", ");");
+        write.ShouldContain("extraGuard",
+            customMessage: "建条目那次正文写入没带代次条件，只有它前后的回读带了 —— 链路只建了一半");
     }
 
     /// <summary>
-    /// 分享链复用要比「当初要的是多少天」，不能比算出来的到期时刻。
+    /// 复用分享链时，「有效期算不算变了」问的是：这是同一次请求的重试，还是又一次新请求。
     ///
-    /// ExpiresAt = 当时那一刻 + 天数：同一个请求重试一次，算出来的值必然不同，于是拿绝对
-    /// 时刻比大小**永远**得出「变了」——幂等重试每次都刷有效期、追一条续期审计，
-    /// 并且把「这次没产生副作用」这个信号彻底废掉。网关正是据它退额度的，
-    /// 结果就是同一个键能无限次续期、无限撑大那条审计数组，还每次都扣额度。
+    /// 两种错法都被 review 抓到过：拿绝对时刻直接判等 —— 重试也差几毫秒，于是**永远**说
+    /// 「变了」，幂等命中这个信号（网关据它退额度）彻底作废；反过来只比「要的天数」——
+    /// 六天前建的 7 天链接遇上今天的「我要 7 天」，天数一样却被判成没变，调用方以为拿到
+    /// 七天、实际那条明天就过期。
     ///
-    /// 与占位时间戳那条同源：**拿一个每次都不同的派生值去判「是不是同一件事」**。
+    /// 没有请求键的时候，能分开这两件事的只有时间距离。真正的解法见 doc/debt.platform.md 边界 7。
     /// </summary>
     [Fact]
-    public void 分享链复用比的是要的天数_不是算出来的时刻()
+    public void 分享链复用_秒级重试不算变_隔天再来才算()
+    {
+        var now = new DateTime(2026, 9, 4, 12, 0, 0, DateTimeKind.Utc);
+
+        // 秒级重试：同一次请求又算了一遍，差几秒 —— 不算变，这才有幂等命中可言
+        HostedSiteService.ExpiryMeaningfullyChanged(now.AddDays(7), now.AddDays(7).AddSeconds(3))
+            .ShouldBeFalse("重试也差几毫秒到几秒，把它算成改动，幂等命中就永远不会发生");
+
+        // 六天前建的 7 天链接，今天再要 7 天：它明天就过期，必须刷
+        HostedSiteService.ExpiryMeaningfullyChanged(now.AddDays(1), now.AddDays(7))
+            .ShouldBeTrue("剩一天的链接遇上「我要七天」，天数一样也得刷，否则调用方拿到的寿命不是它要的");
+
+        // 换了个天数：真的变了
+        HostedSiteService.ExpiryMeaningfullyChanged(now.AddDays(7), now.AddDays(30)).ShouldBeTrue();
+
+        // 永久 ⇄ 有期限：两个方向都算变
+        HostedSiteService.ExpiryMeaningfullyChanged(null, now.AddDays(7)).ShouldBeTrue();
+        HostedSiteService.ExpiryMeaningfullyChanged(now.AddDays(7), null).ShouldBeTrue();
+        HostedSiteService.ExpiryMeaningfullyChanged(null, null).ShouldBeFalse("都是永久，没变");
+    }
+
+    /// <summary>判据只此一处：复用那条路不许自己再写一遍时刻比较。</summary>
+    [Fact]
+    public void 分享链复用只走那一个判据()
     {
         var src = McpSourceGuard.StripComments(
             McpSourceGuard.Read("prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs"));
+        src.ShouldContain("ExpiryMeaningfullyChanged(reuse.ExpiresAt, newExpiresAt)",
+            customMessage: "复用没走那个判定源");
         src.ShouldNotContain("if (reuse.ExpiresAt != newExpiresAt)",
-            customMessage: "又回到比绝对时刻了：幂等重试会每次都被判成真实改动");
-        src.ShouldContain("reuse.ExpiresInDays != requestedDays",
-            customMessage: "判「是不是同一件事」要比当初要的那个量");
-        // 续期审计也得跟着「有没有真的改」走，否则每次重试都往 RenewalHistory 里追一条
+            customMessage: "又回到直接判等了：重试会被当成真实改动，幂等命中永远不发生");
         src.ShouldNotContain("if (oldExpiresAtForAudit != newExpiresAt || ups.Count > 0)",
             customMessage: "审计条件还挂在绝对时刻上，那个数组会被无限撑大");
-    }
-
-    /// <summary>
-    /// 有效期的意图字段，凡是改到期时刻的地方都得一起维护。
-    ///
-    /// 它是「当初要的是多少天」的唯一记录，而复用那条路正是拿它判「这次和上次是不是同一件事」。
-    /// 别处改了到期时刻却不同步它，它就变成一份**过期的说法**：一条建成 7 天、后来被面板改成
-    /// 30 天的链接仍然记着 7，此后「我要 7 天」会被判成没变，于是返回去重成功、链接却还是 30 天。
-    /// 加一个字段就是加一个要维护的地方 —— 逐个写点枚举，新增第五处自动进闸。
-    /// </summary>
-    [Fact]
-    public void 改有效期的每一处都要同步意图字段()
-    {
-        var src = McpSourceGuard.StripComments(
-            McpSourceGuard.Read("prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs"));
-        const string setExpiry = "Set(x => x.ExpiresAt";
-        var sites = 0;
-        for (var i = src.IndexOf(setExpiry, StringComparison.Ordinal); i >= 0;
-             i = src.IndexOf(setExpiry, i + 1, StringComparison.Ordinal))
-        {
-            sites++;
-            // 同一段里必须也写意图字段（前后各取一段，Set 的顺序两种写法都有）
-            var window = src[Math.Max(0, i - 400)..Math.Min(src.Length, i + 700)];
-            window.ShouldContain("ExpiresInDays",
-                customMessage: $"第 {sites} 处改了到期时刻却没同步意图字段：复用判据会拿一份过期的说法去比");
-        }
-        sites.ShouldBe(4, "改到期时刻的地方数量变了 —— 新增那处也要同步意图字段，确认后再改这个数");
     }
 
     /// <summary>

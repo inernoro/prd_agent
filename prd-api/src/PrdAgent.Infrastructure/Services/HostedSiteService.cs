@@ -892,6 +892,23 @@ public class HostedSiteService : IHostedSiteService
     /// 把这些都报成「没有副作用」，等于让同一个键无限次续期、无限撑大那条审计数组而不扣额度。
     /// 所以只有 ups 为空（真的一个字段都没动）才算幂等命中。
     /// </summary>
+    /// <summary>
+    /// 复用一条分享链时，「有效期到底算不算变了」—— 唯一判定源。
+    ///
+    /// 这一步真正要回答的是：**这是同一次请求的重试，还是又一次新的请求？**
+    /// 绝对时刻直接判等答不了（重试也差几毫秒，于是永远说「变了」）；只比「要的天数」也答不了
+    /// （六天前建的 7 天链接遇上今天的「我要 7 天」，天数一样却明天就过期）。
+    /// 没有请求键时，能分开这两件事的只有**时间距离**：重试是秒级的，新请求不是。
+    ///
+    /// 容差取五分钟：这个系统里的重试都在秒级，而差到分钟以上的那次，把有效期刷成本次所选
+    /// 才是调用方要的。真正的解法是给这个工具一个 clientRequestId（doc/debt.platform.md 边界 7）。
+    /// </summary>
+    internal static bool ExpiryMeaningfullyChanged(DateTime? current, DateTime? requested)
+    {
+        if (current is null || requested is null) return current != requested; // 永久 ⇄ 有期限，是真的变了
+        return (requested.Value - current.Value).Duration() > TimeSpan.FromMinutes(5);
+    }
+
     public async Task<(WebPageShareLink Link, bool ReusedWithoutChange)> CreateShareWithReuseInfoAsync(
         string userId, string displayName,
         string? siteId, List<string>? siteIds, string shareType,
@@ -1033,25 +1050,24 @@ public class HostedSiteService : IHostedSiteService
             var ups = new List<UpdateDefinition<WebPageShareLink>>();
             // 保留 mutate 前的 ExpiresAt，供下方审计 RenewalHistory.OldExpiresAt 使用
             var oldExpiresAtForAudit = reuse.ExpiresAt;
-            // 有效期比的是「**当初要的是多少天**」，不是算出来的那个绝对时刻。
+            // 有效期这一步要回答的其实是：**这是同一次请求的重试，还是又一次新的请求？**
             //
-            // ExpiresAt = 当时那一刻 + 天数：同一个请求重试一次，算出来的值必然不同，
-            // 于是拿绝对时刻比大小**永远**得出「变了」—— 幂等重试每次都刷一遍有效期、
-            // 追一条续期审计，并且把「这次没产生副作用」这个信号彻底废掉（网关据它退额度，
-            // 于是同一个键可以无限次续期、无限撑大那条审计数组，还每次都扣额度）。
+            // 拿绝对时刻直接判等答不了：ExpiresAt = 当时那一刻 + 天数，同一个请求重试一次算出来
+            // 必然差几毫秒，于是**永远**得出「变了」—— 幂等重试每次刷一遍有效期、追一条续期审计，
+            // 并且把「这次没产生副作用」这个信号彻底废掉（网关据它退额度）。
+            // 反过来只比「要的天数」也答不了：一条六天前建的 7 天链接，遇上今天这次「我要 7 天」，
+            // 天数一样却被判成没变 —— 调用方以为拿到七天，实际那条明天就过期。
             //
-            // 三种情况才算真的变了：要的天数不一样、存量链接还没记过天数、或者它已经过期了
-            //（过期那条要救活，否则「同一个键再要一次」拿到的是一条死链）。
-            // 0 = 明确要永久；null 只表示「不知道」，永远算变了（见 WebPageShareLink.ExpiresInDays）。
-            var requestedDays = expiresInDays > 0 ? expiresInDays : 0;
-            var expiryChanged = reuse.ExpiresInDays != requestedDays
-                || (reuse.ExpiresAt is { } cur && cur <= nowUtc);
+            // 没有请求键的时候，能区分这两件事的只有**时间距离**：重试是秒级的，新请求不是。
+            // 所以判据是「新算出来的到期时刻，和它现在的到期时刻差得远不远」——
+            // 秒级的差算同一件事，几天的差就是又一次新请求。
+            // 真正的解法是给这个工具一个 clientRequestId（doc/debt.platform.md 边界 7），
+            // 那之前，这条时间距离是唯一说得清的判据。
+            var expiryChanged = ExpiryMeaningfullyChanged(reuse.ExpiresAt, newExpiresAt);
             if (expiryChanged)
             {
                 ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, newExpiresAt));
-                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresInDays, requestedDays));
                 reuse.ExpiresAt = newExpiresAt;
-                reuse.ExpiresInDays = requestedDays;
             }
             if (wantAccess == "password" && reuse.Password != wantPassword)
             {
@@ -1141,7 +1157,6 @@ public class HostedSiteService : IHostedSiteService
             ExpiresAt = newExpiresAt,
             // 记下「要的是多少天」：下次同一个键重试时，判「是不是同一件事」比的是这个，
             // 不是算出来的绝对时刻（那个每次都不一样）。
-            ExpiresInDays = expiresInDays > 0 ? expiresInDays : 0,
             Visibility = effVisibility,
             // 保持 null（而不是 new List）当"没选过" —— 读取侧据此继承站点题库
             AskSuggestedQuestions = effAskQuestions,
@@ -1651,11 +1666,7 @@ public class HostedSiteService : IHostedSiteService
         if (share.ExpiresAt.HasValue)
         {
             updates.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, (DateTime?)null));
-            // 意图字段跟着一起改：它是「当初要的是多少天」的唯一记录，别处改了有效期却不同步，
-            // 它就变成一份过期的说法，而复用那条路正是拿它判「这次和上次是不是同一件事」。
-            updates.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresInDays, (int?)0));
             share.ExpiresAt = null;
-            share.ExpiresInDays = 0;
         }
         if (share.Visibility != "public")
         {
@@ -1968,10 +1979,6 @@ public class HostedSiteService : IHostedSiteService
             x => x.Id == shareId,
             Builders<WebPageShareLink>.Update
                 .Set(x => x.ExpiresAt, newExpiresAt)
-                // 手动续期是「在现有到期时刻上再加几天」，结果没法用「从现在起 N 天」表达，
-                // 所以把意图置为未知（null）。复用那条路见到 null 一律按「变了」处理 ——
-                // 多刷一次有效期，比拿一份过期的说法默默给错寿命安全。
-                .Set(x => x.ExpiresInDays, (int?)null)
                 .Push(x => x.RenewalHistory, renewEvent),
             cancellationToken: ct);
 
@@ -2024,9 +2031,6 @@ public class HostedSiteService : IHostedSiteService
             // 重设而非累加：面板选「7 天」= 从现在起 7 天，0 = 永久。
             effExpiresAt = expiresInDays.Value > 0 ? DateTime.UtcNow.AddDays(expiresInDays.Value) : null;
             ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, effExpiresAt));
-            // 这条路确切知道「要的是多少天」，把意图一起记上（0 = 永久）。
-            ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresInDays,
-                (int?)(expiresInDays.Value > 0 ? expiresInDays.Value : 0)));
             // 过期时间被谁改成什么，与续期走同一本账——排查「莫名其妙过期」时两类改动要在一处看得见
             ups.Add(Builders<WebPageShareLink>.Update.Push(x => x.RenewalHistory, new ShareRenewalEvent
             {

@@ -328,18 +328,6 @@ public class WebPageShareLink
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ExpiresAt { get; set; }
 
-    /// <summary>
-    /// 这条链接当初**要的是多少天**（0 = 永久，null = 不知道）。
-    ///
-    /// 存它是因为 ExpiresAt 是「当时那一刻 + 天数」算出来的绝对时刻：同一个请求重试一次，
-    /// 算出来的值必然不同，于是拿绝对时刻比大小永远得出「变了」—— 幂等重试因此每次都被
-    /// 记成一次真实改动。要判「这次和上次要的是不是同一件事」，就得比当初要的那个量。
-    /// null 与 0 必须分开：0 是「明确要永久」，null 是「不知道当初要的是什么」——存量链接，
-    /// 或者被手动续期改成了没法用「从现在起 N 天」表达的时刻。合成一个值的话，
-    /// 一条存量的 7 天链接遇上「我要永久」会被判成没变，于是它继续 7 天后过期而调用方以为是永久的。
-    /// 不知道就一律按「变了」处理：多刷一次有效期，比默默给错寿命安全。
-    /// </summary>
-    public int? ExpiresInDays { get; set; }
     public bool IsRevoked { get; set; }
 
     /// <summary>

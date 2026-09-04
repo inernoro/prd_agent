@@ -419,9 +419,14 @@ public class DocumentStoreOpenApiController : ControllerBase
                 // 这条占位条目删掉（界面上它已经可见）。写入服务按 id 更新，只有在给了
                 // expectedUpdatedAt 时才把「一行没命中」当成冲突 —— 不给的话它会照常往下写，
                 // 于是留下一批指向一条已经不存在的条目的正文与版本，接口还回成功。
+                // 代次也进这条**原子写**的过滤器，不只在它前后回读时核。
+                // 时间戳只回答「有没有被人动过」，答不了「这还是不是我那条」：确定性 id 会被重用，
+                // 而 BSON 只到毫秒 —— 同一毫秒内这条被删掉、同键重试又插了一条新的，两条在
+                // Id + UpdatedAt 上完全一样，正文就会落进**别人那一代**里，还接着参与它的收尾。
                 var placed = await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
                     DocumentVersionSource.Edit, contentTypeOverride: "text/markdown",
-                    expectedUpdatedAt: entry.UpdatedAt);
+                    expectedUpdatedAt: entry.UpdatedAt,
+                    extraGuard: Builders<DocumentEntry>.Filter.Eq(EntryGenerationField, generation));
                 if (placed.Conflicted)
                 {
                     // Conflicted 不等于「被删了」：任何 UpdatedAt 变化都会让条件写入落空，
