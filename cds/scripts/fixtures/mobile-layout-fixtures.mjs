@@ -6,12 +6,19 @@
  * 合成的，只为把页面渲染成「有内容的样子」——布局判据要量的是元素怎么排，
  * 不是数据对不对。
  *
- * 漂移风险与它的兜底：后端换了响应形状，这份数据就喂不动页面，页面会退化成
- * 空状态——此时冒烟的 textLength 判据会红，而不是静默放行。所以形状漂移是
- * 会被抓到的，只是报错信息指向「页面没渲染出内容」而不是「fixture 过期了」。
+ * 漂移怎么被抓到——这一段原来写错过，留着当反面例子。
  *
- * 覆盖面按需增长：未列出的路径一律回 {}，页面自己会走空态或 catch。加页面时
- * 先跑一次看哪里空，再往这里补，别照着类型定义把字段写满。
+ * 原话是「后端换了响应形状，页面退化成空状态，此时 textLength 判据会红」。
+ * 不成立：那条判据的门槛是 60 字，而空状态的页面光常驻导航就有一百五十多字，
+ * 轻松满足。也就是说 fixture 一旦过期，冒烟会在「页面根本没渲染出它声称要保护的
+ * 内容」的情况下照常绿（Codex P2）。给假安全感的注释比没有注释更糟。
+ *
+ * 现在靠两道判据抓漂移，都在 mobile-layout-smoke 里：
+ *   1. 未登记路径——resolveFixture 认不出的路径被收集起来，跑完一并报错；
+ *   2. 页面内容锚点——每个页面断言一段只有喂对数据才会出现的文字。
+ * 第二道才是根本的：它证明量到的布局是「有数据的那一版」，不是空态。
+ *
+ * 覆盖面按需增长：加页面时先跑一次，让未登记路径的报错告诉你缺哪些。
  */
 
 const PROJECT_ID = 'fixture-project';
@@ -155,6 +162,27 @@ const EXACT = {
   '/api/cache/status': { entries: [] },
   '/api/global-agent-keys': { keys: [] },
   '/api/perf/overview': { routes: [], totals: {} },
+  // 下面这批是 2026-09-04 靠「未登记路径」判据扫出来的：此前它们静默回 {}，
+  // 页面走空态，而冒烟照常绿。
+  '/api/infra': { services: [] },
+  '/api/build-profiles': { profiles: [] },
+  '/api/remote-branches': { branches: [], fetched: false, cachedAt: null },
+  '/api/env': {
+    entries: [
+      { key: 'FIXTURE_SAMPLE_KEY', value: '合成值', isSecret: false, scope: 'project' },
+    ],
+    env: { FIXTURE_SAMPLE_KEY: '合成值' },
+    inheritGlobal: false,
+  },
+  '/api/activity-stream': { events: [] },
+  '/api/self-update-history': { history: [] },
+  '/api/self-branches': { branches: [], current: 'main', recommended: 'main' },
+  '/api/mirror': { configured: false },
+  '/api/tab-title': { title: 'CDS' },
+  '/api/auth/public-status': { authenticated: true, mode: 'password' },
+  '/api/releases/center': { targets: [], runs: [], environments: [] },
+  '/api/deployment-runs': { runs: [] },
+  '/api/deployment-versions': { versions: [] },
 };
 
 const DYNAMIC = {
@@ -197,14 +225,33 @@ const PREFIX = [
   [/^\/api\/branches\/[^/]+/, () => branches[0]],
 ];
 
-/** 返回该路径的响应体；没有登记的一律 {}，让页面走自己的空态。 */
+/*
+ * 明知会空、也应该空的端点。登记在这里表示「回 {} 是对的」，
+ * 与「忘了登记」区分开——后者要报错，前者不该。
+ */
+const INTENTIONALLY_EMPTY = [
+  /^\/api\/notices$/,
+  /^\/api\/access-requests$/,
+  /^\/api\/pending-imports$/,
+  /^\/api\/legacy-cleanup\//,
+  /^\/api\/cds-system\/operator\/requests$/,
+];
+
+/**
+ * 返回该路径的响应体；认不出就返回 null。
+ *
+ * 认不出时**不要**默默回 {}：页面会退化成空态，而空态照样满足冒烟原来那条
+ * 「文字够多」的判据，于是漏登记的端点静默放行。调用方拿到 null 要记下这条
+ * 路径，跑完一并报错。
+ */
 export function resolveFixture(pathname) {
   if (Object.prototype.hasOwnProperty.call(DYNAMIC, pathname)) return DYNAMIC[pathname]();
   if (Object.prototype.hasOwnProperty.call(EXACT, pathname)) return EXACT[pathname];
   for (const [re, make] of PREFIX) {
     if (re.test(pathname)) return make({ pathname });
   }
-  return {};
+  if (INTENTIONALLY_EMPTY.some((re) => re.test(pathname))) return {};
+  return null;
 }
 
 /** SSE 端点：必须回 text/event-stream，否则浏览器直接 abort 并刷控制台错误。 */
