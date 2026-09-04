@@ -1240,6 +1240,19 @@ export default function AppShell() {
 
           {/* 底部操作 */}
           <div className="mt-auto px-4 py-4 flex flex-col gap-2">
+            {/* 智能体接入台：桌面端在侧栏账号菜单第一项，而那个菜单在小屏是 display:none 的
+                （focusHideAside）。不在这里补一条，手机端就只剩「汉堡 → 百宝箱 → 在几十张卡片里找」
+                这条三层路径，与桌面端的一层不对等。 */}
+            <button
+              type="button"
+              onClick={() => { navigate('/mcp-console'); setMobileDrawerOpen(false); }}
+              className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              <Plug size={18} />
+              <span className="text-sm">智能体接入台</span>
+              <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>连接 / 记录</span>
+            </button>
             {user?.role === 'ADMIN' && (
               <button
                 type="button"
