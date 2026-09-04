@@ -14,6 +14,7 @@ export interface AuthorizationHealthItem {
   evidenceSource: string;
   actionUrl: string;
   actionLabel: string;
+  actionPermission?: string | null;
   recovery?: string | null;
 }
 

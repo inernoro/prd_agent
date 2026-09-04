@@ -23,4 +23,17 @@ public sealed class AuthorizationHealthControllerTests
 
         Assert.Equal(expected, AuthorizationHealthController.IsClassifiedFailure(log));
     }
+
+    [Theory]
+    [InlineData(401, "AUTH_UNCLASSIFIED_401")]
+    [InlineData(403, "AUTH_UNCLASSIFIED_403")]
+    public void ToFailure_UsesStatusSpecificFallbackCode(int statusCode, string expected)
+    {
+        var failure = AuthorizationHealthController.ToFailure(new ApiRequestLog
+        {
+            StatusCode = statusCode,
+        });
+
+        Assert.Equal(expected, failure.Code);
+    }
 }

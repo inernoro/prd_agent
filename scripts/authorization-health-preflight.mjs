@@ -8,10 +8,13 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const registryPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/credential-registry.json');
 
 export function classifyPreflightBlockers(blockers) {
+  const gatewayIdentityBlockers = blockers.filter((item) => item.includes('模型网关') && item.includes('身份'));
+  const productIdentityBlockers = blockers.filter((item) => item.includes('主应用') && item.includes('身份'));
+  const identityBlockers = new Set([...gatewayIdentityBlockers, ...productIdentityBlockers]);
   return {
-    gatewayIdentityBlockers: blockers.filter((item) => item.includes('模型网关') && item.includes('身份')),
-    deploymentBlockers: blockers.filter((item) => /提交|镜像|部署调度/.test(item)),
-    productIdentityBlockers: blockers.filter((item) => item.includes('主应用') && item.includes('身份')),
+    gatewayIdentityBlockers,
+    deploymentBlockers: blockers.filter((item) => !identityBlockers.has(item)),
+    productIdentityBlockers,
   };
 }
 
@@ -92,14 +95,14 @@ function main() {
         blockers: gatewayIdentityBlockers,
       },
       {
-        id: 'cds-deployment-revision',
+        id: 'cds-deployment-readiness',
         status: deploymentBlockers.length === 0 ? 'healthy' : 'blocked',
         summary: deploymentBlockers.length === 0
-          ? 'CDS 当前运行版本与本地目标一致。'
-          : 'CDS 当前运行版本尚未同步到本地目标提交。',
+          ? 'CDS 部署预检已通过。'
+          : 'CDS 部署预检仍有阻断。',
         recovery: deploymentBlockers.length === 0
           ? '继续执行 CORE-009 可控 401 故障注入。'
-          : '提交并推送后等待 CDS 镜像与全部运行服务切换到固定提交。',
+          : '按阻断明细恢复地址、部署状态或运行版本后重试。',
         blockers: deploymentBlockers,
       },
     ],

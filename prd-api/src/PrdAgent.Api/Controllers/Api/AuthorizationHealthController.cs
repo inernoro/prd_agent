@@ -178,14 +178,14 @@ public sealed class AuthorizationHealthController : ControllerBase
             "Agent",
             $"当前有 {activeKeys} 个未撤销且仍在有效期或宽限期内的 Agent Key。",
             "Agent Key 台账",
-            "/open-platform?tab=agent-keys")
+            "/marketplace?dialog=open-api")
         : Attention(
             "agent-api-keys",
             "Agent API Key",
             "Agent",
             "当前没有可用的 Agent Key；依赖 M2M 调用的 Agent 无法工作。",
             "Agent Key 台账",
-            "/open-platform?tab=agent-keys",
+            "/marketplace?dialog=open-api",
             "按最小 scope 签发一个长期 Agent Key，并立即做真实端点回读。" );
 
     private AuthorizationHealthItem BuildSyntheticLoginHealth()
@@ -254,20 +254,26 @@ public sealed class AuthorizationHealthController : ControllerBase
                 "用户",
                 $"当前用户有 {invalid} 条外部授权已失效或过期。",
                 "外部授权台账",
-                "/open-platform?tab=authorizations",
-                "重新授权并点击验证，确认真实外部 API 回读成功。" );
+                "/open-platform?tab=auth",
+                "重新授权并点击验证，确认真实外部 API 回读成功。",
+                AdminPermissionCatalog.OpenPlatformManage);
         return Healthy(
             "external-authorizations",
             "外部系统授权",
             "用户",
             items.Count == 0 ? "当前用户未配置外部系统授权。" : $"当前用户的 {items.Count} 条外部授权台账状态正常。",
             "外部授权台账",
-            "/open-platform?tab=authorizations");
+            "/open-platform?tab=auth",
+            AdminPermissionCatalog.OpenPlatformManage);
     }
 
-    private static AuthorizationFailureItem ToFailure(ApiRequestLog item)
+    internal static AuthorizationFailureItem ToFailure(ApiRequestLog item)
     {
-        var code = string.IsNullOrWhiteSpace(item.ErrorCode) ? "AUTH_UNCLASSIFIED_401" : item.ErrorCode!;
+        var code = string.IsNullOrWhiteSpace(item.ErrorCode)
+            ? item.StatusCode == StatusCodes.Status403Forbidden
+                ? "AUTH_UNCLASSIFIED_403"
+                : "AUTH_UNCLASSIFIED_401"
+            : item.ErrorCode!;
         var action = code switch
         {
             "AUTH_AI_KEY_INVALID" => "同步权威 AI Access Key 后按原路径复测。",
@@ -300,15 +306,15 @@ public sealed class AuthorizationHealthController : ControllerBase
             || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
             || value.Equals("on", StringComparison.OrdinalIgnoreCase));
 
-    private static AuthorizationHealthItem Healthy(string id, string label, string audience, string summary, string source, string actionUrl)
-        => New(id, label, audience, "healthy", "正常", summary, source, actionUrl, "查看详情");
-    private static AuthorizationHealthItem Attention(string id, string label, string audience, string summary, string source, string actionUrl, string recovery)
-        => New(id, label, audience, "attention", "待验证", summary, source, actionUrl, "去验证", recovery);
+    private static AuthorizationHealthItem Healthy(string id, string label, string audience, string summary, string source, string actionUrl, string? actionPermission = null)
+        => New(id, label, audience, "healthy", "正常", summary, source, actionUrl, "查看详情", actionPermission: actionPermission);
+    private static AuthorizationHealthItem Attention(string id, string label, string audience, string summary, string source, string actionUrl, string recovery, string? actionPermission = null)
+        => New(id, label, audience, "attention", "待验证", summary, source, actionUrl, "去验证", recovery, actionPermission);
     private static AuthorizationHealthItem Conditional(string id, string label, string audience, string summary, string source, string actionUrl, string recovery)
         => New(id, label, audience, "conditional", "需外部探针", summary, source, actionUrl, "查看预检", recovery);
     private static AuthorizationHealthItem Blocked(string id, string label, string audience, string summary, string source, string actionUrl, string recovery)
         => New(id, label, audience, "blocked", "阻断", summary, source, actionUrl, "立即恢复", recovery);
-    private static AuthorizationHealthItem New(string id, string label, string audience, string status, string statusLabel, string summary, string source, string actionUrl, string actionLabel, string? recovery = null)
+    private static AuthorizationHealthItem New(string id, string label, string audience, string status, string statusLabel, string summary, string source, string actionUrl, string actionLabel, string? recovery = null, string? actionPermission = null)
         => new()
         {
             Id = id,
@@ -320,6 +326,7 @@ public sealed class AuthorizationHealthController : ControllerBase
             EvidenceSource = source,
             ActionUrl = actionUrl,
             ActionLabel = actionLabel,
+            ActionPermission = actionPermission,
             Recovery = recovery,
         };
 }
@@ -363,6 +370,7 @@ public sealed class AuthorizationHealthItem
     public string EvidenceSource { get; set; } = string.Empty;
     public string ActionUrl { get; set; } = string.Empty;
     public string ActionLabel { get; set; } = string.Empty;
+    public string? ActionPermission { get; set; }
     public string? Recovery { get; set; }
 }
 

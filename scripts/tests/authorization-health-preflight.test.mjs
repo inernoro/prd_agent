@@ -15,10 +15,16 @@ test('授权预检将主应用 RSA 身份失败归入产品身份阻断', () => 
   assert.equal(result.deploymentBlockers.length, 1);
 });
 
-test('授权预检不把无关诊断误判为身份阻断', () => {
-  const result = classifyPreflightBlockers(['CDS 权威预览地址读取失败']);
+test('授权预检保留所有非身份类部署阻断', () => {
+  const blockers = [
+    'CDS 权威预览地址读取失败',
+    '分支状态为 stopped',
+    'CDS 未返回任何业务服务',
+    'api 未运行',
+  ];
+  const result = classifyPreflightBlockers(blockers);
 
   assert.deepEqual(result.productIdentityBlockers, []);
   assert.deepEqual(result.gatewayIdentityBlockers, []);
-  assert.deepEqual(result.deploymentBlockers, []);
+  assert.deepEqual(result.deploymentBlockers, blockers);
 });

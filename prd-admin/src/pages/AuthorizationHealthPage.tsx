@@ -10,6 +10,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { useAuthStore } from '@/stores/authStore';
 import {
   getAuthorizationHealth,
   type AuthorizationHealthItem,
@@ -37,6 +38,9 @@ function Metric({ label, value, hint }: { label: string; value: string | number;
 function HealthCard({ item }: { item: AuthorizationHealthItem }) {
   const style = STATUS_STYLE[item.status];
   const Icon = style.icon;
+  const permissions = useAuthStore((state) => state.permissions);
+  const isRoot = useAuthStore((state) => state.isRoot);
+  const canOpenAction = !item.actionPermission || isRoot || permissions.includes(item.actionPermission);
   return (
     <article className="rounded-xl p-4 flex flex-col gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
       <div className="flex items-start gap-3">
@@ -60,9 +64,15 @@ function HealthCard({ item }: { item: AuthorizationHealthItem }) {
           恢复动作：{item.recovery}
         </div>
       ) : null}
-      <Link className="inline-flex items-center gap-1 text-[12px] font-medium self-start" style={{ color: 'var(--accent-primary)' }} to={item.actionUrl}>
-        {item.actionLabel}<ArrowRight size={13} />
-      </Link>
+      {canOpenAction ? (
+        <Link className="inline-flex items-center gap-1 text-[12px] font-medium self-start" style={{ color: 'var(--accent-primary)' }} to={item.actionUrl}>
+          {item.actionLabel}<ArrowRight size={13} />
+        </Link>
+      ) : (
+        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          联系具备 {item.actionPermission} 权限的管理员处理
+        </span>
+      )}
     </article>
   );
 }
