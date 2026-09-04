@@ -1,4 +1,4 @@
-import { ASPECT_OPTIONS, detectTierFromSize, detectAspectFromSize } from '@/lib/imageAspectOptions';
+import { ASPECT_OPTIONS, detectTierFromSize, resolveAspectRatio } from '@/lib/imageAspectOptions';
 import { flattenSizes, RESOLUTION_TIERS, type ResolutionTier, type SizesByResolution } from '@/lib/visualModelSizes';
 import { RectangleHorizontal } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -24,7 +24,9 @@ type SizePickerPanelProps = {
  */
 export function SizePickerPanel({ size, onSizeChange, width = 260, availableSizes }: SizePickerPanelProps) {
   const currentTier = detectTierFromSize(size) ?? '1k';
-  const currentAspect = detectAspectFromSize(size) ?? '1:1';
+  // 先认后端目录再退静态表：`1344x768` 这类不在静态表里的档位，
+  // 直接判 null 会把当前比例当成 1:1，换档时把 16:9 悄悄改成方图。
+  const currentAspect = resolveAspectRatio(size, availableSizes);
 
   // 模型给了尺寸清单就按它渲染：档位只留有内容的，比例只留该档真支持的。
   // 静态 ASPECT_OPTIONS 是所有模型的并集，直接摆出来等于让用户选一个会失败的组合。
@@ -165,7 +167,8 @@ export function SizePickerButton({ size, onSizeChange, availableSizes }: { size:
   }, [open]);
 
   const tier = detectTierFromSize(size) ?? '1k';
-  const aspect = detectAspectFromSize(size) ?? '1:1';
+  // chip 上显示的比例同理——它和面板里高亮的那一格必须是同一个判断。
+  const aspect = resolveAspectRatio(size, availableSizes);
   const tierLabel = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
 
   return (
