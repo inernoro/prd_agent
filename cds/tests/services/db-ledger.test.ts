@@ -11,14 +11,19 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertDropAllowed,
+  retainedDedicatedContainers,
   buildDbLedgerView,
   orphanEntryForSnapshot,
   stripBranchSuffix,
   type DbLedgerDerived,
 } from '../../src/services/db-ledger.js';
-import { dumpArgv } from '../../src/services/db-ledger-ops.js';
+import { dumpArgv, restoreDrillArgv } from '../../src/services/db-ledger-ops.js';
 import type { BranchEntry, DbLedgerEntry, InfraService, ReplicaDbSnapshot } from '../../src/types.js';
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const T = '2026-09-03T08:00:00.000Z';
 
 const snapshot = (o: Partial<ReplicaDbSnapshot> = {}): ReplicaDbSnapshot => ({
@@ -189,5 +194,36 @@ describe('备份 dump：dump 失败必须让备份失败（Codex P1）', () => {
       expect(script).toMatch(/gzip -c \/tmp\//);
       expect(script).not.toContain('pw');
     }
+  });
+});
+
+describe('演练还原：解压失败必须让演练失败（Codex P1）', () => {
+  const infra = { id: 'mysql', containerName: 'cds-infra-mysql', containerPort: 3306, env: { MYSQL_ROOT_PASSWORD: 'pw' } } as unknown as InfraService;
+  const pg = { id: 'pg', containerName: 'cds-infra-pg', containerPort: 5432, env: { POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'pw' } } as unknown as InfraService;
+  it('gunzip 先落盘再喂客户端，不用 `gunzip -c | client`（截断的 gzip 让 gunzip 失败、client 读到合法前缀照样 0）', () => {
+    for (const [engine, i] of [['mysql', infra], ['postgres', pg]] as const) {
+      const { argv } = restoreDrillArgv(engine, i, 'cds_drill_x');
+      const script = argv[argv.length - 1];
+      expect(script).toContain('set -e');
+      expect(script).toMatch(/gunzip -c > \/tmp\//);
+      expect(script).not.toMatch(/gunzip -c \|/);
+      expect(script).not.toContain('pw');
+    }
+  });
+});
+
+describe('删项目级联：台账里保留下来的专用隔离实例也要一起拆（Codex P1）', () => {
+  it('活跃 / 孤儿条目的 dedicatedContainer 列出来，已丢弃的不算', () => {
+    const names = retainedDedicatedContainers([
+      entry({ id: 'a', kind: 'isolated', engine: 'mongo', dbName: 'cat_rs_1', dedicatedContainer: 'cds-rsdb-a-cat_rs_1', status: 'orphaned' }),
+      entry({ id: 'b', kind: 'isolated', engine: 'mongo', dbName: 'cat_rs_2', dedicatedContainer: 'cds-rsdb-b-cat_rs_2', status: 'dropped' }),
+      entry({ id: 'c', kind: 'isolated', engine: 'mongo', dbName: 'cat_rs_3', dedicatedContainer: 'cds-rsdb-c-cat_rs_3' }),
+      entry({ id: 'd' }),
+    ]);
+    expect(names).toEqual(['cds-rsdb-a-cat_rs_1', 'cds-rsdb-c-cat_rs_3']);
+  });
+  it('删项目路由把台账里的专用实例列进拆除清单（接线守卫）', () => {
+    const s = fs.readFileSync(path.join(CDS_ROOT, 'src/routes/projects.ts'), 'utf8');
+    expect(s).toContain('retainedDedicatedContainers(');
   });
 });

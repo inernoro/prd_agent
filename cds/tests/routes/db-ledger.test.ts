@@ -33,7 +33,7 @@ describe('数据台账路由', () => {
   let tmpDir: string; let server: http.Server; let state: StateService;
   let calls: string[]; let listed: string[]; let drillObjects: number; let dropFail: boolean;
   let counts: Record<string, Record<string, number>>;
-  let listedBy: Record<string, string[]>; let containers: string[];
+  let listedBy: Record<string, string[]>; let containers: string[]; let objectsBy: Record<string, number>;
   const cloneExec = async (argv: string[]) => {
     const sql = argv[argv.length - 1];
     if (argv[0] === 'run') { calls.push('clone'); return { code: 0, stdout: '', stderr: '' }; }
@@ -46,7 +46,7 @@ describe('数据台账路由', () => {
     async replaceDbFrom(_e, _i, sourceDb, targetDb, grantTo) { calls.push(`replace:${sourceDb}->${targetDb}${grantTo ? `@grant:${grantTo}` : ''}`); counts[targetDb] = { ...(counts[sourceDb] ?? {}) }; },
     async restoreInto(_e, _i, file, targetDb) { calls.push(`restore:${path.basename(file)}->${targetDb}`); counts[targetDb] = { ...(counts[`snapshot:${targetDb}`] ?? {}) }; },
     async dumpToFile(_e, infra, dbName, file) { calls.push(`dump:${dbName}`); containers.push(`dump@${infra.containerName}`); fs.writeFileSync(file, Buffer.alloc(200, 1)); return { bytes: 200, sha256: 'abc' }; },
-    async countObjects(_e, infra, dbName) { calls.push(`count:${dbName}`); containers.push(`count@${infra.containerName}`); return dbName.startsWith('cds_drill_') ? drillObjects : 12; },
+    async countObjects(_e, infra, dbName) { calls.push(`count:${dbName}`); containers.push(`count@${infra.containerName}`); return dbName.startsWith('cds_drill_') ? drillObjects : (objectsBy[dbName] ?? 12); },
     async restoreDrill(_e, infra, file, scratch) { calls.push(`drill:${path.basename(file)}->${scratch}`); containers.push(`drill@${infra.containerName}`); return { objects: drillObjects }; },
     async dropDb(_e, _i, entry) { calls.push(`drop:${entry.dbName}`); if (dropFail) throw new Error('boom'); },
     async listDatabases(_e, infra) { calls.push('list'); return listedBy[infra.containerName] ?? listed; },
@@ -66,7 +66,7 @@ describe('数据台账路由', () => {
     state.upsertDbLedgerEntry({ id: 'orphan-1', projectId: 'p', kind: 'per-branch', engine: 'mysql', dbName: 'shop_old', infraId: 'mysql', infraContainer: 'cds-infra-mysql', sourceDb: 'shop', branch: 'old', origin: 'cds', status: 'orphaned', orphanedAt: NOW, createdAt: NOW, updatedAt: NOW, backups: [] });
     state.save();
     counts = { shop: { users: 3, orders: 58 }, shop_feat_x: { users: 3, orders: 57 }, 'snapshot:shop': { users: 3, orders: 58 } };
-    calls = []; containers = []; listedBy = {}; listed = ['mysql', 'sys', 'information_schema', 'performance_schema', 'shop', 'shop_feat_x', 'shop_feat_x_rs_ab12cd_r1', 'shop_old', 'legacy_2024', 'cds_drill_deadbeef']; drillObjects = 12; dropFail = false;
+    calls = []; containers = []; listedBy = {}; objectsBy = {}; listed = ['mysql', 'sys', 'information_schema', 'performance_schema', 'shop', 'shop_feat_x', 'shop_feat_x_rs_ab12cd_r1', 'shop_old', 'legacy_2024', 'cds_drill_deadbeef']; drillObjects = 12; dropFail = false;
     const app = express(); app.use(express.json());
     app.use((req, _res, next) => { const h = req.headers['x-test-key'] as string | undefined; if (h === 'KEY-Q') (req as any).cdsProjectKey = { projectId: 'q', keyId: 'k-q' }; next(); });
     process.env.CDS_BACKUP_DIR = path.join(tmpDir, 'backups');
@@ -259,6 +259,25 @@ describe('数据台账路由', () => {
     expect(calls).toContain('replace:crm_old->crm@grant:app');
   });
 
+  it('扫描补录条目的 id 带项目作用域：两个项目同名 infra id 同名库不互相覆盖（Codex P1）', async () => {
+    const r = await request(server, 'POST', '/api/projects/p/db-ledger/scan');
+    expect(r.body.added.map((e: any) => e.id)).toEqual(['dbl_scan_p_mysql_legacy_2024']);
+    state.addInfraService({ id: 'qmysql', name: 'mysql', projectId: 'q', scope: 'project', dockerImage: 'mysql:8', containerName: 'cds-infra-qmysql', hostPort: 0, containerPort: 3306, status: 'running', env: { MYSQL_ROOT_PASSWORD: 'x' } } as unknown as InfraService);
+    state.save();
+    listedBy = { 'cds-infra-qmysql': ['mysql', 'legacy_2024'] };
+    const q = await request(server, 'POST', '/api/projects/q/db-ledger/scan');
+    expect(q.body.added.map((e: any) => e.id)).toEqual(['dbl_scan_q_qmysql_legacy_2024']);
+    expect(state.getDbLedger('p').map((e) => e.id)).toContain('dbl_scan_p_mysql_legacy_2024');
+  });
+
+  it('同一秒内两次备份文件名不同，各自的记录各有各的文件（Codex P2）', async () => {
+    const a = await request(server, 'POST', '/api/projects/p/db-ledger/orphan-1/backup');
+    const b = await request(server, 'POST', '/api/projects/p/db-ledger/orphan-1/backup');
+    expect(a.status).toBe(200); expect(b.status).toBe(200);
+    expect(a.body.backup.file).not.toBe(b.body.backup.file);
+    expect(b.body.entry.backups).toHaveLength(2);
+  });
+
   it('备份运行时条目（还没有台账记录的隔离库）会先固化成台账记录', async () => {
     const view = await request(server, 'GET', '/api/projects/p/db-ledger');
     const iso = view.body.entries.find((e: any) => e.dbName === 'shop_feat_x_rs_ab12cd_r1');
@@ -320,8 +339,26 @@ describe('数据台账路由', () => {
       const again = await request(server, 'POST', `/api/projects/p/db-ledger/${entry.id}/write-backs/${wbId}/rollback`, { confirmDbName: 'shop' });
       expect(again.status).toBe(409);
     });
+    it('回退后对象数对不上：不标已回退、返回 422，记录留着，修好后还能再回退（Codex P1）', async () => {
+      const res = await request(server, 'POST', `/api/projects/p/db-ledger/${live}/write-back`, { confirmDbName: 'shop' });
+      expect(res.status).toBe(200);
+      const entry = state.getDbLedger('p').find((e) => e.dbName === 'shop_feat_x')!;
+      const wbId = entry.writeBacks![0].id;
+      // 回退前的备份演练照常通过（11 == 11），还原后量到 11 与回写前快照的 12 对不上
+      objectsBy.shop = 11; drillObjects = 11;
+      const bad = await request(server, 'POST', `/api/projects/p/db-ledger/${entry.id}/write-backs/${wbId}/rollback`, { confirmDbName: 'shop' });
+      expect(bad.status).toBe(422);
+      expect(bad.body.error).toMatch(/不一致/);
+      const after = state.getDbLedgerEntry(entry.id)!.writeBacks![0];
+      expect(after.rolledBackAt).toBeUndefined();
+      expect(after.rollbackCheck).toMatchObject({ ok: false, objects: 11, expected: 12 });
+      delete objectsBy.shop; drillObjects = 12;
+      const good = await request(server, 'POST', `/api/projects/p/db-ledger/${entry.id}/write-backs/${wbId}/rollback`, { confirmDbName: 'shop' });
+      expect(good.status).toBe(200);
+      expect(good.body.record.rolledBackAt).toBeTruthy();
+    });
     it('来源未知的扫描条目不能回写', async () => {
-      const res = await request(server, 'GET', '/api/projects/p/db-ledger/dbl_scan_mysql_legacy_2024/write-back/preview');
+      const res = await request(server, 'GET', '/api/projects/p/db-ledger/dbl_scan_p_mysql_legacy_2024/write-back/preview');
       expect([404, 409]).toContain(res.status);
     });
   });

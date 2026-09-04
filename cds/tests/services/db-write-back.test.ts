@@ -98,10 +98,13 @@ describe('替换与还原脚本：同一条三元组管线', () => {
   it('还原脚本：gunzip 备份流进目标库，目标库先删后建', () => {
     const my = relationalRestoreScript('mysql', mysqlInfra, 'shop');
     expect(my.script).toContain('gunzip -c');
+    expect(my.script).not.toMatch(/gunzip -c \|/);
+    expect(my.script).toContain('set -e');
     expect(my.script).toContain('DROP DATABASE IF EXISTS `shop`');
     expect(my.script).toContain('mysql -uroot -h127.0.0.1 -P3306 shop');
     const pg = relationalRestoreScript('postgres', pgInfra, 'shop');
     expect(pg.script).toContain('pg_terminate_backend');
+    expect(pg.script).not.toMatch(/gunzip -c \|/);
     expect(pg.script).toContain('psql -U app -h 127.0.0.1 -p 5432 -q -v ON_ERROR_STOP=1 -d shop');
   });
 });

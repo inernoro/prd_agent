@@ -441,6 +441,15 @@ describe('StateService — projects (P4 Part 1)', () => {
       expect(() => svc.removeProject('default')).toThrow(/legacy default/);
     });
 
+    it('cascade 也清掉该项目的数据台账条目（删项目后台账里不留指向空气的记录）', () => {
+      svc.upsertDbLedgerEntry({ id: 'led-1', projectId: 'second', kind: 'isolated', engine: 'mongo', dbName: 'cat_rs_1', infraContainer: 'cds-infra-mongo', dedicatedContainer: 'cds-rsdb-x-cat_rs_1', origin: 'cds', status: 'orphaned', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', backups: [] });
+      svc.upsertDbLedgerEntry({ id: 'led-keep', projectId: 'default', kind: 'per-branch', engine: 'mysql', dbName: 'shop_x', infraContainer: 'cds-infra-mysql', origin: 'cds', status: 'active', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', backups: [] });
+      const summary = svc.removeProject('second');
+      expect(summary.dbLedgerEntries).toEqual(['led-1']);
+      expect(svc.getDbLedgerEntry('led-1')).toBeUndefined();
+      expect(svc.getDbLedgerEntry('led-keep')).toBeDefined();
+    });
+
     it('is a no-op when the id does not exist', () => {
       svc.removeProject('no-such-id');
       expect(svc.getProjects()).toHaveLength(2);

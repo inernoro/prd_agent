@@ -378,3 +378,11 @@ export function markDropped(state: StateService, entry: DbLedgerEntry, by: strin
   const current = state.getDbLedgerEntry(entry.id) ?? entry;
   state.upsertDbLedgerEntry({ ...current, status: 'dropped', droppedAt: now.toISOString(), droppedBy: by, droppedForced: entry.droppedForced, updatedAt: now.toISOString() });
 }
+
+/**
+ * 台账里仍占着容器的专用隔离实例（活跃 / 孤儿；已丢弃的容器已 rm）。删项目时分支已删、
+ * 快照随分支一起没了，台账是这些容器唯一的登记处——不从这里拆，容器和数据卷会永久漏跑（Codex P1）。
+ */
+export function retainedDedicatedContainers(entries: DbLedgerEntry[]): string[] {
+  return [...new Set(entries.filter((e) => e.status !== 'dropped' && e.dedicatedContainer).map((e) => e.dedicatedContainer!))];
+}

@@ -259,11 +259,17 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
       const objects = await ops.countObjects(entry.engine, infra, record.targetDb);
       const expected = record.snapshot.objects;
       const rollbackCheck = { ok: expected === undefined ? objects > 0 : objects === expected, objects, expected, measuredAt: now().toISOString() };
-      const nextRecord: DbWriteBackRecord = { ...record, rolledBackAt: now().toISOString(), rollbackSnapshot: guard.backup, rollbackCheck };
+      // 对象数对不上：不标「已回退」（否则 rolledBackAt 守卫会把这次未完成的回退锁死），把这次尝试的
+      // 快照与校验留在记录上，返回失败让操作员看清再决定重试或人工介入（Codex P1）
+      const nextRecord: DbWriteBackRecord = { ...record, ...(rollbackCheck.ok ? { rolledBackAt: now().toISOString() } : {}), rollbackSnapshot: guard.backup, rollbackCheck };
       const next: DbLedgerEntry = { ...entry, writeBacks: (entry.writeBacks ?? []).map((w) => (w.id === record.id ? nextRecord : w)), updatedAt: now().toISOString() };
       stateService.upsertDbLedgerEntry(next);
       stateService.save();
-      res.json({ entry: next, record: nextRecord, message: `已把 ${record.targetDb} 回退到 ${record.snapshot.createdAt} 的快照：${objects} 个表/集合${expected !== undefined ? `（快照时 ${expected} 个${rollbackCheck.ok ? '，一致' : '，不一致'}）` : ''}` });
+      if (!rollbackCheck.ok) {
+        res.status(422).json({ entry: next, record: nextRecord, error: `回退未完成：${record.targetDb} 还原后有 ${objects} 个表/集合，快照时 ${expected} 个，不一致；未标记为已回退，可以重试；回退前快照在 ${guard.backup.file}` });
+        return;
+      }
+      res.json({ entry: next, record: nextRecord, message: `已把 ${record.targetDb} 回退到 ${record.snapshot.createdAt} 的快照：${objects} 个表/集合${expected !== undefined ? `（快照时 ${expected} 个，一致）` : ''}` });
     } catch (err) {
       res.status(500).json({ error: `回退失败：${(err as Error).message}` });
     }
@@ -314,7 +320,8 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
           for (const db of unknownDatabases(listed, known, new Set(SYSTEM_DBS[engine]))) {
             const t = now().toISOString();
             const entry: DbLedgerEntry = {
-              id: `dbl_scan_${infra.id}_${db}`.replace(/[^A-Za-z0-9_]/g, '_'), projectId: p.id, kind: 'unknown', engine, dbName: db,
+              // id 带项目作用域：infra id 只在项目内唯一，台账 upsert 按 id 全局匹配，两个项目同名 infra 同名库会互相覆盖（Codex P1）
+              id: `dbl_scan_${p.id}_${infra.id}_${db}`.replace(/[^A-Za-z0-9_]/g, '_'), projectId: p.id, kind: 'unknown', engine, dbName: db,
               infraId: infra.id, infraContainer: infra.containerName, origin: 'scan', status: 'active',
               createdAt: t, updatedAt: t, backups: [], note: `扫描 ${infra.id} 补录：来源未知（CDS 台账里没有它的派生记录）`,
             };
@@ -344,7 +351,8 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
     try {
       const dir = pickBackupDir(p.slug, deps.repoRoot);
       const stamp = now().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-      const file = path.join(dir, `db-ledger--${p.id}--${entry.dbName}-${stamp}.${BACKUP_EXT[entry.engine]}`);
+      // 秒级时间戳同一秒内两次备份会打到同一个文件（两个操作员 / 直连 API），加随机段让每条记录独占一个文件（Codex P2）
+      const file = path.join(dir, `db-ledger--${p.id}--${entry.dbName}-${stamp}-${randomUUID().replace(/-/g, '').slice(0, 8)}.${BACKUP_EXT[entry.engine]}`);
       const objects = await ops.countObjects(entry.engine, infra, entry.dbName).catch(() => undefined);
       const meta = await ops.dumpToFile(entry.engine, infra, entry.dbName, file);
       const backup = backupRecord(file, { ...meta, objects }, now());

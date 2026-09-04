@@ -183,12 +183,13 @@ export function relationalRestoreScript(engine: DbEngine, infra: InfraService, t
     const flags = `-u${conn.user} -h127.0.0.1 -P${conn.port}`;
     // mysqldump --databases 带 CREATE DATABASE / USE 原库名；还原到指定目标时统一改成目标库名
     script = `set -e; mysql ${flags} -e 'DROP DATABASE IF EXISTS \`${targetDb}\`; CREATE DATABASE \`${targetDb}\`'; ` +
-      `gunzip -c | sed -E 's/^(CREATE DATABASE[^\`]*\`)[^\`]+(\`)/\\1${targetDb}\\2/; s/^USE \`[^\`]+\`;/USE \`${targetDb}\`;/' | mysql ${flags} ${targetDb}`;
+      // 两阶段：先 gunzip 落盘（截断 / 损坏的 gzip 在这一步就非零退出），再喂客户端；`gunzip | client` 的退出码只看客户端
+      `gunzip -c > /tmp/rsrestore.sql; sed -i -E 's/^(CREATE DATABASE[^\`]*\`)[^\`]+(\`)/\\1${targetDb}\\2/; s/^USE \`[^\`]+\`;/USE \`${targetDb}\`;/' /tmp/rsrestore.sql; mysql ${flags} ${targetDb} < /tmp/rsrestore.sql; rm -f /tmp/rsrestore.sql`;
   } else {
     const flags = `-U ${conn.user} -h 127.0.0.1 -p ${conn.port}`;
     script = `set -e; psql ${flags} -d postgres -v ON_ERROR_STOP=1 -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${targetDb}' AND pid <> pg_backend_pid()" >/dev/null; ` +
       `psql ${flags} -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS "${targetDb}"' -c 'CREATE DATABASE "${targetDb}"'; ` +
-      `gunzip -c | psql ${flags} -q -v ON_ERROR_STOP=1 -d ${targetDb} >/dev/null`;
+      `gunzip -c > /tmp/rsrestore.sql; psql ${flags} -q -v ON_ERROR_STOP=1 -d ${targetDb} < /tmp/rsrestore.sql >/dev/null; rm -f /tmp/rsrestore.sql`;
   }
   return { argv: ['exec', '-i', ...conn.envFlags, infra.containerName, 'sh', '-c', script], script, secrets: conn.secrets };
 }

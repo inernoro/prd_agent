@@ -101,6 +101,41 @@ export function dumpArgv(engine: ReplicaDbEngine, infra: InfraService, dbName: s
   return { argv: ['exec', name, 'mongodump', `--uri=${mongoUri(c, dbName)}`, '--archive', '--gzip', '-d', dbName], secrets: c.secrets };
 }
 
+/**
+ * 演练还原的 docker argv。关系型两阶段：stdin 的 gzip 流先 gunzip 落到容器 /tmp，
+ * 成功了再喂给客户端——`gunzip -c | client` 在 POSIX sh 下退出码取客户端的，截断 /
+ * 损坏的 gzip 让 gunzip 失败、客户端吃到一段合法前缀照样 0，半份还原会被判「演练通过」
+ *（Codex P1，与 dumpArgv 同一教训）。
+ */
+export function restoreDrillArgv(engine: ReplicaDbEngine, infra: InfraService, scratchDb: string): { argv: string[]; createArgv?: string[]; secrets: string[] } {
+  assertSafe(scratchDb);
+  if (!scratchDb.startsWith('cds_drill_')) throw new Error(`演练库名必须以 cds_drill_ 开头: ${scratchDb}`);
+  const c = cred(engine, infra);
+  const name = infra.containerName;
+  const tmp = `/tmp/cds-ledger-restore-${scratchDb}.sql`;
+  if (engine === 'mysql') {
+    // mysqldump --databases 会带 CREATE DATABASE / USE 原库名；演练时用 sed 把库名换成临时库
+    return {
+      createArgv: ['exec', '-i', ...c.argvPrefix, name, 'mysql', `-u${c.user}`, '-h127.0.0.1', `-P${c.port}`, '-e', `CREATE DATABASE IF NOT EXISTS \`${scratchDb}\``],
+      argv: ['exec', '-i', ...c.argvPrefix, name, 'sh', '-c',
+        `set -e; gunzip -c > ${tmp}; sed -i -E 's/^(CREATE DATABASE[^\`]*\`)[^\`]+(\`)/\\1${scratchDb}\\2/; s/^USE \`[^\`]+\`;/USE \`${scratchDb}\`;/' ${tmp}; mysql -u${c.user} -h127.0.0.1 -P${c.port} ${scratchDb} < ${tmp}; rm -f ${tmp}`],
+      secrets: c.secrets,
+    };
+  }
+  if (engine === 'postgres') {
+    return {
+      createArgv: ['exec', '-i', ...c.argvPrefix, name, 'psql', '-U', c.user, '-h', '127.0.0.1', '-p', String(c.port), '-d', 'postgres', '-c', `CREATE DATABASE "${scratchDb}"`],
+      argv: ['exec', '-i', ...c.argvPrefix, name, 'sh', '-c',
+        `set -e; gunzip -c > ${tmp}; psql -U ${c.user} -h 127.0.0.1 -p ${c.port} -q -v ON_ERROR_STOP=1 -d ${scratchDb} < ${tmp} >/dev/null; rm -f ${tmp}`],
+      secrets: c.secrets,
+    };
+  }
+  return {
+    argv: ['exec', '-i', name, 'mongorestore', `--uri=${mongoUri(c, 'admin')}`, '--archive', '--gzip', '--nsFrom', '*.*', '--nsTo', `${scratchDb}.*`, '--drop'],
+    secrets: c.secrets,
+  };
+}
+
 export const realDbLedgerOps: DbLedgerOps = {
   async dumpToFile(engine, infra, dbName, file) {
     const c = dumpArgv(engine, infra, dbName);
@@ -131,25 +166,13 @@ export const realDbLedgerOps: DbLedgerOps = {
   },
 
   async restoreDrill(engine, infra, file, scratchDb) {
-    assertSafe(scratchDb);
-    if (!scratchDb.startsWith('cds_drill_')) throw new Error(`演练库名必须以 cds_drill_ 开头: ${scratchDb}`);
-    const c = cred(engine, infra);
-    const name = infra.containerName;
+    const c = restoreDrillArgv(engine, infra, scratchDb);
     try {
-      if (engine === 'mysql') {
-        // mysqldump --databases 会带 CREATE DATABASE / USE 原库名；演练时用 sed 把库名换成临时库
-        await runDockerExec(['exec', '-i', ...c.argvPrefix, name, 'mysql', `-u${c.user}`, '-h127.0.0.1', `-P${c.port}`, '-e', `CREATE DATABASE IF NOT EXISTS \`${scratchDb}\``], '', 60_000, 8 * 1024);
-        await streamDockerExec(['exec', '-i', ...c.argvPrefix, name, 'sh', '-c',
-          `gunzip -c | sed -E 's/^(CREATE DATABASE[^\`]*\`)[^\`]+(\`)/\\1${scratchDb}\\2/; s/^USE \`[^\`]+\`;/USE \`${scratchDb}\`;/' | mysql -u${c.user} -h127.0.0.1 -P${c.port} ${scratchDb}`],
-        { fromFile: file, secrets: c.secrets, timeoutMs: 30 * 60_000 });
-      } else if (engine === 'postgres') {
-        await runDockerExec(['exec', '-i', ...c.argvPrefix, name, 'psql', '-U', c.user, '-h', '127.0.0.1', '-p', String(c.port), '-d', 'postgres', '-c', `CREATE DATABASE "${scratchDb}"`], '', 60_000, 8 * 1024);
-        await streamDockerExec(['exec', '-i', ...c.argvPrefix, name, 'sh', '-c',
-          `gunzip -c | psql -U ${c.user} -h 127.0.0.1 -p ${c.port} -q -v ON_ERROR_STOP=1 -d ${scratchDb} >/dev/null`],
-        { fromFile: file, secrets: c.secrets, timeoutMs: 30 * 60_000 });
+      if (engine === 'mongo') {
+        await streamDockerExec(c.argv, { fromFile: file, secrets: c.secrets, timeoutMs: 30 * 60_000 });
       } else {
-        await streamDockerExec(['exec', '-i', name, 'mongorestore', `--uri=${mongoUri(c, 'admin')}`, '--archive', '--gzip', '--nsFrom', '*.*', '--nsTo', `${scratchDb}.*`, '--drop'],
-          { fromFile: file, secrets: c.secrets, timeoutMs: 30 * 60_000 });
+        await runDockerExec(c.createArgv!, '', 60_000, 8 * 1024);
+        await streamDockerExec(c.argv, { fromFile: file, secrets: c.secrets, timeoutMs: 30 * 60_000 });
       }
       const objects = await this.countObjects(engine, infra, scratchDb);
       return { objects };
