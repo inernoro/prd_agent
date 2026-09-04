@@ -503,8 +503,22 @@ public class DocumentStoreOpenApiController : ControllerBase
                     cancellationToken: CancellationToken.None);
             _logger.LogWarning(ex, "[mcp] 知识库建文档未走完 entryId={EntryId} storeId={StoreId} outcome={Outcome}",
                 entry.Id, storeId, outcome);
-            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, RollbackMessage(
-                "这篇文档没有建成", "请用同一个 clientRequestId 重试。", outcome)));
+            var rollbackNote = RollbackMessage("这篇文档没有建成", "请用同一个 clientRequestId 重试。", outcome);
+            // 正文其实写进去了，就不能报失败。
+            //
+            // 网关按 HTTP 状态码判这次调用成没成：报 500 它会退掉占的额度、把这笔记成错误 ——
+            // 于是文档明明躺在用户的知识库里，账面上却是「没发生过、也没花钱」。
+            // 报成功并把没做完的部分如实说出来，比让账面和事实对不上强。
+            if (outcome == RollbackOutcome.KeptCommitted)
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    entryId = entry.Id,
+                    storeId,
+                    title = entry.Title,
+                    summaryApplied = false,
+                    warning = rollbackNote,
+                }));
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, rollbackNote));
         }
 
         return Ok(ApiResponse<object>.Ok(new
@@ -669,7 +683,14 @@ public class DocumentStoreOpenApiController : ControllerBase
         var current = await _db.DocumentEntries
             .Find(e => e.Id == entryId)
             .FirstOrDefaultAsync(CancellationToken.None);
-        if (current != null && current.UpdatedAt != placeholderUpdatedAt)
+        // 已经不在了就**立刻收手**，别再按 id 去清派生。
+        //
+        // 这个 id 是幂等键推出来的确定性 id：条目一旦没了，它就空出来了，同键重试可以立刻
+        // 插一条新的并开始写它自己的版本与双链。这时候再按同一个 entryId 清一遍派生，
+        // 清掉的是**新那次**的东西，而那次还会照常报成功 —— 用户拿到一篇没有历史的文档。
+        // 原来那条的派生不用我操心：把它删掉的那条路径自己做过级联。
+        if (current == null) return RollbackOutcome.AlreadyGone;
+        if (current.UpdatedAt != placeholderUpdatedAt)
         {
             // 摘标记也得带上刚读到的那个版本。这个 id 是幂等键推出来的**确定性** id：
             // 回读之后、这一步之前，它完全可能被删掉、又被同键重试插进一条新的占位 ——

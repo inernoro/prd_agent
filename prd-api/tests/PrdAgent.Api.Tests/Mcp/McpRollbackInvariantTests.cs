@@ -140,6 +140,35 @@ public class McpRollbackInvariantTests
             customMessage: "删除必须带条件：回读与删除之间还有窗口，判据和写入要是同一条原子操作");
         src.ShouldNotContain("DeleteOneAsync(e => e.Id == entryId, ",
             customMessage: "又回到无条件删了 —— 正文提交成功的那一瞬会被删掉");
+
+        // 条目已经不在了就得**立刻收手**：这个确定性 id 已经空出来，同键重试可能已经插了一条新的，
+        // 再按 id 清一遍派生，清掉的是新那次的版本与双链，而那次还会照常报成功。
+        var cleanup = McpSourceGuard.Slice(src,
+            "CleanupRolledBackEntryAsync(string entryId, DateTime placeholderUpdatedAt)",
+            "DocumentEntryVersions.DeleteManyAsync");
+        cleanup.ShouldContain("if (current == null) return RollbackOutcome.AlreadyGone;",
+            customMessage: "回读为 null 时还往下走，会按一个已经可重用的 id 去清派生");
+    }
+
+    /// <summary>
+    /// 正文其实写进去了，就不能报失败。
+    ///
+    /// 网关按 HTTP 状态码判这次调用成没成：报 500 它会退掉占的额度、把这笔记成错误 ——
+    /// 于是文档明明躺在用户的知识库里，账面上却是「没发生过、也没花钱」。
+    /// 这不是显示问题：额度账与调用记录都跟着错，而事后没有任何线索指向这次。
+    /// </summary>
+    [Fact]
+    public void 正文已提交时_不许按失败回给调用方()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
+        // 兜底那段里，KeptCommitted 必须在 500 之前被单独接住。
+        var tail = McpSourceGuard.Slice(src, "if (ShouldRestoreDocumentCount(countedIn, outcome))", "public class UpdateEntryContentRequest");
+        var kept = tail.IndexOf("RollbackOutcome.KeptCommitted", StringComparison.Ordinal);
+        var fail = tail.IndexOf("StatusCode(500", StringComparison.Ordinal);
+        kept.ShouldBeGreaterThanOrEqualTo(0, "兜底那段没有单独接住「正文已提交」");
+        fail.ShouldBeGreaterThan(kept, "「正文已提交」得排在 500 之前，否则它照样被当成失败回出去");
+        tail[kept..fail].ShouldContain("Ok(", customMessage: "接住了却还是没按成功回");
     }
 
     /// <summary>
