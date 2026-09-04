@@ -467,17 +467,17 @@ public class DocumentStoreOpenApiController : ControllerBase
         {
             // 条目在正文落盘期间被删掉了。撤回收尾照走（派生可能已经写了几行），
             // 但计数不退：删除那条路径自己已经扣过一次。
-            await CleanupRolledBackEntryAsync(entry.Id);
-            return Conflict(ApiResponse<object>.Fail("ENTRY_DELETED",
-                "这篇文档在正文落盘期间被删除了，内容没有写进去。请用一个新的 clientRequestId 重新建。"));
+            var outcome = await CleanupRolledBackEntryAsync(entry.Id);
+            return Conflict(ApiResponse<object>.Fail("ENTRY_DELETED", RollbackMessage(
+                "这篇文档在正文落盘期间被删除了，内容没有写进去", "请用一个新的 clientRequestId 重新建。", outcome)));
         }
         catch (StoreVanishedException)
         {
             // 库没了，这条也不该留。回滚与下面那段同一套，只是给调用方的说法不同：
             // 让它「用同一个键重试」是错的指引 —— 库已经不在，重试只会一路 404。
-            await CleanupRolledBackEntryAsync(entry.Id);
-            return Conflict(ApiResponse<object>.Fail("STORE_DELETED",
-                "这个知识库在写入过程中被删除了，文档没有建成，也已经撤回。请换一个库再写。"));
+            var outcome = await CleanupRolledBackEntryAsync(entry.Id);
+            return Conflict(ApiResponse<object>.Fail("STORE_DELETED", RollbackMessage(
+                "这个知识库在写入过程中被删除了，文档没有建成", "请换一个库再写。", outcome)));
         }
         catch (Exception ex)
         {
@@ -486,7 +486,6 @@ public class DocumentStoreOpenApiController : ControllerBase
             // 要么永远撞上「还在落正文」的 409。一次存储抖动就此变成永久的残缺数据。
             var outcome = await CleanupRolledBackEntryAsync(entry.Id);
             // 只有「这次真的是我删的」才退计数：条目早已被别人删掉时，扣减也早已由那条路径做过。
-            var cleaned = outcome != RollbackOutcome.Retained;
             if (ShouldRestoreDocumentCount(countedIn, outcome))
                 await _db.DocumentStores.UpdateOneAsync(
                     s => s.Id == storeId,
@@ -494,9 +493,8 @@ public class DocumentStoreOpenApiController : ControllerBase
                     cancellationToken: CancellationToken.None);
             _logger.LogWarning(ex, "[mcp] 知识库建文档未走完 entryId={EntryId} storeId={StoreId} outcome={Outcome}",
                 entry.Id, storeId, outcome);
-            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, cleaned
-                ? "这篇文档没有建成，已经撤回，请用同一个 clientRequestId 重试"
-                : "这篇文档没有建成，且残留记录没能清干净；这个 clientRequestId 暂时不能复用，请换一个键重试，并让管理员看一下服务端日志"));
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, RollbackMessage(
+                "这篇文档没有建成", "请用同一个 clientRequestId 重试。", outcome)));
         }
 
         return Ok(ApiResponse<object>.Ok(new
@@ -597,6 +595,20 @@ public class DocumentStoreOpenApiController : ControllerBase
 
     /// <summary>单篇正文上限。挡住智能体一次糊一本书进来，也挡住它把上下文里的垃圾整个倒进知识库。</summary>
     private const int MaxContentChars = 200_000;
+
+    /// <summary>
+    /// 撤回之后对调用方的那句话。三条撤回路径共用同一处判据。
+    ///
+    /// 上一版只有「没走完」那条看了 outcome，另外两条一律说「已经撤回」——
+    /// 而 <see cref="RollbackOutcome.Retained"/> 时条目是被**刻意留着**占住确定性 id 的，
+    /// 它还带着「正文未落盘」的标记躺在库里，同键重试会一直撞 409。那时候说「已经撤回、
+    /// 用同一个键重试」，两句都是不算数的话（形状 3：同一个判据只长在一条路上）。
+    /// </summary>
+    internal static string RollbackMessage(string situation, string cleanAdvice, RollbackOutcome outcome)
+        => outcome == RollbackOutcome.Retained
+            ? situation + "；而且这次撤回没清干净，库里还留着一条带「正文未落盘」标记的残留记录 —— "
+              + "这个 clientRequestId 暂时不能复用，请换一个键重试，并让管理员看一下服务端日志。"
+            : situation + "，已经撤回。" + cleanAdvice;
 
     /// <summary>
     /// 回滚时要不要把库里的文档计数减回去。

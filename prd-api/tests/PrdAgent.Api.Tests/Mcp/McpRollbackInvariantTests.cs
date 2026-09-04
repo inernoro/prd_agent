@@ -33,6 +33,96 @@ public class McpRollbackInvariantTests
         DocumentStoreOpenApiController.ShouldRestoreDocumentCount(countedIn: false, entryDeleted: false)
             .ShouldBeFalse();
     }
+
+    /// <summary>
+    /// 撤回没清干净时，不许对调用方说「已经撤回」，也不许让它拿同一个键重试。
+    ///
+    /// Retained 的含义是：派生记录没清掉，条目被**刻意留着**占住那个确定性 id ——
+    /// 它还带着「正文未落盘」的标记躺在库里，同键重试会一直撞 409。这时候说
+    /// 「已经撤回，请用同一个 clientRequestId 重试」，两句都是不算数的话。
+    /// </summary>
+    [Fact]
+    public void 撤回干净时_照常给出可复用同一个键的说法()
+    {
+        // 不用 [Theory] 传枚举：这个枚举是 internal，公开测试方法的参数不能比它更可见。
+        var clean = new[]
+        {
+            DocumentStoreOpenApiController.RollbackOutcome.Removed,
+            DocumentStoreOpenApiController.RollbackOutcome.AlreadyGone,
+        };
+        foreach (var outcome in clean)
+        {
+            var msg = DocumentStoreOpenApiController.RollbackMessage(
+                "这篇文档没有建成", "请用同一个 clientRequestId 重试。", outcome);
+            msg.ShouldContain("已经撤回", customMessage: outcome.ToString());
+            msg.ShouldContain("同一个 clientRequestId", customMessage: outcome.ToString());
+        }
+    }
+
+    [Fact]
+    public void 撤回没清干净时_不许说已经撤回_也不许让它用同一个键重试()
+    {
+        var msg = DocumentStoreOpenApiController.RollbackMessage(
+            "这篇文档没有建成", "请用同一个 clientRequestId 重试。",
+            DocumentStoreOpenApiController.RollbackOutcome.Retained);
+        msg.ShouldNotContain("已经撤回");
+        msg.ShouldNotContain("请用同一个 clientRequestId 重试");
+        msg.ShouldContain("换一个键", customMessage: "残留没清干净时必须让调用方换键，否则它会一直撞 409");
+        // 情形本身照说 —— 换了键也得知道刚才发生了什么。
+        msg.ShouldContain("这篇文档没有建成");
+    }
+
+    /// <summary>
+    /// 三条撤回路径必须都走同一处说法。
+    ///
+    /// 这条守卫的存在理由就是它这次抓的东西：上一版只有「没走完」那条看了 outcome，
+    /// 另外两条（条目被删、库被删）一律说「已经撤回」，清理失败时就是句不算数的话。
+    /// 逐个调用点枚举，而不是数总数 —— 新加第四条撤回路径时它自动进闸。
+    /// </summary>
+    [Fact]
+    public void 每一处撤回都必须按清理结果说话()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
+        const string call = "CleanupRolledBackEntryAsync(entry.Id)";
+        var sites = 0;
+        for (var i = src.IndexOf(call, StringComparison.Ordinal); i >= 0; i = src.IndexOf(call, i + 1, StringComparison.Ordinal))
+        {
+            sites++;
+            // 撤回之后那段（到本 catch 块结束前）必须用上清理结果，而不是照着一句写死的话回。
+            var tail = src[i..Math.Min(src.Length, i + 900)];
+            tail.ShouldContain("RollbackMessage(",
+                customMessage: $"第 {sites} 处撤回没按清理结果说话：清理失败时它仍会说「已经撤回」，而条目还带着未落盘标记留在库里");
+        }
+        sites.ShouldBe(3, "撤回路径数量变了 —— 新增的那条也要按清理结果说话，确认后再改这个数");
+    }
+
+    /// <summary>
+    /// 文学写正文：写没写进去一律要判，且「没了」与「被改了」要给不同的说法。
+    ///
+    /// 上一版把这个判断挂在一个标志位上（只有带条件写入时才看 MatchedCount）。
+    /// 于是 replace 且没给版本令牌那条路 —— 过滤器只有 id —— 匹配不到时直接回 200，
+    /// 而库里什么都没发生：工作区在读它与写它之间被删了，调用方却被告知「写好了」。
+    ///
+    /// 这条只能盯源码：要真跑出来得让 Mongo 与驱动在同一微秒里赛跑。所以它盯的是
+    /// **判据的形状**（结果无条件要判、两种结局分开说），不是某一句实现的字面。
+    /// </summary>
+    [Fact]
+    public void 文学写正文_写没写进去一律要判()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryOpenApiController.cs"));
+        src.ShouldContain("if (result.MatchedCount == 0)",
+            customMessage: "写入结果必须无条件判一次");
+        src.ShouldNotContain("&& result.MatchedCount == 0",
+            customMessage: "判据又被挂到标志位后面了：不带条件那次写不进去时会静默回 200");
+
+        var decide = McpSourceGuard.Slice(src, "if (result.MatchedCount == 0)", "return Ok(");
+        decide.ShouldContain("WORKSPACE_NOT_FOUND",
+            customMessage: "工作区被删掉时要说「没了」，让调用方重读也没用");
+        decide.ShouldContain("WORKSPACE_CONTENT_CHANGED",
+            customMessage: "被改过时要说「重读再写」，这条和「没了」不是一回事");
+    }
 }
 
 /// <summary>

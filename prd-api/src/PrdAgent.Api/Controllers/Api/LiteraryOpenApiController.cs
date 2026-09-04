@@ -293,7 +293,6 @@ public class LiteraryOpenApiController : ControllerBase
         //   校验和写入之间那段窗口里用户改一次，照样被盖掉。检查和写入必须是同一个条件，
         //   否则那次检查只是个说法（predicate-and-wiring-discipline 形状 2：链路只建一半）。
         var idFilter = Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, ws.Id);
-        var guarded = append || revisionChecked;
         // append 的条件此前只看正文没变。可这次写入**重置的不止正文**：它还要把
         // ArticleWorkflow 与 ArticleWorkflowHistory 按我读到的那份快照重写一遍。
         // 界面或配图 worker 完全可以在这中间只动 workflow（写标记、回填资产）而不动正文 ——
@@ -308,11 +307,24 @@ public class LiteraryOpenApiController : ControllerBase
                 ? Builders<ImageMasterWorkspace>.Filter.And(idFilter, unchanged)
                 : idFilter;
         var result = await _db.ImageMasterWorkspaces.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
-        if (guarded && result.MatchedCount == 0)
+        // 一律看写没写进去，不只在带条件时看。不带条件那次（replace 且没给 expectedUpdatedAt）
+        // 的过滤器只有 id，匹配不到就只剩一种可能 —— 这个工作区在我读它与写它之间被删了。
+        // 上一版在这种情形下直接回 200，等于告诉调用方「写好了」，而库里什么都没发生。
+        if (result.MatchedCount == 0)
+        {
+            // 「没了」和「被改了」得给不同的说法：前者重读也没用，后者重读就能接着写。
+            // 回读一次分清楚 —— 与知识库那条撤回路径同一个做法，不猜。
+            var still = await _db.ImageMasterWorkspaces
+                .Find(x => x.Id == ws.Id)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (still == null)
+                return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND",
+                    "这个工作区在写入过程中被删除了，内容没有写进去。"));
             return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
                 append
                     ? "追加期间这个工作区被另一次写入改过（正文或配图流程），这次没有写进去。请先用 map_literary_get_workspace 重新读一遍，再决定怎么写。"
                     : "这篇正文在你准备覆盖的这段时间里被改过，本次覆盖没有执行。请先用 map_literary_get_workspace 重新读一遍，再决定怎么写。"));
+        }
 
         return Ok(ApiResponse<object>.Ok(new
         {
