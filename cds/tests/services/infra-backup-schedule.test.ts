@@ -1319,13 +1319,16 @@ describe('redis 快照路径判据只有一份', () => {
  * 救不了正在写的这一个。
  */
 describe('单次导出有写入上限', () => {
-  it('上限 = 可用空间减去保留余量，换算成 512 字节块', () => {
+  it('上限 = 可用空间减去保留余量，并按宿主 shell 的块大小换算', () => {
     const free = 10 * 1024 ** 3;                 // 10 GiB 可用
-    const capped = buildSizeCappedCommand('echo hi', free, 2 * 1024 ** 3);
-    expect(capped).not.toBeNull();
-    expect(capped!.capBytes).toBe(8 * 1024 ** 3); // 留 2 GiB
-    expect(capped!.command).toContain(`ulimit -f ${(8 * 1024 ** 3) / 512}`);
-    expect(capped!.command).toContain('echo hi');
+    const linux = buildSizeCappedCommand('echo hi', free, 2 * 1024 ** 3, 'linux');
+    const macos = buildSizeCappedCommand('echo hi', free, 2 * 1024 ** 3, 'darwin');
+    expect(linux).not.toBeNull();
+    expect(macos).not.toBeNull();
+    expect(linux!.capBytes).toBe(8 * 1024 ** 3); // 留 2 GiB
+    expect(linux!.command).toContain(`ulimit -f ${(8 * 1024 ** 3) / 512}`);
+    expect(macos!.command).toContain(`ulimit -f ${(8 * 1024 ** 3) / 1024}`);
+    expect(linux!.command).toContain('echo hi');
   });
 
   it('余量都不够时返回 null，让调用方跳过而不是硬写', () => {
@@ -1349,7 +1352,7 @@ describe('单次导出有写入上限', () => {
   it('拿真 shell 跑：超过上限的写入被中断，不会写出完整文件', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-ulimit-'));
     const out = path.join(dir, 'big.bin');
-    // cap 传 1 KiB + reserve 0 → ulimit -f 2 块（1024 字节）
+    // cap 传 1 KiB + reserve 0；块数由当前宿主 shell 的实际单位决定。
     const c = buildSizeCappedCommand(`yes ABCDEFGH | head -c 204800 > ${out}`, 1024, 0)!;
     let failed = false;
     try {
@@ -1358,6 +1361,11 @@ describe('单次导出有写入上限', () => {
     expect(failed).toBe(true);
     // 写出来的部分不超过上限（内核在 1 KiB 处就把它砍了）
     expect(fs.statSync(out).size).toBeLessThanOrEqual(1024);
+  });
+
+  it('额度小于 shell 最小文件块时拒绝构造虚假的安全上限', () => {
+    expect(buildSizeCappedCommand('echo unsafe', 511, 0, 'linux')).toBeNull();
+    expect(buildSizeCappedCommand('echo unsafe', 1023, 0, 'darwin')).toBeNull();
   });
 
   /** 接线守卫：算出来的上限要真的套在导出命令上，不是算完扔掉。 */
