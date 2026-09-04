@@ -1,4 +1,5 @@
 using PrdAgent.Core.Models;
+using System.Text.Json.Serialization;
 
 namespace PrdAgent.Core.Interfaces;
 
@@ -126,15 +127,15 @@ public sealed record InfraAgentManagedLaunchRequest(
 );
 
 public sealed record InfraAgentWorkspaceTransferRequest(
-    string SchemaVersion,
-    string InputPackageUrl,
-    string InputSha256,
-    string ResultCommitUrl,
-    string TransferToken,
-    string BaseRevision,
-    long MaxInputBytes,
-    long MaxOutputBytes,
-    IReadOnlyList<string> AllowedOutputPaths
+    [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+    [property: JsonPropertyName("inputPackageUrl")] string InputPackageUrl,
+    [property: JsonPropertyName("inputSha256")] string InputSha256,
+    [property: JsonPropertyName("resultCommitUrl")] string ResultCommitUrl,
+    [property: JsonPropertyName("transferToken")] string TransferToken,
+    [property: JsonPropertyName("baseRevision")] string BaseRevision,
+    [property: JsonPropertyName("maxInputBytes")] long MaxInputBytes,
+    [property: JsonPropertyName("maxOutputBytes")] long MaxOutputBytes,
+    [property: JsonPropertyName("allowedOutputPaths")] IReadOnlyList<string> AllowedOutputPaths
 );
 
 public record SendInfraAgentMessageRequest(
