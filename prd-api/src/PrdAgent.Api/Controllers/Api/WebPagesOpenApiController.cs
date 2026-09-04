@@ -98,7 +98,7 @@ public class WebPagesOpenApiController : ControllerBase
                 {
                     siteId = existed.Id,
                     title = existed.Title,
-                    url = existed.SiteUrl,
+                    url = AbsoluteSiteUrl(existed.SiteUrl),
                     deduplicated = true,
                 }));
         }
@@ -117,7 +117,10 @@ public class WebPagesOpenApiController : ControllerBase
             string.IsNullOrWhiteSpace(req.Description) ? null : req.Description!.Trim(),
             sourceType: "api", sourceRef: sourceRef,
             tags: req.Tags, folder: string.IsNullOrWhiteSpace(req.Folder) ? null : req.Folder!.Trim(),
-            ct: ct,
+            // 服务端自己的令牌，不跟调用方的连接走：对象已经用 CancellationToken.None 传上去了，
+            // 若插库那一步跟着 RequestAborted 被取消，对象就成了没人指向的孤儿，而且因为没有
+            // SourceRef 行，同一个 clientRequestId 的重试会再传一个对象（server-authority）。
+            ct: CancellationToken.None,
             // 上限也交给落盘那一层按变换后的真实字节再判一次：服务端会重写绝对路径、
             // 注入近 10KB 的翻页垫片，只在这里校验入参等于承诺 4MB 却存进去 4MB 多。
             maxStoredBytes: MaxHtmlBytes);
@@ -133,7 +136,7 @@ public class WebPagesOpenApiController : ControllerBase
         {
             siteId = site.Id,
             title = site.Title,
-            url = site.SiteUrl,
+            url = AbsoluteSiteUrl(site.SiteUrl),
             visibility = site.Visibility,
         }));
     }
@@ -157,7 +160,7 @@ public class WebPagesOpenApiController : ControllerBase
                 siteId = s.Id,
                 title = s.Title,
                 description = s.Description,
-                url = s.SiteUrl,
+                url = AbsoluteSiteUrl(s.SiteUrl),
                 folder = s.Folder,
                 tags = s.Tags ?? new List<string>(),
                 createdAt = s.CreatedAt,
@@ -217,6 +220,20 @@ public class WebPagesOpenApiController : ControllerBase
             // 报成没副作用就等于让同一个键无限续期而不扣额度。
             deduplicated = reusedUnchanged,
         }));
+    }
+
+    /// <summary>
+    /// 把站点地址补成绝对地址。对象存储走 CDN 时 SiteUrl 本来就是绝对的，原样返回；
+    /// 但 ASSETS_PROVIDER=local（docker-compose.dev.yml 的默认值）时 LocalAssetStorage
+    /// 回的是 /local-assets/... 这种相对路径 —— 远端 MCP 客户端手里没有 MAP 的来源域名，
+    /// 拿到相对路径只会按它自己的域名解析，点开 404。与分享链那条同一个理由。
+    /// </summary>
+    private string? AbsoluteSiteUrl(string? siteUrl)
+    {
+        if (string.IsNullOrWhiteSpace(siteUrl)) return siteUrl;
+        var raw = siteUrl.Trim();
+        if (Uri.TryCreate(raw, UriKind.Absolute, out _)) return raw;
+        return $"{Request.ResolveExternalBaseUrl()}{(raw.StartsWith('/') ? raw : "/" + raw)}";
     }
 
     private string? BuildSourceRef(string? clientRequestId)

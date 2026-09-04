@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { PrdLoader } from '@/components/ui/PrdLoader';
 import { listMcpCalls } from '@/services';
@@ -49,9 +49,16 @@ export function McpCallsPanel({
   // 审计面板一旦开始说谎，用户还不如没有它。
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // 筛选条件连改两次时会有两个 load 同时在飞，谁后回来谁覆盖 items —— 慢的那个是旧条件的结果，
+  // 于是当前筛选下会显示别的客户端/别的结果状态的记录。给每次请求发一个代次号，
+  // 回来时不是最新那次就整段丢弃（错误态同理，否则旧请求的失败会盖掉新请求的成功）。
+  const loadGenRef = useRef(0);
+
   const load = useCallback(async () => {
+    const gen = ++loadGenRef.current;
     setLoading(true);
     const res = await listMcpCalls({ keyId: keyId || undefined, status: status || undefined, limit: 50 });
+    if (gen !== loadGenRef.current) return;
     if (!res.success || !res.data) {
       setLoadError(res.error?.message || '调用记录没读到，可能是网络断开或服务端异常。');
       setItems([]);
