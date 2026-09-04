@@ -286,7 +286,12 @@ def audit_zip(
             "blockers": blockers,
             "recommendations": recommendations,
             "optimizationRecommended": bool(recommendations),
-            "strictReady": not blockers and node_modules_entries == 0,
+            "strictReady": (
+                not blockers
+                and node_modules_entries == 0
+                and dev_entries == 0
+                and source_map_entries == 0
+            ),
         }
 
 

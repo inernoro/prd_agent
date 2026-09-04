@@ -143,6 +143,22 @@ class AuditPrototypePackageTests(unittest.TestCase):
             self.assertEqual(2, result.returncode)
             self.assertFalse(__import__("json").loads(result.stdout)["strictReady"])
 
+    def test_development_artifacts_are_not_strict_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "development.zip"
+            make_zip(source, {
+                "index.html": b"<main>prototype</main>",
+                "package-lock.json": b"{}",
+                "app.js.map": b"{}",
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertFalse(report["strictReady"])
+            self.assertTrue(report["optimizationRecommended"])
+            self.assertEqual(1, report["developmentEntries"])
+            self.assertEqual(1, report["sourceMapEntries"])
+
 
 if __name__ == "__main__":
     unittest.main()

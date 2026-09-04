@@ -629,107 +629,132 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             throw new InvalidOperationException("请先查看优化版本，再决定是否保存");
 
         var previousStatus = session.Status;
+        var leaseOwner = Guid.NewGuid().ToString("N");
+        var now = DateTime.UtcNow;
         var claim = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
             x => x.Id == session.Id
                  && x.OwnerUserId == userId
                  && x.Status == previousStatus
-                 && x.ExpiresAt > DateTime.UtcNow,
+                 && x.ExpiresAt > now,
             Builders<HostedSiteOptimizationSession>.Update
                 .Set(x => x.Status, HostedSiteOptimizationStatuses.Saving)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                .Set(x => x.ExpiresAt, DateTime.UtcNow.AddMinutes(30)),
+                .Set(x => x.LeaseOwner, leaseOwner)
+                .Set(x => x.LeaseExpiresAt, now.Add(WorkerLeaseLifetime))
+                .Set(x => x.UpdatedAt, now)
+                .Set(x => x.ExpiresAt, now.Add(SessionLifetime)),
             cancellationToken: ct);
         if (claim.ModifiedCount != 1)
             throw new InvalidOperationException("这个优化任务正在保存或已经过期，请刷新后重试");
 
-        HostedSite saved;
+        using var leaseCancellation = new CancellationTokenSource();
+        var leaseHeartbeat = RenewWorkerLeaseAsync(session.Id, leaseOwner, leaseCancellation.Token);
         try
         {
-            var zipBytes = normalizedVariant == "original"
-                ? await _storage.TryDownloadBytesAsync(session.SourceObjectKey, ct)
-                : await BuildZipFromPreviewAsync(session, ct);
-            if (zipBytes == null || zipBytes.Length == 0)
-                throw new InvalidOperationException("临时文件已经过期，请重新选择文件");
-
-            if (string.IsNullOrWhiteSpace(session.TargetSiteId))
-            {
-                saved = await _hostedSites.CreateFromZipAsync(
-                    userId,
-                    zipBytes,
-                    session.Title,
-                    session.Description,
-                    session.Folder,
-                    session.Tags,
-                    ct: CancellationToken.None);
-            }
-            else
-            {
-                saved = await _hostedSites.ReuploadAsync(
-                    session.TargetSiteId,
-                    userId,
-                    zipBytes,
-                    session.SourceFileName,
-                    ct: CancellationToken.None);
-                var metadata = await _hostedSites.UpdateAsync(
-                    saved.Id,
-                    userId,
-                    session.Title,
-                    session.Description,
-                    session.Tags,
-                    session.Folder,
-                    coverImageUrl: null,
-                    ct: CancellationToken.None);
-                if (metadata != null) saved = metadata;
-            }
-        }
-        catch
-        {
-            await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                x => x.Id == session.Id && x.OwnerUserId == userId,
-                Builders<HostedSiteOptimizationSession>.Update
-                    .Set(x => x.Status, previousStatus)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                    .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
-                cancellationToken: CancellationToken.None);
-            throw;
-        }
-
-        // 从这里开始正式站点已经保存成功，后续清理异常不能再把状态恢复成可确认，
-        // 否则客户端重试会重复创建站点。先固化完成身份，再做不影响结果的清理。
-        session.Status = HostedSiteOptimizationStatuses.CleanupPending;
-        session.CompletedSiteId = saved.Id;
-        session.ExpiresAt = DateTime.UtcNow;
-        session.UpdatedAt = DateTime.UtcNow;
-        try
-        {
-            await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                x => x.Id == session.Id && x.OwnerUserId == userId,
-                Builders<HostedSiteOptimizationSession>.Update
-                    .Set(x => x.Status, session.Status)
-                    .Set(x => x.CompletedSiteId, session.CompletedSiteId)
-                    .Set(x => x.ExpiresAt, session.ExpiresAt)
-                    .Set(x => x.UpdatedAt, session.UpdatedAt),
-                cancellationToken: CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "网页托管优化已保存，但记录完成状态失败: {SessionId}", session.Id);
-        }
-
-        if (await CleanupSessionFilesAsync(session))
-        {
+            HostedSite saved;
             try
             {
-                await _db.HostedSiteOptimizationSessions.DeleteOneAsync(
-                    x => x.Id == session.Id,
-                    CancellationToken.None);
+                var zipBytes = normalizedVariant == "original"
+                    ? await _storage.TryDownloadBytesAsync(session.SourceObjectKey, ct)
+                    : await BuildZipFromPreviewAsync(session, ct);
+                if (zipBytes == null || zipBytes.Length == 0)
+                    throw new InvalidOperationException("临时文件已经过期，请重新选择文件");
+
+                if (string.IsNullOrWhiteSpace(session.TargetSiteId))
+                {
+                    saved = await _hostedSites.CreateFromZipAsync(
+                        userId,
+                        zipBytes,
+                        session.Title,
+                        session.Description,
+                        session.Folder,
+                        session.Tags,
+                        ct: CancellationToken.None);
+                }
+                else
+                {
+                    saved = await _hostedSites.ReuploadAsync(
+                        session.TargetSiteId,
+                        userId,
+                        zipBytes,
+                        session.SourceFileName,
+                        ct: CancellationToken.None);
+                    var metadata = await _hostedSites.UpdateAsync(
+                        saved.Id,
+                        userId,
+                        session.Title,
+                        session.Description,
+                        session.Tags,
+                        session.Folder,
+                        coverImageUrl: null,
+                        ct: CancellationToken.None);
+                    if (metadata != null) saved = metadata;
+                }
+            }
+            catch
+            {
+                await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id && x.OwnerUserId == userId && x.LeaseOwner == leaseOwner,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.Status, previousStatus)
+                        .Set(x => x.LeaseOwner, null)
+                        .Set(x => x.LeaseExpiresAt, null)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                        .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
+                    cancellationToken: CancellationToken.None);
+                throw;
+            }
+
+            // 从这里开始正式站点已经保存成功，后续清理异常不能再把状态恢复成可确认，
+            // 否则客户端重试会重复创建站点。先固化完成身份，再做不影响结果的清理。
+            session.Status = HostedSiteOptimizationStatuses.CleanupPending;
+            session.CompletedSiteId = saved.Id;
+            session.ExpiresAt = DateTime.UtcNow;
+            session.UpdatedAt = DateTime.UtcNow;
+            try
+            {
+                await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id && x.OwnerUserId == userId && x.LeaseOwner == leaseOwner,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.Status, session.Status)
+                        .Set(x => x.CompletedSiteId, session.CompletedSiteId)
+                        .Set(x => x.LeaseOwner, null)
+                        .Set(x => x.LeaseExpiresAt, null)
+                        .Set(x => x.ExpiresAt, session.ExpiresAt)
+                        .Set(x => x.UpdatedAt, session.UpdatedAt),
+                    cancellationToken: CancellationToken.None);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "网页托管优化临时文件已清理，但删除会话失败: {SessionId}", session.Id);
+                _logger.LogWarning(ex, "网页托管优化已保存，但记录完成状态失败: {SessionId}", session.Id);
+            }
+
+            if (await CleanupSessionFilesAsync(session))
+            {
+                try
+                {
+                    await _db.HostedSiteOptimizationSessions.DeleteOneAsync(
+                        x => x.Id == session.Id,
+                        CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "网页托管优化临时文件已清理，但删除会话失败: {SessionId}", session.Id);
+                }
+            }
+            return saved;
+        }
+        finally
+        {
+            leaseCancellation.Cancel();
+            try
+            {
+                await leaseHeartbeat;
+            }
+            catch (OperationCanceledException)
+            {
+                // 正常收尾：确认请求已经结束，不再续租。
             }
         }
-        return saved;
     }
 
     public async Task CancelAsync(string sessionId, string userId, CancellationToken ct = default)
@@ -914,6 +939,47 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 text,
                 "(?<prefix>(?:from\\s+|import\\(\\s*)[\\\"'])/(?!/)",
                 match => match.Groups["prefix"].Value + proxyBase,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+        return Encoding.UTF8.GetBytes(text);
+    }
+
+    internal static byte[] RewriteRootReferencesForArtifact(byte[] bytes, string mimeType, string ownerPath)
+    {
+        if (!mimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase)
+            && !mimeType.StartsWith("text/css", StringComparison.OrdinalIgnoreCase)
+            && !mimeType.Contains("javascript", StringComparison.OrdinalIgnoreCase))
+            return bytes;
+
+        var text = Encoding.UTF8.GetString(bytes);
+        string Rewrite(Match match)
+        {
+            var target = match.Groups["path"].Value;
+            return match.Groups["prefix"].Value + RelativeReference(ownerPath, target.TrimStart('/'));
+        }
+
+        if (mimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
+        {
+            text = Regex.Replace(
+                text,
+                "(?<prefix>\\b(?:src|href|poster|data)\\s*=\\s*[\\\"'])(?<path>/(?!/)[^\\\"']*)",
+                Rewrite,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+        else if (mimeType.StartsWith("text/css", StringComparison.OrdinalIgnoreCase))
+        {
+            text = Regex.Replace(
+                text,
+                "(?<prefix>(?:url\\(\\s*|@import\\s+)[\\\"']?)(?<path>/(?!/)[^\\)\\\"']*)",
+                Rewrite,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+        else
+        {
+            text = Regex.Replace(
+                text,
+                "(?<prefix>(?:from\\s+|import\\s*(?:\\(\\s*)?|require\\s*\\(\\s*|fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'])(?<path>/(?!/)[^\\\"']*)",
+                Rewrite,
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
         return Encoding.UTF8.GetBytes(text);
@@ -1178,9 +1244,13 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 output[entryFile] = Encoding.UTF8.GetBytes(html);
             }
 
+            RestoreReferencedRuntimeFiles(byPath, output);
             var missing = FindMissingRuntimeReferences(output);
             if (missing.Count > 0)
                 return Blocked(analysis, $"入口引用的本地资源缺失：{string.Join("、", missing.Take(3))}");
+
+            foreach (var path in output.Keys.ToList())
+                output[path] = RewriteRootReferencesForArtifact(output[path], MimeFor(path), path);
 
             analysis.OptimizedFiles = output.Count;
             analysis.OptimizedUncompressedBytes = output.Values.Sum(x => (long)x.Length);
@@ -1283,6 +1353,21 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             }
         }
         return missing.Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
+    }
+
+    private static void RestoreReferencedRuntimeFiles(
+        IReadOnlyDictionary<string, ArchiveFile> byPath,
+        Dictionary<string, byte[]> output)
+    {
+        while (true)
+        {
+            var restorable = FindMissingRuntimeReferences(output)
+                .Where(byPath.ContainsKey)
+                .ToList();
+            if (restorable.Count == 0) return;
+            foreach (var path in restorable)
+                output[path] = ReadEntry(byPath[path].Entry);
+        }
     }
 
     private static bool HasUnresolvedDynamicRuntimeLoading(IEnumerable<ArchiveFile> runtimeTextEntries)

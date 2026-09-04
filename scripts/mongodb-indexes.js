@@ -1143,6 +1143,24 @@ db.hosted_sites.createIndex(
   { name: "idx_hosted_sites_owner_folder" }
 )
 
+// collection: hosted_site_optimization_sessions
+// 临时优化任务按用户与到期时间查询；后台 worker 按状态与更新时间认领。
+db.hosted_site_optimization_sessions.createIndex(
+  { "OwnerUserId": 1, "ExpiresAt": 1 },
+  { name: "idx_hosted_site_optimization_owner_expiry" }
+)
+
+db.hosted_site_optimization_sessions.createIndex(
+  { "Status": 1, "UpdatedAt": 1 },
+  { name: "idx_hosted_site_optimization_status_updated" }
+)
+
+// 业务清理器先删除对象存储；TTL 多保留一天，仅作为清理器停机时的数据库兜底。
+db.hosted_site_optimization_sessions.createIndex(
+  { "ExpiresAt": 1 },
+  { name: "ttl_hosted_site_optimization_expiry", expireAfterSeconds: 86400 }
+)
+
 // collection: document_store_share_links
 // 按 Token 唯一；按创建者或知识库倒序查询
 db.document_store_share_links.createIndex(

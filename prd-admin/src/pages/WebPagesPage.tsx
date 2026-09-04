@@ -3090,13 +3090,14 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   }, [file?.name, isEdit, onSaved]);
 
   useEffect(() => {
-    if (resumeCheckedRef.current || isEdit || initialFile) return;
+    if (resumeCheckedRef.current || initialFile) return;
     resumeCheckedRef.current = true;
     const controller = new AbortController();
     let active = true;
     const resume = async () => {
       const pending = await resumePendingSiteOptimization({
         signal: controller.signal,
+        targetSiteId: item?.id,
         onStage: stage => { if (active) setOptimizationStage(stage); },
       });
       if (!active || !pending) return;
@@ -3116,7 +3117,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     startedAtRef.current = Date.now();
     void resume().finally(() => { if (active) setSaving(false); });
     return () => { active = false; controller.abort(); };
-  }, [finishSavedSite, initialFile, isEdit]);
+  }, [finishSavedSite, initialFile, item?.id]);
 
   const discardOptimization = async () => {
     const sessionId = optimization?.sessionId;

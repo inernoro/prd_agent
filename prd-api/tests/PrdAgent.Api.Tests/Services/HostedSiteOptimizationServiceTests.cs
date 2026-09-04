@@ -96,7 +96,7 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
-    public void Analyze_StaticRuntimeFetchIntoNodeModules_BlocksBeforeRemovingDependency()
+    public void Analyze_StaticRuntimeFetchIntoNodeModules_RestoresRequiredDependency()
     {
         var files = new Dictionary<string, string>
         {
@@ -109,8 +109,9 @@ public class HostedSiteOptimizationServiceTests
 
         var result = CreateService().Analyze(CreateZip(files));
 
-        result.Blocked.ShouldBeTrue();
-        (result.Error ?? string.Empty).ShouldContain("node_modules/pkg/data.json");
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeTrue();
+        result.OptimizedFiles.ShouldBe(3);
     }
 
     [Fact]
@@ -158,8 +159,47 @@ public class HostedSiteOptimizationServiceTests
         (result.Error ?? string.Empty).ShouldContain("资源缺失");
     }
 
+    [Theory]
+    [InlineData("text/html", "pages/index.html", "<img src=\"/assets/logo.png\">", "<img src=\"../assets/logo.png\">")]
+    [InlineData("text/css", "styles/app.css", "body{background:url('/assets/bg.png')}", "body{background:url('../assets/bg.png')}")]
+    [InlineData("application/javascript", "scripts/app.js", "fetch('/assets/data.json')", "fetch('../assets/data.json')")]
+    public void RewriteRootReferencesForArtifact_PersistsPreviewResolutionInSavedPackage(
+        string mimeType,
+        string ownerPath,
+        string input,
+        string expected)
+    {
+        var rewritten = HostedSiteOptimizationService.RewriteRootReferencesForArtifact(
+            Encoding.UTF8.GetBytes(input), mimeType, ownerPath);
+
+        Encoding.UTF8.GetString(rewritten).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void OptimizationSessionIndexes_AreRegisteredInExecutableCatalog()
+    {
+        var catalog = File.ReadAllText(LocateRepoFile("scripts/mongodb-indexes.js"));
+
+        catalog.ShouldContain("idx_hosted_site_optimization_owner_expiry");
+        catalog.ShouldContain("idx_hosted_site_optimization_status_updated");
+        catalog.ShouldContain("ttl_hosted_site_optimization_expiry");
+        catalog.ShouldContain("expireAfterSeconds: 86400");
+    }
+
     private static HostedSiteOptimizationService CreateService()
         => new(null!, null!, null!, NullLogger<HostedSiteOptimizationService>.Instance);
+
+    private static string LocateRepoFile(string relativePath)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null)
+        {
+            var candidate = Path.Combine(directory.FullName, relativePath);
+            if (File.Exists(candidate)) return candidate;
+            directory = directory.Parent;
+        }
+        throw new FileNotFoundException($"仓库文件不存在: {relativePath}");
+    }
 
     private static byte[] CreateZip(IReadOnlyDictionary<string, string> files)
     {

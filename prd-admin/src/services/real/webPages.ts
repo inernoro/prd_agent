@@ -128,19 +128,36 @@ interface HostedSiteOptimizationUploadStatusResult {
 
 const PENDING_OPTIMIZATION_SESSION_KEY = 'web-pages:pending-optimization-session';
 
-function rememberPendingOptimizationSession(sessionId: string) {
-  try { localStorage.setItem(PENDING_OPTIMIZATION_SESSION_KEY, sessionId); } catch { /* 浏览器禁用存储时仍可在当前弹窗继续。 */ }
+interface PendingOptimizationSession {
+  sessionId: string;
+  targetSiteId?: string;
+}
+
+function rememberPendingOptimizationSession(sessionId: string, targetSiteId?: string) {
+  try {
+    sessionStorage.setItem(PENDING_OPTIMIZATION_SESSION_KEY, JSON.stringify({ sessionId, targetSiteId }));
+  } catch { /* 浏览器禁用存储时仍可在当前弹窗继续。 */ }
 }
 
 function clearPendingOptimizationSession(sessionId: string) {
   try {
-    if (localStorage.getItem(PENDING_OPTIMIZATION_SESSION_KEY) === sessionId)
-      localStorage.removeItem(PENDING_OPTIMIZATION_SESSION_KEY);
+    if (getPendingSiteOptimizationSession()?.sessionId === sessionId)
+      sessionStorage.removeItem(PENDING_OPTIMIZATION_SESSION_KEY);
   } catch { /* 无本地存储时无需清理。 */ }
 }
 
-export function getPendingSiteOptimizationSession(): string | null {
-  try { return localStorage.getItem(PENDING_OPTIMIZATION_SESSION_KEY); } catch { return null; }
+export function getPendingSiteOptimizationSession(): PendingOptimizationSession | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_OPTIMIZATION_SESSION_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<PendingOptimizationSession>;
+    return typeof value.sessionId === 'string' && value.sessionId
+      ? { sessionId: value.sessionId, targetSiteId: value.targetSiteId }
+      : null;
+  } catch {
+    try { sessionStorage.removeItem(PENDING_OPTIMIZATION_SESSION_KEY); } catch { /* 存储不可用。 */ }
+    return null;
+  }
 }
 
 export interface ShareLinkItem {
@@ -442,7 +459,7 @@ export async function reviewSiteZip(input: {
     );
   }
   if (!queued.success) return queued;
-  rememberPendingOptimizationSession(sessionId);
+  rememberPendingOptimizationSession(sessionId, input.targetSiteId);
 
   return pollSiteOptimization(sessionId, {
     signal: input.signal,
@@ -494,10 +511,11 @@ async function pollSiteOptimization(
 export async function resumePendingSiteOptimization(input: {
   onStage?: (stage: string) => void;
   signal?: AbortSignal;
+  targetSiteId?: string;
 } = {}): Promise<ApiResponse<HostedSiteOptimizationReviewResult> | null> {
-  const sessionId = getPendingSiteOptimizationSession();
-  if (!sessionId) return null;
-  return pollSiteOptimization(sessionId, { ...input, cancelOnAbort: false });
+  const pending = getPendingSiteOptimizationSession();
+  if (!pending || (pending.targetSiteId ?? undefined) !== (input.targetSiteId ?? undefined)) return null;
+  return pollSiteOptimization(pending.sessionId, { ...input, cancelOnAbort: false });
 }
 
 function uploadOptimizationChunk(input: {
