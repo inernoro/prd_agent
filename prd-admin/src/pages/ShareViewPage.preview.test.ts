@@ -89,6 +89,14 @@ describe('分享页预览接线', () => {
     expect(source).not.toMatch(/setErrored\(true\)[^\n]*超时/);
     expect(source).not.toMatch(/超时[^\n]*setErrored\(true\)/);
   });
+
+  it('所有者真实预览入口接入同一套网页修改面板，并与提问坞互相让位', () => {
+    expect(source).toContain('ShareSiteEditDock');
+    expect(source).toContain('isOwner && !site.wrappedAssetType');
+    expect(source).toContain('adjacentToAsk={Boolean(token && data.ask?.enabled)}');
+    expect(source).toContain("hidden={isFullscreen || showComments || askState !== 'collapsed'}");
+    expect(source).toContain('onPublished={handleOwnerSitePublished}');
+  });
 });
 
 /**

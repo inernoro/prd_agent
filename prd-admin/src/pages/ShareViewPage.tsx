@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
-import { listShareComments, getShareSiteContent } from '@/services/real/webPages';
+import { listShareComments, getShareSiteContent, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
@@ -11,6 +11,7 @@ import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-ho
 import { detectSlideDeck } from '@/components/web-hosting/slideDeck';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
+import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
 import type { AskDockState } from '@/components/web-hosting/ask/askDockGeometry';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
@@ -192,6 +193,24 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
    * 取回原文时立刻判、单独存：它不能跟着 embeddedHtml 走，那个值在遮罩让位后会被丢弃。
    */
   const [isDeck, setIsDeck] = useState(false);
+
+  const handleOwnerSitePublished = useCallback((updated: HostedSite) => {
+    setData((current) => current ? {
+      ...current,
+      sites: current.sites.map((item) => item.id === updated.id ? {
+        ...item,
+        title: updated.title,
+        description: updated.description,
+        siteUrl: updated.siteUrl,
+        entryFile: updated.entryFile,
+        totalSize: updated.totalSize,
+        fileCount: updated.files.length,
+        coverImageUrl: updated.coverImageUrl,
+        pdfAssetUrl: updated.pdfAssetUrl,
+        wrappedAssetType: updated.wrappedAssetType,
+      } : item),
+    } : current);
+  }, []);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -863,6 +882,15 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             allowAnonymous={data.ask.allowAnonymous}
             hidden={isFullscreen || showComments}
             onStateChange={setAskState}
+          />
+        )}
+        {isOwner && !site.wrappedAssetType && (
+          <ShareSiteEditDock
+            siteId={site.id}
+            isMobile={isMobile}
+            adjacentToAsk={Boolean(token && data.ask?.enabled)}
+            hidden={isFullscreen || showComments || askState !== 'collapsed'}
+            onPublished={handleOwnerSitePublished}
           />
         )}
       </div>
