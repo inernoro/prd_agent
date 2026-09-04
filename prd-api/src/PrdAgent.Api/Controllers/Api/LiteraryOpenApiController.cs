@@ -111,7 +111,9 @@ public class LiteraryOpenApiController : ControllerBase
             offset = from,
             contentChars = full.Length,
             hasMore = from + slice.Length < full.Length,
-            updatedAt = ws.UpdatedAt,
+            // 版本令牌：mode=replace 覆盖时把它原样传回 expectedUpdatedAt，
+            // 期间被用户在界面上改过就会 409 而不是把对方的稿子盖掉。
+            updatedAt = McpRevision.Token(ws.UpdatedAt),
         }));
     }
 
@@ -185,6 +187,12 @@ public class LiteraryOpenApiController : ControllerBase
         public string? Content { get; set; }
         /// <summary>replace（默认，整篇覆盖）或 append（接在末尾）。</summary>
         public string? Mode { get; set; }
+
+        /// <summary>
+        /// 上次读到这篇正文时它的 `updatedAt`（`map_literary_get_workspace` 会回）。
+        /// `mode=replace` 传了才有「期间被改过就不覆盖」这层保护；append 本来就带条件写入。
+        /// </summary>
+        public string? ExpectedUpdatedAt { get; set; }
     }
 
     /// <summary>写工作区正文：整篇覆盖或接着往下写。</summary>
@@ -213,6 +221,19 @@ public class LiteraryOpenApiController : ControllerBase
         if (!append && rawMode.Length > 0 && !string.Equals(rawMode, "replace", StringComparison.OrdinalIgnoreCase))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"mode 只能是 replace 或 append，收到的是「{rawMode}」。不传 mode 默认整篇覆盖。"));
+        // replace 是整篇覆盖，此前只按 workspaceId 过滤、无条件写下去：智能体 T0 读到、
+        // 用户 T1 在界面上改了、智能体 T2 拿旧稿覆盖 —— 用户那次编辑就没了。
+        // append 那一路本来就带「正文还是我读到的那份」这个条件，缺的一直是 replace 这一半。
+        switch (McpRevision.Check(req?.ExpectedUpdatedAt, ws.UpdatedAt))
+        {
+            case RevisionCheck.Unparsable:
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "expectedUpdatedAt 认不出来。把 map_literary_get_workspace 回的 updatedAt 原样传回来即可。"));
+            case RevisionCheck.Mismatch:
+                return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
+                    "这篇正文在你读到它之后被改过，本次写入没有执行。请先用 map_literary_get_workspace 重新读一遍，再决定怎么写。"));
+        }
+
         var merged = append
             ? (string.IsNullOrEmpty(ws.ArticleContent) ? incoming : ws.ArticleContent + "\n\n" + incoming)
             : incoming;

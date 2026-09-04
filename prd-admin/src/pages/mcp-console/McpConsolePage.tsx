@@ -8,6 +8,7 @@ import { toast } from '@/lib/toast';
 import { ConnectAgentDialog } from './ConnectAgentDialog';
 import { McpCallsPanel } from './McpCallsPanel';
 import { QuotaEditorDialog } from './QuotaEditorDialog';
+import { copyToClipboard } from './clipboard';
 
 /**
  * 智能体接入台。
@@ -336,10 +337,12 @@ export default function McpConsolePage() {
               </code>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   if (!overview?.endpointUrl) return;
-                  void navigator.clipboard?.writeText(overview.endpointUrl);
-                  toast.success('地址已复制');
+                  // 必须等它真的写进去：剪贴板不可用时报「已复制」，用户会拿一份旧内容
+                  // 去粘贴进客户端配置，然后对着连不上的连接器排查半天。
+                  if (await copyToClipboard(overview.endpointUrl)) toast.success('地址已复制');
+                  else toast.error('复制失败，请手动选中上面的地址复制');
                 }}
                 className="flex h-8 items-center justify-center gap-1.5 rounded-[9px] text-[12px] font-medium"
                 style={{

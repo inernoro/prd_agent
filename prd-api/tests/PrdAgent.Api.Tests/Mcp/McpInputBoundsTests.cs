@@ -63,6 +63,7 @@ public class McpInputBoundsTests
 
         ["WriteContentRequest.Content"] = Bound.OwnContentCap,
         ["WriteContentRequest.Mode"] = Bound.FiniteShape,
+        ["WriteContentRequest.ExpectedUpdatedAt"] = Bound.FiniteShape,
 
         ["GenerateImageRequest.Prompt"] = Bound.OwnContentCap,
         ["GenerateImageRequest.Size"] = Bound.FiniteShape,
@@ -82,6 +83,48 @@ public class McpInputBoundsTests
         ["SetBindingRequest.ChatModels"] = Bound.MustExist,
         ["SetBindingRequest.ImageModels"] = Bound.MustExist,
     };
+
+    /// <summary>
+    /// 每个「有自己内容上限」的字段是**新建**内容还是**覆盖**既有内容。
+    ///
+    /// 覆盖类必须带版本令牌，否则那次写入会无声地盖掉用户在界面上刚做的编辑。
+    /// 知识库那一路修完之后，文学创作的 mode=replace 是同一族里的下一个，
+    /// 下一轮 Review 才被指出来 —— 所以这件事也要枚举着守，不靠谁记得。
+    /// </summary>
+    private enum ContentKind { Create, Overwrite }
+
+    private static readonly Dictionary<string, ContentKind> ContentSemantics = new(StringComparer.Ordinal)
+    {
+        ["CreateEntryRequest.Content"] = ContentKind.Create,
+        ["CreateWorkspaceRequest.Content"] = ContentKind.Create,
+        ["PublishPageRequest.HtmlContent"] = ContentKind.Create,
+        ["GenerateImageRequest.Prompt"] = ContentKind.Create,
+        ["UpdateEntryContentRequest.Content"] = ContentKind.Overwrite,
+        ["WriteContentRequest.Content"] = ContentKind.Overwrite,
+    };
+
+    [Fact]
+    public void 覆盖既有正文的入参_必须能接调用方的版本令牌()
+    {
+        foreach (var (key, dto, _) in TextFields())
+        {
+            if (!Ledger.TryGetValue(key, out var bound) || bound != Bound.OwnContentCap) continue;
+
+            ContentSemantics.ContainsKey(key).ShouldBeTrue(
+                $"{key} 是内容类字段，但没说它是新建还是覆盖。" +
+                "覆盖类必须带版本令牌，否则会无声盖掉用户刚做的编辑 —— 在 ContentSemantics 里补一行。");
+
+            if (ContentSemantics[key] != ContentKind.Overwrite) continue;
+            dto.GetProperty("ExpectedUpdatedAt").ShouldNotBeNull(
+                $"{dto.Name} 会覆盖既有正文，却收不了调用方的版本令牌（ExpectedUpdatedAt）。" +
+                "没有它，「智能体读到 → 用户改了 → 智能体覆盖」这条路会把用户的编辑弄丢。");
+        }
+
+        // 反向：账本里留着已经删掉的字段，就是一条永远绿的死断言
+        var seen = TextFields().Select(f => f.Key).ToHashSet(StringComparer.Ordinal);
+        foreach (var key in ContentSemantics.Keys)
+            seen.ShouldContain(key, customMessage: $"ContentSemantics 里的 {key} 在代码里已经不存在了，删掉这一行");
+    }
 
     private static IEnumerable<(string Key, Type Owner, PropertyInfo Prop)> TextFields()
     {

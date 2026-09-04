@@ -1,4 +1,6 @@
+using System;
 using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Api.Mcp;
 using Shouldly;
 using Xunit;
 
@@ -100,22 +102,35 @@ public class McpEntryIdempotencyScopeTests
         // 而 409 的文案写的是「在**你读到它**之后被别人改过」，那个「你」是调用方。
         var stored = new DateTime(2026, 9, 4, 10, 0, 0, 123, DateTimeKind.Utc);
 
-        DocumentStoreOpenApiController.CheckRevision(null, stored)
-            .ShouldBe(DocumentStoreOpenApiController.RevisionCheck.NotProvided);
-        DocumentStoreOpenApiController.CheckRevision("   ", stored)
-            .ShouldBe(DocumentStoreOpenApiController.RevisionCheck.NotProvided);
+        McpRevision.Check(null, stored)
+            .ShouldBe(RevisionCheck.NotProvided);
+        McpRevision.Check("   ", stored)
+            .ShouldBe(RevisionCheck.NotProvided);
 
         // 读端点回的就是 "O" 格式，原样传回来必须算匹配
-        DocumentStoreOpenApiController.CheckRevision(stored.ToString("O"), stored)
-            .ShouldBe(DocumentStoreOpenApiController.RevisionCheck.Match);
+        McpRevision.Check(stored.ToString("O"), stored)
+            .ShouldBe(RevisionCheck.Match);
 
         // 用户在中间改过一次 —— 这才是要挡住的那一种
-        DocumentStoreOpenApiController.CheckRevision(
+        McpRevision.Check(
             stored.AddSeconds(-30).ToString("O"), stored)
-            .ShouldBe(DocumentStoreOpenApiController.RevisionCheck.Mismatch);
+            .ShouldBe(RevisionCheck.Mismatch);
 
         // 认不出来的是入参错误，不是冲突：回 400 让调用方改，而不是让它以为有人抢改
-        DocumentStoreOpenApiController.CheckRevision("上周三", stored)
-            .ShouldBe(DocumentStoreOpenApiController.RevisionCheck.Unparsable);
+        McpRevision.Check("上周三", stored)
+            .ShouldBe(RevisionCheck.Unparsable);
+    }
+
+    [Fact]
+    public void 回给调用方的令牌_必须能被自己原样认回来()
+    {
+        // 读端点回什么格式、写端点认什么格式，是同一个判据的两半。
+        // 分开写就会漂：一边 "O"、一边默认 ToString，用户原样传回来反而 409。
+        var stored = new DateTime(2026, 9, 4, 10, 0, 0, 123, DateTimeKind.Utc);
+        McpRevision.Check(McpRevision.Token(stored), stored).ShouldBe(RevisionCheck.Match);
+
+        // 库里取出来的 Kind 有可能是 Unspecified（驱动配置不同），也不该因此判成冲突
+        var unspecified = DateTime.SpecifyKind(stored, DateTimeKind.Unspecified);
+        McpRevision.Check(McpRevision.Token(unspecified), unspecified).ShouldBe(RevisionCheck.Match);
     }
 }

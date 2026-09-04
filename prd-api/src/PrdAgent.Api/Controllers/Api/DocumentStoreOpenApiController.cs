@@ -205,7 +205,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             hasContent = !string.IsNullOrEmpty(content),
             // 版本令牌：覆盖正文时把它原样传回 expectedUpdatedAt，就能挡住
             // 「我读之后有人改过」这种覆盖。不回这个字段的话，那道条件写入无从谈起。
-            updatedAt = entry.UpdatedAt.ToString("O"),
+            updatedAt = McpRevision.Token(entry.UpdatedAt),
         }));
     }
 
@@ -462,39 +462,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         public string? ExpectedUpdatedAt { get; set; }
     }
 
-    /// <summary>调用方给的版本令牌与库里那份的关系。</summary>
-    internal enum RevisionCheck { NotProvided, Match, Mismatch, Unparsable }
 
-    /// <summary>
-    /// 比对调用方给的版本令牌。
-    ///
-    /// 为什么必须由**调用方**给：原先这里传的是刚刚重新读出来的那个 `UpdatedAt`，
-    /// 条件永远成立 —— 那道「乐观并发」只挡得住这一行代码和下一行代码之间的那点缝隙，
-    /// 挡不住真正的场景：智能体读到 T0、用户在 T1 改了、智能体在 T2 覆盖。
-    /// 而 409 的文案写的是「在**你读到它**之后被别人改过」，那个「你」是调用方，不是这段代码。
-    ///
-    /// 毫秒级比对：Mongo 存的是毫秒精度，往返一次 ISO-8601 之后不该因为 tick 尾数判成冲突。
-    /// </summary>
-    internal static RevisionCheck CheckRevision(string? expected, DateTime actual)
-    {
-        if (string.IsNullOrWhiteSpace(expected)) return RevisionCheck.NotProvided;
-        // 只用 RoundtripKind。它与 AdjustToUniversal 是互斥的组合，凑在一起 TryParse 会直接抛
-        // ArgumentException —— 不是返回 false，是把这条判据整个炸掉。上一版就是这么写的，
-        // 本地没有 dotnet 编译不了，靠这条守卫在 CI 上照出来的。
-        if (!DateTime.TryParse(expected, System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
-            return RevisionCheck.Unparsable;
-        // 没带时区信息的按 UTC 认：库里存的就是 UTC，按本机时区解释会凭空差几个小时，
-        // 于是一个正确的令牌被判成冲突 —— 比不校验更糟，因为它把能写的写不进去了。
-        return Math.Abs((AsUtc(parsed) - AsUtc(actual)).TotalMilliseconds) < 1
-            ? RevisionCheck.Match
-            : RevisionCheck.Mismatch;
-    }
-
-    private static DateTime AsUtc(DateTime value)
-        => value.Kind == DateTimeKind.Unspecified
-            ? DateTime.SpecifyKind(value, DateTimeKind.Utc)
-            : value.ToUniversalTime();
 
     /// <summary>覆盖某篇文档的正文（会留一版历史，可在界面里回滚）。</summary>
     [HttpPut("entries/{entryId}/content")]
@@ -516,7 +484,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         // 版本令牌由**调用方**给。原先传的是刚重新读出来的那个 UpdatedAt，条件永远成立：
         // 只挡得住这一行与下一行之间的缝隙，挡不住「智能体 T0 读、用户 T1 改、智能体 T2 覆盖」——
         // 而那正是 409 文案里承诺挡住的那一种，也是真会丢用户改动的那一种。
-        switch (CheckRevision(req?.ExpectedUpdatedAt, entry.UpdatedAt))
+        switch (McpRevision.Check(req?.ExpectedUpdatedAt, entry.UpdatedAt))
         {
             case RevisionCheck.Unparsable:
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,

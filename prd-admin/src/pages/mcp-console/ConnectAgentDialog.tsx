@@ -4,6 +4,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { createAgentApiKey, getMcpVisibleTools } from '@/services';
 import type { McpCapabilityDto, McpVisibleToolsDto } from '@/services/contracts/mcpConsole';
 import { toast } from '@/lib/toast';
+import { copyToClipboard } from './clipboard';
 
 type Step = 'capabilities' | 'key' | 'connect';
 
@@ -606,12 +607,10 @@ function CopyButton({ text, label }: { text: string; label: string }) {
         // 拒绝时会直接不存在或 reject —— 而这里复制的是**只显示一次**的密钥明文，
         // 报一句假的「已复制」，用户就会安心关掉弹窗，然后手里什么都没有。
         setFailed(false);
-        try {
-          if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
-          await navigator.clipboard.writeText(text);
+        if (await copyToClipboard(text)) {
           setCopied(true);
           window.setTimeout(() => setCopied(false), 1600);
-        } catch {
+        } else {
           setFailed(true);
           window.setTimeout(() => setFailed(false), 3200);
         }

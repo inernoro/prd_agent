@@ -197,3 +197,8 @@
 | fix | prd-admin | 复制按钮改成等剪贴板真的写成功再报「已复制」：剪贴板 API 不可用或被拒时原来照样显示成功，而复制的是只显示一次的密钥明文，用户会据此安心关掉弹窗 |
 | test | prd-api | 补版本令牌守卫：没给/原样传回/中间被改过/认不出来四档各断言一次 |
 | fix | prd-api | 版本令牌解析改用单独的 RoundtripKind：上一版把它与 AdjustToUniversal 一起传给 TryParse，而这两个是互斥组合，会直接抛 ArgumentException 把整条判据炸掉（不是返回 false）；另补「没带时区信息按 UTC 认」，否则库里存的 UTC 被按本机时区解释，正确的令牌会被判成冲突 |
+| fix | prd-api | 文学创作 mode=replace 补版本令牌：此前只按 workspaceId 过滤、无条件覆盖，智能体读到之后用户在界面上改了的那次编辑会被旧稿盖掉（append 那一路本来就带条件写入，缺的一直是 replace 这一半）|
+| refactor | prd-api | 版本令牌判据收敛成 Mcp/McpRevision 一处（Check + Token），知识库与文学创作共用；判据留在某个控制器里就注定被抄第二份 |
+| fix | prd-admin | 接入台首屏的「复制地址」同样改成等剪贴板真的写成功再报：判据抽成 mcp-console/clipboard.ts，与向导里那个复制按钮共用一处 |
+| docs | doc | debt 边界 3 去掉指向生成脚本的实现指引，改写成决策/风险/验收层面（AGENTS.md §10）|
+| test | prd-api | 守卫扩到「覆盖既有正文的入参必须能接版本令牌」：内容类字段要声明是新建还是覆盖，覆盖类的 DTO 必须有 ExpectedUpdatedAt；另加「读端点回的令牌必须能被写端点原样认回来」 |
