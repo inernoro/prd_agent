@@ -61,9 +61,9 @@ public sealed class HostedSiteOptimizationCleanupService : BackgroundService
                 {
                     using var scope = _scopeFactory.CreateScope();
                     var service = scope.ServiceProvider.GetRequiredService<IHostedSiteOptimizationService>();
-                    var cleaned = await service.CleanupExpiredAsync(CancellationToken.None);
-                    total += cleaned;
-                    if (cleaned < 20) break;
+                    var result = await service.CleanupExpiredAsync(CancellationToken.None);
+                    total += result.Deleted;
+                    if (result.Selected < 20) break;
                 }
                 if (total > 0)
                     _logger.LogInformation("清理了 {Count} 个过期网页托管优化任务", total);

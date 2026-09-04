@@ -865,7 +865,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
            && expiredHolderCount == 0
            && (!oldestQueueAge.HasValue || oldestQueueAge < QueueStallThreshold);
 
-    public async Task<int> CleanupExpiredAsync(CancellationToken ct = default)
+    public async Task<(int Selected, int Deleted)> CleanupExpiredAsync(CancellationToken ct = default)
     {
         var cleanupNow = DateTime.UtcNow;
         var expired = await _db.HostedSiteOptimizationSessions
@@ -915,7 +915,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     cancellationToken: CancellationToken.None);
             }
         }
-        return cleanedCount;
+        return (expired.Count, cleanedCount);
     }
 
     private async Task<HostedSiteOptimizationSession> GetOwnedSessionAsync(
@@ -1075,7 +1075,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         => $"/api/web-pages/optimization/{Uri.EscapeDataString(session.Id)}/preview-content/"
            + $"{Uri.EscapeDataString(session.PreviewAccessToken)}/";
 
-    private static byte[] RewriteRootReferencesForPreview(byte[] bytes, string mimeType, string proxyBase)
+    internal static byte[] RewriteRootReferencesForPreview(byte[] bytes, string mimeType, string proxyBase)
     {
         if (!mimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase)
             && !mimeType.StartsWith("text/css", StringComparison.OrdinalIgnoreCase)
@@ -1103,7 +1103,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         {
             text = Regex.Replace(
                 text,
-                "(?<prefix>(?:from\\s+|import\\(\\s*)[\\\"'])/(?!/)",
+                "(?<prefix>(?:from\\s+|import\\s*(?:\\(\\s*)?|require\\s*\\(\\s*|fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|navigator\\.serviceWorker\\.register\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'])/(?!/)",
                 match => match.Groups["prefix"].Value + proxyBase,
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
@@ -1805,9 +1805,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     [GeneratedRegex("<style\\b[^>]*>(?<body>[\\s\\S]*?)</style\\s*>", RegexOptions.IgnoreCase)]
     private static partial Regex InlineStyleRegex();
 
-    [GeneratedRegex("(?:fetch\\s*\\(|new\\s+(?:Shared)?Worker\\s*\\(|navigator\\.serviceWorker\\.register\\s*\\(|importScripts\\s*\\()", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("(?:import\\s*\\(|require\\s*\\(|fetch\\s*\\(|new\\s+(?:Shared)?Worker\\s*\\(|navigator\\.serviceWorker\\.register\\s*\\(|importScripts\\s*\\()", RegexOptions.IgnoreCase)]
     private static partial Regex DynamicRuntimeLoaderRegex();
 
-    [GeneratedRegex("(?:fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|navigator\\.serviceWorker\\.register\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'][^\\\"']+[\\\"']", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("(?:import\\s*\\(\\s*|require\\s*\\(\\s*|fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|navigator\\.serviceWorker\\.register\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'][^\\\"']+[\\\"']", RegexOptions.IgnoreCase)]
     private static partial Regex StaticDynamicRuntimeReferenceRegex();
 }

@@ -168,6 +168,27 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_ComputedImportAndRequire_PreservePotentialDependencies()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<html><script src=\"./app.js\"></script></html>",
+            ["app.js"] = "const first = './node_modules/pkg/a.js'; import(first); const second = './node_modules/pkg/b.js'; require(second);",
+            ["node_modules/pkg/a.js"] = "export default true;",
+            ["node_modules/pkg/b.js"] = "module.exports = true;",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeFalse();
+        result.OptimizedFiles.ShouldBe(result.OriginalFiles);
+        result.Warnings.ShouldContain(x => x.Contains("保留所有潜在依赖", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Analyze_InlineRuntimeFetch_RestoresRequiredDependency()
     {
         var files = new Dictionary<string, string>
@@ -301,6 +322,19 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void RewriteRootReferencesForPreview_CoversRuntimeLoaders()
+    {
+        const string input = "import('/module.js');require('/legacy.js');fetch('/data.json');new Worker('/worker.js');navigator.serviceWorker.register('/service-worker.js');importScripts('/shared.js')";
+
+        var rewritten = HostedSiteOptimizationService.RewriteRootReferencesForPreview(
+            Encoding.UTF8.GetBytes(input), "application/javascript", "/preview/");
+
+        var text = Encoding.UTF8.GetString(rewritten);
+        foreach (var path in new[] { "module.js", "legacy.js", "data.json", "worker.js", "service-worker.js", "shared.js" })
+            text.ShouldContain($"'/preview/{path}'");
+    }
+
+    [Fact]
     public void OptimizationSessionIndexes_AreRegisteredInExecutableCatalog()
     {
         var catalog = File.ReadAllText(LocateRepoFile("scripts/mongodb-indexes.js"));
@@ -319,7 +353,8 @@ public class HostedSiteOptimizationServiceTests
 
         source.ShouldContain("Task.WhenAll(");
         source.ShouldContain("CleanupInterval = TimeSpan.FromMinutes(10)");
-        source.ShouldContain("if (cleaned < 20) break;");
+        source.ShouldContain("total += result.Deleted;");
+        source.ShouldContain("if (result.Selected < 20) break;");
         source.ShouldNotContain("CleanupEveryTicks");
     }
 

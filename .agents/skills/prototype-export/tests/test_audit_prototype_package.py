@@ -207,6 +207,20 @@ class AuditPrototypePackageTests(unittest.TestCase):
             self.assertFalse(report["strictReady"])
             self.assertEqual(["index.html"], report["unscannedRuntimePaths"])
 
+    def test_html_base_href_resolves_runtime_references(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "base-href.zip"
+            make_zip(source, {
+                "prototype/index.html": b'<base href="/assets/"><script src="app.js"></script>',
+                "prototype/assets/app.js": b"document.body.dataset.ready = '1'",
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertTrue(report["strictReady"])
+            self.assertEqual([], report["missingLocalReferences"])
+            self.assertEqual(1, report["localReferenceCount"])
+
 
 if __name__ == "__main__":
     unittest.main()

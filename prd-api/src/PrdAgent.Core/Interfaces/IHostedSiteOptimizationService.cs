@@ -47,5 +47,5 @@ public interface IHostedSiteOptimizationService
         CancellationToken ct = default);
 
     Task CancelAsync(string sessionId, string userId, CancellationToken ct = default);
-    Task<int> CleanupExpiredAsync(CancellationToken ct = default);
+    Task<(int Selected, int Deleted)> CleanupExpiredAsync(CancellationToken ct = default);
 }

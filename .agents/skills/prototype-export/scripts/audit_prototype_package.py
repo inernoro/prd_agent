@@ -61,8 +61,16 @@ class ReferenceParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.references: list[str] = []
         self.inline_styles: list[str] = []
+        self.base_href: str | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.casefold() == "base":
+            if self.base_href is None:
+                self.base_href = next(
+                    (value.strip() for key, value in attrs if key.casefold() == "href" and value.strip()),
+                    None,
+                )
+            return
         for key, value in attrs:
             if key.lower() in HTML_REFERENCE_ATTRS and value:
                 self.references.append(value.strip())
@@ -97,7 +105,7 @@ def is_external_reference(value: str) -> bool:
     return lowered.startswith(("http://", "https://", "//"))
 
 
-def resolve_local_reference(owner: str, value: str) -> str | None:
+def resolve_local_reference(owner: str, value: str, base_href: str | None = None) -> str | None:
     value = value.strip()
     if not value or value.startswith(("#", "data:", "mailto:", "tel:", "javascript:")):
         return None
@@ -108,7 +116,26 @@ def resolve_local_reference(owner: str, value: str) -> str | None:
         return None
     if path.startswith("/"):
         return path.lstrip("/")
-    return posixpath.normpath(posixpath.join(posixpath.dirname(owner), path))
+    effective_owner = owner
+    if base_href:
+        if is_external_reference(base_href):
+            return None
+        base_path = unquote(urlsplit(base_href).path).replace("\\", "/")
+        if base_path:
+            if base_path.endswith("/"):
+                base_path += "__base__.html"
+            effective_owner = (
+                base_path.lstrip("/")
+                if base_path.startswith("/")
+                else posixpath.normpath(posixpath.join(posixpath.dirname(owner), base_path))
+            )
+    return posixpath.normpath(posixpath.join(posixpath.dirname(effective_owner), path))
+
+
+def html_base_href(text: str) -> str | None:
+    parser = ReferenceParser()
+    parser.feed(text)
+    return parser.base_href
 
 
 def common_root_prefix(names: list[str]) -> str | None:
@@ -243,18 +270,29 @@ def audit_zip(
                     continue
                 if has_unresolved_dynamic_runtime_loading(text, owner):
                     unscanned_runtime_paths.add(owner)
+                base_href = (
+                    html_base_href(text)
+                    if PurePosixPath(owner).suffix.casefold() in {".html", ".htm"}
+                    else None
+                )
                 for reference in runtime_references(text, owner):
-                    if is_external_reference(reference):
+                    if is_external_reference(reference) or (
+                        base_href and is_external_reference(base_href)
+                    ):
                         external_references += 1
                         continue
-                    resolved = resolve_local_reference(owner, reference)
+                    resolved = resolve_local_reference(owner, reference, base_href)
                     if not resolved:
                         continue
                     local_references += 1
                     reference_path = unquote(urlsplit(reference).path)
+                    base_path = unquote(urlsplit(base_href).path) if base_href else ""
                     packaged_path = (
                         root_prefix + resolved
-                        if root_prefix and reference_path.startswith("/")
+                        if root_prefix and (
+                            reference_path.startswith("/")
+                            or (base_path.startswith("/") and not reference_path.startswith("/"))
+                        )
                         else resolved
                     )
                     if packaged_path not in file_names:
