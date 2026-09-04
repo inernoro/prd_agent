@@ -8,6 +8,7 @@
 | test | cds | 整页窄屏布局冒烟加离线模式（自起前端 + 合成数据），接进 cds.yml 每个 PR——此前它从未被任何流水线调用过 |
 | test | cds | 离线冒烟新增两道抓 fixture 漂移的判据：未登记的 API 路径直接报错、每个页面断言内容锚点——此前漏登记的端点会静默回空对象，页面走空态而冒烟照常绿 |
 | test | cds | 补齐 13 条此前漏登记的 fixture 路径（靠新判据扫出来的），并补 task-schedule 定时任务合成数据，让桌面四档不再走空状态分支空转 |
+| test | cds | 剩下三条没锚定的 fixture 正则一并收口（projects/:id/env、profiles、infra/*）——`/^\/api\/infra\//` 会吞掉整个 infra 家族，「未登记路径」判据在这三处仍可被绕过 |
 | test | cds | 分支子路由 fixture 逐条登记并锚定 catch-all——原来那条不带 $ 的前缀会吞掉 /logs /metrics /resources 等六个子路由，让「未登记路径」判据形同虚设 |
 | test | cds | 抽屉的内容锚点限定在抽屉容器内、且取抽屉独有的值（分支 previewSlug）——原来在整页 body 找分支名，那个串在抽屉背后的分支卡标题上也有，抽屉退化成空壳照样绿；容器找不到判失败，不静默放行 |
 | test | cds | 内容锚点改用各页自己响应里的值：project-settings 取环境变量键名、cds-settings 取自更新分支名、发布中心取 /api/releases/center 自己的数据，不再用共享项目名或页面硬编码标题 |

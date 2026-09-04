@@ -253,10 +253,10 @@ const PREFIX = [
   [/^\/api\/projects\/[^/]+$/, () => project],
   [/^\/api\/projects\/[^/]+\/preview-mode$/, () => ({ mode: 'auto' })],
   [/^\/api\/projects\/[^/]+\/agent-keys$/, () => ({ keys: [] })],
-  [/^\/api\/projects\/[^/]+\/env/, () => ({ env: {}, entries: [] })],
+  [/^\/api\/projects\/[^/]+\/env$/, () => ({ env: {}, entries: [] })],
   [/^\/api\/projects\/[^/]+\/profiles$/, () => ({ profiles: [] })],
-  [/^\/api\/profiles/, () => ({ profiles: [] })],
-  [/^\/api\/infra\//, () => ({ services: [] })],
+  [/^\/api\/profiles$/, () => ({ profiles: [] })],
+  [/^\/api\/infra\/[^/]+$/, () => ({ services: [] })],
   /*
    * 分支子路由逐条登记，末尾那条**必须锚定**。
    *
