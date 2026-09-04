@@ -80,8 +80,10 @@ export default function ShareSiteEditDock({ siteId, isMobile = false, hidden = f
           aria-label="帮我修改"
           style={{
             position: 'fixed',
-            right: adjacentToAsk ? (isMobile ? 156 : 160) : (isMobile ? 14 : 18),
-            bottom: 'calc(18px + env(safe-area-inset-bottom, 0px))',
+            right: isMobile ? 14 : 18,
+            bottom: adjacentToAsk
+              ? 'calc(66px + env(safe-area-inset-bottom, 0px))'
+              : 'calc(18px + env(safe-area-inset-bottom, 0px))',
             zIndex: 60,
             height: 40,
             minWidth: 116,

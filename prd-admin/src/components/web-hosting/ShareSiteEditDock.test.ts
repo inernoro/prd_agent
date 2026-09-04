@@ -26,4 +26,9 @@ describe('分享页所有者修改入口', () => {
     expect(SOURCE).toContain('<MapSpinner size={15} />');
     expect(SOURCE).toContain('正在准备修改工具');
   });
+
+  it('提问入口存在时纵向错开，避免窄屏和 CDS 制品条横向遮挡', () => {
+    expect(SOURCE).toContain("'calc(66px + env(safe-area-inset-bottom, 0px))'");
+    expect(SOURCE).toContain("'calc(18px + env(safe-area-inset-bottom, 0px))'");
+  });
 });
