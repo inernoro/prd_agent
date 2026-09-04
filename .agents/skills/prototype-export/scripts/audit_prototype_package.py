@@ -67,7 +67,11 @@ class ReferenceParser(HTMLParser):
         if tag.casefold() == "base":
             if self.base_href is None:
                 self.base_href = next(
-                    (value.strip() for key, value in attrs if key.casefold() == "href" and value.strip()),
+                    (
+                        value.strip()
+                        for key, value in attrs
+                        if key.casefold() == "href" and value and value.strip()
+                    ),
                     None,
                 )
             return

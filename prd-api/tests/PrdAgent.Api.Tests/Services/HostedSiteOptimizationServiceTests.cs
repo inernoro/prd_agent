@@ -63,6 +63,18 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_FirstHtmlFallback_RemainsHostableWithoutIndexName()
+    {
+        var result = CreateService().Analyze(CreateZip(new Dictionary<string, string>
+        {
+            ["slides.html"] = "<main>slides</main>",
+        }));
+
+        result.Blocked.ShouldBeFalse();
+        result.OriginalFiles.ShouldBe(1);
+    }
+
+    [Fact]
     public void Analyze_CleanPackageAboveOptimizationTarget_RemainsHostable()
     {
         var files = new Dictionary<string, string> { ["index.html"] = "<main>ready</main>" };
@@ -427,6 +439,8 @@ public class HostedSiteOptimizationServiceTests
         source.IndexOf("var claimed = await _db.HostedSiteOptimizationSessions.FindOneAndUpdateAsync(", StringComparison.Ordinal)
             .ShouldBeLessThan(source.IndexOf("CleanupSessionFilesAsync(claimed)", StringComparison.Ordinal));
         source.ShouldContain("x.LeaseOwner == cleanupOwner");
+        source.ShouldContain("CleanupRetryDelay = TimeSpan.FromMinutes(10)");
+        source.ShouldContain(".Set(x => x.ExpiresAt, cleanupNow.Add(CleanupRetryDelay))");
 
         var recommendedBranch = source[source.IndexOf("if (analysis.Recommended)", StringComparison.Ordinal)..];
         recommendedBranch.IndexOf(".Set(x => x.SourceObjectKey", StringComparison.Ordinal).ShouldBeLessThan(

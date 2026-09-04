@@ -26,6 +26,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     private const long MaxScannedTextBytes = 32L * 1024 * 1024;
     private static readonly TimeSpan SessionLifetime = TimeSpan.FromHours(2);
     private static readonly TimeSpan WorkerLeaseLifetime = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan CleanupRetryDelay = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan WorkerLeaseHeartbeat = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan QueueStallThreshold = TimeSpan.FromMinutes(15);
     private const int QueueBacklogThreshold = 100;
@@ -923,7 +924,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     Builders<HostedSiteOptimizationSession>.Update
                         .Set(x => x.LeaseOwner, null)
                         .Set(x => x.LeaseExpiresAt, null)
-                        .Set(x => x.ExpiresAt, cleanupNow),
+                        .Set(x => x.ExpiresAt, cleanupNow.Add(CleanupRetryDelay)),
                     cancellationToken: CancellationToken.None);
             }
         }
@@ -1407,7 +1408,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             var byPath = files.ToDictionary(x => x.LogicalPath, StringComparer.Ordinal);
             var entryFile = SelectEntry(byPath.Keys);
             if (entryFile == null)
-                return Blocked(analysis, "ZIP 缺少 index.html 或 index.htm，无法生成可预览站点");
+                return Blocked(analysis, "ZIP 缺少 HTML 入口文件，无法生成可预览站点");
 
             // Files that are guaranteed to be removed must not consume the runtime scan budget.
             // Large exported prototypes commonly carry a complete node_modules tree; counting it
@@ -1717,11 +1718,11 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
     private static string? SelectEntry(IEnumerable<string> paths)
     {
-        var list = paths.OrderBy(x => x, StringComparer.Ordinal).ToList();
+        var list = paths.ToList();
         return list.FirstOrDefault(x => x.Equals("index.html", StringComparison.OrdinalIgnoreCase))
                ?? list.FirstOrDefault(x => x.Equals("index.htm", StringComparison.OrdinalIgnoreCase))
-               ?? list.FirstOrDefault(x => Path.GetFileName(x).Equals("index.html", StringComparison.OrdinalIgnoreCase))
-               ?? list.FirstOrDefault(x => x.EndsWith(".html", StringComparison.OrdinalIgnoreCase));
+               ?? list.FirstOrDefault(
+                   x => HostedSiteService.GetMimeType(Path.GetExtension(x)) == "text/html");
     }
 
     private static bool IsNodeModules(string path)

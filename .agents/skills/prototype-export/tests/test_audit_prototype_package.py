@@ -235,6 +235,19 @@ class AuditPrototypePackageTests(unittest.TestCase):
             self.assertEqual([], report["unscannedRuntimePaths"])
             self.assertEqual([], report["missingLocalReferences"])
 
+    def test_valueless_base_href_is_treated_as_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "valueless-base.zip"
+            make_zip(source, {
+                "index.html": b'<base href><script src="app.js"></script>',
+                "app.js": b"document.body.dataset.ready = '1'",
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertTrue(report["strictReady"])
+            self.assertEqual([], report["missingLocalReferences"])
+
 
 if __name__ == "__main__":
     unittest.main()
