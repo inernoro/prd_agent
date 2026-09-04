@@ -442,10 +442,34 @@ public class DocumentStoreOpenApiController : ControllerBase
                     // 只摘掉「正文还没落盘」这个标记，否则同键重试会永远撞 409。
                     // 计数也不退 —— 条目确实存在，这一次递增没错。
                     // 摘的时候带上刚读到的版本（确定性 id 可能已被同键重试重用，见另两处出口）。
-                    await _db.DocumentEntries.UpdateOneAsync(
+                    //
+                    // 这一条同样要看结果。「回读 still → 判代次 → 摘标记」之间还有窗口：
+                    // 对方再改一次，这次更新就匹配 0 条，标记原样留着，而这里照旧回一个
+                    // 「对方的内容保留着，你去读一遍再决定覆盖」的 409 —— 调用方照着做，
+                    // 用同一个 clientRequestId 重试，从此每一次都撞 ENTRY_WRITE_IN_PROGRESS，
+                    // 那条建议根本走不通。与另外两处出口是同一个形状：带条件的语句写完不看结果。
+                    var cleared = await _db.DocumentEntries.UpdateOneAsync(
                         MineFilter(entry.Id, still.UpdatedAt, generation),
                         Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
                         cancellationToken: CancellationToken.None);
+                    if (cleared.MatchedCount == 0)
+                    {
+                        var again = await _db.DocumentEntries
+                            .Find(e => e.Id == entry.Id)
+                            .FirstOrDefaultAsync(CancellationToken.None);
+                        // 不是我那一代了 —— 交给「条目没了」那条出口去撤回收尾。
+                        if (!IsMyGeneration(again, generation)) throw new EntryVanishedException(entry.Id);
+                        var retry = await _db.DocumentEntries.UpdateOneAsync(
+                            MineFilter(entry.Id, again.UpdatedAt, generation),
+                            Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
+                            cancellationToken: CancellationToken.None);
+                        // 再摘不掉：对方在持续改这条。不原地打转，如实说标记还挂着，
+                        // 并把出路换成「换一个 clientRequestId」—— 别再指引它去撞 409。
+                        if (retry.MatchedCount == 0)
+                            return Conflict(ApiResponse<object>.Fail("ENTRY_CHANGED_SINCE_CREATE",
+                                "这篇文档正在被别人反复修改，你的正文没有写进去 —— 对方的内容保留着。"
+                                + "先读一遍现在的正文；要重建请换一个 clientRequestId。"));
+                    }
                     return Conflict(ApiResponse<object>.Fail("ENTRY_CHANGED_SINCE_CREATE",
                         "这篇文档在正文落盘期间被别人改过，你的正文没有写进去 —— 对方的内容保留着。"
                         + "先读一遍现在的正文，再决定要不要用 map_kb_update_entry 覆盖。"));

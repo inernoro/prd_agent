@@ -5,6 +5,7 @@ using PrdAgent.Api.Authorization;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Api.Services;
+using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using static PrdAgent.Core.Models.AppCallerRegistry;
@@ -278,8 +279,50 @@ public class VisualOpenApiController : ControllerBase
             // 既不算 done 也不算 failed，于是 done + failed 永远小于 total —— 跟着这个标志轮询的
             // 智能体会一直问下去，直到被限流挡住。它其实早就结束了，只是这个判据看不见。
             finished = IsRunFinished(run.Status, run.Done, run.Failed, run.Total),
+            // 整条 run 被拒时的原因。没有它的话，「模型被下架」这类在排图之前就驳回的失败，
+            // 调用方只能看到 Failed + 空 images —— 而 runs/{runId} 正是我们给智能体的那条
+            // 恢复路径，它到这儿就断了：既不知道为什么，也不知道下一步该做什么。
+            error = RunFailure(run, items.Count),
         }));
     }
+
+    /// <summary>
+    /// 整条 run 的失败原因（没有就返回 null，不占调用方的上下文）。
+    ///
+    /// 三件事一起给：机器认的码、人能读的一句话、下一步做什么。
+    /// 消息先过一遍 <see cref="McpArtifactExtractor.UserFacing"/> —— 这条路上的
+    /// errorMessage 有一支来自 `ex.Message`，原样回出去就是把内部细节递给外部调用方。
+    /// </summary>
+    internal static RunFailureInfo? RunFailure(ImageGenRun run, int itemCount)
+    {
+        if (run.Status != ImageGenRunStatus.Failed) return null;
+        // 逐张失败已经在 images[].errorMessage 里说清楚了，这里不重复一遍。
+        if (string.IsNullOrWhiteSpace(run.ErrorCode) && itemCount > 0) return null;
+
+        var code = string.IsNullOrWhiteSpace(run.ErrorCode) ? ErrorCodes.INTERNAL_ERROR : run.ErrorCode!;
+        var message = string.IsNullOrWhiteSpace(run.ErrorMessage)
+            // 存量 run 没有这两个字段（本次之前入库的），别装作知道原因。
+            ? "这次生成没跑起来，服务端没有留下可读的原因。"
+            : McpArtifactExtractor.UserFacing(run.ErrorMessage!);
+        return new RunFailureInfo(code, message, RunFailureNextStep(code));
+    }
+
+    /// <summary>失败之后该做什么 —— 按错误码给一条能执行的下一步，而不是「请稍后重试」。</summary>
+    internal static string RunFailureNextStep(string code) => code switch
+    {
+        "VISUAL_MODEL_NOT_ALLOWED" =>
+            "可用模型变了（被下架或改了策略）。这次的 run 不用再查了，重新发起一次即可 —— 服务端会挑当前允许的默认模型。",
+        ErrorCodes.INVALID_FORMAT =>
+            "请求本身不合法，重试多少次都是同一个结果。按上面这句话改掉参数再发起一次。",
+        ErrorCodes.RATE_LIMITED =>
+            "这次要的图太多了。拆成几次、每次少要几张再发起。",
+        "WORKER_STOPPED" =>
+            "服务端在这次生成中途重启了，和你的参数无关。原样重新发起一次即可。",
+        _ => "重新发起一次；一直是这个错就把 runId 和时间告诉管理员。",
+    };
+
+    /// <summary>整条 run 的失败原因：机器认的码、人能读的一句话、下一步做什么。</summary>
+    internal sealed record RunFailureInfo(string Code, string Message, string NextStep);
 
     /// <summary>
     /// 这次生图跑完了没有 —— 唯一判定源。

@@ -1,5 +1,6 @@
 using System;
 using PrdAgent.Api.Controllers;
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
 using Shouldly;
@@ -259,5 +260,105 @@ public class McpDownstreamSafetyTests
             customMessage: "反复摘不掉时要按「留了个占位」说 —— 那句话会让调用方换键，而不是去撞 409");
         body.ShouldContain("HoldsRequestedContentAsync(again",
             customMessage: "重读之后结论要按新读到的那份重下，否则还是过期快照");
+    }
+
+    /// <summary>
+    /// 冲突那处摘标记是三兄弟里的最后一个，同样要看结果。
+    ///
+    /// 这条路本来就要回 409，所以「摘没摘掉」看着不影响返回码 —— 影响的是那句建议
+    /// 能不能走通：标记留着的话，调用方照它说的「读一遍再用同一个键覆盖」重试，
+    /// 每一次都会撞 ENTRY_WRITE_IN_PROGRESS。所以摘不掉时必须换一句出路（换键），
+    /// 不能把一句走不通的建议照原样发出去。
+    /// </summary>
+    [Fact]
+    public void 冲突出口摘标记也要看有没有摘掉()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
+        var body = McpSourceGuard.Slice(src, "if (!IsMyGeneration(still, generation))", "map_kb_update_entry");
+        body.ShouldContain("cleared.MatchedCount == 0",
+            customMessage: "冲突那处摘标记的结果没看：匹配为 0 时标记还挂着，那句「用同一个键覆盖」的建议就走不通");
+        body.ShouldContain("clientRequestId",
+            customMessage: "反复摘不掉时要改口让调用方换一个 clientRequestId，别再指引它去撞 409");
+    }
+
+    // ── 生图 run 的整条失败 ────────────────────────────────────────
+
+    /// <summary>
+    /// 整条 run 在排出任何一张图之前被驳回时，轮询端点必须说得出原因和下一步。
+    ///
+    /// 这类失败（模型被下架、items 不合法、超上限、服务停机）一张 item 都不会建，
+    /// 原因原来只发进 Redis 事件流 —— 而 runs/{runId} 正是我们给智能体的恢复路径，
+    /// 它走的是轮询，收不到事件流。于是它拿到 Failed + 空 images，既不知道为什么，
+    /// 也不知道该改参数还是该重发。
+    /// </summary>
+    [Fact]
+    public void 整条生图失败要说得出原因和下一步()
+    {
+        var run = new ImageGenRun
+        {
+            Status = ImageGenRunStatus.Failed,
+            ErrorCode = "VISUAL_MODEL_NOT_ALLOWED",
+            ErrorMessage = "所选模型已不在视觉创作允许列表里",
+        };
+        var failure = VisualOpenApiController.RunFailure(run, itemCount: 0);
+        failure.ShouldNotBeNull("一张 item 都没有的失败，原因只能挂在 run 上 —— 这里不给就没别处可给了");
+        failure!.Code.ShouldBe("VISUAL_MODEL_NOT_ALLOWED");
+        failure.Message.ShouldContain("允许列表");
+        failure.NextStep.ShouldNotBeNullOrWhiteSpace("光说失败不说下一步，调用方只会原样重试同一个必然失败的请求");
+        // 换个错误码要换一句下一步：参数错了重试多少次都一样，跟服务重启不是一回事。
+        VisualOpenApiController.RunFailureNextStep(ErrorCodes.INVALID_FORMAT)
+            .ShouldNotBe(VisualOpenApiController.RunFailureNextStep("WORKER_STOPPED"));
+    }
+
+    /// <summary>
+    /// 这条路上的 errorMessage 有一支直接来自 `ex.Message`（worker 兜底那次），
+    /// 原样回出去就是把内部细节递给外部调用方 —— 必须和接入台那条路走同一道脱敏。
+    /// </summary>
+    [Fact]
+    public void 整条生图失败的原因也要脱敏()
+    {
+        var run = new ImageGenRun
+        {
+            Status = ImageGenRunStatus.Failed,
+            ErrorCode = ErrorCodes.INTERNAL_ERROR,
+            ErrorMessage = "System.Net.Http.HttpRequestException: 连不上 https://internal.example.com/v1/images",
+        };
+        var failure = VisualOpenApiController.RunFailure(run, itemCount: 0);
+        failure.ShouldNotBeNull();
+        failure!.Message.ShouldBe(McpArtifactExtractor.UnrecognizedFailure,
+            "异常原文原样回给了外部调用方");
+    }
+
+    /// <summary>
+    /// 逐张失败已经在 images[].errorMessage 里说清楚了，run 上不再重复一遍；
+    /// 没失败的 run 更不该凭空多出一个 error 字段占调用方的上下文。
+    /// </summary>
+    [Fact]
+    public void 逐张失败与成功的run不重复给整条原因()
+    {
+        VisualOpenApiController.RunFailure(
+            new ImageGenRun { Status = ImageGenRunStatus.Failed }, itemCount: 3).ShouldBeNull();
+        VisualOpenApiController.RunFailure(
+            new ImageGenRun { Status = ImageGenRunStatus.Completed }, itemCount: 3).ShouldBeNull();
+        // 存量 run（本次之前入库的）没有这两个字段，但也没有 item 可看 —— 不许装作知道原因，
+        // 也不许干脆不给：给一个明确的「没留下原因」，调用方才知道该问管理员而不是接着轮询。
+        var legacy = VisualOpenApiController.RunFailure(
+            new ImageGenRun { Status = ImageGenRunStatus.Failed }, itemCount: 0);
+        legacy.ShouldNotBeNull();
+        legacy!.Code.ShouldBe(ErrorCodes.INTERNAL_ERROR);
+    }
+
+    /// <summary>整条失败的原因必须真的落库，否则轮询端点永远读到 null。</summary>
+    [Fact]
+    public void 整条生图失败要落库不能只发事件流()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs"));
+        var mark = McpSourceGuard.Slice(src, "private async Task MarkRunFailedSafeAsync(", "var run = await _db.ImageGenRuns.Find");
+        mark.ShouldContain("x.ErrorCode, errorCode",
+            customMessage: "错误码只发进了事件流没落库，轮询 runs/{runId} 的调用方读不到");
+        mark.ShouldContain("x.ErrorMessage, errorMessage",
+            customMessage: "原因只发进了事件流没落库，轮询 runs/{runId} 的调用方读不到");
     }
 }
