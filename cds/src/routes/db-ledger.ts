@@ -85,6 +85,17 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
     // 记录里的密码常是 ${CDS_...} 模板，备份 / 演练 / 回写前按项目环境变量解析（与容器启动同一套）
     return raw ? resolveInfraForDb(stateService, raw) : raw;
   };
+  /**
+   * 备份 / 数对象 / 演练真正要 exec 的容器：mongo 专用隔离实例的数据在 dedicatedContainer 里，
+   * 记录的 infraContainer 只是克隆来源。打到源实例会 dump 一个不存在的库——空归档、0 个集合，
+   * 演练照样「一致」，然后专用实例就被当成有备份删掉了（Codex P1）。
+   * 带认证标记的实例用源库 root 凭据初始化；历史无认证实例不发凭据。
+   */
+  const execInfraOf = (projectId: string, entry: DbLedgerEntry): InfraService | undefined => {
+    const infra = infraOf(projectId, entry);
+    if (!infra || !entry.dedicatedContainer) return infra;
+    return { ...infra, containerName: entry.dedicatedContainer, env: entry.dedicatedAuth === 'source-infra' ? infra.env : {} };
+  };
 
   router.get('/projects/:id/db-ledger', (req, res) => {
     const p = guardProject(req, res); if (!p) return;
@@ -156,12 +167,18 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
 
   /** 回写目标库的应用用户：从派生库所属分支 / 服务的运行时 env 解析（与克隆授权同口径） */
   function writeBackGrantTo(entry: DbLedgerEntry): string | undefined {
-    if (!entry.branchId || !entry.profileId) return undefined;
-    const branch = stateService.getBranch(entry.branchId);
-    const baseline = branch && stateService.getEffectiveProfilesForBranch(branch).find((p) => p.id === entry.profileId);
-    if (!branch || !baseline) return undefined;
-    const { target } = resolveReplicaDbTarget(stateService, branch, resolveEffectiveProfile(baseline, branch), { infraStatus: 'any' });
-    return target ? appDbUser(target) : undefined;
+    if (!entry.profileId) return undefined;
+    // 孤儿库的分支已删：从项目里仍在用这个服务的任一分支解析（应用用户是服务级配置，不随分支变）
+    const own = entry.branchId ? stateService.getBranch(entry.branchId) : undefined;
+    const candidates = [own, ...stateService.getBranchesForProject(entry.projectId)].filter((b): b is NonNullable<typeof b> => !!b);
+    for (const branch of candidates) {
+      const baseline = stateService.getEffectiveProfilesForBranch(branch).find((p) => p.id === entry.profileId);
+      if (!baseline) continue;
+      const { target } = resolveReplicaDbTarget(stateService, branch, resolveEffectiveProfile(baseline, branch), { infraStatus: 'any' });
+      const user = target ? appDbUser(target) : undefined;
+      if (user) return user;
+    }
+    return undefined;
   }
 
   function resolveWriteBackTarget(req: Request, res: any): { p: { id: string; slug: string }; live: DbLedgerEntry; infra: InfraService; targetDb: string; view: DbLedgerView } | null {
@@ -200,6 +217,10 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
       const entry = materializeEntry(stateService, t.view, t.live.id, now())!;
       // 目标库先删后建：postgres 的库级授权会随 DROP 消失，替换完把应用用户的权限补回去（mysql 的授权本就跨 DROP 保留）
       const grantTo = writeBackGrantTo(entry);
+      if (engine === 'postgres' && !grantTo) {
+        res.status(409).json({ error: `回写中止：找不到 ${t.targetDb} 的应用用户（服务 ${entry.profileId ?? '未知'} 在项目里已没有分支在用，或凭据仍是未解析的模板）。postgres 的库级授权会随 DROP 消失，没有授权对象回写完应用会连不上；先部署一条使用该服务的分支再回写` });
+        return;
+      }
       await ops.replaceDbFrom(engine, t.infra, entry.dbName, t.targetDb, grantTo);
       const [parentAfter, derivedAfter] = await Promise.all([ops.tableCounts(engine, t.infra, t.targetDb), ops.tableCounts(engine, t.infra, entry.dbName)]);
       const verification = compareTableCounts(parentAfter, derivedAfter, now());
@@ -252,12 +273,20 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
     const p = guardProject(req, res); if (!p) return;
     try {
       const view = buildProjectDbLedgerView(stateService, p.id, now());
-      const known = new Set<string>(view.entries.map((e) => e.dbName));
       const revivedEntries: DbLedgerEntry[] = [];
+      // 「已知」按实例分别算：台账身份是 (infraContainer, dbName)，同名库在另一台实例上是已知的，
+      // 不等于这台实例上的它也有人认领——按名字全局去重会把这台上的存量库漏录（Codex P2）
+      const knownOn = new Map<string, Set<string>>();
+      const mark = (container: string, db: string | undefined) => {
+        if (!db) return;
+        if (!knownOn.has(container)) knownOn.set(container, new Set());
+        knownOn.get(container)!.add(db);
+      };
+      for (const e of view.entries) { mark(e.infraContainer, e.dbName); mark(e.infraContainer, e.sourceDb); }
       // 项目内所有服务的源库（共享库本体）也算已知
-      for (const d of collectDerivedDbs(stateService, p.id)) known.add(d.sourceDb);
+      for (const d of collectDerivedDbs(stateService, p.id)) mark(d.infraContainer, d.sourceDb);
       for (const branch of stateService.getBranchesForProject(p.id)) {
-        for (const s of branch.replicaDbSnapshots ?? []) known.add(s.sourceDb);
+        for (const s of branch.replicaDbSnapshots ?? []) mark(s.infraContainer, s.sourceDb);
       }
       const infras = stateService.getInfraServicesForProject(p.id)
         .filter((s) => ['mysql', 'postgres', 'mongo'].includes(detectInfraDataKind(s.dockerImage) || ''))
@@ -281,8 +310,8 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
             stateService.upsertDbLedgerEntry(revived);
             revivedEntries.push(revived);
           }
-          const sourceDbs = new Set(view.entries.map((e) => e.sourceDb).filter((x): x is string => !!x));
-          for (const db of unknownDatabases(listed, new Set([...known, ...sourceDbs]), new Set(SYSTEM_DBS[engine]))) {
+          const known = knownOn.get(infra.containerName) ?? new Set<string>();
+          for (const db of unknownDatabases(listed, known, new Set(SYSTEM_DBS[engine]))) {
             const t = now().toISOString();
             const entry: DbLedgerEntry = {
               id: `dbl_scan_${infra.id}_${db}`.replace(/[^A-Za-z0-9_]/g, '_'), projectId: p.id, kind: 'unknown', engine, dbName: db,
@@ -310,7 +339,7 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
     const entry = materializeEntry(stateService, view, req.params.entryId, now());
     if (!entry) { res.status(404).json({ error: `台账条目不存在: ${req.params.entryId}` }); return; }
     if (entry.status === 'dropped') { res.status(409).json({ error: `${entry.dbName} 已丢弃，无法备份` }); return; }
-    const infra = infraOf(p.id, entry);
+    const infra = execInfraOf(p.id, entry);
     if (!infra) { res.status(409).json({ error: `找不到承载 ${entry.dbName} 的基础设施实例（${entry.infraContainer}）` }); return; }
     try {
       const dir = pickBackupDir(p.slug, deps.repoRoot);
@@ -337,7 +366,7 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
     if (!entry || entry.projectId !== p.id) { res.status(404).json({ error: `台账条目不存在: ${req.params.entryId}` }); return; }
     const backup = entry.backups.find((b) => b.id === req.params.backupId);
     if (!backup) { res.status(404).json({ error: `备份不存在: ${req.params.backupId}` }); return; }
-    const infra = infraOf(p.id, entry);
+    const infra = execInfraOf(p.id, entry);
     if (!infra) { res.status(409).json({ error: `找不到承载 ${entry.dbName} 的基础设施实例` }); return; }
     if (!fs.existsSync(backup.file)) { res.status(409).json({ error: `备份文件已不在宿主上：${backup.file}` }); return; }
     try {

@@ -80,22 +80,31 @@ function streamDockerExec(argv: string[], opts: { toFile?: string; fromFile?: st
   });
 }
 
+/**
+ * 备份 dump 的 docker argv。关系型两阶段：先 dump 落到容器 /tmp，成功了再 gzip 到 stdout——
+ * `dump | gzip` 在 POSIX sh 下退出码取 gzip 的，dump 半路失败（连接断、表锁超时）也是 0，
+ * 半份文件会被当成备份收下（Codex P1，与 db-clone-pipeline 的两阶段同一教训）。
+ */
+export function dumpArgv(engine: ReplicaDbEngine, infra: InfraService, dbName: string): { argv: string[]; secrets: string[] } {
+  assertSafe(dbName);
+  const c = cred(engine, infra);
+  const name = infra.containerName;
+  const tmp = `/tmp/cds-ledger-dump-${dbName}.sql`;
+  if (engine === 'mysql') {
+    return { argv: ['exec', ...c.argvPrefix, name, 'sh', '-c',
+      `set -e; mysqldump -u${c.user} -h127.0.0.1 -P${c.port} --single-transaction --quick --routines --events --no-tablespaces --databases ${dbName} > ${tmp}; gzip -c ${tmp}; rm -f ${tmp}`], secrets: c.secrets };
+  }
+  if (engine === 'postgres') {
+    return { argv: ['exec', ...c.argvPrefix, name, 'sh', '-c',
+      `set -e; pg_dump -U ${c.user} -h 127.0.0.1 -p ${c.port} -d ${dbName} --clean --if-exists --no-owner --no-privileges > ${tmp}; gzip -c ${tmp}; rm -f ${tmp}`], secrets: c.secrets };
+  }
+  return { argv: ['exec', name, 'mongodump', `--uri=${mongoUri(c, dbName)}`, '--archive', '--gzip', '-d', dbName], secrets: c.secrets };
+}
+
 export const realDbLedgerOps: DbLedgerOps = {
   async dumpToFile(engine, infra, dbName, file) {
-    assertSafe(dbName);
-    const c = cred(engine, infra);
-    const name = infra.containerName;
-    let argv: string[];
-    if (engine === 'mysql') {
-      argv = ['exec', ...c.argvPrefix, name, 'sh', '-c',
-        `mysqldump -u${c.user} -h127.0.0.1 -P${c.port} --single-transaction --quick --routines --events --no-tablespaces --databases ${dbName} | gzip`];
-    } else if (engine === 'postgres') {
-      argv = ['exec', ...c.argvPrefix, name, 'sh', '-c',
-        `pg_dump -U ${c.user} -h 127.0.0.1 -p ${c.port} -d ${dbName} --clean --if-exists --no-owner --no-privileges | gzip`];
-    } else {
-      argv = ['exec', name, 'mongodump', `--uri=${mongoUri(c, dbName)}`, '--archive', '--gzip', '-d', dbName];
-    }
-    const r = await streamDockerExec(argv, { toFile: file, secrets: c.secrets, timeoutMs: 30 * 60_000 });
+    const c = dumpArgv(engine, infra, dbName);
+    const r = await streamDockerExec(c.argv, { toFile: file, secrets: c.secrets, timeoutMs: 30 * 60_000 });
     if (r.bytes < 32) throw new Error(`备份文件几乎为空（${r.bytes} 字节），不算备份成功`);
     return r;
   },

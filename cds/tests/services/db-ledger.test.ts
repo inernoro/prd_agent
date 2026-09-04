@@ -16,7 +16,8 @@ import {
   stripBranchSuffix,
   type DbLedgerDerived,
 } from '../../src/services/db-ledger.js';
-import type { BranchEntry, DbLedgerEntry, ReplicaDbSnapshot } from '../../src/types.js';
+import { dumpArgv } from '../../src/services/db-ledger-ops.js';
+import type { BranchEntry, DbLedgerEntry, InfraService, ReplicaDbSnapshot } from '../../src/types.js';
 
 const T = '2026-09-03T08:00:00.000Z';
 
@@ -172,5 +173,21 @@ describe('settleBranchDbsOnDelete：删分支默认保留，勾选丢弃走门�
     // 孤儿条目幂等：反复结算不会长出重复记录
     expect(state.getDbLedger('p').filter((e) => e.dbName === 'shop_feat_x')).toHaveLength(1);
     fs.rmSync(tmp, { recursive: true, force: true });
+  });
+});
+
+describe('备份 dump：dump 失败必须让备份失败（Codex P1）', () => {
+  const infra = { id: 'mysql', containerName: 'cds-infra-mysql', containerPort: 3306, env: { MYSQL_ROOT_PASSWORD: 'pw' } } as unknown as InfraService;
+  const pg = { id: 'pg', containerName: 'cds-infra-pg', containerPort: 5432, env: { POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'pw' } } as unknown as InfraService;
+  it('关系型 dump 两阶段落盘再压缩，不用 `dump | gzip`（POSIX sh 管道退出码取 gzip，dump 半路失败也是 0）', () => {
+    for (const [engine, i, tool] of [['mysql', infra, 'mysqldump'], ['postgres', pg, 'pg_dump']] as const) {
+      const { argv } = dumpArgv(engine, i, 'shop');
+      const script = argv[argv.length - 1];
+      expect(script).toContain('set -e');
+      expect(script).toMatch(new RegExp(`${tool} [^|]* > /tmp/`));
+      expect(script).not.toMatch(/\| *gzip/);
+      expect(script).toMatch(/gzip -c \/tmp\//);
+      expect(script).not.toContain('pw');
+    }
   });
 });

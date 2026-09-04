@@ -33,6 +33,7 @@ describe('数据台账路由', () => {
   let tmpDir: string; let server: http.Server; let state: StateService;
   let calls: string[]; let listed: string[]; let drillObjects: number; let dropFail: boolean;
   let counts: Record<string, Record<string, number>>;
+  let listedBy: Record<string, string[]>; let containers: string[];
   const cloneExec = async (argv: string[]) => {
     const sql = argv[argv.length - 1];
     if (argv[0] === 'run') { calls.push('clone'); return { code: 0, stdout: '', stderr: '' }; }
@@ -42,13 +43,13 @@ describe('数据台账路由', () => {
   };
   const ops: DbLedgerOps = {
     async tableCounts(_e, _i, dbName) { calls.push(`counts:${dbName}`); return { ...(counts[dbName] ?? {}) }; },
-    async replaceDbFrom(_e, _i, sourceDb, targetDb) { calls.push(`replace:${sourceDb}->${targetDb}`); counts[targetDb] = { ...(counts[sourceDb] ?? {}) }; },
+    async replaceDbFrom(_e, _i, sourceDb, targetDb, grantTo) { calls.push(`replace:${sourceDb}->${targetDb}${grantTo ? `@grant:${grantTo}` : ''}`); counts[targetDb] = { ...(counts[sourceDb] ?? {}) }; },
     async restoreInto(_e, _i, file, targetDb) { calls.push(`restore:${path.basename(file)}->${targetDb}`); counts[targetDb] = { ...(counts[`snapshot:${targetDb}`] ?? {}) }; },
-    async dumpToFile(_e, _i, dbName, file) { calls.push(`dump:${dbName}`); fs.writeFileSync(file, Buffer.alloc(200, 1)); return { bytes: 200, sha256: 'abc' }; },
-    async countObjects(_e, _i, dbName) { calls.push(`count:${dbName}`); return dbName.startsWith('cds_drill_') ? drillObjects : 12; },
-    async restoreDrill(_e, _i, file, scratch) { calls.push(`drill:${path.basename(file)}->${scratch}`); return { objects: drillObjects }; },
+    async dumpToFile(_e, infra, dbName, file) { calls.push(`dump:${dbName}`); containers.push(`dump@${infra.containerName}`); fs.writeFileSync(file, Buffer.alloc(200, 1)); return { bytes: 200, sha256: 'abc' }; },
+    async countObjects(_e, infra, dbName) { calls.push(`count:${dbName}`); containers.push(`count@${infra.containerName}`); return dbName.startsWith('cds_drill_') ? drillObjects : 12; },
+    async restoreDrill(_e, infra, file, scratch) { calls.push(`drill:${path.basename(file)}->${scratch}`); containers.push(`drill@${infra.containerName}`); return { objects: drillObjects }; },
     async dropDb(_e, _i, entry) { calls.push(`drop:${entry.dbName}`); if (dropFail) throw new Error('boom'); },
-    async listDatabases() { calls.push('list'); return listed; },
+    async listDatabases(_e, infra) { calls.push('list'); return listedBy[infra.containerName] ?? listed; },
   };
 
   beforeEach(() => {
@@ -65,7 +66,7 @@ describe('数据台账路由', () => {
     state.upsertDbLedgerEntry({ id: 'orphan-1', projectId: 'p', kind: 'per-branch', engine: 'mysql', dbName: 'shop_old', infraId: 'mysql', infraContainer: 'cds-infra-mysql', sourceDb: 'shop', branch: 'old', origin: 'cds', status: 'orphaned', orphanedAt: NOW, createdAt: NOW, updatedAt: NOW, backups: [] });
     state.save();
     counts = { shop: { users: 3, orders: 58 }, shop_feat_x: { users: 3, orders: 57 }, 'snapshot:shop': { users: 3, orders: 58 } };
-    calls = []; listed = ['mysql', 'sys', 'information_schema', 'performance_schema', 'shop', 'shop_feat_x', 'shop_feat_x_rs_ab12cd_r1', 'shop_old', 'legacy_2024', 'cds_drill_deadbeef']; drillObjects = 12; dropFail = false;
+    calls = []; containers = []; listedBy = {}; listed = ['mysql', 'sys', 'information_schema', 'performance_schema', 'shop', 'shop_feat_x', 'shop_feat_x_rs_ab12cd_r1', 'shop_old', 'legacy_2024', 'cds_drill_deadbeef']; drillObjects = 12; dropFail = false;
     const app = express(); app.use(express.json());
     app.use((req, _res, next) => { const h = req.headers['x-test-key'] as string | undefined; if (h === 'KEY-Q') (req as any).cdsProjectKey = { projectId: 'q', keyId: 'k-q' }; next(); });
     process.env.CDS_BACKUP_DIR = path.join(tmpDir, 'backups');
@@ -209,6 +210,53 @@ describe('数据台账路由', () => {
     const again = await request(server, 'POST', '/api/projects/p/db-ledger/scan');
     expect(again.body.revived).toEqual([]);
     expect(state.getDbLedgerEntry('dbl_really_gone')!.status).toBe('dropped');
+  });
+
+  it('扫描补录按实例分别判已知：同名库在另一台实例上是已知的，不能让这台实例上的存量库漏录（Codex P2）', async () => {
+    state.addInfraService({ id: 'pg', name: 'pg', projectId: 'p', scope: 'project', dockerImage: 'postgres:16', containerName: 'cds-infra-pg', hostPort: 0, containerPort: 5432, status: 'running', env: { POSTGRES_PASSWORD: 'pgpw' } } as unknown as InfraService);
+    state.save();
+    listedBy = { 'cds-infra-pg': ['postgres', 'template0', 'shop', 'shop_old'] };
+    const r = await request(server, 'POST', '/api/projects/p/db-ledger/scan');
+    expect(r.status).toBe(200);
+    const onPg = r.body.added.filter((e: any) => e.infraContainer === 'cds-infra-pg').map((e: any) => e.dbName).sort();
+    expect(onPg).toEqual(['shop', 'shop_old']);
+    // mysql 那台上的 shop（源库本体）与 shop_old（台账孤儿）仍不算未知
+    expect(r.body.added.filter((e: any) => e.infraContainer === 'cds-infra-mysql').map((e: any) => e.dbName)).toEqual(['legacy_2024']);
+  });
+
+  it('专用隔离实例上的 mongo 隔离库：备份、数对象、演练都打到专用容器，不是源库所在的共享实例（Codex P1）', async () => {
+    state.addInfraService({ id: 'mongo', name: 'mongo', projectId: 'p', scope: 'project', dockerImage: 'mongo:7.0', containerName: 'cds-infra-mongo', hostPort: 0, containerPort: 27017, status: 'running', env: { MONGO_INITDB_ROOT_USERNAME: 'root', MONGO_INITDB_ROOT_PASSWORD: 'mpw' } } as unknown as InfraService);
+    state.addBranch({ id: 'p-feat-m', projectId: 'p', branch: 'feat/m', worktreePath: path.join(tmpDir, 'wt-m'), status: 'running', createdAt: NOW, services: {},
+      replicaDbSnapshots: [{ id: 'snap-m', profileId: 'api', memberId: 'r1', engine: 'mongo', sourceDb: 'catalog', dbName: 'catalog_rs_ab12cd_r1', infraContainer: 'cds-infra-mongo', dedicatedContainer: 'cds-rsdb-abc123-catalog_rs_ab12cd_r1', dedicatedHostPort: 40001, dedicatedAuth: 'source-infra', clonedAt: NOW }],
+    } as unknown as BranchEntry);
+    state.save();
+    const view = await request(server, 'GET', '/api/projects/p/db-ledger');
+    const entry = view.body.entries.find((e: any) => e.dbName === 'catalog_rs_ab12cd_r1');
+    const backup = await request(server, 'POST', `/api/projects/p/db-ledger/${entry.id}/backup`);
+    expect(backup.status).toBe(200);
+    const verify = await request(server, 'POST', `/api/projects/p/db-ledger/${backup.body.entry.id}/backups/${backup.body.backup.id}/verify`);
+    expect(verify.status).toBe(200);
+    expect(containers.filter((c) => c.endsWith('cds-infra-mongo'))).toEqual([]);
+    expect(containers).toEqual(expect.arrayContaining(['dump@cds-rsdb-abc123-catalog_rs_ab12cd_r1', 'count@cds-rsdb-abc123-catalog_rs_ab12cd_r1', 'drill@cds-rsdb-abc123-catalog_rs_ab12cd_r1']));
+  });
+
+  it('postgres 孤儿库回写：项目里没有任何分支在用该服务时拒绝（DROP 后授权会丢，应用连不上）；有分支在用就从它解析授权对象（Codex P1）', async () => {
+    // 项目 q 没有分支：孤儿库的应用用户无处可解析
+    state.addInfraService({ id: 'qpg', name: 'pg', projectId: 'q', scope: 'project', dockerImage: 'postgres:16', containerName: 'cds-infra-qpg', hostPort: 0, containerPort: 5432, status: 'running', env: { POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'pgpw' } } as unknown as InfraService);
+    state.addBuildProfile({ id: 'qpgapi', projectId: 'q', name: 'PG API', dockerImage: 'node:20', workDir: '.', containerPort: 3001, dbScope: 'per-branch', env: { POSTGRES_DB: 'crm', DATABASE_URL: 'postgres://app:apppw@cds-infra-qpg:5432/crm' } } as BuildProfile);
+    state.upsertDbLedgerEntry({ id: 'orphan-pg', projectId: 'q', kind: 'per-branch', engine: 'postgres', dbName: 'crm_old', infraId: 'qpg', infraContainer: 'cds-infra-qpg', sourceDb: 'crm', branchId: 'q-gone', branch: 'gone', profileId: 'qpgapi', origin: 'cds', status: 'orphaned', orphanedAt: NOW, createdAt: NOW, updatedAt: NOW, backups: [] });
+    state.save();
+    counts.crm = { users: 3 }; counts.crm_old = { users: 4 };
+    const refused = await request(server, 'POST', '/api/projects/q/db-ledger/orphan-pg/write-back', { confirmDbName: 'crm' });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatch(/应用用户/);
+    expect(calls.filter((c) => c.startsWith('replace:'))).toEqual([]);
+
+    state.addBranch({ id: 'q-main', projectId: 'q', branch: 'main', worktreePath: path.join(tmpDir, 'wt-qmain'), status: 'running', createdAt: NOW, services: {} } as unknown as BranchEntry);
+    state.save();
+    const ok = await request(server, 'POST', '/api/projects/q/db-ledger/orphan-pg/write-back', { confirmDbName: 'crm' });
+    expect(ok.status).toBe(200);
+    expect(calls).toContain('replace:crm_old->crm@grant:app');
   });
 
   it('备份运行时条目（还没有台账记录的隔离库）会先固化成台账记录', async () => {
