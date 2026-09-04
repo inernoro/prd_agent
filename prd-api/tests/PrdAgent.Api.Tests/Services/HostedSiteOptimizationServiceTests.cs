@@ -383,6 +383,18 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_NonFileUriSchemes_DoNotBecomeMissingLocalDependencies()
+    {
+        var result = CreateService().Analyze(CreateZip(new Dictionary<string, string>
+        {
+            ["index.html"] = "<iframe src=\"about:blank\"></iframe><img src=\"blob:preview\">",
+        }));
+
+        result.Blocked.ShouldBeFalse();
+        result.OriginalFiles.ShouldBe(1);
+    }
+
+    [Fact]
     public void Analyze_SvgUse_RestoresSpriteDependency()
     {
         var files = new Dictionary<string, string>
@@ -489,12 +501,13 @@ public class HostedSiteOptimizationServiceTests
     [Fact]
     public void RewriteRootReferences_CoversSrcSetAndEmbeddedCss()
     {
-        const string input = "<img srcset=\"/assets/a.png 1x, /assets/b.png 2x\" style=\"background:url('/assets/bg.png')\"><style>.hero{mask:url('/assets/mask.svg')}</style>";
+        const string input = "<script src=/assets/app.js></script><img srcset=\"/assets/a.png 1x, /assets/b.png 2x\" style=\"background:url('/assets/bg.png')\"><style>.hero{mask:url('/assets/mask.svg')}</style>";
 
         var artifact = Encoding.UTF8.GetString(
             HostedSiteOptimizationService.RewriteRootReferencesForArtifact(
                 Encoding.UTF8.GetBytes(input), "text/html", "pages/index.html"));
         artifact.ShouldContain("srcset=\"../assets/a.png 1x, ../assets/b.png 2x\"");
+        artifact.ShouldContain("src=../assets/app.js");
         artifact.ShouldContain("url('../assets/bg.png')");
         artifact.ShouldContain("url('../assets/mask.svg')");
 
@@ -502,6 +515,7 @@ public class HostedSiteOptimizationServiceTests
             HostedSiteOptimizationService.RewriteRootReferencesForPreview(
                 Encoding.UTF8.GetBytes(input), "text/html", "/preview/", "pages/index.html"));
         preview.ShouldContain("srcset=\"/preview/assets/a.png 1x, /preview/assets/b.png 2x\"");
+        preview.ShouldContain("src=/preview/assets/app.js");
         preview.ShouldContain("url('/preview/assets/bg.png')");
         preview.ShouldContain("url('/preview/assets/mask.svg')");
     }
@@ -512,6 +526,8 @@ public class HostedSiteOptimizationServiceTests
         var catalog = File.ReadAllText(LocateRepoFile("scripts/mongodb-indexes.js"));
         var context = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs"));
+        var optimizer = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteOptimizationService.cs"));
 
         catalog.ShouldContain("idx_hosted_site_optimization_owner_expiry");
         catalog.ShouldContain("idx_hosted_site_optimization_status_updated");
@@ -523,6 +539,8 @@ public class HostedSiteOptimizationServiceTests
         context.ShouldNotContain("idx_hosted_site_optimization_owner_expiry");
         context.ShouldNotContain("idx_hosted_site_optimization_status_updated");
         context.ShouldNotContain("idx_hosted_site_optimization_expiry");
+        optimizer.ShouldContain("Sort.Ascending(x => x.UpdatedAt)");
+        optimizer.ShouldNotContain("Sort.Ascending(x => x.CreatedAt)");
     }
 
     [Fact]

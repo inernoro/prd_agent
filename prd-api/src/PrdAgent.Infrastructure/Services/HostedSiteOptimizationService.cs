@@ -281,7 +281,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             new FindOneAndUpdateOptions<HostedSiteOptimizationSession>
             {
                 ReturnDocument = ReturnDocument.After,
-                Sort = Builders<HostedSiteOptimizationSession>.Sort.Ascending(x => x.CreatedAt),
+                Sort = Builders<HostedSiteOptimizationSession>.Sort.Ascending(x => x.UpdatedAt),
             },
             CancellationToken.None);
         if (session == null) return false;
@@ -1161,22 +1161,10 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                        + match.Value[(relativeIndex + pathGroup.Length)..];
             });
             var htmlWithRewrittenBase = text;
-            text = Regex.Replace(
+            text = RewriteHtmlRootResourceReferences(
                 htmlWithRewrittenBase,
-                "(?<prefix>\\b(?:src|href|poster|data)\\s*=\\s*[\\\"'])/(?!/)",
-                match =>
-                {
-                    var tagStart = htmlWithRewrittenBase.LastIndexOf('<', match.Index);
-                    var tagEnd = htmlWithRewrittenBase.LastIndexOf('>', match.Index);
-                    if (tagStart > tagEnd
-                        && Regex.IsMatch(
-                            htmlWithRewrittenBase[(tagStart + 1)..match.Index],
-                            "^\\s*base\\b",
-                            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-                        return match.Value;
-                    return match.Groups["prefix"].Value + proxyBase;
-                },
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                path => proxyBase + path.TrimStart('/'),
+                skipBaseTag: true);
             text = RewriteHtmlEmbeddedRootReferences(
                 text,
                 path => proxyBase + path.TrimStart('/'));
@@ -1216,11 +1204,10 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
         if (mimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
         {
-            text = Regex.Replace(
+            text = RewriteHtmlRootResourceReferences(
                 text,
-                "(?<prefix>\\b(?:src|href|poster|data)\\s*=\\s*[\\\"'])(?<path>/(?!/)[^\\\"']*)",
-                Rewrite,
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                path => RelativeReference(ownerPath, path.TrimStart('/')),
+                skipBaseTag: false);
             text = RewriteHtmlEmbeddedRootReferences(
                 text,
                 path => RelativeReference(ownerPath, path.TrimStart('/')));
@@ -1276,6 +1263,33 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
         html = HtmlStyleAttributeRegex().Replace(html, RewriteCssBody);
         return InlineStyleRegex().Replace(html, RewriteCssBody);
+    }
+
+    private static string RewriteHtmlRootResourceReferences(
+        string html,
+        Func<string, string> rewritePath,
+        bool skipBaseTag)
+    {
+        return HtmlResourceAttributeRegex().Replace(html, match =>
+        {
+            var path = match.Groups["path"];
+            if (!path.Value.StartsWith('/') || path.Value.StartsWith("//", StringComparison.Ordinal))
+                return match.Value;
+            if (skipBaseTag)
+            {
+                var tagStart = html.LastIndexOf('<', match.Index);
+                var tagEnd = html.LastIndexOf('>', match.Index);
+                if (tagStart > tagEnd
+                    && Regex.IsMatch(
+                        html[(tagStart + 1)..match.Index],
+                        "^\\s*base\\b",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    return match.Value;
+            }
+            var offset = path.Index - match.Index;
+            return match.Value[..offset] + rewritePath(path.Value)
+                   + match.Value[(offset + path.Length)..];
+        });
     }
 
     internal static bool SecretEquals(string expected, string supplied)
@@ -1928,8 +1942,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     }
 
     private static bool IsExternalReference(string value)
-        => value.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-           || value.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+        => UriSchemeRegex().IsMatch(value)
            || value.StartsWith("//", StringComparison.Ordinal);
 
     private static bool IsIgnoredReference(string value)
@@ -1948,6 +1961,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
     [GeneratedRegex("https?://[^\\s\\\"'<>]+", RegexOptions.IgnoreCase)]
     private static partial Regex ExternalUrlRegex();
+
+    [GeneratedRegex("^[A-Za-z][A-Za-z0-9+.-]*:", RegexOptions.CultureInvariant)]
+    private static partial Regex UriSchemeRegex();
 
     [GeneratedRegex("<base\\b[^>]*?href\\s*=\\s*(?:\\\"(?<path>[^\\\"]*)\\\"|'(?<path>[^']*)'|(?<path>[^\\s\\\"'=<>`]+))", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlBaseHrefRegex();
