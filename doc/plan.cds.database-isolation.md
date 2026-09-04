@@ -10,7 +10,7 @@
 
 ## 看板
 
-最后更新：2026-09-04 08:20 | 更新人：Claude（数据库隔离轨道）| 距离可发布：收敛 0 至 5 全部验收通过并上线共享 CDS（4ccb9c62）；本轨道收口，剩余边界在 debt.cds.branch-isolation 台账
+最后更新：2026-09-04 10:00 | 更新人：Claude（数据库隔离轨道）| 距离可发布：收敛 0 至 5 全部验收通过并上线共享 CDS（d0aa3111）；克隆与回写已在真实 mysql 分支复验通过，复验暴露的 5 处真实实例缺陷已修；本轨道收口，剩余边界在 debt.cds.branch-isolation 台账
 
 | 阶段 | 进度% | 状态 | 当前 blocker | 下一步 | 验收证据 |
 |---|---|---|---|---|---|
@@ -20,8 +20,8 @@
 | 收敛 1：库名定位共用一份分类器 | 100 | 已验收 | 无 | 收敛 2：先写红测试——只有硬编码 JDBC 串的服务切独立库后串里库名被改写 | [验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2a8cbd3f87174ad48b7a495caa40e0e1&report=280613d9664a437c91f54c880f65617a)（生产 CDS 真实项目取证，通过）；分类器 4 例、路由一致性与来源守卫、页签渲染 1 例 |
 | 收敛 2：分支独立库接入连接串改写 | 100 | 已验收 | 无 | 收敛 3：先写红测试——丢弃无备份的派生库被拒绝 | [验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2a8cbd3f87174ad48b7a495caa40e0e1&report=55a9bd31a5ab40afaffad1ae96ce073d)（沙箱取证连接串跟随 + 生产取证不涉及数据库，通过）；改写与 explain 9 例、溯源与接线守卫 3 例、分类器 7 例 |
 | 收敛 3：数据台账 + 删之前必有备份 | 100 | 已验收 | 无（归属已定：并入本轨道，隔离库 GC 由台账接管） | 收敛 4：分支独立库时间点克隆初始化，等复制集波 4 的快照能力就位 | [验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2a8cbd3f87174ad48b7a495caa40e0e1&report=ebe5ba7dc08e44148d1db93b93758290)（沙箱 docker 桩：备份 → 演练验证 → 丢弃门禁 → 删分支默认保留；生产只读核对台账列出 MAP 2 个、IMP 3 个隔离库且均无备份，通过）；台账纯函数 10 例、路由 10 例、前端渲染与接线 7 例；全量通过 |
-| 收敛 4：分支独立库时间点克隆初始化 | 100 | 已验收 | 无（mongo 独立库暂只能空库、校验只比行数——记 `debt.cds.branch-isolation` DBI-clone-init-mongo-and-drift） | 收敛 5：复制集波 5 设计评审时把分支独立库列为同等回写调用方；真实分支部署链路的克隆钩子在共享 CDS 上线后择一条 mysql / postgres 项目分支复验 | [验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2a8cbd3f87174ad48b7a495caa40e0e1&report=03f3536eaea84f6bb5d565b0d555b15c)（沙箱有状态 docker 桩：选克隆 → 保存 → 台账重算 → 现在克隆 → 3 张表一致；postgres 源库克隆后多写一行 → 校验指出 orders 源 58 / 目标 57，通过）；管线 / 校验 / 初始化 17 例、路由 3 例、前端 5 例；全量 6945 例通过 |
-| 收敛 5：回写并入波 5 | 100 | 已验收 | 无（整库回写落地；增量回写与冲突合并仍属复制集波 5——记 `debt.cds.branch-isolation` DBI-write-back-full-replace） | 复制集波 5 落地时把 db-write-back 的门禁与台账原样复用，只替换「整库替换」那一步；真实分支上择一条 mysql / postgres 项目复验回写 | [验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2a8cbd3f87174ad48b7a495caa40e0e1&report=948973eb64d643a5b7434ba4242b24ac)（沙箱有状态 docker 桩：无冲突预览 → 有冲突预览 orders 主库 58 / 克隆时 57 → 复述库名回写 → 3 张表一致 → 回退 → 主库那一行找回，通过）；回写 12 例、路由 4 例、前端 2 例；全量通过 |
+| 收敛 4：分支独立库时间点克隆初始化 | 100 | 已验收 | 无（mongo 独立库暂只能空库、校验只比行数——记 `debt.cds.branch-isolation` DBI-clone-init-mongo-and-drift） | 复制集波 5 设计评审时把分支独立库列为同等回写调用方；postgres 项目的真实分支复验待有 postgres 项目上线时补 | [沙箱取证](https://cds.miduo.org/reports?project=prd-agent&folder=2a8cbd3f87174ad48b7a495caa40e0e1&report=03f3536eaea84f6bb5d565b0d555b15c)（有状态 docker 桩：选克隆 → 保存 → 台账重算 → 现在克隆 → 3 张表一致；postgres 源库克隆后多写一行 → 校验指出 orders 源 58 / 目标 57，通过）→ [真实 mysql 分支复验](https://cds.miduo.org/reports?project=prd-agent&folder=2a8cbd3f87174ad48b7a495caa40e0e1&report=2962ffc8bae64a6eae6fbff4e8b61634)（工单系统MTS 分支 consolidate-openjdk-20260901：部署前克隆 app 58 张表一致、应用凭据连上克隆库，通过；真实发现并修复 5 处：实例密码模板未解析、克隆库未授权应用用户、应用凭据模板未展开、授权语句反引号被 sh 吃掉、并发双克隆与丢弃失败假标记）；管线 / 校验 / 初始化 24 例、路由 3 例、前端 5 例 |
+| 收敛 5：回写并入波 5 | 100 | 已验收 | 无（整库回写落地；增量回写与冲突合并仍属复制集波 5——记 `debt.cds.branch-isolation` DBI-write-back-full-replace） | 复制集波 5 落地时把 db-write-back 的门禁与台账原样复用，只替换「整库替换」那一步 | [沙箱取证](https://cds.miduo.org/reports?project=prd-agent&folder=2a8cbd3f87174ad48b7a495caa40e0e1&report=948973eb64d643a5b7434ba4242b24ac)（有状态 docker 桩：无冲突预览 → 有冲突预览 orders 主库 58 / 克隆时 57 → 复述库名回写 → 3 张表一致 → 回退 → 主库那一行找回，通过）→ [真实 mysql 分支复验](https://cds.miduo.org/reports?project=prd-agent&folder=2a8cbd3f87174ad48b7a495caa40e0e1&report=2962ffc8bae64a6eae6fbff4e8b61634)（同一条 MTS 分支：回写预览 58 张表并排、冲突为空 → 备份 → 演练 → 整库替换 app → 逐表校验一致 → 回退到快照对象数一致 → 回退后接口再预览两边零差异，通过）；回写 12 例、路由 5 例、前端 2 例；全量通过 |
 | 贯穿：故障矩阵用例 | 0 | 未开始 | 无 | 每收敛一步补对应矩阵行的用例；先补「并发双击隔离」与「克隆中杀容器」 | 无 |
 
 看板只在真实状态翻转时更新；进度停在同一数字多次更新是熔断信号。
