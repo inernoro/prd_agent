@@ -166,6 +166,89 @@ public sealed class WebFolderRenameFenceTests
         currentRepair.MatchedCount.ShouldBe(1);
     }
 
+    [Fact]
+    public async Task 重命名进程退出且租约过期后_创建会回收悬空目标占用()
+    {
+        await using var fixture = await RenameFenceMongoFixture.CreateAsync();
+        const string userId = "owner-abandoned-claim";
+        const string oldFolderId = "folder-abandoned-claim";
+        const string operationId = "operation-abandoned";
+        const long fence = 7;
+        var normalizedName = WebFolderService.NormalizeName("可回收目标");
+        await fixture.Db.WebFolders.InsertOneAsync(new WebFolder
+        {
+            Id = oldFolderId,
+            OwnerUserId = userId,
+            Name = "仍是旧名称",
+        });
+        await fixture.Db.Database.GetCollection<BsonDocument>("web_folder_name_claims").InsertOneAsync(
+            new BsonDocument
+            {
+                ["_id"] = WebFolderService.BuildNameClaimId(userId, normalizedName),
+                ["FolderId"] = oldFolderId,
+                ["OwnerUserId"] = userId,
+                ["NormalizedName"] = normalizedName,
+                ["RenameOperationId"] = operationId,
+                ["Fence"] = fence,
+            });
+        await fixture.Db.Database.GetCollection<BsonDocument>("web_folder_rename_locks").InsertOneAsync(
+            new BsonDocument
+            {
+                ["_id"] = oldFolderId,
+                ["OperationId"] = operationId,
+                ["Fence"] = fence,
+                ["ExpiresAt"] = DateTime.UtcNow.AddMinutes(-1),
+            });
+        var service = CreateService(fixture.Db);
+
+        var created = await service.CreateAsync(userId, new WebFolder { Name = "可回收目标" });
+
+        created.Id.ShouldNotBe(oldFolderId);
+        WebFolderService.NormalizeName(created.Name).ShouldBe(normalizedName);
+    }
+
+    [Fact]
+    public async Task 历史冲突快照不能覆盖另一个操作已持有的名称占用()
+    {
+        await using var fixture = await RenameFenceMongoFixture.CreateAsync();
+        const string userId = "owner-stale-repair";
+        const string targetName = "并发目标";
+        var normalizedName = WebFolderService.NormalizeName(targetName);
+        await fixture.Db.WebFolders.InsertManyAsync(new[]
+        {
+            new WebFolder { Id = "folder-source", OwnerUserId = userId, Name = "原名称" },
+            new WebFolder { Id = "folder-collision", OwnerUserId = userId, Name = targetName },
+        });
+        var claims = fixture.Db.Database.GetCollection<BsonDocument>("web_folder_name_claims");
+        await claims.InsertOneAsync(new BsonDocument
+        {
+            ["_id"] = WebFolderService.BuildNameClaimId(userId, normalizedName),
+            ["FolderId"] = "folder-concurrent-owner",
+            ["OwnerUserId"] = userId,
+            ["NormalizedName"] = normalizedName,
+        });
+
+        await Should.ThrowAsync<InvalidOperationException>(() => CreateService(fixture.Db).UpdateAsync(
+            "folder-source", userId, new WebFolder { Name = targetName }));
+
+        var persistedClaim = await claims.Find(
+            Builders<BsonDocument>.Filter.Eq("_id", WebFolderService.BuildNameClaimId(userId, normalizedName)))
+            .SingleAsync();
+        persistedClaim["FolderId"].AsString.ShouldBe("folder-concurrent-owner");
+    }
+
+    [Fact]
+    public void 服务端权威名称键不会把兼容连字扩成普通字母()
+    {
+        WebFolderService.NormalizeName("ﬃ").ShouldNotBe(WebFolderService.NormalizeName("FFI"));
+    }
+
+    private static WebFolderService CreateService(MongoDbContext db) => new(
+        db,
+        Mock.Of<IHostedSiteService>(),
+        Mock.Of<IDocumentService>(),
+        NullLogger<WebFolderService>.Instance);
+
     private sealed class RenameFenceMongoFixture : IAsyncDisposable
     {
         private readonly MongoClient _client;

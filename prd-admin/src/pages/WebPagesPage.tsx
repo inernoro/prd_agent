@@ -684,29 +684,44 @@ export default function WebPagesPage() {
     () => (currentSpace.kind === 'team' ? sites : sites.filter((s) => !(s.sharedTeamIds && s.sharedTeamIds.length))),
     [sites, currentSpace],
   );
+  const spaceFolderCanonicalNames = useMemo(() => new Map(
+    spaceSites
+      .filter((site) => !!site.folder)
+      .map((site) => [site.folder!, site.folderCanonicalName] as const),
+  ), [spaceSites]);
+  const managedFolderCanonicalNames = useMemo(() => new Map(
+    managedFolders.map((folder) => [folder.name, folder.canonicalName] as const),
+  ), [managedFolders]);
+  const personalFolderCanonicalNames = useMemo(() => new Map([
+    ...spaceFolderCanonicalNames,
+    ...managedFolderCanonicalNames,
+  ]), [managedFolderCanonicalNames, spaceFolderCanonicalNames]);
   // 空间内文件夹由内容派生（站点的 folder 字段）
   const spaceFolders = useMemo(
     () => mergePersonalFolderOptions(
       [],
       spaceSites.map((s) => s.folder).filter((f): f is string => !!f && !!f.trim()),
+      spaceFolderCanonicalNames,
     ),
-    [spaceSites],
+    [spaceFolderCanonicalNames, spaceSites],
   );
   // 显式创建的空文件夹也必须留在左栏；仅从站点 folder 字段派生会让空文件夹创建后立刻消失。
   const personalFolderOptions = useMemo(
     () => mergePersonalFolderOptions(
       managedFolders.map((folder) => folder.name),
       spaceFolders,
+      personalFolderCanonicalNames,
     ),
-    [managedFolders, spaceFolders],
+    [managedFolders, personalFolderCanonicalNames, spaceFolders],
   );
   // 上传/编辑弹窗同样消费显式文件夹，避免左栏看得到、上传表单却选不到。
   const uploadFolderOptions = useMemo(
     () => mergePersonalFolderOptions(
       managedFolders.map((folder) => folder.name),
       folders,
+      managedFolderCanonicalNames,
     ),
-    [folders, managedFolders],
+    [folders, managedFolderCanonicalNames, managedFolders],
   );
   const displaySites = useMemo(() => {
     // 团队空间按分组（专题/日常分类）过滤；个人空间沿用文件夹过滤
@@ -714,10 +729,18 @@ export default function WebPagesPage() {
       if (activeGroupId === UNGROUPED_ID) return spaceSites.filter((s) => !s.groupId);
       return activeGroupId ? spaceSites.filter((s) => s.groupId === activeGroupId) : spaceSites;
     }
+    const activeCanonicalName = activeFolder
+      ? personalFolderCanonicalNames.get(activeFolder)
+      : undefined;
     return activeFolder
-      ? spaceSites.filter((s) => !!s.folder && personalFolderNamesEqual(s.folder, activeFolder))
+      ? spaceSites.filter((s) => !!s.folder && personalFolderNamesEqual(
+        s.folder,
+        activeFolder,
+        s.folderCanonicalName,
+        activeCanonicalName,
+      ))
       : spaceSites;
-  }, [spaceSites, activeFolder, activeGroupId, currentSpace.kind]);
+  }, [spaceSites, activeFolder, activeGroupId, currentSpace.kind, personalFolderCanonicalNames]);
   // 「未分组」是树导航的虚拟节点：投送/移入分组时必须还原成 null
   const activeRealGroupId = activeGroupId === UNGROUPED_ID ? null : activeGroupId;
   // 树导航的分组计数（来自当前空间已加载的站点）
@@ -741,12 +764,17 @@ export default function WebPagesPage() {
     for (const site of spaceSites) {
       if (!site.folder) continue;
       const displayName = personalFolderOptions.find((folder) =>
-        personalFolderNamesEqual(folder, site.folder!),
+        personalFolderNamesEqual(
+          folder,
+          site.folder!,
+          personalFolderCanonicalNames.get(folder),
+          site.folderCanonicalName,
+        ),
       ) ?? site.folder.trim();
       m.set(displayName, (m.get(displayName) ?? 0) + 1);
     }
     return m;
-  }, [spaceSites, personalFolderOptions]);
+  }, [spaceSites, personalFolderCanonicalNames, personalFolderOptions]);
   const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 264;
   const siteShareStats = useMemo(() => buildSiteShareStats(shareLinks), [shareLinks]);
   // 顶栏「分享 N」与分享档结论句同一个口径：未过期且未撤销

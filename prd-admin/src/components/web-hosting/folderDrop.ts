@@ -9,12 +9,16 @@ export type PersonalFolderCreatePlan =
   | { kind: 'select'; name: string }
   | { kind: 'create'; name: string };
 
-function canonicalPersonalFolderName(name: string): string {
-  return name.trim().normalize('NFC').toUpperCase();
-}
-
-export function personalFolderNamesEqual(left: string, right: string): boolean {
-  return canonicalPersonalFolderName(left) === canonicalPersonalFolderName(right);
+export function personalFolderNamesEqual(
+  left: string,
+  right: string,
+  leftCanonicalName?: string,
+  rightCanonicalName?: string,
+): boolean {
+  if (leftCanonicalName !== undefined && rightCanonicalName !== undefined) {
+    return leftCanonicalName === rightCanonicalName;
+  }
+  return left.trim() === right.trim();
 }
 
 /**
@@ -24,12 +28,13 @@ export function personalFolderNamesEqual(left: string, right: string): boolean {
 export function mergePersonalFolderOptions(
   managedFolderNames: readonly string[],
   legacyFolderNames: readonly string[],
+  canonicalNames: ReadonlyMap<string, string> = new Map(),
 ): string[] {
   const byCanonicalName = new Map<string, string>();
   for (const sourceName of [...managedFolderNames, ...legacyFolderNames]) {
     const displayName = sourceName.trim();
     if (!displayName) continue;
-    const canonicalName = canonicalPersonalFolderName(displayName);
+    const canonicalName = canonicalNames.get(sourceName) ?? canonicalNames.get(displayName) ?? displayName;
     if (!byCanonicalName.has(canonicalName)) byCanonicalName.set(canonicalName, displayName);
   }
   return [...byCanonicalName.values()].sort((a, b) => a.localeCompare(b, 'zh-CN'));

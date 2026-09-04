@@ -202,6 +202,22 @@ public class SiteContentSnapshotServiceTests
     }
 
     [Fact]
+    public void 脚本和模板里的伪挂载节点_不能触发脚本文案提取()
+    {
+        const string html = """
+            <!doctype html><html><body>
+              <script type="module">const tpl = '<div id="root"></div>'; const hidden = '管理员内部错误';</script>
+              <template><div id="app"></div></template>
+            </body></html>
+            """;
+
+        var text = SiteContentSnapshotService.HtmlToPlainText(html);
+
+        Assert.True(string.IsNullOrWhiteSpace(text));
+        Assert.DoesNotContain("管理员内部错误", text);
+    }
+
+    [Fact]
     public async Task 当前存储缺少存量入口时_从落库站点地址读取正文()
     {
         var storage = new FakeAssetStorage();

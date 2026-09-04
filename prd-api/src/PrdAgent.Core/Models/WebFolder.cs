@@ -1,4 +1,5 @@
 using PrdAgent.Core.Attributes;
+using System.Text;
 using System.Text.Json.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 
@@ -20,6 +21,10 @@ public class WebFolder
 
     /// <summary>文件夹名称（如「运营简报」）</summary>
     public string Name { get; set; } = string.Empty;
+
+    /// <summary>服务端权威名称键，供客户端比较；不写入 MongoDB。</summary>
+    [BsonIgnore]
+    public string CanonicalName => WebFolderName.Canonicalize(Name);
 
     /// <summary>文件夹描述</summary>
     public string? Description { get; set; }
@@ -54,6 +59,12 @@ public class WebFolder
     [JsonIgnore]
     [BsonIgnoreIfDefault]
     public long RenameFence { get; set; }
+}
+
+public static class WebFolderName
+{
+    public static string Canonicalize(string? name) =>
+        (name ?? string.Empty).Trim().Normalize(NormalizationForm.FormC).ToUpperInvariant();
 }
 
 /// <summary>文件夹生成器类型常量</summary>

@@ -361,9 +361,7 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
 
     private static string ExtractStaticMarkupText(string html)
     {
-        var s = Regex.Replace(html, @"<(script|style|noscript)\b[^>]*>[\s\S]*?</\1>", " ",
-            RegexOptions.IgnoreCase);
-        s = Regex.Replace(s, @"<!--[\s\S]*?-->", " ");
+        var s = StripInertMarkup(html);
         // 块级标签转换行，保住段落感；否则整页会被压成一行，模型很难引用"某一段"
         s = Regex.Replace(s, @"<(br|/p|/div|/li|/h[1-6]|/tr|/section|/article)\s*>", "\n",
             RegexOptions.IgnoreCase);
@@ -372,14 +370,22 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         return Collapse(s);
     }
 
+    private static string StripInertMarkup(string html)
+    {
+        var stripped = Regex.Replace(html, @"<(script|style|noscript|template)\b[^>]*>[\s\S]*?</\1>", " ",
+            RegexOptions.IgnoreCase);
+        return Regex.Replace(stripped, @"<!--[\s\S]*?-->", " ");
+    }
+
     private static bool IsConfirmedClientRenderedShell(string html)
     {
         var bodyMatch = Regex.Match(html, @"<body\b[^>]*>([\s\S]*?)</body>", RegexOptions.IgnoreCase);
         if (!bodyMatch.Success) return false;
 
         var body = bodyMatch.Groups[1].Value;
+        var activeMarkup = StripInertMarkup(body);
         var hasKnownMount = Regex.IsMatch(
-            body,
+            activeMarkup,
             @"\bid\s*=\s*(?:""(?:root|app|__next)""|'(?:root|app|__next)'|(?:root|app|__next)\b)",
             RegexOptions.IgnoreCase);
         var hasModuleScript = Regex.IsMatch(

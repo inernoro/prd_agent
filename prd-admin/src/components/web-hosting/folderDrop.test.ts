@@ -43,9 +43,22 @@ describe('网页卡片文件夹拖拽协议', () => {
   });
 
   it('持久文件夹与历史文件夹按服务端同一口径去重并保留持久名称', () => {
+    const canonicalNames = new Map([
+      ['Reports', 'REPORTS'], ['reports', 'REPORTS'], ['REPORTS', 'REPORTS'],
+      [' 运营简报 ', '运营简报'], ['运营简报', '运营简报'], ['历史归档', '历史归档'],
+    ]);
     expect(mergePersonalFolderOptions(
       ['Reports', ' 运营简报 '],
       ['reports', 'REPORTS', '运营简报', '历史归档'],
+      canonicalNames,
     )).toEqual(['历史归档', '运营简报', 'Reports']);
+  });
+
+  it('使用服务端权威键时不会把服务端可区分的 Unicode 名称误合并', () => {
+    expect(mergePersonalFolderOptions(
+      ['ﬃ'],
+      ['FFI'],
+      new Map([['ﬃ', 'ﬃ'], ['FFI', 'FFI']]),
+    )).toEqual(['ﬃ', 'FFI']);
   });
 });

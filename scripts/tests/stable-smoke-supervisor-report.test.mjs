@@ -7,6 +7,7 @@ const matrix = `
 |---|---|---|---|---|
 | CORE-001 | 首页 | 首页能打开 | 必跑 | 必跑 |
 | VIS-003 | 单图参考 | 参考图进入请求 | 必跑 | 最小图片档 |
+| WEB-004 | 分享锚点 | 锚点留在页面内 | 必跑 | 必跑 |
 `;
 
 const plan = {
@@ -20,6 +21,7 @@ test('测试矩阵解析场景、断言和双环境策略', () => {
   const parsed = parseTestMatrix(matrix);
   assert.equal(parsed.get('VIS-003')?.scenario, '单图参考');
   assert.equal(parsed.get('VIS-003')?.productionPolicy, '最小图片档');
+  assert.equal(parsed.get('WEB-004')?.scenario, '分享锚点');
 });
 
 test('主管报告把异常提前并保留全量逐项账本', () => {

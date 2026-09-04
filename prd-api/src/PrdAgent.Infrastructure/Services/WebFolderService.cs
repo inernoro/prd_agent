@@ -135,7 +135,7 @@ public class WebFolderService : IWebFolderService
     }
 
     internal static string NormalizeName(string? name) =>
-        (name ?? string.Empty).Trim().Normalize(NormalizationForm.FormC).ToUpperInvariant();
+        WebFolderName.Canonicalize(name);
 
     internal static string BuildNameClaimId(string userId, string normalizedName)
     {
@@ -242,7 +242,9 @@ public class WebFolderService : IWebFolderService
                 Builders<BsonDocument>.Update.Set(ClaimFolderIdField, folderId),
                 Builders<BsonDocument>.Update.Set("OwnerUserId", userId),
                 Builders<BsonDocument>.Update.Set("NormalizedName", normalizedName),
-                Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow)),
+                Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow),
+                Builders<BsonDocument>.Update.Unset(RenameOperationIdField),
+                Builders<BsonDocument>.Update.Unset(RenameFenceField)),
             cancellationToken: CancellationToken.None);
         if (finalized.MatchedCount != 1)
             throw new InvalidOperationException("文件夹已被另一个操作接管，请重试");
@@ -285,30 +287,76 @@ public class WebFolderService : IWebFolderService
             if (claimedFolder != null && NormalizeName(claimedFolder.Name) == normalizedName)
                 return claimedFolder;
 
+            if (await TryReclaimAbandonedNameClaimAsync(
+                    currentClaim, userId, normalizedName, claimedFolderId))
+                return null;
+
             await Task.Delay(25, CancellationToken.None);
         }
 
         throw new InvalidOperationException("文件夹名称正在变更，请稍后重试");
     }
 
-    private Task RepairNameClaimAsync(
+    private async Task<bool> TryReclaimAbandonedNameClaimAsync(
+        BsonDocument claim,
         string userId,
         string normalizedName,
         string folderId)
     {
-        var claims = _db.Database.GetCollection<BsonDocument>(NameClaimCollection);
+        if (!claim.TryGetValue(RenameOperationIdField, out var operationValue)
+            || !operationValue.IsString
+            || !claim.TryGetValue(RenameFenceField, out var fenceValue)
+            || !fenceValue.IsNumeric)
+            return false;
+
+        var operationId = operationValue.AsString;
+        var fence = fenceValue.ToInt64();
+        var locks = _db.Database.GetCollection<BsonDocument>(RenameLockCollection);
         var now = DateTime.UtcNow;
-        var update = Builders<BsonDocument>.Update.Combine(
-            Builders<BsonDocument>.Update.Set(ClaimFolderIdField, folderId),
-            Builders<BsonDocument>.Update.Set("OwnerUserId", userId),
-            Builders<BsonDocument>.Update.Set("NormalizedName", normalizedName),
-            Builders<BsonDocument>.Update.SetOnInsert("CreatedAt", now),
-            Builders<BsonDocument>.Update.Set("UpdatedAt", now));
-        return claims.UpdateOneAsync(
-            Builders<BsonDocument>.Filter.Eq("_id", BuildNameClaimId(userId, normalizedName)),
-            update,
-            new UpdateOptions { IsUpsert = true },
+        var leaseActive = await locks.Find(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", folderId),
+                    Builders<BsonDocument>.Filter.Eq("OperationId", operationId),
+                    Builders<BsonDocument>.Filter.Eq(RenameFenceField, fence),
+                    Builders<BsonDocument>.Filter.Gt("ExpiresAt", now)))
+            .AnyAsync(CancellationToken.None);
+        if (leaseActive) return false;
+
+        var claims = _db.Database.GetCollection<BsonDocument>(NameClaimCollection);
+        var deleted = await claims.DeleteOneAsync(
+            BuildOwnedNameClaimFilter(userId, normalizedName, folderId, operationId, fence),
             CancellationToken.None);
+        return deleted.DeletedCount == 1;
+    }
+
+    private async Task<bool> RepairNameClaimIfCurrentOwnerAsync(
+        string userId,
+        string normalizedName,
+        string folderId)
+    {
+        var snapshot = await _db.WebFolders
+            .Find(folder => folder.Id == folderId && folder.OwnerUserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (snapshot == null || NormalizeName(snapshot.Name) != normalizedName)
+            return false;
+
+        var resolution = await ResolveFolderIdAsync(
+            userId, normalizedName, folderId, CancellationToken.None);
+        if (!string.Equals(resolution.FolderId, folderId, StringComparison.Ordinal))
+            return false;
+
+        // Resolve 与复核之间如果另一个重命名已提高围栏，本次历史快照失效；
+        // 只释放仍指向该 folderId 的 claim，绝不覆盖并发创建者的新映射。
+        var current = await _db.WebFolders
+            .Find(folder => folder.Id == folderId && folder.OwnerUserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        var stillOwnsName = current != null
+            && current.RenameFence == snapshot.RenameFence
+            && NormalizeName(current.Name) == normalizedName;
+        if (stillOwnsName) return true;
+
+        await ReleaseNameClaimAsync(userId, normalizedName, folderId, CancellationToken.None);
+        return false;
     }
 
     private Task ReleaseNameClaimAsync(
@@ -498,8 +546,9 @@ public class WebFolderService : IWebFolderService
                 // 老数据没有名称 claim。先把真实占用回填为权威映射，再拒绝本次改名，
                 // 避免两个持久文件夹得到同一个归一化名称。
                 await RenewRenameLockAsync(id, lease);
-                await RepairNameClaimAsync(userId, nextNormalizedName, persistedCollision.Id);
-                throw new InvalidOperationException("同名文件夹已存在，请换一个名称");
+                if (await RepairNameClaimIfCurrentOwnerAsync(
+                        userId, nextNormalizedName, persistedCollision.Id))
+                    throw new InvalidOperationException("同名文件夹已存在，请换一个名称");
             }
 
             await RenewRenameLockAsync(id, lease);
