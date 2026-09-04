@@ -252,7 +252,19 @@ async function main() {
       });
       const isoLabel = `${vp.label} tab 隔离`;
       if (isolation.skipped) {
-        console.log(`SKIP ${isoLabel}（${isolation.skipped}）`);
+        /*
+         * 前置缺失当失败，不当跳过。
+         *
+         * 这里的两个前置——slot 标记在不在、切得走的 tab 找不找得到——**本身就是
+         * 这条判据要守的东西**。它们不见了正是回归，不是「环境缺件」那种可以跳过
+         * 的情况。原来写成 SKIP 打一行日志就放行，等于新加的 CI 步骤声称守着
+         * tab 隔离，实际上覆盖已经悄悄没了（Codex P2）。
+         *
+         * 这条正是 predicate-and-wiring-discipline 形状 4b 说的：跳过要打印原因，
+         * 但「一个不会红的证据比没有证据更糟」。我打了原因，却漏了后半句。
+         */
+        failures.push(`${isoLabel}: 判据跑不起来——${isolation.skipped}`);
+        console.log(`FAIL ${isoLabel} 判据跑不起来——${isolation.skipped}`);
       } else if (isolation.height > 0 || isolation.starterTextVisible) {
         const msg = `切到别的 tab 后上手助手没消失（display=${isolation.display}，高 ${isolation.height}px，文案可见=${isolation.starterTextVisible}）`;
         failures.push(`${isoLabel}: ${msg}`);
