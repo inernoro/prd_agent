@@ -263,7 +263,7 @@ export interface DbLedgerOps {
   /** 逐表行数（回写预览与回写后校验；收敛 5） */
   tableCounts(engine: ReplicaDbEngine, infra: InfraService, dbName: string): Promise<Record<string, number>>;
   /** 整库替换：用 sourceDb 的内容覆盖 targetDb（目标库先删后建再导入；调用方须先备份并演练） */
-  replaceDbFrom(engine: ReplicaDbEngine, infra: InfraService, sourceDb: string, targetDb: string): Promise<void>;
+  replaceDbFrom(engine: ReplicaDbEngine, infra: InfraService, sourceDb: string, targetDb: string, grantTo?: string): Promise<void>;
   /** 把备份文件还原进指定库（目标库先删后建） */
   restoreInto(engine: ReplicaDbEngine, infra: InfraService, file: string, targetDb: string): Promise<void>;
 }

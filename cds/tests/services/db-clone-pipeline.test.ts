@@ -79,6 +79,19 @@ describe('克隆三元组：脚本只从来源库、目标库、实例取值', (
     expect(pg.argv).toContain('PGPASSWORD=pgpw');
   });
 
+  it('带 grantTo：克隆完把目标库授权给应用用户（真实 mysql 分支复验的 ERROR 1044 根因）；用户名不安全拒绝', () => {
+    const my = relationalCloneArgv(spec({ grantTo: 'shop_app' }));
+    const myScript = my.argv[my.argv.length - 1];
+    expect(myScript).toContain("GRANT ALL PRIVILEGES ON `shop_feat_x`.* TO 'shop_app'@'%'");
+    expect(myScript.indexOf('GRANT')).toBeGreaterThan(myScript.indexOf('< /tmp/rsclone.sql'));
+    const pg = relationalCloneArgv(spec({ engine: 'postgres', infra: pgInfra, grantTo: 'shop_app' }));
+    const pgScript = pg.argv[pg.argv.length - 1];
+    expect(pgScript).toContain('GRANT ALL PRIVILEGES ON DATABASE "shop_feat_x" TO "shop_app"');
+    expect(pgScript).toContain('GRANT ALL ON ALL TABLES IN SCHEMA public TO "shop_app"');
+    expect(() => relationalCloneArgv(spec({ grantTo: "x'; DROP" }))).toThrow(/不安全/);
+    expect(relationalCloneArgv(spec()).argv.join(' ')).not.toContain('GRANT');
+  });
+
   it('目标库与源库同名、库名含不安全字符、mongo 引擎：一律拒绝，不生成脚本', () => {
     expect(() => relationalCloneArgv(spec({ targetDb: 'shop' }))).toThrow(/目标库不能等于源库/);
     expect(() => relationalCloneArgv(spec({ targetDb: 'shop;drop' }))).toThrow(/不合法/);
@@ -144,7 +157,7 @@ describe('分支独立库时间点克隆初始化', () => {
     state = new StateService(path.join(tmpDir, 'state.json'), tmpDir); state.load();
     const T = NOW.toISOString();
     state.addProject({ id: 'p', slug: 'p', name: 'P', kind: 'git', createdAt: T, updatedAt: T } as any);
-    state.addBuildProfile({ id: 'api', projectId: 'p', name: 'API', dockerImage: 'node:20', workDir: '.', containerPort: 3000, dbScope: 'per-branch', dbInit: 'clone', env: { CDS_MYSQL_DATABASE: 'shop' } } as BuildProfile);
+    state.addBuildProfile({ id: 'api', projectId: 'p', name: 'API', dockerImage: 'node:20', workDir: '.', containerPort: 3000, dbScope: 'per-branch', dbInit: 'clone', env: { CDS_MYSQL_DATABASE: 'shop', CDS_MYSQL_USER: 'shop_app', CDS_MYSQL_PASSWORD: 'apppw' } } as BuildProfile);
     state.addBuildProfile({ id: 'jobs', projectId: 'p', name: 'Jobs', dockerImage: 'node:20', workDir: '.', containerPort: 3001, dbScope: 'per-branch', env: { CDS_MYSQL_DATABASE: 'shop' } } as BuildProfile);
     state.addBuildProfile({ id: 'search', projectId: 'p', name: 'Search', dockerImage: 'node:20', workDir: '.', containerPort: 3002, dbScope: 'per-branch', dbInit: 'clone', env: { CDS_MONGO_DATABASE: 'catalog' } } as BuildProfile);
     state.addBuildProfile({ id: 'web', projectId: 'p', name: 'Web', dockerImage: 'nginx', workDir: '.', containerPort: 80, dbScope: 'per-branch', dbInit: 'clone', env: {} } as BuildProfile);
@@ -170,6 +183,10 @@ describe('分支独立库时间点克隆初始化', () => {
     const r = perBranchCloneSpec(state, branch(), effective('api'));
     expect('spec' in r && r.spec).toMatchObject({ engine: 'mysql', sourceDb: 'shop', targetDb: 'shop_feat_x', scope: { kind: 'per-branch', projectId: 'p', branchId: 'p-feat-x', profileId: 'api' } });
     expect('spec' in r && r.spec.infra.containerName).toBe('cds-infra-mysql');
+    // 克隆完授权给应用自己的用户（与库探测同一套凭据解析）；没声明应用用户的服务不授权
+    expect('spec' in r && r.spec.grantTo).toBe('shop_app');
+    const jobs = perBranchCloneSpec(state, branch(), effective('jobs'));
+    expect('spec' in jobs && jobs.spec.grantTo).toBeUndefined();
   });
 
   it('mongo 拒绝时间点克隆并说明原因（共享实例写压会崩）；不涉及数据库的服务不适用', () => {
@@ -228,6 +245,27 @@ describe('分支独立库时间点克隆初始化', () => {
     const entry = state.getDbLedger('p').find((e) => e.dbName === 'shop_feat_x')!;
     expect(entry.clone?.verification.ok).toBe(false);
     expect(entry.clone?.verification.tables).toContainEqual({ table: 'orders', source: 11, target: 10 });
+  });
+
+  it('同分支两个服务共用一个独立库并行部署：只克隆一次，后到的等完再判「已存在」（真实 mysql 分支复验的并发缺口）', async () => {
+    state.addBuildProfile({ id: 'web2', projectId: 'p', name: 'Web2', dockerImage: 'nginx', workDir: '.', containerPort: 81, dbScope: 'per-branch', dbInit: 'clone', env: { CDS_MYSQL_DATABASE: 'shop' } } as BuildProfile);
+    state.save();
+    const log: string[] = [];
+    const listed = ['shop'];
+    const world = { shop: { users: 3 } } as Record<string, Record<string, number>>;
+    const base = fakeExec(world, log);
+    const slowExec: DbCloneExec = async (argv, stdin, t, m) => {
+      const r = await base(argv, stdin, t, m);
+      if (argv[0] === 'run') { await new Promise((res) => setTimeout(res, 30)); listed.push('shop_feat_x'); }
+      return r;
+    };
+    const deps = { exec: slowExec, listDatabases: async () => [...listed], now: () => NOW };
+    const [a, b] = await Promise.all([
+      ensurePerBranchDbInitialized(state, branch(), effective('api'), deps),
+      ensurePerBranchDbInitialized(state, branch(), effective('web2'), deps),
+    ]);
+    expect([a.kind, b.kind].sort()).toEqual(['cloned', 'exists']);
+    expect(log.filter((l) => l.startsWith('clone:'))).toHaveLength(1);
   });
 
   it('克隆脚本失败：抛错（部署据此中止），不写台账', async () => {

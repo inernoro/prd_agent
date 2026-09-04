@@ -193,9 +193,9 @@ function credentialsFromUrl(url: string): { user: string; pw: string } | null {
   return userRaw ? { user: dec(userRaw), pw: dec(pwRaw) } : null;
 }
 
-interface Credential { user: string; pw: string; source: DbProbeCredentialSource; authSource?: string }
+export interface Credential { user: string; pw: string; source: DbProbeCredentialSource; authSource?: string }
 
-function resolveCredential(engine: ReplicaDbEngine, appEnv: Record<string, string>, target: ReplicaDbTarget): Credential {
+export function resolveCredential(engine: ReplicaDbEngine, appEnv: Record<string, string>, target: ReplicaDbTarget): Credential {
   // 1. 应用连接串
   const urlKeys = [
     ...Object.keys(target.urlEnvValues || {}),

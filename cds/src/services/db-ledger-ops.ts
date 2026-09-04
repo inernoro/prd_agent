@@ -172,9 +172,9 @@ export const realDbLedgerOps: DbLedgerOps = {
     return relationalTableCounts(engine, infra, dbName);
   },
 
-  async replaceDbFrom(engine, infra, sourceDb, targetDb) {
+  async replaceDbFrom(engine, infra, sourceDb, targetDb, grantTo) {
     assertSafe(sourceDb); assertSafe(targetDb);
-    const { argv, secrets } = relationalReplaceArgv({ engine, infra, sourceDb, targetDb, scope: { kind: 'per-branch', branchId: '', profileId: '' } });
+    const { argv, secrets } = relationalReplaceArgv({ engine, infra, sourceDb, targetDb, grantTo, scope: { kind: 'per-branch', branchId: '', profileId: '' } });
     const r = await runDockerExec(argv, '', 600_000, 64 * 1024);
     if (r.code !== 0) {
       const raw = `${r.stderr || r.stdout}`.trim();

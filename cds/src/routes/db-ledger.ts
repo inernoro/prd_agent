@@ -25,9 +25,9 @@ import {
 import { isDroppableDerivedName, realDbLedgerOps } from '../services/db-ledger-ops.js';
 import { backupDirCandidates } from '../services/infra-backup-schedule.js';
 import { detectInfraDataKind } from './infra-data.js';
-import { resolveInfraForDb, type ReplicaDbEngine } from '../services/replica-db-clone.js';
+import { resolveInfraForDb, resolveReplicaDbTarget, type ReplicaDbEngine } from '../services/replica-db-clone.js';
 import { resolveEffectiveProfile } from '../services/container.js';
-import { ensurePerBranchDbInitialized, type PerBranchDbInitOutcome } from '../services/per-branch-db-init.js';
+import { ensurePerBranchDbInitialized, appDbUser, type PerBranchDbInitOutcome } from '../services/per-branch-db-init.js';
 import { describeCloneVerification, compareTableCounts, type DbCloneExec } from '../services/db-clone-pipeline.js';
 import { assertWriteBackAllowed, buildWriteBackPreview } from '../services/db-write-back.js';
 import { randomUUID } from 'node:crypto';
@@ -154,6 +154,16 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
     return ok ? { ok: true, backup: verified } : { ok: false, backup: verified, detail };
   }
 
+  /** 回写目标库的应用用户：从派生库所属分支 / 服务的运行时 env 解析（与克隆授权同口径） */
+  function writeBackGrantTo(entry: DbLedgerEntry): string | undefined {
+    if (!entry.branchId || !entry.profileId) return undefined;
+    const branch = stateService.getBranch(entry.branchId);
+    const baseline = branch && stateService.getEffectiveProfilesForBranch(branch).find((p) => p.id === entry.profileId);
+    if (!branch || !baseline) return undefined;
+    const { target } = resolveReplicaDbTarget(stateService, branch, resolveEffectiveProfile(baseline, branch), { infraStatus: 'any' });
+    return target ? appDbUser(target) : undefined;
+  }
+
   function resolveWriteBackTarget(req: Request, res: any): { p: { id: string; slug: string }; live: DbLedgerEntry; infra: InfraService; targetDb: string; view: DbLedgerView } | null {
     const p = guardProject(req, res); if (!p) return null;
     const view = buildProjectDbLedgerView(stateService, p.id, now());
@@ -188,7 +198,9 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
       const guard = await backupAndDrill(t.p, engine, t.infra, t.targetDb, 'pre-writeback');
       if (!guard.ok) { res.status(422).json({ error: `回写中止：目标库 ${t.targetDb} 的回写前备份演练未通过（${guard.detail}），目标库未动；备份文件 ${guard.backup.file}` }); return; }
       const entry = materializeEntry(stateService, t.view, t.live.id, now())!;
-      await ops.replaceDbFrom(engine, t.infra, entry.dbName, t.targetDb);
+      // 目标库先删后建：postgres 的库级授权会随 DROP 消失，替换完把应用用户的权限补回去（mysql 的授权本就跨 DROP 保留）
+      const grantTo = writeBackGrantTo(entry);
+      await ops.replaceDbFrom(engine, t.infra, entry.dbName, t.targetDb, grantTo);
       const [parentAfter, derivedAfter] = await Promise.all([ops.tableCounts(engine, t.infra, t.targetDb), ops.tableCounts(engine, t.infra, entry.dbName)]);
       const verification = compareTableCounts(parentAfter, derivedAfter, now());
       const actor = String((req as any).cdsPrincipal?.name || (req as any).cdsProjectKey?.keyId || 'admin');

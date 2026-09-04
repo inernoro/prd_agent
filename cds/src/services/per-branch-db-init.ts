@@ -21,6 +21,8 @@ import {
 import type { DbEngine } from './db-env-keys.js';
 import type { InfraService } from '../types.js';
 import { effectiveDbInit, MONGO_CLONE_REFUSAL } from './db-init-mode.js';
+import { resolveCredential } from './db-probe.js';
+import type { ReplicaDbTarget } from './replica-db-clone.js';
 
 export { DB_INIT_MODES, DB_INIT_LABEL, isDbInitMode, effectiveDbInit, MONGO_CLONE_REFUSAL, type DbInitMode } from './db-init-mode.js';
 
@@ -39,8 +41,18 @@ export function perBranchCloneSpec(state: StateService, branch: BranchEntry, pro
       sourceDb,
       targetDb: r.target.sourceDb,
       scope: { kind: 'per-branch', projectId: branch.projectId, branchId: branch.id, profileId: profile.id },
+      grantTo: appDbUser(r.target),
     },
   };
+}
+
+/**
+ * 应用自己的数据库用户（与库探测同一套凭据解析：连接串 → 应用 env 里的用户变量）。
+ * 退回基础设施 root 的不授权（root 什么都能看）；解析不到就不授权，让「应用连不上」如实暴露。
+ */
+export function appDbUser(target: ReplicaDbTarget): string | undefined {
+  const cred = resolveCredential(target.engine, target.appEnv ?? {}, target);
+  return cred.source === 'app-url' || cred.source === 'app-env' ? cred.user : undefined;
 }
 
 export type PerBranchDbInitOutcome =
@@ -82,10 +94,39 @@ function recordClone(
 }
 
 /**
+ * 同一目标库的克隆串行化（按 实例容器::目标库 键）。
+ * 分支里多个服务常共用一个库（前端 + 后端都指向 app），部署层内它们并行启动，两个钩子会
+ * 同时发现「库不存在」各克隆一遍（2026-09-04 真实 mysql 分支复验撞上：两份导入交叠，
+ * 第一份校验出 57/58 张表）。后来的等前一个做完再重新判「已存在」。进程内互斥即可：
+ * 钩子只在本 CDS 进程的部署循环里跑。
+ */
+const inflightClones = new Map<string, Promise<PerBranchDbInitOutcome>>();
+
+/**
  * 部署前钩子：需要时把分支独立库从共享库时间点克隆出来。
  * 返回值只描述发生了什么；克隆脚本失败直接抛错。
  */
 export async function ensurePerBranchDbInitialized(
+  state: StateService, branch: BranchEntry, profile: BuildProfile, deps: PerBranchDbInitDeps = {},
+): Promise<PerBranchDbInitOutcome> {
+  if (profile.dbScope !== 'per-branch' || effectiveDbInit(profile) !== 'clone') {
+    return ensurePerBranchDbInitializedUnlocked(state, branch, profile, deps);
+  }
+  const r = perBranchCloneSpec(state, branch, profile);
+  if ('refused' in r) return { kind: 'refused', reason: r.refused };
+  const key = `${r.spec.infra.containerName}::${r.spec.targetDb}`;
+  const prior = inflightClones.get(key);
+  if (prior) {
+    deps.onOutput?.(`── 分支独立库 ${r.spec.targetDb} 正由同分支另一个服务克隆中，等它完成 ──`);
+    await prior.catch(() => undefined);
+  }
+  const run = ensurePerBranchDbInitializedUnlocked(state, branch, profile, deps);
+  inflightClones.set(key, run);
+  try { return await run; }
+  finally { if (inflightClones.get(key) === run) inflightClones.delete(key); }
+}
+
+async function ensurePerBranchDbInitializedUnlocked(
   state: StateService, branch: BranchEntry, profile: BuildProfile, deps: PerBranchDbInitDeps = {},
 ): Promise<PerBranchDbInitOutcome> {
   if (profile.dbScope !== 'per-branch') return { kind: 'not-applicable', reason: '共享库' };

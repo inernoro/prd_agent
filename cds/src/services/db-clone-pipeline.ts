@@ -33,6 +33,24 @@ export interface DbCloneSpec {
   sourceDb: string;
   targetDb: string;
   scope: DbCloneScope;
+  /**
+   * 克隆 / 替换完成后把目标库授权给应用自己的数据库用户。root 建库导入的库对应用用户是
+   * 不可见的（mysql 镜像只给 MYSQL_USER 授了 MYSQL_DATABASE；postgres 新库归 superuser）——
+   * 2026-09-04 真实 mysql 分支复验：应用容器起来后 ERROR 1044 Access denied to database。
+   */
+  grantTo?: string;
+}
+
+const DB_USER_SAFE = /^[A-Za-z0-9_.@-]+$/;
+
+function grantScript(engine: DbEngine, flags: string, targetDb: string, user: string | undefined): string {
+  if (!user) return '';
+  if (!DB_USER_SAFE.test(user)) throw new Error(`应用数据库用户名含不安全字符，拒绝授权: ${user}`);
+  if (engine === 'mysql') {
+    return ` mysql ${flags} -e "GRANT ALL PRIVILEGES ON \`${targetDb}\`.* TO '${user}'@'%'; FLUSH PRIVILEGES";`;
+  }
+  return ` psql ${flags} -d postgres -v ON_ERROR_STOP=1 -c 'GRANT ALL PRIVILEGES ON DATABASE "${targetDb}" TO "${user}"';` +
+    ` psql ${flags} -d ${targetDb} -v ON_ERROR_STOP=1 -c 'GRANT ALL ON SCHEMA public TO "${user}"' -c 'GRANT ALL ON ALL TABLES IN SCHEMA public TO "${user}"' -c 'GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO "${user}"' -c 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "${user}"' -c 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "${user}"';`;
 }
 
 const DB_NAME_SAFE = /^[a-z0-9_]+$/i;
@@ -94,7 +112,7 @@ export function relationalCloneArgv(spec: DbCloneSpec): { argv: string[]; secret
       argv: helper(
         `set -e; mysql ${flags} -e 'CREATE DATABASE IF NOT EXISTS \`${spec.targetDb}\`'; ` +
         `mysqldump ${flags} --single-transaction --routines --triggers ${spec.sourceDb} > /tmp/rsclone.sql; ` +
-        `mysql ${flags} ${spec.targetDb} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`,
+        `mysql ${flags} ${spec.targetDb} < /tmp/rsclone.sql;` + grantScript('mysql', flags, spec.targetDb, spec.grantTo) + ` rm -f /tmp/rsclone.sql`,
       ),
       secrets: conn.secrets,
     };
@@ -104,7 +122,7 @@ export function relationalCloneArgv(spec: DbCloneSpec): { argv: string[]; secret
     argv: helper(
       `set -e; psql ${flags} -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "${spec.targetDb}"' 2>/dev/null || true; ` +
       `pg_dump ${flags} ${spec.sourceDb} > /tmp/rsclone.sql; ` +
-      `psql ${flags} -q -v ON_ERROR_STOP=1 -d ${spec.targetDb} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`,
+      `psql ${flags} -q -v ON_ERROR_STOP=1 -d ${spec.targetDb} < /tmp/rsclone.sql;` + grantScript('postgres', flags, spec.targetDb, spec.grantTo) + ` rm -f /tmp/rsclone.sql`,
     ),
     secrets: conn.secrets,
   };
@@ -134,7 +152,7 @@ export function relationalReplaceArgv(spec: DbCloneSpec): { argv: string[]; secr
       argv: helper(
         `set -e; mysqldump ${flags} --single-transaction --routines --triggers ${spec.sourceDb} > /tmp/rsclone.sql; ` +
         `mysql ${flags} -e 'DROP DATABASE IF EXISTS \`${spec.targetDb}\`; CREATE DATABASE \`${spec.targetDb}\`'; ` +
-        `mysql ${flags} ${spec.targetDb} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`,
+        `mysql ${flags} ${spec.targetDb} < /tmp/rsclone.sql;` + grantScript('mysql', flags, spec.targetDb, spec.grantTo) + ` rm -f /tmp/rsclone.sql`,
       ),
       secrets: conn.secrets,
     };
@@ -145,7 +163,7 @@ export function relationalReplaceArgv(spec: DbCloneSpec): { argv: string[]; secr
       `set -e; pg_dump ${flags} ${spec.sourceDb} > /tmp/rsclone.sql; ` +
       `psql ${flags} -d postgres -v ON_ERROR_STOP=1 -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${spec.targetDb}' AND pid <> pg_backend_pid()" >/dev/null; ` +
       `psql ${flags} -d postgres -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS "${spec.targetDb}"' -c 'CREATE DATABASE "${spec.targetDb}"'; ` +
-      `psql ${flags} -q -v ON_ERROR_STOP=1 -d ${spec.targetDb} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`,
+      `psql ${flags} -q -v ON_ERROR_STOP=1 -d ${spec.targetDb} < /tmp/rsclone.sql;` + grantScript('postgres', flags, spec.targetDb, spec.grantTo) + ` rm -f /tmp/rsclone.sql`,
     ),
     secrets: conn.secrets,
   };

@@ -179,6 +179,8 @@ export interface ReplicaDbTarget {
   /** 克隆来源库名（已按 dbScope=per-branch 折算成运行时真实库名） */
   sourceDb: string;
   infra: InfraService;
+  /** 服务的运行时 env（项目 → 分支 → profile 合并并按 dbScope 折算），给凭据解析用（克隆后授权给应用用户） */
+  appEnv?: Record<string, string>;
 }
 
 /** Mongo 连接串 env key 家族（.NET 双下划线 / 通用 URI 风格） */
@@ -426,6 +428,7 @@ export function resolveReplicaDbTarget(
       ...(unboundUrlKeys.length > 0 ? { unboundUrlKeys } : {}),
       sourceDb,
       infra: resolveInfraForDb(state, infra),
+      appEnv: runtimeEnv,
     },
   };
 }
