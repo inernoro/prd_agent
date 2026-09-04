@@ -1,0 +1,1 @@
+| chore | doc | 熵清理：D1/D2/D3/D4/D7 均干净，D6 处理 5 条 changelog（配置入口、视觉业务模型、分支数据库账号碰撞、身份层与多项目），内容已由 design.cds.web-entry.md、design.visual-agent.md、debt.cds.md、plan.cds.multi-project-identity.md、debt.cds.multi-project-identity.md 覆盖，登记进 manifest 避免重复扫描 |
