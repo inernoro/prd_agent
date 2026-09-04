@@ -74,6 +74,7 @@ import { LibraryRail } from '@/components/web-hosting/LibraryRail';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import {
   SiteCard,
+  canDragSiteCard,
   SITE_CARD_SIZES,
   WEB_PAGE_MIME,
   type SiteCaps,
@@ -2845,6 +2846,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   onAskConfig?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
+  const canDrag = canDragSiteCard(c);
   const isPublic = site.visibility === 'public';
   const { onPointerDown } = useDockDrag({
     mime: WEB_PAGE_MIME,
@@ -2861,11 +2863,12 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   };
   return (
     <div
-      className="group flex items-center gap-4 px-3 py-2 rounded-md cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))]"
+      className={`group flex items-center gap-4 px-3 py-2 rounded-md touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))] ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+      data-dock-draggable={canDrag ? 'true' : 'false'}
       style={{
         background: selected ? 'rgba(99,102,241,0.10)' : 'transparent',
       }}
-      onPointerDown={onPointerDown}
+      onPointerDown={canDrag ? onPointerDown : undefined}
     >
       <input
         type="checkbox"

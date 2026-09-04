@@ -717,7 +717,18 @@ const folderRegressionCaseIds = [
 ];
 
 export function runFolderRegressionTests(runDir, commandRunner = command) {
-  const result = commandRunner('dotnet', [
+  const clientArtifactPath = resolve(runDir, 'web-folder-client-regressions.xml');
+  const clientResult = commandRunner('pnpm', [
+    '--dir', 'prd-admin', 'exec', 'vitest', 'run',
+    'src/components/web-hosting/folderDrop.test.ts',
+    '--reporter=junit', `--outputFile=${clientArtifactPath}`,
+  ], {
+    env: { ...process.env },
+    stdio: 'inherit',
+    encoding: undefined,
+  });
+  const serverArtifactPath = resolve(runDir, 'web-folder-regressions.trx');
+  const serverResult = commandRunner('dotnet', [
     'test', 'prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj',
     '--no-restore', '-m:1',
     '--filter', 'FullyQualifiedName~WebFolderRenameFenceTests',
@@ -728,29 +739,41 @@ export function runFolderRegressionTests(runDir, commandRunner = command) {
     stdio: 'inherit',
     encoding: undefined,
   });
-  const passed = result.status === 0;
+  const clientPassed = clientResult.status === 0;
+  const serverPassed = serverResult.status === 0;
+  const resultsByCaseId = new Map([
+    ['REG-web-folder-canonical-001', clientPassed],
+    ['REG-web-folder-fence-001', serverPassed],
+    ['REG-web-folder-create-rename-001', serverPassed],
+  ]);
   return {
     execution: {
       environment: 'cds-folder-regressions',
-      status: passed ? 'passed' : 'failed',
+      status: clientPassed && serverPassed ? 'passed' : 'failed',
       // resultPath 专用于 Playwright JSON；TRX 另存，避免汇总器按 JSON 误读。
       resultPath: null,
-      artifactPath: resolve(runDir, 'web-folder-regressions.trx'),
+      artifactPath: serverArtifactPath,
+      artifactPaths: [clientArtifactPath, serverArtifactPath],
       policy: 'deterministic-integration',
       gateReasons: [],
     },
-    rows: folderRegressionCaseIds.map((caseId) => ({
-      caseId,
-      environment: 'cds',
-      title: `[${caseId}] 文件夹名称与重命名并发集成回归`,
-      tags: [],
-      status: passed ? 'pass' : 'fail',
-      durationMs: 0,
-      error: passed ? '' : '文件夹名称与重命名并发集成回归失败',
-      retryCount: 0,
-      hadFailedAttempt: !passed,
-      attemptErrors: passed ? [] : ['文件夹名称与重命名并发集成回归失败'],
-    })),
+    rows: folderRegressionCaseIds.map((caseId) => {
+      const passed = resultsByCaseId.get(caseId) === true;
+      const area = caseId === 'REG-web-folder-canonical-001' ? '前端权威键归一化' : 'MongoDB 重命名并发围栏';
+      const error = `${area}回归失败`;
+      return {
+        caseId,
+        environment: 'cds',
+        title: `[${caseId}] ${area}回归`,
+        tags: [],
+        status: passed ? 'pass' : 'fail',
+        durationMs: 0,
+        error: passed ? '' : error,
+        retryCount: 0,
+        hadFailedAttempt: !passed,
+        attemptErrors: passed ? [] : [error],
+      };
+    }),
   };
 }
 

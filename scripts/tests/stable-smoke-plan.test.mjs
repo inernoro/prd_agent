@@ -125,8 +125,12 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
   const functionalRegressions = [...new Set([...regressions,
     ...catalog.featureLines.flatMap((feature) => feature.regressionCaseIds),
   ])].filter((caseId) => !visualRegressionCaseIds.includes(caseId));
+  const cdsOnlyRegressions = new Set(catalog.featureLines.flatMap((feature) => feature.cdsOnlyRegressionCaseIds || []));
   assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.cds), new Set([...selected.cds, ...functionalRegressions]));
-  assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.production), new Set([...selected.production, ...functionalRegressions]));
+  assert.deepEqual(
+    new Set(plan.requiredCaseIdsByEnvironment.production),
+    new Set([...selected.production, ...functionalRegressions.filter((caseId) => !cdsOnlyRegressions.has(caseId))]),
+  );
   assert.deepEqual(plan.visualRegressions, ['REG-visual-evidence-001']);
   assert.ok(!plan.requiredCaseIds.includes('REG-visual-evidence-001'));
   assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REC-006'));
@@ -174,7 +178,7 @@ test('矩阵解析保留双环境原始策略并按模块只取一条轮换用�
 });
 
 test('网页托管变更进入功能台账并绑定七个操作锚点', () => {
-  const result = selectFeatureLines(catalog, [
+  const changedFiles = [
     'prd-admin/src/components/web-hosting/LibraryRail.tsx',
     'prd-admin/src/pages/WebPagesPage.mobileFolder.test.ts',
     'prd-admin/src/pages/WebPagesPage.siteCard.test.tsx',
@@ -183,7 +187,8 @@ test('网页托管变更进入功能台账并绑定七个操作锚点', () => {
     'prd-api/src/PrdAgent.Infrastructure/Services/SiteContentSnapshotService.cs',
     'prd-api/src/PrdAgent.Infrastructure/Services/WebFolderService.cs',
     'prd-api/tests/PrdAgent.Api.Tests/Services/WebFolderRenameFenceTests.cs',
-  ], [], 'changed');
+  ];
+  const result = selectFeatureLines(catalog, changedFiles, [], 'changed');
   assert.deepEqual(result.unmappedFiles, []);
   const feature = result.selected.find((item) => item.id === 'web-hosting-sharing');
   assert.ok(feature);
@@ -193,6 +198,19 @@ test('网页托管变更进入功能台账并绑定七个操作锚点', () => {
     'REG-web-folder-fence-001',
     'REG-web-folder-create-rename-001',
   ]);
+  const plan = buildPlan({
+    catalog,
+    changedFiles,
+    activeRegressions: [],
+    visualRegressionCaseIds,
+    matrixCases,
+    mode: 'changed',
+    commit: 'web-folder-scope',
+  });
+  for (const caseId of feature.cdsOnlyRegressionCaseIds) {
+    assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes(caseId));
+    assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes(caseId));
+  }
 });
 
 test('网页托管问答先走匿名主存储，旧存储夹具只在 CDS 环境启用', () => {

@@ -678,7 +678,7 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /await deliverUnhandledFailure\(process\.argv\.slice\(2\), error\)/);
 });
 
-test('文件夹永久回归由真实 MongoDB 集成测试产生证据而非浏览器标题冒领', () => {
+test('文件夹永久回归分别由前端权威键测试和真实 MongoDB 集成测试产生证据', () => {
   const source = readFileSync(resolve('scripts/stable-smoke-run.mjs'), 'utf8');
   const e2eSource = readFileSync(resolve('e2e/specs/stable-smoke.spec.ts'), 'utf8');
   const calls = [];
@@ -689,10 +689,15 @@ test('文件夹永久回归由真实 MongoDB 集成测试产生证据而非浏�
 
   assert.match(source, /FullyQualifiedName~WebFolderRenameFenceTests/);
   assert.match(source, /runFolderRegressionTests\(runDir\)/);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].name, 'dotnet');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].name, 'pnpm');
+  assert.deepEqual(calls[0].args.slice(0, 6), [
+    '--dir', 'prd-admin', 'exec', 'vitest', 'run', 'src/components/web-hosting/folderDrop.test.ts',
+  ]);
+  assert.equal(calls[1].name, 'dotnet');
   assert.equal(result.execution.resultPath, null);
   assert.match(result.execution.artifactPath, /web-folder-regressions\.trx$/);
+  assert.match(result.execution.artifactPaths[0], /web-folder-client-regressions\.xml$/);
   assert.deepEqual(
     result.rows.map((row) => [row.caseId, row.environment, row.status]),
     [
@@ -705,6 +710,21 @@ test('文件夹永久回归由真实 MongoDB 集成测试产生证据而非浏�
     e2eSource,
     /test\('\[WEB-001\][^']*\[REG-web-folder-(?:canonical|fence|create-rename)-001\]/,
   );
+});
+
+test('前端权威键回归失败时不会冒领另外两条服务端回归', () => {
+  const result = runFolderRegressionTests('/tmp/stable-smoke-folder-regression-split-test', (name) => ({
+    status: name === 'pnpm' ? 1 : 0,
+  }));
+  assert.deepEqual(
+    result.rows.map((row) => [row.caseId, row.status]),
+    [
+      ['REG-web-folder-canonical-001', 'fail'],
+      ['REG-web-folder-fence-001', 'pass'],
+      ['REG-web-folder-create-rename-001', 'pass'],
+    ],
+  );
+  assert.equal(result.execution.status, 'failed');
 });
 
 test('未捕获异常会持久化失败摘要并进入失败交付路径', async () => {
