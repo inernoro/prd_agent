@@ -245,6 +245,21 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_HtmlBaseHref_ResolvesDependenciesFromEffectiveBase()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<base href=\"/assets/\"><script src=\"app.js\"></script>",
+            ["assets/app.js"] = "document.body.dataset.ready = 'true';",
+        };
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.OriginalFiles.ShouldBe(2);
+    }
+
+    [Fact]
     public void Analyze_UnsafeArchivePath_BlocksBeforeAnySave()
     {
         var result = CreateService().Analyze(CreateZip(new Dictionary<string, string>
@@ -357,6 +372,9 @@ public class HostedSiteOptimizationServiceTests
             source.IndexOf("CleanupPreviewFilesAsync(recoveryClaim.PreviewFiles)", StringComparison.Ordinal));
         source.ShouldContain("PersistSavedCompletionAsync");
         source.ShouldContain("sourceRef: session.Id");
+        source.IndexOf("var claimed = await _db.HostedSiteOptimizationSessions.FindOneAndUpdateAsync(", StringComparison.Ordinal)
+            .ShouldBeLessThan(source.IndexOf("CleanupSessionFilesAsync(claimed)", StringComparison.Ordinal));
+        source.ShouldContain("x.LeaseOwner == cleanupOwner");
 
         var hostedSiteSource = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs"));

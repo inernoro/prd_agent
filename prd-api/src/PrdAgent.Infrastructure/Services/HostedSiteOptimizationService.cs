@@ -867,17 +867,52 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
     public async Task<int> CleanupExpiredAsync(CancellationToken ct = default)
     {
+        var cleanupNow = DateTime.UtcNow;
         var expired = await _db.HostedSiteOptimizationSessions
-            .Find(x => x.ExpiresAt <= DateTime.UtcNow)
+            .Find(x => x.ExpiresAt <= cleanupNow)
             .Limit(20)
             .ToListAsync(ct);
         var cleanedCount = 0;
         foreach (var session in expired)
         {
-            if (await CleanupSessionFilesAsync(session))
+            var cleanupOwner = Guid.NewGuid().ToString("N");
+            var claimFilter = Builders<HostedSiteOptimizationSession>.Filter.And(
+                Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Id, session.Id),
+                Builders<HostedSiteOptimizationSession>.Filter.Lte(x => x.ExpiresAt, cleanupNow));
+            var claimed = await _db.HostedSiteOptimizationSessions.FindOneAndUpdateAsync(
+                claimFilter,
+                Builders<HostedSiteOptimizationSession>.Update
+                    .Set(x => x.Status, HostedSiteOptimizationStatuses.CleanupPending)
+                    .Set(x => x.LeaseOwner, cleanupOwner)
+                    .Set(x => x.LeaseExpiresAt, cleanupNow.Add(WorkerLeaseLifetime))
+                    .Set(x => x.ExpiresAt, cleanupNow.Add(WorkerLeaseLifetime))
+                    .Set(x => x.UpdatedAt, cleanupNow),
+                new FindOneAndUpdateOptions<HostedSiteOptimizationSession>
+                {
+                    ReturnDocument = ReturnDocument.After,
+                },
+                CancellationToken.None);
+            if (claimed == null) continue;
+            if (await CleanupSessionFilesAsync(claimed))
             {
-                await _db.HostedSiteOptimizationSessions.DeleteOneAsync(x => x.Id == session.Id, ct);
-                cleanedCount++;
+                var deleted = await _db.HostedSiteOptimizationSessions.DeleteOneAsync(
+                    x => x.Id == session.Id
+                         && x.Status == HostedSiteOptimizationStatuses.CleanupPending
+                         && x.LeaseOwner == cleanupOwner,
+                    ct);
+                if (deleted.DeletedCount == 1) cleanedCount++;
+            }
+            else
+            {
+                await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id
+                         && x.Status == HostedSiteOptimizationStatuses.CleanupPending
+                         && x.LeaseOwner == cleanupOwner,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.LeaseOwner, null)
+                        .Set(x => x.LeaseExpiresAt, null)
+                        .Set(x => x.ExpiresAt, cleanupNow),
+                    cancellationToken: CancellationToken.None);
             }
         }
         return cleanedCount;
@@ -1495,6 +1530,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         {
             var extension = Path.GetExtension(owner).ToLowerInvariant();
             if (!TryDecodeUtf8(bytes, out var text)) continue;
+            var htmlBase = extension is ".html" or ".htm"
+                ? HtmlBaseHrefRegex().Match(text).Groups["path"].Value
+                : null;
             foreach (var value in RuntimeReferences(extension, text))
             {
                 var normalizedValue = value.Trim().Trim('"', '\'');
@@ -1502,7 +1540,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 if (extension is ".js" or ".mjs"
                     && !normalizedValue.StartsWith('.') && !normalizedValue.StartsWith('/'))
                     continue;
-                var resolved = ResolveReference(owner, normalizedValue);
+                var resolved = extension is ".html" or ".htm"
+                    ? ResolveHtmlReference(owner, normalizedValue, htmlBase)
+                    : ResolveReference(owner, normalizedValue);
                 if (resolved != null && !output.ContainsKey(resolved)) missing.Add(resolved);
             }
         }
@@ -1691,6 +1731,21 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         return string.Join('/', parts);
     }
 
+    private static string? ResolveHtmlReference(string owner, string value, string? baseHref)
+    {
+        if (string.IsNullOrWhiteSpace(baseHref)) return ResolveReference(owner, value);
+        if (IsExternalReference(baseHref)) return null;
+
+        var basePath = baseHref.Split('?', '#')[0].Trim().Replace('\\', '/');
+        if (string.IsNullOrWhiteSpace(basePath)) return ResolveReference(owner, value);
+        var baseOwner = basePath.EndsWith("/", StringComparison.Ordinal)
+            ? ResolveReference(owner, basePath + "__base__.html")
+            : ResolveReference(owner, basePath);
+        return string.IsNullOrWhiteSpace(baseOwner)
+            ? ResolveReference(owner, value)
+            : ResolveReference(baseOwner, value);
+    }
+
     private static string RelativeReference(string owner, string target)
     {
         var ownerSegments = owner.Split('/').SkipLast(1).ToArray();
@@ -1725,6 +1780,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
     [GeneratedRegex("https?://[^\\s\\\"'<>]+", RegexOptions.IgnoreCase)]
     private static partial Regex ExternalUrlRegex();
+
+    [GeneratedRegex("<base\\b[^>]*?href\\s*=\\s*[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex HtmlBaseHrefRegex();
 
     [GeneratedRegex("<(?:script|link|img|source|video|audio|iframe|object)\\b[^>]*?(?:src|href|poster|data)\\s*=\\s*[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlReferenceRegex();
