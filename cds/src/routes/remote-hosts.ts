@@ -45,7 +45,9 @@ import { CdsPairingService } from '../services/connection/pairing-service.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import {
+  AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
   findAgentRuntimeProviderDefinition,
+  isAgentRuntimeProviderIsolationReady,
   listAgentRuntimeProviderDefinitions,
   normalizeAgentIsolationMode,
   normalizeAgentWorkloadKind,
@@ -650,15 +652,23 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       const transportReady = provider.id === 'fake'
         || resolveCdsManagedRuntimeTransport(deps.stateService, project, provider.id) !== null;
       const healthy = provider.implementationStatus === 'available' && transportReady;
+      const isolationReady = isAgentRuntimeProviderIsolationReady(
+        provider,
+        AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
+      );
       return {
         ...provider,
         configured: provider.implementationStatus === 'available' && transportReady,
         healthy,
-        selectable: provider.productEligible && healthy,
+        selectable: provider.productEligible && healthy && isolationReady,
         isolationOwnedBy: 'cds-remote-agent',
-        resourcePolicyEnforcedPerSession: false,
+        resourcePolicyEnforcedPerSession: AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
         reason: provider.reason
-          || (healthy ? null : 'CDS 中尚无可用的运行时容器或传输适配器'),
+          || (!healthy
+            ? 'CDS 中尚无可用的运行时容器或传输适配器'
+            : !isolationReady
+              ? 'CDS 尚未按会话强制容器资源与清理策略'
+              : null),
       };
     });
     res.json({
@@ -736,6 +746,19 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       });
       return;
     }
+    if (isolationMode === 'session-container' && !AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION) {
+      res.status(409).json({
+        error: {
+          code: 'resource_policy_not_enforced',
+          message: 'session-container isolation cannot start until per-session resource policy is enforced',
+          runtime,
+          requestedIsolationMode: isolationMode,
+          isolationOwnedBy: 'cds-remote-agent',
+          resourcePolicyEnforcedPerSession: AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
+        },
+      });
+      return;
+    }
     const modelBaseUrl = typeof req.body?.modelBaseUrl === 'string' ? req.body.modelBaseUrl : null;
     const modelProtocol = typeof req.body?.modelProtocol === 'string' ? req.body.modelProtocol : null;
     const modelApiKey = typeof req.body?.modelApiKey === 'string' && req.body.modelApiKey.length > 0
@@ -803,14 +826,14 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       workloadKind,
       isolationMode,
       executionOwner: provider.executionOwner,
-      resourcePolicyEnforcedPerSession: false,
+      resourcePolicyEnforcedPerSession: AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
     });
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
       message: `session created runtime=${runtime} workload=${workloadKind} isolation=${isolationMode} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy}`,
       source: runtimeSource,
     });
-    session.logs.push(`[${now}] session created runtime=${runtime} provider=${provider.id} workload=${workloadKind} isolation=${isolationMode} owner=${provider.executionOwner} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy} cleanup=${resourcePolicy.autoCleanupMinutes}m resourcePolicyEnforcedPerSession=false`);
+    session.logs.push(`[${now}] session created runtime=${runtime} provider=${provider.id} workload=${workloadKind} isolation=${isolationMode} owner=${provider.executionOwner} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy} cleanup=${resourcePolicy.autoCleanupMinutes}m resourcePolicyEnforcedPerSession=${AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION}`);
     cdsAgentSessions.set(session.id, session);
     res.status(201).json({ item: toCdsAgentSessionView(session) });
   });
@@ -1926,7 +1949,7 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     isolation: {
       mode: session.isolationMode,
       ownedBy: 'cds-remote-agent',
-      resourcePolicyEnforcedPerSession: false,
+      resourcePolicyEnforcedPerSession: AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
       boundary: session.isolationMode === 'shared-runtime'
         ? 'shared-container-session-boundary'
         : 'dedicated-session-container',

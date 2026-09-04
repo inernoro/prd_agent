@@ -1,6 +1,9 @@
 export type AgentWorkloadKind = 'general' | 'repository-change' | 'design-artifact';
 export type AgentIsolationMode = 'shared-runtime' | 'session-container';
 
+// 会话级容器分配器落地后只能改这一处；目录、创建门禁和会话事实共同读取它。
+export const AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION = false;
+
 export interface AgentRuntimeProviderDefinition {
   id: string;
   label: string;
@@ -107,4 +110,12 @@ export function normalizeAgentIsolationMode(
 ): AgentIsolationMode {
   if (value === 'shared-runtime' || value === 'session-container') return value;
   return provider.requiredIsolationMode;
+}
+
+export function isAgentRuntimeProviderIsolationReady(
+  provider: AgentRuntimeProviderDefinition,
+  resourcePolicyEnforcedPerSession: boolean,
+): boolean {
+  if (!provider.supportedIsolationModes.includes(provider.requiredIsolationMode)) return false;
+  return provider.requiredIsolationMode !== 'session-container' || resourcePolicyEnforcedPerSession;
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   findAgentRuntimeProviderDefinition,
+  isAgentRuntimeProviderIsolationReady,
   listAgentRuntimeProviderDefinitions,
   normalizeAgentIsolationMode,
   normalizeAgentWorkloadKind,
@@ -41,5 +42,19 @@ describe('agent runtime provider registry', () => {
     expect(normalizeAgentWorkloadKind('unknown')).toBe('general');
     expect(normalizeAgentIsolationMode('shared-runtime', provider)).toBe('shared-runtime');
     expect(normalizeAgentIsolationMode(undefined, provider)).toBe('shared-runtime');
+  });
+
+  it('requires real per-session resource enforcement before session-container providers become ready', () => {
+    const openDesign = findAgentRuntimeProviderDefinition('open-design')!;
+    const futureReadyOpenDesign = {
+      ...openDesign,
+      implementationStatus: 'available' as const,
+      supportedIsolationModes: ['session-container' as const],
+    };
+    const claude = findAgentRuntimeProviderDefinition('claude-sdk')!;
+
+    expect(isAgentRuntimeProviderIsolationReady(futureReadyOpenDesign, false)).toBe(false);
+    expect(isAgentRuntimeProviderIsolationReady(futureReadyOpenDesign, true)).toBe(true);
+    expect(isAgentRuntimeProviderIsolationReady(claude, false)).toBe(true);
   });
 });
