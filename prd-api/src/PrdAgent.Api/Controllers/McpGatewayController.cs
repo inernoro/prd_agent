@@ -176,12 +176,30 @@ public class McpGatewayController : ControllerBase
     internal static bool DynamicToolVisible(AgentOpenEndpoint e, HashSet<string> scopes, string? boundUserId)
     {
         if (!e.IsActive) return false;
+        // 收不回来的动作，这一版一律不给智能体 —— 见 IsDestructiveMethod。
+        if (IsDestructiveMethod(e.HttpMethod)) return false;
         var reqScopes = e.RequiredScopes ?? new List<string>();
         if (!reqScopes.Any(scopes.Contains)) return false;
         if (e.AllowedCallerUserIds is { Count: > 0 } wl && (boundUserId == null || !wl.Contains(boundUserId)))
             return false;
         return true;
     }
+
+    /// <summary>
+    /// 这条登记接口做的是不是「收不回来」的事。
+    ///
+    /// 接入向导底部对用户白纸黑字写着：删除和公开发布这类收不回来的动作，这一版一律不开放给智能体，
+    /// 不管你怎么勾。内置工具那边靠「压根没登记这类工具」来兑现，而登记表这条路是敞开的 ——
+    /// <c>AgentOpenEndpointsController</c> 的 AllowedMethods 明确收 DELETE，一旦有人登记一条，
+    /// 它就会跟着普通 <c>agent.*</c> scope 一起出现在 tools/list 里、也能被 tools/call 打到。
+    /// 那等于用户在向导里读到的承诺，从另一扇门被绕过去了。
+    ///
+    /// 破坏性动作要开放，需要的是它自己那一档 scope + 一次显式确认（计划里的第二阶段），
+    /// 在那份契约落地之前，列举和调用两处都不给。判据只此一处，两处共用同一个函数 ——
+    /// 各写一份的话，早晚出现「列表里看不见、直接按名字调却能打通」。
+    /// </summary>
+    internal static bool IsDestructiveMethod(string? httpMethod)
+        => string.Equals(httpMethod?.Trim(), "DELETE", StringComparison.OrdinalIgnoreCase);
 
     internal static JsonObject BuiltinToolToJson(McpToolDef t)
     {
@@ -329,12 +347,20 @@ public class McpGatewayController : ControllerBase
         if (match == null)
             return await DeniedAsync(id, log, $"工具不存在或不可用: {name}", ct);
 
+        // 能不能调，跟能不能看见走同一个判据（DynamicToolVisible）——两处各写一份的老毛病是
+        // 「列表里看不见、直接按名字调却打得通」。拒绝语仍分开给，用户得知道是权限不够、
+        // 不在白名单、还是这类动作压根不开放。
+        if (IsDestructiveMethod(match.HttpMethod))
+            return await DeniedAsync(id, log,
+                "这个接口做的是删除类、收不回来的动作，这一版不开放给智能体 —— 请在网页里自己操作。", ct);
         var ms = match.RequiredScopes ?? new List<string>();
         if (!ms.Any(scopes.Contains))
             return await DeniedAsync(id, log, "权限不足：当前密钥未授权此工具所需 scope。", ct);
         if (match.AllowedCallerUserIds is { Count: > 0 } wl &&
             (boundUserId == null || !wl.Contains(boundUserId)))
             return await DeniedAsync(id, log, "调用方不在此接口的白名单内。", ct);
+        if (!DynamicToolVisible(match, scopes, boundUserId))
+            return await DeniedAsync(id, log, $"工具不存在或不可用: {name}", ct);
 
         var isGetDyn = string.Equals(match.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase);
         log.IsWrite = !isGetDyn;
@@ -378,6 +404,37 @@ public class McpGatewayController : ControllerBase
     /// 两种要退：调用没跑成（非 2xx），以及幂等命中 —— 后者下游只是把已存在的东西原样回来，
     /// 没有新的副作用，再扣一次额度等于惩罚「响应丢了所以重试」这件本来就正常的事。
     /// </summary>
+    /// <summary>
+    /// 认不出结构的响应体，能进日志的只有这两样：一段有界的开头，和整体的指纹。
+    ///
+    /// 上一版把整个 <c>respBody</c> 原样打进日志，而紧挨着的那段注释自己就写明了
+    /// 「这种响应往往是代理页或框架错误页」—— 那类页面里装着用户内容、带签名的地址、
+    /// 请求细节，偶尔还有凭据；一个几 MB 的错误页还会连着放大日志存储。
+    /// 排障真正需要的是「长什么样、是不是同一种」，前者取开头 512 字节够了，
+    /// 后者靠指纹比对：同一个哈希反复出现就是同一个故障，不需要留全文。
+    /// 要看全文的人自己那一侧就拿得到真实响应。
+    /// </summary>
+    private static string BoundedBodyHead(string? body)
+    {
+        if (string.IsNullOrEmpty(body)) return "(空)";
+        var head = body.Length > 512 ? body[..512] + "…" : body;
+        // 开头这 512 字节里同样可能带凭据（错误页会把请求头回显出来），先按行内标志擦一遍。
+        return CredentialLike.Replace(head, "***");
+    }
+
+    /// <summary>整体指纹：只用来判「是不是同一种故障」，不可逆、不含内容。</summary>
+    private static string BodyDigest(string? body)
+    {
+        if (string.IsNullOrEmpty(body)) return "-";
+        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(body));
+        return Convert.ToHexString(bytes, 0, 8).ToLowerInvariant();
+    }
+
+    /// <summary>形如 `Authorization: Bearer xxx` / `api_key=xxx` / `sk-xxxx` 的片段，进日志前擦掉。</summary>
+    private static readonly System.Text.RegularExpressions.Regex CredentialLike = new(
+        @"(?i)(bearer\s+[A-Za-z0-9._\-]+|sk-[A-Za-z0-9._\-]{6,}|(api[_\-]?key|password|secret|token)\s*[=:]\s*""?[^""\s,&}]+)",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private async Task RecordFinishedAsync(
         McpCallLog log, int status, string respBody, DateTime startedAt, McpQuotaVerdict verdict,
         bool producesArtifacts, CancellationToken ct)
@@ -393,8 +450,11 @@ public class McpGatewayController : ControllerBase
             // 原始响应体只留在服务端日志里。面板上那条 ErrorMessage 是给普通用户看的，
             // 而认不出结构的响应往往是代理页或框架错误页，带着内部主机名与调用栈。
             if (log.ErrorMessage == McpArtifactExtractor.UnrecognizedFailure)
-                _logger.LogWarning("[mcp] 回环失败且响应体认不出结构 tool={Tool} status={Status} body={Body}",
-                    log.ToolName, status, respBody);
+                _logger.LogWarning(
+                    "[mcp] 回环失败且响应体认不出结构 tool={Tool} status={Status} bodyBytes={Bytes} bodyHash={Hash} bodyHead={Head}",
+                    log.ToolName, status,
+                    System.Text.Encoding.UTF8.GetByteCount(respBody ?? string.Empty),
+                    BodyDigest(respBody), BoundedBodyHead(respBody));
         }
         else if (McpArtifactExtractor.IsDeduplicated(respBody))
         {

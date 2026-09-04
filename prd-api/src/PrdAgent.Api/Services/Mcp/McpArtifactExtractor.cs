@@ -107,10 +107,10 @@ public static class McpArtifactExtractor
                 if (root["error"] is JsonObject err)
                 {
                     var msg = ReadString(err, "message");
-                    if (!string.IsNullOrWhiteSpace(msg)) return Trim(msg);
+                    if (!string.IsNullOrWhiteSpace(msg)) return UserFacing(msg);
                 }
                 var top = ReadString(root, "message");
-                if (!string.IsNullOrWhiteSpace(top)) return Trim(top);
+                if (!string.IsNullOrWhiteSpace(top)) return UserFacing(top);
             }
         }
         catch { /* 不是 JSON：见下面为什么不退回原文 */ }
@@ -199,4 +199,44 @@ public static class McpArtifactExtractor
             : null;
 
     private static string Trim(string s) => s.Length > 300 ? s[..300] + "…" : s;
+
+    /// <summary>
+    /// 认出了 <c>error.message</c> 的形状，不等于那段字就能端给用户看。
+    ///
+    /// 这条路上的下游是**登记表里的动态接口**，谁登记的谁决定它回什么。它完全可以在
+    /// <c>error.message</c> 里塞一整段异常、上游供应商的原文、内部端点地址，甚至连着凭据 ——
+    /// 而这段字会原样存进 <c>McpCallLog.ErrorMessage</c>，再由接入台端给**普通 access 级**用户看。
+    /// 上一版只按「形状认得出来」就放行，等于把「结构合法」当成了「内容安全」。
+    ///
+    /// 所以再过一道：像人话的短句照原样给；一看就是堆栈、错误页或带凭据的，
+    /// 一律换成固定那句，原文只进服务端日志（调用方自己那一侧本来就拿得到真实响应）。
+    /// 宁可退化成一句稳定的说明，也不把内部细节送上面板。
+    /// </summary>
+    internal static string UserFacing(string message)
+        => LooksUserSafe(message) ? Trim(message) : UnrecognizedFailure;
+
+    /// <summary>判据只此一处：多行/超长/带堆栈标志/带凭据形状/带地址的，都不算给人看的话。</summary>
+    internal static bool LooksUserSafe(string message)
+    {
+        var s = message.Trim();
+        if (s.Length == 0 || s.Length > 300) return false;
+        // 多行几乎只有两种来源：堆栈和 HTML 错误页。用户面的一句话不需要换行。
+        if (s.Contains('\n') || s.Contains('\r')) return false;
+        foreach (var marker in LeakMarkers)
+            if (s.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                return false;
+        return true;
+    }
+
+    /// <summary>
+    /// 一出现就判定「这不是给用户看的话」的标志。分三类：
+    /// 堆栈与错误页（说明这是异常原文而不是提示语）、凭据形状（绝不能上面板）、
+    /// 地址（下游的内部端点；用户对它无从下手，管理员看日志即可）。
+    /// </summary>
+    private static readonly string[] LeakMarkers =
+    {
+        "exception", "traceback", "stack trace", "stacktrace", " at ", "system.", "<html", "<!doctype",
+        "bearer ", "authorization", "api_key", "apikey", "api-key", "password", "secret", "token=", "sk-",
+        "http://", "https://",
+    };
 }

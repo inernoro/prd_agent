@@ -387,10 +387,20 @@ public class McpRollbackInvariantTests
             exits++;
             // 过滤器写在这一句之前，取够长的一段（跨得过 Combine 那种多行写法）。
             var filter = src[Math.Max(0, i - 260)..i];
-            filter.ShouldContain("UpdatedAt",
-                customMessage: $"第 {exits} 处摘标记只认 id：确定性 id 被同键重试重用时，摘掉的是新那次的标记");
+            // 只带 UpdatedAt 不够：BSON 时间戳只到毫秒，「原条目被删、同键重试插一条新的」
+            // 在同一毫秒里 id 与 UpdatedAt 都分不出新旧。必须走带代次的那一个过滤器。
+            filter.ShouldContain("MineFilter(",
+                customMessage: $"第 {exits} 处摘标记没走 MineFilter：只按 id + 毫秒时间戳过滤时，"
+                    + "同一毫秒内被同键重试重建的那条会被误当成自己的，旧请求会摘掉新那次的标记并盖上自己的摘要");
         }
         exits.ShouldBe(4, "摘标记的出口数量变了 —— 新增那处也要带版本条件，确认后再改这个数");
+
+        // 反向一条：那个过滤器自己必须真的把代次算进去，否则上面只是在断言「调了个函数」。
+        var mine = McpSourceGuard.Slice(src, "FilterDefinition<DocumentEntry> MineFilter(", "IsMyGeneration(");
+        mine.ShouldContain("EntryGenerationField",
+            customMessage: "MineFilter 不带代次，等于上面四处出口一起退回只认 id + 时间戳");
+        mine.ShouldContain("expectedUpdatedAt",
+            customMessage: "MineFilter 不带版本，就挡不住「这条还在但已经被人改过」");
     }
 
     /// <summary>

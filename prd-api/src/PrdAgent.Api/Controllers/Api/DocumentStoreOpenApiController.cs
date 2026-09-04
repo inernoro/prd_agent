@@ -443,7 +443,7 @@ public class DocumentStoreOpenApiController : ControllerBase
                     // 计数也不退 —— 条目确实存在，这一次递增没错。
                     // 摘的时候带上刚读到的版本（确定性 id 可能已被同键重试重用，见另两处出口）。
                     await _db.DocumentEntries.UpdateOneAsync(
-                        e => e.Id == entry.Id && e.UpdatedAt == still.UpdatedAt,
+                        MineFilter(entry.Id, still.UpdatedAt, generation),
                         Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
                         cancellationToken: CancellationToken.None);
                     return Conflict(ApiResponse<object>.Fail("ENTRY_CHANGED_SINCE_CREATE",
@@ -464,9 +464,9 @@ public class DocumentStoreOpenApiController : ControllerBase
                 // 那几步里用户完全可以在界面上保存一次这条已经可见的条目。只按 id 更新的话，
                 // 智能体那份 summary 会把用户刚改的盖掉 —— 与上面那道条件写入是同一个道理，
                 // 只是它藏在收尾里，看着像「补一个字段」而已。
-                var finishFilter = Builders<DocumentEntry>.Filter.And(
-                    Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id),
-                    Builders<DocumentEntry>.Filter.Eq(e => e.UpdatedAt, placed.UpdatedAt));
+                // 带代次：id 是幂等键推出来的确定性 id，「原条目被删、同键重试插一条新的」
+                // 在同一个 BSON 毫秒里是能发生的，那时 id 与 UpdatedAt 都分不出新旧。
+                var finishFilter = MineFilter(entry.Id, placed.UpdatedAt, generation);
                 var finish = Builders<DocumentEntry>.Update.Unset(EntryContentPendingField);
                 if (explicitSummary != null)
                     finish = Builders<DocumentEntry>.Update.Combine(
@@ -494,7 +494,7 @@ public class DocumentStoreOpenApiController : ControllerBase
                     // 只按 id + 时间戳摘标记的话，摘掉的是**新那次**的标记，而这一次还照样回成功。
                     if (!IsMyGeneration(latest, generation)) throw new EntryVanishedException(entry.Id);
                     await _db.DocumentEntries.UpdateOneAsync(
-                        e => e.Id == entry.Id && e.UpdatedAt == latest.UpdatedAt,
+                        MineFilter(entry.Id, latest.UpdatedAt, generation),
                         Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
                         cancellationToken: CancellationToken.None);
                     summaryApplied = explicitSummary == null;
@@ -773,7 +773,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             // 只按 id 摘的话，摘掉的是**新那次**的「正文未落盘」标记。
             // 下面那条删除已经带了条件，这条也得带 —— 同一处判据，两条出口。
             await _db.DocumentEntries.UpdateOneAsync(
-                e => e.Id == entryId && e.UpdatedAt == current.UpdatedAt,
+                MineFilter(entryId, current.UpdatedAt, generation),
                 Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
                 cancellationToken: CancellationToken.None);
             return holdsMine ? RollbackOutcome.KeptCommitted : RollbackOutcome.ChangedByOthers;
@@ -870,6 +870,23 @@ public class DocumentStoreOpenApiController : ControllerBase
 
     /// <summary>代次字段的 Mongo 路径写法（供过滤器用）。</summary>
     private const string EntryGenerationField = "Metadata.mcpGeneration";
+
+    /// <summary>
+    /// 「这条还是我那条、而且还是我刚读到的那一版」——所有要动这条条目的语句共用的过滤器。
+    ///
+    /// 单独抽出来是因为它被漏过一次：正文那条原子写和撤回那条删除都带上了代次，
+    /// 收尾那条 <c>Unset(mcpContentPending)</c> 却还只按 id + 毫秒级 UpdatedAt 过滤。
+    /// BSON 的时间戳只到毫秒，同一毫秒内「原条目被删、同键重试插一条新的」是能发生的；
+    /// 那一瞬间 id 相同、UpdatedAt 也可能相同，于是旧请求会把新那一轮的标记摘掉、
+    /// 顺手盖上自己的摘要，还回成功——而它自己那条早就没了。
+    ///
+    /// 所以判据不能分散在各条语句里各写各的（形状 3），只有一处：这里。
+    /// </summary>
+    private static FilterDefinition<DocumentEntry> MineFilter(string entryId, DateTime expectedUpdatedAt, string generation)
+        => Builders<DocumentEntry>.Filter.And(
+            Builders<DocumentEntry>.Filter.Eq(e => e.Id, entryId),
+            Builders<DocumentEntry>.Filter.Eq(e => e.UpdatedAt, expectedUpdatedAt),
+            Builders<DocumentEntry>.Filter.Eq(EntryGenerationField, generation));
 
     /// <summary>这条条目是不是我这一次插进去的那条。核不上就一个字都不许动。</summary>
     private static bool IsMyGeneration(
