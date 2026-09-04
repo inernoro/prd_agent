@@ -107,6 +107,90 @@
   --tooltip-border: rgba(255, 255, 255, 0.12);
   --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.5'/%3E%3C/svg%3E");
 
+  /* 视觉创作画布的生图等待态（GenDevelopLoader）。
+     这一族**故意不双写**：画布舞台在 AdvancedVisualAgentTab 里被钉死成 #1e1e1e，
+     两个主题下都是暗的（见 stageRef 的 backgroundColor）。跟着主题翻会得到
+     「暗底 + 浅色主题的深色字」，正好是双皮肤规则要防的那种不可读。
+     哪天舞台自己跟着主题翻了，这一族要一起改，别只改一半。
+     放这里而不是写在组件里，是为了让它仍然是可查、可一处改的 SSOT。
+     取值恒为**暗色档**的字面色，不引用 --accent-primary / --accent-fg-amber：
+     那两个在浅色档会翻到 #A64B35 / #92400e，落在恒暗的画布上只剩 4.4:1 和更差，
+     等于「跟着主题翻了一半」。 */
+  --gen-wait-veil: rgba(0, 0, 0, 0.16);
+  --gen-wait-progress: #D97757;
+  --gen-wait-progress-halo: rgba(217, 119, 87, 0.22);
+  /* 超时用琥珀，不是更亮一档的赤陶：同色系只差一点亮度，用户根本看不出状态变了。 */
+  --gen-wait-progress-over: #fbbf24;
+  /* 进度描边最前端那一小段亮弧：#D97757 提亮后的同色，不是奶白。
+     画框上只许有赤陶一种颜色——奶白的头会被读成「另一个东西」，而它只是这条线的头。 */
+  --gen-wait-head: #F0A98C;
+
+  /*
+   * ===== 视觉创作首页背景 =====
+   *
+   * 只剩两件东西：一张真背景图 + 一层压暗罩，外加一圈极淡的渐晕。
+   *
+   * 这里曾经先后住过两套程序生成的纹理——「潜像场」（织纹 + 核辉光 + 斜掠光）和
+   * 「印相台」（墨块 + 灰阶梯尺 + 色标条 + 网点 + 套准十字）。两套都删了，
+   * 原因是同一个，量出来的：
+   *
+   *   把印相台每一层单独关掉再量像素差（1440x940，纯 --bg-base 底），
+   *   五件器物里只有墨块读得出来（最大差 49/255），梯尺 13、网点 5、纸颗粒 4，
+   *   色标条与套准十字虽然峰值有 38-40，但一个在 y=902、一个在四角，
+   *   实际都被项目卡和顶栏压住，永远露不出来。
+   *
+   *   唯一还能被看见的是纸颗粒——4/255，却覆盖 81% 像素且是 16px 规则重复，
+   *   在缩放显示下摩尔纹，读出来就是一块斜条纹布。也就是说：**有意画的全看不见，
+   *   看得见的全是无意的**。
+   *
+   * 结论不是「再调一次 alpha」。一个背景不可能既不抢内容又看得清细节——
+   * 器物级的细节在背景这个位置上没有生存空间。氛围交给真图，深度交给渐晕，
+   * 不再画程序纹理。
+   */
+
+  /* 背景照片上的压暗罩。它是前景 9-13px 小字可读性的唯一保障，不许为了「图好看」调低。 */
+  --backdrop-scrim: 10, 10, 12;
+  /* 渐晕：整页唯一的程序背景元素。单向、单层、不重复、不动。
+     浅色档不是取反——奶白纸面上压黑边会显脏，改成中心提亮。 */
+  --vignette-edge: rgba(0, 0, 0, 0.34);
+  --vignette-core: rgba(217, 119, 87, 0.055);
+  /* 唤醒光带。core 是带心那一线，soft 是它两侧的散射。
+     暖白而不是纯白：纯白扫过近黑页面会读成一道生硬的电光。 */
+  --wake-beam-core: rgba(255, 236, 222, 0.16);
+  --wake-beam-soft: rgba(255, 236, 222, 0.06);
+
+  /* ===== 磨砂玻璃 =====
+     光把「半透明 + 模糊」写完就以为是玻璃了，取证下来不是：那样只是一块半透明的板。
+     玻璃之所以是玻璃，靠的是**边**——顶边一道极细的高光（光打在玻璃厚度上的那条边）
+     和底下的投影（它浮在东西之上）。这两条缺了，透明度调到哪个值都只是块板。 */
+  --glass-edge: rgba(255, 236, 222, 0.13);
+  --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.30);
+
+  /* 骨架：底色要比卡面稍亮一点点（看得出「这里将来有东西」），扫光更亮一档。 */
+  --skeleton-base: rgba(255, 255, 255, 0.055);
+  --skeleton-sheen: rgba(255, 236, 222, 0.085);
+
+  /* 0.618 是用户点名的黄金比。取证下来这个值和 0.382 视觉上几乎分不出
+     （卡面色和底色本来就接近），所以取更保命的一档：背景是可换的，
+     用户自己生成一张亮底图之后，薄的那一档会让正文掉对比度。
+     色值 = --bg-elevated #1e1e24 / --bg-secondary #26262e 带 alpha，改底色时要一起改。 */
+  --glass-surface: rgba(30, 30, 36, 0.618);
+  --glass-surface-sub: rgba(38, 38, 46, 0.618);
+  /* 卡面织纹：条纹周期按屏幕像素恒定。写死 14 世界像素时，20% 缩放下只剩 2.5 屏幕像素、
+     配 1.4% 的 alpha 完全看不见——卡片于是变成一块纯平的深色方块（用户原话：很单调哦）。 */
+  --gen-wait-surface: repeating-linear-gradient(45deg,
+    rgba(255, 255, 255, 0.038) 0 calc(6px * var(--invZoom, 1)),
+    transparent calc(6px * var(--invZoom, 1)) calc(13px * var(--invZoom, 1)));
+  /* 中心辉光：缓慢呼吸，给这张空卡一个重心——「有东西正在这里聚起来」。 */
+  --gen-wait-core: radial-gradient(58% 44% at 50% 52%, rgba(255, 236, 222, 0.09) 0%, rgba(217, 119, 87, 0.05) 45%, transparent 72%);
+  /* 斜向柔光。上一版 92% 宽 + 0.10 峰值铺满整张卡，看着是均匀的一层雾而不是「一道光掠过」；
+     收窄到 58%、峰值提到 0.17，才读得出是有东西在走。 */
+  --gen-wait-develop: linear-gradient(108deg, transparent 0%, rgba(255, 236, 222, 0.02) 18%, rgba(255, 236, 222, 0.17) 50%, rgba(255, 236, 222, 0.02) 82%, transparent 100%);
+  --gen-wait-scrim: linear-gradient(to top, rgba(10, 10, 12, 0.74) 0%, rgba(10, 10, 12, 0.34) 55%, transparent 100%);
+  --gen-wait-text: rgba(247, 247, 251, 0.92);
+  --gen-wait-text-dim: rgba(247, 247, 251, 0.74);
+  --gen-wait-dot: rgba(247, 247, 251, 0.34);
+
   /* 「向我提问」浮层坞的玻璃。与 --overlay-panel-solid 的区别：那一族是近实心的浮层面板，
      而起手长条是**浮在托管正文之上**的一件东西——正文要透着看得见，所以 alpha 停在 0.78。
      形变途中 blur 要关掉（跨帧合成会掉帧），那一档单独给一个不透明些的底顶上。 */
@@ -439,6 +523,29 @@
   --button-danger-fg: #fca5a5;
   --button-ghost-bg-hover: rgba(255, 255, 255, 0.06);
   --section-label-text: #D9906E;
+
+  /* ── 弹窗「控制台」形态（2026-09-01 用户选定方向 A）──
+     旧形态是 22px 圆角 + 液态玻璃 + 44px 药丸按钮，那是「另一个系统的东西」压在页面上。
+     新形态直接并进产品已有的那一档密度：8px 容器、6px 控件、12-13px 字。
+     弹窗自己是实底，所以遮罩只压暗不模糊——模糊是给半透明面板映照用的，实底没有可映照的东西。 */
+  --dialog-surface: #1E1E24;
+  --dialog-border: rgba(255, 255, 255, 0.12);
+  --dialog-shadow: 0 10px 34px rgba(0, 0, 0, 0.30);
+  --dialog-divider: rgba(255, 255, 255, 0.08);
+  --dialog-footer-bg: rgba(255, 255, 255, 0.03);
+  --dialog-overlay: rgba(6, 6, 10, 0.62);
+  /* 主操作反色：整块弹窗里最亮的一处，不需要第二种强调手段就能一眼锁定。 */
+  --dialog-primary-bg: #F7F7FB;
+  --dialog-primary-bg-hover: #FFFFFF;
+  --dialog-primary-fg: #141418;
+  --dialog-secondary-border: rgba(255, 255, 255, 0.12);
+  --dialog-secondary-fg: rgba(247, 247, 251, 0.80);
+  --dialog-danger-bg: #B91C1C;
+  --dialog-danger-bg-hover: #C62828;
+  /* 填色红上的白字两个主题都成立（admin-dual-theme 的合法例外），
+     所以只在这里定义一次，浅色块不重写、直接继承。 */
+  --dialog-danger-fg: #FFFFFF;
+  --dialog-input-bg: rgba(0, 0, 0, 0.28);
 
   /* 数据可视化只保留“数据色”例外；画布中性层与文字仍跟随主题。 */
   --viz-sticky-bg: rgba(24, 24, 30, 0.90);
@@ -843,6 +950,28 @@
   --accent-on-gold: #FBF8F2;   /* 浅色档按暖纸美学不用纯白（themeSystem 契约会拦纯白字面量）：暖白压深赭 gold 仍有 5.38:1 */
   --fg-on-bright-fill: #0a0a0c;   /* 底两档同色，故前景也两档同值（见 :root 处注释） */
   --accent-gold-2: #C36F52;
+
+  /* 首页背景浅色档（暗色档与说明见 :root 同名处）。
+     渐晕在浅色下反过来做：边缘压黑会把奶白纸面弄脏，改成中心一圈更亮的暖白，
+     边缘用极淡的墨收口。 */
+  --backdrop-scrim: 251, 248, 242;
+  --vignette-edge: rgba(60, 44, 36, 0.10);
+  --vignette-core: rgba(255, 252, 248, 0.55);
+  /* 浅色档的光带：纸面上加白等于什么都没有，改成极淡的暖影扫过——
+     亮底上「被点亮」的可感信号是短暂变暗再回来，不是更亮。 */
+  --wake-beam-core: rgba(60, 44, 36, 0.07);
+  --wake-beam-soft: rgba(60, 44, 36, 0.025);
+
+  /* 磨砂玻璃浅色档：浅底上的玻璃高光要更亮更实（白纸上一道 13% 的暖白看不出来），
+     投影则要更浅——浅色界面里重投影会显脏。 */
+  --glass-edge: rgba(255, 255, 255, 0.72);
+  --glass-shadow: 0 10px 30px rgba(60, 44, 36, 0.10);
+  /* 骨架浅色档：纸上要用**深**的低透明度打底，扫光反过来用近白。 */
+  --skeleton-base: rgba(60, 44, 36, 0.075);
+  --skeleton-sheen: rgba(255, 255, 255, 0.55);
+  /* 浅色档的玻璃底色 = --bg-elevated #E4DED5 / --bg-card #F8F5EF 带同一个 0.618。 */
+  --glass-surface: rgba(228, 222, 213, 0.618);
+  --glass-surface-sub: rgba(248, 245, 239, 0.618);
   --gold-gradient: linear-gradient(135deg, #E2B19F 0%, #A64B35 52%, #C9795E 100%);
   --selection-bg: rgba(166, 75, 53, 0.10);
   --selection-icon-bg: rgba(166, 75, 53, 0.14);
@@ -870,6 +999,23 @@
   --button-danger-fg: #b91c1c;
   --button-ghost-bg-hover: rgba(15, 23, 42, 0.05);
   --section-label-text: #8F3F2B;
+
+  /* 弹窗「控制台」形态的浅色档。面板走纸面卡，分隔线与动作条底走墨色低透明度。
+     --dialog-danger-fg 不在这里重写：填色红上的白字两个主题共用。 */
+  --dialog-surface: var(--bg-card);
+  --dialog-border: var(--hairline-strong);
+  --dialog-shadow: 0 10px 30px rgba(60, 44, 36, 0.10);
+  --dialog-divider: rgba(26, 26, 31, 0.08);
+  --dialog-footer-bg: rgba(26, 26, 31, 0.03);
+  --dialog-overlay: rgba(60, 44, 36, 0.28);
+  --dialog-primary-bg: #0F172A;
+  --dialog-primary-bg-hover: #1E293B;
+  --dialog-primary-fg: #F8F5EF;
+  --dialog-secondary-border: rgba(26, 26, 31, 0.18);
+  --dialog-secondary-fg: rgba(15, 23, 42, 0.78);
+  --dialog-danger-bg: #B91C1C;
+  --dialog-danger-bg-hover: #A11616;
+  --dialog-input-bg: var(--bg-input);
 
   --viz-sticky-bg: rgba(248, 245, 239, 0.92);
   --viz-grid: rgba(15, 23, 42, 0.12);
@@ -1060,6 +1206,32 @@
 .surface-tone-dark {
   /* 与 :root 同批新增：岛内也要有值，否则浅色页里的暗岛会退回浅色档的描边 */
   --border-strong: rgba(255, 255, 255, 0.24);
+  /* 下面这一组是「经由 CSS 类被消费」的那种漏网之鱼（Codex PR #1476 P1）。
+     岛内文件里搜不到 var(--glass-surface)——真正读它的是 globals.css 的
+     .glass-pane / .glass-sub，页面只写了 className。守卫原来只数直接的 var()，
+     于是浅色档下暗岛拿到的是浅色玻璃底，配上岛内翻回的近白字，几乎读不出来。
+     守卫已连同这批一起收紧（themeSystem.test.ts：类名 → token 的消费关系）。 */
+  --glass-surface: rgba(30, 30, 36, 0.618);
+  --glass-surface-sub: rgba(38, 38, 46, 0.618);
+  --button-primary-bg-hover: #E08A6B;
+  --modal-overlay: rgba(0, 0, 0, 0.5);
+  --selection-icon-bg: rgba(217, 119, 87, 0.22);
+  --semantic-info-text: #93c5fd;
+  --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.45);
+  /* 骨架与唤醒幕同理：读它们的是 globals.css 的 .wake-veil / 骨架类，页面只写 className。
+     浅色档的取值是为纸面调的（幕是「变暗一下再回来」、骨架是深色打底），
+     照搬到暗岛上方向正好相反。 */
+  --skeleton-base: rgba(255, 255, 255, 0.055);
+  --skeleton-sheen: rgba(255, 236, 222, 0.085);
+  --wake-beam-core: rgba(255, 236, 222, 0.16);
+  --wake-beam-soft: rgba(255, 236, 222, 0.06);
+  /* 背景照片在暗岛里是可见的（globals.css 把浅色主题那条 display:none 在暗岛里放回来了），
+     那么压在它上面的罩与渐晕也必须是深色档的值——否则浅色主题下，
+     一张近黑的照片上盖着为纸面调的浅罩，两边都不成立。
+     这三个是上面那条守卫在放回背景之后立刻抓出来的，属于同一次修复的连带项。 */
+  --backdrop-scrim: 10, 10, 12;
+  --vignette-core: rgba(217, 119, 87, 0.055);
+  --vignette-edge: rgba(0, 0, 0, 0.34);
   --nested-block-border: rgba(255, 255, 255, 0.09);
   color-scheme: dark;
   --bg-card: rgba(255, 255, 255, 0.08);
@@ -1134,7 +1306,28 @@
   --accent-primary-rgb: 217, 119, 87;
   --button-primary-bg: #D97757;
   --button-primary-shadow: 0 4px 16px -4px rgba(217, 119, 87, 0.42);
+  /*
+   * 次要 / 危险 / ghost 按钮的底色边框。漏了它们的后果在真机上是「模型设置」
+   * 变成一枚近白药丸、白字压白底，整颗按钮读不出来（2026-09-03 真视觉验收拍到）。
+   *
+   * 为什么单独说一句：浅色档里 --button-secondary-bg 写的是 var(--bg-card)，
+   * 而 --bg-card 暗岛**已经覆盖过**了——看着像会跟着变深。并不会：带 var() 的
+   * 自定义属性在**声明它的那个元素上**就完成替换，所以它拿的是 html 上那份浅色
+   * --bg-card，之后只是把结果继承下来。叶子 token 必须自己在岛里再写一遍。
+   *
+   * danger / ghost 是判据放宽之后一起点出来的兄弟，一次补齐——
+   * 不然又是「修了撞见的那一个，剩下的下次再撞」。
+   */
+  --button-secondary-bg: rgba(255, 255, 255, 0.05);
+  --button-secondary-bg-hover: rgba(255, 255, 255, 0.10);
+  --button-secondary-border: rgba(255, 255, 255, 0.10);
+  --button-danger-bg: rgba(239, 68, 68, 0.10);
+  --button-danger-bg-hover: rgba(239, 68, 68, 0.15);
+  --button-danger-border: rgba(239, 68, 68, 0.25);
+  --button-danger-fg: #fca5a5;
+  --button-ghost-bg-hover: rgba(255, 255, 255, 0.06);
   --gold-gradient: linear-gradient(135deg, #F0C9A8 0%, #C8623A 45%, #E8A87C 100%);
+  --glass-edge: rgba(255, 236, 222, 0.13);
   --hairline: rgba(255, 255, 255, 0.08);
   --media-card-edge: rgba(247, 247, 251, 0.08);
   --nested-block-bg: rgba(255, 255, 255, 0.05);

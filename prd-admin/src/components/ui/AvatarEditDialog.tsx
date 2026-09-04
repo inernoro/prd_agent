@@ -253,7 +253,7 @@ export function AvatarEditDialog(props: {
       description={aiEnabled ? undefined : props.description}
       maxWidth={620}
       closePlacement={aiEnabled ? 'left' : 'right'}
-      contentClassName="max-[640px]:!h-[100dvh] max-[640px]:!max-h-[100dvh] max-[640px]:w-full max-[640px]:rounded-none max-[640px]:border-0 max-[640px]:p-4"
+      contentClassName="max-[640px]:!h-[100dvh] max-[640px]:!max-h-[100dvh] max-[640px]:w-full max-[640px]:rounded-none max-[640px]:border-0"
       contentStyle={{ height: 'min(820px, calc(100vh - 32px))' }}
       content={
         <div className="flex h-full min-h-0 flex-col">

@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap">
+  <style>
+    body { margin: 0; background: #0f0f13; color: #f7f7fb;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif; }
+    a { color: #E8A87C; } a:hover { color: #D97757; }
+    .b-btn { border: 0; cursor: pointer; font: inherit; }
+    @keyframes b-pan { from { transform: translate3d(-18px,-10px,0); } to { transform: translate3d(18px,10px,0); } }
+    @media (prefers-reduced-motion: reduce) { .b-field { animation: none !important; } }
+  </style>
+</helmet>
+
+<div style="position: relative; width: 1440px; min-height: 1000px; overflow: hidden; background: #0f0f13">
+
+  <!-- 画布场：这一版的赌注是「首页就是画布的缩略」。底纹用真实画布的点阵，
+       所以从首页点进编辑器时，背景是连续的，不像换了一个产品。 -->
+  <div class="b-field" style="position: absolute; inset: -40px; pointer-events: none;
+    animation: b-pan 30s ease-in-out infinite alternate;
+    background-image: radial-gradient(circle, rgba(255,255,255,0.10) 1px, transparent 1px);
+    background-size: 34px 34px"></div>
+  <div style="position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(58% 46% at 50% 46%, rgba(15,15,19,0) 0%, rgba(15,15,19,0.86) 72%, #0f0f13 100%)"></div>
+
+  <div style="position: relative; display: flex; align-items: center; justify-content: space-between;
+    min-height: 60px; padding: 0 24px">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <span style="display: grid; width: 30px; height: 30px; place-items: center; border-radius: 7px;
+        background: rgba(255,255,255,0.08)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f7f7fb" stroke-width="1.7"
+          stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15l5-5 4 4 3-3 6 6"/></svg>
+      </span>
+      <strong style="font-size: 13px; font-weight: 650">视觉创作</strong>
+      <span style="color: rgba(247,247,251,0.45); font-size: 9px; letter-spacing: .08em">CONSTELLATION</span>
+    </div>
+    <div style="display: flex; gap: 6px">
+      <button class="b-btn" style="min-height: 34px; padding: 0 11px; border-radius: 7px; background: transparent;
+        color: rgba(247,247,251,0.68); font-size: 11px">全部项目 18</button>
+      <button class="b-btn" style="min-height: 34px; padding: 0 11px; border-radius: 7px;
+        background: rgba(255,255,255,0.08); color: #f7f7fb; font-size: 11px">教程</button>
+    </div>
+  </div>
+
+  <!-- 星图：项目就是星，按最近使用聚在中心，越旧越远越暗。悬停亮起，点击直接进画布。 -->
+  <div style="position: relative; height: 560px; margin-top: 6px">
+    <svg width="1440" height="560" style="position: absolute; inset: 0" fill="none">
+      <path d="M420 300 L640 236 M640 236 L905 292 M640 236 L700 402 M905 292 L1075 214 M700 402 L455 430"
+        stroke="rgba(255,255,255,0.10)" stroke-width="1"/>
+    </svg>
+
+    <div style="position: absolute; left: 560px; top: 156px; width: 160px; height: 160px; border-radius: 10px;
+      overflow: hidden; box-shadow: 0 0 0 1px rgba(217,119,87,0.55), 0 18px 48px rgba(0,0,0,0.55)">
+      <div style="width: 100%; height: 100%;
+        background: radial-gradient(70% 90% at 30% 25%, #f6d3b6 0%, #e79a72 38%, #7d3f2c 78%, #2a1712 100%)"></div>
+      <div style="position: absolute; right: 0; bottom: 0; left: 0; padding: 9px 10px;
+        background: linear-gradient(to top, rgba(10,10,12,0.86), transparent)">
+        <strong style="display: block; font-size: 11px">白桃</strong>
+        <small style="display: block; margin-top: 2px; color: rgba(247,247,251,0.68); font-size: 9px">昨天 · 12 张</small>
+      </div>
+    </div>
+
+    <div style="position: absolute; left: 355px; top: 250px; width: 118px; height: 118px; border-radius: 9px;
+      overflow: hidden; opacity: .78; box-shadow: 0 12px 32px rgba(0,0,0,0.5)">
+      <div style="width: 100%; height: 100%; background: linear-gradient(150deg, #3c5a3a, #16221a)"></div>
+      <span style="position: absolute; bottom: 8px; left: 9px; font-size: 10px">梅花</span>
+    </div>
+    <div style="position: absolute; left: 845px; top: 232px; width: 128px; height: 128px; border-radius: 9px;
+      overflow: hidden; opacity: .72; box-shadow: 0 12px 32px rgba(0,0,0,0.5)">
+      <div style="width: 100%; height: 100%; background: linear-gradient(150deg, #2f4a63, #141c26)"></div>
+      <span style="position: absolute; bottom: 8px; left: 9px; font-size: 10px">绿帽子</span>
+    </div>
+    <div style="position: absolute; left: 650px; top: 356px; width: 96px; height: 96px; border-radius: 8px;
+      overflow: hidden; opacity: .55">
+      <div style="width: 100%; height: 100%; background: linear-gradient(150deg, #5a4a2f, #241d12)"></div>
+    </div>
+    <div style="position: absolute; left: 1030px; top: 176px; width: 82px; height: 82px; border-radius: 8px;
+      overflow: hidden; opacity: .40">
+      <div style="width: 100%; height: 100%; background: linear-gradient(150deg, #46304f, #1b1420)"></div>
+    </div>
+    <div style="position: absolute; left: 258px; top: 152px; width: 66px; height: 66px; border-radius: 7px;
+      overflow: hidden; opacity: .26">
+      <div style="width: 100%; height: 100%; background: linear-gradient(150deg, #3a3a44, #17171d)"></div>
+    </div>
+    <div style="position: absolute; left: 1148px; top: 372px; width: 62px; height: 62px; border-radius: 7px;
+      overflow: hidden; opacity: .22">
+      <div style="width: 100%; height: 100%; background: linear-gradient(150deg, #2c3a3a, #141a1a)"></div>
+    </div>
+
+    <span style="position: absolute; left: 258px; top: 232px; color: rgba(247,247,251,0.32); font-size: 9px">更早 ←</span>
+    <span style="position: absolute; right: 232px; top: 448px; color: rgba(247,247,251,0.32); font-size: 9px">→ 拖动平移 · 滚轮缩放</span>
+  </div>
+
+  <!-- 输入槽：浮在星图之上，是唯一被点亮的东西 -->
+  <div style="position: relative; width: 760px; margin: -30px auto 0">
+    <div style="overflow: hidden; border: 1px solid rgba(217,119,87,0.35); border-radius: 10px;
+      background: rgba(30,30,36,0.94); backdrop-filter: blur(20px);
+      box-shadow: 0 28px 70px rgba(0,0,0,0.62), 0 0 0 6px rgba(217,119,87,0.06)">
+      <div style="padding: 16px 18px 6px; color: rgba(247,247,251,0.45); font-size: 13px">
+        描述你想要的画面，或把一张图拖进来…</div>
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 54px;
+        padding: 8px 10px 8px 12px; border-top: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.05)">
+        <div style="display: flex; gap: 3px">
+          <button class="b-btn" style="min-height: 34px; padding: 0 9px; border-radius: 7px; background: transparent;
+            color: rgba(247,247,251,0.80); font-size: 10px">参考图</button>
+          <button class="b-btn" style="min-height: 34px; padding: 0 9px; border-radius: 7px; background: transparent;
+            color: rgba(247,247,251,0.80); font-size: 10px">1K · 1:1</button>
+          <button class="b-btn" style="min-height: 34px; padding: 0 9px; border-radius: 7px; background: transparent;
+            color: rgba(247,247,251,0.80); font-size: 10px">设置</button>
+        </div>
+        <button class="b-btn" style="min-height: 38px; padding: 0 16px; border-radius: 7px; background: #f7f7fb;
+          color: #141418; font-size: 12px; font-weight: 650">开始创作</button>
+      </div>
+    </div>
+    <div style="display: flex; justify-content: center; gap: 7px; margin-top: 12px">
+      <span style="padding: 7px 11px; border-radius: 999px; background: rgba(255,255,255,0.06);
+        color: rgba(247,247,251,0.68); font-size: 10px">平面设计</span>
+      <span style="padding: 7px 11px; border-radius: 999px; background: rgba(255,255,255,0.06);
+        color: rgba(247,247,251,0.68); font-size: 10px">品牌设计</span>
+      <span style="padding: 7px 11px; border-radius: 999px; background: rgba(255,255,255,0.06);
+        color: rgba(247,247,251,0.68); font-size: 10px">插画创作</span>
+      <span style="padding: 7px 11px; border-radius: 999px; background: rgba(255,255,255,0.06);
+        color: rgba(247,247,251,0.68); font-size: 10px">电商设计</span>
+      <span style="padding: 7px 11px; border-radius: 999px; background: rgba(255,255,255,0.06);
+        color: rgba(247,247,251,0.68); font-size: 10px">视频封面</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

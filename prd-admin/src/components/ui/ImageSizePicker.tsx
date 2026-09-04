@@ -1,17 +1,10 @@
 import { useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { glassPanel } from '@/lib/glassStyles';
-import { detectTierFromSize, detectAspectFromSize } from '@/lib/imageAspectOptions';
+import { detectTierFromSize, resolveAspectRatio } from '@/lib/imageAspectOptions';
 import type { SizesByResolution } from '@/lib/imageAspectOptions';
 
 type SizeOption = { size: string; aspectRatio: string };
-
-/** 从 sizeToAspectMap 或 ASPECT_OPTIONS 检测比例，fallback '1:1' */
-function resolveAspect(size: string, sizeToAspectMap: Map<string, string>): string {
-  const mapped = sizeToAspectMap.get(size.toLowerCase());
-  if (mapped) return mapped;
-  return detectAspectFromSize(size) || '1:1';
-}
 
 interface ImageSizePickerProps {
   /** 按分辨率档位分组的尺寸选项 */
@@ -48,22 +41,10 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
     return result;
   }, [sizesByResolution]);
 
-  // 尺寸→比例映射（后端数据优先，避免 GCD 计算偏差）
-  const sizeToAspectMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const tier of ['1k', '2k', '4k'] as const) {
-      for (const opt of sizesByResolution[tier]) {
-        if (opt.size && opt.aspectRatio) {
-          map.set(opt.size.toLowerCase(), opt.aspectRatio);
-        }
-      }
-    }
-    return map;
-  }, [sizesByResolution]);
-
   const currentSize = value || '1024x1024';
   const currentTier = detectTierFromSize(currentSize) || '1k';
-  const currentAspect = resolveAspect(currentSize, sizeToAspectMap);
+  // 这一处本来就是对的（先查目录再退静态表），收敛到共享判定只是不再留第三份拷贝。
+  const currentAspect = resolveAspectRatio(currentSize, sizesByResolution);
 
   const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
   const effectiveTier = availableTiers.includes(currentTier) ? currentTier : (availableTiers[0] || '1k');
