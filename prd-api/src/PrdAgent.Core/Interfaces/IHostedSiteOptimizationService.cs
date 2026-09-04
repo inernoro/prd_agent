@@ -44,6 +44,12 @@ public interface IHostedSiteOptimizationService
         string userId,
         CancellationToken ct = default);
 
+    Task<HostedSiteOptimizationPreviewFileResult?> GetPreviewFileAsync(
+        string sessionId,
+        string accessToken,
+        string filePath,
+        CancellationToken ct = default);
+
     Task<HostedSite> ConfirmAsync(
         string sessionId,
         string userId,

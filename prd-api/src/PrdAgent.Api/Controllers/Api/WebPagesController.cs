@@ -273,6 +273,24 @@ public class WebPagesController : ControllerBase
         }
     }
 
+    /// <summary>用短期随机令牌读取优化预览文件，不暴露底层对象地址。</summary>
+    [AllowAnonymous]
+    [HttpGet("optimization/{sessionId}/preview-content/{accessToken}/{**filePath}")]
+    public async Task<IActionResult> GetOptimizationPreviewFile(
+        string sessionId,
+        string accessToken,
+        string filePath)
+    {
+        var result = await _optimizationService.GetPreviewFileAsync(
+            sessionId, accessToken, filePath, HttpContext.RequestAborted);
+        if (result == null) return NotFound();
+        Response.Headers.CacheControl = "private, no-store";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        Response.Headers["Referrer-Policy"] = "no-referrer";
+        Response.Headers["Content-Security-Policy"] = "sandbox allow-scripts allow-forms; base-uri 'none'; object-src 'none'";
+        return File(result.Bytes, result.MimeType);
+    }
+
     /// <summary>用户确认后才保存原文件或已预览的优化版本。</summary>
     [HttpPost("optimization/{sessionId}/confirm")]
     public async Task<IActionResult> ConfirmOptimization(

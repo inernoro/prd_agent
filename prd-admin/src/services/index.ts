@@ -1744,6 +1744,7 @@ export type {
 export {
   uploadSite,
   reviewSiteZip,
+  resumePendingSiteOptimization,
   prepareSiteOptimizationPreview,
   confirmSiteOptimization,
   cancelSiteOptimization,

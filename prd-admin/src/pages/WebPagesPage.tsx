@@ -8,6 +8,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import {
   uploadSite,
   reviewSiteZip,
+  resumePendingSiteOptimization,
   prepareSiteOptimizationPreview,
   confirmSiteOptimization,
   cancelSiteOptimization,
@@ -2817,6 +2818,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   const [optimizationPreview, setOptimizationPreview] = useState<HostedSiteOptimizationPreviewResult | null>(null);
   const [optimizationBusy, setOptimizationBusy] = useState<'preview' | 'original' | 'optimized' | null>(null);
   const [optimizationStage, setOptimizationStage] = useState('');
+  const resumeCheckedRef = useRef(false);
 
   useEffect(() => {
     if (!saving) return;
@@ -2849,7 +2851,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     if (f) setFile(f);
   };
 
-  const finishSavedSite = (saved: HostedSite) => {
+  const finishSavedSite = useCallback((saved: HostedSite) => {
     if (backgroundedRef.current) {
       toast.success('后台上传完成', `「${saved.title || file?.name || saved.entryFile}」已进入网页库`);
       onSaved(saved, !isEdit);
@@ -2861,7 +2863,36 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     }
     setCreated(saved);
     onSaved(saved, true, true);
-  };
+  }, [file?.name, isEdit, onSaved]);
+
+  useEffect(() => {
+    if (resumeCheckedRef.current || isEdit || initialFile) return;
+    resumeCheckedRef.current = true;
+    const controller = new AbortController();
+    let active = true;
+    const resume = async () => {
+      const pending = await resumePendingSiteOptimization({
+        signal: controller.signal,
+        onStage: stage => { if (active) setOptimizationStage(stage); },
+      });
+      if (!active || !pending) return;
+      if (!pending.success) {
+        if (pending.error?.code !== 'ABORTED')
+          toast.error('恢复上传任务失败', pending.error?.message || '可以重新选择文件上传');
+        return;
+      }
+      if (pending.data.outcome === 'optimization-recommended') {
+        setOptimization(pending.data);
+      } else if (pending.data.site) {
+        finishSavedSite(pending.data.site);
+      }
+    };
+    setSaving(true);
+    setOptimizationStage('正在恢复上次文件检查');
+    startedAtRef.current = Date.now();
+    void resume().finally(() => { if (active) setSaving(false); });
+    return () => { active = false; controller.abort(); };
+  }, [finishSavedSite, initialFile, isEdit]);
 
   const discardOptimization = async () => {
     const sessionId = optimization?.sessionId;

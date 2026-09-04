@@ -27,6 +27,26 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void PreviewProxy_UsesSeparateStorageScopeAndConstantTimeTokenGate()
+    {
+        var session = new PrdAgent.Core.Models.HostedSiteOptimizationSession
+        {
+            Id = "11111111111111111111111111111111",
+            TemporaryStorageId = "22222222222222222222222222222222",
+            PreviewAccessToken = new string('a', 64),
+        };
+
+        var url = HostedSiteOptimizationService.BuildPreviewProxyUrl(session, "assets/app.js");
+
+        url.ShouldContain(session.Id);
+        url.ShouldContain(session.PreviewAccessToken);
+        url.ShouldNotContain(session.TemporaryStorageId);
+        HostedSiteOptimizationService.StorageScope(session).ShouldBe(session.TemporaryStorageId);
+        HostedSiteOptimizationService.SecretEquals(session.PreviewAccessToken, new string('a', 64)).ShouldBeTrue();
+        HostedSiteOptimizationService.SecretEquals(session.PreviewAccessToken, new string('b', 64)).ShouldBeFalse();
+    }
+
+    [Fact]
     public void Analyze_CleanRuntimePackage_DoesNotInterruptUpload()
     {
         var zip = CreateZip(new Dictionary<string, string>

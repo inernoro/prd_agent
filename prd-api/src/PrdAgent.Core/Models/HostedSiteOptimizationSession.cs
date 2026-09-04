@@ -9,6 +9,7 @@ namespace PrdAgent.Core.Models;
 public class HostedSiteOptimizationSession
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TemporaryStorageId { get; set; } = string.Empty;
     public string OwnerUserId { get; set; } = string.Empty;
     public string? TargetSiteId { get; set; }
     public string SourceFileName { get; set; } = string.Empty;
@@ -28,7 +29,10 @@ public class HostedSiteOptimizationSession
     public HostedSiteOptimizationAnalysis Analysis { get; set; } = new();
     public List<HostedSiteFile> PreviewFiles { get; set; } = new();
     public string? PreviewEntryFile { get; set; }
+    public string PreviewAccessToken { get; set; } = string.Empty;
     public long PreviewTotalSize { get; set; }
+    public string? LeaseOwner { get; set; }
+    public DateTime? LeaseExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddHours(2);
@@ -117,6 +121,12 @@ public class HostedSiteOptimizationPreviewResult
     public long TotalSize { get; set; }
     public DateTime ExpiresAt { get; set; }
     public HostedSiteOptimizationAnalysis Analysis { get; set; } = new();
+}
+
+public class HostedSiteOptimizationPreviewFileResult
+{
+    public byte[] Bytes { get; set; } = Array.Empty<byte>();
+    public string MimeType { get; set; } = "application/octet-stream";
 }
 
 public class ConfirmHostedSiteOptimizationRequest

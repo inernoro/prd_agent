@@ -98,6 +98,31 @@ public class WebPagesOptimizationGateTests
             It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
     }
 
+    [Fact]
+    public async Task PreviewFile_UsesShortLivedProxyAndReturnsPrivateResponse()
+    {
+        var optimization = new Mock<IHostedSiteOptimizationService>();
+        optimization.Setup(x => x.GetPreviewFileAsync(
+                "session-1", "secret-token", "assets/app.js", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteOptimizationPreviewFileResult
+            {
+                Bytes = Encoding.UTF8.GetBytes("console.log('preview')"),
+                MimeType = "text/javascript",
+            });
+        var controller = BuildController(
+            Mock.Of<IHostedSiteService>(), optimization.Object, Mock.Of<IUploadProgressService>());
+
+        var result = await controller.GetOptimizationPreviewFile(
+            "session-1", "secret-token", "assets/app.js");
+
+        var file = result.ShouldBeOfType<FileContentResult>();
+        file.ContentType.ShouldBe("text/javascript");
+        Encoding.UTF8.GetString(file.FileContents).ShouldBe("console.log('preview')");
+        controller.Response.Headers.CacheControl.ToString().ShouldBe("private, no-store");
+        controller.Response.Headers["Referrer-Policy"].ToString().ShouldBe("no-referrer");
+        optimization.VerifyAll();
+    }
+
     private static WebPagesController BuildController(
         IHostedSiteService hostedSites,
         IHostedSiteOptimizationService optimization,

@@ -80,6 +80,24 @@ class AuditPrototypePackageTests(unittest.TestCase):
             self.assertIn("asset.js", report["caseCollisions"])
             self.assertEqual(["missing.js"], report["missingLocalReferences"])
 
+    def test_nested_css_and_javascript_references_are_checked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "nested.zip"
+            make_zip(source, {
+                "index.html": b'<link rel="stylesheet" href="assets/app.css"><script src="assets/app.js"></script>',
+                "assets/app.css": b'body{background:url("missing-background.png")}',
+                "assets/app.js": b'import "./nested.js";',
+                "assets/nested.js": b'import "./missing-module.js";',
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertFalse(report["strictReady"])
+            self.assertEqual(
+                ["assets/missing-background.png", "assets/missing-module.js"],
+                report["missingLocalReferences"],
+            )
+
     def test_cli_strict_returns_two_for_source_package(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.zip"

@@ -32,6 +32,13 @@ DEV_FILES = {
     "tsconfig.json", "vite.config.js", "vite.config.ts", "yarn.lock",
 }
 HTML_REFERENCE_ATTRS = {"src", "href", "poster", "data"}
+CSS_URL_RE = re.compile(r"url\(\s*['\"]?([^'\")]+)", re.IGNORECASE)
+CSS_IMPORT_RE = re.compile(r"@import\s+(?:url\(\s*)?['\"]([^'\"]+)", re.IGNORECASE)
+JS_REFERENCE_RE = re.compile(
+    r"(?:import\s+(?:[^'\"]*?\s+from\s+)?|export\s+[^'\"]*?\s+from\s+|"
+    r"import\(\s*|require\(\s*)['\"]([^'\"]+)['\"]",
+    re.IGNORECASE,
+)
 
 
 class ReferenceParser(HTMLParser):
@@ -101,6 +108,22 @@ def common_root_prefix(names: list[str]) -> str | None:
     return first + "/"
 
 
+def runtime_references(archive: zipfile.ZipFile, info: zipfile.ZipInfo, name: str) -> list[str]:
+    if info.file_size > MAX_INSPECT_BYTES:
+        return []
+    text = archive.read(info).decode("utf-8", errors="replace")
+    suffix = PurePosixPath(name).suffix.casefold()
+    if suffix in {".html", ".htm"}:
+        parser = ReferenceParser()
+        parser.feed(text)
+        return parser.references
+    if suffix == ".css":
+        return CSS_URL_RE.findall(text) + CSS_IMPORT_RE.findall(text)
+    if suffix in {".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"}:
+        return JS_REFERENCE_RE.findall(text)
+    return []
+
+
 def audit_zip(
     source: Path,
     entry_limit: int = DEFAULT_ENTRY_LIMIT,
@@ -112,6 +135,7 @@ def audit_zip(
         names = [normalized_name(info.filename) for info in infos]
         files = [(info, name) for info, name in zip(infos, names) if not info.is_dir()]
         file_names = {name for _, name in files}
+        info_by_name = {name: info for info, name in files}
         file_names_folded = Counter(name.casefold() for name in file_names)
         exact_counts = Counter(names)
         unsafe_paths = sorted({name for name in names if is_unsafe_path(name)})
@@ -155,25 +179,35 @@ def audit_zip(
         local_references = 0
         missing_local_references: set[str] = set()
         if preferred_entry:
-            info = archive.getinfo(infos[names.index(preferred_entry)].filename)
-            if info.file_size <= MAX_INSPECT_BYTES:
-                parser = ReferenceParser()
-                parser.feed(archive.read(info).decode("utf-8", errors="replace"))
-                for reference in parser.references:
+            pending = [preferred_entry]
+            inspected: set[str] = set()
+            while pending:
+                owner = pending.pop()
+                if owner in inspected:
+                    continue
+                inspected.add(owner)
+                info = info_by_name.get(owner)
+                if info is None:
+                    continue
+                for reference in runtime_references(archive, info, owner):
                     if is_external_reference(reference):
                         external_references += 1
                         continue
-                    resolved = resolve_local_reference(preferred_entry, reference)
-                    if resolved:
-                        local_references += 1
-                        reference_path = unquote(urlsplit(reference).path)
-                        packaged_path = (
-                            root_prefix + resolved
-                            if root_prefix and reference_path.startswith("/")
-                            else resolved
-                        )
-                        if packaged_path not in file_names:
-                            missing_local_references.add(packaged_path)
+                    resolved = resolve_local_reference(owner, reference)
+                    if not resolved:
+                        continue
+                    local_references += 1
+                    reference_path = unquote(urlsplit(reference).path)
+                    packaged_path = (
+                        root_prefix + resolved
+                        if root_prefix and reference_path.startswith("/")
+                        else resolved
+                    )
+                    if packaged_path not in file_names:
+                        missing_local_references.add(packaged_path)
+                        continue
+                    if packaged_path not in inspected:
+                        pending.append(packaged_path)
 
         blockers: list[str] = []
         if unsafe_paths:

@@ -25,6 +25,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     private const long MaxScannedTextFileBytes = 8L * 1024 * 1024;
     private const long MaxScannedTextBytes = 32L * 1024 * 1024;
     private static readonly TimeSpan SessionLifetime = TimeSpan.FromHours(2);
+    private static readonly TimeSpan WorkerLeaseLifetime = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan WorkerLeaseHeartbeat = TimeSpan.FromSeconds(30);
 
     private static readonly HashSet<string> DevelopmentDirectoryNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -76,6 +78,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         var now = DateTime.UtcNow;
         var session = new HostedSiteOptimizationSession
         {
+            TemporaryStorageId = Guid.NewGuid().ToString("N"),
             OwnerUserId = userId,
             TargetSiteId = string.IsNullOrWhiteSpace(request.TargetSiteId) ? null : request.TargetSiteId.Trim(),
             SourceFileName = Path.GetFileName(request.FileName),
@@ -241,16 +244,22 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     public async Task<bool> ProcessNextQueuedAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
+        var leaseOwner = Guid.NewGuid().ToString("N");
+        var expiredLease = Builders<HostedSiteOptimizationSession>.Filter.Or(
+            Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.LeaseExpiresAt, null),
+            Builders<HostedSiteOptimizationSession>.Filter.Lt(x => x.LeaseExpiresAt, now));
         var filter = Builders<HostedSiteOptimizationSession>.Filter.Or(
             Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Status, HostedSiteOptimizationStatuses.Queued),
             Builders<HostedSiteOptimizationSession>.Filter.And(
                 Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Status, HostedSiteOptimizationStatuses.Analyzing),
-                Builders<HostedSiteOptimizationSession>.Filter.Lt(x => x.UpdatedAt, now.AddMinutes(-10))));
+                expiredLease));
         var session = await _db.HostedSiteOptimizationSessions.FindOneAndUpdateAsync(
             filter,
             Builders<HostedSiteOptimizationSession>.Update
                 .Set(x => x.Status, HostedSiteOptimizationStatuses.Analyzing)
                 .Set(x => x.Error, null)
+                .Set(x => x.LeaseOwner, leaseOwner)
+                .Set(x => x.LeaseExpiresAt, now.Add(WorkerLeaseLifetime))
                 .Set(x => x.UpdatedAt, now)
                 .Set(x => x.ExpiresAt, now.Add(SessionLifetime)),
             new FindOneAndUpdateOptions<HostedSiteOptimizationSession>
@@ -261,6 +270,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             CancellationToken.None);
         if (session == null) return false;
 
+        using var leaseCancellation = new CancellationTokenSource();
+        var leaseHeartbeat = RenewWorkerLeaseAsync(session.Id, leaseOwner, leaseCancellation.Token);
         try
         {
             using var source = new MemoryStream(
@@ -281,7 +292,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
             if (analysis.Recommended)
             {
-                session.SourceObjectKey = _storage.BuildSiteKey(session.Id, "__source/source.zip");
+                session.SourceObjectKey = _storage.BuildSiteKey(StorageScope(session), "__source/source.zip");
                 session.SourceSha256 = Convert.ToHexString(SHA256.HashData(sourceBytes)).ToLowerInvariant();
                 await _storage.UploadToKeyAsync(
                     session.SourceObjectKey,
@@ -289,16 +300,21 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     "application/zip",
                     CancellationToken.None,
                     "private, no-store");
-                await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                    x => x.Id == session.Id && x.Status == HostedSiteOptimizationStatuses.Analyzing,
+                var transitioned = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id
+                         && x.Status == HostedSiteOptimizationStatuses.Analyzing
+                         && x.LeaseOwner == leaseOwner,
                     Builders<HostedSiteOptimizationSession>.Update
                         .Set(x => x.SourceObjectKey, session.SourceObjectKey)
                         .Set(x => x.SourceSha256, session.SourceSha256)
                         .Set(x => x.Analysis, analysis)
                         .Set(x => x.Status, HostedSiteOptimizationStatuses.AwaitingDecision)
+                        .Set(x => x.LeaseOwner, null)
+                        .Set(x => x.LeaseExpiresAt, null)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow)
                         .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
                     cancellationToken: CancellationToken.None);
+                if (transitioned.ModifiedCount != 1) return true;
                 await CleanupChunkFilesAsync(session);
                 return true;
             }
@@ -307,13 +323,16 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 throw new InvalidOperationException(
                     "ZIP 文件超过 5000 项，且未找到可安全自动精简的方案；原文件尚未保存，请使用原型导出技能重新导出");
 
-            await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                x => x.Id == session.Id && x.Status == HostedSiteOptimizationStatuses.Analyzing,
+            var saveClaim = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                x => x.Id == session.Id
+                     && x.Status == HostedSiteOptimizationStatuses.Analyzing
+                     && x.LeaseOwner == leaseOwner,
                 Builders<HostedSiteOptimizationSession>.Update
                     .Set(x => x.Analysis, analysis)
                     .Set(x => x.Status, HostedSiteOptimizationStatuses.Saving)
                     .Set(x => x.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
+            if (saveClaim.ModifiedCount != 1) return true;
 
             HostedSite saved;
             if (string.IsNullOrWhiteSpace(session.TargetSiteId))
@@ -348,10 +367,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             }
 
             await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                x => x.Id == session.Id && x.Status == HostedSiteOptimizationStatuses.Saving,
+                x => x.Id == session.Id
+                     && x.Status == HostedSiteOptimizationStatuses.Saving
+                     && x.LeaseOwner == leaseOwner,
                 Builders<HostedSiteOptimizationSession>.Update
                     .Set(x => x.CompletedSiteId, saved.Id)
                     .Set(x => x.Status, HostedSiteOptimizationStatuses.Saved)
+                    .Set(x => x.LeaseOwner, null)
+                    .Set(x => x.LeaseExpiresAt, null)
                     .Set(x => x.UpdatedAt, DateTime.UtcNow)
                     .Set(x => x.ExpiresAt, DateTime.UtcNow.AddMinutes(10)),
                 cancellationToken: CancellationToken.None);
@@ -364,13 +387,27 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 ? ex.Message
                 : "文件处理未完成，请重新上传；原文件和既有站点均未被修改";
             await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                x => x.Id == session.Id,
+                x => x.Id == session.Id && x.LeaseOwner == leaseOwner,
                 Builders<HostedSiteOptimizationSession>.Update
                     .Set(x => x.Status, HostedSiteOptimizationStatuses.Failed)
                     .Set(x => x.Error, message)
+                    .Set(x => x.LeaseOwner, null)
+                    .Set(x => x.LeaseExpiresAt, null)
                     .Set(x => x.UpdatedAt, DateTime.UtcNow)
                     .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
                 cancellationToken: CancellationToken.None);
+        }
+        finally
+        {
+            leaseCancellation.Cancel();
+            try
+            {
+                await leaseHeartbeat;
+            }
+            catch (OperationCanceledException)
+            {
+                // 正常收尾：任务已经结束，不再续租。
+            }
         }
         return true;
     }
@@ -397,6 +434,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         var now = DateTime.UtcNow;
         var session = new HostedSiteOptimizationSession
         {
+            TemporaryStorageId = Guid.NewGuid().ToString("N"),
             OwnerUserId = userId,
             TargetSiteId = string.IsNullOrWhiteSpace(targetSiteId) ? null : targetSiteId.Trim(),
             SourceFileName = Path.GetFileName(fileName),
@@ -410,7 +448,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             UpdatedAt = now,
             ExpiresAt = now.Add(SessionLifetime),
         };
-        session.SourceObjectKey = _storage.BuildSiteKey(session.Id, "__source/source.zip");
+        session.SourceObjectKey = _storage.BuildSiteKey(StorageScope(session), "__source/source.zip");
 
         await _storage.UploadToKeyAsync(
             session.SourceObjectKey,
@@ -442,7 +480,18 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         if (session.Status == HostedSiteOptimizationStatuses.PreviewReady
             && session.PreviewFiles.Count > 0
             && !string.IsNullOrWhiteSpace(session.PreviewEntryFile))
+        {
+            if (string.IsNullOrWhiteSpace(session.PreviewAccessToken))
+            {
+                session.PreviewAccessToken = NewSecretToken();
+                await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id && x.OwnerUserId == userId,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.PreviewAccessToken, session.PreviewAccessToken),
+                    cancellationToken: CancellationToken.None);
+            }
             return ToPreviewResult(session);
+        }
 
         session.ExpiresAt = DateTime.UtcNow.Add(SessionLifetime);
         session.UpdatedAt = DateTime.UtcNow;
@@ -468,7 +517,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         {
             foreach (var (path, bytes) in build.Files.OrderBy(x => x.Key, StringComparer.Ordinal))
             {
-                var key = _storage.BuildSiteKey(session.Id, $"__preview/{path}");
+                var key = _storage.BuildSiteKey(StorageScope(session), $"__preview/{path}");
                 var mime = MimeFor(path);
                 await _storage.UploadToKeyAsync(
                     key,
@@ -492,6 +541,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
             session.PreviewFiles = uploaded;
             session.PreviewEntryFile = build.EntryFile;
+            session.PreviewAccessToken = NewSecretToken();
             session.PreviewTotalSize = totalSize;
             session.Analysis = build.Analysis;
             session.Status = HostedSiteOptimizationStatuses.PreviewReady;
@@ -737,13 +787,97 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         return new HostedSiteOptimizationPreviewResult
         {
             SessionId = session.Id,
-            PreviewUrl = _storage.BuildUrlForKey(entry.CosKey),
+            PreviewUrl = BuildPreviewProxyUrl(session, entry.Path),
             EntryFile = entry.Path,
             FileCount = session.PreviewFiles.Count,
             TotalSize = session.PreviewTotalSize,
             ExpiresAt = session.ExpiresAt,
             Analysis = session.Analysis,
         };
+    }
+
+    public async Task<HostedSiteOptimizationPreviewFileResult?> GetPreviewFileAsync(
+        string sessionId,
+        string accessToken,
+        string filePath,
+        CancellationToken ct = default)
+    {
+        var session = await _db.HostedSiteOptimizationSessions
+            .Find(x => x.Id == sessionId
+                       && x.Status == HostedSiteOptimizationStatuses.PreviewReady
+                       && x.ExpiresAt > DateTime.UtcNow)
+            .FirstOrDefaultAsync(ct);
+        if (session == null || !SecretEquals(session.PreviewAccessToken, accessToken)) return null;
+
+        var normalized = NormalizePath(Uri.UnescapeDataString(filePath ?? string.Empty)).TrimStart('/');
+        if (string.IsNullOrWhiteSpace(normalized) || IsUnsafePath(normalized)) return null;
+        var file = session.PreviewFiles.FirstOrDefault(
+            x => string.Equals(x.Path, normalized, StringComparison.Ordinal));
+        if (file == null) return null;
+        var bytes = await _storage.TryDownloadBytesAsync(file.CosKey, ct);
+        if (bytes != null)
+            bytes = RewriteRootReferencesForPreview(bytes, file.MimeType, BuildPreviewProxyBase(session));
+        return bytes == null
+            ? null
+            : new HostedSiteOptimizationPreviewFileResult
+            {
+                Bytes = bytes,
+                MimeType = file.MimeType,
+            };
+    }
+
+    internal static string BuildPreviewProxyUrl(HostedSiteOptimizationSession session, string filePath)
+    {
+        var escapedPath = string.Join("/", NormalizePath(filePath).Split('/').Select(Uri.EscapeDataString));
+        return BuildPreviewProxyBase(session) + escapedPath;
+    }
+
+    private static string BuildPreviewProxyBase(HostedSiteOptimizationSession session)
+        => $"/api/web-pages/optimization/{Uri.EscapeDataString(session.Id)}/preview-content/"
+           + $"{Uri.EscapeDataString(session.PreviewAccessToken)}/";
+
+    private static byte[] RewriteRootReferencesForPreview(byte[] bytes, string mimeType, string proxyBase)
+    {
+        if (!mimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase)
+            && !mimeType.StartsWith("text/css", StringComparison.OrdinalIgnoreCase)
+            && !mimeType.Contains("javascript", StringComparison.OrdinalIgnoreCase))
+            return bytes;
+
+        var text = Encoding.UTF8.GetString(bytes);
+        if (mimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
+        {
+            text = Regex.Replace(
+                text,
+                "(?<prefix>\\b(?:src|href|poster|data)\\s*=\\s*[\\\"'])/(?!/)",
+                match => match.Groups["prefix"].Value + proxyBase,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+        else if (mimeType.StartsWith("text/css", StringComparison.OrdinalIgnoreCase))
+        {
+            text = Regex.Replace(
+                text,
+                "(?<prefix>(?:url\\(\\s*|@import\\s+)[\\\"']?)/(?!/)",
+                match => match.Groups["prefix"].Value + proxyBase,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+        else
+        {
+            text = Regex.Replace(
+                text,
+                "(?<prefix>(?:from\\s+|import\\(\\s*)[\\\"'])/(?!/)",
+                match => match.Groups["prefix"].Value + proxyBase,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+        return Encoding.UTF8.GetBytes(text);
+    }
+
+    internal static bool SecretEquals(string expected, string supplied)
+    {
+        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(supplied)) return false;
+        var expectedBytes = Encoding.UTF8.GetBytes(expected);
+        var suppliedBytes = Encoding.UTF8.GetBytes(supplied);
+        return expectedBytes.Length == suppliedBytes.Length
+               && CryptographicOperations.FixedTimeEquals(expectedBytes, suppliedBytes);
     }
 
     private async Task<byte[]?> BuildZipFromPreviewAsync(
@@ -782,7 +916,38 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     }
 
     private string BuildChunkKey(HostedSiteOptimizationSession session, int chunkIndex)
-        => _storage.BuildSiteKey(session.Id, $"__chunks/{chunkIndex:D6}.part");
+        => _storage.BuildSiteKey(StorageScope(session), $"__chunks/{chunkIndex:D6}.part");
+
+    internal static string StorageScope(HostedSiteOptimizationSession session)
+        => string.IsNullOrWhiteSpace(session.TemporaryStorageId) ? session.Id : session.TemporaryStorageId;
+
+    private static string NewSecretToken()
+        => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+
+    private async Task RenewWorkerLeaseAsync(
+        string sessionId,
+        string leaseOwner,
+        CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(WorkerLeaseHeartbeat);
+        while (await timer.WaitForNextTickAsync(cancellationToken))
+        {
+            var now = DateTime.UtcNow;
+            var renewed = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                Builders<HostedSiteOptimizationSession>.Filter.And(
+                    Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Id, sessionId),
+                    Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.LeaseOwner, leaseOwner),
+                    Builders<HostedSiteOptimizationSession>.Filter.In(
+                        x => x.Status,
+                        new[] { HostedSiteOptimizationStatuses.Analyzing, HostedSiteOptimizationStatuses.Saving })),
+                Builders<HostedSiteOptimizationSession>.Update
+                    .Set(x => x.LeaseExpiresAt, now.Add(WorkerLeaseLifetime))
+                    .Set(x => x.UpdatedAt, now)
+                    .Set(x => x.ExpiresAt, now.Add(SessionLifetime)),
+                cancellationToken: CancellationToken.None);
+            if (renewed.MatchedCount == 0) return;
+        }
+    }
 
     private static string StageFor(string status) => status switch
     {
