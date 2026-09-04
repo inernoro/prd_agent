@@ -79,7 +79,7 @@ public class VisualOpenApiController : ControllerBase
         };
         try
         {
-            await _db.ImageMasterWorkspaces.InsertOneAsync(ws, cancellationToken: ct);
+            await _db.ImageMasterWorkspaces.InsertOneAsync(ws, cancellationToken: CancellationToken.None);
         }
         catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
@@ -194,7 +194,7 @@ public class VisualOpenApiController : ControllerBase
 
         try
         {
-            await _db.ImageGenRuns.InsertOneAsync(run, cancellationToken: ct);
+            await _db.ImageGenRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
         }
         catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && idemKey != null)
         {

@@ -267,7 +267,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         if (deterministicId != null) store.Id = deterministicId;
         try
         {
-            await _db.DocumentStores.InsertOneAsync(store, cancellationToken: ct);
+            await _db.DocumentStores.InsertOneAsync(store, cancellationToken: CancellationToken.None);
         }
         catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && deterministicId != null)
         {
@@ -377,7 +377,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             await _db.DocumentStores.UpdateOneAsync(
                 s => s.Id == storeId,
                 Builders<DocumentStore>.Update.Inc(s => s.DocumentCount, 1).Set(s => s.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: ct);
+                cancellationToken: CancellationToken.None);
             countedIn = true;
 
             if (content.Length > 0)

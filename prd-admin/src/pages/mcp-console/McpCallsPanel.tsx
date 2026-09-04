@@ -3,7 +3,6 @@ import { ExternalLink } from 'lucide-react';
 import { PrdLoader } from '@/components/ui/PrdLoader';
 import { listMcpCalls } from '@/services';
 import type { McpCallLogDto, McpClientDto } from '@/services/contracts/mcpConsole';
-import { toast } from '@/lib/toast';
 
 const STATUS_STYLE: Record<string, { label: string; color: string; bg: string; border: string }> = {
   success: {
@@ -44,15 +43,23 @@ export function McpCallsPanel({
   const [keyId, setKeyId] = useState<string>('');
   const [status, setStatus] = useState<string>('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // 读失败要留一个**持续存在**的错误态。只弹一下 toast 的话，界面会退到两种更糟的样子：
+  // 首次加载显示「还没有调用记录」（把「没读到」说成「你还没用过」），
+  // 换筛选条件失败则把上一次的行留在新条件下面（把别的客户端的记录说成这个客户端的）。
+  // 审计面板一旦开始说谎，用户还不如没有它。
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     const res = await listMcpCalls({ keyId: keyId || undefined, status: status || undefined, limit: 50 });
     if (!res.success || !res.data) {
-      toast.error('调用记录加载失败', res.error?.message);
+      setLoadError(res.error?.message || '调用记录没读到，可能是网络断开或服务端异常。');
+      setItems([]);
+      setTotal(0);
       setLoading(false);
       return;
     }
+    setLoadError(null);
     setItems(res.data.items);
     setTotal(res.data.total);
     setLoading(false);
@@ -106,6 +113,28 @@ export function McpCallsPanel({
       {loading ? (
         <div className="flex flex-1 items-center justify-center">
           <PrdLoader size={36} />
+        </div>
+      ) : loadError ? (
+        <div
+          className="flex flex-1 flex-col items-center justify-center gap-3 rounded-[14px] p-8 text-center"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--semantic-warning-border)' }}
+        >
+          <p className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+            调用记录没读到
+          </p>
+          <p className="max-w-[420px] text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+            {loadError}
+            <br />
+            这不是「你还没用过」——已经发生过的调用都还在，只是这次没取回来。
+          </p>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="rounded-[8px] px-3.5 py-1.5 text-[12.5px] font-medium"
+            style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }}
+          >
+            重试
+          </button>
         </div>
       ) : items.length === 0 ? (
         <div

@@ -276,7 +276,8 @@ public class HostedSiteService : IHostedSiteService
         string? title, string? description,
         string sourceType, string? sourceRef,
         List<string>? tags, string? folder,
-        CancellationToken ct)
+        CancellationToken ct,
+        int? maxStoredBytes = null)
     {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
@@ -284,6 +285,13 @@ public class HostedSiteService : IHostedSiteService
         // 否则这类站点要等下次服务重启的 backfill 才有 shim。
         var htmlBytes = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(
             System.Text.Encoding.UTF8.GetBytes(htmlContent), "index.html"));
+
+        // 上限按**变换之后**的字节判。只校验调用方给的那份，等于对外承诺 4MB 却存进去 4MB 多：
+        // 重写绝对路径会让内容变长，注入的翻页垫片本身近 10KB。差额不大，但承诺就是承诺。
+        if (maxStoredBytes is > 0 && htmlBytes.Length > maxStoredBytes.Value)
+            throw new InvalidOperationException(
+                $"页面处理后为 {htmlBytes.Length} 字节，超过 {maxStoredBytes.Value} 字节上限。"
+                + "服务端会重写绝对路径并注入翻页兼容脚本，落盘体积比你提交的略大，请再精简一些。");
 
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
         await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);

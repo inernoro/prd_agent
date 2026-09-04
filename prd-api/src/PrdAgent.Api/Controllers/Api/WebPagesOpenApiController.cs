@@ -108,13 +108,26 @@ public class WebPagesOpenApiController : ControllerBase
         // 曾经用「确定性 id + 占坑 + 租约 + 接手补传」去收敛它，连续三轮 review 都在长新洞，
         // 根因是发布要跨对象存储与 Mongo 两套系统做原子动作，而对象存储没有条件写入原语。
         // 多出一个站是浪费，不是坏数据。收敛方案见 doc/debt.platform.md 边界 12。
-        var site = await _sites.CreateFromContentAsync(
+        HostedSite site;
+        try
+        {
+            site = await _sites.CreateFromContentAsync(
             userId, html,
             string.IsNullOrWhiteSpace(req.Title) ? null : req.Title!.Trim(),
             string.IsNullOrWhiteSpace(req.Description) ? null : req.Description!.Trim(),
             sourceType: "api", sourceRef: sourceRef,
             tags: req.Tags, folder: string.IsNullOrWhiteSpace(req.Folder) ? null : req.Folder!.Trim(),
-            ct: ct);
+            ct: ct,
+            // 上限也交给落盘那一层按变换后的真实字节再判一次：服务端会重写绝对路径、
+            // 注入近 10KB 的翻页垫片，只在这里校验入参等于承诺 4MB 却存进去 4MB 多。
+            maxStoredBytes: MaxHtmlBytes);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // 「处理后超上限」是调用方能自己解决的事（精简内容），给 400 + 说清为什么比它提交的大，
+            // 不要甩一个 500 让智能体以为是服务端抽风然后原样重试。
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
 
         return Ok(ApiResponse<object>.Ok(new
         {

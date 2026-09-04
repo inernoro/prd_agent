@@ -29,17 +29,18 @@ public interface IHostedSiteService
         string? uploadId = null);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
-    /// <param name="siteId">
-    /// 可选：由调用方指定站点 id。用于幂等 —— 调用方把幂等键压成确定性 id 传进来，
-    /// 并发重复请求会在 _id 上撞主键（而不是各自建出一个站），调用方捕获后返回既有站点。
-    /// 不传则随机生成。
+    /// <param name="maxStoredBytes">
+    /// 落盘上限（字节）。服务端还会重写绝对路径并注入翻页垫片，**存下去的那份比调用方给的大**；
+    /// 对外承诺过「单页不超过 N」的调用方（如 MCP 开放层）把 N 传进来，由实现按变换后的真实字节判，
+    /// 超了直接拒绝上传。传 null 维持原行为（不限）。
     /// </param>
     Task<HostedSite> CreateFromContentAsync(
         string userId, string htmlContent,
         string? title, string? description,
         string sourceType, string? sourceRef,
         List<string>? tags, string? folder,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        int? maxStoredBytes = null);
 
     // ── 替换内容 ──
 

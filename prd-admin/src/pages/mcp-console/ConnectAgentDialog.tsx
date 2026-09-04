@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Check, Copy, KeyRound, ShieldAlert } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { createAgentApiKey, getMcpVisibleTools } from '@/services';
@@ -77,12 +77,21 @@ export function ConnectAgentDialog({
     setChecking(false);
     setCheckTimedOut(false);
     setIssuedKeyId(null);
+    // 关闭/重置即作废在途自检：它的回应回来时号已经对不上，不会再往界面上写
+    checkGenRef.current += 1;
   }, []);
 
+  // 自检是后台跑的，而弹窗随时可能被关掉、重开、再签一把新钥匙。没有代次的话，
+  // 上一把钥匙的回应可以在关闭后落地（显示成新钥匙的工具清单），或者晚到一步把新自检的
+  // 结果盖掉 —— 用户看到的是**别的钥匙**能调什么。所以每次自检领一个号，回来先验号。
+  const checkGenRef = useRef(0);
+
   const runSelfCheck = useCallback(async (keyId: string) => {
+    const gen = ++checkGenRef.current;
     setChecking(true);
     setCheckTimedOut(false);
     const check = await withTimeout(getMcpVisibleTools(keyId), SelfCheckTimeoutMs);
+    if (gen !== checkGenRef.current) return;   // 号过期：期间关过弹窗或又发了一把钥匙
     if (check === null) setCheckTimedOut(true);
     else if (check.success && check.data) setVisible(check.data);
     setChecking(false);

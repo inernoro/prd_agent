@@ -114,7 +114,7 @@ public class LiteraryOpenApiController : ControllerBase
         };
         try
         {
-            await _db.ImageMasterWorkspaces.InsertOneAsync(ws, cancellationToken: ct);
+            await _db.ImageMasterWorkspaces.InsertOneAsync(ws, cancellationToken: CancellationToken.None);
         }
         catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && deterministicId != null)
         {
@@ -221,7 +221,7 @@ public class LiteraryOpenApiController : ControllerBase
                 Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, ws.Id),
                 Builders<ImageMasterWorkspace>.Filter.Eq(x => x.ArticleContent, ws.ArticleContent))
             : Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, ws.Id);
-        var result = await _db.ImageMasterWorkspaces.UpdateOneAsync(filter, update, cancellationToken: ct);
+        var result = await _db.ImageMasterWorkspaces.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
         if (append && result.MatchedCount == 0)
             return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
                 "追加期间正文被另一次写入改过，这次没有写进去。请重新读一遍正文再追加。"));
