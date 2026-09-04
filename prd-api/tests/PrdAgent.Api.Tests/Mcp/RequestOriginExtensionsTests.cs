@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services.Mcp;
@@ -31,11 +33,23 @@ public class RequestOriginExtensionsTests
 
     private static readonly McpLoopbackSignal Signal = new();
 
+    /// <summary>带上平台/运维声明的公网入口（容器 env 或 appsettings）。</summary>
+    private static HttpRequest RequestWithDeclared(
+        string scheme, string host, string declaredKey, string declaredValue,
+        params (string Key, string Value)[] headers)
+        => Build(scheme, host, loopbackToken: null, headers, declared: (declaredKey, declaredValue));
+
     private static HttpRequest Build(
-        string scheme, string host, string? loopbackToken, (string Key, string Value)[] headers)
+        string scheme, string host, string? loopbackToken, (string Key, string Value)[] headers,
+        (string Key, string Value)? declared = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(Signal);
+        services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
+            .AddInMemoryCollection(declared == null
+                ? new Dictionary<string, string?>()
+                : new Dictionary<string, string?> { [declared.Value.Key] = declared.Value.Value })
+            .Build());
         var ctx = new DefaultHttpContext { RequestServices = services.BuildServiceProvider() };
         ctx.Request.Scheme = scheme;
         ctx.Request.Host = new HostString(host);
@@ -109,5 +123,45 @@ public class RequestOriginExtensionsTests
     public void 什么都没有时退回请求自身()
     {
         Request("https", "localhost:5001").ResolveExternalBaseUrl().ShouldBe("https://localhost:5001");
+    }
+
+    [Fact]
+    public void CDS_预览里_Host_是回环_必须用平台声明的公网入口()
+    {
+        // 2026-09-04 真人验收当场抓到的 P1：接入台给出的连接地址是 https://127.0.0.1:48798/api/mcp。
+        // 根因是 CDS 转发器故意把 Host 改写成上游 127.0.0.1:port（容器内按 vhost 路由的应用
+        // 看不到内部 host 会 404），真域名只在外部可伪造的 X-Forwarded-Host 里。
+        // 出路是第三个来源：平台注入的 CDS_PREVIEW_URL —— 请求方够不着。
+        var req = RequestWithDeclared("http", "127.0.0.1:48798",
+            "CDS_PREVIEW_URL", "https://mcp-integration-plan-k7k8od-claude-prd-agent.miduo.org",
+            ("X-Forwarded-Host", "evil.example.com"));
+
+        req.ResolveExternalBaseUrl()
+            .ShouldBe("https://mcp-integration-plan-k7k8od-claude-prd-agent.miduo.org",
+                customMessage: "声明的入口要压过回环 Host，也要压过外部填的 X-Forwarded-Host");
+    }
+
+    [Fact]
+    public void 运维配的_ServerUrl_优先于平台注入()
+    {
+        RequestWithDeclared("http", "127.0.0.1:48798", "ServerUrl", "https://map.example.com/")
+            .ResolveExternalBaseUrl()
+            .ShouldBe("https://map.example.com");
+    }
+
+    [Fact]
+    public void 声明的入口写歪了就当没配_不许把不是地址的东西发给用户()
+    {
+        // 只写主机名、写成内网 scheme、写成一句话——都不是能点开的地址。
+        RequestOriginExtensions.IsUsableBaseUrl("map.example.com").ShouldBeFalse();
+        RequestOriginExtensions.IsUsableBaseUrl("ftp://map.example.com").ShouldBeFalse();
+        RequestOriginExtensions.IsUsableBaseUrl("请填写实际值").ShouldBeFalse();
+        RequestOriginExtensions.IsUsableBaseUrl("https://map.example.com").ShouldBeTrue();
+
+        // 配歪时退回原来的头部推断，而不是把歪值发出去
+        RequestWithDeclared("http", "real.example.com", "CDS_PREVIEW_URL", "请填写实际值",
+                ("X-Forwarded-Proto", "https"))
+            .ResolveExternalBaseUrl()
+            .ShouldBe("https://real.example.com");
     }
 }
