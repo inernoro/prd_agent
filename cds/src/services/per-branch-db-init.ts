@@ -52,7 +52,9 @@ export function perBranchCloneSpec(state: StateService, branch: BranchEntry, pro
  */
 export function appDbUser(target: ReplicaDbTarget): string | undefined {
   const cred = resolveCredential(target.engine, target.appEnv ?? {}, target);
-  return cred.source === 'app-url' || cred.source === 'app-env' ? cred.user : undefined;
+  if (cred.source !== 'app-url' && cred.source !== 'app-env') return undefined;
+  // 仍是模板说明项目环境变量里没有这个值：不授权，让应用连不上如实暴露，而不是把 ${...} 写进 GRANT
+  return /\$\{[^}]+\}/.test(cred.user) ? undefined : cred.user;
 }
 
 export type PerBranchDbInitOutcome =

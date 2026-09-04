@@ -159,6 +159,9 @@ describe('分支独立库时间点克隆初始化', () => {
     state.addProject({ id: 'p', slug: 'p', name: 'P', kind: 'git', createdAt: T, updatedAt: T } as any);
     state.addBuildProfile({ id: 'api', projectId: 'p', name: 'API', dockerImage: 'node:20', workDir: '.', containerPort: 3000, dbScope: 'per-branch', dbInit: 'clone', env: { CDS_MYSQL_DATABASE: 'shop', CDS_MYSQL_USER: 'shop_app', CDS_MYSQL_PASSWORD: 'apppw' } } as BuildProfile);
     state.addBuildProfile({ id: 'jobs', projectId: 'p', name: 'Jobs', dockerImage: 'node:20', workDir: '.', containerPort: 3001, dbScope: 'per-branch', env: { CDS_MYSQL_DATABASE: 'shop' } } as BuildProfile);
+    // 真实项目的写法：连接串用模板，部署时才展开；克隆授权要解析出真实用户名 shop_app 而不是 ${CDS_MYSQL_USER}
+    state.addBuildProfile({ id: 'api2', projectId: 'p', name: 'API2', dockerImage: 'node:20', workDir: '.', containerPort: 3003, dbScope: 'per-branch', dbInit: 'clone', env: { CDS_MYSQL_DATABASE: 'shop', DATABASE_URL: 'mysql://${CDS_MYSQL_USER}:${CDS_MYSQL_PASSWORD}@cds-infra-mysql:3306/shop' } } as BuildProfile);
+    state.setCustomEnv({ CDS_MYSQL_USER: 'shop_app', CDS_MYSQL_PASSWORD: 'apppw' }, 'p');
     state.addBuildProfile({ id: 'search', projectId: 'p', name: 'Search', dockerImage: 'node:20', workDir: '.', containerPort: 3002, dbScope: 'per-branch', dbInit: 'clone', env: { CDS_MONGO_DATABASE: 'catalog' } } as BuildProfile);
     state.addBuildProfile({ id: 'web', projectId: 'p', name: 'Web', dockerImage: 'nginx', workDir: '.', containerPort: 80, dbScope: 'per-branch', dbInit: 'clone', env: {} } as BuildProfile);
     // 深拷贝：updateInfraService 会原地改对象，别把模块级常量污染给后面的用例
@@ -185,8 +188,11 @@ describe('分支独立库时间点克隆初始化', () => {
     expect('spec' in r && r.spec.infra.containerName).toBe('cds-infra-mysql');
     // 克隆完授权给应用自己的用户（与库探测同一套凭据解析）；没声明应用用户的服务不授权
     expect('spec' in r && r.spec.grantTo).toBe('shop_app');
+    // 只有项目级 CDS_MYSQL_USER 的服务同样授给它（项目级变量本来就会灌给每个服务）
     const jobs = perBranchCloneSpec(state, branch(), effective('jobs'));
-    expect('spec' in jobs && jobs.spec.grantTo).toBeUndefined();
+    expect('spec' in jobs && jobs.spec.grantTo).toBe('shop_app');
+    const api2 = perBranchCloneSpec(state, branch(), effective('api2'));
+    expect('spec' in api2 && api2.spec.grantTo).toBe('shop_app');
   });
 
   it('mongo 拒绝时间点克隆并说明原因（共享实例写压会崩）；不涉及数据库的服务不适用', () => {
@@ -285,6 +291,11 @@ describe('接线守卫：一条克隆管线，两个调用方', () => {
   it('分支部署在启动容器前先跑分支独立库初始化', () => {
     const s = read('src/routes/branches.ts');
     expect(s).toContain('ensurePerBranchDbInitialized(');
+  });
+  it('删分支丢弃派生库也按项目环境变量解析实例密码，丢弃失败时条目转孤儿而不是留着「活跃」', () => {
+    const s = read('src/routes/branches.ts');
+    expect(s).toContain('realDbLedgerOps.dropDb(derived.engine, resolveInfraForDb(stateService, rawInfra), derived)');
+    expect(s).toContain("status: 'orphaned', orphanedAt: new Date().toISOString()");
   });
   it('分支覆盖合并把 dbInit 一起带上（与 dbScope 同款）', () => {
     const s = read('src/services/container.ts');

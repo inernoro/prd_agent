@@ -214,16 +214,22 @@ function baseIsolationEnvOverride(target: ReplicaDbTarget, dbName: string): Reco
  * 与容器启动、数据工作台同一套解析；解不出来的模板**保留原样**而不是变成空串——
  * 空串会让 root 无密码静默登录尝试，保留模板让下游能一眼看出「缺哪个变量」。
  */
-export function resolveInfraForDb(state: Pick<StateService, 'getCustomEnv'>, infra: InfraService): InfraService {
-  const raw = infra.env || {};
-  if (!Object.values(raw).some((v) => /\$\{[^}]+\}/.test(String(v)))) return infra;
-  const resolved = resolveEnvTemplates(raw, state.getCustomEnv(infra.projectId) || {});
+/** 按 vars 展开 env 里的 ${...} 模板；解不出来的保留原样（不变成空串，让下游能看出缺哪个变量） */
+export function resolveTemplatesKeepUnresolved(raw: Record<string, string>, vars: Record<string, string>): Record<string, string> {
+  if (!Object.values(raw).some((v) => /\$\{[^}]+\}/.test(String(v)))) return raw;
+  const resolved = resolveEnvTemplates(raw, vars);
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(raw)) {
     const r = resolved[k];
     env[k] = /\$\{[^}]+\}/.test(String(v)) && !String(r ?? '').trim() ? String(v) : String(r ?? '');
   }
-  return { ...infra, env };
+  return env;
+}
+
+export function resolveInfraForDb(state: Pick<StateService, 'getCustomEnv'>, infra: InfraService): InfraService {
+  const raw = infra.env || {};
+  const env = resolveTemplatesKeepUnresolved(raw, state.getCustomEnv(infra.projectId) || {});
+  return env === raw ? infra : { ...infra, env };
 }
 
 export function resolveReplicaDbTarget(
@@ -428,7 +434,9 @@ export function resolveReplicaDbTarget(
       ...(unboundUrlKeys.length > 0 ? { unboundUrlKeys } : {}),
       sourceDb,
       infra: resolveInfraForDb(state, infra),
-      appEnv: runtimeEnv,
+      // 服务 env 里的连接串常写成 mysql://${CDS_MYSQL_USER}:${CDS_MYSQL_PASSWORD}@...，部署时才展开；
+      // 给凭据解析的这一份先按同一份 env 自展开，否则解析出的「用户名」是模板本身
+      appEnv: resolveTemplatesKeepUnresolved(runtimeEnv, runtimeEnv),
     },
   };
 }

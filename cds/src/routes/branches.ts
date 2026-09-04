@@ -27,6 +27,7 @@ import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBr
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import { ensurePerBranchDbInitialized } from '../services/per-branch-db-init.js';
+import { resolveInfraForDb } from '../services/replica-db-clone.js';
 import { resolveBranchEnvLayers } from '../services/branch-env-layers.js';
 import {
   branchEntrypointDepsFromState,
@@ -11545,12 +11546,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const dropSnapshotIds = new Set(dbSettlement.toDrop.filter((e) => e.snapshotId).map((e) => e.snapshotId!));
       for (const derived of dbSettlement.toDrop.filter((e) => !e.snapshotId)) {
         try {
-          const infra = stateService.getInfraServicesForProject(entry.projectId)
+          const rawInfra = stateService.getInfraServicesForProject(entry.projectId)
             .find((svc) => svc.containerName === derived.infraContainer || svc.id === derived.infraId);
-          if (!infra) throw new Error(`找不到承载 ${derived.dbName} 的基础设施实例`);
-          await realDbLedgerOps.dropDb(derived.engine, infra, derived);
+          if (!rawInfra) throw new Error(`找不到承载 ${derived.dbName} 的基础设施实例`);
+          // 记录里的密码常是 ${CDS_...} 模板，按项目环境变量解析后再连库（2026-09-04 真实分支复验：模板当字面量 → 丢弃静默失败）
+          await realDbLedgerOps.dropDb(derived.engine, resolveInfraForDb(stateService, rawInfra), derived);
           markDropped(stateService, derived, actor, new Date());
         } catch (err) {
+          // 丢弃失败：库还在、分支没了——如实转孤儿条目，别让它顶着一个已删分支的「活跃」标签
+          try {
+            stateService.upsertDbLedgerEntry({ ...derived, status: 'orphaned', orphanedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), note: `删分支时丢弃失败：${(err as Error).message}` });
+            stateService.save();
+          } catch { /* 记账尽力而为 */ }
           serverEventLogStore?.record({
             category: 'container', severity: 'warn', source: 'branch-delete', action: 'branch.delete.derived-db-drop-failed',
             message: `删分支丢弃分支独立库失败: ${derived.dbName} — ${(err as Error).message}（条目保留为孤儿，可在数据台账重试）`,
