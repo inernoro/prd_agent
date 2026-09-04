@@ -384,10 +384,7 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
 
         var body = bodyMatch.Groups[1].Value;
         var activeMarkup = StripInertMarkup(body);
-        var hasKnownMount = Regex.IsMatch(
-            activeMarkup,
-            @"\bid\s*=\s*(?:""(?:root|app|__next)""|'(?:root|app|__next)'|(?:root|app|__next)\b)",
-            RegexOptions.IgnoreCase);
+        var hasKnownMount = ContainsKnownMountNode(activeMarkup);
         var hasModuleScript = Regex.IsMatch(
             html,
             @"<script\b[^>]*\btype\s*=\s*(?:""module""|'module'|module\b)",
@@ -395,6 +392,71 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         var visibleBodyText = ExtractStaticMarkupText(body);
 
         return hasKnownMount && hasModuleScript && string.IsNullOrWhiteSpace(visibleBodyText);
+    }
+
+    private static bool ContainsKnownMountNode(string html)
+    {
+        var index = 0;
+        while (index < html.Length)
+        {
+            var tagStart = html.IndexOf('<', index);
+            if (tagStart < 0) return false;
+
+            var cursor = tagStart + 1;
+            if (cursor >= html.Length || html[cursor] is '/' or '!' or '?')
+            {
+                index = cursor;
+                continue;
+            }
+
+            while (cursor < html.Length && !char.IsWhiteSpace(html[cursor]) && html[cursor] is not '>' and not '/')
+                cursor++;
+
+            while (cursor < html.Length)
+            {
+                while (cursor < html.Length && char.IsWhiteSpace(html[cursor])) cursor++;
+                if (cursor >= html.Length || html[cursor] == '>') break;
+                if (html[cursor] == '/')
+                {
+                    cursor++;
+                    continue;
+                }
+
+                var nameStart = cursor;
+                while (cursor < html.Length && !char.IsWhiteSpace(html[cursor]) && html[cursor] is not '=' and not '>' and not '/')
+                    cursor++;
+                var attributeName = html[nameStart..cursor];
+
+                while (cursor < html.Length && char.IsWhiteSpace(html[cursor])) cursor++;
+                if (cursor >= html.Length || html[cursor] != '=') continue;
+                cursor++;
+                while (cursor < html.Length && char.IsWhiteSpace(html[cursor])) cursor++;
+
+                var quote = cursor < html.Length && html[cursor] is '"' or '\'' ? html[cursor++] : '\0';
+                var valueStart = cursor;
+                if (quote == '\0')
+                {
+                    while (cursor < html.Length && !char.IsWhiteSpace(html[cursor]) && html[cursor] is not '>' and not '/') cursor++;
+                }
+                else
+                {
+                    while (cursor < html.Length && html[cursor] != quote) cursor++;
+                }
+
+                var attributeValue = System.Net.WebUtility.HtmlDecode(html[valueStart..cursor]);
+                if (quote != '\0' && cursor < html.Length) cursor++;
+
+                if (attributeName.Equals("id", StringComparison.OrdinalIgnoreCase) &&
+                    (attributeValue.Equals("root", StringComparison.OrdinalIgnoreCase) ||
+                     attributeValue.Equals("app", StringComparison.OrdinalIgnoreCase) ||
+                     attributeValue.Equals("__next", StringComparison.OrdinalIgnoreCase)))
+                    return true;
+            }
+
+            index = cursor + 1;
+        }
+
+        return false;
     }
 
     private static string ExtractHumanReadableScriptText(string html)

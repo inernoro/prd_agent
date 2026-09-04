@@ -218,6 +218,22 @@ public class SiteContentSnapshotServiceTests
     }
 
     [Fact]
+    public void 非Id属性中的挂载名称_不能触发脚本文案提取()
+    {
+        const string html = """
+            <!doctype html><html><body>
+              <div data-id="root" title="id='app'"></div>
+              <script type="module">const page = { children: "管理员内部错误" };</script>
+            </body></html>
+            """;
+
+        var text = SiteContentSnapshotService.HtmlToPlainText(html);
+
+        Assert.True(string.IsNullOrWhiteSpace(text));
+        Assert.DoesNotContain("管理员内部错误", text);
+    }
+
+    [Fact]
     public void 客户端壳子_只读Module中的React文本节点()
     {
         const string html = """
