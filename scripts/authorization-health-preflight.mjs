@@ -18,6 +18,11 @@ export function classifyPreflightBlockers(blockers) {
   };
 }
 
+export function retainRunnerFailure(blockers, exitStatus) {
+  if (exitStatus === 0 || blockers.length > 0) return blockers;
+  return ['授权预检运行器异常退出，未返回可分类阻断；请检查运行器日志与本地配置权限'];
+}
+
 function main() {
   if (process.argv.slice(2).some((arg) => arg !== '--json')) {
     process.stderr.write('仅支持 --json；该命令只输出脱敏诊断结果。\n');
@@ -47,12 +52,13 @@ function main() {
       declaredState: item.state,
     }));
   const cdsHealthy = preflight.status === 0;
-  const blockers = String(preflight.stdout || '')
+  const parsedBlockers = String(preflight.stdout || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.startsWith('- '))
     .map((line) => line.slice(2))
     .slice(0, 20);
+  const blockers = retainRunnerFailure(parsedBlockers, preflight.status);
   const {
     gatewayIdentityBlockers,
     deploymentBlockers,

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
+import { hasEffectivePermission } from '@/lib/permissionAccess';
 import {
   getAuthorizationHealth,
   type AuthorizationHealthItem,
@@ -40,7 +41,8 @@ function HealthCard({ item }: { item: AuthorizationHealthItem }) {
   const Icon = style.icon;
   const permissions = useAuthStore((state) => state.permissions);
   const isRoot = useAuthStore((state) => state.isRoot);
-  const canOpenAction = !item.actionPermission || isRoot || permissions.includes(item.actionPermission);
+  const canOpenAction = !item.actionPermission
+    || hasEffectivePermission(permissions, item.actionPermission, isRoot);
   return (
     <article className="rounded-xl p-4 flex flex-col gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
       <div className="flex items-start gap-3">
