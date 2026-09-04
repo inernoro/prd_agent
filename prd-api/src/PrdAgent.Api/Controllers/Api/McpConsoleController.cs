@@ -357,7 +357,8 @@ public class McpConsoleController : ControllerBase
         isWrite = l.IsWrite,
         deduplicated = l.Deduplicated,
         imageCount = l.ImageCount,
-        httpStatus = l.HttpStatus,
+        // 原始状态码不发给这个页面：它是普通用户（access 权限）的页面，不是管理员诊断面。
+        // 结果由 status 说，失败原因由 errorMessage 用人话说；状态码留在 mcp_call_logs 里备查。
         durationMs = l.DurationMs,
         argumentsPreview = l.ArgumentsPreview,
         errorMessage = l.ErrorMessage,

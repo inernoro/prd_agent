@@ -464,11 +464,15 @@ public class DocumentStoreOpenApiController : ControllerBase
                     var latest = await _db.DocumentEntries
                         .Find(e => e.Id == entry.Id)
                         .FirstOrDefaultAsync(CancellationToken.None);
-                    if (latest != null)
-                        await _db.DocumentEntries.UpdateOneAsync(
-                            e => e.Id == entry.Id && e.UpdatedAt == latest.UpdatedAt,
-                            Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
-                            cancellationToken: CancellationToken.None);
+                    // 回读不到 = 这条在正文提交之后、收尾之前被删了（删条目，或者删了整个库）。
+                    // 上一版这里只是「没有标记可摘」就往下走，最后照样回成功 —— 调用方被告知
+                    // 文档建好了、额度也照扣，而那条根本不在了。收尾没做成就不能报成功：
+                    // 交给下面那条既有的「条目没了」出口去收尾（清派生 + 409）。
+                    if (latest == null) throw new EntryVanishedException(entry.Id);
+                    await _db.DocumentEntries.UpdateOneAsync(
+                        e => e.Id == entry.Id && e.UpdatedAt == latest.UpdatedAt,
+                        Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
+                        cancellationToken: CancellationToken.None);
                     summaryApplied = explicitSummary == null;
                 }
             }

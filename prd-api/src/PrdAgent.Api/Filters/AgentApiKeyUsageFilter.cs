@@ -288,10 +288,10 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
             // 网关那条路已经截了，这条没截的话就是同一个判据只长在一条路上：
             // 新上限只管住以后建的密钥，此前起了个几 MB 名字的老密钥每打一次直连就放大一次，
             // 而超过 Mongo 单文档上限的行插不进去、写审计又包了 try，于是额度扣了、记录没了。
-            KeyName = McpInputBounds.ForAudit(principal?.FindFirst("appName")?.Value, McpInputBounds.KeyNameChars),
+            KeyName = McpInputBounds.ForAudit(principal?.FindFirst("appName")?.Value, McpInputBounds.KeyNameChars) ?? string.Empty,
             // 记成工具名本身，接入台按工具聚合时直连与走网关的算同一件事；
             // 「怎么进来的」放进入参摘要，需要区分时看得见。
-            ToolName = McpInputBounds.ForAudit(toolName, McpInputBounds.ToolNameChars),
+            ToolName = McpInputBounds.ToolNameForAudit(toolName),
             Capability = capability,
             ArgumentsPreview = $"直连 {http.Request.Method} {http.Request.Path.Value}",
             Status = status,

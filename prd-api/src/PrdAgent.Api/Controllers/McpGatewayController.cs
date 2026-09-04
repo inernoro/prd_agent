@@ -274,7 +274,7 @@ public class McpGatewayController : ControllerBase
             KeyId = User.FindFirst("agentApiKeyId")?.Value ?? User.FindFirst("appId")?.Value ?? string.Empty,
             // 密钥名也是调用方给的、也没有上限，而它**每一次调用**都被整个抄进这一行 ——
             // 工具名那条至少还得先想个名字刷，这条是建一把名字几 MB 的密钥，此后每笔调用自动放大。
-            KeyName = McpInputBounds.ForAudit(User.FindFirst("appName")?.Value, McpInputBounds.KeyNameChars),
+            KeyName = McpInputBounds.ForAudit(User.FindFirst("appName")?.Value, McpInputBounds.KeyNameChars) ?? string.Empty,
             ToolName = name!,
             ArgumentsPreview = McpUsageService.SummarizeArguments(args),
             CreatedAt = startedAt,
@@ -404,21 +404,32 @@ public class McpGatewayController : ControllerBase
             // 接入台的调用记录就跟它实际干的事不符了（那一行的文案直接读 IsWrite / ImageCount）。
             // 「没产生新副作用、额度已退回」这件事由 Deduplicated 单独表达 —— 日额度的账本是
             // McpUsageCounter，从来不从这两个字段里加，所以不抹也不会重复计数。
-            var dedupArtifact = McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody);
-            log.ArtifactKind = dedupArtifact.Kind;
-            log.ArtifactId = dedupArtifact.Id;
-            log.ArtifactUrl = dedupArtifact.Url;
-            log.ArtifactTitle = dedupArtifact.Title;
+            ApplyArtifact(log, McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody));
         }
         else
         {
-            var artifact = McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody);
-            log.ArtifactKind = artifact.Kind;
-            log.ArtifactId = artifact.Id;
-            log.ArtifactUrl = artifact.Url;
-            log.ArtifactTitle = artifact.Title;
+            ApplyArtifact(log, McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody));
         }
         await _usage.LogAsync(log, ct);
+    }
+
+    /// <summary>
+    /// 把产物字段写进审计行 —— 唯一一处，且一律先截。
+    ///
+    /// 这三个值来自**下游的响应体**：登记的动态写入接口想回多长的 id / url / title 就回多长，
+    /// 而它们每一次调用都被整个抄进这一行。够大的一条会顶破 Mongo 单文档上限，而写审计包了 try，
+    /// 于是一次**已经扣过额度的成功调用**从审计里凭空消失；不到上限的也在白占存储与面板宽度。
+    ///
+    /// 原来去重与正常两条分支各抄一遍同样的四行赋值 —— 那是判据分裂的现成温床：
+    /// 截了一处、漏了另一处，谁也看不出来。收敛成一处，两条分支都从这儿走。
+    /// </summary>
+    private static void ApplyArtifact(McpCallLog log, McpArtifactExtractor.Artifact artifact)
+    {
+        // Kind 是我方枚举（不是调用方给的），原样留着。
+        log.ArtifactKind = artifact.Kind;
+        log.ArtifactId = McpInputBounds.ForAudit(artifact.Id, McpInputBounds.ArtifactIdChars);
+        log.ArtifactUrl = McpInputBounds.ForAudit(artifact.Url, McpInputBounds.ArtifactUrlChars);
+        log.ArtifactTitle = McpInputBounds.ForAudit(artifact.Title, McpInputBounds.ArtifactTitleChars);
     }
 
     /// <summary>

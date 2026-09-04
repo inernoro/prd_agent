@@ -29,6 +29,14 @@ internal static class McpInputBounds
     /// <summary>密钥名按字符数收。它是主人自己起的名字，进的也只是审计行与面板。</summary>
     internal const int KeyNameChars = 200;
 
+    /// <summary>
+    /// 产物字段按字符数收。这三个值来自**下游响应体**——登记的动态接口想回多长就回多长，
+    /// 而它们每一次调用都被抄进审计行。URL 给得宽些（真实链接可以很长），id 与标题按名字算。
+    /// </summary>
+    internal const int ArtifactIdChars = 200;
+    internal const int ArtifactTitleChars = 200;
+    internal const int ArtifactUrlChars = 2048;
+
     internal static int Bytes(string? value) => value == null ? 0 : Encoding.UTF8.GetByteCount(value);
 
     /// <summary>超限返回一句能照着改的说明；合规返回 null。</summary>
@@ -67,12 +75,13 @@ internal static class McpInputBounds
     /// 同样没有上限，而它**每一次调用**都被整个抄进那一行。抄两个一模一样的单行函数，
     /// 就是下一次判据分裂的起点。新增任何进审计行的调用方文本，都从这里走。
     /// </summary>
-    internal static string ForAudit(string? value, int maxChars)
-        => value is null ? string.Empty
+    /// <returns>null 原样返回 —— 「没有这个值」和「空字符串」在面板上不是一回事。</returns>
+    internal static string? ForAudit(string? value, int maxChars)
+        => value is null ? null
             : value.Length > maxChars ? value[..maxChars] + "…" : value;
 
     /// <summary>工具名的那一份（见上）。</summary>
-    internal static string ToolNameForAudit(string name) => ForAudit(name, ToolNameChars);
+    internal static string ToolNameForAudit(string name) => ForAudit(name, ToolNameChars)!;
 
     internal static string? Tags(List<string>? tags)
     {

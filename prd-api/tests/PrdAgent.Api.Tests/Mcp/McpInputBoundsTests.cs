@@ -303,6 +303,23 @@ public class McpInputBoundsTests
              || toolLine.Contains("ToolName = name", StringComparison.Ordinal))
                 .ShouldBeTrue($"{name}：工具名既没当场截、也不是网关那条已经截过的那个变量");
         }
+
+        // 产物字段来自**下游响应体**，同样无界，同样每一次调用都进这一行。
+        // 逐个赋值点枚举（不只看初始化器——它们是后面才补上的）：
+        // Kind 是我方枚举可以原样，其余三个必须先截。
+        foreach (var file in sites)
+        {
+            var src = McpSourceGuard.StripComments(File.ReadAllText(file));
+            foreach (var line in src.Split('\n'))
+            {
+                var t = line.Trim();
+                if (!t.StartsWith("log.Artifact", StringComparison.Ordinal)) continue;
+                if (t.StartsWith("log.ArtifactKind", StringComparison.Ordinal)) continue;
+                t.ShouldContain("ForAudit(",
+                    customMessage: $"{Path.GetFileName(file)} 有产物字段没截：够大的一条会顶破 Mongo 单文档上限，"
+                        + "而写审计包了 try —— 一次已经扣过额度的成功调用就此从审计里消失");
+            }
+        }
     }
 
     /// <summary>仓库内相对路径 → 绝对路径。</summary>

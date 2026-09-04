@@ -68,7 +68,6 @@ export interface McpCallLogDto {
   imageCount: number;
   /** 幂等命中：这次没产生新副作用，占的额度已退回 */
   deduplicated: boolean;
-  httpStatus: number;
   durationMs: number;
   argumentsPreview?: string | null;
   errorMessage?: string | null;

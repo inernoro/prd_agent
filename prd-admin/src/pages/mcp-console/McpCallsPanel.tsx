@@ -246,7 +246,9 @@ export function McpCallsPanel({
                       />
                     )}
                     <div className="flex flex-wrap gap-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      <span>HTTP {item.httpStatus || '—'}</span>
+                      {/* 不显示原始 HTTP 状态码：这是给普通用户（access 权限）看的页面，不是管理员诊断面。
+                          结果本身上面那枚状态徽章已经说了（成功 / 被挡下 / 失败），失败原因由 errorMessage
+                          用人话给出；状态码只对排障有意义，它留在服务端的 mcp_call_logs 里。 */}
                       <span>{item.isWrite ? '写入类动作' : '只读动作'}</span>
                       {item.imageCount > 0 && <span>{item.imageCount} 张图</span>}
                       {/* 这一行的动作分类照实写（这次要干的确实是写入/出图），额度没动的事实由这个标记说出来。
