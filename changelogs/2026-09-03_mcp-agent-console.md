@@ -166,3 +166,4 @@
 | fix | prd-api | 三处「注释/文档说的」与代码不符改正：幂等命中不抹动作分类、日额度不查 mcp_call_logs、生图入队那条记录仍然没有「打开」 |
 | test | prd-api | 幂等守卫从写死三个文件名改成枚举全部 *OpenApiController.cs——写死清单正是文学创作那处漏检的成因；另补绝对地址助手的行为测试与分享链写库的令牌守卫 |
 | fix | skill | 验收 harness 的 theme 字段改为实测（量真实底色亮度），不再记调用方传进来的意图——那次 20 张暗色图被整批记成 light 就是这么来的 |
+| chore | prd-api | 重跑 bundle-official-skills 同步 official-skills.generated.json：验收技能的 harness 改过，而它的全文内嵌在这份生成物里，不同步 CI 的「生成物新鲜度」会红 |
