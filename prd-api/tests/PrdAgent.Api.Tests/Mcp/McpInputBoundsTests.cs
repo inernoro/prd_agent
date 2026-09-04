@@ -232,4 +232,41 @@ public class McpInputBoundsTests
                     "省略 content 会被当成空串，一次拼错的请求就把正文擦了。");
         }
     }
+
+    /// <summary>
+    /// 工具名进审计之前必须先截。
+    ///
+    /// 认不出来的工具名照样要写一行审计（用户得看得见「有人拿这把密钥在刷不存在的工具」），
+    /// 而那个名字同时进 ToolName 和拒绝语。原样带着的话，拿合法密钥刷几 MB 的工具名，就能
+    /// 按每分钟的速率把审计集合撑爆；大到超过 Mongo 单文档上限时那行还插不进去，而写审计包了 try，
+    /// 连失败都没有声音 —— 一条不出声的坏路，正是最难被发现的那种。
+    /// </summary>
+    [Fact]
+    public void 工具名进审计之前必须先截()
+    {
+        var huge = new string('x', 5_000_000);
+        var bounded = McpInputBounds.ToolNameForAudit(huge);
+        bounded.Length.ShouldBeLessThanOrEqualTo(McpInputBounds.ToolNameChars + 1,
+            "几 MB 的工具名会被复制进 ToolName 与拒绝语，再一条条堆进审计集合");
+        // 真实工具名原样保留 —— 截断不能让「他刚才想调什么」变得看不出来。
+        McpInputBounds.ToolNameForAudit("map_literary_write_content")
+            .ShouldBe("map_literary_write_content");
+    }
+
+    /// <summary>
+    /// 而且必须截在**认工具之前**：认出来之后再截，认不出来的那条路（正是无界名字唯一能走的路）
+    /// 就绕过了它。这条只能盯源码——判据的位置本身就是判据。
+    /// </summary>
+    [Fact]
+    public void 截的位置必须在认工具之前()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/McpGatewayController.cs"));
+        var bound = src.IndexOf("McpInputBounds.ToolNameForAudit(", StringComparison.Ordinal);
+        bound.ShouldBeGreaterThanOrEqualTo(0, "网关没有截工具名");
+        var logged = src.IndexOf("ToolName = ", StringComparison.Ordinal);
+        logged.ShouldBeGreaterThan(bound, "先建审计行再截，等于没截");
+        var resolved = src.IndexOf("McpBuiltinTools.All.FirstOrDefault", StringComparison.Ordinal);
+        resolved.ShouldBeGreaterThan(bound, "认出工具之后才截的话，认不出来的那条路绕过它");
+    }
 }

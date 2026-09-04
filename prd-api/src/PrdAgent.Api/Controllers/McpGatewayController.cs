@@ -257,6 +257,10 @@ public class McpGatewayController : ControllerBase
         var args = prms?["arguments"] as JsonObject ?? new JsonObject();
         if (string.IsNullOrWhiteSpace(name))
             return RpcError(id, -32602, "Missing tool name");
+        // 认出工具之前先截。下面认不出来的那条路会照样写一行审计，而这个名字同时进 ToolName
+        // 和拒绝语 —— 原样带着，拿合法密钥刷几 MB 的工具名就能按每分钟的速率把审计集合撑爆，
+        // 大到超过 Mongo 单文档上限时那行还插不进去，且写审计包了 try，连失败都没有声音。
+        name = McpInputBounds.ToolNameForAudit(name!);
 
         var scopes = OwnedScopes();
         var boundUserId = User.FindFirst("boundUserId")?.Value;

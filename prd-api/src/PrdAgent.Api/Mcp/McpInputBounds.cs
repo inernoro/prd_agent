@@ -23,6 +23,9 @@ internal static class McpInputBounds
     internal const int TagBytes = 128;
     internal const int TagCount = 32;
 
+    /// <summary>工具名按字符数收 —— 它不落进业务字段，只进审计行与回给调用方的那句话。</summary>
+    internal const int ToolNameChars = 200;
+
     internal static int Bytes(string? value) => value == null ? 0 : Encoding.UTF8.GetByteCount(value);
 
     /// <summary>超限返回一句能照着改的说明；合规返回 null。</summary>
@@ -45,6 +48,20 @@ internal static class McpInputBounds
         => content is null
             ? "content 必填。要把正文清空，请显式传 content: \"\"（省略这个字段不等于清空）。"
             : null;
+
+    /// <summary>
+    /// 认出工具**之前**先把调用方给的工具名截住 —— 唯一判定源。
+    ///
+    /// 这个名字不需要是真工具：认不出来的那条路会照样写一行审计（用户得看得见「有人拿这把
+    /// 密钥在刷不存在的工具」），而它同时进 ToolName 和拒绝语。原样带着的话，一个几 MB 的
+    /// 名字会被复制进两处、按每分钟的速率一条条堆进 mcp_call_logs；大到超过 Mongo 单文档上限时，
+    /// 那行审计插不进去 —— 而写审计是包了 try 的，于是**连失败都没有声音**。
+    ///
+    /// 截而不是拒：拒得越早，越会把「有人在刷」这件事从审计里一起抹掉。真实工具名 30 字上下，
+    /// 200 字之后的部分对判断「他刚才想调什么」没有任何贡献。
+    /// </summary>
+    internal static string ToolNameForAudit(string name)
+        => name.Length > ToolNameChars ? name[..ToolNameChars] + "…" : name;
 
     internal static string? Tags(List<string>? tags)
     {

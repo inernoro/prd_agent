@@ -189,6 +189,25 @@ public class McpArgumentRedactionTests
         McpUsageService.IsSensitiveArgumentName(name).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// 把 password 藏在第 129 个字符之后，照样得隐。
+    ///
+    /// 这是我自己上一轮加的那道键名上限长出来的洞：判据拿**截断后**的前缀去比，
+    /// 于是「前 128 字无辜、后缀才是凭据名」正好绕过隐去（形状 6：判据读的不是它要判的那一份）。
+    /// 现在超长的键一律按敏感处理 —— 正常参数名没有超过 128 字的。
+    /// </summary>
+    [Fact]
+    public void 凭据名藏在截断点之后_照样要隐()
+    {
+        var innocuous = new string('a', 200);
+        McpUsageService.IsSensitiveArgumentName(innocuous + "password").ShouldBeTrue(
+            "把 password 挪到截断点之后就能让它的值原样落库并显示在面板上");
+        // 连超长但完全无辜的键也一并隐掉：宁可多隐，漏隐一个凭据是不可逆的。
+        McpUsageService.IsSensitiveArgumentName(innocuous).ShouldBeTrue();
+        // 边界内的照旧按名字判，摘要不能因此变得看不懂。
+        McpUsageService.IsSensitiveArgumentName(new string('a', 128)).ShouldBeFalse();
+    }
+
     [Fact]
     public void 摘要里凭据的值与长度都不透出()
     {

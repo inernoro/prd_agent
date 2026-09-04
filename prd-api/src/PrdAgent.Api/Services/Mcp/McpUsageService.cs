@@ -454,16 +454,22 @@ public sealed class McpUsageService
     /// <summary>
     /// 参数名看着像凭据吗（归一化后按包含判定）。
     ///
-    /// 先截再归一：JSON 的**键名**同样是调用方给的、同样无界。不截的话，一个几 MB 的键
-    /// 会被 `Replace` 复制两遍、`ToLowerInvariant` 再复制一遍，随后还要插进摘要文本里，
-    /// 最后才被 600 字的总长截掉 —— 而摘要构造在限流之前。上一轮我截了值，没截键：
-    /// 同一个杠杆换个位置照旧成立。真实的敏感键名都很短，截到 128 不影响判定。
+    /// JSON 的**键名**同样是调用方给的、同样无界：不加限制的话，一个几 MB 的键会被
+    /// `Replace` 复制两遍、`ToLowerInvariant` 再复制一遍，随后还要插进摘要文本里，
+    /// 最后才被 600 字的总长截掉 —— 而摘要构造在限流之前。
+    ///
+    /// 但**不能拿截断后的前缀去判**：那样「把 password 藏在第 129 个字符之后」就正好绕过隐去，
+    /// 我加的那道上限自己变成了旁路（形状 6：判据读的不是它要判的那一份）。扫全长又得在无界
+    /// 字符串上跑一遍归一化，那恰恰是这道上限要挡的杠杆。
+    ///
+    /// 所以超长的键一律按敏感处理：正常参数名没有超过 128 字的，隐掉它的值不影响这块面板可读，
+    /// 而漏隐一个凭据是不可逆的。摘要里仍然看得到那个键（截断后的），只是值不给。
     /// </summary>
     internal static bool IsSensitiveArgumentName(string name)
     {
         if (string.IsNullOrEmpty(name)) return false;
-        var bounded = BoundName(name);
-        var normalized = bounded.Replace("-", string.Empty).Replace("_", string.Empty).ToLowerInvariant();
+        if (name.Length > MaxNameChars) return true;
+        var normalized = name.Replace("-", string.Empty).Replace("_", string.Empty).ToLowerInvariant();
         return SensitiveArgumentNeedles.Any(needle => normalized.Contains(needle));
     }
 
