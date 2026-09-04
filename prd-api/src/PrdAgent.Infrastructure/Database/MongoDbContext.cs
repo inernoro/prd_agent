@@ -1630,6 +1630,9 @@ public class MongoDbContext
                 .Ascending(x => x.Status)
                 .Ascending(x => x.UpdatedAt),
             new CreateIndexOptions { Name = "idx_hosted_site_optimization_status_updated" }));
+        HostedSiteOptimizationSessions.Indexes.CreateOne(new CreateIndexModel<HostedSiteOptimizationSession>(
+            Builders<HostedSiteOptimizationSession>.IndexKeys.Ascending(x => x.ExpiresAt),
+            new CreateIndexOptions { Name = "idx_hosted_site_optimization_expiry" }));
         // 不为优化会话创建 TTL：记录是对象存储清理账本，只能由业务清理器在对象删除成功后移除。
 
         // WebPageShareLinks：按 Token 唯一

@@ -335,7 +335,8 @@ public class HostedSiteService : IHostedSiteService
         byte[] fileBytes, string fileName,
         string? wrappedAssetType = null,
         CancellationToken ct = default,
-        string? uploadId = null)
+        string? uploadId = null,
+        string? reuploadRef = null)
     {
         // 角色门控：editor / owner / 站点创建者可重传内容；viewer 与非成员一律拒绝
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
@@ -401,6 +402,8 @@ public class HostedSiteService : IHostedSiteService
         // - 用户把 HTML 重传覆盖原 PDF 包装站，应清空 marker，避免前端继续渲染 PDF 占位
         var normalizedType = string.IsNullOrWhiteSpace(wrappedAssetType)
             ? null : wrappedAssetType.Trim().ToLowerInvariant();
+        var normalizedReuploadRef = string.IsNullOrWhiteSpace(reuploadRef)
+            ? null : reuploadRef.Trim();
 
         var update = Builders<HostedSite>.Update
             .Set(x => x.EntryFile, entryFile)
@@ -408,6 +411,7 @@ public class HostedSiteService : IHostedSiteService
             .Set(x => x.Files, siteFiles)
             .Set(x => x.TotalSize, totalSize)
             .Set(x => x.WrappedAssetType, normalizedType)
+            .Set(x => x.LastReuploadRef, normalizedReuploadRef)
             .Set(x => x.UpdatedAt, now)
             .Set(x => x.ContentVersion, now)
             .Set(x => x.SlideNavCompatVersion, SlideNavVersion) // 重传内容已注入当前版垫片

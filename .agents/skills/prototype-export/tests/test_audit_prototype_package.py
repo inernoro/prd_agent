@@ -39,6 +39,18 @@ class AuditPrototypePackageTests(unittest.TestCase):
             self.assertEqual(2, report["localReferenceCount"])
             self.assertEqual([], report["missingLocalReferences"])
 
+    def test_first_html_fallback_matches_hosting_entry_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "slides.zip"
+            make_zip(source, {
+                "slides.html": b"<main>slides</main>",
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertTrue(report["strictReady"])
+            self.assertEqual("slides.html", report["preferredEntry"])
+
     def test_node_modules_and_external_cdn_trigger_optimization(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.zip"

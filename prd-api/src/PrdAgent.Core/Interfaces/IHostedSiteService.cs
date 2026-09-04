@@ -46,7 +46,8 @@ public interface IHostedSiteService
         byte[] fileBytes, string fileName,
         string? wrappedAssetType = null,
         CancellationToken ct = default,
-        string? uploadId = null);
+        string? uploadId = null,
+        string? reuploadRef = null);
 
     /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
     Task<int> BackfillPdfWrapperMarkersAsync(CancellationToken ct = default);

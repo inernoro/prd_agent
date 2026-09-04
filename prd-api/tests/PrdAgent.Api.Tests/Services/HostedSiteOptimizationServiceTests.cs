@@ -410,10 +410,24 @@ public class HostedSiteOptimizationServiceTests
 
         catalog.ShouldContain("idx_hosted_site_optimization_owner_expiry");
         catalog.ShouldContain("idx_hosted_site_optimization_status_updated");
+        catalog.ShouldContain("idx_hosted_site_optimization_expiry");
         catalog.ShouldContain("collection.dropIndex(index.name)");
         catalog.ShouldNotContain("ttl_hosted_site_optimization_expiry");
         catalog.ShouldNotContain("expireAfterSeconds: 86400");
         context.ShouldNotContain("ttl_hosted_site_optimization_expiry");
+    }
+
+    [Fact]
+    public void ReuploadRecovery_PersistsAndUsesOptimizationSessionMarker()
+    {
+        var optimizer = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteOptimizationService.cs"));
+        var hostedSites = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs"));
+
+        optimizer.ShouldContain("reuploadRef: session.Id");
+        optimizer.ShouldContain("x.LastReuploadRef == session.Id");
+        hostedSites.ShouldContain(".Set(x => x.LastReuploadRef, normalizedReuploadRef)");
     }
 
     [Fact]

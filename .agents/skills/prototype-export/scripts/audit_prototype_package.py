@@ -239,14 +239,25 @@ def audit_zip(
             if name.casefold().endswith(".map"):
                 source_map_entries += 1
 
-        entry_candidates = sorted(
+        entry_candidates = [
             name for _, name in files
-            if PurePosixPath(name).name.casefold() in {"index.html", "index.htm"}
+            if PurePosixPath(name).suffix.casefold() in {".html", ".htm"}
+        ]
+        logical_entries = [
+            (name, name[len(root_prefix):] if root_prefix and name.startswith(root_prefix) else name)
+            for name in entry_candidates
+        ]
+        preferred_entry = next(
+            (name for name, logical in logical_entries if logical.casefold() == "index.html"),
+            None,
         )
-        preferred_entry = None
-        if entry_candidates:
-            root_indexes = [name for name in entry_candidates if name.count("/") <= (1 if root_prefix else 0)]
-            preferred_entry = (root_indexes or entry_candidates)[0]
+        if preferred_entry is None:
+            preferred_entry = next(
+                (name for name, logical in logical_entries if logical.casefold() == "index.htm"),
+                None,
+            )
+        if preferred_entry is None and entry_candidates:
+            preferred_entry = entry_candidates[0]
 
         external_references = 0
         local_references = 0
@@ -317,7 +328,7 @@ def audit_zip(
         if case_collisions:
             blockers.append("包含大小写冲突路径")
         if not preferred_entry:
-            blockers.append("缺少 index.html 或 index.htm")
+            blockers.append("缺少 HTML 入口文件")
         if missing_local_references:
             blockers.append("入口引用的本地资源缺失")
         if unscanned_runtime_paths:

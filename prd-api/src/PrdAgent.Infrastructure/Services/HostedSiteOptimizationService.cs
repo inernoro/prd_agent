@@ -361,7 +361,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     session.OwnerUserId,
                     sourceBytes,
                     session.SourceFileName,
-                    ct: CancellationToken.None);
+                    ct: CancellationToken.None,
+                    reuploadRef: session.Id);
                 var metadata = await _hostedSites.UpdateAsync(
                     saved.Id,
                     session.OwnerUserId,
@@ -733,7 +734,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                         userId,
                         zipBytes,
                         session.SourceFileName,
-                        ct: CancellationToken.None);
+                        ct: CancellationToken.None,
+                        reuploadRef: session.Id);
                     var metadata = await _hostedSites.UpdateAsync(
                         saved.Id,
                         userId,
@@ -945,17 +947,48 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         string userId,
         CancellationToken ct)
     {
-        if (!string.IsNullOrWhiteSpace(session.CompletedSiteId)
-            || !string.IsNullOrWhiteSpace(session.TargetSiteId)
-            || session.Status is not (HostedSiteOptimizationStatuses.Saving or HostedSiteOptimizationStatuses.Failed))
+        if (!string.IsNullOrWhiteSpace(session.CompletedSiteId))
             return null;
 
-        var persisted = await _db.HostedSites
-            .Find(x => x.OwnerUserId == userId
-                       && x.SourceType == "upload"
-                       && x.SourceRef == session.Id)
-            .SortByDescending(x => x.CreatedAt)
-            .FirstOrDefaultAsync(ct);
+        HostedSite? persisted;
+        if (string.IsNullOrWhiteSpace(session.TargetSiteId))
+        {
+            if (session.Status is not (HostedSiteOptimizationStatuses.Saving or HostedSiteOptimizationStatuses.Failed))
+                return null;
+            persisted = await _db.HostedSites
+                .Find(x => x.OwnerUserId == userId
+                           && x.SourceType == "upload"
+                           && x.SourceRef == session.Id)
+                .SortByDescending(x => x.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
+        else
+        {
+            if (session.Status is not (
+                    HostedSiteOptimizationStatuses.Saving
+                    or HostedSiteOptimizationStatuses.Failed
+                    or HostedSiteOptimizationStatuses.AwaitingDecision
+                    or HostedSiteOptimizationStatuses.PreviewReady))
+                return null;
+            var marker = await _db.HostedSites
+                .Find(x => x.Id == session.TargetSiteId && x.LastReuploadRef == session.Id)
+                .FirstOrDefaultAsync(ct);
+            if (marker == null) return null;
+            persisted = await _hostedSites.GetByIdAsync(marker.Id, userId, CancellationToken.None);
+            if (persisted != null)
+            {
+                persisted = await _hostedSites.UpdateAsync(
+                                persisted.Id,
+                                userId,
+                                session.Title,
+                                session.Description,
+                                session.Tags,
+                                session.Folder,
+                                coverImageUrl: null,
+                                ct: CancellationToken.None)
+                            ?? persisted;
+            }
+        }
         if (persisted == null) return null;
         if (!await PersistSavedCompletionAsync(session.Id, userId, persisted.Id))
             throw new InvalidOperationException("站点已保存，正在恢复任务状态，请稍后重试");

@@ -1172,6 +1172,11 @@ if (db.getCollectionInfos({ name: "hosted_site_optimization_sessions" }).length 
     })
 }
 
+db.hosted_site_optimization_sessions.createIndex(
+  { "ExpiresAt": 1 },
+  { name: "idx_hosted_site_optimization_expiry" }
+)
+
 // collection: document_store_share_links
 // 按 Token 唯一；按创建者或知识库倒序查询
 db.document_store_share_links.createIndex(
