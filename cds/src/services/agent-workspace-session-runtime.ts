@@ -80,6 +80,7 @@ export interface AgentWorkspaceSessionRuntimeOptions {
   capabilityCacheMs?: number;
   containerUid?: number;
   containerGid?: number;
+  autoPullImage?: boolean;
 }
 
 export interface AgentWorkspaceRuntimeCapability {
@@ -400,8 +401,12 @@ export class AgentWorkspaceSessionRuntime {
   private readonly capabilityCacheMs: number;
   private readonly containerUid: number;
   private readonly containerGid: number;
+  private readonly autoPullImage: boolean;
   private readonly handles = new Map<string, RuntimeHandle>();
   private capabilityCache: { expiresAt: number; value: AgentWorkspaceRuntimeCapability } | null = null;
+  private imagePreparation: Promise<void> | null = null;
+  private imagePreparationAttemptedAt = 0;
+  private imagePreparationError: string | null = null;
 
   constructor(
     private readonly shell: IShellExecutor,
@@ -415,6 +420,44 @@ export class AgentWorkspaceSessionRuntime {
     this.capabilityCacheMs = Math.max(0, options.capabilityCacheMs ?? 5000);
     this.containerUid = options.containerUid ?? 1001;
     this.containerGid = options.containerGid ?? 1001;
+    this.autoPullImage = options.autoPullImage ?? process.env.CDS_OPEN_DESIGN_AUTO_PULL !== '0';
+  }
+
+  async prepareImage(): Promise<void> {
+    if (!this.autoPullImage) return;
+    if (this.imagePreparation) return this.imagePreparation;
+    if (this.imagePreparationError && Date.now() - this.imagePreparationAttemptedAt < 60_000) return;
+    this.imagePreparationAttemptedAt = Date.now();
+    const preparation = (async () => {
+      const docker = await this.shell.exec("docker version --format '{{.Server.Version}}'", { timeout: 5000 });
+      if (docker.exitCode !== 0 || !docker.stdout.trim()) {
+        throw new Error('Docker daemon is unavailable');
+      }
+      const installed = await this.shell.exec(
+        `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
+        { timeout: 10_000 },
+      );
+      if (installed.exitCode === 0 && installed.stdout.trim()) return;
+      const pulled = await this.shell.exec(`docker pull ${shellQuote(this.image)}`, { timeout: 600_000 });
+      if (pulled.exitCode !== 0) throw new Error('runtime image pull failed');
+      const verified = await this.shell.exec(
+        `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
+        { timeout: 10_000 },
+      );
+      if (verified.exitCode !== 0 || !verified.stdout.trim()) {
+        throw new Error('runtime image is still unavailable after pull');
+      }
+    })()
+      .then(() => { this.imagePreparationError = null; })
+      .catch((error) => {
+        this.imagePreparationError = error instanceof Error ? error.message : 'runtime image preparation failed';
+      })
+      .finally(() => {
+        this.imagePreparation = null;
+        this.capabilityCache = null;
+      });
+    this.imagePreparation = preparation;
+    return preparation;
   }
 
   async capability(force = false): Promise<AgentWorkspaceRuntimeCapability> {
@@ -437,10 +480,15 @@ export class AgentWorkspaceSessionRuntime {
           { timeout: 10_000 },
         );
         if (image.exitCode !== 0 || !image.stdout.trim()) {
+          if (this.autoPullImage) void this.prepareImage();
           value = {
             available: false,
             resourcePolicyEnforcedPerSession: false,
-            reason: `OpenDesign image ${this.image} is not installed on this CDS node`,
+            reason: !this.autoPullImage
+              ? `OpenDesign image ${this.image} is not installed on this CDS node`
+              : this.imagePreparationError
+                ? `OpenDesign image ${this.image} could not be prepared on this CDS node`
+                : `OpenDesign image ${this.image} is being prepared on this CDS node`,
           };
         } else {
           const agentCli = await this.shell.exec([

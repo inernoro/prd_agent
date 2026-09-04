@@ -416,7 +416,7 @@ describe('Remote hosts project instances route', () => {
       healthy: false,
       selectable: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime:od-0.21.1-opencode-1.18.28 is not installed on this CDS node',
+      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime:od-0.21.1-opencode-1.18.28 is being prepared on this CDS node',
     });
   });
 

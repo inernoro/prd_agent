@@ -297,12 +297,42 @@ describe('AgentWorkspaceSessionRuntime', () => {
         throw new Error(`unexpected command: ${command}`);
       },
     };
-    const runtime = new AgentWorkspaceSessionRuntime(shell, { capabilityCacheMs: 0 });
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { capabilityCacheMs: 0, autoPullImage: false });
 
     await expect(runtime.capability()).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
       reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime:od-0.21.1-opencode-1.18.28 is not installed on this CDS node',
+    });
+  });
+
+  it('prepares the pinned runtime image in the background before capability becomes selectable', async () => {
+    let installed = false;
+    const calls: string[] = [];
+    const shell: IShellExecutor = {
+      async exec(command: string): Promise<ExecResult> {
+        calls.push(command);
+        if (command.startsWith('docker version')) return result('27.0.0\n');
+        if (command.startsWith('docker image inspect')) {
+          return installed ? result('sha256:image\n') : result('', 'No such image', 1);
+        }
+        if (command.startsWith('docker pull ')) {
+          installed = true;
+          return result('pulled\n');
+        }
+        if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { capabilityCacheMs: 0 });
+
+    await runtime.prepareImage();
+
+    expect(calls.some((command) => command.startsWith('docker pull '))).toBe(true);
+    await expect(runtime.capability()).resolves.toEqual({
+      available: true,
+      resourcePolicyEnforcedPerSession: true,
+      reason: null,
     });
   });
 

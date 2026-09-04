@@ -82,6 +82,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   const router = Router();
   const agentWorkspaceSessionRuntime = deps.agentWorkspaceSessionRuntime
     ?? (deps.shell ? new AgentWorkspaceSessionRuntime(deps.shell) : undefined);
+  if (agentWorkspaceSessionRuntime && !deps.agentWorkspaceSessionRuntime) {
+    void agentWorkspaceSessionRuntime.prepareImage();
+  }
   const instanceDiscoveryCache = new Map<string, {
     expiresAt: number;
     payload: { projectId: string } & ProjectRuntimeInstancesResponse;
