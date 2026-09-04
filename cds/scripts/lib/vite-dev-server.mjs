@@ -17,8 +17,16 @@ const WEB_DIR = path.resolve(HERE, '../../web');
  */
 export async function startViteDevServer({ timeoutMs = 30000 } = {}) {
   const port = 5100 + Math.floor(Math.random() * 400);
+  /*
+   * detached 是为了让 stop() 能收掉整棵进程树。
+   *
+   * `pnpm exec vite` 自己是个包装进程，真正的 vite 是它的孙子；只 SIGTERM
+   * 这个 child，vite 会活下来继续占着端口，而端口是 strictPort——下一次跑
+   * 直接起不来。实测过：只把 launch 挪进 try（Codex P2 指出的那一层）之后
+   * 仍然残留两个进程，必须连进程组一起收。
+   */
   const child = spawn('pnpm', ['exec', 'vite', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
-    cwd: WEB_DIR, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: WEB_DIR, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
   });
   const url = `http://127.0.0.1:${port}`;
   await new Promise((resolve, reject) => {
@@ -36,5 +44,13 @@ export async function startViteDevServer({ timeoutMs = 30000 } = {}) {
   });
   // dev server 的第一个请求要现编译，给它一点时间再开始量。
   await new Promise((r) => setTimeout(r, 1500));
-  return { url, stop: () => child.kill('SIGTERM') };
+    const stop = () => {
+    try {
+      // 负号 = 整个进程组；进程已退出时会抛 ESRCH，退回单进程 kill 即可。
+      process.kill(-child.pid, 'SIGTERM');
+    } catch {
+      try { child.kill('SIGTERM'); } catch { /* 已经没了 */ }
+    }
+  };
+  return { url, stop };
 }

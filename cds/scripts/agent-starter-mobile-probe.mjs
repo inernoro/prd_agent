@@ -183,13 +183,16 @@ async function main() {
   const explicitBase = process.argv[2];
   const server = explicitBase ? { url: explicitBase.replace(/\/+$/, ''), stop: () => {} } : await startViteDevServer();
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch({
-    args: ['--no-sandbox', '--no-proxy-server'],
-    executablePath: process.env.CDS_CHROMIUM_PATH || undefined,
-  });
 
+  // 浏览器起不来（缺二进制、缺依赖）时，上面那个 dev server 也必须被收掉，
+  // 否则端口一直被占——它是 strictPort，下一次跑会直接起不来（Codex P2）。
   const failures = [];
+  let browser = null;
   try {
+    browser = await chromium.launch({
+      args: ['--no-sandbox', '--no-proxy-server'],
+      executablePath: process.env.CDS_CHROMIUM_PATH || undefined,
+    });
     for (const vp of VIEWPORTS) {
       const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: 2 });
       const page = await ctx.newPage();
@@ -276,7 +279,7 @@ async function main() {
       await ctx.close();
     }
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
     server.stop();
   }
 

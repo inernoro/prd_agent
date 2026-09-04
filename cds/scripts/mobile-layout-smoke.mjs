@@ -447,8 +447,11 @@ async function main() {
     baseUrl = devServer.url;
     console.log(`离线模式：前端起在 ${baseUrl}，/api/* 走合成数据`);
   }
-  const browser = await chromium.launch({ args: ['--no-sandbox'], executablePath });
+  // 浏览器起不来（缺二进制、缺依赖）时，上面那个 dev server 也必须被收掉，
+  // 否则端口一直被占——它是 strictPort，下一次跑会直接起不来（Codex P2）。
+  let browser = null;
   try {
+    browser = await chromium.launch({ args: ['--no-sandbox'], executablePath });
     if (only !== 'task-schedule') {
       const probe = await browser.newPage();
       const project = await getFirstProject(probe);
@@ -461,7 +464,7 @@ async function main() {
       await checkTaskScheduleAction(browser, viewport);
     }
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
     if (devServer) devServer.stop();
   }
 

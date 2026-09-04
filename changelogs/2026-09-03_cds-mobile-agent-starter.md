@@ -12,6 +12,7 @@
 | test | cds | 分支子路由 fixture 逐条登记并锚定 catch-all——原来那条不带 $ 的前缀会吞掉 /logs /metrics /resources 等六个子路由，让「未登记路径」判据形同虚设 |
 | test | cds | 抽屉的内容锚点限定在抽屉容器内、且取抽屉独有的值（分支 previewSlug）——原来在整页 body 找分支名，那个串在抽屉背后的分支卡标题上也有，抽屉退化成空壳照样绿；容器找不到判失败，不静默放行 |
 | test | cds | 内容锚点改用各页自己响应里的值：project-settings 取环境变量键名、cds-settings 取自更新分支名、发布中心取 /api/releases/center 自己的数据，不再用共享项目名或页面硬编码标题 |
+| fix | cds | 探针跑失败时不再泄漏 dev server：浏览器启动挪进 cleanup guard，且 stop 改收整个进程组——只杀 `pnpm exec vite` 这个包装进程的话，真正的 vite 是孙进程会活下来占着 strictPort，下一次直接起不来 |
 | refactor | cds | 抽出 scripts/lib/vite-dev-server.mjs，两个布局探针共用一份 dev server 启动逻辑 |
 | ops | cds | cds.yml 补 Chromium 安装与窄屏可达性判据步骤 |
 | docs | cds | 台账记录实测出的三个判据盲区：内部容器溢出 / 卡片被压扁 / 被滚动祖先裁到视口外 |
