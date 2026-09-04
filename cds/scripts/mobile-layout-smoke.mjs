@@ -93,7 +93,11 @@ async function getFirstProject(page) {
 }
 
 async function checkLayout(page, label, anchor) {
-  const result = await page.evaluate(() => {
+  // 锚点可以只认某个容器里的文字：整页 body 上的同名文字（比如抽屉背后那张
+  // 分支卡的标题）会让「抽屉真的渲染出数据了」这件事无法被证明。
+  const anchorText = typeof anchor === 'string' ? anchor : anchor?.text;
+  const anchorWithin = typeof anchor === 'string' ? null : anchor?.within || null;
+  const result = await page.evaluate((scopeSelector) => {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const bodyText = document.body.innerText || '';
@@ -165,6 +169,7 @@ async function checkLayout(page, label, anchor) {
       });
     }
 
+    const scopeEl = scopeSelector ? document.querySelector(scopeSelector) : null;
     return {
       url: location.href,
       bodyText,
@@ -172,8 +177,10 @@ async function checkLayout(page, label, anchor) {
       overflow,
       squeezed: squeezed.slice(0, 10),
       covered: covered.slice(0, 10),
+      scopeFound: scopeSelector ? !!scopeEl : null,
+      scopeText: scopeEl ? (scopeEl.innerText || '') : '',
     };
-  });
+  }, anchorWithin);
 
   assertOk(result.textLength > 60, `${label}: page did not render enough text`, result);
   /*
@@ -183,12 +190,27 @@ async function checkLayout(page, label, anchor) {
    * 所以 fixture 过期、页面退化成空态时它照样绿，而冒烟量的是一个空布局
    * （Codex P2）。锚点把「量到的是有数据的那一版」这件事钉死。
    */
-  if (anchor) {
-    assertOk(
-      result.bodyText.includes(anchor),
-      `${label}: 页面上找不到内容锚点「${anchor}」——多半是 fixture 喂不动了，量到的是空页面`,
-      { textLength: result.textLength, head: result.bodyText.slice(0, 160) },
-    );
+  if (anchorText) {
+    if (anchorWithin) {
+      // 找不到容器本身就是回归（抽屉没开、类名改了），不能当「这次没法判」放行
+      // ——不会红的证据比没有证据更糟（predicate-and-wiring-discipline 形状 4b）。
+      assertOk(
+        result.scopeFound,
+        `${label}: 判据跑不起来——页面上找不到容器「${anchorWithin}」`,
+        { textLength: result.textLength },
+      );
+      assertOk(
+        result.scopeText.includes(anchorText),
+        `${label}: 容器「${anchorWithin}」里找不到内容锚点「${anchorText}」——多半是它的数据喂不动了，量到的是个空壳`,
+        { scopeTextLength: result.scopeText.trim().length, scopeHead: result.scopeText.slice(0, 160) },
+      );
+    } else {
+      assertOk(
+        result.bodyText.includes(anchorText),
+        `${label}: 页面上找不到内容锚点「${anchorText}」——多半是 fixture 喂不动了，量到的是空页面`,
+        { textLength: result.textLength, head: result.bodyText.slice(0, 160) },
+      );
+    }
   }
   assertOk(result.overflow <= 2, `${label}: horizontal overflow detected`, result);
   assertOk(result.squeezed.length === 0, `${label}: text squeezed into vertical layout`, result);
@@ -391,7 +413,19 @@ async function runViewport(browser, project, viewport) {
   const branchCard = page.locator('[aria-label^="打开 "][aria-label$=" 详情"]').first();
   await branchCard.click({ timeout: 10000 });
   await page.waitForTimeout(800);
-  await checkLayout(page, `${viewport.label}:branch-detail-drawer`, OFFLINE ? 'feature/alpha' : undefined);
+  /*
+   * 抽屉的锚点必须限定在抽屉内部，且取一个抽屉独有的值。
+   *
+   * 原来用整页 body 找 `feature/alpha`：那个串在抽屉背后那张分支卡的标题上
+   * 也有（实测文本节点归属 H3.cds-branch-name，不在抽屉里），于是抽屉退化成
+   * 空壳时锚点照样绿。`fixture-alpha` 是分支 fixture 的 previewSlug，实测只
+   * 在抽屉里渲染、抽屉外没有（Codex P2）。
+   */
+  await checkLayout(
+    page,
+    `${viewport.label}:branch-detail-drawer`,
+    OFFLINE ? { text: 'fixture-alpha', within: '.cds-branch-detail-drawer' } : undefined,
+  );
 
   const themeVisibleWhileDrawerOpen = await page.locator('.cds-theme-toggle').evaluate((el) => {
     const style = getComputedStyle(el);
