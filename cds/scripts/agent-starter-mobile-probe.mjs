@@ -9,14 +9,23 @@
  * 而整条祖先链上没有一个可滚容器。编译、类型、单测、源码守卫全都拦不住，
  * 只有真浏览器量得出来。
  *
- * 判据（每一步的主操作 = 这一步唯一的前进出口）：
- *   1. 硬判据 inViewport —— 不滚动就看得见。这就是「有没有下一步」本身。
- *   2. 兜底判据 reachable —— 万一 1 挂了，至少要能滚到，绝不允许「既看不见又滚不到」。
- * 两条都报，因为窄屏 CSS 里那条兜底 overflow-y:auto 会让 2 恒真——只看 2
- * 的话，高度链再断一次照样全绿（predicate-and-wiring-discipline 形状 4a）。
+ * 判据（每一步的主操作 = 这一步唯一的前进出口），四道，各挡一种失效形态：
+ *   1. inBox —— 矩形四边都在视口内。**两轴都查**：只查上下的话，出口被推过
+ *      左右边界或被内层容器横向裁掉时会误判为可见。
+ *   2. hitTested —— 那个坐标上最顶层的元素就是它自己，不是盖在上面的别人。
+ *   3. reachable —— 兜底：万一 1 挂了，至少要能滚到，绝不允许「既看不见又滚不到」。
+ *   4. 推进用真实指针点击（带 actionability 检查），不用合成 el.click()——
+ *      合成事件不管元素在哪、有没有被挡住，照样能把流程推下去。
  *
- * 红绿闭环：删掉 index.css 里 `[data-agent-starter-slot='true']` 那条选择器
- * （窄屏高度链的一环），四档视口的 step03 立刻在硬判据上变红。
+ * 为什么四道都要：每一道单独看都能被另一种形态绕过。窄屏 CSS 里那条兜底
+ * overflow-y:auto 让 3 恒真；只查上下的 1 拦不住横向出界；1 和 3 都拦不住遮挡；
+ * 而 2 拦不住「元素在视口里、没被挡，但整体不可点」的情况——那是 4 的活。
+ *
+ * 红绿闭环（每道都验过能红）：
+ *   删掉 index.css 里 `[data-agent-starter-slot='true']` 那条选择器 → step03 红（1）；
+ *   给出口加 translateX(-3000px) → 报 left=-2978 出界（1 的横向分量）；
+ *   给面板加一层 ::after 全屏遮罩 → 报「被别的元素盖住」（2）与点击超时（4）；
+ *   给前两步的卡片加 margin-top:1200px → step01/02 报既看不见也滚不到（3）。
  *
  * 用法：node scripts/agent-starter-mobile-probe.mjs [baseUrl]
  * 不给 baseUrl 就自己起一个 vite dev server（需要 cds/web 已装依赖）。
@@ -83,12 +92,32 @@ const LOCATE_EXIT = `(exit) => {
     .find((b) => rx.test(b.textContent)) || null;
 }`;
 
-const clickExit = (page, exit) => page.evaluate(([locateSrc, e]) => {
-  const el = eval(locateSrc)(e);
-  if (!el) return false;
-  el.click();
-  return true;
-}, [LOCATE_EXIT, exit]);
+/*
+ * 推进用**真实指针点击**，不用合成 el.click()。
+ *
+ * 合成 click 直接派发事件，不管元素在不在视口里、有没有被别的东西盖住——
+ * 于是「出口被推出屏幕或被浮层挡住」这种回归照样能往下走（Codex P2）。
+ * Playwright 的 click 带 actionability 检查（可见、稳定、能接收事件、未被遮挡），
+ * 点不到就超时报错，正是这里要的判据。
+ *
+ * 定位仍走 LOCATE_EXIT，量测与点击共用同一个找法。
+ */
+const clickExit = async (page, exit) => {
+  const handle = await page.evaluateHandle(([locateSrc, e]) => eval(locateSrc)(e), [LOCATE_EXIT, exit]);
+  const element = handle.asElement();
+  if (!element) {
+    await handle.dispose();
+    return { ok: false, reason: '页面上找不到这个出口' };
+  }
+  try {
+    await element.click({ timeout: 5000 });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: `真实指针点不到它（${String(err.message || err).split('\n')[0]}）` };
+  } finally {
+    await handle.dispose();
+  }
+};
 
 const measure = (page, exit, heading) => page.evaluate(([locateSrc, e, h]) => {
   const vh = window.innerHeight;
@@ -102,7 +131,30 @@ const measure = (page, exit, heading) => page.evaluate(([locateSrc, e, h]) => {
   if (!btn) return { onStep, overflowX, action: t, found: false };
 
   const before = btn.getBoundingClientRect();
-  const inViewport = before.height > 0 && before.top >= 0 && before.bottom <= vh;
+  /*
+   * 两轴都要查，还要做命中测试。
+   *
+   * 只查 top/bottom 的话，出口被推过左右边界、被内层滚动容器横向裁掉、或者被
+   * 别的元素盖住时，判据照样判它在视口里（Codex P2）。文档级的横向溢出检查
+   * 也照不到内层容器里发生的裁剪。
+   */
+  const centerX = before.left + before.width / 2;
+  const centerY = before.top + before.height / 2;
+  const inBox = before.height > 0 && before.width > 0
+    && before.top >= 0 && before.bottom <= vh
+    && before.left >= 0 && before.right <= vw;
+  const topMost = inBox ? document.elementFromPoint(centerX, centerY) : null;
+  /*
+   * 命中测试：这个坐标上最顶层的元素必须是它自己，或它的后代（按钮里的
+   * 图标、文字节点都算）。
+   *
+   * 这里**不能**放行「topMost 是 btn 的祖先」——祖先能出现在最顶层，恰恰
+   * 说明它身上有东西盖住了按钮（伪元素遮罩、更高 z-index 的定位层），那正是
+   * 要抓的遮挡。第一版把祖先也算作通过，结果拿 ::after 全屏遮罩做红绿闭环时
+   * 这条判据判成绿，只有真实指针点击拦下来了。
+   */
+  const hitTested = Boolean(topMost) && (topMost === btn || btn.contains(topMost));
+  const inViewport = inBox && hitTested;
   // 兜底：有没有任何祖先能把它滚进来。滚完要还原，免得污染后续步骤的量测。
   const scrollers = [];
   for (let a = btn.parentElement; a && a !== document.documentElement; a = a.parentElement) {
@@ -113,10 +165,15 @@ const measure = (page, exit, heading) => page.evaluate(([locateSrc, e, h]) => {
   }
   btn.scrollIntoView({ block: 'nearest' });
   const after = btn.getBoundingClientRect();
-  const reachable = after.height > 0 && after.top >= 0 && after.bottom <= vh;
+  const reachable = after.height > 0 && after.width > 0
+    && after.top >= 0 && after.bottom <= vh
+    && after.left >= 0 && after.right <= vw;
   return {
     onStep, overflowX, action: t, found: true,
     top: Math.round(before.top), bottom: Math.round(before.bottom),
+    left: Math.round(before.left), right: Math.round(before.right),
+    inBox, hitTested,
+    coveredBy: hitTested ? null : (topMost ? (topMost.className || topMost.tagName || '').toString().slice(0, 40) : '视口外'),
     inViewport, reachable,
     scrollers: scrollers.map((s) => s.el),
   };
@@ -145,8 +202,9 @@ async function main() {
         if (!m.onStep) problems.push(`没停在这一步（找不到标题「${step.heading}」）`);
         if (m.overflowX > 2) problems.push(`横向溢出 ${m.overflowX}px`);
         if (!m.found) problems.push(`找不到出口「${m.action}」`);
-        else if (!m.reachable) problems.push(`出口「${m.action}」既看不见也滚不到（top=${m.top}，视口高 ${vp.height}）`);
-        else if (!m.inViewport) problems.push(`出口「${m.action}」不在视口里，要先滚动才看得见（top=${m.top}，视口高 ${vp.height}）`);
+        else if (m.inBox && !m.hitTested) problems.push(`出口「${m.action}」被别的元素盖住了（那个坐标上最顶层的是 ${m.coveredBy}）`);
+        else if (!m.reachable) problems.push(`出口「${m.action}」既看不见也滚不到（rect top=${m.top} left=${m.left} right=${m.right}，视口 ${vp.width}x${vp.height}）`);
+        else if (!m.inViewport) problems.push(`出口「${m.action}」不在视口里，要先滚动才看得见（rect top=${m.top} left=${m.left} right=${m.right}，视口 ${vp.width}x${vp.height}）`);
 
         const label = `${vp.label} step${step.id}`;
         if (problems.length) {
@@ -158,9 +216,9 @@ async function main() {
         // 量过之后才点：DOM click 不管元素在不在视口里，先点后量等于放行不可达的出口。
         if (!step.last) {
           const advanced = await clickExit(page, step.exit);
-          if (!advanced) {
-            failures.push(`${label}: 点不动，走不到下一步`);
-            console.log(`FAIL ${label} 点不动，走不到下一步`);
+          if (!advanced.ok) {
+            failures.push(`${label}: 走不到下一步——${advanced.reason}`);
+            console.log(`FAIL ${label} 走不到下一步——${advanced.reason}`);
             break;
           }
           await page.waitForTimeout(600);
