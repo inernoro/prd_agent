@@ -186,4 +186,53 @@ public class McpDownstreamSafetyTests
         body.ShouldContain("tools = Array.Empty<VisibleTool>()",
             customMessage: "钥匙用不了时还回了工具清单：那串名字对方一个也调不动");
     }
+
+    // ── 带条件的语句，写完要看结果 ────────────────────────────────
+
+    /// <summary>
+    /// 摘标记的那几条语句都带了条件（MineFilter），但「带条件」和「看结果」是两件事：
+    /// 写了一条只在特定条件下才生效的更新，却不看它到底生没生效，那个条件就只是装饰。
+    ///
+    /// 收尾兜底那一处尤其致命：匹配为 0 意味着标记还挂在库里，而接口照样回成功 ——
+    /// 之后同一个 clientRequestId 的每一次重试都会撞 ENTRY_WRITE_IN_PROGRESS，
+    /// 这条记录再没人收得了尾。
+    /// </summary>
+    [Fact]
+    public void 兜底摘标记要看有没有摘掉()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
+        var tail = McpSourceGuard.Slice(src, "if (!IsMyGeneration(latest, generation))", "summaryApplied = explicitSummary == null;");
+        tail.ShouldContain("cleared.MatchedCount == 0",
+            customMessage: "兜底那次摘标记的结果没看：匹配为 0 时标记还挂着，接口却回成功，同键重试从此永远撞 409");
+        tail.ShouldContain("ENTRY_CHANGED_SINCE_CREATE",
+            customMessage: "重试仍摘不掉时要如实回冲突，不能原地打转、更不能谎报成功");
+    }
+
+    // ── 审计行的时刻 ──────────────────────────────────────────────
+
+    /// <summary>
+    /// 直连那条路的审计行必须记「发起时刻」，不是「完成时刻」。
+    ///
+    /// 额度是在调用开始时扣的，审计行若记完成时刻，跨 UTC 午夜的那一笔就会分到两天：
+    /// 额度算在前一天的计数器上，记录落在新的一天，接入台按天聚合时「今天调了几次」
+    /// 与「今天写了几次 / 出了几张图」对不上——两个数都不对，用户无从判断哪个是真的。
+    /// 网关那条路本来就在派发前取时刻，这条守卫钉住两条路同一个口径。
+    /// </summary>
+    [Fact]
+    public void 直连审计行记的是发起时刻()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Filters/AgentApiKeyUsageFilter.cs"));
+        var invoked = src.IndexOf("var invokedAt = DateTime.UtcNow;", StringComparison.Ordinal);
+        // 锚在真正那次派发上：前面还有两处早退路径也写着 await next()。
+        var dispatch = src.IndexOf("var executed = await next();", StringComparison.Ordinal);
+        invoked.ShouldBeGreaterThan(-1, "没有在派发前取墙钟：CreatedAt 会退回模型默认，记成完成时刻");
+        dispatch.ShouldBeGreaterThan(-1, "派发点不见了，切片锚点要跟着改");
+        invoked.ShouldBeLessThan(dispatch, "墙钟取在派发之后 —— 那就还是完成时刻");
+
+        var log = McpSourceGuard.Slice(src, "_usage.LogAsync(new McpCallLog", "}, CancellationToken.None);");
+        log.ShouldContain("CreatedAt = invokedAt",
+            customMessage: "审计行没显式落发起时刻，会走模型默认（= 构造这个对象的时刻 = 调用完成之后）");
+    }
 }

@@ -142,6 +142,14 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
         }
 
         var startedAt = Stopwatch.GetTimestamp();
+        // 墙钟也要在派发**之前**取一次。
+        //
+        // 这一行的 CreatedAt 原来走模型默认，而这个对象是 next() 回来之后才构造的——
+        // 于是它记的是「这次调用结束的时刻」。跨 UTC 午夜那一笔就此两边不一致：
+        // 额度在开始时扣在前一天的计数器上，审计行却落到了新的一天，接入台按天聚合时
+        // 「今日调用几次」和「今日写了几次 / 出了几张图」对不上，用户看到的是两个都对不上的数。
+        // 网关那条路本来就是在调用前记的时刻，这里补齐同一个口径。
+        var invokedAt = DateTime.UtcNow;
 
         var rate = await _usage.CheckRateAsync(keyId, ct);
         if (!rate.Allowed)
@@ -150,7 +158,7 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
             // SuppressLog：同一分钟内已经落过一条同类拒绝，再落就是被挡住的洪水一条条进库
             if (!rate.SuppressLog)
                 await LogAsync(http, principal, keyId, toolName, capability, isWrite, imageCount, "denied", 0,
-                    rate.Reason!, startedAt);
+                    rate.Reason!, startedAt, invokedAt);
             return;
         }
 
@@ -159,7 +167,7 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
         {
             context.Result = Reject(verdict.Reason!);
             await LogAsync(http, principal, keyId, toolName, capability, isWrite, imageCount, "denied", 0,
-                verdict.Reason!, startedAt);
+                verdict.Reason!, startedAt, invokedAt);
             return;
         }
 
@@ -177,7 +185,7 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
             ok ? null
                 : threw ? "直连开放接口抛了异常，原因见服务端日志。"
                 : "直连开放接口返回了非 2xx，详情见接口自身的返回体。",
-            startedAt);
+            startedAt, invokedAt);
     }
 
     /// <summary>
@@ -278,9 +286,12 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
     /// </summary>
     private Task LogAsync(HttpContext http, ClaimsPrincipal? principal, string keyId, string toolName,
         string? capability,
-        bool isWrite, int imageCount, string status, int httpStatus, string? error, long startedAt)
+        bool isWrite, int imageCount, string status, int httpStatus, string? error, long startedAt,
+        DateTime invokedAt)
         => _usage.LogAsync(new McpCallLog
         {
+            // 发起时刻，不是完成时刻 —— 与额度扣减发生的那一天保持同一天（见 invokedAt 的取值处）。
+            CreatedAt = invokedAt,
             // 用闸门认出来的那个主体，不是 http.User —— 匿名端点上后者是空的
             OwnerUserId = principal?.FindFirst("boundUserId")?.Value ?? string.Empty,
             KeyId = keyId,

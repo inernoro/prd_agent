@@ -493,10 +493,38 @@ public class DocumentStoreOpenApiController : ControllerBase
                     // 后者是确定性 id 被重用：原来那条被删掉、同键重试插了一条新的，
                     // 只按 id + 时间戳摘标记的话，摘掉的是**新那次**的标记，而这一次还照样回成功。
                     if (!IsMyGeneration(latest, generation)) throw new EntryVanishedException(entry.Id);
-                    await _db.DocumentEntries.UpdateOneAsync(
+                    // 这一次摘标记的结果也得看。
+                    //
+                    // 「回读 → 判代次 → 写」这三步之间还有窗口：那一瞬间条目可以又被改一次、
+                    // 或者被删掉。前者会让这次更新匹配 0 条，标记留在库里，于是**同一个
+                    // clientRequestId 的后续重试永远撞 ENTRY_WRITE_IN_PROGRESS**，这条记录
+                    // 再没人收得了尾；后者则是我这一代已经不在了，还照样往下回成功。
+                    //
+                    // 判据本身（MineFilter）是对的，错在**拿到答案不看**——写了一条带条件的
+                    // 语句却忽略它的返回，等于那个条件只是装饰。匹配为 0 时重读一次确认是哪一种：
+                    // 还是我那条就再摘一次（这次带上新读到的版本），不是了就当「我的那条没了」。
+                    var cleared = await _db.DocumentEntries.UpdateOneAsync(
                         MineFilter(entry.Id, latest.UpdatedAt, generation),
                         Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
                         cancellationToken: CancellationToken.None);
+                    if (cleared.MatchedCount == 0)
+                    {
+                        var again = await _db.DocumentEntries
+                            .Find(e => e.Id == entry.Id)
+                            .FirstOrDefaultAsync(CancellationToken.None);
+                        if (!IsMyGeneration(again, generation)) throw new EntryVanishedException(entry.Id);
+                        var retry = await _db.DocumentEntries.UpdateOneAsync(
+                            MineFilter(entry.Id, again.UpdatedAt, generation),
+                            Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
+                            cancellationToken: CancellationToken.None);
+                        // 再来一次仍然摘不掉：不再原地打转（对方在持续改这条），如实回冲突。
+                        // 标记还挂着，但调用方拿到的是 409 而不是「成功」——比谎报成功好，
+                        // 也给了它「换个键重建」这条明确出路。
+                        if (retry.MatchedCount == 0)
+                            return Conflict(ApiResponse<object>.Fail("ENTRY_CHANGED_SINCE_CREATE",
+                                "这篇文档正在被别人反复修改，你的正文已经写进去了，但收尾没做完。"
+                                + "先读一遍现在的正文；要重建请换一个 clientRequestId。"));
+                    }
                     summaryApplied = explicitSummary == null;
                 }
             }
