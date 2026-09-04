@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Authorization;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
@@ -142,7 +143,8 @@ public class VisualOpenApiController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "prompt 超过 4000 字，请精简"));
 
         var count = ResolveImageCount(req);
-        var size = string.IsNullOrWhiteSpace(req.Size) ? "1024x1024" : req.Size!.Trim();
+        // req 上面已经按可空处理（req?.Prompt），这里保持同一口径：body 缺失时走默认尺寸。
+        var size = string.IsNullOrWhiteSpace(req?.Size) ? "1024x1024" : req.Size!.Trim();
 
         // 模型：与 ImageGenController 同一个判据 —— 视觉创作只跑策略允许的那个模型
         var policy = await _visualModels.ReadAsync(ct);
