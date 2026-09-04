@@ -446,6 +446,7 @@ export async function reviewSiteZip(input: {
     input.onProgress?.(Math.min(input.file.size, start + chunk.size), input.file.size);
   }
 
+  rememberPendingOptimizationSession(sessionId, input.targetSiteId);
   input.onStage?.('文件已送达，正在提交安全检查');
   let queued = await apiRequest<{ queued: boolean; sessionId: string }>(
     api.webPages.optimizationUploadComplete(encodeURIComponent(sessionId)),
@@ -459,7 +460,6 @@ export async function reviewSiteZip(input: {
     );
   }
   if (!queued.success) return queued;
-  rememberPendingOptimizationSession(sessionId, input.targetSiteId);
 
   return pollSiteOptimization(sessionId, {
     signal: input.signal,
@@ -515,6 +515,11 @@ export async function resumePendingSiteOptimization(input: {
 } = {}): Promise<ApiResponse<HostedSiteOptimizationReviewResult> | null> {
   const pending = getPendingSiteOptimizationSession();
   if (!pending || (pending.targetSiteId ?? undefined) !== (input.targetSiteId ?? undefined)) return null;
+  const queued = await apiRequest<{ queued: boolean; sessionId: string }>(
+    api.webPages.optimizationUploadComplete(encodeURIComponent(pending.sessionId)),
+    { method: 'POST', signal: input.signal },
+  );
+  if (!queued.success) return queued;
   return pollSiteOptimization(pending.sessionId, { ...input, cancelOnAbort: false });
 }
 

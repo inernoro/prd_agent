@@ -541,7 +541,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                          && x.Status == HostedSiteOptimizationStatuses.Previewing
                          && x.LeaseOwner == leaseOwner,
                     Builders<HostedSiteOptimizationSession>.Update
-                        .Set(x => x.PreviewFiles, uploaded)
+                        .Push(x => x.PreviewFiles, pendingFile)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow),
                     cancellationToken: CancellationToken.None);
                 if (registered.ModifiedCount != 1)
@@ -745,7 +745,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             session.UpdatedAt = DateTime.UtcNow;
             try
             {
-                await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                var completed = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                     x => x.Id == session.Id && x.OwnerUserId == userId && x.LeaseOwner == leaseOwner,
                     Builders<HostedSiteOptimizationSession>.Update
                         .Set(x => x.Status, session.Status)
@@ -755,10 +755,36 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                         .Set(x => x.ExpiresAt, session.ExpiresAt)
                         .Set(x => x.UpdatedAt, session.UpdatedAt),
                     cancellationToken: CancellationToken.None);
+                if (completed.ModifiedCount != 1)
+                {
+                    completed = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                        x => x.Id == session.Id
+                             && x.OwnerUserId == userId
+                             && x.Status == HostedSiteOptimizationStatuses.Failed
+                             && x.CompletedSiteId == null,
+                        Builders<HostedSiteOptimizationSession>.Update
+                            .Set(x => x.Status, HostedSiteOptimizationStatuses.Saved)
+                            .Set(x => x.CompletedSiteId, saved.Id)
+                            .Set(x => x.Error, null)
+                            .Set(x => x.LeaseOwner, null)
+                            .Set(x => x.LeaseExpiresAt, null)
+                            .Set(x => x.ExpiresAt, session.ExpiresAt)
+                            .Set(x => x.UpdatedAt, session.UpdatedAt),
+                        cancellationToken: CancellationToken.None);
+                }
+                if (completed.ModifiedCount != 1)
+                {
+                    _logger.LogError(
+                        "网页托管站点已保存但无法登记确认结果，保留临时文件供核对: {SessionId} {SiteId}",
+                        session.Id,
+                        saved.Id);
+                    return saved;
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "网页托管优化已保存，但记录完成状态失败: {SessionId}", session.Id);
+                return saved;
             }
 
             if (await CleanupSessionFilesAsync(session))
@@ -1035,7 +1061,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         {
             text = Regex.Replace(
                 text,
-                "(?<prefix>(?:from\\s+|import\\s*(?:\\(\\s*)?|require\\s*\\(\\s*|fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'])(?<path>/(?!/)[^\\\"']*)",
+                "(?<prefix>(?:from\\s+|import\\s*(?:\\(\\s*)?|require\\s*\\(\\s*|fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|navigator\\.serviceWorker\\.register\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'])(?<path>/(?!/)[^\\\"']*)",
                 Rewrite,
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
@@ -1632,23 +1658,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
            || value.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase)
            || value.StartsWith("tel:", StringComparison.OrdinalIgnoreCase);
 
-    private static string MimeFor(string path) => Path.GetExtension(path).ToLowerInvariant() switch
-    {
-        ".html" or ".htm" => "text/html",
-        ".css" => "text/css",
-        ".js" or ".mjs" => "application/javascript",
-        ".json" => "application/json",
-        ".svg" => "image/svg+xml",
-        ".png" => "image/png",
-        ".jpg" or ".jpeg" => "image/jpeg",
-        ".gif" => "image/gif",
-        ".webp" => "image/webp",
-        ".woff" => "font/woff",
-        ".woff2" => "font/woff2",
-        ".ttf" => "font/ttf",
-        ".otf" => "font/otf",
-        _ => "application/octet-stream",
-    };
+    private static string MimeFor(string path)
+        => HostedSiteService.GetMimeType(Path.GetExtension(path));
 
     [GeneratedRegex("https?://(?:unpkg\\.com/|cdn\\.jsdelivr\\.net/npm/)(?<package>@?[^@/\\s\\\"']+(?:/[^@/\\s\\\"']+)?)(?:@[^/\\s\\\"']+)?/(?<path>[^?#\\s\\\"']+)", RegexOptions.IgnoreCase)]
     private static partial Regex ExternalPackageUrlRegex();
@@ -1662,7 +1673,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     [GeneratedRegex("(?:url\\(\\s*|@import\\s+)[\\\"']?(?<path>[^\\)\\\"']+)", RegexOptions.IgnoreCase)]
     private static partial Regex CssReferenceRegex();
 
-    [GeneratedRegex("(?:from\\s+|import\\s*(?:\\(\\s*)?|require\\s*\\(\\s*|fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("(?:from\\s+|import\\s*(?:\\(\\s*)?|require\\s*\\(\\s*|fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|navigator\\.serviceWorker\\.register\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
     private static partial Regex JavaScriptImportRegex();
 
     [GeneratedRegex("<script\\b[^>]*>(?<body>[\\s\\S]*?)</script\\s*>", RegexOptions.IgnoreCase)]
@@ -1671,9 +1682,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     [GeneratedRegex("<style\\b[^>]*>(?<body>[\\s\\S]*?)</style\\s*>", RegexOptions.IgnoreCase)]
     private static partial Regex InlineStyleRegex();
 
-    [GeneratedRegex("(?:fetch\\s*\\(|new\\s+(?:Shared)?Worker\\s*\\(|importScripts\\s*\\()", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("(?:fetch\\s*\\(|new\\s+(?:Shared)?Worker\\s*\\(|navigator\\.serviceWorker\\.register\\s*\\(|importScripts\\s*\\()", RegexOptions.IgnoreCase)]
     private static partial Regex DynamicRuntimeLoaderRegex();
 
-    [GeneratedRegex("(?:fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'][^\\\"']+[\\\"']", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("(?:fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|navigator\\.serviceWorker\\.register\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'][^\\\"']+[\\\"']", RegexOptions.IgnoreCase)]
     private static partial Regex StaticDynamicRuntimeReferenceRegex();
 }

@@ -129,6 +129,25 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_ServiceWorkerRegistrationIntoNodeModules_RestoresRequiredDependency()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<html><script src=\"./app.js\"></script></html>",
+            ["app.js"] = "navigator.serviceWorker.register('./node_modules/pkg/sw.js');",
+            ["node_modules/pkg/sw.js"] = "self.addEventListener('fetch', () => {});",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeTrue();
+        result.OptimizedFiles.ShouldBe(3);
+    }
+
+    [Fact]
     public void Analyze_ComputedRuntimeLoader_PreservesPotentialDependencies()
     {
         var files = new Dictionary<string, string>
@@ -292,6 +311,8 @@ public class HostedSiteOptimizationServiceTests
         source.ShouldContain("session.ExpiresAt = cleanupAfter");
         source.ShouldContain("session.Status = HostedSiteOptimizationStatuses.Saved");
         source.ShouldContain("Previewing,\n                            HostedSiteOptimizationStatuses.Saving");
+        source.ShouldContain(".Push(x => x.PreviewFiles, pendingFile)");
+        source.ShouldContain("HostedSiteService.GetMimeType(Path.GetExtension(path))");
     }
 
     private static HostedSiteOptimizationService CreateService()
