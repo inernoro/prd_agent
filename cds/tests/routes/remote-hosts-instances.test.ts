@@ -354,6 +354,42 @@ describe('Remote hosts project instances route', () => {
     });
   });
 
+  it('publishes runtime provider and isolation facts without pretending planned adapters are ready', async () => {
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+
+    const catalog = await request(server, 'GET', `/api/projects/${projectId}/agent-runtime-providers`, longToken);
+
+    expect(catalog.status).toBe(200);
+    expect(catalog.body).toMatchObject({
+      runtimeOwnedBy: 'cds-remote-agent',
+      isolationOwnedBy: 'cds-remote-agent',
+    });
+    expect(catalog.body.items.find((item: any) => item.id === 'open-design')).toMatchObject({
+      adapterKind: 'design-daemon',
+      implementationStatus: 'planned',
+      healthy: false,
+      selectable: false,
+      requiredIsolationMode: 'session-container',
+      resourcePolicyEnforcedPerSession: false,
+    });
+
+    const rejected = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      { runtime: 'open-design', workloadKind: 'design-artifact' },
+    );
+    expect(rejected.status).toBe(409);
+    expect(rejected.body.error).toMatchObject({
+      code: 'runtime_provider_not_ready',
+      runtime: 'open-design',
+      requiredIsolationMode: 'session-container',
+      executionOwner: 'cds-remote-agent',
+    });
+  });
+
   it('reconciles CDS-managed official SDK runtime capacity without remote host fallback', async () => {
     process.env.CDS_PREVIEW_DOMAIN = 'preview.example.test';
     await startServer();

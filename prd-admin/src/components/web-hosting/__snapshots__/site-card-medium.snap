@@ -6,8 +6,11 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
       span .absolute.gap-1.inline-flex.items-center.left-2.top-2.z-20 {height:20px;padding:0 6px}
         svg
         "HTML"
-      span .absolute.gap-1.inline-flex.items-center.right-2.top-2.z-20 {height:20px;padding:0 6px}
+      span .[@media(hover:none)]:hidden.absolute.gap-1.inline-flex.items-center.right-2.top-2.z-20 {height:20px;padding:0 6px}
         "手动上传"
+      div .[@media(hover:none)]:block.absolute.hidden.right-[7px].top-[7px].z-20
+        button .h-7.inline-flex.items-center.justify-center.pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
+          svg
       span .absolute.bottom-2.inline-flex.items-center.right-2.z-20 {height:20px;padding:0 6px}
         "单页"
       button .absolute.bottom-[7px].group-hover:opacity-100.inline-flex.items-center.justify-center.left-[7px].z-20 {height:20px;opacity:0.5;width:20px} [data-no-drag=true aria-label=选择 type=button]

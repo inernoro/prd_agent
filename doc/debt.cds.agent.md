@@ -12,7 +12,7 @@
 
 | 指标 | 当前值 |
 |------|--------|
-| open | 2 |
+| open | 3 |
 | in-progress | 0 |
 | paid | 2 |
 
@@ -47,6 +47,12 @@
 
 - **原现状**：`CdsAgentAdapter`（工作流节点）在完全没有系统级 runtime profile 时硬报「没有系统级模型配置」，全新环境工作流 CdsAgentRun 节点无法发起。
 - **偿还**：`CdsAgentAdapter` 无 profile 时不再报错——输出提示「尝试以 CDS Lite 模式直跑」并合成占位 `RuntimeProfileChoice(null, "claude-sdk", ...)` 放行；下游 `EnsureRuntimeProfileCompatibleOrLiteFallback` / `DecideRuntimeSelection` 本就兼容 null profile，Lite 不可用时 session 层仍显式失败（行为不劣于原硬报错）。
+
+### D5 · 会话级容器与资源策略强制（open）
+
+- **现状**：CDS 会话接口已经记录 CPU、内存、超时、网络和自动清理策略，运行时 Provider 目录也能声明 `session-container` 要求；但当前可执行链仍复用共享运行时容器，资源策略没有按会话强制。
+- **影响**：OpenDesign、Codex 和自定义 Provider 不能按多租户产品标准启用。目录会如实标记不可选，请求独立容器时必须拒绝，不能降级到共享容器。
+- **偿还条件**：在独立 CDS Remote Agent 基础设施项目落地会话容器分配、工作区挂载、凭据注入、网络策略、资源限制、停止和超时清理；同一合同通过集成测试和真实运行取证后，才把对应 Provider 改为 available。
 
 ## 相关文件
 

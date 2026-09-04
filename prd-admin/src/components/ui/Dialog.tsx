@@ -82,7 +82,7 @@ export function Dialog({
         <DialogPrimitive.Content
           {...(description ? {} : ({ 'aria-describedby': undefined } as const))}
           className={[
-            'w-[92vw] rounded-[22px] p-6 flex flex-col prd-dialog-content',
+            'w-[92vw] min-w-0 rounded-[22px] p-6 flex flex-col prd-dialog-content',
             contentClassName ?? '',
           ].join(' ')}
           style={{
@@ -102,7 +102,7 @@ export function Dialog({
                 <X size={18} />
               </DialogPrimitive.Close>
             )}
-            <div className="min-w-0 flex-shrink-0">
+            <div className="min-w-0 flex-1">
               <DialogPrimitive.Title className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
                 {title}
               </DialogPrimitive.Title>

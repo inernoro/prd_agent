@@ -348,7 +348,7 @@ export function SiteCard({
           {/* 右上：来源。小卡不渲染——176px 宽的缩略图顶部放两枚徽章就满了（设计稿小卡只有形态） */}
           {!isSmall && (
             <span
-              className="absolute right-2 top-2 z-20 inline-flex items-center gap-1 backdrop-blur-md"
+              className="absolute right-2 top-2 z-20 inline-flex items-center gap-1 backdrop-blur-md [@media(hover:none)]:hidden"
               style={{
                 height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
                 fontFamily: 'var(--font-code)', fontSize: 9, letterSpacing: 'var(--tracking-badge)',
@@ -358,6 +358,16 @@ export function SiteCard({
             >
               {siteSourceLabel(site.sourceType)}
             </span>
+          )}
+
+          {/* 触屏没有 hover：中卡和大卡必须另有常驻菜单入口，不能把唯一 kebab 藏在 hover 条里。 */}
+          {!isSmall && (
+            <div
+              className="absolute right-[7px] top-[7px] z-20 hidden [@media(hover:none)]:block"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <CardMoreButton actions={menuActions} touchActions={hoverActions.length} onScrim />
+            </div>
           )}
 
           {/* 右上（小卡）：唯一一枚 kebab。小卡不渲染 hover 条，这颗就是全部操作入口。

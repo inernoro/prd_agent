@@ -42,6 +42,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
   const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
   const [loadingKnowledge, setLoadingKnowledge] = useState(false);
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
+  const [selectedRuntime, setSelectedRuntime] = useState('map-gateway');
   const [title, setTitle] = useState('');
   const [instruction, setInstruction] = useState('');
   const [phase, setPhase] = useState('选择知识，再用两句话说明页面给谁看、希望达到什么效果。');
@@ -88,7 +89,12 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
         });
       }
       setRecentKnowledge(items);
-      if (runtimes.success) setCapabilities(runtimes.data.runtimes);
+      if (runtimes.success) {
+        setCapabilities(runtimes.data.runtimes);
+        const preferred = runtimes.data.runtimes.find((item) => item.id === runtimes.data.defaultRuntime && item.enabled)
+          ?? runtimes.data.runtimes.find((item) => item.enabled);
+        if (preferred) setSelectedRuntime(preferred.id);
+      }
       setLoadingKnowledge(false);
     });
     return () => {
@@ -138,7 +144,11 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     };
   }, [open]);
 
-  const enabledRuntime = capabilities.find((item) => item.enabled);
+  const enabledRuntime = capabilities.find((item) => item.id === selectedRuntime && item.enabled)
+    ?? capabilities.find((item) => item.enabled);
+  const visibleRuntime = capabilities.find((item) => item.id === selectedRuntime)
+    ?? enabledRuntime
+    ?? capabilities[0];
   const unavailableRuntimes = useMemo(
     () => capabilities.filter((item) => !item.enabled),
     [capabilities],
@@ -193,6 +203,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     const created = await createDesignArtifactRun({
       instruction: text,
       title: title.trim() || knowledgeReferences[0].title,
+      runtime: enabledRuntime?.id,
       sourceSurface: initialSource ? 'knowledge-base' : 'web-hosting',
       knowledgeReferences,
     });
@@ -270,10 +281,15 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
       title="引用知识生成网页"
       description="知识内容负责事实，补充要求负责受众、目的和风格。生成结果会直接保存在网页托管。"
       maxWidth={1080}
-      contentClassName="h-[min(760px,calc(100vh-48px))]"
+      contentClassName="p-4 sm:p-6"
+      contentStyle={{
+        width: 'min(1080px, calc(100vw - 16px))',
+        maxWidth: 'calc(100vw - 16px)',
+        height: 'min(760px, calc(100vh - 24px))',
+      }}
       content={(
-        <div className="grid h-full min-h-0 gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
-          <div className="min-h-0 overflow-y-auto rounded-xl border border-token-subtle bg-token-nested p-4">
+        <div className="grid h-full min-h-0 min-w-0 gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
+          <div className="min-h-0 min-w-0 overflow-y-auto rounded-xl border border-token-subtle bg-token-nested p-4">
             <label className="text-xs font-semibold text-token-primary" htmlFor="design-site-title">网页标题</label>
             <input
               id="design-site-title"
@@ -304,9 +320,9 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
                       disabled={generating}
                       onClick={() => toggleKnowledge(item.id)}
                       title={`${item.storeName} / ${item.title}`}
-                      className={`flex max-w-full items-center gap-1 rounded-md border px-2 py-1.5 text-[11px] transition-colors disabled:opacity-50 ${selected ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}
+                      className={`flex min-w-0 max-w-full items-center gap-1 rounded-md border px-2 py-1.5 text-[11px] transition-colors disabled:opacity-50 ${selected ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}
                     >
-                      <span className="truncate">{item.title}</span>
+                      <span className="min-w-0 truncate">{item.title}</span>
                       {selected && <X size={10} className="shrink-0" />}
                     </button>
                   );
@@ -328,10 +344,30 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
 
             <div className="mt-4 rounded-lg border border-token-subtle bg-token-card p-3 text-[11px]">
               <div className="flex items-center gap-1.5 font-medium text-token-primary"><Server size={13} />执行器事实</div>
-              <p className="mt-1 text-token-secondary">当前使用：{enabledRuntime?.label || '正在检测'}</p>
+              {capabilities.filter((item) => item.enabled).length > 1 ? (
+                <select
+                  value={selectedRuntime}
+                  onChange={(event) => setSelectedRuntime(event.target.value)}
+                  disabled={generating}
+                  aria-label="设计执行器"
+                  className="mt-2 w-full rounded-md border border-token-subtle bg-token-nested px-2 py-1.5 text-[11px] text-token-primary"
+                >
+                  {capabilities.filter((item) => item.enabled).map((item) => (
+                    <option key={item.id} value={item.id}>{item.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="mt-1 text-token-secondary">当前使用：{visibleRuntime?.label || '正在检测'}</p>
+              )}
+              {visibleRuntime && (
+                <p className="mt-1 leading-relaxed text-token-muted">
+                  执行归属：{visibleRuntime.executionOwner === 'cds-remote-agent' ? 'CDS Remote Agent' : 'MAP'}；
+                  隔离边界：{visibleRuntime.isolationMode === 'session-container' ? '会话级容器' : 'MAP 服务进程'}。
+                </p>
+              )}
               {unavailableRuntimes.length > 0 && (
                 <p className="mt-1 leading-relaxed text-token-muted">
-                  {unavailableRuntimes.map((item) => item.label).join('、')} 未启用；只有 CDS 真实部署、健康检查和适配器都通过后才会开放。
+                  {unavailableRuntimes.map((item) => `${item.label}：${item.reason || '未启用'}`).join('；')}
                 </p>
               )}
             </div>
@@ -340,7 +376,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
               className="mt-4 w-full justify-center"
               size="sm"
               variant="primary"
-              disabled={generating || !instruction.trim() || selectedKnowledgeIds.length === 0}
+              disabled={generating || !enabledRuntime || !instruction.trim() || selectedKnowledgeIds.length === 0}
               onClick={() => void generate()}
             >
               {generating ? <MapSpinner size={14} /> : <Send size={14} />}
@@ -348,7 +384,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
             </Button>
           </div>
 
-          <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-token-subtle bg-token-nested">
+          <div className="flex min-h-[280px] min-w-0 flex-col overflow-hidden rounded-xl border border-token-subtle bg-token-nested lg:min-h-0">
             <div className="shrink-0 border-b border-token-subtle px-4 py-3">
               <div className="flex items-center justify-between gap-3 text-xs text-token-secondary">
                 <span>{phase}</span>

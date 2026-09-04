@@ -4,6 +4,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -25,6 +26,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     private readonly IRunQueue _queue;
     private readonly MongoDbContext _db;
     private readonly ILogger<HostedSiteEditsController> _logger;
+    private readonly IDesignArtifactProviderCatalog _providers;
 
     public HostedSiteEditsController(
         IHostedSiteService sites,
@@ -32,7 +34,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         IRunEventStore events,
         IRunQueue queue,
         MongoDbContext db,
-        ILogger<HostedSiteEditsController> logger)
+        ILogger<HostedSiteEditsController> logger,
+        IDesignArtifactProviderCatalog providers)
     {
         _sites = sites;
         _revisions = revisions;
@@ -40,24 +43,22 @@ public sealed class HostedSiteEditsController : ControllerBase
         _queue = queue;
         _db = db;
         _logger = logger;
+        _providers = providers;
     }
 
     [HttpGet("runtime-capabilities")]
-    public IActionResult RuntimeCapabilities() => Ok(ApiResponse<object>.Ok(new
+    public async Task<IActionResult> RuntimeCapabilities()
     {
-        defaultRuntime = HostedSiteEditRuntimes.MapGateway,
-        runtimes = new object[]
+        var runtimes = (await _providers.ListAsync(CancellationToken.None))
+            .Where(item => item.ArtifactTypes.Contains(DesignArtifactTypes.WebPage, StringComparer.Ordinal)
+                           && item.Operations.Contains(DesignArtifactOperations.Edit, StringComparer.Ordinal))
+            .ToList();
+        return Ok(ApiResponse<object>.Ok(new
         {
-            new { id = HostedSiteEditRuntimes.MapGateway, label = "MAP 模型", enabled = true },
-            new
-            {
-                id = HostedSiteEditRuntimes.Codex,
-                label = "Codex",
-                enabled = false,
-                reason = "运行时边界已保留；部署并验证 CDS Codex 配置后再启用，不随 MAP 默认镜像捆绑",
-            },
-        },
-    }));
+            defaultRuntime = HostedSiteEditRuntimes.MapGateway,
+            runtimes,
+        }));
+    }
 
     [HttpPost("runs")]
     public async Task<IActionResult> CreateRun(string siteId, [FromBody] CreateHostedSiteEditRunRequest request)
@@ -79,12 +80,16 @@ public sealed class HostedSiteEditsController : ControllerBase
         var runtime = string.IsNullOrWhiteSpace(request.Runtime)
             ? HostedSiteEditRuntimes.MapGateway
             : request.Runtime.Trim().ToLowerInvariant();
-        if (runtime == HostedSiteEditRuntimes.Codex)
+        var capability = await _providers.FindAsync(runtime, CancellationToken.None);
+        if (capability == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的页面修改运行时"));
+        if (!capability.ArtifactTypes.Contains(DesignArtifactTypes.WebPage, StringComparer.Ordinal)
+            || !capability.Operations.Contains(DesignArtifactOperations.Edit, StringComparer.Ordinal))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选执行器不支持修改网页"));
+        if (!capability.Enabled)
             return Conflict(ApiResponse<object>.Fail(
                 "RUNTIME_NOT_READY",
-                "当前环境尚未部署并验证 Codex 页面修改运行时，可先用 MAP 模型生成草稿"));
-        if (runtime != HostedSiteEditRuntimes.MapGateway)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的页面修改运行时"));
+                capability.Reason ?? "所选页面修改执行器尚未部署并通过健康检查"));
 
         var userId = this.GetRequiredUserId();
         try

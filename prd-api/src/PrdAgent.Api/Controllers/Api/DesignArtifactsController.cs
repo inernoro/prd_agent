@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -23,46 +24,26 @@ public sealed class DesignArtifactsController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _events;
     private readonly IRunQueue _queue;
-    private readonly IConfiguration _configuration;
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly HashSet<string> _executorRuntimes;
+    private readonly IDesignArtifactProviderCatalog _providers;
 
     public DesignArtifactsController(
         MongoDbContext db,
         IRunEventStore events,
         IRunQueue queue,
-        IConfiguration configuration,
-        IHttpClientFactory httpClientFactory,
-        IEnumerable<PrdAgent.Api.Services.IDesignArtifactExecutor> executors)
+        IDesignArtifactProviderCatalog providers)
     {
         _db = db;
         _events = events;
         _queue = queue;
-        _configuration = configuration;
-        _httpClientFactory = httpClientFactory;
-        _executorRuntimes = executors.Select(x => x.Runtime).ToHashSet(StringComparer.Ordinal);
+        _providers = providers;
     }
 
     [HttpGet("runtime-capabilities")]
     public async Task<IActionResult> RuntimeCapabilities()
     {
-        var external = await Task.WhenAll(
-            InspectRuntimeAsync(DesignArtifactRuntimes.OpenDesign, "OpenDesign", "DesignGeneration:Runtimes:OpenDesign"),
-            InspectRuntimeAsync(DesignArtifactRuntimes.Codex, "Codex", "DesignGeneration:Runtimes:Codex"),
-            InspectRuntimeAsync(DesignArtifactRuntimes.Claude, "Claude", "DesignGeneration:Runtimes:Claude"));
-        var runtimes = new List<object>
-        {
-            new
-            {
-                id = DesignArtifactRuntimes.MapGateway,
-                label = "MAP 模型",
-                enabled = _executorRuntimes.Contains(DesignArtifactRuntimes.MapGateway),
-                configured = true,
-                healthy = true,
-                operations = new[] { DesignArtifactOperations.Generate, DesignArtifactOperations.Edit },
-            },
-        };
-        runtimes.AddRange(external);
+        var runtimes = (await _providers.ListAsync(CancellationToken.None))
+            .Where(item => item.ArtifactTypes.Contains(DesignArtifactTypes.WebPage, StringComparer.Ordinal))
+            .ToList();
         return Ok(ApiResponse<object>.Ok(new
         {
             defaultRuntime = DesignArtifactRuntimes.MapGateway,
@@ -84,10 +65,16 @@ public sealed class DesignArtifactsController : ControllerBase
         var runtime = string.IsNullOrWhiteSpace(request.Runtime)
             ? DesignArtifactRuntimes.MapGateway
             : request.Runtime.Trim().ToLowerInvariant();
-        if (runtime != DesignArtifactRuntimes.MapGateway)
+        var capability = await _providers.FindAsync(runtime, CancellationToken.None);
+        if (capability == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的设计执行器"));
+        if (!capability.ArtifactTypes.Contains(DesignArtifactTypes.WebPage, StringComparer.Ordinal)
+            || !capability.Operations.Contains(DesignArtifactOperations.Generate, StringComparer.Ordinal))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选执行器不支持生成网页"));
+        if (!capability.Enabled)
             return Conflict(ApiResponse<object>.Fail(
                 "RUNTIME_NOT_READY",
-                "所选执行器尚未部署并通过健康检查，请先使用 MAP 模型"));
+                capability.Reason ?? "所选执行器尚未部署并通过健康检查，请先使用可用执行器"));
 
         var references = request.KnowledgeReferences ?? new List<DesignKnowledgeReferenceRequest>();
         if (references.Count == 0)
@@ -224,57 +211,6 @@ public sealed class DesignArtifactsController : ControllerBase
         {
             // 响应已关闭，后台任务仍继续。
         }
-    }
-
-    private async Task<object> InspectRuntimeAsync(string id, string label, string configKey)
-    {
-        Uri? baseUri = null;
-        var configured = _configuration.GetValue<bool>($"{configKey}:Enabled")
-                         && Uri.TryCreate(_configuration[$"{configKey}:BaseUrl"], UriKind.Absolute, out baseUri);
-        if (!configured)
-        {
-            return new
-            {
-                id,
-                label,
-                enabled = false,
-                configured = false,
-                healthy = false,
-                operations = Array.Empty<string>(),
-                reason = "CDS 中尚未配置该执行器运行时",
-            };
-        }
-
-        var healthy = false;
-        try
-        {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            var client = _httpClientFactory.CreateClient();
-            using var response = await client.GetAsync(new Uri(baseUri!, "health"), timeout.Token);
-            healthy = response.IsSuccessStatusCode;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-        {
-            healthy = false;
-        }
-
-        var hasAdapter = _executorRuntimes.Contains(id);
-        return new
-        {
-            id,
-            label,
-            enabled = healthy && hasAdapter,
-            configured = true,
-            healthy,
-            operations = healthy && hasAdapter
-                ? new[] { DesignArtifactOperations.Generate, DesignArtifactOperations.Edit }
-                : Array.Empty<string>(),
-            reason = !healthy
-                ? "运行时已配置但健康检查未通过"
-                : hasAdapter
-                    ? null
-                    : "运行时已探测到，但 MAP 适配器尚未安装，不能参与本次生成",
-        };
     }
 
     private static object ToDto(DesignArtifactRun run) => new

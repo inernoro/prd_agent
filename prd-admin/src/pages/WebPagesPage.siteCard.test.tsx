@@ -177,6 +177,15 @@ describe('WebPagesPage SiteCard', () => {
     expect(html).toContain('已分享 1 条链接');
   });
 
+  it('中卡和大卡在触屏上提供常驻更多设置入口', () => {
+    for (const size of ['medium', 'large'] satisfies SiteCardSize[]) {
+      const html = renderSiteCard(baseSite, ownerCaps, false, size);
+      expect(html).toContain('hidden [@media(hover:none)]:block');
+      expect(html).toContain('aria-label="更多设置"');
+      expect(html).toContain('[@media(hover:none)]:hidden');
+    }
+  });
+
   it('小卡的 kebab 压在缩略图上，不在正文里占一行（下巴）', () => {
     const html = renderSiteCard(baseSite, ownerCaps, true, 'small', { activeLinks: 1 });
 

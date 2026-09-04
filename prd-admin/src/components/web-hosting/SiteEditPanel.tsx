@@ -6,6 +6,7 @@ import { getDocumentContent, listRecentDocumentEntries } from '@/services/real/d
 import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import {
   createHostedSiteEditRun,
+  getDesignRuntimeCapabilities,
   listHostedSiteRevisions,
   previewHostedSiteRevision,
   publishHostedSiteRevision,
@@ -13,6 +14,7 @@ import {
   streamHostedSiteEditRun,
   type HostedSite,
   type HostedSiteRevision,
+  type DesignRuntimeCapability,
 } from '@/services/real/webPages';
 import { SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
 import { previewableEditHtml, revisionLabel } from './siteEditPreview';
@@ -47,6 +49,8 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
   const [recentKnowledge, setRecentKnowledge] = useState<RecentDocumentEntry[]>([]);
   const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
   const [loadingKnowledge, setLoadingKnowledge] = useState(true);
+  const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
+  const [selectedRuntime, setSelectedRuntime] = useState('map-gateway');
   const streamRef = useRef('');
   const lastPaintAtRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -66,9 +70,16 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
 
   useEffect(() => {
     let active = true;
-    void listRecentDocumentEntries(12).then((result) => {
+    void Promise.all([listRecentDocumentEntries(12), getDesignRuntimeCapabilities()]).then(([result, runtimes]) => {
       if (!active) return;
       if (result.success) setRecentKnowledge(result.data.items);
+      if (runtimes.success) {
+        const supported = runtimes.data.runtimes.filter((item) => item.operations.includes('edit'));
+        setCapabilities(supported);
+        const preferred = supported.find((item) => item.id === runtimes.data.defaultRuntime && item.enabled)
+          ?? supported.find((item) => item.enabled);
+        if (preferred) setSelectedRuntime(preferred.id);
+      }
       setLoadingKnowledge(false);
     });
     return () => { active = false; };
@@ -130,7 +141,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
       title: entry?.title || result.data!.title,
       content: (result.data!.content || '').slice(0, 20_000),
     }));
-    const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences);
+    const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, selectedRuntime);
     if (!created.success) {
       setGenerating(false);
       setPhase(created.error?.message || '修改任务创建失败');
@@ -234,8 +245,21 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
           帮我修改
         </div>
         <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
-          当前先由 MAP 模型生成草稿。线上页面只有在你点击“发布新版本”后才会变化。
+          执行器只生成草稿。线上页面只有在你点击“发布新版本”后才会变化。
         </p>
+        {capabilities.filter((item) => item.enabled).length > 1 && (
+          <select
+            value={selectedRuntime}
+            onChange={(event) => setSelectedRuntime(event.target.value)}
+            disabled={generating}
+            aria-label="页面修改执行器"
+            className="mt-3 w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-primary"
+          >
+            {capabilities.filter((item) => item.enabled).map((item) => (
+              <option key={item.id} value={item.id}>{item.label}</option>
+            ))}
+          </select>
+        )}
         <textarea
           value={instruction}
           onChange={(event) => setInstruction(event.target.value)}

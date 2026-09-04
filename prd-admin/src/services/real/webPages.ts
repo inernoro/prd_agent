@@ -93,8 +93,13 @@ export interface HostedSiteRevisionMutation {
 }
 
 export interface DesignRuntimeCapability {
-  id: 'map-gateway' | 'open-design' | 'codex' | 'claude';
+  id: string;
   label: string;
+  adapterKind: 'in-process' | 'remote-agent' | string;
+  executionOwner: 'map' | 'cds-remote-agent' | string;
+  isolationMode: 'map-process' | 'session-container' | string;
+  artifactTypes: string[];
+  sourceSurfaces: string[];
   enabled: boolean;
   configured: boolean;
   healthy: boolean;
@@ -1013,6 +1018,7 @@ export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
 export async function createDesignArtifactRun(input: {
   instruction: string;
   title?: string;
+  runtime?: string;
   sourceSurface: 'web-hosting' | 'knowledge-base';
   knowledgeReferences: DesignKnowledgeReferenceInput[];
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
@@ -1021,8 +1027,8 @@ export async function createDesignArtifactRun(input: {
     body: {
       artifactType: 'web-page',
       operation: 'generate',
-      runtime: 'map-gateway',
       ...input,
+      runtime: input.runtime || 'map-gateway',
     },
   });
 }
@@ -1054,10 +1060,11 @@ export async function createHostedSiteEditRun(
   siteId: string,
   instruction: string,
   knowledgeReferences: DesignKnowledgeReferenceInput[] = [],
+  runtime = 'map-gateway',
 ): Promise<ApiResponse<{ runId: string; status: string; runtime: string }>> {
   return apiRequest(api.webPages.editRuns(siteId), {
     method: 'POST',
-    body: { instruction, runtime: 'map-gateway', knowledgeReferences },
+    body: { instruction, runtime, knowledgeReferences },
   });
 }
 

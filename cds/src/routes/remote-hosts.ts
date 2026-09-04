@@ -44,6 +44,14 @@ import {
 import { CdsPairingService } from '../services/connection/pairing-service.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
+import {
+  findAgentRuntimeProviderDefinition,
+  listAgentRuntimeProviderDefinitions,
+  normalizeAgentIsolationMode,
+  normalizeAgentWorkloadKind,
+  type AgentIsolationMode,
+  type AgentWorkloadKind,
+} from '../services/agent-runtime-provider-registry.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
@@ -625,6 +633,43 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     }
   });
 
+  router.get('/projects/:id/agent-runtime-providers', (req, res) => {
+    const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['instance:read']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+
+    const project = deps.stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
+      return;
+    }
+
+    const items = listAgentRuntimeProviderDefinitions().map((provider) => {
+      const transportReady = provider.id === 'fake'
+        || resolveCdsManagedRuntimeTransport(deps.stateService, project, provider.id) !== null;
+      const healthy = provider.implementationStatus === 'available' && transportReady;
+      return {
+        ...provider,
+        configured: provider.implementationStatus === 'available' && transportReady,
+        healthy,
+        selectable: provider.productEligible && healthy,
+        isolationOwnedBy: 'cds-remote-agent',
+        resourcePolicyEnforcedPerSession: false,
+        reason: provider.reason
+          || (healthy ? null : 'CDS 中尚无可用的运行时容器或传输适配器'),
+      };
+    });
+    res.json({
+      projectId: project.id,
+      defaultRuntime: 'claude-sdk',
+      runtimeOwnedBy: 'cds-remote-agent',
+      isolationOwnedBy: 'cds-remote-agent',
+      items,
+    });
+  });
+
   router.post('/projects/:id/agent-sessions', async (req, res) => {
     const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['shared-service:deploy']);
     if (!auth.ok) {
@@ -639,7 +684,58 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     }
 
     const now = new Date().toISOString();
-    const runtime = normalizeRuntime(req.body?.runtime);
+    const requestedRuntime = typeof req.body?.runtime === 'string' ? req.body.runtime : 'fake';
+    const provider = findAgentRuntimeProviderDefinition(requestedRuntime);
+    if (!provider) {
+      res.status(400).json({
+        error: {
+          code: 'runtime_provider_unknown',
+          message: 'unknown Agent runtime provider',
+          availableRuntimes: listAgentRuntimeProviderDefinitions().map((item) => item.id),
+        },
+      });
+      return;
+    }
+    const runtime = provider.id;
+    const workloadKind = normalizeAgentWorkloadKind(req.body?.workloadKind);
+    if (!provider.workloadKinds.includes(workloadKind)) {
+      res.status(422).json({
+        error: {
+          code: 'workload_not_supported',
+          message: `${runtime} does not support workload ${workloadKind}`,
+          workloadKind,
+          supportedWorkloadKinds: provider.workloadKinds,
+        },
+      });
+      return;
+    }
+    const isolationMode = normalizeAgentIsolationMode(req.body?.isolationMode, provider);
+    if (provider.implementationStatus !== 'available') {
+      res.status(409).json({
+        error: {
+          code: 'runtime_provider_not_ready',
+          message: provider.reason || `${runtime} runtime provider is not ready`,
+          runtime,
+          workloadKind,
+          requiredIsolationMode: provider.requiredIsolationMode,
+          executionOwner: provider.executionOwner,
+        },
+      });
+      return;
+    }
+    if (!provider.supportedIsolationModes.includes(isolationMode)) {
+      res.status(409).json({
+        error: {
+          code: 'isolation_mode_not_available',
+          message: `${isolationMode} isolation is not implemented for ${runtime}`,
+          runtime,
+          requestedIsolationMode: isolationMode,
+          supportedIsolationModes: provider.supportedIsolationModes,
+          isolationOwnedBy: 'cds-remote-agent',
+        },
+      });
+      return;
+    }
     const modelBaseUrl = typeof req.body?.modelBaseUrl === 'string' ? req.body.modelBaseUrl : null;
     const modelProtocol = typeof req.body?.modelProtocol === 'string' ? req.body.modelProtocol : null;
     const modelApiKey = typeof req.body?.modelApiKey === 'string' && req.body.modelApiKey.length > 0
@@ -666,6 +762,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       clientUser: typeof req.body?.clientUser === 'string' ? req.body.clientUser.slice(0, 120) : null,
       clientApp: typeof req.body?.clientApp === 'string' ? req.body.clientApp.slice(0, 120) : null,
       runtime,
+      providerId: provider.id,
+      workloadKind,
+      isolationMode,
       model: typeof req.body?.model === 'string' ? req.body.model : null,
       modelBaseUrl,
       modelProtocol,
@@ -701,13 +800,17 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       runtimeProfileId: session.runtimeProfileId,
       modelCredential: hasModelApiKey ? 'configured' : 'missing',
       resourcePolicy,
+      workloadKind,
+      isolationMode,
+      executionOwner: provider.executionOwner,
+      resourcePolicyEnforcedPerSession: false,
     });
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
-      message: `session created runtime=${runtime} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy}`,
+      message: `session created runtime=${runtime} workload=${workloadKind} isolation=${isolationMode} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy}`,
       source: runtimeSource,
     });
-    session.logs.push(`[${now}] session created runtime=${runtime} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy} cleanup=${resourcePolicy.autoCleanupMinutes}m`);
+    session.logs.push(`[${now}] session created runtime=${runtime} provider=${provider.id} workload=${workloadKind} isolation=${isolationMode} owner=${provider.executionOwner} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy} cleanup=${resourcePolicy.autoCleanupMinutes}m resourcePolicyEnforcedPerSession=false`);
     cdsAgentSessions.set(session.id, session);
     res.status(201).json({ item: toCdsAgentSessionView(session) });
   });
@@ -785,7 +888,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     });
 
     if (session.runtime === 'claude-sdk') {
-      const transport = resolveCdsManagedRuntimeTransport(deps.stateService, project, session);
+      const transport = resolveCdsManagedRuntimeTransport(deps.stateService, project, session.runtime);
       if (transport) {
         session.status = 'running';
         startCdsManagedOfficialSdkTransport(session, content, transport, () => recordAgentRequestHistory(session));
@@ -1616,6 +1719,9 @@ interface CdsAgentSession {
   clientUser: string | null;
   clientApp: string | null;
   runtime: string;
+  providerId: string;
+  workloadKind: AgentWorkloadKind;
+  isolationMode: AgentIsolationMode;
   model: string | null;
   modelBaseUrl: string | null;
   modelProtocol: string | null;
@@ -1815,6 +1921,16 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     clientUser: session.clientUser,
     clientApp: session.clientApp,
     runtime: session.runtime,
+    providerId: session.providerId,
+    workloadKind: session.workloadKind,
+    isolation: {
+      mode: session.isolationMode,
+      ownedBy: 'cds-remote-agent',
+      resourcePolicyEnforcedPerSession: false,
+      boundary: session.isolationMode === 'shared-runtime'
+        ? 'shared-container-session-boundary'
+        : 'dedicated-session-container',
+    },
     model: session.model,
     modelBaseUrl: session.modelBaseUrl,
     modelProtocol: session.modelProtocol,
@@ -1838,7 +1954,7 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
 function resolveCdsManagedRuntimeTransport(
   stateService: StateService,
   project: Project,
-  session: CdsAgentSession,
+  runtime: string,
 ): CdsManagedRuntimeTransport | null {
   if (project.kind !== 'shared-service') return null;
   const branches = stateService.getBranchesForProject(project.id);
@@ -1848,7 +1964,7 @@ function resolveCdsManagedRuntimeTransport(
     for (const serviceState of Object.values(branch.services || {})) {
       if (serviceState.status !== 'running') continue;
       const profile = stateService.getBuildProfile(serviceState.profileId);
-      if (!isOfficialSdkRuntimeService(session.runtime, serviceState, profile)) continue;
+      if (!isOfficialSdkRuntimeService(runtime, serviceState, profile)) continue;
       const baseUrl = resolveCdsManagedRuntimeBaseUrl(project, branch, serviceState);
       if (!baseUrl) continue;
       const token = normalizeOptionalString(profile?.env?.SIDECAR_TOKEN);
@@ -2349,10 +2465,6 @@ function buildCdsManagedRuntimeUnavailable(session: CdsAgentSession): Record<str
       'keep SSH, image, and env handoff as operator/debug fallback only',
     ],
   };
-}
-
-function normalizeRuntime(value: unknown): string {
-  return value === 'claude-sdk' || value === 'codex' || value === 'custom' ? value : 'fake';
 }
 
 function normalizeOptionalString(value: unknown): string | null {
