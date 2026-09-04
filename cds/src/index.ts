@@ -17,6 +17,7 @@ import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq } 
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
+import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
 import { WorktreeService } from './services/worktree.js';
@@ -3003,26 +3004,24 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
   proxyService.setOnReviveCooled(async (slug: string) => {
     const branch = stateService.getBranch(slug);
     if (!branch) return;
-    // Re-check eligibility on this side: only scheduler-cooled, still idle, with
-    // preserved containers. Guards against a status change between the proxy's
-    // check and this async entry.
-    if (branch.lastStopSource !== 'scheduler') return;
-    if (branch.status !== 'idle') return;
+    // Re-check eligibility on this side against the SAME single predicate the
+    // proxy used — guards against a status change between the proxy's check and
+    // this async entry. 曾经这里另写一份 lastStopSource 判断，两份都只认
+    // 'scheduler'，改一处忘一处的风险白送（判据纪律形状 3）。
+    //
+    // 项目暂停是**项目级**意图，停机来源那一档答不了它，必须把项目状态一起递进去。
+    // 上一版给 proxy 侧的 shouldAutoWakeCooled 加了这个参数，却没给这里加——
+    // 判据是一份了，喂给它的料却只喂了一处，等于这条复检对暂停完全不设防
+    // （判据纪律形状 2：接线只建一半，删掉不会红）。
+    const isProjectPaused = () =>
+      stateService.getProjects?.().find((p) => p.id === branch.projectId)?.paused === true;
+    if (!isAutoWakeEligible(branch, { projectPaused: isProjectPaused() })) return;
     const services = Object.values(branch.services);
-    if (services.length === 0) return;
 
-    // Executor-owned branches can't be revived by a LOCAL docker restart. A
-    // resolved deploy clears executorId to undefined for embedded/local runs
-    // (branches.ts: `stillRemote?.role==='embedded' || !stillRemote` → undefined),
-    // so a truthy executorId always means a REMOTE executor — whether currently
-    // registered OR temporarily absent from the registry (coordinator restart /
-    // missed heartbeat). In both cases the container runs off-master and the
-    // local `restartServiceInPlace` is a doomed no-op that would flip the branch
-    // to `error` and stop future retries. Skip without touching state so the
-    // diagnostic page stays and a later visit retries once the executor
-    // re-registers. Mirrors the auto-lifecycle stop path's
-    // `if (branch.executorId && !remoteExecutor)` remote-unavailable handling.
-    if (branch.executorId) return;
+    // executorId（远端执行器）那一条已经在 isAutoWakeEligible 里了，不在这里重复判——
+    // 理由是本机 restartServiceInPlace 对跑在别处的容器是注定失败的空操作，失败还会把
+    // 分支翻成 error、断掉后续重试；跳过时不碰状态，等执行器重新注册后下次访问再试。
+    // 一份判据一处定义，见 services/branch-wake-eligibility.ts。
 
     // Acquire the operation lease BEFORE mutating state — throws on conflict
     // (a deploy / cooling already owns the branch), in which case we abort
@@ -3131,6 +3130,103 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           svc.errorMessage = `容器 ${svc.containerName} 就绪探测超时，请改用「重新部署」`;
           failed.push(svc.containerName);
         }
+      }
+
+      // 唤醒跑到一半，项目被暂停了——这条路租约拦不住，必须自己问一次。
+      //
+      // 暂停路由（PUT /api/projects/:id/paused）会给每个在跑的分支发一次
+      // POST /stop，带 X-CDS-Trigger: system。那次 stop 的优先级是 10，而我们此刻
+      // 正握着 'auto-restart' 租约（35），协调器只在**严格更高**优先级时才抢占，
+      // 于是它被拒了；而暂停路由发的是 void fetch(...).catch(...)，只看得到网络异常，
+      // 非 2xx 响应它根本不读。两边都「没报错」，结果是项目显示已暂停、容器却在跑，
+      // 而且是我们自己把它标成 running 的（Codex PR #1476 P1）。
+      //
+      // 所以落 running 之前再问一次项目状态：暂停了就把刚拉起来的容器停回去，
+      // 按 system 来源记账（与暂停路由那次 stop 同一档），本次操作记 cancelled。
+      // 这里只负责「不要由我们制造出一个跑着的暂停项目」；至于让低优先级的暂停 stop
+      // 反过来抢占高优先级操作，那是操作优先级仲裁的语义，不在本次改动范围内。
+      if (isProjectPaused()) {
+        // 先确认租约还是我们的：被更高优先级操作接管时，状态机已经不归我们管，
+        // 这里再去 stop 就是和新主人对打。assertCurrent 抛出后由下面的 catch
+        // 按 superseded 处理（不碰状态）。
+        lease?.assertCurrent('auto-wake project-paused recheck');
+        branchOperationFinalStatus = 'cancelled';
+        /** 停完复核仍在跑的容器。非空 = 这次回滚没做干净，不能记成「已停」。 */
+        const stillRunning: string[] = [];
+        for (const svc of services) {
+          // 每个 await 前后都要重新确认租约还在我们手上。
+          //
+          // 入口判一次不够：stop 与随后的存活复核都是 await，中间项目可能被恢复、
+          // 又被一次手动部署接管（优先级 80，抢得动我们的 35）。那之后这个循环再往下走，
+          // 停的就是**新主人刚拉起来的容器**，最后还会拿 idle / error 覆盖掉它的分支状态
+          //（Codex PR #1476 P1）。上面那条重启循环每个服务前后都 assertCurrent，
+          // 这段回滚是后加的，漏了同一道。
+          lease?.assertCurrent(`auto-wake revert before ${svc.profileId}`);
+          try {
+            await containerService.stop(svc.containerName, '项目已暂停，撤销本次自动唤醒', {
+              projectId: branch.projectId,
+              branchId: branch.id,
+              profileId: svc.profileId,
+              operationId: lease?.operationId || null,
+              actor: 'scheduler',
+              trigger: 'scheduler',
+              operation: 'branch-auto-wake-revert',
+              source: 'proxy.preview-auto-wake',
+            });
+          } catch (stopErr) {
+            console.warn(`[auto-wake] revert stop failed for "${svc.containerName}": ${(stopErr as Error).message}`);
+          }
+          // **停完必须核实再落状态**。`containerService.stop` 在 `docker stop`
+          // 非零退出时只记一条 error 事件、**不抛异常**，所以上面那个 catch 一次都不会进；
+          // 无条件写 'stopped' 就是「账上停了、进程还在跑」——而这正是这段回滚要防的
+          // 资源泄漏，等于用一条假记录把它藏起来（Codex PR #1476 P1）。
+          //
+          // 判定复用 services/replica-stop 那一份：同样的坑在副本停止链路上已经踩过
+          // （Codex 第三十五轮 P1），那份的注释就写着「以后新增停止路径也只调它」——
+          // 这里就是新增的那条路径。用 shim 适配是因为分支服务把提示写在 errorMessage，
+          // 而那个接口用的是 statusMessage；判定逻辑一份，落盘字段各自负责。
+          const shim = { containerName: svc.containerName, status: String(svc.status) };
+          const settled = await settleMemberAfterStop(shim, {
+            isRunning: (name) => containerService.isRunning(name),
+            interruptedMessage: '项目已暂停，自动唤醒已撤销',
+            onStillRunning: (name, message) => {
+              svc.errorMessage = message;
+              stillRunning.push(name);
+            },
+          });
+          lease?.assertCurrent(`auto-wake revert after ${svc.profileId}`);
+          svc.status = settled === 'error' ? 'error' : 'stopped';
+        }
+        // 落盘之前再确认一次：最后一个 await 到 save 之间同样可能被接管，
+        // 那时这几行就是拿我们的结论覆盖新主人的状态。
+        lease?.assertCurrent('auto-wake revert before save');
+        branch.lastStoppedAt = new Date().toISOString();
+        branch.lastStopReason = '项目已暂停，自动唤醒已撤销';
+        branch.lastStopSource = 'system';
+        if (stillRunning.length > 0) {
+          // 有容器没停下来：分支不能记成 idle（那会让它从「需要处理」的视野里消失），
+          // 事件也不能说「已停回容器」——那句话此刻是假的。
+          branchOperationFinalStatus = 'failed';
+          branch.status = 'error';
+          branch.errorMessage = `项目已暂停，但 ${stillRunning.length} 个容器未能停止：${stillRunning.join(', ')}，请手动检查 docker`;
+        } else {
+          branch.status = 'idle';
+        }
+        stateService.save();
+        activeServerEventLogStore?.record({
+          category: 'system',
+          severity: stillRunning.length > 0 ? 'error' : 'warn',
+          source: 'proxy.preview-auto-wake',
+          action: stillRunning.length > 0
+            ? 'branch.auto-wake.revert-stop-failed'
+            : 'branch.auto-wake.reverted-project-paused',
+          message: stillRunning.length > 0
+            ? `项目暂停，撤销 ${slug} 的自动唤醒时有容器未停止：${stillRunning.join(', ')}`
+            : `项目暂停，已撤销 ${slug} 的自动唤醒并停回容器`,
+          projectId: branch.projectId,
+          branchId: branch.id,
+        });
+        return;
       }
 
       if (failed.length === 0) {

@@ -6,7 +6,9 @@ import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
-import { GenSweepLoader } from '@/components/ui/GenSweepLoader'; // 生图等待动效=流光进度条（替换旧金色 Nebula）
+import { GenDevelopLoader } from '@/components/ui/GenDevelopLoader'; // 生图等待动效=显影（进度画在画框上，替换旧流光进度条）
+import { anchorRectOf, FALLBACK_ITEM_SIZE, findAlignedFreeTopLeft, occupiedRects, type PlacementRect } from '@/lib/canvasPlacement';
+import { mergeSendCanvas } from '@/lib/sendCanvasMerge'; // 发送时把「刚加、还没刷」的元素并进画布 // 新图贴着锚点共边落位
 import { recordGenDurationMs } from '@/lib/genTiming';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
@@ -274,8 +276,29 @@ type CanvasImageItem = {
  */
 const AI_LAYER_COUNT = LAYER_COUNT_DEFAULT;
 
-/** 图层面板占掉的右侧宽度（面板 300 + 右边距 16）。视角适配要把它让出来，不能把产物摆到面板底下。 */
-const LAYER_PANEL_RESERVED_WIDTH = 316;
+/*
+ * 右侧浮层的几何，一处定义。
+ *
+ * 这一页右边其实有**两个**浮层，都锚在右边：对话（absolute right-3、宽 420、z-30）
+ * 和图层面板（z-40）。层级高的那个直接盖住低的——用户截图里「Hi，我是你的 AI 设计师」
+ * 被切掉半句就是这么来的。和刚修完的「卡片上角三层抢同一个角」是同一个形状，
+ * 只是搬到了页面级。
+ *
+ * 所以图层面板要给对话让位：贴在对话左侧，两者留一个间距。下面三个值都从同一组
+ * 常量推导——把「对话有多宽」抄成两份，是这类布局最典型的漂移源。
+ */
+const CHAT_PANEL_INSET = 12; // 对话浮层的 right-3
+const CHAT_PANEL_WIDTH = 420; // 对话浮层桌面端宽度
+const PANEL_GAP = 12;
+/** 图层面板距画布右缘多远：让开整个对话浮层。手机端对话是全屏浮层，不参与，见挂载处。 */
+const LAYER_PANEL_RIGHT = CHAT_PANEL_INSET + CHAT_PANEL_WIDTH + PANEL_GAP;
+const LAYER_PANEL_WIDTH = 300;
+/**
+ * 图层面板占掉的右侧宽度：视角适配要让出来，不能把产物摆到面板底下。
+ * 让位之后这个值必须跟着变大，否则产物会被摆到面板（甚至对话）底下——
+ * 面板挪了、预留没挪，是典型的「改一处忘一处」。
+ */
+const LAYER_PANEL_RESERVED_WIDTH = LAYER_PANEL_RIGHT + LAYER_PANEL_WIDTH;
 
 /** 透明底纹：与图层面板同一套，保证画布和面板里的「透明」长得一样。 */
 const CANVAS_CHECKERBOARD: React.CSSProperties = {
@@ -3247,8 +3270,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         if (cancelled) return;
         if (res.success && res.data.visualAgentPreferences) {
           const prefs = res.data.visualAgentPreferences;
-          setModelPrefAuto(prefs.modelAuto ?? true);
-          setModelPrefModelId(prefs.modelId ?? '');
+          // 首页刚交接过模型就不许回填：那次偏好写可能失败了，服务端还是旧值。
+          if (!handedModelIdRef.current) {
+            setModelPrefAuto(prefs.modelAuto ?? true);
+            setModelPrefModelId(prefs.modelId ?? '');
+          }
           // 加载 DIY 快捷指令
           if (Array.isArray(prefs.quickActions)) {
             setDiyQuickActions(prefs.quickActions);
@@ -4678,25 +4704,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const key = generatorExistingKey ?? `gen_${Date.now()}`;
     // 获取参考图（选中图）的位置信息，用于联合适配
     const refItem = primaryRef ?? selectedAtSend;
-    const refRect = refItem && typeof refItem.x === 'number' && typeof refItem.y === 'number'
-      ? { x: refItem.x, y: refItem.y, w: refItem.w ?? 320, h: refItem.h ?? 220 }
-      : undefined;
+    const refRect = anchorRectOf(refItem) ?? undefined;
     // 保存参考图信息，用于重试时恢复
     const refImageKey = refItem?.key;
     const refImageSha256 = refItem?.originalSha256 ?? refItem?.sha256;
 
     setCanvas((prev) => {
-      const existingRects = prev
-        .filter(
-          (x) =>
-            ((x.kind ?? 'image') === 'generator' ||
-              (x.kind ?? 'image') === 'shape' ||
-              (x.kind ?? 'image') === 'text' ||
-              !!x.src ||
-              x.status === 'running' ||
-              x.status === 'error')
-        )
-        .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
+      const existingRects = occupiedRects(prev);
       // 占位尺寸随 requested size（保持比例），避免"永远 1K 方形"的观感
       const parsedSize = tryParseWxH(resolvedSizeForGen);
       const genW = parsedSize?.w ?? 1024;
@@ -4733,8 +4747,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         );
       }
 
-      // 否则：新建一张图（放在视口附近的最近空位）
-      const pos = findNearestFreeTopLeft(existingRects, genW, genH, near);
+      // 否则：新建一张图，**贴着参考图共边落位**（和上传路径同一套规则）。
+      //
+      // 这里以前直接用最近空位搜索，没有锚点：结果是新图落在「离视口中心最近的那个 48px 格子」，
+      // 和参考图的边差几十像素，用户看到的是「紧挨在一起」而不是「左右排排坐」。
+      // 对齐车道全占满时才退回最近空位（见 lib/canvasPlacement.ts）。
+      const alignedPos = refRect ? findAlignedFreeTopLeft(existingRects, genW, genH, refRect) : null;
+      const pos = alignedPos ?? findNearestFreeTopLeft(existingRects, genW, genH, near);
       const placeholder: CanvasImageItem = {
         key,
         kind: 'image',
@@ -4754,8 +4773,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 重要：新元素要在最上层 => 放到数组末尾（后渲染覆盖先渲染）
       return [...prev, placeholder].slice(-60);
     });
-    // 体验：像"上传图片"一样，开始生成就把视角移动到占位图位置（避免用户找不到新图）
-    setSelectionWithoutChip([key]); // generator 不需要 chip
+    // 体验：开始生成就把视角移动到占位图位置（避免用户找不到新图）。
+    // 但**不选中**它：选中会在等待卡外面再套一圈蓝色选择框，和进度画框贴在一起，
+    // 用户原话「这三个边框给用户感觉就挺累的」。而且这个选中是系统替用户做的决定——
+    // 他选的是参考图，没说要选这张还没画出来的。镜头已经把它推到眼前，不需要再框一次。
+    // 用户自己点一下当然还是能选中。
     requestAnimationFrame(() => {
       const f = focusKeyRef.current;
       if (!f || f.key !== key) return;
@@ -4933,6 +4955,26 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           url: img.originalSrc || img.src || '',
           label: `第${idx + 1}张图`,
         }));
+
+      // 用户给了参考图，但一张都没能带到后端 —— 停在这里，不要发这次生成。
+      //
+      // 上面那个失败分支把 initImageAssetSha256 清成 undefined 再往下走，于是
+      // imageRefsForBackend 被过滤成空数组，`imageRefs: undefined` 交出去，
+      // 后端照常跑一次**纯文字**生成：用户要的是「按这张图改」，拿到的是照着
+      // 文字重画的另一张图，而且是花了钱的（Codex PR #1476 P1）。
+      //
+      // 手机端那条上一轮已经改成失败即停，桌面端这条是它的兄弟，当时没一起改——
+      // 「修了一个消费方、漏了兄弟」这个形状本轮已经重复出现过好几次。
+      //
+      // 判据用「有没有参考图掉光了」而不是「是不是从首页交接过来的」：
+      // 后者要知道来路，前者直接说的就是要防的那件事，编辑器内选图重绘同样成立。
+      if (unifiedImageRefs.length > 0 && imageRefsForBackend.length === 0) {
+        const msg = '参考图没能带上来，这次没有生成';
+        setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
+        pushMsg('Assistant', `${msg}。提示词留着了，重试一次；或者去掉参考图，改成纯文字生成——那是另一件事，得你自己定。`);
+        triggerDefectFlash();
+        return;
+      }
 
       const runRes = await createWorkspaceImageGenRun({
         id: workspaceId,
@@ -5247,7 +5289,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         };
         return [...prev, placeholder].slice(-60);
       });
-      setSelectionWithoutChip([key]);
+      // 不自动选中：这是系统替用户做的决定，而选中会在等待卡外面再套一圈蓝色选择框，
+      // 和进度画框贴在一起（用户原话「这三个边框给用户感觉就挺累的」）。同上，见 4840 附近。
 
       // 强制保存 canvas（确保占位元素已持久化）
       {
@@ -5455,6 +5498,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   // 处理初始 prompt（从首页快捷输入跳转过来，或从 sessionStorage 读取）
   const initialPromptHandledRef = useRef(false);
+  /**
+   * 首页带进来的那张参考图，在这个 workspace 里的 assetId。
+   *
+   * 首页交接包（sessionStorage）一直带着它，但画板这边从来没读过——链路只建了一半，
+   * 而少的这一半正是「这张图是不是已经在画布上了」的唯一可靠判据。
+   */
+  const initialAssetIdRef = useRef<string | null>(null);
+  /**
+   * 首页量好的参考图像素尺寸。
+   *
+   * 没有它，这张卡在落位那一刻是「尺寸未知」，碰撞表只能给兜底档；
+   * 有它，第一帧就是真实体积，新生成的图才能真的贴着它的边排。
+   */
+  const initialImageSizeRef = useRef<{ w: number; h: number } | null>(null);
+  /** 首页交接包里带来的模型。非空 = 用户刚显式选过，服务端偏好不得覆盖它。 */
+  const handedModelIdRef = useRef<string>('');
   const [initialPrompt, setInitialPrompt] = useState<{
     text: string;
     size: string | null;
@@ -5475,6 +5534,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const data = JSON.parse(stored);
       // 读取后立即删除，避免重复执行
       sessionStorage.removeItem(sessionKey);
+      // assetId 是首页那张参考图在本 workspace 里的身份。首页一直在传，这里第一次读。
+      initialAssetIdRef.current = String(data.assetId || '').trim() || null;
+      // 首页明确选过的模型：优先级高于服务端偏好。
+      // 偏好写失败时只返回 { success:false }（不 reject），此时服务端存的还是上一次的值；
+      // 若编辑器照读，用户在首页选了 A、这里却用 B 跑了一次要花钱的生成（Codex PR #1476 P1）。
+      // 这个 effect 在挂载时同步跑完，而偏好 effect 的赋值在 await 之后，所以标记一定先立起来。
+      const handedModelId = String(data.modelId || '').trim();
+      if (handedModelId) {
+        handedModelIdRef.current = handedModelId;
+        setModelPrefAuto(false);
+        setModelPrefModelId(handedModelId);
+      }
+      const sz = data.imageSize;
+      initialImageSizeRef.current =
+        sz && Number(sz.w) > 0 && Number(sz.h) > 0 ? { w: Number(sz.w), h: Number(sz.h) } : null;
       const messageText = String(data.messageText || '').trim();
       if (messageText) {
         setInitialPrompt(parseInlinePrompt(messageText));
@@ -5498,15 +5572,69 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 延迟执行，确保 UI 已渲染完成
     const timer = window.setTimeout(() => {
       const inline = initialPrompt.inlineImage;
+      // 这一拍刚加进画布 / 刚选中的东西。setCanvas 与 setSelectedKeys 都要到下一次渲染
+      // 才生效，所以必须原样递给 sendText，否则解析器在旧画布里找不到它。
+      let pendingItem: CanvasImageItem | null = null;
+      let pendingKey = '';
 
       // 如果有内联图片，先添加到 canvas
       if (inline?.src) {
+        /*
+         * 先认领，再新增。
+         *
+         * 用户在首页传一张图 + 一句话跳进来，画布上出现了**两张一样的参考图**。
+         * 根因是同一张图走了两条路，各落地一次：
+         *   1. 首页跳转前已经 uploadVisualAgentWorkspaceAsset 把它传进这个 workspace；
+         *      新 workspace 没有画布快照，boot 走「回退到资产列表重建画布」，
+         *      把 workspace 的全部 asset 铺上画布 —— 这是第一张。
+         *   2. 这里再把 messageText 里的 [IMAGE src=...] 当成新图加一遍 —— 第二张。
+         *
+         * 注意这**不违反**「同图允许上传、传几次就几张」：那条说的是用户按几次就有几张。
+         * 这里用户只按了一次，是系统落了两次，属于系统重复，不是用户重复。
+         *
+         * 判据用 assetId（首页交接包一直在传，之前没人读），它是这张图在本 workspace 里的
+         * 身份，比 URL 稳（URL 可能带签名或走变体）。assetId 缺失（老数据）时退回 src 比对。
+         */
+        const wantAssetId = initialAssetIdRef.current;
+        const already = canvasRef.current.find((x) => {
+          if ((x.kind ?? 'image') !== 'image') return false;
+          if (wantAssetId && x.assetId) return x.assetId === wantAssetId;
+          return Boolean(x.src) && x.src === inline.src;
+        });
+
+        if (already) {
+          // 已经在画布上了：复用它，只补选中与 chip。多出来的那张从来就不该存在。
+          const reuseRefId = typeof already.refId === 'number' ? already.refId : nextRefId;
+          if (typeof already.refId !== 'number') setNextRefId(reuseRefId + 1);
+          setSelectedKeys([already.key]);
+          pendingItem = already;
+          pendingKey = already.key;
+          richComposerRef.current?.clearPending();
+          richComposerRef.current?.insertImageChip(
+            { key: already.key, refId: reuseRefId, src: already.src, label: inline.name || `img${reuseRefId}` },
+            { preserveFocus: true }
+          );
+        } else {
         const inlineKey = `inline_${Date.now()}`;
         // 为新图片分配 refId
         const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
         const newRefId = Math.max(nextRefId, maxExisting + 1);
         setNextRefId(newRefId + 1);
 
+        // 首页量好的像素尺寸。缺了这张卡就是「尺寸未知」，落位时只能按兜底档算体积，
+        // 新生成的图排出来会偏；有了它，第一帧的体积就是真的。
+        const handedSize = initialImageSizeRef.current;
+        // 显式落位。不落位的元素坐标是 undefined，到处按 (0,0) 渲染，
+        // 更要命的是它当不了对齐锚点（anchorRectOf 要求真有坐标），
+        // 于是紧接着生成的那张图只能退回最近空位搜索——用户看到的就是「没排排坐」。
+        const inlineW = handedSize?.w ?? FALLBACK_ITEM_SIZE;
+        const inlineH = handedSize?.h ?? FALLBACK_ITEM_SIZE;
+        const inlinePos = findNearestFreeTopLeft(
+          occupiedRects(canvasRef.current),
+          inlineW,
+          inlineH,
+          stageCenterWorld()
+        );
         const inlineCanvasItem: CanvasImageItem = {
           key: inlineKey,
           createdAt: Date.now(),
@@ -5515,20 +5643,43 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           status: 'done',
           kind: 'image',
           refId: newRefId,
+          x: inlinePos.x,
+          y: inlinePos.y,
+          w: inlineW,
+          h: inlineH,
+          ...(handedSize ? { naturalW: handedSize.w, naturalH: handedSize.h } : {}),
+          // assetId 已知就带上：它已经在后端了，不带会被当成「本地未持久化」，
+          // 刷新后按 localOnlyImages 跳过（形状 1：判据少一个字段就漏一类输入）。
+          // 首页现在不再预先上传（跳转不等这个往返），所以这里通常没有 assetId：
+          // 这张图是 dataURL，标 pending，由生成前的 needEnsure 分支落盘。
+          ...(initialAssetIdRef.current
+            ? { assetId: initialAssetIdRef.current, syncStatus: 'synced' as const }
+            : { syncStatus: 'pending' as const }),
         };
         setCanvas((prev) => [...prev, inlineCanvasItem]);
         // 手动同步选中和 chip（因为 setCanvas 是异步的）
         setSelectedKeys([inlineKey]);
+        pendingItem = inlineCanvasItem;
+        pendingKey = inlineKey;
         richComposerRef.current?.clearPending();
         richComposerRef.current?.insertImageChip(
           { key: inlineKey, refId: newRefId, src: inline.src, label: inline.name || `img${newRefId}` },
           { preserveFocus: true }
         );
+        }
       }
 
-      // 通过统一守门员发送（inlineImage 现在已在 canvas 中，会被 selectedKeys 引用）
+      // 通过统一守门员发送。
+      //
+      // **必须把刚加的那张图直接递进去**：上面的 setCanvas / setSelectedKeys 是异步的，
+      // sendText 闭包读到的 canvas 与 selectedKeys 都还是旧的，解析器在旧画布里找不到
+      // 这张图，第一次生成就会静默变成纯文字——用户在首页传的照片被整个忽略。
+      // 旧代码能侥幸工作是因为当时首页会先上传，图经由资产列表重建先进了画布；
+      // 现在跳转不再等上传，这条侥幸没了。
       void sendText(initialPrompt.text, {
         inlineImage: inline,
+        extraCanvas: pendingItem ? [pendingItem] : undefined,
+        selectedKeysOverride: pendingKey ? [pendingKey] : undefined,
       });
     }, 500);
 
@@ -5581,6 +5732,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const sendText = async (rawText: string, opts?: {
     chipRefs?: ChipRef[];
     inlineImage?: { src: string; name?: string };
+    /**
+     * 刚加进画布、但 setCanvas 还没刷出来的元素。
+     *
+     * setCanvas / setSelectedKeys 是异步的，同一个 tick 里紧接着调 sendText，
+     * 这个闭包读到的 `canvas` 和 `selectedKeys` 都还是旧的——首页带图进来那条路
+     * 正是这样：图刚 setCanvas 进去就发送，解析器在旧画布里找不到它，
+     * 于是**第一次生成完全没有参考图，静默退化成纯文字**（Codex PR #1476 P1）。
+     *
+     * canvasRef / selectedKeysRef 也救不了：它们是在 useEffect 里同步的，同一个 tick 同样是旧值。
+     * 所以只能由调用方把「刚加的这一个」直接递进来，不依赖任何刷新时机。
+     */
+    extraCanvas?: CanvasImageItem[];
+    /** 同上：刚设置、还没刷出来的选中键。 */
+    selectedKeysOverride?: string[];
   }) => {
     const raw = String(rawText ?? '').trim();
     if (!raw) return;
@@ -5592,8 +5757,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const cleanDisplay = String(sized.cleanText ?? '').trim();
     if (!cleanDisplay) return;
 
+    // 解析用的画布 = 已刷出来的 state + 调用方递进来的「刚加的、还没刷」。
+    // 后者去重放在前面之后，key 相同时以 extraCanvas 为准。
+    const sendCanvas: CanvasImageItem[] = mergeSendCanvas(canvas, opts?.extraCanvas);
+    const sendSelectedKeys = opts?.selectedKeysOverride ?? selectedKeys;
+
     // 使用统一解析器
-    const contractCanvas: ContractCanvasItem[] = canvas
+    const contractCanvas: ContractCanvasItem[] = sendCanvas
       .filter((it) => (it.kind ?? 'image') === 'image' && it.src)
       .map((it) => ({
         key: it.key,
@@ -5605,7 +5775,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const resolveResult = resolveImageRefs({
       rawText: cleanDisplay,
       chipRefs: opts?.chipRefs ?? [],
-      selectedKeys,
+      selectedKeys: sendSelectedKeys,
       inlineImage: opts?.inlineImage,
       canvas: contractCanvas,
     });
@@ -5617,11 +5787,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     );
 
     // 转换所有 refs 为 CanvasImageItem（用于 UI 显示和生成）
+    // 回查也必须走同一份合并后的画布：解析出了 ref 却在这里找不到实体，
+    // imageRefs 依旧是空的——半截修复比不修更难查。
     const imageRefs: CanvasImageItem[] = resolveResult.refs
-      .map((ref) => canvas.find((c) => c.key === ref.canvasKey))
+      .map((ref) => sendCanvas.find((c) => c.key === ref.canvasKey))
       .filter((c): c is CanvasImageItem => !!c);
 
-    const seedSelectedKey = String(selectedKeysRef.current?.[0] ?? '').trim();
+    const seedSelectedKey = String(sendSelectedKeys[0] ?? selectedKeysRef.current?.[0] ?? '').trim();
     const sizeOverride = sized.size ?? composerSize ?? autoSizeForSelectedImage ?? null;
     const job: GenJob = {
       id: `job_${Date.now()}_${Math.random().toString(16).slice(2)}`,
@@ -5728,7 +5900,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     await sendText(raw);
   };
 
-  const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
+  const onUploadImages = async (files: File[]) => {
     // 工作区初始画布仍在回放时接收上传，会被稍后返回的服务器快照覆盖：界面提示
     // “已加入”但图片随即消失。入口和处理函数双重门禁，覆盖文件选择、拖放与粘贴路径。
     if (!workspaceReady) {
@@ -5764,129 +5936,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }
     }
     if (anyCompressed) showUploadToast('已自动压缩大图以提升画布流畅度');
-    // 选中单张“图片”时：上传单图默认“替换”而非叠加（保留 x/y/w/h）
-    const mode = opts?.mode ?? 'auto';
-    if (mode === 'auto' && list.length === 1 && selectedKeys.length === 1) {
-      const targetKey = selectedKeys[0]!;
-      const target = canvas.find((x) => x.key === targetKey);
-      if (!target || (target.kind ?? 'image') !== 'image') {
-        // 如果当前选中的是“生成器区域”等非图片对象，则走新增逻辑
-      } else {
-      const file = list[0]!;
-      const now = Date.now();
-      const dimFile = await readImageSizeFromFile(file);
-      const src = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => resolve('');
-        reader.readAsDataURL(file);
-      });
-      if (!src) return;
-      const dim = dimFile ?? (await readImageSizeFromSrc(src));
-      const nextW = dim?.w ?? target.w ?? 1;
-      const nextH = dim?.h ?? target.h ?? 1;
-
-      setCanvas((prev) =>
-        prev.map((it) => {
-          if (it.key !== targetKey) return it;
-          // 替换后如果尺寸变化导致碰撞：用“最近空位”微移，避免遮挡
-          const cx = (it.x ?? 0) + (nextW / 2);
-          const cy = (it.y ?? 0) + (nextH / 2);
-          const others = prev
-            .filter((x) => x.key !== targetKey)
-            .filter(
-              (x) =>
-                ((x.kind ?? 'image') === 'generator' ||
-                  (x.kind ?? 'image') === 'shape' ||
-                  (x.kind ?? 'image') === 'text' ||
-                  !!x.src ||
-                  x.status === 'running' ||
-                  x.status === 'error')
-            )
-            .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
-          const hit = others.some((r) => {
-            const ax0 = (it.x ?? 0) - 18;
-            const ay0 = (it.y ?? 0) - 18;
-            const ax1 = (it.x ?? 0) + nextW + 18;
-            const ay1 = (it.y ?? 0) + nextH + 18;
-            const bx0 = r.x;
-            const by0 = r.y;
-            const bx1 = r.x + r.w;
-            const by1 = r.y + r.h;
-            return ax0 < bx1 && ax1 > bx0 && ay0 < by1 && ay1 > by0;
-          });
-          const pos = hit ? findNearestFreeTopLeft(others, nextW, nextH, { x: cx, y: cy }) : { x: it.x ?? 0, y: it.y ?? 0 };
-          focusKeyRef.current = { key: targetKey, cx: pos.x + nextW / 2, cy: pos.y + nextH / 2, w: nextW, h: nextH };
-          requestAnimationFrame(() => {
-            const f = focusKeyRef.current;
-            if (!f || f.key !== targetKey) return;
-            // 新图：只缩小适应或平移，不放大
-            if (f.w && f.h) {
-              animateCameraToFitRect({ x: f.cx - f.w / 2, y: f.cy - f.h / 2, w: f.w, h: f.h }, { maxZoom: zoomRef.current });
-            } else {
-              animateCameraToWorldCenter(f.cx, f.cy);
-            }
-          });
-          return {
-            ...it,
-            createdAt: now,
-            prompt: file.name || it.prompt,
-            src,
-            status: 'done',
-            errorMessage: null,
-            assetId: undefined,
-            sha256: undefined,
-            syncStatus: 'pending',
-            syncError: null,
-            w: nextW,
-            h: nextH,
-            naturalW: dim?.w ?? it.naturalW,
-            naturalH: dim?.h ?? it.naturalH,
-            x: pos.x,
-            y: pos.y,
-          };
-        })
-      );
-      pushMsg('Assistant', '已替换当前选中图片。');
-
-      // 持久化替换后的图片
-      const up = await uploadVisualAgentWorkspaceAsset({ id: workspaceId, data: src, prompt: file.name || 'uploaded' });
-      if (up.success) {
-        const a = up.data.asset;
-        setCanvas((prev) =>
-          prev.map((x) =>
-            x.key === targetKey
-              ? {
-                  ...x,
-                  assetId: a.id,
-                  sha256: a.sha256,
-                  src: a.url || x.src,
-                  syncStatus: 'synced',
-                  syncError: null,
-                }
-              : x
-          )
-        );
-        showUploadToast(`上传成功：${file.name || '图片'}`);
-      } else {
-        const msg = up.error?.message || '图片持久化失败';
-        setCanvas((prev) =>
-          prev.map((x) =>
-            x.key === targetKey
-              ? {
-                  ...x,
-                  syncStatus: 'failed',
-                  syncError: msg,
-                }
-              : x
-          )
-        );
-        pushMsg('Assistant', `图片未能持久化到后端资产（刷新可能丢失）：${msg}`);
-      }
-      return;
-      }
-    }
-
     const added: CanvasImageItem[] = [];
     const now = Date.now();
 
@@ -5925,30 +5974,34 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (added.length === 0) return;
     // 保持顺序：用户选中的文件顺序
     added.sort((a, b) => a.createdAt - b.createdAt);
+    // 首张是否真的贴着选中图落位（不是「有没有选中」——四个方向被占满时会退回最近空位，
+    // 那时说「已贴着选中图」就是假话）。收尾文案按这个说，不按选中状态说。
+    let placedAlongsideSelection = false;
     {
       const prev = canvasRef.current;
-      // “最近路径”算法：从当前视口中心向外找最近空位，避免与现有元素堆叠
+      // 兜底仍是“最近空位”：只在四个方向的对齐车道全被占满时才用（见 lib/canvasPlacement.ts）
       const near = stageCenterWorld();
-      const existingRects = prev
-        .filter(
-          (x) =>
-            ((x.kind ?? 'image') === 'generator' ||
-              (x.kind ?? 'image') === 'shape' ||
-              (x.kind ?? 'image') === 'text' ||
-              !!x.src ||
-              x.status === 'running' ||
-              x.status === 'error')
-        )
-        .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
+      const existingRects = occupiedRects(prev);
       const placed: CanvasImageItem[] = [];
       let focus: { key: string; cx: number; cy: number; w?: number; h?: number } | null = null;
+      // 锚点：选中的那张图。上传时选中一张，新图就贴着它摆，而不是丢到视口中心附近
+      // 找到的第一个空格里——那样每张的边都差几十像素，画布很快就乱了。
+      // 只认「已经有坐标和尺寸」的选中项；选了多张或选中的是没落位的对象就没有锚点。
+      let anchor: PlacementRect | null = (() => {
+        if (selectedKeys.length !== 1) return null;
+        return anchorRectOf(prev.find((x) => x.key === selectedKeys[0]));
+      })();
       for (const it of added) {
         const w = it.w ?? 1;
         const h = it.h ?? 1;
-        const pos = findNearestFreeTopLeft(existingRects, w, h, near);
+        const aligned = anchor ? findAlignedFreeTopLeft(existingRects, w, h, anchor) : null;
+        if (aligned && placed.length === 0 && selectedKeys.length === 1) placedAlongsideSelection = true;
+        const pos = aligned ?? findNearestFreeTopLeft(existingRects, w, h, near);
         const nextIt: CanvasImageItem = { ...it, w, h, x: pos.x, y: pos.y };
         placed.push(nextIt);
         existingRects.push({ x: pos.x, y: pos.y, w, h });
+        // 链式：下一张贴着这一张，多张一次上传会排成等距的一行/一列，而不是各找各的空格。
+        anchor = { x: pos.x, y: pos.y, w, h };
         focus = { key: it.key, cx: pos.x + w / 2, cy: pos.y + h / 2, w, h };
       }
       // 重要：新元素要在最上层 => 放到数组末尾（后渲染覆盖先渲染）
@@ -5986,7 +6039,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         animateCameraToWorldCenter(f.cx, f.cy);
       }
     });
-    pushMsg('Assistant', `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`);
+    // 「新增而不是替换」这件事必须说在**画布上**。
+    //
+    // 上一版只写进了 pushMsg（聊天面板）。在全画布视图里那个面板根本不在视野内，
+    // 于是用户看到的是：选中一张图、传了一张，画布上无声地多出一张一模一样的——
+    // 原话「怎么变成两个参考图了」。改成替换前是「原图无声消失」，改完成了
+    // 「副本无声出现」，两头都是同一个毛病：动作发生了，说明去了用户看不见的地方。
+    if (placedAlongsideSelection) showUploadToast(`已在选中图旁新增 ${added.length} 张，原图保留`);
+    pushMsg(
+      'Assistant',
+      placedAlongsideSelection
+        ? `已在选中图旁新增 ${added.length} 张（原图保留，不会被覆盖）。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`
+        : `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`
+    );
 
     // 持久化：上传到后端并替换为自托管 URL（避免 dataURL 过大、也方便跨设备恢复）
     void (async () => {
@@ -6047,7 +6112,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     onUploadImagesRef.current = onUploadImages;
   });
 
-  // 画板支持 Ctrl/Cmd+V 粘贴图片（作为“新增一项”，不走替换逻辑）
+  // 画板支持 Ctrl/Cmd+V 粘贴图片（与拖放、选文件同一条路径：一律新增，从不替换）
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const cd = e.clipboardData;
@@ -6087,7 +6152,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         return new File([f], name, { type });
       });
 
-      void onUploadImagesRef.current(files, { mode: 'add' });
+      void onUploadImagesRef.current(files);
     };
 
     window.addEventListener('paste', onPaste);
@@ -7087,7 +7152,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         ) : null}
                         {it.status === 'running' ? (
-                          <GenSweepLoader createdAt={it.createdAt} screenW={w * zoom} screenH={h * zoom} viewportRef={stageRef} />
+                          <GenDevelopLoader
+                            createdAt={it.createdAt}
+                            screenW={w * zoom}
+                            screenH={h * zoom}
+                            worldW={w}
+                            worldH={h}
+                            sizeLabel={`${Math.round(w)} × ${Math.round(h)}`}
+                            viewportRef={stageRef}
+                          />
                         ) : it.status === 'error' ? (
                           <div className="absolute inset-0">
                             {/* 灰色静止花瓣背景 */}
@@ -7130,50 +7203,27 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     ) : it.status === 'running' ? (
                       <div
                         className="w-full h-full rounded-[16px] relative"
-                        // 需求：加载中要有“占位框”，告诉用户会在这里生成一张这么大的图
-                        // - 非选中：也要有细边框（避免 loader 像“漂浮出来的”）
-                        // - 选中：强化描边/光晕（不改变尺寸/比例）
-                        style={{
-                          background: 'rgba(255,255,255,0.01)',
-                          border: '1px solid rgba(255,255,255,0.12)',
-                          boxShadow: 'none',
-                        }}
+                        // 需求：加载中要有“占位框”，告诉用户会在这里生成一张这么大的图。
+                        // 这个框现在由 GenDevelopLoader 自己画（描边即进度，按屏幕像素恒定），
+                        // 所以这里**不再画 border**——两条边一个在世界坐标一个在屏幕坐标，
+                        // 叠在一起低倍下必然错开半像素、看着发毛。底纱也归 loader 管。
+                        style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}
                       >
-                        {/* 贴**左上角**：右上角是 Frame 的「图层面板」按钮、正上方是 Frame 头部、
-                            正下方是计时条，四者都用 scale(1/zoom) 保持屏幕尺寸恒定，
-                            凑一起必然互相压（2026-08-11 用户截图：徽章正压在进度条上）。
-                            左上角是这张卡里唯一没人占的角。卡片在屏幕上太小时直接不显示——
-                            那个尺寸下它只会盖住产物本身。 */}
-                        {h * zoom >= 90 && (
-                          <div
-                            className="absolute left-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
-                            style={{
-                              background: 'rgba(0,0,0,0.28)',
-                              border: '1px solid rgba(255,255,255,0.10)',
-                              color: 'rgba(255,255,255,0.78)',
-                              // 关键：文字大小不随画布 zoom 缩放（保持清晰可读）
-                              // 再让开 Frame 头部：Frame 给头部留的是 FRAME_HEADER=46 个**世界**像素，
-                              // 而头部标签自己是 scale(1/zoom) 的**屏幕**常量。缩得越小，
-                              // 那 46px 在屏幕上越薄（21% 时只剩 ~10px），头部就压到卡片上来了
-                              // ——冒烟实测 21%/19% 两档「Frame 头部 × 图层分离中」重叠。
-                              // 这里按同一套换算把徽章往下推：scale 之后的 translateY 正好是屏幕像素，
-                              // 需要让开的量 = 头部屏幕高度 − 头部预留的屏幕高度，高倍下自然归零。
-                              transform: `scale(var(--invZoom)) translateY(${
-                                it.layerRole === 'layer'
-                                  ? Math.max(0, Math.round(30 - 41 * zoom))
-                                  : 0
-                              }px)`,
-                              transformOrigin: 'left top',
-                            }}
-                            title={it.layerRole === 'layer' ? '正在把原图拆成可编辑图层' : '预计生成尺寸（画布占位）'}
-                            // 低倍下这些标签的文字会按档收起，冒烟不能靠文字找它们
-                            // （靠文字找 = 一收起就找不到 = 那一档静默没测）。
-                            data-testid={it.layerRole === 'layer' ? 'frame-layering-badge' : undefined}
-                          >
-                            {it.layerRole === 'layer' ? '图层分离中' : `预计 ${Math.round(w)} × ${Math.round(h)}`}
-                          </div>
-                        )}
-                        <GenSweepLoader createdAt={it.createdAt} screenW={w * zoom} screenH={h * zoom} viewportRef={stageRef} />
+                        {/* 尺寸、阶段、剩余时间原来是三处各自反缩放的标签（左上角徽章 + 底部黑胶囊），
+                            和 Frame 头部、图层面板按钮四件东西抢同一张卡，缩放一低必打架
+                            （2026-08-11 用户截图：徽章正压在进度条上；PR #1458 打的就是这个补丁）。
+                            现在合并成 loader 底边的一行，四个角全部还给卡片——那个冲突不是被修好，
+                            是结构上不存在了。 */}
+                        <GenDevelopLoader
+                          createdAt={it.createdAt}
+                          screenW={w * zoom}
+                          screenH={h * zoom}
+                          worldW={w}
+                          worldH={h}
+                          sizeLabel={`${Math.round(w)} × ${Math.round(h)}`}
+                          mode={it.layerRole === 'layer' ? 'layer' : 'image'}
+                          viewportRef={stageRef}
+                        />
                       </div>
                     ) : kind === 'shape' ? (
                       <div className="w-full h-full flex items-center justify-center">
@@ -7744,6 +7794,27 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         // 如果名字中包含 @imgN 引用，则尝试使用 MessageContentRenderer 渲染为 Chip
                         const isChipLabel = name.match(/@img\d+/);
 
+                        // ── 一张卡的同一个角只允许一个主人 ──
+                        //
+                        // 这张卡的两个上角各有**三个互不知情的图层**在抢：Frame 头部（左上标题 +
+                        // 右上「图层面板」按钮）、这里的选中标签（左上名字 + 右上尺寸）、
+                        // 以及生成中的 loader。三者都按 scale(1/zoom) 反缩放贴同一个角。
+                        //
+                        // 上一版只把 loader **自己**的三个标签合并成底行，就宣称「四个角全部
+                        // 还给卡片、冲突结构上不存在了」——只修了三个主张者里的一个，
+                        // 另外两层根本没动，于是「给我换成正面」和 Frame 标题叠在一起、
+                        // 「1024 × 1024」压在「图层面板」按钮上（后者还是同一个数字的第二份，
+                        // 底行已经写过一遍，是我上次亲手造出来的重复）。
+                        //
+                        // 所以判据改成归属而不是位置：谁占了这个角，别人就得让开。
+                        const inFrame = Boolean(it.frameId || it.layerGroupId);
+                        const isRunning = it.status === 'running';
+                        // 左上：属于 Frame 就归 Frame 标题。它和 item 名字内容本来就近乎重复
+                        // （headline 取的就是这条 prompt），让位不丢信息。
+                        const showNameLabel = !inFrame;
+                        // 右上：生成中归 loader 底行（那里已有尺寸）；属于 Frame 归面板按钮。
+                        const showSizeLabel = !isRunning && !inFrame;
+
                         return (
                           <div
                             key={`ui_sel_${it.key}`}
@@ -7755,6 +7826,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               height: selH,
                             }}
                           >
+                            {showNameLabel ? (
                             <div
                               className="absolute text-[11px] font-semibold"
                               style={{
@@ -7799,7 +7871,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 )}
                               </span>
                             </div>
+                            ) : null}
 
+                            {showSizeLabel ? (
                             <div
                               className="absolute text-[11px] font-semibold"
                               style={{
@@ -7827,6 +7901,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             >
                               {sizeText}
                             </div>
+                            ) : null}
                           </div>
                         );
                       })
@@ -7934,6 +8009,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             {/* 图层面板（组装台）：画布 Frame 管单层编辑，这里管叠放、显隐与导出 */}
             {layerPanelGroupId && layerPanelModel.length > 0 ? (
               <SemanticLayerPanel
+                // 方案 B：从画布右缘推出，让开右侧的对话浮层——两个浮层不再抢同一片区域。
+                // 手机端对话是覆盖全屏、可开关的（mobileShowChat），没有「常驻占位」可让，
+                // 硬让 444 只会把面板挤到左半屏，所以那一档仍贴右缘。
+                rightInset={isMobile ? 16 : LAYER_PANEL_RIGHT}
                 layers={layerPanelModel}
                 sourceSrc={String(layerPanelSource?.originalSrc || layerPanelSource?.src || '')}
                 title={cleanDisplayTitle(layerPanelSource?.prompt || '') || 'AI 分层'}
@@ -8830,17 +8909,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   const near = stageCenterWorld();
                   const key = `generator_${Date.now()}`;
                   setCanvas((prev) => {
-                    const existingRects = prev
-                      .filter(
-                        (x) =>
-                          ((x.kind ?? 'image') === 'generator' ||
-                            (x.kind ?? 'image') === 'shape' ||
-                            (x.kind ?? 'image') === 'text' ||
-                            !!x.src ||
-                            x.status === 'running' ||
-                            x.status === 'error')
-                      )
-                      .map((x) => ({ x: x.x ?? 0, y: x.y ?? 0, w: x.w ?? 1, h: x.h ?? 1 }));
+                    const existingRects = occupiedRects(prev);
                     const pos = findNearestFreeTopLeft(existingRects, w, h, near);
                     const next: CanvasImageItem = {
                       key,
@@ -8973,9 +9042,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           {/* 右侧：浮动对话面板（液态大玻璃效果）— 移动端全屏覆盖 / 桌面端浮动 */}
           <div
             ref={chatPanelRef}
-            className={`${isMobile ? 'absolute inset-0' : 'absolute right-3 top-3'} z-30 flex flex-col`}
+            className={`${isMobile ? 'absolute inset-0' : 'absolute top-3'} z-30 flex flex-col`}
             style={{
-              width: isMobile ? '100%' : 420,
+              // right / width 走同一组常量：图层面板要按它们算让位量，抄成两份必漂。
+              right: isMobile ? undefined : CHAT_PANEL_INSET,
+              width: isMobile ? '100%' : CHAT_PANEL_WIDTH,
               height: isMobile ? '100%' : 'calc(100% - 24px)',
               display: isMobile && !mobileShowChat ? 'none' : undefined,
               // 移动端：底部留出工具栏空间
@@ -9211,7 +9282,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   const ext = type.includes('png') ? 'png' : type.includes('jpeg') || type.includes('jpg') ? 'jpg' : type.includes('webp') ? 'webp' : 'png';
                   const name = (file.name && file.name.trim()) ? file.name : `clipboard_${now}.${ext}`;
                   const normalizedFile = new File([file], name, { type });
-                  void onUploadImages([normalizedFile], { mode: 'add' });
+                  void onUploadImages([normalizedFile]);
                   return true;
                 }}
                 onPendingKeysChange={handlePendingKeysChange}
@@ -10457,7 +10528,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               y: near.y - genH / 2,
             },
           ].slice(-60));
-          setSelectionWithoutChip([genKey]);
+          // 不自动选中：这是系统替用户做的决定，而选中会在等待卡外面再套一圈蓝色选择框，
+          // 和进度画框贴在一起（用户原话「这三个边框给用户感觉就挺累的」）。同上，见 4840 附近。
 
           // 创建生图任务
           try {
