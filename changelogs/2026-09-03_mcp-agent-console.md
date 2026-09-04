@@ -152,3 +152,7 @@
 | fix | prd-api | 网页托管开放层回绝对地址：ASSETS_PROVIDER=local（dev compose 的默认值）时 SiteUrl 是 /local-assets/… 相对路径，远端智能体拿到后按自己的域名解析，点开 404；发布、幂等命中与列表三处统一补齐来源域名 |
 | fix | prd-api | 建站改用服务端令牌落库：对象已用 CancellationToken.None 传上去，插库那一步若跟着客户端断开被取消会留下没人指向的孤儿对象，且因为没有 SourceRef 行，同一个 clientRequestId 的重试会再传一个 |
 | fix | prd-admin | 调用记录的读请求加代次令牌：筛选条件连改两次时慢的那个旧请求回来会覆盖新结果，当前筛选下显示别的客户端或别的结果状态的记录 |
+| fix | prd-api | 幂等键不再截断到 120 字：前 120 字相同、后面不同的两个合法键会压成同一个，第二次写入被报成幂等命中、悄悄不做（调用方拿到 success 却什么都没写） |
+| refactor | prd-api | 幂等键归一化收敛到 McpIdempotency 一处：原来视觉 / 知识库 / 网页托管各抄一份，同一个截断缺陷同时活在三处，自动 review 只在其中一处发现它 |
+| fix | prd-api | McpUsageCounter.Id 按实体契约给随机 id 默认值：空字符串会让任何走普通插入的路径共用同一个 _id |
+| test | prd-api | 补幂等键守卫：长键不许坍缩（含下游确定性 id）、两把密钥互不干扰、三个开放层控制器必须走同一判定源且不许再自己取密钥 id |

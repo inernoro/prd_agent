@@ -6,6 +6,7 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Api.Mcp;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -238,10 +239,7 @@ public class WebPagesOpenApiController : ControllerBase
 
     private string? BuildSourceRef(string? clientRequestId)
     {
-        if (string.IsNullOrWhiteSpace(clientRequestId)) return null;
-        var keyId = User.FindFirst("agentApiKeyId")?.Value ?? "unknown";
-        var raw = clientRequestId.Trim();
-        if (raw.Length > 120) raw = raw[..120];
-        return $"mcp:{keyId}:{raw}";
+        var scoped = McpIdempotency.ScopedByKey(User, clientRequestId);
+        return scoped == null ? null : $"mcp:{scoped}";
     }
 }

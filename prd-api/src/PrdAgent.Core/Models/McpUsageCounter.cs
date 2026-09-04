@@ -15,8 +15,12 @@ namespace PrdAgent.Core.Models;
 [BsonIgnoreExtraElements]
 public class McpUsageCounter
 {
-    /// <summary>`{keyId}:{yyyyMMdd(UTC)}:{kind}`</summary>
-    public string Id { get; set; } = string.Empty;
+    /// <summary>
+    /// `{keyId}:{yyyyMMdd(UTC)}:{kind}`。占坑那条路径会用这个确定性值覆盖默认值；
+    /// 默认值仍按 AGENTS.md §7 的实体契约给随机 id —— 空字符串会让任何走
+    /// 普通插入的路径共用同一个 `_id`，第二条起直接撞主键。
+    /// </summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string KeyId { get; set; } = string.Empty;
 

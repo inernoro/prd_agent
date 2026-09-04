@@ -252,11 +252,8 @@ public class VisualOpenApiController : ControllerBase
 
     private string? BuildIdempotencyKey(string? clientRequestId)
     {
-        if (string.IsNullOrWhiteSpace(clientRequestId)) return null;
-        var keyId = User.FindFirst("agentApiKeyId")?.Value ?? "unknown";
-        var raw = clientRequestId.Trim();
-        if (raw.Length > 120) raw = raw[..120];
+        var scoped = McpIdempotency.ScopedByKey(User, clientRequestId);
         // 与 ImageGenController 一致：幂等键带部署作用域，防前端确定性键跨分支撞唯一索引
-        return DeploymentScope.ScopeIdempotencyKey($"mcp:{keyId}:{raw}");
+        return scoped == null ? null : DeploymentScope.ScopeIdempotencyKey($"mcp:{scoped}");
     }
 }

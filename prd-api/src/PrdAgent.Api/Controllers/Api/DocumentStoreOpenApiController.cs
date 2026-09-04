@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
+using PrdAgent.Api.Mcp;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -567,11 +568,5 @@ public class DocumentStoreOpenApiController : ControllerBase
 
     /// <summary>幂等键带上密钥 id，避免两把密钥用了同一个 clientRequestId 互相吞掉对方的写入。</summary>
     private string? BuildIdempotencyKey(string? clientRequestId)
-    {
-        if (string.IsNullOrWhiteSpace(clientRequestId)) return null;
-        var keyId = User.FindFirst("agentApiKeyId")?.Value ?? "unknown";
-        var raw = clientRequestId.Trim();
-        if (raw.Length > 120) raw = raw[..120];
-        return $"{keyId}:{raw}";
-    }
+        => McpIdempotency.ScopedByKey(User, clientRequestId);
 }
