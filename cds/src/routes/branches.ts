@@ -26,6 +26,8 @@ import {
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
+import { ensurePerBranchDbInitialized } from '../services/per-branch-db-init.js';
+import { resolveInfraForDb } from '../services/replica-db-clone.js';
 import { resolveBranchEnvLayers } from '../services/branch-env-layers.js';
 import {
   branchEntrypointDepsFromState,
@@ -86,6 +88,8 @@ import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
 import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
 import { dropReplicaDb } from '../services/replica-db-clone.js';
+import { markDropped, settleBranchDbsOnDelete, type BranchDbDeleteChoice } from '../services/db-ledger.js';
+import { realDbLedgerOps } from '../services/db-ledger-ops.js';
 import { getInfraCatalogPublic } from '../services/infra-catalog.js';
 import { assertInfraAuthenticationConfigured } from '../services/infra-auth-policy.js';
 import { assertProjectAccess, assertScopedSweep } from './projects.js';
@@ -1717,6 +1721,13 @@ function buildPrebuiltReuseInputs(
 }
 
 async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions): Promise<void> {
+  // 分支独立库「时间点克隆」初始化（数据库隔离收敛 4）：容器起来之前先把库准备好。
+  // 幂等：目标库已存在就跳过；克隆失败抛错让部署如实失败，不让应用对着半份数据启动。
+  options.assertCurrent?.(`before-db-init-${options.profile.id}`);
+  const dbInit = await ensurePerBranchDbInitialized(options.stateService, options.entry, options.profile, {
+    onOutput: (line) => options.onOutput?.(`${line}\n`),
+  });
+  if (dbInit.kind === 'refused') options.onOutput?.(`── 分支独立库未做时间点克隆：${dbInit.reason} ──\n`);
   const maxAttempts = 4;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -11008,6 +11019,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         dbScope: effective.dbScope || 'shared',
         dbScopeSource: override?.dbScope !== undefined ? 'branch-override' : (baseline.dbScope !== undefined ? 'baseline' : 'default'),
         envProvenance,
+        // 收敛 2：分支独立库没跟随的连接串（库名段指向别的库），配置检查器标「连接串未跟随」
+        dbUrlUnfollowed: r.perBranchDb?.unfollowedUrls ?? [],
         ...(envError ? { envError } : {}),
       };
     });
@@ -11525,11 +11538,51 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 容器 + 留存一份数据。必须在删台账前逐个 drop。best-effort：单个失败记
       // 服务器事件不阻断删除主流程（dropReplicaDb 自带 cds-rsdb-/_rs_ 命名双保险，
       // 不会误删共享主库）。
-      for (const snapshot of entry.replicaDbSnapshots ?? []) {
+      // 数据台账（收敛 3，2026-09-03）：删分支**默认保留**派生库——隔离库与分支独立库转为
+      // 台账里的孤儿条目，随时可备份 / 丢弃；只有请求体里明确勾选丢弃、且过了「演练验证过的
+      // 备份或复述库名」门禁的才真删。级联清理只对这些条目跑（下面沿用既有的墓碑 / 重试逻辑）。
+      const dbChoices: BranchDbDeleteChoice[] = Array.isArray((req.body as any)?.dbs) ? (req.body as any).dbs : [];
+      const dbSettlement = settleBranchDbsOnDelete(stateService, entry, dbChoices, new Date());
+      const dropSnapshotIds = new Set(dbSettlement.toDrop.filter((e) => e.snapshotId).map((e) => e.snapshotId!));
+      for (const derived of dbSettlement.toDrop.filter((e) => !e.snapshotId)) {
+        try {
+          const rawInfra = stateService.getInfraServicesForProject(entry.projectId)
+            .find((svc) => svc.containerName === derived.infraContainer || svc.id === derived.infraId);
+          if (!rawInfra) throw new Error(`找不到承载 ${derived.dbName} 的基础设施实例`);
+          // 记录里的密码常是 ${CDS_...} 模板，按项目环境变量解析后再连库（2026-09-04 真实分支复验：模板当字面量 → 丢弃静默失败）
+          await realDbLedgerOps.dropDb(derived.engine, resolveInfraForDb(stateService, rawInfra), derived);
+          markDropped(stateService, derived, actor, new Date());
+        } catch (err) {
+          // 丢弃失败：库还在、分支没了——如实转孤儿条目，别让它顶着一个已删分支的「活跃」标签
+          try {
+            stateService.upsertDbLedgerEntry({ ...derived, status: 'orphaned', orphanedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), note: `删分支时丢弃失败：${(err as Error).message}` });
+            stateService.save();
+          } catch { /* 记账尽力而为 */ }
+          serverEventLogStore?.record({
+            category: 'container', severity: 'warn', source: 'branch-delete', action: 'branch.delete.derived-db-drop-failed',
+            message: `删分支丢弃分支独立库失败: ${derived.dbName} — ${(err as Error).message}（条目保留为孤儿，可在数据台账重试）`,
+            projectId: entry.projectId, branchId: entry.id, requestId: requestId || null,
+            operationId: branchOperationLease?.operationId || null, ...operationAuditFields,
+            details: { dbName: derived.dbName, engine: derived.engine },
+          });
+        }
+      }
+      if (dbSettlement.kept.length > 0 || dbSettlement.refused.length > 0) {
+        serverEventLogStore?.record({
+          category: 'container', severity: 'info', source: 'branch-delete', action: 'branch.delete.derived-db-kept',
+          message: `删分支保留 ${dbSettlement.kept.length} 个派生库为台账孤儿条目${dbSettlement.refused.length ? `；${dbSettlement.refused.length} 个丢弃请求被门禁拒绝（${dbSettlement.refused.map((r) => r.dbName).join(', ')}）` : ''}`,
+          projectId: entry.projectId, branchId: entry.id, requestId: requestId || null,
+          operationId: branchOperationLease?.operationId || null, ...operationAuditFields,
+          details: { kept: dbSettlement.kept.map((e) => e.dbName), refused: dbSettlement.refused },
+        });
+      }
+      for (const snapshot of (entry.replicaDbSnapshots ?? []).filter((s) => dropSnapshotIds.has(s.id))) {
         try {
           const snapshotInfra = stateService.getInfraServicesForProject(entry.projectId)
             .find((svc) => svc.containerName === snapshot.infraContainer);
           await dropReplicaDb(snapshot, snapshotInfra?.env || {});
+          const ledgerEntry = dbSettlement.toDrop.find((e) => e.snapshotId === snapshot.id);
+          if (ledgerEntry) markDropped(stateService, ledgerEntry, actor, new Date());
         } catch (err) {
           // 失败不能只记事件（Codex P2）：台账马上随分支状态删除，瞬时 Docker/DB
           // 故障会让专用实例容器从此彻底无主。专用实例失败 → 写墓碑，收割器按
@@ -15454,6 +15507,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: `dbScope 非法（仅允许 'shared' 或 'per-branch'）` });
         return;
       }
+      if (body.dbInit !== undefined && body.dbInit !== 'empty' && body.dbInit !== 'clone') {
+        res.status(400).json({ error: `dbInit 非法（仅允许 'empty' 或 'clone'）` });
+        return;
+      }
 
       const override = {
         dockerImage: typeof body.dockerImage === 'string' ? body.dockerImage : undefined,
@@ -15466,6 +15523,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         activeDeployMode: typeof body.activeDeployMode === 'string' ? body.activeDeployMode : undefined,
         startupSignal: typeof body.startupSignal === 'string' ? body.startupSignal : undefined,
         dbScope: body.dbScope as 'shared' | 'per-branch' | undefined,
+        dbInit: body.dbInit as 'empty' | 'clone' | undefined,
         notes: typeof body.notes === 'string' ? body.notes : undefined,
       };
       // `setBranchProfileOverride` 是**整体替换**，而这份白名单只认它自己管的字段。

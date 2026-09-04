@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Copy,
   Database,
+  DatabaseZap,
   Download,
   Eye,
   FileText,
@@ -50,6 +51,8 @@ import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { BackupTab } from '@/pages/project-settings/BackupTab';
+import { DbIsolationTab } from '@/pages/project-settings/DbIsolationTab';
+import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 import { RepoSharingBanner, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
 import { BuildScopeDialog } from '@/components/project/BuildScopeDialog';
@@ -291,6 +294,7 @@ type TabValue =
   | 'runtime-defaults'
   | 'delivery'
   | 'compose'
+  | 'db-isolation'
   | 'infra'
   | 'storage'
   | 'backup'
@@ -307,10 +311,17 @@ interface TabItem {
 }
 
 interface TabGroup {
-  label: string;
+  /** 只能用 settingsTaxonomy 词表里的组名；写别的编译不过。 */
+  label: SettingsGroupLabel;
   items: TabItem[];
 }
 
+/*
+ * 分组按「用户来这里要回答的问题」切，组名与顺序来自 settingsTaxonomy（与系统设置共用）。
+ * 2026-09-02 之前 11 个页签全塞在「运行时」里，环境变量、备份、统计混在一起；现在
+ * 运行 = 它怎么跑起来，数据 = 它的数据放哪 / 分不分 / 备不备 / 搬不搬，观测 = 它跑得怎么样。
+ * 新增页签先回答它属于哪个问题，再落组（见 web/src/lib/settingsTaxonomy.ts）。
+ */
 const tabGroups: TabGroup[] = [
   {
     label: '接入',
@@ -321,17 +332,28 @@ const tabGroups: TabGroup[] = [
     ],
   },
   {
-    label: '运行时',
+    label: '运行',
     items: [
+      { value: 'compose', label: '项目配置', icon: FileText },
       { value: 'env', label: '项目环境变量', icon: TerminalSquare },
       { value: 'runtime-defaults', label: '新分支默认', icon: Rocket },
       { value: 'delivery', label: '交付模式', icon: Server },
-      { value: 'compose', label: '项目配置', icon: FileText },
+    ],
+  },
+  {
+    label: '数据',
+    items: [
+      { value: 'db-isolation', label: '数据库隔离', icon: DatabaseZap },
       { value: 'infra', label: '基础设施', icon: Plug },
       { value: 'storage', label: '存储', icon: Database },
       { value: 'backup', label: '周期备份', icon: ShieldCheck },
       { value: 'migration', label: '迁移', icon: Send },
       { value: 'cache', label: '缓存诊断', icon: HardDrive },
+    ],
+  },
+  {
+    label: '观测',
+    items: [
       { value: 'stats', label: '统计', icon: BarChart3 },
       { value: 'activity', label: '活动日志', icon: Activity },
     ],
@@ -679,6 +701,9 @@ export function ProjectSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="compose">
                   <ProjectComposeTab projectId={project.id} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="db-isolation">
+                  <DbIsolationTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="infra">
                   <ProjectInfraTab projectId={project.id} onToast={setToast} />

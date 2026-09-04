@@ -71,6 +71,7 @@ export const PROJECT_TAB_LABELS: Record<string, string> = {
   env: '项目环境变量',
   'runtime-defaults': '新分支默认',
   compose: '项目配置',
+  'db-isolation': '数据库隔离',
   infra: '基础设施',
   storage: '存储',
   migration: '迁移',
@@ -391,6 +392,20 @@ export const PROJECT_SETTINGS_INDEX: SettingsIndexEntry[] = [
       'readiness', 'readiness timeout', 'readiness-timeout', 'health', 'healthcheck',
       '端口探测', 'tcp 探活', 'probe', '超时', '180', '180s', '240', '240s',
       '探测超时', '启动探测', 'cds.readiness-timeout',
+    ],
+  },
+  // —— 数据库隔离（项目默认；分支抽屉里只剩本分支覆盖）——
+  {
+    id: 'proj:db-isolation:scope',
+    label: '数据库隔离（共享库 / 分支独立库）',
+    hint: '数据库隔离 · 项目内每个服务多分支之间共不共用数据库，批量或逐服务设置',
+    tab: 'db-isolation',
+    scope: 'project',
+    keywords: [
+      '数据库隔离', '数据库', '隔离', '共享库', '分支独立库', '独立库', '分库', '切库',
+      '按分支', '每分支', '分支数据库', '库名后缀', 'migration 互相影响', '多分支',
+      'dbscope', 'db scope', 'db-scope', 'per-branch', 'per branch', 'shared', 'database',
+      'isolation', 'db isolation', 'mysql_database', 'postgres_db', 'mongo_initdb_database',
     ],
   },
   {

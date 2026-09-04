@@ -33,6 +33,7 @@ import { detectStack, detectModules, detectDatabaseInitialization, type StackDet
 import { buildCacheMounts } from '../services/cache-catalog.js';
 import { processTeardownTombstones, computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { dropReplicaDb } from '../services/replica-db-clone.js';
+import { retainedDedicatedContainers } from '../services/db-ledger.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { planImportedEnvSeedWrites } from '../services/config-authority.js';
@@ -3873,9 +3874,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       .flatMap((rs) => rs.members.map((m) => m.containerName))
       .filter((n): n is string => Boolean(n));
     const replicaDbSnapshots = projectBranches.flatMap((b) => b.replicaDbSnapshots || []);
-    const dedicatedDbContainerNames = replicaDbSnapshots
-      .map((s) => s.dedicatedContainer)
-      .filter((n): n is string => Boolean(n));
+    // 分支删除默认保留派生库（数据台账，2026-09-03）：分支没了、快照也没了，台账里的孤儿条目
+    // 是专用隔离实例唯一的登记处——不把它们也列进来，删项目就永久漏跑一个带数据卷的容器（Codex P1）。
+    const ledgerEntries = stateService.getDbLedger(project.id);
+    const ledgerDedicatedContainers = retainedDedicatedContainers(ledgerEntries);
+    const dedicatedDbContainerNames = [...new Set([
+      ...replicaDbSnapshots.map((s) => s.dedicatedContainer).filter((n): n is string => Boolean(n)),
+      ...ledgerDedicatedContainers,
+    ])];
     const teardownContainers = [...new Set([
       ...appContainerNames,
       ...infraContainerNames,
@@ -3939,7 +3945,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     void (async () => {
       // 专用隔离实例先走 dropReplicaDb（rm -f -v，匿名数据卷一并清除）；失败留给
       // 墓碑兜底（墓碑 rm -f 不带 -v，卷会残留，但容器不会漏跑）。
-      for (const snapshot of replicaDbSnapshots) {
+      const dedicatedToDrop = [
+        ...replicaDbSnapshots.filter((s) => s.dedicatedContainer),
+        // 台账孤儿：只剩容器名与库名，够 dropReplicaDb 走「整容器 rm -f -v」那条路
+        ...ledgerEntries
+          .filter((e) => e.status !== 'dropped' && e.dedicatedContainer && !replicaDbSnapshots.some((s) => s.dedicatedContainer === e.dedicatedContainer))
+          .map((e) => ({ id: e.snapshotId ?? e.id, profileId: e.profileId ?? '', memberId: e.memberId ?? '', engine: e.engine, sourceDb: e.sourceDb ?? '', dbName: e.dbName, infraContainer: e.infraContainer, dedicatedContainer: e.dedicatedContainer, clonedAt: e.createdAt })),
+      ];
+      for (const snapshot of dedicatedToDrop) {
         if (!snapshot.dedicatedContainer) continue;
         try {
           await dropReplicaDb(snapshot, {});

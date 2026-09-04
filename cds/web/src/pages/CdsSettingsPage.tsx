@@ -25,6 +25,7 @@ import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
+import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 const AccessKeysTab = lazy(() => import('@/pages/cds-settings/tabs/AccessKeysTab').then((m) => ({ default: m.AccessKeysTab })));
@@ -86,7 +87,8 @@ interface TabItem {
 }
 
 interface TabGroup {
-  label: string;
+  /** 只能用 settingsTaxonomy 词表里的组名；写别的编译不过。 */
+  label: SettingsGroupLabel;
   items: TabItem[];
 }
 
@@ -100,39 +102,56 @@ const tabGroups: TabGroup[] = [
     items: [
       { value: 'maintenance', label: 'CDS 更新', icon: Wrench },
       { value: 'update-history', label: '自更新历史', icon: History },
-      { value: 'docker-network', label: 'Docker 网络容量', icon: Network },
-      { value: 'danger', label: '危险操作', icon: ShieldAlert },
+      { value: 'overview', label: '概览', icon: Settings },
+    ],
+  },
+  {
+    // 这是谁、从哪来、谁能进：账号、密钥、权限、GitHub、外部系统
+    label: '接入',
+    items: [
+      { value: 'auth', label: '登录与认证', icon: KeyRound },
+      { value: 'users', label: '用户管理', icon: Users },
       // 2026-05-28 删:运维控制台 Tab 与弹窗审批流(OperatorApprovalModal)100%
       // 功能重叠,且暴露面更大。AI 发起请求 → 右下角弹窗 → 一键允许的流程
       // 已覆盖所有 op,Tab 上点击执行的入口反而有误操作风险。后端注册表保留。
       { value: 'access-keys', label: 'AI Access Key', icon: KeyRound },
       { value: 'identity', label: '权限总览', icon: Users },
-      { value: 'overview', label: '概览', icon: Settings },
-    ],
-  },
-  {
-    label: '接入',
-    items: [
-      { value: 'auth', label: '登录与认证', icon: KeyRound },
-      { value: 'users', label: '用户管理', icon: Users },
-      { value: 'activity', label: '用户痕迹', icon: Activity },
       { value: 'github', label: 'GitHub 集成', icon: Github },
       { value: 'github-whitelist', label: 'GitHub 白名单', icon: ShieldCheck },
-      { value: 'webhook-log', label: 'Webhook 日志', icon: Activity },
       { value: 'connections', label: '外部接入', icon: Plug },
     ],
   },
   {
-    label: '运行时',
+    // 它怎么跑起来：调度、集群、主机、全局变量、加载页
+    label: '运行',
     items: [
-      { value: 'storage', label: '存储后端', icon: Database },
       { value: 'scheduler', label: '调度器', icon: Timer },
       { value: 'cluster', label: '集群', icon: Boxes },
       { value: 'remote-hosts', label: '远程主机', icon: ServerCog },
       { value: 'global-vars', label: 'CDS 全局变量', icon: TerminalSquare },
       { value: 'loading-pages', label: '加载页预览', icon: Monitor },
+    ],
+  },
+  {
+    // 它的数据放哪：状态存储后端、配置快照
+    label: '数据',
+    items: [
+      { value: 'storage', label: '存储后端', icon: Database },
       { value: 'snapshots', label: '配置快照', icon: Save },
     ],
+  },
+  {
+    // 它跑得怎么样：痕迹、投递日志、容量
+    label: '观测',
+    items: [
+      { value: 'activity', label: '用户痕迹', icon: Activity },
+      { value: 'webhook-log', label: 'Webhook 日志', icon: Activity },
+      { value: 'docker-network', label: 'Docker 网络容量', icon: Network },
+    ],
+  },
+  {
+    label: '危险区',
+    items: [{ value: 'danger', label: '危险操作', icon: ShieldAlert }],
   },
 ];
 

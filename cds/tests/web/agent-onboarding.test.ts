@@ -240,7 +240,10 @@ describe('CDS Agent 接入口令', () => {
     //    + topology（服务关系图、拓扑体检与引用切换，含 PUT 故按写能力登记，2026-09-02）
     //    + credential-self-check（凭据自检，匿名只读诊断，2026-09-01）
     //    + identity（身份层：主体 / 用户级凭证 / 项目授权，2026-09-01）
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(48);
+    //    + project-db-isolation（项目级数据库隔离原子读写，2026-09-02）
+    //    + db-probe（分支数据库实测，只读，2026-09-03）
+    //    + db-ledger（数据台账：备份 / 演练 / 丢弃门禁，2026-09-03）
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(51);
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((capability) => capability.mcpExposure)).toBe(true);
     expect(
       CDS_AGENT_CAPABILITY_DEFINITIONS

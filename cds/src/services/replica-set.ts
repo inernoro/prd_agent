@@ -28,7 +28,7 @@ import type { StateService } from './state.js';
 import type { ContainerService } from './container.js';
 import { resolveEffectiveProfile } from './container.js';
 import type { DeploymentVersionService } from './deployment-version.js';
-import { cloneReplicaDb, dropReplicaDb, resolveReplicaDbTarget, envOverrideFromSnapshot, dedicatedAuthFromContainer } from './replica-db-clone.js';
+import { cloneReplicaDb, dropReplicaDb, resolveReplicaDbTarget, resolveInfraForDb, envOverrideFromSnapshot, dedicatedAuthFromContainer } from './replica-db-clone.js';
 
 /** 每个服务的成员上限（不含主成员）。防资源失控，超限拒绝添加。 */
 export const REPLICA_MEMBER_LIMIT = 3;
@@ -920,8 +920,9 @@ export class ReplicaSetService {
         // 移除/复制集解散——记录没了还往台账追加快照会留下无主隔离库。确认成员
         // 仍在册才入账；不在就顺手把刚克隆出来的库清掉（best-effort）。
         if (!this.memberStillTracked(branchId, profileId, memberId)) {
-          const infraEnv = this.opts.state.getInfraServicesForProject(branch.projectId)
-            .find((s) => s.containerName === cloned.snapshot.infraContainer)?.env || {};
+          const fencedInfra = this.opts.state.getInfraServicesForProject(branch.projectId)
+            .find((s) => s.containerName === cloned.snapshot.infraContainer);
+          const infraEnv = fencedInfra ? resolveInfraForDb(this.opts.state, fencedInfra).env || {} : {};
           // 清理失败不静默（Codex 第十七轮 P1）：drop 失败会入台账/写墓碑/留日志
           await this.dropFencedClone(cloned.snapshot, infraEnv, branchId, branch.projectId, '成员物化栅栏');
           this.opts.logger?.warn?.(
