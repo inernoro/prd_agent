@@ -73,6 +73,19 @@ describe('buildDbLedgerView：一本台账、按血缘成树', () => {
     expect(view.entries[0].id).toBe('led-snap');
   });
 
+  it('分支回切主库后：台账里记着的独立库不再被任何配置折算出来，视图标孤儿并写明原因，让丢弃门禁放行', () => {
+    const recorded = [entry({ id: 'e-back', dbName: 'shop_feat_x', branchId: 'p-feat-x', branch: 'feat/x', profileId: 'api' })];
+    const view = buildDbLedgerView({ projectId: 'p', branches: [branch()], derived: [], recorded, now: new Date(T) });
+    const e = view.entries.find((x) => x.id === 'e-back')!;
+    expect(e.status).toBe('orphaned');
+    expect(e.orphanedAt).toBe(T);
+    expect(e.note).toMatch(/回切主库/);
+    expect(view.summary).toMatchObject({ orphaned: 1, active: 0 });
+    // 分支还在按独立库跑（折算得到同一个库）→ 仍是活跃
+    const still = buildDbLedgerView({ projectId: 'p', branches: [branch()], derived: [{ branchId: 'p-feat-x', branch: 'feat/x', profileId: 'api', engine: 'mysql', sourceDb: 'shop', dbName: 'shop_feat_x', infraId: 'mysql', infraContainer: 'cds-infra-mysql' }], recorded, now: new Date(T) });
+    expect(still.entries.find((x) => x.id === 'e-back')!.status).toBe('active');
+  });
+
   it('已丢弃的条目留在台账里可追溯，但不算活跃', () => {
     const recorded = [entry({ id: 'gone', status: 'dropped', droppedAt: T, droppedBy: 'admin' })];
     const view = buildDbLedgerView({ projectId: 'p', branches: [], derived: [], recorded, now: new Date(T) });

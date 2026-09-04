@@ -148,8 +148,19 @@ export function buildDbLedgerView(input: {
       });
     }
   }
+  const branchIds = new Set(input.branches.filter((b) => b.projectId === projectId).map((b) => b.id));
   for (const rec of recorded) {
-    if (!used.has(rec.id)) entries.push(rec);
+    if (used.has(rec.id)) continue;
+    // 分支还在册、但按当前配置已经折算不出这个独立库（分支回切了主库 / 改了库名变量）：
+    // 库仍在实例上、没人再引用，视图上就是孤儿——否则丢弃门禁一边说「或回切主库」一边永远拦着。
+    if (rec.kind === 'per-branch' && rec.status === 'active' && rec.branchId && branchIds.has(rec.branchId)) {
+      entries.push({
+        ...rec, status: 'orphaned', orphanedAt: rec.orphanedAt ?? now.toISOString(),
+        note: rec.note ? `${rec.note}；分支已回切主库，库仍在实例上` : '分支已回切主库，库仍在实例上',
+      });
+      continue;
+    }
+    entries.push(rec);
   }
 
   const groups = new Map<string | null, DbLedgerEntry[]>();

@@ -34,12 +34,12 @@ describe('台账血缘树', () => {
       entry({ dbName: 'legacy_2024', kind: 'unknown', sourceDb: undefined, origin: 'scan', note: '扫描 mysql 补录：来源未知' }),
     ]);
     const html = renderToStaticMarkup(createElement(DbLedgerTree, { view: v }));
-    expect(dbLedgerHeadline(v)).toBe('4 个派生库，1 个有演练验证过的备份（1 个孤儿库（分支已删、数据还在），1 个来源未知）；2 个没有任何备份，现在丢弃会拒绝。');
+    expect(dbLedgerHeadline(v)).toBe('4 个派生库，1 个有演练验证过的备份（1 个孤儿库（分支已删或回切主库、数据还在），1 个来源未知）；2 个没有任何备份，现在丢弃会拒绝。');
     expect(html).toContain('data-db-ledger-root="shop"');
     expect(html).toContain('源库 <span class="font-mono text-foreground">shop</span> 派生出 3 个库');
     expect(html).toContain('来源未知（扫描补录');
     expect(html).toContain('data-db-ledger-status="orphaned"');
-    expect(html).toContain('孤儿（分支已删）');
+    expect(html).toContain('孤儿（分支已删或回切主库）');
     expect(html).toContain('从没演练还原过，不算备份');
     expect(html).toContain('已演练验证');
     expect(html).toContain('没有备份');

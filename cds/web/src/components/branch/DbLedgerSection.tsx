@@ -71,7 +71,7 @@ export interface DbLedgerView {
 export const KIND_LABEL = { 'per-branch': '分支独立库', isolated: '隔离库', unknown: '来源未知' } as const;
 export const STATUS_META = {
   active: { label: '活跃', cls: 'border-ok/40 bg-ok-soft text-ok' },
-  orphaned: { label: '孤儿（分支已删）', cls: 'border-warn/40 bg-warn-soft text-warn' },
+  orphaned: { label: '孤儿（分支已删或回切主库）', cls: 'border-warn/40 bg-warn-soft text-warn' },
   dropped: { label: '已丢弃', cls: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
 } as const;
 
@@ -81,7 +81,7 @@ export function dbLedgerHeadline(view: Pick<DbLedgerView, 'summary'>): string {
   const live = s.total - s.dropped;
   if (live === 0) return '这个项目没有派生库（分支独立库 / 隔离库），也没有扫描出来源未知的存量库。';
   const parts: string[] = [];
-  if (s.orphaned > 0) parts.push(`${s.orphaned} 个孤儿库（分支已删、数据还在）`);
+  if (s.orphaned > 0) parts.push(`${s.orphaned} 个孤儿库（分支已删或回切主库、数据还在）`);
   if (s.unknown > 0) parts.push(`${s.unknown} 个来源未知`);
   const lead = `${live} 个派生库，${s.withVerifiedBackup} 个有演练验证过的备份`;
   const tail = s.withoutBackup > 0 ? `；${s.withoutBackup} 个没有任何备份，现在丢弃会拒绝` : '';
