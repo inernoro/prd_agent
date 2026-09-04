@@ -268,6 +268,20 @@ public static class McpBuiltinTools
         },
         new McpToolDef
         {
+            Name = "map_literary_get_workspace",
+            Description = "读一个文学创作工作区的正文。改稿、续写、以及 append 冲突后重读都用它；正文很长时用 offset 分段读，返回里的 hasMore 说明还有没有。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "GET",
+            PathTemplate = "/api/open/literary/workspaces/{workspaceId}",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "workspaceId", In = "path", Required = true, Description = "工作区 id" },
+                new() { Name = "offset", In = "query", Type = "integer", Description = "从第几个字开始读（默认 0）" },
+                new() { Name = "limit", In = "query", Type = "integer", Description = "本次最多读多少字（默认 20000）" },
+            },
+        },
+        new McpToolDef
+        {
             Name = "map_literary_create_workspace",
             Description = "新建一个文学创作工作区，可以同时把初稿写进去。返回 workspaceId。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
@@ -283,7 +297,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_write_content",
-            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。先用 map_literary_list_workspaces 拿 workspaceId。append 不可重试（重试会把同一段再接一遍）：没收到回应时请改用 replace 提交完整正文。",
+            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。先用 map_literary_list_workspaces 拿 workspaceId，改稿或续写前用 map_literary_get_workspace 读回原稿。append 不可重试（重试会把同一段再接一遍）：没收到回应时请改用 replace 提交完整正文。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST",
             PathTemplate = "/api/open/literary/workspaces/{workspaceId}/content",

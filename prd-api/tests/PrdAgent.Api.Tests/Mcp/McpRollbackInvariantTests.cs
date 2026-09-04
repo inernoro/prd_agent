@@ -66,4 +66,28 @@ public class McpEntryIdempotencyScopeTests
     {
         DocumentStoreOpenApiController.DeterministicId("kb-entry:store-a", null).ShouldBeNull();
     }
+
+    [Fact]
+    public void 条目早已被别人删掉时_不许再退一次计数()
+    {
+        // 正文还在落盘时，用户可以在界面上把这条删了，而那条路径（DocumentStoreController.DeleteEntry）
+        // 自己已经扣过一次 DocumentCount。回滚这边如果一律按「是我删的」再扣一次，
+        // 计数会被扣成负数 —— 而这类错不会红：接口照常 500、页面照常打开，只是数字对不上。
+        DocumentStoreOpenApiController.ShouldRestoreDocumentCount(
+            countedIn: true, DocumentStoreOpenApiController.RollbackOutcome.Removed)
+            .ShouldBeTrue("这次真的是我删的，计数就该退回去");
+
+        DocumentStoreOpenApiController.ShouldRestoreDocumentCount(
+            countedIn: true, DocumentStoreOpenApiController.RollbackOutcome.AlreadyGone)
+            .ShouldBeFalse("条目早已不在，扣减已经由删除那条路径做过，再退一次就是负数");
+
+        DocumentStoreOpenApiController.ShouldRestoreDocumentCount(
+            countedIn: true, DocumentStoreOpenApiController.RollbackOutcome.Retained)
+            .ShouldBeFalse("条目被刻意留着占 id，它还在库里，更不该退计数");
+
+        // 压根没记过数就谈不上退
+        DocumentStoreOpenApiController.ShouldRestoreDocumentCount(
+            countedIn: false, DocumentStoreOpenApiController.RollbackOutcome.Removed)
+            .ShouldBeFalse();
+    }
 }

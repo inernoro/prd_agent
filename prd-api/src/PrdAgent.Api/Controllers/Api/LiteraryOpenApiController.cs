@@ -70,6 +70,51 @@ public class LiteraryOpenApiController : ControllerBase
         }));
     }
 
+    /// <summary>一次最多读回多少字。默认给得比上限小得多：改稿通常只需要看一段，
+    /// 而把 20 万字一口气塞进智能体的上下文，本身就是一种破坏。</summary>
+    private const int DefaultReadChars = 20_000;
+
+    /// <summary>
+    /// 读一个工作区的正文。
+    ///
+    /// 为什么必须有它：`append` 的乐观并发在冲突时回 `WORKSPACE_CONTENT_CHANGED` 并让调用方
+    /// 「重新读一遍正文再追加」—— 而在这条端点存在之前，开放层里**没有任何一条路能读到正文**，
+    /// 那句指引是做不到的（no-rootless-tree：不许声明系统给不出的能力）。
+    /// 改稿、续写这两件在工具描述里承诺过的事同样如此：看不见原稿就无从改起。
+    ///
+    /// 按段读：`offset` + `limit` 一起给出「还有没有更多」，避免一次把 20 万字灌进上下文。
+    /// </summary>
+    [HttpGet("workspaces/{workspaceId}")]
+    [RequireScope(ScopeUse)]
+    public async Task<IActionResult> GetWorkspace(string workspaceId,
+        [FromQuery] int offset, [FromQuery] int limit, CancellationToken ct)
+    {
+        var userId = GetBoundUserId();
+        // 场景与写入端点同一个判据：别的场景的工作区不该从这条路被读出来。
+        var ws = await _db.ImageMasterWorkspaces
+            .Find(x => x.Id == workspaceId && x.OwnerUserId == userId && x.ScenarioType == ScenarioType)
+            .FirstOrDefaultAsync(ct);
+        if (ws == null)
+            return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND",
+                "工作区不存在、不属于你，或者不是文学创作的工作区"));
+
+        var full = ws.ArticleContent ?? string.Empty;
+        var from = offset > 0 ? Math.Min(offset, full.Length) : 0;
+        var take = limit is > 0 and <= MaxContentChars ? limit : DefaultReadChars;
+        var slice = full.Substring(from, Math.Min(take, full.Length - from));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            workspaceId = ws.Id,
+            title = ws.Title,
+            content = slice,
+            offset = from,
+            contentChars = full.Length,
+            hasMore = from + slice.Length < full.Length,
+            updatedAt = ws.UpdatedAt,
+        }));
+    }
+
     public class CreateWorkspaceRequest
     {
         public string? Title { get; set; }
@@ -220,7 +265,7 @@ public class LiteraryOpenApiController : ControllerBase
         var result = await _db.ImageMasterWorkspaces.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
         if (append && result.MatchedCount == 0)
             return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
-                "追加期间正文被另一次写入改过，这次没有写进去。请重新读一遍正文再追加。"));
+                "追加期间正文被另一次写入改过，这次没有写进去。请先用 map_literary_get_workspace 重新读一遍正文，再决定怎么写。"));
 
         return Ok(ApiResponse<object>.Ok(new
         {

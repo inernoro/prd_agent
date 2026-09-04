@@ -258,4 +258,31 @@ public class McpNestedRedactionTests
         summary.ShouldContain("周报");
         summary.ShouldNotContain(McpUsageService.Redacted);
     }
+
+    [Fact]
+    public void 特别宽的入参_不许被整个克隆和序列化()
+    {
+        // 深度早就卡在 6 层了，**宽度**没有：一个几万元素的平铺数组深度只有 2，
+        // 却会被整个克隆一遍、整个序列化一遍，最后只留 120 个字符。
+        // 而摘要是在限流闸门**之前**构造的 —— 已经被限流挡下的调用照样走这一遍，
+        // 等于给调用方一个用自己的 body 放大服务端 CPU 与内存的杠杆。
+        var summary = McpUsageService.SummarizeArguments(
+            new System.Text.Json.Nodes.JsonObject { ["items"] = Wide(20_000) });
+        summary.ShouldNotBeNull();
+        summary!.ShouldContain("items=", customMessage: "摘要本身还得能用");
+
+        // 判据不是耗时（跑在什么机器上都不好说），是「有没有把整棵树走完」：
+        // 走完的话这两万个元素会全部出现在克隆出来的节点里。
+        var redacted = McpUsageService.RedactSensitive(Wide(20_000), 0) as System.Text.Json.Nodes.JsonArray;
+        redacted.ShouldNotBeNull();
+        (redacted!.Count < 1000).ShouldBeTrue(
+            $"整棵树被走完了（克隆出 {redacted.Count} 个元素）：两万个元素全克隆一遍，只为最后留 120 个字符");
+    }
+
+    private static System.Text.Json.Nodes.JsonArray Wide(int n)
+    {
+        var arr = new System.Text.Json.Nodes.JsonArray();
+        for (var i = 0; i < n; i++) arr.Add(i);
+        return arr;
+    }
 }

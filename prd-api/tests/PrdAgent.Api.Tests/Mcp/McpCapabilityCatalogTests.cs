@@ -250,4 +250,40 @@ public class McpCapabilityCatalogTests
                 $"工具 {tool.Name} 的回环路径 {tool.PathTemplate} 不在 /api/open/ 下 —— 那些业务路由认的是登录态 sub，密钥打过去必然 401");
         }
     }
+
+    [Fact]
+    public void 接口文案里提到的工具_必须真的存在()
+    {
+        // 这条守的是 no-rootless-tree：不许指引一条系统给不出的路。
+        // 真实事故：`append` 冲突时回「请重新读一遍正文再追加」，而开放层里当时**没有任何**
+        // 一条路能读到正文 —— 那句指引对智能体来说是做不到的，它只能反复撞同一个 409。
+        var known = McpBuiltinTools.All.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
+        var pattern = new System.Text.RegularExpressions.Regex(@"map_[a-z0-9_]+");
+
+        foreach (var path in McpSourceGuard.EnumerateRelative(
+                     "prd-api/src/PrdAgent.Api/Controllers/Api", "*OpenApiController.cs"))
+        {
+            var source = McpSourceGuard.Read(path);
+            foreach (System.Text.RegularExpressions.Match m in pattern.Matches(source))
+                known.ShouldContain(m.Value,
+                    customMessage: $"{path} 的文案里指引调用方去用 {m.Value}，而工具表里没有这个工具");
+        }
+    }
+
+    [Fact]
+    public void 能开写的能力_必须也有读的路()
+    {
+        // 形状 2 的一种：写这一半建好了、读那一半没有。表现是「改稿 / 续写」在工具描述里
+        // 承诺过，实际却看不见原稿；冲突恢复指引也因此无法执行。
+        foreach (var cap in McpCapabilityCatalog.All)
+        {
+            var tools = McpBuiltinTools.All
+                .Where(t => McpCapabilityCatalog.ByScope(t.RequiredScope)?.Key == cap.Key)
+                .ToList();
+            if (tools.Count == 0) continue;
+            if (!tools.Any(t => !McpUsageService.IsWriteTool(t)))
+                throw new Xunit.Sdk.XunitException(
+                    $"能力「{cap.Key}」只有写工具、没有一条读的路：智能体改不了自己看不见的东西");
+        }
+    }
 }

@@ -472,8 +472,19 @@ public sealed class McpUsageService
 
     /// <summary>摘要里能走到多深。再深的东西本来也进不了 600 字的成品，卡住只为不让病态输入走爆栈。</summary>
     private const int MaxRedactDepth = 6;
+
+    /// <summary>
+    /// 摘要最多遍历多少个节点。深度早就卡住了，**宽度**没有 —— 一个几万元素的平铺数组
+    /// 深度只有 2，却会被整个克隆、整个序列化，最后只留 120 个字符。而摘要是在
+    /// <see cref="CheckRateAsync"/> **之前**构造的，所以已经被限流挡下的调用也照样走这一遍，
+    /// 等于给调用方一个用自己的 body 放大服务端 CPU 与内存的杠杆。
+    /// 256 个节点远超「够用户看懂它当时要干什么」的需要。
+    /// </summary>
+    private const int MaxRedactNodes = 256;
+
     internal const string Redacted = "[已隐去]";
     private const string TooDeep = "[层级过深]";
+    private const string TooWide = "[已截断]";
 
     /// <summary>
     /// 递归隐去嵌套在对象/数组里的凭据。
@@ -486,6 +497,14 @@ public sealed class McpUsageService
     /// </summary>
     internal static JsonNode? RedactSensitive(JsonNode? node, int depth)
     {
+        var budget = MaxRedactNodes;
+        return RedactSensitive(node, depth, ref budget);
+    }
+
+    private static JsonNode? RedactSensitive(JsonNode? node, int depth, ref int budget)
+    {
+        if (budget <= 0) return JsonValue.Create(TooWide);
+        budget--;
         switch (node)
         {
             case JsonObject obj:
@@ -493,9 +512,10 @@ public sealed class McpUsageService
                 var copy = new JsonObject();
                 foreach (var kv in obj)
                 {
+                    if (budget <= 0) { copy[kv.Key] = JsonValue.Create(TooWide); break; }
                     if (IsSensitiveArgumentName(kv.Key)) copy[kv.Key] = JsonValue.Create(Redacted);
                     else if (depth >= MaxRedactDepth) copy[kv.Key] = JsonValue.Create(TooDeep);
-                    else copy[kv.Key] = RedactSensitive(kv.Value, depth + 1);
+                    else copy[kv.Key] = RedactSensitive(kv.Value, depth + 1, ref budget);
                 }
                 return copy;
             }
@@ -504,9 +524,10 @@ public sealed class McpUsageService
                 var copy = new JsonArray();
                 foreach (var item in arr)
                 {
+                    if (budget <= 0) { copy.Add(JsonValue.Create(TooWide)); break; }
                     JsonNode? redacted = depth >= MaxRedactDepth
                         ? JsonValue.Create(TooDeep)
-                        : RedactSensitive(item, depth + 1);
+                        : RedactSensitive(item, depth + 1, ref budget);
                     copy.Add(redacted);
                 }
                 return copy;
