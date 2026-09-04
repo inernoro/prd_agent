@@ -7,6 +7,14 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const registryPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/credential-registry.json');
 
+export function classifyPreflightBlockers(blockers) {
+  return {
+    gatewayIdentityBlockers: blockers.filter((item) => item.includes('模型网关') && item.includes('身份')),
+    deploymentBlockers: blockers.filter((item) => /提交|镜像|部署调度/.test(item)),
+    productIdentityBlockers: blockers.filter((item) => item.includes('主应用') && item.includes('身份')),
+  };
+}
+
 function main() {
   if (process.argv.slice(2).some((arg) => arg !== '--json')) {
     process.stderr.write('仅支持 --json；该命令只输出脱敏诊断结果。\n');
@@ -42,9 +50,11 @@ function main() {
     .filter((line) => line.startsWith('- '))
     .map((line) => line.slice(2))
     .slice(0, 20);
-  const gatewayIdentityBlockers = blockers.filter((item) => item.includes('模型网关') && item.includes('身份'));
-  const deploymentBlockers = blockers.filter((item) => /提交|镜像|部署调度/.test(item));
-  const productIdentityBlockers = blockers.filter((item) => item.includes('产品') && item.includes('身份'));
+  const {
+    gatewayIdentityBlockers,
+    deploymentBlockers,
+    productIdentityBlockers,
+  } = classifyPreflightBlockers(blockers);
   const result = {
     schemaVersion: '1.0',
     generatedAt: new Date().toISOString(),
@@ -67,7 +77,7 @@ function main() {
           : 'CDS 产品自动化身份预检未通过。',
         recovery: productIdentityBlockers.length === 0
           ? '继续执行合成登录与业务回读。'
-          : '同步权威 AI Access Key 与专用账号后按原路径复测。',
+          : '同步 RSA 签名私钥、Key ID、服务端公钥与专用账号后按原路径复测。',
         blockers: productIdentityBlockers,
       },
       {
@@ -99,4 +109,4 @@ function main() {
   if (!cdsHealthy) process.exitCode = 2;
 }
 
-main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

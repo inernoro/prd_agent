@@ -74,6 +74,33 @@ public static class AssetStorageDeletePolicy
             System.Text.RegularExpressions.RegexOptions.IgnoreCase
             | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     }
+
+    /// <summary>
+    /// 网页托管优化只允许回收系统生成的临时对象。站点 ID 必须是 32 位十六进制，
+    /// 且路径必须落在 __chunks、__source 或 __preview 下；正式站点文件永远不命中。
+    /// </summary>
+    public static bool IsHostedSiteOptimizationTemporaryKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        if (normalized.Contains("/../", StringComparison.Ordinal)
+            || normalized.EndsWith("/..", StringComparison.Ordinal)
+            || normalized.Contains("/./", StringComparison.Ordinal)
+            || normalized.EndsWith("/.", StringComparison.Ordinal))
+            return false;
+
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            normalized,
+            @"^web-hosting/sites/[0-9a-f]{32}/__(chunks/[0-9]{6}\.part|source/source\.zip|preview/.+)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
 }
 
 /// <summary>

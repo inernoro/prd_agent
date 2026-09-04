@@ -1,7 +1,7 @@
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+
 import { GlassCard } from '@/components/design/GlassCard';
 import { SizePickerButton } from '@/components/visual-agent/SizePickerPanel';
-import { glassToolbar, glassInputArea } from '@/lib/glassStyles';
+import { VisualModelSettings } from '@/components/visual-agent/VisualModelSettings';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { systemDialog } from '@/lib/systemDialog';
@@ -9,11 +9,14 @@ import { toast } from '@/lib/toast';
 import {
   createVisualAgentWorkspace,
   deleteVisualAgentWorkspace,
+  getUserPreferences,
   getUsers,
+  getVisualAgentAdapterInfo,
+  getVisualAgentImageGenModels,
+  updateVisualAgentPreferences,
   listVisualAgentWorkspaces,
   refreshVisualAgentWorkspaceCover,
   updateVisualAgentWorkspace,
-  uploadVisualAgentWorkspaceAsset,
 } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import type { VisualAgentWorkspace } from '@/services/contracts/visualAgent';
@@ -23,6 +26,7 @@ import {
   Pencil,
   Trash2,
   ArrowRight,
+  ArrowLeft,
   Image,
   ShoppingCart,
   PenTool,
@@ -31,20 +35,32 @@ import {
   Star,
   Sparkles,
   FolderPlus,
-  FilePlus,
   Bug,
+  X,
 } from 'lucide-react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useAuthStore } from '@/stores/authStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useSmartBack } from '@/hooks/useSmartBack';
+import { createPortal } from 'react-dom';
+import { buildVisualAgentModelOptions, type VisualAgentModelOption } from '@/pages/ai-chat/visualAgentModelOptions';
+import { normalizeSizesByResolution, reconcileSize, type SizesByResolution } from '@/lib/visualModelSizes';
 import { useNavigate } from 'react-router-dom';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
-import { NightSkyBackground } from '@/components/effects/NightSkyBackground';
-import { ParticleVortex } from '@/components/effects/ParticleVortex';
+import { BackdropPhoto, PageVignette } from '@/components/effects/PageBackdrop';
+import { BackdropSettings, readBackdropMode, resolveBackdrop, type BackdropMode } from '@/components/visual-agent/BackdropSettings';
+import type { BackdropAsset } from '@/lib/backdropRotation';
+import { BACKDROP_CATALOG, dimFor } from '@/lib/backdropCatalog';
+import { readGeneratedBackdrops } from '@/lib/backdropStudio';
+import { placeAnchoredPanel, type AnchoredPanelPlacement } from '@/lib/anchoredPanel';
+import { consumeWakeOnce } from '@/lib/wakeSweep';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { getNextWorkspaceSkip, isVisibleWorkspace } from './workspaceListPaging';
+
+/** 快捷键提示按平台给。写死 ⌘V 会让 Windows 用户对着一个不存在的键发呆。 */
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 
 function formatDate(iso: string | null | undefined) {
   const s = String(iso ?? '').trim();
@@ -146,130 +162,55 @@ function CoverMosaic(props: { title: string; assets: VisualAgentWorkspace['cover
   );
 }
 
-// ============ 浮动工具栏按钮 ============
-function ToolbarButton(props: {
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  const [showTooltip, setShowTooltip] = useState(false);
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        className="h-10 w-10 rounded-xl inline-flex items-center justify-center transition-all duration-200 hover-bg-soft hover:scale-105 active:scale-95"
-        style={{ color: 'var(--text-secondary)' }}
-        onClick={props.onClick}
-        onMouseEnter={() => setShowTooltip(true)}
-        onMouseLeave={() => setShowTooltip(false)}
-      >
-        {props.icon}
-      </button>
-      {/* Tooltip */}
-      {showTooltip && (
-        <div
-          className="surface-tone-dark absolute left-full ml-3 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap pointer-events-none"
-          style={{
-            background: 'rgba(30, 30, 35, 0.95)',
-            color: '#fff',
-            border: '1px solid var(--border-default)',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          }}
-        >
-          {props.label}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============ 浮动工具栏 ============
-function FloatingToolbar(props: {
-  onNewProject: () => void;
-  onNewFolder: () => void;
-}) {
-  const { onNewProject, onNewFolder } = props;
-
-  return (
-    <div
-      className="rounded-2xl p-1.5 flex flex-col gap-1 bg-transparent"
-      style={{
-        ...glassToolbar,
-        background: 'rgba(18, 18, 22, 0.6)',
-      }}
-    >
-      <ToolbarButton
-        icon={<FilePlus size={17} />}
-        label="新建项目"
-        onClick={onNewProject}
-      />
-      <ToolbarButton
-        icon={<FolderPlus size={17} />}
-        label="新建文件夹"
-        onClick={onNewFolder}
-      />
-    </div>
-  );
-}
-
 // ============ 场景标签定义 ============
 const SCENARIO_TAGS = [
-  { key: 'pro', label: 'MAP Pro', icon: Sparkles, prompt: '', isPro: true },
-  { key: 'design', label: '平面设计', icon: LayoutGrid, prompt: '帮我设计一张' },
-  { key: 'branding', label: '品牌设计', icon: Star, prompt: '帮我设计一个品牌视觉，包括' },
-  { key: 'illustration', label: '插画创作', icon: PenTool, prompt: '帮我创作一幅插画，主题是' },
-  { key: 'ecommerce', label: '电商设计', icon: ShoppingCart, prompt: '帮我设计一张电商主图，产品是' },
-  { key: 'video', label: '视频封面', icon: Video, prompt: '帮我设计一张视频封面，内容是' },
+  // hue 是每格左侧那根色条。它是本页**唯一**的彩色：其余一切走 #D97757 单色 + 三档灰。
+  // 六格等宽（视频创作的风格档同构），所以 label 一律控制在四个字以内。
+  { key: 'pro', label: 'MAP Pro', icon: Sparkles, prompt: '', isPro: true, hue: 'var(--accent-primary)' },
+  { key: 'design', label: '平面设计', icon: LayoutGrid, prompt: '帮我设计一张', hue: '#6fd5ef' },
+  { key: 'branding', label: '品牌设计', icon: Star, prompt: '帮我设计一个品牌视觉，包括', hue: '#E8A87C' },
+  { key: 'illustration', label: '插画创作', icon: PenTool, prompt: '帮我创作一幅插画，主题是', hue: '#77e3b2' },
+  { key: 'ecommerce', label: '电商设计', icon: ShoppingCart, prompt: '帮我设计一张电商主图，产品是', hue: '#fb7185' },
+  { key: 'video', label: '视频封面', icon: Video, prompt: '帮我设计一张视频封面，内容是', hue: '#a78bfa' },
 ];
 
 // ============ Hero 区域 ============
+/**
+ * 标题区。
+ *
+ * 这里**没有口号**，是刻意的。之前挂的是「先落到画布，再谈生成」，
+ * 用户一句话判了死刑：很 low。回头看它确实是口号体——在教用户该怎么想，
+ * 而不是帮他开始干活；而且下面那行说明已经把同一件事讲清楚了，等于说了两遍。
+ *
+ * 换成一句直接指向下面输入框的问句。工作台的首页不需要立场，
+ * 需要的是让人立刻开始打字。同理删掉了原来那行眉标（「一次粘几张参考图开局」）：
+ * 它和输入框里那句「直接按 ⌘V 粘贴」是同一句话，重复一遍只会把标题往下推。
+ *
+ * 更早一版是 42px 青绿渐变标题——渐变字是 2022 年的手法，而且那套青绿
+ * 和产品唯一的品牌色 #D97757 毫无关系，等于页面有两套色。
+ */
 function HeroSection() {
   return (
-    <div className="relative w-full" style={{ height: 260 }}>
-      {/* 本页教程入口(内嵌进页面右上角,页面级单实例,非悬浮浮层) */}
-      <div className="absolute top-3 right-3 z-20"><TipsEntryButton compact /></div>
-      {/* 粒子漩涡背景 — trailColor 精确匹配 #0a0a0c，无 CSS opacity 避免矩形覆盖 */}
-      <div
-        className="absolute inset-0"
-        style={{
-          maskImage: 'radial-gradient(ellipse 70% 50% at 50% 50%, black 15%, transparent 85%)',
-          WebkitMaskImage: 'radial-gradient(ellipse 70% 50% at 50% 50%, black 15%, transparent 85%)',
-        }}
+    <div className="relative w-full flex flex-col items-center text-center" style={{ paddingTop: 8 }}>
+      <h1
+        data-tour-id="visual-page-title"
+        className="text-[32px] font-semibold leading-[1.2]"
+        style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}
       >
-        <ParticleVortex particleCount={200} mouseFollow trailColor="rgba(10,10,12,0.9)" sizeRange={[1, 3]} hueRange={[230, 280]} />
-      </div>
-      {/* 文字层 */}
-      <div className="relative z-10 flex flex-col items-center justify-center h-full text-center">
-        <h1
-          data-tour-id="visual-page-title"
-          className="text-[42px] font-bold tracking-tight mb-3"
-          style={{
-            background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #818cf8, #c4b5fd)',
-            backgroundSize: '200% 100%',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-            letterSpacing: '-0.02em',
-            animation: 'vaHoloFlow 6s ease-in-out infinite',
-          }}
-        >
-          视觉创作 Agent
-        </h1>
-        <p
-          data-tour-id="visual-subtitle"
-          className="text-[15px]"
-          style={{
-            color: 'rgba(199,210,254,0.58)',
-            letterSpacing: '0.01em',
-          }}
-        >
-          AI 驱动的设计助手，让创作更简单
-        </p>
-      </div>
+        今天做什么图？
+      </h1>
+
+      <p
+        data-tour-id="visual-subtitle"
+        className="mt-2.5 text-[13px] leading-[1.6]"
+        style={{ color: 'var(--text-muted)' }}
+      >
+        生成只是其中一步。出图之后还能拆图层、局部重绘、扩展画幅——都在同一张画布上。
+      </p>
     </div>
   );
 }
+
 
 // ============ 打字动效占位符 ============
 const TYPING_TEXTS = [
@@ -317,6 +258,158 @@ function useTypingPlaceholder() {
   return displayText;
 }
 
+// ============ 绘图模型选择（工具行 chip） ============
+/**
+ * 首页这条工具行上的模型 chip。
+ *
+ * 刻意**不是**编辑器那个大面板的搬运：那边挂着智能切换/严格模式/健康统计，
+ * 是「我要精调这次生成」的场景；首页是「我要开始」，只需要看见用哪个模型、
+ * 能换一个（好用四原则 #2 奥卡姆：首屏只暴露 80% 场景需要的）。
+ * 数据源和偏好存储与编辑器完全一致，所以两边看到的默认值必然是同一个。
+ */
+function ModelPickerButton(props: {
+  options: VisualAgentModelOption[];
+  modelId?: string;
+  onChange: (id: string) => void;
+}) {
+  const { options, modelId, onChange } = props;
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<AnchoredPanelPlacement | null>(null);
+
+  // 落点交给 lib/anchoredPanel 算：上方装不下就翻到下方，宽高一律夹回视口。
+  // 上一版是恒定 `top: rect.top - 8` + CSS translateY(-100%)——页面往下滚、
+  // 工具行接近视口顶部时，面板整个跑到屏幕上方，一个选项都点不到；
+  // 而且只在打开那一刻算一次，滚动/改窗口都不重算，浮层会和按钮脱开
+  //（Codex PR #1476 P1）。scroll 用捕获阶段：真正在滚的往往是某个内层容器，
+  // 冒泡阶段收不到它的 scroll 事件。
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (!r) return;
+      setPos(placeAnchoredPanel({
+        anchor: { top: r.top, bottom: r.bottom, left: r.left, right: r.right },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        prefer: 'above',
+        width: 260,
+        maxHeight: 320,
+      }));
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t)) return;
+      if (panelRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const current = options.find((o) => o.id === modelId) ?? null;
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className="inline-flex items-center gap-1.5 hover-bg-soft transition-colors"
+        style={{
+          minHeight: 36,
+          padding: '0 9px',
+          borderRadius: 7,
+          border: 0,
+          background: open ? 'var(--bg-secondary)' : 'transparent',
+          color: open ? 'var(--text-primary)' : 'var(--text-secondary)',
+          fontSize: 10,
+          cursor: 'pointer',
+        }}
+        title="选择绘图模型"
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+      >
+        <Sparkles size={13} className="shrink-0" />
+        <span className="truncate" style={{ maxWidth: 120, whiteSpace: 'nowrap' }}>
+          {current?.name || current?.modelName || '选择模型'}
+        </span>
+        <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>▾</span>
+      </button>
+      {open && pos && createPortal(
+        <div
+          ref={panelRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999 }}
+        >
+          <div
+            className="rounded-[12px] overflow-hidden"
+            style={{
+              width: pos.width,
+              maxHeight: pos.maxHeight,
+              overflowY: 'auto',
+              overscrollBehavior: 'contain',
+              background: 'var(--panel-solid)',
+              border: '1px solid var(--border-default)',
+              boxShadow: 'var(--shadow-card)',
+              padding: 5,
+            }}
+          >
+            {options.map((opt) => {
+              const active = opt.id === modelId;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className="w-full text-left hover-bg-soft transition-colors"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                    padding: '7px 9px',
+                    borderRadius: 8,
+                    border: 0,
+                    background: active ? 'var(--bg-secondary)' : 'transparent',
+                    color: 'var(--text-primary)',
+                    cursor: opt.enabled ? 'pointer' : 'not-allowed',
+                    // 不可用的模型不隐藏、只压暗并说明：藏起来用户会以为「怎么少了一个」，
+                    // 而看见「暂不可用」至少知道发生了什么（no-rootless-tree：暴露缺失）。
+                    opacity: opt.enabled ? 1 : 0.45,
+                  }}
+                  // 压暗不等于点不了。上一版只调了透明度，这一行照样能点中：
+                  // 选了之后交接包里带的就是一个没有健康成员的池，手机端把它过滤掉，
+                  // 静默退回「第一个可用池」——用户明明选了 A，花钱跑的是 B
+                  //（Codex PR #1476 P1）。看得见的「不可用」和点不动必须一起给。
+                  disabled={!opt.enabled}
+                  title={opt.enabled ? undefined : '该模型池当前没有健康成员，暂时不能选'}
+                  onClick={() => { if (!opt.enabled) return; onChange(opt.id); setOpen(false); }}
+                >
+                  <span style={{ fontSize: 12, fontWeight: active ? 600 : 500 }}>
+                    {opt.name || opt.modelName}
+                    {opt.isDefault ? <span style={{ marginLeft: 6, fontSize: 9.5, color: 'var(--text-muted)' }}>默认</span> : null}
+                  </span>
+                  <span style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
+                    {opt.enabled ? (opt.subtitle || opt.actualModelId || '') : '暂不可用'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 // ============ 快捷输入框（深色卡片样式） ============
 function QuickInputBox(props: {
   value: string;
@@ -328,10 +421,23 @@ function QuickInputBox(props: {
   onRemoveImage?: () => void;
   size?: string;
   onSizeChange?: (size: string) => void;
+  /** 该模型支持的尺寸（来自 adapter-info）。给不出就传 null，尺寸表退回静态档位。 */
+  availableSizes?: SizesByResolution | null;
+  /** 绘图模型：目录 + 当前选中 + 切换。默认值来自用户上次生成用的那个模型。 */
+  modelOptions?: VisualAgentModelOption[];
+  modelId?: string;
+  onModelChange?: (id: string) => void;
+  /** 目录还在路上。用来区分「还没读到」与「读完了但一个都没有」两种占位文案。 */
+  modelsLoading?: boolean;
+  /** 让页面拿到 textarea：选完预设格要把光标送进来。 */
+  inputRef?: React.MutableRefObject<HTMLTextAreaElement | null>;
 }) {
-  const { value, onChange, onSubmit, loading, onImageSelect, selectedImage, onRemoveImage, size = '1024x1024', onSizeChange } = props;
+  const {
+    value, onChange, onSubmit, loading, onImageSelect, selectedImage, onRemoveImage,
+    size = '1024x1024', onSizeChange, availableSizes, modelOptions, modelId, onModelChange, modelsLoading, inputRef,
+  } = props;
   const typingPlaceholder = useTypingPlaceholder();
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isFocused, setIsFocused] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -427,21 +533,36 @@ function QuickInputBox(props: {
 
   const canSubmit = value.trim() && !loading;
 
+  // 暗房档的输入区。行为一行没改（粘贴 / 拖入 / 选文件 / 尺寸 / 缺陷 / 回车提交都在），
+  // 换掉的是那套「老」：20px 大圆角 + 靛蓝描边 + 渐变主按钮 + 15px 正文。
+  // 靛蓝是这一页唯一和品牌色无关的颜色，删掉之后整页只剩 #D97757 一种强调色。
+  const focused = isFocused || isDragging;
+  /*
+   * 宽度 880。这是这一页从暗房版式落地起一直用的值，不是新拍的一个数。
+   *
+   * 中间它被我动过两轮，两轮都错在同一处**误判**：用户报「输入框怎么又短又小」，
+   * 我当成宽度值写小了，先后改成 clamp(680,58vw,1180) 和 min(100%,1300px)。
+   * 真正的原因是包裹层的 className 被 `{...rise()}` 覆盖掉、丢了 w-full 之后
+   * 塌成 350（详见 rise 上方那段），**宽度值自始至终是好的**。
+   * 于是两轮「修复」的结果是：塌陷还在，框倒被我越改越宽，
+   * 用户只好再说一次「确实变大了，但我要的是恢复原状」。
+   *
+   * 教训：症状是「变窄了」不等于「宽度写小了」。先量真实盒子，
+   * 判清是值的问题还是链路的问题，再决定改哪一个。
+   */
   return (
-    <div className="max-w-full sm:max-w-[680px] w-full mx-auto px-3 sm:px-6 mt-8">
+    <div className="w-full mx-auto mt-5" style={{ width: 'min(880px, 100%)' }}>
       <div
-        className="surface-tone-dark rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
+        // 磨砂玻璃：底色、模糊、顶边高光、投影全在 .glass-pane 里（见 globals.css）。
+        // 聚焦态要盖掉 glass-pane 自带的 box-shadow，所以这里把高光那一段一起写回去，
+        // 否则一聚焦玻璃的边就没了。
+        className="glass-pane overflow-hidden cursor-text transition-colors"
         style={{
-          ...glassInputArea,
-          // 暖褐色调磨砂玻璃，与金色主题协调
-          background: 'rgba(28, 24, 20, 0.82)',
-          // 聚焦/拖拽时边框变亮 - 使用柔和的琥珀金
-          border: isFocused || isDragging
-            ? '1px solid rgba(99, 102, 241, 0.5)'
-            : '1px solid rgba(99, 102, 241, 0.18)',
-          boxShadow: isFocused || isDragging
-            ? '0 24px 64px rgba(0,0,0,0.5), 0 0 0 3px rgba(99, 102, 241, 0.15), 0 1px 0 rgba(199,210,254,0.08) inset'
-            : '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(199,210,254,0.05) inset',
+          borderRadius: 8,
+          border: `1px solid ${focused ? 'var(--border-focus)' : 'var(--border-subtle)'}`,
+          boxShadow: focused
+            ? 'inset 0 1px 0 var(--glass-edge), var(--glass-shadow), 0 0 0 3px rgba(var(--accent-primary-rgb), 0.14)'
+            : undefined,
         }}
         onClick={handleContainerClick}
         onPaste={handlePaste}
@@ -449,146 +570,179 @@ function QuickInputBox(props: {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
       >
-        {/* 输入区域 - 简化内边距 */}
-        <div className="px-5 pt-4 pb-3 relative min-h-[80px]">
-          {/* 拖拽图片时的提示蒙层 */}
+        {/*
+         * 打字区。
+         *
+         * 上一版这块是 96 高、里面一个 2 行 60px 的 textarea——整块输入框 820x180，
+         * 长宽比 4.6:1 的窄条，真正能打字的只有 60px，比一张项目卡的封面（160px）还矮。
+         * 用户的原话是「是否需要像苹果的触控板一样做大点」，方向对：这块面同时还是
+         * 拖放目标（「把图拖进来当参考图」），窄条不像一块能往上放东西的面。
+         *
+         * 没有做到触控板的 1.6:1——880 宽照那个比例是 550 高，加上顶栏、标题区、
+         * 预设行，「最近项目」会被整个推到折叠线以下。取 190（整块约 3.4:1）：
+         * 打字区从 60 涨到 130，参考图直接落在这块面里，而项目列表第一行仍在首屏。
+         *
+         * 关键前提：**高度必须由内容换来**。空的大框比空的小框更糟（零摩擦那条规则），
+         * 所以参考图从下面那条 30px 的 chip 行搬进来了，占的是这块面本身。
+         */}
+        <div
+          className="relative px-5 pt-4 pb-2 flex flex-col"
+          // 190 是定值，不许改成跟视口走的 clamp。
+          //
+          // 我为此返工过一轮：把宽度误改到 1300 之后，190 的高看着成了细横条，
+          // 于是又拿 clamp(190,19vw,360) 去「配平」——高度跟着一个本来就错的宽度长，
+          // 在宽屏上顶到 360 上限，整块面成了一个空荡荡的大方块，
+          // 用户一眼看出「没有这么高吧」。宽度回到 880 之后，190 本来就是对的。
+          //
+          // 这块面的高度是拿内容换来的（打字区 130 + 参考图槽落在面内），
+          // 不是按屏幕大小分配的空间；视口一宽就跟着长，只会长出空白。
+          style={{ minHeight: 190 }}
+        >
           {isDragging && (
             <div
-              className="surface-tone-dark absolute inset-0 z-40 flex items-center justify-center gap-2 rounded-[16px] pointer-events-none"
+              className="absolute inset-0 z-40 flex items-center justify-center gap-2 pointer-events-none"
               style={{
-                background: 'rgba(28, 24, 20, 0.92)',
-                border: '1px dashed rgba(99, 102, 241, 0.6)',
-                color: 'rgba(199, 210, 254, 0.9)',
+                borderRadius: 6,
+                background: 'var(--panel-solid)',
+                border: '1px dashed var(--border-focus)',
+                color: 'var(--text-secondary)',
               }}
             >
-              <Image size={16} />
-              <span className="text-[13px] font-medium">松开鼠标，把图片作为参考图</span>
+              <Image size={15} />
+              <span className="text-[12px]">松开，把图片作为参考图</span>
             </div>
           )}
-          {/* 图片预览 chip - 参考 AdvancedVisualAgentTab 样式 */}
-          {selectedImage ? (
-            <div
-              className="absolute left-3 right-3 top-3 z-30 inline-flex items-center gap-1.5"
-              style={{ pointerEvents: 'auto', flexWrap: 'wrap' }}
-            >
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 border border-token-subtle bg-token-nested"
-                style={{ height: 20, maxWidth: 140, paddingLeft: 4, paddingRight: 6, borderRadius: 4, overflow: 'hidden', color: 'var(--text-primary)' }}
-                title={`参考图：${selectedImage.file.name}`}
-                aria-label="预览参考图"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  // 可以在这里打开预览对话框
-                }}
-              >
-                {/* 序号标记 */}
-                <span
-                  style={{
-                    minWidth: 14,
-                    height: 14,
-                    borderRadius: 3,
-                    background: 'rgba(99, 102, 241, 0.25)',
-                    border: '1px solid rgba(99, 102, 241, 0.4)',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 9,
-                    fontWeight: 700,
-                    color: 'var(--accent-fg-violet)',
-                    flexShrink: 0,
-                  }}
-                >
-                  1
-                </span>
-                {/* 图片缩略图 */}
-                <span
-                  className="border border-token-subtle" style={{ width: 14, height: 14, borderRadius: 3, overflow: 'hidden', background: 'var(--bg-input-hover)', display: 'inline-flex', flex: '0 0 auto' }}
-                >
-                  <img
-                    src={selectedImage.previewUrl}
-                    alt={selectedImage.file.name}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                  />
-                </span>
-                {/* 文件名 */}
-                <span
-                  style={{
-                    fontSize: 10,
-                    lineHeight: '16px',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    maxWidth: 70,
-                  }}
-                >
-                  {selectedImage.file.name.length > 8 ? `${selectedImage.file.name.slice(0, 6)}...` : selectedImage.file.name}
-                </span>
-                {/* 删除按钮 */}
-                {onRemoveImage && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRemoveImage();
-                    }}
-                    style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: 2,
-                      border: 'none',
-                      background: 'rgba(239,68,68,0.2)',
-                      color: 'var(--accent-fg-danger)',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      fontSize: 10,
-                      padding: 0,
-                      marginLeft: 2,
-                    }}
-                    title="移除图片"
-                  >
-                    ×
-                  </button>
-                )}
-              </button>
 
-            </div>
-          ) : null}
           <textarea
-            ref={textareaRef}
+            ref={(el) => {
+              textareaRef.current = el;
+              if (inputRef) inputRef.current = el;
+            }}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
-            rows={2}
+            rows={4}
             data-tour-id="visual-prompt-input"
-            className="w-full bg-transparent text-[15px] resize-none leading-relaxed no-focus-ring"
+            className="w-full bg-transparent resize-none no-focus-ring"
             style={{
-              color: '#fff',
-              minHeight: '52px',
+              color: 'var(--text-primary)',
+              fontSize: 14,
+              lineHeight: 1.65,
+              flex: '1 1 auto',
+              minHeight: 130,
               border: 'none',
-              paddingTop: selectedImage ? '32px' : '0',
             }}
             disabled={loading}
           />
-          {/* 自定义打字动效占位符 - 偏暖白 */}
-          {!value && !selectedImage && (
+          {!value && (
             <div
-              className="absolute top-4 left-5 right-5 pointer-events-none text-[15px] leading-relaxed"
-              style={{ color: 'var(--text-muted)' }}
+              className="absolute left-5 right-5 pointer-events-none"
+              style={{ top: 16, color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.65 }}
             >
               {typingPlaceholder}
               <span className="animate-pulse">|</span>
             </div>
           )}
+
+          {/* 参考图落在这块面上，而不是挤在一条 30px 的附加行里。
+              没有参考图时同一个位置放一个虚线空槽——把面做大之后，
+              本地取证第一版这里是一片纯粹的空白（浅色下尤其明显），
+              那正是「空的大框比空的小框更糟」。空槽既填住这块地方，
+              又把这块面是个拖放目标这件事说清楚，图一落下它就被真图替换。 */}
+          {!selectedImage && (
+            /*
+             * 空槽本身就是第三条入口：点它 = 打开文件选择器。
+             *
+             * 上一版这里挂着 pointer-events-none，理由是「它只是个提示」——但它长得
+             * 完完全全像一个上传区（虚线框 + 图片图标 + 一句「拖到这里」），
+             * 用户第一反应就是点它，点了没反应。看着能点就必须能点，
+             * 这正是这一轮刚修掉的三个死控件的同一种错，不能自己再造一个。
+             *
+             * 拖放和粘贴原本就由外层容器接着，这里只补「点」这一路。
+             */
+            <button
+              type="button"
+              onClick={handleImageButtonClick}
+              aria-label="选择参考图"
+              className="mt-auto mr-auto pt-2.5 flex items-center gap-2.5 group/slot bg-transparent border-0 p-0 cursor-pointer text-left"
+            >
+              <span
+                className="grid place-items-center shrink-0 transition-colors"
+                style={{
+                  width: 56, height: 56, borderRadius: 6,
+                  border: `1px dashed ${isDragging ? 'var(--border-focus)' : 'var(--border-default)'}`,
+                  color: 'var(--text-muted)',
+                }}
+              >
+                <Image size={16} />
+              </span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 10, lineHeight: 1.6 }}>
+                点这里选图，或把参考图拖进来 / 按 {isMac ? '⌘V' : 'Ctrl+V'} 粘贴
+              </span>
+            </button>
+          )}
+          {selectedImage && (
+            <div className="mt-auto pt-2.5 flex items-end gap-2">
+              <div
+                className="relative group/ref shrink-0"
+                title={`参考图：${selectedImage.file.name}`}
+              >
+                <img
+                  src={selectedImage.previewUrl}
+                  alt=""
+                  style={{
+                    width: 56, height: 56, borderRadius: 6, objectFit: 'cover', display: 'block',
+                    boxShadow: 'inset 0 0 0 1px var(--border-subtle)',
+                  }}
+                />
+                {onRemoveImage && (
+                  <button
+                    type="button"
+                    aria-label="移除参考图"
+                    onClick={(e) => { e.stopPropagation(); onRemoveImage(); }}
+                    className="absolute -top-1.5 -right-1.5 grid place-items-center transition-opacity opacity-0 group-hover/ref:opacity-100 focus-visible:opacity-100"
+                    style={{
+                      width: 18, height: 18, borderRadius: 9, border: 0, cursor: 'pointer',
+                      background: 'var(--panel-solid)', color: 'var(--text-secondary)',
+                      boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+                    }}
+                  >
+                    <X size={10} />
+                  </button>
+                )}
+              </div>
+              <span
+                className="truncate pb-0.5"
+                style={{ color: 'var(--text-muted)', fontSize: 10, maxWidth: 220 }}
+              >
+                {selectedImage.file.name}
+              </span>
+            </div>
+          )}
         </div>
-        {/* 底部工具栏 - 简化，只保留核心操作 */}
-        <div className="flex items-center justify-between px-4 pb-3">
-          {/* 左侧：附件按钮 + 尺寸配置 */}
-          <div className="flex items-center gap-2">
+
+        {/* 原来这里有一条独立的「⌘V 粘贴 / 拖图进来」说明行。
+            现在这句话由打字区里的虚线空槽承担——就写在那个槽旁边，
+            说的正是那个槽的用法，比隔着一条分割线在下面另起一行准确，也少一行 chrome。 */}
+
+        {/* 底部工具条：自带底色 + 上边框，与视频创作同结构。 */}
+        <div
+          className="glass-sub flex items-center justify-between gap-2.5"
+          style={{
+            minHeight: 58,
+            padding: '9px 10px 9px 13px',
+            borderTop: '1px solid var(--border-faint)',
+          }}
+        >
+          {/* 375px 上这一排是「参考图 + 模型 + 尺寸 + 反馈」四个控件，加上右边的
+              主按钮已经放不下；而外层面板是 overflow-hidden，放不下不会换行、
+              只会被裁掉——「反馈」直接消失在屏幕外，且没有任何办法够到它。
+              mobile-first-density 二.5 对这种情况写死了做法：单行横滚 +
+              子项 shrink-0 whitespace-nowrap，不换行也不竖排（Codex PR #1476 P1）。
+              两个下拉都 createPortal 到 body，不会被这里的 overflow 裁掉。 */}
+          <div className="flex items-center gap-[3px] min-w-0 flex-1 overflow-x-auto no-scrollbar">
             <input
               ref={fileInputRef}
               type="file"
@@ -602,120 +756,129 @@ function QuickInputBox(props: {
               data-tour-id="visual-image-btn"
               onClick={handleImageButtonClick}
               disabled={loading}
-              className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{
-                background: 'rgba(99, 102, 241, 0.1)',
-                color: 'var(--accent-fg-violet)',
-                border: '1px solid rgba(99, 102, 241, 0.15)',
-              }}
-              title="添加图片参考（也可直接粘贴 Ctrl/Cmd+V 或拖入图片）"
+              className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ minHeight: 36, padding: '0 9px', borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-secondary)', fontSize: 10, cursor: 'pointer' }}
+              title="添加参考图（也可粘贴或拖入）"
             >
-              <Image size={14} />
-              <span>图片</span>
+              <Image size={13} />
+              参考图
             </button>
-
-            {/* 尺寸选择器（复用编辑器的面板组件） */}
-            {onSizeChange && (
-              <span data-tour-id="visual-size-btn" className="inline-flex">
-                <SizePickerButton size={size} onSizeChange={onSizeChange} />
+            {/* 绘图模型。这条工具行原来没有它——首页是「开始生成」的入口，
+                却看不见也选不了用哪个模型，而换模型是用户能直接感知到结果差异的
+                （ai-model-visibility：这类功能必须让模型可见）。
+                默认值是用户上次生成用的那个，不是每次回到「自动」。 */}
+            {/* 锚点常驻，不跟着「目录拉回来了没有」一起挂载。
+                onboarding-tips 第二节写着 Tour 锚点必须是页面常驻元素（含空状态占位），
+                否则教程走到那一步找不到目标，用户对着一个「正在定位」的气泡等到超时。
+                目录还没回来 / 拉失败时给一个禁用的占位，位置和文案都在，只是点不动
+                （Codex PR #1476 P2；no-rootless-tree：不假装有，但也别装作没这回事）。 */}
+            {onModelChange && (
+              <span data-tour-id="visual-model-btn" className="inline-flex shrink-0 whitespace-nowrap">
+                {modelOptions && modelOptions.length > 0 ? (
+                  <ModelPickerButton options={modelOptions} modelId={modelId} onChange={onModelChange} />
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    title={modelsLoading ? '正在读取可用的绘图模型' : '暂时读不到可用的绘图模型'}
+                    className="inline-flex items-center gap-1.5"
+                    style={{ minHeight: 36, padding: '0 9px', borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-muted)', fontSize: 10, opacity: 0.55, cursor: 'not-allowed' }}
+                  >
+                    <Sparkles size={13} className="shrink-0" />
+                    {modelsLoading ? '读取模型…' : '模型暂不可用'}
+                  </button>
+                )}
               </span>
             )}
-          </div>
-          {/* 右侧：Bug 按钮 + 发送按钮 */}
-          <div className="flex items-center gap-2">
+            {onSizeChange && (
+              <span data-tour-id="visual-size-btn" className="inline-flex shrink-0 whitespace-nowrap">
+                <SizePickerButton size={size} onSizeChange={onSizeChange} availableSizes={availableSizes} />
+              </span>
+            )}
             <button
               type="button"
               data-tour-id="visual-defect-btn"
-              onClick={() => openDefectDialog()}
-              className="h-9 w-9 rounded-xl flex items-center justify-center transition-all duration-200 hover-bg-soft"
-              style={{
-                background: 'var(--bg-input-hover)',
-                color: 'var(--text-secondary)',
-                border: '1px solid var(--border-subtle)',
-              }}
+              onClick={(e) => { e.stopPropagation(); openDefectDialog(); }}
+              className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap hover-bg-soft"
+              style={{ minHeight: 36, padding: '0 9px', borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-secondary)', fontSize: 10, cursor: 'pointer' }}
               title="提交缺陷 (Cmd/Ctrl+B)"
             >
-              <Bug size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={onSubmit}
-              disabled={!canSubmit}
-              data-tour-id="visual-submit-btn"
-              className="h-9 px-5 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all duration-200"
-              style={{
-                background: canSubmit
-                  ? 'linear-gradient(135deg, rgba(99,102,241,0.95) 0%, rgba(79,82,221,0.95) 100%)'
-                  : 'var(--border-subtle)',
-                color: canSubmit ? 'rgba(255,255,255,0.95)' : 'var(--text-muted)',
-                cursor: canSubmit ? 'pointer' : 'not-allowed',
-                boxShadow: canSubmit ? '0 4px 20px rgba(99,102,241,0.3)' : 'none',
-              }}
-            >
-              {loading ? (
-                <span>生成中...</span>
-              ) : (
-                <>
-                  <Sparkles size={14} />
-                  <span>开始创作</span>
-                </>
-              )}
+              <Bug size={13} />
+              反馈
             </button>
           </div>
+
+          {/* 反色主按钮：视频创作的主操作就是这么做的，也是「控制台感」里最见效的一笔。 */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onSubmit(); }}
+            disabled={!canSubmit}
+            data-tour-id="visual-submit-btn"
+            className="inline-flex items-center gap-[7px] shrink-0 whitespace-nowrap transition-opacity"
+            style={{
+              minHeight: 40,
+              padding: '0 16px',
+              borderRadius: 7,
+              border: 0,
+              background: canSubmit ? 'var(--text-primary)' : 'var(--bg-tertiary)',
+              color: canSubmit ? 'var(--bg-base)' : 'var(--text-muted)',
+              fontSize: 12,
+              fontWeight: 650,
+              cursor: canSubmit ? 'pointer' : 'not-allowed',
+            }}
+          >
+            {loading ? '生成中…' : (<><Sparkles size={14} />开始创作</>)}
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
+
 // ============ 场景标签 ============
 function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: string | null }) {
   const { onSelect, activeKey } = props;
 
+  // 六格等宽（与视频创作的风格档同构），窄屏退回横向滚动而不是换行——
+  // 换行会让这一排在手机上吃掉两倍高度，把输入框挤出首屏（mobile-first-density 规则 3）。
   return (
-    <div data-tour-id="visual-scenarios" className="flex items-center justify-start sm:justify-center gap-2.5 flex-nowrap overflow-x-auto sm:flex-wrap px-3 sm:px-6 mt-6 no-scrollbar">
+    <div
+      data-tour-id="visual-scenarios"
+      className="mt-3 grid grid-flow-col auto-cols-[minmax(96px,1fr)] sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-6 gap-1.5 overflow-x-auto no-scrollbar"
+      // 与上面输入台同宽，两者必须一起改——预设行比输入框宽或窄都会露出错位的边。
+      style={{ width: 'min(880px, 100%)' }}
+    >
       {SCENARIO_TAGS.map((tag) => {
         const Icon = tag.icon;
-        const isActive = activeKey === tag.key;
-        const isPro = tag.isPro;
-
-        if (isPro) {
-          // PRD Agent Pro - 特殊高亮样式
-          return (
-            <button
-              key={tag.key}
-              type="button"
-              data-tour-id="visual-pro"
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 hover:scale-[1.02] shrink-0"
-              style={{
-                background: 'linear-gradient(135deg, rgba(99,102,241,0.12) 0%, rgba(79,82,221,0.06) 100%)',
-                border: '1px solid rgba(99,102,241,0.35)',
-                color: 'rgba(165,180,252,0.95)',
-                boxShadow: '0 0 24px rgba(99,102,241,0.08)',
-              }}
-              onClick={() => {}}
-            >
-              <Icon size={15} />
-              {tag.label}
-            </button>
-          );
-        }
-
-        // 普通标签 - 更柔和的样式，偏暖白
+        const isActive = tag.isPro ? activeKey === tag.key || activeKey === null : activeKey === tag.key;
         return (
           <button
             key={tag.key}
             type="button"
+            data-tour-id={tag.isPro ? 'visual-pro' : undefined}
+            // MAP Pro 也要能点。它的高亮条件本来就是 activeKey === null，
+            // 语义即「没选任何预设」——所以点它 = 清空输入回到自由描述。
+            // 上一版这里写的是 if (!tag.isPro)，六格里默认高亮的第一格点了没有任何反应。
             onClick={() => onSelect(tag.prompt)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover-bg-soft shrink-0"
+            className={`${isActive ? '' : 'glass-sub '}inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md px-[7px] text-[9px] shrink-0 transition-colors`}
             style={{
-              background: isActive ? 'rgba(99,102,241,0.1)' : 'transparent',
-              border: isActive ? '1px solid rgba(99,102,241,0.22)' : '1px solid var(--border-subtle)',
-              color: isActive ? 'var(--text-primary)' : 'var(--accent-fg-violet)',
+              minHeight: 38,
+              // 选中态保持实心卡面：它要从这一排里跳出来，磨砂会把它压回去。
+              background: isActive ? 'var(--bg-card)' : undefined,
+              color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+              boxShadow: isActive
+                ? `inset 0 0 0 1px ${tag.hue}, var(--shadow-card-sm)`
+                : undefined,
             }}
           >
-            <Icon size={14} style={{ opacity: isActive ? 1 : 0.65 }} />
-            {tag.label}
+            <i
+              aria-hidden
+              className="block shrink-0 rounded-[3px]"
+              style={{ width: 8, height: 22, background: tag.hue }}
+            />
+            <Icon size={11} className="shrink-0" style={{ opacity: isActive ? 1 : 0.7 }} />
+            <span className="truncate">{tag.label}</span>
           </button>
         );
       })}
@@ -760,7 +923,27 @@ function ProjectCard(props: {
           boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
         }}
       >
-        {hasCover && <CoverMosaic title={ws.title || ws.id} assets={ws.coverAssets} />}
+        {hasCover ? (
+          <CoverMosaic title={ws.title || ws.id} assets={ws.coverAssets} />
+        ) : (
+          /* 还没有图的项目。上一版这里什么都不放，卡片就是一个纯色空框——
+             和「封面加载失败」长得一模一样，用户分不出是没画过还是坏了。
+             放项目名首字 + 一句说明，一眼就知道它是空的、不是坏的。 */
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
+            <span
+              className="grid place-items-center"
+              style={{
+                width: 40, height: 40, borderRadius: 10,
+                background: 'var(--nested-block-bg)',
+                color: 'var(--text-secondary)',
+                fontSize: 17, fontWeight: 600,
+              }}
+            >
+              {(ws.title || '未').trim().slice(0, 1)}
+            </span>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>还没有图</span>
+          </div>
+        )}
         {/* Hover 遮罩 */}
         <div
           className="absolute inset-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
@@ -856,6 +1039,41 @@ function NewProjectCard(props: { onClick: () => void }) {
 }
 
 // ============ 项目列表（网格布局，一排5个） ============
+/**
+ * 项目卡骨架。
+ *
+ * 形状照着 ProjectCard 一比一：160px 的封面块 + 13px 标题条 + 11px 日期条，
+ * 位置和尺寸都对得上，所以真数据落位时不会跳。这是「产物形状的骨架」——
+ * 上一版这里是一个居中 spinner，它既不告诉你要来几张，也不占位，
+ * 列表一到整页往下弹一截。
+ *
+ * 扫光沿 45 度走，和印相台的织纹同一个角度；错峰启动，免得九张卡一起闪。
+ *
+ * 和「统一加载组件」那条规则不冲突，别改回去：那条禁的是**裸 lucide spinner**，
+ * 要求区块加载走 MapSectionLoader；而 artifact-is-experience 更进一步——
+ * 有确定形状的列表要用**产物形状的骨架**，不用居中 spinner。这里取更高的那一档。
+ */
+function ProjectCardSkeleton({ index }: { index: number }) {
+  return (
+    <div aria-hidden>
+      <div
+        className="skeleton-sheen h-[160px] w-full rounded-xl"
+        style={{ animationDelay: `${(index % 5) * 110}ms` }}
+      />
+      <div className="pt-2.5 px-0.5">
+        <div
+          className="skeleton-sheen rounded"
+          style={{ height: 9, width: '58%', animationDelay: `${(index % 5) * 110 + 60}ms` }}
+        />
+        <div
+          className="skeleton-sheen mt-2 rounded"
+          style={{ height: 7, width: '32%', animationDelay: `${(index % 5) * 110 + 120}ms` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function ProjectCarousel(props: {
   items: VisualAgentWorkspace[];
   loading: boolean;
@@ -886,13 +1104,11 @@ function ProjectCarousel(props: {
     return () => io.disconnect();
   }, [hasMore, loadingMore, onLoadMore]);
 
-  if (loading) {
-    return <MapSectionLoader />;
-  }
-
   return (
     <div className="mt-8 flex-1 relative z-10">
-      {/* 标题栏 - 增加分隔线和更好的层级 */}
+      {/* 标题栏 - 增加分隔线和更好的层级。
+          注意它在 loading 时也渲染：骨架期把标题和分隔线留在原位，
+          列表到位时页面不会整体往下跳一截。 */}
       <div className="max-w-[1340px] mx-auto px-5 mb-4">
         <div
           className="flex items-center justify-between py-3"
@@ -905,6 +1121,26 @@ function ProjectCarousel(props: {
           >
             最近项目
           </h2>
+          {/* 从左侧那条浮动工具栏搬过来的。带文字——匿名图标悬在页面左缘时
+              没人认得出它是什么，也跟它要操作的这个列表隔着大半个屏幕。
+
+              后端还没有文件夹，所以它是**禁用**的，不是能点的。
+              上一版点下去会弹出取名对话框、让用户认真起个名字、点「创建」，
+              然后回一句「功能正在开发中」——一整套看着像真的流程，什么都没发生。
+              而这条工具栏原来被 !isMobile 挡着，这次搬进标题行之后手机上也露出来了，
+              等于把这个空转流程推给了更多人（Codex PR #1476 P2）。
+              禁用 + 「开发中」标签是诚实的那一档：能看见规划，但不假装做得到
+              （no-rootless-tree）。接上后端时把 disabled 去掉即可。 */}
+          <button
+            type="button"
+            disabled
+            title="后端尚未支持文件夹，敬请期待"
+            className="glass-sub inline-flex items-center gap-1.5 rounded-md px-2.5 h-7 text-[11px]"
+            style={{ color: 'var(--text-muted)', opacity: 0.55, cursor: 'not-allowed' }}
+          >
+            <FolderPlus size={12} />
+            新建文件夹（开发中）
+          </button>
         </div>
       </div>
       {/* 网格布局，响应式列数 */}
@@ -912,7 +1148,8 @@ function ProjectCarousel(props: {
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-5 pb-6 px-5 max-w-[1340px] mx-auto"
       >
         <NewProjectCard onClick={onCreate} />
-        {items.map((ws) => (
+        {loading && Array.from({ length: 9 }).map((_, i) => <ProjectCardSkeleton key={`sk-${i}`} index={i} />)}
+        {!loading && items.map((ws) => (
           <ProjectCard
             key={ws.id}
             workspace={ws}
@@ -923,20 +1160,74 @@ function ProjectCarousel(props: {
           />
         ))}
       </div>
-      {/* 加载更多指示器 + 哨兵 */}
-      {loadingMore && <MapSectionLoader />}
+      {/* 翻页也用骨架，和首屏同一种形状——换成 spinner 会在同一页出现两种等待语言。 */}
+      {loadingMore && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-5 pb-6 px-5 max-w-[1340px] mx-auto">
+          {Array.from({ length: 5 }).map((_, i) => <ProjectCardSkeleton key={`skm-${i}`} index={i} />)}
+        </div>
+      )}
       {hasMore && <div ref={sentinelRef} className="h-1" />}
     </div>
   );
 }
 
+/**
+ * 量出 dataURL 图片的像素尺寸。纯本地，不发网络。
+ *
+ * 这个值有两处用途，缺了都会出问题：
+ *   1. 画布落位——尺寸未知的元素在碰撞表里没有体积，新生成的图会直接压到参考图上；
+ *   2. 存进资产——后端不解码图片算尺寸，客户端不给就永远是空，下次重建画布还是没体积。
+ *
+ * 量不出来（解码失败 / 非图片）就返回 null，让下游走兜底档，不编一个尺寸。
+ */
+function measureDataUrl(dataUrl: string): Promise<{ w: number; h: number } | null> {
+  return new Promise((resolve) => {
+    if (!dataUrl) return resolve(null);
+    // 注意：这个文件从 lucide-react 引了名为 Image 的图标，遮住了全局构造器，必须走 window。
+    const img = new window.Image();
+    img.onload = () => {
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      resolve(w > 0 && h > 0 ? { w, h } : null);
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
 // ============ 主页面 ============
+/**
+ * 站点存储此刻能不能写。
+ *
+ * 只写一个一次性小键再删掉——探的是「被禁用 / 隐私模式」这一类整体不可用，
+ * 不是配额：几 MB 的 dataURL 放不下要到真写那一刻才知道，那条路径另有降级。
+ */
+function canUseSessionStorage(): boolean {
+  try {
+    const probe = '__vaProbe__';
+    sessionStorage.setItem(probe, '1');
+    sessionStorage.removeItem(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: boolean }) {
   // fullscreenMode 参数保留用于兼容，但现在所有模式都是全屏
   const _fullscreenMode = props.fullscreenMode;
   void _fullscreenMode; // 避免 TS6133 警告
   const navigate = useNavigate();
-  const { isMobile } = useBreakpoint();
+  /**
+   * 返回：有站内上一条就弹栈，没有就兜底回首页。
+   *
+   * 原来这里是裸 navigate(-1)。它在「新标签页直达 / 刷新后 / 登录跳转后」没有站内
+   * 上一条，按下去要么原地不动，要么退到登录页甚至外站——useSmartBack 的注释里
+   * 写的正是这个坑。之前没暴露出来，是因为外层还有一颗走 useSmartBack 的浮动返回钮
+   * 压在它上面，用户点到的一直是那颗；现在那颗只留给编辑器了，兜底得由这颗自己带
+   *（Codex PR #1476 P2）。
+   */
+  const onHeaderBack = useSmartBack('/');
   const userId = useAuthStore((s) => s.user?.userId ?? '');
 
   // 统一使用 /visual-agent 路径（现在所有模式都是全屏）
@@ -957,6 +1248,127 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
   const [inputValue, setInputValue] = useState('');
   const [inputLoading, setInputLoading] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
+
+  // ---- 绘图模型（首页也要能看见、能选）----
+  // 目录、偏好存储、尺寸能力三样都复用编辑器已有的那套，不另起炉灶：
+  // 只有共用同一个 visualAgentPreferences.modelId，两边的「上次用的模型」才是同一个。
+  const [modelOptions, setModelOptions] = useState<VisualAgentModelOption[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelId, setModelId] = useState<string>('');
+  const [availableSizes, setAvailableSizes] = useState<SizesByResolution | null>(null);
+  /**
+   * 用户有没有自己动过模型选择。
+   *
+   * 目录和偏好拆开之后多了一段新窗口：目录先回来，选择器已经能点了，
+   * 偏好还在路上。用户在这段窗口里选了 A，偏好晚到时若无条件套用，
+   * 界面会**自己跳回** B——而这是一次要花钱的生成，且违反
+   * ai-model-visibility（显示的必须是真正在用的）。慢偏好接口越慢，
+   * 这段窗口越长（Codex PR #1476 P1）。
+   * 用 ref 不用 state：它只在异步回调里被读，不需要触发重渲染。
+   */
+  const userPickedModelRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    /**
+     * 目录和偏好**各走各的**，不再 Promise.all 一起等。
+     *
+     * 目录决定「有没有模型可选」，偏好只决定「默认选中哪个」——后者拿不到时，
+     * 前者照样能用（退到服务端默认池 / 第一个可用）。并成一个 await 之后，
+     * 偏好接口慢或不返回就把整块拖住：modelsLoading 一直是 true，
+     * 工具行上那个占位永远停在「读取模型…」而且是禁用的，
+     * 用户连模型都看不到、更选不了（Codex PR #1476 P2）。
+     * apiRequest 默认没有超时，这不是理论情况。
+     *
+     * 这个占位是我上一轮为「教程锚点必须常驻」加的——它把这条隐患
+     * 从「短暂没有选择器」变成了「一个永远转不完的禁用按钮」，更该修。
+     */
+    const applyPreferred = (options: VisualAgentModelOption[], preferred: string) => {
+      // 用户已经自己选过就不再动他的选择——晚到的偏好只能填空白，不能改主意。
+      if (userPickedModelRef.current) return;
+      // 默认值优先级：上次生成用的那个 → 服务端标记的默认池 → 第一个可用。
+      // 注意 prefs 里存的是 option.id（pool_xxx），和编辑器同一套标识，不能换成 modelName。
+      const pick = options.find((o) => o.id === preferred && o.enabled)
+        ?? options.find((o) => o.enabled && o.isDefault)
+        ?? options.find((o) => o.enabled)
+        ?? null;
+      setModelId(pick?.id ?? '');
+    };
+    let loaded: VisualAgentModelOption[] = [];
+    let prefApplied = false;
+    // 目录先到先用：catch 兜网络层异常，拉挂了也要把 modelsLoading 落下来，
+    // 否则占位停在静止的加载态——静止的加载态就是缺陷。
+    const catalog = getVisualAgentImageGenModels().catch(() => null).then((poolsRes) => {
+      if (cancelled) return;
+      loaded = poolsRes?.success ? buildVisualAgentModelOptions(poolsRes.data ?? []) : [];
+      setModelOptions(loaded);
+      setModelsLoading(false);
+      // 偏好还没回来就先按服务端默认选一个，等它回来再纠正（下面那条）。
+      if (!prefApplied) applyPreferred(loaded, '');
+    });
+    void Promise.all([
+      catalog,
+      getUserPreferences().catch(() => null).then((prefRes) => {
+        if (cancelled) return;
+        prefApplied = true;
+        const preferred = prefRes?.success ? String(prefRes.data?.visualAgentPreferences?.modelId ?? '') : '';
+        // 偏好可能比目录先回来：那就等目录（catalog 已 await 在同一个 all 里），
+        // 这里只用它算一次最终选中。preferred 为空时结果与上面那次一致，不会跳。
+        void catalog.then(() => { if (!cancelled) applyPreferred(loaded, preferred); });
+      }),
+    ]);
+    return () => { cancelled = true; };
+  }, []);
+
+  // 选定模型 → 拉它支持的尺寸 → 当前尺寸不被支持就纠正。
+  // 纠正规则在 lib/visualModelSizes（比例优先、拿不到就不动），那里有单测。
+  const currentModel = useMemo(() => modelOptions.find((o) => o.id === modelId) ?? null, [modelOptions, modelId]);
+  useEffect(() => {
+    let cancelled = false;
+    // 生成请求用池 ID，但尺寸能力必须按池内**实际上游模型**查，否则适配器命中不了、
+    // 尺寸会被错误清空（编辑器那边同一个坑，注释见 AdvancedVisualAgentTab 的 adapter-info effect）。
+    const modelCode = currentModel?.actualModelId || currentModel?.modelName;
+    if (!modelCode) { setAvailableSizes(null); return; }
+    // 换模型的第一件事是**先把上一个模型的尺寸清单丢掉**，再去拉新的。
+    //
+    // 不清空的话，这次请求回来之前，尺寸面板端出来的还是上一个模型的档位——
+    // 用户此刻选中的尺寸看着「这个模型支持」，其实属于另一个模型；这段窗口里点发送，
+    // 交给编辑器的就是一个新模型未必支持的尺寸，后端归一化会把输出悄悄改掉，
+    // 而用户以为自己选的是什么就出什么（Codex PR #1476 P2）。
+    // 置 null = 退回静态档位，也就是既有的「拿不到就不假装知道」那一档（no-rootless-tree），
+    // 比端着一份明确属于别人的清单诚实。
+    setAvailableSizes(null);
+    void getVisualAgentAdapterInfo(modelCode)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.success && res.data?.matched && res.data.sizesNotApplicable !== true && res.data.sizesByResolution) {
+          setAvailableSizes(normalizeSizesByResolution(res.data.sizesByResolution));
+        } else {
+          // 没命中 / 该模型尺寸语义不适用 → 明确置空，让尺寸表退回静态档位，不假装知道。
+          setAvailableSizes(null);
+        }
+      })
+      .catch(() => { if (!cancelled) setAvailableSizes(null); });
+    return () => { cancelled = true; };
+  }, [currentModel]);
+
+  // ---- 首页背景 ----
+  // 素材池 = 随包四张专门为「当背景」而画的暗调图 + 用户自己生成的。
+  // 第一版把池子接成「你自己项目的封面图」，取证之后推翻了：真实封面绝大多数是白底产品图，
+  // 压到暗罩底下整页从近黑变成一片平灰，暗房的黑没了，那张图自己也糊成一团认不出来。
+  // 详见 backdropCatalog.ts 的注释。
+  const [backdropMode, setBackdropMode] = useState<BackdropMode>(() => readBackdropMode());
+  // 按账号读：userId 首帧可能还没水合出来，所以不能在 useState 初始值里读死一次，
+  // 否则拿到的是空键（= 空列表），登录完成后再也不会补上。
+  const [generatedBackdrops, setGeneratedBackdrops] = useState<BackdropAsset[]>([]);
+  useEffect(() => {
+    setGeneratedBackdrops(readGeneratedBackdrops(userId));
+  }, [userId]);
+  const backdropAssets = useMemo<BackdropAsset[]>(
+    () => [...BACKDROP_CATALOG, ...generatedBackdrops],
+    [generatedBackdrops],
+  );
+  const backdrop = useMemo(() => resolveBackdrop(backdropAssets, backdropMode), [backdropAssets, backdropMode]);
   const [selectedImage, setSelectedImage] = useState<{ file: File; previewUrl: string } | null>(null);
   // 默认尺寸：从 sessionStorage 读取用户偏好，与编辑器共享同一 key
   const defaultSizeKey = userId ? `prdAdmin.visualAgent.defaultSize.${userId}` : '';
@@ -1092,9 +1504,41 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     const prompt = inputValue.trim();
     if (!prompt) return;
 
+    // 0. 先探一下站点存储能不能写。
+    //
+    // 交接包存不进去就不该跳转（下面第 5 步会拦），但那个拦截发生在**工作区已经建好之后**：
+    // 用户看到错误、再点一次发送，就又建一个空项目，排查过程本身在制造垃圾数据
+    //（Codex PR #1476 P2）。所以把「能不能存」提到建工作区之前问，一个空项目都不留。
+    //
+    // 这里只探「存储可不可用」，探不出「这次的图太大放不下」——配额要到真写才知道。
+    // 那条路径不会留孤儿：它退化成不带图的那一份、照常跳转，见第 5 步。
+    if (!canUseSessionStorage()) {
+      toast.error('浏览器禁用了站点存储，没法把这次输入带进画板', '请允许本站存储后重试；输入已经留着。');
+      return;
+    }
+
     setInputLoading(true);
     try {
-      // 1. 创建 workspace
+      // 1. 把这次选的模型写回账号偏好——**发了就不等**。
+      //
+      // 它的作用只是「下次回首页还默认这个模型」，与本次创作无关：
+      // 本次用哪个模型由交接包里的 modelId 直接决定（见下面第 5 步），
+      // 编辑器优先用它、不读偏好。
+      //
+      // 一开始把它并进 Promise.all 与建工作区一起等，理由是「避免编辑器读到旧偏好」。
+      // 交接包带上 modelId 之后那个理由就没了，而这句 await 的代价还在：
+      // 偏好接口慢或不返回时，工作区其实早就建好了，用户却还盯着一个不动的
+      // 「生成中…」——正是这次要治的那个症状（Codex PR #1476 P2）。
+      // 现在只等建工作区这一个往返，它是跳转前唯一必需的（没有 id 就没有目的地）。
+      //
+      // modelAuto 置 false：用户在首页显式选过了，不该再被自动挑选覆盖。
+      // .catch 只挡网络层异常——这个接口失败时返回 { success:false } 而不 reject
+      //（apiRequest 的统一约定，AGENTS.md 规则 #7），所以它接不住普通失败；
+      // 接不住也无所谓，本次创作不依赖它。
+      if (modelId) void updateVisualAgentPreferences({ modelAuto: false, modelId }).catch(() => null);
+
+      // 2. 创建 workspace —— 跳转前唯一必须等的网络往返。
+      // 参考图的上传也不在这里等（见下面第 4 步）。
       const res = await createVisualAgentWorkspace({
         title: prompt.slice(0, 20) || '未命名',
         idempotencyKey: `ws_quick_${Date.now()}`,
@@ -1105,46 +1549,83 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       }
       const ws = res.data.workspace;
 
-      // 2. 构建消息文本（使用 [IMAGE src=... name=...] 和 (@size:...) 标记）
+      // 3. 构建消息文本（使用 [IMAGE src=... name=...] 和 (@size:...) 标记）
       // 格式：${inlineRefToken}${uiSizeToken}${display || reqText}
       // 即：[IMAGE src=... name=...] (@size:1024x1024) 文本内容
       let messageText = prompt;
-      let assetId: string | null = null;
+      const assetId: string | null = null;
       let imageToken = '';
+      let imageSize: { w: number; h: number } | null = null;
 
-      // 如果有选中的图片，上传图片并添加到消息中
+      // 4. 参考图**不在这里上传**。
+      //
+      // 以前是「传完图才跳转」：一张手机照片转成 base64 要多传三分之一体积，用户就对着
+      // 一个不动的「生成中…」等十几秒，而这段时间画布明明已经可以打开了。
+      // 现在直接把 dataURL 交给画布，由画布在生成前的既有落盘逻辑上传
+      //（AdvancedVisualAgentTab 的 needEnsure 分支：dataURL 参考图先传一次拿 sha 再生成，
+      //  失败会把卡片标成「未持久化」并提示，不是静默丢图）。
+      //
+      // 顺带把像素尺寸量出来一起交过去：画布拿它当卡片的真实体积，
+      // 上传时也会带给后端，否则这张资产的 width/height 永远是空。
       if (selectedImage) {
-        const uploadRes = await uploadVisualAgentWorkspaceAsset({
-          id: ws.id,
-          data: selectedImage.previewUrl,
-          prompt: selectedImage.file.name || '参考图',
-          idempotencyKey: `ws_asset_${ws.id}_${Date.now()}`,
-        });
-        if (uploadRes.success) {
-          const asset = uploadRes.data.asset;
-          assetId = asset.id;
-          // 使用 [IMAGE src=... name=...] 标记（不是 @img1）
-          // 注意：buildInlineImageToken 会对 URL 进行 encodeURIComponent，这是正确的
-          imageToken = buildInlineImageToken(asset.url, selectedImage.file.name || asset.prompt || '参考图');
-        } else {
-          // 图片上传失败，但仍然继续（只使用文本提示）
-          toast.error('图片上传失败', `${uploadRes.error?.message || '未知错误'}。将仅使用文本提示创建项目。`);
-        }
+        imageSize = await measureDataUrl(selectedImage.previewUrl);
+        imageToken = buildInlineImageToken(selectedImage.previewUrl, selectedImage.file.name || '参考图');
       }
 
       // 构建最终消息：图片标记 + 尺寸标记 + 文本内容
       const sizeToken = selectedSize ? `(@size:${selectedSize}) ` : '';
       messageText = `${imageToken}${sizeToken}${messageText}`;
 
-      // 3. 使用 sessionStorage 传递参数（避免刷新时重复创建）
+      // 5. 使用 sessionStorage 传递参数（避免刷新时重复创建）
+      //
+      // dataURL 可能有好几 MB，超配额时 setItem 会抛。抛了不能让整个提交挂掉——
+      // 退而存一份不带图的，用户至少还能带着文字进画板（参考图需要重新拖一次）。
       const sessionKey = `visual_agent_init_${ws.id}`;
-      sessionStorage.setItem(sessionKey, JSON.stringify({
-        messageText,
-        assetId,
-        timestamp: Date.now(),
-      }));
+      // modelId 必须进交接包：偏好接口写失败时只返回 { success:false }，
+      // 编辑器再去读偏好就会拿到上一次的模型，用户在首页选的 A 会变成 B——
+      // 而这是一次要花钱的生成。交接包直接带上，编辑器就不必依赖那次写。
+      const payload = { messageText, assetId, imageSize, modelId, timestamp: Date.now() };
+      // 图太大存不下时**不再退化成「只带文字」**。
+      //
+      // 上一版是：丢掉 [IMAGE] 标记、只存文字、照常跳转，然后提示「请在画板里重新拖入」。
+      // 但两个编辑器消费方拿到交接包都会**自动发送**——用户还没来得及照提示做，
+      // 一次纯文字的付费生成已经跑掉了，而他要的是「按这张图改」（Codex PR #1476 P1）。
+      // 这和上一轮手机端那条是同一个错：把语义变更通告一遍，当成了征得同意。
+      //
+      // 现在只留一条路径：整份交接包存不进去（配额不够 / 站点存储被禁用）就不跳转，
+      // 留在原地、保住输入、说清原因。想要纯文字的话，把图去掉再发一次——那是他的选择。
+      let handoffStored = false;
+      try {
+        sessionStorage.setItem(sessionKey, JSON.stringify(payload));
+        handoffStored = true;
+      } catch {
+        handoffStored = false;
+      }
 
-      // 4. 跳转到 workspace 页面（不传递 URL 参数，避免刷新重复创建）
+      // 交接包一个字都没存进去（站点存储被禁用等）时**不要跳转**。
+      //
+      // 跳过去只会得到一个空工作区：提示词、尺寸、模型全都没带过去，而这边又把
+      // 输入清空了——用户刚敲的那句话就这么没了，还得自己重打一遍（Codex PR #1476 P2）。
+      // 留在原地、保住输入、说清原因，比「看起来成功了其实什么都没带」强。
+      if (!handoffStored) {
+        // 工作区在上面**已经建出来了**，这里一走了之就把它留在列表里：
+        // 一个没标题、没内容的空画板。而这条路径的设计正是「保住输入让他重试」——
+        // 重试一次多一个，最后是一串空画板要用户自己去删（Codex PR #1476 P2）。
+        //
+        // 存储探针探不出这一档：它只写得下几个字节，判得出「站点存储被禁用」，
+        // 判不出「整份交接包超了剩余配额」。所以这里必须自己收尾。
+        // 删失败就算了——真正要紧的是不发送、不丢输入，多一个空画板不该再报一次错。
+        void deleteVisualAgentWorkspace({ id: ws.id, idempotencyKey: `ws_del_handoff_${ws.id}` });
+        toast.error(
+          selectedImage ? '这张参考图太大，没能带进画板' : '浏览器存不下这次输入，没能带进画板',
+          selectedImage
+            ? '这次没有发送。换一张小一点的图再发；或者去掉图片只发文字。输入已经留着。'
+            : '这次没有发送。允许本站存储后重试，输入已经留着。',
+        );
+        return;
+      }
+
+      // 6. 跳转到 workspace 页面（不传递 URL 参数，避免刷新重复创建）
       navigate(getEditorPath(ws.id));
 
       // 清空输入和图片
@@ -1156,12 +1637,51 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     }
   };
 
-  // 场景标签选择
+  // 整页刷新时那一束光该不该放。useState 的初始化函数只跑一次，正好消费掉那一次机会；
+  // 写成 useState(consumeWakeOnce()) 会在每次 render 求值（React 只用第一次的结果，
+  // 但机会已经被后面的 render 白白消费掉了），SPA 内再进来就永远没有。
+  const [wake] = useState(() => consumeWakeOnce());
+  /**
+   * 沿光路依次点亮：左上先亮，右下最后。数值是幕 2500ms 行程上的取样点。
+   *
+   * **base 必须从这里传进去，不能写在元素的 className 上。**
+   * 上一版是 `<div className="w-full flex justify-center" {...rise(950)}>`——
+   * JSX 的 spread 在后面，`className: 'wake-rise'` 把前面那串整个覆盖掉了。
+   * 包裹层丢了 w-full，而它的父级是 flex-col + items-center，块级子元素在这里
+   * **不拉伸**，于是塌成内容宽；输入框的 min(100%, 1300px) 把 100% 解析到那个
+   * 内容宽的盒子上，1300 的长框缩成了三百多。
+   *
+   * 最阴的是它**只在整页刷新时发生**（wake 为 true 才走 rise），SPA 内点进来完全正常——
+   * 而用户正是在刷新页面看唤醒动画时撞上的。合并 className 这件事交给这个函数，
+   * 调用方就没有把它写在两个地方的机会。
+   */
+  const rise = (delayMs: number, base = '') =>
+    wake
+      ? {
+          className: base ? `${base} wake-rise` : 'wake-rise',
+          style: { '--wake-delay': `${delayMs}ms` } as React.CSSProperties,
+        }
+      : (base ? { className: base } : {});
+
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // 预设格：填词 + 把光标送进输入框。
+  //
+  // 两处都修过，原来这一排里有一格是死的：
+  // 1. ScenarioTags 的 onClick 写着 if (!tag.isPro)，MAP Pro 直接不进这个函数；
+  // 2. 就算进来了，这里第一行原本是 if (!prompt) return —— 空 prompt 照样被吞掉。
+  // 典型的「链路只建一半」：修了第一处不修第二处，那一格还是点了没反应。
   const onTagSelect = (prompt: string) => {
-    if (!prompt) return;
     setInputValue(prompt);
-    const tag = SCENARIO_TAGS.find((t) => t.prompt === prompt);
-    setActiveTag(tag?.key ?? null);
+    setActiveTag(SCENARIO_TAGS.find((t) => t.prompt === prompt)?.key ?? null);
+    // 无论填词还是清空，光标都落进输入框——否则「选中 MAP Pro」在输入本来就空时
+    // 是一次零反馈的点击，跟没接线没有区别。
+    const el = promptRef.current;
+    if (el) {
+      el.focus();
+      const end = prompt.length;
+      requestAnimationFrame(() => el.setSelectionRange(end, end));
+    }
   };
 
   // 处理图片选择
@@ -1201,19 +1721,22 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
     if (defaultSizeKey) { try { sessionStorage.setItem(defaultSizeKey, size); } catch { /* ignore */ } }
   };
 
-  // 新建文件夹（目前作为占位功能，后续可接入后端）
-  const onCreateFolder = async () => {
-    const folderName = await systemDialog.prompt({
-      title: '新建文件夹',
-      message: '请输入文件夹名称',
-      defaultValue: '新文件夹',
-      confirmText: '创建',
-      cancelText: '取消',
-    });
-    if (folderName == null) return;
-    // TODO: 后端尚未支持文件夹功能，暂时提示
-    toast.info(`文件夹功能正在开发中，将创建名为「${folderName.trim() || '新文件夹'}」的文件夹。`);
+  const onModelChange = (id: string) => {
+    // 这一笔是「用户自己选的」，从此不许被晚到的偏好覆盖回去。
+    userPickedModelRef.current = true;
+    setModelId(id);
   };
+
+  // 换模型之后把尺寸纠正到新模型支持的那一个。
+  // 放在 effect 里而不是 onModelChange 里：尺寸清单是异步拉回来的，
+  // 在点击那一刻还不知道新模型支持什么，当场纠正必然是拿旧清单算的（形状 6：读的不是生效的那个值）。
+  useEffect(() => {
+    const next = reconcileSize(selectedSize, availableSizes);
+    if (next && next !== selectedSize) onSelectedSizeChange(next);
+    // selectedSize 不进依赖：这里只在「模型的尺寸清单变了」时纠正一次，
+    // 把它加进来会让用户随后手选的尺寸被同一条规则再纠一遍，选不动。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableSizes]);
 
   const onRename = async (ws: VisualAgentWorkspace) => {
     const title = await systemDialog.prompt({
@@ -1289,26 +1812,119 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
   return (
     <div
-      className="surface-tone-dark h-full min-h-0 flex flex-col overflow-auto relative"
-      style={{ background: '#0a0a0c' }}
+      className="surface-tone-dark h-full min-h-0 relative"
+      style={{ background: 'var(--bg-base)' }}
     >
-      {/* 夜景背景 */}
-      <NightSkyBackground />
+      {/* 背景两层，顺序不能反：底下是轮换的那张图（压暗罩由 BackdropPhoto 自带，
+          是小字可读性的唯一保障），上面一层非重复的渐晕。
+          这里曾经压着一整层程序美术（印相台），量下来五件器物只有一件看得见、
+          唯一有存在感的是无意的重复纹理，已整层删除，判据见 PageBackdrop.tsx。
 
-      {/* 浮动工具栏 - 桌面端页面左侧垂直居中，移动端隐藏 */}
-      {!isMobile && (
-        <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20">
-          <FloatingToolbar onNewProject={onCreate} onNewFolder={onCreateFolder} />
+          它们必须挂在**滚动容器之外**这一层。上一版和内容放在同一个 overflow-auto
+          容器里，absolute inset:0 在滚动容器里量的是**可视框**、而且跟着内容一起滚——
+          于是往下滑两屏，背景就从画面顶上滑走了，剩下一片纯底色（用户原话：
+          滑动下去背景居然消失了）。外层不滚、内层滚，背景才是钉住的。 */}
+      <BackdropPhoto src={backdrop?.url ?? null} dim={dimFor(backdrop)} focus={backdrop?.focus} />
+      <PageVignette />
+      {/* 唤醒幕。挂在背景与内容之间、不滚动的那一层——它遮的是整屏，不是内容的某一段。
+          它退到哪里，背景才第一次在那里显影。 */}
+      {wake && <div className="wake-veil" aria-hidden />}
+      <div className="h-full min-h-0 flex flex-col overflow-auto relative" style={{ zIndex: 1 }}>
+
+      {/* 顶栏：品牌 + 创作/作品 + 右侧动作，与视频创作同结构。
+          旧版这里只有一个孤零零的返回箭头和一枚教程胶囊，页面没有身份。 */}
+      <div
+        className={`glass-pane relative z-20 grid items-center px-6${wake ? ' wake-rise' : ''}`}
+        style={{
+          gridTemplateColumns: '1fr auto 1fr',
+          minHeight: 64,
+          borderBottom: '1px solid var(--border-faint)',
+          ...(wake ? ({ '--wake-delay': '160ms' } as React.CSSProperties) : {}),
+        }}
+      >
+        <div className="flex items-center gap-2.5 justify-self-start">
+          <button
+            type="button"
+            aria-label="返回"
+            onClick={onHeaderBack}
+            className="grid place-items-center hover-bg-soft"
+            style={{ width: 30, height: 30, borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
+          >
+            <ArrowLeft size={16} />
+          </button>
+          {/*
+            品牌标记：一枚套准十字，和背景印相台四角那四枚同一个符号。
+            上一版是一块 34x34 的实心 --text-primary 方块——它是整页最亮的东西，
+            比标题还抢眼，而里面只是个占位图标，不表示任何东西。
+            线性、低对比、和背景同源：它标身份，不抢注意力。
+          */}
+          <span
+            className="grid place-items-center shrink-0"
+            style={{
+              width: 30,
+              height: 30,
+              borderRadius: 7,
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-secondary)',
+            }}
+            aria-hidden
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <circle cx="12" cy="12" r="5.5" />
+              <path d="M12 3v18M3 12h18" strokeLinecap="round" />
+            </svg>
+          </span>
+          <span className="min-w-0">
+            <strong className="block" style={{ fontSize: 13, fontWeight: 650, color: 'var(--text-primary)' }}>视觉创作</strong>
+            <small className="block" style={{ marginTop: 1, fontSize: 9, fontWeight: 500, letterSpacing: '.08em', color: 'var(--text-muted)' }}>DARKROOM</small>
+          </span>
         </div>
-      )}
 
-      {/* 顶部居中区域 - 调整间距使布局更紧凑 */}
-      <div className="flex flex-col items-center justify-center pt-[8vh] pb-4 relative z-10">
+        {/* 当前位置，纯标签。
+            上一版这里套着 glass-sub + padding 3 + radius 8 的分段控件外壳，里面只装了
+            一个不可点的 span——看着像个开关，没有第二项可切，点了什么都不会发生
+            （「只有一个选项的选择器一律不显示」）。等真做出「作品」那一栏，
+            再把控件外壳加回来。 */}
+        <span
+          className="justify-self-center"
+          style={{ fontSize: 11, letterSpacing: '.06em', color: 'var(--text-secondary)' }}
+        >
+          创作
+        </span>
+
+        <div className="flex items-center gap-1.5 justify-self-end">
+          <BackdropSettings
+            userId={userId}
+            assets={backdropAssets}
+            generated={generatedBackdrops}
+            onGeneratedChange={setGeneratedBackdrops}
+            mode={backdropMode}
+            onModeChange={setBackdropMode}
+          />
+          <TipsEntryButton compact />
+        </div>
+      </div>
+
+      {/* 这里原本挂着一条左侧浮动工具栏（新建项目 / 新建文件夹）。撤掉了：
+          「新建项目」在这一页已经有两个入口（最近项目里那张大虚线卡、输入框的开始创作），
+          它是第三个；而且是贴着视口左缘、没有文字、悬在空白里的图标，跟任何东西都没有
+          空间关系。「新建文件夹」挪到了「最近项目」标题行，带文字。 */}
+
+      {/* 顶部居中区域。8vh 换成固定 52px：旧版 hero 自带 260px 高度，靠 vh 顶下来才不至于贴顶；
+          现在标题区是内容高度，再按视口比例留白会在大屏上空出一大块。52px 取自视频创作的舞台节奏。 */}
+      <div className="flex flex-col items-center justify-center pt-[52px] pb-4 relative z-10 px-5">
         {/* Hero 区域 */}
-        <HeroSection />
+        <div {...rise(570)}><HeroSection /></div>
+        {/* main 并行落的「模型设置」：管理员配「哪些模型对客户开放、默认哪个」，
+            只对有 settings.write 的人显示。它和工具行里那个模型选择器不是一回事——
+            那个是所有人每次生成时挑用哪个，这个是决定挑得到哪些。两个都要。
+            延迟取 760：夹在 hero(570) 与输入台(950) 之间，保持沿光路依次点亮。 */}
+        <div {...rise(760, 'my-3')}><VisualModelSettings /></div>
 
         {/* 快捷输入框 */}
+        <div {...rise(950, 'w-full flex justify-center')}>
         <QuickInputBox
+          inputRef={promptRef}
           value={inputValue}
           onChange={(v) => {
             setInputValue(v);
@@ -1322,10 +1938,18 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           onRemoveImage={onRemoveImage}
           size={selectedSize}
           onSizeChange={onSelectedSizeChange}
+          availableSizes={availableSizes}
+          modelOptions={modelOptions}
+          modelsLoading={modelsLoading}
+          modelId={modelId}
+          onModelChange={onModelChange}
         />
+        </div>
 
         {/* 场景标签 */}
-        <ScenarioTags onSelect={onTagSelect} activeKey={activeTag} />
+        <div {...rise(1330, 'w-full flex justify-center')}>
+          <ScenarioTags onSelect={onTagSelect} activeKey={activeTag} />
+        </div>
       </div>
 
       {/* 错误提示 */}
@@ -1339,19 +1963,27 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
         </div>
       ) : null}
 
-      {/* 项目列表 */}
-      <ProjectCarousel
-        items={items}
-        loading={loading}
-        loadingMore={loadingMore}
-        hasMore={hasMore}
-        onLoadMore={loadMore}
-        onCreate={onCreate}
-        onRename={onRename}
-        onShare={openShare}
-        onDelete={onDelete}
-        onOpen={(ws) => navigate(getEditorPath(ws.id))}
-      />
+      {/* 项目列表。光路最后一站。
+          这一层的 className 不走 rise()——ProjectCarousel 的根是 flex-1，
+          外面套一个不带 flex-1 的 div 会让它塌成内容高度（full-height-layout 那条链断一层就全塌）。
+          所以这里手拼：flex 链照旧，只把 wake-rise 追加上去。 */}
+      <div
+        className={`flex-1 min-h-0 flex flex-col${wake ? ' wake-rise' : ''}`}
+        style={wake ? ({ '--wake-delay': '1740ms' } as React.CSSProperties) : undefined}
+      >
+        <ProjectCarousel
+          items={items}
+          loading={loading}
+          loadingMore={loadingMore}
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          onCreate={onCreate}
+          onRename={onRename}
+          onShare={openShare}
+          onDelete={onDelete}
+          onOpen={(ws) => navigate(getEditorPath(ws.id))}
+        />
+      </div>
 
       {/* 共享对话框 */}
       <Dialog
@@ -1424,6 +2056,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
           </div>
         }
       />
+      </div>
     </div>
   );
 }

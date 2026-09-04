@@ -264,6 +264,7 @@ var logicalModelsRequireHttp = builder.Configuration.GetValue<bool?>("LlmGateway
 // 显式逻辑模型不跟随 MAP 的全局 inproc/shadow 迁移开关：它始终使用独立 serving HTTP 边界。
 // 注册同一个 Scoped 实例，保证一次请求的预解析与发送共享同一传输实现。
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IVisualModelPolicyService, PrdAgent.Api.Services.VisualModelPolicyService>();
 builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILogicalModelGateway>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
 
@@ -334,6 +335,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteOptimizationService, PrdAgent.Infrastructure.Services.HostedSiteOptimizationService>();
 // 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
 
@@ -403,6 +405,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowScheduleWorker>(
 
 // 一次性回填存量 PDF 包装站的 WrappedAssetType marker（PR #612）
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteOptimizationCleanupService>();
 
 // 一次性清理：删除已移除催办 Worker 留下的存量提醒通知（pm-reminder / defect-escalation），让噪音立即归零
 builder.Services.AddHostedService<PrdAgent.Api.Services.EscalationNotificationCleanupService>();

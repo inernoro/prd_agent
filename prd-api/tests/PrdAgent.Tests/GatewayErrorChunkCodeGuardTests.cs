@@ -134,7 +134,7 @@ public class GatewayErrorChunkCodeGuardTests
     private static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")) && !File.Exists(Path.Combine(dir.FullName, ".git")))
             dir = dir.Parent;
         Assert.NotNull(dir);
         return dir!.FullName;

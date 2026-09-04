@@ -1,5 +1,12 @@
 import type { Model } from '@/types/admin';
 import type { ModelGroupForApp } from '@/types/modelGroup';
+import type { ModelAdapterInfo, SizeOptionFromBackend } from '@/services/contracts/models';
+
+/** 直接消费授权目录的尺寸，不在手机端另设一份型号或尺寸表。 */
+export function visualImageSizeChoices(info: ModelAdapterInfo | null): SizeOptionFromBackend[] {
+  if (!info?.matched || info.sizesNotApplicable) return [];
+  return [...new Map(Object.values(info.sizesByResolution ?? {}).flat().map(option => [option.size, option])).values()];
+}
 
 export type VisualAgentModelOption = Model & {
   resolutionType?: ModelGroupForApp['resolutionType'];
@@ -17,12 +24,49 @@ export type VisualAgentModelOption = Model & {
   averageDurationMs?: number | null;
 };
 
+/**
+ * 选项 id 的前缀。**选项 id ≠ 模型池 id**，差一个前缀。
+ *
+ * 这个差别咬过一次：首页把用户选的 `option.id`（`pool_xxx`）放进交接包，
+ * 手机端编辑器拿过去直接跟原始池列表的 `pool.id`（`xxx`）比，永远比不中，
+ * 于是**静默退回「第一个可用池」**——界面上显示的是 A、真正跑的是 B，
+ * 而这是一次要花钱的生成，还违反 ai-model-visibility（显示的必须是真正在用的）。
+ * 它不会报错、不会红，只有对着账单或日志才看得出来（Codex PR #1476 P1）。
+ *
+ * 所以两个方向都收在这里：构造走 `visualModelOptionIdOf`，还原走
+ * `poolIdFromVisualModelOptionId`。谁都别在别处手写这五个字符。
+ */
+const VISUAL_MODEL_OPTION_ID_PREFIX = 'pool_';
+
+/** 池 id → 选项 id。 */
+export function visualModelOptionIdOf(poolId: string): string {
+  return `${VISUAL_MODEL_OPTION_ID_PREFIX}${poolId}`;
+}
+
+/**
+ * 选项 id → 池 id。没有前缀的原样返回：偏好里可能存着别处写的裸池 id，
+ * 认不出来就当它已经是池 id，比直接判空退回「第一个可用」强。
+ */
+export function poolIdFromVisualModelOptionId(optionId: string): string {
+  const id = String(optionId ?? '').trim();
+  return id.startsWith(VISUAL_MODEL_OPTION_ID_PREFIX)
+    ? id.slice(VISUAL_MODEL_OPTION_ID_PREFIX.length)
+    : id;
+}
+
 export type VisualResultModelMeta = {
   logicalModelPublicId?: string;
   modelPool?: string;
   actualModelPool?: string;
   actualModel?: string;
 };
+
+/** 默认只认业务配置；显式选择失效时返回空，不替用户换型号。 */
+export function selectVisualModel(
+  models: VisualAgentModelOption[], auto: boolean, selectedId?: string | null,
+): VisualAgentModelOption | null {
+  return models.find((model) => auto ? model.isDefault : model.id === selectedId) ?? null;
+}
 
 /**
  * 视觉创作的主展示只认应用选择的逻辑模型；上游模型仅作为旧任务兜底，
@@ -34,8 +78,6 @@ export function resolveVisualResultModelLabel(
 ): string {
   return String(
     meta?.logicalModelPublicId
-      ?? meta?.modelPool
-      ?? meta?.actualModelPool
       ?? meta?.actualModel
       ?? fallback,
   ).trim();
@@ -69,18 +111,17 @@ export function isOperationOnlyPool(pool: Pick<ModelGroupForApp, 'code' | 'capab
 }
 
 export function buildVisualAgentModelOptions(pools: ModelGroupForApp[]): VisualAgentModelOption[] {
-  return pools.filter((pool) => !isOperationOnlyPool(pool)).flatMap((pool) => {
+  return pools.filter((pool) => pool.resolutionType === 'LogicalModel' && !isOperationOnlyPool(pool)).flatMap((pool) => {
     const members = pool.models ?? [];
     const preferredMember = members.find((member) => member.healthStatus === 'Healthy')
       ?? members.find((member) => member.healthStatus === 'Degraded')
       ?? members[0];
-    const logicalModel = pool.resolutionType === 'LogicalModel';
     return {
-      id: `pool_${pool.id}`,
+      id: visualModelOptionIdOf(pool.id),
       name: pool.name,
-      modelName: logicalModel ? (preferredMember?.modelId || pool.code) : pool.id,
-      actualModelId: preferredMember?.modelId,
-      platformId: logicalModel ? 'logical-model' : 'model-pool',
+      modelName: pool.code,
+      actualModelId: pool.code,
+      platformId: 'logical-model',
       enabled: members.some((member) => member.healthStatus === 'Healthy' || member.healthStatus === 'Degraded'),
       isMain: false,
       isImageGen: true,

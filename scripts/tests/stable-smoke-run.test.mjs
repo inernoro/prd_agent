@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
+import { generateKeyPairSync } from 'node:crypto';
 import {
   acquireLock,
   applyCredentialRegistry,
@@ -24,6 +25,7 @@ import {
   evaluateCdsReadiness,
   evaluateProductionSafetyGate,
   initializeProductionSafetyGate,
+  issueGatewayFederationSession,
   mergeVisualPlans,
   extractArchivedReportUrl,
   foldVisualGateVerdict,
@@ -37,6 +39,7 @@ import {
   resolveServiceRuntimeCommits,
   resolveCdsPreviewUrls,
   requireAuthoritativeCdsAddress,
+  runFolderRegressionTests,
   runCdsGatewayPersistenceProbe,
   buildReportVerificationArgs,
   selectCoverageCaseIds,
@@ -186,6 +189,10 @@ test('双环境执行范围按各自矩阵取交集且正式环境不能点名�
   assert.equal(
     buildEnvironmentGrep(['REG-user-error-001'], '\\[reg-user-error-001\\]'),
     '\\[REG-user-error-001\\]',
+  );
+  assert.equal(
+    buildEnvironmentGrep(['CORE-001', 'WEB-001', 'WEB-006'], '\\[WEB-001\\]|\\[WEB-006\\]'),
+    '\\[WEB-001\\]|\\[WEB-006\\]',
   );
   assert.deepEqual(
     selectCoverageCaseIdsByEnvironment(
@@ -671,6 +678,55 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /await deliverUnhandledFailure\(process\.argv\.slice\(2\), error\)/);
 });
 
+test('文件夹永久回归分别由前端权威键测试和真实 MongoDB 集成测试产生证据', () => {
+  const source = readFileSync(resolve('scripts/stable-smoke-run.mjs'), 'utf8');
+  const e2eSource = readFileSync(resolve('e2e/specs/stable-smoke.spec.ts'), 'utf8');
+  const calls = [];
+  const result = runFolderRegressionTests('/tmp/stable-smoke-folder-regression-test', (name, args, options) => {
+    calls.push({ name, args, options });
+    return { status: 0 };
+  });
+
+  assert.match(source, /FullyQualifiedName~WebFolderRenameFenceTests/);
+  assert.match(source, /runFolderRegressionTests\(runDir\)/);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].name, 'pnpm');
+  assert.deepEqual(calls[0].args.slice(0, 6), [
+    '--dir', 'prd-admin', 'exec', 'vitest', 'run', 'src/components/web-hosting/folderDrop.test.ts',
+  ]);
+  assert.equal(calls[1].name, 'dotnet');
+  assert.equal(result.execution.resultPath, null);
+  assert.match(result.execution.artifactPath, /web-folder-regressions\.trx$/);
+  assert.match(result.execution.artifactPaths[0], /web-folder-client-regressions\.xml$/);
+  assert.deepEqual(
+    result.rows.map((row) => [row.caseId, row.environment, row.status]),
+    [
+      ['REG-web-folder-canonical-001', 'cds', 'pass'],
+      ['REG-web-folder-fence-001', 'cds', 'pass'],
+      ['REG-web-folder-create-rename-001', 'cds', 'pass'],
+    ],
+  );
+  assert.doesNotMatch(
+    e2eSource,
+    /test\('\[WEB-001\][^']*\[REG-web-folder-(?:canonical|fence|create-rename)-001\]/,
+  );
+});
+
+test('前端权威键回归失败时不会冒领另外两条服务端回归', () => {
+  const result = runFolderRegressionTests('/tmp/stable-smoke-folder-regression-split-test', (name) => ({
+    status: name === 'pnpm' ? 1 : 0,
+  }));
+  assert.deepEqual(
+    result.rows.map((row) => [row.caseId, row.status]),
+    [
+      ['REG-web-folder-canonical-001', 'fail'],
+      ['REG-web-folder-fence-001', 'pass'],
+      ['REG-web-folder-create-rename-001', 'pass'],
+    ],
+  );
+  assert.equal(result.execution.status, 'failed');
+});
+
 test('未捕获异常会持久化失败摘要并进入失败交付路径', async () => {
   const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-fatal-'));
   try {
@@ -753,6 +809,16 @@ test('主应用凭据齐全但网关凭据缺失时仍阻断开测', () => {
     'STABLE_SMOKE_CDS_GW_USER',
     'STABLE_SMOKE_CDS_GW_PASSWORD',
   ]);
+});
+
+test('RSA 签名身份启用后不再要求长期网关账号密码', () => {
+  assert.deepEqual(validateEnvironmentConfig('cds', {
+    STABLE_SMOKE_CDS_BASE_URL: 'https://app.example',
+    STABLE_SMOKE_CDS_SIGNING_KEY_ID: 'key-1',
+    STABLE_SMOKE_CDS_SIGNING_PRIVATE_KEY: 'private-key-placeholder',
+    STABLE_SMOKE_CDS_USER: 'stable-smoke',
+    STABLE_SMOKE_CDS_GW_BASE_URL: 'https://gateway.example',
+  }), []);
 });
 
 test('凭据登记表只在环境变量缺失时读取 Keychain', () => {
@@ -1002,6 +1068,45 @@ test('预检身份失败只返回审核人可读阻塞项', async () => {
     '正式环境模型网关自动化身份校验未通过',
   ]);
   assert.doesNotMatch(blockers.join(' '), /HTTP|provider|token|secret|gateway-user/i);
+});
+
+test('网关巡检用 MAP 签名换单次票据并完成短会话登录', async () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const values = {
+    STABLE_SMOKE_CDS_BASE_URL: 'https://app.example',
+    STABLE_SMOKE_CDS_USER: 'stable-smoke',
+    STABLE_SMOKE_CDS_SIGNING_KEY_ID: 'key-1',
+    STABLE_SMOKE_CDS_SIGNING_PRIVATE_KEY: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    STABLE_SMOKE_CDS_GW_BASE_URL: 'https://gateway.example',
+  };
+  const calls = [];
+  const fetchFn = async (url, options) => {
+    calls.push({ url, options });
+    if (String(url).endsWith('/gateway-ticket')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: { code: 'one-time-code-value-that-is-long-enough-1234' } }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: { token: gatewayToken(), mustChangePassword: false } }),
+    };
+  };
+
+  const session = await issueGatewayFederationSession('cds', values, fetchFn);
+
+  assert.equal(session.token, gatewayToken());
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, 'https://app.example/api/v1/auth/synthetic/gateway-ticket');
+  assert.equal(calls[1].url, 'https://gateway.example/gw/auth/stable-smoke-sso');
+  assert.equal(calls[0].options.headers['X-Stable-Smoke-Key-Id'], 'key-1');
+  assert.equal(calls[0].options.headers['X-AI-Access-Key'], undefined);
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    code: 'one-time-code-value-that-is-long-enough-1234',
+  });
 });
 
 test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移', () => {

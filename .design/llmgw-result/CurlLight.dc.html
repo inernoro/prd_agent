@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+  <style>
+    body {
+      --bg-page: #f8fafc; --bg-surface: #ffffff; --bg-elevated: #f1f5f9; --bg-input: #ffffff; --bg-base: #f1f5f9;
+      --text-primary: #111827; --text-secondary: #374151; --text-muted: #4b5563;
+      --border-subtle: #e5e7eb; --border-strong: #d1d5db;
+      --accent: #7c3aed; --accent-soft: rgba(124,58,237,0.1);
+      --ok: #15803d; --warn: #a16207;
+      --radius: 8px; --radius-sm: 6px;
+      margin: 0; background: var(--bg-page); color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+      font-size: 14px; font-weight: 450; line-height: 1.625; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: #6d28d9; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</helmet>
+
+<div style="padding: 24px 28px; display: flex; flex-direction: column; gap: 28px;">
+  <!-- 浅色核对：代码块、输入框、输出块的底一律 --bg-base，与白卡分得出层 -->
+
+  <!-- 摘要条与密钥主区在页签之上常驻，此处收成一条提示，避免重复画 -->
+  <div style="border: 1px dashed var(--border-subtle); border-radius: var(--radius); padding: 14px 18px; font-size: 13px; color: var(--text-muted);">
+    上方的摘要条与密钥主区保持不变（见「接入信息」画板）——切页签不会把密钥切走。
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: inline-flex; align-self: flex-start; gap: 3px; padding: 3px; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+      <button type="button" style="height: 36px; padding: 0 18px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--text-muted); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">接入信息</button>
+      <button type="button" style="height: 36px; padding: 0 18px; border: 1px solid var(--accent); border-radius: 4px; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;">cURL</button>
+      <button type="button" style="height: 36px; padding: 0 18px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--text-muted); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">提示词</button>
+    </div>
+
+    <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--bg-surface); padding: 24px; display: flex; flex-direction: column; gap: 28px;">
+
+      <!--
+        试跑区：上输入、下输出，同宽同圆角上下相邻，读起来就是一对。
+        原来只能「上传文本」传个文件，输出块还飘在代码块上方、跟输入没有配对关系。
+        中间那条动作行同时充当分隔；空态也占 88px，跑起来页面不往下跳。
+      -->
+      <div style="display: flex; flex-direction: column; gap: 20px;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span style="display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border-subtle); background: var(--bg-elevated); color: var(--text-secondary); font-size: 13px; white-space: nowrap;">文字对话</span>
+          <span style="font-size: 12px; color: var(--text-muted);">模型</span>
+          <div style="flex: 1 1 200px; min-width: 0; height: 32px; display: flex; align-items: center; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-base); padding: 0 12px; font-size: 13px; color: var(--text-muted);">auto（由模型池调度）</div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">你要发什么</span>
+            <button type="button" style="margin-left: auto; height: 32px; padding: 0 12px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 9.5V2.5"/><path d="M4.2 5.3L7 2.5l2.8 2.8"/><path d="M2.5 10v1.5h9V10"/></svg>
+              或上传文本
+            </button>
+          </div>
+          <div class="mono" style="min-height: 88px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-input); padding: 14px 16px; font-size: 13px; line-height: 1.75; color: var(--text-primary);">用三句话说明什么是模型网关</div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+          <span style="flex: 1 1 320px; min-width: 0; font-size: 13px; color: var(--text-muted); line-height: 1.7;">「对话默认池」4 个成员中 2 个健康，可搜索。安全试跑不打上游、不计费；真实调用会计入用量与费用。</span>
+          <div style="flex: none; display: flex; gap: 8px;">
+            <button type="button" style="height: 32px; padding: 0 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-primary); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">安全试跑</button>
+            <button type="button" style="height: 32px; padding: 0 14px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent); color: #ffffff; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">真实调用</button>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <span style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">模型返回</span>
+            <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border-subtle); background: var(--bg-elevated); color: var(--text-muted); font-size: 12px;">文字</span>
+            <span style="font-size: 12px; color: var(--text-muted);">1.9s · 实际执行 gpt-4o-mini</span>
+            <a href="#" class="mono" style="margin-left: auto; font-size: 12px;">requestId</a>
+          </div>
+          <div class="mono" style="min-height: 88px; border: 1px solid var(--border-subtle); border-left: 2px solid var(--ok); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--bg-base); padding: 14px 16px; font-size: 13px; line-height: 1.75; color: var(--text-secondary);">模型网关是所有大模型调用的统一入口。它按调用用途码把请求路由到获准的模型池，并统一记账与限流。应用侧只认一个地址和一把密钥，换模型不用改代码。</div>
+        </div>
+      </div>
+
+      <!--
+        代码块：把浮在右上角的复制按钮收进一条 header，
+        协议下拉与标签成组左对齐，复制在行尾——块本身干净，不再被按钮压着。
+      -->
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">请求片段</span>
+          <div style="height: 32px; display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-base); padding: 0 12px; font-size: 13px; color: var(--text-secondary);">
+            OpenAI /v1/chat/completions
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5.5l3.5 3.5 3.5-3.5"/></svg>
+          </div>
+          <button type="button" style="margin-left: auto; height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer;">复制</button>
+        </div>
+        <pre class="mono" style="margin: 0; background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 20px; font-size: 13px; line-height: 1.75; color: var(--text-secondary); overflow-x: auto;">REQUEST_ID="quickstart-$(date +%s)-$RANDOM"
+curl "http://localhost:5627/v1/chat/completions" \
+  -H "Authorization: Bearer $LLMGW_API_KEY" \
+  -H "X-Gateway-Source: external" \
+  -H "X-Gateway-App-Caller: xiaomi-speaker.command-intent::chat" \
+  -H "X-Gateway-Dry-Run: quickstart" \
+  -H "X-Request-Id: $REQUEST_ID" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "model": "auto",
+  "model_policy": "auto",
+  "messages": [
+    { "role": "user", "content": "Reply with OK" }
+  ]
+}'</pre>
+        <span style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">示例默认带 X-Gateway-Dry-Run: quickstart，不产生上游费用。</span>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

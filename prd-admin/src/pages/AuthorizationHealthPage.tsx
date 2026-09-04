@@ -9,6 +9,7 @@ import {
   ShieldAlert,
   ShieldCheck,
 } from 'lucide-react';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import {
   getAuthorizationHealth,
   type AuthorizationHealthItem,
@@ -106,18 +107,14 @@ export default function AuthorizationHealthPage() {
           className="rounded-lg px-3 py-2 inline-flex items-center gap-2 text-[12px] font-medium disabled:opacity-60"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
         >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />重新检查
+          {loading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}重新检查
         </button>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+      <main className="min-h-0 flex-1 overflow-y-auto px-5 py-5" style={{ overscrollBehavior: 'contain' }}>
         {loading && !data ? (
-          <div className="rounded-xl p-6 flex items-center gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-            <RefreshCw size={18} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
-            <div>
-              <div className="text-[13px] font-medium">正在回读授权证据</div>
-              <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>检查当前会话、配置存在性、密文可解性和最近 24 小时的 401/403。</div>
-            </div>
+          <div className="rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <MapSectionLoader text="正在回读当前会话、配置、密文和最近授权失败记录" />
           </div>
         ) : error ? (
           <div className="rounded-xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>

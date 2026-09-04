@@ -149,6 +149,9 @@ export function PlatformsPage() {
       outputPricePerMillion: m.outputPricePerMillion,
       pricePerCall: m.pricePerCall,
       priceCurrency: m.priceCurrency,
+      // 选中里出现名录外模型，只可能是用户在面板上明确打开了放行——把这个意图如实带给服务端，
+      // 服务端据此放行并记进审计（谁放的、放了哪几个）。
+      allowOutsideCatalog: !m.inCatalog,
     })));
     setBusyId(null);
     if (!res.success) {
@@ -156,8 +159,11 @@ export function PlatformsPage() {
       return;
     }
     // 池同步失败时后端会如实回传：模型入库了但池路由选不到，不能报成全绿
-    const base = `已导入 ${res.data.created} 个模型${res.data.skipped > 0 ? `，跳过 ${res.data.skipped} 个已存在的` : ''}`;
-    setToast(res.data.poolSyncFailed && res.data.message ? `${base}。${res.data.message}` : base);
+    const blocked = res.data.blockedOutsideCatalog?.length ?? 0;
+    const skippedExisting = res.data.skipped - blocked;
+    const base = `已导入 ${res.data.created} 个模型${skippedExisting > 0 ? `，跳过 ${skippedExisting} 个已存在的` : ''}`;
+    // 池同步失败与「被名录拦下」都要如实说，且都带可执行的下一步——后端的 message 已经写好了。
+    setToast(res.data.message ? `${base}。${res.data.message}` : base);
     setDiscovery(null);
   }
 

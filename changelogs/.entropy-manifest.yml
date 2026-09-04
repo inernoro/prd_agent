@@ -609,3 +609,23 @@ processed:
   - 2026-08-28_录音交付页设计稿还原.md
   - 2026-08-28_首页重构.md
   - 2026-08-29_cds-deploy-loop-guard.md
+  - 2026-08-25_llmgw-quickstart-mainline.md
+  - 2026-08-25_llmgw-service-key-appcaller.md
+  - 2026-08-26_llmgw-quickstart-appcaller-rules.md
+  - 2026-08-26_llmgw-quickstart-layout.md
+  - 2026-08-26_llmgw-quickstart-model-search.md
+  - 2026-08-26_llmgw-quickstart-purpose-test.md
+  - 2026-08-26_llmgw-quickstart-real-test.md
+  - 2026-08-26_llmgw-quickstart-team-scope.md
+  - 2026-08-26_llmgw-quickstart-two-screens.md
+  - 2026-08-27_网关Quickstart改为一句话生成码加三页签产物.md
+  - 2026-08-27_网关Quickstart用途先说清才颁码.md
+  - 2026-08-28_网关产物屏试跑改成上输入下输出.md
+  - 2026-08-28_网关内置模型名录与白名单.md
+  - 2026-08-28_网关子域子路径挂载点登录405.md
+  - 2026-08-28_网关接入流程与设置页版式改版.md
+  - 2026-08-28_网关新增服务网关设置与系统级凭据自愈.md
+  - 2026-08-28_网关系统团队单独计费与会话一个月滑动续期.md
+  - 2026-08-29_模型名录数据面门禁.md
+  - 2026-08-30_entropy-cleanup.md
+  - 2026-08-30_weekly-w35.md

@@ -26,7 +26,8 @@ public interface IHostedSiteService
         string? title, string? description, string? folder, List<string>? tags,
         string? wrappedAssetType = null,
         CancellationToken ct = default,
-        string? uploadId = null);
+        string? uploadId = null,
+        string? sourceRef = null);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
     Task<HostedSite> CreateFromContentAsync(
@@ -45,7 +46,8 @@ public interface IHostedSiteService
         byte[] fileBytes, string fileName,
         string? wrappedAssetType = null,
         CancellationToken ct = default,
-        string? uploadId = null);
+        string? uploadId = null,
+        string? reuploadRef = null);
 
     /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
     Task<int> BackfillPdfWrapperMarkersAsync(CancellationToken ct = default);

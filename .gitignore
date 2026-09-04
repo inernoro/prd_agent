@@ -86,6 +86,9 @@ __pycache__/
 .claude/launch.json
 .claude/worktrees/
 
+# Codex desktop local environments (machine-specific and may contain credentials)
+.Codex/environments/
+
 # CDS runtime state (contains env secrets, port allocations, container status)
 # When CDS runs from the repo root it creates /.cds/ and /.cds-worktrees/
 # there; when it runs from cds/ it creates cds/.cds/. Ignore both locations
@@ -115,6 +118,9 @@ cds/nginx/www/
 
 # Local Codex/agent skill mirrors (machine-specific, generated locally)
 .agents/skills/*
+# 项目级原型导出技能由仓库维护，统一源头剪枝与上传前预检
+!.agents/skills/prototype-export/
+!.agents/skills/prototype-export/**
 # 项目级主题风险治理技能由仓库维护，供不同宿主的开发代理复用
 !.agents/skills/reduce-adaptive-theme-risk/
 !.agents/skills/reduce-adaptive-theme-risk/**

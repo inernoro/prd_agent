@@ -193,8 +193,10 @@ export function validateEnvironmentConfig(name, values) {
   }
   if (!values[`${prefix}_USER`]) errors.push(`${prefix}_USER`);
   if (!values[`${prefix}_GW_BASE_URL`]) errors.push(`${prefix}_GW_BASE_URL`);
-  if (!values[`${prefix}_GW_USER`]) errors.push(`${prefix}_GW_USER`);
-  if (!values[`${prefix}_GW_PASSWORD`]) errors.push(`${prefix}_GW_PASSWORD`);
+  if (!hasSignature) {
+    if (!values[`${prefix}_GW_USER`]) errors.push(`${prefix}_GW_USER`);
+    if (!values[`${prefix}_GW_PASSWORD`]) errors.push(`${prefix}_GW_PASSWORD`);
+  }
   if (name === 'production') {
     const baseUrl = values[`${prefix}_BASE_URL`]?.replace(/\/+$/, '');
     const allowedBaseUrl = values.STABLE_SMOKE_PROD_ALLOWED_BASE_URL?.replace(/\/+$/, '');
@@ -202,6 +204,65 @@ export function validateEnvironmentConfig(name, values) {
     else if (baseUrl !== allowedBaseUrl) errors.push('正式环境地址与部署注入的允许地址不一致');
   }
   return errors;
+}
+
+function hasStableSmokeSigningIdentity(prefix, values) {
+  return Boolean(
+    values[`${prefix}_SIGNING_KEY_ID`]
+    && values[`${prefix}_SIGNING_PRIVATE_KEY`],
+  );
+}
+
+export async function issueGatewayFederationSession(
+  environment,
+  values,
+  fetchFn = globalThis.fetch,
+) {
+  const prefix = environment === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
+  if (!hasStableSmokeSigningIdentity(prefix, values)) {
+    throw new Error('模型网关短票据要求稳定冒烟 RSA 签名身份');
+  }
+
+  const ticketUrl = `${withoutTrailingSlash(values[`${prefix}_BASE_URL`])}/api/v1/auth/synthetic/gateway-ticket`;
+  const ticketBody = '{}';
+  const ticketResponse = await fetchFn(ticketUrl, {
+    signal: AbortSignal.timeout(10_000),
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...buildStableSmokeAuthHeaders({
+        method: 'POST',
+        url: ticketUrl,
+        body: ticketBody,
+        username: values[`${prefix}_USER`],
+        keyId: values[`${prefix}_SIGNING_KEY_ID`],
+        privateKey: values[`${prefix}_SIGNING_PRIVATE_KEY`],
+      }),
+    },
+    body: ticketBody,
+  });
+  const ticketPayload = await ticketResponse.json().catch(() => null);
+  if (!ticketResponse.ok || ticketPayload?.success !== true || !ticketPayload?.data?.code) {
+    const code = ticketPayload?.error?.code || `HTTP_${ticketResponse.status}`;
+    throw new Error(`MAP_GATEWAY_TICKET_REJECTED:${code}`);
+  }
+
+  const gatewayUrl = `${withoutTrailingSlash(values[`${prefix}_GW_BASE_URL`])}/gw/auth/stable-smoke-sso`;
+  const exchangeResponse = await fetchFn(gatewayUrl, {
+    signal: AbortSignal.timeout(10_000),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: ticketPayload.data.code }),
+  });
+  const exchangePayload = await exchangeResponse.json().catch(() => null);
+  if (!exchangeResponse.ok
+    || exchangePayload?.success !== true
+    || !exchangePayload?.data?.token
+    || exchangePayload?.data?.mustChangePassword !== false) {
+    const code = exchangePayload?.error?.code || `HTTP_${exchangeResponse.status}`;
+    throw new Error(`GATEWAY_FEDERATION_REJECTED:${code}`);
+  }
+  return exchangePayload.data;
 }
 
 export function validateProductionReadOnlyConfig(values) {
@@ -262,27 +323,34 @@ export async function validateEnvironmentIdentities(environment, values, fetchFn
   }
 
   try {
-    const response = await fetchFn(
-      `${withoutTrailingSlash(values[`${prefix}_GW_BASE_URL`])}/gw/auth/login`,
-      {
-        signal: AbortSignal.timeout(10_000),
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: values[`${prefix}_GW_USER`],
-          password: values[`${prefix}_GW_PASSWORD`],
-        }),
-      },
-    );
-    const payload = await response.json().catch(() => null);
-    if (!response.ok
-      || payload?.success !== true
-      || !payload?.data?.token
-      || payload?.data?.mustChangePassword !== false) {
-      blockers.push(`${label}模型网关自动化身份校验未通过`);
+    if (hasStableSmokeSigningIdentity(prefix, values)) {
+      await issueGatewayFederationSession(environment, values, fetchFn);
+    } else {
+      const response = await fetchFn(
+        `${withoutTrailingSlash(values[`${prefix}_GW_BASE_URL`])}/gw/auth/login`,
+        {
+          signal: AbortSignal.timeout(10_000),
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: values[`${prefix}_GW_USER`],
+            password: values[`${prefix}_GW_PASSWORD`],
+          }),
+        },
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok
+        || payload?.success !== true
+        || !payload?.data?.token
+        || payload?.data?.mustChangePassword !== false) {
+        blockers.push(`${label}模型网关自动化身份校验未通过`);
+      }
     }
-  } catch {
-    blockers.push(`${label}模型网关自动化身份无法连接`);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : '';
+    blockers.push(reason.includes('_REJECTED:')
+      ? `${label}模型网关自动化身份校验未通过（${reason.split(':').at(-1)}）`
+      : `${label}模型网关自动化身份无法连接`);
   }
 
   return blockers;
@@ -297,6 +365,13 @@ export function decodeJwtPayload(token) {
 }
 
 async function readGatewayLoginSnapshot(values, fetchFn = globalThis.fetch) {
+  if (hasStableSmokeSigningIdentity('STABLE_SMOKE_CDS', values)) {
+    const data = await issueGatewayFederationSession('cds', values, fetchFn);
+    const claims = decodeJwtPayload(data.token);
+    const securityVersion = String(claims.user_security_version || '').trim();
+    if (!securityVersion) throw new Error('CDS 网关巡检会话缺少安全版本声明');
+    return { token: data.token, securityVersion };
+  }
   const baseUrl = withoutTrailingSlash(values.STABLE_SMOKE_CDS_GW_BASE_URL);
   const response = await fetchFn(`${baseUrl}/gw/auth/login`, {
     signal: AbortSignal.timeout(10_000),
@@ -530,7 +605,7 @@ export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation 
   const reasons = [];
   const services = Object.values(branch?.services || {});
   if (branch?.status !== 'running') reasons.push(`分支状态为 ${branch?.status || 'unknown'}`);
-  if (branch?.commitSha !== expectedCommit) reasons.push('CDS 分支提交尚未同步到本地目标提交');
+  if (branch?.commitSha !== expectedCommit) reasons.push('CDS 分支提交尚未同步到目标提交');
   if (!runtimeEquivalent && branch?.ciTargetSha !== expectedCommit) reasons.push('CDS 镜像目标尚未锁定本地目标提交');
   if (!runtimeEquivalent && branch?.ciImageStatus !== 'ready') reasons.push(`CDS 镜像状态为 ${branch?.ciImageStatus || 'unknown'}`);
   if (branch?.lastDeployDispatchCommitSha !== runtimeCommit) reasons.push('CDS 尚未对运行时目标提交完成部署调度');
@@ -635,7 +710,74 @@ function runPlaywright(environment, values, runDir, grep = '') {
   return { status: result.status ?? 1, resultPath, htmlPath, testResultPath };
 }
 
-const smokeCaseIdPattern = /((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|REG-[a-z0-9-]+)-\d+)/gi;
+const folderRegressionCaseIds = [
+  'REG-web-folder-canonical-001',
+  'REG-web-folder-fence-001',
+  'REG-web-folder-create-rename-001',
+];
+
+export function runFolderRegressionTests(runDir, commandRunner = command) {
+  const clientArtifactPath = resolve(runDir, 'web-folder-client-regressions.xml');
+  const clientResult = commandRunner('pnpm', [
+    '--dir', 'prd-admin', 'exec', 'vitest', 'run',
+    'src/components/web-hosting/folderDrop.test.ts',
+    '--reporter=junit', `--outputFile=${clientArtifactPath}`,
+  ], {
+    env: { ...process.env },
+    stdio: 'inherit',
+    encoding: undefined,
+  });
+  const serverArtifactPath = resolve(runDir, 'web-folder-regressions.trx');
+  const serverResult = commandRunner('dotnet', [
+    'test', 'prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj',
+    '--no-restore', '-m:1',
+    '--filter', 'FullyQualifiedName~WebFolderRenameFenceTests',
+    '--logger', 'trx;LogFileName=web-folder-regressions.trx',
+    '--results-directory', runDir,
+  ], {
+    env: { ...process.env, DOTNET_ROLL_FORWARD: 'Major' },
+    stdio: 'inherit',
+    encoding: undefined,
+  });
+  const clientPassed = clientResult.status === 0;
+  const serverPassed = serverResult.status === 0;
+  const resultsByCaseId = new Map([
+    ['REG-web-folder-canonical-001', clientPassed],
+    ['REG-web-folder-fence-001', serverPassed],
+    ['REG-web-folder-create-rename-001', serverPassed],
+  ]);
+  return {
+    execution: {
+      environment: 'cds-folder-regressions',
+      status: clientPassed && serverPassed ? 'passed' : 'failed',
+      // resultPath 专用于 Playwright JSON；TRX 另存，避免汇总器按 JSON 误读。
+      resultPath: null,
+      artifactPath: serverArtifactPath,
+      artifactPaths: [clientArtifactPath, serverArtifactPath],
+      policy: 'deterministic-integration',
+      gateReasons: [],
+    },
+    rows: folderRegressionCaseIds.map((caseId) => {
+      const passed = resultsByCaseId.get(caseId) === true;
+      const area = caseId === 'REG-web-folder-canonical-001' ? '前端权威键归一化' : 'MongoDB 重命名并发围栏';
+      const error = `${area}回归失败`;
+      return {
+        caseId,
+        environment: 'cds',
+        title: `[${caseId}] ${area}回归`,
+        tags: [],
+        status: passed ? 'pass' : 'fail',
+        durationMs: 0,
+        error: passed ? '' : error,
+        retryCount: 0,
+        hadFailedAttempt: !passed,
+        attemptErrors: passed ? [] : [error],
+      };
+    }),
+  };
+}
+
+const smokeCaseIdPattern = /((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|WEB|REG-[a-z0-9-]+)-\d+)/gi;
 
 function grepCaseIds(grepExpression) {
   return [...String(grepExpression || '').replaceAll('\\', '').matchAll(smokeCaseIdPattern)]
@@ -1549,6 +1691,16 @@ async function main() {
     const productionVisualPlanMarkdownPath = resolve(runDir, 'visual-plan-production.md');
     const productionVisualUnlockPath = resolve(runDir, 'production-visual-unlock.json');
     let cdsVisualGate = null;
+    let supplementalRows = [];
+
+    const selectedCdsCases = selected.includes('cds')
+      ? selectedCaseIdsForEnvironment(plan, 'cds', grep)
+      : [];
+    if (selectedCdsCases.some((caseId) => folderRegressionCaseIds.includes(caseId))) {
+      const folderRegressions = runFolderRegressionTests(runDir);
+      executions.push(folderRegressions.execution);
+      supplementalRows = folderRegressions.rows;
+    }
 
     for (const environment of selected) {
       if (environment === 'production' && selected.includes('cds')) {
@@ -1556,6 +1708,7 @@ async function main() {
         const cdsRows = cdsExecution?.resultPath
           ? collectPlaywrightCases(readJson(cdsExecution.resultPath), 'cds')
           : [];
+        cdsRows.push(...supplementalRows);
         cdsRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));
         productionSafetyGate = evaluateProductionSafetyGate(
           cdsExecution,
@@ -1679,6 +1832,7 @@ async function main() {
       if (!execution.resultPath) return [];
       return collectPlaywrightCases(readJson(execution.resultPath), execution.environment);
     });
+    environmentRows.push(...supplementalRows);
     environmentRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));
     const requiredCaseIds = selectCoverageCaseIdsByEnvironment(
       plan,

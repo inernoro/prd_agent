@@ -1,7 +1,7 @@
-using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Attributes;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -44,9 +44,10 @@ public sealed class AuthorizationHealthController : ControllerBase
             .Find(x => x.IsActive && x.RevokedAt == null)
             .ToListAsync(ct);
         var enabledPlatformsTask = _db.LLMPlatforms.Find(x => x.Enabled).ToListAsync(ct);
-        var externalAuthorizationsTask = CurrentUserId() is { Length: > 0 } userId
-            ? _db.ExternalAuthorizations.Find(x => x.UserId == userId && x.RevokedAt == null).ToListAsync(ct)
-            : Task.FromResult(new List<ExternalAuthorization>());
+        var userId = this.GetRequiredUserId();
+        var externalAuthorizationsTask = _db.ExternalAuthorizations
+            .Find(x => x.UserId == userId && x.RevokedAt == null)
+            .ToListAsync(ct);
 
         await Task.WhenAll(recentFailuresTask, activeAgentKeysTask, enabledPlatformsTask, externalAuthorizationsTask);
 
@@ -265,11 +266,6 @@ public sealed class AuthorizationHealthController : ControllerBase
             "外部授权台账",
             "/open-platform?tab=authorizations");
     }
-
-    private string CurrentUserId() =>
-        User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
-        ?? User.FindFirst("sub")?.Value
-        ?? string.Empty;
 
     private static AuthorizationFailureItem ToFailure(ApiRequestLog item)
     {

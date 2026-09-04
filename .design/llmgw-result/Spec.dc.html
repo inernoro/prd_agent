@@ -1,0 +1,116 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+  <style>
+    body {
+      --bg-page: #03080a; --bg-surface: #0c1114; --bg-elevated: #11181d; --bg-base: #030608;
+      --text-primary: #fcfcfe; --text-secondary: #c4c4cc; --text-muted: #a1a1aa;
+      --border-subtle: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+      --accent: #a78bfa; --accent-soft: rgba(167,139,250,0.14); --warn: #eab308; --ok: #22c55e;
+      --radius: 8px; --radius-sm: 6px;
+      margin: 0; background: var(--bg-page); color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+      font-size: 14px; font-weight: 450; line-height: 1.625; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: #c4b5fd; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-size: 12px; font-weight: 500; color: var(--text-muted); letter-spacing: 0.04em; padding: 0 12px 10px 0; border-bottom: 1px solid var(--border-subtle); }
+    td { font-size: 13px; color: var(--text-secondary); padding: 12px 12px 12px 0; border-bottom: 1px solid var(--border-subtle); vertical-align: top; line-height: 1.7; }
+    td.k { color: var(--text-primary); font-weight: 500; }
+  </style>
+</helmet>
+
+<div style="padding: 28px 32px; display: flex; flex-direction: column; gap: 28px;">
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.4;">产物屏改稿 · 对照表</div>
+    <div style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">左列是截图上的现状，右列是改法。间距与字号沿用上一轮定的那套（内边距 24 / 窄屏 16，间距 8 · 20 · 28，字号七档）。</div>
+  </div>
+
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; align-items: baseline; gap: 8px;">
+      <div style="font-size: 15px; font-weight: 650;">一、八处改动</div>
+      <span style="font-size: 13px; color: var(--text-muted);">按版面从上到下</span>
+    </div>
+    <table>
+      <tr><th style="width: 170px;">位置</th><th style="width: 300px;">现状</th><th>改为</th></tr>
+      <tr>
+        <td class="k">顶部横条</td>
+        <td>两条通栏绿条叠着；第二条是纯绿底通栏</td>
+        <td>合并成一条。卡片底 + 左侧 2px 成功色竖线，验证结果收成第二行「小圆点 + 一句话 + requestId 链接」。<b>纯色通栏是 toast 的语言，不该常驻页顶。</b></td>
+      </tr>
+      <tr>
+        <td class="k">一次性密钥</td>
+        <td>三等分之一，藏在「接入信息」页签里</td>
+        <td><b>独占一行、提到页签之上常驻。</b>码 17px mono 650，主按钮 44px 高（比页面其它按钮高一档）。两个理由：它是全屏唯一取不回来的东西；而且切到 cURL 页签时它现在会被切走。</td>
+      </tr>
+      <tr>
+        <td class="k">页签</td>
+        <td>三张等宽大卡，内边距与内容卡相同，选中态只有一圈淡描边</td>
+        <td>降级成分段控件：轨道 <span class="mono">--bg-elevated</span> + 3px 内衬，按钮 36px 高、宽度按内容、左对齐。选中态 accent 描边 + accent-soft 底 + 加粗。</td>
+      </tr>
+      <tr>
+        <td class="k">接入地址 / 调用用途</td>
+        <td>与密钥三等分，且三卡不等高、底边参差</td>
+        <td>降为两张并排配角卡。<span class="mono">grid</span> 默认 <span class="mono">align-items: stretch</span> 保证等高；注释用 <span class="mono">margin-top: auto</span> 贴底，两卡底边必齐。</td>
+      </tr>
+      <tr>
+        <td class="k">下半屏空白</td>
+        <td>接入信息页签只占上半屏，下面 40% 全空</td>
+        <td>内容区 <span class="mono">min-height: 320px</span>，并把「再测一次 / 排障」收进来补齐节奏。</td>
+      </tr>
+      <tr>
+        <td class="k">再测一次 / 排障</td>
+        <td>孤零零一行折叠挂在页面最底</td>
+        <td>收进内容区，成为一张与配角卡同规格的折叠卡，行尾补一句三环归因的提要。</td>
+      </tr>
+      <tr>
+        <td class="k">cURL 工具条</td>
+        <td>五样东西挤一条；两句说明一左一右，右边那句贴着右边缘</td>
+        <td>拆成三行：第一行只读类型 chip + 模型；第二行是输入；第三行是两句说明合成的一段 + 安全试跑 / 真实调用。代码块的浮动复制按钮收进 header 行。</td>
+      </tr>
+      <tr>
+        <td class="k">试跑输入 / 输出</td>
+        <td>只能「上传文本」传个文件，正文写死 <span class="mono">Reply with OK</span>；模型返回飘在代码块上方，跟发出去的东西没有配对关系</td>
+        <td><b>改成上输入下输出。</b>输入是可直接写的 textarea（上传降级成行尾一个次要按钮），输出块紧贴其下，<b>同宽、同圆角、同 88px 最小高</b>，中间只隔一条动作行。输出块左侧 2px 竖线区分方向（接收中走 accent，完成走 ok），行首标 <span class="mono">1.9s · 实际执行 &lt;模型&gt;</span> 与 requestId。空态也占满 88px，跑起来页面不往下跳。输入内容同时进 cURL 片段的 <span class="mono">content</span>，两边永远是同一次请求。三态见「试跑输入 / 输出」画板。</td>
+      </tr>
+    </table>
+  </div>
+
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+    <div style="font-size: 15px; font-weight: 650;">二、字号落点</div>
+    <table>
+      <tr><th style="width: 140px;">档位</th><th style="width: 130px;">token</th><th>用在哪</th></tr>
+      <tr><td class="k" style="font-size: 20px;">20px</td><td class="mono">--fs-title</td><td>页面标题 Quickstart</td></tr>
+      <tr><td class="k" style="font-size: 17px;">17px</td><td class="mono">--fs-metric</td><td><b>只给一次性密钥</b>。整屏唯一的 17px（窄屏降到 15px 保完整可见）</td></tr>
+      <tr><td class="k" style="font-size: 15px;">15px</td><td class="mono">--fs-heading</td><td>本屏未用——产物屏没有卡片分区标题，标签一律走 caption</td></tr>
+      <tr><td class="k">14px</td><td class="mono">--fs-body</td><td>「已签发」、配角卡的值、主按钮文字</td></tr>
+      <tr><td class="k">13px</td><td class="mono">--fs-secondary</td><td>摘要条正文、注释句、按钮与链接、代码块正文</td></tr>
+      <tr><td class="k">12px</td><td class="mono">--fs-caption</td><td>字段标签（一次性密钥 / 接入地址 / 调用用途 / 请求片段）、chip</td></tr>
+    </table>
+  </div>
+
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+    <div style="font-size: 15px; font-weight: 650;">三、两个容易漏的实现点</div>
+    <div style="display: flex; align-items: flex-start; gap: 8px; background: rgba(234,179,8,0.12); border: 1px solid rgba(234,179,8,0.32); border-radius: var(--radius-sm); padding: 14px 16px;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#eab308" stroke-width="1.5" stroke-linecap="round" style="flex: none; margin-top: 3px;"><path d="M8 5v4"/><path d="M8 11.5v.01"/><circle cx="8" cy="8" r="6.25"/></svg>
+      <span style="font-size: 13px; color: var(--text-secondary); line-height: 1.7;"><b>密钥移出页签是结构改动，不只是换个位置。</b>它要从 <span class="mono">resultTab === 'access'</span> 的分支里提出来，放到页签容器之外——否则切页签照样会把它卸载掉。</span>
+    </div>
+    <div style="display: flex; align-items: flex-start; gap: 8px; background: rgba(234,179,8,0.12); border: 1px solid rgba(234,179,8,0.32); border-radius: var(--radius-sm); padding: 14px 16px;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#eab308" stroke-width="1.5" stroke-linecap="round" style="flex: none; margin-top: 3px;"><path d="M8 5v4"/><path d="M8 11.5v.01"/><circle cx="8" cy="8" r="6.25"/></svg>
+      <span style="font-size: 13px; color: var(--text-secondary); line-height: 1.7;"><b>浅色档嵌套底必须换 <span class="mono">--bg-base</span>。</b>浅色下 <span class="mono">--bg-elevated</span> 与 <span class="mono">--bg-surface</span> 同为 <span class="mono">#ffffff</span>，代码块、分段控件轨道、配角卡在白天会和卡片糊成一片。上一轮已按这个办法修过引用块，这一屏照做。</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

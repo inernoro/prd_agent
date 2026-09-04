@@ -23,11 +23,19 @@ public class SiteContentSnapshotServiceTests
             new MemoryCache(new MemoryCacheOptions()),
             NullLogger<SiteContentSnapshotService>.Instance);
 
+    private static SiteContentSnapshotService NewService(FakeAssetStorage storage, StubHttpHandler handler) =>
+        new(storage,
+            new FakeExtractor(),
+            new MemoryCache(new MemoryCacheOptions()),
+            NullLogger<SiteContentSnapshotService>.Instance,
+            new FakeHttpClientFactory(handler));
+
     private static HostedSite SiteWith(params (string Path, string Key)[] files) => new()
     {
         Id = "site-1",
         Title = "测试站点",
         EntryFile = "index.html",
+        SiteUrl = "https://legacy-storage.example/data/web-hosting/sites/site-1/index.html",
         Files = files.Select(f => new HostedSiteFile
         {
             Path = f.Path,
@@ -139,6 +147,182 @@ public class SiteContentSnapshotServiceTests
     }
 
     [Fact]
+    public async Task 单文件长页面_使用完整总预算而不是固定截在八千字()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = new string('前', 9_000) + "三元决策思想：风险分、置信度、业务价值";
+
+        var snap = await NewService(storage).GetAsync(SiteWith(("index.html", "entry")));
+
+        Assert.Null(snap.Unavailable);
+        Assert.Contains("风险分、置信度、业务价值", snap.Text);
+        Assert.False(snap.Truncated, "不足总预算的单页正文不应在 8000 字处被截断");
+    }
+
+    [Fact]
+    public async Task React单文件页面_提取模块脚本中的可见中文文案()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = """
+            <!doctype html><html><head><title>扫码风控</title></head><body>
+            <div id="root"></div>
+            <script type="module">
+            const quotePattern=/"/g;
+            const page={className:"grid gap-8",children:["借鉴三元决策思想：",jsx("strong",{children:"风险分 + 置信度 + 业务价值"})]};
+            </script></body></html>
+            """;
+
+        var snap = await NewService(storage).GetAsync(SiteWith(("index.html", "entry")));
+
+        Assert.Null(snap.Unavailable);
+        Assert.Contains("借鉴三元决策思想", snap.Text);
+        Assert.Contains("风险分 + 置信度 + 业务价值", snap.Text);
+        Assert.DoesNotContain("grid gap-8", snap.Text);
+    }
+
+    [Fact]
+    public async Task 服务端已有可见正文时_不把隐藏脚本字符串当成页面内容()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = """
+            <!doctype html><html><head><title>公开报告</title></head><body>
+            <main><h1>访客可见结论</h1></main>
+            <script type="module">
+            const hiddenAdminLabel="管理员专用密钥已失效";
+            const hydrationCopy="访客可见结论";
+            </script></body></html>
+            """;
+
+        var snap = await NewService(storage).GetAsync(SiteWith(("index.html", "entry")));
+
+        Assert.Null(snap.Unavailable);
+        Assert.Contains("访客可见结论", snap.Text);
+        Assert.DoesNotContain("管理员专用密钥已失效", snap.Text);
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(snap.Text, "访客可见结论").Count);
+    }
+
+    [Fact]
+    public void 脚本和模板里的伪挂载节点_不能触发脚本文案提取()
+    {
+        const string html = """
+            <!doctype html><html><body>
+              <script type="module">const tpl = '<div id="root"></div>'; const hidden = '管理员内部错误';</script>
+              <template><div id="app"></div></template>
+            </body></html>
+            """;
+
+        var text = SiteContentSnapshotService.HtmlToPlainText(html);
+
+        Assert.True(string.IsNullOrWhiteSpace(text));
+        Assert.DoesNotContain("管理员内部错误", text);
+    }
+
+    [Fact]
+    public void 非Id属性中的挂载名称_不能触发脚本文案提取()
+    {
+        const string html = """
+            <!doctype html><html><body>
+              <div data-id="root" title="id='app'"></div>
+              <script type="module">const page = { children: "管理员内部错误" };</script>
+            </body></html>
+            """;
+
+        var text = SiteContentSnapshotService.HtmlToPlainText(html);
+
+        Assert.True(string.IsNullOrWhiteSpace(text));
+        Assert.DoesNotContain("管理员内部错误", text);
+    }
+
+    [Fact]
+    public void 客户端壳子_只读Module中的React文本节点()
+    {
+        const string html = """
+            <!doctype html><html><body>
+              <div id="root"></div>
+              <script type="application/json">{"notice":"其它路由的管理员公告"}</script>
+              <script>const hiddenDialog = "管理员内部错误";</script>
+              <script type="module">
+                const hiddenConstant = "仅在异常对话框中显示";
+                const page = { children: ["当前页可见结论", jsx("strong", { children: "风险分 + 置信度" })] };
+              </script>
+            </body></html>
+            """;
+
+        var text = SiteContentSnapshotService.HtmlToPlainText(html);
+
+        Assert.Contains("当前页可见结论", text);
+        Assert.Contains("风险分 + 置信度", text);
+        Assert.DoesNotContain("其它路由的管理员公告", text);
+        Assert.DoesNotContain("管理员内部错误", text);
+        Assert.DoesNotContain("仅在异常对话框中显示", text);
+    }
+
+    [Fact]
+    public void 含路由的客户端Bundle_不把其它路由文案当成当前页正文()
+    {
+        const string html = """
+            <!doctype html><html><body>
+              <div id="root"></div>
+              <script type="module">
+                const route = location.pathname;
+                const pages = {
+                  public: { children: "公开页结论" },
+                  admin: { children: "管理员密钥页" }
+                };
+              </script>
+            </body></html>
+            """;
+
+        var text = SiteContentSnapshotService.HtmlToPlainText(html);
+
+        Assert.True(string.IsNullOrWhiteSpace(text));
+        Assert.DoesNotContain("管理员密钥页", text);
+    }
+
+    [Fact]
+    public async Task 当前存储缺少存量入口时_从落库站点地址读取正文()
+    {
+        var storage = new FakeAssetStorage();
+        var factory = new FakeHttpClientFactory(new StubHttpHandler(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent("旧腾讯云入口仍可读取的正文"),
+        }));
+
+        var snap = await new SiteContentSnapshotService(
+            storage,
+            new FakeExtractor(),
+            new MemoryCache(new MemoryCacheOptions()),
+            NullLogger<SiteContentSnapshotService>.Instance,
+            factory).GetAsync(SiteWith(("index.html", "old-cos-key")));
+
+        Assert.Null(snap.Unavailable);
+        Assert.False(snap.TransientFailure);
+        Assert.Contains("旧腾讯云入口仍可读取的正文", snap.Text);
+        Assert.Equal(new[] { "SafeOutbound" }, factory.ClientNames);
+        Assert.Single(factory.Handler.Requests);
+        Assert.Equal("legacy-storage.example", factory.Handler.Requests[0].RequestUri?.Host);
+    }
+
+    [Fact]
+    public async Task 公网回退只允许入口文件_兄弟文件缺失仍标截断()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = "入口正文";
+        var handler = new StubHttpHandler(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent("不应被拿来冒充兄弟文件"),
+        });
+
+        var snap = await NewService(storage, handler).GetAsync(
+            SiteWith(("index.html", "entry"), ("chapter.html", "missing")));
+
+        Assert.Contains("入口正文", snap.Text);
+        Assert.DoesNotContain("不应被拿来冒充兄弟文件", snap.Text);
+        Assert.True(snap.Truncated);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task 成功的快照会被缓存_第二次不再打存储()
     {
         var storage = new FakeAssetStorage();
@@ -180,7 +364,7 @@ public class SiteContentSnapshotServiceTests
         Assert.DoesNotContain("巨大的正文", snap.Text);
         Assert.True(snap.Truncated, "被体积上限挡掉的文件必须反映到 Truncated 上");
         // 关键：那个 key 根本不该被读过
-        Assert.False(storage.RequestedKeys.Contains("big"), "超大文件仍然发起了下载——闸门形同虚设");
+        Assert.DoesNotContain("big", storage.RequestedKeys);
     }
 
     [Fact]
@@ -193,7 +377,7 @@ public class SiteContentSnapshotServiceTests
 
         var snap = await NewService(storage).GetAsync(site);
 
-        Assert.False(storage.RequestedKeys.Contains("entry"));
+        Assert.DoesNotContain("entry", storage.RequestedKeys);
         Assert.NotNull(snap.Unavailable);
     }
 
@@ -275,5 +459,28 @@ public class SiteContentSnapshotServiceTests
         public string? Extract(byte[] bytes, string mimeType, string? fileName = null)
             => System.Text.Encoding.UTF8.GetString(bytes);
         public bool IsSupported(string mimeType) => true;
+    }
+
+    private sealed class FakeHttpClientFactory(StubHttpHandler handler) : IHttpClientFactory
+    {
+        public StubHttpHandler Handler { get; } = handler;
+        public List<string> ClientNames { get; } = new();
+
+        public HttpClient CreateClient(string name)
+        {
+            ClientNames.Add(name);
+            return new HttpClient(Handler, disposeHandler: false);
+        }
+    }
+
+    private sealed class StubHttpHandler(HttpResponseMessage response) : HttpMessageHandler
+    {
+        public List<HttpRequestMessage> Requests { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+            return Task.FromResult(response);
+        }
     }
 }

@@ -1271,7 +1271,7 @@ export function DangerOperationsTab({ onToast }: { onToast: (message: string) =>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button type="button" variant="destructive" className="shrink-0">
-                <AlertTriangle className="mr-2 h-4 w-4" />
+                <AlertTriangle className="mr-2" />
                 恢复出厂设置
               </Button>
             </DialogTrigger>
@@ -1718,7 +1718,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <SelfUpdateHistoryStats stats={stats} />
         <Button type="button" variant="outline" size="sm" onClick={manualRefresh} className="shrink-0">
-          <RefreshCw className="h-3.5 w-3.5" /> 刷新历史
+          <RefreshCw /> 刷新历史
         </Button>
       </div>
       <div className="flex min-h-0 flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_390px]">

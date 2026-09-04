@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page, type Response, type TestInfo } from '@playwright/test';
+import { devices, expect, test, type APIRequestContext, type Page, type Response, type TestInfo } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -106,6 +106,57 @@ async function issueTicketDetails(request: APIRequestContext, returnUrl: string)
   return body.data!;
 }
 
+function testingAuthHeaders(method: 'POST' | 'DELETE', url: string) {
+  return buildStableSmokeAuthHeaders({
+    method,
+    url,
+    body: '',
+    username: requiredEnv('STABLE_SMOKE_USER'),
+    aiAccessKey: process.env.STABLE_SMOKE_AI_ACCESS_KEY?.trim(),
+    keyId: process.env.STABLE_SMOKE_SIGNING_KEY_ID?.trim(),
+    privateKey: process.env.STABLE_SMOKE_SIGNING_PRIVATE_KEY?.trim(),
+  });
+}
+
+async function setLegacyStorageFixture(page: Page, siteId: string, prepare: boolean) {
+  const path = `/api/v1/auth/synthetic/testing/web-pages/${siteId}/legacy-entry`;
+  const response = prepare
+    ? await page.request.post(path, { headers: testingAuthHeaders('POST', path) })
+    : await page.request.delete(path, { headers: testingAuthHeaders('DELETE', path) });
+  const body = await response.json() as ApiEnvelope<{
+    prepared?: boolean;
+    restored?: boolean;
+    contentVersionChanged?: boolean;
+  }>;
+  expect(response.ok(), body.error?.message || '旧存储稳定冒烟夹具切换失败').toBe(true);
+  expect(body.success, body.error?.message || '旧存储稳定冒烟夹具切换失败').toBe(true);
+  expect(prepare ? body.data.prepared : body.data.restored).toBe(true);
+  if (prepare) expect(body.data.contentVersionChanged, '旧存储夹具必须击穿正文快照缓存').toBe(true);
+}
+
+async function expectAnonymousShareAnswer(
+  request: APIRequestContext,
+  shareToken: string,
+  siteId: string,
+  marker: string,
+  storagePath: 'current' | 'legacy',
+) {
+  const ask = await request.post(`/api/web-pages/shares/view/${shareToken}/ask/stream`, {
+    headers: { Accept: 'text/event-stream' },
+    data: { siteId, question: '页面中的正文标记是什么？' },
+    timeout: 120_000,
+  });
+  const stream = await ask.text();
+  expect(ask.status(), `${storagePath} storage: ${stream}`).toBe(200);
+  expect(ask.headers()['content-type']).toContain('text/event-stream');
+  expect(stream).toContain('event: phase');
+  expect(stream).toContain('event: typing');
+  expect(stream).toContain('event: done');
+  expect(readSseTypingText(stream), `${storagePath} storage answer`).toContain(marker);
+  expect(stream).not.toContain('ASK_NO_CONTENT');
+  expect(stream).not.toContain('event: error');
+}
+
 async function loginAndReadToken(page: Page, request: APIRequestContext, returnUrl = '/') {
   const loginUrl = await issueTicket(request, returnUrl);
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
@@ -167,6 +218,9 @@ function downloadFileName(contentDisposition: string) {
 type ImageModelPool = {
   id: string;
   code: string;
+  name: string;
+  isDefault?: boolean;
+  resolutionType?: string;
   models: Array<{ healthStatus?: string }>;
 };
 
@@ -480,6 +534,43 @@ async function waitForImageRun(page: Page, token: string, runId: string, timeout
 
 async function loginGateway(request: APIRequestContext) {
   const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
+  const signingKeyId = process.env.STABLE_SMOKE_SIGNING_KEY_ID?.trim();
+  const signingPrivateKey = process.env.STABLE_SMOKE_SIGNING_PRIVATE_KEY?.trim();
+  if (signingKeyId && signingPrivateKey) {
+    const ticketBody = '{}';
+    const ticket = await request.post('/api/v1/auth/synthetic/gateway-ticket', {
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildStableSmokeAuthHeaders({
+          method: 'POST',
+          url: '/api/v1/auth/synthetic/gateway-ticket',
+          body: ticketBody,
+          username: requiredEnv('STABLE_SMOKE_USER'),
+          keyId: signingKeyId,
+          privateKey: signingPrivateKey,
+        }),
+      },
+      data: ticketBody,
+    });
+    const ticketEnvelope = await ticket.json() as ApiEnvelope<{ code: string }>;
+    expect(ticket.ok(), ticketEnvelope.error?.message || '生成模型网关巡检入口失败').toBe(true);
+    expect(ticketEnvelope.success, ticketEnvelope.error?.message || '生成模型网关巡检入口失败').toBe(true);
+    expect(ticketEnvelope.data.code).toBeTruthy();
+
+    const exchange = await request.post(`${baseUrl}/gw/auth/stable-smoke-sso`, {
+      data: { code: ticketEnvelope.data.code },
+    });
+    const exchangeEnvelope = await exchange.json() as ApiEnvelope<{ token: string; mustChangePassword: boolean }>;
+    expect(exchange.ok(), exchangeEnvelope.error?.message || '模型网关巡检短票据登录失败').toBe(true);
+    expect(exchangeEnvelope.success, exchangeEnvelope.error?.message || '模型网关巡检短票据登录失败').toBe(true);
+    expect(exchangeEnvelope.data.token).toBeTruthy();
+    expect(exchangeEnvelope.data.mustChangePassword).toBe(false);
+    return {
+      baseUrl,
+      headers: { Authorization: `Bearer ${exchangeEnvelope.data.token}` },
+    };
+  }
+
   const login = await request.post(`${baseUrl}/gw/auth/login`, {
     data: {
       username: requiredEnv('STABLE_SMOKE_GW_USER'),
@@ -796,6 +887,64 @@ async function openQuickRecord(page: Page, request: APIRequestContext) {
   return token;
 }
 
+type StableHostedSite = {
+  id: string;
+  title: string;
+  folder?: string | null;
+  siteUrl: string;
+};
+
+type StableWebFolder = {
+  id: string;
+  name: string;
+};
+
+async function uploadStableHostedSite(page: Page, token: string, title: string) {
+  const marker = `${title}-正文标记`;
+  // 用实体编码的 # 覆盖浏览器会解码、源码扫描器容易漏判的真实锚点形态。
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title></head><body><a id="jump" href="&#35;target">跳到验收锚点</a><div style="height:900px"></div><section id="target">${marker}</section></body></html>`;
+  const response = await page.request.post('/api/web-pages/upload', {
+    headers: authHeaders(token),
+    multipart: {
+      file: { name: `${title}.html`, mimeType: 'text/html', buffer: Buffer.from(html, 'utf8') },
+      title,
+    },
+  });
+  return {
+    site: await readEnvelope<StableHostedSite>(response),
+    marker,
+  };
+}
+
+async function deleteStableHostedSite(page: Page, token: string, siteId: string) {
+  const response = await page.request.delete(`/api/web-pages/${siteId}`, { headers: authHeaders(token) });
+  expect(response.ok(), '稳定冒烟站点清理失败').toBe(true);
+  expect((await response.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+  expect((await page.request.get(`/api/web-pages/${siteId}`, { headers: authHeaders(token) })).status()).toBe(404);
+}
+
+function readSseTypingText(stream: string) {
+  return stream
+    .replaceAll('\r\n', '\n')
+    .split('\n\n')
+    .flatMap((frame) => {
+      const lines = frame.split('\n');
+      const eventType = lines.find((line) => line.startsWith('event:'))?.slice(6).trim();
+      if (eventType !== 'typing') return [];
+      const data = lines
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim())
+        .join('\n');
+      try {
+        const payload = JSON.parse(data) as { text?: unknown };
+        return typeof payload.text === 'string' ? [payload.text] : [];
+      } catch {
+        return [];
+      }
+    })
+    .join('');
+}
+
 test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   test('[CORE-001] 首页与入口静态资源可用', async ({ page }) => {
     const resourceFailures: string[] = [];
@@ -923,6 +1072,305 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(progress.items.find((item) => item.sourceId === sourceId)?.learned).toBe(true);
     } finally {
       await resetProgress();
+    }
+  });
+
+  test('[WEB-001][WEB-002][WEB-003][WEB-006][WEB-007] 创建空文件夹并高亮拖入站点后刷新保持归属', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(120_000);
+    const token = await loginAndReadToken(page, request, '/web-pages');
+    const runKey = `stsmk-${Date.now().toString(36)}-folder`;
+    let siteId = '';
+    let folderId = '';
+    let recreatedFolderId = '';
+    try {
+      const uploaded = await uploadStableHostedSite(page, token, `${runKey}-site`);
+      siteId = uploaded.site.id;
+
+      await page.goto('/web-pages', { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      await expect(page.locator('[data-tour-id="webpages-library-rail"]')).toBeVisible();
+      await page.locator('[data-tour-id="webpages-create-folder"]').click();
+      await page.getByRole('textbox', { name: '文件夹名称' }).fill(runKey);
+      const createdResponse = page.waitForResponse((response) => (
+        new URL(response.url()).pathname === '/api/web-folders' && response.request().method() === 'POST'
+      ));
+      await page.getByRole('button', { name: '创建', exact: true }).click();
+      const createdHttp = await createdResponse;
+      const createdBody = await createdHttp.json() as ApiEnvelope<StableWebFolder>;
+      expect(createdHttp.ok(), createdBody.error?.message || '创建稳定冒烟文件夹失败').toBe(true);
+      expect(createdBody.success, createdBody.error?.message || '创建稳定冒烟文件夹失败').toBe(true);
+      const created = createdBody.data;
+      folderId = created.id;
+
+      await page.locator('[data-tour-id="webpages-create-folder"]').click();
+      await page.getByRole('textbox', { name: '文件夹名称' }).fill(runKey);
+      await page.getByRole('button', { name: '创建', exact: true }).click();
+      await expect(page.getByText('文件夹已存在', { exact: true })).toBeVisible();
+      const foldersAfterDuplicate = await readEnvelope<{ items: StableWebFolder[] }>(
+        await page.request.get('/api/web-folders', { headers: authHeaders(token) }),
+      );
+      expect(
+        foldersAfterDuplicate.items.filter((folder) => folder.name === runKey),
+        '同名文件夹重复创建后只能保留一条持久记录',
+      ).toHaveLength(1);
+
+      const concurrentPayload = {
+        name: runKey,
+        generatorType: 'none',
+        generateTarget: 'web',
+      };
+      const concurrentCreates = await Promise.all([
+        page.request.post('/api/web-folders', { headers: authHeaders(token), data: concurrentPayload }),
+        page.request.post('/api/web-folders', { headers: authHeaders(token), data: concurrentPayload }),
+      ]);
+      const concurrentFolders = await Promise.all(
+        concurrentCreates.map((response) => readEnvelope<StableWebFolder>(response)),
+      );
+      expect(new Set(concurrentFolders.map((folder) => folder.id)).size, '并发创建必须返回同一文件夹').toBe(1);
+      expect(concurrentFolders[0].id).toBe(folderId);
+      const foldersAfterConcurrentCreate = await readEnvelope<{ items: StableWebFolder[] }>(
+        await page.request.get('/api/web-folders', { headers: authHeaders(token) }),
+      );
+      expect(
+        foldersAfterConcurrentCreate.items.filter((folder) => folder.name === runKey),
+        '并发 API 创建后仍只能存在一条持久记录',
+      ).toHaveLength(1);
+
+      const legacySpelling = runKey.toUpperCase();
+      const assignedLegacyFolder = await page.request.put(`/api/web-pages/${siteId}`, {
+        headers: authHeaders(token),
+        data: { folder: legacySpelling },
+      });
+      expect(assignedLegacyFolder.ok(), '构造历史文件夹拼写失败').toBe(true);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      const canonicalTarget = page.locator('[data-tour-id="webpages-folder-drop-target"]').filter({ hasText: runKey });
+      await expect(canonicalTarget, '持久名与历史大小写变体必须合并为一项').toHaveCount(1);
+      await expect(canonicalTarget.locator('.web-folder-drop-target__count')).toHaveText('1');
+      const clearedLegacyFolder = await page.request.put(`/api/web-pages/${siteId}`, {
+        headers: authHeaders(token),
+        data: { folder: '' },
+      });
+      expect(clearedLegacyFolder.ok(), '历史文件夹拼写夹具清理失败').toBe(true);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+
+      const renamedName = `${runKey}-renamed`;
+      const renamedFolder = await readEnvelope<StableWebFolder>(
+        await page.request.put(`/api/web-folders/${folderId}`, {
+          headers: authHeaders(token),
+          data: { ...concurrentPayload, name: renamedName },
+        }),
+      );
+      expect(renamedFolder.id, '重命名不能改变文件夹身份').toBe(folderId);
+      expect(renamedFolder.name).toBe(renamedName);
+
+      const recreatedOriginal = await readEnvelope<StableWebFolder>(
+        await page.request.post('/api/web-folders', {
+          headers: authHeaders(token),
+          data: concurrentPayload,
+        }),
+      );
+      recreatedFolderId = recreatedOriginal.id;
+      expect(recreatedFolderId, '重命名后原名称必须可以重新创建').not.toBe(folderId);
+      const deletedRecreated = await page.request.delete(`/api/web-folders/${recreatedFolderId}`, {
+        headers: authHeaders(token),
+      });
+      expect(deletedRecreated.ok(), '重命名回归夹具清理失败').toBe(true);
+      recreatedFolderId = '';
+
+      const restoredName = await readEnvelope<StableWebFolder>(
+        await page.request.put(`/api/web-folders/${folderId}`, {
+          headers: authHeaders(token),
+          data: concurrentPayload,
+        }),
+      );
+      expect(restoredName.id, '恢复名称不能改变文件夹身份').toBe(folderId);
+      expect(restoredName.name).toBe(runKey);
+
+      const sharedRenameName = `${runKey}-parallel-same`;
+      await Promise.all([0, 1].map(() => page.request.put(`/api/web-folders/${folderId}`, {
+        headers: authHeaders(token),
+        data: { ...concurrentPayload, name: sharedRenameName },
+      })));
+      const sharedNameCreate = await readEnvelope<StableWebFolder>(
+        await page.request.post('/api/web-folders', {
+          headers: authHeaders(token),
+          data: { ...concurrentPayload, name: sharedRenameName },
+        }),
+      );
+      expect(sharedNameCreate.id, '同名并发重命名不能释放赢家的名称占用').toBe(folderId);
+      await readEnvelope<StableWebFolder>(
+        await page.request.put(`/api/web-folders/${folderId}`, {
+          headers: authHeaders(token),
+          data: concurrentPayload,
+        }),
+      );
+
+      const renameCandidates = [`${runKey}-parallel-a`, `${runKey}-parallel-b`];
+      await Promise.all(renameCandidates.map((name) => page.request.put(`/api/web-folders/${folderId}`, {
+        headers: authHeaders(token),
+        data: { ...concurrentPayload, name },
+      })));
+      const foldersAfterRenameRace = await readEnvelope<{ items: StableWebFolder[] }>(
+        await page.request.get('/api/web-folders', { headers: authHeaders(token) }),
+      );
+      const folderAfterRenameRace = foldersAfterRenameRace.items.find((folder) => folder.id === folderId);
+      expect(folderAfterRenameRace, '并发重命名后文件夹不能丢失').toBeTruthy();
+      expect(renameCandidates).toContain(folderAfterRenameRace!.name);
+      const losingName = renameCandidates.find((name) => name !== folderAfterRenameRace!.name)!;
+      const recreatedLosingName = await readEnvelope<StableWebFolder>(
+        await page.request.post('/api/web-folders', {
+          headers: authHeaders(token),
+          data: { ...concurrentPayload, name: losingName },
+        }),
+      );
+      recreatedFolderId = recreatedLosingName.id;
+      expect(recreatedFolderId, '并发重命名失败方不能留下幽灵名称占用').not.toBe(folderId);
+      const deletedRaceFixture = await page.request.delete(`/api/web-folders/${recreatedFolderId}`, {
+        headers: authHeaders(token),
+      });
+      expect(deletedRaceFixture.ok(), '并发重命名回归夹具清理失败').toBe(true);
+      recreatedFolderId = '';
+
+      const restoredAfterRace = await readEnvelope<StableWebFolder>(
+        await page.request.put(`/api/web-folders/${folderId}`, {
+          headers: authHeaders(token),
+          data: concurrentPayload,
+        }),
+      );
+      expect(restoredAfterRace.id, '并发重命名后恢复名称不能改变文件夹身份').toBe(folderId);
+      expect(restoredAfterRace.name).toBe(runKey);
+
+      const folderTarget = page.locator('[data-tour-id="webpages-folder-drop-target"]').filter({ hasText: runKey });
+      await expect(folderTarget).toBeVisible();
+      await expect(folderTarget.locator('.web-folder-drop-target__count')).toHaveText('0');
+      await page.getByRole('button', { name: '全部', exact: true }).click();
+
+      const card = page.locator('[data-tour-id="webpages-card"]').filter({ hasText: `${runKey}-site` }).first();
+      await expect(card).toBeVisible();
+      const cardBox = await card.boundingBox();
+      const folderBox = await folderTarget.boundingBox();
+      expect(cardBox, '网页卡片缺少可拖拽区域').toBeTruthy();
+      expect(folderBox, '文件夹缺少拖拽目标区域').toBeTruthy();
+      await page.mouse.move(cardBox!.x + cardBox!.width / 2, cardBox!.y + Math.min(40, cardBox!.height / 2));
+      await page.mouse.down();
+      await page.mouse.move(cardBox!.x + cardBox!.width / 2 + 12, cardBox!.y + 56, { steps: 4 });
+      await page.mouse.move(folderBox!.x + folderBox!.width / 2, folderBox!.y + folderBox!.height / 2, { steps: 12 });
+
+      await expect(folderTarget).toHaveAttribute('data-dock-hover', 'true');
+      await expect(folderTarget.getByText('松开移入', { exact: true })).toBeVisible();
+      const targetStyle = await folderTarget.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { boxShadow: style.boxShadow, borderColor: style.borderColor, transform: style.transform };
+      });
+      expect(targetStyle.boxShadow).not.toBe('none');
+      expect(targetStyle.borderColor).not.toBe('rgba(0, 0, 0, 0)');
+      expect(targetStyle.transform).not.toBe('none');
+      await testInfo.attach('web-folder-drop-highlight', { body: await page.screenshot(), contentType: 'image/png' });
+      await page.mouse.up();
+
+      await expect.poll(async () => {
+        const site = await readEnvelope<StableHostedSite>(
+          await page.request.get(`/api/web-pages/${siteId}`, { headers: authHeaders(token) }),
+        );
+        return site.folder;
+      }, { message: '拖拽后站点归属未写入文件夹', timeout: 15_000 }).toBe(runKey);
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      const persisted = page.locator('[data-tour-id="webpages-folder-drop-target"]').filter({ hasText: runKey });
+      await expect(persisted).toBeVisible();
+      await expect(persisted.locator('.web-folder-drop-target__count')).toHaveText('1');
+    } finally {
+      if (siteId) await deleteStableHostedSite(page, token, siteId);
+      if (recreatedFolderId) {
+        await page.request.delete(`/api/web-folders/${recreatedFolderId}`, { headers: authHeaders(token) });
+      }
+      if (folderId) {
+        const deleted = await page.request.delete(`/api/web-folders/${folderId}`, { headers: authHeaders(token) });
+        expect(deleted.ok(), '稳定冒烟文件夹清理失败').toBe(true);
+        const folders = await readEnvelope<{ items: StableWebFolder[] }>(
+          await page.request.get('/api/web-folders', { headers: authHeaders(token) }),
+        );
+        expect(folders.items.some((folder) => folder.id === folderId)).toBe(false);
+      }
+    }
+  });
+
+  test('[WEB-004][WEB-005][WEB-006] 分享页片段留在 srcDoc 且页面提问可读正文', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    const environment = requiredEnv('STABLE_SMOKE_ENVIRONMENT');
+    test.setTimeout(environment === 'cds' ? 300_000 : 180_000);
+    const token = await loginAndReadToken(page, request, '/web-pages');
+    const runKey = `stsmk-${Date.now().toString(36)}-share`;
+    let siteId = '';
+    let shareId = '';
+    let legacyFixturePrepared = false;
+    try {
+      const uploaded = await uploadStableHostedSite(page, token, runKey);
+      siteId = uploaded.site.id;
+      await readEnvelope(await page.request.put(`/api/web-pages/${siteId}/ask/config`, {
+        headers: authHeaders(token),
+        data: {
+          enabled: true,
+          allowAnonymous: true,
+          dailyLimit: 0,
+        },
+      }));
+      const share = await readEnvelope<{ id: string; token: string; shareUrl: string }>(
+        await page.request.post('/api/web-pages/share', {
+          headers: authHeaders(token),
+          data: {
+            siteId,
+            shareType: 'single',
+            title: runKey,
+            expiresInDays: 30,
+            visibility: 'public',
+            forceNew: true,
+          },
+        }),
+      );
+      shareId = share.id;
+
+      await page.goto(share.shareUrl, { waitUntil: 'domcontentloaded' });
+      await expect(page.locator('#root').getByText(runKey, { exact: true }).first()).toBeVisible();
+      await expect.poll(() => page.frames().some((frame) => frame.url().startsWith('about:srcdoc')), {
+        message: '分享页未进入 srcDoc 预览路径',
+        timeout: 20_000,
+      }).toBe(true);
+      const frame = page.frames().find((item) => item.url().startsWith('about:srcdoc'))!;
+      const anchor = frame.locator('#jump');
+      await expect(anchor).toHaveAttribute('href', 'about:srcdoc#target');
+      const unexpectedNavigations: string[] = [];
+      page.on('request', (item) => {
+        if (item.isNavigationRequest() && !item.url().startsWith('about:srcdoc')) {
+          unexpectedNavigations.push(item.url());
+        }
+      });
+      await anchor.click();
+      await expect.poll(() => frame.url()).toBe('about:srcdoc#target');
+      await expect(frame.locator('#target')).toBeInViewport();
+      expect(unexpectedNavigations, '片段点击不应向对象存储目录发起导航').toEqual([]);
+      await testInfo.attach('web-share-srcdoc-anchor', { body: await page.screenshot(), contentType: 'image/png' });
+
+      await expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'current');
+
+      if (environment === 'cds') {
+        legacyFixturePrepared = true;
+        await setLegacyStorageFixture(page, siteId, true);
+        await expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'legacy');
+      }
+    } finally {
+      if (siteId && legacyFixturePrepared) {
+        await setLegacyStorageFixture(page, siteId, false);
+      }
+      if (shareId) {
+        const revoked = await page.request.delete(`/api/web-pages/shares/${shareId}?reason=stable-smoke-cleanup`, {
+          headers: authHeaders(token),
+        });
+        expect(revoked.ok(), '稳定冒烟分享清理失败').toBe(true);
+      }
+      if (siteId) await deleteStableHostedSite(page, token, siteId);
     }
   });
 
@@ -2245,23 +2693,29 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await expect(page.getByText('快捷录音', { exact: true })).toBeHidden();
   });
 
-  test('[VIS-001] 单图模型目录只返回可用逻辑模型', async ({ page, request }) => {
+  test('[VIS-001][REG-visual-policy-001] 单图模型目录有唯一业务默认且不暴露池', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const response = await page.request.get('/api/visual-agent/image-gen/models', { headers: authHeaders(token) });
-    const pools = await readEnvelope<Array<{ id: string; code: string; models: Array<{ healthStatus?: string }> }>>(response);
+    const pools = await readEnvelope<ImageModelPool[]>(response);
     expect(pools.length).toBeGreaterThan(0);
+    const defaults = pools.filter((model) => model.isDefault);
+    expect(defaults, '视觉创作必须由 MAP 明确配置唯一默认模型').toHaveLength(1);
+    expect(defaults[0].models.length, '默认模型不可用属于巡检失败，不能改测其它型号').toBeGreaterThan(0);
     for (const pool of pools) {
+      expect(pool.resolutionType).toBe('LogicalModel');
       expect(pool.id).toBeTruthy();
       expect(pool.code).toBeTruthy();
-      expect(pool.models.length).toBeGreaterThan(0);
-      expect(pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || ''))).toBe(true);
+      // 非默认模型停用时仍保留其业务身份供界面禁用展示，不因此自动换型号。
+      if (pool.isDefault) {
+        expect(pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || ''))).toBe(true);
+      }
     }
   });
 
-  test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001][REG-asr-routing-001] 网关配置与路由可由专用身份审计', async ({ request }) => {
+  test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001][REG-auth-synthetic-001][REG-asr-routing-001] 网关配置与路由可由专用身份审计', async ({ request }) => {
     const { baseUrl, headers } = await loginGateway(request);
 
-    const [context, models, logicalModels, health, authority, logs, poolTypes, asrPools] = await Promise.all([
+    const [context, models, logicalModels, health, authority, logs, poolTypes, asrPools, authFailureHealth] = await Promise.all([
       request.get(`${baseUrl}/gw/auth/context`, { headers }),
       request.get(`${baseUrl}/gw/models?enabled=true`, { headers }),
       request.get(`${baseUrl}/gw/logical-models?enabled=true`, { headers }),
@@ -2270,9 +2724,29 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       request.get(`${baseUrl}/gw/logs?limit=20`, { headers }),
       request.get(`${baseUrl}/gw/pool-types`, { headers }),
       request.get(`${baseUrl}/gw/pools?modelType=asr&sinceHours=168`, { headers }),
+      request.get(`${baseUrl}/gw/auth/failure-health?windowMinutes=10&threshold=3`, { headers }),
     ]);
-    for (const response of [context, models, logicalModels, health, authority, logs, poolTypes, asrPools]) {
+    for (const response of [context, models, logicalModels, health, authority, logs, poolTypes, asrPools, authFailureHealth]) {
       expect(response.ok(), `网关审计接口 ${response.url()} 不可用`).toBe(true);
+    }
+
+    const authFailureBody = await authFailureHealth.json() as ApiEnvelope<{
+      status: 'healthy' | 'recovered' | 'warning';
+      incidents: Array<{ scope: 'identity' | 'platform'; attempts: number; affectedIdentities: number }>;
+      recoveries: Array<{ attempts: number; identityFingerprint: string }>;
+      recovery: { browserSession: string; machineIdentity: string; circuitBreaker: string };
+    }>;
+    expect(authFailureBody.success).toBe(true);
+    expect(authFailureBody.data.recovery.browserSession).toBe('single-refresh-single-retry');
+    expect(authFailureBody.data.recovery.machineIdentity).toBe('one-time-ticket-auto-provision');
+    expect(authFailureBody.data.recovery.circuitBreaker).toBe('manual-disable-role-drift-repeated-failure');
+    for (const incident of authFailureBody.data.incidents) {
+      expect(incident.attempts).toBeGreaterThanOrEqual(3);
+      expect(incident.affectedIdentities).toBeGreaterThanOrEqual(1);
+    }
+    for (const recovery of authFailureBody.data.recoveries) {
+      expect(recovery.attempts).toBeGreaterThanOrEqual(1);
+      expect(recovery.identityFingerprint).toMatch(/^[a-f0-9]{12}$/);
     }
 
     const modelsBody = await models.text();
@@ -2333,17 +2807,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[GW-006] 路由配置变化后健康状态清零且原配置可恢复', async ({ request }) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动修改网关路由配置');
-    const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
-    const login = await request.post(`${baseUrl}/gw/auth/login`, {
-      data: {
-        username: requiredEnv('STABLE_SMOKE_GW_USER'),
-        password: requiredEnv('STABLE_SMOKE_GW_PASSWORD'),
-      },
-    });
-    const loginBody = await login.json() as ApiEnvelope<{ token: string }>;
-    expect(login.ok(), loginBody.error?.message || '模型网关专用账号登录失败').toBe(true);
-    expect(loginBody.success, loginBody.error?.message || '模型网关专用账号登录失败').toBe(true);
-    const headers = { Authorization: `Bearer ${loginBody.data.token}` };
+    const { baseUrl, headers } = await loginGateway(request);
     const logicalResponse = await request.get(`${baseUrl}/gw/logical-models?enabled=true`, { headers });
     const logicalBody = await logicalResponse.json() as ApiEnvelope<{ items: Array<{
       id: string;
@@ -2600,14 +3064,36 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(overflow).toBeLessThanOrEqual(1);
   });
 
-  test('[VIS-009] 移动端视觉输入与结果区域无横向溢出', async ({ page, request }, testInfo) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    const module = modules.find((item) => item.key === 'visual-creation') || modules[0];
-    await openModule(page, request, module, testInfo);
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-    expect(overflow).toBeLessThanOrEqual(1);
-    const interactive = page.locator('textarea:visible, input:visible, button:visible');
-    expect(await interactive.count()).toBeGreaterThan(0);
+  test('[VIS-009][REG-visual-policy-001] 真实触控手机使用业务默认及授权尺寸', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const page = await context.newPage();
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'mobile-business-policy');
+    try {
+      const models = await readEnvelope<ImageModelPool[]>(await page.request.get('/api/visual-agent/image-gen/models', { headers: authHeaders(token) }));
+      const defaults = models.filter(model => model.isDefault);
+      expect(defaults).toHaveLength(1);
+      const model = defaults[0];
+      const capability = await readEnvelope<{ matched: boolean; sizesByResolution?: Record<string, Array<{size:string;aspectRatio:string}>> }>(
+        await page.request.get(`/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(model.code)}`, { headers: authHeaders(token) }));
+      expect(capability.matched).toBe(true);
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
+      await expect(page.getByText(model.name, { exact: true }).first()).toBeVisible();
+      const sizes = [...new Map(Object.values(capability.sizesByResolution ?? {}).flat().map(option => [option.size, option])).values()];
+      expect(sizes.length).toBeGreaterThan(0);
+      for (const size of sizes) await expect(page.getByRole('button', { name: `${size.aspectRatio} · ${size.size}`, exact: true })).toBeAttached();
+      await expect(page.getByPlaceholder('描述你想生成的画面…')).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+      await testInfo.attach('mobile-business-model-policy', { body: await page.screenshot(), contentType: 'image/png' });
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      await context.close();
+    }
   });
 
   test('[MVIS-012] 移动端参考图、尺寸、输入和移除操作均可触达', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
@@ -2626,7 +3112,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(page.getByAltText('参考图')).toBeVisible({ timeout: 15_000 });
       await expect(page.getByPlaceholder('描述要怎么改这张图…')).toBeVisible();
       await expect(page.getByRole('button', { name: '生成', exact: true })).toBeVisible();
-      await expect(page.getByText('方形 1:1', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: /^1:1 · \d+x\d+$/ })).toBeVisible();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow).toBeLessThanOrEqual(1);
       await testInfo.attach('multi-image-mobile-input', { body: await page.screenshot(), contentType: 'image/png' });
@@ -2640,7 +3126,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010] 文生图真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010][REG-visual-policy-001] 业务默认模型真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'single-image');
@@ -2650,8 +3136,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     try {
       const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) });
       const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
-      const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
-      expect(pool, '没有可用的文生图逻辑模型').toBeTruthy();
+      const pool = pools.find((item) => item.isDefault);
+      expect(pool, 'MAP 未配置业务默认，禁止用第一个可用模型替代').toBeTruthy();
+      expect(pool!.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')), '默认型号不可用').toBe(true);
 
       const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-run` },
@@ -2703,11 +3190,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const progress = page.getByTestId('generation-progress').first();
       await expect(progress, '真实生图开始后页面必须恢复生成中占位').toBeVisible({ timeout: 15_000 });
       const progressBox = await progress.boundingBox();
-      const barBox = await progress.locator('.gen-sweep__bar').boundingBox();
+      // 等待态的信息现在是底边一行（尺寸 · 阶段 · 剩余时间），不再是浮在画面上的黑胶囊。
+      const metaBox = await progress.getByTestId('generation-progress-meta').boundingBox();
       expect(progressBox).not.toBeNull();
-      expect(barBox).not.toBeNull();
-      expect(barBox!.x).toBeGreaterThanOrEqual(progressBox!.x - 1);
-      expect(barBox!.x + barBox!.width).toBeLessThanOrEqual(progressBox!.x + progressBox!.width + 1);
+      expect(metaBox).not.toBeNull();
+      expect(metaBox!.x).toBeGreaterThanOrEqual(progressBox!.x - 1);
+      expect(metaBox!.x + metaBox!.width).toBeLessThanOrEqual(progressBox!.x + progressBox!.width + 1);
+      // 进度画在画框上：描边任何缩放下都不许退场，它退场进度就没有载体了。
+      await expect(progress.locator('.gen-dev__arc'), '等待态必须有画框进度描边').toHaveCount(1);
       await testInfo.attach('single-image-progress', { body: await page.screenshot(), contentType: 'image/png' });
 
       const completed = await waitForImageRun(page, token, runId);

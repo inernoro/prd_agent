@@ -7,6 +7,11 @@ import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
 import { Dialog } from '@/components/ui/Dialog';
 import {
   uploadSite,
+  reviewSiteZip,
+  resumePendingSiteOptimization,
+  prepareSiteOptimizationPreview,
+  confirmSiteOptimization,
+  cancelSiteOptimization,
   reuploadSite,
   listSites,
   updateSite,
@@ -31,7 +36,7 @@ import {
   setSiteGroup,
   copySiteToTeam,
 } from '@/services';
-import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
+import type { HostedSite, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
 import { getSiteAskConfig } from '@/services/real/webPages';
 import { resolveShareAskSelection, addAskPick, toggleAskPick, ASK_MAX_DISPLAY } from '@/components/web-hosting/ask/askTypes';
 import type { WebHostingRole, TeamListItem } from '@/services/real/teams';
@@ -53,6 +58,7 @@ import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
 import { SiteContextPanel, SiteSelectionPanel, SiteBatchPanel } from '@/components/web-hosting/SiteContextPanel';
 import { SharePreviewPane, VISIBILITY_LABEL as SHARE_VISIBILITY_LABEL } from '@/components/web-hosting/SharePreviewPane';
 import { buildUploadProgress, fmtDuration, showsUploadProgress, type UnpackFrame } from '@/components/web-hosting/uploadProgress';
+import { DIRECT_PREVIEW_SANDBOX } from '@/components/web-hosting/previewHtml';
 import { resolveSiteForm } from '@/components/web-hosting/siteFormRegistry';
 import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
@@ -74,6 +80,7 @@ import { LibraryRail } from '@/components/web-hosting/LibraryRail';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import {
   SiteCard,
+  canDragSiteCard,
   SITE_CARD_SIZES,
   WEB_PAGE_MIME,
   type SiteCaps,
@@ -84,9 +91,19 @@ import AskConfigDrawer from '@/components/web-hosting/ask/AskConfigDrawer';
 import { createPortal } from 'react-dom';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import type { DocumentStore } from '@/services/contracts/documentStore';
-import { ShareDock, useDockDrag } from '@/components/share-dock';
+import { ShareDock, useDockDrag, DOCK_EVENTS, type DockDropDetail } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { MobileFab } from '@/components/mobile/MobileFab';
+import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real/webFolders';
+import {
+  buildWebPageGroupSlot,
+  canReceiveSiteDrop,
+  canDropSiteIntoTeamGroup,
+  mergePersonalFolderOptions,
+  personalFolderNamesEqual,
+  planPersonalFolderCreate,
+  parseWebPageDropSlot,
+} from '@/components/web-hosting/folderDrop';
 
 /** ShareDock MIME 由 SiteCard 组件统一定义（卡片与投放槽必须同一个常量） */
 
@@ -406,6 +423,7 @@ export default function WebPagesPage() {
   const sharedSiteIds = useMemo(() => buildSharedSiteIds(shareLinks), [shareLinks]);
 
   const [folders, setFolders] = useState<string[]>([]);
+  const [managedFolders, setManagedFolders] = useState<WebFolder[]>([]);
   const [tags, setTags] = useState<TagCount[]>([]);
 
   const [showUploadDialog, setShowUploadDialog] = useState(false);
@@ -441,6 +459,9 @@ export default function WebPagesPage() {
   // 用户在列表里找遍菜单也找不到提问配置（形状 2：接线只建了一半）。
   const [askConfigSite, setAskConfigSite] = useState<HostedSite | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const [showMobileFolderCreate, setShowMobileFolderCreate] = useState(false);
+  const [mobileFolderName, setMobileFolderName] = useState('');
+  const [mobileFolderPending, setMobileFolderPending] = useState(false);
   // 桌面工具条上同时只展开一个气泡（显示 / 筛选），避免两块浮层互相盖住
   const [openToolbarPanel, setOpenToolbarPanel] = useState<'display' | 'filter' | null>(null);
   /**
@@ -489,9 +510,10 @@ export default function WebPagesPage() {
   }, [teamScope.scope, currentUserId, myWebHostingRole]);
 
   const loadMeta = useCallback(async () => {
-    const [fRes, tRes] = await Promise.all([listSiteFolders(), listSiteTags()]);
+    const [fRes, tRes, managedRes] = await Promise.all([listSiteFolders(), listSiteTags(), listWebFolders()]);
     if (fRes.success) setFolders(fRes.data.folders);
     if (tRes.success) setTags(tRes.data.tags);
+    if (managedRes.success) setManagedFolders(managedRes.data.items ?? []);
   }, []);
 
   // 团队空间分组列表（专题 + 日常分类）
@@ -670,10 +692,44 @@ export default function WebPagesPage() {
     () => (currentSpace.kind === 'team' ? sites : sites.filter((s) => !(s.sharedTeamIds && s.sharedTeamIds.length))),
     [sites, currentSpace],
   );
+  const spaceFolderCanonicalNames = useMemo(() => new Map(
+    spaceSites
+      .filter((site) => !!site.folder)
+      .map((site) => [site.folder!, site.folderCanonicalName] as const),
+  ), [spaceSites]);
+  const managedFolderCanonicalNames = useMemo(() => new Map(
+    managedFolders.map((folder) => [folder.name, folder.canonicalName] as const),
+  ), [managedFolders]);
+  const personalFolderCanonicalNames = useMemo(() => new Map([
+    ...spaceFolderCanonicalNames,
+    ...managedFolderCanonicalNames,
+  ]), [managedFolderCanonicalNames, spaceFolderCanonicalNames]);
   // 空间内文件夹由内容派生（站点的 folder 字段）
   const spaceFolders = useMemo(
-    () => Array.from(new Set(spaceSites.map((s) => s.folder).filter((f): f is string => !!f && !!f.trim()))).sort(),
-    [spaceSites],
+    () => mergePersonalFolderOptions(
+      [],
+      spaceSites.map((s) => s.folder).filter((f): f is string => !!f && !!f.trim()),
+      spaceFolderCanonicalNames,
+    ),
+    [spaceFolderCanonicalNames, spaceSites],
+  );
+  // 显式创建的空文件夹也必须留在左栏；仅从站点 folder 字段派生会让空文件夹创建后立刻消失。
+  const personalFolderOptions = useMemo(
+    () => mergePersonalFolderOptions(
+      managedFolders.map((folder) => folder.name),
+      spaceFolders,
+      personalFolderCanonicalNames,
+    ),
+    [managedFolders, personalFolderCanonicalNames, spaceFolders],
+  );
+  // 上传/编辑弹窗同样消费显式文件夹，避免左栏看得到、上传表单却选不到。
+  const uploadFolderOptions = useMemo(
+    () => mergePersonalFolderOptions(
+      managedFolders.map((folder) => folder.name),
+      folders,
+      managedFolderCanonicalNames,
+    ),
+    [folders, managedFolderCanonicalNames, managedFolders],
   );
   const displaySites = useMemo(() => {
     // 团队空间按分组（专题/日常分类）过滤；个人空间沿用文件夹过滤
@@ -681,8 +737,18 @@ export default function WebPagesPage() {
       if (activeGroupId === UNGROUPED_ID) return spaceSites.filter((s) => !s.groupId);
       return activeGroupId ? spaceSites.filter((s) => s.groupId === activeGroupId) : spaceSites;
     }
-    return activeFolder ? spaceSites.filter((s) => s.folder === activeFolder) : spaceSites;
-  }, [spaceSites, activeFolder, activeGroupId, currentSpace.kind]);
+    const activeCanonicalName = activeFolder
+      ? personalFolderCanonicalNames.get(activeFolder)
+      : undefined;
+    return activeFolder
+      ? spaceSites.filter((s) => !!s.folder && personalFolderNamesEqual(
+        s.folder,
+        activeFolder,
+        s.folderCanonicalName,
+        activeCanonicalName,
+      ))
+      : spaceSites;
+  }, [spaceSites, activeFolder, activeGroupId, currentSpace.kind, personalFolderCanonicalNames]);
   // 「未分组」是树导航的虚拟节点：投送/移入分组时必须还原成 null
   const activeRealGroupId = activeGroupId === UNGROUPED_ID ? null : activeGroupId;
   // 树导航的分组计数（来自当前空间已加载的站点）
@@ -702,9 +768,21 @@ export default function WebPagesPage() {
   // 文件夹计数（个人空间左栏用）
   const folderCounts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const s of spaceSites) if (s.folder) m.set(s.folder, (m.get(s.folder) ?? 0) + 1);
+    for (const folder of personalFolderOptions) m.set(folder, 0);
+    for (const site of spaceSites) {
+      if (!site.folder) continue;
+      const displayName = personalFolderOptions.find((folder) =>
+        personalFolderNamesEqual(
+          folder,
+          site.folder!,
+          personalFolderCanonicalNames.get(folder),
+          site.folderCanonicalName,
+        ),
+      ) ?? site.folder.trim();
+      m.set(displayName, (m.get(displayName) ?? 0) + 1);
+    }
     return m;
-  }, [spaceSites]);
+  }, [spaceSites, personalFolderCanonicalNames, personalFolderOptions]);
   const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 264;
   const siteShareStats = useMemo(() => buildSiteShareStats(shareLinks), [shareLinks]);
   // 顶栏「分享 N」与分享档结论句同一个口径：未过期且未撤销
@@ -824,6 +902,50 @@ export default function WebPagesPage() {
 
   // ── 团队空间分组（专题/日常分类）操作 ──
 
+  const handleCreatePersonalFolder = async (name: string): Promise<boolean> => {
+    const plan = planPersonalFolderCreate(
+      name,
+      managedFolders.map((folder) => folder.name),
+      personalFolderOptions,
+    );
+    if (plan.kind === 'invalid') return false;
+    if (plan.kind === 'select') {
+      setActiveFolder(plan.name);
+      toast.success('文件夹已存在', `已切换到「${plan.name}」`);
+      return true;
+    }
+
+    const res = await createWebFolder({
+      name: plan.name,
+      generatorType: 'none',
+      generateTarget: 'web',
+    });
+    if (!res.success) {
+      toast.error('创建文件夹失败', res.error?.message || '请稍后重试');
+      return false;
+    }
+
+    setManagedFolders((prev) => [...prev, res.data]);
+    setActiveFolder(res.data.name);
+    toast.success('文件夹已创建', `可把右侧网页拖入「${res.data.name}」`);
+    return true;
+  };
+
+  const submitMobileFolder = async () => {
+    const name = mobileFolderName.trim();
+    if (!name || mobileFolderPending) return;
+    setMobileFolderPending(true);
+    try {
+      const created = await handleCreatePersonalFolder(name);
+      if (created) {
+        setMobileFolderName('');
+        setShowMobileFolderCreate(false);
+      }
+    } finally {
+      setMobileFolderPending(false);
+    }
+  };
+
   const handleCreateGroup = async (kind: 'topic' | 'daily', name: string) => {
     if (currentSpace.kind !== 'team') return;
     const res = await createSiteGroup({ teamId: currentSpace.teamId, kind, name });
@@ -871,6 +993,58 @@ export default function WebPagesPage() {
     await load();
     toast.success('已移动', targetSpace.kind === 'team' ? '已移动到团队空间' : '已移动到个人空间');
   };
+
+  const moveSiteIntoPersonalFolder = useCallback(async (siteId: string, folder: string) => {
+    if (currentSpace.kind !== 'personal') return;
+    const site = sites.find((item) => item.id === siteId);
+    if (!site || site.folder === folder) return;
+
+    const res = await updateSite(siteId, { folder });
+    if (!res.success) {
+      toast.error('移入文件夹失败', res.error?.message || '请稍后重试');
+      return;
+    }
+
+    setSites((prev) => prev.map((item) => item.id === siteId ? res.data : item));
+    setFolders((prev) => Array.from(new Set([...prev, folder])).sort((a, b) => a.localeCompare(b, 'zh-CN')));
+    toast.success('已移入文件夹', `「${site.title}」已移入「${folder}」`);
+    await loadMeta();
+  }, [currentSpace.kind, sites, loadMeta]);
+
+  const moveSiteIntoTeamGroup = useCallback(async (siteId: string, groupId: string) => {
+    if (currentSpace.kind !== 'team') return;
+    const site = sites.find((item) => item.id === siteId);
+    const group = teamGroups.find((item) => item.id === groupId);
+    if (!site || !group || site.groupId === groupId) return;
+    if (!canDropSiteIntoTeamGroup(myWebHostingRole, site.ownerUserId, currentUserId, group)) {
+      toast.error('无权限', group.visibility === 'restricted'
+        ? '你在该受限分组是只读角色，无法移入网页'
+        : '你在该团队空间是只读角色，无法移动网页');
+      return;
+    }
+
+    const res = await setSiteGroup(siteId, groupId);
+    if (!res.success) {
+      toast.error('移入分组失败', res.error?.message || '请稍后重试');
+      return;
+    }
+
+    setSites((prev) => prev.map((item) => item.id === siteId ? { ...item, groupId } : item));
+    toast.success('已移入分组', `「${site.title}」已移入「${group.name}」`);
+    await loadGroups();
+  }, [currentSpace.kind, sites, teamGroups, myWebHostingRole, currentUserId, loadGroups]);
+
+  useEffect(() => {
+    const onFolderDrop = (event: Event) => {
+      const detail = (event as CustomEvent<DockDropDetail>).detail;
+      if (!detail || detail.mime !== WEB_PAGE_MIME) return;
+      const target = parseWebPageDropSlot(detail.slotKey);
+      if (target?.kind === 'folder') void moveSiteIntoPersonalFolder(detail.id, target.value);
+      if (target?.kind === 'group') void moveSiteIntoTeamGroup(detail.id, target.value);
+    };
+    window.addEventListener(DOCK_EVENTS.DROP, onFolderDrop);
+    return () => window.removeEventListener(DOCK_EVENTS.DROP, onFolderDrop);
+  }, [moveSiteIntoPersonalFolder, moveSiteIntoTeamGroup]);
 
   // 单组内的卡片/列表渲染，按 viewMode 复用
   const renderGroupItems = (items: HostedSite[]) =>
@@ -1371,8 +1545,25 @@ export default function WebPagesPage() {
                 )}
 
                 <section className="space-y-2">
-                  <div className="text-[12px] font-semibold text-token-muted">
-                    {currentSpace.kind === 'team' ? '团队分组' : '文件夹'}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[12px] font-semibold text-token-muted">
+                      {currentSpace.kind === 'team' ? '团队分组' : '文件夹'}
+                    </div>
+                    {currentSpace.kind === 'personal' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowMobileFolderCreate((value) => !value);
+                          setMobileFolderName('');
+                        }}
+                        className="inline-flex h-7 items-center gap-1 rounded-[8px] px-2 text-[11px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
+                        data-tour-id="webpages-mobile-create-folder"
+                        aria-label="创建文件夹"
+                      >
+                        {showMobileFolderCreate ? <X size={12} /> : <Plus size={12} />}
+                        {showMobileFolderCreate ? '取消' : '新建文件夹'}
+                      </button>
+                    )}
                   </div>
                   {currentSpace.kind === 'team' ? (
                     <TeamGroupsTree
@@ -1391,30 +1582,61 @@ export default function WebPagesPage() {
                       fullWidth
                     />
                   ) : (
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setActiveFolder(null)}
-                        className="h-8 px-3 rounded-full text-[13px]"
-                        style={activeFolder === null
-                          ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
-                          : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
-                      >
-                        全部文件夹
-                      </button>
-                      {spaceFolders.map((f) => (
+                    <div className="space-y-2">
+                      {showMobileFolderCreate && (
+                        <div className="flex items-center gap-2" data-tour-id="webpages-mobile-folder-form">
+                          <input
+                            autoFocus
+                            value={mobileFolderName}
+                            disabled={mobileFolderPending}
+                            onChange={(event) => setMobileFolderName(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') void submitMobileFolder();
+                              if (event.key === 'Escape') {
+                                setShowMobileFolderCreate(false);
+                                setMobileFolderName('');
+                              }
+                            }}
+                            placeholder="文件夹名称"
+                            aria-label="文件夹名称"
+                            className="h-9 min-w-0 flex-1 rounded-[10px] px-3 text-[13px] outline-none bg-token-nested text-token-primary border border-token-default"
+                          />
+                          <button
+                            type="button"
+                            disabled={!mobileFolderName.trim() || mobileFolderPending}
+                            onClick={() => void submitMobileFolder()}
+                            className="h-9 shrink-0 rounded-[10px] px-3 text-[12px] font-semibold disabled:opacity-40"
+                            style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
+                          >
+                            {mobileFolderPending ? <MapSpinner size={12} /> : '创建'}
+                          </button>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-2">
                         <button
-                          key={f}
                           type="button"
-                          onClick={() => setActiveFolder(f)}
+                          onClick={() => setActiveFolder(null)}
                           className="h-8 px-3 rounded-full text-[13px]"
-                          style={activeFolder === f
+                          style={activeFolder === null
                             ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
                             : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
                         >
-                          {f}
+                          全部文件夹
                         </button>
-                      ))}
+                        {personalFolderOptions.map((f) => (
+                          <button
+                            key={f}
+                            type="button"
+                            onClick={() => setActiveFolder(f)}
+                            className="h-8 px-3 rounded-full text-[13px]"
+                            style={activeFolder === f
+                              ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
+                              : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
+                          >
+                            {f}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </section>
@@ -1571,10 +1793,11 @@ export default function WebPagesPage() {
             personalCount={currentSpace.kind === 'personal' ? total : null}
             teamCount={currentSpace.kind === 'team' ? total : null}
             spaceHint={`默认沿用上次停留的空间。当前显示：${activeSpaceLabel}。`}
-            folders={currentSpace.kind === 'team' ? undefined : spaceFolders}
+            folders={currentSpace.kind === 'team' ? undefined : personalFolderOptions}
             activeFolder={activeFolder}
             onFolder={setActiveFolder}
             folderCounts={folderCounts}
+            onCreateFolder={currentSpace.kind === 'personal' ? handleCreatePersonalFolder : undefined}
             teamTree={currentSpace.kind === 'team' ? (
               <TeamGroupsTree
                 groups={teamGroups}
@@ -1736,7 +1959,7 @@ export default function WebPagesPage() {
       {showUploadDialog && (
         <UploadEditDialog
           item={editItem}
-          folders={folders}
+          folders={uploadFolderOptions}
           initialFile={pendingExternalFile}
           onClose={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); }}
           onShareSite={(id) => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); setShareTargetId(id); setShowShareDialog(true); }}
@@ -2006,6 +2229,7 @@ function TeamGroupsTree({
 
   const row = (g: WebPageGroup) => {
     const on = activeGroupId === g.id;
+    const acceptsDrop = canReceiveSiteDrop(g);
     if (editing?.id === g.id) {
       return (
         <input
@@ -2031,8 +2255,11 @@ function TeamGroupsTree({
         onClick={() => onSelect(on ? null : g.id)}
         onDoubleClick={() => { if (canEdit) setEditing({ id: g.id, value: g.name }); }}
         onKeyDown={(e) => { if (e.key === 'Enter') onSelect(on ? null : g.id); }}
-        title={canEdit ? '双击重命名' : undefined}
-        className="group/tree-item w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover-bg-soft"
+        title={acceptsDrop ? (canEdit ? '双击重命名' : undefined) : '你在该受限分组是只读角色'}
+        className="web-folder-drop-target group/tree-item w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover-bg-soft"
+        data-dock-slot={acceptsDrop ? buildWebPageGroupSlot(g.id) : undefined}
+        data-dock-mime={acceptsDrop ? WEB_PAGE_MIME : undefined}
+        data-tour-id="webpages-group-drop-target"
         style={itemStyle(on)}
       >
         <Folder size={11} className="shrink-0" />
@@ -2062,7 +2289,8 @@ function TeamGroupsTree({
             <X size={11} />
           </button>
         )}
-        <span className="shrink-0 text-[10px] opacity-60">{counts.get(g.id) ?? 0}</span>
+        <span className="web-folder-drop-target__count shrink-0 text-[10px] opacity-60">{counts.get(g.id) ?? 0}</span>
+        <span className="web-folder-drop-target__hint">松开移入</span>
       </div>
     );
   };
@@ -2624,6 +2852,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   onAskConfig?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
+  const canDrag = canDragSiteCard(c);
   const isPublic = site.visibility === 'public';
   const { onPointerDown } = useDockDrag({
     mime: WEB_PAGE_MIME,
@@ -2640,11 +2869,12 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   };
   return (
     <div
-      className="group flex items-center gap-4 px-3 py-2 rounded-md cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))]"
+      className={`group flex items-center gap-4 px-3 py-2 rounded-md touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))] ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+      data-dock-draggable={canDrag ? 'true' : 'false'}
       style={{
         background: selected ? 'rgba(99,102,241,0.10)' : 'transparent',
       }}
-      onPointerDown={onPointerDown}
+      onPointerDown={canDrag ? onPointerDown : undefined}
     >
       <input
         type="checkbox"
@@ -2808,6 +3038,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   // 用户点了「转到后台」→ 本窗关掉但 XHR 不中断，完成后由页面 toast + 刷新兜底
   const backgroundedRef = useRef(false);
   const [created, setCreated] = useState<HostedSite | null>(null);
+  const [optimization, setOptimization] = useState<HostedSiteOptimizationReviewResult | null>(null);
+  const [optimizationPreview, setOptimizationPreview] = useState<HostedSiteOptimizationPreviewResult | null>(null);
+  const [optimizationBusy, setOptimizationBusy] = useState<'preview' | 'original' | 'optimized' | null>(null);
+  const [optimizationStage, setOptimizationStage] = useState('');
+  const resumeCheckedRef = useRef(false);
 
   useEffect(() => {
     if (!saving) return;
@@ -2840,6 +3075,103 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     if (f) setFile(f);
   };
 
+  const finishSavedSite = useCallback((saved: HostedSite) => {
+    if (backgroundedRef.current) {
+      toast.success('后台上传完成', `「${saved.title || file?.name || saved.entryFile}」已进入网页库`);
+      onSaved(saved, !isEdit);
+      return;
+    }
+    if (isEdit) {
+      onSaved(saved, false);
+      return;
+    }
+    setCreated(saved);
+    onSaved(saved, true, true);
+  }, [file?.name, isEdit, onSaved]);
+
+  useEffect(() => {
+    if (resumeCheckedRef.current || initialFile) return;
+    resumeCheckedRef.current = true;
+    const controller = new AbortController();
+    let active = true;
+    const resume = async () => {
+      const pending = await resumePendingSiteOptimization({
+        signal: controller.signal,
+        targetSiteId: item?.id,
+        onStage: stage => { if (active) setOptimizationStage(stage); },
+      });
+      if (!active || !pending) return;
+      if (!pending.success) {
+        if (pending.error?.code !== 'ABORTED')
+          toast.error('恢复上传任务失败', pending.error?.message || '可以重新选择文件上传');
+        return;
+      }
+      if (pending.data.outcome === 'optimization-recommended') {
+        setOptimization(pending.data);
+      } else if (pending.data.site) {
+        finishSavedSite(pending.data.site);
+      }
+    };
+    setSaving(true);
+    setOptimizationStage('正在恢复上次文件检查');
+    startedAtRef.current = Date.now();
+    void resume().finally(() => { if (active) setSaving(false); });
+    return () => { active = false; controller.abort(); };
+  }, [finishSavedSite, initialFile, item?.id]);
+
+  const discardOptimization = async () => {
+    const sessionId = optimization?.sessionId;
+    setOptimization(null);
+    setOptimizationPreview(null);
+    setOptimizationBusy(null);
+    if (sessionId) await cancelSiteOptimization(sessionId);
+  };
+
+  const closeDialog = () => {
+    if (saving && file?.name.toLowerCase().endsWith('.zip')) {
+      toast.info('正在检查 ZIP', '请先等待检查完成，或点击“中止”后再关闭。');
+      return;
+    }
+    if (optimization?.sessionId) void cancelSiteOptimization(optimization.sessionId);
+    onClose();
+  };
+
+  const prepareOptimization = async () => {
+    if (!optimization?.sessionId) return;
+    setOptimizationBusy('preview');
+    try {
+      const res = await prepareSiteOptimizationPreview(optimization.sessionId);
+      if (!res.success) {
+        toast.error('生成优化预览失败', res.error?.message || '原文件仍未保存，请稍后重试');
+        return;
+      }
+      setOptimizationPreview(res.data);
+    } catch (error) {
+      toast.error('生成优化预览失败', error instanceof Error ? error.message : '原文件仍未保存，请稍后重试');
+    } finally {
+      setOptimizationBusy(null);
+    }
+  };
+
+  const confirmOptimization = async (variant: 'original' | 'optimized') => {
+    if (!optimization?.sessionId) return;
+    setOptimizationBusy(variant);
+    try {
+      const res = await confirmSiteOptimization(optimization.sessionId, variant);
+      if (!res.success) {
+        toast.error('保存失败', res.error?.message || '临时版本仍保留，可以重新尝试');
+        return;
+      }
+      setOptimization(null);
+      setOptimizationPreview(null);
+      finishSavedSite(res.data);
+    } catch (error) {
+      toast.error('保存失败', error instanceof Error ? error.message : '临时版本仍保留，可以重新尝试');
+    } finally {
+      setOptimizationBusy(null);
+    }
+  };
+
   const handleSave = async () => {
     if (!isEdit && !file) return;
     // 打完字直接点「开始上传」是常态，没回车的那一个也算数，别静默丢掉
@@ -2850,11 +3182,47 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     setElapsed(0);
     setSent({ loaded: 0, total: file?.size ?? 0 });
     setUnpack(null);
+    setOptimizationStage('');
     uploadIdRef.current = crypto.randomUUID();
     abortRef.current = new AbortController();
     setSaving(true);
 
     try {
+      const isZip = file?.name.toLowerCase().endsWith('.zip') ?? false;
+      if (file && isZip) {
+        const reviewed = await reviewSiteZip({
+          file,
+          title: title.trim() || undefined,
+          description: description.trim() || undefined,
+          folder: folder.trim() || undefined,
+          tags: effectiveTags.length > 0 ? effectiveTags.join(',') : undefined,
+          targetSiteId: isEdit ? item.id : undefined,
+          uploadId: uploadIdRef.current,
+          onProgress: (loaded, total) => setSent({ loaded, total }),
+          onStart: (xhr) => { xhrRef.current = xhr; },
+          onStage: setOptimizationStage,
+          signal: abortRef.current.signal,
+        });
+        if (!reviewed.success) {
+          if (reviewed.error?.code !== 'ABORTED') {
+            toast.error('上传检查失败', reviewed.error?.message || '请稍后重试');
+          } else {
+            toast.info('已停止等待', '如果文件已经全部送达，干净的 ZIP 仍可能完成保存；稍后刷新列表确认即可。');
+          }
+          return;
+        }
+        if (reviewed.data.outcome === 'optimization-recommended') {
+          setOptimization(reviewed.data);
+          return;
+        }
+        if (!reviewed.data.site) {
+          toast.error('保存失败', '服务端没有返回已保存的站点，请重新上传');
+          return;
+        }
+        finishSavedSite(reviewed.data.site);
+        return;
+      }
+
       if (isEdit) {
         if (file) {
           // Reupload
@@ -2906,15 +3274,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
           if (res.error?.code !== 'ABORTED') toast.error('上传失败', res.error?.message || '请稍后重试');
           return;
         }
-        if (backgroundedRef.current) {
-          // 用户已经把它转到后台、弹窗早关了 —— 走原路径让页面收尾（刷新 + 新卡光环）
-          toast.success('后台上传完成', `「${res.data.title || file!.name}」已进入网页库`);
-          onSaved(res.data, true);
-          return;
-        }
-        // 停在完成态：给可打开的地址 + 下一步动作，而不是关窗让用户自己去列表里找
-        setCreated(res.data);
-        onSaved(res.data, /*isCreate*/ true, /*keepOpen*/ true);
+        finishSavedSite(res.data);
       }
     } catch (error) {
       toast.error(isEdit ? '保存失败' : '上传失败', error instanceof Error ? error.message : '网络异常，请稍后重试');
@@ -2932,8 +3292,8 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   return (
     <Dialog
       open={true}
-      onOpenChange={v => { if (!v) onClose(); }}
-      title={created ? '上传完成' : isEdit ? '编辑站点' : '上传站点'}
+      onOpenChange={v => { if (!v) closeDialog(); }}
+      title={created ? '上传完成' : optimizationPreview ? '查看优化效果' : optimization ? '发现可安全精简的内容' : isEdit ? '编辑站点' : '上传站点'}
       content={
         created ? (
           /* ── 完成态：给可打开的地址 + 三个下一步，而不是关窗让用户自己去列表里找 ── */
@@ -3043,6 +3403,124 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               </Button>
             </div>
           </div>
+        ) : optimizationPreview ? (
+          <div className="flex min-h-0 flex-col gap-4" style={{ maxHeight: '72vh' }}>
+            <div
+              className="flex items-start gap-2.5 rounded-xl p-3 text-xs leading-relaxed"
+              style={{ background: 'var(--semantic-success-soft)', border: '1px solid var(--semantic-success-border)', color: 'var(--text-secondary)' }}
+            >
+              <Check size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--accent-fg-emerald)' }} />
+              <div>
+                <div className="font-medium" style={{ color: 'var(--text-primary)' }}>优化版本已经生成，但还没有保存</div>
+                <div className="mt-0.5">请在下面检查页面、交互和关键数据；确认无误后再保存。</div>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-hidden rounded-xl" style={{ minHeight: 300, border: '1px solid var(--border-default)', background: 'var(--bg-card)' }}>
+              <iframe
+                title="优化版本预览"
+                src={optimizationPreview.previewUrl}
+                sandbox={DIRECT_PREVIEW_SANDBOX}
+                className="h-full w-full border-0"
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg px-2 py-2" style={{ background: 'var(--bg-input)' }}>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>原文件</div>
+                <div className="mt-0.5 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {optimizationPreview.analysis.originalFiles.toLocaleString()} 个
+                </div>
+              </div>
+              <div className="rounded-lg px-2 py-2" style={{ background: 'var(--bg-input)' }}>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>优化后</div>
+                <div className="mt-0.5 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {optimizationPreview.fileCount.toLocaleString()} 个
+                </div>
+              </div>
+              <div className="rounded-lg px-2 py-2" style={{ background: 'var(--bg-input)' }}>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>减少体积</div>
+                <div className="mt-0.5 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {fmtSize(optimizationPreview.analysis.savedUncompressedBytes)}
+                </div>
+              </div>
+            </div>
+
+            {optimizationPreview.analysis.warnings.length > 0 && (
+              <div className="rounded-lg px-3 py-2 text-[11.5px] leading-relaxed" style={{ background: 'var(--semantic-warning-soft)', border: '1px solid var(--semantic-warning-border)', color: 'var(--text-secondary)' }}>
+                {optimizationPreview.analysis.warnings.join('；')}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" style={{ justifyContent: 'center' }} disabled={optimizationBusy !== null} onClick={() => setOptimizationPreview(null)}>
+                返回建议
+              </Button>
+              <Button style={{ justifyContent: 'center' }} disabled={optimizationBusy !== null} onClick={() => void confirmOptimization('optimized')}>
+                {optimizationBusy === 'optimized' && <MapSpinner size={14} className="mr-1.5" />}
+                保存优化版本
+              </Button>
+            </div>
+          </div>
+        ) : optimization ? (
+          <div className="flex min-h-0 flex-col gap-4" style={{ maxHeight: '72vh' }}>
+            <div
+              className="flex items-start gap-2.5 rounded-xl p-3 text-xs leading-relaxed"
+              style={{ background: 'var(--semantic-warning-soft)', border: '1px solid var(--semantic-warning-border)', color: 'var(--text-secondary)' }}
+            >
+              <Sparkles size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--accent-primary)' }} />
+              <div>
+                <div className="font-medium" style={{ color: 'var(--text-primary)' }}>建议先优化再发布</div>
+                <div className="mt-0.5">系统只会处理可确定删除的开发依赖和冗余文件。当前站点尚未创建或覆盖。</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg px-2 py-2" style={{ background: 'var(--bg-input)' }}>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>原文件</div>
+                <div className="mt-0.5 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {(optimization.analysis?.originalFiles ?? 0).toLocaleString()} 个
+                </div>
+              </div>
+              <div className="rounded-lg px-2 py-2" style={{ background: 'var(--bg-input)' }}>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>预计优化后</div>
+                <div className="mt-0.5 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {(optimization.analysis?.optimizedFiles ?? 0).toLocaleString()} 个
+                </div>
+              </div>
+              <div className="rounded-lg px-2 py-2" style={{ background: 'var(--bg-input)' }}>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>预计减少</div>
+                <div className="mt-0.5 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {fmtSize(optimization.analysis?.savedUncompressedBytes ?? 0)}
+                </div>
+              </div>
+            </div>
+
+            <div className="min-h-0 overflow-y-auto rounded-lg px-3 py-2" style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-subtle)' }}>
+              {(optimization.analysis?.reasons ?? []).map((reason) => (
+                <div key={reason} className="flex items-start gap-2 py-1 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                  <span className="mt-1.5 block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent-primary)' }} />
+                  <span>{reason}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="text-[11.5px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              你也可以直接保存原文件。选择优化时会先生成临时预览，不满意可以返回，不会损失原始上传内容。
+            </div>
+
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="ghost" disabled={optimizationBusy !== null} onClick={() => void discardOptimization()}>取消</Button>
+              <Button variant="secondary" disabled={optimizationBusy !== null} onClick={() => void confirmOptimization('original')}>
+                {optimizationBusy === 'original' && <MapSpinner size={14} className="mr-1.5" />}
+                保存原文件
+              </Button>
+              <Button disabled={optimizationBusy !== null} onClick={() => void prepareOptimization()}>
+                {optimizationBusy === 'preview' && <MapSpinner size={14} className="mr-1.5" />}
+                优化并查看效果
+              </Button>
+            </div>
+          </div>
         ) : showsUploadProgress({ saving, isEdit, hasFile: file !== null }) ? (
           /* ── 上传中：屏幕上必须有真实在动的东西，且说得出「还要多久」 ──
              重传（isEdit 且选了文件）走的是同一条解包通道、同一份进度帧，只是拿不到
@@ -3068,6 +3546,10 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 <span className="text-[15px]" style={{ color: 'var(--text-muted)' }}>%</span>
               </div>
               <span className="pb-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>{progress.detail}</span>
+            </div>
+
+            <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+              {optimizationStage || progress.title}
             </div>
 
             <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-tertiary)' }}>
@@ -3106,21 +3588,25 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               className="rounded-lg px-3 py-2 text-[11.5px] leading-relaxed"
               style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
             >
-              可以关掉这个弹窗，上传在后台继续；完成后卡片会带滑入 + 光环出现在列表最前面，你能立刻认出刚传的是哪张。
+              {file?.name.toLowerCase().endsWith('.zip')
+                ? '上传后会自动检查文件结构。只有确实能安全精简时才会显示建议，检查期间不会创建或覆盖站点。'
+                : '可以关掉这个弹窗，上传在后台继续；完成后卡片会带滑入 + 光环出现在列表最前面，你能立刻认出刚传的是哪张。'}
             </div>
 
             {/* 等宽两列（设计稿如此）：两者都是「离开这个等待」的出口，分量相当；
                 右对齐的小按钮会让它们看起来像次要动作，而中止是有后果的 */}
-            <div className="grid grid-cols-2 gap-2">
+            <div className={`grid gap-2 ${file?.name.toLowerCase().endsWith('.zip') ? 'grid-cols-1' : 'grid-cols-2'}`}>
               {/* 转后台：XHR 不随弹窗卸载而中断，完成时由页面 toast + 刷新兜底 */}
-              <button
-                type="button"
-                onClick={() => { backgroundedRef.current = true; onClose(); }}
-                className="rounded-lg py-2 text-[13px]"
-                style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}
-              >
-                转到后台
-              </button>
+              {!file?.name.toLowerCase().endsWith('.zip') && (
+                <button
+                  type="button"
+                  onClick={() => { backgroundedRef.current = true; onClose(); }}
+                  className="rounded-lg py-2 text-[13px]"
+                  style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}
+                >
+                  转到后台
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -3169,7 +3655,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 ) : (
                   <div className="text-center leading-relaxed">
                     <p className="text-sm text-token-secondary">把文件拖到这里，或点击选择</p>
-                    <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤5000 个文件，自动识别入口）</p>
+                    <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，自动识别入口）</p>
                     <p className="text-xs text-token-muted">.md · .pdf · .mp4 / .webm / .mov</p>
                     <p className="text-xs text-token-muted">单个文件上限 500 MB</p>
                   </div>

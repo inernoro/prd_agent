@@ -169,6 +169,9 @@ public class AvailableModelPool
     /// </summary>
     public string Name { get; init; } = string.Empty;
 
+    /// <summary>业务模型用途说明，由网关配置下发。</summary>
+    public string? Description { get; init; }
+
     /// <summary>
     /// 模型池代码
     /// </summary>

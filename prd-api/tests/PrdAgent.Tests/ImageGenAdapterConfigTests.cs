@@ -17,6 +17,38 @@ public class ImageGenAdapterConfigTests
         _output = output;
     }
 
+    [Fact]
+    public void GptImage1_ExposesConcreteSizesWithoutChangingOtherModelPolicies()
+    {
+        var info = ImageGenModelAdapterRegistry.GetAdapterInfo("gpt-image-1");
+        Assert.NotNull(info);
+        Assert.True(info.Matched);
+        Assert.Equal(new[] { "1024x1024", "1024x1536", "1536x1024" },
+            info.SizesByResolution["1k"].Select(x => x.Size));
+        Assert.Equal(new[] { "1:1", "2:3", "3:2" },
+            info.SizesByResolution["1k"].Select(x => x.AspectRatio));
+        Assert.Empty(info.SizesByResolution["2k"]);
+        Assert.Empty(info.SizesByResolution["4k"]);
+        Assert.Equal(SizeParamFormats.WxH, info.SizeParamFormat);
+        Assert.False(info.SizesNotApplicable);
+        Assert.Equal("gpt-image-1.5*", ImageGenModelAdapterRegistry.TryMatch("gpt-image-1.5")?.ModelIdPattern);
+        Assert.Equal("gpt-image-2-all*", ImageGenModelAdapterRegistry.TryMatch("gpt-image-2-all")?.ModelIdPattern);
+    }
+
+    [Theory]
+    [InlineData("1024x1024")]
+    [InlineData("1024x1536")]
+    [InlineData("1536x1024")]
+    public void GptImage1_PreservesSupportedRequestedSize(string requestedSize)
+    {
+        var config = ImageGenModelAdapterRegistry.TryMatch("gpt-image-1");
+        Assert.NotNull(config);
+        var result = ImageGenModelAdapterRegistry.NormalizeSize(config, requestedSize);
+        Assert.Equal(requestedSize, result.Size);
+        Assert.False(result.SizeAdjusted);
+        Assert.False(config.SupportsResponseFormat);
+    }
+
     /// <summary>
     /// 打印所有适配器的尺寸配置（按分辨率分组）
     /// 运行命令: dotnet test --filter "FullyQualifiedName~PrintAllAdapterSizeConfigs" -- xunit.DiagnosticMessages=true

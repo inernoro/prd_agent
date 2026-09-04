@@ -61,6 +61,27 @@ test('未登记的核心代码变更不能静默通过', () => {
   assert.deepEqual(plan.unmappedFiles, ['prd-api/src/UnknownFeature/NewController.cs']);
 });
 
+test('视觉真实源码路径与本次逃逸回归进入计划，不依赖旧页面目录或已有 active 偶然选中', () => {
+  for (const file of [
+    'prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx',
+    'prd-admin/src/pages/ai-chat/visualAgentModelOptions.ts',
+    'prd-admin/src/components/ui/GenSweepLoader.tsx',
+    'prd-admin/src/components/ui/generationProgressPlacement.ts',
+  ]) {
+    const result = selectFeatureLines(catalog, [file], [], 'changed');
+    assert.deepEqual(result.unmappedFiles, []);
+    assert.ok(result.selected.some((item) => item.id === 'visual-creation'));
+    assert.ok(result.selected.some((item) => item.id === 'multi-image-creation'));
+  }
+  const plan = buildPlan({ catalog, changedFiles: [], activeRegressions: regressions,
+    visualRegressionCaseIds, matrixCases, mode: 'scheduled', commit: 'visual-contract-regression' });
+  for (const caseId of ['REG-visual-model-contract-001', 'REG-visual-viewport-001']) {
+    assert.ok(regressions.includes(caseId));
+    assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes(caseId));
+    assert.ok(plan.requiredCaseIdsByEnvironment.production.includes(caseId));
+  }
+});
+
 test('图片输入与网关共享源码命中视觉功能线，JPEG 回归绑定每轮单图必跑项', () => {
   for (const file of [
     'prd-api/src/PrdAgent.Infrastructure/LLM/ImageInputNormalizer.cs',
@@ -101,9 +122,15 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
     commit: 'test-commit',
   });
   const selected = selectMatrixCasesByEnvironment(matrixCases, 'test-commit');
-  const functionalRegressions = regressions.filter((caseId) => !visualRegressionCaseIds.includes(caseId));
+  const functionalRegressions = [...new Set([...regressions,
+    ...catalog.featureLines.flatMap((feature) => feature.regressionCaseIds),
+  ])].filter((caseId) => !visualRegressionCaseIds.includes(caseId));
+  const cdsOnlyRegressions = new Set(catalog.featureLines.flatMap((feature) => feature.cdsOnlyRegressionCaseIds || []));
   assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.cds), new Set([...selected.cds, ...functionalRegressions]));
-  assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.production), new Set([...selected.production, ...functionalRegressions]));
+  assert.deepEqual(
+    new Set(plan.requiredCaseIdsByEnvironment.production),
+    new Set([...selected.production, ...functionalRegressions.filter((caseId) => !cdsOnlyRegressions.has(caseId))]),
+  );
   assert.deepEqual(plan.visualRegressions, ['REG-visual-evidence-001']);
   assert.ok(!plan.requiredCaseIds.includes('REG-visual-evidence-001'));
   assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REC-006'));
@@ -111,6 +138,8 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
   assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes('FILE-004'));
   assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes('VIDEO-005'));
   assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('VIS-004'));
+  assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REG-visual-policy-001'));
+  assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('REG-visual-policy-001'));
   assert.deepEqual(
     new Set(plan.requiredCaseIds),
     new Set([...plan.requiredCaseIdsByEnvironment.cds, ...plan.requiredCaseIdsByEnvironment.production]),
@@ -119,6 +148,9 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
 
 test('矩阵解析保留双环境原始策略并按模块只取一条轮换用例', () => {
   assert.deepEqual(matrixCases.map((item) => item.caseId), matrixCaseIds);
+  assert.ok(matrixCaseIds.includes('WEB-001'));
+  assert.ok(matrixCaseIds.includes('WEB-006'));
+  assert.ok(matrixCaseIds.includes('WEB-007'));
   const rec006 = matrixCases.find((item) => item.caseId === 'REC-006');
   assert.equal(rec006.cdsPolicy, '必跑');
   assert.equal(rec006.productionPolicy, '不主动运行');
@@ -143,6 +175,60 @@ test('矩阵解析保留双环境原始策略并按模块只取一条轮换用�
   });
   assert.equal(plan.matrixPolicies['VIS-004'].productionRotation, 'within-case');
   assert.equal(plan.matrixPolicies['VIS-006'].productionRotation, 'case');
+});
+
+test('网页托管变更进入功能台账并绑定七个操作锚点', () => {
+  const changedFiles = [
+    'prd-admin/src/components/web-hosting/LibraryRail.tsx',
+    'prd-admin/src/pages/WebPagesPage.mobileFolder.test.ts',
+    'prd-admin/src/pages/WebPagesPage.siteCard.test.tsx',
+    'prd-api/src/PrdAgent.Core/Models/WebFolder.cs',
+    'prd-api/src/PrdAgent.Core/Models/WebPage.cs',
+    'prd-api/src/PrdAgent.Infrastructure/Services/SiteContentSnapshotService.cs',
+    'prd-api/src/PrdAgent.Infrastructure/Services/WebFolderService.cs',
+    'prd-api/tests/PrdAgent.Api.Tests/Services/WebFolderRenameFenceTests.cs',
+  ];
+  const result = selectFeatureLines(catalog, changedFiles, [], 'changed');
+  assert.deepEqual(result.unmappedFiles, []);
+  const feature = result.selected.find((item) => item.id === 'web-hosting-sharing');
+  assert.ok(feature);
+  assert.deepEqual(feature.requiredCaseIds, ['WEB-001', 'WEB-002', 'WEB-003', 'WEB-004', 'WEB-005', 'WEB-006', 'WEB-007']);
+  assert.deepEqual(feature.regressionCaseIds, [
+    'REG-web-folder-canonical-001',
+    'REG-web-folder-fence-001',
+    'REG-web-folder-create-rename-001',
+  ]);
+  const plan = buildPlan({
+    catalog,
+    changedFiles,
+    activeRegressions: [],
+    visualRegressionCaseIds,
+    matrixCases,
+    mode: 'changed',
+    commit: 'web-folder-scope',
+  });
+  for (const caseId of feature.cdsOnlyRegressionCaseIds) {
+    assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes(caseId));
+    assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes(caseId));
+  }
+});
+
+test('网页托管问答先走匿名主存储，旧存储夹具只在 CDS 环境启用', () => {
+  const source = readFileSync(resolve(repoRoot, 'e2e/specs/stable-smoke.spec.ts'), 'utf8');
+  const testStart = source.indexOf("test('[WEB-004][WEB-005][WEB-006]");
+  const testEnd = source.indexOf("\n  test(", testStart + 1);
+  const block = source.slice(testStart, testEnd);
+  const currentAsk = block.indexOf("expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'current')");
+  const fixtureGuard = block.indexOf("if (environment === 'cds')");
+  const legacyAsk = block.indexOf("expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'legacy')");
+
+  assert.ok(testStart >= 0, '缺少 WEB-005 稳定冒烟用例');
+  assert.ok(currentAsk >= 0 && fixtureGuard > currentAsk && legacyAsk > fixtureGuard,
+    '必须先验证当前存储，再只在 CDS 环境切换旧存储夹具');
+  assert.match(block, /if \(siteId && legacyFixturePrepared\)/,
+    '未准备旧存储夹具时不得调用恢复端点');
+  assert.match(source, /async function expectAnonymousShareAnswer[\s\S]*?headers: \{ Accept: 'text\/event-stream' \}/,
+    '分享问答必须使用不带 Authorization 的独立 request 上下文');
 });
 
 test('正式环境禁止项不得混入可被正式环境选中的组合用例', () => {

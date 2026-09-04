@@ -64,9 +64,17 @@ export interface ProfileReplicaSetView {
 
 interface ReplicaCandidateView { versionId: string; commitSha: string; image: string; createdAt: string; isCurrent: boolean }
 
-interface GraphNodeView { id: string; rawId?: string; name: string; kind: 'service' | 'infra'; pathPrefixes?: string[]; subdomain?: string; containerPort?: number; dockerImage?: string }
+type ServiceRoleView = 'web' | 'api' | 'worker';
+interface GraphNodeView {
+  id: string; rawId?: string; name: string; kind: 'service' | 'infra'; pathPrefixes?: string[]; subdomain?: string; containerPort?: number; dockerImage?: string;
+  /** 角色由服务端判定（声明 > 路由事实 > 服务名 > 默认），前端只消费，不再自己按名字猜。 */
+  role?: ServiceRoleView; roleSource?: 'declared' | 'route' | 'name' | 'default'; roleReason?: string;
+}
 interface GraphEdgeView { from: string; to: string; envKeys: string[]; dependsOn: boolean }
-interface ServiceGraphView { nodes: GraphNodeView[]; edges: GraphEdgeView[]; layers: string[][] }
+interface GraphSiteMemberView { id: string; prefixes: string[]; viaConvention?: boolean }
+/** 站点 = 一个公网 host：壳（承载根路径的静态站）+ 按前缀挂在它下面的成员。与 forwarder 发布规则同源。 */
+interface GraphSiteView { id: string; kind: 'main' | 'subdomain'; subdomain?: string; shellId?: string; shellSource?: 'declared' | 'convention'; members: GraphSiteMemberView[]; conflicts: Array<{ prefix: string; ids: string[] }> }
+interface ServiceGraphView { nodes: GraphNodeView[]; edges: GraphEdgeView[]; layers: string[][]; sites?: GraphSiteView[]; internal?: string[] }
 
 type ReplicaMode = 'container' | 'project';
 
@@ -912,8 +920,14 @@ function useMeasuredWidth(): [React.RefObject<HTMLDivElement>, number] {
   return [hostRef, w];
 }
 
-const isWebLike = (node: GraphNodeView | undefined, id: string): boolean =>
-  /web|admin|front|console|ui/i.test(id) || (node?.pathPrefixes ?? []).includes('/');
+/** 角色徽标文案：服务端判定的 role → 三字母。角色缺失（旧服务端）按 API 显示，不在前端补猜。 */
+const ROLE_BADGE: Record<ServiceRoleView, string> = { web: 'WEB', api: 'API', worker: 'JOB' };
+const roleBadge = (node: GraphNodeView | undefined): string => ROLE_BADGE[node?.role ?? 'api'];
+const roleTitle = (node: GraphNodeView | undefined): string => {
+  if (!node?.role) return '角色未知（服务端未返回）';
+  const base = `${ROLE_BADGE[node.role]} · ${node.roleReason || ''}`.trim();
+  return node.roleSource === 'declared' ? base : `${base}（推断，可在 cds-compose 里用 cds.role 声明覆盖）`;
+};
 
 /* ── 数据层（两个画布共用）：左框共享基础设施（主库）+ 右框隔离区（统一战线）── */
 function DataLayerSvg({ geo, fy, fh, iso, draftIsoCount, mainDbX, transferActive }: {
@@ -1055,11 +1069,40 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   const nodeById = new Map(graph.nodes
     .filter((n) => n.kind === 'service')
     .map((n) => [n.rawId ?? n.id.replace(/^service:/, ''), n]));
+  // 站点分组（入口 → 站点 → 壳 → 前缀成员）由服务端给出；旧服务端没有 sites 时整体退回调用深度分层。
+  const sites = (graph.sites ?? []).filter((site) => site.shellId ? profileIds.includes(site.shellId) : site.members.some((m) => profileIds.includes(m.id)));
+  const sitedIds = new Set<string>();
+  for (const site of sites) {
+    if (site.shellId) sitedIds.add(site.shellId);
+    for (const m of site.members) sitedIds.add(m.id);
+  }
+  // 壳可能同时是别的站点的成员（子域服务又在主域名声明了前缀）：卡片只画一次，归第一个用到它的站点
+  const placed = new Set<string>();
+  const edgeSvcId = (endpoint: string): string => endpoint.replace(/^service:/, '');
+  const siteBlocks = sites.map((site) => {
+    const shell = site.shellId && profileIds.includes(site.shellId) && !placed.has(site.shellId) ? site.shellId : undefined;
+    if (shell) placed.add(shell);
+    const members = site.members.filter((m) => profileIds.includes(m.id) && !placed.has(m.id)).map((m) => m.id);
+    for (const m of members) placed.add(m);
+    return { site, shell, members, attached: [] as string[] };
+  }).filter((b) => b.shell || b.members.length > 0);
+  // 没有公网路由、只被本站服务经容器网络调用的服务（静态站背后的 API）：挂进同一个站点框，
+  // 落在调用它的服务正下方——静态站在上、API 在下、箭头指向被调方，不平铺到画布底部。
+  const internalIds = (graph.internal ?? profileIds.filter((id) => !sitedIds.has(id))).filter((id) => profileIds.includes(id) && !placed.has(id));
+  for (const id of internalIds) {
+    const callers = graph.edges.filter((e) => e.from.startsWith('service:') && edgeSvcId(e.to) === id).map((e) => edgeSvcId(e.from));
+    if (callers.length === 0) continue;
+    const owner = siteBlocks.find((b) => callers.every((c) => c === b.shell || b.members.includes(c)));
+    if (!owner) continue;
+    owner.attached.push(id);
+    placed.add(id);
+  }
   const layered = new Set(graph.layers.flat());
-  const layers = graph.layers.map((l) => l.filter((id) => profileIds.includes(id)));
-  const missing = profileIds.filter((p) => !layered.has(p));
+  const layers = graph.layers.map((l) => l.filter((id) => profileIds.includes(id) && !placed.has(id)));
+  const missing = profileIds.filter((p) => !layered.has(p) && !placed.has(p));
   if (missing.length) layers.push(missing);
   const rows = layers.filter((l) => l.length > 0);
+  const conflictsOf = (pid: string): string[] => sites.flatMap((site) => site.conflicts.filter((c) => c.ids.includes(pid)).map((c) => c.prefix));
 
   const boxRowsOf = (pid: string): number => {
     const members = replicaSets[pid]?.enabled ? replicaSets[pid].members : [];
@@ -1074,21 +1117,84 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
 
   // gap 留出盒外右侧的加号小按钮（Railway 风：加号不进盒内）
   const gap = 52, layerGap = 66, layerTop = 150;
-  const maxRowW = Math.max(0, ...rows.map((l) => l.length * BOX_W + (l.length - 1) * gap));
+  // 站点块：壳在上、成员一排在下；块宽取两行较宽者。块外留 sitePad 画虚线框，块间 siteGap
+  const sitePad = 14, siteGap = 36, siteLabelH = 22;
+  const rowWidth = (n: number): number => (n <= 0 ? 0 : n * BOX_W + (n - 1) * gap);
+  const blockW = (b: typeof siteBlocks[number]): number => Math.max(b.shell ? BOX_W : 0, rowWidth(b.members.length), rowWidth(b.attached.length));
+  const sitesRowW = siteBlocks.length > 0
+    ? siteBlocks.reduce((sum, b) => sum + blockW(b) + sitePad * 2, 0) + (siteBlocks.length - 1) * siteGap
+    : 0;
+  const maxRowW = Math.max(0, sitesRowW, ...rows.map((l) => rowWidth(l.length)));
   const canvasW = Math.max(w, maxRowW + 24, geoProbe.minWidth);
   const geo = dataGeo(canvasW, Math.max(dbInfra.length, 1));
   const entryX = (canvasW - CW) / 2, entryY = 14;
 
   const pos = new Map<string, { x: number; cx: number; y: number; h: number }>();
+  const frames: Array<{ site: GraphSiteView; x: number; y: number; w: number; h: number; shell?: string; members: string[]; attached: string[] }> = [];
   let cursorY = layerTop;
+  if (siteBlocks.length > 0) {
+    const shellY = cursorY + siteLabelH;
+    const shellRowH = Math.max(0, ...siteBlocks.filter((b) => b.shell).map((b) => boxH(b.shell!)));
+    const memberY = shellY + (shellRowH > 0 ? shellRowH + layerGap : 0);
+    // 三行：壳 / 前缀成员 / 站内内网服务。各站的行高对齐，站点框各自只包到自己最后一行
+    const memberRowH = Math.max(0, ...siteBlocks.flatMap((b) => b.members.map(boxH)));
+    const attachedRowH = Math.max(0, ...siteBlocks.flatMap((b) => b.attached.map(boxH)));
+    let x = Math.max(8, (canvasW - sitesRowW) / 2);
+    for (const b of siteBlocks) {
+      const bw = blockW(b);
+      const innerX = x + sitePad;
+      if (b.shell) {
+        const h = boxH(b.shell);
+        const sx = innerX + (bw - BOX_W) / 2;
+        pos.set(b.shell, { x: sx, cx: sx + BOX_W / 2, y: shellY, h });
+      }
+      const placeRow = (ids: string[], y: number): void => {
+        const rw = rowWidth(ids.length);
+        const start = innerX + (bw - rw) / 2;
+        ids.forEach((id, i) => {
+          const mx = start + i * (BOX_W + gap);
+          pos.set(id, { x: mx, cx: mx + BOX_W / 2, y, h: boxH(id) });
+        });
+      };
+      placeRow(b.members, memberY);
+      // 没有前缀成员的站点，内网服务紧贴壳下方，不为别的站点的成员行留空
+      const attachedY = b.members.length > 0 ? memberY + memberRowH + layerGap : shellY + shellRowH + layerGap;
+      // 站内内网服务尽量对齐到调用它的那一列（单个时直接居中在调用方正下方）
+      if (b.attached.length === 1 && b.members.length <= 1) {
+        const id = b.attached[0];
+        const caller = graph.edges.find((e) => e.from.startsWith('service:') && edgeSvcId(e.to) === id);
+        const callerPos = caller ? pos.get(edgeSvcId(caller.from)) : undefined;
+        const ax = callerPos ? callerPos.x : innerX + (bw - BOX_W) / 2;
+        pos.set(id, { x: ax, cx: ax + BOX_W / 2, y: attachedY, h: boxH(id) });
+      } else {
+        placeRow(b.attached, attachedY);
+      }
+      const lastY = b.attached.length > 0 ? attachedY + attachedRowH : b.members.length > 0 ? memberY + memberRowH : shellY + (b.shell ? boxH(b.shell) : 0);
+      frames.push({ site: b.site, x, y: cursorY, w: bw + sitePad * 2, h: lastY + sitePad - cursorY, shell: b.shell, members: b.members, attached: b.attached });
+      x += bw + sitePad * 2 + siteGap;
+    }
+    const bottom = Math.max(...frames.map((f) => f.y + f.h));
+    cursorY = bottom + layerGap;
+  }
+  // 无公网路由的服务：尽量落在调用它的服务正下方（同列即同链路），没人调用的居中；同排按目标 x 排序后左右推开避免重叠
+  const callerCxOf = (id: string): number | null => {
+    const callers = graph.edges
+      .filter((e) => e.to.replace(/^service:/, '') === id && e.from.startsWith('service:'))
+      .map((e) => pos.get(e.from.replace(/^service:/, ''))?.cx)
+      .filter((cx): cx is number => typeof cx === 'number');
+    return callers.length ? callers.reduce((a, b) => a + b, 0) / callers.length : null;
+  };
   rows.forEach((ids) => {
-    const rowW = ids.length * BOX_W + (ids.length - 1) * gap;
-    const startX = Math.max(8, (canvasW - rowW) / 2);
+    const rowW = rowWidth(ids.length);
+    const want = ids.map((id) => ({ id, cx: callerCxOf(id) ?? canvasW / 2 })).sort((a, b) => a.cx - b.cx);
     let rowMaxH = 0;
-    ids.forEach((id, i) => {
+    let minX = Math.max(8, Math.min((canvasW - rowW) / 2, (want[0]?.cx ?? canvasW / 2) - BOX_W / 2));
+    want.forEach(({ id, cx }) => {
       const h = boxH(id);
       rowMaxH = Math.max(rowMaxH, h);
-      pos.set(id, { x: startX + i * (BOX_W + gap), cx: startX + i * (BOX_W + gap) + BOX_W / 2, y: cursorY, h });
+      const x = Math.max(minX, Math.min(cx - BOX_W / 2, canvasW - BOX_W - 8));
+      pos.set(id, { x, cx: x + BOX_W / 2, y: cursorY, h });
+      minX = x + BOX_W + gap;
     });
     cursorY += rowMaxH + layerGap;
   });
@@ -1098,11 +1204,18 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   const mainDbIdx = Math.max(dbInfra.findIndex((s) => /mongo|mysql|mariadb|postgres/i.test(s.dockerImage || s.id)), 0);
   const mainDbX = geo.dbX(mainDbIdx);
 
-  const entryFacing = profileIds.filter((p) => {
-    const n = nodeById.get(p);
-    return (n?.pathPrefixes?.length ?? 0) > 0 || !!n?.subdomain;
-  });
+  // 入口只连每个站点的壳（一个 host 一条线）；成员由壳下面的前缀线承接。旧服务端无 sites 时退回「有路由的都连」
+  const entryFacing = frames.length > 0
+    ? frames.map((f) => f.shell ?? f.members[0]).filter((id): id is string => !!id)
+    : profileIds.filter((p) => {
+      const n = nodeById.get(p);
+      return (n?.pathPrefixes?.length ?? 0) > 0 || !!n?.subdomain;
+    });
   const entryTargets = entryFacing.length > 0 ? entryFacing : (rows[0] ?? []);
+  const prefixEdges = frames.flatMap((f) => (f.shell ? f.members.map((id) => {
+    const m = f.site.members.find((x) => x.id === id);
+    return { from: f.shell!, to: id, prefixes: m?.prefixes ?? [], viaConvention: !!m?.viaConvention };
+  }) : []));
   const edgeSvc = (endpoint: string): string => endpoint.replace(/^service:/, '');
   const svcEdges = graph.edges
     .map((e) => ({ ...e, from: edgeSvc(e.from), to: edgeSvc(e.to) }))
@@ -1129,7 +1242,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
     <section className="cds-surface-raised cds-hairline overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-2.5">
         {headerLeft}
-        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />{profileIds.length} 容器 · 边=环境变量引用</span>
+        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />{profileIds.length} 容器 · 虚线框=同一 host · 边=环境变量引用</span>
         {branchIso.state === 'done' ? <span className="rounded-md border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">已隔离 · 统一战线</span> : null}
         {branchIso.state === 'partial' ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length} · 建议补齐</span> : null}
         {draftActions.length > 0 ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">{draftActions.length} 项变更待保存</span> : null}
@@ -1143,6 +1256,40 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
               <marker id="rsArr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="hsl(var(--muted-foreground))" /></marker>
               <marker id="rsArrAmber" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#f59e0b" /></marker>
             </defs>
+            {frames.map((f) => {
+              const touching = selected === null || selected === 'entry' || selected === f.shell || f.members.includes(selected) || f.attached.includes(selected);
+              const label = f.site.kind === 'main' ? `主域名 ${entryHost}` : `子域 ${f.site.subdomain}`;
+              const sub = f.site.kind === 'main'
+                ? (f.site.shellSource === 'convention' ? '默认站按名兜底 · 前缀分流' : '按前缀分流')
+                : '整站归壳';
+              return (
+                <g key={`frame-${f.site.id}`} opacity={touching ? 1 : 0.35}>
+                  <rect x={f.x} y={f.y} width={f.w} height={f.h} rx={14} fill="hsl(var(--surface-raised))" fillOpacity="0.35"
+                    stroke="hsl(var(--hairline))" strokeWidth="1.2" strokeDasharray="6 5" />
+                  <text x={f.x + 12} y={f.y + 15} fontSize="10" fontWeight="700" fill="hsl(var(--muted-foreground))">{label}</text>
+                  <text x={f.x + f.w - 12} y={f.y + 15} fontSize="9" textAnchor="end" fill="hsl(var(--muted-foreground))" opacity="0.8">{sub}</text>
+                </g>
+              );
+            })}
+            {prefixEdges.map((e, idx) => {
+              const a = pos.get(e.from), b = pos.get(e.to);
+              if (!a || !b) return null;
+              const text = e.prefixes.join(' ');
+              const label = (text.length > 26 ? `${text.slice(0, 25)}…` : text) + (e.viaConvention ? ' · 按名约定' : '');
+              // 标签沿线错开三档，避免同一排成员的前缀标签叠在一条水平线上
+              const t = 0.42 + (idx % 3) * 0.16;
+              const lx = a.cx + (b.cx - a.cx) * t, ly = (a.y + a.h) + (b.y - (a.y + a.h)) * t + 3;
+              return (
+                <g key={`prefix-${e.from}-${e.to}`} opacity={dimIf(selected === e.from || selected === e.to || selected === 'entry')}>
+                  <path d={edgeD(a.cx, a.y + a.h, b.cx, b.y)} fill="none" stroke={e.viaConvention ? '#f59e0b' : 'hsl(var(--muted-foreground))'} strokeWidth="1.4" strokeDasharray="2 4" opacity="0.8"
+                    markerEnd={e.viaConvention ? 'url(#rsArrAmber)' : 'url(#rsArr)'}>
+                    <title>{`同一 host：forwarder 按最长前缀把 ${e.prefixes.join('、')} 直接转给 ${e.to}，${e.from} 的静态容器不经手这些请求${e.viaConvention ? '\n无人声明 /api/，由「服务名含 api/backend」的约定接管；建议显式写 cds.path-prefix' : ''}`}</title>
+                  </path>
+                  <rect x={lx - 4 - label.length * 2.8} y={ly - 9} width={label.length * 5.6 + 8} height={13} rx={3} fill="hsl(var(--surface-sunken))" opacity="0.92" />
+                  <text x={lx} y={ly} textAnchor="middle" fontSize="9" fill={e.viaConvention ? '#f59e0b' : 'hsl(var(--muted-foreground))'} className="font-mono">{label}</text>
+                </g>
+              );
+            })}
             {entryTargets.map((id) => {
               const p = pos.get(id);
               if (!p) return null;
@@ -1206,9 +1353,10 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
           </div>
           <EntryLinks x={entryX + CW + 12} y={entryY + 4} entries={entries} />
 
-          {rows.flatMap((ids) => ids).map((pid) => {
+          {[...frames.flatMap((f) => [...(f.shell ? [f.shell] : []), ...f.members, ...f.attached]), ...rows.flatMap((ids) => ids)].map((pid) => {
             const p = pos.get(pid)!;
             const node = nodeById.get(pid);
+            const conflicts = conflictsOf(pid);
             const color = profileColor(pid);
             const rs = replicaSets[pid];
             const members = rs?.enabled ? rs.members : [];
@@ -1227,8 +1375,17 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                   title="点击高亮与它相连的线"
                   style={{ left: p.x, top: p.y, width: BOX_W, height: p.h, borderColor: danger ? 'hsl(var(--destructive) / 0.6)' : selected === pid ? color : `${color}59`, boxShadow: selected === pid ? `0 0 0 2px ${color}55` : undefined }}>
                   <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
-                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-white" style={{ background: color }}>{isWebLike(node, pid) ? 'WEB' : 'API'}</span>
+                    <span className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-white ${node?.roleSource && node.roleSource !== 'declared' ? 'border border-dashed border-white/70' : ''}`}
+                      style={{ background: color }} title={roleTitle(node)} data-role={node?.role ?? ''} data-role-source={node?.roleSource ?? ''}>{roleBadge(node)}</span>
                     <span className="min-w-0 flex-1 truncate" title={pid}>{node?.name || pid}</span>
+                    {node?.subdomain && !frames.some((f) => f.site.kind === 'subdomain' && f.shell === pid) ? (
+                      <span className="inline-flex h-[18px] shrink-0 items-center rounded-full border border-[hsl(var(--hairline))] px-1.5 text-[10px] text-muted-foreground"
+                        title={`除了主域名上的前缀，它还独占子域 ${node.subdomain}（整站归它）；卡片只画一次，归主域名站点`}>子域</span>
+                    ) : null}
+                    {conflicts.length > 0 ? (
+                      <span className="inline-flex h-[18px] shrink-0 items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[10px] font-semibold text-warn"
+                        title={`前缀冲突：${conflicts.join('、')} 被多个服务同时声明，forwarder 只能按 id 字典序二选一。请在 cds-compose 里只保留一个声明方`}>冲突</span>
+                    ) : null}
                     {members.length > 0 ? (
                       <span className="inline-flex h-[18px] shrink-0 items-center rounded-full px-1.5 text-[10px] font-bold text-white" style={{ background: color }} title={`1 主 + ${members.length} 副本`}>
                         x{1 + members.length}
@@ -1354,7 +1511,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
           onClick={() => onOpenLoadTest(profileIds.find((pid) => (replicaSets[pid]?.members.length ?? 0) > 0) || profileIds[0])}>
           <Activity />压测
         </Button>
-        <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 连线 = 环境变量引用（悬停看键名）· 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
+        <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 虚线框 = 同一 host，上面是壳（静态站），下面按前缀分流 · 连线 = 环境变量引用（悬停看键名）· 徽标虚边 = 角色是推断的（cds.role 可声明）· 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
       </div>
       <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}@keyframes rsflow{to{stroke-dashoffset:-20}}.rsflow{animation:rsflow 1.1s linear infinite}'}</style>
     </section>

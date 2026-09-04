@@ -198,7 +198,10 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       // 由此推出的边是真实的。
       const projectEnvForGraph = deps.stateService.getCustomEnv(branch.projectId);
       const branchEnvForGraph = deps.stateService.getCustomEnvScope(branch.id);
+      // 先按分支解析 profileOverrides（前缀 / 子域 / 入口 / 部署模式）再合并 env，与转发路由和
+      // service-graph 接口同一口径（Codex P2，2026-09-02）
       const profiles = deps.stateService.getEffectiveProfilesForBranch(branch)
+        .map((p) => resolveEffectiveProfile(p, branch))
         .map((p) => ({ ...p, env: { ...projectEnvForGraph, ...branchEnvForGraph, ...(p.env || {}) } }));
       const infraForProject = (deps.stateService.getState().infraServices || [])
         .filter((s) => s.projectId === branch.projectId && (s.scope ?? 'project') === 'project');

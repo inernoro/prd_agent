@@ -60,6 +60,35 @@ describe('状态色只走 token，不再硬编码调色板', () => {
   });
 
   /**
+   * `bg-primary` 上不许压 `text-primary-ink`。
+   *
+   * `--primary-ink` 是「主色**文字**」——白天把橙色压深两档让它落在浅底上读得清；
+   * **暗色下它与 --primary 同值**。所以这对组合在暗色主题里是橙字压橙底，
+   * 按钮变成一块纯色，文字一个都看不见（2026-09-02 同仓关系横幅上真栽过一次：
+   * 断言「按钮存在」全绿，只有截图看得出来它是空白的）。
+   *
+   * 落在主色填充上的文字走 `text-primary-foreground`（shadcn Button 用的就是它）。
+   */
+  it('主色填充上不压主色文字（暗色下两者同值，等于隐形）', () => {
+    const bad: string[] = [];
+    for (const file of walk(SRC)) {
+      const src = fs.readFileSync(file, 'utf8');
+      // 同一段 class 串里同时出现两者即判红：跨行拼接的数组写法也照样命中
+      for (const chunk of src.split(/[`'"]/)) {
+        // `(?![\w-])` 不能省：`\b` 在 `bg-primary-soft` 的 `y` 与 `-` 之间照样成立，
+        // 于是把 `bg-primary-soft text-primary-ink` 也判红——而那一对恰恰是**对的**
+        // 配色（--primary-soft 暗色下是极深的橙底，--primary-ink 是亮橙字）。
+        // 要抓的只有实心主色填充：`bg-primary` 本身与 `bg-primary/90` 这类透明度变体。
+        // 判据太宽会误伤，太窄会漏，两边都是 predicate-and-wiring-discipline 形状 1。
+        if (/\bbg-primary(?![\w-])/.test(chunk) && /\btext-primary-ink\b/.test(chunk)) {
+          bad.push(`${path.relative(SRC, file)}: ${chunk.trim().slice(0, 80)}`);
+        }
+      }
+    }
+    expect(bad, `改用 text-primary-foreground：\n${bad.join('\n')}`).toEqual([]);
+  });
+
+  /**
    * 中性色（stone / slate / zinc / gray / neutral / bg-white）此前不在守卫范围里 ——
    * 判据太窄（predicate-and-wiring-discipline 形状 1）。真实事故：2026-08-25 用户报
    * 「接入 Agent 的上手助手在黑色皮肤下看不清」，根因是 AgentStarterTab 整块写死
@@ -131,4 +160,113 @@ describe('状态色只走 token，不再硬编码调色板', () => {
       expect(count, `--${token} 应在 dark 与 light 各定义一次，实际 ${count} 次`).toBe(2);
     }
   });
+});
+
+
+describe('左栏当前页：一处强调，且不许退回淡底橙字', () => {
+  /*
+   * 这条规则被手工断言过三次（2026-08-31 定实心底、2026-09-01 调尺度、
+   * 2026-09-02 改竖条），属于「改完页面照样渲染、没人会发现」的那一类。
+   *
+   * 三代演进，两个都被否掉的档要一起钉住：
+   *   一代「淡橙底 + 橙字」——白天 4.25:1，比未选中的 4.72:1 还低，选中项反而最弱。
+   *   二代「整项实心橙 + 反色墨」——数值没问题（白天 5.13、暗色 7.67），
+   *        问题是主色铺了约 3400px²，一个只表示「你在这」的指示物
+   *        抢在页面所有真正的操作前面；底部「接入 Agent」又是第二块橙。
+   *   三代（现行）「竖条 + 抬升底 + 主色图标 + 满墨标签」——主色约 60px²，
+   *        且是全栏唯一的彩色。
+   *
+   * 判据分三半：接线（竖条 + 抬升底 + 主色图标 + 满墨标签）、
+   * 唯一性（栏里不许有第二处主色文字）、数值（图标与标签都过 AA，
+   * 且都高于被否掉的淡底档；竖条按非文字构件的 3:1 判）。
+   * 红绿闭环见每条用例。
+   */
+  const css = strip(CSS);
+
+  const themeBlock = (selector: string): string => {
+    const at = css.indexOf(selector);
+    if (at < 0) throw new Error(`找不到主题块 ${selector}`);
+    const open = css.indexOf('{', at);
+    return css.slice(open, css.indexOf('\n  }', open));
+  };
+
+  const token = (block: string, name: string): [number, number, number] => {
+    const m = block.match(new RegExp(`--${name}:\\s*([\\d.]+)\\s+([\\d.]+)%\\s+([\\d.]+)%`));
+    if (!m) throw new Error(`${name} 没在这个主题块里定义`);
+    return [Number(m[1]), Number(m[2]) / 100, Number(m[3]) / 100];
+  };
+
+  const luminance = ([h, s, l]: [number, number, number]): number => {
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = l - c / 2;
+    const seg = Math.floor(h / 60) % 6;
+    const rgb = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][seg]
+      .map((v) => v + m)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  };
+
+  const ratio = (a: [number, number, number], b: [number, number, number]): number => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100;
+  };
+
+  const ruleAt = (selector: string): string => {
+    const at = css.indexOf(selector);
+    expect(at, `找不到这条规则（选择器变了？）：${selector}`).toBeGreaterThan(-1);
+    return css.slice(at, css.indexOf('}', at));
+  };
+
+  /*
+   * 红绿闭环：把选中态改回 `background-color: hsl(var(--primary-ink))`，
+   * 本条报 `expected '…' to contain 'background-color: hsl(var(--surface-raised))'`。
+   */
+  it('接线：抬升底 + 主色图标 + 一根主色竖条 + 满墨标签', () => {
+    const active = ruleAt(".cds-rail .cds-rail-item[data-active='true'] {");
+    expect(active).toContain('background-color: hsl(var(--surface-raised))');
+    expect(active).toContain('color: hsl(var(--primary-ink))');
+    // 一代那个淡底档不许再出现
+    expect(active).not.toContain('primary-soft');
+
+    const bar = ruleAt(".cds-rail .cds-rail-item[data-active='true']::before {");
+    expect(bar, '竖条没了，「我在哪」就只剩底色差').toContain('background-color: hsl(var(--primary-ink))');
+
+    // 标签必须显式转满墨：item 现在是主色，标签跟着继承就正好落回一代那个被否掉的档。
+    const label = ruleAt(".cds-rail .cds-rail-item[data-active='true'] > .cds-rail-short {");
+    expect(label).toContain('color: hsl(var(--foreground))');
+    expect(label).not.toContain('primary-ink');
+  });
+
+  /*
+   * 「两个橙在抢」是这次改版的头号诉求，而它天然会复发：
+   * .cds-agent-access-entry 的基础规则本来就写着 `color: primary-ink !important`，
+   * 谁把栏里这条覆盖删掉，橙字就自己回来了，页面照常渲染、别的用例全绿。
+   * 红绿闭环：删掉 `.cds-rail .cds-agent-access-entry` 那条，本条报找不到规则。
+   */
+  it('唯一性：栏里只有当前页用主色，接入 Agent 不再是第二块橙', () => {
+    const entry = ruleAt('.cds-rail .cds-agent-access-entry {');
+    expect(entry, '接入 Agent 在栏里必须显式转中性，否则基础规则的橙字会漏出来')
+      .toContain('color: hsl(var(--foreground-muted))');
+    expect(entry).not.toContain('color: hsl(var(--primary-ink))');
+  });
+
+  for (const theme of ["[data-theme='dark']", "[data-theme='light']"]) {
+    it(`数值：${theme} 下图标与标签都过 AA，竖条过非文字的 3:1`, () => {
+      const block = themeBlock(theme);
+      const idle = ratio(token(block, 'foreground-muted'), token(block, 'surface-sunken'));
+      const icon = ratio(token(block, 'primary-ink'), token(block, 'surface-raised'));
+      const label = ratio(token(block, 'foreground'), token(block, 'surface-raised'));
+      const bar = ratio(token(block, 'primary-ink'), token(block, 'surface-sunken'));
+      const rejected = ratio(token(block, 'primary-ink'), token(block, 'primary-soft'));
+
+      expect(idle, `未选中项对栏底只有 ${idle}:1`).toBeGreaterThanOrEqual(4.5);
+      expect(icon, `选中态图标只有 ${icon}:1，没过 AA`).toBeGreaterThanOrEqual(4.5);
+      expect(label, `选中态标签只有 ${label}:1，没过 AA`).toBeGreaterThanOrEqual(4.5);
+      // 竖条是构件不是文字，判据是 WCAG 1.4.11 的 3:1。
+      expect(bar, `竖条对栏底只有 ${bar}:1，非文字构件也要 3:1`).toBeGreaterThanOrEqual(3);
+      expect(icon, `选中图标 ${icon}:1 并不比被否掉的淡底档 ${rejected}:1 更清楚`)
+        .toBeGreaterThan(rejected);
+    });
+  }
 });

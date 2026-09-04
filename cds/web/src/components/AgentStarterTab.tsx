@@ -1,10 +1,14 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Ban,
+  Braces,
   BriefcaseBusiness,
   Check,
+  ChevronDown,
+  ChevronUp,
   ClipboardCopy,
   Code2,
   Download,
@@ -13,11 +17,14 @@ import {
   Layers3,
   PackageCheck,
   RefreshCw,
+  Search,
+  Server,
   Sparkles,
   UserRound,
   WandSparkles,
+  X,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AGENT_EXPERIENCE_PROFILES,
   AGENT_ROLE_PROFILES,
@@ -36,7 +43,41 @@ interface AgentStarterTabProps {
   cdsPrompt: string
   /** 目标项目 id；为空表示还没选定既有项目，此时不上报角色。 */
   projectId?: string
+  /** 切到同一个弹窗的技能市场 tab。缺省时来源面板不显示那个入口，不给死链。 */
+  onOpenMarketplace?: () => void
+  /**
+   * 这个 tab 当前是不是被选中的那个。
+   *
+   * 决定要不要挂 `data-agent-starter`——`≤640px` 的整套移动端样式靠
+   * `:has([data-agent-starter='true'])` 生效，其中一条把弹窗的 tab 导航整个
+   * `display:none`。切走时组件只藏不卸（为了保住向导状态），属性若跟着留在
+   * DOM 里，那条规则照样命中：手机上进了技能市场就没有导航能切回来，只能关掉
+   * 弹窗——而关掉正好丢掉那份要保住的状态。缺省 true，独立使用时行为不变。
+   */
+  active?: boolean
 }
+
+/**
+ * 服务端 `/api/skills/bundles` 的来源自述，字段与
+ * `cds/src/services/skill-proxy.ts` 的 `StarterBundleSource` 对齐。
+ * 这里不重复定义业务含义，只声明前端要渲染的形状。
+ */
+export interface SkillSourceInfo {
+  kind: string
+  bundleCount: number
+  skillCount: number
+  localSkillCount: number
+  /** 本机目录没有、但缓存里有现成包——同样断网可装，不许并进「要回源」。 */
+  cachedSkillCount: number
+  upstreamSkillCount: number
+  upstreamConfigured: boolean
+}
+
+/** loading 还在读；ok 读到了真实清单；fallback 读不到，页面在用内置兜底清单。 */
+export type SkillSourceState = 'loading' | 'ok' | 'fallback'
+
+/** 技能库里代表「不分类，全都列出来」的伪分组 key。 */
+export const ALL_SKILL_GROUP = '__all__'
 
 interface StarterSkill {
   key: string
@@ -108,6 +149,70 @@ function normalizeSkills(payload: unknown): StarterSkill[] {
   return results
 }
 
+/**
+ * 读出清单的来源自述。
+ *
+ * 缺字段就返回 null，让面板说「这台 CDS 没报出来源」——**不要**用 0 兜底：
+ * 「本机自带 0 个技能」和「不知道有几个」是两件完全不同的事，
+ * 后者被显示成前者就是在编（见 no-rootless-tree）。
+ */
+export function normalizeSkillSource(payload: unknown): SkillSourceInfo | null {
+  const value = payload as any
+  const raw = value?.data?.source ?? value?.source
+  if (!raw || typeof raw !== 'object') return null
+  const num = (input: unknown): number | null =>
+    typeof input === 'number' && Number.isFinite(input) && input >= 0 ? input : null
+  const bundleCount = num(raw.bundleCount)
+  const skillCount = num(raw.skillCount)
+  const localSkillCount = num(raw.localSkillCount)
+  const cachedSkillCount = num(raw.cachedSkillCount)
+  const upstreamSkillCount = num(raw.upstreamSkillCount)
+  if (bundleCount === null || skillCount === null || localSkillCount === null
+    || cachedSkillCount === null || upstreamSkillCount === null) {
+    return null
+  }
+  return {
+    kind: typeof raw.kind === 'string' ? raw.kind : 'unknown',
+    bundleCount,
+    skillCount,
+    localSkillCount,
+    cachedSkillCount,
+    upstreamSkillCount,
+    upstreamConfigured: raw.upstreamConfigured === true,
+  }
+}
+
+export interface SkillSelectionSummary {
+  total: number
+  /** 其中有几项是打开技能库之前就选好的（角色推荐 + 用户先前的取舍）。 */
+  kept: number
+  /** 这次在技能库里新加的。用来给卡片打「刚加上」，让改动看得见。 */
+  added: number
+  /** 这次在技能库里去掉的。数字变小时得说清是被减了，不能只报总数。 */
+  removed: number
+}
+
+/**
+ * 汇总「打开技能库前后」的差异。抽成纯函数是为了它能被单测直接钉住：
+ * 底栏那行字是用户判断「我刚才干了什么」的唯一依据，不能只在渲染里算。
+ */
+export function summarizeSkillSelection(input: {
+  selected: readonly string[]
+  openedWith: readonly string[]
+}): SkillSelectionSummary {
+  const before = new Set(input.openedWith)
+  const now = new Set(input.selected)
+  let kept = 0
+  let added = 0
+  for (const key of now) {
+    if (before.has(key)) kept += 1
+    else added += 1
+  }
+  let removed = 0
+  for (const key of before) if (!now.has(key)) removed += 1
+  return { total: now.size, kept, added, removed }
+}
+
 function downloadText(filename: string, content: string) {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)
@@ -118,7 +223,7 @@ function downloadText(filename: string, content: string) {
   URL.revokeObjectURL(url)
 }
 
-export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) {
+export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, active = true }: AgentStarterTabProps) {
   const reduceMotion = useReducedMotion()
   const [step, setStep] = useState(0)
   // 角色和经验档走共享 store：任务地图、项目卡都读同一个值，
@@ -134,11 +239,21 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
     setRoleSelection({ ...roleSelection, roleId: next, declared: true })
   const [skills, setSkills] = useState<StarterSkill[]>(FALLBACK_SKILLS)
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
-  const [showSkillLibrary, setShowSkillLibrary] = useState(false)
-  const [activeSkillGroup, setActiveSkillGroup] = useState('foundation')
+  // 用户有没有亲手改过技能选择（勾选/取消/在技能库里完成选择）。
+  const skillsCustomizedRef = useRef(false)
+  // 技能库是覆盖在推荐页之上的一层浮层，不是把推荐页换掉。
+  // openedWith 记下打开那一刻的选择：「放弃这次改动」据它还原，
+  // 「刚加上」标签据它计算——没有它，用户在库里点完就再也说不清自己改了什么。
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  const [libraryOpenedWith, setLibraryOpenedWith] = useState<string[]>([])
+  const [librarySearch, setLibrarySearch] = useState('')
+  const [activeSkillGroup, setActiveSkillGroup] = useState(ALL_SKILL_GROUP)
   const [includeCds, setIncludeCds] = useState(true)
   const [copied, setCopied] = useState(false)
   const [showDecisionCard, setShowDecisionCard] = useState(false)
+  const [showSkillSource, setShowSkillSource] = useState(false)
+  const [skillSource, setSkillSource] = useState<SkillSourceInfo | null>(null)
+  const [skillSourceState, setSkillSourceState] = useState<SkillSourceState>('loading')
   const [profileSync, setProfileSync] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   // 记下这条状态是给哪个项目写的：完成屏上还能换项目，换掉之后
   //「已记到项目」就不再成立，不能让它继续挂在新项目名下。
@@ -149,19 +264,36 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
     () => String(import.meta.env.VITE_PRD_AGENT_BASE_URL || '').trim(),
   )
 
+  // 读清单的结果要留痕：读到了什么、有没有读到，「技能来源」面板拿它回答用户。
+  // 原来读失败是静默换成兜底清单的——用户看到的是一份缩水的技能库，
+  // 却没有任何地方告诉他这不是完整的那份。
+  const mounted = useRef(true)
   useEffect(() => {
-    let active = true
-    fetch('/api/skills/bundles')
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error('skills unavailable')))
-      .then((payload) => {
-        const remoteSkills = normalizeSkills(payload)
-        if (active && remoteSkills.length > 0) setSkills(remoteSkills)
-      })
-      .catch(() => {
-        if (active) setSkills(FALLBACK_SKILLS)
-      })
-    return () => { active = false }
+    mounted.current = true
+    return () => { mounted.current = false }
   }, [])
+
+  const loadSkillBundles = useCallback(async () => {
+    setSkillSourceState('loading')
+    try {
+      const response = await fetch('/api/skills/bundles')
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const payload = await response.json()
+      const remoteSkills = normalizeSkills(payload)
+      if (remoteSkills.length === 0) throw new Error('empty bundles')
+      if (!mounted.current) return
+      setSkills(remoteSkills)
+      setSkillSource(normalizeSkillSource(payload))
+      setSkillSourceState('ok')
+    } catch {
+      if (!mounted.current) return
+      setSkills(FALLBACK_SKILLS)
+      setSkillSource(null)
+      setSkillSourceState('fallback')
+    }
+  }, [])
+
+  useEffect(() => { void loadSkillBundles() }, [loadSkillBundles])
 
   useEffect(() => {
     let active = true
@@ -183,14 +315,60 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
     () => skills.filter((skill) => skill.roles.length === 0 || skill.roles.includes(roleId)),
     [roleId, skills],
   )
+  // 分类带条数：用户要先知道「这一类有多少」才决定点不点进去，
+  // 光给类名等于让他一类一类试。第一项是「全部」，默认落在它上面。
   const skillGroups = useMemo(() => {
-    const groups = new Map<string, string>()
-    for (const skill of availableSkills) groups.set(skill.groupKey, skill.groupLabel)
-    return [...groups].map(([key, label]) => ({ key, label }))
+    const counts = new Map<string, { label: string; count: number }>()
+    for (const skill of availableSkills) {
+      const current = counts.get(skill.groupKey)
+      if (current) current.count += 1
+      else counts.set(skill.groupKey, { label: skill.groupLabel, count: 1 })
+    }
+    return [
+      { key: ALL_SKILL_GROUP, label: '全部技能', count: availableSkills.length },
+      ...[...counts].map(([key, value]) => ({ key, label: value.label, count: value.count })),
+    ]
   }, [availableSkills])
-  const activeGroupSkills = availableSkills.filter((skill) => skill.groupKey === activeSkillGroup)
+
+  const librarySkills = useMemo(() => {
+    const query = librarySearch.trim().toLowerCase()
+    return availableSkills.filter((skill) => {
+      if (activeSkillGroup !== ALL_SKILL_GROUP && skill.groupKey !== activeSkillGroup) return false
+      if (!query) return true
+      return `${skill.name} ${skill.description} ${skill.key}`.toLowerCase().includes(query)
+    })
+  }, [activeSkillGroup, availableSkills, librarySearch])
+
+  const recommendedKeys = useMemo(() => recommendedSkills.map((skill) => skill.key), [recommendedSkills])
+
+  // 来源面板按**整份清单**分类，不按角色筛过的那份：面板上写着「4 类 · 22 个技能」，
+  // 底下的分类条数就必须加起来也是 22。拿 availableSkills 算会得到 18，
+  // 同一块面板里两个数对不上，用户只会以为哪个错了。
+  const catalogGroups = useMemo(() => {
+    const counts = new Map<string, { label: string; count: number }>()
+    for (const skill of skills) {
+      const current = counts.get(skill.groupKey)
+      if (current) current.count += 1
+      else counts.set(skill.groupKey, { label: skill.groupLabel, count: 1 })
+    }
+    return [...counts].map(([key, value]) => ({ key, label: value.label, count: value.count }))
+  }, [skills])
+
+  /*
+   * 按角色铺推荐，但不许冲掉用户已经改过的选择。
+   *
+   * 这个 effect 原来只依赖 recommendedSkills，而它在两种情况下都会变：换角色
+   * （该重铺）和清单本身重新加载（不该重铺）。后者包括「读不到清单 → 用兜底
+   * 清单配好 → 点重新读一次 → 成功」这条路——重试按钮就开在完成页，冲掉等于
+   * 把用户刚配好、还没抄走的东西悄悄换掉。所以用 ref 记住「他自己动过手」。
+   */
+  useEffect(() => {
+    // 换角色是用户自己的动作，重铺推荐符合预期，定制标记跟着归零。
+    skillsCustomizedRef.current = false
+  }, [roleId])
 
   useEffect(() => {
+    if (skillsCustomizedRef.current) return
     setSelectedSkills(recommendedSkills.map((skill) => skill.key))
   }, [recommendedSkills])
 
@@ -230,6 +408,57 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
     setCopied(false)
     setStep(nextStep)
   }
+
+  const toggleSkill = (key: string): void => {
+    skillsCustomizedRef.current = true
+    setSelectedSkills((current) => (
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]))
+  }
+
+  const openSkillLibrary = (): void => {
+    setLibraryOpenedWith(selectedSkills)
+    setLibrarySearch('')
+    setActiveSkillGroup(ALL_SKILL_GROUP)
+    setLibraryOpen(true)
+  }
+
+  // 放弃这次改动 = 还原成打开浮层那一刻的选择。没有这条路，用户在库里点花了
+  // 就只能一个个点回去，而他根本不记得原来选的是哪几个。
+  const cancelSkillLibrary = (): void => {
+    setSelectedSkills(libraryOpenedWith)
+    setLibraryOpen(false)
+  }
+
+  // 完成页的两块展开区互斥：同时展开会把主操作挤出可视区（那正是决策卡
+  // 当初要「固定操作区 + 可滚预览区」的原因），两块一起来照样会撞上。
+  const toggleDecisionCard = (): void => {
+    setShowSkillSource(false)
+    setShowDecisionCard((value) => !value)
+  }
+  const toggleSkillSource = (): void => {
+    setShowDecisionCard(false)
+    setShowSkillSource((value) => !value)
+  }
+
+  const completionExpanded = showDecisionCard || showSkillSource
+  const skillLibraryOpen = step === 2 && libraryOpen
+  const panelTall = completionExpanded || skillLibraryOpen
+
+  /*
+   * 技能库开着时，把被它盖住的那一屏整块设为 inert。
+   *
+   * 不设的话键盘用户能 Tab 到被盖住的「确认这些技能」并按下去——浮层还开着，
+   * 向导却前进了。那等于本 PR 声明的「出口固定为关闭/放弃/完成三个」之外，
+   * 多出第四个看不见的出口，正好推翻这次要修的东西。
+   *
+   * 走 DOM 属性而不是 JSX prop：React 18 不认识 inert（19 才支持），写成 prop
+   * 会被当未知属性并告警。
+   */
+  const stepContentRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = stepContentRef.current
+    if (el) el.inert = skillLibraryOpen
+  }, [skillLibraryOpen])
 
   // 生成上手包 = 用户确认了这套配置，此时把角色声明记到项目上，
   // 让 CDS 侧也知道这个项目的 Agent 以什么角色在跑（此前只写进仓库文件，无人读取）。
@@ -271,14 +500,14 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
 
   return (
     <div
-      data-agent-starter="true"
+      data-agent-starter={active ? 'true' : undefined}
       /*
        * 展开决策卡时面板长高一档：12 段清单在 560px 里只能分到几十像素。
        * max-h 必须按**弹窗内的可用高度**算，不是按视口：弹窗自己是 90vh，
        * 其上还有标题、目标选择和 tab 条约 220px。原来写的 calc(100vh-190px)
        * 根本不生效，760px 直接捅出弹窗底 74px（真机量出来的）。
        */
-      className={`flex max-h-[calc(90vh-224px)] min-h-[420px] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_20px_70px_rgba(0,0,0,0.18)] transition-[height] duration-200 ${showDecisionCard ? 'h-[760px]' : 'h-[560px]'}`}
+      className={`relative flex max-h-[calc(90vh-224px)] min-h-[420px] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_20px_70px_rgba(0,0,0,0.18)] transition-[height] duration-200 ${panelTall ? 'h-[760px]' : 'h-[560px]'}`}
     >
       <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-7 py-5">
         <div className="flex items-start justify-between gap-6">
@@ -299,7 +528,7 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
         </div>
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden px-7 py-6">
+      <div ref={stepContentRef} className="relative min-h-0 flex-1 overflow-hidden px-7 py-6">
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.section
             key={step}
@@ -350,68 +579,65 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
               </>
             )}
 
+            {/*
+              * 这一屏只有一种形态：角色推荐 + 一个「确认这些技能」。
+              *
+              * 原来它有两种形态，靠 showSkillLibrary 原地互换：进技能库时推荐的技能
+              * 被整片换掉，主按钮被那个开关条件渲染掉，出口只剩一个和入口同款同位的
+              * 次要按钮。三件事叠起来，用户在这一屏找不到任何前进的路，只能兜圈子。
+              * 技能库因此改成浮层：推荐页原样留在底下，出口是关闭 / 放弃 / 完成
+              * 三个大家都认识的动作。守卫见 tests/web/agent-starter-skill-library-contract。
+              */}
             {step === 2 && (
               <>
                 <StepHeading
                   number="03"
-                  title={showSkillLibrary ? '再加一些工作方法' : '带上哪些工作方法？'}
-                  description={showSkillLibrary ? '每次只看一类，选完返回推荐页，不需要一次读完所有技能。' : '已经按你的角色选好。可以取消，也可以按类别增加更多技能。'}
+                  title="带上哪些工作方法？"
+                  description="已经按你的角色选好。可以取消，也可以打开技能库按类别增加更多。"
                 />
-                {showSkillLibrary && (
-                  <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="技能分类">
-                    {skillGroups.map((group) => (
-                      <button
-                        key={group.key}
-                        type="button"
-                        role="tab"
-                        aria-selected={activeSkillGroup === group.key}
-                        onClick={() => setActiveSkillGroup(group.key)}
-                        className={`rounded-full px-4 py-2 text-xs font-bold transition-colors ${activeSkillGroup === group.key ? 'bg-foreground text-background' : 'border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-muted-foreground hover:border-[hsl(var(--hairline-strong))]'}`}
-                      >
-                        {group.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div className="mt-4 grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-y-auto pr-1 lg:grid-cols-3">
-                  {(showSkillLibrary ? activeGroupSkills : recommendedSkills).map((skill) => {
-                    const selected = selectedSkills.includes(skill.key)
-                    return (
-                      <button
-                        key={skill.key}
-                        type="button"
-                        onClick={() => setSelectedSkills((current) => selected ? current.filter((key) => key !== skill.key) : [...current, skill.key])}
-                        className={`group relative rounded-xl border p-4 text-left transition-all ${selected ? 'border-warn bg-warn-soft text-foreground shadow-[0_8px_24px_rgba(194,91,33,0.12)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-foreground hover:border-[hsl(var(--hairline-strong))]'}`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <PackageCheck className={`h-5 w-5 ${selected ? 'text-warn' : 'text-muted-foreground'}`} />
-                          <span className={`grid h-5 w-5 place-items-center rounded-full border ${selected ? 'border-warn bg-warn text-status-ink' : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]'}`}>
-                            {selected && <Check className="h-3.5 w-3.5" />}
-                          </span>
-                        </div>
-                        <div className="mt-3 text-sm font-bold">{skill.name}</div>
-                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{skill.description}</p>
-                      </button>
-                    )
-                  })}
+                <div className="mt-4 grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+                  {/* 这一屏每张卡都是角色推荐的，再逐张打「角色推荐」标签是噪音；
+                      那个标签只在技能库里有意义——那里推荐和非推荐混在一起。 */}
+                  {recommendedSkills.map((skill) => (
+                    <SkillCard
+                      key={skill.key}
+                      skill={skill}
+                      selected={selectedSkills.includes(skill.key)}
+                      onToggle={() => toggleSkill(skill.key)}
+                    />
+                  ))}
                 </div>
-                <div className="mt-4 flex items-center justify-between border-t border-[hsl(var(--hairline))] pt-4">
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-muted-foreground">已选择 {selectedSkills.length} 项</span>
+                {/*
+                  * 返回按钮在这一屏走行内，不用面板底部那个绝对定位的。
+                  * 那个按钮固定在 bottom-5 left-8，而这一屏的底栏是最后一个流式子元素，
+                  * 两者正好叠在一起——「返回」压着「已选择 N 项」。步骤 02 是靠网格
+                  * 的 pb-14 给它让位的，这一屏没有任何东西让位。
+                  */}
+                {/*
+                  * shrink-0：底栏是这一屏唯一的前进出口，绝不允许被上面的卡片区压缩。
+                  * 窄屏排成两行——次要动作一行、主操作独占一行满宽。挤在一行时
+                  * 「已选择 6 项」会折成两行、次要的「打开技能库」反而比主操作还大，
+                  * 主次颠倒（真机 390px 量出来的）。
+                  */}
+                <div className="mt-4 flex shrink-0 flex-col gap-3 border-t border-[hsl(var(--hairline))] pt-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2 sm:gap-3">
                     <button
                       type="button"
-                      onClick={() => {
-                        if (!showSkillLibrary && !skillGroups.some((group) => group.key === activeSkillGroup)) {
-                          setActiveSkillGroup(skillGroups[0]?.key ?? 'foundation')
-                        }
-                        setShowSkillLibrary((value) => !value)
-                      }}
-                      className="rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm font-bold text-foreground hover:border-[hsl(var(--hairline-strong))]"
+                      onClick={() => advance(1)}
+                      className="inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
                     >
-                      {showSkillLibrary ? '返回角色推荐' : `选择更多技能（共 ${availableSkills.length} 项）`}
+                      <ArrowLeft className="h-4 w-4" /> 返回
+                    </button>
+                    <span className="whitespace-nowrap text-sm font-medium text-muted-foreground">已选择 {selectedSkills.length} 项</span>
+                    <button
+                      type="button"
+                      onClick={openSkillLibrary}
+                      className="shrink-0 whitespace-nowrap rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm font-bold text-foreground hover:border-[hsl(var(--hairline-strong))]"
+                    >
+                      打开技能库<span className="hidden sm:inline">（共 {availableSkills.length} 项）</span><span className="sm:hidden">（{availableSkills.length}）</span>
                     </button>
                   </div>
-                  {!showSkillLibrary && <PrimaryNext onClick={() => advance(3)}>确认这些技能</PrimaryNext>}
+                  <PrimaryNext onClick={() => advance(3)} className="w-full sm:w-auto">确认这些技能</PrimaryNext>
                 </div>
               </>
             )}
@@ -440,8 +666,8 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                     </div>
                   </button>
                 </div>
-                <div className="mt-4 flex justify-end border-t border-[hsl(var(--hairline))] pt-4">
-                  <PrimaryNext onClick={() => { advance(4); syncAgentProfile(projectId) }}>生成我的上手包</PrimaryNext>
+                <div className="mt-4 flex shrink-0 justify-end border-t border-[hsl(var(--hairline))] pt-4">
+                  <PrimaryNext onClick={() => { advance(4); syncAgentProfile(projectId) }} className="w-full sm:w-auto">生成我的上手包</PrimaryNext>
                 </div>
               </>
             )}
@@ -454,13 +680,13 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
              */}
             {step === 4 && (
               <div className="flex h-full min-h-0 flex-col">
-                <div className={`flex shrink-0 flex-col items-center text-center ${showDecisionCard ? 'pt-1' : 'my-auto py-2'}`}>
-                {!showDecisionCard && (
+                <div className={`flex shrink-0 flex-col items-center text-center ${completionExpanded ? 'pt-1' : 'my-auto py-2'}`}>
+                {!completionExpanded && (
                   <motion.div initial={reduceMotion ? false : { scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="grid h-14 w-14 place-items-center rounded-2xl bg-foreground text-background shadow-xl">
                     <Check className="h-7 w-7" />
                   </motion.div>
                 )}
-                {!showDecisionCard && (
+                {!completionExpanded && (
                   <button
                     type="button"
                     onClick={() => setStep(3)}
@@ -470,13 +696,13 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                     返回修改
                   </button>
                 )}
-                <h4 className={showDecisionCard ? 'text-base font-bold tracking-tight' : 'mt-5 text-2xl font-bold tracking-tight'}>
+                <h4 className={completionExpanded ? 'text-base font-bold tracking-tight' : 'mt-5 text-2xl font-bold tracking-tight'}>
                   你的 Agent 上手包已经配好
                 </h4>
-                {!showDecisionCard && (
+                {!completionExpanded && (
                   <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">{selectedSkills.length} 项工作方法{includeCds ? '，另含 CDS 接入与真实预览能力' : ''}。复制后直接发给项目里的 Agent。</p>
                 )}
-                <p className={`text-xs text-muted-foreground ${showDecisionCard ? 'sr-only' : 'mt-2'}`} aria-live="polite">
+                <p className={`text-xs text-muted-foreground ${completionExpanded ? 'sr-only' : 'mt-2'}`} aria-live="polite">
                   {!projectId
                     ? `还没有选定项目，角色「${roleProfile.label}」只写进项目里的长期规则，CDS 这边暂不记录。等 Agent 把项目建好，回到这一步再生成一次就会记上。`
                     : null}
@@ -516,14 +742,14 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                     boxShadow: ['0 16px 45px rgba(194,91,33,0.22)', '0 22px 60px rgba(194,91,33,0.38)', '0 16px 45px rgba(194,91,33,0.22)'],
                   }}
                   transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-                  className={`flex min-w-[300px] items-center justify-center gap-3 rounded-2xl px-8 font-bold transition-colors ${showDecisionCard ? 'mt-4 py-3 text-sm' : 'mt-7 py-4 text-base'} ${copied ? 'bg-ok text-status-ink' : 'agent-starter-copy bg-warn hover:bg-warn'}`}
+                  className={`flex min-w-[300px] items-center justify-center gap-3 rounded-2xl px-8 font-bold transition-colors ${completionExpanded ? 'mt-4 py-3 text-sm' : 'mt-7 py-4 text-base'} ${copied ? 'bg-ok text-status-ink' : 'agent-starter-copy bg-warn hover:bg-warn'}`}
                 >
                   {copied ? <Check className="h-5 w-5" /> : <ClipboardCopy className="h-5 w-5" />}
                   {copied ? '已复制，现在交给 Agent' : '复制启动提示词'}
                   {!copied && <ArrowRight className="h-5 w-5" />}
                 </motion.button>
 
-                <div className={`flex items-center gap-3 ${showDecisionCard ? 'mt-3' : 'mt-5'}`}>
+                <div className={`flex flex-wrap items-center justify-center gap-3 ${completionExpanded ? 'mt-3' : 'mt-5'}`}>
                   <button type="button" onClick={() => downloadText('cds-agent-starter.sh', harness)} className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]">
                     <Download className="h-4 w-4" /> 下载一键脚本
                   </button>
@@ -537,15 +763,31 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowDecisionCard((value) => !value)}
+                    onClick={toggleDecisionCard}
                     aria-expanded={showDecisionCard}
                     className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]"
                   >
                     <FileText className="h-4 w-4" /> {showDecisionCard ? '收起' : '预览'}「{roleProfile.cardTitle}」
                   </button>
-                  <a href={`${serviceOrigin}/api/skills/bundles`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground">
-                    查看技能来源 <ArrowRight className="h-4 w-4" />
-                  </a>
+                  {/*
+                    * 原来这里是一个直接指向 /api/skills/bundles 的外链——点一下把接口的
+                    * 裸 JSON 甩给用户。用户问的不是「响应体长什么样」，是「这些技能哪来的、
+                    * 是不是完整的、我还能不能装」。所以改成就地展开一块面板来回答，
+                    * 原始 JSON 降级成面板角落里给排障用的小入口。
+                    */}
+                  <button
+                    type="button"
+                    onClick={toggleSkillSource}
+                    aria-expanded={showSkillSource}
+                    className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold ${showSkillSource ? 'border-warn bg-warn-soft text-warn' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-foreground hover:border-[hsl(var(--hairline-strong))]'}`}
+                  >
+                    <Server className="h-4 w-4" />
+                    技能来源
+                    {skillSourceState === 'fallback' && (
+                      <span className="rounded-full bg-warn px-1.5 py-0.5 text-[10px] font-bold text-status-ink">读不到</span>
+                    )}
+                    {showSkillSource ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </button>
                 </div>
 
                 </div>
@@ -555,17 +797,54 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                     <DecisionCardPreview model={decisionCardModel} />
                   </div>
                 )}
+
+                {showSkillSource && (
+                  <div className="mt-3 flex min-h-[220px] flex-1 justify-center overflow-hidden pb-1">
+                    <SkillSourcePanel
+                      state={skillSourceState}
+                      source={skillSource}
+                      groups={catalogGroups}
+                      roleLabel={roleProfile.label}
+                      roleSkillCount={availableSkills.length}
+                      fallbackCount={FALLBACK_SKILLS.length}
+                      rawUrl={`${serviceOrigin}/api/skills/bundles`}
+                      onRetry={() => { void loadSkillBundles() }}
+                      onOpenMarketplace={onOpenMarketplace}
+                    />
+                  </div>
+                )}
               </div>
             )}
           </motion.section>
         </AnimatePresence>
       </div>
 
-      {step > 0 && step < 4 && (
+      {/* 步骤 03 的返回在它自己的底栏里（见上），这里排除它，否则两个返回并存。 */}
+      {step > 0 && step < 4 && step !== 2 && (
         <div className="absolute bottom-5 left-8">
           <button type="button" onClick={() => advance(step - 1)} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground">
             <ArrowLeft className="h-4 w-4" /> 返回
           </button>
+        </div>
+      )}
+
+      {skillLibraryOpen && (
+        <div className="absolute inset-0 z-20 flex flex-col bg-[hsl(var(--surface-sunken)/0.78)] p-3 sm:p-5">
+          <SkillLibrarySheet
+            groups={skillGroups}
+            activeGroup={activeSkillGroup}
+            onActiveGroup={setActiveSkillGroup}
+            query={librarySearch}
+            onQuery={setLibrarySearch}
+            visibleSkills={librarySkills}
+            totalCount={availableSkills.length}
+            selectedKeys={selectedSkills}
+            openedWith={libraryOpenedWith}
+            recommendedKeys={recommendedKeys}
+            onToggle={toggleSkill}
+            onCancel={cancelSkillLibrary}
+            onDone={() => setLibraryOpen(false)}
+          />
         </div>
       )}
     </div>
@@ -643,6 +922,369 @@ function DecisionCardPreview({ model }: { model: AgentDecisionCardModel }) {
   )
 }
 
+/**
+ * 一张技能卡。推荐页和技能库共用同一张——同一件事写成两份，早晚只改一边。
+ */
+export function SkillCard({ skill, selected, recommended, justAdded, onToggle }: {
+  skill: { key: string; name: string; description: string }
+  selected: boolean
+  recommended?: boolean
+  justAdded?: boolean
+  onToggle: () => void
+}) {
+  // data-skill-card 是守卫锚点：技能卡的填充必须和它背后的内容区分层（见同名契约
+  // 测试）。用属性钉身份，免得守卫去猜「第几个 aria-pressed 按钮才是卡片」。
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={selected}
+      data-skill-card={selected ? 'selected' : 'default'}
+      className={`group relative rounded-xl border p-4 text-left transition-all ${selected ? 'border-warn bg-warn-soft text-foreground shadow-[0_8px_24px_rgba(194,91,33,0.12)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-foreground hover:border-[hsl(var(--hairline-strong))]'}`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <PackageCheck className={`h-5 w-5 ${selected ? 'text-warn' : 'text-muted-foreground'}`} />
+        <span className={`grid h-5 w-5 place-items-center rounded-full border ${selected ? 'border-warn bg-warn text-status-ink' : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]'}`}>
+          {selected && <Check className="h-3.5 w-3.5" />}
+        </span>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <span className="text-sm font-bold">{skill.name}</span>
+        {justAdded && (
+          <span className="rounded-full border border-ok bg-ok-soft px-1.5 py-px text-[10px] font-bold text-ok">刚加上</span>
+        )}
+        {!justAdded && recommended && (
+          <span className="rounded-full bg-warn px-1.5 py-px text-[10px] font-bold text-status-ink">角色推荐</span>
+        )}
+      </div>
+      <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{skill.description}</p>
+    </button>
+  )
+}
+
+export interface SkillLibrarySheetProps {
+  groups: readonly { key: string; label: string; count: number }[]
+  activeGroup: string
+  onActiveGroup: (key: string) => void
+  query: string
+  onQuery: (value: string) => void
+  visibleSkills: readonly StarterSkill[]
+  totalCount: number
+  selectedKeys: readonly string[]
+  /** 打开浮层那一刻的选择，用来算「刚加上」和支撑「放弃这次改动」。 */
+  openedWith: readonly string[]
+  recommendedKeys: readonly string[]
+  onToggle: (key: string) => void
+  onCancel: () => void
+  onDone: () => void
+}
+
+/**
+ * 技能库浮层。
+ *
+ * 三个出口都在这里：右上角关闭、底栏「放弃这次改动」、底栏「完成选择」。
+ * 关闭与完成都保留勾选（勾选是即时生效的，背后的推荐页当场就变），
+ * 只有「放弃这次改动」会还原——所以没有任何一个出口会让人意外丢东西。
+ */
+export function SkillLibrarySheet({
+  groups, activeGroup, onActiveGroup, query, onQuery, visibleSkills, totalCount,
+  selectedKeys, openedWith, recommendedKeys, onToggle, onCancel, onDone,
+}: SkillLibrarySheetProps) {
+  // 浮层一开就把焦点收进来：底下那一屏已经 inert，焦点若还留在被盖住的
+  // 「打开技能库」上，键盘用户第一下 Tab 会落在哪要看浏览器脾气。
+  const searchRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { searchRef.current?.focus() }, [])
+
+  const summary = summarizeSkillSelection({ selected: selectedKeys, openedWith })
+  const changeNote = summary.added === 0 && summary.removed === 0
+    ? '还没有改动'
+    : [summary.added > 0 ? `新加 ${summary.added} 项` : '', summary.removed > 0 ? `去掉 ${summary.removed} 项` : '']
+      .filter(Boolean)
+      .join('，')
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label="技能库" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[0_28px_80px_rgba(0,0,0,0.35)]">
+      <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[hsl(var(--hairline))] px-5 py-4">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <PackageCheck className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
+          <div className="min-w-0">
+            <div className="text-base font-bold">技能库</div>
+            <p className="mt-0.5 text-xs leading-4 text-muted-foreground">关掉它就回到推荐页，这里勾的技能会一起带回去。</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onDone}
+          aria-label="关闭技能库"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground hover:text-foreground"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* 分类：手机横排可滚，桌面竖列。窄屏不做竖列——那会把本就不宽的网格再切一刀。 */}
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        <div
+          role="tablist"
+          aria-label="技能分类"
+          className="flex shrink-0 gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] p-2 lg:w-52 lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:border-b-0 lg:border-r lg:p-2.5"
+        >
+          {groups.map((group) => (
+            <button
+              key={group.key}
+              type="button"
+              role="tab"
+              aria-selected={activeGroup === group.key}
+              onClick={() => onActiveGroup(group.key)}
+              className={`flex shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[13px] font-semibold transition-colors ${activeGroup === group.key ? 'bg-warn-soft text-warn' : 'text-foreground hover:bg-[hsl(var(--surface-sunken))]'}`}
+            >
+              <span>{group.label}</span>
+              <span className="cds-ident text-[11px] opacity-70">{group.count}</span>
+            </button>
+          ))}
+        </div>
+
+        {/*
+          * 内容区是下沉层（sunken），卡片和搜索框是抬升层（raised），这样卡片才有
+          * 东西可以浮在上面。此前内容区和卡片同为 raised，填充对比度 1.000 —— 只有
+          * 1px 发丝线在区分。深色下这不明显：近黑的底让白字和琥珀色自己就以 9.8:1
+          * 炸出来；白天没这个红利，琥珀对自己的填充只有 2.92，于是整片纯白发「光」。
+          * 下沉之后两个主题都是 1.21，是对称的修法，不是只给白天打补丁。
+          */}
+        <div className="flex min-h-0 flex-1 flex-col bg-[hsl(var(--surface-sunken))] p-4 lg:p-5">
+          <label className="flex h-9 shrink-0 items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <input
+              ref={searchRef}
+              type="search"
+              value={query}
+              onChange={(event) => onQuery(event.target.value)}
+              placeholder="搜索技能名称或用途"
+              aria-label="搜索技能"
+              className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+            />
+          </label>
+
+          {visibleSkills.length === 0 ? (
+            <div className="mt-4 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-center">
+              <p className="text-sm text-muted-foreground">这一类里没有匹配「{query}」的技能。</p>
+              <button
+                type="button"
+                onClick={() => onQuery('')}
+                className="rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]"
+              >
+                清除搜索
+              </button>
+            </div>
+          ) : (
+            <div className="mt-4 grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+              {visibleSkills.map((skill) => {
+                const selected = selectedKeys.includes(skill.key)
+                return (
+                  <SkillCard
+                    key={skill.key}
+                    skill={skill}
+                    selected={selected}
+                    recommended={recommendedKeys.includes(skill.key)}
+                    justAdded={selected && !openedWith.includes(skill.key)}
+                    onToggle={() => onToggle(skill.key)}
+                  />
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 底栏回到抬升层：内容区已经下沉，底栏再下沉两者就糊成一片。 */}
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-5 py-3.5">
+        <div className="min-w-0">
+          <div className="text-sm font-bold">已选择 {summary.total} 项</div>
+          <div className="mt-px text-xs text-muted-foreground">共 {totalCount} 项可选 · 这次{changeNote}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex items-center rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground"
+          >
+            放弃这次改动
+          </button>
+          <button
+            type="button"
+            onClick={onDone}
+            className="inline-flex items-center gap-2 rounded-xl bg-warn px-5 py-2.5 text-sm font-bold text-status-ink transition-transform hover:-translate-y-0.5"
+          >
+            完成选择 <ArrowRight className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 技能来源面板。回答的是用户的三个问题：这些技能哪来的、是不是完整的、我还能不能装。
+ *
+ * 每一行都必须有真实来源：服务端报什么就显示什么，没报出来就说没报出来，
+ * 不用 0 或者「未知版本」把空位填上。原始 JSON 留在角落给排障用。
+ */
+export function SkillSourcePanel({
+  state, source, groups = [], roleLabel, roleSkillCount, fallbackCount, rawUrl, onRetry, onOpenMarketplace,
+}: {
+  state: SkillSourceState
+  source: SkillSourceInfo | null
+  /** 整份清单的分类条数（不是按角色筛过的那份），加起来必须等于 source.skillCount。 */
+  groups?: readonly { key: string; label: string; count: number }[]
+  roleLabel?: string
+  /** 这个角色能看到的条数。它比总数少是正常的，但得说出来，否则用户以为清单少了。 */
+  roleSkillCount?: number
+  /** 读不到时页面用的兜底清单条数，用来如实告诉用户「你现在看到的是这份」。 */
+  fallbackCount: number
+  rawUrl: string
+  onRetry: () => void
+  onOpenMarketplace?: () => void
+}) {
+  // 分类条数只有在加起来等于总数时才敢展示。对不上说明两个数来自不同口径，
+  // 那种情况下摆出来只会让人以为哪个错了——宁可不显示。
+  const groupsTotal = groups.reduce((sum, group) => sum + group.count, 0)
+  const groupsTrustworthy = groups.length > 0 && source != null && groupsTotal === source.skillCount
+  // 断网可装 = 本机目录 + 缓存包。缓存过期也算：上游取失败时它会作为陈旧回退返回。
+  const offlineReadyCount = source ? source.localSkillCount + source.cachedSkillCount : 0
+  const badge = state === 'loading'
+    ? { text: '正在读取', className: 'bg-[hsl(var(--surface-sunken))] text-muted-foreground' }
+    : state === 'fallback'
+      ? { text: '读不到来源', className: 'bg-warn-soft text-warn' }
+      : { text: '可用', className: 'bg-ok-soft text-ok' }
+
+  return (
+    <div className="flex min-h-0 w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-left">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Server className="h-4 w-4 shrink-0 text-warn" />
+          <span className="text-sm font-semibold">技能来源</span>
+        </div>
+        <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${badge.className}`}>{badge.text}</span>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {state === 'fallback' && (
+          <>
+            <div className="flex items-start gap-2 border-b border-[hsl(var(--hairline))] bg-warn-soft px-4 py-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
+              <p className="text-xs leading-5">
+                没能从这台 CDS 读到技能清单。现在这一屏用的是页面自带的兜底清单（{fallbackCount} 项），
+                可能比真实清单少。复制出去的提示词照常可用，但里面的技能名可能装不全。
+              </p>
+            </div>
+            <div className="px-4 py-3">
+              <button
+                type="button"
+                onClick={onRetry}
+                className="inline-flex items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs font-bold text-foreground hover:border-[hsl(var(--hairline-strong))]"
+              >
+                <RefreshCw className="h-4 w-4" /> 重新读一次
+              </button>
+            </div>
+          </>
+        )}
+
+        {state === 'loading' && (
+          <p className="px-4 py-4 text-xs text-muted-foreground">正在读取技能清单…</p>
+        )}
+
+        {state === 'ok' && !source && (
+          <p className="px-4 py-4 text-xs leading-5 text-muted-foreground">
+            清单读到了，但这台 CDS 没有报出来源信息（多半是较旧的版本）。
+            技能本身可以正常安装，只是这里说不出它们的出处。
+          </p>
+        )}
+
+        {state === 'ok' && source && (
+          <>
+            <dl className="grid gap-2 px-4 py-3">
+              <SourceRow label="来源" value={source.kind === 'builtin' ? '随 CDS 版本发布的内置清单' : source.kind} />
+              <SourceRow label="清单" value={`${source.bundleCount} 类 · ${source.skillCount} 个技能`} />
+              {roleLabel && typeof roleSkillCount === 'number' && roleSkillCount !== source.skillCount && (
+                <SourceRow
+                  label="适用"
+                  value={`按「${roleLabel}」筛出 ${roleSkillCount} 个，技能库里能看到的就是这些`}
+                />
+              )}
+              <SourceRow
+                label="离线"
+                value={offlineReadyCount === source.skillCount
+                  ? `${source.skillCount} 个这台 CDS 上都有现成的，断网也装得上`
+                  : `${offlineReadyCount} 个这台 CDS 上有现成的${source.cachedSkillCount > 0 ? `（含 ${source.cachedSkillCount} 个缓存包）` : ''}，`
+                    + `另外 ${source.upstreamSkillCount} 个要回源才装得上`}
+              />
+            </dl>
+
+            {/*
+              * 分类走一行可换行的 chip，不用两列网格：这块面板的高度是完成页
+              * 剩下的那点空间，网格多占的两行正好把最后一类挤到滚动折线以下，
+              * 真机截图上是「切掉一半」的观感。
+              */}
+            {groupsTrustworthy && (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-[hsl(var(--hairline))] px-4 py-2.5">
+                <span className="text-[11px] text-muted-foreground">分成</span>
+                {groups.map((group) => (
+                  <span
+                    key={group.key}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1 text-[11px] text-foreground"
+                  >
+                    {group.label}
+                    <span className="cds-ident text-muted-foreground">{group.count}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+            {source.upstreamSkillCount > 0 && !source.upstreamConfigured && (
+              <div className="mx-4 mb-3 flex items-start gap-2 rounded-lg border border-warn bg-warn-soft px-3 py-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
+                <p className="text-xs leading-5">
+                  这 {source.upstreamSkillCount} 个技能这台 CDS 上既没有本机目录也没有缓存包，
+                  而这台 CDS 没有配置上游，装到它们会失败。
+                </p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-2.5">
+        {onOpenMarketplace ? (
+          <button
+            type="button"
+            onClick={onOpenMarketplace}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-warn hover:underline"
+          >
+            在技能市场里逐个看 <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        ) : <span />}
+        <a
+          href={rawUrl}
+          target="_blank"
+          rel="noreferrer"
+          title="给排障用的接口原始返回"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          <Braces className="h-3.5 w-3.5" /> 原始数据
+        </a>
+      </div>
+    </div>
+  )
+}
+
+function SourceRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[3rem_minmax(0,1fr)] gap-3 text-xs leading-5">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="text-foreground">{value}</dd>
+    </div>
+  )
+}
+
 function StepHeading({ number, title, description }: { number: string; title: string; description: string }) {
   return (
     <div className="flex items-start gap-4">
@@ -699,9 +1341,9 @@ function ChoiceCard({ selected, title, eyebrow, description, chips, icon, compac
   )
 }
 
-function PrimaryNext({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+function PrimaryNext({ children, onClick, className = '' }: { children: React.ReactNode; onClick: () => void; className?: string }) {
   return (
-    <button type="button" onClick={onClick} className="inline-flex items-center gap-2 rounded-xl bg-foreground px-5 py-3 text-sm font-bold text-background shadow-lg transition-transform hover:-translate-y-0.5 hover:opacity-90">
+    <button type="button" onClick={onClick} className={`inline-flex items-center justify-center gap-2 rounded-xl bg-foreground px-5 py-3 text-sm font-bold text-background shadow-lg transition-transform hover:-translate-y-0.5 hover:opacity-90 ${className}`}>
       {children} <ArrowRight className="h-4 w-4" />
     </button>
   )
