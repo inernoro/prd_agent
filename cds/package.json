@@ -14,6 +14,8 @@
     "drill:r2-mongo": "tsx src/cli/r2-recovery-drill.ts",
     "audit:ui": "node ../scripts/audit-cds-ui-regressions.mjs",
     "smoke:mobile-layout": "node scripts/mobile-layout-smoke.mjs",
+    "smoke:mobile-layout:offline": "node scripts/mobile-layout-smoke.mjs --offline",
+    "smoke:agent-starter-mobile": "node scripts/agent-starter-mobile-probe.mjs",
     "install:web": "pnpm --dir web install --frozen-lockfile",
     "test": "vitest run",
     "test:watch": "vitest"
