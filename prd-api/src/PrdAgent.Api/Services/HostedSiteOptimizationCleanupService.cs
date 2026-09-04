@@ -7,6 +7,7 @@ public sealed class HostedSiteOptimizationCleanupService : BackgroundService
 {
     private static readonly TimeSpan QueueInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan HealthInterval = TimeSpan.FromMinutes(1);
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<HostedSiteOptimizationCleanupService> _logger;
 
@@ -21,7 +22,8 @@ public sealed class HostedSiteOptimizationCleanupService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         => await Task.WhenAll(
             ProcessQueueAsync(stoppingToken),
-            CleanupExpiredAsync(stoppingToken));
+            CleanupExpiredAsync(stoppingToken),
+            WatchQueueHealthAsync(stoppingToken));
 
     private async Task ProcessQueueAsync(CancellationToken stoppingToken)
     {
@@ -73,6 +75,40 @@ public sealed class HostedSiteOptimizationCleanupService : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "清理过期网页托管优化任务失败，下轮继续");
+            }
+
+            if (!await timer.WaitForNextTickAsync(stoppingToken)) break;
+        }
+    }
+
+    private async Task WatchQueueHealthAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(HealthInterval);
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var service = scope.ServiceProvider.GetRequiredService<IHostedSiteOptimizationService>();
+                var health = await service.GetQueueHealthAsync(CancellationToken.None);
+                if (!health.Healthy)
+                {
+                    _logger.LogError(
+                        "网页托管优化队列退化: {Message}; queued={QueuedCount}; active={ActiveCount}; expired={ExpiredHolderCount}; holders={HolderSessionIds}",
+                        health.Message,
+                        health.QueuedCount,
+                        health.ActiveCount,
+                        health.ExpiredHolderCount,
+                        health.HolderSessionIds);
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "网页托管优化队列健康检查失败，下轮继续");
             }
 
             if (!await timer.WaitForNextTickAsync(stoppingToken)) break;

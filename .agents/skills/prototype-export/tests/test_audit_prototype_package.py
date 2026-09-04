@@ -98,6 +98,18 @@ class AuditPrototypePackageTests(unittest.TestCase):
                 report["missingLocalReferences"],
             )
 
+    def test_html_style_attribute_references_are_checked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "inline-style.zip"
+            make_zip(source, {
+                "index.html": b'<div style="background:url(./missing.png)"></div>',
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertFalse(report["strictReady"])
+            self.assertEqual(["missing.png"], report["missingLocalReferences"])
+
     def test_excessive_compression_ratio_is_blocked_in_strict_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "compression-bomb.zip"

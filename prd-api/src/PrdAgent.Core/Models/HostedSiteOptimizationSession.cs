@@ -130,6 +130,18 @@ public class HostedSiteOptimizationPreviewFileResult
     public string MimeType { get; set; } = "application/octet-stream";
 }
 
+public class HostedSiteOptimizationQueueHealth
+{
+    public bool Healthy { get; set; }
+    public int QueuedCount { get; set; }
+    public int ActiveCount { get; set; }
+    public int ExpiredHolderCount { get; set; }
+    public DateTime? OldestQueuedAt { get; set; }
+    public List<string> HolderSessionIds { get; set; } = new();
+    public List<string> QueuedSessionIds { get; set; } = new();
+    public string Message { get; set; } = string.Empty;
+}
+
 public class ConfirmHostedSiteOptimizationRequest
 {
     /// <summary>optimized 或 original。</summary>

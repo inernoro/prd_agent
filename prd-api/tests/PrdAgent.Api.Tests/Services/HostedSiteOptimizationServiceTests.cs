@@ -235,6 +235,49 @@ public class HostedSiteOptimizationServiceTests
         source.ShouldNotContain("CleanupEveryTicks");
     }
 
+    [Theory]
+    [InlineData(0, 0, 0, true)]
+    [InlineData(101, 0, 0, false)]
+    [InlineData(1, 16, 0, false)]
+    [InlineData(0, 0, 1, false)]
+    public void QueueHealth_FailsForBacklogStallOrExpiredHolder(
+        int queuedCount,
+        int oldestMinutes,
+        int expiredHolderCount,
+        bool expected)
+    {
+        var oldestAge = oldestMinutes == 0 ? (TimeSpan?)null : TimeSpan.FromMinutes(oldestMinutes);
+
+        HostedSiteOptimizationService.IsQueueHealthy(
+            queuedCount, oldestAge, expiredHolderCount).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void QueueWorker_HasProbeWatchdogAndStandingRegressionHooks()
+    {
+        var worker = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/HostedSiteOptimizationCleanupService.cs"));
+        var controller = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs"));
+
+        worker.ShouldContain("WatchQueueHealthAsync");
+        worker.ShouldContain("LogError(");
+        controller.ShouldContain("optimization/health");
+        controller.ShouldContain("Status503ServiceUnavailable");
+    }
+
+    [Fact]
+    public void LargeUploadAndCancellation_AvoidDuplicateArchiveAndRetainCleanupLedger()
+    {
+        var source = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteOptimizationService.cs"));
+
+        source.ShouldContain("var sourceBytes = new byte[checked((int)session.SourceFileSize)]");
+        source.ShouldNotContain("var sourceBytes = source.ToArray()");
+        source.ShouldContain("var cleanupAfter = DateTime.UtcNow.Add(WorkerLeaseLifetime)");
+        source.ShouldContain("session.ExpiresAt = cleanupAfter");
+    }
+
     private static HostedSiteOptimizationService CreateService()
         => new(null!, null!, null!, NullLogger<HostedSiteOptimizationService>.Instance);
 

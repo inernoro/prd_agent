@@ -165,6 +165,17 @@ public class WebPagesController : ControllerBase
         }
     }
 
+    /// <summary>检查优化队列积压和持有者租约，退化时返回 503 供监控探测。</summary>
+    [HttpGet("optimization/health")]
+    public async Task<IActionResult> GetOptimizationQueueHealth()
+    {
+        var health = await _optimizationService.GetQueueHealthAsync(HttpContext.RequestAborted);
+        var response = ApiResponse<object>.Ok(health);
+        return health.Healthy
+            ? Ok(response)
+            : StatusCode(StatusCodes.Status503ServiceUnavailable, response);
+    }
+
     /// <summary>生成私有临时优化版本，供用户确认效果。</summary>
     [HttpPost("optimization/{sessionId}/preview")]
     public async Task<IActionResult> PrepareOptimizationPreview(string sessionId)

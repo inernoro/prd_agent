@@ -25,6 +25,8 @@ public interface IHostedSiteOptimizationService
 
     Task<bool> ProcessNextQueuedAsync(CancellationToken ct = default);
 
+    Task<HostedSiteOptimizationQueueHealth> GetQueueHealthAsync(CancellationToken ct = default);
+
     HostedSiteOptimizationAnalysis Analyze(byte[] zipBytes);
 
     Task<HostedSiteOptimizationPreviewResult> PreparePreviewAsync(

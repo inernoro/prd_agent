@@ -27,6 +27,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     private static readonly TimeSpan SessionLifetime = TimeSpan.FromHours(2);
     private static readonly TimeSpan WorkerLeaseLifetime = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan WorkerLeaseHeartbeat = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan QueueStallThreshold = TimeSpan.FromMinutes(15);
+    private const int QueueBacklogThreshold = 100;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     private static readonly HashSet<string> DevelopmentDirectoryNames = new(StringComparer.OrdinalIgnoreCase)
@@ -279,18 +281,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         var leaseHeartbeat = RenewWorkerLeaseAsync(session.Id, leaseOwner, leaseCancellation.Token);
         try
         {
-            using var source = new MemoryStream(
-                session.SourceFileSize <= int.MaxValue ? (int)session.SourceFileSize : 0);
-            for (var index = 0; index < session.TotalChunks; index++)
-            {
-                var bytes = await _storage.TryDownloadBytesAsync(BuildChunkKey(session, index), CancellationToken.None)
-                    ?? throw new InvalidOperationException("临时上传分片已经过期，请重新选择文件");
-                await source.WriteAsync(bytes, CancellationToken.None);
-            }
-            if (source.Length != session.SourceFileSize)
-                throw new InvalidOperationException("上传文件校验失败，请重新选择文件");
-
-            var sourceBytes = source.ToArray();
+            var sourceBytes = await DownloadChunksAsync(session);
             var analysis = Analyze(sourceBytes);
             if (analysis.Blocked)
                 throw new InvalidOperationException(analysis.Error ?? "ZIP 文件无法通过安全检查，请重新导出后再试");
@@ -610,7 +601,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 .Set(x => x.LeaseExpiresAt, now.Add(WorkerLeaseLifetime))
                 .Set(x => x.UpdatedAt, now)
                 .Set(x => x.ExpiresAt, now.Add(SessionLifetime)),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
         if (claim.ModifiedCount != 1)
             throw new InvalidOperationException("这个优化任务正在保存或已经过期，请刷新后重试");
 
@@ -622,8 +613,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             try
             {
                 var zipBytes = normalizedVariant == "original"
-                    ? await _storage.TryDownloadBytesAsync(session.SourceObjectKey, ct)
-                    : await BuildZipFromPreviewAsync(session, ct);
+                    ? await _storage.TryDownloadBytesAsync(session.SourceObjectKey, CancellationToken.None)
+                    : await BuildZipFromPreviewAsync(session, CancellationToken.None);
                 if (zipBytes == null || zipBytes.Length == 0)
                     throw new InvalidOperationException("临时文件已经过期，请重新选择文件");
 
@@ -736,6 +727,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             or HostedSiteOptimizationStatuses.Saving)
             throw new InvalidOperationException("文件正在后台处理，请等待当前步骤完成");
 
+        var cleanupAfter = DateTime.UtcNow.Add(WorkerLeaseLifetime);
         var claim = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
             Builders<HostedSiteOptimizationSession>.Filter.And(
                 Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Id, session.Id),
@@ -750,30 +742,55 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     })),
             Builders<HostedSiteOptimizationSession>.Update
                 .Set(x => x.Status, HostedSiteOptimizationStatuses.CleanupPending)
-                .Set(x => x.ExpiresAt, DateTime.UtcNow)
+                .Set(x => x.ExpiresAt, cleanupAfter)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         if (claim.MatchedCount == 0)
             throw new InvalidOperationException("文件正在后台处理，请等待当前步骤完成");
 
+        // 保留取消墓碑一个完整租约周期。已经开始的分片写入即使晚于取消落盘，
+        // 也仍有会话账本可供周期清理收敛，不会成为永久孤儿对象。
         session.Status = HostedSiteOptimizationStatuses.CleanupPending;
-        session.ExpiresAt = DateTime.UtcNow;
-        if (await CleanupSessionFilesAsync(session))
-        {
-            await _db.HostedSiteOptimizationSessions.DeleteOneAsync(
-                x => x.Id == session.Id && x.Status == HostedSiteOptimizationStatuses.CleanupPending,
-                CancellationToken.None);
-        }
-        else
-        {
-            await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                x => x.Id == session.Id && x.OwnerUserId == userId,
-                Builders<HostedSiteOptimizationSession>.Update
-                    .Set(x => x.Status, session.Status)
-                    .Set(x => x.ExpiresAt, session.ExpiresAt),
-                cancellationToken: CancellationToken.None);
-        }
+        session.ExpiresAt = cleanupAfter;
     }
+
+    public async Task<HostedSiteOptimizationQueueHealth> GetQueueHealthAsync(CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var queued = await _db.HostedSiteOptimizationSessions
+            .Find(x => x.Status == HostedSiteOptimizationStatuses.Queued)
+            .SortBy(x => x.CreatedAt)
+            .Limit(QueueBacklogThreshold + 1)
+            .ToListAsync(ct);
+        var holders = await _db.HostedSiteOptimizationSessions
+            .Find(x => x.Status == HostedSiteOptimizationStatuses.Analyzing
+                       || x.Status == HostedSiteOptimizationStatuses.Saving)
+            .SortBy(x => x.UpdatedAt)
+            .Limit(100)
+            .ToListAsync(ct);
+        var oldestQueuedAt = queued.FirstOrDefault()?.CreatedAt;
+        var oldestAge = oldestQueuedAt.HasValue ? now - oldestQueuedAt.Value : (TimeSpan?)null;
+        var expiredHolderCount = holders.Count(x => x.LeaseExpiresAt.HasValue && x.LeaseExpiresAt <= now);
+        var healthy = IsQueueHealthy(queued.Count, oldestAge, expiredHolderCount);
+        return new HostedSiteOptimizationQueueHealth
+        {
+            Healthy = healthy,
+            QueuedCount = queued.Count,
+            ActiveCount = holders.Count,
+            ExpiredHolderCount = expiredHolderCount,
+            OldestQueuedAt = oldestQueuedAt,
+            HolderSessionIds = holders.Select(x => x.Id).ToList(),
+            QueuedSessionIds = queued.Take(20).Select(x => x.Id).ToList(),
+            Message = healthy
+                ? "网页托管优化队列正常"
+                : "网页托管优化队列积压或持有者租约异常，请检查后台任务",
+        };
+    }
+
+    internal static bool IsQueueHealthy(int queuedCount, TimeSpan? oldestQueueAge, int expiredHolderCount)
+        => queuedCount <= QueueBacklogThreshold
+           && expiredHolderCount == 0
+           && (!oldestQueueAge.HasValue || oldestQueueAge < QueueStallThreshold);
 
     public async Task<int> CleanupExpiredAsync(CancellationToken ct = default)
     {
@@ -979,6 +996,25 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             }
         }
         return output.ToArray();
+    }
+
+    private async Task<byte[]> DownloadChunksAsync(HostedSiteOptimizationSession session)
+    {
+        var sourceBytes = new byte[checked((int)session.SourceFileSize)];
+        var offset = 0;
+        for (var index = 0; index < session.TotalChunks; index++)
+        {
+            var chunk = await _storage.TryDownloadBytesAsync(
+                            BuildChunkKey(session, index), CancellationToken.None)
+                        ?? throw new InvalidOperationException("临时上传分片已经过期，请重新选择文件");
+            if (chunk.Length > sourceBytes.Length - offset)
+                throw new InvalidOperationException("上传文件校验失败，请重新选择文件");
+            Buffer.BlockCopy(chunk, 0, sourceBytes, offset, chunk.Length);
+            offset += chunk.Length;
+        }
+        if (offset != sourceBytes.Length)
+            throw new InvalidOperationException("上传文件校验失败，请重新选择文件");
+        return sourceBytes;
     }
 
     private async Task<bool> CleanupSessionFilesAsync(HostedSiteOptimizationSession session)

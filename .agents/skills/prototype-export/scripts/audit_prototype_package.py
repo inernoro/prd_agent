@@ -60,6 +60,7 @@ class ReferenceParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.references: list[str] = []
+        self.inline_styles: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         for key, value in attrs:
@@ -67,6 +68,8 @@ class ReferenceParser(HTMLParser):
                 self.references.append(value.strip())
             elif key.lower() == "srcset" and value:
                 self.references.extend(part.strip().split(" ", 1)[0] for part in value.split(","))
+            elif key.lower() == "style" and value:
+                self.inline_styles.append(value)
 
 
 def sha256_file(path: Path) -> str:
@@ -129,6 +132,8 @@ def runtime_references(text: str, name: str) -> list[str]:
         parser = ReferenceParser()
         parser.feed(text)
         references = list(parser.references)
+        for body in parser.inline_styles:
+            references.extend(CSS_URL_RE.findall(body) + CSS_IMPORT_RE.findall(body))
         for body in INLINE_STYLE_RE.findall(text):
             references.extend(CSS_URL_RE.findall(body) + CSS_IMPORT_RE.findall(body))
         for body in INLINE_SCRIPT_RE.findall(text):
