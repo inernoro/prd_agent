@@ -134,8 +134,8 @@ public class McpRollbackInvariantTests
     {
         var src = McpSourceGuard.StripComments(
             McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
-        src.ShouldContain("CleanupRolledBackEntryAsync(string entryId, DateTime placeholderUpdatedAt)",
-            customMessage: "撤回得知道「原封不动」长什么样，否则无从判断该不该删");
+        src.ShouldContain("DateTime placeholderUpdatedAt, string requestedContent)",
+            customMessage: "撤回得知道「原封不动」长什么样、以及这次要写的是什么，否则无从判断该不该删、算不算写成了");
         src.ShouldContain("e.Id == entryId && e.UpdatedAt == placeholderUpdatedAt",
             customMessage: "删除必须带条件：回读与删除之间还有窗口，判据和写入要是同一条原子操作");
         src.ShouldNotContain("DeleteOneAsync(e => e.Id == entryId, ",
@@ -144,10 +144,61 @@ public class McpRollbackInvariantTests
         // 条目已经不在了就得**立刻收手**：这个确定性 id 已经空出来，同键重试可能已经插了一条新的，
         // 再按 id 清一遍派生，清掉的是新那次的版本与双链，而那次还会照常报成功。
         var cleanup = McpSourceGuard.Slice(src,
-            "CleanupRolledBackEntryAsync(string entryId, DateTime placeholderUpdatedAt)",
+            "DateTime placeholderUpdatedAt, string requestedContent)",
             "DocumentEntryVersions.DeleteManyAsync");
         cleanup.ShouldContain("if (current == null) return RollbackOutcome.AlreadyGone;",
             customMessage: "回读为 null 时还往下走，会按一个已经可重用的 id 去清派生");
+    }
+
+    /// <summary>
+    /// 「条目被动过」不等于「我的正文写进去了」。
+    ///
+    /// 用户在界面上改一次那条可见的占位，UpdatedAt 照样变。把那种情况当成「我写成了」并回 200，
+    /// 就是把调用方要写的内容悄悄丢掉，然后回一句成功——而摘掉标记之后，同键重试还会拿到
+    /// 「已去重、成功」，于是那份内容从头到尾没被应用过，也没有任何人会发现。
+    /// </summary>
+    [Fact]
+    public void 别人改的和我写成的_不能给同一种说法()
+    {
+        var mine = DocumentStoreOpenApiController.RollbackMessage(
+            "这篇文档没有建成", "请用同一个 clientRequestId 重试。",
+            DocumentStoreOpenApiController.RollbackOutcome.KeptCommitted);
+        var theirs = DocumentStoreOpenApiController.RollbackMessage(
+            "这篇文档没有建成", "请用同一个 clientRequestId 重试。",
+            DocumentStoreOpenApiController.RollbackOutcome.ChangedByOthers);
+
+        theirs.ShouldNotBe(mine, "两种结局的后果相反，不能给同一句话");
+        theirs.ShouldNotContain("已经写进去", customMessage: "我的正文根本没写进去，不许这么说");
+        theirs.ShouldNotContain("已经撤回", customMessage: "对方的内容还在，什么都没撤");
+        theirs.ShouldContain("被别人改过");
+        // 这条键已经不能再用了：标记被摘掉之后，同键重试会被当成去重成功
+        theirs.ShouldContain("不要再用");
+
+        // 条目还在库里看得见，计数一样不能退
+        DocumentStoreOpenApiController.ShouldRestoreDocumentCount(
+            countedIn: true, DocumentStoreOpenApiController.RollbackOutcome.ChangedByOthers).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// 「装的是不是我要写的那份正文」这个问题，撤回与去重必须问同一遍。
+    ///
+    /// 去重原来只看标记在不在 —— 而标记被摘掉只说明上一次收尾过了，不说明这条装的是这次
+    /// 要写的正文。两处各判各的，就会出现「撤回那边如实说没写进去，去重这边照样报成功」。
+    /// </summary>
+    [Fact]
+    public void 撤回与去重问的是同一个问题()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
+        var calls = 0;
+        for (var i = src.IndexOf("HoldsRequestedContentAsync(", StringComparison.Ordinal); i >= 0;
+             i = src.IndexOf("HoldsRequestedContentAsync(", i + 1, StringComparison.Ordinal)) calls++;
+        calls.ShouldBeGreaterThanOrEqualTo(4,
+            "判据定义 1 处 + 撤回 2 处 + 去重 1 处；少了就是有一条路自己判自己的");
+
+        var dedup = McpSourceGuard.Slice(src, "DedupOrInProgressAsync(DocumentEntry existed", "return Ok(");
+        dedup.ShouldContain("HoldsRequestedContentAsync(",
+            customMessage: "去重只看标记在不在，会把「内容从没被应用过」报成成功");
     }
 
     /// <summary>

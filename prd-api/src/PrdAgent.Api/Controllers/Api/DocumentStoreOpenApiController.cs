@@ -344,7 +344,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             var existed = await _db.DocumentEntries
                 .Find(e => e.Id == deterministicId && e.StoreId == storeId)
                 .FirstOrDefaultAsync(ct);
-            if (existed != null) return DedupOrInProgress(existed);
+            if (existed != null) return await DedupOrInProgressAsync(existed, content);
         }
 
         var entry = new DocumentEntry
@@ -379,7 +379,7 @@ public class DocumentStoreOpenApiController : ControllerBase
                 .Find(e => e.Id == deterministicId && e.StoreId == storeId)
                 .FirstOrDefaultAsync(ct);
             if (raced == null) throw;
-            return DedupOrInProgress(raced);
+            return await DedupOrInProgressAsync(raced, content);
         }
         // 计数与正文一起纳入同一段补偿：计数那一步失败时若不回滚，条目会永远停在
         // mcpContentPending，此后同键的每一次重试都拿到 409 —— 一条谁也救不回来的死记录。
@@ -477,7 +477,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         {
             // 条目在正文落盘期间被删掉了。撤回收尾照走（派生可能已经写了几行），
             // 但计数不退：删除那条路径自己已经扣过一次。
-            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt);
+            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt, content);
             return Conflict(ApiResponse<object>.Fail("ENTRY_DELETED", RollbackMessage(
                 "这篇文档在正文落盘期间被删除了，内容没有写进去", "请用一个新的 clientRequestId 重新建。", outcome)));
         }
@@ -485,7 +485,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         {
             // 库没了，这条也不该留。回滚与下面那段同一套，只是给调用方的说法不同：
             // 让它「用同一个键重试」是错的指引 —— 库已经不在，重试只会一路 404。
-            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt);
+            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt, content);
             return Conflict(ApiResponse<object>.Fail("STORE_DELETED", RollbackMessage(
                 "这个知识库在写入过程中被删除了，文档没有建成", "请换一个库再写。", outcome)));
         }
@@ -494,7 +494,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             // 没走完就把条目撤回去。留着的话，条目上已经带着幂等键了 ——
             // 智能体拿同一个 clientRequestId 重试要么命中去重拿到一篇空文档，
             // 要么永远撞上「还在落正文」的 409。一次存储抖动就此变成永久的残缺数据。
-            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt);
+            var outcome = await CleanupRolledBackEntryAsync(entry.Id, entry.UpdatedAt, content);
             // 只有「这次真的是我删的」才退计数：条目早已被别人删掉时，扣减也早已由那条路径做过。
             if (ShouldRestoreDocumentCount(countedIn, outcome))
                 await _db.DocumentStores.UpdateOneAsync(
@@ -509,6 +509,8 @@ public class DocumentStoreOpenApiController : ControllerBase
             // 网关按 HTTP 状态码判这次调用成没成：报 500 它会退掉占的额度、把这笔记成错误 ——
             // 于是文档明明躺在用户的知识库里，账面上却是「没发生过、也没花钱」。
             // 报成功并把没做完的部分如实说出来，比让账面和事实对不上强。
+            if (outcome == RollbackOutcome.ChangedByOthers)
+                return Conflict(ApiResponse<object>.Fail("ENTRY_CHANGED_SINCE_CREATE", rollbackNote));
             if (outcome == RollbackOutcome.KeptCommitted)
                 return Ok(ApiResponse<object>.Ok(new
                 {
@@ -621,6 +623,24 @@ public class DocumentStoreOpenApiController : ControllerBase
     private const int MaxContentChars = 200_000;
 
     /// <summary>
+    /// 这条条目现在装的，是不是**这次请求要写的那份正文** —— 唯一判定源。
+    ///
+    /// 「条目被动过」和「我的正文写进去了」是两件事，而 UpdatedAt 只回答前一件。
+    /// 用户在界面上改一次这条可见的占位，UpdatedAt 照样变 —— 把那种情况当成「我写成了」，
+    /// 就是把调用方要写的内容悄悄丢掉，然后回一句成功。
+    /// 正文是内容寻址存的，所以直接比内容本身：这是唯一说得清的判据。
+    ///
+    /// 没要写正文（空串）时这个问题不成立，直接算是。
+    /// </summary>
+    private async Task<bool> HoldsRequestedContentAsync(DocumentEntry entry, string requestedContent)
+    {
+        if (requestedContent.Length == 0) return true;
+        if (string.IsNullOrEmpty(entry.DocumentId)) return false;
+        var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+        return doc != null && string.Equals(doc.RawContent, requestedContent, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// 撤回之后对调用方的那句话。三条撤回路径共用同一处判据。
     ///
     /// 上一版只有「没走完」那条看了 outcome，另外两条一律说「已经撤回」——
@@ -631,6 +651,11 @@ public class DocumentStoreOpenApiController : ControllerBase
     internal static string RollbackMessage(string situation, string cleanAdvice, RollbackOutcome outcome)
         => outcome switch
         {
+            // 用户改了这条，我的正文没写进去 —— 既不能说「已经撤回」（那是用户的内容，没动），
+            // 也不能说「写进去了」。如实说清，并指出下一步该怎么走。
+            RollbackOutcome.ChangedByOthers =>
+                "这篇文档在正文落盘期间被别人改过，你的正文没有写进去 —— 对方的内容保留着。"
+                + "先读一遍现在的正文，再决定要不要用 map_kb_update_entry 覆盖；这个 clientRequestId 不要再用了。",
             // 正文已经在库里了，说「没有建成」就是假的。这一支不用 situation：那句话的前提不成立。
             RollbackOutcome.KeptCommitted =>
                 "正文其实已经写进去了，只是这次调用的收尾没走完（评论重锚、双链、版本快照可能不全）。"
@@ -669,7 +694,8 @@ public class DocumentStoreOpenApiController : ControllerBase
     /// 清理本身尽力而为：清不掉不能反过来把「已撤回」变成别的结论。
     /// </summary>
     /// <returns>见 <see cref="RollbackOutcome"/>。</returns>
-    private async Task<RollbackOutcome> CleanupRolledBackEntryAsync(string entryId, DateTime placeholderUpdatedAt)
+    private async Task<RollbackOutcome> CleanupRolledBackEntryAsync(
+        string entryId, DateTime placeholderUpdatedAt, string requestedContent)
     {
         // **先确认这条还是那条原封不动的占位**，再谈撤回。
         //
@@ -692,16 +718,22 @@ public class DocumentStoreOpenApiController : ControllerBase
         if (current == null) return RollbackOutcome.AlreadyGone;
         if (current.UpdatedAt != placeholderUpdatedAt)
         {
+            // 「变了」有两种，后果完全相反，不能合成一件事：
+            //   - 我的正文提交成功了，倒在后面那几步（重锚评论/双链/版本快照）——这次实质上成了；
+            //   - 我的正文一个字都没写进去，是**用户**在这中间改了这条可见的占位——这次实质上没成。
+            // 只看 UpdatedAt 分不出这两种（形状 1：判据比它该管的范围窄），而把后者当成前者报成功，
+            // 等于把调用方要写的内容悄悄丢掉。所以去看这条现在装的到底是不是我要写的那份正文。
+            var holdsMine = await HoldsRequestedContentAsync(current, requestedContent);
+
             // 摘标记也得带上刚读到的那个版本。这个 id 是幂等键推出来的**确定性** id：
             // 回读之后、这一步之前，它完全可能被删掉、又被同键重试插进一条新的占位 ——
-            // 只按 id 摘的话，摘掉的是**新那次**的「正文未落盘」标记，于是再一次重试会
-            // 拿到「已去重、成功」，而那条的正文还没写、甚至最终会失败。
+            // 只按 id 摘的话，摘掉的是**新那次**的「正文未落盘」标记。
             // 下面那条删除已经带了条件，这条也得带 —— 同一处判据，两条出口。
             await _db.DocumentEntries.UpdateOneAsync(
                 e => e.Id == entryId && e.UpdatedAt == current.UpdatedAt,
                 Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
                 cancellationToken: CancellationToken.None);
-            return RollbackOutcome.KeptCommitted;
+            return holdsMine ? RollbackOutcome.KeptCommitted : RollbackOutcome.ChangedByOthers;
         }
 
         // 顺序要紧：**先清派生，最后删条目**。
@@ -738,7 +770,10 @@ public class DocumentStoreOpenApiController : ControllerBase
         var after = await _db.DocumentEntries
             .Find(e => e.Id == entryId)
             .FirstOrDefaultAsync(CancellationToken.None);
-        return after == null ? RollbackOutcome.AlreadyGone : RollbackOutcome.KeptCommitted;
+        if (after == null) return RollbackOutcome.AlreadyGone;
+        return await HoldsRequestedContentAsync(after, requestedContent)
+            ? RollbackOutcome.KeptCommitted
+            : RollbackOutcome.ChangedByOthers;
     }
 
     /// <summary>条目在正文落盘期间被删掉了。同样单独一个类型，收尾与说法都与库被删那条不同。</summary>
@@ -760,10 +795,16 @@ public class DocumentStoreOpenApiController : ControllerBase
         Retained,
 
         /// <summary>
-        /// 条目已经不是那条原封不动的占位了 —— 正文其实提交成功了，或者用户在界面上动过它。
-        /// 一个字都不许删，计数也不退（它还在库里看得见）。
+        /// 条目已经不是那条原封不动的占位了，**而且它装的正是这次要写的正文** ——
+        /// 这次实质上成了，只是收尾没走完。一个字都不许删，计数也不退。
         /// </summary>
         KeptCommitted,
+
+        /// <summary>
+        /// 条目被动过，但装的**不是**这次要写的正文 —— 用户在这中间改了它，而我的正文没写进去。
+        /// 同样一个字都不许删（那是用户的内容），但绝不能报成功：这次实质上没成。
+        /// </summary>
+        ChangedByOthers,
     }
 
     /// <summary>条目「正文还没落盘」的标记字段（Mongo 路径写法，供 Unset 用）。</summary>
@@ -781,11 +822,23 @@ public class DocumentStoreOpenApiController : ControllerBase
     }
 
     /// <summary>幂等命中：已经完整的回既有条目，还在写正文的回 409 让调用方稍后重试。</summary>
-    private IActionResult DedupOrInProgress(DocumentEntry existed)
+    /// <summary>
+    /// 同一个幂等键撞上一条已经存在的条目：这次算去重成功，还是得说点别的。
+    ///
+    /// 判据不能只看「标记还在不在」。标记被摘掉只说明上一次收尾过了，不说明这条**装的是
+    /// 这次要写的正文** —— 上一次的正文可能压根没写进去（用户在中间改了这条占位，撤回那边
+    /// 只好摘掉标记免得留下死记录）。那种情况下报「已去重、成功」，调用方就再也没机会发现
+    /// 它要写的内容从头到尾没被应用过。所以这里问的是和撤回那边同一个问题。
+    /// </summary>
+    private async Task<IActionResult> DedupOrInProgressAsync(DocumentEntry existed, string requestedContent)
     {
         if (existed.Metadata != null && existed.Metadata.ContainsKey("mcpContentPending"))
             return Conflict(ApiResponse<object>.Fail("ENTRY_WRITE_IN_PROGRESS",
                 "同一个 clientRequestId 的上一次写入还在落正文，这次没有重复写。稍等一两秒用同一个键再试一次即可。"));
+        if (!await HoldsRequestedContentAsync(existed, requestedContent))
+            return Conflict(ApiResponse<object>.Fail("ENTRY_CHANGED_SINCE_CREATE",
+                "这个 clientRequestId 对应的文档已经存在，但它现在的正文不是你这次要写的那份（有人改过，或上一次的正文没能写进去）。"
+                + "先读一遍现在的正文，再决定要不要用 map_kb_update_entry 覆盖；这个键不要再用了。"));
         return Ok(ApiResponse<object>.Ok(new { entryId = existed.Id, title = existed.Title, deduplicated = true }));
     }
 
