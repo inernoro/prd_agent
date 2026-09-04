@@ -800,10 +800,30 @@ public class DocumentStoreOpenApiController : ControllerBase
             // 回读之后、这一步之前，它完全可能被删掉、又被同键重试插进一条新的占位 ——
             // 只按 id 摘的话，摘掉的是**新那次**的「正文未落盘」标记。
             // 下面那条删除已经带了条件，这条也得带 —— 同一处判据，两条出口。
-            await _db.DocumentEntries.UpdateOneAsync(
+            var cleared = await _db.DocumentEntries.UpdateOneAsync(
                 MineFilter(entryId, current.UpdatedAt, generation),
                 Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
                 cancellationToken: CancellationToken.None);
+            // 结论是照着 current 这份**快照**下的，而快照到这一步之间还有窗口。
+            // 匹配为 0 说明这条又变了：可能被删（结论 KeptCommitted 就成了「为一条已经不在的
+            // 条目报成功」），也可能只是被再改一次（标记还挂着，同键重试从此一直撞 409）。
+            // 重读一次按现状说话，别拿过期的快照下结论。
+            if (cleared.MatchedCount == 0)
+            {
+                var again = await _db.DocumentEntries
+                    .Find(e => e.Id == entryId)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                if (!IsMyGeneration(again, generation)) return RollbackOutcome.AlreadyGone;
+                var retry = await _db.DocumentEntries.UpdateOneAsync(
+                    MineFilter(entryId, again.UpdatedAt, generation),
+                    Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
+                    cancellationToken: CancellationToken.None);
+                // 再摘不掉：对方在持续改这条。标记还挂着，按「留了个占位」说 ——
+                // Retained 的说法正是「换一个键」，不会指引调用方去撞那个 409。
+                if (retry.MatchedCount == 0) return RollbackOutcome.Retained;
+                // 摘掉了，但结论要按**新读到的**那份重下：这中间正文可能被换掉了。
+                holdsMine = await HoldsRequestedContentAsync(again, requestedContent);
+            }
             return holdsMine ? RollbackOutcome.KeptCommitted : RollbackOutcome.ChangedByOthers;
         }
 

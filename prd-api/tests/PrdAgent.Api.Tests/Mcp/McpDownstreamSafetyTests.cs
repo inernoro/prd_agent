@@ -235,4 +235,29 @@ public class McpDownstreamSafetyTests
         log.ShouldContain("CreatedAt = invokedAt",
             customMessage: "审计行没显式落发起时刻，会走模型默认（= 构造这个对象的时刻 = 调用完成之后）");
     }
+
+    /// <summary>
+    /// 撤回那处摘标记同样要看结果，而且结论不能拿过期快照下。
+    ///
+    /// 它是照着 `current` 那份回读快照判「正文到底提交没提交」的，而快照到写之间还有窗口：
+    /// 匹配为 0 时那条已经又变了 —— 可能被删（于是 KeptCommitted 变成「为一条已经不在的
+    /// 条目报成功」），也可能只是被再改一次（标记还挂着，同键重试从此一直撞 409）。
+    /// 收尾兜底那处刚修过同一个形状，这处是它的兄弟。
+    /// </summary>
+    [Fact]
+    public void 撤回摘标记也要看有没有摘掉()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
+        var body = McpSourceGuard.Slice(src, "var holdsMine = await HoldsRequestedContentAsync(current",
+            "return holdsMine ? RollbackOutcome.KeptCommitted");
+        body.ShouldContain("cleared.MatchedCount == 0",
+            customMessage: "撤回那处摘标记的结果没看：匹配为 0 时结论还是照过期快照下的");
+        body.ShouldContain("RollbackOutcome.AlreadyGone",
+            customMessage: "重读发现不是我那条时要说「已经不在了」，不能仍报 KeptCommitted");
+        body.ShouldContain("RollbackOutcome.Retained",
+            customMessage: "反复摘不掉时要按「留了个占位」说 —— 那句话会让调用方换键，而不是去撞 409");
+        body.ShouldContain("HoldsRequestedContentAsync(again",
+            customMessage: "重读之后结论要按新读到的那份重下，否则还是过期快照");
+    }
 }
