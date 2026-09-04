@@ -40,6 +40,26 @@ public class DesignArtifactRun
 
     public List<DesignKnowledgeSnapshot> KnowledgeReferences { get; set; } = new();
 
+    /// <summary>OpenDesign 工作区输入包的对象存储物理 key。只由 MAP 与 CDS 控制面读取。</summary>
+    public string? WorkspaceInputAssetKey { get; set; }
+
+    public string? WorkspaceInputSha256 { get; set; }
+
+    /// <summary>输入快照的不可变版本。结果提交必须原样带回，防止旧任务覆盖新输入。</summary>
+    public string? WorkspaceBaseRevision { get; set; }
+
+    /// <summary>CDS 原子提交的结果包对象存储物理 key。</summary>
+    public string? WorkspaceResultAssetKey { get; set; }
+
+    public string? WorkspaceResultSha256 { get; set; }
+
+    /// <summary>本次远程运行已通过 MAP 代理进入 LLMGW 的真实请求数。</summary>
+    public int RuntimeModelCallCount { get; set; }
+
+    public int RuntimeModelCallLimit { get; set; } = 36;
+
+    public DateTime? RuntimeTicketExpiresAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

@@ -396,6 +396,12 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor>(sp =>
     sp.GetRequiredService<PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>());
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactWorkspaceBroker,
+    PrdAgent.Api.Services.DesignArtifactWorkspaceBroker>();
+builder.Services.AddHttpClient("DesignArtifactRuntimeProxy", client =>
+{
+    client.Timeout = Timeout.InfiniteTimeSpan;
+});
 builder.Services.AddScoped<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor>(sp =>
     sp.GetRequiredService<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>());

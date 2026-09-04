@@ -18,7 +18,8 @@ describe('agent runtime provider registry', () => {
       executionOwner: 'cds-remote-agent',
       workloadKinds: ['design-artifact'],
       requiredIsolationMode: 'session-container',
-      implementationStatus: 'planned',
+      implementationStatus: 'available',
+      supportedIsolationModes: ['session-container'],
     });
     expect(codex).toMatchObject({
       adapterKind: 'cli-adapter',

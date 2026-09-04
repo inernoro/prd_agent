@@ -1,0 +1,144 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using PrdAgent.Api.Services;
+using PrdAgent.Core.Models;
+using Xunit;
+
+namespace PrdAgent.Api.Tests;
+
+public sealed class DesignArtifactWorkspaceContractTests
+{
+    [Fact]
+    public void InputPackageMaterializesKnowledgeAndCurrentPageAsFiles()
+    {
+        var run = BuildRun();
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(
+            run,
+            "<!doctype html><html><body>旧页面</body></html>");
+
+        Assert.Equal(DesignArtifactWorkspaceBroker.SchemaVersion, package.SchemaVersion);
+        Assert.Equal(run.Id, package.RunId);
+        Assert.Equal(64, package.BaseRevision.Length);
+        Assert.Contains(package.Files, file => file.Path == "brief/task.json");
+        Assert.Contains(package.Files, file => file.Path.StartsWith("knowledge/01-", StringComparison.Ordinal));
+        Assert.Contains(package.Files, file => file.Path == "current/index.html");
+        foreach (var file in package.Files)
+        {
+            var bytes = Convert.FromBase64String(file.ContentBase64);
+            Assert.Equal(file.Size, bytes.LongLength);
+            Assert.Equal(Hash(bytes), file.Sha256);
+        }
+    }
+
+    [Fact]
+    public void ResultRequiresMatchingRevisionAndVerifiedIndexHtml()
+    {
+        var run = BuildRun();
+        var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        var html = Encoding.UTF8.GetBytes("<!doctype html><html><body>新页面</body></html>");
+        var htmlFile = new DesignWorkspaceFile("index.html", Convert.ToBase64String(html), Hash(html), html.Length, "text/html");
+        var manifest = BuildManifest(input.BaseRevision, htmlFile);
+        var result = new DesignWorkspacePackage(
+            DesignArtifactWorkspaceBroker.SchemaVersion,
+            run.Id,
+            input.BaseRevision,
+            [htmlFile, manifest]);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(result, DesignArtifactWorkspaceContract.JsonOptions);
+
+        var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            bytes,
+            run.Id,
+            input.BaseRevision,
+            DesignArtifactWorkspaceBroker.MaxOutputBytes);
+
+        Assert.Contains("新页面", parsed.IndexHtml);
+    }
+
+    [Fact]
+    public void ResultRejectsManifestThatDoesNotMatchVerifiedFiles()
+    {
+        var run = BuildRun();
+        var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        var html = Encoding.UTF8.GetBytes("<!doctype html><html><body>新页面</body></html>");
+        var htmlFile = new DesignWorkspaceFile("index.html", Convert.ToBase64String(html), Hash(html), html.Length, "text/html");
+        var incorrectManifest = BuildManifest(input.BaseRevision, htmlFile with { Sha256 = new string('a', 64) });
+        var result = new DesignWorkspacePackage(
+            DesignArtifactWorkspaceBroker.SchemaVersion,
+            run.Id,
+            input.BaseRevision,
+            [htmlFile, incorrectManifest]);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(result, DesignArtifactWorkspaceContract.JsonOptions);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            DesignArtifactWorkspaceContract.ParseAndValidateResult(
+                bytes,
+                run.Id,
+                input.BaseRevision,
+                DesignArtifactWorkspaceBroker.MaxOutputBytes));
+
+        Assert.Contains("清单与文件校验结果不一致", error.Message);
+    }
+
+    [Fact]
+    public void ResultRejectsTraversalEvenWhenHashMatches()
+    {
+        var run = BuildRun();
+        var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        var content = Encoding.UTF8.GetBytes("secret");
+        var result = new DesignWorkspacePackage(
+            DesignArtifactWorkspaceBroker.SchemaVersion,
+            run.Id,
+            input.BaseRevision,
+            [new DesignWorkspaceFile("assets/../secret.txt", Convert.ToBase64String(content), Hash(content), content.Length, "text/plain")]);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(result, DesignArtifactWorkspaceContract.JsonOptions);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            DesignArtifactWorkspaceContract.ParseAndValidateResult(
+                bytes,
+                run.Id,
+                input.BaseRevision,
+                DesignArtifactWorkspaceBroker.MaxOutputBytes));
+
+        Assert.Contains("不允许", error.Message);
+    }
+
+    private static DesignArtifactRun BuildRun() => new()
+    {
+        Id = "run-workspace-1",
+        UserId = "user-1",
+        Operation = DesignArtifactOperations.Edit,
+        SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
+        Instruction = "把主色改成蓝色并保留正文",
+        KnowledgeReferences =
+        [
+            new DesignKnowledgeSnapshot
+            {
+                EntryId = "entry-1",
+                Title = "产品 资料",
+                Content = "产品定位与核心卖点",
+                ContentHash = "source-hash",
+            },
+        ],
+    };
+
+    private static string Hash(byte[] bytes) =>
+        Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
+    private static DesignWorkspaceFile BuildManifest(string baseRevision, DesignWorkspaceFile file)
+    {
+        var manifest = new DesignArtifactManifest(
+            DesignArtifactWorkspaceBroker.ManifestSchemaVersion,
+            baseRevision,
+            "index.html",
+            [new DesignArtifactManifestFile(file.Path, file.Sha256, file.Size, file.MediaType)]);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(manifest, DesignArtifactWorkspaceContract.JsonOptions);
+        return new DesignWorkspaceFile(
+            "manifest.json",
+            Convert.ToBase64String(bytes),
+            Hash(bytes),
+            bytes.Length,
+            "application/json");
+    }
+}

@@ -7,8 +7,9 @@ import path from 'node:path';
 
 import { createRemoteHostsRouter } from '../../src/routes/remote-hosts.js';
 import { CdsPairingService } from '../../src/services/connection/pairing-service.js';
+import { AgentWorkspaceSessionRuntime } from '../../src/services/agent-workspace-session-runtime.js';
 import { StateService } from '../../src/services/state.js';
-import type { BuildProfile, Project } from '../../src/types.js';
+import type { BuildProfile, ExecResult, IShellExecutor, Project } from '../../src/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
@@ -354,7 +355,7 @@ describe('Remote hosts project instances route', () => {
     });
   });
 
-  it('publishes runtime provider and isolation facts without pretending planned adapters are ready', async () => {
+  it('publishes OpenDesign as implemented but not selectable without an injected container runtime', async () => {
     await startServer();
     const { projectId, longToken } = authorizeSharedServiceProject();
 
@@ -367,7 +368,7 @@ describe('Remote hosts project instances route', () => {
     });
     expect(catalog.body.items.find((item: any) => item.id === 'open-design')).toMatchObject({
       adapterKind: 'design-daemon',
-      implementationStatus: 'planned',
+      implementationStatus: 'available',
       healthy: false,
       selectable: false,
       requiredIsolationMode: 'session-container',
@@ -383,10 +384,194 @@ describe('Remote hosts project instances route', () => {
     );
     expect(rejected.status).toBe(409);
     expect(rejected.body.error).toMatchObject({
-      code: 'runtime_provider_not_ready',
+      code: 'resource_policy_not_enforced',
       runtime: 'open-design',
-      requiredIsolationMode: 'session-container',
-      executionOwner: 'cds-remote-agent',
+      requestedIsolationMode: 'session-container',
+      isolationOwnedBy: 'cds-remote-agent',
+      resourcePolicyEnforcedPerSession: false,
+    });
+  });
+
+  it('keeps OpenDesign unselectable when its configured image is absent', async () => {
+    const shell: IShellExecutor = {
+      async exec(command: string): Promise<ExecResult> {
+        if (command.startsWith('docker version')) {
+          return { stdout: '27.0.0\n', stderr: '', exitCode: 0 };
+        }
+        if (command.startsWith('docker image inspect')) {
+          return { stdout: '', stderr: 'No such image', exitCode: 1 };
+        }
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const workspaceRuntime = new AgentWorkspaceSessionRuntime(shell, { capabilityCacheMs: 0 });
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+
+    const catalog = await request(server, 'GET', `/api/projects/${projectId}/agent-runtime-providers`, longToken);
+
+    expect(catalog.status).toBe(200);
+    expect(catalog.body.items.find((item: any) => item.id === 'open-design')).toMatchObject({
+      implementationStatus: 'available',
+      healthy: false,
+      selectable: false,
+      resourcePolicyEnforcedPerSession: false,
+      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime:od-0.21.1-opencode-1.18.28 is not installed on this CDS node',
+    });
+  });
+
+  it('routes OpenDesign through the injected workspace runtime and exposes only committed result facts', async () => {
+    const calls: Array<{ kind: string; value: unknown }> = [];
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create(sessionId: string, transfer: any, policy: any, onStage: (stage: string) => void) {
+        calls.push({ kind: 'create', value: { sessionId, transfer, policy } });
+        onStage('workspace_materialized');
+        return {
+          hostRoot: '/host/session',
+          workspaceDir: '/host/session/workspace',
+          containerName: 'cds-od-test',
+          networkName: 'cds-od-net-test',
+          daemonBaseUrl: 'http://172.19.0.2:7456',
+          inputFileCount: 2,
+        };
+      },
+      async execute(
+        sessionId: string,
+        instruction: string,
+        model: any,
+        transferToken: string,
+        _signal: AbortSignal,
+        onStage: (stage: string) => void,
+      ) {
+        calls.push({ kind: 'execute', value: { sessionId, instruction, model, transferToken } });
+        onStage('workspace_collecting');
+        onStage('workspace_committing');
+        return {
+          artifactRef: 'design-artifact:run-1',
+          resultSha256: 'b'.repeat(64),
+          files: [
+            { path: 'index.html', sha256: 'c'.repeat(64), size: 120, mediaType: 'text/html; charset=utf-8' },
+            { path: 'manifest.json', sha256: 'd'.repeat(64), size: 220, mediaType: 'application/json; charset=utf-8' },
+          ],
+          openDesignRunId: 'od-run-1',
+        };
+      },
+      async stop(sessionId: string, reason: string) {
+        calls.push({ kind: 'stop', value: { sessionId, reason } });
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const transfer = {
+      schemaVersion: 'map-design-workspace-v1',
+      inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/input',
+      resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/result',
+      transferToken: 'transfer-secret',
+      inputSha256: 'a'.repeat(64),
+      baseRevision: 'revision-1',
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 1024 * 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+    };
+
+    const catalog = await request(server, 'GET', `/api/projects/${projectId}/agent-runtime-providers`, longToken);
+    expect(catalog.body.items.find((item: any) => item.id === 'open-design')).toMatchObject({
+      healthy: true,
+      selectable: true,
+      resourcePolicyEnforcedPerSession: true,
+    });
+
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      {
+        runtime: 'open-design',
+        workloadKind: 'design-artifact',
+        model: 'map-managed',
+        modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+        modelProtocol: 'openai',
+        modelApiKey: 'model-secret',
+        workspaceTransfer: transfer,
+        resourcePolicy: {
+          cpuCores: 1,
+          memoryMb: 768,
+          timeoutSeconds: 120,
+          networkPolicy: 'egress-only',
+          autoCleanupMinutes: 5,
+        },
+      },
+    );
+
+    expect(created.status).toBe(201);
+    expect(created.body.item).toMatchObject({
+      runtime: 'open-design',
+      workloadKind: 'design-artifact',
+      containerName: 'cds-od-test',
+      workspaceRoot: '/workspace',
+      hasModelApiKey: true,
+      workspaceTransfer: {
+        schemaVersion: 'map-design-workspace-v1',
+        inputSha256: 'a'.repeat(64),
+        baseRevision: 'revision-1',
+      },
+    });
+    expect(JSON.stringify(created.body.item)).not.toContain('transfer-secret');
+    expect(JSON.stringify(created.body.item)).not.toContain('model-secret');
+    expect(JSON.stringify(created.body.item)).not.toContain('inputPackageUrl');
+    const sessionId = created.body.item.id;
+
+    const sent = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+      longToken,
+      { content: '将页面调整为清晰的产品发布页' },
+    );
+    expect(sent.status).toBe(202);
+    expect(sent.body).toMatchObject({ accepted: true, runtimeOwnedBy: 'cds-agent-workspace-session' });
+    await waitFor(async () => {
+      const current = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, longToken);
+      return current.body.item.status === 'idle';
+    });
+
+    expect(calls.find((call) => call.kind === 'execute')?.value).toMatchObject({
+      instruction: '将页面调整为清晰的产品发布页',
+      model: {
+        baseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+        apiKey: 'model-secret',
+        model: 'map-managed',
+      },
+      transferToken: 'transfer-secret',
+    });
+    const stream = await request(
+      server,
+      'GET',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stream`,
+      longToken,
+    );
+    expect(stream.body).toContain('CDS 正在校验生成文件与安全边界。');
+    expect(stream.body).toContain('CDS 正在向 MAP 提交已校验的结果。');
+    expect(stream.body).toContain('design-artifact:run-1');
+    expect(stream.body).toContain('event: done');
+    expect(stream.body).not.toContain('model-secret');
+    expect(stream.body).not.toContain('transfer-secret');
+
+    const stopped = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stop`,
+      longToken,
+      {},
+    );
+    expect(stopped.status).toBe(200);
+    expect(calls.find((call) => call.kind === 'stop')?.value).toEqual({
+      sessionId,
+      reason: 'session_stop_requested',
     });
   });
 

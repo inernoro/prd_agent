@@ -31,6 +31,7 @@ import type { StateService } from '../services/state.js';
 import type { ContainerService } from '../services/container.js';
 import type { BranchEntry, BuildProfile, Project, ServiceDeployment, ServiceState } from '../types.js';
 import type { CdsConfig } from '../types.js';
+import type { IShellExecutor } from '../types.js';
 import {
   RemoteHostService,
   type RemoteHostInput,
@@ -54,11 +55,19 @@ import {
   type AgentIsolationMode,
   type AgentWorkloadKind,
 } from '../services/agent-runtime-provider-registry.js';
+import {
+  AgentWorkspaceRuntimeError,
+  AgentWorkspaceSessionRuntime,
+  normalizeWorkspaceTransfer,
+  type WorkspaceTransferRequest,
+} from '../services/agent-workspace-session-runtime.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
   containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
   config?: Pick<CdsConfig, 'portStart'>;
+  shell?: IShellExecutor;
+  agentWorkspaceSessionRuntime?: AgentWorkspaceSessionRuntime;
 }
 
 export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
@@ -71,6 +80,8 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     () => '',
   );
   const router = Router();
+  const agentWorkspaceSessionRuntime = deps.agentWorkspaceSessionRuntime
+    ?? (deps.shell ? new AgentWorkspaceSessionRuntime(deps.shell) : undefined);
   const instanceDiscoveryCache = new Map<string, {
     expiresAt: number;
     payload: { projectId: string } & ProjectRuntimeInstancesResponse;
@@ -635,7 +646,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     }
   });
 
-  router.get('/projects/:id/agent-runtime-providers', (req, res) => {
+  router.get('/projects/:id/agent-runtime-providers', async (req, res) => {
     const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['instance:read']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
@@ -648,13 +659,26 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
 
+    const workspaceCapability = agentWorkspaceSessionRuntime
+      ? await agentWorkspaceSessionRuntime.capability()
+      : {
+          available: false,
+          resourcePolicyEnforcedPerSession: false,
+          reason: 'Agent workspace session runtime is not injected on this CDS node',
+        };
     const items = listAgentRuntimeProviderDefinitions().map((provider) => {
       const transportReady = provider.id === 'fake'
-        || resolveCdsManagedRuntimeTransport(deps.stateService, project, provider.id) !== null;
+        || (provider.id === 'open-design'
+          ? workspaceCapability.available
+          : resolveCdsManagedRuntimeTransport(deps.stateService, project, provider.id) !== null);
       const healthy = provider.implementationStatus === 'available' && transportReady;
+      const resourcePolicyEnforcedPerSession = provider.id === 'open-design'
+        ? AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION
+          && workspaceCapability.resourcePolicyEnforcedPerSession
+        : AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION;
       const isolationReady = isAgentRuntimeProviderIsolationReady(
         provider,
-        AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
+        resourcePolicyEnforcedPerSession,
       );
       return {
         ...provider,
@@ -662,10 +686,11 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         healthy,
         selectable: provider.productEligible && healthy && isolationReady,
         isolationOwnedBy: 'cds-remote-agent',
-        resourcePolicyEnforcedPerSession: AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
+        resourcePolicyEnforcedPerSession,
         reason: provider.reason
           || (!healthy
-            ? 'CDS 中尚无可用的运行时容器或传输适配器'
+            ? (provider.id === 'open-design' && workspaceCapability.reason)
+              || 'CDS 中尚无可用的运行时容器或传输适配器'
             : !isolationReady
               ? 'CDS 尚未按会话强制容器资源与清理策略'
               : null),
@@ -746,15 +771,27 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       });
       return;
     }
-    if (isolationMode === 'session-container' && !AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION) {
+    const workspaceCapability = runtime === 'open-design' && agentWorkspaceSessionRuntime
+      ? await agentWorkspaceSessionRuntime.capability()
+      : null;
+    const resourcePolicyEnforcedPerSession = runtime === 'open-design'
+      ? Boolean(
+          agentWorkspaceSessionRuntime
+          && workspaceCapability?.available
+          && workspaceCapability.resourcePolicyEnforcedPerSession
+          && AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
+        )
+      : AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION;
+    if (isolationMode === 'session-container' && !resourcePolicyEnforcedPerSession) {
       res.status(409).json({
         error: {
           code: 'resource_policy_not_enforced',
-          message: 'session-container isolation cannot start until per-session resource policy is enforced',
+          message: workspaceCapability?.reason
+            || 'session-container isolation cannot start until per-session resource policy is enforced',
           runtime,
           requestedIsolationMode: isolationMode,
           isolationOwnedBy: 'cds-remote-agent',
-          resourcePolicyEnforcedPerSession: AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
+          resourcePolicyEnforcedPerSession,
         },
       });
       return;
@@ -769,11 +806,54 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const gitRef = typeof req.body?.gitRef === 'string' ? req.body.gitRef : null;
     const hasModelApiKey = Boolean(modelApiKey);
     const resourcePolicy = normalizeAgentResourcePolicy(req.body?.resourcePolicy);
+    let workspaceTransfer: WorkspaceTransferRequest | null = null;
+    if (runtime === 'open-design') {
+      try {
+        workspaceTransfer = normalizeWorkspaceTransfer(req.body?.workspaceTransfer);
+      } catch (error) {
+        const runtimeError = toAgentWorkspaceRuntimeError(error);
+        res.status(422).json({ error: runtimeError });
+        return;
+      }
+      if (
+        auth.partnerBaseUrl
+        && new URL(workspaceTransfer.inputPackageUrl).origin !== new URL(auth.partnerBaseUrl).origin
+      ) {
+        res.status(422).json({
+          error: {
+            code: 'workspace_transfer_origin_mismatch',
+            message: 'workspace transfer URLs must use the authenticated MAP connection origin',
+            runtime,
+          },
+        });
+        return;
+      }
+      if (!modelBaseUrl || modelProtocol !== 'openai' || !modelApiKey || typeof req.body?.model !== 'string' || !req.body.model.trim()) {
+        res.status(422).json({
+          error: {
+            code: 'model_authority_required',
+            message: 'OpenDesign requires MAP-owned modelBaseUrl, modelProtocol=openai, modelApiKey, and model',
+            runtime,
+          },
+        });
+        return;
+      }
+      if (resourcePolicy.networkPolicy !== 'egress-only') {
+        res.status(422).json({
+          error: {
+            code: 'resource_policy_not_enforced',
+            message: 'OpenDesign session containers require networkPolicy=egress-only',
+            runtime,
+          },
+        });
+        return;
+      }
+    }
     const runtimeSource = runtime === 'fake' ? 'fake-runtime' : `${runtime}-runtime`;
     const workerId = runtime === 'fake'
       ? `fake-worker-${req.params.id}`
       : `${runtime}-worker-${req.params.id}`;
-    const containerName = runtime === 'fake'
+    let containerName = runtime === 'fake'
       ? `cds-agent-fake-${req.params.id}`
       : (process.env.CDS_AGENT_CONTAINER_NAME
         || process.env.CLAUDE_SIDECAR_CONTAINER_NAME
@@ -797,7 +877,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       hasModelApiKey,
       runtimeProfileId: typeof req.body?.runtimeProfileId === 'string' ? req.body.runtimeProfileId : null,
       resourcePolicy,
-      status: 'running',
+      status: runtime === 'open-design' ? 'creating' : 'running',
       workerId,
       containerName,
       toolPolicy: typeof req.body?.toolPolicy === 'string' ? req.body.toolPolicy : 'confirm-dangerous',
@@ -806,9 +886,47 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       events: [],
       messages: [],
       logs: [],
+      workspaceTransfer: workspaceTransfer
+        ? {
+            schemaVersion: workspaceTransfer.schemaVersion,
+            inputSha256: workspaceTransfer.inputSha256,
+            baseRevision: workspaceTransfer.baseRevision,
+            maxInputBytes: workspaceTransfer.maxInputBytes,
+            maxOutputBytes: workspaceTransfer.maxOutputBytes,
+            allowedOutputPaths: [...workspaceTransfer.allowedOutputPaths],
+          }
+        : null,
     };
-    if (modelApiKey) {
-      cdsAgentSessionSecrets.set(session.id, { modelApiKey });
+    if (modelApiKey || workspaceTransfer) {
+      cdsAgentSessionSecrets.set(session.id, {
+        ...(modelApiKey ? { modelApiKey } : {}),
+        ...(workspaceTransfer ? { transferToken: workspaceTransfer.transferToken } : {}),
+      });
+    }
+    if (runtime === 'open-design' && workspaceTransfer && agentWorkspaceSessionRuntime) {
+      try {
+        const allocated = await agentWorkspaceSessionRuntime.create(
+          session.id,
+          workspaceTransfer,
+          resourcePolicy,
+          (stage, detail) => {
+            pushCdsAgentEvent(session, 'status', { status: 'creating', reason: stage, ...detail });
+          },
+          (error) => expireAgentWorkspaceSession(session, error, recordAgentRequestHistory),
+        );
+        containerName = allocated.containerName;
+        session.containerName = allocated.containerName;
+        session.workspaceRoot = '/workspace';
+        session.status = 'running';
+        session.updatedAt = new Date().toISOString();
+      } catch (error) {
+        cdsAgentSessionSecrets.delete(session.id);
+        const runtimeError = toAgentWorkspaceRuntimeError(error);
+        session.status = 'failed';
+        session.updatedAt = new Date().toISOString();
+        res.status(runtimeError.retryable ? 503 : 409).json({ error: runtimeError });
+        return;
+      }
     }
     pushCdsAgentEvent(session, 'status', {
       status: 'running',
@@ -826,14 +944,14 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       workloadKind,
       isolationMode,
       executionOwner: provider.executionOwner,
-      resourcePolicyEnforcedPerSession: AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
+      resourcePolicyEnforcedPerSession,
     });
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
       message: `session created runtime=${runtime} workload=${workloadKind} isolation=${isolationMode} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy}`,
       source: runtimeSource,
     });
-    session.logs.push(`[${now}] session created runtime=${runtime} provider=${provider.id} workload=${workloadKind} isolation=${isolationMode} owner=${provider.executionOwner} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy} cleanup=${resourcePolicy.autoCleanupMinutes}m resourcePolicyEnforcedPerSession=${AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION}`);
+    session.logs.push(`[${now}] session created runtime=${runtime} provider=${provider.id} workload=${workloadKind} isolation=${isolationMode} owner=${provider.executionOwner} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy} cleanup=${resourcePolicy.autoCleanupMinutes}m resourcePolicyEnforcedPerSession=${resourcePolicyEnforcedPerSession}`);
     cdsAgentSessions.set(session.id, session);
     res.status(201).json({ item: toCdsAgentSessionView(session) });
   });
@@ -909,6 +1027,89 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       message: `message accepted chars=${content.length}`,
       source: session.runtime === 'fake' ? 'fake-runtime' : `${session.runtime}-runtime`,
     });
+
+    if (session.runtime === 'open-design') {
+      const secrets = cdsAgentSessionSecrets.get(session.id);
+      if (
+        !agentWorkspaceSessionRuntime
+        || !secrets?.modelApiKey
+        || !secrets.transferToken
+        || !session.modelBaseUrl
+        || session.modelProtocol !== 'openai'
+        || !session.model
+      ) {
+        const unavailable = {
+          code: 'open_design_session_contract_missing',
+          message: 'OpenDesign session is missing its MAP-owned model or workspace transfer authority',
+          runtime: session.runtime,
+          retryable: false,
+        };
+        session.status = 'failed';
+        pushCdsAgentEvent(session, 'error', unavailable);
+        recordAgentRequestHistory(session);
+        res.status(202).json({ item: toCdsAgentSessionView(session), accepted: false, error: unavailable });
+        return;
+      }
+      const runId = `${session.id}-design-${session.events.length + 1}`;
+      const controller = new AbortController();
+      session.activeRunId = runId;
+      session.activeRunAbortController = controller;
+      session.status = 'running';
+      void agentWorkspaceSessionRuntime.execute(
+        session.id,
+        content,
+        {
+          baseUrl: session.modelBaseUrl,
+          protocol: 'openai',
+          apiKey: secrets.modelApiKey,
+          model: session.model,
+        },
+        secrets.transferToken,
+        controller.signal,
+        (stage, detail) => {
+          if (session.status === 'stopped') return;
+          pushCdsAgentEvent(session, 'status', { status: 'running', reason: stage, ...detail });
+          pushCdsAgentEvent(session, 'text_delta', { text: designStageSummary(stage, detail) });
+        },
+      ).then((result) => {
+        if (session.status === 'stopped' || session.activeRunId !== runId) return;
+        session.status = 'idle';
+        session.messages.push({
+          role: 'assistant',
+          content: `Design artifact committed as ${result.artifactRef}`,
+          createdAt: new Date().toISOString(),
+        });
+        pushCdsAgentEvent(session, 'done', {
+          artifactRef: result.artifactRef,
+          resultSha256: result.resultSha256,
+          files: result.files,
+          openDesignRunId: result.openDesignRunId,
+        });
+        recordAgentRequestHistory(session);
+      }).catch((error) => {
+        if (session.status === 'stopped') return;
+        const runtimeError = toAgentWorkspaceRuntimeError(error);
+        session.status = 'failed';
+        pushCdsAgentEvent(session, 'error', runtimeError);
+        pushCdsAgentEvent(session, 'log', {
+          level: 'warn',
+          message: runtimeError.message,
+          source: 'open-design-runtime',
+        });
+        recordAgentRequestHistory(session);
+      }).finally(() => {
+        if (session.activeRunId === runId) {
+          session.activeRunId = undefined;
+          session.activeRunAbortController = undefined;
+        }
+      });
+      res.status(202).json({
+        item: toCdsAgentSessionView(session),
+        accepted: true,
+        runtimeOwnedBy: 'cds-agent-workspace-session',
+      });
+      return;
+    }
 
     if (session.runtime === 'claude-sdk') {
       const transport = resolveCdsManagedRuntimeTransport(deps.stateService, project, session.runtime);
@@ -1050,7 +1251,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     res.json({ ok: true, decision });
   });
 
-  router.post('/projects/:projectId/agent-sessions/:sessionId/stop', (req, res) => {
+  router.post('/projects/:projectId/agent-sessions/:sessionId/stop', async (req, res) => {
     const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['shared-service:deploy']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
@@ -1068,6 +1269,20 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     session.activeRunId = undefined;
     pushCdsAgentEvent(session, 'status', { status: 'stopping', reason: 'session_stop_requested' });
     session.logs.push(`[${session.updatedAt}] session stopping`);
+    if (session.runtime === 'open-design' && agentWorkspaceSessionRuntime) {
+      try {
+        await agentWorkspaceSessionRuntime.stop(session.id, 'session_stop_requested');
+      } catch (error) {
+        const runtimeError = toAgentWorkspaceRuntimeError(error);
+        session.status = 'failed';
+        session.updatedAt = new Date().toISOString();
+        cdsAgentSessionSecrets.delete(session.id);
+        pushCdsAgentEvent(session, 'error', runtimeError);
+        recordAgentRequestHistory(session);
+        res.status(502).json({ item: toCdsAgentSessionView(session), error: runtimeError });
+        return;
+      }
+    }
     session.status = 'stopped';
     session.updatedAt = new Date().toISOString();
     session.stoppedAt = session.updatedAt;
@@ -1766,10 +1981,18 @@ interface CdsAgentSession {
   events: CdsAgentEvent[];
   messages: Array<{ role: string; content: string; createdAt: string }>;
   logs: string[];
+  workspaceTransfer: {
+    schemaVersion: string;
+    inputSha256: string;
+    baseRevision: string;
+    maxInputBytes: number;
+    maxOutputBytes: number;
+    allowedOutputPaths: string[];
+  } | null;
 }
 
 const cdsAgentSessions = new Map<string, CdsAgentSession>();
-const cdsAgentSessionSecrets = new Map<string, { modelApiKey: string }>();
+const cdsAgentSessionSecrets = new Map<string, { modelApiKey?: string; transferToken?: string }>();
 
 interface CdsManagedRuntimeTransport {
   source: 'cds-branch-service';
@@ -1804,7 +2027,7 @@ function authenticateProjectRequest(
   projectId: string,
   pairing: CdsPairingService,
   requiredScopes: string[],
-): { ok: true } | { ok: false; status: number; code: string; message: string } {
+): { ok: true; partnerBaseUrl?: string } | { ok: false; status: number; code: string; message: string } {
   // [#746 obs-auth] 仪表盘操作者放行 —— 人类 cookie 登录(`_cdsCookieAuth`,由 server.ts
   // 主鉴权中间件盖章)是 admin 等价,直接放行。不加这条,仪表盘操作者点「Sidecar Pool /
   // Agent 会话」卡片会永远 401(端点只认 Bearer 连接 token,而浏览器带的是 cds_token cookie)。
@@ -1843,13 +2066,72 @@ function authenticateProjectRequest(
   if (missing) {
     return { ok: false, status: 403, code: 'scope_denied', message: `connection token lacks ${missing}` };
   }
-  return { ok: true };
+  return { ok: true, partnerBaseUrl: connection.partnerBaseUrl };
 }
 
 function getCdsAgentSession(projectId: string, sessionId: string): CdsAgentSession | undefined {
   const session = cdsAgentSessions.get(sessionId);
   if (!session || session.projectId !== projectId) return undefined;
   return session;
+}
+
+function toAgentWorkspaceRuntimeError(error: unknown): {
+  code: string;
+  message: string;
+  retryable: boolean;
+  details?: Record<string, unknown>;
+} {
+  if (error instanceof AgentWorkspaceRuntimeError) {
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      ...(error.details ? { details: error.details } : {}),
+    };
+  }
+  return {
+    code: 'agent_workspace_runtime_failed',
+    message: error instanceof Error ? error.message : 'Agent workspace runtime failed',
+    retryable: false,
+  };
+}
+
+function designStageSummary(stage: string, detail?: Record<string, unknown>): string {
+  if (stage === 'open_design_running' && typeof detail?.elapsedSeconds === 'number') {
+    return `OpenDesign 正在修改共享工作区，已运行 ${detail.elapsedSeconds} 秒。`;
+  }
+  const summaries: Record<string, string> = {
+    open_design_importing: 'OpenDesign 正在接入已准备的工作区。',
+    open_design_run_starting: 'OpenDesign 正在启动本次设计任务。',
+    open_design_running: 'OpenDesign 正在修改共享工作区。',
+    workspace_collecting: 'CDS 正在校验生成文件与安全边界。',
+    workspace_committing: 'CDS 正在向 MAP 提交已校验的结果。',
+  };
+  return summaries[stage] || '隔离设计会话正在继续处理。';
+}
+
+function expireAgentWorkspaceSession(
+  session: CdsAgentSession,
+  error: unknown,
+  recordHistory: (session: CdsAgentSession) => void,
+): void {
+  if (session.status === 'stopped') return;
+  session.activeRunAbortController?.abort();
+  session.activeRunAbortController = undefined;
+  session.activeRunId = undefined;
+  const runtimeError = error ? toAgentWorkspaceRuntimeError(error) : null;
+  session.status = runtimeError ? 'failed' : 'stopped';
+  session.updatedAt = new Date().toISOString();
+  session.stoppedAt = session.updatedAt;
+  cdsAgentSessionSecrets.delete(session.id);
+  if (runtimeError) {
+    pushCdsAgentEvent(session, 'error', runtimeError);
+    session.logs.push(`[${session.updatedAt}] session cleanup failed reason=ttl_expired code=${runtimeError.code}`);
+  } else {
+    pushCdsAgentEvent(session, 'status', { status: 'stopped', reason: 'ttl_expired' });
+    session.logs.push(`[${session.updatedAt}] session stopped reason=ttl_expired`);
+  }
+  recordHistory(session);
 }
 
 function pushCdsAgentEvent(
@@ -1962,6 +2244,7 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     gitRef: session.gitRef,
     hasModelApiKey: session.hasModelApiKey,
     runtimeProfileId: session.runtimeProfileId,
+    workspaceTransfer: session.workspaceTransfer,
     resourcePolicy: session.resourcePolicy,
     status: session.status,
     workerId: session.workerId,

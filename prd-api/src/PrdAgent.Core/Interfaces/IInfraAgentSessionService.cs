@@ -110,7 +110,31 @@ public record CreateInfraAgentSessionRequest(
 
 public record StartInfraAgentSessionRequest(
     string? Runtime,
-    string? Model
+    string? Model,
+    InfraAgentManagedLaunchRequest? ManagedLaunch = null
+);
+
+/// <summary>
+/// MAP 为单次 CDS 会话计算好的启动参数。该对象只在 Create/Start 调用栈内存在，
+/// model key 与 transfer token 均不得写入 InfraAgentSession 或运行日志。
+/// </summary>
+public sealed record InfraAgentManagedLaunchRequest(
+    string ModelBaseUrl,
+    string ModelProtocol,
+    string ModelApiKey,
+    InfraAgentWorkspaceTransferRequest WorkspaceTransfer
+);
+
+public sealed record InfraAgentWorkspaceTransferRequest(
+    string SchemaVersion,
+    string InputPackageUrl,
+    string InputSha256,
+    string ResultCommitUrl,
+    string TransferToken,
+    string BaseRevision,
+    long MaxInputBytes,
+    long MaxOutputBytes,
+    IReadOnlyList<string> AllowedOutputPaths
 );
 
 public record SendInfraAgentMessageRequest(

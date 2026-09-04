@@ -1,8 +1,9 @@
 export type AgentWorkloadKind = 'general' | 'repository-change' | 'design-artifact';
 export type AgentIsolationMode = 'shared-runtime' | 'session-container';
 
-// 会话级容器分配器落地后只能改这一处；目录、创建门禁和会话事实共同读取它。
-export const AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION = false;
+// 会话级容器分配器的实现事实。路由还会检查运行时实例是否真实注入并探测 Docker，
+// 所以该值为 true 不会让缺少容器底座的 CDS 节点误报 selectable。
+export const AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION = true;
 
 export interface AgentRuntimeProviderDefinition {
   id: string;
@@ -62,13 +63,12 @@ const DEFINITIONS: AgentRuntimeProviderDefinition[] = [
     label: 'OpenDesign',
     adapterKind: 'design-daemon',
     executionOwner: 'cds-remote-agent',
-    implementationStatus: 'planned',
+    implementationStatus: 'available',
     productEligible: true,
     workloadKinds: ['design-artifact'],
-    supportedIsolationModes: [],
+    supportedIsolationModes: ['session-container'],
     requiredIsolationMode: 'session-container',
     runtimeProtocol: 'cds-design-artifact-events-v1',
-    reason: 'OpenDesign daemon、Agent CLI 与会话级容器分配器尚未部署',
   },
   {
     id: 'custom',

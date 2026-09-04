@@ -1,0 +1,63 @@
+name: OpenDesign Runtime Image
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "cds/open-design-runtime/**"
+      - ".github/workflows/open-design-runtime.yml"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/opendesign-runtime
+  RUNTIME_TAG: od-0.21.1-opencode-1.18.28
+
+jobs:
+  build-and-push:
+    name: Build and push OpenDesign runtime
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push pinned runtime
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./cds/open-design-runtime
+          file: ./cds/open-design-runtime/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.RUNTIME_TAG }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          platforms: linux/amd64
+          cache-from: type=gha,scope=open-design-runtime
+          cache-to: type=gha,mode=max,scope=open-design-runtime
+
+      - name: Publish immutable digest
+        shell: bash
+        run: |
+          {
+            echo "## OpenDesign runtime"
+            echo ""
+            echo "- runtime: OpenDesign 0.21.1"
+            echo "- agent: OpenCode 1.18.28"
+            echo "- digest: \`${{ steps.build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

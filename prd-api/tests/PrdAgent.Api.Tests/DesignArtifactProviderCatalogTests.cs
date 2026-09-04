@@ -91,6 +91,7 @@ public class DesignArtifactProviderCatalogTests
         var executor = new OpenDesignRemoteArtifactExecutor(
             connections.Object,
             sessions.Object,
+            Mock.Of<IDesignArtifactWorkspaceBroker>(),
             NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
 
         var result = await executor.ProbeAsync("user-1", CancellationToken.None);
@@ -117,6 +118,7 @@ public class DesignArtifactProviderCatalogTests
         var executor = new OpenDesignRemoteArtifactExecutor(
             connections.Object,
             sessions.Object,
+            Mock.Of<IDesignArtifactWorkspaceBroker>(),
             NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
 
         var result = await executor.ProbeAsync("user-1", CancellationToken.None);
@@ -136,7 +138,27 @@ public class DesignArtifactProviderCatalogTests
         connections.Setup(service => service.ListAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([connection]);
         CreateInfraAgentSessionRequest? createRequest = null;
+        StartInfraAgentSessionRequest? startRequest = null;
         string? sentEnvelope = null;
+        var workspaceBroker = new Mock<IDesignArtifactWorkspaceBroker>();
+        workspaceBroker.Setup(service => service.PrepareAsync(
+                It.IsAny<DesignArtifactRun>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PreparedDesignArtifactWorkspace(
+                "https://map.test/input",
+                "input-sha",
+                "https://map.test/result",
+                "transfer-token",
+                "https://map.test/llm/v1",
+                "model-token",
+                "map-managed",
+                "base-revision",
+                1_048_576,
+                6_291_456,
+                ["index.html", "manifest.json", "assets/**"]));
+        workspaceBroker.Setup(service => service.ReadResultHtmlAsync("run-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync("<!doctype html>");
         var sessions = new Mock<IInfraAgentSessionService>();
         sessions.Setup(service => service.CreateAsync(
                 "user-1",
@@ -149,6 +171,7 @@ public class DesignArtifactProviderCatalogTests
                 remoteSession.Id,
                 It.IsAny<StartInfraAgentSessionRequest>(),
                 It.IsAny<CancellationToken>()))
+            .Callback<string, string, StartInfraAgentSessionRequest, CancellationToken>((_, _, request, _) => startRequest = request)
             .ReturnsAsync(remoteSession);
         sessions.Setup(service => service.SendMessageAsync(
                 "user-1",
@@ -165,8 +188,8 @@ public class DesignArtifactProviderCatalogTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync([
                 new InfraAgentEventView("event-1", remoteSession.Id, 1, "trace-1", InfraAgentEventTypes.Thinking, "{\"text\":\"正在布局\"}", DateTime.UtcNow),
-                new InfraAgentEventView("event-2", remoteSession.Id, 2, "trace-1", InfraAgentEventTypes.TextDelta, "{\"text\":\"<!doctype html>\"}", DateTime.UtcNow),
-                new InfraAgentEventView("event-3", remoteSession.Id, 3, "trace-1", InfraAgentEventTypes.Done, "{\"finalText\":\"<!doctype html>\"}", DateTime.UtcNow),
+                new InfraAgentEventView("event-2", remoteSession.Id, 2, "trace-1", InfraAgentEventTypes.TextDelta, "{\"text\":\"正在生成页面文件\"}", DateTime.UtcNow),
+                new InfraAgentEventView("event-3", remoteSession.Id, 3, "trace-1", InfraAgentEventTypes.Done, "{\"artifactRef\":\"map://design-artifact/run-1/result\"}", DateTime.UtcNow),
             ]);
         sessions.Setup(service => service.StopAsync(
                 "user-1",
@@ -176,6 +199,7 @@ public class DesignArtifactProviderCatalogTests
         var executor = new OpenDesignRemoteArtifactExecutor(
             connections.Object,
             sessions.Object,
+            workspaceBroker.Object,
             NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
         var run = new DesignArtifactRun
         {
@@ -207,18 +231,26 @@ public class DesignArtifactProviderCatalogTests
         Assert.Equal(InfraAgentWorkloadKinds.DesignArtifact, createRequest.WorkloadKind);
         Assert.Equal(InfraAgentIsolationModes.SessionContainer, createRequest.IsolationMode);
         Assert.Equal(InfraAgentToolPolicies.DenyAll, createRequest.ToolPolicy);
+        Assert.NotNull(startRequest?.ManagedLaunch);
+        Assert.Equal("https://map.test/llm/v1", startRequest.ManagedLaunch.ModelBaseUrl);
+        Assert.Equal("https://map.test/input", startRequest.ManagedLaunch.WorkspaceTransfer.InputPackageUrl);
+        Assert.Equal("transfer-token", startRequest.ManagedLaunch.WorkspaceTransfer.TransferToken);
         Assert.NotNull(sentEnvelope);
         using var envelope = JsonDocument.Parse(sentEnvelope);
-        Assert.Equal("map-design-artifact-v1", envelope.RootElement.GetProperty("schemaVersion").GetString());
-        Assert.Equal(
-            "核心价值是降低配置成本",
-            envelope.RootElement.GetProperty("knowledgeReferences")[0].GetProperty("content").GetString());
+        Assert.Equal("map-design-artifact-command-v2", envelope.RootElement.GetProperty("schemaVersion").GetString());
+        Assert.False(envelope.RootElement.GetProperty("knowledgeReferences")[0].TryGetProperty("content", out _));
+        Assert.DoesNotContain("核心价值是降低配置成本", sentEnvelope);
         Assert.Collection(
             chunks,
             chunk =>
             {
                 Assert.Equal("thinking", chunk.Type);
                 Assert.Equal("正在布局", chunk.Content);
+            },
+            chunk =>
+            {
+                Assert.Equal("thinking", chunk.Type);
+                Assert.Equal("正在生成页面文件", chunk.Content);
             },
             chunk =>
             {

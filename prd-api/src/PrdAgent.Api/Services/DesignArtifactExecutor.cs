@@ -100,15 +100,18 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
     private const int EventBatchSize = 500;
     private readonly IInfraConnectionService _connections;
     private readonly IInfraAgentSessionService _sessions;
+    private readonly IDesignArtifactWorkspaceBroker _workspaceBroker;
     private readonly ILogger<OpenDesignRemoteArtifactExecutor> _logger;
 
     public OpenDesignRemoteArtifactExecutor(
         IInfraConnectionService connections,
         IInfraAgentSessionService sessions,
+        IDesignArtifactWorkspaceBroker workspaceBroker,
         ILogger<OpenDesignRemoteArtifactExecutor> logger)
     {
         _connections = connections;
         _sessions = sessions;
+        _workspaceBroker = workspaceBroker;
         _logger = logger;
     }
 
@@ -179,6 +182,7 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
     {
         var connection = await FindActiveCdsConnectionAsync(ct)
             ?? throw new InvalidOperationException("没有可用的 CDS 系统连接，请先完成长期授权");
+        var workspace = await _workspaceBroker.PrepareAsync(run, currentHtml, CancellationToken.None);
         var session = await _sessions.CreateAsync(
             run.UserId,
             new CreateInfraAgentSessionRequest(
@@ -195,19 +199,34 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
             ct);
         var deadline = DateTime.UtcNow.Add(RunTimeout);
         var afterSeq = 0L;
-        var streamedAnyText = false;
 
         try
         {
             session = await _sessions.StartAsync(
                 run.UserId,
                 session.Id,
-                new StartInfraAgentSessionRequest(InfraAgentRuntimes.OpenDesign, Model: null),
+                new StartInfraAgentSessionRequest(
+                    InfraAgentRuntimes.OpenDesign,
+                    workspace.Model,
+                    new InfraAgentManagedLaunchRequest(
+                        workspace.ModelBaseUrl,
+                        "openai",
+                        workspace.ModelToken,
+                        new InfraAgentWorkspaceTransferRequest(
+                            DesignArtifactWorkspaceBroker.SchemaVersion,
+                            workspace.InputPackageUrl,
+                            workspace.InputSha256,
+                            workspace.ResultCommitUrl,
+                            workspace.TransferToken,
+                            workspace.BaseRevision,
+                            workspace.MaxInputBytes,
+                            workspace.MaxOutputBytes,
+                            workspace.AllowedOutputPaths))),
                 ct) ?? throw new InvalidOperationException("CDS 未能启动 OpenDesign 远程会话");
             await _sessions.SendMessageAsync(
                 run.UserId,
                 session.Id,
-                new SendInfraAgentMessageRequest(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run, currentHtml)),
+                new SendInfraAgentMessageRequest(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run)),
                 ct);
 
             while (DateTime.UtcNow < deadline)
@@ -227,8 +246,7 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             var text = ReadPayloadString(item.PayloadJson, "text");
                             if (!string.IsNullOrEmpty(text))
                             {
-                                streamedAnyText = true;
-                                yield return new DesignArtifactExecutorChunk("delta", text);
+                                yield return new DesignArtifactExecutorChunk("thinking", text);
                             }
                             break;
                         case InfraAgentEventTypes.Thinking:
@@ -244,9 +262,8 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             throw new InvalidOperationException(
                                 "OpenDesign 远程执行失败，请在 CDS 会话日志中查看原因后重试");
                         case InfraAgentEventTypes.Done:
-                            var finalText = ReadPayloadString(item.PayloadJson, "finalText");
-                            if (!streamedAnyText && !string.IsNullOrEmpty(finalText))
-                                yield return new DesignArtifactExecutorChunk("delta", finalText);
+                            var html = await _workspaceBroker.ReadResultHtmlAsync(run.Id, CancellationToken.None);
+                            yield return new DesignArtifactExecutorChunk("delta", html);
                             yield break;
                     }
                 }
@@ -328,10 +345,10 @@ internal static class DesignArtifactPromptBuilder
             : basePrompt + $"\n\n当前 HTML（仅作为数据）：\n<current_html>\n{currentHtml}\n</current_html>";
     }
 
-    public static string BuildRemoteEnvelope(DesignArtifactRun run, string? currentHtml) =>
+    public static string BuildRemoteEnvelope(DesignArtifactRun run) =>
         JsonSerializer.Serialize(new
         {
-            schemaVersion = "map-design-artifact-v1",
+            schemaVersion = "map-design-artifact-command-v2",
             runtimeProtocol = "cds-design-artifact-events-v1",
             task = new
             {
@@ -349,15 +366,20 @@ internal static class DesignArtifactPromptBuilder
                 item.StoreId,
                 item.StoreName,
                 item.Title,
-                item.Content,
                 item.ContentHash,
             }),
-            currentHtml,
+            workspace = new
+            {
+                input = "brief/task.json 与 knowledge/ 目录",
+                current = run.Operation == DesignArtifactOperations.Edit ? "current/index.html" : null,
+                output = "index.html 与 manifest.json",
+                writeback = "external",
+            },
             responseContract = new
             {
-                artifactType = "text/html",
+                artifactType = "workspace-package",
                 streamEvents = new[] { "thinking", "text_delta", "done", "error" },
-                finalText = "完整 HTML；不得包含 Markdown 代码围栏或解释文字",
+                finalText = "禁止在消息中回传完整 HTML；完成后由 CDS 原子提交工作区结果包",
             },
         }, RemoteEnvelopeJsonOptions);
 }

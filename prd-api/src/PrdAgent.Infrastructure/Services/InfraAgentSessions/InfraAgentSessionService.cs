@@ -300,11 +300,28 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(userId, session.RuntimeProfileId, ct);
             var runtime = NormalizeRuntime(request.Runtime ?? runtimeProfile?.Runtime ?? session.Runtime);
             var model = NormalizeOptional(request.Model) ?? runtimeProfile?.Model ?? session.Model;
-            var modelBaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl;
+            var managedLaunch = request.ManagedLaunch;
+            if (managedLaunch != null
+                && (!string.Equals(runtime, InfraAgentRuntimes.OpenDesign, StringComparison.Ordinal)
+                    || !string.Equals(session.WorkloadKind, InfraAgentWorkloadKinds.DesignArtifact, StringComparison.Ordinal)
+                    || !string.Equals(session.IsolationMode, InfraAgentIsolationModes.SessionContainer, StringComparison.Ordinal)))
+            {
+                throw new InfraAgentSessionException(
+                    InfraAgentSessionErrorCodes.RuntimeProfileIncompatible,
+                    "MAP 托管启动参数只允许用于隔离的设计产物会话");
+            }
+            var modelBaseUrl = managedLaunch?.ModelBaseUrl ?? runtimeProfile?.BaseUrl ?? session.ModelBaseUrl;
+            var modelProtocol = managedLaunch?.ModelProtocol ?? runtimeProfile?.Protocol;
+            var modelApiKey = managedLaunch?.ModelApiKey ?? runtimeProfile?.ApiKey;
             var resourceCpuCores = runtimeProfile?.ResourceCpuCores ?? session.ResourceCpuCores;
             var resourceMemoryMb = runtimeProfile?.ResourceMemoryMb ?? session.ResourceMemoryMb;
             var timeoutSeconds = runtimeProfile?.TimeoutSeconds ?? session.TimeoutSeconds;
-            var networkPolicy = runtimeProfile?.NetworkPolicy ?? session.NetworkPolicy;
+            // OpenDesign needs outbound access only to the MAP workspace/model endpoints. The
+            // managed launch contract is server-authored, so it may narrow the generic session
+            // default without exposing a caller-controlled network policy field.
+            var networkPolicy = managedLaunch != null
+                ? InfraAgentRuntimeNetworkPolicies.EgressOnly
+                : runtimeProfile?.NetworkPolicy ?? session.NetworkPolicy;
             var autoCleanupMinutes = runtimeProfile?.AutoCleanupMinutes ?? session.AutoCleanupMinutes;
             EnsureRuntimeProfileCompatibleOrLiteFallback(runtime, runtimeProfile, ResolveSidecarRuntimeAdapter());
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
@@ -317,10 +334,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 clientUser = session.UserId,
                 clientApp = session.ClientApp ?? "map",
                 modelBaseUrl,
-                modelProtocol = runtimeProfile?.Protocol,
-                modelApiKey = runtimeProfile?.ApiKey,
+                modelProtocol,
+                modelApiKey,
                 runtimeProfileId = runtimeProfile?.Id ?? session.RuntimeProfileId,
                 workspaceRoot = session.WorkspaceRoot,
+                workspaceTransfer = managedLaunch?.WorkspaceTransfer,
                 gitRepository = session.GitRepository,
                 gitRef = session.GitRef,
                 resourcePolicy = new
