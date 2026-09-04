@@ -384,6 +384,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         // 计数与正文一起纳入同一段补偿：计数那一步失败时若不回滚，条目会永远停在
         // mcpContentPending，此后同键的每一次重试都拿到 409 —— 一条谁也救不回来的死记录。
         var countedIn = false;
+        var summaryApplied = true;
         try
         {
             var counted = await _db.DocumentStores.UpdateOneAsync(
@@ -435,15 +436,31 @@ public class DocumentStoreOpenApiController : ControllerBase
                 // 而这里只有摘要一个字段要纠正，整套重写反而多出几处能写错的地方。
                 var explicitSummary = string.IsNullOrWhiteSpace(req.Summary) ? null : req.Summary.Trim();
 
-                // 正文落盘了，这条才算完整 —— 在此之前撞上来的重试只会拿到 409，不会拿到「成功」
+                // 正文落盘了，这条才算完整 —— 在此之前撞上来的重试只会拿到 409，不会拿到「成功」。
+                //
+                // 收尾这一步也要带条件：WriteAsync 提交正文之后还要重锚评论、重算双链、拍版本快照，
+                // 那几步里用户完全可以在界面上保存一次这条已经可见的条目。只按 id 更新的话，
+                // 智能体那份 summary 会把用户刚改的盖掉 —— 与上面那道条件写入是同一个道理，
+                // 只是它藏在收尾里，看着像「补一个字段」而已。
+                var finishFilter = Builders<DocumentEntry>.Filter.And(
+                    Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id),
+                    Builders<DocumentEntry>.Filter.Eq(e => e.UpdatedAt, placed.UpdatedAt));
                 var finish = Builders<DocumentEntry>.Update.Unset(EntryContentPendingField);
                 if (explicitSummary != null)
                     finish = Builders<DocumentEntry>.Update.Combine(
                         finish, Builders<DocumentEntry>.Update.Set(e => e.Summary, explicitSummary));
-                await _db.DocumentEntries.UpdateOneAsync(
-                    e => e.Id == entry.Id,
-                    finish,
-                    cancellationToken: CancellationToken.None);
+                var finished = await _db.DocumentEntries.UpdateOneAsync(
+                    finishFilter, finish, cancellationToken: CancellationToken.None);
+                if (finished.MatchedCount == 0)
+                {
+                    // 用户在这几步之间改过了。**不覆盖他的 summary**，但那个「正文还没落盘」的标记
+                    // 必须摘掉 —— 留着的话同键重试会永远撞 409，这条记录再没人能收尾。
+                    await _db.DocumentEntries.UpdateOneAsync(
+                        e => e.Id == entry.Id,
+                        Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
+                        cancellationToken: CancellationToken.None);
+                    summaryApplied = explicitSummary == null;
+                }
             }
         }
         catch (EntryVanishedException)
@@ -482,7 +499,15 @@ public class DocumentStoreOpenApiController : ControllerBase
                 : "这篇文档没有建成，且残留记录没能清干净；这个 clientRequestId 暂时不能复用，请换一个键重试，并让管理员看一下服务端日志"));
         }
 
-        return Ok(ApiResponse<object>.Ok(new { entryId = entry.Id, storeId, title = entry.Title }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entryId = entry.Id,
+            storeId,
+            title = entry.Title,
+            // 正文写进去了，但收尾那一步撞上了用户的编辑：他的摘要保留着，你给的那个没应用。
+            // 如实说出来，比让调用方以为自己写成了强。
+            summaryApplied,
+        }));
     }
 
     public class UpdateEntryContentRequest

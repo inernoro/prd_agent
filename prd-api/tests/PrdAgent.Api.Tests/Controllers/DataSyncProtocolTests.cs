@@ -4,6 +4,7 @@ using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services.DataSync;
+using static PrdAgent.Api.Tests.Middleware.RequestLogRedactionProbe;
 using PrdAgent.Core.DataSync;
 using PrdAgent.Core.Models;
 using Shouldly;
@@ -900,7 +901,7 @@ public class DataSyncProtocolTests
     ///
     /// 原来中间件里只有一个写死的 `/api/llm-gateway/sso/ticket` 判等：每加一个发凭据的
     /// 端点都得有人记得回来改那一行，漏掉不会红（形状 3）。所以这条守卫盯的是
-    /// **判据的形状**——必须是一张具名清单 + 前缀匹配，而不是又一次字符串判等。
+    /// **判据的形状**——必须是一张具名清单 + 按路径段匹配，而不是又一次字符串判等。
     /// </summary>
     [Fact]
     public void 同步端点的请求与响应体不许落进接口日志()
@@ -911,10 +912,14 @@ public class DataSyncProtocolTests
         middleware.ShouldContain("\"/api/instance-sync/\",");
         // 2. 原来那个凭据端点没被弄丢。
         middleware.ShouldContain("\"/api/llm-gateway/sso/ticket\",");
-        // 3. 判据是前缀匹配的具名函数，不是散在调用点的字符串判等。
+        // 3. 判据是一个具名函数，不是散在调用点的字符串判等；而它到底挡不挡，
+        //    问**真正生效的那份实现**（清单在、匹配写错的情况，扫字面量看不出来）。
         middleware.ShouldContain("private static bool CarriesCredential(string path) =>");
-        middleware.ShouldContain("CredentialBearingPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase))");
         middleware.ShouldNotContain("path.Equals(\n            \"/api/llm-gateway/sso/ticket\"");
+        CarriesCredential("/api/instance-sync/token").ShouldBeTrue();
+        CarriesCredential("/api/instance-sync/export").ShouldBeTrue();
+        CarriesCredential("/api/llm-gateway/sso/ticket").ShouldBeTrue();
+        CarriesCredential("/api/documents").ShouldBeFalse("挡得过宽等于把排障能力一起关掉");
 
         // 4. 请求体和响应体**两边**都挡。只挡响应是半个补丁——PKCE verifier 与授权码
         //    都在请求里，拿到它们同样能换出导出令牌。

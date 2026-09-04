@@ -294,18 +294,24 @@ public class LiteraryOpenApiController : ControllerBase
         //   否则那次检查只是个说法（predicate-and-wiring-discipline 形状 2：链路只建一半）。
         var idFilter = Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, ws.Id);
         var guarded = append || revisionChecked;
+        // append 的条件此前只看正文没变。可这次写入**重置的不止正文**：它还要把
+        // ArticleWorkflow 与 ArticleWorkflowHistory 按我读到的那份快照重写一遍。
+        // 界面或配图 worker 完全可以在这中间只动 workflow（写标记、回填资产）而不动正文 ——
+        // 那时正文条件照样成立，于是这次写入拿旧快照把新的「标记 → 资产」映射抹掉。
+        // 所以条件要覆盖「我这次要改的全部东西」，而不只是我读来拼接的那一段：
+        // UpdatedAt 变了就说明这条被人动过，一律让调用方重读。
+        var unchanged = Builders<ImageMasterWorkspace>.Filter.Eq(x => x.UpdatedAt, ws.UpdatedAt);
         var filter = append
-            ? Builders<ImageMasterWorkspace>.Filter.And(idFilter,
+            ? Builders<ImageMasterWorkspace>.Filter.And(idFilter, unchanged,
                 Builders<ImageMasterWorkspace>.Filter.Eq(x => x.ArticleContent, ws.ArticleContent))
             : revisionChecked
-                ? Builders<ImageMasterWorkspace>.Filter.And(idFilter,
-                    Builders<ImageMasterWorkspace>.Filter.Eq(x => x.UpdatedAt, ws.UpdatedAt))
+                ? Builders<ImageMasterWorkspace>.Filter.And(idFilter, unchanged)
                 : idFilter;
         var result = await _db.ImageMasterWorkspaces.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
         if (guarded && result.MatchedCount == 0)
             return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
                 append
-                    ? "追加期间正文被另一次写入改过，这次没有写进去。请先用 map_literary_get_workspace 重新读一遍正文，再决定怎么写。"
+                    ? "追加期间这个工作区被另一次写入改过（正文或配图流程），这次没有写进去。请先用 map_literary_get_workspace 重新读一遍，再决定怎么写。"
                     : "这篇正文在你准备覆盖的这段时间里被改过，本次覆盖没有执行。请先用 map_literary_get_workspace 重新读一遍，再决定怎么写。"));
 
         return Ok(ApiResponse<object>.Ok(new
