@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { SiteCard } from './WebPagesPage';
 import type { HostedSite } from '@/services/real/webPages';
-import { buildCardActionLayers } from '@/components/web-hosting/SiteCard';
+import { buildCardActionLayers, canDragSiteCard } from '@/components/web-hosting/SiteCard';
 import type { SiteCaps, SiteCardSize, SiteShareStats } from '@/components/web-hosting/SiteCard';
 
 const baseSite: HostedSite = {
@@ -18,6 +18,7 @@ const baseSite: HostedSite = {
   files: [{ path: 'index.html', cosKey: 'sites/site-1/index.html', size: 1024, mimeType: 'text/html' }],
   totalSize: 1024,
   tags: [],
+  folderCanonicalName: '',
   ownerUserId: 'user-1',
   viewCount: 3,
   visibility: 'private',
@@ -224,5 +225,15 @@ describe('WebPagesPage SiteCard', () => {
     expect(html).toContain('aria-label="分享"');
     expect(html).not.toContain('aria-label="编辑信息"');
     expect(html).not.toContain('aria-label="替换内容"');
+  });
+
+  it('团队 viewer 不能拖动别人的站点触发错误投放高亮', () => {
+    const viewerCaps = { canEdit: false, canDelete: false, canShare: false, canSetVisibility: false };
+    const html = renderSiteCard(baseSite, viewerCaps);
+
+    expect(canDragSiteCard(viewerCaps)).toBe(false);
+    expect(html).toContain('data-dock-draggable="false"');
+    expect(html).toContain('cursor-default');
+    expect(html).not.toContain('cursor-grab');
   });
 });
