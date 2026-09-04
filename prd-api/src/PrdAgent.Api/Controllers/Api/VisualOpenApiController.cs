@@ -173,13 +173,14 @@ public class VisualOpenApiController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"size 只能是「宽x高」这种形状（如 1024x1024 / 1024x1536），收到的是「{size}」"));
 
-        // 模型：与 ImageGenController 同一个判据 —— 视觉创作只跑策略允许的那个模型
-        var policy = await _visualModels.ReadAsync(ct);
-        var modelId = policy.Select(null);
-        if (string.IsNullOrWhiteSpace(modelId))
-            return BadRequest(ApiResponse<object>.Fail("VISUAL_MODEL_NOT_ALLOWED",
-                "视觉创作还没配默认生图模型，智能体没法出图。请管理员到「视觉创作 → 模型策略」选一个模型后重试。"));
-
+        // 幂等回放要排在「当前配置合不合格」这道闸**前面**。
+        //
+        // 这两件事看的不是同一个时刻：闸看的是服务端此刻的模型策略，而回放要的是一条
+        // 早就入队、甚至可能已经出完图的 run。入队成功之后响应丢了（超时、断线 —— 智能体
+        // 重试正是为这个），管理员这期间把默认生图模型撤了，调用方拿同一个 clientRequestId
+        // 再来一次，就会先撞上 VISUAL_MODEL_NOT_ALLOWED —— 它连自己那条 runId 都取不回来，
+        // 而回放一条既有结果根本不需要选模型。前面那些参数校验不动：它们判的是**这一次请求
+        // 自己**，调用方给什么就是什么，原样重试必然照过；只有这道闸判的是会独立变化的服务端状态。
         var idemKey = BuildIdempotencyKey(req.ClientRequestId);
         if (idemKey != null)
         {
@@ -189,6 +190,13 @@ public class VisualOpenApiController : ControllerBase
             if (existed != null)
                 return Ok(ApiResponse<object>.Ok(new { runId = existed.Id, deduplicated = true }));
         }
+
+        // 模型：与 ImageGenController 同一个判据 —— 视觉创作只跑策略允许的那个模型
+        var policy = await _visualModels.ReadAsync(ct);
+        var modelId = policy.Select(null);
+        if (string.IsNullOrWhiteSpace(modelId))
+            return BadRequest(ApiResponse<object>.Fail("VISUAL_MODEL_NOT_ALLOWED",
+                "视觉创作还没配默认生图模型，智能体没法出图。请管理员到「视觉创作 → 模型策略」选一个模型后重试。"));
 
         // 必须绑一个真实工作区。ImageGenRunWorker 只在 run.WorkspaceId 非空时才把结果落进
         // 资产存储并回填画布；不绑的话，配着 ResponseFormat=b64_json 的这条 run 跑完只会把

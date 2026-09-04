@@ -280,3 +280,4 @@
 | security | prd-api | 产物地址只认站内路由与 http/https：下游给 `javascript:` / `data:text/html` 时当没给，退回按 id 反推的站内路由 |
 | security | prd-admin | 调用记录的「打开」按钮按同一判据过一遍再进 href，挡住那道闸之前已落库的危险地址 |
 | security | prd-api | 给用户看的失败原因改成「凭据沾边就拒」：列字面量必漏（列了 `token=` 没列 `token:`），补凭据词表 + 长串判据 |
+| fix | prd-api | 生图幂等回放挪到模型策略闸之前：撤掉默认模型后，调用方不再连自己已入队的 runId 都取不回来 |

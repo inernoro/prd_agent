@@ -401,6 +401,29 @@ public class McpDownstreamSafetyTests
             "危险协议被原样收下了 —— 它该被当成没给，退回按 kind + id 反推的站内路由");
     }
 
+    /// <summary>
+    /// 幂等回放必须排在「当前配置合不合格」那道闸前面。
+    ///
+    /// 两者看的不是同一个时刻：闸看服务端此刻的模型策略，回放要的是一条早就入队的 run。
+    /// 入队成功但响应丢了（智能体重试正是为这个），管理员这期间撤掉默认生图模型，
+    /// 调用方拿同一个 clientRequestId 再来一次就先撞 VISUAL_MODEL_NOT_ALLOWED ——
+    /// 连自己那条 runId 都取不回来，而回放一条既有结果根本不需要选模型。
+    ///
+    /// 顺序这种事删掉不会红：两句都在、编译过、全量测试绿，只有真撞上那个时间窗才现形。
+    /// </summary>
+    [Fact]
+    public void 幂等回放排在模型策略闸之前()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/VisualOpenApiController.cs"));
+        var replay = src.IndexOf("var idemKey = BuildIdempotencyKey(", StringComparison.Ordinal);
+        var gate = src.IndexOf("\"VISUAL_MODEL_NOT_ALLOWED\"", StringComparison.Ordinal);
+        replay.ShouldBeGreaterThan(-1, "幂等回放不见了，切片锚点要跟着改");
+        gate.ShouldBeGreaterThan(-1, "模型策略闸不见了，切片锚点要跟着改");
+        replay.ShouldBeLessThan(gate,
+            "模型策略闸排在了幂等回放前面 —— 撤掉默认模型之后，调用方连自己已经入队的 runId 都取不回来");
+    }
+
     /// <summary>整条失败的原因必须真的落库，否则轮询端点永远读到 null。</summary>
     [Fact]
     public void 整条生图失败要落库不能只发事件流()
