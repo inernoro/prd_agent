@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BookOpen, Check, Clock3, Eye, History, RefreshCw, RotateCcw, Send, WandSparkles, X } from 'lucide-react';
+import { BookOpen, Check, Clock3, Eye, History, RefreshCw, RotateCcw, Send, Server, WandSparkles, X } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { getDocumentContent, listRecentDocumentEntries } from '@/services/real/documentStore';
@@ -56,6 +56,12 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
   const streamRef = useRef('');
   const lastPaintAtRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  const enabledRuntimes = capabilities.filter((item) => item.enabled);
+  const activeRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
+  const unavailableRuntimes = capabilities.filter((item) => !item.enabled);
+  const activeRuntimeFact = activeRuntime
+    ? `当前使用：${activeRuntime.label}；执行归属：${activeRuntime.executionOwner === 'cds-remote-agent' ? 'CDS Remote Agent' : 'MAP'}；隔离边界：${activeRuntime.isolationMode === 'session-container' ? '会话级容器' : 'MAP 服务进程'}。`
+    : '当前没有可用执行器，请根据下方原因完成配置。';
 
   const loadHistory = useCallback(async () => {
     setLoadingHistory(true);
@@ -322,7 +328,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
         <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
           执行器只生成草稿。线上页面只有在你点击“发布新版本”后才会变化。
         </p>
-        {capabilities.filter((item) => item.enabled).length > 1 && (
+        {enabledRuntimes.length > 1 && (
           <select
             value={selectedRuntime}
             onChange={(event) => setSelectedRuntime(event.target.value)}
@@ -330,10 +336,23 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
             aria-label="页面修改执行器"
             className="mt-3 w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-primary"
           >
-            {capabilities.filter((item) => item.enabled).map((item) => (
+            {enabledRuntimes.map((item) => (
               <option key={item.id} value={item.id}>{item.label}</option>
             ))}
           </select>
+        )}
+        {capabilities.length > 0 && (
+          <div className="mt-3 rounded-lg border border-token-subtle bg-token-nested p-2.5 text-[10px] leading-relaxed text-token-muted">
+            <div className="flex items-center gap-1.5 font-medium text-token-primary">
+              <Server size={12} />执行器事实
+            </div>
+            <p className="mt-1">{activeRuntimeFact}</p>
+            {unavailableRuntimes.length > 0 && (
+              <p className="mt-1">
+                {unavailableRuntimes.map((item) => `${item.label}：${item.reason || '未启用'}`).join('；')}
+              </p>
+            )}
+          </div>
         )}
         <textarea
           value={instruction}
