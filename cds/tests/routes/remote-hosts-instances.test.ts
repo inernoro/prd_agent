@@ -51,6 +51,72 @@ async function request(
   });
 }
 
+function streamRequest(
+  server: http.Server,
+  urlPath: string,
+  token: string,
+): {
+  firstEvent: Promise<string>;
+  completed: Promise<{ status: number; body: string }>;
+  abort: () => void;
+} {
+  let resolveFirstEvent!: (value: string) => void;
+  const firstEvent = new Promise<string>((resolve) => {
+    resolveFirstEvent = resolve;
+  });
+  let aborted = false;
+  let req: http.ClientRequest;
+  const completed = new Promise<{ status: number; body: string }>((resolve, reject) => {
+    let settled = false;
+    const finish = (value: { status: number; body: string }) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const addr = server.address() as { port: number };
+    req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: addr.port,
+        path: urlPath,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      },
+      (res) => {
+        let raw = '';
+        let firstResolved = false;
+        res.on('data', (chunk: Buffer) => {
+          raw += chunk.toString();
+          if (!firstResolved && raw.includes('\n\n')) {
+            firstResolved = true;
+            resolveFirstEvent(raw.slice(0, raw.indexOf('\n\n') + 2));
+          }
+        });
+        res.on('end', () => finish({ status: res.statusCode!, body: raw }));
+        res.on('close', () => {
+          if (aborted) finish({ status: 0, body: raw });
+        });
+      },
+    );
+    req.on('error', (error) => {
+      if (aborted) {
+        finish({ status: 0, body: '' });
+        return;
+      }
+      reject(error);
+    });
+    req.end();
+  });
+  return {
+    firstEvent,
+    completed,
+    abort: () => {
+      aborted = true;
+      req.destroy();
+    },
+  };
+}
+
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1_000): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -416,12 +482,16 @@ describe('Remote hosts project instances route', () => {
       healthy: false,
       selectable: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime:od-0.21.1-opencode-1.18.28 is being prepared on this CDS node',
+      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 is being prepared on this CDS node',
     });
   });
 
   it('routes OpenDesign through the injected workspace runtime and exposes only committed result facts', async () => {
     const calls: Array<{ kind: string; value: unknown }> = [];
+    let completeExecution!: () => void;
+    const executionGate = new Promise<void>((resolve) => {
+      completeExecution = resolve;
+    });
     const workspaceRuntime = {
       async capability() {
         return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
@@ -448,6 +518,7 @@ describe('Remote hosts project instances route', () => {
       ) {
         calls.push({ kind: 'execute', value: { sessionId, instruction, model, transferToken } });
         onStage('workspace_collecting');
+        await executionGate;
         onStage('workspace_committing');
         return {
           artifactRef: 'design-artifact:run-1',
@@ -534,10 +605,6 @@ describe('Remote hosts project instances route', () => {
     );
     expect(sent.status).toBe(202);
     expect(sent.body).toMatchObject({ accepted: true, runtimeOwnedBy: 'cds-agent-workspace-session' });
-    await waitFor(async () => {
-      const current = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, longToken);
-      return current.body.item.status === 'idle';
-    });
 
     expect(calls.find((call) => call.kind === 'execute')?.value).toMatchObject({
       instruction: '将页面调整为清晰的产品发布页',
@@ -548,18 +615,45 @@ describe('Remote hosts project instances route', () => {
       },
       transferToken: 'transfer-secret',
     });
-    const stream = await request(
+    const firstStream = streamRequest(
       server,
-      'GET',
-      `/api/projects/${projectId}/agent-sessions/${sessionId}/stream`,
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stream?follow=true`,
       longToken,
     );
+    const firstEvent = await firstStream.firstEvent;
+    const firstCursor = Number(firstEvent.match(/^id: (\d+)$/m)?.[1]);
+    expect(firstCursor).toBeGreaterThan(0);
+    firstStream.abort();
+    await firstStream.completed;
+
+    const running = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, longToken);
+    expect(running.body.item.status).toBe('running');
+
+    const resumedStream = streamRequest(
+      server,
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stream?afterSeq=${firstCursor}&follow=true`,
+      longToken,
+    );
+    const resumedFirstEvent = await resumedStream.firstEvent;
+    expect(Number(resumedFirstEvent.match(/^id: (\d+)$/m)?.[1])).toBeGreaterThan(firstCursor);
+
+    // 直到断线续接后的流已经收到回放事件才允许异步 runtime 完成。旧的一次性快照实现
+    // 会在此时提前关闭，因此绝不可能把随后产生的 done 带回 MAP。
+    completeExecution();
+    const stream = await resumedStream.completed;
+    expect(stream.status).toBe(200);
     expect(stream.body).toContain('CDS 正在校验生成文件与安全边界。');
     expect(stream.body).toContain('CDS 正在向 MAP 提交已校验的结果。');
     expect(stream.body).toContain('design-artifact:run-1');
     expect(stream.body).toContain('event: done');
+    expect(stream.body).not.toContain(`id: ${firstCursor}\n`);
     expect(stream.body).not.toContain('model-secret');
     expect(stream.body).not.toContain('transfer-secret');
+
+    await waitFor(async () => {
+      const current = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, longToken);
+      return current.body.item.status === 'idle';
+    });
 
     const stopped = await request(
       server,

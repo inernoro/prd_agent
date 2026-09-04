@@ -109,10 +109,7 @@ export interface DesignRuntimeCapability {
 
 export interface DesignKnowledgeReferenceInput {
   entryId: string;
-  storeId?: string;
-  storeName?: string;
-  title: string;
-  content: string;
+  storeId: string;
 }
 
 export interface DesignArtifactRunSummary {

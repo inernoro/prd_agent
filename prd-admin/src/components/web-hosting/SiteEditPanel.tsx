@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, Check, Clock3, Eye, History, RefreshCw, RotateCcw, Send, Server, WandSparkles, X } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
-import { getDocumentContent, listRecentDocumentEntries } from '@/services/real/documentStore';
+import { listRecentDocumentEntries } from '@/services/real/documentStore';
 import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import {
   createHostedSiteEditRun,
@@ -190,24 +190,18 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
     streamRef.current = '';
     setRecoveringRunId(null);
 
-    const knowledgeResults = await Promise.all(selectedKnowledgeIds.map(async (entryId) => {
-      const entry = recentKnowledge.find((item) => item.id === entryId);
-      const result = await getDocumentContent(entryId);
-      return { entry, result };
-    }));
-    const unreadable = knowledgeResults.find(({ result }) => !result.success || !result.data.hasContent);
-    if (unreadable) {
+    const selectedEntries = selectedKnowledgeIds
+      .map((entryId) => recentKnowledge.find((item) => item.id === entryId))
+      .filter((entry): entry is RecentDocumentEntry => !!entry);
+    if (selectedEntries.length !== selectedKnowledgeIds.length || selectedEntries.some((entry) => !entry.storeId)) {
       setGenerating(false);
-      setPhase('引用知识读取失败，请取消该条知识后重试');
-      toast.error('引用知识读取失败', unreadable.result.error?.message || '所选知识没有可读取的正文');
+      setPhase('引用知识身份不完整，请重新选择');
+      toast.error('无法校验引用知识', '请刷新知识列表后重新选择');
       return;
     }
-    const knowledgeReferences = knowledgeResults.map(({ entry, result }) => ({
-      entryId: result.data!.entryId,
-      storeId: entry?.storeId,
-      storeName: entry?.storeName,
-      title: entry?.title || result.data!.title,
-      content: (result.data!.content || '').slice(0, 20_000),
+    const knowledgeReferences = selectedEntries.map((entry) => ({
+      entryId: entry.id,
+      storeId: entry.storeId,
     }));
     const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, selectedRuntime);
     if (!created.success) {

@@ -18,4 +18,11 @@ describe('SiteGenerateDialog responsive layout contract', () => {
     expect(dialogSource).toContain('className="min-w-0 flex-1"');
     expect(dialogSource).not.toContain('className="min-w-0 flex-shrink-0"');
   });
+
+  it('submits only knowledge identities and never truncates or uploads browser-fetched content', () => {
+    expect(source).not.toContain('getDocumentContent');
+    expect(source).not.toContain('.slice(0, 20_000)');
+    expect(source).toContain('entryId: entry.id');
+    expect(source).toContain('storeId: entry.storeId');
+  });
 });

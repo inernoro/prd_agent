@@ -1,6 +1,4 @@
 using System.Text.Json;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -28,6 +26,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILogger<HostedSiteEditsController> _logger;
     private readonly IDesignArtifactProviderCatalog _providers;
+    private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
 
     public HostedSiteEditsController(
         IHostedSiteService sites,
@@ -36,7 +35,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         IRunQueue queue,
         MongoDbContext db,
         ILogger<HostedSiteEditsController> logger,
-        IDesignArtifactProviderCatalog providers)
+        IDesignArtifactProviderCatalog providers,
+        IDesignKnowledgeSnapshotResolver knowledgeSnapshots)
     {
         _sites = sites;
         _revisions = revisions;
@@ -45,6 +45,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         _db = db;
         _logger = logger;
         _providers = providers;
+        _knowledgeSnapshots = knowledgeSnapshots;
     }
 
     [HttpGet("runtime-capabilities")]
@@ -74,11 +75,6 @@ public sealed class HostedSiteEditsController : ControllerBase
         var knowledgeReferences = request.KnowledgeReferences ?? new List<HostedSiteKnowledgeReference>();
         if (knowledgeReferences.Count > 3)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "首版一次最多引用 3 篇知识"));
-        if (knowledgeReferences.Any(x => string.IsNullOrWhiteSpace(x.EntryId) || string.IsNullOrWhiteSpace(x.Content)))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "引用知识缺少条目或正文"));
-        if (knowledgeReferences.Sum(x => x.Content!.Length) > 60_000)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "引用知识正文过长，请减少选择或缩短内容"));
-
         var runtime = string.IsNullOrWhiteSpace(request.Runtime)
             ? HostedSiteEditRuntimes.MapGateway
             : request.Runtime.Trim().ToLowerInvariant();
@@ -106,16 +102,24 @@ public sealed class HostedSiteEditsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
 
-        var runId = Guid.NewGuid().ToString("N");
-        var snapshots = knowledgeReferences.Select(x => new DesignKnowledgeSnapshot
+        IReadOnlyList<DesignKnowledgeSnapshot> snapshots;
+        try
         {
-            EntryId = x.EntryId!.Trim(),
-            StoreId = TrimOptional(x.StoreId, 120),
-            StoreName = TrimOptional(x.StoreName, 200),
-            Title = TrimTitle(x.Title),
-            Content = x.Content!.Trim(),
-            ContentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(x.Content!.Trim()))).ToLowerInvariant(),
-        }).ToList();
+            snapshots = await _knowledgeSnapshots.ResolveAsync(
+                userId,
+                knowledgeReferences.Select(reference => new DesignKnowledgeReferenceIdentity(
+                    reference.EntryId ?? string.Empty,
+                    reference.StoreId ?? string.Empty)).ToList(),
+                CancellationToken.None);
+        }
+        catch (DesignKnowledgeSnapshotException ex)
+        {
+            return ex.Code == ErrorCodes.NOT_FOUND
+                ? NotFound(ApiResponse<object>.Fail(ex.Code, ex.Message))
+                : BadRequest(ApiResponse<object>.Fail(ex.Code, ex.Message));
+        }
+
+        var runId = Guid.NewGuid().ToString("N");
         var run = new DesignArtifactRun
         {
             Id = runId,
@@ -127,7 +131,7 @@ public sealed class HostedSiteEditsController : ControllerBase
             Runtime = runtime,
             Instruction = instruction,
             TargetSiteId = siteId,
-            KnowledgeReferences = snapshots,
+            KnowledgeReferences = snapshots.ToList(),
             Progress = 2,
             Phase = "修改任务已进入队列",
         };
@@ -360,19 +364,6 @@ public sealed class HostedSiteEditsController : ControllerBase
         }
     }
 
-    private static string TrimTitle(string? value)
-    {
-        var title = string.IsNullOrWhiteSpace(value) ? "未命名知识" : value.Trim();
-        return title.Length <= 200 ? title : title[..200];
-    }
-
-    private static string? TrimOptional(string? value, int maxLength)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var trimmed = value.Trim();
-        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
-    }
-
     private async Task WriteEventAsync(long? id, string eventName, string json, CancellationToken ct)
     {
         if (id.HasValue) await Response.WriteAsync($"id: {id.Value}\n", ct);
@@ -395,7 +386,4 @@ public sealed class HostedSiteKnowledgeReference
 {
     public string? EntryId { get; set; }
     public string? StoreId { get; set; }
-    public string? StoreName { get; set; }
-    public string? Title { get; set; }
-    public string? Content { get; set; }
 }

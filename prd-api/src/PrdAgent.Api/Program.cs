@@ -398,6 +398,8 @@ builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor>(sp =>
     sp.GetRequiredService<PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>());
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactWorkspaceBroker,
     PrdAgent.Api.Services.DesignArtifactWorkspaceBroker>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignKnowledgeSnapshotResolver,
+    PrdAgent.Api.Services.DesignKnowledgeSnapshotResolver>();
 builder.Services.AddHttpClient("DesignArtifactRuntimeProxy", client =>
 {
     client.Timeout = Timeout.InfiniteTimeSpan;

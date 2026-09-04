@@ -55,7 +55,8 @@ public sealed class HostedSiteEditsControllerTests
             Mock.Of<IRunQueue>(),
             db,
             NullLogger<HostedSiteEditsController>.Instance,
-            Mock.Of<IDesignArtifactProviderCatalog>());
+            Mock.Of<IDesignArtifactProviderCatalog>(),
+            Mock.Of<IDesignKnowledgeSnapshotResolver>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

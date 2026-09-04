@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -25,17 +23,20 @@ public sealed class DesignArtifactsController : ControllerBase
     private readonly IRunEventStore _events;
     private readonly IRunQueue _queue;
     private readonly IDesignArtifactProviderCatalog _providers;
+    private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
 
     public DesignArtifactsController(
         MongoDbContext db,
         IRunEventStore events,
         IRunQueue queue,
-        IDesignArtifactProviderCatalog providers)
+        IDesignArtifactProviderCatalog providers,
+        IDesignKnowledgeSnapshotResolver knowledgeSnapshots)
     {
         _db = db;
         _events = events;
         _queue = queue;
         _providers = providers;
+        _knowledgeSnapshots = knowledgeSnapshots;
     }
 
     [HttpGet("runtime-capabilities")]
@@ -82,28 +83,27 @@ public sealed class DesignArtifactsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请至少选择一篇知识作为网页内容来源"));
         if (references.Count > 3)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "首版一次最多引用 3 篇知识"));
-        if (references.Any(x => string.IsNullOrWhiteSpace(x.EntryId) || string.IsNullOrWhiteSpace(x.Content)))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "引用知识缺少条目或正文"));
-        if (references.Sum(x => x.Content!.Length) > 60_000)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "引用知识正文过长，请减少选择或缩短内容"));
+        IReadOnlyList<DesignKnowledgeSnapshot> snapshots;
+        try
+        {
+            snapshots = await _knowledgeSnapshots.ResolveAsync(
+                userId,
+                references.Select(reference => new DesignKnowledgeReferenceIdentity(
+                    reference.EntryId ?? string.Empty,
+                    reference.StoreId ?? string.Empty)).ToList(),
+                CancellationToken.None);
+        }
+        catch (DesignKnowledgeSnapshotException ex)
+        {
+            return ex.Code == ErrorCodes.NOT_FOUND
+                ? NotFound(ApiResponse<object>.Fail(ex.Code, ex.Message))
+                : BadRequest(ApiResponse<object>.Fail(ex.Code, ex.Message));
+        }
 
         var sourceSurface = string.Equals(request.SourceSurface, DesignArtifactSourceSurfaces.KnowledgeBase, StringComparison.OrdinalIgnoreCase)
             ? DesignArtifactSourceSurfaces.KnowledgeBase
             : DesignArtifactSourceSurfaces.WebHosting;
         var runId = Guid.NewGuid().ToString("N");
-        var snapshots = references.Select(x =>
-        {
-            var content = x.Content!.Trim();
-            return new DesignKnowledgeSnapshot
-            {
-                EntryId = x.EntryId!.Trim(),
-                StoreId = TrimOptional(x.StoreId, 120),
-                StoreName = TrimOptional(x.StoreName, 200),
-                Title = TrimTitle(x.Title),
-                Content = content,
-                ContentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant(),
-            };
-        }).ToList();
         var run = new DesignArtifactRun
         {
             Id = runId,
@@ -115,7 +115,7 @@ public sealed class DesignArtifactsController : ControllerBase
             Runtime = runtime,
             Instruction = instruction,
             Title = TrimOptional(request.Title, 200) ?? snapshots[0].Title,
-            KnowledgeReferences = snapshots,
+            KnowledgeReferences = snapshots.ToList(),
             Progress = 2,
             Phase = "网页生成任务已进入队列",
         };
@@ -241,12 +241,6 @@ public sealed class DesignArtifactsController : ControllerBase
         run.CompletedAt,
     };
 
-    private static string TrimTitle(string? value)
-    {
-        var title = string.IsNullOrWhiteSpace(value) ? "未命名知识" : value.Trim();
-        return title.Length <= 200 ? title : title[..200];
-    }
-
     private static string? TrimOptional(string? value, int maxLength)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
@@ -279,7 +273,4 @@ public sealed class DesignKnowledgeReferenceRequest
 {
     public string? EntryId { get; set; }
     public string? StoreId { get; set; }
-    public string? StoreName { get; set; }
-    public string? Title { get; set; }
-    public string? Content { get; set; }
 }

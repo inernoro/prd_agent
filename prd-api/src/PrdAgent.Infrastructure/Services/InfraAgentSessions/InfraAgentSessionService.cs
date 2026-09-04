@@ -47,6 +47,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         _runtimeJobs = runtimeJobs;
         _toolRegistry = toolRegistry;
         _http = http;
+        // CDS Agent 的 follow SSE 可持续到会话资源策略的终态（默认 15 分钟），不能被
+        // HttpClient 默认 100 秒总超时截断。普通请求仍由各调用方 CancellationToken 约束。
+        _http.Timeout = Timeout.InfiniteTimeSpan;
         _liteReviewAdapter = liteReviewAdapter;
     }
 
@@ -604,17 +607,79 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             }
             try
             {
-                var connection = await GetActiveConnectionAsync(session, CancellationToken.None);
-                var token = await GetLongTokenAsync(connection.Id, CancellationToken.None);
-                // server-authority：用 CancellationToken.None，客户端断开 / worker 调度不打断 agent 运行。
-                var importResult = await ImportCdsStreamEventsAsync(connection, token, session, 0, CancellationToken.None);
+                var turnStartedAt = session.UpdatedAt;
+                // server-authority：客户端断开不打断 agent 运行。单条 CDS follow SSE 若被网络、代理、
+                // JSON 解析或 Mongo 落库异常截断，则重新读取已持久化 CdsSeq 水位并续订，直至终态。
+                var importResult = await FollowCdsStreamWithRetryAsync(
+                    async retryCt =>
+                    {
+                        try
+                        {
+                            var connection = await GetActiveConnectionAsync(session, retryCt);
+                            var token = await GetLongTokenAsync(connection.Id, retryCt);
+                            return await ImportCdsStreamEventsAsync(
+                                connection,
+                                token,
+                                session,
+                                0,
+                                retryCt,
+                                followUntilTerminal: true);
+                        }
+                        catch (InfraAgentSessionException ex) when (IsCdsSessionNotFound(ex))
+                        {
+                            const string lostMessage = "CDS 会话已丢失（CDS 服务可能刚重启/自更新），请重建会话重试";
+                            await MarkRuntimeFailedAsync(session, lostMessage, CancellationToken.None);
+                            await AppendRawEventAsync(
+                                session.Id,
+                                await NextEventSeqAsync(session.Id, CancellationToken.None),
+                                InfraAgentEventTypes.Error,
+                                JsonSerializer.Serialize(new { message = lostMessage, code = "cds_session_lost" }),
+                                CancellationToken.None);
+                            return new CdsStreamImportResult(
+                                InfraAgentSessionStatuses.Failed,
+                                lostMessage);
+                        }
+                    },
+                    retryCt => ReadPersistedCdsTerminalStatusAsync(session.Id, turnStartedAt, retryCt),
+                    (attempt, exception, delay) =>
+                    {
+                        _logger.LogWarning(
+                            exception,
+                            "CDS stream ended before terminal event; reconnecting session={SessionId} attempt={Attempt} delayMs={DelayMs}",
+                            session.Id,
+                            attempt,
+                            delay.TotalMilliseconds);
+                        return Task.CompletedTask;
+                    },
+                    TimeSpan.FromSeconds(Math.Clamp(session.TimeoutSeconds, 1, 86_400)),
+                    TimeSpan.FromSeconds(5),
+                    CancellationToken.None);
+
+                if (importResult.TimedOut)
+                {
+                    var timeoutSeconds = Math.Clamp(session.TimeoutSeconds, 1, 86_400);
+                    var timeoutMessage = $"CDS Agent 事件同步超过任务时限（{timeoutSeconds} 秒），已停止等待";
+                    await MarkRuntimeFailedAsync(session, timeoutMessage, CancellationToken.None);
+                    await AppendRawEventAsync(
+                        session.Id,
+                        await NextEventSeqAsync(session.Id, CancellationToken.None),
+                        InfraAgentEventTypes.Error,
+                        JsonSerializer.Serialize(new { message = timeoutMessage, code = "cds_stream_sync_timeout" }),
+                        CancellationToken.None);
+                    return;
+                }
                 if (!string.IsNullOrWhiteSpace(importResult.SessionStatus))
                 {
+                    var update = Builders<InfraAgentSession>.Update
+                        .Set(x => x.Status, importResult.SessionStatus)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow);
+                    if (!string.IsNullOrWhiteSpace(importResult.SessionError))
+                    {
+                        update = update.Set(x => x.LastError, importResult.SessionError);
+                    }
                     await _db.InfraAgentSessions.UpdateOneAsync(
                         x => x.Id == session.Id,
-                        Builders<InfraAgentSession>.Update
-                            .Set(x => x.Status, importResult.SessionStatus)
-                            .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                        update,
                         cancellationToken: CancellationToken.None);
                 }
             }
@@ -1737,7 +1802,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         string token,
         InfraAgentSession session,
         long afterSeq,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool followUntilTerminal = false)
     {
         // 去重水位线：本会话已导入的最大 CDS seq。CDS 每个事件带单调递增 seq，
         // 用 seq 判重是唯一正确做法。历史实现按 (type, payload) 内容判重，
@@ -1754,7 +1820,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             HttpMethod.Get,
             connection,
             token,
-            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId!)}/stream?afterSeq={cdsSeqWatermark}",
+            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId!)}/stream?afterSeq={cdsSeqWatermark}&follow={followUntilTerminal.ToString().ToLowerInvariant()}",
             null,
             ct);
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(ct));
@@ -1816,6 +1882,17 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 sessionStatus = InfraAgentSessionStatuses.Idle;
                 turnDone = true;
             }
+            else if (type == InfraAgentEventTypes.Status && root.TryGetProperty("payload", out var statusPayload))
+            {
+                var mappedStatus = MapCdsStatus(GetString(statusPayload, "status"));
+                if (mappedStatus is InfraAgentSessionStatuses.Idle
+                    or InfraAgentSessionStatuses.Stopped
+                    or InfraAgentSessionStatuses.Failed)
+                {
+                    sessionStatus = mappedStatus;
+                    turnDone = true;
+                }
+            }
             if (type == InfraAgentEventTypes.Done && root.TryGetProperty("payload", out var donePayload))
             {
                 var finalText = GetString(donePayload, "finalText");
@@ -1841,8 +1918,144 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 await MarkRuntimeFailedAsync(session, errorStatus.SessionError, ct);
                 sessionStatus = InfraAgentSessionStatuses.Failed;
                 sessionError = errorStatus.SessionError;
+                turnDone = true;
             }
         }
+    }
+
+    private async Task<string?> ReadPersistedCdsTerminalStatusAsync(
+        string sessionId,
+        DateTime turnStartedAt,
+        CancellationToken ct)
+    {
+        var sessionStatus = await _db.InfraAgentSessions
+            .Find(x => x.Id == sessionId)
+            .Project(x => x.Status)
+            .FirstOrDefaultAsync(ct);
+        if (sessionStatus is InfraAgentSessionStatuses.Idle
+            or InfraAgentSessionStatuses.Stopped
+            or InfraAgentSessionStatuses.Failed)
+        {
+            return sessionStatus;
+        }
+
+        // AppendRawEventAsync 先持久化 CDS seq，再做消息投影/会话状态更新。如果后一步临时失败，
+        // 重连前必须承认已经落库的终态事件，否则 afterSeq 会越过 done/error 后无限空拉。
+        var terminalEvent = await _db.InfraAgentEvents
+            .Find(x => x.SessionId == sessionId
+                && x.CdsSeq != null
+                && x.CreatedAt >= turnStartedAt
+                && (x.Type == InfraAgentEventTypes.Done
+                    || x.Type == InfraAgentEventTypes.Error
+                    || x.Type == InfraAgentEventTypes.Status))
+            .SortByDescending(x => x.CdsSeq)
+            .FirstOrDefaultAsync(ct);
+        if (terminalEvent == null) return null;
+        if (terminalEvent.Type == InfraAgentEventTypes.Done) return InfraAgentSessionStatuses.Idle;
+        if (terminalEvent.Type == InfraAgentEventTypes.Error) return InfraAgentSessionStatuses.Failed;
+
+        try
+        {
+            using var payload = JsonDocument.Parse(terminalEvent.PayloadJson);
+            var mappedStatus = MapCdsStatus(GetString(payload.RootElement, "status"));
+            return mappedStatus is InfraAgentSessionStatuses.Idle
+                or InfraAgentSessionStatuses.Stopped
+                or InfraAgentSessionStatuses.Failed
+                ? mappedStatus
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    internal static async Task<CdsStreamImportResult> FollowCdsStreamWithRetryAsync(
+        Func<CancellationToken, Task<CdsStreamImportResult>> importAttempt,
+        Func<CancellationToken, Task<string?>> readPersistedSessionStatus,
+        Func<int, Exception?, TimeSpan, Task> onRetry,
+        TimeSpan timeout,
+        TimeSpan maxRetryDelay,
+        CancellationToken ct)
+    {
+        if (timeout <= TimeSpan.Zero)
+        {
+            return new CdsStreamImportResult(
+                InfraAgentSessionStatuses.Failed,
+                "CDS Agent event synchronization timed out",
+                TimedOut: true);
+        }
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(timeout);
+        var attempt = 0;
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var persistedStatus = await readPersistedSessionStatus(timeoutCts.Token);
+                if (persistedStatus is InfraAgentSessionStatuses.Idle
+                    or InfraAgentSessionStatuses.Stopped
+                    or InfraAgentSessionStatuses.Failed)
+                {
+                    return new CdsStreamImportResult(persistedStatus, null, Attempts: attempt);
+                }
+
+                attempt++;
+                var result = await importAttempt(timeoutCts.Token);
+                if (!string.IsNullOrWhiteSpace(result.SessionStatus))
+                {
+                    return result with { Attempts = attempt };
+                }
+
+                var cleanEofDelay = ComputeCdsStreamRetryDelay(attempt, maxRetryDelay);
+                await onRetry(attempt, null, cleanEofDelay);
+                await Task.Delay(cleanEofDelay, timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+            {
+                return new CdsStreamImportResult(
+                    InfraAgentSessionStatuses.Failed,
+                    "CDS Agent event synchronization timed out",
+                    TimedOut: true,
+                    Attempts: attempt);
+            }
+            catch (Exception ex)
+            {
+                var retryDelay = ComputeCdsStreamRetryDelay(attempt, maxRetryDelay);
+                await onRetry(attempt, ex, retryDelay);
+                try
+                {
+                    await Task.Delay(retryDelay, timeoutCts.Token);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+                {
+                    return new CdsStreamImportResult(
+                        InfraAgentSessionStatuses.Failed,
+                        "CDS Agent event synchronization timed out",
+                        TimedOut: true,
+                        Attempts: attempt);
+                }
+            }
+        }
+    }
+
+    private static TimeSpan ComputeCdsStreamRetryDelay(int attempt, TimeSpan maximum)
+    {
+        if (maximum <= TimeSpan.Zero) return TimeSpan.Zero;
+        var exponent = Math.Clamp(attempt - 1, 0, 5);
+        var delayMilliseconds = Math.Min(250d * Math.Pow(2, exponent), maximum.TotalMilliseconds);
+        return TimeSpan.FromMilliseconds(delayMilliseconds);
     }
 
     private async Task<bool> RunSidecarRuntimeIfAvailableAsync(
@@ -4005,7 +4218,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     }
 }
 
-internal sealed record CdsStreamImportResult(string? SessionStatus, string? SessionError);
+internal sealed record CdsStreamImportResult(
+    string? SessionStatus,
+    string? SessionError,
+    bool TimedOut = false,
+    int Attempts = 1);
 
 public sealed record InfraAgentRuntimeErrorStatus(
     string SessionError,

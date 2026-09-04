@@ -4,9 +4,10 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { IShellExecutor } from '../types.js';
+import { computeCdsInstanceId } from './orphan-container-reaper.js';
 
 export const MAP_DESIGN_WORKSPACE_SCHEMA = 'map-design-workspace-v1';
-export const OPEN_DESIGN_IMAGE = 'ghcr.io/inernoro/prd_agent/opendesign-runtime:od-0.21.1-opencode-1.18.28';
+export const OPEN_DESIGN_IMAGE = 'ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474';
 
 export interface AgentWorkspaceResourcePolicy {
   cpuCores: number;
@@ -60,9 +61,13 @@ interface RuntimeHandle {
   mapRunId: string;
   hostRoot: string;
   workspaceDir: string;
+  outputDir: string;
   dataDir: string;
   containerName: string;
+  egressContainerName?: string;
   networkName: string;
+  workspaceVolumeName: string;
+  dataVolumeName: string;
   daemonBaseUrl: string;
   daemonApiToken: string;
   transfer: Omit<WorkspaceTransferRequest, 'transferToken'>;
@@ -73,6 +78,7 @@ interface RuntimeHandle {
 
 export interface AgentWorkspaceSessionRuntimeOptions {
   rootDir?: string;
+  instanceId?: string;
   image?: string;
   daemonPort?: number;
   fetchImpl?: typeof fetch;
@@ -123,6 +129,100 @@ const SHA256_RE = /^[a-f0-9]{64}$/;
 const SESSION_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const MAX_PACKAGE_OVERHEAD_BYTES = 2 * 1024 * 1024;
 const MAX_COMMIT_RESPONSE_BYTES = 1024 * 1024;
+const EGRESS_PROXY_PORT = 8787;
+const ARTIFACT_CSP = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "connect-src 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+  "img-src data:",
+  "font-src data:",
+  "media-src data:",
+  "style-src 'unsafe-inline'",
+  "script-src 'unsafe-inline'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'none'",
+  "manifest-src 'none'",
+  "navigate-to 'none'",
+].join('; ');
+const ARTIFACT_NAVIGATION_GUARD = '<script data-cds-offline-guard>(()=>{const block=(event)=>{const target=event.target;const navigable=target&&typeof target.closest==="function"?target.closest("a[href],area[href],form"):null;if(navigable)event.preventDefault();};addEventListener("click",block,true);addEventListener("submit",block,true);})();</script>';
+
+// OpenDesign never receives a routable egress network. This narrow relay is
+// the only container attached to both the internal session network and Docker's
+// outbound bridge. It pins one MAP origin/path, rejects redirects, and resolves
+// DNS itself so private, loopback, link-local, and metadata ranges fail closed.
+const EGRESS_PROXY_SCRIPT = String.raw`
+const http = require('node:http');
+const https = require('node:https');
+const dns = require('node:dns');
+const net = require('node:net');
+const target = new URL(process.env.TARGET_ORIGIN);
+const prefix = process.env.TARGET_PATH_PREFIX || '/';
+function blocked(address) {
+  const value = String(address || '').toLowerCase().split('%')[0];
+  if (net.isIP(value) === 4) {
+    const parts = value.split('.').map(Number);
+    return parts[0] === 0 || parts[0] === 10 || parts[0] === 127
+      || (parts[0] === 169 && parts[1] === 254)
+      || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+      || (parts[0] === 192 && parts[1] === 168)
+      || parts[0] >= 224;
+  }
+  if (net.isIP(value) === 6) {
+    if (value.startsWith('::ffff:')) return blocked(value.slice(7));
+    return value === '::' || value === '::1' || value.startsWith('fc')
+      || value.startsWith('fd') || value.startsWith('fe8') || value.startsWith('fe9')
+      || value.startsWith('fea') || value.startsWith('feb') || value.startsWith('ff');
+  }
+  return true;
+}
+function pathAllowed(raw) {
+  try {
+    const pathname = new URL(raw, 'http://relay.invalid').pathname;
+    return prefix === '/' || pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : prefix + '/');
+  } catch { return false; }
+}
+const server = http.createServer((req, res) => {
+  if (req.url === '/__health') { res.writeHead(204); res.end(); return; }
+  if ((req.method !== 'GET' && req.method !== 'POST') || !pathAllowed(req.url || '/')) {
+    res.writeHead(403); res.end(); return;
+  }
+  dns.lookup(target.hostname, { all: true, verbatim: true }, (lookupError, addresses) => {
+    if (lookupError || !addresses.length || addresses.some((entry) => blocked(entry.address))) {
+      res.writeHead(502); res.end(); return;
+    }
+    const selected = addresses[0];
+    const headers = { ...req.headers, host: target.host };
+    for (const name of ['connection', 'proxy-authorization', 'proxy-connection', 'upgrade', 'forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto']) delete headers[name];
+    const transport = target.protocol === 'https:' ? https : http;
+    const upstream = transport.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || undefined,
+      method: req.method,
+      path: req.url,
+      headers,
+      lookup: (_hostname, _options, callback) => callback(null, selected.address, selected.family),
+    }, (upstreamResponse) => {
+      if ((upstreamResponse.statusCode || 0) >= 300 && (upstreamResponse.statusCode || 0) < 400) {
+        upstreamResponse.resume(); res.writeHead(502); res.end(); return;
+      }
+      const responseHeaders = { ...upstreamResponse.headers };
+      delete responseHeaders.location;
+      res.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
+      upstreamResponse.pipe(res);
+    });
+    upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+    req.pipe(upstream);
+  });
+});
+server.on('connect', (_req, socket) => socket.destroy());
+server.on('upgrade', (_req, socket) => socket.destroy());
+server.listen(Number(process.env.PROXY_PORT || '8787'), '0.0.0.0');
+`;
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
@@ -394,6 +494,9 @@ function publicTransfer(transfer: WorkspaceTransferRequest): Omit<WorkspaceTrans
 
 export class AgentWorkspaceSessionRuntime {
   private readonly rootDir: string;
+  private readonly instanceRootDir: string;
+  private readonly instanceId: string;
+  private readonly instanceNameScope: string;
   private readonly image: string;
   private readonly daemonPort: number;
   private readonly fetchImpl: typeof fetch;
@@ -407,12 +510,22 @@ export class AgentWorkspaceSessionRuntime {
   private imagePreparation: Promise<void> | null = null;
   private imagePreparationAttemptedAt = 0;
   private imagePreparationError: string | null = null;
+  private bootstrapPreparation: Promise<void> | null = null;
+  private bootstrapAttempted = false;
+  private bootstrapError: string | null = null;
 
   constructor(
     private readonly shell: IShellExecutor,
     options: AgentWorkspaceSessionRuntimeOptions = {},
   ) {
     this.rootDir = path.resolve(options.rootDir || process.env.CDS_AGENT_WORKSPACE_ROOT || '/tmp/cds-agent-workspaces');
+    const configuredInstanceId = options.instanceId
+      || computeCdsInstanceId(process.env.CDS_REPO_ROOT || path.resolve(process.cwd(), '..'));
+    this.instanceId = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(configuredInstanceId)
+      ? configuredInstanceId
+      : sha256(configuredInstanceId).slice(0, 12);
+    this.instanceNameScope = sha256(this.instanceId).slice(0, 8);
+    this.instanceRootDir = path.join(this.rootDir, this.instanceNameScope);
     this.image = options.image || process.env.CDS_OPEN_DESIGN_IMAGE || OPEN_DESIGN_IMAGE;
     this.daemonPort = options.daemonPort || 7456;
     this.fetchImpl = options.fetchImpl || fetch;
@@ -421,6 +534,102 @@ export class AgentWorkspaceSessionRuntime {
     this.containerUid = options.containerUid ?? 1001;
     this.containerGid = options.containerGid ?? 1001;
     this.autoPullImage = options.autoPullImage ?? process.env.CDS_OPEN_DESIGN_AUTO_PULL !== '0';
+  }
+
+  /**
+   * Process-start barrier for the runtime. In-memory session handles cannot be
+   * restored safely after a CDS restart, so daemon resources bearing both the
+   * agent-session and this CDS instance label are reclaimed before the provider
+   * becomes selectable. Legacy unlabeled resources are deliberately left for
+   * operator reconciliation because shared-host ownership cannot be proven.
+   */
+  async bootstrap(): Promise<void> {
+    if (this.bootstrapPreparation) return this.bootstrapPreparation;
+    this.bootstrapAttempted = true;
+    const preparation = (async () => {
+      await this.recoverOrphans();
+      await this.prepareImage();
+    })()
+      .then(() => { this.bootstrapError = null; })
+      .catch((error) => {
+        this.bootstrapError = error instanceof Error ? error.message : 'Agent workspace bootstrap failed';
+      })
+      .finally(() => {
+        this.bootstrapPreparation = null;
+        this.capabilityCache = null;
+      });
+    this.bootstrapPreparation = preparation;
+    return preparation;
+  }
+
+  async recoverOrphans(): Promise<void> {
+    if (this.handles.size > 0) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_recovery_conflict',
+        'Agent workspace recovery cannot run while managed sessions are active',
+      );
+    }
+    const failures: string[] = [];
+    const removeLabeled = async (
+      listCommand: string,
+      remove: (identifier: string) => Promise<void>,
+      kind: string,
+    ): Promise<void> => {
+      const listed = await this.shell.exec(listCommand, { timeout: 30_000 });
+      if (listed.exitCode !== 0) {
+        failures.push(`${kind} listing failed`);
+        return;
+      }
+      const identifiers = listed.stdout.split(/\s+/).map((value) => value.trim()).filter(Boolean);
+      for (const identifier of identifiers) {
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$/.test(identifier)) {
+          failures.push(`${kind} returned an unsafe identifier`);
+          continue;
+        }
+        await remove(identifier).catch(() => failures.push(`${kind} ${identifier} cleanup failed`));
+      }
+    };
+
+    await removeLabeled(
+      `docker ps -aq --filter ${shellQuote('label=cds.type=agent-session')} --filter ${shellQuote(`label=cds.instance=${this.instanceId}`)}`,
+      (identifier) => this.removeContainer(identifier),
+      'container',
+    );
+    await removeLabeled(
+      `docker network ls -q --filter ${shellQuote('label=cds.type=agent-session')} --filter ${shellQuote(`label=cds.instance=${this.instanceId}`)}`,
+      (identifier) => this.removeNetwork(identifier),
+      'network',
+    );
+    await removeLabeled(
+      `docker volume ls -q --filter ${shellQuote('label=cds.type=agent-session')} --filter ${shellQuote(`label=cds.instance=${this.instanceId}`)}`,
+      (identifier) => this.removeVolume(identifier),
+      'volume',
+    );
+
+    try {
+      if (fs.existsSync(this.instanceRootDir)) {
+        for (const entry of fs.readdirSync(this.instanceRootDir, { withFileTypes: true })) {
+          if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+          const target = path.resolve(this.instanceRootDir, entry.name);
+          if (path.dirname(target) !== this.instanceRootDir) {
+            failures.push('workspace cleanup resolved outside the configured root');
+            continue;
+          }
+          fs.rmSync(target, { recursive: true, force: true });
+        }
+        fs.rmdirSync(this.instanceRootDir);
+      }
+    } catch {
+      failures.push('workspace directory cleanup failed');
+    }
+    if (failures.length > 0) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_orphan_cleanup_failed',
+        'Stale Agent workspace resources could not be fully reclaimed',
+        true,
+        { failures },
+      );
+    }
   }
 
   async prepareImage(): Promise<void> {
@@ -466,6 +675,24 @@ export class AgentWorkspaceSessionRuntime {
       return this.capabilityCache.value;
     }
     let value: AgentWorkspaceRuntimeCapability;
+    if (this.bootstrapPreparation) {
+      value = {
+        available: false,
+        resourcePolicyEnforcedPerSession: false,
+        reason: 'Agent workspace startup recovery is still running',
+      };
+      this.capabilityCache = { expiresAt: now + this.capabilityCacheMs, value };
+      return value;
+    }
+    if (this.bootstrapAttempted && this.bootstrapError) {
+      value = {
+        available: false,
+        resourcePolicyEnforcedPerSession: false,
+        reason: `Agent workspace startup recovery failed: ${this.bootstrapError}`,
+      };
+      this.capabilityCache = { expiresAt: now + this.capabilityCacheMs, value };
+      return value;
+    }
     try {
       const docker = await this.shell.exec("docker version --format '{{.Server.Version}}'", { timeout: 5000 });
       if (docker.exitCode !== 0 || !docker.stdout.trim()) {
@@ -550,17 +777,22 @@ export class AgentWorkspaceSessionRuntime {
       throw new AgentWorkspaceRuntimeError('workspace_runtime_unavailable', capability.reason || 'workspace runtime unavailable', true);
     }
     const transfer = normalizeWorkspaceTransfer(rawTransfer);
-    fs.mkdirSync(this.rootDir, { recursive: true, mode: 0o700 });
-    const hostRoot = fs.mkdtempSync(path.join(this.rootDir, `${sessionId}-`));
+    fs.mkdirSync(this.instanceRootDir, { recursive: true, mode: 0o700 });
+    const hostRoot = fs.mkdtempSync(path.join(this.instanceRootDir, `${sessionId}-`));
     const workspaceDir = path.join(hostRoot, 'workspace');
+    const outputDir = path.join(hostRoot, 'output');
     const dataDir = path.join(hostRoot, 'data');
     const suffix = sha256(sessionId).slice(0, 16);
-    const containerName = `cds-od-${suffix}`;
-    const networkName = `cds-od-net-${suffix}`;
-    let containerStarted = false;
+    const containerName = `cds-od-${this.instanceNameScope}-${suffix}`;
+    const networkName = `cds-od-net-${this.instanceNameScope}-${suffix}`;
+    const workspaceVolumeName = `cds-od-ws-${this.instanceNameScope}-${suffix}`;
+    const dataVolumeName = `cds-od-data-${this.instanceNameScope}-${suffix}`;
+    let containerCreated = false;
     let networkCreated = false;
+    const createdVolumes: string[] = [];
     try {
       fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o750 });
+      fs.mkdirSync(outputDir, { recursive: true, mode: 0o750 });
       fs.mkdirSync(dataDir, { recursive: true, mode: 0o750 });
       onStage('workspace_downloading');
       const response = await this.fetchImpl(transfer.inputPackageUrl, {
@@ -593,13 +825,23 @@ export class AgentWorkspaceSessionRuntime {
       onStage('workspace_materialized', { fileCount: files.length });
 
       const network = await this.shell.exec(
-        `docker network create --label cds.managed=true --label cds.type=agent-session --label ${shellQuote(`cds.agent.session=${sessionId}`)} ${shellQuote(networkName)}`,
+        `docker network create --internal --label cds.managed=true --label cds.type=agent-session --label ${shellQuote(`cds.instance=${this.instanceId}`)} --label ${shellQuote(`cds.agent.session=${sessionId}`)} ${shellQuote(networkName)}`,
         { timeout: 30_000 },
       );
       if (network.exitCode !== 0) {
         throw new AgentWorkspaceRuntimeError('workspace_network_create_failed', 'could not create isolated Agent network', true);
       }
       networkCreated = true;
+      for (const volumeName of [workspaceVolumeName, dataVolumeName]) {
+        const volume = await this.shell.exec(
+          `docker volume create --label cds.managed=true --label cds.type=agent-session --label ${shellQuote(`cds.instance=${this.instanceId}`)} --label ${shellQuote(`cds.agent.session=${sessionId}`)} ${shellQuote(volumeName)}`,
+          { timeout: 30_000 },
+        );
+        if (volume.exitCode !== 0) {
+          throw new AgentWorkspaceRuntimeError('workspace_volume_create_failed', 'could not create Agent workspace volume', true);
+        }
+        createdVolumes.push(volumeName);
+      }
       const daemonApiToken = crypto.randomBytes(32).toString('hex');
       const env = [
         'NODE_ENV=production',
@@ -612,7 +854,7 @@ export class AgentWorkspaceSessionRuntime {
         'OD_SANDBOX_IMPORT_ALLOWED_ROOTS=/workspace',
       ].join('\n') + '\n';
       const command = [
-        'docker run --detach',
+        'docker create',
         '--pull never',
         `--name ${shellQuote(containerName)}`,
         '--restart no',
@@ -629,9 +871,10 @@ export class AgentWorkspaceSessionRuntime {
         `--network ${shellQuote(networkName)}`,
         `--label ${shellQuote('cds.managed=true')}`,
         `--label ${shellQuote('cds.type=agent-session')}`,
+        `--label ${shellQuote(`cds.instance=${this.instanceId}`)}`,
         `--label ${shellQuote(`cds.agent.session=${sessionId}`)}`,
-        `--mount ${shellQuote(`type=bind,src=${workspaceDir},dst=/workspace`)}`,
-        `--mount ${shellQuote(`type=bind,src=${dataDir},dst=/app/.od`)}`,
+        `--mount ${shellQuote(`type=volume,src=${workspaceVolumeName},dst=/workspace`)}`,
+        `--mount ${shellQuote(`type=volume,src=${dataVolumeName},dst=/app/.od`)}`,
         '--workdir /workspace',
         '--env-file /dev/stdin',
         shellQuote(this.image),
@@ -639,9 +882,47 @@ export class AgentWorkspaceSessionRuntime {
       onStage('container_starting', { image: this.image });
       const started = await this.shell.exec(command, { timeout: 120_000, stdin: env });
       if (started.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError('workspace_container_create_failed', 'OpenDesign container failed to be created', true);
+      }
+      containerCreated = true;
+      // Match CDS project validation's established sibling-container pattern:
+      // docker cp streams from the control-plane filesystem through the Docker
+      // API, so no control-container /tmp path is misinterpreted as a daemon
+      // host bind source.
+      const copied = await this.shell.exec(
+        `docker cp ${shellQuote(`${workspaceDir}/.`)} ${shellQuote(`${containerName}:/workspace/`)}`,
+        { timeout: 90_000 },
+      );
+      if (copied.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError('workspace_copy_failed', 'workspace files could not be copied into the Agent volume', true);
+      }
+      const initialized = await this.shell.exec([
+        'docker run --rm',
+        '--pull never',
+        '--network none',
+        '--read-only',
+        '--security-opt no-new-privileges:true',
+        '--cap-drop ALL',
+        '--cap-add CHOWN',
+        '--user 0:0',
+        `--label ${shellQuote('cds.managed=true')}`,
+        `--label ${shellQuote('cds.type=agent-session')}`,
+        `--label ${shellQuote(`cds.instance=${this.instanceId}`)}`,
+        `--label ${shellQuote(`cds.agent.session=${sessionId}`)}`,
+        `--mount ${shellQuote(`type=volume,src=${workspaceVolumeName},dst=/workspace`)}`,
+        `--mount ${shellQuote(`type=volume,src=${dataVolumeName},dst=/app/.od`)}`,
+        '--entrypoint /bin/sh',
+        shellQuote(this.image),
+        '-c',
+        shellQuote(`chown -R ${this.containerUid}:${this.containerGid} /workspace /app/.od`),
+      ].join(' '), { timeout: 90_000 });
+      if (initialized.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError('workspace_volume_init_failed', 'Agent workspace volume ownership could not be initialized', true);
+      }
+      const startedContainer = await this.shell.exec(`docker start ${shellQuote(containerName)}`, { timeout: 30_000 });
+      if (startedContainer.exitCode !== 0) {
         throw new AgentWorkspaceRuntimeError('workspace_container_start_failed', 'OpenDesign container failed to start', true);
       }
-      containerStarted = true;
       const address = await this.shell.exec(
         `docker inspect --format ${shellQuote(`{{with index .NetworkSettings.Networks "${networkName}"}}{{.IPAddress}}{{end}}`)} ${shellQuote(containerName)}`,
         { timeout: 5000 },
@@ -663,9 +944,12 @@ export class AgentWorkspaceSessionRuntime {
         mapRunId: workspacePackage.runId,
         hostRoot,
         workspaceDir,
+        outputDir,
         dataDir,
         containerName,
         networkName,
+        workspaceVolumeName,
+        dataVolumeName,
         daemonBaseUrl,
         daemonApiToken,
         transfer: publicTransfer(transfer),
@@ -683,7 +967,7 @@ export class AgentWorkspaceSessionRuntime {
       };
     } catch (error) {
       const cleanupErrors: string[] = [];
-      if (containerStarted) {
+      if (containerCreated) {
         await this.removeContainer(containerName).catch((cleanupError) => {
           cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
         });
@@ -693,9 +977,15 @@ export class AgentWorkspaceSessionRuntime {
           cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
         });
       }
+      for (const volumeName of createdVolumes.reverse()) {
+        await this.removeVolume(volumeName).catch((cleanupError) => {
+          cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+        });
+      }
       try { fs.rmSync(hostRoot, { recursive: true, force: true }); } catch (cleanupError) {
         cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
       }
+      this.removeInstanceRootIfEmpty();
       if (cleanupErrors.length > 0) {
         throw new AgentWorkspaceRuntimeError(
           'workspace_cleanup_failed',
@@ -755,6 +1045,8 @@ export class AgentWorkspaceSessionRuntime {
     if (!projectId || !conversationId) {
       throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import returned no project identity');
     }
+    const proxiedModelBaseUrl = await this.startEgressProxy(handle, model.baseUrl);
+    try {
     onStage('open_design_run_starting', { projectId });
     const run = await this.odJson(handle, '/api/runs', {
       method: 'POST',
@@ -772,7 +1064,7 @@ export class AgentWorkspaceSessionRuntime {
         byokProvider: {
           protocol: 'openai',
           apiKey: model.apiKey,
-          baseUrl: model.baseUrl,
+          baseUrl: proxiedModelBaseUrl,
           model: model.model,
           requiresApiKey: true,
         },
@@ -792,12 +1084,17 @@ export class AgentWorkspaceSessionRuntime {
     try {
       await this.waitForRun(handle, runId, signal, onStage);
       onStage('workspace_collecting');
+      await this.copyOutputsFromContainer(handle);
       const collectedFiles = this.collectOutputs(handle);
       const indexFile = collectedFiles.find((file) => file.path === 'index.html');
       if (!indexFile) {
         throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed without index.html');
       }
-      this.validateSelfContainedHtml(Buffer.from(indexFile.contentBase64, 'base64').toString('utf8'));
+      const hardenedHtml = hardenSelfContainedHtml(Buffer.from(indexFile.contentBase64, 'base64').toString('utf8'));
+      const hardenedBytes = Buffer.from(hardenedHtml);
+      indexFile.contentBase64 = hardenedBytes.toString('base64');
+      indexFile.sha256 = sha256(hardenedBytes);
+      indexFile.size = hardenedBytes.byteLength;
       const manifestBytes = Buffer.from(JSON.stringify({
         schemaVersion: 'map-design-artifact-manifest-v1',
         baseRevision: handle.transfer.baseRevision,
@@ -885,6 +1182,9 @@ export class AgentWorkspaceSessionRuntime {
     } finally {
       handle.activeRunId = undefined;
     }
+    } finally {
+      await this.stopEgressProxy(handle);
+    }
   }
 
   async stop(sessionId: string, _reason = 'requested'): Promise<void> {
@@ -901,15 +1201,27 @@ export class AgentWorkspaceSessionRuntime {
     handle.activeRunId = undefined;
     handle.daemonApiToken = '';
     const cleanupErrors: string[] = [];
+    if (handle.egressContainerName) {
+      await this.removeContainer(handle.egressContainerName).catch((error) => {
+        cleanupErrors.push(error instanceof Error ? error.message : String(error));
+      });
+      handle.egressContainerName = undefined;
+    }
     await this.removeContainer(handle.containerName).catch((error) => {
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     });
     await this.removeNetwork(handle.networkName).catch((error) => {
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     });
+    for (const volumeName of [handle.workspaceVolumeName, handle.dataVolumeName]) {
+      await this.removeVolume(volumeName).catch((error) => {
+        cleanupErrors.push(error instanceof Error ? error.message : String(error));
+      });
+    }
     try { fs.rmSync(handle.hostRoot, { recursive: true, force: true }); } catch (error) {
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
+    this.removeInstanceRootIfEmpty();
     if (cleanupErrors.length > 0) {
       throw new AgentWorkspaceRuntimeError(
         'workspace_cleanup_failed',
@@ -951,6 +1263,118 @@ export class AgentWorkspaceSessionRuntime {
       for (const name of fs.readdirSync(target)) visit(path.join(target, name));
     };
     visit(hostRoot);
+  }
+
+  private removeInstanceRootIfEmpty(): void {
+    try {
+      if (fs.existsSync(this.instanceRootDir) && fs.readdirSync(this.instanceRootDir).length === 0) {
+        fs.rmdirSync(this.instanceRootDir);
+      }
+    } catch {
+      // Best effort only; session-owned children have already been removed.
+    }
+  }
+
+  private async startEgressProxy(handle: RuntimeHandle, modelBaseUrl: string): Promise<string> {
+    await this.stopEgressProxy(handle);
+    const target = validateTransferUrl(modelBaseUrl, 'modelBaseUrl');
+    const suffix = sha256(`${handle.sessionId}:${target.origin}:${target.pathname}`).slice(0, 16);
+    const containerName = `cds-od-egress-${suffix}`;
+    const env = [
+      `TARGET_ORIGIN=${target.origin}`,
+      `TARGET_PATH_PREFIX=${target.pathname}`,
+      `PROXY_PORT=${EGRESS_PROXY_PORT}`,
+      `CDS_EGRESS_PROXY_SCRIPT=${Buffer.from(EGRESS_PROXY_SCRIPT).toString('base64')}`,
+    ].join('\n') + '\n';
+    const command = [
+      'docker run --detach',
+      '--pull never',
+      `--name ${shellQuote(containerName)}`,
+      '--restart no',
+      '--read-only',
+      '--network bridge',
+      '--security-opt no-new-privileges:true',
+      '--cap-drop ALL',
+      '--pids-limit 64',
+      '--memory 128m',
+      '--cpus 0.25',
+      '--tmpfs /tmp:rw,noexec,nosuid,size=16m',
+      `--label ${shellQuote('cds.managed=true')}`,
+      `--label ${shellQuote('cds.type=agent-session')}`,
+      `--label ${shellQuote(`cds.instance=${this.instanceId}`)}`,
+      `--label ${shellQuote(`cds.agent.session=${handle.sessionId}`)}`,
+      '--env-file /dev/stdin',
+      '--entrypoint node',
+      shellQuote(this.image),
+      '-e',
+      shellQuote("eval(Buffer.from(process.env.CDS_EGRESS_PROXY_SCRIPT, 'base64').toString('utf8'))"),
+    ].join(' ');
+    const started = await this.shell.exec(command, { timeout: 30_000, stdin: env });
+    if (started.exitCode !== 0) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_egress_unavailable',
+        'MAP-only egress relay could not be started; OpenDesign remains network-isolated',
+        true,
+      );
+    }
+    handle.egressContainerName = containerName;
+    const connected = await this.shell.exec(
+      `docker network connect --alias map-egress ${shellQuote(handle.networkName)} ${shellQuote(containerName)}`,
+      { timeout: 30_000 },
+    );
+    if (connected.exitCode !== 0) {
+      await this.stopEgressProxy(handle);
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_egress_unavailable',
+        'MAP-only egress relay could not join the isolated Agent network',
+        true,
+      );
+    }
+    let ready = false;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const probe = await this.shell.exec(
+        `docker exec ${shellQuote(containerName)} node -e ${shellQuote(`fetch('http://127.0.0.1:${EGRESS_PROXY_PORT}/__health').then(r=>process.exit(r.status===204?0:1)).catch(()=>process.exit(1))`)}`,
+        { timeout: 3000 },
+      );
+      if (probe.exitCode === 0) {
+        ready = true;
+        break;
+      }
+      await delay(50);
+    }
+    if (!ready) {
+      await this.stopEgressProxy(handle);
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_egress_unavailable',
+        'MAP-only egress relay did not become ready; OpenDesign remains network-isolated',
+        true,
+      );
+    }
+    const basePath = target.pathname === '/' ? '' : target.pathname.replace(/\/$/, '');
+    return `http://map-egress:${EGRESS_PROXY_PORT}${basePath}`;
+  }
+
+  private async stopEgressProxy(handle: RuntimeHandle): Promise<void> {
+    if (!handle.egressContainerName) return;
+    const containerName = handle.egressContainerName;
+    await this.removeContainer(containerName);
+    handle.egressContainerName = undefined;
+  }
+
+  private async copyOutputsFromContainer(handle: RuntimeHandle): Promise<void> {
+    fs.rmSync(handle.outputDir, { recursive: true, force: true });
+    fs.mkdirSync(handle.outputDir, { recursive: true, mode: 0o700 });
+    const copied = await this.shell.exec(
+      `docker cp ${shellQuote(`${handle.containerName}:/workspace/.`)} ${shellQuote(handle.outputDir)}`,
+      { timeout: 90_000 },
+    );
+    if (copied.exitCode !== 0) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_copy_failed',
+        'OpenDesign output could not be copied out of the managed workspace volume',
+        true,
+      );
+    }
   }
 
   private async waitForHealth(baseUrl: string, token: string, timeoutSeconds: number): Promise<void> {
@@ -1034,7 +1458,7 @@ export class AgentWorkspaceSessionRuntime {
     const walk = (directory: string): void => {
       for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
         const absolute = path.join(directory, entry.name);
-        const relative = path.relative(handle.workspaceDir, absolute).split(path.sep).join('/');
+        const relative = path.relative(handle.outputDir, absolute).split(path.sep).join('/');
         normalizeRelativePath(relative);
         const stat = fs.lstatSync(absolute);
         if (stat.isSymbolicLink()) {
@@ -1063,33 +1487,8 @@ export class AgentWorkspaceSessionRuntime {
         });
       }
     };
-    walk(handle.workspaceDir);
+    walk(handle.outputDir);
     return results.sort((left, right) => left.path.localeCompare(right.path));
-  }
-
-  private validateSelfContainedHtml(html: string): void {
-    if (!/^\s*<!doctype html>|^\s*<html[\s>]/i.test(html)) {
-      throw new AgentWorkspaceRuntimeError('design_output_invalid', 'index.html is not a complete HTML document');
-    }
-    for (const match of html.matchAll(/<([a-z][a-z0-9-]*)\b[^>]*\b(src|href)\s*=\s*(["'])(.*?)\3/gi)) {
-      const tag = match[1].toLowerCase();
-      const attribute = match[2].toLowerCase();
-      const value = match[4].trim();
-      if (!value || value.startsWith('#') || value.startsWith('data:')) continue;
-      if (tag === 'a' && attribute === 'href') continue;
-      throw new AgentWorkspaceRuntimeError(
-        'design_output_not_self_contained',
-        `index.html references a non-inline resource from <${tag}>`,
-      );
-    }
-    for (const match of html.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
-      const value = match[2].trim();
-      if (!value || value.startsWith('data:') || value.startsWith('#')) continue;
-      throw new AgentWorkspaceRuntimeError(
-        'design_output_not_self_contained',
-        'index.html CSS references a non-inline resource',
-      );
-    }
   }
 
   private async odJson(
@@ -1168,6 +1567,113 @@ export class AgentWorkspaceSessionRuntime {
       );
     }
   }
+
+  private async removeVolume(volumeName: string): Promise<void> {
+    const result = await this.shell.exec(`docker volume rm ${shellQuote(volumeName)}`, { timeout: 30_000 });
+    if (result.exitCode !== 0 && !/No such volume/i.test(`${result.stderr}\n${result.stdout}`)) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_volume_cleanup_failed',
+        'OpenDesign session volume could not be removed',
+        true,
+      );
+    }
+  }
+}
+
+export function hardenSelfContainedHtml(html: string): string {
+  if (!/^\s*<!doctype html>|^\s*<html[\s>]/i.test(html)) {
+    throw new AgentWorkspaceRuntimeError('design_output_invalid', 'index.html is not a complete HTML document');
+  }
+  for (const match of html.matchAll(/<([a-z][a-z0-9-]*)\b[^>]*\b(src|href)\s*=\s*(["'])(.*?)\3/gi)) {
+    const tag = match[1].toLowerCase();
+    const attribute = match[2].toLowerCase();
+    const value = match[4].trim();
+    if (!value || value.startsWith('#')) continue;
+    if (value.startsWith('data:') && tag !== 'a' && tag !== 'area') continue;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      `index.html references a non-inline resource from <${tag}>`,
+    );
+  }
+  for (const match of html.matchAll(/<([a-z][a-z0-9-]*)\b[^>]*\b(src|href)\s*=\s*([^\s"'`=<>]+)/gi)) {
+    const tag = match[1].toLowerCase();
+    const value = match[3].trim();
+    if (!value || value.startsWith('#')) continue;
+    if (value.startsWith('data:') && tag !== 'a' && tag !== 'area') continue;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      `index.html references a non-inline resource from <${tag}>`,
+    );
+  }
+  if (/\bsrcset\s*=/i.test(html)) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html uses srcset, which cannot be proven self-contained',
+    );
+  }
+  if (/\bsrcdoc\s*=/i.test(html)) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html contains a nested srcDoc document',
+    );
+  }
+  if (/@import\s+(?:url\s*\()?/i.test(html)) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html CSS contains a disallowed @import',
+    );
+  }
+  for (const match of html.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
+    const value = match[2].trim();
+    if (!value || value.startsWith('data:') || value.startsWith('#')) continue;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html CSS references a non-inline resource',
+    );
+  }
+  const scriptBodies = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)]
+    .map((match) => match[1])
+    .join('\n');
+  if (/\b(?:fetch\s*\(|XMLHttpRequest\b|WebSocket\s*\(|EventSource\s*\(|sendBeacon\s*\(|import\s*\()/i.test(scriptBodies)) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html contains a script network primitive',
+    );
+  }
+  if (
+    /\blocation\b|\b(?:window|globalThis|self|top|parent)\s*(?:\.\s*open|\[\s*['"]open['"]\s*\])\s*\(|\bopen\s*\(|\.\s*(?:submit|requestSubmit|click)\s*\(|createElement\s*\(\s*['"](?:a|area|form|iframe|frame|object|embed)['"]/i.test(scriptBodies)
+  ) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html contains a script navigation primitive',
+    );
+  }
+  if (/\son[a-z0-9_-]+\s*=/i.test(html)) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html contains an inline event handler that cannot be proven offline',
+    );
+  }
+  if (
+    /<\s*(?:base|iframe|frame|object|embed|form)\b/i.test(html)
+    || /\sformaction\s*=/i.test(html)
+    || /<meta\b[^>]*http-equiv\s*=\s*(["']?)refresh\1/i.test(html)
+  ) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html contains an embedded navigation or document primitive',
+    );
+  }
+
+  const withoutExistingCsp = html.replace(
+    /<meta\b(?=[^>]*http-equiv\s*=\s*(["']?)content-security-policy\1)[^>]*>\s*/gi,
+    '',
+  );
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
+  if (/<head\b[^>]*>/i.test(withoutExistingCsp)) {
+    return withoutExistingCsp.replace(/<head\b([^>]*)>/i, `<head$1>${cspMeta}${ARTIFACT_NAVIGATION_GUARD}`);
+  }
+  return withoutExistingCsp.replace(/<html\b([^>]*)>/i, `<html$1><head>${cspMeta}${ARTIFACT_NAVIGATION_GUARD}</head>`);
 }
 
 function classifyImagePullFailure(stdout: string, stderr: string): string {

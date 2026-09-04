@@ -2,7 +2,11 @@ name: OpenDesign Runtime Image
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
+    paths:
+      - "cds/open-design-runtime/**"
+      - ".github/workflows/open-design-runtime.yml"
+  pull_request:
     paths:
       - "cds/open-design-runtime/**"
       - ".github/workflows/open-design-runtime.yml"
@@ -11,11 +15,36 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}/opendesign-runtime
-  RUNTIME_TAG: od-0.21.1-opencode-1.18.28
 
 jobs:
+  verify:
+    name: Verify OpenDesign runtime build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build runtime without publishing
+        uses: docker/build-push-action@v5
+        with:
+          context: ./cds/open-design-runtime
+          file: ./cds/open-design-runtime/Dockerfile
+          push: false
+          provenance: false
+          sbom: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=open-design-runtime
+
   build-and-push:
     name: Build and push OpenDesign runtime
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -35,16 +64,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push pinned runtime
+      - name: Build and push commit-addressed runtime
         id: build
         uses: docker/build-push-action@v5
         with:
           context: ./cds/open-design-runtime
           file: ./cds/open-design-runtime/Dockerfile
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.RUNTIME_TAG }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
           provenance: mode=max
           sbom: true
           platforms: linux/amd64

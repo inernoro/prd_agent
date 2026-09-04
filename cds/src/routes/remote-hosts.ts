@@ -83,7 +83,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   const agentWorkspaceSessionRuntime = deps.agentWorkspaceSessionRuntime
     ?? (deps.shell ? new AgentWorkspaceSessionRuntime(deps.shell) : undefined);
   if (agentWorkspaceSessionRuntime && !deps.agentWorkspaceSessionRuntime) {
-    void agentWorkspaceSessionRuntime.prepareImage();
+    void agentWorkspaceSessionRuntime.bootstrap();
   }
   const instanceDiscoveryCache = new Map<string, {
     expiresAt: number;
@@ -1219,20 +1219,45 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
     }
-    const afterSeq = Number(req.query.afterSeq || 0);
+    const requestedAfterSeq = Number(req.query.afterSeq || 0);
+    let afterSeq = Number.isSafeInteger(requestedAfterSeq) && requestedAfterSeq >= 0
+      ? requestedAfterSeq
+      : 0;
+    const follow = req.query.follow === 'true' || req.query.follow === '1';
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'close');
-    const events = session.events.filter((event) => event.seq > afterSeq);
-    for (const event of events) {
-      res.write(`id: ${event.seq}\n`);
-      res.write(`event: ${event.type}\n`);
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
-      await delay(20);
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    let disconnected = false;
+    res.once('close', () => {
+      disconnected = true;
+      wakeCdsAgentStreamWaiters(session.id);
+    });
+
+    // 先按 afterSeq 回放，再保持连接等待本轮异步运行产生的新事件。OpenDesign 的
+    // /messages 会在 202 后继续执行；旧实现只抓一次数组快照，导致稍后到达的 done/error
+    // 永远无法进入 MAP，最终由上层在 15 分钟后误判超时。
+    while (!disconnected) {
+      const events = session.events.filter((event) => event.seq > afterSeq);
+      for (const event of events) {
+        if (disconnected || res.writableEnded) break;
+        res.write(`id: ${event.seq}\n`);
+        res.write(`event: ${event.type}\n`);
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        afterSeq = event.seq;
+      }
+
+      if (disconnected || !follow || isCdsAgentStreamTerminal(session)) break;
+
+      const eventArrived = await waitForCdsAgentEvent(session, afterSeq, 15_000);
+      if (!eventArrived && !disconnected && !res.writableEnded) {
+        res.write('event: keepalive\n');
+        res.write(`data: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
+      }
     }
-    res.write('event: keepalive\n');
-    res.write(`data: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
-    res.end();
+
+    if (!disconnected && !res.writableEnded) res.end();
   });
 
   router.post('/projects/:projectId/agent-sessions/:sessionId/tool-approvals/:approvalId', (req, res) => {
@@ -1996,6 +2021,7 @@ interface CdsAgentSession {
 
 const cdsAgentSessions = new Map<string, CdsAgentSession>();
 const cdsAgentSessionSecrets = new Map<string, { modelApiKey?: string; transferToken?: string }>();
+const cdsAgentStreamWaiters = new Map<string, Set<() => void>>();
 
 interface CdsManagedRuntimeTransport {
   source: 'cds-branch-service';
@@ -2150,12 +2176,54 @@ function pushCdsAgentEvent(
   };
   session.events.push(event);
   session.updatedAt = event.createdAt;
+  wakeCdsAgentStreamWaiters(session.id);
   // 观测台实时流（2026-06-11）：结构性节点发布到全局总线（status/done/error/tool_*），
   // text_delta/thinking 不逐 token 发（防总线洪水）——前端列表只需状态翻转与收发节点。
   if (type === 'status' || type === 'done' || type === 'error' || type === 'tool_call' || type === 'tool_result') {
     publishAgentActivity(session, type, payload);
   }
   return event;
+}
+
+function isCdsAgentStreamTerminal(session: CdsAgentSession): boolean {
+  return session.status === 'idle' || session.status === 'stopped' || session.status === 'failed';
+}
+
+function wakeCdsAgentStreamWaiters(sessionId: string): void {
+  const waiters = cdsAgentStreamWaiters.get(sessionId);
+  if (!waiters) return;
+  cdsAgentStreamWaiters.delete(sessionId);
+  for (const wake of waiters) wake();
+}
+
+function waitForCdsAgentEvent(
+  session: CdsAgentSession,
+  afterSeq: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (session.events.some((event) => event.seq > afterSeq)) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const waiters = cdsAgentStreamWaiters.get(session.id) ?? new Set<() => void>();
+    const finish = (eventArrived: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      waiters.delete(wake);
+      if (waiters.size === 0 && cdsAgentStreamWaiters.get(session.id) === waiters) {
+        cdsAgentStreamWaiters.delete(session.id);
+      }
+      resolve(eventArrived);
+    };
+    const wake = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    waiters.add(wake);
+    cdsAgentStreamWaiters.set(session.id, waiters);
+
+    // 二次检查覆盖未来若这里变成可重入调用时的竞态，确保“检查后、订阅前”不丢唤醒。
+    if (session.events.some((event) => event.seq > afterSeq)) finish(true);
+  });
 }
 
 /** 向全局事件总线发布 agent 会话活动（观测台实时行内更新用） */

@@ -8,6 +8,7 @@ import {
   AgentWorkspaceRuntimeError,
   AgentWorkspaceSessionRuntime,
   MAP_DESIGN_WORKSPACE_SCHEMA,
+  hardenSelfContainedHtml,
   normalizeWorkspaceTransfer,
 } from '../../src/services/agent-workspace-session-runtime.js';
 import type { ExecOptions, ExecResult, IShellExecutor } from '../../src/types.js';
@@ -23,6 +24,7 @@ function result(stdout = '', stderr = '', exitCode = 0): ExecResult {
 class RecordingShell implements IShellExecutor {
   readonly calls: Array<{ command: string; options?: ExecOptions }> = [];
   workspaceDir = '';
+  failEgressConnect = false;
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     this.calls.push({ command, options });
@@ -30,14 +32,27 @@ class RecordingShell implements IShellExecutor {
     if (command.startsWith('docker image inspect')) return result('sha256:image\n');
     if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
     if (command.startsWith('docker network create')) return result('network-id\n');
-    if (command.startsWith('docker run ')) {
-      const mount = command.match(/type=bind,src=([^,']+),dst=\/workspace/);
-      this.workspaceDir = mount?.[1] || '';
-      return result('container-id\n');
+    if (command.startsWith('docker volume create')) return result('volume-id\n');
+    if (command.startsWith('docker create ')) return result('container-id\n');
+    if (command.startsWith('docker cp ')) {
+      const inbound = command.match(/^docker cp '([^']+)\/\.' 'cds-od-[^']+:\/workspace\/'$/);
+      if (inbound) this.workspaceDir = inbound[1];
+      const outbound = command.match(/^docker cp 'cds-od-[^']+:\/workspace\/\.' '([^']+)'$/);
+      if (outbound && this.workspaceDir) {
+        fs.cpSync(this.workspaceDir, outbound[1], { recursive: true });
+      }
+      return result('copied\n');
     }
+    if (command.startsWith('docker run ')) return result('container-id\n');
+    if (command.startsWith('docker start ')) return result('started\n');
+    if (command.startsWith('docker network connect ')) {
+      return this.failEgressConnect ? result('', 'connect denied', 1) : result('connected\n');
+    }
+    if (command.startsWith('docker exec ')) return result('ready\n');
     if (command.startsWith('docker inspect ')) return result('127.0.0.1\n');
     if (command.startsWith('docker rm -f ')) return result('removed\n');
     if (command.startsWith('docker network rm ')) return result('removed\n');
+    if (command.startsWith('docker volume rm ')) return result('removed\n');
     return result();
   }
 }
@@ -118,6 +133,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     };
     const runtime = new AgentWorkspaceSessionRuntime(shell, {
       rootDir,
+      instanceId: 'instance-a',
       daemonPort: 7456,
       fetchImpl: fakeFetch,
       pollIntervalMs: 5,
@@ -151,12 +167,17 @@ describe('AgentWorkspaceSessionRuntime', () => {
 
     expect(fs.readFileSync(path.join(created.workspaceDir, 'knowledge', 'source.md'), 'utf8'))
       .toBe('Private knowledge body');
-    const runCommand = shell.calls.find((call) => call.command.startsWith('docker run --detach'));
+    const runCommand = shell.calls.find((call) => call.command.startsWith('docker create'));
     expect(runCommand?.command).toContain('--read-only');
     expect(runCommand?.command).toContain('--security-opt no-new-privileges:true');
     expect(runCommand?.command).toContain('--cap-drop ALL');
     expect(runCommand?.command).toContain('--pids-limit 256');
-    expect(runCommand?.command).toContain('ghcr.io/inernoro/prd_agent/opendesign-runtime:od-0.21.1-opencode-1.18.28');
+    expect(runCommand?.command).toContain('ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474');
+    expect(runCommand?.command).toContain('type=volume');
+    expect(runCommand?.command).not.toContain('type=bind');
+    expect(runCommand?.command).toContain("--label 'cds.instance=instance-a'");
+    expect(shell.calls.some((call) => call.command.startsWith('docker network create --internal'))).toBe(true);
+    expect(shell.calls.some((call) => call.command.startsWith('docker cp '))).toBe(true);
     expect(runCommand?.command).not.toContain('transfer-token');
     expect(runCommand?.command).not.toContain('model-secret');
     expect(runCommand?.options?.stdin).not.toContain('transfer-token');
@@ -202,10 +223,24 @@ describe('AgentWorkspaceSessionRuntime', () => {
       byokProvider: {
         protocol: 'openai',
         apiKey: 'model-secret',
+        baseUrl: 'http://map-egress:8787/api/design-artifacts/runtime/run-1/llm/v1',
         model: 'map-managed',
       },
     });
     expect(JSON.stringify(run?.body)).not.toContain('Private knowledge body');
+    const sessionResourceCreates = shell.calls.filter((call) =>
+      call.command.includes('cds.type=agent-session') && (
+        call.command.startsWith('docker network create')
+        || call.command.startsWith('docker volume create')
+        || call.command.startsWith('docker create')
+        || call.command.startsWith('docker run --rm')
+        || call.command.startsWith('docker run --detach')
+      ),
+    );
+    expect(sessionResourceCreates.length).toBeGreaterThanOrEqual(6);
+    for (const call of sessionResourceCreates) {
+      expect(call.command).toContain('cds.instance=instance-a');
+    }
     const committed = requests.find((request) => request.path === '/commit');
     expect(committed?.authorization).toBe('Bearer transfer-token');
     expect(committed?.body.runId).toBe('map-run-1');
@@ -224,12 +259,17 @@ describe('AgentWorkspaceSessionRuntime', () => {
         expect.objectContaining({ path: 'index.html' }),
       ],
     });
+    const committedIndex = committed?.body.files.find((file: any) => file.path === 'index.html');
+    expect(Buffer.from(committedIndex.contentBase64, 'base64').toString('utf8')).toContain(
+      `default-src 'none'; base-uri 'none'; connect-src 'none'`,
+    );
 
     await runtime.stop('session-test-1');
     expect(runtime.has('session-test-1')).toBe(false);
     expect(fs.existsSync(created.hostRoot)).toBe(false);
     expect(shell.calls.some((call) => call.command.startsWith('docker rm -f '))).toBe(true);
     expect(shell.calls.some((call) => call.command.startsWith('docker network rm '))).toBe(true);
+    expect(shell.calls.filter((call) => call.command.startsWith('docker volume rm '))).toHaveLength(2);
   });
 
   it('fails closed on package hash mismatch and removes the allocated host root', async () => {
@@ -275,6 +315,60 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(shell.calls.some((call) => call.command.startsWith('docker network create'))).toBe(false);
   });
 
+  it('fails closed before an Agent run when the MAP-only egress relay cannot be isolated', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const workspacePackage = buildPackage([
+      { path: 'brief.txt', content: 'brief', mediaType: 'text/plain' },
+    ]);
+    const requestedPaths: string[] = [];
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      capabilityCacheMs: 0,
+      pollIntervalMs: 5,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async (input, init) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
+        requestedPaths.push(url.pathname);
+        if (url.pathname === '/input') return new Response(workspacePackage.serialized, { status: 200 });
+        if (url.pathname === '/api/health') return Response.json({ ok: true });
+        if (url.pathname === '/api/import/folder' && init?.method === 'POST') {
+          return Response.json({ project: { id: 'od-project' }, conversationId: 'od-conversation' });
+        }
+        return new Response('', { status: 404 });
+      },
+    });
+    await runtime.create('session-egress-fail', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: workspacePackage.sha256,
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024,
+      maxOutputBytes: 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json'],
+    }, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 30,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    });
+    shell.failEgressConnect = true;
+
+    await expect(runtime.execute('session-egress-fail', 'Build the page.', {
+      baseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+      protocol: 'openai',
+      apiKey: 'model-secret',
+      model: 'map-managed',
+    }, 'transfer-token')).rejects.toMatchObject({ code: 'workspace_egress_unavailable' });
+    expect(requestedPaths).not.toContain('/api/runs');
+
+    await runtime.stop('session-egress-fail');
+  });
+
   it('rejects transfer credentials hidden in URL query parameters', () => {
     expect(() => normalizeWorkspaceTransfer({
       schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
@@ -302,7 +396,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     await expect(runtime.capability()).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime:od-0.21.1-opencode-1.18.28 is not installed on this CDS node',
+      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 is not installed on this CDS node',
     });
   });
 
@@ -354,7 +448,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     await expect(runtime.capability()).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime:od-0.21.1-opencode-1.18.28 could not be prepared on this CDS node: runtime image registry authentication failed',
+      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 could not be prepared on this CDS node: runtime image registry authentication failed',
     });
     await expect(runtime.prepareImage()).resolves.toBeUndefined();
   });
@@ -373,7 +467,102 @@ describe('AgentWorkspaceSessionRuntime', () => {
     await expect(runtime.capability()).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime:od-0.21.1-opencode-1.18.28 does not contain the required OpenCode Agent CLI',
+      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 does not contain the required OpenCode Agent CLI',
     });
+  });
+
+  it('reclaims labeled containers, networks, volumes, and stale workspace directories after restart', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const instanceScope = digest('instance-a').slice(0, 8);
+    const staleRoot = path.join(rootDir, instanceScope, 'session-stale-deadbeef');
+    const legacyRoot = path.join(rootDir, 'legacy-session-other-owner');
+    fs.mkdirSync(path.dirname(staleRoot), { recursive: true });
+    fs.mkdirSync(staleRoot);
+    fs.mkdirSync(legacyRoot);
+    fs.writeFileSync(path.join(staleRoot, 'leftover.txt'), 'stale');
+    const calls: string[] = [];
+    const shell: IShellExecutor = {
+      async exec(command: string): Promise<ExecResult> {
+        calls.push(command);
+        if (command.startsWith('docker ps -aq')) return result('deadbeef\n');
+        if (command.startsWith('docker network ls -q')) return result('network-old\n');
+        if (command.startsWith('docker volume ls -q')) return result('volume-old\n');
+        if (command.startsWith('docker rm -f ')) return result('removed\n');
+        if (command.startsWith('docker network rm ')) return result('removed\n');
+        if (command.startsWith('docker volume rm ')) return result('removed\n');
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      instanceId: 'instance-a',
+      autoPullImage: false,
+    });
+
+    await runtime.recoverOrphans();
+
+    expect(fs.existsSync(staleRoot)).toBe(false);
+    expect(fs.existsSync(legacyRoot)).toBe(true);
+    expect(calls).toEqual(expect.arrayContaining([
+      "docker ps -aq --filter 'label=cds.type=agent-session' --filter 'label=cds.instance=instance-a'",
+      "docker network ls -q --filter 'label=cds.type=agent-session' --filter 'label=cds.instance=instance-a'",
+      "docker volume ls -q --filter 'label=cds.type=agent-session' --filter 'label=cds.instance=instance-a'",
+      "docker rm -f 'deadbeef'",
+      "docker network rm 'network-old'",
+      "docker volume rm 'volume-old'",
+    ]));
+    expect(calls.some((call) => call === "docker ps -aq --filter 'label=cds.type=agent-session'")).toBe(false);
+  });
+
+  it('keeps the provider unavailable when startup orphan cleanup cannot be proven complete', async () => {
+    const shell: IShellExecutor = {
+      async exec(command: string): Promise<ExecResult> {
+        if (command.startsWith('docker ps -aq')) return result('', 'daemon unavailable', 1);
+        if (command.startsWith('docker network ls -q')) return result('');
+        if (command.startsWith('docker volume ls -q')) return result('');
+        if (command.startsWith('docker version')) return result('27.0.0\n');
+        if (command.startsWith('docker image inspect')) return result('sha256:image\n');
+        if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { capabilityCacheMs: 0, autoPullImage: false });
+
+    await runtime.bootstrap();
+
+    await expect(runtime.capability()).resolves.toMatchObject({
+      available: false,
+      resourcePolicyEnforcedPerSession: false,
+      reason: expect.stringContaining('startup recovery failed'),
+    });
+  });
+
+  it('injects a restrictive CSP and rejects dynamic or indirect network surfaces', () => {
+    const safe = hardenSelfContainedHtml('<!doctype html><html><head><title>Safe</title></head><body><a href="#details">Details</a><style>body{color:red}</style><script>document.querySelector("#details")?.classList.toggle("open")</script></body></html>');
+    expect(safe).toContain('http-equiv="Content-Security-Policy"');
+    expect(safe).toContain("connect-src 'none'");
+    expect(safe).toContain("form-action 'none'");
+    expect(safe).toContain('data-cds-offline-guard');
+
+    const unsafe = [
+      '<!doctype html><html><img srcset="https://tracker.example/a.png 1x"></html>',
+      '<!doctype html><html><style>@import "https://tracker.example/a.css";</style></html>',
+      '<!doctype html><html><script>fetch("https://tracker.example/data")</script></html>',
+      '<!doctype html><html><script>window.location.href="https://tracker.example/out"</script></html>',
+      '<!doctype html><html><script>location.assign("https://tracker.example/out")</script></html>',
+      '<!doctype html><html><script>self.location.replace("https://tracker.example/out")</script></html>',
+      '<!doctype html><html><script>globalThis["location"].replace("https://tracker.example/out")</script></html>',
+      '<!doctype html><html><script>window["open"]("https://tracker.example/out")</script></html>',
+      '<!doctype html><html><script>document.createElement("a").click()</script></html>',
+      '<!doctype html><html><form action="https://tracker.example/out"><input name="secret"></form></html>',
+      '<!doctype html><html><a href=https://tracker.example/out>leave</a></html>',
+      '<!doctype html><html><iframe srcdoc="&lt;script&gt;top.location=\'https://tracker.example/out\'&lt;/script&gt;"></iframe></html>',
+      '<!doctype html><html><button onclick=goAway()>leave</button></html>',
+    ];
+    for (const html of unsafe) {
+      expect(() => hardenSelfContainedHtml(html)).toThrowError(
+        expect.objectContaining({ code: 'design_output_not_self_contained' }),
+      );
+    }
   });
 });

@@ -15,4 +15,11 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('const enabledRuntimes = capabilities.filter((item) => item.enabled)');
     expect(source).toContain('{enabledRuntimes.map((item) => (');
   });
+
+  it('只提交知识身份并由服务端校验正文和容量', () => {
+    expect(source).not.toContain('getDocumentContent');
+    expect(source).not.toContain('.slice(0, 20_000)');
+    expect(source).toContain('entryId: entry.id');
+    expect(source).toContain('storeId: entry.storeId');
+  });
 });
