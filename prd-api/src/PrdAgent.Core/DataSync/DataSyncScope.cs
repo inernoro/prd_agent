@@ -393,6 +393,7 @@ public static class DataSyncScope
         ["group_message_counters"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["hosted_site_ask_messages"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["hosted_site_ask_sessions"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
+        ["hosted_site_optimization_sessions"] = "运行时上传与预览会话：包含私有源包引用且会自动过期，跨实例没有意义",
         ["image_gen_run_events"] = "日志与埋点：量大且只对源站有意义",
         ["image_gen_run_items"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["image_gen_runs"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
