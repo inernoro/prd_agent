@@ -29,6 +29,7 @@ export async function startViteDevServer({ timeoutMs = 30000 } = {}) {
     cwd: WEB_DIR, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
   });
   const url = `http://127.0.0.1:${port}`;
+  let seen = '';
 
   const stop = () => {
     try {
@@ -48,19 +49,27 @@ export async function startViteDevServer({ timeoutMs = 30000 } = {}) {
    */
   try {
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`vite dev server ${timeoutMs}ms 没起来`)), timeoutMs);
+      const timer = setTimeout(() => reject(new Error(`vite dev server ${timeoutMs}ms 没起来：${seen.slice(-300) || '（没有任何输出）'}`)), timeoutMs);
       const onData = (buf) => {
-        const text = buf.toString();
+        // 累积后再判：就绪行可能被切在两个 chunk 里；同时剥掉 ANSI，
+        // 因为 vite 会给耗时数字加粗（`ready in \e[1m412\e[22m ms`）。
+        seen += buf.toString().replace(/\u001b\[[0-9;]*m/g, '');
+        const text = seen;
         /*
-         * 只认 vite 自己那行 `ready in <n> ms`，而且必须带词边界。
+         * 只认 vite 自己那行 `ready in ...`，关键是**词边界**。
          *
          * 两个坑叠在一起：① 旧判据把「输出里出现了端口号」也当就绪，而端口
          * 被占时的错误信息里同样带着端口号；② 去掉 ① 之后仍然误判——因为
          * `Port 5299 is already in use` 里 **already in** 含有子串 `ready in`。
          * 两者任一命中，整套布局判据就会对着**另一个进程**的响应跑完并全绿
          * （实测：拿到占位服务器返回的 IMPOSTOR，判据无一报错）。
+         *
+         * 不要求紧跟数字：vite 会给耗时加粗，ANSI 码正好插在 `in ` 和数字
+         * 之间，要求 `\d+` 会在 CI 上整个匹配不上（实测 30s 超时）。
+         * `\b` 已经足够把 `already in use` 排除——`already` 里 r 前面是 l，
+         * 不构成词边界。
          */
-        if (/\bready in \d+/.test(text)) {
+        if (/\bready in\b/.test(text)) {
           clearTimeout(timer);
           resolve();
         }
