@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
@@ -29,6 +30,10 @@ public class HostedSite
 
     /// <summary>来源引用（如 workflowExecutionId）</summary>
     public string? SourceRef { get; set; }
+
+    /// <summary>最近一次内容重传的幂等引用；普通重传会清空。</summary>
+    [JsonIgnore]
+    public string? LastReuploadRef { get; set; }
 
     // ── COS 存储 ──
 

@@ -295,6 +295,8 @@ public class MongoDbContext
 
     // Web Hosting 网页托管与分享
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
+    public IMongoCollection<HostedSiteOptimizationSession> HostedSiteOptimizationSessions =>
+        _database.GetCollection<HostedSiteOptimizationSession>("hosted_site_optimization_sessions");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
     public IMongoCollection<WebPageGroup> WebPageGroups => _database.GetCollection<WebPageGroup>("web_page_groups");
@@ -470,71 +472,6 @@ public class MongoDbContext
                 || message.Contains("IndexOptionsConflict", StringComparison.OrdinalIgnoreCase)
                 || message.Contains("IndexKeySpecsConflict", StringComparison.OrdinalIgnoreCase)
                 || message.Contains("IndexAlreadyExists", StringComparison.OrdinalIgnoreCase);
-        }
-
-        void EnsureTtlIndex<TDocument>(
-            IMongoCollection<TDocument> collection,
-            string collectionName,
-            string fieldName,
-            TimeSpan expireAfter,
-            string? indexName = null)
-        {
-            var options = new CreateIndexOptions
-            {
-                ExpireAfter = expireAfter
-            };
-            if (!string.IsNullOrWhiteSpace(indexName))
-            {
-                options.Name = indexName;
-            }
-
-            try
-            {
-                collection.Indexes.CreateOne(new CreateIndexModel<TDocument>(
-                    Builders<TDocument>.IndexKeys.Ascending(fieldName),
-                    options));
-            }
-            catch (MongoCommandException ex) when (IsIndexConflict(ex))
-            {
-                // 兼容历史环境：旧索引可能已存在（同 key 但非 TTL），此时 createIndexes 会因选项冲突失败并导致进程启动中断。
-                // 优先按 name 执行 collMod 升级 TTL，若名称不匹配则回退到 keyPattern 升级。
-                var ttlSeconds = (long)Math.Floor(expireAfter.TotalSeconds);
-                try
-                {
-                    var collModByName = new BsonDocument
-                    {
-                        { "collMod", collectionName },
-                        { "index", new BsonDocument
-                            {
-                                { "name", indexName ?? $"{fieldName}_1" },
-                                { "expireAfterSeconds", ttlSeconds }
-                            }
-                        }
-                    };
-                    _database.RunCommand<BsonDocument>(collModByName);
-                }
-                catch (MongoCommandException)
-                {
-                    try
-                    {
-                        var collModByPattern = new BsonDocument
-                        {
-                            { "collMod", collectionName },
-                            { "index", new BsonDocument
-                                {
-                                    { "keyPattern", new BsonDocument(fieldName, 1) },
-                                    { "expireAfterSeconds", ttlSeconds }
-                                }
-                            }
-                        };
-                        _database.RunCommand<BsonDocument>(collModByPattern);
-                    }
-                    catch (MongoCommandException ex2) when (IsIndexConflict(ex2))
-                    {
-                        // ignore
-                    }
-                }
-            }
         }
 
         // Users索引
@@ -1683,7 +1620,6 @@ public class MongoDbContext
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Folder),
             new CreateIndexOptions { Name = "idx_hosted_sites_owner_folder" }));
-
         // WebPageShareLinks：按 Token 唯一
         try
         {

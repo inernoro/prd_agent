@@ -1143,6 +1143,40 @@ db.hosted_sites.createIndex(
   { name: "idx_hosted_sites_owner_folder" }
 )
 
+// collection: hosted_site_optimization_sessions
+// 临时优化任务按用户与到期时间查询；后台 worker 按状态与更新时间认领。
+db.hosted_site_optimization_sessions.createIndex(
+  { "OwnerUserId": 1, "ExpiresAt": 1 },
+  { name: "idx_hosted_site_optimization_owner_expiry" }
+)
+
+db.hosted_site_optimization_sessions.createIndex(
+  { "Status": 1, "UpdatedAt": 1 },
+  { name: "idx_hosted_site_optimization_status_updated" }
+)
+
+// 优化会话是对象存储清理账本，只能由业务清理器在对象删除成功后移除。
+// 清除存量 TTL，避免清理器停机期间 MongoDB 先删记录并永久遗失对象清理线索。
+if (db.getCollectionInfos({ name: "hosted_site_optimization_sessions" }).length > 0) {
+  const collection = db.hosted_site_optimization_sessions
+  collection.getIndexes()
+    .filter(index => index.expireAfterSeconds !== undefined)
+    .forEach(index => {
+      try {
+        collection.dropIndex(index.name)
+      } catch (error) {
+        tightenedUniqueIndexMigrationFailures.push(
+          `hosted_site_optimization_sessions.${index.name}: failed to drop forbidden TTL index: ${error.message || error}`
+        )
+      }
+    })
+}
+
+db.hosted_site_optimization_sessions.createIndex(
+  { "ExpiresAt": 1 },
+  { name: "idx_hosted_site_optimization_expiry" }
+)
+
 // collection: document_store_share_links
 // 按 Token 唯一；按创建者或知识库倒序查询
 db.document_store_share_links.createIndex(
