@@ -30,6 +30,8 @@ public sealed class StableSmokeAuthenticationHandler
 
     private const long MaximumClockSkewSeconds = 120;
     private const long MaximumBodyBytes = 64 * 1024;
+    private const string LegacyFixturePrefix = "/api/v1/auth/synthetic/testing/web-pages/";
+    private const string LegacyFixtureSuffix = "/legacy-entry";
 
     private static readonly HashSet<(string Method, string Path)> AllowedRequests = new()
     {
@@ -150,8 +152,17 @@ public sealed class StableSmokeAuthenticationHandler
         configuration.GetSection("StableSmokeAuthentication:Keys")
             .Get<List<StableSmokePublicKeyOptions>>() ?? new List<StableSmokePublicKeyOptions>();
 
-    internal static bool IsAllowedRequest(string method, string path) =>
-        AllowedRequests.Contains((method, path));
+    internal static bool IsAllowedRequest(string method, string path)
+    {
+        if (AllowedRequests.Contains((method, path))) return true;
+        if (method != HttpMethods.Post && method != HttpMethods.Delete) return false;
+        if (!path.StartsWith(LegacyFixturePrefix, StringComparison.Ordinal)
+            || !path.EndsWith(LegacyFixtureSuffix, StringComparison.Ordinal))
+            return false;
+
+        var siteId = path[LegacyFixturePrefix.Length..^LegacyFixtureSuffix.Length];
+        return siteId.Length == 32 && siteId.All(Uri.IsHexDigit);
+    }
 
     internal static bool IsAllowedHost(
         string configuredHost,

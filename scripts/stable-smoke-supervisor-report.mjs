@@ -9,6 +9,7 @@ const PRIMARY_FEATURE_BY_PREFIX = {
   VIS: 'visual-creation',
   MVIS: 'multi-image-creation',
   GW: 'llm-gateway',
+  WEB: 'web-hosting-sharing',
 };
 
 const OWNER_BY_FEATURE = {
@@ -22,6 +23,7 @@ const OWNER_BY_FEATURE = {
   'visual-creation': '视觉创作负责人',
   'multi-image-creation': '视觉创作负责人',
   'llm-gateway': '模型网关负责人',
+  'web-hosting-sharing': '网页托管负责人',
 };
 
 function escapeCell(value) {
@@ -63,7 +65,7 @@ export function parseTestMatrix(markdown) {
   for (const line of String(markdown || '').split('\n')) {
     const cells = line.split('|').map((cell) => cell.trim()).filter(Boolean);
     const caseId = cells[0] || '';
-    if (!/^(?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW)-\d+$/.test(caseId)) continue;
+    if (!/^(?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|WEB)-\d+$/.test(caseId)) continue;
     cases.set(caseId, {
       caseId,
       scenario: cells[1] || '未命名场景',

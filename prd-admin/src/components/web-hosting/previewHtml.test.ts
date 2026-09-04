@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { hasFetchableHtml, canUseSrcDocPreview, withPreviewBase } from './previewHtml';
+import { hasFetchableHtml, canUseSrcDocPreview, preserveSrcDocFragmentLinks, withPreviewBase } from './previewHtml';
 
 /**
  * 「这个站点走 srcDoc 还是直链」的判据。
@@ -92,5 +92,143 @@ describe('CDN 注入的遥测脚本', () => {
   it('不做「凡是跨域 module 一律剥」——那种页面可能真靠 CDN 上的 ESM 依赖跑', () => {
     const esm = '<script type="module" src="https://esm.sh/vue@3"></script>';
     expect(canUseSrcDocPreview(`<html><body>${esm}</body></html>`)).toBe(false);
+  });
+});
+
+describe('srcDoc 页内锚点', () => {
+  it('注入 base 后纯片段链接仍停留在当前 srcDoc，不请求对象存储目录', () => {
+    const out = withPreviewBase(
+      '<html><head></head><body><a href="#risk">风险</a><section id="risk">正文</section></body></html>',
+      'https://storage.example/data/web-hosting/sites/site-1/index.html',
+    );
+
+    expect(out).toContain('<base href="https://storage.example/data/web-hosting/sites/site-1/">');
+    expect(out).toContain('href="about:srcdoc#risk"');
+    expect(out).not.toContain('href="#risk"');
+  });
+
+  it('只改 a 与 area 的纯片段，不改资源引用、相对页面和外链', () => {
+    const html = [
+      '<a href=#top>顶部</a>',
+      "<area href='#map'>",
+      '<use href="#icon"></use>',
+      '<a href="./detail.html#part">详情</a>',
+      '<a href="https://example.test/#part">外链</a>',
+    ].join('');
+    const out = preserveSrcDocFragmentLinks(html);
+
+    expect(out).toContain('href="about:srcdoc#top"');
+    expect(out).toContain('href="about:srcdoc#map"');
+    expect(out).toContain('<use href="#icon"></use>');
+    expect(out).toContain('href="./detail.html#part"');
+    expect(out).toContain('href="https://example.test/#part"');
+  });
+
+  it('先解码 HTML 字符引用，再识别并保护页内锚点', () => {
+    const html = [
+      '<a href="&#35;risk">十进制</a>',
+      '<a href="&#x23;summary">十六进制</a>',
+      '<area href="&num;map">命名实体</area>',
+      '<a href="&amp;not-fragment">非锚点</a>',
+    ].join('');
+    const out = preserveSrcDocFragmentLinks(html);
+
+    expect(out).toContain('href="about:srcdoc#risk"');
+    expect(out).toContain('href="about:srcdoc#summary"');
+    expect(out).toContain('href="about:srcdoc#map"');
+    expect(out).toContain('href="&amp;not-fragment"');
+  });
+
+  it('页面自带绝对 base 时同样保护纯片段链接', () => {
+    const out = withPreviewBase(
+      '<html><head><base href="https://cdn.example/assets/"></head><body><a href="#summary">摘要</a></body></html>',
+      'https://storage.example/site/index.html',
+    );
+
+    expect(out).toContain('<base href="https://cdn.example/assets/">');
+    expect(out).toContain('href="about:srcdoc#summary"');
+  });
+
+  it('base 地址按浏览器语义解码字符引用后再分类和解析', () => {
+    const relative = withPreviewBase(
+      '<html><head><base href="&#47;assets/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    const absolute = withPreviewBase(
+      '<html><head><base href="https&colon;//cdn.example/assets/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    const namedSlash = withPreviewBase(
+      '<html><head><base href="&sol;shared/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+
+    expect(relative).toContain('<base href="https://storage.example/assets/">');
+    expect(relative).not.toContain('&amp;#47;assets/');
+    expect(absolute).toContain('<base href="https&colon;//cdn.example/assets/">');
+    expect(namedSlash).toContain('<base href="https://storage.example/shared/">');
+  });
+
+  it('忽略 data-href 等同名后缀属性，只改真正的 href', () => {
+    const out = preserveSrcDocFragmentLinks(
+      `<a data-note=" href='#quoted-fake'" data-href="#tracking" aria-label="章节" href="#section">正文</a>`,
+    );
+
+    expect(out).toContain(`data-note=" href='#quoted-fake'"`);
+    expect(out).toContain('data-href="#tracking"');
+    expect(out).toContain('href="about:srcdoc#section"');
+    expect(out).not.toContain('data-href="about:srcdoc#tracking"');
+  });
+
+  it('引号内的大于号不会截断开始标签，后面的真实 href 仍会被保护', () => {
+    const out = preserveSrcDocFragmentLinks(
+      '<a title="score > 0" data-href="#tracking" href="#risk">风险</a>',
+    );
+
+    expect(out).toContain('title="score > 0"');
+    expect(out).toContain('data-href="#tracking"');
+    expect(out).toContain('href="about:srcdoc#risk"');
+  });
+
+  it('base 与 head 的属性里出现大于号时仍能正确改写或注入', () => {
+    const rewrittenBase = withPreviewBase(
+      '<html><head><base title="score > 0" href="./assets/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    expect(rewrittenBase).toContain('title="score > 0" href="https://storage.example/site/assets/"');
+
+    const injectedBase = withPreviewBase(
+      '<html><head data-note="score > 0"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    expect(injectedBase).toContain('<head data-note="score > 0"><base href="https://storage.example/site/">');
+  });
+
+  it('忽略 RCDATA、模板与 body 中的伪 base，只向真实 head 注入', () => {
+    const html = [
+      '<html><head><title><base href="/title-fake"></title></head>',
+      '<body><textarea><base href="/textarea-fake"></textarea>',
+      '<template><base href="/template-fake"></template>',
+      '<base href="/body-fake"><img src="asset.png"></body></html>',
+    ].join('');
+    const out = withPreviewBase(html, 'https://storage.example/site/index.html');
+
+    expect(out).toContain('<head><base href="https://storage.example/site/">');
+    expect(out).toContain('<textarea><base href="/textarea-fake"></textarea>');
+    expect(out).toContain('<template><base href="/template-fake"></template>');
+    expect(out).toContain('<base href="/body-fake">');
+  });
+
+  it('脚本字符串与 HTML 注释里的伪锚点不会被当成真实标签改写', () => {
+    const html = [
+      '<script>const sample = `<a href="#script-fake">`;</script>',
+      '<!-- <a href="#comment-fake"> -->',
+      '<a href="#real">正文</a>',
+    ].join('');
+    const out = preserveSrcDocFragmentLinks(html);
+
+    expect(out).toContain('href="#script-fake"');
+    expect(out).toContain('href="#comment-fake"');
+    expect(out).toContain('href="about:srcdoc#real"');
   });
 });
