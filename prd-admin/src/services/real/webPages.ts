@@ -1068,6 +1068,13 @@ export async function createHostedSiteEditRun(
   });
 }
 
+export async function getHostedSiteEditRun(
+  siteId: string,
+  runId: string,
+): Promise<ApiResponse<DesignArtifactRunSummary>> {
+  return apiRequest(api.webPages.editRunById(siteId, runId));
+}
+
 export async function streamHostedSiteEditRun(input: {
   siteId: string;
   runId: string;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { previewableEditHtml, revisionLabel } from './siteEditPreview';
+import { activeSiteEditRunStorageKey, previewableEditHtml, revisionLabel } from './siteEditPreview';
 
 describe('网页微调即时预览', () => {
   it('页面起点出现前不把解释文字塞进 iframe', () => {
@@ -21,5 +21,12 @@ describe('网页版本标签', () => {
   it('草稿明确标记为未发布', () => {
     expect(revisionLabel({ isCurrent: false, status: 'draft', source: 'ai-edit' }))
       .toBe('未发布草稿');
+  });
+});
+
+describe('网页微调任务恢复', () => {
+  it('按站点隔离未完成任务，避免切换站点时串单', () => {
+    expect(activeSiteEditRunStorageKey('site-a')).toBe('web-hosting-edit-active-run-v1:site-a');
+    expect(activeSiteEditRunStorageKey('site-a')).not.toBe(activeSiteEditRunStorageKey('site-b'));
   });
 });

@@ -1,5 +1,9 @@
 import type { HostedSiteRevision } from '@/services/real/webPages';
 
+export function activeSiteEditRunStorageKey(siteId: string) {
+  return `web-hosting-edit-active-run-v1:${siteId}`;
+}
+
 export function revisionLabel(item: Pick<HostedSiteRevision, 'isCurrent' | 'status' | 'source'>) {
   if (item.isCurrent) return '当前线上版本';
   if (item.status === 'draft') return '未发布草稿';

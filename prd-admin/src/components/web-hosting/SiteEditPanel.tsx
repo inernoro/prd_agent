@@ -7,6 +7,7 @@ import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import {
   createHostedSiteEditRun,
   getDesignRuntimeCapabilities,
+  getHostedSiteEditRun,
   listHostedSiteRevisions,
   previewHostedSiteRevision,
   publishHostedSiteRevision,
@@ -17,7 +18,7 @@ import {
   type DesignRuntimeCapability,
 } from '@/services/real/webPages';
 import { SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
-import { previewableEditHtml, revisionLabel } from './siteEditPreview';
+import { activeSiteEditRunStorageKey, previewableEditHtml, revisionLabel } from './siteEditPreview';
 
 interface Props {
   site: HostedSite;
@@ -51,6 +52,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
   const [loadingKnowledge, setLoadingKnowledge] = useState(true);
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
   const [selectedRuntime, setSelectedRuntime] = useState('map-gateway');
+  const [recoveringRunId, setRecoveringRunId] = useState<string | null>(null);
   const streamRef = useRef('');
   const lastPaintAtRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -96,7 +98,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
     });
   };
 
-  const openRevision = async (revisionId: string) => {
+  const openRevision = useCallback(async (revisionId: string) => {
     const result = await previewHostedSiteRevision(site.id, revisionId);
     if (!result.success) {
       toast.error('版本预览失败', result.error?.message || '请稍后重试');
@@ -106,7 +108,66 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
     setDraftRevisionId(result.data.revision.status === 'draft' ? revisionId : null);
     setPhase(revisionLabel(result.data.revision));
     setProgress(result.data.revision.status === 'draft' ? 95 : 100);
-  };
+  }, [site.id]);
+
+  useEffect(() => {
+    try {
+      setRecoveringRunId(sessionStorage.getItem(activeSiteEditRunStorageKey(site.id)));
+    } catch {
+      setRecoveringRunId(null);
+    }
+  }, [site.id]);
+
+  useEffect(() => {
+    if (!recoveringRunId) return;
+    let active = true;
+    let timer: number | undefined;
+    const clearRecovery = () => {
+      try { sessionStorage.removeItem(activeSiteEditRunStorageKey(site.id)); } catch { /* ignore unavailable storage */ }
+      if (active) setRecoveringRunId(null);
+    };
+    const recover = async () => {
+      const result = await getHostedSiteEditRun(site.id, recoveringRunId);
+      if (!active) return;
+      if (!result.success) {
+        if (result.error?.code === 'NOT_FOUND') {
+          clearRecovery();
+          setGenerating(false);
+          setPhase('修改任务不存在，请从版本记录确认是否已经生成草稿');
+          return;
+        }
+        setGenerating(true);
+        setPhase('暂时无法读取修改进度，正在自动重试');
+        timer = window.setTimeout(recover, 2000);
+        return;
+      }
+
+      setPhase(result.data.phase);
+      setProgress(result.data.progress);
+      const status = result.data.status.toLowerCase();
+      if (status === 'done' && result.data.artifactRevisionId) {
+        clearRecovery();
+        setGenerating(false);
+        await openRevision(result.data.artifactRevisionId);
+        await loadHistory();
+        return;
+      }
+      if (status === 'error' || status === 'cancelled') {
+        clearRecovery();
+        setGenerating(false);
+        setPhase(result.data.error || result.data.phase || '页面修改失败');
+        return;
+      }
+
+      setGenerating(true);
+      timer = window.setTimeout(recover, 1500);
+    };
+    void recover();
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [loadHistory, openRevision, recoveringRunId, site.id]);
 
   const generate = async () => {
     const text = instruction.trim();
@@ -121,6 +182,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
     setProgress(1);
     setPhase('正在创建修改任务');
     streamRef.current = '';
+    setRecoveringRunId(null);
 
     const knowledgeResults = await Promise.all(selectedKnowledgeIds.map(async (entryId) => {
       const entry = recentKnowledge.find((item) => item.id === entryId);
@@ -148,7 +210,10 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
       toast.error('无法开始修改', created.error?.message || '请稍后重试');
       return;
     }
+    try { sessionStorage.setItem(activeSiteEditRunStorageKey(site.id), created.data.runId); } catch { /* ignore unavailable storage */ }
 
+    let reachedTerminal = false;
+    let handedOffToRecovery = false;
     try {
       await streamHostedSiteEditRun({
         siteId: site.id,
@@ -181,6 +246,8 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
             return;
           }
           if (event.event === 'done' && typeof data.revisionId === 'string') {
+            reachedTerminal = true;
+            try { sessionStorage.removeItem(activeSiteEditRunStorageKey(site.id)); } catch { /* ignore unavailable storage */ }
             setDraftRevisionId(data.revisionId);
             setProgress(100);
             setPhase('草稿已生成，请预览确认后再发布');
@@ -189,20 +256,28 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
             return;
           }
           if (event.event === 'error') {
+            reachedTerminal = true;
             const message = typeof data.message === 'string' ? data.message : '页面修改失败';
+            try { sessionStorage.removeItem(activeSiteEditRunStorageKey(site.id)); } catch { /* ignore unavailable storage */ }
             setPhase(message);
             toast.error('页面修改失败', message);
           }
         },
       });
-    } catch (error) {
-      if (!abort.signal.aborted) {
-        const message = error instanceof Error ? error.message : '修改进度连接中断';
-        setPhase(message);
-        toast.error('修改进度中断', '刷新版本记录可以找回已经完成的草稿');
+      if (!abort.signal.aborted && !reachedTerminal) {
+        handedOffToRecovery = true;
+        setPhase('进度连接已结束，正在继续确认任务结果');
+        setRecoveringRunId(created.data.runId);
+      }
+    } catch {
+      if (!abort.signal.aborted && !reachedTerminal) {
+        handedOffToRecovery = true;
+        setPhase('修改进度连接中断，正在自动恢复');
+        toast.error('修改进度中断', '任务仍在服务器执行，系统会自动找回进度和草稿');
+        setRecoveringRunId(created.data.runId);
       }
     } finally {
-      setGenerating(false);
+      if (!handedOffToRecovery) setGenerating(false);
     }
   };
 

@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
@@ -151,6 +152,22 @@ public sealed class HostedSiteEditsController : ControllerBase
             CancellationToken.None);
         await _queue.EnqueueAsync(RunKinds.DesignArtifact, runId, CancellationToken.None);
         return Accepted(ApiResponse<object>.Ok(new { runId, status = meta.Status, runtime }));
+    }
+
+    [HttpGet("runs/{runId}")]
+    public async Task<IActionResult> GetRun(string siteId, string runId)
+    {
+        var run = await _db.DesignArtifactRuns
+            .Find(x => x.Id == runId
+                       && x.UserId == this.GetRequiredUserId()
+                       && x.TargetSiteId == siteId
+                       && x.Operation == DesignArtifactOperations.Edit
+                       && x.ArtifactType == DesignArtifactTypes.WebPage
+                       && x.SourceSurface == DesignArtifactSourceSurfaces.WebHosting)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        return run == null
+            ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "修改任务不存在"))
+            : Ok(ApiResponse<object>.Ok(ToRunDto(run)));
     }
 
     [HttpGet("runs/{runId}/stream")]
@@ -302,6 +319,31 @@ public sealed class HostedSiteEditsController : ControllerBase
         item.CreatedAt,
         item.PublishedAt,
         isCurrent = currentContentVersion.HasValue && item.PublishedContentVersion == currentContentVersion,
+    };
+
+    private static object ToRunDto(DesignArtifactRun run) => new
+    {
+        runId = run.Id,
+        run.Status,
+        run.ArtifactType,
+        run.Operation,
+        run.SourceSurface,
+        run.Runtime,
+        run.Title,
+        run.Progress,
+        run.Phase,
+        run.ArtifactSiteId,
+        run.ArtifactRevisionId,
+        run.LinkedRunId,
+        run.Error,
+        knowledgeReferences = run.KnowledgeReferences.Select(item => new
+        {
+            item.EntryId,
+            item.StoreId,
+            item.StoreName,
+            item.Title,
+            item.ContentHash,
+        }),
     };
 
     private static bool RunBelongsToSite(RunMeta meta, string siteId)
