@@ -40,6 +40,8 @@ export interface HostedSite {
   totalSize: number;
   tags: string[];
   folder?: string;
+  /** 服务端权威文件夹名称键；禁止在浏览器端重新实现 Unicode 大小写归一化。 */
+  folderCanonicalName: string;
   coverImageUrl?: string;
   ownerUserId: string;
   /** 分享到的团队 ID 列表（仅网页托管消费） */

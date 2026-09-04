@@ -44,6 +44,11 @@ export interface SiteCaps {
   canSetVisibility: boolean;
 }
 
+/** 拖拽会触发分享或移动写操作，必须沿用站点的分享写权限。 */
+export function canDragSiteCard(caps: SiteCaps): boolean {
+  return caps.canShare;
+}
+
 /** 该站点的分享侧真实数据；拿不到就不传，KPI 位显示「—」而不是编一个 0。 */
 export interface SiteShareStats {
   /** 有效链接数（未过期、未撤销） */
@@ -173,6 +178,7 @@ export function SiteCard({
   onAskConfig,
 }: SiteCardProps) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
+  const canDrag = canDragSiteCard(c);
   const isPublic = site.visibility === 'public';
   const isSmall = size === 'small';
   const isLarge = size === 'large';
@@ -261,14 +267,15 @@ export function SiteCard({
       /* h-full + flex 链：grid item 本来就被拉伸到行高，但内部盒子是内容高，
          于是同一行的卡片下边缘参差（标题一行/两行、有无标签都会差几十像素）。
          设计稿的 grid 是默认 stretch，卡片在行内等高——这条链把高度真正传下去。 */
-      className={['group relative flex h-full w-full flex-col cursor-grab touch-none active:cursor-grabbing', fresh ? 'site-card-fresh' : ''].join(' ')}
+      className={['group relative flex h-full w-full flex-col touch-none', canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default', fresh ? 'site-card-fresh' : ''].join(' ')}
+      data-dock-draggable={canDrag ? 'true' : 'false'}
       /* 半径必须跟内框同一个值：`.site-card-fresh::before` 的光环是 border-radius:inherit，
          这里写死 20 而内框是 SPEC.radius(10/11/12)，光环就会比卡片圆一大圈、错开成两条边。
          选中态也**不在这一层画圈**——外层 outline(半径 20 + offset 3) 叠上内框自己的
          accent 边框，就是用户看到的「两条线」：两个不同半径的硬轮廓套在一起。
          选中只由内框那一个圆角矩形表达。 */
       style={{ borderRadius: SPEC.radius }}
-      onPointerDown={onPointerDown}
+      onPointerDown={canDrag ? onPointerDown : undefined}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
