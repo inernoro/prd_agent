@@ -64,6 +64,18 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_NodeModulesLargerThanRuntimeScanBudget_PrunesBeforeBudgetCheck()
+    {
+        var result = CreateService().Analyze(CreateNodeModulesHeavyZip());
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeTrue();
+        result.NodeModulesFiles.ShouldBe(105);
+        result.OriginalFiles.ShouldBe(107);
+        result.OptimizedFiles.ShouldBe(2);
+    }
+
+    [Fact]
     public void Analyze_UnsafeArchivePath_BlocksBeforeAnySave()
     {
         var result = CreateService().Analyze(CreateZip(new Dictionary<string, string>
@@ -105,5 +117,28 @@ public class HostedSiteOptimizationServiceTests
             }
         }
         return output.ToArray();
+    }
+
+    private static byte[] CreateNodeModulesHeavyZip()
+    {
+        using var output = new MemoryStream();
+        using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddTextEntry(archive, "index.html", "<html><script src=\"./app.js\"></script></html>");
+            AddTextEntry(archive, "app.js", "document.body.dataset.ready = 'true';");
+
+            var dependencyPayload = new string('x', 350 * 1024);
+            for (var index = 0; index < 105; index++)
+                AddTextEntry(archive, $"node_modules/unused-{index}/index.js", dependencyPayload);
+        }
+        return output.ToArray();
+    }
+
+    private static void AddTextEntry(ZipArchive archive, string path, string content)
+    {
+        var entry = archive.CreateEntry(path, CompressionLevel.Fastest);
+        using var stream = entry.Open();
+        var bytes = Encoding.UTF8.GetBytes(content);
+        stream.Write(bytes, 0, bytes.Length);
     }
 }

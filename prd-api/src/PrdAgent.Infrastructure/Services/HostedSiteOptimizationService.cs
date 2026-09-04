@@ -303,6 +303,10 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 return true;
             }
 
+            if (analysis.OriginalEntries > 5000)
+                throw new InvalidOperationException(
+                    "ZIP 文件超过 5000 项，且未找到可安全自动精简的方案；原文件尚未保存，请使用原型导出技能重新导出");
+
             await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                 x => x.Id == session.Id && x.Status == HostedSiteOptimizationStatuses.Analyzing,
                 Builders<HostedSiteOptimizationSession>.Update
@@ -861,7 +865,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             if (entryFile == null)
                 return Blocked(analysis, "ZIP 缺少 index.html 或 index.htm，无法生成可预览站点");
 
-            var runtimeTextEntries = files.Where(x => IsScannedRuntimeText(x.LogicalPath)).ToList();
+            // Files that are guaranteed to be removed must not consume the runtime scan budget.
+            // Large exported prototypes commonly carry a complete node_modules tree; counting it
+            // here would skip the very optimization that is meant to remove it.
+            var runtimeTextEntries = files
+                .Where(x => !IsNodeModules(x.LogicalPath)
+                            && !IsDevelopmentFile(x.LogicalPath)
+                            && IsScannedRuntimeText(x.LogicalPath))
+                .ToList();
             if (runtimeTextEntries.Any(x => x.Entry.Length > MaxScannedTextFileBytes)
                 || runtimeTextEntries.Sum(x => x.Entry.Length) > MaxScannedTextBytes)
             {
