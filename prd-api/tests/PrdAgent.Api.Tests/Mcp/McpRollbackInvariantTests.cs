@@ -393,7 +393,9 @@ public class McpRollbackInvariantTests
                 customMessage: $"第 {exits} 处摘标记没走 MineFilter：只按 id + 毫秒时间戳过滤时，"
                     + "同一毫秒内被同键重试重建的那条会被误当成自己的，旧请求会摘掉新那次的标记并盖上自己的摘要");
         }
-        exits.ShouldBe(4, "摘标记的出口数量变了 —— 新增那处也要带版本条件，确认后再改这个数");
+        // 五处：收尾成功、收尾撞上用户编辑、兜底那次的重试、正文被别人改过、撤回时发现正文已提交。
+        // 第三处是 2026-09-04 补的——兜底那次摘不掉时要重读再摘一次，也必须带条件。
+        exits.ShouldBe(5, "摘标记的出口数量变了 —— 新增那处也要带版本条件，确认后再改这个数");
 
         // 反向一条：那个过滤器自己必须真的把代次算进去，否则上面只是在断言「调了个函数」。
         var mine = McpSourceGuard.Slice(src, "FilterDefinition<DocumentEntry> MineFilter(", "IsMyGeneration(");
