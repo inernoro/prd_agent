@@ -1189,7 +1189,6 @@ export const api = {
   // ============ Web Hosting 网页托管 ============
   webPages: {
     upload: () => '/api/web-pages/upload',
-    reviewedUpload: () => '/api/web-pages/upload-reviewed',
     optimizationUploads: () => '/api/web-pages/optimization/uploads',
     optimizationUploadChunk: (sessionId: string, chunkIndex: number) => `/api/web-pages/optimization/uploads/${sessionId}/chunks/${chunkIndex}`,
     optimizationUploadComplete: (sessionId: string) => `/api/web-pages/optimization/uploads/${sessionId}/complete`,

@@ -36,9 +36,23 @@ CSS_URL_RE = re.compile(r"url\(\s*['\"]?([^'\")]+)", re.IGNORECASE)
 CSS_IMPORT_RE = re.compile(r"@import\s+(?:url\(\s*)?['\"]([^'\"]+)", re.IGNORECASE)
 JS_REFERENCE_RE = re.compile(
     r"(?:import\s+(?:[^'\"]*?\s+from\s+)?|export\s+[^'\"]*?\s+from\s+|"
-    r"import\(\s*|require\(\s*)['\"]([^'\"]+)['\"]",
+    r"import\(\s*|require\(\s*|fetch\(\s*|new\s+(?:Shared)?Worker\(\s*|"
+    r"navigator\.serviceWorker\.register\(\s*|importScripts\(\s*)['\"]([^'\"]+)['\"]",
     re.IGNORECASE,
 )
+DYNAMIC_RUNTIME_LOADER_RE = re.compile(
+    r"(?:fetch|import|require|importScripts)\s*\(|new\s+(?:Shared)?Worker\s*\(|"
+    r"navigator\.serviceWorker\.register\s*\(",
+    re.IGNORECASE,
+)
+STATIC_RUNTIME_LOADER_RE = re.compile(
+    r"(?:fetch|import|require|importScripts)\s*\(\s*['\"][^'\"]+['\"]|"
+    r"new\s+(?:Shared)?Worker\s*\(\s*['\"][^'\"]+['\"]|"
+    r"navigator\.serviceWorker\.register\s*\(\s*['\"][^'\"]+['\"]",
+    re.IGNORECASE,
+)
+INLINE_SCRIPT_RE = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.IGNORECASE | re.DOTALL)
+INLINE_STYLE_RE = re.compile(r"<style\b[^>]*>(.*?)</style\s*>", re.IGNORECASE | re.DOTALL)
 RUNTIME_TEXT_SUFFIXES = {".html", ".htm", ".css", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"}
 
 
@@ -109,20 +123,37 @@ def common_root_prefix(names: list[str]) -> str | None:
     return first + "/"
 
 
-def runtime_references(archive: zipfile.ZipFile, info: zipfile.ZipInfo, name: str) -> list[str]:
-    if info.file_size > MAX_INSPECT_BYTES:
-        return []
-    text = archive.read(info).decode("utf-8", errors="replace")
+def runtime_references(text: str, name: str) -> list[str]:
     suffix = PurePosixPath(name).suffix.casefold()
     if suffix in {".html", ".htm"}:
         parser = ReferenceParser()
         parser.feed(text)
-        return parser.references
+        references = list(parser.references)
+        for body in INLINE_STYLE_RE.findall(text):
+            references.extend(CSS_URL_RE.findall(body) + CSS_IMPORT_RE.findall(body))
+        for body in INLINE_SCRIPT_RE.findall(text):
+            references.extend(JS_REFERENCE_RE.findall(body))
+        return references
     if suffix == ".css":
         return CSS_URL_RE.findall(text) + CSS_IMPORT_RE.findall(text)
     if suffix in {".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"}:
         return JS_REFERENCE_RE.findall(text)
     return []
+
+
+def has_unresolved_dynamic_runtime_loading(text: str, name: str) -> bool:
+    suffix = PurePosixPath(name).suffix.casefold()
+    if suffix in {".html", ".htm"}:
+        scripts = INLINE_SCRIPT_RE.findall(text)
+    elif suffix in {".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"}:
+        scripts = [text]
+    else:
+        return False
+    return any(
+        len(DYNAMIC_RUNTIME_LOADER_RE.findall(script))
+        > len(STATIC_RUNTIME_LOADER_RE.findall(script))
+        for script in scripts
+    )
 
 
 def audit_zip(
@@ -200,7 +231,14 @@ def audit_zip(
                         and info.file_size > MAX_INSPECT_BYTES:
                     unscanned_runtime_paths.add(owner)
                     continue
-                for reference in runtime_references(archive, info, owner):
+                try:
+                    text = archive.read(info).decode("utf-8")
+                except UnicodeDecodeError:
+                    unscanned_runtime_paths.add(owner)
+                    continue
+                if has_unresolved_dynamic_runtime_loading(text, owner):
+                    unscanned_runtime_paths.add(owner)
+                for reference in runtime_references(text, owner):
                     if is_external_reference(reference):
                         external_references += 1
                         continue

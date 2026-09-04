@@ -27,18 +27,6 @@ public interface IHostedSiteOptimizationService
 
     HostedSiteOptimizationAnalysis Analyze(byte[] zipBytes);
 
-    Task<HostedSiteOptimizationSession> CreateSessionAsync(
-        string userId,
-        byte[] zipBytes,
-        string fileName,
-        string? targetSiteId,
-        string? title,
-        string? description,
-        string? folder,
-        List<string> tags,
-        HostedSiteOptimizationAnalysis analysis,
-        CancellationToken ct = default);
-
     Task<HostedSiteOptimizationPreviewResult> PreparePreviewAsync(
         string sessionId,
         string userId,

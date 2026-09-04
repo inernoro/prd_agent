@@ -159,6 +159,42 @@ class AuditPrototypePackageTests(unittest.TestCase):
             self.assertEqual(1, report["developmentEntries"])
             self.assertEqual(1, report["sourceMapEntries"])
 
+    def test_runtime_loader_references_are_included_in_strict_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "runtime-loaders.zip"
+            make_zip(source, {
+                "index.html": b'<script src="app.js"></script>',
+                "app.js": (
+                    b"fetch('./missing.json');"
+                    b"new Worker('./missing-worker.js');"
+                    b"navigator.serviceWorker.register('./missing-service-worker.js');"
+                    b"importScripts('./missing-import.js');"
+                ),
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertFalse(report["strictReady"])
+            self.assertEqual([
+                "missing-import.js",
+                "missing-service-worker.js",
+                "missing-worker.js",
+                "missing.json",
+            ], report["missingLocalReferences"])
+
+    def test_dynamic_runtime_loader_is_reported_as_unscanned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "dynamic-loader.zip"
+            make_zip(source, {
+                "index.html": b"<script>const path = './data.json'; fetch(path)</script>",
+                "data.json": b"{}",
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertFalse(report["strictReady"])
+            self.assertEqual(["index.html"], report["unscannedRuntimePaths"])
+
 
 if __name__ == "__main__":
     unittest.main()

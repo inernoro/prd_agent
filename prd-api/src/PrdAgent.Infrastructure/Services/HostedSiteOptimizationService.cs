@@ -27,6 +27,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     private static readonly TimeSpan SessionLifetime = TimeSpan.FromHours(2);
     private static readonly TimeSpan WorkerLeaseLifetime = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan WorkerLeaseHeartbeat = TimeSpan.FromSeconds(30);
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     private static readonly HashSet<string> DevelopmentDirectoryNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -370,7 +371,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 if (metadata != null) saved = metadata;
             }
 
-            await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+            var completed = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                 x => x.Id == session.Id
                      && x.Status == HostedSiteOptimizationStatuses.Saving
                      && x.LeaseOwner == leaseOwner,
@@ -382,6 +383,30 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     .Set(x => x.UpdatedAt, DateTime.UtcNow)
                     .Set(x => x.ExpiresAt, DateTime.UtcNow.AddMinutes(10)),
                 cancellationToken: CancellationToken.None);
+            if (completed.ModifiedCount != 1)
+            {
+                completed = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id
+                         && x.Status == HostedSiteOptimizationStatuses.Failed
+                         && x.CompletedSiteId == null,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.CompletedSiteId, saved.Id)
+                        .Set(x => x.Status, HostedSiteOptimizationStatuses.Saved)
+                        .Set(x => x.Error, null)
+                        .Set(x => x.LeaseOwner, null)
+                        .Set(x => x.LeaseExpiresAt, null)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                        .Set(x => x.ExpiresAt, DateTime.UtcNow.AddMinutes(10)),
+                    cancellationToken: CancellationToken.None);
+            }
+            if (completed.ModifiedCount != 1)
+            {
+                _logger.LogError(
+                    "网页托管站点已保存但无法登记完成状态，保留分片供后续核对: {SessionId} {SiteId}",
+                    session.Id,
+                    saved.Id);
+                return true;
+            }
             await CleanupChunkFilesAsync(session);
         }
         catch (Exception ex)
@@ -414,63 +439,6 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             }
         }
         return true;
-    }
-
-    public async Task<HostedSiteOptimizationSession> CreateSessionAsync(
-        string userId,
-        byte[] zipBytes,
-        string fileName,
-        string? targetSiteId,
-        string? title,
-        string? description,
-        string? folder,
-        List<string> tags,
-        HostedSiteOptimizationAnalysis analysis,
-        CancellationToken ct = default)
-    {
-        if (!analysis.Recommended || analysis.Blocked)
-            throw new InvalidOperationException("这个文件不需要进入优化预览");
-
-        if (!string.IsNullOrWhiteSpace(targetSiteId)
-            && await _hostedSites.GetByIdAsync(targetSiteId, userId, ct) == null)
-            throw new KeyNotFoundException("站点不存在");
-
-        var now = DateTime.UtcNow;
-        var session = new HostedSiteOptimizationSession
-        {
-            TemporaryStorageId = Guid.NewGuid().ToString("N"),
-            OwnerUserId = userId,
-            TargetSiteId = string.IsNullOrWhiteSpace(targetSiteId) ? null : targetSiteId.Trim(),
-            SourceFileName = Path.GetFileName(fileName),
-            SourceSha256 = Convert.ToHexString(SHA256.HashData(zipBytes)).ToLowerInvariant(),
-            Title = title?.Trim(),
-            Description = description?.Trim(),
-            Folder = folder?.Trim(),
-            Tags = tags,
-            Analysis = analysis,
-            CreatedAt = now,
-            UpdatedAt = now,
-            ExpiresAt = now.Add(SessionLifetime),
-        };
-        session.SourceObjectKey = _storage.BuildSiteKey(StorageScope(session), "__source/source.zip");
-
-        await _storage.UploadToKeyAsync(
-            session.SourceObjectKey,
-            zipBytes,
-            "application/zip",
-            CancellationToken.None,
-            "private, no-store");
-        try
-        {
-            await _db.HostedSiteOptimizationSessions.InsertOneAsync(session, cancellationToken: ct);
-        }
-        catch
-        {
-            await TryDeleteAsync(session.SourceObjectKey);
-            throw;
-        }
-
-        return session;
     }
 
     public async Task<HostedSiteOptimizationPreviewResult> PreparePreviewAsync(
@@ -916,7 +884,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             && !mimeType.Contains("javascript", StringComparison.OrdinalIgnoreCase))
             return bytes;
 
-        var text = Encoding.UTF8.GetString(bytes);
+        if (!TryDecodeUtf8(bytes, out var text)) return bytes;
         if (mimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
         {
             text = Regex.Replace(
@@ -951,7 +919,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             && !mimeType.Contains("javascript", StringComparison.OrdinalIgnoreCase))
             return bytes;
 
-        var text = Encoding.UTF8.GetString(bytes);
+        if (!TryDecodeUtf8(bytes, out var text)) return bytes;
         string Rewrite(Match match)
         {
             var target = match.Groups["path"].Value;
@@ -1331,28 +1299,47 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         foreach (var (owner, bytes) in output)
         {
             var extension = Path.GetExtension(owner).ToLowerInvariant();
-            Regex? referenceRegex = extension switch
+            if (!TryDecodeUtf8(bytes, out var text)) continue;
+            foreach (var value in RuntimeReferences(extension, text))
             {
-                ".html" or ".htm" => HtmlReferenceRegex(),
-                ".css" => CssReferenceRegex(),
-                ".js" or ".mjs" => JavaScriptImportRegex(),
-                _ => null,
-            };
-            if (referenceRegex == null) continue;
-
-            var text = Encoding.UTF8.GetString(bytes);
-            foreach (Match match in referenceRegex.Matches(text))
-            {
-                var value = match.Groups["path"].Value.Trim().Trim('"', '\'');
-                if (IsIgnoredReference(value) || IsExternalReference(value)) continue;
+                var normalizedValue = value.Trim().Trim('"', '\'');
+                if (IsIgnoredReference(normalizedValue) || IsExternalReference(normalizedValue)) continue;
                 if (extension is ".js" or ".mjs"
-                    && !value.StartsWith('.') && !value.StartsWith('/'))
+                    && !normalizedValue.StartsWith('.') && !normalizedValue.StartsWith('/'))
                     continue;
-                var resolved = ResolveReference(owner, value);
+                var resolved = ResolveReference(owner, normalizedValue);
                 if (resolved != null && !output.ContainsKey(resolved)) missing.Add(resolved);
             }
         }
         return missing.Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
+    }
+
+    private static IEnumerable<string> RuntimeReferences(string extension, string text)
+    {
+        if (extension is ".html" or ".htm")
+        {
+            foreach (Match match in HtmlReferenceRegex().Matches(text))
+                yield return match.Groups["path"].Value;
+            foreach (Match block in InlineStyleRegex().Matches(text))
+            foreach (Match match in CssReferenceRegex().Matches(block.Groups["body"].Value))
+                yield return match.Groups["path"].Value;
+            foreach (Match block in InlineScriptRegex().Matches(text))
+            foreach (Match match in JavaScriptImportRegex().Matches(block.Groups["body"].Value))
+            {
+                var value = match.Groups["path"].Value;
+                if (value.StartsWith('.') || value.StartsWith('/')) yield return value;
+            }
+            yield break;
+        }
+        var regex = extension switch
+        {
+            ".css" => CssReferenceRegex(),
+            ".js" or ".mjs" => JavaScriptImportRegex(),
+            _ => null,
+        };
+        if (regex == null) yield break;
+        foreach (Match match in regex.Matches(text))
+            yield return match.Groups["path"].Value;
     }
 
     private static void RestoreReferencedRuntimeFiles(
@@ -1375,13 +1362,33 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         foreach (var file in runtimeTextEntries)
         {
             var extension = Path.GetExtension(file.LogicalPath).ToLowerInvariant();
-            if (extension is not (".js" or ".mjs")) continue;
-            var text = Encoding.UTF8.GetString(ReadEntry(file.Entry));
-            if (DynamicRuntimeLoaderRegex().Matches(text).Count
-                > StaticDynamicRuntimeReferenceRegex().Matches(text).Count)
-                return true;
+            if (extension is not (".html" or ".htm" or ".js" or ".mjs")) continue;
+            if (!TryDecodeUtf8(ReadEntry(file.Entry), out var text)) return true;
+            var scripts = extension is ".html" or ".htm"
+                ? InlineScriptRegex().Matches(text).Select(x => x.Groups["body"].Value)
+                : new[] { text };
+            foreach (var script in scripts)
+            {
+                if (DynamicRuntimeLoaderRegex().Matches(script).Count
+                    > StaticDynamicRuntimeReferenceRegex().Matches(script).Count)
+                    return true;
+            }
         }
         return false;
+    }
+
+    private static bool TryDecodeUtf8(byte[] bytes, out string text)
+    {
+        try
+        {
+            text = StrictUtf8.GetString(bytes);
+            return true;
+        }
+        catch (DecoderFallbackException)
+        {
+            text = string.Empty;
+            return false;
+        }
     }
 
     private static byte[] ReadEntry(ZipArchiveEntry entry)
@@ -1536,6 +1543,12 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
     [GeneratedRegex("(?:from\\s+|import\\s*(?:\\(\\s*)?|require\\s*\\(\\s*|fetch\\s*\\(\\s*|new\\s+(?:Shared)?Worker\\s*\\(\\s*|importScripts\\s*\\(\\s*)[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
     private static partial Regex JavaScriptImportRegex();
+
+    [GeneratedRegex("<script\\b[^>]*>(?<body>[\\s\\S]*?)</script\\s*>", RegexOptions.IgnoreCase)]
+    private static partial Regex InlineScriptRegex();
+
+    [GeneratedRegex("<style\\b[^>]*>(?<body>[\\s\\S]*?)</style\\s*>", RegexOptions.IgnoreCase)]
+    private static partial Regex InlineStyleRegex();
 
     [GeneratedRegex("(?:fetch\\s*\\(|new\\s+(?:Shared)?Worker\\s*\\(|importScripts\\s*\\()", RegexOptions.IgnoreCase)]
     private static partial Regex DynamicRuntimeLoaderRegex();

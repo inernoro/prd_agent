@@ -135,6 +135,43 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_InlineRuntimeFetch_RestoresRequiredDependency()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<script>fetch('./node_modules/pkg/data.json')</script>",
+            ["node_modules/pkg/data.json"] = "{\"ready\":true}",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeTrue();
+        result.OptimizedFiles.ShouldBe(2);
+    }
+
+    [Fact]
+    public void Analyze_NonUtf8RuntimeText_PreservesOriginalBytesAndDependencies()
+    {
+        var files = new Dictionary<string, byte[]>
+        {
+            ["index.html"] = new byte[] { 0xff, 0xfe, 0x3c, 0x68, 0x31, 0x3e },
+            ["node_modules/pkg/data.json"] = Encoding.UTF8.GetBytes("{}"),
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = Encoding.UTF8.GetBytes("export default true;");
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeFalse();
+        result.OptimizedFiles.ShouldBe(result.OriginalFiles);
+        result.Warnings.ShouldContain(x => x.Contains("保留所有潜在依赖", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Analyze_UnsafeArchivePath_BlocksBeforeAnySave()
     {
         var result = CreateService().Analyze(CreateZip(new Dictionary<string, string>
@@ -186,6 +223,18 @@ public class HostedSiteOptimizationServiceTests
         catalog.ShouldContain("expireAfterSeconds: 86400");
     }
 
+    [Fact]
+    public void BackgroundCleanup_UsesIndependentElapsedTimeLoopAndDrainsBatches()
+    {
+        var source = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/HostedSiteOptimizationCleanupService.cs"));
+
+        source.ShouldContain("Task.WhenAll(");
+        source.ShouldContain("CleanupInterval = TimeSpan.FromMinutes(10)");
+        source.ShouldContain("if (cleaned < 20) break;");
+        source.ShouldNotContain("CleanupEveryTicks");
+    }
+
     private static HostedSiteOptimizationService CreateService()
         => new(null!, null!, null!, NullLogger<HostedSiteOptimizationService>.Instance);
 
@@ -202,6 +251,9 @@ public class HostedSiteOptimizationServiceTests
     }
 
     private static byte[] CreateZip(IReadOnlyDictionary<string, string> files)
+        => CreateZip(files.ToDictionary(x => x.Key, x => Encoding.UTF8.GetBytes(x.Value)));
+
+    private static byte[] CreateZip(IReadOnlyDictionary<string, byte[]> files)
     {
         using var output = new MemoryStream();
         using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
@@ -210,8 +262,7 @@ public class HostedSiteOptimizationServiceTests
             {
                 var entry = archive.CreateEntry(path, CompressionLevel.Fastest);
                 using var stream = entry.Open();
-                var bytes = Encoding.UTF8.GetBytes(content);
-                stream.Write(bytes, 0, bytes.Length);
+                stream.Write(content, 0, content.Length);
             }
         }
         return output.ToArray();
