@@ -139,3 +139,7 @@ sidecar 实例另行部署——合并 main + sidecar 实例重启后真流式�
 - 已修：并行逐页降级计数从共享 int 计数器改为 `bool[total]` per-page 标记，消除「retry 兜底已计数后 EmitAsync 再抛 → 外层 catch 重复计数」导致的 degraded 高估（Bugbot Medium）。
 - 已修：`MdToPptRun` 落 `Degraded/Total`，`GetRun` 返回；前端三处恢复路径（poll 对账 / tick / onError 恢复）读取后同样弹降级告警 + 改写完成文案。上一条「断线恢复拿不到 degraded」边界已闭合（Codex P2）。
 - 仍未覆盖：走 `RunAgentStreamAsync` 的整篇路径（自定义模板/无 outlinePages）无 degraded 口径；该路径降级判定需另接 `LooksCorruptedSection` 计数。
+
+## 统一设计任务只覆盖新生成运行（2026-09-04）
+
+新的 convert 运行会把知识快照与来源入口同步写入统一设计任务，发布后回写托管站点 ID。历史运行、outline 与 patch 保留原记录结构，不做批量回填；旧 HTML 仍可打开和发布，但无法反查生成时引用的知识。若以后需要全量审计，只能把基于历史消息和内容摘要恢复的关系明确标成“推断来源”，不能伪装成生成时原始快照。

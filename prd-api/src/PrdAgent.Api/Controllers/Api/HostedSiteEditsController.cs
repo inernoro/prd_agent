@@ -1,10 +1,13 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -20,6 +23,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     private readonly IHostedSiteRevisionService _revisions;
     private readonly IRunEventStore _events;
     private readonly IRunQueue _queue;
+    private readonly MongoDbContext _db;
     private readonly ILogger<HostedSiteEditsController> _logger;
 
     public HostedSiteEditsController(
@@ -27,12 +31,14 @@ public sealed class HostedSiteEditsController : ControllerBase
         IHostedSiteRevisionService revisions,
         IRunEventStore events,
         IRunQueue queue,
+        MongoDbContext db,
         ILogger<HostedSiteEditsController> logger)
     {
         _sites = sites;
         _revisions = revisions;
         _events = events;
         _queue = queue;
+        _db = db;
         _logger = logger;
     }
 
@@ -95,37 +101,50 @@ public sealed class HostedSiteEditsController : ControllerBase
         }
 
         var runId = Guid.NewGuid().ToString("N");
-        var input = JsonSerializer.Serialize(new
+        var snapshots = knowledgeReferences.Select(x => new DesignKnowledgeSnapshot
         {
-            SiteId = siteId,
+            EntryId = x.EntryId!.Trim(),
+            StoreId = TrimOptional(x.StoreId, 120),
+            StoreName = TrimOptional(x.StoreName, 200),
+            Title = TrimTitle(x.Title),
+            Content = x.Content!.Trim(),
+            ContentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(x.Content!.Trim()))).ToLowerInvariant(),
+        }).ToList();
+        var run = new DesignArtifactRun
+        {
+            Id = runId,
             UserId = userId,
-            Instruction = instruction,
+            Status = RunStatuses.Queued,
+            ArtifactType = DesignArtifactTypes.WebPage,
+            Operation = DesignArtifactOperations.Edit,
+            SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
             Runtime = runtime,
-            KnowledgeReferences = knowledgeReferences.Select(x => new
-            {
-                EntryId = x.EntryId!.Trim(),
-                Title = TrimTitle(x.Title),
-                Content = x.Content!.Trim(),
-            }).ToList(),
-        });
+            Instruction = instruction,
+            TargetSiteId = siteId,
+            KnowledgeReferences = snapshots,
+            Progress = 2,
+            Phase = "修改任务已进入队列",
+        };
+        await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+        var input = JsonSerializer.Serialize(new { SiteId = siteId });
         var meta = new RunMeta
         {
             RunId = runId,
-            Kind = RunKinds.HostedSiteEdit,
+            Kind = RunKinds.DesignArtifact,
             Status = RunStatuses.Queued,
             CreatedByUserId = userId,
             CreatedAt = DateTime.UtcNow,
             InputJson = input,
         };
-        await _events.SetRunAsync(RunKinds.HostedSiteEdit, meta, RunTtl, ct: CancellationToken.None);
+        await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
         await _events.AppendEventAsync(
-            RunKinds.HostedSiteEdit,
+            RunKinds.DesignArtifact,
             runId,
             "phase",
             new { progress = 2, message = "修改任务已进入队列" },
             RunTtl,
             CancellationToken.None);
-        await _queue.EnqueueAsync(RunKinds.HostedSiteEdit, runId, CancellationToken.None);
+        await _queue.EnqueueAsync(RunKinds.DesignArtifact, runId, CancellationToken.None);
         return Accepted(ApiResponse<object>.Ok(new { runId, status = meta.Status, runtime }));
     }
 
@@ -138,7 +157,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         Response.Headers["X-Accel-Buffering"] = "no";
 
         var userId = this.GetRequiredUserId();
-        var meta = await _events.GetRunAsync(RunKinds.HostedSiteEdit, runId, ct);
+        var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, ct);
         if (meta == null || meta.CreatedByUserId != userId || !RunBelongsToSite(meta, siteId))
         {
             await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
@@ -155,7 +174,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         {
             while (!ct.IsCancellationRequested)
             {
-                var batch = await _events.GetEventsAsync(RunKinds.HostedSiteEdit, runId, cursor, 100, ct);
+                var batch = await _events.GetEventsAsync(RunKinds.DesignArtifact, runId, cursor, 100, ct);
                 foreach (var item in batch)
                 {
                     await WriteEventAsync(item.Seq, item.EventName, item.PayloadJson, ct);
@@ -167,7 +186,7 @@ public sealed class HostedSiteEditsController : ControllerBase
                     continue;
                 }
 
-                meta = await _events.GetRunAsync(RunKinds.HostedSiteEdit, runId, ct);
+                meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, ct);
                 if (meta == null || meta.Status is RunStatuses.Done or RunStatuses.Error or RunStatuses.Cancelled)
                     return;
 
@@ -300,6 +319,13 @@ public sealed class HostedSiteEditsController : ControllerBase
         return title.Length <= 200 ? title : title[..200];
     }
 
+    private static string? TrimOptional(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
+    }
+
     private async Task WriteEventAsync(long? id, string eventName, string json, CancellationToken ct)
     {
         if (id.HasValue) await Response.WriteAsync($"id: {id.Value}\n", ct);
@@ -321,6 +347,8 @@ public sealed class CreateHostedSiteEditRunRequest
 public sealed class HostedSiteKnowledgeReference
 {
     public string? EntryId { get; set; }
+    public string? StoreId { get; set; }
+    public string? StoreName { get; set; }
     public string? Title { get; set; }
     public string? Content { get; set; }
 }

@@ -87,6 +87,9 @@ import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { MobileFab } from '@/components/mobile/MobileFab';
+import SiteGenerateDialog, { type SiteGenerateSource } from '@/components/web-hosting/SiteGenerateDialog';
+import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
+import { useLocation } from 'react-router-dom';
 
 /** ShareDock MIME 由 SiteCard 组件统一定义（卡片与投放槽必须同一个常量） */
 
@@ -133,6 +136,7 @@ import {
   MessageCircleQuestion,
   EyeOff,
   FileArchive,
+  WandSparkles,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -344,6 +348,7 @@ export { SiteCard };
 export type { SiteCaps };
 
 export default function WebPagesPage() {
+  const location = useLocation();
   const { isMobile } = useBreakpoint();
   const username = useAuthStore(s => s.user?.username);
   const currentUserId = useAuthStore(s => s.user?.userId);
@@ -409,6 +414,9 @@ export default function WebPagesPage() {
   const [tags, setTags] = useState<TagCount[]>([]);
 
   const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
+  const [generateSource, setGenerateSource] = useState<SiteGenerateSource | null>(null);
+  const consumedLaunchRef = useRef('');
   const [editItem, setEditItem] = useState<HostedSite | null>(null);
   const [pendingExternalFile, setPendingExternalFile] = useState<File | null>(null);
   // 快照「打开新建上传弹窗时」的空间：弹窗内上传期间用户若切换空间，onSaved 仍按打开时的目标归属
@@ -418,6 +426,20 @@ export default function WebPagesPage() {
     setEditItem(null);
     setShowUploadDialog(true);
   };
+
+  useEffect(() => {
+    if (!location.search || consumedLaunchRef.current === location.search) return;
+    const launch = parseDesignArtifactLaunch(location.search);
+    if (!launch || launch.target !== 'web-page') return;
+    consumedLaunchRef.current = location.search;
+    setGenerateSource({
+      entryId: launch.sourceEntryId,
+      storeId: launch.sourceStoreId,
+      title: launch.sourceTitle,
+      storeName: launch.sourceStoreName,
+    });
+    setShowGenerateDialog(true);
+  }, [location.search]);
   // 上传成功的站点 ID 集合，触发"滑入 + 光环"入场动效。
   // 事件驱动（onSaved 回调）—— 不再用 sites diff 推断，避免筛选/排序变化误触发动效。
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
@@ -1140,7 +1162,10 @@ export default function WebPagesPage() {
                     跟顶栏的语境切换（资产库 / 分享）不是一类动作。
                     「从个人空间添加」只留左栏底部那一处，不在两个地方各摆一遍。 */}
                 {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-                  <div className="ml-auto shrink-0">
+                  <div className="ml-auto flex shrink-0 items-center gap-2">
+                    <Button data-tour-id="webpages-knowledge-generate" size="sm" variant="secondary" onClick={() => { setGenerateSource(null); setShowGenerateDialog(true); }}>
+                      <WandSparkles size={14} className="mr-1" /> 知识生成
+                    </Button>
                     <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
                       <Upload size={14} className="mr-1" /> 上传网页
                     </Button>
@@ -1343,7 +1368,21 @@ export default function WebPagesPage() {
         ) : null}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-          <MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />
+          <>
+            <button
+              type="button"
+              onClick={() => { setGenerateSource(null); setShowGenerateDialog(true); }}
+              aria-label="引用知识生成网页"
+              className="fixed right-[18px] z-[119] flex h-10 items-center gap-1.5 rounded-2xl border border-token-subtle bg-token-elevated px-3 text-xs font-semibold text-token-primary shadow-lg"
+              style={{
+                bottom: 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px) + 82px)',
+                background: 'var(--bg-elevated)',
+              }}
+            >
+              <WandSparkles size={15} />知识生成
+            </button>
+            <MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />
+          </>
         )}
 
         {/* Batch actions */}
@@ -1633,9 +1672,14 @@ export default function WebPagesPage() {
           {/* 与顶部上传按钮同款权限闸门：团队空间只读 viewer 不展示上传入口，
               避免点开弹窗 uploadSite 后被 setTeams 403、徒留站点在个人空间 */}
           {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-            <Button size="sm" variant="primary" onClick={openCreateUploadDialog}>
-              <Upload size={14} className="mr-1" /> 上传第一个站点
-            </Button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button size="sm" variant="secondary" onClick={() => { setGenerateSource(null); setShowGenerateDialog(true); }}>
+                <WandSparkles size={14} className="mr-1" /> 引用知识生成
+              </Button>
+              <Button size="sm" variant="primary" onClick={openCreateUploadDialog}>
+                <Upload size={14} className="mr-1" /> 上传第一个站点
+              </Button>
+            </div>
           )}
           {/* 教程引导锚点占位：空态下也让「网页托管 3 步」教程能找到 webpages-card / webpages-viewcount 目标，
               避免「没找到目标元素」报错。占位卡是一张轻量预览卡，告诉新用户站点卡长什么样。 */}
@@ -1769,6 +1813,13 @@ export default function WebPagesPage() {
           }}
         />
       )}
+
+      <SiteGenerateDialog
+        open={showGenerateDialog}
+        initialSource={generateSource}
+        onClose={() => setShowGenerateDialog(false)}
+        onCreated={() => { void load(); void loadMeta(); }}
+      />
 
       {/* 拖文件替换网页 — 二次确认 */}
       <Dialog

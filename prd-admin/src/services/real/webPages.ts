@@ -92,6 +92,47 @@ export interface HostedSiteRevisionMutation {
   site: HostedSite;
 }
 
+export interface DesignRuntimeCapability {
+  id: 'map-gateway' | 'open-design' | 'codex' | 'claude';
+  label: string;
+  enabled: boolean;
+  configured: boolean;
+  healthy: boolean;
+  operations: string[];
+  reason?: string;
+}
+
+export interface DesignKnowledgeReferenceInput {
+  entryId: string;
+  storeId?: string;
+  storeName?: string;
+  title: string;
+  content: string;
+}
+
+export interface DesignArtifactRunSummary {
+  runId: string;
+  status: string;
+  artifactType: 'web-page' | 'html-ppt';
+  operation: 'generate' | 'edit';
+  sourceSurface: 'web-hosting' | 'knowledge-base' | 'html-ppt';
+  runtime: string;
+  title?: string | null;
+  progress: number;
+  phase: string;
+  artifactSiteId?: string | null;
+  artifactRevisionId?: string | null;
+  linkedRunId?: string | null;
+  error?: string | null;
+  knowledgeReferences: Array<{
+    entryId: string;
+    storeId?: string | null;
+    storeName?: string | null;
+    title: string;
+    contentHash: string;
+  }>;
+}
+
 export interface ShareLinkItem {
   id: string;
   token: string;
@@ -962,10 +1003,57 @@ export async function regenerateSiteAskQuestions(
 
 // ─── 帮我修改 / 版本 ───
 
+export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
+  defaultRuntime: string;
+  runtimes: DesignRuntimeCapability[];
+}>> {
+  return apiRequest(api.designArtifacts.runtimeCapabilities());
+}
+
+export async function createDesignArtifactRun(input: {
+  instruction: string;
+  title?: string;
+  sourceSurface: 'web-hosting' | 'knowledge-base';
+  knowledgeReferences: DesignKnowledgeReferenceInput[];
+}): Promise<ApiResponse<DesignArtifactRunSummary>> {
+  return apiRequest(api.designArtifacts.runs(), {
+    method: 'POST',
+    body: {
+      artifactType: 'web-page',
+      operation: 'generate',
+      runtime: 'map-gateway',
+      ...input,
+    },
+  });
+}
+
+export async function getDesignArtifactRun(
+  runId: string,
+): Promise<ApiResponse<DesignArtifactRunSummary>> {
+  return apiRequest(api.designArtifacts.byId(runId));
+}
+
+export async function streamDesignArtifactRun(input: {
+  runId: string;
+  afterSeq?: number;
+  signal: AbortSignal;
+  onEvent: (event: SseEvent) => void;
+}): Promise<void> {
+  const suffix = input.afterSeq && input.afterSeq > 0 ? `?afterSeq=${input.afterSeq}` : '';
+  const result = await connectSse({
+    url: `${api.designArtifacts.stream(input.runId)}${suffix}`,
+    method: 'GET',
+    signal: input.signal,
+    onEvent: input.onEvent,
+  });
+  if (!result.success && !input.signal.aborted)
+    throw new Error(result.errorMessage || '网页生成进度连接中断');
+}
+
 export async function createHostedSiteEditRun(
   siteId: string,
   instruction: string,
-  knowledgeReferences: Array<{ entryId: string; title: string; content: string }> = [],
+  knowledgeReferences: DesignKnowledgeReferenceInput[] = [],
 ): Promise<ApiResponse<{ runId: string; status: string; runtime: string }>> {
   return apiRequest(api.webPages.editRuns(siteId), {
     method: 'POST',

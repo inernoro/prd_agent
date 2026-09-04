@@ -44,6 +44,15 @@ public class MdToPptRun
 
     public string? Platform { get; set; }
 
+    /// <summary>html-ppt | knowledge-base，记录本次生成从哪个业务入口发起。</summary>
+    public string SourceSurface { get; set; } = DesignArtifactSourceSurfaces.HtmlPpt;
+
+    /// <summary>生成时使用的知识快照，用于跨知识库、PPT 与托管站点追溯。</summary>
+    public List<DesignKnowledgeSnapshot> KnowledgeReferences { get; set; } = new();
+
+    /// <summary>发布到网页托管后的站点 ID。</summary>
+    public string? PublishedSiteId { get; set; }
+
     /// <summary>退化为「标题+要点」兜底的页数（并行逐页路径 done 时落库，刷新恢复仍能如实告警）</summary>
     public int Degraded { get; set; }
 

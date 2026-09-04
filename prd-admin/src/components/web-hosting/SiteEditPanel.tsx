@@ -125,6 +125,8 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
     }
     const knowledgeReferences = knowledgeResults.map(({ entry, result }) => ({
       entryId: result.data!.entryId,
+      storeId: entry?.storeId,
+      storeName: entry?.storeName,
       title: entry?.title || result.data!.title,
       content: (result.data!.content || '').slice(0, 20_000),
     }));

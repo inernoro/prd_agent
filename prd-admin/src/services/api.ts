@@ -1237,6 +1237,12 @@ export const api = {
     publishRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/publish`,
     rollbackRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/rollback`,
   },
+  designArtifacts: {
+    runtimeCapabilities: () => '/api/design-artifacts/runtime-capabilities',
+    runs: () => '/api/design-artifacts/runs',
+    byId: (runId: string) => `/api/design-artifacts/runs/${runId}`,
+    stream: (runId: string) => `/api/design-artifacts/runs/${runId}/stream`,
+  },
   // ============ Short Video Materials 短视频素材解析 ============
   shortVideoMaterials: {
     runs: () => '/api/short-video-materials/runs',

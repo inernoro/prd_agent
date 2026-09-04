@@ -155,6 +155,7 @@
 - [多图视觉生成 · 设计](./design.visual-agent.multi-image-vision-api.md) `design.visual-agent.multi-image-vision-api`
 - [Visual Agent (视觉创作) · 设计](./design.visual-agent.md) `design.visual-agent`
 - [网页托管与分享 · 设计](./design.web-hosting.md) `design.web-hosting`
+- [知识驱动设计生成体系 · 设计](./design.platform.design-generation.md) `design.platform.design-generation`
 - [工作流自动配置 (Workflow Auto-Config) · 设计](./design.workflow-agent.auto-config.md) `design.workflow-agent.auto-config`
 - [工作流引擎 · 设计](./design.workflow-agent.engine.md) `design.workflow-agent.engine`
 
@@ -282,6 +283,7 @@
 - [前端 Apple 设计系统迁移 · 计划](./plan.frontend.apple-design-migration.md) `plan.frontend.apple-design-migration`
 - [前端移动端适配 · 计划](./plan.frontend.mobile-adaptation.md) `plan.frontend.mobile-adaptation`
 - [MD 转 PPT 对话工作台收尾 · 计划](./plan.md-to-ppt.chat-redesign.md) `plan.md-to-ppt.chat-redesign`
+- [知识驱动设计生成体系 · 计划](./plan.platform.design-generation.md) `plan.platform.design-generation`
 - [MAP 核心业务稳定基线落地 · 计划](./plan.platform.core-business-stability.md) `plan.platform.core-business-stability`
 - [LLM Gateway 模型网关权威教程 · 计划](./plan.platform.llm-gateway.authoritative-tutorial.md) `plan.platform.llm-gateway.authoritative-tutorial`
 - [LLM Gateway 外部平台化与控制台体验收口 · 计划](./plan.platform.llm-gateway.external-platform.md) `plan.platform.llm-gateway.external-platform`

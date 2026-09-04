@@ -254,6 +254,14 @@ export interface MdToPptConvertRequest {
   content: string;
   slideCount?: number;
   theme?: string;
+  sourceSurface?: 'html-ppt' | 'knowledge-base';
+  knowledgeReferences?: Array<{
+    entryId: string;
+    storeId?: string;
+    storeName?: string;
+    title: string;
+    content: string;
+  }>;
 }
 
 export interface MdToPptPatchRequest {
@@ -270,6 +278,7 @@ export interface MdToPptPublishRequest {
   description?: string;
   tags?: string[];
   teamIds?: string[];
+  runId?: string;
 }
 
 export interface MdToPptPublishResult {
@@ -395,6 +404,14 @@ export interface MdToPptConvertSseOptions {
   summary?: string;
   /** 模型运行配置 ID（用户在 PPT 页切换的模型；缺省走后端默认链） */
   runtimeProfileId?: string;
+  sourceSurface?: 'html-ppt' | 'knowledge-base';
+  knowledgeReferences?: Array<{
+    entryId: string;
+    storeId?: string;
+    storeName?: string;
+    title: string;
+    content: string;
+  }>;
   /** 壳子就绪（head 含完整设计系统，实况渲染用） */
   onFrame?: (data: { head: string; suffix?: string; total: number; anchored?: boolean }) => void;
   /** 单页完成（并行，真实进度） */
@@ -431,6 +448,8 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
           outlinePages: options.outlinePages,
           summary: options.summary,
           runtimeProfileId: options.runtimeProfileId,
+          sourceSurface: options.sourceSurface,
+          knowledgeReferences: options.knowledgeReferences,
         }),
         signal: abortController.signal,
       });

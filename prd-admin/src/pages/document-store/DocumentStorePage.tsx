@@ -62,6 +62,7 @@ import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { Button } from '@/components/design/Button';
+import { Dialog } from '@/components/ui/Dialog';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
@@ -93,6 +94,7 @@ import {
   withoutOrphanedDocumentStoreEntry,
   withoutQuickRecordRequest,
 } from './documentStoreDeepLink';
+import { buildDesignArtifactLaunchPath, type DesignArtifactTarget } from '@/lib/designArtifactLaunch';
 import {
   consumeDetailInitialAction,
   detailInitialActionForStore,
@@ -1179,6 +1181,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   }, [location.hash, location.pathname, location.search, navigate, selectedEntryId, storeId]);
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
+  const [showDesignLauncher, setShowDesignLauncher] = useState(false);
   /** 桌面端分享面板的锚点：就地悬浮在「分享」按钮下方 */
   const shareAnchorRef = useRef<HTMLSpanElement>(null);
   const [showViewers, setShowViewers] = useState(false);
@@ -2399,6 +2402,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 <Share2 size={13} /> 分享
               </Button>
             </span>
+            {selectedDocEntry && (
+              <Button
+                variant="primary"
+                size="xs"
+                onClick={() => setShowDesignLauncher(true)}
+                title="用当前文档生成网页或 HTML PPT"
+              >
+                <Wand2 size={13} /> 智能生成
+              </Button>
+            )}
             {/* 顶栏「上传文档」按钮已下线：库内「新增」收敛为右下角调色盘 FAB（唯一入口）。
                 上传中的状态提示保留在此处，避免用户点完 FAB 上传后失去反馈。 */}
             {uploading && (
@@ -2836,6 +2849,53 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           onAfterSync={() => { void loadStore(); void loadEntries(); }}
         />
       )}
+
+      <Dialog
+        open={showDesignLauncher && !!selectedDocEntry}
+        onOpenChange={(next) => setShowDesignLauncher(next)}
+        title="选择生成智能体"
+        description={`当前知识：${selectedDocEntry?.title || ''}。目标页会自动带入，不需要再次选择。`}
+        maxWidth={620}
+        content={(
+          <div className="grid gap-3 sm:grid-cols-2">
+            {([
+              {
+                target: 'web-page' as DesignArtifactTarget,
+                title: '网页设计智能体',
+                description: '补充两句话，生成并保存为可继续微调的托管网页。',
+                icon: <Globe size={20} />,
+              },
+              {
+                target: 'html-ppt' as DesignArtifactTarget,
+                title: 'HTML PPT 智能体',
+                description: '进入大纲、主题、生成和发布工作台，输出可翻页网页。',
+                icon: <FileText size={20} />,
+              },
+            ]).map((item) => (
+              <button
+                key={item.target}
+                type="button"
+                onClick={() => {
+                  if (!selectedDocEntry) return;
+                  setShowDesignLauncher(false);
+                  navigate(buildDesignArtifactLaunchPath({
+                    target: item.target,
+                    sourceStoreId: store.id,
+                    sourceEntryId: selectedDocEntry.id,
+                    sourceTitle: selectedDocEntry.title,
+                    sourceStoreName: store.name,
+                  }));
+                }}
+                className="rounded-xl border border-token-subtle bg-token-nested p-4 text-left transition-colors hover:border-blue-500"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">{item.icon}</span>
+                <span className="mt-3 block text-sm font-semibold text-token-primary">{item.title}</span>
+                <span className="mt-1 block text-xs leading-relaxed text-token-muted">{item.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      />
       {canManageTutorialGraph && showTutorialGraph && tutorialGraph && (
         <TutorialLinkGraphDrawer
           storeId={storeId}

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
@@ -1203,7 +1204,14 @@ public class MdToPptController : ControllerBase
         await WriteEventAsync("start", null);
 
         var template = await ResolveTemplateAsync(userId, req.TemplateId);
-        var run = await CreateRunAsync(userId, "agent", template != null ? $"custom:{template.Name}" : req.Theme, "convert", req.Content);
+        var run = await CreateRunAsync(
+            userId,
+            "agent",
+            template != null ? $"custom:{template.Name}" : req.Theme,
+            "convert",
+            req.Content,
+            req.SourceSurface,
+            NormalizeKnowledgeReferences(req.KnowledgeReferences));
         await WriteEventAsync("run", new { runId = run.Id });
 
         // 并行逐页编排（用户 2026-06-11 架构提案）：大纲定稿 → 壳子确定（设计系统）→
@@ -1293,6 +1301,25 @@ public class MdToPptController : ControllerBase
             await siteService.SetSharedTeamsAsync(site.Id, userId, req.TeamIds, CancellationToken.None);
         }
 
+        if (!string.IsNullOrWhiteSpace(req.RunId))
+        {
+            var runFilter = Builders<MdToPptRun>.Filter.And(
+                Builders<MdToPptRun>.Filter.Eq(x => x.Id, req.RunId),
+                Builders<MdToPptRun>.Filter.Eq(x => x.UserId, userId));
+            await _db.MdToPptRuns.UpdateOneAsync(
+                runFilter,
+                Builders<MdToPptRun>.Update
+                    .Set(x => x.PublishedSiteId, site.Id)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+            await _db.DesignArtifactRuns.UpdateOneAsync(
+                x => x.Id == req.RunId && x.UserId == userId,
+                Builders<DesignArtifactRun>.Update
+                    .Set(x => x.ArtifactSiteId, site.Id)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+        }
+
         return Ok(new
         {
             siteId = site.Id,
@@ -1323,6 +1350,16 @@ public class MdToPptController : ControllerBase
             title = run.Title,
             html = run.Html,
             outlineJson = run.OutlineJson,
+            sourceSurface = run.SourceSurface,
+            knowledgeReferences = run.KnowledgeReferences.Select(x => new
+            {
+                x.EntryId,
+                x.StoreId,
+                x.StoreName,
+                x.Title,
+                x.ContentHash,
+            }),
+            publishedSiteId = run.PublishedSiteId,
             error = run.Error,
             model = run.Model,
             platform = run.Platform,
@@ -1352,11 +1389,21 @@ public class MdToPptController : ControllerBase
             title = r.Title,
             contentPreview = r.ContentPreview,
             hasHtml = !string.IsNullOrEmpty(r.Html),
+            sourceSurface = r.SourceSurface,
+            knowledgeCount = r.KnowledgeReferences.Count,
+            publishedSiteId = r.PublishedSiteId,
             createdAt = r.CreatedAt,
         }));
     }
 
-    private async Task<MdToPptRun> CreateRunAsync(string userId, string engine, string? theme, string op, string? content)
+    private async Task<MdToPptRun> CreateRunAsync(
+        string userId,
+        string engine,
+        string? theme,
+        string op,
+        string? content,
+        string? sourceSurface = null,
+        List<DesignKnowledgeSnapshot>? knowledgeReferences = null)
     {
         var run = new MdToPptRun
         {
@@ -1369,8 +1416,34 @@ public class MdToPptController : ControllerBase
             ContentPreview = (content ?? string.Empty).Trim() is { Length: > 0 } cp
                 ? (cp.Length > 200 ? cp[..200] : cp)
                 : string.Empty,
+            SourceSurface = sourceSurface == DesignArtifactSourceSurfaces.KnowledgeBase
+                ? DesignArtifactSourceSurfaces.KnowledgeBase
+                : DesignArtifactSourceSurfaces.HtmlPpt,
+            KnowledgeReferences = knowledgeReferences ?? new List<DesignKnowledgeSnapshot>(),
         };
         await _db.MdToPptRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+        if (op == "convert")
+        {
+            await _db.DesignArtifactRuns.InsertOneAsync(new DesignArtifactRun
+            {
+                Id = run.Id,
+                UserId = userId,
+                Status = RunStatuses.Running,
+                ArtifactType = DesignArtifactTypes.HtmlPpt,
+                Operation = DesignArtifactOperations.Generate,
+                SourceSurface = run.SourceSurface,
+                Runtime = DesignArtifactRuntimes.HtmlPptPipeline,
+                // 完整正文已经由 MdToPptRun 持有；通用运行记录只保留可检索摘要，避免重复放大 Mongo 文档。
+                Instruction = (content ?? string.Empty).Length > 4_000
+                    ? (content ?? string.Empty)[..4_000]
+                    : content ?? string.Empty,
+                Title = run.Title,
+                LinkedRunId = run.Id,
+                KnowledgeReferences = run.KnowledgeReferences,
+                Progress = 5,
+                Phase = "HTML PPT 正在生成",
+            }, cancellationToken: CancellationToken.None);
+        }
         return run;
     }
 
@@ -1386,6 +1459,15 @@ public class MdToPptController : ControllerBase
             run.Total = total;
             run.UpdatedAt = DateTime.UtcNow;
             await _db.MdToPptRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: CancellationToken.None);
+            await _db.DesignArtifactRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<DesignArtifactRun>.Update
+                    .Set(x => x.Status, RunStatuses.Done)
+                    .Set(x => x.Progress, 100)
+                    .Set(x => x.Phase, "HTML PPT 已生成")
+                    .Set(x => x.CompletedAt, DateTime.UtcNow)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
         }
         catch (Exception ex) { _logger.LogError(ex, "[MdToPpt] persist run done failed runId={Id}", run.Id); }
     }
@@ -1398,6 +1480,15 @@ public class MdToPptController : ControllerBase
             run.Error = error;
             run.UpdatedAt = DateTime.UtcNow;
             await _db.MdToPptRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: CancellationToken.None);
+            await _db.DesignArtifactRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<DesignArtifactRun>.Update
+                    .Set(x => x.Status, RunStatuses.Error)
+                    .Set(x => x.Error, error)
+                    .Set(x => x.Phase, error)
+                    .Set(x => x.CompletedAt, DateTime.UtcNow)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
         }
         catch (Exception ex) { _logger.LogError(ex, "[MdToPpt] persist run error failed runId={Id}", run.Id); }
     }
@@ -1414,6 +1505,29 @@ public class MdToPptController : ControllerBase
         }
         var first = c.Split('\n')[0].Trim();
         return first.Length > 40 ? first[..40] : first;
+    }
+
+    private static List<DesignKnowledgeSnapshot> NormalizeKnowledgeReferences(
+        List<MdToPptKnowledgeReferenceRequest>? references)
+    {
+        return (references ?? new List<MdToPptKnowledgeReferenceRequest>())
+            .Where(x => !string.IsNullOrWhiteSpace(x.EntryId) && !string.IsNullOrWhiteSpace(x.Content))
+            .Take(3)
+            .Select(x =>
+            {
+                var fullContent = x.Content!.Trim();
+                var content = fullContent.Length > 20_000 ? fullContent[..20_000] : fullContent;
+                return new DesignKnowledgeSnapshot
+                {
+                    EntryId = x.EntryId!.Trim(),
+                    StoreId = x.StoreId?.Trim(),
+                    StoreName = x.StoreName?.Trim(),
+                    Title = string.IsNullOrWhiteSpace(x.Title) ? "未命名知识" : x.Title.Trim(),
+                    Content = content,
+                    ContentHash = System.Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant(),
+                };
+            })
+            .ToList();
     }
 
     // ─────────────────────────────────────────────
@@ -3183,6 +3297,12 @@ public class MdToPptConvertRequest
 
     /// <summary>模型运行配置 ID（可选；用户在 PPT 页随时切换模型，缺省走默认链）</summary>
     public string? RuntimeProfileId { get; set; }
+
+    /// <summary>html-ppt | knowledge-base，标记本次生成入口。</summary>
+    public string? SourceSurface { get; set; }
+
+    /// <summary>用户明确选择的知识快照及其来源标识。</summary>
+    public List<MdToPptKnowledgeReferenceRequest>? KnowledgeReferences { get; set; }
 }
 
 public class MdToPptOutlinePageDto
@@ -3251,6 +3371,18 @@ public class MdToPptPublishRequest
 
     /// <summary>分享到的团队 ID（可选）</summary>
     public List<string>? TeamIds { get; set; }
+
+    /// <summary>对应的 HTML PPT 运行 ID，用于回写统一产物链。</summary>
+    public string? RunId { get; set; }
+}
+
+public class MdToPptKnowledgeReferenceRequest
+{
+    public string? EntryId { get; set; }
+    public string? StoreId { get; set; }
+    public string? StoreName { get; set; }
+    public string? Title { get; set; }
+    public string? Content { get; set; }
 }
 
 public class MdToPptOutlineRequest

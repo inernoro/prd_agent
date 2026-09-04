@@ -51,8 +51,9 @@ import {
   getMdToPptConnectionStatus,
 } from '@/services/real/mdToPptService';
 import { apiRequest } from '@/services/real/apiClient';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
+import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
 import { NextStepBar } from './NextStepBar';
 import { SelectionFeedbackOverlay, type SelectionRectPct } from './SelectionFeedbackOverlay';
 
@@ -66,6 +67,8 @@ interface Attachment {
 }
 
 interface KbRef {
+  storeId?: string;
+  entryId?: string;
   storeName: string;
   entryTitle: string;
   content: string;
@@ -105,6 +108,8 @@ interface OutlineDraft {
 interface SessionState {
   messages: ChatMessage[];
   activeRunId: string;
+  /** 本次产物实际采用的知识来源，用于刷新恢复与发布溯源 */
+  activeKnowledgeRefs?: KbRef[];
   theme: string;
   /** 选中的自定义模板 ID（null = 用官方主题 theme） */
   templateId?: string | null;
@@ -810,6 +815,8 @@ function KbPicker({ onClose, onSelect }: KbPickerProps) {
   const confirmSelect = useCallback(() => {
     if (!selectedStore || !previewEntry || previewContent == null) return;
     onSelect({
+      storeId: selectedStore.id,
+      entryId: previewEntry.id,
       storeName: selectedStore.name,
       entryTitle: previewEntry.title,
       content: previewContent,
@@ -1038,6 +1045,7 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
 
 export function MdToPptAgentPage() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   // ─── CDS 连接状态：openai-compatible 配置优先走 LLM Gateway 直出；
   // 这里只作为 CDS Agent 兼容路径的状态提示，不再整页禁用。
@@ -1310,8 +1318,41 @@ export function MdToPptAgentPage() {
   // ─── Attachments & KB
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [pendingKbRefs, setPendingKbRefs] = useState<KbRef[]>([]);
+  const [activeKnowledgeRefs, setActiveKnowledgeRefs] = useState<KbRef[]>(
+    savedSession?.activeKnowledgeRefs ?? [],
+  );
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [showKbPicker, setShowKbPicker] = useState(false);
+  const consumedLaunchRef = useRef('');
+
+  useEffect(() => {
+    if (!location.search || consumedLaunchRef.current === location.search) return;
+    const launch = parseDesignArtifactLaunch(location.search);
+    if (!launch || launch.target !== 'html-ppt') return;
+    consumedLaunchRef.current = location.search;
+    let active = true;
+    void apiRequest<{ entryId: string; title: string; content: string | null; hasContent: boolean }>(
+      `/api/document-store/entries/${encodeURIComponent(launch.sourceEntryId)}/content`,
+    ).then((result) => {
+      if (!active) return;
+      if (!result.success || !result.data.hasContent || !result.data.content) {
+        toast.error('知识带入失败', result.error?.message || '当前文档没有可读取的正文');
+        return;
+      }
+      setPendingKbRefs((previous) => {
+        if (previous.some((item) => item.entryId === launch.sourceEntryId)) return previous;
+        return [...previous, {
+          storeId: launch.sourceStoreId,
+          entryId: launch.sourceEntryId,
+          storeName: launch.sourceStoreName || '当前知识库',
+          entryTitle: launch.sourceTitle,
+          content: result.data.content!,
+        }];
+      });
+      toast.success('当前知识已带入 HTML PPT 工作台');
+    });
+    return () => { active = false; };
+  }, [location.search]);
 
   // 左侧对话栏宽度（可拖拽，280-640px；纯 UI 偏好走 localStorage——关浏览器仍记住）
   const [chatWidth, setChatWidth] = useState<number>(() => {
@@ -1516,8 +1557,8 @@ export function MdToPptAgentPage() {
 
   // ─── Session persistence: save on state change
   useEffect(() => {
-    saveSession({ messages, activeRunId, theme, templateId, outlineDraft });
-  }, [messages, activeRunId, theme, templateId, outlineDraft]);
+    saveSession({ messages, activeRunId, activeKnowledgeRefs, theme, templateId, outlineDraft });
+  }, [messages, activeRunId, activeKnowledgeRefs, theme, templateId, outlineDraft]);
 
   // 模板列表进页即载（右侧模板画廊是空状态主视觉，必须秒出）；模型配置列表同时载入
   useEffect(() => {
@@ -1727,6 +1768,7 @@ export function MdToPptAgentPage() {
       adjustMode?: boolean
     ) => {
       setIsProcessing(true);
+      if (!adjustMode) setActiveKnowledgeRefs(kbRefs);
       // 调整模式：编辑器保持在场（内联 busy 蒙层），不切全屏「规划中」——
       // 否则用户手里的大纲整个消失，像被清空了（2026-06-11 用户原话「好像全都消失了」）
       if (adjustMode) {
@@ -1950,6 +1992,16 @@ export function MdToPptAgentPage() {
         outlinePages,
         summary,
         runtimeProfileId: selectedProfileId ?? undefined,
+        sourceSurface: activeKnowledgeRefs.length > 0 ? 'knowledge-base' : 'html-ppt',
+        knowledgeReferences: activeKnowledgeRefs
+          .filter((item): item is KbRef & { entryId: string } => !!item.entryId)
+          .map((item) => ({
+            entryId: item.entryId,
+            storeId: item.storeId,
+            storeName: item.storeName,
+            title: item.entryTitle,
+            content: item.content,
+          })),
         onFrame: (f) => {
           setFrameHead(f.head);
           setFrameSuffix(f.suffix ?? '');
@@ -2079,7 +2131,7 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [isProcessing, pushMsg, theme, templateId, selectedProfileId, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
+    [isProcessing, pushMsg, theme, templateId, selectedProfileId, activeKnowledgeRefs, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
   );
 
   // 序列化大纲（注入生成提示词 / 调整上下文共用）
@@ -2515,12 +2567,13 @@ export function MdToPptAgentPage() {
     const result = await publishMdToPpt({
       htmlContent: prepareExportHtml(base),
       title: extractDeckTitle(base) || 'PPT 演示',
+      runId: activeRunId || undefined,
     });
     setIsPublishing(false);
     if (result.success && result.siteUrl) {
       setPublishedUrl(result.siteUrl);
     }
-  }, [latestHtml, editMode, commitEdits]);
+  }, [latestHtml, editMode, commitEdits, activeRunId]);
 
   // ─── Abort
   const handleAbort = useCallback(() => {
@@ -2547,6 +2600,7 @@ export function MdToPptAgentPage() {
     setArtifactPhase('idle');
     setPendingAttachments([]);
     setPendingKbRefs([]);
+    setActiveKnowledgeRefs([]);
     setEditMode(false);
     setDirtyEdits(false);
     setSlidePos(null);
