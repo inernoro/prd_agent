@@ -233,11 +233,7 @@ public class WebPagesOpenApiController : ControllerBase
     /// </summary>
     private string? BuildSourceRef(string? clientRequestId)
     {
-        var scoped = McpIdempotency.ScopedByKey(User, clientRequestId);
-        if (scoped == null) return null;
-        var digest = Convert.ToHexString(
-            System.Security.Cryptography.SHA256.HashData(
-                System.Text.Encoding.UTF8.GetBytes($"mcp-site:{scoped}"))).ToLowerInvariant()[..32];
-        return $"mcp:{digest}";
+        var digest = McpIdempotency.Fingerprint("mcp-site", McpIdempotency.ScopedByKey(User, clientRequestId));
+        return digest == null ? null : $"mcp:{digest}";
     }
 }

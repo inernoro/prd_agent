@@ -36,6 +36,22 @@ public class McpIdempotencyTests
     }
 
     [Fact]
+    public void 幂等指纹_定长32位十六进制且长键互不坍缩()
+    {
+        var prefix = new string('z', 5000);
+        var one = McpIdempotency.Fingerprint("k", McpIdempotency.ScopedByKey(Key("k1"), prefix + "-alpha"));
+        var two = McpIdempotency.Fingerprint("k", McpIdempotency.ScopedByKey(Key("k1"), prefix + "-beta"));
+
+        one!.Length.ShouldBe(32, customMessage: "落库的键必须定长：clientRequestId 无界，原样进 Mongo 等于让调用方决定文档多大");
+        System.Text.RegularExpressions.Regex.IsMatch(one, "^[0-9a-f]{32}$")
+            .ShouldBeTrue(customMessage: "指纹必须是小写十六进制，与随机 id 同形");
+        one.ShouldNotBe(two, customMessage: "长键在指纹这一步坍缩了：第二次写入会被误判成幂等命中、悄悄不做");
+        McpIdempotency.Fingerprint("k", null).ShouldBeNull();
+        // 前缀是判据的一部分：同一个键在不同用途下不许算出同一个 id
+        McpIdempotency.Fingerprint("a", "same").ShouldNotBe(McpIdempotency.Fingerprint("b", "same"));
+    }
+
+    [Fact]
     public void 两把密钥用同一个幂等键_互不干扰()
     {
         McpIdempotency.ScopedByKey(Key("k1"), "same-request")
@@ -88,6 +104,18 @@ public class McpIdempotencyTests
             || source.Contains("clientRequestId", StringComparison.Ordinal))
             source.ShouldContain("McpIdempotency.ScopedByKey",
                 customMessage: $"{path} 自己拼幂等键而没走共用判定源，迟早各漂各的");
+
+        // 归一化后的键里带着调用方给的**原文**，而原文是无界的。凡是让它继续往下走的路
+        // （确定性 id、SourceRef、IdempotencyKey、条目 Metadata）都得先压成定长指纹。
+        // 所以判据不是「有没有调 ScopedByKey」，而是「它的结果有没有当场被 Fingerprint 包住」——
+        // 视觉创作那一路正是调了 ScopedByKey、却把结果直接塞进带唯一索引的 IdempotencyKey。
+        foreach (var line in source.Split('\n'))
+        {
+            if (!line.Contains("McpIdempotency.ScopedByKey", StringComparison.Ordinal)) continue;
+            line.ShouldContain("McpIdempotency.Fingerprint",
+                customMessage: $"{path} 把 ScopedByKey 的结果（含调用方原文）直接往下传了，"
+                    + "必须当场 McpIdempotency.Fingerprint 压成定长指纹再落库");
+        }
     }
 
     /// <summary>复刻知识库那一步的确定性 id 算法，用来确认长键坍缩不会在下游被重新引入。</summary>

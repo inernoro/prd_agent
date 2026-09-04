@@ -623,14 +623,24 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     if (root.classList.contains('light') || document.body?.classList.contains('light')) return 'light';
     // 兜底量真实底色，而不是问 prefers-color-scheme —— 无头浏览器默认答 light，
     // 于是一整套暗色截图会被记成 light（这正是那次 20 张全记错的成因）。
-    const bg = getComputedStyle(document.body || root).backgroundColor || '';
-    const m = bg.match(/rgba?\(([^)]+)\)/);
-    if (m) {
-      const [r, g, b] = m[1].split(',').map((v) => parseFloat(v));
-      if ([r, g, b].every((v) => Number.isFinite(v))) {
-        return (0.2126 * r + 0.7152 * g + 0.0722 * b) < 128 ? 'dark' : 'light';
-      }
-    }
+    //
+    // 必须看 alpha：body 的背景常常是 rgba(0,0,0,0)（完全透明，看得见的底色其实来自 html
+    // 或更外层）。只取 rgb 三个分量的话，那三个 0 会被当成纯黑 —— 浅色页反而被记成 dark，
+    // 双主题证据比不量还错。所以只认**不透明**的背景，半透明/全透明一律往外层找；
+    // 都不透明不了就退回媒体查询。
+    const opaqueTheme = (el) => {
+      if (!el) return null;
+      const m = (getComputedStyle(el).backgroundColor || '').match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const parts = m[1].split(',').map((v) => parseFloat(v));
+      const [r, g, b] = parts;
+      const a = parts.length > 3 ? parts[3] : 1;
+      if (![r, g, b, a].every((v) => Number.isFinite(v))) return null;
+      if (a < 1) return null;
+      return (0.2126 * r + 0.7152 * g + 0.0722 * b) < 128 ? 'dark' : 'light';
+    };
+    const measured = opaqueTheme(document.body) || opaqueTheme(root);
+    if (measured) return measured;
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }).catch(() => null);
   const actualPageUrl = page.url();

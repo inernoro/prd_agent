@@ -140,6 +140,9 @@ jobs:
               - 'scripts/compose-stable-smoke-supervisor-report.mjs'
               - 'scripts/prepare-stable-smoke-archive-report.mjs'
               - 'scripts/split-stable-smoke-report.mjs'
+              # 视觉验收 harness 是 visual-harness-*.test.mjs 的被测文件，却一直没登记：
+              # 只改 harness.mjs 的 PR 完全跳过这道闸，而漂移恰恰长在那边（形状 7）。
+              - '.claude/skills/create-visual-test-to-kb/scripts/harness.mjs'
               # 设计复刻工具里被守卫盯着的判据函数（样例数据键、档位导出与比对）
               - '.claude/skills/design-replication/scripts/fixtures.mjs'
               - '.claude/skills/design-replication/scripts/spec-export.mjs'

@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace PrdAgent.Api.Mcp;
 
@@ -27,6 +29,25 @@ internal static class McpIdempotency
     /// </summary>
     internal static string? Normalize(string? clientRequestId)
         => string.IsNullOrWhiteSpace(clientRequestId) ? null : clientRequestId.Trim();
+
+    /// <summary>
+    /// 把归一化后的幂等键压成 32 位十六进制指纹（与随机 id 同形）。传 null 原样返回 null。
+    ///
+    /// 为什么必须过这一道：`clientRequestId` 是调用方给的**无界**字符串，nginx 那层收到 30MB body
+    /// 都算合法。凡是把它落进 Mongo 的路径（确定性文档 id、`SourceRef`、`IdempotencyKey`），
+    /// 原样存就等于让调用方决定文档大小 —— 一个超长键就能把文档撑大甚至顶破 16MB 上限，
+    /// 让一次本来合法的写入在插入时炸。哈希同时保住「长键互不坍缩」：截断会把
+    /// 「前 N 字相同、后面不同」的两个键压成同一个，第二次写入被报成幂等命中、悄悄不做。
+    ///
+    /// 这四个开放层原来各写了一份 SHA-256（网页托管内联、知识库 DeterministicId、
+    /// 文学 Sha256Hex），而视觉创作那一路**一份都没有** —— 判据分裂之后漏掉的那个兄弟
+    /// （predicate-and-wiring-discipline 形状 3）。收敛到这里，让后来者没有第二个口径可走偏。
+    /// </summary>
+    internal static string? Fingerprint(string kind, string? scopedKey)
+        => scopedKey == null
+            ? null
+            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{kind}:{scopedKey}")))
+                .ToLowerInvariant()[..32];
 
     /// <summary>
     /// 归一化并带上密钥 id：两把密钥用了同一个 clientRequestId 时互不干扰。

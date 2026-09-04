@@ -132,8 +132,7 @@ public class LiteraryOpenApiController : ControllerBase
     /// <summary>把「这把密钥 + 这个 clientRequestId」压成确定性工作区 id；没给幂等键就返回 null 走随机 id。</summary>
     private string? BuildDeterministicId(string? clientRequestId)
     {
-        var scoped = McpIdempotency.ScopedByKey(User, clientRequestId);
-        return scoped == null ? null : LiteraryWorkspaceHash.Sha256Hex($"literary-ws:{scoped}")[..32];
+        return McpIdempotency.Fingerprint("literary-ws", McpIdempotency.ScopedByKey(User, clientRequestId));
     }
 
     public class WriteContentRequest

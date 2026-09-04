@@ -562,12 +562,14 @@ public class DocumentStoreOpenApiController : ControllerBase
 
     /// <summary>把幂等键压成确定性文档 id（32 位十六进制，与随机 id 同形）。没给幂等键就返回 null。</summary>
     internal static string? DeterministicId(string kind, string? idempotencyKey)
-        => idempotencyKey == null
-            ? null
-            : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-                System.Text.Encoding.UTF8.GetBytes($"mcp-{kind}:{idempotencyKey}"))).ToLowerInvariant()[..32];
+        => McpIdempotency.Fingerprint($"mcp-{kind}", idempotencyKey);
 
-    /// <summary>幂等键带上密钥 id，避免两把密钥用了同一个 clientRequestId 互相吞掉对方的写入。</summary>
+    /// <summary>
+    /// 幂等键带上密钥 id（避免两把密钥用了同一个 clientRequestId 互相吞掉对方的写入），
+    /// 并且**在这里就压成定长指纹**：下游除了算确定性 id，还会把它写进条目的
+    /// `Metadata["mcpRequestId"]`，那是一条直接把调用方原文落进 Mongo 的路
+    /// —— 与视觉创作那条 `IdempotencyKey` 是同一族缺陷，Codex 只报了后者。
+    /// </summary>
     private string? BuildIdempotencyKey(string? clientRequestId)
-        => McpIdempotency.ScopedByKey(User, clientRequestId);
+        => McpIdempotency.Fingerprint("mcp-kb-req", McpIdempotency.ScopedByKey(User, clientRequestId));
 }

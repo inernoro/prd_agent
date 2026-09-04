@@ -254,8 +254,10 @@ public class VisualOpenApiController : ControllerBase
 
     private string? BuildIdempotencyKey(string? clientRequestId)
     {
-        var scoped = McpIdempotency.ScopedByKey(User, clientRequestId);
+        // 先压成定长指纹再落库：ImageGenRun.IdempotencyKey 带唯一索引、还要当查询键，
+        // 而 clientRequestId 是调用方给的无界字符串 —— 原样存等于让它决定文档多大。
+        var digest = McpIdempotency.Fingerprint("mcp-visual", McpIdempotency.ScopedByKey(User, clientRequestId));
         // 与 ImageGenController 一致：幂等键带部署作用域，防前端确定性键跨分支撞唯一索引
-        return scoped == null ? null : DeploymentScope.ScopeIdempotencyKey($"mcp:{scoped}");
+        return digest == null ? null : DeploymentScope.ScopeIdempotencyKey($"mcp:{digest}");
     }
 }

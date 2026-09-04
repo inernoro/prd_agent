@@ -173,3 +173,9 @@
 | fix | prd-api | 网页托管的幂等键压成定长指纹再进库：去掉截断后它成了唯一把调用方原文存进 Mongo 并当查询键的一路，30MB body 能造出同样大的文档 |
 | fix | prd-api | 直连闸门排到自动模型校验之前（Order = -2001）：body 传坏的 sk-ak 请求原来会被 400 短路，既不过每分钟窗口也不进调用记录 |
 | test | prd-api | 补三条守卫：绝对地址助手对 Linux file:// 那种输入的行为、SourceRef 必须是定长指纹、闸门顺序必须小于 -2000 |
+| fix | prd-api | 视觉创作与知识库的幂等键也压成定长指纹再落库：前者原样进带唯一索引的 ImageGenRun.IdempotencyKey、后者原样进条目 Metadata["mcpRequestId"]（写完从没被读过），clientRequestId 无界，一个超长键就能撑大甚至顶破文档 |
+| refactor | prd-api | 四个开放层的 SHA-256 收敛到 McpIdempotency.Fingerprint 一处：原本网页托管内联、知识库 DeterministicId、文学 Sha256Hex 各写一份，视觉创作一份都没有——判据分裂之后漏掉的那个兄弟 |
+| fix | skill | 验收 harness 的主题探测改为只认不透明底色：body 常是 rgba(0,0,0,0)，只看 rgb 三个 0 会把浅色页记成 dark，双主题证据比不量还错 |
+| test | prd-api | 幂等守卫加两条：指纹定长且长键互不坍缩（行为）、ScopedByKey 的结果必须当场被 Fingerprint 包住（结构，视觉那一路原来正好违反） |
+| test | scripts | 新增 visual-harness-theme-probe.test.mjs：把 harness 里的判定函数取出来真跑（透明/半透明/不透明各一档），不是断言几行字面存在 |
+| ci | ci | harness.mjs 登记进 release-script-test 的 path filter：它是 visual-harness-*.test.mjs 的被测文件却一直没登记，只改它的 PR 完全跳过这道闸（形状 7） |
