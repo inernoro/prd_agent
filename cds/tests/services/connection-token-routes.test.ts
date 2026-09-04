@@ -33,6 +33,25 @@ describe('连接凭据的路由白名单', () => {
       expect(connectionTokenRequiredScope('GET', '/api/reports/acc-prd-agent-202608261200/raw')).toBe('report:read');
       expect(connectionTokenRequiredScope('GET', '/api/reports/a.b-c_d/raw')).toBe('report:read');
     });
+
+    it('只按真实 MAP 调用所需范围开放 Agent 目录与会话链路', () => {
+      const project = 'prd-agent';
+      const session = 'cds-agent-123';
+      expect(connectionTokenRequiredScope('GET', `/api/projects/${project}/agent-runtime-providers`))
+        .toBe('instance:read');
+      expect(connectionTokenRequiredScope('POST', `/api/projects/${project}/agent-sessions`))
+        .toBe('shared-service:deploy');
+      expect(connectionTokenRequiredScope('POST', `/api/projects/${project}/agent-sessions/${session}/messages`))
+        .toBe('deployment:stream');
+      expect(connectionTokenRequiredScope('GET', `/api/projects/${project}/agent-sessions/${session}/stream`))
+        .toBe('deployment:stream');
+      expect(connectionTokenRequiredScope('POST', `/api/projects/${project}/agent-sessions/${session}/tool-approvals/a-1`))
+        .toBe('deployment:stream');
+      expect(connectionTokenRequiredScope('POST', `/api/projects/${project}/agent-sessions/${session}/stop`))
+        .toBe('shared-service:deploy');
+      expect(connectionTokenRequiredScope('GET', `/api/projects/${project}/agent-sessions/${session}/logs`))
+        .toBe('instance:read');
+    });
   });
 
   describe('不该开的', () => {
@@ -68,9 +87,31 @@ describe('连接凭据的路由白名单', () => {
         '/api/self-update',
         '/api/factory-reset',
         '/api/cds-system/connections',
+        '/api/projects/p1/files',
+        '/api/projects/p1/agent-runtime-capacity',
+        '/api/projects/p1/agent-requests',
       ]) {
         expect(connectionTokenRequiredScope('GET', path), path).toBeNull();
         expect(connectionTokenRequiredScope('POST', path), path).toBeNull();
+      }
+    });
+
+    it('Agent 白名单不接受错方法、多余层级或未被 MAP 使用的旁路', () => {
+      const base = '/api/projects/p1/agent-sessions/s1';
+      for (const [method, path] of [
+        ['POST', '/api/projects/p1/agent-runtime-providers'],
+        ['GET', '/api/projects/p1/agent-sessions'],
+        ['GET', base],
+        ['GET', `${base}/messages`],
+        ['POST', `${base}/stream`],
+        ['GET', `${base}/tool-approvals/a1`],
+        ['POST', `${base}/logs`],
+        ['DELETE', `${base}/stop`],
+        ['GET', `${base}/stream/extra`],
+        ['POST', `${base}/tool-approvals/a1/extra`],
+        ['POST', '/api/projects/p1/agent-sessions/s1/restart'],
+      ]) {
+        expect(connectionTokenRequiredScope(method, path), `${method} ${path}`).toBeNull();
       }
     });
 
@@ -139,6 +180,13 @@ describe('范围要发得出来，也要跟授权页说的一致', () => {
     ['GET', '/api/reports'],
     ['GET', '/api/reports/rep-1/raw'],
     ['POST', '/api/bridge/command/b1'],
+    ['GET', '/api/projects/p1/agent-runtime-providers'],
+    ['POST', '/api/projects/p1/agent-sessions'],
+    ['POST', '/api/projects/p1/agent-sessions/s1/messages'],
+    ['GET', '/api/projects/p1/agent-sessions/s1/stream'],
+    ['POST', '/api/projects/p1/agent-sessions/s1/tool-approvals/a1'],
+    ['POST', '/api/projects/p1/agent-sessions/s1/stop'],
+    ['GET', '/api/projects/p1/agent-sessions/s1/logs'],
   ];
 
   it('表里要求的每个范围，默认授权都发得出来', () => {

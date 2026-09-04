@@ -100,10 +100,52 @@ describe('instance:read 的行为一个字都没变', () => {
     expect(connectionTokenAllows(scopes, 'GET', '/api/bridge/state/br-1')).toBe(true);
   });
 
+  it('只增加 MAP 所需的 Agent 只读目录与会话日志，不开放项目管理面', () => {
+    expect(connectionTokenAllows(scopes, 'GET', '/api/projects/p1/agent-runtime-providers')).toBe(true);
+    expect(connectionTokenAllows(scopes, 'GET', '/api/projects/p1/agent-sessions/s1/logs')).toBe(true);
+    expect(connectionTokenAllows(scopes, 'GET', '/api/projects')).toBe(false);
+    expect(connectionTokenAllows(scopes, 'POST', '/api/projects/p1/files')).toBe(false);
+    expect(connectionTokenAllows(scopes, 'GET', '/api/projects/p1/agent-requests')).toBe(false);
+  });
+
   it('instance:read 不顺带打开验收报告', () => {
     // 反过来也要成立：不能因为「都是读」就让老 scope 白捡新权限。
     expect(connectionTokenAllows(scopes, 'GET', '/api/reports')).toBe(false);
     expect(connectionTokenAllows(scopes, 'GET', '/api/reports/acc-1/raw')).toBe(false);
+  });
+});
+
+describe('Agent 会话调用按现有三个范围严格分权', () => {
+  it('资源创建与停止只认 shared-service:deploy', () => {
+    const scopes = ['shared-service:deploy'];
+    expect(connectionTokenAllows(scopes, 'POST', '/api/projects/p1/agent-sessions')).toBe(true);
+    expect(connectionTokenAllows(scopes, 'POST', '/api/projects/p1/agent-sessions/s1/stop')).toBe(true);
+    expect(connectionTokenAllows(scopes, 'POST', '/api/projects/p1/agent-sessions/s1/messages')).toBe(false);
+    expect(connectionTokenAllows(scopes, 'GET', '/api/projects/p1/agent-runtime-providers')).toBe(false);
+  });
+
+  it('执行交互只认 deployment:stream', () => {
+    const scopes = ['deployment:stream'];
+    expect(connectionTokenAllows(scopes, 'POST', '/api/projects/p1/agent-sessions/s1/messages')).toBe(true);
+    expect(connectionTokenAllows(scopes, 'GET', '/api/projects/p1/agent-sessions/s1/stream')).toBe(true);
+    expect(connectionTokenAllows(scopes, 'POST', '/api/projects/p1/agent-sessions/s1/tool-approvals/a1')).toBe(true);
+    expect(connectionTokenAllows(scopes, 'POST', '/api/projects/p1/agent-sessions')).toBe(false);
+    expect(connectionTokenAllows(scopes, 'POST', '/api/projects/p1/agent-sessions/s1/stop')).toBe(false);
+  });
+
+  it('相似路径、错方法和管理端点不能搭便车', () => {
+    const scopes = DEFAULT_SCOPES;
+    for (const [method, path] of [
+      ['GET', '/api/projects/p1/agent-sessions'],
+      ['GET', '/api/projects/p1/agent-sessions/s1'],
+      ['POST', '/api/projects/p1/agent-runtime-providers'],
+      ['POST', '/api/projects/p1/files'],
+      ['GET', '/api/projects/p1/agent-requests'],
+      ['POST', '/api/projects/p1/agent-sessions/s1/restart'],
+      ['GET', '/api/projects/p1/agent-sessions/s1/stream/extra'],
+    ]) {
+      expect(connectionTokenAllows(scopes, method, path), `${method} ${path}`).toBe(false);
+    }
   });
 });
 
