@@ -53,6 +53,7 @@ export function ConnectAgentDialog({
   const [visible, setVisible] = useState<McpVisibleToolsDto | null>(null);
   const [checking, setChecking] = useState(false);
   const [checkTimedOut, setCheckTimedOut] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
   // 留着密钥 id 才能重试自检。明文不能重来，自检可以。
   const [issuedKeyId, setIssuedKeyId] = useState<string | null>(null);
   const [configTab, setConfigTab] = useState<'claude-code' | 'claude-desktop' | 'codex'>('claude-code');
@@ -76,6 +77,7 @@ export function ConnectAgentDialog({
     setVisible(null);
     setChecking(false);
     setCheckTimedOut(false);
+    setCheckError(null);
     setIssuedKeyId(null);
     // 关闭/重置即作废在途自检：它的回应回来时号已经对不上，不会再往界面上写
     checkGenRef.current += 1;
@@ -90,10 +92,14 @@ export function ConnectAgentDialog({
     const gen = ++checkGenRef.current;
     setChecking(true);
     setCheckTimedOut(false);
+    setCheckError(null);
     const check = await withTimeout(getMcpVisibleTools(keyId), SelfCheckTimeoutMs);
     if (gen !== checkGenRef.current) return;   // 号过期：期间关过弹窗或又发了一把钥匙
     if (check === null) setCheckTimedOut(true);
     else if (check.success && check.data) setVisible(check.data);
+    // 超时之外的失败（401 / 500 / 网络断）原来什么都不设：转圈直接消失，
+    // 既没有结果也没有说法，更没有重试 —— 而这把钥匙的明文只出现这一次。
+    else setCheckError(check.error?.message || '自检没能完成，钥匙已经发出来了，可以先复制保存。');
     setChecking(false);
   }, []);
 
@@ -417,7 +423,7 @@ export function ConnectAgentDialog({
                 </div>
               )}
 
-              {checkTimedOut && (
+              {(checkTimedOut || checkError) && (
                 <div
                   className="rounded-[12px] px-3.5 py-3 text-[12px] leading-relaxed"
                   style={{
@@ -427,8 +433,10 @@ export function ConnectAgentDialog({
                   }}
                 >
                   <div>
-                    授权自检这次没跑完（超过 15 秒没有回应）。这不影响上面那把钥匙 ——
-                    它已经生效，复制走就能用。自检只是替你先核一遍授权对不对。
+                    {checkTimedOut
+                      ? '授权自检这次没跑完（超过 15 秒没有回应）。'
+                      : `授权自检没能完成：${checkError}`}
+                    这不影响上面那把钥匙 —— 它已经生效，复制走就能用。自检只是替你先核一遍授权对不对。
                   </div>
                   {issuedKeyId && (
                     <button
@@ -589,13 +597,24 @@ function StepBar({ step }: { step: Step }) {
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
   return (
     <button
       type="button"
-      onClick={() => {
-        void navigator.clipboard?.writeText(text);
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1600);
+      onClick={async () => {
+        // 必须等它真的写进去再报「已复制」。剪贴板 API 在非安全来源、无权限或被浏览器
+        // 拒绝时会直接不存在或 reject —— 而这里复制的是**只显示一次**的密钥明文，
+        // 报一句假的「已复制」，用户就会安心关掉弹窗，然后手里什么都没有。
+        setFailed(false);
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1600);
+        } catch {
+          setFailed(true);
+          window.setTimeout(() => setFailed(false), 3200);
+        }
       }}
       className="flex h-8 shrink-0 items-center gap-1.5 rounded-[9px] px-2.5 text-[11.5px] font-medium"
       style={{
@@ -605,7 +624,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       }}
     >
       {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
-      {copied ? '已复制' : label}
+      {copied ? '已复制' : failed ? '复制失败，请手动选中' : label}
     </button>
   );
 }

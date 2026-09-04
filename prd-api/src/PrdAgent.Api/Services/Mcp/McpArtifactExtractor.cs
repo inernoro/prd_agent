@@ -113,9 +113,18 @@ public static class McpArtifactExtractor
                 if (!string.IsNullOrWhiteSpace(top)) return Trim(top);
             }
         }
-        catch { /* 不是 JSON 就退回原文截断 */ }
-        return Trim(responseBody);
+        catch { /* 不是 JSON：见下面为什么不退回原文 */ }
+
+        // 认不出结构化的 message 时**不回原文**。这段字符串会原样存进 McpCallLog.ErrorMessage，
+        // 并在接入台上作为「失败原因」显示给普通用户 —— 而认不出结构的那种响应，恰恰最可能是
+        // 代理页、框架的开发者错误页或异常堆栈，里面带着内部主机名与调用栈。
+        // 原文只留在服务端日志里（调用方自己那一侧也拿得到真实响应），面板上给一句稳定的、
+        // 能照着做下一步的说明。
+        return UnrecognizedFailure;
     }
+
+    /// <summary>认不出结构时给用户看的固定说法。原始响应体只进服务端日志，不进面板。</summary>
+    internal const string UnrecognizedFailure = "下游返回了无法识别的错误，详细内容见服务端日志。请稍后重试；一直不行就把调用时间告诉管理员。";
 
     /// <summary>在 data 的数组字段里找第一个带 url 的元素（生图 images[]）。只下探一层，不做深搜，且只在已认出生图任务时调用。</summary>
     private static string? ReadFirstUrlInArrays(JsonObject data)

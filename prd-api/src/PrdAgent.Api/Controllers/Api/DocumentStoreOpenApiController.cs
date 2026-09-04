@@ -203,6 +203,9 @@ public class DocumentStoreOpenApiController : ControllerBase
             contentType = entry.ContentType,
             fileUrl,
             hasContent = !string.IsNullOrEmpty(content),
+            // 版本令牌：覆盖正文时把它原样传回 expectedUpdatedAt，就能挡住
+            // 「我读之后有人改过」这种覆盖。不回这个字段的话，那道条件写入无从谈起。
+            updatedAt = entry.UpdatedAt.ToString("O"),
         }));
     }
 
@@ -451,6 +454,37 @@ public class DocumentStoreOpenApiController : ControllerBase
     public class UpdateEntryContentRequest
     {
         public string? Content { get; set; }
+
+        /// <summary>
+        /// 上次读到这篇文档时它的 `updatedAt`（`knowledge_base_read_entry` 会回）。
+        /// 传了就按它做条件写入：期间被别人改过就 409，不覆盖。
+        /// </summary>
+        public string? ExpectedUpdatedAt { get; set; }
+    }
+
+    /// <summary>调用方给的版本令牌与库里那份的关系。</summary>
+    internal enum RevisionCheck { NotProvided, Match, Mismatch, Unparsable }
+
+    /// <summary>
+    /// 比对调用方给的版本令牌。
+    ///
+    /// 为什么必须由**调用方**给：原先这里传的是刚刚重新读出来的那个 `UpdatedAt`，
+    /// 条件永远成立 —— 那道「乐观并发」只挡得住这一行代码和下一行代码之间的那点缝隙，
+    /// 挡不住真正的场景：智能体读到 T0、用户在 T1 改了、智能体在 T2 覆盖。
+    /// 而 409 的文案写的是「在**你读到它**之后被别人改过」，那个「你」是调用方，不是这段代码。
+    ///
+    /// 毫秒级比对：Mongo 存的是毫秒精度，往返一次 ISO-8601 之后不该因为 tick 尾数判成冲突。
+    /// </summary>
+    internal static RevisionCheck CheckRevision(string? expected, DateTime actual)
+    {
+        if (string.IsNullOrWhiteSpace(expected)) return RevisionCheck.NotProvided;
+        if (!DateTime.TryParse(expected, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind
+                | System.Globalization.DateTimeStyles.AdjustToUniversal, out var parsed))
+            return RevisionCheck.Unparsable;
+        return Math.Abs((parsed.ToUniversalTime() - actual.ToUniversalTime()).TotalMilliseconds) < 1
+            ? RevisionCheck.Match
+            : RevisionCheck.Mismatch;
     }
 
     /// <summary>覆盖某篇文档的正文（会留一版历史，可在界面里回滚）。</summary>
@@ -470,17 +504,27 @@ public class DocumentStoreOpenApiController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"正文超过 {MaxContentChars} 字上限，请拆成多篇或先精简"));
 
-        // 两件事都是接现成的机制，不是新造：写入服务本来就支持乐观并发与「正文已提交但派生失败」，
-        // 这里此前既没传条件、也没看返回值 —— 建了一半的线。
-        //
-        // 1) expectedUpdatedAt：两个智能体（或同一个智能体的两次重试）同时覆盖同一篇时，
-        //    没有条件的话两次各写各的，最后正文、摘要、双链、版本快照可能来自不同的请求。
-        // 2) derivedStateMetadataKey：不传这个键时，派生步骤（重锚评论 / 重算双链 / 版本快照）
-        //    抛出的异常会一路上抛成 500 —— 而正文**早就提交了**。网关据此退还写入额度，
-        //    智能体则被鼓励去重试一件已经生效的事。传了键，写入服务把它转成 DerivedFailed
-        //    并在条目上留一个 failed 标记，这里就能如实回「正文写进去了，派生没刷成」。
+        // 版本令牌由**调用方**给。原先传的是刚重新读出来的那个 UpdatedAt，条件永远成立：
+        // 只挡得住这一行与下一行之间的缝隙，挡不住「智能体 T0 读、用户 T1 改、智能体 T2 覆盖」——
+        // 而那正是 409 文案里承诺挡住的那一种，也是真会丢用户改动的那一种。
+        switch (CheckRevision(req?.ExpectedUpdatedAt, entry.UpdatedAt))
+        {
+            case RevisionCheck.Unparsable:
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "expectedUpdatedAt 认不出来。把 knowledge_base_read_entry 回的 updatedAt 原样传回来即可。"));
+            case RevisionCheck.Mismatch:
+                return Conflict(ApiResponse<object>.Fail("ENTRY_CHANGED_SINCE_READ",
+                    "这篇文档在你读到它之后被改过，本次覆盖没有执行。先重新读一遍正文，再决定要不要覆盖。"));
+        }
+
+        // derivedStateMetadataKey：不传这个键时，派生步骤（重锚评论 / 重算双链 / 版本快照）
+        // 抛出的异常会一路上抛成 500 —— 而正文**早就提交了**。网关据此退还写入额度，
+        // 智能体则被鼓励去重试一件已经生效的事。传了键，写入服务把它转成 DerivedFailed
+        // 并在条目上留一个 failed 标记，这里就能如实回「正文写进去了，派生没刷成」。
         var write = await _entryContentWriter.WriteAsync(entry, store!, content, userId, displayName,
             DocumentVersionSource.Edit, contentTypeOverride: entry.ContentType,
+            // 仍然传：它挡的是「读出来之后、写下去之前」这段窗口里的另一次写入（重试撞在一起）。
+            // 与上面那道调用方令牌是两件事，缺哪一件都会丢改动。
             expectedUpdatedAt: entry.UpdatedAt,
             derivedStateMetadataKey: McpDerivedStateKey);
 
@@ -488,7 +532,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             // 与本文件里另一处 409 同风格用字面量：ErrorCodes 里没有通用的 CONFLICT，
             // 而给它新添一个通用码会牵动全站的错误码语义，不值当。
             return Conflict(ApiResponse<object>.Fail("ENTRY_CHANGED_SINCE_READ",
-                "这篇文档在你读到它之后被别人改过，本次覆盖没有执行。先重新读一遍正文，再决定要不要覆盖。"));
+                "这篇文档在你准备覆盖的这段时间里被另一次写入改过，本次覆盖没有执行。先重新读一遍正文，再决定要不要覆盖。"));
 
         return Ok(ApiResponse<object>.Ok(new
         {

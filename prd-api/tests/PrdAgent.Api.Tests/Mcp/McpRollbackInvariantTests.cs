@@ -90,4 +90,32 @@ public class McpEntryIdempotencyScopeTests
             countedIn: false, DocumentStoreOpenApiController.RollbackOutcome.Removed)
             .ShouldBeFalse();
     }
+
+    [Fact]
+    public void 版本令牌必须由调用方给_不能拿刚读出来的那个当条件()
+    {
+        // 原先传给写入服务的 expectedUpdatedAt 是**刚刚重新读出来的**那个 UpdatedAt，
+        // 条件永远成立 —— 那道「乐观并发」只挡得住相邻两行代码之间的缝隙，挡不住真正会
+        // 丢用户改动的那一种：智能体 T0 读到、用户 T1 改了、智能体 T2 覆盖。
+        // 而 409 的文案写的是「在**你读到它**之后被别人改过」，那个「你」是调用方。
+        var stored = new DateTime(2026, 9, 4, 10, 0, 0, 123, DateTimeKind.Utc);
+
+        DocumentStoreOpenApiController.CheckRevision(null, stored)
+            .ShouldBe(DocumentStoreOpenApiController.RevisionCheck.NotProvided);
+        DocumentStoreOpenApiController.CheckRevision("   ", stored)
+            .ShouldBe(DocumentStoreOpenApiController.RevisionCheck.NotProvided);
+
+        // 读端点回的就是 "O" 格式，原样传回来必须算匹配
+        DocumentStoreOpenApiController.CheckRevision(stored.ToString("O"), stored)
+            .ShouldBe(DocumentStoreOpenApiController.RevisionCheck.Match);
+
+        // 用户在中间改过一次 —— 这才是要挡住的那一种
+        DocumentStoreOpenApiController.CheckRevision(
+            stored.AddSeconds(-30).ToString("O"), stored)
+            .ShouldBe(DocumentStoreOpenApiController.RevisionCheck.Mismatch);
+
+        // 认不出来的是入参错误，不是冲突：回 400 让调用方改，而不是让它以为有人抢改
+        DocumentStoreOpenApiController.CheckRevision("上周三", stored)
+            .ShouldBe(DocumentStoreOpenApiController.RevisionCheck.Unparsable);
+    }
 }

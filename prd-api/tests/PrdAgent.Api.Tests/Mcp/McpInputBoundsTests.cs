@@ -54,6 +54,8 @@ public class McpInputBoundsTests
         ["CreateEntryRequest.ClientRequestId"] = Bound.Hashed,
 
         ["UpdateEntryContentRequest.Content"] = Bound.OwnContentCap,
+        // 版本令牌：要能被解析成时间戳才生效，解析不了直接 400
+        ["UpdateEntryContentRequest.ExpectedUpdatedAt"] = Bound.FiniteShape,
 
         ["CreateWorkspaceRequest.Title"] = Bound.Metadata,
         ["CreateWorkspaceRequest.Content"] = Bound.OwnContentCap,

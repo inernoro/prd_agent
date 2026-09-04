@@ -384,6 +384,11 @@ public class McpGatewayController : ControllerBase
         {
             await ReleaseReservationAsync(log.KeyId, verdict, ct);
             log.ErrorMessage = McpArtifactExtractor.ExtractErrorMessage(respBody);
+            // 原始响应体只留在服务端日志里。面板上那条 ErrorMessage 是给普通用户看的，
+            // 而认不出结构的响应往往是代理页或框架错误页，带着内部主机名与调用栈。
+            if (log.ErrorMessage == McpArtifactExtractor.UnrecognizedFailure)
+                _logger.LogWarning("[mcp] 回环失败且响应体认不出结构 tool={Tool} status={Status} body={Body}",
+                    log.ToolName, status, respBody);
         }
         else if (McpArtifactExtractor.IsDeduplicated(respBody))
         {

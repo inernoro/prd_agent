@@ -207,7 +207,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "knowledge_base_read_entry",
-            Description = "读取某个文档条目的完整正文内容。先用 knowledge_base_list_entries 拿 entryId。",
+            Description = "读取某个文档条目的完整正文内容。先用 knowledge_base_list_entries 拿 entryId。返回里的 updatedAt 是版本令牌：要覆盖这篇文档时把它原样传给 map_kb_update_entry 的 expectedUpdatedAt。",
             RequiredScope = ScopeDocStoreRead,
             Method = "GET",
             PathTemplate = "/api/open/document-store/entries/{entryId}/content",
@@ -343,7 +343,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_kb_update_entry",
-            Description = "覆盖某篇文档的正文（会留一版历史，用户可在界面回滚）。entryId 来自 knowledge_base_list_entries。",
+            Description = "覆盖某篇文档的正文（会留一版历史，用户可在界面回滚）。entryId 来自 knowledge_base_list_entries。**先读再写**：把 knowledge_base_read_entry 回的 updatedAt 原样传给 expectedUpdatedAt，期间被别人改过就会 409 而不是把对方的改动盖掉；不传这个参数就没有这层保护。",
             RequiredScope = ScopeDocStoreWrite,
             Method = "PUT",
             PathTemplate = "/api/open/document-store/entries/{entryId}/content",
@@ -351,6 +351,7 @@ public static class McpBuiltinTools
             {
                 new() { Name = "entryId", In = "path", Required = true, Description = "文档条目 id" },
                 new() { Name = "content", In = "body", Required = true, Description = "新的完整正文（整篇覆盖，不是追加）" },
+                new() { Name = "expectedUpdatedAt", In = "body", Description = "上次读到这篇文档时它的 updatedAt。传了才有「别人改过就不覆盖」这层保护。" },
             },
         },
 
