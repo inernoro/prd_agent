@@ -471,6 +471,9 @@ describe('Remote hosts project instances route', () => {
       },
     };
     const workspaceRuntime = new AgentWorkspaceSessionRuntime(shell, { capabilityCacheMs: 0 });
+    // Provider 目录现在只读非阻塞快照；先完成一次探针，才能断言缺镜像的具体原因，
+    // 否则首个请求按设计只会得到 fail-closed 的“正在验证”。
+    await workspaceRuntime.capability(true);
     await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime });
     const { projectId, longToken } = authorizeSharedServiceProject();
 

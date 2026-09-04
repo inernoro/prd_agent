@@ -3,12 +3,44 @@ using System.Text;
 using System.Text.Json;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using Xunit;
 
 namespace PrdAgent.Api.Tests;
 
 public sealed class DesignArtifactWorkspaceContractTests
 {
+    [Fact]
+    public async Task WorkspaceMetadataRoundTripsThroughRegisteredAssetStoragePath()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"design-workspace-assets-{Guid.NewGuid():N}");
+        try
+        {
+            IAssetStorage storage = new LocalAssetStorage(root);
+            var payload = Encoding.UTF8.GetBytes("{\"schemaVersion\":\"map-design-workspace-v1\"}");
+
+            var stored = await DesignArtifactWorkspaceBroker.SaveWorkspaceMetadataAsync(
+                storage,
+                payload,
+                "run-workspace-1.json",
+                CancellationToken.None);
+
+            Assert.Equal(AppDomainPaths.DomainWebHosting, AppDomainPaths.NormDomain(AppDomainPaths.DomainWebHosting));
+            Assert.Equal(AppDomainPaths.TypeMeta, AppDomainPaths.NormType(AppDomainPaths.TypeMeta));
+            Assert.NotNull(stored.Key);
+            Assert.StartsWith(
+                $"{AppDomainPaths.DomainWebHosting}/{AppDomainPaths.TypeMeta}/",
+                stored.Key,
+                StringComparison.Ordinal);
+            Assert.Equal(payload, await storage.TryDownloadBytesAsync(stored.Key!, CancellationToken.None));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public void InputPackageMaterializesKnowledgeAndCurrentPageAsFiles()
     {

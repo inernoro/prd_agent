@@ -84,6 +84,8 @@ export interface AgentWorkspaceSessionRuntimeOptions {
   fetchImpl?: typeof fetch;
   pollIntervalMs?: number;
   capabilityCacheMs?: number;
+  capabilityNegativeCacheMs?: number;
+  capabilityMaxStaleMs?: number;
   containerUid?: number;
   containerGid?: number;
   autoPullImage?: boolean;
@@ -93,6 +95,17 @@ export interface AgentWorkspaceRuntimeCapability {
   available: boolean;
   resourcePolicyEnforcedPerSession: boolean;
   reason: string | null;
+}
+
+interface CapabilitySnapshot {
+  value: AgentWorkspaceRuntimeCapability;
+  freshUntil: number;
+  staleUntil: number;
+}
+
+interface CapabilityProbeResult {
+  value: AgentWorkspaceRuntimeCapability;
+  imageId: string | null;
 }
 
 export interface AgentWorkspaceCreateResult {
@@ -502,11 +515,17 @@ export class AgentWorkspaceSessionRuntime {
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
   private readonly capabilityCacheMs: number;
+  private readonly capabilityNegativeCacheMs: number;
+  private readonly capabilityMaxStaleMs: number;
   private readonly containerUid: number;
   private readonly containerGid: number;
   private readonly autoPullImage: boolean;
   private readonly handles = new Map<string, RuntimeHandle>();
-  private capabilityCache: { expiresAt: number; value: AgentWorkspaceRuntimeCapability } | null = null;
+  private capabilityCache: CapabilitySnapshot | null = null;
+  private capabilityRefresh: Promise<CapabilityProbeResult> | null = null;
+  private capabilityRetryAfter = 0;
+  private capabilityRefreshError: string | null = null;
+  private readonly agentCliValidationByImageId = new Map<string, boolean>();
   private imagePreparation: Promise<void> | null = null;
   private imagePreparationAttemptedAt = 0;
   private imagePreparationError: string | null = null;
@@ -530,7 +549,12 @@ export class AgentWorkspaceSessionRuntime {
     this.daemonPort = options.daemonPort || 7456;
     this.fetchImpl = options.fetchImpl || fetch;
     this.pollIntervalMs = Math.max(5, options.pollIntervalMs || 750);
-    this.capabilityCacheMs = Math.max(0, options.capabilityCacheMs ?? 5000);
+    this.capabilityCacheMs = Math.max(0, options.capabilityCacheMs ?? 30_000);
+    this.capabilityNegativeCacheMs = Math.max(0, options.capabilityNegativeCacheMs ?? 5_000);
+    this.capabilityMaxStaleMs = Math.max(
+      this.capabilityCacheMs,
+      options.capabilityMaxStaleMs ?? 120_000,
+    );
     this.containerUid = options.containerUid ?? 1001;
     this.containerGid = options.containerGid ?? 1001;
     this.autoPullImage = options.autoPullImage ?? process.env.CDS_OPEN_DESIGN_AUTO_PULL !== '0';
@@ -549,6 +573,7 @@ export class AgentWorkspaceSessionRuntime {
     const preparation = (async () => {
       await this.recoverOrphans();
       await this.prepareImage();
+      await this.refreshCapability().catch(() => undefined);
     })()
       .then(() => { this.bootstrapError = null; })
       .catch((error) => {
@@ -556,7 +581,6 @@ export class AgentWorkspaceSessionRuntime {
       })
       .finally(() => {
         this.bootstrapPreparation = null;
-        this.capabilityCache = null;
       });
     this.bootstrapPreparation = preparation;
     return preparation;
@@ -663,94 +687,175 @@ export class AgentWorkspaceSessionRuntime {
       })
       .finally(() => {
         this.imagePreparation = null;
-        this.capabilityCache = null;
       });
     this.imagePreparation = preparation;
     return preparation;
   }
 
+  /**
+   * 默认供 Provider 目录读取：只返回内存快照并在后台刷新，绝不等待最长 45 秒的 Docker 冷探针。
+   * force 只供会话创建安全门使用：等待同一个去重刷新，并在探针异常时从严返回不可用。
+   */
   async capability(force = false): Promise<AgentWorkspaceRuntimeCapability> {
     const now = Date.now();
-    if (!force && this.capabilityCache && this.capabilityCache.expiresAt > now) {
-      return this.capabilityCache.value;
-    }
-    let value: AgentWorkspaceRuntimeCapability;
     if (this.bootstrapPreparation) {
-      value = {
+      return {
         available: false,
         resourcePolicyEnforcedPerSession: false,
         reason: 'Agent workspace startup recovery is still running',
       };
-      this.capabilityCache = { expiresAt: now + this.capabilityCacheMs, value };
-      return value;
     }
     if (this.bootstrapAttempted && this.bootstrapError) {
-      value = {
+      return {
         available: false,
         resourcePolicyEnforcedPerSession: false,
         reason: `Agent workspace startup recovery failed: ${this.bootstrapError}`,
       };
-      this.capabilityCache = { expiresAt: now + this.capabilityCacheMs, value };
-      return value;
     }
-    try {
-      const docker = await this.shell.exec("docker version --format '{{.Server.Version}}'", { timeout: 5000 });
-      if (docker.exitCode !== 0 || !docker.stdout.trim()) {
-        value = {
+    if (force) {
+      try {
+        return (await this.refreshCapability()).value;
+      } catch {
+        return this.failedCapabilitySnapshot();
+      }
+    }
+    if (this.capabilityCache && this.capabilityCache.freshUntil > now) {
+      return this.capabilityCache.value;
+    }
+    if (now >= this.capabilityRetryAfter) void this.refreshCapability().catch(() => undefined);
+    if (this.capabilityCache && this.capabilityCache.staleUntil > now) {
+      return this.capabilityCache.value;
+    }
+    return this.pendingCapabilitySnapshot();
+  }
+
+  private refreshCapability(): Promise<CapabilityProbeResult> {
+    if (this.capabilityRefresh) return this.capabilityRefresh;
+    const refresh = this.probeCapability()
+      .then((result) => {
+        const now = Date.now();
+        const freshFor = result.value.available
+          ? this.capabilityCacheMs
+          : this.capabilityNegativeCacheMs;
+        this.capabilityCache = {
+          value: result.value,
+          freshUntil: now + freshFor,
+          staleUntil: now + this.capabilityMaxStaleMs,
+        };
+        this.capabilityRetryAfter = now + freshFor;
+        this.capabilityRefreshError = null;
+        return result;
+      })
+      .catch((error) => {
+        const now = Date.now();
+        this.capabilityRefreshError = error instanceof Error
+          ? error.message
+          : 'Docker capability probe failed';
+        this.capabilityRetryAfter = now + this.capabilityNegativeCacheMs;
+        if (!this.capabilityCache || this.capabilityCache.staleUntil <= now) {
+          this.capabilityCache = {
+            value: this.failedCapabilitySnapshot(),
+            freshUntil: this.capabilityRetryAfter,
+            staleUntil: this.capabilityRetryAfter,
+          };
+        }
+        throw error;
+      })
+      .finally(() => {
+        this.capabilityRefresh = null;
+      });
+    this.capabilityRefresh = refresh;
+    return refresh;
+  }
+
+  private async probeCapability(): Promise<CapabilityProbeResult> {
+    const docker = await this.shell.exec("docker version --format '{{.Server.Version}}'", { timeout: 5000 });
+    if (docker.exitCode !== 0 || !docker.stdout.trim()) {
+      return {
+        imageId: null,
+        value: {
           available: false,
           resourcePolicyEnforcedPerSession: false,
           reason: 'Docker daemon is unavailable; dedicated Agent workspace containers cannot be enforced',
-        };
-      } else {
-        const image = await this.shell.exec(
-          `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
-          { timeout: 10_000 },
-        );
-        if (image.exitCode !== 0 || !image.stdout.trim()) {
-          if (this.autoPullImage) void this.prepareImage();
-          value = {
-            available: false,
-            resourcePolicyEnforcedPerSession: false,
-            reason: !this.autoPullImage
-              ? `OpenDesign image ${this.image} is not installed on this CDS node`
-              : this.imagePreparationError
-                ? `OpenDesign image ${this.image} could not be prepared on this CDS node: ${this.imagePreparationError}`
-                : `OpenDesign image ${this.image} is being prepared on this CDS node`,
-          };
-        } else {
-          const agentCli = await this.shell.exec([
-            'docker run --rm',
-            '--pull never',
-            '--read-only',
-            '--network none',
-            '--security-opt no-new-privileges:true',
-            '--cap-drop ALL',
-            '--pids-limit 64',
-            '--memory 128m',
-            '--cpus 0.25',
-            '--entrypoint /bin/sh',
-            shellQuote(this.image),
-            '-lc',
-            shellQuote('command -v opencode-cli >/dev/null 2>&1 || command -v opencode >/dev/null 2>&1'),
-          ].join(' '), { timeout: 30_000 });
-          value = agentCli.exitCode === 0
-            ? { available: true, resourcePolicyEnforcedPerSession: true, reason: null }
-            : {
-                available: false,
-                resourcePolicyEnforcedPerSession: false,
-                reason: `OpenDesign image ${this.image} does not contain the required OpenCode Agent CLI`,
-              };
-        }
-      }
-    } catch {
-      value = {
-        available: false,
-        resourcePolicyEnforcedPerSession: false,
-        reason: 'Docker capability probe failed; dedicated Agent workspace containers remain disabled',
+        },
       };
     }
-    this.capabilityCache = { expiresAt: now + this.capabilityCacheMs, value };
-    return value;
+
+    const image = await this.shell.exec(
+      `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
+      { timeout: 10_000 },
+    );
+    const imageId = image.exitCode === 0 ? image.stdout.trim() : '';
+    if (!imageId) {
+      if (this.autoPullImage) {
+        void this.prepareImage().then(() => {
+          if (!this.imagePreparationError) void this.refreshCapability().catch(() => undefined);
+        });
+      }
+      return {
+        imageId: null,
+        value: {
+          available: false,
+          resourcePolicyEnforcedPerSession: false,
+          reason: !this.autoPullImage
+            ? `OpenDesign image ${this.image} is not installed on this CDS node`
+            : this.imagePreparationError
+              ? `OpenDesign image ${this.image} could not be prepared on this CDS node: ${this.imagePreparationError}`
+              : `OpenDesign image ${this.image} is being prepared on this CDS node`,
+        },
+      };
+    }
+
+    let cliAvailable = this.agentCliValidationByImageId.get(imageId);
+    if (cliAvailable === undefined) {
+      const agentCli = await this.shell.exec([
+        'docker run --rm',
+        '--pull never',
+        '--read-only',
+        '--network none',
+        '--security-opt no-new-privileges:true',
+        '--cap-drop ALL',
+        '--pids-limit 64',
+        '--memory 128m',
+        '--cpus 0.25',
+        '--entrypoint /bin/sh',
+        shellQuote(this.image),
+        '-lc',
+        shellQuote('command -v opencode-cli >/dev/null 2>&1 || command -v opencode >/dev/null 2>&1'),
+      ].join(' '), { timeout: 30_000 });
+      cliAvailable = agentCli.exitCode === 0;
+      this.agentCliValidationByImageId.clear();
+      this.agentCliValidationByImageId.set(imageId, cliAvailable);
+    }
+
+    return {
+      imageId,
+      value: cliAvailable
+        ? { available: true, resourcePolicyEnforcedPerSession: true, reason: null }
+        : {
+            available: false,
+            resourcePolicyEnforcedPerSession: false,
+            reason: `OpenDesign image ${this.image} does not contain the required OpenCode Agent CLI`,
+          },
+    };
+  }
+
+  private pendingCapabilitySnapshot(): AgentWorkspaceRuntimeCapability {
+    return {
+      available: false,
+      resourcePolicyEnforcedPerSession: false,
+      reason: this.capabilityRefreshError
+        ? 'Docker capability probe failed; dedicated Agent workspace containers remain disabled'
+        : 'OpenDesign capability verification is running on this CDS node',
+    };
+  }
+
+  private failedCapabilitySnapshot(): AgentWorkspaceRuntimeCapability {
+    return {
+      available: false,
+      resourcePolicyEnforcedPerSession: false,
+      reason: 'Docker capability probe failed; dedicated Agent workspace containers remain disabled',
+    };
   }
 
   async create(
@@ -772,7 +877,7 @@ export class AgentWorkspaceSessionRuntime {
         'OpenDesign requires the egress-only network policy',
       );
     }
-    const capability = await this.capability();
+    const capability = await this.capability(true);
     if (!capability.available || !capability.resourcePolicyEnforcedPerSession) {
       throw new AgentWorkspaceRuntimeError('workspace_runtime_unavailable', capability.reason || 'workspace runtime unavailable', true);
     }

@@ -63,6 +63,19 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     private readonly IDataProtector _protector;
     private readonly IConfiguration _configuration;
 
+    internal static Task<StoredAsset> SaveWorkspaceMetadataAsync(
+        IAssetStorage storage,
+        byte[] bytes,
+        string fileName,
+        CancellationToken ct) => storage.SaveAsync(
+            bytes,
+            "application/json",
+            ct,
+            domain: AppDomainPaths.DomainWebHosting,
+            type: AppDomainPaths.TypeMeta,
+            fileName: fileName,
+            extensionHint: ".json");
+
     public DesignArtifactWorkspaceBroker(
         MongoDbContext db,
         IAssetStorage storage,
@@ -88,14 +101,11 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         if (bytes.LongLength > MaxInputBytes)
             throw new InvalidOperationException("页面与知识资料超过远程工作区上限，请减少引用或精简页面后重试");
 
-        var stored = await _storage.SaveAsync(
+        var stored = await SaveWorkspaceMetadataAsync(
+            _storage,
             bytes,
-            "application/json",
-            CancellationToken.None,
-            domain: "design-artifact",
-            type: "workspace-input",
-            fileName: $"{run.Id}.json",
-            extensionHint: ".json");
+            $"{run.Id}.json",
+            CancellationToken.None);
         if (string.IsNullOrWhiteSpace(stored.Key))
             throw new InvalidOperationException("远程工作区输入保存失败，请稍后重试");
 
@@ -174,14 +184,11 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             throw new InvalidOperationException("该工作区已经提交过不同结果，请重新发起任务");
         }
 
-        var stored = await _storage.SaveAsync(
+        var stored = await SaveWorkspaceMetadataAsync(
+            _storage,
             packageBytes,
-            "application/json",
-            CancellationToken.None,
-            domain: "design-artifact",
-            type: "workspace-result",
-            fileName: $"{run.Id}.json",
-            extensionHint: ".json");
+            $"{run.Id}.json",
+            CancellationToken.None);
         if (string.IsNullOrWhiteSpace(stored.Key))
             throw new InvalidOperationException("远程设计结果保存失败，请稍后重试");
 

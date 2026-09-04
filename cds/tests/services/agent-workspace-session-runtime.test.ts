@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   AgentWorkspaceRuntimeError,
@@ -19,6 +19,16 @@ function digest(value: Buffer | string): string {
 
 function result(stdout = '', stderr = '', exitCode = 0): ExecResult {
   return { stdout, stderr, exitCode };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 class RecordingShell implements IShellExecutor {
@@ -81,6 +91,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
   let rootDir = '';
 
   afterEach(() => {
+    vi.useRealTimers();
     if (rootDir) fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
@@ -383,6 +394,151 @@ describe('AgentWorkspaceSessionRuntime', () => {
     })).toThrowError(/cannot contain credentials, query parameters, or fragments/);
   });
 
+  it('returns a fail-closed cold snapshot without waiting for a slow Docker probe', async () => {
+    const dockerVersion = deferred<ExecResult>();
+    let dockerProbeStarted = false;
+    const shell: IShellExecutor = {
+      async exec(command: string): Promise<ExecResult> {
+        if (command.startsWith('docker version')) {
+          dockerProbeStarted = true;
+          return dockerVersion.promise;
+        }
+        if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
+        if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { autoPullImage: false });
+
+    await expect(runtime.capability()).resolves.toEqual({
+      available: false,
+      resourcePolicyEnforcedPerSession: false,
+      reason: 'OpenDesign capability verification is running on this CDS node',
+    });
+    expect(dockerProbeStarted).toBe(true);
+
+    dockerVersion.resolve(result('27.0.0\n'));
+    await expect(runtime.capability(true)).resolves.toEqual({
+      available: true,
+      resourcePolicyEnforcedPerSession: true,
+      reason: null,
+    });
+  });
+
+  it('deduplicates concurrent forced capability refreshes', async () => {
+    const dockerVersion = deferred<ExecResult>();
+    let dockerProbeCount = 0;
+    const shell: IShellExecutor = {
+      async exec(command: string): Promise<ExecResult> {
+        if (command.startsWith('docker version')) {
+          dockerProbeCount += 1;
+          return dockerVersion.promise;
+        }
+        if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
+        if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { autoPullImage: false });
+
+    const probes = [runtime.capability(true), runtime.capability(true), runtime.capability(true)];
+    expect(dockerProbeCount).toBe(1);
+    dockerVersion.resolve(result('27.0.0\n'));
+
+    await expect(Promise.all(probes)).resolves.toEqual([
+      { available: true, resourcePolicyEnforcedPerSession: true, reason: null },
+      { available: true, resourcePolicyEnforcedPerSession: true, reason: null },
+      { available: true, resourcePolicyEnforcedPerSession: true, reason: null },
+    ]);
+    expect(dockerProbeCount).toBe(1);
+  });
+
+  it('serves a last-known-good catalog snapshot only within the bounded stale window', async () => {
+    vi.useFakeTimers();
+    let probeFails = false;
+    const shell: IShellExecutor = {
+      async exec(command: string): Promise<ExecResult> {
+        if (command.startsWith('docker version')) {
+          if (probeFails) throw new Error('daemon request timed out');
+          return result('27.0.0\n');
+        }
+        if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
+        if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      autoPullImage: false,
+      capabilityCacheMs: 100,
+      capabilityNegativeCacheMs: 20,
+      capabilityMaxStaleMs: 300,
+    });
+
+    await expect(runtime.capability(true)).resolves.toMatchObject({ available: true });
+    probeFails = true;
+    vi.advanceTimersByTime(101);
+
+    await expect(runtime.capability()).resolves.toMatchObject({ available: true });
+    await Promise.resolve();
+    await Promise.resolve();
+    await expect(runtime.create('session-stale-capability', {}, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 30,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    })).rejects.toMatchObject({ code: 'workspace_runtime_unavailable' });
+    vi.advanceTimersByTime(200);
+
+    await expect(runtime.capability()).resolves.toEqual({
+      available: false,
+      resourcePolicyEnforcedPerSession: false,
+      reason: 'Docker capability probe failed; dedicated Agent workspace containers remain disabled',
+    });
+  });
+
+  it('reuses CLI validation for the same image id and revalidates a changed image id', async () => {
+    const imageIds = ['sha256:image-a', 'sha256:image-a', 'sha256:image-b', 'sha256:image-b'];
+    let cliProbeCount = 0;
+    const shell: IShellExecutor = {
+      async exec(command: string): Promise<ExecResult> {
+        if (command.startsWith('docker version')) return result('27.0.0\n');
+        if (command.startsWith('docker image inspect')) return result(`${imageIds.shift()}\n`);
+        if (command.includes('--entrypoint /bin/sh')) {
+          cliProbeCount += 1;
+          return cliProbeCount === 1
+            ? result('/usr/local/bin/opencode\n')
+            : result('', 'opencode not found', 1);
+        }
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { autoPullImage: false });
+
+    await expect(runtime.capability(true)).resolves.toMatchObject({ available: true });
+    await expect(runtime.capability(true)).resolves.toMatchObject({ available: true });
+    expect(cliProbeCount).toBe(1);
+    await expect(runtime.capability(true)).resolves.toMatchObject({ available: false });
+    await expect(runtime.capability(true)).resolves.toMatchObject({ available: false });
+    expect(cliProbeCount).toBe(2);
+  });
+
+  it('warms the capability snapshot during bootstrap', async () => {
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { autoPullImage: false });
+
+    await runtime.bootstrap();
+    const callsAfterBootstrap = shell.calls.length;
+
+    await expect(runtime.capability()).resolves.toEqual({
+      available: true,
+      resourcePolicyEnforcedPerSession: true,
+      reason: null,
+    });
+    expect(shell.calls).toHaveLength(callsAfterBootstrap);
+    expect(shell.calls.filter((call) => call.command.includes('--entrypoint /bin/sh'))).toHaveLength(1);
+  });
+
   it('keeps OpenDesign unavailable when the configured image is not installed', async () => {
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
@@ -393,7 +549,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     };
     const runtime = new AgentWorkspaceSessionRuntime(shell, { capabilityCacheMs: 0, autoPullImage: false });
 
-    await expect(runtime.capability()).resolves.toEqual({
+    await expect(runtime.capability(true)).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
       reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 is not installed on this CDS node',
@@ -423,7 +579,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     await runtime.prepareImage();
 
     expect(calls.some((command) => command.startsWith('docker pull '))).toBe(true);
-    await expect(runtime.capability()).resolves.toEqual({
+    await expect(runtime.capability(true)).resolves.toEqual({
       available: true,
       resourcePolicyEnforcedPerSession: true,
       reason: null,
@@ -445,7 +601,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
 
     await runtime.prepareImage();
 
-    await expect(runtime.capability()).resolves.toEqual({
+    await expect(runtime.capability(true)).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
       reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 could not be prepared on this CDS node: runtime image registry authentication failed',
@@ -464,7 +620,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     };
     const runtime = new AgentWorkspaceSessionRuntime(shell, { capabilityCacheMs: 0 });
 
-    await expect(runtime.capability()).resolves.toEqual({
+    await expect(runtime.capability(true)).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
       reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 does not contain the required OpenCode Agent CLI',

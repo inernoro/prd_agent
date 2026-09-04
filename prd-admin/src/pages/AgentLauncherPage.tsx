@@ -77,6 +77,7 @@ import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { WeeklyPosterModal } from '@/components/weekly-poster/WeeklyPosterModal';
 import { getAccent, glassTileStyle } from '@/lib/tileAccent';
+import { withRecentWorkReactKeys } from '@/lib/homeRecentWorkKeys';
 import { isoWeekNumber } from '@/lib/isoWeek';
 import { useHomePulse, formatCompactNumber } from '@/lib/homePulse';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
@@ -846,9 +847,9 @@ export default function AgentLauncherPage() {
                     </p>
                   ) : workItems.length > 0 ? (
                     <div className="home-desk-work-list">
-                      {(workExpanded ? workItems : workItems.slice(0, WORK_PREVIEW_COUNT)).map((item) => (
+                      {withRecentWorkReactKeys(workExpanded ? workItems : workItems.slice(0, WORK_PREVIEW_COUNT)).map(({ item, reactKey }) => (
                         <WorkCard
-                          key={`${item.agentKey}:${item.route}`}
+                          key={reactKey}
                           item={item}
                           onClick={() => openRoute(item.route, {
                             id: item.agentKey,
