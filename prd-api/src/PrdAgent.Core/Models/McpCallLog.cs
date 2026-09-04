@@ -66,7 +66,7 @@ public class McpCallLog
 
     /// <summary>
     /// 这次是幂等命中（同一个 clientRequestId 重试，下游把已存在的东西原样回给它）。
-    /// 命中时不算新的副作用：占的配额要退回去，ImageCount / IsWrite 也归零，
+    /// 命中时不算新的副作用：占的配额要退回去，而动作分类（ImageCount / IsWrite）**照实写** —— 这次要干的确实是写入 / 出图，账本本来就不从这两个字段加，抹掉只会让记录说谎，
     /// 否则一次丢响应的重试会被当成两次真实产出扣两回额度。
     /// </summary>
     public bool Deduplicated { get; set; }

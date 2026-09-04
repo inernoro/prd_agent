@@ -1,7 +1,6 @@
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
 import type {
-  GetMcpCallDetailContract,
   GetMcpConsoleOverviewContract,
   GetMcpVisibleToolsContract,
   ListMcpCallsContract,
@@ -22,9 +21,6 @@ export const listMcpCallsReal: ListMcpCallsContract = async (input) => {
   return await apiRequest(api.mcpConsole.calls(suffix), { method: 'GET' });
 };
 
-export const getMcpCallDetailReal: GetMcpCallDetailContract = async (id) => {
-  return await apiRequest(api.mcpConsole.callDetail(encodeURIComponent(id)), { method: 'GET' });
-};
 
 export const getMcpVisibleToolsReal: GetMcpVisibleToolsContract = async (keyId) => {
   return await apiRequest(api.mcpConsole.visibleTools(encodeURIComponent(keyId)), { method: 'GET' });

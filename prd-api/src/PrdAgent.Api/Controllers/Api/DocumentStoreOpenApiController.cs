@@ -191,7 +191,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             if (att != null)
             {
                 if (string.IsNullOrEmpty(content)) { content = att.ExtractedText; title ??= att.FileName; }
-                fileUrl = string.IsNullOrEmpty(att.Url) ? null : att.Url;
+                fileUrl = string.IsNullOrEmpty(att.Url) ? null : Request.ResolveAbsoluteUrl(att.Url);
             }
         }
         return Ok(ApiResponse<object>.Ok(new

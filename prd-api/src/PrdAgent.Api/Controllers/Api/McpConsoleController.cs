@@ -202,22 +202,6 @@ public class McpConsoleController : ControllerBase
         }));
     }
 
-    /// <summary>单条调用的完整记录（入参摘要、产物、失败原因）。</summary>
-    [HttpGet("calls/{id}")]
-    public async Task<IActionResult> CallDetail(string id, CancellationToken ct)
-    {
-        var userId = this.GetRequiredUserId();
-        // 部署作用域跟列表/概览同一把尺子。只判 OwnerUserId 的话，同一个人拿另一条分支预览
-        // 里的记录 id 打过来照样读得到 —— 共享 Mongo 下这就绕开了列表那边的分支隔离。
-        var log = await _db.McpCallLogs
-            .Find(x => x.Id == id && x.OwnerUserId == userId
-                       && x.DeploymentSlug == DeploymentScope.CurrentDurable)
-            .FirstOrDefaultAsync(ct);
-        if (log == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "记录不存在"));
-        return Ok(ApiResponse<object>.Ok(ToLogDto(log)));
-    }
-
     /// <summary>
     /// 能力自检：这把密钥现在能看到哪些工具。
     ///

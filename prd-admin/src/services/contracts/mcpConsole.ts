@@ -113,6 +113,5 @@ export type ListMcpCallsContract = (input: {
   limit?: number;
 }) => Promise<ApiResponse<{ total: number; skip: number; limit: number; items: McpCallLogDto[] }>>;
 
-export type GetMcpCallDetailContract = (id: string) => Promise<ApiResponse<McpCallLogDto>>;
 
 export type GetMcpVisibleToolsContract = (keyId: string) => Promise<ApiResponse<McpVisibleToolsDto>>;

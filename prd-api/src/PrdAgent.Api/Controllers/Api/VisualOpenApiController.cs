@@ -242,7 +242,7 @@ public class VisualOpenApiController : ControllerBase
             {
                 index = x.ImageIndex,
                 status = x.Status.ToString(),
-                url = x.Url,
+                url = Request.ResolveAbsoluteUrl(x.Url),
                 revisedPrompt = x.RevisedPrompt,
                 errorMessage = x.ErrorMessage,
             }),

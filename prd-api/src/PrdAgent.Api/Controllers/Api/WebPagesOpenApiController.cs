@@ -99,7 +99,7 @@ public class WebPagesOpenApiController : ControllerBase
                 {
                     siteId = existed.Id,
                     title = existed.Title,
-                    url = AbsoluteSiteUrl(existed.SiteUrl),
+                    url = Request.ResolveAbsoluteUrl(existed.SiteUrl),
                     deduplicated = true,
                 }));
         }
@@ -137,7 +137,7 @@ public class WebPagesOpenApiController : ControllerBase
         {
             siteId = site.Id,
             title = site.Title,
-            url = AbsoluteSiteUrl(site.SiteUrl),
+            url = Request.ResolveAbsoluteUrl(site.SiteUrl),
             visibility = site.Visibility,
         }));
     }
@@ -161,7 +161,7 @@ public class WebPagesOpenApiController : ControllerBase
                 siteId = s.Id,
                 title = s.Title,
                 description = s.Description,
-                url = AbsoluteSiteUrl(s.SiteUrl),
+                url = Request.ResolveAbsoluteUrl(s.SiteUrl),
                 folder = s.Folder,
                 tags = s.Tags ?? new List<string>(),
                 createdAt = s.CreatedAt,
@@ -197,7 +197,9 @@ public class WebPagesOpenApiController : ControllerBase
             title: string.IsNullOrWhiteSpace(req?.Title) ? site.Title : req!.Title!.Trim(),
             description: string.IsNullOrWhiteSpace(req?.Description) ? null : req!.Description!.Trim(),
             password: null, expiresInDays: days,
-            ct: ct,
+            // 服务端自己的令牌：这一步已经在改库了，调用方断开时 Mongo 可能已经提交而驱动抛取消，
+            // 用量过滤器会据此把已占的写入额度退回去，重试于是又建/又续一条（server-authority）。
+            ct: CancellationToken.None,
             purpose: "share",
             // 走服务端的复用路径（同用户 + 同站点 + 同访问级别 + 未吊销即复用，并把有效期刷新为本次所选）。
             // forceNew=true 是给「用户在面板上明确点了新建」用的；智能体超时重试可不是那个意思 ——
@@ -221,20 +223,6 @@ public class WebPagesOpenApiController : ControllerBase
             // 报成没副作用就等于让同一个键无限续期而不扣额度。
             deduplicated = reusedUnchanged,
         }));
-    }
-
-    /// <summary>
-    /// 把站点地址补成绝对地址。对象存储走 CDN 时 SiteUrl 本来就是绝对的，原样返回；
-    /// 但 ASSETS_PROVIDER=local（docker-compose.dev.yml 的默认值）时 LocalAssetStorage
-    /// 回的是 /local-assets/... 这种相对路径 —— 远端 MCP 客户端手里没有 MAP 的来源域名，
-    /// 拿到相对路径只会按它自己的域名解析，点开 404。与分享链那条同一个理由。
-    /// </summary>
-    private string? AbsoluteSiteUrl(string? siteUrl)
-    {
-        if (string.IsNullOrWhiteSpace(siteUrl)) return siteUrl;
-        var raw = siteUrl.Trim();
-        if (Uri.TryCreate(raw, UriKind.Absolute, out _)) return raw;
-        return $"{Request.ResolveExternalBaseUrl()}{(raw.StartsWith('/') ? raw : "/" + raw)}";
     }
 
     private string? BuildSourceRef(string? clientRequestId)

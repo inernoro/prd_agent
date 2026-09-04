@@ -67,6 +67,23 @@ public static class RequestOriginExtensions
     /// 只认能解析成 http/https 绝对地址的值：配歪了（写成主机名、写成内网地址）宁可当没配，
     /// 退回下面的头部推断，也不要把一个语法就不对的东西发给用户当连接地址。
     /// </summary>
+    /// <summary>
+    /// 把存储层给的地址补成绝对地址。对象存储走 CDN 时本来就是绝对的，原样返回；
+    /// 但 ASSETS_PROVIDER=local（dev compose 的默认值）时 LocalAssetStorage 回的是
+    /// /local-assets/… 这种相对路径 —— 远端 MCP 客户端手里没有 MAP 的来源域名，
+    /// 拿到相对路径只会按它自己的域名解析，点开 404。
+    ///
+    /// 放在这里而不是某个控制器的私有方法：它第一次落地时就是私有的，于是
+    /// 视觉创作、知识库附件两处兄弟各漏各的（predicate-and-wiring-discipline 形状 3）。
+    /// </summary>
+    public static string? ResolveAbsoluteUrl(this HttpRequest request, string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return url;
+        var raw = url.Trim();
+        if (Uri.TryCreate(raw, UriKind.Absolute, out _)) return raw;
+        return $"{request.ResolveExternalBaseUrl()}{(raw.StartsWith('/') ? raw : "/" + raw)}";
+    }
+
     internal static readonly string[] DeclaredBaseUrlKeys = { "ServerUrl", "CDS_PREVIEW_URL" };
 
     private static string? ResolveDeclaredBaseUrl(HttpRequest request)

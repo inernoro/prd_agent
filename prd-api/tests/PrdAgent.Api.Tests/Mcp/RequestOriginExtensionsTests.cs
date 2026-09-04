@@ -164,4 +164,47 @@ public class RequestOriginExtensionsTests
             .ResolveExternalBaseUrl()
             .ShouldBe("https://real.example.com");
     }
+
+    [Fact]
+    public void 相对地址补成绝对_绝对地址原样返回()
+    {
+        var req = RequestWithDeclared("http", "127.0.0.1:48798", "ServerUrl", "https://map.example.com");
+
+        req.ResolveAbsoluteUrl("/local-assets/a/b.png")
+            .ShouldBe("https://map.example.com/local-assets/a/b.png");
+        req.ResolveAbsoluteUrl("local-assets/a/b.png")
+            .ShouldBe("https://map.example.com/local-assets/a/b.png");
+        req.ResolveAbsoluteUrl("https://cdn.example.com/x.png")
+            .ShouldBe("https://cdn.example.com/x.png");
+        req.ResolveAbsoluteUrl(null).ShouldBeNull();
+        req.ResolveAbsoluteUrl("   ").ShouldBe("   ");
+    }
+
+    [Fact]
+    public void 开放层返回给智能体的存储地址_必须过绝对化()
+    {
+        // 形状 2：这个助手第一次落地时是 WebPages 的私有方法，于是视觉创作与知识库附件
+        // 两处兄弟各漏各的。钉住「三处都在用」，下一个漏的会当场红。
+        foreach (var path in new[]
+                 {
+                     "prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesOpenApiController.cs",
+                     "prd-api/src/PrdAgent.Api/Controllers/Api/VisualOpenApiController.cs",
+                     "prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs",
+                 })
+            McpSourceGuard.StripComments(McpSourceGuard.Read(path))
+                .ShouldContain("ResolveAbsoluteUrl",
+                    customMessage: $"{path} 把存储层的相对地址原样回给了智能体，远端客户端点开是 404");
+    }
+
+    [Fact]
+    public void 分享链写库_不跟调用方的取消令牌走()
+    {
+        // 与建站那一步同族：写已经提交、驱动才报取消时，用量过滤器会把额度退回去，
+        // 重试于是又建/又续一条。这条判据删掉不会红（要让 Mongo 与驱动在同一微秒赛跑）。
+        var slice = McpSourceGuard.Slice(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesOpenApiController.cs"),
+            "CreateShareWithReuseInfoAsync", "purpose: \"share\"");
+        McpSourceGuard.StripComments(slice).ShouldContain("ct: CancellationToken.None",
+            customMessage: "分享链写库又跟着 RequestAborted 走了（server-authority）");
+    }
 }

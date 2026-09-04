@@ -10,7 +10,7 @@
 
 ## 一、状态看板
 
-**最后更新**：2026-09-03 16:05 | **轨道**：第一期实现 | **距离可发布**：代码全部落地、CI 全绿（含 `dotnet test`）、27 轮自动 Review 的意见已逐条处置，只差真人验收那一步 —— 没跑完端到端就不算完成。
+**最后更新**：2026-09-04 09:05 | **轨道**：第一期实现 | **距离可发布**：代码全部落地、CI 全绿、真人路径验收已跑完并归档（有条件通过：1 个 P2、3 项未覆盖）。剩下的是双主题补拍与两块能力的端到端，见下表 P4/P5 行。
 
 | 阶段 | 进度% | 状态 | 当前 blocker | 下一步 | 验收证据 |
 |---|---|---|---|---|---|
@@ -18,7 +18,7 @@
 | P1 授权收口 | 100 | 已部署 | 无 | 权限交集校验 + 运行时二次核对 + 按 Key 配额都已上线 | CDS 构建通过（commit a4bfce42 / f417fae8） |
 | P2 能力开放层 | 100 | 已部署 | 无 | 四块能力各一层薄开放面 + 工具由 5 个扩到 18 个 | 同上，能力目录守卫测试随构建跑 |
 | P3 接入台与入口 | 100 | 已部署 | 无 | `/mcp-console` 面板 + 三步向导 + 左下角菜单入口 | 前端全量 2355 用例通过（commit 8e82f575） |
-| P4 真人验收 | 20 | 阻塞 | **管理员口令在库里、但不在任何人手里**。证据（2026-09-03 10:23 容器启动日志 + CDS env 只读）：① `MAP_ADMIN_FORCE_RESET` 是开着的，日志打出了它的影响面警告；② 紧接着**没有**「凭据不合法」也**没有**「已重置」——按 `DatabaseInitializer.MaybeForceResetAdminAsync` 的分支，说明它在「这个开关值已经用过了」那一步返回了（`deployment_markers` 里的 marker 等于当前值）；③ 而 `MAP_INITIAL_ADMIN_PASSWORD` 在 `_global` 与 `project` 两个作用域都不存在（`cdscli env get --metadata-only` 只列出 `MAP_INITIAL_ADMIN_USERNAME`）。合起来：那次救场早就执行过了，用的口令来自当时的配置，现在环境里已经没有那一半，于是谁也再推不出来。root 破窗账户是启用的（日志「Root 破窗账户已启用，用户名: root」），但 `ROOT_ACCESS_PASSWORD` 同样不在我读得到的 env 里。 | 需要用户拍板：在 CDS 给这个项目补 `MAP_INITIAL_ADMIN_PASSWORD`（与已有的 `MAP_INITIAL_ADMIN_USERNAME` 配对），并把 `MAP_ADMIN_FORCE_RESET` 换成一个没用过的新值（如 `2`）重新武装救场；下次部署即生效。**影响面**：改的是共库那一份管理员，同项目其它分支会跟着变（代码注释里写明这是有意为之，CDS 上都是测试环境）。所以这一步由用户做，不由我自作主张。 | 待补 |
+| P4 真人验收 | 85 | 已验收（有条件通过） | 无。此前记的「管理员口令不在任何人手里」已证伪 —— 口令一直在容器 env 里（`MAP_USER` / `MAP_PASSWORD`），当时只查了 CDS 项目 env 与库，没查容器自己的环境变量。 | 补双主题取证（脚本实测 `supportsLight=false`，20 张图全是暗色，这一项没进「未覆盖」栏是账没记全）；文学创作与海鲜市场补端到端调用；证据落后于 head 的那几张按当前 sha 重拍 | [CDS 验收报告 acc-prd-agent-202609040824](https://cds.miduo.org/reports?project=prd-agent&folder=3559ca7517224ce39df384f0f3432dde&report=da962c88c39c4a7898b4a8908dbb3fd6)（20 张图 / verdict conditional / verify-open 通过） |
 | P4.1 C# 单测 | 100 | 已通过 | 无 | 开 PR 后 `Server Build & Test` 首次真实跑到这批守卫；前两次红灯（数据同步分类缺失、写蕴含读判据写错）已修 | CI run 33739666505 全绿（commit 700a8923） |
 | P4.2 Review 处置 | 100 | 已完成 | 无 | 27 轮：A 类（可证明的缺陷）一律当场修并配守卫，B 类（有价值但引入新语义类别）记进 debt.platform 边界 5-12 不在本 PR 展开，C 类（找不到真实路径的推测）附证据说明不实现 | [PR #1484](https://github.com/inernoro/prd_agent/pull/1484) 评论 5523688095 / 5523898341 |
 | P5 OAuth 授权 | 0 | 未开始 | 无（按拍板延后） | 等密钥方案跑一段时间收反馈 | 待补 |
@@ -73,7 +73,7 @@
 ## 四、第一期开放哪些能力
 
 按能力讲，不逐个列工具名与授权项 —— 那份清单在代码里的能力目录与工具注册表里，
-是唯一事实源，也只有它跟得上代码（位置见文末「实现来源」）。这里写的是「用户勾了这块能力，智能体能替他做什么」。
+是唯一事实源，也只有它跟得上代码（要看具体挂了哪些工具，直接读那份注册表，不在这里抄一份）。这里写的是「用户勾了这块能力，智能体能替他做什么」。
 
 | 能力 | 勾了它，智能体能做什么 | 第一期不做什么 |
 |---|---|---|
@@ -166,10 +166,4 @@ P1 与 P3 弱耦合，可并线；P2 内部四块彼此也不阻塞，可各占�
 - [doc/design.platform.map-mcp-connector.md](./design.platform.map-mcp-connector.md) —— 已落地的网关设计与债务
 - [doc/guide.platform.mcp-connector.md](./guide.platform.mcp-connector.md) —— 现有用户接入指南（本计划落地后需同步扩写）
 - [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— AgentApiKey 与开放接口的上游设计
-### 实现来源
-
-- 协议层与工具注册：`prd-api/src/PrdAgent.Api/Controllers/McpGatewayController.cs`、`prd-api/src/PrdAgent.Api/Mcp/McpBuiltinTools.cs`、`prd-api/src/PrdAgent.Api/Mcp/McpCapabilityCatalog.cs`
-- 四层开放面：`prd-api/src/PrdAgent.Api/Controllers/Api/`（`VisualOpenApiController` / `LiteraryOpenApiController` / `WebPagesOpenApiController` / `DocumentStoreOpenApiController`）
-- 配额、用量与审计：`prd-api/src/PrdAgent.Api/Services/Mcp/`、`prd-api/src/PrdAgent.Api/Filters/AgentApiKeyUsageFilter.cs`
-- 接入台前端：`prd-admin/src/pages/mcp-console/`
-- 相关规则：`.claude/rules/minimal-user-input.md`、`.claude/rules/cross-project-isolation.md`、`.claude/rules/closed-loop-acceptance.md`、`.claude/rules/parallel-workstreams.md`、`.claude/rules/server-authority.md`
+相关规则：`.claude/rules/minimal-user-input.md`、`.claude/rules/cross-project-isolation.md`、`.claude/rules/closed-loop-acceptance.md`、`.claude/rules/parallel-workstreams.md`、`.claude/rules/server-authority.md`

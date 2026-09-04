@@ -612,12 +612,25 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     && viewport.width <= 480
     && touchPoints >= 1,
   );
-  const resolvedTheme = theme || await page.evaluate(() => {
+  // 实测，不取脚本意图：这个字段曾经把 20 张暗色图全记成 light（调用方传什么就记什么），
+  // 于是「浅色其实没切成功」在账面上看不出来 —— predicate-and-wiring-discipline 形状 6。
+  // 现在无论调用方传没传 theme，都以页面当时真实渲染出来的为准。
+  const resolvedTheme = await page.evaluate(() => {
     const root = document.documentElement;
     const declared = root.getAttribute('data-theme') || document.body?.getAttribute('data-theme');
     if (declared === 'light' || declared === 'dark') return declared;
     if (root.classList.contains('dark') || document.body?.classList.contains('dark')) return 'dark';
     if (root.classList.contains('light') || document.body?.classList.contains('light')) return 'light';
+    // 兜底量真实底色，而不是问 prefers-color-scheme —— 无头浏览器默认答 light，
+    // 于是一整套暗色截图会被记成 light（这正是那次 20 张全记错的成因）。
+    const bg = getComputedStyle(document.body || root).backgroundColor || '';
+    const m = bg.match(/rgba?\(([^)]+)\)/);
+    if (m) {
+      const [r, g, b] = m[1].split(',').map((v) => parseFloat(v));
+      if ([r, g, b].every((v) => Number.isFinite(v))) {
+        return (0.2126 * r + 0.7152 * g + 0.0722 * b) < 128 ? 'dark' : 'light';
+      }
+    }
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }).catch(() => null);
   const actualPageUrl = page.url();

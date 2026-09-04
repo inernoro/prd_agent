@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Security.Claims;
 using PrdAgent.Api.Mcp;
@@ -56,20 +57,37 @@ public class McpIdempotencyTests
         McpIdempotency.KeyIdOf(null).ShouldBe("unknown");
     }
 
+    /// <summary>
+    /// 被守对象是**枚举**出来的，不是写死的清单。
+    ///
+    /// 上一版把三个控制器的路径写死在 [InlineData] 里，第四个（文学创作）因此从一开始
+    /// 就不在视野里，同一处截断在那儿又活了一轮。枚举之后，新增开放层控制器自动进闸。
+    /// </summary>
+    public static TheoryData<string> 开放层控制器()
+    {
+        var data = new TheoryData<string>();
+        foreach (var path in McpSourceGuard.EnumerateRelative(
+                     "prd-api/src/PrdAgent.Api/Controllers/Api", "*OpenApiController.cs"))
+            data.Add(path);
+        return data;
+    }
+
     [Theory]
-    [InlineData("prd-api/src/PrdAgent.Api/Controllers/Api/VisualOpenApiController.cs")]
-    [InlineData("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs")]
-    [InlineData("prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesOpenApiController.cs")]
-    public void 三个开放层控制器_不许再自己归一化幂等键(string path)
+    [MemberData(nameof(开放层控制器))]
+    public void 开放层控制器_不许自己归一化幂等键(string path)
     {
         var source = McpSourceGuard.StripComments(McpSourceGuard.Read(path));
 
-        source.ShouldContain("McpIdempotency.ScopedByKey",
-            customMessage: $"{path} 没走共用判定源，归一化又抄了一份，迟早各漂各的");
         source.ShouldNotContain("raw[..120]",
-            customMessage: $"{path} 又把幂等键截断了：长键坍缩会让第二次写入被误判成幂等命中");
+            customMessage: $"{path} 把幂等键截断了：长键坍缩会让第二次写入被误判成幂等命中、悄悄不做");
         source.ShouldNotContain("FindFirst(\"agentApiKeyId\")",
-            customMessage: $"{path} 又自己去取密钥 id 了，取法应当只有 McpIdempotency 一处");
+            customMessage: $"{path} 自己去取密钥 id 了，取法应当只有 McpIdempotency 一处");
+
+        // 只有真的做幂等的控制器才要求它走共用判定源；不碰 clientRequestId 的（如管理面）豁免。
+        if (source.Contains("ClientRequestId", StringComparison.Ordinal)
+            || source.Contains("clientRequestId", StringComparison.Ordinal))
+            source.ShouldContain("McpIdempotency.ScopedByKey",
+                customMessage: $"{path} 自己拼幂等键而没走共用判定源，迟早各漂各的");
     }
 
     /// <summary>复刻知识库那一步的确定性 id 算法，用来确认长键坍缩不会在下游被重新引入。</summary>

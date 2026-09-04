@@ -1464,20 +1464,17 @@ export const deleteAgentApiKey: DeleteAgentApiKeyContract = withAuth(deleteAgent
 
 // 智能体接入台（MCP）：能力清单 / 客户端 / 今日额度 / 调用记录
 import type {
-  GetMcpCallDetailContract,
   GetMcpConsoleOverviewContract,
   GetMcpVisibleToolsContract,
   ListMcpCallsContract,
 } from '@/services/contracts/mcpConsole';
 import {
-  getMcpCallDetailReal,
   getMcpConsoleOverviewReal,
   getMcpVisibleToolsReal,
   listMcpCallsReal,
 } from '@/services/real/mcpConsole';
 export const getMcpConsoleOverview: GetMcpConsoleOverviewContract = withAuth(getMcpConsoleOverviewReal);
 export const listMcpCalls: ListMcpCallsContract = withAuth(listMcpCallsReal);
-export const getMcpCallDetail: GetMcpCallDetailContract = withAuth(getMcpCallDetailReal);
 export const getMcpVisibleTools: GetMcpVisibleToolsContract = withAuth(getMcpVisibleToolsReal);
 
 // 限流配置服务

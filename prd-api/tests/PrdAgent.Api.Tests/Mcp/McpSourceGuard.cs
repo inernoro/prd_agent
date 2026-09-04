@@ -39,6 +39,29 @@ internal static class McpSourceGuard
         source.Split('\n').Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
 
     /// <summary>
+    /// 按目录枚举被守文件（返回仓库相对路径）。
+    ///
+    /// 存在的理由是一次真实漏检：上一版幂等键守卫把三个开放层控制器的路径**写死**在
+    /// [InlineData] 里，于是第四个（文学创作）从一开始就不在守卫视野里，同一处截断
+    /// 缺陷在那儿又活了一轮，靠自动 review 才捞出来。枚举比清单可靠 —— 新增一个
+    /// 开放层控制器时，它自动进闸，不需要谁记得回来补一行。
+    /// </summary>
+    public static string[] EnumerateRelative(string repoRelativeDir, string searchPattern)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+        dir.ShouldNotBeNull("找不到仓库根，无法枚举被守文件");
+        var full = Path.Combine(dir!.FullName, repoRelativeDir);
+        Directory.Exists(full).ShouldBeTrue($"被守目录不在了：{repoRelativeDir}（改名了就同步改这里）");
+        var found = Directory.GetFiles(full, searchPattern)
+            .Select(f => Path.GetRelativePath(dir.FullName, f).Replace('\\', '/'))
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToArray();
+        found.Length.ShouldBeGreaterThan(0, $"{repoRelativeDir} 下没有匹配 {searchPattern} 的文件，守卫等于空转");
+        return found;
+    }
+
+    /// <summary>
     /// 切出一段（含注释）。从**定义**切，不是从第一次出现 —— 后者常常是调用点。
     /// 切不出来直接判红：守卫盯的东西改名了，比断言悄悄落空好。
     /// </summary>
