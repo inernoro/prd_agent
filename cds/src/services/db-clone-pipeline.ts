@@ -40,15 +40,23 @@ const TABLE_NAME_SAFE = /^[A-Za-z0-9_]+$/;
 
 interface EngineConn { user: string; pw: string; port: number; secrets: string[]; envFlags: string[] }
 
+function assertResolved(key: string, value: string): string {
+  if (/\$\{[^}]+\}/.test(value)) {
+    throw new Error(`基础设施记录里的 ${key} 仍是未解析的模板 ${value}：项目环境变量里没有对应的值，先在「项目环境变量」补上再克隆 / 备份 / 回写`);
+  }
+  return value;
+}
+
 function connOf(spec: Pick<DbCloneSpec, 'engine' | 'infra'>): EngineConn {
   const env = spec.infra.env || {};
   if (spec.engine === 'mysql') {
-    const pw = env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '';
+    const pw = assertResolved(env.MYSQL_ROOT_PASSWORD ? 'MYSQL_ROOT_PASSWORD' : 'MARIADB_ROOT_PASSWORD', env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '');
     return { user: 'root', pw, port: spec.infra.containerPort || 3306, secrets: [pw], envFlags: ['-e', `MYSQL_PWD=${pw}`] };
   }
   if (spec.engine === 'postgres') {
-    const pw = env.POSTGRES_PASSWORD || '';
-    return { user: env.POSTGRES_USER || 'postgres', pw, port: spec.infra.containerPort || 5432, secrets: [pw], envFlags: ['-e', `PGPASSWORD=${pw}`] };
+    const pw = assertResolved('POSTGRES_PASSWORD', env.POSTGRES_PASSWORD || '');
+    const user = assertResolved('POSTGRES_USER', env.POSTGRES_USER || 'postgres');
+    return { user, pw, port: spec.infra.containerPort || 5432, secrets: [pw], envFlags: ['-e', `PGPASSWORD=${pw}`] };
   }
   throw new Error(`mongo 不走关系型克隆管线（共享实例写压会崩，须用专用实例通道）`);
 }

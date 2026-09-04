@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import type { BranchEntry, BuildProfile, InfraService, ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
+import { resolveEnvTemplates } from './compose-parser.js';
 import { cloneRelationalDbInPlace } from './db-clone-pipeline.js';
 import { detectInfraDataKind, runDockerExec, maskSecretValues } from '../routes/infra-data.js';
 
@@ -202,6 +203,25 @@ function baseIsolationEnvOverride(target: ReplicaDbTarget, dbName: string): Reco
     if (rewritten) envOverride[key] = rewritten;
   }
   return envOverride;
+}
+
+/**
+ * 基础设施记录里的 env 常存模板（`MYSQL_ROOT_PASSWORD=${CDS_MYSQL_ROOT_PASSWORD}`），容器启动时
+ * 才按项目环境变量解析。克隆 / 备份 / 回写这些路直接拿记录里的值当密码，就会把 `${...}`
+ * 字面量发给数据库（2026-09-04 真实 mysql 分支复验时撞上：Access denied for user root）。
+ * 与容器启动、数据工作台同一套解析；解不出来的模板**保留原样**而不是变成空串——
+ * 空串会让 root 无密码静默登录尝试，保留模板让下游能一眼看出「缺哪个变量」。
+ */
+export function resolveInfraForDb(state: Pick<StateService, 'getCustomEnv'>, infra: InfraService): InfraService {
+  const raw = infra.env || {};
+  if (!Object.values(raw).some((v) => /\$\{[^}]+\}/.test(String(v)))) return infra;
+  const resolved = resolveEnvTemplates(raw, state.getCustomEnv(infra.projectId) || {});
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const r = resolved[k];
+    env[k] = /\$\{[^}]+\}/.test(String(v)) && !String(r ?? '').trim() ? String(v) : String(r ?? '');
+  }
+  return { ...infra, env };
 }
 
 export function resolveReplicaDbTarget(
@@ -405,7 +425,7 @@ export function resolveReplicaDbTarget(
       urlEnvValues,
       ...(unboundUrlKeys.length > 0 ? { unboundUrlKeys } : {}),
       sourceDb,
-      infra,
+      infra: resolveInfraForDb(state, infra),
     },
   };
 }

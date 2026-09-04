@@ -85,6 +85,13 @@ describe('克隆三元组：脚本只从来源库、目标库、实例取值', (
     expect(() => relationalCloneArgv(spec({ engine: 'mongo', infra: mongoInfra }))).toThrow(/mongo/);
   });
 
+  it('实例记录里的密码还是 ${...} 模板：拒绝生成脚本并指出缺哪个变量（真实 mysql 分支复验的 Access denied 根因）', () => {
+    const templated = { ...mysqlInfra, env: { MYSQL_ROOT_PASSWORD: '${CDS_MYSQL_ROOT_PASSWORD}' } } as unknown as InfraService;
+    expect(() => relationalCloneArgv(spec({ infra: templated }))).toThrow(/MYSQL_ROOT_PASSWORD 仍是未解析的模板/);
+    const pgTemplated = { ...pgInfra, env: { POSTGRES_USER: 'app', POSTGRES_PASSWORD: '${CDS_PG_PASSWORD}' } } as unknown as InfraService;
+    expect(() => relationalCloneArgv(spec({ engine: 'postgres', infra: pgTemplated }))).toThrow(/POSTGRES_PASSWORD 仍是未解析的模板/);
+  });
+
   it('克隆执行：exec 退出码非 0 就抛错，错误里不出现密码', async () => {
     const exec: DbCloneExec = async () => ({ code: 1, stdout: '', stderr: 'Access denied for user root (using password: rootpw)' });
     await expect(cloneRelationalDbInPlace(spec(), { exec })).rejects.toThrow(/Access denied/);
@@ -141,12 +148,23 @@ describe('分支独立库时间点克隆初始化', () => {
     state.addBuildProfile({ id: 'jobs', projectId: 'p', name: 'Jobs', dockerImage: 'node:20', workDir: '.', containerPort: 3001, dbScope: 'per-branch', env: { CDS_MYSQL_DATABASE: 'shop' } } as BuildProfile);
     state.addBuildProfile({ id: 'search', projectId: 'p', name: 'Search', dockerImage: 'node:20', workDir: '.', containerPort: 3002, dbScope: 'per-branch', dbInit: 'clone', env: { CDS_MONGO_DATABASE: 'catalog' } } as BuildProfile);
     state.addBuildProfile({ id: 'web', projectId: 'p', name: 'Web', dockerImage: 'nginx', workDir: '.', containerPort: 80, dbScope: 'per-branch', dbInit: 'clone', env: {} } as BuildProfile);
-    state.addInfraService(mysqlInfra);
-    state.addInfraService(mongoInfra);
+    // 深拷贝：updateInfraService 会原地改对象，别把模块级常量污染给后面的用例
+    state.addInfraService({ ...mysqlInfra, env: { ...mysqlInfra.env } } as InfraService);
+    state.addInfraService({ ...mongoInfra, env: { ...mongoInfra.env } } as InfraService);
     state.addBranch({ id: 'p-feat-x', projectId: 'p', branch: 'feat/x', worktreePath: path.join(tmpDir, 'wt'), status: 'running', createdAt: T, services: {} } as unknown as BranchEntry);
     state.save();
   });
   afterEach(() => { flushAllJsonStateStores(); fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it('实例记录里的 ${CDS_MYSQL_ROOT_PASSWORD} 按项目环境变量解析后才进三元组；解不出来的保留模板原样', () => {
+    state.updateInfraService('mysql', { env: { MYSQL_ROOT_PASSWORD: '${CDS_MYSQL_ROOT_PASSWORD}', MYSQL_DATABASE: '${NOPE}' } }, 'p');
+    state.setCustomEnv({ CDS_MYSQL_ROOT_PASSWORD: 'real-root-pw' }, 'p');
+    state.save();
+    const r = perBranchCloneSpec(state, branch(), effective('api'));
+    expect('spec' in r && r.spec.infra.env?.MYSQL_ROOT_PASSWORD).toBe('real-root-pw');
+    expect('spec' in r && r.spec.infra.env?.MYSQL_DATABASE).toBe('${NOPE}');
+    expect(state.getInfraService('mysql')?.env?.MYSQL_ROOT_PASSWORD).toBe('${CDS_MYSQL_ROOT_PASSWORD}');
+  });
 
   it('三元组：来源是共享库 shop，目标是折算后的 shop_feat_x，作用域带项目 / 分支 / 服务', () => {
     const r = perBranchCloneSpec(state, branch(), effective('api'));

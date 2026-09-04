@@ -25,7 +25,7 @@ import {
 import { isDroppableDerivedName, realDbLedgerOps } from '../services/db-ledger-ops.js';
 import { backupDirCandidates } from '../services/infra-backup-schedule.js';
 import { detectInfraDataKind } from './infra-data.js';
-import type { ReplicaDbEngine } from '../services/replica-db-clone.js';
+import { resolveInfraForDb, type ReplicaDbEngine } from '../services/replica-db-clone.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import { ensurePerBranchDbInitialized, type PerBranchDbInitOutcome } from '../services/per-branch-db-init.js';
 import { describeCloneVerification, compareTableCounts, type DbCloneExec } from '../services/db-clone-pipeline.js';
@@ -80,8 +80,11 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
     return { id: project.id, slug: project.slug || project.id };
   };
 
-  const infraOf = (projectId: string, entry: DbLedgerEntry) =>
-    stateService.getInfraServicesForProject(projectId).find((s) => s.containerName === entry.infraContainer || s.id === entry.infraId);
+  const infraOf = (projectId: string, entry: DbLedgerEntry) => {
+    const raw = stateService.getInfraServicesForProject(projectId).find((s) => s.containerName === entry.infraContainer || s.id === entry.infraId);
+    // 记录里的密码常是 ${CDS_...} 模板，备份 / 演练 / 回写前按项目环境变量解析（与容器启动同一套）
+    return raw ? resolveInfraForDb(stateService, raw) : raw;
+  };
 
   router.get('/projects/:id/db-ledger', (req, res) => {
     const p = guardProject(req, res); if (!p) return;
