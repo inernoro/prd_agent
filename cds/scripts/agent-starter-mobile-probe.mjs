@@ -181,8 +181,10 @@ const measure = (page, exit, heading) => page.evaluate(([locateSrc, e, h]) => {
 
 async function main() {
   const explicitBase = process.argv[2];
-  const server = explicitBase ? { url: explicitBase.replace(/\/+$/, ''), stop: () => {} } : await startViteDevServer();
+  // 先解析 playwright 再起服务：它只是个模块解析、没有副作用，而放在起服务
+  // 之后就多出一条「解析失败 → 服务已起 → 还没进 try」的泄漏路径（Codex P2）。
   const { chromium } = loadPlaywright();
+  const server = explicitBase ? { url: explicitBase.replace(/\/+$/, ''), stop: () => {} } : await startViteDevServer();
 
   // 浏览器起不来（缺二进制、缺依赖）时，上面那个 dev server 也必须被收掉，
   // 否则端口一直被占——它是 strictPort，下一次跑会直接起不来（Codex P2）。
