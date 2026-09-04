@@ -8,6 +8,7 @@ import { toast } from '@/lib/toast';
 import { ConnectAgentDialog } from './ConnectAgentDialog';
 import { McpCallsPanel } from './McpCallsPanel';
 import { QuotaEditorDialog } from './QuotaEditorDialog';
+import { RevokeClientDialog } from './RevokeClientDialog';
 import { copyToClipboard } from './clipboard';
 
 /**
@@ -22,6 +23,7 @@ export default function McpConsolePage() {
   const [connectOpen, setConnectOpen] = useState(false);
   const [tab, setTab] = useState<'overview' | 'calls'>('overview');
   const [quotaTarget, setQuotaTarget] = useState<McpClientDto | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<McpClientDto | null>(null);
   // 「刷新」按钮只能刷自己拉的数据。调用记录面板自己管自己的分页与筛选，
   // 靠这个计数把刷新意图传下去 —— 否则用户停在记录页点刷新，列表纹丝不动。
   const [refreshToken, setRefreshToken] = useState(0);
@@ -293,6 +295,21 @@ export default function McpConsolePage() {
                     >
                       {client.todayCalls}
                     </span>
+                    {/* 钥匙泄露、或者这台客户端不用了，得能在**这里**当场断掉。
+                        从接入台进来的用户根本不知道另有一个密钥管理页，找不到就只能眼看着
+                        一把带写入和花钱权限的钥匙活到 90 天期满。所以断的入口就放在
+                        「这台客户端」这一行上，不让用户去别处找。 */}
+                    {client.isActive && (
+                      <button
+                        type="button"
+                        onClick={() => setRevokeTarget(client)}
+                        className="shrink-0 cursor-pointer text-[11px] font-medium"
+                        style={{ color: 'var(--semantic-danger-text)' }}
+                        title="立刻作废这把钥匙，这台客户端马上就调不动了"
+                      >
+                        断开
+                      </button>
+                    )}
                   </div>
                 ))
               )}
@@ -369,6 +386,15 @@ export default function McpConsolePage() {
           </div>
         </div>
       )}
+
+      <RevokeClientDialog
+        client={revokeTarget}
+        open={revokeTarget !== null}
+        onOpenChange={(next) => {
+          if (!next) setRevokeTarget(null);
+        }}
+        onRevoked={() => void load()}
+      />
 
       <QuotaEditorDialog
         client={quotaTarget}
