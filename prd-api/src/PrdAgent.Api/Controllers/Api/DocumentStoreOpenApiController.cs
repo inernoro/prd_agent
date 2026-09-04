@@ -489,7 +489,7 @@ public class DocumentStoreOpenApiController : ControllerBase
                     // 只按 id + 时间戳摘标记的话，摘掉的是**新那次**的标记，而这一次还照样回成功。
                     if (!IsMyGeneration(latest, generation)) throw new EntryVanishedException(entry.Id);
                     await _db.DocumentEntries.UpdateOneAsync(
-                        e => e.Id == entry.Id && e.UpdatedAt == latest!.UpdatedAt,
+                        e => e.Id == entry.Id && e.UpdatedAt == latest.UpdatedAt,
                         Builders<DocumentEntry>.Update.Unset(EntryContentPendingField),
                         cancellationToken: CancellationToken.None);
                     summaryApplied = explicitSummary == null;
@@ -867,7 +867,8 @@ public class DocumentStoreOpenApiController : ControllerBase
     private const string EntryGenerationField = "Metadata.mcpGeneration";
 
     /// <summary>这条条目是不是我这一次插进去的那条。核不上就一个字都不许动。</summary>
-    private static bool IsMyGeneration(DocumentEntry? entry, string generation)
+    private static bool IsMyGeneration(
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] DocumentEntry? entry, string generation)
         => entry?.Metadata != null
            && entry.Metadata.TryGetValue(EntryGenerationKey, out var g)
            && string.Equals(g, generation, StringComparison.Ordinal);

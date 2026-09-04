@@ -260,20 +260,32 @@ public class McpRollbackInvariantTests
     {
         var src = McpSourceGuard.StripComments(
             McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreOpenApiController.cs"));
-        src.ShouldContain("DateTime placeholderUpdatedAt, string requestedContent)",
-            customMessage: "撤回得知道「原封不动」长什么样、以及这次要写的是什么，否则无从判断该不该删、算不算写成了");
-        src.ShouldContain("e.Id == entryId && e.UpdatedAt == placeholderUpdatedAt",
-            customMessage: "删除必须带条件：回读与删除之间还有窗口，判据和写入要是同一条原子操作");
+        // 锚在**定义**上，判的是「它知不知道这三件事」，不是参数表怎么拼写 ——
+        // 上一版把整串签名（连右括号）写进断言，于是给撤回补一个参数（那是更强的判据）
+        // 反而把这条守卫弄红了。断言实现的字面，就是这个下场（形状 4a）。
+        var signature = McpSourceGuard.Slice(src,
+            "private async Task<RollbackOutcome> CleanupRolledBackEntryAsync(", "{");
+        foreach (var knows in new[] { "placeholderUpdatedAt", "requestedContent", "generation" })
+            signature.ShouldContain(knows,
+                customMessage: $"撤回不知道 {knows}，就无从判断该不该删、算不算写成了、这条是不是我插的");
+
+        // 删除那一下的条件：既要「还是我插进去时那个样子」，也要「这条确实是我插的」。
+        // 少任何一个，回读与删除之间那一瞬被重用时删掉的就是别人的条目。
+        var delete = McpSourceGuard.Slice(src, "DeleteOneAsync(", "CancellationToken.None);");
+        delete.ShouldContain("placeholderUpdatedAt",
+            customMessage: "删除没带版本条件：判据和写入必须是同一条原子操作");
+        delete.ShouldContain("EntryGenerationField",
+            customMessage: "删除没带代次条件：确定性 id 被重用时删掉的会是别人的条目");
         src.ShouldNotContain("DeleteOneAsync(e => e.Id == entryId, ",
             customMessage: "又回到无条件删了 —— 正文提交成功的那一瞬会被删掉");
 
-        // 条目已经不在了就得**立刻收手**：这个确定性 id 已经空出来，同键重试可能已经插了一条新的，
-        // 再按 id 清一遍派生，清掉的是新那次的版本与双链，而那次还会照常报成功。
+        // 条目已经不是我那条了就得**立刻收手**：这个确定性 id 已经空出来，同键重试可能已经插了
+        // 一条新的，再按 id 清一遍派生，清掉的是新那次的版本与双链，而那次还会照常报成功。
         var cleanup = McpSourceGuard.Slice(src,
-            "DateTime placeholderUpdatedAt, string requestedContent)",
+            "private async Task<RollbackOutcome> CleanupRolledBackEntryAsync(",
             "DocumentEntryVersions.DeleteManyAsync");
-        cleanup.ShouldContain("if (current == null) return RollbackOutcome.AlreadyGone;",
-            customMessage: "回读为 null 时还往下走，会按一个已经可重用的 id 去清派生");
+        cleanup.ShouldContain("return RollbackOutcome.AlreadyGone;",
+            customMessage: "清派生之前没有「不是我那条就收手」的早返回，会按一个已经可重用的 id 去清");
     }
 
     /// <summary>
