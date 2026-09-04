@@ -212,18 +212,18 @@ public class RequestOriginExtensionsTests
     }
 
     [Fact]
-    public void 网页托管的幂等指纹_定长且长键互不坍缩()
+    public void 网页托管的幂等指纹_不许回到拼接原文的写法()
     {
-        // 去掉 120 字截断之后，这一路成了唯一把调用方原文往库里存的地方（SourceRef 还要当
-        // 查询键）。哈希既保住「长键不坍缩」，又不把无界输入落库。
-        // 不切片：BuildSourceRef 是文件最后一个成员，用 "}" 当结束标记会切在插值的花括号上，
-        // 那种守卫下一次改动就会莫名其妙地飘。整文件断言在这里已经足够精确。
+        // 这条上一版断言的是「文件里出现 SHA256.HashData」——**实现的字面存在**，
+        // 不是行为（predicate-and-wiring-discipline 形状 4a）。于是把那份内联 SHA 收敛进
+        // McpIdempotency.Fingerprint（正确的修法）时，它反过来把修复判红了：
+        // 「谁修 bug 谁的 CI 红」。所以改成只钉真正的不变量——不许拼原文；
+        // 「必须走共用指纹」由 McpIdempotencyTests 那条**枚举全部开放层控制器**的守卫负责，
+        // 行为面（定长、长键不坍缩）也在那里，不在这里再抄一份判据。
         var slice = McpSourceGuard.StripComments(
             McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesOpenApiController.cs"));
-        slice.ShouldContain("SHA256.HashData",
-            customMessage: "SourceRef 又直接存调用方原文了：30MB 的 body 能造出一条同样大的 Mongo 文档");
         slice.ShouldNotContain("$\"mcp:{scoped}\"",
-            customMessage: "SourceRef 又回到了拼接原文的写法");
+            customMessage: "SourceRef 又回到了拼接原文的写法：30MB 的 body 能造出一条同样大的 Mongo 文档");
     }
 
     [Fact]

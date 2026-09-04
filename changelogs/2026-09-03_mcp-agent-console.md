@@ -179,3 +179,4 @@
 | test | prd-api | 幂等守卫加两条：指纹定长且长键互不坍缩（行为）、ScopedByKey 的结果必须当场被 Fingerprint 包住（结构，视觉那一路原来正好违反） |
 | test | scripts | 新增 visual-harness-theme-probe.test.mjs：把 harness 里的判定函数取出来真跑（透明/半透明/不透明各一档），不是断言几行字面存在 |
 | ci | ci | harness.mjs 登记进 release-script-test 的 path filter：它是 visual-harness-*.test.mjs 的被测文件却一直没登记，只改它的 PR 完全跳过这道闸（形状 7） |
+| test | prd-api | 上一轮那条「SourceRef 必须是定长指纹」的守卫断言的是 SHA256.HashData 的字面存在，于是把内联 SHA 收敛进共用指纹时反过来把修复判红了（形状 4a，谁修 bug 谁的 CI 红）；改成只钉不变量「不许拼原文」，必须走共用指纹与行为面交给枚举全部开放层控制器的那条守卫 |
