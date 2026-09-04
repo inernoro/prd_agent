@@ -137,4 +137,53 @@ public class McpDownstreamSafetyTests
         head.ShouldContain("CredentialLike.Replace",
             customMessage: "开头这几百字节同样可能带凭据（错误页会把请求头回显出来）");
     }
+
+    // ── 批量条数 ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 一个 HTTP 请求里能塞多少条 JSON-RPC，必须在开始派发之前就收住。
+    ///
+    /// 外层限流看到的是「一个请求」，而数组里可以装几千条 tools/call —— 每条都会走一遍
+    /// CheckRateAsync，那里是先查 Mongo 拿密钥、再看内存窗口，于是「这一分钟早就超了」
+    /// 也拦不住前面那几千次数据库往返。判在循环里没用：进了循环，前面那部分已经打出去了。
+    /// </summary>
+    [Fact]
+    public void 批量条数在派发之前就收住()
+    {
+        McpGatewayController.MaxBatchItems.ShouldBeInRange(10, 200,
+            customMessage: "真实客户端的批量是个位数到十几条，这个上限只用来挡「一个包塞几千条」");
+
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/McpGatewayController.cs"));
+        var batch = McpSourceGuard.Slice(src, "if (root is JsonArray arr)", "foreach (var item in arr)");
+        batch.ShouldContain("arr.Count > MaxBatchItems",
+            customMessage: "批量条数没在进循环之前判 —— 判在循环里等于前面那几千条已经打出去了");
+    }
+
+    // ── 用不了的钥匙不许报「自检通过」──────────────────────────────
+
+    /// <summary>
+    /// 停用、撤销、过了宽限期的钥匙，/api/mcp 在鉴权那一步就直接拒，一个工具也调不动。
+    /// 自检要是照着存下来的 scope 算出一串工具名，用户就会拿着一把作废的钥匙去接，
+    /// 接不上还找不着原因。所以先问「还用得了吗」，再算「能看见什么」。
+    /// </summary>
+    [Fact]
+    public void 自检先判钥匙还能不能用再算清单()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/Api/McpConsoleController.cs"));
+        // 切到方法末尾（下一个成员的声明），不切到「第一个 return Ok(」——
+        // 不可用那条早退本身就是一个 return Ok(，切到它等于把要守的那段全甩在外面。
+        var body = McpSourceGuard.Slice(src,
+            "public async Task<IActionResult> VisibleTools(",
+            "private sealed record VisibleTool(");
+        var gate = body.IndexOf("AgentApiKey.IsUsableAt(", StringComparison.Ordinal);
+        var compute = body.IndexOf("McpBuiltinTools.All", StringComparison.Ordinal);
+        gate.ShouldBeGreaterThan(-1, "自检没判 IsUsableAt：作废的钥匙也会被报成「授权自检通过」");
+        compute.ShouldBeGreaterThan(-1, "工具清单的计算不见了，切片锚点要跟着改");
+        gate.ShouldBeLessThan(compute,
+            "IsUsableAt 判在算清单之后 —— 算都算完了才发现钥匙不能用，等于没判");
+        body.ShouldContain("tools = Array.Empty<VisibleTool>()",
+            customMessage: "钥匙用不了时还回了工具清单：那串名字对方一个也调不动");
+    }
 }

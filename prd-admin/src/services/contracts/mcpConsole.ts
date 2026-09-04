@@ -98,6 +98,8 @@ export interface McpVisibleToolsDto {
   keyPrefix: string;
   isActive: boolean;
   expiresAt?: string | null;
+  /** 不可用（或宽限期）时的一句大白话原因；可用且不在宽限期时为 null。 */
+  unusableReason?: string | null;
   toolCount: number;
   tools: Array<{ name: string; description: string; capability?: string | null; isWrite: boolean }>;
 }

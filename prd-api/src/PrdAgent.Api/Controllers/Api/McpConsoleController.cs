@@ -216,6 +216,30 @@ public class McpConsoleController : ControllerBase
         if (key == null || key.OwnerUserId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "密钥不存在或无权访问"));
 
+        // 先问「这把钥匙现在还用得了吗」，再算它能看见什么。
+        //
+        // 停用、撤销、过了宽限期的钥匙，/api/mcp 在 LookupByPlaintextAsync 那一步就直接拒了，
+        // 一个工具也调不动。而这里原来只按存下来的 scope 算清单，照样能算出一串名字，
+        // 弹窗接着报「授权自检通过」—— 用户拿着一把已经作废的钥匙去接，接不上还找不着原因。
+        // isActive 字段当时是回了的，但没人拿它拦这段计算：算出来的东西本身就是错的，
+        // 不该指望展示层去补救（形状 1：判据比它该管的范围窄）。
+        var usable = AgentApiKey.IsUsableAt(key, DateTime.UtcNow, out var inGrace);
+        if (!usable)
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                endpointUrl = BuildEndpointUrl(),
+                keyId = key.Id,
+                keyName = key.Name,
+                keyPrefix = key.KeyPrefix,
+                isActive = false,
+                expiresAt = key.ExpiresAt,
+                unusableReason = key.RevokedAt.HasValue ? "这把钥匙已经吊销了"
+                    : !key.IsActive ? "这把钥匙被停用了"
+                    : "这把钥匙已经过期，连宽限期也过了",
+                toolCount = 0,
+                tools = Array.Empty<VisibleTool>(),
+            }));
+
         // 与 /api/mcp 的 tools/list 同口径：权限被回收的 scope 在鉴权时就被剥掉了，
         // 自检不能照着存下来的 scope 报一串对方其实看不见的工具。
         var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
@@ -248,8 +272,10 @@ public class McpConsoleController : ControllerBase
             keyId = key.Id,
             keyName = key.Name,
             keyPrefix = key.KeyPrefix,
-            isActive = AgentApiKey.IsUsableAt(key, DateTime.UtcNow, out _),
+            isActive = true,
             expiresAt = key.ExpiresAt,
+            // 宽限期内还能用，但用户得知道它正在倒计时 —— 不说的话，某天突然全部调不动。
+            unusableReason = inGrace ? "这把钥匙已经过期，正在宽限期里，续期之前随时会停" : null,
             toolCount = visible.Count,
             tools = visible,
         }));

@@ -457,12 +457,30 @@ export function ConnectAgentDialog({
                   className="flex flex-col gap-2 rounded-[12px] px-3.5 py-3"
                   style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-faint)' }}
                 >
+                  {/* 钥匙用不了的时候不能报「自检通过」：/api/mcp 那边会直接拒，
+                      一个工具都调不动，报通过等于把用户送去撞墙。宽限期也照实说，
+                      不然某天突然全部调不动、找不着原因。 */}
                   <div className="flex items-center gap-2">
-                    <Check size={15} style={{ color: 'var(--semantic-success-text)' }} aria-hidden />
+                    {visible.isActive ? (
+                      <Check size={15} style={{ color: 'var(--semantic-success-text)' }} aria-hidden />
+                    ) : (
+                      <ShieldAlert size={15} style={{ color: 'var(--semantic-danger-text)' }} aria-hidden />
+                    )}
                     <span className="text-[12.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                      授权自检通过：这把钥匙能看到 {visible.toolCount} 个工具
+                      {visible.isActive
+                        ? `授权自检通过：这把钥匙能看到 ${visible.toolCount} 个工具`
+                        : '这把钥匙现在用不了，接上去一个工具也调不动'}
                     </span>
                   </div>
+                  {visible.unusableReason && (
+                    <div
+                      className="text-[11.5px] leading-relaxed"
+                      style={{ color: visible.isActive ? 'var(--semantic-warning-text)' : 'var(--semantic-danger-text)' }}
+                    >
+                      {visible.unusableReason}
+                      {visible.isActive ? '。到「连着的客户端」里续期即可。' : '。请另建一把新钥匙。'}
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-1.5">
                     {visible.tools.slice(0, 8).map((t) => (
                       <code

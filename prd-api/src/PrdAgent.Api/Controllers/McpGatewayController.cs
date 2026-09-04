@@ -60,6 +60,14 @@ public class McpGatewayController : ControllerBase
         _loopback = loopback;
     }
 
+    /// <summary>
+    /// 一个 JSON-RPC 批量请求里最多几条。
+    ///
+    /// 取 50：真实客户端的批量是「把几个初始化调用打个包」，个位数到十几条；
+    /// 而它要挡的是「一个包里塞几千条」——两者之间差着两个数量级，不必卡得很紧。
+    /// </summary>
+    internal const int MaxBatchItems = 50;
+
     /// <summary>MCP 主端点。接收 JSON-RPC（单条或批量），返回 JSON-RPC 响应。</summary>
     [HttpPost]
     public async Task<IActionResult> Handle(CancellationToken ct)
@@ -74,6 +82,19 @@ public class McpGatewayController : ControllerBase
 
         if (root is JsonArray arr)
         {
+            // 批量条数先收住，再开始逐条派发。
+            //
+            // 外层那道限流看到的是**一个** HTTP 请求，而这个数组里可以装几千条 tools/call ——
+            // 每一条都会走一遍 CheckRateAsync，那里是先查一次 Mongo 拿密钥、再看内存窗口，
+            // 于是「这把钥匙这一分钟早就超了」也拦不住前面那几千次数据库往返；
+            // 装的若是 ping，则是几千条响应拼成一个巨大的 body。
+            // 一个还没超过请求体上限的包，就能把这两样各来一遍。
+            //
+            // 收在派发之前而不是派发之中：进了循环再判，前面那部分已经打出去了。
+            if (arr.Count > MaxBatchItems)
+                return JsonRpc(RpcError(null, -32600,
+                    $"一次最多 {MaxBatchItems} 条，收到 {arr.Count} 条。请拆成多个请求分批发。"));
+
             var responses = new JsonArray();
             foreach (var item in arr)
             {
