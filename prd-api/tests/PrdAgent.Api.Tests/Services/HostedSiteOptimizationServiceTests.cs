@@ -141,6 +141,61 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_UnquotedHtmlResourceAttribute_RestoresRequiredDependency()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<script src=./node_modules/pkg/app.js></script><img srcset=./node_modules/pkg/a.png><main style=background:url(./node_modules/pkg/bg.png)></main>",
+            ["node_modules/pkg/app.js"] = "document.body.dataset.ready = 'true';",
+            ["node_modules/pkg/a.png"] = "image",
+            ["node_modules/pkg/bg.png"] = "background",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeTrue();
+        result.OptimizedFiles.ShouldBe(4);
+    }
+
+    [Fact]
+    public void Analyze_UnquotedHtmlBaseHref_ResolvesDependencyFromEffectiveBase()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<base href=./assets/><script src=app.js></script>",
+            ["assets/app.js"] = "document.body.dataset.ready = 'true';",
+        };
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.OriginalFiles.ShouldBe(2);
+    }
+
+    [Fact]
+    public void Analyze_RestoredDependencyWithComputedLoader_PreservesDependencyTree()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<script src=\"./node_modules/pkg/runtime.js\"></script>",
+            ["node_modules/pkg/runtime.js"] = "const path = './asset.json'; fetch(path);",
+            ["node_modules/pkg/asset.json"] = "{\"ready\":true}",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeFalse();
+        result.OptimizedFiles.ShouldBe(result.OriginalFiles);
+        result.Warnings.ShouldContain(x => x.Contains("依赖脚本", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Analyze_ServiceWorkerRegistrationIntoNodeModules_RestoresRequiredDependency()
     {
         var files = new Dictionary<string, string>
@@ -465,6 +520,9 @@ public class HostedSiteOptimizationServiceTests
         catalog.ShouldNotContain("ttl_hosted_site_optimization_expiry");
         catalog.ShouldNotContain("expireAfterSeconds: 86400");
         context.ShouldNotContain("ttl_hosted_site_optimization_expiry");
+        context.ShouldNotContain("idx_hosted_site_optimization_owner_expiry");
+        context.ShouldNotContain("idx_hosted_site_optimization_status_updated");
+        context.ShouldNotContain("idx_hosted_site_optimization_expiry");
     }
 
     [Fact]

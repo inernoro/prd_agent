@@ -1570,6 +1570,16 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             }
 
             RestoreReferencedRuntimeFiles(byPath, output);
+            if (!preservePotentialRuntimeFiles && HasUnresolvedDynamicRuntimeLoading(output))
+            {
+                analysis.Warnings.Add("依赖脚本包含无法静态确认的运行时加载，本次保留所有潜在依赖");
+                foreach (var file in files)
+                {
+                    if ((IsNodeModules(file.LogicalPath) || IsDevelopmentFile(file.LogicalPath))
+                        && !output.ContainsKey(file.LogicalPath))
+                        output[file.LogicalPath] = ReadEntry(file.Entry);
+                }
+            }
             var missing = FindMissingRuntimeReferences(output);
             if (missing.Count > 0)
                 return Blocked(analysis, $"入口引用的本地资源缺失：{string.Join("、", missing.Take(3))}");
@@ -1747,23 +1757,35 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     {
         foreach (var file in runtimeTextEntries)
         {
-            var extension = Path.GetExtension(file.LogicalPath).ToLowerInvariant();
-            if (extension is not (".html" or ".htm" or ".css" or ".js" or ".mjs")) continue;
-            if (!TryDecodeUtf8(ReadEntry(file.Entry), out var text)) return true;
-            if (extension == ".css") continue;
-            if (extension is ".html" or ".htm")
-                text = VisibleHtmlText(text);
-            var scripts = extension is ".html" or ".htm"
-                ? InlineScriptRegex().Matches(text).Select(x => x.Groups["body"].Value)
-                : new[] { text };
-            foreach (var script in scripts)
-            {
-                if (DynamicRuntimeLoaderRegex().Matches(script).Count
-                    > StaticDynamicRuntimeReferenceRegex().Matches(script).Count)
-                    return true;
-            }
+            if (HasUnresolvedDynamicRuntimeLoading(file.LogicalPath, ReadEntry(file.Entry))) return true;
         }
         return false;
+    }
+
+    private static bool HasUnresolvedDynamicRuntimeLoading(IReadOnlyDictionary<string, byte[]> runtimeFiles)
+    {
+        var entries = runtimeFiles
+            .Where(x => IsScannedRuntimeText(x.Key))
+            .ToList();
+        if (entries.Any(x => x.Value.LongLength > MaxScannedTextFileBytes)
+            || entries.Sum(x => x.Value.LongLength) > MaxScannedTextBytes)
+            return true;
+        return entries.Any(x => HasUnresolvedDynamicRuntimeLoading(x.Key, x.Value));
+    }
+
+    private static bool HasUnresolvedDynamicRuntimeLoading(string path, byte[] bytes)
+    {
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        if (extension is not (".html" or ".htm" or ".css" or ".js" or ".mjs")) return false;
+        if (!TryDecodeUtf8(bytes, out var text)) return true;
+        if (extension == ".css") return false;
+        if (extension is ".html" or ".htm")
+            text = VisibleHtmlText(text);
+        var scripts = extension is ".html" or ".htm"
+            ? InlineScriptRegex().Matches(text).Select(x => x.Groups["body"].Value)
+            : new[] { text };
+        return scripts.Any(script => DynamicRuntimeLoaderRegex().Matches(script).Count
+                                     > StaticDynamicRuntimeReferenceRegex().Matches(script).Count);
     }
 
     private static string VisibleHtmlText(string text)
@@ -1927,7 +1949,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     [GeneratedRegex("https?://[^\\s\\\"'<>]+", RegexOptions.IgnoreCase)]
     private static partial Regex ExternalUrlRegex();
 
-    [GeneratedRegex("<base\\b[^>]*?href\\s*=\\s*[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    [GeneratedRegex("<base\\b[^>]*?href\\s*=\\s*(?:\\\"(?<path>[^\\\"]*)\\\"|'(?<path>[^']*)'|(?<path>[^\\s\\\"'=<>`]+))", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlBaseHrefRegex();
 
     [GeneratedRegex("<(?:script|link|img|source|video|audio|iframe|object|use|image)\\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
@@ -1936,13 +1958,13 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     [GeneratedRegex("<!--[\\s\\S]*?-->", RegexOptions.CultureInvariant)]
     private static partial Regex HtmlCommentRegex();
 
-    [GeneratedRegex("\\b(?:src|href|poster|data)\\s*=\\s*[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("\\b(?:src|href|poster|data)\\s*=\\s*(?:\\\"(?<path>[^\\\"]*)\\\"|'(?<path>[^']*)'|(?<path>[^\\s\\\"'=<>`]+))", RegexOptions.IgnoreCase)]
     private static partial Regex HtmlResourceAttributeRegex();
 
-    [GeneratedRegex("\\bsrcset\\s*=\\s*[\\\"'](?<paths>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("\\bsrcset\\s*=\\s*(?:\\\"(?<paths>[^\\\"]*)\\\"|'(?<paths>[^']*)'|(?<paths>[^\\s\\\"'=<>`]+))", RegexOptions.IgnoreCase)]
     private static partial Regex HtmlSrcSetAttributeRegex();
 
-    [GeneratedRegex("\\bstyle\\s*=\\s*(?<quote>[\\\"'])(?<body>.*?)\\k<quote>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    [GeneratedRegex("\\bstyle\\s*=\\s*(?:\\\"(?<body>[^\\\"]*)\\\"|'(?<body>[^']*)'|(?<body>[^\\s\\\"'=<>`]+))", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlStyleAttributeRegex();
 
     [GeneratedRegex("url\\(\\s*(?:[\\\"'](?<path>[^\\\"']+)[\\\"']|(?<path>[^\\s)]+))\\s*\\)", RegexOptions.IgnoreCase)]
