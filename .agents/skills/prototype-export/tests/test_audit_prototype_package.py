@@ -221,6 +221,20 @@ class AuditPrototypePackageTests(unittest.TestCase):
             self.assertEqual([], report["missingLocalReferences"])
             self.assertEqual(1, report["localReferenceCount"])
 
+    def test_binary_runtime_asset_is_not_decoded_as_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "binary-asset.zip"
+            make_zip(source, {
+                "index.html": b'<img src="logo.png">',
+                "logo.png": b"\x89PNG\r\n\x1a\n\xff\xfe",
+            })
+
+            report = MODULE.audit_zip(source)
+
+            self.assertTrue(report["strictReady"])
+            self.assertEqual([], report["unscannedRuntimePaths"])
+            self.assertEqual([], report["missingLocalReferences"])
+
 
 if __name__ == "__main__":
     unittest.main()

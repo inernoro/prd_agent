@@ -293,6 +293,17 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             {
                 session.SourceObjectKey = _storage.BuildSiteKey(StorageScope(session), "__source/source.zip");
                 session.SourceSha256 = Convert.ToHexString(SHA256.HashData(sourceBytes)).ToLowerInvariant();
+                var sourceRecorded = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id
+                         && x.Status == HostedSiteOptimizationStatuses.Analyzing
+                         && x.LeaseOwner == leaseOwner,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.SourceObjectKey, session.SourceObjectKey)
+                        .Set(x => x.SourceSha256, session.SourceSha256)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                        .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
+                    cancellationToken: CancellationToken.None);
+                if (sourceRecorded.MatchedCount != 1) return true;
                 await _storage.UploadToKeyAsync(
                     session.SourceObjectKey,
                     sourceBytes,
@@ -837,6 +848,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             .ToListAsync(ct);
         var holders = await _db.HostedSiteOptimizationSessions
             .Find(x => x.Status == HostedSiteOptimizationStatuses.Analyzing
+                       || x.Status == HostedSiteOptimizationStatuses.Previewing
                        || x.Status == HostedSiteOptimizationStatuses.Saving)
             .SortBy(x => x.UpdatedAt)
             .Limit(100)
@@ -1055,7 +1067,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         if (file == null) return null;
         var bytes = await _storage.TryDownloadBytesAsync(file.CosKey, ct);
         if (bytes != null)
-            bytes = RewriteRootReferencesForPreview(bytes, file.MimeType, BuildPreviewProxyBase(session));
+            bytes = RewriteRootReferencesForPreview(
+                bytes, file.MimeType, BuildPreviewProxyBase(session), normalized);
         return bytes == null
             ? null
             : new HostedSiteOptimizationPreviewFileResult
@@ -1075,7 +1088,11 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         => $"/api/web-pages/optimization/{Uri.EscapeDataString(session.Id)}/preview-content/"
            + $"{Uri.EscapeDataString(session.PreviewAccessToken)}/";
 
-    internal static byte[] RewriteRootReferencesForPreview(byte[] bytes, string mimeType, string proxyBase)
+    internal static byte[] RewriteRootReferencesForPreview(
+        byte[] bytes,
+        string mimeType,
+        string proxyBase,
+        string ownerPath)
     {
         if (!mimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase)
             && !mimeType.StartsWith("text/css", StringComparison.OrdinalIgnoreCase)
@@ -1085,10 +1102,41 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         if (!TryDecodeUtf8(bytes, out var text)) return bytes;
         if (mimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
         {
+            text = HtmlBaseHrefRegex().Replace(text, match =>
+            {
+                var href = match.Groups["path"].Value;
+                if (IsIgnoredReference(href) || IsExternalReference(href)) return match.Value;
+                var basePath = href.Split('?', '#')[0].Trim().Replace('\\', '/');
+                if (string.IsNullOrWhiteSpace(basePath)) return match.Value;
+                const string directoryMarker = "__preview_base__.html";
+                var resolved = basePath.EndsWith("/", StringComparison.Ordinal)
+                    ? ResolveReference(ownerPath, basePath + directoryMarker)
+                    : ResolveReference(ownerPath, basePath);
+                if (string.IsNullOrWhiteSpace(resolved)) return match.Value;
+                if (resolved.EndsWith(directoryMarker, StringComparison.Ordinal))
+                    resolved = resolved[..^directoryMarker.Length];
+                var escaped = string.Join('/', resolved.Split('/').Select(Uri.EscapeDataString));
+                var pathGroup = match.Groups["path"];
+                var relativeIndex = pathGroup.Index - match.Index;
+                return match.Value[..relativeIndex] + proxyBase + escaped
+                       + match.Value[(relativeIndex + pathGroup.Length)..];
+            });
+            var htmlWithRewrittenBase = text;
             text = Regex.Replace(
-                text,
+                htmlWithRewrittenBase,
                 "(?<prefix>\\b(?:src|href|poster|data)\\s*=\\s*[\\\"'])/(?!/)",
-                match => match.Groups["prefix"].Value + proxyBase,
+                match =>
+                {
+                    var tagStart = htmlWithRewrittenBase.LastIndexOf('<', match.Index);
+                    var tagEnd = htmlWithRewrittenBase.LastIndexOf('>', match.Index);
+                    if (tagStart > tagEnd
+                        && Regex.IsMatch(
+                            htmlWithRewrittenBase[(tagStart + 1)..match.Index],
+                            "^\\s*base\\b",
+                            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                        return match.Value;
+                    return match.Groups["prefix"].Value + proxyBase;
+                },
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
         else if (mimeType.StartsWith("text/css", StringComparison.OrdinalIgnoreCase))

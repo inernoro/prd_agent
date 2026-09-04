@@ -211,7 +211,7 @@ public class WebPagesController : ControllerBase
         Response.Headers.AccessControlAllowOrigin = "*";
         Response.Headers["X-Content-Type-Options"] = "nosniff";
         Response.Headers["Referrer-Policy"] = "no-referrer";
-        Response.Headers["Content-Security-Policy"] = "sandbox allow-scripts allow-forms; base-uri 'none'; object-src 'none'";
+        Response.Headers["Content-Security-Policy"] = "sandbox allow-scripts allow-forms; base-uri 'self'; object-src 'none'";
         return File(result.Bytes, result.MimeType);
     }
 

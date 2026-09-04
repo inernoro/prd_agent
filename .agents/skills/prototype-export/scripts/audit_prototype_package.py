@@ -259,8 +259,10 @@ def audit_zip(
                 info = info_by_name.get(owner)
                 if info is None:
                     continue
-                if PurePosixPath(owner).suffix.casefold() in RUNTIME_TEXT_SUFFIXES \
-                        and info.file_size > MAX_INSPECT_BYTES:
+                suffix = PurePosixPath(owner).suffix.casefold()
+                if suffix not in RUNTIME_TEXT_SUFFIXES:
+                    continue
+                if info.file_size > MAX_INSPECT_BYTES:
                     unscanned_runtime_paths.add(owner)
                     continue
                 try:
@@ -272,7 +274,7 @@ def audit_zip(
                     unscanned_runtime_paths.add(owner)
                 base_href = (
                     html_base_href(text)
-                    if PurePosixPath(owner).suffix.casefold() in {".html", ".htm"}
+                    if suffix in {".html", ".htm"}
                     else None
                 )
                 for reference in runtime_references(text, owner):

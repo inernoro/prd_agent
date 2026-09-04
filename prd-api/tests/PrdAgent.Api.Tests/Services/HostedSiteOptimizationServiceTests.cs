@@ -327,11 +327,28 @@ public class HostedSiteOptimizationServiceTests
         const string input = "import('/module.js');require('/legacy.js');fetch('/data.json');new Worker('/worker.js');navigator.serviceWorker.register('/service-worker.js');importScripts('/shared.js')";
 
         var rewritten = HostedSiteOptimizationService.RewriteRootReferencesForPreview(
-            Encoding.UTF8.GetBytes(input), "application/javascript", "/preview/");
+            Encoding.UTF8.GetBytes(input), "application/javascript", "/preview/", "scripts/app.js");
 
         var text = Encoding.UTF8.GetString(rewritten);
         foreach (var path in new[] { "module.js", "legacy.js", "data.json", "worker.js", "service-worker.js", "shared.js" })
             text.ShouldContain($"'/preview/{path}'");
+    }
+
+    [Fact]
+    public void RewriteRootReferencesForPreview_RewritesLocalBaseToTokenProxy()
+    {
+        const string input = "<base href=\"/assets/\"><script src=\"app.js\"></script>";
+
+        var rewritten = HostedSiteOptimizationService.RewriteRootReferencesForPreview(
+            Encoding.UTF8.GetBytes(input), "text/html", "/preview/", "pages/index.html");
+
+        Encoding.UTF8.GetString(rewritten)
+            .ShouldBe("<base href=\"/preview/assets/\"><script src=\"app.js\"></script>");
+
+        var controller = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs"));
+        controller.ShouldContain("base-uri 'self'");
+        controller.ShouldNotContain("base-uri 'none'");
     }
 
     [Fact]
@@ -410,6 +427,15 @@ public class HostedSiteOptimizationServiceTests
         source.IndexOf("var claimed = await _db.HostedSiteOptimizationSessions.FindOneAndUpdateAsync(", StringComparison.Ordinal)
             .ShouldBeLessThan(source.IndexOf("CleanupSessionFilesAsync(claimed)", StringComparison.Ordinal));
         source.ShouldContain("x.LeaseOwner == cleanupOwner");
+
+        var recommendedBranch = source[source.IndexOf("if (analysis.Recommended)", StringComparison.Ordinal)..];
+        recommendedBranch.IndexOf(".Set(x => x.SourceObjectKey", StringComparison.Ordinal).ShouldBeLessThan(
+            recommendedBranch.IndexOf("await _storage.UploadToKeyAsync(", StringComparison.Ordinal));
+
+        var healthQuery = source[
+            source.IndexOf("public async Task<HostedSiteOptimizationQueueHealth>", StringComparison.Ordinal)..
+            source.IndexOf("internal static bool IsQueueHealthy", StringComparison.Ordinal)];
+        healthQuery.ShouldContain("HostedSiteOptimizationStatuses.Previewing");
 
         var hostedSiteSource = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs"));
