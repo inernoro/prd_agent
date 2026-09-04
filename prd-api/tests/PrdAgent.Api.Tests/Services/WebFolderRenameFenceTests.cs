@@ -75,6 +75,57 @@ public sealed class WebFolderRenameFenceTests
         persisted.RenameFence.ShouldBe(2);
     }
 
+    [Fact]
+    public async Task 创建撞上重命名目标占用时_等待实体名称落定后再返回成功()
+    {
+        await using var fixture = await RenameFenceMongoFixture.CreateAsync();
+        const string userId = "owner-create-rename";
+        const string folderId = "folder-create-rename";
+        const string targetName = "目标名称";
+        var folder = new WebFolder
+        {
+            Id = folderId,
+            OwnerUserId = userId,
+            Name = "旧名称",
+        };
+        await fixture.Db.WebFolders.InsertOneAsync(folder);
+
+        var normalizedTarget = WebFolderService.NormalizeName(targetName);
+        var now = DateTime.UtcNow;
+        await fixture.Db.Database.GetCollection<BsonDocument>("web_folder_name_claims").InsertOneAsync(
+            new BsonDocument
+            {
+                ["_id"] = WebFolderService.BuildNameClaimId(userId, normalizedTarget),
+                ["FolderId"] = folderId,
+                ["OwnerUserId"] = userId,
+                ["NormalizedName"] = normalizedTarget,
+                ["CreatedAt"] = now,
+                ["UpdatedAt"] = now,
+            });
+
+        var service = new WebFolderService(
+            fixture.Db,
+            Mock.Of<IHostedSiteService>(),
+            Mock.Of<IDocumentService>(),
+            NullLogger<WebFolderService>.Instance);
+
+        var createTask = service.CreateAsync(userId, new WebFolder { Name = targetName });
+        await Task.Delay(100);
+        createTask.IsCompleted.ShouldBeFalse("目标名称还未写入实体时不能提前报告创建成功");
+
+        await fixture.Db.WebFolders.UpdateOneAsync(
+            item => item.Id == folderId && item.OwnerUserId == userId,
+            Builders<WebFolder>.Update.Set(item => item.Name, targetName));
+
+        var created = await createTask.WaitAsync(TimeSpan.FromSeconds(3));
+        created.Id.ShouldBe(folderId);
+        WebFolderService.NormalizeName(created.Name).ShouldBe(normalizedTarget);
+
+        var persisted = await fixture.Db.WebFolders.Find(item => item.OwnerUserId == userId).ToListAsync();
+        persisted.ShouldHaveSingleItem();
+        WebFolderService.NormalizeName(persisted[0].Name).ShouldBe(normalizedTarget);
+    }
+
     private sealed class RenameFenceMongoFixture : IAsyncDisposable
     {
         private readonly MongoClient _client;

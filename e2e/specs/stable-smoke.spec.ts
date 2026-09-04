@@ -1075,7 +1075,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[WEB-001][WEB-002][WEB-003][WEB-006][WEB-007][REG-web-folder-canonical-001][REG-web-folder-fence-001] 创建空文件夹并高亮拖入站点后刷新保持归属', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[WEB-001][WEB-002][WEB-003][WEB-006][WEB-007][REG-web-folder-canonical-001][REG-web-folder-fence-001][REG-web-folder-create-rename-001] 创建空文件夹并高亮拖入站点后刷新保持归属', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/web-pages');
     const runKey = `stsmk-${Date.now().toString(36)}-folder`;

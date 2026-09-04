@@ -186,7 +186,11 @@ test('网页托管变更进入功能台账并绑定七个操作锚点', () => {
   const feature = result.selected.find((item) => item.id === 'web-hosting-sharing');
   assert.ok(feature);
   assert.deepEqual(feature.requiredCaseIds, ['WEB-001', 'WEB-002', 'WEB-003', 'WEB-004', 'WEB-005', 'WEB-006', 'WEB-007']);
-  assert.deepEqual(feature.regressionCaseIds, ['REG-web-folder-canonical-001', 'REG-web-folder-fence-001']);
+  assert.deepEqual(feature.regressionCaseIds, [
+    'REG-web-folder-canonical-001',
+    'REG-web-folder-fence-001',
+    'REG-web-folder-create-rename-001',
+  ]);
 });
 
 test('网页托管问答先走匿名主存储，旧存储夹具只在 CDS 环境启用', () => {

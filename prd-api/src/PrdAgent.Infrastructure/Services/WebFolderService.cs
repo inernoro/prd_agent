@@ -48,6 +48,18 @@ public class WebFolderService : IWebFolderService
 
     public async Task<WebFolder> CreateAsync(string userId, WebFolder input, CancellationToken ct = default)
     {
+        for (var transitionAttempt = 0; transitionAttempt < 4; transitionAttempt++)
+        {
+            var resolved = await TryCreateAsync(userId, input, ct);
+            if (resolved != null)
+                return resolved;
+        }
+
+        throw new InvalidOperationException("文件夹名称正在变更，请稍后重试");
+    }
+
+    private async Task<WebFolder?> TryCreateAsync(string userId, WebFolder input, CancellationToken ct)
+    {
         var now = DateTime.UtcNow;
         var normalizedName = NormalizeName(input.Name);
         var existing = (await _db.WebFolders
@@ -110,8 +122,15 @@ public class WebFolderService : IWebFolderService
             },
             CancellationToken.None) ?? throw new InvalidOperationException("文件夹创建后未能读取，请稍后重试");
 
-        _logger.LogInformation("[web-folder] Resolved idempotent folder {Id} '{Name}' by {UserId}", created.Id, created.Name, userId);
-        return created;
+        if (NormalizeName(created.Name) == normalizedName)
+        {
+            _logger.LogInformation("[web-folder] Resolved idempotent folder {Id} '{Name}' by {UserId}", created.Id, created.Name, userId);
+            return created;
+        }
+
+        // 重命名会先占用目标名称，再写实体名称。创建请求撞上这个短暂窗口时，
+        // 不能把同 ID 的旧名称实体当成创建成功；等待 claim 与实体重新一致。
+        return await WaitForClaimedFolderAsync(userId, normalizedName);
     }
 
     internal static string NormalizeName(string? name) =>
@@ -151,6 +170,36 @@ public class WebFolderService : IWebFolderService
         return previousClaim == null
             ? new NameClaimResolution(preferredFolderId, true)
             : new NameClaimResolution(previousClaim[ClaimFolderIdField].AsString, false);
+    }
+
+    private async Task<WebFolder?> WaitForClaimedFolderAsync(
+        string userId,
+        string normalizedName)
+    {
+        var claims = _db.Database.GetCollection<BsonDocument>(NameClaimCollection);
+        var claimId = BuildNameClaimId(userId, normalizedName);
+        for (var attempt = 0; attempt < 400; attempt++)
+        {
+            var currentClaim = await claims
+                .Find(Builders<BsonDocument>.Filter.Eq("_id", claimId))
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (currentClaim == null)
+                return null;
+            if (!currentClaim.TryGetValue(ClaimFolderIdField, out var folderIdValue)
+                || !folderIdValue.IsString)
+                throw new InvalidOperationException("文件夹名称占用记录无效，请稍后重试");
+
+            var claimedFolderId = folderIdValue.AsString;
+            var claimedFolder = await _db.WebFolders
+                .Find(folder => folder.Id == claimedFolderId && folder.OwnerUserId == userId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (claimedFolder != null && NormalizeName(claimedFolder.Name) == normalizedName)
+                return claimedFolder;
+
+            await Task.Delay(25, CancellationToken.None);
+        }
+
+        throw new InvalidOperationException("文件夹名称正在变更，请稍后重试");
     }
 
     private Task RepairNameClaimAsync(
