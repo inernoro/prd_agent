@@ -315,10 +315,6 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 return true;
             }
 
-            if (analysis.OriginalEntries > 5000)
-                throw new InvalidOperationException(
-                    "ZIP 文件超过 5000 项，且未找到可安全自动精简的方案；原文件尚未保存，请使用原型导出技能重新导出");
-
             var saveClaim = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                 x => x.Id == session.Id
                      && x.Status == HostedSiteOptimizationStatuses.Analyzing
@@ -438,6 +434,40 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         CancellationToken ct = default)
     {
         var session = await GetOwnedSessionAsync(sessionId, userId, ct);
+        var recoveryNow = DateTime.UtcNow;
+        if (session.Status == HostedSiteOptimizationStatuses.Previewing
+            && (!session.LeaseExpiresAt.HasValue || session.LeaseExpiresAt <= recoveryNow))
+        {
+            if (!await CleanupPreviewFilesAsync(session.PreviewFiles))
+            {
+                await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id && x.OwnerUserId == userId,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.Status, HostedSiteOptimizationStatuses.CleanupPending)
+                        .Set(x => x.ExpiresAt, recoveryNow),
+                    cancellationToken: CancellationToken.None);
+                throw new InvalidOperationException("上次预览中断，临时文件正在清理，请稍后重试");
+            }
+
+            var recovered = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                x => x.Id == session.Id
+                     && x.OwnerUserId == userId
+                     && x.Status == HostedSiteOptimizationStatuses.Previewing
+                     && (x.LeaseExpiresAt == null || x.LeaseExpiresAt <= recoveryNow),
+                Builders<HostedSiteOptimizationSession>.Update
+                    .Set(x => x.Status, HostedSiteOptimizationStatuses.AwaitingDecision)
+                    .Set(x => x.PreviewFiles, new List<HostedSiteFile>())
+                    .Set(x => x.PreviewEntryFile, null)
+                    .Set(x => x.PreviewAccessToken, string.Empty)
+                    .Set(x => x.PreviewTotalSize, 0)
+                    .Set(x => x.LeaseOwner, null)
+                    .Set(x => x.LeaseExpiresAt, null)
+                    .Set(x => x.UpdatedAt, recoveryNow)
+                    .Set(x => x.ExpiresAt, recoveryNow.Add(SessionLifetime)),
+                cancellationToken: CancellationToken.None);
+            if (recovered.ModifiedCount == 1)
+                session = await GetOwnedSessionAsync(sessionId, userId, CancellationToken.None);
+        }
         EnsureUsable(session);
 
         if (session.Status == HostedSiteOptimizationStatuses.PreviewReady
@@ -461,12 +491,15 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
         session.ExpiresAt = DateTime.UtcNow.Add(SessionLifetime);
         session.UpdatedAt = DateTime.UtcNow;
+        var leaseOwner = Guid.NewGuid().ToString("N");
         var previewClaim = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
             x => x.Id == session.Id
                  && x.OwnerUserId == userId
                  && x.Status == HostedSiteOptimizationStatuses.AwaitingDecision,
             Builders<HostedSiteOptimizationSession>.Update
                 .Set(x => x.Status, HostedSiteOptimizationStatuses.Previewing)
+                .Set(x => x.LeaseOwner, leaseOwner)
+                .Set(x => x.LeaseExpiresAt, DateTime.UtcNow.Add(WorkerLeaseLifetime))
                 .Set(x => x.ExpiresAt, session.ExpiresAt)
                 .Set(x => x.UpdatedAt, session.UpdatedAt),
             cancellationToken: CancellationToken.None);
@@ -475,6 +508,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         session.Status = HostedSiteOptimizationStatuses.Previewing;
 
         var uploaded = new List<HostedSiteFile>();
+        using var leaseCancellation = new CancellationTokenSource();
+        var leaseHeartbeat = RenewWorkerLeaseAsync(session.Id, leaseOwner, leaseCancellation.Token);
         try
         {
             var sourceBytes = await _storage.TryDownloadBytesAsync(
@@ -492,19 +527,31 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             {
                 var key = _storage.BuildSiteKey(StorageScope(session), $"__preview/{path}");
                 var mime = MimeFor(path);
+                var pendingFile = new HostedSiteFile
+                {
+                    Path = path,
+                    CosKey = key,
+                    Size = bytes.Length,
+                    MimeType = mime,
+                };
+                uploaded.Add(pendingFile);
+                var registered = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id
+                         && x.OwnerUserId == userId
+                         && x.Status == HostedSiteOptimizationStatuses.Previewing
+                         && x.LeaseOwner == leaseOwner,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.PreviewFiles, uploaded)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                if (registered.ModifiedCount != 1)
+                    throw new InvalidOperationException("优化任务状态已变化，未继续生成预览");
                 await _storage.UploadToKeyAsync(
                     key,
                     bytes,
                     mime == "text/html" ? "text/html; charset=utf-8" : mime,
                     CancellationToken.None,
                     "private, no-store");
-                uploaded.Add(new HostedSiteFile
-                {
-                    Path = path,
-                    CosKey = key,
-                    Size = bytes.Length,
-                    MimeType = mime,
-                });
             }
 
             var totalSize = uploaded.Sum(x => x.Size);
@@ -522,7 +569,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             var completed = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                 x => x.Id == session.Id
                      && x.OwnerUserId == userId
-                     && x.Status == HostedSiteOptimizationStatuses.Previewing,
+                     && x.Status == HostedSiteOptimizationStatuses.Previewing
+                     && x.LeaseOwner == leaseOwner,
                 Builders<HostedSiteOptimizationSession>.Update
                     .Set(x => x.PreviewFiles, session.PreviewFiles)
                     .Set(x => x.PreviewEntryFile, session.PreviewEntryFile)
@@ -530,6 +578,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     .Set(x => x.PreviewTotalSize, session.PreviewTotalSize)
                     .Set(x => x.Analysis, session.Analysis)
                     .Set(x => x.Status, HostedSiteOptimizationStatuses.PreviewReady)
+                    .Set(x => x.LeaseOwner, null)
+                    .Set(x => x.LeaseExpiresAt, null)
                     .Set(x => x.UpdatedAt, session.UpdatedAt)
                     .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
                 cancellationToken: CancellationToken.None);
@@ -540,17 +590,19 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         }
         catch
         {
-            var cleaned = true;
-            foreach (var file in uploaded)
-                cleaned = await TryDeleteAsync(file.CosKey) && cleaned;
+            var cleaned = await CleanupPreviewFilesAsync(uploaded);
             if (cleaned)
             {
                 await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                     x => x.Id == session.Id
                          && x.OwnerUserId == userId
-                         && x.Status == HostedSiteOptimizationStatuses.Previewing,
+                         && x.Status == HostedSiteOptimizationStatuses.Previewing
+                         && x.LeaseOwner == leaseOwner,
                     Builders<HostedSiteOptimizationSession>.Update
                         .Set(x => x.Status, HostedSiteOptimizationStatuses.AwaitingDecision)
+                        .Set(x => x.PreviewFiles, new List<HostedSiteFile>())
+                        .Set(x => x.LeaseOwner, null)
+                        .Set(x => x.LeaseExpiresAt, null)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow)
                         .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
                     cancellationToken: CancellationToken.None);
@@ -560,14 +612,29 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                     x => x.Id == session.Id
                          && x.OwnerUserId == userId
-                         && x.Status == HostedSiteOptimizationStatuses.Previewing,
+                         && x.Status == HostedSiteOptimizationStatuses.Previewing
+                         && x.LeaseOwner == leaseOwner,
                     Builders<HostedSiteOptimizationSession>.Update
                         .Set(x => x.Status, HostedSiteOptimizationStatuses.CleanupPending)
                         .Set(x => x.PreviewFiles, uploaded)
+                        .Set(x => x.LeaseOwner, null)
+                        .Set(x => x.LeaseExpiresAt, null)
                         .Set(x => x.ExpiresAt, DateTime.UtcNow),
                     cancellationToken: CancellationToken.None);
             }
             throw;
+        }
+        finally
+        {
+            leaseCancellation.Cancel();
+            try
+            {
+                await leaseHeartbeat;
+            }
+            catch (OperationCanceledException)
+            {
+                // 正常收尾：预览任务已经结束，不再续租。
+            }
         }
     }
 
@@ -582,6 +649,13 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             throw new InvalidOperationException("请选择保存原文件或优化版本");
 
         var session = await GetOwnedSessionAsync(sessionId, userId, ct);
+        if (session.Status == HostedSiteOptimizationStatuses.Saved
+            && !string.IsNullOrWhiteSpace(session.CompletedSiteId))
+        {
+            return await _hostedSites.GetByIdAsync(
+                       session.CompletedSiteId, userId, CancellationToken.None)
+                   ?? throw new InvalidOperationException("文件已经保存，但站点暂时无法读取，请刷新站点列表");
+        }
         EnsureUsable(session);
         if (normalizedVariant == "optimized"
             && (session.Status != HostedSiteOptimizationStatuses.PreviewReady || session.PreviewFiles.Count == 0))
@@ -665,9 +739,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
             // 从这里开始正式站点已经保存成功，后续清理异常不能再把状态恢复成可确认，
             // 否则客户端重试会重复创建站点。先固化完成身份，再做不影响结果的清理。
-            session.Status = HostedSiteOptimizationStatuses.CleanupPending;
+            session.Status = HostedSiteOptimizationStatuses.Saved;
             session.CompletedSiteId = saved.Id;
-            session.ExpiresAt = DateTime.UtcNow;
+            session.ExpiresAt = DateTime.UtcNow.AddMinutes(10);
             session.UpdatedAt = DateTime.UtcNow;
             try
             {
@@ -689,16 +763,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
             if (await CleanupSessionFilesAsync(session))
             {
-                try
-                {
-                    await _db.HostedSiteOptimizationSessions.DeleteOneAsync(
-                        x => x.Id == session.Id,
-                        CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "网页托管优化临时文件已清理，但删除会话失败: {SessionId}", session.Id);
-                }
+                await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id
+                         && x.OwnerUserId == userId
+                         && x.Status == HostedSiteOptimizationStatuses.Saved,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.SourceObjectKey, string.Empty)
+                        .Set(x => x.PreviewFiles, new List<HostedSiteFile>()),
+                    cancellationToken: CancellationToken.None);
             }
             return saved;
         }
@@ -1027,6 +1099,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         return cleaned;
     }
 
+    private async Task<bool> CleanupPreviewFilesAsync(IEnumerable<HostedSiteFile> files)
+    {
+        var cleaned = true;
+        foreach (var file in files)
+            cleaned = await TryDeleteAsync(file.CosKey) && cleaned;
+        return cleaned;
+    }
+
     private async Task CleanupChunkFilesAsync(HostedSiteOptimizationSession session)
     {
         for (var index = 0; index < session.TotalChunks; index++)
@@ -1057,7 +1137,12 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.LeaseOwner, leaseOwner),
                     Builders<HostedSiteOptimizationSession>.Filter.In(
                         x => x.Status,
-                        new[] { HostedSiteOptimizationStatuses.Analyzing, HostedSiteOptimizationStatuses.Saving })),
+                        new[]
+                        {
+                            HostedSiteOptimizationStatuses.Analyzing,
+                            HostedSiteOptimizationStatuses.Previewing,
+                            HostedSiteOptimizationStatuses.Saving,
+                        })),
                 Builders<HostedSiteOptimizationSession>.Update
                     .Set(x => x.LeaseExpiresAt, now.Add(WorkerLeaseLifetime))
                     .Set(x => x.UpdatedAt, now)

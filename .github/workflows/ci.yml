@@ -117,6 +117,8 @@ jobs:
               - 'scripts/assemble-changelog.sh'
               - 'scripts/lib/changelog_merge.py'
               - 'scripts/tests/test_*.py'
+              - '.agents/skills/prototype-export/scripts/audit_prototype_package.py'
+              - '.agents/skills/prototype-export/tests/test_audit_prototype_package.py'
               # cdscli 的冒烟覆盖守卫盯的是这个脚本本身：不把它登记进来，
               # 只改 cdscli 的 PR 就完全跳过这道闸，而假绿恰恰是在那里回潮的
               # （形状 7：守卫自己没接上线）。
@@ -276,6 +278,9 @@ jobs:
             echo "--- $t"
             python3 "$t"
           done
+
+      - name: Prototype export audit tests
+        run: python3 .agents/skills/prototype-export/tests/test_audit_prototype_package.py
 
       # scripts/tests/ 下的 *.test.mjs 此前没有任何 workflow 引用（写了等于没写）。
       # 用 node --test 一次跑完；shopt -s nullglob 保证「一个都没有」时是空跑而不是

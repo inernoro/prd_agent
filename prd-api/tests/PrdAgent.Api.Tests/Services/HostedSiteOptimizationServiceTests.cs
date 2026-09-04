@@ -63,6 +63,20 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_CleanPackageAboveOptimizationTarget_RemainsHostable()
+    {
+        var files = new Dictionary<string, string> { ["index.html"] = "<main>ready</main>" };
+        for (var index = 0; index < 5000; index++)
+            files[$"assets/{index:D4}.txt"] = "x";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeFalse();
+        result.OriginalFiles.ShouldBe(5001);
+    }
+
+    [Fact]
     public void Analyze_LargeNodeModulesTree_RecommendsConservativeOptimization()
     {
         var files = new Dictionary<string, string>
@@ -276,6 +290,8 @@ public class HostedSiteOptimizationServiceTests
         source.ShouldNotContain("var sourceBytes = source.ToArray()");
         source.ShouldContain("var cleanupAfter = DateTime.UtcNow.Add(WorkerLeaseLifetime)");
         source.ShouldContain("session.ExpiresAt = cleanupAfter");
+        source.ShouldContain("session.Status = HostedSiteOptimizationStatuses.Saved");
+        source.ShouldContain("Previewing,\n                            HostedSiteOptimizationStatuses.Saving");
     }
 
     private static HostedSiteOptimizationService CreateService()
