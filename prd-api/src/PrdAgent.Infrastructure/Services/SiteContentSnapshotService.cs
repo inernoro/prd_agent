@@ -401,21 +401,33 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     {
         var output = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var scripts = Regex.Matches(html, @"<script\b[^>]*>([\s\S]*?)</script>",
+        // 只读真正承载客户端页面的 module 脚本。hydration JSON、兼容脚本、
+        // 埋点和错误处理脚本不是可见正文，不得被混入快照。
+        var scripts = Regex.Matches(
+            html,
+            @"<script\b(?=[^>]*\btype\s*=\s*(?:""module""|'module'|module\b))[^>]*>([\s\S]*?)</script>",
             RegexOptions.IgnoreCase);
 
         foreach (Match script in scripts)
         {
-            // 不能用“完整 JS 字符串字面量”正则：真实压缩 bundle 含正则字面量和转义片段，
-            // 一处引号配对偏移就会让后续整段可见文案全部漏掉。按 JS/HTML 结构分隔符切段
-            // 更稳健；随后严格要求含中文、限制长度并去重，框架代码自然会被过滤掉。
-            var segments = Regex.Split(script.Groups[1].Value, "[\"'`<>{}\\[\\]\\r\\n]");
-            foreach (var segment in segments)
+            var source = script.Groups[1].Value;
+            // 带路由的 bundle 同时包含多个页面，服务端不知道浏览器当前渲染了哪一条。
+            // 这种形态宁可拒绝自动补文案，也不把其它路由的内容说成当前页正文。
+            if (Regex.IsMatch(
+                    source,
+                    @"\b(?:createBrowserRouter|BrowserRouter|HashRouter|MemoryRouter|useRoutes)\b|\blocation\s*\.\s*pathname\b",
+                    RegexOptions.IgnoreCase))
+                continue;
+
+            // 只提取 React 元素 children 属性中的文本节点，不再扫描任意 JS 字符串。
+            // 这会排除路由表元数据、对话框配置、隐藏错误和管理员文案常量。
+            var children = Regex.Matches(
+                source,
+                @"\bchildren\s*:\s*(?:\[\s*)?(?<quote>[""'`])(?<text>(?:\\.|(?!\k<quote>)[\s\S]){2,1000}?)\k<quote>");
+            foreach (Match child in children)
             {
-                var value = segment;
+                var value = child.Groups["text"].Value;
                 if (string.IsNullOrWhiteSpace(value)
-                    || value.Length < 2
-                    || value.Length > 1000
                     || !Regex.IsMatch(value, @"[\u3400-\u9fff]"))
                     continue;
 

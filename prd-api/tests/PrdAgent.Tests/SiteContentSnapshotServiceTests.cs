@@ -218,6 +218,52 @@ public class SiteContentSnapshotServiceTests
     }
 
     [Fact]
+    public void 客户端壳子_只读Module中的React文本节点()
+    {
+        const string html = """
+            <!doctype html><html><body>
+              <div id="root"></div>
+              <script type="application/json">{"notice":"其它路由的管理员公告"}</script>
+              <script>const hiddenDialog = "管理员内部错误";</script>
+              <script type="module">
+                const hiddenConstant = "仅在异常对话框中显示";
+                const page = { children: ["当前页可见结论", jsx("strong", { children: "风险分 + 置信度" })] };
+              </script>
+            </body></html>
+            """;
+
+        var text = SiteContentSnapshotService.HtmlToPlainText(html);
+
+        Assert.Contains("当前页可见结论", text);
+        Assert.Contains("风险分 + 置信度", text);
+        Assert.DoesNotContain("其它路由的管理员公告", text);
+        Assert.DoesNotContain("管理员内部错误", text);
+        Assert.DoesNotContain("仅在异常对话框中显示", text);
+    }
+
+    [Fact]
+    public void 含路由的客户端Bundle_不把其它路由文案当成当前页正文()
+    {
+        const string html = """
+            <!doctype html><html><body>
+              <div id="root"></div>
+              <script type="module">
+                const route = location.pathname;
+                const pages = {
+                  public: { children: "公开页结论" },
+                  admin: { children: "管理员密钥页" }
+                };
+              </script>
+            </body></html>
+            """;
+
+        var text = SiteContentSnapshotService.HtmlToPlainText(html);
+
+        Assert.True(string.IsNullOrWhiteSpace(text));
+        Assert.DoesNotContain("管理员密钥页", text);
+    }
+
+    [Fact]
     public async Task 当前存储缺少存量入口时_从落库站点地址读取正文()
     {
         var storage = new FakeAssetStorage();

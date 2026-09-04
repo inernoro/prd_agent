@@ -1,4 +1,5 @@
 import type { WebHostingRole } from '@/services/real/teams';
+import type { WebPageGroup } from '@/services/real/webPages';
 import { canEditInWebHosting } from '@/lib/webHostingRole';
 
 export const WEB_PAGE_FOLDER_SLOT_PREFIX = 'web-page-folder:';
@@ -62,9 +63,19 @@ export function canDropSiteIntoTeamGroup(
   role: WebHostingRole | null | undefined,
   ownerUserId: string | null | undefined,
   currentUserId: string | null | undefined,
+  group?: Pick<WebPageGroup, 'visibility' | 'myGroupRole'>,
 ): boolean {
+  if (!canReceiveSiteDrop(group)) return false;
   const isSiteOwner = !!currentUserId && ownerUserId === currentUserId;
   return isSiteOwner || canEditInWebHosting(role);
+}
+
+/** 受限分组的写权限由分组角色单独决定，不能用站点所有者或空间编辑身份绕过。 */
+export function canReceiveSiteDrop(
+  group?: Pick<WebPageGroup, 'visibility' | 'myGroupRole'>,
+): boolean {
+  if (!group || group.visibility !== 'restricted') return true;
+  return group.myGroupRole === 'owner' || group.myGroupRole === 'editor';
 }
 
 export function buildWebPageFolderSlot(folder: string): string {

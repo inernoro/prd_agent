@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildWebPageFolderSlot,
   buildWebPageGroupSlot,
+  canReceiveSiteDrop,
   canDropSiteIntoTeamGroup,
   mergePersonalFolderOptions,
   planPersonalFolderCreate,
@@ -29,6 +30,17 @@ describe('网页卡片文件夹拖拽协议', () => {
     expect(canDropSiteIntoTeamGroup('viewer', 'user-1', 'user-1')).toBe(true);
     expect(canDropSiteIntoTeamGroup('viewer', 'user-2', 'user-1')).toBe(false);
     expect(canDropSiteIntoTeamGroup('editor', 'user-2', 'user-1')).toBe(true);
+  });
+
+  it('受限分组必须同时具备分组编辑权才显示可投放并接受移入', () => {
+    const restrictedViewer = { visibility: 'restricted' as const, myGroupRole: 'viewer' as const };
+    const restrictedEditor = { visibility: 'restricted' as const, myGroupRole: 'editor' as const };
+
+    expect(canReceiveSiteDrop(restrictedViewer)).toBe(false);
+    expect(canDropSiteIntoTeamGroup('editor', 'user-1', 'user-1', restrictedViewer)).toBe(false);
+    expect(canReceiveSiteDrop(restrictedEditor)).toBe(true);
+    expect(canDropSiteIntoTeamGroup('viewer', 'user-1', 'user-1', restrictedEditor)).toBe(true);
+    expect(canReceiveSiteDrop({ visibility: 'inherit', myGroupRole: 'viewer' })).toBe(true);
   });
 
   it('同名旧文件夹仍会补建持久记录，已有持久记录则只切换', () => {

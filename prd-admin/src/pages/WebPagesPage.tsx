@@ -90,6 +90,7 @@ import { MobileFab } from '@/components/mobile/MobileFab';
 import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real/webFolders';
 import {
   buildWebPageGroupSlot,
+  canReceiveSiteDrop,
   canDropSiteIntoTeamGroup,
   mergePersonalFolderOptions,
   personalFolderNamesEqual,
@@ -1008,8 +1009,10 @@ export default function WebPagesPage() {
     const site = sites.find((item) => item.id === siteId);
     const group = teamGroups.find((item) => item.id === groupId);
     if (!site || !group || site.groupId === groupId) return;
-    if (!canDropSiteIntoTeamGroup(myWebHostingRole, site.ownerUserId, currentUserId)) {
-      toast.error('无权限', '你在该团队空间是只读角色，无法移动网页');
+    if (!canDropSiteIntoTeamGroup(myWebHostingRole, site.ownerUserId, currentUserId, group)) {
+      toast.error('无权限', group.visibility === 'restricted'
+        ? '你在该受限分组是只读角色，无法移入网页'
+        : '你在该团队空间是只读角色，无法移动网页');
       return;
     }
 
@@ -2219,6 +2222,7 @@ function TeamGroupsTree({
 
   const row = (g: WebPageGroup) => {
     const on = activeGroupId === g.id;
+    const acceptsDrop = canReceiveSiteDrop(g);
     if (editing?.id === g.id) {
       return (
         <input
@@ -2244,10 +2248,10 @@ function TeamGroupsTree({
         onClick={() => onSelect(on ? null : g.id)}
         onDoubleClick={() => { if (canEdit) setEditing({ id: g.id, value: g.name }); }}
         onKeyDown={(e) => { if (e.key === 'Enter') onSelect(on ? null : g.id); }}
-        title={canEdit ? '双击重命名' : undefined}
+        title={acceptsDrop ? (canEdit ? '双击重命名' : undefined) : '你在该受限分组是只读角色'}
         className="web-folder-drop-target group/tree-item w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover-bg-soft"
-        data-dock-slot={buildWebPageGroupSlot(g.id)}
-        data-dock-mime={WEB_PAGE_MIME}
+        data-dock-slot={acceptsDrop ? buildWebPageGroupSlot(g.id) : undefined}
+        data-dock-mime={acceptsDrop ? WEB_PAGE_MIME : undefined}
         data-tour-id="webpages-group-drop-target"
         style={itemStyle(on)}
       >
