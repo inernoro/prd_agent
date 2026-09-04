@@ -65,7 +65,9 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
         var client = _gateway.CreateClient(
             caller,
             ModelTypes.Chat,
-            maxTokens: 16_000,
+            // 默认模型池可能回落到 4K completion 上限；首版先保证所有已配置聊天模型都能执行。
+            // 更长网页由模型配置升级或后续分段生成解决，不能在业务层假定 16K 输出能力。
+            maxTokens: 4_096,
             temperature: run.Operation == DesignArtifactOperations.Edit ? 0.25 : 0.45,
             includeThinking: true);
         var messages = new List<LLMMessage>
