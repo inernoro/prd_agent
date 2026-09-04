@@ -368,6 +368,30 @@ public sealed class WebFolderRenameFenceTests
     }
 
     [Fact]
+    public async Task 创建租约被接管后_旧围栏补偿不能删除新实体()
+    {
+        await using var fixture = await RenameFenceMongoFixture.CreateAsync();
+        const string userId = "owner-create-compensation";
+        const string folderId = "folder-create-compensation";
+        await fixture.Db.WebFolders.InsertOneAsync(new WebFolder
+        {
+            Id = folderId,
+            OwnerUserId = userId,
+            Name = "接管后的实体",
+            RenameFence = 2,
+        });
+
+        var staleDelete = await fixture.Db.WebFolders.DeleteOneAsync(
+            WebFolderService.BuildRenameFenceOwnerFilter(folderId, userId, 1));
+
+        staleDelete.DeletedCount.ShouldBe(0);
+        var persisted = await fixture.Db.WebFolders
+            .Find(folder => folder.Id == folderId && folder.OwnerUserId == userId)
+            .SingleAsync();
+        persisted.RenameFence.ShouldBe(2);
+    }
+
+    [Fact]
     public void 服务端权威名称键不会把兼容连字扩成普通字母()
     {
         WebFolderService.NormalizeName("ﬃ").ShouldNotBe(WebFolderService.NormalizeName("FFI"));

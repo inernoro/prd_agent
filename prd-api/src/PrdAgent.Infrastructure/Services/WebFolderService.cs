@@ -117,6 +117,9 @@ public class WebFolderService : IWebFolderService
                 RenameFence = lease.Fence,
             };
 
+            // 创建实体前续租并复核锁所有权，缩小慢写或进程暂停跨过租约边界的窗口。
+            // 写入后还会再次续租；若期间已被接管，catch 会按本次 fence 精确删除旧实体。
+            await RenewRenameLockAsync(candidateId, lease);
             var ub = Builders<WebFolder>.Update;
             var created = await IMongoCollectionExtensions.FindOneAndUpdateAsync<WebFolder, WebFolder>(
                 _db.WebFolders,
@@ -145,6 +148,7 @@ public class WebFolderService : IWebFolderService
             if (NormalizeName(created.Name) != normalizedName)
                 throw new InvalidOperationException("文件夹身份发生冲突，请稍后重试");
 
+            await RenewRenameLockAsync(candidateId, lease);
             await FinalizeOwnedNameClaimAsync(userId, normalizedName, candidateId, lease);
             ownsNameClaim = false;
             keepLockRecord = true;
@@ -157,6 +161,10 @@ public class WebFolderService : IWebFolderService
         {
             if (ownsNameClaim)
             {
+                // FindOneAndUpdate 可能已在服务端成功、但客户端收到超时；无论调用方是否
+                // 拿到返回值，都按本次 fence 清理候选实体。更高 fence 的接管者不会命中。
+                // 只有实体确认清理后才释放 claim；清理失败时保留映射比放出同名写入更安全。
+                await DeleteCreatedFolderIfOwnedAsync(candidateId, userId, lease);
                 await ReleaseOwnedNameClaimAsync(userId, normalizedName, candidateId, lease);
             }
             throw;
@@ -494,6 +502,16 @@ public class WebFolderService : IWebFolderService
                 Builders<BsonDocument>.Filter.Eq("_id", folderId),
                 Builders<BsonDocument>.Filter.Eq("OperationId", lease.OperationId),
                 Builders<BsonDocument>.Filter.Eq(RenameFenceField, lease.Fence)),
+            CancellationToken.None);
+    }
+
+    private Task DeleteCreatedFolderIfOwnedAsync(
+        string folderId,
+        string userId,
+        RenameLease lease)
+    {
+        return _db.WebFolders.DeleteOneAsync(
+            BuildRenameFenceOwnerFilter(folderId, userId, lease.Fence),
             CancellationToken.None);
     }
 
