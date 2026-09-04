@@ -21,6 +21,7 @@ import { Router } from 'express';
 import type { StateService } from '../services/state.js';
 import type { BranchEntry, BuildProfile, Project } from '../types.js';
 import { classifyDbEnvKeys, dbInvolvementOf, type DbEnvKeyClassification, type DbInvolvement } from '../services/replica-db-clone.js';
+import { effectiveDbInit, isDbInitMode, MONGO_CLONE_REFUSAL, type DbInitMode } from '../services/db-init-mode.js';
 
 export type DbScope = 'shared' | 'per-branch';
 
@@ -65,6 +66,11 @@ export interface ProjectDbIsolationService {
   inheritedSuspectDbEnvKeys: string[];
   /** 有多少条分支对这个服务写了自己的覆盖（这些分支不受项目默认影响）。 */
   branchOverrideCount: number;
+  /** 分支独立库初始化方式（收敛 4）：empty 空库重跑迁移（默认）/ clone 从共享库时间点克隆 */
+  dbInit: DbInitMode;
+  /** 能不能选时间点克隆：只有认出关系型库名变量（mysql / postgres）的服务可以 */
+  dbInitSupported: boolean;
+  dbInitUnsupportedReason?: string;
 }
 
 export interface ProjectDbIsolationBranchOverride {
@@ -108,6 +114,14 @@ export interface ProjectDbIsolationWriteBody {
   all?: unknown;
   /** 逐服务：profileId → 档位。与 all 同时给时，这里的条目优先。 */
   services?: unknown;
+  /** 逐服务：profileId → 分支独立库初始化方式（收敛 4）。可单独提交，不必同时改档位。 */
+  inits?: unknown;
+}
+
+export interface ProjectDbInitChange {
+  profileId: string;
+  from: DbInitMode;
+  to: DbInitMode;
 }
 
 export interface ProjectDbIsolationChange {
@@ -117,12 +131,14 @@ export interface ProjectDbIsolationChange {
 }
 
 export type ProjectDbIsolationPlan =
-  | { ok: true; changes: ProjectDbIsolationChange[]; unchanged: string[] }
+  | { ok: true; changes: ProjectDbIsolationChange[]; initChanges: ProjectDbInitChange[]; unchanged: string[] }
   | { ok: false; status: number; error: string; unknownProfileIds?: string[] };
 
 export interface ProjectDbIsolationWriteResult {
   projectId: string;
   changes: ProjectDbIsolationChange[];
+  /** 初始化方式的变更（收敛 4） */
+  initChanges: ProjectDbInitChange[];
   unchanged: string[];
   /** 继承项目默认（对被改的服务没有分支覆盖）、因此会受影响的分支数 */
   affectedBranches: number;
@@ -141,6 +157,22 @@ export function effectiveDbScope(profile: Pick<BuildProfile, 'dbScope'>): DbScop
 function branchDbScopeOverride(branch: BranchEntry, profileId: string): DbScope | undefined {
   const value = branch.profileOverrides?.[profileId]?.dbScope;
   return isDbScope(value) ? value : undefined;
+}
+
+/**
+ * 这个服务能不能选「时间点克隆」：只有认出关系型库名变量（会被改写的 mysql / postgres key）才行；
+ * mongo 走不了共享实例克隆，不涉及数据库或认不出库名的服务没有独立库可克隆。
+ */
+export function dbInitSupportOf(profile: Pick<BuildProfile, 'env'>, projectEnv: Record<string, string> = {}): { supported: boolean; reason?: string } {
+  const mergedEnv = { ...projectEnv, ...(profile.env || {}) };
+  const details = classifyDbEnvKeys(mergedEnv);
+  const { involvement } = dbInvolvementOf(mergedEnv, new Set(Object.keys(profile.env || {})));
+  if (involvement === 'none') return { supported: false, reason: '不涉及数据库，没有独立库可克隆' };
+  if (involvement === 'unrecognized') return { supported: false, reason: '库名变量无法识别，先改成分类器认得的家族名再谈克隆' };
+  if (details.length > 0 && details.every((k) => k.engine === 'mongo')) return { supported: false, reason: MONGO_CLONE_REFUSAL };
+  const rewritten = details.filter((k) => k.rewritten && k.engine !== 'mongo');
+  if (rewritten.length === 0) return { supported: false, reason: '库名变量不在改写白名单（只识别不加后缀），没有独立库可克隆' };
+  return { supported: true };
 }
 
 /**
@@ -187,6 +219,8 @@ export function buildProjectDbIsolationView(
       suspectDbEnvKeys: suspects,
       inheritedSuspectDbEnvKeys: inheritedSuspects,
       branchOverrideCount: overrideCountByProfile.get(profile.id) || 0,
+      dbInit: effectiveDbInit(profile),
+      ...(() => { const sup = dbInitSupportOf(profile, projectEnv); return { dbInitSupported: sup.supported, ...(sup.reason ? { dbInitUnsupportedReason: sup.reason } : {}) }; })(),
     };
   });
 
@@ -222,13 +256,39 @@ export function buildProjectDbIsolationView(
 export function planProjectDbIsolationWrite(
   profiles: BuildProfile[],
   body: ProjectDbIsolationWriteBody | null | undefined,
+  projectEnv: Record<string, string> = {},
 ): ProjectDbIsolationPlan {
   if (!body || typeof body !== 'object') {
-    return { ok: false, status: 400, error: '请求体必须是对象，且至少提供 all 或 services 之一' };
+    return { ok: false, status: 400, error: '请求体必须是对象，且至少提供 all、services、inits 之一' };
   }
-  const { all, services } = body;
-  if (all === undefined && services === undefined) {
-    return { ok: false, status: 400, error: '至少提供 all（批量）或 services（逐服务）之一' };
+  const { all, services, inits } = body;
+  if (all === undefined && services === undefined && inits === undefined) {
+    return { ok: false, status: 400, error: '至少提供 all（批量）、services（逐服务档位）或 inits（逐服务初始化方式）之一' };
+  }
+  // 初始化方式（收敛 4）：与档位同一套「全量校验先行、整批拒绝」
+  const initChanges: ProjectDbInitChange[] = [];
+  if (inits !== undefined) {
+    if (!inits || typeof inits !== 'object' || Array.isArray(inits)) {
+      return { ok: false, status: 400, error: "inits 必须是 { profileId: 'empty' | 'clone' } 形状的对象" };
+    }
+    const known = new Map(profiles.map((p) => [p.id, p]));
+    const unknown: string[] = [];
+    for (const [profileId, value] of Object.entries(inits as Record<string, unknown>)) {
+      const profile = known.get(profileId);
+      if (!profile) { unknown.push(profileId); continue; }
+      if (!isDbInitMode(value)) {
+        return { ok: false, status: 400, error: `服务 "${profileId}" 的初始化方式非法（仅允许 'empty' 或 'clone'）` };
+      }
+      if (value === 'clone') {
+        const sup = dbInitSupportOf(profile, projectEnv);
+        if (!sup.supported) return { ok: false, status: 400, error: `服务 "${profileId}" 不支持时间点克隆：${sup.reason}（整批未写入）` };
+      }
+      const from = effectiveDbInit(profile);
+      if (from !== value) initChanges.push({ profileId, from, to: value });
+    }
+    if (unknown.length > 0) {
+      return { ok: false, status: 400, error: `以下服务不属于本项目：${unknown.join(', ')}（整批未写入）`, unknownProfileIds: unknown };
+    }
   }
   if (all !== undefined && !isDbScope(all)) {
     return { ok: false, status: 400, error: `all 非法（仅允许 'shared' 或 'per-branch'）` };
@@ -256,7 +316,7 @@ export function planProjectDbIsolationWrite(
       };
     }
   }
-  if (all === undefined && perService.size === 0) {
+  if (all === undefined && perService.size === 0 && inits === undefined) {
     return { ok: false, status: 400, error: 'services 为空，没有可写入的服务' };
   }
 
@@ -271,7 +331,7 @@ export function planProjectDbIsolationWrite(
     if (from === target) { unchanged.push(profile.id); continue; }
     changes.push({ profileId: profile.id, from, to: target });
   }
-  return { ok: true, changes, unchanged };
+  return { ok: true, changes, initChanges, unchanged };
 }
 
 /** 被改的服务里，哪些分支会跟着变（没写覆盖）、哪些分支不受影响（写了覆盖）。 */
@@ -329,7 +389,7 @@ export function createProjectDbIsolationRouter(deps: ProjectDbIsolationDeps): Ro
     }
 
     const profiles = stateService.getBuildProfilesForProject(projectId);
-    const plan = planProjectDbIsolationWrite(profiles, req.body as ProjectDbIsolationWriteBody);
+    const plan = planProjectDbIsolationWrite(profiles, req.body as ProjectDbIsolationWriteBody, stateService.getCustomEnv(project.id) || {});
     if (!plan.ok) {
       res.status(plan.status).json({
         error: plan.error,
@@ -341,10 +401,11 @@ export function createProjectDbIsolationRouter(deps: ProjectDbIsolationDeps): Ro
     const branches = stateService.getBranchesForProject(projectId);
     const { affectedBranches, keptBranchOverrides } = countAffectedBranches(branches, plan.changes);
 
-    if (plan.changes.length === 0) {
+    if (plan.changes.length === 0 && plan.initChanges.length === 0) {
       res.json({
         projectId,
         changes: [],
+        initChanges: [],
         unchanged: plan.unchanged,
         affectedBranches: 0,
         keptBranchOverrides: 0,
@@ -357,7 +418,7 @@ export function createProjectDbIsolationRouter(deps: ProjectDbIsolationDeps): Ro
     // 批量改底座是可回滚的破坏性写入：先拍配置快照，再一次性落盘。
     const snapshot = stateService.createConfigSnapshot({
       trigger: 'pre-destructive',
-      label: `修改项目数据库隔离（${plan.changes.length} 个服务）`,
+      label: `修改项目数据库隔离（${plan.changes.length + plan.initChanges.length} 个服务）`,
       projectId,
     });
 
@@ -368,9 +429,17 @@ export function createProjectDbIsolationRouter(deps: ProjectDbIsolationDeps): Ro
       const profile = stateService.getBuildProfile(change.profileId);
       before.set(change.profileId, profile?.dbScope);
     }
+    const beforeInit = new Map<string, BuildProfile['dbInit']>();
+    for (const change of plan.initChanges) {
+      const profile = stateService.getBuildProfile(change.profileId);
+      beforeInit.set(change.profileId, profile?.dbInit);
+    }
     try {
       for (const change of plan.changes) {
         stateService.updateBuildProfile(change.profileId, { dbScope: change.to });
+      }
+      for (const change of plan.initChanges) {
+        stateService.updateBuildProfile(change.profileId, { dbInit: change.to });
       }
       stateService.save();
     } catch (err) {
@@ -382,6 +451,14 @@ export function createProjectDbIsolationRouter(deps: ProjectDbIsolationDeps): Ro
           else profile.dbScope = prev;
         } catch { /* 回滚尽力而为 */ }
       }
+      for (const [profileId, prev] of beforeInit) {
+        try {
+          const profile = stateService.getBuildProfile(profileId);
+          if (!profile) continue;
+          if (prev === undefined) delete profile.dbInit;
+          else profile.dbInit = prev;
+        } catch { /* 回滚尽力而为 */ }
+      }
       res.status(500).json({ error: `保存失败，整批未写入：${(err as Error).message}` });
       return;
     }
@@ -389,18 +466,26 @@ export function createProjectDbIsolationRouter(deps: ProjectDbIsolationDeps): Ro
     stateService.recordDestructiveOp({
       type: 'other',
       snapshotId: snapshot.id,
-      summary: `项目 ${projectId} 数据库隔离：${plan.changes.map((c) => `${c.profileId} ${c.from}→${c.to}`).join('，')}`,
+      summary: `项目 ${projectId} 数据库隔离：${[
+        ...plan.changes.map((c) => `${c.profileId} ${c.from}→${c.to}`),
+        ...plan.initChanges.map((c) => `${c.profileId} 初始化 ${c.from}→${c.to}`),
+      ].join('，')}`,
     });
 
     const nextProfiles = stateService.getBuildProfilesForProject(projectId);
-    const parts = [`已更新 ${plan.changes.length} 个服务的数据库隔离`];
-    parts.push(affectedBranches > 0
-      ? `${affectedBranches} 个继承项目配置的分支重新部署后生效`
-      : '当前没有继承项目配置的分支');
+    const parts: string[] = [];
+    if (plan.changes.length > 0) parts.push(`已更新 ${plan.changes.length} 个服务的数据库隔离`);
+    if (plan.initChanges.length > 0) parts.push(`已更新 ${plan.initChanges.length} 个服务的独立库初始化方式（对还没建库的分支首次部署时生效）`);
+    if (plan.changes.length > 0) {
+      parts.push(affectedBranches > 0
+        ? `${affectedBranches} 个继承项目配置的分支重新部署后生效`
+        : '当前没有继承项目配置的分支');
+    }
     if (keptBranchOverrides > 0) parts.push(`${keptBranchOverrides} 个分支的本分支覆盖保持不变`);
     res.json({
       projectId,
       changes: plan.changes,
+      initChanges: plan.initChanges,
       unchanged: plan.unchanged,
       affectedBranches,
       keptBranchOverrides,

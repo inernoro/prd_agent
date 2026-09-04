@@ -258,6 +258,12 @@ export interface BuildProfile {
    * 多分支不互相破坏数据"的北极星目标。
    */
   dbScope?: 'shared' | 'per-branch';
+  /**
+   * 数据库隔离收敛 4（2026-09-04）—— 分支独立库的初始化方式（只在 dbScope=per-branch 时有意义）。
+   *   empty（默认）：空库，应用启动时自己建库、跑迁移
+   *   clone：首次部署前从共享库时间点克隆一份（mysql / postgres；mongo 暂不支持，按空库处理）
+   */
+  dbInit?: 'empty' | 'clone';
 }
 
 /**
@@ -526,6 +532,8 @@ export interface BuildProfileOverride {
    * branchOverride 改成 'per-branch' 拿到独立 DB,避免污染 main。
    */
   dbScope?: 'shared' | 'per-branch';
+  /** 按分支覆盖分支独立库的初始化方式（见 BuildProfile.dbInit） */
+  dbInit?: 'empty' | 'clone';
   /**
    * 2026-05-01 Phase 7(B10)新增 —— Docker entrypoint 覆盖。
    * 见 BuildProfile.entrypoint 注释。允许个别分支临时改 entrypoint(如调试用)。
@@ -741,7 +749,28 @@ export interface DbLedgerEntry {
   backups: DbLedgerBackup[];
   /** 最近一次量到的对象数（表 / 集合） */
   lastObjects?: { count: number; measuredAt: string };
+  /** 时间点克隆初始化（收敛 4）：从哪个库、什么时候克隆的、逐表行数校验结果 */
+  clone?: DbLedgerClone;
+  /** 视图字段（不落盘）：按当前配置折算的初始化方式，分支独立库条目才有 */
+  initMode?: 'empty' | 'clone';
   note?: string;
+}
+
+/** 克隆后的逐表行数校验：源库与目标库各数一遍，差异逐表列出 */
+export interface DbCloneVerification {
+  ok: boolean;
+  measuredAt: string;
+  tables: Array<{ table: string; source: number; target: number }>;
+  /** 两边都有但行数不同的表 */
+  mismatched: string[];
+  sourceOnly: string[];
+  targetOnly: string[];
+}
+
+export interface DbLedgerClone {
+  sourceDb: string;
+  clonedAt: string;
+  verification: DbCloneVerification;
 }
 
 /** 复制集执行计划的步骤类型（草稿-保存模型：用户先排操作，保存后串行执行） */

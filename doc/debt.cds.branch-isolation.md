@@ -10,7 +10,7 @@
 
 ## 总览
 
-当前 open: 2（BNI-legacy-shared-alias / DBI-project-default-stale-build，均为已知边界）/ 已落地待验证: 2（dns-alias-collision / bullmq）/ 已修复: 2（BNI-prune-network / BNI-cleanup）/ 总计: 6
+当前 open: 3（BNI-legacy-shared-alias / DBI-project-default-stale-build / DBI-clone-init-mongo-and-drift，均为已知边界）/ 已落地待验证: 2（dns-alias-collision / bullmq）/ 已修复: 2（BNI-prune-network / BNI-cleanup）/ 总计: 7
 
 > 2026-07-09 批次：BULLMQ_PREFIX 平台自动注入落地（env-provenance 第 4.5 层，customEnv 显式定义优先 + `CDS_BULLMQ_PREFIX_INJECTION=0` 逃生阀，slug 与 per-branch-db 同一 SSOT `slugifyBranchForDb`）；BNI-cleanup 补齐 janitor removeFn 与启动残留 prune 两处 `removeBranchNetwork` 调用。
 
@@ -65,6 +65,7 @@ brandai 项目已临时用分支级 env 兜底:`AI_SERVICE_URL=http://cds-<branc
 | BNI-prune-network | low | 2026-06-29 | `pruneStaleAppContainersForProfile` 曾按共享网扫描,隔离后 app 别名在分支网 | 隔离开启后的陈旧容器清理 | 已修复 | 2026-06-29 review:已改按 `netPlan.runNetwork`(隔离=分支网)扫别名,与别名实际所在网一致 |
 | BNI-legacy-shared-alias | low | 2026-06-29 | 渐进迁移过渡窗口:已迁移分支 connect 共享网以可达 infra,若兄弟分支旧容器仍跑在共享网,其残留 app `--network-alias` 仍可被解析,隔离要等所有兄弟重部署后才完全生效 | 隔离 rollout 期 + 兄弟分支未重部署 + 解析本分支网缺失的 app 名 | open（已知边界） | 无 flag day 渐进迁移固有过渡态,非新代码 bug。缓解:兄弟下次部署即落分支网/旧别名消失、运营可批量重部署或 prune 共享网存量 app 别名、逃生开关整体回退。根治=app 只连 infra-only 专网(共享网不再承载 app 别名),属更大架构改动,待专项。见 `design.cds.branch-network-isolation` §6 |
 | DBI-project-default-stale-build | low | 2026-09-02 | 项目设置「数据库隔离」改的是 `BuildProfile.dbScope` 底座，保存只写配置不重部署：改完之后、分支重新部署之前，跑着的旧容器仍连着改前的库；分支删除后 `app_<slug>` 独立库也不会自动 drop（与 `guide.cds.multi-branch-db` §4 一致） | 改项目默认后不重部署 / 频繁增删分支 | open（已知边界） | 有意设计：切库是重操作，重部署时机交给用户；页面与 API 回包都写明「重新部署后生效」并给出受影响分支数。独立库的去向已由数据台账接管（2026-09-03 收敛 3）：删分支默认保留转孤儿，备份 / 演练 / 丢弃门禁在项目设置「派生库台账」里 |
+| DBI-clone-init-mongo-and-drift | low | 2026-09-04 | 分支独立库「时间点克隆」只覆盖 mysql / postgres，mongo 服务只能空库；克隆后的逐表校验只比行数、只比一次，克隆期间共享库的写入会以「不一致」呈现而不区分「克隆丢数据」与「源库又写了」 | 选了克隆的 mongo 服务 / 高写入共享库 | open（已知边界） | mongo 走专用实例通道要把 cloneMongoViaDedicatedInstance 抽进三元组管线并让分支独立库的连接串改指专用实例；校验若要区分两种原因，需在克隆前先拍一次源库行数快照（复制集波 4 的分阶段进度条与校验报告落地后一并接） |
 
 ---
 

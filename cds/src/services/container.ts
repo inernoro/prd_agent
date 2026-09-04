@@ -371,6 +371,7 @@ export function applyProfileOverride(baseline: BuildProfile, rawOverride?: Build
     ...(override.startupSignal !== undefined ? { startupSignal: override.startupSignal } : {}),
     ...(override.readinessProbe !== undefined ? { readinessProbe: override.readinessProbe } : {}),
     ...(override.dbScope !== undefined ? { dbScope: override.dbScope } : {}),
+    ...(override.dbInit !== undefined ? { dbInit: override.dbInit } : {}),
     ...(override.entrypoint !== undefined ? { entrypoint: override.entrypoint } : {}),
     // 手动多出口（分支档）：命名子域与用户入口都可以按分支覆盖。空串 subdomain 是
     // 「本分支取消命名 URL」的显式意图，必须照样覆盖掉 baseline，不能当没写。

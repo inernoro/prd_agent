@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import type { BranchEntry, BuildProfile, InfraService, ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
+import { cloneRelationalDbInPlace } from './db-clone-pipeline.js';
 import { detectInfraDataKind, runDockerExec, maskSecretValues } from '../routes/infra-data.js';
 
 import {
@@ -470,9 +471,6 @@ export async function cloneReplicaDb(opts: {
   }
   const c = target.infra.containerName;
   const env = target.infra.env || {};
-  const image = target.infra.dockerImage;
-  const port = target.infra.containerPort
-    || (target.engine === 'mysql' ? 3306 : target.engine === 'postgres' ? 5432 : 27017);
 
   // mongo 走「专用隔离实例」通道（八轮验收终局取证：共享 mongod 8.0.20 在本宿主
   // 上凡大批量写入随机 SIGSEGV[docker events die exitCode=139]，纯读从未崩——
@@ -481,53 +479,16 @@ export async function cloneReplicaDb(opts: {
     return cloneMongoViaDedicatedInstance({ target, memberId, profileId, dbName, instanceId: opts.instanceId, publishHost: opts.publishHost, now: opts.now, onOutput: opts.onOutput });
   }
 
-  // ── mysql / postgres：共享实例内克隆（写入量小、历轮验收无崩溃记录，维持原路径）──
-  // 复验 R3-P0：独立限额辅助容器（同镜像自带 client 工具、共享 DB 网络命名空间），
-  // 压力大时被杀的是辅助容器，不是数据库本体。
-  const helper = (extraEnv: string[], script: string): string[] => [
-    'run', '--rm', '-i', '--pull', 'never',
-    '--network', `container:${c}`,
-    '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
-    '--entrypoint', 'sh',
-    ...extraEnv,
-    image,
-    '-c', script,
-  ];
-
-  let argv: string[];
-  const secrets: string[] = [];
-
-  // 两阶段 dump→导入（Codex P1）：`dump | client` 管道在 POSIX sh 下退出码取
-  // 末端 client——dump 半路失败而 client 消费掉空/残缺流照样 0 退出，set -e
-  // 拦不住，快照被记成克隆成功、副本对着空库跑实验。落盘中间产物让两个进程
-  // 的退出码都被 set -e 逐个把关（与 mongo 通道的 dump 落盘同款思路；文件写在
-  // 辅助容器自身层，随 --rm 自动消失）。
-  if (target.engine === 'mysql') {
-    const user = 'root';
-    const pw = env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '';
-    secrets.push(pw);
-    const conn = `-h127.0.0.1 -P${port} -u${user}`;
-    argv = helper(['-e', `MYSQL_PWD=${pw}`],
-      `set -e; mysql ${conn} -e 'CREATE DATABASE IF NOT EXISTS \`${dbName}\`'; ` +
-      `mysqldump ${conn} --single-transaction --routines --triggers ${target.sourceDb} > /tmp/rsclone.sql; ` +
-      `mysql ${conn} ${dbName} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`);
-  } else {
-    const user = env.POSTGRES_USER || 'postgres';
-    const pw = env.POSTGRES_PASSWORD || '';
-    secrets.push(pw);
-    const conn = `-h 127.0.0.1 -p ${port} -U ${user}`;
-    argv = helper(['-e', `PGPASSWORD=${pw}`],
-      `set -e; psql ${conn} -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "${dbName}"' 2>/dev/null || true; ` +
-      `pg_dump ${conn} ${target.sourceDb} > /tmp/rsclone.sql; ` +
-      `psql ${conn} -q -v ON_ERROR_STOP=1 -d ${dbName} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`);
-  }
-
+  // ── mysql / postgres：共享实例内克隆——走收敛 4 抽出的三元组管线（来源库、目标库、实例），
+  // 与分支独立库「时间点克隆」共用同一份 dump→导入脚本、辅助容器限额与两阶段落盘。
   opts.onOutput?.(`── 一键隔离数据库: 克隆 ${target.sourceDb} → ${dbName}（${target.engine} @ ${c}，独立限额辅助容器）──`);
-  const result = await runDockerExec(argv, '', 600_000, 64 * 1024);
-  if (result.code !== 0) {
-    // 失败原因保留头尾双段（复验 R3-P2）；失败残留延迟重试清理（复验 R3-P1/R4）
-    const raw = `${result.stderr || result.stdout}`.trim();
-    const detail = maskSecretValues(raw.length > 900 ? `${raw.slice(0, 300)}\n…\n${raw.slice(-500)}` : raw, secrets);
+  try {
+    await cloneRelationalDbInPlace(
+      { engine: target.engine, infra: target.infra, sourceDb: target.sourceDb, targetDb: dbName, scope: { kind: 'replica-member', branchId: opts.branchId, profileId, memberId } },
+      { cleanupOnFailure: false },
+    );
+  } catch (err) {
+    // 失败原因已由管线脱敏；失败残留延迟重试清理（复验 R3-P1/R4）
     let residue = `（警告：半成品克隆库 ${dbName} 未能自动清理，请到数据库工作台手动 DROP）`;
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       try {
@@ -542,7 +503,7 @@ export async function cloneReplicaDb(opts: {
         if (attempt < 5) await new Promise((r) => setTimeout(r, 20_000));
       }
     }
-    throw new Error(`数据库克隆失败（${target.engine}）: ${detail || `exit ${result.code}`}${residue}`);
+    throw new Error(`数据库克隆失败（${target.engine}）: ${(err as Error).message}${residue}`);
   }
   opts.onOutput?.(`── 隔离库 ${dbName} 克隆完成 ──`);
 

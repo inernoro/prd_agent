@@ -11,6 +11,7 @@
  *   - 有副作用的操作走 DbLedgerOps 接口注入（备份落盘、演练还原、丢弃、列库），
  *     真实实现在 db-ledger-ops.ts，路由测试用桩。
  */
+import { effectiveDbInit } from './db-init-mode.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { BranchEntry, DbLedgerBackup, DbLedgerEntry, InfraService, ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
@@ -30,6 +31,8 @@ export interface DbLedgerDerived {
   dbName: string;
   infraId: string;
   infraContainer: string;
+  /** 按配置折算的初始化方式（收敛 4） */
+  dbInit?: 'empty' | 'clone';
 }
 
 export interface DbLedgerTreeNode {
@@ -133,14 +136,14 @@ export function buildDbLedgerView(input: {
       used.add(rec.id);
       entries.push({
         ...rec, kind: 'per-branch', engine: d.engine, sourceDb: d.sourceDb, branchId: d.branchId, branch: d.branch, profileId: d.profileId,
-        infraId: d.infraId, status: rec.status === 'dropped' ? 'dropped' : 'active',
+        infraId: d.infraId, status: rec.status === 'dropped' ? 'dropped' : 'active', initMode: d.dbInit,
       });
     } else if (!rec) {
       entries.push({
         id: `live_db_${d.branchId}_${d.profileId}`, projectId, kind: 'per-branch', engine: d.engine, dbName: d.dbName,
         infraId: d.infraId, infraContainer: d.infraContainer, sourceDb: d.sourceDb,
         branchId: d.branchId, branch: d.branch, profileId: d.profileId,
-        origin: 'cds', status: 'active', createdAt: now.toISOString(), updatedAt: now.toISOString(), backups: [],
+        origin: 'cds', status: 'active', createdAt: now.toISOString(), updatedAt: now.toISOString(), backups: [], initMode: d.dbInit,
         note: '按当前配置折算（分支部署后才真正建库）；「扫描补录」可核实实例上是否已存在',
       });
     }
@@ -215,6 +218,7 @@ export function collectDerivedDbs(state: StateService, projectId: string): DbLed
       out.push({
         branchId: branch.id, branch: branch.branch, profileId: profile.id, engine: target.engine,
         sourceDb, dbName: target.sourceDb, infraId: target.infra.id, infraContainer: target.infra.containerName,
+        dbInit: effectiveDbInit(effective),
       });
     }
   }

@@ -386,6 +386,50 @@ describe('项目级数据库隔离路由', () => {
       expect(ok.status).toBe(200);
     });
   });
+
+  describe('分支独立库初始化方式（收敛 4）', () => {
+    it('GET：每个服务带 dbInit（默认空库）与能否时间点克隆；mongo 与不涉及数据库的服务不支持并说明原因', async () => {
+      const res = await request(server, 'GET', '/api/projects/proj-a/db-isolation');
+      expect(res.status).toBe(200);
+      const by = Object.fromEntries(res.body.services.map((s: any) => [s.profileId, s]));
+      expect(by.worker).toMatchObject({ dbInit: 'empty', dbInitSupported: true });
+      expect(by.api).toMatchObject({ dbInit: 'empty', dbInitSupported: true });
+      expect(by.web).toMatchObject({ dbInit: 'empty', dbInitSupported: false });
+      expect(by.web.dbInitUnsupportedReason).toMatch(/不涉及数据库/);
+      const c = await request(server, 'GET', '/api/projects/proj-c/db-isolation');
+      const byC = Object.fromEntries(c.body.services.map((s: any) => [s.profileId, s]));
+      expect(byC.node.dbInitSupported).toBe(true);
+      expect(byC.dotnet.dbInitSupported).toBe(false);
+      expect(byC.dotnet.dbInitUnsupportedReason).toMatch(/mongo/i);
+    });
+
+    it('PUT inits：写入 dbInit、响应带 initChanges；非法值与不支持的服务整批拒绝；重复提交无变更', async () => {
+      const bad = await request(server, 'PUT', '/api/projects/proj-a/db-isolation', { inits: { worker: 'snapshot' } });
+      expect(bad.status).toBe(400);
+      expect(bad.body.error).toMatch(/初始化方式非法/);
+      const unsupported = await request(server, 'PUT', '/api/projects/proj-a/db-isolation', { inits: { web: 'clone', worker: 'clone' } });
+      expect(unsupported.status).toBe(400);
+      expect(unsupported.body.error).toMatch(/不支持时间点克隆/);
+      expect(stateService.getBuildProfile('worker')?.dbInit).toBeUndefined();
+
+      const ok = await request(server, 'PUT', '/api/projects/proj-a/db-isolation', { inits: { worker: 'clone' } });
+      expect(ok.status).toBe(200);
+      expect(ok.body.changes).toEqual([]);
+      expect(ok.body.initChanges).toEqual([{ profileId: 'worker', from: 'empty', to: 'clone' }]);
+      expect(ok.body.message).toMatch(/初始化方式/);
+      expect(stateService.getBuildProfile('worker')?.dbInit).toBe('clone');
+      expect(ok.body.view.services.find((s: any) => s.profileId === 'worker').dbInit).toBe('clone');
+
+      const same = await request(server, 'PUT', '/api/projects/proj-a/db-isolation', { inits: { worker: 'clone' } });
+      expect(same.status).toBe(200);
+      expect(same.body.message).toBe('没有需要写入的变更');
+
+      const both = await request(server, 'PUT', '/api/projects/proj-a/db-isolation', { services: { api: 'per-branch' }, inits: { api: 'clone' } });
+      expect(both.status).toBe(200);
+      expect(both.body.changes).toEqual([{ profileId: 'api', from: 'shared', to: 'per-branch' }]);
+      expect(both.body.initChanges).toEqual([{ profileId: 'api', from: 'empty', to: 'clone' }]);
+    });
+  });
 });
 
 describe('纯函数：plan / view / 影响面', () => {
@@ -396,7 +440,7 @@ describe('纯函数：plan / view / 影响面', () => {
 
   it('plan：显式 shared 与默认 shared 都不算变更，避免制造假变更', () => {
     const plan = planProjectDbIsolationWrite(profiles, { all: 'shared' });
-    expect(plan).toEqual({ ok: true, changes: [], unchanged: ['api', 'web'] });
+    expect(plan).toEqual({ ok: true, changes: [], initChanges: [], unchanged: ['api', 'web'] });
   });
 
   it('plan：非对象 / 数组 services 拒绝', () => {

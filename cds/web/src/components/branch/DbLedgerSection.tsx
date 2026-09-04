@@ -9,7 +9,7 @@
  * DELETE …/:entryId、POST …/scan。所有判定在后端，这里只把它们摆清楚、把门禁说清楚。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Archive, Loader2, RefreshCw, ScanSearch, ShieldCheck, Trash2 } from 'lucide-react';
+import { Archive, Loader2, RefreshCw, ScanSearch, ShieldCheck, Trash2, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 
@@ -20,6 +20,26 @@ export interface DbLedgerEntry {
   snapshotId?: string; dedicatedContainer?: string; origin: 'cds' | 'scan'; status: 'active' | 'orphaned' | 'dropped';
   createdAt: string; updatedAt: string; orphanedAt?: string; droppedAt?: string; droppedBy?: string; droppedForced?: boolean;
   backups: DbLedgerBackup[]; lastObjects?: { count: number; measuredAt: string }; note?: string;
+  /** 时间点克隆初始化（收敛 4）：从哪个库、什么时候、逐表行数校验结果 */
+  clone?: DbLedgerClone;
+  /** 视图字段：按当前配置折算的初始化方式（分支独立库才有） */
+  initMode?: 'empty' | 'clone';
+}
+export interface DbCloneVerification {
+  ok: boolean; measuredAt: string;
+  tables: Array<{ table: string; source: number; target: number }>;
+  mismatched: string[]; sourceOnly: string[]; targetOnly: string[];
+}
+export interface DbLedgerClone { sourceDb: string; clonedAt: string; verification: DbCloneVerification }
+
+/** 校验结果一句话（与后端 describeCloneVerification 同口径，前端不再自己算） */
+export function describeCloneVerification(v: DbCloneVerification): string {
+  if (v.ok) return `逐表校验 ${v.tables.length} 张表行数一致`;
+  const parts: string[] = [];
+  if (v.mismatched.length) parts.push(`${v.mismatched.length} 张表行数不一致：${v.mismatched.map((t) => { const row = v.tables.find((x) => x.table === t); return row ? `${t}（源 ${row.source} / 目标 ${row.target}）` : t; }).join('、')}`);
+  if (v.sourceOnly.length) parts.push(`只在源库：${v.sourceOnly.join('、')}`);
+  if (v.targetOnly.length) parts.push(`只在目标库：${v.targetOnly.join('、')}`);
+  return `逐表校验不一致——${parts.join('；')}`;
 }
 export interface DbLedgerView {
   projectId: string; generatedAt: string; entries: DbLedgerEntry[];
@@ -57,10 +77,12 @@ function fmtBytes(n: number): string {
   return `${n} B`;
 }
 
-function EntryRow({ e, busy, onBackup, onVerify, onDrop }: {
+function EntryRow({ e, busy, onBackup, onVerify, onDrop, onClone }: {
   e: DbLedgerEntry; busy: string | null;
   onBackup?: (e: DbLedgerEntry) => void; onVerify?: (e: DbLedgerEntry, b: DbLedgerBackup) => void; onDrop?: (e: DbLedgerEntry) => void;
+  onClone?: (e: DbLedgerEntry) => void;
 }): JSX.Element {
+  const clonePending = e.kind === 'per-branch' && e.status === 'active' && e.initMode === 'clone' && !e.clone && !!e.branchId && !!e.profileId;
   const latest = [...e.backups].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   const verified = hasVerifiedBackup(e);
   const droppable = e.status !== 'dropped' && !(e.status === 'active' && e.branchId);
@@ -79,6 +101,14 @@ function EntryRow({ e, busy, onBackup, onVerify, onDrop }: {
             {e.profileId ? <span className="mr-2">服务 <span className="font-mono">{e.profileId}</span></span> : null}
             <span className="mr-2">{e.kind === 'isolated' ? '克隆于' : '记于'} {new Date(e.createdAt).toLocaleString('zh-CN')}</span>
             {e.lastObjects ? <span className="mr-2">{e.lastObjects.count} 个表/集合</span> : null}
+            {e.clone ? (
+              <span className={`mr-2 ${e.clone.verification.ok ? 'text-ok' : 'text-warn'}`} data-db-ledger-clone={e.clone.verification.ok ? 'ok' : 'mismatch'}
+                title={e.clone.verification.ok ? '克隆是时间点快照，之后源库的写入不会同步' : '克隆是时间点快照：不一致通常是克隆之后源库又有写入；表名与两边行数已列出'}>
+                时间点克隆自 <span className="font-mono">{e.clone.sourceDb}</span>（{new Date(e.clone.clonedAt).toLocaleString('zh-CN')}），{describeCloneVerification(e.clone.verification)}
+              </span>
+            ) : clonePending ? (
+              <span className="mr-2" data-db-ledger-clone="pending">初始化方式：时间点克隆（首次部署前从 <span className="font-mono">{e.sourceDb}</span> 克隆；库已在实例上则跳过、不覆盖）</span>
+            ) : null}
             {e.droppedAt ? <span className="mr-2">已于 {new Date(e.droppedAt).toLocaleString('zh-CN')} 丢弃{e.droppedForced ? '（强制，未备份）' : ''}</span> : null}
             {e.note ? <span className="mr-2">{e.note}</span> : null}
           </div>
@@ -105,6 +135,11 @@ function EntryRow({ e, busy, onBackup, onVerify, onDrop }: {
                 {busy === `verify:${e.id}` ? <Loader2 className="animate-spin" /> : <ShieldCheck />} 演练验证
               </Button>
             ) : null}
+            {onClone && clonePending ? (
+              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => onClone(e)} title="现在就从共享库时间点克隆到这个独立库（目标库已存在则不会覆盖）">
+                {busy === `clone:${e.id}` ? <Loader2 className="animate-spin" /> : <Copy />} 现在克隆
+              </Button>
+            ) : null}
             {onDrop ? (
               <Button size="sm" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy !== null || !droppable} onClick={() => onDrop(e)}
                 title={!droppable ? '仍属于在册分支：先删除分支（默认保留库）或回切主库' : verified ? '有演练验证过的备份，可以丢弃' : '没有验证过的备份：需要复述库名强制丢弃'}>
@@ -119,9 +154,10 @@ function EntryRow({ e, busy, onBackup, onVerify, onDrop }: {
 }
 
 /** 血缘树（纯展示，可离线渲染测试） */
-export function DbLedgerTree({ view, busy = null, onBackup, onVerify, onDrop }: {
+export function DbLedgerTree({ view, busy = null, onBackup, onVerify, onDrop, onClone }: {
   view: DbLedgerView; busy?: string | null;
   onBackup?: (e: DbLedgerEntry) => void; onVerify?: (e: DbLedgerEntry, b: DbLedgerBackup) => void; onDrop?: (e: DbLedgerEntry) => void;
+  onClone?: (e: DbLedgerEntry) => void;
 }): JSX.Element {
   return (
     <div className="space-y-3">
@@ -132,7 +168,7 @@ export function DbLedgerTree({ view, busy = null, onBackup, onVerify, onDrop }: 
             {node.sourceDb ? <>源库 <span className="font-mono text-foreground">{node.sourceDb}</span> 派生出 {node.children.length} 个库</> : <>来源未知（扫描补录，CDS 台账里没有它们的派生记录）</>}
           </div>
           <ul className="space-y-1.5 border-l border-[hsl(var(--hairline))] pl-3">
-            {node.children.map((e) => <EntryRow key={e.id} e={e} busy={busy} onBackup={onBackup} onVerify={onVerify} onDrop={onDrop} />)}
+            {node.children.map((e) => <EntryRow key={e.id} e={e} busy={busy} onBackup={onBackup} onVerify={onVerify} onDrop={onDrop} onClone={onClone} />)}
           </ul>
         </div>
       ))}
@@ -166,7 +202,7 @@ export function DropConfirm({ entry, pending, onCancel, onConfirm }: { entry: Db
   );
 }
 
-export function DbLedgerSection({ projectId, onToast }: { projectId: string; onToast?: (m: string) => void }): JSX.Element {
+export function DbLedgerSection({ projectId, onToast, reloadToken = 0 }: { projectId: string; onToast?: (m: string) => void; /** 外部改了配置（如初始化方式）后递增，让台账按新配置重算 */ reloadToken?: number }): JSX.Element {
   const [state, setState] = useState<{ status: 'idle' | 'loading' } | { status: 'ok'; view: DbLedgerView } | { status: 'error'; message: string }>({ status: 'idle' });
   const [busy, setBusy] = useState<string | null>(null);
   const [dropping, setDropping] = useState<DbLedgerEntry | null>(null);
@@ -177,7 +213,7 @@ export function DbLedgerSection({ projectId, onToast }: { projectId: string; onT
     try { setState({ status: 'ok', view: await apiRequest<DbLedgerView>(base) }); }
     catch (err) { setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) }); }
   }, [base]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); }, [load, reloadToken]);
 
   const run = async (key: string, fn: () => Promise<{ message?: string }>): Promise<boolean> => {
     setBusy(key);
@@ -216,6 +252,7 @@ export function DbLedgerSection({ projectId, onToast }: { projectId: string; onT
               onBackup={(e) => void run(`backup:${e.id}`, () => apiRequest<{ message: string }>(`${base}/${encodeURIComponent(e.id)}/backup`, { method: 'POST' }))}
               onVerify={(e, b) => void run(`verify:${e.id}`, () => apiRequest<{ message: string }>(`${base}/${encodeURIComponent(e.id)}/backups/${encodeURIComponent(b.id)}/verify`, { method: 'POST' }))}
               onDrop={(e) => setDropping(e)}
+              onClone={(e) => void run(`clone:${e.id}`, () => apiRequest<{ message: string }>(`/api/branches/${encodeURIComponent(e.branchId!)}/db-init/${encodeURIComponent(e.profileId!)}`, { method: 'POST' }))}
             />
           </>
         ) : null}

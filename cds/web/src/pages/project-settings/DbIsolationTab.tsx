@@ -22,6 +22,9 @@ import { DbLedgerSection } from '@/components/branch/DbLedgerSection';
  */
 
 export type DbScope = 'shared' | 'per-branch';
+/** 分支独立库初始化方式（收敛 4） */
+export type DbInit = 'empty' | 'clone';
+export const DB_INIT_LABEL: Record<DbInit, string> = { empty: '空库重跑迁移', clone: '从共享库时间点克隆' };
 
 export interface DbIsolationService {
   profileId: string;
@@ -38,6 +41,11 @@ export interface DbIsolationService {
   /** 只从项目级灌下来、服务自己没声明的疑似变量 */
   inheritedSuspectDbEnvKeys?: string[];
   branchOverrideCount: number;
+  /** 分支独立库初始化方式（收敛 4）；缺省按空库 */
+  dbInit?: DbInit;
+  /** 只有认出关系型库名变量（mysql / postgres）的服务能选时间点克隆 */
+  dbInitSupported?: boolean;
+  dbInitUnsupportedReason?: string;
 }
 
 export interface DbIsolationBranchOverride {
@@ -72,6 +80,8 @@ export interface DbIsolationView {
 }
 
 interface DbIsolationWriteResult {
+  /** 初始化方式的变更（收敛 4） */
+  initChanges?: Array<{ profileId: string; from: DbInit; to: DbInit }>;
   changes: Array<{ profileId: string; from: DbScope; to: DbScope }>;
   affectedBranches: number;
   keptBranchOverrides: number;
@@ -126,6 +136,22 @@ export function changedServices(view: DbIsolationView, draft: Record<string, DbS
   return changed;
 }
 
+export function initDraftFromView(view: DbIsolationView): Record<string, DbInit> {
+  const draft: Record<string, DbInit> = {};
+  for (const s of view.services) draft[s.profileId] = s.dbInit ?? 'empty';
+  return draft;
+}
+
+/** 初始化方式草稿里和当前生效值不一样的服务（收敛 4）。 */
+export function changedInits(view: DbIsolationView, initDraft: Record<string, DbInit>): Record<string, DbInit> {
+  const changed: Record<string, DbInit> = {};
+  for (const s of view.services) {
+    const next = initDraft[s.profileId];
+    if (next && next !== (s.dbInit ?? 'empty')) changed[s.profileId] = next;
+  }
+  return changed;
+}
+
 function messageFromError(err: unknown): string {
   return err instanceof ApiError ? err.message : String(err);
 }
@@ -173,23 +199,29 @@ function ScopeSwitch({
 export function DbIsolationPanel({
   view,
   draft,
+  initDraft = {},
   saving,
   error,
   onDraftChange,
+  onInitDraftChange,
   onSave,
   onReload,
 }: {
   view: DbIsolationView;
   draft: Record<string, DbScope>;
+  /** 分支独立库初始化方式草稿（收敛 4） */
+  initDraft?: Record<string, DbInit>;
   saving: boolean;
   error: string;
   onDraftChange: (next: Record<string, DbScope>) => void;
+  onInitDraftChange?: (next: Record<string, DbInit>) => void;
   onSave: () => void | Promise<void>;
   onReload?: () => void;
 }): JSX.Element {
   const { headline, subline } = dbIsolationHeadline(view);
   const changed = changedServices(view, draft);
-  const changedCount = Object.keys(changed).length;
+  const changedInit = changedInits(view, initDraft);
+  const changedCount = Object.keys(changed).length + Object.keys(changedInit).length;
   const disabled = view.readOnly || saving;
   const setAll = (scope: DbScope) => {
     const next: Record<string, DbScope> = {};
@@ -254,11 +286,15 @@ export function DbIsolationPanel({
             {view.services.map((service) => {
               const value = draft[service.profileId] ?? service.dbScope;
               const isChanged = changed[service.profileId] !== undefined;
+              const initValue: DbInit = initDraft[service.profileId] ?? service.dbInit ?? 'empty';
+              const initChanged = changedInit[service.profileId] !== undefined;
+              const initSupported = service.dbInitSupported ?? false;
+              const showInit = value === 'per-branch' && service.dbInvolvement !== 'none';
               return (
                 <div
                   key={service.profileId}
                   className={`flex flex-col gap-3 rounded-md border px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center ${
-                    isChanged ? 'border-warn/40 bg-warn-soft/40' : 'border-[hsl(var(--hairline))] bg-card'
+                    isChanged || initChanged ? 'border-warn/40 bg-warn-soft/40' : 'border-[hsl(var(--hairline))] bg-card'
                   }`}
                 >
                   <div className="min-w-0 sm:flex-1">
@@ -339,6 +375,30 @@ export function DbIsolationPanel({
                     disabled={disabled || service.dbInvolvement === 'none'}
                     onChange={(next) => onDraftChange({ ...draft, [service.profileId]: next })}
                   />
+                  {showInit ? (
+                    <label
+                      className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
+                      data-db-init={service.profileId}
+                      title={initSupported
+                        ? '新分支首次部署时独立库怎么来：空库由应用自己跑迁移；时间点克隆先从共享库复制一份（克隆后不追增量），克隆时间点与逐表校验结果记进台账'
+                        : `不支持时间点克隆：${service.dbInitUnsupportedReason ?? ''}`}
+                    >
+                      <span>新分支初始化</span>
+                      <select
+                        aria-label={`${service.name} 的分支独立库初始化方式`}
+                        className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                        value={initValue}
+                        disabled={disabled || !initSupported}
+                        onChange={(ev) => onInitDraftChange?.({ ...initDraft, [service.profileId]: ev.target.value as DbInit })}
+                      >
+                        {(['empty', 'clone'] as const).map((mode) => (
+                          <option key={mode} value={mode}>{DB_INIT_LABEL[mode]}</option>
+                        ))}
+                      </select>
+                      {!initSupported ? <span title={service.dbInitUnsupportedReason}>不支持克隆</span> : null}
+                      {initChanged ? <span className="text-warn">未保存</span> : null}
+                    </label>
+                  ) : null}
                 </div>
               );
             })}
@@ -365,7 +425,14 @@ export function DbIsolationPanel({
                   </Button>
                 )}
                 title="写入项目默认？"
-                description={`${changedCount} 个服务的档位会成为项目默认，继承项目配置的分支（本项目 ${view.summary.branches} 条）重新部署后生效；已写本分支覆盖的服务档位（${view.summary.branchesWithOverride} 条分支）不受影响。`}
+                description={[
+                  Object.keys(changed).length > 0
+                    ? `${Object.keys(changed).length} 个服务的档位会成为项目默认，继承项目配置的分支（本项目 ${view.summary.branches} 条）重新部署后生效；已写本分支覆盖的服务档位（${view.summary.branchesWithOverride} 条分支）不受影响。`
+                    : '',
+                  Object.keys(changedInit).length > 0
+                    ? `${Object.keys(changedInit).length} 个服务的独立库初始化方式只对还没建库的分支首次部署时生效，已经建了库的分支不受影响。`
+                    : '',
+                ].filter(Boolean).join(' ')}
                 confirmLabel="写入"
                 pending={saving}
                 onConfirm={onSave}
@@ -474,6 +541,9 @@ export function DbIsolationTab({
 }): JSX.Element {
   const [view, setView] = useState<DbIsolationView | null>(null);
   const [draft, setDraft] = useState<Record<string, DbScope>>({});
+  const [initDraft, setInitDraft] = useState<Record<string, DbInit>>({});
+  // 保存后递增：台账里「初始化方式 / 还没克隆」按新配置折算，不能停在挂载时那一份
+  const [ledgerReload, setLedgerReload] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -486,6 +556,7 @@ export function DbIsolationTab({
       const next = await apiRequest<DbIsolationView>(`/api/projects/${encodeURIComponent(projectId)}/db-isolation`);
       setView(next);
       setDraft(draftFromView(next));
+      setInitDraft(initDraftFromView(next));
     } catch (err) {
       setLoadError(messageFromError(err));
     } finally {
@@ -498,18 +569,27 @@ export function DbIsolationTab({
   }, [load]);
 
   const changed = useMemo(() => (view ? changedServices(view, draft) : {}), [view, draft]);
+  const changedInit = useMemo(() => (view ? changedInits(view, initDraft) : {}), [view, initDraft]);
 
   async function save(): Promise<void> {
-    if (!view || Object.keys(changed).length === 0) return;
+    if (!view || (Object.keys(changed).length === 0 && Object.keys(changedInit).length === 0)) return;
     setSaving(true);
     setSaveError('');
     try {
       const result = await apiRequest<DbIsolationWriteResult>(
         `/api/projects/${encodeURIComponent(projectId)}/db-isolation`,
-        { method: 'PUT', body: { services: changed } },
+        {
+          method: 'PUT',
+          body: {
+            ...(Object.keys(changed).length > 0 ? { services: changed } : {}),
+            ...(Object.keys(changedInit).length > 0 ? { inits: changedInit } : {}),
+          },
+        },
       );
       setView(result.view);
       setDraft(draftFromView(result.view));
+      setInitDraft(initDraftFromView(result.view));
+      setLedgerReload((n) => n + 1);
       onToast(result.message);
     } catch (err) {
       setSaveError(messageFromError(err));
@@ -527,14 +607,16 @@ export function DbIsolationTab({
       <DbIsolationPanel
         view={view}
         draft={draft}
+        initDraft={initDraft}
         saving={saving}
         error={saveError}
         onDraftChange={setDraft}
+        onInitDraftChange={setInitDraft}
         onSave={save}
         onReload={() => void load()}
       />
       {/* 收敛 3：一本数据台账（派生库从谁来、在哪、备份在哪、丢弃门禁） */}
-      <DbLedgerSection projectId={projectId} onToast={onToast} />
+      <DbLedgerSection projectId={projectId} onToast={onToast} reloadToken={ledgerReload} />
     </div>
   );
 }

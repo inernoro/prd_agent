@@ -26,6 +26,7 @@ import {
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
+import { ensurePerBranchDbInitialized } from '../services/per-branch-db-init.js';
 import { resolveBranchEnvLayers } from '../services/branch-env-layers.js';
 import {
   branchEntrypointDepsFromState,
@@ -1719,6 +1720,13 @@ function buildPrebuiltReuseInputs(
 }
 
 async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions): Promise<void> {
+  // 分支独立库「时间点克隆」初始化（数据库隔离收敛 4）：容器起来之前先把库准备好。
+  // 幂等：目标库已存在就跳过；克隆失败抛错让部署如实失败，不让应用对着半份数据启动。
+  options.assertCurrent?.(`before-db-init-${options.profile.id}`);
+  const dbInit = await ensurePerBranchDbInitialized(options.stateService, options.entry, options.profile, {
+    onOutput: (line) => options.onOutput?.(`${line}\n`),
+  });
+  if (dbInit.kind === 'refused') options.onOutput?.(`── 分支独立库未做时间点克隆：${dbInit.reason} ──\n`);
   const maxAttempts = 4;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -15492,6 +15500,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: `dbScope 非法（仅允许 'shared' 或 'per-branch'）` });
         return;
       }
+      if (body.dbInit !== undefined && body.dbInit !== 'empty' && body.dbInit !== 'clone') {
+        res.status(400).json({ error: `dbInit 非法（仅允许 'empty' 或 'clone'）` });
+        return;
+      }
 
       const override = {
         dockerImage: typeof body.dockerImage === 'string' ? body.dockerImage : undefined,
@@ -15504,6 +15516,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         activeDeployMode: typeof body.activeDeployMode === 'string' ? body.activeDeployMode : undefined,
         startupSignal: typeof body.startupSignal === 'string' ? body.startupSignal : undefined,
         dbScope: body.dbScope as 'shared' | 'per-branch' | undefined,
+        dbInit: body.dbInit as 'empty' | 'clone' | undefined,
         notes: typeof body.notes === 'string' ? body.notes : undefined,
       };
       // `setBranchProfileOverride` 是**整体替换**，而这份白名单只认它自己管的字段。

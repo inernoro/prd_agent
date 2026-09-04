@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   DbIsolationPanel,
+  changedInits,
   changedServices,
   dbIsolationHeadline,
   type DbIsolationView,
@@ -31,7 +32,7 @@ function view(overrides: Partial<DbIsolationView> = {}): DbIsolationView {
     services: [
       { profileId: 'api', name: 'API', dockerImage: 'node:20', dbScope: 'shared', dbScopeSource: 'default', dbEnvKeys: ['CDS_POSTGRES_DB'], branchOverrideCount: 1 },
       { profileId: 'web', name: 'Web', dockerImage: 'nginx:alpine', dbScope: 'shared', dbScopeSource: 'default', dbEnvKeys: [], branchOverrideCount: 0 },
-      { profileId: 'worker', name: 'Worker', dockerImage: 'node:20', dbScope: 'per-branch', dbScopeSource: 'explicit', dbEnvKeys: ['CDS_MYSQL_DATABASE'], branchOverrideCount: 0 },
+      { profileId: 'worker', name: 'Worker', dockerImage: 'node:20', dbScope: 'per-branch', dbScopeSource: 'explicit', dbEnvKeys: ['CDS_MYSQL_DATABASE'], branchOverrideCount: 0, dbInit: 'clone', dbInitSupported: true },
     ],
     branchOverrides: [
       { branchId: 'demo-feat-x', branch: 'feat/x', overrides: { api: 'shared' } },
@@ -156,6 +157,34 @@ describe('数据库隔离面板：渲染出来的东西', () => {
 
 describe('数据库隔离 tab 的四处登记', () => {
   const page = fs.readFileSync(path.join(CDS_ROOT, 'web/src/pages/ProjectSettingsPage.tsx'), 'utf8');
+
+  it('初始化方式（收敛 4）：分支独立库的服务给「新分支初始化」下拉，草稿里改了就标未保存；共享库不显示；mongo 禁用并说明原因', () => {
+    const v = view();
+    v.services.push({ profileId: 'search', name: 'Search', dockerImage: 'node:20', dbScope: 'per-branch', dbScopeSource: 'explicit', dbEnvKeys: ['CDS_MONGO_DATABASE'], branchOverrideCount: 0, dbInvolvement: 'db', dbInit: 'empty', dbInitSupported: false, dbInitUnsupportedReason: 'mongo 的分支独立库暂不支持时间点克隆' });
+    const html = renderToStaticMarkup(createElement(DbIsolationPanel, {
+      view: v,
+      draft: Object.fromEntries(v.services.map((s) => [s.profileId, s.dbScope])) as Record<string, 'shared' | 'per-branch'>,
+      initDraft: { worker: 'empty' },
+      saving: false, error: '', onDraftChange: () => {}, onInitDraftChange: () => {}, onSave: () => {},
+    }));
+    expect(html).toContain('data-db-init="worker"');
+    expect(html).toContain('Worker 的分支独立库初始化方式');
+    expect(html).toContain('从共享库时间点克隆');
+    expect(html).toContain('空库重跑迁移');
+    expect(html).not.toContain('data-db-init="api"');
+    expect(html).toContain('data-db-init="search"');
+    expect(html).toMatch(/aria-label="Search 的分支独立库初始化方式"[^>]*disabled=""/);
+    expect(html).toContain('不支持克隆');
+    expect(html).toContain('保存 1 项改动');
+    expect(changedInits(v, { worker: 'empty' })).toEqual({ worker: 'empty' });
+    expect(changedInits(v, { worker: 'clone' })).toEqual({});
+  });
+
+  it('保存请求把初始化方式放进 inits（与档位 services 同一个 PUT）', () => {
+    const source = fs.readFileSync(path.join(CDS_ROOT, 'web/src/pages/project-settings/DbIsolationTab.tsx'), 'utf8');
+    expect(source).toContain('{ inits: changedInit }');
+    expect(source).toContain('{ services: changed }');
+  });
 
   it('类型、左侧导航（数据组）、面板三处都登记了', () => {
     expect(page).toMatch(/\|\s*'db-isolation'/);

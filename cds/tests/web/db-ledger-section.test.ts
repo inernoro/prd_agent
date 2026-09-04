@@ -46,6 +46,27 @@ describe('台账血缘树', () => {
     expect(html).toContain('扫描补录');
   });
 
+  it('时间点克隆（收敛 4）：克隆过的条目写明来源、时间点与逐表校验；不一致时逐表列出源 / 目标行数', () => {
+    const ok = entry({ dbName: 'shop_feat_a', branchId: 'b-a', branch: 'feat/a', profileId: 'api', initMode: 'clone', clone: { sourceDb: 'shop', clonedAt: T, verification: { ok: true, measuredAt: T, tables: [{ table: 'users', source: 3, target: 3 }, { table: 'orders', source: 10, target: 10 }], mismatched: [], sourceOnly: [], targetOnly: [] } } });
+    const bad = entry({ dbName: 'shop_feat_b', branchId: 'b-b', branch: 'feat/b', profileId: 'api', initMode: 'clone', clone: { sourceDb: 'shop', clonedAt: T, verification: { ok: false, measuredAt: T, tables: [{ table: 'users', source: 3, target: 3 }, { table: 'orders', source: 11, target: 10 }], mismatched: ['orders'], sourceOnly: [], targetOnly: [] } } });
+    const html = renderToStaticMarkup(createElement(DbLedgerTree, { view: view([ok, bad]), onClone: () => {} }));
+    expect(html).toContain('data-db-ledger-clone="ok"');
+    expect(html).toContain('逐表校验 2 张表行数一致');
+    expect(html).toContain('data-db-ledger-clone="mismatch"');
+    expect(html).toContain('orders（源 11 / 目标 10）');
+    expect(html).not.toContain('现在克隆');
+  });
+
+  it('选了时间点克隆但还没克隆的分支独立库：标「首次部署前从源库克隆」并给「现在克隆」按钮；空库方式不给', () => {
+    const pending = entry({ dbName: 'shop_feat_c', branchId: 'b-c', branch: 'feat/c', profileId: 'api', initMode: 'clone' });
+    const empty = entry({ dbName: 'shop_feat_d', branchId: 'b-d', branch: 'feat/d', profileId: 'api', initMode: 'empty' });
+    const html = renderToStaticMarkup(createElement(DbLedgerTree, { view: view([pending, empty]), onClone: () => {} }));
+    expect(html).toContain('data-db-ledger-clone="pending"');
+    expect(html).toContain('首次部署前从');
+    expect(html).toContain('库已在实例上则跳过');
+    expect((html.match(/现在克隆/g) ?? []).length).toBe(1);
+  });
+
   it('已丢弃的条目不再给动作按钮，但留有丢弃时间与是否强制', () => {
     const v = view([entry({ dbName: 'gone', status: 'dropped', droppedAt: T, droppedBy: 'admin', droppedForced: true })]);
     const html = renderToStaticMarkup(createElement(DbLedgerTree, { view: v, onDrop: () => {}, onBackup: () => {} }));
@@ -80,6 +101,9 @@ describe('接线守卫：台账进项目页签，删分支对话框先展示会�
     const s = read('web/src/pages/project-settings/DbIsolationTab.tsx');
     expect(s).toContain("from '@/components/branch/DbLedgerSection'");
     expect(s).toContain('<DbLedgerSection projectId={projectId}');
+    // 保存档位 / 初始化方式后台账必须重算（2026-09-04 验收发现：只在挂载时加载一次，保存后「还没克隆」标不出来）
+    expect(s).toContain('reloadToken={ledgerReload}');
+    expect(s).toContain('setLedgerReload((n) => n + 1)');
   });
   it('分支抽屉删除确认里挂了 BranchDbKeepList，且删除请求把 dbs 去向带给后端', () => {
     const s = read('web/src/components/BranchDetailDrawer.tsx');
@@ -87,6 +111,11 @@ describe('接线守卫：台账进项目页签，删分支对话框先展示会�
     expect(s).toContain('<BranchDbKeepList branchId={branch.id}');
     expect(s).toContain("onRunAction('delete', '删除分支', { dbs: dbChoices })");
     expect(s).toContain('body: { dbs: extra.dbs.map');
+  });
+  it('台账「现在克隆」打的是分支的 db-init 端点（与部署前钩子同一条路径）', () => {
+    const s = read('web/src/components/branch/DbLedgerSection.tsx');
+    expect(s).toContain('/db-init/');
+    expect(s).toContain("method: 'POST'");
   });
   it('后端删分支路径改用台账结算（默认保留），级联 drop 只对勾选丢弃的跑', () => {
     const s = read('src/routes/branches.ts');

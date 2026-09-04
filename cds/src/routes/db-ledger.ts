@@ -6,6 +6,7 @@
 //   POST   /api/projects/:id/db-ledger/:entryId/backups/:backupId/verify 演练还原到临时库并核对对象数
 //   DELETE /api/projects/:id/db-ledger/:entryId                         丢弃（门禁：演练验证过的备份，或复述库名强制）
 //   GET    /api/branches/:id/db-ledger                                  某条分支的派生库（删分支对话框用）
+//   POST   /api/branches/:id/db-init/:profileId                         分支独立库时间点克隆初始化（收敛 4；部署前钩子的手动入口）
 //
 // 有副作用的 docker 操作全部经 deps.ops 注入（真实实现 db-ledger-ops.ts），路由测试用桩。
 
@@ -22,6 +23,9 @@ import { isDroppableDerivedName, realDbLedgerOps } from '../services/db-ledger-o
 import { backupDirCandidates } from '../services/infra-backup-schedule.js';
 import { detectInfraDataKind } from './infra-data.js';
 import type { ReplicaDbEngine } from '../services/replica-db-clone.js';
+import { resolveEffectiveProfile } from '../services/container.js';
+import { ensurePerBranchDbInitialized, type PerBranchDbInitOutcome } from '../services/per-branch-db-init.js';
+import { describeCloneVerification, type DbCloneExec } from '../services/db-clone-pipeline.js';
 
 export interface DbLedgerRouterDeps {
   stateService: StateService;
@@ -29,6 +33,17 @@ export interface DbLedgerRouterDeps {
   ops?: DbLedgerOps;
   repoRoot?: string;
   now?: () => Date;
+  /** 时间点克隆的 docker exec（测试注入桩；缺省走真实 docker） */
+  cloneExec?: DbCloneExec;
+}
+
+export function describePerBranchDbInit(o: PerBranchDbInitOutcome): string {
+  switch (o.kind) {
+    case 'cloned': return `已从 ${o.sourceDb} 时间点克隆到 ${o.dbName}（${o.clonedAt}）：${describeCloneVerification(o.verification)}`;
+    case 'exists': return `${o.dbName} 已在实例上，未重复克隆（不覆盖分支自己的数据）`;
+    case 'refused': return `未克隆：${o.reason}`;
+    default: return `不适用：${o.reason}`;
+  }
 }
 
 const BACKUP_EXT: Record<ReplicaDbEngine, string> = { mysql: 'sql.gz', postgres: 'sql.gz', mongo: 'archive.gz' };
@@ -85,6 +100,31 @@ export function createDbLedgerRouter(deps: DbLedgerRouterDeps): Router {
         ? '这条分支没有派生库，删除不会留下任何数据库'
         : `删除分支默认保留这 ${entries.length} 个派生库（转为台账里的孤儿条目，随时可备份或丢弃）；要一并丢弃的必须已有演练验证过的备份，或复述库名强制`,
     });
+  });
+
+  router.post('/branches/:id/db-init/:profileId', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) { res.status(404).json({ error: `分支不存在: ${req.params.id}` }); return; }
+    const access = deps.assertProjectAccess(req, branch.projectId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    const baseline = stateService.getEffectiveProfilesForBranch(branch).find((p) => p.id === req.params.profileId);
+    if (!baseline) { res.status(404).json({ error: `服务不存在: ${req.params.profileId}` }); return; }
+    const effective = resolveEffectiveProfile(baseline, branch);
+    const lines: string[] = [];
+    try {
+      const outcome = await ensurePerBranchDbInitialized(stateService, branch, effective, {
+        exec: deps.cloneExec,
+        listDatabases: (engine, infra) => ops.listDatabases(engine, infra),
+        now,
+        onOutput: (line) => lines.push(line),
+      });
+      res.status(outcome.kind === 'refused' ? 409 : 200).json({
+        branchId: branch.id, branch: branch.branch, profileId: baseline.id,
+        outcome, lines, message: describePerBranchDbInit(outcome),
+      });
+    } catch (err) {
+      res.status(500).json({ error: `时间点克隆失败：${(err as Error).message}`, lines });
+    }
   });
 
   router.post('/projects/:id/db-ledger/scan', async (req, res) => {

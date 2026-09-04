@@ -32,6 +32,13 @@ const NOW = '2026-09-03T08:00:00.000Z';
 describe('数据台账路由', () => {
   let tmpDir: string; let server: http.Server; let state: StateService;
   let calls: string[]; let listed: string[]; let drillObjects: number; let dropFail: boolean;
+  const cloneExec = async (argv: string[]) => {
+    const sql = argv[argv.length - 1];
+    if (argv[0] === 'run') { calls.push('clone'); return { code: 0, stdout: '', stderr: '' }; }
+    if (/information_schema\.tables/.test(sql)) return { code: 0, stdout: 'users\n', stderr: '' };
+    if (/COUNT\(\*\)/.test(sql)) return { code: 0, stdout: 'users\t3', stderr: '' };
+    return { code: 1, stdout: '', stderr: `unexpected ${argv.join(' ')}` };
+  };
   const ops: DbLedgerOps = {
     async dumpToFile(_e, _i, dbName, file) { calls.push(`dump:${dbName}`); fs.writeFileSync(file, Buffer.alloc(200, 1)); return { bytes: 200, sha256: 'abc' }; },
     async countObjects(_e, _i, dbName) { calls.push(`count:${dbName}`); return dbName.startsWith('cds_drill_') ? drillObjects : 12; },
@@ -57,7 +64,7 @@ describe('数据台账路由', () => {
     const app = express(); app.use(express.json());
     app.use((req, _res, next) => { const h = req.headers['x-test-key'] as string | undefined; if (h === 'KEY-Q') (req as any).cdsProjectKey = { projectId: 'q', keyId: 'k-q' }; next(); });
     process.env.CDS_BACKUP_DIR = path.join(tmpDir, 'backups');
-    app.use('/api', createDbLedgerRouter({ stateService: state, assertProjectAccess: assertProjectAccess as any, ops, now: () => new Date(NOW) }));
+    app.use('/api', createDbLedgerRouter({ stateService: state, assertProjectAccess: assertProjectAccess as any, ops, now: () => new Date(NOW), cloneExec }));
     server = app.listen(0);
   });
   afterEach(async () => { delete process.env.CDS_BACKUP_DIR; await flushAllJsonStateStores(); await new Promise<void>((r) => server.close(() => r())); fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
@@ -71,6 +78,37 @@ describe('数据台账路由', () => {
     expect(byName.shop_old).toMatchObject({ kind: 'per-branch', status: 'orphaned' });
     expect(res.body.summary).toMatchObject({ total: 3, active: 2, orphaned: 1, withoutBackup: 3 });
     expect(res.body.tree.map((n: any) => n.sourceDb)).toEqual(['shop', 'shop_feat_x']);
+  });
+
+  it('POST 分支时间点克隆：目标库不在实例上就克隆并写台账（含逐表校验）；已存在则不重复；空库方式不适用', async () => {
+    const before = await request(server, 'POST', '/api/branches/p-feat-x/db-init/api');
+    expect(before.status).toBe(200);
+    expect(before.body.outcome.kind).toBe('not-applicable');
+    expect(calls).toEqual([]);
+
+    state.updateBuildProfile('api', { dbInit: 'clone' }); state.save();
+    listed = listed.filter((d) => d !== 'shop_feat_x');
+    const res = await request(server, 'POST', '/api/branches/p-feat-x/db-init/api');
+    expect(res.status).toBe(200);
+    expect(res.body.outcome).toMatchObject({ kind: 'cloned', dbName: 'shop_feat_x', sourceDb: 'shop', verification: { ok: true } });
+    expect(res.body.message).toMatch(/时间点克隆到 shop_feat_x/);
+    expect(res.body.lines.join('\n')).toMatch(/1 张表行数一致/);
+    expect(calls.filter((c) => c === 'clone')).toEqual(['clone']);
+
+    const ledger = await request(server, 'GET', '/api/branches/p-feat-x/db-ledger');
+    const e = ledger.body.entries.find((x: any) => x.dbName === 'shop_feat_x');
+    expect(e.clone).toMatchObject({ sourceDb: 'shop', verification: { ok: true, mismatched: [] } });
+    expect(e.initMode).toBe('clone');
+    expect(e.id.startsWith('live_')).toBe(false);
+
+    listed.push('shop_feat_x');
+    const again = await request(server, 'POST', '/api/branches/p-feat-x/db-init/api');
+    expect(again.status).toBe(200);
+    expect(again.body.outcome.kind).toBe('exists');
+    expect(calls.filter((c) => c === 'clone')).toEqual(['clone']);
+
+    const missing = await request(server, 'POST', '/api/branches/p-feat-x/db-init/nope');
+    expect(missing.status).toBe(404);
   });
 
   it('项目 key 只能看自己的项目', async () => {
