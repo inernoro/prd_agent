@@ -515,11 +515,24 @@ export async function resumePendingSiteOptimization(input: {
 } = {}): Promise<ApiResponse<HostedSiteOptimizationReviewResult> | null> {
   const pending = getPendingSiteOptimizationSession();
   if (!pending || (pending.targetSiteId ?? undefined) !== (input.targetSiteId ?? undefined)) return null;
-  const queued = await apiRequest<{ queued: boolean; sessionId: string }>(
-    api.webPages.optimizationUploadComplete(encodeURIComponent(pending.sessionId)),
-    { method: 'POST', signal: input.signal },
+  const status = await apiRequest<HostedSiteOptimizationUploadStatusResult>(
+    api.webPages.optimizationUploadStatus(encodeURIComponent(pending.sessionId)),
+    { signal: input.signal },
   );
-  if (!queued.success) return queued;
+  if (!status.success) {
+    if (status.error?.code === 'NOT_FOUND') clearPendingOptimizationSession(pending.sessionId);
+    return status;
+  }
+  if (status.data.status === 'uploading') {
+    const queued = await apiRequest<{ queued: boolean; sessionId: string }>(
+      api.webPages.optimizationUploadComplete(encodeURIComponent(pending.sessionId)),
+      { method: 'POST', signal: input.signal },
+    );
+    if (!queued.success) {
+      if (queued.error?.code === 'NOT_FOUND') clearPendingOptimizationSession(pending.sessionId);
+      return queued;
+    }
+  }
   return pollSiteOptimization(pending.sessionId, { ...input, cancelOnAbort: false });
 }
 

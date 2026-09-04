@@ -198,6 +198,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         CancellationToken ct = default)
     {
         var session = await GetOwnedSessionAsync(sessionId, userId, ct);
+        var recoveredSite = await TryRecoverCompletedSiteAsync(session, userId, ct);
+        if (recoveredSite != null)
+            session = await GetOwnedSessionAsync(sessionId, userId, ct);
         HostedSite? site = null;
         if (session.Status == HostedSiteOptimizationStatuses.Saved
             && !string.IsNullOrWhiteSpace(session.CompletedSiteId))
@@ -336,7 +339,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     session.Description,
                     session.Folder,
                     session.Tags,
-                    ct: CancellationToken.None);
+                    ct: CancellationToken.None,
+                    sourceRef: session.Id);
             }
             else
             {
@@ -358,35 +362,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 if (metadata != null) saved = metadata;
             }
 
-            var completed = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                x => x.Id == session.Id
-                     && x.Status == HostedSiteOptimizationStatuses.Saving
-                     && x.LeaseOwner == leaseOwner,
-                Builders<HostedSiteOptimizationSession>.Update
-                    .Set(x => x.CompletedSiteId, saved.Id)
-                    .Set(x => x.Status, HostedSiteOptimizationStatuses.Saved)
-                    .Set(x => x.LeaseOwner, null)
-                    .Set(x => x.LeaseExpiresAt, null)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                    .Set(x => x.ExpiresAt, DateTime.UtcNow.AddMinutes(10)),
-                cancellationToken: CancellationToken.None);
-            if (completed.ModifiedCount != 1)
-            {
-                completed = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                    x => x.Id == session.Id
-                         && x.Status == HostedSiteOptimizationStatuses.Failed
-                         && x.CompletedSiteId == null,
-                    Builders<HostedSiteOptimizationSession>.Update
-                        .Set(x => x.CompletedSiteId, saved.Id)
-                        .Set(x => x.Status, HostedSiteOptimizationStatuses.Saved)
-                        .Set(x => x.Error, null)
-                        .Set(x => x.LeaseOwner, null)
-                        .Set(x => x.LeaseExpiresAt, null)
-                        .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                        .Set(x => x.ExpiresAt, DateTime.UtcNow.AddMinutes(10)),
-                    cancellationToken: CancellationToken.None);
-            }
-            if (completed.ModifiedCount != 1)
+            if (!await PersistSavedCompletionAsync(session.Id, session.OwnerUserId, saved.Id))
             {
                 _logger.LogError(
                     "网页托管站点已保存但无法登记完成状态，保留分片供后续核对: {SessionId} {SiteId}",
@@ -438,35 +414,67 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         if (session.Status == HostedSiteOptimizationStatuses.Previewing
             && (!session.LeaseExpiresAt.HasValue || session.LeaseExpiresAt <= recoveryNow))
         {
-            if (!await CleanupPreviewFilesAsync(session.PreviewFiles))
+            var recoveryOwner = Guid.NewGuid().ToString("N");
+            var recoveryFilter = Builders<HostedSiteOptimizationSession>.Filter.And(
+                Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Id, session.Id),
+                Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.OwnerUserId, userId),
+                Builders<HostedSiteOptimizationSession>.Filter.Eq(
+                    x => x.Status, HostedSiteOptimizationStatuses.Previewing),
+                Builders<HostedSiteOptimizationSession>.Filter.Or(
+                    Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.LeaseExpiresAt, null),
+                    Builders<HostedSiteOptimizationSession>.Filter.Lte(x => x.LeaseExpiresAt, recoveryNow)));
+            var recoveryClaim = await _db.HostedSiteOptimizationSessions.FindOneAndUpdateAsync(
+                recoveryFilter,
+                Builders<HostedSiteOptimizationSession>.Update
+                    .Set(x => x.Status, HostedSiteOptimizationStatuses.CleanupPending)
+                    .Set(x => x.LeaseOwner, recoveryOwner)
+                    .Set(x => x.LeaseExpiresAt, recoveryNow.Add(WorkerLeaseLifetime))
+                    .Set(x => x.UpdatedAt, recoveryNow),
+                new FindOneAndUpdateOptions<HostedSiteOptimizationSession>
+                {
+                    ReturnDocument = ReturnDocument.After,
+                },
+                CancellationToken.None);
+            if (recoveryClaim == null)
+            {
+                session = await GetOwnedSessionAsync(sessionId, userId, CancellationToken.None);
+            }
+            else if (!await CleanupPreviewFilesAsync(recoveryClaim.PreviewFiles))
             {
                 await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                    x => x.Id == session.Id && x.OwnerUserId == userId,
+                    x => x.Id == session.Id
+                         && x.OwnerUserId == userId
+                         && x.Status == HostedSiteOptimizationStatuses.CleanupPending
+                         && x.LeaseOwner == recoveryOwner,
                     Builders<HostedSiteOptimizationSession>.Update
-                        .Set(x => x.Status, HostedSiteOptimizationStatuses.CleanupPending)
+                        .Set(x => x.LeaseOwner, null)
+                        .Set(x => x.LeaseExpiresAt, null)
                         .Set(x => x.ExpiresAt, recoveryNow),
                     cancellationToken: CancellationToken.None);
                 throw new InvalidOperationException("上次预览中断，临时文件正在清理，请稍后重试");
             }
-
-            var recovered = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                x => x.Id == session.Id
-                     && x.OwnerUserId == userId
-                     && x.Status == HostedSiteOptimizationStatuses.Previewing
-                     && (x.LeaseExpiresAt == null || x.LeaseExpiresAt <= recoveryNow),
-                Builders<HostedSiteOptimizationSession>.Update
-                    .Set(x => x.Status, HostedSiteOptimizationStatuses.AwaitingDecision)
-                    .Set(x => x.PreviewFiles, new List<HostedSiteFile>())
-                    .Set(x => x.PreviewEntryFile, null)
-                    .Set(x => x.PreviewAccessToken, string.Empty)
-                    .Set(x => x.PreviewTotalSize, 0)
-                    .Set(x => x.LeaseOwner, null)
-                    .Set(x => x.LeaseExpiresAt, null)
-                    .Set(x => x.UpdatedAt, recoveryNow)
-                    .Set(x => x.ExpiresAt, recoveryNow.Add(SessionLifetime)),
-                cancellationToken: CancellationToken.None);
-            if (recovered.ModifiedCount == 1)
+            else
+            {
+                var recovered = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    x => x.Id == session.Id
+                         && x.OwnerUserId == userId
+                         && x.Status == HostedSiteOptimizationStatuses.CleanupPending
+                         && x.LeaseOwner == recoveryOwner,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.Status, HostedSiteOptimizationStatuses.AwaitingDecision)
+                        .Set(x => x.PreviewFiles, new List<HostedSiteFile>())
+                        .Set(x => x.PreviewEntryFile, null)
+                        .Set(x => x.PreviewAccessToken, string.Empty)
+                        .Set(x => x.PreviewTotalSize, 0)
+                        .Set(x => x.LeaseOwner, null)
+                        .Set(x => x.LeaseExpiresAt, null)
+                        .Set(x => x.UpdatedAt, recoveryNow)
+                        .Set(x => x.ExpiresAt, recoveryNow.Add(SessionLifetime)),
+                    cancellationToken: CancellationToken.None);
+                if (recovered.ModifiedCount != 1)
+                    throw new InvalidOperationException("上次预览恢复状态已变化，请刷新后重试");
                 session = await GetOwnedSessionAsync(sessionId, userId, CancellationToken.None);
+            }
         }
         EnsureUsable(session);
 
@@ -656,6 +664,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                        session.CompletedSiteId, userId, CancellationToken.None)
                    ?? throw new InvalidOperationException("文件已经保存，但站点暂时无法读取，请刷新站点列表");
         }
+        var recoveredSite = await TryRecoverCompletedSiteAsync(session, userId, ct);
+        if (recoveredSite != null) return recoveredSite;
         EnsureUsable(session);
         if (normalizedVariant == "optimized"
             && (session.Status != HostedSiteOptimizationStatuses.PreviewReady || session.PreviewFiles.Count == 0))
@@ -701,7 +711,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                         session.Description,
                         session.Folder,
                         session.Tags,
-                        ct: CancellationToken.None);
+                        ct: CancellationToken.None,
+                        sourceRef: session.Id);
                 }
                 else
                 {
@@ -739,53 +750,17 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
             // 从这里开始正式站点已经保存成功，后续清理异常不能再把状态恢复成可确认，
             // 否则客户端重试会重复创建站点。先固化完成身份，再做不影响结果的清理。
+            if (!await PersistSavedCompletionAsync(session.Id, userId, saved.Id))
+            {
+                _logger.LogError(
+                    "网页托管站点已保存但无法登记确认结果，保留临时文件供恢复: {SessionId} {SiteId}",
+                    session.Id,
+                    saved.Id);
+                throw new InvalidOperationException("站点已保存，正在登记结果，请刷新站点列表后重试");
+            }
+
             session.Status = HostedSiteOptimizationStatuses.Saved;
             session.CompletedSiteId = saved.Id;
-            session.ExpiresAt = DateTime.UtcNow.AddMinutes(10);
-            session.UpdatedAt = DateTime.UtcNow;
-            try
-            {
-                var completed = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                    x => x.Id == session.Id && x.OwnerUserId == userId && x.LeaseOwner == leaseOwner,
-                    Builders<HostedSiteOptimizationSession>.Update
-                        .Set(x => x.Status, session.Status)
-                        .Set(x => x.CompletedSiteId, session.CompletedSiteId)
-                        .Set(x => x.LeaseOwner, null)
-                        .Set(x => x.LeaseExpiresAt, null)
-                        .Set(x => x.ExpiresAt, session.ExpiresAt)
-                        .Set(x => x.UpdatedAt, session.UpdatedAt),
-                    cancellationToken: CancellationToken.None);
-                if (completed.ModifiedCount != 1)
-                {
-                    completed = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
-                        x => x.Id == session.Id
-                             && x.OwnerUserId == userId
-                             && x.Status == HostedSiteOptimizationStatuses.Failed
-                             && x.CompletedSiteId == null,
-                        Builders<HostedSiteOptimizationSession>.Update
-                            .Set(x => x.Status, HostedSiteOptimizationStatuses.Saved)
-                            .Set(x => x.CompletedSiteId, saved.Id)
-                            .Set(x => x.Error, null)
-                            .Set(x => x.LeaseOwner, null)
-                            .Set(x => x.LeaseExpiresAt, null)
-                            .Set(x => x.ExpiresAt, session.ExpiresAt)
-                            .Set(x => x.UpdatedAt, session.UpdatedAt),
-                        cancellationToken: CancellationToken.None);
-                }
-                if (completed.ModifiedCount != 1)
-                {
-                    _logger.LogError(
-                        "网页托管站点已保存但无法登记确认结果，保留临时文件供核对: {SessionId} {SiteId}",
-                        session.Id,
-                        saved.Id);
-                    return saved;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "网页托管优化已保存，但记录完成状态失败: {SessionId}", session.Id);
-                return saved;
-            }
 
             if (await CleanupSessionFilesAsync(session))
             {
@@ -916,6 +891,79 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                .Find(x => x.Id == sessionId && x.OwnerUserId == userId)
                .FirstOrDefaultAsync(ct)
            ?? throw new KeyNotFoundException("优化任务不存在或已经过期");
+
+    private async Task<HostedSite?> TryRecoverCompletedSiteAsync(
+        HostedSiteOptimizationSession session,
+        string userId,
+        CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(session.CompletedSiteId)
+            || !string.IsNullOrWhiteSpace(session.TargetSiteId)
+            || session.Status is not (HostedSiteOptimizationStatuses.Saving or HostedSiteOptimizationStatuses.Failed))
+            return null;
+
+        var persisted = await _db.HostedSites
+            .Find(x => x.OwnerUserId == userId
+                       && x.SourceType == "upload"
+                       && x.SourceRef == session.Id)
+            .SortByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (persisted == null) return null;
+        if (!await PersistSavedCompletionAsync(session.Id, userId, persisted.Id))
+            throw new InvalidOperationException("站点已保存，正在恢复任务状态，请稍后重试");
+        return await _hostedSites.GetByIdAsync(persisted.Id, userId, ct) ?? persisted;
+    }
+
+    private async Task<bool> PersistSavedCompletionAsync(string sessionId, string userId, string siteId)
+    {
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            try
+            {
+                var filter = Builders<HostedSiteOptimizationSession>.Filter.And(
+                    Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Id, sessionId),
+                    Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.OwnerUserId, userId),
+                    Builders<HostedSiteOptimizationSession>.Filter.In(
+                        x => x.Status,
+                        new[]
+                        {
+                            HostedSiteOptimizationStatuses.Saving,
+                            HostedSiteOptimizationStatuses.Failed,
+                            HostedSiteOptimizationStatuses.Saved,
+                        }),
+                    Builders<HostedSiteOptimizationSession>.Filter.Or(
+                        Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.CompletedSiteId, null),
+                        Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.CompletedSiteId, siteId)));
+                var result = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
+                    filter,
+                    Builders<HostedSiteOptimizationSession>.Update
+                        .Set(x => x.CompletedSiteId, siteId)
+                        .Set(x => x.Status, HostedSiteOptimizationStatuses.Saved)
+                        .Set(x => x.Error, null)
+                        .Set(x => x.LeaseOwner, null)
+                        .Set(x => x.LeaseExpiresAt, null)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                        .Set(x => x.ExpiresAt, DateTime.UtcNow.AddMinutes(10)),
+                    cancellationToken: CancellationToken.None);
+                return result.MatchedCount == 1;
+            }
+            catch (Exception ex) when (attempt < 3)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "网页托管完成状态登记失败，准备重试: {SessionId} {Attempt}",
+                    sessionId,
+                    attempt);
+                await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "网页托管完成状态登记连续失败: {SessionId}", sessionId);
+                return false;
+            }
+        }
+        return false;
+    }
 
     private static void EnsureUsable(HostedSiteOptimizationSession session)
     {
@@ -1467,6 +1515,16 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         {
             foreach (Match match in HtmlReferenceRegex().Matches(text))
                 yield return match.Groups["path"].Value;
+            foreach (Match match in HtmlSrcSetRegex().Matches(text))
+            foreach (var candidate in match.Groups["paths"].Value.Split(','))
+            {
+                var value = candidate.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(value)) yield return value;
+            }
+            foreach (Match attribute in HtmlStyleAttributeRegex().Matches(text))
+            foreach (Match match in CssReferenceRegex().Matches(attribute.Groups["body"].Value))
+                yield return match.Groups["path"].Value;
             foreach (Match block in InlineStyleRegex().Matches(text))
             foreach (Match match in CssReferenceRegex().Matches(block.Groups["body"].Value))
                 yield return match.Groups["path"].Value;
@@ -1509,8 +1567,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         foreach (var file in runtimeTextEntries)
         {
             var extension = Path.GetExtension(file.LogicalPath).ToLowerInvariant();
-            if (extension is not (".html" or ".htm" or ".js" or ".mjs")) continue;
+            if (extension is not (".html" or ".htm" or ".css" or ".js" or ".mjs")) continue;
             if (!TryDecodeUtf8(ReadEntry(file.Entry), out var text)) return true;
+            if (extension == ".css") continue;
             var scripts = extension is ".html" or ".htm"
                 ? InlineScriptRegex().Matches(text).Select(x => x.Groups["body"].Value)
                 : new[] { text };
@@ -1667,8 +1726,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     [GeneratedRegex("https?://[^\\s\\\"'<>]+", RegexOptions.IgnoreCase)]
     private static partial Regex ExternalUrlRegex();
 
-    [GeneratedRegex("<(?:script|link|img|source|video|audio|iframe)\\b[^>]*?(?:src|href|poster)\\s*=\\s*[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    [GeneratedRegex("<(?:script|link|img|source|video|audio|iframe|object)\\b[^>]*?(?:src|href|poster|data)\\s*=\\s*[\\\"'](?<path>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlReferenceRegex();
+
+    [GeneratedRegex("<(?:img|source)\\b[^>]*?srcset\\s*=\\s*[\\\"'](?<paths>[^\\\"']+)[\\\"']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex HtmlSrcSetRegex();
+
+    [GeneratedRegex("\\bstyle\\s*=\\s*(?<quote>[\\\"'])(?<body>.*?)\\k<quote>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex HtmlStyleAttributeRegex();
 
     [GeneratedRegex("(?:url\\(\\s*|@import\\s+)[\\\"']?(?<path>[^\\)\\\"']+)", RegexOptions.IgnoreCase)]
     private static partial Regex CssReferenceRegex();

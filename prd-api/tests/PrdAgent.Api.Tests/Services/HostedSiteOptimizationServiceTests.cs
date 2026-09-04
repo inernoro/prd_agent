@@ -205,6 +205,46 @@ public class HostedSiteOptimizationServiceTests
     }
 
     [Fact]
+    public void Analyze_NonUtf8Stylesheet_PreservesPotentialDependencies()
+    {
+        var files = new Dictionary<string, byte[]>
+        {
+            ["index.html"] = Encoding.UTF8.GetBytes("<link rel=\"stylesheet\" href=\"./styles.css\">") ,
+            ["styles.css"] = new byte[] { 0x80, 0x81, 0x82 },
+            ["node_modules/pkg/font.woff"] = new byte[] { 0x01, 0x02 },
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = Encoding.UTF8.GetBytes("export default true;");
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeFalse();
+        result.OptimizedFiles.ShouldBe(result.OriginalFiles);
+        result.Warnings.ShouldContain(x => x.Contains("保留所有潜在依赖", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Analyze_InlineStyleAndSrcSet_RestoreRequiredDependencies()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["index.html"] = "<main style=\"background:url('./node_modules/pkg/bg.png')\"><img srcset=\"./node_modules/pkg/a.png 1x, ./node_modules/pkg/b.png 2x\"></main>",
+            ["node_modules/pkg/bg.png"] = "background",
+            ["node_modules/pkg/a.png"] = "one",
+            ["node_modules/pkg/b.png"] = "two",
+        };
+        for (var index = 0; index < 120; index++)
+            files[$"node_modules/unused-{index}/index.js"] = "export default true;";
+
+        var result = CreateService().Analyze(CreateZip(files));
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeTrue();
+        result.OptimizedFiles.ShouldBe(4);
+    }
+
+    [Fact]
     public void Analyze_UnsafeArchivePath_BlocksBeforeAnySave()
     {
         var result = CreateService().Analyze(CreateZip(new Dictionary<string, string>
@@ -313,6 +353,14 @@ public class HostedSiteOptimizationServiceTests
         source.ShouldContain("Previewing,\n                            HostedSiteOptimizationStatuses.Saving");
         source.ShouldContain(".Push(x => x.PreviewFiles, pendingFile)");
         source.ShouldContain("HostedSiteService.GetMimeType(Path.GetExtension(path))");
+        source.IndexOf("var recoveryClaim =", StringComparison.Ordinal).ShouldBeLessThan(
+            source.IndexOf("CleanupPreviewFilesAsync(recoveryClaim.PreviewFiles)", StringComparison.Ordinal));
+        source.ShouldContain("PersistSavedCompletionAsync");
+        source.ShouldContain("sourceRef: session.Id");
+
+        var hostedSiteSource = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs"));
+        hostedSiteSource.ShouldContain("SourceRef = sourceRef?.Trim()");
     }
 
     private static HostedSiteOptimizationService CreateService()

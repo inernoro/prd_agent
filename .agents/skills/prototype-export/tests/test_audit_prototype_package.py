@@ -177,10 +177,10 @@ class AuditPrototypePackageTests(unittest.TestCase):
             make_zip(source, {
                 "index.html": b'<script src="app.js"></script>',
                 "app.js": (
-                    b"fetch('./missing.json');"
-                    b"new Worker('./missing-worker.js');"
-                    b"navigator.serviceWorker.register('./missing-service-worker.js');"
-                    b"importScripts('./missing-import.js');"
+                    b"fetch ('./missing.json');"
+                    b"new Worker ('./missing-worker.js');"
+                    b"navigator.serviceWorker.register ('./missing-service-worker.js');"
+                    b"importScripts ('./missing-import.js');"
                 ),
             })
 

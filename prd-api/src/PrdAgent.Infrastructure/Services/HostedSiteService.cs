@@ -235,7 +235,8 @@ public class HostedSiteService : IHostedSiteService
         string? title, string? description, string? folder, List<string>? tags,
         string? wrappedAssetType = null,
         CancellationToken ct = default,
-        string? uploadId = null)
+        string? uploadId = null,
+        string? sourceRef = null)
     {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
@@ -252,6 +253,7 @@ public class HostedSiteService : IHostedSiteService
             Title = title?.Trim() ?? "未命名站点",
             Description = description?.Trim(),
             SourceType = "upload",
+            SourceRef = sourceRef?.Trim(),
             CosPrefix = cosPrefix,
             EntryFile = result.EntryFile,
             SiteUrl = siteUrl,

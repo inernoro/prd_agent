@@ -45,7 +45,9 @@ describe('网页托管 ZIP 优化确认门', () => {
     expect(serviceSource.indexOf('rememberPendingOptimizationSession(sessionId, input.targetSiteId)'))
       .toBeLessThan(serviceSource.indexOf('if (!queued.success) return queued'));
     expect(serviceSource).toContain('export async function resumePendingSiteOptimization');
+    expect(serviceSource).toContain('optimizationUploadStatus(encodeURIComponent(pending.sessionId))');
     expect(serviceSource).toContain('optimizationUploadComplete(encodeURIComponent(pending.sessionId))');
+    expect(serviceSource).toContain("if (status.error?.code === 'NOT_FOUND') clearPendingOptimizationSession(pending.sessionId)");
     expect(serviceSource).not.toContain('Date.now() + 15 * 60 * 1000');
     expect(pageSource).toContain('resumePendingSiteOptimization({');
     expect(pageSource).toContain('targetSiteId: item?.id');

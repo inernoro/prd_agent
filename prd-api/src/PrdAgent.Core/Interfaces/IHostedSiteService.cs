@@ -26,7 +26,8 @@ public interface IHostedSiteService
         string? title, string? description, string? folder, List<string>? tags,
         string? wrappedAssetType = null,
         CancellationToken ct = default,
-        string? uploadId = null);
+        string? uploadId = null,
+        string? sourceRef = null);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
     Task<HostedSite> CreateFromContentAsync(

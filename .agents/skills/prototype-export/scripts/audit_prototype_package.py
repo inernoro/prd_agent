@@ -36,8 +36,8 @@ CSS_URL_RE = re.compile(r"url\(\s*['\"]?([^'\")]+)", re.IGNORECASE)
 CSS_IMPORT_RE = re.compile(r"@import\s+(?:url\(\s*)?['\"]([^'\"]+)", re.IGNORECASE)
 JS_REFERENCE_RE = re.compile(
     r"(?:import\s+(?:[^'\"]*?\s+from\s+)?|export\s+[^'\"]*?\s+from\s+|"
-    r"import\(\s*|require\(\s*|fetch\(\s*|new\s+(?:Shared)?Worker\(\s*|"
-    r"navigator\.serviceWorker\.register\(\s*|importScripts\(\s*)['\"]([^'\"]+)['\"]",
+    r"import\s*\(\s*|require\s*\(\s*|fetch\s*\(\s*|new\s+(?:Shared)?Worker\s*\(\s*|"
+    r"navigator\.serviceWorker\.register\s*\(\s*|importScripts\s*\(\s*)['\"]([^'\"]+)['\"]",
     re.IGNORECASE,
 )
 DYNAMIC_RUNTIME_LOADER_RE = re.compile(
