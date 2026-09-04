@@ -180,3 +180,8 @@
 | test | scripts | 新增 visual-harness-theme-probe.test.mjs：把 harness 里的判定函数取出来真跑（透明/半透明/不透明各一档），不是断言几行字面存在 |
 | ci | ci | harness.mjs 登记进 release-script-test 的 path filter：它是 visual-harness-*.test.mjs 的被测文件却一直没登记，只改它的 PR 完全跳过这道闸（形状 7） |
 | test | prd-api | 上一轮那条「SourceRef 必须是定长指纹」的守卫断言的是 SHA256.HashData 的字面存在，于是把内联 SHA 收敛进共用指纹时反过来把修复判红了（形状 4a，谁修 bug 谁的 CI 红）；改成只钉不变量「不许拼原文」，必须走共用指纹与行为面交给枚举全部开放层控制器的那条守卫 |
+| fix | prd-api | 直连闸门改按框架选中的路由模板反查工具：按原始路径匹配时占位段会吞掉同级静态路由（GET /api/open/marketplace/skills/tags 被 /skills/{id} 认成 marketplace_get_skill），那条非工具接口会白扣一次分钟窗口并在调用记录里留一条假审计，反复请求还能触发 429 |
+| fix | prd-api | 网页托管的 title/description/folder/tags 补上限（按 UTF-8 字节），且判在调用服务之前：服务是先传对象后插库，元数据过大会让对象传上去、插库时顶破文档上限失败，留下没人指向的孤儿对象 |
+| docs | doc | 删掉 debt.platform.md 里那条指向插画生成脚本的逐文件实现指针（AGENTS.md §10：实现细节不进 doc） |
+| docs | doc | debt.platform.md 记边界 16：网页托管列表只有 limit 没有分页，超过 100 个站的账号翻不到更旧的 |
+| test | prd-api | 补两条守卫：静态兄弟路由不许被占位段吃掉（含占位符改名/带约束仍算同一条）、网页托管元数据必须在传对象之前判上限（含中文按字节算那一档） |

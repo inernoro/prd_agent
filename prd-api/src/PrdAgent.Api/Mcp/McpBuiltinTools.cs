@@ -86,6 +86,48 @@ public static class McpBuiltinTools
     }
 
     /// <summary>
+    /// 按**框架真正选中的那条路由模板**反查工具（形状 6：判据要读生效的值，不是自己再猜一遍）。
+    ///
+    /// 拿原始路径去匹配会让占位符吞掉同级的静态路由：`GET /api/open/marketplace/skills/tags`
+    /// 是一条真实存在的、不是 MCP 工具的接口，却会被 `marketplace_get_skill` 的
+    /// `/skills/{id}` 吃掉 —— 于是它白扣一次这把密钥的分钟窗口、还在调用记录里留下一条
+    /// 根本没发生过的 `marketplace_get_skill`，反复请求甚至能把人限到 429。
+    ///
+    /// 改成拿 ActionDescriptor 的路由模板比：占位段只与占位段相等，静态段只与静态段相等。
+    /// `tags` 是静态段，与 `{id}` 不再相等，整类「静态兄弟被占位吃掉」就此消失。
+    /// </summary>
+    public static McpToolDef? MatchRouteTemplate(string method, string? routeTemplate)
+    {
+        if (string.IsNullOrWhiteSpace(routeTemplate)) return null;
+        foreach (var t in All)
+        {
+            if (!string.Equals(t.Method, method, StringComparison.OrdinalIgnoreCase)) continue;
+            if (RouteTemplatesEqual(t.PathTemplate, routeTemplate)) return t;
+        }
+        return null;
+    }
+
+    /// <summary>两条路由模板是不是同一条：段数相同，且逐段「占位对占位、静态对静态」。</summary>
+    internal static bool RouteTemplatesEqual(string a, string b)
+    {
+        var x = a.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var y = b.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (x.Length != y.Length) return false;
+        for (var i = 0; i < x.Length; i++)
+        {
+            var xp = IsPlaceholder(x[i]);
+            var yp = IsPlaceholder(y[i]);
+            if (xp != yp) return false;
+            // 占位段的名字与路由约束（{id:int}）不参与比较：叫什么不影响它是同一条路由。
+            if (!xp && !string.Equals(x[i], y[i], StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        return true;
+    }
+
+    private static bool IsPlaceholder(string segment)
+        => segment.Length > 1 && segment[0] == '{' && segment[^1] == '}';
+
+    /// <summary>
     /// 路径模板匹配：{xxx} 占位吃掉任意一个路径段，其余段逐段相等。
     ///
     /// 动态工具（AgentOpenEndpoint.Path）的直连反查也用这一个，别再写第二份 —— 两份匹配

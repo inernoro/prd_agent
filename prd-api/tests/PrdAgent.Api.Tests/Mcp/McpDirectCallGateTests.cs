@@ -380,4 +380,56 @@ public class McpRound31WiringTests
         authz.ShouldBeGreaterThan(rate,
             "限流不再排在授权之前了：那上一条守卫的前提就没了，按密钥分桶这件事要重新审一遍");
     }
+
+    [Fact]
+    public void 同级的静态路由_不许被占位段吃掉()
+    {
+        // GET /api/open/marketplace/skills/tags 是一条真实存在、但**不是** MCP 工具的接口。
+        // 按原始路径反查时它会被 marketplace_get_skill 的 /skills/{id} 认领，于是白扣一次
+        // 这把密钥的分钟窗口、还在调用记录里留下一条没发生过的调用，反复请求能把人限到 429。
+        // 认领了就是缺陷：非工具接口会白扣额度并在调用记录里留一条假审计。
+        McpBuiltinTools.MatchRouteTemplate("GET", "api/open/marketplace/skills/tags")
+            .ShouldBeNull();
+
+        // 真正那条工具照旧认得出（占位对占位）。
+        // 不写成 `?.Name.ShouldBe(...)`：那样一旦返回 null，整个断言会被静默跳过（形状 4b）。
+        var matched = McpBuiltinTools.MatchRouteTemplate("GET", "api/open/marketplace/skills/{id}");
+        matched.ShouldNotBeNull("真正的工具路由反而认不出来了");
+        matched.Name.ShouldBe("marketplace_get_skill");
+
+        // 占位符叫什么、带不带路由约束都不影响它是同一条路由。
+        McpBuiltinTools.RouteTemplatesEqual("/api/open/marketplace/skills/{id}",
+            "api/open/marketplace/skills/{skillId}").ShouldBeTrue();
+        McpBuiltinTools.RouteTemplatesEqual("/api/open/marketplace/skills/{id}",
+            "api/open/marketplace/skills/tags").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 网页托管的元数据_必须在传对象之前就判上限()
+    {
+        // 幂等键压成指纹之后，title/description/folder/tags 是这一路仅剩的无界调用方输入。
+        // 服务是先传对象、后插库，所以超限必须在**调用服务之前**就判掉，
+        // 否则对象已经传上去、插库时顶破文档上限失败，留下一个没人指向的孤儿。
+        var ok = new WebPagesOpenApiController.PublishPageRequest
+        {
+            Title = "正常标题", Description = "正常说明", Folder = "demo",
+            Tags = new List<string> { "a", "b" },
+        };
+        WebPagesOpenApiController.ValidateMetadata(ok).ShouldBeNull();
+
+        WebPagesOpenApiController.ValidateMetadata(new WebPagesOpenApiController.PublishPageRequest
+        { Title = new string('x', 1000) }).ShouldNotBeNull("超长 title 没被拦住");
+
+        WebPagesOpenApiController.ValidateMetadata(new WebPagesOpenApiController.PublishPageRequest
+        { Tags = Enumerable.Range(0, 100).Select(i => i.ToString()).ToList() })
+            .ShouldNotBeNull("tag 个数没被拦住");
+
+        WebPagesOpenApiController.ValidateMetadata(new WebPagesOpenApiController.PublishPageRequest
+        { Tags = new List<string> { new('y', 500) } })
+            .ShouldNotBeNull("超长单个 tag 没被拦住");
+
+        // 中文按字节算：一个汉字 3 字节，512 字节的 title 上限对中文是约 170 字。
+        WebPagesOpenApiController.ValidateMetadata(new WebPagesOpenApiController.PublishPageRequest
+        { Title = new string('标', 300) }).ShouldNotBeNull("中文 title 按字符数放行了，上限对中文形同虚设");
+    }
 }

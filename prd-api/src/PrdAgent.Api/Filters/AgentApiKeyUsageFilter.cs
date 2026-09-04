@@ -23,7 +23,7 @@ namespace PrdAgent.Api.Filters;
 /// 绕过网关直连就没有上限——接入台上写着的配额，对直连是假的。所以把同一套闸门挪到两条路都会
 /// 经过的位置：全局动作过滤器。
 ///
-/// 判据刻意收窄到「这次请求命中了哪个工具」—— 内置工具走 McpBuiltinTools.MatchRequest，动态工具
+/// 判据刻意收窄到「这次请求命中了哪个工具」—— 内置工具走 McpBuiltinTools.MatchRouteTemplate，动态工具
 /// 走 AgentOpenEndpoint 登记表 —— 而不是「凡 sk-ak 都计一笔」：sk-ak 早于本次改动就存在，把每日
 /// 写入额度一把套到全部 sk-ak 流量上，等于给既有集成凭空加了一道每天 200 次的天花板。反过来，只堵
 /// 内置工具那一半也不行：登记表接口在网关那条路上是扣额度的，直连不扣就等于后门还开着。
@@ -106,7 +106,15 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
         bool isWrite;
         int imageCount;
 
-        var tool = McpBuiltinTools.MatchRequest(method, path);
+        // 反查读的是**框架真正选中的那条路由模板**，不是原始路径：拿路径匹配时，占位段会吞掉
+        // 同级的静态路由（GET /api/open/marketplace/skills/tags 被 /skills/{id} 认成
+        // marketplace_get_skill），于是那条根本不是工具的接口白扣一次分钟窗口、还在调用记录里
+        // 留下一条没发生过的调用，反复请求甚至能把人限到 429。模板拿不到时（非属性路由）才退回
+        // 按路径匹配（predicate-and-wiring-discipline 形状 6：判据要读生效的值，别自己再猜一遍）。
+        var routeTemplate = context.ActionDescriptor.AttributeRouteInfo?.Template;
+        var tool = routeTemplate != null
+            ? McpBuiltinTools.MatchRouteTemplate(method, routeTemplate)
+            : McpBuiltinTools.MatchRequest(method, path);
         if (tool != null)
         {
             // 判据全部取自工具定义，与网关读的是同一份：WritesData 显式声明的（如取用技能是 POST
@@ -120,7 +128,7 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
         {
             // 动态工具（AgentOpenEndpoint 登记表）同样有两条路：网关的 tools/call 会扣写入额度，
             // 直接打登记的那个 Path 原先不扣 —— 只堵内置工具那一半，等于登记表接口仍是无上限的后门。
-            var dyn = await MatchDynamicEndpointAsync(method, path, ct);
+            var dyn = await MatchDynamicEndpointAsync(method, path, routeTemplate, ct);
             if (dyn == null)
             {
                 await next();
@@ -228,7 +236,7 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
     /// 缓存 30 秒 —— 代价是新登记的接口最多晚 30 秒进闸门，这比每次直连都多一次数据库往返划算。
     /// </summary>
     private async Task<AgentOpenEndpoint?> MatchDynamicEndpointAsync(string method, string path,
-        CancellationToken ct)
+        string? routeTemplate, CancellationToken ct)
     {
         if (!_cache.TryGetValue(DynamicEndpointsCacheKey, out List<AgentOpenEndpoint>? endpoints)
             || endpoints == null)
@@ -237,9 +245,13 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
             _cache.Set(DynamicEndpointsCacheKey, endpoints, DynamicEndpointsTtl);
         }
 
+        // 与内置工具同一个口径：优先按选中的路由模板比（静态兄弟不会被占位吃掉），
+        // 拿不到模板才退回按路径匹配。
         return endpoints.FirstOrDefault(e =>
             string.Equals(e.HttpMethod, method, StringComparison.OrdinalIgnoreCase)
-            && McpBuiltinTools.PathTemplateMatches(e.Path, path));
+            && (routeTemplate != null
+                ? McpBuiltinTools.RouteTemplatesEqual(e.Path, routeTemplate)
+                : McpBuiltinTools.PathTemplateMatches(e.Path, path)));
     }
 
     /// <summary>

@@ -43,8 +43,8 @@ public class McpIdempotencyTests
         var two = McpIdempotency.Fingerprint("k", McpIdempotency.ScopedByKey(Key("k1"), prefix + "-beta"));
 
         one!.Length.ShouldBe(32, customMessage: "落库的键必须定长：clientRequestId 无界，原样进 Mongo 等于让调用方决定文档多大");
-        System.Text.RegularExpressions.Regex.IsMatch(one, "^[0-9a-f]{32}$")
-            .ShouldBeTrue(customMessage: "指纹必须是小写十六进制，与随机 id 同形");
+        // 指纹必须是小写十六进制，与随机 id 同形。
+        System.Text.RegularExpressions.Regex.IsMatch(one, "^[0-9a-f]{32}$").ShouldBeTrue();
         one.ShouldNotBe(two, customMessage: "长键在指纹这一步坍缩了：第二次写入会被误判成幂等命中、悄悄不做");
         McpIdempotency.Fingerprint("k", null).ShouldBeNull();
         // 前缀是判据的一部分：同一个键在不同用途下不许算出同一个 id

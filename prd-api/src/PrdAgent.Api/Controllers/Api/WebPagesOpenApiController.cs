@@ -39,6 +39,20 @@ public class WebPagesOpenApiController : ControllerBase
     /// </summary>
     private const int MaxHtmlBytes = 4 * 1024 * 1024;
 
+    /// <summary>
+    /// 元数据字段的上限（按 UTF-8 字节，与 HTML 同一口径）。
+    ///
+    /// 把 clientRequestId 压成指纹之后，`title` / `description` / `folder` / `tags` 是这一路
+    /// 仅剩的无界调用方输入：nginx 收 30MB body，一页几 KB 的合法 HTML 配上超大标题，
+    /// 就能让对象先传上去、随后那条 HostedSite 插库时顶破文档上限失败，留下一个没人指向的孤儿对象。
+    /// 所以在**调用服务之前**就判掉——服务是先传对象后插库，进去了再失败就晚了。
+    /// </summary>
+    private const int MaxTitleBytes = 512;
+    private const int MaxDescriptionBytes = 4 * 1024;
+    private const int MaxFolderBytes = 256;
+    private const int MaxTagBytes = 128;
+    private const int MaxTagCount = 32;
+
     private readonly IHostedSiteService _sites;
     private readonly MongoDbContext _db;
 
@@ -87,8 +101,12 @@ public class WebPagesOpenApiController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"HTML 超过 {MaxHtmlBytes / 1024 / 1024} MB 上限（按 UTF-8 字节算，中文一个字约 3 字节），请精简或拆成多页"));
 
+        var metaError = ValidateMetadata(req!);
+        if (metaError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, metaError));
+
         // 幂等：同一把密钥 + 同一个 clientRequestId 只建一次站
-        var sourceRef = BuildSourceRef(req!.ClientRequestId);
+        var sourceRef = BuildSourceRef(req.ClientRequestId);
         if (sourceRef != null)
         {
             var existed = await _db.HostedSites
@@ -231,6 +249,26 @@ public class WebPagesOpenApiController : ControllerBase
     /// 一个超长键就能造出一条同样大的文档。知识库与文学创作本来就哈希，这里对齐它们：
     /// 哈希保住「长键互不坍缩」，同时不把无界输入落库。
     /// </summary>
+    /// <summary>元数据超限返回一句能照着改的说明；都合规返回 null。</summary>
+    internal static string? ValidateMetadata(PublishPageRequest req)
+    {
+        static int Bytes(string? v) => v == null ? 0 : System.Text.Encoding.UTF8.GetByteCount(v);
+
+        if (Bytes(req.Title) > MaxTitleBytes)
+            return $"title 超过 {MaxTitleBytes} 字节（按 UTF-8 算，中文一个字约 3 字节），请精简";
+        if (Bytes(req.Description) > MaxDescriptionBytes)
+            return $"description 超过 {MaxDescriptionBytes} 字节，请精简";
+        if (Bytes(req.Folder) > MaxFolderBytes)
+            return $"folder 超过 {MaxFolderBytes} 字节，请精简";
+        if (req.Tags is { Count: > MaxTagCount })
+            return $"tags 最多 {MaxTagCount} 个，当前 {req.Tags.Count} 个";
+        if (req.Tags != null)
+            foreach (var tag in req.Tags)
+                if (Bytes(tag) > MaxTagBytes)
+                    return $"单个 tag 超过 {MaxTagBytes} 字节，请精简";
+        return null;
+    }
+
     private string? BuildSourceRef(string? clientRequestId)
     {
         var digest = McpIdempotency.Fingerprint("mcp-site", McpIdempotency.ScopedByKey(User, clientRequestId));
