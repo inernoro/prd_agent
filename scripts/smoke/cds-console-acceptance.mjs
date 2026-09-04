@@ -238,7 +238,7 @@ const WIZARD_STEPS = [
   { id: '04', exit: { button: '生成我的上手包' }, advance: false },
 ];
 
-async function checkWizardMobile(ctx, projectId) {
+async function checkWizardMobile(ctx, projectId, viewport) {
   const page = await ctx.newPage();
   try {
     await page.goto(`${BASE}/branches/${encodeURIComponent(projectId)}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -271,11 +271,11 @@ async function checkWizardMobile(ctx, projectId) {
         break;
       }
       // 四边都要在视口内：只查上下的话，出口被横向推出屏幕照样全绿。
-      const inBox = box.top >= 0 && box.bottom <= 844 && box.left >= 0 && box.right <= 390;
+      const inBox = box.top >= 0 && box.bottom <= viewport.height && box.left >= 0 && box.right <= viewport.width;
       record(
         `窄屏 · 向导步骤 ${step.id} 出口「${label}」`,
         inBox,
-        `rect top=${box.top} bottom=${box.bottom} left=${box.left} right=${box.right}（视口 390x844）`,
+        `rect top=${box.top} bottom=${box.bottom} left=${box.left} right=${box.right}（视口 ${viewport.width}x${viewport.height}）`,
       );
       if (!inBox || !step.advance) break;
       // 真实指针点击：合成 el.click() 会绕过命中测试，出口被浮层盖住照样能往下走。
@@ -310,7 +310,7 @@ try {
     // url 形式让 Playwright 自己推 domain/path，避免隧道下 host 与目标域不一致时对不上。
     await ctx.addCookies(cookies.map((c) => ({ name: c.name, value: c.value, url: BASE })));
     for (const p of PAGES) await checkPage(ctx, p, viewport, projectId);
-    if (viewport.key === 'mobile') await checkWizardMobile(ctx, projectId);
+    if (viewport.key === 'mobile') await checkWizardMobile(ctx, projectId, viewport);
     await ctx.close();
   }
 } catch (e) {
