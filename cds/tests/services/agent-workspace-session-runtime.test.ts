@@ -336,6 +336,29 @@ describe('AgentWorkspaceSessionRuntime', () => {
     });
   });
 
+  it('reports a safe actionable category when registry authentication blocks image preparation', async () => {
+    const shell: IShellExecutor = {
+      async exec(command: string): Promise<ExecResult> {
+        if (command.startsWith('docker version')) return result('27.0.0\n');
+        if (command.startsWith('docker image inspect')) return result('', 'No such image', 1);
+        if (command.startsWith('docker pull ')) {
+          return result('', 'denied: requested access to the resource is denied', 1);
+        }
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { capabilityCacheMs: 0 });
+
+    await runtime.prepareImage();
+
+    await expect(runtime.capability()).resolves.toEqual({
+      available: false,
+      resourcePolicyEnforcedPerSession: false,
+      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime:od-0.21.1-opencode-1.18.28 could not be prepared on this CDS node: runtime image registry authentication failed',
+    });
+    await expect(runtime.prepareImage()).resolves.toBeUndefined();
+  });
+
   it('keeps OpenDesign unavailable when the image has no compatible Agent CLI', async () => {
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {

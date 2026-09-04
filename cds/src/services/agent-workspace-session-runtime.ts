@@ -439,7 +439,7 @@ export class AgentWorkspaceSessionRuntime {
       );
       if (installed.exitCode === 0 && installed.stdout.trim()) return;
       const pulled = await this.shell.exec(`docker pull ${shellQuote(this.image)}`, { timeout: 600_000 });
-      if (pulled.exitCode !== 0) throw new Error('runtime image pull failed');
+      if (pulled.exitCode !== 0) throw new Error(classifyImagePullFailure(pulled.stdout, pulled.stderr));
       const verified = await this.shell.exec(
         `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
         { timeout: 10_000 },
@@ -487,7 +487,7 @@ export class AgentWorkspaceSessionRuntime {
             reason: !this.autoPullImage
               ? `OpenDesign image ${this.image} is not installed on this CDS node`
               : this.imagePreparationError
-                ? `OpenDesign image ${this.image} could not be prepared on this CDS node`
+                ? `OpenDesign image ${this.image} could not be prepared on this CDS node: ${this.imagePreparationError}`
                 : `OpenDesign image ${this.image} is being prepared on this CDS node`,
           };
         } else {
@@ -1168,4 +1168,21 @@ export class AgentWorkspaceSessionRuntime {
       );
     }
   }
+}
+
+function classifyImagePullFailure(stdout: string, stderr: string): string {
+  const output = `${stdout}\n${stderr}`.toLowerCase();
+  if (/unauthorized|denied|authentication required|credential/.test(output)) {
+    return 'runtime image registry authentication failed';
+  }
+  if (/no matching manifest|unsupported platform|does not match the specified platform/.test(output)) {
+    return 'runtime image does not support this CDS node architecture';
+  }
+  if (/no space left|insufficient disk|disk quota/.test(output)) {
+    return 'runtime image pull failed because CDS node storage is exhausted';
+  }
+  if (/timeout|timed out|connection reset|temporary failure|network is unreachable|no such host/.test(output)) {
+    return 'runtime image pull failed because the registry is temporarily unreachable';
+  }
+  return 'runtime image pull failed';
 }
