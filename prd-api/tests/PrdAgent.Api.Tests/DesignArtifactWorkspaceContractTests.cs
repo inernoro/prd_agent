@@ -1,6 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -10,6 +16,47 @@ namespace PrdAgent.Api.Tests;
 
 public sealed class DesignArtifactWorkspaceContractTests
 {
+    [Fact]
+    public async Task ModelProxyUsesMapSourceAndKeepsOpenDesignRunAttribution()
+    {
+        var run = BuildRun();
+        run.Id = "run-model-proxy-1";
+        run.Status = RunStatuses.Running;
+        run.Operation = DesignArtifactOperations.Generate;
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(run);
+        var handler = new CapturingHandler();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve:8091",
+            ["LlmGwServe:ApiKey"] = "gateway-secret",
+        }).Build();
+        var controller = new DesignArtifactRuntimeController(
+            broker.Object,
+            new SingleClientFactory(handler),
+            configuration,
+            NullLogger<DesignArtifactRuntimeController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+        };
+        var requestBytes = Encoding.UTF8.GetBytes("{\"model\":\"map-managed\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}");
+        controller.Request.Body = new MemoryStream(requestBytes);
+        controller.Request.ContentLength = requestBytes.Length;
+        controller.Request.Headers.Authorization = "Bearer model-ticket";
+        controller.Response.Body = new MemoryStream();
+
+        await controller.ProxyChatCompletions(run.Id, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
+        Assert.Equal("map", handler.Header("X-Gateway-Source"));
+        Assert.Equal(AppCallerRegistry.Admin.WebHosting.GenerateHtml, handler.Header("X-Gateway-App-Caller"));
+        Assert.Equal(run.UserId, handler.Header("X-Gateway-User-Id"));
+        Assert.Equal(run.Id, handler.Header("X-Gateway-Run-Id"));
+        Assert.Equal("gateway-secret", handler.Header("X-Gateway-Key"));
+        broker.VerifyAll();
+    }
+
     [Fact]
     public async Task WorkspaceMetadataRoundTripsThroughRegisteredAssetStoragePath()
     {
@@ -172,5 +219,30 @@ public sealed class DesignArtifactWorkspaceContractTests
             Hash(bytes),
             bytes.Length,
             "application/json");
+    }
+
+    private sealed class SingleClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    private sealed class CapturingHandler : HttpMessageHandler
+    {
+        private IReadOnlyDictionary<string, string[]> _headers = new Dictionary<string, string[]>();
+
+        public string Header(string name) => _headers.TryGetValue(name, out var values)
+            ? Assert.Single(values)
+            : string.Empty;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            _headers = request.Headers.ToDictionary(item => item.Key, item => item.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"gateway-response\"}", Encoding.UTF8, "application/json"),
+            });
+        }
     }
 }

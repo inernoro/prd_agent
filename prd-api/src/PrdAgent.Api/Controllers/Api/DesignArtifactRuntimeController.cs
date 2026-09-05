@@ -130,7 +130,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
             };
             upstream.Headers.TryAddWithoutValidation("X-Gateway-Key", gatewayKey);
             upstream.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", caller);
-            upstream.Headers.TryAddWithoutValidation("X-Gateway-Source", "map-open-design");
+            upstream.Headers.TryAddWithoutValidation("X-Gateway-Source", "map");
             upstream.Headers.TryAddWithoutValidation("X-Gateway-User-Id", run.UserId);
             upstream.Headers.TryAddWithoutValidation("X-Gateway-Run-Id", run.Id);
 
