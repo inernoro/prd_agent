@@ -1058,7 +1058,17 @@ export class AgentWorkspaceSessionRuntime {
         shellQuote(`chown -R ${this.containerUid}:${this.containerGid} /workspace /app/.od`),
       ].join(' '), { timeout: 90_000 });
       if (initialized.exitCode !== 0) {
-        throw new AgentWorkspaceRuntimeError('workspace_volume_init_failed', 'Agent workspace volume ownership could not be initialized', true);
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_volume_init_failed',
+          'Agent workspace volume ownership could not be initialized',
+          true,
+          {
+            stage: 'docker_volume_init',
+            exitCode: initialized.exitCode,
+            stderrPreview: runtimeDiagnosticPreview(initialized.stderr, []),
+            stdoutPreview: runtimeDiagnosticPreview(initialized.stdout, []),
+          },
+        );
       }
       const startedContainer = await this.shell.exec(`docker start ${shellQuote(containerName)}`, { timeout: 30_000 });
       if (startedContainer.exitCode !== 0) {

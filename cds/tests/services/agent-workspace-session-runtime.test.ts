@@ -37,6 +37,7 @@ class RecordingShell implements IShellExecutor {
   workspaceDir = '';
   failEgressConnect = false;
   failContainerCreate = false;
+  failVolumeInit = false;
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     this.calls.push({ command, options });
@@ -51,7 +52,9 @@ class RecordingShell implements IShellExecutor {
     }
     if (command.startsWith('docker version')) return result('27.0.0\n');
     if (command.startsWith('docker image inspect')) return result('sha256:image\n');
-    if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
+    if (command.includes('--entrypoint /bin/sh') && !command.includes('--cap-add CHOWN')) {
+      return result('/usr/local/bin/opencode\n');
+    }
     if (command.startsWith('docker network create')) return result('network-id\n');
     if (command.startsWith('docker volume create')) return result('volume-id\n');
     if (command.startsWith('docker create ')) {
@@ -74,7 +77,12 @@ class RecordingShell implements IShellExecutor {
       }
       return result('copied\n');
     }
-    if (command.startsWith('docker run ')) return result('container-id\n');
+    if (command.startsWith('docker run ')) {
+      if (this.failVolumeInit && command.includes('--cap-add CHOWN')) {
+        return result('', `${'volume init denied '.repeat(256)}\n`, 126);
+      }
+      return result('container-id\n');
+    }
     if (command.startsWith('docker start ')) return result('started\n');
     if (command.startsWith('docker network connect ')) {
       return this.failEgressConnect ? result('', 'connect denied', 1) : result('connected\n');
@@ -428,6 +436,58 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(String(details.stdoutPreview)).toContain('cds runtime diagnostic truncated');
     expect(Buffer.byteLength(String(details.stderrPreview), 'utf8')).toBeLessThanOrEqual(2 * 1024);
     expect(Buffer.byteLength(String(details.stdoutPreview), 'utf8')).toBeLessThanOrEqual(2 * 1024);
+    expect(fs.readdirSync(rootDir)).toEqual([]);
+  });
+
+  it('returns bounded diagnostics when workspace volume ownership initialization fails', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const workspacePackage = buildPackage([
+      { path: 'brief.txt', content: 'brief', mediaType: 'text/plain' },
+    ]);
+    const shell = new RecordingShell();
+    shell.failVolumeInit = true;
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      instanceId: 'instance-a',
+      capabilityCacheMs: 0,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async () => new Response(workspacePackage.serialized, {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    });
+
+    const error = await runtime.create('session-volume-init-failure', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: workspacePackage.sha256,
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024,
+      maxOutputBytes: 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json'],
+    }, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 30,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: 'workspace_volume_init_failed',
+      retryable: true,
+      details: {
+        stage: 'docker_volume_init',
+        exitCode: 126,
+        stderrPreview: expect.stringContaining('cds runtime diagnostic truncated'),
+        stdoutPreview: '',
+      },
+    });
+    expect(Buffer.byteLength(String((error as AgentWorkspaceRuntimeError).details?.stderrPreview), 'utf8'))
+      .toBeLessThanOrEqual(2 * 1024);
     expect(fs.readdirSync(rootDir)).toEqual([]);
   });
 
