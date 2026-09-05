@@ -212,7 +212,7 @@ export function ModelPickerDialog({
     <div className="flex-1 min-h-0 overflow-auto">
       {platformList.length === 0 ? (
         <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-          暂无平台，请先在“模型管理”中添加平台
+          暂无平台，请先到 LLM Gateway 控制台（左下角「模型网关」）添加平台
         </div>
       ) : (
         <div className="space-y-2">

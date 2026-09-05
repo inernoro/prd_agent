@@ -9317,7 +9317,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               </div>
                               {imageModels.length === 0 ? (
                                 <div className="px-2 py-1.5 text-[12px] text-token-secondary">
-                                  暂无启用的 isImageGen 模型（可在“模型管理”设置）
+                                  暂无启用的 isImageGen 模型（可在 LLM Gateway 控制台设置）
                                 </div>
                               ) : (
                                 imageModels.map((m) => (
@@ -9346,7 +9346,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               </div>
                               {visionModels.length === 0 ? (
                                 <div className="px-2 py-1.5 text-[12px] text-token-secondary">
-                                  暂无启用的 isVision 模型（可在“模型管理”设置）
+                                  暂无启用的 isVision 模型（可在 LLM Gateway 控制台设置）
                                 </div>
                               ) : (
                                 visionModels.map((m) => (

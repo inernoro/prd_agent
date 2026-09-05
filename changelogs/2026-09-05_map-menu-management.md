@@ -16,3 +16,4 @@
 | fix | prd-api | 用户偏好新增导航专属时间戳 NavLayoutUpdatedAt，总览排序与展示不再被皮肤等其他偏好改动带偏；GET 偏好暴露 navLayoutSynced |
 | fix | prd-admin | 导航 store：服务端主动清空过布局时不再用 sessionStorage 旧布局回填上传，管理员按人重置不会被撤销 |
 | security | prd-api | 全员导航总览接口改为需要 settings.write（或 super），不再仅凭 settings.read 放行 |
+| fix | prd-admin | 实验台模型选择、视觉创作高级页里指向已删「模型管理」的文案改为 LLM Gateway 控制台 |
