@@ -176,7 +176,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
             path.join(shell.workspaceDir, 'index.html'),
             '<!doctype html><html><body>Generated</body></html>',
           );
-          fs.mkdirSync(path.join(shell.workspaceDir, 'assets'));
+          fs.mkdirSync(path.join(shell.workspaceDir, 'assets'), { recursive: true });
           fs.writeFileSync(path.join(shell.workspaceDir, 'assets', 'app.css'), 'body{color:blue}');
           fs.writeFileSync(path.join(shell.workspaceDir, 'manifest.json'), '{"untrusted":true}');
           fs.writeFileSync(path.join(shell.workspaceDir, 'not-allowed.txt'), 'must not leave CDS');
@@ -370,7 +370,9 @@ describe('AgentWorkspaceSessionRuntime', () => {
         writeback: 'external',
       },
     });
-    const run = requests.find((request) => request.path === '/api/runs');
+    const designRuns = requests.filter((request) => request.path === '/api/runs');
+    expect(designRuns).toHaveLength(2);
+    const run = designRuns[0];
     expect(run?.body).toMatchObject({
       projectId: 'od-project',
       conversationId: 'od-conversation',
@@ -396,6 +398,9 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(run?.body.systemPrompt).toContain('A starting /workspace/index.html already exists');
     expect(run?.body.systemPrompt).toContain('small targeted edit operations');
     expect(run?.body.systemPrompt).toContain('never replace the whole document with one write operation');
+    expect(designRuns[1]?.body.message).toContain('Perform a strict final review');
+    expect(designRuns[1]?.body.message).toContain('/workspace/brief/task.json');
+    expect(designRuns[1]?.body.conversationId).toBe('od-conversation');
     expect(JSON.stringify(run?.body)).not.toContain('Private knowledge body');
     const sessionResourceCreates = shell.calls.filter((call) =>
       call.command.includes('cds.type=agent-session') && (

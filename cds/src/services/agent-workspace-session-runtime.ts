@@ -1263,34 +1263,36 @@ export class AgentWorkspaceSessionRuntime {
           .sort()
       : [];
     try {
+    const systemPrompt = [
+      'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
+      knowledgeFiles.length > 0
+        ? `Read every knowledge source before editing: ${knowledgeFiles.join(', ')}. Use those files as the only source for factual claims and product copy.`
+        : 'This task has no knowledge source files. Do not invent factual claims or metrics.',
+      'The active web-prototype skill side files are rooted at /workspace/.od-skills/web-prototype. Read /workspace/.od-skills/web-prototype/assets/template.html, /workspace/.od-skills/web-prototype/references/layouts.md, and /workspace/.od-skills/web-prototype/references/checklist.md by these exact paths; do not resolve them as /workspace/assets or /workspace/references.',
+      'A starting /workspace/index.html already exists. When task operation is edit, it is the exact current published page and must remain the starting point; the generic template is reference material only. Never replace the product identity with OpenDesign or copy generic template copy into the deliverable.',
+      'Modify index.html with small targeted edit operations; never replace the whole document with one write operation. The user instruction has priority over example text. Complete every requested change and do not stop after one replacement. Then reread task.json and index.html. Remove every unresolved placeholder and verify every visible-language and content constraint before claiming completion.',
+      'Keep the final webpage in index.html. The first release must be self-contained: inline all CSS, JavaScript, fonts, and images; do not reference relative or remote assets.',
+      'Do not request credentials, upload source files, publish, deploy, or mutate any external source.',
+    ].join(' ');
+    const buildRunBody = (message: string) => ({
+      projectId,
+      conversationId,
+      agentId: 'byok-opencode',
+      model: model.model,
+      message,
+      systemPrompt,
+      byokProvider: {
+        protocol: 'openai',
+        apiKey: model.apiKey,
+        baseUrl: proxiedModelBaseUrl,
+        model: model.model,
+        requiresApiKey: true,
+      },
+    });
     onStage('open_design_run_starting', { projectId });
     const run = await this.odJson(handle, '/api/runs', {
       method: 'POST',
-      body: {
-        projectId,
-        conversationId,
-        agentId: 'byok-opencode',
-        model: model.model,
-        message: instruction.trim(),
-        systemPrompt: [
-          'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
-          knowledgeFiles.length > 0
-            ? `Read every knowledge source before editing: ${knowledgeFiles.join(', ')}. Use those files as the only source for factual claims and product copy.`
-            : 'This task has no knowledge source files. Do not invent factual claims or metrics.',
-          'The active web-prototype skill side files are rooted at /workspace/.od-skills/web-prototype. Read /workspace/.od-skills/web-prototype/assets/template.html, /workspace/.od-skills/web-prototype/references/layouts.md, and /workspace/.od-skills/web-prototype/references/checklist.md by these exact paths; do not resolve them as /workspace/assets or /workspace/references.',
-          'A starting /workspace/index.html already exists. When task operation is edit, it is the exact current published page and must remain the starting point; the generic template is reference material only. Never replace the product identity with OpenDesign or copy generic template copy into the deliverable.',
-          'Modify index.html with small targeted edit operations; never replace the whole document with one write operation. The user instruction has priority over example text. Complete every requested change and do not stop after one replacement. Then reread task.json and index.html. Remove every unresolved placeholder and verify every visible-language and content constraint before claiming completion.',
-          'Keep the final webpage in index.html. The first release must be self-contained: inline all CSS, JavaScript, fonts, and images; do not reference relative or remote assets.',
-          'Do not request credentials, upload source files, publish, deploy, or mutate any external source.',
-        ].join(' '),
-        byokProvider: {
-          protocol: 'openai',
-          apiKey: model.apiKey,
-          baseUrl: proxiedModelBaseUrl,
-          model: model.model,
-          requiresApiKey: true,
-        },
-      },
+      body: buildRunBody(instruction.trim()),
       signal,
       acceptedStatuses: [200, 202],
     });
@@ -1304,7 +1306,32 @@ export class AgentWorkspaceSessionRuntime {
     }
     handle.activeRunId = runId;
     try {
-      const runOutcome = await this.waitForRun(handle, runId, signal, onStage);
+      let finalRunId = runId;
+      let runOutcome = await this.waitForRun(handle, runId, signal, onStage);
+      const currentIndexPath = path.join(handle.workspaceDir, 'current', 'index.html');
+      if (fs.existsSync(currentIndexPath)) {
+        onStage('open_design_reviewing', { runId });
+        const review = await this.odJson(handle, '/api/runs', {
+          method: 'POST',
+          body: buildRunBody([
+            'Perform a strict final review of /workspace/index.html against every constraint in /workspace/brief/task.json.',
+            'Do not merely describe the result. Inspect all visible labels, navigation, buttons, headings, statistics, role paths, placeholders, and factual claims, then use targeted edit operations to correct every mismatch you find.',
+            'Reread the finished index.html and only stop when every requested constraint is visibly present and every forbidden placeholder or unsupported claim is absent.',
+          ].join(' ')),
+          signal,
+          acceptedStatuses: [200, 202],
+        });
+        finalRunId = typeof review.runId === 'string'
+          ? review.runId
+          : typeof review.id === 'string'
+            ? review.id
+            : '';
+        if (!finalRunId) {
+          throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign review run returned no run id');
+        }
+        handle.activeRunId = finalRunId;
+        runOutcome = await this.waitForRun(handle, finalRunId, signal, onStage);
+      }
       onStage('workspace_collecting');
       await this.copyOutputsFromContainer(handle);
       const collectedFiles = this.collectOutputs(handle);
@@ -1313,7 +1340,6 @@ export class AgentWorkspaceSessionRuntime {
         throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed without index.html');
       }
       const outputHtml = Buffer.from(indexFile.contentBase64, 'base64');
-      const currentIndexPath = path.join(handle.workspaceDir, 'current', 'index.html');
       const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
       if (
         !runOutcome.deliverableValid
@@ -1411,7 +1437,7 @@ export class AgentWorkspaceSessionRuntime {
           size,
           mediaType,
         })),
-        openDesignRunId: runId,
+        openDesignRunId: finalRunId,
       };
     } finally {
       handle.activeRunId = undefined;

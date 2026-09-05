@@ -2189,6 +2189,7 @@ function designStageSummary(stage: string, detail?: Record<string, unknown>): st
     open_design_importing: 'OpenDesign 正在接入已准备的工作区。',
     open_design_run_starting: 'OpenDesign 正在启动本次设计任务。',
     open_design_running: 'OpenDesign 正在修改共享工作区。',
+    open_design_reviewing: 'OpenDesign 正在逐项复查页面约束与知识事实。',
     workspace_collecting: 'CDS 正在校验生成文件与安全边界。',
     workspace_committing: 'CDS 正在向 MAP 提交已校验的结果。',
   };
