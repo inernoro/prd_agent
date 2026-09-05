@@ -84,3 +84,4 @@
 | docs | doc | 债务 #34 记下残留敞口：`/api/open/` 里有三条收不回来的路（publisher 节点删除、教程图谱发布、`DELETE /api/open/marketplace-skills/{id}`），而自动档钥匙拿得到它们要的 scope，所以「删除、公开发布一律不给」目前只在 MCP 工具面成立，直接打 REST 仍做得到。要真正收口得区分密钥用途或按端点标破坏性，靠路径命名调不出来 |
 | fix | prd-api | `{"scopes":[]}` 不带 scopeMode 时也不再把自动档钥匙清空 —— 「变成手动」有**两扇门**：显式写 `scopeMode:"manual"`，和只带一个 `scopes` 字段（服务层据此推断）。上一轮的保护只挂在显式那扇门上，于是空清单从隐式门进来，落到校验分支、零个 scope「全部校验通过」，空清单原样入库，接口返回 200 而钥匙失去全部工具。和上一轮修的 `scopeMode` 拼错是同一个形状：以为设成 A 其实是 B，且没有任何线索 |
 | refactor | prd-api | 切档判据抽成 `ResultingScopeMode` + `NeedsScopeSnapshot` 两个纯函数，控制器只调用不内联判断。原来那条守卫断言的是切档那一段里出现某几个字面量（`AgentApiKeyScopeMode.Manual` / `IsNullOrWhiteSpace`），换成十条行为用例穷举两扇门 × 空清单的各种写法 + 一条接线断言（控制器必须真的调 `NeedsScopeSnapshot`）——纯函数「对不对」有用例管，「有没有人用」得单独钉，否则旧的内联条件留着照样全绿 |
+| docs | doc | 本 PR 新增的 10 条债务条目去掉实现符号（类名、方法名、C# 表达式、组件文件名），改用行为语言重写。AGENTS.md §10 写着「实现代码、接口签名一律不进文档——AI 要细节直接读源码」，而这些符号一旦改名，台账就成了会漂的第二份真相。Review 只点名了其中一条，但同一形状在相邻九条里都在，只修被点名的那条是把问题留在原地 |
