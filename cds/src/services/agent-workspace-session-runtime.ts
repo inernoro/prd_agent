@@ -653,6 +653,7 @@ export class AgentWorkspaceSessionRuntime {
   private readonly runtimeValidationByImageId = new Map<string, boolean>();
   private hardStoragePolicyValidated = false;
   private hardStoragePolicyFailureCode: string | null = null;
+  private hardStoragePolicyDiagnostic: string | null = null;
   private imagePreparation: Promise<void> | null = null;
   private imagePreparationAttemptedAt = 0;
   private imagePreparationError: string | null = null;
@@ -983,7 +984,7 @@ export class AgentWorkspaceSessionRuntime {
           : {
               available: false,
               resourcePolicyEnforcedPerSession: false,
-              reason: `Docker node cannot enforce and verify hard per-session Agent workspace storage limits (${this.hardStoragePolicyFailureCode || 'unknown'})`,
+              reason: `Docker node cannot enforce and verify hard per-session Agent workspace storage limits (${this.hardStoragePolicyFailureCode || 'unknown'}${this.hardStoragePolicyDiagnostic ? `; ${this.hardStoragePolicyDiagnostic}` : ''})`,
             },
     };
   }
@@ -995,6 +996,7 @@ export class AgentWorkspaceSessionRuntime {
     let verified = false;
     let removed = false;
     this.hardStoragePolicyFailureCode = null;
+    this.hardStoragePolicyDiagnostic = null;
     try {
       // Treat the name as allocated before Docker replies: a timed-out create
       // can still have succeeded in the daemon and therefore must be removed.
@@ -1049,6 +1051,10 @@ export class AgentWorkspaceSessionRuntime {
                         ? 'docker_or_shell_error'
                         : 'no_diagnostic';
           this.hardStoragePolicyFailureCode = `validation_exit_${validation.exitCode}_${category}`;
+          this.hardStoragePolicyDiagnostic = runtimeDiagnosticPreview(
+            `${validation.stderr}\n${validation.stdout}`,
+            [volumeName, this.image],
+          ).trim().replace(/\s+/g, ' ').slice(0, 240) || null;
         }
       } else {
         this.hardStoragePolicyFailureCode = `volume_create_exit_${volume.exitCode}`;
