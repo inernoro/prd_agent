@@ -19,3 +19,4 @@
 | fix | prd-admin | 实验台模型选择、视觉创作高级页里指向已删「模型管理」的文案改为 LLM Gateway 控制台 |
 | fix | prd-admin | 总览行复演侧栏时，隐藏过滤后落单的分隔横杆收敛掉，与侧栏一致 |
 | fix | prd-api | remove-tokens 的两段破坏性写入不跟随请求取消，管理员断线不会留下半截清理 |
+| fix | prd-api | CCAS 素材图与向量模型缺失的指路文案改为 LLM Gateway 控制台，不再指向已删除的模型管理页 |
