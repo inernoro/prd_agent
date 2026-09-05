@@ -197,8 +197,8 @@ public class McpGatewayController : ControllerBase
     internal static bool DynamicToolVisible(AgentOpenEndpoint e, HashSet<string> scopes, string? boundUserId)
     {
         if (!e.IsActive) return false;
-        // 收不回来的动作，这一版一律不给智能体 —— 见 IsDestructiveMethod。
-        if (IsDestructiveMethod(e.HttpMethod)) return false;
+        // 收不回来的动作，这一版一律不给智能体 —— 见 IsDestructiveEndpoint。
+        if (IsDestructiveEndpoint(e)) return false;
         var reqScopes = e.RequiredScopes ?? new List<string>();
         if (!reqScopes.Any(scopes.Contains)) return false;
         if (e.AllowedCallerUserIds is { Count: > 0 } wl && (boundUserId == null || !wl.Contains(boundUserId)))
@@ -219,8 +219,18 @@ public class McpGatewayController : ControllerBase
     /// 在那份契约落地之前，列举和调用两处都不给。判据只此一处，两处共用同一个函数 ——
     /// 各写一份的话，早晚出现「列表里看不见、直接按名字调却能打通」。
     /// </summary>
-    internal static bool IsDestructiveMethod(string? httpMethod)
-        => string.Equals(httpMethod?.Trim(), "DELETE", StringComparison.OrdinalIgnoreCase);
+    /// <remarks>
+    /// 判据本身在 <see cref="McpDestructiveActions"/> —— 直连普通业务控制器那条路
+    /// （AgentApiKey 走 [Authorize] + AdminPermissionMiddleware 的 scope 授权）
+    /// 要用同一处判据，只在网关挡住等于只锁了正门。
+    ///
+    /// **必须连路径一起看，只传方法不够**：<c>AgentOpenEndpointsController</c> 收任意 POST 路径，
+    /// 所以有人能登记一条 <c>POST /api/web-pages/batch-delete</c> —— 方法是 POST，
+    /// 只认 DELETE 的判据放它过去，它照样出现在 tools/list、也照样能被 tools/call 打到。
+    /// 上一版这里只转调了 <c>IsDestructiveMethod</c>，等于「共用了那个类，没共用那条判据」。
+    /// </remarks>
+    internal static bool IsDestructiveEndpoint(AgentOpenEndpoint e)
+        => McpDestructiveActions.IsDestructiveRequest(e.HttpMethod, e.Path);
 
     internal static JsonObject BuiltinToolToJson(McpToolDef t)
     {
@@ -371,7 +381,7 @@ public class McpGatewayController : ControllerBase
         // 能不能调，跟能不能看见走同一个判据（DynamicToolVisible）——两处各写一份的老毛病是
         // 「列表里看不见、直接按名字调却打得通」。拒绝语仍分开给，用户得知道是权限不够、
         // 不在白名单、还是这类动作压根不开放。
-        if (IsDestructiveMethod(match.HttpMethod))
+        if (IsDestructiveEndpoint(match))
             return await DeniedAsync(id, log,
                 "这个接口做的是删除类、收不回来的动作，这一版不开放给智能体 —— 请在网页里自己操作。", ct);
         var ms = match.RequiredScopes ?? new List<string>();

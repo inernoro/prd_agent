@@ -38,12 +38,20 @@ public static class McpArtifactExtractor
         var data = ReadDataObject(responseBody);
         if (data == null) return new Artifact(null, null, null, null);
 
+        // `runId` 只对**视觉工具**意味着「一个还在跑的生图任务」。
+        // 无条件把它映射成 image-run 会坑到登记的动态接口：一个技能执行接口回的是
+        // { runId, userMessageId, assistantMessageId } 而永远没有图片地址，
+        // 于是那次成功的调用被判成 image-run 且无 url —— 接入台把它显示成
+        // 「还没出结果」，而且**永远**不会变，因为压根没有轮询会给它一个地址。
+        // 其余工具的 runId 记成中性的 "run"：身份还在（归并照旧），但不触发那条等产物的判据。
+        var isVisualTool = toolName.StartsWith("map_visual_", StringComparison.OrdinalIgnoreCase);
+
         string? kind = null, id = null;
         foreach (var (key, k) in IdKeys)
         {
             var v = ReadString(data, key);
             if (string.IsNullOrWhiteSpace(v)) continue;
-            kind = k;
+            kind = k == "image-run" && !isVisualTool ? "run" : k;
             id = v;
             break;
         }
@@ -67,7 +75,18 @@ public static class McpArtifactExtractor
         // 但下探只对**已经认出是生图任务**的响应做。无差别扫所有数组会把列表类工具坑掉：
         // map_web_list_pages 回的是 data.items[]，第一条既有站点的地址会被当成「这次做出来的东西」，
         // 记录上于是长出一个指向别处的「打开」按钮 —— 产物是这次做出来的，不是这次看到的。
-        if (string.IsNullOrWhiteSpace(url) && kind == "image-run") url = ReadFirstUrlInArrays(data);
+        //
+        // 而且**明说还没跑完时不下探**。一次四张的生图，`GetRun` 在 `finished:false` 时就已经能带回
+        // 第一张成品的地址；照着它取地址，接入台会把整件事判成「已落地」并打绿灯，而另外三张
+        // 还在跑、甚至可能失败。`finished` 就在同一份响应里（VisualOpenApiController.GetRun），
+        // 不用引入新的状态来源。
+        //
+        // 判据写成「不是 false 就下探」而不是「必须是 true」：这个字段缺席时（旧响应、
+        // 别的路径）仍然照常取地址。反过来写的话，只要哪天响应里没这个字段，
+        // 记录上那个「打开」就会**静默消失** —— 而「一点就打开刚做出来的东西」正是这条记录存在的理由。
+        // 宁可在字段缺席时保留链接，也不要因为字段缺席而丢掉它。
+        if (string.IsNullOrWhiteSpace(url) && kind == "image-run" && !RunHasNoUsableOutcome(data))
+            url = ReadFirstUrlInArrays(data);
         // 下游给的地址先过一道协议闸再往下走：不合格就当它没给，
         // 下面还能按 kind + id 反推一条站内路由，用户仍有得点。
         url = SafeArtifactUrl(url);
@@ -200,6 +219,43 @@ public static class McpArtifactExtractor
     private static string? ReadString(JsonObject obj, string key)
         => obj.TryGetPropertyValue(key, out var node) && node is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s)
             ? s
+            : null;
+
+    /// <summary>
+    /// 这条 run 还不能拿它的图当「整件事的产物」。
+    ///
+    /// 三种情形：
+    /// <list type="number">
+    /// <item>还没跑完（<c>finished:false</c>）—— 四张里成了一张时，GetRun 就已经能带回第一张的地址。</item>
+    /// <item>跑完了但没成（<c>status</c> 是 Failed / Cancelled）—— <c>IsRunFinished</c> 对这两种终态
+    /// 同样返回 true，而 worker 在多张里坏了一张时会把整条 run 记成 Failed 却**留着**已成那几张的地址。
+    /// 只看 finished 的话，一条失败的 run 照样会被认出产物，接入台随即打绿灯写「落地」。</item>
+    /// <item>计数满了但终态还没写（<c>finished:true</c> + <c>status:Running</c>）—— <c>IsRunFinished</c>
+    /// 是「终态 或 done + failed >= total」的**或**，而 worker 要等所有条目跑完、读回最终计数
+    /// 才写 Status（<c>ImageGenRunWorker</c> 收尾那一段）。这中间有一个窗口，GetRun 同时回
+    /// 「跑完了」「还在跑」和已成那几张的地址。</item>
+    /// </list>
+    ///
+    /// 判据因此收成白名单：**状态在场就必须是 Completed**。
+    /// 这里推翻了上一版的取舍。上一版写「只拦明说没成的那两种，认不出来的一律放行」，
+    /// 理由是「哪天多个新状态，那个『打开』会静默消失」—— 但那是假设的将来，
+    /// 而上面那个窗口是现在就存在的真实缺陷，且**误报成功比丢链接更糟**：
+    /// 丢链接用户看得见（没得点），误报成功用户看不见（以为图出来了）。
+    ///
+    /// 唯一保留的宽松是**状态缺席**（旧响应、别的路径没有这个字段）：那时只靠 finished，
+    /// 免得字段一缺就整类丢链接。
+    /// </summary>
+    private static bool RunHasNoUsableOutcome(JsonObject data)
+    {
+        if (ReadBool(data, "finished") == false) return true;
+        var status = ReadString(data, "status");
+        if (status is null) return false;
+        return !status.Equals("Completed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool? ReadBool(JsonObject obj, string key)
+        => obj.TryGetPropertyValue(key, out var node) && node is JsonValue v && v.TryGetValue<bool>(out var b)
+            ? b
             : null;
 
     private static string Trim(string s) => s.Length > 300 ? s[..300] + "…" : s;

@@ -21,17 +21,27 @@ public class McpDownstreamSafetyTests
 {
     // ── 破坏性动作不进工具面 ──────────────────────────────────────────
 
+    /// <summary>
+    /// 判据必须连**路径**一起看。
+    ///
+    /// 登记表（<c>AgentOpenEndpointsController</c>）收任意 POST 路径，所以有人能登记一条
+    /// <c>POST /api/web-pages/batch-delete</c> —— 方法是 POST，只认 DELETE 的判据放它过去，
+    /// 它照样出现在 tools/list、也照样能被 tools/call 打到，然后真的删掉数据。
+    /// </summary>
     [Theory]
-    [InlineData("DELETE", true)]
-    [InlineData("delete", true)]
-    [InlineData(" DELETE ", true)]
-    [InlineData("GET", false)]
-    [InlineData("POST", false)]
-    [InlineData("PUT", false)]
-    [InlineData("PATCH", false)]
-    [InlineData(null, false)]
-    public void 删除类动作认得出来(string? method, bool destructive)
-        => McpGatewayController.IsDestructiveMethod(method).ShouldBe(destructive);
+    [InlineData("DELETE", "/api/anything", true)]
+    [InlineData("delete", "/api/anything", true)]
+    [InlineData("POST", "/api/web-pages/batch-delete", true)]
+    [InlineData("POST", "/api/things/purge", true)]
+    [InlineData("POST", "/api/open/web-pages/pages", false)]
+    // 承诺的另一半：登记一条 POST .../publish 同样收不回来
+    [InlineData("POST", "/api/literary-agent/prompts/p1/publish", true)]
+    [InlineData("GET", "/api/web-pages", false)]
+    [InlineData("POST", "", false)]
+    public void 破坏性登记接口认得出来(string method, string path, bool destructive)
+        => McpGatewayController.IsDestructiveEndpoint(
+                new AgentOpenEndpoint { HttpMethod = method, Path = path })
+            .ShouldBe(destructive, customMessage: $"{method} {path}");
 
     [Fact]
     public void 删除类接口就算scope对上也不出现在工具清单里()
@@ -48,7 +58,14 @@ public class McpDownstreamSafetyTests
             + "而向导底部对用户写的是「删除这类收不回来的动作一律不开放」");
 
         del.HttpMethod = "POST";
+        del.Path = "/api/open/web-pages/pages";
         McpGatewayController.DynamicToolVisible(del, scopes, "u1").ShouldBeTrue("挡过宽会把正常的写入接口一起关掉");
+
+        // 方法是 POST、路径却在删东西 —— 登记表收任意路径，只认方法挡不住它
+        del.Path = "/api/web-pages/batch-delete";
+        McpGatewayController.DynamicToolVisible(del, scopes, "u1").ShouldBeFalse(
+            "登记成 POST /api/web-pages/batch-delete 就绕过了删除禁令，"
+            + "而它跟真的 DELETE 一样收不回来");
     }
 
     /// <summary>
@@ -64,8 +81,12 @@ public class McpDownstreamSafetyTests
         var src = McpSourceGuard.StripComments(
             McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Controllers/McpGatewayController.cs"));
         var call = McpSourceGuard.Slice(src, "var match = endpoints.FirstOrDefault", "var isGetDyn");
-        call.ShouldContain("IsDestructiveMethod(match.HttpMethod)",
-            customMessage: "tools/call 没挡破坏性动作：列表里看不见，按名字直接调却打得通");
+        // 断言的是「走了带路径的那个判据」，不是某个字面实现 —— 上一版钉的是
+        // `IsDestructiveMethod(match.HttpMethod)`，而那正是要被修掉的窄判据（形状 4a：
+        // 谁修好谁的 CI 红）。现在钉的是判据的**形状**：必须整条 endpoint 传进去。
+        call.ShouldContain("IsDestructiveEndpoint(match)",
+            customMessage: "tools/call 没挡破坏性动作，或只传了方法没传路径 —— "
+                + "登记表收任意 POST 路径，只认 DELETE 的判据挡不住 POST /api/web-pages/batch-delete");
         call.ShouldContain("DynamicToolVisible(match",
             customMessage: "tools/call 自己另判一套 scope/白名单，早晚跟 tools/list 漂开");
     }
