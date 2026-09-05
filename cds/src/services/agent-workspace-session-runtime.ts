@@ -1099,7 +1099,7 @@ export class AgentWorkspaceSessionRuntime {
           'mkdir -p /workspace/.od-skills/web-prototype',
           `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /app/design-templates/web-prototype/`,
           `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /workspace/.od-skills/web-prototype/`,
-          `[ -f /workspace/index.html ] || cp ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/assets/template.html /workspace/index.html`,
+          `if [ -f /workspace/current/index.html ]; then cp /workspace/current/index.html /workspace/index.html; elif [ ! -f /workspace/index.html ]; then cp ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/assets/template.html /workspace/index.html; fi`,
           'test -f /app/design-templates/web-prototype/SKILL.md',
           'test -f /app/design-templates/web-prototype/assets/template.html',
           'test -f /app/design-templates/web-prototype/references/layouts.md',
@@ -1250,6 +1250,13 @@ export class AgentWorkspaceSessionRuntime {
       throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import did not retain the required web prototype skill');
     }
     const proxiedModelBaseUrl = await this.startEgressProxy(handle, model.baseUrl);
+    const knowledgeDir = path.join(handle.workspaceDir, 'knowledge');
+    const knowledgeFiles = fs.existsSync(knowledgeDir)
+      ? fs.readdirSync(knowledgeDir, { withFileTypes: true })
+          .filter((entry) => entry.isFile())
+          .map((entry) => `/workspace/knowledge/${entry.name}`)
+          .sort()
+      : [];
     try {
     onStage('open_design_run_starting', { projectId });
     const run = await this.odJson(handle, '/api/runs', {
@@ -1261,9 +1268,13 @@ export class AgentWorkspaceSessionRuntime {
         model: model.model,
         message: instruction.trim(),
         systemPrompt: [
-          'The workspace is already prepared by MAP. Read MAP task and knowledge files from /workspace.',
+          'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
+          knowledgeFiles.length > 0
+            ? `Read every knowledge source before editing: ${knowledgeFiles.join(', ')}. Use those files as the only source for factual claims and product copy.`
+            : 'This task has no knowledge source files. Do not invent factual claims or metrics.',
           'The active web-prototype skill side files are rooted at /workspace/.od-skills/web-prototype. Read /workspace/.od-skills/web-prototype/assets/template.html, /workspace/.od-skills/web-prototype/references/layouts.md, and /workspace/.od-skills/web-prototype/references/checklist.md by these exact paths; do not resolve them as /workspace/assets or /workspace/references.',
-          'A starting /workspace/index.html already exists. Modify it with small targeted edit operations; never replace the whole document with one write operation. Continue until the page fully satisfies the task.',
+          'A starting /workspace/index.html already exists. When task operation is edit, it is the exact current published page and must remain the starting point; the generic template is reference material only. Never replace the product identity with OpenDesign or copy generic template copy into the deliverable.',
+          'Modify index.html with small targeted edit operations; never replace the whole document with one write operation. The user instruction has priority over example text. Remove every unresolved placeholder and do not claim completion until the page satisfies every requested content constraint.',
           'Keep the final webpage in index.html. The first release must be self-contained: inline all CSS, JavaScript, fonts, and images; do not reference relative or remote assets.',
           'Do not request credentials, upload source files, publish, deploy, or mutate any external source.',
         ].join(' '),

@@ -136,6 +136,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const workspacePackage = buildPackage([
       { path: 'knowledge/source.md', content: 'Private knowledge body', mediaType: 'text/markdown' },
       { path: 'brief.txt', content: 'Build a launch page', mediaType: 'text/plain' },
+      { path: 'current/index.html', content: '<!doctype html><html><body>Current page</body></html>', mediaType: 'text/html' },
     ]);
     const requests: Array<{ path: string; authorization: string; body?: any }> = [];
     const shell = new RecordingShell();
@@ -247,7 +248,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/assets/template.html');
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
-    expect(preparedDesignTemplate?.command).toContain('[ -f /workspace/index.html ] || cp /app/plugins/_official/examples/web-prototype/assets/template.html /workspace/index.html');
+    expect(preparedDesignTemplate?.command).toContain('if [ -f /workspace/current/index.html ]; then cp /workspace/current/index.html /workspace/index.html;');
+    expect(preparedDesignTemplate?.command).toContain('elif [ ! -f /workspace/index.html ]; then cp /app/plugins/_official/examples/web-prototype/assets/template.html /workspace/index.html; fi');
     expect(preparedDesignTemplate?.command).toContain('test -f /workspace/index.html');
 
     const executed = await runtime.execute(
@@ -374,6 +376,11 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/assets/template.html');
     expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
     expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
+    expect(run?.body.systemPrompt).toContain('Read /workspace/brief/task.json first');
+    expect(run?.body.systemPrompt).toContain('Read every knowledge source before editing: /workspace/knowledge/source.md');
+    expect(run?.body.systemPrompt).toContain('it is the exact current published page and must remain the starting point');
+    expect(run?.body.systemPrompt).toContain('Never replace the product identity with OpenDesign');
+    expect(run?.body.systemPrompt).toContain('Remove every unresolved placeholder');
     expect(run?.body.systemPrompt).toContain('do not resolve them as /workspace/assets or /workspace/references');
     expect(run?.body.systemPrompt).toContain('A starting /workspace/index.html already exists');
     expect(run?.body.systemPrompt).toContain('small targeted edit operations');
