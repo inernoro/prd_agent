@@ -331,7 +331,15 @@ public class McpConsoleController : ControllerBase
     /// </summary>
     private static List<object> MissingCapabilitiesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
     {
-        var held = (key.Scopes ?? new List<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // held 必须取**有效**清单，不能读库里存的那份原始 scope。
+        // 权限被回收之后两者会分叉：一把存着 web-pages:write 的手动钥匙，主人被降成只读时，
+        // 有效清单里那条 write 已经被剥掉（鉴权也不会认），可原始清单里它还在 ——
+        // 而 ScopeSatisfies 认 write 蕴含 read，于是这里会判「读档也满足了」，
+        // 把 Web 整块从「还能给它什么」里漏掉：那一行同时显示「一块能力都没有」和「没有缺的」。
+        // 与展示、鉴权同一处判据，不在这里读第二份数据。
+        var held = McpCapabilityCatalog
+            .EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return McpCapabilityCatalog.All
             .Where(cap => cap.AllScopes().Any(s => ScopeAvailable(s, ownedPermissions))
                           && cap.AllScopes().All(s =>
