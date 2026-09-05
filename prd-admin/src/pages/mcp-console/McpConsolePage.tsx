@@ -392,6 +392,15 @@ function ClientRow({
       (cap.readScope && held.has(cap.readScope.toLowerCase())) ||
       (cap.writeScope && held.has(cap.writeScope.toLowerCase())),
   );
+  // 能力卡只覆盖平台内置的那五块。登记表里的开放接口走 `agent.*` scope，网关照样把它们
+  // 当工具列出来（McpGatewayController.DynamicToolVisible），能力卡却一个都对不上 ——
+  // 只挂这类 scope 的钥匙会被这一行说成「一块能力也拿不到」，而它其实调得动。
+  // 这里不去给它们编能力名（那需要后端把登记表的元数据一并回出来，属另一件事），
+  // 但至少要如实说「还有 N 项开放接口授权」，不能报一个假的零。
+  const namedScopes = new Set(
+    granted.flatMap((cap) => [cap.readScope, cap.writeScope].filter(Boolean).map((s) => s!.toLowerCase())),
+  );
+  const extraScopes = (client.scopes ?? []).filter((s) => !namedScopes.has(s.toLowerCase()));
 
   return (
     <div
@@ -449,7 +458,7 @@ function ClientRow({
             它能做什么
           </span>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            {granted.length === 0 ? (
+            {granted.length === 0 && extraScopes.length === 0 ? (
               <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
                 这把钥匙现在一块能力也拿不到
               </span>
@@ -472,6 +481,16 @@ function ClientRow({
                   </span>
                 );
               })
+            )}
+            {extraScopes.length > 0 && (
+              <span
+                className="flex h-6 items-center gap-1.5 text-[11.5px]"
+                style={{ color: 'var(--text-muted)' }}
+                title={extraScopes.join('\n')}
+              >
+                <Plug size={13} aria-hidden />
+                另有 {extraScopes.length} 项开放接口授权
+              </span>
             )}
           </div>
           {/* 自动 / 手动：这块必须写出来 —— 两者在「平台以后新上一块能力」时行为完全不同 */}

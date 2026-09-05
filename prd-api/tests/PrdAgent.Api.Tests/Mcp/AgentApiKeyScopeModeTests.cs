@@ -95,6 +95,43 @@ public class AgentApiKeyScopeModeTests
     }
 
     [Fact]
+    public void WriteOnlyKey_IsNotReportedAsMissingTheReadHalf()
+    {
+        // 知识库与网页托管声明了 WriteImpliesRead：只存了 `:write` 的钥匙，闸门认它连读端点一起满足。
+        // 「你还能给它什么」若拿集合直接 Contains 比对，会把这类钥匙报成「知识库还没开给它」，
+        // 而同一行的能力标签正显示着知识库已授权 —— 一行之内自己跟自己打架。
+        // 这条删掉不会红：两处各按各的口径判，照样编译、照样全绿。
+        foreach (var cap in McpCapabilityCatalog.All.Where(c => c.WriteImpliesRead))
+        {
+            cap.WriteScope.ShouldNotBeNull(customMessage: $"{cap.Title} 声明了写蕴含读，却没有写 scope");
+            cap.ReadScope.ShouldNotBeNull(customMessage: $"{cap.Title} 声明了写蕴含读，却没有读 scope");
+
+            var writeOnly = new[] { cap.WriteScope! };
+            McpCapabilityCatalog.ScopeSatisfies(writeOnly, cap.ReadScope!).ShouldBeTrue(
+                customMessage: $"只持有 {cap.WriteScope} 的钥匙应当满足 {cap.ReadScope}，判据是 ScopeSatisfies");
+        }
+    }
+
+    [Fact]
+    public void MissingCapabilities_UsesScopeSatisfies_NotRawContains()
+    {
+        // 上一条钉的是判据本身成立；这一条钉的是「你还能给它什么」真的走了那个判据。
+        var source = ReadSource("src/PrdAgent.Api/Controllers/Api/McpConsoleController.cs");
+        // 定位失败要当场说出来。IndexOf 回 -1 时下面的 Substring 会抛一个跟本条判据毫无关系的
+        // 越界异常，读的人只会以为测试自己坏了 —— 而真正发生的是「那个方法被改名/挪走了」。
+        var begin = source.IndexOf("MissingCapabilitiesOf(AgentApiKey key", StringComparison.Ordinal);
+        begin.ShouldBeGreaterThanOrEqualTo(0, customMessage: "找不到 MissingCapabilitiesOf —— 它被改名或挪走了？");
+        var body = source.Substring(begin);
+        var end = body.IndexOf("\n    }", StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(0, customMessage: "量不出 MissingCapabilitiesOf 的方法体范围");
+        body = body.Substring(0, end);
+        body.ShouldContain("ScopeSatisfies",
+            customMessage: "「你还能给它什么」没走 ScopeSatisfies —— 只存 :write 的钥匙会被报成缺了读的那半");
+        body.ShouldNotContain("held.Contains",
+            customMessage: "拿集合直接比对会漏掉写蕴含读，这正是它上一版的毛病");
+    }
+
+    [Fact]
     public void Console_TellsUserWhatTheyCouldStillGrant()
     {
         // 手动档的语义是「用户知道、钥匙没权限」。不渲染这一项，前半句就没了。
@@ -125,6 +162,7 @@ public class AgentApiKeyScopeModeTests
         dir.ShouldNotBeNull(customMessage: "没找到 PrdAgent.sln，测试定位不到源码");
         var path = Path.Combine(dir!.FullName, relative);
         File.Exists(path).ShouldBeTrue(customMessage: $"源码不存在：{path}");
-        return File.ReadAllText(path);
+        // 统一成 \n：下面按 "\n    }" 找方法结尾，CRLF 检出时会一个都找不到（然后静默量错范围）
+        return File.ReadAllText(path).Replace("\r\n", "\n");
     }
 }

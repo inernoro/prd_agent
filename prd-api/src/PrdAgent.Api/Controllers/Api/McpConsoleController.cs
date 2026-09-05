@@ -308,12 +308,18 @@ public class McpConsoleController : ControllerBase
     /// 不去追「平台是哪天新增的」：那需要给能力目录记时间戳，而用户要回答的问题从来不是
     /// 「这是不是新的」，而是「我还能给它什么」。按当前权限与当前授权做差，两种来源
     ///（平台新上的、他当初没勾的）都落进同一句话里。
+    ///
+    /// 「有没有」必须用 <see cref="McpCapabilityCatalog.ScopeSatisfies"/> 判，不能拿集合直接
+    /// Contains：知识库与网页托管声明了 WriteImpliesRead，只存了 `:write` 的钥匙实际连读端点
+    /// 一起满足（闸门就是这么认的）。照字面比对会把这类钥匙报成「知识库还没开给它」，
+    /// 而同一行的能力标签正显示着知识库已授权 —— 一行之内自己跟自己打架。
     /// </summary>
     private static List<object> MissingCapabilitiesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
     {
         var held = (key.Scopes ?? new List<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return McpCapabilityCatalog.All
-            .Where(cap => cap.AllScopes().Any(s => ScopeAvailable(s, ownedPermissions) && !held.Contains(s)))
+            .Where(cap => cap.AllScopes().Any(s =>
+                ScopeAvailable(s, ownedPermissions) && !McpCapabilityCatalog.ScopeSatisfies(held, s)))
             .Select(cap => (object)new { key = cap.Key, title = cap.Title })
             .ToList();
     }

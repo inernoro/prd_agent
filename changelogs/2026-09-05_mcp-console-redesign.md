@@ -10,3 +10,5 @@
 | fix | prd-admin | 结论条已用数改取服务端权威合计：密钥当天被撤销后不再出现「判断句说调了 47 次、旁边显示 0 / 0」 |
 | fix | prd-admin | 「你能给出去的工具数」按工具的 scope 数，不按能力整块数：只读用户不再被告知能给出发布类工具 |
 | fix | prd-api | 密钥管理页返回「此刻真拿得到什么」：自动档密钥不再显示成零权限；四处消费方收敛到唯一判据 McpCapabilityCatalog.EffectiveScopesFor |
+| fix | prd-api | 「你还能给它什么」改用 ScopeSatisfies 判：只存 `:write` 的钥匙（知识库/网页托管声明写蕴含读）不再被报成缺了读的那半 |
+| fix | prd-admin | 客户端行不再把只挂 `agent.*` 开放接口 scope 的钥匙说成「一块能力也拿不到」，如实显示「另有 N 项开放接口授权」 |
