@@ -400,6 +400,9 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(run?.body.systemPrompt).toContain('never replace the whole document with one write operation');
     expect(designRuns[1]?.body.message).toContain('Perform a strict final review');
     expect(designRuns[1]?.body.message).toContain('/workspace/brief/task.json');
+    expect(designRuns[1]?.body.message).toContain('Never use broad or global string replacement');
+    expect(designRuns[1]?.body.message).toContain('Never alter CSS values');
+    expect(designRuns[1]?.body.message).toContain('keep the existing content unchanged');
     expect(designRuns[1]?.body.conversationId).toBe('od-conversation');
     expect(JSON.stringify(run?.body)).not.toContain('Private knowledge body');
     const sessionResourceCreates = shell.calls.filter((call) =>

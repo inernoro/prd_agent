@@ -1315,7 +1315,8 @@ export class AgentWorkspaceSessionRuntime {
           method: 'POST',
           body: buildRunBody([
             'Perform a strict final review of /workspace/index.html against every constraint in /workspace/brief/task.json.',
-            'Do not merely describe the result. Inspect all visible labels, navigation, buttons, headings, statistics, role paths, placeholders, and factual claims, then use targeted edit operations to correct every mismatch you find.',
+            'Do not merely describe the result. Inspect all visible labels, navigation, buttons, headings, statistics, role paths, placeholders, and factual claims, then use only the smallest targeted edit operations needed to correct a proven mismatch.',
+            'Never use broad or global string replacement. Never alter CSS values, JavaScript behavior, existing facts, links, section order, or product identity unless task.json explicitly requests that exact change. If a possible change is not directly required or you are uncertain, keep the existing content unchanged.',
             'Reread the finished index.html and only stop when every requested constraint is visibly present and every forbidden placeholder or unsupported claim is absent.',
           ].join(' ')),
           signal,
