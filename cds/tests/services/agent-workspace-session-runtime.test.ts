@@ -119,7 +119,10 @@ class RecordingShell implements IShellExecutor {
     }
     if (command.startsWith('docker exec ')) {
       if (command.includes('CDS_OUTPUT_PREFLIGHT=1') && this.outputPreflightFailure) {
-        return result('', `CDS_OUTPUT_PREFLIGHT:${this.outputPreflightFailure}`, 1);
+        const rejectedPath = this.outputPreflightFailure === 'path_not_allowed'
+          ? `:${Buffer.from('unexpected/runtime-state.json').toString('base64url')}`
+          : '';
+        return result('', `CDS_OUTPUT_PREFLIGHT:${this.outputPreflightFailure}${rejectedPath}`, 1);
       }
       if (this.failTemplateInit && command.includes('design-templates/web-prototype')) {
         return result('', 'web prototype resources missing', 1);
@@ -1184,12 +1187,18 @@ describe('AgentWorkspaceSessionRuntime', () => {
       autoCleanupMinutes: 5,
     });
 
-    await expect(runtime.execute(`session-output-${failure}`, 'Build the page.', {
+    const rejected = runtime.execute(`session-output-${failure}`, 'Build the page.', {
       baseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
       protocol: 'openai',
       apiKey: 'model-secret',
       model: 'map-managed',
-    }, 'transfer-token')).rejects.toMatchObject({ code: expectedCode });
+    }, 'transfer-token');
+    await expect(rejected).rejects.toMatchObject({ code: expectedCode });
+    if (failure === 'path_not_allowed') {
+      await expect(rejected).rejects.toMatchObject({
+        details: { stage: 'output_preflight', rejectedPath: 'unexpected/runtime-state.json' },
+      });
+    }
 
     expect(shell.calls.some((call) => call.command.includes('CDS_OUTPUT_PREFLIGHT=1'))).toBe(true);
     expect(shell.calls.some((call) => (

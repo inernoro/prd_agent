@@ -223,7 +223,11 @@ let fileCount = 0;
 let totalBytes = 0;
 let workspaceFileCount = 0;
 let nodeCount = 0;
-const fail = (code) => { process.stderr.write('CDS_OUTPUT_PREFLIGHT:' + code); process.exit(1); };
+const fail = (code, relative = '') => {
+  const encodedPath = relative ? ':' + Buffer.from(relative, 'utf8').toString('base64url') : '';
+  process.stderr.write('CDS_OUTPUT_PREFLIGHT:' + code + encodedPath);
+  process.exit(1);
+};
 const walk = (directory) => {
   for (const name of fs.readdirSync(directory)) {
     const absolute = path.join(directory, name);
@@ -232,7 +236,7 @@ const walk = (directory) => {
     if (nodeCount > config.maxNodeCount) fail('node_count');
     if (relative.split('/').length > config.maxDirectoryDepth) fail('directory_depth');
     const stat = fs.lstatSync(absolute);
-    if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) fail('special_file');
+    if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) fail('special_file', relative);
     if (stat.isDirectory()) { walk(absolute); continue; }
     workspaceFileCount += 1;
     if (workspaceFileCount > config.maxWorkspaceFileCount) fail('workspace_file_count');
@@ -244,7 +248,7 @@ const walk = (directory) => {
       continue;
     }
     if (inputPaths.has(relative) || relative.startsWith('.od-skills/')) continue;
-    fail('path_not_allowed');
+    fail('path_not_allowed', relative);
   }
 };
 walk(root);
@@ -359,6 +363,18 @@ function runtimeDiagnosticPreview(value: string, excludedValues: string[]): stri
   let preview = bytes.subarray(0, textBudget).toString('utf8');
   while (Buffer.byteLength(preview, 'utf8') > textBudget) preview = preview.slice(0, -1);
   return `${preview}${suffix}`;
+}
+
+function outputPreflightRejectedPath(diagnostic: string, code: string): Record<string, unknown> {
+  const match = diagnostic.match(new RegExp(`CDS_OUTPUT_PREFLIGHT:${code}:([A-Za-z0-9_-]{1,512})`));
+  if (!match) return { stage: 'output_preflight' };
+  try {
+    const relative = Buffer.from(match[1], 'base64url').toString('utf8');
+    normalizeRelativePath(relative);
+    return { stage: 'output_preflight', rejectedPath: relative.slice(0, 240) };
+  } catch {
+    return { stage: 'output_preflight' };
+  }
 }
 
 function normalizeSha(value: unknown, field: string): string {
@@ -2147,10 +2163,20 @@ export class AgentWorkspaceSessionRuntime {
       );
     }
     if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:special_file')) {
-      throw new AgentWorkspaceRuntimeError('design_output_invalid', 'OpenDesign output contains a special file or symbolic link');
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_invalid',
+        'OpenDesign output contains a special file or symbolic link',
+        false,
+        outputPreflightRejectedPath(diagnostic, 'special_file'),
+      );
     }
     if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:path_not_allowed')) {
-      throw new AgentWorkspaceRuntimeError('design_output_invalid', 'OpenDesign output contains a path outside the transfer allowlist');
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_invalid',
+        'OpenDesign output contains a path outside the transfer allowlist',
+        false,
+        outputPreflightRejectedPath(diagnostic, 'path_not_allowed'),
+      );
     }
     throw new AgentWorkspaceRuntimeError(
       'workspace_output_validation_failed',
