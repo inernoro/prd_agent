@@ -108,8 +108,15 @@ function toGroup(chronoSteps: McpCallLogDto[]): CallGroup {
   // 幂等命中的重试不算「发起」：它没产生任何副作用，真正的那一次在更早的记录里。
   // 把它当发起点，下面的耗时就会从这次空转的重试算起，写成一个没发生过的「从发起到落地」。
   const hasOrigin = first.isWrite && !first.deduplicated;
+  // 每条记录的 createdAt 是**发起时刻**（审计行在派发前取墙钟），执行耗时另存在 durationMs 里。
+  // 所以「这件事花了多久」的终点是最后一步的 createdAt + durationMs，不是它的 createdAt ——
+  // 只减 createdAt 等于把最后那一次调用本身的耗时白送掉：10:00 发起、10:00:30 发起最后一次轮询、
+  // 15 秒后才拿到图，屏幕上会写「从发起到落地 30s」，而用户实际等了 45 秒。
   const elapsedMs = multiStep
-    ? Math.max(0, new Date(last.createdAt).getTime() - new Date(first.createdAt).getTime())
+    ? Math.max(
+        0,
+        new Date(last.createdAt).getTime() + (last.durationMs ?? 0) - new Date(first.createdAt).getTime(),
+      )
     : last.durationMs;
 
   const key = first.artifact?.kind && first.artifact?.id

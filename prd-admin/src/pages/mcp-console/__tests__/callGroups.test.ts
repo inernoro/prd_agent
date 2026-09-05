@@ -218,10 +218,37 @@ describe('把调用流水折成「一件事一行」', () => {
 
   it('多步时给的是墙上时钟，单步时给的是那次调用自己的耗时', () => {
     const { poll2, poll1, enqueue } = run();
-    expect(groupCalls([poll2, poll1, enqueue])[0].elapsedMs).toBe(30_000);
+    // 30s 是发起到最后一次轮询**发起**的间隔，再加上那次轮询自己的 120ms 才是用户真等的时间
+    expect(groupCalls([poll2, poll1, enqueue])[0].elapsedMs).toBe(30_120);
 
     const solo = call({ durationMs: 450, artifact: null });
     expect(groupCalls([solo])[0].elapsedMs).toBe(450);
+  });
+
+  /**
+   * 每条记录的 createdAt 是**发起时刻**（审计行在派发前取墙钟），执行耗时另存在 durationMs 里。
+   * 所以终点是最后一步的 createdAt + durationMs —— 只减 createdAt 会把最后那一次调用本身的
+   * 耗时白送掉，而恰恰是它可能很慢（生图轮询要等下游出图）。
+   *
+   * 这条数字上的误差看不出来：两种算法在快速收尾时只差几十毫秒，界面按秒取整后一模一样。
+   * 只有最后一步真的很慢时才现形，所以要专门造一个慢收尾。
+   */
+  it('最后一步很慢时，耗时要把它自己的执行时间算进去', () => {
+    const art = { kind: 'image-run', id: 'run-slow', url: null, title: null };
+    const enqueue = call({
+      isWrite: true,
+      createdAt: '2026-09-05T10:00:00.000Z',
+      durationMs: 200,
+      artifact: art,
+    });
+    // 10:00:30 发起最后一次轮询，15 秒后才拿到图 —— 用户实际等了 45.2 秒，不是 30 秒
+    const slowPoll = call({
+      createdAt: '2026-09-05T10:00:30.000Z',
+      durationMs: 15_000,
+      artifact: { ...art, url: 'https://example.com/a.png' },
+    });
+
+    expect(groupCalls([slowPoll, enqueue])[0].elapsedMs).toBe(45_000);
   });
 
   it('列表按每件事的最后一步时间倒序，最新的事在最前', () => {
