@@ -158,9 +158,16 @@ public class AgentApiKeyScopeModeTests
     public void ToDto_ReportsNoScopes_ForUnusableKey()
     {
         var source = ReadSource("src/PrdAgent.Api/Controllers/Api/AgentApiKeysController.cs");
-        var start = source.IndexOf("scopes = ", StringComparison.Ordinal);
-        start.ShouldBeGreaterThan(-1, customMessage: "ToDto 里找不到 scopes 那一行");
-        var slice = source.Substring(start, Math.Min(400, source.Length - start));
+        // 锚点必须是 ToDto 的方法体，不能拿 IndexOf("scopes = ") 直接找 ——
+        // 这个文件里 "scopes = " 有五处（工具清单、创建、更新各有一处），第一处在 ToDto 之前，
+        // 于是判据会去量一段完全无关的代码然后判红/判绿全凭巧合。
+        // 这正是本 PR 反复在修的那个形状：读的不是真正生效的那一个。
+        var begin = source.IndexOf("private static object ToDto(AgentApiKey k", StringComparison.Ordinal);
+        begin.ShouldBeGreaterThan(-1, customMessage: "找不到 ToDto —— 签名改了？判据得跟着改");
+        var body = source.Substring(begin);
+        var end = body.IndexOf("\n    }", StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(-1, customMessage: "找不到 ToDto 的方法结尾");
+        var slice = body.Substring(0, end);
 
         slice.ShouldContain("AgentApiKey.IsUsableAt",
             customMessage: "用不了的钥匙仍按主人当前权限现算 scope，密钥管理页会给一把调不动任何东西的钥匙画满授权芯片");
