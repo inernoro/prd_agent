@@ -140,9 +140,32 @@ public class MdToPptAnchorTests
         Assert.DoesNotContain("hc-footer", slide);
         Assert.Contains("mdppt-fallback-footer", slide);
         Assert.Contains("02 / 06", slide);
+        Assert.Contains("mdppt-fallback-split", slide);
         // 根元素仍是合法 slide 块（拆装扫描可识别）
         var blocks = MdToPptController.FindSlideBlocks(slide);
         Assert.Single(blocks);
+    }
+
+    [Theory]
+    [InlineData(0, 6, "终端风格封面", "mdppt-fallback-cover")]
+    [InlineData(2, 6, "四阶段横向流程图", "mdppt-fallback-flow")]
+    [InlineData(3, 6, "四象限能力卡片", "mdppt-fallback-quadrant")]
+    [InlineData(5, 6, "结论页", "mdppt-fallback-closing")]
+    public void AnchoredFallbackSlide_UsesSemanticLayoutVariants(int index, int total, string design, string expectedClass)
+    {
+        var anchor = MdToPptAnchors.Load("cyber-terminal")!;
+        var page = new MdToPptOutlinePageDto
+        {
+            Title = "页面标题",
+            Design = design,
+            Bullets = new List<string> { "要点一", "要点二", "要点三", "要点四" },
+        };
+
+        var slide = MdToPptController.AnchoredFallbackSlide(anchor.ContentSlides[0], page, index, total);
+
+        Assert.Contains(expectedClass, slide);
+        Assert.Contains($"{index + 1:00} / {total:00}", slide);
+        Assert.DoesNotContain("设计兜底", slide);
     }
 
     [Fact]

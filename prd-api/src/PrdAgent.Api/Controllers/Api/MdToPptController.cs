@@ -1778,7 +1778,7 @@ public class MdToPptController : ControllerBase
             .Where(b => !string.IsNullOrWhiteSpace(b))
             .Take(4)
             .ToList();
-        while (bullets.Count < 3) bullets.Add("聚焦关键信息，压缩文字密度，保留可讲述的视觉层级");
+        while (bullets.Count < 3) bullets.Add(page.Title ?? string.Empty);
 
         var cardHtml = string.Join("", bullets.Take(3).Select((b, n) =>
         {
@@ -1791,19 +1791,62 @@ public class MdToPptController : ControllerBase
                    "</div>";
         }));
         var statLabel = bullets.Count >= 4 ? enc(bullets[3]) : enc(page.Title);
-        var content =
-            "<div class=\"mdppt-fallback-layout\" style=\"padding:5.5% 7%;position:relative;z-index:2;display:grid;grid-template-columns:1.05fr .95fr;gap:38px;align-items:center\">" +
-            "<div>" +
-            $"<div style=\"font-size:12px;letter-spacing:.22em;text-transform:uppercase;opacity:.66;margin-bottom:18px\">第 {index + 1:00} 页 / 设计兜底</div>" +
-            $"<h1 style=\"font-size:clamp(44px,6vw,76px);line-height:.98;margin:0 0 22px;font-weight:900;letter-spacing:-.035em\">{enc(page.Title)}</h1>" +
-            $"<p style=\"font-size:20px;line-height:1.5;margin:0;opacity:.78;max-width:34em\">{enc(bullets[0])}</p>" +
-            "<div style=\"width:88px;height:6px;background:currentColor;margin-top:30px;border-radius:999px;opacity:.88\"></div>" +
-            "</div>" +
-            "<div style=\"display:grid;gap:14px\">" + cardHtml +
-            "<div style=\"display:flex;align-items:end;justify-content:space-between;border-top:1px solid currentColor;padding-top:16px;opacity:.82\">" +
-            $"<div style=\"font-size:46px;line-height:1;font-weight:900\">{Math.Max(3, bullets.Count):00}</div>" +
-            $"<div style=\"font-size:13px;line-height:1.45;text-align:right;max-width:18em\">{statLabel}</div>" +
-            "</div></div></div>";
+        var eyebrow = $"第 {index + 1:00} 页 / {total:00}";
+        string content;
+        if (index == 0)
+        {
+            var chips = string.Join("", bullets.Take(3).Select(b =>
+                $"<span style=\"border:1px solid currentColor;border-radius:999px;padding:10px 15px;background:rgba(255,255,255,.06)\">{enc(b)}</span>"));
+            content =
+                "<div class=\"mdppt-fallback-layout mdppt-fallback-cover\" style=\"padding:8% 8%;position:relative;z-index:2;display:flex;flex-direction:column;justify-content:center;height:100%;box-sizing:border-box\">" +
+                $"<div style=\"font-size:12px;letter-spacing:.24em;text-transform:uppercase;opacity:.66;margin-bottom:24px\">{eyebrow}</div>" +
+                $"<h1 style=\"font-size:clamp(64px,8vw,108px);line-height:.94;margin:0;max-width:10em;font-weight:900;letter-spacing:-.055em\">{enc(page.Title)}</h1>" +
+                $"<p style=\"font-size:22px;line-height:1.5;margin:30px 0 38px;opacity:.78;max-width:34em\">{enc(bullets[0])}</p>" +
+                $"<div style=\"display:flex;gap:12px;flex-wrap:wrap;font-size:13px;line-height:1.4\">{chips}</div></div>";
+        }
+        else if (index == total - 1)
+        {
+            var actions = string.Join("", bullets.Take(3).Select((b, n) =>
+                $"<div style=\"display:flex;gap:16px;align-items:center;border-top:1px solid currentColor;padding:15px 0\"><span style=\"font-size:12px;opacity:.56\">{n + 1:00}</span><strong style=\"font-size:17px\">{enc(b)}</strong></div>"));
+            content =
+                "<div class=\"mdppt-fallback-layout mdppt-fallback-closing\" style=\"padding:7% 10%;position:relative;z-index:2;display:grid;grid-template-columns:1.15fr .85fr;gap:70px;align-items:center;height:100%;box-sizing:border-box\">" +
+                $"<div><div style=\"font-size:12px;letter-spacing:.24em;opacity:.62;margin-bottom:22px\">{eyebrow}</div><h1 style=\"font-size:clamp(58px,7vw,96px);line-height:.96;margin:0;font-weight:900;letter-spacing:-.05em\">{enc(page.Title)}</h1></div>" +
+                $"<div style=\"display:grid\">{actions}</div></div>";
+        }
+        else if ((page.Design ?? string.Empty).Contains("流程", StringComparison.OrdinalIgnoreCase))
+        {
+            var steps = string.Join("", bullets.Take(4).Select((b, n) =>
+                $"<div class=\"mdppt-fallback-card\" style=\"border:1px solid currentColor;border-radius:18px;padding:22px 20px;background:rgba(255,255,255,.08);min-height:150px\"><div style=\"font-size:34px;font-weight:900;opacity:.34;margin-bottom:24px\">{n + 1:00}</div><div style=\"font-size:18px;font-weight:800;line-height:1.35\">{enc(b)}</div></div>"));
+            content =
+                "<div class=\"mdppt-fallback-layout mdppt-fallback-flow\" style=\"padding:6% 7%;position:relative;z-index:2;display:flex;flex-direction:column;justify-content:center;height:100%;box-sizing:border-box\">" +
+                $"<div style=\"font-size:12px;letter-spacing:.22em;opacity:.62;margin-bottom:16px\">{eyebrow}</div><h1 style=\"font-size:54px;line-height:1;margin:0 0 42px;font-weight:900\">{enc(page.Title)}</h1>" +
+                $"<div style=\"display:grid;grid-template-columns:repeat(4,1fr);gap:14px\">{steps}</div></div>";
+        }
+        else if ((page.Design ?? string.Empty).Contains("四象限", StringComparison.OrdinalIgnoreCase))
+        {
+            var tiles = string.Join("", bullets.Take(4).Select((b, n) =>
+                $"<div class=\"mdppt-fallback-card\" style=\"border:1px solid currentColor;border-radius:18px;padding:20px 22px;background:rgba(255,255,255,.08);display:flex;gap:18px;align-items:flex-start\"><span style=\"font-size:28px;font-weight:900;opacity:.4\">{n + 1:00}</span><strong style=\"font-size:19px;line-height:1.4\">{enc(b)}</strong></div>"));
+            content =
+                "<div class=\"mdppt-fallback-layout mdppt-fallback-quadrant\" style=\"padding:6% 7%;position:relative;z-index:2;display:grid;grid-template-columns:.72fr 1.28fr;gap:48px;align-items:center;height:100%;box-sizing:border-box\">" +
+                $"<div><div style=\"font-size:12px;letter-spacing:.22em;opacity:.62;margin-bottom:18px\">{eyebrow}</div><h1 style=\"font-size:58px;line-height:.98;margin:0;font-weight:900\">{enc(page.Title)}</h1></div>" +
+                $"<div style=\"display:grid;grid-template-columns:1fr 1fr;gap:14px\">{tiles}</div></div>";
+        }
+        else
+        {
+            content =
+                "<div class=\"mdppt-fallback-layout mdppt-fallback-split\" style=\"padding:5.5% 7%;position:relative;z-index:2;display:grid;grid-template-columns:1.05fr .95fr;gap:38px;align-items:center\">" +
+                "<div>" +
+                $"<div style=\"font-size:12px;letter-spacing:.22em;text-transform:uppercase;opacity:.66;margin-bottom:18px\">{eyebrow}</div>" +
+                $"<h1 style=\"font-size:clamp(44px,6vw,76px);line-height:.98;margin:0 0 22px;font-weight:900;letter-spacing:-.035em\">{enc(page.Title)}</h1>" +
+                $"<p style=\"font-size:20px;line-height:1.5;margin:0;opacity:.78;max-width:34em\">{enc(bullets[0])}</p>" +
+                "<div style=\"width:88px;height:6px;background:currentColor;margin-top:30px;border-radius:999px;opacity:.88\"></div>" +
+                "</div>" +
+                "<div style=\"display:grid;gap:14px\">" + cardHtml +
+                "<div style=\"display:flex;align-items:end;justify-content:space-between;border-top:1px solid currentColor;padding-top:16px;opacity:.82\">" +
+                $"<div style=\"font-size:46px;line-height:1;font-weight:900\">{Math.Max(3, bullets.Count):00}</div>" +
+                $"<div style=\"font-size:13px;line-height:1.45;text-align:right;max-width:18em\">{statLabel}</div>" +
+                "</div></div></div>";
+        }
         // 兜底页不再裸奔（2026-06-12 用户视觉验收：兜底页无模板装饰、像贴了张白纸）：
         // 从本页版式范本里继承"无文本装饰块"（网格/扫描线/窗饰/背景 SVG），页脚改写为可信的当前页信息，
         // 即使子智能体两次输出都无效，这页也穿着设计系统的衣服降级。
