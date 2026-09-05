@@ -446,6 +446,106 @@ public class DesignArtifactProviderCatalogTests
             CancellationToken.None), Times.Once);
     }
 
+    [Fact]
+    public async Task OpenDesignExecutorStopsWhenCdsSessionFailsBeforeErrorEventIsPersisted()
+    {
+        var connection = BuildConnection();
+        var remoteSession = BuildSession();
+        var failedSession = remoteSession with
+        {
+            Status = InfraAgentSessionStatuses.Failed,
+            LastError = "remote diagnostic details",
+        };
+        var connections = new Mock<IInfraConnectionService>();
+        connections.Setup(service => service.ListAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([connection]);
+        var workspaceBroker = new Mock<IDesignArtifactWorkspaceBroker>();
+        workspaceBroker.Setup(service => service.PrepareAsync(
+                It.IsAny<DesignArtifactRun>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PreparedDesignArtifactWorkspace(
+                "https://map.test/input",
+                "input-sha",
+                "https://map.test/result",
+                "transfer-token",
+                "https://map.test/llm/v1",
+                "model-token",
+                "map-managed",
+                "base-revision",
+                1_048_576,
+                6_291_456,
+                ["index.html", "manifest.json", "assets/**"]));
+        var sessions = new Mock<IInfraAgentSessionService>();
+        sessions.Setup(service => service.CreateAsync(
+                "user-1",
+                It.IsAny<CreateInfraAgentSessionRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(remoteSession);
+        sessions.Setup(service => service.StartAsync(
+                "user-1",
+                remoteSession.Id,
+                It.IsAny<StartInfraAgentSessionRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(remoteSession);
+        sessions.Setup(service => service.SendMessageAsync(
+                "user-1",
+                remoteSession.Id,
+                It.IsAny<SendInfraAgentMessageRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(remoteSession);
+        sessions.Setup(service => service.ListPersistedEventsAsync(
+                "user-1",
+                remoteSession.Id,
+                It.IsAny<long>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        sessions.Setup(service => service.GetAsync(
+                "user-1",
+                remoteSession.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(failedSession);
+        sessions.Setup(service => service.StopAsync(
+                "user-1",
+                remoteSession.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(failedSession);
+        var executor = new OpenDesignRemoteArtifactExecutor(
+            connections.Object,
+            sessions.Object,
+            workspaceBroker.Object,
+            NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
+        var run = new DesignArtifactRun
+        {
+            Id = "run-1",
+            UserId = "user-1",
+            ArtifactType = DesignArtifactTypes.WebPage,
+            Operation = DesignArtifactOperations.Generate,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Instruction = "生成页面",
+            Title = "页面",
+        };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in executor.ExecuteAsync(run, currentHtml: null, CancellationToken.None))
+            {
+            }
+        });
+
+        Assert.Equal("OpenDesign 远程执行失败，请在 CDS 会话日志中查看原因后重试", error.Message);
+        Assert.DoesNotContain("remote diagnostic details", error.Message);
+        sessions.Verify(service => service.GetAsync(
+            "user-1",
+            remoteSession.Id,
+            It.IsAny<CancellationToken>()), Times.Once);
+        sessions.Verify(service => service.StopAsync(
+            "user-1",
+            remoteSession.Id,
+            CancellationToken.None), Times.Once);
+    }
+
     private static InfraConnectionPublicView BuildConnection() => new(
         "connection-1",
         "cds",

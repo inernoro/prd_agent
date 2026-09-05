@@ -1,4 +1,5 @@
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.AgentRuntime;
 using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 using Shouldly;
@@ -9,6 +10,16 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class InfraAgentSessionServiceRuntimeAdapterTests
 {
+    [Theory]
+    [InlineData(InfraAgentSessionStatuses.Idle, true)]
+    [InlineData(InfraAgentSessionStatuses.Stopped, true)]
+    [InlineData(InfraAgentSessionStatuses.Failed, false)]
+    [InlineData(InfraAgentSessionStatuses.Running, false)]
+    public void CdsFollowWaitsForDetailedErrorAfterFailedStatus(string status, bool expected)
+    {
+        Assert.Equal(expected, InfraAgentSessionService.ShouldEndCdsFollowOnStatus(status));
+    }
+
     [Fact]
     public void WorkspaceTransferRequest_ShouldSerializeWithTheCdsCamelCaseContract()
     {

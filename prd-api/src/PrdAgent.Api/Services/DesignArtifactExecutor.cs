@@ -207,6 +207,7 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
             ct);
         var deadline = DateTime.UtcNow.Add(RunTimeout);
         var afterSeq = 0L;
+        var nextSessionStatusCheckAt = DateTime.MinValue;
 
         try
         {
@@ -273,6 +274,26 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             var html = await _workspaceBroker.ReadResultHtmlAsync(run.Id, CancellationToken.None);
                             yield return new DesignArtifactExecutorChunk("delta", html);
                             yield break;
+                    }
+                }
+
+                if (DateTime.UtcNow >= nextSessionStatusCheckAt)
+                {
+                    nextSessionStatusCheckAt = DateTime.UtcNow.AddSeconds(1);
+                    var latestSession = await _sessions.GetAsync(run.UserId, session.Id, ct);
+                    if (latestSession?.Status == InfraAgentSessionStatuses.Failed)
+                    {
+                        _logger.LogWarning(
+                            "OpenDesign 远程会话在终态事件到达前已失败 session={SessionId} lastError={RemoteMessage}",
+                            session.Id,
+                            latestSession.LastError ?? "unknown");
+                        throw new InvalidOperationException(
+                            "OpenDesign 远程执行失败，请在 CDS 会话日志中查看原因后重试");
+                    }
+                    if (latestSession?.Status == InfraAgentSessionStatuses.Stopped)
+                    {
+                        throw new InvalidOperationException(
+                            "OpenDesign 远程会话在产物提交前已停止，请重新发起任务");
                     }
                 }
 

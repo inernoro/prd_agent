@@ -1886,9 +1886,16 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             else if (type == InfraAgentEventTypes.Status && root.TryGetProperty("payload", out var statusPayload))
             {
                 var mappedStatus = MapCdsStatus(GetString(statusPayload, "status"));
-                if (mappedStatus is InfraAgentSessionStatuses.Idle
-                    or InfraAgentSessionStatuses.Stopped
-                    or InfraAgentSessionStatuses.Failed)
+                if (mappedStatus == InfraAgentSessionStatuses.Failed)
+                {
+                    // CDS 会先发 status=failed，再发带具体原因的 error。这里不能提前结束读取，
+                    // 否则消费方只能看到会话失败却收不到诊断事件。先同步终态供上层秒级对账，
+                    // 再继续读取同一条流，直到 error 到达或服务端关闭连接。
+                    sessionStatus = mappedStatus;
+                    sessionError = GetString(statusPayload, "message") ?? "CDS Agent 运行失败";
+                    await MarkRuntimeFailedAsync(session, sessionError, ct);
+                }
+                else if (ShouldEndCdsFollowOnStatus(mappedStatus))
                 {
                     sessionStatus = mappedStatus;
                     turnDone = true;
@@ -4151,6 +4158,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             _ => InfraAgentSessionStatuses.Idle
         };
     }
+
+    internal static bool ShouldEndCdsFollowOnStatus(string mappedStatus) =>
+        mappedStatus is InfraAgentSessionStatuses.Idle or InfraAgentSessionStatuses.Stopped;
 
     private static string? GetString(JsonElement element, string property)
     {
