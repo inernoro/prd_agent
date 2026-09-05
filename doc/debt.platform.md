@@ -702,21 +702,9 @@ PR 都会被它拦。该 job 是路径过滤的，多数 PR 会 skip，聚合的
 属于需要人明确点头的流程变更（AGENTS.md §5.5 的 B 类），不该由一份周报 PR 顺手改掉。
 发现它的那个 PR 已按范围熔断停在这里。
 
----
+### 已知边界（后续可补）
 
-## 已结清（供回溯）
-
-下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
-
-### 跨模块债务（在 PR #542 review 中被发现，但不属于本 PR scope）
-
-| ID | 说明 | 文件 | 优先级 | 触发条件 |
-|---|---|---|---|---|
-| X-1 | `SubtitleGenerationProcessor.cs` 的 `doubao-asr` 异步分支曾传空 `multipartFields`，且参考实现 `TranscriptRunWorker.ProcessAsrViaGatewayAsync` 始终包含 `model / response_format / timestamp_granularities[] / language`。Gateway Exchange 路径只把 multipart 文件转成 `image_urls`，而 `DoubaoAsrTransformer.TransformRequest` 只读 `audio_url / audio_data / url`，因此该路径不能走 multipart files。当前代码已改为 JSON `audio_data(base64)`，并用 `SubtitleGenerationProcessorTests.DoubaoAsyncAsr_ShouldSendAudioDataJson_NotMultipart` 锁定回归。 | `prd-api/src/PrdAgent.Api/Services/SubtitleGenerationProcessor.cs` | **P1** | 已还债：2026-05-12 |
-| X-2 | `ExchangeController.cs` SSE error 事件曾直接把 `ex.StackTrace` 前 3 行 + `ex.GetType().Name` + raw `ex.Message` 推给客户端，泄露后端实现细节（文件路径、类名、方法签名）。当前已改成客户端只收到友好 message、`errorCode`、`requestId`、`exchangeId`，完整异常仅通过 `LogError` 写服务端日志。 | `prd-api/src/PrdAgent.Api/Controllers/Api/ExchangeController.cs` | **P2** | 已还债：2026-05-12 |
-| X-5 | `ExchangeController.cs` ASR 失败时后端先发 `result` event（含 text/segmentCount/durationMs/diagnostic），紧接着为兼容老前端再发 `error` event。前端 `ExchangeTestPanel.tsx` 的 error handler 曾把 `sseResult` 覆盖为 `text:''/segmentCount:0/durationMs:0`，把 result event 携带的部分转录数据丢光。当前已改为保留已有 `text/segmentCount/durationMs`，只追加 error message，并补充前端单测锁定。 | `prd-api/src/PrdAgent.Api/Controllers/Api/ExchangeController.cs` + `prd-admin/src/components/exchange/ExchangeTestPanel.tsx` | P3 | 已还债：2026-05-12 |
-
-### 二、已知边界（后续可补）
+> 下列条目**尚未解决**，是本轮明确不做、留待后续 PR 的边界。带删除线的那两条已修复，保留供回溯。
 
 | # | 边界 | 说明 | 补法 |
 |---|------|------|------|
@@ -751,6 +739,19 @@ PR 都会被它拦。该 job 是路径过滤的，多数 PR 会 skip，聚合的
 | 3 | ~~智能体接入台没进百宝箱~~（已修复 2026-09-03） | 当初写的理由是「没有可用插画素材」——那半句对，但结论错了：判断有没有插画的那个函数只查一张展示表，加一行就满足；真正缺的是两张 960x600 的 webp。这台机器没有任何图片编码器（PIL / cwebp / imagemagick 都没有），但有 Chromium ——用画布画完导出 webp 即可。已按规则带 wip 标记注册，四条前端守卫（插画覆盖、任务文案、token 唯一、双主题 token 计数）本地全绿 | 已闭环。插画是程序化生成的（画的是这两块能力各自的示意，不是照片素材），要换成手绘版直接覆盖同名文件即可，不需要改代码 |
 | 2 | ~~实体全局时间戳近似~~（已修复 2026-07-05） | 首版用实体 `UpdatedAt/LastOpenedAt/LastExecutedAt` 近似"我的最近"，实测共享成员编辑、定时工作流自跑会顶进所有用户的继续上次（用户反馈"人人一样且不是自己操作的"）。已改为每用户台账 `home_recent_opens`（打开详情时 `RecentOpenTracker.TouchAsync` 打点），端点只读台账 | 已闭环；禁止回退全局时间戳方案 |
 
+---
+
+## 已结清（供回溯）
+
+下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
+
+### 跨模块债务（在 PR #542 review 中被发现，但不属于本 PR scope）
+
+| ID | 说明 | 文件 | 优先级 | 触发条件 |
+|---|---|---|---|---|
+| X-1 | `SubtitleGenerationProcessor.cs` 的 `doubao-asr` 异步分支曾传空 `multipartFields`，且参考实现 `TranscriptRunWorker.ProcessAsrViaGatewayAsync` 始终包含 `model / response_format / timestamp_granularities[] / language`。Gateway Exchange 路径只把 multipart 文件转成 `image_urls`，而 `DoubaoAsrTransformer.TransformRequest` 只读 `audio_url / audio_data / url`，因此该路径不能走 multipart files。当前代码已改为 JSON `audio_data(base64)`，并用 `SubtitleGenerationProcessorTests.DoubaoAsyncAsr_ShouldSendAudioDataJson_NotMultipart` 锁定回归。 | `prd-api/src/PrdAgent.Api/Services/SubtitleGenerationProcessor.cs` | **P1** | 已还债：2026-05-12 |
+| X-2 | `ExchangeController.cs` SSE error 事件曾直接把 `ex.StackTrace` 前 3 行 + `ex.GetType().Name` + raw `ex.Message` 推给客户端，泄露后端实现细节（文件路径、类名、方法签名）。当前已改成客户端只收到友好 message、`errorCode`、`requestId`、`exchangeId`，完整异常仅通过 `LogError` 写服务端日志。 | `prd-api/src/PrdAgent.Api/Controllers/Api/ExchangeController.cs` | **P2** | 已还债：2026-05-12 |
+| X-5 | `ExchangeController.cs` ASR 失败时后端先发 `result` event（含 text/segmentCount/durationMs/diagnostic），紧接着为兼容老前端再发 `error` event。前端 `ExchangeTestPanel.tsx` 的 error handler 曾把 `sseResult` 覆盖为 `text:''/segmentCount:0/durationMs:0`，把 result event 携带的部分转录数据丢光。当前已改为保留已有 `text/segmentCount/durationMs`，只追加 error message，并补充前端单测锁定。 | `prd-api/src/PrdAgent.Api/Controllers/Api/ExchangeController.cs` + `prd-admin/src/components/exchange/ExchangeTestPanel.tsx` | P3 | 已还债：2026-05-12 |
 ---
 
 ## 实现来源
