@@ -65,15 +65,38 @@ describe('把调用流水折成「一件事一行」', () => {
 
   it('最后一次失败时整件事算失败，原因取那一次的', () => {
     const { poll1, enqueue } = run();
+    // 后端 RecordFinishedAsync 的 error 分支只写 ErrorMessage、不调 ApplyArtifact，
+    // 所以失败行的 artifact 恒为 null —— 这条以前在这里造了个 artifact 出来，
+    // 用后端不可能产生的数据测分组，测绿了也说明不了什么。
     const failed = call({
       createdAt: '2026-09-05T10:00:40.000Z',
       status: 'error',
       errorMessage: '模型被下架了',
-      artifact: { kind: 'image-run', id: 'run-1', url: null, title: null },
     });
     const groups = groupCalls([failed, poll1, enqueue]);
     expect(groups[0].status).toBe('error');
     expect(groups[0].last.errorMessage).toBe('模型被下架了');
+  });
+
+  /**
+   * 期望：一次生图任务的入队与它那次失败的轮询，是**一件**事。
+   *
+   * 当前做不到，标 `fails` 而不是把「两件」断言下来 —— 后者会把缺陷锁死（形状 4a），
+   * 谁修好了谁的 CI 红。修好之后这条会因为「意外通过」而红，正好提醒来把标记去掉。
+   *
+   * 根因在后端而不在这个函数：归并键是产物身份，而失败行的 artifact 恒为 null
+   * （`RecordFinishedAsync` 的 error 分支不调 `ApplyArtifact`），所以它落单。
+   * 要修得让网关在失败时也记下**请求里**的那个 runId —— 那需要一张「工具 → 身份字段」
+   * 的映射，属新增语义类别，见 `doc/debt.platform.md` #32。
+   */
+  it.fails('入队与它那次失败的轮询应当折成一件事（当前折不上）', () => {
+    const { enqueue } = run();
+    const failedPoll = call({
+      createdAt: '2026-09-05T10:00:20.000Z',
+      status: 'error',
+      errorMessage: '模型被下架了',
+    });
+    expect(groupCalls([failedPoll, enqueue]).length).toBe(1);
   });
 
   it('两台客户端轮询同一个 run 不许混成一行', () => {
@@ -189,7 +212,7 @@ describe('把调用流水折成「一件事一行」', () => {
   it('最后一次真的失败时照样是失败，不被改写成「还没出结果」', () => {
     const art = { kind: 'image-run', id: 'run-f', url: null, title: null };
     const enqueue = call({ isWrite: true, createdAt: '2026-09-05T10:00:00.000Z', artifact: art });
-    const failed = call({ isWrite: false, status: 'error', errorMessage: '模型被下架了', createdAt: '2026-09-05T10:00:20.000Z', artifact: art });
+    const failed = call({ isWrite: false, status: 'error', errorMessage: '模型被下架了', createdAt: '2026-09-05T10:00:20.000Z' });
     expect(groupCalls([failed, enqueue])[0].status).toBe('error');
   });
 
