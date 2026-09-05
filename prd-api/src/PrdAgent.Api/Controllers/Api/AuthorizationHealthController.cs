@@ -85,15 +85,15 @@ public sealed class AuthorizationHealthController : ControllerBase
                         ? "当前没有启用的平台；模型调用能力尚未建立运行证据。"
                         : $"{enabledPlatforms.Count} 个启用平台的必需凭据均可解密。",
                     "平台配置与密文试解",
-                    "/mds")
+                    "/logs")
                 : Blocked(
                     "model-platform-keys",
                     "模型平台凭据",
                     "服务",
                     $"{modelKeyFailures} 个启用平台缺少凭据或无法解密，模型请求可能出现 401。",
                     "平台配置与密文试解",
-                    "/mds",
-                    "在模型控制台重新保存受影响平台凭据，并执行模型健康检查。"),
+                    "/logs",
+                    "在 LLM Gateway 控制台（MAP 左下角「模型网关」）重新保存受影响平台凭据，并执行模型健康检查。"),
             BuildExternalAuthorizationHealth(externalAuthorizations),
             Conditional(
                 "cds-project-identity",
@@ -223,7 +223,7 @@ public sealed class AuthorizationHealthController : ControllerBase
             || (_configuration.GetValue<bool?>("LlmGateway:LogicalModelsRequireHttp") ?? true);
         var keyConfigured = !string.IsNullOrWhiteSpace(_configuration["LlmGwServe:ApiKey"]);
         if (!requiresHttp)
-            return Healthy("llmgw-service", "LLMGW 服务身份", "服务", "当前仅使用进程内网关，不依赖独立服务身份。", "LlmGateway 模式", "/mds");
+            return Healthy("llmgw-service", "LLMGW 服务身份", "服务", "当前仅使用进程内网关，不依赖独立服务身份。", "LlmGateway 模式", "/logs");
         return keyConfigured
             ? Attention(
                 "llmgw-service",
@@ -231,7 +231,7 @@ public sealed class AuthorizationHealthController : ControllerBase
                 "服务",
                 "MAP 已配置 LLMGW 服务身份；仍需 /gw/healthz 与真实模型调用回读证明两端一致。",
                 "MAP 网关配置存在性",
-                "/mds",
+                "/logs",
                 "执行 LLMGW 健康、auth context、key health 与最小模型调用。")
             : Blocked(
                 "llmgw-service",
@@ -239,7 +239,7 @@ public sealed class AuthorizationHealthController : ControllerBase
                 "服务",
                 "当前模式需要独立 LLMGW，但 MAP 未配置服务身份。",
                 "MAP 网关配置存在性",
-                "/mds",
+                "/logs",
                 "统一 MAP 与 LLMGW 的服务 Key 后执行真实模型调用。" );
     }
 

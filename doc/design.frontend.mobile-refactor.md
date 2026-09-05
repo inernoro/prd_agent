@@ -91,7 +91,6 @@
 | 我的资产 | `/my-assets` | full | **broken** | 近空白（textLen 136），底部「资产」Tab 目的地 |
 | 缺陷管理 | `/defect-agent` | full | **cramped** | tab 渲染，列表区卡 MAP 加载；进得去但内容慢 |
 | 周报 | `/report-agent` | full | **cramped** | 桌面多栏直接塞手机，右侧「团队周报列表」侧栏被截一半 |
-| 模型中心 | `/mds` | limited | **cramped** | 顶部多排 chip + 列表区多个 MAP 骨架；已挂 PC 建议黄条 |
 | 用户/团队 | `/users` | limited | **cramped** | 宽表挤；已挂「横向滑动」黄条 |
 | 海鲜市场 | `/marketplace` | full | **cramped** | 渲染好，但顶部筛选 chip 堆多排，进内容前控制条过载 |
 | 文学创作 | `/literary-agent` | full | **cramped** | 渲染正常（首访教程浮层覆盖），深度编辑仍建议 PC |
@@ -124,7 +123,7 @@
 - `/library`、`/changelog`：按密度纪律复核并收口。
 
 ### W3 — limited 页收敛 + 范式沉淀
-- `/mds`、`/users`、`/logs`：宽表保留「横向滑动」黄条，但把最关键 2-3 列做成手机卡片摘要；保留 PC 建议。
+- `/users`、`/logs`：宽表保留「横向滑动」黄条，但把最关键 2-3 列做成手机卡片摘要；保留 PC 建议。
 - 把 W1/W2 沉淀出的通用件（移动卡片列表、控制条收纳 sheet、空状态范式）提取到 `components/mobile/`，供后续页面直接套。
 - 复核并更新 `MOBILE_COMPAT_REGISTRY`（把改造完成的页从 limited 升 full）。
 
@@ -143,7 +142,7 @@
 | defect-agent | 列表加载兜底 + 筛选进 sheet + 缺陷卡单列 | 同上 |
 | report-agent | 团队侧栏折叠为 tab/sheet + 主区铺满 | `SplitToTabLayout`（已存在） |
 | marketplace | 筛选 chip 单行横滚 + 卡片 1-2 列 | `--mobile-padding` |
-| mds/users/logs | 关键列做卡片摘要 + 保留宽表横滑 + PC 建议 | MobileCompatGate |
+| users/logs | 关键列做卡片摘要 + 保留宽表横滑 + PC 建议 | MobileCompatGate |
 
 ---
 

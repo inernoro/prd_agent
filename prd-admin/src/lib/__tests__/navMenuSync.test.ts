@@ -179,10 +179,13 @@ describe('DEFAULT_NAV_ORDER 硬编码默认顺序', () => {
     expect(DEFAULT_NAV_ORDER).toContain('marketplace');
     expect(DEFAULT_NAV_ORDER).toContain('my-assets');
     expect(DEFAULT_NAV_ORDER).toContain('emergence');
-    expect(DEFAULT_NAV_ORDER).toContain('mds');
     expect(DEFAULT_NAV_ORDER).toContain('users');
     expect(DEFAULT_NAV_ORDER).toContain('document-store');
     expect(DEFAULT_NAV_ORDER).toContain('web-pages');
+  });
+
+  it('不再包含已下线的「模型」菜单（2026-09-05 MAP 侧模型页面整体删除，禁止回流）', () => {
+    expect(DEFAULT_NAV_ORDER).not.toContain('mds');
   });
 
   it('包含 settings（settings 是正常导航条目，出现在 admin 组段末尾）', () => {
@@ -237,7 +240,7 @@ describe('getMenuGroupedDefaultOrder 基于硬编码顺序过滤', () => {
     // 构造含 DEFAULT_NAV_ORDER 中部分 appKey 的 catalog
     const partialCatalog: AdminMenuItem[] = [
       { appKey: 'ai-toolbox', path: '/ai-toolbox', label: '百宝箱', icon: 'Sparkles', group: 'tools', sortOrder: 10 },
-      { appKey: 'mds', path: '/mds', label: '模型', icon: 'Cpu', group: 'admin', sortOrder: 50 },
+      { appKey: 'users', path: '/users', label: '用户权限', icon: 'Users', group: 'admin', sortOrder: 60 },
     ];
     const order = getMenuGroupedDefaultOrder({ menuCatalog: partialCatalog, permissions: [], isRoot: true });
     if (order.length > 0) {
@@ -270,13 +273,13 @@ describe('getMenuGroupedDefaultOrder 基于硬编码顺序过滤', () => {
   it('相邻组之间保留一个分隔符', () => {
     const mixedCatalog: AdminMenuItem[] = [
       { appKey: 'ai-toolbox', path: '/ai-toolbox', label: '百宝箱', icon: 'Sparkles', group: 'tools', sortOrder: 10 },
-      { appKey: 'mds', path: '/mds', label: '模型', icon: 'Cpu', group: 'admin', sortOrder: 50 },
+      { appKey: 'users', path: '/users', label: '用户权限', icon: 'Users', group: 'admin', sortOrder: 60 },
     ];
-    // isRoot=false → weekly-poster 不自动注入，结果只含 ai-toolbox 和 mds
+    // isRoot=false → weekly-poster 不自动注入，结果只含 ai-toolbox 和 users
     const order = getMenuGroupedDefaultOrder({ menuCatalog: mixedCatalog, permissions: [], isRoot: false });
-    // ai-toolbox(tools 组) 和 mds(admin 组) 之间恰好一个分隔符
+    // ai-toolbox(tools 组) 和 users(admin 组) 之间恰好一个分隔符
     const dividerCount = order.filter((k) => k === NAV_DIVIDER_KEY).length;
     expect(dividerCount).toBe(1);
-    expect(order).toEqual(['ai-toolbox', NAV_DIVIDER_KEY, 'mds']);
+    expect(order).toEqual(['ai-toolbox', NAV_DIVIDER_KEY, 'users']);
   });
 });

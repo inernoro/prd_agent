@@ -11,6 +11,7 @@ import { UpdateAccelerationSettings } from '@/pages/settings/UpdateAccelerationS
 import { UserSpaceSettings } from '@/pages/settings/UserSpaceSettings';
 import { AccountSettings } from '@/pages/settings/AccountSettings';
 import { NavLayoutEditor } from '@/pages/settings/NavLayoutEditor';
+import { UserNavOverview } from '@/pages/settings/UserNavOverview';
 import { ShortLinksAdminSettings } from '@/pages/settings/ShortLinksAdminSettings';
 import { PeerNodesSettings } from '@/pages/settings/PeerNodesSettings';
 import LandingPreviewSettings from '@/pages/settings/LandingPreviewSettings';
@@ -63,7 +64,7 @@ function NavOrderSettings() {
   const isRoot = useAuthStore((s) => s.isRoot);
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const canManageDefaultNav = isRoot || perms.includes('super') || perms.includes('settings.write');
-  const [activeScope, setActiveScope] = useState<'mine' | 'all'>('mine');
+  const [activeScope, setActiveScope] = useState<'mine' | 'all' | 'users'>('mine');
   const [defaultSaving, setDefaultSaving] = useState(false);
   const [defaultDraftOrder, setDefaultDraftOrder] = useState<string[]>([]);
   const [defaultDraftHidden, setDefaultDraftHidden] = useState<string[]>([]);
@@ -88,7 +89,7 @@ function NavOrderSettings() {
         border: '1px solid var(--nested-block-border)',
       }}
     >
-      {(['mine', 'all'] as const).map((key) => (
+      {(['mine', 'all', 'users'] as const).map((key) => (
         <button
           key={key}
           type="button"
@@ -105,7 +106,7 @@ function NavOrderSettings() {
             transition: 'background 120ms, color 120ms',
           }}
         >
-          {key === 'mine' ? '我的' : '所有人的'}
+          {key === 'mine' ? '我的' : key === 'all' ? '所有人的' : '全部用户'}
         </button>
       ))}
     </div>
@@ -280,6 +281,15 @@ function NavOrderSettings() {
               </Button>
             </>
           }
+        />
+      )}
+
+      {activeScope === 'users' && canManageDefaultNav && (
+        <UserNavOverview
+          titleNode={scopeSwitcher}
+          defaultNavOrder={defaultNavOrder}
+          defaultNavHidden={defaultNavHidden}
+          onDefaultNavChanged={setDefaultNavLayoutLocal}
         />
       )}
     </div>

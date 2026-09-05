@@ -278,6 +278,9 @@ import type {
   UpdateHomeLauncherPreferencesContract,
   UpdateDefaultNavLayoutContract,
   ApplyDefaultNavToAllUsersContract,
+  GetUserNavLayoutsContract,
+  ResetUserNavLayoutContract,
+  RemoveNavTokensContract,
 } from '@/services/contracts/userPreferences';
 import type {
   GetModelSizesContract,
@@ -605,6 +608,9 @@ import {
   updateHomeLauncherPreferencesReal,
   updateDefaultNavLayoutReal,
   applyDefaultNavToAllUsersReal,
+  getUserNavLayoutsReal,
+  resetUserNavLayoutReal,
+  removeNavTokensReal,
 } from '@/services/real/userPreferences';
 import {
   getAdminNotificationsReal,
@@ -1380,6 +1386,9 @@ export const updateAgentSwitcherPreferences: UpdateAgentSwitcherPreferencesContr
 export const updateHomeLauncherPreferences: UpdateHomeLauncherPreferencesContract = withAuth(updateHomeLauncherPreferencesReal);
 export const updateDefaultNavLayout: UpdateDefaultNavLayoutContract = withAuth(updateDefaultNavLayoutReal);
 export const applyDefaultNavToAllUsers: ApplyDefaultNavToAllUsersContract = withAuth(applyDefaultNavToAllUsersReal);
+export const getUserNavLayouts: GetUserNavLayoutsContract = withAuth(getUserNavLayoutsReal);
+export const resetUserNavLayout: ResetUserNavLayoutContract = withAuth(resetUserNavLayoutReal);
+export const removeNavTokens: RemoveNavTokensContract = withAuth(removeNavTokensReal);
 
 export const getWatermarks: GetWatermarksContract = withAuth(getWatermarksReal);
 export const getWatermarkByApp: GetWatermarkByAppContract = withAuth(getWatermarkByAppReal);
