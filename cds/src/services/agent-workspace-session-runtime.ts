@@ -1028,7 +1028,7 @@ export class AgentWorkspaceSessionRuntime {
           '--entrypoint /bin/sh',
           shellQuote(this.image),
           '-lc',
-          shellQuote('set -eu; command -v dd >/dev/null 2>&1; for root in /cds-storage-probe /cds-direct-storage-probe; do dd if=/dev/zero of="$root/within-limit" bs=524288 count=1 2>/dev/null; ! dd if=/dev/zero of="$root/over-limit" bs=1048576 count=2 2>/dev/null; rm -f "$root/within-limit" "$root/over-limit"; created=0; while [ "$created" -lt 128 ]; do if : > "$root/inode-limit-$created" 2>/dev/null; then created=$((created + 1)); else break; fi; done; test "$created" -lt 128; done'),
+          shellQuote('set -u; command -v dd >/dev/null 2>&1 || exit 10; stage=20; for root in /cds-storage-probe /cds-direct-storage-probe; do dd if=/dev/zero of="$root/within-limit" bs=524288 count=1 2>/dev/null || exit $((stage + 1)); if dd if=/dev/zero of="$root/over-limit" bs=1048576 count=2 2>/dev/null; then exit $((stage + 2)); fi; rm -f "$root/within-limit" "$root/over-limit" || exit $((stage + 3)); created=0; while [ "$created" -lt 128 ]; do if : > "$root/inode-limit-$created" 2>/dev/null; then created=$((created + 1)); else break; fi; done; test "$created" -lt 128 || exit $((stage + 4)); rm -f "$root"/inode-limit-* || exit $((stage + 5)); stage=30; done'),
         ].join(' '), { timeout: 30_000 });
         verified = validation.exitCode === 0;
         if (!verified) this.hardStoragePolicyFailureCode = `validation_exit_${validation.exitCode}`;
