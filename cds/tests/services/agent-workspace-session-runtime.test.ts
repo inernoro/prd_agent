@@ -243,6 +243,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           fs.mkdirSync(path.join(shell.workspaceDir, 'assets'), { recursive: true });
           fs.writeFileSync(path.join(shell.workspaceDir, 'assets', 'app.css'), 'body{color:blue}');
           fs.writeFileSync(path.join(shell.workspaceDir, 'manifest.json'), '{"untrusted":true}');
+          fs.writeFileSync(path.join(shell.workspaceDir, 'index.html.artifact.json'), '{"runtime":"metadata"}');
         return Response.json({ runId: 'od-run-1' }, { status: 202 });
       }
       if (requestPath === '/api/runs/od-run-1' && init?.method === 'GET') {
@@ -386,6 +387,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(JSON.parse(Buffer.from(encodedPreflightConfig, 'base64').toString('utf8'))).toEqual({
       allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
       inputPaths: ['knowledge/source.md', 'brief.txt', 'current/index.html'],
+      ignoredRuntimePaths: ['index.html.artifact.json'],
       maxFileCount: 100,
       maxWorkspaceFileCount: 1024,
       maxNodeCount: 2048,

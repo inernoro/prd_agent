@@ -200,6 +200,7 @@ const ARTIFACT_CSP = [
   "manifest-src 'none'",
 ].join('; ');
 const DOCUMENT_ROOT_RE = /^\s*(?:<!doctype\s+html\s*>\s*)?<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
+const IGNORED_RUNTIME_OUTPUT_PATHS = ['index.html.artifact.json'] as const;
 
 // This script runs inside the isolated OpenDesign container before any bytes
 // cross the Docker boundary. Original MAP inputs and CDS-managed skill files
@@ -212,6 +213,7 @@ const path = require('node:path');
 const config = JSON.parse(Buffer.from(process.env.CDS_OUTPUT_PREFLIGHT_CONFIG || '', 'base64').toString('utf8'));
 const root = '/workspace';
 const inputPaths = new Set(config.inputPaths);
+const ignoredRuntimePaths = new Set(config.ignoredRuntimePaths);
 const allowed = (relative) => config.allowedOutputPaths.some((pattern) => {
   if (pattern.endsWith('/**')) {
     const prefix = pattern.slice(0, -3);
@@ -247,7 +249,7 @@ const walk = (directory) => {
       if (totalBytes > config.maxOutputBytes) fail('total_bytes');
       continue;
     }
-    if (inputPaths.has(relative) || relative.startsWith('.od-skills/')) continue;
+    if (inputPaths.has(relative) || ignoredRuntimePaths.has(relative) || relative.startsWith('.od-skills/')) continue;
     fail('path_not_allowed', relative);
   }
 };
@@ -2122,6 +2124,7 @@ export class AgentWorkspaceSessionRuntime {
     const config = Buffer.from(JSON.stringify({
       allowedOutputPaths: handle.transfer.allowedOutputPaths,
       inputPaths: handle.inputPaths,
+      ignoredRuntimePaths: [...IGNORED_RUNTIME_OUTPUT_PATHS],
       maxFileCount: MAX_OUTPUT_FILE_COUNT,
       maxWorkspaceFileCount: MAX_WORKSPACE_FILE_COUNT,
       maxNodeCount: MAX_WORKSPACE_NODE_COUNT,
