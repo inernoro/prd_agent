@@ -3915,7 +3915,7 @@ public class GatewayDataDomainGuardTests
 
         static bool ReturnsHostedSite(string line)
             => System.Text.RegularExpressions.Regex.IsMatch(
-                line, @"public async Task<(HostedSite\??|List<HostedSite>|\(List<HostedSite>)");
+                line, @"public async Task<(HostedSite\??>|List<HostedSite>>|\(List<HostedSite>\s)");
 
         var memberStarts = new List<int>();
         for (var i = 0; i < lines.Length; i++)
