@@ -252,7 +252,7 @@ public class PlatformKeyIntegrityWorker : BackgroundService
             "所有依赖这些平台的模型池调用将以空凭据请求上游（401）。" +
             "典型原因：部署环境的数据加密密钥被轮换，或存量密文来自另一套历史密钥。" +
             "修复：配置 ApiKeyCrypto__LegacySecrets 后重启触发自动迁移，" +
-            "或在模型平台重新保存各平台 API key。";
+            "或到 LLM Gateway 控制台（MAP 左下角「模型网关」） 重新保存各平台 API key。";
 
         _logger.LogError(
             "[PlatformKeyIntegrity] 权威部署 {Source} 检测到 {Count} 个模型相关 API key 无法解密：{Names}。环境数据加密密钥与存量密文不匹配，模型池调用将全部失败",
