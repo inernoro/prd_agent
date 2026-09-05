@@ -1118,12 +1118,40 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       }).catch((error) => {
         if (session.status === 'stopped') return;
         const runtimeError = toAgentWorkspaceRuntimeError(error);
+        const runtimeMessagePreview = [secrets.modelApiKey, secrets.transferToken]
+          .filter((secret): secret is string => typeof secret === 'string' && secret.length > 0)
+          .reduce(
+            (message: string, secret: string) => message.split(secret).join('***[masked]***'),
+            runtimeError.message,
+          )
+          .slice(0, 2048);
         session.status = 'failed';
         pushCdsAgentEvent(session, 'error', runtimeError);
         pushCdsAgentEvent(session, 'log', {
           level: 'warn',
           message: runtimeError.message,
           source: 'open-design-runtime',
+        });
+        deps.serverEventLogStore?.record({
+          category: 'container',
+          severity: 'error',
+          source: 'agent-workspace-session-runtime',
+          action: 'agent-workspace-session.execute.failed',
+          message: 'OpenDesign workspace execution failed',
+          projectId: session.projectId,
+          status: 'failed',
+          error: {
+            code: runtimeError.code,
+            message: 'OpenDesign workspace execution failed',
+          },
+          details: {
+            ...(runtimeError.details || {}),
+            sessionId: session.id,
+            runtime: session.runtime,
+            code: runtimeError.code,
+            retryable: runtimeError.retryable,
+            runtimeMessagePreview,
+          },
         });
         recordAgentRequestHistory(session);
       }).finally(() => {
