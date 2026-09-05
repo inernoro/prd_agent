@@ -28,6 +28,7 @@ import { copyToClipboard } from './clipboard';
 import { capabilityVisual } from './capabilityRegistry';
 import { buildHeadline } from './headline';
 import { grantableTool, grantableToolCount, isReadOnlyTier } from './scopePlan';
+import { quotaFillPercent } from './quotaMeter';
 
 /**
  * 智能体接入台。
@@ -148,12 +149,18 @@ export default function McpConsolePage() {
     // 第二台客户端与「断开」按钮根本不渲染（390 宽实测 docScrollHeight === innerHeight）。
     // 窄屏改成自然高度、由 <main> 滚。
     <div className="flex min-h-full flex-col gap-3.5 py-3 md:p-6 lg:h-full lg:min-h-0">
-      {/* 页头：标题、切页、动作挤在一行，把纵向留给内容 */}
-      <div className="flex flex-wrap items-center gap-3">
-        <Plug size={19} style={{ color: 'var(--accent-primary)' }} aria-hidden />
-        <h1 className="text-[18px] font-bold" style={{ color: 'var(--text-primary)' }}>
-          智能体接入台
-        </h1>
+      {/* 页头：宽屏一行排完，把纵向留给内容；窄屏改成三行，每行都填满。
+          原来是单个 `flex flex-wrap` + 右侧动作组 `ml-auto`。宽屏没问题，窄屏折行之后
+          `ml-auto` 依然生效 —— 它把动作组顶到**它那一行**的最右端，于是切页组左对齐、
+          右边空一片，下一行两个按钮右对齐、左边空一片，读出来是个 Z 字。
+          折行不是「同一套规则少排几个」，对齐规则得跟着一起换。 */}
+      <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
+        <div className="flex items-center gap-2">
+          <Plug size={19} style={{ color: 'var(--accent-primary)' }} aria-hidden />
+          <h1 className="text-[18px] font-bold" style={{ color: 'var(--text-primary)' }}>
+            智能体接入台
+          </h1>
+        </div>
         <div className="flex gap-1 rounded-[10px] p-1" style={{ background: 'var(--tab-container-bg)' }}>
           {([
             { key: 'overview' as const, label: '能力与客户端', icon: ShieldCheck },
@@ -166,7 +173,7 @@ export default function McpConsolePage() {
                 key={item.key}
                 type="button"
                 onClick={() => setTab(item.key)}
-                className="flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-[12.5px] font-medium transition-colors"
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-[8px] px-3 py-2 text-[12.5px] font-medium transition-colors lg:flex-none lg:justify-start lg:py-1.5"
                 style={
                   active
                     ? { background: 'var(--bg-card)', color: 'var(--text-primary)' }
@@ -179,7 +186,7 @@ export default function McpConsolePage() {
             );
           })}
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex items-center gap-2 lg:ml-auto">
           <button
             type="button"
             disabled={refreshing}
@@ -187,7 +194,7 @@ export default function McpConsolePage() {
               setRefreshToken((n) => n + 1);
               void refresh();
             }}
-            className="flex h-9 items-center gap-2 rounded-[10px] px-3 text-[13px] font-medium transition-colors"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] text-[13px] font-medium transition-colors lg:h-9 lg:w-auto lg:gap-2 lg:px-3"
             style={{
               background: 'var(--bg-card)',
               border: '1px solid var(--border-subtle)',
@@ -195,12 +202,12 @@ export default function McpConsolePage() {
             }}
           >
             <RefreshCw size={15} aria-hidden className={refreshing ? 'animate-spin' : undefined} />
-            {refreshing ? '刷新中' : '刷新'}
+            <span className="hidden lg:inline">{refreshing ? '刷新中' : '刷新'}</span>
           </button>
           <button
             type="button"
             onClick={() => setConnectOpen(true)}
-            className="flex h-9 items-center gap-2 rounded-[10px] px-4 text-[13px] font-semibold transition-opacity hover:opacity-90"
+            className="flex h-10 flex-1 items-center justify-center gap-2 rounded-[10px] px-4 text-[13px] font-semibold transition-opacity hover:opacity-90 lg:h-9 lg:flex-none"
             style={{ background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }}
           >
             <Plus size={15} aria-hidden />
@@ -426,6 +433,12 @@ function ClientRow({
         opacity: client.isActive ? 1 : 0.7,
       }}
     >
+      {/* 名字那一行与状态那一句，窄屏必须分开两行。
+          它们原来同在一个 flex-wrap 里：状态句在手机上很长（「钥匙已停用。界面上还开不回来…」），
+          必然把带 `ml-auto` 的「今天 N 次」挤到下一行，而 ml-auto 在新的一行里照样右对齐 ——
+          于是那个数字孤零零占掉一整行。
+          做法是给状态句 `w-full`（窄屏它放不下任何同伴，自然独占一行，把「今天 N 次」留在第一行末），
+          宽屏再用 `lg:w-auto lg:flex-1` + `lg:order-last` 还原成原来那一排。 */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <span
           className="block h-2 w-2 shrink-0 rounded-full"
@@ -445,7 +458,13 @@ function ClientRow({
         >
           {client.keyPrefix}…
         </code>
-        <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+        <span
+          className="ml-auto text-[12px] font-semibold tabular-nums lg:order-last"
+          style={{ color: 'var(--text-secondary)' }}
+        >
+          今天 {client.todayCalls} 次
+        </span>
+        <span className="w-full text-[11.5px] lg:w-auto lg:flex-1" style={{ color: 'var(--text-muted)' }}>
           {client.isActive ? (
             client.lastUsedAt ? (
               <>
@@ -467,12 +486,6 @@ function ClientRow({
               : '钥匙已停用。界面上还开不回来（只能走接口），要立刻接着用就点右上角「接入新的」重接一台；它做过的事和调用记录都留着'
           )}
         </span>
-        <span
-          className="ml-auto text-[12px] font-semibold tabular-nums"
-          style={{ color: 'var(--text-secondary)' }}
-        >
-          今天 {client.todayCalls} 次
-        </span>
       </div>
 
       {/* 说明区与动作区：宽屏并排、中间隔一道竖线（别读成同一排按钮）；
@@ -484,7 +497,8 @@ function ClientRow({
           <span className="text-[10.5px] font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
             它能做什么
           </span>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          {/* 芯片之间要明显宽于芯片内部，否则「· 只能看」会被扫读成独立的一项 */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
             {granted.length === 0 && extraScopes.length === 0 ? (
               <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
                 这把钥匙现在一块能力也拿不到
@@ -503,7 +517,9 @@ function ClientRow({
                     <Icon size={13} aria-hidden />
                     {cap.title}
                     {readOnly && (
-                      <span style={{ color: 'var(--text-muted)' }}>· 只能看</span>
+                      <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
+                        · 只能看
+                      </span>
                     )}
                   </span>
                 );
@@ -594,17 +610,17 @@ function PlatformCapabilityBar({ capabilities }: { capabilities: McpCapabilityDt
       className="flex flex-col gap-2.5 rounded-[13px] px-3.5 py-3"
       style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
     >
+      {/* 与客户端卡片头同一个形状、同一个修法：容器折行、按钮带 ml-auto，
+          窄屏放不下时按钮会孤零零右对齐占掉一整行。让说明句 `w-full` 独占第二行，
+          按钮就留在第一行末；宽屏用 `lg:order-last` 还原成原来那一排。 */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[12.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
           平台开放了什么
         </span>
-        <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
-          你能给出去的共 <b style={{ color: 'var(--text-secondary)' }}>{totalTools}</b> 个工具
-        </span>
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="ml-auto h-7 rounded-[8px] px-2.5 text-[11.5px] font-medium"
+          className="ml-auto h-7 rounded-[8px] px-2.5 text-[11.5px] font-medium lg:order-last"
           style={{
             background: 'var(--bg-sunken)',
             border: '1px solid var(--border-subtle)',
@@ -613,6 +629,9 @@ function PlatformCapabilityBar({ capabilities }: { capabilities: McpCapabilityDt
         >
           {open ? '收起清单' : '看清单'}
         </button>
+        <span className="w-full text-[11.5px] lg:w-auto" style={{ color: 'var(--text-muted)' }}>
+          你能给出去的共 <b style={{ color: 'var(--text-secondary)' }}>{totalTools}</b> 个工具
+        </span>
       </div>
 
       <div className="flex flex-wrap gap-1.5">
@@ -735,21 +754,26 @@ function QuotaBar({
   quota: number;
   unit: string;
 }) {
-  const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
+  const shown = quotaFillPercent(used, quota);
   return (
     <div className="flex min-w-[150px] flex-1 flex-col gap-1">
       <div className="flex items-baseline justify-between">
         <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
           {label}
         </span>
-        <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+        <span
+          className="text-[11px] tabular-nums"
+          style={{ color: used > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}
+        >
           {used} / {quota} {unit}
         </span>
       </div>
-      <span className="h-1 overflow-hidden rounded-full" style={{ background: 'var(--nested-block-bg)' }}>
+      {/* 轨道本身要看得出是「容量」而不是一条分隔线：原来 4px 高 + 最淡的底色，
+          在深色卡片上几乎不可见，于是 0 用量时这一行读起来只是两个数字下面有条划痕。 */}
+      <span className="h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--border-default)' }}>
         <span
           className="block h-full rounded-full transition-[width] duration-500"
-          style={{ width: `${pct}%`, background: 'var(--accent-primary)' }}
+          style={{ width: `${shown}%`, background: 'var(--accent-primary)' }}
         />
       </span>
     </div>

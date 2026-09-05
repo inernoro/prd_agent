@@ -62,6 +62,54 @@ describe('接入台窄屏滚动契约', () => {
     expect(t).not.toContain('h-full');
   });
 
+  /**
+   * 窄屏折行之后，对齐规则必须跟着一起换。
+   *
+   * `ml-auto` 的意思是「把我推到这一行的最右端」。在 `flex-wrap` 容器里，
+   * 换行之后它**照样生效** —— 只是那一行现在只剩它自己，于是排出一个
+   * 左边空一片、右边孤零零一个元素的 Z 字。页头（切页组 / 刷新 / 接入新的）、
+   * 客户端卡片头（今天 N 次）、能力条（看清单）都栽在这同一件事上。
+   *
+   * 这类事删掉不会红：去掉断点前缀，类型过、lint 过、全量用例过，
+   * 桌面截图一模一样，只有真的用手机视口打开才现形。所以判据钉在源码上。
+   */
+  it('每一处 ml-auto 都显式处理过窄屏，不是宽屏思维直接写下来的', () => {
+    const bad = [...source.matchAll(/className="([^"]*)"/g)]
+      .map((m) => m[1])
+      .filter((c) => c.split(/\s+/).includes('ml-auto'))
+      .filter((c) => !c.includes('lg:order-last'));
+    expect(
+      bad,
+      'ml-auto 在 flex-wrap 里换行后仍然靠右，会孤零零占掉一整行；' +
+        '窄屏要么让它跟着 w-full 兄弟留在第一行（配 lg:order-last 还原宽屏排序），要么别用它',
+    ).toEqual([]);
+  });
+
+  it('每个 lg:order-last 都配着一句 w-full，否则它照样孤零零占一行', () => {
+    // 这个修法是**一对**：右对齐的那个元素提到 DOM 靠前的位置（宽屏用 order-last 还原），
+    // 同时让被它挤下去的那句话 `w-full` 独占第二行。只做前半边，窄屏第一行仍然只有它自己。
+    //
+    // 判据必须认这一对，不能只认某个原子类：`lg:w-auto` 在刷新按钮上是
+    // 「窄屏方形图标钮、宽屏按内容宽」，跟独占一行毫无关系（写这条守卫时就先撞上了这个）。
+    const classes = [...source.matchAll(/className="([^"]*)"/g)].map((m) => m[1]);
+    const pinned = classes.filter((c) => c.includes('lg:order-last'));
+    const spans = classes.filter((c) => {
+      const t = c.split(/\s+/);
+      return t.includes('w-full') && t.includes('lg:w-auto');
+    });
+    expect(pinned.length, '找不到 lg:order-last —— 布局被重写了？').toBeGreaterThan(0);
+    expect(
+      spans.length,
+      `有 ${pinned.length} 处 lg:order-last，却只有 ${spans.length} 句 w-full lg:w-auto 兜着它们`,
+    ).toBe(pinned.length);
+  });
+
+  it('页头窄屏是竖排，不靠 flex-wrap 兜底', () => {
+    const t = tokensOfClassNameContaining('lg:flex-row lg:flex-wrap');
+    expect(t).toContain('flex-col');
+    expect(t, '裸 flex-wrap 会让页头在窄屏自动折行，而折行后的对齐没人管').not.toContain('flex-wrap');
+  });
+
   it('主体栅格：撑满剩余高度只在 lg 生效', () => {
     const t = tokensOfClassNameContaining('lg:grid-cols-[minmax(0,1fr)_320px]');
     expect(t).toContain('lg:flex-1');
