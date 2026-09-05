@@ -1373,7 +1373,7 @@ export default function WebPagesPage() {
               type="button"
               onClick={() => { setGenerateSource(null); setShowGenerateDialog(true); }}
               aria-label="引用知识生成网页"
-              className="fixed right-[18px] z-[119] flex h-10 items-center gap-1.5 rounded-2xl border border-token-subtle bg-token-elevated px-3 text-xs font-semibold text-token-primary shadow-lg"
+              className="fixed right-[18px] z-[90] flex h-10 items-center gap-1.5 rounded-2xl border border-token-subtle bg-token-elevated px-3 text-xs font-semibold text-token-primary shadow-lg"
               style={{
                 bottom: 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px) + 82px)',
                 background: 'var(--bg-elevated)',
