@@ -299,8 +299,11 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(volumeInitCall?.command).toContain(
       `chown ${process.getuid?.() ?? 1001}:${process.getgid?.() ?? 1001} /workspace /app/.od`,
     );
-    expect(volumeInitCall?.command).toContain('chmod -R u=rwX,go=rX /workspace');
+    expect(volumeInitCall?.command).not.toContain('chmod -R');
     expect(volumeInitCall?.command).not.toContain('chown -R');
+    expect(fs.statSync(path.join(created.workspaceDir, 'brief.txt')).mode & 0o777).toBe(0o644);
+    expect(fs.statSync(path.join(created.workspaceDir, 'knowledge')).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(path.join(created.workspaceDir, 'knowledge', 'source.md')).mode & 0o777).toBe(0o644);
     const committed = requests.find((request) => request.path === '/commit');
     expect(committed?.authorization).toBe('Bearer transfer-token');
     expect(committed?.body.runId).toBe('map-run-1');

@@ -914,7 +914,7 @@ export class AgentWorkspaceSessionRuntime {
     let networkCreated = false;
     const createdVolumes: string[] = [];
     try {
-      fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o750 });
+      fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o755 });
       fs.mkdirSync(outputDir, { recursive: true, mode: 0o750 });
       fs.mkdirSync(dataDir, { recursive: true, mode: 0o750 });
       onStage('workspace_downloading');
@@ -941,8 +941,8 @@ export class AgentWorkspaceSessionRuntime {
         if (relative.startsWith('..') || path.isAbsolute(relative)) {
           throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `workspace path escaped root: ${file.path}`);
         }
-        fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o750 });
-        fs.writeFileSync(target, file.bytes, { mode: 0o640, flag: 'wx' });
+        fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
+        fs.writeFileSync(target, file.bytes, { mode: 0o644, flag: 'wx' });
       }
       this.chownForContainer(hostRoot);
       onStage('workspace_materialized', { fileCount: files.length });
@@ -1055,10 +1055,7 @@ export class AgentWorkspaceSessionRuntime {
         '--entrypoint /bin/sh',
         shellQuote(this.image),
         '-c',
-        shellQuote([
-          `chown ${this.containerUid}:${this.containerGid} /workspace /app/.od`,
-          'chmod -R u=rwX,go=rX /workspace',
-        ].join(' && ')),
+        shellQuote(`chown ${this.containerUid}:${this.containerGid} /workspace /app/.od`),
       ].join(' '), { timeout: 90_000 });
       if (initialized.exitCode !== 0) {
         throw new AgentWorkspaceRuntimeError(
