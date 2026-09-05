@@ -328,6 +328,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const imported = requests.find((request) => request.path === '/api/import/folder');
     expect(imported?.body).toMatchObject({
       baseDir: '/workspace',
+      skillId: 'web-prototype',
       orchestratorWorkspace: {
         kind: 'scratch',
         baseRevision: 'rev-1',

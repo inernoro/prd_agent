@@ -9,6 +9,7 @@ import { maskSecrets } from './secret-masker.js';
 
 export const MAP_DESIGN_WORKSPACE_SCHEMA = 'map-design-workspace-v1';
 export const OPEN_DESIGN_IMAGE = 'ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474';
+const OPEN_DESIGN_WEB_PROTOTYPE_SKILL = 'web-prototype';
 
 export interface AgentWorkspaceResourcePolicy {
   cpuCores: number;
@@ -1187,6 +1188,7 @@ export class AgentWorkspaceSessionRuntime {
       body: {
         baseDir: '/workspace',
         name: `MAP design ${sessionId.slice(-12)}`,
+        skillId: OPEN_DESIGN_WEB_PROTOTYPE_SKILL,
         orchestratorWorkspace: {
           kind: 'scratch',
           sourceLabel: 'MAP design workspace',
