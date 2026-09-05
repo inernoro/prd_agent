@@ -45,6 +45,48 @@ public sealed class DesignKnowledgeSnapshotResolverTests
         Assert.Equal(Hash("服务端权威正文"), snapshot.ContentHash);
     }
 
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ResolveAsync_FreezesResolvedContentWhileANewRunObservesSourceChanges()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var store = new DocumentStore { Id = "store-source-change", OwnerId = "owner", Name = "变更源知识库" };
+        var document = new ParsedPrd { Id = "document-source-change", RawContent = "初始正文" };
+        var entry = new DocumentEntry
+        {
+            Id = "entry-source-change",
+            StoreId = store.Id,
+            DocumentId = document.Id,
+            Title = "可变更条目",
+            ContentIndex = document.RawContent,
+            CreatedBy = "owner",
+        };
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+        await fixture.Db.Documents.InsertOneAsync(document);
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+
+        var first = Assert.Single(await fixture.Resolver.ResolveAsync(
+            "owner",
+            [new DesignKnowledgeReferenceIdentity(entry.Id, store.Id)],
+            CancellationToken.None));
+        await fixture.Db.Documents.UpdateOneAsync(
+            candidate => candidate.Id == document.Id,
+            Builders<ParsedPrd>.Update.Set(candidate => candidate.RawContent, "更新正文"));
+        await fixture.Db.DocumentEntries.UpdateOneAsync(
+            candidate => candidate.Id == entry.Id,
+            Builders<DocumentEntry>.Update.Set(candidate => candidate.ContentIndex, "更新正文"));
+        var second = Assert.Single(await fixture.Resolver.ResolveAsync(
+            "owner",
+            [new DesignKnowledgeReferenceIdentity(entry.Id, store.Id)],
+            CancellationToken.None));
+
+        Assert.Equal("初始正文", first.Content);
+        Assert.Equal(Hash("初始正文"), first.ContentHash);
+        Assert.Equal("更新正文", second.Content);
+        Assert.Equal(Hash("更新正文"), second.ContentHash);
+        Assert.NotEqual(first.ContentHash, second.ContentHash);
+    }
+
     [Theory]
     [InlineData("intruder", "store-1")]
     [InlineData("owner", "forged-store")]

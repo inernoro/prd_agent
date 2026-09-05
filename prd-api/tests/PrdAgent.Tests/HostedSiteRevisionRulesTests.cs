@@ -105,4 +105,27 @@ public class HostedSiteRevisionRulesTests
             < result.IndexOf("<!--<head>-->", StringComparison.Ordinal));
         Assert.Contains("img-src data:", result, StringComparison.Ordinal);
     }
+
+    [Theory]
+    [InlineData("<!doctype html><html><body><header>[REPLACE] Brand</header></body></html>")]
+    [InlineData("<!doctype html><html><body><button>[replace] CTA</button></body></html>")]
+    [InlineData("<!doctype html><html><body><footer>[email protected]</footer></body></html>")]
+    [InlineData("<!doctype html><html><body><footer>[email&#160;protected]</footer></body></html>")]
+    public void HardenGeneratedHtml_RejectsVisibleUnresolvedTemplateSentinels(string html)
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => HostedSiteRevisionRules.HardenGeneratedHtml(html));
+
+        Assert.Contains("未替换的模板占位内容", error.Message, StringComparison.Ordinal);
+        Assert.Contains("重新生成", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HardenGeneratedHtml_AllowsOrdinaryBracketedCopyAndCommentedTemplateNotes()
+    {
+        var result = HostedSiteRevisionRules.HardenGeneratedHtml(
+            "<!doctype html><html><!-- [REPLACE] Brand --><head><style>.hint::after{content:'[说明]'}</style></head><body>[已验证] 普通方括号文案</body></html>");
+
+        Assert.Contains("[已验证] 普通方括号文案", result, StringComparison.Ordinal);
+        Assert.Contains("<!-- [REPLACE] Brand -->", result, StringComparison.Ordinal);
+    }
 }

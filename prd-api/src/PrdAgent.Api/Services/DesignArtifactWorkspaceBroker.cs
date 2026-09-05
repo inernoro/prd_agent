@@ -131,6 +131,9 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         run.WorkspaceBaseRevision = package.BaseRevision;
         run.WorkspaceResultAssetKey = null;
         run.WorkspaceResultSha256 = null;
+        run.WorkspaceRejectedResultAssetKey = null;
+        run.WorkspaceRejectedResultCleanupAttemptedAt = null;
+        run.WorkspaceRejectedResultCleanupError = null;
         run.RuntimeModelCallCount = 0;
         run.RuntimeModelCallLimit = modelCallLimit;
         run.RuntimeTicketExpiresAt = expiresAt;
@@ -158,7 +161,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         ValidateTicket(token, runId, "workspace");
         var run = await _db.DesignArtifactRuns.Find(item => item.Id == runId).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
-        EnsureTicketWindow(run);
+        EnsureActiveWorkspaceWindow(run);
         if (string.IsNullOrWhiteSpace(run.WorkspaceInputAssetKey))
             throw new InvalidOperationException("设计任务输入尚未准备完成，请稍后重试");
         var bytes = await _storage.TryDownloadBytesAsync(run.WorkspaceInputAssetKey, CancellationToken.None)
@@ -180,7 +183,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             throw new InvalidOperationException("远程设计结果大小不符合要求，请重新生成");
         var run = await _db.DesignArtifactRuns.Find(item => item.Id == runId).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
-        EnsureTicketWindow(run);
+        EnsureActiveWorkspaceWindow(run);
         var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
             packageBytes,
             runId,
@@ -194,6 +197,38 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             throw new InvalidOperationException("该工作区已经提交过不同结果，请重新发起任务");
         }
 
+        // 先用内容哈希在 Run 上占位，再写对象存储。若两个不同结果并发提交，
+        // 失败方会在 SaveAsync 之前被拒绝，不会留下无任务引用的内容寻址对象。
+        // 同内容并发可以共享占位：真实存储实现均按 SHA 去重，不会产生第二个物理对象。
+        var now = DateTime.UtcNow;
+        var activeFilter = BuildActiveWorkspaceFilter(runId, run.LeaseOwnerId, now);
+        var reservation = await _db.DesignArtifactRuns.UpdateOneAsync(
+            Builders<DesignArtifactRun>.Filter.And(
+                activeFilter,
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultAssetKey, null),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceRejectedResultAssetKey, null),
+                Builders<DesignArtifactRun>.Filter.Or(
+                    Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultSha256, null),
+                    Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultSha256, packageSha))),
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.WorkspaceResultSha256, packageSha)
+                .Set(item => item.UpdatedAt, now),
+            cancellationToken: CancellationToken.None);
+        if (reservation.MatchedCount == 0)
+        {
+            var winner = await _db.DesignArtifactRuns.Find(item => item.Id == runId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (winner != null
+                && winner.Status == RunStatuses.Running
+                && winner.LeaseOwnerId == run.LeaseOwnerId
+                && winner.LeaseExpiresAt > now
+                && winner.RuntimeTicketExpiresAt > now
+                && !string.IsNullOrWhiteSpace(winner.WorkspaceResultAssetKey)
+                && FixedEquals(winner.WorkspaceResultSha256, packageSha))
+                return new DesignArtifactResultCommit(packageSha, parsed.Files.Select(file => file.Path).ToArray(), true);
+            throw new InvalidOperationException("该工作区已经提交过不同结果，请重新发起任务");
+        }
+
         var stored = await SaveWorkspaceMetadataAsync(
             _storage,
             packageBytes,
@@ -202,20 +237,77 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         if (string.IsNullOrWhiteSpace(stored.Key))
             throw new InvalidOperationException("远程设计结果保存失败，请稍后重试");
 
+        var completedAt = DateTime.UtcNow;
         var update = Builders<DesignArtifactRun>.Update
             .Set(item => item.WorkspaceResultAssetKey, stored.Key)
-            .Set(item => item.WorkspaceResultSha256, packageSha)
-            .Set(item => item.UpdatedAt, DateTime.UtcNow);
+            .Set(item => item.WorkspaceRejectedResultAssetKey, null)
+            .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, null)
+            .Set(item => item.WorkspaceRejectedResultCleanupError, null)
+            .Set(item => item.UpdatedAt, completedAt);
         var write = await _db.DesignArtifactRuns.UpdateOneAsync(
-            item => item.Id == runId && item.WorkspaceResultAssetKey == null,
+            Builders<DesignArtifactRun>.Filter.And(
+                BuildActiveWorkspaceFilter(runId, run.LeaseOwnerId, completedAt),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultAssetKey, null),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultSha256, packageSha)),
             update,
             cancellationToken: CancellationToken.None);
         if (write.ModifiedCount == 0)
         {
             var winner = await _db.DesignArtifactRuns.Find(item => item.Id == runId).FirstOrDefaultAsync(CancellationToken.None);
-            if (winner != null && FixedEquals(winner.WorkspaceResultSha256, packageSha))
-                return new DesignArtifactResultCommit(packageSha, parsed.Files.Select(file => file.Path).ToArray(), true);
-            throw new InvalidOperationException("该工作区已经提交过不同结果，请重新发起任务");
+            if (winner != null
+                && !string.IsNullOrWhiteSpace(winner.WorkspaceResultAssetKey)
+                && FixedEquals(winner.WorkspaceResultSha256, packageSha))
+            {
+                if (HasActiveWorkspaceWindow(winner, run.LeaseOwnerId, completedAt))
+                    return new DesignArtifactResultCommit(packageSha, parsed.Files.Select(file => file.Path).ToArray(), true);
+                throw new UnauthorizedAccessException("远程设计凭证对应的任务已结束，请重新发起任务");
+            }
+
+            // 对象写入期间任务可能已终止或租约已过期。先把精确 key 持久化为回收线索，
+            // 再删除对象并释放哈希占位；即使回收过程中断，后续也能按 Run 恢复。
+            await _db.DesignArtifactRuns.UpdateOneAsync(
+                item => item.Id == runId
+                        && item.WorkspaceResultAssetKey == null
+                        && item.WorkspaceResultSha256 == packageSha,
+                Builders<DesignArtifactRun>.Update
+                    .Set(item => item.WorkspaceRejectedResultAssetKey, stored.Key)
+                    .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, null)
+                    .Set(item => item.WorkspaceRejectedResultCleanupError, null)
+                    .Set(item => item.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+            try
+            {
+                await _storage.DeleteByKeyAsync(stored.Key, CancellationToken.None);
+            }
+            catch (Exception cleanupError)
+            {
+                await _db.DesignArtifactRuns.UpdateOneAsync(
+                    item => item.Id == runId
+                            && item.WorkspaceResultAssetKey == null
+                            && item.WorkspaceRejectedResultAssetKey == stored.Key,
+                    Builders<DesignArtifactRun>.Update
+                        .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, DateTime.UtcNow)
+                        .Set(item => item.WorkspaceRejectedResultCleanupError, BoundedCleanupError(cleanupError))
+                        .Set(item => item.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                throw;
+            }
+            await _db.DesignArtifactRuns.UpdateOneAsync(
+                item => item.Id == runId
+                        && item.WorkspaceResultAssetKey == null
+                        && item.WorkspaceResultSha256 == packageSha
+                        && item.WorkspaceRejectedResultAssetKey == stored.Key,
+                Builders<DesignArtifactRun>.Update
+                    .Set(item => item.WorkspaceResultSha256, null)
+                    .Set(item => item.WorkspaceRejectedResultAssetKey, null)
+                    .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, null)
+                    .Set(item => item.WorkspaceRejectedResultCleanupError, null)
+                    .Set(item => item.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+
+            if (winner == null || !HasActiveWorkspaceWindow(winner, run.LeaseOwnerId, completedAt))
+                throw new UnauthorizedAccessException("远程设计凭证对应的任务已结束，请重新发起任务");
+            throw new InvalidOperationException("远程设计结果提交冲突，请重试");
         }
         return new DesignArtifactResultCommit(packageSha, parsed.Files.Select(file => file.Path).ToArray(), false);
     }
@@ -243,11 +335,13 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         ValidateTicket(token, runId, "model");
         var current = await _db.DesignArtifactRuns.Find(item => item.Id == runId).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
-        EnsureTicketWindow(current);
+        EnsureActiveWorkspaceWindow(current);
         var now = DateTime.UtcNow;
         var filter = Builders<DesignArtifactRun>.Filter.And(
             Builders<DesignArtifactRun>.Filter.Eq(item => item.Id, runId),
             Builders<DesignArtifactRun>.Filter.Eq(item => item.Status, RunStatuses.Running),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.LeaseOwnerId, current.LeaseOwnerId),
+            Builders<DesignArtifactRun>.Filter.Gt(item => item.LeaseExpiresAt, now),
             Builders<DesignArtifactRun>.Filter.Gt(item => item.RuntimeTicketExpiresAt, now),
             Builders<DesignArtifactRun>.Filter.Lt(item => item.RuntimeModelCallCount, current.RuntimeModelCallLimit));
         var run = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
@@ -265,7 +359,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         ValidateTicket(token, runId, "model");
         var run = await _db.DesignArtifactRuns.Find(item => item.Id == runId).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
-        EnsureTicketWindow(run);
+        EnsureActiveWorkspaceWindow(run);
         return run;
     }
 
@@ -293,6 +387,9 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 .Set(item => item.WorkspaceBaseRevision, baseRevision)
                 .Set(item => item.WorkspaceResultAssetKey, null)
                 .Set(item => item.WorkspaceResultSha256, null)
+                .Set(item => item.WorkspaceRejectedResultAssetKey, null)
+                .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, null)
+                .Set(item => item.WorkspaceRejectedResultCleanupError, null)
                 .Set(item => item.RuntimeModelCallCount, 0)
                 .Set(item => item.RuntimeModelCallLimit, modelCallLimit)
                 .Set(item => item.RuntimeTicketExpiresAt, ticketExpiresAt)
@@ -330,6 +427,36 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     {
         if (run.RuntimeTicketExpiresAt is null || run.RuntimeTicketExpiresAt <= DateTime.UtcNow)
             throw new UnauthorizedAccessException("远程设计凭证已过期，请重新发起任务");
+    }
+
+    private static void EnsureActiveWorkspaceWindow(DesignArtifactRun run)
+    {
+        EnsureTicketWindow(run);
+        if (!HasActiveWorkspaceWindow(run, run.LeaseOwnerId, DateTime.UtcNow))
+            throw new UnauthorizedAccessException("远程设计凭证对应的任务已结束，请重新发起任务");
+    }
+
+    private static bool HasActiveWorkspaceWindow(DesignArtifactRun run, string? leaseOwner, DateTime now) =>
+        run.Status == RunStatuses.Running
+        && !string.IsNullOrWhiteSpace(leaseOwner)
+        && run.LeaseOwnerId == leaseOwner
+        && run.LeaseExpiresAt > now
+        && run.RuntimeTicketExpiresAt > now;
+
+    private static FilterDefinition<DesignArtifactRun> BuildActiveWorkspaceFilter(
+        string runId,
+        string? leaseOwner,
+        DateTime now) => Builders<DesignArtifactRun>.Filter.And(
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.Id, runId),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.Status, RunStatuses.Running),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.LeaseOwnerId, leaseOwner),
+            Builders<DesignArtifactRun>.Filter.Gt(item => item.LeaseExpiresAt, now),
+            Builders<DesignArtifactRun>.Filter.Gt(item => item.RuntimeTicketExpiresAt, now));
+
+    private static string BoundedCleanupError(Exception error)
+    {
+        var message = string.IsNullOrWhiteSpace(error.Message) ? error.GetType().Name : error.Message;
+        return message.Length <= 500 ? message : message[..500];
     }
 
     internal static string? ResolvePublicBaseUrl(IConfiguration configuration)
@@ -493,8 +620,7 @@ public static class DesignArtifactWorkspaceContract
         var verifiedFiles = new Dictionary<string, DesignWorkspaceFile>(StringComparer.Ordinal);
         foreach (var file in package.Files)
         {
-            var normalized = file.Path.Replace('\\', '/').TrimStart('/');
-            if (!IsAllowedResultPath(normalized) || !seen.Add(normalized))
+            if (!TryNormalizeResultPath(file.Path, out var normalized) || !seen.Add(normalized))
                 throw new InvalidOperationException("远程设计结果包含不允许的文件，请重新生成");
             byte[] content;
             try
@@ -559,11 +685,26 @@ public static class DesignArtifactWorkspaceContract
         }
     }
 
-    private static bool IsAllowedResultPath(string path) =>
-        path is "index.html" or "manifest.json"
-        || (path.StartsWith("assets/", StringComparison.Ordinal)
-            && !path.Contains("../", StringComparison.Ordinal)
-            && !path.EndsWith("/", StringComparison.Ordinal));
+    private static bool TryNormalizeResultPath(string? path, out string normalized)
+    {
+        normalized = string.Empty;
+        if (path is null
+            || string.IsNullOrWhiteSpace(path)
+            || path.Length > 512
+            || !string.Equals(path, path.Trim(), StringComparison.Ordinal)
+            || path.Contains('\\')
+            || path.StartsWith("/", StringComparison.Ordinal)
+            || path.Any(character => char.IsControl(character)))
+            return false;
+
+        var segments = path.Split('/');
+        if (segments.Any(segment => segment.Length == 0 || segment is "." or ".."))
+            return false;
+
+        normalized = string.Join('/', segments);
+        return normalized is "index.html" or "manifest.json"
+               || (segments.Length > 1 && segments[0] == "assets");
+    }
 
     private static DesignWorkspaceFile ToFile(string path, string mediaType, byte[] content) =>
         new(path, Convert.ToBase64String(content), HashBytes(content), content.LongLength, mediaType);

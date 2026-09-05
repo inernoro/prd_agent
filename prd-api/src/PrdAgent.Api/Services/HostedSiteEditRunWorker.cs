@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
 
@@ -407,7 +408,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             DateTime.UtcNow,
             ct,
             scope.ServiceProvider.GetRequiredService<IHostedSiteService>(),
-            scope.ServiceProvider.GetRequiredService<IHostedSiteRevisionService>());
+            scope.ServiceProvider.GetRequiredService<IHostedSiteRevisionService>(),
+            scope.ServiceProvider.GetRequiredService<IAssetStorage>());
     }
 
     internal static async Task<PersistedDesignArtifact> PersistArtifactWithLeaseAsync(
@@ -722,8 +724,12 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         DateTime now,
         CancellationToken ct,
         IHostedSiteService? sites = null,
-        IHostedSiteRevisionService? revisions = null)
+        IHostedSiteRevisionService? revisions = null,
+        IAssetStorage? workspaceStorage = null)
     {
+        if (workspaceStorage != null)
+            await RecoverRejectedWorkspaceResultsAsync(db, workspaceStorage, now, ct);
+
         // 上一轮已经终结但清理失败的任务先重试；本轮新发现的任务只尝试一次，避免故障时紧密重试。
         var pendingCleanup = await db.DesignArtifactRuns
             .Find(x => x.Status == RunStatuses.Error && x.CleanupPending)
@@ -802,6 +808,56 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             if (write.ModifiedCount == 1)
                 await queue.EnqueueAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None);
         }
+    }
+
+    internal static async Task<int> RecoverRejectedWorkspaceResultsAsync(
+        MongoDbContext db,
+        IAssetStorage storage,
+        DateTime attemptedAt,
+        CancellationToken ct)
+    {
+        var candidates = await db.DesignArtifactRuns
+            .Find(x => x.WorkspaceResultAssetKey == null
+                       && x.WorkspaceRejectedResultAssetKey != null
+                       && x.WorkspaceRejectedResultAssetKey != string.Empty)
+            .Limit(100)
+            .ToListAsync(ct);
+        var recovered = 0;
+        foreach (var candidate in candidates)
+        {
+            var key = candidate.WorkspaceRejectedResultAssetKey!;
+            try
+            {
+                await storage.DeleteByKeyAsync(key, CancellationToken.None);
+                var write = await db.DesignArtifactRuns.UpdateOneAsync(
+                    x => x.Id == candidate.Id
+                         && x.WorkspaceResultAssetKey == null
+                         && x.WorkspaceRejectedResultAssetKey == key,
+                    Builders<DesignArtifactRun>.Update
+                        .Set(x => x.WorkspaceResultSha256, null)
+                        .Set(x => x.WorkspaceRejectedResultAssetKey, null)
+                        .Set(x => x.WorkspaceRejectedResultCleanupAttemptedAt, null)
+                        .Set(x => x.WorkspaceRejectedResultCleanupError, null)
+                        .Set(x => x.UpdatedAt, attemptedAt),
+                    cancellationToken: CancellationToken.None);
+                if (write.ModifiedCount == 1) recovered++;
+            }
+            catch (Exception ex)
+            {
+                var message = string.IsNullOrWhiteSpace(ex.Message) ? ex.GetType().Name : ex.Message;
+                if (message.Length > 500) message = message[..500];
+                await db.DesignArtifactRuns.UpdateOneAsync(
+                    x => x.Id == candidate.Id
+                         && x.WorkspaceResultAssetKey == null
+                         && x.WorkspaceRejectedResultAssetKey == key,
+                    Builders<DesignArtifactRun>.Update
+                        .Set(x => x.WorkspaceRejectedResultCleanupAttemptedAt, attemptedAt)
+                        .Set(x => x.WorkspaceRejectedResultCleanupError, message)
+                        .Set(x => x.UpdatedAt, attemptedAt),
+                    cancellationToken: CancellationToken.None);
+            }
+        }
+        return recovered;
     }
 
     internal static async Task TryCompensateRecoveredRunAsync(

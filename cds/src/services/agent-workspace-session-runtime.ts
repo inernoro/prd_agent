@@ -502,7 +502,14 @@ function validateOutputPattern(pattern: string): void {
 }
 
 function normalizeRelativePath(value: unknown, label = 'file path'): string {
-  if (typeof value !== 'string' || !value.trim() || value.length > 512 || value.includes('\\')) {
+  if (
+    typeof value !== 'string'
+    || !value.trim()
+    || value !== value.trim()
+    || value.length > 512
+    || value.includes('\\')
+    || /[\u0000-\u001f\u007f]/.test(value)
+  ) {
     throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `${label} must be a bounded POSIX relative path`);
   }
   const trimmed = value.trim();

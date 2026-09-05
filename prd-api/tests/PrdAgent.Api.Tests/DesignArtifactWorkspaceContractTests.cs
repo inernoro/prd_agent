@@ -225,6 +225,19 @@ public sealed class DesignArtifactWorkspaceContractTests
     }
 
     [Fact]
+    public void ResultPackageRejectsBytesBeyondConfiguredLimitBeforeParsing()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            DesignArtifactWorkspaceContract.ParseAndValidateResult(
+                new byte[1_025],
+                "run-workspace-1",
+                "base-revision",
+                1_024));
+
+        Assert.Contains("大小不符合要求", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void VerifiedCdsHardenedResultCanBeHardenedAgainWithExactlyOneSystemCsp()
     {
         var run = BuildRun();
@@ -303,6 +316,32 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Contains("新页面", parsed.IndexHtml);
     }
 
+    [Theory]
+    [InlineData("other-run", null)]
+    [InlineData(null, "other-revision")]
+    public void ResultRejectsAnotherTaskOrSourceRevision(string? resultRunId, string? resultBaseRevision)
+    {
+        var run = BuildRun();
+        var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        var htmlFile = BuildFile("index.html", "<!doctype html><html><body>新页面</body></html>", "text/html");
+        var manifest = BuildManifest(resultBaseRevision ?? input.BaseRevision, htmlFile);
+        var result = new DesignWorkspacePackage(
+            DesignArtifactWorkspaceBroker.SchemaVersion,
+            resultRunId ?? run.Id,
+            resultBaseRevision ?? input.BaseRevision,
+            [htmlFile, manifest]);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(result, DesignArtifactWorkspaceContract.JsonOptions);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            DesignArtifactWorkspaceContract.ParseAndValidateResult(
+                bytes,
+                run.Id,
+                input.BaseRevision,
+                DesignArtifactWorkspaceBroker.MaxOutputBytes));
+
+        Assert.Contains("版本不匹配", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ResultRejectsManifestThatDoesNotMatchVerifiedFiles()
     {
@@ -328,8 +367,15 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Contains("清单与文件校验结果不一致", error.Message);
     }
 
-    [Fact]
-    public void ResultRejectsTraversalEvenWhenHashMatches()
+    [Theory]
+    [InlineData("/index.html")]
+    [InlineData("assets/../secret.txt")]
+    [InlineData("assets/..")]
+    [InlineData("assets/./logo.png")]
+    [InlineData("assets//logo.png")]
+    [InlineData("assets\\..\\secret.txt")]
+    [InlineData(" assets/logo.png")]
+    public void ResultRejectsNonCanonicalOrTraversalPathEvenWhenHashMatches(string path)
     {
         var run = BuildRun();
         var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
@@ -338,7 +384,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             DesignArtifactWorkspaceBroker.SchemaVersion,
             run.Id,
             input.BaseRevision,
-            [new DesignWorkspaceFile("assets/../secret.txt", Convert.ToBase64String(content), Hash(content), content.Length, "text/plain")]);
+            [new DesignWorkspaceFile(path, Convert.ToBase64String(content), Hash(content), content.Length, "text/plain")]);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(result, DesignArtifactWorkspaceContract.JsonOptions);
 
         var error = Assert.Throws<InvalidOperationException>(() =>

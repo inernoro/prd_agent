@@ -88,6 +88,13 @@ public class DesignArtifactRun
 
     public string? WorkspaceResultSha256 { get; set; }
 
+    /// <summary>结果写入后终态 CAS 失败时的待回收对象 key；先持久化再删除，避免进程中断后失去恢复线索。</summary>
+    public string? WorkspaceRejectedResultAssetKey { get; set; }
+
+    public DateTime? WorkspaceRejectedResultCleanupAttemptedAt { get; set; }
+
+    public string? WorkspaceRejectedResultCleanupError { get; set; }
+
     /// <summary>本次远程运行已通过 MAP 代理进入 LLMGW 的真实请求数。</summary>
     public int RuntimeModelCallCount { get; set; }
 

@@ -837,6 +837,12 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             return true;
         }
 
+        if (AssetStorageDeletePolicy.IsContentAddressedDesignWorkspaceMetadataKey(normalizedKey, _prefix))
+        {
+            reason = "owned_design_workspace_metadata";
+            return true;
+        }
+
         // 2) 受控删除：默认关闭；开启后仅允许 domain/type 白名单前缀
         if (!_enableSafeDelete)
         {

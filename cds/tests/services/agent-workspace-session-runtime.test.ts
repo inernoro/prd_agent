@@ -638,6 +638,50 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(shell.calls.some((call) => call.command.startsWith('docker network create'))).toBe(false);
   });
 
+  it.each([
+    '../secret.txt',
+    '/etc/passwd',
+    'knowledge/../../secret.txt',
+    'knowledge\\source.md',
+    'knowledge//source.md',
+    ' knowledge/source.md',
+    'knowledge/source.md\nignored',
+  ])('rejects non-canonical input package path %s before Docker allocation', async (filePath) => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const workspacePackage = buildPackage([
+      { path: filePath, content: 'private source', mediaType: 'text/plain' },
+    ]);
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      capabilityCacheMs: 0,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async () => new Response(workspacePackage.serialized, { status: 200 }),
+    });
+
+    await expect(runtime.create(`session-invalid-path-${digest(filePath).slice(0, 12)}`, {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: workspacePackage.sha256,
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024,
+      maxOutputBytes: 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json'],
+    }, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 30,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    })).rejects.toMatchObject<Partial<AgentWorkspaceRuntimeError>>({ code: 'workspace_package_invalid' });
+
+    expect(shell.calls.some((call) => call.command.startsWith('docker network create'))).toBe(false);
+    expect(fs.readdirSync(rootDir)).toEqual([]);
+  });
+
   it('returns bounded and credential-safe diagnostics when Docker cannot create the container', async () => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
     const workspacePackage = buildPackage([

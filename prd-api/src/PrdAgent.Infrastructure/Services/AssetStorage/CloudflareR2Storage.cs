@@ -553,6 +553,11 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             reason = "owned_generated_image";
             return true;
         }
+        if (AssetStorageDeletePolicy.IsContentAddressedDesignWorkspaceMetadataKey(normalizedKey, _prefix))
+        {
+            reason = "owned_design_workspace_metadata";
+            return true;
+        }
         if (!_enableSafeDelete) { reason = "disabled"; return false; }
         if (_safeDeleteAllowPrefixes.Length == 0) { reason = "empty_allowlist"; return false; }
 

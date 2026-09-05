@@ -111,6 +111,7 @@ public static class HostedSiteRevisionRules
     {
         var html = NormalizeGeneratedHtml(raw);
         ValidateHtml(html);
+        EnsureNoUnresolvedTemplatePlaceholders(html);
         html = ConvertRelativeKnowledgeAnchors(html);
 
         if (System.Text.RegularExpressions.Regex.IsMatch(html, @"<script\b", RegexOptions))
@@ -163,6 +164,31 @@ public static class HostedSiteRevisionRules
             return html.Insert(insertionIndex, TrustedSystemCspMeta);
         }
         return html.Insert(afterRoot, TrustedSystemCspEnvelope);
+    }
+
+    private static void EnsureNoUnresolvedTemplatePlaceholders(string html)
+    {
+        var visibleMarkup = System.Text.RegularExpressions.Regex.Replace(
+            html,
+            @"<!--[\s\S]*?-->|<style\b[^>]*>[\s\S]*?</style\s*>",
+            string.Empty,
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        var hasReplaceSentinel = System.Text.RegularExpressions.Regex.IsMatch(
+            visibleMarkup,
+            @"\[\s*replace\s*\]",
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        var hasProtectedEmailSentinel = System.Text.RegularExpressions.Regex.IsMatch(
+            visibleMarkup,
+            @"\[\s*email(?:\s|&(?:nbsp|#0*160|#x0*a0);)+protected\s*\]",
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        if (hasReplaceSentinel || hasProtectedEmailSentinel)
+        {
+            throw new InvalidOperationException(
+                "生成的页面仍包含未替换的模板占位内容，已停止保存。请明确品牌与主操作文案后重新生成；若仍出现，请改用其他可用执行器。");
+        }
     }
 
     /// <summary>

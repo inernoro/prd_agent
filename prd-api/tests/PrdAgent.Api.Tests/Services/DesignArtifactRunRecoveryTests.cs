@@ -16,6 +16,56 @@ public sealed class DesignArtifactRunRecoveryTests
 {
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task RejectedWorkspaceResultCleanup_ShouldRetryFromDurableRunState()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var firstAttempt = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("run-rejected-workspace-result", firstAttempt);
+        run.Status = RunStatuses.Error;
+        run.WorkspaceResultSha256 = new string('a', 64);
+        run.WorkspaceRejectedResultAssetKey = "web-hosting/meta/abcdefghijklmnopqrstuvwxyz.json";
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var attempts = 0;
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.DeleteByKeyAsync(run.WorkspaceRejectedResultAssetKey, CancellationToken.None))
+            .Returns(() =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                    throw new IOException("workspace cleanup unavailable");
+                return Task.CompletedTask;
+            });
+
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(
+            fixture.Db,
+            new InMemoryRunQueue(),
+            new InMemoryRunEventStore(),
+            firstAttempt,
+            CancellationToken.None,
+            workspaceStorage: storage.Object);
+        var pending = await fixture.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).FirstAsync();
+        Assert.Equal(run.WorkspaceRejectedResultAssetKey, pending.WorkspaceRejectedResultAssetKey);
+        Assert.Equal(firstAttempt, pending.WorkspaceRejectedResultCleanupAttemptedAt);
+        Assert.Contains("workspace cleanup unavailable", pending.WorkspaceRejectedResultCleanupError);
+        Assert.Equal(run.WorkspaceResultSha256, pending.WorkspaceResultSha256);
+
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(
+            fixture.Db,
+            new InMemoryRunQueue(),
+            new InMemoryRunEventStore(),
+            firstAttempt.Add(HostedSiteEditRunWorker.RecoveryInterval),
+            CancellationToken.None,
+            workspaceStorage: storage.Object);
+        var cleaned = await fixture.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).FirstAsync();
+        Assert.Null(cleaned.WorkspaceRejectedResultAssetKey);
+        Assert.Null(cleaned.WorkspaceRejectedResultCleanupAttemptedAt);
+        Assert.Null(cleaned.WorkspaceRejectedResultCleanupError);
+        Assert.Null(cleaned.WorkspaceResultSha256);
+        Assert.Equal(2, attempts);
+        storage.VerifyAll();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task FreshHeartbeat_ShouldFenceOtherInstancesAndSurviveOriginalExpiry()
     {
         await using var fixture = await RunMongoFixture.CreateAsync();
