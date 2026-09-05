@@ -309,17 +309,23 @@ public class McpConsoleController : ControllerBase
     /// 「这是不是新的」，而是「我还能给它什么」。按当前权限与当前授权做差，两种来源
     ///（平台新上的、他当初没勾的）都落进同一句话里。
     ///
-    /// 「有没有」必须用 <see cref="McpCapabilityCatalog.ScopeSatisfies"/> 判，不能拿集合直接
-    /// Contains：知识库与网页托管声明了 WriteImpliesRead，只存了 `:write` 的钥匙实际连读端点
-    /// 一起满足（闸门就是这么认的）。照字面比对会把这类钥匙报成「知识库还没开给它」，
-    /// 而同一行的能力标签正显示着知识库已授权 —— 一行之内自己跟自己打架。
+    /// 两条判据缺一不可，缺任何一条这一行都会跟它自己上半行的能力标签打架：
+    ///   1. 「有没有」用 <see cref="McpCapabilityCatalog.ScopeSatisfies"/>，不是集合直接 Contains ——
+    ///      知识库与网页托管声明了 WriteImpliesRead，只存 `:write` 的钥匙闸门认它连读一起满足；
+    ///   2. 只报**整块一点都没给**的能力（All 而不是 Any）—— 只给了读档的钥匙，那块能力是
+    ///      部分授权，标签上写着已授权，这里若因为缺写档就把整块报成「还没开给它」，就是同一行
+    ///      自己说两种话。
+    ///
+    /// 代价是：「你还可以再给它写入档」这句话现在说不出来。那要给这个字段带上档位
+    ///（read/write），是新的语义类别 —— 按 §5.5 归后续 PR，见 doc/debt.platform.md #23。
     /// </summary>
     private static List<object> MissingCapabilitiesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
     {
         var held = (key.Scopes ?? new List<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return McpCapabilityCatalog.All
-            .Where(cap => cap.AllScopes().Any(s =>
-                ScopeAvailable(s, ownedPermissions) && !McpCapabilityCatalog.ScopeSatisfies(held, s)))
+            .Where(cap => cap.AllScopes().Any(s => ScopeAvailable(s, ownedPermissions))
+                          && cap.AllScopes().All(s =>
+                              !ScopeAvailable(s, ownedPermissions) || !McpCapabilityCatalog.ScopeSatisfies(held, s)))
             .Select(cap => (object)new { key = cap.Key, title = cap.Title })
             .ToList();
     }

@@ -26,7 +26,7 @@ import { QuotaEditorDialog } from './QuotaEditorDialog';
 import { RevokeClientDialog } from './RevokeClientDialog';
 import { copyToClipboard } from './clipboard';
 import { capabilityVisual } from './capabilityRegistry';
-import { buildHeadline, todayTotals, type TodayMetric } from './headline';
+import { buildHeadline } from './headline';
 import { grantableTool, grantableToolCount } from './scopePlan';
 
 /**
@@ -95,10 +95,6 @@ export default function McpConsolePage() {
 
   const clients = useMemo(() => overview?.clients ?? [], [overview]);
   const capabilities = useMemo(() => overview?.capabilities ?? [], [overview]);
-  const totals = useMemo(
-    () => todayTotals({ today: overview?.today ?? null, clients }),
-    [overview, clients],
-  );
   const headline = useMemo(
     () =>
       buildHeadline({
@@ -243,10 +239,13 @@ export default function McpConsolePage() {
             {headline.detail}
           </div>
         </div>
-        {/* 两个数怎么算见 todayTotals：已用取服务端权威合计，上限只按还能用的密钥算。
-            在这里就地求和过一次，撤销密钥当天会让它跟旁边那句判断自相矛盾。 */}
-        <StripMetric label="今天出图" metric={totals.images} unit="张" />
-        <StripMetric label="今天写入" metric={totals.writes} unit="次" />
+        {/* 这里**不再**放「今天出图 X / Y」这种合计条。
+            用量的分子（服务端权威合计，含当天被撤销的密钥）与额度的分母（只有还在的密钥才有额度）
+            天然来自两拨不同的密钥，凑成一个比值怎么摆都会在某个边界上说谎：
+            连续三轮 Review 各挑出一种（0/0、50/50 满格、撤销后自相矛盾），每次都只是换个说法。
+            真正要的两件事本来就各有归处 —— 总量在左边那句判断里（与 today 同源），
+            每把钥匙自己的用量与上限在下面各自那一行（分子分母同一把钥匙，没有混人口的问题）。
+            合计余量本身也不可行动：额度是按密钥算的，加起来那个数谁也用不上。 */}
       </div>
 
       {tab === 'calls' ? (
@@ -670,34 +669,6 @@ function PlatformCapabilityBar({ capabilities }: { capabilities: McpCapabilityDt
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function StripMetric({ label, metric, unit }: { label: string; metric: TodayMetric; unit: string }) {
-  const { used, quota } = metric;
-  const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
-  return (
-    <div className="flex w-[132px] shrink-0 flex-col gap-1.5">
-      <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
-        {label}
-      </span>
-      <span className="flex items-baseline gap-1">
-        <b className="text-[19px] font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>
-          {used}
-        </b>
-        {/* 还在的密钥一把都没有时（都断开了），没有「还剩多少」可言 ——
-            写「/ 0」会读成「额度是零」，而用掉的那些是断开之前真实发生的。 */}
-        <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-          {quota > 0 ? `/ ${quota} ${unit}` : `${unit} · 已断开的密钥用的`}
-        </span>
-      </span>
-      <span className="h-1 overflow-hidden rounded-full" style={{ background: 'var(--nested-block-bg)' }}>
-        <span
-          className="block h-full rounded-full transition-[width] duration-500"
-          style={{ width: `${pct}%`, background: 'var(--accent-primary)' }}
-        />
-      </span>
     </div>
   );
 }

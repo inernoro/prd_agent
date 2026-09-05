@@ -129,6 +129,10 @@ public class AgentApiKeyScopeModeTests
             customMessage: "「你还能给它什么」没走 ScopeSatisfies —— 只存 :write 的钥匙会被报成缺了读的那半");
         body.ShouldNotContain("held.Contains",
             customMessage: "拿集合直接比对会漏掉写蕴含读，这正是它上一版的毛病");
+        // 只报「整块一点都没给」的能力。按 Any 判（缺任何一档就报整块）会让同一行自己说两种话：
+        // 上半行标签写着网页托管已授权，下半行说它还没开给这台客户端。
+        body.ShouldContain(".All(",
+            customMessage: "没有「整块都没给才报」这一层，部分授权的能力会被报成整块未授权，与同一行的标签矛盾");
     }
 
     [Fact]

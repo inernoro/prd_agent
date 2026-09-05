@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildHeadline, todayTotals, type HeadlineInput } from '../headline';
+import { buildHeadline, type HeadlineInput } from '../headline';
 import type { McpCallLogDto, McpClientDto } from '@/services/contracts/mcpConsole';
 
 function client(over: Partial<McpClientDto> = {}): McpClientDto {
@@ -120,38 +120,5 @@ describe('接入台第一屏那句判断', () => {
       expect(h.verdict).toMatch(/\d/);
       expect(h.verdict).not.toMatch(/一切正常|整体表现良好|运行良好|状态良好/);
     }
-  });
-});
-
-describe('结论条右侧那两个数', () => {
-  it('已用取服务端权威合计，不按 clients 求和', () => {
-    // 事故形状：密钥今天用掉 12 张图之后被撤销，它就不在 clients 里了 ——
-    // 按 clients 求和会得出「0 / 0」，而旁边那句判断正说着它今天调了 47 次。
-    const totals = todayTotals({
-      today: today({ calls: 47, images: 12, writes: 9 }),
-      clients: [],
-    });
-    expect(totals.images.used).toBe(12);
-    expect(totals.writes.used).toBe(9);
-  });
-
-  it('上限只算还能用的密钥 —— 断开的那把不会再消耗任何东西', () => {
-    const totals = todayTotals({
-      today: today({ images: 12 }),
-      clients: [
-        client({ isActive: true, dailyImageQuota: 50, dailyWriteQuota: 200 }),
-        client({ keyId: 'k2', isActive: false, dailyImageQuota: 50, dailyWriteQuota: 200 }),
-      ],
-    });
-    expect(totals.images.quota).toBe(50);
-    expect(totals.writes.quota).toBe(200);
-  });
-
-  it('一把能用的都没有时上限是 0，但已用数照实给', () => {
-    const totals = todayTotals({
-      today: today({ images: 12 }),
-      clients: [client({ isActive: false })],
-    });
-    expect(totals.images).toEqual({ used: 12, quota: 0 });
   });
 });

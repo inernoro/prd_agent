@@ -12,13 +12,6 @@ export interface HeadlineInput {
   recentCalls: McpCallLogDto[];
 }
 
-export interface TodayMetric {
-  /** 今天已经用掉多少 —— 取服务端那份权威合计 */
-  used: number;
-  /** 还在的密钥加起来的上限；一把可用密钥都没有时是 0 */
-  quota: number;
-}
-
 export interface Headline {
   /** 判断句：一句话说清「现在什么情况」，每句都挂着真实数字 */
   verdict: string;
@@ -102,33 +95,4 @@ function formatClock(iso?: string): string | null {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-}
-
-
-/**
- * 结论条右侧那两个数。
- *
- * 已用数**只能**取服务端的权威合计（`today.images` / `today.writes`），不许按 clients 求和：
- * 今天用过额度、随后被撤销或硬删的密钥不在 clients 里，它的用量却算在 today 里 ——
- * 按 clients 求和会得出 0，而旁边那句判断正说着这把密钥今天调了多少次。
- * 同一屏两个数字自己跟自己打架，是这块面板最不该有的毛病。
- *
- * 上限只能按**还能用的**密钥算：撤销/过期的那几把不会再消耗任何东西，
- * 把它们的额度算进「还剩多少」等于告诉用户一个他其实用不到的余量。
- */
-export function todayTotals({
-  today,
-  clients,
-}: Pick<HeadlineInput, 'today' | 'clients'>): { images: TodayMetric; writes: TodayMetric } {
-  const usable = clients.filter((c) => c.isActive);
-  return {
-    images: {
-      used: today?.images ?? 0,
-      quota: usable.reduce((n, c) => n + c.dailyImageQuota, 0),
-    },
-    writes: {
-      used: today?.writes ?? 0,
-      quota: usable.reduce((n, c) => n + c.dailyWriteQuota, 0),
-    },
-  };
 }
