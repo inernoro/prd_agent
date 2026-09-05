@@ -37,7 +37,15 @@ export interface McpClientDto {
   keyId: string;
   name: string;
   keyPrefix: string;
+  /** 它此刻实际拿得到的能力。自动模式是服务端现算的，不是库里存的那份（存的是空） */
   scopes: string[];
+  /** auto = 跟着主人的权限走，平台新增的能力自动进来；manual = 按当初存的清单钉死 */
+  scopeMode: 'auto' | 'manual';
+  /**
+   * 你自己有、但没开给这台客户端的能力。只有手动模式才可能非空 ——
+   * 这正是「用户知道、钥匙没权限」：告诉他还能给什么，但不替他给。
+   */
+  missingCapabilities: Array<{ key: string; title: string }>;
   isActive: boolean;
   expiresAt?: string | null;
   lastUsedAt?: string | null;

@@ -22,6 +22,8 @@ export interface AgentApiKeyDto {
   /** 前 12 字符明文，仅用于展示（如 `sk-ak-abc12345`） */
   keyPrefix: string;
   scopes: string[];
+  /** auto = 能力跟着主人的权限走，不存清单；manual = 按存的这份清单钉死 */
+  scopeMode: 'auto' | 'manual';
   isActive: boolean;
   createdAt: string;
   expiresAt?: string | null;
@@ -42,8 +44,14 @@ export type ListAgentApiKeysContract = () => Promise<
 export type CreateAgentApiKeyContract = (input: {
   name: string;
   description?: string;
+  /** 自动模式下传什么都会被服务端忽略（它不存清单） */
   scopes: string[];
   ttlDays?: number;
+  /**
+   * 缺省 = manual，跟老路径（密钥管理页）语义一致。
+   * 接入台默认走 'auto'：用户没动过高级设置，能力就跟着他的权限走。
+   */
+  scopeMode?: 'auto' | 'manual';
 }) => Promise<
   ApiResponse<{
     item: AgentApiKeyDto;
@@ -58,6 +66,8 @@ export type UpdateAgentApiKeyContract = (input: {
   name?: string;
   description?: string;
   scopes?: string[];
+  /** 显式切模式。不传时：**存了 scopes 就自动钉成 manual**（存清单那一刻就是动过高级设置那一刻） */
+  scopeMode?: 'auto' | 'manual';
   isActive?: boolean;
   /** 接入台配额上限（每日生图张数，1-500） */
   mcpDailyImageQuota?: number;

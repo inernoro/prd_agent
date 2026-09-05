@@ -1,21 +1,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, KeyRound, Plug, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
+import {
+  Activity,
+  Check,
+  CircleSlash,
+  Link2,
+  Plug,
+  Plus,
+  Power,
+  RefreshCw,
+  ShieldCheck,
+  Sliders,
+} from 'lucide-react';
 import { PrdLoader } from '@/components/ui/PrdLoader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { getMcpConsoleOverview } from '@/services';
-import type { McpCapabilityDto, McpClientDto, McpConsoleOverviewDto } from '@/services/contracts/mcpConsole';
+import type {
+  McpCapabilityDto,
+  McpClientDto,
+  McpConsoleOverviewDto,
+} from '@/services/contracts/mcpConsole';
 import { toast } from '@/lib/toast';
 import { ConnectAgentDialog } from './ConnectAgentDialog';
 import { McpCallsPanel } from './McpCallsPanel';
 import { QuotaEditorDialog } from './QuotaEditorDialog';
 import { RevokeClientDialog } from './RevokeClientDialog';
 import { copyToClipboard } from './clipboard';
+import { capabilityVisual } from './capabilityRegistry';
+import { buildHeadline } from './headline';
 
 /**
  * 智能体接入台。
  *
  * 一页回答三件事：我授权了什么、连着哪几台客户端、它们刚才做了什么。
  * 授权与配额都是服务端权威，这里只做展示与入口，不在前端复算。
+ *
+ * 第一屏是**一句挂着数字的判断**，不是一排让人自己算的指标（conclusion-before-numbers）：
+ * 「2 台客户端今天调了 47 次，其中 1 次没成」比四个孤零零的大数有用得多。
  */
 export default function McpConsolePage() {
   const [overview, setOverview] = useState<McpConsoleOverviewDto | null>(null);
@@ -72,9 +92,16 @@ export default function McpConsolePage() {
     void load();
   }, [load]);
 
-  const onlineClients = useMemo(
-    () => (overview?.clients ?? []).filter((c) => c.isActive).length,
-    [overview],
+  const clients = useMemo(() => overview?.clients ?? [], [overview]);
+  const capabilities = useMemo(() => overview?.capabilities ?? [], [overview]);
+  const headline = useMemo(
+    () =>
+      buildHeadline({
+        clients,
+        today: overview?.today ?? null,
+        recentCalls: overview?.recentCalls ?? [],
+      }),
+    [clients, overview],
   );
 
   if (loading) {
@@ -102,10 +129,7 @@ export default function McpConsolePage() {
           disabled={refreshing}
           onClick={() => void refresh()}
           className="rounded-[8px] px-3.5 py-1.5 text-[12.5px] font-medium disabled:opacity-60"
-          style={{
-            background: 'var(--accent-primary)',
-            color: 'var(--accent-on-solid)',
-          }}
+          style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }}
         >
           {refreshing ? '正在重试…' : '重试'}
         </button>
@@ -117,36 +141,39 @@ export default function McpConsolePage() {
     // 手机端不再自己加左右 padding：外层 gutter 由 AppShell 统一给（--mobile-padding，
     // ≤479px 8px / 其余 10px）。再叠一层 16px 的话，375 宽下外边距变成 24px，
     // 卡片自己的 padding 还要再吃一层——正是密度规则点名禁止的三层叠加。
-    <div className="flex h-full min-h-0 flex-col gap-4 py-3 md:p-6">
-      {/* 顶栏 */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center gap-2.5">
-            <Plug size={19} style={{ color: 'var(--accent-primary)' }} aria-hidden />
-            <h1 className="text-[19px] font-bold" style={{ color: 'var(--text-primary)' }}>
-              智能体接入台
-            </h1>
-            <span
-              className="flex items-center gap-1.5 rounded-full px-2.5 py-[3px] text-[11px] font-semibold"
-              style={{
-                background: 'var(--semantic-success-soft)',
-                border: '1px solid var(--semantic-success-border)',
-                color: 'var(--semantic-success-text)',
-              }}
-            >
-              <span
-                className="block h-1.5 w-1.5 rounded-full"
-                style={{ background: 'var(--semantic-success-text)' }}
-              />
-              {onlineClients} 台客户端已授权
-            </span>
-          </div>
-          <p className="text-[13px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            把这个平台接进你的智能体（Claude Code、Codex 等），它就能替你生图、写稿、整理知识库、把网页托管出来。
-            今天它调用了 <b style={{ color: 'var(--text-primary)' }}>{overview?.today.calls ?? 0}</b> 次。
-          </p>
+    <div className="flex h-full min-h-0 flex-col gap-3.5 py-3 md:p-6">
+      {/* 页头：标题、切页、动作挤在一行，把纵向留给内容 */}
+      <div className="flex flex-wrap items-center gap-3">
+        <Plug size={19} style={{ color: 'var(--accent-primary)' }} aria-hidden />
+        <h1 className="text-[18px] font-bold" style={{ color: 'var(--text-primary)' }}>
+          智能体接入台
+        </h1>
+        <div className="flex gap-1 rounded-[10px] p-1" style={{ background: 'var(--tab-container-bg)' }}>
+          {([
+            { key: 'overview' as const, label: '能力与客户端', icon: ShieldCheck },
+            { key: 'calls' as const, label: '它干了什么', icon: Activity },
+          ]).map((item) => {
+            const Icon = item.icon;
+            const active = tab === item.key;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setTab(item.key)}
+                className="flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-[12.5px] font-medium transition-colors"
+                style={
+                  active
+                    ? { background: 'var(--bg-card)', color: 'var(--text-primary)' }
+                    : { background: 'transparent', color: 'var(--text-muted)' }
+                }
+              >
+                <Icon size={14} aria-hidden />
+                {item.label}
+              </button>
+            );
+          })}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2">
           <button
             type="button"
             disabled={refreshing}
@@ -171,7 +198,7 @@ export default function McpConsolePage() {
             style={{ background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }}
           >
             <Plus size={15} aria-hidden />
-            连接新客户端
+            接入新的
           </button>
         </div>
       </div>
@@ -198,160 +225,68 @@ export default function McpConsolePage() {
         </div>
       ) : null}
 
-      {/* tab */}
+      {/* 结论条：先给判断，再给数字 */}
       <div
-        className="flex w-fit gap-1 rounded-[11px] p-1"
-        style={{ background: 'var(--nested-block-bg)' }}
+        className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-[14px] px-4 py-3.5"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
       >
-        {([
-          { key: 'overview' as const, label: '能力与客户端', icon: ShieldCheck },
-          { key: 'calls' as const, label: '调用记录', icon: Activity },
-        ]).map((item) => {
-          const Icon = item.icon;
-          const active = tab === item.key;
-          return (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => setTab(item.key)}
-              className="flex items-center gap-2 rounded-[9px] px-3.5 py-1.5 text-[12.5px] font-medium transition-colors"
-              style={
-                active
-                  ? { background: 'var(--bg-card)', color: 'var(--text-primary)' }
-                  : { background: 'transparent', color: 'var(--text-muted)' }
-              }
-            >
-              <Icon size={14} aria-hidden />
-              {item.label}
-            </button>
-          );
-        })}
+        <div className="flex min-w-[260px] flex-1 flex-col gap-1">
+          <div className="text-[14px] font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>
+            {headline.verdict}
+          </div>
+          <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+            {headline.detail}
+          </div>
+        </div>
+        <StripMetric
+          label="今天出图"
+          used={clients.reduce((n, c) => n + c.todayImages, 0)}
+          quota={clients.reduce((n, c) => n + c.dailyImageQuota, 0)}
+          unit="张"
+        />
+        <StripMetric
+          label="今天写入"
+          used={clients.reduce((n, c) => n + c.todayWrites, 0)}
+          quota={clients.reduce((n, c) => n + c.dailyWriteQuota, 0)}
+          unit="次"
+        />
       </div>
 
       {tab === 'calls' ? (
-        <McpCallsPanel clients={overview?.clients ?? []} refreshToken={refreshToken} />
+        <McpCallsPanel clients={clients} refreshToken={refreshToken} />
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-          {/* 能力清单：自己撑高自己滚，不把整页顶出去 */}
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          {/* 左：客户端 + 平台开放了什么 */}
           <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-0.5">
-            <div className="flex items-baseline justify-between">
-              <h2 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                它能替我做什么
+            <div className="flex items-baseline gap-2">
+              <h2 className="text-[13.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                连着的客户端
               </h2>
               <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                没勾的能力，在智能体那边根本看不到
+                一台一把钥匙，断哪台都不影响别的
               </span>
             </div>
-            <div className="flex flex-col gap-2.5">
-              {(overview?.capabilities ?? []).map((cap) => (
-                <CapabilityRow key={cap.key} capability={cap} />
-              ))}
-            </div>
+
+            {clients.length === 0 ? (
+              <EmptyHint text="还没有客户端接进来。点右上角「接入新的」，起个名字复制一段配置就完事，两分钟就能连上。" />
+            ) : (
+              clients.map((client) => (
+                <ClientRow
+                  key={client.keyId}
+                  client={client}
+                  capabilities={capabilities}
+                  onRevoke={() => setRevokeTarget(client)}
+                  onEditQuota={() => setQuotaTarget(client)}
+                />
+              ))
+            )}
+
+            <PlatformCapabilityBar capabilities={capabilities} />
           </div>
 
-          {/* 右列 */}
+          {/* 右：连接地址 + 去哪看 */}
           <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-0.5">
-            <SectionCard title="连着的客户端" hint="一台一把钥匙">
-              {(overview?.clients ?? []).length === 0 ? (
-                <EmptyHint text="还没有客户端接进来。点右上角「连接新客户端」，两分钟就能连上。" />
-              ) : (
-                (overview?.clients ?? []).map((client) => (
-                  <div
-                    key={client.keyId}
-                    className="flex items-center gap-2.5 rounded-[11px] px-3 py-2.5"
-                    style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-faint)' }}
-                  >
-                    <span
-                      className="block h-2 w-2 shrink-0 rounded-full"
-                      style={{
-                        background: client.isActive
-                          ? 'var(--semantic-success-text)'
-                          : 'var(--text-disabled)',
-                      }}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <span
-                        className="truncate text-[12.5px] font-semibold"
-                        style={{ color: 'var(--text-primary)' }}
-                      >
-                        {client.name}
-                      </span>
-                      <span className="truncate text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
-                        {client.keyPrefix}…
-                        {client.lastUsedAt ? (
-                          <>
-                            {' · '}
-                            <RelativeTime value={client.lastUsedAt} />
-                            活跃
-                          </>
-                        ) : (
-                          ' · 还没用过'
-                        )}
-                      </span>
-                    </div>
-                    <span
-                      className="shrink-0 text-[12px] font-semibold tabular-nums"
-                      style={{ color: 'var(--text-secondary)' }}
-                    >
-                      {client.todayCalls}
-                    </span>
-                    {/* 钥匙泄露、或者这台客户端不用了，得能在**这里**当场断掉。
-                        从接入台进来的用户根本不知道另有一个密钥管理页，找不到就只能眼看着
-                        一把带写入和花钱权限的钥匙活到 90 天期满。所以断的入口就放在
-                        「这台客户端」这一行上，不让用户去别处找。 */}
-                    {client.isActive && (
-                      <button
-                        type="button"
-                        onClick={() => setRevokeTarget(client)}
-                        className="shrink-0 cursor-pointer text-[11px] font-medium"
-                        style={{ color: 'var(--semantic-danger-text)' }}
-                        title="立刻作废这把钥匙，这台客户端马上就调不动了"
-                      >
-                        断开
-                      </button>
-                    )}
-                  </div>
-                ))
-              )}
-            </SectionCard>
-
-            <SectionCard title="今日额度" hint="按 UTC 自然日切">
-              {(overview?.clients ?? []).length === 0 ? (
-                <EmptyHint text="接入客户端后，这里会显示它今天用掉多少。" />
-              ) : (
-                (overview?.clients ?? []).map((client) => (
-                  <div key={client.keyId} className="flex flex-col gap-2">
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-                        {client.name}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setQuotaTarget(client)}
-                        className="text-[11px] font-medium"
-                        style={{ color: 'var(--accent-primary)' }}
-                      >
-                        调整上限
-                      </button>
-                    </div>
-                    <QuotaBar
-                      label="生图"
-                      used={client.todayImages}
-                      quota={client.dailyImageQuota}
-                      unit="张"
-                    />
-                    <QuotaBar
-                      label="写入类动作"
-                      used={client.todayWrites}
-                      quota={client.dailyWriteQuota}
-                      unit="次"
-                    />
-                  </div>
-                ))
-              )}
-            </SectionCard>
-
-            <SectionCard title="连接地址" hint="填进客户端的就是它">
+            <SectionCard title="连接地址" icon={Link2}>
               <code
                 className="block break-all rounded-[9px] px-2.5 py-2 text-[11px]"
                 style={{
@@ -361,12 +296,12 @@ export default function McpConsolePage() {
                   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
                 }}
               >
-                {overview?.endpointUrl ?? ''}
+                {overview.endpointUrl}
               </code>
               <button
                 type="button"
                 onClick={async () => {
-                  if (!overview?.endpointUrl) return;
+                  if (!overview.endpointUrl) return;
                   // 必须等它真的写进去：剪贴板不可用时报「已复制」，用户会拿一份旧内容
                   // 去粘贴进客户端配置，然后对着连不上的连接器排查半天。
                   if (await copyToClipboard(overview.endpointUrl)) toast.success('地址已复制');
@@ -379,9 +314,25 @@ export default function McpConsolePage() {
                   color: 'var(--text-secondary)',
                 }}
               >
-                <KeyRound size={13} aria-hidden />
+                <Check size={13} aria-hidden />
                 复制地址
               </button>
+              <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                已经接过的客户端不用改；新接一台走上面的「接入新的」，配置连钥匙一起给你。
+              </p>
+            </SectionCard>
+
+            <SectionCard title="出了问题去哪看">
+              <p className="text-[11.5px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                切到上面的
+                <b style={{ color: 'var(--text-secondary)' }}>「它干了什么」</b>
+                看每一次调用：谁、做了什么、成没成、产出在哪。
+              </p>
+              <p className="text-[11.5px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                钥匙泄露了就在左边那一行点
+                <b style={{ color: 'var(--semantic-danger-text)' }}>「断开」</b>
+                ，立刻失效，它做过的事和记录仍然留着。
+              </p>
             </SectionCard>
           </div>
         </div>
@@ -408,101 +359,284 @@ export default function McpConsolePage() {
       <ConnectAgentDialog
         open={connectOpen}
         onOpenChange={setConnectOpen}
-        capabilities={overview?.capabilities ?? []}
-        endpointUrl={overview?.endpointUrl ?? ''}
+        capabilities={capabilities}
+        endpointUrl={overview.endpointUrl}
         onCreated={() => void load()}
       />
     </div>
   );
 }
 
-function CapabilityRow({ capability }: { capability: McpCapabilityDto }) {
-  const [expanded, setExpanded] = useState(false);
-  const granted = capability.granted;
+/**
+ * 客户端一行。
+ *
+ * 这一行上有两类东西，视觉上必须分得开（上一版把它们画成一排大小不一的按钮，
+ * 读者分不清哪个能点）：
+ *   - **说明**：它能做什么 —— 无边框、图标 + 文字、统一 24px，不可点；
+ *   - **动作**：断开 / 调整上限 —— 32px、有边框，中间隔一道竖线。
+ */
+function ClientRow({
+  client,
+  capabilities,
+  onRevoke,
+  onEditQuota,
+}: {
+  client: McpClientDto;
+  capabilities: McpCapabilityDto[];
+  onRevoke: () => void;
+  onEditQuota: () => void;
+}) {
+  const held = useMemo(() => new Set((client.scopes ?? []).map((s) => s.toLowerCase())), [client.scopes]);
+  // 灰度期间新旧后端会同时在跑（分支预览共用一个前端构建），旧的那版不回这个字段。
+  // 直接 .length 会白屏 —— 一整页因为一个还没上线的字段消失，比少显示一行提示糟得多。
+  const missing = client.missingCapabilities ?? [];
+  const granted = capabilities.filter(
+    (cap) =>
+      (cap.readScope && held.has(cap.readScope.toLowerCase())) ||
+      (cap.writeScope && held.has(cap.writeScope.toLowerCase())),
+  );
+
   return (
     <div
-      className="flex flex-col gap-2.5 rounded-[14px] px-4 py-3.5"
+      className="flex flex-col gap-2.5 rounded-[13px] px-3.5 py-3"
       style={{
         background: 'var(--bg-card)',
-        border: granted ? '1px solid var(--border-subtle)' : '1px dashed var(--border-default)',
+        border: '1px solid var(--border-subtle)',
+        opacity: client.isActive ? 1 : 0.7,
       }}
     >
-      <div className="flex flex-wrap items-center gap-2.5">
-        <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-          {capability.title}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <span
+          className="block h-2 w-2 shrink-0 rounded-full"
+          style={{
+            background: client.isActive ? 'var(--semantic-success-text)' : 'var(--text-disabled)',
+          }}
+        />
+        <span className="text-[13.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          {client.name}
+        </span>
+        <code
+          className="text-[10.5px]"
+          style={{
+            color: 'var(--text-muted)',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          }}
+        >
+          {client.keyPrefix}…
+        </code>
+        <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+          {client.isActive ? (
+            client.lastUsedAt ? (
+              <>
+                最后活跃 <RelativeTime value={client.lastUsedAt} />
+              </>
+            ) : (
+              '还没用过'
+            )
+          ) : (
+            '钥匙已作废，它做过的事和调用记录仍然留着'
+          )}
         </span>
         <span
-          className="rounded-[6px] px-1.5 py-0.5 text-[10px] font-semibold"
-          style={
-            granted
-              ? {
-                  background: 'var(--semantic-success-soft)',
-                  border: '1px solid var(--semantic-success-border)',
-                  color: 'var(--semantic-success-text)',
-                }
-              : {
-                  background: 'var(--nested-block-bg)',
-                  border: '1px solid var(--border-faint)',
-                  color: 'var(--text-muted)',
-                }
-          }
+          className="ml-auto text-[12px] font-semibold tabular-nums"
+          style={{ color: 'var(--text-secondary)' }}
         >
-          {granted ? `已授权 ${capability.tools.filter((t) => t.granted).length} 个工具` : '未授权'}
+          今天 {client.todayCalls} 次
         </span>
-        {!capability.availableToMe && (
-          <span className="text-[11px]" style={{ color: 'var(--semantic-warning-text)' }}>
-            你自己还没有这块权限，需要先找管理员开通
+      </div>
+
+      {/* 说明区与动作区：中间隔一道竖线，别读成同一排按钮 */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <span className="text-[10.5px] font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+            它能做什么
           </span>
-        )}
-        {capability.todayCalls > 0 && (
-          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            今天 {capability.todayCalls} 次
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            {granted.length === 0 ? (
+              <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+                这把钥匙现在一块能力也拿不到
+              </span>
+            ) : (
+              granted.map((cap) => {
+                const v = capabilityVisual(cap.key);
+                const Icon = v.icon;
+                const readOnly = !!cap.readScope && !(cap.writeScope && held.has(cap.writeScope.toLowerCase()));
+                return (
+                  <span
+                    key={cap.key}
+                    className="flex h-6 items-center gap-1.5 text-[11.5px]"
+                    style={{ color: v.text }}
+                  >
+                    <Icon size={13} aria-hidden />
+                    {cap.title}
+                    {readOnly && (
+                      <span style={{ color: 'var(--text-muted)' }}>· 只能看</span>
+                    )}
+                  </span>
+                );
+              })
+            )}
+          </div>
+          {/* 自动 / 手动：这块必须写出来 —— 两者在「平台以后新上一块能力」时行为完全不同 */}
+          <span className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+            {client.scopeMode === 'auto'
+              ? '跟着你的权限走：以后平台新上一块能力，它自动就有；你被收回的权限它也立刻跟着没。'
+              : missing.length > 0
+                ? `按当初那份清单钉死。你自己还有${missing.map((c) => c.title).join('、')}没开给它 —— 到密钥管理里把这块加给它，或者重新接一台（不改高级设置就是跟着权限走）。`
+                : '按当初那份清单钉死：以后平台新上的能力不会自动进来。'}
           </span>
-        )}
+        </div>
+
+        <span className="hidden h-9 w-px shrink-0 sm:block" style={{ background: 'var(--border-subtle)' }} />
+
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onEditQuota}
+            className="flex h-8 items-center gap-1.5 rounded-[9px] px-2.5 text-[12px] font-medium"
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            <Sliders size={13} aria-hidden />
+            调整上限
+          </button>
+          {/* 钥匙泄露、或者这台客户端不用了，得能在**这里**当场断掉。
+              从接入台进来的用户根本不知道另有一个密钥管理页，找不到就只能眼看着
+              一把带写入和花钱权限的钥匙活到 90 天期满。 */}
+          {client.isActive && (
+            <button
+              type="button"
+              onClick={onRevoke}
+              className="flex h-8 items-center gap-1.5 rounded-[9px] px-2.5 text-[12px] font-medium"
+              style={{
+                background: 'var(--button-danger-bg)',
+                border: '1px solid var(--button-danger-border)',
+                color: 'var(--button-danger-fg)',
+              }}
+              title="立刻作废这把钥匙，这台客户端马上就调不动了"
+            >
+              <Power size={13} aria-hidden />
+              断开
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-x-5 gap-y-2">
+        <QuotaBar label="生图" used={client.todayImages} quota={client.dailyImageQuota} unit="张" />
+        <QuotaBar label="写入类动作" used={client.todayWrites} quota={client.dailyWriteQuota} unit="次" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 平台一共开放了什么 —— 一条紧凑的能力条，不再是五张要人逐张读的大卡。
+ *
+ * 用户已经不用在这里做选择了（选择收进了接入弹窗的高级设置），所以它退回成一句说明：
+ * 平台有这么几块、各挂着几个工具、哪块你还没权限。想看具体工具名的人点「看清单」。
+ */
+function PlatformCapabilityBar({ capabilities }: { capabilities: McpCapabilityDto[] }) {
+  const [open, setOpen] = useState(false);
+  const totalTools = capabilities
+    .filter((c) => c.availableToMe)
+    .reduce((n, c) => n + c.tools.length, 0);
+
+  return (
+    <div
+      className="flex flex-col gap-2.5 rounded-[13px] px-3.5 py-3"
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[12.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          平台开放了什么
+        </span>
+        <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+          你能给出去的共 <b style={{ color: 'var(--text-secondary)' }}>{totalTools}</b> 个工具
+        </span>
         <button
           type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="ml-auto text-[11.5px] font-medium"
-          style={{ color: 'var(--accent-primary)' }}
+          onClick={() => setOpen((v) => !v)}
+          className="ml-auto h-7 rounded-[8px] px-2.5 text-[11.5px] font-medium"
+          style={{
+            background: 'var(--bg-sunken)',
+            border: '1px solid var(--border-subtle)',
+            color: 'var(--text-secondary)',
+          }}
         >
-          {expanded ? '收起工具' : `看这 ${capability.tools.length} 个工具`}
+          {open ? '收起清单' : '看清单'}
         </button>
       </div>
-      <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-        {capability.summary}
-      </p>
-      {expanded && (
-        <div className="flex flex-col gap-1.5">
-          {capability.tools.map((tool) => (
-            <div
-              key={tool.name}
-              className="flex flex-wrap items-baseline gap-2 rounded-[9px] px-2.5 py-2"
-              style={{ background: 'var(--bg-sunken)' }}
+
+      <div className="flex flex-wrap gap-1.5">
+        {capabilities.map((cap) => {
+          const v = capabilityVisual(cap.key);
+          const Icon = v.icon;
+          const usable = cap.availableToMe;
+          return (
+            <span
+              key={cap.key}
+              className="flex h-[24px] items-center gap-1.5 rounded-full px-2.5 text-[11px]"
+              style={
+                usable
+                  ? { background: v.soft, border: `1px solid ${v.border}`, color: v.text }
+                  : {
+                      background: 'var(--semantic-neutral-soft)',
+                      border: '1px solid var(--semantic-neutral-border)',
+                      color: 'var(--text-muted)',
+                    }
+              }
             >
-              <code
-                className="text-[11px]"
-                style={{
-                  color: tool.granted ? 'var(--text-primary)' : 'var(--text-disabled)',
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                }}
-              >
-                {tool.name}
-              </code>
-              {tool.isWrite && (
-                <span
-                  className="rounded-[5px] px-1.5 py-[1px] text-[10px]"
-                  style={{
-                    background: 'var(--semantic-orange-soft)',
-                    border: '1px solid var(--semantic-orange-border)',
-                    color: 'var(--semantic-warning-text)',
-                  }}
-                >
-                  写入
-                </span>
-              )}
-              <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
-                {tool.description}
+              {usable ? <Icon size={11} aria-hidden /> : <CircleSlash size={11} aria-hidden />}
+              {cap.title} {cap.tools.length}
+              {!usable && ' · 你还没这块权限'}
+            </span>
+          );
+        })}
+      </div>
+
+      {open && (
+        <div className="flex flex-col gap-2">
+          {capabilities.map((cap) => (
+            <div key={cap.key} className="flex flex-col gap-1.5">
+              <span className="text-[11.5px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                {cap.title} · {cap.summary}
               </span>
+              {cap.tools.map((tool) => (
+                <div
+                  key={tool.name}
+                  className="flex flex-wrap items-baseline gap-2 rounded-[8px] px-2.5 py-1.5"
+                  style={{ background: 'var(--bg-sunken)' }}
+                >
+                  <code
+                    className="text-[11px]"
+                    style={{
+                      color: tool.granted ? 'var(--text-primary)' : 'var(--text-disabled)',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                    }}
+                  >
+                    {tool.name}
+                  </code>
+                  {tool.isWrite && (
+                    <span
+                      className="rounded-[5px] px-1.5 py-[1px] text-[10px]"
+                      style={{
+                        background: 'var(--semantic-orange-soft)',
+                        border: '1px solid var(--semantic-orange-border)',
+                        color: 'var(--semantic-warning-text)',
+                      }}
+                    >
+                      写入
+                    </span>
+                  )}
+                  <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+                    {tool.description}
+                  </span>
+                </div>
+              ))}
             </div>
           ))}
         </div>
@@ -511,30 +645,59 @@ function CapabilityRow({ capability }: { capability: McpCapabilityDto }) {
   );
 }
 
+function StripMetric({
+  label,
+  used,
+  quota,
+  unit,
+}: {
+  label: string;
+  used: number;
+  quota: number;
+  unit: string;
+}) {
+  const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
+  return (
+    <div className="flex w-[122px] shrink-0 flex-col gap-1.5">
+      <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
+        {label}
+      </span>
+      <span className="flex items-baseline gap-1">
+        <b className="text-[19px] font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>
+          {used}
+        </b>
+        <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          / {quota} {unit}
+        </span>
+      </span>
+      <span className="h-1 overflow-hidden rounded-full" style={{ background: 'var(--nested-block-bg)' }}>
+        <span
+          className="block h-full rounded-full transition-[width] duration-500"
+          style={{ width: `${pct}%`, background: 'var(--accent-primary)' }}
+        />
+      </span>
+    </div>
+  );
+}
+
 function SectionCard({
   title,
-  hint,
+  icon: Icon,
   children,
 }: {
   title: string;
-  hint?: string;
+  icon?: typeof Link2;
   children: React.ReactNode;
 }) {
   return (
     <div
-      className="flex flex-col gap-2.5 rounded-[14px] px-4 py-3.5"
+      className="flex flex-col gap-2.5 rounded-[13px] px-3.5 py-3"
       style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
     >
-      <div className="flex items-baseline justify-between">
-        <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-          {title}
-        </span>
-        {hint && (
-          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            {hint}
-          </span>
-        )}
-      </div>
+      <span className="flex items-center gap-1.5 text-[12.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+        {Icon && <Icon size={13} style={{ color: 'var(--accent-primary)' }} aria-hidden />}
+        {title}
+      </span>
       {children}
     </div>
   );
@@ -553,31 +716,31 @@ function QuotaBar({
 }) {
   const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex min-w-[150px] flex-1 flex-col gap-1">
       <div className="flex items-baseline justify-between">
-        <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
           {label}
         </span>
-        <span className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+        <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
           {used} / {quota} {unit}
         </span>
       </div>
-      <div
-        className="h-1.5 overflow-hidden rounded-full"
-        style={{ background: 'var(--nested-block-bg)' }}
-      >
+      <span className="h-1 overflow-hidden rounded-full" style={{ background: 'var(--nested-block-bg)' }}>
         <span
-          className="block h-full rounded-full"
+          className="block h-full rounded-full transition-[width] duration-500"
           style={{ width: `${pct}%`, background: 'var(--accent-primary)' }}
         />
-      </div>
+      </span>
     </div>
   );
 }
 
 function EmptyHint({ text }: { text: string }) {
   return (
-    <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+    <p
+      className="rounded-[12px] px-3.5 py-3 text-[12px] leading-relaxed"
+      style={{ background: 'var(--bg-card)', border: '1px dashed var(--border-default)', color: 'var(--text-muted)' }}
+    >
       {text}
     </p>
   );

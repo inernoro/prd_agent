@@ -166,6 +166,22 @@ public static class McpCapabilityCatalog
     public static bool IsIssuancePermissionChecked(string scope) =>
         PermissionCheckedScopes.Contains(scope) || IssuanceOnlyPermissionCheckedScopes.Contains(scope);
 
+    /// <summary>
+    /// 自动模式的密钥此刻拿得到哪些 scope —— 平台开放的全部可授予 scope 里，主人当前权限允许的那些。
+    ///
+    /// 这里用的是**签发口径**（<see cref="IsIssuancePermissionChecked"/>），不是鉴权口径
+    /// （<see cref="PermissionCheckedScopes"/>）。两者的差别只在 document-store 那两个 scope：
+    /// 鉴权时不查它们，是为了不打死早就在跑的存量密钥。而自动模式是本次新增的，没有存量 ——
+    /// 对它按签发口径查，才不会出现「后台没给他文档空间写权限，自动模式却替他签进去了」。
+    ///
+    /// 顺序跟着 <see cref="All"/> 的声明走，不用 <see cref="AllScopes"/> 那个集合：
+    /// 集合的枚举顺序不作保证，而这份清单会原样进审计与接入台展示，顺序抖动会让人以为权限变了。
+    /// </summary>
+    public static IReadOnlyList<string> AutoScopesFor(IReadOnlyCollection<string> ownedPermissions) =>
+        All.SelectMany(c => c.AllScopes())
+           .Where(s => !IsIssuancePermissionChecked(s) || PermissionsAllowScope(ownedPermissions, s))
+           .ToList();
+
     public static McpCapability? ByScope(string scope) =>
         All.FirstOrDefault(c => c.AllScopes().Contains(scope, StringComparer.OrdinalIgnoreCase));
 

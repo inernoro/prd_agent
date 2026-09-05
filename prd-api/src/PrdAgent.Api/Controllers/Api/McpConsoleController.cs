@@ -72,8 +72,7 @@ public class McpConsoleController : ControllerBase
         var activeKeys = keys.Where(k => AgentApiKey.IsUsableAt(k, nowUtc, out _)).ToList();
         // 「已授权」要跟鉴权口径一致：受权限位把关的 scope，权限被回收后鉴权时就会被剥掉，
         // 面板不能还显示成已授权 —— 否则用户看到的和智能体实际能用的是两回事。
-        var grantedScopes = activeKeys.SelectMany(k => k.Scopes ?? new List<string>())
-            .Where(s => EffectiveForOwner(s, ownedPermissions))
+        var grantedScopes = activeKeys.SelectMany(k => EffectiveScopesOf(k, ownedPermissions))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var since = McpUsageService.TodayStartUtc();
@@ -131,7 +130,15 @@ public class McpConsoleController : ControllerBase
             keyId = k.Id,
             name = k.Name,
             keyPrefix = k.KeyPrefix,
-            scopes = k.Scopes ?? new List<string>(),
+            // 自动模式的清单是现算的，不是库里存的那份（存的是空）。面板必须显示「它此刻真拿得到什么」，
+            // 否则一把自动模式的钥匙在界面上会是「零个能力」，而它实际什么都调得动。
+            scopes = EffectiveScopesOf(k, ownedPermissions),
+            scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
+            // 手动模式才有「你有、但没开给它」这件事 —— 自动模式按定义不会缺。
+            // 这正是「用户知道、钥匙没权限」：平台新上一块能力、或者他当初没勾，都落在这里。
+            missingCapabilities = k.ScopeMode == AgentApiKeyScopeMode.Auto
+                ? new List<object>()
+                : MissingCapabilitiesOf(k, ownedPermissions),
             isActive = AgentApiKey.IsUsableAt(k, nowUtc, out _),
             expiresAt = k.ExpiresAt,
             lastUsedAt = k.LastUsedAt,
@@ -244,8 +251,9 @@ public class McpConsoleController : ControllerBase
         // 自检不能照着存下来的 scope 报一串对方其实看不见的工具。
         var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
         var ownedPermissions = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
-        var scopes = (key.Scopes ?? new List<string>())
-            .Where(s => EffectiveForOwner(s, ownedPermissions))
+        // 自动模式的钥匙库里存的是空清单 —— 照着它算，自检会报「0 个工具」，
+        // 而它连上去其实什么都调得动。走与鉴权同一处的推导。
+        var scopes = EffectiveScopesOf(key, ownedPermissions)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var visible = McpBuiltinTools.All
             .Where(t => McpCapabilityCatalog.ScopeSatisfies(scopes, t.RequiredScope))
@@ -291,6 +299,34 @@ public class McpConsoleController : ControllerBase
     /// 与 AgentApiKeysController.ValidateScopeAsync 同一个函数。两处不同口径的后果是
     /// 面板上写着「可以开通」，一点却被签发接口打回来：把用户请到门口再关门。
     /// </summary>
+    /// <summary>
+    /// 这把钥匙此刻实际拿得到哪些 scope。判据与 <c>ApiKeyAuthenticationHandler</c> 同源：
+    /// 自动模式现算（主人当前权限 ∩ 平台当前开放），手动模式读存的那份再按权限位过一遍。
+    ///
+    /// 面板与鉴权必须走同一个口径 —— 上一版就栽在这上面：面板照 IsActive 判、鉴权照能不能用判，
+    /// 于是用户看到「已连接、已授权」，而它发的每个请求都被拒。
+    /// </summary>
+    private static IReadOnlyList<string> EffectiveScopesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
+        => key.ScopeMode == AgentApiKeyScopeMode.Auto
+            ? McpCapabilityCatalog.AutoScopesFor(ownedPermissions)
+            : (key.Scopes ?? new List<string>()).Where(s => EffectiveForOwner(s, ownedPermissions)).ToList();
+
+    /// <summary>
+    /// 「你自己有、但没开给这台客户端」的能力。只对手动模式成立。
+    ///
+    /// 不去追「平台是哪天新增的」：那需要给能力目录记时间戳，而用户要回答的问题从来不是
+    /// 「这是不是新的」，而是「我还能给它什么」。按当前权限与当前授权做差，两种来源
+    ///（平台新上的、他当初没勾的）都落进同一句话里。
+    /// </summary>
+    private static List<object> MissingCapabilitiesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
+    {
+        var held = (key.Scopes ?? new List<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return McpCapabilityCatalog.All
+            .Where(cap => cap.AllScopes().Any(s => ScopeAvailable(s, ownedPermissions) && !held.Contains(s)))
+            .Select(cap => (object)new { key = cap.Key, title = cap.Title })
+            .ToList();
+    }
+
     private static bool ScopeAvailable(string? scope, IReadOnlyCollection<string> ownedPermissions)
     {
         if (string.IsNullOrEmpty(scope)) return false;

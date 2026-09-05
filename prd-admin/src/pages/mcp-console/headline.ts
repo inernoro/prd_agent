@@ -1,0 +1,98 @@
+import type { McpCallLogDto, McpClientDto } from '@/services/contracts/mcpConsole';
+
+export interface HeadlineInput {
+  clients: McpClientDto[];
+  today: {
+    calls: number;
+    images: number;
+    writes: number;
+    denied: number;
+    failed: number;
+  } | null;
+  recentCalls: McpCallLogDto[];
+}
+
+export interface Headline {
+  /** 判断句：一句话说清「现在什么情况」，每句都挂着真实数字 */
+  verdict: string;
+  /** 支撑句：为什么是这个判断、下一步该看哪 */
+  detail: string;
+}
+
+/**
+ * 接入台第一屏那句判断 —— 规则生成，不走大模型。
+ *
+ * 为什么是规则不是模型：这一屏要秒开、要可复现、要能定位到具体分支。
+ * 模型更适合长文汇报（周报），不适合仪表盘头条（conclusion-before-numbers）。
+ *
+ * 三条自律钉在这里：
+ *   1. 每句挂着真实数字。「整体表现良好」放到任何账号都成立，等于没说，一律不许出现。
+ *   2. 算不出来就不出那句。没有失败明细时说「在「它干了什么」里逐条能看」，不编一个原因。
+ *   3. 「被挡下」与「执行失败」是两件事，下一步完全不同（去开权限 / 去重试），不能合成一句。
+ */
+export function buildHeadline({ clients, today, recentCalls }: HeadlineInput): Headline {
+  const active = clients.filter((c) => c.isActive);
+
+  if (clients.length === 0) {
+    return {
+      verdict: '还没有客户端接进来。',
+      detail: '点右上角「接入新的」：起个名字、复制一段配置粘进 Claude Code 或 Codex，两分钟就能连上。',
+    };
+  }
+
+  if (active.length === 0) {
+    return {
+      verdict: `${clients.length} 台客户端都已经断开了，现在没有智能体能调用你的能力。`,
+      detail: '钥匙作废不影响历史 —— 它们做过什么，切到「它干了什么」仍然逐条看得到。',
+    };
+  }
+
+  const calls = today?.calls ?? 0;
+  const denied = today?.denied ?? 0;
+  const failed = today?.failed ?? 0;
+  const bad = denied + failed;
+
+  if (calls === 0) {
+    const used = active.filter((c) => c.lastUsedAt).length;
+    return {
+      verdict: `${active.length} 台客户端接着，今天一次都还没调过。`,
+      detail:
+        used === 0
+          ? '这几台从来没用过 —— 粘完配置记得重启客户端，再跟它说一句「把这周周报做成一页网页发出来」。'
+          : '不是坏了，就是今天还没使唤它。要试一下的话，跟客户端说一句需要生图或写文档的话就行。',
+    };
+  }
+
+  const volume = `出图 ${today?.images ?? 0} 张、写入 ${today?.writes ?? 0} 次`;
+  const lastAt = formatClock(recentCalls[0]?.createdAt);
+  const tail = lastAt ? `最近一次在 ${lastAt}。` : '';
+
+  if (bad === 0) {
+    return {
+      verdict: `${active.length} 台客户端今天替你调了 ${calls} 次，全都成了。`,
+      detail: `${volume}。${tail}`.trim(),
+    };
+  }
+
+  // 被挡下 vs 执行失败：一个去开权限/等额度，一个去重试，合成一句会把下一步说糊
+  const parts: string[] = [];
+  if (denied > 0) parts.push(`${denied} 次被挡下（权限或额度不够）`);
+  if (failed > 0) parts.push(`${failed} 次执行失败`);
+
+  const firstBad = recentCalls.find((c) => c.status !== 'success' && !!c.errorMessage);
+
+  return {
+    verdict: `${active.length} 台客户端今天调了 ${calls} 次，其中 ${parts.join('、')}。`,
+    detail: firstBad
+      ? `最近那次是「${firstBad.toolName}」：${firstBad.errorMessage}`
+      : `失败的原因在「它干了什么」里逐条看得到。${volume}。${tail}`.trim(),
+  };
+}
+
+/** 只给「最近一次在几点」用。相对时间由 RelativeTime 组件负责，这里不另写一份口径。 */
+function formatClock(iso?: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+}

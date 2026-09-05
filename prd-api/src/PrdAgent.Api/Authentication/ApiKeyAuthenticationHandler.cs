@@ -126,12 +126,18 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             };
             // 接入台能力目录里的 scope 要按「密钥主人此刻还有没有那个权限位」二次核对：
             // 签发时校验过一次，但权限随后可能被管理员回收，而密钥还在外面跑。
-            // 只查一次权限（而且只在密钥确实带了这类 scope 时才查），老 scope 不受影响。
-            var declaredScopes = (key.Scopes ?? new List<string>())
+            // 只查一次权限（而且只在确实需要时才查），老 scope 不受影响。
+            //
+            // 自动模式（用户没动过高级设置）根本不读存的那份清单：它的清单就是「主人此刻有什么」，
+            // 所以必须先把权限查出来再推导。平台以后新开一块能力，这里当场就把它算进去 ——
+            // 这正是「新增的自动跟着走」那条语义的落点，不需要谁回来给存量密钥补一次 scope。
+            var isAutoScope = key.ScopeMode == AgentApiKeyScopeMode.Auto;
+            var storedScopes = (key.Scopes ?? new List<string>())
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .ToList();
+
             IReadOnlyList<string>? ownerPermissions = null;
-            if (declaredScopes.Any(McpCapabilityCatalog.PermissionCheckedScopes.Contains))
+            if (isAutoScope || storedScopes.Any(McpCapabilityCatalog.PermissionCheckedScopes.Contains))
             {
                 // root 破窗账户不在 Mongo 里，按 isRoot:false 去查它的权限只会拿到空集合，
                 // 于是刚在控制台签出来的密钥下一秒就被剥光 scope。身份按 owner id 认，与 JwtService 同一个判据。
@@ -139,9 +145,16 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
                 ownerPermissions = await _permissionService.GetEffectivePermissionsAsync(key.OwnerUserId, ownerIsRoot);
             }
 
+            // 自动模式的清单是推导出来的，推导时已经按签发口径过了权限，下面那道再检不必重复；
+            // 手动模式仍走原来的口径（只查 PermissionCheckedScopes，放过存量的 document-store）。
+            var declaredScopes = isAutoScope
+                ? McpCapabilityCatalog.AutoScopesFor(ownerPermissions ?? Array.Empty<string>())
+                : storedScopes;
+
             foreach (var scope in declaredScopes)
             {
-                if (McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope)
+                if (!isAutoScope
+                    && McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope)
                     && !McpCapabilityCatalog.PermissionsAllowScope(ownerPermissions ?? Array.Empty<string>(), scope))
                 {
                     Logger.LogWarning("AgentApiKey {KeyId} 携带的 scope {Scope} 已失效：主人 {UserId} 当前没有对应权限位，本次请求按未授权处理",

@@ -32,7 +32,8 @@ public class AgentApiKeyService : IAgentApiKeyService
         string? description,
         IEnumerable<string> scopes,
         int ttlDays,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        AgentApiKeyScopeMode scopeMode = AgentApiKeyScopeMode.Manual)
     {
         var plaintext = GenerateApiKey();
         var hash = ComputeSha256(plaintext);
@@ -46,7 +47,13 @@ public class AgentApiKeyService : IAgentApiKeyService
             OwnerUserId = ownerUserId,
             ApiKeyHash = hash,
             KeyPrefix = prefix,
-            Scopes = scopes?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Distinct().ToList() ?? new List<string>(),
+            // 自动模式故意不存清单：它的清单是「主人此刻有什么」，每次鉴权现算。
+            // 存一份快照的话，那份快照第二天就可能与真实权限对不上，而两处都能被读到 ——
+            // 判据分裂的老形状，早晚有人照着过期的那份下结论。
+            Scopes = scopeMode == AgentApiKeyScopeMode.Auto
+                ? new List<string>()
+                : scopes?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Distinct().ToList() ?? new List<string>(),
+            ScopeMode = scopeMode,
             IsActive = true,
             CreatedAt = DateTime.UtcNow,
             ExpiresAt = ttlDays > 0 ? DateTime.UtcNow.AddDays(ttlDays) : null
@@ -120,16 +127,29 @@ public class AgentApiKeyService : IAgentApiKeyService
         IEnumerable<string>? scopes,
         bool? isActive,
         CancellationToken ct = default,
-        AgentApiKeyQuotaPatch? quota = null)
+        AgentApiKeyQuotaPatch? quota = null,
+        AgentApiKeyScopeMode? scopeMode = null)
     {
         var updates = new List<UpdateDefinition<AgentApiKey>>();
         if (name != null) updates.Add(Builders<AgentApiKey>.Update.Set(k => k.Name, name.Trim()));
         if (description != null)
             updates.Add(Builders<AgentApiKey>.Update.Set(k => k.Description, string.IsNullOrWhiteSpace(description) ? null : description.Trim()));
-        if (scopes != null)
+
+        // 切回自动 = 清单作废。留着旧清单的话，库里会同时存在两份「它能做什么」的说法，
+        // 而只有现算的那份是真的 —— 判据分裂的老形状，早晚有人照着死的那份下结论。
+        var switchingToAuto = scopeMode == AgentApiKeyScopeMode.Auto;
+        if (switchingToAuto)
+            updates.Add(Builders<AgentApiKey>.Update.Set(k => k.Scopes, new List<string>()));
+        else if (scopes != null)
             updates.Add(Builders<AgentApiKey>.Update.Set(
                 k => k.Scopes,
                 scopes.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Distinct().ToList()));
+
+        // 存下一份清单 = 从此钉死。没有这一条，一把自动模式的钥匙被改过 scope 之后
+        // 仍然是自动的：用户改的那份清单下一次鉴权就被现算的结果盖掉，改了等于没改。
+        var resolvedMode = scopeMode ?? (scopes != null ? AgentApiKeyScopeMode.Manual : (AgentApiKeyScopeMode?)null);
+        if (resolvedMode is { } mode)
+            updates.Add(Builders<AgentApiKey>.Update.Set(k => k.ScopeMode, mode));
         if (isActive.HasValue)
             updates.Add(Builders<AgentApiKey>.Update.Set(k => k.IsActive, isActive.Value));
 
