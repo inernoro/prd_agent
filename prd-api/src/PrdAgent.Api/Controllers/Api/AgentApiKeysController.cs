@@ -256,6 +256,44 @@ public class AgentApiKeysController : ControllerBase
         public string? ScopeMode { get; set; }
     }
 
+    /// <summary>
+    /// 这次 PATCH 最终会把这把钥匙落到哪一档。
+    ///
+    /// 关键在于「手动」有**两扇门**：显式写 <c>scopeMode: "manual"</c>，
+    /// 和只带一个 <c>scopes</c> 字段（服务层据此推断 —— 存了清单那一刻就是动过高级设置那一刻）。
+    /// 判据只认前一扇门的话，后一扇门上的所有保护都不生效。
+    /// </summary>
+    internal static AgentApiKeyScopeMode ResultingScopeMode(
+        AgentApiKeyScopeMode current,
+        AgentApiKeyScopeMode? explicitMode,
+        bool scopesSupplied)
+        => explicitMode ?? (scopesSupplied ? AgentApiKeyScopeMode.Manual : current);
+
+    /// <summary>
+    /// 要不要把当前有效清单快照下来。
+    ///
+    /// 成立条件：这把钥匙现在是自动档、这次请求会把它变成手动档、而给出的清单是空的
+    /// （没给，或者给了一个空数组 / 全是空白项）。三者齐了才快照。
+    ///
+    /// 「给的清单是不是空的」要认空数组，不能只认 null —— <c>&#123;"scopeMode":"manual"&#125;</c> 与
+    /// <c>&#123;"scopeMode":"manual","scopes":[]&#125;</c> 是同一个意思；
+    /// 而「会不会变成手动」要认两扇门，不能只认显式那扇 —— <c>&#123;"scopes":[]&#125;</c>
+    /// 不带 scopeMode 时同样会把自动档钥匙钉成手动，上一版这条路径直接落到校验分支，
+    /// 零个 scope「全部校验通过」，空清单原样入库，接口返回 200 而钥匙失去全部工具。
+    /// 两次都是同一个形状：以为设成 A 其实是 B，而且没有任何线索。
+    /// </summary>
+    internal static bool NeedsScopeSnapshot(
+        AgentApiKeyScopeMode current,
+        AgentApiKeyScopeMode? explicitMode,
+        IReadOnlyList<string>? scopes)
+    {
+        if (explicitMode == AgentApiKeyScopeMode.Auto) return false;
+        if (current != AgentApiKeyScopeMode.Auto) return false;
+        if (ResultingScopeMode(current, explicitMode, scopes != null) != AgentApiKeyScopeMode.Manual)
+            return false;
+        return scopes == null || scopes.All(string.IsNullOrWhiteSpace);
+    }
+
     [HttpPatch("{id}")]
     public async Task<IActionResult> Update(string id, [FromBody] UpdateRequest req, CancellationToken ct)
     {
@@ -279,15 +317,9 @@ public class AgentApiKeysController : ControllerBase
         {
             req.Scopes = null;
         }
-        // 判据要认「给的清单是不是空的」，不能只认 null —— `{"scopeMode":"manual"}` 和
-        // `{"scopeMode":"manual","scopes":[]}` 是同一个意思，而上一版只挡住了前者：
-        // 后者因为 Scopes 非 null 会走下面那条校验分支，零个 scope 全部「校验通过」，
-        // 然后把空清单原样存进去 —— 接口返回 200，钥匙失去全部工具。
-        else if (explicitScopeMode == AgentApiKeyScopeMode.Manual
-                 && key.ScopeMode == AgentApiKeyScopeMode.Auto
-                 && (req.Scopes == null || req.Scopes.All(string.IsNullOrWhiteSpace)))
+        else if (NeedsScopeSnapshot(key.ScopeMode, explicitScopeMode, req.Scopes))
         {
-            // 只说「切成手动」不给清单：自动档的 Scopes 本来就是空的，照直写下去这把钥匙
+            // 切档但没给清单：自动档的 Scopes 本来就是空的，照直写下去这把钥匙
             // 会在返回 200 的同时失去全部工具 —— 接口说成了、钥匙却废了。
             // 「按清单钉死」的意思是把它**此刻拿得到的那些**定下来，不是清零。
             // 取值走唯一那处判据，所以这份快照天然只含主人现在真有权限的 scope，不用再过一遍校验。

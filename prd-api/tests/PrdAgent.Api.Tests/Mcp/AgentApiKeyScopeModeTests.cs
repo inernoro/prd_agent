@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -191,22 +192,81 @@ public class AgentApiKeyScopeModeTests
     /// 「按清单钉死」的语义是**冻结现状**，不是清空。
     /// 这条接线删掉不会红：少了这一段照样编译、照样全绿。
     /// </summary>
+    [Theory]
+    // 显式那扇门：`{"scopeMode":"manual"}` 与 `{"scopeMode":"manual","scopes":[]}` 同义
+    [InlineData("manual", null, true)]
+    [InlineData("manual", "", true)]
+    [InlineData("manual", "   ", true)]
+    // 隐式那扇门：只带一个空 scopes，服务层照样把它推断成手动 —— 上一版这条路没被覆盖，
+    // 空清单落到校验分支、零个 scope 全部「通过」，接口 200 而钥匙失去全部工具
+    [InlineData(null, "", true)]
+    [InlineData(null, "   ", true)]
+    // 真给了清单：走正常校验，不快照
+    [InlineData(null, "web-pages:read", false)]
+    [InlineData("manual", "web-pages:read", false)]
+    // 没表达任何跟范围有关的意见（只改名字/额度）：不该动清单
+    [InlineData(null, null, false)]
+    // 切回自动：清单本来就要作废
+    [InlineData("auto", null, false)]
+    [InlineData("auto", "", false)]
+    public void 自动档钥匙被钉成手动而没给清单时_要快照不要清空(
+        string? explicitMode, string? scopesCsv, bool expected)
+    {
+        var scopes = scopesCsv?.Split(',').ToList();
+        AgentApiKeyScopeMode? mode = explicitMode switch
+        {
+            "auto" => AgentApiKeyScopeMode.Auto,
+            "manual" => AgentApiKeyScopeMode.Manual,
+            _ => null,
+        };
+
+        AgentApiKeysController.NeedsScopeSnapshot(AgentApiKeyScopeMode.Auto, mode, scopes)
+            .ShouldBe(expected,
+                customMessage: $"explicitMode={explicitMode ?? "(无)"} scopes={scopesCsv ?? "(无)"} "
+                    + "—— 判错这一档的后果是接口返回 200、钥匙却失去全部工具");
+    }
+
+    /// <summary>
+    /// 已经是手动档的钥匙不走快照 —— 它本来就有一份清单，冻结现状没有意义。
+    /// 这条钉的是范围：快照只为「自动 → 手动」那一次切换而存在。
+    /// </summary>
     [Fact]
-    public void Update_SnapshotsEffectiveScopes_WhenSwitchingAutoKeyToManual()
+    public void 本来就是手动档的_不走快照()
+        => AgentApiKeysController.NeedsScopeSnapshot(
+                AgentApiKeyScopeMode.Manual, null, new List<string>()).ShouldBeFalse();
+
+    /// <summary>
+    /// 「会不会变成手动」有**两扇门**，判据必须都认。
+    ///
+    /// 显式门是 <c>scopeMode: "manual"</c>；隐式门是「只要带了 scopes 字段」——
+    /// 服务层据此推断（存了清单那一刻就是动过高级设置那一刻）。上一版的保护只挂在显式门上，
+    /// 于是 <c>&#123;"scopes":[]&#125;</c> 从隐式门进来，绕过了整段保护。
+    /// </summary>
+    [Theory]
+    [InlineData(false, AgentApiKeyScopeMode.Auto)]   // 什么都没说 → 维持原样
+    [InlineData(true, AgentApiKeyScopeMode.Manual)]  // 只带 scopes → 隐式钉成手动
+    public void 落到哪一档_两扇门都要认(bool scopesSupplied, AgentApiKeyScopeMode expected)
+        => AgentApiKeysController.ResultingScopeMode(AgentApiKeyScopeMode.Auto, null, scopesSupplied)
+            .ShouldBe(expected);
+
+    /// <summary>
+    /// 接线：控制器必须真的走那个判据。
+    ///
+    /// 抽成纯函数之后，「函数对不对」有上面那批用例管，但「有没有人用它」没人管 ——
+    /// 控制器里原样留着旧的内联条件照样编译、照样全绿（形状 2）。
+    /// </summary>
+    [Fact]
+    public void 切档那一段必须走共用判据()
     {
         var source = ReadSource("src/PrdAgent.Api/Controllers/Api/AgentApiKeysController.cs");
         var begin = source.IndexOf("explicitScopeMode == AgentApiKeyScopeMode.Auto", StringComparison.Ordinal);
         begin.ShouldBeGreaterThan(-1, customMessage: "找不到切档那一段");
         var slice = source.Substring(begin, Math.Min(1200, source.Length - begin));
 
-        slice.ShouldContain("AgentApiKeyScopeMode.Manual",
-            customMessage: "切成手动这条路径没有单独处理，自动档的空清单会被原样钉死");
+        slice.ShouldContain("NeedsScopeSnapshot(key.ScopeMode, explicitScopeMode, req.Scopes)",
+            customMessage: "切档那一段没走共用判据，自己内联判一套 —— 隐式那扇门会再漏一次");
         slice.ShouldContain("EffectiveScopesFor",
             customMessage: "切手动时没有把当前有效清单快照下来 —— 钥匙会静默失去全部工具");
-        // `{"scopeMode":"manual"}` 与 `{"scopeMode":"manual","scopes":[]}` 是同一个意思。
-        // 只认 null 的话，后者会走校验分支、零个 scope 全部「通过」，然后把空清单原样存下去。
-        slice.ShouldContain("IsNullOrWhiteSpace",
-            customMessage: "空清单（scopes: []）没被当成「没给清单」，这条路仍会把钥匙清空");
     }
 
     /// <summary>

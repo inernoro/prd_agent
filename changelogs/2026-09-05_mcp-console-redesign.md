@@ -82,3 +82,5 @@
 | fix | prd-api | 开放层前缀判据保留结尾斜杠（`/api/open/`）——`/api/open-platform/` 与 `/api/open-api/` 是三个挂 `[AdminController]` 的后台控制器，跟开放层无关，少一个斜杠会把 `DELETE /api/open-platform/apps/{id}` 一起放行（形状 1）。守卫两条 `[Theory]` 分别钉住该豁免的和不该豁免的 |
 | test | prd-api | 豁免只挂在直连那道门上、不揉进判据本身：`IsDestructiveRequest` 对开放层的 DELETE 照旧判真（网关那条路只问「收不收得回来」，它管的是 MCP 工具面），另加一条守卫断言直连那道门**两个判据都问过**——少问哪一个都不会红：只问破坏性则流水线断，只问开放层则第 26 轮那个缺口回来 |
 | docs | doc | 债务 #34 记下残留敞口：`/api/open/` 里有三条收不回来的路（publisher 节点删除、教程图谱发布、`DELETE /api/open/marketplace-skills/{id}`），而自动档钥匙拿得到它们要的 scope，所以「删除、公开发布一律不给」目前只在 MCP 工具面成立，直接打 REST 仍做得到。要真正收口得区分密钥用途或按端点标破坏性，靠路径命名调不出来 |
+| fix | prd-api | `{"scopes":[]}` 不带 scopeMode 时也不再把自动档钥匙清空 —— 「变成手动」有**两扇门**：显式写 `scopeMode:"manual"`，和只带一个 `scopes` 字段（服务层据此推断）。上一轮的保护只挂在显式那扇门上，于是空清单从隐式门进来，落到校验分支、零个 scope「全部校验通过」，空清单原样入库，接口返回 200 而钥匙失去全部工具。和上一轮修的 `scopeMode` 拼错是同一个形状：以为设成 A 其实是 B，且没有任何线索 |
+| refactor | prd-api | 切档判据抽成 `ResultingScopeMode` + `NeedsScopeSnapshot` 两个纯函数，控制器只调用不内联判断。原来那条守卫断言的是切档那一段里出现某几个字面量（`AgentApiKeyScopeMode.Manual` / `IsNullOrWhiteSpace`），换成十条行为用例穷举两扇门 × 空清单的各种写法 + 一条接线断言（控制器必须真的调 `NeedsScopeSnapshot`）——纯函数「对不对」有用例管，「有没有人用」得单独钉，否则旧的内联条件留着照样全绿 |
