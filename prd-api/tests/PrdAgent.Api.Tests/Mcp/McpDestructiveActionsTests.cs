@@ -82,4 +82,28 @@ public class McpDestructiveActionsTests
         File.ReadAllText(file).ShouldContain("McpDestructiveActions",
             customMessage: $"{relative} 没走共用判据，自己判 DELETE 就是下一次漂移的起点");
     }
+
+    /// <summary>
+    /// 光「用了这个类」还不够，得用**带路径**的那个。
+    ///
+    /// 上一版守卫只断言文件里出现 <c>McpDestructiveActions</c>，而网关当时转调的是
+    /// <c>IsDestructiveMethod</c>（只认 DELETE）—— 类共用了，判据没共用，
+    /// 于是登记成 <c>POST /api/web-pages/batch-delete</c> 的接口照样列得出、调得动。
+    /// 守卫在场却一点忙没帮上，因为它断言的东西太弱。
+    /// </summary>
+    [Theory]
+    [InlineData("src/PrdAgent.Api/Controllers/McpGatewayController.cs")]
+    [InlineData("src/PrdAgent.Api/Middleware/AdminPermissionMiddleware.cs")]
+    public void 两条路都用带路径的判据_不是只看方法(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "PrdAgent.sln")))
+            dir = dir.Parent;
+        dir.ShouldNotBeNull(customMessage: "没找到 PrdAgent.sln，测试定位不到源码");
+
+        var text = File.ReadAllText(Path.Combine(dir!.FullName, relative));
+        text.ShouldContain("IsDestructiveRequest",
+            customMessage: $"{relative} 只看 HTTP 方法 —— 登记表与业务路由都收任意 POST 路径，"
+                + "POST /api/web-pages/batch-delete 会从这里漏过去");
+    }
 }

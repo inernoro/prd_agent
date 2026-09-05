@@ -71,3 +71,5 @@
 | fix | prd-api | `runId` 只对视觉工具映射成 `image-run`，其余记成中性的 `run`——登记的动态接口（如技能执行）回的是 `{runId, userMessageId, assistantMessageId}` 而永远没有图片地址，无条件映射会让那次**成功**的调用在接入台永远显示「还没出结果」（没有任何轮询会给它地址）。身份保留，归并照旧 |
 | fix | prd-api | `scopeMode` 认不出来的值改成 400，不再静默当 manual——`{"scopeMode":"atuo"}` 拼错一个字母会走快照分支把钥匙**永久钉死**在手动档，而接口返回 200，调用方以为自己开了自动档、实际关掉了它。安全的默认与明确的报错不冲突：认不出来就拒，既不放宽也不静默；null（不传）仍走默认，那是「没表达意见」不是「表达错了」 |
 | fix | prd-admin | 调用记录行里的「打开」链接从展开钮内部挪出来做兄弟节点——`<a>` 套在 `<button>` 里 HTML 无效、无障碍树有歧义（读屏会把链接当成展开钮的一部分，键盘 Tab 到什么也说不准），而它类型过、lint 过、鼠标点着完全正常。布局不变：button 吃掉剩余宽度，链接贴右。守卫扫全目录禁止嵌套交互控件 |
+| security | prd-api | 网关的破坏性判据补上路径这一半：`DynamicToolVisible` 与 `tools/call` 改用 `IsDestructiveEndpoint(e)`（整条 endpoint 进去，方法 + 路径一起看），删掉只认方法的 `IsDestructiveMethod` 包装。上一版说「两条路共用一处判据」——共用的其实只是那个**类**，网关调的还是窄的那个方法，于是登记成 `POST /api/web-pages/batch-delete` 的接口照样列得出、调得动，真的删数据。守卫也跟着加强：原来只断言「文件里出现 McpDestructiveActions」，而这次正是出现了但调错方法，守卫在场却没帮上忙；现在断言必须出现 `IsDestructiveRequest` |
+| test | prd-api | `McpDownstreamSafetyTests` 那条钉「`IsDestructiveMethod(match.HttpMethod)` 字面存在」的断言换成钉判据形状（`IsDestructiveEndpoint(match)`）——它锚的正是要被修掉的窄判据，属形状 4a：谁修好谁的 CI 红 |
