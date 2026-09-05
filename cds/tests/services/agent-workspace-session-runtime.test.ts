@@ -440,6 +440,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(details).not.toHaveProperty('stdin');
     expect(details).not.toHaveProperty('command');
     expect(createCall?.command).not.toContain('/dev/stdin');
+    expect(createCall?.command).not.toContain('--workdir /workspace');
     expect(createCall?.options?.stdin).toBeUndefined();
     expect(shell.envFiles.find((entry) => entry.command === createCall?.command)?.mode).toBe(0o600);
     expect(fs.existsSync(shell.envFiles.find((entry) => entry.command === createCall?.command)?.path || '')).toBe(false);

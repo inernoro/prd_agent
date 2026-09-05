@@ -1000,7 +1000,6 @@ export class AgentWorkspaceSessionRuntime {
         `--label ${shellQuote(`cds.agent.session=${sessionId}`)}`,
         `--mount ${shellQuote(`type=volume,src=${workspaceVolumeName},dst=/workspace`)}`,
         `--mount ${shellQuote(`type=volume,src=${dataVolumeName},dst=/app/.od`)}`,
-        '--workdir /workspace',
         `--env-file ${shellQuote(envFilePath)}`,
         shellQuote(this.image),
       ].join(' ');
