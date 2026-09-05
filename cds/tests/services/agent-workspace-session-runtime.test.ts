@@ -39,6 +39,7 @@ class RecordingShell implements IShellExecutor {
   failEgressConnect = false;
   failContainerCreate = false;
   failVolumeInit = false;
+  failTemplateInit = false;
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     this.calls.push({ command, options });
@@ -88,7 +89,12 @@ class RecordingShell implements IShellExecutor {
     if (command.startsWith('docker network connect ')) {
       return this.failEgressConnect ? result('', 'connect denied', 1) : result('connected\n');
     }
-    if (command.startsWith('docker exec ')) return result('ready\n');
+    if (command.startsWith('docker exec ')) {
+      if (this.failTemplateInit && command.includes('design-templates/web-prototype')) {
+        return result('', 'web prototype resources missing', 1);
+      }
+      return result('ready\n');
+    }
     if (command.startsWith('docker inspect ')) return result('127.0.0.1\n');
     if (command.startsWith('docker rm -f ')) return result('removed\n');
     if (command.startsWith('docker network rm ')) return result('removed\n');
@@ -148,7 +154,10 @@ describe('AgentWorkspaceSessionRuntime', () => {
       }
       if (requestPath === '/api/health') return Response.json({ ok: true });
       if (requestPath === '/api/import/folder') {
-        return Response.json({ project: { id: 'od-project' }, conversationId: 'od-conversation' });
+        return Response.json({
+          project: { id: 'od-project', skillId: 'web-prototype' },
+          conversationId: 'od-conversation',
+        });
       }
       if (requestPath === '/api/runs' && init?.method === 'POST') {
           fs.writeFileSync(
@@ -213,6 +222,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(runCommand?.command).toContain('--security-opt no-new-privileges:true');
     expect(runCommand?.command).toContain('--cap-drop ALL');
     expect(runCommand?.command).toContain('--pids-limit 256');
+    expect(runCommand?.command).toContain("--tmpfs '/app/design-templates:rw,noexec,nosuid,size=8m");
     expect(runCommand?.command).toContain('ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474');
     expect(runCommand?.command).toContain('type=volume');
     expect(runCommand?.command).not.toContain('type=bind');
@@ -227,6 +237,13 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(shell.envFiles[0]?.content).not.toContain('transfer-token');
     expect(shell.envFiles[0]?.content).not.toContain('model-secret');
     expect(fs.existsSync(shell.envFiles[0]?.path || '')).toBe(false);
+    const preparedDesignTemplate = shell.calls.find((call) => (
+      call.command.startsWith('docker exec ') && call.command.includes('design-templates/web-prototype')
+    ));
+    expect(preparedDesignTemplate?.command).toContain('/app/plugins/_official/examples/web-prototype/.');
+    expect(preparedDesignTemplate?.command).toContain('/app/design-templates/web-prototype/assets/template.html');
+    expect(preparedDesignTemplate?.command).toContain('/app/design-templates/web-prototype/references/layouts.md');
+    expect(preparedDesignTemplate?.command).toContain('/app/design-templates/web-prototype/references/checklist.md');
 
     const executed = await runtime.execute(
       'session-test-1',
@@ -573,6 +590,55 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(fs.readdirSync(rootDir)).toEqual([]);
   });
 
+  it('fails closed and cleans the session when official web prototype resources cannot be prepared', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const workspacePackage = buildPackage([
+      { path: 'brief.txt', content: 'brief', mediaType: 'text/plain' },
+    ]);
+    const shell = new RecordingShell();
+    shell.failTemplateInit = true;
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      instanceId: 'instance-a',
+      capabilityCacheMs: 0,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async () => new Response(workspacePackage.serialized, { status: 200 }),
+    });
+
+    const error = await runtime.create('session-template-init-failure', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: workspacePackage.sha256,
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024,
+      maxOutputBytes: 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json'],
+    }, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 30,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: 'workspace_design_template_init_failed',
+      retryable: false,
+      details: {
+        stage: 'design_template_init',
+        exitCode: 1,
+        stderrPreview: 'web prototype resources missing',
+        stdoutPreview: '',
+      },
+    });
+    expect(shell.calls.some((call) => call.command.startsWith('docker rm -f '))).toBe(true);
+    expect(shell.calls.filter((call) => call.command.startsWith('docker volume rm '))).toHaveLength(2);
+    expect(fs.readdirSync(rootDir)).toEqual([]);
+  });
+
   it('fails closed before an Agent run when the MAP-only egress relay cannot be isolated', async () => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
     const workspacePackage = buildPackage([
@@ -592,7 +658,10 @@ describe('AgentWorkspaceSessionRuntime', () => {
         if (url.pathname === '/input') return new Response(workspacePackage.serialized, { status: 200 });
         if (url.pathname === '/api/health') return Response.json({ ok: true });
         if (url.pathname === '/api/import/folder' && init?.method === 'POST') {
-          return Response.json({ project: { id: 'od-project' }, conversationId: 'od-conversation' });
+          return Response.json({
+            project: { id: 'od-project', skillId: 'web-prototype' },
+            conversationId: 'od-conversation',
+          });
         }
         return new Response('', { status: 404 });
       },
@@ -857,7 +926,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     await expect(runtime.prepareImage()).resolves.toBeUndefined();
   });
 
-  it('keeps OpenDesign unavailable when the image has no compatible Agent CLI', async () => {
+  it('keeps OpenDesign unavailable when the image lacks its Agent CLI or web prototype resources', async () => {
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
         if (command.startsWith('docker version')) return result('27.0.0\n');
@@ -871,7 +940,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     await expect(runtime.capability(true)).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 does not contain the required OpenCode Agent CLI',
+      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 does not contain the required OpenCode Agent CLI and web prototype resources',
     });
   });
 

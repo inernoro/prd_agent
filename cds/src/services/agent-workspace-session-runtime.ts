@@ -10,6 +10,7 @@ import { maskSecrets } from './secret-masker.js';
 export const MAP_DESIGN_WORKSPACE_SCHEMA = 'map-design-workspace-v1';
 export const OPEN_DESIGN_IMAGE = 'ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474';
 const OPEN_DESIGN_WEB_PROTOTYPE_SKILL = 'web-prototype';
+const OPEN_DESIGN_WEB_PROTOTYPE_SOURCE = '/app/plugins/_official/examples/web-prototype';
 
 export interface AgentWorkspaceResourcePolicy {
   cpuCores: number;
@@ -551,7 +552,7 @@ export class AgentWorkspaceSessionRuntime {
   private capabilityRefresh: Promise<CapabilityProbeResult> | null = null;
   private capabilityRetryAfter = 0;
   private capabilityRefreshError: string | null = null;
-  private readonly agentCliValidationByImageId = new Map<string, boolean>();
+  private readonly runtimeValidationByImageId = new Map<string, boolean>();
   private imagePreparation: Promise<void> | null = null;
   private imagePreparationAttemptedAt = 0;
   private imagePreparationError: string | null = null;
@@ -832,9 +833,9 @@ export class AgentWorkspaceSessionRuntime {
       };
     }
 
-    let cliAvailable = this.agentCliValidationByImageId.get(imageId);
-    if (cliAvailable === undefined) {
-      const agentCli = await this.shell.exec([
+    let runtimeAvailable = this.runtimeValidationByImageId.get(imageId);
+    if (runtimeAvailable === undefined) {
+      const runtimeValidation = await this.shell.exec([
         'docker run --rm',
         '--pull never',
         '--read-only',
@@ -847,21 +848,27 @@ export class AgentWorkspaceSessionRuntime {
         '--entrypoint /bin/sh',
         shellQuote(this.image),
         '-lc',
-        shellQuote('command -v opencode-cli >/dev/null 2>&1 || command -v opencode >/dev/null 2>&1'),
+        shellQuote([
+          '(command -v opencode-cli >/dev/null 2>&1 || command -v opencode >/dev/null 2>&1)',
+          `test -f ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/SKILL.md`,
+          `test -f ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/assets/template.html`,
+          `test -f ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/references/layouts.md`,
+          `test -f ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/references/checklist.md`,
+        ].join(' && ')),
       ].join(' '), { timeout: 30_000 });
-      cliAvailable = agentCli.exitCode === 0;
-      this.agentCliValidationByImageId.clear();
-      this.agentCliValidationByImageId.set(imageId, cliAvailable);
+      runtimeAvailable = runtimeValidation.exitCode === 0;
+      this.runtimeValidationByImageId.clear();
+      this.runtimeValidationByImageId.set(imageId, runtimeAvailable);
     }
 
     return {
       imageId,
-      value: cliAvailable
+      value: runtimeAvailable
         ? { available: true, resourcePolicyEnforcedPerSession: true, reason: null }
         : {
             available: false,
             resourcePolicyEnforcedPerSession: false,
-            reason: `OpenDesign image ${this.image} does not contain the required OpenCode Agent CLI`,
+            reason: `OpenDesign image ${this.image} does not contain the required OpenCode Agent CLI and web prototype resources`,
           },
     };
   }
@@ -1002,6 +1009,7 @@ export class AgentWorkspaceSessionRuntime {
         '--log-opt max-size=20m',
         '--log-opt max-file=2',
         '--tmpfs /tmp:rw,noexec,nosuid,size=128m',
+        `--tmpfs ${shellQuote(`/app/design-templates:rw,noexec,nosuid,size=8m,uid=${this.containerUid},gid=${this.containerGid},mode=0755`)}`,
         `--network ${shellQuote(networkName)}`,
         `--label ${shellQuote('cds.managed=true')}`,
         `--label ${shellQuote('cds.type=agent-session')}`,
@@ -1081,6 +1089,32 @@ export class AgentWorkspaceSessionRuntime {
       const startedContainer = await this.shell.exec(`docker start ${shellQuote(containerName)}`, { timeout: 30_000 });
       if (startedContainer.exitCode !== 0) {
         throw new AgentWorkspaceRuntimeError('workspace_container_start_failed', 'OpenDesign container failed to start', true);
+      }
+      const preparedDesignTemplate = await this.shell.exec([
+        'docker exec',
+        shellQuote(containerName),
+        '/bin/sh -lc',
+        shellQuote([
+          'mkdir -p /app/design-templates/web-prototype',
+          `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /app/design-templates/web-prototype/`,
+          'test -f /app/design-templates/web-prototype/SKILL.md',
+          'test -f /app/design-templates/web-prototype/assets/template.html',
+          'test -f /app/design-templates/web-prototype/references/layouts.md',
+          'test -f /app/design-templates/web-prototype/references/checklist.md',
+        ].join(' && ')),
+      ].join(' '), { timeout: 30_000 });
+      if (preparedDesignTemplate.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_design_template_init_failed',
+          'OpenDesign web prototype resources could not be prepared',
+          false,
+          {
+            stage: 'design_template_init',
+            exitCode: preparedDesignTemplate.exitCode,
+            stderrPreview: runtimeDiagnosticPreview(preparedDesignTemplate.stderr, []),
+            stdoutPreview: runtimeDiagnosticPreview(preparedDesignTemplate.stdout, []),
+          },
+        );
       }
       const address = await this.shell.exec(
         `docker inspect --format ${shellQuote(`{{with index .NetworkSettings.Networks "${networkName}"}}{{.IPAddress}}{{end}}`)} ${shellQuote(containerName)}`,
@@ -1204,6 +1238,9 @@ export class AgentWorkspaceSessionRuntime {
     const conversationId = typeof imported.conversationId === 'string' ? imported.conversationId : '';
     if (!projectId || !conversationId) {
       throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import returned no project identity');
+    }
+    if (project?.skillId !== OPEN_DESIGN_WEB_PROTOTYPE_SKILL) {
+      throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import did not retain the required web prototype skill');
     }
     const proxiedModelBaseUrl = await this.startEgressProxy(handle, model.baseUrl);
     try {
