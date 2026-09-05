@@ -210,7 +210,8 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
                 {staleUserCount > 0 ? ` · ${staleUserCount} 人挂着已下线菜单` : ''}
               </span>
             )}
-            {staleTokens.length > 0 && (
+            {/* 破坏性入口只在拿到服务端全量目录后才露出：目录没回来时判据退化成管理员自己的权限视图，可能把合法菜单当成下线项 */}
+            {staleTokens.length > 0 && fullCatalog !== null && !loadError && (
               <Button
                 variant="danger"
                 size="sm"

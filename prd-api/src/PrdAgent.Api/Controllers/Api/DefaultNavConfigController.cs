@@ -183,7 +183,8 @@ public class DefaultNavConfigController : ControllerBase
             .Set(x => x.NavHidden, new List<string>())
             .Set(x => x.NavLayoutUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
-        await _db.UserPreferences.UpdateOneAsync(x => x.UserId == userId, update, cancellationToken: ct);
+        // 校验通过后的破坏性写入不跟随请求取消，与 remove-tokens 同口径
+        await _db.UserPreferences.UpdateOneAsync(x => x.UserId == userId, update, cancellationToken: CancellationToken.None);
 
         var pref = await _db.UserPreferences.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         return Ok(ApiResponse<UserNavLayoutItem>.Ok(UserNavLayoutItem.From(user, pref)));
