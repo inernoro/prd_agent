@@ -266,6 +266,17 @@ export default function McpConsolePage() {
               <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 一台一把钥匙，断哪台都不影响别的
               </span>
+              {/* 「今天」按 UTC 自然日切（McpUsageService.TodayStartUtc = UtcNow.Date），
+                  不是用户本地的午夜 —— UTC+8 的人在早上 8 点看到它归零。这句话改版前
+                  一直在页面上，改版时被收进了额度编辑弹窗里；而下面每一行、每一条额度条
+                  都写着「今天」，不说清是哪个「今天」，用户会以为数字错了。 */}
+              <span
+                className="text-[11px]"
+                style={{ color: 'var(--text-muted)', opacity: 0.85 }}
+                title="额度与「今天」的计数都按 UTC 自然日重置；UTC+8 是每天早上 8 点归零"
+              >
+                · 「今天」按 UTC 自然日算
+              </span>
             </div>
 
             {clients.length === 0 ? (

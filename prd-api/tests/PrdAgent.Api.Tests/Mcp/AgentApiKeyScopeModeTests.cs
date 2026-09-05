@@ -176,6 +176,30 @@ public class AgentApiKeyScopeModeTests
     }
 
     /// <summary>
+    /// 只说「切成手动」不给清单时，必须把它此刻拿得到的那些定下来，而不是清零。
+    ///
+    /// 自动档的 Scopes 本来就是空的。PATCH {"scopeMode":"manual"} 若照直写下去，
+    /// 这把钥匙会在接口返回 200 的同时失去全部工具 —— 说成了、其实废了，
+    /// 而调用方没有任何线索知道自己刚把钥匙作废了。
+    ///
+    /// 「按清单钉死」的语义是**冻结现状**，不是清空。
+    /// 这条接线删掉不会红：少了这一段照样编译、照样全绿。
+    /// </summary>
+    [Fact]
+    public void Update_SnapshotsEffectiveScopes_WhenSwitchingAutoKeyToManual()
+    {
+        var source = ReadSource("src/PrdAgent.Api/Controllers/Api/AgentApiKeysController.cs");
+        var begin = source.IndexOf("explicitScopeMode == AgentApiKeyScopeMode.Auto", StringComparison.Ordinal);
+        begin.ShouldBeGreaterThan(-1, customMessage: "找不到切档那一段");
+        var slice = source.Substring(begin, Math.Min(1200, source.Length - begin));
+
+        slice.ShouldContain("AgentApiKeyScopeMode.Manual",
+            customMessage: "切成手动这条路径没有单独处理，自动档的空清单会被原样钉死");
+        slice.ShouldContain("EffectiveScopesFor",
+            customMessage: "切手动时没有把当前有效清单快照下来 —— 钥匙会静默失去全部工具");
+    }
+
+    /// <summary>
     /// 「什么都有」的那个人的权限位。必须带上 access ——
     /// 它是所有功能权限的前置闸（PermissionsAllowScope 里没有 access 一律不算数）。
     /// </summary>

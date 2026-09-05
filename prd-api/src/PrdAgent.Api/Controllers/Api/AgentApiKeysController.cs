@@ -253,6 +253,18 @@ public class AgentApiKeysController : ControllerBase
         {
             req.Scopes = null;
         }
+        else if (explicitScopeMode == AgentApiKeyScopeMode.Manual
+                 && req.Scopes == null
+                 && key.ScopeMode == AgentApiKeyScopeMode.Auto)
+        {
+            // 只说「切成手动」不给清单：自动档的 Scopes 本来就是空的，照直写下去这把钥匙
+            // 会在返回 200 的同时失去全部工具 —— 接口说成了、钥匙却废了。
+            // 「按清单钉死」的意思是把它**此刻拿得到的那些**定下来，不是清零。
+            // 取值走唯一那处判据，所以这份快照天然只含主人现在真有权限的 scope，不用再过一遍校验。
+            req.Scopes = McpCapabilityCatalog
+                .EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions)
+                .ToList();
+        }
         else if (req.Scopes != null)
         {
             var scopes = req.Scopes.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
