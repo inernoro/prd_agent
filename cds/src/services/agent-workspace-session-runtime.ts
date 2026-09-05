@@ -1031,7 +1031,25 @@ export class AgentWorkspaceSessionRuntime {
           shellQuote('set -u; command -v dd >/dev/null 2>&1 || exit 10; stage=20; for root in /cds-storage-probe /cds-direct-storage-probe; do dd if=/dev/zero of="$root/within-limit" bs=524288 count=1 2>/dev/null || exit $((stage + 1)); if dd if=/dev/zero of="$root/over-limit" bs=1048576 count=2 2>/dev/null; then exit $((stage + 2)); fi; rm -f "$root/within-limit" "$root/over-limit" || exit $((stage + 3)); created=0; while [ "$created" -lt 128 ]; do if : > "$root/inode-limit-$created" 2>/dev/null; then created=$((created + 1)); else break; fi; done; test "$created" -lt 128 || exit $((stage + 4)); rm -f "$root"/inode-limit-* || exit $((stage + 5)); stage=30; done'),
         ].join(' '), { timeout: 30_000 });
         verified = validation.exitCode === 0;
-        if (!verified) this.hardStoragePolicyFailureCode = `validation_exit_${validation.exitCode}`;
+        if (!verified) {
+          const diagnostic = `${validation.stderr}\n${validation.stdout}`.toLowerCase();
+          const category = diagnostic.includes('permission denied')
+            ? 'permission_denied'
+            : diagnostic.includes('operation not permitted')
+              ? 'operation_not_permitted'
+              : diagnostic.includes('invalid argument') || diagnostic.includes('invalid mount')
+                ? 'invalid_mount'
+                : diagnostic.includes('unknown flag') || diagnostic.includes('unknown option')
+                  ? 'unsupported_option'
+                  : diagnostic.includes('no space left')
+                    ? 'no_space'
+                    : diagnostic.includes('read-only')
+                      ? 'read_only'
+                      : diagnostic.length > 0
+                        ? 'docker_or_shell_error'
+                        : 'no_diagnostic';
+          this.hardStoragePolicyFailureCode = `validation_exit_${validation.exitCode}_${category}`;
+        }
       } else {
         this.hardStoragePolicyFailureCode = `volume_create_exit_${volume.exitCode}`;
       }
