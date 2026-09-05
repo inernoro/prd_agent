@@ -206,7 +206,7 @@ public static class McpCapabilityCatalog
                 .Where(s => !PermissionCheckedScopes.Contains(s) || PermissionsAllowScope(ownedPermissions, s))
                 .ToList();
 
-    public static McpCapability? ByScope(string scope) =
+    public static McpCapability? ByScope(string scope) =>
         All.FirstOrDefault(c => c.AllScopes().Contains(scope, StringComparer.OrdinalIgnoreCase));
 
     /// <summary>归属某块能力的内置工具（按 scope 反查，不另维护清单）。</summary>
