@@ -61,6 +61,7 @@ import {
   normalizeWorkspaceTransfer,
   type WorkspaceTransferRequest,
 } from '../services/agent-workspace-session-runtime.js';
+import type { ServerEventLogSink } from '../services/server-event-log-store.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
@@ -68,6 +69,7 @@ export interface RemoteHostsRouterDeps {
   config?: Pick<CdsConfig, 'portStart'>;
   shell?: IShellExecutor;
   agentWorkspaceSessionRuntime?: AgentWorkspaceSessionRuntime;
+  serverEventLogStore?: ServerEventLogSink | null;
 }
 
 export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
@@ -927,6 +929,30 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         const runtimeError = toAgentWorkspaceRuntimeError(error);
         session.status = 'failed';
         session.updatedAt = new Date().toISOString();
+        const exitCode = typeof runtimeError.details?.exitCode === 'number'
+          ? runtimeError.details.exitCode
+          : undefined;
+        deps.serverEventLogStore?.record({
+          category: 'container',
+          severity: 'error',
+          source: 'agent-workspace-session-runtime',
+          action: 'agent-workspace-session.create.failed',
+          message: 'OpenDesign workspace session creation failed',
+          projectId: session.projectId,
+          status: 'failed',
+          exitCode,
+          error: {
+            code: runtimeError.code,
+            message: 'OpenDesign workspace session creation failed',
+          },
+          details: {
+            ...(runtimeError.details || {}),
+            sessionId: session.id,
+            runtime,
+            code: runtimeError.code,
+            retryable: runtimeError.retryable,
+          },
+        });
         res.status(runtimeError.retryable ? 503 : 409).json({ error: runtimeError });
         return;
       }

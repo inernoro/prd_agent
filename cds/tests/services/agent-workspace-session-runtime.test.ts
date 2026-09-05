@@ -35,6 +35,7 @@ class RecordingShell implements IShellExecutor {
   readonly calls: Array<{ command: string; options?: ExecOptions }> = [];
   workspaceDir = '';
   failEgressConnect = false;
+  failContainerCreate = false;
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     this.calls.push({ command, options });
@@ -43,7 +44,17 @@ class RecordingShell implements IShellExecutor {
     if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
     if (command.startsWith('docker network create')) return result('network-id\n');
     if (command.startsWith('docker volume create')) return result('volume-id\n');
-    if (command.startsWith('docker create ')) return result('container-id\n');
+    if (command.startsWith('docker create ')) {
+      if (this.failContainerCreate) {
+        const daemonApiToken = options?.stdin?.match(/^OD_API_TOKEN=(.+)$/m)?.[1] || '';
+        return result(
+          `transfer-token ${daemonApiToken} ${'x'.repeat(4_096)}`,
+          `OD_API_TOKEN=${daemonApiToken}\ntransferToken=transfer-token\ncommand=${command}`,
+          125,
+        );
+      }
+      return result('container-id\n');
+    }
     if (command.startsWith('docker cp ')) {
       const inbound = command.match(/^docker cp '([^']+)\/\.' 'cds-od-[^']+:\/workspace\/'$/);
       if (inbound) this.workspaceDir = inbound[1];
@@ -324,6 +335,73 @@ describe('AgentWorkspaceSessionRuntime', () => {
     )).rejects.toMatchObject<Partial<AgentWorkspaceRuntimeError>>({ code: 'workspace_package_hash_mismatch' });
     expect(fs.readdirSync(rootDir)).toEqual([]);
     expect(shell.calls.some((call) => call.command.startsWith('docker network create'))).toBe(false);
+  });
+
+  it('returns bounded and credential-safe diagnostics when Docker cannot create the container', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const workspacePackage = buildPackage([
+      { path: 'brief.txt', content: 'brief', mediaType: 'text/plain' },
+    ]);
+    const shell = new RecordingShell();
+    shell.failContainerCreate = true;
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      instanceId: 'instance-a',
+      capabilityCacheMs: 0,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async () => new Response(workspacePackage.serialized, {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    });
+
+    const error = await runtime.create('session-create-failure', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: workspacePackage.sha256,
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024,
+      maxOutputBytes: 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json'],
+    }, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 30,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AgentWorkspaceRuntimeError);
+    expect(error).toMatchObject({
+      code: 'workspace_container_create_failed',
+      message: 'OpenDesign container failed to be created',
+      retryable: true,
+      details: {
+        stage: 'docker_create',
+        exitCode: 125,
+        stderrPreview: expect.any(String),
+        stdoutPreview: expect.any(String),
+      },
+    });
+    const runtimeError = error as AgentWorkspaceRuntimeError;
+    const details = runtimeError.details || {};
+    const serializedDetails = JSON.stringify(details);
+    const createCall = shell.calls.find((call) => call.command.startsWith('docker create '));
+    const daemonApiToken = createCall?.options?.stdin?.match(/^OD_API_TOKEN=(.+)$/m)?.[1] || '';
+    expect(daemonApiToken).not.toBe('');
+    expect(serializedDetails).not.toContain(daemonApiToken);
+    expect(serializedDetails).not.toContain('transfer-token');
+    expect(serializedDetails).not.toContain(createCall?.command || 'docker create');
+    expect(details).not.toHaveProperty('stdin');
+    expect(details).not.toHaveProperty('command');
+    expect(String(details.stderrPreview)).toContain('***[masked]***');
+    expect(String(details.stdoutPreview)).toContain('cds runtime diagnostic truncated');
+    expect(Buffer.byteLength(String(details.stderrPreview), 'utf8')).toBeLessThanOrEqual(2 * 1024);
+    expect(Buffer.byteLength(String(details.stdoutPreview), 'utf8')).toBeLessThanOrEqual(2 * 1024);
+    expect(fs.readdirSync(rootDir)).toEqual([]);
   });
 
   it('fails closed before an Agent run when the MAP-only egress relay cannot be isolated', async () => {

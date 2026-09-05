@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import type { IShellExecutor } from '../types.js';
 import { computeCdsInstanceId } from './orphan-container-reaper.js';
+import { maskSecrets } from './secret-masker.js';
 
 export const MAP_DESIGN_WORKSPACE_SCHEMA = 'map-design-workspace-v1';
 export const OPEN_DESIGN_IMAGE = 'ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474';
@@ -142,6 +143,7 @@ const SHA256_RE = /^[a-f0-9]{64}$/;
 const SESSION_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const MAX_PACKAGE_OVERHEAD_BYTES = 2 * 1024 * 1024;
 const MAX_COMMIT_RESPONSE_BYTES = 1024 * 1024;
+const MAX_RUNTIME_DIAGNOSTIC_BYTES = 2 * 1024;
 const EGRESS_PROXY_PORT = 8787;
 const ARTIFACT_CSP = [
   "default-src 'none'",
@@ -243,6 +245,22 @@ function shellQuote(value: string): string {
 
 function sha256(bytes: Uint8Array | string): string {
   return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
+function runtimeDiagnosticPreview(value: string, excludedValues: string[]): string {
+  let safe = value.replaceAll('\0', '');
+  for (const excluded of excludedValues) {
+    if (excluded) safe = safe.split(excluded).join('***[masked]***');
+  }
+  safe = maskSecrets(safe, { mask: true });
+  const bytes = Buffer.from(safe, 'utf8');
+  if (bytes.length <= MAX_RUNTIME_DIAGNOSTIC_BYTES) return safe;
+
+  const suffix = `\n[cds runtime diagnostic truncated: original ${bytes.length} bytes]`;
+  const textBudget = Math.max(0, MAX_RUNTIME_DIAGNOSTIC_BYTES - Buffer.byteLength(suffix, 'utf8'));
+  let preview = bytes.subarray(0, textBudget).toString('utf8');
+  while (Buffer.byteLength(preview, 'utf8') > textBudget) preview = preview.slice(0, -1);
+  return `${preview}${suffix}`;
 }
 
 function normalizeSha(value: unknown, field: string): string {
@@ -987,7 +1005,18 @@ export class AgentWorkspaceSessionRuntime {
       onStage('container_starting', { image: this.image });
       const started = await this.shell.exec(command, { timeout: 120_000, stdin: env });
       if (started.exitCode !== 0) {
-        throw new AgentWorkspaceRuntimeError('workspace_container_create_failed', 'OpenDesign container failed to be created', true);
+        const excludedDiagnosticValues = [daemonApiToken, transfer.transferToken, command];
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_container_create_failed',
+          'OpenDesign container failed to be created',
+          true,
+          {
+            stage: 'docker_create',
+            exitCode: started.exitCode,
+            stderrPreview: runtimeDiagnosticPreview(started.stderr, excludedDiagnosticValues),
+            stdoutPreview: runtimeDiagnosticPreview(started.stdout, excludedDiagnosticValues),
+          },
+        );
       }
       containerCreated = true;
       // Match CDS project validation's established sibling-container pattern:

@@ -1,6 +1,6 @@
 # CDS Agent 工作台 · 债务台账
 
-> **版本**：v0.1 | **日期**：2026-07-17 | **状态**：开发中
+> **版本**：v0.2 | **日期**：2026-09-05 | **状态**：持续偿还
 
 **一句话**：工作台长期卡在默认运行配置这道门禁，本文记债务清单与用户「看不懂、玩不明白」的根因。
 **谁该读**：接手工作台的人；排查它为什么不好用的人。
@@ -14,7 +14,7 @@
 |------|--------|
 | open | 3 |
 | in-progress | 0 |
-| paid | 2 |
+| paid | 3 |
 
 模块范围：`/cds-agent` 工作台、`InfraAgentSessionService`、`GatewayReviewRuntimeAdapter`、`CdsAgentAdapter`，以及 `doc/` 下 `*.cds-agent*` 文档群。
 
@@ -48,11 +48,18 @@
 - **原现状**：`CdsAgentAdapter`（工作流节点）在完全没有系统级 runtime profile 时硬报「没有系统级模型配置」，全新环境工作流 CdsAgentRun 节点无法发起。
 - **偿还**：`CdsAgentAdapter` 无 profile 时不再报错——输出提示「尝试以 CDS Lite 模式直跑」并合成占位 `RuntimeProfileChoice(null, "claude-sdk", ...)` 放行；下游 `EnsureRuntimeProfileCompatibleOrLiteFallback` / `DecideRuntimeSelection` 本就兼容 null profile，Lite 不可用时 session 层仍显式失败（行为不劣于原硬报错）。
 
-### D5 · 会话级容器与资源策略强制（open）
+### D5 · 会话级容器与资源策略强制（paid，2026-09-05）
 
-- **现状**：CDS 会话接口已经记录 CPU、内存、超时、网络和自动清理策略，运行时 Provider 目录也能声明 `session-container` 要求；但当前可执行链仍复用共享运行时容器，资源策略没有按会话强制。
-- **影响**：OpenDesign、Codex 和自定义 Provider 不能按多租户产品标准启用。目录会如实标记不可选，请求独立容器时必须拒绝，不能降级到共享容器。
-- **偿还条件**：在独立 CDS Remote Agent 基础设施项目落地会话容器分配、工作区挂载、凭据注入、网络策略、资源限制、停止和超时清理；同一合同通过集成测试和真实运行取证后，才把对应 Provider 改为 available。
+- **原问题**：CDS 只记录 CPU、内存、超时、网络和清理策略，可执行链仍复用共享容器，不能按多租户标准启用外部 Provider。
+- **偿还**：OpenDesign 已改为每个会话独立容器、内部网络和命名卷，强制只读根文件系统、CPU、内存、进程数、限域模型出口、超时与失败清理；能力探针不能证明这些事实时 Provider 仍不可选择。
+- **验收边界**：代码合同和隔离参数已通过自动化验证；共享 CDS 宿主的最终真容器复验仍受 D6 的发布路径约束，不把该运维阻塞倒退解释为共享容器降级。
+
+### D6 · Agent Workspace 独立控制面灰度（open）
+
+- **现状**：共享 CDS 承载真实 Docker，但控制面更新属于高影响操作；`cds-self` 只用于 UI/API 预览，按设计不挂 Docker socket 并禁止宿主命令。当前没有一套可由 cdscli 创建、同时具备真实 Docker 且与共享控制面隔离的 Agent Workspace canary。
+- **影响**：运行时改动可在分支预览完成编译和合同测试，却不能在不更新共享控制面的情况下取得宿主级 `docker create` 诊断或完成真容器回归，延长了问题收敛周期。
+- **当前缓解**：容器创建失败会记录严格限长、统一脱敏的阶段、退出码和 stdout/stderr 摘要；错误事件不保存请求体、模型密钥、传输票据或完整命令。
+- **偿还条件**：准备第二套 standalone CDS 或受控 Remote Agent 节点，挂独立 Docker socket、使用独立状态与凭据，并为 MAP 增加按运行显式固定连接的能力；cdscli 提供创建、部署、健康、回滚和清理的完整入口。
 
 ## 相关文件
 

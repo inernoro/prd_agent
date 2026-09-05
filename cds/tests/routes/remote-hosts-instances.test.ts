@@ -7,7 +7,11 @@ import path from 'node:path';
 
 import { createRemoteHostsRouter } from '../../src/routes/remote-hosts.js';
 import { CdsPairingService } from '../../src/services/connection/pairing-service.js';
-import { AgentWorkspaceSessionRuntime } from '../../src/services/agent-workspace-session-runtime.js';
+import {
+  AgentWorkspaceRuntimeError,
+  AgentWorkspaceSessionRuntime,
+} from '../../src/services/agent-workspace-session-runtime.js';
+import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 import { StateService } from '../../src/services/state.js';
 import type { BuildProfile, ExecResult, IShellExecutor, Project } from '../../src/types.js';
 
@@ -487,6 +491,118 @@ describe('Remote hosts project instances route', () => {
       resourcePolicyEnforcedPerSession: false,
       reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 is being prepared on this CDS node',
     });
+  });
+
+  it('persists credential-safe OpenDesign creation diagnostics without retaining the failed session', async () => {
+    const events: Array<Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }> = [];
+    const serverEventLogStore: ServerEventLogSink = {
+      record(event) {
+        events.push(event);
+      },
+    };
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create() {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_container_create_failed',
+          'OpenDesign container failed to be created',
+          true,
+          {
+            stage: 'docker_create',
+            exitCode: 125,
+            stderrPreview: 'permission denied OD_API_TOKEN=***[masked]***',
+            stdoutPreview: '',
+          },
+        );
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime, serverEventLogStore });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const fullCommand = "docker create --env-file /dev/stdin 'private-image'";
+
+    const failed = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      {
+        runtime: 'open-design',
+        workloadKind: 'design-artifact',
+        model: 'map-managed',
+        modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+        modelProtocol: 'openai',
+        modelApiKey: 'model-secret',
+        workspaceTransfer: {
+          schemaVersion: 'map-design-workspace-v1',
+          inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/input',
+          resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/result',
+          transferToken: 'transfer-secret',
+          inputSha256: 'a'.repeat(64),
+          baseRevision: 'revision-1',
+          maxInputBytes: 1024 * 1024,
+          maxOutputBytes: 1024 * 1024,
+          allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+        },
+        resourcePolicy: {
+          cpuCores: 1,
+          memoryMb: 768,
+          timeoutSeconds: 120,
+          networkPolicy: 'egress-only',
+          autoCleanupMinutes: 5,
+        },
+      },
+    );
+
+    expect(failed.status).toBe(503);
+    expect(failed.body.error).toMatchObject({
+      code: 'workspace_container_create_failed',
+      message: 'OpenDesign container failed to be created',
+      retryable: true,
+      details: { stage: 'docker_create', exitCode: 125 },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      category: 'container',
+      severity: 'error',
+      source: 'agent-workspace-session-runtime',
+      action: 'agent-workspace-session.create.failed',
+      message: 'OpenDesign workspace session creation failed',
+      projectId,
+      status: 'failed',
+      exitCode: 125,
+      error: {
+        code: 'workspace_container_create_failed',
+        message: 'OpenDesign workspace session creation failed',
+      },
+      details: {
+        sessionId: expect.any(String),
+        runtime: 'open-design',
+        code: 'workspace_container_create_failed',
+        retryable: true,
+        stage: 'docker_create',
+        exitCode: 125,
+        stderrPreview: 'permission denied OD_API_TOKEN=***[masked]***',
+        stdoutPreview: '',
+      },
+    });
+    const serializedEvent = JSON.stringify(events[0]);
+    expect(serializedEvent).not.toContain('model-secret');
+    expect(serializedEvent).not.toContain('transfer-secret');
+    expect(serializedEvent).not.toContain(fullCommand);
+    expect(serializedEvent).not.toContain('workspaceTransfer');
+    expect(serializedEvent).not.toContain('modelApiKey');
+
+    const failedSessionId = String(events[0].details?.sessionId || '');
+    expect(failedSessionId).not.toBe('');
+    const missing = await request(
+      server,
+      'GET',
+      `/api/projects/${projectId}/agent-sessions/${failedSessionId}`,
+      longToken,
+    );
+    expect(missing.status).toBe(404);
   });
 
   it('routes OpenDesign through the injected workspace runtime and exposes only committed result facts', async () => {

@@ -4174,6 +4174,7 @@ export function createServer(deps: ServerDeps): express.Express {
     containerService: deps.containerService,
     config: deps.config,
     shell: deps.shell,
+    serverEventLogStore: deps.serverEventLogStore,
   }));
   // 自更新排空窗口闸（app 级，Codex PR #1273 P1）。
   //
