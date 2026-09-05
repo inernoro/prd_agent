@@ -80,8 +80,11 @@ public static class HostedSiteRevisionRules
     public const int MaxHtmlBytes = 2 * 1024 * 1024;
     public const string GeneratedArtifactCsp = "default-src 'none'; base-uri 'none'; connect-src 'none'; form-action 'none'; img-src data:; font-src data:; media-src data:; style-src 'unsafe-inline'; script-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; manifest-src 'none'";
     private const string DocumentRootPattern = @"^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:""[^""<>]*""|'[^'<>]*'|[^\s""'`=<>]+))?)*\s*>";
+    private const string DocumentHeadPattern = @"^\s*(?:<!--[\s\S]*?-->\s*)*<head(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:""[^""<>]*""|'[^'<>]*'|[^\s""'`=<>]+))?)*\s*>";
+    private static readonly string TrustedSystemCspMeta =
+        $"<meta http-equiv=\"Content-Security-Policy\" content=\"{GeneratedArtifactCsp}\">";
     private static readonly string TrustedSystemCspEnvelope =
-        $"<head><meta http-equiv=\"Content-Security-Policy\" content=\"{GeneratedArtifactCsp}\"></head>";
+        $"<head>{TrustedSystemCspMeta}</head>";
 
     public static string NormalizeGeneratedHtml(string raw)
     {
@@ -143,13 +146,23 @@ public static class HostedSiteRevisionRules
                 throw new InvalidOperationException("生成页面的 CSS 引用了外部资源");
         }
 
-        var csp = $"<meta http-equiv=\"Content-Security-Policy\" content=\"{GeneratedArtifactCsp}\">";
-        return System.Text.RegularExpressions.Regex.Replace(
+        var root = System.Text.RegularExpressions.Regex.Match(
             html,
             DocumentRootPattern,
-            match => $"{match.Value}<head>{csp}</head>",
             RegexOptions,
             TimeSpan.FromSeconds(1));
+        var afterRoot = root.Index + root.Length;
+        var head = System.Text.RegularExpressions.Regex.Match(
+            html[afterRoot..],
+            DocumentHeadPattern,
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        if (head.Success)
+        {
+            var insertionIndex = afterRoot + head.Index + head.Length;
+            return html.Insert(insertionIndex, TrustedSystemCspMeta);
+        }
+        return html.Insert(afterRoot, TrustedSystemCspEnvelope);
     }
 
     /// <summary>
@@ -168,7 +181,18 @@ public static class HostedSiteRevisionRules
         if (!root.Success) return html;
         var envelopeStart = root.Index + root.Length;
         if (!html.AsSpan(envelopeStart).StartsWith(TrustedSystemCspEnvelope, StringComparison.Ordinal))
-            return html;
+        {
+            var head = System.Text.RegularExpressions.Regex.Match(
+                html[envelopeStart..],
+                DocumentHeadPattern,
+                RegexOptions,
+                TimeSpan.FromSeconds(1));
+            if (!head.Success) return html;
+            var metaStart = envelopeStart + head.Index + head.Length;
+            if (!html.AsSpan(metaStart).StartsWith(TrustedSystemCspMeta, StringComparison.Ordinal))
+                return html;
+            return html.Remove(metaStart, TrustedSystemCspMeta.Length);
+        }
         return html.Remove(envelopeStart, TrustedSystemCspEnvelope.Length);
     }
 

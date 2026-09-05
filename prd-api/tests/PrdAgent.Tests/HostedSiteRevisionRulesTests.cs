@@ -78,6 +78,23 @@ public class HostedSiteRevisionRulesTests
     }
 
     [Fact]
+    public void HardenGeneratedHtml_PreservesSingleHeadAndMobileViewport()
+    {
+        var result = HostedSiteRevisionRules.HardenGeneratedHtml(
+            "<!doctype html><html lang=\"zh-CN\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>移动页面</title></head><body>正文</body></html>");
+
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(
+                result,
+                @"<head\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Cast<System.Text.RegularExpressions.Match>());
+        Assert.Contains("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">", result, StringComparison.Ordinal);
+        Assert.True(
+            result.IndexOf("Content-Security-Policy", StringComparison.Ordinal)
+            < result.IndexOf("name=\"viewport\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void HardenGeneratedHtml_InjectsCspBeforeACommentThatPretendsToBeHead()
     {
         var result = HostedSiteRevisionRules.HardenGeneratedHtml(

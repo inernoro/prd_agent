@@ -200,6 +200,7 @@ const ARTIFACT_CSP = [
   "manifest-src 'none'",
 ].join('; ');
 const DOCUMENT_ROOT_RE = /^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
+const DOCUMENT_HEAD_RE = /^\s*(?:<!--[\s\S]*?-->\s*)*<head(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
 const IGNORED_RUNTIME_OUTPUT_PATHS = ['index.html.artifact.json'] as const;
 
 // This script runs inside the isolated OpenDesign container before any bytes
@@ -2492,7 +2493,13 @@ export function hardenSelfContainedHtml(html: string): string {
   }
 
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
-  return html.replace(DOCUMENT_ROOT_RE, (root) => `${root}<head>${cspMeta}</head>`);
+  const root = html.match(DOCUMENT_ROOT_RE);
+  const head = html.slice(root![0].length).match(DOCUMENT_HEAD_RE);
+  if (head) {
+    const insertionIndex = root![0].length + head[0].length;
+    return `${html.slice(0, insertionIndex)}${cspMeta}${html.slice(insertionIndex)}`;
+  }
+  return html.replace(DOCUMENT_ROOT_RE, (documentRoot) => `${documentRoot}<head>${cspMeta}</head>`);
 }
 
 function convertRelativeKnowledgeAnchors(html: string): string {

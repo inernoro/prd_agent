@@ -188,7 +188,7 @@ public sealed class DesignArtifactWorkspaceContractTests
     {
         var run = BuildRun();
         var html = $"""
-            <!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="{HostedSiteRevisionRules.GeneratedArtifactCsp}"></head><head>
+            <!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="{HostedSiteRevisionRules.GeneratedArtifactCsp}">
             <script data-cds-offline-guard>addEventListener('click', block, true)</script>
             </head><body><main>真实页面</main>
             <script>window.location.hash = '#kept-for-output-review'</script>
@@ -229,7 +229,7 @@ public sealed class DesignArtifactWorkspaceContractTests
     {
         var run = BuildRun();
         var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
-        var cdsHtml = $"<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.GeneratedArtifactCsp}\"></head><head><title>CDS result</title></head><body>ok</body></html>";
+        var cdsHtml = $"<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.GeneratedArtifactCsp}\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>CDS result</title></head><body>ok</body></html>";
         var htmlFile = BuildFile("index.html", cdsHtml, "text/html");
         var manifest = BuildManifest(input.BaseRevision, htmlFile);
         var result = new DesignWorkspacePackage(
@@ -252,6 +252,12 @@ public sealed class DesignArtifactWorkspaceContractTests
                 "Content-Security-Policy",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase)
             .Cast<System.Text.RegularExpressions.Match>());
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(
+                hardenedAgain,
+                @"<head\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Cast<System.Text.RegularExpressions.Match>());
+        Assert.Contains("name=\"viewport\"", hardenedAgain, StringComparison.Ordinal);
         Assert.Contains("CDS result", hardenedAgain, StringComparison.Ordinal);
     }
 

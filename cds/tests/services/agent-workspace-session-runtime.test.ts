@@ -1569,7 +1569,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
   });
 
   it('injects a restrictive CSP and rejects dynamic or indirect network surfaces', () => {
-    const safe = hardenSelfContainedHtml('<!doctype html><html><head><title>Safe</title></head><body><a href="#details">Details</a><a class="link" href="./guide.platform.quickstart.md">Guide</a><style>body{color:red}</style></body></html>');
+    const safe = hardenSelfContainedHtml('<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Safe</title></head><body><a href="#details">Details</a><a class="link" href="./guide.platform.quickstart.md">Guide</a><style>body{color:red}</style></body></html>');
     expect(safe).toContain('http-equiv="Content-Security-Policy"');
     expect(safe).toContain("connect-src 'none'");
     expect(safe).toContain("form-action 'none'");
@@ -1578,6 +1578,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(safe).not.toContain('navigate-to');
     expect(safe).toContain('<span data-cds-source-reference="./guide.platform.quickstart.md">Guide</span>');
     expect(safe).not.toContain('href="./guide.platform.quickstart.md"');
+    expect(safe.match(/<head\b/gi)).toHaveLength(1);
+    expect(safe).toContain('<meta name="viewport" content="width=device-width, initial-scale=1">');
 
     const officialTemplateEnvelope = hardenSelfContainedHtml(
       '\uFEFF<!doctype html>\n<!-- OpenDesign web-prototype seed. -->\n<html lang="zh-CN"><head><title>Template</title></head><body>ok</body></html>',
