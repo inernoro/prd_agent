@@ -5,6 +5,7 @@ import { listMcpCalls } from '@/services';
 import type { McpCallLogDto, McpClientDto } from '@/services/contracts/mcpConsole';
 import { safeArtifactHref } from './artifactHref';
 import { groupCalls, type CallGroup } from './callGroups';
+import { eventClock } from './eventClock';
 
 const STATUS_STYLE: Record<string, { label: string; color: string; bg: string; border: string }> = {
   success: {
@@ -267,8 +268,8 @@ function EventRow({
         ) : (
           <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} aria-hidden />
         )}
-        <span className="w-[46px] shrink-0 text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-          {clock(group.first.createdAt)}
+        <span className="w-[86px] shrink-0 text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          {eventClock(group.first.createdAt)}
         </span>
         <span className="w-[110px] shrink-0 truncate text-[12px]" style={{ color: 'var(--text-secondary)' }}>
           {group.first.keyName}
@@ -369,7 +370,7 @@ function EventRow({
                     style={{ background: 'var(--bg-nested)' }}
                   >
                     <span className="w-[46px] shrink-0 text-[10.5px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                      {clock(step.createdAt)}
+                      {eventClock(step.createdAt)}
                     </span>
                     <code
                       className="text-[11px]"
@@ -424,10 +425,6 @@ function EventRow({
       )}
     </div>
   );
-}
-
-function clock(iso: string): string {
-  return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 }
 
 function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
