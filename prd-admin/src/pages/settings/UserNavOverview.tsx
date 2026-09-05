@@ -225,10 +225,21 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
           第一行是「所有人的默认导航」；其余每人一行，自定义过的排在前面（最近改动在最上），沿用默认的排在后面。
           每行画的是侧栏真实渲染的那一列：虚线灰框是用户没排过、侧栏自动补到末尾的新菜单；虚线红框是目录里已不存在的菜单（侧栏渲染时会自动跳过），删菜单前先看这里谁还挂着它。
         </div>
+        <div className="flex items-center gap-3 text-[11px] text-token-muted" data-testid="user-nav-legend">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded-sm" style={{ background: 'hsl(var(--primary) / 0.22)', border: '1px solid hsl(var(--primary) / 0.6)' }} />
+            自定义过的人（左侧主色竖条）
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded-sm" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }} />
+            沿用默认（灰）
+          </span>
+        </div>
         <NavRow
           heading={<span className="text-[12px] font-semibold text-token-primary">所有人的默认导航</span>}
           subheading={defaultNavOrder.length > 0 ? '管理员在「所有人的」里配置的顺序' : '未配置，使用系统内置分组顺序'}
           tag={<RowTag tone="default">默认</RowTag>}
+          kind="default"
           order={effectiveDefaultOrder}
           hidden={defaultNavHidden}
           homeMeta={homeMeta}
@@ -296,9 +307,9 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
                     {it.customized ? <RowTag tone="custom">自定义</RowTag> : <RowTag tone="default">默认</RowTag>}
                   </>
                 }
+                kind={it.customized ? 'custom' : 'default'}
                 order={it.customized ? it.navOrder : effectiveDefaultOrder}
                 hidden={it.customized ? it.navHidden : defaultNavHidden}
-                dimmed={!it.customized}
                 homeMeta={homeMeta}
                 metaByKey={metaByKey}
                 sidebarIds={sidebarIds}
@@ -351,9 +362,9 @@ function NavRow({
   heading,
   subheading,
   tag,
+  kind,
   order,
   hidden,
-  dimmed,
   homeMeta,
   metaByKey,
   sidebarIds,
@@ -363,9 +374,10 @@ function NavRow({
   heading: ReactNode;
   subheading: string;
   tag: ReactNode;
+  /** custom = 用户自己排过（主色调）；default = 沿用默认（中性灰、略压暗） */
+  kind: 'custom' | 'default';
   order: string[];
   hidden: string[];
-  dimmed?: boolean;
   homeMeta: NavChipMeta | null;
   metaByKey: Map<string, NavChipMeta>;
   sidebarIds: readonly string[];
@@ -374,11 +386,20 @@ function NavRow({
 }) {
   const hiddenMetas = hidden.filter((t) => t !== NAV_DIVIDER_KEY);
   const effective = buildEffectiveNavOrder({ order, hidden, sidebarIds });
+  // 自定义与默认两种行一眼要能分开：自定义走主色（左侧 3px 竖条 + 淡主色底），默认走中性灰并略压暗
+  const rowStyle: React.CSSProperties =
+    kind === 'custom'
+      ? {
+          borderLeft: '3px solid hsl(var(--primary) / 0.85)',
+          background: 'hsl(var(--primary) / 0.07)',
+        }
+      : { borderLeft: '3px solid var(--nested-block-border)', opacity: 0.82 };
   return (
     <div
       className="surface-inset flex flex-col gap-2 rounded-[12px] p-3"
-      style={dimmed ? { opacity: 0.78 } : undefined}
+      style={rowStyle}
       data-user-nav-row={dataUserId ?? 'default'}
+      data-user-nav-kind={kind}
     >
       <div className="flex flex-wrap items-center gap-2">
         {heading}
