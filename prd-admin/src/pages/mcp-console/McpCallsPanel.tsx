@@ -25,6 +25,14 @@ const STATUS_STYLE: Record<string, { label: string; color: string; bg: string; b
     bg: 'var(--semantic-danger-soft)',
     border: 'var(--semantic-danger-border)',
   },
+  // 「问到了」不等于「跑完了」：以查看收尾又没有产物的多步事件落在这里。
+  // 不猜成功也不猜失败 —— 给一个失败的 run 打绿色「成功」比不说话糟得多。
+  pending: {
+    label: '还没出结果',
+    color: 'var(--text-muted)',
+    bg: 'var(--semantic-neutral-soft)',
+    border: 'var(--semantic-neutral-border)',
+  },
 };
 
 /**
@@ -232,7 +240,8 @@ function EventRow({
   onToggle: () => void;
 }) {
   const st = STATUS_STYLE[group.status] ?? STATUS_STYLE.success;
-  const bad = group.status !== 'success';
+  // pending 不是失败：不整行染色、也不给「下一步」（没什么要他做的，等就完了）
+  const bad = group.status === 'error' || group.status === 'denied';
   const href = safeArtifactHref(group.artifact?.url);
   const title =
     group.artifact?.title || group.first.argumentsPreview || group.first.toolName;

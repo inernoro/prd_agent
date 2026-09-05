@@ -9,8 +9,16 @@ export interface CallGroup {
   first: McpCallLogDto;
   /** 最后一次 —— 结果、产物地址都在这条上 */
   last: McpCallLogDto;
-  /** 这件事的结局。取最后一次的结果，不是「有没有出现过失败」：中途一次超时后来成了，就是成了 */
-  status: string;
+  /**
+   * 这件事的结局。取最后一次的结果，不是「有没有出现过失败」：中途一次超时后来成了，就是成了。
+   *
+   * 但「最后一次返回 200」只对**写入**成立 —— 写入的 HTTP 结果就是它的结局。
+   * 以**查看**收尾的多步事件不成立：生图 run 还在排队、甚至已经失败，`map_visual_get_run`
+   * 照样回 200，而网关的 `log.Status` 是纯按 HTTP 判的。照搬过来就是给一个失败的 run
+   * 打绿色「成功」。所以这类事件要看**产物有没有真的出来**（closed-loop-acceptance 的判据），
+   * 出来了才算成，没出来如实说 `pending`（不知道跑完没有），不猜成功也不猜失败。
+   */
+  status: 'success' | 'error' | 'denied' | 'pending' | string;
   /** 多步时是墙上时钟（从发起到落地），单步时就是那次调用自己的耗时 —— 两者语义不同，展示时要分开说 */
   elapsedMs: number;
   multiStep: boolean;
@@ -106,13 +114,23 @@ function toGroup(chronoSteps: McpCallLogDto[]): CallGroup {
     ? `${first.keyId}|${first.artifact.kind}:${first.artifact.id}#${first.id}`
     : `row|${first.id}`;
 
+  const artifact =
+    steps.find((s) => !!s.artifact?.url)?.artifact ??
+    steps.find((s) => !!s.artifact?.id)?.artifact ??
+    null;
+
+  // 以查看收尾、又没有产物地址的多步事件：我们只知道「问到了」，不知道那件事跑完没有。
+  // 单步、或以写入收尾的，HTTP 结果就是结局，原样用。
+  const endedOnRead = multiStep && !last.isWrite;
+  const status = endedOnRead && last.status === 'success' && !artifact?.url ? 'pending' : last.status;
+
   return {
     // id 带上发起那一次的行 id：同一篇文档改两次是两件事，光用产物身份会撞 React key
     id: key,
     steps,
     first,
     last,
-    status: last.status,
+    status,
     elapsedMs,
     multiStep,
     hasOrigin,
@@ -121,9 +139,6 @@ function toGroup(chronoSteps: McpCallLogDto[]): CallGroup {
     imageCount: steps.reduce((n, s) => Math.max(n, s.imageCount), 0),
     isWrite: steps.some((s) => s.isWrite),
     // 地址是跑完才有的，所以从最新往回找第一条给得出地址的；都没有就退回带 id 的那条
-    artifact:
-      steps.find((s) => !!s.artifact?.url)?.artifact ??
-      steps.find((s) => !!s.artifact?.id)?.artifact ??
-      null,
+    artifact,
   };
 }

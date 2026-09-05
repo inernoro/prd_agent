@@ -389,7 +389,7 @@ export function ConnectAgentDialog({
                       style={{ color: visible.isActive ? 'var(--semantic-warning-text)' : 'var(--semantic-danger-text)' }}
                     >
                       {visible.unusableReason}
-                      {visible.isActive ? '。到「连着的客户端」里续期即可。' : '。请另建一把新钥匙。'}
+                      {visible.isActive ? '。续期在「海鲜市场 → 开放接口 → 密钥」那一屏。' : '。请另建一把新钥匙。'}
                     </div>
                   )}
                   <span className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
@@ -434,7 +434,7 @@ export function ConnectAgentDialog({
 
           <p className="text-center text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
             {step === 'form'
-              ? '有效期 90 天，到期前可在下方客户端列表里续期；明文只显示一次。'
+              ? '有效期 90 天；明文只显示一次。续期在「海鲜市场 → 开放接口 → 密钥」那一屏（接入台这一页暂时只能调上限和断开）。'
               : '粘完重启客户端，跟它说一句「把这周周报做成一页网页发出来」就能用。'}
           </p>
         </div>

@@ -165,6 +165,34 @@ describe('把调用流水折成「一件事一行」', () => {
     expect(groupCalls([poll2, poll1, enqueue])[0].hasOrigin).toBe(true);
   });
 
+  it('以查看收尾又没有产物：如实说「还没出结果」，不打绿色成功', () => {
+    // 网关的 log.Status 是纯按 HTTP 判的：生图 run 还在排队、甚至已经失败，
+    // map_visual_get_run 照样回 200 → 这几步全是 success。照搬最后一步就是给失败的 run 打绿灯。
+    const art = { kind: 'image-run', id: 'run-p', url: null, title: null };
+    const enqueue = call({ isWrite: true, imageCount: 1, createdAt: '2026-09-05T10:00:00.000Z', artifact: art });
+    const poll = call({ isWrite: false, createdAt: '2026-09-05T10:00:20.000Z', artifact: art });
+    expect(groupCalls([poll, enqueue])[0].status).toBe('pending');
+  });
+
+  it('产物地址出来了才算成', () => {
+    const { poll2, poll1, enqueue } = run();   // poll2 带 url
+    expect(groupCalls([poll2, poll1, enqueue])[0].status).toBe('success');
+  });
+
+  it('以写入收尾的事件，HTTP 结果就是结局', () => {
+    // 写入不一样：它的 200 就代表那件事做完了，不需要再等产物
+    const art = { kind: 'entry', id: 'e-9', url: null, title: null };
+    const write = call({ isWrite: true, createdAt: '2026-09-05T10:00:00.000Z', artifact: art });
+    expect(groupCalls([write])[0].status).toBe('success');
+  });
+
+  it('最后一次真的失败时照样是失败，不被改写成「还没出结果」', () => {
+    const art = { kind: 'image-run', id: 'run-f', url: null, title: null };
+    const enqueue = call({ isWrite: true, createdAt: '2026-09-05T10:00:00.000Z', artifact: art });
+    const failed = call({ isWrite: false, status: 'error', errorMessage: '模型被下架了', createdAt: '2026-09-05T10:00:20.000Z', artifact: art });
+    expect(groupCalls([failed, enqueue])[0].status).toBe('error');
+  });
+
   it('多步时给的是墙上时钟，单步时给的是那次调用自己的耗时', () => {
     const { poll2, poll1, enqueue } = run();
     expect(groupCalls([poll2, poll1, enqueue])[0].elapsedMs).toBe(30_000);

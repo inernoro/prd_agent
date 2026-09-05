@@ -54,6 +54,14 @@ describe('接入台第一屏那句判断', () => {
     expect(h.detail).toContain('接入新的');
   });
 
+  it('撤掉最后一把钥匙之后，不许把当天的活动一起抹掉', () => {
+    // clients 空了但 today 还留着它的调用 —— 先看 today 再看名单。
+    // 反过来会把「今天用过、刚断开」说成「还没有客户端接进来」。
+    const h = buildHeadline({ clients: [], today: today({ calls: 31, images: 4 }), recentCalls: [] });
+    expect(h.verdict).toContain('31 次');
+    expect(h.verdict).not.toContain('还没有客户端接进来');
+  });
+
   it('全断开了：说的是「现在没人能调」，不是「你还没接过」', () => {
     const h = buildHeadline({
       clients: [client({ isActive: false }), client({ keyId: 'k2', isActive: false })],

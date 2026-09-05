@@ -33,10 +33,21 @@ export interface Headline {
 export function buildHeadline({ clients, today, recentCalls }: HeadlineInput): Headline {
   const active = clients.filter((c) => c.isActive);
 
+  const calls = today?.calls ?? 0;
+
+  // 撤销或删掉最后一把钥匙之后 clients 就空了，而它今天的调用还留在 today 里。
+  // 先看 today 再看名单 —— 反过来会把「今天用过、刚断开」说成「还没有客户端接进来」，
+  // 一句话抹掉当天全部活动。「没有过」和「现在没有了」是两件事。
   if (clients.length === 0) {
+    if (calls === 0) {
+      return {
+        verdict: '还没有客户端接进来。',
+        detail: '点右上角「接入新的」：起个名字、复制一段配置粘进 Claude Code 或 Codex，两分钟就能连上。',
+      };
+    }
     return {
-      verdict: '还没有客户端接进来。',
-      detail: '点右上角「接入新的」：起个名字、复制一段配置粘进 Claude Code 或 Codex，两分钟就能连上。',
+      verdict: `今天有过 ${calls} 次调用，但现在一台客户端也没连着了。`,
+      detail: '钥匙都撤掉或删掉了。它们做过什么，切到「它干了什么」仍然逐条看得到；要再用就点右上角「接入新的」。',
     };
   }
 
@@ -47,7 +58,6 @@ export function buildHeadline({ clients, today, recentCalls }: HeadlineInput): H
     };
   }
 
-  const calls = today?.calls ?? 0;
   const denied = today?.denied ?? 0;
   const failed = today?.failed ?? 0;
   const bad = denied + failed;
