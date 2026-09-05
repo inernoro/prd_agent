@@ -209,6 +209,12 @@ public class HostedSite
     public DateTime ContentVersion { get; set; }
 
     /// <summary>
+    /// 当前线上入口由哪个发布版本写入。该指针与入口对象指针、ContentVersion 在同一次 Mongo CAS 中更新，
+    /// 用于在版本状态最终写入失败后安全重试；其他内容写入路径必须清空。
+    /// </summary>
+    public string? PublishedRevisionId { get; set; }
+
+    /// <summary>
     /// 已注入的「幻灯片翻页方向兼容垫片」版本号。0 = 从未注入（存量旧站）。
     /// 上传时注入当前版本；startup backfill 把 &lt; 当前版本的站点重新注入并升级，
     /// 让垫片代码升级后存量站点自动获得新版（无需用户重传）。详见 HostedSiteService.SlideNavVersion。

@@ -58,6 +58,7 @@ import {
 import {
   AgentWorkspaceRuntimeError,
   AgentWorkspaceSessionRuntime,
+  normalizeAgentWorkspaceModelBaseUrl,
   normalizeWorkspaceTransfer,
   type WorkspaceTransferRequest,
 } from '../services/agent-workspace-session-runtime.js';
@@ -82,6 +83,12 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     () => '',
   );
   const router = Router();
+  const agentSessionRouterInstanceId = crypto.randomUUID();
+  const agentSessionLimits = {
+    host: readPositiveIntegerEnv('CDS_AGENT_SESSION_HOST_LIMIT', 16),
+    project: readPositiveIntegerEnv('CDS_AGENT_SESSION_PROJECT_LIMIT', 8),
+    principal: readPositiveIntegerEnv('CDS_AGENT_SESSION_PRINCIPAL_LIMIT', 4),
+  };
   const agentWorkspaceSessionRuntime = deps.agentWorkspaceSessionRuntime
     ?? (deps.shell ? new AgentWorkspaceSessionRuntime(deps.shell) : undefined);
   if (agentWorkspaceSessionRuntime && !deps.agentWorkspaceSessionRuntime) {
@@ -803,7 +810,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       });
       return;
     }
-    const modelBaseUrl = typeof req.body?.modelBaseUrl === 'string' ? req.body.modelBaseUrl : null;
+    let modelBaseUrl = typeof req.body?.modelBaseUrl === 'string' ? req.body.modelBaseUrl : null;
     const modelProtocol = typeof req.body?.modelProtocol === 'string' ? req.body.modelProtocol : null;
     const modelApiKey = typeof req.body?.modelApiKey === 'string' && req.body.modelApiKey.length > 0
       ? req.body.modelApiKey
@@ -818,7 +825,12 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       try {
         workspaceTransfer = normalizeWorkspaceTransfer(req.body?.workspaceTransfer);
       } catch (error) {
-        const runtimeError = toAgentWorkspaceRuntimeError(error);
+        const runtimeError = sanitizeAgentWorkspaceRuntimeError(error, [
+          modelApiKey,
+          typeof req.body?.workspaceTransfer?.transferToken === 'string'
+            ? req.body.workspaceTransfer.transferToken
+            : null,
+        ]);
         res.status(422).json({ error: runtimeError });
         return;
       }
@@ -845,6 +857,16 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         });
         return;
       }
+      try {
+        modelBaseUrl = normalizeAgentWorkspaceModelBaseUrl(modelBaseUrl);
+      } catch (error) {
+        const runtimeError = sanitizeAgentWorkspaceRuntimeError(error, [
+          modelApiKey,
+          workspaceTransfer.transferToken,
+        ]);
+        res.status(422).json({ error: runtimeError });
+        return;
+      }
       if (resourcePolicy.networkPolicy !== 'egress-only') {
         res.status(422).json({
           error: {
@@ -865,9 +887,27 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       : (process.env.CDS_AGENT_CONTAINER_NAME
         || process.env.CLAUDE_SIDECAR_CONTAINER_NAME
         || `${runtime}-sidecar-${req.params.id}`);
+    const capacityError = findAgentSessionCapacityError(
+      cdsAgentSessions.values(),
+      {
+        routerInstanceId: agentSessionRouterInstanceId,
+        projectId: req.params.id,
+        principalKey: auth.principalKey,
+      },
+      agentSessionLimits,
+      (candidate) => candidate.runtime === 'open-design'
+        && typeof agentWorkspaceSessionRuntime?.has === 'function'
+        && agentWorkspaceSessionRuntime.has(candidate.id),
+    );
+    if (capacityError) {
+      res.status(429).json({ error: capacityError });
+      return;
+    }
     const session: CdsAgentSession = {
       id: `cds-agent-${crypto.randomUUID().replace(/-/g, '')}`,
+      routerInstanceId: agentSessionRouterInstanceId,
       projectId: req.params.id,
+      principalKey: auth.principalKey,
       title: typeof req.body?.title === 'string' ? req.body.title.slice(0, 200) : null,
       clientUser: typeof req.body?.clientUser === 'string' ? req.body.clientUser.slice(0, 120) : null,
       clientApp: typeof req.body?.clientApp === 'string' ? req.body.clientApp.slice(0, 120) : null,
@@ -904,6 +944,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           }
         : null,
     };
+    // 会话名额必须在第一次异步容器创建前原子预占。Node 的同步区间不会交错，
+    // 因而两个并发请求不能同时越过容量检查后再各自创建一个容器。
+    cdsAgentSessions.set(session.id, session);
     if (modelApiKey || workspaceTransfer) {
       cdsAgentSessionSecrets.set(session.id, {
         ...(modelApiKey ? { modelApiKey } : {}),
@@ -919,7 +962,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           (stage, detail) => {
             pushCdsAgentEvent(session, 'status', { status: 'creating', reason: stage, ...detail });
           },
-          (error) => expireAgentWorkspaceSession(session, error, recordAgentRequestHistory),
+          (error) => settleAgentWorkspaceSessionCleanup(session, error, recordAgentRequestHistory),
         );
         containerName = allocated.containerName;
         session.containerName = allocated.containerName;
@@ -927,10 +970,16 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         session.status = 'running';
         session.updatedAt = new Date().toISOString();
       } catch (error) {
-        cdsAgentSessionSecrets.delete(session.id);
-        const runtimeError = toAgentWorkspaceRuntimeError(error);
+        const runtimeError = sanitizeAgentWorkspaceRuntimeError(error, [
+          modelApiKey,
+          workspaceTransfer.transferToken,
+        ]);
         session.status = 'failed';
         session.updatedAt = new Date().toISOString();
+        const runtimeRetainsSession = typeof agentWorkspaceSessionRuntime.has === 'function'
+          && agentWorkspaceSessionRuntime.has(session.id);
+        const cleanupFailed = runtimeError.code === 'workspace_cleanup_failed';
+        session.resourceCleanupPending = cleanupFailed || runtimeRetainsSession;
         const exitCode = typeof runtimeError.details?.exitCode === 'number'
           ? runtimeError.details.exitCode
           : undefined;
@@ -953,9 +1002,26 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
             runtime,
             code: runtimeError.code,
             retryable: runtimeError.retryable,
+            resourceCleanupPending: session.resourceCleanupPending,
           },
         });
-        res.status(runtimeError.retryable ? 503 : 409).json({ error: runtimeError });
+        if (session.resourceCleanupPending) {
+          pushCdsAgentEvent(session, 'error', runtimeError);
+          pushCdsAgentEvent(session, 'log', {
+            level: 'error',
+            message: runtimeError.message,
+            source: 'agent-workspace-session-runtime',
+          });
+          session.logs.push(`[${session.updatedAt}] OpenDesign workspace creation failed with incomplete resource cleanup code=${runtimeError.code}`);
+          recordAgentRequestHistory(session);
+        } else {
+          cdsAgentSessionSecrets.delete(session.id);
+          cdsAgentSessions.delete(session.id);
+        }
+        res.status(runtimeError.retryable ? 503 : 409).json({
+          error: runtimeError,
+          ...(session.resourceCleanupPending ? { item: toCdsAgentSessionView(session) } : {}),
+        });
         return;
       }
     }
@@ -983,7 +1049,6 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       source: runtimeSource,
     });
     session.logs.push(`[${now}] session created runtime=${runtime} provider=${provider.id} workload=${workloadKind} isolation=${isolationMode} owner=${provider.executionOwner} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy} cleanup=${resourcePolicy.autoCleanupMinutes}m resourcePolicyEnforcedPerSession=${resourcePolicyEnforcedPerSession}`);
-    cdsAgentSessions.set(session.id, session);
     res.status(201).json({ item: toCdsAgentSessionView(session) });
   });
 
@@ -1030,8 +1095,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
     }
-    if (session.status === 'stopped') {
-      res.status(409).json({ error: { code: 'session_stopped', message: 'agent session already stopped' } });
+    if (session.status === 'stopped' || session.status === 'failed' || session.status === 'stopping') {
+      res.status(409).json({
+        error: {
+          code: `session_${session.status}`,
+          message: `agent session is ${session.status} and cannot accept new messages`,
+        },
+      });
       return;
     }
     if (session.activeRunId) {
@@ -1098,12 +1168,12 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         secrets.transferToken,
         controller.signal,
         (stage, detail) => {
-          if (session.status === 'stopped') return;
+          if (session.status === 'stopped' || session.status === 'stopping') return;
           pushCdsAgentEvent(session, 'status', { status: 'running', reason: stage, ...detail });
           pushCdsAgentEvent(session, 'text_delta', { text: designStageSummary(stage, detail) });
         },
       ).then((result) => {
-        if (session.status === 'stopped' || session.activeRunId !== runId) return;
+        if (session.status === 'stopped' || session.status === 'stopping' || session.activeRunId !== runId) return;
         session.status = 'idle';
         session.messages.push({
           role: 'assistant',
@@ -1117,23 +1187,26 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           openDesignRunId: result.openDesignRunId,
         });
         recordAgentRequestHistory(session);
-      }).catch((error) => {
-        if (session.status === 'stopped') return;
-        const runtimeError = toAgentWorkspaceRuntimeError(error);
-        const runtimeMessagePreview = [secrets.modelApiKey, secrets.transferToken]
-          .filter((secret): secret is string => typeof secret === 'string' && secret.length > 0)
-          .reduce(
-            (message: string, secret: string) => message.split(secret).join('***[masked]***'),
-            runtimeError.message,
-          )
-          .slice(0, 2048);
-        session.status = 'failed';
+      }).catch(async (error) => {
+        if (
+          session.status === 'stopped'
+          || session.status === 'stopping'
+          || session.activeRunId !== runId
+        ) return;
+        const runtimeError = sanitizeAgentWorkspaceRuntimeError(error, [
+          secrets.modelApiKey,
+          secrets.transferToken,
+        ]);
+        const runtimeMessagePreview = runtimeError.message.slice(0, 2048);
+        session.status = 'stopping';
+        session.resourceCleanupPending = true;
         pushCdsAgentEvent(session, 'error', runtimeError);
         pushCdsAgentEvent(session, 'log', {
           level: 'warn',
           message: runtimeError.message,
           source: 'open-design-runtime',
         });
+        session.logs.push(`[${new Date().toISOString()}] OpenDesign workspace execution failed code=${runtimeError.code} message=${runtimeMessagePreview}`);
         deps.serverEventLogStore?.record({
           category: 'container',
           severity: 'error',
@@ -1155,6 +1228,65 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
             runtimeMessagePreview,
           },
         });
+        try {
+          await agentWorkspaceSessionRuntime.stop(session.id, 'execution_failed');
+          if (session.activeRunId !== runId) return;
+          if (
+            typeof agentWorkspaceSessionRuntime.has === 'function'
+            && agentWorkspaceSessionRuntime.has(session.id)
+          ) {
+            throw new AgentWorkspaceRuntimeError(
+              'workspace_cleanup_incomplete',
+              'OpenDesign session cleanup returned before all runtime resources were released',
+              true,
+            );
+          }
+          session.resourceCleanupPending = false;
+          session.status = 'failed';
+          session.updatedAt = new Date().toISOString();
+          cdsAgentSessionSecrets.delete(session.id);
+          pushCdsAgentEvent(session, 'status', {
+            status: 'failed',
+            reason: 'execution_failed_resources_cleaned',
+          });
+          session.logs.push(`[${session.updatedAt}] OpenDesign session resources cleaned after execution failure`);
+        } catch (cleanupError) {
+          if (session.activeRunId !== runId) return;
+          const sanitizedCleanupError = sanitizeAgentWorkspaceRuntimeError(cleanupError, [
+            secrets.modelApiKey,
+            secrets.transferToken,
+          ]);
+          session.status = 'failed';
+          session.updatedAt = new Date().toISOString();
+          cdsAgentSessionSecrets.delete(session.id);
+          pushCdsAgentEvent(session, 'error', sanitizedCleanupError);
+          pushCdsAgentEvent(session, 'log', {
+            level: 'error',
+            message: sanitizedCleanupError.message,
+            source: 'agent-workspace-session-runtime',
+          });
+          session.logs.push(`[${session.updatedAt}] OpenDesign resource cleanup failed code=${sanitizedCleanupError.code} message=${sanitizedCleanupError.message.slice(0, 2048)}`);
+          deps.serverEventLogStore?.record({
+            category: 'container',
+            severity: 'error',
+            source: 'agent-workspace-session-runtime',
+            action: 'agent-workspace-session.cleanup.failed',
+            message: 'OpenDesign workspace cleanup failed after execution failure',
+            projectId: session.projectId,
+            status: 'failed',
+            error: {
+              code: sanitizedCleanupError.code,
+              message: 'OpenDesign workspace cleanup failed after execution failure',
+            },
+            details: {
+              ...(sanitizedCleanupError.details || {}),
+              sessionId: session.id,
+              runtime: session.runtime,
+              code: sanitizedCleanupError.code,
+              retryable: sanitizedCleanupError.retryable,
+            },
+          });
+        }
         recordAgentRequestHistory(session);
       }).finally(() => {
         if (session.activeRunId === runId) {
@@ -1356,9 +1488,25 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     if (session.runtime === 'open-design' && agentWorkspaceSessionRuntime) {
       try {
         await agentWorkspaceSessionRuntime.stop(session.id, 'session_stop_requested');
+        if (
+          typeof agentWorkspaceSessionRuntime.has === 'function'
+          && agentWorkspaceSessionRuntime.has(session.id)
+        ) {
+          throw new AgentWorkspaceRuntimeError(
+            'workspace_cleanup_incomplete',
+            'OpenDesign session cleanup returned before all runtime resources were released',
+            true,
+          );
+        }
+        session.resourceCleanupPending = false;
       } catch (error) {
-        const runtimeError = toAgentWorkspaceRuntimeError(error);
+        const secrets = cdsAgentSessionSecrets.get(session.id);
+        const runtimeError = sanitizeAgentWorkspaceRuntimeError(error, [
+          secrets?.modelApiKey,
+          secrets?.transferToken,
+        ]);
         session.status = 'failed';
+        session.resourceCleanupPending = true;
         session.updatedAt = new Date().toISOString();
         cdsAgentSessionSecrets.delete(session.id);
         pushCdsAgentEvent(session, 'error', runtimeError);
@@ -2035,7 +2183,9 @@ interface CdsAgentEvent {
 
 interface CdsAgentSession {
   id: string;
+  routerInstanceId: string;
   projectId: string;
+  principalKey: string;
   /** 请求标签（2026-06-11 观测台）：调用方自述的标题/用户/应用，用于列表与筛选 */
   title: string | null;
   clientUser: string | null;
@@ -2062,6 +2212,7 @@ interface CdsAgentSession {
   stoppedAt?: string;
   activeRunId?: string;
   activeRunAbortController?: AbortController;
+  resourceCleanupPending?: boolean;
   events: CdsAgentEvent[];
   messages: Array<{ role: string; content: string; createdAt: string }>;
   logs: string[];
@@ -2112,12 +2263,12 @@ function authenticateProjectRequest(
   projectId: string,
   pairing: CdsPairingService,
   requiredScopes: string[],
-): { ok: true; partnerBaseUrl?: string } | { ok: false; status: number; code: string; message: string } {
+): { ok: true; partnerBaseUrl?: string; principalKey: string } | { ok: false; status: number; code: string; message: string } {
   // [#746 obs-auth] 仪表盘操作者放行 —— 人类 cookie 登录(`_cdsCookieAuth`,由 server.ts
   // 主鉴权中间件盖章)是 admin 等价,直接放行。不加这条,仪表盘操作者点「Sidecar Pool /
   // Agent 会话」卡片会永远 401(端点只认 Bearer 连接 token,而浏览器带的是 cds_token cookie)。
   if (req._cdsCookieAuth === true) {
-    return { ok: true };
+    return { ok: true, principalKey: 'cookie-admin' };
   }
   // AI 会话分两种(server.ts resolveAiSession):
   //  - 全局超级密钥(AI_ACCESS_KEY):有 `_aiSession`、无 `cdsProjectKey` → admin 等价,放行。
@@ -2127,10 +2278,16 @@ function authenticateProjectRequest(
   if (req._aiSession) {
     const projectKey = req.cdsProjectKey;
     if (!projectKey) {
-      return { ok: true };
+      const bearer = extractBearerToken(req.headers.authorization);
+      return {
+        ok: true,
+        principalKey: bearer
+          ? `global-agent:${crypto.createHash('sha256').update(bearer).digest('hex').slice(0, 20)}`
+          : 'global-agent',
+      };
     }
     if (projectKey.projectId === projectId) {
-      return { ok: true };
+      return { ok: true, principalKey: `project-key:${projectKey.keyId}` };
     }
     return {
       ok: false,
@@ -2151,7 +2308,11 @@ function authenticateProjectRequest(
   if (missing) {
     return { ok: false, status: 403, code: 'scope_denied', message: `connection token lacks ${missing}` };
   }
-  return { ok: true, partnerBaseUrl: connection.partnerBaseUrl };
+  return {
+    ok: true,
+    partnerBaseUrl: connection.partnerBaseUrl,
+    principalKey: `connection:${connection.id}`,
+  };
 }
 
 function getCdsAgentSession(projectId: string, sessionId: string): CdsAgentSession | undefined {
@@ -2181,6 +2342,109 @@ function toAgentWorkspaceRuntimeError(error: unknown): {
   };
 }
 
+type SanitizedAgentWorkspaceRuntimeError = ReturnType<typeof toAgentWorkspaceRuntimeError>;
+
+function sanitizeAgentWorkspaceRuntimeError(
+  error: unknown,
+  credentials: Array<string | null | undefined>,
+): SanitizedAgentWorkspaceRuntimeError {
+  const runtimeError = toAgentWorkspaceRuntimeError(error);
+  const secrets = credentials
+    .filter((credential): credential is string => typeof credential === 'string' && credential.length > 0)
+    .sort((left, right) => right.length - left.length);
+  const sanitized = redactAgentRuntimeValue(runtimeError, secrets);
+  return sanitized as SanitizedAgentWorkspaceRuntimeError;
+}
+
+const AGENT_CREDENTIAL_FIELD_PATTERN = /(authorization|api[-_]?key|token|secret|password|credential)/i;
+
+function redactAgentRuntimeValue(
+  value: unknown,
+  secrets: string[],
+  key = '',
+  depth = 0,
+): unknown {
+  if (depth > 8) return '[truncated]';
+  if (value === null || value === undefined) return value;
+  if (AGENT_CREDENTIAL_FIELD_PATTERN.test(key)) return '***[masked]***';
+  if (typeof value === 'string') {
+    let redacted = secrets.reduce(
+      (current, secret) => current.split(secret).join('***[masked]***'),
+      value,
+    );
+    redacted = redacted.replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer ***[masked]***');
+    redacted = redacted.replace(
+      /((?:authorization|api[-_]?key|token|secret|password|credential)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      '$1***[masked]***',
+    );
+    return redacted;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactAgentRuntimeValue(entry, secrets, '', depth + 1));
+  }
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
+        entryKey,
+        redactAgentRuntimeValue(entryValue, secrets, entryKey, depth + 1),
+      ]),
+    );
+  }
+  return value;
+}
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] || '', 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function findAgentSessionCapacityError(
+  sessions: Iterable<CdsAgentSession>,
+  scope: { routerInstanceId: string; projectId: string; principalKey: string },
+  limits: { host: number; project: number; principal: number },
+  runtimeRetainsSession: (session: CdsAgentSession) => boolean = () => false,
+): Record<string, unknown> | null {
+  const active = Array.from(sessions).filter(
+    (session) => session.routerInstanceId === scope.routerInstanceId
+      && session.status !== 'stopped'
+      && (
+        session.status !== 'failed'
+        || session.resourceCleanupPending === true
+        || runtimeRetainsSession(session)
+      ),
+  );
+  const checks = [
+    {
+      dimension: 'host',
+      count: active.length,
+      limit: limits.host,
+      code: 'agent_session_host_limit_exceeded',
+    },
+    {
+      dimension: 'project',
+      count: active.filter((session) => session.projectId === scope.projectId).length,
+      limit: limits.project,
+      code: 'agent_session_project_limit_exceeded',
+    },
+    {
+      dimension: 'principal',
+      count: active.filter((session) => session.principalKey === scope.principalKey).length,
+      limit: limits.principal,
+      code: 'agent_session_principal_limit_exceeded',
+    },
+  ];
+  const exceeded = checks.find((check) => check.count >= check.limit);
+  if (!exceeded) return null;
+  return {
+    code: exceeded.code,
+    message: `active agent session ${exceeded.dimension} limit reached`,
+    retryable: true,
+    dimension: exceeded.dimension,
+    limit: exceeded.limit,
+    activeCount: exceeded.count,
+  };
+}
+
 function designStageSummary(stage: string, detail?: Record<string, unknown>): string {
   if (stage === 'open_design_running' && typeof detail?.elapsedSeconds === 'number') {
     return `OpenDesign 正在修改共享工作区，已运行 ${detail.elapsedSeconds} 秒。`;
@@ -2196,7 +2460,7 @@ function designStageSummary(stage: string, detail?: Record<string, unknown>): st
   return summaries[stage] || '隔离设计会话正在继续处理。';
 }
 
-function expireAgentWorkspaceSession(
+function settleAgentWorkspaceSessionCleanup(
   session: CdsAgentSession,
   error: unknown,
   recordHistory: (session: CdsAgentSession) => void,
@@ -2205,17 +2469,21 @@ function expireAgentWorkspaceSession(
   session.activeRunAbortController?.abort();
   session.activeRunAbortController = undefined;
   session.activeRunId = undefined;
-  const runtimeError = error ? toAgentWorkspaceRuntimeError(error) : null;
+  const secrets = cdsAgentSessionSecrets.get(session.id);
+  const runtimeError = error
+    ? sanitizeAgentWorkspaceRuntimeError(error, [secrets?.modelApiKey, secrets?.transferToken])
+    : null;
   session.status = runtimeError ? 'failed' : 'stopped';
+  session.resourceCleanupPending = runtimeError !== null;
   session.updatedAt = new Date().toISOString();
-  session.stoppedAt = session.updatedAt;
+  if (!runtimeError) session.stoppedAt = session.updatedAt;
   cdsAgentSessionSecrets.delete(session.id);
   if (runtimeError) {
     pushCdsAgentEvent(session, 'error', runtimeError);
-    session.logs.push(`[${session.updatedAt}] session cleanup failed reason=ttl_expired code=${runtimeError.code}`);
+    session.logs.push(`[${session.updatedAt}] session cleanup failed code=${runtimeError.code}`);
   } else {
-    pushCdsAgentEvent(session, 'status', { status: 'stopped', reason: 'ttl_expired' });
-    session.logs.push(`[${session.updatedAt}] session stopped reason=ttl_expired`);
+    pushCdsAgentEvent(session, 'status', { status: 'stopped', reason: 'runtime_cleanup_completed' });
+    session.logs.push(`[${session.updatedAt}] session stopped after runtime cleanup completed`);
   }
   recordHistory(session);
 }
@@ -2225,10 +2493,17 @@ function pushCdsAgentEvent(
   type: CdsAgentEventType,
   payload: Record<string, unknown>,
 ): CdsAgentEvent {
+  const sessionSecrets = cdsAgentSessionSecrets.get(session.id);
+  const safePayload = type === 'error' || type === 'log'
+    ? redactAgentRuntimeValue(payload, [
+        sessionSecrets?.modelApiKey,
+        sessionSecrets?.transferToken,
+      ].filter((secret): secret is string => typeof secret === 'string' && secret.length > 0)) as Record<string, unknown>
+    : payload;
   const event = {
     seq: session.events.length + 1,
     type,
-    payload,
+    payload: safePayload,
     createdAt: new Date().toISOString(),
   };
   session.events.push(event);
@@ -2237,7 +2512,7 @@ function pushCdsAgentEvent(
   // 观测台实时流（2026-06-11）：结构性节点发布到全局总线（status/done/error/tool_*），
   // text_delta/thinking 不逐 token 发（防总线洪水）——前端列表只需状态翻转与收发节点。
   if (type === 'status' || type === 'done' || type === 'error' || type === 'tool_call' || type === 'tool_result') {
-    publishAgentActivity(session, type, payload);
+    publishAgentActivity(session, type, safePayload);
   }
   return event;
 }
@@ -2381,6 +2656,7 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     stoppedAt: session.stoppedAt ?? null,
+    resourceCleanupPending: session.resourceCleanupPending === true,
     eventCount: session.events.length,
   };
 }

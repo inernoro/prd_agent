@@ -132,9 +132,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 ?? DefaultMaxCompletionTokens,
                 1,
                 8_192);
-            if (body["max_tokens"] is JsonValue maxTokensNode
-                && maxTokensNode.TryGetValue<int>(out var maxTokens))
-                body["max_tokens"] = Math.Clamp(maxTokens, 1, maxCompletionTokens);
+            ApplyMapOwnedCompletionBudget(body, maxCompletionTokens);
 
             var serveBaseUrl = _configuration["LlmGateway:ServeBaseUrl"]?.Trim().TrimEnd('/');
             var gatewayKey = _configuration["LlmGwServe:ApiKey"]?.Trim();
@@ -189,6 +187,17 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 }, CancellationToken.None);
             }
         }
+    }
+
+    internal static void ApplyMapOwnedCompletionBudget(JsonObject body, int maxCompletionTokens)
+    {
+        // OpenDesign is only a passive consumer of the MAP model endpoint. It cannot raise the
+        // output budget through either OpenAI spelling or fan out one call into several choices.
+        body.Remove("max_tokens");
+        body.Remove("max_completion_tokens");
+        body.Remove("best_of");
+        body["max_tokens"] = Math.Clamp(maxCompletionTokens, 1, 8_192);
+        body["n"] = 1;
     }
 
     private string ReadBearerToken()

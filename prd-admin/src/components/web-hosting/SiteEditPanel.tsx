@@ -17,8 +17,13 @@ import {
   type HostedSiteRevision,
   type DesignRuntimeCapability,
 } from '@/services/real/webPages';
-import { SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
-import { activeSiteEditRunStorageKey, previewableEditHtml, revisionLabel } from './siteEditPreview';
+import {
+  AI_STREAM_PREVIEW_SANDBOX,
+  activeSiteEditRunStorageKey,
+  canPublishRevision,
+  previewableAiStreamHtml,
+  revisionLabel,
+} from './siteEditPreview';
 
 interface Props {
   site: HostedSite;
@@ -43,6 +48,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
   const [thinking, setThinking] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
   const [draftRevisionId, setDraftRevisionId] = useState<string | null>(null);
+  const [draftRevisionStatus, setDraftRevisionStatus] = useState<'draft' | 'publishing' | null>(null);
   const [revisions, setRevisions] = useState<HostedSiteRevision[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -60,7 +66,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
   const activeRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
   const unavailableRuntimes = capabilities.filter((item) => !item.enabled);
   const activeRuntimeFact = activeRuntime
-    ? `当前使用：${activeRuntime.label}；执行归属：${activeRuntime.executionOwner === 'cds-remote-agent' ? 'CDS Remote Agent' : 'MAP'}；隔离边界：${activeRuntime.isolationMode === 'session-container' ? '会话级容器' : 'MAP 服务进程'}。`
+    ? `当前使用：${activeRuntime.label}；执行归属：${activeRuntime.executionOwner === 'cds-remote-agent' ? 'CDS Remote Agent' : 'MAP'}；隔离边界：${activeRuntime.isolationMode === 'session-container' ? '会话级容器' : 'MAP 服务进程'}；产物范围：声明式 HTML 与内联 CSS，不执行脚本。`
     : '当前没有可用执行器，请根据下方原因完成配置。';
 
   const loadHistory = useCallback(async () => {
@@ -111,9 +117,15 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
       return;
     }
     setPreviewHtml(result.data.html);
-    setDraftRevisionId(result.data.revision.status === 'draft' ? revisionId : null);
+    const publishable = canPublishRevision(result.data.revision);
+    setDraftRevisionId(publishable ? revisionId : null);
+    setDraftRevisionStatus(
+      result.data.revision.status === 'draft' || result.data.revision.status === 'publishing'
+        ? result.data.revision.status
+        : null,
+    );
     setPhase(revisionLabel(result.data.revision));
-    setProgress(result.data.revision.status === 'draft' ? 95 : 100);
+    setProgress(publishable ? 95 : 100);
   }, [site.id]);
 
   useEffect(() => {
@@ -183,6 +195,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
     abortRef.current = abort;
     setGenerating(true);
     setDraftRevisionId(null);
+    setDraftRevisionStatus(null);
     setThinking('');
     setPreviewHtml('');
     setProgress(1);
@@ -239,7 +252,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
             streamRef.current += data.text;
             const now = Date.now();
             if (now - lastPaintAtRef.current >= 250) {
-              const html = previewableEditHtml(streamRef.current);
+              const html = previewableAiStreamHtml(streamRef.current);
               if (html) setPreviewHtml(html);
               lastPaintAtRef.current = now;
             }
@@ -249,6 +262,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
             reachedTerminal = true;
             try { sessionStorage.removeItem(activeSiteEditRunStorageKey(site.id)); } catch { /* ignore unavailable storage */ }
             setDraftRevisionId(data.revisionId);
+            setDraftRevisionStatus('draft');
             setProgress(100);
             setPhase('草稿已生成，请预览确认后再发布');
             void openRevision(data.revisionId);
@@ -287,10 +301,13 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
     setMutatingId(null);
     if (!result.success) {
       toast.error('发布失败', result.error?.message || '请刷新后重试');
+      await loadHistory();
+      if (draftRevisionId === revisionId) await openRevision(revisionId);
       return;
     }
     onPublished(result.data.site);
     setDraftRevisionId(null);
+    setDraftRevisionStatus(null);
     setPhase('新版本已经发布');
     toast.success('新版本已经发布');
     await loadHistory();
@@ -307,6 +324,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
     onPublished(result.data.site);
     setPreviewHtml('');
     setDraftRevisionId(null);
+    setDraftRevisionStatus(null);
     setPhase('旧内容已作为一个新版本重新发布');
     toast.success('已经回退并发布为新版本');
     await loadHistory();
@@ -341,6 +359,9 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
               <Server size={12} />执行器事实
             </div>
             <p className="mt-1">{activeRuntimeFact}</p>
+            <p className="mt-1">
+              首版仅支持声明式自包含 HTML，含脚本、外链或 ZIP 资源会在任务创建前提示。
+            </p>
             {unavailableRuntimes.length > 0 && (
               <p className="mt-1">
                 {unavailableRuntimes.map((item) => `${item.label}：${item.reason || '未启用'}`).join('；')}
@@ -423,13 +444,14 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
                     className="flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
                   >
                     {mutatingId === draftRevisionId ? <MapSpinner size={12} /> : <Check size={12} />}
-                    发布新版本
+                    {draftRevisionStatus === 'publishing' ? '重试发布' : '发布新版本'}
                   </button>
                 )}
               </div>
               <iframe
                 srcDoc={previewHtml}
-                sandbox={`${SRCDOC_PREVIEW_SANDBOX} allow-modals`}
+                sandbox={AI_STREAM_PREVIEW_SANDBOX}
+                referrerPolicy="no-referrer"
                 title="修改草稿预览"
                 className="h-64 w-full bg-white"
               />
@@ -491,6 +513,17 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
                           className="rounded-md p-1.5 text-token-secondary hover-bg-soft disabled:opacity-50"
                         >
                           {mutatingId === item.id ? <MapSpinner size={13} /> : <RotateCcw size={13} />}
+                        </button>
+                      )}
+                      {canPublishRevision(item) && (
+                        <button
+                          type="button"
+                          title={item.status === 'publishing' ? '重试未完成的发布' : '发布这个草稿'}
+                          disabled={mutatingId === item.id}
+                          onClick={() => void publish(item.id)}
+                          className="rounded-md p-1.5 text-emerald-600 hover-bg-soft disabled:opacity-50"
+                        >
+                          {mutatingId === item.id ? <MapSpinner size={13} /> : <Check size={13} />}
                         </button>
                       )}
                     </div>

@@ -15,6 +15,7 @@ public static class RunStatuses
 {
     public const string Queued = "Queued";
     public const string Running = "Running";
+    public const string Committing = "Committing";
     public const string Done = "Done";
     public const string Error = "Error";
     public const string Cancelled = "Cancelled";

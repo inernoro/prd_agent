@@ -97,9 +97,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             ?? throw new InvalidOperationException("远程设计入口尚未配置，请先补齐当前 CDS 预览地址后重试");
         var expiresAt = DateTime.UtcNow.Add(TicketTtl);
         var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, currentHtml);
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(package, DesignArtifactWorkspaceContract.JsonOptions);
-        if (bytes.LongLength > MaxInputBytes)
-            throw new InvalidOperationException("页面与知识资料超过远程工作区上限，请减少引用或精简页面后重试");
+        var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, MaxInputBytes);
 
         var stored = await SaveWorkspaceMetadataAsync(
             _storage,
@@ -109,22 +107,34 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         if (string.IsNullOrWhiteSpace(stored.Key))
             throw new InvalidOperationException("远程工作区输入保存失败，请稍后重试");
 
+        var modelCallLimit = Math.Clamp(
+            _configuration.GetValue<int?>("DesignArtifactRuntime:MaxModelCalls") ?? 36,
+            1,
+            36);
+        var updatedAt = DateTime.UtcNow;
+        if (!await PersistPreparedWorkspaceAsync(
+                _db,
+                run.Id,
+                run.LeaseOwnerId,
+                stored.Key,
+                stored.Sha256,
+                package.BaseRevision,
+                modelCallLimit,
+                expiresAt,
+                updatedAt,
+                CancellationToken.None))
+            throw new DesignArtifactRunLeaseLostException(run.Id);
+
+        // 本地快照只供后续生成凭证和构造返回值；持久化使用部分 Update，禁止覆盖并发心跳。
         run.WorkspaceInputAssetKey = stored.Key;
         run.WorkspaceInputSha256 = stored.Sha256;
         run.WorkspaceBaseRevision = package.BaseRevision;
         run.WorkspaceResultAssetKey = null;
         run.WorkspaceResultSha256 = null;
         run.RuntimeModelCallCount = 0;
-        run.RuntimeModelCallLimit = Math.Clamp(
-            _configuration.GetValue<int?>("DesignArtifactRuntime:MaxModelCalls") ?? 36,
-            1,
-            36);
+        run.RuntimeModelCallLimit = modelCallLimit;
         run.RuntimeTicketExpiresAt = expiresAt;
-        run.UpdatedAt = DateTime.UtcNow;
-        await _db.DesignArtifactRuns.ReplaceOneAsync(
-            item => item.Id == run.Id,
-            run,
-            cancellationToken: CancellationToken.None);
+        run.UpdatedAt = updatedAt;
 
         var transferToken = ProtectTicket(run, "workspace", expiresAt);
         var modelToken = ProtectTicket(run, "model", expiresAt);
@@ -220,12 +230,12 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             ?? throw new InvalidOperationException("远程设计结果暂时无法读取，请稍后重试");
         if (!FixedEquals(run.WorkspaceResultSha256, Sha256Hex(bytes)))
             throw new InvalidOperationException("远程设计结果校验失败，请重新发起任务");
-        return DesignArtifactWorkspaceContract.ParseAndValidateResult(
+        var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
                 bytes,
                 runId,
                 run.WorkspaceBaseRevision ?? string.Empty,
-                MaxOutputBytes)
-            .IndexHtml;
+                MaxOutputBytes);
+        return HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(parsed.IndexHtml);
     }
 
     public async Task<DesignArtifactRun> ReserveModelCallAsync(string runId, string token, CancellationToken ct)
@@ -257,6 +267,38 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureTicketWindow(run);
         return run;
+    }
+
+    internal static async Task<bool> PersistPreparedWorkspaceAsync(
+        MongoDbContext db,
+        string runId,
+        string? leaseOwner,
+        string inputAssetKey,
+        string inputSha256,
+        string baseRevision,
+        int modelCallLimit,
+        DateTime ticketExpiresAt,
+        DateTime updatedAt,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(leaseOwner)) return false;
+        var write = await db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == runId
+                    && item.Status == RunStatuses.Running
+                    && item.LeaseOwnerId == leaseOwner
+                    && item.LeaseExpiresAt > updatedAt,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.WorkspaceInputAssetKey, inputAssetKey)
+                .Set(item => item.WorkspaceInputSha256, inputSha256)
+                .Set(item => item.WorkspaceBaseRevision, baseRevision)
+                .Set(item => item.WorkspaceResultAssetKey, null)
+                .Set(item => item.WorkspaceResultSha256, null)
+                .Set(item => item.RuntimeModelCallCount, 0)
+                .Set(item => item.RuntimeModelCallLimit, modelCallLimit)
+                .Set(item => item.RuntimeTicketExpiresAt, ticketExpiresAt)
+                .Max(item => item.UpdatedAt, updatedAt),
+            cancellationToken: ct);
+        return write.ModifiedCount == 1;
     }
 
     private string ProtectTicket(DesignArtifactRun run, string purpose, DateTime expiresAt) =>
@@ -341,9 +383,6 @@ public static class DesignArtifactWorkspaceContract
     private static readonly Regex CdsOfflineGuardBlock = new(
         @"<script\b(?=[^>]*\bdata-cds-offline-guard(?:\s|=|>))[^>]*>[\s\S]*?</script\s*>",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex CdsContentSecurityPolicy = new(
-        @"<meta\b(?=[^>]*http-equiv\s*=\s*([""']?)content-security-policy\1)[^>]*>\s*",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public static DesignWorkspacePackage BuildInputPackage(DesignArtifactRun run, string? currentHtml)
@@ -408,7 +447,20 @@ public static class DesignArtifactWorkspaceContract
         var normalized = MapSlideNavCompatBlock.Replace(html, string.Empty);
         normalized = MapSlideNavCompatMarker.Replace(normalized, string.Empty);
         normalized = CdsOfflineGuardBlock.Replace(normalized, string.Empty);
-        return CdsContentSecurityPolicy.Replace(normalized, string.Empty);
+        return HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(normalized);
+    }
+
+    /// <summary>
+    /// 序列化最终会发送给远程执行器的真实 JSON 包后校验上限；调用方不能用原始字符数估算，
+    /// 因为文件正文会经过 UTF-8、base64 与 JSON 包装膨胀。
+    /// </summary>
+    public static byte[] ValidateInputPackageSize(DesignWorkspacePackage package, long maxInputBytes)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(package, JsonOptions);
+        if (bytes.LongLength > maxInputBytes)
+            throw new InvalidOperationException(
+                $"页面、知识资料与任务说明打包后超过远程工作区 {maxInputBytes / 1024 / 1024}MB 上限，请减少引用或精简页面后重试");
+        return bytes;
     }
 
     public static ParsedDesignWorkspaceResult ParseAndValidateResult(

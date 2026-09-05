@@ -73,7 +73,7 @@ export interface HostedSite {
 export interface HostedSiteRevision {
   id: string;
   siteId: string;
-  status: 'draft' | 'published';
+  status: 'draft' | 'publishing' | 'published';
   source: 'baseline' | 'ai-edit' | 'rollback';
   parentRevisionId?: string | null;
   sourceRunId?: string | null;

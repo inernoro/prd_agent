@@ -89,9 +89,11 @@ public sealed class HostedSiteEditsController : ControllerBase
                 "RUNTIME_NOT_READY",
                 capability.Reason ?? "所选页面修改执行器尚未部署并通过健康检查"));
 
+        HostedSiteEditableEntry editable;
         try
         {
-            await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);
+            editable = await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);
+            ValidateEditInputCompatibility(editable);
         }
         catch (KeyNotFoundException)
         {
@@ -135,6 +137,20 @@ public sealed class HostedSiteEditsController : ControllerBase
             Progress = 2,
             Phase = "修改任务已进入队列",
         };
+        if (runtime is DesignArtifactRuntimes.OpenDesign or DesignArtifactRuntimes.Codex)
+        {
+            try
+            {
+                var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, editable.Html);
+                DesignArtifactWorkspaceContract.ValidateInputPackageSize(
+                    package,
+                    DesignArtifactWorkspaceBroker.MaxInputBytes);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+            }
+        }
         await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
         var input = JsonSerializer.Serialize(new { SiteId = siteId });
         var meta = new RunMeta
@@ -156,6 +172,27 @@ public sealed class HostedSiteEditsController : ControllerBase
             CancellationToken.None);
         await _queue.EnqueueAsync(RunKinds.DesignArtifact, runId, CancellationToken.None);
         return Accepted(ApiResponse<object>.Ok(new { runId, status = meta.Status, runtime }));
+    }
+
+    internal static string ValidateEditInputCompatibility(HostedSiteEditableEntry editable)
+    {
+        if ((editable.Site.Files?.Count ?? 0) > 1)
+        {
+            throw new InvalidOperationException(
+                "当前站点包含 ZIP 或多文件资源；首版 AI 微调只支持单个声明式、自包含 HTML，请先把 CSS、图片等资源内嵌到入口 HTML 后再试");
+        }
+
+        var normalized = DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(editable.Html);
+        try
+        {
+            _ = HostedSiteRevisionRules.HardenGeneratedHtml(normalized);
+            return normalized;
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new InvalidOperationException(
+                $"当前站点无法进入首版 AI 微调：仅支持声明式、自包含 HTML，请先移除脚本、外链、相对资源或嵌入能力后再试。{ex.Message}");
+        }
     }
 
     [HttpGet("runs/{runId}")]

@@ -22,4 +22,8 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('entryId: entry.id');
     expect(source).toContain('storeId: entry.storeId');
   });
+
+  it('在开始前明示首版自包含输入边界', () => {
+    expect(source).toContain('首版仅支持声明式自包含 HTML，含脚本、外链或 ZIP 资源会在任务创建前提示。');
+  });
 });

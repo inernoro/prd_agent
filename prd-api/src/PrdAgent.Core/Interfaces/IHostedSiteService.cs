@@ -59,6 +59,7 @@ public interface IHostedSiteService
     Task<HostedSite> ReplaceEntryHtmlAsync(
         string siteId, string userId, string html,
         DateTime? expectedContentVersion = null,
+        string? publishedRevisionId = null,
         CancellationToken ct = default);
 
     /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
@@ -100,6 +101,16 @@ public interface IHostedSiteService
         CancellationToken ct = default);
 
     Task<bool> DeleteAsync(string siteId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 补偿尚未完成的设计任务所创建的私有站点。仅删除 Id、owner、design-agent 来源和 run 引用均精确匹配、
+    /// 且仍未公开的站点，并清理该站点的对象、版本和分享记录。
+    /// </summary>
+    Task<bool> CompensateGeneratedSiteAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        CancellationToken ct = default);
 
     Task<long> BatchDeleteAsync(List<string> siteIds, string userId, CancellationToken ct = default);
 

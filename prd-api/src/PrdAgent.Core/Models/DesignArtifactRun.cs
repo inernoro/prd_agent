@@ -38,6 +38,41 @@ public class DesignArtifactRun
 
     public string? Error { get; set; }
 
+    /// <summary>当前执行尝试的租约所有者。每次认领使用唯一值，作为所有写入的 fencing token。</summary>
+    public string? LeaseOwnerId { get; set; }
+
+    /// <summary>执行租约到期时间。活跃 worker 必须周期续租；过期任务由恢复器终结。</summary>
+    public DateTime? LeaseExpiresAt { get; set; }
+
+    /// <summary>最近一次成功续租时间，用于区分活跃实例与已经退出的实例。</summary>
+    public DateTime? HeartbeatAt { get; set; }
+
+    /// <summary>排队任务最近一次被恢复器补投队列的时间，限制多实例重复补投频率。</summary>
+    public DateTime? RecoveryEnqueuedAt { get; set; }
+
+    /// <summary>异常终结的 committing 任务是否仍需按 Run 来源清理未发布产物。</summary>
+    public bool CleanupPending { get; set; }
+
+    /// <summary>最近一次产物补偿尝试时间，用于诊断与恢复器重试。</summary>
+    public DateTime? CleanupAttemptedAt { get; set; }
+
+    /// <summary>最近一次产物补偿失败原因；成功后清空。</summary>
+    public string? CleanupLastError { get; set; }
+
+    /// <summary>生成站点补偿已确认的站点 ID；与对象 key 一起先于站点账本删除持久化。</summary>
+    public string? CleanupArtifactSiteId { get; set; }
+
+    /// <summary>生成站点补偿待删除的对象 key。站点账本删除后进程退出时，恢复器据此继续清理。</summary>
+    public List<string> CleanupAssetKeys { get; set; } = new();
+
+    /// <summary>持久化清理计划对应的站点账本是否已通过采用围栏删除。</summary>
+    public bool CleanupSiteRecordDeleted { get; set; }
+
+    /// <summary>跨实例清理租约，避免两个恢复器同时改写同一持久化清理计划。</summary>
+    public string? CleanupLeaseOwnerId { get; set; }
+
+    public DateTime? CleanupLeaseExpiresAt { get; set; }
+
     public List<DesignKnowledgeSnapshot> KnowledgeReferences { get; set; } = new();
 
     /// <summary>OpenDesign 工作区输入包的对象存储物理 key。只由 MAP 与 CDS 控制面读取。</summary>

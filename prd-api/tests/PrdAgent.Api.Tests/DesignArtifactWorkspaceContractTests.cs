@@ -17,6 +17,34 @@ namespace PrdAgent.Api.Tests;
 
 public sealed class DesignArtifactWorkspaceContractTests
 {
+    [Theory]
+    [InlineData("{\"messages\":[]}")]
+    [InlineData("{\"messages\":[],\"max_tokens\":999999,\"n\":8,\"best_of\":8}")]
+    [InlineData("{\"messages\":[],\"max_completion_tokens\":999999}")]
+    [InlineData("{\"messages\":[],\"max_tokens\":\"unbounded\",\"max_completion_tokens\":{}}")]
+    public void MapAlwaysOwnsRemoteCompletionBudgetAndFanOut(string json)
+    {
+        var body = JsonNode.Parse(json)!.AsObject();
+
+        DesignArtifactRuntimeController.ApplyMapOwnedCompletionBudget(body, 4_096);
+
+        Assert.Equal(4_096, body["max_tokens"]?.GetValue<int>());
+        Assert.Null(body["max_completion_tokens"]);
+        Assert.Equal(1, body["n"]?.GetValue<int>());
+        Assert.Null(body["best_of"]);
+    }
+
+    [Fact]
+    public void MapPromptsMatchTheDeclarativeOnlyArtifactGate()
+    {
+        var generate = DesignArtifactPromptBuilder.BuildSystemPrompt(DesignArtifactOperations.Generate);
+        var edit = DesignArtifactPromptBuilder.BuildSystemPrompt(DesignArtifactOperations.Edit);
+
+        Assert.Contains("不得输出任何 <script>", generate, StringComparison.Ordinal);
+        Assert.Contains("不得输出任何 <script>", edit, StringComparison.Ordinal);
+        Assert.DoesNotContain("只使用内联 CSS 与原生 JavaScript", generate, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ModelProxyUsesMapSourceAndKeepsOpenDesignRunAttribution()
     {
@@ -159,9 +187,8 @@ public sealed class DesignArtifactWorkspaceContractTests
     public void InputPackageRemovesOnlyMapDeliveryWrappersFromEditablePage()
     {
         var run = BuildRun();
-        const string html = """
-            <!doctype html><html><head>
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'">
+        var html = $"""
+            <!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="{HostedSiteRevisionRules.GeneratedArtifactCsp}"></head><head>
             <script data-cds-offline-guard>addEventListener('click', block, true)</script>
             </head><body><main>真实页面</main>
             <script>window.location.hash = '#kept-for-output-review'</script>
@@ -178,6 +205,72 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.DoesNotContain("Content-Security-Policy", editableHtml, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("真实页面", editableHtml, StringComparison.Ordinal);
         Assert.Contains("window.location.hash", editableHtml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InputPackageSizeUsesSerializedBase64PackageInsteadOfRawCharacterEstimate()
+    {
+        var run = BuildRun();
+        run.KnowledgeReferences.Clear();
+        var rawHtml = $"<!doctype html><html><body>{new string('a', 800_000)}</body></html>";
+        Assert.True(Encoding.UTF8.GetByteCount(rawHtml) < DesignArtifactWorkspaceBroker.MaxInputBytes);
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, rawHtml);
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            DesignArtifactWorkspaceContract.ValidateInputPackageSize(
+                package,
+                DesignArtifactWorkspaceBroker.MaxInputBytes));
+
+        Assert.Contains("打包后超过远程工作区 1MB 上限", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VerifiedCdsHardenedResultCanBeHardenedAgainWithExactlyOneSystemCsp()
+    {
+        var run = BuildRun();
+        var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        var cdsHtml = $"<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.GeneratedArtifactCsp}\"></head><head><title>CDS result</title></head><body>ok</body></html>";
+        var htmlFile = BuildFile("index.html", cdsHtml, "text/html");
+        var manifest = BuildManifest(input.BaseRevision, htmlFile);
+        var result = new DesignWorkspacePackage(
+            DesignArtifactWorkspaceBroker.SchemaVersion,
+            run.Id,
+            input.BaseRevision,
+            [htmlFile, manifest]);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(result, DesignArtifactWorkspaceContract.JsonOptions);
+
+        var verified = DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            bytes,
+            run.Id,
+            input.BaseRevision,
+            DesignArtifactWorkspaceBroker.MaxOutputBytes);
+        var trustedPayload = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(verified.IndexHtml);
+        var hardenedAgain = HostedSiteRevisionRules.HardenGeneratedHtml(trustedPayload);
+
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(
+                hardenedAgain,
+                "Content-Security-Policy",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Cast<System.Text.RegularExpressions.Match>());
+        Assert.Contains("CDS result", hardenedAgain, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(UntrustedSystemMetaVariants))]
+    public void TrustedCdsBoundaryDoesNotStripMovedDuplicateOrCustomHttpEquiv(string html)
+    {
+        var boundaryResult = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(html);
+
+        Assert.Throws<InvalidOperationException>(() => HostedSiteRevisionRules.HardenGeneratedHtml(boundaryResult));
+    }
+
+    public static IEnumerable<object[]> UntrustedSystemMetaVariants()
+    {
+        var exact = $"<head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.GeneratedArtifactCsp}\"></head>";
+        yield return [$"<!doctype html><html><head><title>before</title><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.GeneratedArtifactCsp}\"></head><body></body></html>"];
+        yield return [$"<!doctype html><html>{exact}{exact}<body></body></html>"];
+        yield return ["<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'\"></head><body></body></html>"];
+        yield return ["<!doctype html><html><head><meta http-equiv=\"re&#102;resh\" content=\"0;url=https://evil.example\"></head><body></body></html>"];
     }
 
     [Fact]
@@ -288,6 +381,12 @@ public sealed class DesignArtifactWorkspaceContractTests
             Hash(bytes),
             bytes.Length,
             "application/json");
+    }
+
+    private static DesignWorkspaceFile BuildFile(string path, string content, string mediaType)
+    {
+        var bytes = Encoding.UTF8.GetBytes(content);
+        return new DesignWorkspaceFile(path, Convert.ToBase64String(bytes), Hash(bytes), bytes.Length, mediaType);
     }
 
     private sealed class SingleClientFactory(HttpMessageHandler handler) : IHttpClientFactory

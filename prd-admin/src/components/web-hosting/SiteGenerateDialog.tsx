@@ -13,8 +13,10 @@ import {
   streamDesignArtifactRun,
   type DesignRuntimeCapability,
 } from '@/services/real/webPages';
-import { SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
-import { previewableEditHtml } from './siteEditPreview';
+import {
+  AI_STREAM_PREVIEW_SANDBOX,
+  previewableAiStreamHtml,
+} from './siteEditPreview';
 
 export interface SiteGenerateSource {
   entryId: string;
@@ -233,14 +235,14 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
             streamRef.current += data.text;
             const now = Date.now();
             if (now - lastPaintAtRef.current >= 200) {
-              const html = previewableEditHtml(streamRef.current);
+              const html = previewableAiStreamHtml(streamRef.current);
               if (html) setPreviewHtml(html);
               lastPaintAtRef.current = now;
             }
             return;
           }
           if (event.event === 'done' && typeof data.siteId === 'string') {
-            const finalPreview = previewableEditHtml(streamRef.current);
+            const finalPreview = previewableAiStreamHtml(streamRef.current);
             if (finalPreview) setPreviewHtml(finalPreview);
             setCompletedSite({ id: data.siteId, url: typeof data.siteUrl === 'string' ? data.siteUrl : undefined });
             setProgress(100);
@@ -393,7 +395,8 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
               {previewHtml ? (
                 <iframe
                   srcDoc={previewHtml}
-                  sandbox={SRCDOC_PREVIEW_SANDBOX}
+                  sandbox={AI_STREAM_PREVIEW_SANDBOX}
+                  referrerPolicy="no-referrer"
                   title="知识生成网页预览"
                   className="h-full w-full bg-white"
                 />

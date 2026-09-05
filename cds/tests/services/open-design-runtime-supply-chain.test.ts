@@ -31,4 +31,21 @@ describe('OpenDesign runtime supply chain', () => {
     expect(workflow).toContain("if: github.ref == 'refs/heads/main'");
     expect(workflow).toContain('Build runtime without publishing');
   });
+
+  it('ships versioned third-party provenance and license responsibilities in the derived image', () => {
+    const dockerfile = fs.readFileSync(
+      path.join(repoRoot, 'cds/open-design-runtime/Dockerfile'),
+      'utf8',
+    );
+    const notices = fs.readFileSync(
+      path.join(repoRoot, 'cds/open-design-runtime/THIRD_PARTY_NOTICES.md'),
+      'utf8',
+    );
+
+    expect(dockerfile).toContain('org.opencontainers.image.licenses="Apache-2.0 AND MIT"');
+    expect(dockerfile).toContain('COPY THIRD_PARTY_NOTICES.md');
+    expect(notices).toContain('| OpenDesign | 0.21.1 |');
+    expect(notices).toContain('| OpenCode | 1.18.28 |');
+    expect(notices).toContain('正式升级前');
+  });
 });

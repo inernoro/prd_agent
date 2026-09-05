@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
 using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging;
@@ -18,6 +20,8 @@ namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 /// </summary>
 public class InfraAgentSessionService : IInfraAgentSessionService
 {
+    private static readonly TimeSpan CdsCreateRecoveryTimeout = TimeSpan.FromSeconds(15);
+    private const int MaxCdsErrorMessageChars = 512;
     private readonly MongoDbContext _db;
     private readonly ILogger<InfraAgentSessionService> _logger;
     private readonly IInfraConnectionService _connections;
@@ -364,60 +368,77 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 token,
                 $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions",
                 body,
-                ct);
-            var item = await ReadCdsItemAsync(response, ct);
-            var cdsSessionId = GetString(item, "id");
-            var workerId = GetString(item, "workerId");
-            var containerName = GetString(item, "containerName");
-            var status = MapCdsStatus(GetString(item, "status"));
-            now = DateTime.UtcNow;
+                ct,
+                allowErrorResponse: true);
+            await ProcessCdsCreateResponseAsync(response, async (createResponse, recoveryCt) =>
+            {
+                var item = createResponse.Item!.Value;
+                var cdsSessionId = GetString(item, "id")!;
+                var workerId = GetString(item, "workerId");
+                var containerName = GetString(item, "containerName");
+                var status = response.IsSuccessStatusCode
+                    ? MapCdsStatus(GetString(item, "status"))
+                    : InfraAgentSessionStatuses.Failed;
+                now = DateTime.UtcNow;
 
-            var update = Builders<InfraAgentSession>.Update
-                .Set(x => x.CdsSessionId, cdsSessionId)
-                .Set(x => x.CdsWorkerId, workerId)
-                .Set(x => x.CdsContainerName, containerName)
-                .Set(x => x.RuntimeProfileId, runtimeProfile?.Id ?? session.RuntimeProfileId)
-                .Set(x => x.ModelBaseUrl, modelBaseUrl)
-                .Set(x => x.Runtime, runtime)
-                .Set(x => x.Model, model)
-                .Set(x => x.ResourceCpuCores, resourceCpuCores)
-                .Set(x => x.ResourceMemoryMb, resourceMemoryMb)
-                .Set(x => x.TimeoutSeconds, timeoutSeconds)
-                .Set(x => x.NetworkPolicy, networkPolicy)
-                .Set(x => x.AutoCleanupMinutes, autoCleanupMinutes)
-                .Set(x => x.Status, status)
-                .Set(x => x.StartedAt, now)
-                .Set(x => x.UpdatedAt, now)
-                .Set(x => x.LastError, null);
-            await _db.InfraAgentSessions.UpdateOneAsync(x => x.Id == id && x.UserId == userId, update, cancellationToken: ct);
+                var update = Builders<InfraAgentSession>.Update
+                    .Set(x => x.CdsSessionId, cdsSessionId)
+                    .Set(x => x.CdsWorkerId, workerId)
+                    .Set(x => x.CdsContainerName, containerName)
+                    .Set(x => x.RuntimeProfileId, runtimeProfile?.Id ?? session.RuntimeProfileId)
+                    .Set(x => x.ModelBaseUrl, modelBaseUrl)
+                    .Set(x => x.Runtime, runtime)
+                    .Set(x => x.Model, model)
+                    .Set(x => x.ResourceCpuCores, resourceCpuCores)
+                    .Set(x => x.ResourceMemoryMb, resourceMemoryMb)
+                    .Set(x => x.TimeoutSeconds, timeoutSeconds)
+                    .Set(x => x.NetworkPolicy, networkPolicy)
+                    .Set(x => x.AutoCleanupMinutes, autoCleanupMinutes)
+                    .Set(x => x.Status, status)
+                    .Set(x => x.StartedAt, now)
+                    .Set(x => x.UpdatedAt, now)
+                    .Set(x => x.LastError, createResponse.ErrorMessage);
+                var persistenceResult = await _db.InfraAgentSessions.UpdateOneAsync(
+                    x => x.Id == id && x.UserId == userId,
+                    update,
+                    cancellationToken: recoveryCt);
+                if (!persistenceResult.IsAcknowledged || persistenceResult.MatchedCount != 1)
+                {
+                    throw new InfraAgentSessionException(
+                        InfraAgentSessionErrorCodes.CdsRequestFailed,
+                        "CDS 已返回远端会话，但 MAP 未能持久化其资源标识",
+                        StatusCodes.Status502BadGateway);
+                }
 
-            session.CdsSessionId = cdsSessionId;
-            session.CdsWorkerId = workerId;
-            session.CdsContainerName = containerName;
-            session.RuntimeProfileId = runtimeProfile?.Id ?? session.RuntimeProfileId;
-            session.ModelBaseUrl = modelBaseUrl;
-            session.Runtime = runtime;
-            session.Model = model;
-            session.ResourceCpuCores = resourceCpuCores;
-            session.ResourceMemoryMb = resourceMemoryMb;
-            session.TimeoutSeconds = timeoutSeconds;
-            session.NetworkPolicy = networkPolicy;
-            session.AutoCleanupMinutes = autoCleanupMinutes;
-            session.Status = status;
-            session.StartedAt = now;
-            session.UpdatedAt = now;
-            session.LastError = null;
+                session.CdsSessionId = cdsSessionId;
+                session.CdsWorkerId = workerId;
+                session.CdsContainerName = containerName;
+                session.RuntimeProfileId = runtimeProfile?.Id ?? session.RuntimeProfileId;
+                session.ModelBaseUrl = modelBaseUrl;
+                session.Runtime = runtime;
+                session.Model = model;
+                session.ResourceCpuCores = resourceCpuCores;
+                session.ResourceMemoryMb = resourceMemoryMb;
+                session.TimeoutSeconds = timeoutSeconds;
+                session.NetworkPolicy = networkPolicy;
+                session.AutoCleanupMinutes = autoCleanupMinutes;
+                session.Status = status;
+                session.StartedAt = now;
+                session.UpdatedAt = now;
+                session.LastError = createResponse.ErrorMessage;
+            });
             await AppendStatusEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), session.Status, "cds_session_started", ct);
             await RunHookAsync(session, hookProfile, "afterStart", hookProfile?.AfterStart, blockOnFailure: false, ct);
             return ToView(session);
         }
         catch (Exception ex)
         {
-            await MarkFailedAsync(session, ex.Message, ct);
+            var safeError = SanitizeCdsErrorMessage(ex.Message, "CDS 创建会话失败");
+            await RunCdsRecoveryAsync(recoveryCt => MarkFailedAsync(session, safeError, recoveryCt));
             if (ex is InfraAgentSessionException) throw;
             throw new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.CdsRequestFailed,
-                $"CDS 创建会话失败：{ex.Message}",
+                $"CDS 创建会话失败：{safeError}",
                 StatusCodes.Status502BadGateway);
         }
     }
@@ -874,11 +895,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 var token = await GetLongTokenAsync(connection.Id, ct);
                 try
                 {
+                    var stopRequest = BuildCdsSessionStopRequest(session.CdsProjectId, session.CdsSessionId);
                     using var response = await SendCdsJsonAsync(
-                        HttpMethod.Post,
+                        stopRequest.Method,
                         connection,
                         token,
-                        $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/stop",
+                        stopRequest.Path,
                         new { },
                         ct);
                     response.EnsureSuccessStatusCode();
@@ -903,11 +925,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            await MarkFailedAsync(session, ex.Message, ct);
+            var safeError = SanitizeCdsErrorMessage(ex.Message, "停止 CDS Agent 会话失败");
+            await MarkFailedAsync(session, safeError, ct);
             if (ex is InfraAgentSessionException) throw;
             throw new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.CdsRequestFailed,
-                $"停止 CDS Agent 会话失败：{ex.Message}",
+                $"停止 CDS Agent 会话失败：{safeError}",
                 StatusCodes.Status502BadGateway);
         }
 
@@ -1717,13 +1740,22 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return token;
     }
 
+    internal readonly record struct CdsCreateSessionResponse(JsonElement? Item, string? ErrorMessage);
+    internal readonly record struct CdsSessionStopRequest(HttpMethod Method, string Path);
+
+    internal static CdsSessionStopRequest BuildCdsSessionStopRequest(string projectId, string cdsSessionId)
+        => new(
+            HttpMethod.Post,
+            $"/api/projects/{Uri.EscapeDataString(projectId)}/agent-sessions/{Uri.EscapeDataString(cdsSessionId)}/stop");
+
     private async Task<HttpResponseMessage> SendCdsJsonAsync(
         HttpMethod method,
         InfraConnection connection,
         string token,
         string path,
         object? body,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool allowErrorResponse = false)
     {
         var baseUrl = connection.PartnerBaseUrl.TrimEnd('/');
         using var request = new HttpRequestMessage(method, $"{baseUrl}{path}");
@@ -1733,15 +1765,230 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
         }
         var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!response.IsSuccessStatusCode)
+        if (!response.IsSuccessStatusCode && !allowErrorResponse)
         {
             var text = await response.Content.ReadAsStringAsync(ct);
             throw new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.CdsRequestFailed,
-                $"CDS 请求失败：HTTP {(int)response.StatusCode} {text}",
+                BuildCdsRequestFailureMessage((int)response.StatusCode, text),
                 StatusCodes.Status502BadGateway);
         }
         return response;
+    }
+
+    internal static async Task<CdsCreateSessionResponse> ProcessCdsCreateResponseAsync(
+        HttpResponseMessage response,
+        Func<CdsCreateSessionResponse, CancellationToken, Task> persistAsync,
+        TimeSpan? recoveryTimeout = null)
+    {
+        using var recoveryCts = new CancellationTokenSource(recoveryTimeout ?? CdsCreateRecoveryTimeout);
+        var createResponse = await ReadCdsCreateResponseAsync(response, recoveryCts.Token);
+        var item = createResponse.Item
+            ?? throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                createResponse.ErrorMessage ?? "CDS 创建会话失败，未返回可追踪的远端会话",
+                StatusCodes.Status502BadGateway);
+        var cdsSessionId = GetString(item, "id");
+        if (string.IsNullOrWhiteSpace(cdsSessionId))
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                "CDS 创建会话失败，未返回可追踪的远端会话",
+                StatusCodes.Status502BadGateway);
+        }
+
+        // Once CDS has returned a remote resource identity, persistence is recovery work rather
+        // than request work. Complete it under an independent bounded token before surfacing a
+        // non-success response, so caller cancellation cannot orphan the remote session.
+        await persistAsync(createResponse, recoveryCts.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                createResponse.ErrorMessage ?? "CDS 创建会话失败，远端资源清理待重试",
+                StatusCodes.Status502BadGateway);
+        }
+        return createResponse;
+    }
+
+    private static async Task RunCdsRecoveryAsync(Func<CancellationToken, Task> action)
+    {
+        using var recoveryCts = new CancellationTokenSource(CdsCreateRecoveryTimeout);
+        await action(recoveryCts.Token);
+    }
+
+    private static async Task<CdsCreateSessionResponse> ReadCdsCreateResponseAsync(
+        HttpResponseMessage response,
+        CancellationToken ct)
+    {
+        var text = await response.Content.ReadAsStringAsync(ct);
+        return ParseCdsCreateSessionResponse(response.IsSuccessStatusCode, text);
+    }
+
+    internal static CdsCreateSessionResponse ParseCdsCreateSessionResponse(bool success, string text)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            var root = doc.RootElement;
+            JsonElement? item = root.TryGetProperty("item", out var itemElement)
+                && itemElement.ValueKind == JsonValueKind.Object
+                ? itemElement.Clone()
+                : null;
+            string? errorMessage = null;
+            if (!success
+                && root.TryGetProperty("error", out var error)
+                && error.ValueKind == JsonValueKind.Object)
+            {
+                errorMessage = SanitizeCdsErrorMessage(
+                    GetString(error, "message"),
+                    "CDS 创建会话失败");
+            }
+            return new CdsCreateSessionResponse(item, errorMessage);
+        }
+        catch (JsonException)
+        {
+            return new CdsCreateSessionResponse(null, success
+                ? "CDS 创建会话响应格式不正确"
+                : "CDS 创建会话失败，远端未返回可恢复信息");
+        }
+    }
+
+    internal static string SanitizeCdsErrorMessage(string? message, string fallback = "CDS 请求失败")
+    {
+        if (string.IsNullOrWhiteSpace(message)) return fallback;
+
+        var safe = message.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        safe = Regex.Replace(
+            safe,
+            @"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+",
+            "Bearer ***",
+            RegexOptions.CultureInvariant);
+        safe = Regex.Replace(
+            safe,
+            @"(?ix)\b(authorization|proxy-authorization|x-api-key|api[-_]?key|apikey|access[-_]?token|refresh[-_]?token|transfer[-_]?token|token|password|secret|cookie|set-cookie)\b\s*[:=]\s*(?:Bearer\s+)?(?:[\""'][^\""'\r\n]*[\""']|[^\s,;}\]]+)",
+            "$1=***",
+            RegexOptions.CultureInvariant);
+        safe = Regex.Replace(
+            safe,
+            @"(?i)\bsk-[A-Za-z0-9_-]{8,}\b",
+            "***",
+            RegexOptions.CultureInvariant);
+        safe = Regex.Replace(
+            safe,
+            @"(?i)https?://[^\s<>\""']+",
+            match => SanitizeCdsErrorUrl(match.Value),
+            RegexOptions.CultureInvariant);
+        return safe.Length <= MaxCdsErrorMessageChars
+            ? safe
+            : safe[..MaxCdsErrorMessageChars] + "...[truncated]";
+    }
+
+    private static string ReadSafeCdsErrorMessage(string body, string fallback)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("error", out var error))
+            {
+                if (error.ValueKind == JsonValueKind.Object)
+                {
+                    return SanitizeCdsErrorMessage(GetString(error, "message"), fallback);
+                }
+                if (error.ValueKind == JsonValueKind.String)
+                {
+                    return SanitizeCdsErrorMessage(error.GetString(), fallback);
+                }
+            }
+            return root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String
+                ? SanitizeCdsErrorMessage(message.GetString(), fallback)
+                : fallback;
+        }
+        catch (JsonException)
+        {
+            return fallback;
+        }
+    }
+
+    internal static string BuildCdsRequestFailureMessage(int statusCode, string body)
+        => $"CDS 请求失败：HTTP {statusCode} {ReadSafeCdsErrorMessage(body, "CDS 远端请求失败")}";
+
+    internal static string SanitizeCdsEventPayload(string payload)
+    {
+        try
+        {
+            var node = JsonNode.Parse(payload);
+            SanitizeCdsEventNode(node);
+            return node?.ToJsonString() ?? "{}";
+        }
+        catch (JsonException)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                message = SanitizeCdsErrorMessage(payload, "CDS 远端事件格式不正确")
+            });
+        }
+    }
+
+    private static void SanitizeCdsEventNode(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                foreach (var property in obj.ToList())
+                {
+                    if (IsCdsSensitiveKey(property.Key))
+                    {
+                        obj[property.Key] = "***";
+                    }
+                    else
+                    {
+                        SanitizeCdsEventNode(property.Value);
+                    }
+                }
+                break;
+            case JsonArray array:
+                foreach (var child in array)
+                {
+                    SanitizeCdsEventNode(child);
+                }
+                break;
+            case JsonValue value when value.TryGetValue<string>(out var textValue):
+                value.ReplaceWith(JsonValue.Create(SanitizeCdsErrorMessage(textValue, string.Empty)));
+                break;
+        }
+    }
+
+    private static bool IsCdsSensitiveKey(string key)
+    {
+        var normalized = key.Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace("_", string.Empty, StringComparison.Ordinal);
+        return normalized.Equals("authorization", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("proxyauthorization", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("xapikey", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("apikey", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("accesstoken", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("refreshtoken", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("transfertoken", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("token", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("password", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("secret", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("cookie", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("setcookie", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string SanitizeCdsErrorUrl(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return "[redacted-url]";
+        var builder = new UriBuilder(uri)
+        {
+            UserName = string.Empty,
+            Password = string.Empty,
+            Query = string.Empty,
+            Fragment = string.Empty
+        };
+        return builder.Uri.GetLeftPart(UriPartial.Path);
     }
 
     private static async Task<JsonElement> ReadCdsItemAsync(HttpResponseMessage response, CancellationToken ct)
@@ -1864,6 +2111,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var payload = root.TryGetProperty("payload", out var payloadElement)
                 ? payloadElement.GetRawText()
                 : "{}";
+            if (type is InfraAgentEventTypes.Error or InfraAgentEventTypes.Status)
+            {
+                payload = SanitizeCdsEventPayload(payload);
+            }
 
             // 优先用 CDS seq 判重（水位线）；只有事件没带 seq 时才退回内容判重兜底
             var decision = DecideCdsEventImport(root, cdsSeqWatermark);
@@ -1892,7 +2143,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     // 否则消费方只能看到会话失败却收不到诊断事件。先同步终态供上层秒级对账，
                     // 再继续读取同一条流，直到 error 到达或服务端关闭连接。
                     sessionStatus = mappedStatus;
-                    sessionError = GetString(statusPayload, "message") ?? "CDS Agent 运行失败";
+                    sessionError = SanitizeCdsErrorMessage(
+                        GetString(statusPayload, "message"),
+                        "CDS Agent 运行失败");
                     await MarkRuntimeFailedAsync(session, sessionError, ct);
                 }
                 else if (ShouldEndCdsFollowOnStatus(mappedStatus))
@@ -1918,7 +2171,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             }
             else if (type == InfraAgentEventTypes.Error && root.TryGetProperty("payload", out var errorPayload))
             {
-                var errorMessage = GetString(errorPayload, "message") ?? "CDS-managed runtime returned an error";
+                var errorMessage = SanitizeCdsErrorMessage(
+                    GetString(errorPayload, "message"),
+                    "CDS-managed runtime returned an error");
                 var errorStatus = BuildRuntimeErrorStatus(
                     GetString(errorPayload, "code"),
                     errorMessage,

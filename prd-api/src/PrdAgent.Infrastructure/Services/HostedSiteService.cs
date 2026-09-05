@@ -404,6 +404,7 @@ public class HostedSiteService : IHostedSiteService
             .Set(x => x.WrappedAssetType, normalizedType)
             .Set(x => x.UpdatedAt, now)
             .Set(x => x.ContentVersion, now)
+            .Set(x => x.PublishedRevisionId, null)
             .Set(x => x.SlideNavCompatVersion, SlideNavVersion) // 重传内容已注入当前版垫片
             // 换了内容就要重判形态：HTML 站换成 deck 要变、deck 换成普通页也要变回去
             .Set(x => x.IsSlideDeck, replacedIsSlideDeck);
@@ -487,6 +488,7 @@ public class HostedSiteService : IHostedSiteService
         string userId,
         string html,
         DateTime? expectedContentVersion = null,
+        string? publishedRevisionId = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(html))
@@ -502,7 +504,7 @@ public class HostedSiteService : IHostedSiteService
             throw new InvalidOperationException("待发布的入口 HTML 超过 2MB");
 
         var entry = site.Files.First(x => string.Equals(x.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
-        var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(bytes, site.EntryFile));
+        var rewritten = RewritePublishedEntryHtml(bytes, site.EntryFile);
         var isSlideDeck = DetectSlideDeck(rewritten);
         // 不覆盖当前线上对象：先写同目录下的新入口，再通过 Mongo 条件更新原子切换指针。
         // 若并发发布输掉 CAS，只留下一个未引用对象，不会把赢家的线上正文反向覆盖。
@@ -546,6 +548,7 @@ public class HostedSiteService : IHostedSiteService
             .Set(x => x.IsSlideDeck, isSlideDeck)
             .Set(x => x.SlideNavCompatVersion, SlideNavVersion)
             .Set(x => x.ContentVersion, now)
+            .Set(x => x.PublishedRevisionId, publishedRevisionId)
             .Set(x => x.UpdatedAt, now);
         var result = await _db.HostedSites.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
         if (result.ModifiedCount == 0)
@@ -760,6 +763,156 @@ public class HostedSiteService : IHostedSiteService
         }
         return true;
     }
+
+    public async Task<bool> CompensateGeneratedSiteAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        CancellationToken ct = default) =>
+        await CompensateGeneratedSiteCoreAsync(siteId, runId, userId, null, ct);
+
+    internal async Task<bool> CompensateGeneratedSiteCoreAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        Func<Task>? afterPlanPersisted,
+        CancellationToken ct)
+    {
+        var cleanupOwner = Guid.NewGuid().ToString("N");
+        var claimedAt = DateTime.UtcNow;
+        var runFb = Builders<DesignArtifactRun>.Filter;
+        var cleanupClaimFilter = runFb.Eq(x => x.Id, runId)
+                                 & runFb.Eq(x => x.UserId, userId)
+                                 & runFb.In(x => x.Status, new[] { RunStatuses.Committing, RunStatuses.Error })
+                                 & (runFb.Eq(x => x.CleanupLeaseExpiresAt, null)
+                                    | runFb.Lte(x => x.CleanupLeaseExpiresAt, claimedAt));
+        var run = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
+            cleanupClaimFilter,
+            Builders<DesignArtifactRun>.Update
+                .Set(x => x.CleanupPending, true)
+                .Set(x => x.CleanupLeaseOwnerId, cleanupOwner)
+                .Set(x => x.CleanupLeaseExpiresAt, claimedAt.AddMinutes(1)),
+            new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (run == null)
+        {
+            var existing = await _db.DesignArtifactRuns
+                .Find(x => x.Id == runId && x.UserId == userId)
+                .FirstOrDefaultAsync(ct);
+            if (existing != null
+                && (existing.Status == RunStatuses.Committing || existing.Status == RunStatuses.Error)
+                && existing.CleanupLeaseExpiresAt > claimedAt)
+                throw new InvalidOperationException("设计产物清理正在由其他实例执行");
+            return false;
+        }
+
+        try
+        {
+            var fb = Builders<HostedSite>.Filter;
+            var ownershipFence = fb.Eq(x => x.OwnerUserId, userId)
+                                 & fb.Eq(x => x.SourceType, "design-agent")
+                                 & fb.Eq(x => x.SourceRef, runId)
+                                 & fb.Eq(x => x.Visibility, "private")
+                                 & fb.Eq(x => x.PublishedAt, null)
+                                 & fb.Eq(x => x.PublishedRevisionId, null)
+                                 & fb.Size(x => x.SharedTeamIds, 0);
+            if (!string.IsNullOrWhiteSpace(siteId))
+                ownershipFence &= fb.Eq(x => x.Id, siteId);
+
+            var cleanupSiteId = run.CleanupArtifactSiteId;
+            var cleanupKeys = run.CleanupAssetKeys ?? new List<string>();
+            var siteRecordDeleted = run.CleanupSiteRecordDeleted;
+            if (string.IsNullOrWhiteSpace(cleanupSiteId))
+            {
+                var candidate = await _db.HostedSites.Find(ownershipFence).FirstOrDefaultAsync(ct);
+                if (candidate == null)
+                {
+                    await ClearGeneratedSiteCleanupPlanAsync(runId, userId, cleanupOwner, DateTime.UtcNow);
+                    return false;
+                }
+
+                cleanupSiteId = candidate.Id;
+                cleanupKeys = candidate.Files
+                    .Select(x => x.CosKey)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                var planWrite = await _db.DesignArtifactRuns.UpdateOneAsync(
+                    x => x.Id == runId && x.UserId == userId && x.CleanupLeaseOwnerId == cleanupOwner,
+                    Builders<DesignArtifactRun>.Update
+                        .Set(x => x.CleanupPending, true)
+                        .Set(x => x.CleanupArtifactSiteId, cleanupSiteId)
+                        .Set(x => x.CleanupAssetKeys, cleanupKeys)
+                        .Set(x => x.CleanupSiteRecordDeleted, false)
+                        .Set(x => x.CleanupAttemptedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                if (planWrite.ModifiedCount != 1)
+                    throw new InvalidOperationException("设计产物清理计划持久化失败，将在下一轮重试");
+
+                if (afterPlanPersisted != null)
+                    await afterPlanPersisted();
+            }
+
+            if (!siteRecordDeleted)
+            {
+                var exactFence = ownershipFence & fb.Eq(x => x.Id, cleanupSiteId);
+                var deleted = await _db.HostedSites.DeleteOneAsync(exactFence, ct);
+                if (deleted.DeletedCount != 1)
+                {
+                    var stillExists = await _db.HostedSites
+                        .Find(x => x.Id == cleanupSiteId)
+                        .AnyAsync(ct);
+                    if (stillExists)
+                    {
+                        // 计划持久化后若站点已公开、分享或来源变化，视为用户已采用，绝不删除其对象。
+                        await ClearGeneratedSiteCleanupPlanAsync(runId, userId, cleanupOwner, DateTime.UtcNow);
+                        return false;
+                    }
+                }
+
+                await _db.DesignArtifactRuns.UpdateOneAsync(
+                    x => x.Id == runId
+                         && x.UserId == userId
+                         && x.CleanupArtifactSiteId == cleanupSiteId
+                         && x.CleanupLeaseOwnerId == cleanupOwner,
+                    Builders<DesignArtifactRun>.Update.Set(x => x.CleanupSiteRecordDeleted, true),
+                    cancellationToken: CancellationToken.None);
+            }
+
+            foreach (var key in cleanupKeys)
+                await _storage.DeleteByKeyAsync(key, CancellationToken.None);
+
+            await _db.HostedSiteRevisions.DeleteManyAsync(x => x.SiteId == cleanupSiteId, ct);
+            await _db.WebPageShareLinks.DeleteManyAsync(x => x.SiteId == cleanupSiteId, ct);
+            await ClearGeneratedSiteCleanupPlanAsync(runId, userId, cleanupOwner, DateTime.UtcNow);
+            return true;
+        }
+        finally
+        {
+            await _db.DesignArtifactRuns.UpdateOneAsync(
+                x => x.Id == runId && x.CleanupLeaseOwnerId == cleanupOwner,
+                Builders<DesignArtifactRun>.Update
+                    .Set(x => x.CleanupLeaseOwnerId, null)
+                    .Set(x => x.CleanupLeaseExpiresAt, null),
+                cancellationToken: CancellationToken.None);
+        }
+    }
+
+    private Task ClearGeneratedSiteCleanupPlanAsync(
+        string runId,
+        string userId,
+        string cleanupOwner,
+        DateTime attemptedAt) =>
+        _db.DesignArtifactRuns.UpdateOneAsync(
+            x => x.Id == runId && x.UserId == userId && x.CleanupLeaseOwnerId == cleanupOwner,
+            Builders<DesignArtifactRun>.Update
+                .Set(x => x.CleanupPending, false)
+                .Set(x => x.CleanupArtifactSiteId, null)
+                .Set(x => x.CleanupAssetKeys, new List<string>())
+                .Set(x => x.CleanupSiteRecordDeleted, false)
+                .Set(x => x.CleanupAttemptedAt, attemptedAt)
+                .Set(x => x.CleanupLastError, null),
+            cancellationToken: CancellationToken.None);
 
     public async Task<long> BatchDeleteAsync(List<string> siteIds, string userId, CancellationToken ct)
     {
@@ -1877,7 +2030,8 @@ public class HostedSiteService : IHostedSiteService
                         Builders<HostedSite>.Update
                             .Set(x => x.SlideNavCompatVersion, SlideNavVersion)
                             .Set(x => x.SiteUrl, AppendVersion(_storage.BuildUrlForKey(savedEntryKey), savedNow))
-                            .Set(x => x.ContentVersion, savedNow),
+                            .Set(x => x.ContentVersion, savedNow)
+                            .Set(x => x.PublishedRevisionId, null),
                         cancellationToken: ct);
                     continue;
                 }
@@ -1920,6 +2074,7 @@ public class HostedSiteService : IHostedSiteService
                         var newUrl = AppendVersion(_storage.BuildUrlForKey(entryKey), now);
                         update = update.Set(x => x.SiteUrl, newUrl)
                                        .Set(x => x.ContentVersion, now)
+                                       .Set(x => x.PublishedRevisionId, null)
                                        .Set(x => x.UpdatedAt, now);
                     }
                     injectedSites++;
@@ -2905,6 +3060,12 @@ public class HostedSiteService : IHostedSiteService
         return System.Text.Encoding.UTF8.GetBytes(html);
     }
 
+    /// <summary>
+    /// 发布入口的唯一重写路径。声明式安全产物仍执行相对路径改写，但绝不重新引入脚本。
+    /// </summary>
+    internal static byte[] RewritePublishedEntryHtml(byte[] htmlBytes, string entryFile) =>
+        InjectSlideNavCompat(RewriteAbsolutePathsInHtml(htmlBytes, entryFile));
+
     // ─────────────────────────────────────────────
     // 幻灯片翻页方向兼容垫片
     // ─────────────────────────────────────────────
@@ -2999,6 +3160,12 @@ public class HostedSiteService : IHostedSiteService
                 : html.Remove(start, SlideNavMarker.Length); // 只有裸 marker 没脚本，删掉 marker
         }
 
+        // 安全生成产物以声明式 HTML/CSS 为边界。严格 CSP 已禁止 script 时继续塞入垫片，
+        // 即使浏览器不执行，也会破坏“产物不含可执行内容”的可审计合同。
+        // 先剥离历史垫片再返回，保证曾被旧版本污染的页面下一次发布也能恢复干净。
+        if (HasDeclarativeOnlyPolicy(html))
+            return System.Text.Encoding.UTF8.GetBytes(html);
+
         // 2) 插入当前版本注入块（剥离后重新定位锚点）
         var bodyIdx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
         var htmlIdx = html.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
@@ -3008,6 +3175,55 @@ public class HostedSiteService : IHostedSiteService
                             : html + SlideNavCompatScript);
 
         return System.Text.Encoding.UTF8.GetBytes(injected);
+    }
+
+    internal static bool HasDeclarativeOnlyPolicy(string html)
+    {
+        if (Regex.IsMatch(
+                html,
+                @"\bdata-map-artifact-mode\s*=\s*([""'])declarative-only\1",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            return true;
+
+        foreach (Match meta in Regex.Matches(
+                     html,
+                     @"<meta\b[^>]*>",
+                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            var tag = meta.Value;
+            var httpEquiv = ReadQuotedAttribute(tag, "http-equiv");
+            if (!string.Equals(httpEquiv, "content-security-policy", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var content = ReadQuotedAttribute(tag, "content");
+            if (string.IsNullOrWhiteSpace(content)) continue;
+
+            string? defaultSource = null;
+            string? scriptSource = null;
+            foreach (var directive in content.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var parts = directive.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length == 0) continue;
+                if (parts[0].Equals("default-src", StringComparison.OrdinalIgnoreCase))
+                    defaultSource = string.Join(' ', parts.Skip(1));
+                else if (parts[0].Equals("script-src", StringComparison.OrdinalIgnoreCase))
+                    scriptSource = string.Join(' ', parts.Skip(1));
+            }
+
+            // script-src 会覆盖 default-src：只有唯一来源为 'none' 才能证明脚本被禁用。
+            var effective = scriptSource ?? defaultSource;
+            if (string.Equals(effective, "'none'", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private static string? ReadQuotedAttribute(string tag, string attribute)
+    {
+        var match = Regex.Match(
+            tag,
+            $@"\b{Regex.Escape(attribute)}\s*=\s*([""'])(.*?)\1",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline);
+        return match.Success ? match.Groups[2].Value.Trim() : null;
     }
 
     // 注入的运行时脚本：自包含 IIFE，全部用单引号避免 C# verbatim 字符串的双引号转义。

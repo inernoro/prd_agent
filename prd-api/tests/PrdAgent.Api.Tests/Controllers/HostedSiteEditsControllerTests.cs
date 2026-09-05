@@ -18,6 +18,99 @@ namespace PrdAgent.Api.Tests.Controllers;
 public sealed class HostedSiteEditsControllerTests
 {
     [Fact]
+    public async Task CreateRun_ShouldRejectMultiFileSiteBeforeResolvingKnowledgeOrQueueing()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>", fileCount: 2));
+        var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+        });
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("ZIP 或多文件资源", ResponseMessage(badRequest), StringComparison.Ordinal);
+        knowledge.VerifyNoOtherCalls();
+        queue.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CreateRun_ShouldRejectDynamicCurrentHtmlBeforeQueueing()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry(
+                "<!doctype html><html><body><script>fetch('https://evil.example')</script></body></html>"));
+        var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+        });
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("仅支持声明式、自包含 HTML", ResponseMessage(badRequest), StringComparison.Ordinal);
+        knowledge.VerifyNoOtherCalls();
+        queue.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CreateRun_ShouldRejectSerializedRemotePackageOverOneMegabyteBeforeQueueing()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry(
+                $"<!doctype html><html><body>{new string('a', 800_000)}</body></html>"));
+        var providers = EnabledProvider(DesignArtifactRuntimes.Codex);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ReturnsAsync(Array.Empty<DesignKnowledgeSnapshot>());
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.Codex,
+        });
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("打包后超过远程工作区 1MB 上限", ResponseMessage(badRequest), StringComparison.Ordinal);
+        queue.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     [Trait("Category", TestCategories.Integration)]
     public async Task GetRun_ShouldRequireMatchingOwnerAndSite()
     {
@@ -46,17 +139,23 @@ public sealed class HostedSiteEditsControllerTests
         Assert.IsType<NotFoundObjectResult>(wrongUser);
     }
 
-    private static HostedSiteEditsController BuildController(MongoDbContext db, string userId)
+    private static HostedSiteEditsController BuildController(
+        MongoDbContext db,
+        string userId,
+        IHostedSiteService? sites = null,
+        IDesignArtifactProviderCatalog? providers = null,
+        IDesignKnowledgeSnapshotResolver? knowledgeSnapshots = null,
+        IRunQueue? queue = null)
     {
         var controller = new HostedSiteEditsController(
-            Mock.Of<IHostedSiteService>(),
+            sites ?? Mock.Of<IHostedSiteService>(),
             Mock.Of<IHostedSiteRevisionService>(),
             Mock.Of<IRunEventStore>(),
-            Mock.Of<IRunQueue>(),
+            queue ?? Mock.Of<IRunQueue>(),
             db,
             NullLogger<HostedSiteEditsController>.Instance,
-            Mock.Of<IDesignArtifactProviderCatalog>(),
-            Mock.Of<IDesignKnowledgeSnapshotResolver>());
+            providers ?? Mock.Of<IDesignArtifactProviderCatalog>(),
+            knowledgeSnapshots ?? Mock.Of<IDesignKnowledgeSnapshotResolver>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -65,6 +164,56 @@ public sealed class HostedSiteEditsControllerTests
             },
         };
         return controller;
+    }
+
+    private static MongoDbContext NewLazyDb() => new(
+        "mongodb://127.0.0.1:27017",
+        $"hosted_site_edit_unit_{Guid.NewGuid():N}");
+
+    private static Mock<IDesignArtifactProviderCatalog> EnabledProvider(string runtime)
+    {
+        var provider = new Mock<IDesignArtifactProviderCatalog>(MockBehavior.Strict);
+        provider.Setup(service => service.FindAsync("owner-user", runtime, CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactProviderCapability(
+                runtime,
+                runtime,
+                DesignArtifactAdapterKinds.RemoteAgent,
+                DesignArtifactExecutionOwners.CdsRemoteAgent,
+                DesignArtifactIsolationModes.SessionContainer,
+                [DesignArtifactTypes.WebPage],
+                [DesignArtifactOperations.Edit],
+                [DesignArtifactSourceSurfaces.WebHosting],
+                Configured: true,
+                Healthy: true,
+                Enabled: true,
+                Reason: null));
+        return provider;
+    }
+
+    private static HostedSiteEditableEntry BuildEditableEntry(string html, int fileCount = 1)
+    {
+        var site = new HostedSite
+        {
+            Id = "site-a",
+            OwnerUserId = "owner-user",
+            EntryFile = "index.html",
+            Files = Enumerable.Range(0, fileCount)
+                .Select(index => new HostedSiteFile
+                {
+                    Path = index == 0 ? "index.html" : $"assets/{index}.css",
+                    CosKey = $"site-a/{index}",
+                    Size = index == 0 ? System.Text.Encoding.UTF8.GetByteCount(html) : 10,
+                    MimeType = index == 0 ? "text/html" : "text/css",
+                })
+                .ToList(),
+        };
+        return new HostedSiteEditableEntry(site, html, DateTime.UtcNow);
+    }
+
+    private static string ResponseMessage(BadRequestObjectResult result)
+    {
+        var payload = JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        return payload.GetProperty("error").GetProperty("message").GetString() ?? string.Empty;
     }
 
     private sealed class HostedSiteEditMongoFixture : IAsyncDisposable
