@@ -78,3 +78,7 @@
 | fix | prd-api | 路径规范化的顺序改成「先摘查询串/锚点，再去尾斜杠」。反过来写只有最朴素的那条过得去：`/api/web-pages/batch-delete/?dry=1` 去完尾斜杠什么都没少，末段被切成 `?dry=1`，一个尾斜杠就从门下溜过去；两句都在、编译过、原有用例照样绿 |
 | test | prd-api | 删掉两处「`POST /api/web-pages/publish` 是安全的」断言——那条路由在仓库里压根不存在（网页托管发布走 `/api/open/web-pages/pages`），是我又一次照想象造的测试数据，而它把「公开发布没被挡」这个缺口反向锁死了（形状 4a）。换成真实路由，并把 publish 归到该挡的那一侧 |
 | docs | doc | 债务 #34 记下：这个自由文本解析器已被要求加过第二轮词（第一轮伪装成 POST 的删除、第二轮公开发布），按 AGENTS.md §5.5 属熔断信号，不再加第三轮同义词；下一次要么按语义认（登记表补破坏性标记 + 独立 scope + 显式确认），要么维持现状并如实说明边界 |
+| fix | prd-api | 直连那道破坏性门补开放层豁免（`/api/open/` 下那八个 `[Authorize(ApiKey)] + [RequireScope]` 控制器）——上一轮加 `publish` 判据 + 把门挪到早退之前，两处叠起来把 `llmgw/tutorial/publisher.py` 的教程发布（`POST .../tutorial-link-graph/publish`）和它失败时的回滚（`DELETE .../nodes/{sourceId}`）一起 403，整条流水线断了，而 CI 不跑它、编译也不会红。这道门本来要挡的是**普通业务控制器**：`DELETE /api/web-pages/{id}` 那类只挂 `[Authorize]`、从没为 API key 设计过、却因为默认策略收 ApiKey scheme 而被打通的路；开放层是给 sk-ak 走的受控接口，各自的 scope 就是它的门。判据太宽的代价不是「多挡一点」，是打断真实流水线 |
+| fix | prd-api | 开放层前缀判据保留结尾斜杠（`/api/open/`）——`/api/open-platform/` 与 `/api/open-api/` 是三个挂 `[AdminController]` 的后台控制器，跟开放层无关，少一个斜杠会把 `DELETE /api/open-platform/apps/{id}` 一起放行（形状 1）。守卫两条 `[Theory]` 分别钉住该豁免的和不该豁免的 |
+| test | prd-api | 豁免只挂在直连那道门上、不揉进判据本身：`IsDestructiveRequest` 对开放层的 DELETE 照旧判真（网关那条路只问「收不收得回来」，它管的是 MCP 工具面），另加一条守卫断言直连那道门**两个判据都问过**——少问哪一个都不会红：只问破坏性则流水线断，只问开放层则第 26 轮那个缺口回来 |
+| docs | doc | 债务 #34 记下残留敞口：`/api/open/` 里有三条收不回来的路（publisher 节点删除、教程图谱发布、`DELETE /api/open/marketplace-skills/{id}`），而自动档钥匙拿得到它们要的 scope，所以「删除、公开发布一律不给」目前只在 MCP 工具面成立，直接打 REST 仍做得到。要真正收口得区分密钥用途或按端点标破坏性，靠路径命名调不出来 |

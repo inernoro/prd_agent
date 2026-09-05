@@ -106,6 +106,77 @@ public class McpDestructiveActionsTests
     }
 
     /// <summary>
+    /// 开放层是**给 sk-ak 走的受控接口**，直连那道门不该管到它头上。
+    ///
+    /// 上一版没有这条豁免，后果是真的：<c>llmgw/tutorial/publisher.py</c> 用
+    /// <c>MAP_DOC_STORE_KEY</c>（sk-ak 前缀 → authType=agent-apikey）打
+    /// <c>POST .../tutorial-link-graph/publish</c> 发布教程双链图谱，
+    /// 失败时用 <c>DELETE .../nodes/&#123;sourceId&#125;</c> 回滚 —— 两条一起 403，
+    /// 发布断了、连回滚也断了。判据太宽的代价从来不是「多挡一点」，是打断真实流水线。
+    /// </summary>
+    [Theory]
+    [InlineData("/api/open/document-store/publisher/stores/s1/tutorial-link-graph/publish")]
+    [InlineData("/api/open/document-store/publisher/stores/s1/nodes/n1")]
+    [InlineData("/api/open/web-pages/pages/s1")]
+    [InlineData("/API/OPEN/document-store/stores/s1")]
+    public void 开放层的路不归这道门管(string path)
+        => McpDestructiveActions.IsCuratedOpenApiPath(path).ShouldBeTrue(
+            customMessage: $"{path} 被当成普通业务路由 —— 开放层是给 sk-ak 走的受控接口，"
+                + "挡它等于打断 publisher.py 的发布与回滚");
+
+    /// <summary>
+    /// **结尾那个斜杠是判据的一部分。**
+    ///
+    /// <c>/api/open-platform/</c> 与 <c>/api/open-api/</c> 是三个挂 <c>[AdminController]</c>
+    /// 的后台控制器，跟开放层没有关系。写成 <c>StartsWith("/api/open")</c> 会把
+    /// <c>DELETE /api/open-platform/apps/&#123;id&#125;</c> 一起放行 —— 前缀判据的经典漏法
+    /// （形状 1：语义上不同的输入被判成同一类）。
+    /// </summary>
+    [Theory]
+    [InlineData("/api/open-platform/apps/a1")]
+    [InlineData("/api/open-platform/app-callers/c1")]
+    [InlineData("/api/open-api/keys/k1")]
+    [InlineData("/api/web-pages/w1")]
+    [InlineData("/api/openbook/x")]
+    [InlineData(null)]
+    public void 名字里带open但不是开放层的_照旧归这道门管(string? path)
+        => McpDestructiveActions.IsCuratedOpenApiPath(path).ShouldBeFalse(
+            customMessage: $"{path} 被误当成开放层放行了 —— 前缀少了结尾那个斜杠");
+
+    /// <summary>
+    /// 豁免只挂在直连那道门上，不挂进判据本身。
+    ///
+    /// 两者回答的是不同问题：<c>IsDestructiveRequest</c> 答「这个动作收不收得回来」，
+    /// <c>IsCuratedOpenApiPath</c> 答「这条路是不是给 API key 走的」。网关那条路
+    /// 只问前者（它管的是 MCP 工具面，而向导那句承诺说的正是工具面），
+    /// 直连那道门两个一起问。把豁免揉进判据本身，网关那侧会跟着一起松掉。
+    /// </summary>
+    [Fact]
+    public void 开放层的删除本身仍算破坏性()
+        => McpDestructiveActions.IsDestructiveRequest(
+                "DELETE", "/api/open/document-store/publisher/stores/s1/nodes/n1")
+            .ShouldBeTrue(customMessage: "豁免被揉进了判据本身 —— 网关那侧会跟着一起松掉");
+
+    /// <summary>
+    /// 直连那道门必须**同时**问过这两件事。
+    ///
+    /// 少问哪一个都不会红：只问破坏性 → publisher.py 断（上一版）；
+    /// 只问开放层 → 普通业务控制器的 DELETE 全放行（第 26 轮那个缺口回来）。
+    /// </summary>
+    [Fact]
+    public void 直连那道门两个判据都要问()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Middleware/AdminPermissionMiddleware.cs"));
+        var invoke = src[src.IndexOf("public async Task Invoke(", StringComparison.Ordinal)..];
+        var gate = McpSourceGuard.Slice(invoke, "var isAgentKey =", "var dip =");
+        gate.ShouldContain("IsCuratedOpenApiPath(path)",
+            customMessage: "没问「这条路是不是开放层」—— publisher.py 的发布与回滚会一起 403");
+        gate.ShouldContain("IsDestructiveRequest(method, path)",
+            customMessage: "没问「这个动作收不收得回来」—— 第 26 轮那个缺口回来了");
+    }
+
+    /// <summary>
     /// 直连那道门必须排在**权限扫描的早退之前**。
     ///
     /// 上一版把它写在 <c>isAgentKey</c> 分支里，而那整段在

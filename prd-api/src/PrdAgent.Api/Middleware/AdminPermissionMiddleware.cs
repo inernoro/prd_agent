@@ -130,15 +130,23 @@ public sealed class AdminPermissionMiddleware
         var path = context.Request.Path.Value ?? string.Empty;
         var method = context.Request.Method;
 
-        // 收不回来的动作，一律不给智能体 —— 这道门必须排在「这条路要不要 admin 权限」**之前**。
+        // 收不回来的动作，一律不给智能体。这道门有两个维度，缺一个都出过事：
         //
-        // 上一版把它放在下面的 isAgentKey 分支里，而那整段在 `required == null` 早退之后：
-        // 只挂 [Authorize(AuthenticationSchemes = "ApiKey")] + [RequireScope]、没有
-        // [AdminController] 标记的控制器，扫描器给不出 required，请求在门开之前就走掉了。
-        // DocumentStorePublisherTutorialLinkGraphController 这类恰好就是这种形状，
-        // 于是 DELETE /api/open/document-store/... 照旧打得通 —— 判据没错，取值的时刻错了。
+        // 【位置】必须排在「这条路要不要 admin 权限」**之前**。上一版写在下面的 isAgentKey
+        // 分支里，而那整段在 `required == null` 早退之后 —— 没有 [AdminController] 标记的
+        // 控制器扫描器给不出 required，请求在门开之前就走掉了。
+        //
+        // 【范围】开放层（/api/open/）豁免。它要挡的是**普通业务控制器**：
+        // DELETE /api/web-pages/{id} 这类只挂 [Authorize]、从没为 API key 设计过，
+        // 却因为默认策略收 ApiKey scheme、middleware 又把 scope a:b 认成 admin 权限 a.b
+        // 而被打通的路。开放层不是这种 —— 那八个控制器每一个都显式写着
+        // [Authorize(AuthenticationSchemes = "ApiKey")] + [RequireScope]，本来就是给 sk-ak
+        // 走的受控接口，各自的 scope 就是它的门。不豁免的后果上一版真发生了：
+        // llmgw/tutorial/publisher.py 的教程发布与它的回滚一起 403（见 IsCuratedOpenApiPath）。
         var isAgentKey = string.Equals(context.User?.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
-        if (isAgentKey && McpDestructiveActions.IsDestructiveRequest(method, path))
+        if (isAgentKey
+            && !McpDestructiveActions.IsCuratedOpenApiPath(path)
+            && McpDestructiveActions.IsDestructiveRequest(method, path))
         {
             var dip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
             _logger.LogWarning("[403] AgentApiKey 破坏性动作被挡 - Path: {Path}, Method: {Method}, IP: {IP}",
