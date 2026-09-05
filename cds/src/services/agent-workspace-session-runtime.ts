@@ -1030,7 +1030,10 @@ export class AgentWorkspaceSessionRuntime {
           '--entrypoint /bin/sh',
           shellQuote(this.image),
           '-lc',
-          shellQuote('set -u; command -v dd >/dev/null 2>&1 || exit 10; stage=20; for root in /cds-storage-probe /cds-direct-storage-probe; do dd if=/dev/zero of="$root/within-limit" bs=524288 count=1 2>/dev/null || exit $((stage + 1)); if dd if=/dev/zero of="$root/over-limit" bs=1048576 count=2 2>/dev/null; then exit $((stage + 2)); fi; rm -f "$root/within-limit" "$root/over-limit" || exit $((stage + 3)); created=0; while [ "$created" -lt 128 ]; do if : 2>/dev/null > "$root/inode-limit-$created"; then created=$((created + 1)); else break; fi; done; test "$created" -lt 128 || exit $((stage + 4)); rm -f "$root"/inode-limit-* || exit $((stage + 5)); stage=30; done; exit 0'),
+          // POSIX shells may terminate when a redirection on the special `:`
+          // builtin fails. Keep that expected ENOSPC inside a subshell so the
+          // parent can observe it, break the loop, and finish the probe.
+          shellQuote('set -u; command -v dd >/dev/null 2>&1 || exit 10; stage=20; for root in /cds-storage-probe /cds-direct-storage-probe; do dd if=/dev/zero of="$root/within-limit" bs=524288 count=1 2>/dev/null || exit $((stage + 1)); if dd if=/dev/zero of="$root/over-limit" bs=1048576 count=2 2>/dev/null; then exit $((stage + 2)); fi; rm -f "$root/within-limit" "$root/over-limit" || exit $((stage + 3)); created=0; while [ "$created" -lt 128 ]; do if ( : > "$root/inode-limit-$created" ) 2>/dev/null; then created=$((created + 1)); else break; fi; done; test "$created" -lt 128 || exit $((stage + 4)); rm -f "$root"/inode-limit-* || exit $((stage + 5)); stage=30; done; exit 0'),
         ].join(' '), { timeout: 30_000 });
         verified = validation.exitCode === 0;
         if (!verified) {
