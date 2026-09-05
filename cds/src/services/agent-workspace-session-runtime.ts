@@ -1099,6 +1099,7 @@ export class AgentWorkspaceSessionRuntime {
           'mkdir -p /workspace/.od-skills/web-prototype',
           `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /app/design-templates/web-prototype/`,
           `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /workspace/.od-skills/web-prototype/`,
+          `[ -f /workspace/index.html ] || cp ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/assets/template.html /workspace/index.html`,
           'test -f /app/design-templates/web-prototype/SKILL.md',
           'test -f /app/design-templates/web-prototype/assets/template.html',
           'test -f /app/design-templates/web-prototype/references/layouts.md',
@@ -1106,6 +1107,7 @@ export class AgentWorkspaceSessionRuntime {
           'test -f /workspace/.od-skills/web-prototype/assets/template.html',
           'test -f /workspace/.od-skills/web-prototype/references/layouts.md',
           'test -f /workspace/.od-skills/web-prototype/references/checklist.md',
+          'test -f /workspace/index.html',
         ].join(' && ')),
       ].join(' '), { timeout: 30_000 });
       if (preparedDesignTemplate.exitCode !== 0) {
@@ -1261,7 +1263,8 @@ export class AgentWorkspaceSessionRuntime {
         systemPrompt: [
           'The workspace is already prepared by MAP. Read MAP task and knowledge files from /workspace.',
           'The active web-prototype skill side files are rooted at /workspace/.od-skills/web-prototype. Read /workspace/.od-skills/web-prototype/assets/template.html, /workspace/.od-skills/web-prototype/references/layouts.md, and /workspace/.od-skills/web-prototype/references/checklist.md by these exact paths; do not resolve them as /workspace/assets or /workspace/references.',
-          'Write the final webpage to index.html. The first release must be self-contained: inline all CSS, JavaScript, fonts, and images; do not reference relative or remote assets.',
+          'A starting /workspace/index.html already exists. Modify it with small targeted edit operations; never replace the whole document with one write operation. Continue until the page fully satisfies the task.',
+          'Keep the final webpage in index.html. The first release must be self-contained: inline all CSS, JavaScript, fonts, and images; do not reference relative or remote assets.',
           'Do not request credentials, upload source files, publish, deploy, or mutate any external source.',
         ].join(' '),
         byokProvider: {

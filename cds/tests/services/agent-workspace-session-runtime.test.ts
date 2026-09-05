@@ -247,6 +247,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/assets/template.html');
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
+    expect(preparedDesignTemplate?.command).toContain('[ -f /workspace/index.html ] || cp /app/plugins/_official/examples/web-prototype/assets/template.html /workspace/index.html');
+    expect(preparedDesignTemplate?.command).toContain('test -f /workspace/index.html');
 
     const executed = await runtime.execute(
       'session-test-1',
@@ -373,6 +375,9 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
     expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
     expect(run?.body.systemPrompt).toContain('do not resolve them as /workspace/assets or /workspace/references');
+    expect(run?.body.systemPrompt).toContain('A starting /workspace/index.html already exists');
+    expect(run?.body.systemPrompt).toContain('small targeted edit operations');
+    expect(run?.body.systemPrompt).toContain('never replace the whole document with one write operation');
     expect(JSON.stringify(run?.body)).not.toContain('Private knowledge body');
     const sessionResourceCreates = shell.calls.filter((call) =>
       call.command.includes('cds.type=agent-session') && (
