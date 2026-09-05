@@ -151,7 +151,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
 
   const modal = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-1 sm:p-4"
       onClick={onClose}
     >
       <div
@@ -160,12 +160,12 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-token-subtle shrink-0">
-          <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 sm:flex-nowrap sm:px-4 border-b border-token-subtle shrink-0">
+          <div className="min-w-0 w-full flex-1 sm:w-auto">
             <h3 className="text-sm font-semibold text-token-primary truncate">{site.title}</h3>
             <p className="text-xs text-token-muted truncate">{site.siteUrl}</p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap shrink-0">
             <button
               onClick={() => setShowComments((v) => !v)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${

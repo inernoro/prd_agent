@@ -990,6 +990,90 @@ describe('Remote hosts project instances route', () => {
     }
   });
 
+  it('retries a transient OpenDesign cleanup failure before reporting the session stop', async () => {
+    let runtimeRetainsSession = false;
+    let stopCalls = 0;
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create() {
+        runtimeRetainsSession = true;
+        return {
+          hostRoot: '/host/session',
+          workspaceDir: '/host/session/workspace',
+          containerName: 'cds-od-stop-retry-test',
+          networkName: 'cds-od-stop-retry-net',
+          daemonBaseUrl: 'http://172.19.0.2:7456',
+          inputFileCount: 1,
+        };
+      },
+      async stop() {
+        stopCalls += 1;
+        if (stopCalls === 1) {
+          throw new AgentWorkspaceRuntimeError(
+            'workspace_cleanup_failed',
+            'OpenDesign session resources could not be fully cleaned',
+            true,
+          );
+        }
+        runtimeRetainsSession = false;
+      },
+      has() {
+        return runtimeRetainsSession;
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      {
+        runtime: 'open-design',
+        workloadKind: 'design-artifact',
+        model: 'map-managed',
+        modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-stop-retry/llm/v1',
+        modelProtocol: 'openai',
+        modelApiKey: 'model-secret-stop-retry',
+        workspaceTransfer: {
+          schemaVersion: 'map-design-workspace-v1',
+          inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-stop-retry/input',
+          resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-stop-retry/result',
+          transferToken: 'transfer-secret-stop-retry',
+          inputSha256: 'a'.repeat(64),
+          baseRevision: 'revision-stop-retry',
+          maxInputBytes: 1024 * 1024,
+          maxOutputBytes: 1024 * 1024,
+          allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+        },
+        resourcePolicy: {
+          cpuCores: 1,
+          memoryMb: 768,
+          timeoutSeconds: 120,
+          networkPolicy: 'egress-only',
+          autoCleanupMinutes: 5,
+        },
+      },
+    );
+
+    const stopped = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${created.body.item.id}/stop`,
+      longToken,
+      {},
+    );
+
+    expect(stopped.status).toBe(200);
+    expect(stopped.body.item).toMatchObject({
+      status: 'stopped',
+      resourceCleanupPending: false,
+    });
+    expect(stopCalls).toBe(2);
+  });
+
   it('does not let an aborted OpenDesign execute failure race a requested stop', async () => {
     let runtimeRetainsSession = false;
     let executeStarted = false;

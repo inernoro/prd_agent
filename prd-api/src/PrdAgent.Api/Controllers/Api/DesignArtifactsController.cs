@@ -228,6 +228,11 @@ public sealed class DesignArtifactsController : ControllerBase
         run.ArtifactRevisionId,
         run.LinkedRunId,
         run.Error,
+        run.RuntimeModelCallCount,
+        run.RuntimeModelCallLimit,
+        run.WorkspaceInputSha256,
+        run.WorkspaceBaseRevision,
+        run.WorkspaceResultSha256,
         knowledgeReferences = run.KnowledgeReferences.Select(x => new
         {
             x.EntryId,

@@ -369,7 +369,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
             </div>
 
             <Button
-              className="mt-4 w-full justify-center"
+              className="sticky bottom-0 z-10 mt-4 w-full justify-center shadow-lg"
               size="sm"
               variant="primary"
               disabled={generating || !enabledRuntime || !instruction.trim() || selectedKnowledgeIds.length === 0}
@@ -380,7 +380,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
             </Button>
           </div>
 
-          <div className="flex min-h-[280px] min-w-0 flex-col overflow-hidden rounded-xl border border-token-subtle bg-token-nested lg:min-h-0">
+          <div className={`${generating || previewHtml || completedSite ? 'flex' : 'hidden lg:flex'} min-h-[220px] min-w-0 flex-col overflow-hidden rounded-xl border border-token-subtle bg-token-nested lg:min-h-0`}>
             <div className="shrink-0 border-b border-token-subtle px-4 py-3">
               <div className="flex items-center justify-between gap-3 text-xs text-token-secondary">
                 <span>{phase}</span>

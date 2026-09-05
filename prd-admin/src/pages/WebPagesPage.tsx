@@ -902,7 +902,7 @@ export default function WebPagesPage() {
         style={{
           // 设计稿：minmax(236px,1fr) 拉伸铺满 + gap 14 + 左对齐。
           // 固定轨道 + 居中会让卡片左缘与上方结论行错开、右侧留一条死区。
-          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), 1fr))`,
+          gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), 1fr))`,
           justifyContent: isMobile ? 'stretch' : 'start',
           alignContent: 'start',
           gap: isMobile ? 12 : 14,

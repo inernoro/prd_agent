@@ -19,6 +19,11 @@ describe('SiteGenerateDialog responsive layout contract', () => {
     expect(dialogSource).not.toContain('className="min-w-0 flex-shrink-0"');
   });
 
+  it('keeps the primary action visible while mobile configuration scrolls and hides an empty preview', () => {
+    expect(source).toContain('sticky bottom-0 z-10');
+    expect(source).toContain("generating || previewHtml || completedSite ? 'flex' : 'hidden lg:flex'");
+  });
+
   it('submits only knowledge identities and never truncates or uploads browser-fetched content', () => {
     expect(source).not.toContain('getDocumentContent');
     expect(source).not.toContain('.slice(0, 20_000)');

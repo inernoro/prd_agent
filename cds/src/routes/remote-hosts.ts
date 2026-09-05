@@ -64,6 +64,8 @@ import {
 } from '../services/agent-workspace-session-runtime.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
 
+const AGENT_WORKSPACE_STOP_RETRY_DELAYS_MS = [0, 250, 750] as const;
+
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
   containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
@@ -1487,17 +1489,37 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     session.logs.push(`[${session.updatedAt}] session stopping`);
     if (session.runtime === 'open-design' && agentWorkspaceSessionRuntime) {
       try {
-        await agentWorkspaceSessionRuntime.stop(session.id, 'session_stop_requested');
-        if (
-          typeof agentWorkspaceSessionRuntime.has === 'function'
-          && agentWorkspaceSessionRuntime.has(session.id)
-        ) {
-          throw new AgentWorkspaceRuntimeError(
-            'workspace_cleanup_incomplete',
-            'OpenDesign session cleanup returned before all runtime resources were released',
-            true,
-          );
+        let lastCleanupError: unknown;
+        for (const retryDelayMs of AGENT_WORKSPACE_STOP_RETRY_DELAYS_MS) {
+          if (retryDelayMs > 0) await delay(retryDelayMs);
+          try {
+            await agentWorkspaceSessionRuntime.stop(session.id, 'session_stop_requested');
+            if (
+              typeof agentWorkspaceSessionRuntime.has === 'function'
+              && agentWorkspaceSessionRuntime.has(session.id)
+            ) {
+              throw new AgentWorkspaceRuntimeError(
+                'workspace_cleanup_incomplete',
+                'OpenDesign session cleanup returned before all runtime resources were released',
+                true,
+              );
+            }
+            lastCleanupError = undefined;
+            break;
+          } catch (error) {
+            lastCleanupError = error;
+            const retryableError = sanitizeAgentWorkspaceRuntimeError(error, [
+              cdsAgentSessionSecrets.get(session.id)?.modelApiKey,
+              cdsAgentSessionSecrets.get(session.id)?.transferToken,
+            ]);
+            if (
+              retryableError.retryable !== true
+              || typeof agentWorkspaceSessionRuntime.has !== 'function'
+              || !agentWorkspaceSessionRuntime.has(session.id)
+            ) break;
+          }
         }
+        if (lastCleanupError) throw lastCleanupError;
         session.resourceCleanupPending = false;
       } catch (error) {
         const secrets = cdsAgentSessionSecrets.get(session.id);
