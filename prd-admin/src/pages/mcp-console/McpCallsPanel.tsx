@@ -271,11 +271,16 @@ function EventRow({
         border: `1px solid ${bad ? st.border : 'var(--border-subtle)'}`,
       }}
     >
+      {/* 展开钮与「打开」是**兄弟**，不是父子。
+          原来「打开」那个 <a> 长在这个 <button> 里 —— 嵌套交互控件的无障碍树是无效的：
+          读屏用户会把链接当成展开钮的一部分，键盘 Tab 到的东西也说不准。
+          布局仍是一行：button 吃掉剩余宽度，链接贴右。 */}
+      <div className="flex items-center">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3.5 py-2.5 text-left"
+        className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5 px-3.5 py-2.5 text-left"
       >
         {expanded ? (
           <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} aria-hidden />
@@ -316,19 +321,6 @@ function EventRow({
           </span>
         )}
 
-        {href && (
-          <a
-            href={href}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="flex shrink-0 items-center gap-1 text-[11.5px] font-medium"
-            style={{ color: 'var(--accent-primary)' }}
-          >
-            <ExternalLink size={12} aria-hidden />
-            打开
-          </a>
-        )}
         <span className="w-[56px] shrink-0 text-right text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
           {group.elapsedMs > 0 ? `${(group.elapsedMs / 1000).toFixed(1)}s` : '—'}
         </span>
@@ -339,6 +331,19 @@ function EventRow({
           {st.label}
         </span>
       </button>
+      {href && (
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className="flex shrink-0 items-center gap-1 py-2.5 pr-3.5 text-[11.5px] font-medium"
+          style={{ color: 'var(--accent-primary)' }}
+        >
+          <ExternalLink size={12} aria-hidden />
+          打开
+        </a>
+      )}
+      </div>
 
       {/* 失败不用点开就能看到「为什么」和「下一步」—— 要点开才知道的原因，等于没给 */}
       {bad && (

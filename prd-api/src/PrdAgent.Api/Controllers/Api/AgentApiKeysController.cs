@@ -161,13 +161,31 @@ public class AgentApiKeysController : ControllerBase
     }
 
     /// <summary>
-    /// 把请求里的 `auto` / `manual` 翻成枚举。认不出的一律按 manual ——
-    /// 拼错一个字母就悄悄把范围放到最大，是最不该有的失败方向。
+    /// 把请求里的 `auto` / `manual` 翻成枚举。**认不出来就说认不出来。**
+    ///
+    /// 上一版是「不是 auto 就当 manual」，理由是「拼错一个字母也不该悄悄把范围放到最大」——
+    /// 那个方向没错，但它把另一半吃掉了：`{"scopeMode":"atuo"}` 会被当成 manual，
+    /// 走下面的快照分支把钥匙**永久钉死**，而接口返回 200。调用方以为自己开了自动档，
+    /// 实际上关掉了它，还没有任何线索。
+    ///
+    /// 安全的默认与明确的报错并不冲突：认不出来就 400，既不放宽也不静默。
+    /// null（不传）仍走默认 —— 那是「没表达意见」，不是「表达错了」。
     /// </summary>
-    private static AgentApiKeyScopeMode ParseScopeMode(string? raw)
-        => string.Equals(raw, "auto", StringComparison.OrdinalIgnoreCase)
-            ? AgentApiKeyScopeMode.Auto
-            : AgentApiKeyScopeMode.Manual;
+    private static bool TryParseScopeMode(string? raw, out AgentApiKeyScopeMode mode)
+    {
+        mode = AgentApiKeyScopeMode.Manual;
+        if (string.Equals(raw, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = AgentApiKeyScopeMode.Auto;
+            return true;
+        }
+        return string.Equals(raw, "manual", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IActionResult BadScopeMode(string? raw)
+        => new BadRequestObjectResult(ApiResponse<object>.Fail(
+            ErrorCodes.INVALID_FORMAT,
+            $"scopeMode 只认 auto 或 manual，收到的是「{raw}」。"));
 
     /// <summary>
     /// 创建 Key。返回明文 —— 仅此一次，丢了只能重生成。
@@ -183,7 +201,9 @@ public class AgentApiKeysController : ControllerBase
         var nameTooLong = McpInputBounds.Text(req.Name, McpInputBounds.TitleBytes, "name");
         if (nameTooLong != null) return BadRequest(ApiResponse<object>.Fail("INVALID_NAME", nameTooLong));
 
-        var scopeMode = ParseScopeMode(req.ScopeMode);
+        var scopeMode = AgentApiKeyScopeMode.Manual;
+        if (req.ScopeMode != null && !TryParseScopeMode(req.ScopeMode, out scopeMode))
+            return BadScopeMode(req.ScopeMode);
         var scopes = (req.Scopes ?? new List<string>())
             .Where(s => !string.IsNullOrWhiteSpace(s))
             .Select(s => s.Trim())
@@ -248,7 +268,13 @@ public class AgentApiKeysController : ControllerBase
         // 顺序在 scope 校验之前 —— 否则「既传 scopeMode=auto 又带着一串旧 scope」的请求
         // 会拿一份马上要被丢掉的清单去撞校验，报一个用户根本无从理解的错。
         var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
-        var explicitScopeMode = req.ScopeMode == null ? (AgentApiKeyScopeMode?)null : ParseScopeMode(req.ScopeMode);
+        AgentApiKeyScopeMode? explicitScopeMode = null;
+        if (req.ScopeMode != null)
+        {
+            if (!TryParseScopeMode(req.ScopeMode, out var parsedMode))
+                return BadScopeMode(req.ScopeMode);
+            explicitScopeMode = parsedMode;
+        }
         if (explicitScopeMode == AgentApiKeyScopeMode.Auto)
         {
             req.Scopes = null;

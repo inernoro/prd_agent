@@ -174,6 +174,33 @@ describe('接入台窄屏滚动契约', () => {
     expect(allSources.length, '一个源文件都没扫到 —— 目录结构变了？').toBeGreaterThan(4);
   });
 
+  /**
+   * 交互控件不许套交互控件。
+   *
+   * `<a>` 长在 `<button>` 里，HTML 无效、无障碍树有歧义：读屏用户会把链接当成
+   * 展开钮的一部分，键盘 Tab 到什么也说不准。而它类型过、lint 过、鼠标点着也正常 ——
+   * 只有读屏或键盘才现形，所以钉在源码上。
+   */
+  it('按钮里不许再套链接或按钮', () => {
+    const nested = allSources.flatMap(({ file, text }) => {
+      const out: string[] = [];
+      // 先剥注释再扫：第一版没剥，结果抓到的是解释这条规则的那段注释本身
+      // （里面写着 `<button>`）—— 判据太宽的又一例，而且是当场撞上的。
+      const code = text
+        .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/[^\n]*$/gm, '');
+      // 逐个 <button ...> … </button> 取出内容，看里面有没有 <a href / <button
+      for (const m of code.matchAll(/<button[\s\S]*?<\/button>/g)) {
+        if (/<a\s[^>]*href=/.test(m[0]) || /<button\s/.test(m[0].slice(7))) {
+          out.push(`${file}: ${m[0].slice(0, 80).replace(/\s+/g, ' ')}…`);
+        }
+      }
+      return out;
+    });
+    expect(nested, '嵌套交互控件：把它们改成兄弟节点，用 flex 保持同一行').toEqual([]);
+  });
+
   it('只剩图标的按钮必须有 aria-label', () => {
     // 窄屏把文字 span `hidden` 掉之后，若图标又是 aria-hidden，
     // 这个按钮对读屏用户就没有名字了 —— 类型过、lint 过、看着也正常。
