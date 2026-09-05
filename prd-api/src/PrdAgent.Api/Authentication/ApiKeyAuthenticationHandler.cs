@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Authentication;

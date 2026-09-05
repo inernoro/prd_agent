@@ -293,13 +293,6 @@ public class McpConsoleController : ControllerBase
     private sealed record VisibleTool(string Name, string Description, string? Capability, bool IsWrite);
 
     /// <summary>
-    /// 某个 scope 我自己签不签得出来：不受权限位把关的恒真，受把关的看权限位。
-    ///
-    /// 判据按 **scope** 而不是按能力整块判，且用的是签发口径（IsIssuancePermissionChecked）——
-    /// 与 AgentApiKeysController.ValidateScopeAsync 同一个函数。两处不同口径的后果是
-    /// 面板上写着「可以开通」，一点却被签发接口打回来：把用户请到门口再关门。
-    /// </summary>
-    /// <summary>
     /// 这把钥匙此刻实际拿得到哪些 scope。判据与 <c>ApiKeyAuthenticationHandler</c> 同源：
     /// 自动模式现算（主人当前权限 ∩ 平台当前开放），手动模式读存的那份再按权限位过一遍。
     ///
@@ -327,6 +320,13 @@ public class McpConsoleController : ControllerBase
             .ToList();
     }
 
+    /// <summary>
+    /// 某个 scope 我自己签不签得出来：不受权限位把关的恒真，受把关的看权限位。
+    ///
+    /// 判据按 **scope** 而不是按能力整块判，且用的是签发口径（IsIssuancePermissionChecked）——
+    /// 与 AgentApiKeysController.ValidateScopeAsync 同一个函数。两处不同口径的后果是
+    /// 面板上写着「可以开通」，一点却被签发接口打回来：把用户请到门口再关门。
+    /// </summary>
     private static bool ScopeAvailable(string? scope, IReadOnlyCollection<string> ownedPermissions)
     {
         if (string.IsNullOrEmpty(scope)) return false;
