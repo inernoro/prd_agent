@@ -353,33 +353,9 @@ internal static class DesignArtifactPromptBuilder
             task = new
             {
                 runId = run.Id,
-                run.ArtifactType,
                 run.Operation,
-                run.SourceSurface,
-                run.Instruction,
                 run.Title,
             },
             systemInstruction = BuildSystemPrompt(run.Operation),
-            knowledgeReferences = run.KnowledgeReferences.Select(item => new
-            {
-                item.EntryId,
-                item.StoreId,
-                item.StoreName,
-                item.Title,
-                item.ContentHash,
-            }),
-            workspace = new
-            {
-                input = "brief/task.json 与 knowledge/ 目录",
-                current = run.Operation == DesignArtifactOperations.Edit ? "current/index.html" : null,
-                output = "index.html 与 manifest.json",
-                writeback = "external",
-            },
-            responseContract = new
-            {
-                artifactType = "workspace-package",
-                streamEvents = new[] { "thinking", "text_delta", "done", "error" },
-                finalText = "禁止在消息中回传完整 HTML；完成后由 CDS 原子提交工作区结果包",
-            },
         }, RemoteEnvelopeJsonOptions);
 }
