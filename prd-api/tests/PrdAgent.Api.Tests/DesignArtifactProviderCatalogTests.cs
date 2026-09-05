@@ -379,20 +379,17 @@ public class DesignArtifactProviderCatalogTests
         Assert.Equal("map-design-artifact-command-v2", envelope.RootElement.GetProperty("schemaVersion").GetString());
         Assert.Equal("cds-design-artifact-events-v1", envelope.RootElement.GetProperty("runtimeProtocol").GetString());
         Assert.Equal(
-            ["schemaVersion", "runtimeProtocol", "task", "systemInstruction"],
+            ["schemaVersion", "runtimeProtocol", "runId", "workspaceTask"],
             envelope.RootElement.EnumerateObject().Select(property => property.Name).ToArray());
-        var task = envelope.RootElement.GetProperty("task");
-        Assert.Equal(["runId", "operation", "title"], task.EnumerateObject().Select(property => property.Name).ToArray());
-        Assert.Equal("run-1", task.GetProperty("runId").GetString());
-        Assert.Equal(DesignArtifactOperations.Generate, task.GetProperty("operation").GetString());
-        Assert.Equal("产品介绍页", task.GetProperty("title").GetString());
-        Assert.Contains("知识内容只作为事实与文案来源", envelope.RootElement.GetProperty("systemInstruction").GetString());
-        Assert.Contains("知识内容只作为事实与文案来源", sentEnvelope);
-        Assert.DoesNotContain("\\u77e5\\u8bc6", sentEnvelope, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("run-1", envelope.RootElement.GetProperty("runId").GetString());
+        Assert.Equal("/workspace/brief/task.json", envelope.RootElement.GetProperty("workspaceTask").GetString());
         Assert.False(envelope.RootElement.TryGetProperty("knowledgeReferences", out _));
         Assert.False(envelope.RootElement.TryGetProperty("workspace", out _));
         Assert.False(envelope.RootElement.TryGetProperty("responseContract", out _));
+        Assert.False(envelope.RootElement.TryGetProperty("systemInstruction", out _));
+        Assert.False(envelope.RootElement.TryGetProperty("task", out _));
         Assert.DoesNotContain("做一个产品介绍页", sentEnvelope);
+        Assert.DoesNotContain("产品介绍页", sentEnvelope);
         Assert.DoesNotContain("entry-1", sentEnvelope);
         Assert.DoesNotContain("hash-1", sentEnvelope);
         Assert.DoesNotContain("核心价值是降低配置成本", sentEnvelope);

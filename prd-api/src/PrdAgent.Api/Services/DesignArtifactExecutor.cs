@@ -352,12 +352,7 @@ internal static class DesignArtifactPromptBuilder
         {
             schemaVersion = "map-design-artifact-command-v2",
             runtimeProtocol = "cds-design-artifact-events-v1",
-            task = new
-            {
-                runId = run.Id,
-                run.Operation,
-                run.Title,
-            },
-            systemInstruction = BuildSystemPrompt(run.Operation),
+            runId = run.Id,
+            workspaceTask = "/workspace/brief/task.json",
         }, RemoteEnvelopeJsonOptions);
 }
