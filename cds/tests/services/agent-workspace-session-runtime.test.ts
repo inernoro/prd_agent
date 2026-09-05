@@ -1225,6 +1225,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     ));
     expect(probeRun?.command).toContain('/cds-direct-storage-probe');
     expect(probeRun?.command).toContain('nr_inodes=64');
+    expect(probeRun?.command).toContain('--user 0:0');
     expect(probeRun?.command).toContain('inode-limit-$created');
     expect(probeRun?.command).toContain('test "$created" -lt 128');
     expect(shell.calls.some((call) => (

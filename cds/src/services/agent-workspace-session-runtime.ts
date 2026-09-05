@@ -1014,6 +1014,10 @@ export class AgentWorkspaceSessionRuntime {
           '--read-only',
           '--security-opt no-new-privileges:true',
           '--cap-drop ALL',
+          // The probe volume is intentionally mode=0700 and owned by root.
+          // Production sessions separately initialize their volume ownership;
+          // this probe verifies the daemon's byte/inode enforcement itself.
+          '--user 0:0',
           '--pids-limit 32',
           '--memory 64m',
           '--cpus 0.1',
