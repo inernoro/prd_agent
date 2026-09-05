@@ -1211,7 +1211,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     await expect(runtime.capability(true)).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'Docker node cannot enforce and verify hard per-session Agent workspace storage limits',
+      reason: 'Docker node cannot enforce and verify hard per-session Agent workspace storage limits (validation_exit_1)',
     });
 
     const probeCreate = shell.calls.find((call) => (

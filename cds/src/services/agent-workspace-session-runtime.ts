@@ -652,6 +652,7 @@ export class AgentWorkspaceSessionRuntime {
   private capabilityRefreshError: string | null = null;
   private readonly runtimeValidationByImageId = new Map<string, boolean>();
   private hardStoragePolicyValidated = false;
+  private hardStoragePolicyFailureCode: string | null = null;
   private imagePreparation: Promise<void> | null = null;
   private imagePreparationAttemptedAt = 0;
   private imagePreparationError: string | null = null;
@@ -982,7 +983,7 @@ export class AgentWorkspaceSessionRuntime {
           : {
               available: false,
               resourcePolicyEnforcedPerSession: false,
-              reason: 'Docker node cannot enforce and verify hard per-session Agent workspace storage limits',
+              reason: `Docker node cannot enforce and verify hard per-session Agent workspace storage limits (${this.hardStoragePolicyFailureCode || 'unknown'})`,
             },
     };
   }
@@ -993,6 +994,7 @@ export class AgentWorkspaceSessionRuntime {
     let created = false;
     let verified = false;
     let removed = false;
+    this.hardStoragePolicyFailureCode = null;
     try {
       // Treat the name as allocated before Docker replies: a timed-out create
       // can still have succeeded in the daemon and therefore must be removed.
@@ -1029,9 +1031,13 @@ export class AgentWorkspaceSessionRuntime {
           shellQuote('set -eu; command -v dd >/dev/null 2>&1; for root in /cds-storage-probe /cds-direct-storage-probe; do dd if=/dev/zero of="$root/within-limit" bs=524288 count=1 2>/dev/null; ! dd if=/dev/zero of="$root/over-limit" bs=1048576 count=2 2>/dev/null; rm -f "$root/within-limit" "$root/over-limit"; created=0; while [ "$created" -lt 128 ]; do if : > "$root/inode-limit-$created" 2>/dev/null; then created=$((created + 1)); else break; fi; done; test "$created" -lt 128; done'),
         ].join(' '), { timeout: 30_000 });
         verified = validation.exitCode === 0;
+        if (!verified) this.hardStoragePolicyFailureCode = `validation_exit_${validation.exitCode}`;
+      } else {
+        this.hardStoragePolicyFailureCode = `volume_create_exit_${volume.exitCode}`;
       }
     } catch {
       verified = false;
+      this.hardStoragePolicyFailureCode = 'probe_exception';
     } finally {
       if (created) {
         await this.removeVolume(volumeName)
@@ -1039,6 +1045,7 @@ export class AgentWorkspaceSessionRuntime {
           .catch(() => { removed = false; });
       }
     }
+    if (!removed) this.hardStoragePolicyFailureCode = 'volume_remove_failed';
     return verified && removed;
   }
 
