@@ -55,11 +55,12 @@ export function NavDividerBody({ active }: { active?: boolean }) {
         active ? 'bg-[hsl(var(--primary)/0.18)]' : 'group-hover:bg-token-nested'
       }`}
     >
-      <div className="relative flex h-8 w-4 items-center justify-center">
-        <div className="h-8 w-0.5 rounded-sm bg-token-muted/70" />
+      <div className="relative flex h-9 w-4 items-center justify-center">
+        {/* 竖线要在两个主题下都一眼可见：宽 3px、走次要文字色，不再用 muted 的半透明细线 */}
+        <div className="h-9 w-[3px] rounded-full" style={{ background: 'var(--text-secondary)', opacity: 0.75 }} />
         <GripVertical
           size={12}
-          className="absolute text-token-muted opacity-0 transition-opacity group-hover:opacity-100"
+          className="absolute rounded bg-token-nested text-token-primary opacity-0 transition-opacity group-hover:opacity-100"
         />
       </div>
     </div>
