@@ -266,23 +266,27 @@ export default function McpConsolePage() {
         <div className="grid grid-cols-1 gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_320px]">
           {/* 左：客户端 + 平台开放了什么 */}
           <div className="flex flex-col gap-3 lg:min-h-0 lg:overflow-y-auto lg:pr-0.5">
-            <div className="flex items-baseline gap-2">
-              <h2 className="text-[13.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            {/* 标题与说明，窄屏必须分两行。
+                三段挤在一个不折行的 flex 里，390 宽放不下时**标题自己**被压到最窄 ——
+                「连着的客户端」折成「连着的客户 / 端」。压的是标题，因为 flex 项默认可收缩，
+                而那两句说明比它长得多、抢得也多。
+                （这是上一轮加第三段说明时引入的：当时判断「放标题旁比逐行写省地方」，
+                 省下的地方正是从标题这一行扣掉的。）
+                做法：标题 shrink-0 不许被压，两句说明合成一句、窄屏独占第二行。 */}
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <h2 className="shrink-0 text-[13.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                 连着的客户端
               </h2>
-              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                一台一把钥匙，断哪台都不影响别的
-              </span>
               {/* 「今天」按 UTC 自然日切（McpUsageService.TodayStartUtc = UtcNow.Date），
                   不是用户本地的午夜 —— UTC+8 的人在早上 8 点看到它归零。这句话改版前
                   一直在页面上，改版时被收进了额度编辑弹窗里；而下面每一行、每一条额度条
                   都写着「今天」，不说清是哪个「今天」，用户会以为数字错了。 */}
               <span
-                className="text-[11px]"
-                style={{ color: 'var(--text-muted)', opacity: 0.85 }}
+                className="w-full text-[11px] lg:w-auto"
+                style={{ color: 'var(--text-muted)' }}
                 title="额度与「今天」的计数都按 UTC 自然日重置；UTC+8 是每天早上 8 点归零"
               >
-                · 「今天」按 UTC 自然日算
+                一台一把钥匙，断哪台都不影响别的 · 「今天」按 UTC 自然日算
               </span>
             </div>
 

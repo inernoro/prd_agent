@@ -98,10 +98,23 @@ describe('接入台窄屏滚动契约', () => {
       return t.includes('w-full') && t.includes('lg:w-auto');
     });
     expect(pinned.length, '找不到 lg:order-last —— 布局被重写了？').toBeGreaterThan(0);
+    // 是「至少」不是「恰好」：`w-full lg:w-auto` 本身是通用的「窄屏独占一行」手法，
+    // 别处（客户端区标题旁那句说明）正当用它，不该把这条守卫判红。
     expect(
       spans.length,
       `有 ${pinned.length} 处 lg:order-last，却只有 ${spans.length} 句 w-full lg:w-auto 兜着它们`,
-    ).toBe(pinned.length);
+    ).toBeGreaterThanOrEqual(pinned.length);
+  });
+
+  it('区块标题不许被旁边的说明挤到折行', () => {
+    // flex 项默认可收缩，而说明句往往比标题长得多、抢得也多 ——
+    // 390 宽下被压到最窄的是标题：「连着的客户端」折成「连着的客户 / 端」。
+    // 标题是这一屏的骨架，宁可让说明换行，也不能让它散架。
+    const h2 = [...source.matchAll(/<h2\s+className="([^"]*)"/g)].map((m) => m[1]);
+    expect(h2.length, '找不到区块标题 —— 布局被重写了？').toBeGreaterThan(0);
+    for (const c of h2) {
+      expect(c.split(/\s+/), `${c} 少了 shrink-0，窄屏会被旁边的说明压到折行`).toContain('shrink-0');
+    }
   });
 
   it('页头窄屏是竖排，不靠 flex-wrap 兜底', () => {
