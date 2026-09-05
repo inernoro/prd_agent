@@ -117,6 +117,19 @@ public interface IAssetStorage
     Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null, string? fileName = null, string? extensionHint = null);
 
     /// <summary>
+    /// 在实际写入前预演 <see cref="SaveAsync"/> 将返回的精确物理 key。
+    /// 需要在对象写入前持久化补偿意图的调用方使用；真实存储实现必须与 SaveAsync 共用同一套 key 规则。
+    /// 不支持预演的兼容实现返回 null。
+    /// </summary>
+    string? TryBuildContentAddressedKey(
+        byte[] bytes,
+        string mime,
+        string? domain = null,
+        string? type = null,
+        string? fileName = null,
+        string? extensionHint = null) => null;
+
+    /// <summary>
     /// 按 sha256 读取 bytes（用于本地存储或兼容旧数据）。
     /// </summary>
     Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null);

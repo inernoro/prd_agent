@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildUnifiedBranchResources } from '../../src/services/resources.js';
+import { buildUnifiedBranchResources, getUnifiedResourceInternalRaw } from '../../src/services/resources.js';
 import type { BranchEntry, InfraService } from '../../src/types.js';
 
 describe('buildUnifiedBranchResources', () => {
@@ -67,5 +67,58 @@ describe('buildUnifiedBranchResources', () => {
       .toBe('postgres://branch_pg_user:******@postgres-main:5432/branch_pg');
     expect(resources.find((resource) => resource.id === 'infra:mongo-main')?.connectionString)
       .toBe('mongodb://branch_mongo_user:******@mongo-main:27017/branch_mongo?authSource=branch_mongo');
+  });
+
+  it('never serializes infrastructure environment values through raw', () => {
+    const branch: BranchEntry = {
+      id: 'secret-redaction-branch',
+      projectId: 'prd-agent',
+      branch: 'secret-redaction',
+      worktreePath: '/tmp/secret-redaction',
+      status: 'running',
+      createdAt: '2026-09-06T00:00:00.000Z',
+      lastDeployAt: '2026-09-06T00:00:00.000Z',
+      services: {},
+    };
+    const infraService: InfraService = {
+      id: 'mongo-secret-redaction',
+      projectId: 'prd-agent',
+      name: 'MongoDB 7',
+      dockerImage: 'mongo:7',
+      containerPort: 27017,
+      hostPort: 27017,
+      containerName: 'cds-mongo-secret-redaction',
+      status: 'running',
+      env: {
+        MONGO_INITDB_ROOT_USERNAME: 'root-user-sentinel',
+        MONGO_INITDB_ROOT_PASSWORD: 'root-password-sentinel',
+        EMPTY_VALUE: '',
+      },
+      volumes: [],
+      createdAt: '2026-09-06T00:00:00.000Z',
+    };
+
+    const [resource] = buildUnifiedBranchResources({
+      branch,
+      profiles: [],
+      infraServices: [infraService],
+    });
+
+    expect((resource.raw as InfraService).env).toEqual({
+      MONGO_INITDB_ROOT_USERNAME: '******',
+      MONGO_INITDB_ROOT_PASSWORD: '******',
+      EMPTY_VALUE: '******',
+    });
+    const serialized = JSON.parse(JSON.stringify(resource)) as { raw: { env: Record<string, string> } };
+    expect(serialized.raw.env).toEqual({
+      MONGO_INITDB_ROOT_USERNAME: '******',
+      MONGO_INITDB_ROOT_PASSWORD: '******',
+      EMPTY_VALUE: '******',
+    });
+    expect(JSON.stringify(serialized.raw)).not.toContain('root-user-sentinel');
+    expect(JSON.stringify(serialized.raw)).not.toContain('root-password-sentinel');
+    expect(getUnifiedResourceInternalRaw(resource)).toBe(infraService);
+    expect((getUnifiedResourceInternalRaw(resource) as InfraService).env.MONGO_INITDB_ROOT_PASSWORD)
+      .toBe('root-password-sentinel');
   });
 });

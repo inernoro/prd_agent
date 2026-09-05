@@ -814,15 +814,37 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         MongoDbContext db,
         IAssetStorage storage,
         DateTime attemptedAt,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? processEpoch = null)
     {
+        var pendingWrites = await db.DesignArtifactRuns
+            .Find(x => x.WorkspaceResultAssetKey == null
+                       && x.WorkspacePendingResultAssetKey != null
+                       && x.WorkspacePendingResultAssetKey != string.Empty
+                       && x.WorkspacePendingResultAttemptId != null
+                       && x.WorkspacePendingResultAttemptId != string.Empty)
+            .Limit(100)
+            .ToListAsync(ct);
+        var recovered = 0;
+        foreach (var candidate in pendingWrites)
+        {
+            if (await DesignArtifactWorkspaceBroker.RecoverPendingWorkspaceResultAsync(
+                    db,
+                    storage,
+                    candidate,
+                    attemptedAt,
+                    ct,
+                    processEpoch: processEpoch))
+                recovered++;
+        }
+
+        // 兼容修复前已经落库的晚到结果清理线索。
         var candidates = await db.DesignArtifactRuns
             .Find(x => x.WorkspaceResultAssetKey == null
                        && x.WorkspaceRejectedResultAssetKey != null
                        && x.WorkspaceRejectedResultAssetKey != string.Empty)
             .Limit(100)
             .ToListAsync(ct);
-        var recovered = 0;
         foreach (var candidate in candidates)
         {
             var key = candidate.WorkspaceRejectedResultAssetKey!;

@@ -57,6 +57,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     public const long MaxInputBytes = 1_048_576;
     public const long MaxOutputBytes = 6_291_456;
     private static readonly TimeSpan TicketTtl = TimeSpan.FromMinutes(25);
+    internal static string CurrentProcessEpoch { get; } = $"{Environment.ProcessId}:{Guid.NewGuid():N}";
     private static readonly string[] AllowedOutputPaths = ["index.html", "manifest.json", "assets/**"];
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _storage;
@@ -131,6 +132,12 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         run.WorkspaceBaseRevision = package.BaseRevision;
         run.WorkspaceResultAssetKey = null;
         run.WorkspaceResultSha256 = null;
+        run.WorkspacePendingResultAssetKey = null;
+        run.WorkspacePendingResultAttemptId = null;
+        run.WorkspacePendingResultWriteState = null;
+        run.WorkspacePendingResultProcessEpoch = null;
+        run.WorkspacePendingResultStartedAt = null;
+        run.WorkspacePendingResultWriteError = null;
         run.WorkspaceRejectedResultAssetKey = null;
         run.WorkspaceRejectedResultCleanupAttemptedAt = null;
         run.WorkspaceRejectedResultCleanupError = null;
@@ -197,21 +204,37 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             throw new InvalidOperationException("该工作区已经提交过不同结果，请重新发起任务");
         }
 
-        // 先用内容哈希在 Run 上占位，再写对象存储。若两个不同结果并发提交，
-        // 失败方会在 SaveAsync 之前被拒绝，不会留下无任务引用的内容寻址对象。
-        // 同内容并发可以共享占位：真实存储实现均按 SHA 去重，不会产生第二个物理对象。
+        // 精确物理 key 与 attempt 围栏必须先于 SaveAsync 持久化。这样即使进程在对象写入成功后、
+        // 终态 CAS 前退出，恢复器仍能定位唯一对象；同一 Run 的并发请求也不能共享无主占位。
         var now = DateTime.UtcNow;
+        var attemptId = Guid.NewGuid().ToString("N");
+        var pendingKey = _storage.TryBuildContentAddressedKey(
+            packageBytes,
+            "application/json",
+            domain: AppDomainPaths.DomainWebHosting,
+            type: AppDomainPaths.TypeMeta,
+            fileName: $"{run.Id}.json",
+            extensionHint: ".json");
+        if (string.IsNullOrWhiteSpace(pendingKey))
+            throw new InvalidOperationException("当前对象存储无法预演远程设计结果路径，请联系管理员检查存储配置");
         var activeFilter = BuildActiveWorkspaceFilter(runId, run.LeaseOwnerId, now);
         var reservation = await _db.DesignArtifactRuns.UpdateOneAsync(
             Builders<DesignArtifactRun>.Filter.And(
                 activeFilter,
                 Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultAssetKey, null),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspacePendingResultAssetKey, null),
                 Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceRejectedResultAssetKey, null),
                 Builders<DesignArtifactRun>.Filter.Or(
                     Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultSha256, null),
                     Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultSha256, packageSha))),
             Builders<DesignArtifactRun>.Update
                 .Set(item => item.WorkspaceResultSha256, packageSha)
+                .Set(item => item.WorkspacePendingResultAssetKey, pendingKey)
+                .Set(item => item.WorkspacePendingResultAttemptId, attemptId)
+                .Set(item => item.WorkspacePendingResultWriteState, DesignWorkspaceResultWriteStates.Writing)
+                .Set(item => item.WorkspacePendingResultProcessEpoch, CurrentProcessEpoch)
+                .Set(item => item.WorkspacePendingResultStartedAt, now)
+                .Set(item => item.WorkspacePendingResultWriteError, null)
                 .Set(item => item.UpdatedAt, now),
             cancellationToken: CancellationToken.None);
         if (reservation.MatchedCount == 0)
@@ -229,17 +252,63 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             throw new InvalidOperationException("该工作区已经提交过不同结果，请重新发起任务");
         }
 
-        var stored = await SaveWorkspaceMetadataAsync(
-            _storage,
-            packageBytes,
-            $"{run.Id}.json",
-            CancellationToken.None);
-        if (string.IsNullOrWhiteSpace(stored.Key))
-            throw new InvalidOperationException("远程设计结果保存失败，请稍后重试");
+        StoredAsset stored;
+        try
+        {
+            stored = await SaveWorkspaceMetadataAsync(
+                _storage,
+                packageBytes,
+                $"{run.Id}.json",
+                CancellationToken.None);
+            if (string.IsNullOrWhiteSpace(stored.Key)
+                || !string.Equals(stored.Key, pendingKey, StringComparison.Ordinal))
+                throw new InvalidOperationException("远程设计结果保存路径与预演不一致，请联系管理员检查存储配置");
+        }
+        catch (Exception saveError)
+        {
+            var failedAt = DateTime.UtcNow;
+            await _db.DesignArtifactRuns.UpdateOneAsync(
+                item => item.Id == runId
+                        && item.WorkspaceResultAssetKey == null
+                        && item.WorkspaceResultSha256 == packageSha
+                        && item.WorkspacePendingResultAssetKey == pendingKey
+                        && item.WorkspacePendingResultAttemptId == attemptId,
+                Builders<DesignArtifactRun>.Update
+                    .Set(item => item.WorkspacePendingResultWriteState, DesignWorkspaceResultWriteStates.SaveFailed)
+                    .Set(item => item.WorkspacePendingResultWriteError, BoundedCleanupError(saveError))
+                    .Set(item => item.UpdatedAt, failedAt),
+                cancellationToken: CancellationToken.None);
+            var failed = await _db.DesignArtifactRuns.Find(item => item.Id == runId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (failed != null)
+                await RecoverPendingWorkspaceResultAsync(_db, _storage, failed, failedAt, CancellationToken.None);
+            throw;
+        }
+
+        // 单独落下 stored 状态，让恢复器能够区分“上传可能仍在进行”与“对象已确认可见”。
+        // 即便进程在本次更新前退出，writing 状态也已经携带精确 key，租约失效后仍可查存在性并回收。
+        var storedAt = DateTime.UtcNow;
+        await _db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == runId
+                    && item.WorkspaceResultAssetKey == null
+                    && item.WorkspaceResultSha256 == packageSha
+                    && item.WorkspacePendingResultAssetKey == pendingKey
+                    && item.WorkspacePendingResultAttemptId == attemptId,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.WorkspacePendingResultWriteState, DesignWorkspaceResultWriteStates.Stored)
+                .Set(item => item.WorkspacePendingResultWriteError, null)
+                .Set(item => item.UpdatedAt, storedAt),
+            cancellationToken: CancellationToken.None);
 
         var completedAt = DateTime.UtcNow;
         var update = Builders<DesignArtifactRun>.Update
-            .Set(item => item.WorkspaceResultAssetKey, stored.Key)
+            .Set(item => item.WorkspaceResultAssetKey, pendingKey)
+            .Set(item => item.WorkspacePendingResultAssetKey, null)
+            .Set(item => item.WorkspacePendingResultAttemptId, null)
+            .Set(item => item.WorkspacePendingResultWriteState, null)
+            .Set(item => item.WorkspacePendingResultProcessEpoch, null)
+            .Set(item => item.WorkspacePendingResultStartedAt, null)
+            .Set(item => item.WorkspacePendingResultWriteError, null)
             .Set(item => item.WorkspaceRejectedResultAssetKey, null)
             .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, null)
             .Set(item => item.WorkspaceRejectedResultCleanupError, null)
@@ -248,7 +317,12 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             Builders<DesignArtifactRun>.Filter.And(
                 BuildActiveWorkspaceFilter(runId, run.LeaseOwnerId, completedAt),
                 Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultAssetKey, null),
-                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultSha256, packageSha)),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultSha256, packageSha),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspacePendingResultAssetKey, pendingKey),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspacePendingResultAttemptId, attemptId),
+                Builders<DesignArtifactRun>.Filter.Eq(
+                    item => item.WorkspacePendingResultWriteState,
+                    DesignWorkspaceResultWriteStates.Stored)),
             update,
             cancellationToken: CancellationToken.None);
         if (write.ModifiedCount == 0)
@@ -256,6 +330,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             var winner = await _db.DesignArtifactRuns.Find(item => item.Id == runId).FirstOrDefaultAsync(CancellationToken.None);
             if (winner != null
                 && !string.IsNullOrWhiteSpace(winner.WorkspaceResultAssetKey)
+                && string.Equals(winner.WorkspaceResultAssetKey, pendingKey, StringComparison.Ordinal)
                 && FixedEquals(winner.WorkspaceResultSha256, packageSha))
             {
                 if (HasActiveWorkspaceWindow(winner, run.LeaseOwnerId, completedAt))
@@ -263,47 +338,14 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 throw new UnauthorizedAccessException("远程设计凭证对应的任务已结束，请重新发起任务");
             }
 
-            // 对象写入期间任务可能已终止或租约已过期。先把精确 key 持久化为回收线索，
-            // 再删除对象并释放哈希占位；即使回收过程中断，后续也能按 Run 恢复。
-            await _db.DesignArtifactRuns.UpdateOneAsync(
-                item => item.Id == runId
-                        && item.WorkspaceResultAssetKey == null
-                        && item.WorkspaceResultSha256 == packageSha,
-                Builders<DesignArtifactRun>.Update
-                    .Set(item => item.WorkspaceRejectedResultAssetKey, stored.Key)
-                    .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, null)
-                    .Set(item => item.WorkspaceRejectedResultCleanupError, null)
-                    .Set(item => item.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: CancellationToken.None);
-            try
-            {
-                await _storage.DeleteByKeyAsync(stored.Key, CancellationToken.None);
-            }
-            catch (Exception cleanupError)
-            {
-                await _db.DesignArtifactRuns.UpdateOneAsync(
-                    item => item.Id == runId
-                            && item.WorkspaceResultAssetKey == null
-                            && item.WorkspaceRejectedResultAssetKey == stored.Key,
-                    Builders<DesignArtifactRun>.Update
-                        .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, DateTime.UtcNow)
-                        .Set(item => item.WorkspaceRejectedResultCleanupError, BoundedCleanupError(cleanupError))
-                        .Set(item => item.UpdatedAt, DateTime.UtcNow),
-                    cancellationToken: CancellationToken.None);
-                throw;
-            }
-            await _db.DesignArtifactRuns.UpdateOneAsync(
-                item => item.Id == runId
-                        && item.WorkspaceResultAssetKey == null
-                        && item.WorkspaceResultSha256 == packageSha
-                        && item.WorkspaceRejectedResultAssetKey == stored.Key,
-                Builders<DesignArtifactRun>.Update
-                    .Set(item => item.WorkspaceResultSha256, null)
-                    .Set(item => item.WorkspaceRejectedResultAssetKey, null)
-                    .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, null)
-                    .Set(item => item.WorkspaceRejectedResultCleanupError, null)
-                    .Set(item => item.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: CancellationToken.None);
+            if (winner != null)
+                await RecoverPendingWorkspaceResultAsync(
+                    _db,
+                    _storage,
+                    winner,
+                    DateTime.UtcNow,
+                    CancellationToken.None,
+                    throwOnCleanupFailure: true);
 
             if (winner == null || !HasActiveWorkspaceWindow(winner, run.LeaseOwnerId, completedAt))
                 throw new UnauthorizedAccessException("远程设计凭证对应的任务已结束，请重新发起任务");
@@ -387,6 +429,12 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 .Set(item => item.WorkspaceBaseRevision, baseRevision)
                 .Set(item => item.WorkspaceResultAssetKey, null)
                 .Set(item => item.WorkspaceResultSha256, null)
+                .Set(item => item.WorkspacePendingResultAssetKey, null)
+                .Set(item => item.WorkspacePendingResultAttemptId, null)
+                .Set(item => item.WorkspacePendingResultWriteState, null)
+                .Set(item => item.WorkspacePendingResultProcessEpoch, null)
+                .Set(item => item.WorkspacePendingResultStartedAt, null)
+                .Set(item => item.WorkspacePendingResultWriteError, null)
                 .Set(item => item.WorkspaceRejectedResultAssetKey, null)
                 .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, null)
                 .Set(item => item.WorkspaceRejectedResultCleanupError, null)
@@ -452,6 +500,126 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             Builders<DesignArtifactRun>.Filter.Eq(item => item.LeaseOwnerId, leaseOwner),
             Builders<DesignArtifactRun>.Filter.Gt(item => item.LeaseExpiresAt, now),
             Builders<DesignArtifactRun>.Filter.Gt(item => item.RuntimeTicketExpiresAt, now));
+
+    internal static async Task<bool> RecoverPendingWorkspaceResultAsync(
+        MongoDbContext db,
+        IAssetStorage storage,
+        DesignArtifactRun candidate,
+        DateTime attemptedAt,
+        CancellationToken ct,
+        bool throwOnCleanupFailure = false,
+        string? processEpoch = null)
+    {
+        var key = candidate.WorkspacePendingResultAssetKey;
+        var attemptId = candidate.WorkspacePendingResultAttemptId;
+        if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(attemptId)) return false;
+
+        var current = await db.DesignArtifactRuns.Find(item => item.Id == candidate.Id
+                                                               && item.WorkspacePendingResultAssetKey == key
+                                                               && item.WorkspacePendingResultAttemptId == attemptId)
+            .FirstOrDefaultAsync(ct);
+        if (current == null) return false;
+
+        // 获胜结果已经引用同一个内容寻址对象时，只移除旧 attempt，绝不能删除对象。
+        if (!string.IsNullOrWhiteSpace(current.WorkspaceResultAssetKey))
+        {
+            if (string.Equals(current.WorkspaceResultAssetKey, key, StringComparison.Ordinal))
+                return await ClearPendingWorkspaceResultAsync(db, current, attemptedAt, clearHash: false, ct);
+            return false;
+        }
+
+        var active = HasActiveWorkspaceWindow(current, current.LeaseOwnerId, attemptedAt);
+        if (active
+            && !string.Equals(
+                current.WorkspacePendingResultWriteState,
+                DesignWorkspaceResultWriteStates.SaveFailed,
+                StringComparison.Ordinal))
+            return false;
+
+        // writing 表示对象存储调用尚未确认返回。同一进程仍可能在完成上传，不能依赖固定时长猜测。
+        // 只有新的进程代际才能确认旧写入者已经退出，再按精确 key 接管回收。
+        if (string.Equals(
+                current.WorkspacePendingResultWriteState,
+                DesignWorkspaceResultWriteStates.Writing,
+                StringComparison.Ordinal)
+            && string.Equals(
+                current.WorkspacePendingResultProcessEpoch,
+                processEpoch ?? CurrentProcessEpoch,
+                StringComparison.Ordinal))
+            return false;
+
+        var referencedByWinner = await db.DesignArtifactRuns
+            .Find(item => item.WorkspaceResultAssetKey == key)
+            .AnyAsync(ct);
+        if (referencedByWinner)
+            return await ClearPendingWorkspaceResultAsync(db, current, attemptedAt, clearHash: true, ct);
+
+        // 同内容可能由另一个 Run 同时写入。只要仍有活跃写入，就延后回收，避免删除其即将采用的对象。
+        var activeSibling = await db.DesignArtifactRuns.Find(item =>
+                item.Id != current.Id
+                && item.WorkspaceResultAssetKey == null
+                && item.WorkspacePendingResultAssetKey == key
+                && item.Status == RunStatuses.Running
+                && item.LeaseExpiresAt > attemptedAt
+                && item.RuntimeTicketExpiresAt > attemptedAt
+                && item.WorkspacePendingResultWriteState != DesignWorkspaceResultWriteStates.SaveFailed)
+            .AnyAsync(ct);
+        if (activeSibling) return false;
+
+        try
+        {
+            if (await storage.ExistsAsync(key, CancellationToken.None))
+                await storage.DeleteByKeyAsync(key, CancellationToken.None);
+        }
+        catch (Exception cleanupError)
+        {
+            await db.DesignArtifactRuns.UpdateOneAsync(
+                item => item.Id == current.Id
+                        && item.WorkspaceResultAssetKey == null
+                        && item.WorkspacePendingResultAssetKey == key
+                        && item.WorkspacePendingResultAttemptId == attemptId,
+                Builders<DesignArtifactRun>.Update
+                    .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, attemptedAt)
+                    .Set(item => item.WorkspaceRejectedResultCleanupError, BoundedCleanupError(cleanupError))
+                    .Set(item => item.UpdatedAt, attemptedAt),
+                cancellationToken: CancellationToken.None);
+            if (throwOnCleanupFailure) throw;
+            return false;
+        }
+
+        return await ClearPendingWorkspaceResultAsync(db, current, attemptedAt, clearHash: true, ct);
+    }
+
+    private static async Task<bool> ClearPendingWorkspaceResultAsync(
+        MongoDbContext db,
+        DesignArtifactRun current,
+        DateTime attemptedAt,
+        bool clearHash,
+        CancellationToken ct)
+    {
+        var update = Builders<DesignArtifactRun>.Update
+            .Set(item => item.WorkspacePendingResultAssetKey, null)
+            .Set(item => item.WorkspacePendingResultAttemptId, null)
+            .Set(item => item.WorkspacePendingResultWriteState, null)
+            .Set(item => item.WorkspacePendingResultProcessEpoch, null)
+            .Set(item => item.WorkspacePendingResultStartedAt, null)
+            .Set(item => item.WorkspacePendingResultWriteError, null)
+            .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, null)
+            .Set(item => item.WorkspaceRejectedResultCleanupError, null)
+            .Set(item => item.UpdatedAt, attemptedAt);
+        if (clearHash)
+            update = update.Set(item => item.WorkspaceResultSha256, null);
+        var write = await db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == current.Id
+                    && item.WorkspacePendingResultAssetKey == current.WorkspacePendingResultAssetKey
+                    && item.WorkspacePendingResultAttemptId == current.WorkspacePendingResultAttemptId
+                    && (clearHash
+                        ? item.WorkspaceResultAssetKey == null
+                        : item.WorkspaceResultAssetKey == current.WorkspaceResultAssetKey),
+            update,
+            cancellationToken: ct);
+        return write.ModifiedCount == 1;
+    }
 
     private static string BoundedCleanupError(Exception error)
     {

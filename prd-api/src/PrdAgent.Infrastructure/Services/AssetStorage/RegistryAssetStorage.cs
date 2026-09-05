@@ -75,6 +75,15 @@ public sealed class RegistryAssetStorage : IAssetStorage, IAssetStorageRuntimeIn
         return result;
     }
 
+    public string? TryBuildContentAddressedKey(
+        byte[] bytes,
+        string mime,
+        string? domain = null,
+        string? type = null,
+        string? fileName = null,
+        string? extensionHint = null) =>
+        _inner.TryBuildContentAddressedKey(bytes, mime, domain, type, fileName, extensionHint);
+
     public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
     {
         return await _inner.TryReadByShaAsync(sha256, ct, domain, type);

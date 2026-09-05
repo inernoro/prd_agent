@@ -386,6 +386,24 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return new StoredAsset(sha, url, bytes.LongLength, safeMime, key);
     }
 
+    public string? TryBuildContentAddressedKey(
+        byte[] bytes,
+        string mime,
+        string? domain = null,
+        string? type = null,
+        string? fileName = null,
+        string? extensionHint = null)
+    {
+        ThrowIfDisposed();
+        if (bytes == null || bytes.Length == 0) return null;
+        var safeMime = string.IsNullOrWhiteSpace(mime) ? "application/octet-stream" : mime.Trim();
+        var ext = ResolveExtension(extensionHint, fileName, safeMime);
+        var sha = Sha256Hex(bytes);
+        var d = string.IsNullOrWhiteSpace(domain) ? AppDomainPaths.DomainVisualAgent : AppDomainPaths.NormDomain(domain);
+        var t = string.IsNullOrWhiteSpace(type) ? AppDomainPaths.TypeImg : AppDomainPaths.NormType(type);
+        return BuildObjectKey(d, t, sha, ext);
+    }
+
     public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
     {
         ThrowIfDisposed();

@@ -142,6 +142,9 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
         var persisted = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
         Assert.Null(persisted.WorkspaceResultAssetKey);
         Assert.Null(persisted.WorkspaceResultSha256);
+        Assert.Null(persisted.WorkspacePendingResultAssetKey);
+        Assert.Null(persisted.WorkspacePendingResultAttemptId);
+        Assert.Null(persisted.WorkspacePendingResultWriteState);
         Assert.Null(persisted.WorkspaceRejectedResultAssetKey);
         Assert.Null(persisted.WorkspaceRejectedResultCleanupAttemptedAt);
         Assert.Null(persisted.WorkspaceRejectedResultCleanupError);
@@ -178,7 +181,10 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
         var pending = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
         Assert.Null(pending.WorkspaceResultAssetKey);
         Assert.NotNull(pending.WorkspaceResultSha256);
-        Assert.NotNull(pending.WorkspaceRejectedResultAssetKey);
+        Assert.NotNull(pending.WorkspacePendingResultAssetKey);
+        Assert.NotNull(pending.WorkspacePendingResultAttemptId);
+        Assert.Equal(DesignWorkspaceResultWriteStates.Stored, pending.WorkspacePendingResultWriteState);
+        Assert.Null(pending.WorkspaceRejectedResultAssetKey);
         Assert.NotNull(pending.WorkspaceRejectedResultCleanupAttemptedAt);
         Assert.Contains("模拟对象删除失败", pending.WorkspaceRejectedResultCleanupError ?? string.Empty, StringComparison.Ordinal);
 
@@ -193,10 +199,156 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
         var cleaned = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
         Assert.Null(cleaned.WorkspaceResultAssetKey);
         Assert.Null(cleaned.WorkspaceResultSha256);
+        Assert.Null(cleaned.WorkspacePendingResultAssetKey);
+        Assert.Null(cleaned.WorkspacePendingResultAttemptId);
+        Assert.Null(cleaned.WorkspacePendingResultWriteState);
         Assert.Null(cleaned.WorkspaceRejectedResultAssetKey);
         Assert.Null(cleaned.WorkspaceRejectedResultCleanupAttemptedAt);
         Assert.Null(cleaned.WorkspaceRejectedResultCleanupError);
         Assert.Equal(2, fixture.Storage.DeletedKeys.Count);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ProcessExitAfterInnerSaveIsRecoveredFromPrePersistedExactKey()
+    {
+        await using var fixture = await BrokerFixture.CreateAsync();
+        var runId = "run-crash-after-inner-save";
+        var workspace = await fixture.PrepareAsync(runId);
+        var result = BuildResult(runId, workspace.BaseRevision, "对象已保存但终态尚未提交");
+        var objectsBeforeCommit = fixture.AssetObjectCount;
+        fixture.Storage.BlockAfterNextInnerSave();
+
+        var abandonedCommit = fixture.Broker.CommitResultAsync(
+            runId,
+            workspace.TransferToken,
+            result,
+            CancellationToken.None);
+        await fixture.Storage.WaitUntilInnerSaveCompletedAsync();
+
+        var pending = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
+        Assert.Equal(DesignWorkspaceResultWriteStates.Writing, pending.WorkspacePendingResultWriteState);
+        Assert.Equal(DesignArtifactWorkspaceBroker.CurrentProcessEpoch, pending.WorkspacePendingResultProcessEpoch);
+        Assert.False(string.IsNullOrWhiteSpace(pending.WorkspacePendingResultAssetKey));
+        Assert.False(string.IsNullOrWhiteSpace(pending.WorkspacePendingResultAttemptId));
+        Assert.True(await fixture.Storage.ExistsAsync(pending.WorkspacePendingResultAssetKey!, CancellationToken.None));
+        Assert.Equal(objectsBeforeCommit + 1, fixture.AssetObjectCount);
+
+        var prematureRecovery = await HostedSiteEditRunWorker.RecoverRejectedWorkspaceResultsAsync(
+            fixture.Db,
+            fixture.Storage,
+            DateTime.UtcNow.AddMinutes(2),
+            CancellationToken.None);
+        Assert.Equal(0, prematureRecovery);
+        Assert.Equal(objectsBeforeCommit + 1, fixture.AssetObjectCount);
+
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            run => run.Id == runId,
+            Builders<DesignArtifactRun>.Update.Set(run => run.LeaseExpiresAt, DateTime.UtcNow.AddSeconds(-1)));
+        var sameProcessRecovery = await HostedSiteEditRunWorker.RecoverRejectedWorkspaceResultsAsync(
+            fixture.Db,
+            fixture.Storage,
+            DateTime.UtcNow.AddDays(1),
+            CancellationToken.None);
+        Assert.Equal(0, sameProcessRecovery);
+        Assert.Equal(objectsBeforeCommit + 1, fixture.AssetObjectCount);
+
+        var recovered = await HostedSiteEditRunWorker.RecoverRejectedWorkspaceResultsAsync(
+            fixture.Db,
+            fixture.Storage,
+            DateTime.UtcNow.AddDays(1),
+            CancellationToken.None,
+            processEpoch: "simulated-new-process-epoch");
+
+        Assert.Equal(1, recovered);
+        Assert.Equal(objectsBeforeCommit, fixture.AssetObjectCount);
+        var cleaned = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
+        Assert.Null(cleaned.WorkspaceResultAssetKey);
+        Assert.Null(cleaned.WorkspaceResultSha256);
+        Assert.Null(cleaned.WorkspacePendingResultAssetKey);
+        Assert.Null(cleaned.WorkspacePendingResultAttemptId);
+        Assert.Null(cleaned.WorkspacePendingResultProcessEpoch);
+
+        fixture.Storage.ReleaseAfterInnerSave();
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => abandonedCommit);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task StaleRecoverySnapshotCannotDeleteResultAdoptedByWinningCommit()
+    {
+        await using var fixture = await BrokerFixture.CreateAsync();
+        var runId = "run-stale-recovery-vs-winner";
+        var workspace = await fixture.PrepareAsync(runId);
+        var result = BuildResult(runId, workspace.BaseRevision, "最终获胜对象");
+        fixture.Storage.BlockAfterNextInnerSave();
+
+        var winningCommit = fixture.Broker.CommitResultAsync(
+            runId,
+            workspace.TransferToken,
+            result,
+            CancellationToken.None);
+        await fixture.Storage.WaitUntilInnerSaveCompletedAsync();
+        var stalePending = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
+
+        fixture.Storage.ReleaseAfterInnerSave();
+        var committed = await winningCommit;
+        var objectsAfterCommit = fixture.AssetObjectCount;
+
+        var recovered = await DesignArtifactWorkspaceBroker.RecoverPendingWorkspaceResultAsync(
+            fixture.Db,
+            fixture.Storage,
+            stalePending,
+            DateTime.UtcNow.AddMinutes(1),
+            CancellationToken.None);
+
+        Assert.False(recovered);
+        Assert.Equal(objectsAfterCommit, fixture.AssetObjectCount);
+        Assert.Empty(fixture.Storage.DeletedKeys);
+        var winner = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
+        Assert.Equal(committed.ResultSha256, winner.WorkspaceResultSha256);
+        Assert.False(string.IsNullOrWhiteSpace(winner.WorkspaceResultAssetKey));
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task SaveFailureAfterObjectWriteKeepsExactRecoverableIntentUntilDeleteSucceeds()
+    {
+        await using var fixture = await BrokerFixture.CreateAsync();
+        var runId = "run-save-failed-after-write";
+        var workspace = await fixture.PrepareAsync(runId);
+        var result = BuildResult(runId, workspace.BaseRevision, "保存后报告失败");
+        var objectsBeforeCommit = fixture.AssetObjectCount;
+        fixture.Storage.ThrowAfterNextInnerSave();
+        fixture.Storage.FailNextDeletes(1);
+
+        var error = await Assert.ThrowsAsync<IOException>(() => fixture.Broker.CommitResultAsync(
+            runId,
+            workspace.TransferToken,
+            result,
+            CancellationToken.None));
+        Assert.Contains("模拟保存响应丢失", error.Message, StringComparison.Ordinal);
+
+        var pending = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
+        Assert.Equal(DesignWorkspaceResultWriteStates.SaveFailed, pending.WorkspacePendingResultWriteState);
+        Assert.False(string.IsNullOrWhiteSpace(pending.WorkspacePendingResultAssetKey));
+        Assert.False(string.IsNullOrWhiteSpace(pending.WorkspacePendingResultAttemptId));
+        Assert.Equal(objectsBeforeCommit + 1, fixture.AssetObjectCount);
+        Assert.NotNull(pending.WorkspaceRejectedResultCleanupAttemptedAt);
+
+        var recovered = await HostedSiteEditRunWorker.RecoverRejectedWorkspaceResultsAsync(
+            fixture.Db,
+            fixture.Storage,
+            DateTime.UtcNow,
+            CancellationToken.None);
+
+        Assert.Equal(1, recovered);
+        Assert.Equal(objectsBeforeCommit, fixture.AssetObjectCount);
+        var cleaned = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
+        Assert.Null(cleaned.WorkspaceResultSha256);
+        Assert.Null(cleaned.WorkspacePendingResultAssetKey);
+        Assert.Null(cleaned.WorkspacePendingResultAttemptId);
+        Assert.Null(cleaned.WorkspacePendingResultWriteState);
     }
 
     [Theory]
@@ -378,6 +530,9 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
     {
         private TaskCompletionSource? _saveStarted;
         private TaskCompletionSource? _releaseSave;
+        private TaskCompletionSource? _innerSaveCompleted;
+        private TaskCompletionSource? _releaseAfterInnerSave;
+        private bool _throwAfterInnerSave;
         private int _remainingDeleteFailures;
 
         internal int BlockedSaveAttempts { get; private set; }
@@ -394,6 +549,19 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
             ?? throw new InvalidOperationException("尚未启用存储阻塞");
 
         internal void ReleaseBlockedSave() => _releaseSave?.TrySetResult();
+
+        internal void BlockAfterNextInnerSave()
+        {
+            _innerSaveCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _releaseAfterInnerSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        internal Task WaitUntilInnerSaveCompletedAsync() => _innerSaveCompleted?.Task
+            ?? throw new InvalidOperationException("尚未启用内层保存后阻塞");
+
+        internal void ReleaseAfterInnerSave() => _releaseAfterInnerSave?.TrySetResult();
+
+        internal void ThrowAfterNextInnerSave() => _throwAfterInnerSave = true;
 
         internal void FailNextDeletes(int count) => _remainingDeleteFailures = count;
 
@@ -412,8 +580,30 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
                 _saveStarted.TrySetResult();
                 await _releaseSave.Task.WaitAsync(ct);
             }
-            return await inner.SaveAsync(bytes, mime, ct, domain, type, fileName, extensionHint);
+            var stored = await inner.SaveAsync(bytes, mime, ct, domain, type, fileName, extensionHint);
+            if (_innerSaveCompleted != null && _releaseAfterInnerSave != null)
+            {
+                _innerSaveCompleted.TrySetResult();
+                await _releaseAfterInnerSave.Task.WaitAsync(ct);
+                _innerSaveCompleted = null;
+                _releaseAfterInnerSave = null;
+            }
+            if (_throwAfterInnerSave)
+            {
+                _throwAfterInnerSave = false;
+                throw new IOException("模拟保存响应丢失");
+            }
+            return stored;
         }
+
+        public string? TryBuildContentAddressedKey(
+            byte[] bytes,
+            string mime,
+            string? domain = null,
+            string? type = null,
+            string? fileName = null,
+            string? extensionHint = null) =>
+            inner.TryBuildContentAddressedKey(bytes, mime, domain, type, fileName, extensionHint);
 
         public Task<(byte[] bytes, string mime)?> TryReadByShaAsync(
             string sha256,

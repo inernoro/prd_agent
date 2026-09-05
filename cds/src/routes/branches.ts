@@ -97,7 +97,7 @@ import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import { ROUTABLE_SERVICE_STATUSES } from '../services/forwarder-route-publisher.js';
 import { maskSecrets as maskSecretsText, maskEnvRecord, maskCommandSecrets, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeSecretBearingValue, shouldMask } from '../services/secret-masker.js';
-import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
+import { buildUnifiedBranchResources, getUnifiedResourceInternalRaw, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { selfStatusCache, type RemoteBranchEntry } from '../services/self-status-cache.js';
@@ -8700,7 +8700,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (input.resource.source !== 'infra') {
       throw new Error('只有 infra TCP 资源需要资源级 TCP proxy');
     }
-    const service = input.resource.raw as InfraService;
+    const service = getUnifiedResourceInternalRaw(input.resource) as InfraService;
     const targetContainer = resourceContainerName(input.resource);
     if (!targetContainer) throw new Error(`资源 "${input.resource.displayName}" 没有关联目标容器`);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(targetContainer)) {
@@ -8819,7 +8819,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       resourceId,
       resourceName: resource.displayName,
       runtime,
-      service: resource.raw as InfraService,
+      service: getUnifiedResourceInternalRaw(resource) as InfraService,
     };
   }
 
@@ -8854,7 +8854,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       projectId,
       resourceId,
       resourceName: resource.displayName,
-      service: resource.raw as InfraService,
+      service: getUnifiedResourceInternalRaw(resource) as InfraService,
     };
   }
 
@@ -8889,7 +8889,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       projectId,
       resourceId,
       resourceName: resource.displayName,
-      service: resource.raw as InfraService,
+      service: getUnifiedResourceInternalRaw(resource) as InfraService,
     };
   }
 
@@ -9036,7 +9036,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     if (!requireSecretRevealAccess(req, res, projectId)) return;
     if (!requireResourcePermission(req, res, 'connection-inject', branch, resource)) return;
-    const service = resource.raw as InfraService;
+    const service = getUnifiedResourceInternalRaw(resource) as InfraService;
     const scope = String(req.query.scope || 'internal') === 'external' ? 'external' : 'internal';
     const policy = await expireResourceExternalAccessIfNeeded(
       projectId,
@@ -9816,7 +9816,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '只有数据库/缓存资源支持备份列表' });
       return;
     }
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
     try {
       const database = resourceDatabaseForRuntime(runtime as ResourceDatabaseRuntime, rawInfra, branch);
       const backups = await listResourceBackupEntries(rawInfra, branch, runtime as ResourceDatabaseRuntime, database);
@@ -9849,7 +9849,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const actor = resolveActorFromRequest(req);
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
     try {
       const backup = await createResourceBackupFile({
         runtime: runtime as ResourceDatabaseRuntime,
@@ -9902,13 +9902,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const confirmResourceName = String(req.body?.confirmResourceName || '').trim();
-    const acceptedNames = new Set([resource.displayName, resource.serviceName, (resource.raw as InfraService).id].filter(Boolean));
+    const acceptedNames = new Set([resource.displayName, resource.serviceName, (getUnifiedResourceInternalRaw(resource) as InfraService).id].filter(Boolean));
     if (!acceptedNames.has(confirmResourceName)) {
       res.status(409).json({ error: `恢复会覆盖当前库，请输入资源名确认：${resource.displayName}` });
       return;
     }
     const actor = resolveActorFromRequest(req);
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
     try {
       const restored = await restoreResourceBackupFile({
         runtime: runtime as ResourceDatabaseRuntime,
@@ -9975,7 +9975,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const result = await clearResourceData({
         runtime: runtime as ResourceDatabaseRuntime,
-        service: resource.raw as InfraService,
+        service: getUnifiedResourceInternalRaw(resource) as InfraService,
         branch,
         resourceId,
         resourceName: resource.displayName,
@@ -10036,7 +10036,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const result = await deleteBranchDatabaseResource({
         runtime: runtime as ResourceDatabaseRuntime,
-        service: resource.raw as InfraService,
+        service: getUnifiedResourceInternalRaw(resource) as InfraService,
         branch,
         resourceId,
         resourceName: resource.displayName,
@@ -10091,7 +10091,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: `${resource.runtime} 暂不支持凭据重置` });
       return;
     }
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
     const confirmResourceName = String(req.body?.confirmResourceName || '').trim();
     const acceptedNames = new Set([resource.displayName, resource.serviceName, rawInfra.id].filter(Boolean));
     if (!acceptedNames.has(confirmResourceName)) {
@@ -10163,7 +10163,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: `${resource.runtime} 暂不支持连接变量注入` });
       return;
     }
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
     const connection = getExistingResourceConnectionEnv(runtime, rawInfra, branch);
     if (!connection) {
       res.status(409).json({ error: `当前分支没有独立 ${resource.runtime} 凭据；请先创建空库、克隆 main/prod，或重置凭据。` });
@@ -10282,7 +10282,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!requireResourcePermission(req, res, cloneAction, branch, resource)) return;
     const runtime = resourceRuntimeKey(resource.runtime);
     const actor = resolveActorFromRequest(req);
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
     const baseDb = runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb' || runtime === 'redis'
       ? resourceDatabaseForRuntime(runtime, rawInfra, branch) || 'app'
       : resolvedServiceDbName(rawInfra) || 'app';

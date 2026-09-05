@@ -34,6 +34,12 @@ export interface UnifiedResourceCapabilitySet {
   dangerousActions: boolean;
 }
 
+const INTERNAL_RESOURCE_RAW = Symbol('cds.unified-resource.internal-raw');
+
+export type UnifiedResourceRaw = ServiceState | (Omit<InfraService, 'env'> & {
+  env: Record<string, string>;
+});
+
 export interface UnifiedBranchResource {
   id: string;
   source: 'app' | 'infra';
@@ -60,7 +66,12 @@ export interface UnifiedBranchResource {
   cloneTasks?: ResourceCloneTask[];
   containerName?: string;
   errorMessage?: string;
-  raw: ServiceState | InfraService;
+  /**
+   * 兼容旧工作台的资源摘要。基础设施环境变量只保留键名，值统一掩码；
+   * 真实状态通过不可枚举的内部引用供路由使用，绝不能进入 API JSON。
+   */
+  raw: UnifiedResourceRaw;
+  [INTERNAL_RESOURCE_RAW]?: ServiceState | InfraService;
 }
 
 export interface BuildUnifiedResourcesInput {
@@ -92,6 +103,27 @@ function normalizeStatus(status?: string): UnifiedResourceStatus {
     return status;
   }
   return status === 'running' ? 'running' : 'stopped';
+}
+
+function maskInfraService(service: InfraService): UnifiedResourceRaw {
+  return {
+    ...service,
+    env: Object.fromEntries(Object.keys(service.env || {}).map((key) => [key, '******'])),
+  };
+}
+
+function attachInternalRaw<T extends UnifiedBranchResource>(resource: T, raw: ServiceState | InfraService): T {
+  Object.defineProperty(resource, INTERNAL_RESOURCE_RAW, {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: raw,
+  });
+  return resource;
+}
+
+export function getUnifiedResourceInternalRaw(resource: UnifiedBranchResource): ServiceState | InfraService {
+  return resource[INTERNAL_RESOURCE_RAW] || resource.raw;
 }
 
 export function inferAppRuntime(profile?: BuildProfile, service?: ServiceState): string {
@@ -238,7 +270,7 @@ export function buildUnifiedBranchResources(input: BuildUnifiedResourcesInput): 
     const resourceId = `app:${service.profileId}`;
     const policy = policyByResourceId.get(resourceId);
     const externalUrl = policy?.enabled && policy.address ? policy.address : input.previewUrl || '';
-    return {
+    return attachInternalRaw({
       id: resourceId,
       source: 'app' as const,
       kind: 'app' as const,
@@ -272,8 +304,8 @@ export function buildUnifiedBranchResources(input: BuildUnifiedResourcesInput): 
       cloneTasks: cloneTasksByResourceId.get(resourceId) || [],
       containerName: service.containerName,
       errorMessage: service.errorMessage,
-      raw: service,
-    };
+      raw: { ...service },
+    }, service);
   });
 
   const infraResources = input.infraServices.map((service) => {
@@ -282,7 +314,7 @@ export function buildUnifiedBranchResources(input: BuildUnifiedResourcesInput): 
     const resourceId = `infra:${service.id}`;
     const policy = policyByResourceId.get(resourceId);
     const tcpAddress = publicTcpAddress(publicHost, service.hostPort);
-    return {
+    return attachInternalRaw({
       id: resourceId,
       source: 'infra' as const,
       kind: inferred.kind,
@@ -324,8 +356,8 @@ export function buildUnifiedBranchResources(input: BuildUnifiedResourcesInput): 
       cloneTasks: cloneTasksByResourceId.get(resourceId) || [],
       containerName: service.containerName,
       errorMessage: service.errorMessage,
-      raw: service,
-    };
+      raw: maskInfraService(service),
+    }, service);
   });
 
   const rank: Record<UnifiedResourceKind, number> = { app: 0, database: 1, cache: 2, queue: 3, storage: 4, service: 5 };

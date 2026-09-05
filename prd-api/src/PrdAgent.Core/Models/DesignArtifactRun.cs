@@ -88,6 +88,22 @@ public class DesignArtifactRun
 
     public string? WorkspaceResultSha256 { get; set; }
 
+    /// <summary>结果上传开始前持久化的精确物理 key；恢复器据此覆盖 SaveAsync 成功但终态 CAS 尚未发生的崩溃窗口。</summary>
+    public string? WorkspacePendingResultAssetKey { get; set; }
+
+    /// <summary>本次结果写入 attempt 的唯一围栏，防止旧请求清理新请求或同内容获胜对象。</summary>
+    public string? WorkspacePendingResultAttemptId { get; set; }
+
+    /// <summary>结果对象写入状态：writing、stored 或 save-failed。</summary>
+    public string? WorkspacePendingResultWriteState { get; set; }
+
+    /// <summary>开始写入时的进程代际；同代恢复器不得接管仍处于 writing 的对象。</summary>
+    public string? WorkspacePendingResultProcessEpoch { get; set; }
+
+    public DateTime? WorkspacePendingResultStartedAt { get; set; }
+
+    public string? WorkspacePendingResultWriteError { get; set; }
+
     /// <summary>结果写入后终态 CAS 失败时的待回收对象 key；先持久化再删除，避免进程中断后失去恢复线索。</summary>
     public string? WorkspaceRejectedResultAssetKey { get; set; }
 
@@ -150,4 +166,11 @@ public static class DesignArtifactRuntimes
     public const string Codex = "codex";
     public const string Claude = "claude";
     public const string HtmlPptPipeline = "html-ppt-pipeline";
+}
+
+public static class DesignWorkspaceResultWriteStates
+{
+    public const string Writing = "writing";
+    public const string Stored = "stored";
+    public const string SaveFailed = "save-failed";
 }
