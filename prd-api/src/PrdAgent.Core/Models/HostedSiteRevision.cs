@@ -79,7 +79,7 @@ public static class HostedSiteRevisionRules
 {
     public const int MaxHtmlBytes = 2 * 1024 * 1024;
     public const string GeneratedArtifactCsp = "default-src 'none'; base-uri 'none'; connect-src 'none'; form-action 'none'; img-src data:; font-src data:; media-src data:; style-src 'unsafe-inline'; script-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; manifest-src 'none'";
-    private const string DocumentRootPattern = @"^\s*(?:<!doctype\s+html\s*>\s*)?<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:""[^""<>]*""|'[^'<>]*'|[^\s""'`=<>]+))?)*\s*>";
+    private const string DocumentRootPattern = @"^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:""[^""<>]*""|'[^'<>]*'|[^\s""'`=<>]+))?)*\s*>";
     private static readonly string TrustedSystemCspEnvelope =
         $"<head><meta http-equiv=\"Content-Security-Policy\" content=\"{GeneratedArtifactCsp}\"></head>";
 

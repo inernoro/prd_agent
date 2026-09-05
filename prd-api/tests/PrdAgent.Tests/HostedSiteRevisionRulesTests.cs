@@ -17,6 +17,7 @@ public class HostedSiteRevisionRulesTests
     [Theory]
     [InlineData("<!doctype html><html><body></body></html>")]
     [InlineData("<html><body>页面</body></html>")]
+    [InlineData("\uFEFF<!doctype html>\n<!-- OpenDesign web-prototype seed. -->\n<html lang=\"zh-CN\"><body>页面</body></html>")]
     public void ValidateHtml_AcceptsCompletePage(string html)
     {
         HostedSiteRevisionRules.ValidateHtml(html);
@@ -27,6 +28,8 @@ public class HostedSiteRevisionRulesTests
     [InlineData("只有一段解释文字")]
     [InlineData("<!doctype html><body>implicit root bypass</body>")]
     [InlineData("<!doctype html><!-- <html> --><body>comment root bypass</body>")]
+    [InlineData("<!doctype html><!-- closed --><script>outside root</script><html><body>late root</body></html>")]
+    [InlineData("plain text before <!doctype html><html><body>late root</body></html>")]
     [InlineData("<!doctype html><html data-breakout=\"<\"><body>quoted root delimiter</body></html>")]
     public void ValidateHtml_RejectsEmptyOrNonHtml(string html)
     {
