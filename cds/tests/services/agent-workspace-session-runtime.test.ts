@@ -9,6 +9,7 @@ import {
   AgentWorkspaceRuntimeError,
   AgentWorkspaceSessionRuntime,
   MAP_DESIGN_WORKSPACE_SCHEMA,
+  canAcceptUntrackedWorkspaceEdit,
   hardenSelfContainedHtml,
   normalizeWorkspaceTransfer,
 } from '../../src/services/agent-workspace-session-runtime.js';
@@ -131,6 +132,16 @@ describe('AgentWorkspaceSessionRuntime', () => {
     if (rootDir) fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
+  it('accepts OpenDesign no_artifact only for a changed existing workspace page', () => {
+    const current = Buffer.from('<!doctype html><html><body>Current</body></html>');
+    const changed = Buffer.from('<!doctype html><html><body>Changed</body></html>');
+
+    expect(canAcceptUntrackedWorkspaceEdit('no_artifact', current, changed)).toBe(true);
+    expect(canAcceptUntrackedWorkspaceEdit('no_artifact', current, Buffer.from(current))).toBe(false);
+    expect(canAcceptUntrackedWorkspaceEdit('no_artifact', undefined, changed)).toBe(false);
+    expect(canAcceptUntrackedWorkspaceEdit('unsafe_output', current, changed)).toBe(false);
+  });
+
   it('materializes a verified package, runs an isolated OpenDesign container, and commits only allowed outputs', async () => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
     const workspacePackage = buildPackage([
@@ -172,7 +183,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
         return Response.json({ runId: 'od-run-1' }, { status: 202 });
       }
       if (requestPath === '/api/runs/od-run-1' && init?.method === 'GET') {
-        return Response.json({ status: 'succeeded', deliverableValid: true });
+        return Response.json({ status: 'succeeded', deliverableValid: false, deliverableValidation: 'no_artifact' });
       }
       if (requestPath === '/commit') {
         return authorization === 'Bearer transfer-token'

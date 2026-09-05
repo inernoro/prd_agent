@@ -142,6 +142,11 @@ export class AgentWorkspaceRuntimeError extends Error {
 
 type StageReporter = (stage: string, detail?: Record<string, unknown>) => void;
 
+interface OpenDesignRunOutcome {
+  deliverableValid: boolean;
+  deliverableValidation?: string;
+}
+
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const SESSION_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const MAX_PACKAGE_OVERHEAD_BYTES = 2 * 1024 * 1024;
@@ -1274,7 +1279,7 @@ export class AgentWorkspaceSessionRuntime {
             : 'This task has no knowledge source files. Do not invent factual claims or metrics.',
           'The active web-prototype skill side files are rooted at /workspace/.od-skills/web-prototype. Read /workspace/.od-skills/web-prototype/assets/template.html, /workspace/.od-skills/web-prototype/references/layouts.md, and /workspace/.od-skills/web-prototype/references/checklist.md by these exact paths; do not resolve them as /workspace/assets or /workspace/references.',
           'A starting /workspace/index.html already exists. When task operation is edit, it is the exact current published page and must remain the starting point; the generic template is reference material only. Never replace the product identity with OpenDesign or copy generic template copy into the deliverable.',
-          'Modify index.html with small targeted edit operations; never replace the whole document with one write operation. The user instruction has priority over example text. Remove every unresolved placeholder and do not claim completion until the page satisfies every requested content constraint.',
+          'Modify index.html with small targeted edit operations; never replace the whole document with one write operation. The user instruction has priority over example text. Complete every requested change and do not stop after one replacement. Then reread task.json and index.html. Remove every unresolved placeholder and verify every visible-language and content constraint before claiming completion.',
           'Keep the final webpage in index.html. The first release must be self-contained: inline all CSS, JavaScript, fonts, and images; do not reference relative or remote assets.',
           'Do not request credentials, upload source files, publish, deploy, or mutate any external source.',
         ].join(' '),
@@ -1299,7 +1304,7 @@ export class AgentWorkspaceSessionRuntime {
     }
     handle.activeRunId = runId;
     try {
-      await this.waitForRun(handle, runId, signal, onStage);
+      const runOutcome = await this.waitForRun(handle, runId, signal, onStage);
       onStage('workspace_collecting');
       await this.copyOutputsFromContainer(handle);
       const collectedFiles = this.collectOutputs(handle);
@@ -1307,7 +1312,19 @@ export class AgentWorkspaceSessionRuntime {
       if (!indexFile) {
         throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed without index.html');
       }
-      const hardenedHtml = hardenSelfContainedHtml(Buffer.from(indexFile.contentBase64, 'base64').toString('utf8'));
+      const outputHtml = Buffer.from(indexFile.contentBase64, 'base64');
+      const currentIndexPath = path.join(handle.workspaceDir, 'current', 'index.html');
+      const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
+      if (
+        !runOutcome.deliverableValid
+        && !canAcceptUntrackedWorkspaceEdit(runOutcome.deliverableValidation, currentHtml, outputHtml)
+      ) {
+        throw new AgentWorkspaceRuntimeError(
+          'open_design_deliverable_invalid',
+          runOutcome.deliverableValidation || 'OpenDesign rejected its final deliverable',
+        );
+      }
+      const hardenedHtml = hardenSelfContainedHtml(outputHtml.toString('utf8'));
       const hardenedBytes = Buffer.from(hardenedHtml);
       indexFile.contentBase64 = hardenedBytes.toString('base64');
       indexFile.sha256 = sha256(hardenedBytes);
@@ -1625,7 +1642,7 @@ export class AgentWorkspaceSessionRuntime {
     runId: string,
     signal: AbortSignal | undefined,
     onStage: StageReporter,
-  ): Promise<void> {
+  ): Promise<OpenDesignRunOutcome> {
     const startedAt = Date.now();
     const deadline = startedAt + handle.policy.timeoutSeconds * 1000;
     let lastStatus = '';
@@ -1651,15 +1668,12 @@ export class AgentWorkspaceSessionRuntime {
         });
       }
       if (value === 'succeeded') {
-        if (status.deliverableValid === false) {
-          throw new AgentWorkspaceRuntimeError(
-            'open_design_deliverable_invalid',
-            typeof status.deliverableValidation === 'string'
-              ? status.deliverableValidation
-              : 'OpenDesign rejected its final deliverable',
-          );
-        }
-        return;
+        return {
+          deliverableValid: status.deliverableValid !== false,
+          deliverableValidation: typeof status.deliverableValidation === 'string'
+            ? status.deliverableValidation
+            : undefined,
+        };
       }
       if (value === 'failed' || value === 'canceled') {
         throw new AgentWorkspaceRuntimeError(
@@ -1802,6 +1816,17 @@ export class AgentWorkspaceSessionRuntime {
       );
     }
   }
+}
+
+export function canAcceptUntrackedWorkspaceEdit(
+  deliverableValidation: string | undefined,
+  currentHtml: Buffer | undefined,
+  outputHtml: Buffer,
+): boolean {
+  return deliverableValidation === 'no_artifact'
+    && currentHtml !== undefined
+    && currentHtml.length > 0
+    && !currentHtml.equals(outputHtml);
 }
 
 export function hardenSelfContainedHtml(html: string): string {
