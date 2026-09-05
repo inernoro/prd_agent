@@ -41,3 +41,18 @@ export function buildEffectiveNavOrder(args: {
   }
   return result;
 }
+
+/**
+ * 与 AppShell.effectiveNavHidden 同口径：管理员默认隐藏项（除非用户把它显式排进了 navOrder）∪ 用户自己隐藏的。
+ * 只隐藏过、没排过顺序的人（navOrder 空、navHidden 非空）侧栏走默认顺序，总览也一样——
+ * 顺序取舍看 navOrder 是否为空，不看后端的 customized 标签（Codex P2）。
+ */
+export function mergeEffectiveHidden(navOrder: readonly string[], navHidden: readonly string[], defaultHidden: readonly string[]): string[] {
+  const userNavSet = new Set(navOrder.filter((k) => k !== NAV_DIVIDER_KEY).map(migrateLegacyNavId));
+  const merged: string[] = [];
+  for (const key of defaultHidden) {
+    if (!userNavSet.has(migrateLegacyNavId(key))) merged.push(key);
+  }
+  for (const key of navHidden) if (!merged.includes(key)) merged.push(key);
+  return merged;
+}

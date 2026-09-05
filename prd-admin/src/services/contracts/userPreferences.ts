@@ -1,3 +1,4 @@
+import type { AdminMenuItem } from '@/services/contracts/authz';
 import type { ApiResponse } from '@/types/api';
 import type { ThemeConfig } from '@/types/theme';
 
@@ -146,6 +147,8 @@ export type UserNavLayoutsResult = {
   items: UserNavLayoutItem[];
   totalCount: number;
   customizedCount: number;
+  /** 全量菜单目录（服务端不按调用者权限过滤），总览用它判「已下线」与复演侧栏自动补齐 */
+  catalog: AdminMenuItem[];
 };
 
 export type GetUserNavLayoutsContract = () => Promise<ApiResponse<UserNavLayoutsResult>>;

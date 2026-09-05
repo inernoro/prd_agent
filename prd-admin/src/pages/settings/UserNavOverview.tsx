@@ -4,12 +4,13 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { getUserNavLayouts, removeNavTokens, resetUserNavLayout } from '@/services';
 import type { UserNavLayoutItem } from '@/services/contracts/userPreferences';
+import type { AdminMenuItem } from '@/services/contracts/authz';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { findHomeItem, getMenuGroupedDefaultOrder, getUnifiedNavCatalog } from '@/lib/unifiedNavCatalog';
 import { migrateLegacyNavId } from '@/lib/launcherCatalog';
 import { getSidebarAutoAppendItems } from '@/lib/adminMenuCatalog';
-import { buildEffectiveNavOrder } from '@/lib/navEffectiveOrder';
+import { buildEffectiveNavOrder, mergeEffectiveHidden } from '@/lib/navEffectiveOrder';
 import { collectStaleNavTokens, isStaleNavToken } from '@/lib/navStaleTokens';
 import { useAuthStore } from '@/stores/authStore';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
@@ -44,9 +45,23 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
   const permissions = useAuthStore((s) => s.permissions);
   const isRoot = useAuthStore((s) => s.isRoot);
 
+  const [items, setItems] = useState<UserNavLayoutItem[]>([]);
+  // 服务端给的全量菜单目录（不按当前管理员权限过滤）。「已下线」是破坏性清理的判据，
+  // 不能用管理员自己那份被权限过滤过的目录——否则缺 users.read 的管理员会把别人的「团队」当成下线项删掉。
+  const [fullCatalog, setFullCatalog] = useState<AdminMenuItem[] | null>(null);
+
+  // 目录：优先全量（isRoot=true 让 launcher 侧也不做权限过滤），接口没回来前先用自己的那份画个大概
+  const catalogForView = useMemo(
+    () => ({
+      menuCatalog: fullCatalog ?? menuCatalog,
+      permissions,
+      isRoot: fullCatalog ? true : isRoot,
+    }),
+    [fullCatalog, isRoot, menuCatalog, permissions],
+  );
   const unified = useMemo(
-    () => getUnifiedNavCatalog({ menuCatalog, permissions, isRoot, includeShortcuts: false }),
-    [isRoot, menuCatalog, permissions],
+    () => getUnifiedNavCatalog({ ...catalogForView, includeShortcuts: false }),
+    [catalogForView],
   );
   const metaByKey = useMemo(() => {
     const map = new Map<string, NavChipMeta>();
@@ -57,10 +72,10 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
   }, [unified]);
   const knownIds = useMemo<ReadonlySet<string>>(() => new Set(metaByKey.keys()), [metaByKey]);
   // 侧栏会把目录里可见、不在顺序里也没被隐藏的项自动补到末尾（AppShell NON_HOME 兜底）。
-  // 这里用当前管理员看到的目录做代理——权限不全的管理员会少画几项，边界已记入 debt.frontend。
+  // 用全量目录复演：个别用户没权限的项其侧栏不会有，这里会多画一两项，但不会少画、更不会误删。
   const sidebarIds = useMemo(
-    () => getSidebarAutoAppendItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
-    [isRoot, menuCatalog, permissions],
+    () => getSidebarAutoAppendItems({ items: catalogForView.menuCatalog, permissions, isRoot: catalogForView.isRoot }).map((m) => m.appKey),
+    [catalogForView, permissions],
   );
   const homeMeta = useMemo<NavChipMeta | null>(() => {
     const home = findHomeItem(unified);
@@ -70,10 +85,8 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
   // 未自定义的人看到的就是这一份（管理员配过默认 → 用默认；否则系统内置分组顺序）
   const effectiveDefaultOrder = useMemo(() => {
     if (defaultNavOrder.length > 0) return collapseDividers(defaultNavOrder);
-    return getMenuGroupedDefaultOrder({ menuCatalog, permissions, isRoot });
-  }, [defaultNavOrder, isRoot, menuCatalog, permissions]);
-
-  const [items, setItems] = useState<UserNavLayoutItem[]>([]);
+    return getMenuGroupedDefaultOrder(catalogForView);
+  }, [catalogForView, defaultNavOrder]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [keyword, setKeyword] = useState('');
@@ -91,6 +104,7 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
         return;
       }
       setItems(res.data.items);
+      if (res.data.catalog.length > 0) setFullCatalog(res.data.catalog);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : '加载全员导航失败');
     } finally {
@@ -308,8 +322,8 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
                   </>
                 }
                 kind={it.customized ? 'custom' : 'default'}
-                order={it.customized ? it.navOrder : effectiveDefaultOrder}
-                hidden={it.customized ? it.navHidden : defaultNavHidden}
+                order={it.navOrder.length > 0 ? it.navOrder : effectiveDefaultOrder}
+                hidden={mergeEffectiveHidden(it.navOrder, it.navHidden, defaultNavHidden)}
                 homeMeta={homeMeta}
                 metaByKey={metaByKey}
                 sidebarIds={sidebarIds}

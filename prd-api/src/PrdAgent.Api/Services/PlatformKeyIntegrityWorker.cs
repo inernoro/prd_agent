@@ -25,6 +25,16 @@ namespace PrdAgent.Api.Services;
 public class PlatformKeyIntegrityWorker : BackgroundService
 {
     private const string NotificationKey = "platform-key-integrity";
+
+    // 2026-09-05：MAP 侧模型页面已下线，平台凭据只在 LLM Gateway 控制台维护——
+
+    // 走网关 SSO 深链（ActionKind = llm-gateway，ActionUrl 是网关控制台内的 returnTo 路径）。
+
+    private const string GatewayActionLabel = "去模型网关检查平台凭据";
+
+    private const string GatewayActionUrl = "/platforms";
+
+    private const string GatewayActionKind = "llm-gateway";
     private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(6);
 
@@ -255,6 +265,10 @@ public class PlatformKeyIntegrityWorker : BackgroundService
                 n => n.Id == existing.Id,
                 Builders<AdminNotification>.Update
                     .Set(x => x.Message, message)
+                    // 存量告警的处理入口也要一起迁到网关：否则旧记录会一直带着已删除的 /mds
+                    .Set(x => x.ActionLabel, GatewayActionLabel)
+                    .Set(x => x.ActionUrl, GatewayActionUrl)
+                    .Set(x => x.ActionKind, GatewayActionKind)
                     .Set(x => x.UpdatedAt, now)
                     .Set(x => x.ExpiresAt, now.AddDays(7)),
                 cancellationToken: ct);
@@ -270,11 +284,9 @@ public class PlatformKeyIntegrityWorker : BackgroundService
             Level = "error",
             Status = "open",
             Source = "platform-key-integrity",
-            // 2026-09-05：MAP 侧模型页面已下线，平台凭据只在 LLM Gateway 控制台维护——
-            // 走网关 SSO 深链（ActionKind = llm-gateway，ActionUrl 是网关控制台内的 returnTo 路径）。
-            ActionLabel = "去模型网关检查平台凭据",
-            ActionUrl = "/platforms",
-            ActionKind = "llm-gateway",
+            ActionLabel = GatewayActionLabel,
+            ActionUrl = GatewayActionUrl,
+            ActionKind = GatewayActionKind,
             CreatedAt = now,
             UpdatedAt = now,
             ExpiresAt = now.AddDays(7),

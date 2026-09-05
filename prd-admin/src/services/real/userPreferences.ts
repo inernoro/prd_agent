@@ -209,6 +209,7 @@ export const getUserNavLayoutsReal: GetUserNavLayoutsContract = async (): Promis
     items,
     totalCount: res.data.totalCount ?? items.length,
     customizedCount: res.data.customizedCount ?? items.filter((it) => it.customized).length,
+    catalog: res.data.catalog ?? [],
   });
 };
 

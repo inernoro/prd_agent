@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using System.Text.RegularExpressions;
+using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -116,7 +118,10 @@ public class DefaultNavConfigController : ControllerBase
         {
             Items = items,
             TotalCount = items.Count,
-            CustomizedCount = items.Count(i => i.Customized)
+            CustomizedCount = items.Count(i => i.Customized),
+            // 全量菜单目录（不按当前管理员权限过滤）：总览用它判「已下线」，否则权限不全的管理员
+            // 会把自己看不到的合法菜单当成下线项，进而经 remove-tokens 从所有人的导航里删掉（Codex P1）
+            Catalog = FullMenuCatalog()
         }));
     }
 
@@ -176,6 +181,15 @@ public class DefaultNavConfigController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail("INVALID_ARGUMENT", "tokens 不能为空"));
         }
+        // 仍在目录里的菜单 key 不许清：这是破坏性操作，判据必须是服务端全量目录，不能信前端传来的集合
+        var catalogKeys = new HashSet<string>(AdminMenuCatalog.All.Select(m => m.AppKey), StringComparer.Ordinal);
+        var stillValid = tokens.Where(t => catalogKeys.Contains(StripLegacyNavPrefix(t))).ToList();
+        if (stillValid.Count > 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                "NAV_TOKEN_STILL_VALID",
+                $"这些 key 仍是有效菜单，拒绝清理：{string.Join("、", stillValid)}"));
+        }
         var tokenSet = new HashSet<string>(tokens, StringComparer.Ordinal);
 
         // 1. 所有人的默认导航
@@ -219,6 +233,24 @@ public class DefaultNavConfigController : ControllerBase
     }
 
     private const string NavDividerToken = "---";
+
+    private static readonly Regex LegacyNavPrefix = new("^(agent|toolbox|utility|infra|builtin):", RegexOptions.Compiled);
+
+    /// <summary>与前端 migrateLegacyNavId 同口径：去掉 v7 之前的前缀，再拿去和目录比对。</summary>
+    private static string StripLegacyNavPrefix(string token) => LegacyNavPrefix.Replace(token, string.Empty);
+
+    private static List<AdminMenuItemResponse> FullMenuCatalog() => AdminMenuCatalog.All
+        .Select(x => new AdminMenuItemResponse
+        {
+            AppKey = x.AppKey,
+            Path = x.Path,
+            Label = x.Label,
+            Description = x.Description,
+            Icon = x.Icon,
+            SortOrder = x.SortOrder,
+            Group = x.Group
+        })
+        .ToList();
 
     /// <summary>去掉首尾与连续的分隔符，与前端 collapseDividers 语义一致。</summary>
     private static List<string> CollapseDividers(List<string> arr)
@@ -301,6 +333,8 @@ public class UserNavLayoutsResponse
     public List<UserNavLayoutItem> Items { get; set; } = new();
     public int TotalCount { get; set; }
     public int CustomizedCount { get; set; }
+    /// <summary>全量菜单目录（不按调用者权限过滤），供总览判「已下线」与复演侧栏自动补齐。</summary>
+    public List<AdminMenuItemResponse> Catalog { get; set; } = new();
 }
 
 public class UpdateDefaultNavConfigRequest

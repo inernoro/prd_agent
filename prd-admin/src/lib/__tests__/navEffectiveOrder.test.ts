@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildEffectiveNavOrder } from '@/lib/navEffectiveOrder';
+import { buildEffectiveNavOrder, mergeEffectiveHidden } from '@/lib/navEffectiveOrder';
 
 /**
  * 守卫：全员导航总览每一行必须等于该用户侧栏真实渲染的那一列。
@@ -30,5 +30,19 @@ describe('buildEffectiveNavOrder', () => {
   it('目录里已不存在的 token 原样保留在原位（总览要把它标成红框）', () => {
     const out = buildEffectiveNavOrder({ order: ['ai-toolbox', 'mds', 'users'], hidden: [], sidebarIds: ['ai-toolbox', 'users'] });
     expect(out.map((e) => e.token)).toEqual(['ai-toolbox', 'mds', 'users']);
+  });
+});
+
+describe('mergeEffectiveHidden', () => {
+  it('默认隐藏 ∪ 用户隐藏；用户显式排进 navOrder 的项不再受默认隐藏约束', () => {
+    expect(mergeEffectiveHidden(['ai-toolbox', 'logs'], ['prompts'], ['logs', 'lab'])).toEqual(['lab', 'prompts']);
+  });
+
+  it('只隐藏过、没排过顺序的人：默认隐藏全部保留，再并上自己的', () => {
+    expect(mergeEffectiveHidden([], ['users'], ['lab'])).toEqual(['lab', 'users']);
+  });
+
+  it('旧前缀 id 视同迁移后的 id', () => {
+    expect(mergeEffectiveHidden(['utility:emergence'], [], ['emergence'])).toEqual([]);
   });
 });
