@@ -115,6 +115,7 @@ public class AgentApiKeysController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         var keys = await _keyService.ListByOwnerAsync(userId, ct);
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
 
         // 汇总 scope：固定 + AgentOpenEndpoint 登记的所有 agent.* scope
         var endpoints = await _db.AgentOpenEndpoints
@@ -133,7 +134,7 @@ public class AgentApiKeysController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            items = keys.Select(ToDto),
+            items = keys.Select(k => ToDto(k, ownedPermissions)),
             allowedScopes = allowed,
             agentEndpoints = endpoints.Select(e => new
             {
@@ -150,7 +151,23 @@ public class AgentApiKeysController : ControllerBase
         public string? Description { get; set; }
         public List<string>? Scopes { get; set; }
         public int? TtlDays { get; set; }
+
+        /// <summary>
+        /// `auto` = 能力范围跟着主人走，不存清单；其余（含缺省）= 按 Scopes 钉死。
+        ///
+        /// 缺省必须是 manual：密钥管理页那条老路径不传这个字段，语义一个字都不能变。
+        /// </summary>
+        public string? ScopeMode { get; set; }
     }
+
+    /// <summary>
+    /// 把请求里的 `auto` / `manual` 翻成枚举。认不出的一律按 manual ——
+    /// 拼错一个字母就悄悄把范围放到最大，是最不该有的失败方向。
+    /// </summary>
+    private static AgentApiKeyScopeMode ParseScopeMode(string? raw)
+        => string.Equals(raw, "auto", StringComparison.OrdinalIgnoreCase)
+            ? AgentApiKeyScopeMode.Auto
+            : AgentApiKeyScopeMode.Manual;
 
     /// <summary>
     /// 创建 Key。返回明文 —— 仅此一次，丢了只能重生成。
@@ -166,24 +183,37 @@ public class AgentApiKeysController : ControllerBase
         var nameTooLong = McpInputBounds.Text(req.Name, McpInputBounds.TitleBytes, "name");
         if (nameTooLong != null) return BadRequest(ApiResponse<object>.Fail("INVALID_NAME", nameTooLong));
 
+        var scopeMode = ParseScopeMode(req.ScopeMode);
         var scopes = (req.Scopes ?? new List<string>())
             .Where(s => !string.IsNullOrWhiteSpace(s))
             .Select(s => s.Trim())
             .ToList();
-        if (scopes.Count == 0)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", "至少选择一个 scope（如 marketplace.skills:read）"));
+
         var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
-        foreach (var s in scopes)
+
+        // 自动模式不收清单，也就没什么可校验的：它每次鉴权现算「主人当前权限 ∩ 平台当前开放」，
+        // 而这个交集本身就是签发校验要求的东西 —— 长不出主人没有的权限。
+        // 传进来的 scopes 一律忽略，不留一份将来会漂的快照。
+        if (scopeMode == AgentApiKeyScopeMode.Auto)
         {
-            var (ok, reason) = await ValidateScopeAsync(s, ownedPermissions, ct);
-            if (!ok) return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", reason!));
+            scopes = new List<string>();
+        }
+        else
+        {
+            if (scopes.Count == 0)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", "至少选择一个 scope（如 marketplace.skills:read）"));
+            foreach (var s in scopes)
+            {
+                var (ok, reason) = await ValidateScopeAsync(s, ownedPermissions, ct);
+                if (!ok) return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", reason!));
+            }
         }
 
         var ttl = req.TtlDays is > 0 and <= MaxTtlDays ? req.TtlDays.Value : DefaultTtlDays;
-        var (entity, plaintext) = await _keyService.CreateAsync(userId, req.Name, req.Description, scopes, ttl, ct);
+        var (entity, plaintext) = await _keyService.CreateAsync(userId, req.Name, req.Description, scopes, ttl, ct, scopeMode);
 
         // 明文 Key 仅此处返回一次
-        return Ok(ApiResponse<object>.Ok(new { item = ToDto(entity), apiKey = plaintext, warning = "这是 Key 唯一一次明文显示，请妥善保存。" }));
+        return Ok(ApiResponse<object>.Ok(new { item = ToDto(entity, ownedPermissions), apiKey = plaintext, warning = "这是 Key 唯一一次明文显示，请妥善保存。" }));
     }
 
     public class UpdateRequest
@@ -198,6 +228,12 @@ public class AgentApiKeysController : ControllerBase
         public int? McpDailyImageQuota { get; set; }
         public int? McpDailyWriteQuota { get; set; }
         public int? McpRateLimitPerMin { get; set; }
+
+        /// <summary>
+        /// 显式切换能力范围模式。null = 不显式切，但**存了 scopes 就自动钉成 manual**
+        /// （存清单那一刻就是「动过高级设置」那一刻）。
+        /// </summary>
+        public string? ScopeMode { get; set; }
     }
 
     [HttpPatch("{id}")]
@@ -208,10 +244,34 @@ public class AgentApiKeysController : ControllerBase
         if (key == null || key.OwnerUserId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "Key 不存在或无权访问"));
 
-        if (req.Scopes != null)
+        // 切回自动：清单作废（服务层会一并清空），也就没有 scope 要校验。
+        // 顺序在 scope 校验之前 —— 否则「既传 scopeMode=auto 又带着一串旧 scope」的请求
+        // 会拿一份马上要被丢掉的清单去撞校验，报一个用户根本无从理解的错。
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
+        var explicitScopeMode = req.ScopeMode == null ? (AgentApiKeyScopeMode?)null : ParseScopeMode(req.ScopeMode);
+        if (explicitScopeMode == AgentApiKeyScopeMode.Auto)
+        {
+            req.Scopes = null;
+        }
+        // 判据要认「给的清单是不是空的」，不能只认 null —— `{"scopeMode":"manual"}` 和
+        // `{"scopeMode":"manual","scopes":[]}` 是同一个意思，而上一版只挡住了前者：
+        // 后者因为 Scopes 非 null 会走下面那条校验分支，零个 scope 全部「校验通过」，
+        // 然后把空清单原样存进去 —— 接口返回 200，钥匙失去全部工具。
+        else if (explicitScopeMode == AgentApiKeyScopeMode.Manual
+                 && key.ScopeMode == AgentApiKeyScopeMode.Auto
+                 && (req.Scopes == null || req.Scopes.All(string.IsNullOrWhiteSpace)))
+        {
+            // 只说「切成手动」不给清单：自动档的 Scopes 本来就是空的，照直写下去这把钥匙
+            // 会在返回 200 的同时失去全部工具 —— 接口说成了、钥匙却废了。
+            // 「按清单钉死」的意思是把它**此刻拿得到的那些**定下来，不是清零。
+            // 取值走唯一那处判据，所以这份快照天然只含主人现在真有权限的 scope，不用再过一遍校验。
+            req.Scopes = McpCapabilityCatalog
+                .EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions)
+                .ToList();
+        }
+        else if (req.Scopes != null)
         {
             var scopes = req.Scopes.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
-            var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
             foreach (var s in scopes)
             {
                 var (ok, reason) = await ValidateScopeAsync(s, ownedPermissions, ct);
@@ -236,10 +296,11 @@ public class AgentApiKeysController : ControllerBase
 
         await _keyService.UpdateMetadataAsync(
             id, req.Name, req.Description, req.Scopes, req.IsActive, ct,
-            new AgentApiKeyQuotaPatch(req.McpDailyImageQuota, req.McpDailyWriteQuota, req.McpRateLimitPerMin));
+            new AgentApiKeyQuotaPatch(req.McpDailyImageQuota, req.McpDailyWriteQuota, req.McpRateLimitPerMin),
+            explicitScopeMode);
 
         var reloaded = await _keyService.GetByIdAsync(id, ct);
-        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded) }));
+        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
     }
 
     public class RenewRequest
@@ -256,10 +317,11 @@ public class AgentApiKeysController : ControllerBase
         if (key == null || key.OwnerUserId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "Key 不存在或无权访问"));
 
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
         var ttl = req?.TtlDays is > 0 and <= MaxTtlDays ? req.TtlDays!.Value : RenewTtlDays;
         await _keyService.RenewAsync(id, ttl, ct);
         var reloaded = await _keyService.GetByIdAsync(id, ct);
-        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded) }));
+        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
     }
 
     /// <summary>撤销（立即失效，不可恢复）</summary>
@@ -271,9 +333,10 @@ public class AgentApiKeysController : ControllerBase
         if (key == null || key.OwnerUserId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "Key 不存在或无权访问"));
 
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
         await _keyService.RevokeAsync(id, ct);
         var reloaded = await _keyService.GetByIdAsync(id, ct);
-        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded) }));
+        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
     }
 
     [HttpDelete("{id}")]
@@ -292,7 +355,14 @@ public class AgentApiKeysController : ControllerBase
     // Helpers
     // ======================================================================
 
-    private static object ToDto(AgentApiKey k)
+    /// <summary>
+    /// 列表/详情行。<paramref name="ownedPermissions"/> 是密钥主人此刻的权限位 ——
+    /// 必须传，因为 `scopes` 这一列要显示「它此刻真拿得到什么」，不是库里存了什么：
+    ///   - 自动档的钥匙存的是**空清单**，照着存的显示就是「零个能力」，而它什么都调得动；
+    ///   - 手动档的钥匙里，权限被回收的那几个 scope 鉴权时就被剥掉了，显示出来是假的。
+    /// 判据与鉴权同一个函数（McpCapabilityCatalog.EffectiveScopesFor），不在这里另写一份。
+    /// </summary>
+    private static object ToDto(AgentApiKey k, IReadOnlyList<string> ownedPermissions)
     {
         var now = DateTime.UtcNow;
         int? daysLeft = k.ExpiresAt.HasValue ? (int)Math.Ceiling((k.ExpiresAt.Value - now).TotalDays) : null;
@@ -311,7 +381,11 @@ public class AgentApiKeysController : ControllerBase
             k.Name,
             k.Description,
             keyPrefix = k.KeyPrefix,
-            scopes = k.Scopes ?? new List<string>(),
+            // 用不了的钥匙一个 scope 都不该报（鉴权会拒掉它、授权自检也回 toolCount=0）。
+            // 「能不能用」这层判断收在 EffectiveScopesForKey 里，不在这里各写一遍 ——
+            // 这件事已经在两处投影上各漏过一次。
+            scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, now),
+            scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
             k.IsActive,
             k.CreatedAt,
             expiresAt = k.ExpiresAt,

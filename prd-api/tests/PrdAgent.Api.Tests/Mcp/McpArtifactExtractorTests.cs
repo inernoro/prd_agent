@@ -119,4 +119,92 @@ public class McpArtifactExtractorTests
         run.Id.ShouldBe("r1");
         run.Url.ShouldBeNull();
     }
+
+    /// <summary>
+    /// 一次多张的生图，跑到一半时 GetRun 会回 finished:false 而 images 里已经有第一张的地址。
+    /// 照着那个地址取产物，接入台会把整件事判成「已落地」并打绿灯 —— 而另外几张还在跑、
+    /// 甚至可能失败。产物出来没有，以 finished 为准，不以「有没有第一个地址」为准。
+    /// </summary>
+    [Fact]
+    public void Extract_生图跑到一半_不认那第一张的地址()
+    {
+        var body = """
+        {"success":true,"data":{"runId":"r9","finished":false,"total":4,"done":1,
+         "images":[{"assetId":"a1","url":"https://cdn/1.png"}]}}
+        """;
+
+        var art = McpArtifactExtractor.Extract("map_visual_get_run", producesArtifacts: false, body);
+
+        art.Kind.ShouldBe("image-run");
+        art.Id.ShouldBe("r9");
+        art.Url.ShouldBeNull(customMessage: "还没跑完就给出地址，接入台会把整件事打成绿色成功");
+    }
+
+    [Fact]
+    public void Extract_生图跑完_finished为真_照常认地址()
+    {
+        var body = """
+        {"success":true,"data":{"runId":"r9","finished":true,"total":1,"done":1,
+         "images":[{"assetId":"a1","url":"https://cdn/1.png"}]}}
+        """;
+
+        McpArtifactExtractor.Extract("map_visual_get_run", false, body).Url
+            .ShouldBe("https://cdn/1.png");
+    }
+
+    /// <summary>
+    /// 判据是「不是 false 才下探」，不是「必须是 true」：字段缺席时仍要给出地址。
+    /// 写成必须为真的话，哪天响应里没这个字段，记录上那个「打开」会静默消失。
+    /// </summary>
+    [Fact]
+    public void Extract_没有finished字段时_仍然认地址()
+    {
+        var body = """
+        {"success":true,"data":{"runId":"r9","status":"Completed",
+         "images":[{"assetId":"a1","url":"https://cdn/1.png"}]}}
+        """;
+
+        McpArtifactExtractor.Extract("map_visual_get_run", false, body).Url
+            .ShouldBe("https://cdn/1.png");
+    }
+
+    /// <summary>
+    /// finished:true 也包含**没成**的终态：IsRunFinished 对 Failed / Cancelled 同样返回 true，
+    /// 而 worker 在多张里坏了一张时会把整条 run 记成 Failed 却留着已成那几张的地址。
+    /// 只看 finished 的话，一条失败的 run 照样被认出产物，接入台随即打绿灯写「落地」。
+    /// </summary>
+    [Theory]
+    [InlineData("Failed")]
+    [InlineData("Cancelled")]
+    public void Extract_跑完但没成的run_不认它留下的那几张地址(string status)
+    {
+        // 这段 JSON 以两个右花括号收尾，插值 raw string 会把它当成插值的收尾（编译不过）。
+        // 所以不插值，用占位符替换最省事。
+        var body = """
+        {"success":true,"data":{"runId":"r9","status":"__STATUS__","finished":true,
+         "total":4,"done":1,"failed":3,
+         "images":[{"assetId":"a1","url":"https://cdn/1.png"}]}}
+        """.Replace("__STATUS__", status);
+
+        var art = McpArtifactExtractor.Extract("map_visual_get_run", producesArtifacts: false, body);
+
+        art.Kind.ShouldBe("image-run");
+        art.Url.ShouldBeNull(customMessage: $"{status} 的 run 仍给出地址，接入台会把它显示成绿色成功并写「落地」");
+    }
+
+    /// <summary>
+    /// 判据只拦「明说没成」的那两种终态。认不出来的状态一律放行 ——
+    /// 写成「必须是 Completed」的话，哪天多个新状态或少了这个字段，「打开」会静默消失。
+    /// </summary>
+    [Fact]
+    public void Extract_认不出来的状态_仍然认地址()
+    {
+        var body = """
+        {"success":true,"data":{"runId":"r9","status":"SomethingNew","finished":true,
+         "images":[{"assetId":"a1","url":"https://cdn/1.png"}]}}
+        """;
+
+        McpArtifactExtractor.Extract("map_visual_get_run", false, body).Url
+            .ShouldBe("https://cdn/1.png");
+    }
 }

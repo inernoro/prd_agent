@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Mcp;
@@ -165,6 +166,65 @@ public static class McpCapabilityCatalog
     /// <summary>签发一把带这个 scope 的密钥时，要不要先看密钥主人自己有没有对应权限位。</summary>
     public static bool IsIssuancePermissionChecked(string scope) =>
         PermissionCheckedScopes.Contains(scope) || IssuanceOnlyPermissionCheckedScopes.Contains(scope);
+
+    /// <summary>
+    /// 自动模式的密钥此刻拿得到哪些 scope —— 平台开放的全部可授予 scope 里，主人当前权限允许的那些。
+    ///
+    /// 这里用的是**签发口径**（<see cref="IsIssuancePermissionChecked"/>），不是鉴权口径
+    /// （<see cref="PermissionCheckedScopes"/>）。两者的差别只在 document-store 那两个 scope：
+    /// 鉴权时不查它们，是为了不打死早就在跑的存量密钥。而自动模式是本次新增的，没有存量 ——
+    /// 对它按签发口径查，才不会出现「后台没给他文档空间写权限，自动模式却替他签进去了」。
+    ///
+    /// 顺序跟着 <see cref="All"/> 的声明走，不用 <see cref="AllScopes"/> 那个集合：
+    /// 集合的枚举顺序不作保证，而这份清单会原样进审计与接入台展示，顺序抖动会让人以为权限变了。
+    /// </summary>
+    public static IReadOnlyList<string> AutoScopesFor(IReadOnlyCollection<string> ownedPermissions) =>
+        All.SelectMany(c => c.AllScopes())
+           .Where(s => !IsIssuancePermissionChecked(s) || PermissionsAllowScope(ownedPermissions, s))
+           .ToList();
+
+    /// <summary>
+    /// 这把钥匙此刻实际拿得到哪些 scope —— **唯一判据**，鉴权、接入台面板、授权自检、
+    /// 密钥管理页四处都必须走这一个函数。
+    ///
+    /// 自动档：不读存的清单（存的是空），现算「主人当前权限 ∩ 平台当前开放能力」。
+    /// 手动档：读存的那份，再按**鉴权口径**（<see cref="PermissionCheckedScopes"/>）过一遍 ——
+    /// 权限被管理员回收后，密钥还在外面跑，那几个 scope 得当场失效；document-store 那两个
+    /// 不在这道闸里，是为了不打死早就在跑的存量密钥（差别见 IssuanceOnlyPermissionCheckedScopes）。
+    ///
+    /// 这件事早先在三个地方各写了一遍，而它们必须回答同一个问题。抄第二份的那一刻，
+    /// 就是下一次「面板说已授权、智能体每个请求都被拒」的起点（判据分裂的老形状）。
+    /// </summary>
+    public static IReadOnlyList<string> EffectiveScopesFor(
+        AgentApiKeyScopeMode mode,
+        IEnumerable<string>? storedScopes,
+        IReadOnlyCollection<string> ownedPermissions)
+        => mode == AgentApiKeyScopeMode.Auto
+            ? AutoScopesFor(ownedPermissions)
+            : (storedScopes ?? Enumerable.Empty<string>())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Where(s => !PermissionCheckedScopes.Contains(s) || PermissionsAllowScope(ownedPermissions, s))
+                .ToList();
+
+    /// <summary>
+    /// 「这把钥匙此刻真拿得到什么」—— 展示面唯一入口。
+    ///
+    /// 比 <see cref="EffectiveScopesFor"/> 多一层：钥匙本身还能不能用。
+    /// 自动档现算的是主人**当前**的权限，这个动作不看钥匙的死活；于是一把已作废 /
+    /// 已停用 / 过了宽限期的钥匙会被算出满满一串 scope，而鉴权会把它整个拒掉，
+    /// 授权自检也回 toolCount=0 —— 同一个对象在几个视图里说几种话。
+    ///
+    /// 之所以单独成一个函数而不是在每个投影里各写一遍 `IsUsableAt ? ... : 空`：
+    /// 这件事已经在两处投影上各漏过一次（密钥管理页的 ToDto、接入台的 clients）。
+    /// 判据分成几处放着，就一定会补了这处、漏了那处。
+    /// </summary>
+    public static IReadOnlyList<string> EffectiveScopesForKey(
+        AgentApiKey key,
+        IReadOnlyCollection<string> ownedPermissions,
+        DateTime nowUtc)
+        => AgentApiKey.IsUsableAt(key, nowUtc, out _)
+            ? EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions)
+            : Array.Empty<string>();
 
     public static McpCapability? ByScope(string scope) =>
         All.FirstOrDefault(c => c.AllScopes().Contains(scope, StringComparer.OrdinalIgnoreCase));

@@ -1,12 +1,27 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Check, Copy, KeyRound, ShieldAlert } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  KeyRound,
+  RotateCcw,
+  Settings2,
+  ShieldAlert,
+  X,
+} from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { createAgentApiKey, getMcpVisibleTools } from '@/services';
 import type { McpCapabilityDto, McpVisibleToolsDto } from '@/services/contracts/mcpConsole';
 import { toast } from '@/lib/toast';
 import { copyToClipboard } from './clipboard';
+import { capabilityVisual } from './capabilityRegistry';
+import { autoPicks, picksToScopes, samePicks, type CapabilityPicks } from './scopePlan';
 
-type Step = 'capabilities' | 'key' | 'connect';
+/** 只有两屏：填名字 / 拿配置。中间那道「选能力」被收进高级设置了。 */
+type Step = 'form' | 'connect';
+
+type ClientKind = 'claude-code' | 'claude-desktop' | 'codex';
 
 /**
  * 授权自检的等待上限。
@@ -27,11 +42,18 @@ function withTimeout<T>(task: Promise<T>, ms: number): Promise<T | null> {
 }
 
 /**
- * 三步接入向导：勾能力 → 出钥匙 → 接上。
+ * 接入弹窗 —— 起个名字，一键复制配置，完事。
  *
- * 两条硬规矩落在这里：
- *   - 默认只给「看」的权限，写入要单独再点一次（拍板结论）
- *   - 用户自己没有的权限位，卡片直接禁用并说明去找谁开通（服务端也会拒，这里只是先说清楚）
+ * 上一版是三步向导：先让用户逐块勾能力，再出钥匙，再给配置。用户的原话是「步骤有点多，
+ * 其实选择什么，客户是没有选择能力的」—— 让一个人对着五张卡片决定要不要把「网页托管的写入档」
+ * 交出去，是把系统本来就该知道的事推给他判断（minimal-user-input）。
+ *
+ * 所以主路径上不放选择，只放**告知**：默认就是「你自己有的全部能力」，
+ * 想改的人点开「高级设置」。这两档在服务端是两种语义，不只是界面折叠：
+ *   - 没动过高级设置 → 自动档，钥匙不存清单，平台以后新上一块能力它自动就有；
+ *   - 动过 → 手动档，按当时那份清单钉死，平台新增的不会自动进来（面板会告诉用户「你还能给它什么」）。
+ *
+ * 收不回来的动作（删除、公开发布）一律不给，两档都一样，高级设置里也调不出来。
  */
 export function ConnectAgentDialog({
   open,
@@ -46,9 +68,9 @@ export function ConnectAgentDialog({
   endpointUrl: string;
   onCreated: () => void;
 }) {
-  const [step, setStep] = useState<Step>('capabilities');
-  const [selected, setSelected] = useState<Record<string, { read: boolean; write: boolean }>>({});
+  const [step, setStep] = useState<Step>('form');
   const [clientName, setClientName] = useState('我的 Claude Code');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [plaintext, setPlaintext] = useState('');
   const [visible, setVisible] = useState<McpVisibleToolsDto | null>(null);
@@ -57,23 +79,38 @@ export function ConnectAgentDialog({
   const [checkError, setCheckError] = useState<string | null>(null);
   // 留着密钥 id 才能重试自检。明文不能重来，自检可以。
   const [issuedKeyId, setIssuedKeyId] = useState<string | null>(null);
-  const [configTab, setConfigTab] = useState<'claude-code' | 'claude-desktop' | 'codex'>('claude-code');
+  const [configTab, setConfigTab] = useState<ClientKind>('claude-code');
 
-  const scopes = useMemo(() => {
-    const list: string[] = [];
-    for (const cap of capabilities) {
-      const pick = selected[cap.key];
-      if (!pick) continue;
-      if (pick.read && cap.readScope) list.push(cap.readScope);
-      if (pick.write && cap.writeScope) list.push(cap.writeScope);
-    }
-    return Array.from(new Set(list));
-  }, [capabilities, selected]);
+  const defaults = useMemo(() => autoPicks(capabilities), [capabilities]);
+  const [picks, setPicks] = useState<CapabilityPicks>(defaults);
+  // 「用户碰过高级设置没有」是一个独立的事实，不能从 picks 与 defaults 的差异反推：
+  // 能力目录是异步拉回来的，弹窗先挂载时 defaults 还是空的，之后一变，
+  // 「没碰过但两者不相等」这个中间态就会被读成「碰过」，跟着 picks 就再也不更新了 ——
+  // 高级设置一打开显示「一块都没开」，而实际提交的是自动档（全给）。
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!dirty) setPicks(defaults);
+  }, [defaults, dirty]);
+
+  const changePicks = useCallback((next: CapabilityPicks) => {
+    setDirty(true);
+    setPicks(next);
+  }, []);
+
+  /**
+   * 用户动过高级设置就钉死；没动过（或改回默认了）就跟着他的权限走。
+   * 判据是「这份清单跟默认档一不一样」，不是「他有没有点开过面板」——
+   * 点开看一眼又原样关掉的人，不该因此失去「平台新增能力自动进来」。
+   */
+  const scopeMode: 'auto' | 'manual' = samePicks(picks, defaults) ? 'auto' : 'manual';
+  const scopes = useMemo(() => picksToScopes(capabilities, picks), [capabilities, picks]);
 
   const reset = useCallback(() => {
-    setStep('capabilities');
-    setSelected({});
+    setStep('form');
     setClientName('我的 Claude Code');
+    setAdvancedOpen(false);
+    setPicks(defaults);
+    setDirty(false);
     setPlaintext('');
     setVisible(null);
     setChecking(false);
@@ -82,7 +119,7 @@ export function ConnectAgentDialog({
     setIssuedKeyId(null);
     // 关闭/重置即作废在途自检：它的回应回来时号已经对不上，不会再往界面上写
     checkGenRef.current += 1;
-  }, []);
+  }, [defaults]);
 
   // 自检是后台跑的，而弹窗随时可能被关掉、重开、再签一把新钥匙。没有代次的话，
   // 上一把钥匙的回应可以在关闭后落地（显示成新钥匙的工具清单），或者晚到一步把新自检的
@@ -116,12 +153,18 @@ export function ConnectAgentDialog({
   );
 
   const createKey = useCallback(async () => {
-    if (scopes.length === 0) {
-      toast.error('至少勾一块能力', '一个都不勾的话，智能体连上来什么也做不了');
+    // 自动档不提交清单（服务端不存），所以「一个都没勾」只可能出现在手动档。
+    if (scopeMode === 'manual' && scopes.length === 0) {
+      toast.error('至少留一块能力', '一块都不留的话，它连上来什么也做不了');
       return;
     }
     setCreating(true);
-    const res = await createAgentApiKey({ name: clientName.trim() || '未命名客户端', scopes, ttlDays: 90 });
+    const res = await createAgentApiKey({
+      name: clientName.trim() || '未命名客户端',
+      scopes,
+      ttlDays: 90,
+      scopeMode,
+    });
     if (!res.success || !res.data) {
       setCreating(false);
       toast.error('密钥创建失败', res.error?.message);
@@ -142,7 +185,7 @@ export function ConnectAgentDialog({
     if (!keyId) return;
     setIssuedKeyId(keyId);
     await runSelfCheck(keyId);
-  }, [clientName, scopes, onCreated, runSelfCheck]);
+  }, [clientName, scopes, scopeMode, onCreated, runSelfCheck]);
 
   const configSnippet = useMemo(() => {
     const key = plaintext || 'sk-ak-你的密钥';
@@ -170,174 +213,45 @@ export function ConnectAgentDialog({
     <Dialog
       open={open}
       onOpenChange={handleClose}
-      title="连接新客户端"
-      description="勾你愿意交出去的能力，剩下的这里替你配"
-      maxWidth={720}
+      title="接入你的智能体"
+      description="复制一段配置粘进 Claude Code、Codex，它就能替你生图、写稿、整理知识库、把网页托管出来"
+      maxWidth={560}
       content={
         <div className="flex flex-col gap-4">
-          <StepBar step={step} />
-
-          {step === 'capabilities' && (
-            <div className="flex flex-col gap-2.5">
-              <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                有只读档的能力，勾选只给「看」；要它动手写，得在卡片里单独再点一次。
-                只有写入档的能力（视觉创作、文学创作）会在卡片上标出来 —— 勾上即授予写入。
-              </p>
-              {capabilities.map((cap) => {
-                const pick = selected[cap.key] ?? { read: false, write: false };
-                // 只有写入档、没有只读档的能力：勾选即授予写入，卡片上必须写明白
-                const writeOnly = !cap.readScope && !!cap.writeScope;
-                // 整张卡的可用性看「入口那一档」；写入单独看写入档 ——
-                // 只有 web-pages.read 的人卡片能用，但写入勾选框必须是灰的，
-                // 否则他勾完走到最后一步才被后端交集校验拒掉。
-                const disabled = !cap.availableToMe;
-                const writeDisabled = !cap.writeAvailableToMe;
-                return (
-                  <div
-                    key={cap.key}
-                    className="flex flex-col gap-2 rounded-[12px] px-3.5 py-3"
-                    style={{
-                      background: 'var(--bg-sunken)',
-                      border: pick.read
-                        ? '1.5px solid var(--accent-primary)'
-                        : '1px solid var(--border-subtle)',
-                      opacity: disabled ? 0.55 : 1,
-                    }}
-                  >
-                    <label className="flex cursor-pointer items-start gap-2.5">
-                      <input
-                        type="checkbox"
-                        disabled={disabled}
-                        checked={pick.read}
-                        onChange={(e) => {
-                          const on = e.target.checked;
-                          setSelected((prev) => ({
-                            ...prev,
-                            // 没有只读档的能力（视觉创作、文学创作），勾上就是把写入交出去 ——
-                            // 这里直接落成 write，别用「读」的名义给出改动权限。
-                            [cap.key]: writeOnly
-                              ? { read: on, write: on }
-                              : { read: on, write: on ? pick.write : false },
-                          }));
-                        }}
-                        className="mt-0.5"
-                      />
-                      <span className="flex flex-col gap-1">
-                        <span className="text-[13.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                          {cap.title}
-                        </span>
-                        <span className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                          {cap.summary}
-                        </span>
-                        {writeOnly && (
-                          <span
-                            className="text-[11.5px] leading-relaxed"
-                            style={{ color: 'var(--semantic-warning-text)' }}
-                          >
-                            这块能力没有「只看」的档位：勾上就是允许它生成内容、写进你的空间。
-                          </span>
-                        )}
-                      </span>
-                    </label>
-
-                    {disabled && (
-                      <span
-                        className="flex items-center gap-1.5 text-[11.5px]"
-                        style={{ color: 'var(--semantic-warning-text)' }}
-                      >
-                        <ShieldAlert size={13} aria-hidden />
-                        你自己还没有这块权限，得先找管理员开通，勾了也签不出密钥
-                      </span>
-                    )}
-
-                    {!disabled && pick.read && cap.writeScope && cap.readScope && (
-                      <label
-                        className={`flex items-center gap-2 rounded-[9px] px-2.5 py-2 ${writeDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-                        style={{
-                          background: 'var(--semantic-orange-soft)',
-                          border: '1px solid var(--semantic-orange-border)',
-                          opacity: writeDisabled ? 0.6 : 1,
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          disabled={writeDisabled}
-                          checked={pick.write && !writeDisabled}
-                          onChange={(e) =>
-                            setSelected((prev) => ({
-                              ...prev,
-                              [cap.key]: { read: true, write: e.target.checked },
-                            }))
-                          }
-                        />
-                        <span className="text-[12px]" style={{ color: 'var(--semantic-warning-text)' }}>
-                          {writeDisabled
-                            ? '你只有这块能力的只读权限，写入得先找管理员开通'
-                            : '也允许它写入（会在平台里留下东西）'}
-                        </span>
-                      </label>
-                    )}
-                  </div>
-                );
-              })}
-              <p
-                className="rounded-[10px] px-3 py-2.5 text-[11.5px] leading-relaxed"
-                style={{ background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
-              >
-                删除和公开发布这类收不回来的动作，这一版一律不开放给智能体 —— 不管你怎么勾。
-              </p>
-            </div>
-          )}
-
-          {step === 'key' && (
-            <div className="flex flex-col gap-3">
+          {step === 'form' && (
+            <>
               <label className="flex flex-col gap-1.5">
                 <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-                  给这台客户端起个名（撤销时按名字找）
+                  给它起个名字
                 </span>
                 <input
                   value={clientName}
                   onChange={(e) => setClientName(e.target.value)}
-                  className="h-9 rounded-[10px] px-3 text-[13px]"
+                  className="h-[38px] rounded-[10px] px-3 text-[13.5px]"
                   style={{
-                    background: 'var(--bg-input)',
+                    background: 'var(--bg-sunken)',
                     border: '1px solid var(--border-subtle)',
                     color: 'var(--text-primary)',
                   }}
                 />
-              </label>
-              <div
-                className="flex flex-col gap-1.5 rounded-[10px] px-3 py-2.5"
-                style={{ background: 'var(--nested-block-bg)' }}
-              >
-                <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-                  这把钥匙会带上这些能力
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {scopes.map((s) => (
-                    <code
-                      key={s}
-                      className="rounded-[6px] px-1.5 py-0.5 text-[10.5px]"
-                      style={{
-                        background: 'var(--bg-card)',
-                        color: 'var(--text-muted)',
-                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                      }}
-                    >
-                      {s}
-                    </code>
-                  ))}
-                  {scopes.length === 0 && (
-                    <span className="text-[11.5px]" style={{ color: 'var(--semantic-warning-text)' }}>
-                      还没勾任何能力
-                    </span>
-                  )}
-                </div>
                 <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  有效期 90 天，到期前可在密钥管理里续期；明文只显示一次。
+                  随便起 —— 以后想断开它，按这个名字找。
                 </span>
-              </div>
-            </div>
+              </label>
+
+              <ScopeDisclosure
+                capabilities={capabilities}
+                picks={picks}
+                scopeMode={scopeMode}
+                open={advancedOpen}
+                onToggleOpen={() => setAdvancedOpen((v) => !v)}
+                onChange={changePicks}
+                onRestoreDefaults={() => {
+                  setDirty(false);
+                  setPicks(defaults);
+                }}
+              />
+            </>
           )}
 
           {step === 'connect' && (
@@ -367,7 +281,7 @@ export function ConnectAgentDialog({
                 <CopyButton text={plaintext} label="复制" />
               </div>
 
-              <div className="flex gap-1 rounded-[11px] p-1" style={{ background: 'var(--nested-block-bg)' }}>
+              <div className="flex gap-1 rounded-[11px] p-1" style={{ background: 'var(--tab-container-bg)' }}>
                 {([
                   { key: 'claude-code' as const, label: 'Claude Code' },
                   { key: 'claude-desktop' as const, label: 'Claude 桌面' },
@@ -390,17 +304,14 @@ export function ConnectAgentDialog({
               </div>
 
               <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
-                    {configTab === 'claude-code' ? '在终端里跑这一行' : '粘进配置文件'}
-                  </span>
-                  <CopyButton text={configSnippet} label="复制配置" />
-                </div>
+                <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+                  {configTab === 'claude-code' ? '在终端里跑这一行' : '粘进配置文件'}
+                </span>
                 <pre
                   className="overflow-x-auto rounded-[11px] px-3.5 py-3 text-[11.5px] leading-relaxed"
                   style={{
-                    background: 'var(--bg-sunken)',
-                    border: '1px solid var(--border-faint)',
+                    background: 'var(--tab-container-bg)',
+                    border: '1px solid var(--border-subtle)',
                     color: 'var(--text-secondary)',
                     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
                   }}
@@ -478,29 +389,9 @@ export function ConnectAgentDialog({
                       style={{ color: visible.isActive ? 'var(--semantic-warning-text)' : 'var(--semantic-danger-text)' }}
                     >
                       {visible.unusableReason}
-                      {visible.isActive ? '。到「连着的客户端」里续期即可。' : '。请另建一把新钥匙。'}
+                      {visible.isActive ? '。续期在「海鲜市场 → 开放接口 → 密钥」那一屏。' : '。请另建一把新钥匙。'}
                     </div>
                   )}
-                  <div className="flex flex-wrap gap-1.5">
-                    {visible.tools.slice(0, 8).map((t) => (
-                      <code
-                        key={t.name}
-                        className="rounded-[6px] px-1.5 py-0.5 text-[10.5px]"
-                        style={{
-                          background: 'var(--bg-card)',
-                          color: 'var(--text-muted)',
-                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                        }}
-                      >
-                        {t.name}
-                      </code>
-                    ))}
-                    {visible.tools.length > 8 && (
-                      <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
-                        还有 {visible.tools.length - 8} 个
-                      </span>
-                    )}
-                  </div>
                   <span className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                     这一步核的是授权对不对（服务端按 scope 算的），不代表你的客户端已经连通 —— 那要等你把上面的配置粘过去。
                   </span>
@@ -510,107 +401,304 @@ export function ConnectAgentDialog({
           )}
 
           {/* 底部动作 */}
-          <div className="flex items-center justify-between pt-1">
-            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-              {step === 'capabilities' && `已选 ${scopes.length} 个授权项`}
-              {step === 'key' && '创建后明文只显示一次'}
-              {step === 'connect' && '粘完配置，回到客户端说一句话就能用'}
-            </span>
-            <div className="flex gap-2">
-              {step === 'capabilities' && (
-                <button
-                  type="button"
-                  disabled={scopes.length === 0}
-                  onClick={() => setStep('key')}
-                  className="h-9 rounded-[10px] px-4 text-[13px] font-semibold disabled:opacity-50"
-                  style={{ background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }}
-                >
-                  下一步：出钥匙
-                </button>
-              )}
-              {step === 'key' && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setStep('capabilities')}
-                    className="h-9 rounded-[10px] px-4 text-[13px] font-medium"
-                    style={{
-                      background: 'var(--bg-card)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-secondary)',
-                    }}
-                  >
-                    返回
-                  </button>
-                  <button
-                    type="button"
-                    disabled={creating}
-                    onClick={() => void createKey()}
-                    className="h-9 rounded-[10px] px-4 text-[13px] font-semibold disabled:opacity-60"
-                    style={{ background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }}
-                  >
-                    {creating ? '正在签发…' : '生成密钥'}
-                  </button>
-                </>
-              )}
-              {step === 'connect' && (
+          <div className="flex items-center gap-2.5 pt-0.5">
+            {step === 'form' && (
+              <button
+                type="button"
+                disabled={creating}
+                onClick={() => void createKey()}
+                className="flex h-10 flex-1 items-center justify-center gap-2 rounded-[11px] text-[13.5px] font-semibold disabled:opacity-60"
+                style={{ background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }}
+              >
+                {creating ? '正在生成…' : '生成接入配置'}
+              </button>
+            )}
+            {step === 'connect' && (
+              <>
+                <CopyPrimaryButton text={configSnippet} />
                 <button
                   type="button"
                   onClick={() => handleClose(false)}
-                  className="h-9 rounded-[10px] px-4 text-[13px] font-semibold"
-                  style={{ background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }}
+                  className="h-10 rounded-[11px] px-4 text-[13px] font-medium"
+                  style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-secondary)',
+                  }}
                 >
                   完成
                 </button>
-              )}
-            </div>
+              </>
+            )}
           </div>
+
+          <p className="text-center text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+            {step === 'form'
+              ? '有效期 90 天；明文只显示一次。续期在「海鲜市场 → 开放接口 → 密钥」那一屏（接入台这一页暂时只能调上限和断开）。'
+              : '粘完重启客户端，跟它说一句「把这周周报做成一页网页发出来」就能用。'}
+          </p>
         </div>
       }
     />
   );
 }
 
-function StepBar({ step }: { step: Step }) {
-  const steps: Array<{ key: Step; label: string }> = [
-    { key: 'capabilities', label: '选能力' },
-    { key: 'key', label: '出钥匙' },
-    { key: 'connect', label: '接上' },
-  ];
-  const currentIndex = steps.findIndex((s) => s.key === step);
+/**
+ * 「默认给什么」那一块：先告知，再给一个可以改的入口。
+ *
+ * 折叠态是**说明**（无边框标签），展开态才是**选择**（有开关）。上一版把两者画成
+ * 一排大小不一的按钮，读者分不清哪个能点 —— 说明和动作要在视觉上分开。
+ */
+function ScopeDisclosure({
+  capabilities,
+  picks,
+  scopeMode,
+  open,
+  onToggleOpen,
+  onChange,
+  onRestoreDefaults,
+}: {
+  capabilities: McpCapabilityDto[];
+  picks: CapabilityPicks;
+  scopeMode: 'auto' | 'manual';
+  open: boolean;
+  onToggleOpen: () => void;
+  onChange: (next: CapabilityPicks) => void;
+  onRestoreDefaults: () => void;
+}) {
+  const granted = capabilities.filter((cap) => picks[cap.key]?.read || picks[cap.key]?.write);
+  const blocked = capabilities.filter((cap) => !cap.availableToMe);
+
   return (
-    <div className="flex items-center gap-2.5">
-      {steps.map((s, i) => {
-        const done = i < currentIndex;
-        const active = i === currentIndex;
-        return (
-          <div key={s.key} className="flex flex-1 items-center gap-2.5">
-            <span
-              className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
-              style={
-                active || done
-                  ? { background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }
-                  : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }
-              }
+    <div
+      className="flex flex-col gap-2.5 rounded-[12px] px-3.5 py-3"
+      style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="flex-1 text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          {scopeMode === 'auto' ? '默认把你有的能力都给它' : '按你选的这几块给它'}
+        </span>
+        <button
+          type="button"
+          onClick={onToggleOpen}
+          aria-expanded={open}
+          className="flex h-7 items-center gap-1.5 rounded-[8px] pl-2.5 pr-2 text-[12px] font-medium"
+          style={{
+            background: 'var(--bg-sunken)',
+            border: '1px solid var(--border-subtle)',
+            color: 'var(--text-secondary)',
+          }}
+        >
+          <Settings2 size={13} aria-hidden />
+          高级设置
+          {open ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
+        </button>
+      </div>
+
+      {/* 折叠态：只告知它能做什么、以及什么永远不给 */}
+      {!open && (
+        <div className="flex flex-wrap gap-1.5">
+          {granted.map((cap) => {
+            const v = capabilityVisual(cap.key);
+            const pick = picks[cap.key];
+            const Icon = v.icon;
+            return (
+              <span
+                key={cap.key}
+                className="flex h-[23px] items-center gap-1.5 rounded-full px-2.5 text-[11px]"
+                style={{ background: v.soft, border: `1px solid ${v.border}`, color: v.text }}
+              >
+                <Icon size={11} aria-hidden />
+                {cap.title}
+                {pick?.write && cap.readScope ? ' · 读写' : ''}
+              </span>
+            );
+          })}
+          <span
+            className="flex h-[23px] items-center gap-1.5 rounded-full px-2.5 text-[11px]"
+            style={{
+              background: 'var(--semantic-neutral-soft)',
+              border: '1px solid var(--semantic-neutral-border)',
+              color: 'var(--text-muted)',
+            }}
+          >
+            <X size={11} aria-hidden />
+            删除 · 公开发布
+          </span>
+        </div>
+      )}
+
+      {/* 展开态：这才是选择 */}
+      {open && (
+        <div className="flex flex-col gap-2">
+          {capabilities.map((cap) => {
+            const v = capabilityVisual(cap.key);
+            const Icon = v.icon;
+            const pick = picks[cap.key] ?? { read: false, write: false };
+            const on = pick.read || pick.write;
+            const disabled = !cap.availableToMe;
+            // 只有写入档、没有只读档的能力：开了就是把写入交出去，卡片上必须写明白
+            const writeOnly = !cap.readScope && !!cap.writeScope;
+            if (disabled) return null;
+            return (
+              <div
+                key={cap.key}
+                className="flex flex-col gap-2 rounded-[11px] px-3 py-2.5"
+                style={{
+                  background: 'var(--bg-sunken)',
+                  border: on ? `1px solid ${v.border}` : '1px solid var(--border-faint)',
+                }}
+              >
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <span
+                    className="mt-0.5 flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[8px]"
+                    style={{ background: v.soft, border: `1px solid ${v.border}`, color: v.text }}
+                  >
+                    <Icon size={13} aria-hidden />
+                  </span>
+                  <span className="flex flex-1 flex-col gap-0.5">
+                    <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {cap.title}
+                    </span>
+                    <span className="text-[11.5px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                      {cap.summary}
+                    </span>
+                    {writeOnly && on && (
+                      <span className="text-[11px] leading-relaxed" style={{ color: 'var(--semantic-warning-text)' }}>
+                        这块没有「只看」的档位：开着就是允许它生成内容、写进你的空间。
+                      </span>
+                    )}
+                  </span>
+                  <input
+                    type="checkbox"
+                    className="mt-1 shrink-0"
+                    checked={on}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      onChange({
+                        ...picks,
+                        [cap.key]: next
+                          ? {
+                              read: !!cap.readScope,
+                              write: !!cap.writeScope && cap.writeAvailableToMe && (writeOnly || pick.write),
+                            }
+                          : { read: false, write: false },
+                      });
+                    }}
+                  />
+                </label>
+
+                {/* 读写两档的能力才谈得上「能看 / 能写」；只有写入档的能力开着就是写 */}
+                {on && cap.readScope && cap.writeScope && (
+                  <div className="flex gap-1.5 pl-[36px]">
+                    <span
+                      className="flex h-[22px] items-center gap-1.5 rounded-[7px] px-2 text-[11px]"
+                      style={{ background: v.soft, border: `1px solid ${v.border}`, color: v.text }}
+                    >
+                      <Check size={11} aria-hidden />
+                      能看
+                    </span>
+                    <label
+                      className={`flex h-[22px] items-center gap-1.5 rounded-[7px] px-2 text-[11px] ${cap.writeAvailableToMe ? 'cursor-pointer' : 'cursor-not-allowed'}`}
+                      style={
+                        pick.write
+                          ? { background: v.soft, border: `1px solid ${v.border}`, color: v.text }
+                          : {
+                              background: 'var(--semantic-neutral-soft)',
+                              border: '1px solid var(--semantic-neutral-border)',
+                              color: 'var(--text-muted)',
+                            }
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-[11px] w-[11px]"
+                        disabled={!cap.writeAvailableToMe}
+                        checked={pick.write}
+                        onChange={(e) =>
+                          onChange({ ...picks, [cap.key]: { read: true, write: e.target.checked } })
+                        }
+                      />
+                      {cap.writeAvailableToMe ? '能写' : '能写（你自己还没这块权限）'}
+                    </label>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {blocked.map((cap) => (
+            <div
+              key={cap.key}
+              className="flex items-center gap-2.5 rounded-[11px] px-3 py-2.5"
+              style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-faint)', opacity: 0.6 }}
             >
-              {i + 1}
+              <ShieldAlert size={14} style={{ color: 'var(--semantic-warning-text)' }} aria-hidden />
+              <span className="flex flex-1 flex-col gap-0.5">
+                <span className="text-[12.5px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                  {cap.title}
+                </span>
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  你自己还没有这块权限，得先找管理员开通
+                </span>
+              </span>
+            </div>
+          ))}
+
+          <div className="flex items-center gap-2">
+            <span className="flex-1 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              {scopeMode === 'auto'
+                ? '现在跟着你的权限走：以后平台新上一块能力，它自动就有。'
+                : '改过之后就按这份清单钉死：以后平台新上的能力不会自动进来，会在客户端那行提醒你。'}
             </span>
-            <span
-              className="text-[12.5px]"
-              style={{
-                color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                fontWeight: active ? 600 : 400,
-              }}
-            >
-              {s.label}
-            </span>
-            {i < steps.length - 1 && (
-              <span className="h-px flex-1" style={{ background: 'var(--border-subtle)' }} />
+            {scopeMode === 'manual' && (
+              <button
+                type="button"
+                onClick={onRestoreDefaults}
+                className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] px-2.5 text-[11.5px] font-medium"
+                style={{
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                <RotateCcw size={12} aria-hidden />
+                还原默认
+              </button>
             )}
           </div>
-        );
-      })}
+        </div>
+      )}
+
+      <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+        删除、公开发布这类收不回来的动作一律不给，高级设置里也调不出来。生图会花钱，每天有上限。
+      </p>
     </div>
+  );
+}
+
+function CopyPrimaryButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        setFailed(false);
+        if (await copyToClipboard(text)) {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1600);
+        } else {
+          setFailed(true);
+          window.setTimeout(() => setFailed(false), 3200);
+        }
+      }}
+      className="flex h-10 flex-1 items-center justify-center gap-2 rounded-[11px] text-[13.5px] font-semibold"
+      style={{ background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }}
+    >
+      {copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}
+      {copied ? '已复制' : failed ? '复制失败，请手动选中' : '一键复制配置'}
+    </button>
   );
 }
 

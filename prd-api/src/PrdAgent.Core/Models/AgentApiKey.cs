@@ -44,6 +44,26 @@ public class AgentApiKey
     /// </summary>
     public List<string> Scopes { get; set; } = new();
 
+    /// <summary>
+    /// 这把钥匙的能力范围是**跟着走**还是**钉死**。
+    ///
+    /// 用户没有选择能力的能力 —— 让他在接入时逐张卡去勾，勾出来的十有八九不是他要的。
+    /// 所以**接入台**签出来的钥匙走 <see cref="AgentApiKeyScopeMode.Auto"/>（由接入弹窗显式传）：
+    /// 不存清单，每次鉴权现算「主人此刻有的权限 ∩ 平台此刻开放的能力」。平台以后新上一块能力，
+    /// 它自动就有；主人被撤掉某块权限，它当场也就没有。
+    ///
+    /// 但**这个字段本身的默认值是 Manual**，别把两件事读混：默认值管的是「没人显式说」的情况，
+    /// 那正是存量文档与密钥管理页那条老路径，它们的语义一个字都不能被这次改动改写。
+    ///
+    /// 只有用户**亲手动过**高级设置，才落成 <see cref="AgentApiKeyScopeMode.Manual"/>：
+    /// 清单钉死在他当时选的那几项，以后新增的一律不自动加 —— 他表达过意愿，就不许再替他改。
+    ///
+    /// 枚举值故意让 Manual = 0：存量文档没有这个字段，反序列化会拿到默认值。
+    /// 若默认是 Auto，那么**所有已经发出去的密钥**（含跟接入台无关的海鲜市场密钥）
+    /// 会在这次发版后一夜之间获得主人的全部能力 —— 一次静默的越权。默认必须是「按存的来」。
+    /// </summary>
+    public AgentApiKeyScopeMode ScopeMode { get; set; } = AgentApiKeyScopeMode.Manual;
+
     /// <summary>是否启用</summary>
     public bool IsActive { get; set; } = true;
 
@@ -129,4 +149,17 @@ public class AgentApiKey
 
     /// <summary>每分钟工具调用次数上限；null=系统默认 60。</summary>
     public int? McpRateLimitPerMin { get; set; }
+}
+
+/// <summary>
+/// 密钥能力范围的取值方式。见 <see cref="AgentApiKey.ScopeMode"/> 的说明，
+/// 尤其是「Manual 必须是 0」那一段 —— 换顺序等于给存量密钥静默扩权。
+/// </summary>
+public enum AgentApiKeyScopeMode
+{
+    /// <summary>按 <see cref="AgentApiKey.Scopes"/> 存的那份清单来。存量密钥、以及用户动过高级设置的密钥。</summary>
+    Manual = 0,
+
+    /// <summary>不存清单，鉴权时现算「主人当前权限 ∩ 平台当前开放能力」。接入台默认签出来的就是这种。</summary>
+    Auto = 1,
 }

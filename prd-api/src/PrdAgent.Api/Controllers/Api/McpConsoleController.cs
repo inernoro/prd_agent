@@ -72,8 +72,7 @@ public class McpConsoleController : ControllerBase
         var activeKeys = keys.Where(k => AgentApiKey.IsUsableAt(k, nowUtc, out _)).ToList();
         // 「已授权」要跟鉴权口径一致：受权限位把关的 scope，权限被回收后鉴权时就会被剥掉，
         // 面板不能还显示成已授权 —— 否则用户看到的和智能体实际能用的是两回事。
-        var grantedScopes = activeKeys.SelectMany(k => k.Scopes ?? new List<string>())
-            .Where(s => EffectiveForOwner(s, ownedPermissions))
+        var grantedScopes = activeKeys.SelectMany(k => EffectiveScopesOf(k, ownedPermissions))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var since = McpUsageService.TodayStartUtc();
@@ -131,8 +130,26 @@ public class McpConsoleController : ControllerBase
             keyId = k.Id,
             name = k.Name,
             keyPrefix = k.KeyPrefix,
-            scopes = k.Scopes ?? new List<string>(),
+            // 自动模式的清单是现算的，不是库里存的那份（存的是空）。面板必须显示「它此刻真拿得到什么」，
+            // 否则一把自动模式的钥匙在界面上会是「零个能力」，而它实际什么都调得动。
+            // 「已停用 / 过了宽限期」的那些要显示成零个 —— 这一行下面就写着 isActive=false，
+            // 旁边却列一串它根本调不动的能力，是同一行自己说两种话。
+            scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, nowUtc),
+            scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
+            // 手动模式才有「你有、但没开给它」这件事 —— 自动模式按定义不会缺。
+            // 这正是「用户知道、钥匙没权限」：平台新上一块能力、或者他当初没勾，都落在这里。
+            // 用不了的钥匙也不谈「你还能再给它什么」—— 那句话的前提是它还能用。
+            missingCapabilities = k.ScopeMode == AgentApiKeyScopeMode.Auto
+                                  || !AgentApiKey.IsUsableAt(k, nowUtc, out _)
+                ? new List<object>()
+                : MissingCapabilitiesOf(k, ownedPermissions),
             isActive = AgentApiKey.IsUsableAt(k, nowUtc, out _),
+            // 这份名单一开始就把 RevokedAt 非空的滤掉了（见上面的 allKeys.Where），
+            // 所以出现在这里而又不可用的，只可能是「停用」或「过了宽限期」——两种都还救得回来。
+            // 界面上原本一律写「已作废」，那是不可逆的意思，会让用户白白重接一台。
+            unusableReason = AgentApiKey.IsUsableAt(k, nowUtc, out _)
+                ? (string?)null
+                : !k.IsActive ? "disabled" : "expired",
             expiresAt = k.ExpiresAt,
             lastUsedAt = k.LastUsedAt,
             todayCalls = tally.ByKey.TryGetValue(k.Id, out var keyCalls) ? keyCalls : 0,
@@ -244,8 +261,9 @@ public class McpConsoleController : ControllerBase
         // 自检不能照着存下来的 scope 报一串对方其实看不见的工具。
         var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
         var ownedPermissions = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
-        var scopes = (key.Scopes ?? new List<string>())
-            .Where(s => EffectiveForOwner(s, ownedPermissions))
+        // 自动模式的钥匙库里存的是空清单 —— 照着它算，自检会报「0 个工具」，
+        // 而它连上去其实什么都调得动。走与鉴权同一处的推导。
+        var scopes = EffectiveScopesOf(key, ownedPermissions)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var visible = McpBuiltinTools.All
             .Where(t => McpCapabilityCatalog.ScopeSatisfies(scopes, t.RequiredScope))
@@ -285,6 +303,52 @@ public class McpConsoleController : ControllerBase
     private sealed record VisibleTool(string Name, string Description, string? Capability, bool IsWrite);
 
     /// <summary>
+    /// 这把钥匙此刻实际拿得到哪些 scope。判据与 <c>ApiKeyAuthenticationHandler</c> 同源：
+    /// 自动模式现算（主人当前权限 ∩ 平台当前开放），手动模式读存的那份再按权限位过一遍。
+    ///
+    /// 面板与鉴权必须走同一个口径 —— 上一版就栽在这上面：面板照 IsActive 判、鉴权照能不能用判，
+    /// 于是用户看到「已连接、已授权」，而它发的每个请求都被拒。
+    /// </summary>
+    private static IReadOnlyList<string> EffectiveScopesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
+        => McpCapabilityCatalog.EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions);
+
+    /// <summary>
+    /// 「你自己有、但没开给这台客户端」的能力。只对手动模式成立。
+    ///
+    /// 不去追「平台是哪天新增的」：那需要给能力目录记时间戳，而用户要回答的问题从来不是
+    /// 「这是不是新的」，而是「我还能给它什么」。按当前权限与当前授权做差，两种来源
+    ///（平台新上的、他当初没勾的）都落进同一句话里。
+    ///
+    /// 两条判据缺一不可，缺任何一条这一行都会跟它自己上半行的能力标签打架：
+    ///   1. 「有没有」用 <see cref="McpCapabilityCatalog.ScopeSatisfies"/>，不是集合直接 Contains ——
+    ///      知识库与网页托管声明了 WriteImpliesRead，只存 `:write` 的钥匙闸门认它连读一起满足；
+    ///   2. 只报**整块一点都没给**的能力（All 而不是 Any）—— 只给了读档的钥匙，那块能力是
+    ///      部分授权，标签上写着已授权，这里若因为缺写档就把整块报成「还没开给它」，就是同一行
+    ///      自己说两种话。
+    ///
+    /// 代价是：「你还可以再给它写入档」这句话现在说不出来。那要给这个字段带上档位
+    ///（read/write），是新的语义类别 —— 按 §5.5 归后续 PR，见 doc/debt.platform.md #23。
+    /// </summary>
+    private static List<object> MissingCapabilitiesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
+    {
+        // held 必须取**有效**清单，不能读库里存的那份原始 scope。
+        // 权限被回收之后两者会分叉：一把存着 web-pages:write 的手动钥匙，主人被降成只读时，
+        // 有效清单里那条 write 已经被剥掉（鉴权也不会认），可原始清单里它还在 ——
+        // 而 ScopeSatisfies 认 write 蕴含 read，于是这里会判「读档也满足了」，
+        // 把 Web 整块从「还能给它什么」里漏掉：那一行同时显示「一块能力都没有」和「没有缺的」。
+        // 与展示、鉴权同一处判据，不在这里读第二份数据。
+        var held = McpCapabilityCatalog
+            .EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return McpCapabilityCatalog.All
+            .Where(cap => cap.AllScopes().Any(s => ScopeAvailable(s, ownedPermissions))
+                          && cap.AllScopes().All(s =>
+                              !ScopeAvailable(s, ownedPermissions) || !McpCapabilityCatalog.ScopeSatisfies(held, s)))
+            .Select(cap => (object)new { key = cap.Key, title = cap.Title })
+            .ToList();
+    }
+
+    /// <summary>
     /// 某个 scope 我自己签不签得出来：不受权限位把关的恒真，受把关的看权限位。
     ///
     /// 判据按 **scope** 而不是按能力整块判，且用的是签发口径（IsIssuancePermissionChecked）——
@@ -297,14 +361,6 @@ public class McpConsoleController : ControllerBase
         if (!McpCapabilityCatalog.IsIssuancePermissionChecked(scope!)) return true;
         return McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope!);
     }
-
-    /// <summary>
-    /// 这个 scope 此刻对密钥主人还成立吗。受权限位把关的按当前权限判，其余（老 scope）原样成立。
-    /// 与 ApiKeyAuthenticationHandler 的剥离逻辑同一口径，面板才不会跟实际能力对不上。
-    /// </summary>
-    private static bool EffectiveForOwner(string scope, IReadOnlyList<string> ownedPermissions)
-        => !McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope)
-           || McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope);
 
     private sealed record TodayTally(
         long Total,
