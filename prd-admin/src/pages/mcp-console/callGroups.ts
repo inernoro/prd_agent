@@ -164,7 +164,11 @@ export function outcomeOf(
   artifact: McpCallLogDto['artifact'] | null,
 ): CallGroup['status'] {
   if (last.status !== 'success') return last.status;
-  if (last.isWrite) return 'success';
+  // 「图还没出来」这件事与最后一步是写是读无关：入队（generate_image，写）本身就只回一个
+  // runId，没有地址；客户端要是压根不来轮询，这件事会永远停在入队那一步。
+  // 上一版把 isWrite 的判断放在前面，于是「只入队、还没轮询」的事件被打成绿色成功 ——
+  // 而图并不存在（closed-loop-acceptance：产物没出现就不算成了）。
+  // 判据只认产物：是一个还没有地址的 image-run，就还没出结果。
   if (artifact?.kind === 'image-run' && !artifact.url) return 'pending';
   return 'success';
 }

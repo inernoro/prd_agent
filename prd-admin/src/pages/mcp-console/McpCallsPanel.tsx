@@ -204,12 +204,30 @@ export function McpCallsPanel({
           className="flex flex-1 flex-col items-center justify-center gap-2 rounded-[14px] p-8 text-center"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
         >
-          <p className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-            还没有调用记录
-          </p>
-          <p className="max-w-[420px] text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            连上客户端后，对它说一句「把这周的周报做成一页网页托管上去」，它调用平台能力的每一步都会出现在这里。
-          </p>
+          {/* 「一条都没有」和「这一档筛没了」是两件事。上一版共用同一段引导语，于是
+              正上方的计数行刚说「另有 N 条被滤掉」，这里就说「还没有调用记录，去接一台客户端」
+              —— 同一屏自己打架，而且把一个筛选结果说成了空历史。 */}
+          {status || filteredOut > 0 ? (
+            <>
+              <p className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                这一档里没有记录
+              </p>
+              <p className="max-w-[420px] text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                {filteredOut > 0
+                  ? `最近这一页里有 ${filteredOut} 条按传输结果算成功、但产物还没出来，它们不算在这一档里。把上面的筛选切回「全部结果」就能看到。`
+                  : '换个筛选条件看看，或者切回「全部结果」。'}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                还没有调用记录
+              </p>
+              <p className="max-w-[420px] text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                连上客户端后，对它说一句「把这周的周报做成一页网页托管上去」，它调用平台能力的每一步都会出现在这里。
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto pr-0.5">

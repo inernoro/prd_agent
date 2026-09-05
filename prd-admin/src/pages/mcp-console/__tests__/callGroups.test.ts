@@ -229,8 +229,19 @@ describe('结局判据（唯一一处，不挂在「多步」上）', () => {
     expect(soloGroup(call({ isWrite: false, artifact: done })).status).toBe('success');
   });
 
-  it('写入的 HTTP 成功就是它的结局，不因为没有地址被说成还没出结果', () => {
-    expect(soloGroup(call({ isWrite: true, artifact: queued })).status).toBe('success');
+  /**
+   * 这条原来断言「写入的 HTTP 成功就是它的结局」，把生图入队也算了进去 ——
+   * 而入队（generate_image，写）只回一个 runId、没有地址，图并不存在。
+   * 那样写等于用测试锁死了「只入队就打绿灯」这个缺陷。拆成两条，各说各的。
+   */
+  it('生图入队（写）本身成功，但图还没出来，事件仍是「还没出结果」', () => {
+    expect(soloGroup(call({ isWrite: true, artifact: queued })).status).toBe('pending');
+  });
+
+  it('不等异步产物的写入（发网页、建条目）照旧算成', () => {
+    const site = { kind: 'site', id: 's1', url: null, title: null };
+    expect(soloGroup(call({ isWrite: true, artifact: site })).status).toBe('success');
+    expect(soloGroup(call({ isWrite: true, artifact: null })).status).toBe('success');
   });
 
   it('判据要窄：不等异步产物的普通读取（列清单、看工作区）问到了就是问到了', () => {
