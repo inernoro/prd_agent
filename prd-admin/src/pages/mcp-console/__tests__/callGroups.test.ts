@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupCalls, outcomeOf, soloGroup } from '../callGroups';
+import { eventTime, groupCalls, outcomeOf, soloGroup } from '../callGroups';
 import type { McpCallLogDto } from '@/services/contracts/mcpConsole';
 
 function call(over: Partial<McpCallLogDto>): McpCallLogDto {
@@ -263,5 +263,33 @@ describe('幂等命中的重试不算发起', () => {
       call({ isWrite: true, deduplicated: false, artifact: art, createdAt: '2026-09-05T10:00:00.000Z' }),
     ]);
     expect(g.hasOrigin).toBe(true);
+  });
+});
+
+describe('事件行显示的时刻必须与排序键一致', () => {
+  const art = (id: string) => ({ kind: 'image-run', id, url: 'https://x/i.png', title: null });
+
+  it('显示的是最后一步的时刻，不是发起时刻', () => {
+    const [g] = groupCalls([
+      call({ isWrite: false, artifact: art('r1'), createdAt: '2026-09-05T10:20:00.000Z' }),
+      call({ isWrite: true, artifact: art('r1'), createdAt: '2026-09-05T10:00:00.000Z' }),
+    ]);
+    expect(eventTime(g)).toBe('2026-09-05T10:20:00.000Z');
+    expect(eventTime(g)).not.toBe(g.first.createdAt);
+  });
+
+  /**
+   * 这条钉的是「显示与排序同源」这个性质本身：
+   * 一个 10:00 发起、10:20 跑完的生图事件，和一次 10:10 的快调用放在一起，
+   * 前者排在上面（最后一步更新），那它显示的时刻也必须更新——否则列表看起来没按时间排。
+   */
+  it('列表倒序时，相邻两行显示出来的时刻也是倒序', () => {
+    const groups = groupCalls([
+      call({ keyId: 'k2', isWrite: true, artifact: null, createdAt: '2026-09-05T10:10:00.000Z' }),
+      call({ keyId: 'k1', isWrite: false, artifact: art('r9'), createdAt: '2026-09-05T10:20:00.000Z' }),
+      call({ keyId: 'k1', isWrite: true, artifact: art('r9'), createdAt: '2026-09-05T10:00:00.000Z' }),
+    ]);
+    const times = groups.map((g) => new Date(eventTime(g)).getTime());
+    expect(times).toEqual([...times].sort((a, b) => b - a));
   });
 });

@@ -4,7 +4,7 @@ import { PrdLoader } from '@/components/ui/PrdLoader';
 import { listMcpCalls } from '@/services';
 import type { McpCallLogDto, McpClientDto } from '@/services/contracts/mcpConsole';
 import { safeArtifactHref } from './artifactHref';
-import { groupCalls, soloGroup, type CallGroup } from './callGroups';
+import { eventTime, groupCalls, soloGroup, type CallGroup } from './callGroups';
 import { eventClock } from './eventClock';
 
 const STATUS_STYLE: Record<string, { label: string; color: string; bg: string; border: string }> = {
@@ -265,7 +265,7 @@ function EventRow({
           <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} aria-hidden />
         )}
         <span className="w-[86px] shrink-0 text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-          {eventClock(group.first.createdAt)}
+          {eventClock(eventTime(group))}
         </span>
         <span className="w-[110px] shrink-0 truncate text-[12px]" style={{ color: 'var(--text-secondary)' }}>
           {group.first.keyName}
@@ -410,12 +410,21 @@ function EventRow({
             {!group.multiStep ? (
               <span>耗时 {(group.elapsedMs / 1000).toFixed(1)}s</span>
             ) : group.hasOrigin ? (
-              <span>从发起到落地 {(group.elapsedMs / 1000).toFixed(1)}s</span>
+              // 「落地」是「产物真的出来了」的意思，只有真成了才配这么说。
+              // 原来这里只看 multiStep + hasOrigin，于是一个还在排队的 run 也被写成
+              // 「从发起到落地 Xs」——上面那枚徽章明明标着「还没出结果」，同一行自己打架。
+              group.status === 'pending' ? (
+                <span>从发起算起 {(group.elapsedMs / 1000).toFixed(1)}s，还没出结果</span>
+              ) : group.status === 'success' ? (
+                <span>从发起到落地 {(group.elapsedMs / 1000).toFixed(1)}s</span>
+              ) : (
+                <span>从发起到失败 {(group.elapsedMs / 1000).toFixed(1)}s</span>
+              )
             ) : (
               // 发起那一次不在这一页里 —— 只能说「看到的这几次跨了多久」，不能说成从发起算起
               <span>这一页里看到的 {group.steps.length} 次跨 {(group.elapsedMs / 1000).toFixed(1)}s</span>
             )}
-            <span>{new Date(group.first.createdAt).toLocaleString('zh-CN')}</span>
+            <span>{group.multiStep ? '发起于 ' : ''}{new Date(group.first.createdAt).toLocaleString('zh-CN')}</span>
           </div>
         </div>
       )}

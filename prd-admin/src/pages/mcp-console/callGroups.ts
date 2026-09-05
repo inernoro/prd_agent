@@ -186,3 +186,15 @@ export function soloGroup(item: McpCallLogDto): CallGroup {
     artifact,
   };
 }
+
+/**
+ * 事件行显示的那个时刻。
+ *
+ * 必须与列表的排序键是同一个值。事件之间按「各自最后一步的时间」倒序（见 groupCalls 结尾），
+ * 而这一列原来显示的是 first.createdAt —— 一个 10:00 发起、10:20 才跑完的生图事件，
+ * 会排在 10:10 那次快调用**上面**却显示 10:00，看起来像列表没按时间排。
+ * 发起时刻不丢：展开后的详情里单独写着。
+ */
+export function eventTime(group: CallGroup): string {
+  return group.last.createdAt;
+}
