@@ -1866,6 +1866,7 @@ export function hardenSelfContainedHtml(html: string): string {
     const attribute = match[2].toLowerCase();
     const value = match[4].trim();
     if (!value || value.startsWith('#')) continue;
+    if (attribute === 'href' && isInertRelativeAnchorReference(tag, value)) continue;
     if (value.startsWith('data:') && tag !== 'a' && tag !== 'area') continue;
     throw new AgentWorkspaceRuntimeError(
       'design_output_not_self_contained',
@@ -1876,6 +1877,7 @@ export function hardenSelfContainedHtml(html: string): string {
     const tag = match[1].toLowerCase();
     const value = match[3].trim();
     if (!value || value.startsWith('#')) continue;
+    if (isInertRelativeAnchorReference(tag, value)) continue;
     if (value.startsWith('data:') && tag !== 'a' && tag !== 'area') continue;
     throw new AgentWorkspaceRuntimeError(
       'design_output_not_self_contained',
@@ -1951,6 +1953,12 @@ export function hardenSelfContainedHtml(html: string): string {
     return withoutExistingCsp.replace(/<head\b([^>]*)>/i, `<head$1>${cspMeta}${ARTIFACT_NAVIGATION_GUARD}`);
   }
   return withoutExistingCsp.replace(/<html\b([^>]*)>/i, `<html$1><head>${cspMeta}${ARTIFACT_NAVIGATION_GUARD}</head>`);
+}
+
+function isInertRelativeAnchorReference(tag: string, value: string): boolean {
+  return (tag === 'a' || tag === 'area')
+    && /^\.\/[A-Za-z0-9_./-]+(?:#[A-Za-z0-9_.:-]+)?$/.test(value)
+    && !/(?:^|\/)\.\.(?:\/|$)/.test(value);
 }
 
 function classifyImagePullFailure(stdout: string, stderr: string): string {

@@ -1056,11 +1056,12 @@ describe('AgentWorkspaceSessionRuntime', () => {
   });
 
   it('injects a restrictive CSP and rejects dynamic or indirect network surfaces', () => {
-    const safe = hardenSelfContainedHtml('<!doctype html><html><head><title>Safe</title></head><body><a href="#details">Details</a><style>body{color:red}</style><script>document.querySelector("#details")?.classList.toggle("open")</script></body></html>');
+    const safe = hardenSelfContainedHtml('<!doctype html><html><head><title>Safe</title></head><body><a href="#details">Details</a><a href="./guide.platform.quickstart.md">Guide</a><style>body{color:red}</style><script>document.querySelector("#details")?.classList.toggle("open")</script></body></html>');
     expect(safe).toContain('http-equiv="Content-Security-Policy"');
     expect(safe).toContain("connect-src 'none'");
     expect(safe).toContain("form-action 'none'");
     expect(safe).toContain('data-cds-offline-guard');
+    expect(safe).toContain('href="./guide.platform.quickstart.md"');
 
     const unsafe = [
       '<!doctype html><html><img srcset="https://tracker.example/a.png 1x"></html>',
@@ -1074,6 +1075,10 @@ describe('AgentWorkspaceSessionRuntime', () => {
       '<!doctype html><html><script>document.createElement("a").click()</script></html>',
       '<!doctype html><html><form action="https://tracker.example/out"><input name="secret"></form></html>',
       '<!doctype html><html><a href=https://tracker.example/out>leave</a></html>',
+      '<!doctype html><html><a href=//tracker.example/out>leave</a></html>',
+      '<!doctype html><html><a href=/api/private>leave</a></html>',
+      '<!doctype html><html><a href=./../private>leave</a></html>',
+      '<!doctype html><html><a href=./guides/..>leave</a></html>',
       '<!doctype html><html><iframe srcdoc="&lt;script&gt;top.location=\'https://tracker.example/out\'&lt;/script&gt;"></iframe></html>',
       '<!doctype html><html><button onclick=goAway()>leave</button></html>',
     ];
