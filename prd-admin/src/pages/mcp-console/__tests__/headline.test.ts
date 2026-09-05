@@ -86,6 +86,7 @@ describe('接入台第一屏那句判断', () => {
     expect(h.verdict).toContain('47 次');
     expect(h.verdict).toContain('全都成了');
     expect(h.detail).toContain('12 张');
+    expect(h.detail).toContain('1 台客户端');
   });
 
   it('「被挡下」和「执行失败」分开说 —— 两者的下一步完全不同', () => {
@@ -114,6 +115,21 @@ describe('接入台第一屏那句判断', () => {
       recentCalls: [log({ status: 'success' })],
     });
     expect(h.detail).toContain('它干了什么');
+  });
+
+  it('判断句不许把「还连着几台」当成「调了多少次」的主语', () => {
+    // 两个数来自不同人口：active 只算还在的，today 含当天被撤销的那些。
+    // 一把用过 46 次的钥匙刚被撤掉、只剩一台没用过的还连着时，
+    // 「1 台客户端今天替你调了 47 次」是把别人的账算到它头上。
+    // 这一类在这块面板上出过四次，所以钉的是「整类不许出现」，不是某个分支的措辞。
+    const cases: HeadlineInput[] = [
+      { clients: [client()], today: today({ calls: 47, images: 12 }), recentCalls: [log()] },
+      { clients: [client()], today: today({ calls: 47, denied: 3 }), recentCalls: [] },
+    ];
+    for (const input of cases) {
+      const h = buildHeadline(input);
+      expect(h.verdict).not.toMatch(/\d+\s*台客户端[^。]*调了\s*\d+\s*次/);
+    }
   });
 
   it('有调用时判断句必须挂着数字，不许出现放到任何账号都成立的空话', () => {

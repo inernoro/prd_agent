@@ -77,10 +77,16 @@ export function buildHeadline({ clients, today, recentCalls }: HeadlineInput): H
   const lastAt = formatClock(recentCalls[0]?.createdAt);
   const tail = lastAt ? `最近一次在 ${lastAt}。` : '';
 
+  // 判断句里**不许**把「还连着几台」和「今天调了多少次」说成一件事。
+  // 两个数来自不同的人口：`active` 只算还在的，`today` 含当天被撤销/删掉的那些。
+  // 「1 台客户端今天替你调了 47 次」在那 47 次里有一半是刚被撤掉的另一把钥匙干的时候，
+  // 就是把别人的账算到它头上。这一类已经在这块面板上出过四次（合计条两次、判断句两次），
+  // 每次单修一个分支都会在下一个边界复发 —— 所以这里整类拿掉：数字各自出自权威来源，
+  // 客户端台数只作为并列的一句事实，不做主语。
   if (bad === 0) {
     return {
-      verdict: `${active.length} 台客户端今天替你调了 ${calls} 次，全都成了。`,
-      detail: `${volume}。${tail}`.trim(),
+      verdict: `今天调了 ${calls} 次，全都成了。`,
+      detail: `${volume}。现在连着 ${active.length} 台客户端。${tail}`.trim(),
     };
   }
 
@@ -92,10 +98,10 @@ export function buildHeadline({ clients, today, recentCalls }: HeadlineInput): H
   const firstBad = recentCalls.find((c) => c.status !== 'success' && !!c.errorMessage);
 
   return {
-    verdict: `${active.length} 台客户端今天调了 ${calls} 次，其中 ${parts.join('、')}。`,
+    verdict: `今天调了 ${calls} 次，其中 ${parts.join('、')}。`,
     detail: firstBad
       ? `最近那次是「${firstBad.toolName}」：${firstBad.errorMessage}`
-      : `失败的原因在「它干了什么」里逐条看得到。${volume}。${tail}`.trim(),
+      : `失败的原因在「它干了什么」里逐条看得到。${volume}。现在连着 ${active.length} 台客户端。${tail}`.trim(),
   };
 }
 
