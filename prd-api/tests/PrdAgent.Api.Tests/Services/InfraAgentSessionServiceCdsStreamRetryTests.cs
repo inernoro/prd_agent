@@ -9,6 +9,15 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class InfraAgentSessionServiceCdsStreamRetryTests
 {
     [Theory]
+    [InlineData("queued")]
+    [InlineData("running")]
+    public void MapCdsStatus_KeepsNonTerminalExecutionStatesRunning(string cdsStatus)
+    {
+        InfraAgentSessionService.MapCdsStatus(cdsStatus)
+            .ShouldBe(InfraAgentSessionStatuses.Running);
+    }
+
+    [Theory]
     [InlineData("network", 2)]
     [InlineData("parse", 2)]
     [InlineData("storage", 0)]

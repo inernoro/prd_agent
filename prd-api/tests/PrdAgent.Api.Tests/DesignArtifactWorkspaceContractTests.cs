@@ -32,6 +32,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         {
             ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve:8091",
             ["LlmGwServe:ApiKey"] = "gateway-secret",
+            ["DesignArtifactRuntime:Model"] = "gpt-4.1-mini",
         }).Build();
         var controller = new DesignArtifactRuntimeController(
             broker.Object,
@@ -55,7 +56,48 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Equal(run.UserId, handler.Header("X-Gateway-User-Id"));
         Assert.Equal(run.Id, handler.Header("X-Gateway-Run-Id"));
         Assert.Equal("gateway-secret", handler.Header("X-Gateway-Key"));
+        Assert.Equal("gpt-4.1-mini", handler.Body?["model"]?.GetValue<string>());
         Assert.Equal(4096, handler.Body?["max_tokens"]?.GetValue<int>());
+        broker.VerifyAll();
+    }
+
+    [Fact]
+    public async Task ModelProxyUsesPoolRoutingFieldsInsteadOfPretendingPoolIdIsAModel()
+    {
+        var run = BuildRun();
+        run.Id = "run-model-pool-proxy-1";
+        run.Status = RunStatuses.Running;
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(run);
+        var handler = new CapturingHandler();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve:8091",
+            ["LlmGwServe:ApiKey"] = "gateway-secret",
+            ["DesignArtifactRuntime:ModelPoolId"] = "pool-chat-premium",
+            ["DesignArtifactRuntime:Model"] = "gpt-4.1-mini",
+        }).Build();
+        var controller = new DesignArtifactRuntimeController(
+            broker.Object,
+            new SingleClientFactory(handler),
+            configuration,
+            NullLogger<DesignArtifactRuntimeController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+        };
+        var requestBytes = Encoding.UTF8.GetBytes("{\"model\":\"map-managed\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}");
+        controller.Request.Body = new MemoryStream(requestBytes);
+        controller.Request.ContentLength = requestBytes.Length;
+        controller.Request.Headers.Authorization = "Bearer model-ticket";
+        controller.Response.Body = new MemoryStream();
+
+        await controller.ProxyChatCompletions(run.Id, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, controller.Response.StatusCode);
+        Assert.Null(handler.Body?["model"]);
+        Assert.Equal("pool-chat-premium", handler.Body?["model_pool_id"]?.GetValue<string>());
+        Assert.Equal("pool", handler.Body?["model_policy"]?.GetValue<string>());
         broker.VerifyAll();
     }
 

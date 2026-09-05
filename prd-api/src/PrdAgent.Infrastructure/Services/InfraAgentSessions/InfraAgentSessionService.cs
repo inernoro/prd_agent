@@ -4136,11 +4136,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return string.IsNullOrWhiteSpace(traceId) ? BuildEventTraceId(sessionId) : traceId;
     }
 
-    private static string MapCdsStatus(string? status)
+    internal static string MapCdsStatus(string? status)
     {
         return status switch
         {
             "creating" => InfraAgentSessionStatuses.Creating,
+            "queued" => InfraAgentSessionStatuses.Running,
             "running" => InfraAgentSessionStatuses.Running,
             "idle" => InfraAgentSessionStatuses.Idle,
             "stopping" => InfraAgentSessionStatuses.Stopping,

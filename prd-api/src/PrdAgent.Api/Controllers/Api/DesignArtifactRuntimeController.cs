@@ -108,8 +108,25 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
 
             var run = await _broker.ReserveModelCallAsync(runId, ReadBearerToken(), ct);
             var configuredPool = _configuration["DesignArtifactRuntime:ModelPoolId"]?.Trim();
-            if (string.IsNullOrWhiteSpace(configuredPool)) body.Remove("model");
-            else body["model"] = configuredPool;
+            var configuredModel = _configuration["DesignArtifactRuntime:Model"]?.Trim();
+            body.Remove("model_pool_id");
+            body.Remove("modelPoolId");
+            body.Remove("model_policy");
+            body.Remove("modelPolicy");
+            if (!string.IsNullOrWhiteSpace(configuredPool))
+            {
+                body.Remove("model");
+                body["model_pool_id"] = configuredPool;
+                body["model_policy"] = "pool";
+            }
+            else if (!string.IsNullOrWhiteSpace(configuredModel))
+            {
+                body["model"] = configuredModel;
+            }
+            else
+            {
+                body.Remove("model");
+            }
             var maxCompletionTokens = Math.Clamp(
                 _configuration.GetValue<int?>("DesignArtifactRuntime:MaxCompletionTokens")
                 ?? DefaultMaxCompletionTokens,
