@@ -244,6 +244,9 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(preparedDesignTemplate?.command).toContain('/app/design-templates/web-prototype/assets/template.html');
     expect(preparedDesignTemplate?.command).toContain('/app/design-templates/web-prototype/references/layouts.md');
     expect(preparedDesignTemplate?.command).toContain('/app/design-templates/web-prototype/references/checklist.md');
+    expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/assets/template.html');
+    expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
+    expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
 
     const executed = await runtime.execute(
       'session-test-1',
@@ -366,6 +369,10 @@ describe('AgentWorkspaceSessionRuntime', () => {
         model: 'map-managed',
       },
     });
+    expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/assets/template.html');
+    expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
+    expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
+    expect(run?.body.systemPrompt).toContain('do not resolve them as /workspace/assets or /workspace/references');
     expect(JSON.stringify(run?.body)).not.toContain('Private knowledge body');
     const sessionResourceCreates = shell.calls.filter((call) =>
       call.command.includes('cds.type=agent-session') && (

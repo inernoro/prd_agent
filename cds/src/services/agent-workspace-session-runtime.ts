@@ -1096,11 +1096,16 @@ export class AgentWorkspaceSessionRuntime {
         '/bin/sh -lc',
         shellQuote([
           'mkdir -p /app/design-templates/web-prototype',
+          'mkdir -p /workspace/.od-skills/web-prototype',
           `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /app/design-templates/web-prototype/`,
+          `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /workspace/.od-skills/web-prototype/`,
           'test -f /app/design-templates/web-prototype/SKILL.md',
           'test -f /app/design-templates/web-prototype/assets/template.html',
           'test -f /app/design-templates/web-prototype/references/layouts.md',
           'test -f /app/design-templates/web-prototype/references/checklist.md',
+          'test -f /workspace/.od-skills/web-prototype/assets/template.html',
+          'test -f /workspace/.od-skills/web-prototype/references/layouts.md',
+          'test -f /workspace/.od-skills/web-prototype/references/checklist.md',
         ].join(' && ')),
       ].join(' '), { timeout: 30_000 });
       if (preparedDesignTemplate.exitCode !== 0) {
@@ -1254,7 +1259,8 @@ export class AgentWorkspaceSessionRuntime {
         model: model.model,
         message: instruction.trim(),
         systemPrompt: [
-          'The workspace is already prepared by MAP. Read the referenced files from /workspace.',
+          'The workspace is already prepared by MAP. Read MAP task and knowledge files from /workspace.',
+          'The active web-prototype skill side files are rooted at /workspace/.od-skills/web-prototype. Read /workspace/.od-skills/web-prototype/assets/template.html, /workspace/.od-skills/web-prototype/references/layouts.md, and /workspace/.od-skills/web-prototype/references/checklist.md by these exact paths; do not resolve them as /workspace/assets or /workspace/references.',
           'Write the final webpage to index.html. The first release must be self-contained: inline all CSS, JavaScript, fonts, and images; do not reference relative or remote assets.',
           'Do not request credentials, upload source files, publish, deploy, or mutate any external source.',
         ].join(' '),
