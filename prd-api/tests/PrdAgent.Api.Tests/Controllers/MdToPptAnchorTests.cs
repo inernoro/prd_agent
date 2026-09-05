@@ -199,18 +199,18 @@ public class MdToPptAnchorTests
             "terminal",
             "slide terminal",
             "终端版式",
-            "<section class=\"slide terminal\"><div class=\"hermes-shell\"><span>hermes</span><span>lewis</span></div></section>");
+            "<section class=\"slide terminal\"><div class=\"hermes-shell\"><span>zsh</span><span>lewis</span></div></section>");
         var page = new MdToPptOutlinePageDto
         {
             Title = "端到端调用链",
             Bullets = new List<string> { "MAP 创建隔离会话", "OpenDesign 读写工作区" },
         };
-        var generated = "<section class=\"slide terminal\"><div class=\"hermes-shell\"><span>hermes</span><span>lewis</span></div></section>";
+        var generated = "<section class=\"slide terminal\"><div class=\"hermes-shell\"><span>zsh</span><span>lewis</span></div></section>";
 
         var rewritten = MdToPptController.RewriteAnchorSampleResidue(generated, layout, page, "知识驱动验收", null);
 
         Assert.Contains("class=\"hermes-shell\"", rewritten);
-        Assert.DoesNotContain(">hermes<", rewritten, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(">zsh<", rewritten, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(">lewis<", rewritten, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(">端到端调用链<", rewritten);
         Assert.Contains(">MAP 创建隔离会话<", rewritten);

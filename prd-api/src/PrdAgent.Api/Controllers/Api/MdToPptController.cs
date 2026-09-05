@@ -1864,7 +1864,7 @@ public class MdToPptController : ControllerBase
             templateWithoutNonText, "<!--[\\s\\S]*?-->", " ");
         var candidates = System.Text.RegularExpressions.Regex.Matches(templateWithoutNonText, ">([^<>]+)<")
             .Select(match => Normalize(match.Groups[1].Value))
-            .Where(value => value.Length >= 5)
+            .Where(value => value.Length >= 3)
             .Where(value => !System.Text.RegularExpressions.Regex.IsMatch(value, "^0?\\d+\\s*[/·|-]\\s*0?\\d+$"))
             .Where(value => !System.Text.RegularExpressions.Regex.IsMatch(value, "^[\\p{P}\\p{S}\\s]+$"))
             .Distinct(StringComparer.OrdinalIgnoreCase);
@@ -1905,7 +1905,7 @@ public class MdToPptController : ControllerBase
             templateWithoutNonText, "<!--[\\s\\S]*?-->", " ");
         var samples = System.Text.RegularExpressions.Regex.Matches(templateWithoutNonText, ">([^<>]+)<")
             .Select(match => Normalize(match.Groups[1].Value))
-            .Where(value => value.Length >= 5)
+            .Where(value => value.Length >= 3)
             .Where(value => !System.Text.RegularExpressions.Regex.IsMatch(value, "^0?\\d+\\s*[/·|-]\\s*0?\\d+$"))
             .Where(value => !System.Text.RegularExpressions.Regex.IsMatch(value, "^[\\p{P}\\p{S}\\s]+$"))
             .Where(value => !allowed.Contains(value, StringComparison.OrdinalIgnoreCase))
