@@ -303,6 +303,16 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(runCommand?.command).toContain("--label 'cds.instance=instance-a'");
     expect(shell.calls.some((call) => call.command.startsWith('docker network create --internal'))).toBe(true);
     expect(shell.calls.some((call) => call.command.startsWith('docker cp '))).toBe(true);
+    const storageKeeperRun = shell.calls.find((call) => (
+      call.command.startsWith('docker run --detach') && call.command.includes('-storage')
+    ));
+    expect(storageKeeperRun?.command).toContain('while :; do sleep 300; done');
+    expect(storageKeeperRun?.command).toContain(`--label 'cds.agent.session=session-test-1'`);
+    const mainContainerStartIndex = shell.calls.findIndex((call) => call.command.startsWith('docker start '));
+    const storageKeeperRemoveIndex = shell.calls.findIndex((call) => (
+      call.command.startsWith('docker rm -f ') && call.command.includes('-storage')
+    ));
+    expect(storageKeeperRemoveIndex).toBeGreaterThan(mainContainerStartIndex);
     expect(runCommand?.command).not.toContain('transfer-token');
     expect(runCommand?.command).not.toContain('model-secret');
     expect(runCommand?.command).not.toContain('/dev/stdin');
@@ -379,7 +389,9 @@ describe('AgentWorkspaceSessionRuntime', () => {
       maxDirectoryDepth: 16,
       maxOutputBytes: 1024 * 1024,
     });
-    const egressRun = shell.calls.find((call) => call.command.startsWith('docker run --detach'));
+    const egressRun = shell.calls.find((call) => (
+      call.command.startsWith('docker run --detach') && call.command.includes('cds-od-egress-')
+    ));
     const egressEnv = shell.envFiles.find((entry) => entry.command === egressRun?.command);
     expect(egressRun?.command).toContain('--tmpfs /tmp:rw,noexec,nosuid,size=16m,nr_inodes=256');
     expect(egressRun?.command).not.toContain('/dev/stdin');

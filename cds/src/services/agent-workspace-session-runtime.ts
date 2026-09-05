@@ -1146,10 +1146,12 @@ export class AgentWorkspaceSessionRuntime {
     const dataDir = path.join(hostRoot, 'data');
     const suffix = sha256(sessionId).slice(0, 16);
     const containerName = `cds-od-${this.instanceNameScope}-${suffix}`;
+    const storageKeeperName = `${containerName}-storage`;
     const networkName = `cds-od-net-${this.instanceNameScope}-${suffix}`;
     const workspaceVolumeName = `cds-od-ws-${this.instanceNameScope}-${suffix}`;
     const dataVolumeName = `cds-od-data-${this.instanceNameScope}-${suffix}`;
     let containerCreated = false;
+    let storageKeeperCreated = false;
     let networkCreated = false;
     const createdVolumes: string[] = [];
     try {
@@ -1213,6 +1215,50 @@ export class AgentWorkspaceSessionRuntime {
         if (volume.exitCode !== 0) {
           throw new AgentWorkspaceRuntimeError('workspace_volume_create_failed', 'could not create Agent workspace volume', true);
         }
+      }
+      // A local-driver tmpfs volume is unmounted when its last consumer exits.
+      // Copying into a stopped container and then running a short init helper
+      // can therefore lose both bytes and ownership before the real container
+      // starts. Keep both mounts alive across copy, chown and startup; once the
+      // main container is running it becomes the volume consumer and this
+      // helper can be removed without remounting the tmpfs.
+      storageKeeperCreated = true;
+      const storageKeeper = await this.shell.exec([
+        'docker run --detach',
+        '--pull never',
+        `--name ${shellQuote(storageKeeperName)}`,
+        '--restart no',
+        '--network none',
+        '--read-only',
+        '--security-opt no-new-privileges:true',
+        '--cap-drop ALL',
+        '--user 0:0',
+        '--pids-limit 16',
+        '--memory 32m',
+        '--cpus 0.05',
+        `--label ${shellQuote('cds.managed=true')}`,
+        `--label ${shellQuote('cds.type=agent-session')}`,
+        `--label ${shellQuote(`cds.instance=${this.instanceId}`)}`,
+        `--label ${shellQuote(`cds.agent.session=${sessionId}`)}`,
+        `--mount ${shellQuote(`type=volume,src=${workspaceVolumeName},dst=/workspace,volume-nocopy`)}`,
+        `--mount ${shellQuote(`type=volume,src=${dataVolumeName},dst=/app/.od,volume-nocopy`)}`,
+        '--entrypoint /bin/sh',
+        shellQuote(this.image),
+        '-c',
+        shellQuote('while :; do sleep 300; done'),
+      ].join(' '), { timeout: 30_000 });
+      if (storageKeeper.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_volume_keeper_start_failed',
+          'Agent workspace storage mount could not be held during initialization',
+          true,
+          {
+            stage: 'docker_volume_keeper',
+            exitCode: storageKeeper.exitCode,
+            stderrPreview: runtimeDiagnosticPreview(storageKeeper.stderr, [storageKeeperName]),
+            stdoutPreview: runtimeDiagnosticPreview(storageKeeper.stdout, [storageKeeperName]),
+          },
+        );
       }
       const daemonApiToken = crypto.randomBytes(32).toString('hex');
       const env = [
@@ -1323,6 +1369,8 @@ export class AgentWorkspaceSessionRuntime {
       if (startedContainer.exitCode !== 0) {
         throw new AgentWorkspaceRuntimeError('workspace_container_start_failed', 'OpenDesign container failed to start', true);
       }
+      await this.removeContainer(storageKeeperName);
+      storageKeeperCreated = false;
       const preparedDesignTemplate = await this.shell.exec([
         'docker exec',
         shellQuote(containerName),
@@ -1403,13 +1451,16 @@ export class AgentWorkspaceSessionRuntime {
       };
     } catch (error) {
       const cleanupErrors: string[] = [];
-      let remainingContainerName = containerCreated ? containerName : undefined;
+      const remainingContainerNames = new Set([
+        ...(containerCreated ? [containerName] : []),
+        ...(storageKeeperCreated ? [storageKeeperName] : []),
+      ]);
       let remainingNetworkName = networkCreated ? networkName : undefined;
       const remainingVolumeNames = new Set(createdVolumes);
       let remainingHostRoot: string | undefined = hostRoot;
-      if (containerCreated) {
-        await this.removeContainer(containerName)
-          .then(() => { remainingContainerName = undefined; })
+      for (const allocatedContainerName of [...remainingContainerNames]) {
+        await this.removeContainer(allocatedContainerName)
+          .then(() => { remainingContainerNames.delete(allocatedContainerName); })
           .catch((cleanupError) => {
             cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
           });
@@ -1440,7 +1491,7 @@ export class AgentWorkspaceSessionRuntime {
           kind: 'partial-cleanup',
           sessionId,
           ...(remainingHostRoot ? { hostRoot: remainingHostRoot } : {}),
-          containerNames: remainingContainerName ? [remainingContainerName] : [],
+          containerNames: [...remainingContainerNames],
           ...(remainingNetworkName ? { networkName: remainingNetworkName } : {}),
           volumeNames: [...remainingVolumeNames],
           onCleanupSettled: onExpired,
