@@ -161,13 +161,13 @@ public class MdToPptAnchorTests
             "terminal",
             "slide terminal",
             "终端版式",
-            "<section class=\"slide terminal\"><div>hermes run &quot;refactor auth module to use pkce&quot;</div><footer>14k tokens · $0.21</footer></section>");
+            "<section class=\"slide terminal\"><div><span>hermes</span><span>lewis</span></div><footer>14k tokens · $0.21</footer></section>");
         var page = new MdToPptOutlinePageDto
         {
             Title = "统一工作区",
             Bullets = new List<string> { "知识文件只读挂载", "产物写入输出目录" },
         };
-        var generated = "<section class=\"slide terminal\"><h1>统一工作区</h1><div>hermes run &quot;refactor auth module to use pkce&quot;</div></section>";
+        var generated = "<section class=\"slide terminal\"><h1>统一工作区</h1><div><span>hermes</span><span>lewis</span></div></section>";
 
         Assert.True(MdToPptController.ContainsAnchorSampleResidue(generated, layout, page, "OpenDesign", "共享工作区"));
     }
