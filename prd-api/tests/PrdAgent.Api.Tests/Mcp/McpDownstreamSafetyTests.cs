@@ -33,7 +33,9 @@ public class McpDownstreamSafetyTests
     [InlineData("delete", "/api/anything", true)]
     [InlineData("POST", "/api/web-pages/batch-delete", true)]
     [InlineData("POST", "/api/things/purge", true)]
-    [InlineData("POST", "/api/web-pages/publish", false)]
+    [InlineData("POST", "/api/open/web-pages/pages", false)]
+    // 承诺的另一半：登记一条 POST .../publish 同样收不回来
+    [InlineData("POST", "/api/literary-agent/prompts/p1/publish", true)]
     [InlineData("GET", "/api/web-pages", false)]
     [InlineData("POST", "", false)]
     public void 破坏性登记接口认得出来(string method, string path, bool destructive)
@@ -56,7 +58,7 @@ public class McpDownstreamSafetyTests
             + "而向导底部对用户写的是「删除这类收不回来的动作一律不开放」");
 
         del.HttpMethod = "POST";
-        del.Path = "/api/web-pages/publish";
+        del.Path = "/api/open/web-pages/pages";
         McpGatewayController.DynamicToolVisible(del, scopes, "u1").ShouldBeTrue("挡过宽会把正常的写入接口一起关掉");
 
         // 方法是 POST、路径却在删东西 —— 登记表收任意路径，只认方法挡不住它

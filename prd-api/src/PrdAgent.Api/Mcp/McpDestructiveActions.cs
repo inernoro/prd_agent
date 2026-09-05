@@ -38,18 +38,44 @@ public static class McpDestructiveActions
         "batch-delete", "bulk-delete", "delete-all", "purge",
     };
 
+    /// <summary>
+    /// 承诺的另一半：公开发布。
+    ///
+    /// 向导对用户的原话是「删除、<b>公开发布</b>这类收不回来的动作一律不给」，而上一版
+    /// 只兑现了「删除」那半句 —— 持 <c>literary:write</c> 的钥匙照样能打
+    /// <c>POST /api/literary-agent/prompts/&#123;id&#125;/publish</c> 把主人的提示词公开出去。
+    /// 撤下来不难，已经被别人看见/抄走的那部分收不回来，所以它跟删除同档。
+    ///
+    /// 认「最后一段是 publish，或以 -publish 收尾」两种形状：后者是本仓库真实存在的
+    /// <c>creative-publish</c> 这类命名，不是臆想的同义词。<c>unpublish</c> 没有连字符，
+    /// 落不进这条 —— 撤回本来就该放行。
+    ///
+    /// 内置工具没有一条路径落在这里：网页托管发布走的是
+    /// <c>POST /api/open/web-pages/pages</c>（最后一段是 pages），分享链走 <c>/share</c>
+    /// 且按工具说明只对本人与团队可见，都不受影响。
+    /// </summary>
+    private static bool IsPublicPublishSegment(string last)
+        => string.Equals(last, "publish", StringComparison.OrdinalIgnoreCase)
+           || last.EndsWith("-publish", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>这一次请求要不要挡下来。</summary>
     public static bool IsDestructiveRequest(string? httpMethod, string? path)
     {
         if (IsDestructiveMethod(httpMethod)) return true;
         if (string.IsNullOrWhiteSpace(path)) return false;
 
-        var trimmed = path.TrimEnd('/');
-        var slash = trimmed.LastIndexOf('/');
-        var last = slash >= 0 ? trimmed[(slash + 1)..] : trimmed;
-        // 查询串不该混进段名（/x/batch-delete?dry=1）
-        var q = last.IndexOf('?');
-        if (q >= 0) last = last[..q];
+        // 顺序要紧：先摘查询串与锚点，再去尾斜杠。反过来写的话
+        // `/api/web-pages/batch-delete/?dry=1` 的最后一段会被切成 `?dry=1`，
+        // 一个尾斜杠就把整条从门下放过去了。
+        var normalized = path;
+        var cut = normalized.IndexOfAny(new[] { '?', '#' });
+        if (cut >= 0) normalized = normalized[..cut];
+        normalized = normalized.TrimEnd('/');
+
+        var slash = normalized.LastIndexOf('/');
+        var last = slash >= 0 ? normalized[(slash + 1)..] : normalized;
+
+        if (IsPublicPublishSegment(last)) return true;
 
         foreach (var seg in DestructiveLastSegments)
             if (string.Equals(last, seg, StringComparison.OrdinalIgnoreCase))

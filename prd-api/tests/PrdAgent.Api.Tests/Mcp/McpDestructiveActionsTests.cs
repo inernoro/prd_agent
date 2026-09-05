@@ -37,6 +37,11 @@ public class McpDestructiveActionsTests
     [InlineData("DELETE", "/api/document-store/stores/s1")]
     [InlineData("POST", "/api/web-pages/batch-delete")]
     [InlineData("POST", "/api/web-pages/batch-delete/")]
+    // 承诺的另一半：公开发布。上一版只兑现了「删除」那半句。
+    [InlineData("POST", "/api/literary-agent/prompts/p1/publish")]
+    [InlineData("POST", "/api/watermarks/w1/publish")]
+    [InlineData("PUT", "/api/ai-toolbox/items/i1/publish")]
+    [InlineData("POST", "/api/document-store/entries/e1/creative-publish")]
     public void 真实的破坏性请求都挡得住(string method, string path)
         => McpDestructiveActions.IsDestructiveRequest(method, path).ShouldBeTrue(
             customMessage: $"{method} {path} 没挡住 —— 接入向导承诺过删除不开放给智能体");
@@ -47,18 +52,35 @@ public class McpDestructiveActionsTests
     /// </summary>
     [Theory]
     [InlineData("GET", "/api/web-pages/deleted-items")]
-    [InlineData("POST", "/api/web-pages/publish")]
     [InlineData("GET", "/api/document-store/stores/s1")]
     [InlineData("POST", "/api/mcp")]
     [InlineData("POST", "/api/web-pages/batch-delete-preview")]
+    // 内置的「网页托管发布」走的是这条 —— 最后一段是 pages，不该被公开发布那半句误伤
+    [InlineData("POST", "/api/open/web-pages/pages")]
+    // 分享链按工具说明只对本人与团队可见，不是公开发布
+    [InlineData("POST", "/api/open/web-pages/pages/s1/share")]
+    // 撤回是把东西收回来，本来就该放行
+    [InlineData("POST", "/api/literary-agent/prompts/p1/unpublish")]
     public void 正常请求不被误挡(string method, string path)
         => McpDestructiveActions.IsDestructiveRequest(method, path).ShouldBeFalse(
             customMessage: $"{method} {path} 被误挡了");
 
-    [Fact]
-    public void 查询串不混进段名()
-        => McpDestructiveActions.IsDestructiveRequest("POST", "/api/web-pages/batch-delete?dry=1")
-            .ShouldBeTrue(customMessage: "带查询串就绕过了这道门");
+    /// <summary>
+    /// 规范化的**顺序**：先摘查询串/锚点，再去尾斜杠。
+    ///
+    /// 反过来写也能过掉最朴素的那条（<c>/batch-delete?dry=1</c>），但尾斜杠一加就露馅：
+    /// <c>/batch-delete/?dry=1</c> 去完尾斜杠什么都没少，最后一段被切成 <c>?dry=1</c>，
+    /// 整条从门下溜过去。两句都在、编译过、单条用例还是绿的 —— 只有把两种写法凑在一起才现形。
+    /// </summary>
+    [Theory]
+    [InlineData("/api/web-pages/batch-delete?dry=1")]
+    [InlineData("/api/web-pages/batch-delete/?dry=1")]
+    [InlineData("/api/web-pages/batch-delete/?a=1&b=2")]
+    [InlineData("/api/web-pages/batch-delete#frag")]
+    [InlineData("/api/literary-agent/prompts/p1/publish/?force=1")]
+    public void 查询串与尾斜杠凑一起也绕不过去(string path)
+        => McpDestructiveActions.IsDestructiveRequest("POST", path)
+            .ShouldBeTrue(customMessage: $"{path} 绕过了这道门 —— 规范化的顺序反了");
 
     /// <summary>
     /// 两条路都必须走这一处判据。
@@ -81,6 +103,36 @@ public class McpDestructiveActionsTests
         File.Exists(file).ShouldBeTrue(customMessage: $"源码不存在：{file}");
         File.ReadAllText(file).ShouldContain("McpDestructiveActions",
             customMessage: $"{relative} 没走共用判据，自己判 DELETE 就是下一次漂移的起点");
+    }
+
+    /// <summary>
+    /// 直连那道门必须排在**权限扫描的早退之前**。
+    ///
+    /// 上一版把它写在 <c>isAgentKey</c> 分支里，而那整段在
+    /// <c>if (required == null) { await _next(context); return; }</c> 之后 ——
+    /// 只挂 <c>[Authorize(AuthenticationSchemes = "ApiKey")] + [RequireScope]</c>、
+    /// 没有 <c>[AdminController]</c> 标记的控制器，扫描器给不出 required，
+    /// 请求在门开之前就走掉了。判据本身没写错，取值的时刻错了（形状 5）。
+    ///
+    /// 顺序这种事删掉不会红：两段都在、编译过、上面那些用例照样绿，
+    /// 只有真拿 sk-ak 去打一条非 AdminController 的 DELETE 才现形。
+    /// </summary>
+    [Fact]
+    public void 直连那道门排在权限扫描早退之前()
+    {
+        var src = McpSourceGuard.StripComments(
+            McpSourceGuard.Read("prd-api/src/PrdAgent.Api/Middleware/AdminPermissionMiddleware.cs"));
+        var invoke = src.IndexOf("public async Task Invoke(", StringComparison.Ordinal);
+        invoke.ShouldBeGreaterThan(-1, "Invoke 不见了，守卫的锚点要跟着改");
+
+        var body = src[invoke..];
+        var gate = body.IndexOf("McpDestructiveActions.IsDestructiveRequest(", StringComparison.Ordinal);
+        var earlyReturn = body.IndexOf("if (required == null)", StringComparison.Ordinal);
+        gate.ShouldBeGreaterThan(-1, "Invoke 里没有这道门 —— 直连那条路又只剩 scope 一层了");
+        earlyReturn.ShouldBeGreaterThan(-1, "权限扫描的早退不见了，守卫的锚点要跟着改");
+        gate.ShouldBeLessThan(earlyReturn,
+            "这道门排在了 required == null 早退之后 —— 非 AdminController 的控制器根本走不到它，"
+            + "DELETE /api/open/document-store/... 照旧打得通");
     }
 
     /// <summary>

@@ -130,6 +130,27 @@ public sealed class AdminPermissionMiddleware
         var path = context.Request.Path.Value ?? string.Empty;
         var method = context.Request.Method;
 
+        // 收不回来的动作，一律不给智能体 —— 这道门必须排在「这条路要不要 admin 权限」**之前**。
+        //
+        // 上一版把它放在下面的 isAgentKey 分支里，而那整段在 `required == null` 早退之后：
+        // 只挂 [Authorize(AuthenticationSchemes = "ApiKey")] + [RequireScope]、没有
+        // [AdminController] 标记的控制器，扫描器给不出 required，请求在门开之前就走掉了。
+        // DocumentStorePublisherTutorialLinkGraphController 这类恰好就是这种形状，
+        // 于是 DELETE /api/open/document-store/... 照旧打得通 —— 判据没错，取值的时刻错了。
+        var isAgentKey = string.Equals(context.User?.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
+        if (isAgentKey && McpDestructiveActions.IsDestructiveRequest(method, path))
+        {
+            var dip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            _logger.LogWarning("[403] AgentApiKey 破坏性动作被挡 - Path: {Path}, Method: {Method}, IP: {IP}",
+                path, method, dip);
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            context.Response.ContentType = "application/json; charset=utf-8";
+            var blocked = ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                "删除、公开发布这类收不回来的动作不开放给智能体密钥。要做请在界面上操作。");
+            await context.Response.WriteAsync(JsonSerializer.Serialize(blocked, _jsonOptions));
+            return;
+        }
+
         // 使用扫描器获取所需权限
         var required = _scanner.GetRequiredPermission(path, method);
 
@@ -158,29 +179,8 @@ public sealed class AdminPermissionMiddleware
         // AgentApiKey 走"纯 scope"授权，保证最小权限：M2M Key 命中匹配 scope 才放行，
         // 且【绝不】继承 owner 的 admin 权限/root（否则 root 名下的 scoped key 等于全权，最小权限失效）。
         // scope "a:b"（冒号）精确满足 admin 权限 "a.b"（点分），不跨资源泄漏。
-        var isAgentKey = string.Equals(context.User.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
         if (isAgentKey)
         {
-            // 收不回来的动作，一律不给智能体 —— 与网关 /api/mcp 同一处判据。
-            //
-            // 缺了这一道，接入向导那句「删除和公开发布这类收不回来的动作一律不开放」
-            // 只在走网关时成立：拿同一把 sk-ak 直连业务控制器，scope `web-pages:write`
-            // 会被下面的 HasScopeGrant 认成 admin 权限 `web-pages.write`，
-            // 而 DELETE /api/web-pages/{id} 恰恰只要这个权限 —— 钥匙能删掉主人的站点。
-            // 自动档让「签一把钥匙就拿到全部 write scope」成了默认路径，这个缺口因此被放大。
-            if (McpDestructiveActions.IsDestructiveRequest(method, path))
-            {
-                var dip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-                _logger.LogWarning("[403] AgentApiKey 破坏性动作被挡 - Path: {Path}, Method: {Method}, IP: {IP}",
-                    path, method, dip);
-                context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                context.Response.ContentType = "application/json; charset=utf-8";
-                var blocked = ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
-                    "删除这类收不回来的动作不开放给智能体密钥。要删请在界面上操作。");
-                await context.Response.WriteAsync(JsonSerializer.Serialize(blocked, _jsonOptions));
-                return;
-            }
-
             if (HasScopeGrant(context, required) || HasDefectShareScopeGrant(context, required, path, method))
             {
                 // 仅在通过 scope 门禁后，才把 owner 身份(sub)注入到本次请求的 principal，
