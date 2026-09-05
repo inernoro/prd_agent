@@ -51,10 +51,16 @@ export function buildHeadline({ clients, today, recentCalls }: HeadlineInput): H
     };
   }
 
+  // 名单不空、但一台能用的都没有（全停用 / 全过了宽限期）。overview 只把**已作废**的排除掉，
+  // 所以这条分支下 clients 非空而 active 为空，today 里却可能还留着今天早些时候的调用。
+  // 与上一条同一个不变量：今天有过调用，就必须把它说出来 —— 不许有任何一条分支把它吞掉。
   if (active.length === 0) {
     return {
-      verdict: `${clients.length} 台客户端都已经断开了，现在没有智能体能调用你的能力。`,
-      detail: '钥匙作废不影响历史 —— 它们做过什么，切到「它干了什么」仍然逐条看得到。',
+      verdict:
+        calls > 0
+          ? `今天有过 ${calls} 次调用，但 ${clients.length} 台客户端现在都用不了了。`
+          : `${clients.length} 台客户端都已经断开了，现在没有智能体能调用你的能力。`,
+      detail: '钥匙停用或过期不影响历史 —— 它们做过什么，切到「它干了什么」仍然逐条看得到。',
     };
   }
 

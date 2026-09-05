@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupCalls } from '../callGroups';
+import { groupCalls, outcomeOf, soloGroup } from '../callGroups';
 import type { McpCallLogDto } from '@/services/contracts/mcpConsole';
 
 function call(over: Partial<McpCallLogDto>): McpCallLogDto {
@@ -207,5 +207,40 @@ describe('把调用流水折成「一件事一行」', () => {
     const groups = groupCalls([newer, older.poll2, older.enqueue]);
     expect(groups[0].first.toolName).toBe('map_web_publish_page');
     expect(groups[1].steps).toHaveLength(2);
+  });
+});
+
+describe('结局判据（唯一一处，不挂在「多步」上）', () => {
+  const queued = { kind: 'image-run', id: 'run-9', url: null, title: null };
+  const done = { kind: 'image-run', id: 'run-9', url: 'https://x/img.png', title: null };
+
+  it('按结果筛选走 soloGroup 时也走同一个判据 —— 排队中的 run 不许显示成绿色成功', () => {
+    const g = soloGroup(call({ status: 'success', isWrite: false, artifact: queued }));
+    expect(g.status).toBe('pending');
+  });
+
+  it('发起那次落在上一页、这一页只剩一次轮询的单步事件，同样不许当成功', () => {
+    const [g] = groupCalls([call({ status: 'success', isWrite: false, artifact: queued })]);
+    expect(g.multiStep).toBe(false);
+    expect(g.status).toBe('pending');
+  });
+
+  it('产物地址出来了就是真成了', () => {
+    expect(soloGroup(call({ isWrite: false, artifact: done })).status).toBe('success');
+  });
+
+  it('写入的 HTTP 成功就是它的结局，不因为没有地址被说成还没出结果', () => {
+    expect(soloGroup(call({ isWrite: true, artifact: queued })).status).toBe('success');
+  });
+
+  it('判据要窄：不等异步产物的普通读取（列清单、看工作区）问到了就是问到了', () => {
+    const listing = call({ toolName: 'map_web_list_pages', isWrite: false, artifact: null });
+    expect(soloGroup(listing).status).toBe('success');
+    expect(outcomeOf(listing, null)).toBe('success');
+  });
+
+  it('真失败照样是失败，不会被判成还没出结果', () => {
+    expect(soloGroup(call({ status: 'error', isWrite: false, artifact: queued })).status).toBe('error');
+    expect(soloGroup(call({ status: 'denied', isWrite: false, artifact: null })).status).toBe('denied');
   });
 });

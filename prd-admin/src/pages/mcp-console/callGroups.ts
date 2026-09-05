@@ -119,10 +119,7 @@ function toGroup(chronoSteps: McpCallLogDto[]): CallGroup {
     steps.find((s) => !!s.artifact?.id)?.artifact ??
     null;
 
-  // 以查看收尾、又没有产物地址的多步事件：我们只知道「问到了」，不知道那件事跑完没有。
-  // 单步、或以写入收尾的，HTTP 结果就是结局，原样用。
-  const endedOnRead = multiStep && !last.isWrite;
-  const status = endedOnRead && last.status === 'success' && !artifact?.url ? 'pending' : last.status;
+  const status = outcomeOf(last, artifact);
 
   return {
     // id 带上发起那一次的行 id：同一篇文档改两次是两件事，光用产物身份会撞 React key
@@ -139,6 +136,51 @@ function toGroup(chronoSteps: McpCallLogDto[]): CallGroup {
     imageCount: steps.reduce((n, s) => Math.max(n, s.imageCount), 0),
     isWrite: steps.some((s) => s.isWrite),
     // 地址是跑完才有的，所以从最新往回找第一条给得出地址的；都没有就退回带 id 的那条
+    artifact,
+  };
+}
+
+/**
+ * 一件事的结局。
+ *
+ * 轮询那一次的 HTTP 200 只代表「问到了」，不代表那件事跑完了 —— 网关记 `log.Status`
+ * 用的是纯传输层判据（`status is >= 200 and < 300`），生图 run 还在排队甚至已经失败，
+ * `map_visual_get_run` 照样回 200。
+ *
+ * 这个判据必须是**唯一一处**，而且不许挂在「多步」上：
+ * 上一版写成「以查看收尾 && 多步」，于是两个口子漏了 ——
+ * ① 发起那次落在上一页、这一页只剩一次轮询的单步事件；
+ * ② 按结果筛选时整条走 `soloGroup`，根本不经过分组。
+ * 两条路都把排队中的 run 显示成绿色「成功」。（形状 3：判据分裂成多份然后各自漂移）
+ *
+ * 判据本身要窄：只有「在等一个异步产物」的读取才可能是「还没出结果」——
+ * 产物是 image-run 而地址还没有。其它读取（列站点清单、看工作区）问到了就是问到了，
+ * 一律判 pending 会把一整类正常的查询说成没结果。
+ */
+export function outcomeOf(
+  last: McpCallLogDto,
+  artifact: McpCallLogDto['artifact'] | null,
+): CallGroup['status'] {
+  if (last.status !== 'success') return last.status;
+  if (last.isWrite) return 'success';
+  if (artifact?.kind === 'image-run' && !artifact.url) return 'pending';
+  return 'success';
+}
+
+/** 按结果筛选时用：一条流水就是一件事，不折 —— 但结局仍走同一个判据。 */
+export function soloGroup(item: McpCallLogDto): CallGroup {
+  const artifact = item.artifact ?? null;
+  return {
+    id: `row|${item.id}`,
+    steps: [item],
+    first: item,
+    last: item,
+    status: outcomeOf(item, artifact),
+    elapsedMs: item.durationMs,
+    multiStep: false,
+    hasOrigin: item.isWrite,
+    imageCount: item.imageCount,
+    isWrite: item.isWrite,
     artifact,
   };
 }

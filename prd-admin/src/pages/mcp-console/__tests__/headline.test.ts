@@ -145,4 +145,31 @@ describe('接入台第一屏那句判断', () => {
       expect(h.verdict).not.toMatch(/一切正常|整体表现良好|运行良好|状态良好/);
     }
   });
+
+  /**
+   * 不变量（而不是又一条分支的措辞）：今天有过调用，任何一条分支都必须把这个数说出来。
+   *
+   * 这一条是被同一个根因连着抓五次之后加的：合计条按 clients 求和、混合人口满格、
+   * clients 空了抹掉当天活动、把别人的账算到还在的那台头上、名单非空但全不可用又吞掉。
+   * 每次都是补一条分支，然后在下一个边界复发 —— 因为判据分散在各分支里，
+   * 没有任何一处在断言「这件事对所有分支都成立」。所以这里穷举分支形状，钉性质。
+   */
+  it('今天有过调用时，没有任何一条分支能把这个数吞掉', () => {
+    const withCalls = { calls: 47, denied: 0, failed: 0, images: 3, writes: 5 };
+    const shapes: Array<[string, Parameters<typeof buildHeadline>[0]]> = [
+      ['一台都没有（都删了）', { clients: [], today: withCalls, recentCalls: [] }],
+      ['名单非空但全不可用', { clients: [client({ isActive: false }), client({ isActive: false })], today: withCalls, recentCalls: [] }],
+      ['有能用的、全成功', { clients: [client({ isActive: true })], today: withCalls, recentCalls: [] }],
+      ['有能用的、有失败', {
+        clients: [client({ isActive: true })],
+        today: { ...withCalls, denied: 2, failed: 1 },
+        recentCalls: [],
+      }],
+    ];
+    for (const [name, input] of shapes) {
+      const h = buildHeadline(input);
+      expect(`${name}: ${h.verdict} ${h.detail}`).toContain('47');
+    }
+  });
+
 });

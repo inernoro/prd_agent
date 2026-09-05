@@ -4,7 +4,7 @@ import { PrdLoader } from '@/components/ui/PrdLoader';
 import { listMcpCalls } from '@/services';
 import type { McpCallLogDto, McpClientDto } from '@/services/contracts/mcpConsole';
 import { safeArtifactHref } from './artifactHref';
-import { groupCalls, type CallGroup } from './callGroups';
+import { groupCalls, soloGroup, type CallGroup } from './callGroups';
 import { eventClock } from './eventClock';
 
 const STATUS_STYLE: Record<string, { label: string; color: string; bg: string; border: string }> = {
@@ -212,23 +212,6 @@ export function McpCallsPanel({
       )}
     </div>
   );
-}
-
-/** 按结果筛选时用：一条流水就是一件事，不折。 */
-function soloGroup(item: McpCallLogDto): CallGroup {
-  return {
-    id: `row|${item.id}`,
-    steps: [item],
-    first: item,
-    last: item,
-    status: item.status,
-    elapsedMs: item.durationMs,
-    multiStep: false,
-    hasOrigin: item.isWrite,
-    imageCount: item.imageCount,
-    isWrite: item.isWrite,
-    artifact: item.artifact ?? null,
-  };
 }
 
 function EventRow({

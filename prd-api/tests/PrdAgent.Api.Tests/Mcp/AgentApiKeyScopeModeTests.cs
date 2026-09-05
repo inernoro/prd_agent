@@ -145,6 +145,30 @@ public class AgentApiKeyScopeModeTests
     }
 
     /// <summary>
+    /// 用不了的钥匙不许报出任何 scope。
+    ///
+    /// 自动档不存清单、鉴权时现算，好处是不会有一份第二天就对不上的快照；代价是
+    /// 「现算」这个动作本身不看这把钥匙还能不能用。于是一把已作废 / 已停用 / 过了宽限期的
+    /// 钥匙，在密钥管理页会按主人**当前**权限画满授权芯片，而同一页的授权自检回 toolCount=0
+    /// —— 同一个对象在两个视图里说两种话。
+    ///
+    /// 这条接线删掉不会红：去掉 IsUsableAt 那层判断，照样编译、照样全绿。
+    /// </summary>
+    [Fact]
+    public void ToDto_ReportsNoScopes_ForUnusableKey()
+    {
+        var source = ReadSource("src/PrdAgent.Api/Controllers/Api/AgentApiKeysController.cs");
+        var start = source.IndexOf("scopes = ", StringComparison.Ordinal);
+        start.ShouldBeGreaterThan(-1, customMessage: "ToDto 里找不到 scopes 那一行");
+        var slice = source.Substring(start, Math.Min(400, source.Length - start));
+
+        slice.ShouldContain("AgentApiKey.IsUsableAt",
+            customMessage: "用不了的钥匙仍按主人当前权限现算 scope，密钥管理页会给一把调不动任何东西的钥匙画满授权芯片");
+        slice.ShouldContain("EffectiveScopesFor",
+            customMessage: "能用的钥匙仍必须走唯一那处判据，不许在这里另写一套");
+    }
+
+    /// <summary>
     /// 「什么都有」的那个人的权限位。必须带上 access ——
     /// 它是所有功能权限的前置闸（PermissionsAllowScope 里没有 access 一律不算数）。
     /// </summary>
