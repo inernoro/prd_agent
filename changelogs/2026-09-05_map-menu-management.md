@@ -17,3 +17,5 @@
 | fix | prd-admin | 导航 store：服务端主动清空过布局时不再用 sessionStorage 旧布局回填上传，管理员按人重置不会被撤销 |
 | security | prd-api | 全员导航总览接口改为需要 settings.write（或 super），不再仅凭 settings.read 放行 |
 | fix | prd-admin | 实验台模型选择、视觉创作高级页里指向已删「模型管理」的文案改为 LLM Gateway 控制台 |
+| fix | prd-admin | 总览行复演侧栏时，隐藏过滤后落单的分隔横杆收敛掉，与侧栏一致 |
+| fix | prd-api | remove-tokens 的两段破坏性写入不跟随请求取消，管理员断线不会留下半截清理 |

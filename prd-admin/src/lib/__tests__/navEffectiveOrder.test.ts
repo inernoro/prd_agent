@@ -27,6 +27,13 @@ describe('buildEffectiveNavOrder', () => {
     expect(out[0].id).toBe('emergence');
   });
 
+  it('隐藏过滤后落单的分隔符要收敛：开头、连续、结尾的横杆都不出现（与 AppShell 一致）', () => {
+    const out = buildEffectiveNavOrder({ order: ['users', '---', 'settings', '---', 'logs'], hidden: ['users', 'logs'], sidebarIds: [] });
+    expect(out.map((e) => e.token)).toEqual(['settings']);
+    const out2 = buildEffectiveNavOrder({ order: ['ai-toolbox', '---', '---', 'users', '---'], hidden: [], sidebarIds: [] });
+    expect(out2.map((e) => e.token)).toEqual(['ai-toolbox', '---', 'users']);
+  });
+
   it('目录里已不存在的 token 原样保留在原位（总览要把它标成红框）', () => {
     const out = buildEffectiveNavOrder({ order: ['ai-toolbox', 'mds', 'users'], hidden: [], sidebarIds: ['ai-toolbox', 'users'] });
     expect(out.map((e) => e.token)).toEqual(['ai-toolbox', 'mds', 'users']);

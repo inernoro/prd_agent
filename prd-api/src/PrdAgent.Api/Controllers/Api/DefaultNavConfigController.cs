@@ -233,7 +233,9 @@ public class DefaultNavConfigController : ControllerBase
                 config.NavOrder = nextOrder;
                 config.NavHidden = nextHidden;
                 config.UpdatedAt = DateTime.UtcNow;
-                await _db.DefaultNavConfigs.ReplaceOneAsync(x => x.Id == "singleton", config, cancellationToken: ct);
+                // 下面两段写入跨两个集合，管理员断线不能把它切成「默认导航清了、用户偏好没清」的半截：
+                // 破坏性阶段一律不跟随请求取消令牌
+                await _db.DefaultNavConfigs.ReplaceOneAsync(x => x.Id == "singleton", config, cancellationToken: CancellationToken.None);
             }
         }
 
@@ -246,7 +248,7 @@ public class DefaultNavConfigController : ControllerBase
             .PullAll(x => x.NavHidden, tokens)
             .Set(x => x.NavLayoutUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
-        var result = await _db.UserPreferences.UpdateManyAsync(filter, update, cancellationToken: ct);
+        var result = await _db.UserPreferences.UpdateManyAsync(filter, update, cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<RemoveNavTokensResponse>.Ok(new RemoveNavTokensResponse
         {

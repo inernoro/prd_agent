@@ -39,7 +39,20 @@ export function buildEffectiveNavOrder(args: {
     seen.add(id);
     result.push({ token: id, id, auto: true });
   }
-  return result;
+  return collapseDividerEntries(result);
+}
+
+/** 与 AppShell 一致：段里没攒到可见项就不出横杆——去掉开头、连续、结尾的分隔符（隐藏过滤后常见） */
+function collapseDividerEntries(entries: EffectiveNavEntry[]): EffectiveNavEntry[] {
+  const out: EffectiveNavEntry[] = [];
+  for (const e of entries) {
+    if (e.token === NAV_DIVIDER_KEY) {
+      if (out.length === 0 || out[out.length - 1].token === NAV_DIVIDER_KEY) continue;
+    }
+    out.push(e);
+  }
+  while (out.length > 0 && out[out.length - 1].token === NAV_DIVIDER_KEY) out.pop();
+  return out;
 }
 
 /**
