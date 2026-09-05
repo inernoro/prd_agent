@@ -156,6 +156,31 @@ public sealed class DesignArtifactWorkspaceContractTests
     }
 
     [Fact]
+    public void InputPackageRemovesOnlyMapDeliveryWrappersFromEditablePage()
+    {
+        var run = BuildRun();
+        const string html = """
+            <!doctype html><html><head>
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'">
+            <script data-cds-offline-guard>addEventListener('click', block, true)</script>
+            </head><body><main>真实页面</main>
+            <script>window.location.hash = '#kept-for-output-review'</script>
+            <!--map-slide-nav-compat--><script>window.location.pathname</script>
+            </body></html>
+            """;
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, html);
+        var current = Assert.Single(package.Files, file => file.Path == "current/index.html");
+        var editableHtml = Encoding.UTF8.GetString(Convert.FromBase64String(current.ContentBase64));
+
+        Assert.DoesNotContain("map-slide-nav-compat", editableHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("data-cds-offline-guard", editableHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Content-Security-Policy", editableHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("真实页面", editableHtml, StringComparison.Ordinal);
+        Assert.Contains("window.location.hash", editableHtml, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ResultRequiresMatchingRevisionAndVerifiedIndexHtml()
     {
         var run = BuildRun();

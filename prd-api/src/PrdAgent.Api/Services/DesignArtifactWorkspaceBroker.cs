@@ -332,6 +332,18 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
 public static class DesignArtifactWorkspaceContract
 {
     private static readonly Regex SafeSlug = new("[^a-zA-Z0-9._-]+", RegexOptions.Compiled);
+    private static readonly Regex MapSlideNavCompatBlock = new(
+        @"<!--map-slide-nav-compat-->\s*<script\b[^>]*>[\s\S]*?</script\s*>",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex MapSlideNavCompatMarker = new(
+        @"<!--map-slide-nav-compat-->",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex CdsOfflineGuardBlock = new(
+        @"<script\b(?=[^>]*\bdata-cds-offline-guard(?:\s|=|>))[^>]*>[\s\S]*?</script\s*>",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex CdsContentSecurityPolicy = new(
+        @"<meta\b(?=[^>]*http-equiv\s*=\s*([""']?)content-security-policy\1)[^>]*>\s*",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public static DesignWorkspacePackage BuildInputPackage(DesignArtifactRun run, string? currentHtml)
@@ -377,12 +389,26 @@ public static class DesignArtifactWorkspaceContract
             files.Add(ToFile($"knowledge/{index + 1:D2}-{slug}.md", "text/markdown", Encoding.UTF8.GetBytes(markdown)));
         }
         if (!string.IsNullOrWhiteSpace(currentHtml))
-            files.Add(ToFile("current/index.html", "text/html", Encoding.UTF8.GetBytes(currentHtml)));
+        {
+            var editableHtml = NormalizeCurrentHtmlForRemoteEditing(currentHtml);
+            files.Add(ToFile("current/index.html", "text/html", Encoding.UTF8.GetBytes(editableHtml)));
+        }
         return new DesignWorkspacePackage(
             DesignArtifactWorkspaceBroker.SchemaVersion,
             run.Id,
             baseRevision,
             files);
+    }
+
+    internal static string NormalizeCurrentHtmlForRemoteEditing(string html)
+    {
+        // 网页托管会给已发布页面追加 MAP 翻页兼容垫片，CDS 也会给远程产物追加离线守卫与 CSP。
+        // 它们属于交付包装，不属于用户页面源码；编辑工作区先剥离明确带内部标记的包装，回收时再统一加固。
+        // 任意未带这些标记的脚本均保持原样，仍会由 CDS 的产物安全闸门严格审查。
+        var normalized = MapSlideNavCompatBlock.Replace(html, string.Empty);
+        normalized = MapSlideNavCompatMarker.Replace(normalized, string.Empty);
+        normalized = CdsOfflineGuardBlock.Replace(normalized, string.Empty);
+        return CdsContentSecurityPolicy.Replace(normalized, string.Empty);
     }
 
     public static ParsedDesignWorkspaceResult ParseAndValidateResult(
