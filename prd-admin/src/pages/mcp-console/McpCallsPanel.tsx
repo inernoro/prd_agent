@@ -121,6 +121,13 @@ export function McpCallsPanel({
     return items.map(soloGroup).filter((g) => g.status === status);
   }, [items, status]);
 
+  // 服务端按纯 HTTP 结果分页取 50 条，这一道语义过滤发生在**取完之后**。
+  // 极端情况下最新 50 条「HTTP 成功」全是排队中的轮询，选「成功」就会得到一个空列表 ——
+  // 而更早确实有成功过的记录，这一屏却一个字都不说，看起来像功能坏了。
+  // 不去改成「一直取到凑够 N 条」：那要么把分页语义搬到前端，要么让服务端认识业务状态，
+  // 都是新的语义类别。这里只保证**不沉默**：把被滤掉的条数如实说出来，并指到看得见它们的地方。
+  const filteredOut = status ? items.length - groups.length : 0;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       {/* 筛选 */}
@@ -159,7 +166,9 @@ export function McpCallsPanel({
         </select>
         <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
           {status
-            ? `共 ${total} 次调用，这一档里最近 ${groups.length} 条`
+            ? `共 ${total} 次调用，这一档里最近 ${groups.length} 条${
+                filteredOut > 0 ? `（另有 ${filteredOut} 条按传输结果算成功、但产物还没出来，在「全部结果」里看）` : ''
+              }`
             : `最近 ${items.length} 次调用折成 ${groups.length} 件事（共 ${total} 次）`}
         </span>
       </div>

@@ -144,6 +144,12 @@ public class McpConsoleController : ControllerBase
                 ? new List<object>()
                 : MissingCapabilitiesOf(k, ownedPermissions),
             isActive = AgentApiKey.IsUsableAt(k, nowUtc, out _),
+            // 这份名单一开始就把 RevokedAt 非空的滤掉了（见上面的 allKeys.Where），
+            // 所以出现在这里而又不可用的，只可能是「停用」或「过了宽限期」——两种都还救得回来。
+            // 界面上原本一律写「已作废」，那是不可逆的意思，会让用户白白重接一台。
+            unusableReason = AgentApiKey.IsUsableAt(k, nowUtc, out _)
+                ? (string?)null
+                : !k.IsActive ? "disabled" : "expired",
             expiresAt = k.ExpiresAt,
             lastUsedAt = k.LastUsedAt,
             todayCalls = tally.ByKey.TryGetValue(k.Id, out var keyCalls) ? keyCalls : 0,

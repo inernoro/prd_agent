@@ -47,6 +47,11 @@ export interface McpClientDto {
    */
   missingCapabilities: Array<{ key: string; title: string }>;
   isActive: boolean;
+  /**
+   * 不可用的原因。名单里不会出现已吊销的钥匙（服务端先按 RevokedAt 滤过），
+   * 所以不可用只可能是这两种，而且两种都还救得回来 —— 不能一律说成「已作废」。
+   */
+  unusableReason?: 'disabled' | 'expired' | null;
   expiresAt?: string | null;
   lastUsedAt?: string | null;
   todayCalls: number;
