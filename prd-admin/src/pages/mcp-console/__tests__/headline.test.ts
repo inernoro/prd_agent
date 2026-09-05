@@ -49,7 +49,7 @@ function today(over: Partial<NonNullable<HeadlineInput['today']>> = {}) {
 
 describe('接入台第一屏那句判断', () => {
   it('一台都没接：说清下一步，不摆数字', () => {
-    const h = buildHeadline({ clients: [], today: today(), recentCalls: [] });
+    const h = buildHeadline({ clients: [], today: today(), recentCalls: [], hasHistory: false });
     expect(h.verdict).toContain('还没有客户端');
     expect(h.detail).toContain('接入新的');
   });
@@ -61,7 +61,10 @@ describe('接入台第一屏那句判断', () => {
     const h = buildHeadline({
       clients: [],
       today: today(),
-      recentCalls: [log({ createdAt: '2026-09-04T15:01:00.000Z' })],
+      // 关键：recentCalls 也是空的 —— overview 的这份走 TodayFilter，今天没调用就没有。
+      // 上一版拿它当「有没有过历史」的判据，等于这个分支根本没改。
+      recentCalls: [],
+      hasHistory: true,
     });
     expect(h.verdict).not.toContain('还没有客户端接进来');
     expect(h.verdict).toContain('没连着');
@@ -71,7 +74,7 @@ describe('接入台第一屏那句判断', () => {
   it('撤掉最后一把钥匙之后，不许把当天的活动一起抹掉', () => {
     // clients 空了但 today 还留着它的调用 —— 先看 today 再看名单。
     // 反过来会把「今天用过、刚断开」说成「还没有客户端接进来」。
-    const h = buildHeadline({ clients: [], today: today({ calls: 31, images: 4 }), recentCalls: [] });
+    const h = buildHeadline({ clients: [], today: today({ calls: 31, images: 4 }), recentCalls: [], hasHistory: true });
     expect(h.verdict).toContain('31 次');
     expect(h.verdict).not.toContain('还没有客户端接进来');
   });
@@ -80,14 +83,14 @@ describe('接入台第一屏那句判断', () => {
     const h = buildHeadline({
       clients: [client({ isActive: false }), client({ keyId: 'k2', isActive: false })],
       today: today(),
-      recentCalls: [],
+      recentCalls: [], hasHistory: true,
     });
     expect(h.verdict).toContain('2 台');
     expect(h.verdict).toContain('断开');
   });
 
   it('接着但今天没动过：不说成失败', () => {
-    const h = buildHeadline({ clients: [client()], today: today(), recentCalls: [] });
+    const h = buildHeadline({ clients: [client()], today: today(), recentCalls: [], hasHistory: true });
     expect(h.verdict).toContain('一次都还没调过');
   });
 
@@ -95,7 +98,7 @@ describe('接入台第一屏那句判断', () => {
     const h = buildHeadline({
       clients: [client()],
       today: today({ calls: 47, images: 12, writes: 9 }),
-      recentCalls: [log()],
+      recentCalls: [log()], hasHistory: true,
     });
     expect(h.verdict).toContain('47 次');
     expect(h.detail).toContain('12 张');
@@ -118,7 +121,7 @@ describe('接入台第一屏那句判断', () => {
     const h = buildHeadline({
       clients: [client()],
       today: today({ calls: 20, denied: 3, failed: 1 }),
-      recentCalls: [],
+      recentCalls: [], hasHistory: true,
     });
     expect(h.verdict).toContain('3 次被挡下');
     expect(h.verdict).toContain('1 次执行失败');
@@ -128,7 +131,7 @@ describe('接入台第一屏那句判断', () => {
     const h = buildHeadline({
       clients: [client()],
       today: today({ calls: 20, failed: 1 }),
-      recentCalls: [log({ status: 'error', errorMessage: '模型被下架了' })],
+      recentCalls: [log({ status: 'error', errorMessage: '模型被下架了' })], hasHistory: true,
     });
     expect(h.detail).toContain('模型被下架了');
   });
@@ -137,7 +140,7 @@ describe('接入台第一屏那句判断', () => {
     const h = buildHeadline({
       clients: [client()],
       today: today({ calls: 20, failed: 1 }),
-      recentCalls: [log({ status: 'success' })],
+      recentCalls: [log({ status: 'success' })], hasHistory: true,
     });
     expect(h.detail).toContain('它干了什么');
   });
@@ -148,8 +151,8 @@ describe('接入台第一屏那句判断', () => {
     // 「1 台客户端今天替你调了 47 次」是把别人的账算到它头上。
     // 这一类在这块面板上出过四次，所以钉的是「整类不许出现」，不是某个分支的措辞。
     const cases: HeadlineInput[] = [
-      { clients: [client()], today: today({ calls: 47, images: 12 }), recentCalls: [log()] },
-      { clients: [client()], today: today({ calls: 47, denied: 3 }), recentCalls: [] },
+      { clients: [client()], today: today({ calls: 47, images: 12 }), recentCalls: [log()], hasHistory: true },
+      { clients: [client()], today: today({ calls: 47, denied: 3 }), recentCalls: [], hasHistory: true },
     ];
     for (const input of cases) {
       const h = buildHeadline(input);
@@ -160,9 +163,9 @@ describe('接入台第一屏那句判断', () => {
   it('有调用时判断句必须挂着数字，不许出现放到任何账号都成立的空话', () => {
     // 「整体表现良好」这类句子放到任何账号都成立，等于没说（conclusion-before-numbers）
     const cases: HeadlineInput[] = [
-      { clients: [client()], today: today({ calls: 5 }), recentCalls: [log()] },
-      { clients: [client()], today: today({ calls: 5, failed: 5 }), recentCalls: [] },
-      { clients: [client()], today: today({ calls: 5, denied: 2 }), recentCalls: [] },
+      { clients: [client()], today: today({ calls: 5 }), recentCalls: [log()], hasHistory: true },
+      { clients: [client()], today: today({ calls: 5, failed: 5 }), recentCalls: [], hasHistory: true },
+      { clients: [client()], today: today({ calls: 5, denied: 2 }), recentCalls: [], hasHistory: true },
     ];
     for (const input of cases) {
       const h = buildHeadline(input);
@@ -182,13 +185,13 @@ describe('接入台第一屏那句判断', () => {
   it('今天有过调用时，没有任何一条分支能把这个数吞掉', () => {
     const withCalls = { calls: 47, denied: 0, failed: 0, images: 3, writes: 5 };
     const shapes: Array<[string, Parameters<typeof buildHeadline>[0]]> = [
-      ['一台都没有（都删了）', { clients: [], today: withCalls, recentCalls: [] }],
-      ['名单非空但全不可用', { clients: [client({ isActive: false }), client({ isActive: false })], today: withCalls, recentCalls: [] }],
-      ['有能用的、全成功', { clients: [client({ isActive: true })], today: withCalls, recentCalls: [] }],
+      ['一台都没有（都删了）', { clients: [], today: withCalls, recentCalls: [], hasHistory: true }],
+      ['名单非空但全不可用', { clients: [client({ isActive: false }), client({ isActive: false })], today: withCalls, recentCalls: [], hasHistory: true }],
+      ['有能用的、全成功', { clients: [client({ isActive: true })], today: withCalls, recentCalls: [], hasHistory: true }],
       ['有能用的、有失败', {
         clients: [client({ isActive: true })],
         today: { ...withCalls, denied: 2, failed: 1 },
-        recentCalls: [],
+        recentCalls: [], hasHistory: true,
       }],
     ];
     for (const [name, input] of shapes) {

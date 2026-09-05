@@ -65,3 +65,5 @@
 | fix | prd-admin | 判断句分得出「从来没接过」和「现在没连着了」——昨天用过、今天之前被撤销的钥匙会让 clients 空且 today.calls 为 0，上一版据此说「还没有客户端接进来」，而它的记录还在「它干了什么」里躺着；用现成的 recentCalls（按条数取最近 N 次、天然跨天）判断，不改后端契约 |
 | fix | prd-admin | 方位守卫从只扫 `McpConsolePage.tsx` 扩到扫整个 mcp-console 目录——上一版加这条守卫的同一个提交里，`headline.ts` 还留着两处「右上角」原样没改，因为守卫只盯着我刚改的那个文件（predicate-and-wiring-discipline 形状 7：守卫自己没接上线）；现在新增文件自动进扫描范围 |
 | test | prd-admin | 调用记录分组的三条用例不再在失败行上造 artifact——后端 `RecordFinishedAsync` 的 error 分支只写 ErrorMessage、不调 `ApplyArtifact`，失败行的产物列恒为空；我用后端不可能产生的数据测了分组，绿了也说明不了什么。按真实形状造之后暴露出：一次生图的入队与它那次失败的轮询会落成两件互不相关的事（实测分组数 2，应为 1）。根因在后端记录侧，属新增语义类别，本轮只用 `it.fails` 锁定期望行为（修好后会因「意外通过」而红），台账 #32 |
+| fix | prd-api | overview 新增 `hasHistory`：服务端不带时间下界查一次「这个人有没有过任何调用」。面板其余数字全按 UTC 自然日切，而「从来没接过」是一句关于全部历史的话 |
+| fix | prd-admin | 判断句改用 `hasHistory` 判「从来没接过」——上一版拿 overview 的 `recentCalls` 非空代替，理由写的是「它按条数取最近 N 次、天然跨天」，**那是错的**：它同样走 `TodayFilter`，今天没调用时必然为空，那个分支等于没改。跨天的那份是「它干了什么」端点（`listMcpCalls`），与这里同名不同义（台账 #33）。旧后端不回这个字段时缺省当「有过」——宁可少说一句引导，不要把真实历史说成从来没有 |

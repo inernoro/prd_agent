@@ -102,6 +102,11 @@ export default function McpConsolePage() {
         clients,
         today: overview?.today ?? null,
         recentCalls: overview?.recentCalls ?? [],
+        // 灰度期间新旧后端会同时在跑（分支预览共用一个前端构建），旧的那版不回这个字段。
+        // 缺省取 false 会让「有过历史」的账号被说成「还没有客户端接进来」——
+        // 而这一支正是本条要修的那句谎。缺省当「有过」：宁可少说一句引导，
+        // 不要把一段真实历史说成从来没有。
+        hasHistory: overview?.hasHistory ?? true,
       }),
     [clients, overview],
   );

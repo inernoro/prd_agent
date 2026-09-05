@@ -90,6 +90,14 @@ export interface McpCallLogDto {
 
 export interface McpConsoleOverviewDto {
   endpointUrl: string;
+  /**
+   * 这个人**有没有过**任何一次调用 —— 不带时间下界，与下面所有「今天」的数字不同源。
+   *
+   * 「今天没调用」不等于「从来没接过」：一把昨天用过、今天之前被撤销的钥匙会让
+   * clients 空、today 全零。别拿 recentCalls 代替它 —— 那份同样按今天切，
+   * 今天没调用时必然为空（跨天的那份在「它干了什么」那个端点）。
+   */
+  hasHistory: boolean;
   capabilities: McpCapabilityDto[];
   clients: McpClientDto[];
   today: {

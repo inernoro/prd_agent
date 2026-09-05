@@ -10,6 +10,8 @@ export interface HeadlineInput {
     failed: number;
   } | null;
   recentCalls: McpCallLogDto[];
+  /** 有没有过任何一次调用（全部历史，不是今天）—— 见 McpConsoleOverviewDto.hasHistory */
+  hasHistory: boolean;
 }
 
 export interface Headline {
@@ -30,7 +32,7 @@ export interface Headline {
  *   2. 算不出来就不出那句。没有失败明细时说「在「它干了什么」里逐条能看」，不编一个原因。
  *   3. 「被挡下」与「执行失败」是两件事，下一步完全不同（去开权限 / 去重试），不能合成一句。
  */
-export function buildHeadline({ clients, today, recentCalls }: HeadlineInput): Headline {
+export function buildHeadline({ clients, today, recentCalls, hasHistory }: HeadlineInput): Headline {
   const active = clients.filter((c) => c.isActive);
 
   const calls = today?.calls ?? 0;
@@ -42,9 +44,13 @@ export function buildHeadline({ clients, today, recentCalls }: HeadlineInput): H
     if (calls === 0) {
       // 「今天没调用」不等于「从来没接过」：昨天用过、今天之前被撤销的钥匙
       // 会让 clients 空、today.calls 为 0，而它的记录还在「它干了什么」里躺着。
-      // 不必为此改后端契约 —— recentCalls 本来就是按条数取最近 N 次、天然跨天的，
-      // 它非空就说明历史上真接过（跨天显示正是 eventClock 存在的理由）。
-      if (recentCalls.length === 0) {
+      //
+      // 判据必须是 hasHistory（服务端不带时间下界查一次）。上一版拿 recentCalls
+      // 顶替，理由写的是「它按条数取最近 N 次、天然跨天」—— **那是错的**：
+      // overview 的 recentCalls 走 TodayFilter，今天没调用时必然为空，
+      // 这个分支等于没改。跨天的那份是「它干了什么」那个端点（listMcpCalls），
+      // 与这里同名不同义。
+      if (!hasHistory) {
         return {
           verdict: '还没有客户端接进来。',
           detail: '点这一页顶上那行的「接入新的」：起个名字、复制一段配置粘进 Claude Code 或 Codex，两分钟就能连上。',

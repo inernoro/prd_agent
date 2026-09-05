@@ -80,6 +80,8 @@ public class McpConsoleController : ControllerBase
         // 十几分钟就能超过任何截断阈值，之后面板会系统性少报。列表只取要展示的那几条。
         var tally = await TodayTallyAsync(userId, since, ct);
         var recentLogs = await RecentLogsAsync(userId, since, 5, ct);
+        // 「今天没调用」不等于「从来没接过」，而上面这几个数全是今天的
+        var hasHistory = await HasAnyHistoryAsync(userId, ct);
 
         var capabilities = McpCapabilityCatalog.All.Select(cap =>
         {
@@ -177,6 +179,7 @@ public class McpConsoleController : ControllerBase
                 denied = tally.ByStatus.TryGetValue("denied", out var denied) ? denied : 0,
                 failed = tally.ByStatus.TryGetValue("error", out var failed) ? failed : 0,
             },
+            hasHistory,
             recentCalls = recentLogs.Select(ToLogDto),
         }));
     }
@@ -367,6 +370,26 @@ public class McpConsoleController : ControllerBase
         IReadOnlyDictionary<string, long> ByStatus,
         IReadOnlyDictionary<string, long> ByKey,
         IReadOnlyDictionary<string, long> ByCapability);
+
+    /// <summary>
+    /// 这个人在这套部署上**有没有过**任何一次调用 —— 不带时间下界。
+    ///
+    /// 面板上其余数字都按 UTC 自然日切，而「从来没接过」是一句关于**全部历史**的话：
+    /// 一把昨天用过、今天之前被撤销的钥匙会让 clients 空、today 全零，
+    /// 照着今天的数据说「还没有客户端接进来」，等于把一段真实历史说成从来没有。
+    ///
+    /// 前端一度想用 overview 的 recentCalls 代替这个判据 —— 那是错的，
+    /// 它同样走 TodayFilter，今天没调用时必然为空。跨天的那份是「它干了什么」
+    /// 那个端点（listMcpCalls），不是这里。两个数据源同名不同义，别再混。
+    /// </summary>
+    private async Task<bool> HasAnyHistoryAsync(string userId, CancellationToken ct)
+    {
+        var f = Builders<McpCallLog>.Filter;
+        var scoped = f.And(
+            f.Eq(x => x.OwnerUserId, userId),
+            f.Eq(x => x.DeploymentSlug, DeploymentScope.CurrentDurable));
+        return await _db.McpCallLogs.Find(scoped).Limit(1).AnyAsync(ct);
+    }
 
     private FilterDefinition<McpCallLog> TodayFilter(string userId, DateTime since)
     {
