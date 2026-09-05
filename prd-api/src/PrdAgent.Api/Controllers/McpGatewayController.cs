@@ -219,8 +219,13 @@ public class McpGatewayController : ControllerBase
     /// 在那份契约落地之前，列举和调用两处都不给。判据只此一处，两处共用同一个函数 ——
     /// 各写一份的话，早晚出现「列表里看不见、直接按名字调却能打通」。
     /// </summary>
+    /// <remarks>
+    /// 判据本身搬到了 <see cref="McpDestructiveActions"/> —— 直连普通业务控制器那条路
+    /// （AgentApiKey 走 [Authorize] + AdminPermissionMiddleware 的 scope 授权）
+    /// 要用同一处判据，只在网关挡住等于只锁了正门。
+    /// </remarks>
     internal static bool IsDestructiveMethod(string? httpMethod)
-        => string.Equals(httpMethod?.Trim(), "DELETE", StringComparison.OrdinalIgnoreCase);
+        => McpDestructiveActions.IsDestructiveMethod(httpMethod);
 
     internal static JsonObject BuiltinToolToJson(McpToolDef t)
     {

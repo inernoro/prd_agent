@@ -38,12 +38,20 @@ public static class McpArtifactExtractor
         var data = ReadDataObject(responseBody);
         if (data == null) return new Artifact(null, null, null, null);
 
+        // `runId` 只对**视觉工具**意味着「一个还在跑的生图任务」。
+        // 无条件把它映射成 image-run 会坑到登记的动态接口：一个技能执行接口回的是
+        // { runId, userMessageId, assistantMessageId } 而永远没有图片地址，
+        // 于是那次成功的调用被判成 image-run 且无 url —— 接入台把它显示成
+        // 「还没出结果」，而且**永远**不会变，因为压根没有轮询会给它一个地址。
+        // 其余工具的 runId 记成中性的 "run"：身份还在（归并照旧），但不触发那条等产物的判据。
+        var isVisualTool = toolName.StartsWith("map_visual_", StringComparison.OrdinalIgnoreCase);
+
         string? kind = null, id = null;
         foreach (var (key, k) in IdKeys)
         {
             var v = ReadString(data, key);
             if (string.IsNullOrWhiteSpace(v)) continue;
-            kind = k;
+            kind = k == "image-run" && !isVisualTool ? "run" : k;
             id = v;
             break;
         }

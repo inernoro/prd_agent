@@ -6,6 +6,7 @@ using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Api.Mcp;
 
 namespace PrdAgent.Api.Middleware;
 
@@ -160,6 +161,26 @@ public sealed class AdminPermissionMiddleware
         var isAgentKey = string.Equals(context.User.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
         if (isAgentKey)
         {
+            // 收不回来的动作，一律不给智能体 —— 与网关 /api/mcp 同一处判据。
+            //
+            // 缺了这一道，接入向导那句「删除和公开发布这类收不回来的动作一律不开放」
+            // 只在走网关时成立：拿同一把 sk-ak 直连业务控制器，scope `web-pages:write`
+            // 会被下面的 HasScopeGrant 认成 admin 权限 `web-pages.write`，
+            // 而 DELETE /api/web-pages/{id} 恰恰只要这个权限 —— 钥匙能删掉主人的站点。
+            // 自动档让「签一把钥匙就拿到全部 write scope」成了默认路径，这个缺口因此被放大。
+            if (McpDestructiveActions.IsDestructiveRequest(method, path))
+            {
+                var dip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                _logger.LogWarning("[403] AgentApiKey 破坏性动作被挡 - Path: {Path}, Method: {Method}, IP: {IP}",
+                    path, method, dip);
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                context.Response.ContentType = "application/json; charset=utf-8";
+                var blocked = ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                    "删除这类收不回来的动作不开放给智能体密钥。要删请在界面上操作。");
+                await context.Response.WriteAsync(JsonSerializer.Serialize(blocked, _jsonOptions));
+                return;
+            }
+
             if (HasScopeGrant(context, required) || HasDefectShareScopeGrant(context, required, path, method))
             {
                 // 仅在通过 scope 门禁后，才把 owner 身份(sub)注入到本次请求的 principal，

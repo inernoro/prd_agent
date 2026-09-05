@@ -141,6 +141,36 @@ public class McpArtifactExtractorTests
     }
 
     /// <summary>
+    /// `runId` 只对视觉工具意味着生图任务。
+    ///
+    /// 登记的动态接口（例如技能执行）回的是 { runId, userMessageId, assistantMessageId }
+    /// 而永远没有图片地址 —— 无条件映射成 image-run 的话，那次**成功**的调用会被
+    /// 接入台判成「还没出结果」，且永远不会变：没有任何轮询会给它一个地址。
+    /// </summary>
+    [Fact]
+    public void 非视觉工具的runId_不算生图任务()
+    {
+        var body = """
+        {"success":true,"data":{"runId":"r1","userMessageId":"u1","assistantMessageId":"a1"}}
+        """;
+
+        var art = McpArtifactExtractor.Extract("skill_execute", producesArtifacts: true, body);
+
+        art.Id.ShouldBe("r1", customMessage: "身份不该丢，归并还要用它");
+        art.Kind.ShouldNotBe("image-run",
+            customMessage: "非视觉工具的 runId 被当成生图任务，那条记录会永远停在「还没出结果」");
+    }
+
+    [Fact]
+    public void 视觉工具的runId_照旧算生图任务()
+    {
+        var body = """{"success":true,"data":{"runId":"r1","status":"Queued"}}""";
+
+        McpArtifactExtractor.Extract("map_visual_generate_image", true, body).Kind
+            .ShouldBe("image-run");
+    }
+
+    /// <summary>
     /// 判据收成白名单之后，这条同时是「**状态字段缺席**仍然认地址」的锚 ——
     /// 它的响应体里没有 status，旧响应和别的路径都可能这样，一缺就整类丢链接是另一种坏。
     /// 谁把判据改成「没有 status 也不认」，这里会红。
