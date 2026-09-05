@@ -199,7 +199,7 @@ const ARTIFACT_CSP = [
   "worker-src 'none'",
   "manifest-src 'none'",
 ].join('; ');
-const DOCUMENT_ROOT_RE = /^\s*(?:<!doctype\s+html\s*>\s*)?<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
+const DOCUMENT_ROOT_RE = /^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
 const IGNORED_RUNTIME_OUTPUT_PATHS = ['index.html.artifact.json'] as const;
 
 // This script runs inside the isolated OpenDesign container before any bytes

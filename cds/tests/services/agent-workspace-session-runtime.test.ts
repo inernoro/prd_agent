@@ -1579,6 +1579,14 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(safe).toContain('<span data-cds-source-reference="./guide.platform.quickstart.md">Guide</span>');
     expect(safe).not.toContain('href="./guide.platform.quickstart.md"');
 
+    const officialTemplateEnvelope = hardenSelfContainedHtml(
+      '\uFEFF<!doctype html>\n<!-- OpenDesign web-prototype seed. -->\n<html lang="zh-CN"><head><title>Template</title></head><body>ok</body></html>',
+    );
+    expect(officialTemplateEnvelope).toContain('<!-- OpenDesign web-prototype seed. -->');
+    expect(officialTemplateEnvelope.indexOf('Content-Security-Policy')).toBeGreaterThan(
+      officialTemplateEnvelope.indexOf('<html lang="zh-CN">'),
+    );
+
     const deceptiveHead = hardenSelfContainedHtml(
       '<!doctype html><html><!--<head>--><style>body{background-image:u\\72l(https://tracker.example/p)}</style><body>ok</body></html>',
     );
@@ -1588,6 +1596,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const invalidDocuments = [
       '<!doctype html><body>implicit root bypass</body>',
       '<!doctype html><!-- <html> --><body>comment root bypass</body>',
+      '<!doctype html><!-- closed --><script>outside root</script><html><body>late root</body></html>',
+      'plain text before <!doctype html><html><body>late root</body></html>',
       '<!doctype html><html data-breakout=">"><body>quoted root delimiter</body></html>',
     ];
     for (const html of invalidDocuments) {
