@@ -91,6 +91,10 @@ describe('接入台第一屏那句判断', () => {
     // 它的轮询回的是 HTTP 200，在这里算成功。所以判断句只能说「没被挡下、没报错」，
     // 不能说「都成了」——同一屏的事件行会把那个 run 标成「还没出结果」，两句话对不上。
     expect(h.verdict).not.toContain('全都成了');
+    // today.images 是入队时占下的额度（McpUsageCounter），不是真做出来的图。
+    // 说「出图 N 张」会跟事件行里那句「还没出结果」当场打架。
+    expect(h.detail).not.toContain('出图');
+    expect(h.detail).toContain('发起生图');
     expect(h.verdict).toMatch(/没有被挡下|没报错|没有报错/);
     // 有出图时要指路到真正说得清结果的地方
     expect(h.detail).toContain('它干了什么');

@@ -79,7 +79,11 @@ export function buildHeadline({ clients, today, recentCalls }: HeadlineInput): H
     };
   }
 
-  const volume = `出图 ${today?.images ?? 0} 张、写入 ${today?.writes ?? 0} 次`;
+  // 「出图 N 张」是句不准的话：这个数出自 McpUsageCounter，是**入队时占下的额度**，
+  // 不是真做出来的图。一次刚排进去的四张、或者 worker 里全烧了的四张，都会让它显示 4，
+  // 而同一屏的事件行会说那件事还没出结果 / 失败了。改成说它真正代表的东西：发起了几张。
+  // 真正出没出来，以「它干了什么」那一行为准（下面的 asyncNote 就是指那儿）。
+  const volume = `发起生图 ${today?.images ?? 0} 张、写入 ${today?.writes ?? 0} 次`;
   const lastAt = formatClock(recentCalls[0]?.createdAt);
   const tail = lastAt ? `最近一次在 ${lastAt}。` : '';
 
