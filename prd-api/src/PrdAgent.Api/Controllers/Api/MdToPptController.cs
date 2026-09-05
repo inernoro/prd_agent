@@ -1688,8 +1688,8 @@ public class MdToPptController : ControllerBase
             "3. 禁止内联布局样式：style 属性里不得出现 position/width/height/min-/max-/margin/transform/z-index/inset，禁止 vh/vw 单位\n" +
             "4. 内容必须放得下：标题不超过范本对应位置字数的 1.3 倍；每条要点不超过 40 字；放不下就精炼文字，禁止缩字号硬塞\n" +
             "5. 颜色/字体不得偏离设计系统（不要写新的颜色值）\n" +
-            "6. 不得压到页脚/页眉：内容总量不超过范本原有内容量，宁可少写一条也不让正文与底部页码/页脚文字重叠；范本里的页脚（如页码、栏目名）原样保留位置\n" +
-            "7. 视觉装置不得留空：范本里的图表/数据可视化/SVG/统计块/大数字等装置，必须用本页真实或代表性的数值与标签填满（数字来自要点、缺数据就给合理示意值），严禁留空容器、占位问号、或只有标题没有内容的空装置\n" +
+            "6. 不得压到页脚/页眉：内容总量不超过范本原有内容量，宁可少写一条也不让正文与底部页码/页脚文字重叠；保留页脚的位置与样式，但页脚样例文字必须替换为当前主题、栏目和正确页码\n" +
+            "7. 视觉装置不得留空：范本里的图表/数据可视化/SVG/统计块/大数字等装置必须填满；只能使用本页要点或全局上下文明确给出的事实，缺少数字时改用定性标签或原文短句，禁止编造人名、命令、版本、时间、token、费用、百分比或其他示意数值\n" +
             "8. 用户给出的创意方向只能转译为范本内的文案、数值、标签和已有视觉装置语义，不得破坏成品模板结构\n" +
             "9. 禁止低级兜底版式：不得输出可见标题为“封面/目录/总结/标题/本页标题”的泛化页；不得只给一个标题加 bullet 列表；每页至少保留并填实范本中的两类视觉结构（如数据块、卡片组、图表、分栏、流程、时间线、对比、引用、行动区）\n" +
             $"10. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
@@ -1771,7 +1771,7 @@ public class MdToPptController : ControllerBase
     }
 
     /// <summary>锚定兜底页：范本结构保留，正文区替换为可演示的设计块，避免退化成标题加列表。</summary>
-    internal static string AnchoredFallbackSlide(MdToPptAnchors.AnchorSlide layout, MdToPptOutlinePageDto page, int index)
+    internal static string AnchoredFallbackSlide(MdToPptAnchors.AnchorSlide layout, MdToPptOutlinePageDto page, int index, int total)
     {
         var enc = (string? t) => System.Net.WebUtility.HtmlEncode(t ?? string.Empty);
         var bullets = (page.Bullets ?? new List<string>())
@@ -1805,17 +1805,73 @@ public class MdToPptController : ControllerBase
             $"<div style=\"font-size:13px;line-height:1.45;text-align:right;max-width:18em\">{statLabel}</div>" +
             "</div></div></div>";
         // 兜底页不再裸奔（2026-06-12 用户视觉验收：兜底页无模板装饰、像贴了张白纸）：
-        // 从本页版式范本里继承"无文本装饰块"（网格/扫描线/窗饰/背景 SVG）与页脚，
+        // 从本页版式范本里继承"无文本装饰块"（网格/扫描线/窗饰/背景 SVG），页脚改写为可信的当前页信息，
         // 即使子智能体两次输出都无效，这页也穿着设计系统的衣服降级。
-        var (lead, tail) = ExtractAnchorDecorations(layout.Html);
+        var (lead, _) = ExtractAnchorDecorations(layout.Html);
+        var safeFooter =
+            "<div class=\"mdppt-fallback-footer\" style=\"position:absolute;left:7%;right:7%;bottom:3.5%;display:flex;justify-content:space-between;align-items:center;font-size:11px;letter-spacing:.18em;text-transform:uppercase;opacity:.58\">" +
+            $"<span>{enc(page.Title)}</span><span>{index + 1:00} / {total:00}</span></div>";
         var rootOpen = System.Text.RegularExpressions.Regex.Match(layout.Html,
             "<(div|section|article)\\b[^>]*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         if (rootOpen.Success)
         {
             var tag = rootOpen.Groups[1].Value.ToLowerInvariant();
-            return rootOpen.Value + lead + content + tail + $"</{tag}>";
+            return rootOpen.Value + lead + content + safeFooter + $"</{tag}>";
         }
-        return $"<div class=\"{layout.ClassAttr}\">{lead}{content}{tail}</div>";
+        return $"<div class=\"{layout.ClassAttr}\">{lead}{content}{safeFooter}</div>";
+    }
+
+    /// <summary>
+    /// 检测模型是否把锚点范本中的样例事实原样带进成品。
+    /// 范本负责结构与风格，不是内容来源；未出现在本页输入中的长文本一律视为污染。
+    /// </summary>
+    internal static bool ContainsAnchorSampleResidue(
+        string generated,
+        MdToPptAnchors.AnchorSlide layout,
+        MdToPptOutlinePageDto page,
+        string? deckSummary,
+        string? deckContent)
+    {
+        if (string.IsNullOrWhiteSpace(generated) || string.IsNullOrWhiteSpace(layout.Html)) return false;
+
+        static string Normalize(string value) => System.Text.RegularExpressions.Regex.Replace(
+            System.Net.WebUtility.HtmlDecode(value), "\\s+", " ").Trim();
+
+        static string VisibleText(string html)
+        {
+            var value = System.Text.RegularExpressions.Regex.Replace(
+                html, "<(style|script|svg)\\b[^>]*>[\\s\\S]*?</\\1>", " ",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            value = System.Text.RegularExpressions.Regex.Replace(value, "<!--[\\s\\S]*?-->", " ");
+            value = System.Text.RegularExpressions.Regex.Replace(value, "<[^>]+>", "\n");
+            return Normalize(value);
+        }
+
+        var allowedParts = new List<string?>
+        {
+            page.Title,
+            string.Join("\n", page.Bullets ?? new List<string>()),
+            page.Design,
+            deckSummary,
+            deckContent,
+        };
+        var allowed = Normalize(string.Join("\n", allowedParts.Where(value => !string.IsNullOrWhiteSpace(value))));
+        var output = VisibleText(generated);
+        var templateWithoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            layout.Html, "<(style|script|svg)\\b[^>]*>[\\s\\S]*?</\\1>", " ",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        templateWithoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            templateWithoutNonText, "<!--[\\s\\S]*?-->", " ");
+        var candidates = System.Text.RegularExpressions.Regex.Matches(templateWithoutNonText, ">([^<>]+)<")
+            .Select(match => Normalize(match.Groups[1].Value))
+            .Where(value => value.Length >= 7)
+            .Where(value => !System.Text.RegularExpressions.Regex.IsMatch(value, "^0?\\d+\\s*[/·|-]\\s*0?\\d+$"))
+            .Where(value => !System.Text.RegularExpressions.Regex.IsMatch(value, "^[\\p{P}\\p{S}\\s]+$"))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        return candidates.Any(sample =>
+            output.Contains(sample, StringComparison.OrdinalIgnoreCase) &&
+            !allowed.Contains(sample, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -2546,6 +2602,12 @@ public class MdToPptController : ControllerBase
                     var (text, err) = await RunPageOnceAsync(
                         userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", i == 0 ? presession : null);
                     var section = NormalizeGeneratedSlideFragment(text, anchor != null);
+                    if (anchor != null && layout != null && !string.IsNullOrEmpty(section) &&
+                        ContainsAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content))
+                    {
+                        _logger.LogWarning("[MdToPpt-Pages] page {Idx} retained anchor sample text, retrying", i);
+                        section = string.Empty;
+                    }
                     if (consoleDashboardMode && !string.IsNullOrEmpty(section) && LooksLikeConsoleVisualMismatch(section, anchor?.Name))
                     {
                         _logger.LogWarning("[MdToPpt-Pages] page {Idx} console visual mismatch anchor={Anchor}, retrying", i, anchor?.Name);
@@ -2559,6 +2621,12 @@ public class MdToPptController : ControllerBase
                         var (text2, _) = await RunPageOnceAsync(
                             userId, connection, profile, sys, usr, $"PPT 第{i + 1}页R", null);
                         section = NormalizeGeneratedSlideFragment(text2, anchor != null);
+                        if (anchor != null && layout != null && !string.IsNullOrEmpty(section) &&
+                            ContainsAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content))
+                        {
+                            _logger.LogWarning("[MdToPpt-Pages] page {Idx} retained anchor sample text after retry, using fallback", i);
+                            section = string.Empty;
+                        }
                         if (consoleDashboardMode && !string.IsNullOrEmpty(section) && LooksLikeConsoleVisualMismatch(section, anchor?.Name))
                         {
                             _logger.LogWarning("[MdToPpt-Pages] page {Idx} console visual mismatch after retry anchor={Anchor}, using dashboard fallback", i, anchor?.Name);
@@ -2570,7 +2638,7 @@ public class MdToPptController : ControllerBase
                             section = consoleDashboardMode
                                 ? ConsoleDashboardFallbackSlide(layout, pages[i], i, total)
                                 : anchor != null && layout != null
-                                ? AnchoredFallbackSlide(layout, pages[i], i)
+                                ? AnchoredFallbackSlide(layout, pages[i], i, total)
                                 : SanitizeSection(FallbackSection(pages[i], i));
                         }
                     }
@@ -2588,7 +2656,7 @@ public class MdToPptController : ControllerBase
                       var fb = consoleDashboardMode
                           ? ConsoleDashboardFallbackSlide(anchor != null ? MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design) : null, pages[i], i, total)
                           : anchor != null
-                          ? AnchoredFallbackSlide(MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design), pages[i], i)
+                          ? AnchoredFallbackSlide(MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design), pages[i], i, total)
                           : SanitizeSection(FallbackSection(pages[i], i));
                       sections[i] = fb;
                       var n2 = Interlocked.Increment(ref doneCount);

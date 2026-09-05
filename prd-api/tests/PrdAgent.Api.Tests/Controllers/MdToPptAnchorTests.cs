@@ -56,6 +56,8 @@ public class MdToPptAnchorTests
         Assert.Contains("GitHub html-ppt 技能契约", anchoredPrompt);
         Assert.Contains("上游 lewislulu/html-ppt-skill", anchoredPrompt);
         Assert.Contains("本页版式范本", anchoredPrompt);
+        Assert.Contains("禁止编造人名、命令、版本、时间、token、费用", anchoredPrompt);
+        Assert.DoesNotContain("缺数据就给合理示意值", anchoredPrompt);
     }
 
     [Fact]
@@ -116,9 +118,9 @@ public class MdToPptAnchorTests
     }
 
     [Fact]
-    public void AnchoredFallbackSlide_InheritsTemplateDecorationsAndFooter()
+    public void AnchoredFallbackSlide_InheritsTemplateDecorationsButReplacesSampleFooter()
     {
-        // 兜底页不再裸奔：继承 cyber-terminal 范本的装饰块（网格/扫描线）与页脚
+        // 兜底页不再裸奔：继承 cyber-terminal 范本的装饰块（网格/扫描线），但不继承样例页脚
         var anchor = MdToPptAnchors.Load("cyber-terminal")!;
         var layout = anchor.ContentSlides[0];
         var page = new MdToPptOutlinePageDto
@@ -126,7 +128,7 @@ public class MdToPptAnchorTests
             Title = "测试标题",
             Bullets = new List<string> { "要点一", "要点二" },
         };
-        var slide = MdToPptController.AnchoredFallbackSlide(layout, page, 1);
+        var slide = MdToPptController.AnchoredFallbackSlide(layout, page, 1, 6);
 
         Assert.Contains("测试标题", slide);
         Assert.Contains("要点一", slide);
@@ -134,8 +136,10 @@ public class MdToPptAnchorTests
         Assert.Contains("mdppt-fallback-card", slide);
         // 模板装饰（无文本块）被继承
         Assert.Contains("hc-grid", slide);
-        // 页脚被继承（class 含 footer）
-        Assert.Contains("hc-footer", slide);
+        // 样例页脚不继承，改为当前页面身份与正确页码
+        Assert.DoesNotContain("hc-footer", slide);
+        Assert.Contains("mdppt-fallback-footer", slide);
+        Assert.Contains("02 / 06", slide);
         // 根元素仍是合法 slide 块（拆装扫描可识别）
         var blocks = MdToPptController.FindSlideBlocks(slide);
         Assert.Single(blocks);
@@ -147,5 +151,43 @@ public class MdToPptAnchorTests
         var (lead, tail) = MdToPptController.ExtractAnchorDecorations("plain text no tags");
         Assert.Equal("", lead);
         Assert.Equal("", tail);
+    }
+
+    [Fact]
+    public void ContainsAnchorSampleResidue_RejectsUnsupportedTemplateFacts()
+    {
+        var layout = new MdToPptAnchors.AnchorSlide(
+            "terminal.html",
+            "terminal",
+            "slide terminal",
+            "终端版式",
+            "<section class=\"slide terminal\"><div>hermes run &quot;refactor auth module to use pkce&quot;</div><footer>14k tokens · $0.21</footer></section>");
+        var page = new MdToPptOutlinePageDto
+        {
+            Title = "统一工作区",
+            Bullets = new List<string> { "知识文件只读挂载", "产物写入输出目录" },
+        };
+        var generated = "<section class=\"slide terminal\"><h1>统一工作区</h1><div>hermes run &quot;refactor auth module to use pkce&quot;</div></section>";
+
+        Assert.True(MdToPptController.ContainsAnchorSampleResidue(generated, layout, page, "OpenDesign", "共享工作区"));
+    }
+
+    [Fact]
+    public void ContainsAnchorSampleResidue_AllowsFactsProvidedByCurrentPage()
+    {
+        var layout = new MdToPptAnchors.AnchorSlide(
+            "terminal.html",
+            "terminal",
+            "slide terminal",
+            "终端版式",
+            "<section class=\"slide terminal\"><div>共享工作区</div><footer>项目状态</footer></section>");
+        var page = new MdToPptOutlinePageDto
+        {
+            Title = "共享工作区",
+            Bullets = new List<string> { "项目状态可追踪" },
+        };
+        var generated = "<section class=\"slide terminal\"><h1>共享工作区</h1><div>项目状态可追踪</div></section>";
+
+        Assert.False(MdToPptController.ContainsAnchorSampleResidue(generated, layout, page, "OpenDesign", null));
     }
 }
