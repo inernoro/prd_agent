@@ -33,12 +33,22 @@ function deferred<T>() {
 
 class RecordingShell implements IShellExecutor {
   readonly calls: Array<{ command: string; options?: ExecOptions }> = [];
+  readonly envFiles: Array<{ command: string; path: string; content: string; mode: number }> = [];
   workspaceDir = '';
   failEgressConnect = false;
   failContainerCreate = false;
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     this.calls.push({ command, options });
+    const envFile = command.match(/--env-file '([^']+)'/);
+    if (envFile) {
+      this.envFiles.push({
+        command,
+        path: envFile[1],
+        content: fs.readFileSync(envFile[1], 'utf8'),
+        mode: fs.statSync(envFile[1]).mode & 0o777,
+      });
+    }
     if (command.startsWith('docker version')) return result('27.0.0\n');
     if (command.startsWith('docker image inspect')) return result('sha256:image\n');
     if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
@@ -46,7 +56,7 @@ class RecordingShell implements IShellExecutor {
     if (command.startsWith('docker volume create')) return result('volume-id\n');
     if (command.startsWith('docker create ')) {
       if (this.failContainerCreate) {
-        const daemonApiToken = options?.stdin?.match(/^OD_API_TOKEN=(.+)$/m)?.[1] || '';
+        const daemonApiToken = this.envFiles.at(-1)?.content.match(/^OD_API_TOKEN=(.+)$/m)?.[1] || '';
         return result(
           `transfer-token ${daemonApiToken} ${'x'.repeat(4_096)}`,
           `OD_API_TOKEN=${daemonApiToken}\ntransferToken=transfer-token\ncommand=${command}`,
@@ -202,8 +212,12 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(shell.calls.some((call) => call.command.startsWith('docker cp '))).toBe(true);
     expect(runCommand?.command).not.toContain('transfer-token');
     expect(runCommand?.command).not.toContain('model-secret');
-    expect(runCommand?.options?.stdin).not.toContain('transfer-token');
-    expect(runCommand?.options?.stdin).not.toContain('model-secret');
+    expect(runCommand?.command).not.toContain('/dev/stdin');
+    expect(runCommand?.options?.stdin).toBeUndefined();
+    expect(shell.envFiles[0]?.mode).toBe(0o600);
+    expect(shell.envFiles[0]?.content).not.toContain('transfer-token');
+    expect(shell.envFiles[0]?.content).not.toContain('model-secret');
+    expect(fs.existsSync(shell.envFiles[0]?.path || '')).toBe(false);
 
     const executed = await runtime.execute(
       'session-test-1',
@@ -226,6 +240,14 @@ describe('AgentWorkspaceSessionRuntime', () => {
         { path: 'manifest.json' },
       ],
     });
+    const egressRun = shell.calls.find((call) => call.command.startsWith('docker run --detach'));
+    const egressEnv = shell.envFiles.find((entry) => entry.command === egressRun?.command);
+    expect(egressRun?.command).not.toContain('/dev/stdin');
+    expect(egressRun?.options?.stdin).toBeUndefined();
+    expect(egressEnv?.mode).toBe(0o600);
+    expect(egressEnv?.content).toContain('TARGET_ORIGIN=https://map.example.test');
+    expect(egressEnv?.content).not.toContain('model-secret');
+    expect(fs.existsSync(egressEnv?.path || '')).toBe(false);
     const imported = requests.find((request) => request.path === '/api/import/folder');
     expect(imported?.body).toMatchObject({
       baseDir: '/workspace',
@@ -390,13 +412,18 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const details = runtimeError.details || {};
     const serializedDetails = JSON.stringify(details);
     const createCall = shell.calls.find((call) => call.command.startsWith('docker create '));
-    const daemonApiToken = createCall?.options?.stdin?.match(/^OD_API_TOKEN=(.+)$/m)?.[1] || '';
+    const daemonApiToken = shell.envFiles.find((entry) => entry.command === createCall?.command)
+      ?.content.match(/^OD_API_TOKEN=(.+)$/m)?.[1] || '';
     expect(daemonApiToken).not.toBe('');
     expect(serializedDetails).not.toContain(daemonApiToken);
     expect(serializedDetails).not.toContain('transfer-token');
     expect(serializedDetails).not.toContain(createCall?.command || 'docker create');
     expect(details).not.toHaveProperty('stdin');
     expect(details).not.toHaveProperty('command');
+    expect(createCall?.command).not.toContain('/dev/stdin');
+    expect(createCall?.options?.stdin).toBeUndefined();
+    expect(shell.envFiles.find((entry) => entry.command === createCall?.command)?.mode).toBe(0o600);
+    expect(fs.existsSync(shell.envFiles.find((entry) => entry.command === createCall?.command)?.path || '')).toBe(false);
     expect(String(details.stderrPreview)).toContain('***[masked]***');
     expect(String(details.stdoutPreview)).toContain('cds runtime diagnostic truncated');
     expect(Buffer.byteLength(String(details.stderrPreview), 'utf8')).toBeLessThanOrEqual(2 * 1024);

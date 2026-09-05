@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import type { IShellExecutor } from '../types.js';
+import type { ExecResult, IShellExecutor } from '../types.js';
 import { computeCdsInstanceId } from './orphan-container-reaper.js';
 import { maskSecrets } from './secret-masker.js';
 
@@ -976,6 +976,8 @@ export class AgentWorkspaceSessionRuntime {
         'OD_SANDBOX_MODE=1',
         'OD_SANDBOX_IMPORT_ALLOWED_ROOTS=/workspace',
       ].join('\n') + '\n';
+      const envFilePath = path.join(hostRoot, `.docker-env-${crypto.randomBytes(8).toString('hex')}`);
+      fs.writeFileSync(envFilePath, env, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
       const command = [
         'docker create',
         '--pull never',
@@ -999,11 +1001,16 @@ export class AgentWorkspaceSessionRuntime {
         `--mount ${shellQuote(`type=volume,src=${workspaceVolumeName},dst=/workspace`)}`,
         `--mount ${shellQuote(`type=volume,src=${dataVolumeName},dst=/app/.od`)}`,
         '--workdir /workspace',
-        '--env-file /dev/stdin',
+        `--env-file ${shellQuote(envFilePath)}`,
         shellQuote(this.image),
       ].join(' ');
       onStage('container_starting', { image: this.image });
-      const started = await this.shell.exec(command, { timeout: 120_000, stdin: env });
+      let started: ExecResult;
+      try {
+        started = await this.shell.exec(command, { timeout: 120_000 });
+      } finally {
+        fs.rmSync(envFilePath, { force: true });
+      }
       if (started.exitCode !== 0) {
         const excludedDiagnosticValues = [daemonApiToken, transfer.transferToken, command];
         throw new AgentWorkspaceRuntimeError(
@@ -1420,6 +1427,8 @@ export class AgentWorkspaceSessionRuntime {
       `PROXY_PORT=${EGRESS_PROXY_PORT}`,
       `CDS_EGRESS_PROXY_SCRIPT=${Buffer.from(EGRESS_PROXY_SCRIPT).toString('base64')}`,
     ].join('\n') + '\n';
+    const envFilePath = path.join(handle.hostRoot, `.docker-env-${crypto.randomBytes(8).toString('hex')}`);
+    fs.writeFileSync(envFilePath, env, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     const command = [
       'docker run --detach',
       '--pull never',
@@ -1437,13 +1446,18 @@ export class AgentWorkspaceSessionRuntime {
       `--label ${shellQuote('cds.type=agent-session')}`,
       `--label ${shellQuote(`cds.instance=${this.instanceId}`)}`,
       `--label ${shellQuote(`cds.agent.session=${handle.sessionId}`)}`,
-      '--env-file /dev/stdin',
+      `--env-file ${shellQuote(envFilePath)}`,
       '--entrypoint node',
       shellQuote(this.image),
       '-e',
       shellQuote("eval(Buffer.from(process.env.CDS_EGRESS_PROXY_SCRIPT, 'base64').toString('utf8'))"),
     ].join(' ');
-    const started = await this.shell.exec(command, { timeout: 30_000, stdin: env });
+    let started: ExecResult;
+    try {
+      started = await this.shell.exec(command, { timeout: 30_000 });
+    } finally {
+      fs.rmSync(envFilePath, { force: true });
+    }
     if (started.exitCode !== 0) {
       throw new AgentWorkspaceRuntimeError(
         'workspace_egress_unavailable',
