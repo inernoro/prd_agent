@@ -146,24 +146,21 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
                 ownerPermissions = await _permissionService.GetEffectivePermissionsAsync(key.OwnerUserId, ownerIsRoot);
             }
 
-            // 自动模式的清单是推导出来的，推导时已经按签发口径过了权限，下面那道再检不必重复；
-            // 手动模式仍走原来的口径（只查 PermissionCheckedScopes，放过存量的 document-store）。
-            var declaredScopes = isAutoScope
-                ? McpCapabilityCatalog.AutoScopesFor(ownerPermissions ?? Array.Empty<string>())
-                : storedScopes;
+            // 「它此刻拿得到什么」只此一处推导（McpCapabilityCatalog.EffectiveScopesFor），
+            // 接入台面板、授权自检、密钥管理页读的是同一个函数 —— 抄第二份的那一刻，
+            // 就是下一次「面板说已授权、这里每个请求都拒」的起点。
+            var declaredScopes = McpCapabilityCatalog.EffectiveScopesFor(
+                key.ScopeMode, storedScopes, ownerPermissions ?? Array.Empty<string>());
 
-            foreach (var scope in declaredScopes)
+            // 被剥掉的那几个要留痕：权限回收之后智能体会突然少几个工具，
+            // 日志里没有这一行的话，排障时只看得到「它就是调不动」。
+            foreach (var dropped in storedScopes.Except(declaredScopes, StringComparer.OrdinalIgnoreCase))
             {
-                if (!isAutoScope
-                    && McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope)
-                    && !McpCapabilityCatalog.PermissionsAllowScope(ownerPermissions ?? Array.Empty<string>(), scope))
-                {
-                    Logger.LogWarning("AgentApiKey {KeyId} 携带的 scope {Scope} 已失效：主人 {UserId} 当前没有对应权限位，本次请求按未授权处理",
-                        key.Id, scope, key.OwnerUserId);
-                    continue;
-                }
-                keyClaims.Add(new Claim("scope", scope));
+                Logger.LogWarning("AgentApiKey {KeyId} 携带的 scope {Scope} 已失效：主人 {UserId} 当前没有对应权限位，本次请求按未授权处理",
+                    key.Id, dropped, key.OwnerUserId);
             }
+
+            foreach (var scope in declaredScopes) keyClaims.Add(new Claim("scope", scope));
 
             // 若处于宽限期，通过响应头提示续期（不阻断请求）
             if (lookup.InGracePeriod)

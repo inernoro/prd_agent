@@ -73,26 +73,32 @@ public class AgentApiKeyScopeModeTests
                 customMessage: $"`{scope}` 不在能力目录里，却被自动档签了出来");
     }
 
-    [Fact]
-    public void AuthHandler_DerivesScopes_ByMode_NotByStoredList()
+    /// <summary>
+    /// 「它此刻拿得到什么」这件事只许有一处判据。
+    ///
+    /// 自动档的钥匙库里存的是**空清单**：任何一处照着 `key.Scopes` 算，都会把它说成「零个能力」，
+    /// 而它实际什么都调得动。这四处回答的是同一个问题，抄第二份的那一刻，就是下一次
+    /// 「面板说已授权、智能体每个请求都被拒」的起点（判据分裂的老形状）。
+    ///
+    /// 这条守卫删掉不会红：四处各写各的照样编译、照样全绿。
+    /// </summary>
+    [Theory]
+    [InlineData("src/PrdAgent.Api/Authentication/ApiKeyAuthenticationHandler.cs", "鉴权")]
+    [InlineData("src/PrdAgent.Api/Controllers/Api/McpConsoleController.cs", "接入台面板与授权自检")]
+    [InlineData("src/PrdAgent.Api/Controllers/Api/AgentApiKeysController.cs", "密钥管理页")]
+    public void EveryConsumer_GoesThroughTheOneEffectiveScopePredicate(string relative, string who)
     {
-        // 自动档的钥匙库里存的是空清单。鉴权若照着 key.Scopes 算，它一个工具也调不动 ——
-        // 而面板会显示「已授权」，因为面板走的是现算那一路。两处口径分裂正是这块地方栽过的形状。
-        var source = ReadSource("src/PrdAgent.Api/Authentication/ApiKeyAuthenticationHandler.cs");
-        source.ShouldContain("AgentApiKeyScopeMode.Auto",
-            customMessage: "鉴权处理器没有区分自动档：自动档的钥匙存的是空清单，照它算等于零权限");
-        source.ShouldContain("McpCapabilityCatalog.AutoScopesFor",
-            customMessage: "鉴权没走现算那一处 —— 自动档的清单必须与面板同源，不能各算各的");
+        var source = ReadSource(relative);
+        source.ShouldContain("EffectiveScopesFor",
+            customMessage: $"{who}没走唯一那处推导（McpCapabilityCatalog.EffectiveScopesFor）—— "
+                           + "自动档的钥匙存的是空清单，照着存的算等于零权限");
     }
 
     [Fact]
-    public void Console_ShowsEffectiveScopes_NotStoredList()
+    public void Console_TellsUserWhatTheyCouldStillGrant()
     {
-        // 面板照着 key.Scopes 展示的话，一把自动档的钥匙会显示成「零个能力」，
-        // 而它实际什么都调得动 —— 用户看到的和智能体拿到的是两回事。
+        // 手动档的语义是「用户知道、钥匙没权限」。不渲染这一项，前半句就没了。
         var source = ReadSource("src/PrdAgent.Api/Controllers/Api/McpConsoleController.cs");
-        source.ShouldContain("EffectiveScopesOf",
-            customMessage: "接入台面板没有走「此刻实际拿得到什么」那一处推导");
         source.ShouldContain("MissingCapabilitiesOf",
             customMessage: "手动档缺少「你有、但没开给它」的告知 —— 用户该知道，钥匙不该自动拿到");
     }

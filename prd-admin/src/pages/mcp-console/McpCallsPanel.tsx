@@ -215,6 +215,7 @@ function soloGroup(item: McpCallLogDto): CallGroup {
     status: item.status,
     elapsedMs: item.durationMs,
     multiStep: false,
+    hasOrigin: item.isWrite,
     imageCount: item.imageCount,
     isWrite: item.isWrite,
     artifact: item.artifact ?? null,
@@ -346,7 +347,9 @@ function EventRow({
           {group.multiStep && (
             <div className="flex flex-col gap-1">
               <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
-                这件事分了 {group.steps.length} 步（新到旧）
+                {group.hasOrigin
+                  ? `这件事分了 ${group.steps.length} 步（新到旧）`
+                  : `这一页里看到它的 ${group.steps.length} 次（新到旧）；发起那一次在更早的记录里`}
               </span>
               {group.steps.map((step) => {
                 const sst = STATUS_STYLE[step.status] ?? STATUS_STYLE.success;
@@ -398,10 +401,13 @@ function EventRow({
                 用人话给出；状态码只对排障有意义，它留在服务端的 mcp_call_logs 里。 */}
             <span>{group.isWrite ? '写入类动作' : '只读动作'}</span>
             {group.imageCount > 0 && <span>{group.imageCount} 张图</span>}
-            {group.multiStep ? (
+            {!group.multiStep ? (
+              <span>耗时 {(group.elapsedMs / 1000).toFixed(1)}s</span>
+            ) : group.hasOrigin ? (
               <span>从发起到落地 {(group.elapsedMs / 1000).toFixed(1)}s</span>
             ) : (
-              <span>耗时 {(group.elapsedMs / 1000).toFixed(1)}s</span>
+              // 发起那一次不在这一页里 —— 只能说「看到的这几次跨了多久」，不能说成从发起算起
+              <span>这一页里看到的 {group.steps.length} 次跨 {(group.elapsedMs / 1000).toFixed(1)}s</span>
             )}
             <span>{new Date(group.first.createdAt).toLocaleString('zh-CN')}</span>
           </div>

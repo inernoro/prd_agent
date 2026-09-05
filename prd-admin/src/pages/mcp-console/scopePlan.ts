@@ -1,4 +1,4 @@
-import type { McpCapabilityDto } from '@/services/contracts/mcpConsole';
+import type { McpCapabilityDto, McpToolDto } from '@/services/contracts/mcpConsole';
 
 export interface CapabilityPick {
   read: boolean;
@@ -51,4 +51,22 @@ export function samePicks(a: CapabilityPicks, b: CapabilityPicks): boolean {
     if (x.read !== y.read || x.write !== y.write) return false;
   }
   return true;
+}
+
+/**
+ * 这个工具，密钥主人此刻签不签得出来。
+ *
+ * 判据按**工具要求的那个 scope** 走，不按能力整块走：读写分档的能力里，
+ * 只有读权限位的人整块是可用的（`availableToMe` 为真），但写入档那几个工具签不出来。
+ * 按整块判会告诉一个只读用户「发布、分享都能给它」，而那几个 scope 在签发时会被交集校验打回来 ——
+ * 把用户请到门口再关门。与服务端 `McpConsoleController.ScopeAvailable`（按 scope 判）同一个口径。
+ */
+export function grantableTool(cap: McpCapabilityDto, tool: McpToolDto): boolean {
+  if (cap.writeScope && tool.requiredScope === cap.writeScope) return cap.writeAvailableToMe;
+  return cap.availableToMe;
+}
+
+/** 这块能力里，他真能给出去的工具数。 */
+export function grantableToolCount(cap: McpCapabilityDto): number {
+  return cap.tools.filter((t) => grantableTool(cap, t)).length;
 }

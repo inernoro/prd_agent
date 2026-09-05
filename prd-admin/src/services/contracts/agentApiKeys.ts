@@ -21,6 +21,12 @@ export interface AgentApiKeyDto {
   description?: string | null;
   /** 前 12 字符明文，仅用于展示（如 `sk-ak-abc12345`） */
   keyPrefix: string;
+  /**
+   * 它此刻**真拿得到**的能力，不是库里存了什么。
+   *
+   * 自动档的钥匙存的是空清单（清单是鉴权时现算的），手动档里被回收权限的那几项鉴权时会被剥掉 ——
+   * 两种情况照着存的显示都是假的。服务端按与鉴权同一处的判据算好再回。
+   */
   scopes: string[];
   /** auto = 能力跟着主人的权限走，不存清单；manual = 按存的这份清单钉死 */
   scopeMode: 'auto' | 'manual';

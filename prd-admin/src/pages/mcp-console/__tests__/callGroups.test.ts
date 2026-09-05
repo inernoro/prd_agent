@@ -91,8 +91,9 @@ describe('把调用流水折成「一件事一行」', () => {
     expect(groupCalls([denied, other])).toHaveLength(2);
   });
 
-  it('出图张数取最大不取求和', () => {
-    // 同一个 run 被重试时每条都记着「这次要 N 张」，加起来会把一次重试说成出了两倍的图
+  it('幂等命中的重试折进同一件事，出图张数取最大不取求和', () => {
+    // 幂等命中那次什么副作用都没产生，它不是新的一件事；
+    // 而每条都记着「这次要 N 张」，加起来会把一次重试说成出了两倍的图
     const { poll2, enqueue } = run();
     const retry = call({
       toolName: 'map_visual_generate',
@@ -102,7 +103,66 @@ describe('把调用流水折成「一件事一行」', () => {
       createdAt: '2026-09-05T10:00:05.000Z',
       artifact: { kind: 'image-run', id: 'run-1', url: null, title: null },
     });
-    expect(groupCalls([poll2, retry, enqueue])[0].imageCount).toBe(2);
+    const groups = groupCalls([poll2, retry, enqueue]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].imageCount).toBe(2);
+  });
+
+  it('同一篇文档改两次是两件事，不许折成一行', () => {
+    // 事故形状：map_kb_update_entry 两次都回同一个 entryId。只按产物身份折的话，
+    // 第二次的「成功」会把第一次的失败盖掉，而展示的参数摘要来自那次不相干的旧编辑。
+    const entry = { kind: 'entry', id: 'e-1', url: null, title: null };
+    const firstEdit = call({
+      toolName: 'map_kb_update_entry',
+      isWrite: true,
+      status: 'error',
+      errorMessage: '这篇文档正在被别人改',
+      argumentsPreview: 'content=第一稿',
+      createdAt: '2026-09-05T10:00:00.000Z',
+      artifact: entry,
+    });
+    const secondEdit = call({
+      toolName: 'map_kb_update_entry',
+      isWrite: true,
+      argumentsPreview: 'content=第二稿',
+      createdAt: '2026-09-05T10:05:00.000Z',
+      artifact: entry,
+    });
+    const groups = groupCalls([secondEdit, firstEdit]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].status).toBe('success');
+    expect(groups[1].status).toBe('error');
+    expect(groups[1].first.argumentsPreview).toBe('content=第一稿');
+  });
+
+  it('写入之后的读取折进那次写入，下一次写入另起一件', () => {
+    const art = { kind: 'workspace', id: 'w-1', url: null, title: null };
+    const write1 = call({ isWrite: true, argumentsPreview: '第一段', createdAt: '2026-09-05T10:00:00.000Z', artifact: art });
+    const read1 = call({ isWrite: false, createdAt: '2026-09-05T10:00:10.000Z', artifact: art });
+    const write2 = call({ isWrite: true, argumentsPreview: '第二段', createdAt: '2026-09-05T10:01:00.000Z', artifact: art });
+    const read2 = call({ isWrite: false, createdAt: '2026-09-05T10:01:10.000Z', artifact: art });
+
+    const groups = groupCalls([read2, write2, read1, write1]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].first.argumentsPreview).toBe('第二段');
+    expect(groups[1].first.argumentsPreview).toBe('第一段');
+    expect(groups.every((g) => g.steps.length === 2)).toBe(true);
+  });
+
+  it('入队落在上一页时，剩下的轮询仍折成一行，但标明「没有发起」', () => {
+    // 它们确实是同一件事，该折；但这一行的第一步是一次查看，不是动作 ——
+    // 不标出来的话，详情里那句「从发起到落地 Xs」是在编一个没看见的时刻
+    const art = { kind: 'image-run', id: 'run-x', url: null, title: null };
+    const readA = call({ isWrite: false, createdAt: '2026-09-05T10:00:10.000Z', artifact: art });
+    const readB = call({ isWrite: false, createdAt: '2026-09-05T10:00:20.000Z', artifact: art });
+    const groups = groupCalls([readB, readA]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].hasOrigin).toBe(false);
+  });
+
+  it('入队开头的那件事标成「有发起」', () => {
+    const { poll2, poll1, enqueue } = run();
+    expect(groupCalls([poll2, poll1, enqueue])[0].hasOrigin).toBe(true);
   });
 
   it('多步时给的是墙上时钟，单步时给的是那次调用自己的耗时', () => {
@@ -113,7 +173,7 @@ describe('把调用流水折成「一件事一行」', () => {
     expect(groupCalls([solo])[0].elapsedMs).toBe(450);
   });
 
-  it('列表顺序按每件事第一次出现的位置排，最新的事在最前', () => {
+  it('列表按每件事的最后一步时间倒序，最新的事在最前', () => {
     const older = run('image-run', 'run-old');
     const newer = call({ createdAt: '2026-09-05T11:00:00.000Z', artifact: null, toolName: 'map_web_publish_page' });
     const groups = groupCalls([newer, older.poll2, older.enqueue]);

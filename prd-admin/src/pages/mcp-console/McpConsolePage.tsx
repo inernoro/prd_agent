@@ -26,7 +26,8 @@ import { QuotaEditorDialog } from './QuotaEditorDialog';
 import { RevokeClientDialog } from './RevokeClientDialog';
 import { copyToClipboard } from './clipboard';
 import { capabilityVisual } from './capabilityRegistry';
-import { buildHeadline } from './headline';
+import { buildHeadline, todayTotals, type TodayMetric } from './headline';
+import { grantableTool, grantableToolCount } from './scopePlan';
 
 /**
  * 智能体接入台。
@@ -94,6 +95,10 @@ export default function McpConsolePage() {
 
   const clients = useMemo(() => overview?.clients ?? [], [overview]);
   const capabilities = useMemo(() => overview?.capabilities ?? [], [overview]);
+  const totals = useMemo(
+    () => todayTotals({ today: overview?.today ?? null, clients }),
+    [overview, clients],
+  );
   const headline = useMemo(
     () =>
       buildHeadline({
@@ -238,18 +243,10 @@ export default function McpConsolePage() {
             {headline.detail}
           </div>
         </div>
-        <StripMetric
-          label="今天出图"
-          used={clients.reduce((n, c) => n + c.todayImages, 0)}
-          quota={clients.reduce((n, c) => n + c.dailyImageQuota, 0)}
-          unit="张"
-        />
-        <StripMetric
-          label="今天写入"
-          used={clients.reduce((n, c) => n + c.todayWrites, 0)}
-          quota={clients.reduce((n, c) => n + c.dailyWriteQuota, 0)}
-          unit="次"
-        />
+        {/* 两个数怎么算见 todayTotals：已用取服务端权威合计，上限只按还能用的密钥算。
+            在这里就地求和过一次，撤销密钥当天会让它跟旁边那句判断自相矛盾。 */}
+        <StripMetric label="今天出图" metric={totals.images} unit="张" />
+        <StripMetric label="今天写入" metric={totals.writes} unit="次" />
       </div>
 
       {tab === 'calls' ? (
@@ -541,9 +538,10 @@ function ClientRow({
  */
 function PlatformCapabilityBar({ capabilities }: { capabilities: McpCapabilityDto[] }) {
   const [open, setOpen] = useState(false);
+  // 只数他真能给出去的工具（判据见 scopePlan.grantableTool）
   const totalTools = capabilities
     .filter((c) => c.availableToMe)
-    .reduce((n, c) => n + c.tools.length, 0);
+    .reduce((n, c) => n + grantableToolCount(c), 0);
 
   return (
     <div
@@ -591,7 +589,7 @@ function PlatformCapabilityBar({ capabilities }: { capabilities: McpCapabilityDt
               }
             >
               {usable ? <Icon size={11} aria-hidden /> : <CircleSlash size={11} aria-hidden />}
-              {cap.title} {cap.tools.length}
+              {cap.title} {usable ? grantableToolCount(cap) : cap.tools.length}
               {!usable && ' · 你还没这块权限'}
             </span>
           );
@@ -620,6 +618,18 @@ function PlatformCapabilityBar({ capabilities }: { capabilities: McpCapabilityDt
                   >
                     {tool.name}
                   </code>
+                  {!grantableTool(cap, tool) && (
+                    <span
+                      className="rounded-[5px] px-1.5 py-[1px] text-[10px]"
+                      style={{
+                        background: 'var(--semantic-neutral-soft)',
+                        border: '1px solid var(--semantic-neutral-border)',
+                        color: 'var(--text-muted)',
+                      }}
+                    >
+                      你还给不出去
+                    </span>
+                  )}
                   {tool.isWrite && (
                     <span
                       className="rounded-[5px] px-1.5 py-[1px] text-[10px]"
@@ -645,20 +655,11 @@ function PlatformCapabilityBar({ capabilities }: { capabilities: McpCapabilityDt
   );
 }
 
-function StripMetric({
-  label,
-  used,
-  quota,
-  unit,
-}: {
-  label: string;
-  used: number;
-  quota: number;
-  unit: string;
-}) {
+function StripMetric({ label, metric, unit }: { label: string; metric: TodayMetric; unit: string }) {
+  const { used, quota } = metric;
   const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
   return (
-    <div className="flex w-[122px] shrink-0 flex-col gap-1.5">
+    <div className="flex w-[132px] shrink-0 flex-col gap-1.5">
       <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
         {label}
       </span>
@@ -666,8 +667,10 @@ function StripMetric({
         <b className="text-[19px] font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>
           {used}
         </b>
+        {/* 还在的密钥一把都没有时（都断开了），没有「还剩多少」可言 ——
+            写「/ 0」会读成「额度是零」，而用掉的那些是断开之前真实发生的。 */}
         <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-          / {quota} {unit}
+          {quota > 0 ? `/ ${quota} ${unit}` : `${unit} · 已断开的密钥用的`}
         </span>
       </span>
       <span className="h-1 overflow-hidden rounded-full" style={{ background: 'var(--nested-block-bg)' }}>

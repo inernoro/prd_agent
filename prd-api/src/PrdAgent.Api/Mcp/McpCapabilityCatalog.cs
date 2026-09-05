@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Mcp;
@@ -182,7 +183,30 @@ public static class McpCapabilityCatalog
            .Where(s => !IsIssuancePermissionChecked(s) || PermissionsAllowScope(ownedPermissions, s))
            .ToList();
 
-    public static McpCapability? ByScope(string scope) =>
+    /// <summary>
+    /// 这把钥匙此刻实际拿得到哪些 scope —— **唯一判据**，鉴权、接入台面板、授权自检、
+    /// 密钥管理页四处都必须走这一个函数。
+    ///
+    /// 自动档：不读存的清单（存的是空），现算「主人当前权限 ∩ 平台当前开放能力」。
+    /// 手动档：读存的那份，再按**鉴权口径**（<see cref="PermissionCheckedScopes"/>）过一遍 ——
+    /// 权限被管理员回收后，密钥还在外面跑，那几个 scope 得当场失效；document-store 那两个
+    /// 不在这道闸里，是为了不打死早就在跑的存量密钥（差别见 IssuanceOnlyPermissionCheckedScopes）。
+    ///
+    /// 这件事早先在三个地方各写了一遍，而它们必须回答同一个问题。抄第二份的那一刻，
+    /// 就是下一次「面板说已授权、智能体每个请求都被拒」的起点（判据分裂的老形状）。
+    /// </summary>
+    public static IReadOnlyList<string> EffectiveScopesFor(
+        AgentApiKeyScopeMode mode,
+        IEnumerable<string>? storedScopes,
+        IReadOnlyCollection<string> ownedPermissions)
+        => mode == AgentApiKeyScopeMode.Auto
+            ? AutoScopesFor(ownedPermissions)
+            : (storedScopes ?? Enumerable.Empty<string>())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Where(s => !PermissionCheckedScopes.Contains(s) || PermissionsAllowScope(ownedPermissions, s))
+                .ToList();
+
+    public static McpCapability? ByScope(string scope) =
         All.FirstOrDefault(c => c.AllScopes().Contains(scope, StringComparer.OrdinalIgnoreCase));
 
     /// <summary>归属某块能力的内置工具（按 scope 反查，不另维护清单）。</summary>

@@ -300,9 +300,7 @@ public class McpConsoleController : ControllerBase
     /// 于是用户看到「已连接、已授权」，而它发的每个请求都被拒。
     /// </summary>
     private static IReadOnlyList<string> EffectiveScopesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
-        => key.ScopeMode == AgentApiKeyScopeMode.Auto
-            ? McpCapabilityCatalog.AutoScopesFor(ownedPermissions)
-            : (key.Scopes ?? new List<string>()).Where(s => EffectiveForOwner(s, ownedPermissions)).ToList();
+        => McpCapabilityCatalog.EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions);
 
     /// <summary>
     /// 「你自己有、但没开给这台客户端」的能力。只对手动模式成立。
@@ -333,14 +331,6 @@ public class McpConsoleController : ControllerBase
         if (!McpCapabilityCatalog.IsIssuancePermissionChecked(scope!)) return true;
         return McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope!);
     }
-
-    /// <summary>
-    /// 这个 scope 此刻对密钥主人还成立吗。受权限位把关的按当前权限判，其余（老 scope）原样成立。
-    /// 与 ApiKeyAuthenticationHandler 的剥离逻辑同一口径，面板才不会跟实际能力对不上。
-    /// </summary>
-    private static bool EffectiveForOwner(string scope, IReadOnlyList<string> ownedPermissions)
-        => !McpCapabilityCatalog.PermissionCheckedScopes.Contains(scope)
-           || McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope);
 
     private sealed record TodayTally(
         long Total,

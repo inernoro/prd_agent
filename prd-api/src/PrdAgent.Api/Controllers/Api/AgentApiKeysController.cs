@@ -115,6 +115,7 @@ public class AgentApiKeysController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         var keys = await _keyService.ListByOwnerAsync(userId, ct);
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
 
         // 汇总 scope：固定 + AgentOpenEndpoint 登记的所有 agent.* scope
         var endpoints = await _db.AgentOpenEndpoints
@@ -133,7 +134,7 @@ public class AgentApiKeysController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            items = keys.Select(ToDto),
+            items = keys.Select(k => ToDto(k, ownedPermissions)),
             allowedScopes = allowed,
             agentEndpoints = endpoints.Select(e => new
             {
@@ -188,6 +189,8 @@ public class AgentApiKeysController : ControllerBase
             .Select(s => s.Trim())
             .ToList();
 
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
+
         // 自动模式不收清单，也就没什么可校验的：它每次鉴权现算「主人当前权限 ∩ 平台当前开放」，
         // 而这个交集本身就是签发校验要求的东西 —— 长不出主人没有的权限。
         // 传进来的 scopes 一律忽略，不留一份将来会漂的快照。
@@ -199,7 +202,6 @@ public class AgentApiKeysController : ControllerBase
         {
             if (scopes.Count == 0)
                 return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", "至少选择一个 scope（如 marketplace.skills:read）"));
-            var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
             foreach (var s in scopes)
             {
                 var (ok, reason) = await ValidateScopeAsync(s, ownedPermissions, ct);
@@ -211,7 +213,7 @@ public class AgentApiKeysController : ControllerBase
         var (entity, plaintext) = await _keyService.CreateAsync(userId, req.Name, req.Description, scopes, ttl, ct, scopeMode);
 
         // 明文 Key 仅此处返回一次
-        return Ok(ApiResponse<object>.Ok(new { item = ToDto(entity), apiKey = plaintext, warning = "这是 Key 唯一一次明文显示，请妥善保存。" }));
+        return Ok(ApiResponse<object>.Ok(new { item = ToDto(entity, ownedPermissions), apiKey = plaintext, warning = "这是 Key 唯一一次明文显示，请妥善保存。" }));
     }
 
     public class UpdateRequest
@@ -245,6 +247,7 @@ public class AgentApiKeysController : ControllerBase
         // 切回自动：清单作废（服务层会一并清空），也就没有 scope 要校验。
         // 顺序在 scope 校验之前 —— 否则「既传 scopeMode=auto 又带着一串旧 scope」的请求
         // 会拿一份马上要被丢掉的清单去撞校验，报一个用户根本无从理解的错。
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
         var explicitScopeMode = req.ScopeMode == null ? (AgentApiKeyScopeMode?)null : ParseScopeMode(req.ScopeMode);
         if (explicitScopeMode == AgentApiKeyScopeMode.Auto)
         {
@@ -253,7 +256,6 @@ public class AgentApiKeysController : ControllerBase
         else if (req.Scopes != null)
         {
             var scopes = req.Scopes.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
-            var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
             foreach (var s in scopes)
             {
                 var (ok, reason) = await ValidateScopeAsync(s, ownedPermissions, ct);
@@ -282,7 +284,7 @@ public class AgentApiKeysController : ControllerBase
             explicitScopeMode);
 
         var reloaded = await _keyService.GetByIdAsync(id, ct);
-        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded) }));
+        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
     }
 
     public class RenewRequest
@@ -299,10 +301,11 @@ public class AgentApiKeysController : ControllerBase
         if (key == null || key.OwnerUserId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "Key 不存在或无权访问"));
 
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
         var ttl = req?.TtlDays is > 0 and <= MaxTtlDays ? req.TtlDays!.Value : RenewTtlDays;
         await _keyService.RenewAsync(id, ttl, ct);
         var reloaded = await _keyService.GetByIdAsync(id, ct);
-        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded) }));
+        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
     }
 
     /// <summary>撤销（立即失效，不可恢复）</summary>
@@ -314,9 +317,10 @@ public class AgentApiKeysController : ControllerBase
         if (key == null || key.OwnerUserId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "Key 不存在或无权访问"));
 
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
         await _keyService.RevokeAsync(id, ct);
         var reloaded = await _keyService.GetByIdAsync(id, ct);
-        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded) }));
+        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
     }
 
     [HttpDelete("{id}")]
@@ -335,7 +339,14 @@ public class AgentApiKeysController : ControllerBase
     // Helpers
     // ======================================================================
 
-    private static object ToDto(AgentApiKey k)
+    /// <summary>
+    /// 列表/详情行。<paramref name="ownedPermissions"/> 是密钥主人此刻的权限位 ——
+    /// 必须传，因为 `scopes` 这一列要显示「它此刻真拿得到什么」，不是库里存了什么：
+    ///   - 自动档的钥匙存的是**空清单**，照着存的显示就是「零个能力」，而它什么都调得动；
+    ///   - 手动档的钥匙里，权限被回收的那几个 scope 鉴权时就被剥掉了，显示出来是假的。
+    /// 判据与鉴权同一个函数（McpCapabilityCatalog.EffectiveScopesFor），不在这里另写一份。
+    /// </summary>
+    private static object ToDto(AgentApiKey k, IReadOnlyList<string> ownedPermissions)
     {
         var now = DateTime.UtcNow;
         int? daysLeft = k.ExpiresAt.HasValue ? (int)Math.Ceiling((k.ExpiresAt.Value - now).TotalDays) : null;
@@ -354,7 +365,7 @@ public class AgentApiKeysController : ControllerBase
             k.Name,
             k.Description,
             keyPrefix = k.KeyPrefix,
-            scopes = k.Scopes ?? new List<string>(),
+            scopes = McpCapabilityCatalog.EffectiveScopesFor(k.ScopeMode, k.Scopes, ownedPermissions),
             scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
             k.IsActive,
             k.CreatedAt,
