@@ -11,6 +11,7 @@ public sealed class InfraAgentSessionServiceCdsStreamRetryTests
     [Theory]
     [InlineData("queued")]
     [InlineData("running")]
+    [InlineData("succeeded")]
     public void MapCdsStatus_KeepsNonTerminalExecutionStatesRunning(string cdsStatus)
     {
         InfraAgentSessionService.MapCdsStatus(cdsStatus)

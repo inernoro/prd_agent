@@ -361,5 +361,6 @@ internal static class DesignArtifactPromptBuilder
             runtimeProtocol = "cds-design-artifact-events-v1",
             runId = run.Id,
             workspaceTask = "/workspace/brief/task.json",
+            command = "Read the workspace task and referenced files, then implement it now. Continue using tools until /workspace/index.html exists and is complete. Do not stop after analysis, a plan, or a progress summary.",
         }, RemoteEnvelopeJsonOptions);
 }

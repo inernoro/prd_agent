@@ -408,10 +408,11 @@ public class DesignArtifactProviderCatalogTests
         Assert.Equal("map-design-artifact-command-v2", envelope.RootElement.GetProperty("schemaVersion").GetString());
         Assert.Equal("cds-design-artifact-events-v1", envelope.RootElement.GetProperty("runtimeProtocol").GetString());
         Assert.Equal(
-            ["schemaVersion", "runtimeProtocol", "runId", "workspaceTask"],
+            ["schemaVersion", "runtimeProtocol", "runId", "workspaceTask", "command"],
             envelope.RootElement.EnumerateObject().Select(property => property.Name).ToArray());
         Assert.Equal("run-1", envelope.RootElement.GetProperty("runId").GetString());
         Assert.Equal("/workspace/brief/task.json", envelope.RootElement.GetProperty("workspaceTask").GetString());
+        Assert.Contains("/workspace/index.html exists", envelope.RootElement.GetProperty("command").GetString());
         Assert.False(envelope.RootElement.TryGetProperty("knowledgeReferences", out _));
         Assert.False(envelope.RootElement.TryGetProperty("workspace", out _));
         Assert.False(envelope.RootElement.TryGetProperty("responseContract", out _));

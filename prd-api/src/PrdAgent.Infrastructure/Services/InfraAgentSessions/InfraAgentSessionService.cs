@@ -4143,6 +4143,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             "creating" => InfraAgentSessionStatuses.Creating,
             "queued" => InfraAgentSessionStatuses.Running,
             "running" => InfraAgentSessionStatuses.Running,
+            "succeeded" => InfraAgentSessionStatuses.Running,
             "idle" => InfraAgentSessionStatuses.Idle,
             "stopping" => InfraAgentSessionStatuses.Stopping,
             "stopped" => InfraAgentSessionStatuses.Stopped,
