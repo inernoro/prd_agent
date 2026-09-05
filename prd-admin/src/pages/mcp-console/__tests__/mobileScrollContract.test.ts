@@ -5,8 +5,13 @@
  * 但窄屏是单列：同一套 `h-full` + `flex-1 min-h-0` + `overflow-y-auto` 会让整页高度
  * 恰好等于一屏，外层 `<main>`（overflow-auto）没得可滚，每列在一个很矮的盒子里自己滚。
  *
- * 390 宽实测的后果不是「要多滚两下」：`document.scrollHeight === innerHeight`，
- * 第二台客户端与「断开」按钮**根本不在 DOM 里**，用户既看不见也够不着。
+ * 390 宽实测的后果不是「要多滚两下」：第二台客户端与「断开」按钮**根本不在 DOM 里**，
+ * 用户既看不见也够不着。
+ *
+ * 量它的时候别去量 document —— 这一页的滚动归 AppShell 的内容容器，
+ * `document.scrollHeight === innerHeight` 修好前后都成立，判不出任何东西。
+ * 真正的判据是那个 overflow 容器的 scrollHeight 有没有超出 clientHeight，
+ * 以及「断开」按钮到底有几个（坏的时候是 0，好的时候等于客户端台数）。
  *
  * 这类事删掉不会红：类型过、lint 过、59 条用例过、桌面截图好看，
  * 只有真的用手机视口打开才现形。所以判据钉在源码上。
