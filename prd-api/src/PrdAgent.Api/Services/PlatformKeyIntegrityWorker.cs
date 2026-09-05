@@ -270,8 +270,11 @@ public class PlatformKeyIntegrityWorker : BackgroundService
             Level = "error",
             Status = "open",
             Source = "platform-key-integrity",
-            ActionLabel = "去模型平台检查",
-            ActionUrl = "/mds",
+            // 2026-09-05：MAP 侧模型页面已下线，平台凭据只在 LLM Gateway 控制台维护——
+            // 走网关 SSO 深链（ActionKind = llm-gateway，ActionUrl 是网关控制台内的 returnTo 路径）。
+            ActionLabel = "去模型网关检查平台凭据",
+            ActionUrl = "/platforms",
+            ActionKind = "llm-gateway",
             CreatedAt = now,
             UpdatedAt = now,
             ExpiresAt = now.AddDays(7),

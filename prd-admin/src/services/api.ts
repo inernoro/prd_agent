@@ -973,6 +973,8 @@ export const api = {
   settings: {
     defaultNav: () => '/api/settings/default-nav',
     applyDefaultNavToAllUsers: () => '/api/settings/default-nav/apply-to-all-users',
+    userNavLayouts: () => '/api/settings/default-nav/user-layouts',
+    userNavLayout: (userId: string) => `/api/settings/default-nav/user-layouts/${encodeURIComponent(userId)}`,
     init: {
       defaultGroups: () => '/api/settings/init/default-groups',
       migrateModels: () => '/api/settings/init/migrate-models',

@@ -37,7 +37,7 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 | 面 | 应用 | 路由 | 权限 | 菜单文案 | 来源文件 |
 |----|------|------|------|----------|----------|
 | A | prd-admin | `/logs` | `logs.read` | 请求日志（短标签「日志」） | navRegistry.tsx L657-667 |
-| B | prd-admin | `/mds`（`?tab=pools`） | `mds.read` | 模型中心（短标签「模型」） | navRegistry.tsx L765-777 |
+| B | （已下线） | 无 | 无 | MAP 侧「模型」菜单与页面 2026-09-05 整体下线，模型池 / 健康面板归 LLM Gateway 控制台（面 C） | AdminMenuCatalog.cs |
 | C | llmgw/web | `/login` → `/` | 独立账号体系（非 prd-admin 权限） | LLM 网关观测台 | llmgw/web/src/App.tsx |
 | D | cds/web | `/`（BranchTopologyPage） | CDS 鉴权 | 分支拓扑 | cds/web/src/pages/BranchTopologyPage.tsx |
 | E | serving API | `GET /gw/v1/shadow-comparisons` | `X-Gateway-Key`（M2M） | 影子比对读端点 | llmgw/serving/GatewayHttpEndpoints.cs L170-192 |
@@ -149,25 +149,11 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
   - 预期（双主题）：图片像素真实渲染（object-cover），非 spinner、非裂图；治「返回数据图片无法显示」。
 - **双主题**：A1-A6 每个截图点暗/亮各一张。
 
-### 面 B：模型池管理 + 健康 / 告警面板
+### 面 B：（已下线）模型池管理 + 健康 / 告警面板
 
-- **路由**：`/mds?tab=pools`（权限 `mds.read`）。来源：navRegistry.tsx L765-777；
-  页面 `prd-admin/src/pages/ModelManageTabsPage.tsx` → `ModelPoolManagePage.tsx`（健康总览 `PoolHealthOverview.tsx`）。
-- **进入面包屑**（从登录后首页）：
-  1. 左侧导航 / 命令面板找到「模型中心」（短标签「模型」，icon Cpu）并 `click`。
-  2. 落到 `/mds`，`waitForSelector` 命中顶层 TabBar（ModelManageTabsPage.tsx L34-39，文案：
-     `应用模型池管理` / `模型池管理` / `平台管理` / `模型中继`）。
-  3. `click`「模型池管理」tab（key=`pools`）→ `waitForSelector` 命中健康总览标题「健康总览」（PoolHealthOverview.tsx L144）。
-- **截图点 B1（健康总览 + 告警）**：`waitForSelector` 命中 `PoolHealthOverview` 主体（非「正在加载模型池健康总览...」spinner）。
-  - 两种主态择一截：(a) 有告警 → 告警区出现「死池」/「高 fallback」条目 + 「点击定位」（PoolHealthOverview.tsx L201）；
-    (b) 全健康 → 绿条「全部健康：无死池、无高 fallback 告警」（L219）。
-  - 预期（双主题）：把静默降级一眼暴露成红色一级告警；fallback 率 ≥20% 橙、≥5% 黄。
-- **截图点 B2（池内模型健康状态）**：在池列表 `click` 一个池 → 右侧详情出现「健康 / 不可用」计数（ModelPoolManagePage.tsx L723-732）
-  + 每个模型的健康徽章（HEALTH_STATUS_MAP：健康绿 / 不可用红，L58-61）。
-  - 预期（双主题）：非健康模型旁出现「点击重置为健康状态」入口（L775）；计数与徽章一致。
-- **截图点 B3（告警定位联动）**：若 B1 有告警，`click`「点击定位」→ 列表滚动/高亮到对应池（死池）或按 modelType 过滤（高 fallback）。
-  - 预期（双主题）：点击后目标池可见并选中；闭环到「告警能跳到现场」。
-- **双主题**：B1-B3 暗/亮各一张。
+- 2026-09-05 起 MAP 左侧「模型」菜单与 `/mds` 页面整体删除，不再有这一面的入口；模型池、平台凭据、
+  健康总览统一在 LLM Gateway 控制台（MAP 左下角「模型网关」SSO 进入，或面 C 的独立站点）验收。
+- 原 B1-B3 截图点不再执行；历史报告里引用本面的，按「已下线」处理，不算断头。
 
 ### 面 C：独立观测前端 llmgw/web（登录 → 日志页）
 

@@ -27,7 +27,7 @@ public sealed class MdsWriteRetiredFilter : IActionFilter
 {
     /// <summary>网关控制台的说明位置。真实入口由服务端 SSO 票据下发，这里只给一句话指路。</summary>
     private const string Guidance =
-        "MAP 的模型管理已下线，上游、模型、模型池请到 LLM Gateway 控制台配置（MAP 左下角「模型网关」或 /mds 页面进入）。";
+        "MAP 的模型管理已下线，上游、模型、模型池请到 LLM Gateway 控制台配置（MAP 左下角「模型网关」进入）。";
 
     /// <summary>
     /// 非 GET 但语义是「读 / 探测」、且仍有存活调用方的端点。

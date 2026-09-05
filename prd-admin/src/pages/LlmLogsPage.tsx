@@ -25,7 +25,7 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import SystemLogsTab from '@/pages/system-logs/SystemLogsTab';
 
 function codeBoxStyle(): React.CSSProperties {
@@ -886,8 +886,6 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 } = {}) {
   const { isMobile } = useBreakpoint();
   const [searchParams, setSearchParams] = useSearchParams();
-  // 站内跳转走 SPA navigate：整页刷新会重置路由历史序号，破坏返回手势
-  const navigate = useNavigate();
   const tab = (searchParams.get('tab') ?? 'llm') as 'llm' | 'system';
 
   const setTab = (next: 'llm' | 'system') => {
@@ -1540,15 +1538,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               <button
                                 type="button"
                                 className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
-                                title="直连单模型（点击跳转到模型管理）"
+                                title="直连单模型"
                                 style={{
                                   background: 'rgba(156, 163, 175, 0.12)',
                                   border: '1px solid rgba(156, 163, 175, 0.28)',
                                   color: 'rgba(156, 163, 175, 0.95)'
-                                }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigate('/mds?tab=models');
                                 }}
                               >
                                 <Zap size={10} />
@@ -1561,12 +1555,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               <button
                                 type="button"
                                 className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
-                                title={`默认模型池：${groupName}（点击跳转到模型池管理）`}
+                                title={`默认模型池：${groupName}`}
                                 style={requestTypeChipStyle(b.tone)}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigate('/mds?tab=pools');
-                                }}
                               >
                                 {b.icon}
                                 默认模型池：{groupName}
@@ -1578,15 +1568,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               <button
                                 type="button"
                                 className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
-                                title={`专属模型池：${groupName}（点击跳转到模型池管理）`}
+                                title={`专属模型池：${groupName}`}
                                 style={{
                                   background: 'rgba(59, 130, 246, 0.12)',
                                   border: '1px solid rgba(59, 130, 246, 0.28)',
                                   color: 'var(--accent-fg-blue)'
-                                }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigate('/mds?tab=pools');
                                 }}
                               >
                                 <Layers size={10} />
@@ -1599,12 +1585,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               <button
                                 type="button"
                                 className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
-                                title={`默认${b.label}（点击跳转到应用配置）`}
+                                title={`默认${b.label}`}
                                 style={requestTypeChipStyle(b.tone)}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigate('/mds?tab=apps');
-                                }}
                               >
                                 {b.icon}
                                 默认{b.label}

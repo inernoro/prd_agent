@@ -127,3 +127,28 @@ export type UpdateDefaultNavLayoutContract = (payload: {
 }) => Promise<ApiResponse<DefaultNavLayout>>;
 
 export type ApplyDefaultNavToAllUsersContract = () => Promise<ApiResponse<ApplyDefaultNavToAllUsersResult>>;
+
+/** 全员导航总览里的一行：一个真人用户 + 他当前生效的个人导航 */
+export type UserNavLayoutItem = {
+  userId: string;
+  username: string;
+  displayName: string;
+  role: string;
+  status: string;
+  /** navOrder 或 navHidden 任一非空即为自定义过 */
+  customized: boolean;
+  navOrder: string[];
+  navHidden: string[];
+  updatedAt?: string | null;
+};
+
+export type UserNavLayoutsResult = {
+  items: UserNavLayoutItem[];
+  totalCount: number;
+  customizedCount: number;
+};
+
+export type GetUserNavLayoutsContract = () => Promise<ApiResponse<UserNavLayoutsResult>>;
+
+/** 清空某个用户的个人导航，让其回退到「所有人的默认导航」 */
+export type ResetUserNavLayoutContract = (userId: string) => Promise<ApiResponse<UserNavLayoutItem>>;

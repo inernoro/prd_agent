@@ -12,6 +12,10 @@ import type {
   UpdateAgentSwitcherPreferencesContract,
   UpdateHomeLauncherPreferencesContract,
   UpdateDefaultNavLayoutContract,
+  GetUserNavLayoutsContract,
+  ResetUserNavLayoutContract,
+  UserNavLayoutItem,
+  UserNavLayoutsResult,
   ApplyDefaultNavToAllUsersContract,
   ThemeConfigResponse,
   VisualAgentPreferences,
@@ -194,3 +198,29 @@ export const applyDefaultNavToAllUsersReal: ApplyDefaultNavToAllUsersContract = 
     modifiedCount: res.data.modifiedCount ?? 0,
   });
 };
+
+export const getUserNavLayoutsReal: GetUserNavLayoutsContract = async (): Promise<ApiResponse<UserNavLayoutsResult>> => {
+  const res = await apiRequest<UserNavLayoutsResult>(api.settings.userNavLayouts());
+  if (!res.success) return res;
+  const items = (res.data.items ?? []).map(normalizeUserNavLayoutItem);
+  return ok({
+    items,
+    totalCount: res.data.totalCount ?? items.length,
+    customizedCount: res.data.customizedCount ?? items.filter((it) => it.customized).length,
+  });
+};
+
+export const resetUserNavLayoutReal: ResetUserNavLayoutContract = async (userId): Promise<ApiResponse<UserNavLayoutItem>> => {
+  const res = await apiRequest<UserNavLayoutItem>(api.settings.userNavLayout(userId), { method: 'DELETE' });
+  if (!res.success) return res;
+  return ok(normalizeUserNavLayoutItem(res.data));
+};
+
+function normalizeUserNavLayoutItem(raw: UserNavLayoutItem): UserNavLayoutItem {
+  return {
+    ...raw,
+    navOrder: raw.navOrder ?? [],
+    navHidden: raw.navHidden ?? [],
+    customized: Boolean(raw.customized),
+  };
+}

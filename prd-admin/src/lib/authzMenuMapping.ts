@@ -34,7 +34,9 @@ export const menuList: MenuDef[] = [
   },
   {
     appKey: 'mds',
-    label: '模型管理',
+    // 2026-09-05：MAP 侧「模型」菜单与页面已整体下线；权限点保留，因为 api/mds 读接口
+    // 仍被视觉创作模型池选择、实验台等消费。这里只是授权矩阵里勾权限的位置，不再对应菜单。
+    label: '模型接口（页面已下线）',
     icon: 'Cpu',
     permissions: ['mds.read', 'mds.write'],
   },

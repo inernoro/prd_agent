@@ -163,7 +163,7 @@ const VOC_QUICK_LINK: HomeQuickLink = {
 
 /**
  * 首页快捷入口注册表。key 是「偏好 id」（用户排序用），与目录 id 不是一回事：
- * updates→changelog、voc→team-activity、models→mds、teams→users。
+ * updates→changelog、voc→team-activity、teams→users。
  * 记账必须用后者，判据见 navCoverage 的「首页快捷入口按目录 id 记账」。
  *
  * path 必须是目录里**原样存在**的路由：`/visual-agent?tab=assets` 那种
@@ -181,7 +181,6 @@ export const QUICK_LINK_BY_ID: Partial<Record<HomeQuickLinkId, HomeQuickLink>> =
   'workflow-agent': { id: 'workflow-agent', icon: Workflow, label: '工作流引擎', desc: '可视化工作流编排，自动化多步骤任务串联', path: '/workflow-agent' },
   'web-pages': { id: 'web-pages', icon: Globe, label: '网页托管', desc: '上传 HTML 或 ZIP，托管并分享你的网页', path: '/web-pages' },
   'open-platform': { id: 'open-platform', icon: Code2, label: '开放平台', desc: 'API 签发、应用接入与调用监控', path: '/open-platform' },
-  models: { id: 'models', icon: Cpu, label: '模型中心', desc: '大模型与模型池配置、健康监控', path: '/mds' },
   teams: { id: 'teams', icon: Users, label: '团队协作', desc: '团队成员、用户组、分享与协作', path: '/users' },
 };
 
@@ -502,7 +501,6 @@ export default function AgentLauncherPage() {
     const canUseQuickLink = (id: HomeQuickLinkId) => {
       if (id === 'voc') return launcherPerms.canReadTeamActivity;
       if (id === 'open-platform') return launcherPerms.canManageOpenPlatform;
-      if (id === 'models') return launcherPerms.canReadModels;
       if (id === 'teams') return launcherPerms.canReadUsers;
       return true;
     };
@@ -516,7 +514,7 @@ export default function AgentLauncherPage() {
       const resolved = QUICK_LINK_BY_ID[id];
       return resolved ? [resolved] : [];
     });
-  }, [launcherPerms.canManageOpenPlatform, launcherPerms.canReadModels, launcherPerms.canReadTeamActivity, launcherPerms.canReadUsers, quickLinkIds]);
+  }, [launcherPerms.canManageOpenPlatform, launcherPerms.canReadTeamActivity, launcherPerms.canReadUsers, quickLinkIds]);
 
   useEffect(() => {
     loadItems();
@@ -809,8 +807,8 @@ export default function AgentLauncherPage() {
                       data-tour-id={`quicklink-${link.id}`}
                       onClick={() => {
                         // 记账用目录 id（由路由推导），不能用 link.id ——后者是「首页快捷入口
-                        // 偏好」的别名（updates / voc / models / teams），与目录 id
-                        // （changelog / team-activity / mds / users）对不上。
+                        // 偏好」的别名（updates / voc / teams），与目录 id
+                        // （changelog / team-activity / users）对不上。
                         const trackedId = navIdFromPath(link.path);
                         openRoute(link.path, { id: trackedId, name: link.label });
                       }}
