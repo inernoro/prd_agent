@@ -1535,9 +1535,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           } else if (resolutionType === 0) {
                             // 直连单模型
                             return (
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
                                 title="直连单模型"
                                 style={{
                                   background: 'rgba(156, 163, 175, 0.12)',
@@ -1547,27 +1546,25 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               >
                                 <Zap size={10} />
                                 直连单模型
-                              </button>
+                              </span>
                             );
                           } else if (resolutionType === 1) {
                             // 默认模型池
                             return (
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
                                 title={`默认模型池：${groupName}`}
                                 style={requestTypeChipStyle(b.tone)}
                               >
                                 {b.icon}
                                 默认模型池：{groupName}
-                              </button>
+                              </span>
                             );
                           } else if (resolutionType === 2) {
                             // 专属模型池
                             return (
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
                                 title={`专属模型池：${groupName}`}
                                 style={{
                                   background: 'rgba(59, 130, 246, 0.12)',
@@ -1577,20 +1574,19 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               >
                                 <Layers size={10} />
                                 专属模型池：{groupName}
-                              </button>
+                              </span>
                             );
                           } else {
                             // 兜底：显示默认标签
                             return (
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0 hover:opacity-80 transition-opacity"
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
                                 title={`默认${b.label}`}
                                 style={requestTypeChipStyle(b.tone)}
                               >
                                 {b.icon}
                                 默认{b.label}
-                              </button>
+                              </span>
                             );
                           }
                         })()}

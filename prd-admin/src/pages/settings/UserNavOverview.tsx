@@ -186,14 +186,8 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
         toast.error('重置失败', res.error?.message || '重置用户导航失败');
         return;
       }
-      const updated = res.data;
-      setItems((prev) => {
-        // 重置后它不再是「自定义」，按服务端同样的规则挪到默认段最前
-        const rest = prev.filter((it) => it.userId !== updated.userId);
-        const firstDefaultIdx = rest.findIndex((it) => !it.customized);
-        const at = firstDefaultIdx < 0 ? rest.length : firstDefaultIdx;
-        return [...rest.slice(0, at), updated, ...rest.slice(at)];
-      });
+      // 重置后这个人从「自定义」段挪到「默认」段，默认段按显示名排——位置由服务端算，直接重拉，不在本地猜
+      await load();
       toast.success('已重置', `${item.displayName} 的导航已回退到默认`);
     } catch (error) {
       toast.error('重置失败', error instanceof Error ? error.message : '重置用户导航失败');
