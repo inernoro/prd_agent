@@ -81,6 +81,8 @@ export type LiteraryAgentPreferences = {
 export type UserPreferences = {
   navOrder: string[];
   navHidden: string[];
+  /** 服务端是否明确持有过导航布局（空数组 + true = 被主动清空，前端不得用本地缓存回填） */
+  navLayoutSynced?: boolean;
   defaultNavOrder: string[];
   defaultNavHidden: string[];
   themeConfig?: ThemeConfigResponse;

@@ -13,3 +13,6 @@
 | fix | prd-api | 平台密钥完整性告警：存量未关闭记录的处理入口也迁到模型网关 |
 | fix | prd-admin | 全员导航总览：用服务端全量目录判「已下线」；只隐藏未排序的用户按默认顺序画、隐藏集与侧栏同口径 |
 | fix | prd-admin | 首页预览图设置：无文生图模型时的指路文案改为 LLM Gateway 控制台，不再指向已删除的模型中心 |
+| fix | prd-api | 用户偏好新增导航专属时间戳 NavLayoutUpdatedAt，总览排序与展示不再被皮肤等其他偏好改动带偏；GET 偏好暴露 navLayoutSynced |
+| fix | prd-admin | 导航 store：服务端主动清空过布局时不再用 sessionStorage 旧布局回填上传，管理员按人重置不会被撤销 |
+| security | prd-api | 全员导航总览接口改为需要 settings.write（或 super），不再仅凭 settings.read 放行 |

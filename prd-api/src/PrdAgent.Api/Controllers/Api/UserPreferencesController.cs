@@ -51,6 +51,9 @@ public class UserPreferencesController : ControllerBase
         {
             navOrder = prefs?.NavOrder ?? new List<string>(),
             navHidden = prefs?.NavHidden ?? new List<string>(),
+            // 服务端是否明确持有过导航布局（哪怕是空数组）。空数组 + true = 管理员或用户主动清空过，
+            // 前端不得再拿 sessionStorage 里的旧布局回填覆盖；空数组 + false = 从没同步过，允许回填。
+            navLayoutSynced = prefs?.NavOrder != null || prefs?.NavHidden != null,
             defaultNavOrder = defaultNav?.NavOrder ?? new List<string>(),
             defaultNavHidden = defaultNav?.NavHidden ?? new List<string>(),
             themeConfig = prefs?.ThemeConfig,
@@ -195,6 +198,7 @@ public class UserPreferencesController : ControllerBase
 
         var update = Builders<UserPreferences>.Update
             .Set(x => x.NavOrder, request.NavOrder)
+            .Set(x => x.NavLayoutUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _db.UserPreferences.UpdateOneAsync(
@@ -220,6 +224,7 @@ public class UserPreferencesController : ControllerBase
 
         var update = Builders<UserPreferences>.Update
             .Set(x => x.NavHidden, request.NavHidden)
+            .Set(x => x.NavLayoutUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _db.UserPreferences.UpdateOneAsync(
@@ -243,6 +248,7 @@ public class UserPreferencesController : ControllerBase
         var update = Builders<UserPreferences>.Update
             .Set(x => x.NavOrder, request.NavOrder ?? new List<string>())
             .Set(x => x.NavHidden, request.NavHidden ?? new List<string>())
+            .Set(x => x.NavLayoutUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _db.UserPreferences.UpdateOneAsync(

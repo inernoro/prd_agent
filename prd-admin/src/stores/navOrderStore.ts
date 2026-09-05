@@ -88,6 +88,10 @@ export const useNavOrderStore = create<NavOrderState>()(
                   console.error('[navOrderStore] 持久化迁移后的导航布局失败:', err);
                 });
               }
+            } else if (res.data.navLayoutSynced) {
+              // 服务端明确持有「空布局」= 管理员按人重置 / 恢复所有用户 / 用户自己恢复默认。
+              // 这时 sessionStorage 里的旧布局是过期的，回填上传会把重置悄悄撤销（Codex P1）。
+              set({ navOrder: [], navHidden: [], defaultNavOrder, defaultNavHidden, loaded: true });
             } else if (localOrder.length > 0 || localHidden.length > 0) {
               console.info('[navOrderStore] 后端无自定义导航，使用本地缓存并同步到后端');
               set({

@@ -42,13 +42,14 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
 };
 
 async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
-  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; defaultNavOrder?: string[]; defaultNavHidden?: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences; homeLauncherPreferences?: HomeLauncherPreferences; documentStorePinnedIds?: string[] }>(
+  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; navLayoutSynced?: boolean; defaultNavOrder?: string[]; defaultNavHidden?: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences; homeLauncherPreferences?: HomeLauncherPreferences; documentStorePinnedIds?: string[] }>(
     api.dashboard.userPreferences.get()
   );
   if (!res.success) return res as unknown as ApiResponse<UserPreferences>;
   return ok({
     navOrder: res.data.navOrder ?? [],
     navHidden: res.data.navHidden ?? [],
+    navLayoutSynced: res.data.navLayoutSynced === true,
     defaultNavOrder: res.data.defaultNavOrder ?? [],
     defaultNavHidden: res.data.defaultNavHidden ?? [],
     themeConfig: res.data.themeConfig,

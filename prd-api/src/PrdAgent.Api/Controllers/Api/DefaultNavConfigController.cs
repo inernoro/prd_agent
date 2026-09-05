@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using System.IdentityModel.Tokens.Jwt;
 using System.Text.RegularExpressions;
 using PrdAgent.Api.Models.Responses;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -19,10 +21,26 @@ namespace PrdAgent.Api.Controllers.Api;
 public class DefaultNavConfigController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly IAdminPermissionService _permissionService;
 
-    public DefaultNavConfigController(MongoDbContext db)
+    public DefaultNavConfigController(MongoDbContext db, IAdminPermissionService permissionService)
     {
         _db = db;
+        _permissionService = permissionService;
+    }
+
+    /// <summary>
+    /// 全员总览是 GET，类级 AdminController 只会按 settings.read 放行；但它列出的是所有人的账号与偏好，
+    /// 门槛必须与「所有人的默认导航」的写权限一致（settings.write 或 super），不能靠前端不显示入口。
+    /// </summary>
+    private async Task<bool> CanManageAllUsersNavAsync(CancellationToken ct)
+    {
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        if (isRoot) return true;
+        var uid = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(uid)) return false;
+        var perms = await _permissionService.GetEffectivePermissionsAsync(uid, isRoot: false, ct);
+        return perms.Contains(AdminPermissionCatalog.SettingsWrite) || perms.Contains(AdminPermissionCatalog.Super);
     }
 
     [HttpGet]
@@ -62,6 +80,7 @@ public class DefaultNavConfigController : ControllerBase
         var update = Builders<UserPreferences>.Update
             .Set(x => x.NavOrder, new List<string>())
             .Set(x => x.NavHidden, new List<string>())
+            .Set(x => x.NavLayoutUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         var result = await _db.UserPreferences.UpdateManyAsync(
@@ -83,6 +102,12 @@ public class DefaultNavConfigController : ControllerBase
     [HttpGet("user-layouts")]
     public async Task<IActionResult> ListUserLayouts(CancellationToken ct)
     {
+        if (!await CanManageAllUsersNavAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("FORBIDDEN", "查看全员导航需要 settings.write 权限"));
+        }
+
         var users = await _db.Users
             .Find(u => u.UserType == UserType.Human)
             .Project(u => new UserNavLayoutUserProjection
@@ -156,6 +181,7 @@ public class DefaultNavConfigController : ControllerBase
         var update = Builders<UserPreferences>.Update
             .Set(x => x.NavOrder, new List<string>())
             .Set(x => x.NavHidden, new List<string>())
+            .Set(x => x.NavLayoutUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
         await _db.UserPreferences.UpdateOneAsync(x => x.UserId == userId, update, cancellationToken: ct);
 
@@ -218,6 +244,7 @@ public class DefaultNavConfigController : ControllerBase
         var update = Builders<UserPreferences>.Update
             .PullAll(x => x.NavOrder, tokens)
             .PullAll(x => x.NavHidden, tokens)
+            .Set(x => x.NavLayoutUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
         var result = await _db.UserPreferences.UpdateManyAsync(filter, update, cancellationToken: ct);
 
@@ -306,7 +333,7 @@ public class UserNavLayoutItem
     public bool Customized { get; set; }
     public List<string> NavOrder { get; set; } = new();
     public List<string> NavHidden { get; set; } = new();
-    /// <summary>偏好记录最近一次改动时间；没有偏好记录时为 null。</summary>
+    /// <summary>导航布局最近一次改动时间（NavLayoutUpdatedAt）；老记录没有这个字段时为 null，排在有时间的之后。</summary>
     public DateTime? UpdatedAt { get; set; }
 
     public static UserNavLayoutItem From(UserNavLayoutUserProjection user, UserPreferences? pref)
@@ -323,7 +350,7 @@ public class UserNavLayoutItem
             Customized = order.Count > 0 || hidden.Count > 0,
             NavOrder = order,
             NavHidden = hidden,
-            UpdatedAt = pref?.UpdatedAt
+            UpdatedAt = pref?.NavLayoutUpdatedAt
         };
     }
 }
