@@ -38,6 +38,7 @@ class RecordingShell implements IShellExecutor {
   readonly envFiles: Array<{ command: string; path: string; content: string; mode: number }> = [];
   workspaceDir = '';
   failEgressConnect = false;
+  egressHealthFailures = 0;
   failContainerCreate = false;
   failVolumeInit = false;
   failTemplateInit = false;
@@ -93,6 +94,10 @@ class RecordingShell implements IShellExecutor {
     if (command.startsWith('docker exec ')) {
       if (this.failTemplateInit && command.includes('design-templates/web-prototype')) {
         return result('', 'web prototype resources missing', 1);
+      }
+      if (command.includes('/__health') && this.egressHealthFailures > 0) {
+        this.egressHealthFailures -= 1;
+        return result('', 'relay starting', 1);
       }
       return result('ready\n');
     }
@@ -151,6 +156,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     ]);
     const requests: Array<{ path: string; authorization: string; body?: any }> = [];
     const shell = new RecordingShell();
+    shell.egressHealthFailures = 3;
     const fakeFetch: typeof fetch = async (input, init) => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
       const requestPath = url.pathname;
@@ -405,6 +411,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(designRuns[1]?.body.message).toContain('keep the existing content unchanged');
     expect(designRuns[1]?.body.conversationId).toBe('od-conversation');
     expect(JSON.stringify(run?.body)).not.toContain('Private knowledge body');
+    expect(shell.calls.filter((call) => call.command.includes('/__health'))).toHaveLength(4);
     const sessionResourceCreates = shell.calls.filter((call) =>
       call.command.includes('cds.type=agent-session') && (
         call.command.startsWith('docker network create')

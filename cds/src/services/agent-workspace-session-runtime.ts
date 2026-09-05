@@ -1599,7 +1599,8 @@ export class AgentWorkspaceSessionRuntime {
       );
     }
     let ready = false;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    const readyDeadline = Date.now() + 15_000;
+    while (Date.now() < readyDeadline) {
       const probe = await this.shell.exec(
         `docker exec ${shellQuote(containerName)} node -e ${shellQuote(`fetch('http://127.0.0.1:${EGRESS_PROXY_PORT}/__health').then(r=>process.exit(r.status===204?0:1)).catch(()=>process.exit(1))`)}`,
         { timeout: 3000 },
@@ -1608,7 +1609,7 @@ export class AgentWorkspaceSessionRuntime {
         ready = true;
         break;
       }
-      await delay(50);
+      await delay(Math.min(this.pollIntervalMs, 250));
     }
     if (!ready) {
       await this.stopEgressProxy(handle);
