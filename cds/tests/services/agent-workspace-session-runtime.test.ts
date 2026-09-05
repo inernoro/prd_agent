@@ -293,6 +293,14 @@ describe('AgentWorkspaceSessionRuntime', () => {
     for (const call of sessionResourceCreates) {
       expect(call.command).toContain('cds.instance=instance-a');
     }
+    const volumeInitCall = shell.calls.find((call) => (
+      call.command.startsWith('docker run --rm') && call.command.includes('--cap-add CHOWN')
+    ));
+    expect(volumeInitCall?.command).toContain(
+      `chown ${process.getuid?.() ?? 1001}:${process.getgid?.() ?? 1001} /workspace /app/.od`,
+    );
+    expect(volumeInitCall?.command).toContain('chmod -R u=rwX,go=rX /workspace');
+    expect(volumeInitCall?.command).not.toContain('chown -R');
     const committed = requests.find((request) => request.path === '/commit');
     expect(committed?.authorization).toBe('Bearer transfer-token');
     expect(committed?.body.runId).toBe('map-run-1');

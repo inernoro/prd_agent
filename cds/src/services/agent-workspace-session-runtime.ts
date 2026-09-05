@@ -1055,7 +1055,10 @@ export class AgentWorkspaceSessionRuntime {
         '--entrypoint /bin/sh',
         shellQuote(this.image),
         '-c',
-        shellQuote(`chown -R ${this.containerUid}:${this.containerGid} /workspace /app/.od`),
+        shellQuote([
+          `chown ${this.containerUid}:${this.containerGid} /workspace /app/.od`,
+          'chmod -R u=rwX,go=rX /workspace',
+        ].join(' && ')),
       ].join(' '), { timeout: 90_000 });
       if (initialized.exitCode !== 0) {
         throw new AgentWorkspaceRuntimeError(
