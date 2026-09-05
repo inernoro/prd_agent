@@ -974,6 +974,7 @@ export const api = {
     defaultNav: () => '/api/settings/default-nav',
     applyDefaultNavToAllUsers: () => '/api/settings/default-nav/apply-to-all-users',
     userNavLayouts: () => '/api/settings/default-nav/user-layouts',
+    removeNavTokens: () => '/api/settings/default-nav/remove-tokens',
     userNavLayout: (userId: string) => `/api/settings/default-nav/user-layouts/${encodeURIComponent(userId)}`,
     init: {
       defaultGroups: () => '/api/settings/init/default-groups',

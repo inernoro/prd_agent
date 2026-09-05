@@ -157,6 +157,101 @@ public class DefaultNavConfigController : ControllerBase
         var pref = await _db.UserPreferences.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         return Ok(ApiResponse<UserNavLayoutItem>.Ok(UserNavLayoutItem.From(user, pref)));
     }
+
+    /// <summary>
+    /// 从「所有人的默认导航」和全部用户的个人导航（navOrder + navHidden）里拔掉指定 token。
+    /// 用途：某个菜单下线后，把还挂在各处的旧 key 一次清干净，而不必重置任何人的自定义顺序。
+    /// 只删指定 token，不动其余顺序；分隔符本身不可作为 token 传入。
+    /// </summary>
+    [HttpPost("remove-tokens")]
+    public async Task<IActionResult> RemoveTokens([FromBody] RemoveNavTokensRequest? request, CancellationToken ct)
+    {
+        var tokens = (request?.Tokens ?? new List<string>())
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim())
+            .Where(t => t != NavDividerToken)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (tokens.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_ARGUMENT", "tokens 不能为空"));
+        }
+        var tokenSet = new HashSet<string>(tokens, StringComparer.Ordinal);
+
+        // 1. 所有人的默认导航
+        var config = await _db.DefaultNavConfigs.Find(x => x.Id == "singleton").FirstOrDefaultAsync(ct);
+        var defaultRemoved = 0;
+        if (config != null)
+        {
+            var order = config.NavOrder ?? new List<string>();
+            var hidden = config.NavHidden ?? new List<string>();
+            var nextOrder = CollapseDividers(order.Where(t => !tokenSet.Contains(t)).ToList());
+            var nextHidden = hidden.Where(t => !tokenSet.Contains(t)).ToList();
+            defaultRemoved = (order.Count - nextOrder.Count) + (hidden.Count - nextHidden.Count);
+            if (defaultRemoved > 0)
+            {
+                config.NavOrder = nextOrder;
+                config.NavHidden = nextHidden;
+                config.UpdatedAt = DateTime.UtcNow;
+                await _db.DefaultNavConfigs.ReplaceOneAsync(x => x.Id == "singleton", config, cancellationToken: ct);
+            }
+        }
+
+        // 2. 全部用户：只 pull 指定 token，不重排、不重置
+        var filter = Builders<UserPreferences>.Filter.Or(
+            Builders<UserPreferences>.Filter.AnyIn(x => x.NavOrder, tokens),
+            Builders<UserPreferences>.Filter.AnyIn(x => x.NavHidden, tokens));
+        var update = Builders<UserPreferences>.Update
+            .PullAll(x => x.NavOrder, tokens)
+            .PullAll(x => x.NavHidden, tokens)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        var result = await _db.UserPreferences.UpdateManyAsync(filter, update, cancellationToken: ct);
+
+        return Ok(ApiResponse<RemoveNavTokensResponse>.Ok(new RemoveNavTokensResponse
+        {
+            Tokens = tokens,
+            DefaultRemovedCount = defaultRemoved,
+            DefaultNavOrder = config?.NavOrder ?? new List<string>(),
+            DefaultNavHidden = config?.NavHidden ?? new List<string>(),
+            UsersMatchedCount = result.MatchedCount,
+            UsersModifiedCount = result.ModifiedCount
+        }));
+    }
+
+    private const string NavDividerToken = "---";
+
+    /// <summary>去掉首尾与连续的分隔符，与前端 collapseDividers 语义一致。</summary>
+    private static List<string> CollapseDividers(List<string> arr)
+    {
+        var result = new List<string>();
+        foreach (var token in arr)
+        {
+            if (token == NavDividerToken)
+            {
+                if (result.Count == 0) continue;
+                if (result[^1] == NavDividerToken) continue;
+            }
+            result.Add(token);
+        }
+        while (result.Count > 0 && result[^1] == NavDividerToken) result.RemoveAt(result.Count - 1);
+        return result;
+    }
+}
+
+public class RemoveNavTokensRequest
+{
+    public List<string>? Tokens { get; set; }
+}
+
+public class RemoveNavTokensResponse
+{
+    public List<string> Tokens { get; set; } = new();
+    /// <summary>从所有人的默认导航里去掉的条目数（含随之收敛掉的分隔符）。</summary>
+    public int DefaultRemovedCount { get; set; }
+    public List<string> DefaultNavOrder { get; set; } = new();
+    public List<string> DefaultNavHidden { get; set; } = new();
+    public long UsersMatchedCount { get; set; }
+    public long UsersModifiedCount { get; set; }
 }
 
 public class UserNavLayoutUserProjection

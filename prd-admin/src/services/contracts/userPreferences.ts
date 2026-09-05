@@ -152,3 +152,15 @@ export type GetUserNavLayoutsContract = () => Promise<ApiResponse<UserNavLayouts
 
 /** 清空某个用户的个人导航，让其回退到「所有人的默认导航」 */
 export type ResetUserNavLayoutContract = (userId: string) => Promise<ApiResponse<UserNavLayoutItem>>;
+
+export type RemoveNavTokensResult = {
+  tokens: string[];
+  defaultRemovedCount: number;
+  defaultNavOrder: string[];
+  defaultNavHidden: string[];
+  usersMatchedCount: number;
+  usersModifiedCount: number;
+};
+
+/** 从所有人的默认导航 + 全部用户的个人导航里拔掉指定 token（菜单下线后的清理），不重置任何人的顺序 */
+export type RemoveNavTokensContract = (tokens: string[]) => Promise<ApiResponse<RemoveNavTokensResult>>;

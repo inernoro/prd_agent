@@ -280,6 +280,7 @@ import type {
   ApplyDefaultNavToAllUsersContract,
   GetUserNavLayoutsContract,
   ResetUserNavLayoutContract,
+  RemoveNavTokensContract,
 } from '@/services/contracts/userPreferences';
 import type {
   GetModelSizesContract,
@@ -609,6 +610,7 @@ import {
   applyDefaultNavToAllUsersReal,
   getUserNavLayoutsReal,
   resetUserNavLayoutReal,
+  removeNavTokensReal,
 } from '@/services/real/userPreferences';
 import {
   getAdminNotificationsReal,
@@ -1386,6 +1388,7 @@ export const updateDefaultNavLayout: UpdateDefaultNavLayoutContract = withAuth(u
 export const applyDefaultNavToAllUsers: ApplyDefaultNavToAllUsersContract = withAuth(applyDefaultNavToAllUsersReal);
 export const getUserNavLayouts: GetUserNavLayoutsContract = withAuth(getUserNavLayoutsReal);
 export const resetUserNavLayout: ResetUserNavLayoutContract = withAuth(resetUserNavLayoutReal);
+export const removeNavTokens: RemoveNavTokensContract = withAuth(removeNavTokensReal);
 
 export const getWatermarks: GetWatermarksContract = withAuth(getWatermarksReal);
 export const getWatermarkByApp: GetWatermarkByAppContract = withAuth(getWatermarkByAppReal);

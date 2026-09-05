@@ -14,6 +14,8 @@ import type {
   UpdateDefaultNavLayoutContract,
   GetUserNavLayoutsContract,
   ResetUserNavLayoutContract,
+  RemoveNavTokensContract,
+  RemoveNavTokensResult,
   UserNavLayoutItem,
   UserNavLayoutsResult,
   ApplyDefaultNavToAllUsersContract,
@@ -224,3 +226,19 @@ function normalizeUserNavLayoutItem(raw: UserNavLayoutItem): UserNavLayoutItem {
     customized: Boolean(raw.customized),
   };
 }
+
+export const removeNavTokensReal: RemoveNavTokensContract = async (tokens): Promise<ApiResponse<RemoveNavTokensResult>> => {
+  const res = await apiRequest<RemoveNavTokensResult>(api.settings.removeNavTokens(), {
+    method: 'POST',
+    body: { tokens },
+  });
+  if (!res.success) return res;
+  return ok({
+    tokens: res.data.tokens ?? tokens,
+    defaultRemovedCount: res.data.defaultRemovedCount ?? 0,
+    defaultNavOrder: res.data.defaultNavOrder ?? [],
+    defaultNavHidden: res.data.defaultNavHidden ?? [],
+    usersMatchedCount: res.data.usersMatchedCount ?? 0,
+    usersModifiedCount: res.data.usersModifiedCount ?? 0,
+  });
+};

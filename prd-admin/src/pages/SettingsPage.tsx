@@ -289,6 +289,7 @@ function NavOrderSettings() {
           titleNode={scopeSwitcher}
           defaultNavOrder={defaultNavOrder}
           defaultNavHidden={defaultNavHidden}
+          onDefaultNavChanged={setDefaultNavLayoutLocal}
         />
       )}
     </div>

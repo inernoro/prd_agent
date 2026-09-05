@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { getUserNavLayouts, resetUserNavLayout } from '@/services';
+import { getUserNavLayouts, removeNavTokens, resetUserNavLayout } from '@/services';
 import type { UserNavLayoutItem } from '@/services/contracts/userPreferences';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { findHomeItem, getMenuGroupedDefaultOrder, getUnifiedNavCatalog } from '@/lib/unifiedNavCatalog';
 import { useAuthStore } from '@/stores/authStore';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
-import { RefreshCw, RotateCcw, Search } from 'lucide-react';
+import { Eraser, RefreshCw, RotateCcw, Search } from 'lucide-react';
 import { collapseDividers } from './NavLayoutEditor';
 import {
   NAV_CHIP_BASE_CLASS,
@@ -31,9 +31,11 @@ type Props = {
   titleNode?: ReactNode;
   defaultNavOrder: string[];
   defaultNavHidden: string[];
+  /** 清理已下线菜单后，把新的默认导航回写给上层（navOrderStore） */
+  onDefaultNavChanged?: (payload: { navOrder: string[]; navHidden: string[] }) => void;
 };
 
-export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden }: Props) {
+export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, onDefaultNavChanged }: Props) {
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const permissions = useAuthStore((s) => s.permissions);
   const isRoot = useAuthStore((s) => s.isRoot);
@@ -66,6 +68,7 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden }
   const [keyword, setKeyword] = useState('');
   const [onlyCustomized, setOnlyCustomized] = useState(false);
   const [resettingId, setResettingId] = useState<string | null>(null);
+  const [pruning, setPruning] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,6 +96,51 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden }
     () => items.filter((it) => it.customized && [...it.navOrder, ...it.navHidden].some((t) => t !== NAV_DIVIDER_KEY && !metaByKey.has(t))).length,
     [items, metaByKey],
   );
+
+  // 目录里已不存在的 token 全集：默认导航 + 每个人的 navOrder / navHidden
+  const staleTokens = useMemo(() => {
+    const set = new Set<string>();
+    const collect = (arr: string[]) => {
+      for (const t of arr) if (t !== NAV_DIVIDER_KEY && !metaByKey.has(t)) set.add(t);
+    };
+    collect(defaultNavOrder);
+    collect(defaultNavHidden);
+    for (const it of items) {
+      collect(it.navOrder);
+      collect(it.navHidden);
+    }
+    return [...set].sort();
+  }, [defaultNavHidden, defaultNavOrder, items, metaByKey]);
+
+  const handlePrune = useCallback(async () => {
+    if (staleTokens.length === 0) return;
+    const ok = await systemDialog.confirm({
+      title: '清理已下线菜单',
+      message: `将从「所有人的默认导航」和全部用户的个人导航里拔掉这些菜单：${staleTokens.join('、')}。只删这几个 key，不改任何人的其余顺序。确认继续吗？`,
+      confirmText: '确认清理',
+      cancelText: '取消',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setPruning(true);
+    try {
+      const res = await removeNavTokens(staleTokens);
+      if (!res.success) {
+        toast.error('清理失败', res.error?.message || '清理已下线菜单失败');
+        return;
+      }
+      onDefaultNavChanged?.({ navOrder: res.data.defaultNavOrder, navHidden: res.data.defaultNavHidden });
+      toast.success(
+        '已清理',
+        `默认导航去掉 ${res.data.defaultRemovedCount} 项，${res.data.usersModifiedCount} 个用户的导航已更新`,
+      );
+      await load();
+    } catch (error) {
+      toast.error('清理失败', error instanceof Error ? error.message : '清理已下线菜单失败');
+    } finally {
+      setPruning(false);
+    }
+  }, [load, onDefaultNavChanged, staleTokens]);
 
   const visibleItems = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
@@ -148,6 +196,19 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden }
                 {items.length} 人 · {customizedCount} 人自定义
                 {staleUserCount > 0 ? ` · ${staleUserCount} 人挂着已下线菜单` : ''}
               </span>
+            )}
+            {staleTokens.length > 0 && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => void handlePrune()}
+                disabled={pruning || loading}
+                title={`从默认导航和所有人的个人导航里拔掉：${staleTokens.join('、')}`}
+                data-testid="prune-stale-nav"
+              >
+                {pruning ? <MapSpinner size={12} /> : <Eraser size={14} />}
+                清理已下线菜单（{staleTokens.length}）
+              </Button>
             )}
             <Button variant="ghost" size="sm" onClick={() => void load()} disabled={loading} title="重新拉取">
               <RefreshCw size={14} />
