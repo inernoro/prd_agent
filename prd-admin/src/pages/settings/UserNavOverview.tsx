@@ -8,6 +8,8 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { findHomeItem, getMenuGroupedDefaultOrder, getUnifiedNavCatalog } from '@/lib/unifiedNavCatalog';
 import { migrateLegacyNavId } from '@/lib/launcherCatalog';
+import { getSidebarAutoAppendItems } from '@/lib/adminMenuCatalog';
+import { buildEffectiveNavOrder } from '@/lib/navEffectiveOrder';
 import { collectStaleNavTokens, isStaleNavToken } from '@/lib/navStaleTokens';
 import { useAuthStore } from '@/stores/authStore';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
@@ -54,6 +56,12 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
     return map;
   }, [unified]);
   const knownIds = useMemo<ReadonlySet<string>>(() => new Set(metaByKey.keys()), [metaByKey]);
+  // 侧栏会把目录里可见、不在顺序里也没被隐藏的项自动补到末尾（AppShell NON_HOME 兜底）。
+  // 这里用当前管理员看到的目录做代理——权限不全的管理员会少画几项，边界已记入 debt.frontend。
+  const sidebarIds = useMemo(
+    () => getSidebarAutoAppendItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
+    [isRoot, menuCatalog, permissions],
+  );
   const homeMeta = useMemo<NavChipMeta | null>(() => {
     const home = findHomeItem(unified);
     return home ? { navKey: home.id, label: home.label, shortLabel: home.shortLabel, icon: home.icon } : null;
@@ -215,7 +223,7 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
         </div>
         <div className="text-[11px] text-token-muted">
           第一行是「所有人的默认导航」；其余每人一行，自定义过的排在前面（最近改动在最上），沿用默认的排在后面。
-          虚线红框是目录里已不存在的菜单（侧栏渲染时会自动跳过），删菜单前先看这里谁还挂着它。
+          每行画的是侧栏真实渲染的那一列：虚线灰框是用户没排过、侧栏自动补到末尾的新菜单；虚线红框是目录里已不存在的菜单（侧栏渲染时会自动跳过），删菜单前先看这里谁还挂着它。
         </div>
         <NavRow
           heading={<span className="text-[12px] font-semibold text-token-primary">所有人的默认导航</span>}
@@ -225,6 +233,7 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
           hidden={defaultNavHidden}
           homeMeta={homeMeta}
           metaByKey={metaByKey}
+          sidebarIds={sidebarIds}
         />
       </GlassCard>
 
@@ -292,6 +301,7 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
                 dimmed={!it.customized}
                 homeMeta={homeMeta}
                 metaByKey={metaByKey}
+                sidebarIds={sidebarIds}
                 actions={
                   it.customized ? (
                     <Button
@@ -346,6 +356,7 @@ function NavRow({
   dimmed,
   homeMeta,
   metaByKey,
+  sidebarIds,
   actions,
   dataUserId,
 }: {
@@ -357,10 +368,12 @@ function NavRow({
   dimmed?: boolean;
   homeMeta: NavChipMeta | null;
   metaByKey: Map<string, NavChipMeta>;
+  sidebarIds: readonly string[];
   actions?: ReactNode;
   dataUserId?: string;
 }) {
   const hiddenMetas = hidden.filter((t) => t !== NAV_DIVIDER_KEY);
+  const effective = buildEffectiveNavOrder({ order, hidden, sidebarIds });
   return (
     <div
       className="surface-inset flex flex-col gap-2 rounded-[12px] p-3"
@@ -380,18 +393,24 @@ function NavRow({
             <NavChipBody meta={homeMeta} />
           </div>
         )}
-        {order.map((token, idx) => {
-          if (token === NAV_DIVIDER_KEY) {
+        {effective.map((entry, idx) => {
+          if (entry.token === NAV_DIVIDER_KEY) {
             return (
               <div key={`d-${idx}`} className="group" title="分隔横杆">
                 <NavDividerBody />
               </div>
             );
           }
-          const meta = metaByKey.get(migrateLegacyNavId(token));
-          if (!meta) return <StaleNavChip key={`s-${idx}-${token}`} token={token} />;
+          const meta = metaByKey.get(entry.id);
+          if (!meta) return <StaleNavChip key={`s-${idx}-${entry.token}`} token={entry.token} />;
           return (
-            <div key={`${token}-${idx}`} className={NAV_CHIP_BASE_CLASS} title={meta.label}>
+            <div
+              key={`${entry.token}-${idx}`}
+              className={`${NAV_CHIP_BASE_CLASS} ${entry.auto ? 'border border-dashed' : ''}`}
+              style={entry.auto ? { borderColor: 'var(--nested-block-border)' } : undefined}
+              title={entry.auto ? `${meta.label}（用户没排过，侧栏自动补到末尾）` : meta.label}
+              data-nav-auto={entry.auto ? '1' : undefined}
+            >
               <NavChipBody meta={meta} />
             </div>
           );
