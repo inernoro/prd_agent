@@ -731,6 +731,8 @@ export interface ReportComment {
   attachmentIds?: string[];
   /** 附件详情（后端按 attachmentIds 批量解析返回） */
   attachments?: ReportCommentAttachmentInfo[];
+  /** 被 @ 提醒的成员 UserId（后端按评论正文解析后落库，只读） */
+  mentionedUserIds?: string[];
   createdAt: string;
   updatedAt?: string;
   /** 划词锚定：被选中的原文片段（无则为传统段落级评论） */
@@ -1233,6 +1235,7 @@ export const ReportEventTypes = {
   Returned: 'returned',
   DeadlineApproaching: 'deadline_approaching',
   Overdue: 'overdue',
+  CommentMention: 'comment_mention',
 } as const;
 
 export const ReportEventLabels: Record<string, string> = {
@@ -1242,6 +1245,7 @@ export const ReportEventLabels: Record<string, string> = {
   returned: '周报被退回',
   deadline_approaching: '截止提醒',
   overdue: '逾期通知',
+  comment_mention: '评论@提醒',
 };
 
 // --- Team Workflow ---

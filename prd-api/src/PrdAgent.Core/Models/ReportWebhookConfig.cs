@@ -41,9 +41,11 @@ public static class ReportEventType
     public const string Returned = "returned";
     public const string DeadlineApproaching = "deadline_approaching";
     public const string Overdue = "overdue";
+    /// <summary>评论中 @ 了成员（同步推送到群，正文含引用原文 + 评论内容）</summary>
+    public const string CommentMention = "comment_mention";
 
     public static readonly string[] All =
     {
-        Submitted, AllSubmitted, Reviewed, Returned, DeadlineApproaching, Overdue
+        Submitted, AllSubmitted, Reviewed, Returned, DeadlineApproaching, Overdue, CommentMention
     };
 }
