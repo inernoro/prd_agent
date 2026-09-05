@@ -203,6 +203,10 @@ public class AgentApiKeyScopeModeTests
             customMessage: "切成手动这条路径没有单独处理，自动档的空清单会被原样钉死");
         slice.ShouldContain("EffectiveScopesFor",
             customMessage: "切手动时没有把当前有效清单快照下来 —— 钥匙会静默失去全部工具");
+        // `{"scopeMode":"manual"}` 与 `{"scopeMode":"manual","scopes":[]}` 是同一个意思。
+        // 只认 null 的话，后者会走校验分支、零个 scope 全部「通过」，然后把空清单原样存下去。
+        slice.ShouldContain("IsNullOrWhiteSpace",
+            customMessage: "空清单（scopes: []）没被当成「没给清单」，这条路仍会把钥匙清空");
     }
 
     /// <summary>

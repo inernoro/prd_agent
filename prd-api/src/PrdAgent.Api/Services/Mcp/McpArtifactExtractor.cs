@@ -77,7 +77,7 @@ public static class McpArtifactExtractor
         // 别的路径）仍然照常取地址。反过来写的话，只要哪天响应里没这个字段，
         // 记录上那个「打开」就会**静默消失** —— 而「一点就打开刚做出来的东西」正是这条记录存在的理由。
         // 宁可在字段缺席时保留链接，也不要因为字段缺席而丢掉它。
-        if (string.IsNullOrWhiteSpace(url) && kind == "image-run" && ReadBool(data, "finished") != false)
+        if (string.IsNullOrWhiteSpace(url) && kind == "image-run" && !RunHasNoUsableOutcome(data))
             url = ReadFirstUrlInArrays(data);
         // 下游给的地址先过一道协议闸再往下走：不合格就当它没给，
         // 下面还能按 kind + id 反推一条站内路由，用户仍有得点。
@@ -212,6 +212,30 @@ public static class McpArtifactExtractor
         => obj.TryGetPropertyValue(key, out var node) && node is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s)
             ? s
             : null;
+
+    /// <summary>
+    /// 这条 run 还不能拿它的图当「整件事的产物」。
+    ///
+    /// 两种情形：
+    /// <list type="number">
+    /// <item>还没跑完（<c>finished:false</c>）—— 四张里成了一张时，GetRun 就已经能带回第一张的地址。</item>
+    /// <item>跑完了但没成（<c>status</c> 是 Failed / Cancelled）—— <c>IsRunFinished</c> 对这两种终态
+    /// 同样返回 true，而 worker 在多张里坏了一张时会把整条 run 记成 Failed 却**留着**已成那几张的地址。
+    /// 只看 finished 的话，一条失败的 run 照样会被认出产物，接入台随即打绿灯写「落地」。</item>
+    /// </list>
+    ///
+    /// 认不出来的状态（旧响应、将来新增的枚举）一律放行 —— 判据只拦「明说没成」的那两种。
+    /// 反过来写成「必须是 Completed 才认」的话，哪天响应少了这个字段或多了个新状态，
+    /// 记录上那个「打开」就会**静默消失**，而「一点就打开刚做出来的东西」正是这条记录存在的理由。
+    /// </summary>
+    private static bool RunHasNoUsableOutcome(JsonObject data)
+    {
+        if (ReadBool(data, "finished") == false) return true;
+        var status = ReadString(data, "status");
+        return status is not null
+            && (status.Equals("Failed", StringComparison.OrdinalIgnoreCase)
+                || status.Equals("Cancelled", StringComparison.OrdinalIgnoreCase));
+    }
 
     private static bool? ReadBool(JsonObject obj, string key)
         => obj.TryGetPropertyValue(key, out var node) && node is JsonValue v && v.TryGetValue<bool>(out var b)

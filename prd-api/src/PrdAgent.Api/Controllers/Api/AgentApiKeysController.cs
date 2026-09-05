@@ -253,9 +253,13 @@ public class AgentApiKeysController : ControllerBase
         {
             req.Scopes = null;
         }
+        // 判据要认「给的清单是不是空的」，不能只认 null —— `{"scopeMode":"manual"}` 和
+        // `{"scopeMode":"manual","scopes":[]}` 是同一个意思，而上一版只挡住了前者：
+        // 后者因为 Scopes 非 null 会走下面那条校验分支，零个 scope 全部「校验通过」，
+        // 然后把空清单原样存进去 —— 接口返回 200，钥匙失去全部工具。
         else if (explicitScopeMode == AgentApiKeyScopeMode.Manual
-                 && req.Scopes == null
-                 && key.ScopeMode == AgentApiKeyScopeMode.Auto)
+                 && key.ScopeMode == AgentApiKeyScopeMode.Auto
+                 && (req.Scopes == null || req.Scopes.All(string.IsNullOrWhiteSpace)))
         {
             // 只说「切成手动」不给清单：自动档的 Scopes 本来就是空的，照直写下去这把钥匙
             // 会在返回 200 的同时失去全部工具 —— 接口说成了、钥匙却废了。
