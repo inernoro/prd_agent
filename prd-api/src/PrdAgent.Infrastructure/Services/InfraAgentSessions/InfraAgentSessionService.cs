@@ -104,7 +104,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             GetBool(item, "selectable"),
             GetString(item, "isolationOwnedBy") ?? string.Empty,
             GetBool(item, "resourcePolicyEnforcedPerSession"),
-            GetString(item, "reason"))).ToList();
+            GetString(item, "reason"),
+            GetBool(item, "verificationPending"))).ToList();
     }
 
     public async Task<InfraAgentSlaDashboardView> GetSlaDashboardAsync(string userId, int days, CancellationToken ct)

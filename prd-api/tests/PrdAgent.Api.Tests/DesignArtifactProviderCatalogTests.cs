@@ -268,6 +268,35 @@ public class DesignArtifactProviderCatalogTests
     }
 
     [Fact]
+    public async Task OpenDesignProbeWaitsForCdsCapabilityVerification()
+    {
+        var connection = BuildConnection();
+        var connections = new Mock<IInfraConnectionService>();
+        connections.Setup(service => service.ListAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([connection]);
+        var sessions = new Mock<IInfraAgentSessionService>();
+        sessions.SetupSequence(service => service.ListRuntimeProvidersAsync(
+                "user-1",
+                connection.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([BuildPendingOpenDesignRuntime()])
+            .ReturnsAsync([BuildOpenDesignRuntime(resourcePolicyEnforcedPerSession: true)]);
+        var executor = new OpenDesignRemoteArtifactExecutor(
+            connections.Object,
+            sessions.Object,
+            Mock.Of<IDesignArtifactWorkspaceBroker>(),
+            NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
+
+        var result = await executor.ProbeAsync("user-1", CancellationToken.None);
+
+        Assert.True(result.Enabled);
+        sessions.Verify(service => service.ListRuntimeProvidersAsync(
+            "user-1",
+            connection.Id,
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
     public async Task OpenDesignExecutorSendsVersionedTaskPackageAndStreamsCdsEvents()
     {
         var connection = BuildConnection();
@@ -509,6 +538,25 @@ public class DesignArtifactProviderCatalogTests
         "cds-remote-agent",
         resourcePolicyEnforcedPerSession,
         null);
+
+    private static InfraAgentRuntimeProviderView BuildPendingOpenDesignRuntime() => new(
+        DesignArtifactRuntimes.OpenDesign,
+        "OpenDesign",
+        "design-daemon",
+        "cds-remote-agent",
+        "available",
+        true,
+        [InfraAgentWorkloadKinds.DesignArtifact],
+        [InfraAgentIsolationModes.SessionContainer],
+        InfraAgentIsolationModes.SessionContainer,
+        "cds-design-artifact-events-v1",
+        false,
+        false,
+        false,
+        "cds-remote-agent",
+        false,
+        "OpenDesign capability verification is running on this CDS node",
+        VerificationPending: true);
 
     private sealed class ClosedDesignDefinitionSource : IDesignArtifactProviderDefinitionSource
     {

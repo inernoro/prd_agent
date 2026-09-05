@@ -692,6 +692,8 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         selectable: provider.productEligible && healthy && isolationReady,
         isolationOwnedBy: 'cds-remote-agent',
         resourcePolicyEnforcedPerSession,
+        verificationPending: provider.id === 'open-design'
+          && workspaceCapability.verificationPending === true,
         reason: provider.reason
           || (!healthy
             ? (provider.id === 'open-design' && workspaceCapability.reason)

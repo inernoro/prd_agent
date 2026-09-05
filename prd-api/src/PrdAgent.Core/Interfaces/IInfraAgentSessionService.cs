@@ -230,7 +230,8 @@ public record InfraAgentRuntimeProviderView(
     bool Selectable,
     string IsolationOwnedBy,
     bool ResourcePolicyEnforcedPerSession,
-    string? Reason
+    string? Reason,
+    bool VerificationPending = false
 );
 
 public record InfraAgentEventView(

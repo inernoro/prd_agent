@@ -96,6 +96,7 @@ export interface AgentWorkspaceRuntimeCapability {
   available: boolean;
   resourcePolicyEnforcedPerSession: boolean;
   reason: string | null;
+  verificationPending?: boolean;
 }
 
 interface CapabilitySnapshot {
@@ -871,6 +872,7 @@ export class AgentWorkspaceSessionRuntime {
       reason: this.capabilityRefreshError
         ? 'Docker capability probe failed; dedicated Agent workspace containers remain disabled'
         : 'OpenDesign capability verification is running on this CDS node',
+      ...(this.capabilityRefreshError ? {} : { verificationPending: true }),
     };
   }
 

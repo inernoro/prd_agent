@@ -96,7 +96,8 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
 /// </summary>
 public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, IDesignArtifactProviderProbe
 {
-    private static readonly TimeSpan ProviderProbeTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan ProviderProbeTimeout = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan ProviderProbePendingDelay = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan RunTimeout = TimeSpan.FromMinutes(15);
     private const int EventBatchSize = 500;
     private readonly IInfraConnectionService _connections;
@@ -136,9 +137,15 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
 
         using var timeout = new CancellationTokenSource(ProviderProbeTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
-        var providers = await _sessions.ListRuntimeProvidersAsync(userId, connection.Id, linked.Token);
-        var provider = providers.FirstOrDefault(item =>
-            string.Equals(item.Id, Runtime, StringComparison.Ordinal));
+        InfraAgentRuntimeProviderView? provider;
+        do
+        {
+            var providers = await _sessions.ListRuntimeProvidersAsync(userId, connection.Id, linked.Token);
+            provider = providers.FirstOrDefault(item =>
+                string.Equals(item.Id, Runtime, StringComparison.Ordinal));
+            if (provider?.VerificationPending != true) break;
+            await Task.Delay(ProviderProbePendingDelay, linked.Token);
+        } while (true);
         if (provider == null)
         {
             return new DesignArtifactProviderProbeResult(

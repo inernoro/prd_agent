@@ -660,6 +660,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
       available: false,
       resourcePolicyEnforcedPerSession: false,
       reason: 'OpenDesign capability verification is running on this CDS node',
+      verificationPending: true,
     });
     expect(dockerProbeStarted).toBe(true);
 
