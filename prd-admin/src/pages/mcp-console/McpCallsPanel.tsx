@@ -112,10 +112,14 @@ export function McpCallsPanel({
 
   // 按结果筛选时**不折**：筛「失败」的人要的是每一条失败，把中途成功的轮询折进来
   // 会让这一屏显示出一条「成功」的事件 —— 与他选的筛选条件正相反。
-  const groups = useMemo(
-    () => (status ? items.map(soloGroup) : groupCalls(items)),
-    [items, status],
-  );
+  //
+  // 筛完还要再按**结局**过一道：服务端那个 status 过的是 log.Status，也就是纯 HTTP 结果，
+  // 而排队中的生图 run 回的正是 200。不过这一道，选「成功」会看到一行写着「还没出结果」，
+  // 跟刚选的条件当场打架。这里丢掉的那些不会消失 —— 它们在「全部结果」里照常看得到。
+  const groups = useMemo(() => {
+    if (!status) return groupCalls(items);
+    return items.map(soloGroup).filter((g) => g.status === status);
+  }, [items, status]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -155,7 +159,7 @@ export function McpCallsPanel({
         </select>
         <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
           {status
-            ? `共 ${total} 次调用，这里显示最近 ${items.length} 次`
+            ? `共 ${total} 次调用，这一档里最近 ${groups.length} 条`
             : `最近 ${items.length} 次调用折成 ${groups.length} 件事（共 ${total} 次）`}
         </span>
       </div>

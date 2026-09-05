@@ -377,14 +377,10 @@ public class AgentApiKeysController : ControllerBase
             k.Name,
             k.Description,
             keyPrefix = k.KeyPrefix,
-            // 用不了的钥匙（已作废 / 已停用 / 过了宽限期）一个 scope 都不该报。
-            // 鉴权会直接拒掉它，同一页的授权自检也已经回 toolCount=0；
-            // 这里若照旧按主人当前权限现算，密钥管理页就会给一把调不动任何东西的钥匙
-            // 画满授权芯片，同一个对象在两个视图里说两种话。
-            // 能不能用走 AgentApiKey.IsUsableAt —— 与鉴权同一处判据，不在这里另写一套。
-            scopes = AgentApiKey.IsUsableAt(k, now, out _)
-                ? McpCapabilityCatalog.EffectiveScopesFor(k.ScopeMode, k.Scopes, ownedPermissions)
-                : (IReadOnlyList<string>)Array.Empty<string>(),
+            // 用不了的钥匙一个 scope 都不该报（鉴权会拒掉它、授权自检也回 toolCount=0）。
+            // 「能不能用」这层判断收在 EffectiveScopesForKey 里，不在这里各写一遍 ——
+            // 这件事已经在两处投影上各漏过一次。
+            scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, now),
             scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
             k.IsActive,
             k.CreatedAt,

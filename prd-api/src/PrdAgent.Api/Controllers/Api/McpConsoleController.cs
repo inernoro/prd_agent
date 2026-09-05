@@ -132,11 +132,15 @@ public class McpConsoleController : ControllerBase
             keyPrefix = k.KeyPrefix,
             // 自动模式的清单是现算的，不是库里存的那份（存的是空）。面板必须显示「它此刻真拿得到什么」，
             // 否则一把自动模式的钥匙在界面上会是「零个能力」，而它实际什么都调得动。
-            scopes = EffectiveScopesOf(k, ownedPermissions),
+            // 「已停用 / 过了宽限期」的那些要显示成零个 —— 这一行下面就写着 isActive=false，
+            // 旁边却列一串它根本调不动的能力，是同一行自己说两种话。
+            scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, nowUtc),
             scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
             // 手动模式才有「你有、但没开给它」这件事 —— 自动模式按定义不会缺。
             // 这正是「用户知道、钥匙没权限」：平台新上一块能力、或者他当初没勾，都落在这里。
+            // 用不了的钥匙也不谈「你还能再给它什么」—— 那句话的前提是它还能用。
             missingCapabilities = k.ScopeMode == AgentApiKeyScopeMode.Auto
+                                  || !AgentApiKey.IsUsableAt(k, nowUtc, out _)
                 ? new List<object>()
                 : MissingCapabilitiesOf(k, ownedPermissions),
             isActive = AgentApiKey.IsUsableAt(k, nowUtc, out _),

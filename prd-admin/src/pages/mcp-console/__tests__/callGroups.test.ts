@@ -244,3 +244,24 @@ describe('结局判据（唯一一处，不挂在「多步」上）', () => {
     expect(soloGroup(call({ status: 'denied', isWrite: false, artifact: null })).status).toBe('denied');
   });
 });
+
+describe('幂等命中的重试不算发起', () => {
+  const art = { kind: 'image-run', id: 'run-7', url: null, title: null };
+
+  it('这一页最早那条是幂等重试时，不许写成「从发起到落地」', () => {
+    const [g] = groupCalls([
+      call({ isWrite: false, artifact: art, createdAt: '2026-09-05T10:00:20.000Z' }),
+      call({ isWrite: true, deduplicated: true, artifact: art, createdAt: '2026-09-05T10:00:00.000Z' }),
+    ]);
+    expect(g.multiStep).toBe(true);
+    expect(g.hasOrigin).toBe(false);
+  });
+
+  it('真正的发起（非幂等命中）仍算发起', () => {
+    const [g] = groupCalls([
+      call({ isWrite: false, artifact: art, createdAt: '2026-09-05T10:00:20.000Z' }),
+      call({ isWrite: true, deduplicated: false, artifact: art, createdAt: '2026-09-05T10:00:00.000Z' }),
+    ]);
+    expect(g.hasOrigin).toBe(true);
+  });
+});

@@ -157,22 +157,28 @@ public class AgentApiKeyScopeModeTests
     [Fact]
     public void ToDto_ReportsNoScopes_ForUnusableKey()
     {
-        var source = ReadSource("src/PrdAgent.Api/Controllers/Api/AgentApiKeysController.cs");
-        // 锚点必须是 ToDto 的方法体，不能拿 IndexOf("scopes = ") 直接找 ——
-        // 这个文件里 "scopes = " 有五处（工具清单、创建、更新各有一处），第一处在 ToDto 之前，
-        // 于是判据会去量一段完全无关的代码然后判红/判绿全凭巧合。
-        // 这正是本 PR 反复在修的那个形状：读的不是真正生效的那一个。
-        var begin = source.IndexOf("private static object ToDto(AgentApiKey k", StringComparison.Ordinal);
+        // 展示面有两处投影（密钥管理页的 ToDto、接入台的 clients），两处都必须走
+        // EffectiveScopesForKey —— 它比 EffectiveScopesFor 多一层「钥匙还能不能用」。
+        // 这件事已经在这两处上各漏过一次：补了一处、漏了另一处，正是判据分裂的典型。
+        // 锚点取方法体，不拿 IndexOf("scopes = ")：那个串在文件里有好几处，第一处远在
+        // ToDto 之前，判据会去量一段无关代码，然后判红判绿全凭巧合。
+        var keysSource = ReadSource("src/PrdAgent.Api/Controllers/Api/AgentApiKeysController.cs");
+        var begin = keysSource.IndexOf("private static object ToDto(AgentApiKey k", StringComparison.Ordinal);
         begin.ShouldBeGreaterThan(-1, customMessage: "找不到 ToDto —— 签名改了？判据得跟着改");
-        var body = source.Substring(begin);
+        var body = keysSource.Substring(begin);
         var end = body.IndexOf("\n    }", StringComparison.Ordinal);
         end.ShouldBeGreaterThan(-1, customMessage: "找不到 ToDto 的方法结尾");
-        var slice = body.Substring(0, end);
+        body.Substring(0, end).ShouldContain("EffectiveScopesForKey",
+            customMessage: "密钥管理页会给一把已作废/已停用的钥匙画满授权芯片");
 
-        slice.ShouldContain("AgentApiKey.IsUsableAt",
-            customMessage: "用不了的钥匙仍按主人当前权限现算 scope，密钥管理页会给一把调不动任何东西的钥匙画满授权芯片");
-        slice.ShouldContain("EffectiveScopesFor",
-            customMessage: "能用的钥匙仍必须走唯一那处判据，不许在这里另写一套");
+        var consoleSource = ReadSource("src/PrdAgent.Api/Controllers/Api/McpConsoleController.cs");
+        var clientsBegin = consoleSource.IndexOf("var clients = keys.Select", StringComparison.Ordinal);
+        clientsBegin.ShouldBeGreaterThan(-1, customMessage: "找不到接入台的 clients 投影");
+        var clientsBody = consoleSource.Substring(clientsBegin);
+        var clientsEnd = clientsBody.IndexOf("\n        var ", StringComparison.Ordinal);
+        var clientsSlice = clientsEnd > 0 ? clientsBody.Substring(0, clientsEnd) : clientsBody;
+        clientsSlice.ShouldContain("EffectiveScopesForKey",
+            customMessage: "接入台会在同一行上写着 isActive=false，旁边却列一串它根本调不动的能力");
     }
 
     /// <summary>

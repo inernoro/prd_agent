@@ -206,6 +206,26 @@ public static class McpCapabilityCatalog
                 .Where(s => !PermissionCheckedScopes.Contains(s) || PermissionsAllowScope(ownedPermissions, s))
                 .ToList();
 
+    /// <summary>
+    /// 「这把钥匙此刻真拿得到什么」—— 展示面唯一入口。
+    ///
+    /// 比 <see cref="EffectiveScopesFor"/> 多一层：钥匙本身还能不能用。
+    /// 自动档现算的是主人**当前**的权限，这个动作不看钥匙的死活；于是一把已作废 /
+    /// 已停用 / 过了宽限期的钥匙会被算出满满一串 scope，而鉴权会把它整个拒掉，
+    /// 授权自检也回 toolCount=0 —— 同一个对象在几个视图里说几种话。
+    ///
+    /// 之所以单独成一个函数而不是在每个投影里各写一遍 `IsUsableAt ? ... : 空`：
+    /// 这件事已经在两处投影上各漏过一次（密钥管理页的 ToDto、接入台的 clients）。
+    /// 判据分成几处放着，就一定会补了这处、漏了那处。
+    /// </summary>
+    public static IReadOnlyList<string> EffectiveScopesForKey(
+        AgentApiKey key,
+        IReadOnlyCollection<string> ownedPermissions,
+        DateTime nowUtc)
+        => AgentApiKey.IsUsableAt(key, nowUtc, out _)
+            ? EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions)
+            : Array.Empty<string>();
+
     public static McpCapability? ByScope(string scope) =>
         All.FirstOrDefault(c => c.AllScopes().Contains(scope, StringComparer.OrdinalIgnoreCase));
 

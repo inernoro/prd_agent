@@ -105,7 +105,9 @@ function toGroup(chronoSteps: McpCallLogDto[]): CallGroup {
   const last = chronoSteps[chronoSteps.length - 1];
   const steps = [...chronoSteps].reverse();
   const multiStep = steps.length > 1;
-  const hasOrigin = first.isWrite;
+  // 幂等命中的重试不算「发起」：它没产生任何副作用，真正的那一次在更早的记录里。
+  // 把它当发起点，下面的耗时就会从这次空转的重试算起，写成一个没发生过的「从发起到落地」。
+  const hasOrigin = first.isWrite && !first.deduplicated;
   const elapsedMs = multiStep
     ? Math.max(0, new Date(last.createdAt).getTime() - new Date(first.createdAt).getTime())
     : last.durationMs;
