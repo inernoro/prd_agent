@@ -7,3 +7,4 @@
 | feat | prd-api | 新增 remove-tokens 接口：按 token 从默认导航配置与全部用户偏好中批量拔除（settings.write） |
 | fix | prd-admin | 全员导航总览：旧前缀 id（如 utility:emergence）不再被误判为已下线；默认导航本地回写与加载同口径迁移 |
 | fix | prd-admin | 全员导航总览每行按侧栏真实渲染结果来画：用户没排过、被侧栏自动补到末尾的菜单也画出来并用虚线灰框标记 |
+| fix | prd-admin | 全员导航总览行列表改为在卡片内滚动，卡片背景不再被内容溢出、边缘横穿行标题 |

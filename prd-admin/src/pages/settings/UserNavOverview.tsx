@@ -273,7 +273,7 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
           </div>
         )}
         {!loading && !loadError && visibleItems.length > 0 && (
-          <div className="flex flex-col gap-2" data-testid="user-nav-rows">
+          <div className="min-h-0 flex-1 overflow-y-auto flex flex-col gap-2 pr-1" data-testid="user-nav-rows">
             {visibleItems.map((it) => (
               <NavRow
                 key={it.userId}
