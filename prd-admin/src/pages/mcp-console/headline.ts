@@ -40,14 +40,24 @@ export function buildHeadline({ clients, today, recentCalls }: HeadlineInput): H
   // 一句话抹掉当天全部活动。「没有过」和「现在没有了」是两件事。
   if (clients.length === 0) {
     if (calls === 0) {
+      // 「今天没调用」不等于「从来没接过」：昨天用过、今天之前被撤销的钥匙
+      // 会让 clients 空、today.calls 为 0，而它的记录还在「它干了什么」里躺着。
+      // 不必为此改后端契约 —— recentCalls 本来就是按条数取最近 N 次、天然跨天的，
+      // 它非空就说明历史上真接过（跨天显示正是 eventClock 存在的理由）。
+      if (recentCalls.length === 0) {
+        return {
+          verdict: '还没有客户端接进来。',
+          detail: '点这一页顶上那行的「接入新的」：起个名字、复制一段配置粘进 Claude Code 或 Codex，两分钟就能连上。',
+        };
+      }
       return {
-        verdict: '还没有客户端接进来。',
-        detail: '点右上角「接入新的」：起个名字、复制一段配置粘进 Claude Code 或 Codex，两分钟就能连上。',
+        verdict: '现在一台客户端也没连着了。',
+        detail: '今天还没有调用。之前那些做过什么，切到「它干了什么」仍然逐条看得到；要再用就点这一页顶上那行的「接入新的」。',
       };
     }
     return {
       verdict: `今天有过 ${calls} 次调用，但现在一台客户端也没连着了。`,
-      detail: '钥匙都撤掉或删掉了。它们做过什么，切到「它干了什么」仍然逐条看得到；要再用就点右上角「接入新的」。',
+      detail: '钥匙都撤掉或删掉了。它们做过什么，切到「它干了什么」仍然逐条看得到；要再用就点这一页顶上那行的「接入新的」。',
     };
   }
 

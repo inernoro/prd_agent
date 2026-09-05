@@ -216,25 +216,33 @@ public static class McpArtifactExtractor
     /// <summary>
     /// 这条 run 还不能拿它的图当「整件事的产物」。
     ///
-    /// 两种情形：
+    /// 三种情形：
     /// <list type="number">
     /// <item>还没跑完（<c>finished:false</c>）—— 四张里成了一张时，GetRun 就已经能带回第一张的地址。</item>
     /// <item>跑完了但没成（<c>status</c> 是 Failed / Cancelled）—— <c>IsRunFinished</c> 对这两种终态
     /// 同样返回 true，而 worker 在多张里坏了一张时会把整条 run 记成 Failed 却**留着**已成那几张的地址。
     /// 只看 finished 的话，一条失败的 run 照样会被认出产物，接入台随即打绿灯写「落地」。</item>
+    /// <item>计数满了但终态还没写（<c>finished:true</c> + <c>status:Running</c>）—— <c>IsRunFinished</c>
+    /// 是「终态 或 done + failed >= total」的**或**，而 worker 要等所有条目跑完、读回最终计数
+    /// 才写 Status（<c>ImageGenRunWorker</c> 收尾那一段）。这中间有一个窗口，GetRun 同时回
+    /// 「跑完了」「还在跑」和已成那几张的地址。</item>
     /// </list>
     ///
-    /// 认不出来的状态（旧响应、将来新增的枚举）一律放行 —— 判据只拦「明说没成」的那两种。
-    /// 反过来写成「必须是 Completed 才认」的话，哪天响应少了这个字段或多了个新状态，
-    /// 记录上那个「打开」就会**静默消失**，而「一点就打开刚做出来的东西」正是这条记录存在的理由。
+    /// 判据因此收成白名单：**状态在场就必须是 Completed**。
+    /// 这里推翻了上一版的取舍。上一版写「只拦明说没成的那两种，认不出来的一律放行」，
+    /// 理由是「哪天多个新状态，那个『打开』会静默消失」—— 但那是假设的将来，
+    /// 而上面那个窗口是现在就存在的真实缺陷，且**误报成功比丢链接更糟**：
+    /// 丢链接用户看得见（没得点），误报成功用户看不见（以为图出来了）。
+    ///
+    /// 唯一保留的宽松是**状态缺席**（旧响应、别的路径没有这个字段）：那时只靠 finished，
+    /// 免得字段一缺就整类丢链接。
     /// </summary>
     private static bool RunHasNoUsableOutcome(JsonObject data)
     {
         if (ReadBool(data, "finished") == false) return true;
         var status = ReadString(data, "status");
-        return status is not null
-            && (status.Equals("Failed", StringComparison.OrdinalIgnoreCase)
-                || status.Equals("Cancelled", StringComparison.OrdinalIgnoreCase));
+        if (status is null) return false;
+        return !status.Equals("Completed", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool? ReadBool(JsonObject obj, string key)

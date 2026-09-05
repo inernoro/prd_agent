@@ -54,6 +54,20 @@ describe('接入台第一屏那句判断', () => {
     expect(h.detail).toContain('接入新的');
   });
 
+  it('昨天用过、今天之前撤掉的：不许说成「从来没接过」', () => {
+    // clients 空 + 今天 0 次，但记录里还有昨天那些 —— overview 的 today 只覆盖今天，
+    // 而 recentCalls 是按条数取最近 N 次、天然跨天的（跨天显示正是 eventClock 的由来）。
+    // 「今天没调用」和「从来没接过」是两件事，用现成数据就分得开，不必改后端契约。
+    const h = buildHeadline({
+      clients: [],
+      today: today(),
+      recentCalls: [log({ createdAt: '2026-09-04T15:01:00.000Z' })],
+    });
+    expect(h.verdict).not.toContain('还没有客户端接进来');
+    expect(h.verdict).toContain('没连着');
+    expect(h.detail).toContain('它干了什么');
+  });
+
   it('撤掉最后一把钥匙之后，不许把当天的活动一起抹掉', () => {
     // clients 空了但 today 还留着它的调用 —— 先看 today 再看名单。
     // 反过来会把「今天用过、刚断开」说成「还没有客户端接进来」。

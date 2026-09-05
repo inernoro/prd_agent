@@ -21,10 +21,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const source = fs.readFileSync(
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'McpConsolePage.tsx'),
-  'utf8',
-);
+const here = path.dirname(fileURLToPath(import.meta.url));
+const source = fs.readFileSync(path.resolve(here, '..', 'McpConsolePage.tsx'), 'utf8');
+
+/**
+ * 整屏的用户可见文案，不只是这一个组件。
+ *
+ * 上一版的方位守卫只读 McpConsolePage.tsx，而同一个提交里 headline.ts 有两处「右上角」
+ * 原样留着 —— 守卫写的时候只盯着自己刚改的那个文件，没问「这个问题还会出现在哪」
+ * （predicate-and-wiring-discipline 形状 7：守卫自己没接上线）。
+ * 现在扫这一屏的全部源文件，新增的文件自动进来，不需要谁记得回来改这份名单。
+ */
+const allSources = fs
+  .readdirSync(path.resolve(here, '..'))
+  .filter((f) => /\.(ts|tsx)$/.test(f))
+  .map((f) => ({ file: f, text: fs.readFileSync(path.resolve(here, '..', f), 'utf8') }));
 
 /** className="..." 里出现的每一个原子类（含断点前缀）。 */
 function classTokens(): string[] {
@@ -152,12 +163,15 @@ describe('接入台窄屏滚动契约', () => {
    * 判据只拦写死的绝对方位，不拦「上面 / 下面」这类跟随文档流、两端都成立的说法。
    */
   it('文案不写死屏幕方位（断点一变就指错）', () => {
-    const 方位 = /「?(右上角|左上角|右下角|左下角|右侧栏|左侧栏)」?/g;
-    const hits = [...source.matchAll(方位)].map((m) => m[0]);
+    const 方位 = /(右上角|左上角|右下角|左下角|右侧栏|左侧栏)/g;
+    const hits = allSources.flatMap(({ file, text }) =>
+      [...text.matchAll(方位)].map((m) => `${file}: ${m[0]}`),
+    );
     expect(
       hits,
       '这类方位在窄屏会失效；改成「这一页顶上那行」「下面那张卡」这种跟随文档流的说法',
     ).toEqual([]);
+    expect(allSources.length, '一个源文件都没扫到 —— 目录结构变了？').toBeGreaterThan(4);
   });
 
   it('只剩图标的按钮必须有 aria-label', () => {

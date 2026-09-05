@@ -140,6 +140,11 @@ public class McpArtifactExtractorTests
         art.Url.ShouldBeNull(customMessage: "还没跑完就给出地址，接入台会把整件事打成绿色成功");
     }
 
+    /// <summary>
+    /// 判据收成白名单之后，这条同时是「**状态字段缺席**仍然认地址」的锚 ——
+    /// 它的响应体里没有 status，旧响应和别的路径都可能这样，一缺就整类丢链接是另一种坏。
+    /// 谁把判据改成「没有 status 也不认」，这里会红。
+    /// </summary>
     [Fact]
     public void Extract_生图跑完_finished为真_照常认地址()
     {
@@ -193,18 +198,28 @@ public class McpArtifactExtractorTests
     }
 
     /// <summary>
-    /// 判据只拦「明说没成」的那两种终态。认不出来的状态一律放行 ——
-    /// 写成「必须是 Completed」的话，哪天多个新状态或少了这个字段，「打开」会静默消失。
+    /// 计数满了但终态还没写：<c>IsRunFinished</c> 是「终态 <b>或</b> done + failed &gt;= total」，
+    /// 而 worker 要等所有条目跑完、读回最终计数才写 Status。这中间 GetRun 会同时回
+    /// 「跑完了」「还在跑」和已成那几张的地址 —— 这一版之前放行了它。
+    ///
+    /// 这条用例连同下面那条，一起推翻了上一版的取舍（「只拦明说没成的两种，认不出来的放行」）：
+    /// 那条理由是「哪天多个新状态，『打开』会静默消失」，但那是假设的将来，
+    /// 而这个窗口是现在就存在的缺陷，且**误报成功比丢链接更糟** ——
+    /// 丢链接用户看得见（没得点），误报成功用户看不见（以为图出来了）。
     /// </summary>
-    [Fact]
-    public void Extract_认不出来的状态_仍然认地址()
+    [Theory]
+    [InlineData("Running")]
+    [InlineData("Queued")]
+    [InlineData("SomethingNew")]
+    public void Extract_状态不是Completed_一律不认地址(string status)
     {
         var body = """
-        {"success":true,"data":{"runId":"r9","status":"SomethingNew","finished":true,
+        {"success":true,"data":{"runId":"r9","status":"__STATUS__","finished":true,
+         "total":4,"done":3,"failed":1,
          "images":[{"assetId":"a1","url":"https://cdn/1.png"}]}}
-        """;
+        """.Replace("__STATUS__", status);
 
         McpArtifactExtractor.Extract("map_visual_get_run", false, body).Url
-            .ShouldBe("https://cdn/1.png");
+            .ShouldBeNull(customMessage: $"status={status} 却认了地址，接入台会把它显示成绿色成功并写「落地」");
     }
 }
