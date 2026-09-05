@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoPicks, grantableToolCount, picksToScopes, samePicks } from '../scopePlan';
+import { autoPicks, grantableToolCount, isReadOnlyTier, picksToScopes, samePicks } from '../scopePlan';
 import type { McpCapabilityDto, McpToolDto } from '@/services/contracts/mcpConsole';
 
 function cap(over: Partial<McpCapabilityDto>): McpCapabilityDto {
@@ -98,5 +98,31 @@ describe('他真能给出去的工具数', () => {
       tools: [tool({ name: 'map_visual_generate', requiredScope: 'visual-agent:use', isWrite: true })],
     });
     expect(grantableToolCount(visual)).toBe(1);
+  });
+});
+
+describe('「只能看」这个标签什么时候才该出现', () => {
+  const held = (...s: string[]) => new Set(s.map((x) => x.toLowerCase()));
+
+  it('没有写入档的能力（海鲜市场）永远不标「只能看」', () => {
+    // 标了等于暗示还有一档没给他，而那一档不存在；
+    // 接入弹窗对海鲜市场什么都不标，这一行标了，同一个功能两处说法就打架
+    const market = cap({ key: "market", readScope: "marketplace.skills:read", writeScope: null });
+    expect(isReadOnlyTier(market, held('marketplace.skills:read'))).toBe(false);
+  });
+
+  it('有写入档但没给它 → 标「只能看」', () => {
+    const web = cap({ readScope: 'web-pages:read', writeScope: 'web-pages:write' });
+    expect(isReadOnlyTier(web, held('web-pages:read'))).toBe(true);
+  });
+
+  it('写入档给了 → 不标', () => {
+    const web = cap({ readScope: 'web-pages:read', writeScope: 'web-pages:write' });
+    expect(isReadOnlyTier(web, held('web-pages:read', 'web-pages:write'))).toBe(false);
+  });
+
+  it('只有写入档的能力（视觉创作）不标「只能看」', () => {
+    const visual = cap({ key: 'visual', readScope: null, writeScope: 'visual-agent:use' });
+    expect(isReadOnlyTier(visual, held('visual-agent:use'))).toBe(false);
   });
 });

@@ -70,3 +70,18 @@ export function grantableTool(cap: McpCapabilityDto, tool: McpToolDto): boolean 
 export function grantableToolCount(cap: McpCapabilityDto): number {
   return cap.tools.filter((t) => grantableTool(cap, t)).length;
 }
+
+/**
+ * 这块能力对这把钥匙是不是「只能看」。
+ *
+ * 三个条件缺一不可：有读档、**有写档**、写档没给它。中间那条最容易漏 ——
+ * 海鲜市场压根没有写入档，漏了它就会给海鲜市场标上「只能看」，等于暗示还有一档没给他，
+ * 而那一档不存在；同一个功能里接入弹窗对海鲜市场什么都不标，两处说法就此打架。
+ */
+export function isReadOnlyTier(
+  cap: Pick<McpCapabilityDto, 'readScope' | 'writeScope'>,
+  heldLowercase: ReadonlySet<string>,
+): boolean {
+  if (!cap.readScope || !cap.writeScope) return false;
+  return !heldLowercase.has(cap.writeScope.toLowerCase());
+}

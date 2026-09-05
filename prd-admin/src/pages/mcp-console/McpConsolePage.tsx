@@ -27,7 +27,7 @@ import { RevokeClientDialog } from './RevokeClientDialog';
 import { copyToClipboard } from './clipboard';
 import { capabilityVisual } from './capabilityRegistry';
 import { buildHeadline } from './headline';
-import { grantableTool, grantableToolCount } from './scopePlan';
+import { grantableTool, grantableToolCount, isReadOnlyTier } from './scopePlan';
 
 /**
  * 智能体接入台。
@@ -450,8 +450,11 @@ function ClientRow({
         </span>
       </div>
 
-      {/* 说明区与动作区：中间隔一道竖线，别读成同一排按钮 */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      {/* 说明区与动作区：宽屏并排、中间隔一道竖线（别读成同一排按钮）；
+          窄屏改上下堆叠 —— 并排时说明区换行到第三行，右侧那两个按钮会把最后一个能力标签
+          挤出可视区（390 宽实测：桌面五块能力，手机只剩四块，海鲜市场没了）。
+          「用户看到的授权范围与实际不符」正是这块面板最不该有的毛病。 */}
+      <div className="flex flex-col items-stretch gap-x-3 gap-y-2 sm:flex-row sm:flex-wrap sm:items-center">
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <span className="text-[10.5px] font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
             它能做什么
@@ -465,7 +468,7 @@ function ClientRow({
               granted.map((cap) => {
                 const v = capabilityVisual(cap.key);
                 const Icon = v.icon;
-                const readOnly = !!cap.readScope && !(cap.writeScope && held.has(cap.writeScope.toLowerCase()));
+                const readOnly = isReadOnlyTier(cap, held);
                 return (
                   <span
                     key={cap.key}
@@ -497,14 +500,14 @@ function ClientRow({
             {client.scopeMode === 'auto'
               ? '跟着你的权限走：以后平台新上一块能力，它自动就有；你被收回的权限它也立刻跟着没。'
               : missing.length > 0
-                ? `按当初那份清单钉死。你自己还有${missing.map((c) => c.title).join('、')}没开给它 —— 到密钥管理里把这块加给它，或者重新接一台（不改高级设置就是跟着权限走）。`
+                ? `按当初那份清单钉死。你自己还有${missing.map((c) => c.title).join('、')}没开给它 —— 到密钥管理里补上，或者重新接一台（不改高级设置就是跟着权限走）。`
                 : '按当初那份清单钉死：以后平台新上的能力不会自动进来。'}
           </span>
         </div>
 
         <span className="hidden h-9 w-px shrink-0 sm:block" style={{ background: 'var(--border-subtle)' }} />
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center justify-end gap-2">
           <button
             type="button"
             onClick={onEditQuota}
