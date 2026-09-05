@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -40,7 +41,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
-        var requestBytes = Encoding.UTF8.GetBytes("{\"model\":\"map-managed\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}");
+        var requestBytes = Encoding.UTF8.GetBytes("{\"model\":\"map-managed\",\"max_tokens\":8192,\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}");
         controller.Request.Body = new MemoryStream(requestBytes);
         controller.Request.ContentLength = requestBytes.Length;
         controller.Request.Headers.Authorization = "Bearer model-ticket";
@@ -54,6 +55,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Equal(run.UserId, handler.Header("X-Gateway-User-Id"));
         Assert.Equal(run.Id, handler.Header("X-Gateway-Run-Id"));
         Assert.Equal("gateway-secret", handler.Header("X-Gateway-Key"));
+        Assert.Equal(4096, handler.Body?["max_tokens"]?.GetValue<int>());
         broker.VerifyAll();
     }
 
@@ -230,19 +232,22 @@ public sealed class DesignArtifactWorkspaceContractTests
     {
         private IReadOnlyDictionary<string, string[]> _headers = new Dictionary<string, string[]>();
 
+        public JsonObject? Body { get; private set; }
+
         public string Header(string name) => _headers.TryGetValue(name, out var values)
             ? Assert.Single(values)
             : string.Empty;
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             _headers = request.Headers.ToDictionary(item => item.Key, item => item.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
-            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            Body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)) as JsonObject;
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"id\":\"gateway-response\"}", Encoding.UTF8, "application/json"),
-            });
+            };
         }
     }
 }

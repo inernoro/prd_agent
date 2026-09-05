@@ -19,6 +19,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public sealed class DesignArtifactRuntimeController : ControllerBase
 {
     private const int MaxProxyRequestBytes = 1_048_576;
+    private const int DefaultMaxCompletionTokens = 4_096;
     private readonly IDesignArtifactWorkspaceBroker _broker;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
@@ -109,9 +110,14 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
             var configuredPool = _configuration["DesignArtifactRuntime:ModelPoolId"]?.Trim();
             if (string.IsNullOrWhiteSpace(configuredPool)) body.Remove("model");
             else body["model"] = configuredPool;
+            var maxCompletionTokens = Math.Clamp(
+                _configuration.GetValue<int?>("DesignArtifactRuntime:MaxCompletionTokens")
+                ?? DefaultMaxCompletionTokens,
+                1,
+                8_192);
             if (body["max_tokens"] is JsonValue maxTokensNode
                 && maxTokensNode.TryGetValue<int>(out var maxTokens))
-                body["max_tokens"] = Math.Clamp(maxTokens, 1, 8_192);
+                body["max_tokens"] = Math.Clamp(maxTokens, 1, maxCompletionTokens);
 
             var serveBaseUrl = _configuration["LlmGateway:ServeBaseUrl"]?.Trim().TrimEnd('/');
             var gatewayKey = _configuration["LlmGwServe:ApiKey"]?.Trim();
