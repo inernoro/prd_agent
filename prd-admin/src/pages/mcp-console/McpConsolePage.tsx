@@ -149,19 +149,34 @@ export default function McpConsolePage() {
     // 第二台客户端与「断开」按钮根本不渲染（390 宽实测 docScrollHeight === innerHeight）。
     // 窄屏改成自然高度、由 <main> 滚。
     <div className="flex min-h-full flex-col gap-3.5 py-3 md:p-6 lg:h-full lg:min-h-0">
-      {/* 页头：宽屏一行排完，把纵向留给内容；窄屏改成三行，每行都填满。
-          原来是单个 `flex flex-wrap` + 右侧动作组 `ml-auto`。宽屏没问题，窄屏折行之后
-          `ml-auto` 依然生效 —— 它把动作组顶到**它那一行**的最右端，于是切页组左对齐、
-          右边空一片，下一行两个按钮右对齐、左边空一片，读出来是个 Z 字。
-          折行不是「同一套规则少排几个」，对齐规则得跟着一起换。 */}
-      <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
-        <div className="flex items-center gap-2">
+      {/* 页头：窄屏是**一条**横滚控制条，宽屏还原成一行排完。
+          `mobile-first-density` 原则 3 + 决策表：进内容前最多一条控制条，
+          多个工具条要合并成一条 / 横滚，**不要竖向堆**；次要动作图标化并入条尾；
+          卡内头部合并为单行 `overflow-x-auto`，标题 `shrink-0 whitespace-nowrap`。
+          形态照 `pages/team-activity/InsightsPanel.tsx` 的 renderMobileSingle。
+
+          演化记录（两次都错在同一件事上：只看这一屏，没看全站纪律）：
+          ① 最早是单个 `flex flex-wrap` + 动作组 `ml-auto` —— 折行之后 `ml-auto` 依然
+             把动作组顶到**它那一行**的最右端，排出一个左边空一片的 Z 字；
+          ② 然后改成窄屏竖排三行「每行都填满」—— Z 字是没了，但那正是本规则明令禁止的
+             「竖向堆控制条」，130px 高的 chrome 把内容推出首屏。 */}
+      <div
+        className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 lg:mx-0 lg:flex-wrap lg:gap-3 lg:overflow-visible lg:px-0"
+        style={{ overscrollBehavior: 'contain' }}
+      >
+        <div className="flex shrink-0 items-center gap-2">
           <Plug size={19} style={{ color: 'var(--accent-primary)' }} aria-hidden />
-          <h1 className="text-[18px] font-bold" style={{ color: 'var(--text-primary)' }}>
+          <h1
+            className="shrink-0 whitespace-nowrap text-[18px] font-bold"
+            style={{ color: 'var(--text-primary)' }}
+          >
             智能体接入台
           </h1>
         </div>
-        <div className="flex gap-1 rounded-[10px] p-1" style={{ background: 'var(--tab-container-bg)' }}>
+        <div
+          className="flex shrink-0 gap-1 rounded-[10px] p-1"
+          style={{ background: 'var(--tab-container-bg)' }}
+        >
           {([
             { key: 'overview' as const, label: '能力与客户端', icon: ShieldCheck },
             { key: 'calls' as const, label: '它干了什么', icon: Activity },
@@ -173,7 +188,7 @@ export default function McpConsolePage() {
                 key={item.key}
                 type="button"
                 onClick={() => setTab(item.key)}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-[8px] px-3 py-2 text-[12.5px] font-medium transition-colors lg:flex-none lg:justify-start lg:py-1.5"
+                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[8px] px-3 py-1.5 text-[12.5px] font-medium transition-colors"
                 style={
                   active
                     ? { background: 'var(--bg-card)', color: 'var(--text-primary)' }
@@ -186,15 +201,29 @@ export default function McpConsolePage() {
             );
           })}
         </div>
-        <div className="flex items-center gap-2 lg:ml-auto">
+        {/* 窄屏顺序是「主操作在前、次要动作在尾」（决策表：次要动作并入条尾），
+            宽屏用 lg:order-first 把刷新调回它原来在左的位置。 */}
+        <div className="flex shrink-0 items-center gap-2 lg:ml-auto">
+          <button
+            type="button"
+            onClick={() => setConnectOpen(true)}
+            className="flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-[10px] px-4 text-[13px] font-semibold transition-opacity hover:opacity-90"
+            style={{ background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }}
+          >
+            <Plus size={15} aria-hidden />
+            接入新的
+          </button>
+          {/* 窄屏只剩图标：文字 span 被 `hidden` 摘出无障碍树，而图标本身 aria-hidden，
+              不给 aria-label 的话这个按钮对读屏用户没有名字。文案跟着状态走。 */}
           <button
             type="button"
             disabled={refreshing}
+            aria-label={refreshing ? '正在刷新' : '刷新'}
             onClick={() => {
               setRefreshToken((n) => n + 1);
               void refresh();
             }}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] text-[13px] font-medium transition-colors lg:h-9 lg:w-auto lg:gap-2 lg:px-3"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-[13px] font-medium transition-colors lg:order-first lg:w-auto lg:gap-2 lg:px-3"
             style={{
               background: 'var(--bg-card)',
               border: '1px solid var(--border-subtle)',
@@ -203,15 +232,6 @@ export default function McpConsolePage() {
           >
             <RefreshCw size={15} aria-hidden className={refreshing ? 'animate-spin' : undefined} />
             <span className="hidden lg:inline">{refreshing ? '刷新中' : '刷新'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setConnectOpen(true)}
-            className="flex h-10 flex-1 items-center justify-center gap-2 rounded-[10px] px-4 text-[13px] font-semibold transition-opacity hover:opacity-90 lg:h-9 lg:flex-none"
-            style={{ background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }}
-          >
-            <Plus size={15} aria-hidden />
-            接入新的
           </button>
         </div>
       </div>

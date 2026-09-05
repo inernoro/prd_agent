@@ -117,10 +117,40 @@ describe('接入台窄屏滚动契约', () => {
     }
   });
 
-  it('页头窄屏是竖排，不靠 flex-wrap 兜底', () => {
-    const t = tokensOfClassNameContaining('lg:flex-row lg:flex-wrap');
-    expect(t).toContain('flex-col');
-    expect(t, '裸 flex-wrap 会让页头在窄屏自动折行，而折行后的对齐没人管').not.toContain('flex-wrap');
+  /**
+   * 页头在窄屏是**一条**横滚控制条 —— `mobile-first-density` 原则 3 与决策表：
+   * 进内容前最多一条控制条，多条要合并 / 横滚，**不要竖向堆**；标题 shrink-0 whitespace-nowrap。
+   *
+   * 这一条守卫本身改过一次：上一版钉的是「窄屏必须 flex-col」，那正好把
+   * 规则禁止的竖排实现写死成了契约（形状 4a：测试反向锁死缺陷）。
+   */
+  it('页头窄屏是单条横滚控制条，不是竖排堆叠', () => {
+    const t = tokensOfClassNameContaining('overflow-x-auto px-1');
+    expect(t, '页头窄屏必须能横滚，放不下的控件靠滑动而不是换行/竖排').toContain('overflow-x-auto');
+    expect(t, '窄屏竖排会把 chrome 堆成三行，把内容推出首屏').not.toContain('flex-col');
+    expect(t, '宽屏要还原成一行排完，不留横滚').toContain('lg:overflow-visible');
+  });
+
+  it('页头标题不换行、不被压缩', () => {
+    const h1 = [...source.matchAll(/<h1\s+className="([^"]*)"/g)].map((m) => m[1]);
+    expect(h1.length, '找不到页头标题 —— 布局被重写了？').toBeGreaterThan(0);
+    for (const c of h1) {
+      const t = c.split(/\s+/);
+      expect(t, `${c} 少了 shrink-0`).toContain('shrink-0');
+      expect(t, `${c} 少了 whitespace-nowrap，横滚条里它会被折成两行`).toContain('whitespace-nowrap');
+    }
+  });
+
+  it('只剩图标的按钮必须有 aria-label', () => {
+    // 窄屏把文字 span `hidden` 掉之后，若图标又是 aria-hidden，
+    // 这个按钮对读屏用户就没有名字了 —— 类型过、lint 过、看着也正常。
+    const iconOnly = [...source.matchAll(/<button[\s\S]{0,900}?<\/button>/g)]
+      .map((m) => m[0])
+      .filter((b) => /className="[^"]*hidden lg:inline/.test(b) || /<span className="hidden lg:inline/.test(b));
+    expect(iconOnly.length, '找不到窄屏图标钮 —— 布局被重写了？').toBeGreaterThan(0);
+    for (const b of iconOnly) {
+      expect(/aria-label=/.test(b), `有个按钮窄屏只剩图标却没有 aria-label：${b.slice(0, 120)}`).toBe(true);
+    }
   });
 
   it('主体栅格：撑满剩余高度只在 lg 生效', () => {
