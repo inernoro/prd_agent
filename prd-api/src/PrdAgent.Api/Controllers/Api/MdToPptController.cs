@@ -1875,6 +1875,65 @@ public class MdToPptController : ControllerBase
     }
 
     /// <summary>
+    /// 将模型遗漏的范本样例文字确定性改写为当前页真实内容，保留 OpenDesign 版式结构。
+    /// 仅处理标签之间的可见文本，不触碰 class、data 属性或脚本；改写后仍由残留检测再次把关。
+    /// </summary>
+    internal static string RewriteAnchorSampleResidue(
+        string generated,
+        MdToPptAnchors.AnchorSlide layout,
+        MdToPptOutlinePageDto page,
+        string? deckSummary,
+        string? deckContent)
+    {
+        if (string.IsNullOrWhiteSpace(generated) || string.IsNullOrWhiteSpace(layout.Html)) return generated;
+
+        static string Normalize(string value) => System.Text.RegularExpressions.Regex.Replace(
+            System.Net.WebUtility.HtmlDecode(value), "\\s+", " ").Trim();
+
+        var allowed = Normalize(string.Join("\n", new List<string?>
+        {
+            page.Title,
+            string.Join("\n", page.Bullets ?? new List<string>()),
+            page.Design,
+            deckSummary,
+            deckContent,
+        }.Where(value => !string.IsNullOrWhiteSpace(value))));
+        var templateWithoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            layout.Html, "<(style|script|svg)\\b[^>]*>[\\s\\S]*?</\\1>", " ",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        templateWithoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            templateWithoutNonText, "<!--[\\s\\S]*?-->", " ");
+        var samples = System.Text.RegularExpressions.Regex.Matches(templateWithoutNonText, ">([^<>]+)<")
+            .Select(match => Normalize(match.Groups[1].Value))
+            .Where(value => value.Length >= 5)
+            .Where(value => !System.Text.RegularExpressions.Regex.IsMatch(value, "^0?\\d+\\s*[/·|-]\\s*0?\\d+$"))
+            .Where(value => !System.Text.RegularExpressions.Regex.IsMatch(value, "^[\\p{P}\\p{S}\\s]+$"))
+            .Where(value => !allowed.Contains(value, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(value => value.Length)
+            .ToList();
+        if (samples.Count == 0) return generated;
+
+        var replacements = new[] { page.Title }
+            .Concat(page.Bullets ?? new List<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (replacements.Count == 0) return generated;
+
+        var replacementIndex = 0;
+        return System.Text.RegularExpressions.Regex.Replace(generated, ">([^<>]+)<", match =>
+        {
+            var visible = Normalize(match.Groups[1].Value);
+            if (!samples.Any(sample => visible.Contains(sample, StringComparison.OrdinalIgnoreCase)))
+                return match.Value;
+            var replacement = replacements[replacementIndex++ % replacements.Count];
+            return $">{System.Net.WebUtility.HtmlEncode(replacement)}<";
+        });
+    }
+
+    /// <summary>
     /// 从版式范本里提取可继承的装饰：顶层"无文本子块"（背景网格/扫描线/窗饰/SVG 装置）作 lead，
     /// class 含 footer 的子块作 tail。供兜底页穿上设计系统的衣服。
     /// </summary>
@@ -2602,6 +2661,8 @@ public class MdToPptController : ControllerBase
                     var (text, err) = await RunPageOnceAsync(
                         userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", i == 0 ? presession : null);
                     var section = NormalizeGeneratedSlideFragment(text, anchor != null);
+                    if (anchor != null && layout != null && !string.IsNullOrEmpty(section))
+                        section = RewriteAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content);
                     if (anchor != null && layout != null && !string.IsNullOrEmpty(section) &&
                         ContainsAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content))
                     {
@@ -2621,6 +2682,8 @@ public class MdToPptController : ControllerBase
                         var (text2, _) = await RunPageOnceAsync(
                             userId, connection, profile, sys, usr, $"PPT 第{i + 1}页R", null);
                         section = NormalizeGeneratedSlideFragment(text2, anchor != null);
+                        if (anchor != null && layout != null && !string.IsNullOrEmpty(section))
+                            section = RewriteAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content);
                         if (anchor != null && layout != null && !string.IsNullOrEmpty(section) &&
                             ContainsAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content))
                         {

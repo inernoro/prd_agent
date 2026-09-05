@@ -190,4 +190,30 @@ public class MdToPptAnchorTests
 
         Assert.False(MdToPptController.ContainsAnchorSampleResidue(generated, layout, page, "OpenDesign", null));
     }
+
+    [Fact]
+    public void RewriteAnchorSampleResidue_PreservesMarkupAndUsesOnlyPageFacts()
+    {
+        var layout = new MdToPptAnchors.AnchorSlide(
+            "terminal.html",
+            "terminal",
+            "slide terminal",
+            "终端版式",
+            "<section class=\"slide terminal\"><div class=\"hermes-shell\"><span>hermes</span><span>lewis</span></div></section>");
+        var page = new MdToPptOutlinePageDto
+        {
+            Title = "端到端调用链",
+            Bullets = new List<string> { "MAP 创建隔离会话", "OpenDesign 读写工作区" },
+        };
+        var generated = "<section class=\"slide terminal\"><div class=\"hermes-shell\"><span>hermes</span><span>lewis</span></div></section>";
+
+        var rewritten = MdToPptController.RewriteAnchorSampleResidue(generated, layout, page, "知识驱动验收", null);
+
+        Assert.Contains("class=\"hermes-shell\"", rewritten);
+        Assert.DoesNotContain(">hermes<", rewritten, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(">lewis<", rewritten, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(">端到端调用链<", rewritten);
+        Assert.Contains(">MAP 创建隔离会话<", rewritten);
+        Assert.False(MdToPptController.ContainsAnchorSampleResidue(rewritten, layout, page, "知识驱动验收", null));
+    }
 }
