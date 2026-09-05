@@ -142,7 +142,12 @@ export default function McpConsolePage() {
     // 手机端不再自己加左右 padding：外层 gutter 由 AppShell 统一给（--mobile-padding，
     // ≤479px 8px / 其余 10px）。再叠一层 16px 的话，375 宽下外边距变成 24px，
     // 卡片自己的 padding 还要再吃一层——正是密度规则点名禁止的三层叠加。
-    <div className="flex h-full min-h-0 flex-col gap-3.5 py-3 md:p-6">
+    // 内部滚动只在宽屏成立：宽屏是左右两列各自滚（内容多时不互相顶），
+    // 窄屏单列时若沿用 h-full + flex-1 + overflow-y-auto，整页高度被锁死在一屏内 ——
+    // 外层 <main> 没得可滚，每列在一个很矮的盒子里自己滚，客户端卡片被拦腰截断，
+    // 第二台客户端与「断开」按钮根本不渲染（390 宽实测 docScrollHeight === innerHeight）。
+    // 窄屏改成自然高度、由 <main> 滚。
+    <div className="flex min-h-full flex-col gap-3.5 py-3 md:p-6 lg:h-full lg:min-h-0">
       {/* 页头：标题、切页、动作挤在一行，把纵向留给内容 */}
       <div className="flex flex-wrap items-center gap-3">
         <Plug size={19} style={{ color: 'var(--accent-primary)' }} aria-hidden />
@@ -251,9 +256,9 @@ export default function McpConsolePage() {
       {tab === 'calls' ? (
         <McpCallsPanel clients={clients} refreshToken={refreshToken} />
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="grid grid-cols-1 gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_320px]">
           {/* 左：客户端 + 平台开放了什么 */}
-          <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-0.5">
+          <div className="flex flex-col gap-3 lg:min-h-0 lg:overflow-y-auto lg:pr-0.5">
             <div className="flex items-baseline gap-2">
               <h2 className="text-[13.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                 连着的客户端
@@ -281,7 +286,7 @@ export default function McpConsolePage() {
           </div>
 
           {/* 右：连接地址 + 去哪看 */}
-          <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-0.5">
+          <div className="flex flex-col gap-3 lg:min-h-0 lg:overflow-y-auto lg:pr-0.5">
             <SectionCard title="连接地址" icon={Link2}>
               <code
                 className="block break-all rounded-[9px] px-2.5 py-2 text-[11px]"
