@@ -7,6 +7,8 @@ import type { UserNavLayoutItem } from '@/services/contracts/userPreferences';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { findHomeItem, getMenuGroupedDefaultOrder, getUnifiedNavCatalog } from '@/lib/unifiedNavCatalog';
+import { migrateLegacyNavId } from '@/lib/launcherCatalog';
+import { collectStaleNavTokens, isStaleNavToken } from '@/lib/navStaleTokens';
 import { useAuthStore } from '@/stores/authStore';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import { Eraser, RefreshCw, RotateCcw, Search } from 'lucide-react';
@@ -51,6 +53,7 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
     }
     return map;
   }, [unified]);
+  const knownIds = useMemo<ReadonlySet<string>>(() => new Set(metaByKey.keys()), [metaByKey]);
   const homeMeta = useMemo<NavChipMeta | null>(() => {
     const home = findHomeItem(unified);
     return home ? { navKey: home.id, label: home.label, shortLabel: home.shortLabel, icon: home.icon } : null;
@@ -93,24 +96,18 @@ export function UserNavOverview({ titleNode, defaultNavOrder, defaultNavHidden, 
 
   const customizedCount = useMemo(() => items.filter((it) => it.customized).length, [items]);
   const staleUserCount = useMemo(
-    () => items.filter((it) => it.customized && [...it.navOrder, ...it.navHidden].some((t) => t !== NAV_DIVIDER_KEY && !metaByKey.has(t))).length,
-    [items, metaByKey],
+    () => items.filter((it) => it.customized && [...it.navOrder, ...it.navHidden].some((t) => isStaleNavToken(t, knownIds))).length,
+    [items, knownIds],
   );
 
-  // 目录里已不存在的 token 全集：默认导航 + 每个人的 navOrder / navHidden
-  const staleTokens = useMemo(() => {
-    const set = new Set<string>();
-    const collect = (arr: string[]) => {
-      for (const t of arr) if (t !== NAV_DIVIDER_KEY && !metaByKey.has(t)) set.add(t);
-    };
-    collect(defaultNavOrder);
-    collect(defaultNavHidden);
-    for (const it of items) {
-      collect(it.navOrder);
-      collect(it.navHidden);
-    }
-    return [...set].sort();
-  }, [defaultNavHidden, defaultNavOrder, items, metaByKey]);
+  // 目录里已不存在的 token 全集：默认导航 + 每个人的 navOrder / navHidden（判据见 lib/navStaleTokens）
+  const staleTokens = useMemo(
+    () => collectStaleNavTokens(
+      [defaultNavOrder, defaultNavHidden, ...items.flatMap((it) => [it.navOrder, it.navHidden])],
+      knownIds,
+    ),
+    [defaultNavHidden, defaultNavOrder, items, knownIds],
+  );
 
   const handlePrune = useCallback(async () => {
     if (staleTokens.length === 0) return;
@@ -391,7 +388,7 @@ function NavRow({
               </div>
             );
           }
-          const meta = metaByKey.get(token);
+          const meta = metaByKey.get(migrateLegacyNavId(token));
           if (!meta) return <StaleNavChip key={`s-${idx}-${token}`} token={token} />;
           return (
             <div key={`${token}-${idx}`} className={NAV_CHIP_BASE_CLASS} title={meta.label}>
@@ -404,7 +401,7 @@ function NavRow({
           <>
             <span className={`${NAV_END_CAP_CLASS} ml-2`}>已隐藏</span>
             {hiddenMetas.map((token, idx) => {
-              const meta = metaByKey.get(token);
+              const meta = metaByKey.get(migrateLegacyNavId(token));
               if (!meta) return <StaleNavChip key={`hs-${idx}-${token}`} token={token} />;
               return (
                 <div key={`h-${token}-${idx}`} className={`${NAV_CHIP_BASE_CLASS} border-dashed`} title={`${meta.label}（该用户已从侧栏隐藏）`}>

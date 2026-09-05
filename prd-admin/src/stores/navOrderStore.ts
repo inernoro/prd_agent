@@ -118,7 +118,9 @@ export const useNavOrderStore = create<NavOrderState>()(
       },
 
       setDefaultNavLayoutLocal: (payload) => {
-        set({ defaultNavOrder: payload.navOrder, defaultNavHidden: payload.navHidden });
+        // 服务端存的可能还是 v7 之前的前缀 id（utility:emergence 等），与 loadFromServer 同口径迁移，
+        // 否则回写后目录对不上，会被当成「已下线」条目
+        set({ defaultNavOrder: migrateOrder(payload.navOrder), defaultNavHidden: migrateOrder(payload.navHidden) });
       },
 
       restoreDefault: async () => {

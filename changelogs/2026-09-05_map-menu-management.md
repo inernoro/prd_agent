@@ -5,3 +5,4 @@
 | chore | prd-api | 菜单目录移除 mds 条目；平台密钥完整性通知与授权健康检查的处理入口改指向模型网关 / 请求日志，不再指向已删除页面 |
 | feat | prd-admin | 全员导航总览新增「清理已下线菜单」：一键从所有人默认导航与全部用户个人导航里拔掉目录中已不存在的菜单 key，不重置任何人的顺序 |
 | feat | prd-api | 新增 remove-tokens 接口：按 token 从默认导航配置与全部用户偏好中批量拔除（settings.write） |
+| fix | prd-admin | 全员导航总览：旧前缀 id（如 utility:emergence）不再被误判为已下线；默认导航本地回写与加载同口径迁移 |
