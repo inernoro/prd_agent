@@ -166,8 +166,12 @@ export default function McpConsolePage() {
       >
         <div className="flex shrink-0 items-center gap-2">
           <Plug size={19} style={{ color: 'var(--accent-primary)' }} aria-hidden />
+          {/* 窄屏让位：390px 装不下标题 135 + 切页 243 + 主操作 108，
+              而横滚条里最先该保住的是「能点的东西」—— 用户刚从抽屉点着
+              「智能体接入台」进来，标题是标识不是操作。
+              用 sr-only 而不是 hidden：读屏仍念得出这一页叫什么，h1 也还在文档大纲里。 */}
           <h1
-            className="shrink-0 whitespace-nowrap text-[18px] font-bold"
+            className="sr-only shrink-0 whitespace-nowrap text-[18px] font-bold lg:not-sr-only"
             style={{ color: 'var(--text-primary)' }}
           >
             智能体接入台
