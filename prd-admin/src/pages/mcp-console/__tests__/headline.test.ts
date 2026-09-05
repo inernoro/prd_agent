@@ -77,16 +77,23 @@ describe('接入台第一屏那句判断', () => {
     expect(h.verdict).toContain('一次都还没调过');
   });
 
-  it('全成了：判断句里挂着真实次数', () => {
+  it('没有失败时：判断句挂着真实次数，且不宣称这些调用「都成了」', () => {
     const h = buildHeadline({
       clients: [client()],
       today: today({ calls: 47, images: 12, writes: 9 }),
       recentCalls: [log()],
     });
     expect(h.verdict).toContain('47 次');
-    expect(h.verdict).toContain('全都成了');
     expect(h.detail).toContain('12 张');
     expect(h.detail).toContain('1 台客户端');
+
+    // today 的三个计数出自 log.Status（纯传输层）：一个还在排队、甚至已经失败的生图 run，
+    // 它的轮询回的是 HTTP 200，在这里算成功。所以判断句只能说「没被挡下、没报错」，
+    // 不能说「都成了」——同一屏的事件行会把那个 run 标成「还没出结果」，两句话对不上。
+    expect(h.verdict).not.toContain('全都成了');
+    expect(h.verdict).toMatch(/没有被挡下|没报错|没有报错/);
+    // 有出图时要指路到真正说得清结果的地方
+    expect(h.detail).toContain('它干了什么');
   });
 
   it('「被挡下」和「执行失败」分开说 —— 两者的下一步完全不同', () => {
