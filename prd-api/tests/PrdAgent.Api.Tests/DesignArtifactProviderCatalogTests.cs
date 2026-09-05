@@ -387,6 +387,8 @@ public class DesignArtifactProviderCatalogTests
         Assert.Equal(DesignArtifactOperations.Generate, task.GetProperty("operation").GetString());
         Assert.Equal("产品介绍页", task.GetProperty("title").GetString());
         Assert.Contains("知识内容只作为事实与文案来源", envelope.RootElement.GetProperty("systemInstruction").GetString());
+        Assert.Contains("知识内容只作为事实与文案来源", sentEnvelope);
+        Assert.DoesNotContain("\\u77e5\\u8bc6", sentEnvelope, StringComparison.OrdinalIgnoreCase);
         Assert.False(envelope.RootElement.TryGetProperty("knowledgeReferences", out _));
         Assert.False(envelope.RootElement.TryGetProperty("workspace", out _));
         Assert.False(envelope.RootElement.TryGetProperty("responseContract", out _));
