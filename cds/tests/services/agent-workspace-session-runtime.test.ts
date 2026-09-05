@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -256,6 +257,74 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(egressEnv?.content).toContain('TARGET_ORIGIN=https://map.example.test');
     expect(egressEnv?.content).not.toContain('model-secret');
     expect(fs.existsSync(egressEnv?.path || '')).toBe(false);
+    const encodedProxyScript = egressEnv?.content.match(/^CDS_EGRESS_PROXY_SCRIPT=(.+)$/m)?.[1] || '';
+    const proxyScript = Buffer.from(encodedProxyScript, 'base64').toString('utf8');
+    let relayHandler: ((request: any, response: any) => void) | undefined;
+    let upstreamOptions: Record<string, any> | undefined;
+    const relayServer = {
+      on: vi.fn().mockReturnThis(),
+      listen: vi.fn(),
+    };
+    const upstreamRequest = {
+      on: vi.fn().mockReturnThis(),
+    };
+    vm.runInNewContext(proxyScript, {
+      URL,
+      console,
+      process: {
+        env: {
+          TARGET_ORIGIN: 'https://map.example.test',
+          TARGET_PATH_PREFIX: '/api/design-artifacts/runtime/run-1/llm/v1',
+          PROXY_PORT: '8787',
+        },
+      },
+      require: (specifier: string) => {
+        if (specifier === 'node:http') {
+          return {
+            createServer: (handler: (request: any, response: any) => void) => {
+              relayHandler = handler;
+              return relayServer;
+            },
+          };
+        }
+        if (specifier === 'node:https') {
+          return {
+            request: (options: Record<string, any>) => {
+              upstreamOptions = options;
+              return upstreamRequest;
+            },
+          };
+        }
+        if (specifier === 'node:dns') {
+          return {
+            lookup: (_hostname: string, _options: unknown, callback: Function) => callback(null, [
+              { address: '203.0.113.10', family: 4 },
+            ]),
+          };
+        }
+        if (specifier === 'node:net') {
+          return { isIP: (address: string) => address.includes(':') ? 6 : 4 };
+        }
+        throw new Error(`Unexpected proxy dependency: ${specifier}`);
+      },
+    });
+    expect(relayHandler).toBeTypeOf('function');
+    relayHandler?.({
+      method: 'POST',
+      url: '/api/design-artifacts/runtime/run-1/llm/v1/chat/completions',
+      headers: {},
+      pipe: vi.fn(),
+    }, {
+      writeHead: vi.fn(),
+      end: vi.fn(),
+    });
+    expect(upstreamOptions?.lookup).toBeTypeOf('function');
+    const allLookup = vi.fn();
+    upstreamOptions?.lookup('map.example.test', { all: true }, allLookup);
+    expect(allLookup).toHaveBeenCalledWith(null, [{ address: '203.0.113.10', family: 4 }]);
+    const singleLookup = vi.fn();
+    upstreamOptions?.lookup('map.example.test', {}, singleLookup);
+    expect(singleLookup).toHaveBeenCalledWith(null, '203.0.113.10', 4);
     const imported = requests.find((request) => request.path === '/api/import/folder');
     expect(imported?.body).toMatchObject({
       baseDir: '/workspace',

@@ -220,7 +220,13 @@ const server = http.createServer((req, res) => {
       method: req.method,
       path: req.url,
       headers,
-      lookup: (_hostname, _options, callback) => callback(null, selected.address, selected.family),
+      lookup: (_hostname, options, callback) => {
+        if (options && typeof options === 'object' && options.all) {
+          callback(null, [selected]);
+          return;
+        }
+        callback(null, selected.address, selected.family);
+      },
     }, (upstreamResponse) => {
       if ((upstreamResponse.statusCode || 0) >= 300 && (upstreamResponse.statusCode || 0) < 400) {
         upstreamResponse.resume(); res.writeHead(502); res.end(); return;
