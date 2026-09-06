@@ -247,6 +247,9 @@ export function WebhookSettingsPanel() {
 
       <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
         配置 Webhook 后，周报事件（提交、审阅、截止提醒等）将自动推送到企微/钉钉/飞书群聊。
+        <br />
+        勾选「评论@提醒」后，周报评论里 @ 到的成员会收到站内通知，同一条消息（含引用原文与评论内容）同步推到群里；
+        想在企微群里真的 @ 亮那个人，需要在「团队成员 → 身份映射」里填写该成员的企业微信 userid，未填写时只发 @显示名 文本。
       </div>
 
       {/* Create form */}

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Users, UserPlus } from 'lucide-react';
+import { Plus, Pencil, Trash2, Users, UserPlus, Link2 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -15,6 +15,8 @@ import {
 import { ReportTeamRole, ReportVisibilityMode } from '@/services/contracts/reportAgent';
 import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { IdentityMappingEditor } from './IdentityMappingEditor';
+import type { ReportTeamMember } from '@/services/contracts/reportAgent';
 import type { AdminUser } from '@/types/admin';
 
 const roleLabels: Record<string, string> = {
@@ -25,6 +27,8 @@ const roleLabels: Record<string, string> = {
 
 export function TeamManager() {
   const { teams, users, currentTeam, currentTeamMembers, loadTeams, loadTeamDetail, loadUsers } = useReportAgentStore();
+  /** 正在编辑身份映射的成员（GitHub / TAPD / 语雀 / GitLab / 企业微信） */
+  const [mappingMember, setMappingMember] = useState<ReportTeamMember | null>(null);
   const [showTeamDialog, setShowTeamDialog] = useState(false);
   const [showMemberDialog, setShowMemberDialog] = useState(false);
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
@@ -263,6 +267,14 @@ export function TeamManager() {
                           <option key={k} value={k}>{v}</option>
                         ))}
                       </select>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setMappingMember(m)}
+                        title="身份映射：GitHub / TAPD / 语雀 / GitLab 用户名，以及企业微信 userid（填了才能在群里真 @ 到这个人）"
+                      >
+                        <Link2 size={12} />
+                      </Button>
                       {m.role !== ReportTeamRole.Leader && (
                         <Button
                           variant="ghost"
@@ -435,6 +447,15 @@ export function TeamManager() {
             </div>
           </GlassCard>
         </div>
+      )}
+
+      {mappingMember && selectedTeamId && (
+        <IdentityMappingEditor
+          teamId={selectedTeamId}
+          member={mappingMember}
+          onClose={() => setMappingMember(null)}
+          onSaved={() => void loadTeamDetail(selectedTeamId)}
+        />
       )}
 
     </div>
