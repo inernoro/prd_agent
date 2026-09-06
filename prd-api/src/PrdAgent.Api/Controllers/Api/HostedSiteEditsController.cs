@@ -355,6 +355,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         item.Status,
         item.Source,
         item.ParentRevisionId,
+        item.RollbackTargetRevisionId,
         item.SourceRunId,
         item.Instruction,
         item.Runtime,

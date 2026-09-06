@@ -873,7 +873,14 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                 const parentRevision = item.parentRevisionId
                   ? revisions.find((candidate) => candidate.id === item.parentRevisionId)
                   : null;
-                const sourceVersion = !item.parentRevisionId
+                const rollbackTargetRevision = item.rollbackTargetRevisionId
+                  ? revisions.find((candidate) => candidate.id === item.rollbackTargetRevisionId)
+                  : null;
+                const sourceVersion = item.source === 'rollback' && item.rollbackTargetRevisionId
+                  ? rollbackTargetRevision
+                    ? `回退目标 ${revisionLabel(rollbackTargetRevision)} · ${rollbackTargetRevision.id.slice(-6)}`
+                    : `回退目标历史版本 · ${item.rollbackTargetRevisionId.slice(-6)}`
+                  : !item.parentRevisionId
                   ? '初始版本'
                   : parentRevision
                     ? `${revisionLabel(parentRevision)} · ${parentRevision.id.slice(-6)}`

@@ -8,6 +8,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -21,6 +22,8 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public class SubmissionsController : ControllerBase
 {
+    private const int CreatorAvatarExistenceConcurrency = 8;
+
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
 
@@ -342,7 +345,8 @@ public class SubmissionsController : ControllerBase
     [HttpGet("public/creators")]
     public async Task<IActionResult> ListPublicSubmissionCreators(
         [FromQuery] string? contentType = null,
-        [FromQuery] int limit = 24)
+        [FromQuery] int limit = 24,
+        CancellationToken ct = default)
     {
         limit = Math.Clamp(limit, 1, 60);
 
@@ -362,20 +366,104 @@ public class SubmissionsController : ControllerBase
             })
             .SortByDescending(x => x.SubmissionCount)
             .Limit(limit)
-            .ToListAsync();
+            .ToListAsync(ct);
 
-        var creators = grouped
+        var candidates = grouped
             .Where(x => !string.IsNullOrWhiteSpace(x.OwnerUserId))
-            .Select(x => new
-            {
-                ownerUserId = x.OwnerUserId,
-                ownerUserName = x.OwnerUserName,
-                ownerAvatarFileName = x.OwnerAvatarFileName,
-                submissionCount = x.SubmissionCount,
-            });
+            .Select(x => new PublicSubmissionCreatorCandidate(
+                x.OwnerUserId,
+                x.OwnerUserName,
+                x.OwnerAvatarFileName,
+                x.SubmissionCount))
+            .ToList();
+
+        var ownerIds = candidates.Select(x => x.OwnerUserId).ToList();
+        var currentUsers = ownerIds.Count == 0
+            ? []
+            : await _db.Users
+                .Find(x => ownerIds.Contains(x.UserId))
+                .ToListAsync(ct);
+        var currentUsersById = currentUsers
+            .GroupBy(x => x.UserId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
+
+        var creators = await ResolvePublicSubmissionCreatorsAsync(
+            candidates,
+            currentUsersById,
+            _assetStorage,
+            ct);
 
         return Ok(ApiResponse<object>.Ok(new { creators }));
     }
+
+    internal static async Task<IReadOnlyList<PublicSubmissionCreatorView>> ResolvePublicSubmissionCreatorsAsync(
+        IReadOnlyList<PublicSubmissionCreatorCandidate> candidates,
+        IReadOnlyDictionary<string, User> currentUsersById,
+        IAssetStorage assetStorage,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(currentUsersById);
+        ArgumentNullException.ThrowIfNull(assetStorage);
+
+        using var gate = new SemaphoreSlim(
+            CreatorAvatarExistenceConcurrency,
+            CreatorAvatarExistenceConcurrency);
+        var creatorTasks = candidates.Select(async candidate =>
+        {
+            currentUsersById.TryGetValue(candidate.OwnerUserId, out var currentUser);
+            var ownerUserName = currentUser == null
+                ? candidate.OwnerUserName
+                : ResolveDisplayName(currentUser, claimName: null, candidate.OwnerUserId);
+
+            // 当前用户存在时，以资料里的头像为准。资料明确为空表示已清除头像，
+            // 不能退回投稿快照，否则会把已删除的历史对象重新暴露给首页。
+            var avatarFileName = (currentUser == null
+                    ? candidate.OwnerAvatarFileName
+                    : currentUser.AvatarFileName)
+                ?.Trim();
+            if (string.IsNullOrWhiteSpace(avatarFileName))
+            {
+                avatarFileName = null;
+            }
+            else
+            {
+                var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName}".ToLowerInvariant();
+                await gate.WaitAsync(ct);
+                try
+                {
+                    if (!await assetStorage.ExistsAsync(objectKey, ct))
+                    {
+                        avatarFileName = null;
+                    }
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }
+
+            return new PublicSubmissionCreatorView(
+                candidate.OwnerUserId,
+                ownerUserName,
+                avatarFileName,
+                candidate.SubmissionCount);
+        });
+
+        return await Task.WhenAll(creatorTasks);
+    }
+
+    internal sealed record PublicSubmissionCreatorCandidate(
+        string OwnerUserId,
+        string OwnerUserName,
+        string? OwnerAvatarFileName,
+        int SubmissionCount);
+
+    internal sealed record PublicSubmissionCreatorView(
+        string OwnerUserId,
+        string OwnerUserName,
+        string? OwnerAvatarFileName,
+        int SubmissionCount);
 
     /// <summary>
     /// 获取当前用户的投稿列表

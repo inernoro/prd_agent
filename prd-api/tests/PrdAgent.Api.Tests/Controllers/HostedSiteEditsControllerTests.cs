@@ -183,17 +183,58 @@ public sealed class HostedSiteEditsControllerTests
         queue.Verify(service => service.EnqueueAsync(RunKinds.DesignArtifact, persisted.Id, CancellationToken.None), Times.Once);
     }
 
+    [Fact]
+    public async Task ListRevisions_ShouldExposeRollbackTargetSeparatelyFromParentRevision()
+    {
+        var rollback = new HostedSiteRevision
+        {
+            Id = "revision-rollback",
+            SiteId = "site-a",
+            CreatedByUserId = "owner-user",
+            Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.Rollback,
+            ParentRevisionId = "revision-current-before-rollback",
+            RollbackTargetRevisionId = "revision-selected-history",
+            Html = "<!doctype html><html><body>restored</body></html>",
+            BasedOnContentVersion = DateTime.UtcNow.AddMinutes(-1),
+            PublishedContentVersion = DateTime.UtcNow,
+        };
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.EnsureCurrentSnapshotAsync(
+                "site-a", "owner-user", null, CancellationToken.None))
+            .ReturnsAsync(rollback);
+        revisions.Setup(service => service.ListAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync([rollback]);
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry(rollback.Html));
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites: sites.Object,
+            revisions: revisions.Object);
+
+        var result = await controller.ListRevisions("site-a");
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var item = payload.GetProperty("data")[0];
+        Assert.Equal("revision-current-before-rollback", item.GetProperty("parentRevisionId").GetString());
+        Assert.Equal("revision-selected-history", item.GetProperty("rollbackTargetRevisionId").GetString());
+    }
+
     private static HostedSiteEditsController BuildController(
         MongoDbContext db,
         string userId,
         IHostedSiteService? sites = null,
         IDesignArtifactProviderCatalog? providers = null,
         IDesignKnowledgeSnapshotResolver? knowledgeSnapshots = null,
-        IRunQueue? queue = null)
+        IRunQueue? queue = null,
+        IHostedSiteRevisionService? revisions = null)
     {
         var controller = new HostedSiteEditsController(
             sites ?? Mock.Of<IHostedSiteService>(),
-            Mock.Of<IHostedSiteRevisionService>(),
+            revisions ?? Mock.Of<IHostedSiteRevisionService>(),
             Mock.Of<IRunEventStore>(),
             queue ?? Mock.Of<IRunQueue>(),
             db,

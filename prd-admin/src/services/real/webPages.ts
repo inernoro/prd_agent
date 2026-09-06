@@ -76,6 +76,7 @@ export interface HostedSiteRevision {
   status: 'draft' | 'publishing' | 'published';
   source: 'baseline' | 'ai-edit' | 'rollback';
   parentRevisionId?: string | null;
+  rollbackTargetRevisionId?: string | null;
   sourceRunId?: string | null;
   instruction?: string | null;
   runtime: 'map-gateway' | 'open-design' | 'codex' | 'manual';

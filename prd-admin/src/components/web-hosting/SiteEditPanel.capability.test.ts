@@ -91,6 +91,8 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain("? '回退复制'");
     expect(source).toContain('来源动作：{sourceAction} · 来源版本：{sourceVersion}');
     expect(source).toContain('revisions.find((candidate) => candidate.id === item.parentRevisionId)');
+    expect(source).toContain('item.rollbackTargetRevisionId');
+    expect(source).toContain('回退目标 ${revisionLabel(rollbackTargetRevision)}');
   });
 
   it('回退先进入可聚焦确认态并说明目标、线上影响和可恢复性', () => {
