@@ -2636,12 +2636,23 @@ export function canAcceptUntrackedWorkspaceEdit(
   outputHtml: Buffer,
 ): boolean {
   return deliverableValidation === 'no_artifact'
-    && currentHtml !== undefined
-    && currentHtml.length > 0
-    && !currentHtml.equals(outputHtml);
+    && outputHtml.length > 0
+    && (currentHtml === undefined || !currentHtml.equals(outputHtml));
 }
 
 function classifyQualityRepairReason(message: string): { code: string; instruction: string } | undefined {
+  if (message === 'index.html contains no explicit body element') {
+    return {
+      code: 'missing_body',
+      instruction: 'Create one explicit body element containing the complete visible page.',
+    };
+  }
+  if (message === 'index.html contains no visible content') {
+    return {
+      code: 'no_visible_content',
+      instruction: 'Create a complete page with meaningful visible content grounded in the MAP task and knowledge sources.',
+    };
+  }
   if (message === 'index.html contains visible placeholder or unfinished content') {
     return {
       code: 'visible_placeholder',
@@ -2763,7 +2774,7 @@ export function hardenSelfContainedHtml(html: string, evidenceText = ''): string
 
 function extractVisibleHtmlText(html: string): string {
   const markup = html.replace(
-    /<!--[\s\S]*?-->|<head\b[^>]*>[\s\S]*?<\/head\s*>|<style\b[^>]*>[\s\S]*?<\/style\s*>|<script\b[^>]*>[\s\S]*?<\/script\s*>|<template\b[^>]*>[\s\S]*?<\/template\s*>|<noscript\b[^>]*>[\s\S]*?<\/noscript\s*>/gi,
+    /<!doctype[^>]*>|<!--[\s\S]*?-->|<head\b[^>]*>[\s\S]*?<\/head\s*>|<style\b[^>]*>[\s\S]*?<\/style\s*>|<script\b[^>]*>[\s\S]*?<\/script\s*>|<template\b[^>]*>[\s\S]*?<\/template\s*>|<noscript\b[^>]*>[\s\S]*?<\/noscript\s*>/gi,
     ' ',
   );
   return decodeHtmlText(extractVisibleTextFromMarkup(markup))
@@ -3032,15 +3043,27 @@ function extractClaimEntityKeys(segment: string, unit: string): Set<string> {
 }
 
 function validateArtifactQuality(html: string, evidenceText: string): void {
-  const visible = extractVisibleHtmlText(html);
+  const structureHtml = html.replace(/<!--[\s\S]*?(?:-->|$)/g, (comment) => ' '.repeat(comment.length));
+  const tags = scanHtmlTags(structureHtml);
+  const bodyOpening = tags.find((tag) => !tag.isClosing && tag.name.toLowerCase() === 'body');
+  const bodyClosing = bodyOpening
+    ? tags.find((tag) => tag.isClosing && tag.name.toLowerCase() === 'body' && tag.start >= bodyOpening.end)
+    : undefined;
+  if (!bodyOpening || !bodyClosing) {
+    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains no explicit body element');
+  }
+  const visible = extractVisibleHtmlText(html.slice(bodyOpening.end, bodyClosing.start));
+  if (!visible) {
+    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains no visible content');
+  }
   if (/(?:图|图片|图示|插图|截图|内容|文案|数据|此处|位置)\s*(?:仍|仅|为|是|[:：·—-])?\s*占位|占位\s*(?:图|图片|图示|插图|截图|内容|文案|数据|[:：·—-])|待\s*(?:补充|替换|填写|完善)|\blorem\s+ipsum\b|\b(?:todo|tbd)\b/i.test(visible)) {
     throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains visible placeholder or unfinished content');
   }
 
   const targets = new Set<string>();
   const popoverTargets = new Set<string>();
-  const tags = scanHtmlTags(html).filter((tag) => !tag.isClosing);
-  for (const tag of tags) {
+  const openingTags = tags.filter((tag) => !tag.isClosing);
+  for (const tag of openingTags) {
     const attributes = tag.attributes;
     const target = decodeHtmlText((readHtmlAttribute(attributes, 'id') ?? readHtmlAttribute(attributes, 'name') ?? '').trim());
     if (target) {
@@ -3048,7 +3071,7 @@ function validateArtifactQuality(html: string, evidenceText: string): void {
       if (hasHtmlAttribute(attributes, 'popover')) popoverTargets.add(target);
     }
   }
-  for (const tag of tags.filter((item) => item.name.toLowerCase() === 'a')) {
+  for (const tag of openingTags.filter((item) => item.name.toLowerCase() === 'a')) {
     const href = readHtmlAttribute(tag.attributes, 'href');
     if (href === undefined) {
       throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains a link without a target');
@@ -3069,7 +3092,7 @@ function validateArtifactQuality(html: string, evidenceText: string): void {
       }
     }
   }
-  for (const tag of tags.filter((item) => item.name.toLowerCase() === 'button')) {
+  for (const tag of openingTags.filter((item) => item.name.toLowerCase() === 'button')) {
     const attributes = tag.attributes;
     if (hasHtmlAttribute(attributes, 'disabled')) continue;
     const popoverTarget = readHtmlAttribute(attributes, 'popovertarget')?.trim();
