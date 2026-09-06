@@ -392,6 +392,19 @@ export function bodyPreviewFromUnknown(value: unknown, contentType?: unknown): {
   };
 }
 
+export function selectRequestBodyForHttpLog(
+  captured: { bodyPreview?: string; bodyBytes?: number },
+  parsed: { bodyPreview?: string; bodyBytes?: number },
+  suppress: boolean,
+): { bodyPreview?: string; bodyBytes?: number } {
+  if (!suppress) return (captured.bodyBytes || 0) > 0 ? captured : parsed;
+  const observedBytes = Math.max(captured.bodyBytes || 0, parsed.bodyBytes || 0);
+  return {
+    bodyPreview: observedBytes > 0 ? '[cds request body omitted]' : undefined,
+    bodyBytes: observedBytes || undefined,
+  };
+}
+
 export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES, contentType?: unknown): {
   onChunk(chunk: Buffer | string): void;
   snapshot(contentTypeOverride?: unknown): { bodyPreview?: string; bodyBytes: number };

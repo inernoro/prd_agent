@@ -24,7 +24,7 @@ describe('session lifetime policy (single source)', () => {
     // GitHub / 本地密码会话
     expect(serverSource).toContain('config: { allowedOrgs, sessionTtlMs }');
     // basic 模式 cds_token
-    expect(serverSource).toContain('basicSessionCookie(validToken, sessionTtlMs)');
+    expect(serverSource).toContain('basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure)');
   });
 
   it('never hardcodes a login window next to the cookie writers', () => {
@@ -35,11 +35,11 @@ describe('session lifetime policy (single source)', () => {
 
   it('re-issues the basic-mode cookie on authenticated use so it slides', () => {
     // basic 模式没有服务端会话记录，只能靠重发 cookie 续期；漏了就退回固定期限。
-    const gateIndex = serverSource.indexOf('if (token === validToken) {');
+    const gateIndex = serverSource.indexOf('if (humanCookieValid || machineHeaderValid) {');
     expect(gateIndex).toBeGreaterThan(0);
     const gateBlock = serverSource.slice(gateIndex, gateIndex + 800);
-    expect(gateBlock).toContain('basicSessionCookie(validToken, sessionTtlMs)');
+    expect(gateBlock).toContain('basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure)');
     // 只对 cookie 认证续期：x-cds-token 走机器凭据，不涉及浏览器 cookie。
-    expect(gateBlock).toContain('cookieToken === validToken');
+    expect(gateBlock).toContain('if (humanCookieValid)');
   });
 });
