@@ -129,6 +129,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         run.WorkspaceBaseRevision = package.BaseRevision;
         run.WorkspaceResultAssetKey = null;
         run.WorkspaceResultSha256 = null;
+        run.WorkspaceManifestSha256 = null;
         run.WorkspacePendingResultAssetKey = null;
         run.WorkspacePendingResultAttemptId = null;
         run.WorkspacePendingResultWriteState = null;
@@ -199,6 +200,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             run.WorkspaceBaseRevision ?? string.Empty,
             MaxOutputBytes);
         var packageSha = Sha256Hex(packageBytes);
+        var manifestSha = parsed.Files.Single(file => file.Path == "manifest.json").Sha256;
         if (!string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
         {
             if (FixedEquals(run.WorkspaceResultSha256, packageSha))
@@ -231,6 +233,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                     Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultSha256, packageSha))),
             Builders<DesignArtifactRun>.Update
                 .Set(item => item.WorkspaceResultSha256, packageSha)
+                .Set(item => item.WorkspaceManifestSha256, manifestSha)
                 .Set(item => item.WorkspacePendingResultAssetKey, pendingKey)
                 .Set(item => item.WorkspacePendingResultAttemptId, attemptId)
                 .Set(item => item.WorkspacePendingResultWriteState, DesignWorkspaceResultWriteStates.Writing)
@@ -431,6 +434,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 .Set(item => item.WorkspaceBaseRevision, baseRevision)
                 .Set(item => item.WorkspaceResultAssetKey, null)
                 .Set(item => item.WorkspaceResultSha256, null)
+                .Set(item => item.WorkspaceManifestSha256, null)
                 .Set(item => item.WorkspacePendingResultAssetKey, null)
                 .Set(item => item.WorkspacePendingResultAttemptId, null)
                 .Set(item => item.WorkspacePendingResultWriteState, null)
@@ -610,7 +614,9 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             .Set(item => item.WorkspaceRejectedResultCleanupError, null)
             .Set(item => item.UpdatedAt, attemptedAt);
         if (clearHash)
-            update = update.Set(item => item.WorkspaceResultSha256, null);
+            update = update
+                .Set(item => item.WorkspaceResultSha256, null)
+                .Set(item => item.WorkspaceManifestSha256, null);
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
             item => item.Id == current.Id
                     && item.WorkspacePendingResultAssetKey == current.WorkspacePendingResultAssetKey

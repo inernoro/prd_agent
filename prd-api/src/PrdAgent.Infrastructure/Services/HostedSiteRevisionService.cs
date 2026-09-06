@@ -229,7 +229,9 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             Builders<HostedSiteRevision>.Update
                 .Set(x => x.Status, HostedSiteRevisionStatuses.Publishing)
                 .Set(x => x.PublishAttemptId, attemptId)
-                .Set(x => x.PublishAttemptStartedAt, attemptStartedAt),
+                .Set(x => x.PublishAttemptStartedAt, attemptStartedAt)
+                .Set(x => x.LastPublishFailureCode, null)
+                .Set(x => x.LastPublishFailedAt, null),
             cancellationToken: CancellationToken.None);
         if (claimed.ModifiedCount == 0)
             throw new InvalidOperationException("该草稿正在由另一个请求发布，请稍后刷新");
@@ -257,11 +259,35 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
                     var recovered = await FinalizePublishedRevisionAsync(draft, afterFailure.ContentVersion);
                     return (recovered, afterFailure.Site);
                 }
-                await TryResetPublishingAttemptAsync(_db, draft.Id, attemptId, CancellationToken.None);
+                await TryResetPublishingAttemptAsync(
+                    _db,
+                    draft.Id,
+                    attemptId,
+                    CancellationToken.None,
+                    draft.Source == HostedSiteRevisionSources.Rollback
+                        ? "rollback_publish_failed"
+                        : "publish_failed",
+                    DateTime.UtcNow);
             }
             catch
             {
                 // 无法确认站点是否已切换时保留 publishing，后续请求会按发布指针恢复，不能猜测回滚。
+                try
+                {
+                    await TryMarkPublishingFailureAsync(
+                        _db,
+                        draft.Id,
+                        attemptId,
+                        draft.Source == HostedSiteRevisionSources.Rollback
+                            ? "rollback_publish_state_unknown"
+                            : "publish_state_unknown",
+                        DateTime.UtcNow,
+                        CancellationToken.None);
+                }
+                catch
+                {
+                    // 审计补写失败不能覆盖原始发布异常；publishing 围栏仍允许后续请求按地面真值恢复。
+                }
             }
             throw;
         }
@@ -289,6 +315,7 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             Status = HostedSiteRevisionStatuses.Draft,
             Source = HostedSiteRevisionSources.Rollback,
             ParentRevisionId = parent.Id,
+            RollbackTargetRevisionId = target.Id,
             Instruction = $"回退到 {target.Id}",
             // 回退是版本账本操作，不伪装成再次调用了原始 AI 执行器。
             // ParentRevisionId 仍可追溯到内容真正来自哪个历史版本。
@@ -344,6 +371,35 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         MongoDbContext db,
         string revisionId,
         string? attemptId,
+        CancellationToken ct,
+        string? failureCode = null,
+        DateTime? failedAt = null)
+    {
+        var update = Builders<HostedSiteRevision>.Update
+            .Set(x => x.Status, HostedSiteRevisionStatuses.Draft)
+            .Set(x => x.PublishAttemptId, null)
+            .Set(x => x.PublishAttemptStartedAt, null);
+        if (!string.IsNullOrWhiteSpace(failureCode))
+        {
+            update = update
+                .Set(x => x.LastPublishFailureCode, failureCode)
+                .Set(x => x.LastPublishFailedAt, failedAt ?? DateTime.UtcNow);
+        }
+        var write = await db.HostedSiteRevisions.UpdateOneAsync(
+            x => x.Id == revisionId
+                 && x.Status == HostedSiteRevisionStatuses.Publishing
+                 && x.PublishAttemptId == attemptId,
+            update,
+            cancellationToken: ct);
+        return write.ModifiedCount == 1;
+    }
+
+    internal static async Task<bool> TryMarkPublishingFailureAsync(
+        MongoDbContext db,
+        string revisionId,
+        string? attemptId,
+        string failureCode,
+        DateTime failedAt,
         CancellationToken ct)
     {
         var write = await db.HostedSiteRevisions.UpdateOneAsync(
@@ -351,9 +407,8 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
                  && x.Status == HostedSiteRevisionStatuses.Publishing
                  && x.PublishAttemptId == attemptId,
             Builders<HostedSiteRevision>.Update
-                .Set(x => x.Status, HostedSiteRevisionStatuses.Draft)
-                .Set(x => x.PublishAttemptId, null)
-                .Set(x => x.PublishAttemptStartedAt, null),
+                .Set(x => x.LastPublishFailureCode, failureCode)
+                .Set(x => x.LastPublishFailedAt, failedAt),
             cancellationToken: ct);
         return write.ModifiedCount == 1;
     }

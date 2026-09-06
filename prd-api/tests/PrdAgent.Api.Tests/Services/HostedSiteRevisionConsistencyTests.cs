@@ -75,6 +75,7 @@ public sealed class HostedSiteRevisionConsistencyTests
         Assert.Null(result.Revision.SourceRunId);
         Assert.Equal(target.KnowledgeEntryIds, result.Revision.KnowledgeEntryIds);
         Assert.Equal(HostedSiteRevisionSources.Rollback, result.Revision.Source);
+        Assert.Equal(target.Id, result.Revision.RollbackTargetRevisionId);
     }
 
     [Fact]
@@ -190,6 +191,47 @@ public sealed class HostedSiteRevisionConsistencyTests
         Assert.Equal(HostedSiteRevisionStatuses.Draft, persisted.Status);
         Assert.Null(persisted.PublishAttemptId);
         Assert.Null(persisted.PublishAttemptStartedAt);
+        Assert.Equal("publish_failed", persisted.LastPublishFailureCode);
+        Assert.NotNull(persisted.LastPublishFailedAt);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task RollbackPublishFailure_ShouldPersistOnlyStableFailureEvidence()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var baseVersion = MongoTime(DateTime.UtcNow.AddMinutes(-2));
+        var target = PublishingRevision("revision-rollback-target", baseVersion);
+        target.Status = HostedSiteRevisionStatuses.Published;
+        target.PublishedContentVersion = baseVersion;
+        target.PublishedAt = baseVersion;
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(target);
+        var currentSite = Site(target.Id, baseVersion);
+        var currentEntry = new HostedSiteEditableEntry(currentSite, target.Html, baseVersion);
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(currentEntry);
+        sites.Setup(x => x.ReplaceEntryHtmlAsync(
+                "site-1",
+                "user-1",
+                target.Html,
+                baseVersion,
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("secret=must-not-be-persisted"));
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.RollbackAsync("site-1", target.Id, "user-1"));
+
+        var rollback = await fixture.Db.HostedSiteRevisions
+            .Find(item => item.Source == HostedSiteRevisionSources.Rollback)
+            .SingleAsync();
+        Assert.Equal(HostedSiteRevisionStatuses.Draft, rollback.Status);
+        Assert.Equal(target.Id, rollback.RollbackTargetRevisionId);
+        Assert.Equal("rollback_publish_failed", rollback.LastPublishFailureCode);
+        Assert.NotNull(rollback.LastPublishFailedAt);
+        Assert.DoesNotContain("secret", rollback.ToJson(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

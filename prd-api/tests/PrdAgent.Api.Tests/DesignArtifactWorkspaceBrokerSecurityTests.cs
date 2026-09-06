@@ -66,6 +66,7 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
             .Find(run => run.Id == "run-replay")
             .FirstAsync();
         Assert.Equal(first.ResultSha256, persisted.WorkspaceResultSha256);
+        Assert.Matches("^[a-f0-9]{64}$", persisted.WorkspaceManifestSha256 ?? string.Empty);
     }
 
     [Fact]
@@ -142,6 +143,7 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
         var persisted = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
         Assert.Null(persisted.WorkspaceResultAssetKey);
         Assert.Null(persisted.WorkspaceResultSha256);
+        Assert.Null(persisted.WorkspaceManifestSha256);
         Assert.Null(persisted.WorkspacePendingResultAssetKey);
         Assert.Null(persisted.WorkspacePendingResultAttemptId);
         Assert.Null(persisted.WorkspacePendingResultWriteState);
@@ -181,6 +183,7 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
         var pending = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
         Assert.Null(pending.WorkspaceResultAssetKey);
         Assert.NotNull(pending.WorkspaceResultSha256);
+        Assert.Matches("^[a-f0-9]{64}$", pending.WorkspaceManifestSha256 ?? string.Empty);
         Assert.NotNull(pending.WorkspacePendingResultAssetKey);
         Assert.NotNull(pending.WorkspacePendingResultAttemptId);
         Assert.Equal(DesignWorkspaceResultWriteStates.Stored, pending.WorkspacePendingResultWriteState);
@@ -199,6 +202,7 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
         var cleaned = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
         Assert.Null(cleaned.WorkspaceResultAssetKey);
         Assert.Null(cleaned.WorkspaceResultSha256);
+        Assert.Null(cleaned.WorkspaceManifestSha256);
         Assert.Null(cleaned.WorkspacePendingResultAssetKey);
         Assert.Null(cleaned.WorkspacePendingResultAttemptId);
         Assert.Null(cleaned.WorkspacePendingResultWriteState);
@@ -265,6 +269,7 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
         var cleaned = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
         Assert.Null(cleaned.WorkspaceResultAssetKey);
         Assert.Null(cleaned.WorkspaceResultSha256);
+        Assert.Null(cleaned.WorkspaceManifestSha256);
         Assert.Null(cleaned.WorkspacePendingResultAssetKey);
         Assert.Null(cleaned.WorkspacePendingResultAttemptId);
         Assert.Null(cleaned.WorkspacePendingResultProcessEpoch);
@@ -346,6 +351,7 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
         Assert.Equal(objectsBeforeCommit, fixture.AssetObjectCount);
         var cleaned = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
         Assert.Null(cleaned.WorkspaceResultSha256);
+        Assert.Null(cleaned.WorkspaceManifestSha256);
         Assert.Null(cleaned.WorkspacePendingResultAssetKey);
         Assert.Null(cleaned.WorkspacePendingResultAttemptId);
         Assert.Null(cleaned.WorkspacePendingResultWriteState);

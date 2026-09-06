@@ -23,6 +23,9 @@ public class HostedSiteRevision
     /// <summary>生成该版本所依据的上一版本；首个基线为空。</summary>
     public string? ParentRevisionId { get; set; }
 
+    /// <summary>回退版本明确指向被选择的历史版本；与 ParentRevisionId 的回退前当前版本语义分离。</summary>
+    public string? RollbackTargetRevisionId { get; set; }
+
     /// <summary>生成草稿的 Run，用于从版本追溯模型交互过程。</summary>
     public string? SourceRunId { get; set; }
 
@@ -49,6 +52,11 @@ public class HostedSiteRevision
 
     /// <summary>当前发布尝试开始时间。进程退出后，过期尝试可由后续请求安全接管。</summary>
     public DateTime? PublishAttemptStartedAt { get; set; }
+
+    /// <summary>最近一次发布尝试的稳定失败码；不得保存原始异常或外部服务信息。</summary>
+    public string? LastPublishFailureCode { get; set; }
+
+    public DateTime? LastPublishFailedAt { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

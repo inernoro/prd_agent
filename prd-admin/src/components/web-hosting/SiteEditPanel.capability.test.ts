@@ -28,11 +28,19 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('首版仅支持声明式自包含 HTML，含脚本、外链或 ZIP 资源会在任务创建前提示。');
   });
 
-  it('版本图标操作具有明确名称和不小于 36px 的点击热区', () => {
+  it('版本操作具有明确文字和不小于 44px 的点击热区', () => {
     expect(source).toContain('aria-label="刷新版本记录"');
     expect(source).toContain('aria-label="预览这个版本"');
     expect(source).toContain('aria-label="把这个版本重新发布为最新版"');
-    expect(source.match(/inline-flex h-9 w-9 items-center justify-center/g)).toHaveLength(4);
+    expect(source).toContain('发布新版本');
+    expect(source).toContain('回退');
+    expect(source.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it('从卡片进入版本记录时会把历史区滚入视野', () => {
+    expect(source).toContain("focusSection?: 'compose' | 'history'");
+    expect(source).toContain("focusSection === 'history' ? historyRef.current : composeRef.current");
+    expect(source).toContain("scrollIntoView({ block: 'start', behavior: 'smooth' })");
   });
 
   it('长时间远程微调时每秒更新可见时长', () => {

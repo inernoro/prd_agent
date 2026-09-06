@@ -31,6 +31,8 @@ import {
 interface Props {
   site: HostedSite;
   onPublished: (site: HostedSite) => void;
+  /** 由卡片或预览顶栏决定先看修改输入还是版本历史。 */
+  focusSection?: 'compose' | 'history';
 }
 
 interface PhaseEvent {
@@ -44,7 +46,7 @@ function formatRevisionTime(value?: string | null) {
   return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', { hour12: false });
 }
 
-export default function SiteEditPanel({ site, onPublished }: Props) {
+export default function SiteEditPanel({ site, onPublished, focusSection = 'compose' }: Props) {
   const [instruction, setInstruction] = useState('');
   const [phase, setPhase] = useState('告诉我你想改什么，系统会先生成草稿，不会直接覆盖线上页面。');
   const [progress, setProgress] = useState(0);
@@ -68,6 +70,15 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
   const streamRef = useRef('');
   const lastPaintAtRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  const composeRef = useRef<HTMLDivElement | null>(null);
+  const historyRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const target = focusSection === 'history' ? historyRef.current : composeRef.current;
+    if (!target) return;
+    const frame = window.requestAnimationFrame(() => target.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusSection]);
 
   useEffect(() => {
     if (!generating || runStartedAtMs == null) return;
@@ -364,7 +375,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col text-token-primary">
-      <div className="shrink-0 border-b border-token-subtle p-4">
+      <div ref={composeRef} className="shrink-0 scroll-mt-2 border-b border-token-subtle p-4">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <WandSparkles size={16} />
           帮我修改
@@ -433,7 +444,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
                     disabled={generating}
                     onClick={() => toggleKnowledge(item.id)}
                     title={`${item.storeName} / ${item.title}`}
-                    className={`flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[10px] transition-colors disabled:opacity-50 ${selected ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}
+                    className={`flex min-h-11 max-w-full items-center gap-1 rounded-md border px-2 text-[10px] transition-colors disabled:opacity-50 ${selected ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}
                   >
                     <span className="truncate">{item.title}</span>
                     {selected && <X size={10} className="shrink-0" />}
@@ -447,7 +458,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
           type="button"
           onClick={() => void generate()}
           disabled={generating || instruction.trim().length === 0}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+          className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         >
           {generating ? <MapSpinner size={14} /> : <Send size={14} />}
           {generating ? '正在生成草稿' : '生成修改草稿'}
@@ -476,7 +487,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
                     type="button"
                     disabled={mutatingId === draftRevisionId}
                     onClick={() => void publish(draftRevisionId)}
-                    className="flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                    className="flex min-h-11 items-center gap-1 rounded-md bg-emerald-600 px-3 font-medium text-white hover:bg-emerald-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
                   >
                     {mutatingId === draftRevisionId ? <MapSpinner size={12} /> : <Check size={12} />}
                     {draftRevisionStatus === 'publishing' ? '重试发布' : '发布新版本'}
@@ -498,7 +509,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
           ) : null}
         </div>
 
-        <div className="p-4">
+        <div ref={historyRef} className="scroll-mt-2 p-4">
           <div className="mb-3 flex items-center justify-between gap-2 text-xs font-medium">
             <span className="flex items-center gap-2"><History size={14} />版本记录</span>
             <button
@@ -507,7 +518,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
               aria-label="刷新版本记录"
               disabled={loadingHistory}
               onClick={() => void loadHistory()}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md text-token-secondary hover-bg-soft disabled:opacity-50"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-token-secondary hover-bg-soft disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               <RefreshCw size={12} className={loadingHistory ? 'animate-spin' : ''} />
             </button>
@@ -520,7 +531,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
             <div className="space-y-2">
               {revisions.map((item) => (
                 <div key={item.id} className="rounded-lg border border-token-subtle bg-token-nested p-2.5">
-                  <div className="flex items-start justify-between gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="text-xs font-medium">{revisionLabel(item)}</div>
                       <div className="mt-1 flex items-center gap-1 text-[10px] text-token-muted">
@@ -531,15 +542,16 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
                         <p className="mt-1 text-[10px] text-token-muted">引用了 {item.knowledgeEntryIds.length} 篇知识</p>
                       )}
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
+                    <div className="flex w-full shrink-0 items-center gap-1 overflow-x-auto sm:w-auto sm:overflow-visible">
                       <button
                         type="button"
                         title="预览这个版本"
                         aria-label="预览这个版本"
                         onClick={() => void openRevision(item.id)}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-md text-token-secondary hover-bg-soft"
+                        className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium text-token-secondary hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                       >
                         <Eye size={13} />
+                        预览
                       </button>
                       {item.status === 'published' && !item.isCurrent && (
                         <button
@@ -548,9 +560,10 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
                           aria-label="把这个版本重新发布为最新版"
                           disabled={mutatingId === item.id}
                           onClick={() => void rollback(item.id)}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-token-secondary hover-bg-soft disabled:opacity-50"
+                          className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-semibold text-token-secondary hover-bg-soft disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                         >
                           {mutatingId === item.id ? <MapSpinner size={13} /> : <RotateCcw size={13} />}
+                          回退
                         </button>
                       )}
                       {canPublishRevision(item) && (
@@ -560,9 +573,10 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
                           aria-label={item.status === 'publishing' ? '重试未完成的发布' : '发布这个草稿'}
                           disabled={mutatingId === item.id}
                           onClick={() => void publish(item.id)}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-emerald-600 hover-bg-soft disabled:opacity-50"
+                          className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-semibold text-emerald-600 hover-bg-soft disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
                         >
                           {mutatingId === item.id ? <MapSpinner size={13} /> : <Check size={13} />}
+                          发布新版本
                         </button>
                       )}
                     </div>

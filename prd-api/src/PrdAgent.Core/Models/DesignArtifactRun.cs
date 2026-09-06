@@ -94,6 +94,12 @@ public class DesignArtifactRun
 
     public string? WorkspaceResultSha256 { get; set; }
 
+    /// <summary>
+    /// 已通过结果契约校验的 manifest.json 内容哈希。结果尚处于 pending 时也会保留，
+    /// 但是否已经原子提交必须以 WorkspaceResultAssetKey 为准。
+    /// </summary>
+    public string? WorkspaceManifestSha256 { get; set; }
+
     /// <summary>结果上传开始前持久化的精确物理 key；恢复器据此覆盖 SaveAsync 成功但终态 CAS 尚未发生的崩溃窗口。</summary>
     public string? WorkspacePendingResultAssetKey { get; set; }
 

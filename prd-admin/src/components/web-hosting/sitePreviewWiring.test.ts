@@ -90,3 +90,21 @@ describe('分享下拉接线', () => {
     expect(source).toMatch(/onShare:\s*\(anchor: HTMLElement\)/);
   });
 });
+
+describe('网页微调与版本入口接线', () => {
+  it('卡片两个常驻动作分别直达修改区和版本记录区', () => {
+    const source = read('pages/WebPagesPage.tsx');
+    expect(source).toContain("onAiEdit={() => openSiteEditor(site, 'compose')}");
+    expect(source).toContain("onVersionHistory={() => openSiteEditor(site, 'history')}");
+    expect(source).toContain('initialPanel={previewInitialPanel}');
+    expect(source).toContain('initialEditSection={previewEditSection}');
+  });
+
+  it('预览页的版本记录按钮打开真实编辑面板并定位历史区', () => {
+    const source = read('components/web-hosting/SitePreviewModal.tsx');
+    expect(source).toContain("setEditSection('history')");
+    expect(source).toContain("setRightPanel('edit')");
+    expect(source).toContain('focusSection={editSection}');
+    expect(source).toContain('版本记录');
+  });
+});

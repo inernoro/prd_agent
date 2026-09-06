@@ -113,6 +113,7 @@ import {
   X,
   Lock,
   Clock,
+  History,
   Sparkles,
   RefreshCw,
   Link2,
@@ -459,6 +460,13 @@ export default function WebPagesPage() {
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
   // 评论管理：点击站点卡「评论」按钮打开预览 + 评论面板（owner 可发表/删除 + 允许评论开关）
   const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
+  const [previewInitialPanel, setPreviewInitialPanel] = useState<'none' | 'edit'>('none');
+  const [previewEditSection, setPreviewEditSection] = useState<'compose' | 'history'>('compose');
+  const openSiteEditor = (site: HostedSite, section: 'compose' | 'history') => {
+    setPreviewInitialPanel('edit');
+    setPreviewEditSection(section);
+    setCommentSite(site);
+  };
   // 提问设置：站点卡「更多设置」直达。原先只有大预览顶栏的齿轮一个入口，
   // 用户在列表里找遍菜单也找不到提问配置（形状 2：接线只建了一半）。
   const [askConfigSite, setAskConfigSite] = useState<HostedSite | null>(null);
@@ -933,6 +941,8 @@ export default function WebPagesPage() {
             onMove={() => setMovingSite(site)}
             onComments={() => setCommentSite(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
+            onAiEdit={() => openSiteEditor(site, 'compose')}
+            onVersionHistory={() => openSiteEditor(site, 'history')}
           />
         ))}
       </div>
@@ -953,6 +963,8 @@ export default function WebPagesPage() {
             onTogglePublic={() => handleMakePublic(site)}
             onComments={() => setCommentSite(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
+            onAiEdit={() => openSiteEditor(site, 'compose')}
+            onVersionHistory={() => openSiteEditor(site, 'history')}
           />
         ))}
       </div>
@@ -1934,7 +1946,13 @@ export default function WebPagesPage() {
       {commentSite && (
         <SitePreviewModal
           site={commentSite}
-          onClose={() => setCommentSite(null)}
+          initialPanel={previewInitialPanel}
+          initialEditSection={previewEditSection}
+          onClose={() => {
+            setCommentSite(null);
+            setPreviewInitialPanel('none');
+            setPreviewEditSection('compose');
+          }}
           canToggleComments={siteCaps(commentSite).canEdit}
           onCommentsEnabledChange={(sid, enabled) => {
             // 同步父组件持有的 site 快照 + 列表，避免关闭再开开关回退到旧值
@@ -2662,7 +2680,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig }: {
+function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit, onVersionHistory }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
@@ -2677,6 +2695,8 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   onComments?: () => void;
   /** 提问设置抽屉；仅 canEdit 时传入 */
   onAskConfig?: () => void;
+  onAiEdit?: () => void;
+  onVersionHistory?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
@@ -2766,6 +2786,24 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
+        {c.canEdit && onAiEdit && onVersionHistory && (
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onAiEdit}
+              className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg bg-token-nested px-3 text-xs font-semibold text-token-primary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            >
+              <WandSparkles size={14} />帮我修改
+            </button>
+            <button
+              type="button"
+              onClick={onVersionHistory}
+              className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg bg-token-nested px-3 text-xs font-semibold text-token-primary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            >
+              <History size={14} />版本记录
+            </button>
+          </div>
+        )}
         <button onClick={handleVisit} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="打开" aria-label="打开">
           <ExternalLink size={14} className="text-token-muted" />
         </button>

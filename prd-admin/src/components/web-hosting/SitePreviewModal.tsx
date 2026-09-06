@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, ExternalLink, FileWarning, MessageSquare, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
+import { X, ExternalLink, FileWarning, History, MessageSquare, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
 import { setSiteCommentsEnabled } from '../../services/real/webPages';
@@ -32,20 +32,34 @@ interface Props {
   onSiteChange?: (site: HostedSite) => void;
   /** 是否可改「允许访客评论」开关（仅 owner/editor）。viewer 角色只读评论、不显示开关 */
   canToggleComments?: boolean;
+  /** 卡片可直接打开修改面板，避免用户必须先预览、再猜“帮我修改”在哪里。 */
+  initialPanel?: 'none' | 'edit';
+  /** 卡片的“版本记录”入口直接把修改面板定位到历史区。 */
+  initialEditSection?: 'compose' | 'history';
 }
 
 /**
  * 站点预览模态框 —— 在 iframe 中加载站点入口 URL，右侧可展开评论面板
  * 遵循 frontend-modal.md 三硬约束: inline style 高度 + createPortal + min-h-0
  */
-export default function SitePreviewModal({ site, onClose, onCommentsEnabledChange, onAskEnabledChange, onSiteChange, canToggleComments = true }: Props) {
+export default function SitePreviewModal({
+  site,
+  onClose,
+  onCommentsEnabledChange,
+  onAskEnabledChange,
+  onSiteChange,
+  canToggleComments = true,
+  initialPanel = 'none',
+  initialEditSection = 'compose',
+}: Props) {
   const [loading, setLoading] = useState(true);
   /** 只在 iframe 真的 onError 时为 true —— 不由超时推断（见下方 effect 注释） */
   const [errored, setErrored] = useState(false);
   /** 加载偏慢：只挂一条角标提示，不遮挡已经绘制出来的内容 */
   const [slow, setSlow] = useState(false);
   // 右侧面板同一时刻只开一个：评论与提问互斥，两个都塞进来会把 iframe 挤成窄条
-  const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask' | 'edit'>('none');
+  const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask' | 'edit'>(initialPanel);
+  const [editSection, setEditSection] = useState<'compose' | 'history'>(initialEditSection);
   const showComments = rightPanel === 'comments';
   const setShowComments = (next: boolean | ((v: boolean) => boolean)) => {
     const want = typeof next === 'function' ? next(rightPanel === 'comments') : next;
@@ -55,7 +69,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   const [showAskConfig, setShowAskConfig] = useState(false);
   /** 提问面板打开过至少一次；之后常驻挂载，切走只藏不卸（见渲染处注释） */
   const [askEverOpened, setAskEverOpened] = useState(false);
-  const [editEverOpened, setEditEverOpened] = useState(false);
+  const [editEverOpened, setEditEverOpened] = useState(initialPanel === 'edit');
   /** 站点提问开关的本地镜像：配置抽屉保存后即时回填，不必等父级刷新列表 */
   // 三态：undefined = owner 从没表过态（默认开），true = 明确开，false = 明确关。
   // 曾经写的是 === true，于是「没表过态」被当成关——默认全开的口径下这会让
@@ -160,15 +174,27 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 sm:flex-nowrap sm:px-4 border-b border-token-subtle shrink-0">
-          <div className="min-w-0 w-full flex-1 sm:w-auto">
+        <div className="flex shrink-0 flex-col gap-2 border-b border-token-subtle px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-3">
+          <div className="flex min-w-0 w-full flex-1 items-center gap-2 sm:w-auto">
+            <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold text-token-primary truncate">{site.title}</h3>
-            <p className="text-xs text-token-muted truncate">{site.siteUrl}</p>
-          </div>
-          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap shrink-0">
+            <p className="hidden text-xs text-token-muted truncate sm:block">{site.siteUrl}</p>
+            </div>
             <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:hidden"
+              title="关闭"
+              aria-label="关闭"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:w-auto sm:overflow-visible sm:pb-0">
+            <button
+              type="button"
               onClick={() => setShowComments((v) => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+              className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                 showComments ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
               }`}
             >
@@ -177,11 +203,12 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             </button>
             {askEnabled && (
               <button
+                type="button"
                 onClick={() => {
                   setAskEverOpened(true);
                   setRightPanel((p) => (p === 'ask' ? 'none' : 'ask'));
                 }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   rightPanel === 'ask' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
                 }`}
               >
@@ -191,11 +218,14 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             )}
             {canToggleComments && !site.wrappedAssetType && (
               <button
+                type="button"
                 onClick={() => {
+                  const shouldOpen = rightPanel !== 'edit' || editSection !== 'compose';
                   setEditEverOpened(true);
-                  setRightPanel((panel) => (panel === 'edit' ? 'none' : 'edit'));
+                  setEditSection('compose');
+                  setRightPanel(shouldOpen ? 'edit' : 'none');
                 }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   rightPanel === 'edit' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
                 }`}
               >
@@ -203,26 +233,47 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
                 帮我修改
               </button>
             )}
+            {canToggleComments && !site.wrappedAssetType && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditEverOpened(true);
+                  setEditSection('history');
+                  setRightPanel('edit');
+                }}
+                className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                  rightPanel === 'edit' && editSection === 'history' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
+                }`}
+              >
+                <History className="h-3.5 w-3.5" />
+                版本记录
+              </button>
+            )}
             {canToggleComments && (
               <button
+                type="button"
                 onClick={() => setShowAskConfig(true)}
-                className="flex items-center justify-center w-8 h-8 rounded-lg bg-token-nested hover-bg-soft text-token-secondary transition-colors"
+                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 title="提问设置"
+                aria-label="提问设置"
               >
                 <Settings2 className="w-4 h-4" />
               </button>
             )}
             <button
+              type="button"
               onClick={handleOpenExternal}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-token-nested hover-bg-soft text-token-secondary text-xs transition-colors"
+              className="flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               <ExternalLink className="w-3.5 h-3.5" />
               新窗口打开
             </button>
             <button
+              type="button"
               onClick={onClose}
-              className="flex items-center justify-center w-8 h-8 rounded-lg bg-token-nested hover-bg-soft text-token-secondary transition-colors"
+              className="hidden min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:inline-flex"
               title="关闭"
+              aria-label="关闭"
             >
               <X className="w-4 h-4" />
             </button>
@@ -364,6 +415,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             >
               <SiteEditPanel
                 site={site}
+                focusSection={editSection}
                 onPublished={(updated) => onSiteChange?.(updated)}
               />
             </aside>

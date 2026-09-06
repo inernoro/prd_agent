@@ -52,6 +52,8 @@ function renderSiteCard(
       onQrCode={vi.fn()}
       onTransferToLibrary={vi.fn()}
       onReplaceFile={vi.fn()}
+      onAiEdit={vi.fn()}
+      onVersionHistory={vi.fn()}
     />,
   );
 }
@@ -67,6 +69,15 @@ describe('WebPagesPage SiteCard', () => {
     // 低频配置不常驻（它们在菜单里，菜单未展开时不渲染）
     expect(html).not.toContain('aria-label="发布到公开页"');
     expect(html).not.toContain('aria-label="转存到知识库"');
+  });
+
+  it('把网页微调与版本记录作为带文字的常驻核心动作', () => {
+    const html = renderSiteCard();
+
+    expect(html).toContain('data-site-version-actions="true"');
+    expect(html).toContain('帮我修改');
+    expect(html).toContain('版本记录');
+    expect(html.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
   it('hover 层不显形时不可点', () => {
@@ -175,6 +186,9 @@ describe('WebPagesPage SiteCard', () => {
     // 条数收进 title——不能因为卡片小就把这个状态整个丢掉
     expect(html).toContain('已分享');
     expect(html).toContain('已分享 1 条链接');
+    expect(html).toContain('帮我修改');
+    expect(html).toContain('版本记录');
+    expect(html).toContain('grid-cols-1');
   });
 
   it('中卡和大卡在触屏上提供常驻更多设置入口', () => {
@@ -233,5 +247,6 @@ describe('WebPagesPage SiteCard', () => {
     expect(html).toContain('aria-label="分享"');
     expect(html).not.toContain('aria-label="编辑信息"');
     expect(html).not.toContain('aria-label="替换内容"');
+    expect(html).not.toContain('data-site-version-actions="true"');
   });
 });
