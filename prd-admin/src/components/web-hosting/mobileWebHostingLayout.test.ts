@@ -35,8 +35,9 @@ describe('mobile web hosting layout', () => {
     expect(editPanelSource).toContain('className="mt-3 min-h-11 w-full');
     expect(pageSource).toContain('className="min-h-11 w-full pl-9');
     expect(pageSource).toContain('className="h-11 px-3 rounded-[12px]');
-    expect(appShellSource.match(/className="(?:relative )?h-11 w-11/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(changelogBellSource).toContain("compact ? 'h-11 w-11'");
+    expect(appShellSource).toContain("gridTemplateColumns: '44px minmax(0, 1fr) 92px'");
+    expect(appShellSource.match(/className="(?:relative )?h-11 w-11 shrink-0/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(changelogBellSource).toContain("compact ? 'h-11 w-11 shrink-0'");
   });
 
   it('stacks version titles above their actions instead of squeezing them on mobile', () => {

@@ -1114,7 +1114,7 @@ export default function AppShell() {
           className="fixed top-0 left-0 right-0 z-100 grid items-center px-3"
           style={{
             ...glassMobileHeader,
-            gridTemplateColumns: '44px minmax(0, 1fr) 88px',
+            gridTemplateColumns: '44px minmax(0, 1fr) 92px',
             columnGap: 8,
             height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
             paddingTop: 'env(safe-area-inset-top, 0px)',
@@ -1123,7 +1123,7 @@ export default function AppShell() {
           <button
             type="button"
             onClick={() => setMobileDrawerOpen(true)}
-            className="h-11 w-11 inline-flex items-center justify-center rounded-xl"
+            className="h-11 w-11 shrink-0 inline-flex items-center justify-center rounded-xl"
             style={{ color: 'var(--text-primary)' }}
             aria-label="打开导航菜单"
           >
@@ -1146,7 +1146,7 @@ export default function AppShell() {
                 setNotificationDialogOpen(true);
                 void loadNotifications({ silent: true });
               }}
-              className="relative h-11 w-11 inline-flex items-center justify-center rounded-xl"
+              className="relative h-11 w-11 shrink-0 inline-flex items-center justify-center rounded-xl"
               style={{ color: 'var(--text-secondary)' }}
               aria-label="通知"
             >

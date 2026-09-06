@@ -129,7 +129,7 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
     navigate('/changelog');
   };
 
-  const buttonSizeClass = compact ? 'h-11 w-11' : 'h-9 w-9 max-sm:h-11 max-sm:w-11';
+  const buttonSizeClass = compact ? 'h-11 w-11 shrink-0' : 'h-9 w-9 max-sm:h-11 max-sm:w-11 max-sm:shrink-0';
 
   return (
     <>
