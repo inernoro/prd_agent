@@ -251,6 +251,11 @@ var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] 
 // 提交前失败，也会绕过控制台中已配置的 video-gen 默认池。
 httpAllowlist.Add(AppCallerRegistry.VideoAgent.VideoGen.Generate);
 httpAllowlist.Add(AppCallerRegistry.VisualAgent.VideoGen.Generate);
+// HTML PPT 是 MAP 内置的模型型能力，不依赖 Agent 文件工具；其模型选择、成本和 runId
+// 必须统一进入独立 LLMGW。这里像视频调用方一样设为代码级不变量，避免部署器
+// 对 compose 环境的覆盖或遗漏让请求静默退回 MAP 进程内直连。
+httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.Outline);
+httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate);
 var shadowFullSampleAllowlist = (builder.Configuration["LlmGateway:ShadowFullSampleAppCallerAllowlist"] ?? string.Empty)
     .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Where(x => !string.IsNullOrWhiteSpace(x))

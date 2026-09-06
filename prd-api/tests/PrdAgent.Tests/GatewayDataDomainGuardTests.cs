@@ -1231,6 +1231,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("transcript-agent.transcribe::asr", cdsAllowlist.Groups[1].Value);
         Assert.Contains("md-to-ppt-agent.outline::chat", cdsAllowlist.Groups[1].Value);
         Assert.Contains("md-to-ppt-agent.html-generate::chat", cdsAllowlist.Groups[1].Value);
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.Outline)", program);
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate)", program);
         Assert.DoesNotContain("LlmGateway__HttpAppCallerAllowlist: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForActiveAppCallers: \"${", cdsCompose);
