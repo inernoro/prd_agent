@@ -291,6 +291,54 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.False(quality.GetProperty("emptyOrMissingFragmentTargetsAllowed").GetBoolean());
         Assert.False(quality.GetProperty("inertEnabledButtonsAllowed").GetBoolean());
         Assert.True(quality.GetProperty("finalReviewRequired").GetBoolean());
+        Assert.Empty(quality.GetProperty("visibleTextOccurrenceConstraints").EnumerateArray());
+    }
+
+    [Theory]
+    [InlineData("在主标题下方新增一行短句“只出现一次的验收标记”", "只出现一次的验收标记")]
+    [InlineData("请添加文案「唯一发布标记」到页面底部", "唯一发布标记")]
+    [InlineData("逐项检查每个模块；在标题下方新增短句“当前子句唯一标记”", "当前子句唯一标记")]
+    [InlineData("请检查每个模块，然后在标题下方新增短句“唯一标记文本”", "唯一标记文本")]
+    [InlineData("在标题下方新增短句“唯一标记文本”，再检查每个按钮", "唯一标记文本")]
+    public void InputPackageCompilesExplicitSingleTextInsertionIntoOccurrenceConstraint(
+        string instruction,
+        string expectedText)
+    {
+        var run = BuildRun();
+        run.Instruction = instruction;
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+
+        var taskFile = Assert.Single(package.Files, file => file.Path == "brief/task.json");
+        using var task = JsonDocument.Parse(Convert.FromBase64String(taskFile.ContentBase64));
+        var constraint = Assert.Single(
+            task.RootElement.GetProperty("qualityContract")
+                .GetProperty("visibleTextOccurrenceConstraints")
+                .EnumerateArray());
+        Assert.Equal(expectedText, constraint.GetProperty("text").GetString());
+        Assert.Equal(1, constraint.GetProperty("minOccurrences").GetInt32());
+        Assert.Equal(1, constraint.GetProperty("maxOccurrences").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("给所有卡片分别添加“相同标签”")]
+    [InlineData("给每张卡片添加文案“相同标签”")]
+    [InlineData("在各栏中新增短句“栏目标记”")]
+    [InlineData("把“旧标题”替换为“新标题”")]
+    [InlineData("新增一个段落解释“知识库”的概念")]
+    public void InputPackageDoesNotInventSingleOccurrenceForMultiPlacementOrReplacement(string instruction)
+    {
+        var run = BuildRun();
+        run.Instruction = instruction;
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+
+        var taskFile = Assert.Single(package.Files, file => file.Path == "brief/task.json");
+        using var task = JsonDocument.Parse(Convert.FromBase64String(taskFile.ContentBase64));
+        Assert.Empty(
+            task.RootElement.GetProperty("qualityContract")
+                .GetProperty("visibleTextOccurrenceConstraints")
+                .EnumerateArray());
     }
 
     [Fact]

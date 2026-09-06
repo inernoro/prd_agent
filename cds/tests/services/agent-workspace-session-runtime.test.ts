@@ -198,6 +198,7 @@ function buildPackage(
               emptyOrMissingFragmentTargetsAllowed: false,
               inertEnabledButtonsAllowed: false,
               finalReviewRequired: true,
+              visibleTextOccurrenceConstraints: [],
             },
           }),
           mediaType: 'application/json',
@@ -260,6 +261,36 @@ describe('AgentWorkspaceSessionRuntime', () => {
           operation: 'generate',
           baseRevision: 'rev-1',
           qualityContract: { schemaVersion: 'map-design-artifact-quality-v2' },
+        }),
+        mediaType: 'application/json',
+      }],
+      injectDefaultTask: true,
+      code: 'workspace_quality_contract_unsupported',
+    },
+    {
+      name: 'malformed visible text occurrence constraint',
+      files: [{
+        path: 'brief/task.json',
+        content: JSON.stringify({
+          schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+          runId: 'map-run-1',
+          operation: 'generate',
+          instruction: 'Build a launch page',
+          title: 'Launch page',
+          baseRevision: 'rev-1',
+          responseContract: { requiredFile: 'index.html', manifestFile: 'manifest.json', writeback: 'external' },
+          qualityContract: {
+            schemaVersion: 'map-design-artifact-quality-v1',
+            factualSources: ['title', 'instruction', 'knowledge'],
+            measuredClaimsRequireSource: true,
+            sensitiveFactsRequireSource: true,
+            contextBoundMetricsReviewRequired: true,
+            visibleDraftMarkersAllowed: false,
+            emptyOrMissingFragmentTargetsAllowed: false,
+            inertEnabledButtonsAllowed: false,
+            finalReviewRequired: true,
+            visibleTextOccurrenceConstraints: [{ text: '重复文案', minOccurrences: 1, maxOccurrences: 2 }],
+          },
         }),
         mediaType: 'application/json',
       }],
@@ -1539,7 +1570,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     ]);
     const shell = new RecordingShell();
     shell.failEgressRun = true;
-    shell.egressCleanupFailures = 2;
+    shell.egressCleanupFailures = 5;
     shell.returnNoSuchForRepeatedCleanup = true;
     const runtime = new AgentWorkspaceSessionRuntime(shell, {
       rootDir,
@@ -1594,7 +1625,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const egressRemovalsBeforeStop = shell.calls.filter((call) => (
       call.command.startsWith('docker rm -f ') && call.command.includes('cds-od-egress-')
     ));
-    expect(egressRemovalsBeforeStop).toHaveLength(1);
+    expect(egressRemovalsBeforeStop).toHaveLength(2);
     expect(runtime.has('session-egress-cleanup-retry')).toBe(true);
 
     await expect(runtime.stop('session-egress-cleanup-retry', 'retry_egress_cleanup'))
@@ -1605,7 +1636,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const egressRemovalsAfterStop = shell.calls.filter((call) => (
       call.command.startsWith('docker rm -f ') && call.command.includes('cds-od-egress-')
     ));
-    expect(egressRemovalsAfterStop).toHaveLength(3);
+    expect(egressRemovalsAfterStop).toHaveLength(6);
     expect(runtime.has('session-egress-cleanup-retry')).toBe(false);
   });
 
@@ -1996,6 +2027,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
         if (command.startsWith('docker ps -aq')) return result('deadbeef\n');
         if (command.startsWith('docker network ls -q')) return result('network-old\n');
         if (command.startsWith('docker volume ls -q')) return result('volume-old\n');
+        if (command.startsWith('docker kill ')) return result('killed\n');
         if (command.startsWith('docker rm -f ')) return result('removed\n');
         if (command.startsWith('docker network rm ')) return result('removed\n');
         if (command.startsWith('docker volume rm ')) return result('removed\n');
@@ -2016,11 +2048,46 @@ describe('AgentWorkspaceSessionRuntime', () => {
       "docker ps -aq --filter 'label=cds.type=agent-session' --filter 'label=cds.instance=instance-a'",
       "docker network ls -q --filter 'label=cds.type=agent-session' --filter 'label=cds.instance=instance-a'",
       "docker volume ls -q --filter 'label=cds.type=agent-session' --filter 'label=cds.instance=instance-a'",
+      "docker kill 'deadbeef'",
       "docker rm -f 'deadbeef'",
       "docker network rm 'network-old'",
       "docker volume rm 'volume-old'",
     ]));
     expect(calls.some((call) => call === "docker ps -aq --filter 'label=cds.type=agent-session'")).toBe(false);
+  });
+
+  it('retries a failed kill and busy removal before declaring orphan cleanup complete', async () => {
+    const calls: string[] = [];
+    let killAttempts = 0;
+    let removalAttempts = 0;
+    const shell: IShellExecutor = {
+      async exec(command: string): Promise<ExecResult> {
+        calls.push(command);
+        if (command.startsWith('docker ps -aq')) return result('deadbeef\n');
+        if (command.startsWith('docker network ls -q')) return result('');
+        if (command.startsWith('docker volume ls -q')) return result('');
+        if (command.startsWith('docker kill ')) {
+          killAttempts += 1;
+          return killAttempts === 1 ? result('', 'command timed out', 1) : result('killed\n');
+        }
+        if (command.startsWith('docker rm -f ')) {
+          removalAttempts += 1;
+          return removalAttempts === 1 ? result('', 'container is busy', 1) : result('removed\n');
+        }
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      instanceId: 'instance-a',
+      autoPullImage: false,
+    });
+
+    await runtime.recoverOrphans();
+
+    expect(killAttempts).toBe(2);
+    expect(removalAttempts).toBe(2);
+    expect(calls.filter((call) => call === "docker kill 'deadbeef'")).toHaveLength(2);
+    expect(calls.filter((call) => call === "docker rm -f 'deadbeef'")).toHaveLength(2);
   });
 
   it('keeps the provider unavailable when startup orphan cleanup cannot be proven complete', async () => {
@@ -2196,5 +2263,47 @@ describe('AgentWorkspaceSessionRuntime', () => {
       '<!doctype html><html><body><p>客服平均答复30分钟。</p></body></html>',
       '客服响应耗时30分钟。',
     )).toContain('客服平均答复30分钟');
+  });
+
+  it('enforces MAP visible text occurrence constraints without exposing the text in errors', () => {
+    const marker = '唯一发布验收标记';
+    const constraints = [{ text: marker, minOccurrences: 1, maxOccurrences: 1 }];
+    expect(hardenSelfContainedHtml(
+      `<!doctype html><html><body><p>${marker}</p></body></html>`,
+      marker,
+      constraints,
+    )).toContain(marker);
+
+    for (const body of [
+      `<p>其他内容</p>`,
+      `<p>${marker}</p><p>${marker}</p>`,
+      `<p>${marker}</p><input value="${marker}">`,
+    ]) {
+      try {
+        hardenSelfContainedHtml(
+          `<!doctype html><html><body>${body}</body></html>`,
+          marker,
+          constraints,
+        );
+        throw new Error('expected occurrence rejection');
+      } catch (error) {
+        expect(error).toMatchObject({
+          code: 'design_output_quality_rejected',
+          message: 'index.html violates a visible text occurrence constraint',
+        });
+        expect(String(error)).not.toContain(marker);
+      }
+    }
+    expect(() => hardenSelfContainedHtml(
+      `<!doctype html><html><head><style>.dup::before{content:"${marker}"}</style></head><body><p class="dup">${marker}</p></body></html>`,
+      marker,
+      constraints,
+    )).toThrowError(expect.objectContaining({
+      code: 'design_output_quality_rejected',
+      message: 'index.html contains CSS-generated textual content',
+    }));
+    expect(hardenSelfContainedHtml(
+      '<!doctype html><html><head><style>.next::after{content:"\u2192"}</style></head><body><p class="next">继续</p></body></html>',
+    )).toContain('content:"→"');
   });
 });

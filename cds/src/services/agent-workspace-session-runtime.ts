@@ -59,6 +59,12 @@ interface ParsedWorkspacePackage {
   files: Array<{ path: string; bytes: Buffer; sha256: string; mediaType: string }>;
 }
 
+interface VisibleTextOccurrenceConstraint {
+  text: string;
+  minOccurrences: number;
+  maxOccurrences: number;
+}
+
 const MAP_DESIGN_ARTIFACT_QUALITY_SCHEMA = 'map-design-artifact-quality-v1';
 
 interface RuntimeHandle {
@@ -713,6 +719,7 @@ function validateDesignTaskContract(
       );
     }
   }
+  parseVisibleTextOccurrenceConstraints(contract.visibleTextOccurrenceConstraints);
   const hasCurrentPage = files.some((file) => file.path === 'current/index.html');
   const responseContract = task.responseContract;
   if (
@@ -1750,7 +1757,7 @@ export class AgentWorkspaceSessionRuntime {
     try {
     const systemPrompt = [
       'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
-      'The versioned qualityContract in task.json is mandatory. Factual claims, measured values, dates, prices, contact details, and links must come from the listed MAP sources. Review what each number describes and never attach a sourced value to a different subject. Remove visible placeholders, empty links, missing fragment targets, and enabled buttons without provable declarative behavior.',
+      'The versioned qualityContract in task.json is mandatory. Factual claims, measured values, dates, prices, contact details, and links must come from the listed MAP sources. Review what each number describes and never attach a sourced value to a different subject. Honor every visibleTextOccurrenceConstraint exactly. Remove visible placeholders, empty links, missing fragment targets, and enabled buttons without provable declarative behavior.',
       knowledgeFiles.length > 0
         ? `Read every knowledge source before editing: ${knowledgeFiles.join(', ')}. Use those files as the only source for factual claims and product copy.`
         : 'This task has no knowledge source files. Do not invent factual claims or metrics.',
@@ -1849,8 +1856,13 @@ export class AgentWorkspaceSessionRuntime {
           );
         }
         const qualityEvidence = collectArtifactQualityEvidence(handle.workspaceDir);
+        const visibleTextOccurrenceConstraints = collectVisibleTextOccurrenceConstraints(handle.workspaceDir);
         try {
-          hardenedHtml = hardenSelfContainedHtml(outputHtml.toString('utf8'), qualityEvidence);
+          hardenedHtml = hardenSelfContainedHtml(
+            outputHtml.toString('utf8'),
+            qualityEvidence,
+            visibleTextOccurrenceConstraints,
+          );
           break;
         } catch (error) {
           if (
@@ -2604,14 +2616,33 @@ export class AgentWorkspaceSessionRuntime {
   }
 
   private async removeContainer(containerName: string): Promise<void> {
-    const result = await this.shell.exec(`docker rm -f ${shellQuote(containerName)}`, { timeout: 30_000 });
-    if (result.exitCode !== 0 && !/No such container/i.test(`${result.stderr}\n${result.stdout}`)) {
-      throw new AgentWorkspaceRuntimeError(
-        'workspace_container_cleanup_failed',
-        'OpenDesign session container could not be removed',
-        true,
-      );
+    // Some Docker daemon/storage combinations can leave `rm -f` waiting while
+    // the process is still alive. An explicit bounded kill first makes cleanup
+    // deterministic; rm remains authoritative and idempotent for stopped or
+    // already absent containers.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const kill = await this.shell.exec(
+        `docker kill ${shellQuote(containerName)}`,
+        { timeout: 10_000 },
+      ).catch(() => ({ stdout: '', stderr: 'process error', exitCode: 1 }));
+      const killOutput = `${kill.stderr}\n${kill.stdout}`;
+      const killReachedTerminalState = kill.exitCode === 0
+        || /No such container|is not running/i.test(killOutput);
+      const removal = await this.shell.exec(
+        `docker rm -f ${shellQuote(containerName)}`,
+        { timeout: 10_000 },
+      ).catch(() => ({ stdout: '', stderr: 'process error', exitCode: 1 }));
+      const removalOutput = `${removal.stderr}\n${removal.stdout}`;
+      if (removal.exitCode === 0 || /No such container/i.test(removalOutput)) return;
+      if (attempt === 0) {
+        await delay(killReachedTerminalState ? 100 : 250);
+      }
     }
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_container_cleanup_failed',
+      'OpenDesign session container could not be removed',
+      true,
+    );
   }
 
   private async removeNetwork(networkName: string): Promise<void> {
@@ -2713,6 +2744,25 @@ function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code:
       instruction: 'Remove, disable, or give provable declarative behavior to every enabled button.',
     };
   }
+  if (message === 'index.html violates a visible text occurrence constraint') {
+    const ordinal = typeof error.details?.constraintOrdinal === 'number'
+      && Number.isSafeInteger(error.details.constraintOrdinal)
+      && error.details.constraintOrdinal > 0
+      ? error.details.constraintOrdinal
+      : undefined;
+    return {
+      code: 'visible_text_occurrence',
+      instruction: ordinal === undefined
+        ? 'Read qualityContract.visibleTextOccurrenceConstraints in task.json and make every constrained visible text appear exactly the required number of times.'
+        : `Read qualityContract.visibleTextOccurrenceConstraints in task.json. Make constraint number ${ordinal} appear exactly once in visible page content, removing duplicate rendered elements while preserving the requested insertion.`,
+    };
+  }
+  if (message === 'index.html contains CSS-generated textual content') {
+    return {
+      code: 'css_generated_text',
+      instruction: 'Move every readable pseudo-element or CSS-generated string into an ordinary visible HTML text node. CSS content may contain decorative symbols only.',
+    };
+  }
   if (message.startsWith('index.html contains an unsupported measured claim:')) {
     return {
       code: 'unsupported_measured_claim',
@@ -2728,7 +2778,11 @@ function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code:
   return undefined;
 }
 
-export function hardenSelfContainedHtml(html: string, evidenceText = ''): string {
+export function hardenSelfContainedHtml(
+  html: string,
+  evidenceText = '',
+  visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[] = [],
+): string {
   if (!DOCUMENT_ROOT_RE.test(html)) {
     throw new AgentWorkspaceRuntimeError(
       'design_output_invalid',
@@ -2784,7 +2838,8 @@ export function hardenSelfContainedHtml(html: string, evidenceText = ''): string
       'index.html contains executable script; the OpenDesign MVP accepts declarative HTML and CSS only',
     );
   }
-  validateArtifactQuality(html, evidenceText);
+  validateCssGeneratedContent(html);
+  validateArtifactQuality(html, evidenceText, visibleTextOccurrenceConstraints);
 
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
   const root = html.match(DOCUMENT_ROOT_RE);
@@ -2896,6 +2951,15 @@ function extractVisibleTextFromMarkup(html: string): string {
       const suppressed = hasHtmlAttribute(tag.attributes, 'hidden')
         || readHtmlAttribute(tag.attributes, 'aria-hidden')?.trim().toLowerCase() === 'true'
         || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)/i.test(style);
+      if (suppressedDepth === 0 && !suppressed && tag.name.toLowerCase() === 'input') {
+        const type = (readHtmlAttribute(tag.attributes, 'type') ?? 'text').trim().toLowerCase();
+        if (!['hidden', 'checkbox', 'radio', 'file', 'color', 'range'].includes(type)) {
+          const value = readHtmlAttribute(tag.attributes, 'value')?.trim();
+          const placeholder = readHtmlAttribute(tag.attributes, 'placeholder')?.trim();
+          if (value) result += ` ${value} `;
+          else if (placeholder) result += ` ${placeholder} `;
+        }
+      }
       const voidElement = /^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i.test(tag.name);
       if (!tag.isSelfClosing && !voidElement) {
         stack.push({ name: tag.name, suppressed });
@@ -2906,6 +2970,23 @@ function extractVisibleTextFromMarkup(html: string): string {
   }
   if (cursor < html.length && suppressedDepth === 0) result += html.slice(cursor);
   return result;
+}
+
+function validateCssGeneratedContent(html: string): void {
+  const css = Array.from(html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi))
+    .map((match) => match[1])
+    .join('\n')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ');
+  for (const match of css.matchAll(/(?:^|[;{])\s*content\s*:\s*([^;}]+)/gi)) {
+    const value = match[1].trim();
+    if (/^(?:none|normal|["']\s*["'])$/i.test(value)) continue;
+    const quoted = value.match(/^(["'])([\s\S]*)\1$/);
+    if (quoted && !/[A-Za-z0-9\\\u3400-\u9fff]/u.test(quoted[2])) continue;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html contains CSS-generated textual content',
+    );
+  }
 }
 
 function parseHtmlAttributes(attributes: string): Map<string, string | undefined> {
@@ -3066,7 +3147,11 @@ function extractClaimEntityKeys(segment: string, unit: string): Set<string> {
   return keys;
 }
 
-function validateArtifactQuality(html: string, evidenceText: string): void {
+function validateArtifactQuality(
+  html: string,
+  evidenceText: string,
+  visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[],
+): void {
   const structureHtml = html.replace(/<!--[\s\S]*?(?:-->|$)/g, (comment) => ' '.repeat(comment.length));
   const tags = scanHtmlTags(structureHtml);
   const bodyOpening = tags.find((tag) => !tag.isClosing && tag.name.toLowerCase() === 'body');
@@ -3082,6 +3167,25 @@ function validateArtifactQuality(html: string, evidenceText: string): void {
   }
   if (/(?:图|图片|图示|插图|截图|内容|文案|数据|此处|位置)\s*(?:仍|仅|为|是|[:：·—-])?\s*占位|占位\s*(?:图|图片|图示|插图|截图|内容|文案|数据|[:：·—-])|待\s*(?:补充|替换|填写|完善)|\blorem\s+ipsum\b|\b(?:todo|tbd)\b/i.test(visible)) {
     throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains visible placeholder or unfinished content');
+  }
+  for (const [index, constraint] of visibleTextOccurrenceConstraints.entries()) {
+    const actualOccurrences = countLiteralOccurrences(visible, constraint.text);
+    if (
+      actualOccurrences >= constraint.minOccurrences
+      && actualOccurrences <= constraint.maxOccurrences
+    ) continue;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html violates a visible text occurrence constraint',
+      false,
+      {
+        qualityViolationFingerprint: crypto.createHash('sha256').update(constraint.text).digest('hex'),
+        constraintOrdinal: index + 1,
+        actualOccurrences,
+        minOccurrences: constraint.minOccurrences,
+        maxOccurrences: constraint.maxOccurrences,
+      },
+    );
   }
 
   const targets = new Set<string>();
@@ -3197,6 +3301,71 @@ function collectArtifactQualityEvidence(workspaceDir: string): string {
   const currentPath = path.join(workspaceDir, 'current', 'index.html');
   if (fs.existsSync(currentPath)) evidence.push(extractVisibleHtmlText(fs.readFileSync(currentPath, 'utf8')));
   return evidence.join('\n');
+}
+
+function collectVisibleTextOccurrenceConstraints(workspaceDir: string): VisibleTextOccurrenceConstraint[] {
+  const taskPath = path.join(workspaceDir, 'brief', 'task.json');
+  if (!fs.existsSync(taskPath)) return [];
+  try {
+    const task = JSON.parse(fs.readFileSync(taskPath, 'utf8')) as Record<string, unknown>;
+    const quality = task.qualityContract;
+    if (!quality || typeof quality !== 'object' || Array.isArray(quality)) {
+      throw new Error('quality contract missing');
+    }
+    return parseVisibleTextOccurrenceConstraints(
+      (quality as Record<string, unknown>).visibleTextOccurrenceConstraints,
+    );
+  } catch (error) {
+    if (error instanceof AgentWorkspaceRuntimeError) throw error;
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json is not valid JSON');
+  }
+}
+
+function parseVisibleTextOccurrenceConstraints(value: unknown): VisibleTextOccurrenceConstraint[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 12) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_quality_contract_unsupported',
+      'brief/task.json qualityContract.visibleTextOccurrenceConstraints is unsupported',
+    );
+  }
+  const seen = new Set<string>();
+  return value.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_quality_contract_unsupported',
+        'brief/task.json qualityContract.visibleTextOccurrenceConstraints is unsupported',
+      );
+    }
+    const rule = item as Record<string, unknown>;
+    const text = typeof rule.text === 'string' ? rule.text.trim().replace(/\s+/g, ' ') : '';
+    if (
+      text.length < 4
+      || text.length > 200
+      || rule.minOccurrences !== 1
+      || rule.maxOccurrences !== 1
+      || seen.has(text)
+    ) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_quality_contract_unsupported',
+        'brief/task.json qualityContract.visibleTextOccurrenceConstraints is unsupported',
+      );
+    }
+    seen.add(text);
+    return { text, minOccurrences: 1, maxOccurrences: 1 };
+  });
+}
+
+function countLiteralOccurrences(haystack: string, needle: string): number {
+  let count = 0;
+  let cursor = 0;
+  while (cursor <= haystack.length - needle.length) {
+    const index = haystack.indexOf(needle, cursor);
+    if (index < 0) break;
+    count += 1;
+    cursor = index + needle.length;
+  }
+  return count;
 }
 
 function convertRelativeKnowledgeAnchors(html: string): string {

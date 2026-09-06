@@ -676,6 +676,18 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
 
 public static class DesignArtifactWorkspaceContract
 {
+    private static readonly Regex ExplicitSingleVisibleTextInsertion = new(
+        @"(?:新增|添加|增加|插入|写上|放入|放置)(?:[^“”""「」『』\r\n]{0,48})(?:文案|短句|文字|标记|副?标题|标签|按钮(?:文案|文字)?)(?:[^“”""「」『』\r\n]{0,16})[“""「『](?<text>[^“”""「」『』\r\n]{4,200})[”""」』]",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant,
+        TimeSpan.FromSeconds(1));
+    private static readonly Regex MultiPlacementIntent = new(
+        @"(?:分别|所有|各自|多处|每(?:个|处|页|张|项|栏|块|段|行|篇|条)|各(?:个|处|页|张|项|栏|块|段|行|篇|条)|重复\s*(?:两|2|多)\s*(?:次|遍))",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant,
+        TimeSpan.FromSeconds(1));
+    private static readonly Regex ActionBoundary = new(
+        @"(?:[。；;！!？?\r\n]|(?:然后|随后|接着|另外|并且|同时|再))",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant,
+        TimeSpan.FromSeconds(1));
     private static readonly Regex SafeSlug = new("[^a-zA-Z0-9._-]+", RegexOptions.Compiled);
     private static readonly Regex MapSlideNavCompatBlock = new(
         @"<!--map-slide-nav-compat-->\s*<script\b[^>]*>[\s\S]*?</script\s*>",
@@ -690,6 +702,7 @@ public static class DesignArtifactWorkspaceContract
 
     public static DesignWorkspacePackage BuildInputPackage(DesignArtifactRun run, string? currentHtml)
     {
+        var visibleTextOccurrenceConstraints = ExtractVisibleTextOccurrenceConstraints(run.Instruction);
         var semantic = JsonSerializer.SerializeToUtf8Bytes(new
         {
             run.Id,
@@ -732,6 +745,7 @@ public static class DesignArtifactWorkspaceContract
                 emptyOrMissingFragmentTargetsAllowed = false,
                 inertEnabledButtonsAllowed = false,
                 finalReviewRequired = true,
+                visibleTextOccurrenceConstraints,
             },
         }, JsonOptions);
         files.Add(ToFile("brief/task.json", "application/json", task));
@@ -754,6 +768,32 @@ public static class DesignArtifactWorkspaceContract
             run.Id,
             baseRevision,
             files);
+    }
+
+    internal static IReadOnlyList<DesignVisibleTextOccurrenceConstraint> ExtractVisibleTextOccurrenceConstraints(
+        string instruction)
+    {
+        if (string.IsNullOrWhiteSpace(instruction))
+            return [];
+
+        var constraints = new List<DesignVisibleTextOccurrenceConstraint>();
+        foreach (Match match in ExplicitSingleVisibleTextInsertion.Matches(instruction))
+        {
+            var actionStart = 0;
+            foreach (Match boundary in ActionBoundary.Matches(instruction[..match.Index]))
+                actionStart = boundary.Index + boundary.Length;
+            var actionEnd = match.Groups["text"].Index;
+            if (MultiPlacementIntent.IsMatch(instruction[actionStart..actionEnd]))
+                continue;
+
+            var text = Regex.Replace(match.Groups["text"].Value.Trim(), @"\s+", " ");
+            if (constraints.Any(item => string.Equals(item.Text, text, StringComparison.Ordinal)))
+                continue;
+            constraints.Add(new DesignVisibleTextOccurrenceConstraint(text, 1, 1));
+            if (constraints.Count >= 12)
+                break;
+        }
+        return constraints;
     }
 
     internal static string NormalizeCurrentHtmlForRemoteEditing(string html)
@@ -909,6 +949,11 @@ public sealed record DesignWorkspacePackage(
     string RunId,
     string BaseRevision,
     IReadOnlyList<DesignWorkspaceFile> Files);
+
+public sealed record DesignVisibleTextOccurrenceConstraint(
+    string Text,
+    int MinOccurrences,
+    int MaxOccurrences);
 
 public sealed record DesignWorkspaceFile(
     string Path,
