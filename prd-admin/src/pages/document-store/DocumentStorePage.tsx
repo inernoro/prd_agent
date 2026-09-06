@@ -2645,6 +2645,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 <Share2 size={13} className="flex-shrink-0 text-token-muted" />
                 <span className="truncate">分享</span>
               </button>
+              {selectedDocEntry && (
+                <button
+                  type="button"
+                  onClick={() => setShowDesignLauncher(true)}
+                  className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary transition-colors"
+                >
+                  <Wand2 size={13} className="flex-shrink-0 text-token-muted" />
+                  <span className="truncate">智能生成</span>
+                </button>
+              )}
             </>
           ) : undefined}
           tagColors={(store.tagColors ?? {}) as Record<string, import('@/lib/tagPalette').TagColorKey>}
