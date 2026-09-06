@@ -1411,9 +1411,14 @@ describe('Remote hosts project instances route', () => {
         model: any,
         transferToken: string,
         _signal: AbortSignal,
-        onStage: (stage: string) => void,
+        onStage: (stage: string, detail?: Record<string, unknown>) => void,
       ) {
         calls.push({ kind: 'execute', value: { sessionId, instruction, model, transferToken } });
+        onStage('open_design_running', {
+          status: 'failed',
+          runId: 'nested-run-telemetry',
+          elapsedSeconds: 7,
+        });
         onStage('workspace_collecting');
         await executionGate;
         onStage('workspace_committing');
@@ -1540,6 +1545,8 @@ describe('Remote hosts project instances route', () => {
     completeExecution();
     const stream = await resumedStream.completed;
     expect(stream.status).toBe(200);
+    expect(stream.body).toContain('"status":"running","reason":"open_design_running","runtimeStatus":"failed"');
+    expect(stream.body).not.toContain('"status":"failed","reason":"open_design_running"');
     expect(stream.body).toContain('CDS 正在校验生成文件与安全边界。');
     expect(stream.body).toContain('CDS 正在向 MAP 提交已校验的结果。');
     expect(stream.body).toContain('design-artifact:run-1');

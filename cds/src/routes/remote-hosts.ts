@@ -1171,7 +1171,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         controller.signal,
         (stage, detail) => {
           if (session.status === 'stopped' || session.status === 'stopping') return;
-          pushCdsAgentEvent(session, 'status', { status: 'running', reason: stage, ...detail });
+          const { status: runtimeStatus, ...stageDetail } = detail || {};
+          pushCdsAgentEvent(session, 'status', {
+            ...stageDetail,
+            status: 'running',
+            reason: stage,
+            ...(typeof runtimeStatus === 'string' ? { runtimeStatus } : {}),
+          });
           pushCdsAgentEvent(session, 'text_delta', { text: designStageSummary(stage, detail) });
         },
       ).then((result) => {
