@@ -207,6 +207,12 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
+    public void OutlineCompletionBudget_StaysWithinGatewayCompatibilityCeiling()
+    {
+        Assert.Equal(4096, MdToPptController.OutlineCompletionTokenBudget);
+    }
+
+    [Fact]
     public void GatewayPageRequest_CanExposeThinkingForWholeDeck()
     {
         var profile = MdToPptController.CreateSystemGatewayProfile("user-1");

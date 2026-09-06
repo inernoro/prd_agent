@@ -40,6 +40,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class MdToPptController : ControllerBase
 {
     internal const string SystemGatewayProfileId = "system-gateway-default";
+    internal const int OutlineCompletionTokenBudget = 4_096;
 
     private readonly IInfraAgentSessionService _sessions;
     private readonly MongoDbContext _db;
@@ -419,7 +420,7 @@ public class MdToPptController : ControllerBase
                     new JsonObject { ["role"] = "user",   ["content"] = userContent },
                 },
                 ["temperature"] = 0.3,
-                ["max_tokens"] = 4096,
+                ["max_tokens"] = OutlineCompletionTokenBudget,
             },
         };
 
@@ -560,7 +561,7 @@ public class MdToPptController : ControllerBase
                     new JsonObject { ["role"] = "user",   ["content"] = userContent },
                 },
                 ["temperature"] = 0.3,
-                ["max_tokens"] = 6144,
+                ["max_tokens"] = OutlineCompletionTokenBudget,
             },
         };
 
