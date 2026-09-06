@@ -33,6 +33,11 @@ describe('SiteGenerateDialog responsive layout contract', () => {
 
   it('updates visible elapsed time every second during a long remote generation', () => {
     expect(source).toContain('window.setInterval');
-    expect(source).toContain('已运行 {elapsedSeconds} 秒');
+    expect(source).toContain('runningGenerationActivity(phase, elapsedSeconds)');
+    expect(source).toContain("generating ? '任务运行中'");
+    expect(source).toContain('animate-pulse');
+    expect(source).toContain('aria-valuenow={generating ? undefined : progress}');
+    expect(source).toContain('className="sr-only">{phase}</span>');
+    expect(source).toContain('<span aria-hidden="true">');
   });
 });

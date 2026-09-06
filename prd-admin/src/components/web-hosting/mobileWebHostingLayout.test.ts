@@ -9,7 +9,6 @@ const cardSource = readFileSync(path.resolve(__dirname, 'SiteCard.tsx'), 'utf8')
 const cardActionsSource = readFileSync(path.resolve(__dirname, 'SiteCardActions.tsx'), 'utf8');
 const appShellSource = readFileSync(path.resolve(__dirname, '../../layouts/AppShell.tsx'), 'utf8');
 const changelogBellSource = readFileSync(path.resolve(__dirname, '../changelog/ChangelogBell.tsx'), 'utf8');
-const mobileFabSource = readFileSync(path.resolve(__dirname, '../mobile/MobileFab.tsx'), 'utf8');
 const dialogSource = readFileSync(path.resolve(__dirname, '../ui/Dialog.tsx'), 'utf8');
 
 describe('mobile web hosting layout', () => {
@@ -66,9 +65,11 @@ describe('mobile web hosting layout', () => {
     expect(pageSource).not.toContain("isMobile ? 'repeat(2, minmax(0, 1fr))'");
   });
 
-  it('keeps page-level floating actions below modal surfaces', () => {
-    expect(pageSource).toContain('fixed right-[18px] z-[90]');
-    expect(mobileFabSource).toContain('zIndex: 90');
+  it('keeps mobile create actions in document flow so they never cover site cards', () => {
+    expect(pageSource).toContain('aria-label="网页托管快捷操作"');
+    expect(pageSource).toContain('className="grid grid-cols-2 gap-2 px-2"');
+    expect(pageSource).not.toContain('fixed right-[18px] z-[90]');
+    expect(pageSource).not.toContain('<MobileFab');
     expect(dialogSource).toContain('zIndex: zIndex ?? 100');
   });
 

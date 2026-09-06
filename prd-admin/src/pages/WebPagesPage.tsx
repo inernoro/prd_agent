@@ -86,7 +86,6 @@ import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
-import { MobileFab } from '@/components/mobile/MobileFab';
 import SiteGenerateDialog, { type SiteGenerateSource } from '@/components/web-hosting/SiteGenerateDialog';
 import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
 import { useLocation } from 'react-router-dom';
@@ -1380,21 +1379,24 @@ export default function WebPagesPage() {
         ) : null}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-          <>
+          <div className="grid grid-cols-2 gap-2 px-2" aria-label="网页托管快捷操作">
             <button
               type="button"
               onClick={() => { setGenerateSource(null); setShowGenerateDialog(true); }}
               aria-label="引用知识生成网页"
-              className="fixed right-[18px] z-[90] flex h-11 items-center gap-1.5 rounded-2xl border border-token-subtle bg-token-elevated px-3 text-xs font-semibold text-token-primary shadow-lg"
-              style={{
-                bottom: 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px) + 82px)',
-                background: 'var(--bg-elevated)',
-              }}
+              className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-token-subtle bg-token-elevated px-3 text-xs font-semibold text-token-primary"
             >
               <WandSparkles size={15} />知识生成
             </button>
-            <MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />
-          </>
+            <button
+              type="button"
+              onClick={openCreateUploadDialog}
+              aria-label="上传网页"
+              className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 text-xs font-semibold text-white"
+            >
+              <Upload size={15} />上传网页
+            </button>
+          </div>
         )}
 
         {/* Batch actions */}

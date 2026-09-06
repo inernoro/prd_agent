@@ -19,6 +19,7 @@ import {
   displayedDesignRuntime,
   elapsedSecondsSince,
   previewableAiStreamHtml,
+  runningGenerationActivity,
 } from './siteEditPreview';
 
 export interface SiteGenerateSource {
@@ -416,11 +417,27 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
           <div className={`${generating || previewHtml || completedSite ? 'flex' : 'hidden lg:flex'} min-h-[220px] min-w-0 flex-col overflow-hidden rounded-xl border border-token-subtle bg-token-nested lg:min-h-0`}>
             <div className="shrink-0 border-b border-token-subtle px-4 py-3">
               <div className="flex items-center justify-between gap-3 text-xs text-token-secondary">
-                <span>{phase}</span>
-                <span className="tabular-nums">{progress}% · 已运行 {elapsedSeconds} 秒</span>
+                <span role="status" aria-live="polite" className="sr-only">{phase}</span>
+                <span aria-hidden="true">
+                  {generating ? runningGenerationActivity(phase, elapsedSeconds) : phase}
+                </span>
+                <span className="shrink-0 tabular-nums">{generating ? '任务运行中' : `${progress}%`}</span>
               </div>
-              <div className="mt-2 h-1 overflow-hidden rounded-full bg-token-card">
-                <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${progress}%` }} />
+              <div
+                className="mt-2 h-1 overflow-hidden rounded-full bg-token-card"
+                role="progressbar"
+                aria-label="网页生成进度"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={generating ? undefined : progress}
+                aria-valuetext={generating ? '任务正在执行' : `${progress}%`}
+              >
+                <div
+                  className={generating
+                    ? 'h-full w-1/3 animate-pulse rounded-full bg-blue-500 motion-reduce:animate-none'
+                    : 'h-full bg-blue-500 transition-all duration-300'}
+                  style={generating ? undefined : { width: `${progress}%` }}
+                />
               </div>
               {thinking && generating && <p className="mt-2 line-clamp-2 text-[11px] text-token-muted">{thinking}</p>}
             </div>

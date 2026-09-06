@@ -45,7 +45,10 @@ describe('网页微调执行器事实接线', () => {
 
   it('长时间远程微调时每秒更新可见时长', () => {
     expect(source).toContain('window.setInterval');
-    expect(source).toContain('{progress}% · {elapsedSeconds} 秒');
+    expect(source).toContain('runningGenerationActivity(phase, elapsedSeconds)');
+    expect(source).toContain("generating ? '任务运行中'");
+    expect(source).toContain('animate-pulse');
+    expect(source).toContain('aria-valuenow={generating ? undefined : progress}');
   });
 
   it('把生成过程拆成可感知阶段，并向辅助技术播报动态进度', () => {
@@ -54,7 +57,9 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('aria-label="AI 修改进度"');
     expect(source).toContain('aria-live="polite"');
     expect(source).toContain('role="progressbar"');
-    expect(source).toContain('aria-valuenow={progress}');
+    expect(source).toContain("aria-valuetext={generating ? '任务正在执行' : `${progress}%`}");
+    expect(source).toContain('className="sr-only">{phase}</span>');
+    expect(source).toContain('<p aria-hidden="true"');
     expect(source).toContain('motion-reduce:transition-none');
   });
 
@@ -73,6 +78,9 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('role="alert"');
     expect(source).toContain('retryRecovery');
     expect(source).toContain('按原要求重试');
+    expect(source).toContain('调整要求或切换执行器');
+    expect(source).toContain('adjustFailedGeneration');
+    expect(source).toContain('请移除脚本、外链、表单或动态嵌入');
     expect(source).toContain('当前线上版本仍然有效，可直接重试发布。');
     expect(source).toContain('当前线上版本没有变化，可再次尝试。');
   });
@@ -85,14 +93,18 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain("recoverFromVersionConflict('regenerate')");
   });
 
-  it('版本卡说明来源动作和父版本，首个版本明确标为初始版本', () => {
+  it('版本卡首屏说明改动摘要，技术标识默认折叠', () => {
     expect(source).toContain("? '初始版本'");
     expect(source).toContain("? 'AI 修改'");
     expect(source).toContain("? '回退复制'");
-    expect(source).toContain('来源动作：{sourceAction} · 来源版本：{sourceVersion}');
+    expect(source).toContain('revisionChangeSummary(item, rollbackTargetRevision)');
+    expect(source).toContain('{changeSummary}');
+    expect(source).toContain('<summary className="min-h-6');
+    expect(source).toContain('技术信息');
+    expect(source).not.toContain('来源动作：{sourceAction} · 来源版本：{sourceVersion}');
     expect(source).toContain('revisions.find((candidate) => candidate.id === item.parentRevisionId)');
     expect(source).toContain('item.rollbackTargetRevisionId');
-    expect(source).toContain('回退目标 ${revisionLabel(rollbackTargetRevision)}');
+    expect(source).toContain('回退目标：${revisionLabel(rollbackTargetRevision)}');
   });
 
   it('回退先进入可聚焦确认态并说明目标、线上影响和可恢复性', () => {

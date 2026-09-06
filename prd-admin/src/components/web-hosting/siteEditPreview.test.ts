@@ -12,7 +12,9 @@ import {
   elapsedSecondsSince,
   extractCompleteAiPreviewHtml,
   isAllowedAiPreviewResource,
+  revisionChangeSummary,
   revisionLabel,
+  runningGenerationActivity,
   sanitizeAiPreviewCss,
 } from './siteEditPreview';
 
@@ -96,6 +98,16 @@ describe('网页版本标签', () => {
   it('已发布版本不显示再次发布操作', () => {
     expect(canPublishRevision({ isCurrent: false, status: 'published' })).toBe(false);
   });
+
+  it('用人能扫读的摘要说明初始、AI 修改与回退', () => {
+    expect(revisionChangeSummary({ source: 'baseline', instruction: null })).toBe('本次变更：建立初始页面');
+    expect(revisionChangeSummary({ source: 'ai-edit', instruction: '把标题改得更直接' }))
+      .toBe('本次修改：把标题改得更直接');
+    expect(revisionChangeSummary(
+      { source: 'rollback', instruction: null },
+      { isCurrent: false, status: 'published', source: 'ai-edit' },
+    )).toBe('本次变更：恢复到已发布版本');
+  });
 });
 
 describe('网页微调任务恢复', () => {
@@ -118,5 +130,11 @@ describe('网页微调任务恢复', () => {
     expect(elapsedSecondsSince('2026-09-06T10:00:00.000Z', Date.parse('2026-09-06T10:02:03.900Z')))
       .toBe(123);
     expect(elapsedSecondsSince('invalid', Date.now())).toBe(0);
+  });
+
+  it('运行态逐秒说明真实阶段，不伪造百分比', () => {
+    expect(runningGenerationActivity('正在读取知识', 23))
+      .toBe('当前步骤：正在读取知识。已运行 23 秒，任务仍在继续，页面会自动更新。');
+    expect(runningGenerationActivity('', -4)).toContain('已运行 0 秒');
   });
 });

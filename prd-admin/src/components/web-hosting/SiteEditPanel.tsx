@@ -25,7 +25,9 @@ import {
   displayedDesignRuntime,
   elapsedSecondsSince,
   previewableAiStreamHtml,
+  revisionChangeSummary,
   revisionLabel,
+  runningGenerationActivity,
 } from './siteEditPreview';
 
 interface Props {
@@ -61,6 +63,14 @@ function formatRevisionTime(value?: string | null) {
   if (!value) return '尚未发布';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function generationRecoveryDetail(detail: string) {
+  const safetyFailure = /脚本|外链|表单|嵌入|导航|离线安全|安全校验/u.test(detail);
+  const nextStep = safetyFailure
+    ? '请移除脚本、外链、表单或动态嵌入，只保留文字、图片说明和内联样式后再试。'
+    : '你可以缩小修改范围、换一种说法或切换执行器后再试。';
+  return `${detail}。线上版本没有变化，修改要求已保留。${nextStep}`;
 }
 
 export default function SiteEditPanel({ site, onPublished, focusSection = 'compose' }: Props) {
@@ -265,7 +275,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
         setPhase(detail);
         setRecoveryNotice({
           title: '页面修改未完成',
-          detail: `${detail}。线上版本没有变化，修改要求已保留。`,
+          detail: generationRecoveryDetail(detail),
           action: 'generate',
         });
         return;
@@ -338,7 +348,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       setPhase(detail);
       setRecoveryNotice({
         title: '无法开始修改',
-        detail: `${detail}。线上版本没有变化，修改要求已保留。`,
+        detail: generationRecoveryDetail(detail),
         action: 'generate',
       });
       toast.error('无法开始修改', detail);
@@ -400,7 +410,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             setPhase(message);
             setRecoveryNotice({
               title: '页面修改未完成',
-              detail: `${message}。线上版本没有变化，修改要求已保留。`,
+              detail: generationRecoveryDetail(message),
               action: 'generate',
             });
             toast.error('页面修改失败', message);
@@ -511,6 +521,12 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     else if (recoveryNotice.action === 'rollback' && revisionId) void rollback(revisionId);
   };
 
+  const adjustFailedGeneration = () => {
+    setRecoveryNotice(null);
+    composeRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    window.requestAnimationFrame(() => document.getElementById(`site-edit-instruction-${site.id}`)?.focus());
+  };
+
   const recoveryActionLabel = recoveryNotice?.action === 'history'
     ? '刷新版本记录'
     : recoveryNotice?.action === 'preview'
@@ -583,6 +599,16 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                 >
                   <RefreshCw size={13} />{recoveryActionLabel}
                 </button>
+                {recoveryNotice.action === 'generate' && (
+                  <button
+                    type="button"
+                    onClick={adjustFailedGeneration}
+                    disabled={generating || mutatingId !== null}
+                    className="inline-flex min-h-11 items-center justify-center rounded-lg border border-amber-500/40 px-3 text-[11px] font-semibold text-token-primary hover:bg-amber-500/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                  >
+                    调整要求或切换执行器
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => historyRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })}
@@ -762,11 +788,14 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                   <div className="text-xs font-semibold text-token-primary">
                     {generating ? 'AI 正在生成隔离草稿' : recoveryNotice ? '未完成的草稿预览' : '版本预览已就绪'}
                   </div>
-                  <p role="status" aria-live="polite" aria-atomic="true" className="mt-1 text-[11px] leading-relaxed text-token-muted">{phase}</p>
+                  <span role="status" aria-live="polite" className="sr-only">{phase}</span>
+                  <p aria-hidden="true" className="mt-1 text-[11px] leading-relaxed text-token-muted">
+                    {generating ? runningGenerationActivity(phase, elapsedSeconds) : phase}
+                  </p>
                 </div>
                 <div className="shrink-0 text-right text-[10px] text-token-muted">
                   <div className="max-w-28 truncate text-token-secondary">{activeRuntime?.label || '设计执行器'}</div>
-                  <div className="mt-0.5 tabular-nums">{progress}% · {elapsedSeconds} 秒</div>
+                  <div className="mt-0.5 tabular-nums">{generating ? '任务运行中' : `${progress}% · ${elapsedSeconds} 秒`}</div>
                 </div>
               </div>
 
@@ -792,9 +821,15 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                 aria-label="草稿生成进度"
                 aria-valuemin={0}
                 aria-valuemax={100}
-                aria-valuenow={progress}
+                aria-valuenow={generating ? undefined : progress}
+                aria-valuetext={generating ? '任务正在执行' : `${progress}%`}
               >
-                <div className="h-full bg-blue-500 transition-all duration-300 motion-reduce:transition-none" style={{ width: `${progress}%` }} />
+                <div
+                  className={generating
+                    ? 'h-full w-1/3 animate-pulse rounded-full bg-blue-500 motion-reduce:animate-none'
+                    : 'h-full bg-blue-500 transition-all duration-300 motion-reduce:transition-none'}
+                  style={generating ? undefined : { width: `${progress}%` }}
+                />
               </div>
               {thinking && generating && (
                 <div className="mt-2 rounded-lg bg-token-nested px-2.5 py-2 text-[10px] leading-relaxed text-token-muted">
@@ -878,13 +913,13 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                   : null;
                 const sourceVersion = item.source === 'rollback' && item.rollbackTargetRevisionId
                   ? rollbackTargetRevision
-                    ? `回退目标 ${revisionLabel(rollbackTargetRevision)} · ${rollbackTargetRevision.id.slice(-6)}`
-                    : `回退目标历史版本 · ${item.rollbackTargetRevisionId.slice(-6)}`
+                    ? `回退目标：${revisionLabel(rollbackTargetRevision)}`
+                    : '回退目标：所选历史版本'
                   : !item.parentRevisionId
                   ? '初始版本'
                   : parentRevision
-                    ? `${revisionLabel(parentRevision)} · ${parentRevision.id.slice(-6)}`
-                    : `历史版本 · ${item.parentRevisionId.slice(-6)}`;
+                    ? `基于：${revisionLabel(parentRevision)}`
+                    : '基于：历史线上版本';
                 const sourceAction = item.source === 'ai-edit'
                   ? 'AI 修改'
                   : item.source === 'rollback'
@@ -902,6 +937,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                   : item.status === 'draft' || item.status === 'publishing'
                     ? '仅你可见，尚未影响线上页面'
                     : '历史快照，可预览或回退到此版本';
+                const changeSummary = revisionChangeSummary(item, rollbackTargetRevision);
                 return (
                 <div key={item.id} aria-current={item.isCurrent ? 'true' : undefined} className={`rounded-lg border p-2.5 ${statusClass}`}>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -911,16 +947,18 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                         {selected && <span className="rounded-full bg-blue-500/15 px-1.5 py-0.5 text-[9px] font-medium text-blue-500">预览中</span>}
                       </div>
                       <p className="mt-1 text-[11px] text-token-secondary">{statusDescription}</p>
+                      <p className="mt-1.5 line-clamp-2 text-[11px] font-medium leading-relaxed text-token-primary">{changeSummary}</p>
                       <div className="mt-1 flex items-center gap-1 text-[10px] text-token-muted">
                         <Clock3 size={10} />{formatRevisionTime(item.publishedAt || item.createdAt)}
                       </div>
-                      <p className="mt-1 text-[10px] text-token-muted">
-                        来源动作：{sourceAction} · 来源版本：{sourceVersion}
-                      </p>
-                      {item.instruction && <p className="mt-1 line-clamp-2 text-[10px] text-token-muted">{item.instruction}</p>}
                       {item.knowledgeEntryIds.length > 0 && (
                         <p className="mt-1 text-[10px] text-token-muted">引用了 {item.knowledgeEntryIds.length} 篇知识</p>
                       )}
+                      <details className="mt-1 text-[10px] text-token-muted">
+                        <summary className="min-h-6 cursor-pointer py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">技术信息</summary>
+                        <p>执行来源：{sourceAction} · {sourceVersion}</p>
+                        <p className="mt-0.5 break-all">版本标识：{item.id}</p>
+                      </details>
                     </div>
                     <div className="flex w-full shrink-0 items-center gap-1 overflow-x-auto sm:w-auto sm:overflow-visible">
                       <button

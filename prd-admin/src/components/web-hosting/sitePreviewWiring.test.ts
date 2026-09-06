@@ -107,4 +107,12 @@ describe('网页微调与版本入口接线', () => {
     expect(source).toContain('focusSection={editSection}');
     expect(source).toContain('版本记录');
   });
+
+  it('修改与版本记录的高亮状态互斥', () => {
+    const source = read('components/web-hosting/SitePreviewModal.tsx');
+    expect(source.match(/rightPanel === 'edit' && editSection === 'compose'/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(source.match(/rightPanel === 'edit' && editSection === 'history'/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(source).toContain("aria-pressed={rightPanel === 'edit' && editSection === 'compose'}");
+    expect(source).toContain("aria-pressed={rightPanel === 'edit' && editSection === 'history'}");
+  });
 });

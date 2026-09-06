@@ -6,6 +6,12 @@ export function elapsedSecondsSince(startedAt: number | string | null | undefine
   return Math.max(0, Math.floor((now - startedAtMs) / 1000));
 }
 
+export function runningGenerationActivity(phase: string, elapsedSeconds: number) {
+  const currentPhase = phase.trim() || '正在处理当前步骤';
+  const seconds = Math.max(0, Math.floor(elapsedSeconds));
+  return `当前步骤：${currentPhase}。已运行 ${seconds} 秒，任务仍在继续，页面会自动更新。`;
+}
+
 export function chooseDesignRuntime(
   capabilities: DesignRuntimeCapability[],
   defaultRuntime: string,
@@ -37,6 +43,21 @@ export function revisionLabel(item: Pick<HostedSiteRevision, 'isCurrent' | 'stat
   if (item.source === 'rollback') return '回退发布版本';
   if (item.source === 'baseline') return '历史线上版本';
   return '已发布版本';
+}
+
+export function revisionChangeSummary(
+  item: Pick<HostedSiteRevision, 'source' | 'instruction'>,
+  rollbackTarget?: Pick<HostedSiteRevision, 'isCurrent' | 'status' | 'source'> | null,
+) {
+  if (item.source === 'ai-edit') {
+    return item.instruction?.trim()
+      ? `本次修改：${item.instruction.trim()}`
+      : '本次修改：根据页面要求生成新草稿';
+  }
+  if (item.source === 'rollback') {
+    return `本次变更：恢复到${rollbackTarget ? revisionLabel(rollbackTarget) : '所选历史版本'}`;
+  }
+  return '本次变更：建立初始页面';
 }
 
 export function canPublishRevision(item: Pick<HostedSiteRevision, 'isCurrent' | 'status'>) {

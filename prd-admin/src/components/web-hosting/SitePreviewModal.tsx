@@ -271,8 +271,9 @@ export default function SitePreviewModal({
                   setRightPanel(shouldOpen ? 'edit' : 'none');
                 }}
                 className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                  rightPanel === 'edit' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
+                  rightPanel === 'edit' && editSection === 'compose' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
                 }`}
+                aria-pressed={rightPanel === 'edit' && editSection === 'compose'}
               >
                 <WandSparkles className="w-3.5 h-3.5" />
                 帮我修改
@@ -289,6 +290,7 @@ export default function SitePreviewModal({
                 className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   rightPanel === 'edit' && editSection === 'history' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
                 }`}
+                aria-pressed={rightPanel === 'edit' && editSection === 'history'}
               >
                 <History className="h-3.5 w-3.5" />
                 版本记录
