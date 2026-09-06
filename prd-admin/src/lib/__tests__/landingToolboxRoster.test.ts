@@ -52,20 +52,18 @@ describe('首页百宝箱那一幕的名单', () => {
    * 文案里报了三个数，这里按数断言，不用「不小于」糊过去：
    *   「不是六个 Agent，是三十几个」 → 注册表 30-39 条
    *   「这里列了 16 个」            → 名单正好 16 条
-   *   「注册表里还有十几个」        → 注册表减去这 16 条，余 12-19
-   *     （英文那句是 "another dozen-odd"，比中文的「十几」起点高一点，取两者的交集）
-   * 三条合起来把注册表钉在 30-35。下限式的写法（≥12 / ≥20）在名单缩到 12 条、
+   *   「注册表里另有 20 个」         → 注册表减去这 16 条，必须正好余 20
+   * 三条合起来把注册表钉在当前真实的 36 条。下限式的写法在名单缩到 12 条、
    * 或注册表掉到 20 条时照样绿，而页面还在说十六个、三十几个——这一支从头到尾
    * 防的就是这种「守卫绿着、文案已经不成立」。
    *
-   * 加到第 36 个工具时这条会红：那时「还有十几个」变成二十来个，文案确实该改。
+   * 注册表再增删工具时这条会红：页面报的是精确数量，文案必须一起更新。
    */
   it('文案报的三个数与真实数据对得上（也保证下面几条不恒真）', () => {
     expect(zhItems.length).toBe(16);
     expect(registry.size).toBeGreaterThanOrEqual(30);
     expect(registry.size).toBeLessThanOrEqual(39);
-    expect(registry.size - zhItems.length).toBeGreaterThanOrEqual(12);
-    expect(registry.size - zhItems.length).toBeLessThanOrEqual(19);
+    expect(registry.size - zhItems.length).toBe(20);
   });
 
   it('每个列出的名字都在注册表里，一个例外都没有', () => {

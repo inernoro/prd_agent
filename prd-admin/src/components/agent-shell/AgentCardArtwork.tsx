@@ -32,6 +32,7 @@ const AGENT_CARD_PRESENTATION: Readonly<Record<string, AgentCardPresentation>> =
   'tapd-bug-agent': { task: '规范提交缺陷' },
   'marketplace-openapi': { task: '授权技能接口' },
   'shortcuts-agent': { task: '执行快捷操作' },
+  'web-pages': { task: '生成并发布网页' },
   'my-shares': { task: '统管分享链接' },
   'learning-center': { task: '推进学习进度' },
   'share-link-tester': { task: '校验分享链路' },

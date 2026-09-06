@@ -691,7 +691,7 @@ const zh: TranslationShape = {
           ],
         },
       ],
-      footer: '这里列了 16 个，注册表里还有十几个——搜索框比翻页快。',
+      footer: '这里列了 16 个，注册表里另有 20 个——搜索框比翻页快。',
     },
     workflow: {
       eyebrow: '工作流 · /workflow-agent',
@@ -1261,7 +1261,7 @@ const en: TranslationShape = {
           ],
         },
       ],
-      footer: 'Sixteen shown here; the registry holds another dozen-odd — search beats paging.',
+      footer: 'Sixteen shown here; the registry holds another twenty — search beats paging.',
     },
     workflow: {
       eyebrow: 'Workflows · /workflow-agent',
