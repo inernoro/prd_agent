@@ -106,8 +106,9 @@ function normalizeStatus(status?: string): UnifiedResourceStatus {
 }
 
 function maskInfraService(service: InfraService): UnifiedResourceRaw {
+  const { credentialRotationVault: _credentialRotationVault, ...publicService } = service;
   return {
-    ...service,
+    ...publicService,
     env: Object.fromEntries(Object.keys(service.env || {}).map((key) => [key, '******'])),
   };
 }

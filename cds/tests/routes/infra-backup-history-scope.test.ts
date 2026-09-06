@@ -26,6 +26,9 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { InfraService } from '../../src/types.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 
+let holdSpawnOpen = false;
+let lastSpawned: (EventEmitter & { kill: ReturnType<typeof vi.fn> }) | null = null;
+
 /**
  * 恢复用例要走到 `spawn('docker', …)`。这台机器上有没有 docker 不该决定这条判据
  * 红不红——用例问的是「恢复前快照存到哪个文件名」，不是「docker 能不能跑」。
@@ -36,11 +39,13 @@ vi.mock('node:child_process', async (importOriginal) => {
   return {
     ...actual,
     spawn: () => {
-      const proc = new EventEmitter() as EventEmitter & Record<string, unknown>;
+      const proc = new EventEmitter() as EventEmitter & Record<string, unknown> & { kill: ReturnType<typeof vi.fn> };
       proc.stdin = new PassThrough();
       proc.stdout = new PassThrough();
       proc.stderr = new PassThrough();
-      setTimeout(() => proc.emit('close', 0), 0);
+      proc.kill = vi.fn();
+      lastSpawned = proc;
+      if (!holdSpawnOpen) setTimeout(() => proc.emit('close', 0), 0);
       return proc;
     },
   };
@@ -98,6 +103,8 @@ describe('GET /api/infra/:id/backup-history 的筛选范围', () => {
   }
 
   beforeEach(async () => {
+    holdSpawnOpen = false;
+    lastSpawned = null;
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-backup-history-'));
     stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
     stateService.load();
@@ -183,6 +190,35 @@ describe('GET /api/infra/:id/backup-history 的筛选范围', () => {
     expect(res.status).toBe(200);
     expect(res.body.preRestoreBackup).toContain('/proj-a--mongo-pre-restore-');
     expect(res.body.preRestoreBackup).not.toMatch(/\/mongo-pre-restore-/);
+  });
+
+  it('客户端下载中断后仍等 mongodump 真正退出才释放轮换门禁', async () => {
+    holdSpawnOpen = true;
+    const addr = server.address() as { port: number };
+    const clientRequest = http.request({
+      hostname: '127.0.0.1', port: addr.port,
+      path: '/api/infra/mongo/backup?project=proj-a', method: 'GET',
+    });
+    clientRequest.on('error', () => { /* 主动断开是本用例的一部分 */ });
+    clientRequest.end();
+    for (let i = 0; i < 50; i += 1) {
+      if (lastSpawned) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(lastSpawned).not.toBeNull();
+
+    clientRequest.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(lastSpawned?.kill).toHaveBeenCalledWith('SIGKILL');
+    expect(stateService.listActiveInfraMaintenanceJobs({ projectId: 'proj-a', serviceId: 'mongo' }))
+      .toEqual([expect.objectContaining({ kind: 'manual-backup', status: 'active' })]);
+
+    lastSpawned?.emit('close', null);
+    for (let i = 0; i < 50; i += 1) {
+      if (stateService.listActiveInfraMaintenanceJobs({ projectId: 'proj-a', serviceId: 'mongo' }).length === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(stateService.listActiveInfraMaintenanceJobs({ projectId: 'proj-a', serviceId: 'mongo' })).toEqual([]);
   });
 
   it('大小与时间取自 ls 输出，不是占位值', async () => {

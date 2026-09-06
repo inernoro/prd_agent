@@ -159,7 +159,7 @@ export class JsonStateBackingStore implements StateBackingStore {
     const tmpPath = `${this.filePath}.tmp.${process.pid}.${Date.now()}`;
 
     // Atomic write: tmp → fsync → rename
-    const handle = await fs.promises.open(tmpPath, 'w');
+    const handle = await fs.promises.open(tmpPath, 'w', 0o600);
     try {
       await handle.writeFile(serialized);
       await handle.sync();
@@ -167,6 +167,7 @@ export class JsonStateBackingStore implements StateBackingStore {
       await handle.close();
     }
     await fs.promises.rename(tmpPath, this.filePath);
+    await fs.promises.chmod(this.filePath, 0o600);
 
     // Rolling backup（≥60s 节流；best-effort，失败不影响主写）
     const now = Date.now();
@@ -189,7 +190,8 @@ export class JsonStateBackingStore implements StateBackingStore {
     const base = path.basename(this.filePath);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupPath = path.join(dir, `${base}.bak.${stamp}`);
-    await fs.promises.writeFile(backupPath, serialized);
+    await fs.promises.writeFile(backupPath, serialized, { mode: 0o600 });
+    await fs.promises.chmod(backupPath, 0o600);
 
     // Prune: keep MAX_STATE_BACKUPS newest, delete the rest
     const backups = (await fs.promises.readdir(dir))

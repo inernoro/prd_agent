@@ -715,6 +715,7 @@ builder.Services.AddSingleton<IAssetStorageRuntimeInfo>(sp =>
     sp.GetRequiredService<IAssetStorage>() as IAssetStorageRuntimeInfo
     ?? throw new InvalidOperationException("IAssetStorage 实现未暴露运行时提供商信息"));
 builder.Services.AddSingleton<AssetStorageReadinessProbe>();
+builder.Services.AddSingleton<ApplicationReadinessProbe>();
 builder.Services.AddHttpClient("AssetStorageReadiness", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(20);
@@ -1603,8 +1604,9 @@ app.MapControllers();
 
 // 健康检查端点
 app.MapGet("/health", HealthCheck);
-app.MapGet("/health/ready", AssetStorageReadiness);
-app.MapGet("/api/health/ready", AssetStorageReadiness);
+app.MapGet("/health/ready", ApplicationReadiness);
+app.MapGet("/api/health/ready", ApplicationReadiness);
+app.MapGet("/health/assets/ready", AssetStorageReadiness);
 app.MapGet("/api/v", VersionInfo);
 app.MapGet("/api/version", VersionInfo);
 
@@ -1663,6 +1665,30 @@ static async Task<IResult> AssetStorageReadiness(
     return TypedResults.Json(
         result,
         AppJsonContext.Default.AssetStorageReadinessResponse,
+        statusCode: statusCode);
+}
+
+static async Task<IResult> ApplicationReadiness(
+    ApplicationReadinessProbe probe,
+    HttpContext context,
+    CancellationToken cancellationToken,
+    bool force = false)
+{
+    if (force && !AssetStorageReadinessProbe.CanForceProbe(
+            context.Connection.RemoteIpAddress))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    var result = await probe.CheckAsync(
+        force: force,
+        cancellationToken: cancellationToken);
+    var statusCode = string.Equals(result.Status, "healthy", StringComparison.Ordinal)
+        ? StatusCodes.Status200OK
+        : StatusCodes.Status503ServiceUnavailable;
+    return TypedResults.Json(
+        result,
+        AppJsonContext.Default.ApplicationReadinessResponse,
         statusCode: statusCode);
 }
 

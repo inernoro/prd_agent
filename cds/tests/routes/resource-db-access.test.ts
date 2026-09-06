@@ -192,7 +192,7 @@ describe('resource database access', () => {
       },
       volumes: [],
     });
-    harness.shell.addResponsePattern(/mongosh 'mongodb:\/\/app:pw@localhost:27017\/orders\?authSource=admin'/, () => ({
+    harness.shell.addResponsePattern(/mongosh.*--host.*localhost.*orders.*--authenticationDatabase.*admin/s, () => ({
       stdout: '[{"name":"users","type":"collection"}]\n',
       stderr: '',
       exitCode: 0,
@@ -211,7 +211,61 @@ describe('resource database access', () => {
     expect(res.status).toBe(200);
     expect(res.body.database).toBe('orders');
     expect(res.body.collections).toEqual([{ name: 'users', type: 'collection' }]);
-    expect(harness.shell.commands.some((cmd) => cmd.includes('/orders?authSource=admin'))).toBe(true);
+    expect(harness.shell.commands.some((cmd) => cmd.includes('orders') && cmd.includes('--authenticationDatabase'))).toBe(true);
+    expect(harness.shell.commands.join('\n')).not.toContain('pw');
+    expect(harness.shell.stdins.some((stdin) => Boolean(stdin))).toBe(true);
+  });
+
+  it('resolves local migration MongoDB by project and reads rotated credentials only at execution time', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    const now = new Date().toISOString();
+    harness.stateService.addProject({
+      id: 'project-b', slug: 'project-b', name: 'project-b', kind: 'git',
+      dockerNetwork: 'cds-proj-project-b', legacyFlag: false, createdAt: now, updatedAt: now,
+    });
+    for (const [projectId, port, password] of [
+      ['prd-agent', 27017, 'project-a-canary'],
+      ['project-b', 27018, 'project-b-old-canary'],
+    ] as const) {
+      harness.stateService.addInfraService({
+        id: 'mongodb', projectId, name: `${projectId}-mongo`, dockerImage: 'mongo:7',
+        containerPort: 27017, hostPort: port, containerName: `${projectId}-mongo`, status: 'running',
+        env: { MONGO_INITDB_ROOT_USERNAME: `${projectId}-root`, MONGO_INITDB_ROOT_PASSWORD: password },
+        volumes: [], createdAt: now,
+      });
+    }
+    harness.shell.addResponsePattern(/listDatabases/, () => ({ stdout: '[]\n', stderr: '', exitCode: 0 }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+
+    const connection = {
+      type: 'local', host: '', port: 0, projectId: 'project-b', serviceId: 'mongodb', database: 'app',
+    };
+    const first = await request(server!, 'POST', '/api/data-migrations/list-databases', { connection });
+    expect(first.status).toBe(200);
+    expect(harness.shell.commands.at(-1)).toContain('--port');
+    expect(harness.shell.commands.at(-1)).toContain('27018');
+    expect(harness.shell.commands.at(-1)).not.toContain('project-b-old-canary');
+    expect(harness.shell.stdins.at(-1)).toBe('project-b-old-canary\n');
+
+    const ambiguous = await request(server!, 'POST', '/api/data-migrations/list-databases', {
+      connection: { type: 'local', host: '', port: 0, database: 'app' },
+    });
+    expect(ambiguous.body.databases).toEqual([]);
+    expect(ambiguous.body.error).toMatch(/不唯一/);
+
+    harness.stateService.updateInfraService('mongodb', {
+      env: {
+        MONGO_INITDB_ROOT_USERNAME: 'project-b-rotated-root',
+        MONGO_INITDB_ROOT_PASSWORD: 'project-b-new-canary',
+      },
+    }, 'project-b');
+    const second = await request(server!, 'POST', '/api/data-migrations/list-databases', { connection });
+    expect(second.status).toBe(200);
+    expect(harness.shell.commands.at(-1)).not.toContain('project-b-new-canary');
+    expect(harness.shell.stdins.at(-1)).toBe('project-b-new-canary\n');
+    expect(JSON.stringify(second.body)).not.toContain('project-b-new-canary');
   });
 
   it('runs audited MongoDB writes with admin confirmation', async () => {
@@ -486,7 +540,7 @@ describe('resource database access', () => {
     harness.stateService.setCustomEnvVar('MONGODB_USERNAME', 'cds_main', 'main-branch');
     harness.stateService.setCustomEnvVar('MONGODB_PASSWORD', 'branch-pw', 'main-branch');
     harness.stateService.setCustomEnvVar('MONGODB_AUTH_SOURCE', 'branchdb', 'main-branch');
-    harness.shell.addResponsePattern(/mongodb:\/\/cds_main:branch-pw@localhost:27017\/branchdb\?authSource=branchdb/, () => ({
+    harness.shell.addResponsePattern(/mongosh.*branchdb.*--authenticationDatabase.*branchdb/s, () => ({
       stdout: '[{"name":"orders","type":"collection"}]\n',
       stderr: '',
       exitCode: 0,
@@ -505,7 +559,9 @@ describe('resource database access', () => {
     expect(res.status).toBe(200);
     expect(res.body.database).toBe('branchdb');
     expect(res.body.collections).toEqual([{ name: 'orders', type: 'collection' }]);
-    expect(harness.shell.commands.some((cmd) => cmd.includes('/branchdb?authSource=branchdb'))).toBe(true);
+    expect(harness.shell.commands.some((cmd) => cmd.includes('branchdb') && cmd.includes('--authenticationDatabase'))).toBe(true);
+    expect(harness.shell.commands.join('\n')).not.toContain('branch-pw');
+    expect(harness.shell.stdins.some((stdin) => Boolean(stdin))).toBe(true);
   });
 
   it('lists Redis backups for cache resources', async () => {

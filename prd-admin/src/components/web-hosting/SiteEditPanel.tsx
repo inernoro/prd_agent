@@ -354,20 +354,23 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
           </select>
         )}
         {capabilities.length > 0 && (
-          <div className="mt-3 rounded-lg border border-token-subtle bg-token-nested p-2.5 text-[10px] leading-relaxed text-token-muted">
-            <div className="flex items-center gap-1.5 font-medium text-token-primary">
-              <Server size={12} />执行器事实
-            </div>
-            <p className="mt-1">{activeRuntimeFact}</p>
-            <p className="mt-1">
-              首版仅支持声明式自包含 HTML，含脚本、外链或 ZIP 资源会在任务创建前提示。
-            </p>
-            {unavailableRuntimes.length > 0 && (
+          <details className="group mt-3 rounded-lg border border-token-subtle bg-token-nested text-[10px] leading-relaxed text-token-muted">
+            <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 font-medium text-token-primary">
+              <span className="flex items-center gap-1.5"><Server size={12} />执行器与限制</span>
+              <span className="max-w-36 truncate font-normal text-token-muted">{activeRuntime?.label || '当前执行器'}</span>
+            </summary>
+            <div className="border-t border-token-subtle px-2.5 pb-2.5 pt-2">
+              <p>{activeRuntimeFact}</p>
               <p className="mt-1">
-                {unavailableRuntimes.map((item) => `${item.label}：${item.reason || '未启用'}`).join('；')}
+                首版仅支持声明式自包含 HTML，含脚本、外链或 ZIP 资源会在任务创建前提示。
               </p>
-            )}
-          </div>
+              {unavailableRuntimes.length > 0 && (
+                <p className="mt-1">
+                  {unavailableRuntimes.map((item) => `${item.label}：${item.reason || '未启用'}`).join('；')}
+                </p>
+              )}
+            </div>
+          </details>
         )}
         <textarea
           value={instruction}
@@ -469,9 +472,10 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
             <button
               type="button"
               title="刷新版本记录"
+              aria-label="刷新版本记录"
               disabled={loadingHistory}
               onClick={() => void loadHistory()}
-              className="rounded-md p-1.5 text-token-secondary hover-bg-soft disabled:opacity-50"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md text-token-secondary hover-bg-soft disabled:opacity-50"
             >
               <RefreshCw size={12} className={loadingHistory ? 'animate-spin' : ''} />
             </button>
@@ -499,8 +503,9 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
                       <button
                         type="button"
                         title="预览这个版本"
+                        aria-label="预览这个版本"
                         onClick={() => void openRevision(item.id)}
-                        className="rounded-md p-1.5 text-token-secondary hover-bg-soft"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md text-token-secondary hover-bg-soft"
                       >
                         <Eye size={13} />
                       </button>
@@ -508,9 +513,10 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
                         <button
                           type="button"
                           title="把这个版本重新发布为最新版"
+                          aria-label="把这个版本重新发布为最新版"
                           disabled={mutatingId === item.id}
                           onClick={() => void rollback(item.id)}
-                          className="rounded-md p-1.5 text-token-secondary hover-bg-soft disabled:opacity-50"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-token-secondary hover-bg-soft disabled:opacity-50"
                         >
                           {mutatingId === item.id ? <MapSpinner size={13} /> : <RotateCcw size={13} />}
                         </button>
@@ -519,9 +525,10 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
                         <button
                           type="button"
                           title={item.status === 'publishing' ? '重试未完成的发布' : '发布这个草稿'}
+                          aria-label={item.status === 'publishing' ? '重试未完成的发布' : '发布这个草稿'}
                           disabled={mutatingId === item.id}
                           onClick={() => void publish(item.id)}
-                          className="rounded-md p-1.5 text-emerald-600 hover-bg-soft disabled:opacity-50"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-emerald-600 hover-bg-soft disabled:opacity-50"
                         >
                           {mutatingId === item.id ? <MapSpinner size={13} /> : <Check size={13} />}
                         </button>

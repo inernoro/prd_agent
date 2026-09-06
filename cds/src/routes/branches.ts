@@ -133,6 +133,18 @@ import type { DeploymentVersionService } from '../services/deployment-version.js
 import type { ManagedProjectPlan, ManagedProjectService } from '../services/managed-project.js';
 import { classifyDeploymentFailure } from '../services/deployment-failure-classifier.js';
 import type { DeploymentRunStatus, DeploymentRunTrigger } from '../types.js';
+import {
+  buildSecureMongoDockerInvocation,
+  buildSecureMongoHostInvocation,
+  buildSecureRedisDockerInvocation,
+  clearMigrationCredentials,
+  describeSecureInvocation,
+  invocationShellCommand,
+  publicDataMigration,
+  redactSecretValues,
+  sealMigrationConnections,
+  unsealMigrationConnections,
+} from '../services/secure-database-cli.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 2026-05-28 重构:状态权威源迁移到 services/self-status-cache.ts。
@@ -4348,7 +4360,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
   ): string[] {
     const args: string[] = ['--host', host, '--port', String(port), '--archive', '--gzip'];
     if (auth.username) args.push('--username', auth.username);
-    if (auth.password) args.push('--password', auth.password);
     if (auth.authDatabase) args.push('--authenticationDatabase', auth.authDatabase);
     if (database) args.push('--db', database);
     if (collections && collections.length === 1) {
@@ -4367,7 +4378,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
   ): string[] {
     const args: string[] = ['--host', host, '--port', String(port), '--archive', '--gzip'];
     if (auth.username) args.push('--username', auth.username);
-    if (auth.password) args.push('--password', auth.password);
     if (auth.authDatabase) args.push('--authenticationDatabase', auth.authDatabase);
     if (opts.drop) args.push('--drop');
     // Cross-database rename: --nsFrom="srcDb.*" --nsTo="tgtDb.*"
@@ -4452,14 +4462,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     tool: 'mongodump' | 'mongorestore',
     args: string[],
     dockerContainer: string | undefined,
+    password: string,
   ): string {
-    const inner = [tool, ...args.map(shq)].join(' ');
-    if (dockerContainer) {
-      // docker exec -i for restore (stdin), no -i for dump
-      const flags = tool === 'mongorestore' ? '-i' : '';
-      return `docker exec ${flags} ${shq(dockerContainer)} sh -c ${shq(inner)}`.replace(/  +/g, ' ');
-    }
-    return inner;
+    const invocation = dockerContainer
+      ? buildSecureMongoDockerInvocation(dockerContainer, tool, args, password)
+      : buildSecureMongoHostInvocation(tool, args, password);
+    return invocationShellCommand(invocation);
   }
 
   // ── Remote branches ──
@@ -6691,7 +6699,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return businessDatabase || validDatabases[0] || configuredDatabase;
   }
 
-  function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; uri: string; secrets: string[] } {
+  function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; authDatabase: string; secrets: string[] } {
     const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
     const env = resolvedInfraEnv(service, branch);
     const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
@@ -6711,26 +6719,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const authSourceDb = user
       ? (branchEnv.MONGODB_AUTH_SOURCE || branchEnv.MONGO_AUTH_SOURCE || (branchUser ? database : 'admin'))
       : '';
-    const uri = user
-      ? `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:27017/${encodeURIComponent(database)}?authSource=${encodeURIComponent(authSourceDb)}`
-      : `mongodb://localhost:27017/${encodeURIComponent(database)}`;
-    return { user, password, database, uri, secrets: [password] };
+    return { user, password, database, authDatabase: authSourceDb, secrets: [password] };
   }
 
-  async function runMongoJson(service: InfraService, branch: BranchEntry, script: string, databaseOverride?: string, timeoutMs = 30_000): Promise<unknown> {
+  async function runMongoJson(service: InfraService, branch: BranchEntry, script: string, databaseOverride?: string, timeoutMs = 30_000, expectJson = true): Promise<unknown> {
     if (service.status !== 'running') {
       throw new Error(`MongoDB 服务当前未运行（status=${service.status}）`);
     }
     const creds = mongoCredentials(service, branch, databaseOverride);
+    const invocation = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongosh',
+      [
+        '--host', 'localhost', '--port', '27017', creds.database, '--quiet', '--eval', script,
+        ...(creds.user ? ['--username', creds.user, '--authenticationDatabase', creds.authDatabase || 'admin'] : []),
+      ],
+      creds.password,
+    );
     const result = await shell.exec(
-      `docker exec ${shq(service.containerName || '')} mongosh ${shq(creds.uri)} --quiet --eval ${shq(script)}`,
-      { timeout: timeoutMs },
+      invocationShellCommand(invocation),
+      { timeout: timeoutMs, stdin: invocation.stdinPrefix },
     );
     const stdout = maskTextSecrets((result.stdout || '').trim(), creds.secrets);
     const stderr = maskTextSecrets((result.stderr || '').trim(), creds.secrets);
     if (result.exitCode !== 0) {
       throw new Error(stderr || stdout || 'MongoDB 查询失败');
     }
+    if (!expectJson) return stdout;
     const jsonLine = stdout.split('\n').reverse().find((line) => {
       const t = line.trim();
       return t.startsWith('{') || t.startsWith('[');
@@ -6908,10 +6923,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`Redis 服务当前未运行（status=${service.status}）`);
     }
     const password = redisPassword(service);
-    const authArgs = password ? ['-a', password, '--no-auth-warning'] : [];
+    const invocation = buildSecureRedisDockerInvocation(service.containerName || '', ['--raw', ...args], password);
     const result = await shell.exec(
-      ['docker', 'exec', shq(service.containerName || ''), 'redis-cli', '--raw', ...authArgs.map(shq), ...args.map(shq)].join(' '),
-      { timeout: timeoutMs },
+      invocationShellCommand(invocation),
+      { timeout: timeoutMs, stdin: invocation.stdinPrefix },
     );
     const output = maskTextSecrets((result.stdout || '').trim(), [password]);
     const error = maskTextSecrets((result.stderr || '').trim(), [password]);
@@ -7164,7 +7179,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
   }
 
-  function mongoAdminUri(service: InfraService): { uri: string; secrets: string[]; rootUser: string; rootPassword: string } {
+  function mongoAdminUri(service: InfraService): { secrets: string[]; rootUser: string; rootPassword: string } {
     const env = resolvedInfraEnv(service);
     const rootUser = env.MONGO_INITDB_ROOT_USERNAME
       || env.MONGO_USERNAME
@@ -7174,10 +7189,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       || env.MONGO_PASSWORD
       || env.MONGODB_PASSWORD
       || '';
-    const uri = rootUser
-      ? `mongodb://${encodeURIComponent(rootUser)}:${encodeURIComponent(rootPassword)}@localhost:27017/admin`
-      : 'mongodb://localhost:27017/admin';
-    return { uri, secrets: [rootPassword], rootUser, rootPassword };
+    return { secrets: [rootPassword], rootUser, rootPassword };
   }
 
   async function runMongoAdminScript(service: InfraService, script: string, timeoutMs = 60_000): Promise<void> {
@@ -7185,9 +7197,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`MongoDB 服务当前未运行（status=${service.status}）`);
     }
     const admin = mongoAdminUri(service);
+    const invocation = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongosh',
+      [
+        '--host', 'localhost', '--port', '27017', 'admin', '--quiet', '--eval', script,
+        ...(admin.rootUser ? ['--username', admin.rootUser, '--authenticationDatabase', 'admin'] : []),
+      ],
+      admin.rootPassword,
+    );
     const result = await shell.exec(
-      `docker exec ${shq(service.containerName || '')} mongosh ${shq(admin.uri)} --quiet --eval ${shq(script)}`,
-      { timeout: timeoutMs },
+      invocationShellCommand(invocation),
+      { timeout: timeoutMs, stdin: invocation.stdinPrefix },
     );
     if (result.exitCode !== 0) {
       throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 管理命令失败').trim(), admin.secrets));
@@ -7591,9 +7612,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const fileName = makeResourceBackupFileName({ service, branch, runtime: 'mongodb', database, reason });
     const filePath = path.posix.join(dir, fileName);
     const creds = mongoCredentials(service, branch);
+    const invocation = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongodump',
+      [
+        '--db', database, '--archive', '--gzip',
+        ...(creds.user ? ['--username', creds.user, '--authenticationDatabase', creds.authDatabase || 'admin'] : []),
+      ],
+      creds.password,
+    );
     const result = await shell.exec(
-      `mkdir -p ${shq(dir)} && docker exec ${shq(service.containerName || '')} mongodump --uri ${shq(creds.uri)} --db ${shq(database)} --archive --gzip > ${shq(filePath)}`,
-      { timeout: 1_800_000 },
+      `mkdir -p ${shq(dir)} && ${invocationShellCommand(invocation)} > ${shq(filePath)}`,
+      { timeout: 1_800_000, stdin: invocation.stdinPrefix },
     );
     if (result.exitCode !== 0) {
       throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 备份失败').trim(), creds.secrets));
@@ -7895,9 +7925,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       reason: 'pre-restore',
     });
     const creds = mongoCredentials(service, branch);
+    const invocation = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongorestore',
+      [
+        '--db', database, '--archive', '--gzip', '--drop',
+        ...(creds.user ? ['--username', creds.user, '--authenticationDatabase', creds.authDatabase || 'admin'] : []),
+      ],
+      creds.password,
+    );
     const result = await shell.exec(
-      `docker exec -i ${shq(service.containerName || '')} mongorestore --uri ${shq(creds.uri)} --db ${shq(database)} --archive --gzip --drop < ${shq(filePath)}`,
-      { timeout: 1_800_000 },
+      `{ cat; cat ${shq(filePath)}; } | ${invocationShellCommand(invocation)}`,
+      { timeout: 1_800_000, stdin: invocation.stdinPrefix },
     );
     if (result.exitCode !== 0) {
       throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 恢复失败').trim(), creds.secrets));
@@ -7933,9 +7972,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { fileName, filePath } = await assertBackupFile(backupName, 'mongodb', { service, branch });
     const branchDb = await createMongoBranchDatabase(service, branch, targetDatabase);
     const admin = mongoAdminUri(service);
+    const invocation = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongorestore',
+      [
+        '--archive', '--gzip', '--drop', '--nsFrom', `${sourceDatabase}.*`, '--nsTo', `${targetDatabase}.*`,
+        ...(admin.rootUser ? ['--username', admin.rootUser, '--authenticationDatabase', 'admin'] : []),
+      ],
+      admin.rootPassword,
+    );
     const result = await shell.exec(
-      `docker exec -i ${shq(service.containerName || '')} mongorestore --uri ${shq(admin.uri)} --archive --gzip --drop --nsFrom ${shq(`${sourceDatabase}.*`)} --nsTo ${shq(`${targetDatabase}.*`)} < ${shq(filePath)}`,
-      { timeout: 1_800_000 },
+      `{ cat; cat ${shq(filePath)}; } | ${invocationShellCommand(invocation)}`,
+      { timeout: 1_800_000, stdin: invocation.stdinPrefix },
     );
     if (result.exitCode !== 0) {
       throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 新库恢复失败').trim(), [...admin.secrets, branchDb.branchPassword]));
@@ -8153,12 +8201,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 清空数据失败').trim(), creds.secrets));
     } else if (runtime === 'mongodb') {
-      const creds = mongoCredentials(service, branch);
-      const result = await shell.exec(
-        `docker exec ${shq(service.containerName || '')} mongosh ${shq(creds.uri)} --quiet --eval ${shq('db.dropDatabase()')}`,
-        { timeout: 120_000 },
-      );
-      if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 清空数据失败').trim(), creds.secrets));
+      await runMongoJson(service, branch, 'db.dropDatabase()', database, 120_000, false);
     } else {
       await runRedisCli(service, ['FLUSHALL']);
     }
@@ -8242,18 +8285,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 删除数据库失败').trim(), [adminPassword]));
     } else if (runtime === 'mongodb') {
-      const creds = mongoCredentials(service, branch);
       const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
       const user = branchEnv.MONGODB_USERNAME || '';
       const script = [
         'db.dropDatabase();',
         user ? `db.dropUser(${mongoSafeJson(user)});` : '',
       ].filter(Boolean).join(' ');
-      const result = await shell.exec(
-        `docker exec ${shq(service.containerName || '')} mongosh ${shq(creds.uri)} --quiet --eval ${shq(script)}`,
-        { timeout: 120_000 },
-      );
-      if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 删除数据库失败').trim(), creds.secrets));
+      await runMongoJson(service, branch, script, database, 120_000, false);
     }
     removeBranchResourceEnv(runtime, branch);
     stateService.recordDestructiveOp({
@@ -8322,16 +8360,56 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const branchDb = await createMongoBranchDatabase(service, branch, targetDatabase);
     const admin = mongoAdminUri(service);
-    const result = await shell.exec(
-      [
-        `docker exec ${shq(service.containerName || '')} mongodump --uri ${shq(admin.uri)} --db ${shq(sourceDatabase)} --archive --gzip`,
-        `docker exec -i ${shq(service.containerName || '')} mongorestore --uri ${shq(admin.uri)} --archive --gzip --drop --nsFrom ${shq(`${sourceDatabase}.*`)} --nsTo ${shq(`${targetDatabase}.*`)}`,
-      ].join(' | '),
-      { timeout: 1_800_000 },
+    const authArgs = admin.rootUser ? ['--username', admin.rootUser, '--authenticationDatabase', 'admin'] : [];
+    const producer = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongodump',
+      ['--db', sourceDatabase, '--archive', '--gzip', ...authArgs],
+      admin.rootPassword,
     );
-    if (result.exitCode !== 0) {
-      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 克隆失败').trim(), [...admin.secrets, branchDb.branchPassword]));
-    }
+    const consumer = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongorestore',
+      ['--archive', '--gzip', '--drop', '--nsFrom', `${sourceDatabase}.*`, '--nsTo', `${targetDatabase}.*`, ...authArgs],
+      admin.rootPassword,
+    );
+    await new Promise<void>((resolve, reject) => {
+      const dump = spawn(producer.command, producer.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+      const restore = spawn(consumer.command, consumer.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+      let dumpError = '';
+      let restoreError = '';
+      let dumpCode: number | null = null;
+      let restoreCode: number | null = null;
+      let settled = false;
+      const finish = () => {
+        if (settled || dumpCode === null || restoreCode === null) return;
+        settled = true;
+        clearTimeout(timer);
+        if (dumpCode === 0 && restoreCode === 0) resolve();
+        else reject(new Error(maskTextSecrets(
+          (restoreError || dumpError || 'MongoDB 克隆失败').trim().slice(-400),
+          [...admin.secrets, branchDb.branchPassword],
+        )));
+      };
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { dump.kill('SIGKILL'); } catch { /* noop */ }
+        try { restore.kill('SIGKILL'); } catch { /* noop */ }
+        reject(new Error(maskTextSecrets(err.message, [...admin.secrets, branchDb.branchPassword])));
+      };
+      const timer = setTimeout(() => fail(new Error('MongoDB 克隆超时')), 1_800_000);
+      dump.stderr.on('data', (chunk: Buffer) => { dumpError = (dumpError + chunk.toString()).slice(-4000); });
+      restore.stderr.on('data', (chunk: Buffer) => { restoreError = (restoreError + chunk.toString()).slice(-4000); });
+      dump.on('error', fail);
+      restore.on('error', fail);
+      dump.on('close', (code) => { dumpCode = code ?? -1; finish(); });
+      restore.on('close', (code) => { restoreCode = code ?? -1; finish(); });
+      dump.stdin.end(producer.stdinPrefix);
+      restore.stdin.write(consumer.stdinPrefix);
+      dump.stdout.pipe(restore.stdin);
+    });
     return branchDb;
   }
 
@@ -9850,6 +9928,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const actor = resolveActorFromRequest(req);
     const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId,
+        serviceId: rawInfra.id,
+        runtime: runtime === 'mongodb' ? 'mongodb' : runtime === 'redis' ? 'redis' : 'other',
+        kind: 'resource-backup',
+      });
+    } catch (error) {
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({ error: rotating ? '资源正在轮换凭据，请稍后再备份。' : '无法登记资源备份作业。' });
+      return;
+    }
+    let maintenanceSucceeded = false;
     try {
       const backup = await createResourceBackupFile({
         runtime: runtime as ResourceDatabaseRuntime,
@@ -9862,6 +9954,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         reason: 'manual',
       });
       stateService.save();
+      maintenanceSucceeded = true;
       res.status(201).json({ branchId: branch.id, resourceId, backup });
     } catch (err) {
       stateService.appendActivityLog(projectId, {
@@ -9876,6 +9969,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       stateService.save();
       res.status(500).json({ error: (err as Error).message });
+    } finally {
+      await stateService.finishInfraMaintenanceJob(maintenanceJob.id, maintenanceSucceeded ? 'completed' : 'failed');
     }
   });
 
@@ -9909,6 +10004,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const actor = resolveActorFromRequest(req);
     const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId,
+        serviceId: rawInfra.id,
+        runtime: runtime === 'mongodb' ? 'mongodb' : runtime === 'redis' ? 'redis' : 'other',
+        kind: 'resource-restore',
+      });
+    } catch (error) {
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({ error: rotating ? '资源正在轮换凭据，请稍后再恢复。' : '无法登记资源恢复作业。' });
+      return;
+    }
+    let maintenanceSucceeded = false;
     try {
       const restored = await restoreResourceBackupFile({
         runtime: runtime as ResourceDatabaseRuntime,
@@ -9921,6 +10030,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         backupName: req.body?.backupName,
       });
       stateService.save();
+      maintenanceSucceeded = true;
       res.json({ branchId: branch.id, resourceId, restored });
     } catch (err) {
       stateService.appendActivityLog(projectId, {
@@ -9936,6 +10046,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
       const message = (err as Error).message;
       res.status(message.includes('备份文件不属于当前资源或分支') ? 409 : 500).json({ error: message });
+    } finally {
+      await stateService.finishInfraMaintenanceJob(maintenanceJob.id, maintenanceSucceeded ? 'completed' : 'failed');
     }
   });
 
@@ -10303,6 +10415,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : mode === 'clone-main'
           ? (runtime === 'mysql' ? 'mysqldump' : 'background-copy')
           : 'branch-database';
+    if (!stateService.canStartInfraMaintenance(projectId, rawInfra.id)) {
+      res.status(409).json({ error: '资源正在轮换凭据，暂不能创建数据库克隆或恢复任务。' });
+      return;
+    }
     const task = stateService.addResourceCloneTask({
       projectId,
       branchId: branch.id,
@@ -10321,6 +10437,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       actor,
       log: `[${new Date().toISOString()}] ${actor} created ${mode} task for ${resource.displayName}`,
     });
+    // active/pending 台账必须先于任何数据库 mutation 耐久落盘；否则进程崩溃或轮换并发
+    // 会出现「任务已经动库，撤销门禁却看不见」的窗口。
+    stateService.save();
+    await stateService.flush();
 
     let resultTask = task;
     try {
@@ -19845,8 +19965,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function infraServiceView(service: InfraService | null | undefined): InfraService | null | undefined {
     if (!service) return service;
+    const { credentialRotationVault: _credentialRotationVault, ...publicService } = service;
     return {
-      ...service,
+      ...publicService,
       env: maskEnvRecord(service.env || {}),
       command: maskCommandSecrets(service.command),
       entrypoint: maskCommandSecrets(service.entrypoint),
@@ -21232,23 +21353,78 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // ── Data Migration ──
 
   /** Resolve 'local' MongoDB connection to actual host:port from infra */
-  function resolveMongoConn(conn: MongoConnectionConfig): MongoConnectionConfig {
+  function resolveMongoConn(conn: MongoConnectionConfig, migrationProjectId?: string): MongoConnectionConfig {
     if (conn.type === 'local') {
-      const mongoInfra = stateService.getInfraServices().find(s => s.id === 'mongodb');
-      if (!mongoInfra) throw new Error('本机 MongoDB 未在 CDS 基础设施中注册');
-      const dockerHost = stateService.getCdsEnvVars()['CDS_HOST'] || '172.17.0.1';
-      return { ...conn, host: dockerHost, port: mongoInfra.hostPort };
+      const projectId = String(conn.projectId || migrationProjectId || '').trim();
+      const serviceId = String(conn.serviceId || '').trim();
+      let candidates = stateService.getInfraServices()
+        .filter((service) => (
+          resourceRuntimeKey(`${service.id} ${service.basePresetId || ''} ${service.dockerImage}`) === 'mongodb'
+          && (service.scope || 'project') === 'project'
+        ));
+      if (projectId) candidates = candidates.filter((service) => service.projectId === projectId);
+      if (serviceId) candidates = candidates.filter((service) => service.id === serviceId);
+      if (candidates.length !== 1) {
+        throw new Error(projectId || serviceId
+          ? `无法唯一解析本机 MongoDB（project=${projectId || '未指定'}, service=${serviceId || '未指定'}）`
+          : '本机 MongoDB 不唯一，数据迁移必须指定 projectId 与 serviceId');
+      }
+      const authoritative = peerLocalMongoConnection(candidates[0], conn.database);
+      return {
+        ...conn,
+        ...authoritative,
+        projectId: candidates[0].projectId,
+        serviceId: candidates[0].id,
+        database: conn.database,
+      };
     }
     return conn;
   }
 
-  /** Build mongosh auth args */
-  function mongoAuthArgs(conn: MongoConnectionConfig): string {
-    let args = '';
-    if (conn.username) args += ` -u ${conn.username}`;
-    if (conn.password) args += ` -p ${conn.password}`;
-    if (conn.authDatabase) args += ` --authenticationDatabase ${conn.authDatabase}`;
-    return args;
+  function resolvePeerLocalMongo(
+    req: import('express').Request,
+    explicitProjectId?: string,
+    explicitServiceId?: string,
+  ): InfraService {
+    const keyProjectId = (req as unknown as { cdsProjectKey?: { projectId?: string } }).cdsProjectKey?.projectId;
+    const projectId = String(explicitProjectId || keyProjectId || '').trim();
+    const serviceId = String(explicitServiceId || '').trim();
+    const candidates = stateService.getInfraServices()
+      .filter((service) => (
+        resourceRuntimeKey(`${service.id} ${service.basePresetId || ''} ${service.dockerImage}`) === 'mongodb'
+        && (service.scope || 'project') === 'project'
+        && (!serviceId || service.id === serviceId)
+      ));
+    if (projectId) {
+      const exact = candidates.find((service) => service.projectId === projectId);
+      if (!exact) throw new Error(`项目 ${projectId} 没有可供迁移的本机 MongoDB`);
+      return exact;
+    }
+    if (candidates.length !== 1) {
+      throw new Error('本机存在多个 MongoDB 项目资源，peer 调用必须带 projectId 或使用项目级凭据');
+    }
+    return candidates[0];
+  }
+
+  function peerLocalMongoConnection(service: InfraService, database?: string): MongoConnectionConfig {
+    const env = resolvedInfraEnv(service);
+    const username = env.MONGO_INITDB_ROOT_USERNAME
+      || env.MONGO_USERNAME
+      || env.MONGODB_USERNAME
+      || '';
+    const password = env.MONGO_INITDB_ROOT_PASSWORD
+      || env.MONGO_PASSWORD
+      || env.MONGODB_PASSWORD
+      || '';
+    return {
+      type: 'local',
+      host: stateService.getCdsEnvVars()['CDS_HOST'] || '172.17.0.1',
+      port: service.hostPort,
+      database,
+      username: username || undefined,
+      password: password || undefined,
+      authDatabase: username ? 'admin' : undefined,
+    };
   }
 
   /** Get this CDS's own AI access key (used to display to the user for copy/paste).
@@ -21322,29 +21498,39 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
   // GET /api/data-migrations — list all migration tasks
   router.get('/data-migrations', (_req, res) => {
-    res.json(stateService.getDataMigrations());
+    res.json(stateService.getDataMigrations().map(publicDataMigration));
   });
 
   // POST /api/data-migrations — create a new migration task
   router.post('/data-migrations', (req, res) => {
-    const { name, dbType, source, target, collections } = req.body as {
+    const { name, dbType, source, target, collections, projectId } = req.body as {
       name: string;
       dbType: 'mongodb';
       source: MongoConnectionConfig;
       target: MongoConnectionConfig;
       collections?: string[];
+      projectId?: string;
     };
     if (!name || !dbType || !source || !target) {
       res.status(400).json({ error: '缺少必填字段: name, dbType, source, target' });
       return;
     }
     const id = `mig-${Date.now().toString(36)}`;
+    let sealedConnections: ReturnType<typeof sealMigrationConnections>;
+    try {
+      sealedConnections = sealMigrationConnections(source, target);
+    } catch (error) {
+      res.status(503).json({ error: (error as Error).message });
+      return;
+    }
     const migration: DataMigration = {
       id,
+      projectId: String(projectId || source.projectId || target.projectId || '').trim() || undefined,
       name,
       dbType,
-      source,
-      target,
+      source: sealedConnections.source,
+      target: sealedConnections.target,
+      credentialsEncrypted: sealedConnections.credentialsEncrypted,
       collections: collections?.length ? collections : undefined,
       status: 'pending',
       progress: 0,
@@ -21352,7 +21538,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     };
     stateService.addDataMigration(migration);
     stateService.save();
-    res.json(migration);
+    res.json(publicDataMigration(migration));
   });
 
   // DELETE /api/data-migrations/:id — delete a migration task
@@ -21451,14 +21637,30 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const { name, source, target, collections } = req.body as Partial<DataMigration>;
     const updates: Partial<DataMigration> = {};
     if (name !== undefined) updates.name = name;
-    if (source !== undefined) updates.source = source;
-    if (target !== undefined) updates.target = target;
+    if (source !== undefined || target !== undefined) {
+      try {
+        const current = unsealMigrationConnections(existing);
+        const nextSource = source !== undefined
+          ? { ...current.source, ...source, sshTunnel: source.sshTunnel ? { ...current.source.sshTunnel, ...source.sshTunnel } : current.source.sshTunnel }
+          : current.source;
+        const nextTarget = target !== undefined
+          ? { ...current.target, ...target, sshTunnel: target.sshTunnel ? { ...current.target.sshTunnel, ...target.sshTunnel } : current.target.sshTunnel }
+          : current.target;
+        const sealed = sealMigrationConnections(nextSource, nextTarget);
+        updates.source = sealed.source;
+        updates.target = sealed.target;
+        updates.credentialsEncrypted = sealed.credentialsEncrypted;
+      } catch (error) {
+        res.status(503).json({ error: (error as Error).message });
+        return;
+      }
+    }
     // collections === [] means "all collections" (undefined), non-empty = subset
     if (collections !== undefined) updates.collections = (collections && collections.length) ? collections : undefined;
     updates.updatedAt = new Date().toISOString();
     stateService.updateDataMigration(id, updates);
     stateService.save();
-    res.json(stateService.getDataMigration(id));
+    res.json(publicDataMigration(stateService.getDataMigration(id)!));
   });
 
   // POST /api/data-migrations/:id/execute — execute a migration task (SSE stream, streaming pipeline)
@@ -21483,10 +21685,23 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     if (!migration) { res.status(404).json({ error: '迁移任务不存在' }); return; }
     if (migration.status === 'running') { res.status(400).json({ error: '任务已在运行中' }); return; }
 
+    let executionConnections: ReturnType<typeof unsealMigrationConnections>;
+    try {
+      executionConnections = unsealMigrationConnections(migration);
+    } catch (error) {
+      res.status(409).json({ error: (error as Error).message });
+      return;
+    }
+    if (stateService.hasActiveCredentialRotation('mongodb')) {
+      res.status(409).json({ error: 'MongoDB 正在轮换凭据，暂不能启动数据迁移。' });
+      return;
+    }
+
     initSSE(res);
     const send = (progress: number, message: string) => {
-      sendSSE(res, 'progress', { progress, message });
-      stateService.updateDataMigration(id, { progress, progressMessage: message });
+      const safeMessage = redactSecretValues(message, executionConnections.secretValues);
+      sendSSE(res, 'progress', { progress, message: safeMessage });
+      stateService.updateDataMigration(id, { progress, progressMessage: safeMessage });
     };
 
     // SSE keepalive — prevents proxies from closing the connection on long dumps
@@ -21495,12 +21710,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     // Mark as running
     stateService.updateDataMigration(id, { status: 'running', startedAt: new Date().toISOString(), progress: 0, errorMessage: undefined, log: '' });
     stateService.save();
+    await stateService.flush();
 
     let logOutput = '';
     const MAX_LOG = 64 * 1024;
     const appendLog = (line: string) => {
-      logOutput += line;
-      if (!line.endsWith('\n')) logOutput += '\n';
+      const safeLine = redactSecretValues(line, executionConnections.secretValues);
+      logOutput += safeLine;
+      if (!safeLine.endsWith('\n')) logOutput += '\n';
       if (logOutput.length > MAX_LOG) logOutput = '...(truncated)...\n' + logOutput.slice(-MAX_LOG);
     };
 
@@ -21540,17 +21757,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
       // ── Build producer ──
       const producer = await buildSourceProducer(
-        migration.source,
+        executionConnections.source,
         cols,
+        migration.projectId,
         { appendLog, onProgressLine: updateProgressFromLine, send },
       );
       children.push(producer);
 
       // ── Build consumer ──
       const consumer = await buildTargetConsumer(
-        migration.target,
-        migration.source,
+        executionConnections.target,
+        executionConnections.source,
         cols,
+        migration.projectId,
         { appendLog, onProgressLine: updateProgressFromLine, send },
       );
       children.push(consumer);
@@ -21577,12 +21796,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         finishedAt: new Date().toISOString(),
         log: logOutput,
       });
+      clearMigrationCredentials(migration);
       stateService.save();
+      await stateService.flush();
       sendSSE(res, 'done', { message: '迁移完成' });
       cleanup();
       res.end();
     } catch (e) {
-      const errMsg = (e as Error).message || String(e);
+      const errMsg = redactSecretValues((e as Error).message || String(e), executionConnections.secretValues);
       appendLog(`ERROR: ${errMsg}`);
       stateService.updateDataMigration(id, {
         status: 'failed',
@@ -21591,6 +21812,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         log: logOutput,
       });
       stateService.save();
+      await stateService.flush();
       sendSSE(res, 'error', { message: errMsg });
       cleanup();
       res.end();
@@ -21604,6 +21826,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   async function buildSourceProducer(
     source: MongoConnectionConfig,
     cols: string[] | undefined,
+    migrationProjectId: string | undefined,
     cb: {
       appendLog: (s: string) => void;
       onProgressLine: (line: string) => void;
@@ -21618,6 +21841,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const peerRes = await peerRequest(peer, '/api/data-migrations/local-dump', 'POST', {
         database: source.database,
         collections: cols,
+        projectId: source.projectId,
+        serviceId: source.serviceId,
       });
       if ((peerRes.statusCode || 500) >= 400) {
         const chunks: Buffer[] = [];
@@ -21637,7 +21862,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     }
 
     // ── Local / remote via mongodump ──
-    const eff = source.type === 'local' ? resolveMongoConn(source) : source;
+    const eff = source.type === 'local' ? resolveMongoConn(source, migrationProjectId) : source;
     const dumpArgs = buildMongodumpArgs(
       eff.host, eff.port,
       { username: eff.username, password: eff.password, authDatabase: eff.authDatabase },
@@ -21646,20 +21871,25 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
     let cmd: string;
     let argv: string[];
+    let stdinPrefix: string;
     if (source.sshTunnel?.enabled) {
       cb.send(8, `通过 SSH 连接 ${source.sshTunnel.host}...`);
       const sshBase = buildSshBase(source.sshTunnel);
-      const remoteCmd = buildRemoteMongoCmd('mongodump', dumpArgs, source.sshTunnel.dockerContainer);
-      cb.appendLog(`[source] ssh ${source.sshTunnel.username}@${source.sshTunnel.host}: ${remoteCmd}`);
+      const remoteCmd = buildRemoteMongoCmd('mongodump', dumpArgs, source.sshTunnel.dockerContainer, eff.password || '');
+      cb.appendLog(`[source] ssh ${source.sshTunnel.username}@${source.sshTunnel.host}: mongodump（凭据通过标准输入）`);
       cmd = 'ssh';
       argv = [...sshBase, remoteCmd];
+      stdinPrefix = buildSecureMongoHostInvocation('mongodump', [], eff.password || '').stdinPrefix;
     } else {
-      cb.appendLog(`[source] mongodump ${dumpArgs.join(' ')}`);
-      cmd = 'mongodump';
-      argv = dumpArgs;
+      const invocation = buildSecureMongoHostInvocation('mongodump', dumpArgs, eff.password || '');
+      cb.appendLog(`[source] ${describeSecureInvocation(invocation)}（凭据通过标准输入）`);
+      cmd = invocation.command;
+      argv = invocation.argv;
+      stdinPrefix = invocation.stdinPrefix;
     }
 
-    const child = spawn(cmd, argv, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(cmd, argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin!.end(stdinPrefix);
     let stderrTail = '';
     child.stderr!.on('data', (d: Buffer) => {
       const s = d.toString();
@@ -21690,6 +21920,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     target: MongoConnectionConfig,
     source: MongoConnectionConfig,
     cols: string[] | undefined,
+    migrationProjectId: string | undefined,
     cb: {
       appendLog: (s: string) => void;
       onProgressLine: (line: string) => void;
@@ -21705,6 +21936,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const qs = new URLSearchParams();
       if (source.database) qs.set('sourceDb', source.database);
       if (target.database) qs.set('targetDb', target.database);
+      if (target.projectId) qs.set('projectId', target.projectId);
+      if (target.serviceId) qs.set('serviceId', target.serviceId);
       if (cols && cols.length) qs.set('collections', cols.join(','));
       const apiPath = '/api/data-migrations/local-restore' + (qs.toString() ? '?' + qs.toString() : '');
       const url = new URL(peer.baseUrl.replace(/\/$/, '') + apiPath);
@@ -21756,7 +21989,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     }
 
     // ── Local / remote via mongorestore ──
-    const eff = target.type === 'local' ? resolveMongoConn(target) : target;
+    const eff = target.type === 'local' ? resolveMongoConn(target, migrationProjectId) : target;
     const restoreArgs = buildMongorestoreArgs(
       eff.host, eff.port,
       { username: eff.username, password: eff.password, authDatabase: eff.authDatabase },
@@ -21770,20 +22003,25 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
     let cmd: string;
     let argv: string[];
+    let stdinPrefix: string;
     if (target.sshTunnel?.enabled) {
       cb.send(12, `通过 SSH 连接 ${target.sshTunnel.host}...`);
       const sshBase = buildSshBase(target.sshTunnel);
-      const remoteCmd = buildRemoteMongoCmd('mongorestore', restoreArgs, target.sshTunnel.dockerContainer);
-      cb.appendLog(`[target] ssh ${target.sshTunnel.username}@${target.sshTunnel.host}: ${remoteCmd}`);
+      const remoteCmd = buildRemoteMongoCmd('mongorestore', restoreArgs, target.sshTunnel.dockerContainer, eff.password || '');
+      cb.appendLog(`[target] ssh ${target.sshTunnel.username}@${target.sshTunnel.host}: mongorestore（凭据通过标准输入）`);
       cmd = 'ssh';
       argv = [...sshBase, remoteCmd];
+      stdinPrefix = buildSecureMongoHostInvocation('mongorestore', [], eff.password || '').stdinPrefix;
     } else {
-      cb.appendLog(`[target] mongorestore ${restoreArgs.join(' ')}`);
-      cmd = 'mongorestore';
-      argv = restoreArgs;
+      const invocation = buildSecureMongoHostInvocation('mongorestore', restoreArgs, eff.password || '');
+      cb.appendLog(`[target] ${describeSecureInvocation(invocation)}（凭据通过标准输入）`);
+      cmd = invocation.command;
+      argv = invocation.argv;
+      stdinPrefix = invocation.stdinPrefix;
     }
 
     const child = spawn(cmd, argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin!.write(stdinPrefix);
     let stderrTail = '';
     const mirror = (prefix: string) => (d: Buffer) => {
       const s = d.toString();
@@ -21814,28 +22052,40 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     if (!connection) { res.status(400).json({ error: '缺少 connection 参数' }); return; }
 
     try {
-      let host = connection.host;
-      let port = connection.port;
+      const effective = connection.type === 'local'
+        ? resolveMongoConn(connection, connection.projectId)
+        : connection;
+      const host = effective.host;
+      const port = effective.port;
 
-      // Resolve local
-      if (connection.type === 'local') {
-        const mongoInfra = stateService.getInfraServices().find(s => s.id === 'mongodb');
-        if (!mongoInfra) { res.json({ success: false, error: '本机 MongoDB 未注册' }); return; }
-        host = stateService.getCdsEnvVars()['CDS_HOST'] || '172.17.0.1';
-        port = mongoInfra.hostPort;
-      }
-
-      // Build mongosh/mongo test command
-      let testCmd = `mongosh --host ${host} --port ${port} --eval "db.adminCommand({ping:1})" --quiet`;
-      if (connection.username) testCmd = `mongosh --host ${host} --port ${port} -u ${connection.username} -p ${connection.password || ''} --authenticationDatabase ${connection.authDatabase || 'admin'} --eval "db.adminCommand({ping:1})" --quiet`;
-
-      const result = await shell.exec(testCmd, { timeout: 10000 });
+      const testInvocation = buildSecureMongoHostInvocation(
+        'mongosh',
+        [
+          '--host', host, '--port', String(port), '--eval', 'db.adminCommand({ping:1})', '--quiet',
+          ...(effective.username ? ['--username', effective.username, '--authenticationDatabase', effective.authDatabase || 'admin'] : []),
+        ],
+        effective.password || '',
+      );
+      const result = await shell.exec(
+        invocationShellCommand(testInvocation),
+        { timeout: 10_000, stdin: testInvocation.stdinPrefix },
+      );
       if (result.exitCode === 0) {
         // Get database list
-        let listCmd = `mongosh --host ${host} --port ${port} --eval "JSON.stringify(db.adminCommand({listDatabases:1}).databases.map(d=>({name:d.name,sizeOnDisk:d.sizeOnDisk})))" --quiet`;
-        if (connection.username) listCmd = `mongosh --host ${host} --port ${port} -u ${connection.username} -p ${connection.password || ''} --authenticationDatabase ${connection.authDatabase || 'admin'} --eval "JSON.stringify(db.adminCommand({listDatabases:1}).databases.map(d=>({name:d.name,sizeOnDisk:d.sizeOnDisk})))" --quiet`;
-
-        const listResult = await shell.exec(listCmd, { timeout: 10000 });
+        const listInvocation = buildSecureMongoHostInvocation(
+          'mongosh',
+          [
+            '--host', host, '--port', String(port),
+            '--eval', 'JSON.stringify(db.adminCommand({listDatabases:1}).databases.map(d=>({name:d.name,sizeOnDisk:d.sizeOnDisk})))',
+            '--quiet',
+            ...(effective.username ? ['--username', effective.username, '--authenticationDatabase', effective.authDatabase || 'admin'] : []),
+          ],
+          effective.password || '',
+        );
+        const listResult = await shell.exec(
+          invocationShellCommand(listInvocation),
+          { timeout: 10_000, stdin: listInvocation.stdinPrefix },
+        );
         let databases: unknown[] = [];
         try { databases = JSON.parse(listResult.stdout.trim()); } catch { /* ok */ }
         res.json({ success: true, databases });
@@ -21845,7 +22095,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         if (tcpResult.stdout.includes('TCP_FAILED')) {
           res.json({ success: false, error: `无法连接到 ${host}:${port}` });
         } else {
-          res.json({ success: false, error: `连接成功但认证失败: ${result.stderr || result.stdout}` });
+          res.json({ success: false, error: `连接成功但认证失败: ${maskTextSecrets(result.stderr || result.stdout, [effective.password || ''])}` });
         }
       }
     } catch (e) {
@@ -21860,8 +22110,18 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     try {
       const conn = resolveMongoConn(connection);
       const evalScript = `JSON.stringify(db.adminCommand({listDatabases:1}).databases.map(d=>({name:d.name,sizeOnDisk:d.sizeOnDisk})))`;
-      const cmd = `mongosh --host ${conn.host} --port ${conn.port}${mongoAuthArgs(conn)} --eval "${evalScript}" --quiet 2>/dev/null`;
-      const result = await shell.exec(cmd, { timeout: 15000 });
+      const invocation = buildSecureMongoHostInvocation(
+        'mongosh',
+        [
+          '--host', conn.host, '--port', String(conn.port), '--eval', evalScript, '--quiet',
+          ...(conn.username ? ['--username', conn.username, '--authenticationDatabase', conn.authDatabase || 'admin'] : []),
+        ],
+        conn.password || '',
+      );
+      const result = await shell.exec(
+        invocationShellCommand(invocation),
+        { timeout: 15_000, stdin: invocation.stdinPrefix },
+      );
       let databases: Array<{ name: string; sizeOnDisk: number }> = [];
       if (result.exitCode === 0) {
         const lines = result.stdout.trim().split('\n');
@@ -21889,9 +22149,18 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const conn = resolveMongoConn(connection);
       const db = conn.database!;
       const evalScript = `JSON.stringify(db.getSiblingDB('${db}').getCollectionInfos({type:'collection'}).map(c=>({name:c.name,count:db.getSiblingDB('${db}').getCollection(c.name).estimatedDocumentCount()})))`;
-      let cmd = `mongosh --host ${conn.host} --port ${conn.port}${mongoAuthArgs(conn)} --eval "${evalScript}" --quiet 2>/dev/null`;
-
-      const result = await shell.exec(cmd, { timeout: 15000 });
+      const invocation = buildSecureMongoHostInvocation(
+        'mongosh',
+        [
+          '--host', conn.host, '--port', String(conn.port), '--eval', evalScript, '--quiet',
+          ...(conn.username ? ['--username', conn.username, '--authenticationDatabase', conn.authDatabase || 'admin'] : []),
+        ],
+        conn.password || '',
+      );
+      const result = await shell.exec(
+        invocationShellCommand(invocation),
+        { timeout: 15_000, stdin: invocation.stdinPrefix },
+      );
       if (result.exitCode !== 0) {
         res.json({ collections: [], error: result.stderr || 'mongosh 执行失败' });
         return;
@@ -22120,17 +22389,38 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //
   // Body: { database?: string, collections?: string[] }
   router.post('/data-migrations/local-dump', async (req, res) => {
-    const body = (req.body || {}) as { database?: string; collections?: string[] };
+    const body = (req.body || {}) as { projectId?: string; serviceId?: string; database?: string; collections?: string[] };
     let eff: MongoConnectionConfig;
+    let mongoInfra: InfraService;
     try {
-      eff = resolveMongoConn({ type: 'local', host: '', port: 0, database: body.database });
+      mongoInfra = resolvePeerLocalMongo(req, body.projectId, body.serviceId);
+      eff = peerLocalMongoConnection(mongoInfra, body.database);
     } catch (e) {
-      res.status(500).json({ error: (e as Error).message });
+      res.status(409).json({ error: (e as Error).message });
       return;
     }
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId: mongoInfra.projectId,
+        serviceId: mongoInfra.id,
+        runtime: 'mongodb',
+        kind: 'peer-dump',
+      });
+    } catch (error) {
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({ error: rotating ? 'MongoDB 正在轮换凭据，暂不能导出迁移数据。' : '无法登记迁移导出作业。' });
+      return;
+    }
+    let maintenanceSettled = false;
+    const settleMaintenance = (status: 'completed' | 'failed'): void => {
+      if (maintenanceSettled) return;
+      maintenanceSettled = true;
+      void stateService.finishInfraMaintenanceJob(maintenanceJob.id, status);
+    };
     const dumpArgs = buildMongodumpArgs(
       eff.host, eff.port,
-      {},
+      { username: eff.username, authDatabase: eff.authDatabase },
       body.database,
       body.collections,
     );
@@ -22139,20 +22429,24 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       'Cache-Control': 'no-cache',
       'X-Accel-Buffering': 'no',
     });
-    const child = spawn('mongodump', dumpArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const invocation = buildSecureMongoHostInvocation('mongodump', dumpArgs, eff.password || '');
+    const child = spawn(invocation.command, invocation.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin.end(invocation.stdinPrefix);
     let stderrTail = '';
     child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
     child.stdout.pipe(res);
     child.on('close', (code) => {
+      settleMaintenance(code === 0 ? 'completed' : 'failed');
       if (code !== 0) {
         // We may already have sent headers — append a trailer-like marker
-        try { res.write(`\n__CDS_DUMP_ERROR__:${stderrTail.slice(-400)}`); } catch { /* */ }
+        try { res.write(`\n__CDS_DUMP_ERROR__:${redactSecretValues(stderrTail.slice(-400), [eff.password || ''])}`); } catch { /* */ }
       }
       try { res.end(); } catch { /* */ }
     });
     child.on('error', (err) => {
+      settleMaintenance('failed');
       try {
-        if (!res.headersSent) res.status(500).json({ error: err.message });
+        if (!res.headersSent) res.status(500).json({ error: redactSecretValues(err.message, [eff.password || '']) });
         else res.end();
       } catch { /* */ }
     });
@@ -22171,45 +22465,69 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //
   // Query params: sourceDb, targetDb, collections (comma-separated)
   router.post('/data-migrations/local-restore', async (req, res) => {
+    const explicitProjectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
+    const explicitServiceId = typeof req.query.serviceId === 'string' ? req.query.serviceId : undefined;
     const sourceDb = (req.query.sourceDb as string | undefined) || undefined;
     const targetDb = (req.query.targetDb as string | undefined) || undefined;
     const colsParam = req.query.collections as string | undefined;
     const collections = colsParam ? colsParam.split(',').filter(Boolean) : undefined;
 
     let eff: MongoConnectionConfig;
+    let mongoInfra: InfraService;
     try {
-      eff = resolveMongoConn({ type: 'local', host: '', port: 0, database: targetDb });
+      mongoInfra = resolvePeerLocalMongo(req, explicitProjectId, explicitServiceId);
+      eff = peerLocalMongoConnection(mongoInfra, targetDb);
     } catch (e) {
-      res.status(500).json({ error: (e as Error).message });
+      res.status(409).json({ error: (e as Error).message });
       return;
     }
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId: mongoInfra.projectId,
+        serviceId: mongoInfra.id,
+        runtime: 'mongodb',
+        kind: 'peer-restore',
+      });
+    } catch (error) {
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({ error: rotating ? 'MongoDB 正在轮换凭据，暂不能接收迁移恢复。' : '无法登记迁移恢复作业。' });
+      return;
+    }
+    let maintenanceSettled = false;
+    const settleMaintenance = (status: 'completed' | 'failed'): void => {
+      if (maintenanceSettled) return;
+      maintenanceSettled = true;
+      void stateService.finishInfraMaintenanceJob(maintenanceJob.id, status);
+    };
     const restoreArgs = buildMongorestoreArgs(
       eff.host, eff.port,
-      {},
+      { username: eff.username, authDatabase: eff.authDatabase },
       { drop: true, sourceDb, targetDb, collections },
     );
-    const child = spawn('mongorestore', restoreArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const invocation = buildSecureMongoHostInvocation('mongorestore', restoreArgs, eff.password || '');
+    const child = spawn(invocation.command, invocation.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin.write(invocation.stdinPrefix);
     let stderrTail = '';
     const logLines: string[] = [];
     const mirror = (d: Buffer) => {
       const s = d.toString();
-      stderrTail = (stderrTail + s).slice(-4000);
-      for (const line of s.split('\n')) if (line) logLines.push(line);
+      const safe = redactSecretValues(s, [eff.password || '']);
+      stderrTail = (stderrTail + safe).slice(-4000);
+      for (const line of safe.split('\n')) if (line) logLines.push(line);
     };
     child.stderr.on('data', mirror);
     child.stdout.on('data', mirror);
 
-    // Pipe request body into mongorestore stdin
+    // The authentication config prefix must be written before archive bytes.
     req.pipe(child.stdin);
 
     // If the client aborts upload, kill the restore process
     req.on('error', () => { try { child.kill('SIGKILL'); } catch { /* */ } });
-    req.on('close', () => {
-      // End of request body — close stdin so mongorestore can finish
-      try { child.stdin.end(); } catch { /* */ }
-    });
+    req.on('aborted', () => { try { child.kill('SIGKILL'); } catch { /* */ } });
 
     child.on('close', (code) => {
+      settleMaintenance(code === 0 ? 'completed' : 'failed');
       if (code === 0) {
         res.json({ success: true, log: logLines.join('\n') });
       } else {
@@ -22217,7 +22535,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       }
     });
     child.on('error', (err) => {
-      if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
+      settleMaintenance('failed');
+      if (!res.headersSent) res.status(500).json({ success: false, error: redactSecretValues(err.message, [eff.password || '']) });
     });
   });
 

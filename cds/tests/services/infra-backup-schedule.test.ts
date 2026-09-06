@@ -291,6 +291,18 @@ describe('结论可读', () => {
 
 /** 接线守卫：判定写好没人调用，表现和「一切正常」一模一样。 */
 describe('自动备份真的被启动了', () => {
+  it('Mongo/Redis 每目标先耐久登记 automatic-backup，且 finally 必定结束作业', () => {
+    const start = SRC.indexOf('function startInfraAutoBackup(');
+    const end = SRC.indexOf('\nasync function certificateStatus', start);
+    const code = SRC.slice(start, end);
+    const begin = code.indexOf('await stateService.beginInfraMaintenanceJob({');
+    const firstMongoIo = code.indexOf("if (t.kind === 'mongo')", begin + 1);
+    expect(begin).toBeGreaterThan(0);
+    expect(firstMongoIo).toBeGreaterThan(begin);
+    expect(code).toContain("kind: 'automatic-backup'");
+    expect(code).toContain('infra_maintenance.credential_rotation_in_progress');
+    expect(code).toMatch(/finally\s*\{[\s\S]*await stateService\.finishInfraMaintenanceJob\(/);
+  });
   const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
   const CODE = SRC.split('\n')
     .filter((l) => {
@@ -438,21 +450,15 @@ describe('首轮实跑暴露的缺陷', () => {
     expect(buildMysqlDumpScript()).toContain('--single-transaction');
   });
 
-  /**
-   * 凭据必须在**容器内部**展开：不进宿主命令行（因而不进 CDS 日志与宿主 ps），
-   * 也不依赖 CDS 台账里那份 env——台账看不到 compose 导入 / 手工起的容器的真实
-   * 凭据，照台账取会在有认证的库上静默失败。
-   */
+  /** 轮换后的权威凭据来自 state，口令经 stdin config 送入，不进入任一侧 argv。 */
   it('备份命令不把凭据插进宿主命令行', () => {
     // 判据要盯「从台账取凭据」这个动作本身，别用 `-p ${shq(` 这种形状去猜——
     // 它会把 `mkdir -p ${shq(dir)}` 一起匹配上（判据太宽，今天已经栽过同款）。
-    expect(CODE).not.toMatch(/const pw = env\./);
-    expect(CODE).not.toMatch(/MONGO_INITDB_ROOT_PASSWORD \|\| env\./);
-    // TS 源码里 `$` 写成 `${'$'}` 转义。断言必须针对**渲染出来的 shell 文本**，
-    // 不是源码字面量——直接扫源码就是在读一个和运行时不同的值（今天栽过同款）。
-    const SHELL = CODE.replace(/\$\{'\$'\}/g, '$');
+    expect(CODE).toContain('stateService.getInfraServiceForProjectAndId(t.projectId, t.id)');
+    expect(CODE).toContain('--config=/dev/stdin');
+    expect(CODE).toContain('commandStdin = `password: ${JSON.stringify(password)}');
+    expect(CODE).not.toMatch(/mongodump[^\n]+(?:-p|--password)[= ]/);
     expect(buildMysqlDumpScript()).toMatch(/export MYSQL_PWD="\$CDS_(ROOT|APP)_PW"/);
-    expect(SHELL).toMatch(/\$\{MONGO_INITDB_ROOT_PASSWORD:-/);
   });
 });
 

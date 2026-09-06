@@ -104,6 +104,7 @@ describe('ContainerService', () => {
 
       // Verify env file contents
       const envFileContent = writeSpy.mock.calls[0][1] as string;
+      expect(writeSpy.mock.calls[0][2]).toMatchObject({ mode: 0o600, flag: 'wx' });
       expect(envFileContent).toContain('JWT_SECRET=project-jwt-secret');
       expect(envFileContent).toContain('Jwt__Secret=project-jwt-secret');
       expect(envFileContent).toContain('Jwt__Issuer=prdagent');

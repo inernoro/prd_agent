@@ -114,6 +114,10 @@ describe('JsonStateBackingStore', () => {
       const raw = fs.readFileSync(filePath, 'utf-8');
       const parsed = JSON.parse(raw);
       expect(parsed.branches.b1.name).toBe('feature/x');
+      expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+      const backup = fs.readdirSync(tmpDir).find((name) => name.startsWith('state.json.bak.'));
+      expect(backup).toBeTruthy();
+      expect(fs.statSync(path.join(tmpDir, backup!)).mode & 0o777).toBe(0o600);
     });
 
     it('coalesces multiple saves in the same tick into one write with the latest value', async () => {

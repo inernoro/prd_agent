@@ -1877,6 +1877,11 @@ export interface CdsState {
   /** Resource-scoped database clone / create / restore task history. */
   resourceCloneTasks?: ResourceCloneTask[];
   /**
+   * 正在直接占用基础设施数据面的短作业台账。轮换在撤销旧凭据前以此做 drain 门禁；
+   * completed/failed 记录只保留有限历史，active 记录在进程崩溃后故意保持阻断，等待人工核对。
+   */
+  infraMaintenanceJobs?: InfraMaintenanceJob[];
+  /**
    * 分支墓碑台账（PR 合并/关闭后分支被删，gone 页据此区分"已合并"与"已放弃"）。
    * Keyed by previewSlug（即预览子域名 slug，与 gone 页收到的 slug 同口径），
    * 这样 serveBranchGonePage(slug) 能直接命中。容量上限由 StateService
@@ -2953,6 +2958,34 @@ export interface ResourceCloneTask {
   log?: string;
 }
 
+export type InfraMaintenanceJobKind =
+  | 'automatic-backup'
+  | 'manual-backup'
+  | 'manual-restore'
+  | 'resource-backup'
+  | 'resource-restore'
+  | 'peer-dump'
+  | 'peer-restore'
+  | 'replica-isolation'
+  | 'data-query'
+  | 'data-schema'
+  | 'data-init';
+
+/**
+ * 直接使用某个 infra 连接或数据文件的持久短作业租约。
+ * 此处禁止保存命令、连接串、请求正文和凭据，只允许资源身份与生命周期元数据。
+ */
+export interface InfraMaintenanceJob {
+  id: string;
+  projectId: string;
+  serviceId: string;
+  runtime: 'mongodb' | 'redis' | 'other';
+  kind: InfraMaintenanceJobKind;
+  status: 'active' | 'completed' | 'failed';
+  startedAt: string;
+  finishedAt?: string;
+}
+
 /**
  * 配置快照。拍下 buildProfiles/envVars/infra/routingRules 四件套当前状态，
  * 供一键回滚。不包含 branches/logs/运行时字段 —— 那些不算「配置」。
@@ -3934,6 +3967,10 @@ export interface MongoConnectionConfig {
   type: 'local' | 'remote' | 'cds';
   host: string;
   port: number;
+  /** Owning CDS project for a local connection. Required to disambiguate multi-project infra. */
+  projectId?: string;
+  /** Exact InfraService id for a local connection. */
+  serviceId?: string;
   /** Database name (empty = all databases) */
   database?: string;
   /** Auth username */
@@ -3951,6 +3988,8 @@ export interface MongoConnectionConfig {
 /** A data migration task */
 export interface DataMigration {
   id: string;
+  /** Owning CDS project used to resolve local infrastructure at execution time. */
+  projectId?: string;
   /** Display name */
   name: string;
   /** Database type (extensible: 'mongodb', future: 'redis', 'postgres', etc.) */
@@ -3959,6 +3998,11 @@ export interface DataMigration {
   source: MongoConnectionConfig;
   /** Target connection */
   target: MongoConnectionConfig;
+  /**
+   * Source/target passwords sealed with CDS_SECRET_KEY. Public routes must
+   * remove this field; only the execution path may unseal it transiently.
+   */
+  credentialsEncrypted?: SealedSecret;
   /** Specific collections to migrate (empty/undefined = all collections) */
   collections?: string[];
   /** Migration status */
@@ -3998,6 +4042,60 @@ export interface InfraHealthCheck {
   interval: number;
   /** Number of retries before marking unhealthy */
   retries: number;
+}
+
+export type InfraCredentialRotationStage =
+  | 'prepared'
+  | 'issued'
+  | 'deployed'
+  | 'verified'
+  | 'revoked'
+  | 'verified_after_revoke'
+  | 'failed';
+
+export interface InfraCredentialRotationEvent {
+  stage: InfraCredentialRotationStage | 'recovery_verified' | 'quiescence_verified' | 'quiescence_blocked' | 'rollback_started' | 'rollback_completed' | 'rollback_failed';
+  at: string;
+  /** 只允许放不含凭据的证据编号、数量与哈希前缀。 */
+  evidence?: Record<string, string | number | boolean | null>;
+}
+
+/**
+ * 项目共享数据服务的凭据轮换台账。
+ *
+ * 本结构刻意不提供 secret/password/token 字段；运行期凭据仍由 InfraService.env 与
+ * 项目环境变量的既有密钥存储承担，轮换台账只保存指纹和可审计元数据。
+ */
+export interface InfraCredentialRotationRecord {
+  id: string;
+  idempotencyKey: string;
+  projectId: string;
+  serviceId: string;
+  runtime: 'mongodb' | 'redis';
+  stage: InfraCredentialRotationStage;
+  previousFingerprint: string;
+  nextFingerprint: string;
+  consumerIds: string[];
+  /** 已实际完成切换的消费者；部分部署失败时用于精确回滚，必须逐分支耐久写入。 */
+  deployedConsumerIds?: string[];
+  deploymentRevision?: string;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+  failureCode?: string;
+  rollback?: 'not-required' | 'started' | 'completed' | 'failed';
+  events: InfraCredentialRotationEvent[];
+}
+
+/**
+ * 轮换未完成时的可恢复上下文。payload 只能是 CDS_SECRET_KEY 密封后的 AEAD 密文；
+ * API 序列化必须删除整个字段，不能把密文当成可公开的脱敏值。
+ */
+export interface InfraCredentialRotationVault {
+  operationId: string;
+  idempotencyKey: string;
+  payload: SealedSecret;
+  sealedAt: string;
 }
 
 /** An infrastructure service managed by CDS (e.g., MongoDB, Redis) */
@@ -4056,6 +4154,10 @@ export interface InfraService {
   restartPolicy?: string;
   /** When this service was created */
   createdAt: string;
+  /** 最近一轮共享凭据轮换的无明文审计台账。 */
+  credentialRotation?: InfraCredentialRotationRecord;
+  /** 未完成轮换的密封恢复上下文；成功或已完成回滚后立即清除。 */
+  credentialRotationVault?: InfraCredentialRotationVault;
 }
 
 /** CDS running mode */

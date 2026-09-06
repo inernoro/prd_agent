@@ -48,21 +48,25 @@ describe('infra-data buildInfraDataExec', () => {
     expect(ex.secretValues).toEqual(['mp']);
   });
 
-  it('mongo: builds auth uri against the app db (default app, not admin), secret tracked', () => {
-    const ex = buildInfraDataExec(svc('mongo:7', { MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'mpw' }), 'schema', '');
-    expect(ex.argv.some((a) => a.includes('mongodb://app:mpw@localhost:27017/app?authSource=admin'))).toBe(true);
-    // must NOT target the admin database (would hide the user's own collections)
-    expect(ex.argv.some((a) => a.includes('/admin?'))).toBe(false);
-    expect(ex.stdin).toBe('db.getCollectionNames();');
-    expect(ex.secretValues).toEqual(['mpw']);
+  it('mongo: sends the password through stdin and keeps argv free of a URI or secret', () => {
+    const secret = 'mongo-canary-never-in-argv';
+    const ex = buildInfraDataExec(svc('mongo:7', { MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: secret }), 'schema', '');
+    expect(JSON.stringify(ex.argv)).not.toContain(secret);
+    expect(JSON.stringify(ex.argv)).not.toContain('mongodb://');
+    expect(ex.argv).toContain('mongosh');
+    expect(ex.argv).toEqual(expect.arrayContaining(['app', '--authenticationDatabase', 'admin']));
+    expect(ex.argv[ex.argv.length - 1]).toBe('--password');
+    expect(ex.stdin.endsWith('db.getCollectionNames();')).toBe(true);
+    expect(ex.stdin.startsWith(`${secret}\n`)).toBe(true);
+    expect(ex.secretValues).toEqual([secret]);
   });
 
   it('mongo: connects to MONGO_INITDB_DATABASE / svc.dbName when configured', () => {
     const byEnv = buildInfraDataExec(svc('mongo:7', { MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'mpw', MONGO_INITDB_DATABASE: 'shop' }), 'schema', '');
-    expect(byEnv.argv.some((a) => a.includes('/shop?authSource=admin'))).toBe(true);
+    expect(byEnv.argv).toContain('shop');
     // svc.dbName (the SSOT field) wins over the env mirror
     const byField = buildInfraDataExec(svc('mongo:7', { MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'mpw', MONGO_INITDB_DATABASE: 'shop' }, { dbName: 'orders' }), 'schema', '');
-    expect(byField.argv.some((a) => a.includes('/orders?authSource=admin'))).toBe(true);
+    expect(byField.argv).toContain('orders');
   });
 
   it('redis schema => SCAN, no secret', () => {
@@ -72,10 +76,15 @@ describe('infra-data buildInfraDataExec', () => {
     expect(ex.secretValues).toEqual([]);
   });
 
-  it('redis: honours requirepass via -a + --no-auth-warning, tracks secret', () => {
-    const ex = buildInfraDataExec(svc('redis:7-alpine', { REDIS_PASSWORD: 'rpw' }), 'query', 'PING');
-    expect(ex.argv).toEqual(expect.arrayContaining(['redis-cli', '-a', 'rpw', '--no-auth-warning']));
-    expect(ex.secretValues).toEqual(['rpw']);
+  it('redis: sends requirepass through stdin-backed REDISCLI_AUTH, not -a', () => {
+    const secret = 'redis-canary-never-in-argv';
+    const ex = buildInfraDataExec(svc('redis:7-alpine', { REDIS_PASSWORD: secret }), 'query', 'PING');
+    expect(ex.argv).toContain('redis-cli');
+    expect(ex.argv).not.toContain('-a');
+    expect(JSON.stringify(ex.argv)).not.toContain(secret);
+    expect(ex.stdin).not.toContain(secret);
+    expect(ex.stdin.endsWith('PING')).toBe(true);
+    expect(ex.secretValues).toEqual([secret]);
   });
 
   it('redis: no password stays bare (backward compat — catalog redis has no auth)', () => {

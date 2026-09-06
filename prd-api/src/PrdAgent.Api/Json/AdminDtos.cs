@@ -302,6 +302,32 @@ public class AssetStorageReadinessResponse
 }
 
 /// <summary>
+/// 应用业务依赖就绪检查响应。错误仅暴露稳定错误码，不返回连接信息或底层异常。
+/// </summary>
+public class ApplicationReadinessResponse
+{
+    public string Status { get; set; } = string.Empty;
+    public string? ErrorCode { get; set; }
+    public string Provider { get; set; } = string.Empty;
+    public string? ExpectedProvider { get; set; }
+    public bool WriteVerified { get; set; }
+    public bool InternalReadVerified { get; set; }
+    public bool PublicReadVerified { get; set; }
+    public bool CleanupVerified { get; set; }
+    public long ProbeBytes { get; set; }
+    public List<ApplicationReadinessComponent> Components { get; set; } = [];
+    public DateTime CheckedAt { get; set; }
+    public long DurationMs { get; set; }
+}
+
+public class ApplicationReadinessComponent
+{
+    public string Name { get; set; } = string.Empty;
+    public bool Ready { get; set; }
+    public string? ErrorCode { get; set; }
+}
+
+/// <summary>
 /// 流式错误事件
 /// </summary>
 public class StreamErrorEvent

@@ -52,6 +52,10 @@ import {
   type BackupHealthRecord,
 } from '../services/backup-panel.js';
 import { backupHealthFindings } from '../services/platform-daily-health.js';
+import {
+  buildSecureMongoDockerInvocation,
+  invocationShellCommand,
+} from '../services/secure-database-cli.js';
 
 export interface InfraBackupRouterDeps {
   stateService: StateService;
@@ -163,11 +167,18 @@ function outputTail(s: string, max = 300): string {
   return t.length > max ? `…（前文截断）${t.slice(-max)}` : t;
 }
 
+function maskKnownSecrets(text: string, secrets: Array<string | undefined>): string {
+  return secrets.reduce<string>((masked, secret) => (
+    secret && secret.length >= 3 ? masked.split(secret).join('******') : masked
+  ), String(text || ''));
+}
+
 /** 从 env 里抠 mongo root 账号密码，同时兼容两种写法。 */
-function extractMongoAuth(env: Record<string, string>): { user?: string; password?: string } {
+function extractMongoAuth(env?: Record<string, string>): { user?: string; password?: string } {
+  const values = env || {};
   return {
-    user: env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME,
-    password: env.MONGO_INITDB_ROOT_PASSWORD || env.MONGO_PASSWORD || env.MONGODB_PASSWORD,
+    user: values.MONGO_INITDB_ROOT_USERNAME || values.MONGO_USERNAME || values.MONGODB_USERNAME,
+    password: values.MONGO_INITDB_ROOT_PASSWORD || values.MONGO_PASSWORD || values.MONGODB_PASSWORD,
   };
 }
 
@@ -295,6 +306,28 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     }
 
     const kind = detectKind(svc);
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId: svc.projectId,
+        serviceId: svc.id,
+        runtime: kind === 'mongo' ? 'mongodb' : kind === 'redis' ? 'redis' : 'other',
+        kind: 'manual-backup',
+      });
+    } catch (error) {
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({
+        error: rotating ? '基础设施正在轮换凭据，请等待轮换完成后再备份。' : '无法登记备份作业，备份尚未开始。',
+      });
+      return;
+    }
+    let maintenanceSettled = false;
+    const settleMaintenance = async (status: 'completed' | 'failed'): Promise<void> => {
+      if (maintenanceSettled) return;
+      maintenanceSettled = true;
+      await stateService.finishInfraMaintenanceJob(maintenanceJob.id, status);
+    };
+    let maintenanceStatus: 'completed' | 'failed' = 'failed';
     const scripted = scriptedDump(kind);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const filename = `${svc.id}-${stamp}.`
@@ -312,27 +345,32 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         const auth = extractMongoAuth(svc.env);
         const authArgs: string[] = [];
         if (auth.user && auth.password) {
-          authArgs.push('-u', auth.user, '-p', auth.password, '--authenticationDatabase', 'admin');
+          authArgs.push('--username', auth.user, '--authenticationDatabase', 'admin');
         }
-        const cmd = [
-          'docker', 'exec', svc.containerName,
-          'mongodump', '--archive', '--gzip', ...authArgs,
-        ];
-        const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+        const invocation = buildSecureMongoDockerInvocation(
+          svc.containerName,
+          'mongodump',
+          ['--archive', '--gzip', ...authArgs],
+          auth.password || '',
+        );
+        const proc = spawn(invocation.command, invocation.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+        proc.stdin.end(invocation.stdinPrefix);
         proc.stdout.pipe(res);
         let stderr = '';
         proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
-        proc.on('close', (code) => {
-          if (code !== 0) {
-            console.error(`[infra-backup] mongodump exit ${code}: ${stderr}`);
-            if (!res.writableEnded) res.end();
-          }
-          // 记一条破坏性操作（备份自己不是破坏性，不记）
+        res.once('close', () => {
+          if (!res.writableEnded) { try { proc.kill('SIGKILL'); } catch { /* child close 负责结束台账 */ } }
         });
-        proc.on('error', (err) => {
-          if (!res.headersSent) res.status(500).json({ error: err.message });
-          else res.end();
+        const code = await new Promise<number | null>((resolve, reject) => {
+          proc.once('close', resolve);
+          proc.once('error', reject);
         });
+        if (code !== 0) {
+          const detail = maskKnownSecrets(stderr, [auth.password]);
+          console.error(`[infra-backup] mongodump exit ${code}: ${detail}`);
+          throw new Error(`mongodump exit ${code}: ${detail.slice(-300)}`);
+        }
+        maintenanceStatus = 'completed';
       } else if (kind === 'redis') {
         // 走**和周期备份同一个**探测脚本：它认证（env 取不到就扫容器内进程命令行里的
         // --requirepass）、用 INFO persistence 确认 BGSAVE 真的完成、再用 mtime 证明
@@ -363,10 +401,15 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         const cmd = ['docker', 'exec', svc.containerName, 'cat', rdbPath];
         const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
         proc.stdout.pipe(res);
-        proc.on('error', (err) => {
-          if (!res.headersSent) res.status(500).json({ error: err.message });
-          else res.end();
+        res.once('close', () => {
+          if (!res.writableEnded) { try { proc.kill('SIGKILL'); } catch { /* child close 负责结束台账 */ } }
         });
+        const code = await new Promise<number | null>((resolve, reject) => {
+          proc.once('close', resolve);
+          proc.once('error', reject);
+        });
+        if (code !== 0) throw new Error(`读取 Redis 快照失败 exit=${code}`);
+        maintenanceStatus = 'completed';
       } else if (scripted) {
         // mysql / postgres 此前都掉进下面的兜底 `tar -C /data`，而它们的数据分别在
         // /var/lib/mysql 与 /var/lib/postgresql/data，于是**下载得到一个 22 字节的
@@ -380,34 +423,41 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         proc.stdout.pipe(res);
         let stderr = '';
         proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
-        proc.on('close', (code) => {
-          if (code !== 0) {
-            // 截断取**尾**不取头：真正说明失败原因的那几行在末尾，取头只会拿到
-            // 一堆无关的启动噪音（house rule 见 ssh-exec-failure 的三宗罪）。
-            const tail = stderr.length > 300 ? `…（前文截断）${stderr.slice(-300)}` : stderr;
-            const tool = scripted.tool;
-            console.error(`[infra-backup] ${tool} exit ${code}: ${tail}`);
-            if (!res.headersSent) res.status(500).json({ error: `导出失败 exit=${code}`, detail: tail });
-            else res.destroy(new Error(`${tool} exit ${code}: ${tail}`));
-          }
+        res.once('close', () => {
+          if (!res.writableEnded) { try { proc.kill('SIGKILL'); } catch { /* child close 负责结束台账 */ } }
         });
-        proc.on('error', (err) => {
-          if (!res.headersSent) res.status(500).json({ error: err.message });
-          else res.end();
+        const code = await new Promise<number | null>((resolve, reject) => {
+          proc.once('close', resolve);
+          proc.once('error', reject);
         });
+        if (code !== 0) {
+          // 截断取**尾**不取头：真正说明失败原因的那几行在末尾，取头只会拿到
+          // 一堆无关的启动噪音（house rule 见 ssh-exec-failure 的三宗罪）。
+          const tail = stderr.length > 300 ? `…（前文截断）${stderr.slice(-300)}` : stderr;
+          throw new Error(`${scripted.tool} exit ${code}: ${tail}`);
+        }
+        maintenanceStatus = 'completed';
       } else {
         // generic: tar /data。只对「数据确实在 /data」的类型成立；
         // 新增类型前先确认它的数据目录，否则又是一个「200 但空壳」。
         const cmd = ['docker', 'exec', svc.containerName, 'tar', '-czf', '-', '-C', '/data', '.'];
         const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
         proc.stdout.pipe(res);
-        proc.on('error', (err) => {
-          if (!res.headersSent) res.status(500).json({ error: err.message });
-          else res.end();
+        res.once('close', () => {
+          if (!res.writableEnded) { try { proc.kill('SIGKILL'); } catch { /* child close 负责结束台账 */ } }
         });
+        const code = await new Promise<number | null>((resolve, reject) => {
+          proc.once('close', resolve);
+          proc.once('error', reject);
+        });
+        if (code !== 0) throw new Error(`通用数据导出失败 exit=${code}`);
+        maintenanceStatus = 'completed';
       }
     } catch (err) {
       if (!res.headersSent) res.status(500).json({ error: (err as Error).message });
+      else if (!res.writableEnded) res.destroy();
+    } finally {
+      await settleMaintenance(maintenanceStatus);
     }
   });
 
@@ -450,8 +500,32 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     }
 
     const kind = detectKind(svc);
-    const scripted = scriptedDump(kind);
-    const { spawn } = await import('node:child_process');
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId: svc.projectId,
+        serviceId: svc.id,
+        runtime: kind === 'mongo' ? 'mongodb' : kind === 'redis' ? 'redis' : 'other',
+        kind: 'manual-restore',
+      });
+    } catch (error) {
+      bail();
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({
+        error: rotating ? '基础设施正在轮换凭据，请等待轮换完成后再恢复。' : '无法登记恢复作业，恢复尚未开始。',
+      });
+      return;
+    }
+    let maintenanceSettled = false;
+    const settleMaintenance = async (status: 'completed' | 'failed'): Promise<void> => {
+      if (maintenanceSettled) return;
+      maintenanceSettled = true;
+      await stateService.finishInfraMaintenanceJob(maintenanceJob.id, status);
+    };
+    let maintenanceStatus: 'completed' | 'failed' = 'failed';
+    try {
+      const scripted = scriptedDump(kind);
+      const { spawn } = await import('node:child_process');
 
     // 1) 先自动备份当前状态（便于"撤销恢复"）
     const backupDir = await resolveBackupDir();
@@ -469,10 +543,18 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         const auth = extractMongoAuth(svc.env);
         const authArgs: string[] = [];
         if (auth.user && auth.password) {
-          authArgs.push('-u', auth.user, '-p', auth.password, '--authenticationDatabase', 'admin');
+          authArgs.push('--username', auth.user, '--authenticationDatabase', 'admin');
         }
-        const dumpCmd = `docker exec ${shq(svc.containerName)} mongodump --archive --gzip ${authArgs.map(shq).join(' ')} > ${shq(preBackupPath)}`;
-        await shell.exec(dumpCmd);
+        const invocation = buildSecureMongoDockerInvocation(
+          svc.containerName,
+          'mongodump',
+          ['--archive', '--gzip', ...authArgs],
+          auth.password || '',
+        );
+        await shell.exec(
+          `${invocationShellCommand(invocation)} > ${shq(preBackupPath)}`,
+          { timeout: 1_800_000, stdin: invocation.stdinPrefix },
+        );
       }
     } catch (err) {
       console.error('[infra-restore] pre-restore backup 失败', err);
@@ -485,27 +567,35 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         const auth = extractMongoAuth(svc.env);
         const authArgs: string[] = [];
         if (auth.user && auth.password) {
-          authArgs.push('-u', auth.user, '-p', auth.password, '--authenticationDatabase', 'admin');
+          authArgs.push('--username', auth.user, '--authenticationDatabase', 'admin');
         }
-        const cmd = [
-          'docker', 'exec', '-i', svc.containerName,
-          'mongorestore', '--archive', '--gzip', '--drop', ...authArgs,
-        ];
-        const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
+        const invocation = buildSecureMongoDockerInvocation(
+          svc.containerName,
+          'mongorestore',
+          ['--archive', '--gzip', '--drop', ...authArgs],
+          auth.password || '',
+        );
+        const proc = spawn(invocation.command, invocation.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+        proc.stdin.write(invocation.stdinPrefix);
         req.pipe(proc.stdin);
         let stderr = '';
         proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
-        proc.on('close', (code) => {
-          if (code !== 0) {
-            res.status(500).json({ error: `mongorestore exit ${code}`, detail: stderr });
-            return;
-          }
-          stateService.recordDestructiveOp({
-            type: 'purge-database',
-            summary: `恢复 ${svc.id} 数据库（预备份已保存：${preBackupPath}）`,
-          });
-          res.json({ restored: true, preRestoreBackup: preBackupPath, message: '数据库已恢复' });
+        const abortChild = (): void => { try { proc.kill('SIGKILL'); } catch { /* child close 负责结束台账 */ } };
+        req.once('aborted', abortChild);
+        res.once('close', () => { if (!res.writableEnded) abortChild(); });
+        const code = await new Promise<number | null>((resolve, reject) => {
+          proc.once('close', resolve);
+          proc.once('error', reject);
         });
+        if (code !== 0) {
+          throw new Error(`mongorestore exit ${code}: ${maskKnownSecrets(stderr, [auth.password]).slice(-300)}`);
+        }
+        stateService.recordDestructiveOp({
+          type: 'purge-database',
+          summary: `恢复 ${svc.id} 数据库（预备份已保存：${preBackupPath}）`,
+        });
+        maintenanceStatus = 'completed';
+        res.json({ restored: true, preRestoreBackup: preBackupPath, message: '数据库已恢复' });
       } else if (kind === 'redis') {
         // 该往哪写，问 redis 自己（和备份共用 REDIS_RDB_PATH_LINES 那份判据）。
         // 写死 /data/dump.rdb 的话，改过 dir/dbfilename 的实例会把上传的快照写到
@@ -597,6 +687,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           type: 'purge-database',
           summary: `恢复 ${svc.id} Redis 快照（恢复前状态已存：${preBackupPath}）`,
         });
+        maintenanceStatus = 'completed';
         res.json({
           restored: true,
           preRestoreBackup: preBackupPath,
@@ -686,6 +777,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           type: 'purge-database',
           summary: `恢复 ${svc.id} ${engineLabel} dump（恢复前状态已存：${preBackupPath}）`,
         });
+        maintenanceStatus = 'completed';
         res.json({
           restored: true,
           preRestoreBackup: preBackupPath,
@@ -707,7 +799,11 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         res.status(400).json({ error: '暂不支持该 infra 类型的自动恢复，请手动导入' });
       }
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      if (!res.headersSent) res.status(500).json({ error: (err as Error).message });
+      else if (!res.writableEnded) res.destroy();
+    }
+    } finally {
+      await settleMaintenance(maintenanceStatus);
     }
   });
 

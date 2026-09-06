@@ -51,6 +51,7 @@ import { createDockerNetworkHealthRouter } from './routes/docker-network-health.
 import { createTopologyAggregator } from './services/topology-aggregator.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
 import { createInfraDataRouter } from './routes/infra-data.js';
+import { createInfraCredentialRotationRouter } from './routes/infra-credential-rotation.js';
 import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createCommentTemplateRouter } from './routes/comment-template.js';
@@ -112,6 +113,12 @@ import {
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
+import { InfraCredentialRotationService } from './services/infra-credential-rotation.js';
+import {
+  CdsRotationConsumerCoordinator,
+  ProjectSharedCredentialRotationBackend,
+  StateInfraCredentialRotationStore,
+} from './services/infra-credential-rotation-runtime.js';
 import { isPreviewInstance } from './services/preview-instance.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 import {
@@ -1181,6 +1188,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/infra\/(.+)\/backup$/, '下载数据库备份'],
     [/^POST \/infra\/(.+)\/restore$/, '恢复数据库'],
     [/^GET \/infra\/(.+)\/backup-history$/, '查看备份历史'],
+    [/^GET \/projects\/[^/]+\/infra\/[^/]+\/credential-rotation$/, '查看共享凭据轮换'],
+    [/^POST \/projects\/[^/]+\/infra\/[^/]+\/credential-rotation$/, '执行共享凭据轮换'],
     [/^GET \/projects\/[^/]+\/backup-health$/, '查看周期备份'],
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
     [/^GET \/infra\/(.+)\/lifecycle-events$/, '查基础设施生命周期'],
@@ -1640,6 +1649,24 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const credentialRotationService = new InfraCredentialRotationService(
+    new StateInfraCredentialRotationStore(deps.stateService),
+    new ProjectSharedCredentialRotationBackend(
+      deps.stateService,
+      new CdsRotationConsumerCoordinator(deps.stateService, deps.config),
+      undefined,
+      undefined,
+      {
+        recreate: async (service) => {
+          await deps.containerService.stopInfraService(service.containerName);
+          await deps.containerService.startInfraService(service, deps.stateService.getCustomEnv(service.projectId));
+          deps.stateService.updateInfraService(service.id, { status: 'running', errorMessage: undefined }, service.projectId);
+          deps.stateService.save();
+          await deps.stateService.flush();
+        },
+      },
+    ),
+  );
   const deploymentRunService = new DeploymentRunService(deps.stateService);
   const deploymentVersionService = new DeploymentVersionService(deps.stateService);
   const managedProjectService = new ManagedProjectService(deps.stateService);
@@ -4303,6 +4330,11 @@ export function createServer(deps: ServerDeps): express.Express {
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
   app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any, repoRoot: deps.config.repoRoot }));
   app.use('/api', createInfraDataRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any }));
+  app.use('/api', createInfraCredentialRotationRouter({
+    stateService: deps.stateService,
+    rotationService: credentialRotationService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
   // 遗留 default 项目迁移（见 legacy-cleanup.ts 头部注释）
   app.use('/api', createLegacyCleanupRouter({
     stateService: deps.stateService,

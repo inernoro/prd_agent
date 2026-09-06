@@ -849,7 +849,7 @@ export class ContainerService {
   private writeEnvFile(mergedEnv: Record<string, string>): string {
     const envFilePath = path.join(os.tmpdir(), `cds-env-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const lines = Object.entries(mergedEnv).map(([k, v]) => `${k}=${v}`);
-    fs.writeFileSync(envFilePath, lines.join('\n'), 'utf-8');
+    fs.writeFileSync(envFilePath, lines.join('\n'), { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
     return envFilePath;
   }
 

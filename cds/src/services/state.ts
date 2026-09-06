@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, Principal, UserCredential, ProjectGrant, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, Principal, UserCredential, ProjectGrant, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, InfraMaintenanceJob, InfraMaintenanceJobKind, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -41,6 +41,7 @@ import {
 import { credentialUsability, hasActiveGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
+import { migrateLegacyDataMigrationCredentials } from './secure-database-cli.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
@@ -230,6 +231,7 @@ function emptyState(): CdsState {
     activityLogs: {},
     resourceExternalAccess: {},
     resourceCloneTasks: [],
+    infraMaintenanceJobs: [],
     removedBranches: {},
   };
 }
@@ -395,8 +397,12 @@ export class StateService {
       if (!this.state.activityLogs) this.state.activityLogs = {};
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
+      if (migrateLegacyDataMigrationCredentials(this.state.dataMigrations)) {
+        this.persistLegacyDataMigrationCredentialUpgrade();
+      }
       if (!this.state.resourceExternalAccess) this.state.resourceExternalAccess = {};
       if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];
+      if (!this.state.infraMaintenanceJobs) this.state.infraMaintenanceJobs = [];
       if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
       if (!this.state.scheduledJobs) this.state.scheduledJobs = [];
@@ -450,6 +456,59 @@ export class StateService {
       this.migrateProjects();
       // (nothing to scope on a fresh install — collections are empty)
     }
+  }
+
+  /**
+   * Plaintext migration passwords existed in state before sealed storage was
+   * introduced. JSON mode rewrites the primary file and every readable rolling
+   * backup synchronously before load returns, closing the crash window where a
+   * restarted CDS could continue to expose the old credential on disk. Other
+   * backends use the normal save/flush path; index.ts flushes startup migrations
+   * before the HTTP server is created.
+   */
+  private persistLegacyDataMigrationCredentialUpgrade(): void {
+    if (this.backingStore.kind !== 'json') {
+      this.save();
+      return;
+    }
+
+    const dir = path.dirname(this.filePath);
+    const base = path.basename(this.filePath);
+    const backupPaths = fs.existsSync(dir)
+      ? fs.readdirSync(dir)
+        .filter((name) => name.startsWith(`${base}.bak.`))
+        .map((name) => path.join(dir, name))
+      : [];
+    const snapshots: Array<{ file: string; state: CdsState }> = [{ file: this.filePath, state: this.state }];
+    for (const backupPath of backupPaths) {
+      try {
+        const backupState = JSON.parse(fs.readFileSync(backupPath, 'utf8')) as CdsState;
+        if (!backupState.dataMigrations) backupState.dataMigrations = [];
+        migrateLegacyDataMigrationCredentials(backupState.dataMigrations);
+        snapshots.push({ file: backupPath, state: backupState });
+      } catch (error) {
+        throw new Error(`旧版数据迁移凭据备份无法安全升级：${path.basename(backupPath)}: ${(error as Error).message}`);
+      }
+    }
+
+    for (const snapshot of snapshots) {
+      fs.mkdirSync(path.dirname(snapshot.file), { recursive: true });
+      const temp = `${snapshot.file}.credential-upgrade.${process.pid}`;
+      let fd: number | undefined;
+      try {
+        fd = fs.openSync(temp, 'w', 0o600);
+        fs.writeFileSync(fd, JSON.stringify(snapshot.state, null, 2));
+        fs.fsyncSync(fd);
+        fs.closeSync(fd);
+        fd = undefined;
+        fs.renameSync(temp, snapshot.file);
+        fs.chmodSync(snapshot.file, 0o600);
+      } finally {
+        if (fd !== undefined) fs.closeSync(fd);
+        try { fs.unlinkSync(temp); } catch { /* already renamed */ }
+      }
+    }
+    this.save();
   }
 
   private hasLegacyDefaultPayload(): boolean {
@@ -4538,6 +4597,87 @@ export class StateService {
     if (!task) throw new Error(`资源克隆任务 "${id}" 不存在`);
     Object.assign(task, updates, { updatedAt: new Date().toISOString() });
     return task;
+  }
+
+  // ── Infrastructure maintenance jobs ──
+
+  private isCredentialRotationTerminal(service: InfraService): boolean {
+    const rotation = service.credentialRotation;
+    if (!rotation) return true;
+    return rotation.stage === 'verified_after_revoke'
+      || (rotation.stage === 'failed' && rotation.rollback === 'completed');
+  }
+
+  canStartInfraMaintenance(projectId: string, serviceId: string): boolean {
+    const service = this.getInfraServiceForProjectAndId(projectId, serviceId);
+    return Boolean(service && this.isCredentialRotationTerminal(service));
+  }
+
+  hasActiveCredentialRotation(runtime?: 'mongodb' | 'redis'): boolean {
+    return this.state.infraServices.some((service) => {
+      if (this.isCredentialRotationTerminal(service)) return false;
+      if (!runtime) return true;
+      const label = `${service.id} ${service.basePresetId || ''} ${service.dockerImage}`.toLowerCase();
+      return runtime === 'mongodb' ? label.includes('mongo') : label.includes('redis');
+    });
+  }
+
+  /**
+   * 把短作业意图先耐久落盘再允许它接触数据库。轮换一旦写入非终态记录，新作业即被拒绝，
+   * 与撤销前的 active-job 枚举合起来封住「刚检查完又启动新备份」的竞态窗口。
+   */
+  async beginInfraMaintenanceJob(input: {
+    projectId: string;
+    serviceId: string;
+    runtime: InfraMaintenanceJob['runtime'];
+    kind: InfraMaintenanceJobKind;
+  }): Promise<InfraMaintenanceJob> {
+    const service = this.getInfraServiceForProjectAndId(input.projectId, input.serviceId);
+    if (!service) throw new Error('infra_maintenance.service_not_found');
+    if (!this.isCredentialRotationTerminal(service)) {
+      throw new Error('infra_maintenance.credential_rotation_in_progress');
+    }
+    if (!this.state.infraMaintenanceJobs) this.state.infraMaintenanceJobs = [];
+    const job: InfraMaintenanceJob = {
+      id: `imj_${crypto.randomBytes(12).toString('hex')}`,
+      projectId: input.projectId,
+      serviceId: input.serviceId,
+      runtime: input.runtime,
+      kind: input.kind,
+      status: 'active',
+      startedAt: new Date().toISOString(),
+    };
+    this.state.infraMaintenanceJobs.push(job);
+    this.state.infraMaintenanceJobs = [
+      ...this.state.infraMaintenanceJobs.filter((item) => item.status === 'active'),
+      ...this.state.infraMaintenanceJobs.filter((item) => item.status !== 'active').slice(-200),
+    ];
+    this.save(HINT_GLOBAL);
+    await this.flush();
+    return { ...job };
+  }
+
+  async finishInfraMaintenanceJob(id: string, status: 'completed' | 'failed'): Promise<void> {
+    const job = (this.state.infraMaintenanceJobs || []).find((item) => item.id === id);
+    if (!job || job.status !== 'active') return;
+    job.status = status;
+    job.finishedAt = new Date().toISOString();
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
+  listActiveInfraMaintenanceJobs(filter: {
+    projectId?: string;
+    serviceId?: string;
+    runtime?: InfraMaintenanceJob['runtime'];
+  } = {}): InfraMaintenanceJob[] {
+    return (this.state.infraMaintenanceJobs || []).filter((job) => {
+      if (job.status !== 'active') return false;
+      if (filter.projectId && job.projectId !== filter.projectId) return false;
+      if (filter.serviceId && job.serviceId !== filter.serviceId) return false;
+      if (filter.runtime && job.runtime !== filter.runtime) return false;
+      return true;
+    }).map((job) => ({ ...job }));
   }
 
   // ── CDS peers (remote CDS instances trusted for data migration) ──

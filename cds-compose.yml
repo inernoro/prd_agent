@@ -453,7 +453,7 @@ services:
       LLMGW_ADMIN_ENV_AUTHORITY: "${LLMGW_ADMIN_ENV_AUTHORITY}"
     labels:
       # 只做容器内部就绪检查，不声明 cds.subdomain/path-prefix，避免 CDS 生成独立 Web 预览。
-      cds.readiness-path: "/gw/healthz"
+      cds.readiness-path: "/gw/readyz"
 
   # 独立 LLM serving 网关 llmgw-serve（DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*）。
   # 与 api 同连一份 CDS 托管 Mongo；resolve 解密平台 key 用全局 x-cds-env.ApiKeyCrypto__Secret，
@@ -495,7 +495,7 @@ services:
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY}"
     labels:
       # 只做容器内部就绪检查，不声明 cds.subdomain/path-prefix，避免 CDS 生成独立 Web 预览。
-      cds.readiness-path: "/gw/v1/healthz"
+      cds.readiness-path: "/gw/v1/readyz"
 
   # 独立 LLM 网关前端控制台 llmgw-web。默认 CDS 源码模式由 Vite 承载当前分支，
   # /gw 与四协议入口分别反代到 console API 和 serving；express 模式仍使用 CI 的不可变 nginx 镜像。

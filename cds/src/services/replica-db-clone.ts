@@ -13,14 +13,18 @@
  *   - mysql    : CREATE DATABASE + mysqldump | mysql
  *   - postgres : CREATE DATABASE + pg_dump | psql（不用 TEMPLATE——源库有活跃连接必失败）
  *
- * 凭据均通过 docker exec -e 环境变量传入（MYSQL_PWD / PGPASSWORD / RS_MONGO_PW），
- * 不落 shell 参数，脚本里只出现受白名单校验的库名（[a-z0-9_]），无注入面。
+ * Mongo 凭据通过 mongosh stdin、Database Tools 0600 config 或 Docker 0600 env-file
+ * 传入；脚本里只出现受白名单校验的库名（[a-z0-9_]），无注入面。
  */
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { BranchEntry, BuildProfile, InfraService, ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
 import { PER_BRANCH_DB_ENV_KEYS, applyPerBranchDbIsolation } from './db-scope-isolation.js';
 import { detectInfraDataKind, runDockerExec, maskSecretValues } from '../routes/infra-data.js';
+import { buildSecureMongoDockerInvocation } from './secure-database-cli.js';
 
 export type ReplicaDbEngine = 'mongo' | 'mysql' | 'postgres';
 
@@ -685,7 +689,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
   const port = target.infra.containerPort || 27017;
   const user = env.MONGO_INITDB_ROOT_USERNAME || '';
   const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
-  const secrets = [pw].filter(Boolean);
+  const secrets = [pw, encodeURIComponent(pw)].filter(Boolean);
 
   // fail-closed：成员必须能经连接串 env 指向专用实例，否则隔离只是幻觉
   if (!target.connEnvKeys?.length) {
@@ -720,8 +724,10 @@ async function cloneMongoViaDedicatedInstance(opts: {
   // 是完整容器名）。
   const isoName = `cds-rsdb-${opts.instanceId ? `${opts.instanceId.slice(0, 6)}-` : ''}${dbName}`;
   const isoImage = process.env.CDS_REPLICA_ISO_MONGO_IMAGE || 'mongo:7.0';
-  const authFlags = user ? `-u "$RS_MONGO_USER" -p "$RS_MONGO_PW" --authenticationDatabase admin` : '';
-  const authEnv = user ? ['-e', `RS_MONGO_USER=${user}`, '-e', `RS_MONGO_PW=${pw}`] : [];
+  let authTempDir: string | undefined;
+  let authEnvFile: string | undefined;
+  let authEnv: string[] = [];
+  let authSetup = 'set --';
   const toolsHelper = (network: string, script: string): string[] => [
     'run', '--rm', '-i', '--pull', 'never',
     '--network', `container:${network}`,
@@ -734,6 +740,33 @@ async function cloneMongoViaDedicatedInstance(opts: {
   ];
 
   try {
+    if (user) {
+      if (/\r|\n/.test(user) || /\r|\n/.test(pw)) {
+        throw new Error('MongoDB 账号或口令包含 env-file 不支持的换行符，拒绝启动隔离克隆');
+      }
+      authTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-rs-mongo-auth-'));
+      authEnvFile = path.join(authTempDir, 'mongo.env');
+      const config = Buffer.from(JSON.stringify({ password: pw }), 'utf8').toString('base64');
+      const encodedUser = Buffer.from(user, 'utf8').toString('base64');
+      fs.writeFileSync(authEnvFile, [
+        `RS_MONGO_CONFIG_B64=${config}`,
+        `RS_MONGO_USER_B64=${encodedUser}`,
+        `MONGO_INITDB_ROOT_USERNAME=${user}`,
+        `MONGO_INITDB_ROOT_PASSWORD=${pw}`,
+        '',
+      ].join('\n'), { mode: 0o600 });
+      fs.chmodSync(authEnvFile, 0o600);
+      authEnv = ['--env-file', authEnvFile];
+      authSetup = [
+        'auth_file="$(mktemp /tmp/cds-rs-mongo-auth.XXXXXX)"',
+        'cleanup_auth() { rm -f "$auth_file"; }',
+        'trap cleanup_auth EXIT HUP INT TERM',
+        'chmod 600 "$auth_file"',
+        'printf %s "$RS_MONGO_CONFIG_B64" | base64 -d > "$auth_file"',
+        'RS_MONGO_USER="$(printf %s "$RS_MONGO_USER_B64" | base64 -d)"',
+        'set -- --username "$RS_MONGO_USER" --authenticationDatabase admin --config "$auth_file"',
+      ].join('; ');
+    }
     // 清掉上次失败/崩溃残留的同名卷（陈旧归档会被 restore 成错误数据）；
     // 同 master 并发同目标克隆已被 isolationInFlight 互斥，rm 不会撞在途卷
     await runDockerExec(['volume', 'rm', '-f', scratchVol], '', 60_000, 8 * 1024).catch(() => undefined);
@@ -754,8 +787,8 @@ async function cloneMongoViaDedicatedInstance(opts: {
 
     onOutput?.('── 阶段1/3: mongodump 只读落盘（共享库只读，零写入）──');
     const dump = await runDockerExec(toolsHelper(c,
-      `set -e; command -v mongodump >/dev/null 2>&1 || { echo 'mongo 镜像缺少 mongodump（database tools），无法克隆'; exit 41; }; ` +
-      `mongodump --host 127.0.0.1 --port ${port} ${authFlags} --archive=/rsclone/dump.archive.gz --gzip -d ${target.sourceDb} --numParallelCollections=1`,
+      `set -e; ${authSetup}; command -v mongodump >/dev/null 2>&1 || { echo 'mongo 镜像缺少 mongodump（database tools），无法克隆'; exit 41; }; ` +
+      `mongodump --host 127.0.0.1 --port ${port} "$@" --archive=/rsclone/dump.archive.gz --gzip -d ${target.sourceDb} --numParallelCollections=1`,
     ), '', 600_000, 64 * 1024);
     if (dump.code !== 0) throw cloneStageError('mongo dump', dump, secrets);
 
@@ -786,7 +819,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
       // 无上限，restore 期间的 mongod 日志尤其密集。
       '--log-opt', 'max-size=50m', '--log-opt', 'max-file=3',
       '--memory', '1536m', '--memory-swap', '1536m',
-      ...(user ? ['-e', `MONGO_INITDB_ROOT_USERNAME=${user}`, '-e', `MONGO_INITDB_ROOT_PASSWORD=${pw}`] : []),
+      ...authEnv,
       isoImage, 'mongod', '--wiredTigerCacheSizeGB', '1',
     ], '', 300_000, 16 * 1024);
     if (runIso.code !== 0) throw cloneStageError('启动专用实例', runIso, secrets);
@@ -809,7 +842,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
 
     onOutput?.('── 阶段3/3: mongorestore 写入专用实例（写压不触碰共享库）──');
     const restore = await runDockerExec(toolsHelper(isoName,
-      `set -e; mongorestore --host 127.0.0.1 --port 27017 ${authFlags} --archive=/rsclone/dump.archive.gz --gzip ` +
+      `set -e; ${authSetup}; mongorestore --host 127.0.0.1 --port 27017 "$@" --archive=/rsclone/dump.archive.gz --gzip ` +
       `--nsFrom='${target.sourceDb}.*' --nsTo='${dbName}.*' --numParallelCollections=1 --numInsertionWorkersPerCollection=1`,
     ), '', 900_000, 64 * 1024);
     if (restore.code !== 0) throw cloneStageError('mongo restore', restore, secrets);
@@ -841,6 +874,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
     await runDockerExec(['rm', '-f', '-v', isoName], '', 60_000, 8 * 1024).catch(() => undefined);
     throw err;
   } finally {
+    if (authTempDir) fs.rmSync(authTempDir, { recursive: true, force: true });
     // daemon 命名空间内清理归档卷（best-effort；失败留给下次同名克隆的 pre-rm）
     await runDockerExec(['volume', 'rm', '-f', scratchVol], '', 60_000, 8 * 1024).catch(() => undefined);
   }
@@ -854,7 +888,7 @@ function cloneStageError(stage: string, r: { code: number; stderr: string; stdou
 
 /** mongod admin eval 通道（root 凭据经 URI，脚本经 --eval，输出 --quiet）。
  * 导出给隔离审计（replica-isolation-audit）复用——主库侧金丝雀读写同一凭据链路。 */
-export function mongoAdminEval(
+export async function mongoAdminEval(
   containerName: string,
   port: number,
   env: Record<string, string>,
@@ -862,10 +896,22 @@ export function mongoAdminEval(
 ): ReturnType<typeof runDockerExec> {
   const user = env.MONGO_INITDB_ROOT_USERNAME || '';
   const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
-  const uri = user
-    ? `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(pw)}@localhost:${port}/admin?authSource=admin`
-    : `mongodb://localhost:${port}/admin`;
-  return runDockerExec(['exec', '-i', containerName, 'mongosh', uri, '--quiet', '--eval', script], '', 30_000, 16 * 1024);
+  const invocation = buildSecureMongoDockerInvocation(
+    containerName,
+    'mongosh',
+    [
+      '--host', 'localhost', '--port', String(port), 'admin', '--quiet', '--eval', script,
+      ...(user ? ['--username', user, '--authenticationDatabase', 'admin'] : []),
+    ],
+    pw,
+  );
+  const result = await runDockerExec(invocation.argv, invocation.stdinPrefix, 30_000, 16 * 1024);
+  const secrets = [pw, encodeURIComponent(pw)].filter(Boolean);
+  return {
+    ...result,
+    stdout: maskSecretValues(result.stdout, secrets),
+    stderr: maskSecretValues(result.stderr, secrets),
+  };
 }
 
 /** mongosh 数值输出解析：脚本端必须 Number() 强转（int64 会打成 Long('…')），这里再兜底提取行尾数字。 */
@@ -975,11 +1021,22 @@ export async function dropReplicaDb(snapshot: ReplicaDbSnapshot, infraEnv: Recor
   } else {
     const user = infraEnv.MONGO_INITDB_ROOT_USERNAME || '';
     const pw = infraEnv.MONGO_INITDB_ROOT_PASSWORD || '';
-    secrets.push(pw);
-    const uri = user
-      ? `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(pw)}@localhost:27017/${dbName}?authSource=admin`
-      : `mongodb://localhost:27017/${dbName}`;
-    argv = ['exec', '-i', c, 'mongosh', uri, '--quiet', '--eval', 'db.dropDatabase()'];
+    secrets.push(pw, encodeURIComponent(pw));
+    const invocation = buildSecureMongoDockerInvocation(
+      c,
+      'mongosh',
+      [
+        '--host', 'localhost', '--port', '27017', dbName, '--quiet', '--eval', 'db.dropDatabase()',
+        ...(user ? ['--username', user, '--authenticationDatabase', 'admin'] : []),
+      ],
+      pw,
+    );
+    argv = invocation.argv;
+    const result = await runDockerExec(argv, invocation.stdinPrefix, 120_000, 16 * 1024);
+    if (result.code !== 0) {
+      throw new Error(`删除隔离库失败: ${maskSecretValues((result.stderr || result.stdout).trim().slice(-400), secrets)}`);
+    }
+    return;
   }
   const result = await runDockerExec(argv, '', 120_000, 16 * 1024);
   if (result.code !== 0) {

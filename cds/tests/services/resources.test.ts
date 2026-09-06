@@ -96,6 +96,10 @@ describe('buildUnifiedBranchResources', () => {
       },
       volumes: [],
       createdAt: '2026-09-06T00:00:00.000Z',
+      credentialRotationVault: {
+        operationId: 'icr-private', idempotencyKey: 'request-private', sealedAt: '2026-09-06T00:00:00.000Z',
+        payload: { __sealed: true, iv: 'private-iv', tag: 'private-tag', data: 'private-ciphertext' },
+      },
     };
 
     const [resource] = buildUnifiedBranchResources({
@@ -117,6 +121,8 @@ describe('buildUnifiedBranchResources', () => {
     });
     expect(JSON.stringify(serialized.raw)).not.toContain('root-user-sentinel');
     expect(JSON.stringify(serialized.raw)).not.toContain('root-password-sentinel');
+    expect(JSON.stringify(serialized.raw)).not.toContain('credentialRotationVault');
+    expect(JSON.stringify(serialized.raw)).not.toContain('private-ciphertext');
     expect(getUnifiedResourceInternalRaw(resource)).toBe(infraService);
     expect((getUnifiedResourceInternalRaw(resource) as InfraService).env.MONGO_INITDB_ROOT_PASSWORD)
       .toBe('root-password-sentinel');
