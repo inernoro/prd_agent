@@ -1863,9 +1863,12 @@ export class AgentWorkspaceSessionRuntime {
           if (Date.now() >= executionDeadline) {
             throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
           }
-          const repairReason = classifyQualityRepairReason(error.message);
+          const repairReason = classifyQualityRepairReason(error);
           if (!repairReason) throw error;
-          const violationSignature = `${repairReason.code}\u0000${error.message}`;
+          const qualityViolationFingerprint = typeof error.details?.qualityViolationFingerprint === 'string'
+            ? error.details.qualityViolationFingerprint
+            : error.message;
+          const violationSignature = `${repairReason.code}\u0000${qualityViolationFingerprint}`;
           if (attemptedQualityViolations.has(violationSignature)) throw error;
           attemptedQualityViolations.add(violationSignature);
           const repair = await this.odJson(handle, '/api/runs', {
@@ -2644,7 +2647,8 @@ export function canAcceptUntrackedWorkspaceEdit(
     && (currentHtml === undefined || !currentHtml.equals(outputHtml));
 }
 
-function classifyQualityRepairReason(message: string): { code: string; instruction: string } | undefined {
+function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {
+  const { message } = error;
   if (message === 'index.html contains no explicit body element') {
     return {
       code: 'missing_body',
@@ -2681,10 +2685,26 @@ function classifyQualityRepairReason(message: string): { code: string; instructi
       instruction: 'Remove or correct every malformed in-page fragment link.',
     };
   }
-  if (message.startsWith('index.html contains a missing fragment target:')) {
+  if (
+    message.startsWith('index.html contains a missing fragment target:')
+    || message.startsWith('index.html contains missing fragment targets:')
+    || /^index\.html contains [1-9]\d* missing fragment target\(s\)$/.test(message)
+  ) {
+    const count = typeof error.details?.missingFragmentCount === 'number'
+      && Number.isSafeInteger(error.details.missingFragmentCount)
+      && error.details.missingFragmentCount > 0
+      ? error.details.missingFragmentCount
+      : undefined;
+    const ordinals = Array.isArray(error.details?.missingLinkOrdinals)
+      ? error.details.missingLinkOrdinals.filter((value): value is number => (
+        typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+      )).slice(0, 24)
+      : [];
     return {
       code: 'missing_fragment_target',
-      instruction: 'Remove or correct every in-page link whose fragment does not match an existing element id.',
+      instruction: count !== undefined && ordinals.length > 0
+        ? `There are ${count} missing fragment link target(s). Correct or remove the affected anchor element(s) at document-order position(s) ${ordinals.join(', ')}, then inspect every other fragment link against existing element ids.`
+        : 'Remove or correct every in-page link whose fragment does not match an existing element id.',
     };
   }
   if (message === 'index.html contains an enabled button without provable declarative behavior') {
@@ -3075,7 +3095,9 @@ function validateArtifactQuality(html: string, evidenceText: string): void {
       if (hasHtmlAttribute(attributes, 'popover')) popoverTargets.add(target);
     }
   }
-  for (const tag of openingTags.filter((item) => item.name.toLowerCase() === 'a')) {
+  const missingFragments = new Map<string, number[]>();
+  const anchorTags = openingTags.filter((item) => item.name.toLowerCase() === 'a');
+  for (const [anchorIndex, tag] of anchorTags.entries()) {
     const href = readHtmlAttribute(tag.attributes, 'href');
     if (href === undefined) {
       throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains a link without a target');
@@ -3092,9 +3114,29 @@ function validateArtifactQuality(html: string, evidenceText: string): void {
         throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains a malformed fragment target');
       }
       if (!fragment || !targets.has(fragment)) {
-        throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `index.html contains a missing fragment target: #${fragment}`);
+        const ordinals = missingFragments.get(fragment) ?? [];
+        ordinals.push(anchorIndex + 1);
+        missingFragments.set(fragment, ordinals);
       }
     }
+  }
+  if (missingFragments.size > 0) {
+    const normalizedFragments = Array.from(missingFragments.keys()).sort();
+    const missingLinkOrdinals = Array.from(missingFragments.values()).flat().sort((left, right) => left - right);
+    const qualityViolationFingerprint = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(normalizedFragments))
+      .digest('hex');
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      `index.html contains ${missingFragments.size} missing fragment target(s)`,
+      false,
+      {
+        qualityViolationFingerprint,
+        missingFragmentCount: missingFragments.size,
+        missingLinkOrdinals,
+      },
+    );
   }
   for (const tag of openingTags.filter((item) => item.name.toLowerCase() === 'button')) {
     const attributes = tag.attributes;
