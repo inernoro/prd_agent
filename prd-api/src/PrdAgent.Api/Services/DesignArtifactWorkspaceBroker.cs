@@ -108,10 +108,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         if (string.IsNullOrWhiteSpace(stored.Key))
             throw new InvalidOperationException("远程工作区输入保存失败，请稍后重试");
 
-        var modelCallLimit = Math.Clamp(
-            _configuration.GetValue<int?>("DesignArtifactRuntime:MaxModelCalls") ?? 36,
-            1,
-            36);
+        var modelCallLimit = ResolveModelCallLimit(_configuration);
         var updatedAt = DateTime.UtcNow;
         if (!await PersistPreparedWorkspaceAsync(
                 _db,
@@ -162,6 +159,11 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             MaxOutputBytes,
             AllowedOutputPaths);
     }
+
+    internal static int ResolveModelCallLimit(IConfiguration configuration) => Math.Clamp(
+        configuration.GetValue<int?>("DesignArtifactRuntime:MaxModelCalls") ?? 72,
+        1,
+        96);
 
     public async Task<byte[]> ReadInputPackageAsync(string runId, string token, CancellationToken ct)
     {

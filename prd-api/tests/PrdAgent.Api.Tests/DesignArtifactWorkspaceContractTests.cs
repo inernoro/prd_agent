@@ -19,6 +19,29 @@ namespace PrdAgent.Api.Tests;
 public sealed class DesignArtifactWorkspaceContractTests
 {
     [Theory]
+    [InlineData(null, 72)]
+    [InlineData("0", 1)]
+    [InlineData("72", 72)]
+    [InlineData("200", 96)]
+    public void ModelCallBudgetCoversBuildReviewAndOneRepairWithinHardLimit(
+        string? configured,
+        int expected)
+    {
+        var values = new Dictionary<string, string?>();
+        if (configured != null)
+            values["DesignArtifactRuntime:MaxModelCalls"] = configured;
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+
+        Assert.Equal(expected, DesignArtifactWorkspaceBroker.ResolveModelCallLimit(configuration));
+    }
+
+    [Fact]
+    public void NewRunUsesTheSameDefaultModelCallBudget()
+    {
+        Assert.Equal(72, new DesignArtifactRun().RuntimeModelCallLimit);
+    }
+
+    [Theory]
     [InlineData("{\"messages\":[]}")]
     [InlineData("{\"messages\":[],\"max_tokens\":999999,\"n\":8,\"best_of\":8}")]
     [InlineData("{\"messages\":[],\"max_completion_tokens\":999999}")]

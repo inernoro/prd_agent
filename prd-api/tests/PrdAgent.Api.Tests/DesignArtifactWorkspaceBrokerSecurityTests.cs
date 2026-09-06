@@ -413,6 +413,32 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
         Assert.Equal(0, persisted.RuntimeModelCallCount);
     }
 
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task DefaultBudgetAllowsSeventyTwoAtomicReservationsAndRejectsTheNext()
+    {
+        await using var fixture = await BrokerFixture.CreateAsync();
+        const string runId = "run-default-model-budget";
+        var workspace = await fixture.PrepareAsync(runId);
+
+        for (var index = 0; index < 72; index++)
+        {
+            var reserved = await fixture.Broker.ReserveModelCallAsync(
+                runId,
+                workspace.ModelToken,
+                CancellationToken.None);
+            Assert.Equal(index + 1, reserved.RuntimeModelCallCount);
+            Assert.Equal(72, reserved.RuntimeModelCallLimit);
+        }
+
+        var rejected = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Broker.ReserveModelCallAsync(runId, workspace.ModelToken, CancellationToken.None));
+
+        Assert.Contains("额度已用完", rejected.Message, StringComparison.Ordinal);
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
+        Assert.Equal(72, persisted.RuntimeModelCallCount);
+    }
+
     private static byte[] BuildResult(string runId, string baseRevision, string body)
     {
         var html = Encoding.UTF8.GetBytes($"<!doctype html><html><body>{body}</body></html>");

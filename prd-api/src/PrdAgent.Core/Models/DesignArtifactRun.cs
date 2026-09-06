@@ -120,7 +120,7 @@ public class DesignArtifactRun
     /// <summary>本次远程运行已通过 MAP 代理进入 LLMGW 的真实请求数。</summary>
     public int RuntimeModelCallCount { get; set; }
 
-    public int RuntimeModelCallLimit { get; set; } = 36;
+    public int RuntimeModelCallLimit { get; set; } = 72;
 
     public DateTime? RuntimeTicketExpiresAt { get; set; }
 
