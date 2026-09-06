@@ -131,7 +131,7 @@ const PAGES = [
     scope: '[data-acceptance-scope="web-pages"]' },
   { key: 'doc-store',  route: '/document-store', anchor: '新建知识库',           minChars: 60, label: '知识库 / 文件解析' },
   { key: 'defect',     route: '/defect-agent',   anchor: '提交缺陷',             minChars: 60, label: '缺陷管理' },
-  { key: 'visual',     route: '/visual-agent',   anchor: 'AI 驱动的设计助手',     minChars: 60, label: '视觉创作' },
+  { key: 'visual',     route: '/visual-agent',   anchor: '今天做什么图',          minChars: 60, label: '视觉创作' },
 ];
 
 const results = [];
@@ -472,20 +472,25 @@ async function checkPageAlive(ctx, page4) {
   // 外壳（导航 + 告警条）本身有上百字，在 body 上数等于路由渲不渲染都够。
   // 没声明 scope 的路由退回整页——那是明确的降级，只在锚点确实为路由独有时才成立。
   const needle = page4.anchor.replace(/\s+/g, '');
-  const readScoped = (sel) => (n) => {
+  // 注意：这个函数会被序列化后丢进浏览器执行，**闭包不会跟过去**。
+  // 所以 scope 必须走参数传进去，不能用 `(sel) => (n) => ...` 那种柯里化写法 ——
+  // 那样 sel 在浏览器里是未定义的，每次 evaluate 直接抛 ReferenceError，
+  // 四条页面判据会全部变成「异常」而不是「有没有字」。
+  const readScoped = ({ sel, n }) => {
     const root = sel ? document.querySelector(sel) : document.body;
     if (!root) return null;
     const t = root.innerText.replace(/\s+/g, '');
     return { chars: t.length, hit: n ? t.includes(n) : false };
   };
+  const scope = page4.scope || null;
   let appeared = false;
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {
-    const read = await page.evaluate(readScoped(page4.scope || null), needle);
+    const read = await page.evaluate(readScoped, { sel: scope, n: needle });
     if (read?.hit) { appeared = true; break; }
     await page.waitForTimeout(500);
   }
-  const final = await page.evaluate(readScoped(page4.scope || null), null);
+  const final = await page.evaluate(readScoped, { sel: scope, n: null });
   const text = { length: final?.chars ?? 0 };
   await page.close();
 
