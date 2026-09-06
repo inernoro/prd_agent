@@ -397,7 +397,7 @@ export default function SitePreviewModal({
             <aside
               className="absolute inset-0 z-20 flex w-full min-h-0 flex-col sm:static sm:inset-auto sm:z-auto sm:w-[380px] sm:shrink-0 sm:border-l sm:border-token-subtle"
               style={{
-                background: 'var(--panel-solid, var(--bg-elevated))',
+                background: 'var(--bg-elevated)',
                 display: rightPanel === 'ask' ? 'flex' : 'none',
               }}
             >
@@ -409,7 +409,7 @@ export default function SitePreviewModal({
             <aside
               className="absolute inset-0 z-20 flex w-full min-h-0 flex-col sm:static sm:inset-auto sm:z-auto sm:w-[440px] sm:shrink-0 sm:border-l sm:border-token-subtle"
               style={{
-                background: 'var(--panel-solid, var(--bg-elevated))',
+                background: 'var(--bg-elevated)',
                 display: rightPanel === 'edit' ? 'flex' : 'none',
               }}
             >

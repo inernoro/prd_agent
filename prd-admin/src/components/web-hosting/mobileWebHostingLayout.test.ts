@@ -51,6 +51,8 @@ describe('mobile web hosting layout', () => {
     expect(previewSource).toContain('sm:w-[360px]');
     expect(previewSource).toContain('sm:w-[380px]');
     expect(previewSource).toContain('sm:w-[440px]');
+    expect(previewSource.match(/background: 'var\(--bg-elevated\)'/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(previewSource).not.toContain("background: 'var(--panel-solid, var(--bg-elevated))'");
   });
 
   it('uses one full-width card column on mobile', () => {
