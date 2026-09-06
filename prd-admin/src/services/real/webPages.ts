@@ -78,7 +78,7 @@ export interface HostedSiteRevision {
   parentRevisionId?: string | null;
   sourceRunId?: string | null;
   instruction?: string | null;
-  runtime: 'map-gateway' | 'codex';
+  runtime: 'map-gateway' | 'open-design' | 'codex' | 'manual';
   knowledgeEntryIds: string[];
   basedOnContentVersion: string;
   publishedContentVersion?: string | null;
@@ -126,6 +126,7 @@ export interface DesignArtifactRunSummary {
   artifactRevisionId?: string | null;
   linkedRunId?: string | null;
   error?: string | null;
+  createdAt: string;
   knowledgeReferences: Array<{
     entryId: string;
     storeId?: string | null;

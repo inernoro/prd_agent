@@ -1797,7 +1797,7 @@ export function MdToPptAgentPage() {
       // 每页解析成功立刻填充一张卡——第一页几秒内可见，不再苦等
       const sourceText =
         sourceTextOverride ??
-        [userText, attachmentText, kbContext].filter(Boolean).join('\n\n---\n\n').trim();
+        [userText, attachmentText].filter(Boolean).join('\n\n---\n\n').trim();
       const prevOutline = outlineDraft?.outline ?? [];
       let metaSeen = false;
       let pagesSeen = 0;
@@ -1824,7 +1824,9 @@ export function MdToPptAgentPage() {
       const cleanup = streamMdToPptOutline({
         content: userText,
         attachmentText: attachmentText || undefined,
-        kbContext: kbContext || undefined,
+        knowledgeReferences: kbRefs
+          .filter((item): item is KbRef & { entryId: string; storeId: string } => !!item.entryId && !!item.storeId)
+          .map((item) => ({ entryId: item.entryId, storeId: item.storeId })),
         chatHistory: chatHistory || undefined,
         targetPages,
         // 服务器权威：记下大纲 runId。刷新/断开后大纲仍在后台跑完并存库，
@@ -1994,13 +1996,10 @@ export function MdToPptAgentPage() {
         runtimeProfileId: selectedProfileId ?? undefined,
         sourceSurface: activeKnowledgeRefs.length > 0 ? 'knowledge-base' : 'html-ppt',
         knowledgeReferences: activeKnowledgeRefs
-          .filter((item): item is KbRef & { entryId: string } => !!item.entryId)
+          .filter((item): item is KbRef & { entryId: string; storeId: string } => !!item.entryId && !!item.storeId)
           .map((item) => ({
             entryId: item.entryId,
             storeId: item.storeId,
-            storeName: item.storeName,
-            title: item.entryTitle,
-            content: item.content,
           })),
         onFrame: (f) => {
           setFrameHead(f.head);
@@ -2185,12 +2184,9 @@ export function MdToPptAgentPage() {
       const attachmentText = (userMsg?.attachments ?? [])
         .map((a) => `## 附件：${a.name}\n\n${a.content}`)
         .join('\n\n');
-      const kbContext = (userMsg?.kbRefs ?? [])
-        .map((r) => `## KB「${r.storeName}」>「${r.entryTitle}」\n\n${r.content}`)
-        .join('\n\n');
       const outlineText = serializeOutline(outlineMsg.outline ?? []);
       const fullContent =
-        [userContent, attachmentText, kbContext].filter(Boolean).join('\n\n---\n\n').trim() +
+        [userContent, attachmentText].filter(Boolean).join('\n\n---\n\n').trim() +
         (outlineText ? `\n\n---\n\n## 大纲结构（请严格按此页数和标题生成）\n\n${outlineText}` : '');
       launchConvert(
         fullContent,
@@ -2254,6 +2250,7 @@ export function MdToPptAgentPage() {
 
       const effTemplateId = styleOverride?.templateId !== undefined ? styleOverride.templateId : templateId;
       const cleanup = streamMdToPptPatch({
+        parentRunId: activeRunId || undefined,
         currentHtml: base,
         slideRequest: instruction,
         slideIndex,
@@ -2310,7 +2307,7 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [generatedHtml, isProcessing, pushMsg, theme, templateId, selectedProfileId, slidePos, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
+    [generatedHtml, isProcessing, pushMsg, theme, templateId, selectedProfileId, activeRunId, slidePos, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
   );
 
   // ─── 换风格/换模板 = AI 参照新设计参照整体重绘（2026-06-10 用户纠偏：风格是
@@ -2494,10 +2491,8 @@ export function MdToPptAgentPage() {
       const attachmentText = (userMsg?.attachments ?? [])
         .map((a) => `## 附件：${a.name}\n\n${a.content}`)
         .join('\n\n');
-      const kbContext = (userMsg?.kbRefs ?? [])
-        .map((r) => `## KB「${r.storeName}」>「${r.entryTitle}」\n\n${r.content}`)
-        .join('\n\n');
-      const sourceText = [userContent, attachmentText, kbContext].filter(Boolean).join('\n\n---\n\n').trim();
+      const knowledgeRefs = userMsg?.kbRefs ?? activeKnowledgeRefs;
+      const sourceText = [userContent, attachmentText].filter(Boolean).join('\n\n---\n\n').trim();
       const outlineText = serializeOutline(outlineMsg.outline ?? []);
 
       // 追加一条用户消息
@@ -2510,12 +2505,12 @@ export function MdToPptAgentPage() {
           (outlineText ? `\n\n当前大纲（请在此基础上调整）：\n${outlineText}` : '') +
           '\n\n调整要求：' + instruction +
           '\n（除非调整要求里明确提到增减页数，否则总页数保持不变）',
-        [], [],
+        [], knowledgeRefs,
         outlineMsg.totalPages ?? outlineMsg.outline?.length,
         sourceText
       );
     },
-    [isProcessing, messages, pushMsg, requestOutline, serializeOutline]
+    [isProcessing, messages, activeKnowledgeRefs, pushMsg, requestOutline, serializeOutline]
   );
 
   // ─── Main send handler

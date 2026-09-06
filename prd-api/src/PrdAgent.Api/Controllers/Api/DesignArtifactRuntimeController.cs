@@ -20,6 +20,8 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
 {
     private const int MaxProxyRequestBytes = 1_048_576;
     private const int DefaultMaxCompletionTokens = 4_096;
+    private const int DefaultProxyTimeoutSeconds = 900;
+    private const int DefaultProxyIdleTimeoutSeconds = 90;
     private readonly IDesignArtifactWorkspaceBroker _broker;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
@@ -155,21 +157,50 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
             upstream.Headers.TryAddWithoutValidation("X-Gateway-User-Id", run.UserId);
             upstream.Headers.TryAddWithoutValidation("X-Gateway-Run-Id", run.Id);
 
+            var totalTimeout = ResolveProxyTotalTimeout(
+                _configuration,
+                run.RuntimeTicketExpiresAt,
+                DateTime.UtcNow);
+            var idleTimeout = TimeSpan.FromSeconds(Math.Clamp(
+                _configuration.GetValue<int?>("DesignArtifactRuntime:ProxyIdleTimeoutSeconds")
+                ?? DefaultProxyIdleTimeoutSeconds,
+                1,
+                DefaultProxyTimeoutSeconds));
+            using var proxyDeadline = new CancellationTokenSource(totalTimeout);
             var client = _httpClientFactory.CreateClient("DesignArtifactRuntimeProxy");
             using var response = await client.SendAsync(
                 upstream,
                 HttpCompletionOption.ResponseHeadersRead,
-                CancellationToken.None);
+                proxyDeadline.Token);
             Response.StatusCode = (int)response.StatusCode;
             Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
             Response.Headers.CacheControl = "no-store";
             if (response.Headers.TryGetValues("x-request-id", out var requestIds)
                 && requestIds.FirstOrDefault() is { Length: > 0 } requestId)
                 Response.Headers["X-Request-Id"] = requestId;
-            await using var stream = await response.Content.ReadAsStreamAsync(CancellationToken.None);
-            await stream.CopyToAsync(Response.Body, CancellationToken.None);
+            await using var stream = await response.Content.ReadAsStreamAsync(proxyDeadline.Token);
+            await CopyWithIdleTimeoutAsync(stream, Response.Body, idleTimeout, proxyDeadline.Token);
         }
-        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException)
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("远程设计模型代理超过截止时间或流式空闲上限 runId={RunId}", runId);
+            if (!Response.HasStarted)
+            {
+                Response.StatusCode = StatusCodes.Status504GatewayTimeout;
+                Response.ContentType = "application/json";
+                using var responseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await Response.WriteAsJsonAsync(new
+                {
+                    error = new
+                    {
+                        code = "DESIGN_RUNTIME_MODEL_TIMEOUT",
+                        message = "设计模型响应超时，请重新发起任务",
+                        runId,
+                    },
+                }, responseDeadline.Token);
+            }
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or IOException)
         {
             _logger.LogInformation("远程设计模型连接已结束 runId={RunId}", runId);
         }
@@ -181,12 +212,64 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 var mapped = MapRuntimeError(ex, runId) as ObjectResult;
                 Response.StatusCode = mapped?.StatusCode ?? StatusCodes.Status500InternalServerError;
                 Response.ContentType = "application/json";
+                using var responseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 await Response.WriteAsJsonAsync(mapped?.Value ?? new
                 {
                     error = new { code = "DESIGN_RUNTIME_UNAVAILABLE", message = "设计模型服务暂时不可用，请稍后重试", runId },
-                }, CancellationToken.None);
+                }, responseDeadline.Token);
             }
         }
+    }
+
+    internal static async Task CopyWithIdleTimeoutAsync(
+        Stream source,
+        Stream destination,
+        TimeSpan idleTimeout,
+        CancellationToken totalDeadline)
+    {
+        var buffer = new byte[64 * 1024];
+        var destinationConnected = true;
+        while (true)
+        {
+            using var idleDeadline = CancellationTokenSource.CreateLinkedTokenSource(totalDeadline);
+            idleDeadline.CancelAfter(idleTimeout);
+            var read = await source.ReadAsync(buffer.AsMemory(), idleDeadline.Token);
+            if (read == 0) break;
+            if (!destinationConnected) continue;
+
+            try
+            {
+                await destination.WriteAsync(buffer.AsMemory(0, read), totalDeadline);
+                await destination.FlushAsync(totalDeadline);
+            }
+            catch (Exception ex) when (
+                ex is IOException or ObjectDisposedException
+                || (ex is OperationCanceledException && !totalDeadline.IsCancellationRequested))
+            {
+                // 浏览器断开只停止回写，不能取消已经进入 LLMGW 的服务端权威请求。
+                // 继续在总截止和空闲截止内排空上游，使 LLMGW 审计与计费事实完整落库。
+                destinationConnected = false;
+            }
+        }
+    }
+
+    internal static TimeSpan ResolveProxyTotalTimeout(
+        IConfiguration configuration,
+        DateTime? runtimeTicketExpiresAt,
+        DateTime now)
+    {
+        var configuredTimeout = TimeSpan.FromSeconds(Math.Clamp(
+            configuration.GetValue<int?>("DesignArtifactRuntime:ProxyTimeoutSeconds")
+            ?? DefaultProxyTimeoutSeconds,
+            1,
+            DefaultProxyTimeoutSeconds));
+        if (runtimeTicketExpiresAt is not { } ticketExpiresAt)
+            return configuredTimeout;
+
+        var ticketBudget = ticketExpiresAt - now;
+        if (ticketBudget <= TimeSpan.Zero)
+            throw new UnauthorizedAccessException("远程设计凭证已过期，请重新发起任务");
+        return ticketBudget < configuredTimeout ? ticketBudget : configuredTimeout;
     }
 
     internal static void ApplyMapOwnedCompletionBudget(JsonObject body, int maxCompletionTokens)

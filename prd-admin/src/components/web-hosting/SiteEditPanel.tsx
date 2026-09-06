@@ -21,6 +21,9 @@ import {
   AI_STREAM_PREVIEW_SANDBOX,
   activeSiteEditRunStorageKey,
   canPublishRevision,
+  chooseDesignRuntime,
+  displayedDesignRuntime,
+  elapsedSecondsSince,
   previewableAiStreamHtml,
   revisionLabel,
 } from './siteEditPreview';
@@ -45,6 +48,9 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
   const [instruction, setInstruction] = useState('');
   const [phase, setPhase] = useState('告诉我你想改什么，系统会先生成草稿，不会直接覆盖线上页面。');
   const [progress, setProgress] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [runStartedAtMs, setRunStartedAtMs] = useState<number | null>(null);
+  const [activeRunRuntime, setActiveRunRuntime] = useState<string | null>(null);
   const [thinking, setThinking] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
   const [draftRevisionId, setDraftRevisionId] = useState<string | null>(null);
@@ -62,8 +68,20 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
   const streamRef = useRef('');
   const lastPaintAtRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!generating || runStartedAtMs == null) return;
+    const tick = () => setElapsedSeconds(elapsedSecondsSince(runStartedAtMs));
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [generating, runStartedAtMs]);
   const enabledRuntimes = capabilities.filter((item) => item.enabled);
-  const activeRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
+  const activeRuntime = displayedDesignRuntime(
+    capabilities,
+    selectedRuntime,
+    generating ? activeRunRuntime : null,
+  );
   const unavailableRuntimes = capabilities.filter((item) => !item.enabled);
   const activeRuntimeFact = activeRuntime
     ? `当前使用：${activeRuntime.label}；执行归属：${activeRuntime.executionOwner === 'cds-remote-agent' ? 'CDS Remote Agent' : 'MAP'}；隔离边界：${activeRuntime.isolationMode === 'session-container' ? '会话级容器' : 'MAP 服务进程'}；产物范围：声明式 HTML 与内联 CSS，不执行脚本。`
@@ -90,9 +108,11 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
       if (runtimes.success) {
         const supported = runtimes.data.runtimes.filter((item) => item.operations.includes('edit'));
         setCapabilities(supported);
-        const preferred = supported.find((item) => item.id === runtimes.data.defaultRuntime && item.enabled)
-          ?? supported.find((item) => item.enabled);
-        if (preferred) setSelectedRuntime(preferred.id);
+        const runtimeId = chooseDesignRuntime(
+          supported,
+          runtimes.data.defaultRuntime,
+        );
+        if (runtimeId) setSelectedRuntime(runtimeId);
       }
       setLoadingKnowledge(false);
     });
@@ -162,6 +182,8 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
 
       setPhase(result.data.phase);
       setProgress(result.data.progress);
+      setActiveRunRuntime(result.data.runtime);
+      setRunStartedAtMs(Date.parse(result.data.createdAt));
       const status = result.data.status.toLowerCase();
       if (status === 'done' && result.data.artifactRevisionId) {
         clearRecovery();
@@ -190,10 +212,18 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
   const generate = async () => {
     const text = instruction.trim();
     if (!text || generating) return;
+    const requestRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
+    if (!requestRuntime) {
+      toast.error('没有可用的设计执行器', '请检查执行器部署状态后重试');
+      return;
+    }
     abortRef.current?.abort();
     const abort = new AbortController();
     abortRef.current = abort;
     setGenerating(true);
+    setElapsedSeconds(0);
+    setRunStartedAtMs(Date.now());
+    setActiveRunRuntime(requestRuntime.id);
     setDraftRevisionId(null);
     setDraftRevisionStatus(null);
     setThinking('');
@@ -216,13 +246,15 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
       entryId: entry.id,
       storeId: entry.storeId,
     }));
-    const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, selectedRuntime);
+    const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, requestRuntime.id);
     if (!created.success) {
       setGenerating(false);
+      setActiveRunRuntime(null);
       setPhase(created.error?.message || '修改任务创建失败');
       toast.error('无法开始修改', created.error?.message || '请稍后重试');
       return;
     }
+    setActiveRunRuntime(created.data.runtime);
     try { sessionStorage.setItem(activeSiteEditRunStorageKey(site.id), created.data.runId); } catch { /* ignore unavailable storage */ }
 
     let reachedTerminal = false;
@@ -426,7 +458,7 @@ export default function SiteEditPanel({ site, onPublished }: Props) {
         <div className="border-b border-token-subtle p-4">
           <div className="flex items-center justify-between gap-2 text-[11px] text-token-muted">
             <span>{phase}</span>
-            <span className="tabular-nums">{progress}%</span>
+            <span className="tabular-nums">{progress}% · 已运行 {elapsedSeconds} 秒</span>
           </div>
           <div className="mt-2 h-1 overflow-hidden rounded-full bg-token-card">
             <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${progress}%` }} />

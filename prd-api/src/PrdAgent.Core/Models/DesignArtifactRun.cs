@@ -20,6 +20,12 @@ public class DesignArtifactRun
 
     public string Runtime { get; set; } = DesignArtifactRuntimes.MapGateway;
 
+    /// <summary>
+    /// 远程执行器在能力探针通过时冻结的 CDS 连接。Worker 只能使用该连接，
+    /// 禁止按更新时间重新选择另一个基础设施目标。
+    /// </summary>
+    public string? RuntimeConnectionId { get; set; }
+
     public string Instruction { get; set; } = string.Empty;
 
     public string? Title { get; set; }

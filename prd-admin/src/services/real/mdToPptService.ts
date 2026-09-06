@@ -29,7 +29,10 @@ export interface MdToPptOutlineResult {
 export interface MdToPptOutlineRequest {
   content?: string;
   attachmentText?: string;
-  kbContext?: string;
+  knowledgeReferences?: Array<{
+    entryId: string;
+    storeId: string;
+  }>;
   chatHistory?: string;
   targetPages?: number;
 }
@@ -93,7 +96,7 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
         body: JSON.stringify({
           content: options.content,
           attachmentText: options.attachmentText,
-          kbContext: options.kbContext,
+          knowledgeReferences: options.knowledgeReferences,
           chatHistory: options.chatHistory,
           targetPages: options.targetPages,
         }),
@@ -257,14 +260,12 @@ export interface MdToPptConvertRequest {
   sourceSurface?: 'html-ppt' | 'knowledge-base';
   knowledgeReferences?: Array<{
     entryId: string;
-    storeId?: string;
-    storeName?: string;
-    title: string;
-    content: string;
+    storeId: string;
   }>;
 }
 
 export interface MdToPptPatchRequest {
+  parentRunId?: string;
   currentHtml: string;
   slideRequest: string;
   slideIndex?: number;
@@ -407,10 +408,7 @@ export interface MdToPptConvertSseOptions {
   sourceSurface?: 'html-ppt' | 'knowledge-base';
   knowledgeReferences?: Array<{
     entryId: string;
-    storeId?: string;
-    storeName?: string;
-    title: string;
-    content: string;
+    storeId: string;
   }>;
   /** 壳子就绪（head 含完整设计系统，实况渲染用） */
   onFrame?: (data: { head: string; suffix?: string; total: number; anchored?: boolean }) => void;
@@ -507,6 +505,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
 // ============ Patch SSE ============
 
 export interface MdToPptPatchSseOptions {
+  parentRunId?: string;
   currentHtml: string;
   slideRequest: string;
   slideIndex?: number;
@@ -540,6 +539,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
         method: 'POST',
         headers: buildSseHeaders(),
         body: JSON.stringify({
+          parentRunId: options.parentRunId,
           currentHtml: options.currentHtml,
           slideRequest: options.slideRequest,
           slideIndex: options.slideIndex,

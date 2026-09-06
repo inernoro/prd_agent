@@ -10,6 +10,15 @@ public interface IHostedSiteRevisionService
         HostedSiteEditableEntry? knownEntry = null,
         CancellationToken ct = default);
 
+    Task<HostedSiteRevision> EnsureGeneratedSnapshotAsync(
+        string siteId,
+        string userId,
+        HostedSiteEditableEntry knownEntry,
+        string runtime,
+        string sourceRunId,
+        IReadOnlyCollection<string> knowledgeEntryIds,
+        CancellationToken ct = default);
+
     Task<HostedSiteRevision> CreateDraftAsync(
         string siteId,
         string userId,

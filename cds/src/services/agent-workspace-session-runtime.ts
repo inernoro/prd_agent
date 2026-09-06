@@ -75,6 +75,7 @@ interface RuntimeHandle {
   inputPaths: string[];
   daemonBaseUrl: string;
   daemonApiToken: string;
+  egressClientToken: string;
   transfer: Omit<WorkspaceTransferRequest, 'transferToken'>;
   policy: AgentWorkspaceResourcePolicy;
   activeRunId?: string;
@@ -266,25 +267,50 @@ const http = require('node:http');
 const https = require('node:https');
 const dns = require('node:dns');
 const net = require('node:net');
+const crypto = require('node:crypto');
 const target = new URL(process.env.TARGET_ORIGIN);
 const prefix = process.env.TARGET_PATH_PREFIX || '/';
 const mapModelTicket = process.env.MAP_MODEL_TICKET || '';
+const relayClientToken = process.env.RELAY_CLIENT_TOKEN || '';
+const requestStarts = [];
+const maxRequestsPerMinute = 240;
+const deniedAddresses = new net.BlockList();
+for (const [address, prefix, type] of [
+  ['0.0.0.0', 8, 'ipv4'], ['10.0.0.0', 8, 'ipv4'], ['100.64.0.0', 10, 'ipv4'],
+  ['127.0.0.0', 8, 'ipv4'], ['169.254.0.0', 16, 'ipv4'], ['172.16.0.0', 12, 'ipv4'],
+  ['192.0.0.0', 24, 'ipv4'], ['192.0.2.0', 24, 'ipv4'], ['192.168.0.0', 16, 'ipv4'],
+  ['192.88.99.0', 24, 'ipv4'], ['198.18.0.0', 15, 'ipv4'], ['198.51.100.0', 24, 'ipv4'],
+  ['203.0.113.0', 24, 'ipv4'], ['224.0.0.0', 4, 'ipv4'], ['240.0.0.0', 4, 'ipv4'],
+  ['::', 128, 'ipv6'], ['::1', 128, 'ipv6'],
+  ['64:ff9b::', 96, 'ipv6'], ['64:ff9b:1::', 48, 'ipv6'], ['100::', 64, 'ipv6'],
+  ['2001:10::', 28, 'ipv6'], ['2001:20::', 28, 'ipv6'], ['2001:db8::', 32, 'ipv6'],
+  ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'], ['fec0::', 10, 'ipv6'], ['ff00::', 8, 'ipv6'],
+]) deniedAddresses.addSubnet(address, prefix, type);
+function authorized(value) {
+  if (!relayClientToken || typeof value !== 'string') return false;
+  const actual = Buffer.from(value, 'utf8');
+  const expected = Buffer.from('Bearer ' + relayClientToken, 'utf8');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+function loopback(address) {
+  const value = String(address || '').toLowerCase().split('%')[0];
+  return value === '127.0.0.1' || value === '::1' || value === '::ffff:127.0.0.1';
+}
 function blocked(address) {
   const value = String(address || '').toLowerCase().split('%')[0];
-  if (net.isIP(value) === 4) {
-    const parts = value.split('.').map(Number);
-    return parts[0] === 0 || parts[0] === 10 || parts[0] === 127
-      || (parts[0] === 169 && parts[1] === 254)
-      || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
-      || (parts[0] === 192 && parts[1] === 168)
-      || parts[0] >= 224;
+  const family = net.isIP(value);
+  if (family === 4) return deniedAddresses.check(value, 'ipv4');
+  if (family === 6) {
+    if (value.startsWith('::ffff:') && net.isIP(value.slice(7)) === 4) return blocked(value.slice(7));
+    return deniedAddresses.check(value, 'ipv6');
   }
-  if (net.isIP(value) === 6) {
-    if (value.startsWith('::ffff:')) return blocked(value.slice(7));
-    return value === '::' || value === '::1' || value.startsWith('fc')
-      || value.startsWith('fd') || value.startsWith('fe8') || value.startsWith('fe9')
-      || value.startsWith('fea') || value.startsWith('feb') || value.startsWith('ff');
-  }
+  return true;
+}
+function admitted() {
+  const cutoff = Date.now() - 60000;
+  while (requestStarts.length && requestStarts[0] < cutoff) requestStarts.shift();
+  if (requestStarts.length >= maxRequestsPerMinute) return false;
+  requestStarts.push(Date.now());
   return true;
 }
 function pathAllowed(raw) {
@@ -294,7 +320,12 @@ function pathAllowed(raw) {
   } catch { return false; }
 }
 const server = http.createServer((req, res) => {
-  if (req.url === '/__health') { res.writeHead(mapModelTicket ? 204 : 503); res.end(); return; }
+  if (req.url === '/__health') {
+    res.writeHead(loopback(req.socket && req.socket.remoteAddress) ? (mapModelTicket && relayClientToken ? 204 : 503) : 403);
+    res.end(); return;
+  }
+  if (!authorized(req.headers.authorization)) { res.writeHead(401); res.end(); return; }
+  if (!admitted()) { res.writeHead(429, { 'retry-after': '60' }); res.end(); return; }
   if ((req.method !== 'GET' && req.method !== 'POST') || !pathAllowed(req.url || '/')) {
     res.writeHead(403); res.end(); return;
   }
@@ -336,9 +367,15 @@ const server = http.createServer((req, res) => {
       upstreamResponse.pipe(res);
     });
     upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+    upstream.setTimeout?.(90000, () => upstream.destroy());
     req.pipe(upstream);
   });
 });
+server.maxConnections = 16;
+server.headersTimeout = 10000;
+server.requestTimeout = 900000;
+server.keepAliveTimeout = 5000;
+server.on('connection', (socket) => socket.setTimeout(90000, () => socket.destroy()));
 server.on('connect', (_req, socket) => socket.destroy());
 server.on('upgrade', (_req, socket) => socket.destroy());
 server.listen(Number(process.env.PROXY_PORT || '8787'), '0.0.0.0');
@@ -1287,6 +1324,7 @@ export class AgentWorkspaceSessionRuntime {
         );
       }
       const daemonApiToken = crypto.randomBytes(32).toString('hex');
+      const egressClientToken = `cds-placeholder-${crypto.randomBytes(32).toString('base64url')}`;
       const env = [
         'NODE_ENV=production',
         'OD_BIND_HOST=0.0.0.0',
@@ -1461,6 +1499,7 @@ export class AgentWorkspaceSessionRuntime {
         inputPaths: files.map((file) => file.path),
         daemonBaseUrl,
         daemonApiToken,
+        egressClientToken,
         transfer: publicTransfer(transfer),
         policy,
         ttlTimer,
@@ -1592,8 +1631,13 @@ export class AgentWorkspaceSessionRuntime {
     if (project?.skillId !== OPEN_DESIGN_WEB_PROTOTYPE_SKILL) {
       throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import did not retain the required web prototype skill');
     }
-    const proxiedModelBaseUrl = await this.startEgressProxy(handle, model.baseUrl, model.apiKey);
-    const agentModelPlaceholderKey = `cds-placeholder-${crypto.randomBytes(24).toString('base64url')}`;
+    const proxiedModelBaseUrl = await this.startEgressProxy(
+      handle,
+      model.baseUrl,
+      model.apiKey,
+      handle.egressClientToken,
+    );
+    const agentModelPlaceholderKey = handle.egressClientToken;
     const knowledgeDir = path.join(handle.workspaceDir, 'knowledge');
     const knowledgeFiles = fs.existsSync(knowledgeDir)
       ? fs.readdirSync(knowledgeDir, { withFileTypes: true })
@@ -1892,6 +1936,7 @@ export class AgentWorkspaceSessionRuntime {
     }
     handle.activeRunId = undefined;
     handle.daemonApiToken = '';
+    handle.egressClientToken = '';
     const cleanupErrors: string[] = [];
     if (handle.egressContainerName) {
       await this.removeContainer(handle.egressContainerName)
@@ -1972,9 +2017,10 @@ export class AgentWorkspaceSessionRuntime {
     handle: RuntimeHandle,
     modelBaseUrl: string,
     mapModelTicket: string,
+    relayClientToken: string,
   ): Promise<string> {
     await this.stopEgressProxy(handle);
-    if (!mapModelTicket || /[\0\r\n]/.test(mapModelTicket)) {
+    if (!mapModelTicket || /[\0\r\n]/.test(mapModelTicket) || !relayClientToken || /[\0\r\n]/.test(relayClientToken)) {
       throw new AgentWorkspaceRuntimeError(
         'model_authority_invalid',
         'MAP model ticket is missing or malformed',
@@ -1988,6 +2034,7 @@ export class AgentWorkspaceSessionRuntime {
       `TARGET_PATH_PREFIX=${target.pathname}`,
       `PROXY_PORT=${EGRESS_PROXY_PORT}`,
       `MAP_MODEL_TICKET=${mapModelTicket}`,
+      `RELAY_CLIENT_TOKEN=${relayClientToken}`,
       `CDS_EGRESS_PROXY_SCRIPT=${Buffer.from(EGRESS_PROXY_SCRIPT).toString('base64')}`,
     ].join('\n') + '\n';
     const envFilePath = path.join(handle.hostRoot, `.docker-env-${crypto.randomBytes(8).toString('hex')}`);
@@ -2089,6 +2136,7 @@ export class AgentWorkspaceSessionRuntime {
     clearTimeout(handle.ttlTimer);
     handle.activeRunId = undefined;
     handle.daemonApiToken = '';
+    handle.egressClientToken = '';
     this.handles.set(handle.sessionId, {
       kind: 'partial-cleanup',
       sessionId: handle.sessionId,

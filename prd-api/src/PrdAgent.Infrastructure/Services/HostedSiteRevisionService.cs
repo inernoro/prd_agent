@@ -21,11 +21,31 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         _sites = sites;
     }
 
-    public async Task<HostedSiteRevision> EnsureCurrentSnapshotAsync(
+    public Task<HostedSiteRevision> EnsureCurrentSnapshotAsync(
         string siteId,
         string userId,
         HostedSiteEditableEntry? knownEntry = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        EnsureSnapshotAsync(siteId, userId, knownEntry, null, null, null, ct);
+
+    public Task<HostedSiteRevision> EnsureGeneratedSnapshotAsync(
+        string siteId,
+        string userId,
+        HostedSiteEditableEntry knownEntry,
+        string runtime,
+        string sourceRunId,
+        IReadOnlyCollection<string> knowledgeEntryIds,
+        CancellationToken ct = default) =>
+        EnsureSnapshotAsync(siteId, userId, knownEntry, runtime, sourceRunId, knowledgeEntryIds, ct);
+
+    private async Task<HostedSiteRevision> EnsureSnapshotAsync(
+        string siteId,
+        string userId,
+        HostedSiteEditableEntry? knownEntry,
+        string? runtime,
+        string? sourceRunId,
+        IReadOnlyCollection<string>? knowledgeEntryIds,
+        CancellationToken ct)
     {
         var entry = knownEntry ?? await _sites.GetEditableEntryHtmlAsync(siteId, userId, ct);
         await ReconcileActivePublicationAsync(entry.Site.PublishedRevisionId, entry.ContentVersion);
@@ -43,7 +63,13 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             CreatedByUserId = userId,
             Status = HostedSiteRevisionStatuses.Published,
             Source = HostedSiteRevisionSources.Baseline,
-            Runtime = HostedSiteEditRuntimes.MapGateway,
+            SourceRunId = string.IsNullOrWhiteSpace(sourceRunId) ? null : sourceRunId.Trim(),
+            Runtime = string.IsNullOrWhiteSpace(runtime) ? HostedSiteEditRuntimes.MapGateway : runtime.Trim(),
+            KnowledgeEntryIds = (knowledgeEntryIds ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.Ordinal)
+                .ToList(),
             Html = entry.Html,
             BasedOnContentVersion = entry.ContentVersion,
             PublishedContentVersion = entry.ContentVersion,
@@ -264,7 +290,9 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             Source = HostedSiteRevisionSources.Rollback,
             ParentRevisionId = parent.Id,
             Instruction = $"回退到 {target.Id}",
-            Runtime = target.Runtime,
+            // 回退是版本账本操作，不伪装成再次调用了原始 AI 执行器。
+            // ParentRevisionId 仍可追溯到内容真正来自哪个历史版本。
+            Runtime = HostedSiteEditRuntimes.Manual,
             KnowledgeEntryIds = target.KnowledgeEntryIds,
             Html = target.Html,
             BasedOnContentVersion = current.ContentVersion,

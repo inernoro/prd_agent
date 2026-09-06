@@ -20,6 +20,28 @@ public class MdToPptPrewarmProfileTests
         method.ShouldNotContain("session = await TakePrewarmedSessionAsync(userId);");
     }
 
+    [Fact]
+    public void KnowledgeReferences_AreResolvedFromServerOwnedIdentity()
+    {
+        var source = File.ReadAllText(ControllerPath());
+
+        source.ShouldContain("_knowledgeSnapshots.ResolveAsync");
+        source.ShouldContain("new DesignKnowledgeReferenceIdentity(");
+        source.ShouldContain("BuildKnowledgeContext(knowledgeReferences)");
+        source.ShouldNotContain("x.Content!.Trim()");
+
+        var dtoStart = source.IndexOf("public class MdToPptKnowledgeReferenceRequest", StringComparison.Ordinal);
+        var dtoEnd = source.IndexOf("public class MdToPptOutlineRequest", dtoStart, StringComparison.Ordinal);
+        dtoStart.ShouldBeGreaterThanOrEqualTo(0);
+        dtoEnd.ShouldBeGreaterThan(dtoStart);
+        var dto = source[dtoStart..dtoEnd];
+        dto.ShouldContain("EntryId");
+        dto.ShouldContain("StoreId");
+        dto.ShouldNotContain("Content");
+        dto.ShouldNotContain("Title");
+        dto.ShouldNotContain("StoreName");
+    }
+
     private static string ControllerPath()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

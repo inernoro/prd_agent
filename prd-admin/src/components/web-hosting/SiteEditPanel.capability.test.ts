@@ -34,4 +34,9 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('aria-label="把这个版本重新发布为最新版"');
     expect(source.match(/inline-flex h-9 w-9 items-center justify-center/g)).toHaveLength(4);
   });
+
+  it('长时间远程微调时每秒更新可见时长', () => {
+    expect(source).toContain('window.setInterval');
+    expect(source).toContain('已运行 {elapsedSeconds} 秒');
+  });
 });

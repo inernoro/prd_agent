@@ -15,6 +15,9 @@ import {
 } from '@/services/real/webPages';
 import {
   AI_STREAM_PREVIEW_SANDBOX,
+  chooseDesignRuntime,
+  displayedDesignRuntime,
+  elapsedSecondsSince,
   previewableAiStreamHtml,
 } from './siteEditPreview';
 
@@ -49,6 +52,9 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
   const [instruction, setInstruction] = useState('');
   const [phase, setPhase] = useState('选择知识，再用两句话说明页面给谁看、希望达到什么效果。');
   const [progress, setProgress] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [runStartedAtMs, setRunStartedAtMs] = useState<number | null>(null);
+  const [activeRunRuntime, setActiveRunRuntime] = useState<string | null>(null);
   const [thinking, setThinking] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -56,6 +62,14 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
   const streamRef = useRef('');
   const lastPaintAtRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!generating || runStartedAtMs == null) return;
+    const tick = () => setElapsedSeconds(elapsedSecondsSince(runStartedAtMs));
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [generating, runStartedAtMs]);
   const onCreatedRef = useRef(onCreated);
 
   useEffect(() => {
@@ -69,6 +83,9 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     setInstruction('');
     setPhase('选择知识，再用两句话说明页面给谁看、希望达到什么效果。');
     setProgress(0);
+    setElapsedSeconds(0);
+    setRunStartedAtMs(null);
+    setActiveRunRuntime(null);
     setThinking('');
     setPreviewHtml('');
     setCompletedSite(null);
@@ -93,9 +110,11 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
       setRecentKnowledge(items);
       if (runtimes.success) {
         setCapabilities(runtimes.data.runtimes);
-        const preferred = runtimes.data.runtimes.find((item) => item.id === runtimes.data.defaultRuntime && item.enabled)
-          ?? runtimes.data.runtimes.find((item) => item.enabled);
-        if (preferred) setSelectedRuntime(preferred.id);
+        const runtimeId = chooseDesignRuntime(
+          runtimes.data.runtimes,
+          runtimes.data.defaultRuntime,
+        );
+        if (runtimeId) setSelectedRuntime(runtimeId);
       }
       setLoadingKnowledge(false);
     });
@@ -122,6 +141,8 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
 
       setPhase(result.data.phase);
       setProgress(result.data.progress);
+      setActiveRunRuntime(result.data.runtime);
+      setRunStartedAtMs(Date.parse(result.data.createdAt));
       const status = result.data.status.toLowerCase();
       if (status === 'done' && result.data.artifactSiteId) {
         setGenerating(false);
@@ -148,9 +169,11 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
 
   const enabledRuntime = capabilities.find((item) => item.id === selectedRuntime && item.enabled)
     ?? capabilities.find((item) => item.enabled);
-  const visibleRuntime = capabilities.find((item) => item.id === selectedRuntime)
-    ?? enabledRuntime
-    ?? capabilities[0];
+  const visibleRuntime = displayedDesignRuntime(
+    capabilities,
+    enabledRuntime?.id ?? selectedRuntime,
+    generating ? activeRunRuntime : null,
+  ) ?? capabilities[0];
   const unavailableRuntimes = useMemo(
     () => capabilities.filter((item) => !item.enabled),
     [capabilities],
@@ -171,10 +194,17 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
   const generate = async () => {
     const text = instruction.trim();
     if (!text || selectedKnowledgeIds.length === 0 || generating) return;
+    if (!enabledRuntime) {
+      toast.error('没有可用的设计执行器', '请检查执行器部署状态后重试');
+      return;
+    }
     const abort = new AbortController();
     abortRef.current?.abort();
     abortRef.current = abort;
     setGenerating(true);
+    setElapsedSeconds(0);
+    setRunStartedAtMs(Date.now());
+    setActiveRunRuntime(enabledRuntime.id);
     setCompletedSite(null);
     setThinking('');
     setPreviewHtml('');
@@ -199,16 +229,19 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     const created = await createDesignArtifactRun({
       instruction: text,
       title: title.trim() || selectedEntries[0].title,
-      runtime: enabledRuntime?.id,
+      runtime: enabledRuntime.id,
       sourceSurface: initialSource ? 'knowledge-base' : 'web-hosting',
       knowledgeReferences,
     });
     if (!created.success) {
       setGenerating(false);
+      setActiveRunRuntime(null);
       setPhase(created.error?.message || '网页生成任务创建失败');
       toast.error('无法开始生成', created.error?.message || '请稍后重试');
       return;
     }
+    setActiveRunRuntime(created.data.runtime);
+    setRunStartedAtMs(Date.parse(created.data.createdAt));
     sessionStorage.setItem(ACTIVE_GENERATION_RUN_KEY, created.data.runId);
 
     try {
@@ -384,7 +417,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
             <div className="shrink-0 border-b border-token-subtle px-4 py-3">
               <div className="flex items-center justify-between gap-3 text-xs text-token-secondary">
                 <span>{phase}</span>
-                <span className="tabular-nums">{progress}%</span>
+                <span className="tabular-nums">{progress}% · 已运行 {elapsedSeconds} 秒</span>
               </div>
               <div className="mt-2 h-1 overflow-hidden rounded-full bg-token-card">
                 <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${progress}%` }} />

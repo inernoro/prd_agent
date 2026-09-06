@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
@@ -103,17 +104,20 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
     private readonly IInfraConnectionService _connections;
     private readonly IInfraAgentSessionService _sessions;
     private readonly IDesignArtifactWorkspaceBroker _workspaceBroker;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<OpenDesignRemoteArtifactExecutor> _logger;
 
     public OpenDesignRemoteArtifactExecutor(
         IInfraConnectionService connections,
         IInfraAgentSessionService sessions,
         IDesignArtifactWorkspaceBroker workspaceBroker,
+        IConfiguration configuration,
         ILogger<OpenDesignRemoteArtifactExecutor> logger)
     {
         _connections = connections;
         _sessions = sessions;
         _workspaceBroker = workspaceBroker;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -125,15 +129,16 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
 
     public async Task<DesignArtifactProviderProbeResult> ProbeAsync(string userId, CancellationToken ct)
     {
-        var connection = await FindActiveCdsConnectionAsync(ct);
-        if (connection == null)
+        var selection = await SelectCdsConnectionAsync(ct);
+        if (selection.Connection == null)
         {
             return new DesignArtifactProviderProbeResult(
                 Configured: false,
                 Healthy: false,
                 Enabled: false,
-                Reason: "没有可用的 CDS 系统连接，请先在系统设置中完成长期授权");
+                Reason: selection.Reason);
         }
+        var connection = selection.Connection;
 
         using var timeout = new CancellationTokenSource(ProviderProbeTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
@@ -152,7 +157,8 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                 Configured: false,
                 Healthy: false,
                 Enabled: false,
-                Reason: "CDS Remote Agent 尚未注册 OpenDesign 运行时");
+                Reason: "CDS Remote Agent 尚未注册 OpenDesign 运行时",
+                ConnectionId: connection.Id);
         }
 
         var contractMatches = provider.ProductEligible
@@ -180,7 +186,8 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
             provider.Configured,
             provider.Healthy,
             enabled,
-            reason);
+            reason,
+            connection.Id);
     }
 
     public async IAsyncEnumerable<DesignArtifactExecutorChunk> ExecuteAsync(
@@ -188,8 +195,7 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
         string? currentHtml,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        var connection = await FindActiveCdsConnectionAsync(ct)
-            ?? throw new InvalidOperationException("没有可用的 CDS 系统连接，请先完成长期授权");
+        var connection = await FindFrozenCdsConnectionAsync(run.RuntimeConnectionId, ct);
         var workspace = await _workspaceBroker.PrepareAsync(run, currentHtml, CancellationToken.None);
         var session = await _sessions.CreateAsync(
             run.UserId,
@@ -315,16 +321,61 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
         }
     }
 
-    private async Task<InfraConnectionPublicView?> FindActiveCdsConnectionAsync(CancellationToken ct)
+    private async Task<CdsConnectionSelection> SelectCdsConnectionAsync(CancellationToken ct)
     {
-        var connections = await _connections.ListAsync(ct);
-        return connections
-            .Where(item => string.Equals(item.Partner, "cds", StringComparison.OrdinalIgnoreCase)
-                           && (string.Equals(item.Status, "active", StringComparison.OrdinalIgnoreCase)
-                               || (item.LastProbeOk == true && item.LongTokenExpiresAt > DateTime.UtcNow)))
-            .OrderByDescending(item => item.UpdatedAt)
-            .FirstOrDefault();
+        var available = (await _connections.ListAsync(ct))
+            .Where(IsAvailableCdsConnection)
+            .ToList();
+        var configuredId = _configuration["DesignArtifactRuntime:CdsConnectionId"]?.Trim();
+        if (!string.IsNullOrWhiteSpace(configuredId))
+        {
+            var configured = available.FirstOrDefault(item =>
+                string.Equals(item.Id, configuredId, StringComparison.Ordinal));
+            return configured == null
+                ? new CdsConnectionSelection(
+                    null,
+                    "设计运行时指定的 CDS 连接不可用，请检查 DesignArtifactRuntime:CdsConnectionId")
+                : new CdsConnectionSelection(configured, null);
+        }
+
+        if (available.Count == 0)
+        {
+            return new CdsConnectionSelection(
+                null,
+                "没有可用的 CDS 系统连接，请先在系统设置中完成长期授权");
+        }
+
+        if (available.Count != 1)
+        {
+            return new CdsConnectionSelection(
+                null,
+                "检测到多个可用的 CDS 连接，请配置 DesignArtifactRuntime:CdsConnectionId 后再启用 OpenDesign");
+        }
+
+        return new CdsConnectionSelection(available[0], null);
     }
+
+    private async Task<InfraConnectionPublicView> FindFrozenCdsConnectionAsync(
+        string? connectionId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(connectionId))
+            throw new InvalidOperationException("OpenDesign 任务没有冻结 CDS 连接，请重新发起任务");
+        var connection = (await _connections.ListAsync(ct)).FirstOrDefault(item =>
+            string.Equals(item.Id, connectionId, StringComparison.Ordinal)
+            && IsAvailableCdsConnection(item));
+        return connection
+            ?? throw new InvalidOperationException("OpenDesign 任务冻结的 CDS 连接已不可用，请重新发起任务");
+    }
+
+    private static bool IsAvailableCdsConnection(InfraConnectionPublicView item) =>
+        string.Equals(item.Partner, "cds", StringComparison.OrdinalIgnoreCase)
+        && (string.Equals(item.Status, "active", StringComparison.OrdinalIgnoreCase)
+            || (item.LastProbeOk == true && item.LongTokenExpiresAt > DateTime.UtcNow));
+
+    private sealed record CdsConnectionSelection(
+        InfraConnectionPublicView? Connection,
+        string? Reason);
 
     internal static string? ReadPayloadString(string payloadJson, string field)
     {

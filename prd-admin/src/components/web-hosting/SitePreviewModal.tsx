@@ -155,7 +155,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
       onClick={onClose}
     >
       <div
-        className="relative flex flex-col rounded-xl border border-token-subtle bg-[#0f1014] shadow-2xl"
+        className="relative flex flex-col rounded-xl border border-token-subtle bg-token-card text-token-primary shadow-2xl"
         style={{ width: '90vw', height: '90vh', maxWidth: '1400px' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -230,19 +230,19 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
         </div>
 
         {/* 主体：iframe + 可选评论面板 */}
-        <div className="flex-1 min-h-0 flex">
+        <div className="relative flex-1 min-h-0 flex overflow-hidden">
           {/* iframe 容器（底色用面板深色，避免站点白底加载瞬间在暗色后台里突兀闪白） */}
-          <div className="flex-1 min-w-0 relative bg-[#0f1014]">
+          <div className="flex-1 min-w-0 relative bg-token-nested">
             {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
             {loading && !slow && (
-              <div className="absolute inset-0 flex items-center justify-center bg-[#0f1014]">
+              <div className="absolute inset-0 flex items-center justify-center bg-token-nested">
                 <MapSectionLoader text="正在加载站点…" />
               </div>
             )}
             {/* 真失败（onError）才铺满遮罩 */}
             {errored && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0f1014] gap-3">
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-token-nested gap-3">
                 <FileWarning className="w-12 h-12 text-amber-400/70" />
                 <p className="text-sm text-token-secondary">站点加载失败</p>
                 <button
@@ -255,7 +255,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             )}
             {/* 加载慢：角标提示，不遮挡内容。措辞只说「较慢」，不谎报「失败」。 */}
             {loading && slow && !errored && (
-              <div className="absolute left-3 bottom-3 z-10 flex items-center gap-2 rounded-lg bg-black/70 px-3 py-1.5 text-[12px] text-token-secondary backdrop-blur-sm">
+              <div className="absolute left-3 bottom-3 z-10 flex items-center gap-2 rounded-lg border border-token-subtle bg-token-card px-3 py-1.5 text-[12px] text-token-secondary shadow-lg backdrop-blur-sm">
                 <MapSpinner size={14} />
                 <span>加载较慢，内容可能仍在陆续显示</span>
                 <button onClick={handleOpenExternal} className="text-blue-400 hover:text-blue-300">
@@ -294,7 +294,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
           {/* 评论面板 */}
           {showComments && (
             <aside
-              className="w-[360px] shrink-0 border-l border-token-subtle flex flex-col min-h-0 bg-[#0f1014]"
+              className="absolute inset-0 z-20 flex w-full min-h-0 flex-col bg-token-card sm:static sm:inset-auto sm:z-auto sm:w-[360px] sm:shrink-0 sm:border-l sm:border-token-subtle"
             >
               {/* 允许评论开关：仅 owner/editor 显示（viewer 无权改，显示了点不动反而困惑） */}
               {canToggleComments && (
@@ -344,7 +344,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
               流式输出中途切走还会让那次请求无人认领地跑完。 */}
           {askEverOpened && (
             <aside
-              className="w-[380px] shrink-0 border-l border-token-subtle flex flex-col min-h-0"
+              className="absolute inset-0 z-20 flex w-full min-h-0 flex-col sm:static sm:inset-auto sm:z-auto sm:w-[380px] sm:shrink-0 sm:border-l sm:border-token-subtle"
               style={{
                 background: 'var(--panel-solid, var(--bg-elevated))',
                 display: rightPanel === 'ask' ? 'flex' : 'none',
@@ -356,7 +356,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
 
           {editEverOpened && (
             <aside
-              className="w-[440px] shrink-0 border-l border-token-subtle flex flex-col min-h-0"
+              className="absolute inset-0 z-20 flex w-full min-h-0 flex-col sm:static sm:inset-auto sm:z-auto sm:w-[440px] sm:shrink-0 sm:border-l sm:border-token-subtle"
               style={{
                 background: 'var(--panel-solid, var(--bg-elevated))',
                 display: rightPanel === 'edit' ? 'flex' : 'none',

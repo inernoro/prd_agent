@@ -84,9 +84,78 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Equal(run.UserId, handler.Header("X-Gateway-User-Id"));
         Assert.Equal(run.Id, handler.Header("X-Gateway-Run-Id"));
         Assert.Equal("gateway-secret", handler.Header("X-Gateway-Key"));
+        Assert.True(handler.RequestTokenCanBeCanceled);
         Assert.Equal("gpt-4.1-mini", handler.Body?["model"]?.GetValue<string>());
         Assert.Equal(4096, handler.Body?["max_tokens"]?.GetValue<int>());
         broker.VerifyAll();
+    }
+
+    [Fact]
+    public async Task ModelProxyStreamStopsWhenNoBytesArriveBeforeIdleDeadline()
+    {
+        await using var source = new NeverCompletingReadStream();
+        await using var destination = new MemoryStream();
+        using var totalDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            DesignArtifactRuntimeController.CopyWithIdleTimeoutAsync(
+                source,
+                destination,
+                TimeSpan.FromMilliseconds(40),
+                totalDeadline.Token));
+    }
+
+    [Fact]
+    public async Task ModelProxyStreamStopsAtRunDeadlineEvenWhenIdleLimitIsLonger()
+    {
+        await using var source = new NeverCompletingReadStream();
+        await using var destination = new MemoryStream();
+        using var totalDeadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(40));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            DesignArtifactRuntimeController.CopyWithIdleTimeoutAsync(
+                source,
+                destination,
+                TimeSpan.FromSeconds(10),
+                totalDeadline.Token));
+    }
+
+    [Fact]
+    public async Task ModelProxyContinuesDrainingUpstreamAfterBrowserDisconnects()
+    {
+        await using var source = new MemoryStream(Encoding.UTF8.GetBytes("first-second"));
+        await using var disconnectedBrowser = new DisconnectingWriteStream();
+        using var totalDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        await DesignArtifactRuntimeController.CopyWithIdleTimeoutAsync(
+            source,
+            disconnectedBrowser,
+            TimeSpan.FromSeconds(1),
+            totalDeadline.Token);
+
+        Assert.Equal(source.Length, source.Position);
+        Assert.Equal(1, disconnectedBrowser.WriteAttempts);
+    }
+
+    [Fact]
+    public void ModelProxyTotalDeadlineUsesRunTicketAndHardUpperBound()
+    {
+        var now = new DateTime(2026, 9, 6, 0, 0, 0, DateTimeKind.Utc);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DesignArtifactRuntime:ProxyTimeoutSeconds"] = "3600",
+        }).Build();
+
+        var hardBound = DesignArtifactRuntimeController.ResolveProxyTotalTimeout(configuration, null, now);
+        var runBound = DesignArtifactRuntimeController.ResolveProxyTotalTimeout(
+            configuration,
+            now.AddSeconds(20),
+            now);
+
+        Assert.Equal(TimeSpan.FromMinutes(15), hardBound);
+        Assert.Equal(TimeSpan.FromSeconds(20), runBound);
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            DesignArtifactRuntimeController.ResolveProxyTotalTimeout(configuration, now, now));
     }
 
     [Fact]
@@ -452,6 +521,8 @@ public sealed class DesignArtifactWorkspaceContractTests
 
         public JsonObject? Body { get; private set; }
 
+        public bool RequestTokenCanBeCanceled { get; private set; }
+
         public string Header(string name) => _headers.TryGetValue(name, out var values)
             ? Assert.Single(values)
             : string.Empty;
@@ -460,12 +531,69 @@ public sealed class DesignArtifactWorkspaceContractTests
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            RequestTokenCanBeCanceled = cancellationToken.CanBeCanceled;
             _headers = request.Headers.ToDictionary(item => item.Key, item => item.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
             Body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)) as JsonObject;
             return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"id\":\"gateway-response\"}", Encoding.UTF8, "application/json"),
             };
+        }
+    }
+
+    private sealed class NeverCompletingReadStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+    }
+
+    private sealed class DisconnectingWriteStream : Stream
+    {
+        public int WriteAttempts { get; private set; }
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() => throw new IOException("browser disconnected");
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new IOException("browser disconnected");
+
+        public override ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            WriteAttempts++;
+            return ValueTask.FromException(new IOException("browser disconnected"));
         }
     }
 }

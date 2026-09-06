@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PrdAgent.Api.Services;
@@ -214,6 +215,78 @@ public class DesignArtifactProviderCatalogTests
     }
 
     [Fact]
+    public async Task ConnectionScopedProviderFactIsNeverReusedWithoutCurrentConnectionProof()
+    {
+        using var cache = NewCache();
+        var firstCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(
+                DesignArtifactRuntimes.OpenDesign,
+                EnabledProbeResult() with { ConnectionId = "connection-a" }));
+        var first = await firstCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+        Assert.True(first!.Enabled);
+        Assert.Equal("connection-a", first.ConnectionId);
+
+        var failingCatalog = BuildOpenDesignCatalog(
+            cache,
+            new StubProbe(
+                DesignArtifactRuntimes.OpenDesign,
+                _ => Task.FromException<DesignArtifactProviderProbeResult>(new InvalidOperationException("probe failed"))));
+        var afterFailure = await failingCatalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+
+        Assert.False(afterFailure!.Enabled);
+        Assert.Null(afterFailure.ConnectionId);
+    }
+
+    [Fact]
+    public void InternalConnectionIdIsNotSerializedToCapabilityClients()
+    {
+        var capability = new DesignArtifactProviderCapability(
+            DesignArtifactRuntimes.OpenDesign,
+            "OpenDesign",
+            DesignArtifactAdapterKinds.RemoteAgent,
+            DesignArtifactExecutionOwners.CdsRemoteAgent,
+            DesignArtifactIsolationModes.SessionContainer,
+            [DesignArtifactTypes.WebPage],
+            [DesignArtifactOperations.Generate],
+            [DesignArtifactSourceSurfaces.WebHosting],
+            Configured: true,
+            Healthy: true,
+            Enabled: true,
+            Reason: null,
+            ConnectionId: "internal-connection-id");
+
+        var json = JsonSerializer.Serialize(capability);
+
+        Assert.DoesNotContain("internal-connection-id", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("ConnectionId", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OpenDesignProbeFailsClosedForDuplicateConnectionsToSameTarget()
+    {
+        var first = BuildConnection(id: "connection-1");
+        var duplicate = BuildConnection(id: "connection-2");
+        var connections = new Mock<IInfraConnectionService>();
+        connections.Setup(service => service.ListAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([first, duplicate]);
+        var sessions = new Mock<IInfraAgentSessionService>(MockBehavior.Strict);
+        var executor = new OpenDesignRemoteArtifactExecutor(
+            connections.Object,
+            sessions.Object,
+            Mock.Of<IDesignArtifactWorkspaceBroker>(),
+            BuildConfiguration(),
+            NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
+
+        var result = await executor.ProbeAsync("user-1", CancellationToken.None);
+
+        Assert.False(result.Enabled);
+        Assert.Null(result.ConnectionId);
+        Assert.Contains("多个可用的 CDS 连接", result.Reason);
+        sessions.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task OpenDesignProbeRequiresCdsSessionContainerResourceEnforcement()
     {
         var connection = BuildConnection();
@@ -230,6 +303,7 @@ public class DesignArtifactProviderCatalogTests
             connections.Object,
             sessions.Object,
             Mock.Of<IDesignArtifactWorkspaceBroker>(),
+            BuildConfiguration(),
             NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
 
         var result = await executor.ProbeAsync("user-1", CancellationToken.None);
@@ -257,6 +331,7 @@ public class DesignArtifactProviderCatalogTests
             connections.Object,
             sessions.Object,
             Mock.Of<IDesignArtifactWorkspaceBroker>(),
+            BuildConfiguration(),
             NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
 
         var result = await executor.ProbeAsync("user-1", CancellationToken.None);
@@ -285,6 +360,7 @@ public class DesignArtifactProviderCatalogTests
             connections.Object,
             sessions.Object,
             Mock.Of<IDesignArtifactWorkspaceBroker>(),
+            BuildConfiguration(),
             NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
 
         var result = await executor.ProbeAsync("user-1", CancellationToken.None);
@@ -297,13 +373,82 @@ public class DesignArtifactProviderCatalogTests
     }
 
     [Fact]
+    public async Task OpenDesignProbeFailsClosedForMultipleTargetsUntilConnectionIsConfigured()
+    {
+        var first = BuildConnection();
+        var second = BuildConnection(
+            id: "connection-2",
+            partnerId: "cds-2",
+            baseUrl: "https://cds-2.test",
+            projectId: "project-2");
+        var connections = new Mock<IInfraConnectionService>();
+        connections.Setup(service => service.ListAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([first, second]);
+        var sessions = new Mock<IInfraAgentSessionService>(MockBehavior.Strict);
+        var executor = new OpenDesignRemoteArtifactExecutor(
+            connections.Object,
+            sessions.Object,
+            Mock.Of<IDesignArtifactWorkspaceBroker>(),
+            BuildConfiguration(),
+            NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
+
+        var result = await executor.ProbeAsync("user-1", CancellationToken.None);
+
+        Assert.False(result.Enabled);
+        Assert.Null(result.ConnectionId);
+        Assert.Contains("多个可用的 CDS", result.Reason);
+        sessions.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task OpenDesignProbeUsesConfiguredConnectionAndReturnsItsFrozenIdentity()
+    {
+        var first = BuildConnection();
+        var second = BuildConnection(
+            id: "connection-2",
+            partnerId: "cds-2",
+            baseUrl: "https://cds-2.test",
+            projectId: "project-2");
+        var connections = new Mock<IInfraConnectionService>();
+        connections.Setup(service => service.ListAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([first, second]);
+        var sessions = new Mock<IInfraAgentSessionService>();
+        sessions.Setup(service => service.ListRuntimeProvidersAsync(
+                "user-1",
+                second.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([BuildOpenDesignRuntime(resourcePolicyEnforcedPerSession: true)]);
+        var executor = new OpenDesignRemoteArtifactExecutor(
+            connections.Object,
+            sessions.Object,
+            Mock.Of<IDesignArtifactWorkspaceBroker>(),
+            BuildConfiguration(second.Id),
+            NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
+
+        var result = await executor.ProbeAsync("user-1", CancellationToken.None);
+
+        Assert.True(result.Enabled);
+        Assert.Equal(second.Id, result.ConnectionId);
+        sessions.Verify(service => service.ListRuntimeProvidersAsync(
+            "user-1",
+            second.Id,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task OpenDesignExecutorSendsVersionedTaskPackageAndStreamsCdsEvents()
     {
         var connection = BuildConnection();
         var remoteSession = BuildSession();
         var connections = new Mock<IInfraConnectionService>();
+        var newerDifferentTarget = BuildConnection(
+            id: "connection-2",
+            partnerId: "cds-2",
+            baseUrl: "https://cds-2.test",
+            projectId: "project-2",
+            updatedAt: DateTime.UtcNow.AddMinutes(1));
         connections.Setup(service => service.ListAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([connection]);
+            .ReturnsAsync([connection, newerDifferentTarget]);
         CreateInfraAgentSessionRequest? createRequest = null;
         StartInfraAgentSessionRequest? startRequest = null;
         string? sentEnvelope = null;
@@ -367,6 +512,7 @@ public class DesignArtifactProviderCatalogTests
             connections.Object,
             sessions.Object,
             workspaceBroker.Object,
+            BuildConfiguration(),
             NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
         var run = new DesignArtifactRun
         {
@@ -376,6 +522,7 @@ public class DesignArtifactProviderCatalogTests
             Operation = DesignArtifactOperations.Generate,
             SourceSurface = DesignArtifactSourceSurfaces.KnowledgeBase,
             Runtime = DesignArtifactRuntimes.OpenDesign,
+            RuntimeConnectionId = connection.Id,
             Instruction = "做一个产品介绍页",
             Title = "产品介绍页",
             KnowledgeReferences =
@@ -395,6 +542,7 @@ public class DesignArtifactProviderCatalogTests
             chunks.Add(chunk);
 
         Assert.NotNull(createRequest);
+        Assert.Equal(connection.Id, createRequest.ConnectionId);
         Assert.Equal(InfraAgentRuntimes.OpenDesign, createRequest.Runtime);
         Assert.Equal(InfraAgentWorkloadKinds.DesignArtifact, createRequest.WorkloadKind);
         Assert.Equal(InfraAgentIsolationModes.SessionContainer, createRequest.IsolationMode);
@@ -515,6 +663,7 @@ public class DesignArtifactProviderCatalogTests
             connections.Object,
             sessions.Object,
             workspaceBroker.Object,
+            BuildConfiguration(),
             NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
         var run = new DesignArtifactRun
         {
@@ -523,6 +672,7 @@ public class DesignArtifactProviderCatalogTests
             ArtifactType = DesignArtifactTypes.WebPage,
             Operation = DesignArtifactOperations.Generate,
             Runtime = DesignArtifactRuntimes.OpenDesign,
+            RuntimeConnectionId = connection.Id,
             Instruction = "生成页面",
             Title = "页面",
         };
@@ -546,22 +696,35 @@ public class DesignArtifactProviderCatalogTests
             CancellationToken.None), Times.Once);
     }
 
-    private static InfraConnectionPublicView BuildConnection() => new(
-        "connection-1",
+    private static InfraConnectionPublicView BuildConnection(
+        string id = "connection-1",
+        string partnerId = "cds-1",
+        string baseUrl = "https://cds.test",
+        string projectId = "project-1",
+        DateTime? updatedAt = null) => new(
+        id,
         "cds",
         "CDS",
-        "cds-1",
-        "https://cds.test",
-        "project-1",
+        partnerId,
+        baseUrl,
+        projectId,
         "/api/discovery",
         ["instance:read", "shared-service:deploy"],
         "active",
         DateTime.UtcNow.AddDays(-1),
-        DateTime.UtcNow,
+        updatedAt ?? DateTime.UtcNow,
         DateTime.UtcNow,
         true,
         null,
         DateTime.UtcNow.AddYears(1));
+
+    private static IConfiguration BuildConfiguration(string? connectionId = null)
+    {
+        var values = new Dictionary<string, string?>();
+        if (!string.IsNullOrWhiteSpace(connectionId))
+            values["DesignArtifactRuntime:CdsConnectionId"] = connectionId;
+        return new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+    }
 
     private static MemoryCache NewCache() => new(new MemoryCacheOptions());
 

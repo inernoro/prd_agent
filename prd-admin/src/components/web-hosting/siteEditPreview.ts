@@ -1,4 +1,30 @@
-import type { HostedSiteRevision } from '@/services/real/webPages';
+import type { DesignRuntimeCapability, HostedSiteRevision } from '@/services/real/webPages';
+
+export function elapsedSecondsSince(startedAt: number | string | null | undefined, now = Date.now()) {
+  const startedAtMs = typeof startedAt === 'number' ? startedAt : Date.parse(startedAt ?? '');
+  if (!Number.isFinite(startedAtMs)) return 0;
+  return Math.max(0, Math.floor((now - startedAtMs) / 1000));
+}
+
+export function chooseDesignRuntime(
+  capabilities: DesignRuntimeCapability[],
+  defaultRuntime: string,
+) {
+  return capabilities.find((item) => item.id === defaultRuntime && item.enabled)?.id
+    ?? capabilities.find((item) => item.enabled)?.id
+    ?? '';
+}
+
+export function displayedDesignRuntime(
+  capabilities: DesignRuntimeCapability[],
+  selectedRuntime: string,
+  activeRunRuntime?: string | null,
+) {
+  const runtimeId = activeRunRuntime || selectedRuntime;
+  return capabilities.find((item) => item.id === runtimeId)
+    ?? capabilities.find((item) => item.id === selectedRuntime && item.enabled)
+    ?? capabilities.find((item) => item.enabled);
+}
 
 export function activeSiteEditRunStorageKey(siteId: string) {
   return `web-hosting-edit-active-run-v1:${siteId}`;

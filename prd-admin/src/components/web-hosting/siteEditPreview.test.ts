@@ -7,6 +7,9 @@ import {
   buildStrictAiPreviewDocument,
   buildStrictAiPreviewParserInput,
   canPublishRevision,
+  chooseDesignRuntime,
+  displayedDesignRuntime,
+  elapsedSecondsSince,
   extractCompleteAiPreviewHtml,
   isAllowedAiPreviewResource,
   revisionLabel,
@@ -99,5 +102,21 @@ describe('网页微调任务恢复', () => {
   it('按站点隔离未完成任务，避免切换站点时串单', () => {
     expect(activeSiteEditRunStorageKey('site-a')).toBe('web-hosting-edit-active-run-v1:site-a');
     expect(activeSiteEditRunStorageKey('site-a')).not.toBe(activeSiteEditRunStorageKey('site-b'));
+  });
+
+  it('历史任务执行器与下一次可选执行器分开计算', () => {
+    const runtimes = [
+      { id: 'map-gateway', enabled: true },
+      { id: 'open-design', enabled: false },
+    ] as Parameters<typeof chooseDesignRuntime>[0];
+    expect(chooseDesignRuntime(runtimes, 'map-gateway')).toBe('map-gateway');
+    expect(displayedDesignRuntime(runtimes, 'map-gateway', 'open-design')?.id).toBe('open-design');
+    expect(displayedDesignRuntime(runtimes, 'map-gateway')?.id).toBe('map-gateway');
+  });
+
+  it('恢复后的运行时长从服务端创建时间继续计算', () => {
+    expect(elapsedSecondsSince('2026-09-06T10:00:00.000Z', Date.parse('2026-09-06T10:02:03.900Z')))
+      .toBe(123);
+    expect(elapsedSecondsSince('invalid', Date.now())).toBe(0);
   });
 });

@@ -72,7 +72,9 @@ public static class HostedSiteRevisionSources
 public static class HostedSiteEditRuntimes
 {
     public const string MapGateway = "map-gateway";
+    public const string OpenDesign = "open-design";
     public const string Codex = "codex";
+    public const string Manual = "manual";
 }
 
 public static class HostedSiteRevisionRules

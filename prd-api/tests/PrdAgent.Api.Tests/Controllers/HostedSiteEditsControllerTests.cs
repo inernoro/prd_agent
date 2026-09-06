@@ -139,6 +139,41 @@ public sealed class HostedSiteEditsControllerTests
         Assert.IsType<NotFoundObjectResult>(wrongUser);
     }
 
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateRun_ShouldPersistProviderConnectionChosenByCapabilityProbe()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>"));
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>();
+        knowledge.Setup(service => service.ResolveAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ReturnsAsync(Array.Empty<DesignKnowledgeSnapshot>());
+        var queue = new Mock<IRunQueue>();
+        var controller = BuildController(
+            fixture.Db,
+            "owner-user",
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+        });
+
+        Assert.IsType<AcceptedResult>(result);
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(_ => true).SingleAsync();
+        Assert.Equal("connection-1", persisted.RuntimeConnectionId);
+        queue.Verify(service => service.EnqueueAsync(RunKinds.DesignArtifact, persisted.Id, CancellationToken.None), Times.Once);
+    }
+
     private static HostedSiteEditsController BuildController(
         MongoDbContext db,
         string userId,
@@ -186,7 +221,8 @@ public sealed class HostedSiteEditsControllerTests
                 Configured: true,
                 Healthy: true,
                 Enabled: true,
-                Reason: null));
+                Reason: null,
+                ConnectionId: "connection-1"));
         return provider;
     }
 

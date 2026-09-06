@@ -14,6 +14,14 @@ describe('mobile web hosting layout', () => {
     expect(previewSource).toContain('sm:flex-nowrap');
   });
 
+  it('opens every right panel as a mobile overlay instead of squeezing the preview', () => {
+    expect(previewSource).toContain('relative flex-1 min-h-0 flex overflow-hidden');
+    expect(previewSource.match(/absolute inset-0 z-20 flex w-full/g)).toHaveLength(3);
+    expect(previewSource).toContain('sm:w-[360px]');
+    expect(previewSource).toContain('sm:w-[380px]');
+    expect(previewSource).toContain('sm:w-[440px]');
+  });
+
   it('uses one full-width card column on mobile', () => {
     expect(pageSource).toContain("isMobile ? 'minmax(0, 1fr)'");
     expect(pageSource).not.toContain("isMobile ? 'repeat(2, minmax(0, 1fr))'");

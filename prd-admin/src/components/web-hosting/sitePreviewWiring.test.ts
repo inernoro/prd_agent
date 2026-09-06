@@ -37,6 +37,9 @@ describe('托管预览接线', () => {
     const source = read('components/web-hosting/SitePreviewModal.tsx');
     expect(source).toContain('useSitePreviewHtml');
     expect(source).toMatch(/srcDoc=\{/);
+    expect(source).toContain('bg-token-card text-token-primary');
+    expect(source).not.toContain("bg-[#0f1014]");
+    expect(source).not.toContain('bg-black/70 px-3 py-1.5 text-[12px] text-token-secondary');
   });
 
   it('网页托管列表把 site 传给缩略图（不传就取不到正文，静默退回直链）', () => {

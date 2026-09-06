@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -404,20 +405,33 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(egressEnv?.mode).toBe(0o600);
     expect(egressEnv?.content).toContain('TARGET_ORIGIN=https://map.example.test');
     expect(egressEnv?.content).toContain('MAP_MODEL_TICKET=model-secret');
+    const relayClientToken = egressEnv?.content.match(/^RELAY_CLIENT_TOKEN=(.+)$/m)?.[1] || '';
+    expect(relayClientToken).toMatch(/^cds-placeholder-[A-Za-z0-9_-]+$/);
+    expect(egressRun?.command).not.toContain(relayClientToken);
+    expect(shell.calls.filter((call) => call.command.includes('/__health'))
+      .every((call) => !call.command.includes(relayClientToken))).toBe(true);
     expect(fs.existsSync(egressEnv?.path || '')).toBe(false);
     const encodedProxyScript = egressEnv?.content.match(/^CDS_EGRESS_PROXY_SCRIPT=(.+)$/m)?.[1] || '';
     const proxyScript = Buffer.from(encodedProxyScript, 'base64').toString('utf8');
     let relayHandler: ((request: any, response: any) => void) | undefined;
     let upstreamOptions: Record<string, any> | undefined;
+    let resolvedAddress = '93.184.216.34';
     const relayServer = {
       on: vi.fn().mockReturnThis(),
       listen: vi.fn(),
+      maxConnections: 0,
+      headersTimeout: 0,
+      requestTimeout: 0,
+      keepAliveTimeout: 0,
     };
     const upstreamRequest = {
       on: vi.fn().mockReturnThis(),
+      setTimeout: vi.fn().mockReturnThis(),
+      destroy: vi.fn(),
     };
     vm.runInNewContext(proxyScript, {
       URL,
+      Buffer,
       console,
       process: {
         env: {
@@ -425,6 +439,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           TARGET_PATH_PREFIX: '/api/design-artifacts/runtime/run-1/llm/v1',
           PROXY_PORT: '8787',
           MAP_MODEL_TICKET: 'model-secret',
+          RELAY_CLIENT_TOKEN: relayClientToken,
         },
       },
       require: (specifier: string) => {
@@ -447,17 +462,32 @@ describe('AgentWorkspaceSessionRuntime', () => {
         if (specifier === 'node:dns') {
           return {
             lookup: (_hostname: string, _options: unknown, callback: Function) => callback(null, [
-              { address: '203.0.113.10', family: 4 },
+              { address: resolvedAddress, family: resolvedAddress.includes(':') ? 6 : 4 },
             ]),
           };
         }
-        if (specifier === 'node:net') {
-          return { isIP: (address: string) => address.includes(':') ? 6 : 4 };
-        }
+        if (specifier === 'node:net') return net;
+        if (specifier === 'node:crypto') return crypto;
         throw new Error(`Unexpected proxy dependency: ${specifier}`);
       },
     });
     expect(relayHandler).toBeTypeOf('function');
+    expect(relayServer.maxConnections).toBe(16);
+    expect(relayServer.headersTimeout).toBe(10_000);
+    expect(relayServer.requestTimeout).toBe(900_000);
+    expect(relayServer.keepAliveTimeout).toBe(5_000);
+    const missingAuthResponse = { writeHead: vi.fn(), end: vi.fn() };
+    relayHandler?.({
+      method: 'POST',
+      url: '/api/design-artifacts/runtime/run-1/llm/v1/chat/completions',
+      headers: {},
+      socket: { remoteAddress: '172.18.0.10' },
+      pipe: vi.fn(),
+    }, missingAuthResponse);
+    expect(missingAuthResponse.writeHead).toHaveBeenCalledWith(401);
+    expect(upstreamOptions).toBeUndefined();
+
+    const forgedAuthResponse = { writeHead: vi.fn(), end: vi.fn() };
     relayHandler?.({
       method: 'POST',
       url: '/api/design-artifacts/runtime/run-1/llm/v1/chat/completions',
@@ -467,11 +497,25 @@ describe('AgentWorkspaceSessionRuntime', () => {
         'anthropic-api-key': 'agent-forged-anthropic-key',
         cookie: 'agent-session-cookie',
       },
+      socket: { remoteAddress: '172.18.0.10' },
       pipe: vi.fn(),
-    }, {
-      writeHead: vi.fn(),
-      end: vi.fn(),
-    });
+    }, forgedAuthResponse);
+    expect(forgedAuthResponse.writeHead).toHaveBeenCalledWith(401);
+    expect(upstreamOptions).toBeUndefined();
+
+    const authenticatedResponse = { writeHead: vi.fn(), end: vi.fn() };
+    relayHandler?.({
+      method: 'POST',
+      url: '/api/design-artifacts/runtime/run-1/llm/v1/chat/completions',
+      headers: {
+        authorization: `Bearer ${relayClientToken}`,
+        'x-api-key': 'agent-forged-api-key',
+        'anthropic-api-key': 'agent-forged-anthropic-key',
+        cookie: 'agent-session-cookie',
+      },
+      socket: { remoteAddress: '172.18.0.10' },
+      pipe: vi.fn(),
+    }, authenticatedResponse);
     expect(upstreamOptions?.lookup).toBeTypeOf('function');
     expect(upstreamOptions?.headers).toMatchObject({
       authorization: 'Bearer model-secret',
@@ -480,12 +524,46 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(upstreamOptions?.headers).not.toHaveProperty('x-api-key');
     expect(upstreamOptions?.headers).not.toHaveProperty('anthropic-api-key');
     expect(upstreamOptions?.headers).not.toHaveProperty('cookie');
+    expect(JSON.stringify(upstreamOptions?.headers)).not.toContain(relayClientToken);
+    expect(upstreamRequest.setTimeout).toHaveBeenCalledWith(90_000, expect.any(Function));
+    const externalHealthResponse = { writeHead: vi.fn(), end: vi.fn() };
+    relayHandler?.({
+      method: 'GET', url: '/__health', headers: {}, socket: { remoteAddress: '172.18.0.10' }, pipe: vi.fn(),
+    }, externalHealthResponse);
+    expect(externalHealthResponse.writeHead).toHaveBeenCalledWith(403);
+    const loopbackHealthResponse = { writeHead: vi.fn(), end: vi.fn() };
+    relayHandler?.({
+      method: 'GET', url: '/__health', headers: {}, socket: { remoteAddress: '127.0.0.1' }, pipe: vi.fn(),
+    }, loopbackHealthResponse);
+    expect(loopbackHealthResponse.writeHead).toHaveBeenCalledWith(204);
     const allLookup = vi.fn();
     upstreamOptions?.lookup('map.example.test', { all: true }, allLookup);
-    expect(allLookup).toHaveBeenCalledWith(null, [{ address: '203.0.113.10', family: 4 }]);
+    expect(allLookup).toHaveBeenCalledWith(null, [{ address: '93.184.216.34', family: 4 }]);
     const singleLookup = vi.fn();
     upstreamOptions?.lookup('map.example.test', {}, singleLookup);
-    expect(singleLookup).toHaveBeenCalledWith(null, '203.0.113.10', 4);
+    expect(singleLookup).toHaveBeenCalledWith(null, '93.184.216.34', 4);
+    for (const deniedAddress of [
+      '100.100.100.200',
+      '198.18.0.1',
+      '192.0.2.1',
+      '203.0.113.10',
+      '64:ff9b:1::a00:1',
+      'fec0::1',
+      '2001:2f::1',
+    ]) {
+      resolvedAddress = deniedAddress;
+      upstreamOptions = undefined;
+      const deniedResponse = { writeHead: vi.fn(), end: vi.fn() };
+      relayHandler?.({
+        method: 'POST',
+        url: '/api/design-artifacts/runtime/run-1/llm/v1/chat/completions',
+        headers: { authorization: `Bearer ${relayClientToken}` },
+        socket: { remoteAddress: '172.18.0.10' },
+        pipe: vi.fn(),
+      }, deniedResponse);
+      expect(deniedResponse.writeHead).toHaveBeenCalledWith(502);
+      expect(upstreamOptions).toBeUndefined();
+    }
     const imported = requests.find((request) => request.path === '/api/import/folder');
     expect(imported?.body).toMatchObject({
       baseDir: '/workspace',
@@ -513,6 +591,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
       },
     });
     expect(JSON.stringify(designRuns)).not.toContain('model-secret');
+    expect(run?.body.byokProvider.apiKey).toBe(relayClientToken);
     expect(JSON.stringify(run?.body)).not.toContain('agent-forged-secret');
     expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/assets/template.html');
     expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');

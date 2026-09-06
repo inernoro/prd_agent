@@ -30,4 +30,9 @@ describe('SiteGenerateDialog responsive layout contract', () => {
     expect(source).toContain('entryId: entry.id');
     expect(source).toContain('storeId: entry.storeId');
   });
+
+  it('updates visible elapsed time every second during a long remote generation', () => {
+    expect(source).toContain('window.setInterval');
+    expect(source).toContain('已运行 {elapsedSeconds} 秒');
+  });
 });

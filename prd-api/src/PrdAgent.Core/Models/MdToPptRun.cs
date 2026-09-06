@@ -22,6 +22,9 @@ public class MdToPptRun
     /// <summary>convert | patch | outline</summary>
     public string Op { get; set; } = "convert";
 
+    /// <summary>精修任务所依据的上一条 run；只接受同一用户已持久化的服务端 run。</summary>
+    public string? ParentRunId { get; set; }
+
     /// <summary>用于历史列表展示的标题（取自首个标题行或内容前缀）</summary>
     public string Title { get; set; } = string.Empty;
 

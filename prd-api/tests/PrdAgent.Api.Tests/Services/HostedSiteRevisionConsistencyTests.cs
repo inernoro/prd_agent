@@ -13,6 +13,72 @@ public sealed class HostedSiteRevisionConsistencyTests
 {
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task GeneratedSnapshot_ShouldPersistActualRuntimeRunAndKnowledgeProvenance()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var version = MongoTime(DateTime.UtcNow);
+        var site = Site(null, version);
+        var entry = new HostedSiteEditableEntry(site, "<!doctype html><html>generated</html>", version);
+        var service = new HostedSiteRevisionService(fixture.Db, Mock.Of<IHostedSiteService>());
+
+        var revision = await service.EnsureGeneratedSnapshotAsync(
+            site.Id,
+            "user-1",
+            entry,
+            HostedSiteEditRuntimes.OpenDesign,
+            "run-open-design",
+            ["entry-1", "entry-1", "entry-2"]);
+
+        Assert.Equal(HostedSiteEditRuntimes.OpenDesign, revision.Runtime);
+        Assert.Equal("run-open-design", revision.SourceRunId);
+        Assert.Equal(["entry-1", "entry-2"], revision.KnowledgeEntryIds);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task Rollback_ShouldRecordManualLedgerActionInsteadOfPretendingToRunAiAgain()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var targetVersion = MongoTime(DateTime.UtcNow.AddMinutes(-2));
+        var currentVersion = MongoTime(DateTime.UtcNow.AddMinutes(-1));
+        var publishedVersion = MongoTime(DateTime.UtcNow);
+        var target = new HostedSiteRevision
+        {
+            Id = "open-design-target",
+            SiteId = "site-1",
+            CreatedByUserId = "user-1",
+            Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.Baseline,
+            Runtime = HostedSiteEditRuntimes.OpenDesign,
+            SourceRunId = "run-open-design",
+            KnowledgeEntryIds = ["entry-1"],
+            Html = "<!doctype html><html>target</html>",
+            BasedOnContentVersion = targetVersion,
+            PublishedContentVersion = targetVersion,
+            PublishedAt = targetVersion,
+            CreatedAt = targetVersion,
+        };
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(target);
+        var currentSite = Site(null, currentVersion);
+        var publishedSite = Site(null, publishedVersion);
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(currentSite, "<!doctype html><html>current</html>", currentVersion));
+        sites.Setup(x => x.ReplaceEntryHtmlAsync(
+                "site-1", "user-1", target.Html, currentVersion, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(publishedSite);
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        var result = await service.RollbackAsync("site-1", target.Id, "user-1");
+
+        Assert.Equal(HostedSiteEditRuntimes.Manual, result.Revision.Runtime);
+        Assert.Null(result.Revision.SourceRunId);
+        Assert.Equal(target.KnowledgeEntryIds, result.Revision.KnowledgeEntryIds);
+        Assert.Equal(HostedSiteRevisionSources.Rollback, result.Revision.Source);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task PublishRetry_ShouldFinalizeLedgerWhenSitePointerAlreadySwitched()
     {
         await using var fixture = await RevisionMongoFixture.CreateAsync();

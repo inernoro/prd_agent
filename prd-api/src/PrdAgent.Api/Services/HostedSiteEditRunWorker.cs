@@ -498,7 +498,14 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 throw new DesignArtifactRunLeaseLostException(run.Id);
 
             var current = await sites.GetEditableEntryHtmlAsync(site.Id, run.UserId, ct);
-            var baseline = await revisions.EnsureCurrentSnapshotAsync(site.Id, run.UserId, current, ct);
+            var baseline = await revisions.EnsureGeneratedSnapshotAsync(
+                site.Id,
+                run.UserId,
+                current,
+                run.Runtime,
+                run.Id,
+                run.KnowledgeReferences.Select(item => item.EntryId).ToList(),
+                ct);
             if (!await RenewLeaseAsync(
                     db,
                     run.Id,

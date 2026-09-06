@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Caching.Memory;
 using PrdAgent.Core.Models;
 
@@ -43,7 +44,8 @@ public sealed record DesignArtifactProviderCapability(
     bool Configured,
     bool Healthy,
     bool Enabled,
-    string? Reason);
+    string? Reason,
+    [property: JsonIgnore] string? ConnectionId = null);
 
 /// <summary>每个设计插件通过 DI 注册定义源，不要求统一控制器认识插件名称。</summary>
 public interface IDesignArtifactProviderDefinitionSource
@@ -62,7 +64,8 @@ public sealed record DesignArtifactProviderProbeResult(
     bool Configured,
     bool Healthy,
     bool Enabled,
-    string? Reason);
+    string? Reason,
+    string? ConnectionId = null);
 
 /// <summary>远程 Provider 的运行事实探针。事实必须来自执行归属方，不能由 MAP 静态开关代替。</summary>
 public interface IDesignArtifactProviderProbe
@@ -214,7 +217,10 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
         try
         {
             var result = await probe.ProbeAsync(userId, ct);
-            if (result.Enabled)
+            // 连接型 Provider 的能力事实必须和本次选中的连接一起返回并冻结到 Run。
+            // 未知当前连接时不得回退到旧连接的正向快照，否则探针 A 可能授权执行到 B。
+            var connectionScoped = !string.IsNullOrWhiteSpace(result.ConnectionId);
+            if (result.Enabled && !connectionScoped)
             {
                 _cache.Set(cacheKey, result, _positiveCapabilityCacheDuration);
             }
@@ -228,7 +234,8 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
                 result.Configured,
                 result.Healthy,
                 result.Enabled,
-                result.Reason);
+                result.Reason,
+                result.ConnectionId);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -279,7 +286,8 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
         bool configured,
         bool healthy,
         bool enabled,
-        string? reason) => new(
+        string? reason,
+        string? connectionId = null) => new(
             definition.Id,
             definition.Label,
             definition.AdapterKind,
@@ -291,7 +299,8 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
             configured,
             healthy,
             enabled,
-            reason);
+            reason,
+            connectionId);
 
     private readonly record struct PositiveCapabilityCacheKey(string UserId, string Runtime);
 }

@@ -58,7 +58,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             defaultRuntime = HostedSiteEditRuntimes.MapGateway,
-            runtimes,
+            runtimes = runtimes.Select(ToPublicCapability).ToList(),
         }));
     }
 
@@ -131,6 +131,7 @@ public sealed class HostedSiteEditsController : ControllerBase
             Operation = DesignArtifactOperations.Edit,
             SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
             Runtime = runtime,
+            RuntimeConnectionId = capability.ConnectionId,
             Instruction = instruction,
             TargetSiteId = siteId,
             KnowledgeReferences = snapshots.ToList(),
@@ -377,6 +378,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         run.ArtifactRevisionId,
         run.LinkedRunId,
         run.Error,
+        run.CreatedAt,
         knowledgeReferences = run.KnowledgeReferences.Select(item => new
         {
             item.EntryId,
@@ -385,6 +387,22 @@ public sealed class HostedSiteEditsController : ControllerBase
             item.Title,
             item.ContentHash,
         }),
+    };
+
+    private static object ToPublicCapability(DesignArtifactProviderCapability item) => new
+    {
+        item.Id,
+        item.Label,
+        item.AdapterKind,
+        item.ExecutionOwner,
+        item.IsolationMode,
+        item.ArtifactTypes,
+        item.Operations,
+        item.SourceSurfaces,
+        item.Configured,
+        item.Healthy,
+        item.Enabled,
+        item.Reason,
     };
 
     private static bool RunBelongsToSite(RunMeta meta, string siteId)

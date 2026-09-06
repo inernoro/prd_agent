@@ -48,7 +48,7 @@ public sealed class DesignArtifactsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             defaultRuntime = DesignArtifactRuntimes.MapGateway,
-            runtimes,
+            runtimes = runtimes.Select(ToPublicCapability).ToList(),
         }));
     }
 
@@ -113,6 +113,7 @@ public sealed class DesignArtifactsController : ControllerBase
             Operation = DesignArtifactOperations.Generate,
             SourceSurface = sourceSurface,
             Runtime = runtime,
+            RuntimeConnectionId = capability.ConnectionId,
             Instruction = instruction,
             Title = TrimOptional(request.Title, 200) ?? snapshots[0].Title,
             KnowledgeReferences = snapshots.ToList(),
@@ -252,6 +253,22 @@ public sealed class DesignArtifactsController : ControllerBase
         var trimmed = value.Trim();
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
+
+    private static object ToPublicCapability(DesignArtifactProviderCapability item) => new
+    {
+        item.Id,
+        item.Label,
+        item.AdapterKind,
+        item.ExecutionOwner,
+        item.IsolationMode,
+        item.ArtifactTypes,
+        item.Operations,
+        item.SourceSurfaces,
+        item.Configured,
+        item.Healthy,
+        item.Enabled,
+        item.Reason,
+    };
 
     private async Task WriteEventAsync(long? id, string eventName, string json, CancellationToken ct)
     {

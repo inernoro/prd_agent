@@ -114,6 +114,12 @@ export function buildWidgetScript(
     #cds-widget .cds-mode-select{font-size:10px;padding:2px 4px;border-radius:4px;border:1px solid #30363d;background:#161b22;color:#c9d1d9;cursor:pointer;flex:1;min-width:0}
     #cds-widget .cds-mode-select:hover{border-color:#58a6ff}
     #cds-widget .cds-mode-select:focus{outline:none;border-color:#58a6ff}
+    @media (max-width:640px){
+      #cds-widget{max-width:calc(100vw - 24px)}
+      #cds-widget .cds-badge{max-width:184px;padding:4px 6px}
+      #cds-widget .cds-branch,#cds-widget .cds-mode{display:none}
+      #cds-widget .cds-panel{min-width:min(260px,calc(100vw - 24px));max-width:calc(100vw - 24px)}
+    }
     #cds-widget .cds-spinner{display:inline-block;width:11px;height:11px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:cds-spin .8s linear infinite;flex-shrink:0}
     #cds-widget .cds-step{display:flex;align-items:center;gap:4px;font-size:10px;color:#8b949e}
     #cds-widget .cds-step.done{color:#3fb950}

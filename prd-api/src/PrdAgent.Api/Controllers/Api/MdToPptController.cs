@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -45,6 +46,7 @@ public class MdToPptController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
+    private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
     private readonly IConfiguration _configuration;
     private readonly ILogger<MdToPptController> _logger;
 
@@ -323,6 +325,7 @@ public class MdToPptController : ControllerBase
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         IInfraAgentRuntimeProfileService runtimeProfiles,
+        IDesignKnowledgeSnapshotResolver knowledgeSnapshots,
         IConfiguration configuration,
         ILogger<MdToPptController> logger)
     {
@@ -331,6 +334,7 @@ public class MdToPptController : ControllerBase
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _runtimeProfiles = runtimeProfiles;
+        _knowledgeSnapshots = knowledgeSnapshots;
         _configuration = configuration;
         _logger = logger;
     }
@@ -347,6 +351,16 @@ public class MdToPptController : ControllerBase
     public async Task<IActionResult> Outline([FromBody] MdToPptOutlineRequest req)
     {
         var userId = this.GetRequiredUserId();
+
+        IReadOnlyList<DesignKnowledgeSnapshot> knowledgeReferences;
+        try
+        {
+            knowledgeReferences = await ResolveKnowledgeReferencesAsync(userId, req.KnowledgeReferences, HttpContext.RequestAborted);
+        }
+        catch (DesignKnowledgeSnapshotException ex)
+        {
+            return BadRequest(new { error = ex.Message, code = ex.Code });
+        }
 
         if (string.IsNullOrWhiteSpace(req.Content))
             return BadRequest(new { error = "内容不能为空" });
@@ -373,8 +387,8 @@ public class MdToPptController : ControllerBase
             contextParts.Add($"# 用户内容\n\n{req.Content.Trim()}");
         if (!string.IsNullOrWhiteSpace(req.AttachmentText))
             contextParts.Add($"# 附件内容\n\n{req.AttachmentText.Trim()}");
-        if (!string.IsNullOrWhiteSpace(req.KbContext))
-            contextParts.Add($"# 知识库内容\n\n{req.KbContext.Trim()}");
+        if (knowledgeReferences.Count > 0)
+            contextParts.Add(BuildKnowledgeContext(knowledgeReferences));
         if (!string.IsNullOrWhiteSpace(req.ChatHistory))
             contextParts.Add($"# 对话历史\n\n{req.ChatHistory.Trim()}");
         var userContent = string.Join("\n\n---\n\n", contextParts);
@@ -470,6 +484,18 @@ public class MdToPptController : ControllerBase
     public async Task OutlineStream([FromBody] MdToPptOutlineRequest req)
     {
         var userId = this.GetRequiredUserId();
+
+        IReadOnlyList<DesignKnowledgeSnapshot> knowledgeReferences;
+        try
+        {
+            knowledgeReferences = await ResolveKnowledgeReferencesAsync(userId, req.KnowledgeReferences, HttpContext.RequestAborted);
+        }
+        catch (DesignKnowledgeSnapshotException ex)
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(new { error = ex.Message, code = ex.Code }, HttpContext.RequestAborted);
+            return;
+        }
         SetSseHeaders();
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
@@ -502,8 +528,8 @@ public class MdToPptController : ControllerBase
             contextParts.Add($"# 用户内容\n\n{req.Content.Trim()}");
         if (!string.IsNullOrWhiteSpace(req.AttachmentText))
             contextParts.Add($"# 附件内容\n\n{req.AttachmentText.Trim()}");
-        if (!string.IsNullOrWhiteSpace(req.KbContext))
-            contextParts.Add($"# 知识库内容\n\n{req.KbContext.Trim()}");
+        if (knowledgeReferences.Count > 0)
+            contextParts.Add(BuildKnowledgeContext(knowledgeReferences));
         if (!string.IsNullOrWhiteSpace(req.ChatHistory))
             contextParts.Add($"# 对话历史\n\n{req.ChatHistory.Trim()}");
         var userContent = string.Join("\n\n---\n\n", contextParts);
@@ -739,7 +765,7 @@ public class MdToPptController : ControllerBase
     {
         if (req.TargetPages is > 0)
             return Math.Clamp(req.TargetPages.Value, 1, 30);
-        var text = string.Join("\n", new[] { req.Content, req.AttachmentText, req.KbContext, req.ChatHistory }
+        var text = string.Join("\n", new[] { req.Content, req.AttachmentText, req.ChatHistory }
             .Where(s => !string.IsNullOrWhiteSpace(s)));
         var explicitPages = ParseExplicitPageCount(text);
         return explicitPages.HasValue ? Math.Clamp(explicitPages.Value, 1, 30) : 8;
@@ -1205,6 +1231,27 @@ public class MdToPptController : ControllerBase
     public async Task Convert([FromBody] MdToPptConvertRequest req)
     {
         var userId = this.GetRequiredUserId();
+
+        IReadOnlyList<DesignKnowledgeSnapshot> knowledgeReferences;
+        try
+        {
+            knowledgeReferences = await ResolveKnowledgeReferencesAsync(userId, req.KnowledgeReferences, HttpContext.RequestAborted);
+        }
+        catch (DesignKnowledgeSnapshotException ex)
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(new { error = ex.Message, code = ex.Code }, HttpContext.RequestAborted);
+            return;
+        }
+
+        var authoritativeContent = knowledgeReferences.Count == 0
+            ? req.Content
+            : string.Join("\n\n---\n\n", new[]
+            {
+                req.Content?.Trim(),
+                BuildKnowledgeContext(knowledgeReferences),
+            }.Where(part => !string.IsNullOrWhiteSpace(part)));
+        req.Content = authoritativeContent;
         SetSseHeaders();
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
@@ -1216,8 +1263,10 @@ public class MdToPptController : ControllerBase
             template != null ? $"custom:{template.Name}" : req.Theme,
             "convert",
             req.Content,
-            req.SourceSurface,
-            NormalizeKnowledgeReferences(req.KnowledgeReferences));
+            knowledgeReferences.Count > 0
+                ? DesignArtifactSourceSurfaces.KnowledgeBase
+                : DesignArtifactSourceSurfaces.HtmlPpt,
+            knowledgeReferences.ToList());
         await WriteEventAsync("run", new { runId = run.Id });
 
         // 并行逐页编排（用户 2026-06-11 架构提案）：大纲定稿 → 壳子确定（设计系统）→
@@ -1245,12 +1294,39 @@ public class MdToPptController : ControllerBase
     public async Task Patch([FromBody] MdToPptPatchRequest req)
     {
         var userId = this.GetRequiredUserId();
+
+        MdToPptRun? parentRun = null;
+        if (!string.IsNullOrWhiteSpace(req.ParentRunId))
+        {
+            parentRun = await _db.MdToPptRuns
+                .Find(item => item.Id == req.ParentRunId.Trim() && item.UserId == userId)
+                .FirstOrDefaultAsync(HttpContext.RequestAborted);
+            if (parentRun == null)
+            {
+                Response.StatusCode = StatusCodes.Status400BadRequest;
+                await Response.WriteAsJsonAsync(new
+                {
+                    error = "精修来源任务不存在，请从当前生成结果重新发起",
+                    code = ErrorCodes.NOT_FOUND,
+                }, HttpContext.RequestAborted);
+                return;
+            }
+        }
+        var provenance = InheritPatchProvenance(parentRun);
         SetSseHeaders();
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
         var template = await ResolveTemplateAsync(userId, req.TemplateId);
-        var run = await CreateRunAsync(userId, "agent", template != null ? $"custom:{template.Name}" : req.Theme, "patch", req.SlideRequest);
+        var run = await CreateRunAsync(
+            userId,
+            "agent",
+            template != null ? $"custom:{template.Name}" : req.Theme,
+            "patch",
+            req.SlideRequest,
+            provenance.SourceSurface,
+            provenance.KnowledgeReferences,
+            parentRun?.Id);
         await WriteEventAsync("run", new { runId = run.Id });
 
         // 定向单页 patch（2026-06-11 诉求 4「重绘本页」）：只把目标页交给一个子智能体
@@ -1353,6 +1429,7 @@ public class MdToPptController : ControllerBase
             status = run.Status,
             engine = run.Engine,
             op = run.Op,
+            parentRunId = run.ParentRunId,
             title = run.Title,
             html = run.Html,
             outlineJson = run.OutlineJson,
@@ -1397,6 +1474,7 @@ public class MdToPptController : ControllerBase
             hasHtml = !string.IsNullOrEmpty(r.Html),
             sourceSurface = r.SourceSurface,
             knowledgeCount = r.KnowledgeReferences.Count,
+            parentRunId = r.ParentRunId,
             publishedSiteId = r.PublishedSiteId,
             createdAt = r.CreatedAt,
         }));
@@ -1409,7 +1487,8 @@ public class MdToPptController : ControllerBase
         string op,
         string? content,
         string? sourceSurface = null,
-        List<DesignKnowledgeSnapshot>? knowledgeReferences = null)
+        List<DesignKnowledgeSnapshot>? knowledgeReferences = null,
+        string? parentRunId = null)
     {
         var run = new MdToPptRun
         {
@@ -1418,6 +1497,7 @@ public class MdToPptController : ControllerBase
             Engine = engine,
             Theme = theme ?? string.Empty,
             Op = op,
+            ParentRunId = string.IsNullOrWhiteSpace(parentRunId) ? null : parentRunId.Trim(),
             Title = DeriveTitle(content, op),
             ContentPreview = (content ?? string.Empty).Trim() is { Length: > 0 } cp
                 ? (cp.Length > 200 ? cp[..200] : cp)
@@ -1451,6 +1531,27 @@ public class MdToPptController : ControllerBase
             }, cancellationToken: CancellationToken.None);
         }
         return run;
+    }
+
+    internal static (string SourceSurface, List<DesignKnowledgeSnapshot> KnowledgeReferences)
+        InheritPatchProvenance(MdToPptRun? parentRun)
+    {
+        if (parentRun == null)
+            return (DesignArtifactSourceSurfaces.HtmlPpt, new List<DesignKnowledgeSnapshot>());
+
+        var sourceSurface = parentRun.SourceSurface == DesignArtifactSourceSurfaces.KnowledgeBase
+            && parentRun.KnowledgeReferences.Count > 0
+                ? DesignArtifactSourceSurfaces.KnowledgeBase
+                : DesignArtifactSourceSurfaces.HtmlPpt;
+        return (sourceSurface, parentRun.KnowledgeReferences.Select(item => new DesignKnowledgeSnapshot
+        {
+            EntryId = item.EntryId,
+            StoreId = item.StoreId,
+            StoreName = item.StoreName,
+            Title = item.Title,
+            Content = item.Content,
+            ContentHash = item.ContentHash,
+        }).ToList());
     }
 
     private async Task PersistRunDoneAsync(MdToPptRun run, string html, string? model, string? platform, int degraded = 0, int total = 0)
@@ -1513,28 +1614,23 @@ public class MdToPptController : ControllerBase
         return first.Length > 40 ? first[..40] : first;
     }
 
-    private static List<DesignKnowledgeSnapshot> NormalizeKnowledgeReferences(
-        List<MdToPptKnowledgeReferenceRequest>? references)
-    {
-        return (references ?? new List<MdToPptKnowledgeReferenceRequest>())
-            .Where(x => !string.IsNullOrWhiteSpace(x.EntryId) && !string.IsNullOrWhiteSpace(x.Content))
-            .Take(3)
-            .Select(x =>
-            {
-                var fullContent = x.Content!.Trim();
-                var content = fullContent.Length > 20_000 ? fullContent[..20_000] : fullContent;
-                return new DesignKnowledgeSnapshot
-                {
-                    EntryId = x.EntryId!.Trim(),
-                    StoreId = x.StoreId?.Trim(),
-                    StoreName = x.StoreName?.Trim(),
-                    Title = string.IsNullOrWhiteSpace(x.Title) ? "未命名知识" : x.Title.Trim(),
-                    Content = content,
-                    ContentHash = System.Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant(),
-                };
-            })
-            .ToList();
-    }
+    private Task<IReadOnlyList<DesignKnowledgeSnapshot>> ResolveKnowledgeReferencesAsync(
+        string userId,
+        List<MdToPptKnowledgeReferenceRequest>? references,
+        CancellationToken ct) => _knowledgeSnapshots.ResolveAsync(
+            userId,
+            (references ?? new List<MdToPptKnowledgeReferenceRequest>())
+                .Select(item => new DesignKnowledgeReferenceIdentity(
+                    item.EntryId?.Trim() ?? string.Empty,
+                    item.StoreId?.Trim() ?? string.Empty))
+                .ToList(),
+            ct);
+
+    private static string BuildKnowledgeContext(IReadOnlyList<DesignKnowledgeSnapshot> references) =>
+        "# 服务端校验的知识库内容\n\n" + string.Join(
+            "\n\n---\n\n",
+            references.Select(item =>
+                $"## 知识库「{item.StoreName}」>「{item.Title}」\n\n{item.Content}"));
 
     // ─────────────────────────────────────────────
     // CDS Agent 路径（可观测，诊断插桩）
@@ -3604,6 +3700,9 @@ public class MdToPptOutlinePageDto
 
 public class MdToPptPatchRequest
 {
+    /// <summary>当前精修所依据的服务端 run；来源与知识快照只能从该 run 继承。</summary>
+    public string? ParentRunId { get; set; }
+
     /// <summary>当前 HTML 内容</summary>
     public string? CurrentHtml { get; set; }
 
@@ -3669,9 +3768,6 @@ public class MdToPptKnowledgeReferenceRequest
 {
     public string? EntryId { get; set; }
     public string? StoreId { get; set; }
-    public string? StoreName { get; set; }
-    public string? Title { get; set; }
-    public string? Content { get; set; }
 }
 
 public class MdToPptOutlineRequest
@@ -3682,8 +3778,8 @@ public class MdToPptOutlineRequest
     /// <summary>附件文本（已提取的文件内容）</summary>
     public string? AttachmentText { get; set; }
 
-    /// <summary>知识库上下文（已提取的 KB 条目内容）</summary>
-    public string? KbContext { get; set; }
+    /// <summary>知识条目身份；正文、标题与归属由服务端重新解析。</summary>
+    public List<MdToPptKnowledgeReferenceRequest>? KnowledgeReferences { get; set; }
 
     /// <summary>对话历史摘要（告知 AI 用户的历史需求）</summary>
     public string? ChatHistory { get; set; }

@@ -282,4 +282,38 @@ public class MdToPptSectionSanitizeTests
         Assert.Contains("网页托管预览", html);
         Assert.Contains("知识库引用", html);
     }
+
+    [Fact]
+    public void PatchProvenance_IsClonedOnlyFromPersistedParentRun()
+    {
+        var parent = new MdToPptRun
+        {
+            Id = "parent-run",
+            UserId = "user-1",
+            SourceSurface = DesignArtifactSourceSurfaces.KnowledgeBase,
+            KnowledgeReferences =
+            [
+                new DesignKnowledgeSnapshot
+                {
+                    EntryId = "entry-1",
+                    StoreId = "store-1",
+                    StoreName = "产品知识",
+                    Title = "发布方案",
+                    Content = "服务端正文",
+                    ContentHash = "hash-1",
+                },
+            ],
+        };
+
+        var inherited = MdToPptController.InheritPatchProvenance(parent);
+
+        Assert.Equal(DesignArtifactSourceSurfaces.KnowledgeBase, inherited.SourceSurface);
+        var snapshot = Assert.Single(inherited.KnowledgeReferences);
+        Assert.Equal("服务端正文", snapshot.Content);
+        Assert.NotSame(parent.KnowledgeReferences[0], snapshot);
+
+        var noParent = MdToPptController.InheritPatchProvenance(null);
+        Assert.Equal(DesignArtifactSourceSurfaces.HtmlPpt, noParent.SourceSurface);
+        Assert.Empty(noParent.KnowledgeReferences);
+    }
 }
