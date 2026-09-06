@@ -784,6 +784,43 @@ public class MdToPptController : ControllerBase
         return ParseChineseSmallNumber(raw);
     }
 
+    /// <summary>
+    /// 从精修要求中识别有限、明确的“第 N 页”语法。显式请求字段优先；这里只处理带“第”
+    /// 的单页定位，不把“生成 5 页”这类总页数要求误判成第 5 页。
+    /// </summary>
+    internal static int? ResolvePatchSlideIndex(int? requestedIndex, string? instruction)
+    {
+        if (requestedIndex is >= 1 and <= 30) return requestedIndex;
+        if (string.IsNullOrWhiteSpace(instruction)) return null;
+
+        // 自然语言只在“恰好一个页面 + 内容精修”时归一成单页替换。删除、移动、交换、
+        // 新增等结构操作仍交给整篇路径，避免把“删除第 3 页”错误变成重绘第 3 页。
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            instruction,
+            "第\\s*(\\d{1,2}|[一二两三四五六七八九十]{1,3})\\s*页",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (matches.Count != 1) return null;
+
+        const string pageRef = "第\\s*(?:\\d{1,2}|[一二两三四五六七八九十]{1,3})\\s*页";
+        var structuralPageOperation =
+            $"(?:删除|移除|复制)\\s*{pageRef}|" +
+            $"{pageRef}\\s*(?:删除|移除|复制|移动|移到|移至|挪到|挪至|前移|后移|上移|下移)|" +
+            "(?:新增|增加|插入)\\s*(?:一|1|两|2)?\\s*(?:个|张)?\\s*(?:新)?页|" +
+            $"{pageRef}\\s*(?:之前|之后|前|后)\\s*(?:新增|增加|插入)|" +
+            $"(?:交换|对调|调换)[\\s\\S]{{0,12}}{pageRef}|{pageRef}[\\s\\S]{{0,12}}(?:交换|对调|调换)|" +
+            $"拆分\\s*{pageRef}\\s*为[\\s\\S]*页";
+        if (System.Text.RegularExpressions.Regex.IsMatch(
+                instruction,
+                structuralPageOperation,
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return null;
+
+        var match = matches[0];
+        var raw = match.Groups[1].Value;
+        var parsed = int.TryParse(raw, out var numeric) ? numeric : ParseChineseSmallNumber(raw);
+        return parsed is >= 1 and <= 30 ? parsed : null;
+    }
+
     private static int? ParseChineseSmallNumber(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
@@ -1332,20 +1369,20 @@ public class MdToPptController : ControllerBase
 
         // 定向单页 patch（2026-06-11 诉求 4「重绘本页」）：只把目标页交给一个子智能体
         // 重画并在服务端原位替换——不再把整份 58KB HTML 喂给模型重出（旧路径实测 7 分钟+）。
-        // 官方主题限定（自定义模板的页级提示词 token 物化仍是 debt）；失败回落整篇路径。
-        if (req.SlideIndex.HasValue && template == null && !string.IsNullOrEmpty(req.CurrentHtml))
+        var effectiveSlideIndex = ResolvePatchSlideIndex(req.SlideIndex, req.SlideRequest);
+        if (effectiveSlideIndex.HasValue && !string.IsNullOrEmpty(req.CurrentHtml))
         {
-            var handled = await TryRunSinglePagePatchAsync(userId, req, run, req.SlideIndex.Value);
+            var handled = await TryRunSinglePagePatchAsync(userId, req, run, effectiveSlideIndex.Value, template);
             if (handled) return;
         }
 
         // 风格/模板随 patch 下发：换风格 = AI 参照该风格重绘整页 HTML（设计 token、
         // 字体、版式气质都在系统提示词里），不是前端套一层 CSS 换皮。
         var systemPrompt = BuildPptSystemPrompt(req.Theme, template?.StyleSpec);
-        // 前端的"指定第几页"输入框是 1-based(min=1)且原样下发,这里直接用,不能再 +1(否则
-        // 输入 3 会被改成第 4 页);留空时 SlideIndex 为 null,语义是整份 PPT,不能写成"第 0 页"。
-        var pageHint = req.SlideIndex.HasValue
-            ? $"（仅修改第 {req.SlideIndex.Value} 页）"
+        // 显式字段与“第 N 页”自然语言都归一为 1-based，不能再 +1（否则输入 3 会改成第 4 页）；
+        // 未识别到明确页码时语义是整份 PPT，不能写成“第 0 页”。
+        var pageHint = effectiveSlideIndex.HasValue
+            ? $"（仅修改第 {effectiveSlideIndex.Value} 页）"
             : "（未指定具体页，按要求修改整份 PPT）";
         var userContent = $"---\n\n# 已有 HTML\n\n```html\n{req.CurrentHtml?.Trim()}\n```\n\n# 修改要求{pageHint}\n\n{req.SlideRequest?.Trim()}";
 
@@ -1363,7 +1400,16 @@ public class MdToPptController : ControllerBase
         var userId = this.GetRequiredUserId();
 
         if (string.IsNullOrWhiteSpace(req.HtmlContent))
-            return BadRequest(new { error = "HTML 内容不能为空" });
+            return BadRequest(ApiResponse<object>.Fail(
+                "empty_ppt_html",
+                "PPT 内容为空，未发布。请先生成或恢复一份完整演示稿"));
+
+        if (!IsRunnableDeckDocument(req.HtmlContent))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                "incomplete_ppt_html",
+                "PPT 内容不完整，未发布。请保留当前演示稿并重新生成或精修"));
+        }
 
         var title = string.IsNullOrWhiteSpace(req.Title) ? "PPT 幻灯片" : req.Title.Trim();
         var htmlBytes = Encoding.UTF8.GetBytes(req.HtmlContent);
@@ -1424,15 +1470,18 @@ public class MdToPptController : ControllerBase
             .Find(x => x.Id == id && x.UserId == userId)
             .FirstOrDefaultAsync();
         if (run == null) return NotFound(new { error = "运行记录不存在" });
+        var invalidSavedDeck = run.Status == "done" &&
+                               run.Op is "convert" or "patch" &&
+                               !IsRunnableDeckDocument(run.Html);
         return Ok(new
         {
             id = run.Id,
-            status = run.Status,
+            status = invalidSavedDeck ? "error" : run.Status,
             engine = run.Engine,
             op = run.Op,
             parentRunId = run.ParentRunId,
             title = run.Title,
-            html = run.Html,
+            html = invalidSavedDeck ? null : run.Html,
             outlineJson = run.OutlineJson,
             sourceSurface = run.SourceSurface,
             knowledgeReferences = run.KnowledgeReferences.Select(x => new
@@ -1444,7 +1493,9 @@ public class MdToPptController : ControllerBase
                 x.ContentHash,
             }),
             publishedSiteId = run.PublishedSiteId,
-            error = run.Error,
+            error = invalidSavedDeck
+                ? "保存的演示稿不完整，已停止恢复。请重新生成或从上一版本继续"
+                : run.Error,
             model = run.Model,
             platform = run.Platform,
             degraded = run.Degraded,
@@ -1472,7 +1523,7 @@ public class MdToPptController : ControllerBase
             op = r.Op,
             title = r.Title,
             contentPreview = r.ContentPreview,
-            hasHtml = !string.IsNullOrEmpty(r.Html),
+            hasHtml = !string.IsNullOrEmpty(r.Html) && IsRunnableDeckDocument(r.Html),
             sourceSurface = r.SourceSurface,
             knowledgeCount = r.KnowledgeReferences.Count,
             parentRunId = r.ParentRunId,
@@ -1700,9 +1751,12 @@ public class MdToPptController : ControllerBase
         "要点卡片（.grid.g3 每卡一要点，禁止裸列表）",
     };
 
-    internal static string BuildPageSystemPrompt(string? theme, int index, int total)
+    internal static string BuildPageSystemPrompt(string? theme, int index, int total, string? customStyleSpec = null)
     {
-        var (_, tone) = ThemeTokens(theme);
+        var (_, defaultTone) = ThemeTokens(theme);
+        var tone = string.IsNullOrWhiteSpace(customStyleSpec)
+            ? defaultTone
+            : "自定义模板（从用户参考图提取，必须保持当前整份演示的视觉语言）——" + customStyleSpec.Trim();
         return
             "你是顶级演示设计师，正在与其他设计师并行完成同一份 reveal.js 演示的不同页面。" +
             "文档 <head> 已包含设计系统：CSS 变量（--bg/--bg2/--ink/--muted/--line/--card/--a1/--a2/--a3/--orb-op）" +
@@ -1830,25 +1884,26 @@ public class MdToPptController : ControllerBase
 
 
     /// <summary>整篇 HTML 中平衡扫描全部顶层 slide 块（锚定 deck 的拆装用）</summary>
-    internal static List<(int Start, int Length)> FindSlideBlocks(string html)
+    private static List<(int Start, int Length)> FindBalancedClassBlocks(string html, string classToken)
     {
-        var result = new List<(int, int)>();
+        var result = new List<(int Start, int Length)>();
         var openRe = new System.Text.RegularExpressions.Regex(
-            "<(div|section|article)\\b[^>]*class=\"[^\"]*\\bslide\\b[^\"]*\"[^>]*>",
+            "<(?<tag>div|main|section|article)\\b[^>]*\\bclass\\s*=\\s*(?<quote>[\"'])(?<classes>[^\"']*)\\k<quote>[^>]*>",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         var pos = 0;
         while (true)
         {
             var open = openRe.Match(html, pos);
             if (!open.Success) break;
-            // class 列表必须含独立的 slide token（排除 slide-counter / slides-container 容器）
-            var clsM = System.Text.RegularExpressions.Regex.Match(open.Value, "class=\"([^\"]*)\"");
-            if (!clsM.Success || !clsM.Groups[1].Value.Split(' ').Contains("slide"))
+            // class 列表必须含独立 token（排除 slide-counter / slides-container 等近似名）。
+            if (!open.Groups["classes"].Value
+                    .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                    .Any(value => string.Equals(value, classToken, StringComparison.OrdinalIgnoreCase)))
             {
                 pos = open.Index + open.Length;
                 continue;
             }
-            var tag = open.Groups[1].Value.ToLowerInvariant();
+            var tag = open.Groups["tag"].Value.ToLowerInvariant();
             var tagRe = new System.Text.RegularExpressions.Regex($"<(/?){tag}\\b[^>]*?(/?)>",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             var depth = 1;
@@ -1865,6 +1920,432 @@ public class MdToPptController : ControllerBase
             pos = scan;
         }
         return result;
+    }
+
+    internal static List<(int Start, int Length)> FindSlideBlocks(string html) =>
+        FindBalancedClassBlocks(html, "slide");
+
+    private static List<(int Start, int Length)> FindBalancedTagBlocks(string html, string tag)
+    {
+        var result = new List<(int Start, int Length)>();
+        var tagRe = new System.Text.RegularExpressions.Regex($"<(?<close>/?)({tag})\\b[^>]*?(?<self>/?)>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var stack = new List<(int Start, bool HasNested)>();
+        foreach (System.Text.RegularExpressions.Match token in tagRe.Matches(html))
+        {
+            if (token.Groups["close"].Value == "/")
+            {
+                if (stack.Count == 0) return new List<(int Start, int Length)>();
+                var open = stack[^1];
+                stack.RemoveAt(stack.Count - 1);
+                if (!open.HasNested) result.Add((open.Start, token.Index + token.Length - open.Start));
+                continue;
+            }
+            if (token.Groups["self"].Value == "/") continue;
+            if (stack.Count > 0)
+            {
+                var parent = stack[^1];
+                stack[^1] = (parent.Start, true);
+            }
+            stack.Add((token.Index, false));
+        }
+        return stack.Count == 0 ? result.OrderBy(block => block.Start).ToList() : new List<(int Start, int Length)>();
+    }
+
+    internal static List<(int Start, int Length)> FindPatchPageBlocks(string html)
+    {
+        var structuralHtml = MaskNonStructuralMarkup(html);
+        var blocks = FindSlideBlocks(structuralHtml);
+        return blocks.Count > 0 ? blocks : FindRevealPageBlocks(structuralHtml);
+    }
+
+    internal static bool IsAnchoredPatchBlock(string block) =>
+        System.Text.RegularExpressions.Regex.IsMatch(
+            block,
+            "^\\s*<(?:div|main|section|article)\\b[^>]*\\bclass\\s*=\\s*([\"'])(?<classes>[^\"']*)\\1",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase) &&
+        System.Text.RegularExpressions.Regex.Match(
+                block,
+                "^\\s*<(?:div|main|section|article)\\b[^>]*\\bclass\\s*=\\s*([\"'])(?<classes>[^\"']*)\\1",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Groups["classes"].Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Any(value => value.Equals("slide", StringComparison.OrdinalIgnoreCase));
+
+    private static List<(int Start, int Length)> FindRevealPageBlocks(string structuralHtml)
+    {
+        var result = new List<(int Start, int Length)>();
+        foreach (var reveal in FindBalancedClassBlocks(structuralHtml, "reveal"))
+        {
+            var revealHtml = structuralHtml.Substring(reveal.Start, reveal.Length);
+            foreach (var slides in FindBalancedClassBlocks(revealHtml, "slides"))
+            {
+                var slidesHtml = revealHtml.Substring(slides.Start, slides.Length);
+                foreach (var page in FindBalancedTagBlocks(slidesHtml, "section"))
+                    result.Add((reveal.Start + slides.Start + page.Start, page.Length));
+            }
+        }
+        return result.OrderBy(page => page.Start).ToList();
+    }
+
+    internal static bool HasRenderableSlideContent(string block)
+    {
+        if (string.IsNullOrWhiteSpace(block)) return false;
+        var hasImage = System.Text.RegularExpressions.Regex.IsMatch(
+            block, "<img\\b[^>]*\\bsrc\\s*=\\s*([\"'])[^\"']+\\1", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var svgMatch = System.Text.RegularExpressions.Regex.Match(
+            block, "<svg\\b[^>]*>(?<svg>[\\s\\S]*?)</svg\\s*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var svg = svgMatch.Success
+            ? System.Text.RegularExpressions.Regex.Replace(
+                svgMatch.Groups["svg"].Value,
+                "<defs\\b[^>]*>[\\s\\S]*?</defs\\s*>",
+                string.Empty,
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            : string.Empty;
+        var hasSvgShape =
+            System.Text.RegularExpressions.Regex.IsMatch(svg, "<path\\b[^>]*\\bd\\s*=\\s*([\"'])[^\"'\\s][^\"']*\\1", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            System.Text.RegularExpressions.Regex.IsMatch(svg, "<(?:circle|ellipse|rect)\\b[^>]*(?:\\br|\\brx|\\bry|\\bwidth|\\bheight)\\s*=\\s*([\"'])[^\"']*[1-9][^\"']*\\1", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            System.Text.RegularExpressions.Regex.IsMatch(svg, "<(?:polyline|polygon)\\b[^>]*\\bpoints\\s*=\\s*([\"'])[^\"'\\s][^\"']*\\1", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            System.Text.RegularExpressions.Regex.IsMatch(svg, "<(?:use|image)\\b[^>]*(?:href|xlink:href)\\s*=\\s*([\"'])[^\"'\\s][^\"']*\\1", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            System.Text.RegularExpressions.Regex.IsMatch(svg, "<text\\b[^>]*>[\\s\\S]*?\\S[\\s\\S]*?</text\\s*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var hasEmbeddedMedia = System.Text.RegularExpressions.Regex.IsMatch(
+            block, "<(?:video|iframe)\\b[^>]*\\bsrc\\s*=\\s*([\"'])[^\"']+\\1", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (hasImage || hasSvgShape || hasEmbeddedMedia)
+            return true;
+
+        var text = System.Text.RegularExpressions.Regex.Replace(
+            block,
+            "<(?:script|style)\\b[^>]*>[\\s\\S]*?</(?:script|style)\\s*>|<!--[\\s\\S]*?-->|<[^>]+>",
+            string.Empty,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        text = System.Net.WebUtility.HtmlDecode(text)
+            .Replace("\u00a0", string.Empty, StringComparison.Ordinal);
+        return text.Any(c => !char.IsWhiteSpace(c));
+    }
+
+    internal static string MaskNonStructuralMarkup(string html) =>
+        System.Text.RegularExpressions.Regex.Replace(
+            html,
+            "<(?:script|style)\\b[^>]*>[\\s\\S]*?</(?:script|style)\\s*>|<!--[\\s\\S]*?-->",
+            match => new string(' ', match.Length),
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    private static bool HasBalancedRawTextElements(string html, string tag)
+    {
+        var openRe = new System.Text.RegularExpressions.Regex($"<{tag}\\b[^>]*>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var closeRe = new System.Text.RegularExpressions.Regex($"</{tag}\\s*>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var pos = 0;
+        while (true)
+        {
+            var open = openRe.Match(html, pos);
+            if (!open.Success) return true;
+            var close = closeRe.Match(html, open.Index + open.Length);
+            if (!close.Success) return false;
+            pos = close.Index + close.Length;
+        }
+    }
+
+    private static bool HasGloballyHiddenCanvas(string html, string bodyOpeningTag)
+    {
+        static bool HidesContent(string declarations) =>
+            System.Text.RegularExpressions.Regex.IsMatch(
+                declarations,
+                "(?:display\\s*:\\s*none|visibility\\s*:\\s*hidden|opacity\\s*:\\s*0(?:\\.0+)?(?:[;!\\s]|$))",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        var inlineStyle = System.Text.RegularExpressions.Regex.Match(
+            bodyOpeningTag,
+            "\\bstyle\\s*=\\s*([\"'])(?<style>[^\"']*)\\1",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (inlineStyle.Success && HidesContent(inlineStyle.Groups["style"].Value)) return true;
+
+        foreach (System.Text.RegularExpressions.Match style in System.Text.RegularExpressions.Regex.Matches(
+                     html,
+                     "<style\\b[^>]*>(?<css>[\\s\\S]*?)</style\\s*>",
+                     System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            foreach (var rule in EnumerateTopLevelCssRules(style.Groups["css"].Value))
+            {
+                var hidesRoot = rule.Selectors
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Any(selector => selector.Equals("body", StringComparison.OrdinalIgnoreCase) ||
+                                     selector.Equals("html", StringComparison.OrdinalIgnoreCase) ||
+                                     selector.Equals("html body", StringComparison.OrdinalIgnoreCase) ||
+                                     selector == "*");
+                if (hidesRoot && HidesContent(rule.Declarations)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static IEnumerable<(string Selectors, string Declarations)> EnumerateTopLevelCssRules(string css)
+    {
+        css = System.Text.RegularExpressions.Regex.Replace(css, "/\\*[\\s\\S]*?\\*/", " ");
+        var depth = 0;
+        var selectorStart = 0;
+        var declarationStart = -1;
+        var selectors = string.Empty;
+        for (var i = 0; i < css.Length; i++)
+        {
+            if (css[i] == '{')
+            {
+                if (depth == 0)
+                {
+                    selectors = css[selectorStart..i].Trim();
+                    declarationStart = i + 1;
+                }
+                depth++;
+            }
+            else if (css[i] == '}' && depth > 0)
+            {
+                depth--;
+                if (depth == 0 && declarationStart >= 0)
+                {
+                    var declarations = css[declarationStart..i];
+                    if (selectors.StartsWith("@media", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!System.Text.RegularExpressions.Regex.IsMatch(
+                                selectors,
+                                "@media\\s+(?:print|speech)(?:\\s|\\{|$)",
+                                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                        {
+                            foreach (var nested in EnumerateTopLevelCssRules(declarations)) yield return nested;
+                        }
+                    }
+                    else if (selectors.StartsWith("@supports", StringComparison.OrdinalIgnoreCase) ||
+                             selectors.StartsWith("@layer", StringComparison.OrdinalIgnoreCase))
+                    {
+                        foreach (var nested in EnumerateTopLevelCssRules(declarations)) yield return nested;
+                    }
+                    else if (!selectors.StartsWith('@'))
+                    {
+                        yield return (selectors, declarations);
+                    }
+                    selectorStart = i + 1;
+                    declarationStart = -1;
+                }
+            }
+        }
+    }
+
+    private static bool IsOpeningTagExplicitlyHidden(string opening)
+    {
+        if (System.Text.RegularExpressions.Regex.IsMatch(
+                opening, "\\shidden(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s>]+))?(?=\\s|>)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            System.Text.RegularExpressions.Regex.IsMatch(
+                opening, "\\baria-hidden\\s*=\\s*(?:[\"']true[\"']|true)(?:\\s|>)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return true;
+        var inline = System.Text.RegularExpressions.Regex.Match(
+            opening, "\\bstyle\\s*=\\s*([\"'])(?<style>[^\"']*)\\1",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return inline.Success && System.Text.RegularExpressions.Regex.IsMatch(
+            inline.Groups["style"].Value,
+            "(?:display\\s*:\\s*none|visibility\\s*:\\s*hidden|opacity\\s*:\\s*0(?:\\.0+)?(?:[;!\\s]|$))",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    private static bool IsSlideBlockExplicitlyHidden(string structuralBody, (int Start, int Length) block)
+    {
+        var opening = structuralBody.Substring(block.Start, block.Length);
+        opening = opening[..(opening.IndexOf('>') + 1)];
+        return IsOpeningTagExplicitlyHidden(opening);
+    }
+
+    private static List<string> FindAncestorOpeningTags(string html, int childStart)
+    {
+        var stack = new List<(string Tag, string Opening)>();
+        var tokenRe = new System.Text.RegularExpressions.Regex(
+            "<(?<close>/?)\\s*(?<tag>[a-z][a-z0-9:-]*)\\b[^>]*?(?<self>/?)>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        foreach (System.Text.RegularExpressions.Match token in tokenRe.Matches(html))
+        {
+            if (token.Index >= childStart) break;
+            var tag = token.Groups["tag"].Value.ToLowerInvariant();
+            if (token.Groups["close"].Value == "/")
+            {
+                var match = stack.FindLastIndex(item => item.Tag == tag);
+                if (match >= 0) stack.RemoveRange(match, stack.Count - match);
+                continue;
+            }
+            if (token.Groups["self"].Value == "/" || tag is "area" or "base" or "br" or "col" or "embed" or "hr" or "img" or "input" or "link" or "meta" or "param" or "source" or "track" or "wbr")
+                continue;
+            stack.Add((tag, token.Value));
+        }
+        return stack.Select(item => item.Opening).ToList();
+    }
+
+    private static bool SelectorSubjectMatchesOpeningTag(string subject, string opening)
+    {
+        var normalized = System.Text.RegularExpressions.Regex.Replace(subject, ":not\\([^)]*\\)", string.Empty).Trim();
+        if (normalized == "*") return true;
+        var tag = System.Text.RegularExpressions.Regex.Match(opening, "^<\\s*(?<tag>[a-z][a-z0-9:-]*)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Groups["tag"].Value;
+        var requestedTag = System.Text.RegularExpressions.Regex.Match(normalized, "^(?<tag>[a-z][a-z0-9:-]*)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Groups["tag"].Value;
+        if (!string.IsNullOrEmpty(requestedTag) && !requestedTag.Equals(tag, StringComparison.OrdinalIgnoreCase)) return false;
+
+        var classes = System.Text.RegularExpressions.Regex.Match(opening, "\\bclass\\s*=\\s*([\"'])(?<classes>[^\"']*)\\1", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Groups["classes"].Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        foreach (System.Text.RegularExpressions.Match requested in System.Text.RegularExpressions.Regex.Matches(normalized, "\\.(?<name>[a-z0-9_-]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            if (!classes.Any(value => value.Equals(requested.Groups["name"].Value, StringComparison.OrdinalIgnoreCase))) return false;
+
+        var requestedId = System.Text.RegularExpressions.Regex.Match(normalized, "#(?<id>[a-z0-9_-]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Groups["id"].Value;
+        if (!string.IsNullOrEmpty(requestedId))
+        {
+            var id = System.Text.RegularExpressions.Regex.Match(opening, "\\bid\\s*=\\s*([\"'])(?<id>[^\"']*)\\1", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Groups["id"].Value;
+            if (!requestedId.Equals(id, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        return !string.IsNullOrEmpty(requestedTag) || normalized.Contains('.') || normalized.Contains('#');
+    }
+
+    private static bool SelectorCanApplyToPage(string selector, string opening, IReadOnlyList<string> ancestors)
+    {
+        // 运行时首屏不能依赖 hover/focus 等瞬时伪类；当前合同只识别 :not(.class)。
+        var unsupportedPseudo = System.Text.RegularExpressions.Regex.Replace(selector, ":not\\([^)]*\\)", string.Empty);
+        if (unsupportedPseudo.Contains(':')) return false;
+        foreach (System.Text.RegularExpressions.Match excluded in System.Text.RegularExpressions.Regex.Matches(
+                     selector, ":not\\(\\.(?<class>[a-z0-9_-]+)\\)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            var classes = System.Text.RegularExpressions.Regex.Match(opening, "\\bclass\\s*=\\s*([\"'])(?<classes>[^\"']*)\\1", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                .Groups["classes"].Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (classes.Any(value => value.Equals(excluded.Groups["class"].Value, StringComparison.OrdinalIgnoreCase))) return false;
+        }
+
+        var parts = System.Text.RegularExpressions.Regex.Split(selector.Trim(), "[\\s>+~]+").Where(part => part.Length > 0).ToArray();
+        if (parts.Length == 0 || !SelectorSubjectMatchesOpeningTag(parts[^1], opening)) return false;
+        var ancestorIndex = ancestors.Count - 1;
+        for (var partIndex = parts.Length - 2; partIndex >= 0; partIndex--)
+        {
+            var part = parts[partIndex];
+            if (part.Equals("html", StringComparison.OrdinalIgnoreCase) || part.Equals("body", StringComparison.OrdinalIgnoreCase)) continue;
+            var found = false;
+            while (ancestorIndex >= 0)
+            {
+                if (SelectorSubjectMatchesOpeningTag(part, ancestors[ancestorIndex]))
+                {
+                    found = true;
+                    ancestorIndex--;
+                    break;
+                }
+                ancestorIndex--;
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+
+    private static List<(string Property, bool Hidden, bool Important)> ParseVisibilityDeclarations(string declarations)
+    {
+        var result = new List<(string, bool, bool)>();
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                     declarations,
+                     "(?<property>display|visibility|opacity)\\s*:\\s*(?<value>[^;!}]+?)(?<important>\\s*!important)?(?=;|}|$)",
+                     System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            var property = match.Groups["property"].Value.ToLowerInvariant();
+            var value = match.Groups["value"].Value.Trim().ToLowerInvariant();
+            bool hidden;
+            if (property == "display") hidden = value == "none";
+            else if (property == "visibility") hidden = value is "hidden" or "collapse";
+            else
+            {
+                if (!double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var opacity))
+                    continue;
+                hidden = opacity <= 0;
+            }
+            result.Add((property, hidden, match.Groups["important"].Success));
+        }
+        return result;
+    }
+
+    private static int CssSpecificity(string selector)
+    {
+        var ids = System.Text.RegularExpressions.Regex.Matches(selector, "#[a-z0-9_-]+", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        var classes = System.Text.RegularExpressions.Regex.Matches(selector, "\\.[a-z0-9_-]+|\\[[^]]+\\]|:[a-z0-9_-]+", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        var tags = System.Text.RegularExpressions.Regex.Matches(selector, "(?:^|[\\s>+~])(?:[a-z][a-z0-9:-]*)", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        return ids * 100 + classes * 10 + tags;
+    }
+
+    private static bool HasHiddenSlideContract(string html, string structuralBody, IReadOnlyList<(int Start, int Length)> blocks)
+    {
+        if (blocks.Any(block => IsSlideBlockExplicitlyHidden(structuralBody, block))) return true;
+        var ancestorOpenings = blocks
+            .SelectMany(block => FindAncestorOpeningTags(structuralBody, block.Start))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (ancestorOpenings.Any(IsOpeningTagExplicitlyHidden)) return true;
+
+        var contexts = blocks.Select(block =>
+        {
+            var opening = structuralBody.Substring(block.Start, block.Length);
+            opening = opening[..(opening.IndexOf('>') + 1)];
+            return (Opening: opening, Ancestors: (IReadOnlyList<string>)FindAncestorOpeningTags(structuralBody, block.Start));
+        }).ToList();
+        var rules = new List<(string Selector, string Declarations, int Order)>();
+        var order = 0;
+        foreach (System.Text.RegularExpressions.Match style in System.Text.RegularExpressions.Regex.Matches(
+                     html, "<style\\b[^>]*>(?<css>[\\s\\S]*?)</style\\s*>",
+                     System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            foreach (var rule in EnumerateTopLevelCssRules(style.Groups["css"].Value))
+            {
+                var declarations = rule.Declarations;
+                foreach (var raw in rule.Selectors.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var selector = raw.ToLowerInvariant();
+                    rules.Add((selector, declarations, order++));
+                }
+            }
+        }
+
+        bool ElementIsHidden((string Opening, IReadOnlyList<string> Ancestors) context)
+        {
+            var winners = new Dictionary<string, (bool Hidden, bool Important, int Specificity, int Order)>();
+            foreach (var rule in rules)
+            {
+                if (!SelectorCanApplyToPage(rule.Selector, context.Opening, context.Ancestors)) continue;
+                var specificity = CssSpecificity(rule.Selector);
+                foreach (var declaration in ParseVisibilityDeclarations(rule.Declarations))
+                {
+                    if (!winners.TryGetValue(declaration.Property, out var current) ||
+                        (declaration.Important && !current.Important) ||
+                        (declaration.Important == current.Important &&
+                         (specificity > current.Specificity || specificity == current.Specificity && rule.Order >= current.Order)))
+                    {
+                        winners[declaration.Property] = (declaration.Hidden, declaration.Important, specificity, rule.Order);
+                    }
+                }
+            }
+            return winners.Values.Any(value => value.Hidden);
+        }
+
+        bool PageIsHidden((string Opening, IReadOnlyList<string> Ancestors) context)
+        {
+            for (var index = 0; index < context.Ancestors.Count; index++)
+            {
+                if (ElementIsHidden((context.Ancestors[index], context.Ancestors.Take(index).ToList()))) return true;
+            }
+            return ElementIsHidden(context);
+        }
+
+        static bool IsActiveOpening(string opening)
+        {
+            var classes = System.Text.RegularExpressions.Regex.Match(
+                opening, "\\bclass\\s*=\\s*([\"'])(?<classes>[^\"']*)\\1", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                .Groups["classes"].Value;
+            return classes.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                .Any(value => value.Equals("active", StringComparison.OrdinalIgnoreCase) ||
+                              value.Equals("is-active", StringComparison.OrdinalIgnoreCase) ||
+                              value.Equals("present", StringComparison.OrdinalIgnoreCase));
+        }
+
+        var activeContexts = contexts.Where(context => IsActiveOpening(context.Opening)).ToList();
+        return activeContexts.Count > 0
+            ? activeContexts.All(PageIsHidden)
+            : contexts.Count > 0 && contexts.All(PageIsHidden);
     }
 
     /// <summary>锚定兜底页：范本结构保留，正文区替换为可演示的设计块，避免退化成标题加列表。</summary>
@@ -2204,8 +2685,10 @@ public class MdToPptController : ControllerBase
         var m = System.Text.RegularExpressions.Regex.Match(block, "class=\"([^\"]*)\"");
         if (!m.Success) return block;
         var cls = m.Groups[1].Value;
-        if (cls.Split(' ').Contains("active")) return block;
-        return block[..m.Index] + $"class=\"{cls} active\"" + block[(m.Index + m.Length)..];
+        var tokens = cls.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+        if (!tokens.Contains("active", StringComparer.OrdinalIgnoreCase)) tokens.Add("active");
+        if (!tokens.Contains("is-active", StringComparer.OrdinalIgnoreCase)) tokens.Add("is-active");
+        return block[..m.Index] + $"class=\"{string.Join(" ", tokens)}\"" + block[(m.Index + m.Length)..];
     }
 
     private static string ExtractSection(string text)
@@ -2233,6 +2716,73 @@ public class MdToPptController : ControllerBase
         t = System.Text.RegularExpressions.Regex.Replace(t, "<[^<>]*>", " ");
         var hits = System.Text.RegularExpressions.Regex.Matches(t, "(?:style|class)\\s*=\\s*\"").Count;
         return hits >= 3;
+    }
+
+    /// <summary>
+    /// 完整 HTML PPT 的统一后端判据。只统计真实标签上的 class token，不让 CSS 中的
+    /// “.slide”或“.reveal”形成假阳性；同时要求 body/html 正常闭合，拦住模型上限导致的
+    /// 半截 CSS、半截脚本和半份 deck。
+    /// </summary>
+    internal static bool IsRunnableDeckDocument(string? html)
+    {
+        if (string.IsNullOrWhiteSpace(html) || html.Length < 200) return false;
+        if (!HasBalancedRawTextElements(html, "script") || !HasBalancedRawTextElements(html, "style")) return false;
+        var outsideRawText = MaskNonStructuralMarkup(html);
+        if (System.Text.RegularExpressions.Regex.Matches(outsideRawText, "<!--").Count !=
+            System.Text.RegularExpressions.Regex.Matches(outsideRawText, "-->").Count)
+            return false;
+        var structuralDocument = MaskNonStructuralMarkup(html);
+        if (!System.Text.RegularExpressions.Regex.IsMatch(structuralDocument, "<html\\b[^>]*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(structuralDocument, "<head\\b[^>]*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(structuralDocument, "</head\\s*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(structuralDocument, "<body\\b[^>]*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(structuralDocument, "</body\\s*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(structuralDocument, "</html\\s*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return false;
+
+        var headClose = System.Text.RegularExpressions.Regex.Match(structuralDocument, "</head\\s*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!headClose.Success) return false;
+
+        var bodyMatch = new System.Text.RegularExpressions.Regex(
+            "(?<opening><body\\b[^>]*>)(?<body>[\\s\\S]*?)</body\\s*>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Match(structuralDocument, headClose.Index + headClose.Length);
+        if (!bodyMatch.Success) return false;
+        if (HasGloballyHiddenCanvas(html, bodyMatch.Groups["opening"].Value)) return false;
+        var structuralBody = bodyMatch.Groups["body"].Value;
+
+        static int CountClassToken(string source, string token)
+        {
+            var tags = System.Text.RegularExpressions.Regex.Matches(
+                source,
+                "<(?:div|main|section|article)\\b[^>]*\\bclass\\s*=\\s*([\"'])(?<classes>[^\"']*)\\1[^>]*>",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            return tags.Count(match => match.Groups["classes"].Value
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                .Any(value => string.Equals(value, token, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        // OpenDesign 锚定模板的外壳并不统一（deck / presentation / slides-container 等）；
+        // 真正稳定的合同是正文中存在真实 class token=slide 的页面元素。
+        var slideTagCount = CountClassToken(structuralBody, "slide");
+        var slideBlocks = FindSlideBlocks(structuralBody);
+        var anchoredDeck = slideTagCount > 0 &&
+                           slideBlocks.Count == slideTagCount &&
+                           !HasHiddenSlideContract(html, structuralBody, slideBlocks) &&
+                           slideBlocks.All(block => HasRenderableSlideContent(
+                               structuralBody.Substring(block.Start, block.Length)));
+        var sectionOpenCount = System.Text.RegularExpressions.Regex.Matches(
+            structuralBody, "<section\\b[^>]*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        var sectionCloseCount = System.Text.RegularExpressions.Regex.Matches(
+            structuralBody, "</section\\s*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count;
+        var revealSections = FindRevealPageBlocks(structuralBody);
+        var revealDeck =
+                         sectionOpenCount > 0 && sectionOpenCount == sectionCloseCount &&
+                         revealSections.Count > 0 &&
+                         !HasHiddenSlideContract(html, structuralBody, revealSections) &&
+                         revealSections.All(section => HasRenderableSlideContent(
+                             structuralBody.Substring(section.Start, section.Length)));
+        return anchoredDeck || revealDeck;
     }
 
     internal static bool LooksLikeLowQualitySlide(string fragment)
@@ -2877,6 +3427,13 @@ public class MdToPptController : ControllerBase
             var totalMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
             var fallbackCount = fallbackFlags.Count(b => b);
             _logger.LogInformation("[MdToPpt-Pages] DONE userId={UserId} totalMs={Ms} htmlLen={Len} degraded={Degraded}/{Total}", userId, totalMs, html.Length, fallbackCount, total);
+            if (!IsRunnableDeckDocument(html))
+            {
+                const string message = "逐页生成结果不完整，未保存。请重新生成演示稿";
+                await PersistRunErrorAsync(run, message);
+                await EmitAsync("error", new { message });
+                return;
+            }
             await PersistRunDoneAsync(run, html, GenerationModelLabel(profile), platform, fallbackCount, total);
             await EmitAsync("done", new { html, degraded = fallbackCount, total });
         }
@@ -2898,17 +3455,19 @@ public class MdToPptController : ControllerBase
     /// 返回 false 表示无法走单页路径（页索引越界 / deck 结构不识别），调用方回落整篇路径。
     /// 失败（agent 不可用等）时发 error 事件并返回 true（已处理，不再二次跑整篇）。
     /// </summary>
-    private async Task<bool> TryRunSinglePagePatchAsync(string userId, MdToPptPatchRequest req, MdToPptRun run, int oneBasedIndex)
+    private async Task<bool> TryRunSinglePagePatchAsync(
+        string userId,
+        MdToPptPatchRequest req,
+        MdToPptRun run,
+        int oneBasedIndex,
+        MdToPptTemplate? template)
     {
         var html = req.CurrentHtml!;
         // 锚定 deck（div.slide 嵌套）与旧 reveal（顶层 section）统一走平衡扫描
-        var blocks = FindSlideBlocks(html);
-        if (blocks.Count == 0)
-        {
-            var legacy = System.Text.RegularExpressions.Regex.Matches(html, "<section[\\s\\S]*?</section>",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            blocks = legacy.Select(m => (m.Index, m.Length)).ToList();
-        }
+        // 先等长掩蔽 script/style/comment，保留原始 offset；不能把脚本字符串里的示例标签当成第一页。
+        // Reveal 的纵向演示以外层 section 包裹多个叶子 section；精修页码必须与
+        // 验证器认定的实际页面一致，不能用首个 closing tag 截断外层结构。
+        var blocks = FindPatchPageBlocks(html);
         if (blocks.Count == 0 || oneBasedIndex < 1 || oneBasedIndex > blocks.Count) return false;
 
         var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, req.RuntimeProfileId);
@@ -2952,11 +3511,14 @@ public class MdToPptController : ControllerBase
         {
             var idx = oneBasedIndex - 1;
             var current = html.Substring(blocks[idx].Start, blocks[idx].Length);
-            var patchAnchor = MdToPptAnchors.Resolve(req.Theme);
+            // 输出片段形态由现有 deck 决定，而不是由当前主题决定：旧 Reveal deck 必须继续
+            // 返回 section，OpenDesign 锚定 deck 才能返回 class=slide 的同构块。
+            var targetIsAnchored = IsAnchoredPatchBlock(current);
+            var patchAnchor = targetIsAnchored && template == null ? MdToPptAnchors.Resolve(req.Theme) : null;
             var sys = patchAnchor != null
                 ? BuildAnchoredPageSystemPrompt(patchAnchor,
                     MdToPptAnchors.PickLayout(patchAnchor, idx, blocks.Count, null), idx, blocks.Count)
-                : BuildPageSystemPrompt(req.Theme, idx, blocks.Count);
+                : BuildPageSystemPrompt(req.Theme, idx, blocks.Count, template?.StyleSpec);
             var usr =
                 $"这是第 {oneBasedIndex}/{blocks.Count} 页当前的 HTML：\n{current}\n\n" +
                 $"修改要求（只动这一页）：\n{req.SlideRequest?.Trim()}\n\n" +
@@ -2964,12 +3526,12 @@ public class MdToPptController : ControllerBase
                 "重新设计排版时严格遵守画布与版面硬约束。";
 
             var (text, err) = await RunPageOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改", null);
-            var section = NormalizeGeneratedSlideFragment(text, patchAnchor != null);
+            var section = NormalizeGeneratedSlideFragment(text, targetIsAnchored);
             if (string.IsNullOrEmpty(section))
             {
                 _logger.LogWarning("[MdToPpt-PagePatch] invalid section, retrying page={Page} err={Err}", oneBasedIndex, err);
                 var (text2, err2) = await RunPageOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改R", null);
-                section = NormalizeGeneratedSlideFragment(text2, patchAnchor != null);
+                section = NormalizeGeneratedSlideFragment(text2, targetIsAnchored);
                 if (string.IsNullOrEmpty(section))
                 {
                     var msg = err2 ?? err ?? "单页重绘失败，请重试";
@@ -2980,6 +3542,13 @@ public class MdToPptController : ControllerBase
             }
 
             var newHtml = html[..blocks[idx].Start] + section + html[(blocks[idx].Start + blocks[idx].Length)..];
+            if (!IsRunnableDeckDocument(newHtml))
+            {
+                const string message = "精修结果不完整，未替换当前演示稿，请重试";
+                await PersistRunErrorAsync(run, message);
+                await WriteEventAsync("error", new { message });
+                return true;
+            }
             await PersistRunDoneAsync(run, newHtml, GenerationModelLabel(profile), platform);
             await WriteEventAsync("page", new { index = idx, total = blocks.Count, html = section, done = 1 });
             await WriteEventAsync("done", new { html = newHtml });
@@ -3063,9 +3632,9 @@ public class MdToPptController : ControllerBase
             }
 
             var html = StripCodeFences(fullText.ToString());
-            if (string.IsNullOrWhiteSpace(html))
+            if (!IsRunnableDeckDocument(html))
             {
-                const string message = "LLM Gateway 未返回 PPT HTML";
+                const string message = "生成结果不完整，未替换当前演示稿，请重试";
                 await PersistRunErrorAsync(run, message);
                 await WriteEventAsync("error", new { message });
                 return;
@@ -3382,6 +3951,13 @@ public class MdToPptController : ControllerBase
                         logCount,
                         errorCount,
                     });
+                    if (!IsRunnableDeckDocument(html))
+                    {
+                        const string message = "生成结果不完整，未替换当前演示稿，请重试";
+                        await PersistRunErrorAsync(run, message);
+                        await WriteEventAsync("error", new { message });
+                        return;
+                    }
                     await PersistRunDoneAsync(run, html, runtimeProfile?.Model ?? model, "CDS Agent");
                     await WriteEventAsync("done", new { html });
                     return;
@@ -3423,15 +3999,16 @@ public class MdToPptController : ControllerBase
                     : "TIMEOUT: 超时，agent 未发送 done 事件",
             });
 
-            if (!string.IsNullOrWhiteSpace(timeoutHtml))
+            if (IsRunnableDeckDocument(timeoutHtml))
             {
                 await PersistRunDoneAsync(run, timeoutHtml, model, "CDS Agent");
                 await WriteEventAsync("done", new { html = timeoutHtml });
             }
             else
             {
-                await PersistRunErrorAsync(run, "CDS Agent 响应超时，请稍后重试或缩短内容");
-                await WriteEventAsync("error", new { message = "CDS Agent 响应超时，请稍后重试或缩短内容" });
+                const string message = "CDS Agent 响应超时且结果不完整，未替换当前演示稿，请重试";
+                await PersistRunErrorAsync(run, message);
+                await WriteEventAsync("error", new { message });
             }
         }
         catch (OperationCanceledException) { }

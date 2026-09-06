@@ -618,6 +618,7 @@ export async function publishMdToPpt(req: MdToPptPublishRequest): Promise<{
 
 export interface MdToPptRunDetail {
   id: string;
+  parentRunId?: string | null;
   status: 'running' | 'done' | 'error';
   engine: MdToPptEngine;
   op: string;

@@ -4,9 +4,13 @@ import {
   estimatePages,
   extractCompletedSections,
   extractHeadAssets,
+  looksLikeDeck,
   parseExplicitPages,
   parseSlideProgress,
+  resolveNaturalPatchSlideIndex,
+  recoverPatchParentRun,
 } from '../MdToPptAgentPage';
+import type { MdToPptRunDetail } from '@/services/real/mdToPptService';
 
 // 守护「生成等待面板逐页点亮」：从流式 HTML 里解析已闭合 <section> 的页标题，
 // 以及是否有正在绘制（已开口未闭合）的页。
@@ -52,6 +56,80 @@ describe('estimatePages', () => {
     expect(parseExplicitPages('做一份两页控制台演示')).toBe(2);
     expect(parseExplicitPages('输出十二页技术方案')).toBe(12);
     expect(estimatePages('严格生成 2 页高级产品发布会 PPT，' + '内容很长'.repeat(500))).toBe(2);
+  });
+});
+
+describe('looksLikeDeck', () => {
+  it('只接受正文中存在真实幻灯元素且完整闭合的文档', () => {
+    const padding = '正文'.repeat(120);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{color:red}</style></head><body>${padding}</body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{color:red}</style></head>${padding}`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><script>const fake = '<div class="deck"><section class="slide">x</section></div>';</script>${padding}</body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><script>const fake = '<section class="slide">x</section>';${padding}</body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><script>const fake='</head><body><section class="slide">x</section>${padding}</body></html>'`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><script>const fake='</head><body><section class="slide">x</section>${padding}</body></html>';</script></head></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="deck"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(true);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="presentation"><div class="slide active"><h1>${padding}</h1></div></div></body></html>`)).toBe(true);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class='reveal'><div class='slides'><section><h1>${padding}</h1></section></div></div></body></html>`)).toBe(true);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class='SLIDE active'><h1>${padding}</h1></div></body></html>`)).toBe(true);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>${padding}</style></head><body><section class="slide"></section></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide"><h1>${padding}</h1></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>body{display:none}</style></head><body><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body style="visibility:hidden"><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><main id="root"><section class="slide"><h1>${padding}</h1></section></main></body></html>`)).toBe(true);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide" hidden><h1>${padding}</h1></section></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide" aria-hidden="true"><h1>${padding}</h1></section></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide"><svg></svg></section>${padding}</body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide"><svg><defs><path d="M0 0"></path></defs><path d=""></path></svg></section>${padding}</body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{display:none}</style></head><body><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>/* deck */ .slide{display:none}</style></head><body><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>@media print{body{display:none}}</style></head><body><section class="slide active"><h1>序</h1></section>${padding}</body></html>`)).toBe(true);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>@media screen{body{display:none}}</style></head><body><section class="slide active"><h1>序</h1></section>${padding}</body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide .notes{display:none}</style></head><body><section class="slide active"><h1>序</h1><div class="notes">备注</div></section>${padding}</body></html>`)).toBe(true);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide:not(.active){display:none}</style></head><body><section class="slide active"><h1>序</h1></section>${padding}</body></html>`)).toBe(true);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="deck" hidden><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.deck{display:none}</style></head><body><div class="deck"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.missing .deck{display:none}</style></head><body><div class="deck"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(true);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.deck{display:none}.deck.active{display:block}</style></head><body><div class="deck active"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(true);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{opacity:0!important}.slide.active{opacity:1}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{opacity:0!important}.slide.active{opacity:1!important}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(true);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{display:none!important}.missing .slide.active{display:block!important}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{display:none}.slide.active{opacity:1}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.reveal{display:none}</style></head><body><div class="reveal"><div class="slides"><section><h1>${padding}</h1></section></div></div></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.reveal .slides section{display:none}</style></head><body><div class="reveal"><div class="slides"><section><h1>${padding}</h1></section></div></div></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="reveal"><div class="slides"></div></div><template><section><h1>${padding}</h1></section></template></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="reveal"><div class="slides"><section><h1>标题</h1></section><section></section></div></div>${padding}</body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="reveal"><div class="slides"><section><section><h1>${padding}</h1></section><section></section></section></div></div></body></html>`)).toBe(false);
+    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide">&#32;&#32;</section>${padding}</body></html>`)).toBe(false);
+  });
+});
+
+describe('自然语言单页精修识别', () => {
+  it('与后端保守路由保持一致', () => {
+    expect(resolveNaturalPatchSlideIndex('增加第 3 页标题字号')).toBe(3);
+    expect(resolveNaturalPatchSlideIndex('把第 3 页标题移动到左侧')).toBe(3);
+    expect(resolveNaturalPatchSlideIndex('删除第 3 页')).toBeNull();
+    expect(resolveNaturalPatchSlideIndex('第 2 页与第 3 页对调')).toBeNull();
+    expect(resolveNaturalPatchSlideIndex('把第 3 页移到最后')).toBeNull();
+    expect(resolveNaturalPatchSlideIndex('把第 3 页和封面交换')).toBeNull();
+    expect(resolveNaturalPatchSlideIndex('将第 3 页与下一页对调')).toBeNull();
+  });
+});
+
+describe('精修刷新恢复', () => {
+  it('子 run 失败时从 parentRunId 恢复上一份完整演示稿', async () => {
+    const failed = { id: 'patch-1', parentRunId: 'parent-1', status: 'error', op: 'patch' } as MdToPptRunDetail;
+    const parent = { id: 'parent-1', status: 'done', op: 'convert', html: '<html>parent</html>' } as MdToPptRunDetail;
+    const loaded: string[] = [];
+
+    const recovered = await recoverPatchParentRun(failed, async id => {
+      loaded.push(id);
+      return parent;
+    });
+
+    expect(loaded).toEqual(['parent-1']);
+    expect(recovered?.id).toBe('parent-1');
+    expect(recovered?.html).toContain('parent');
   });
 });
 
