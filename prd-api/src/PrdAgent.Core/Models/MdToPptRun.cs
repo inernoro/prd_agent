@@ -17,9 +17,15 @@ public class MdToPptRun
     /// <summary>map | agent</summary>
     public string Engine { get; set; } = "map";
 
+    /// <summary>执行编排身份；HTML PPT 固定为 html-ppt-pipeline。</summary>
+    public string Runtime { get; set; } = "html-ppt-pipeline";
+
+    /// <summary>设计实现适配器身份；用于区分未来可替换的设计插件。</summary>
+    public string Provider { get; set; } = "open-design-html-ppt";
+
     public string Theme { get; set; } = string.Empty;
 
-    /// <summary>convert | patch | outline</summary>
+    /// <summary>convert | patch | manual-edit | outline</summary>
     public string Op { get; set; } = "convert";
 
     /// <summary>精修任务所依据的上一条 run；只接受同一用户已持久化的服务端 run。</summary>
@@ -34,6 +40,12 @@ public class MdToPptRun
     /// <summary>生成完成的 HTML（convert/patch done 时填充）</summary>
     public string Html { get; set; } = string.Empty;
 
+    /// <summary>当前完成态 HTML 的 SHA-256；用于精修与发布内容绑定。</summary>
+    public string? HtmlHash { get; set; }
+
+    /// <summary>精修任务所依据父产物的 SHA-256。</summary>
+    public string? ParentHtmlHash { get; set; }
+
     /// <summary>
     /// 大纲结果 JSON（op=outline done 时填充）。服务器权威性：大纲生成不随
     /// 客户端断开/刷新而消亡，刷新后前端按 runId 取回这里的结果继续。
@@ -47,6 +59,12 @@ public class MdToPptRun
 
     public string? Platform { get; set; }
 
+    /// <summary>并行页级生成最终被采用的实际模型集合；不记录被丢弃重试的模型。</summary>
+    public List<string> ResolvedModels { get; set; } = new();
+
+    /// <summary>与最终被采用页面对应的实际模型平台集合。</summary>
+    public List<string> ResolvedPlatforms { get; set; } = new();
+
     /// <summary>html-ppt | knowledge-base，记录本次生成从哪个业务入口发起。</summary>
     public string SourceSurface { get; set; } = DesignArtifactSourceSurfaces.HtmlPpt;
 
@@ -55,6 +73,9 @@ public class MdToPptRun
 
     /// <summary>发布到网页托管后的站点 ID。</summary>
     public string? PublishedSiteId { get; set; }
+
+    /// <summary>实际发布内容的 SHA-256，必须与当前完成态 HTML 一致。</summary>
+    public string? PublishedHtmlHash { get; set; }
 
     /// <summary>退化为「标题+要点」兜底的页数（并行逐页路径 done 时落库，刷新恢复仍能如实告警）</summary>
     public int Degraded { get; set; }

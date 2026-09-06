@@ -9,6 +9,7 @@ import {
   parseSlideProgress,
   resolveNaturalPatchSlideIndex,
   recoverPatchParentRun,
+  resolveRecoveredDeckState,
 } from '../MdToPptAgentPage';
 import type { MdToPptRunDetail } from '@/services/real/mdToPptService';
 
@@ -117,6 +118,22 @@ describe('自然语言单页精修识别', () => {
 });
 
 describe('精修刷新恢复', () => {
+  it('服务端返回规范化派生版本时使用派生 runId 与 HTML', () => {
+    const requestedHistoricalRunId = 'legacy-run';
+    const derived = {
+      id: 'normalized-run',
+      status: 'done',
+      op: 'normalize',
+      html: '<html>normalized</html>',
+    } as MdToPptRunDetail;
+
+    const recovered = resolveRecoveredDeckState(derived);
+
+    expect(recovered.runId).toBe('normalized-run');
+    expect(recovered.runId).not.toBe(requestedHistoricalRunId);
+    expect(recovered.html).toContain('normalized');
+  });
+
   it('子 run 失败时从 parentRunId 恢复上一份完整演示稿', async () => {
     const failed = { id: 'patch-1', parentRunId: 'parent-1', status: 'error', op: 'patch' } as MdToPptRunDetail;
     const parent = { id: 'parent-1', status: 'done', op: 'convert', html: '<html>parent</html>' } as MdToPptRunDetail;

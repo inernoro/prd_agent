@@ -265,7 +265,7 @@ export interface MdToPptConvertRequest {
 }
 
 export interface MdToPptPatchRequest {
-  parentRunId?: string;
+  parentRunId: string;
   currentHtml: string;
   slideRequest: string;
   slideIndex?: number;
@@ -279,12 +279,23 @@ export interface MdToPptPublishRequest {
   description?: string;
   tags?: string[];
   teamIds?: string[];
-  runId?: string;
+  runId: string;
 }
 
 export interface MdToPptPublishResult {
+  runId: string;
   siteId: string;
   siteUrl: string;
+  html: string;
+  contentHash: string;
+}
+
+export interface MdToPptLocalEditResult {
+  runId: string;
+  parentRunId?: string | null;
+  html: string;
+  contentHash: string;
+  unchanged: boolean;
 }
 
 /** 诊断事件 payload（agent 路径专有） */
@@ -505,7 +516,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
 // ============ Patch SSE ============
 
 export interface MdToPptPatchSseOptions {
-  parentRunId?: string;
+  parentRunId: string;
   currentHtml: string;
   slideRequest: string;
   slideIndex?: number;
@@ -596,8 +607,10 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
  */
 export async function publishMdToPpt(req: MdToPptPublishRequest): Promise<{
   success: boolean;
+  runId?: string;
   siteUrl?: string;
   siteId?: string;
+  html?: string;
   error?: string;
 }> {
   const res = await apiRequest<MdToPptPublishResult>('/api/md-to-ppt/publish', {
@@ -609,9 +622,29 @@ export async function publishMdToPpt(req: MdToPptPublishRequest): Promise<{
   }
   return {
     success: true,
+    runId: res.data?.runId ?? req.runId,
     siteUrl: res.data?.siteUrl ?? '',
     siteId: res.data?.siteId ?? '',
+    html: res.data?.html ?? '',
   };
+}
+
+/** 把浏览器内直接编辑保存为新的权威运行版本，随后才能继续精修或发布。 */
+export async function persistMdToPptLocalEdit(
+  parentRunId: string,
+  htmlContent: string
+): Promise<{ success: true; data: MdToPptLocalEditResult } | { success: false; error: string }> {
+  const res = await apiRequest<MdToPptLocalEditResult>(
+    `/api/md-to-ppt/runs/${encodeURIComponent(parentRunId)}/local-edit`,
+    {
+      method: 'POST',
+      body: { htmlContent },
+    }
+  );
+  if (!res.success || !res.data) {
+    return { success: false, error: res.error?.message ?? '编辑版本保存失败' };
+  }
+  return { success: true, data: res.data };
 }
 
 // ============ Runs（server-authority：刷新可重连/查看历史）============
@@ -619,16 +652,23 @@ export async function publishMdToPpt(req: MdToPptPublishRequest): Promise<{
 export interface MdToPptRunDetail {
   id: string;
   parentRunId?: string | null;
+  parentHtmlHash?: string | null;
   status: 'running' | 'done' | 'error';
   engine: MdToPptEngine;
+  runtime?: string;
+  provider?: string;
   op: string;
   title: string;
   html: string;
+  htmlHash?: string | null;
+  publishedHtmlHash?: string | null;
   /** op=outline 时填充：刷新恢复用的大纲结果 JSON（与 outlineDraft 同形） */
   outlineJson?: string | null;
   error?: string | null;
   model?: string | null;
   platform?: string | null;
+  resolvedModels?: string[];
+  resolvedPlatforms?: string[];
   /** 退化为「标题+要点」兜底的页数（>0 时恢复路径也要如实告警，与 done 事件一致） */
   degraded?: number;
   /** 总页数（与 degraded 配对还原「共 N 页其中 X 页降级」文案） */
@@ -641,10 +681,16 @@ export interface MdToPptRunSummary {
   id: string;
   status: 'running' | 'done' | 'error';
   engine: MdToPptEngine;
+  runtime?: string;
+  provider?: string;
   op: string;
   title: string;
   contentPreview: string;
   hasHtml: boolean;
+  model?: string | null;
+  platform?: string | null;
+  resolvedModels?: string[];
+  resolvedPlatforms?: string[];
   createdAt: string;
 }
 

@@ -15,6 +15,78 @@ namespace PrdAgent.Api.Services.MdToPpt;
 /// </summary>
 public static class MdToPptAnchors
 {
+    internal const string MobilePresentationGuardId = "mdppt-mobile-presentation-guard";
+
+    private const string MobilePresentationGuard = """
+<style id="mdppt-mobile-presentation-guard">
+@media (max-width: 640px) {
+  html, body { width:100%; height:100%; overflow:hidden; }
+  .slide {
+    padding:48px 22px 112px !important;
+    justify-content:flex-start !important;
+    align-items:stretch !important;
+    box-sizing:border-box !important;
+    width:100vw !important;
+    min-width:100vw !important;
+    height:100vh !important;
+    min-height:100vh !important;
+    max-height:none !important;
+    overflow-x:auto !important;
+    overflow-y:auto !important;
+    overscroll-behavior:contain;
+  }
+  .slide *, .slide *::before, .slide *::after { box-sizing:border-box !important; min-width:0 !important; max-width:100% !important; }
+  .slide img, .slide svg, .slide canvas, .slide video { height:auto !important; object-fit:contain !important; }
+  .slide pre, .slide table { display:block; width:100% !important; overflow-x:auto !important; }
+  .slide h1, .slide [class*="-h1"] {
+    font-size:clamp(32px, 9.5vw, 44px) !important;
+    line-height:1.08 !important;
+    letter-spacing:-.025em !important;
+    overflow-wrap:break-word !important;
+    word-break:normal !important;
+  }
+  .slide h2, .slide [class*="-h2"] {
+    font-size:clamp(28px, 8vw, 38px) !important;
+    line-height:1.14 !important;
+    overflow-wrap:break-word !important;
+    word-break:normal !important;
+  }
+  .slide h3, .slide [class*="-h3"] { font-size:clamp(20px, 6vw, 28px) !important; }
+  .slide p, .slide li, .slide [class*="lede"], .slide [class*="desc"] {
+    font-size:clamp(14px, 4.1vw, 18px) !important;
+    line-height:1.55 !important;
+    white-space:normal !important;
+    overflow-wrap:anywhere !important;
+  }
+  .slide [class*="grid"], .slide [class*="columns"], .slide [class*="split"],
+  .slide [style*="grid-template-columns"] { grid-template-columns:minmax(0, 1fr) !important; }
+  .slide [class*="row"] { flex-wrap:wrap !important; }
+  .slide [class*="big"], .slide [class*="display"], .slide [class*="hero-title"] {
+    font-size:clamp(32px, 12vw, 52px) !important;
+    overflow-wrap:anywhere !important;
+  }
+  .slide-4 .slide-header { flex-wrap:wrap !important; gap:12px !important; }
+  .slide-4 .chart-container { width:100% !important; gap:16px !important; }
+  .slide--chart .bar-track { gap:8px !important; padding-left:0 !important; }
+  .slide-rsvp .hand-line { font-size:0 !important; overflow:hidden !important; }
+  .deck-header, .deck-footer { left:18px !important; right:18px !important; font-size:9px !important; }
+  .deck-footer { bottom:68px !important; }
+  .overview.open { grid-template-columns:1fr !important; padding:20px !important; }
+}
+</style>
+""";
+
+    // soft-editorial 使用 OpenDesign 的固定画布 deck-stage 运行时自适应缩放。
+    // 若套用通用移动端重排规则，会把 1920x1080 画布强行改成 390px 宽并破坏版式语义。
+    private const string SoftEditorialMobilePresentationGuard = """
+<style id="mdppt-mobile-presentation-guard">
+@media (max-width: 640px) {
+  html, body { width:100%; height:100%; margin:0; overflow:hidden; }
+  deck-stage { position:fixed; inset:0; display:block; }
+}
+</style>
+""";
+
     public sealed record AnchorSlide(string File, string Layout, string ClassAttr, string Summary, string Html);
 
     public sealed record Anchor(string Name, string Prefix, string Suffix, IReadOnlyList<AnchorSlide> Slides)
@@ -59,6 +131,11 @@ public static class MdToPptAnchors
                 var root = Path.Combine(AppContext.BaseDirectory, "Resources", "mdppt", "anchors", name);
                 if (!Directory.Exists(root)) return null;
                 var prefix = File.ReadAllText(Path.Combine(root, "prefix.html"));
+                if (name.Equals("soft-editorial", StringComparison.OrdinalIgnoreCase))
+                {
+                    prefix = EnsureEmbeddedRuntime(prefix);
+                    if (HasUnresolvedRuntimeReference(prefix)) return null;
+                }
                 var suffix = File.ReadAllText(Path.Combine(root, "suffix.html"));
                 using var meta = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "meta.json")));
                 var slides = new List<AnchorSlide>();
@@ -79,6 +156,71 @@ public static class MdToPptAnchors
                 return null;
             }
         });
+    }
+
+    /// <summary>
+    /// 把历史 soft-editorial 产物的精确受信运行时引用固化为单文件脚本。
+    /// 只处理包含 deck-stage 的官方相对路径，不下载、不接受调用方指定的脚本。
+    /// </summary>
+    internal static string EnsureEmbeddedRuntime(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html)
+            || html.Contains("data-open-design-runtime", StringComparison.Ordinal)
+            || !HasUnresolvedRuntimeReference(html)
+            || !html.Contains("<deck-stage", StringComparison.OrdinalIgnoreCase))
+            return html;
+
+        var runtimePath = Path.Combine(
+            AppContext.BaseDirectory,
+            "Resources",
+            "mdppt",
+            "anchors",
+            "soft-editorial",
+            "deck-stage.js");
+        if (!File.Exists(runtimePath)) return html;
+        var runtime = File.ReadAllText(runtimePath);
+        return System.Text.RegularExpressions.Regex.Replace(
+            html,
+            "<script\\s+src=[\"']assets/deck-stage\\.js[\"']\\s*></script>",
+            _ => $"<script data-open-design-runtime>\n{runtime}\n</script>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+    }
+
+    internal static bool HasUnresolvedRuntimeReference(string html) =>
+        !string.IsNullOrWhiteSpace(html)
+        && System.Text.RegularExpressions.Regex.IsMatch(
+            html,
+            "<script\\s+src=[\"']assets/deck-stage\\.js[\"']\\s*></script>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+
+    internal static string EnsureMobilePresentationGuard(string htmlHead, string? anchorName = null)
+    {
+        if (string.IsNullOrWhiteSpace(htmlHead)
+            || htmlHead.Contains(MobilePresentationGuardId, StringComparison.Ordinal))
+            return htmlHead;
+
+        var taggedHead = htmlHead;
+        var normalizedAnchorName = (anchorName ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalizedAnchorName.Length > 0
+            && normalizedAnchorName.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '-'))
+        {
+            taggedHead = System.Text.RegularExpressions.Regex.Replace(
+                taggedHead,
+                "<body(?<attrs>[^>]*)>",
+                match => $"<body{match.Groups["attrs"].Value} data-mdppt-anchor=\"{normalizedAnchorName}\">",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+                TimeSpan.FromSeconds(1));
+        }
+
+        var guard = normalizedAnchorName == "soft-editorial"
+            ? SoftEditorialMobilePresentationGuard
+            : MobilePresentationGuard;
+        var headClose = taggedHead.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
+        return headClose >= 0
+            ? taggedHead.Insert(headClose, guard + "\n")
+            : guard + taggedHead;
     }
 
     /// <summary>

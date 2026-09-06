@@ -37,6 +37,7 @@ import {
   streamMdToPptConvert,
   streamMdToPptPatch,
   publishMdToPpt,
+  persistMdToPptLocalEdit,
   getMdToPptRun,
   getRecentMdToPptRuns,
   streamMdToPptOutline,
@@ -66,6 +67,10 @@ export async function recoverPatchParentRun(
   if (run.status !== 'error' || run.op !== 'patch' || !run.parentRunId) return null;
   const parent = await loader(run.parentRunId);
   return parent?.status === 'done' && parent.html ? parent : null;
+}
+
+export function resolveRecoveredDeckState(run: MdToPptRunDetail): { runId: string; html: string } {
+  return { runId: run.id, html: run.html };
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -851,8 +856,9 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
     // 兜底：class 标记
     'for(var k=0;k<ss.length;k++){var cl=ss[k].classList;if(cl.contains("active")||cl.contains("is-active")||cl.contains("current")){return k+1;}}' +
     '}catch(e){}return 1;}' +
-    // 锚定模式翻页：派发方向键（各模板运行时都绑方向键），window+document 双目标、带 keyCode 兼容
-    'function pressKey(key,code){var ev;try{ev=new KeyboardEvent("keydown",{key:key,keyCode:code,which:code,bubbles:true});}catch(e){return;}try{Object.defineProperty(ev,"keyCode",{get:function(){return code;}});}catch(e2){}document.dispatchEvent(ev);window.dispatchEvent(ev);}' +
+    // 锚定模式翻页：所有已登记模板都能收到从 document 冒泡的事件；只派发一次，
+    // 避免 window 监听型 deck-stage 同时收到冒泡事件和直接派发事件而一次跳两页。
+    'function pressKey(key,code){var ev;try{ev=new KeyboardEvent("keydown",{key:key,keyCode:code,which:code,bubbles:true});}catch(e){return;}try{Object.defineProperty(ev,"keyCode",{get:function(){return code;}});}catch(e2){}document.dispatchEvent(ev);}' +
     'function anchoredNav(dir){pressKey(dir==="prev"?"ArrowLeft":"ArrowRight",dir==="prev"?37:39);}' +
     'function anchoredGoto(h){var guard=0;while(cur()>1&&guard<60){anchoredNav("prev");guard++;}for(var i=0;i<h&&i<60;i++){anchoredNav("next");}}' +
     'function rep(){try{parent.postMessage({type:"map-ppt-slide",cur:cur(),total:tot()},"*");}catch(e){}}' +
@@ -914,7 +920,7 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
       // 撤销栈（最多 20 条）+ dirty 标志：beforeinput 首次触发时压栈（即"首次 input 前"的修改前快照），
       // blur/换目标/按钮操作后复位 dirty
       'var hist=[];var dirty=false;' +
-      'function slidesEl(){return document.querySelector(".reveal .slides")||document.body;}' +
+      'function slidesEl(){return document.querySelector(".reveal .slides")||document.querySelector("deck-stage")||document.body;}' +
       'function snap(){try{var s=slidesEl();if(s){hist.push(s.innerHTML);if(hist.length>20){hist.shift();}}}catch(e){}}' +
       'function onBI(){if(!dirty){snap();dirty=true;}}' +
       'function serialize(){try{' +
@@ -959,7 +965,7 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
       'document.addEventListener("click",function(e){' +
       'if(e.target.closest&&e.target.closest("#__map_editor_toolbar__")){return;}' +
       'var el=e.target.closest?e.target.closest(SEL):null;' +
-      'if(el&&el.closest(".slides")){e.preventDefault();e.stopPropagation();sel(el);}else{desel(false);}' +
+      'if(el&&el.closest(".slides,deck-stage")){e.preventDefault();e.stopPropagation();sel(el);}else{desel(false);}' +
       '},true);' +
       'document.addEventListener("keydown",function(e){if(e.key==="Escape"){desel(false);}},true);' +
       'window.addEventListener("resize",function(){place();});' +
@@ -981,12 +987,16 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
   return result;
 }
 
-// 导出/发布用 HTML：只补字体链接（AI 的 CSS 引用了这些字体名），不带 shim/编辑器等运行时注入。
+// 新版本在服务端生成阶段固化字体；旧历史版本导出或发布时只补同一份确定性字体声明。
+// 服务端仍以来源 run + 该唯一规范化变换做哈希校验，并把旧版本另存为派生版本。
+const PERSISTED_FONT_LINK =
+  '<link data-mdppt-fonts rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;family=Caveat:wght@400;600&amp;family=Cormorant+Garamond:ital,wght@0,400;0,500;0,700;1,400;1,500&amp;family=Courier+Prime:wght@400;700&amp;family=DM+Mono:wght@400;500&amp;family=DM+Sans:wght@400;500;700&amp;family=Hanken+Grotesk:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700;800;900&amp;family=JetBrains+Mono:wght@400;500;700&amp;family=Jost:wght@300;400;500;600&amp;family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&amp;family=Lora:ital,wght@0,400;0,600;1,400&amp;family=Newsreader:ital,wght@0,400;0,500;1,300;1,400&amp;family=Noto+Sans+SC:wght@400;500;700&amp;family=Noto+Serif+SC:wght@300;400;700&amp;family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400;1,600&amp;family=Shrikhand&amp;family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Work+Sans:wght@400;500;600;700&amp;display=swap">';
+
 function prepareExportHtml(html: string): string {
-  if (!html) return html;
-  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, FONT_LINKS + '</head>');
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + FONT_LINKS);
-  return FONT_LINKS + html;
+  if (!html || /data-mdppt-fonts/i.test(html)) return html;
+  return /<\/head\s*>/i.test(html)
+    ? html.replace(/<\/head\s*>/i, (headClose) => `${PERSISTED_FONT_LINK}\n${headClose}`)
+    : html;
 }
 
 // 从生成 HTML 提取 <title>，用作下载文件名与发布标题
@@ -1669,6 +1679,7 @@ export function MdToPptAgentPage() {
   // ─── 所见即所得编辑 + 页码（iframe postMessage 通道）
   const [editMode, setEditMode] = useState(false);
   const [dirtyEdits, setDirtyEdits] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [slidePos, setSlidePos] = useState<{ cur: number; total: number } | null>(null);
   const editedHtmlRef = useRef<string>('');
   const previewWrapRef = useRef<HTMLDivElement>(null);
@@ -1835,8 +1846,9 @@ export function MdToPptAgentPage() {
       if (cancelled) return;
       if (!run) return;
       if (run.status === 'done' && run.html) {
-        setGeneratedHtml(run.html);
-        setActiveRunId(runId);
+        const recovered = resolveRecoveredDeckState(run);
+        setGeneratedHtml(recovered.html);
+        setActiveRunId(recovered.runId);
         setArtifactPhase('done');
         warnIfDegraded(run);
         reconcileMessages('done', null, buildRecoveredDoneMessage(run));
@@ -2025,20 +2037,45 @@ export function MdToPptAgentPage() {
       : generatedHtml;
   }, [generatedHtml]);
 
-  // ─── 提交编辑（把 iframe 回传的编辑稿存为正式产物）
-  const commitEdits = useCallback(() => {
-    if (editedHtmlRef.current && looksLikeDeck(editedHtmlRef.current)) {
-      setGeneratedHtml(editedHtmlRef.current);
+  // ─── 提交编辑：先在服务端形成带父版本与内容哈希的新 run，再允许精修或发布。
+  const commitEdits = useCallback(async (): Promise<{ html: string; runId: string } | null> => {
+    const editedHtml = editedHtmlRef.current;
+    if (!editedHtml || !looksLikeDeck(editedHtml)) {
+      setDirtyEdits(false);
+      return generatedHtml && activeRunId ? { html: generatedHtml, runId: activeRunId } : null;
     }
-    editedHtmlRef.current = '';
-    setDirtyEdits(false);
-  }, []);
+    if (!activeRunId) {
+      toast.error('保存编辑失败', '当前演示稿没有可追溯的来源版本，请先恢复历史版本或重新生成。');
+      return null;
+    }
+
+    setIsSavingEdit(true);
+    try {
+      const result = await persistMdToPptLocalEdit(activeRunId, editedHtml);
+      if (!result.success) {
+        toast.error('保存编辑失败', result.error + '。当前修改仍保留在编辑器中。');
+        return null;
+      }
+
+      setGeneratedHtml(result.data.html);
+      setActiveRunId(result.data.runId);
+      editedHtmlRef.current = '';
+      setDirtyEdits(false);
+      return { html: result.data.html, runId: result.data.runId };
+    } catch {
+      toast.error('保存编辑失败', '网络连接中断，当前修改仍保留在编辑器中。');
+      return null;
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [generatedHtml, activeRunId]);
 
   const toggleEditMode = useCallback(() => {
     pendingRestoreRef.current = restoreSlideRef.current; // 进出编辑都触发 iframe 重载，先快照页位
     if (editMode) {
-      commitEdits();
-      setEditMode(false);
+      void commitEdits().then((saved) => {
+        if (saved) setEditMode(false);
+      });
     } else {
       setFeedbackMode(false); // 编辑与圈选互斥
       setEditMode(true);
@@ -2604,10 +2641,16 @@ export function MdToPptAgentPage() {
       instruction: string,
       baseHtml?: string,
       styleOverride?: { theme?: string; templateId?: string | null },
-      slideIndex?: number
+      slideIndex?: number,
+      parentRunIdOverride?: string
     ) => {
       const base = baseHtml ?? generatedHtml;
+      const sourceRunId = parentRunIdOverride ?? activeRunId;
       if (!base || isProcessing) return;
+      if (!sourceRunId) {
+        toast.error('无法精修', '当前演示稿没有可追溯的来源版本，请先恢复历史版本或重新生成。');
+        return;
+      }
 
       setIsProcessing(true);
       setArtifactPhase('patching');
@@ -2624,11 +2667,9 @@ export function MdToPptAgentPage() {
         content: '正在修改 PPT...',
         phase: 'patching',
       });
-      const sourceRunId = activeRunId;
-
       const effTemplateId = styleOverride?.templateId !== undefined ? styleOverride.templateId : templateId;
       const cleanup = streamMdToPptPatch({
-        parentRunId: activeRunId || undefined,
+        parentRunId: sourceRunId,
         currentHtml: base,
         slideRequest: instruction,
         slideIndex,
@@ -2722,15 +2763,19 @@ export function MdToPptAgentPage() {
   );
 
   // ─── 确认执行换模板重绘（pendingTemplateSwitch 确认条的「确认重绘」）
-  const applyTemplateSwitch = useCallback(() => {
+  const applyTemplateSwitch = useCallback(async () => {
     const p = pendingTemplateSwitch;
     if (!p || isProcessing) return;
-    setPendingTemplateSwitch(null);
-    const base = latestHtml();
+    let base = latestHtml();
+    let sourceRunId = activeRunId;
     if (editMode) {
-      commitEdits();
+      const saved = await commitEdits();
+      if (!saved) return;
+      base = saved.html;
+      sourceRunId = saved.runId;
       setEditMode(false);
     }
+    setPendingTemplateSwitch(null);
     if (p.kind === 'official') {
       setTheme(p.value);
       setTemplateId(null);
@@ -2738,7 +2783,9 @@ export function MdToPptAgentPage() {
       startPatch(
         `参照「${p.label}」风格把整份 PPT 重新设计：配色、字体、版式气质全部按该风格重绘，内容与页数保持不变。`,
         base,
-        { theme: p.value, templateId: null }
+        { theme: p.value, templateId: null },
+        undefined,
+        sourceRunId
       );
     } else {
       setTemplateId(p.tpl.id);
@@ -2746,28 +2793,36 @@ export function MdToPptAgentPage() {
       startPatch(
         `参照自定义模板「${p.tpl.name}」的风格规范把整份 PPT 重新设计：配色、字体、版式气质全部按规范重绘，内容与页数保持不变。`,
         base,
-        { templateId: p.tpl.id }
+        { templateId: p.tpl.id },
+        undefined,
+        sourceRunId
       );
     }
-  }, [pendingTemplateSwitch, isProcessing, latestHtml, editMode, commitEdits, pushMsg, startPatch]);
+  }, [pendingTemplateSwitch, isProcessing, latestHtml, activeRunId, editMode, commitEdits, pushMsg, startPatch]);
 
   // ─── 重绘当前页（诉求 4/6：溢出/挤压页的一键修复，slideIndex 定向只动这一页）
-  const redrawCurrentPage = useCallback(() => {
+  const redrawCurrentPage = useCallback(async () => {
     if (!slidePos || isProcessing) return;
     const n = slidePos.cur;
+    let base = latestHtml();
+    let sourceRunId = activeRunId;
     if (editMode) {
-      commitEdits();
+      const saved = await commitEdits();
+      if (!saved) return;
+      base = saved.html;
+      sourceRunId = saved.runId;
       setEditMode(false);
     }
     pushMsg({ role: 'user', content: `重绘第 ${n} 页` });
     startPatch(
       `只重绘第 ${n} 页：整页重新设计排版，修复溢出、挤压、文字逐字竖排等版面问题；` +
       '该页的信息内容逐字保留，其余页完全不动。注意横向步骤/时间线最多 4 项且每项 min-width:170px。',
-      latestHtml(),
+      base,
       undefined,
-      n
+      n,
+      sourceRunId
     );
-  }, [slidePos, isProcessing, editMode, commitEdits, pushMsg, startPatch, latestHtml]);
+  }, [slidePos, isProcessing, latestHtml, activeRunId, editMode, commitEdits, pushMsg, startPatch]);
 
   // ─── 上传参考图创建模板（零摩擦：选图即建，名字默认取文件名；视觉提取约 5-15s）
   const handleTemplateFile = useCallback(
@@ -2894,7 +2949,7 @@ export function MdToPptAgentPage() {
   );
 
   // ─── Main send handler
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isProcessing) return;
 
@@ -2915,12 +2970,16 @@ export function MdToPptAgentPage() {
     // 决策：有 HTML → patch；有大纲工作稿（且无新附件）→ AI 调整大纲；否则 → 请求大纲
     if (generatedHtml) {
       // 对话精修模式。若编辑模式有未提交修改，以编辑稿为基底并先落盘。
-      const base = latestHtml();
+      let base = latestHtml();
+      let sourceRunId = activeRunId;
       if (editMode) {
-        commitEdits();
+        const saved = await commitEdits();
+        if (!saved) return;
+        base = saved.html;
+        sourceRunId = saved.runId;
         setEditMode(false);
       }
-      startPatch(text, base);
+      startPatch(text, base, undefined, undefined, sourceRunId);
     } else if (outlineDraft && atts.length === 0 && kbs.length === 0) {
       // outline-ready 阶段：输入即调整大纲（右侧工作稿为基底）
       requestOutlineAdjust(text);
@@ -2928,33 +2987,49 @@ export function MdToPptAgentPage() {
       // 初次生成：大纲先行
       void requestOutline(text, atts, kbs);
     }
-  }, [input, isProcessing, pendingAttachments, pendingKbRefs, generatedHtml, outlineDraft, pushMsg, startPatch, requestOutline, requestOutlineAdjust, latestHtml, editMode, commitEdits]);
+  }, [input, isProcessing, pendingAttachments, pendingKbRefs, generatedHtml, outlineDraft, pushMsg, startPatch, requestOutline, requestOutlineAdjust, latestHtml, activeRunId, editMode, commitEdits]);
 
   // ─── Publish（携带主题样式发布，标题取自 deck <title>）
   const handlePublish = useCallback(async () => {
-    const base = latestHtml();
+    let base = latestHtml();
+    let sourceRunId = activeRunId;
     if (!base) return;
     if (!looksLikeDeck(base)) {
       toast.error('无法发布', '当前 PPT 内容不完整，请保留现有版本并重新生成或精修。');
       return;
     }
     if (editMode) {
-      commitEdits();
+      const saved = await commitEdits();
+      if (!saved) return;
+      base = saved.html;
+      sourceRunId = saved.runId;
       setEditMode(false);
     }
+    if (!sourceRunId) {
+      toast.error('无法发布', '当前演示稿没有可追溯的来源版本，请先恢复历史版本或重新生成。');
+      return;
+    }
     setIsPublishing(true);
+    const publishHtml = prepareExportHtml(base);
     const result = await publishMdToPpt({
-      htmlContent: prepareExportHtml(base),
+      htmlContent: publishHtml,
       title: extractDeckTitle(base) || 'PPT 演示',
-      runId: activeRunId || undefined,
+      runId: sourceRunId,
     });
     setIsPublishing(false);
     if (result.success && result.siteUrl) {
+      if (result.runId) setActiveRunId(result.runId);
+      const authoritativeHtml = result.html || publishHtml;
+      if (authoritativeHtml !== base) {
+        setGeneratedHtml(authoritativeHtml);
+        editedHtmlRef.current = '';
+        setDirtyEdits(false);
+      }
       setPublishedUrl(result.siteUrl);
     } else {
       toast.error('发布失败', result.error || '请稍后重试，当前版本未被覆盖。');
     }
-  }, [latestHtml, editMode, commitEdits, activeRunId]);
+  }, [latestHtml, activeRunId, editMode, commitEdits]);
 
   // ─── Abort
   const handleAbort = useCallback(() => {
@@ -4865,7 +4940,7 @@ export function MdToPptAgentPage() {
                   </button>
                   <button
                     onClick={toggleEditMode}
-                    disabled={isStreaming}
+                    disabled={isStreaming || isSavingEdit}
                     title={editMode ? '完成编辑并保存修改' : '直接编辑：点击幻灯片文字修改内容、调整字号'}
                     className={[
                       'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border disabled:opacity-40',
@@ -4874,8 +4949,8 @@ export function MdToPptAgentPage() {
                         : 'bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle',
                     ].join(' ')}
                   >
-                    {editMode ? <Check size={11} /> : <Pencil size={11} />}
-                    {editMode ? '完成编辑' : '编辑内容'}
+                    {isSavingEdit ? <MapSpinner size={11} /> : editMode ? <Check size={11} /> : <Pencil size={11} />}
+                    {isSavingEdit ? '保存中' : editMode ? '完成编辑' : '编辑内容'}
                   </button>
                   <button
                     onClick={redrawCurrentPage}

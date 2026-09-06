@@ -1333,23 +1333,52 @@ public class MdToPptController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
 
-        MdToPptRun? parentRun = null;
-        if (!string.IsNullOrWhiteSpace(req.ParentRunId))
+        if (string.IsNullOrWhiteSpace(req.ParentRunId))
         {
-            parentRun = await _db.MdToPptRuns
-                .Find(item => item.Id == req.ParentRunId.Trim() && item.UserId == userId)
-                .FirstOrDefaultAsync(HttpContext.RequestAborted);
-            if (parentRun == null)
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(new
             {
-                Response.StatusCode = StatusCodes.Status400BadRequest;
-                await Response.WriteAsJsonAsync(new
-                {
-                    error = "精修来源任务不存在，请从当前生成结果重新发起",
-                    code = ErrorCodes.NOT_FOUND,
-                }, HttpContext.RequestAborted);
-                return;
-            }
+                error = "精修来源版本为空，请恢复演示稿后重试",
+                code = "parent_run_required",
+            }, HttpContext.RequestAborted);
+            return;
         }
+
+        var parentRun = await _db.MdToPptRuns
+            .Find(item => item.Id == req.ParentRunId.Trim() && item.UserId == userId)
+            .FirstOrDefaultAsync(HttpContext.RequestAborted);
+        if (parentRun == null)
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(new
+            {
+                error = "精修来源任务不存在，请从当前生成结果重新发起",
+                code = ErrorCodes.NOT_FOUND,
+            }, HttpContext.RequestAborted);
+            return;
+        }
+        if (parentRun.Status != "done" || !IsRunnableDeckDocument(parentRun.Html))
+        {
+            Response.StatusCode = StatusCodes.Status409Conflict;
+            await Response.WriteAsJsonAsync(new
+            {
+                error = "精修来源任务尚未形成完整演示稿，请恢复完成态版本后重试",
+                code = "parent_run_not_ready",
+            }, HttpContext.RequestAborted);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(req.CurrentHtml)
+            || !HtmlMatchesHash(req.CurrentHtml, parentRun.HtmlHash ?? ComputeHtmlHash(parentRun.Html)))
+        {
+            Response.StatusCode = StatusCodes.Status409Conflict;
+            await Response.WriteAsJsonAsync(new
+            {
+                error = "当前演示稿与精修来源版本不一致，请刷新恢复后再修改",
+                code = "parent_html_mismatch",
+            }, HttpContext.RequestAborted);
+            return;
+        }
+        req.CurrentHtml = parentRun.Html;
         var provenance = InheritPatchProvenance(parentRun);
         SetSseHeaders();
         await WriteSsePreambleAsync();
@@ -1364,7 +1393,8 @@ public class MdToPptController : ControllerBase
             req.SlideRequest,
             provenance.SourceSurface,
             provenance.KnowledgeReferences,
-            parentRun?.Id);
+            parentRun?.Id,
+            parentRun == null ? null : parentRun.HtmlHash ?? ComputeHtmlHash(parentRun.Html));
         await WriteEventAsync("run", new { runId = run.Id });
 
         // 定向单页 patch（2026-06-11 诉求 4「重绘本页」）：只把目标页交给一个子智能体
@@ -1390,6 +1420,74 @@ public class MdToPptController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // POST /api/md-to-ppt/runs/{parentRunId}/local-edit
+    // ─────────────────────────────────────────────
+
+    /// <summary>把浏览器内的直接编辑保存为一条新的权威运行版本。</summary>
+    [HttpPost("runs/{parentRunId}/local-edit")]
+    public async Task<IActionResult> PersistLocalEdit(string parentRunId, [FromBody] MdToPptLocalEditRequest req)
+    {
+        var userId = this.GetRequiredUserId();
+        var normalizedParentRunId = parentRunId.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedParentRunId))
+            return BadRequest(ApiResponse<object>.Fail("parent_run_required", "编辑来源版本为空，请恢复演示稿后重试"));
+
+        var parentRun = await _db.MdToPptRuns
+            .Find(item => item.Id == normalizedParentRunId && item.UserId == userId)
+            .FirstOrDefaultAsync(HttpContext.RequestAborted);
+        if (parentRun == null)
+            return NotFound(ApiResponse<object>.Fail("ppt_run_not_found", "编辑来源版本不存在，请恢复演示稿后重试"));
+        if (parentRun.Status != "done" || !IsRunnableDeckDocument(parentRun.Html))
+            return Conflict(ApiResponse<object>.Fail("parent_run_not_ready", "编辑来源版本尚未完成，请恢复完成态演示稿后重试"));
+
+        var editedHtml = req.HtmlContent?.Trim();
+        if (string.IsNullOrWhiteSpace(editedHtml) || !IsRunnableDeckDocument(editedHtml))
+            return BadRequest(ApiResponse<object>.Fail("incomplete_ppt_html", "编辑内容不完整，未保存。当前完成态版本仍然保留"));
+        editedHtml = NormalizePresentationDocument(editedHtml);
+
+        var parentHtmlHash = parentRun.HtmlHash ?? ComputeHtmlHash(parentRun.Html);
+        var editedHtmlHash = ComputeHtmlHash(editedHtml);
+        if (string.Equals(parentHtmlHash, editedHtmlHash, StringComparison.OrdinalIgnoreCase))
+        {
+            return Ok(new
+            {
+                runId = parentRun.Id,
+                parentRunId = parentRun.ParentRunId,
+                html = parentRun.Html,
+                contentHash = parentHtmlHash,
+                unchanged = true,
+            });
+        }
+
+        var provenance = InheritPatchProvenance(parentRun);
+        var run = await CreateRunAsync(
+            userId,
+            "map",
+            parentRun.Theme,
+            "manual-edit",
+            parentRun.Title,
+            provenance.SourceSurface,
+            provenance.KnowledgeReferences,
+            parentRun.Id,
+            parentHtmlHash);
+        run.Title = parentRun.Title;
+        if (!await PersistRunDoneAsync(run, editedHtml, "人工编辑", "浏览器编辑器"))
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                ApiResponse<object>.Fail("local_edit_persist_failed", "编辑版本保存失败，当前完成态版本仍然保留，请重试"));
+        }
+
+        return Ok(new
+        {
+            runId = run.Id,
+            parentRunId = run.ParentRunId,
+            html = run.Html,
+            contentHash = run.HtmlHash,
+            unchanged = false,
+        });
+    }
+
+    // ─────────────────────────────────────────────
     // POST /api/md-to-ppt/publish
     // ─────────────────────────────────────────────
 
@@ -1411,8 +1509,51 @@ public class MdToPptController : ControllerBase
                 "PPT 内容不完整，未发布。请保留当前演示稿并重新生成或精修"));
         }
 
+        if (string.IsNullOrWhiteSpace(req.RunId))
+            return BadRequest(ApiResponse<object>.Fail("ppt_run_required", "发布来源版本为空，请恢复演示稿后重试"));
+
+        var normalizedRunId = req.RunId.Trim();
+        var sourceRun = await _db.MdToPptRuns
+            .Find(x => x.Id == normalizedRunId && x.UserId == userId)
+            .FirstOrDefaultAsync(HttpContext.RequestAborted);
+        if (sourceRun == null)
+            return NotFound(ApiResponse<object>.Fail("ppt_run_not_found", "发布来源任务不存在，请从当前演示稿重新发布"));
+        if (sourceRun.Status != "done" || !IsRunnableDeckDocument(sourceRun.Html))
+            return Conflict(ApiResponse<object>.Fail("ppt_run_not_ready", "发布来源任务尚未完成，请等待生成结束后再发布"));
+
+        var sourceHash = sourceRun.HtmlHash ?? ComputeHtmlHash(sourceRun.Html);
+        var fontOnlySourceHtml = EnsurePresentationFontLinks(sourceRun.Html);
+        var fontOnlySourceHash = ComputeHtmlHash(fontOnlySourceHtml);
+        var normalizedSourceHtml = NormalizePresentationDocument(sourceRun.Html);
+        if (MdToPptAnchors.HasUnresolvedRuntimeReference(normalizedSourceHtml))
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                ApiResponse<object>.Fail("ppt_runtime_unavailable", "历史版本运行时暂时不可用，原版本仍然保留，请稍后重试"));
+        }
+        var normalizedSourceHash = ComputeHtmlHash(normalizedSourceHtml);
+        if (!HtmlMatchesHash(req.HtmlContent, sourceHash)
+            && !HtmlMatchesHash(req.HtmlContent, fontOnlySourceHash)
+            && !HtmlMatchesHash(req.HtmlContent, normalizedSourceHash))
+            return Conflict(ApiResponse<object>.Fail("ppt_html_mismatch", "当前内容与完成态版本不一致，请先完成精修或恢复后再发布"));
+
+        // 历史版本若缺字体，只允许这一种确定性规范化，并另存为派生运行；
+        // 原版本保持不可变，任意其他 HTML 仍会被上面的哈希绑定拒绝。
+        var authoritativeHtml = normalizedSourceHtml;
+        if (!string.Equals(sourceHash, normalizedSourceHash, StringComparison.OrdinalIgnoreCase))
+        {
+            var normalizedRun = await ResolveReadableHistoricalRunAsync(userId, sourceRun);
+            if (normalizedRun == null)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    ApiResponse<object>.Fail("ppt_normalize_failed", "历史版本运行时固化失败，原版本仍然保留，请重试"));
+            }
+            normalizedRunId = normalizedRun.Id;
+            authoritativeHtml = normalizedRun.Html;
+        }
+
+        var publishedHtmlHash = ComputeHtmlHash(authoritativeHtml);
         var title = string.IsNullOrWhiteSpace(req.Title) ? "PPT 幻灯片" : req.Title.Trim();
-        var htmlBytes = Encoding.UTF8.GetBytes(req.HtmlContent);
+        var htmlBytes = Encoding.UTF8.GetBytes(authoritativeHtml);
 
         var siteService = HttpContext.RequestServices.GetRequiredService<IHostedSiteService>();
         var site = await siteService.CreateFromHtmlAsync(
@@ -1430,30 +1571,31 @@ public class MdToPptController : ControllerBase
             await siteService.SetSharedTeamsAsync(site.Id, userId, req.TeamIds, CancellationToken.None);
         }
 
-        if (!string.IsNullOrWhiteSpace(req.RunId))
-        {
-            var runFilter = Builders<MdToPptRun>.Filter.And(
-                Builders<MdToPptRun>.Filter.Eq(x => x.Id, req.RunId),
-                Builders<MdToPptRun>.Filter.Eq(x => x.UserId, userId));
-            await _db.MdToPptRuns.UpdateOneAsync(
-                runFilter,
-                Builders<MdToPptRun>.Update
-                    .Set(x => x.PublishedSiteId, site.Id)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: CancellationToken.None);
-            await _db.DesignArtifactRuns.UpdateOneAsync(
-                x => x.Id == req.RunId && x.UserId == userId,
-                Builders<DesignArtifactRun>.Update
-                    .Set(x => x.ArtifactSiteId, site.Id)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: CancellationToken.None);
-        }
+        var runFilter = Builders<MdToPptRun>.Filter.And(
+            Builders<MdToPptRun>.Filter.Eq(x => x.Id, normalizedRunId),
+            Builders<MdToPptRun>.Filter.Eq(x => x.UserId, userId));
+        await _db.MdToPptRuns.UpdateOneAsync(
+            runFilter,
+            Builders<MdToPptRun>.Update
+                .Set(x => x.PublishedSiteId, site.Id)
+                .Set(x => x.PublishedHtmlHash, publishedHtmlHash)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        await _db.DesignArtifactRuns.UpdateOneAsync(
+            x => x.Id == normalizedRunId && x.UserId == userId,
+            Builders<DesignArtifactRun>.Update
+                .Set(x => x.ArtifactSiteId, site.Id)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
 
         return Ok(new
         {
+            runId = normalizedRunId,
             siteId = site.Id,
             title = site.Title,
             siteUrl = site.SiteUrl,
+            html = authoritativeHtml,
+            contentHash = publishedHtmlHash,
         });
     }
 
@@ -1470,16 +1612,32 @@ public class MdToPptController : ControllerBase
             .Find(x => x.Id == id && x.UserId == userId)
             .FirstOrDefaultAsync();
         if (run == null) return NotFound(new { error = "运行记录不存在" });
+        if (run.Status == "done" && IsRunnableDeckDocument(run.Html))
+        {
+            var readableRun = await ResolveReadableHistoricalRunAsync(userId, run);
+            if (readableRun == null)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    error = "历史版本运行时暂时不可用，原版本仍然保留，请稍后重试",
+                    code = "ppt_runtime_unavailable",
+                });
+            }
+            run = readableRun;
+        }
         var invalidSavedDeck = run.Status == "done" &&
-                               run.Op is "convert" or "patch" &&
+                               run.Op is "convert" or "patch" or "manual-edit" or "normalize" &&
                                !IsRunnableDeckDocument(run.Html);
         return Ok(new
         {
             id = run.Id,
             status = invalidSavedDeck ? "error" : run.Status,
             engine = run.Engine,
+            runtime = run.Runtime,
+            provider = run.Provider,
             op = run.Op,
             parentRunId = run.ParentRunId,
+            parentHtmlHash = run.ParentHtmlHash,
             title = run.Title,
             html = invalidSavedDeck ? null : run.Html,
             outlineJson = run.OutlineJson,
@@ -1493,16 +1651,69 @@ public class MdToPptController : ControllerBase
                 x.ContentHash,
             }),
             publishedSiteId = run.PublishedSiteId,
+            htmlHash = run.HtmlHash,
+            publishedHtmlHash = run.PublishedHtmlHash,
             error = invalidSavedDeck
                 ? "保存的演示稿不完整，已停止恢复。请重新生成或从上一版本继续"
                 : run.Error,
             model = run.Model,
             platform = run.Platform,
+            resolvedModels = run.ResolvedModels,
+            resolvedPlatforms = run.ResolvedPlatforms,
             degraded = run.Degraded,
             total = run.Total,
             createdAt = run.CreatedAt,
             updatedAt = run.UpdatedAt,
         });
+    }
+
+    /// <summary>
+    /// 历史记录可能仍引用已不存在的相对运行时，或缺少固化字体。
+    /// 读取时复用服务端唯一规范化器并返回不可变派生版本，使预览、下载、精修和发布共享同一 runId 与哈希。
+    /// </summary>
+    private async Task<MdToPptRun?> ResolveReadableHistoricalRunAsync(string userId, MdToPptRun sourceRun)
+    {
+        var sourceHash = sourceRun.HtmlHash ?? ComputeHtmlHash(sourceRun.Html);
+        var normalizedHtml = NormalizePresentationDocument(sourceRun.Html);
+        if (MdToPptAnchors.HasUnresolvedRuntimeReference(normalizedHtml)) return null;
+
+        var normalizedHash = ComputeHtmlHash(normalizedHtml);
+        if (string.Equals(sourceHash, normalizedHash, StringComparison.OrdinalIgnoreCase)) return sourceRun;
+
+        var existing = await _db.MdToPptRuns
+            .Find(item => item.UserId == userId
+                          && item.Status == "done"
+                          && item.Op == "normalize"
+                          && item.ParentRunId == sourceRun.Id
+                          && item.ParentHtmlHash == sourceHash
+                          && item.HtmlHash == normalizedHash)
+            .SortByDescending(item => item.UpdatedAt)
+            .FirstOrDefaultAsync(HttpContext.RequestAborted);
+        if (existing != null) return existing;
+
+        var provenance = InheritPatchProvenance(sourceRun);
+        var normalizedRun = await CreateRunAsync(
+            userId,
+            "map",
+            sourceRun.Theme,
+            "normalize",
+            sourceRun.Title,
+            provenance.SourceSurface,
+            provenance.KnowledgeReferences,
+            sourceRun.Id,
+            sourceHash);
+        normalizedRun.Title = sourceRun.Title;
+        normalizedRun.ResolvedModels = sourceRun.ResolvedModels.ToList();
+        normalizedRun.ResolvedPlatforms = sourceRun.ResolvedPlatforms.ToList();
+        return await PersistRunDoneAsync(
+            normalizedRun,
+            normalizedHtml,
+            sourceRun.Model,
+            sourceRun.Platform,
+            sourceRun.Degraded,
+            sourceRun.Total)
+                ? normalizedRun
+                : null;
     }
 
     /// <summary>最近的生成历史（让用户刷新后还能找回/重开过去的结果）</summary>
@@ -1520,6 +1731,8 @@ public class MdToPptController : ControllerBase
             id = r.Id,
             status = r.Status,
             engine = r.Engine,
+            runtime = r.Runtime,
+            provider = r.Provider,
             op = r.Op,
             title = r.Title,
             contentPreview = r.ContentPreview,
@@ -1528,6 +1741,10 @@ public class MdToPptController : ControllerBase
             knowledgeCount = r.KnowledgeReferences.Count,
             parentRunId = r.ParentRunId,
             publishedSiteId = r.PublishedSiteId,
+            model = r.Model,
+            platform = r.Platform,
+            resolvedModels = r.ResolvedModels,
+            resolvedPlatforms = r.ResolvedPlatforms,
             createdAt = r.CreatedAt,
         }));
     }
@@ -1540,16 +1757,20 @@ public class MdToPptController : ControllerBase
         string? content,
         string? sourceSurface = null,
         List<DesignKnowledgeSnapshot>? knowledgeReferences = null,
-        string? parentRunId = null)
+        string? parentRunId = null,
+        string? parentHtmlHash = null)
     {
         var run = new MdToPptRun
         {
             UserId = userId,
             Status = "running",
             Engine = engine,
+            Runtime = DesignArtifactRuntimes.HtmlPptPipeline,
+            Provider = "open-design-html-ppt",
             Theme = theme ?? string.Empty,
             Op = op,
             ParentRunId = string.IsNullOrWhiteSpace(parentRunId) ? null : parentRunId.Trim(),
+            ParentHtmlHash = string.IsNullOrWhiteSpace(parentHtmlHash) ? null : parentHtmlHash.Trim(),
             Title = DeriveTitle(content, op),
             ContentPreview = (content ?? string.Empty).Trim() is { Length: > 0 } cp
                 ? (cp.Length > 200 ? cp[..200] : cp)
@@ -1560,15 +1781,17 @@ public class MdToPptController : ControllerBase
             KnowledgeReferences = knowledgeReferences ?? new List<DesignKnowledgeSnapshot>(),
         };
         await _db.MdToPptRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
-        if (op == "convert")
+        if (op is "convert" or "patch" or "manual-edit" or "normalize")
         {
+            var isGenerate = op == "convert";
+            var isSavedEdit = op is "manual-edit" or "normalize";
             await _db.DesignArtifactRuns.InsertOneAsync(new DesignArtifactRun
             {
                 Id = run.Id,
                 UserId = userId,
                 Status = RunStatuses.Running,
                 ArtifactType = DesignArtifactTypes.HtmlPpt,
-                Operation = DesignArtifactOperations.Generate,
+                Operation = isGenerate ? DesignArtifactOperations.Generate : DesignArtifactOperations.Edit,
                 SourceSurface = run.SourceSurface,
                 Runtime = DesignArtifactRuntimes.HtmlPptPipeline,
                 // 完整正文已经由 MdToPptRun 持有；通用运行记录只保留可检索摘要，避免重复放大 Mongo 文档。
@@ -1578,8 +1801,8 @@ public class MdToPptController : ControllerBase
                 Title = run.Title,
                 LinkedRunId = run.Id,
                 KnowledgeReferences = run.KnowledgeReferences,
-                Progress = 5,
-                Phase = "HTML PPT 正在生成",
+                Progress = isSavedEdit ? 90 : 5,
+                Phase = op == "normalize" ? "HTML PPT 历史版本正在兼容固化" : op == "manual-edit" ? "HTML PPT 编辑版本正在保存" : isGenerate ? "HTML PPT 正在生成" : "HTML PPT 正在精修",
             }, cancellationToken: CancellationToken.None);
         }
         return run;
@@ -1606,14 +1829,25 @@ public class MdToPptController : ControllerBase
         }).ToList());
     }
 
-    private async Task PersistRunDoneAsync(MdToPptRun run, string html, string? model, string? platform, int degraded = 0, int total = 0)
+    private async Task<bool> PersistRunDoneAsync(MdToPptRun run, string html, string? model, string? platform, int degraded = 0, int total = 0)
     {
         try
         {
+            html = NormalizePresentationDocument(html);
+            if (MdToPptAnchors.HasUnresolvedRuntimeReference(html))
+            {
+                _logger.LogError("[MdToPpt] trusted presentation runtime unavailable runId={Id}", run.Id);
+                return false;
+            }
             run.Status = "done";
             run.Html = html;
+            run.HtmlHash = ComputeHtmlHash(html);
             run.Model = model;
             run.Platform = platform;
+            if (run.Op is not ("manual-edit" or "normalize") && run.ResolvedModels.Count == 0 && !string.IsNullOrWhiteSpace(model))
+                run.ResolvedModels.Add(model.Trim());
+            if (run.Op is not ("manual-edit" or "normalize") && run.ResolvedPlatforms.Count == 0 && !string.IsNullOrWhiteSpace(platform))
+                run.ResolvedPlatforms.Add(platform.Trim());
             run.Degraded = degraded;
             run.Total = total;
             run.UpdatedAt = DateTime.UtcNow;
@@ -1623,13 +1857,43 @@ public class MdToPptController : ControllerBase
                 Builders<DesignArtifactRun>.Update
                     .Set(x => x.Status, RunStatuses.Done)
                     .Set(x => x.Progress, 100)
-                    .Set(x => x.Phase, "HTML PPT 已生成")
+                    .Set(x => x.Phase, run.Op == "normalize" ? "HTML PPT 历史版本已兼容固化" : run.Op == "manual-edit" ? "HTML PPT 编辑版本已保存" : run.Op == "patch" ? "HTML PPT 已精修" : "HTML PPT 已生成")
                     .Set(x => x.CompletedAt, DateTime.UtcNow)
                     .Set(x => x.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
+            return true;
         }
-        catch (Exception ex) { _logger.LogError(ex, "[MdToPpt] persist run done failed runId={Id}", run.Id); }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MdToPpt] persist run done failed runId={Id}", run.Id);
+            return false;
+        }
     }
+
+    internal static string ComputeHtmlHash(string html)
+        => System.Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(html ?? string.Empty))).ToLowerInvariant();
+
+    internal static bool HtmlMatchesHash(string html, string expectedHash)
+        => !string.IsNullOrWhiteSpace(expectedHash)
+           && string.Equals(ComputeHtmlHash(html), expectedHash.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    internal static string EnsurePresentationFontLinks(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html)
+            || html.Contains("data-mdppt-fonts", StringComparison.OrdinalIgnoreCase))
+            return html;
+
+        const string fontLink = "<link data-mdppt-fonts rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;family=Caveat:wght@400;600&amp;family=Cormorant+Garamond:ital,wght@0,400;0,500;0,700;1,400;1,500&amp;family=Courier+Prime:wght@400;700&amp;family=DM+Mono:wght@400;500&amp;family=DM+Sans:wght@400;500;700&amp;family=Hanken+Grotesk:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700;800;900&amp;family=JetBrains+Mono:wght@400;500;700&amp;family=Jost:wght@300;400;500;600&amp;family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&amp;family=Lora:ital,wght@0,400;0,600;1,400&amp;family=Newsreader:ital,wght@0,400;0,500;1,300;1,400&amp;family=Noto+Sans+SC:wght@400;500;700&amp;family=Noto+Serif+SC:wght@300;400;700&amp;family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400;1,600&amp;family=Shrikhand&amp;family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Work+Sans:wght@400;500;600;700&amp;display=swap\">";
+        var headClose = System.Text.RegularExpressions.Regex.Match(
+            html,
+            "</head\\s*>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        return headClose.Success ? html.Insert(headClose.Index, fontLink + "\n") : html;
+    }
+
+    internal static string NormalizePresentationDocument(string html) =>
+        EnsurePresentationFontLinks(MdToPptAnchors.EnsureEmbeddedRuntime(html));
 
     private async Task PersistRunErrorAsync(MdToPptRun run, string error)
     {
@@ -1835,7 +2099,7 @@ public class MdToPptController : ControllerBase
             HtmlPptSkillContract() + "\n" +
             "## 铁律（违反会被系统剥离或整页重做）\n" +
             "1. 下方版式范本的类名、结构层级、装饰元素一律保留——这是设计系统的身份，禁止改类名/删装饰/换结构\n" +
-            "2. 只把范本中的占位内容（标题/段落/数字/标签/列表项文字）替换为本页真实内容；同构列表项允许增删 1-2 个\n" +
+            "2. 只把范本中的占位内容（标题/段落/数字/标签/列表项文字）替换为本页真实内容；标题与要点必须逐字复制输入，不得润色、改写或新增业务文案；同构列表项允许增删 1-2 个\n" +
             "3. 禁止内联布局样式：style 属性里不得出现 position/width/height/min-/max-/margin/transform/z-index/inset，禁止 vh/vw 单位\n" +
             "4. 内容必须放得下：标题不超过范本对应位置字数的 1.3 倍；每条要点不超过 40 字；放不下就精炼文字，禁止缩字号硬塞\n" +
             "5. 颜色/字体不得偏离设计系统（不要写新的颜色值）\n" +
@@ -1868,14 +2132,14 @@ public class MdToPptController : ControllerBase
         var sb = new StringBuilder();
         sb.Append("整份 PPT 主题：").Append(req.Summary ?? "（通用）").Append('\n');
         sb.Append($"本页是第 {index + 1}/{total} 页：{page.Title}\n");
-        sb.Append("本页要点（信息必须全部呈现，可润色不可丢失）：\n");
+        sb.Append("本页要点（必须逐字呈现，不得润色、拆义或新增事实）：\n");
         foreach (var b in bullets) sb.Append("- ").Append(b).Append('\n');
         if (!string.IsNullOrWhiteSpace(page.Design))
             sb.Append("设计意图（在范本允许范围内体现）：").Append(page.Design.Trim()).Append('\n');
         var consoleGuard = BuildConsoleDashboardGuard(req.Content, req.Summary);
         if (!string.IsNullOrEmpty(consoleGuard)) sb.Append(consoleGuard);
-        sb.Append("创意与质量要求：把用户意图转成具体发布会文案、数字、对比标签或流程节点；");
-        sb.Append("可在范本同构区域内调整词序和标签，但不得输出泛化标题“封面/目录/总结/标题”；");
+        sb.Append("创意与质量要求：只通过版式、层级、装饰和已有视觉装置表达用户意图，不得发明文案、数字、对比标签或流程节点；");
+        sb.Append("范本同构区域只能填入上面的标题与要点原文，不得输出泛化标题“封面/目录/总结/标题”；");
         sb.Append("如果本页是封面，主标题必须是产品或主题名称，不得显示“封面”二字。");
         sb.Append("把范本占位内容替换为以上真实内容，输出整个 slide 块。");
         return sb.ToString();
@@ -2496,6 +2760,169 @@ public class MdToPptController : ControllerBase
     }
 
     /// <summary>
+    /// 锚点只提供视觉结构；可见业务文字必须由本页标题、要点或源内容的完整事实片段组成。
+    /// 先移除允许事实，再检查剩余语义字符，因此跨多个内联标签拆分也不能绕过。
+    /// </summary>
+    internal static bool ContainsUnsupportedVisibleClaims(
+        string generated,
+        MdToPptOutlinePageDto page,
+        string? deckSummary,
+        string? deckContent,
+        int? pageIndex = null,
+        int? totalPages = null)
+    {
+        if (string.IsNullOrWhiteSpace(generated)) return false;
+
+        static string Normalize(string value) => System.Text.RegularExpressions.Regex.Replace(
+            System.Net.WebUtility.HtmlDecode(value), "\\s+", " ").Trim();
+
+        var allowedParts = new List<string?>
+        {
+            page.Title,
+            deckSummary,
+        };
+        allowedParts.AddRange(page.Bullets ?? new List<string>());
+        if (!string.IsNullOrWhiteSpace(deckContent))
+        {
+            allowedParts.AddRange(System.Text.RegularExpressions.Regex
+                .Split(deckContent, "[\\r\\n。！？!?；;]+")
+                .Where(value => !string.IsNullOrWhiteSpace(value)));
+        }
+        var withoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            generated, "<(style|script)\\b[^>]*>[\\s\\S]*?</\\1>", " ",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        withoutNonText = System.Text.RegularExpressions.Regex.Replace(withoutNonText, "<!--[\\s\\S]*?-->", " ");
+        // 仅剥离有明确结构身份的页码或流程序号。其余所有可见数字，包括 1-2 位裸 KPI，
+        // 都必须在用户来源中出现，不能再用“数字较短”作为放行条件。
+        withoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            withoutNonText,
+            "(?<open><(?<tag>div|span|p)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\b(?:pagenum|gd-snum|pin-note|grove-num|flow-num|cycle-num|num-tag|p-num)\\b[^\"']*[\"'][^>]*>)(?<value>\\s*#?\\d{1,2}(?:\\s*/\\s*\\d{1,2})?\\.?\\s*)(?<close></\\k<tag>>)",
+            match => match.Groups["open"].Value + match.Groups["close"].Value,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        // Vellum、Monochrome 与 Grove 的真实锚点把页码放在 slide-chrome 内的通用 label 中。
+        // 只剥离该容器内“纯数字”的 label，不能全局放行 label 里的业务数字。
+        var expectedPageNumber = pageIndex.HasValue && totalPages is > 0
+            ? (pageIndex.Value + 1).ToString("00")
+            : null;
+        withoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            withoutNonText,
+            "(?<open><(?<chrome>header|div)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bslide-chrome\\b[^\"']*[\"'][^>]*>[\\s\\S]*?<span\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\blabel\\b[^\"']*[\"'][^>]*>)(?<value>\\s*\\d{1,2}\\s*)(?<close></span>[\\s\\S]*?</\\k<chrome>>)",
+            match => expectedPageNumber != null
+                     && string.Equals(match.Groups["value"].Value.Trim().TrimStart('0'), expectedPageNumber.TrimStart('0'), StringComparison.Ordinal)
+                ? match.Groups["open"].Value + match.Groups["close"].Value
+                : match.Value,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        // Coral 的页码是 left-col 的首个 number 子节点；同样限定容器关系和纯数字内容。
+        withoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            withoutNonText,
+            "(?<open><div\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bleft-col\\b[^\"']*[\"'][^>]*>\\s*<div\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bnumber\\b[^\"']*[\"'][^>]*>)(?<value>\\s*\\d{1,2}\\s*)(?<close></div>)",
+            match => expectedPageNumber != null
+                     && string.Equals(match.Groups["value"].Value.Trim().TrimStart('0'), expectedPageNumber.TrimStart('0'), StringComparison.Ordinal)
+                ? match.Groups["open"].Value + match.Groups["close"].Value
+                : match.Value,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        withoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            withoutNonText,
+            "(?<open><(?<tag>div|span|p)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bsection-label\\b[^\"']*[\"'][^>]*>)\\s*\\d{1,2}\\s*/\\s*(?=[^<]*</\\k<tag>>)",
+            match => match.Groups["open"].Value,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        withoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            withoutNonText,
+            "(SECTION\\s*·\\s*)\\d{1,2}\\s*/\\s*\\d{1,2}",
+            "$1",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        withoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            withoutNonText,
+            "(?<open><div\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bhc-footer\\b[^\"']*[\"'][^>]*>[\\s\\S]*?<span\\b[^>]*>)\\s*\\d{1,2}\\s*/\\s*\\d{1,2}(?<close>\\s*</span>[\\s\\S]*?</div>)",
+            match => match.Groups["open"].Value + match.Groups["close"].Value,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        withoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            withoutNonText,
+            "(?<open><(?<tag>div|footer)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bslide-foot\\b[^\"']*[\"'][^>]*>[\\s\\S]*?<span\\b[^>]*>)\\s*\\d{1,2}\\s*/\\s*\\d{1,2}(?<close>\\s*</span>[\\s\\S]*?</\\k<tag>>)",
+            match => match.Groups["open"].Value + match.Groups["close"].Value,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        var visible = Normalize(System.Text.RegularExpressions.Regex.Replace(withoutNonText, "<[^>]+>", string.Empty));
+        // 数字事实单独校验。正文语义校验会剥掉数字以容忍页码和装饰序号，不能因此放过
+        // 模型新造的百分比、金额、耗时、token 数或年份。
+        static IEnumerable<string> NumericFacts(string value) =>
+            System.Text.RegularExpressions.Regex.Matches(
+                    Normalize(value),
+                    "(?:[$¥￥€£]\\s*)?\\d+(?:[.,]\\d+)*(?:\\s*(?:%|％|ms|min|tokens?|gb|mb|[skmh]|元|万|亿|天|家|人|个|次|项|位|套|页|x|×))?",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+                    TimeSpan.FromSeconds(1))
+                .Select(match => System.Text.RegularExpressions.Regex.Replace(
+                    match.Value.ToLowerInvariant(), "\\s+", string.Empty));
+
+        var allowedNumericFacts = allowedParts
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .SelectMany(value => NumericFacts(value!))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (NumericFacts(visible).Any(value => !allowedNumericFacts.Contains(value))) return true;
+
+        static string Semantic(string value) => System.Text.RegularExpressions.Regex.Replace(
+            Normalize(value).ToLowerInvariant(), "[\\p{P}\\p{S}\\s\\d]+", string.Empty);
+
+        var remaining = Semantic(visible);
+        foreach (var allowed in allowedParts
+                     .Where(value => !string.IsNullOrWhiteSpace(value))
+                     .Select(value => Semantic(value!))
+                     .Where(value => value.Length >= 2)
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .OrderByDescending(value => value.Length))
+        {
+            remaining = remaining.Replace(allowed, string.Empty, StringComparison.OrdinalIgnoreCase);
+        }
+        remaining = remaining
+            .Replace("section", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("slide", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("page", string.Empty, StringComparison.OrdinalIgnoreCase);
+        return remaining.Length >= 3;
+    }
+
+    internal static string NormalizeSlidePageIdentity(string slide, int index, int total)
+    {
+        if (string.IsNullOrWhiteSpace(slide) || total <= 0) return slide;
+        var current = index + 1;
+        var normalized = System.Text.RegularExpressions.Regex.Replace(
+            slide,
+            "(?<open><(?:div|span|p)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\b(?:pagenum|gd-snum|pin-note)\\b[^\"']*[\"'][^>]*>)(?<lead>\\s*)\\d{1,2}\\s*/\\s*\\d{1,2}(?<tail>\\s*)(?<close></(?:div|span|p)>)",
+            match => $"{match.Groups["open"].Value}{match.Groups["lead"].Value}{current:00} / {total:00}{match.Groups["tail"].Value}{match.Groups["close"].Value}",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        normalized = System.Text.RegularExpressions.Regex.Replace(
+            normalized,
+            "(SECTION\\s*·\\s*)\\d{1,2}\\s*/\\s*\\d{1,2}",
+            match => $"{match.Groups[1].Value}{current:00}/{total:00}",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        normalized = System.Text.RegularExpressions.Regex.Replace(
+            normalized,
+            "(?<open><div\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bhc-footer\\b[^\"']*[\"'][^>]*>[\\s\\S]*?<span\\b[^>]*>)(?<lead>\\s*)\\d{1,2}\\s*/\\s*\\d{1,2}(?<tail>\\s*)(?<close></span>[\\s\\S]*?</div>)",
+            match => $"{match.Groups["open"].Value}{match.Groups["lead"].Value}{current:00} / {total:00}{match.Groups["tail"].Value}{match.Groups["close"].Value}",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        normalized = System.Text.RegularExpressions.Regex.Replace(
+            normalized,
+            "(?<open><(?<tag>div|footer)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bslide-foot\\b[^\"']*[\"'][^>]*>[\\s\\S]*?<span\\b[^>]*>)(?<lead>\\s*)\\d{1,2}\\s*/\\s*\\d{1,2}(?<tail>\\s*)(?<close></span>[\\s\\S]*?</\\k<tag>>)",
+            match => $"{match.Groups["open"].Value}{match.Groups["lead"].Value}{current:00} / {total:00}{match.Groups["tail"].Value}{match.Groups["close"].Value}",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        normalized = System.Text.RegularExpressions.Regex.Replace(
+            normalized,
+            "(?<open><(?<chrome>header|div)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bslide-chrome\\b[^\"']*[\"'][^>]*>[\\s\\S]*?<span\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\blabel\\b[^\"']*[\"'][^>]*>)(?<lead>\\s*)\\d{1,2}(?<tail>\\s*)(?<close></span>[\\s\\S]*?</\\k<chrome>>)",
+            match => $"{match.Groups["open"].Value}{match.Groups["lead"].Value}{current:00}{match.Groups["tail"].Value}{match.Groups["close"].Value}",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return System.Text.RegularExpressions.Regex.Replace(
+            normalized,
+            "(?<open><div\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bleft-col\\b[^\"']*[\"'][^>]*>\\s*<div\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bnumber\\b[^\"']*[\"'][^>]*>)(?<lead>\\s*)\\d{1,2}(?<tail>\\s*)(?<close></div>)",
+            match => $"{match.Groups["open"].Value}{match.Groups["lead"].Value}{current:00}{match.Groups["tail"].Value}{match.Groups["close"].Value}",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    /// <summary>
     /// 将模型遗漏的范本样例文字确定性改写为当前页真实内容，保留 OpenDesign 版式结构。
     /// 仅处理标签之间的可见文本，不触碰 class、data 属性或脚本；改写后仍由残留检测再次把关。
     /// </summary>
@@ -2986,6 +3413,7 @@ public class MdToPptController : ControllerBase
         string? requestId = null,
         string? userId = null,
         string? title = null,
+        string? runId = null,
         bool includeThinking = false)
     {
         return new GatewayRequest
@@ -3011,6 +3439,7 @@ public class MdToPptController : ControllerBase
             Context = new GatewayRequestContext
             {
                 RequestId = requestId,
+                RunId = runId,
                 UserId = userId,
                 SourceSystem = "map",
                 IngressProtocol = "gw-native",
@@ -3058,12 +3487,19 @@ public class MdToPptController : ControllerBase
         return IsRunnableSlideFragment(fragment, anchored) ? fragment : string.Empty;
     }
 
-    private async Task<(string? text, string? error)> RunGatewayPageOnceAsync(
+    private sealed record PageGenerationResult(
+        string? Text,
+        string? Error,
+        string? ActualModel,
+        string? ActualPlatform);
+
+    private async Task<PageGenerationResult> RunGatewayPageOnceAsync(
         string userId,
         InfraAgentRuntimeProfile profile,
         string systemPrompt,
         string userPrompt,
-        string title)
+        string title,
+        string runId)
     {
         try
         {
@@ -3071,14 +3507,15 @@ public class MdToPptController : ControllerBase
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: requestId,
                 GroupId: null,
-                SessionId: null,
+                SessionId: runId,
                 UserId: userId,
                 ViewRole: null,
                 DocumentChars: userPrompt.Length,
                 DocumentHash: null,
                 SystemPromptRedacted: "[MdToPpt-Page]",
                 RequestType: "chat",
-                AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate));
+                AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+                RunId: runId));
 
             var request = BuildGatewayPageRequest(
                 profile,
@@ -3087,11 +3524,20 @@ public class MdToPptController : ControllerBase
                 AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
                 requestId,
                 userId,
-                title);
+                title,
+                runId);
 
             var fullText = new StringBuilder();
+            string? actualModel = null;
+            string? actualPlatform = null;
             await foreach (var chunk in _gateway.StreamAsync(request, CancellationToken.None))
             {
+                if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                {
+                    actualModel = chunk.Resolution.ActualModel;
+                    actualPlatform = chunk.Resolution.ActualPlatformName ?? chunk.Resolution.ActualPlatformId;
+                    continue;
+                }
                 if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
                     fullText.Append(chunk.Content);
@@ -3100,36 +3546,40 @@ public class MdToPptController : ControllerBase
 
                 if (chunk.Type == GatewayChunkType.Error)
                 {
-                    return (null, chunk.Error ?? "LLM Gateway 页面生成失败");
+                    return new PageGenerationResult(null, chunk.Error ?? "LLM Gateway 页面生成失败", actualModel, actualPlatform);
                 }
             }
 
             var raw = fullText.ToString();
-            return string.IsNullOrWhiteSpace(raw) ? (null, "LLM Gateway 未返回页面 HTML") : (raw, null);
+            return string.IsNullOrWhiteSpace(raw)
+                ? new PageGenerationResult(null, "LLM Gateway 未返回页面 HTML", actualModel, actualPlatform)
+                : new PageGenerationResult(raw, null, actualModel, actualPlatform);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[MdToPpt-Page] gateway page generation failed: {Msg}", ex.Message);
-            return (null, ex.Message);
+            return new PageGenerationResult(null, ex.Message, null, null);
         }
     }
 
-    private async Task<(string? text, string? error)> RunPageOnceAsync(
+    private async Task<PageGenerationResult> RunPageOnceAsync(
         string userId,
         InfraConnection? connection,
         InfraAgentRuntimeProfile profile,
         string systemPrompt,
         string userPrompt,
         string title,
+        string runId,
         InfraAgentSessionView? presession)
     {
         if (ShouldUseGatewayDirect(profile))
-            return await RunGatewayPageOnceAsync(userId, profile, systemPrompt, userPrompt, title);
+            return await RunGatewayPageOnceAsync(userId, profile, systemPrompt, userPrompt, title, runId);
 
         if (connection == null)
-            return (null, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
+            return new PageGenerationResult(null, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权", null, null);
 
-        return await RunAgentOnceAsync(userId, connection, profile, systemPrompt, userPrompt, title, presession);
+        var (text, error) = await RunAgentOnceAsync(userId, connection, profile, systemPrompt, userPrompt, title, presession);
+        return new PageGenerationResult(text, error, null, null);
     }
 
     /// <summary>单次 agent 会话往返：创建/复用 → 发送 → 轮询至 done，返回最终文本（页级子任务用）</summary>
@@ -3261,6 +3711,12 @@ public class MdToPptController : ControllerBase
         {
             (head, suffix) = BuildDeckShell(effectiveTheme, deckTitle);
         }
+        head = MdToPptAnchors.EnsureMobilePresentationGuard(head, anchor?.Name);
+        head = System.Text.RegularExpressions.Regex.Replace(
+            head,
+            "<title\\b[^>]*>[\\s\\S]*?</title\\s*>",
+            $"<title>{System.Net.WebUtility.HtmlEncode(deckTitle)}</title>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         await EmitAsync("frame", new { head, suffix, total, anchored = anchor != null, anchor = anchor?.Name, skill = "github-html-ppt" });
         await EmitAsync("diag", new
         {
@@ -3307,6 +3763,8 @@ public class MdToPptController : ControllerBase
         // 退化为「范本/裸要点」兜底页：按页打标（每页一个槽位，写两次仍是 true，幂等），
         // 避免用共享计数器在「retry 兜底后 EmitAsync 又抛 → 外层 catch 再加一次」时重复计数（Bugbot Medium）
         var fallbackFlags = new bool[total];
+        var actualModels = new string?[total];
+        var actualPlatforms = new string?[total];
 
         try
         {
@@ -3348,15 +3806,23 @@ public class MdToPptController : ControllerBase
                         await EmitAsync("page", new { index = i, total, html = dashboardSection, done = dashboardDone });
                         return;
                     }
-                    var (text, err) = await RunPageOnceAsync(
-                        userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", i == 0 ? presession : null);
-                    var section = NormalizeGeneratedSlideFragment(text, anchor != null);
+                    var pageResult = await RunPageOnceAsync(
+                        userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", run.Id, i == 0 ? presession : null);
+                    var section = NormalizeGeneratedSlideFragment(pageResult.Text, anchor != null);
                     if (anchor != null && layout != null && !string.IsNullOrEmpty(section))
                         section = RewriteAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content);
+                    if (anchor != null && !string.IsNullOrEmpty(section))
+                        section = NormalizeSlidePageIdentity(section, i, total);
                     if (anchor != null && layout != null && !string.IsNullOrEmpty(section) &&
                         ContainsAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content))
                     {
                         _logger.LogWarning("[MdToPpt-Pages] page {Idx} retained anchor sample text, retrying", i);
+                        section = string.Empty;
+                    }
+                    if (anchor != null && !string.IsNullOrEmpty(section) &&
+                        ContainsUnsupportedVisibleClaims(section, pages[i], req.Summary, req.Content, i, total))
+                    {
+                        _logger.LogWarning("[MdToPpt-Pages] page {Idx} contains unsupported visible claims, retrying", i);
                         section = string.Empty;
                     }
                     if (consoleDashboardMode && !string.IsNullOrEmpty(section) && LooksLikeConsoleVisualMismatch(section, anchor?.Name))
@@ -3364,26 +3830,46 @@ public class MdToPptController : ControllerBase
                         _logger.LogWarning("[MdToPpt-Pages] page {Idx} console visual mismatch anchor={Anchor}, retrying", i, anchor?.Name);
                         section = string.Empty;
                     }
+                    string? acceptedModel = null;
+                    string? acceptedPlatform = null;
+                    if (!string.IsNullOrEmpty(section))
+                    {
+                        acceptedModel = pageResult.ActualModel;
+                        acceptedPlatform = pageResult.ActualPlatform;
+                    }
                     if (string.IsNullOrEmpty(section))
                     {
                         // 单页失败重试一次，再失败用范本兜底（结构不塌，内容退化为范本+标题要点）
-                        if (err == null || text != null)
+                        if (pageResult.Error == null || pageResult.Text != null)
                             _logger.LogWarning("[MdToPpt-Pages] page {Idx} invalid block, retrying", i);
-                        var (text2, _) = await RunPageOnceAsync(
-                            userId, connection, profile, sys, usr, $"PPT 第{i + 1}页R", null);
-                        section = NormalizeGeneratedSlideFragment(text2, anchor != null);
+                        var retryResult = await RunPageOnceAsync(
+                            userId, connection, profile, sys, usr, $"PPT 第{i + 1}页R", run.Id, null);
+                        section = NormalizeGeneratedSlideFragment(retryResult.Text, anchor != null);
                         if (anchor != null && layout != null && !string.IsNullOrEmpty(section))
                             section = RewriteAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content);
+                        if (anchor != null && !string.IsNullOrEmpty(section))
+                            section = NormalizeSlidePageIdentity(section, i, total);
                         if (anchor != null && layout != null && !string.IsNullOrEmpty(section) &&
                             ContainsAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content))
                         {
                             _logger.LogWarning("[MdToPpt-Pages] page {Idx} retained anchor sample text after retry, using fallback", i);
                             section = string.Empty;
                         }
+                        if (anchor != null && !string.IsNullOrEmpty(section) &&
+                            ContainsUnsupportedVisibleClaims(section, pages[i], req.Summary, req.Content, i, total))
+                        {
+                            _logger.LogWarning("[MdToPpt-Pages] page {Idx} contains unsupported visible claims after retry, using fallback", i);
+                            section = string.Empty;
+                        }
                         if (consoleDashboardMode && !string.IsNullOrEmpty(section) && LooksLikeConsoleVisualMismatch(section, anchor?.Name))
                         {
                             _logger.LogWarning("[MdToPpt-Pages] page {Idx} console visual mismatch after retry anchor={Anchor}, using dashboard fallback", i, anchor?.Name);
                             section = string.Empty;
+                        }
+                        if (!string.IsNullOrEmpty(section))
+                        {
+                            acceptedModel = retryResult.ActualModel;
+                            acceptedPlatform = retryResult.ActualPlatform;
                         }
                         if (string.IsNullOrEmpty(section))
                         {
@@ -3395,7 +3881,9 @@ public class MdToPptController : ControllerBase
                                 : SanitizeSection(FallbackSection(pages[i], i));
                         }
                     }
-                    sections[i] = section;
+                    actualModels[i] = acceptedModel;
+                    actualPlatforms[i] = acceptedPlatform;
+                    sections[i] = NormalizeSlidePageIdentity(section, i, total);
                     var n = Interlocked.Increment(ref doneCount);
                     var ms = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
                     _logger.LogInformation("[MdToPpt-Pages] page {Idx} done {N}/{Total} elapsedMs={Ms}", i, n, total, ms);
@@ -3411,7 +3899,7 @@ public class MdToPptController : ControllerBase
                           : anchor != null
                           ? AnchoredFallbackSlide(MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design), pages[i], i, total)
                           : SanitizeSection(FallbackSection(pages[i], i));
-                      sections[i] = fb;
+                      sections[i] = NormalizeSlidePageIdentity(fb, i, total);
                       var n2 = Interlocked.Increment(ref doneCount);
                       await EmitAsync("page", new { index = i, total, html = fb, done = n2 });
                   }
@@ -3423,7 +3911,7 @@ public class MdToPptController : ControllerBase
 
             if (anchor != null && sections.Length > 0 && !string.IsNullOrEmpty(sections[0]))
                 sections[0] = AddActiveToFirstSlide(sections[0]);
-            var html = head + string.Join("\n", sections) + suffix;
+            var html = NormalizePresentationDocument(head + string.Join("\n", sections) + suffix);
             var totalMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
             var fallbackCount = fallbackFlags.Count(b => b);
             _logger.LogInformation("[MdToPpt-Pages] DONE userId={UserId} totalMs={Ms} htmlLen={Len} degraded={Degraded}/{Total}", userId, totalMs, html.Length, fallbackCount, total);
@@ -3434,7 +3922,24 @@ public class MdToPptController : ControllerBase
                 await EmitAsync("error", new { message });
                 return;
             }
-            await PersistRunDoneAsync(run, html, GenerationModelLabel(profile), platform, fallbackCount, total);
+            run.ResolvedModels = actualModels
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            run.ResolvedPlatforms = actualPlatforms
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var actualModel = run.ResolvedModels.Count > 0
+                ? string.Join(", ", run.ResolvedModels)
+                : GenerationModelLabel(profile);
+            if (!await PersistRunDoneAsync(run, html, actualModel, platform, fallbackCount, total))
+            {
+                await EmitAsync("error", new { message = "演示稿已生成但版本保存失败，请重试" });
+                return;
+            }
             await EmitAsync("done", new { html, degraded = fallbackCount, total });
         }
         catch (Exception ex)
@@ -3525,23 +4030,38 @@ public class MdToPptController : ControllerBase
                 "硬约束：未被修改要求点名的信息内容必须逐字保留（数字、名称、要点一字不差）；" +
                 "重新设计排版时严格遵守画布与版面硬约束。";
 
-            var (text, err) = await RunPageOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改", null);
-            var section = NormalizeGeneratedSlideFragment(text, targetIsAnchored);
+            var pageResult = await RunPageOnceAsync(
+                userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改", run.Id, null);
+            string? actualModel = null;
+            string? actualPlatform = null;
+            var section = NormalizeGeneratedSlideFragment(pageResult.Text, targetIsAnchored);
+            if (!string.IsNullOrEmpty(section))
+            {
+                actualModel = pageResult.ActualModel;
+                actualPlatform = pageResult.ActualPlatform;
+            }
             if (string.IsNullOrEmpty(section))
             {
-                _logger.LogWarning("[MdToPpt-PagePatch] invalid section, retrying page={Page} err={Err}", oneBasedIndex, err);
-                var (text2, err2) = await RunPageOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改R", null);
-                section = NormalizeGeneratedSlideFragment(text2, targetIsAnchored);
+                _logger.LogWarning("[MdToPpt-PagePatch] invalid section, retrying page={Page} err={Err}", oneBasedIndex, pageResult.Error);
+                var retryResult = await RunPageOnceAsync(
+                    userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改R", run.Id, null);
+                section = NormalizeGeneratedSlideFragment(retryResult.Text, targetIsAnchored);
+                if (!string.IsNullOrEmpty(section))
+                {
+                    actualModel = retryResult.ActualModel;
+                    actualPlatform = retryResult.ActualPlatform;
+                }
                 if (string.IsNullOrEmpty(section))
                 {
-                    var msg = err2 ?? err ?? "单页重绘失败，请重试";
+                    var msg = retryResult.Error ?? pageResult.Error ?? "单页重绘失败，请重试";
                     await PersistRunErrorAsync(run, msg);
                     await WriteEventAsync("error", new { message = msg });
                     return true;
                 }
             }
 
-            var newHtml = html[..blocks[idx].Start] + section + html[(blocks[idx].Start + blocks[idx].Length)..];
+            var newHtml = NormalizePresentationDocument(
+                html[..blocks[idx].Start] + section + html[(blocks[idx].Start + blocks[idx].Length)..]);
             if (!IsRunnableDeckDocument(newHtml))
             {
                 const string message = "精修结果不完整，未替换当前演示稿，请重试";
@@ -3549,7 +4069,13 @@ public class MdToPptController : ControllerBase
                 await WriteEventAsync("error", new { message });
                 return true;
             }
-            await PersistRunDoneAsync(run, newHtml, GenerationModelLabel(profile), platform);
+            run.ResolvedModels = string.IsNullOrWhiteSpace(actualModel) ? new List<string>() : new List<string> { actualModel };
+            run.ResolvedPlatforms = string.IsNullOrWhiteSpace(actualPlatform) ? new List<string>() : new List<string> { actualPlatform };
+            if (!await PersistRunDoneAsync(run, newHtml, actualModel ?? GenerationModelLabel(profile), platform))
+            {
+                await WriteEventAsync("error", new { message = "精修结果已生成但版本保存失败，请重试" });
+                return true;
+            }
             await WriteEventAsync("page", new { index = idx, total = blocks.Count, html = section, done = 1 });
             await WriteEventAsync("done", new { html = newHtml });
             _logger.LogInformation("[MdToPpt-PagePatch] DONE userId={UserId} page={Page} newLen={Len}", userId, oneBasedIndex, newHtml.Length);
@@ -3588,7 +4114,8 @@ public class MdToPptController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: "[MdToPpt-Deck]",
             RequestType: "chat",
-            AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate));
+            AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+            RunId: run.Id));
 
         var request = BuildGatewayPageRequest(
             profile,
@@ -3598,9 +4125,11 @@ public class MdToPptController : ControllerBase
             requestId,
             userId,
             title,
+            runId: run.Id,
             includeThinking: true);
         var fullText = new StringBuilder();
         var model = GenerationModelLabel(profile);
+        var resolvedPlatform = "LLM Gateway";
 
         await WriteEventAsync("model", new { model, platform = "LLM Gateway" });
         await WriteDiagAsync(new { stage = "gateway_direct", route = "gateway-direct", runId = run.Id });
@@ -3611,6 +4140,9 @@ public class MdToPptController : ControllerBase
                 if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
                 {
                     model = chunk.Resolution.ActualModel;
+                    resolvedPlatform = chunk.Resolution.ActualPlatformName
+                        ?? chunk.Resolution.ActualPlatformId
+                        ?? resolvedPlatform;
                     await WriteEventAsync("model", new { model, platform = "LLM Gateway" });
                 }
                 else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
@@ -3631,7 +4163,7 @@ public class MdToPptController : ControllerBase
                 }
             }
 
-            var html = StripCodeFences(fullText.ToString());
+            var html = NormalizePresentationDocument(StripCodeFences(fullText.ToString()));
             if (!IsRunnableDeckDocument(html))
             {
                 const string message = "生成结果不完整，未替换当前演示稿，请重试";
@@ -3640,7 +4172,13 @@ public class MdToPptController : ControllerBase
                 return;
             }
 
-            await PersistRunDoneAsync(run, html, model, "LLM Gateway");
+            run.ResolvedModels = string.IsNullOrWhiteSpace(model) ? new List<string>() : new List<string> { model };
+            run.ResolvedPlatforms = new List<string> { resolvedPlatform };
+            if (!await PersistRunDoneAsync(run, html, model, "LLM Gateway"))
+            {
+                await WriteEventAsync("error", new { message = "演示稿已生成但版本保存失败，请重试" });
+                return;
+            }
             await WriteEventAsync("done", new { html });
         }
         catch (Exception ex)
@@ -3934,7 +4472,7 @@ public class MdToPptController : ControllerBase
 
                 if (gotDone)
                 {
-                    var html = finalHtml ?? StripCodeFences(fullText.ToString());
+                    var html = NormalizePresentationDocument(finalHtml ?? StripCodeFences(fullText.ToString()));
                     var doneMs = (int)(DateTime.UtcNow - overallStart).TotalMilliseconds;
                     _logger.LogInformation(
                         "[MdToPpt-Agent] DONE elapsedMs={Ms} htmlLen={Len} textDeltas={TD} toolCalls={TC}",
@@ -3958,7 +4496,11 @@ public class MdToPptController : ControllerBase
                         await WriteEventAsync("error", new { message });
                         return;
                     }
-                    await PersistRunDoneAsync(run, html, runtimeProfile?.Model ?? model, "CDS Agent");
+                    if (!await PersistRunDoneAsync(run, html, runtimeProfile?.Model ?? model, "CDS Agent"))
+                    {
+                        await WriteEventAsync("error", new { message = "演示稿已生成但版本保存失败，请重试" });
+                        return;
+                    }
                     await WriteEventAsync("done", new { html });
                     return;
                 }
@@ -3982,7 +4524,7 @@ public class MdToPptController : ControllerBase
             }
 
             // 超时兜底
-            var timeoutHtml = StripCodeFences(fullText.ToString());
+            var timeoutHtml = NormalizePresentationDocument(StripCodeFences(fullText.ToString()));
             var timeoutMs = (int)(DateTime.UtcNow - overallStart).TotalMilliseconds;
             _logger.LogWarning(
                 "[MdToPpt-Agent] TIMEOUT elapsedMs={Ms} htmlLen={Len} textDeltas={TD} toolCalls={TC}",
@@ -4001,8 +4543,10 @@ public class MdToPptController : ControllerBase
 
             if (IsRunnableDeckDocument(timeoutHtml))
             {
-                await PersistRunDoneAsync(run, timeoutHtml, model, "CDS Agent");
-                await WriteEventAsync("done", new { html = timeoutHtml });
+                if (await PersistRunDoneAsync(run, timeoutHtml, model, "CDS Agent"))
+                    await WriteEventAsync("done", new { html = timeoutHtml });
+                else
+                    await WriteEventAsync("error", new { message = "演示稿已生成但版本保存失败，请重试" });
             }
             else
             {
@@ -4340,6 +4884,12 @@ public class MdToPptPublishRequest
 
     /// <summary>对应的 HTML PPT 运行 ID，用于回写统一产物链。</summary>
     public string? RunId { get; set; }
+}
+
+public class MdToPptLocalEditRequest
+{
+    /// <summary>浏览器编辑器清洗后回传的完整 HTML。</summary>
+    public string? HtmlContent { get; set; }
 }
 
 public class MdToPptKnowledgeReferenceRequest

@@ -185,13 +185,14 @@ public class MdToPptSectionSanitizeTests
             TimeoutSeconds = 120,
         };
 
-        var request = MdToPptController.BuildGatewayPageRequest(profile, "sys", "usr", "md-to-ppt-test::chat", "req1", "u1", "page1");
+        var request = MdToPptController.BuildGatewayPageRequest(profile, "sys", "usr", "md-to-ppt-test::chat", "req1", "u1", "page1", "run-1");
 
         Assert.True(request.Stream);
         Assert.Equal("qwen-max", request.ExpectedModel);
         Assert.Equal("md-to-ppt-test::chat", request.AppCallerCode);
         Assert.Equal("req1", request.Context?.RequestId);
         Assert.Equal("u1", request.Context?.UserId);
+        Assert.Equal("run-1", request.Context?.RunId);
         Assert.Equal(4096, request.RequestBody?["max_tokens"]?.GetValue<int>());
     }
 
