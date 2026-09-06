@@ -2672,7 +2672,7 @@ export function MdToPptAgentPage() {
         parentRunId: sourceRunId,
         currentHtml: base,
         slideRequest: instruction,
-        slideIndex,
+        slideIndex: effectiveSlideIndex ?? undefined,
         theme: styleOverride?.theme ?? theme,
         templateId: effTemplateId ?? undefined,
         runtimeProfileId: selectedProfileId ?? undefined,

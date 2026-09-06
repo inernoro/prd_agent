@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   buildLiveSlideDoc,
   estimatePages,
@@ -114,6 +115,12 @@ describe('自然语言单页精修识别', () => {
     expect(resolveNaturalPatchSlideIndex('把第 3 页移到最后')).toBeNull();
     expect(resolveNaturalPatchSlideIndex('把第 3 页和封面交换')).toBeNull();
     expect(resolveNaturalPatchSlideIndex('将第 3 页与下一页对调')).toBeNull();
+  });
+
+  it('将自然语言解析的页码传给服务端，不退化为整稿精修', () => {
+    const source = readFileSync(new URL('../MdToPptAgentPage.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('slideIndex: effectiveSlideIndex ?? undefined');
+    expect(source).not.toMatch(/streamMdToPptPatch\(\{[\s\S]*?\n\s*slideIndex,\n/);
   });
 });
 
