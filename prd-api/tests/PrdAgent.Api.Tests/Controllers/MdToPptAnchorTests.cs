@@ -452,4 +452,29 @@ public class MdToPptAnchorTests
         Assert.Contains("data-mdppt-fonts", normalized);
         Assert.Contains("</HEAD   >", normalized);
     }
+
+    [Fact]
+    public void EnsurePresentationTouchTargets_ExpandsRevealControlsAndIsIdempotent()
+    {
+        const string html = "<!doctype html><html><head><title>移动演示</title></head><body><div class=\"reveal\"><button class=\"navigate-right\">下一页</button></div></body></html>";
+
+        var normalized = MdToPptController.EnsurePresentationTouchTargets(html);
+        var normalizedAgain = MdToPptController.EnsurePresentationTouchTargets(normalized);
+
+        Assert.Equal(normalized, normalizedAgain);
+        Assert.Contains("data-mdppt-touch-targets", normalized);
+        Assert.Contains("min-width:44px!important", normalized);
+        Assert.Contains("min-height:44px!important", normalized);
+    }
+
+    [Fact]
+    public void NormalizePresentationDocument_IncludesTouchTargetContract()
+    {
+        const string html = "<!doctype html><html><head></head><body><div class=\"reveal\"><div class=\"slides\"><section>内容</section></div></div></body></html>";
+
+        var normalized = MdToPptController.NormalizePresentationDocument(html);
+
+        Assert.Contains("data-mdppt-touch-targets", normalized);
+        Assert.Contains(".reveal .controls button", normalized);
+    }
 }

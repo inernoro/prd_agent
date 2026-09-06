@@ -1892,8 +1892,27 @@ public class MdToPptController : ControllerBase
         return headClose.Success ? html.Insert(headClose.Index, fontLink + "\n") : html;
     }
 
+    internal static string EnsurePresentationTouchTargets(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html)
+            || html.Contains("data-mdppt-touch-targets", StringComparison.OrdinalIgnoreCase))
+            return html;
+
+        const string touchTargetStyles =
+            "<style data-mdppt-touch-targets>" +
+            ".reveal .controls button{min-width:44px!important;min-height:44px!important}" +
+            "</style>";
+        var headClose = System.Text.RegularExpressions.Regex.Match(
+            html,
+            "</head\\s*>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        return headClose.Success ? html.Insert(headClose.Index, touchTargetStyles + "\n") : html;
+    }
+
     internal static string NormalizePresentationDocument(string html) =>
-        EnsurePresentationFontLinks(MdToPptAnchors.EnsureEmbeddedRuntime(html));
+        EnsurePresentationTouchTargets(
+            EnsurePresentationFontLinks(MdToPptAnchors.EnsureEmbeddedRuntime(html)));
 
     private async Task PersistRunErrorAsync(MdToPptRun run, string error)
     {
