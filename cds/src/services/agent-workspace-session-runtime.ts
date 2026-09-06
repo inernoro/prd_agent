@@ -172,7 +172,7 @@ const SESSION_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const MAX_PACKAGE_OVERHEAD_BYTES = 2 * 1024 * 1024;
 const MAX_COMMIT_RESPONSE_BYTES = 1024 * 1024;
 const MAX_RUNTIME_DIAGNOSTIC_BYTES = 2 * 1024;
-const MAX_QUALITY_REPAIR_ATTEMPTS = 1;
+const MAX_QUALITY_REPAIR_ATTEMPTS = 2;
 const MAX_OUTPUT_FILE_COUNT = 100;
 const MAX_WORKSPACE_FILE_COUNT = 1024;
 const MAX_WORKSPACE_NODE_COUNT = 2048;
@@ -1828,6 +1828,7 @@ export class AgentWorkspaceSessionRuntime {
       let collectedFiles: WorkspacePackageFile[] = [];
       let indexFile: WorkspacePackageFile | undefined;
       let hardenedHtml = '';
+      const attemptedQualityViolations = new Set<string>();
       for (let qualityRepairAttempt = 0; ; qualityRepairAttempt += 1) {
         onStage('workspace_collecting');
         await this.copyOutputsFromContainer(handle);
@@ -1864,6 +1865,9 @@ export class AgentWorkspaceSessionRuntime {
           }
           const repairReason = classifyQualityRepairReason(error.message);
           if (!repairReason) throw error;
+          const violationSignature = `${repairReason.code}\u0000${error.message}`;
+          if (attemptedQualityViolations.has(violationSignature)) throw error;
+          attemptedQualityViolations.add(violationSignature);
           const repair = await this.odJson(handle, '/api/runs', {
             method: 'POST',
             body: buildRunBody([
