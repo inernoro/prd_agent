@@ -32,7 +32,7 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('aria-label="刷新版本记录"');
     expect(source).toContain('aria-label="预览这个版本"');
     expect(source).toContain('aria-label="把这个版本重新发布为最新版"');
-    expect(source).toContain('发布新版本');
+    expect(source).toContain('确认并发布');
     expect(source).toContain('回退');
     expect(source.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(7);
   });
@@ -45,6 +45,68 @@ describe('网页微调执行器事实接线', () => {
 
   it('长时间远程微调时每秒更新可见时长', () => {
     expect(source).toContain('window.setInterval');
-    expect(source).toContain('已运行 {elapsedSeconds} 秒');
+    expect(source).toContain('{progress}% · {elapsedSeconds} 秒');
+  });
+
+  it('把生成过程拆成可感知阶段，并向辅助技术播报动态进度', () => {
+    expect(source).toContain('GENERATION_STAGES');
+    expect(source).toContain('AI 正在生成隔离草稿');
+    expect(source).toContain('aria-label="AI 修改进度"');
+    expect(source).toContain('aria-live="polite"');
+    expect(source).toContain('role="progressbar"');
+    expect(source).toContain('aria-valuenow={progress}');
+    expect(source).toContain('motion-reduce:transition-none');
+  });
+
+  it('明确表达草稿到发布的版本心智，并区分预览中的真实版本', () => {
+    expect(source).toContain('aria-label="版本发布流程"');
+    expect(source).toContain("['1', '生成草稿', '线上不变']");
+    expect(source).toContain("['2', '人工预览', '确认效果']");
+    expect(source).toContain("['3', '发布上线', '保留历史']");
+    expect(source).toContain('previewedRevision ? revisionLabel(previewedRevision)');
+    expect(source).toContain('访客当前看到的线上内容');
+    expect(source).toContain('仅你可见，尚未影响线上页面');
+    expect(source).toContain('回退会复制所选历史内容并发布为新版本，不会删除任何记录。');
+  });
+
+  it('错误不只发瞬时提示，还保留就地恢复动作与线上安全结论', () => {
+    expect(source).toContain('role="alert"');
+    expect(source).toContain('retryRecovery');
+    expect(source).toContain('按原要求重试');
+    expect(source).toContain('当前线上版本仍然有效，可直接重试发布。');
+    expect(source).toContain('当前线上版本没有变化，可再次尝试。');
+  });
+
+  it('并发版本冲突提供刷新记录和按原要求另存草稿两条恢复路径', () => {
+    expect(source).toContain("result.error?.code === 'REVISION_CONFLICT'");
+    expect(source).toContain('刷新版本记录');
+    expect(source).toContain('按原要求另存新草稿');
+    expect(source).toContain("recoverFromVersionConflict('refresh')");
+    expect(source).toContain("recoverFromVersionConflict('regenerate')");
+  });
+
+  it('版本卡说明来源动作和父版本，首个版本明确标为初始版本', () => {
+    expect(source).toContain("? '初始版本'");
+    expect(source).toContain("? 'AI 修改'");
+    expect(source).toContain("? '回退复制'");
+    expect(source).toContain('来源动作：{sourceAction} · 来源版本：{sourceVersion}');
+    expect(source).toContain('revisions.find((candidate) => candidate.id === item.parentRevisionId)');
+  });
+
+  it('回退先进入可聚焦确认态并说明目标、线上影响和可恢复性', () => {
+    expect(source).toContain('role="alertdialog"');
+    expect(source).toContain('aria-haspopup="dialog"');
+    expect(source).toContain('确认回退到 {revisionLabel(pendingRollback)}');
+    expect(source).toContain('确认后访客看到的线上页面会立即替换为该版本内容');
+    expect(source).toContain('系统会复制内容并创建一个可恢复的新版本');
+    expect(source).toContain("event.key === 'Escape'");
+    expect(source).toContain('确认回退');
+    expect(source).toContain('cancelRollback');
+  });
+
+  it('修改要求有真实标签，知识选择向辅助技术暴露选中状态', () => {
+    expect(source).toContain('htmlFor={`site-edit-instruction-${site.id}`}');
+    expect(source).toContain('id={`site-edit-instruction-${site.id}`}');
+    expect(source).toContain('aria-pressed={selected}');
   });
 });

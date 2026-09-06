@@ -52,6 +52,9 @@ export default function SitePreviewModal({
   initialPanel = 'none',
   initialEditSection = 'compose',
 }: Props) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   const [loading, setLoading] = useState(true);
   /** 只在 iframe 真的 onError 时为 true —— 不由超时推断（见下方 effect 注释） */
   const [errored, setErrored] = useState(false);
@@ -125,12 +128,49 @@ export default function SitePreviewModal({
   };
 
   useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const dialog = dialogRef.current;
+    window.requestAnimationFrame(() => {
+      const preferred = dialog?.querySelector<HTMLElement>('[data-dialog-initial-focus="true"]');
+      (preferred ?? dialog)?.focus();
+    });
+
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        closeRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialog) return;
+
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => element.getClientRects().length > 0);
+      if (focusable.length === 0) {
+        e.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (document.activeElement === dialog) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+      previouslyFocused?.focus();
+    };
+  }, []);
 
   // 加载慢 ≠ 加载失败。
   //
@@ -169,6 +209,11 @@ export default function SitePreviewModal({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="site-preview-dialog-title"
+        tabIndex={-1}
         className="relative flex flex-col rounded-xl border border-token-subtle bg-token-card text-token-primary shadow-2xl"
         style={{ width: '90vw', height: '90vh', maxWidth: '1400px' }}
         onClick={(e) => e.stopPropagation()}
@@ -177,7 +222,7 @@ export default function SitePreviewModal({
         <div className="flex shrink-0 flex-col gap-2 border-b border-token-subtle px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-3">
           <div className="flex min-w-0 w-full flex-1 items-center gap-2 sm:w-auto">
             <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-semibold text-token-primary truncate">{site.title}</h3>
+            <h3 id="site-preview-dialog-title" className="text-sm font-semibold text-token-primary truncate">{site.title}</h3>
             <p className="hidden text-xs text-token-muted truncate sm:block">{site.siteUrl}</p>
             </div>
             <button
@@ -326,7 +371,7 @@ export default function SitePreviewModal({
                 // 修复"超时已置 errored，但站点随后加载成功，错误遮罩却一直盖住"（Cursor medium）
                 setLoading(false);
                 setErrored(false);
-                focusPreviewFrame();
+                if (rightPanel === 'none') focusPreviewFrame();
               }}
               onError={() => {
                 setLoading(false);

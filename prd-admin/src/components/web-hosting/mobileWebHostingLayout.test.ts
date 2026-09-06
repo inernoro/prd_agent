@@ -45,6 +45,12 @@ describe('mobile web hosting layout', () => {
     expect(editPanelSource).toContain('w-full shrink-0 items-center gap-1 overflow-x-auto sm:w-auto');
   });
 
+  it('uses one scroll owner for compose, progress, preview and history on mobile', () => {
+    expect(editPanelSource).toContain('className="flex-1 min-h-0 overflow-y-auto"');
+    expect(editPanelSource).toMatch(/ref=\{composeRef\}[\s\S]{0,220}className="scroll-mt-2/);
+    expect(editPanelSource).not.toContain('ref={composeRef} className="shrink-0');
+  });
+
   it('opens every right panel as a mobile overlay instead of squeezing the preview', () => {
     expect(previewSource).toContain('relative flex-1 min-h-0 flex overflow-hidden');
     expect(previewSource.match(/absolute inset-0 z-20 flex w-full/g)).toHaveLength(3);
@@ -64,5 +70,13 @@ describe('mobile web hosting layout', () => {
     expect(pageSource).toContain('fixed right-[18px] z-[90]');
     expect(mobileFabSource).toContain('zIndex: 90');
     expect(dialogSource).toContain('zIndex: zIndex ?? 100');
+  });
+
+  it('exposes the preview surface as a labelled modal with keyboard focus containment', () => {
+    expect(previewSource).toContain('role="dialog"');
+    expect(previewSource).toContain('aria-modal="true"');
+    expect(previewSource).toContain('aria-labelledby="site-preview-dialog-title"');
+    expect(previewSource).toContain("e.key !== 'Tab'");
+    expect(previewSource).toContain('previouslyFocused?.focus()');
   });
 });
