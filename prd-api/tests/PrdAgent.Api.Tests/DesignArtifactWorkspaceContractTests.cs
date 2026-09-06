@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using Xunit;
@@ -42,6 +43,8 @@ public sealed class DesignArtifactWorkspaceContractTests
 
         Assert.Contains("不得输出任何 <script>", generate, StringComparison.Ordinal);
         Assert.Contains("不得输出任何 <script>", edit, StringComparison.Ordinal);
+        Assert.Contains("事实、数字、日期、金额、联系方式和链接只能来自", generate, StringComparison.Ordinal);
+        Assert.Contains("不得保留无行为的启用按钮", edit, StringComparison.Ordinal);
         Assert.DoesNotContain("只使用内联 CSS 与原生 JavaScript", generate, StringComparison.Ordinal);
     }
 
@@ -250,6 +253,41 @@ public sealed class DesignArtifactWorkspaceContractTests
             Assert.Equal(file.Size, bytes.LongLength);
             Assert.Equal(Hash(bytes), file.Sha256);
         }
+
+        var taskFile = Assert.Single(package.Files, file => file.Path == "brief/task.json");
+        using var task = JsonDocument.Parse(Convert.FromBase64String(taskFile.ContentBase64));
+        var quality = task.RootElement.GetProperty("qualityContract");
+        Assert.Equal("map-design-artifact-quality-v1", quality.GetProperty("schemaVersion").GetString());
+        Assert.Equal(
+            ["title", "instruction", "knowledge", "current-visible-content"],
+            quality.GetProperty("factualSources").EnumerateArray().Select(value => value.GetString() ?? string.Empty).ToArray());
+        Assert.True(quality.GetProperty("measuredClaimsRequireSource").GetBoolean());
+        Assert.True(quality.GetProperty("sensitiveFactsRequireSource").GetBoolean());
+        Assert.True(quality.GetProperty("contextBoundMetricsReviewRequired").GetBoolean());
+        Assert.False(quality.GetProperty("visibleDraftMarkersAllowed").GetBoolean());
+        Assert.False(quality.GetProperty("emptyOrMissingFragmentTargetsAllowed").GetBoolean());
+        Assert.False(quality.GetProperty("inertEnabledButtonsAllowed").GetBoolean());
+        Assert.True(quality.GetProperty("finalReviewRequired").GetBoolean());
+    }
+
+    [Fact]
+    public void MapQualityEvidenceIncludesKnowledgeTitlesAndOnlyVisibleCurrentContent()
+    {
+        var run = BuildRun();
+        run.KnowledgeReferences[0].Title = "2026-10-01 发布计划与 40 分钟指南";
+        var current = new HostedSiteEditableEntry(
+            new HostedSite(),
+            "<!doctype html><html><body><p>当前可见事实</p><div hidden>平台已服务999个项目</div></body></html>",
+            DateTime.UtcNow);
+
+        var evidence = HostedSiteEditRunWorker.BuildQualityEvidence(run, current);
+
+        Assert.Contains("2026-10-01 发布计划与 40 分钟指南", evidence, StringComparison.Ordinal);
+        Assert.Contains("当前可见事实", evidence, StringComparison.Ordinal);
+        Assert.DoesNotContain("999个项目", evidence, StringComparison.Ordinal);
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+            "<!doctype html><html><body><p>2026-10-01，完整阅读约40分钟。</p></body></html>",
+            evidence);
     }
 
     [Fact]
@@ -470,6 +508,7 @@ public sealed class DesignArtifactWorkspaceContractTests
     {
         Id = "run-workspace-1",
         UserId = "user-1",
+        Title = "网页标题",
         Operation = DesignArtifactOperations.Edit,
         SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
         Instruction = "把主色改成蓝色并保留正文",

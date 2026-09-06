@@ -168,12 +168,47 @@ class RecordingShell implements IShellExecutor {
   }
 }
 
-function buildPackage(files: Array<{ path: string; content: string; mediaType: string }>) {
+function buildPackage(
+  files: Array<{ path: string; content: string; mediaType: string }>,
+  options: { injectDefaultTask?: boolean } = {},
+) {
+  const hasCurrentPage = files.some((file) => file.path === 'current/index.html');
+  const normalizedFiles = options.injectDefaultTask === false || files.some((file) => file.path === 'brief/task.json')
+    ? files
+    : [
+        {
+          path: 'brief/task.json',
+          content: JSON.stringify({
+            schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+            runId: 'map-run-1',
+            operation: hasCurrentPage ? 'edit' : 'generate',
+            instruction: 'Build a launch page',
+            title: 'Launch page',
+            baseRevision: 'rev-1',
+            responseContract: { requiredFile: 'index.html', manifestFile: 'manifest.json', writeback: 'external' },
+            qualityContract: {
+              schemaVersion: 'map-design-artifact-quality-v1',
+              factualSources: hasCurrentPage
+                ? ['title', 'instruction', 'knowledge', 'current-visible-content']
+                : ['title', 'instruction', 'knowledge'],
+              measuredClaimsRequireSource: true,
+              sensitiveFactsRequireSource: true,
+              contextBoundMetricsReviewRequired: true,
+              visibleDraftMarkersAllowed: false,
+              emptyOrMissingFragmentTargetsAllowed: false,
+              inertEnabledButtonsAllowed: false,
+              finalReviewRequired: true,
+            },
+          }),
+          mediaType: 'application/json',
+        },
+        ...files,
+      ];
   const body = {
     schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
     runId: 'map-run-1',
     baseRevision: 'rev-1',
-    files: files.map((file) => {
+    files: normalizedFiles.map((file) => {
       const bytes = Buffer.from(file.content);
       return {
         path: file.path,
@@ -204,6 +239,104 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(canAcceptUntrackedWorkspaceEdit('no_artifact', current, Buffer.from(current))).toBe(false);
     expect(canAcceptUntrackedWorkspaceEdit('no_artifact', undefined, changed)).toBe(false);
     expect(canAcceptUntrackedWorkspaceEdit('unsafe_output', current, changed)).toBe(false);
+  });
+
+  it.each([
+    {
+      name: 'missing task',
+      files: [{ path: 'brief.txt', content: 'legacy brief', mediaType: 'text/plain' }],
+      injectDefaultTask: false,
+      code: 'workspace_package_invalid',
+    },
+    {
+      name: 'unknown quality contract',
+      files: [{
+        path: 'brief/task.json',
+        content: JSON.stringify({
+          schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+          runId: 'map-run-1',
+          operation: 'generate',
+          baseRevision: 'rev-1',
+          qualityContract: { schemaVersion: 'map-design-artifact-quality-v2' },
+        }),
+        mediaType: 'application/json',
+      }],
+      injectDefaultTask: true,
+      code: 'workspace_quality_contract_unsupported',
+    },
+    {
+      name: 'operation mismatch',
+      files: [{
+        path: 'brief/task.json',
+        content: JSON.stringify({
+          schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+          runId: 'map-run-1',
+          operation: 'edit',
+          instruction: 'Build a launch page',
+          title: 'Launch page',
+          baseRevision: 'rev-1',
+          responseContract: { requiredFile: 'index.html', manifestFile: 'manifest.json', writeback: 'external' },
+          qualityContract: {
+            schemaVersion: 'map-design-artifact-quality-v1',
+            factualSources: ['title', 'instruction', 'knowledge'],
+            measuredClaimsRequireSource: true,
+            sensitiveFactsRequireSource: true,
+            contextBoundMetricsReviewRequired: true,
+            visibleDraftMarkersAllowed: false,
+            emptyOrMissingFragmentTargetsAllowed: false,
+            inertEnabledButtonsAllowed: false,
+            finalReviewRequired: true,
+          },
+        }),
+        mediaType: 'application/json',
+      }],
+      injectDefaultTask: true,
+      code: 'workspace_package_invalid',
+    },
+  ])('rejects $name before allocating Docker resources', async ({ files, injectDefaultTask, code }) => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const workspacePackage = buildPackage(files, { injectDefaultTask });
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      capabilityCacheMs: 0,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async () => new Response(workspacePackage.serialized, { status: 200 }),
+    });
+
+    await expect(runtime.create('session-contract-reject', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: workspacePackage.sha256,
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json'],
+    }, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 30,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    })).rejects.toMatchObject({ code });
+    expect(shell.calls.some((call) => call.command.startsWith('docker network create'))).toBe(false);
+  });
+
+  it('rejects a cleanup TTL that cannot cover execution and result commit', async () => {
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { autoPullImage: false });
+
+    await expect(runtime.create('session-short-cleanup', {}, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 300,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    })).rejects.toMatchObject({ code: 'resource_policy_not_enforced' });
+    expect(shell.calls).toHaveLength(0);
   });
 
   it('materializes a verified package, runs an isolated OpenDesign container, and commits only allowed outputs', async () => {
@@ -245,9 +378,10 @@ describe('AgentWorkspaceSessionRuntime', () => {
           fs.writeFileSync(path.join(shell.workspaceDir, 'assets', 'app.css'), 'body{color:blue}');
           fs.writeFileSync(path.join(shell.workspaceDir, 'manifest.json'), '{"untrusted":true}');
           fs.writeFileSync(path.join(shell.workspaceDir, 'index.html.artifact.json'), '{"runtime":"metadata"}');
-        return Response.json({ runId: 'od-run-1' }, { status: 202 });
+        const runCount = requests.filter((request) => request.path === '/api/runs').length;
+        return Response.json({ runId: runCount === 1 ? 'od-run-build' : 'od-run-review' }, { status: 202 });
       }
-      if (requestPath === '/api/runs/od-run-1' && init?.method === 'GET') {
+      if ((requestPath === '/api/runs/od-run-build' || requestPath === '/api/runs/od-run-review') && init?.method === 'GET') {
         return Response.json({ status: 'succeeded', deliverableValid: false, deliverableValidation: 'no_artifact' });
       }
       if (requestPath === '/commit') {
@@ -255,7 +389,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           ? Response.json({ artifactRef: 'artifact:result-1', resultSha256: digest(raw) })
           : new Response('', { status: 401 });
       }
-      if (requestPath === '/api/runs/od-run-1/cancel') return Response.json({});
+      if (requestPath.endsWith('/cancel')) return Response.json({});
       return new Response('', { status: 404 });
     };
     const runtime = new AgentWorkspaceSessionRuntime(shell, {
@@ -366,7 +500,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
 
     expect(executed).toMatchObject({
       artifactRef: 'artifact:result-1',
-      openDesignRunId: 'od-run-1',
+      openDesignRunId: 'od-run-review',
       files: [
         { path: 'assets/app.css' },
         { path: 'index.html' },
@@ -387,7 +521,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const encodedPreflightConfig = preflightCommand.match(/CDS_OUTPUT_PREFLIGHT_CONFIG=([A-Za-z0-9+/=]+)/)?.[1] || '';
     expect(JSON.parse(Buffer.from(encodedPreflightConfig, 'base64').toString('utf8'))).toEqual({
       allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
-      inputPaths: ['knowledge/source.md', 'brief.txt', 'current/index.html'],
+      inputPaths: ['brief/task.json', 'knowledge/source.md', 'brief.txt', 'current/index.html'],
       ignoredRuntimePaths: ['index.html.artifact.json'],
       maxFileCount: 100,
       maxWorkspaceFileCount: 1024,
@@ -597,6 +731,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
     expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
     expect(run?.body.systemPrompt).toContain('Read /workspace/brief/task.json first');
+    expect(run?.body.systemPrompt).toContain('qualityContract in task.json is mandatory');
     expect(run?.body.systemPrompt).toContain('Read every knowledge source before editing: /workspace/knowledge/source.md');
     expect(run?.body.systemPrompt).toContain('it is the exact current published page and must remain the starting point');
     expect(run?.body.systemPrompt).toContain('Never replace the product identity with OpenDesign');
@@ -672,6 +807,86 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(shell.calls.filter((call) => (
       call.command.startsWith('docker volume rm ') && !call.command.includes('storage-probe')
     ))).toHaveLength(2);
+  });
+
+  it('runs generate without a current page and returns the distinct final review run', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const workspacePackage = buildPackage([
+      { path: 'knowledge/source.md', content: 'Product facts', mediaType: 'text/markdown' },
+    ]);
+    const requests: string[] = [];
+    let runCreates = 0;
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      instanceId: 'instance-generate',
+      daemonPort: 7456,
+      pollIntervalMs: 1,
+      capabilityCacheMs: 0,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async (input, init) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
+        requests.push(url.pathname);
+        if (url.pathname === '/input') return new Response(workspacePackage.serialized, { status: 200 });
+        if (url.pathname === '/api/health') return Response.json({ ok: true });
+        if (url.pathname === '/api/import/folder') {
+          return Response.json({
+            project: { id: 'od-generate-project', skillId: 'web-prototype' },
+            conversationId: 'od-generate-conversation',
+          });
+        }
+        if (url.pathname === '/api/runs' && init?.method === 'POST') {
+          runCreates += 1;
+          fs.writeFileSync(
+            path.join(shell.workspaceDir, 'index.html'),
+            '<!doctype html><html><body><main>Product facts</main></body></html>',
+          );
+          return Response.json({ runId: runCreates === 1 ? 'od-generate-build' : 'od-generate-review' }, { status: 202 });
+        }
+        if (url.pathname === '/api/runs/od-generate-build' || url.pathname === '/api/runs/od-generate-review') {
+          return Response.json({ status: 'succeeded', deliverableValid: true });
+        }
+        if (url.pathname === '/commit') {
+          const body = typeof init?.body === 'string' ? init.body : '';
+          return Response.json({ artifactRef: 'artifact:generated', resultSha256: digest(body) });
+        }
+        if (url.pathname.endsWith('/cancel')) return Response.json({});
+        return new Response('', { status: 404 });
+      },
+    });
+    await runtime.create('session-generate', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: workspacePackage.sha256,
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 1024 * 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json'],
+    }, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 30,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    });
+
+    const result = await runtime.execute('session-generate', 'Build the page.', {
+      baseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+      protocol: 'openai',
+      apiKey: 'model-secret',
+      model: 'map-managed',
+    }, 'transfer-token');
+
+    expect(result.openDesignRunId).toBe('od-generate-review');
+    expect(runCreates).toBe(2);
+    expect(requests).toContain('/api/runs/od-generate-build');
+    expect(requests).toContain('/api/runs/od-generate-review');
+    expect(requests).toContain('/commit');
+    expect(fs.existsSync(path.join(rootDir, 'session-generate', 'workspace', 'current', 'index.html'))).toBe(false);
+    await runtime.stop('session-generate');
   });
 
   it('fails closed on package hash mismatch and removes the allocated host root', async () => {
@@ -1692,7 +1907,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
   });
 
   it('injects a restrictive CSP and rejects dynamic or indirect network surfaces', () => {
-    const safe = hardenSelfContainedHtml('<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Safe</title></head><body><a href="#details">Details</a><a class="link" href="./guide.platform.quickstart.md">Guide</a><style>body{color:red}</style></body></html>');
+    const safe = hardenSelfContainedHtml('<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Safe</title></head><body><a href="#details">Details</a><section id="details">Body</section><a class="link" href="./guide.platform.quickstart.md">Guide</a><style>body{color:red}</style></body></html>');
     expect(safe).toContain('http-equiv="Content-Security-Policy"');
     expect(safe).toContain("connect-src 'none'");
     expect(safe).toContain("form-action 'none'");
@@ -1747,6 +1962,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
       '<!doctype html><html><script>document.createElement("a").click()</script></html>',
       '<!doctype html><html><form action="https://tracker.example/out"><input name="secret"></form></html>',
       '<!doctype html><html><a href=https://tracker.example/out>leave</a></html>',
+      '<!doctype html><html><a title="2 > 1" href="https://tracker.example/out">leave</a></html>',
+      '<!doctype html><html><img title="2 > 1" src="https://tracker.example/p.png"></html>',
       '<!doctype html><html><a href=//tracker.example/out>leave</a></html>',
       '<!doctype html><html><a href=/api/private>leave</a></html>',
       '<!doctype html><html><a href=./../private>leave</a></html>',
@@ -1756,11 +1973,84 @@ describe('AgentWorkspaceSessionRuntime', () => {
       '<!doctype html><html><head><meta http-equiv="re&#102;resh" content="0;url=https://tracker.example/out"></head></html>',
       '<!doctype html><html><head><meta content="custom" http-equiv="x-product-mode"></head></html>',
       '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'"></head></html>',
+      '<!doctype html><html><head><meta title="2 > 1" http-equiv="refresh" content="0;url=https://tracker.example/out"></head></html>',
     ];
     for (const html of unsafe) {
       expect(() => hardenSelfContainedHtml(html)).toThrowError(
         expect.objectContaining({ code: 'design_output_not_self_contained' }),
       );
     }
+  });
+
+  it('rejects fake controls, broken fragments, visible draft markers, and unsupported measured claims', () => {
+    const invalidQuality = [
+      '<!doctype html><html><body><a href="#">Start</a></body></html>',
+      '<!doctype html><html><body><a href="#missing">Start</a></body></html>',
+      '<!doctype html><html><body><a>Start</a></body></html>',
+      '<!doctype html><html><body><a aria-label="Start"><svg></svg></a></body></html>',
+      '<!doctype html><html><body><button>Start</button></body></html>',
+      '<!doctype html><html><body><div class="diagram-placeholder">关系图占位</div></body></html>',
+      '<!doctype html><html><body><p>完整阅读只需 30 分钟。</p></body></html>',
+      '<!doctype html><html><body><p>平台已服务999个项目。</p></body></html>',
+      '<!doctype html><html><body><p>平台客户999个。</p></body></html>',
+      '<!doctype html><html><body><p>客户案例：999个。</p></body></html>',
+      '<!doctype html><html><body><p>平台共有999个项目。</p></body></html>',
+      '<!doctype html><html><body><p>999个项目正在使用。</p></body></html>',
+      '<!doctype html><html><body><p>已经帮助999位客户。</p></body></html>',
+      '<!doctype html><html><body><p>平台已有999个模块。</p></body></html>',
+      '<!doctype html><html><body><p>服务覆盖999个类别。</p></body></html>',
+      '<!doctype html><html><body><p>平台提供999种操作。</p></body></html>',
+      '<!doctype html><html><body><p>产品包含999个章节。</p></body></html>',
+      '<!doctype html><html><body><p>网站拥有999个栏目。</p></body></html>',
+      '<!doctype html><html><body><p>发布日期：2026-10-01</p></body></html>',
+      '<!doctype html><html><body><p>联系 design@example.com</p></body></html>',
+      '<!doctype html><html><body><button popovertarget="details">说明</button><div id="details">内容</div></body></html>',
+      '<!doctype html><html><body><div title="jump to id=missing">Body</div><a href="#missing">Go</a></body></html>',
+      '<!doctype html><html><body><div id="details" title="contains popover panel">Body</div><button popovertarget="details">Go</button></body></html>',
+    ];
+    for (const html of invalidQuality) {
+      expect(() => hardenSelfContainedHtml(html, '总共约40分钟')).toThrowError(
+        expect.objectContaining({ code: 'design_output_quality_rejected' }),
+      );
+    }
+    for (const [output, evidence] of [
+      ['文章已有999位读者。', '平台服务999位客户。'],
+      ['面向999位消费者。', '系统注册999位用户。'],
+    ]) {
+      expect(() => hardenSelfContainedHtml(
+        `<!doctype html><html><body><p>${output}</p></body></html>`,
+        evidence,
+      )).toThrowError(expect.objectContaining({ code: 'design_output_quality_rejected' }));
+    }
+    for (const price of ['￥999', '¥999', '$999']) {
+      expect(() => hardenSelfContainedHtml(
+        `<!doctype html><html><body><p>售价为${price}</p></body></html>`,
+        '来源没有价格',
+      )).toThrowError(expect.objectContaining({ code: 'design_output_quality_rejected' }));
+    }
+
+    const valid = hardenSelfContainedHtml(
+      '<!doctype html><html><head><style>.placeholder{width:30%}</style></head><body><!-- 图示占位 --><template><p>内容待补充，2026-10-01</p></template><div hidden>平台已服务999个项目</div><div style="display:none">只需30分钟</div><a href="#map">阅读</a><section title="2 > 1" id=map>完整阅读约40分钟</section><button disabled>暂不提供</button><p>本文解释占位符机制。</p><p>使用方式分为3个步骤。</p></body></html>',
+      '总共约40分钟',
+    );
+    expect(valid).toContain('id=map');
+    for (const [output, evidence] of [
+      ['平台已服务999个项目。', '已有999个项目。'],
+      ['目前服务999位客户。', '客户数为999人。'],
+      ['知识库收录100篇文章。', '已有文章100篇。'],
+    ]) {
+      expect(hardenSelfContainedHtml(
+        `<!doctype html><html><body><p>${output}</p></body></html>`,
+        evidence,
+      )).toContain(output);
+    }
+    expect(hardenSelfContainedHtml(
+      '<!doctype html><html><body><p>套餐售价999元。</p></body></html>',
+      '套餐售价￥999',
+    )).toContain('套餐售价999元');
+    expect(hardenSelfContainedHtml(
+      '<!doctype html><html><body><p>客服平均答复30分钟。</p></body></html>',
+      '客服响应耗时30分钟。',
+    )).toContain('客服平均答复30分钟');
   });
 });

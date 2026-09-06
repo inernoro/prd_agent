@@ -175,7 +175,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             }
 
             var html = HostedSiteRevisionRules.HardenGeneratedHtml(output.ToString());
-            HostedSiteRevisionRules.ValidateHtml(html);
+            var qualityEvidence = BuildQualityEvidence(run, editable);
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(html, qualityEvidence);
             await UpdatePhaseAsync(db, run, leaseOwner, 88,
                 run.Operation == DesignArtifactOperations.Edit ? "正在校验并保存草稿" : "正在校验并保存托管网页");
 
@@ -254,6 +255,17 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             catch (OperationCanceledException) { }
         }
     }
+
+    internal static string BuildQualityEvidence(DesignArtifactRun run, HostedSiteEditableEntry? editable) =>
+        string.Join(
+            "\n",
+            new[]
+            {
+                run.Title,
+                run.Instruction,
+                string.Join("\n", run.KnowledgeReferences.Select(item => $"{item.Title}\n{item.Content}")),
+                editable == null ? string.Empty : HostedSiteRevisionRules.ExtractVisibleText(editable.Html),
+            }.Where(value => !string.IsNullOrWhiteSpace(value)));
 
     private async Task UpdatePhaseAsync(
         MongoDbContext db,

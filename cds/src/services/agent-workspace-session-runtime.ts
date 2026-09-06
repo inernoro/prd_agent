@@ -59,6 +59,8 @@ interface ParsedWorkspacePackage {
   files: Array<{ path: string; bytes: Buffer; sha256: string; mediaType: string }>;
 }
 
+const MAP_DESIGN_ARTIFACT_QUALITY_SCHEMA = 'map-design-artifact-quality-v1';
+
 interface RuntimeHandle {
   kind: 'active';
   sessionId: string;
@@ -657,7 +659,97 @@ function parseWorkspacePackage(bytes: Buffer, transfer: WorkspaceTransferRequest
       : 'application/octet-stream';
     return { path: relativePath, bytes: content, sha256: expectedSha, mediaType };
   });
+  validateDesignTaskContract(runId, transfer.baseRevision, files);
   return { runId, files };
+}
+
+function validateDesignTaskContract(
+  runId: string,
+  baseRevision: string,
+  files: ParsedWorkspacePackage['files'],
+): void {
+  const taskFile = files.find((file) => file.path === 'brief/task.json');
+  if (!taskFile) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'workspace input package must contain brief/task.json');
+  }
+  let task: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(taskFile.bytes.toString('utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+    task = parsed as Record<string, unknown>;
+  } catch {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json is not valid JSON');
+  }
+  const quality = task.qualityContract;
+  if (
+    task.schemaVersion !== MAP_DESIGN_WORKSPACE_SCHEMA
+    || task.runId !== runId
+    || task.baseRevision !== baseRevision
+    || !quality
+    || typeof quality !== 'object'
+    || Array.isArray(quality)
+    || (quality as Record<string, unknown>).schemaVersion !== MAP_DESIGN_ARTIFACT_QUALITY_SCHEMA
+  ) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_quality_contract_unsupported',
+      `brief/task.json must use ${MAP_DESIGN_ARTIFACT_QUALITY_SCHEMA} and match the workspace identity`,
+    );
+  }
+  const contract = quality as Record<string, unknown>;
+  for (const [field, expected] of [
+    ['measuredClaimsRequireSource', true],
+    ['sensitiveFactsRequireSource', true],
+    ['contextBoundMetricsReviewRequired', true],
+    ['visibleDraftMarkersAllowed', false],
+    ['emptyOrMissingFragmentTargetsAllowed', false],
+    ['inertEnabledButtonsAllowed', false],
+    ['finalReviewRequired', true],
+  ] as const) {
+    if (contract[field] !== expected) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_quality_contract_unsupported',
+        `brief/task.json qualityContract.${field} is unsupported`,
+      );
+    }
+  }
+  const hasCurrentPage = files.some((file) => file.path === 'current/index.html');
+  const responseContract = task.responseContract;
+  if (
+    typeof task.title !== 'string'
+    || typeof task.instruction !== 'string'
+    || !task.title.trim()
+    || !task.instruction.trim()
+    || !responseContract
+    || typeof responseContract !== 'object'
+    || Array.isArray(responseContract)
+    || (responseContract as Record<string, unknown>).requiredFile !== 'index.html'
+    || (responseContract as Record<string, unknown>).manifestFile !== 'manifest.json'
+    || (responseContract as Record<string, unknown>).writeback !== 'external'
+  ) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_invalid',
+      'brief/task.json title, instruction, and responseContract are incomplete',
+    );
+  }
+  const expectedSources = hasCurrentPage
+    ? ['title', 'instruction', 'knowledge', 'current-visible-content']
+    : ['title', 'instruction', 'knowledge'];
+  if (
+    !Array.isArray(contract.factualSources)
+    || contract.factualSources.length !== expectedSources.length
+    || contract.factualSources.some((value, index) => value !== expectedSources[index])
+  ) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_quality_contract_unsupported',
+      'brief/task.json qualityContract.factualSources does not match the operation',
+    );
+  }
+  if ((task.operation === 'edit') !== hasCurrentPage || (task.operation !== 'edit' && task.operation !== 'generate')) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_invalid',
+      'brief/task.json operation does not match the presence of current/index.html',
+    );
+  }
 }
 
 function isAllowedOutput(relativePath: string, patterns: readonly string[]): boolean {
@@ -1197,6 +1289,12 @@ export class AgentWorkspaceSessionRuntime {
         'OpenDesign requires the egress-only network policy',
       );
     }
+    if (policy.autoCleanupMinutes * 60 < policy.timeoutSeconds + 120) {
+      throw new AgentWorkspaceRuntimeError(
+        'resource_policy_not_enforced',
+        'OpenDesign auto-cleanup must leave at least two minutes for result validation and commit',
+      );
+    }
     const capability = await this.capability(true);
     if (!capability.available || !capability.resourcePolicyEnforcedPerSession) {
       throw new AgentWorkspaceRuntimeError('workspace_runtime_unavailable', capability.reason || 'workspace runtime unavailable', true);
@@ -1595,6 +1693,7 @@ export class AgentWorkspaceSessionRuntime {
         true,
       );
     }
+    const executionDeadline = Date.now() + Math.max(1, handle.policy.timeoutSeconds) * 1000;
     if (handle.activeRunId) {
       throw new AgentWorkspaceRuntimeError('workspace_session_busy', 'OpenDesign workspace session already has an active run');
     }
@@ -1620,7 +1719,7 @@ export class AgentWorkspaceSessionRuntime {
           writeback: 'external',
         },
       },
-      signal,
+      signal: this.signalForDeadline(executionDeadline, signal),
     });
     const project = imported.project as Record<string, unknown> | undefined;
     const projectId = typeof project?.id === 'string' ? project.id : '';
@@ -1645,15 +1744,22 @@ export class AgentWorkspaceSessionRuntime {
           .map((entry) => `/workspace/knowledge/${entry.name}`)
           .sort()
       : [];
+    const currentIndexPath = path.join(handle.workspaceDir, 'current', 'index.html');
+    const editingExistingPage = fs.existsSync(currentIndexPath);
     try {
     const systemPrompt = [
       'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
+      'The versioned qualityContract in task.json is mandatory. Factual claims, measured values, dates, prices, contact details, and links must come from the listed MAP sources. Review what each number describes and never attach a sourced value to a different subject. Remove visible placeholders, empty links, missing fragment targets, and enabled buttons without provable declarative behavior.',
       knowledgeFiles.length > 0
         ? `Read every knowledge source before editing: ${knowledgeFiles.join(', ')}. Use those files as the only source for factual claims and product copy.`
         : 'This task has no knowledge source files. Do not invent factual claims or metrics.',
       'The active web-prototype skill side files are rooted at /workspace/.od-skills/web-prototype. Read /workspace/.od-skills/web-prototype/assets/template.html, /workspace/.od-skills/web-prototype/references/layouts.md, and /workspace/.od-skills/web-prototype/references/checklist.md by these exact paths; do not resolve them as /workspace/assets or /workspace/references.',
-      'A starting /workspace/index.html already exists. When task operation is edit, it is the exact current published page and must remain the starting point; the generic template is reference material only. Never replace the product identity with OpenDesign or copy generic template copy into the deliverable.',
-      'Modify index.html with small targeted edit operations; never replace the whole document with one write operation. The user instruction has priority over example text. Complete every requested change and do not stop after one replacement. Then reread task.json and index.html. Remove every unresolved placeholder and verify every visible-language and content constraint before claiming completion.',
+      editingExistingPage
+        ? 'A starting /workspace/index.html already exists; it is the exact current published page and must remain the starting point. The generic template is reference material only. Never replace the product identity with OpenDesign or copy generic template copy into the deliverable.'
+        : 'This is a new page. Create /workspace/index.html from the MAP task and knowledge sources; the generic template is reference material only and its sample identity or copy must not appear in the deliverable.',
+      editingExistingPage
+        ? 'Modify index.html with small targeted edit operations; never replace the whole document with one write operation. The user instruction has priority over example text. Complete every requested change and do not stop after one replacement. Then reread task.json and index.html. Remove every unresolved placeholder and verify every visible-language and content constraint before claiming completion.'
+        : 'Build a complete responsive index.html, then reread task.json, every knowledge file, and the finished page. Remove every unresolved placeholder and verify every visible-language, source accuracy, navigation, control, and content constraint before claiming completion.',
       'Keep the final webpage in index.html. The first release is declarative-only and self-contained: inline CSS, fonts, and images; do not include JavaScript, script elements, inline event handlers, or relative or remote assets. Existing scripts are static design reference only and must be removed from the final deliverable.',
       'Do not request credentials, upload source files, publish, deploy, or mutate any external source.',
     ].join(' ');
@@ -1676,7 +1782,7 @@ export class AgentWorkspaceSessionRuntime {
     const run = await this.odJson(handle, '/api/runs', {
       method: 'POST',
       body: buildRunBody(instruction.trim()),
-      signal,
+      signal: this.signalForDeadline(executionDeadline, signal),
       acceptedStatuses: [200, 202],
     });
     const runId = typeof run.runId === 'string'
@@ -1690,32 +1796,34 @@ export class AgentWorkspaceSessionRuntime {
     handle.activeRunId = runId;
     try {
       let finalRunId = runId;
-      let runOutcome = await this.waitForRun(handle, runId, signal, onStage);
-      const currentIndexPath = path.join(handle.workspaceDir, 'current', 'index.html');
-      if (fs.existsSync(currentIndexPath)) {
-        onStage('open_design_reviewing', { runId });
-        const review = await this.odJson(handle, '/api/runs', {
-          method: 'POST',
-          body: buildRunBody([
-            'Perform a strict final review of /workspace/index.html against every constraint in /workspace/brief/task.json.',
-            'Do not merely describe the result. Inspect all visible labels, navigation, buttons, headings, statistics, role paths, placeholders, and factual claims, then use only the smallest targeted edit operations needed to correct a proven mismatch.',
-            'Never use broad or global string replacement. Never alter CSS values, JavaScript behavior, existing facts, links, section order, or product identity unless task.json explicitly requests that exact change. If a possible change is not directly required or you are uncertain, keep the existing content unchanged.',
-            'Reread the finished index.html and only stop when every requested constraint is visibly present and every forbidden placeholder or unsupported claim is absent.',
-          ].join(' ')),
-          signal,
-          acceptedStatuses: [200, 202],
-        });
-        finalRunId = typeof review.runId === 'string'
-          ? review.runId
-          : typeof review.id === 'string'
-            ? review.id
-            : '';
-        if (!finalRunId) {
-          throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign review run returned no run id');
-        }
-        handle.activeRunId = finalRunId;
-        runOutcome = await this.waitForRun(handle, finalRunId, signal, onStage);
+      let runOutcome = await this.waitForRun(handle, runId, executionDeadline, signal, onStage);
+      if (Date.now() >= executionDeadline) {
+        throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
       }
+      const review = await this.odJson(handle, '/api/runs', {
+        method: 'POST',
+        body: buildRunBody([
+          'Perform a strict final review of /workspace/index.html against every constraint and the qualityContract in /workspace/brief/task.json.',
+          'Do not merely describe the result. Inspect all visible labels, navigation, buttons, headings, statistics, role paths, placeholders, and factual claims. Correct every proven mismatch in the file before stopping.',
+          editingExistingPage
+            ? 'Use only the smallest targeted edit operations needed. Never use broad or global string replacement. Never alter CSS values, existing facts, links, section order, or product identity unless task.json explicitly requests that exact change. If a possible change is not directly required or you are uncertain, keep the existing content unchanged.'
+            : 'For this newly generated page, remove or replace every unsupported element. Do not retain sample copy, fake actions, missing targets, invented measured claims, or incomplete sections merely to preserve the first draft.',
+          'Reread the finished index.html and only stop when every requested constraint is visibly present and every forbidden placeholder, inert control, broken fragment, or unsupported claim is absent.',
+        ].join(' ')),
+        signal: this.signalForDeadline(executionDeadline, signal),
+        acceptedStatuses: [200, 202],
+      });
+      finalRunId = typeof review.runId === 'string'
+        ? review.runId
+        : typeof review.id === 'string'
+          ? review.id
+          : '';
+      if (!finalRunId) {
+        throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign review run returned no run id');
+      }
+      handle.activeRunId = finalRunId;
+      onStage('open_design_reviewing', { runId: finalRunId });
+      runOutcome = await this.waitForRun(handle, finalRunId, executionDeadline, signal, onStage);
       onStage('workspace_collecting');
       await this.copyOutputsFromContainer(handle);
       const collectedFiles = this.collectOutputs(handle);
@@ -1734,7 +1842,8 @@ export class AgentWorkspaceSessionRuntime {
           runOutcome.deliverableValidation || 'OpenDesign rejected its final deliverable',
         );
       }
-      const hardenedHtml = hardenSelfContainedHtml(outputHtml.toString('utf8'));
+      const qualityEvidence = collectArtifactQualityEvidence(handle.workspaceDir);
+      const hardenedHtml = hardenSelfContainedHtml(outputHtml.toString('utf8'), qualityEvidence);
       const hardenedBytes = Buffer.from(hardenedHtml);
       indexFile.contentBase64 = hardenedBytes.toString('base64');
       indexFile.sha256 = sha256(hardenedBytes);
@@ -1781,7 +1890,9 @@ export class AgentWorkspaceSessionRuntime {
           Accept: 'application/json',
         },
         body: serialized,
-        signal: signal || AbortSignal.timeout(Math.min(handle.policy.timeoutSeconds * 1000, 60_000)),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(Math.min(handle.policy.timeoutSeconds * 1000, 60_000))])
+          : AbortSignal.timeout(Math.min(handle.policy.timeoutSeconds * 1000, 60_000)),
       });
       const commitBytes = await readResponseLimited(commitResponse, MAX_COMMIT_RESPONSE_BYTES);
       let commit: Record<string, unknown> = {};
@@ -2266,11 +2377,11 @@ export class AgentWorkspaceSessionRuntime {
   private async waitForRun(
     handle: RuntimeHandle,
     runId: string,
+    deadline: number,
     signal: AbortSignal | undefined,
     onStage: StageReporter,
   ): Promise<OpenDesignRunOutcome> {
     const startedAt = Date.now();
-    const deadline = startedAt + handle.policy.timeoutSeconds * 1000;
     let lastStatus = '';
     let lastProgressAt = 0;
     while (Date.now() < deadline) {
@@ -2278,10 +2389,24 @@ export class AgentWorkspaceSessionRuntime {
         await this.cancelRun(handle, runId);
         throw new AgentWorkspaceRuntimeError('open_design_run_cancelled', 'OpenDesign run was cancelled');
       }
-      const status = await this.odJson(handle, `/api/runs/${encodeURIComponent(runId)}`, {
-        method: 'GET',
-        signal,
-      });
+      const deadlineSignal = this.signalForDeadline(deadline, signal);
+      let status: Record<string, unknown>;
+      try {
+        status = await this.odJson(handle, `/api/runs/${encodeURIComponent(runId)}`, {
+          method: 'GET',
+          signal: deadlineSignal,
+        });
+      } catch (error) {
+        if (signal?.aborted) {
+          await this.cancelRun(handle, runId);
+          throw new AgentWorkspaceRuntimeError('open_design_run_cancelled', 'OpenDesign run was cancelled');
+        }
+        if (deadlineSignal.aborted || Date.now() >= deadline) {
+          await this.cancelRun(handle, runId);
+          throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
+        }
+        throw error;
+      }
       const value = typeof status.status === 'string' ? status.status : '';
       const now = Date.now();
       if (value && (value !== lastStatus || now - lastProgressAt >= 3_000)) {
@@ -2307,8 +2432,8 @@ export class AgentWorkspaceSessionRuntime {
           typeof status.error === 'string' ? status.error : `OpenDesign run ended with status ${value}`,
         );
       }
-      await delay(this.pollIntervalMs, undefined, signal ? { signal } : undefined).catch((error) => {
-        if (signal?.aborted) return;
+      await delay(this.pollIntervalMs, undefined, { signal: deadlineSignal }).catch((error) => {
+        if (deadlineSignal.aborted) return;
         throw error;
       });
     }
@@ -2410,10 +2535,16 @@ export class AgentWorkspaceSessionRuntime {
     return body;
   }
 
+  private signalForDeadline(deadline: number, signal?: AbortSignal): AbortSignal {
+    const deadlineSignal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
+    return signal ? AbortSignal.any([signal, deadlineSignal]) : deadlineSignal;
+  }
+
   private async cancelRun(handle: RuntimeHandle, runId: string): Promise<void> {
     await this.odJson(handle, `/api/runs/${encodeURIComponent(runId)}/cancel`, {
       method: 'POST',
       body: {},
+      signal: AbortSignal.timeout(3_000),
       acceptedStatuses: [200, 202, 404, 409],
     }).catch(() => undefined);
   }
@@ -2463,7 +2594,7 @@ export function canAcceptUntrackedWorkspaceEdit(
     && !currentHtml.equals(outputHtml);
 }
 
-export function hardenSelfContainedHtml(html: string): string {
+export function hardenSelfContainedHtml(html: string, evidenceText = ''): string {
   if (!DOCUMENT_ROOT_RE.test(html)) {
     throw new AgentWorkspaceRuntimeError(
       'design_output_invalid',
@@ -2471,44 +2602,33 @@ export function hardenSelfContainedHtml(html: string): string {
     );
   }
   html = convertRelativeKnowledgeAnchors(html);
-  for (const match of html.matchAll(/<([a-z][a-z0-9-]*)\b[^>]*\b(src|href)\s*=\s*(["'])(.*?)\3/gi)) {
-    const tag = match[1].toLowerCase();
-    const attribute = match[2].toLowerCase();
-    const value = match[4].trim();
-    if (!value || value.startsWith('#')) continue;
-    if (value.startsWith('data:') && tag !== 'a' && tag !== 'area') continue;
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      `index.html references a non-inline resource from <${tag}>`,
-    );
-  }
-  for (const match of html.matchAll(/<([a-z][a-z0-9-]*)\b[^>]*\b(src|href)\s*=\s*([^\s"'`=<>]+)/gi)) {
-    const tag = match[1].toLowerCase();
-    const value = match[3].trim();
-    if (!value || value.startsWith('#')) continue;
-    if (value.startsWith('data:') && tag !== 'a' && tag !== 'area') continue;
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      `index.html references a non-inline resource from <${tag}>`,
-    );
-  }
-  if (/\bsrcset\s*=/i.test(html)) {
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      'index.html uses srcset, which cannot be proven self-contained',
-    );
-  }
-  if (/\s(?:background|poster|ping)\s*=/i.test(html)) {
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      'index.html contains a legacy network-capable URL attribute',
-    );
-  }
-  if (/\bsrcdoc\s*=/i.test(html)) {
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      'index.html contains a nested srcDoc document',
-    );
+  for (const tag of scanHtmlTags(html).filter((item) => !item.isClosing)) {
+    const name = tag.name.toLowerCase();
+    const attributes = parseHtmlAttributes(tag.attributes);
+    for (const attribute of ['src', 'href']) {
+      const rawValue = attributes.get(attribute);
+      if (rawValue === undefined) continue;
+      const value = decodeHtmlText(rawValue ?? '').trim();
+      if (!value || value.startsWith('#')) continue;
+      if (value.startsWith('data:') && name !== 'a' && name !== 'area') continue;
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_not_self_contained',
+        `index.html references a non-inline resource from <${name}>`,
+      );
+    }
+    if (
+      [...attributes.keys()].some((attribute) => (
+        ['srcset', 'srcdoc', 'background', 'poster', 'ping', 'formaction'].includes(attribute)
+        || attribute.startsWith('on')
+      ))
+      || /^(?:applet|base|iframe|frame|object|embed|form)$/i.test(name)
+      || (name === 'meta' && attributes.has('http-equiv'))
+    ) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_not_self_contained',
+        'index.html contains an embedded navigation or document primitive',
+      );
+    }
   }
   if (/@import\s+(?:url\s*\()?/i.test(html)) {
     throw new AgentWorkspaceRuntimeError(
@@ -2524,28 +2644,13 @@ export function hardenSelfContainedHtml(html: string): string {
       'index.html CSS references a non-inline resource',
     );
   }
-  if (/<script\b/i.test(html)) {
+  if (scanHtmlTags(html).some((tag) => !tag.isClosing && tag.name.toLowerCase() === 'script')) {
     throw new AgentWorkspaceRuntimeError(
       'design_output_not_self_contained',
       'index.html contains executable script; the OpenDesign MVP accepts declarative HTML and CSS only',
     );
   }
-  if (/\son[a-z0-9_-]+\s*=/i.test(html)) {
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      'index.html contains an inline event handler that cannot be proven offline',
-    );
-  }
-  if (
-    /<\s*(?:applet|base|iframe|frame|object|embed|form)\b/i.test(html)
-    || /\sformaction\s*=/i.test(html)
-    || /<meta\b[^>]*\bhttp-equiv\s*=/i.test(html)
-  ) {
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      'index.html contains an embedded navigation or document primitive',
-    );
-  }
+  validateArtifactQuality(html, evidenceText);
 
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
   const root = html.match(DOCUMENT_ROOT_RE);
@@ -2555,6 +2660,375 @@ export function hardenSelfContainedHtml(html: string): string {
     return `${html.slice(0, insertionIndex)}${cspMeta}${html.slice(insertionIndex)}`;
   }
   return html.replace(DOCUMENT_ROOT_RE, (documentRoot) => `${documentRoot}<head>${cspMeta}</head>`);
+}
+
+function extractVisibleHtmlText(html: string): string {
+  const markup = html.replace(
+    /<!--[\s\S]*?-->|<head\b[^>]*>[\s\S]*?<\/head\s*>|<style\b[^>]*>[\s\S]*?<\/style\s*>|<script\b[^>]*>[\s\S]*?<\/script\s*>|<template\b[^>]*>[\s\S]*?<\/template\s*>|<noscript\b[^>]*>[\s\S]*?<\/noscript\s*>/gi,
+    ' ',
+  );
+  return decodeHtmlText(extractVisibleTextFromMarkup(markup))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function decodeHtmlText(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#([0-9]+);/g, (_match, decimal: string) => String.fromCodePoint(Number.parseInt(decimal, 10)))
+    .replace(/&(?:nbsp|#160);/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;|&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&');
+}
+
+function readHtmlAttribute(attributes: string, name: string): string | undefined {
+  const value = parseHtmlAttributes(attributes).get(name.toLowerCase());
+  return value === undefined ? undefined : decodeHtmlText(value ?? '');
+}
+
+function hasHtmlAttribute(attributes: string, name: string): boolean {
+  return parseHtmlAttributes(attributes).has(name.toLowerCase());
+}
+
+interface HtmlTagToken {
+  name: string;
+  attributes: string;
+  start: number;
+  end: number;
+  isClosing: boolean;
+  isSelfClosing: boolean;
+}
+
+function scanHtmlTags(html: string): HtmlTagToken[] {
+  const tags: HtmlTagToken[] = [];
+  for (let index = 0; index < html.length; index += 1) {
+    if (html[index] !== '<' || index + 1 >= html.length) continue;
+    let cursor = index + 1;
+    const isClosing = html[cursor] === '/';
+    if (isClosing) cursor += 1;
+    if (!/[A-Za-z]/.test(html[cursor] ?? '')) continue;
+    const nameStart = cursor;
+    while (cursor < html.length && /[A-Za-z0-9:-]/.test(html[cursor])) cursor += 1;
+    const name = html.slice(nameStart, cursor);
+    const attributesStart = cursor;
+    let quote: string | undefined;
+    while (cursor < html.length) {
+      const current = html[cursor];
+      if (quote) {
+        if (current === quote) quote = undefined;
+      } else if (current === '"' || current === "'") {
+        quote = current;
+      } else if (current === '>') {
+        const attributes = html.slice(attributesStart, cursor);
+        tags.push({
+          name,
+          attributes,
+          start: index,
+          end: cursor + 1,
+          isClosing,
+          isSelfClosing: attributes.trimEnd().endsWith('/'),
+        });
+        index = cursor;
+        break;
+      }
+      cursor += 1;
+    }
+  }
+  return tags;
+}
+
+function extractVisibleTextFromMarkup(html: string): string {
+  const stack: Array<{ name: string; suppressed: boolean }> = [];
+  let suppressedDepth = 0;
+  let cursor = 0;
+  let result = '';
+  for (const tag of scanHtmlTags(html)) {
+    if (tag.start > cursor && suppressedDepth === 0) result += html.slice(cursor, tag.start);
+    const block = /^(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|section|table|tbody|td|tfoot|th|thead|tr|ul)$/i.test(tag.name);
+    if (tag.isClosing) {
+      for (let index = stack.length - 1; index >= 0; index -= 1) {
+        const frame = stack[index];
+        stack.splice(index, 1);
+        if (frame.suppressed) suppressedDepth -= 1;
+        if (frame.name.toLowerCase() === tag.name.toLowerCase()) break;
+      }
+      if (block && suppressedDepth === 0) result += '。';
+    } else {
+      if (block && suppressedDepth === 0) result += '。';
+      const style = readHtmlAttribute(tag.attributes, 'style') ?? '';
+      const suppressed = hasHtmlAttribute(tag.attributes, 'hidden')
+        || readHtmlAttribute(tag.attributes, 'aria-hidden')?.trim().toLowerCase() === 'true'
+        || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)/i.test(style);
+      const voidElement = /^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i.test(tag.name);
+      if (!tag.isSelfClosing && !voidElement) {
+        stack.push({ name: tag.name, suppressed });
+        if (suppressed) suppressedDepth += 1;
+      }
+    }
+    cursor = tag.end;
+  }
+  if (cursor < html.length && suppressedDepth === 0) result += html.slice(cursor);
+  return result;
+}
+
+function parseHtmlAttributes(attributes: string): Map<string, string | undefined> {
+  const parsed = new Map<string, string | undefined>();
+  let index = 0;
+  while (index < attributes.length) {
+    while (index < attributes.length && (/\s/.test(attributes[index]) || attributes[index] === '/')) index += 1;
+    const nameStart = index;
+    while (index < attributes.length && !/[\s=>]/.test(attributes[index])) index += 1;
+    if (index === nameStart) {
+      index += 1;
+      continue;
+    }
+    const attributeName = attributes.slice(nameStart, index).toLowerCase();
+    while (index < attributes.length && /\s/.test(attributes[index])) index += 1;
+    let value: string | undefined;
+    if (attributes[index] === '=') {
+      index += 1;
+      while (index < attributes.length && /\s/.test(attributes[index])) index += 1;
+      const quote = attributes[index] === '"' || attributes[index] === "'" ? attributes[index] : undefined;
+      if (quote) {
+        index += 1;
+        const valueStart = index;
+        while (index < attributes.length && attributes[index] !== quote) index += 1;
+        value = attributes.slice(valueStart, index);
+        if (index < attributes.length) index += 1;
+      } else {
+        const valueStart = index;
+        while (index < attributes.length && !/[\s>]/.test(attributes[index])) index += 1;
+        value = attributes.slice(valueStart, index);
+      }
+    }
+    if (!parsed.has(attributeName)) parsed.set(attributeName, value);
+  }
+  return parsed;
+}
+
+interface MeasuredClaimContext {
+  token: string;
+  context: string;
+  requiresContext: boolean;
+  isStructural: boolean;
+  entityKeys: Set<string>;
+}
+
+function measuredClaimContexts(text: string): MeasuredClaimContext[] {
+  const claims: MeasuredClaimContext[] = [];
+  for (const segment of text.split(/[\r\n。！？!?；;，,：:]+/)) {
+    const patterns = [
+      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
+      { regex: /([￥¥$])\s*(\d+(?:[.,]\d+)*)/gi, numberIndex: 2, unitIndex: 1 },
+      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
+    ];
+    for (const pattern of patterns) {
+      for (const match of segment.matchAll(pattern.regex)) {
+        const rawNumber = match[pattern.numberIndex];
+        const parsed = Number(rawNumber.replaceAll(',', ''));
+        const number = Number.isFinite(parsed) ? String(parsed) : rawNumber;
+        const rawUnit = match[pattern.unitIndex];
+        const requiresContext = isCountUnit(rawUnit);
+        const entityKeys = extractClaimEntityKeys(segment, rawUnit);
+        const unit = normalizeClaimUnit(rawUnit, entityKeys);
+        claims.push({
+          token: `${number}|${unit}`,
+          context: normalizeClaimContext(segment),
+          requiresContext,
+          isStructural: requiresContext && isStructuralCount(segment),
+          entityKeys,
+        });
+      }
+    }
+  }
+  return claims;
+}
+
+function normalizeClaimContext(value: string): string {
+  return value.replace(
+    /\d+(?:[.,]\d+)*|%|％|￥|¥|\$|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB|个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页|大约|约|只需|总共|预计|可达|达到|需要|耗时|时长|total|approximately|about|around/gi,
+    '',
+  );
+}
+
+function claimContextTokens(value: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const word of value.matchAll(/[A-Za-z][A-Za-z0-9_-]{2,}/g)) tokens.add(word[0].toLowerCase());
+  const chinese = [...value].filter((character) => /[\u4e00-\u9fff]/.test(character)).join('');
+  for (let index = 0; index + 1 < chinese.length; index += 1) tokens.add(chinese.slice(index, index + 2));
+  return tokens;
+}
+
+function hasClaimContextOverlap(
+  left: string,
+  right: string,
+  requiresContext: boolean,
+  leftEntities: Set<string>,
+  rightEntities: Set<string>,
+): boolean {
+  if (!requiresContext) return true;
+  const comparableLeftEntities = new Set([...leftEntities].filter((key) => key !== 'PERSON'));
+  const comparableRightEntities = new Set([...rightEntities].filter((key) => key !== 'PERSON'));
+  if (requiresContext && comparableLeftEntities.size > 0 && comparableRightEntities.size > 0) {
+    return [...comparableRightEntities].some((key) => comparableLeftEntities.has(key));
+  }
+  const leftTokens = claimContextTokens(left);
+  if (leftTokens.size === 0) return !requiresContext;
+  const rightTokens = claimContextTokens(right);
+  if (rightTokens.size === 0) return false;
+  const overlap = [...rightTokens].filter((token) => leftTokens.has(token)).length;
+  return Math.min(leftTokens.size, rightTokens.size) <= 1 ? overlap === 1 : overlap >= 2;
+}
+
+function normalizeClaimUnit(value: string, entityKeys: Set<string>): string {
+  if (value === '％') return '%';
+  if (value === '￥' || value === '¥' || value === '元' || value === '人民币') return 'CNY';
+  if (value === '$' || value === '美元') return 'USD';
+  if (value === '人' || value === '位' || (value === '个' && ['CUSTOMER', 'USER', 'CONSUMER', 'READER', 'EMPLOYEE'].some((key) => entityKeys.has(key)))) return 'PERSON';
+  if (value === '篇' || (value === '个' && entityKeys.has('ARTICLE'))) return 'ARTICLE';
+  if (value === '家' || (value === '个' && entityKeys.has('ORGANIZATION'))) return 'ORGANIZATION';
+  if (value === '章' || value === '节' || (value === '个' && entityKeys.has('SECTION'))) return 'SECTION';
+  if (value === '页') return 'PAGE';
+  if (value === '个' && entityKeys.size === 1) return [...entityKeys][0];
+  return value.toUpperCase();
+}
+
+function isCountUnit(unit: string): boolean {
+  return new Set(['个', '条', '次', '篇', '字', '人', '位', '家', '项', '例', '份', '种', '类', '层', '步', '章', '节', '页']).has(unit);
+}
+
+function isStructuralCount(segment: string): boolean {
+  return /(?:第\s*\d+\s*(?:步|章|节)(?:\b|。|，|,|：|:|$))|(?:(?:本文|本页|下文|以下|使用方式|操作流程|阅读路径|页面内容)[^\r\n。！？!?；;]{0,16}(?:分为|包括|包含|共有)\s*\d+(?:[.,]\d+)*\s*(?:个|条|项|种|类|层|步|章|节)?\s*(?:步骤|阶段|部分|章节|要点|原则|方式|层级|类别|模块|区块|栏目|操作)(?:\b|。|，|,|：|:|$))/i.test(segment);
+}
+
+function extractClaimEntityKeys(segment: string, unit: string): Set<string> {
+  const keys = new Set<string>();
+  for (const [key, pattern] of [
+    ['PROJECT', /项目/],
+    ['CUSTOMER', /客户/],
+    ['USER', /用户/],
+    ['CONSUMER', /消费者/],
+    ['READER', /读者/],
+    ['EMPLOYEE', /员工|成员/],
+    ['CASE', /案例|样例/],
+    ['ARTICLE', /文章|文档|知识|内容/],
+    ['MODULE', /模块|功能/],
+    ['CATEGORY', /类别|分类|种类/],
+    ['OPERATION', /操作|流程|步骤/],
+    ['SECTION', /章节|章|节/],
+    ['COLUMN', /栏目|专栏/],
+    ['ORGANIZATION', /企业|公司|机构|商家/],
+  ] as const) {
+    if (pattern.test(segment)) keys.add(key);
+  }
+  if (unit === '人' || unit === '位') keys.add('PERSON');
+  if (unit === '篇') keys.add('ARTICLE');
+  if (unit === '章' || unit === '节') keys.add('SECTION');
+  if (unit === '家') keys.add('ORGANIZATION');
+  if (unit === '页') keys.add('PAGE');
+  return keys;
+}
+
+function validateArtifactQuality(html: string, evidenceText: string): void {
+  const visible = extractVisibleHtmlText(html);
+  if (/(?:图|图片|图示|插图|截图|内容|文案|数据|此处|位置)\s*(?:仍|仅|为|是|[:：·—-])?\s*占位|占位\s*(?:图|图片|图示|插图|截图|内容|文案|数据|[:：·—-])|待\s*(?:补充|替换|填写|完善)|\blorem\s+ipsum\b|\b(?:todo|tbd)\b/i.test(visible)) {
+    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains visible placeholder or unfinished content');
+  }
+
+  const targets = new Set<string>();
+  const popoverTargets = new Set<string>();
+  const tags = scanHtmlTags(html).filter((tag) => !tag.isClosing);
+  for (const tag of tags) {
+    const attributes = tag.attributes;
+    const target = decodeHtmlText((readHtmlAttribute(attributes, 'id') ?? readHtmlAttribute(attributes, 'name') ?? '').trim());
+    if (target) {
+      targets.add(target);
+      if (hasHtmlAttribute(attributes, 'popover')) popoverTargets.add(target);
+    }
+  }
+  for (const tag of tags.filter((item) => item.name.toLowerCase() === 'a')) {
+    const href = readHtmlAttribute(tag.attributes, 'href');
+    if (href === undefined) {
+      throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains a link without a target');
+    }
+    const normalized = href?.trim() ?? '';
+    if (!normalized || normalized === '#') {
+      throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains an empty link target');
+    }
+    if (normalized.startsWith('#')) {
+      let fragment: string;
+      try {
+        fragment = decodeURIComponent(normalized.slice(1));
+      } catch {
+        throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains a malformed fragment target');
+      }
+      if (!fragment || !targets.has(fragment)) {
+        throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `index.html contains a missing fragment target: #${fragment}`);
+      }
+    }
+  }
+  for (const tag of tags.filter((item) => item.name.toLowerCase() === 'button')) {
+    const attributes = tag.attributes;
+    if (hasHtmlAttribute(attributes, 'disabled')) continue;
+    const popoverTarget = readHtmlAttribute(attributes, 'popovertarget')?.trim();
+    if (popoverTarget && popoverTargets.has(popoverTarget)) continue;
+    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains an enabled button without provable declarative behavior');
+  }
+
+  const supportedClaims = measuredClaimContexts(evidenceText);
+  for (const claim of measuredClaimContexts(visible)) {
+    if (claim.isStructural) continue;
+    const candidates = supportedClaims.filter((candidate) => candidate.token.toLowerCase() === claim.token.toLowerCase());
+    if (candidates.some((candidate) => hasClaimContextOverlap(
+      candidate.context,
+      claim.context,
+      claim.requiresContext,
+      candidate.entityKeys,
+      claim.entityKeys,
+    ))) continue;
+    const [number, unit] = claim.token.split('|');
+    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `index.html contains an unsupported measured claim: ${number}${unit}`);
+  }
+  const supportedFacts = sensitiveFacts(evidenceText);
+  for (const fact of sensitiveFacts(visible)) {
+    if (supportedFacts.has(fact)) continue;
+    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `index.html contains an unsupported date, contact, or URL: ${fact}`);
+  }
+}
+
+function sensitiveFacts(text: string): Set<string> {
+  const facts = new Set<string>();
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)/gi)) {
+    facts.add(match[0].replace(/[.,;:，。；：)\]}>`]+$/g, '').toLowerCase());
+  }
+  return facts;
+}
+
+function collectArtifactQualityEvidence(workspaceDir: string): string {
+  const evidence: string[] = [];
+  const taskPath = path.join(workspaceDir, 'brief', 'task.json');
+  if (fs.existsSync(taskPath)) {
+    try {
+      const task = JSON.parse(fs.readFileSync(taskPath, 'utf8')) as Record<string, unknown>;
+      for (const key of ['title', 'instruction']) {
+        if (typeof task[key] === 'string') evidence.push(task[key] as string);
+      }
+    } catch {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json is not valid JSON');
+    }
+  }
+  const knowledgeDir = path.join(workspaceDir, 'knowledge');
+  if (fs.existsSync(knowledgeDir)) {
+    for (const entry of fs.readdirSync(knowledgeDir, { withFileTypes: true }).filter((item) => item.isFile())) {
+      evidence.push(fs.readFileSync(path.join(knowledgeDir, entry.name), 'utf8'));
+    }
+  }
+  const currentPath = path.join(workspaceDir, 'current', 'index.html');
+  if (fs.existsSync(currentPath)) evidence.push(extractVisibleHtmlText(fs.readFileSync(currentPath, 'utf8')));
+  return evidence.join('\n');
 }
 
 function convertRelativeKnowledgeAnchors(html: string): string {

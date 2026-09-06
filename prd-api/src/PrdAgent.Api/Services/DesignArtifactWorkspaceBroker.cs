@@ -711,6 +711,20 @@ public static class DesignArtifactWorkspaceContract
                 manifestFile = "manifest.json",
                 writeback = "external",
             },
+            qualityContract = new
+            {
+                schemaVersion = "map-design-artifact-quality-v1",
+                factualSources = run.Operation == DesignArtifactOperations.Edit
+                    ? new[] { "title", "instruction", "knowledge", "current-visible-content" }
+                    : new[] { "title", "instruction", "knowledge" },
+                measuredClaimsRequireSource = true,
+                sensitiveFactsRequireSource = true,
+                contextBoundMetricsReviewRequired = true,
+                visibleDraftMarkersAllowed = false,
+                emptyOrMissingFragmentTargetsAllowed = false,
+                inertEnabledButtonsAllowed = false,
+                finalReviewRequired = true,
+            },
         }, JsonOptions);
         files.Add(ToFile("brief/task.json", "application/json", task));
         for (var index = 0; index < run.KnowledgeReferences.Count; index++)
