@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 const previewSource = readFileSync(path.resolve(__dirname, 'SitePreviewModal.tsx'), 'utf8');
 const editPanelSource = readFileSync(path.resolve(__dirname, 'SiteEditPanel.tsx'), 'utf8');
 const pageSource = readFileSync(path.resolve(__dirname, '../../pages/WebPagesPage.tsx'), 'utf8');
+const cardSource = readFileSync(path.resolve(__dirname, 'SiteCard.tsx'), 'utf8');
+const cardActionsSource = readFileSync(path.resolve(__dirname, 'SiteCardActions.tsx'), 'utf8');
+const appShellSource = readFileSync(path.resolve(__dirname, '../../layouts/AppShell.tsx'), 'utf8');
+const changelogBellSource = readFileSync(path.resolve(__dirname, '../changelog/ChangelogBell.tsx'), 'utf8');
 const mobileFabSource = readFileSync(path.resolve(__dirname, '../mobile/MobileFab.tsx'), 'utf8');
 const dialogSource = readFileSync(path.resolve(__dirname, '../ui/Dialog.tsx'), 'utf8');
 
@@ -21,6 +25,18 @@ describe('mobile web hosting layout', () => {
     expect(previewSource).toContain('min-w-11');
     expect(previewSource).toContain('帮我修改');
     expect(previewSource).toContain('版本记录');
+  });
+
+  it('keeps the functional page controls at least 44px on mobile', () => {
+    expect(cardSource).toContain('className="absolute bottom-[-5px] left-[-5px] z-20 inline-flex h-11 w-11');
+    expect(cardActionsSource).toContain('max-sm:h-11 max-sm:min-h-11');
+    expect(cardActionsSource).toContain('max-sm:w-11 max-sm:min-w-11');
+    expect(editPanelSource).toContain('aria-label="页面修改执行器"');
+    expect(editPanelSource).toContain('className="mt-3 min-h-11 w-full');
+    expect(pageSource).toContain('className="min-h-11 w-full pl-9');
+    expect(pageSource).toContain('className="h-11 px-3 rounded-[12px]');
+    expect(appShellSource.match(/className="(?:relative )?h-11 w-11/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(changelogBellSource).toContain("compact ? 'h-11 w-11'");
   });
 
   it('stacks version titles above their actions instead of squeezing them on mobile', () => {

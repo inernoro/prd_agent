@@ -30,7 +30,9 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};');
     expect(script).toContain('@media (max-width:640px)');
     expect(script).toContain('#cds-widget .cds-branch,#cds-widget .cds-mode{display:none}');
-    expect(script).toContain('#cds-widget .cds-badge{max-width:184px');
+    expect(script).toContain('#cds-widget .cds-badge{max-width:280px');
+    expect(script).toContain('#cds-widget button{min-width:44px;min-height:44px}');
+    expect(script).toContain('#cds-widget .cds-mode-select{min-height:44px}');
   });
 
   it('keeps the preview widget in a right-side safe area outside expanded navigation', () => {

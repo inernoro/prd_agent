@@ -28,6 +28,7 @@ public sealed class DesignArtifactsController : ControllerBase
         "open_design_contract_mismatch",
         "open_design_execution_failed",
         "open_design_not_ready",
+        "open_design_run_failed",
         "open_design_run_cancelled",
         "open_design_run_timeout",
         "workspace_commit_invalid_response",

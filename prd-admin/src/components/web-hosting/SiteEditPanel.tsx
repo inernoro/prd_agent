@@ -389,7 +389,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             onChange={(event) => setSelectedRuntime(event.target.value)}
             disabled={generating}
             aria-label="页面修改执行器"
-            className="mt-3 w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-primary"
+            className="mt-3 min-h-11 w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-primary"
           >
             {enabledRuntimes.map((item) => (
               <option key={item.id} value={item.id}>{item.label}</option>
@@ -398,7 +398,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
         )}
         {capabilities.length > 0 && (
           <details className="group mt-3 rounded-lg border border-token-subtle bg-token-nested text-[10px] leading-relaxed text-token-muted">
-            <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 font-medium text-token-primary">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 font-medium text-token-primary">
               <span className="flex items-center gap-1.5"><Server size={12} />执行器与限制</span>
               <span className="max-w-36 truncate font-normal text-token-muted">{activeRuntime?.label || '当前执行器'}</span>
             </summary>

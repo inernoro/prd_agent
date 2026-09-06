@@ -1123,7 +1123,7 @@ export default function AppShell() {
           <button
             type="button"
             onClick={() => setMobileDrawerOpen(true)}
-            className="h-9 w-9 inline-flex items-center justify-center rounded-xl"
+            className="h-11 w-11 inline-flex items-center justify-center rounded-xl"
             style={{ color: 'var(--text-primary)' }}
             aria-label="打开导航菜单"
           >
@@ -1146,7 +1146,7 @@ export default function AppShell() {
                 setNotificationDialogOpen(true);
                 void loadNotifications({ silent: true });
               }}
-              className="relative h-9 w-9 inline-flex items-center justify-center rounded-xl"
+              className="relative h-11 w-11 inline-flex items-center justify-center rounded-xl"
               style={{ color: 'var(--text-secondary)' }}
               aria-label="通知"
             >
@@ -1172,7 +1172,7 @@ export default function AppShell() {
             <button
               type="button"
               onClick={() => { setAvatarOpen(true); setMobileDrawerOpen(false); }}
-              className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full ring-1 ring-white/10 transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+              className="h-11 w-11 shrink-0 cursor-pointer overflow-hidden rounded-full ring-1 ring-white/10 transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
               aria-label="修改我的头像"
               title="修改我的头像"
             >

@@ -140,6 +140,7 @@ public sealed class DesignArtifactEvidenceControllerTests
         {
             (RunId: "timeout-run", Code: "open_design_run_timeout"),
             (RunId: "crash-run", Code: "open_design_execution_failed"),
+            (RunId: "generic-runtime-run", Code: "open_design_run_failed"),
             (RunId: "invalid-output-run", Code: "design_output_invalid"),
             (RunId: "unauthorized-run", Code: "workspace_transfer_invalid"),
         };

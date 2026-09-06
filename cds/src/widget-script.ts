@@ -116,9 +116,12 @@ export function buildWidgetScript(
     #cds-widget .cds-mode-select:focus{outline:none;border-color:#58a6ff}
     @media (max-width:640px){
       #cds-widget{max-width:calc(100vw - 24px)}
-      #cds-widget .cds-badge{max-width:184px;padding:4px 6px}
+      #cds-widget .cds-badge{max-width:280px;padding:4px 6px}
       #cds-widget .cds-branch,#cds-widget .cds-mode{display:none}
       #cds-widget .cds-panel{min-width:min(260px,calc(100vw - 24px));max-width:calc(100vw - 24px)}
+      #cds-widget button{min-width:44px;min-height:44px}
+      #cds-widget .cds-deploy-btn{min-width:0}
+      #cds-widget .cds-mode-select{min-height:44px}
     }
     #cds-widget .cds-spinner{display:inline-block;width:11px;height:11px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:cds-spin .8s linear infinite;flex-shrink:0}
     #cds-widget .cds-step{display:flex;align-items:center;gap:4px;font-size:10px;color:#8b949e}

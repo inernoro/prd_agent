@@ -408,21 +408,25 @@ export function SiteCard({
             </span>
           )}
 
-          {/* 左下：批量勾选（设计稿是常驻 20×20，未选时低对比，不是 hover 才出现） */}
+          {/* 左下：视觉勾选框保持 20×20，真实按钮热区为 44×44，触屏不用精准点中小方框。 */}
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onSelect(); }}
             aria-label={selected ? '取消选择' : '选择'}
             data-no-drag
-            className="absolute bottom-[7px] left-[7px] z-20 inline-flex items-center justify-center transition-opacity hover:!opacity-100 group-hover:opacity-100"
-            style={{
-              width: 20, height: 20, borderRadius: 'var(--radius-chip)',
-              background: selected ? 'var(--accent-primary)' : 'var(--scrim-badge-bg)',
-              border: `1px solid ${selected ? 'var(--accent-primary)' : 'var(--border-strong)'}`,
-              opacity: selected ? 1 : 0.5,
-            }}
+            className="absolute bottom-[-5px] left-[-5px] z-20 inline-flex h-11 w-11 items-center justify-center"
           >
-            {selected && <Check size={12} strokeWidth={2.8} style={{ color: 'var(--accent-on-primary)' }} />}
+            <span
+              className="inline-flex h-5 w-5 items-center justify-center transition-opacity hover:!opacity-100 group-hover:opacity-100"
+              style={{
+                borderRadius: 'var(--radius-chip)',
+                background: selected ? 'var(--accent-primary)' : 'var(--scrim-badge-bg)',
+                border: `1px solid ${selected ? 'var(--accent-primary)' : 'var(--border-strong)'}`,
+                opacity: selected ? 1 : 0.5,
+              }}
+            >
+              {selected && <Check size={12} strokeWidth={2.8} style={{ color: 'var(--accent-on-primary)' }} />}
+            </span>
           </button>
 
           {/*

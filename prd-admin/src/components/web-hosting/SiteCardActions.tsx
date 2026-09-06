@@ -44,7 +44,7 @@ export function CardIconAction({
   // pointer-events-auto 是必须的：这些按钮的容器（卡片 hover 条）恒为 pointer-events-none，
   // 「可点的只有按钮本身」这条契约靠这里成立，去掉了 hover 条会重新以整条宽度吞掉底下的勾选框。
   const base =
-    'pointer-events-auto inline-flex h-7 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-md text-[11px] font-medium transition-colors';
+    'pointer-events-auto inline-flex h-7 min-h-7 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-md text-[11px] font-medium transition-colors max-sm:h-11 max-sm:min-h-11';
   if (compact) {
     return (
       <button
@@ -56,7 +56,7 @@ export function CardIconAction({
         title={label}
         aria-label={label}
         data-no-drag
-        className={[base, 'w-[26px] hover-bg-soft'].join(' ')}
+        className={[base, 'w-[26px] min-w-[26px] hover-bg-soft max-sm:w-11 max-sm:min-w-11'].join(' ')}
         style={onScrim
           ? { color: 'var(--text-primary)', background: 'var(--scrim-button-bg)', border: '1px solid var(--border-strong)' }
           : { color: 'var(--text-secondary)', background: 'var(--bg-tertiary)' }}
@@ -112,7 +112,7 @@ export function CardMoreButton({ actions, touchActions = 0, onScrim }: { actions
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="pointer-events-auto inline-flex h-7 w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover-bg-soft"
+        className="pointer-events-auto inline-flex h-7 min-h-7 w-[26px] min-w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover-bg-soft max-sm:h-11 max-sm:min-h-11 max-sm:w-11 max-sm:min-w-11"
         title="更多设置"
         aria-label="更多设置"
         data-no-drag
@@ -131,7 +131,7 @@ export function CardMoreButton({ actions, touchActions = 0, onScrim }: { actions
               )}
               <button
                 type="button"
-                className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-colors hover-bg-soft"
+                className="flex h-8 min-h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-colors hover-bg-soft max-sm:h-11 max-sm:min-h-11"
                 style={{ color: action.danger ? 'var(--semantic-danger-text)' : 'var(--text-secondary)' }}
                 onClick={() => {
                   setOpen(false);

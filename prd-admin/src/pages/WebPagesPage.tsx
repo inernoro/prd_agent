@@ -1337,7 +1337,7 @@ export default function WebPagesPage() {
                   placeholder="搜索站点名称、描述..."
                   value={keyword}
                   onChange={e => setKeyword(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
+                  className="min-h-11 w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
                   style={{
                     background: 'var(--bg-sunken)',
                     color: 'var(--text-primary)',
@@ -1349,7 +1349,7 @@ export default function WebPagesPage() {
                 type="button"
                 onClick={() => setShowMobileFilters(true)}
                 data-tour-id="webpages-mobile-filter"
-                className="h-10 px-3 rounded-[12px] inline-flex items-center gap-1.5 shrink-0"
+                className="h-11 px-3 rounded-[12px] inline-flex items-center gap-1.5 shrink-0"
                 style={{
                   background: filterCount > 0 ? 'var(--selection-bg)' : 'var(--bg-card)',
                   border: `1px solid ${filterCount > 0 ? 'var(--selection-border)' : 'var(--border-subtle)'}`,
@@ -1385,7 +1385,7 @@ export default function WebPagesPage() {
               type="button"
               onClick={() => { setGenerateSource(null); setShowGenerateDialog(true); }}
               aria-label="引用知识生成网页"
-              className="fixed right-[18px] z-[90] flex h-10 items-center gap-1.5 rounded-2xl border border-token-subtle bg-token-elevated px-3 text-xs font-semibold text-token-primary shadow-lg"
+              className="fixed right-[18px] z-[90] flex h-11 items-center gap-1.5 rounded-2xl border border-token-subtle bg-token-elevated px-3 text-xs font-semibold text-token-primary shadow-lg"
               style={{
                 bottom: 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px) + 82px)',
                 background: 'var(--bg-elevated)',
@@ -1524,7 +1524,7 @@ export default function WebPagesPage() {
                     <button
                       type="button"
                       onClick={() => setViewMode('grid')}
-                      className="h-9 px-4 inline-flex items-center gap-1.5 transition-colors"
+                      className="h-11 px-4 inline-flex items-center gap-1.5 transition-colors"
                       style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
                     >
                       <Grid3X3 size={14} /> 网格
@@ -1532,7 +1532,7 @@ export default function WebPagesPage() {
                     <button
                       type="button"
                       onClick={() => setViewMode('list')}
-                      className="h-9 px-4 inline-flex items-center gap-1.5 transition-colors"
+                      className="h-11 px-4 inline-flex items-center gap-1.5 transition-colors"
                       style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
                     >
                       <List size={14} /> 列表
@@ -1549,7 +1549,7 @@ export default function WebPagesPage() {
                         setShowMobileFilters(false);
                         setShowAnalytics(true);
                       }}
-                      className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
+                      className="h-11 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
                     >
                       <BarChart3 size={15} /> 分享统计
                     </button>
@@ -1560,7 +1560,7 @@ export default function WebPagesPage() {
                         setShareTargetId(null);
                         setShowSharesPanel(true);
                       }}
-                      className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
+                      className="h-11 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
                     >
                       <Link2 size={15} /> 分享管理
                     </button>
@@ -1571,7 +1571,7 @@ export default function WebPagesPage() {
                           setShowMobileFilters(false);
                           setShowCopyFromPersonal(true);
                         }}
-                        className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold col-span-2 bg-token-nested text-token-primary border border-token-subtle"
+                        className="h-11 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold col-span-2 bg-token-nested text-token-primary border border-token-subtle"
                       >
                         <FolderInput size={15} /> 从个人空间添加
                       </button>
@@ -2641,7 +2641,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-black/38 text-token-primary shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
+        className="inline-flex h-7 min-h-7 w-7 min-w-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-black/38 text-token-primary shadow-md backdrop-blur-md transition-colors hover:bg-black/58 max-sm:h-11 max-sm:min-h-11 max-sm:w-11 max-sm:min-w-11"
         title="更多设置"
         aria-label="更多设置"
         data-no-drag
@@ -2661,7 +2661,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
             <button
               key={action.label}
               type="button"
-              className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-colors hover-bg-soft"
+              className="flex h-8 min-h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-colors hover-bg-soft max-sm:h-11 max-sm:min-h-11"
               style={{ color: action.color ?? (action.danger ? '#fecaca' : 'var(--text-secondary)') }}
               onClick={() => {
                 setOpen(false);
