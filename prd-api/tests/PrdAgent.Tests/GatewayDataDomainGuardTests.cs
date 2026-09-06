@@ -1202,6 +1202,7 @@ public class GatewayDataDomainGuardTests
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");
         var cdsCompose = ReadRepoFile("cds-compose.yml");
+        var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
 
         Assert.Contains("LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}", dockerCompose);
         Assert.Contains("LlmGateway__Mode=${LLMGW_MODE}", dockerCompose);
