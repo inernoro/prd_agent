@@ -172,6 +172,7 @@ const SESSION_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const MAX_PACKAGE_OVERHEAD_BYTES = 2 * 1024 * 1024;
 const MAX_COMMIT_RESPONSE_BYTES = 1024 * 1024;
 const MAX_RUNTIME_DIAGNOSTIC_BYTES = 2 * 1024;
+const MAX_QUALITY_REPAIR_ATTEMPTS = 1;
 const MAX_OUTPUT_FILE_COUNT = 100;
 const MAX_WORKSPACE_FILE_COUNT = 1024;
 const MAX_WORKSPACE_NODE_COUNT = 2048;
@@ -1824,30 +1825,76 @@ export class AgentWorkspaceSessionRuntime {
       handle.activeRunId = finalRunId;
       onStage('open_design_reviewing', { runId: finalRunId });
       runOutcome = await this.waitForRun(handle, finalRunId, executionDeadline, signal, onStage);
-      onStage('workspace_collecting');
-      await this.copyOutputsFromContainer(handle);
-      const collectedFiles = this.collectOutputs(handle);
-      const indexFile = collectedFiles.find((file) => file.path === 'index.html');
-      if (!indexFile) {
-        throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed without index.html');
+      let collectedFiles: WorkspacePackageFile[] = [];
+      let indexFile: WorkspacePackageFile | undefined;
+      let hardenedHtml = '';
+      for (let qualityRepairAttempt = 0; ; qualityRepairAttempt += 1) {
+        onStage('workspace_collecting');
+        await this.copyOutputsFromContainer(handle);
+        collectedFiles = this.collectOutputs(handle);
+        indexFile = collectedFiles.find((file) => file.path === 'index.html');
+        if (!indexFile) {
+          throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed without index.html');
+        }
+        const outputHtml = Buffer.from(indexFile.contentBase64, 'base64');
+        const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
+        if (
+          !runOutcome.deliverableValid
+          && !canAcceptUntrackedWorkspaceEdit(runOutcome.deliverableValidation, currentHtml, outputHtml)
+        ) {
+          throw new AgentWorkspaceRuntimeError(
+            'open_design_deliverable_invalid',
+            runOutcome.deliverableValidation || 'OpenDesign rejected its final deliverable',
+          );
+        }
+        const qualityEvidence = collectArtifactQualityEvidence(handle.workspaceDir);
+        try {
+          hardenedHtml = hardenSelfContainedHtml(outputHtml.toString('utf8'), qualityEvidence);
+          break;
+        } catch (error) {
+          if (
+            !(error instanceof AgentWorkspaceRuntimeError)
+            || error.code !== 'design_output_quality_rejected'
+            || qualityRepairAttempt >= MAX_QUALITY_REPAIR_ATTEMPTS
+          ) {
+            throw error;
+          }
+          if (Date.now() >= executionDeadline) {
+            throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
+          }
+          const repairReason = classifyQualityRepairReason(error.message);
+          if (!repairReason) throw error;
+          const repair = await this.odJson(handle, '/api/runs', {
+            method: 'POST',
+            body: buildRunBody([
+              'The deterministic CDS publication gate rejected /workspace/index.html after your final review.',
+              `The controlled rejection reason is ${repairReason.code}: ${repairReason.instruction}`,
+              'Fix exactly this proven quality violation in /workspace/index.html. Inspect the whole file and remove every occurrence of the same violation while preserving supported facts, valid structure, visual quality, and all other task constraints.',
+              'Do not merely explain the change. Save the corrected file, reread it, and stop only after the violation is absent.',
+            ].join(' ')),
+            signal: this.signalForDeadline(executionDeadline, signal),
+            acceptedStatuses: [200, 202],
+          });
+          finalRunId = typeof repair.runId === 'string'
+            ? repair.runId
+            : typeof repair.id === 'string'
+              ? repair.id
+              : '';
+          if (!finalRunId) {
+            throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign quality repair run returned no run id');
+          }
+          handle.activeRunId = finalRunId;
+          onStage('open_design_quality_repairing', {
+            runId: finalRunId,
+            attempt: qualityRepairAttempt + 1,
+          });
+          runOutcome = await this.waitForRun(handle, finalRunId, executionDeadline, signal, onStage);
+        }
       }
-      const outputHtml = Buffer.from(indexFile.contentBase64, 'base64');
-      const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
-      if (
-        !runOutcome.deliverableValid
-        && !canAcceptUntrackedWorkspaceEdit(runOutcome.deliverableValidation, currentHtml, outputHtml)
-      ) {
-        throw new AgentWorkspaceRuntimeError(
-          'open_design_deliverable_invalid',
-          runOutcome.deliverableValidation || 'OpenDesign rejected its final deliverable',
-        );
-      }
-      const qualityEvidence = collectArtifactQualityEvidence(handle.workspaceDir);
-      const hardenedHtml = hardenSelfContainedHtml(outputHtml.toString('utf8'), qualityEvidence);
       const hardenedBytes = Buffer.from(hardenedHtml);
-      indexFile.contentBase64 = hardenedBytes.toString('base64');
-      indexFile.sha256 = sha256(hardenedBytes);
-      indexFile.size = hardenedBytes.byteLength;
+      indexFile!.contentBase64 = hardenedBytes.toString('base64');
+      indexFile!.sha256 = sha256(hardenedBytes);
+      indexFile!.size = hardenedBytes.byteLength;
       const manifestBytes = Buffer.from(JSON.stringify({
         schemaVersion: 'map-design-artifact-manifest-v1',
         baseRevision: handle.transfer.baseRevision,
@@ -2592,6 +2639,58 @@ export function canAcceptUntrackedWorkspaceEdit(
     && currentHtml !== undefined
     && currentHtml.length > 0
     && !currentHtml.equals(outputHtml);
+}
+
+function classifyQualityRepairReason(message: string): { code: string; instruction: string } | undefined {
+  if (message === 'index.html contains visible placeholder or unfinished content') {
+    return {
+      code: 'visible_placeholder',
+      instruction: 'Remove every visible placeholder or unfinished-content marker.',
+    };
+  }
+  if (message === 'index.html contains a link without a target') {
+    return {
+      code: 'link_without_target',
+      instruction: 'Remove or convert every visible link that has no target.',
+    };
+  }
+  if (message === 'index.html contains an empty link target') {
+    return {
+      code: 'empty_link_target',
+      instruction: 'Remove or correct every link with an empty target.',
+    };
+  }
+  if (message === 'index.html contains a malformed fragment target') {
+    return {
+      code: 'malformed_fragment_target',
+      instruction: 'Remove or correct every malformed in-page fragment link.',
+    };
+  }
+  if (message.startsWith('index.html contains a missing fragment target:')) {
+    return {
+      code: 'missing_fragment_target',
+      instruction: 'Remove or correct every in-page link whose fragment does not match an existing element id.',
+    };
+  }
+  if (message === 'index.html contains an enabled button without provable declarative behavior') {
+    return {
+      code: 'inert_enabled_button',
+      instruction: 'Remove, disable, or give provable declarative behavior to every enabled button.',
+    };
+  }
+  if (message.startsWith('index.html contains an unsupported measured claim:')) {
+    return {
+      code: 'unsupported_measured_claim',
+      instruction: 'Remove every measured claim that is not supported by the MAP knowledge sources.',
+    };
+  }
+  if (message.startsWith('index.html contains an unsupported date, contact, or URL:')) {
+    return {
+      code: 'unsupported_fact',
+      instruction: 'Remove every date, contact detail, or URL that is not supported by the MAP knowledge sources.',
+    };
+  }
+  return undefined;
 }
 
 export function hardenSelfContainedHtml(html: string, evidenceText = ''): string {
