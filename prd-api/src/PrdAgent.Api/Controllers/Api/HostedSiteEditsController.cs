@@ -133,6 +133,9 @@ public sealed class HostedSiteEditsController : ControllerBase
             Runtime = runtime,
             RuntimeConnectionId = capability.ConnectionId,
             Instruction = instruction,
+            Title = string.IsNullOrWhiteSpace(editable.Site.Title)
+                ? "网页修改"
+                : editable.Site.Title.Trim(),
             TargetSiteId = siteId,
             KnowledgeReferences = snapshots.ToList(),
             Progress = 2,

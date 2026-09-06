@@ -139,14 +139,22 @@ public sealed class HostedSiteEditsControllerTests
         Assert.IsType<NotFoundObjectResult>(wrongUser);
     }
 
-    [Fact]
+    [Theory]
+    [InlineData(null, "网页修改")]
+    [InlineData("", "网页修改")]
+    [InlineData("   ", "网页修改")]
+    [InlineData("  测试站点  ", "测试站点")]
     [Trait("Category", TestCategories.Integration)]
-    public async Task CreateRun_ShouldPersistProviderConnectionChosenByCapabilityProbe()
+    public async Task CreateRun_ShouldPersistProviderConnectionAndNormalizedSiteTitle(
+        string? siteTitle,
+        string expectedTitle)
     {
         await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
         var sites = new Mock<IHostedSiteService>();
         sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
-            .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>"));
+            .ReturnsAsync(BuildEditableEntry(
+                "<!doctype html><html><body>safe</body></html>",
+                siteTitle: siteTitle));
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>();
         knowledge.Setup(service => service.ResolveAsync(
                 "owner-user",
@@ -171,6 +179,7 @@ public sealed class HostedSiteEditsControllerTests
         Assert.IsType<AcceptedResult>(result);
         var persisted = await fixture.Db.DesignArtifactRuns.Find(_ => true).SingleAsync();
         Assert.Equal("connection-1", persisted.RuntimeConnectionId);
+        Assert.Equal(expectedTitle, persisted.Title);
         queue.Verify(service => service.EnqueueAsync(RunKinds.DesignArtifact, persisted.Id, CancellationToken.None), Times.Once);
     }
 
@@ -226,12 +235,16 @@ public sealed class HostedSiteEditsControllerTests
         return provider;
     }
 
-    private static HostedSiteEditableEntry BuildEditableEntry(string html, int fileCount = 1)
+    private static HostedSiteEditableEntry BuildEditableEntry(
+        string html,
+        int fileCount = 1,
+        string? siteTitle = "测试站点")
     {
         var site = new HostedSite
         {
             Id = "site-a",
             OwnerUserId = "owner-user",
+            Title = siteTitle ?? string.Empty,
             EntryFile = "index.html",
             Files = Enumerable.Range(0, fileCount)
                 .Select(index => new HostedSiteFile
