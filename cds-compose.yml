@@ -334,7 +334,8 @@ services:
       # 「向我提问」两个调用方一并切到 HTTP 权威：模型池配置在 llmgw 那边，
       # 留在 inproc 会去查 MAP 自己的 model_groups —— 那张表在网关剥离之后就是空的，
       # 结果是 [ModelResolver] 未找到可用模型（无池且 legacy 未命中），访客看到「回答失败了」。
-      LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr,prd-agent-web.web-hosting.ask::chat,prd-agent-web.web-hosting.ask-openers::intent"
+      # HTML PPT 的大纲和页级生成同样由 MAP 选模，但必须经独立 LLMGW 记录模型、调用方和 runId。
+      LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr,prd-agent-web.web-hosting.ask::chat,prd-agent-web.web-hosting.ask-openers::intent,md-to-ppt-agent.outline::chat,md-to-ppt-agent.html-generate::chat"
       # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
       LlmGateway__LogicalModelsRequireHttp: "true"
       # redis 跑 --aclfile，只给地址会 NOAUTH 崩在启动阶段。StackExchange.Redis 不吃 redis:// URI，

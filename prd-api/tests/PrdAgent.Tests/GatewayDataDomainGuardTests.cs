@@ -1229,6 +1229,8 @@ public class GatewayDataDomainGuardTests
         var cdsAllowlist = Regex.Match(cdsCompose, "LlmGateway__HttpAppCallerAllowlist:\\s*\"([^\"]*)\"");
         Assert.True(cdsAllowlist.Success, "cds-compose.yml 必须显式声明 LlmGateway__HttpAppCallerAllowlist");
         Assert.Contains("transcript-agent.transcribe::asr", cdsAllowlist.Groups[1].Value);
+        Assert.Contains("md-to-ppt-agent.outline::chat", cdsAllowlist.Groups[1].Value);
+        Assert.Contains("md-to-ppt-agent.html-generate::chat", cdsAllowlist.Groups[1].Value);
         Assert.DoesNotContain("LlmGateway__HttpAppCallerAllowlist: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForActiveAppCallers: \"${", cdsCompose);
