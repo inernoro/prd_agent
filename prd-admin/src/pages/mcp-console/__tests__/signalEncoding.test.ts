@@ -6,11 +6,14 @@ function cap(over: Partial<McpCapabilityDto> = {}): McpCapabilityDto {
   return {
     key: 'knowledge',
     title: '知识库',
-    description: '',
+    summary: '',
     readScope: 'document-store:read',
     writeScope: 'document-store:write',
+    writeNeedsApproval: false,
     availableToMe: true,
     writeAvailableToMe: true,
+    granted: false,
+    todayCalls: 0,
     tools: [],
     ...over,
   };
