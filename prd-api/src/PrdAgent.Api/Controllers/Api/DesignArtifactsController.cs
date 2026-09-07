@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -46,6 +47,7 @@ public sealed class DesignArtifactsController : ControllerBase
     private readonly IDesignArtifactProviderCatalog _providers;
     private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
     private readonly LlmGatewayDataContext _gatewayDb;
+    private readonly ILogger<DesignArtifactsController>? _logger;
 
     public DesignArtifactsController(
         MongoDbContext db,
@@ -53,7 +55,8 @@ public sealed class DesignArtifactsController : ControllerBase
         IRunQueue queue,
         IDesignArtifactProviderCatalog providers,
         IDesignKnowledgeSnapshotResolver knowledgeSnapshots,
-        LlmGatewayDataContext gatewayDb)
+        LlmGatewayDataContext gatewayDb,
+        ILogger<DesignArtifactsController>? logger = null)
     {
         _db = db;
         _events = events;
@@ -61,6 +64,7 @@ public sealed class DesignArtifactsController : ControllerBase
         _providers = providers;
         _knowledgeSnapshots = knowledgeSnapshots;
         _gatewayDb = gatewayDb;
+        _logger = logger;
     }
 
     [HttpGet("runtime-capabilities")]
@@ -80,6 +84,18 @@ public sealed class DesignArtifactsController : ControllerBase
     public async Task<IActionResult> CreateRun([FromBody] CreateDesignArtifactRunRequest request)
     {
         var userId = this.GetRequiredUserId();
+        var protectedOverrides = DesignArtifactRequestAuthorityGuard.FindProtectedOverrides(
+            request.AdditionalProperties?.Keys);
+        if (protectedOverrides.Count > 0)
+        {
+            _logger?.LogWarning(
+                "Rejected design-artifact runtime authority override. userId={UserId} fields={Fields}",
+                userId,
+                string.Join(',', protectedOverrides));
+            return BadRequest(ApiResponse<object>.Fail(
+                DesignArtifactRequestAuthorityGuard.ErrorCode,
+                "运行时模型、网关地址和审计归属由 MAP 统一配置，请移除覆盖字段后重试"));
+        }
         var instruction = (request.Instruction ?? string.Empty).Trim();
         if (instruction.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请用两句话说明网页用途和期望效果"));
@@ -459,6 +475,9 @@ public sealed class CreateDesignArtifactRunRequest
     public string? Instruction { get; set; }
     public string? Title { get; set; }
     public List<DesignKnowledgeReferenceRequest>? KnowledgeReferences { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 public sealed class DesignKnowledgeReferenceRequest

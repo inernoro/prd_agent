@@ -18,6 +18,65 @@ namespace PrdAgent.Api.Tests.Controllers;
 
 public sealed class HostedSiteEditsControllerTests
 {
+    [Theory]
+    [InlineData("model")]
+    [InlineData("MODELBASEURL")]
+    [InlineData("baseUrl")]
+    [InlineData("apiKey")]
+    [InlineData("modelApiKey")]
+    [InlineData("modelPoolId")]
+    [InlineData("modelPolicy")]
+    [InlineData("auditOwner")]
+    [InlineData("appCallerCode")]
+    [InlineData("sourceSystem")]
+    [InlineData("authority")]
+    public async Task CreateRun_ShouldRejectClientRuntimeAuthorityOverrides(string field)
+    {
+        var request = JsonSerializer.Deserialize<CreateHostedSiteEditRunRequest>(
+            $$"""{"instruction":"调整版式","runtime":"open-design","{{field}}":"attacker-value"}""",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(request);
+
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        var providers = new Mock<IDesignArtifactProviderCatalog>(MockBehavior.Strict);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", request);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(
+            badRequest.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(
+            DesignArtifactRequestAuthorityGuard.ErrorCode,
+            payload.GetProperty("error").GetProperty("code").GetString());
+        sites.VerifyNoOtherCalls();
+        providers.VerifyNoOtherCalls();
+        knowledge.VerifyNoOtherCalls();
+        queue.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void GenerateRequest_ShouldCaptureProtectedRuntimeAuthorityOverrides()
+    {
+        var request = JsonSerializer.Deserialize<CreateDesignArtifactRunRequest>(
+            """{"artifactType":"web-page","instruction":"生成网页","model":"attacker-model","baseUrl":"https://attacker.invalid/v1","auditOwner":"attacker"}""",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.NotNull(request);
+        Assert.Equal(
+            ["auditOwner", "baseUrl", "model"],
+            DesignArtifactRequestAuthorityGuard.FindProtectedOverrides(request.AdditionalProperties?.Keys));
+    }
+
     [Fact]
     public async Task CreateRun_ShouldRejectMultiFileSiteBeforeResolvingKnowledgeOrQueueing()
     {

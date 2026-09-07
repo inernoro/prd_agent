@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -66,6 +67,19 @@ public sealed class HostedSiteEditsController : ControllerBase
     public async Task<IActionResult> CreateRun(string siteId, [FromBody] CreateHostedSiteEditRunRequest request)
     {
         var userId = this.GetRequiredUserId();
+        var protectedOverrides = DesignArtifactRequestAuthorityGuard.FindProtectedOverrides(
+            request.AdditionalProperties?.Keys);
+        if (protectedOverrides.Count > 0)
+        {
+            _logger.LogWarning(
+                "Rejected hosted-site edit runtime authority override. userId={UserId} siteId={SiteId} fields={Fields}",
+                userId,
+                siteId,
+                string.Join(',', protectedOverrides));
+            return BadRequest(ApiResponse<object>.Fail(
+                DesignArtifactRequestAuthorityGuard.ErrorCode,
+                "运行时模型、网关地址和审计归属由 MAP 统一配置，请移除覆盖字段后重试"));
+        }
         var instruction = (request.Instruction ?? string.Empty).Trim();
         if (instruction.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请描述想修改什么"));
@@ -447,6 +461,9 @@ public sealed class CreateHostedSiteEditRunRequest
     public string? Instruction { get; set; }
     public string? Runtime { get; set; }
     public List<HostedSiteKnowledgeReference>? KnowledgeReferences { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 public sealed class HostedSiteKnowledgeReference
