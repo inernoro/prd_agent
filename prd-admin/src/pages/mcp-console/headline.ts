@@ -18,7 +18,8 @@ export interface Headline {
   /** 判断句：一句话说清「现在什么情况」，每句都挂着真实数字 */
   verdict: string;
   /** 支撑句：为什么是这个判断、下一步该看哪 */
-  detail: string;
+  /** 判断句下面那行。只有真有话要说（下一步、原因、数字）时才有；没有就不占位置 */
+  detail: string | null;
 }
 
 /**
@@ -88,10 +89,12 @@ export function buildHeadline({ clients, today, recentCalls, hasHistory }: Headl
     const used = active.filter((c) => c.lastUsedAt).length;
     return {
       verdict: `${active.length} 台客户端接着，今天一次都还没调过。`,
+      // 从来没用过：给一句能照着做的下一步。用过、只是今天没动：判断句已经说完了，
+      // 再补一句安抚（「不是坏了」）没有信息量，真机上看着就是一段占地方的字。
       detail:
         used === 0
           ? '这几台从来没用过 —— 粘完配置记得重启客户端，再跟它说一句「把这周周报做成一页网页发出来」。'
-          : '不是坏了，就是今天还没使唤它。要试一下的话，跟客户端说一句需要生图或写文档的话就行。',
+          : null,
     };
   }
 

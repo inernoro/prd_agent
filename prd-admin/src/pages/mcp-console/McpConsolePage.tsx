@@ -279,9 +279,11 @@ export default function McpConsolePage() {
           <div className="text-[14px] font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>
             {headline.verdict}
           </div>
-          <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            {headline.detail}
-          </div>
+          {headline.detail && (
+            <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              {headline.detail}
+            </div>
+          )}
         </div>
         {/* 这里**不再**放「今天出图 X / Y」这种合计条。
             用量的分子（服务端权威合计，含当天被撤销的密钥）与额度的分母（只有还在的密钥才有额度）
@@ -318,7 +320,7 @@ export default function McpConsolePage() {
                 style={{ color: 'var(--text-muted)' }}
                 title="额度与「今天」的计数都按 UTC 自然日重置；UTC+8 是每天早上 8 点归零"
               >
-                一台一把钥匙，断哪台都不影响别的 · 「今天」按 UTC 自然日算
+                「今天」按 UTC 自然日算
               </span>
             </div>
 
