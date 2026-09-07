@@ -177,6 +177,12 @@ def load_manifest(path):
         ws = item.get("warnings") or []
         if ws:  # harness 在截图前后做就绪校验，把问题写进 warnings；这里提升为拒发硬条件
             errs.append(f"截图未就绪/有问题：{name} -> {' | '.join(ws)}")
+        # 阅读用刊物不需要 2x 像素比对精度：单张超过 1.5MB 多半是 deviceScaleFactor=2 的
+        # 2880x1800 原图，四张就是 6MB 一篇。只告警不拒发——报告可读性优先于文件体积，
+        # 但要让写 driver 的人看见（日报取证用 1x，见 SKILL.md Phase 4.5）
+        if os.path.isfile(p) and os.path.getsize(p) > 1_500_000:
+            print(f"  [告警] 截图 {name} 体积 {os.path.getsize(p) / 1e6:.1f}MB——阅读用刊物取证请用 "
+                  f"deviceScaleFactor=1（1440x900 约 300KB），2x 只给验收档案做像素比对")
     if errs:
         raise RuntimeError("截图清单校验未通过（Phase 4.5 要求每张图就绪且说明验证点）：\n  - " + "\n  - ".join(errs))
     return m
@@ -456,6 +462,89 @@ def img_embed(url_or_path, caption, is_html):
     return f"![{caption}]({url_or_path})"
 
 
+def assert_placeholder_standalone(content):
+    """发布前硬闸：{{IMG:}} 占位必须是独立节点，不许塞进任何标签的属性里。
+
+    占位会被 img_embed 展开成整段 <figure><img><figcaption></figure>。写成
+    <img src="{{IMG:x}}" alt="..."> 的话，整段 figure 会被塞进 src=""，浏览器把
+    嵌套的引号当作属性结束，剩下的 alt/figcaption 原样漏到页面上（2026-09-07 日报
+    首次发布实测）。判据：占位前最近的一个 '<' 若比最近的 '>' 更靠后，就是在标签内部。
+    """
+    bad = []
+    for m in re.finditer(r"\{\{IMG:[^}]+\}\}", content):
+        head = content[:m.start()]
+        if head.rfind("<") > head.rfind(">"):
+            bad.append(m.group(0))
+    if bad:
+        raise RuntimeError(
+            "占位被写进了标签属性里：" + ", ".join(sorted(set(bad))) +
+            "。{{IMG:<name>}} 会展开成整段 <figure>，只能独立成行放在正文里，"
+            "不能写成 <img src=\"{{IMG:...}}\">；图说来自 manifest 的 caption。")
+
+
+# 展开物是裸 <figure><img>，不带 class，能出现在正文任何位置。它的尺寸契约必须挂在
+# 无作用域的 figure img 规则上，而不是挂在某个作者可用可不用的容器（如 .story）上——
+# 否则放在容器外的证据图按原始物理像素平铺（2x 采集常见 2880x1800），撑破 960px 版心。
+# 见 .claude/rules/report-design-system.md §1.6 / predicate-and-wiring-discipline.md 形状 9。
+_FIGURE_IMG_SELECTORS = {"figure img", "figure>img"}
+
+
+def _top_level_css_rules(css):
+    """把 <style> 原文切成顶层规则 [(selector, decls)]；@media 等条件块内部的规则
+    一律跳过——它们只在某个条件下生效，不能当作「无条件成立」的证据（形状 8）。"""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    rules, depth, buf, sel = [], 0, [], ""
+    for ch in css:
+        if ch == "{":
+            if depth == 0:
+                sel = "".join(buf).strip()
+                buf = []
+            else:
+                buf.append(ch)
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                if not sel.startswith("@"):
+                    rules.append((sel, "".join(buf)))
+                buf, sel = [], ""
+            else:
+                buf.append(ch)
+        else:
+            buf.append(ch)
+    return rules
+
+
+def check_evidence_figure_css(body):
+    """证据图尺寸契约（发布闸 + CI 守卫共用的唯一判定源）。返回问题清单（空 = 通过）。
+
+    要求：存在无作用域的 `figure img`（或 `figure>img`）顶层规则，且这些规则里
+    **胜出**的 width 声明是 100%（同特异性后写的赢，取最后一条，不取第一条——形状 6）。
+    """
+    sc = _ReportScanner()
+    sc.feed(body)
+    sc.close()
+    css = "\n".join(sc.css_chunks)
+    width, hits = None, 0
+    for sel, decls in _top_level_css_rules(css):
+        parts = {re.sub(r"\s*>\s*", ">", re.sub(r"\s+", " ", p.strip())) for p in sel.split(",")}
+        if not (parts & _FIGURE_IMG_SELECTORS):
+            continue
+        hits += 1
+        for d in decls.split(";"):
+            if ":" not in d:
+                continue
+            k, v = d.split(":", 1)
+            if k.strip().lower() == "width":
+                width = v.strip().lower()
+    if hits == 0:
+        return ["模板缺无作用域的 `figure img { width:100% }` 规则——{{IMG:}} 展开成裸 <figure><img>，"
+                "放在 .story 之外的证据图会按截图原始像素平铺撑破页面（report-design-system.md §1.6）"]
+    if width != "100%":
+        return [f"`figure img` 胜出的 width 是 {width!r}，必须是 100%（证据图按版心宽度自适应）"]
+    return []
+
+
 def assert_no_placeholder(content):
     """发布前硬闸：正文残留 {{IMG:}}/{{EVIDENCE}} 占位 → 拒发，避免读者看到坏占位。"""
     left = PLACEHOLDER_RE.findall(content)
@@ -535,8 +624,13 @@ def main():
         # 不剥会误伤模板；后端正文守卫同为子串扫描，注释不剥也会被后端误拒（Codex P2）
         body = strip_html_comments(body)
         errs = validate_html_report(body)
+        # 证据图契约只在真要嵌图时才是硬闸：无 manifest 的期次（新增方向为 0、只有 SVG 版画）
+        # 不因此拒发；有图就必须有无作用域的 figure img 尺寸规则（report-design-system.md §1.6）
+        if a.manifest:
+            errs.extend(check_evidence_figure_css(body))
         if errs:
             raise RuntimeError("HTML 报纸版校验未通过：\n  - " + "\n  - ".join(errs))
+        assert_placeholder_standalone(body)
     else:
         body = open(a.report_md, encoding="utf-8").read().lstrip()
         if not body.startswith("#"):
