@@ -15,6 +15,12 @@ public class InfraAgentMessage
 
     public string Status { get; set; } = InfraAgentMessageStatuses.Completed;
 
+    /// <summary>消息实际发送或产生时绑定的 CDS 会话代；本地消息与尚未确认的出站消息为空。</summary>
+    public string? CdsSourceSessionId { get; set; }
+
+    /// <summary>助手回复对应的用户消息 ID，用于跨 CDS 重建保持因果顺序。</summary>
+    public string? ReplyToMessageId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 

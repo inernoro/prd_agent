@@ -2071,6 +2071,8 @@ export interface CdsState {
    * 落一条摘要(收发预览各截 2000 字),ring buffer 500 条;全量事件仍在内存随重启丢失。
    */
   agentRequestHistory?: AgentRequestRecord[];
+  /** Agent session idempotency reservations and restart-recovery snapshots, keyed by session id. */
+  agentSessionReservations?: Record<string, AgentSessionReservationRecord>;
   /**
    * Daemon 启动完成时间戳(ISO),由 index.ts 的 server.listen() 回调写入。
    * 2026-05-07 用户反馈"在左下角卡了 1 小时"导致的 timing 体系审视
@@ -2681,6 +2683,8 @@ export interface ActiveSelfUpdate {
 export interface AgentRequestRecord {
   sessionId: string;
   projectId: string;
+  /** Owner scope for observability. Missing legacy rows are visible only to explicit admins. */
+  principalKey?: string;
   title: string | null;
   clientUser: string | null;
   clientApp: string | null;
@@ -2693,6 +2697,21 @@ export interface AgentRequestRecord {
   eventCount: number;
   requestPreview: string | null;
   responsePreview: string | null;
+}
+
+/**
+ * Persisted Agent session identity and public snapshot.
+ * Secrets, message bodies, logs and event payloads are deliberately excluded.
+ */
+export interface AgentSessionReservationRecord {
+  id: string;
+  routerInstanceId: string;
+  projectId: string;
+  principalKey: string;
+  clientRequestId: string;
+  item: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SelfUpdateRecord {

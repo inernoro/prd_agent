@@ -1,4 +1,5 @@
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 using Xunit;
 
@@ -84,6 +85,176 @@ public sealed class InfraAgentSessionCreateRecoveryTests
     }
 
     [Fact]
+    public async Task AcceptedCreateReplayIsPendingAndNeverPersistsProvisionalIdentity()
+    {
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.Accepted)
+        {
+            Content = new StringContent("""
+                {
+                  "item": {
+                    "id": "cds-agent-reservation",
+                    "clientRequestId": "start-stable",
+                    "status": "creating"
+                  }
+                }
+                """)
+        };
+        var persistCalls = 0;
+
+        var error = await Assert.ThrowsAnyAsync<InfraAgentSessionException>(() =>
+            InfraAgentSessionService.ProcessCdsCreateResponseAsync(
+                response,
+                (_, _) =>
+                {
+                    persistCalls++;
+                    return Task.CompletedTask;
+                },
+                TimeSpan.FromSeconds(1)));
+
+        Assert.Equal(0, persistCalls);
+        Assert.Equal(InfraAgentSessionErrorCodes.CdsRequestFailed, error.ErrorCode);
+        Assert.Equal(503, error.HttpStatus);
+        Assert.Contains("仍在创建中", error.Message);
+        Assert.Contains("同一请求标识", error.Message);
+    }
+
+    [Theory]
+    [InlineData("creating", "Pending")]
+    [InlineData("queued", "Pending")]
+    [InlineData("running", "Ready")]
+    [InlineData("idle", "Ready")]
+    [InlineData("failed", "Failed")]
+    [InlineData("stopped", "Invalid")]
+    [InlineData(null, "Invalid")]
+    public void CreateReplayOnlyTreatsDispatchableOrFailedStatesAsTerminal(
+        string? status,
+        string expected)
+    {
+        Assert.Equal(
+            expected,
+            InfraAgentSessionService.ClassifyCdsCreateReplayStatus(status).ToString());
+    }
+
+    [Fact]
+    public void StableAttemptBypassesFreshLeaseSoStartCanRecoverAcceptedReplay()
+    {
+        var now = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+
+        Assert.False(InfraAgentSessionService.ShouldWaitForExistingStartLease(
+            InfraAgentSessionStatuses.Creating,
+            cdsSessionId: null,
+            startAttemptId: "start-stable",
+            updatedAt: now.AddSeconds(-1),
+            now));
+        Assert.True(InfraAgentSessionService.ShouldWaitForExistingStartLease(
+            InfraAgentSessionStatuses.Creating,
+            cdsSessionId: null,
+            startAttemptId: null,
+            updatedAt: now.AddSeconds(-1),
+            now));
+    }
+
+    [Theory]
+    [InlineData(InfraAgentSessionStatuses.Failed, "cds-residual", 409)]
+    [InlineData(InfraAgentSessionStatuses.Stopped, "cds-stopped", 409)]
+    [InlineData(InfraAgentSessionStatuses.Stopping, "cds-stopping", 409)]
+    [InlineData(InfraAgentSessionStatuses.Creating, null, 503)]
+    [InlineData(InfraAgentSessionStatuses.Creating, "cds-provisional", 503)]
+    [InlineData(InfraAgentSessionStatuses.Running, null, 409)]
+    public void NonDispatchableSessionCannotCreateCompletedUserMessage(
+        string status,
+        string? cdsSessionId,
+        int expectedHttpStatus)
+    {
+        var now = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+
+        var error = Assert.ThrowsAny<InfraAgentSessionException>(() =>
+            InfraAgentSessionService.PrepareOutboundUserMessage(
+                status,
+                cdsSessionId,
+                "map-session",
+                "never completed",
+                now));
+
+        Assert.Equal(expectedHttpStatus, error.HttpStatus);
+    }
+
+    [Theory]
+    [InlineData(InfraAgentSessionStatuses.Running)]
+    [InlineData(InfraAgentSessionStatuses.Idle)]
+    public void DispatchableUserMessageStartsNonTerminalUntilCdsAcknowledges(string status)
+    {
+        var now = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+
+        var message = InfraAgentSessionService.PrepareOutboundUserMessage(
+            status,
+            "cds-ready",
+            "map-session",
+            "send me",
+            now);
+
+        Assert.Equal(InfraAgentMessageStatuses.Streaming, message.Status);
+        Assert.NotEqual(InfraAgentMessageStatuses.Completed, message.Status);
+        Assert.Equal("map-session", message.SessionId);
+        Assert.Equal("send me", message.Content);
+    }
+
+    [Theory]
+    [InlineData(InfraAgentSessionStatuses.Creating, "cds-creating", true)]
+    [InlineData(InfraAgentSessionStatuses.Running, "cds-running", true)]
+    [InlineData(InfraAgentSessionStatuses.Idle, "cds-idle", true)]
+    [InlineData(InfraAgentSessionStatuses.Running, null, false)]
+    [InlineData(InfraAgentSessionStatuses.Failed, "cds-residual", false)]
+    [InlineData(InfraAgentSessionStatuses.Stopped, "cds-stopped", false)]
+    [InlineData(InfraAgentSessionStatuses.Stopping, "cds-stopping", false)]
+    public void PersistedEventPollingRecoversOnlyActiveRemoteSessions(
+        string status,
+        string? cdsSessionId,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            InfraAgentSessionService.ShouldRecoverPersistedCdsEvents(status, cdsSessionId));
+    }
+
+    [Fact]
+    public async Task EnqueueFailureAfterRemoteAcceptanceIsBestEffortAndUsesDetachedToken()
+    {
+        CancellationToken observedToken = new(canceled: true);
+        Exception? logged = null;
+
+        var enqueued = await InfraAgentSessionService.RunBestEffortRuntimeEnqueueAsync(
+            token =>
+            {
+                observedToken = token;
+                throw new InvalidOperationException("queue unavailable");
+            },
+            ex => logged = ex);
+
+        Assert.False(enqueued);
+        Assert.Equal(CancellationToken.None, observedToken);
+        Assert.IsType<InvalidOperationException>(logged);
+    }
+
+    [Fact]
+    public async Task SuccessfulBestEffortEnqueueRemainsAnAccelerationOnly()
+    {
+        var calls = 0;
+
+        var enqueued = await InfraAgentSessionService.RunBestEffortRuntimeEnqueueAsync(
+            token =>
+            {
+                Assert.Equal(CancellationToken.None, token);
+                calls++;
+                return ValueTask.CompletedTask;
+            },
+            _ => throw new Xunit.Sdk.XunitException("failure logger should not run"));
+
+        Assert.True(enqueued);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
     public void CdsErrorMessageRedactsSecretsUrlsAndCapsLength()
     {
         var message = "token=plain-secret Authorization: Bearer bearer-secret "
@@ -119,6 +290,12 @@ public sealed class InfraAgentSessionCreateRecoveryTests
         Assert.DoesNotContain("structured-secret", structured);
         Assert.DoesNotContain("raw-debug-secret", structured);
         Assert.Contains("token=***", structured);
+
+        var semantic = InfraAgentSessionService.BuildCdsRequestFailureMessage(
+            400,
+            """{"error":{"code":"invalid_request","message":"invalid payload"}}""");
+        Assert.Contains("HTTP 400", semantic);
+        Assert.Contains("[invalid_request]", semantic);
     }
 
     [Fact]
@@ -143,5 +320,94 @@ public sealed class InfraAgentSessionCreateRecoveryTests
         Assert.DoesNotContain("inline-secret", safe);
         Assert.Contains("https://cds.test/fail", safe);
         Assert.Contains("\"apiKey\":\"***\"", safe);
+    }
+
+    [Theory]
+    [InlineData(200, "{}", "Success")]
+    [InlineData(404, "{\"error\":{\"code\":\"session_not_found\"}}", "AlreadyStopped")]
+    [InlineData(400, "upstream rejected before routing", "Failure")]
+    [InlineData(400, "{\"error\":{\"code\":\"workspace_cleanup_failed\"}}", "Retry")]
+    [InlineData(400, "{\"error\":{\"code\":\"invalid_request\"}}", "Failure")]
+    [InlineData(502, "{\"error\":{\"code\":\"workspace_cleanup_failed\"}}", "Retry")]
+    [InlineData(502, "{\"error\":{\"code\":\"unauthorized\"}}", "Failure")]
+    [InlineData(503, "{}", "Retry")]
+    [InlineData(401, "{\"error\":{\"code\":\"unauthorized\"}}", "Failure")]
+    [InlineData(401, "{\"error\":{\"code\":\"workspace_cleanup_failed\"}}", "Failure")]
+    [InlineData(403, "{\"error\":{\"code\":\"workspace_cleanup_failed\"}}", "Failure")]
+    public void CdsStopResponseClassificationIsBoundedAndFailClosed(
+        int statusCode,
+        string body,
+        string expected)
+    {
+        Assert.Equal(expected, InfraAgentSessionService.ClassifyCdsStopResponse(statusCode, body).ToString());
+    }
+
+    [Theory]
+    [InlineData(InfraAgentSessionStatuses.Creating, true)]
+    [InlineData(InfraAgentSessionStatuses.Running, true)]
+    [InlineData(InfraAgentSessionStatuses.Idle, true)]
+    [InlineData(InfraAgentSessionStatuses.Stopping, false)]
+    [InlineData(InfraAgentSessionStatuses.Stopped, false)]
+    [InlineData(InfraAgentSessionStatuses.Failed, false)]
+    public void LateRuntimeProjectionCannotRegressTerminalStopState(string currentStatus, bool expected)
+    {
+        Assert.Equal(expected, InfraAgentSessionService.CanApplyCdsRuntimeStatus(currentStatus));
+    }
+
+    [Theory]
+    [InlineData(InfraAgentSessionStatuses.Stopped, -600, false)]
+    [InlineData(InfraAgentSessionStatuses.Stopping, 30, false)]
+    [InlineData(InfraAgentSessionStatuses.Stopping, -1, true)]
+    [InlineData(InfraAgentSessionStatuses.Failed, 120, true)]
+    [InlineData(InfraAgentSessionStatuses.Idle, 120, true)]
+    public void StopLeaseCanBeReclaimedOnlyAfterDedicatedExpiry(string status, int expiryOffsetSeconds, bool expected)
+    {
+        var now = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+
+        Assert.Equal(
+            expected,
+            InfraAgentSessionService.CanAcquireCdsStopLease(status, now.AddSeconds(expiryOffsetSeconds), now));
+    }
+
+    [Fact]
+    public void LegacyStoppingRowsWithoutDedicatedLeaseAreRecoverable()
+    {
+        var now = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+
+        Assert.True(InfraAgentSessionService.CanAcquireCdsStopLease(
+            InfraAgentSessionStatuses.Stopping,
+            leaseExpiresAt: null,
+            now));
+    }
+
+    [Theory]
+    [InlineData(InfraAgentSessionStatuses.Stopped, null, null, 0, false, true)]
+    [InlineData(InfraAgentSessionStatuses.Stopped, null, "start-old", 0, true, false)]
+    [InlineData(InfraAgentSessionStatuses.Stopped, null, null, 1, true, false)]
+    [InlineData(InfraAgentSessionStatuses.Failed, "cds-old", null, 0, true, false)]
+    [InlineData(InfraAgentSessionStatuses.Failed, null, null, 1, true, false)]
+    [InlineData(InfraAgentSessionStatuses.Idle, null, null, 1, true, false)]
+    [InlineData(InfraAgentSessionStatuses.Running, "cds-live", null, 1, false, false)]
+    public void PendingCleanupLedgerBlocksRestartAndCleanStoppedFastPath(
+        string status,
+        string? cdsSessionId,
+        string? startAttemptId,
+        int pendingCount,
+        bool cleanupBeforeStart,
+        bool cleanStopped)
+    {
+        Assert.Equal(
+            cleanupBeforeStart,
+            InfraAgentSessionService.RequiresCdsCleanupBeforeStart(
+                status,
+                cdsSessionId,
+                startAttemptId,
+                pendingCount));
+        Assert.Equal(
+            cleanStopped,
+            InfraAgentSessionService.CanReturnStoppedWithoutCleanup(
+                status,
+                startAttemptId,
+                pendingCount));
     }
 }

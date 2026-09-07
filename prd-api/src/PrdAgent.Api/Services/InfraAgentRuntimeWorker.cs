@@ -30,7 +30,12 @@ public sealed class InfraAgentRuntimeWorker : BackgroundService
             {
                 using var scope = _scopeFactory.CreateScope();
                 var sessions = scope.ServiceProvider.GetRequiredService<IInfraAgentSessionService>();
-                await sessions.RunRuntimeJobAsync(job.UserId, job.SessionId, job.Content, stoppingToken);
+                await sessions.RunRuntimeJobAsync(
+                    job.UserId,
+                    job.SessionId,
+                    job.MessageId,
+                    job.Content,
+                    stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

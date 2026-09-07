@@ -3999,6 +3999,44 @@ export class StateService {
     return this.state.agentRequestHistory || [];
   }
 
+  /** Agent session idempotency reservations and public recovery snapshots. */
+  static readonly AGENT_SESSION_RESERVATIONS_MAX = 500;
+
+  upsertAgentSessionReservation(record: import('../types.js').AgentSessionReservationRecord): void {
+    const previous = this.state.agentSessionReservations;
+    const reservations = { ...(previous || {}) };
+    reservations[record.id] = record;
+    const overflow = Object.values(reservations)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(StateService.AGENT_SESSION_RESERVATIONS_MAX);
+    for (const stale of overflow) delete reservations[stale.id];
+    this.state.agentSessionReservations = reservations;
+    try {
+      this.save(HINT_GLOBAL);
+    } catch (error) {
+      this.state.agentSessionReservations = previous;
+      throw error;
+    }
+  }
+
+  removeAgentSessionReservation(id: string): void {
+    if (!this.state.agentSessionReservations?.[id]) return;
+    const previous = this.state.agentSessionReservations;
+    const reservations = { ...previous };
+    delete reservations[id];
+    this.state.agentSessionReservations = reservations;
+    try {
+      this.save(HINT_GLOBAL);
+    } catch (error) {
+      this.state.agentSessionReservations = previous;
+      throw error;
+    }
+  }
+
+  listAgentSessionReservations(): import('../types.js').AgentSessionReservationRecord[] {
+    return Object.values(this.state.agentSessionReservations || {});
+  }
+
   recordSelfUpdate(record: import('../types.js').SelfUpdateRecord): void {
     // 2026-05-07 用户反馈"以前的更新日志去哪了":在写历史前,把当前 active 的
     // logTail 转储到 record.steps,历史抽屉就能展开看完整步骤序列。

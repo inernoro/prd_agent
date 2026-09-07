@@ -80,4 +80,46 @@ public class CdsEventImportDedupTests
         Assert.Null(decision.CdsSeq);
         Assert.Equal(5, decision.Watermark);
     }
+
+    [Fact]
+    public void SameRemoteEventBuildsSameDatabaseClaimAcrossImporters()
+    {
+        var sourceKeyA = InfraAgentSessionService.BuildCdsEventSourceDedupKey(
+            "cds-session-a", 17, "done", "{\"finalText\":\"ok\"}");
+        var sourceKeyB = InfraAgentSessionService.BuildCdsEventSourceDedupKey(
+            "cds-session-a", 17, "done", "{\"finalText\":\"different retry body\"}");
+
+        Assert.Equal(sourceKeyA, sourceKeyB);
+        Assert.Equal(
+            InfraAgentSessionService.BuildCdsEventStorageId("map-session", sourceKeyA),
+            InfraAgentSessionService.BuildCdsEventStorageId("map-session", sourceKeyB));
+    }
+
+    [Fact]
+    public void RemoteSessionGenerationSeparatesResetSequence()
+    {
+        var generationA = InfraAgentSessionService.BuildCdsEventSourceDedupKey(
+            "cds-session-a", 1, "text_delta", "{\"text\":\"A\"}");
+        var generationB = InfraAgentSessionService.BuildCdsEventSourceDedupKey(
+            "cds-session-b", 1, "text_delta", "{\"text\":\"A\"}");
+
+        Assert.NotEqual(generationA, generationB);
+        Assert.NotEqual(
+            InfraAgentSessionService.BuildCdsEventStorageId("map-session", generationA),
+            InfraAgentSessionService.BuildCdsEventStorageId("map-session", generationB));
+    }
+
+    [Fact]
+    public void LegacyEventWithoutSequenceStillHasStableContentClaim()
+    {
+        var first = InfraAgentSessionService.BuildCdsEventSourceDedupKey(
+            "cds-session-a", null, "log", "{\"message\":\"same\"}");
+        var replay = InfraAgentSessionService.BuildCdsEventSourceDedupKey(
+            "cds-session-a", null, "log", "{\"message\":\"same\"}");
+        var different = InfraAgentSessionService.BuildCdsEventSourceDedupKey(
+            "cds-session-a", null, "log", "{\"message\":\"different\"}");
+
+        Assert.Equal(first, replay);
+        Assert.NotEqual(first, different);
+    }
 }

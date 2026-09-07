@@ -955,7 +955,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                         <p className="mt-1 text-[10px] text-token-muted">引用了 {item.knowledgeEntryIds.length} 篇知识</p>
                       )}
                       <details className="mt-1 text-[10px] text-token-muted">
-                        <summary className="min-h-6 cursor-pointer py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">技术信息</summary>
+                        <summary className="min-h-11 cursor-pointer py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">技术信息</summary>
                         <p>执行来源：{sourceAction} · {sourceVersion}</p>
                         <p className="mt-0.5 break-all">版本标识：{item.id}</p>
                       </details>

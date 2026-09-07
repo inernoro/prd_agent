@@ -101,7 +101,17 @@ interface PartialCleanupHandle {
   onCleanupSettled: (error?: unknown) => void;
 }
 
-type ManagedRuntimeHandle = RuntimeHandle | PartialCleanupHandle;
+interface CreatingRuntimeHandle {
+  kind: 'creating';
+  sessionId: string;
+  cancelRequested: boolean;
+  abortController: AbortController;
+  settled: Promise<void>;
+  resolveSettled: () => void;
+  onCleanupSettled: (error?: unknown) => void;
+}
+
+type ManagedRuntimeHandle = RuntimeHandle | PartialCleanupHandle | CreatingRuntimeHandle;
 
 export interface AgentWorkspaceSessionRuntimeOptions {
   rootDir?: string;
@@ -178,7 +188,12 @@ const SESSION_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const MAX_PACKAGE_OVERHEAD_BYTES = 2 * 1024 * 1024;
 const MAX_COMMIT_RESPONSE_BYTES = 1024 * 1024;
 const MAX_RUNTIME_DIAGNOSTIC_BYTES = 2 * 1024;
-const MAX_QUALITY_REPAIR_ATTEMPTS = 2;
+// A real design run commonly exposes a different deterministic violation after each
+// repair (for example: unsupported facts, then broken fragments, then inert buttons).
+// Keep the loop bounded by both this cap and the MAP-owned 72-call budget, while
+// allowing OpenDesign enough passes to converge instead of failing a valid task after
+// only two repairs.
+const MAX_QUALITY_REPAIR_ATTEMPTS = 4;
 const MAX_OUTPUT_FILE_COUNT = 100;
 const MAX_WORKSPACE_FILE_COUNT = 1024;
 const MAX_WORKSPACE_NODE_COUNT = 2048;
@@ -882,6 +897,22 @@ export class AgentWorkspaceSessionRuntime {
     return preparation;
   }
 
+  /**
+   * Await the same startup recovery barrier and surface an incomplete orphan cleanup.
+   * bootstrap() intentionally keeps capability probing non-throwing; control-plane
+   * reconciliation needs the stronger contract before it can close persisted ledgers.
+   */
+  async bootstrapAndVerify(): Promise<void> {
+    await this.bootstrap();
+    if (this.bootstrapError) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_orphan_cleanup_failed',
+        this.bootstrapError,
+        true,
+      );
+    }
+  }
+
   async recoverOrphans(): Promise<void> {
     if (this.handles.size > 0) {
       throw new AgentWorkspaceRuntimeError(
@@ -1303,35 +1334,67 @@ export class AgentWorkspaceSessionRuntime {
         'OpenDesign auto-cleanup must leave at least two minutes for result validation and commit',
       );
     }
-    const capability = await this.capability(true);
-    if (!capability.available || !capability.resourcePolicyEnforcedPerSession) {
-      throw new AgentWorkspaceRuntimeError('workspace_runtime_unavailable', capability.reason || 'workspace runtime unavailable', true);
-    }
-    const transfer = normalizeWorkspaceTransfer(rawTransfer);
-    fs.mkdirSync(this.instanceRootDir, { recursive: true, mode: 0o700 });
-    const hostRoot = fs.mkdtempSync(path.join(this.instanceRootDir, `${sessionId}-`));
-    const workspaceDir = path.join(hostRoot, 'workspace');
-    const outputDir = path.join(hostRoot, 'output');
-    const dataDir = path.join(hostRoot, 'data');
-    const suffix = sha256(sessionId).slice(0, 16);
-    const containerName = `cds-od-${this.instanceNameScope}-${suffix}`;
-    const storageKeeperName = `${containerName}-storage`;
-    const networkName = `cds-od-net-${this.instanceNameScope}-${suffix}`;
-    const workspaceVolumeName = `cds-od-ws-${this.instanceNameScope}-${suffix}`;
-    const dataVolumeName = `cds-od-data-${this.instanceNameScope}-${suffix}`;
-    let containerCreated = false;
-    let storageKeeperCreated = false;
-    let networkCreated = false;
-    const createdVolumes: string[] = [];
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => { resolveSettled = resolve; });
+    const creatingHandle: CreatingRuntimeHandle = {
+      kind: 'creating',
+      sessionId,
+      cancelRequested: false,
+      abortController: new AbortController(),
+      settled,
+      resolveSettled,
+      onCleanupSettled: onExpired,
+    };
+    // Register synchronously, before the capability probe or any filesystem / Docker side effect.
+    // stop() can now mark creation cancelled and wait until the create path has fully cleaned up.
+    this.handles.set(sessionId, creatingHandle);
     try {
+      const capability = await this.capability(true);
+      if (!capability.available || !capability.resourcePolicyEnforcedPerSession) {
+        throw new AgentWorkspaceRuntimeError('workspace_runtime_unavailable', capability.reason || 'workspace runtime unavailable', true);
+      }
+      if (creatingHandle.cancelRequested) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_creation_cancelled',
+          'OpenDesign workspace creation was cancelled before allocation',
+          false,
+        );
+      }
+      const transfer = normalizeWorkspaceTransfer(rawTransfer);
+      fs.mkdirSync(this.instanceRootDir, { recursive: true, mode: 0o700 });
+      const hostRoot = fs.mkdtempSync(path.join(this.instanceRootDir, `${sessionId}-`));
+      const workspaceDir = path.join(hostRoot, 'workspace');
+      const outputDir = path.join(hostRoot, 'output');
+      const dataDir = path.join(hostRoot, 'data');
+      const suffix = sha256(sessionId).slice(0, 16);
+      const containerName = `cds-od-${this.instanceNameScope}-${suffix}`;
+      const storageKeeperName = `${containerName}-storage`;
+      const networkName = `cds-od-net-${this.instanceNameScope}-${suffix}`;
+      const workspaceVolumeName = `cds-od-ws-${this.instanceNameScope}-${suffix}`;
+      const dataVolumeName = `cds-od-data-${this.instanceNameScope}-${suffix}`;
+      let containerCreated = false;
+      let storageKeeperCreated = false;
+      let networkCreated = false;
+      const createdVolumes: string[] = [];
+      try {
       fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o755 });
       fs.mkdirSync(outputDir, { recursive: true, mode: 0o750 });
       fs.mkdirSync(dataDir, { recursive: true, mode: 0o750 });
       onStage('workspace_downloading');
       const response = await this.fetchImpl(transfer.inputPackageUrl, {
         headers: { Authorization: `Bearer ${transfer.transferToken}`, Accept: 'application/json' },
-        signal: AbortSignal.timeout(Math.min(policy.timeoutSeconds * 1000, 60_000)),
+        signal: AbortSignal.any([
+          creatingHandle.abortController.signal,
+          AbortSignal.timeout(Math.min(policy.timeoutSeconds * 1000, 60_000)),
+        ]),
       });
+      if (creatingHandle.cancelRequested) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_creation_cancelled',
+          'OpenDesign workspace creation was cancelled during input transfer',
+          false,
+        );
+      }
       if (!response.ok) {
         throw new AgentWorkspaceRuntimeError(
           'workspace_download_failed',
@@ -1584,6 +1647,13 @@ export class AgentWorkspaceSessionRuntime {
       }
       const daemonBaseUrl = `http://${containerIp}:${this.daemonPort}`;
       await this.waitForHealth(daemonBaseUrl, daemonApiToken, policy.timeoutSeconds);
+      if (creatingHandle.cancelRequested) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_creation_cancelled',
+          'OpenDesign workspace creation was cancelled before readiness',
+          false,
+        );
+      }
       const ttlTimer = setTimeout(() => {
         void this.stop(sessionId, 'ttl_expired')
           .then(() => onExpired())
@@ -1620,7 +1690,7 @@ export class AgentWorkspaceSessionRuntime {
         daemonBaseUrl,
         inputFileCount: files.length,
       };
-    } catch (error) {
+      } catch (error) {
       const cleanupErrors: string[] = [];
       const remainingContainerNames = new Set([
         ...(containerCreated ? [containerName] : []),
@@ -1679,6 +1749,12 @@ export class AgentWorkspaceSessionRuntime {
         );
       }
       throw error;
+      }
+    } finally {
+      if (this.handles.get(sessionId) === creatingHandle) {
+        this.handles.delete(sessionId);
+      }
+      creatingHandle.resolveSettled();
     }
   }
 
@@ -1693,6 +1769,13 @@ export class AgentWorkspaceSessionRuntime {
     const handle = this.handles.get(sessionId);
     if (!handle) {
       throw new AgentWorkspaceRuntimeError('workspace_session_not_found', 'OpenDesign workspace session does not exist');
+    }
+    if (handle.kind === 'creating') {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_session_creating',
+        'OpenDesign workspace session is still being created',
+        true,
+      );
     }
     if (handle.kind === 'partial-cleanup') {
       throw new AgentWorkspaceRuntimeError(
@@ -1835,11 +1918,13 @@ export class AgentWorkspaceSessionRuntime {
       let collectedFiles: WorkspacePackageFile[] = [];
       let indexFile: WorkspacePackageFile | undefined;
       let hardenedHtml = '';
-      const attemptedQualityViolations = new Set<string>();
       for (let qualityRepairAttempt = 0; ; qualityRepairAttempt += 1) {
         onStage('workspace_collecting');
-        await this.copyOutputsFromContainer(handle);
+        this.assertExecutionDeadline(executionDeadline);
+        await this.copyOutputsFromContainer(handle, executionDeadline);
+        this.assertExecutionDeadline(executionDeadline);
         collectedFiles = this.collectOutputs(handle);
+        this.assertExecutionDeadline(executionDeadline);
         indexFile = collectedFiles.find((file) => file.path === 'index.html');
         if (!indexFile) {
           throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed without index.html');
@@ -1877,12 +1962,6 @@ export class AgentWorkspaceSessionRuntime {
           }
           const repairReason = classifyQualityRepairReason(error);
           if (!repairReason) throw error;
-          const qualityViolationFingerprint = typeof error.details?.qualityViolationFingerprint === 'string'
-            ? error.details.qualityViolationFingerprint
-            : error.message;
-          const violationSignature = `${repairReason.code}\u0000${qualityViolationFingerprint}`;
-          if (attemptedQualityViolations.has(violationSignature)) throw error;
-          attemptedQualityViolations.add(violationSignature);
           const repair = await this.odJson(handle, '/api/runs', {
             method: 'POST',
             body: buildRunBody([
@@ -1947,7 +2026,12 @@ export class AgentWorkspaceSessionRuntime {
         files,
       };
       const serialized = JSON.stringify(commitBody);
+      this.assertExecutionDeadline(executionDeadline);
       onStage('workspace_committing', { fileCount: files.length });
+      const commitDeadline = Math.min(
+        executionDeadline,
+        Date.now() + Math.min(handle.policy.timeoutSeconds * 1000, 60_000),
+      );
       const commitResponse = await this.fetchImpl(handle.transfer.resultCommitUrl, {
         method: 'POST',
         headers: {
@@ -1956,11 +2040,10 @@ export class AgentWorkspaceSessionRuntime {
           Accept: 'application/json',
         },
         body: serialized,
-        signal: signal
-          ? AbortSignal.any([signal, AbortSignal.timeout(Math.min(handle.policy.timeoutSeconds * 1000, 60_000))])
-          : AbortSignal.timeout(Math.min(handle.policy.timeoutSeconds * 1000, 60_000)),
+        signal: this.signalForDeadline(commitDeadline, signal),
       });
       const commitBytes = await readResponseLimited(commitResponse, MAX_COMMIT_RESPONSE_BYTES);
+      this.assertExecutionDeadline(executionDeadline);
       let commit: Record<string, unknown> = {};
       try {
         commit = commitBytes.length ? JSON.parse(commitBytes.toString('utf8')) as Record<string, unknown> : {};
@@ -2062,6 +2145,19 @@ export class AgentWorkspaceSessionRuntime {
   private async stopOnce(sessionId: string, _reason: string): Promise<void> {
     const handle = this.handles.get(sessionId);
     if (!handle) return;
+    if (handle.kind === 'creating') {
+      handle.cancelRequested = true;
+      handle.abortController.abort();
+      await handle.settled;
+      const settledHandle = this.handles.get(sessionId);
+      if (!settledHandle) return;
+      if (settledHandle === handle) {
+        this.handles.delete(sessionId);
+        return;
+      }
+      await this.stopOnce(sessionId, _reason);
+      return;
+    }
     if (handle.kind === 'partial-cleanup') {
       const cleanupErrors: string[] = [];
       for (const containerName of [...handle.containerNames]) {
@@ -2336,14 +2432,16 @@ export class AgentWorkspaceSessionRuntime {
     handle.egressContainerName = undefined;
   }
 
-  private async copyOutputsFromContainer(handle: RuntimeHandle): Promise<void> {
-    await this.validateOutputsInContainer(handle);
+  private async copyOutputsFromContainer(handle: RuntimeHandle, executionDeadline: number): Promise<void> {
+    await this.validateOutputsInContainer(handle, executionDeadline);
+    this.assertExecutionDeadline(executionDeadline);
     fs.rmSync(handle.outputDir, { recursive: true, force: true });
     fs.mkdirSync(handle.outputDir, { recursive: true, mode: 0o700 });
     const copied = await this.shell.exec(
       `docker cp ${shellQuote(`${handle.containerName}:/workspace/.`)} ${shellQuote(handle.outputDir)}`,
-      { timeout: 90_000 },
+      { timeout: Math.min(90_000, this.remainingExecutionMs(executionDeadline)) },
     );
+    this.assertExecutionDeadline(executionDeadline);
     if (copied.exitCode !== 0) {
       throw new AgentWorkspaceRuntimeError(
         'workspace_copy_failed',
@@ -2353,7 +2451,7 @@ export class AgentWorkspaceSessionRuntime {
     }
   }
 
-  private async validateOutputsInContainer(handle: RuntimeHandle): Promise<void> {
+  private async validateOutputsInContainer(handle: RuntimeHandle, executionDeadline: number): Promise<void> {
     const config = Buffer.from(JSON.stringify({
       allowedOutputPaths: handle.transfer.allowedOutputPaths,
       inputPaths: handle.inputPaths,
@@ -2371,7 +2469,8 @@ export class AgentWorkspaceSessionRuntime {
       shellQuote(handle.containerName),
       'node -e',
       shellQuote(OUTPUT_PREFLIGHT_SCRIPT),
-    ].join(' '), { timeout: 30_000 });
+    ].join(' '), { timeout: Math.min(30_000, this.remainingExecutionMs(executionDeadline)) });
+    this.assertExecutionDeadline(executionDeadline);
     if (validation.exitCode === 0) return;
     const diagnostic = `${validation.stdout}\n${validation.stderr}`;
     if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:total_bytes')) {
@@ -2604,6 +2703,18 @@ export class AgentWorkspaceSessionRuntime {
   private signalForDeadline(deadline: number, signal?: AbortSignal): AbortSignal {
     const deadlineSignal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
     return signal ? AbortSignal.any([signal, deadlineSignal]) : deadlineSignal;
+  }
+
+  private remainingExecutionMs(deadline: number): number {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
+    }
+    return remaining;
+  }
+
+  private assertExecutionDeadline(deadline: number): void {
+    this.remainingExecutionMs(deadline);
   }
 
   private async cancelRun(handle: RuntimeHandle, runId: string): Promise<void> {

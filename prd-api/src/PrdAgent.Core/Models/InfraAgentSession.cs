@@ -40,6 +40,26 @@ public class InfraAgentSession
 
     public string? CurrentRuntimeRunId { get; set; }
 
+    /// <summary>当前已被 MAP 接纳但尚未投影终态的用户消息 ID；用于把 CDS 事件绑定到唯一一轮。</summary>
+    public string? ActiveMessageId { get; set; }
+
+    /// <summary>MAP 事件序号的数据库原子计数器；所有事件写入必须先从这里预留序号。</summary>
+    public long EventSeq { get; set; }
+
+    /// <summary>旧会话完成事件序号迁移后置为 true，避免从 0 与历史事件撞号。</summary>
+    public bool EventSeqInitialized { get; set; }
+
+    /// <summary>当前创建尝试的唯一标识，用于拒绝迟到回包覆盖后续尝试。</summary>
+    public string? StartAttemptId { get; set; }
+
+    /// <summary>停止租约所有者；只有持有者能提交 Failed/Stopped 终态。</summary>
+    public string? StopLeaseOwner { get; set; }
+
+    public DateTime? StopLeaseExpiresAt { get; set; }
+
+    /// <summary>创建回包迟到或补偿失败时仍需回收的 CDS 会话身份。</summary>
+    public List<string> PendingCdsSessionIds { get; set; } = [];
+
     public string? Model { get; set; }
 
     public double ResourceCpuCores { get; set; } = 2;

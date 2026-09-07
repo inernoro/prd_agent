@@ -372,6 +372,53 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(shell.calls).toHaveLength(0);
   });
 
+  it('registers creation before resource work and stop waits for cancelled creation cleanup', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const fetchStarted = deferred<void>();
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      capabilityCacheMs: 0,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async (_input, init) => {
+        fetchStarted.resolve();
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (signal?.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      },
+    });
+    const createPromise = runtime.create('session-stop-while-creating', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: 'a'.repeat(64),
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json'],
+    }, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 30,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    });
+
+    expect(runtime.has('session-stop-while-creating')).toBe(true);
+    await fetchStarted.promise;
+    await runtime.stop('session-stop-while-creating', 'test_cancel');
+    await expect(createPromise).rejects.toBeDefined();
+    expect(runtime.has('session-stop-while-creating')).toBe(false);
+    expect(fs.readdirSync(rootDir)).toEqual([]);
+  });
+
   it('materializes a verified package, runs an isolated OpenDesign container, and commits only allowed outputs', async () => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
     const workspacePackage = buildPackage([
@@ -547,6 +594,10 @@ describe('AgentWorkspaceSessionRuntime', () => {
     ));
     expect(preflightIndex).toBeGreaterThan(-1);
     expect(outboundCopyIndex).toBeGreaterThan(preflightIndex);
+    expect(shell.calls[preflightIndex]?.options?.timeout).toBeGreaterThan(0);
+    expect(shell.calls[preflightIndex]?.options?.timeout).toBeLessThanOrEqual(30_000);
+    expect(shell.calls[outboundCopyIndex]?.options?.timeout).toBeGreaterThan(0);
+    expect(shell.calls[outboundCopyIndex]?.options?.timeout).toBeLessThanOrEqual(30_000);
     expect(preflightCommand).toContain('special_file');
     expect(preflightCommand).toContain('file_count');
     expect(preflightCommand).toContain('total_bytes');
@@ -928,6 +979,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
   it.each([
     { name: 'reports every missing fragment position in one repair and commits the corrected artifact', repairSucceedsOnRun: 3, unsafeOutput: false, blankShell: false, multipleBrokenFragments: true, reorderRepeatedFragments: false },
     { name: 'repairs a different violation introduced by the first repair and commits', repairSucceedsOnRun: 4, unsafeOutput: false, blankShell: false, multipleBrokenFragments: false, reorderRepeatedFragments: false },
+    { name: 'allows the fourth and final quality repair to succeed', repairSucceedsOnRun: 6, unsafeOutput: false, blankShell: false, multipleBrokenFragments: false, reorderRepeatedFragments: false },
     { name: 'fails closed when the same fragment set repeats in a different order', repairSucceedsOnRun: null, unsafeOutput: false, blankShell: false, multipleBrokenFragments: true, reorderRepeatedFragments: true },
     { name: 'does not attempt quality repair for a security rejection', repairSucceedsOnRun: null, unsafeOutput: true, blankShell: false, multipleBrokenFragments: false, reorderRepeatedFragments: false },
     { name: 'fails closed when a new no_artifact page remains a blank shell after repair', repairSucceedsOnRun: null, unsafeOutput: false, blankShell: true, multipleBrokenFragments: false, reorderRepeatedFragments: false },
@@ -970,7 +1022,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
             : runNumber === repairSucceedsOnRun
               ? '<!doctype html><html><body><main>Product facts</main></body></html>'
               : runNumber === 3 && repairSucceedsOnRun === 4
-                ? '<!doctype html><html><body><main>Product facts</main><a href="#summary">Summary</a></body></html>'
+                ? '<!doctype html><html><body><main>Product facts</main><button type="button">Continue</button></body></html>'
               : multipleBrokenFragments
                 ? reorderRepeatedFragments && runNumber >= 3
                   ? '<!doctype html><html><body><main>Product facts</main><a href="#directory">Directory</a><a href="#summary">Summary</a></body></html>'
@@ -979,7 +1031,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           );
           return Response.json({ runId: `od-quality-run-${runNumber}` }, { status: 202 });
         }
-        if (/^\/api\/runs\/od-quality-run-[1234]$/.test(url.pathname)) {
+        if (/^\/api\/runs\/od-quality-run-[1-6]$/.test(url.pathname)) {
           if (blankShell && !url.pathname.endsWith('-1')) {
             return Response.json({ status: 'succeeded', deliverableValid: false, deliverableValidation: 'no_artifact' });
           }
@@ -1036,7 +1088,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
       });
       expect(commitCount).toBe(0);
     }
-    expect(runBodies).toHaveLength(unsafeOutput ? 2 : repairSucceedsOnRun ?? 3);
+    expect(runBodies).toHaveLength(unsafeOutput ? 2 : repairSucceedsOnRun ?? 6);
     if (!unsafeOutput && !blankShell) {
       expect(runBodies[2]?.conversationId).toBe('od-quality-conversation');
       expect(runBodies[2]?.message).toContain('deterministic CDS publication gate rejected');
@@ -1051,8 +1103,22 @@ describe('AgentWorkspaceSessionRuntime', () => {
       expect(runBodies[2]?.message).not.toContain('#directory');
     }
     if (repairSucceedsOnRun === 4) {
-      expect(runBodies[3]?.message).toContain('controlled rejection reason is missing_fragment_target');
-      expect(runBodies[3]?.message).not.toContain('#summary');
+      expect(runBodies[2]?.message).toContain('controlled rejection reason is missing_fragment_target');
+      expect(runBodies[3]?.message).toContain('controlled rejection reason is inert_enabled_button');
+      expect(runBodies[3]?.message).not.toContain('Continue');
+    }
+    if (repairSucceedsOnRun === 6) {
+      expect(runBodies.slice(2, 6)).toHaveLength(4);
+      for (const repairBody of runBodies.slice(2, 6)) {
+        expect(repairBody.message).toContain('controlled rejection reason is missing_fragment_target');
+      }
+    }
+    if (repairSucceedsOnRun === null && multipleBrokenFragments) {
+      expect(runBodies.slice(2, 6)).toHaveLength(4);
+      for (const repairBody of runBodies.slice(2, 6)) {
+        expect(repairBody.message).toContain('controlled rejection reason is missing_fragment_target');
+      }
+      expect(commitCount).toBe(0);
     }
     if (blankShell) {
       expect(runBodies[2]?.message).toContain('controlled rejection reason is no_visible_content');
@@ -2104,7 +2170,10 @@ describe('AgentWorkspaceSessionRuntime', () => {
     };
     const runtime = new AgentWorkspaceSessionRuntime(shell, { capabilityCacheMs: 0, autoPullImage: false });
 
-    await runtime.bootstrap();
+    await expect(runtime.bootstrapAndVerify()).rejects.toMatchObject({
+      code: 'workspace_orphan_cleanup_failed',
+      retryable: true,
+    });
 
     await expect(runtime.capability()).resolves.toMatchObject({
       available: false,

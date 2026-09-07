@@ -99,7 +99,8 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain("? '回退复制'");
     expect(source).toContain('revisionChangeSummary(item, rollbackTargetRevision)');
     expect(source).toContain('{changeSummary}');
-    expect(source).toContain('<summary className="min-h-6');
+    expect(source).toContain('<summary className="min-h-11 cursor-pointer py-3');
+    expect(source).not.toContain('<summary className="inline-flex');
     expect(source).toContain('技术信息');
     expect(source).not.toContain('来源动作：{sourceAction} · 来源版本：{sourceVersion}');
     expect(source).toContain('revisions.find((candidate) => candidate.id === item.parentRevisionId)');

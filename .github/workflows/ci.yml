@@ -490,11 +490,11 @@ jobs:
         working-directory: ${{ github.workspace }}/e2e
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Run recording continuity acceptance
+      - name: Run focused browser acceptance
         working-directory: ${{ github.workspace }}/e2e
         env:
           E2E_LOCAL_SERVER: '1'
-        run: pnpm exec playwright test specs/recording-continuity.spec.ts specs/generation-progress-layout.spec.ts
+        run: pnpm exec playwright test specs/recording-continuity.spec.ts specs/generation-progress-layout.spec.ts specs/web-hosting-version-touch-target.spec.ts
 
       - name: Upload recording acceptance evidence
         if: always()

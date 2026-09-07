@@ -93,9 +93,54 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   };
   const agentWorkspaceSessionRuntime = deps.agentWorkspaceSessionRuntime
     ?? (deps.shell ? new AgentWorkspaceSessionRuntime(deps.shell) : undefined);
-  if (agentWorkspaceSessionRuntime && !deps.agentWorkspaceSessionRuntime) {
-    void agentWorkspaceSessionRuntime.bootstrap();
-  }
+  const persistedRecoverableReservations = deps.stateService.listAgentSessionReservations()
+    .filter((reservation) => reservation.item.status !== 'stopped' && reservation.item.status !== 'failed');
+  // One process owns one recovery promise. Creation, replay convergence and exact stop all
+  // observe this same barrier, so no request can interpret an in-progress/failed reaper as success.
+  const agentSessionRecoveryPromise = (async (): Promise<void> => {
+    let runtimeRecoveryError: SanitizedAgentWorkspaceRuntimeError | null = null;
+    const requiresPersistedOpenDesignRecovery = persistedRecoverableReservations
+      .some((reservation) => reservation.item.runtime === 'open-design');
+    const shouldBootstrapRuntime = Boolean(
+      agentWorkspaceSessionRuntime
+      && (!deps.agentWorkspaceSessionRuntime || requiresPersistedOpenDesignRecovery),
+    );
+    if (agentWorkspaceSessionRuntime && shouldBootstrapRuntime) {
+      try {
+        await agentWorkspaceSessionRuntime.bootstrapAndVerify();
+      } catch (error) {
+        runtimeRecoveryError = sanitizeAgentWorkspaceRuntimeError(error, []);
+      }
+    } else if (!agentWorkspaceSessionRuntime && requiresPersistedOpenDesignRecovery) {
+      runtimeRecoveryError = {
+        code: 'workspace_cleanup_unavailable',
+        message: 'OpenDesign cleanup runtime is unavailable during CDS restart recovery',
+        retryable: true,
+      };
+    }
+    for (const reservation of persistedRecoverableReservations) {
+      const isOpenDesign = reservation.item.runtime === 'open-design';
+      const cleanupError = isOpenDesign ? runtimeRecoveryError : null;
+      const updatedAt = new Date().toISOString();
+      deps.stateService.upsertAgentSessionReservation({
+        ...reservation,
+        routerInstanceId: agentSessionRouterInstanceId,
+        updatedAt,
+        item: {
+          ...reservation.item,
+          status: 'failed',
+          updatedAt,
+          resourceCleanupPending: Boolean(cleanupError),
+          recoveryError: cleanupError ?? {
+            code: 'agent_session_interrupted_by_cds_restart',
+            message: 'agent session creation was interrupted by a CDS restart and its resources were reclaimed',
+            retryable: false,
+          },
+        },
+      });
+    }
+    await deps.stateService.flush();
+  })();
   const instanceDiscoveryCache = new Map<string, {
     expiresAt: number;
     payload: { projectId: string } & ProjectRuntimeInstancesResponse;
@@ -115,11 +160,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   );
   const recordAgentRequestHistory = (session: CdsAgentSession): void => {
     try {
+      persistAgentSession(session);
       const summary = toAgentRequestSummary(session);
       const finishedAt = session.stoppedAt ?? session.updatedAt ?? new Date().toISOString();
       deps.stateService.recordAgentRequest({
         sessionId: session.id,
         projectId: session.projectId,
+        principalKey: session.principalKey,
         title: session.title,
         clientUser: session.clientUser,
         clientApp: session.clientApp,
@@ -134,6 +181,25 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         responsePreview: (summary.responsePreview as string | null) ?? null,
       });
     } catch { /* 历史落盘失败不影响主链路 */ }
+  };
+  function persistAgentSession(session: CdsAgentSession): void {
+    if (!session.clientRequestId) return;
+    deps.stateService.upsertAgentSessionReservation({
+      id: session.id,
+      routerInstanceId: session.routerInstanceId,
+      projectId: session.projectId,
+      principalKey: session.principalKey,
+      clientRequestId: session.clientRequestId,
+      item: toCdsAgentSessionView(session),
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    });
+  }
+  const releaseAgentSessionReservation = async (session: CdsAgentSession): Promise<void> => {
+    cdsAgentSessionSecrets.delete(session.id);
+    cdsAgentSessions.delete(session.id);
+    if (session.clientRequestId) deps.stateService.removeAgentSessionReservation(session.id);
+    await deps.stateService.flush();
   };
 
   router.get('/cds-system/remote-hosts', (_req, res) => {
@@ -734,6 +800,89 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
 
+    const parsedClientRequestId = parseAgentClientRequestId(req.body?.clientRequestId);
+    if (!parsedClientRequestId.ok) {
+      res.status(400).json({ error: parsedClientRequestId.error });
+      return;
+    }
+    const clientRequestId = parsedClientRequestId.value;
+    const stableSessionId = clientRequestId
+      ? buildStableAgentSessionId(req.params.id, auth.principalKey, clientRequestId)
+      : null;
+    const replayExistingSession = async (): Promise<boolean> => {
+      if (!stableSessionId) return false;
+      const existing = cdsAgentSessions.get(stableSessionId);
+      const persisted = existing
+        ? null
+        : deps.stateService.listAgentSessionReservations()
+          .find((reservation) => reservation.id === stableSessionId);
+      if (!existing && !persisted) return false;
+      const identity = existing ?? persisted!;
+      if (
+        identity.projectId !== req.params.id
+        || identity.principalKey !== auth.principalKey
+        || identity.clientRequestId !== clientRequestId
+      ) {
+        res.status(409).json({
+          error: {
+            code: 'client_request_id_collision',
+            message: 'clientRequestId resolved to an occupied agent session identity',
+          },
+        });
+        return true;
+      }
+      const item = existing ? toCdsAgentSessionView(existing) : persisted!.item;
+      const creationFailure = item.creationFailure;
+      if (
+        item.status === 'failed'
+        && creationFailure
+        && typeof creationFailure === 'object'
+      ) {
+        const error = creationFailure as Record<string, unknown>;
+        res.status(error.retryable === false ? 409 : 503).json({
+          item,
+          error,
+          idempotentReplay: true,
+          recovered: !existing,
+        });
+        return true;
+      }
+      if (item.status === 'creating') {
+        const inFlight = existing ? cdsAgentSessionCreations.get(stableSessionId) : undefined;
+        if (inFlight) {
+          const outcome = await inFlight;
+          const replayBody = outcome.status === 201
+            ? {
+                ...outcome.body,
+                idempotentReplay: true,
+                recovered: false,
+              }
+            : {
+                ...outcome.body,
+                idempotentReplay: true,
+              };
+          res.status(outcome.status === 201 ? 200 : outcome.status).json(replayBody);
+          return true;
+        }
+        res.status(202).json({
+          item,
+          idempotentReplay: true,
+          pending: true,
+          recovered: !existing,
+        });
+        return true;
+      }
+      res.status(200).json({
+        item,
+        idempotentReplay: true,
+        recovered: !existing,
+      });
+      return true;
+    };
+    if (await replayExistingSession()) {
+      return;
+    }
+
     const now = new Date().toISOString();
     const requestedRuntime = typeof req.body?.runtime === 'string' ? req.body.runtime : 'fake';
     const provider = findAgentRuntimeProviderDefinition(requestedRuntime);
@@ -787,27 +936,15 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       });
       return;
     }
-    const workspaceCapability = runtime === 'open-design' && agentWorkspaceSessionRuntime
-      ? await agentWorkspaceSessionRuntime.capability()
-      : null;
-    const resourcePolicyEnforcedPerSession = runtime === 'open-design'
-      ? Boolean(
-          agentWorkspaceSessionRuntime
-          && workspaceCapability?.available
-          && workspaceCapability.resourcePolicyEnforcedPerSession
-          && AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
-        )
-      : AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION;
-    if (isolationMode === 'session-container' && !resourcePolicyEnforcedPerSession) {
+    if (runtime === 'open-design' && !agentWorkspaceSessionRuntime) {
       res.status(409).json({
         error: {
           code: 'resource_policy_not_enforced',
-          message: workspaceCapability?.reason
-            || 'session-container isolation cannot start until per-session resource policy is enforced',
+          message: 'session-container isolation cannot start until per-session resource policy is enforced',
           runtime,
           requestedIsolationMode: isolationMode,
           isolationOwnedBy: 'cds-remote-agent',
-          resourcePolicyEnforcedPerSession,
+          resourcePolicyEnforcedPerSession: false,
         },
       });
       return;
@@ -906,10 +1043,11 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
     const session: CdsAgentSession = {
-      id: `cds-agent-${crypto.randomUUID().replace(/-/g, '')}`,
+      id: stableSessionId ?? `cds-agent-${crypto.randomUUID().replace(/-/g, '')}`,
       routerInstanceId: agentSessionRouterInstanceId,
       projectId: req.params.id,
       principalKey: auth.principalKey,
+      clientRequestId,
       title: typeof req.body?.title === 'string' ? req.body.title.slice(0, 200) : null,
       clientUser: typeof req.body?.clientUser === 'string' ? req.body.clientUser.slice(0, 120) : null,
       clientApp: typeof req.body?.clientApp === 'string' ? req.body.clientApp.slice(0, 120) : null,
@@ -926,7 +1064,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       hasModelApiKey,
       runtimeProfileId: typeof req.body?.runtimeProfileId === 'string' ? req.body.runtimeProfileId : null,
       resourcePolicy,
-      status: runtime === 'open-design' ? 'creating' : 'running',
+      status: 'creating',
       workerId,
       containerName,
       toolPolicy: typeof req.body?.toolPolicy === 'string' ? req.body.toolPolicy : 'confirm-dangerous',
@@ -934,6 +1072,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       updatedAt: now,
       events: [],
       messages: [],
+      messageRequests: new Map(),
       logs: [],
       workspaceTransfer: workspaceTransfer
         ? {
@@ -946,9 +1085,148 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           }
         : null,
     };
-    // 会话名额必须在第一次异步容器创建前原子预占。Node 的同步区间不会交错，
-    // 因而两个并发请求不能同时越过容量检查后再各自创建一个容器。
+    let resolveCreationOutcome!: (outcome: CdsAgentSessionCreationOutcome) => void;
+    const creationOutcomePromise = new Promise<CdsAgentSessionCreationOutcome>((resolve) => {
+      resolveCreationOutcome = resolve;
+    });
+    const respondCreation = (status: number, body: Record<string, unknown>): void => {
+      resolveCreationOutcome({ status, body });
+      if (cdsAgentSessionCreations.get(session.id) === creationOutcomePromise) {
+        cdsAgentSessionCreations.delete(session.id);
+      }
+      res.status(status).json(body);
+    };
+    // 会话名额与 in-flight promise 必须在第一次 await 前原子预占。Node 的同步区间
+    // 不会交错，因而同进程重放会等待同一个最终结果，不能创建第二个 runtime。
     cdsAgentSessions.set(session.id, session);
+    cdsAgentSessionCreations.set(session.id, creationOutcomePromise);
+    try {
+      persistAgentSession(session);
+      await deps.stateService.flush();
+    } catch {
+      cdsAgentSessions.delete(session.id);
+      try {
+        if (session.clientRequestId) deps.stateService.removeAgentSessionReservation(session.id);
+        await deps.stateService.flush();
+      } catch { /* retain the persistence failure as the primary error */ }
+      respondCreation(503, {
+        error: {
+          code: 'agent_session_reservation_persist_failed',
+          message: 'agent session reservation could not be persisted',
+          retryable: true,
+        },
+      });
+      return;
+    }
+    const creationWasCancelled = (): boolean => (
+      session.status === 'stopping'
+      || session.status === 'stopped'
+      || session.status === 'failed'
+    );
+    const finishCancelledCreation = async (): Promise<void> => {
+      try {
+        if (runtime === 'open-design' && agentWorkspaceSessionRuntime) {
+          await agentWorkspaceSessionRuntime.stop(session.id, 'session_creation_cancelled');
+          if (
+            typeof agentWorkspaceSessionRuntime.has === 'function'
+            && agentWorkspaceSessionRuntime.has(session.id)
+          ) {
+            throw new AgentWorkspaceRuntimeError(
+              'workspace_cleanup_incomplete',
+              'cancelled Agent session still owns runtime resources',
+              true,
+            );
+          }
+        }
+        session.resourceCleanupPending = false;
+        if (session.status !== 'failed') {
+          session.status = 'stopped';
+          session.stoppedAt = session.stoppedAt ?? new Date().toISOString();
+        }
+        session.updatedAt = new Date().toISOString();
+        persistAgentSession(session);
+        await deps.stateService.flush();
+        respondCreation(session.status === 'failed' ? 502 : 409, {
+          item: toCdsAgentSessionView(session),
+          error: {
+            code: 'agent_session_creation_cancelled',
+            message: 'agent session creation was cancelled before the runtime became ready',
+            retryable: false,
+          },
+        });
+      } catch (error) {
+        const runtimeError = sanitizeAgentWorkspaceRuntimeError(error, [modelApiKey, workspaceTransfer?.transferToken]);
+        session.status = 'failed';
+        session.resourceCleanupPending = true;
+        session.updatedAt = new Date().toISOString();
+        cdsAgentSessionSecrets.delete(session.id);
+        pushCdsAgentEvent(session, 'error', runtimeError);
+        persistAgentSession(session);
+        recordAgentRequestHistory(session);
+        await deps.stateService.flush().catch(() => undefined);
+        respondCreation(502, { item: toCdsAgentSessionView(session), error: runtimeError });
+      }
+    };
+
+    // The durable creating reservation above is visible before this first asynchronous check.
+    // Concurrent retries therefore replay the same stable session instead of creating a second
+    // runtime resource, and MAP can recover the attempt through the filtered GET route.
+    try {
+      await agentSessionRecoveryPromise;
+    } catch {
+      await releaseAgentSessionReservation(session).catch(() => undefined);
+      respondCreation(503, {
+        error: {
+          code: 'agent_session_recovery_persist_failed',
+          message: 'agent session recovery state could not be persisted',
+          retryable: true,
+        },
+      });
+      return;
+    }
+    let workspaceCapability: Awaited<ReturnType<AgentWorkspaceSessionRuntime['capability']>> | null = null;
+    try {
+      workspaceCapability = runtime === 'open-design' && agentWorkspaceSessionRuntime
+        ? await agentWorkspaceSessionRuntime.capability()
+        : null;
+    } catch {
+      await releaseAgentSessionReservation(session).catch(() => undefined);
+      respondCreation(503, {
+        error: {
+          code: 'agent_runtime_capability_failed',
+          message: 'agent runtime capability validation failed',
+          retryable: true,
+        },
+      });
+      return;
+    }
+    if (creationWasCancelled()) {
+      await finishCancelledCreation();
+      return;
+    }
+    const resourcePolicyEnforcedPerSession = runtime === 'open-design'
+      ? Boolean(
+          agentWorkspaceSessionRuntime
+          && workspaceCapability?.available
+          && workspaceCapability.resourcePolicyEnforcedPerSession
+          && AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
+        )
+      : AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION;
+    if (isolationMode === 'session-container' && !resourcePolicyEnforcedPerSession) {
+      await releaseAgentSessionReservation(session).catch(() => undefined);
+      respondCreation(409, {
+        error: {
+          code: 'resource_policy_not_enforced',
+          message: workspaceCapability?.reason
+            || 'session-container isolation cannot start until per-session resource policy is enforced',
+          runtime,
+          requestedIsolationMode: isolationMode,
+          isolationOwnedBy: 'cds-remote-agent',
+          resourcePolicyEnforcedPerSession,
+        },
+      });
+      return;
+    }
     if (modelApiKey || workspaceTransfer) {
       cdsAgentSessionSecrets.set(session.id, {
         ...(modelApiKey ? { modelApiKey } : {}),
@@ -964,14 +1242,25 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           (stage, detail) => {
             pushCdsAgentEvent(session, 'status', { status: 'creating', reason: stage, ...detail });
           },
-          (error) => settleAgentWorkspaceSessionCleanup(session, error, recordAgentRequestHistory),
+          (error) => settleAgentWorkspaceSessionCleanup(session, error, (settledSession) => {
+            persistAgentSession(settledSession);
+            recordAgentRequestHistory(settledSession);
+          }),
         );
+        if (creationWasCancelled()) {
+          await finishCancelledCreation();
+          return;
+        }
         containerName = allocated.containerName;
         session.containerName = allocated.containerName;
         session.workspaceRoot = '/workspace';
         session.status = 'running';
         session.updatedAt = new Date().toISOString();
       } catch (error) {
+        if (creationWasCancelled()) {
+          await finishCancelledCreation();
+          return;
+        }
         const runtimeError = sanitizeAgentWorkspaceRuntimeError(error, [
           modelApiKey,
           workspaceTransfer.transferToken,
@@ -1015,12 +1304,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
             source: 'agent-workspace-session-runtime',
           });
           session.logs.push(`[${session.updatedAt}] OpenDesign workspace creation failed with incomplete resource cleanup code=${runtimeError.code}`);
+          persistAgentSession(session);
           recordAgentRequestHistory(session);
+          await deps.stateService.flush().catch(() => undefined);
         } else {
-          cdsAgentSessionSecrets.delete(session.id);
-          cdsAgentSessions.delete(session.id);
+          await releaseAgentSessionReservation(session).catch(() => undefined);
         }
-        res.status(runtimeError.retryable ? 503 : 409).json({
+        respondCreation(runtimeError.retryable ? 503 : 409, {
           error: runtimeError,
           ...(session.resourceCleanupPending ? { item: toCdsAgentSessionView(session) } : {}),
         });
@@ -1051,7 +1341,64 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       source: runtimeSource,
     });
     session.logs.push(`[${now}] session created runtime=${runtime} provider=${provider.id} workload=${workloadKind} isolation=${isolationMode} owner=${provider.executionOwner} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy} cleanup=${resourcePolicy.autoCleanupMinutes}m resourcePolicyEnforcedPerSession=${resourcePolicyEnforcedPerSession}`);
-    res.status(201).json({ item: toCdsAgentSessionView(session) });
+    session.status = 'running';
+    session.updatedAt = new Date().toISOString();
+    persistAgentSession(session);
+    try {
+      await deps.stateService.flush();
+    } catch (persistError) {
+      // A live runtime without a durable running snapshot must never fall back to an ownerless
+      // Creating ledger. Synchronously compensate the runtime, then retain a replayable failed
+      // outcome even when the backing store remains unavailable.
+      let cleanupFailure: SanitizedAgentWorkspaceRuntimeError | null = null;
+      try {
+        if (runtime === 'open-design' && agentWorkspaceSessionRuntime) {
+          await agentWorkspaceSessionRuntime.stop(session.id, 'final_state_persist_failed');
+          if (
+            typeof agentWorkspaceSessionRuntime.has === 'function'
+            && agentWorkspaceSessionRuntime.has(session.id)
+          ) {
+            throw new AgentWorkspaceRuntimeError(
+              'workspace_cleanup_incomplete',
+              'OpenDesign runtime remained allocated after final state persistence failed',
+              true,
+            );
+          }
+        }
+      } catch (cleanupError) {
+        const sanitizedCleanupFailure = sanitizeAgentWorkspaceRuntimeError(cleanupError, [
+          modelApiKey,
+          workspaceTransfer?.transferToken,
+        ]);
+        cleanupFailure = { ...sanitizedCleanupFailure, retryable: true };
+      }
+      const finalPersistFailure: SanitizedAgentWorkspaceRuntimeError = cleanupFailure ?? {
+        code: 'agent_session_final_persist_failed',
+        message: 'agent session runtime was cleaned because its durable final state could not be persisted',
+        retryable: true,
+        details: {
+          persistenceError: persistError instanceof Error ? persistError.name : 'unknown',
+        },
+      };
+      session.status = 'failed';
+      session.resourceCleanupPending = cleanupFailure !== null;
+      session.creationFailure = finalPersistFailure;
+      session.updatedAt = new Date().toISOString();
+      cdsAgentSessionSecrets.delete(session.id);
+      pushCdsAgentEvent(session, 'error', finalPersistFailure);
+      session.logs.push(`[${session.updatedAt}] final session persistence failed; runtime cleanup pending=${session.resourceCleanupPending}`);
+      try {
+        persistAgentSession(session);
+        recordAgentRequestHistory(session);
+        await deps.stateService.flush();
+      } catch { /* in-memory failed outcome remains authoritative for same-process replay */ }
+      respondCreation(503, {
+        item: toCdsAgentSessionView(session),
+        error: finalPersistFailure,
+      });
+      return;
+    }
+    respondCreation(201, { item: toCdsAgentSessionView(session) });
   });
 
   router.get('/projects/:id/agent-sessions', (req, res) => {
@@ -1060,10 +1407,27 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
     }
-    const sessions = Array.from(cdsAgentSessions.values())
-      .filter(s => s.projectId === req.params.id)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .map(toCdsAgentSessionView);
+    const parsedClientRequestId = parseAgentClientRequestId(req.query.clientRequestId);
+    if (!parsedClientRequestId.ok) {
+      res.status(400).json({ error: parsedClientRequestId.error });
+      return;
+    }
+    const clientRequestId = parsedClientRequestId.value;
+    const sessionsById = new Map<string, Record<string, unknown>>();
+    for (const reservation of deps.stateService.listAgentSessionReservations()) {
+      if (reservation.projectId !== req.params.id) continue;
+      if (reservation.principalKey !== auth.principalKey) continue;
+      if (clientRequestId && reservation.clientRequestId !== clientRequestId) continue;
+      sessionsById.set(reservation.id, reservation.item);
+    }
+    for (const session of cdsAgentSessions.values()) {
+      if (session.projectId !== req.params.id) continue;
+      if (session.principalKey !== auth.principalKey) continue;
+      if (clientRequestId && session.clientRequestId !== clientRequestId) continue;
+      sessionsById.set(session.id, toCdsAgentSessionView(session));
+    }
+    const sessions = Array.from(sessionsById.values())
+      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     res.json({ items: sessions });
   });
 
@@ -1073,7 +1437,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
     }
-    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
+    const session = getOwnedCdsAgentSession(req.params.projectId, req.params.sessionId, auth.principalKey);
     if (!session) {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
@@ -1092,10 +1456,48 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
     }
-    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
+    const session = getOwnedCdsAgentSession(req.params.projectId, req.params.sessionId, auth.principalKey);
     if (!session) {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
+    }
+    const project = deps.stateService.getProject(req.params.projectId);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
+      return;
+    }
+
+    const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
+    if (!content) {
+      res.status(400).json({ error: { code: 'content_required', message: 'message content is required' } });
+      return;
+    }
+    const parsedClientMessageId = parseAgentClientMessageId(req.body?.clientMessageId);
+    if (!parsedClientMessageId.ok) {
+      res.status(400).json({ error: parsedClientMessageId.error });
+      return;
+    }
+    const clientMessageId = parsedClientMessageId.value;
+    if (clientMessageId) {
+      const prior = session.messageRequests.get(clientMessageId);
+      if (prior) {
+        if (prior.content !== content) {
+          res.status(409).json({
+            error: {
+              code: 'client_message_id_conflict',
+              message: 'clientMessageId was already used with different content',
+            },
+          });
+          return;
+        }
+        res.status(202).json({
+          item: toCdsAgentSessionView(session),
+          accepted: prior.accepted,
+          ...(prior.error ? { error: prior.error } : {}),
+          replayed: true,
+        });
+        return;
+      }
     }
     if (session.status === 'stopped' || session.status === 'failed' || session.status === 'stopping') {
       res.status(409).json({
@@ -1110,20 +1512,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(409).json({ error: { code: 'session_busy', message: 'agent session already has a running task' } });
       return;
     }
-    const project = deps.stateService.getProject(req.params.projectId);
-    if (!project) {
-      res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
-      return;
-    }
-
-    const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
-    if (!content) {
-      res.status(400).json({ error: { code: 'content_required', message: 'message content is required' } });
-      return;
-    }
 
     const now = new Date().toISOString();
-    session.messages.push({ role: 'user', content, createdAt: now });
+    if (clientMessageId) {
+      session.messageRequests.set(clientMessageId, { content, accepted: true });
+    }
+    session.activeClientMessageId = clientMessageId || undefined;
+    session.messages.push({ role: 'user', content, createdAt: now, clientMessageId: clientMessageId || undefined });
     pushCdsAgentEvent(session, 'status', { status: 'running', reason: 'message_received' });
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
@@ -1148,8 +1543,12 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           retryable: false,
         };
         session.status = 'failed';
+        if (clientMessageId) {
+          session.messageRequests.set(clientMessageId, { content, accepted: false, error: unavailable });
+        }
         pushCdsAgentEvent(session, 'error', unavailable);
         recordAgentRequestHistory(session);
+        session.activeClientMessageId = undefined;
         res.status(202).json({ item: toCdsAgentSessionView(session), accepted: false, error: unavailable });
         return;
       }
@@ -1300,6 +1699,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         if (session.activeRunId === runId) {
           session.activeRunId = undefined;
           session.activeRunAbortController = undefined;
+          session.activeClientMessageId = undefined;
         }
       });
       res.status(202).json({
@@ -1326,6 +1726,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       }
 
       const unavailable = buildCdsManagedRuntimeUnavailable(session);
+      if (clientMessageId) {
+        session.messageRequests.set(clientMessageId, { content, accepted: false, error: unavailable });
+      }
       session.status = 'failed';
       session.updatedAt = new Date().toISOString();
       pushCdsAgentEvent(session, 'error', unavailable);
@@ -1336,6 +1739,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       });
       session.logs.push(`[${session.updatedAt}] runtime unavailable runtime=${session.runtime} owner=cds-managed-runtime reason=${unavailable.code}`);
       recordAgentRequestHistory(session);
+      session.activeClientMessageId = undefined;
       res.status(202).json({
         item: toCdsAgentSessionView(session),
         accepted: false,
@@ -1352,6 +1756,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         runtimeProfileId: session.runtimeProfileId,
         retryable: false,
       };
+      if (clientMessageId) {
+        session.messageRequests.set(clientMessageId, { content, accepted: false, error: unavailable });
+      }
       session.status = 'failed';
       session.updatedAt = new Date().toISOString();
       pushCdsAgentEvent(session, 'error', unavailable);
@@ -1361,6 +1768,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         source: `${session.runtime}-runtime`,
       });
       recordAgentRequestHistory(session);
+      session.activeClientMessageId = undefined;
       res.status(202).json({
         item: toCdsAgentSessionView(session),
         accepted: false,
@@ -1401,6 +1809,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     session.updatedAt = new Date().toISOString();
     if (session.status === 'running') session.status = 'idle';
     recordAgentRequestHistory(session);
+    session.activeClientMessageId = undefined;
     res.status(202).json({ item: toCdsAgentSessionView(session), accepted: true });
   });
 
@@ -1410,7 +1819,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
     }
-    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
+    const session = getOwnedCdsAgentSession(req.params.projectId, req.params.sessionId, auth.principalKey);
     if (!session) {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
@@ -1462,7 +1871,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
     }
-    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
+    const session = getOwnedCdsAgentSession(req.params.projectId, req.params.sessionId, auth.principalKey);
     if (!session) {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
@@ -1481,28 +1890,149 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
     }
-    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
-    if (!session) {
+    const session = getOwnedCdsAgentSession(req.params.projectId, req.params.sessionId, auth.principalKey);
+    let persistedReservation = session
+      ? undefined
+      : deps.stateService.listAgentSessionReservations().find((reservation) => (
+          reservation.id === req.params.sessionId
+          && reservation.projectId === req.params.projectId
+          && reservation.principalKey === auth.principalKey
+        ));
+    if (!session && !persistedReservation) {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
     }
-    session.status = 'stopping';
-    session.updatedAt = new Date().toISOString();
-    session.activeRunAbortController?.abort();
-    session.activeRunAbortController = undefined;
-    session.activeRunId = undefined;
-    pushCdsAgentEvent(session, 'status', { status: 'stopping', reason: 'session_stop_requested' });
-    session.logs.push(`[${session.updatedAt}] session stopping`);
-    if (session.runtime === 'open-design' && agentWorkspaceSessionRuntime) {
+    if (!session && persistedReservation) {
+      try {
+        await agentSessionRecoveryPromise;
+      } catch {
+        res.status(503).json({
+          item: persistedReservation.item,
+          error: {
+            code: 'agent_session_recovery_persist_failed',
+            message: 'agent session recovery state could not be persisted',
+            retryable: true,
+          },
+        });
+        return;
+      }
+      persistedReservation = deps.stateService.listAgentSessionReservations().find((reservation) => (
+        reservation.id === req.params.sessionId
+        && reservation.projectId === req.params.projectId
+        && reservation.principalKey === auth.principalKey
+      ));
+      if (!persistedReservation) {
+        res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
+        return;
+      }
+      const persistedItem = persistedReservation.item;
+      if (persistedItem.resourceCleanupPending === true) {
+        res.status(503).json({
+          item: persistedItem,
+          error: {
+            code: 'workspace_cleanup_pending',
+            message: 'agent session resources have not been proven cleaned; retry stop after recovery',
+            retryable: true,
+          },
+          recovered: true,
+        });
+        return;
+      }
+      if (persistedItem.status === 'stopped') {
+        res.json({ item: persistedItem, idempotentReplay: true });
+        return;
+      }
+      const updatedAt = new Date().toISOString();
+      try {
+        if (persistedItem.runtime === 'open-design') {
+          if (!agentWorkspaceSessionRuntime) {
+            throw new AgentWorkspaceRuntimeError(
+              'workspace_cleanup_unavailable',
+              'OpenDesign cleanup runtime is unavailable; retry stop after runtime recovery',
+              true,
+            );
+          }
+          await agentWorkspaceSessionRuntime.stop(req.params.sessionId, 'persisted_session_stop_requested');
+          if (
+            typeof agentWorkspaceSessionRuntime.has === 'function'
+            && agentWorkspaceSessionRuntime.has(req.params.sessionId)
+          ) {
+            throw new AgentWorkspaceRuntimeError(
+              'workspace_cleanup_incomplete',
+              'OpenDesign persisted session resources are still present',
+              true,
+            );
+          }
+        }
+        const stoppedItem = {
+          ...persistedItem,
+          status: 'stopped',
+          updatedAt,
+          stoppedAt: updatedAt,
+          resourceCleanupPending: false,
+        };
+        deps.stateService.upsertAgentSessionReservation({
+          ...persistedReservation,
+          routerInstanceId: agentSessionRouterInstanceId,
+          updatedAt,
+          item: stoppedItem,
+        });
+        await deps.stateService.flush();
+        res.json({ item: stoppedItem, recovered: true });
+      } catch (error) {
+        const runtimeError = sanitizeAgentWorkspaceRuntimeError(error, []);
+        const retryableError = { ...runtimeError, retryable: true };
+        const failedItem = {
+          ...persistedItem,
+          status: 'failed',
+          updatedAt,
+          resourceCleanupPending: true,
+          recoveryError: retryableError,
+        };
+        deps.stateService.upsertAgentSessionReservation({
+          ...persistedReservation,
+          routerInstanceId: agentSessionRouterInstanceId,
+          updatedAt,
+          item: failedItem,
+        });
+        await deps.stateService.flush().catch(() => undefined);
+        res.status(503).json({ item: failedItem, error: retryableError, recovered: true });
+      }
+      return;
+    }
+    const liveSession = session!;
+    const creationOutcome = cdsAgentSessionCreations.get(liveSession.id);
+    liveSession.status = 'stopping';
+    liveSession.updatedAt = new Date().toISOString();
+    liveSession.activeRunAbortController?.abort();
+    liveSession.activeRunAbortController = undefined;
+    liveSession.activeRunId = undefined;
+    pushCdsAgentEvent(liveSession, 'status', { status: 'stopping', reason: 'session_stop_requested' });
+    liveSession.logs.push(`[${liveSession.updatedAt}] session stopping`);
+    persistAgentSession(liveSession);
+    try {
+      await deps.stateService.flush();
+    } catch {
+      res.status(503).json({
+        item: toCdsAgentSessionView(liveSession),
+        error: {
+          code: 'agent_session_stop_reservation_persist_failed',
+          message: 'agent session stop intent could not be persisted',
+          retryable: true,
+        },
+      });
+      return;
+    }
+    if (liveSession.runtime === 'open-design' && agentWorkspaceSessionRuntime) {
       try {
         let lastCleanupError: unknown;
         for (const retryDelayMs of AGENT_WORKSPACE_STOP_RETRY_DELAYS_MS) {
           if (retryDelayMs > 0) await delay(retryDelayMs);
           try {
-            await agentWorkspaceSessionRuntime.stop(session.id, 'session_stop_requested');
+            await agentWorkspaceSessionRuntime.stop(liveSession.id, 'session_stop_requested');
             if (
               typeof agentWorkspaceSessionRuntime.has === 'function'
-              && agentWorkspaceSessionRuntime.has(session.id)
+              && agentWorkspaceSessionRuntime.has(liveSession.id)
             ) {
               throw new AgentWorkspaceRuntimeError(
                 'workspace_cleanup_incomplete',
@@ -1515,47 +2045,68 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           } catch (error) {
             lastCleanupError = error;
             const retryableError = sanitizeAgentWorkspaceRuntimeError(error, [
-              cdsAgentSessionSecrets.get(session.id)?.modelApiKey,
-              cdsAgentSessionSecrets.get(session.id)?.transferToken,
+              cdsAgentSessionSecrets.get(liveSession.id)?.modelApiKey,
+              cdsAgentSessionSecrets.get(liveSession.id)?.transferToken,
             ]);
             if (
               retryableError.retryable !== true
               || typeof agentWorkspaceSessionRuntime.has !== 'function'
-              || !agentWorkspaceSessionRuntime.has(session.id)
+              || !agentWorkspaceSessionRuntime.has(liveSession.id)
             ) break;
           }
         }
         if (lastCleanupError) throw lastCleanupError;
-        session.resourceCleanupPending = false;
+        if (creationOutcome) await creationOutcome;
+        liveSession.resourceCleanupPending = false;
       } catch (error) {
-        const secrets = cdsAgentSessionSecrets.get(session.id);
+        const secrets = cdsAgentSessionSecrets.get(liveSession.id);
         const runtimeError = sanitizeAgentWorkspaceRuntimeError(error, [
           secrets?.modelApiKey,
           secrets?.transferToken,
         ]);
-        session.status = 'failed';
-        session.resourceCleanupPending = true;
-        session.updatedAt = new Date().toISOString();
-        cdsAgentSessionSecrets.delete(session.id);
-        pushCdsAgentEvent(session, 'error', runtimeError);
-        recordAgentRequestHistory(session);
-        res.status(502).json({ item: toCdsAgentSessionView(session), error: runtimeError });
+        liveSession.status = 'failed';
+        liveSession.resourceCleanupPending = true;
+        liveSession.updatedAt = new Date().toISOString();
+        cdsAgentSessionSecrets.delete(liveSession.id);
+        pushCdsAgentEvent(liveSession, 'error', runtimeError);
+        recordAgentRequestHistory(liveSession);
+        await deps.stateService.flush().catch(() => undefined);
+        res.status(runtimeError.retryable ? 503 : 502).json({ item: toCdsAgentSessionView(liveSession), error: runtimeError });
         return;
       }
+    } else if (creationOutcome) {
+      await creationOutcome;
     }
-    session.status = 'stopped';
-    session.updatedAt = new Date().toISOString();
-    session.stoppedAt = session.updatedAt;
-    cdsAgentSessionSecrets.delete(session.id);
-    pushCdsAgentEvent(session, 'status', { status: 'stopped', reason: 'session_stopped' });
-    pushCdsAgentEvent(session, 'log', {
+    liveSession.status = 'stopped';
+    liveSession.updatedAt = new Date().toISOString();
+    liveSession.stoppedAt = liveSession.updatedAt;
+    cdsAgentSessionSecrets.delete(liveSession.id);
+    pushCdsAgentEvent(liveSession, 'status', { status: 'stopped', reason: 'session_stopped' });
+    pushCdsAgentEvent(liveSession, 'log', {
       level: 'info',
       message: 'session stopped',
-      source: session.runtime === 'fake' ? 'fake-runtime' : `${session.runtime}-runtime`,
+      source: liveSession.runtime === 'fake' ? 'fake-runtime' : `${liveSession.runtime}-runtime`,
     });
-    session.logs.push(`[${session.updatedAt}] session stopped`);
-    recordAgentRequestHistory(session);
-    res.json({ item: toCdsAgentSessionView(session) });
+    liveSession.logs.push(`[${liveSession.updatedAt}] session stopped`);
+    recordAgentRequestHistory(liveSession);
+    try {
+      await deps.stateService.flush();
+    } catch {
+      liveSession.status = 'failed';
+      liveSession.resourceCleanupPending = true;
+      liveSession.updatedAt = new Date().toISOString();
+      persistAgentSession(liveSession);
+      res.status(503).json({
+        item: toCdsAgentSessionView(liveSession),
+        error: {
+          code: 'agent_session_stop_persist_failed',
+          message: 'runtime cleanup completed but stopped state could not be persisted',
+          retryable: true,
+        },
+      });
+      return;
+    }
+    res.json({ item: toCdsAgentSessionView(liveSession) });
   });
 
   // ── Agent 请求观测台（2026-06-11 用户信任诉求）──────────────────
@@ -1572,14 +2123,24 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const fApp = typeof req.query.app === 'string' ? req.query.app.trim().toLowerCase() : '';
     const fQ = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
     const fStatus = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : '';
+    const isAdminPrincipal = auth.principalKey === 'cookie-admin'
+      || auth.principalKey === 'global-agent'
+      || auth.principalKey.startsWith('global-agent:');
 
     const liveSummaries = Array.from(cdsAgentSessions.values())
-      .filter(sess => sess.projectId === req.params.id)
+      .filter(sess => (
+        sess.projectId === req.params.id
+        && (isAdminPrincipal || sess.principalKey === auth.principalKey)
+      ))
       .map(toAgentRequestSummary);
     const liveIds = new Set(liveSummaries.map(x => x.sessionId as string));
     const history = deps.stateService.listAgentRequests()
-      .filter(r => r.projectId === req.params.id && !liveIds.has(r.sessionId))
-      .map(r => ({ ...r, live: false } as Record<string, unknown>));
+      .filter(r => (
+        r.projectId === req.params.id
+        && !liveIds.has(r.sessionId)
+        && (isAdminPrincipal || r.principalKey === auth.principalKey)
+      ))
+      .map(({ principalKey: _principalKey, ...r }) => ({ ...r, live: false } as Record<string, unknown>));
 
     const match = (item: Record<string, unknown>): boolean => {
       const sv = (k: string) => String(item[k] ?? '').toLowerCase();
@@ -1610,7 +2171,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
     }
-    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
+    const session = getOwnedCdsAgentSession(req.params.projectId, req.params.sessionId, auth.principalKey);
     if (!session) {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
@@ -2214,6 +2775,7 @@ interface CdsAgentSession {
   routerInstanceId: string;
   projectId: string;
   principalKey: string;
+  clientRequestId: string | null;
   /** 请求标签（2026-06-11 观测台）：调用方自述的标题/用户/应用，用于列表与筛选 */
   title: string | null;
   clientUser: string | null;
@@ -2239,10 +2801,17 @@ interface CdsAgentSession {
   updatedAt: string;
   stoppedAt?: string;
   activeRunId?: string;
+  activeClientMessageId?: string;
   activeRunAbortController?: AbortController;
   resourceCleanupPending?: boolean;
+  creationFailure?: SanitizedAgentWorkspaceRuntimeError;
   events: CdsAgentEvent[];
-  messages: Array<{ role: string; content: string; createdAt: string }>;
+  messages: Array<{ role: string; content: string; createdAt: string; clientMessageId?: string }>;
+  messageRequests: Map<string, {
+    content: string;
+    accepted: boolean;
+    error?: Record<string, unknown>;
+  }>;
   logs: string[];
   workspaceTransfer: {
     schemaVersion: string;
@@ -2254,9 +2823,70 @@ interface CdsAgentSession {
   } | null;
 }
 
+interface CdsAgentSessionCreationOutcome {
+  status: number;
+  body: Record<string, unknown>;
+}
+
 const cdsAgentSessions = new Map<string, CdsAgentSession>();
 const cdsAgentSessionSecrets = new Map<string, { modelApiKey?: string; transferToken?: string }>();
 const cdsAgentStreamWaiters = new Map<string, Set<() => void>>();
+const cdsAgentSessionCreations = new Map<string, Promise<CdsAgentSessionCreationOutcome>>();
+
+const AGENT_CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
+
+function parseAgentClientRequestId(value: unknown):
+  | { ok: true; value: string | null }
+  | { ok: false; error: { code: string; message: string } } {
+  if (value === undefined) return { ok: true, value: null };
+  if (
+    typeof value !== 'string'
+    || value !== value.trim()
+    || !AGENT_CLIENT_REQUEST_ID_PATTERN.test(value)
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: 'client_request_id_invalid',
+        message: 'clientRequestId must be 8-128 characters using letters, numbers, dot, underscore, colon, or hyphen',
+      },
+    };
+  }
+  return { ok: true, value };
+}
+
+function parseAgentClientMessageId(value: unknown):
+  | { ok: true; value: string | null }
+  | { ok: false; error: { code: string; message: string } } {
+  if (value === undefined) return { ok: true, value: null };
+  if (
+    typeof value !== 'string'
+    || value !== value.trim()
+    || !AGENT_CLIENT_REQUEST_ID_PATTERN.test(value)
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: 'client_message_id_invalid',
+        message: 'clientMessageId must be 8-128 characters using letters, numbers, dot, underscore, colon, or hyphen',
+      },
+    };
+  }
+  return { ok: true, value };
+}
+
+function buildStableAgentSessionId(
+  projectId: string,
+  principalKey: string,
+  clientRequestId: string,
+): string {
+  const digest = crypto
+    .createHash('sha256')
+    .update(JSON.stringify([projectId, principalKey, clientRequestId]))
+    .digest('hex')
+    .slice(0, 32);
+  return `cds-agent-${digest}`;
+}
 
 interface CdsManagedRuntimeTransport {
   source: 'cds-branch-service';
@@ -2347,6 +2977,15 @@ function getCdsAgentSession(projectId: string, sessionId: string): CdsAgentSessi
   const session = cdsAgentSessions.get(sessionId);
   if (!session || session.projectId !== projectId) return undefined;
   return session;
+}
+
+function getOwnedCdsAgentSession(
+  projectId: string,
+  sessionId: string,
+  principalKey: string,
+): CdsAgentSession | undefined {
+  const session = getCdsAgentSession(projectId, sessionId);
+  return session?.principalKey === principalKey ? session : undefined;
 }
 
 function toAgentWorkspaceRuntimeError(error: unknown): {
@@ -2529,10 +3168,13 @@ function pushCdsAgentEvent(
         sessionSecrets?.transferToken,
       ].filter((secret): secret is string => typeof secret === 'string' && secret.length > 0)) as Record<string, unknown>
     : payload;
+  const correlatedPayload = session.activeClientMessageId && safePayload.clientMessageId === undefined
+    ? { ...safePayload, clientMessageId: session.activeClientMessageId }
+    : safePayload;
   const event = {
     seq: session.events.length + 1,
     type,
-    payload: safePayload,
+    payload: correlatedPayload,
     createdAt: new Date().toISOString(),
   };
   session.events.push(event);
@@ -2541,7 +3183,7 @@ function pushCdsAgentEvent(
   // 观测台实时流（2026-06-11）：结构性节点发布到全局总线（status/done/error/tool_*），
   // text_delta/thinking 不逐 token 发（防总线洪水）——前端列表只需状态翻转与收发节点。
   if (type === 'status' || type === 'done' || type === 'error' || type === 'tool_call' || type === 'tool_result') {
-    publishAgentActivity(session, type, safePayload);
+    publishAgentActivity(session, type, correlatedPayload);
   }
   return event;
 }
@@ -2654,6 +3296,7 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
   return {
     id: session.id,
     projectId: session.projectId,
+    clientRequestId: session.clientRequestId,
     title: session.title,
     clientUser: session.clientUser,
     clientApp: session.clientApp,
@@ -2686,6 +3329,7 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     updatedAt: session.updatedAt,
     stoppedAt: session.stoppedAt ?? null,
     resourceCleanupPending: session.resourceCleanupPending === true,
+    creationFailure: session.creationFailure ?? null,
     eventCount: session.events.length,
   };
 }
@@ -2911,7 +3555,10 @@ async function runCdsManagedOfficialSdkTransport(
     return result;
   } catch (err) {
     const aborted = err instanceof Error && err.name === 'AbortError';
-    const stoppedDuringRun = (session.status as CdsAgentSessionStatus) === 'stopped';
+    const stoppedDuringRun = (
+      (session.status as CdsAgentSessionStatus) === 'stopping'
+      || (session.status as CdsAgentSessionStatus) === 'stopped'
+    );
     if (aborted && stoppedDuringRun) {
       const error = {
         code: 'cds_managed_runtime_transport_aborted',
@@ -2948,6 +3595,7 @@ async function runCdsManagedOfficialSdkTransport(
     if (session.activeRunId === runId) {
       session.activeRunId = undefined;
       session.activeRunAbortController = undefined;
+      session.activeClientMessageId = undefined;
     }
     clearTimeout(timer);
   }

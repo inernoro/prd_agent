@@ -238,11 +238,11 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             workspace.MaxOutputBytes,
                             workspace.AllowedOutputPaths))),
                 ct) ?? throw new InvalidOperationException("CDS 未能启动 OpenDesign 远程会话");
-            await _sessions.SendMessageAsync(
+            session = await _sessions.SendMessageAsync(
                 run.UserId,
                 session.Id,
                 new SendInfraAgentMessageRequest(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run)),
-                ct);
+                ct) ?? throw new InvalidOperationException("CDS 未能接收 OpenDesign 远程任务");
 
             while (DateTime.UtcNow < deadline)
             {
@@ -254,6 +254,11 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                     ct);
                 foreach (var item in events.OrderBy(item => item.Seq))
                 {
+                    if (!string.IsNullOrWhiteSpace(item.CdsSourceSessionId)
+                        && !string.Equals(item.CdsSourceSessionId, session.CdsSessionId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
                     afterSeq = Math.Max(afterSeq, item.Seq);
                     switch (item.Type)
                     {

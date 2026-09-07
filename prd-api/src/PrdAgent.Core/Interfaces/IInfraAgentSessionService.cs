@@ -33,7 +33,7 @@ public interface IInfraAgentSessionService
     /// </summary>
     Task<bool> InjectWorkspaceFilesAsync(string userId, string id, IReadOnlyList<InfraAgentWorkspaceFileInput> files, CancellationToken ct);
 
-    Task RunRuntimeJobAsync(string userId, string id, string content, CancellationToken ct);
+    Task RunRuntimeJobAsync(string userId, string id, string messageId, string content, CancellationToken ct);
 
     Task<InfraAgentSessionView?> StopAsync(string userId, string id, CancellationToken ct);
 
@@ -85,6 +85,7 @@ public interface IInfraAgentRuntimeJobQueue
 public sealed record InfraAgentRuntimeJob(
     string UserId,
     string SessionId,
+    string MessageId,
     string Content,
     DateTime EnqueuedAt
 );
@@ -241,7 +242,9 @@ public record InfraAgentEventView(
     string TraceId,
     string Type,
     string PayloadJson,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    string? CdsSourceSessionId = null,
+    long? CdsSeq = null
 );
 
 public record InfraAgentMessageView(
@@ -250,7 +253,9 @@ public record InfraAgentMessageView(
     string Role,
     string Content,
     string Status,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    string? CdsSourceSessionId = null,
+    string? ReplyToMessageId = null
 );
 
 public record InfraAgentSlaDashboardView(
@@ -505,6 +510,7 @@ public static class InfraAgentSessionErrorCodes
     public const string RuntimeProfileIncompatible = "runtime_profile_incompatible";
     public const string RuntimeUnavailable = "runtime_unavailable";
     public const string SessionStillRunning = "session_still_running";
+    public const string MessageDispatchPending = "message_dispatch_pending";
     public const string ManualTakeoverEnabled = "manual_takeover_enabled";
     public const string ManualTakeoverRequired = "manual_takeover_required";
 }
