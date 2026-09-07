@@ -708,6 +708,32 @@ def collect_prev_weekly(base, H, prev_title_hint):
             "prevEntry": {"title": hit.get("title"), "entryId": hit.get("id")} if hit else None}
 
 
+def assert_not_shallow():
+    """浅克隆会让本周提交统计少算，且不会报错——只会安静地少。
+
+    W33/W34/W35/W36 连续四周踩同一个坑：容器里的 clone 只有几百个提交，
+    正文数字先按截断值写出来，事后靠人工发现再 git fetch --unshallow 重算。
+    每一期的报告正文都写下「下期应该断言」，但写进报告正文的待办没人执行，
+    所以这一次写进采集脚本——采集是数字的唯一入口，在这里挡住才算数。
+    """
+    try:
+        r = subprocess.run(["git", "rev-parse", "--is-shallow-repository"],
+                           capture_output=True, text=True, timeout=10)
+        shallow = r.stdout.strip() == "true"
+    except Exception as e:
+        return {"checked": False, "reason": f"无法判定：{e}"}
+    if not shallow:
+        return {"checked": True, "shallow": False}
+    n = subprocess.run(["git", "rev-list", "--count", "HEAD"],
+                       capture_output=True, text=True).stdout.strip() or "?"
+    sys.stderr.write(
+        "\n[采集中止] 当前仓库是浅克隆（本地仅 %s 个提交），"
+        "本周提交数与逐日分布都会少算，且不会报错。\n"
+        "  先跑：git fetch --unshallow\n"
+        "  确有理由在浅克隆上采集时，加 --allow-shallow 显式放行（报告需注明数字为下限）。\n" % n)
+    sys.exit(2)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--week-start", required=True)
@@ -722,10 +748,19 @@ def main():
                    help="上线→采用回溯几周（默认 4：本周之前的 4 份周报）")
     p.add_argument("--out", default="")
     p.add_argument("--human", action="store_true")
+    p.add_argument("--allow-shallow", action="store_true",
+                   help="放行浅克隆采集（数字会少算，报告须注明为下限）")
     a = p.parse_args()
 
+    shallow_state = {"checked": True, "shallow": False}
+    if a.allow_shallow:
+        shallow_state = {"checked": False, "reason": "--allow-shallow 显式放行"}
+    else:
+        shallow_state = assert_not_shallow()
+
     base, start, end = a.base.rstrip("/"), a.week_start, a.week_end
-    ctx = {"weekStart": start, "weekEnd": end, "base": base, "project": a.project}
+    ctx = {"weekStart": start, "weekEnd": end, "base": base, "project": a.project,
+           "repoDepth": shallow_state}
 
     try:
         H = _headers(a.impersonate)
