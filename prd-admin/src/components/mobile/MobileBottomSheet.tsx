@@ -68,8 +68,14 @@ export function MobileBottomSheet({ open, onClose, title, note, children }: Mobi
           background: C.bg,
           borderRadius: '22px 22px 0 0',
           paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)',
+          // 关闭时不仅移出视口，还要从可见性树中移除内容。
+          // 否则自动化或辅助技术仍可能把隐藏面板内的操作识别为可见，
+          // 误判移动端入口不可达，并允许焦点落到不可见按钮上。
+          visibility: open ? 'visible' : 'hidden',
           transform: open ? 'translateY(0)' : 'translateY(100%)',
-          transition: 'transform 0.4s cubic-bezier(0.32,0.72,0,1)',
+          transition: open
+            ? 'transform 0.4s cubic-bezier(0.32,0.72,0,1)'
+            : 'transform 0.4s cubic-bezier(0.32,0.72,0,1), visibility 0s linear 0.4s',
           maxHeight: '82%',
           minHeight: 0,
           overflowY: 'auto',
