@@ -51,7 +51,7 @@ export function RevokeClientDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="断开这台客户端"
-      description={client ? `这把钥匙：${client.name}` : undefined}
+      description={client ? `这把钥匙：${client.name}（${client.keyPrefix}…）` : undefined}
       maxWidth={440}
       content={
         <div className="flex flex-col gap-3">
