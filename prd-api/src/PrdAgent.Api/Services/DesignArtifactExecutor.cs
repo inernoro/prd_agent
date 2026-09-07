@@ -303,7 +303,7 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                     }
                     if (latestSession?.Status == InfraAgentSessionStatuses.Stopped)
                     {
-                        throw new InvalidOperationException(
+                        throw new DesignArtifactExecutionCancelledException(
                             "OpenDesign 远程会话在产物提交前已停止，请重新发起任务");
                     }
                 }
@@ -398,6 +398,8 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
         }
     }
 }
+
+internal sealed class DesignArtifactExecutionCancelledException(string message) : Exception(message);
 
 internal static class DesignArtifactPromptBuilder
 {

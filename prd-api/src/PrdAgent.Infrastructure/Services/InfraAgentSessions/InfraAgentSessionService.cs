@@ -1233,20 +1233,25 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var cancelAdapter = ResolveAdapterByKind(session.RuntimeAdapter);
             if (!string.IsNullOrWhiteSpace(session.CurrentRuntimeRunId) && cancelAdapter != null)
             {
-                var cancel = await cancelAdapter.CancelAsync(session.CurrentRuntimeRunId, CancellationToken.None);
+                var cancel = await RunBestEffortRuntimeCancelAsync(
+                    () => cancelAdapter.CancelAsync(session.CurrentRuntimeRunId, CancellationToken.None),
+                    ex => _logger.LogWarning(
+                        ex,
+                        "Runtime cancellation failed; continuing session cleanup session={SessionId}",
+                        session.Id));
                 await AppendRawEventAsync(
                     session.Id,
                     await NextEventSeqAsync(session.Id, CancellationToken.None),
                     InfraAgentEventTypes.Log,
                     JsonSerializer.Serialize(new
                     {
-                        level = cancel.Cancelled ? "info" : "warning",
+                        level = cancel?.Cancelled == true ? "info" : "warning",
                         source = "runtime-adapter",
-                        runtimeAdapter = cancel.AdapterKind ?? session.RuntimeAdapter,
+                        runtimeAdapter = cancel?.AdapterKind ?? session.RuntimeAdapter,
                         runtimeRunId = session.CurrentRuntimeRunId,
-                        message = cancel.Cancelled
+                        message = cancel?.Cancelled == true
                             ? "runtime run cancel requested"
-                            : $"runtime run cancel did not complete: {cancel.Reason ?? "unknown"}"
+                            : "runtime run cancel did not complete; continuing session cleanup"
                     }),
                     CancellationToken.None);
             }
@@ -2350,6 +2355,21 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             logFailure(ex);
             return false;
+        }
+    }
+
+    internal static async Task<InfraAgentRuntimeCancelResult?> RunBestEffortRuntimeCancelAsync(
+        Func<Task<InfraAgentRuntimeCancelResult>> cancelAsync,
+        Action<Exception> logFailure)
+    {
+        try
+        {
+            return await cancelAsync();
+        }
+        catch (Exception ex)
+        {
+            logFailure(ex);
+            return null;
         }
     }
 

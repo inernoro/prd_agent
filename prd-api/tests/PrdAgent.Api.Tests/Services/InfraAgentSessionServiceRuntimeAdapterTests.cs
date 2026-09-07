@@ -10,6 +10,31 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class InfraAgentSessionServiceRuntimeAdapterTests
 {
+    [Fact]
+    public async Task RuntimeCancelFailure_ShouldBeLoggedWithoutBlockingSessionCleanup()
+    {
+        Exception? logged = null;
+
+        var result = await InfraAgentSessionService.RunBestEffortRuntimeCancelAsync(
+            () => throw new InvalidOperationException("runtime cancel rejected"),
+            ex => logged = ex);
+
+        result.ShouldBeNull();
+        logged.ShouldBeOfType<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task RuntimeCancelSuccess_ShouldRemainObservable()
+    {
+        var expected = new InfraAgentRuntimeCancelResult(true, AdapterKind: "open-design");
+
+        var result = await InfraAgentSessionService.RunBestEffortRuntimeCancelAsync(
+            () => Task.FromResult(expected),
+            _ => throw new InvalidOperationException("failure callback must not run"));
+
+        result.ShouldBeSameAs(expected);
+    }
+
     [Theory]
     [InlineData(InfraAgentSessionStatuses.Idle, true)]
     [InlineData(InfraAgentSessionStatuses.Stopped, true)]

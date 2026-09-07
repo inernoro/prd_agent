@@ -235,6 +235,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         {
             await MarkErrorAsync(runId, "站点不存在或你没有修改权限", leaseOwner);
         }
+        catch (DesignArtifactExecutionCancelledException)
+        {
+            await MarkCancelledAsync(runId, "设计任务已取消，未生成或发布新版本", leaseOwner);
+        }
         catch (InvalidOperationException ex)
         {
             await MarkErrorAsync(runId, ex.Message, leaseOwner);
@@ -296,13 +300,37 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             CancellationToken.None);
     }
 
-    private async Task MarkErrorAsync(string runId, string message, string leaseOwner)
+    private Task MarkErrorAsync(string runId, string message, string leaseOwner)
+        => MarkTerminalAsync(
+            runId,
+            message,
+            leaseOwner,
+            RunStatuses.Error,
+            "error",
+            "DESIGN_ARTIFACT_FAILED");
+
+    private Task MarkCancelledAsync(string runId, string message, string leaseOwner)
+        => MarkTerminalAsync(
+            runId,
+            message,
+            leaseOwner,
+            RunStatuses.Cancelled,
+            "cancelled",
+            null);
+
+    private async Task MarkTerminalAsync(
+        string runId,
+        string message,
+        string leaseOwner,
+        string status,
+        string eventName,
+        string? errorCode)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var update = Builders<DesignArtifactRun>.Update
-            .Set(x => x.Status, RunStatuses.Error)
-            .Set(x => x.Error, message)
+            .Set(x => x.Status, status)
+            .Set(x => x.Error, errorCode == null ? null : message)
             .Set(x => x.Phase, message)
             .Set(x => x.UpdatedAt, DateTime.UtcNow)
             .Set(x => x.CompletedAt, DateTime.UtcNow)
@@ -317,16 +345,16 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
         var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, CancellationToken.None)
                    ?? new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact };
-        meta.Status = RunStatuses.Error;
+        meta.Status = status;
         meta.EndedAt = DateTime.UtcNow;
-        meta.ErrorCode = "DESIGN_ARTIFACT_FAILED";
-        meta.ErrorMessage = message;
+        meta.ErrorCode = errorCode;
+        meta.ErrorMessage = errorCode == null ? null : message;
         await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
         await _events.AppendEventAsync(
             RunKinds.DesignArtifact,
             runId,
-            "error",
-            new { code = "DESIGN_ARTIFACT_FAILED", message },
+            eventName,
+            new { code = errorCode, message },
             RunTtl,
             CancellationToken.None);
     }
