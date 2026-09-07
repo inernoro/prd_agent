@@ -541,7 +541,9 @@ function ClientRow({
             type="button"
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-[8px] py-1 text-left"
+            // 手机端图例收起后这一行是看文字说明的唯一入口，触点必须够手指按：
+            // 最小 44px 高，桌面端不撑；视觉仍是那一行小点，只是可按的区域变大
+            className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 rounded-[8px] py-1 text-left sm:min-h-0"
           >
             <span className="flex shrink-0 items-center gap-1.5">
               {signal.dots.map((d) => (
