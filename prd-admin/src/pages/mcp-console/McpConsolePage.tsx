@@ -628,15 +628,12 @@ function ClientRow({
                 ? '按当初那份清单钉死：以后平台新上的能力不会自动进来。'
                 : '跟着你的权限走：以后平台新上一块能力，它自动就有；你被收回的权限它也立刻跟着没。'}
             </span>
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              {client.lastUsedAt ? (
-                <>
-                  最后活跃 <RelativeTime value={client.lastUsedAt} />
-                </>
-              ) : (
-                '还没用过'
-              )}
-            </span>
+            {/* 从来没用过的那把，折叠态头部已经写着「还没用过」，这里不再说第二遍 */}
+            {client.lastUsedAt && (
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                最后活跃 <RelativeTime value={client.lastUsedAt} />
+              </span>
+            )}
           </div>
         )}
 
