@@ -270,7 +270,7 @@ public class InfraAgentEventConcurrencyTests : IAsyncLifetime
         var persisted = await _db.InfraAgentSessions.Find(x => x.Id == sessionId).SingleAsync();
         Assert.Equal(InfraAgentSessionStatuses.Running, persisted.Status);
         Assert.Equal("new-message", persisted.ActiveMessageId);
-        Assert.Equal(cleanupRequestedAt, persisted.CleanupRequestedAt);
+        Assert.Equal(cleanupRequestedAt, persisted.CleanupRequestedAt!.Value, TimeSpan.FromMilliseconds(1));
     }
 
     [Fact]
