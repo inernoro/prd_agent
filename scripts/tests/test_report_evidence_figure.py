@@ -112,6 +112,10 @@ def check_red_green(label, text, pub):
         overridden = text.replace("</style>", extra + "\n</style>", 1)
         if not pub.check_evidence_figure_css(overridden):
             fail(f"{label}：{tag}的竞争规则 `{extra}` 仍判绿——浏览器会采用它，证据图又能按原始像素平铺")
+    # 基础选择器自己写在前面的 !important 会赢过后面的 100%（Codex review 第二轮）：必须红
+    important_first = re.sub(r"(?m)^(\s*)figure img\s*\{", r"\1figure img { width: auto !important; }\n\1figure img {", text, count=1)
+    if not pub.check_evidence_figure_css(important_first):
+        fail(f"{label}：前置的 `figure img{{width:auto !important}}` 被后写的 100% 掩盖仍判绿")
     # 反向：别的规则也声明 width:100%（不打架）不能误拒
     harmless = text.replace("</style>", ".story figure img { width: 100%; }\n</style>", 1)
     if pub.check_evidence_figure_css(harmless):
@@ -125,16 +129,29 @@ def check_placeholder_gate(pub):
         ("包在行内元素里", "<span>{{IMG:x}}</span>"),
         ("一行两个占位", "{{IMG:a}} {{IMG:b}}"),
         ("EVIDENCE 与文字同行", "证据：{{EVIDENCE}}"),
+        # 换行绕过（Codex review 第二轮）：物理行上独立，节点上下文却仍是属性 / <p>
+        ("属性值里换行", '<img src="\n{{IMG:x}}\n" alt="a">'),
+        ("<p> 里换行", "<p>\n{{IMG:x}}\n</p>"),
+        ("<a> 里换行", "<a href=\"#\">\n{{IMG:x}}\n</a>"),
+        ("标题里换行", "<h4>\n{{IMG:x}}\n</h4>"),
+        ("<style> 注释里", "<style>\n/* {{IMG:x}} */\n</style>"),
+        ("HTML 注释里", "<div>\n<!-- {{IMG:x}} -->\n</div>"),
     ]:
         try:
             pub.assert_placeholder_standalone(bad)
-            fail(f"占位{tag}没有被拒：{bad}")
+            fail(f"占位{tag}没有被拒：{bad!r}")
         except RuntimeError:
             pass
-    try:
-        pub.assert_placeholder_standalone("<p>前文</p>\n  {{IMG:x}}  \n<p>后文</p>\n{{EVIDENCE}}\n")
-    except RuntimeError as e:
-        fail(f"独立成行的占位被误拒：{e}")
+    for tag, good in [
+        ("顶层", "<p>前文</p>\n  {{IMG:x}}  \n<p>后文</p>\n{{EVIDENCE}}\n"),
+        ("section 里", "<section class=\"extra\">\n{{IMG:x}}\n</section>"),
+        ("嵌套 div 里，前面有 void 元素", "<div class=\"a\"><div class=\"b\">\n<img src=\"y.png\"><br>\n{{IMG:x}}\n</div></div>"),
+        ("li 里", "<ul><li>\n{{IMG:x}}\n</li></ul>"),
+    ]:
+        try:
+            pub.assert_placeholder_standalone(good)
+        except RuntimeError as e:
+            fail(f"{tag}独立成行的占位被误拒：{e}")
 
 
 def _glob_to_regex(p):
