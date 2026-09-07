@@ -358,6 +358,7 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IUploadProgressService, P
 // 团队（跨应用协作单位：网页托管 + 知识库共用）+ 团队活动日志
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infrastructure.Services.TeamService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IActivityActionRecorder, PrdAgent.Api.Services.ActivityActionRecorder>();
 // 网页访客痕迹审计 + 自定义分类自动生成
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteViewEventService, PrdAgent.Infrastructure.Services.SiteViewEventService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWebFolderService, PrdAgent.Infrastructure.Services.WebFolderService>();

@@ -487,6 +487,199 @@ public sealed class HostedSiteEditsControllerTests
         Assert.Equal(expected, HostedSiteService.IsRevisionReadableWrapper(wrappedAssetType));
     }
 
+    [Fact]
+    public async Task RejectRevision_ShouldCallDomainServiceAndExposeRejectionAuditFields()
+    {
+        var rejectedAt = DateTime.UtcNow;
+        var revision = new HostedSiteRevision
+        {
+            Id = "revision-draft",
+            SiteId = "site-a",
+            Status = HostedSiteRevisionStatuses.Rejected,
+            CreatedByUserId = "owner-user",
+            RejectedAt = rejectedAt,
+            RejectedByUserId = "owner-user",
+            RejectionReason = "版式不符合要求",
+        };
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.RejectAsync(
+                "site-a",
+                revision.Id,
+                "owner-user",
+                "版式不符合要求",
+                CancellationToken.None))
+            .ReturnsAsync((revision, true));
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var result = await controller.RejectRevision(
+            "site-a",
+            revision.Id,
+            new RejectHostedSiteRevisionRequest { Reason = " 版式不符合要求\n" });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.True(payload.GetProperty("data").GetProperty("changed").GetBoolean());
+        var item = payload.GetProperty("data").GetProperty("revision");
+        Assert.Equal(HostedSiteRevisionStatuses.Rejected, item.GetProperty("status").GetString());
+        Assert.Equal("owner-user", item.GetProperty("rejectedByUserId").GetString());
+        Assert.Equal("版式不符合要求", item.GetProperty("rejectionReason").GetString());
+        Assert.Equal(rejectedAt, item.GetProperty("rejectedAt").GetDateTime());
+        Assert.False(controller.HttpContext.Items.ContainsKey(
+            PrdAgent.Api.Filters.ActivityLogActionFilter.SuppressItemKey));
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task RejectRevision_WhenAlreadyRejected_ShouldSuppressDuplicateHttpActivity()
+    {
+        var revision = new HostedSiteRevision
+        {
+            Id = "revision-rejected",
+            SiteId = "site-a",
+            Status = HostedSiteRevisionStatuses.Rejected,
+            CreatedByUserId = "owner-user",
+            RejectedAt = DateTime.UtcNow,
+            RejectedByUserId = "owner-user",
+        };
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.RejectAsync(
+                "site-a",
+                revision.Id,
+                "owner-user",
+                null,
+                CancellationToken.None))
+            .ReturnsAsync((revision, false));
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var result = await controller.RejectRevision("site-a", revision.Id, new RejectHostedSiteRevisionRequest());
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.False(payload.GetProperty("data").GetProperty("changed").GetBoolean());
+        Assert.True(controller.HttpContext.Items.ContainsKey(
+            PrdAgent.Api.Filters.ActivityLogActionFilter.SuppressItemKey));
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task RejectRevision_ShouldMapInvalidReasonAndStateConflictWithoutFalseSuccess()
+    {
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var invalid = await controller.RejectRevision(
+            "site-a",
+            "revision-draft",
+            new RejectHostedSiteRevisionRequest
+            {
+                Reason = new string('a', HostedSiteRevisionRules.MaxRejectionReasonLength + 1),
+            });
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(invalid);
+        Assert.Contains("不能超过", ResponseMessage(badRequest), StringComparison.Ordinal);
+        revisions.VerifyNoOtherCalls();
+
+        revisions.Setup(service => service.RejectAsync(
+                "site-a",
+                "revision-published",
+                "owner-user",
+                null,
+                CancellationToken.None))
+            .ThrowsAsync(new InvalidOperationException("只有草稿可以拒绝"));
+        var conflict = await controller.RejectRevision(
+            "site-a",
+            "revision-published",
+            new RejectHostedSiteRevisionRequest());
+
+        var conflictResult = Assert.IsType<ConflictObjectResult>(conflict);
+        var payload = JsonSerializer.SerializeToElement(
+            conflictResult.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal("REVISION_CONFLICT", payload.GetProperty("error").GetProperty("code").GetString());
+        Assert.False(controller.HttpContext.Items.ContainsKey(
+            PrdAgent.Api.Filters.ActivityLogActionFilter.SuppressItemKey));
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task RejectRevision_WhenRevisionOrSiteIsMissing_ShouldReturnNotFound()
+    {
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.RejectAsync(
+                "site-a",
+                "revision-missing",
+                "owner-user",
+                null,
+                CancellationToken.None))
+            .ThrowsAsync(new KeyNotFoundException("版本不存在"));
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var result = await controller.RejectRevision(
+            "site-a",
+            "revision-missing",
+            new RejectHostedSiteRevisionRequest());
+
+        var notFound = Assert.IsType<NotFoundObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(
+            notFound.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(ErrorCodes.NOT_FOUND, payload.GetProperty("error").GetProperty("code").GetString());
+        Assert.False(controller.HttpContext.Items.ContainsKey(
+            PrdAgent.Api.Filters.ActivityLogActionFilter.SuppressItemKey));
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task PublishRevision_WhenAlreadyCurrent_ShouldSuppressDuplicateHttpActivity()
+    {
+        var site = BuildEditableEntry("<!doctype html><html>current</html>").Site;
+        var revision = new HostedSiteRevision
+        {
+            Id = "revision-current",
+            SiteId = site.Id,
+            Status = HostedSiteRevisionStatuses.Published,
+            PublishedContentVersion = site.ContentVersion,
+        };
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.PublishAsync(
+                site.Id, revision.Id, "owner-user", CancellationToken.None))
+            .ReturnsAsync(new HostedSiteRevisionMutationResult(revision, site, false));
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var result = await controller.PublishRevision(site.Id, revision.Id);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.True(controller.HttpContext.Items.ContainsKey(
+            PrdAgent.Api.Filters.ActivityLogActionFilter.SuppressItemKey));
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task RollbackRevision_ShouldRequireAndForwardIdempotencyKey()
+    {
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var missing = await controller.RollbackRevision("site-a", "revision-old", null);
+        var badRequest = Assert.IsType<BadRequestObjectResult>(missing);
+        var missingPayload = JsonSerializer.SerializeToElement(
+            badRequest.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal("IDEMPOTENCY_KEY_REQUIRED", missingPayload.GetProperty("error").GetProperty("code").GetString());
+        revisions.VerifyNoOtherCalls();
+
+        var site = BuildEditableEntry("<!doctype html><html>restored</html>").Site;
+        var revision = new HostedSiteRevision { Id = "rollback-copy", SiteId = site.Id };
+        revisions.Setup(service => service.RollbackAsync(
+                "site-a", "revision-old", "owner-user", "stable-request-key", CancellationToken.None))
+            .ReturnsAsync(new HostedSiteRevisionMutationResult(revision, site, true));
+
+        var accepted = await controller.RollbackRevision("site-a", "revision-old", "stable-request-key");
+
+        Assert.IsType<OkObjectResult>(accepted);
+        revisions.VerifyAll();
+    }
+
     private static HostedSiteEditsController BuildController(
         MongoDbContext db,
         string userId,

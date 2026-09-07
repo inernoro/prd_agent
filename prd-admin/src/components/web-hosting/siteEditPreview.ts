@@ -40,6 +40,7 @@ export function revisionLabel(item: Pick<HostedSiteRevision, 'isCurrent' | 'stat
   if (item.isCurrent) return '当前线上版本';
   if (item.status === 'draft') return '未发布草稿';
   if (item.status === 'publishing') return '发布未完成，可重试';
+  if (item.status === 'rejected') return '已拒绝草稿';
   if (item.source === 'rollback') return '回退发布版本';
   if (item.source === 'baseline') return '历史线上版本';
   return '已发布版本';

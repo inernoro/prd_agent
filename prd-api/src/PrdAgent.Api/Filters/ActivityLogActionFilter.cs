@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
-using PrdAgent.Core.Models;
+using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Filters;
@@ -22,7 +22,7 @@ public sealed class ActivityLogActionFilter : IAsyncActionFilter
     public const string SuppressItemKey = "team-activity:suppress";
 
     /// <summary>
-    /// 在"返回缓存结果、未发生新写入"的分支（典型：Idempotency-Key 回放命中）调用，
+    /// 在"返回缓存结果、未发生新写入"的分支（如 Idempotency-Key 回放或重复拒绝草稿）调用，
     /// 避免客户端超时重试时产生重复动态。
     /// </summary>
     public static void Suppress(HttpContext httpContext) => httpContext.Items[SuppressItemKey] = true;
@@ -30,11 +30,16 @@ public sealed class ActivityLogActionFilter : IAsyncActionFilter
     private const int MaxTitleLength = 200;
 
     private readonly MongoDbContext _db;
+    private readonly IActivityActionRecorder _recorder;
     private readonly ILogger<ActivityLogActionFilter> _logger;
 
-    public ActivityLogActionFilter(MongoDbContext db, ILogger<ActivityLogActionFilter> logger)
+    public ActivityLogActionFilter(
+        MongoDbContext db,
+        IActivityActionRecorder recorder,
+        ILogger<ActivityLogActionFilter> logger)
     {
         _db = db;
+        _recorder = recorder;
         _logger = logger;
     }
 
@@ -103,19 +108,15 @@ public sealed class ActivityLogActionFilter : IAsyncActionFilter
                 title = title[..MaxTitleLength];
             }
 
-            var entry = new ActivityLog
-            {
-                ActorId = actorId,
-                Module = def.Module,
-                ModuleLabel = def.ModuleLabel,
-                Action = actionKey,
-                ActionLabel = def.ActionLabel,
-                TargetId = targetId,
-                TargetTitle = string.IsNullOrWhiteSpace(title) ? null : title.Trim(),
-                Method = context.HttpContext.Request.Method,
-                Path = context.HttpContext.Request.Path.Value ?? string.Empty,
-            };
-            await _db.ActivityLogs.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
+            await _recorder.RecordHttpAsync(
+                def,
+                actionKey,
+                actorId,
+                targetId,
+                title,
+                context.HttpContext.Request.Method,
+                context.HttpContext.Request.Path.Value ?? string.Empty,
+                CancellationToken.None);
         }
         catch (Exception ex)
         {

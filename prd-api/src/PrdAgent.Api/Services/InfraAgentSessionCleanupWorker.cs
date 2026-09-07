@@ -30,11 +30,18 @@ public sealed class InfraAgentSessionCleanupWorker : BackgroundService
                 using var scope = _scopeFactory.CreateScope();
                 var sessions = scope.ServiceProvider.GetRequiredService<IInfraAgentSessionService>();
                 var stoppedCount = await sessions.RecoverPendingStopsAsync(stoppingToken);
+                var expiredPrewarmCount = await sessions.RecoverExpiredPrewarmsAsync(stoppingToken);
                 if (stoppedCount > 0)
                 {
                     _logger.LogInformation(
                         "Recovered {StoppedCount} persisted infra agent session cleanup requests",
                         stoppedCount);
+                }
+                if (expiredPrewarmCount > 0)
+                {
+                    _logger.LogInformation(
+                        "Recovered {StoppedCount} expired PPT prewarm sessions",
+                        expiredPrewarmCount);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

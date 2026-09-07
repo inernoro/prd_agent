@@ -8,6 +8,7 @@ import { computeCdsInstanceId } from './orphan-container-reaper.js';
 import { maskSecrets } from './secret-masker.js';
 
 export const MAP_DESIGN_WORKSPACE_SCHEMA = 'map-design-workspace-v1';
+const PUBLIC_ARTIFACT_MANIFEST_SCHEMA = 'map-design-artifact-public-manifest-v2';
 export const OPEN_DESIGN_IMAGE = 'ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474';
 const OPEN_DESIGN_WEB_PROTOTYPE_SKILL = 'web-prototype';
 const OPEN_DESIGN_WEB_PROTOTYPE_SOURCE = '/app/plugins/_official/examples/web-prototype';
@@ -80,7 +81,7 @@ interface RuntimeHandle {
   networkName: string;
   workspaceVolumeName: string;
   dataVolumeName: string;
-  inputPaths: string[];
+  inputFiles: Array<{ path: string; sha256: string; size: number }>;
   daemonBaseUrl: string;
   daemonApiToken: string;
   egressClientToken: string;
@@ -234,10 +235,6 @@ const CDS_GENERATED_ARTIFACT_PATHS = [
   'assets/provenance.json',
 ] as const;
 
-interface GeneratedArtifactContext {
-  knowledgeSourceCount: number;
-}
-
 function jsonArtifactFile(path: string, value: unknown): WorkspacePackageFile {
   const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
   return {
@@ -249,10 +246,58 @@ function jsonArtifactFile(path: string, value: unknown): WorkspacePackageFile {
   };
 }
 
-function plainTextFromMarkup(markup: string): string {
-  return decodeHtmlText(markup.replace(/<[^>]*>/g, ' '))
-    .replace(/\s+/g, ' ')
-    .trim();
+function compareOrdinal(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function computePublicArtifactRevision(files: readonly WorkspacePackageFile[]): string {
+  const canonical = [...files]
+    .sort((left, right) => compareOrdinal(left.path, right.path))
+    .flatMap((file) => [file.path, file.sha256, String(file.size), file.mediaType])
+    .map((value) => `${Buffer.byteLength(value, 'utf8')}:${value}`)
+    .join('');
+  return sha256(Buffer.from(canonical, 'utf8'));
+}
+
+function buildPublicArtifactManifest(files: readonly WorkspacePackageFile[]): WorkspacePackageFile {
+  const listedFiles = [...files]
+    .sort((left, right) => compareOrdinal(left.path, right.path))
+    .map(({ path: filePath, sha256: fileSha, size, mediaType }) => ({
+      path: filePath,
+      sha256: fileSha,
+      size,
+      mediaType,
+    }));
+  const manifestBytes = Buffer.from(JSON.stringify({
+    schemaVersion: PUBLIC_ARTIFACT_MANIFEST_SCHEMA,
+    artifactRevision: computePublicArtifactRevision(files),
+    entryFile: 'index.html',
+    files: listedFiles,
+  }));
+  return {
+    path: 'manifest.json',
+    contentBase64: manifestBytes.toString('base64'),
+    sha256: sha256(manifestBytes),
+    size: manifestBytes.byteLength,
+    mediaType: 'application/json; charset=utf-8',
+  };
+}
+
+const MAX_OUTLINE_HEADINGS = 256;
+const MAX_HEADING_TEXT_CHARS = 2_048;
+const MAX_CSS_DERIVATION_CHARS = 512 * 1024;
+const MAX_HTML_NESTING_DEPTH = 2_048;
+
+type DerivedHeading = { level: number; text: string; id?: string };
+
+function appendBounded(current: string, next: string, limit: number): string {
+  if (current.length >= limit || !next) return current;
+  return current + next.slice(0, limit - current.length);
+}
+
+
+function normalizeDerivedText(value: string, maxLength: number): string {
+  return decodeHtmlText(value).replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
 /**
@@ -263,59 +308,156 @@ function plainTextFromMarkup(markup: string): string {
  */
 export function buildGeneratedArtifactFiles(
   hardenedHtml: string,
-  context: GeneratedArtifactContext = { knowledgeSourceCount: 0 },
 ): WorkspacePackageFile[] {
-  const tags = scanHtmlTags(hardenedHtml).filter((tag) => !tag.isClosing);
-  const root = tags.find((tag) => tag.name.toLowerCase() === 'html');
-  const titleMatch = hardenedHtml.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
-  const headings = Array.from(hardenedHtml.matchAll(/<h([1-6])\b([^>]*)>([\s\S]*?)<\/h\1\s*>/gi))
-    .map((match) => {
-      const attributes = parseHtmlAttributes(match[2]);
-      const text = plainTextFromMarkup(match[3]).slice(0, 240);
-      return {
-        level: Number.parseInt(match[1], 10),
-        text,
+  const headings: DerivedHeading[] = [];
+  const customProperties = new Map<string, string>();
+  const colors = new Set<string>();
+  const fontFamilies = new Set<string>();
+  const breakpoints = new Set<number>();
+  const landmarks: Record<string, number> = { header: 0, nav: 0, main: 0, aside: 0, footer: 0 };
+  const stack: Array<{
+    name: string;
+    suppressed: boolean;
+    heading?: { level: number; id?: string; text: string };
+    title?: { text: string };
+    styleStart?: number;
+  }> = [];
+  let activeHeading: typeof stack[number]['heading'];
+  let activeTitle: typeof stack[number]['title'];
+  let documentTitle = '';
+  let suppressedDepth = 0;
+  let htmlLanguage = '';
+  let headingCount = 0;
+  let h1Count = 0;
+  let imageCount = 0;
+  let missingImageAltCount = 0;
+  let linkCount = 0;
+  let buttonCount = 0;
+  let cssCharsRemaining = MAX_CSS_DERIVATION_CHARS;
+  let cursor = 0;
+
+  const processCss = (rawCss: string): void => {
+    if (cssCharsRemaining <= 0) return;
+    const css = rawCss.slice(0, cssCharsRemaining).replace(/\/\*[\s\S]*?\*\//g, ' ');
+    cssCharsRemaining -= Math.min(rawCss.length, cssCharsRemaining);
+    if (customProperties.size < 256) {
+      for (const match of css.matchAll(/(--[a-z0-9_-]+)\s*:\s*([^;}{]+)/gi)) {
+        const key = match[1].toLowerCase();
+        if (!customProperties.has(key) && customProperties.size >= 256) break;
+        customProperties.set(key, match[2].trim().slice(0, 240));
+      }
+    }
+    if (colors.size < 256) {
+      for (const match of css.matchAll(/#[0-9a-f]{3,8}\b|(?:rgb|hsl)a?\([^)]{1,120}\)/gi)) {
+        colors.add(match[0].toLowerCase().replace(/\s+/g, ' '));
+        if (colors.size >= 256) break;
+      }
+    }
+    if (fontFamilies.size < 64) {
+      for (const match of css.matchAll(/font-family\s*:\s*([^;}{]+)/gi)) {
+        fontFamilies.add(match[1].trim().replace(/\s+/g, ' ').slice(0, 240));
+        if (fontFamilies.size >= 64) break;
+      }
+    }
+    if (breakpoints.size < 64) {
+      for (const match of css.matchAll(/@media[^{}]*\((?:min|max)-width\s*:\s*(\d+)px\)/gi)) {
+        breakpoints.add(Number.parseInt(match[1], 10));
+        if (breakpoints.size >= 64) break;
+      }
+    }
+  };
+
+  for (const tag of iterateHtmlTags(hardenedHtml)) {
+    const text = hardenedHtml.slice(cursor, tag.start);
+    if (activeTitle) activeTitle.text = appendBounded(activeTitle.text, text, MAX_HEADING_TEXT_CHARS);
+    if (activeHeading && suppressedDepth === 0) {
+      activeHeading.text = appendBounded(activeHeading.text, text, MAX_HEADING_TEXT_CHARS);
+    }
+    cursor = tag.end;
+    const name = tag.name.toLowerCase();
+    if (tag.isClosing) {
+      for (let index = stack.length - 1; index >= 0; index -= 1) {
+        const frame = stack.pop()!;
+        if (frame.suppressed) suppressedDepth -= 1;
+        if (frame.styleStart !== undefined) processCss(hardenedHtml.slice(frame.styleStart, tag.start));
+        if (frame.heading) {
+          const normalizedText = normalizeDerivedText(frame.heading.text, 240);
+          if (normalizedText && headings.length < MAX_OUTLINE_HEADINGS) {
+            headings.push({
+              level: frame.heading.level,
+              text: normalizedText,
+              ...(frame.heading.id ? { id: frame.heading.id } : {}),
+            });
+          }
+          if (activeHeading === frame.heading) activeHeading = undefined;
+        }
+        if (frame.title) {
+          if (!documentTitle) documentTitle = normalizeDerivedText(frame.title.text, 240);
+          if (activeTitle === frame.title) activeTitle = undefined;
+        }
+        if (frame.name === name) break;
+      }
+      continue;
+    }
+
+    const needsAttributes = name === 'html'
+      || name === 'img'
+      || /^h[1-6]$/.test(name)
+      || /(?:^|\s)(?:hidden|aria-hidden|style)(?:\s|=|$)/i.test(tag.attributes);
+    const attributes = needsAttributes ? parseHtmlAttributes(tag.attributes) : new Map<string, string>();
+    if (name === 'html' && !htmlLanguage) {
+      htmlLanguage = decodeHtmlText(attributes.get('lang') || '').trim().slice(0, 80);
+    }
+    const inlineStyle = attributes.get('style') || '';
+    const suppressed = ['head', 'template', 'noscript', 'script', 'style'].includes(name)
+      || attributes.has('hidden')
+      || (attributes.get('aria-hidden') || '').trim().toLowerCase() === 'true'
+      || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)/i.test(inlineStyle);
+    const visible = suppressedDepth === 0 && !suppressed;
+    let heading: typeof activeHeading;
+    let titleFrame: typeof activeTitle;
+    if (visible && /^h[1-6]$/.test(name)) {
+      const level = Number.parseInt(name[1], 10);
+      headingCount += 1;
+      if (level === 1) h1Count += 1;
+      heading = {
+        level,
+        text: '',
         ...(attributes.get('id') ? { id: decodeHtmlText(attributes.get('id') || '').slice(0, 160) } : {}),
       };
-    })
-    .filter((heading) => heading.text.length > 0)
-    .slice(0, 256);
-
-  const css = Array.from(hardenedHtml.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi))
-    .map((match) => match[1])
-    .join('\n')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ');
-  const customProperties = new Map<string, string>();
-  for (const match of css.matchAll(/(--[a-z0-9_-]+)\s*:\s*([^;}{]+)/gi)) {
-    if (!customProperties.has(match[1].toLowerCase()) && customProperties.size >= 256) continue;
-    customProperties.set(match[1].toLowerCase(), match[2].trim().slice(0, 240));
+      activeHeading = heading;
+    }
+    if (name === 'title' && !activeTitle) {
+      titleFrame = { text: '' };
+      activeTitle = titleFrame;
+    }
+    if (visible) {
+      if (name === 'img') {
+        imageCount += 1;
+        if (!attributes.has('alt')) missingImageAltCount += 1;
+      } else if (name === 'a') linkCount += 1;
+      else if (name === 'button') buttonCount += 1;
+      if (Object.hasOwn(landmarks, name)) landmarks[name] += 1;
+    }
+    const voidElement = /^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i.test(name);
+    if (!tag.isSelfClosing && !voidElement) {
+      if (stack.length >= MAX_HTML_NESTING_DEPTH) {
+        throw new AgentWorkspaceRuntimeError(
+          'design_output_quality_rejected',
+          'index.html exceeds the supported HTML nesting depth',
+        );
+      }
+      stack.push({
+        name,
+        suppressed,
+        ...(heading ? { heading } : {}),
+        ...(titleFrame ? { title: titleFrame } : {}),
+        ...(name === 'style' ? { styleStart: tag.end } : {}),
+      });
+      if (suppressed) suppressedDepth += 1;
+    }
   }
-  const colors = new Set<string>();
-  for (const match of css.matchAll(/#[0-9a-f]{3,8}\b|(?:rgb|hsl)a?\([^)]{1,120}\)/gi)) {
-    if (colors.size >= 256) break;
-    colors.add(match[0].toLowerCase().replace(/\s+/g, ' '));
-  }
-  const fontFamilies = new Set<string>();
-  for (const match of css.matchAll(/font-family\s*:\s*([^;}{]+)/gi)) {
-    if (fontFamilies.size >= 64) break;
-    fontFamilies.add(match[1].trim().replace(/\s+/g, ' ').slice(0, 240));
-  }
-  const breakpoints = new Set<number>();
-  for (const match of css.matchAll(/@media[^{}]*\((?:min|max)-width\s*:\s*(\d+)px\)/gi)) {
-    if (breakpoints.size >= 64) break;
-    breakpoints.add(Number.parseInt(match[1], 10));
-  }
-
-  const imageTags = tags.filter((tag) => tag.name.toLowerCase() === 'img');
-  const missingImageAltCount = imageTags.filter((tag) => !parseHtmlAttributes(tag.attributes).has('alt')).length;
-  const landmarks = Object.fromEntries(
-    ['header', 'nav', 'main', 'aside', 'footer'].map((name) => [
-      name,
-      tags.filter((tag) => tag.name.toLowerCase() === name).length,
-    ]),
-  );
-  const htmlLanguage = decodeHtmlText(parseHtmlAttributes(root?.attributes || '').get('lang') || '').trim();
-  const title = titleMatch ? plainTextFromMarkup(titleMatch[1]).slice(0, 240) : '';
+  const title = documentTitle || normalizeDerivedText(activeTitle?.text || '', 240);
 
   return [
     jsonArtifactFile('assets/page-outline.json', {
@@ -336,16 +478,16 @@ export function buildGeneratedArtifactFiles(
         hasLanguage: htmlLanguage.length > 0,
         language: htmlLanguage || null,
         hasTitle: title.length > 0,
-        headingCount: headings.length,
-        hasSingleH1: headings.filter((heading) => heading.level === 1).length === 1,
+        headingCount,
+        hasSingleH1: h1Count === 1,
       },
       images: {
-        count: imageTags.length,
+        count: imageCount,
         missingAltCount: missingImageAltCount,
       },
       controls: {
-        linkCount: tags.filter((tag) => tag.name.toLowerCase() === 'a').length,
-        buttonCount: tags.filter((tag) => tag.name.toLowerCase() === 'button').length,
+        linkCount,
+        buttonCount,
       },
       landmarks,
       scope: 'static-structure-only',
@@ -354,27 +496,41 @@ export function buildGeneratedArtifactFiles(
       schemaVersion: 'map-artifact-provenance-v1',
       producer: 'cds-open-design-runtime',
       derivationStage: 'post-security-hardening',
-      sourceClasses: context.knowledgeSourceCount > 0
-        ? ['map-task', 'map-knowledge-material']
-        : ['map-task'],
-      knowledgeSourceCount: Math.max(0, Math.floor(context.knowledgeSourceCount)),
+      publicInput: 'hardened-index-html',
       publishedFiles: ['index.html', ...CDS_GENERATED_ARTIFACT_PATHS, 'manifest.json'],
-      privacy: 'no-source-identifiers-keys-credentials-or-source-hashes',
+      privacy: 'public-html-only-no-private-source-metadata',
     }),
   ].sort((left, right) => left.path.localeCompare(right.path));
 }
 
-// This script runs inside the isolated OpenDesign container before any bytes
-// cross the Docker boundary. Original MAP inputs and CDS-managed skill files
-// stay private; every other file must be a regular allowlisted output and fit
-// the transfer contract. The host repeats validation after copy as defense in
-// depth, but no unbounded or special file reaches docker cp first.
+export function buildGeneratedPublicArtifactPackage(hardenedHtml: string): WorkspacePackageFile[] {
+  const indexBytes = Buffer.from(hardenedHtml);
+  const indexFile: WorkspacePackageFile = {
+    path: 'index.html',
+    contentBase64: indexBytes.toString('base64'),
+    sha256: sha256(indexBytes),
+    size: indexBytes.byteLength,
+    mediaType: 'text/html; charset=utf-8',
+  };
+  const publicFiles = [indexFile, ...buildGeneratedArtifactFiles(hardenedHtml)]
+    .sort((left, right) => compareOrdinal(left.path, right.path));
+  return [...publicFiles, buildPublicArtifactManifest(publicFiles)]
+    .sort((left, right) => compareOrdinal(left.path, right.path));
+}
+
+// This script runs in a one-shot read-only exporter while the OpenDesign
+// container is paused. It validates the frozen workspace and copies only
+// allowlisted regular output files to the host bind mount. Private inputs and
+// runtime files therefore never cross the Docker boundary.
 const OUTPUT_PREFLIGHT_SCRIPT = String.raw`
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const config = JSON.parse(Buffer.from(process.env.CDS_OUTPUT_PREFLIGHT_CONFIG || '', 'base64').toString('utf8'));
 const root = '/workspace';
-const inputPaths = new Set(config.inputPaths);
+const outputRoot = '/cds-output';
+const inputFiles = new Map(config.inputFiles.map((file) => [file.path, file]));
+const seenInputs = new Set();
 const ignoredRuntimePaths = new Set(config.ignoredRuntimePaths);
 const allowed = (relative) => config.allowedOutputPaths.some((pattern) => {
   if (pattern.endsWith('/**')) {
@@ -409,13 +565,29 @@ const walk = (directory) => {
       totalBytes += stat.size;
       if (fileCount > config.maxFileCount) fail('file_count');
       if (totalBytes > config.maxOutputBytes) fail('total_bytes');
+      const target = path.join(outputRoot, ...relative.split('/'));
+      const targetRelative = path.relative(outputRoot, target);
+      if (targetRelative.startsWith('..') || path.isAbsolute(targetRelative)) fail('path_not_allowed', relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      const bytes = fs.readFileSync(absolute);
+      if (bytes.length !== stat.size) fail('file_changed', relative);
+      fs.writeFileSync(target, bytes, { flag: 'wx' });
       continue;
     }
-    if (inputPaths.has(relative) || ignoredRuntimePaths.has(relative) || relative.startsWith('.od-skills/')) continue;
+    const input = inputFiles.get(relative);
+    if (input) {
+      const bytes = fs.readFileSync(absolute);
+      const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+      if (bytes.length !== input.size || digest !== input.sha256) fail('input_changed', relative);
+      seenInputs.add(relative);
+      continue;
+    }
+    if (ignoredRuntimePaths.has(relative) || relative.startsWith('.od-skills/')) continue;
     fail('path_not_allowed', relative);
   }
 };
 walk(root);
+for (const inputPath of inputFiles.keys()) if (!seenInputs.has(inputPath)) fail('input_changed', inputPath);
 `;
 
 // OpenDesign never receives a routable egress network. This narrow relay is
@@ -872,12 +1044,36 @@ function validateDesignTaskContract(
   }
   parseVisibleTextOccurrenceConstraints(contract.visibleTextOccurrenceConstraints);
   const hasCurrentPage = files.some((file) => file.path === 'current/index.html');
+  const hasKnowledge = files.some((file) => file.path.startsWith('knowledge/'));
   const responseContract = task.responseContract;
+  const input = task.input;
+  const inputContract = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : undefined;
+  const userSupplied = inputContract?.userSupplied;
+  const userSuppliedContract = userSupplied && typeof userSupplied === 'object' && !Array.isArray(userSupplied)
+    ? userSupplied as Record<string, unknown>
+    : undefined;
+  const serverKnowledge = inputContract?.serverKnowledge;
+  const serverKnowledgeContract = serverKnowledge && typeof serverKnowledge === 'object' && !Array.isArray(serverKnowledge)
+    ? serverKnowledge as Record<string, unknown>
+    : undefined;
+  const currentHtml = inputContract?.currentHtml;
+  const currentHtmlContract = currentHtml && typeof currentHtml === 'object' && !Array.isArray(currentHtml)
+    ? currentHtml as Record<string, unknown>
+    : undefined;
   if (
     typeof task.title !== 'string'
-    || typeof task.instruction !== 'string'
     || !task.title.trim()
-    || !task.instruction.trim()
+    || typeof userSuppliedContract?.instruction !== 'string'
+    || !userSuppliedContract.instruction.trim()
+    || userSuppliedContract.authority !== 'user-supplied'
+    || serverKnowledgeContract?.authority !== 'server-authoritative-snapshot'
+    || !Array.isArray(serverKnowledgeContract.references)
+    || contract.userSuppliedInputsAreFactualProvenance !== false
+    || (hasCurrentPage
+      ? currentHtmlContract?.authority !== 'server-owned-current-artifact'
+      : currentHtml !== null)
     || !responseContract
     || typeof responseContract !== 'object'
     || Array.isArray(responseContract)
@@ -887,12 +1083,13 @@ function validateDesignTaskContract(
   ) {
     throw new AgentWorkspaceRuntimeError(
       'workspace_package_invalid',
-      'brief/task.json title, instruction, and responseContract are incomplete',
+      'brief/task.json input authority, title, and responseContract are incomplete',
     );
   }
-  const expectedSources = hasCurrentPage
-    ? ['title', 'instruction', 'knowledge', 'current-visible-content']
-    : ['title', 'instruction', 'knowledge'];
+  const expectedSources = [
+    ...(hasKnowledge ? ['server-knowledge'] : []),
+    ...(hasCurrentPage ? ['server-current-visible-content'] : []),
+  ];
   if (
     !Array.isArray(contract.factualSources)
     || contract.factualSources.length !== expectedSources.length
@@ -1808,7 +2005,7 @@ export class AgentWorkspaceSessionRuntime {
         networkName,
         workspaceVolumeName,
         dataVolumeName,
-        inputPaths: files.map((file) => file.path),
+        inputFiles: files.map((file) => ({ path: file.path, sha256: file.sha256, size: file.bytes.byteLength })),
         daemonBaseUrl,
         daemonApiToken,
         egressClientToken,
@@ -2133,34 +2330,10 @@ export class AgentWorkspaceSessionRuntime {
       // assets/, but the self-contained page does not consume them and they
       // have not passed a public active-content policy. CDS replaces those
       // side outputs with post-hardening metadata it can fully attest.
-      if (!editingExistingPage && handle.transfer.allowedOutputPaths.includes('assets/**')) {
-        const knowledgeSourceCount = handle.inputPaths.filter((filePath) => filePath.startsWith('knowledge/')).length;
-        collectedFiles = [
-          indexFile!,
-          ...buildGeneratedArtifactFiles(hardenedHtml, { knowledgeSourceCount }),
-        ].sort((left, right) => left.path.localeCompare(right.path));
-      }
-      const manifestBytes = Buffer.from(JSON.stringify({
-        schemaVersion: 'map-design-artifact-manifest-v1',
-        baseRevision: handle.transfer.baseRevision,
-        entryFile: 'index.html',
-        files: collectedFiles.map(({ path: filePath, sha256: fileSha, size, mediaType }) => ({
-          path: filePath,
-          sha256: fileSha,
-          size,
-          mediaType,
-        })),
-      }));
-      const files = [
-        ...collectedFiles,
-        {
-          path: 'manifest.json',
-          contentBase64: manifestBytes.toString('base64'),
-          sha256: sha256(manifestBytes),
-          size: manifestBytes.byteLength,
-          mediaType: 'application/json; charset=utf-8',
-        },
-      ].sort((left, right) => left.path.localeCompare(right.path));
+      const files = !editingExistingPage && handle.transfer.allowedOutputPaths.includes('assets/**')
+        ? buildGeneratedPublicArtifactPackage(hardenedHtml)
+        : [...collectedFiles, buildPublicArtifactManifest(collectedFiles)]
+            .sort((left, right) => compareOrdinal(left.path, right.path));
       const totalOutputBytes = files.reduce((total, file) => total + file.size, 0);
       if (totalOutputBytes > handle.transfer.maxOutputBytes) {
         throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output and CDS manifest exceed maxOutputBytes');
@@ -2580,28 +2753,29 @@ export class AgentWorkspaceSessionRuntime {
   }
 
   private async copyOutputsFromContainer(handle: RuntimeHandle, executionDeadline: number): Promise<void> {
-    await this.validateOutputsInContainer(handle, executionDeadline);
-    this.assertExecutionDeadline(executionDeadline);
     fs.rmSync(handle.outputDir, { recursive: true, force: true });
     fs.mkdirSync(handle.outputDir, { recursive: true, mode: 0o700 });
-    const copied = await this.shell.exec(
-      `docker cp ${shellQuote(`${handle.containerName}:/workspace/.`)} ${shellQuote(handle.outputDir)}`,
-      { timeout: Math.min(90_000, this.remainingExecutionMs(executionDeadline)) },
+    const paused = await this.shell.exec(
+      `docker pause ${shellQuote(handle.containerName)}`,
+      { timeout: Math.min(30_000, this.remainingExecutionMs(executionDeadline)) },
     );
-    this.assertExecutionDeadline(executionDeadline);
-    if (copied.exitCode !== 0) {
-      throw new AgentWorkspaceRuntimeError(
-        'workspace_copy_failed',
-        'OpenDesign output could not be copied out of the managed workspace volume',
-        true,
-      );
+    if (paused.exitCode !== 0) {
+      throw new AgentWorkspaceRuntimeError('workspace_copy_failed', 'OpenDesign workspace could not be frozen for export', true);
+    }
+    try {
+      await this.validateOutputsInContainer(handle, executionDeadline);
+    } finally {
+      const resumed = await this.shell.exec(`docker unpause ${shellQuote(handle.containerName)}`, { timeout: 30_000 });
+      if (resumed.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError('workspace_copy_failed', 'OpenDesign workspace could not resume after export', true);
+      }
     }
   }
 
   private async validateOutputsInContainer(handle: RuntimeHandle, executionDeadline: number): Promise<void> {
     const config = Buffer.from(JSON.stringify({
       allowedOutputPaths: handle.transfer.allowedOutputPaths,
-      inputPaths: handle.inputPaths,
+      inputFiles: handle.inputFiles,
       ignoredRuntimePaths: [...IGNORED_RUNTIME_OUTPUT_PATHS],
       maxFileCount: MAX_OUTPUT_FILE_COUNT,
       maxWorkspaceFileCount: MAX_WORKSPACE_FILE_COUNT,
@@ -2610,11 +2784,16 @@ export class AgentWorkspaceSessionRuntime {
       maxOutputBytes: handle.transfer.maxOutputBytes,
     })).toString('base64');
     const validation = await this.shell.exec([
-      'docker exec',
+      'docker run --rm --network none --read-only',
+      `--label ${shellQuote('cds.managed=true')}`,
+      `--label ${shellQuote('cds.type=agent-output-export')}`,
+      `--mount ${shellQuote(`type=volume,src=${handle.workspaceVolumeName},dst=/workspace,readonly`)}`,
+      `--mount ${shellQuote(`type=bind,src=${handle.outputDir},dst=/cds-output`)}`,
       `--env ${shellQuote('CDS_OUTPUT_PREFLIGHT=1')}`,
       `--env ${shellQuote(`CDS_OUTPUT_PREFLIGHT_CONFIG=${config}`)}`,
-      shellQuote(handle.containerName),
-      'node -e',
+      '--entrypoint node',
+      shellQuote(OPEN_DESIGN_IMAGE),
+      '-e',
       shellQuote(OUTPUT_PREFLIGHT_SCRIPT),
     ].join(' '), { timeout: Math.min(30_000, this.remainingExecutionMs(executionDeadline)) });
     this.assertExecutionDeadline(executionDeadline);
@@ -2658,6 +2837,18 @@ export class AgentWorkspaceSessionRuntime {
         'OpenDesign output contains a path outside the transfer allowlist',
         false,
         outputPreflightRejectedPath(diagnostic, 'path_not_allowed'),
+      );
+    }
+    if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:input_changed')) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_input_changed',
+        'OpenDesign modified a frozen MAP input; the result was rejected',
+      );
+    }
+    if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:file_changed')) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_invalid',
+        'OpenDesign output changed while it was being exported',
       );
     }
     throw new AgentWorkspaceRuntimeError(
@@ -3036,11 +3227,26 @@ function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code:
   return undefined;
 }
 
+/** Version 1 canonical bytes shared with HostedSiteRevisionRules.NormalizeGeneratedHtml. */
+export function normalizeGeneratedHtml(raw: string): string {
+  const trimHtmlWhitespace = (value: string) => value.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '');
+  let value = String(raw ?? '').replace(/\r\n?/g, '\n');
+  if (value.startsWith('\uFEFF')) value = value.slice(1);
+  value = trimHtmlWhitespace(value);
+  if (!value.startsWith('```')) return value;
+  const firstLine = value.indexOf('\n');
+  if (firstLine >= 0) value = value.slice(firstLine + 1);
+  const closing = value.lastIndexOf('```');
+  if (closing >= 0) value = value.slice(0, closing);
+  return trimHtmlWhitespace(value);
+}
+
 export function hardenSelfContainedHtml(
-  html: string,
+  rawHtml: string,
   evidenceText = '',
   visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[] = [],
 ): string {
+  let html = normalizeGeneratedHtml(rawHtml);
   if (!DOCUMENT_ROOT_RE.test(html)) {
     throw new AgentWorkspaceRuntimeError(
       'design_output_invalid',
@@ -3048,8 +3254,21 @@ export function hardenSelfContainedHtml(
     );
   }
   html = convertRelativeKnowledgeAnchors(html);
-  for (const tag of scanHtmlTags(html).filter((item) => !item.isClosing)) {
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.isClosing) continue;
     const name = tag.name.toLowerCase();
+    if (name === 'script') {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_not_self_contained',
+        'index.html contains executable script; the OpenDesign MVP accepts declarative HTML and CSS only',
+      );
+    }
+    if (/^(?:animate|set|animatemotion|animatetransform)$/i.test(name)) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_not_self_contained',
+        'index.html contains a disallowed SVG animation primitive',
+      );
+    }
     const attributes = parseHtmlAttributes(tag.attributes);
     for (const attribute of ['src', 'href']) {
       const rawValue = attributes.get(attribute);
@@ -3064,7 +3283,7 @@ export function hardenSelfContainedHtml(
     }
     if (
       [...attributes.keys()].some((attribute) => (
-        ['srcset', 'srcdoc', 'background', 'poster', 'ping', 'formaction'].includes(attribute)
+        ['srcset', 'srcdoc', 'background', 'poster', 'ping', 'formaction', 'xlink:href'].includes(attribute)
         || attribute.startsWith('on')
       ))
       || /^(?:applet|base|iframe|frame|object|embed|form)$/i.test(name)
@@ -3090,12 +3309,6 @@ export function hardenSelfContainedHtml(
       'index.html CSS references a non-inline resource',
     );
   }
-  if (scanHtmlTags(html).some((tag) => !tag.isClosing && tag.name.toLowerCase() === 'script')) {
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      'index.html contains executable script; the OpenDesign MVP accepts declarative HTML and CSS only',
-    );
-  }
   validateCssGeneratedContent(html);
   validateArtifactQuality(html, evidenceText, visibleTextOccurrenceConstraints);
 
@@ -3110,11 +3323,7 @@ export function hardenSelfContainedHtml(
 }
 
 function extractVisibleHtmlText(html: string): string {
-  const markup = html.replace(
-    /<!doctype[^>]*>|<!--[\s\S]*?-->|<head\b[^>]*>[\s\S]*?<\/head\s*>|<style\b[^>]*>[\s\S]*?<\/style\s*>|<script\b[^>]*>[\s\S]*?<\/script\s*>|<template\b[^>]*>[\s\S]*?<\/template\s*>|<noscript\b[^>]*>[\s\S]*?<\/noscript\s*>/gi,
-    ' ',
-  );
-  return decodeHtmlText(extractVisibleTextFromMarkup(markup))
+  return decodeHtmlText(extractVisibleTextFromMarkup(html))
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -3147,12 +3356,28 @@ interface HtmlTagToken {
   end: number;
   isClosing: boolean;
   isSelfClosing: boolean;
+  isComment?: boolean;
 }
 
-function scanHtmlTags(html: string): HtmlTagToken[] {
-  const tags: HtmlTagToken[] = [];
+function* iterateHtmlTags(html: string): Generator<HtmlTagToken> {
+  let rawTextElement = '';
   for (let index = 0; index < html.length; index += 1) {
     if (html[index] !== '<' || index + 1 >= html.length) continue;
+    if (!rawTextElement && html.startsWith('<!--', index)) {
+      const commentEnd = html.indexOf('-->', index + 4);
+      const end = commentEnd < 0 ? html.length : commentEnd + 3;
+      yield {
+        name: '!comment',
+        attributes: '',
+        start: index,
+        end,
+        isClosing: false,
+        isSelfClosing: true,
+        isComment: true,
+      };
+      index = end - 1;
+      continue;
+    }
     let cursor = index + 1;
     const isClosing = html[cursor] === '/';
     if (isClosing) cursor += 1;
@@ -3160,6 +3385,7 @@ function scanHtmlTags(html: string): HtmlTagToken[] {
     const nameStart = cursor;
     while (cursor < html.length && /[A-Za-z0-9:-]/.test(html[cursor])) cursor += 1;
     const name = html.slice(nameStart, cursor);
+    if (rawTextElement && (!isClosing || name.toLowerCase() !== rawTextElement)) continue;
     const attributesStart = cursor;
     let quote: string | undefined;
     while (cursor < html.length) {
@@ -3170,30 +3396,44 @@ function scanHtmlTags(html: string): HtmlTagToken[] {
         quote = current;
       } else if (current === '>') {
         const attributes = html.slice(attributesStart, cursor);
-        tags.push({
+        const token = {
           name,
           attributes,
           start: index,
           end: cursor + 1,
           isClosing,
           isSelfClosing: attributes.trimEnd().endsWith('/'),
-        });
+        };
+        yield token;
+        if (isClosing && name.toLowerCase() === rawTextElement) rawTextElement = '';
+        else if (!isClosing && !token.isSelfClosing && /^(?:script|style|textarea|title)$/i.test(name)) {
+          rawTextElement = name.toLowerCase();
+        }
         index = cursor;
         break;
       }
       cursor += 1;
     }
   }
-  return tags;
 }
 
 function extractVisibleTextFromMarkup(html: string): string {
+  const maxVisibleTextCharacters = 2 * 1024 * 1024;
   const stack: Array<{ name: string; suppressed: boolean }> = [];
   let suppressedDepth = 0;
   let cursor = 0;
   let result = '';
-  for (const tag of scanHtmlTags(html)) {
-    if (tag.start > cursor && suppressedDepth === 0) result += html.slice(cursor, tag.start);
+  const appendVisibleText = (value: string): void => {
+    if (result.length + value.length > maxVisibleTextCharacters) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_quality_rejected',
+        'index.html contains too much visible text to validate safely',
+      );
+    }
+    result += value;
+  };
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.start > cursor && suppressedDepth === 0) appendVisibleText(html.slice(cursor, tag.start));
     const block = /^(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|section|table|tbody|td|tfoot|th|thead|tr|ul)$/i.test(tag.name);
     if (tag.isClosing) {
       for (let index = stack.length - 1; index >= 0; index -= 1) {
@@ -3202,11 +3442,12 @@ function extractVisibleTextFromMarkup(html: string): string {
         if (frame.suppressed) suppressedDepth -= 1;
         if (frame.name.toLowerCase() === tag.name.toLowerCase()) break;
       }
-      if (block && suppressedDepth === 0) result += '。';
+      if (block && suppressedDepth === 0) appendVisibleText('。');
     } else {
-      if (block && suppressedDepth === 0) result += '。';
+      if (block && suppressedDepth === 0) appendVisibleText('。');
       const style = readHtmlAttribute(tag.attributes, 'style') ?? '';
-      const suppressed = hasHtmlAttribute(tag.attributes, 'hidden')
+      const suppressed = /^(?:head|script|style|template|noscript)$/i.test(tag.name)
+        || hasHtmlAttribute(tag.attributes, 'hidden')
         || readHtmlAttribute(tag.attributes, 'aria-hidden')?.trim().toLowerCase() === 'true'
         || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)/i.test(style);
       if (suppressedDepth === 0 && !suppressed && tag.name.toLowerCase() === 'input') {
@@ -3214,36 +3455,49 @@ function extractVisibleTextFromMarkup(html: string): string {
         if (!['hidden', 'checkbox', 'radio', 'file', 'color', 'range'].includes(type)) {
           const value = readHtmlAttribute(tag.attributes, 'value')?.trim();
           const placeholder = readHtmlAttribute(tag.attributes, 'placeholder')?.trim();
-          if (value) result += ` ${value} `;
-          else if (placeholder) result += ` ${placeholder} `;
+          if (value) appendVisibleText(` ${value} `);
+          else if (placeholder) appendVisibleText(` ${placeholder} `);
         }
       }
       const voidElement = /^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i.test(tag.name);
       if (!tag.isSelfClosing && !voidElement) {
+        if (stack.length >= MAX_HTML_NESTING_DEPTH) {
+          throw new AgentWorkspaceRuntimeError(
+            'design_output_quality_rejected',
+            'index.html exceeds the supported HTML nesting depth',
+          );
+        }
         stack.push({ name: tag.name, suppressed });
         if (suppressed) suppressedDepth += 1;
       }
     }
     cursor = tag.end;
   }
-  if (cursor < html.length && suppressedDepth === 0) result += html.slice(cursor);
+  if (cursor < html.length && suppressedDepth === 0) appendVisibleText(html.slice(cursor));
   return result;
 }
 
 function validateCssGeneratedContent(html: string): void {
-  const css = Array.from(html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi))
-    .map((match) => match[1])
-    .join('\n')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ');
-  for (const match of css.matchAll(/(?:^|[;{])\s*content\s*:\s*([^;}]+)/gi)) {
-    const value = match[1].trim();
-    if (/^(?:none|normal|["']\s*["'])$/i.test(value)) continue;
-    const quoted = value.match(/^(["'])([\s\S]*)\1$/);
-    if (quoted && !/[A-Za-z0-9\\\u3400-\u9fff]/u.test(quoted[2])) continue;
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_quality_rejected',
-      'index.html contains CSS-generated textual content',
-    );
+  let styleContentStart: number | undefined;
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.name.toLowerCase() !== 'style') continue;
+    if (!tag.isClosing) {
+      if (!tag.isSelfClosing) styleContentStart = tag.end;
+      continue;
+    }
+    if (styleContentStart === undefined) continue;
+    const css = html.slice(styleContentStart, tag.start).replace(/\/\*[\s\S]*?\*\//g, ' ');
+    styleContentStart = undefined;
+    for (const match of css.matchAll(/(?:^|[;{])\s*content\s*:\s*([^;}]+)/gi)) {
+      const value = match[1].trim();
+      if (/^(?:none|normal|["']\s*["'])$/i.test(value)) continue;
+      const quoted = value.match(/^(["'])([\s\S]*)\1$/);
+      if (quoted && !/[A-Za-z0-9\\\u3400-\u9fff]/u.test(quoted[2])) continue;
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_quality_rejected',
+        'index.html contains CSS-generated textual content',
+      );
+    }
   }
 }
 
@@ -3410,16 +3664,20 @@ function validateArtifactQuality(
   evidenceText: string,
   visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[],
 ): void {
-  const structureHtml = html.replace(/<!--[\s\S]*?(?:-->|$)/g, (comment) => ' '.repeat(comment.length));
-  const tags = scanHtmlTags(structureHtml);
-  const bodyOpening = tags.find((tag) => !tag.isClosing && tag.name.toLowerCase() === 'body');
-  const bodyClosing = bodyOpening
-    ? tags.find((tag) => tag.isClosing && tag.name.toLowerCase() === 'body' && tag.start >= bodyOpening.end)
-    : undefined;
-  if (!bodyOpening || !bodyClosing) {
+  let bodyContentStart: number | undefined;
+  let bodyContentEnd: number | undefined;
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.name.toLowerCase() !== 'body') continue;
+    if (!tag.isClosing && bodyContentStart === undefined) bodyContentStart = tag.end;
+    else if (tag.isClosing && bodyContentStart !== undefined) {
+      bodyContentEnd = tag.start;
+      break;
+    }
+  }
+  if (bodyContentStart === undefined || bodyContentEnd === undefined) {
     throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains no explicit body element');
   }
-  const visible = extractVisibleHtmlText(html.slice(bodyOpening.end, bodyClosing.start));
+  const visible = extractVisibleHtmlText(html.slice(bodyContentStart, bodyContentEnd));
   if (!visible) {
     throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains no visible content');
   }
@@ -3446,20 +3704,40 @@ function validateArtifactQuality(
     );
   }
 
+  const maxQualityTargets = 4_096;
+  const maxMissingLinkOrdinals = 256;
   const targets = new Set<string>();
   const popoverTargets = new Set<string>();
-  const openingTags = tags.filter((tag) => !tag.isClosing);
-  for (const tag of openingTags) {
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.isClosing) continue;
     const attributes = tag.attributes;
     const target = decodeHtmlText((readHtmlAttribute(attributes, 'id') ?? readHtmlAttribute(attributes, 'name') ?? '').trim());
     if (target) {
       targets.add(target);
       if (hasHtmlAttribute(attributes, 'popover')) popoverTargets.add(target);
+      if (targets.size > maxQualityTargets) {
+        throw new AgentWorkspaceRuntimeError(
+          'design_output_quality_rejected',
+          'index.html contains too many fragment targets to validate safely',
+        );
+      }
     }
   }
   const missingFragments = new Map<string, number[]>();
-  const anchorTags = openingTags.filter((item) => item.name.toLowerCase() === 'a');
-  for (const [anchorIndex, tag] of anchorTags.entries()) {
+  let anchorOrdinal = 0;
+  let retainedMissingLinkOrdinals = 0;
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.isClosing) continue;
+    const tagName = tag.name.toLowerCase();
+    if (tagName === 'button') {
+      const attributes = tag.attributes;
+      if (hasHtmlAttribute(attributes, 'disabled')) continue;
+      const popoverTarget = readHtmlAttribute(attributes, 'popovertarget')?.trim();
+      if (popoverTarget && popoverTargets.has(popoverTarget)) continue;
+      throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains an enabled button without provable declarative behavior');
+    }
+    if (tagName !== 'a') continue;
+    anchorOrdinal += 1;
     const href = readHtmlAttribute(tag.attributes, 'href');
     if (href === undefined) {
       throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains a link without a target');
@@ -3477,8 +3755,17 @@ function validateArtifactQuality(
       }
       if (!fragment || !targets.has(fragment)) {
         const ordinals = missingFragments.get(fragment) ?? [];
-        ordinals.push(anchorIndex + 1);
+        if (retainedMissingLinkOrdinals < maxMissingLinkOrdinals) {
+          ordinals.push(anchorOrdinal);
+          retainedMissingLinkOrdinals += 1;
+        }
         missingFragments.set(fragment, ordinals);
+        if (missingFragments.size > maxQualityTargets) {
+          throw new AgentWorkspaceRuntimeError(
+            'design_output_quality_rejected',
+            'index.html contains too many missing fragment targets to report safely',
+          );
+        }
       }
     }
   }
@@ -3499,13 +3786,6 @@ function validateArtifactQuality(
         missingLinkOrdinals,
       },
     );
-  }
-  for (const tag of openingTags.filter((item) => item.name.toLowerCase() === 'button')) {
-    const attributes = tag.attributes;
-    if (hasHtmlAttribute(attributes, 'disabled')) continue;
-    const popoverTarget = readHtmlAttribute(attributes, 'popovertarget')?.trim();
-    if (popoverTarget && popoverTargets.has(popoverTarget)) continue;
-    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains an enabled button without provable declarative behavior');
   }
 
   const supportedClaims = measuredClaimContexts(evidenceText);

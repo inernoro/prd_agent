@@ -26,7 +26,7 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         string userId,
         HostedSiteEditableEntry? knownEntry = null,
         CancellationToken ct = default) =>
-        EnsureSnapshotAsync(siteId, userId, knownEntry, null, null, null, ct);
+        EnsureSnapshotAsync(siteId, userId, knownEntry, [], null, null, null, ct);
 
     public Task<HostedSiteRevision> EnsureGeneratedSnapshotAsync(
         string siteId,
@@ -36,12 +36,24 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         string sourceRunId,
         IReadOnlyCollection<string> knowledgeEntryIds,
         CancellationToken ct = default) =>
-        EnsureSnapshotAsync(siteId, userId, knownEntry, runtime, sourceRunId, knowledgeEntryIds, ct);
+        EnsureSnapshotAsync(siteId, userId, knownEntry, [], runtime, sourceRunId, knowledgeEntryIds, ct);
+
+    public Task<HostedSiteRevision> EnsureGeneratedVerifiedSnapshotAsync(
+        string siteId,
+        string userId,
+        HostedSiteEditableEntry knownEntry,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        string runtime,
+        string sourceRunId,
+        IReadOnlyCollection<string> knowledgeEntryIds,
+        CancellationToken ct = default) =>
+        EnsureSnapshotAsync(siteId, userId, knownEntry, files, runtime, sourceRunId, knowledgeEntryIds, ct);
 
     private async Task<HostedSiteRevision> EnsureSnapshotAsync(
         string siteId,
         string userId,
         HostedSiteEditableEntry? knownEntry,
+        IReadOnlyList<HostedSiteVerifiedFile> verifiedFiles,
         string? runtime,
         string? sourceRunId,
         IReadOnlyCollection<string>? knowledgeEntryIds,
@@ -71,6 +83,13 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
                 .Distinct(StringComparer.Ordinal)
                 .ToList(),
             Html = entry.Html,
+            VerifiedFiles = verifiedFiles.Select(file => new HostedSiteRevisionFile
+            {
+                Path = file.Path,
+                Content = file.Content.ToArray(),
+                Sha256 = file.Sha256,
+                MimeType = file.MimeType,
+            }).ToList(),
             BasedOnContentVersion = entry.ContentVersion,
             PublishedContentVersion = entry.ContentVersion,
             CreatedAt = entry.ContentVersion,
@@ -99,6 +118,38 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         IReadOnlyCollection<string> knowledgeEntryIds,
         DateTime basedOnContentVersion,
         CancellationToken ct = default)
+        => await CreateDraftCoreAsync(
+            siteId, userId, html, [], instruction, runtime, runId, parentRevisionId,
+            knowledgeEntryIds, basedOnContentVersion, ct);
+
+    public async Task<HostedSiteRevision> CreateVerifiedDraftAsync(
+        string siteId,
+        string userId,
+        string html,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        string instruction,
+        string runtime,
+        string runId,
+        string parentRevisionId,
+        IReadOnlyCollection<string> knowledgeEntryIds,
+        DateTime basedOnContentVersion,
+        CancellationToken ct = default)
+        => await CreateDraftCoreAsync(
+            siteId, userId, html, files, instruction, runtime, runId, parentRevisionId,
+            knowledgeEntryIds, basedOnContentVersion, ct);
+
+    private async Task<HostedSiteRevision> CreateDraftCoreAsync(
+        string siteId,
+        string userId,
+        string html,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        string instruction,
+        string runtime,
+        string runId,
+        string parentRevisionId,
+        IReadOnlyCollection<string> knowledgeEntryIds,
+        DateTime basedOnContentVersion,
+        CancellationToken ct)
     {
         HostedSiteRevisionRules.ValidateHtml(html);
         var current = await _sites.GetEditableEntryHtmlAsync(siteId, userId, ct);
@@ -120,6 +171,13 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
                 .Distinct(StringComparer.Ordinal)
                 .ToList(),
             Html = html,
+            VerifiedFiles = files.Select(file => new HostedSiteRevisionFile
+            {
+                Path = file.Path,
+                Content = file.Content.ToArray(),
+                Sha256 = file.Sha256,
+                MimeType = file.MimeType,
+            }).ToList(),
             BasedOnContentVersion = basedOnContentVersion,
             CreatedAt = DateTime.UtcNow,
         };
@@ -174,7 +232,7 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             .FirstOrDefaultAsync(ct);
     }
 
-    public async Task<(HostedSiteRevision Revision, HostedSite Site)> PublishAsync(
+    public async Task<HostedSiteRevisionMutationResult> PublishAsync(
         string siteId,
         string revisionId,
         string userId,
@@ -185,7 +243,7 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         var current = await _sites.GetEditableEntryHtmlAsync(siteId, userId, ct);
         if (draft.Status == HostedSiteRevisionStatuses.Published
             && current.Site.PublishedRevisionId == draft.Id)
-            return (draft, current.Site);
+            return new HostedSiteRevisionMutationResult(draft, current.Site, false);
         if (draft.Status is not (HostedSiteRevisionStatuses.Draft or HostedSiteRevisionStatuses.Publishing))
             throw new InvalidOperationException("只有草稿可以发布");
 
@@ -194,8 +252,8 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             // 上一次调用可能已经切换站点指针，只在账本最终写入时失败。
             if (current.Site.PublishedRevisionId == draft.Id)
             {
-                var recovered = await FinalizePublishedRevisionAsync(draft, current.ContentVersion);
-                return (recovered, current.Site);
+                var recovered = await FinalizePublishedRevisionAsync(draft, current.ContentVersion, draft.PublishAttemptId);
+                return new HostedSiteRevisionMutationResult(recovered, current.Site, false);
             }
 
             var staleBefore = DateTime.UtcNow - PublishAttemptTtl;
@@ -210,7 +268,7 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
                 draft = await _db.HostedSiteRevisions.Find(x => x.Id == draft.Id).FirstAsync(CancellationToken.None);
                 if (draft.Status == HostedSiteRevisionStatuses.Published
                     && current.Site.PublishedRevisionId == draft.Id)
-                    return (draft, current.Site);
+                    return new HostedSiteRevisionMutationResult(draft, current.Site, false);
                 throw new InvalidOperationException("该草稿的发布状态已经发生变化，请刷新后重试");
             }
             draft.Status = HostedSiteRevisionStatuses.Draft;
@@ -239,13 +297,25 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         HostedSite site;
         try
         {
-            site = await _sites.ReplaceEntryHtmlAsync(
-                siteId,
-                userId,
-                draft.Html,
-                draft.BasedOnContentVersion,
-                draft.Id,
-                CancellationToken.None);
+            site = draft.VerifiedFiles.Count > 0
+                ? await _sites.ReplaceWithVerifiedFilesAsync(
+                    siteId,
+                    userId,
+                    draft.VerifiedFiles.Select(file => new HostedSiteVerifiedFile(
+                        file.Path,
+                        file.Content,
+                        file.Sha256,
+                        file.MimeType)).ToArray(),
+                    draft.BasedOnContentVersion,
+                    draft.Id,
+                    CancellationToken.None)
+                : await _sites.ReplaceEntryHtmlAsync(
+                    siteId,
+                    userId,
+                    draft.Html,
+                    draft.BasedOnContentVersion,
+                    draft.Id,
+                    CancellationToken.None);
         }
         catch
         {
@@ -256,8 +326,8 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
                 var afterFailure = await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);
                 if (afterFailure.Site.PublishedRevisionId == draft.Id)
                 {
-                    var recovered = await FinalizePublishedRevisionAsync(draft, afterFailure.ContentVersion);
-                    return (recovered, afterFailure.Site);
+                    var recovered = await FinalizePublishedRevisionAsync(draft, afterFailure.ContentVersion, attemptId);
+                    return new HostedSiteRevisionMutationResult(recovered, afterFailure.Site, true);
                 }
                 await TryResetPublishingAttemptAsync(
                     _db,
@@ -292,21 +362,38 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             throw;
         }
 
-        return (await FinalizePublishedRevisionAsync(draft, site.ContentVersion), site);
+        return new HostedSiteRevisionMutationResult(
+            await FinalizePublishedRevisionAsync(draft, site.ContentVersion, attemptId),
+            site,
+            true);
     }
 
-    public async Task<(HostedSiteRevision Revision, HostedSite Site)> RollbackAsync(
+    public async Task<HostedSiteRevisionMutationResult> RollbackAsync(
         string siteId,
         string revisionId,
         string userId,
+        string idempotencyKey,
         CancellationToken ct = default)
     {
+        var normalizedKey = NormalizeIdempotencyKey(idempotencyKey);
         var target = await GetAsync(siteId, revisionId, userId, ct)
             ?? throw new KeyNotFoundException("版本不存在");
         if (target.Status != HostedSiteRevisionStatuses.Published)
             throw new InvalidOperationException("只能回退到已经发布的版本");
 
         var current = await _sites.GetEditableEntryHtmlAsync(siteId, userId, ct);
+        var existing = await _db.HostedSiteRevisions.Find(item =>
+                item.SiteId == siteId
+                && item.CreatedByUserId == userId
+                && item.RollbackIdempotencyKey == normalizedKey)
+            .FirstOrDefaultAsync(ct);
+        if (existing != null)
+        {
+            if (existing.RollbackTargetRevisionId != target.Id)
+                throw new InvalidOperationException("同一幂等键不能用于不同回退目标");
+            return await ReplayRollbackAsync(siteId, userId, target.Id, existing, current, reportChange: false);
+        }
+
         var parent = await EnsureCurrentSnapshotAsync(siteId, userId, current, ct);
         var rollback = new HostedSiteRevision
         {
@@ -316,17 +403,125 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             Source = HostedSiteRevisionSources.Rollback,
             ParentRevisionId = parent.Id,
             RollbackTargetRevisionId = target.Id,
+            RollbackIdempotencyKey = normalizedKey,
             Instruction = $"回退到 {target.Id}",
             // 回退是版本账本操作，不伪装成再次调用了原始 AI 执行器。
             // ParentRevisionId 仍可追溯到内容真正来自哪个历史版本。
             Runtime = HostedSiteEditRuntimes.Manual,
             KnowledgeEntryIds = target.KnowledgeEntryIds,
             Html = target.Html,
+            VerifiedFiles = target.VerifiedFiles.Select(file => new HostedSiteRevisionFile
+            {
+                Path = file.Path,
+                Content = file.Content.ToArray(),
+                Sha256 = file.Sha256,
+                MimeType = file.MimeType,
+            }).ToList(),
             BasedOnContentVersion = current.ContentVersion,
             CreatedAt = DateTime.UtcNow,
         };
-        await _db.HostedSiteRevisions.InsertOneAsync(rollback, cancellationToken: CancellationToken.None);
-        return await PublishAsync(siteId, rollback.Id, userId, CancellationToken.None);
+        try
+        {
+            await _db.HostedSiteRevisions.InsertOneAsync(rollback, cancellationToken: CancellationToken.None);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            var winner = await _db.HostedSiteRevisions.Find(item =>
+                    item.SiteId == siteId
+                    && item.CreatedByUserId == userId
+                    && item.RollbackIdempotencyKey == normalizedKey)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (winner == null) throw;
+            if (winner.RollbackTargetRevisionId != target.Id)
+                throw new InvalidOperationException("同一幂等键不能用于不同回退目标");
+            var latest = await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);
+            return await ReplayRollbackAsync(siteId, userId, target.Id, winner, latest, reportChange: false);
+        }
+        return await ReplayRollbackAsync(siteId, userId, target.Id, rollback, current, reportChange: true);
+    }
+
+    private async Task<HostedSiteRevisionMutationResult> ReplayRollbackAsync(
+        string siteId,
+        string userId,
+        string targetRevisionId,
+        HostedSiteRevision initial,
+        HostedSiteEditableEntry initialSite,
+        bool reportChange)
+    {
+        var revision = initial;
+        var current = initialSite;
+        for (var attempt = 0; attempt < 40; attempt++)
+        {
+            if (revision.RollbackTargetRevisionId != targetRevisionId)
+                throw new InvalidOperationException("同一幂等键不能用于不同回退目标");
+            if (revision.Status == HostedSiteRevisionStatuses.Published)
+                return new HostedSiteRevisionMutationResult(revision, current.Site, reportChange);
+            if (revision.Status == HostedSiteRevisionStatuses.Draft
+                || revision.Status == HostedSiteRevisionStatuses.Publishing
+                   && current.Site.PublishedRevisionId == revision.Id)
+            {
+                try
+                {
+                    var result = await PublishAsync(siteId, revision.Id, userId, CancellationToken.None);
+                    return result with { Changed = reportChange && result.Changed };
+                }
+                catch (InvalidOperationException) when (attempt < 39)
+                {
+                    // 同 key 并发调用可能由另一个请求先取得发布围栏；重读同一事实，不新建版本。
+                }
+            }
+
+            await Task.Delay(50, CancellationToken.None);
+            revision = await _db.HostedSiteRevisions.Find(item => item.Id == revision.Id)
+                .FirstOrDefaultAsync(CancellationToken.None)
+                ?? throw new KeyNotFoundException("版本不存在");
+            current = await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);
+        }
+        throw new InvalidOperationException("同一回退请求正在处理，请稍后重试");
+    }
+
+    public async Task<(HostedSiteRevision Revision, bool Changed)> RejectAsync(
+        string siteId,
+        string revisionId,
+        string userId,
+        string? reason,
+        CancellationToken ct = default)
+    {
+        var normalizedReason = HostedSiteRevisionRules.NormalizeRejectionReason(reason);
+        var revision = await GetAsync(siteId, revisionId, userId, ct)
+            ?? throw new KeyNotFoundException("版本不存在");
+        if (revision.Status == HostedSiteRevisionStatuses.Rejected)
+            return (revision, false);
+        if (revision.Status != HostedSiteRevisionStatuses.Draft)
+            throw new InvalidOperationException("只有草稿可以拒绝");
+
+        var rejectedAt = DateTime.UtcNow;
+        var write = await _db.HostedSiteRevisions.UpdateOneAsync(
+            x => x.Id == revision.Id
+                 && x.SiteId == siteId
+                 && x.Status == HostedSiteRevisionStatuses.Draft,
+            Builders<HostedSiteRevision>.Update
+                .Set(x => x.Status, HostedSiteRevisionStatuses.Rejected)
+                .Set(x => x.RejectedAt, rejectedAt)
+                .Set(x => x.RejectedByUserId, userId)
+                .Set(x => x.RejectionReason, normalizedReason),
+            cancellationToken: CancellationToken.None);
+        if (write.ModifiedCount == 1)
+        {
+            revision.Status = HostedSiteRevisionStatuses.Rejected;
+            revision.RejectedAt = rejectedAt;
+            revision.RejectedByUserId = userId;
+            revision.RejectionReason = normalizedReason;
+            return (revision, true);
+        }
+
+        var persisted = await _db.HostedSiteRevisions
+            .Find(x => x.Id == revision.Id && x.SiteId == siteId)
+            .FirstOrDefaultAsync(CancellationToken.None)
+            ?? throw new KeyNotFoundException("版本不存在");
+        if (persisted.Status == HostedSiteRevisionStatuses.Rejected)
+            return (persisted, false);
+        throw new InvalidOperationException("该草稿的状态已经发生变化，请刷新后重试");
     }
 
     private async Task ReconcileActivePublicationAsync(string? revisionId, DateTime contentVersion)
@@ -343,13 +538,16 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             cancellationToken: CancellationToken.None);
     }
 
-    private async Task<HostedSiteRevision> FinalizePublishedRevisionAsync(
+    internal async Task<HostedSiteRevision> FinalizePublishedRevisionAsync(
         HostedSiteRevision revision,
-        DateTime contentVersion)
+        DateTime contentVersion,
+        string? attemptId)
     {
         var publishedAt = DateTime.UtcNow;
         await _db.HostedSiteRevisions.UpdateOneAsync(
-            x => x.Id == revision.Id && x.Status == HostedSiteRevisionStatuses.Publishing,
+            x => x.Id == revision.Id
+                 && x.Status == HostedSiteRevisionStatuses.Publishing
+                 && x.PublishAttemptId == attemptId,
             Builders<HostedSiteRevision>.Update
                 .Set(x => x.Status, HostedSiteRevisionStatuses.Published)
                 .Set(x => x.PublishedAt, publishedAt)
@@ -365,6 +563,15 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             || persisted.PublishedContentVersion != contentVersion)
             throw new InvalidOperationException("站点内容已写入，版本账本正在恢复，请重试发布");
         return persisted;
+    }
+
+    internal static string NormalizeIdempotencyKey(string? value)
+    {
+        var normalized = value?.Trim() ?? string.Empty;
+        if (normalized.Length is < 8 or > 128
+            || normalized.Any(character => character < 0x21 || character > 0x7e))
+            throw new InvalidOperationException("Idempotency-Key 必须是 8 到 128 个可见 ASCII 字符");
+        return normalized;
     }
 
     internal static async Task<bool> TryResetPublishingAttemptAsync(

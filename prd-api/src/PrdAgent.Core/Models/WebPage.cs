@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
@@ -52,6 +53,35 @@ public class HostedSite
 
     /// <summary>站点包含的文件清单</summary>
     public List<HostedSiteFile> Files { get; set; } = new();
+
+    /// <summary>由服务端依据完整文件角色判定的内容形态，不入库。</summary>
+    [BsonIgnore]
+    public string ContentShape { get; set; } = HostedSiteContentShapes.MultiFile;
+
+    /// <summary>
+    /// 内容指针切换后待删除的旧对象 key。与 Files 在同一个站点文档中原子更新，
+    /// 后台清理器按站点 ID 唯一领取并幂等重试。
+    /// </summary>
+    [JsonIgnore]
+    public List<string> PendingAssetCleanupKeys { get; set; } = new();
+
+    [JsonIgnore]
+    public DateTime? AssetCleanupNextAttemptAt { get; set; }
+    [JsonIgnore]
+    public int AssetCleanupAttemptCount { get; set; }
+    [JsonIgnore]
+    public string? AssetCleanupLastErrorCode { get; set; }
+    [JsonIgnore]
+    public string? AssetCleanupLeaseOwnerId { get; set; }
+    [JsonIgnore]
+    public DateTime? AssetCleanupLeaseExpiresAt { get; set; }
+
+    /// <summary>发布已登记但尚未完成指针切换的对象；清理器在租约内不得删除。</summary>
+    [JsonIgnore]
+    public List<string> AssetPublishInProgressKeys { get; set; } = new();
+
+    [JsonIgnore]
+    public DateTime? AssetPublishLeaseExpiresAt { get; set; }
 
     /// <summary>站点总大小 (bytes)</summary>
     public long TotalSize { get; set; }
@@ -243,6 +273,44 @@ public class HostedSiteFile
     /// </summary>
     [BsonIgnore]
     public string? Url { get; set; }
+}
+
+public static class HostedSiteContentShapes
+{
+    public const string SelfContainedHtml = "self-contained-html";
+    public const string MultiFile = "multi-file";
+}
+
+public static class HostedSiteContentShapeRules
+{
+    private static readonly string[] GeneratedPackagePaths =
+    [
+        "assets/accessibility-static-report.json",
+        "assets/design-tokens.json",
+        "assets/page-outline.json",
+        "assets/provenance.json",
+        "index.html",
+        "manifest.json",
+    ];
+
+    public static bool IsSelfContainedHtml(HostedSite site)
+    {
+        var files = site.Files ?? new List<HostedSiteFile>();
+        var extension = Path.GetExtension(site.EntryFile);
+        if (!string.Equals(extension, ".html", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(extension, ".htm", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (files.Count == 1)
+            return string.Equals(files[0].Path, site.EntryFile, StringComparison.OrdinalIgnoreCase);
+        return files.Select(file => file.Path)
+            .OrderBy(filePath => filePath, StringComparer.Ordinal)
+            .SequenceEqual(GeneratedPackagePaths, StringComparer.Ordinal);
+    }
+
+    public static string Resolve(HostedSite site) =>
+        IsSelfContainedHtml(site)
+            ? HostedSiteContentShapes.SelfContainedHtml
+            : HostedSiteContentShapes.MultiFile;
 }
 
 /// <summary>

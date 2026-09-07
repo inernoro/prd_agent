@@ -282,8 +282,16 @@ public sealed class DesignArtifactWorkspaceContractTests
         var quality = task.RootElement.GetProperty("qualityContract");
         Assert.Equal("map-design-artifact-quality-v1", quality.GetProperty("schemaVersion").GetString());
         Assert.Equal(
-            ["title", "instruction", "knowledge", "current-visible-content"],
+            ["server-knowledge", "server-current-visible-content"],
             quality.GetProperty("factualSources").EnumerateArray().Select(value => value.GetString() ?? string.Empty).ToArray());
+        Assert.False(quality.GetProperty("userSuppliedInputsAreFactualProvenance").GetBoolean());
+        var input = task.RootElement.GetProperty("input");
+        Assert.Equal(
+            DesignArtifactInputAuthorities.UserSupplied,
+            input.GetProperty("userSupplied").GetProperty("authority").GetString());
+        Assert.Equal(
+            "server-authoritative-snapshot",
+            input.GetProperty("serverKnowledge").GetProperty("authority").GetString());
         Assert.True(quality.GetProperty("measuredClaimsRequireSource").GetBoolean());
         Assert.True(quality.GetProperty("sensitiveFactsRequireSource").GetBoolean());
         Assert.True(quality.GetProperty("contextBoundMetricsReviewRequired").GetBoolean());
@@ -292,6 +300,20 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.False(quality.GetProperty("inertEnabledButtonsAllowed").GetBoolean());
         Assert.True(quality.GetProperty("finalReviewRequired").GetBoolean());
         Assert.Empty(quality.GetProperty("visibleTextOccurrenceConstraints").EnumerateArray());
+    }
+
+    [Fact]
+    public void InputPackageTaskMatchesSharedCrossRuntimeGoldenContract()
+    {
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(
+            BuildRun(),
+            "<!doctype html><html><body>旧页面</body></html>");
+        var taskFile = Assert.Single(package.Files, file => file.Path == "brief/task.json");
+        var actual = JsonNode.Parse(Convert.FromBase64String(taskFile.ContentBase64));
+        var fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", "opendesign-task-v1.json");
+        var expected = JsonNode.Parse(File.ReadAllText(fixturePath));
+
+        Assert.Equal(expected?.ToJsonString(), actual?.ToJsonString());
     }
 
     [Theory]
@@ -422,7 +444,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
         var cdsHtml = $"<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.GeneratedArtifactCsp}\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>CDS result</title></head><body>ok</body></html>";
         var htmlFile = BuildFile("index.html", cdsHtml, "text/html");
-        var manifest = BuildManifest(input.BaseRevision, htmlFile);
+        var manifest = BuildManifest(htmlFile);
         var result = new DesignWorkspacePackage(
             DesignArtifactWorkspaceBroker.SchemaVersion,
             run.Id,
@@ -477,7 +499,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
         var html = Encoding.UTF8.GetBytes("<!doctype html><html><body>新页面</body></html>");
         var htmlFile = new DesignWorkspaceFile("index.html", Convert.ToBase64String(html), Hash(html), html.Length, "text/html");
-        var manifest = BuildManifest(input.BaseRevision, htmlFile);
+        var manifest = BuildManifest(htmlFile);
         var result = new DesignWorkspacePackage(
             DesignArtifactWorkspaceBroker.SchemaVersion,
             run.Id,
@@ -494,6 +516,78 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Contains("新页面", parsed.IndexHtml);
     }
 
+    [Fact]
+    public void PublicSixFilePackage_ShouldBeByteIdenticalAcrossDifferentPrivateKnowledgeSets()
+    {
+        var firstRun = BuildRun();
+        var secondRun = BuildRun();
+        secondRun.Id = "run-workspace-private-2";
+        secondRun.KnowledgeReferences =
+        [
+            new DesignKnowledgeSnapshot
+            {
+                EntryId = "entry-private-2",
+                Title = "另一份私有资料",
+                Content = "另一份不同的私有正文",
+                ContentHash = "private-content-hash-2",
+            },
+        ];
+        var firstInput = DesignArtifactWorkspaceContract.BuildInputPackage(firstRun, null);
+        var secondInput = DesignArtifactWorkspaceContract.BuildInputPackage(secondRun, null);
+        Assert.NotEqual(firstInput.BaseRevision, secondInput.BaseRevision);
+
+        var publicFiles = new[]
+        {
+            BuildFile("assets/accessibility-static-report.json", "{\"schemaVersion\":\"a11y-v1\"}", "application/json; charset=utf-8"),
+            BuildFile("assets/design-tokens.json", "{\"schemaVersion\":\"tokens-v1\"}", "application/json; charset=utf-8"),
+            BuildFile("assets/page-outline.json", "{\"schemaVersion\":\"outline-v1\"}", "application/json; charset=utf-8"),
+            BuildFile("assets/provenance.json", "{\"publicInput\":\"hardened-index-html\"}", "application/json; charset=utf-8"),
+            BuildFile("index.html", "<!doctype html><html><body><main>公开页面</main></body></html>", "text/html; charset=utf-8"),
+        };
+        var completePublicPackage = publicFiles.Append(BuildManifest(publicFiles))
+            .OrderBy(file => file.Path, StringComparer.Ordinal)
+            .ToArray();
+
+        ParsedDesignWorkspaceResult Parse(DesignArtifactRun run, string privateBaseRevision)
+        {
+            var envelope = new DesignWorkspacePackage(
+                DesignArtifactWorkspaceBroker.SchemaVersion,
+                run.Id,
+                privateBaseRevision,
+                completePublicPackage);
+            return DesignArtifactWorkspaceContract.ParseAndValidateResult(
+                JsonSerializer.SerializeToUtf8Bytes(envelope, DesignArtifactWorkspaceContract.JsonOptions),
+                run.Id,
+                privateBaseRevision,
+                DesignArtifactWorkspaceBroker.MaxOutputBytes);
+        }
+
+        var firstPublic = Parse(firstRun, firstInput.BaseRevision).Files.OrderBy(file => file.Path).ToArray();
+        var secondPublic = Parse(secondRun, secondInput.BaseRevision).Files.OrderBy(file => file.Path).ToArray();
+        Assert.Equal(6, firstPublic.Length);
+        Assert.True(firstPublic.SequenceEqual(secondPublic));
+        Assert.DoesNotContain(firstInput.BaseRevision, Encoding.UTF8.GetString(
+            Convert.FromBase64String(firstPublic.Single(file => file.Path == "manifest.json").ContentBase64)),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(secondInput.BaseRevision, Encoding.UTF8.GetString(
+            Convert.FromBase64String(secondPublic.Single(file => file.Path == "manifest.json").ContentBase64)),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PublicArtifactRevision_MatchesCdsGoldenVector()
+    {
+        var revision = DesignArtifactWorkspaceContract.ComputePublicArtifactRevision([
+            new DesignArtifactManifestFile(
+                "index.html",
+                new string('a', 64),
+                123,
+                "text/html; charset=utf-8"),
+        ]);
+
+        Assert.Equal("682a9da217538a26e9451dd11888ae0ceef1fe807e7728c3c0b840536700de61", revision);
+    }
+
     [Theory]
     [InlineData("other-run", null)]
     [InlineData(null, "other-revision")]
@@ -502,7 +596,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var run = BuildRun();
         var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
         var htmlFile = BuildFile("index.html", "<!doctype html><html><body>新页面</body></html>", "text/html");
-        var manifest = BuildManifest(resultBaseRevision ?? input.BaseRevision, htmlFile);
+        var manifest = BuildManifest(htmlFile);
         var result = new DesignWorkspacePackage(
             DesignArtifactWorkspaceBroker.SchemaVersion,
             resultRunId ?? run.Id,
@@ -527,7 +621,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
         var html = Encoding.UTF8.GetBytes("<!doctype html><html><body>新页面</body></html>");
         var htmlFile = new DesignWorkspaceFile("index.html", Convert.ToBase64String(html), Hash(html), html.Length, "text/html");
-        var incorrectManifest = BuildManifest(input.BaseRevision, htmlFile with { Sha256 = new string('a', 64) });
+        var incorrectManifest = BuildManifest(htmlFile with { Sha256 = new string('a', 64) });
         var result = new DesignWorkspacePackage(
             DesignArtifactWorkspaceBroker.SchemaVersion,
             run.Id,
@@ -543,6 +637,38 @@ public sealed class DesignArtifactWorkspaceContractTests
                 DesignArtifactWorkspaceBroker.MaxOutputBytes));
 
         Assert.Contains("清单与文件校验结果不一致", error.Message);
+    }
+
+    [Fact]
+    public void ResultRejectsPrivateRevisionSmuggledIntoPublicManifest()
+    {
+        var run = BuildRun();
+        var input = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        var htmlFile = BuildFile("index.html", "<!doctype html><html><body>新页面</body></html>", "text/html");
+        var manifest = BuildManifest(htmlFile);
+        var manifestValue = JsonNode.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(manifest.ContentBase64)))!.AsObject();
+        manifestValue["baseRevision"] = input.BaseRevision;
+        var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(manifestValue, DesignArtifactWorkspaceContract.JsonOptions);
+        var smuggledManifest = new DesignWorkspaceFile(
+            "manifest.json",
+            Convert.ToBase64String(manifestBytes),
+            Hash(manifestBytes),
+            manifestBytes.LongLength,
+            "application/json");
+        var result = new DesignWorkspacePackage(
+            DesignArtifactWorkspaceBroker.SchemaVersion,
+            run.Id,
+            input.BaseRevision,
+            [htmlFile, smuggledManifest]);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            DesignArtifactWorkspaceContract.ParseAndValidateResult(
+                JsonSerializer.SerializeToUtf8Bytes(result, DesignArtifactWorkspaceContract.JsonOptions),
+                run.Id,
+                input.BaseRevision,
+                DesignArtifactWorkspaceBroker.MaxOutputBytes));
+
+        Assert.Contains("清单格式不正确", error.Message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -598,13 +724,17 @@ public sealed class DesignArtifactWorkspaceContractTests
     private static string Hash(byte[] bytes) =>
         Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
-    private static DesignWorkspaceFile BuildManifest(string baseRevision, DesignWorkspaceFile file)
+    private static DesignWorkspaceFile BuildManifest(params DesignWorkspaceFile[] files)
     {
+        var manifestFiles = files
+            .OrderBy(file => file.Path, StringComparer.Ordinal)
+            .Select(file => new DesignArtifactManifestFile(file.Path, file.Sha256, file.Size, file.MediaType))
+            .ToArray();
         var manifest = new DesignArtifactManifest(
             DesignArtifactWorkspaceBroker.ManifestSchemaVersion,
-            baseRevision,
+            DesignArtifactWorkspaceContract.ComputePublicArtifactRevision(manifestFiles),
             "index.html",
-            [new DesignArtifactManifestFile(file.Path, file.Sha256, file.Size, file.MediaType)]);
+            manifestFiles);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(manifest, DesignArtifactWorkspaceContract.JsonOptions);
         return new DesignWorkspaceFile(
             "manifest.json",

@@ -38,7 +38,7 @@ public interface IHostedSiteService
 
     /// <summary>
     /// 从已验证的完整文件包创建新站点。先把全部目标 key 登记到设计 Run 的补偿账本，
-    /// 全部上传成功后才插入站点记录；首版不用于已有站点编辑或版本发布。
+    /// 全部上传成功后才插入站点记录；已有站点的整包版本发布走 ReplaceWithVerifiedFilesAsync。
     /// </summary>
     Task<HostedSite> CreateFromVerifiedFilesAsync(
         string userId,
@@ -49,6 +49,7 @@ public interface IHostedSiteService
         string sourceRef,
         List<string>? tags,
         string? folder,
+        string leaseOwnerId,
         CancellationToken ct = default);
 
     // ── 替换内容 ──
@@ -82,6 +83,15 @@ public interface IHostedSiteService
         string siteId, string userId, string html,
         DateTime? expectedContentVersion = null,
         string? publishedRevisionId = null,
+        CancellationToken ct = default);
+
+    /// <summary>发布已验证的完整 OpenDesign 文件包，并以单次站点 CAS 切换全部文件。</summary>
+    Task<HostedSite> ReplaceWithVerifiedFilesAsync(
+        string siteId,
+        string userId,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        DateTime expectedContentVersion,
+        string publishedRevisionId,
         CancellationToken ct = default);
 
     /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>

@@ -24,6 +24,17 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> GetAsync(string userId, string id, CancellationToken ct);
 
+    /// <summary>原子认领一个尚未发送消息的预热会话，并把领域根 Run 绑定为 TraceId。</summary>
+    Task<InfraAgentSessionView?> ClaimPrewarmedAsync(
+        string userId,
+        string id,
+        string expectedProfileId,
+        string rootRunId,
+        CancellationToken ct);
+
+    /// <summary>回收已经到期且从未被领域 Run 认领的预热会话；失败项保留并在下一轮重试。</summary>
+    Task<int> RecoverExpiredPrewarmsAsync(CancellationToken ct);
+
     Task<InfraAgentSessionView?> SendMessageAsync(string userId, string id, SendInfraAgentMessageRequest request, CancellationToken ct);
 
     /// <summary>
@@ -121,7 +132,10 @@ public record CreateInfraAgentSessionRequest(
     string? GitRef = null,
     string? ClientApp = null,
     string? WorkloadKind = null,
-    string? IsolationMode = null
+    string? IsolationMode = null,
+    string? PrewarmKey = null,
+    DateTime? PrewarmExpiresAt = null,
+    int? AutoCleanupMinutes = null
 );
 
 public record StartInfraAgentSessionRequest(

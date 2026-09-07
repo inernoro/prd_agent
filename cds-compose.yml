@@ -296,7 +296,7 @@ services:
       dotnet build --no-restore --no-incremental -c Debug &&
       dotnet run --project src/PrdAgent.Api --no-build -c Debug --urls http://0.0.0.0:5000
     depends_on:
-      mongodb: { condition: service_healthy }
+      mongodb-indexes: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     environment:
       # 仅服务特有变量，全局变量已由 x-cds-env 注入
@@ -554,6 +554,20 @@ services:
       test: mongosh --eval "db.runCommand({ping:1})" --quiet
       interval: 10s
       retries: 3
+
+  # DBA 索引目录必须在 API 切流前幂等执行并精确校验；失败时 API 不启动。
+  mongodb-indexes:
+    image: mongo:8.0
+    volumes:
+      - .:/repo:ro
+    depends_on:
+      mongodb: { condition: service_healthy }
+    environment:
+      CDS_MONGODB_URL: "${CDS_MONGODB_URL}"
+    command: >-
+      mongosh "$CDS_MONGODB_URL" --quiet
+      --eval 'db = db.getSiblingDB("prdagent"); load("/repo/scripts/mongodb-indexes.js")'
+    restart: "no"
 
   redis:
     image: redis:7-alpine

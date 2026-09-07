@@ -4,6 +4,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -1136,9 +1138,11 @@ public sealed class DesignArtifactRunRecoveryTests
             run.Id,
             ["知识生成"],
             null,
+            "worker-a",
             CancellationToken.None);
 
         Assert.Equal(6, site.Files.Count);
+        Assert.Equal(HostedSiteContentShapes.SelfContainedHtml, site.ContentShape);
         Assert.All(site.Files, file => Assert.StartsWith("https://assets.test/", file.Url, StringComparison.Ordinal));
         Assert.Equal(
             [
@@ -1184,6 +1188,91 @@ public sealed class DesignArtifactRunRecoveryTests
 
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task GeneratedSidecarSite_ShouldRemainEditableAndPublishAsSingleHtmlWithDurableCleanup()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var oldHtml = HostedSiteRevisionRules.HardenGeneratedHtml(
+            "<!doctype html><html><head><title>旧页面</title></head><body><main>旧页面</main></body></html>");
+        var files = BuildVerifiedGeneratedFiles().Select(file => new HostedSiteFile
+        {
+            Path = file.Path,
+            CosKey = $"web-hosting/sites/site-sidecar/{file.Path}",
+            Size = file.Content.LongLength,
+            MimeType = file.MimeType,
+        }).ToList();
+        var site = new HostedSite
+        {
+            Id = "site-sidecar",
+            OwnerUserId = "user-1",
+            Title = "可微调页面",
+            EntryFile = "index.html",
+            Files = files,
+            TotalSize = files.Sum(file => file.Size),
+            ContentVersion = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+            SourceType = "design-agent",
+        };
+        await fixture.Db.HostedSites.InsertOneAsync(site);
+        var deletedKeys = new List<string>();
+        var rejectFirstCleanupAttempt = true;
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.TryDownloadBytesAsync(
+                "web-hosting/sites/site-sidecar/index.html",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Encoding.UTF8.GetBytes(oldHtml));
+        storage.Setup(x => x.UploadToKeyAsync(
+                It.Is<string>(key => key.StartsWith("web-hosting/sites/site-sidecar/index.v", StringComparison.Ordinal)),
+                It.IsAny<byte[]>(),
+                "text/html; charset=utf-8",
+                CancellationToken.None,
+                It.IsAny<string?>()))
+            .Returns(Task.CompletedTask);
+        storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>()))
+            .Returns((string key) => $"https://assets.test/{key}");
+        storage.Setup(x => x.DeleteByKeyAsync(It.IsAny<string>(), CancellationToken.None))
+            .Callback((string key, CancellationToken _) => deletedKeys.Add(key))
+            .Returns(() =>
+            {
+                if (rejectFirstCleanupAttempt)
+                {
+                    rejectFirstCleanupAttempt = false;
+                    return Task.FromException(new IOException("模拟对象存储暂时不可用"));
+                }
+                return Task.CompletedTask;
+            });
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+        var editable = await service.GetEditableEntryHtmlAsync(site.Id, site.OwnerUserId, CancellationToken.None);
+
+        var normalized = HostedSiteEditsController.ValidateEditInputCompatibility(editable);
+        var published = await service.ReplaceEntryHtmlAsync(
+            site.Id,
+            site.OwnerUserId,
+            normalized.Replace("旧页面", "新页面", StringComparison.Ordinal),
+            now,
+            "revision-sidecar",
+            CancellationToken.None);
+
+        Assert.Single(published.Files);
+        Assert.Equal("index.html", published.Files[0].Path);
+        Assert.Equal(HostedSiteContentShapes.SelfContainedHtml, published.ContentShape);
+        var pending = await fixture.Db.HostedSites.Find(x => x.Id == site.Id).FirstAsync();
+        Assert.Single(pending.Files);
+        Assert.Equal(6, pending.PendingAssetCleanupKeys.Count);
+        Assert.Equal("asset_cleanup_failed", pending.AssetCleanupLastErrorCode);
+
+        Assert.True(await service.ResumeNextPendingAssetCleanupAsync(now.AddDays(1), CancellationToken.None));
+        Assert.Equal(7, deletedKeys.Count);
+        Assert.Contains("web-hosting/sites/site-sidecar/manifest.json", deletedKeys);
+        var stored = await fixture.Db.HostedSites.Find(x => x.Id == site.Id).FirstAsync();
+        Assert.Single(stored.Files);
+        Assert.Empty(stored.PendingAssetCleanupKeys);
+        storage.VerifyAll();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task VerifiedMultiAssetCreate_WhenSecondUploadFails_ShouldRemainFullyCompensatable()
     {
         await using var fixture = await RunMongoFixture.CreateAsync();
@@ -1191,6 +1280,8 @@ public sealed class DesignArtifactRunRecoveryTests
         var run = NewQueuedRun("run-multi-asset-failure", now);
         run.Operation = DesignArtifactOperations.Generate;
         run.Status = RunStatuses.Committing;
+        run.LeaseOwnerId = "worker-a";
+        run.LeaseExpiresAt = now.AddMinutes(2);
         await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
         var uploadCount = 0;
         var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
@@ -1218,6 +1309,7 @@ public sealed class DesignArtifactRunRecoveryTests
             run.Id,
             null,
             null,
+            "worker-a",
             CancellationToken.None));
 
         var planned = await fixture.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).FirstAsync();
@@ -1235,6 +1327,100 @@ public sealed class DesignArtifactRunRecoveryTests
         Assert.Empty(cleaned.CleanupAssetKeys);
         Assert.Empty(await fixture.Db.HostedSites.Find(x => x.SourceRef == run.Id).ToListAsync());
         storage.Verify(x => x.DeleteByKeyAsync(It.IsAny<string>(), CancellationToken.None), Times.Exactly(6));
+        storage.VerifyAll();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task VerifiedMultiAssetCreate_WhenRecoveryCleansBeforeBlockedUploadReturns_ShouldFenceLateWrite()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("run-multi-asset-fenced", now);
+        run.Operation = DesignArtifactOperations.Generate;
+        run.Status = RunStatuses.Committing;
+        run.LeaseOwnerId = "worker-a";
+        run.LeaseExpiresAt = now.AddMinutes(2);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var uploadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseUpload = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var uploadCount = 0;
+        var deletedKeys = new List<string>();
+        string? blockedObjectKey = null;
+        var lateWriteCompleted = false;
+        var lateDeleteAttemptCount = 0;
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.BuildSiteKey(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns((string siteId, string filePath) => $"web-hosting/sites/{siteId}/{filePath}");
+        storage.Setup(x => x.UploadToKeyAsync(
+                It.IsAny<string>(),
+                It.IsAny<byte[]>(),
+                It.IsAny<string?>(),
+                CancellationToken.None,
+                It.IsAny<string?>()))
+            .Returns(async (string key, byte[] _, string? _, CancellationToken _, string? _) =>
+            {
+                if (Interlocked.Increment(ref uploadCount) != 1) return;
+                blockedObjectKey = key;
+                uploadStarted.SetResult();
+                await releaseUpload.Task;
+                lateWriteCompleted = true;
+            });
+        storage.Setup(x => x.DeleteByKeyAsync(It.IsAny<string>(), CancellationToken.None))
+            .Callback((string key, CancellationToken _) => deletedKeys.Add(key))
+            .Returns((string key, CancellationToken _) =>
+            {
+                if (lateWriteCompleted
+                    && key == blockedObjectKey
+                    && Interlocked.Increment(ref lateDeleteAttemptCount) == 1)
+                    return Task.FromException(new IOException("模拟晚到对象首次删除失败"));
+                return Task.CompletedTask;
+            });
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        var publishing = service.CreateFromVerifiedFilesAsync(
+            run.UserId,
+            BuildVerifiedGeneratedFiles(),
+            "多资产页面",
+            null,
+            "design-agent",
+            run.Id,
+            null,
+            null,
+            "worker-a",
+            CancellationToken.None);
+        await uploadStarted.Task;
+        var planned = await fixture.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).FirstAsync();
+        Assert.True(planned.CleanupPending);
+        Assert.NotNull(planned.CleanupPublishAttemptId);
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(x => x.Status, RunStatuses.Error)
+                .Set(x => x.LeaseOwnerId, null)
+                .Set(x => x.LeaseExpiresAt, null));
+        Assert.True(await service.CompensateGeneratedSiteAsync(null, run.Id, run.UserId, CancellationToken.None));
+
+        releaseUpload.SetResult();
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => publishing);
+
+        Assert.Contains("晚到写入", error.Message, StringComparison.Ordinal);
+        Assert.Equal(7, deletedKeys.Count);
+        Assert.Empty(await fixture.Db.HostedSites.Find(x => x.SourceRef == run.Id).ToListAsync());
+        var orphanCleanup = await fixture.Db.HostedSiteDeletionTasks
+            .Find(x => x.ObjectKeys.Contains(blockedObjectKey!))
+            .SingleAsync();
+        Assert.Equal("asset_cleanup_failed", orphanCleanup.LastErrorCode);
+        var recovered = await fixture.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).FirstAsync();
+        Assert.False(recovered.CleanupPending);
+        Assert.Null(recovered.CleanupPublishAttemptId);
+
+        var restartedService = CreateHostedSiteService(fixture.Db, storage.Object);
+        Assert.True(await restartedService.ResumeNextPendingDeletionAsync(now.AddDays(1), CancellationToken.None));
+        Assert.Equal(8, deletedKeys.Count);
+        Assert.Empty(await fixture.Db.HostedSiteDeletionTasks
+            .Find(x => x.Id == orphanCleanup.Id)
+            .ToListAsync());
         storage.VerifyAll();
     }
 
@@ -1264,6 +1450,7 @@ public sealed class DesignArtifactRunRecoveryTests
             "run-unhardened",
             null,
             null,
+            "worker-a",
             CancellationToken.None));
 
         Assert.Contains("最终安全版本不一致", error.Message, StringComparison.Ordinal);
@@ -1272,7 +1459,7 @@ public sealed class DesignArtifactRunRecoveryTests
 
     [Fact]
     [Trait("Category", TestCategories.Integration)]
-    public async Task EditPersistence_ShouldIgnoreVerifiedSideFilesAndCreateHtmlDraftOnly()
+    public async Task EditPersistence_ShouldPersistVerifiedPackageWithDraft()
     {
         await using var fixture = await RunMongoFixture.CreateAsync();
         var now = MongoTime(DateTime.UtcNow);
@@ -1283,14 +1470,17 @@ public sealed class DesignArtifactRunRecoveryTests
         var claimed = await HostedSiteEditRunWorker.TryClaimAsync(
             fixture.Db, run.Id, "worker-a", now, TimeSpan.FromMinutes(2), CancellationToken.None);
         Assert.NotNull(claimed);
-        var html = "<!doctype html><html><body><main>仅保存 HTML 草稿</main></body></html>";
+        var files = BuildDesignWorkspaceFiles();
+        var html = Encoding.UTF8.GetString(Convert.FromBase64String(
+            files.Single(file => file.Path == "index.html").ContentBase64));
         var draft = new HostedSiteRevision { Id = "draft-html-only", SiteId = run.TargetSiteId, Status = HostedSiteRevisionStatuses.Draft };
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
         var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
-        revisions.Setup(x => x.CreateDraftAsync(
+        revisions.Setup(x => x.CreateVerifiedDraftAsync(
                 run.TargetSiteId,
                 run.UserId,
                 html,
+                It.Is<IReadOnlyList<HostedSiteVerifiedFile>>(package => package.Count == 6),
                 run.Instruction,
                 run.Runtime,
                 run.Id,
@@ -1312,11 +1502,27 @@ public sealed class DesignArtifactRunRecoveryTests
             now.AddMilliseconds(1),
             TimeSpan.FromMinutes(2),
             CancellationToken.None,
-            BuildDesignWorkspaceFiles());
+            files);
 
         Assert.Equal(draft.Id, persisted.RevisionId);
         revisions.VerifyAll();
         sites.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void VerifiedExecutorOutput_StripsOnlyTrustedCspAndRequiresExactPackageBytes()
+    {
+        var files = BuildDesignWorkspaceFiles();
+        var packaged = Encoding.UTF8.GetString(Convert.FromBase64String(
+            files.Single(file => file.Path == "index.html").ContentBase64));
+
+        var hardened = HostedSiteEditRunWorker.HardenExecutorOutput(packaged, files);
+
+        Assert.Equal(packaged, hardened);
+        Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteEditRunWorker.HardenExecutorOutput(
+                packaged.Replace("多资产页面", "被篡改页面", StringComparison.Ordinal),
+                files));
     }
 
     [Fact]
@@ -1332,6 +1538,406 @@ public sealed class DesignArtifactRunRecoveryTests
         Assert.Contains("最终安全版本不一致", error.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task VerifiedGeneratedBaseline_ShouldRetainCompletePackageForLaterRollback()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var files = BuildVerifiedGeneratedFiles();
+        var html = Encoding.UTF8.GetString(files.Single(file => file.Path == "index.html").Content);
+        var site = new HostedSite
+        {
+            Id = "site-verified-baseline",
+            OwnerUserId = "user-1",
+            ContentVersion = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Files = files.Select(file => new HostedSiteFile
+            {
+                Path = file.Path,
+                CosKey = $"web-hosting/sites/site-verified-baseline/{file.Path}",
+                Size = file.Content.LongLength,
+                MimeType = file.MimeType,
+            }).ToList(),
+        };
+        var entry = new HostedSiteEditableEntry(site, html, now);
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        var baseline = await service.EnsureGeneratedVerifiedSnapshotAsync(
+            site.Id,
+            site.OwnerUserId,
+            entry,
+            files,
+            HostedSiteEditRuntimes.OpenDesign,
+            "run-baseline",
+            ["entry-1"],
+            CancellationToken.None);
+
+        Assert.Equal(6, baseline.VerifiedFiles.Count);
+        Assert.Equal(
+            files.Select(file => file.Path).OrderBy(path => path, StringComparer.Ordinal),
+            baseline.VerifiedFiles.Select(file => file.Path).OrderBy(path => path, StringComparer.Ordinal));
+        Assert.All(baseline.VerifiedFiles, file => Assert.NotEmpty(file.Content));
+        sites.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task VerifiedPackageEdit_ShouldAtomicallyRetainManifestAndAllSidecars()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var oldHtml = HostedSiteRevisionRules.HardenGeneratedHtml(
+            "<!doctype html><html><head><title>旧页面</title></head><body><main>旧页面</main></body></html>");
+        var site = new HostedSite
+        {
+            Id = "site-package-edit",
+            OwnerUserId = "user-1",
+            SourceType = "design-agent",
+            EntryFile = "index.html",
+            ContentVersion = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Files = BuildVerifiedGeneratedFiles().Select(file => new HostedSiteFile
+            {
+                Path = file.Path,
+                CosKey = $"web-hosting/sites/site-package-edit/old/{file.Path}",
+                Size = file.Content.LongLength,
+                MimeType = file.MimeType,
+            }).ToList(),
+        };
+        site.TotalSize = site.Files.Sum(file => file.Size);
+        await fixture.Db.HostedSites.InsertOneAsync(site);
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.TryDownloadBytesAsync(
+                "web-hosting/sites/site-package-edit/old/index.html",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Encoding.UTF8.GetBytes(oldHtml));
+        storage.Setup(x => x.BuildSiteKey(site.Id, It.IsAny<string>()))
+            .Returns((string _, string filePath) => $"web-hosting/sites/site-package-edit/{filePath}");
+        storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>()))
+            .Returns((string key) => $"https://assets.test/{key}");
+        storage.Setup(x => x.UploadToKeyAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string?>(),
+                CancellationToken.None, It.IsAny<string?>()))
+            .Returns(Task.CompletedTask);
+        storage.Setup(x => x.DeleteByKeyAsync(
+                It.Is<string>(key => key.Contains("/old/", StringComparison.Ordinal)),
+                CancellationToken.None))
+            .Returns(Task.CompletedTask);
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        var published = await service.ReplaceWithVerifiedFilesAsync(
+            site.Id, site.OwnerUserId, BuildVerifiedGeneratedFiles(), now, "revision-package", CancellationToken.None);
+
+        Assert.Equal(6, published.Files.Count);
+        Assert.Contains(published.Files, file => file.Path == "manifest.json");
+        Assert.All(published.Files, file => Assert.Contains("/.versions/", file.CosKey, StringComparison.Ordinal));
+        Assert.Empty(published.PendingAssetCleanupKeys);
+        storage.Verify(x => x.UploadToKeyAsync(
+            It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string?>(),
+            CancellationToken.None, It.IsAny<string?>()), Times.Exactly(6));
+        storage.Verify(x => x.DeleteByKeyAsync(It.IsAny<string>(), CancellationToken.None), Times.Exactly(6));
+        storage.VerifyAll();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task VerifiedPackageEdit_WhenContentVersionChangesDuringUpload_ShouldPersistAndRecoverLosingKeys()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var oldHtml = HostedSiteRevisionRules.HardenGeneratedHtml(
+            "<!doctype html><html><head><title>旧页面</title></head><body><main>旧页面</main></body></html>");
+        var site = new HostedSite
+        {
+            Id = "site-package-cas-loser",
+            OwnerUserId = "user-1",
+            SourceType = "design-agent",
+            EntryFile = "index.html",
+            ContentVersion = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Files = [new HostedSiteFile
+            {
+                Path = "index.html",
+                CosKey = "web-hosting/sites/site-package-cas-loser/index.html",
+                Size = Encoding.UTF8.GetByteCount(oldHtml),
+                MimeType = "text/html",
+            }],
+        };
+        await fixture.Db.HostedSites.InsertOneAsync(site);
+        var uploadCount = 0;
+        var deleted = new List<string>();
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.TryDownloadBytesAsync(site.Files[0].CosKey, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Encoding.UTF8.GetBytes(oldHtml));
+        storage.Setup(x => x.BuildSiteKey(site.Id, It.IsAny<string>()))
+            .Returns((string _, string filePath) => $"web-hosting/sites/{site.Id}/{filePath}");
+        storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>()))
+            .Returns((string key) => $"https://assets.test/{key}");
+        storage.Setup(x => x.UploadToKeyAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string?>(),
+                CancellationToken.None, It.IsAny<string?>()))
+            .Returns(async () =>
+            {
+                if (Interlocked.Increment(ref uploadCount) != 1) return;
+                await fixture.Db.HostedSites.UpdateOneAsync(
+                    x => x.Id == site.Id,
+                    Builders<HostedSite>.Update.Set(x => x.ContentVersion, now.AddSeconds(1)));
+            });
+        storage.Setup(x => x.DeleteByKeyAsync(It.IsAny<string>(), CancellationToken.None))
+            .Callback((string key, CancellationToken _) => deleted.Add(key))
+            .Returns(Task.CompletedTask);
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ReplaceWithVerifiedFilesAsync(
+            site.Id, site.OwnerUserId, BuildVerifiedGeneratedFiles(), now, "revision-loser", CancellationToken.None));
+
+        var afterFailure = await fixture.Db.HostedSites.Find(x => x.Id == site.Id).FirstAsync();
+        Assert.Equal(6, afterFailure.PendingAssetCleanupKeys.Count);
+        Assert.Empty(afterFailure.AssetPublishInProgressKeys);
+        Assert.True(await service.ResumeNextPendingAssetCleanupAsync(now.AddMinutes(10), CancellationToken.None));
+        Assert.Equal(6, deleted.Count);
+        var recovered = await fixture.Db.HostedSites.Find(x => x.Id == site.Id).FirstAsync();
+        Assert.Empty(recovered.PendingAssetCleanupKeys);
+        storage.VerifyAll();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task Reupload_WhenContentVersionChangesDuringUpload_ShouldFenceAndRecoverImmutableObject()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var site = new HostedSite
+        {
+            Id = "site-reupload-cas-loser",
+            OwnerUserId = "user-1",
+            EntryFile = "index.html",
+            ContentVersion = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Files =
+            [
+                new HostedSiteFile
+                {
+                    Path = "index.html",
+                    CosKey = "web-hosting/sites/site-reupload-cas-loser/index.html",
+                    Size = 16,
+                    MimeType = "text/html",
+                },
+            ],
+        };
+        await fixture.Db.HostedSites.InsertOneAsync(site);
+        string? uploadedKey = null;
+        var deleted = new List<string>();
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.BuildSiteKey(site.Id, It.IsAny<string>()))
+            .Returns((string _, string filePath) => $"web-hosting/sites/{site.Id}/{filePath}");
+        storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>()))
+            .Returns((string key) => $"https://assets.test/{key}");
+        storage.Setup(x => x.UploadToKeyAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string?>(),
+                CancellationToken.None, It.IsAny<string?>()))
+            .Returns(async (string key, byte[] _, string? _, CancellationToken _, string? _) =>
+            {
+                uploadedKey = key;
+                await fixture.Db.HostedSites.UpdateOneAsync(
+                    item => item.Id == site.Id,
+                    Builders<HostedSite>.Update.Set(item => item.ContentVersion, now.AddSeconds(1)));
+            });
+        storage.Setup(x => x.DeleteByKeyAsync(It.IsAny<string>(), CancellationToken.None))
+            .Callback((string key, CancellationToken _) => deleted.Add(key))
+            .Returns(Task.CompletedTask);
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ReuploadAsync(
+            site.Id,
+            site.OwnerUserId,
+            Encoding.UTF8.GetBytes("<!doctype html><html><body>new</body></html>"),
+            "index.html",
+            ct: CancellationToken.None));
+
+        Assert.NotNull(uploadedKey);
+        Assert.Contains("/.versions/", uploadedKey, StringComparison.Ordinal);
+        var afterFailure = await fixture.Db.HostedSites.Find(item => item.Id == site.Id).FirstAsync();
+        Assert.Contains(uploadedKey, afterFailure.PendingAssetCleanupKeys);
+        Assert.Empty(afterFailure.AssetPublishInProgressKeys);
+        Assert.True(await service.ResumeNextPendingAssetCleanupAsync(now.AddMinutes(10), CancellationToken.None));
+        Assert.Equal([uploadedKey!], deleted);
+        storage.VerifyAll();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task AssetCleanup_ShouldDeferReservedObjectUntilPublishLeaseExpires()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        const string reservedKey = "web-hosting/sites/site-active/.versions/a/index.html";
+        await fixture.Db.HostedSites.InsertOneAsync(new HostedSite
+        {
+            Id = "site-active",
+            OwnerUserId = "owner",
+            Files = [new HostedSiteFile { Path = "index.html", CosKey = "web-hosting/sites/site-active/index.html" }],
+            PendingAssetCleanupKeys = [reservedKey],
+            AssetPublishInProgressKeys = [reservedKey],
+            AssetPublishLeaseExpiresAt = now.AddMinutes(5),
+            AssetCleanupNextAttemptAt = now,
+        });
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        Assert.True(await service.ResumeNextPendingAssetCleanupAsync(now, CancellationToken.None));
+
+        var deferred = await fixture.Db.HostedSites.Find(item => item.Id == "site-active").FirstAsync();
+        Assert.Contains(reservedKey, deferred.PendingAssetCleanupKeys);
+        Assert.Equal("asset_publish_in_progress", deferred.AssetCleanupLastErrorCode);
+        Assert.Equal(now.AddMinutes(5), deferred.AssetCleanupNextAttemptAt);
+        storage.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task AssetCleanup_ShouldRetainKeyReferencedByLegacySavedShare()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        const string sharedKey = "web-hosting/sites/original/manifest.json";
+        await fixture.Db.HostedSites.InsertManyAsync([
+            new HostedSite
+            {
+                Id = "original",
+                OwnerUserId = "owner",
+                Files = [new HostedSiteFile { Path = "index.html", CosKey = "web-hosting/sites/original/new.html" }],
+                PendingAssetCleanupKeys = [sharedKey],
+                AssetCleanupNextAttemptAt = now,
+            },
+            new HostedSite
+            {
+                Id = "saved",
+                OwnerUserId = "reader",
+                SourceType = "saved-share",
+                Files = [new HostedSiteFile { Path = "manifest.json", CosKey = sharedKey }],
+            },
+        ]);
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        Assert.True(await service.ResumeNextPendingAssetCleanupAsync(now, CancellationToken.None));
+
+        var original = await fixture.Db.HostedSites.Find(x => x.Id == "original").FirstAsync();
+        Assert.Contains(sharedKey, original.PendingAssetCleanupKeys);
+        Assert.Equal("asset_still_referenced", original.AssetCleanupLastErrorCode);
+        storage.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task SiteDeletion_ShouldNotDeleteObjectStillReferencedByLegacySavedShare()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        const string sharedKey = "web-hosting/sites/original/index.html";
+        await fixture.Db.HostedSites.InsertManyAsync([
+            new HostedSite
+            {
+                Id = "original",
+                OwnerUserId = "owner",
+                Title = "original",
+                Files = [new HostedSiteFile { Path = "index.html", CosKey = sharedKey }],
+            },
+            new HostedSite
+            {
+                Id = "saved",
+                OwnerUserId = "reader",
+                SourceType = "saved-share",
+                Files = [new HostedSiteFile { Path = "index.html", CosKey = sharedKey }],
+            },
+        ]);
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        Assert.True(await service.DeleteAsync("original", "owner", CancellationToken.None));
+
+        Assert.False(await fixture.Db.HostedSites.Find(item => item.Id == "original").AnyAsync());
+        Assert.True(await fixture.Db.HostedSites.Find(item => item.Id == "saved").AnyAsync());
+        storage.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task SaveSharedGeneratedSite_ShouldCopyObjectsAndReturnSelfContainedShape()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var verified = BuildVerifiedGeneratedFiles();
+        var original = new HostedSite
+        {
+            Id = "site-share-source",
+            OwnerUserId = "owner",
+            SourceType = "design-agent",
+            EntryFile = "index.html",
+            ContentVersion = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Files = verified.Select(file => new HostedSiteFile
+            {
+                Path = file.Path,
+                CosKey = $"web-hosting/sites/site-share-source/{file.Path}",
+                Size = file.Content.LongLength,
+                MimeType = file.MimeType,
+            }).ToList(),
+        };
+        await fixture.Db.HostedSites.InsertOneAsync(original);
+        await fixture.Db.WebPageShareLinks.InsertOneAsync(new WebPageShareLink
+        {
+            Id = "share-copy",
+            Token = "share-copy-token",
+            SiteId = original.Id,
+            CreatedBy = original.OwnerUserId,
+            AccessLevel = "public",
+            Visibility = "public",
+        });
+        var bytesByKey = original.Files.ToDictionary(
+            file => file.CosKey,
+            file => verified.Single(source => source.Path == file.Path).Content,
+            StringComparer.Ordinal);
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, CancellationToken _) => bytesByKey[key]);
+        storage.Setup(x => x.BuildSiteKey(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns((string siteId, string path) => $"web-hosting/sites/{siteId}/{path}");
+        storage.Setup(x => x.UploadToKeyAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Returns(Task.CompletedTask);
+        storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>()))
+            .Returns((string key) => $"https://assets.test/{key}");
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        var result = await service.SaveSharedSiteAsync(
+            "share-copy-token", null, "reader", CancellationToken.None);
+
+        Assert.True(result.Saved);
+        var saved = Assert.Single(result.Sites);
+        Assert.Equal(HostedSiteContentShapes.SelfContainedHtml, saved.ContentShape);
+        Assert.All(saved.Files, file =>
+        {
+            Assert.StartsWith($"web-hosting/sites/{saved.Id}/", file.CosKey, StringComparison.Ordinal);
+            Assert.DoesNotContain("site-share-source", file.CosKey, StringComparison.Ordinal);
+        });
+        var sourceAfter = await fixture.Db.HostedSites.Find(item => item.Id == original.Id).FirstAsync();
+        Assert.Empty(sourceAfter.AssetPublishInProgressKeys);
+        Assert.Empty(sourceAfter.PendingAssetCleanupKeys);
+        storage.Verify(x => x.UploadToKeyAsync(
+            It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Exactly(6));
+        storage.VerifyAll();
+    }
+
     private static IReadOnlyList<HostedSiteVerifiedFile> BuildVerifiedGeneratedFiles() =>
         BuildDesignWorkspaceFiles().Select(file => new HostedSiteVerifiedFile(
             file.Path,
@@ -1343,14 +1949,13 @@ public sealed class DesignArtifactRunRecoveryTests
     {
         var html = HostedSiteRevisionRules.HardenGeneratedHtml(
             "<!doctype html><html lang=\"zh-CN\"><head><title>多资产页面</title></head><body><main><h1>多资产页面</h1></main></body></html>");
-        return new Dictionary<string, string>
+        var publicFiles = new Dictionary<string, string>
         {
             ["assets/accessibility-static-report.json"] = "{\"schemaVersion\":\"map-accessibility-static-report-v1\"}",
             ["assets/design-tokens.json"] = "{\"schemaVersion\":\"map-design-tokens-v1\"}",
             ["assets/page-outline.json"] = "{\"schemaVersion\":\"map-page-outline-v1\"}",
             ["assets/provenance.json"] = "{\"schemaVersion\":\"map-artifact-provenance-v1\"}",
             ["index.html"] = html,
-            ["manifest.json"] = "{\"schemaVersion\":\"map-design-artifact-manifest-v1\"}",
         }.Select(item =>
         {
             var bytes = Encoding.UTF8.GetBytes(item.Value);
@@ -1360,7 +1965,22 @@ public sealed class DesignArtifactRunRecoveryTests
                 Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
                 bytes.LongLength,
                 item.Key == "index.html" ? "text/html; charset=utf-8" : "application/json; charset=utf-8");
-        }).ToArray();
+        }).OrderBy(file => file.Path, StringComparer.Ordinal).ToArray();
+        var manifestFiles = publicFiles.Select(file =>
+            new DesignArtifactManifestFile(file.Path, file.Sha256, file.Size, file.MediaType)).ToArray();
+        var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(
+            new DesignArtifactManifest(
+                DesignArtifactWorkspaceBroker.ManifestSchemaVersion,
+                DesignArtifactWorkspaceContract.ComputePublicArtifactRevision(manifestFiles),
+                "index.html",
+                manifestFiles),
+            DesignArtifactWorkspaceContract.JsonOptions);
+        return publicFiles.Append(new DesignWorkspaceFile(
+            "manifest.json",
+            Convert.ToBase64String(manifestBytes),
+            Convert.ToHexString(SHA256.HashData(manifestBytes)).ToLowerInvariant(),
+            manifestBytes.LongLength,
+            "application/json; charset=utf-8")).ToArray();
     }
 
     private static HostedSiteService CreateHostedSiteService(MongoDbContext db, IAssetStorage storage)

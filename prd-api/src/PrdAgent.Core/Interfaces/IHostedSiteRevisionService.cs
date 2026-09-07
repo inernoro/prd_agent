@@ -2,6 +2,11 @@ using PrdAgent.Core.Models;
 
 namespace PrdAgent.Core.Interfaces;
 
+public sealed record HostedSiteRevisionMutationResult(
+    HostedSiteRevision Revision,
+    HostedSite Site,
+    bool Changed);
+
 public interface IHostedSiteRevisionService
 {
     Task<HostedSiteRevision> EnsureCurrentSnapshotAsync(
@@ -19,10 +24,33 @@ public interface IHostedSiteRevisionService
         IReadOnlyCollection<string> knowledgeEntryIds,
         CancellationToken ct = default);
 
+    Task<HostedSiteRevision> EnsureGeneratedVerifiedSnapshotAsync(
+        string siteId,
+        string userId,
+        HostedSiteEditableEntry knownEntry,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        string runtime,
+        string sourceRunId,
+        IReadOnlyCollection<string> knowledgeEntryIds,
+        CancellationToken ct = default);
+
     Task<HostedSiteRevision> CreateDraftAsync(
         string siteId,
         string userId,
         string html,
+        string instruction,
+        string runtime,
+        string runId,
+        string parentRevisionId,
+        IReadOnlyCollection<string> knowledgeEntryIds,
+        DateTime basedOnContentVersion,
+        CancellationToken ct = default);
+
+    Task<HostedSiteRevision> CreateVerifiedDraftAsync(
+        string siteId,
+        string userId,
+        string html,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
         string instruction,
         string runtime,
         string runId,
@@ -53,15 +81,27 @@ public interface IHostedSiteRevisionService
         string userId,
         CancellationToken ct = default);
 
-    Task<(HostedSiteRevision Revision, HostedSite Site)> PublishAsync(
+    Task<HostedSiteRevisionMutationResult> PublishAsync(
         string siteId,
         string revisionId,
         string userId,
         CancellationToken ct = default);
 
-    Task<(HostedSiteRevision Revision, HostedSite Site)> RollbackAsync(
+    Task<HostedSiteRevisionMutationResult> RollbackAsync(
         string siteId,
         string revisionId,
         string userId,
+        string idempotencyKey,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// 将草稿终结为 rejected。重复拒绝同一版本幂等返回，Changed=false；
+    /// publishing 与 published 均不允许转为 rejected。
+    /// </summary>
+    Task<(HostedSiteRevision Revision, bool Changed)> RejectAsync(
+        string siteId,
+        string revisionId,
+        string userId,
+        string? reason,
         CancellationToken ct = default);
 }

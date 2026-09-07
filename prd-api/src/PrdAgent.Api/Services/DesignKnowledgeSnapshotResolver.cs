@@ -39,7 +39,8 @@ public interface IDesignKnowledgeSnapshotResolver
 }
 
 /// <summary>
-/// 将客户端提交的知识条目身份解析为服务端权威快照。客户端不能提供正文、标题或内容哈希。
+/// 将客户端提交的知识条目身份与预检 contentHash 解析为服务端权威快照。
+/// 客户端不能提供正文或标题；contentHash 只是乐观锁，服务端仍重新读取权威内容并计算哈希。
 /// </summary>
 public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotResolver
 {

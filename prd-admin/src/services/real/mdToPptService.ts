@@ -1,16 +1,16 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { useAuthStore } from '@/stores/authStore';
 
-interface MdToPptKnowledgeReferenceInput {
+export interface MdToPptKnowledgeReferenceInput {
   entryId: string;
   storeId: string;
   contentHash?: string;
 }
 
-interface ResolvedMdToPptKnowledgeReference extends MdToPptKnowledgeReferenceInput {
+export interface ResolvedMdToPptKnowledgeReference extends MdToPptKnowledgeReferenceInput {
   contentHash: string;
-  storeName: string;
-  title: string;
+  storeName?: string;
+  title?: string;
 }
 
 async function resolveMdToPptKnowledgeReferences(
@@ -20,6 +20,15 @@ async function resolveMdToPptKnowledgeReferences(
     return {
       success: true as const,
       data: { items: [] as ResolvedMdToPptKnowledgeReference[] },
+      error: null,
+    };
+  }
+  if (references.every((item) => /^[0-9a-f]{64}$/i.test(item.contentHash ?? ''))) {
+    return {
+      success: true as const,
+      data: {
+        items: references.map((item) => ({ ...item, contentHash: item.contentHash! })),
+      },
       error: null,
     };
   }
@@ -123,6 +132,7 @@ export interface MdToPptOutlineStreamOptions extends MdToPptOutlineRequest {
   onPage?: (page: OutlineStreamPageEvent) => void;
   /** 服务器权威：大纲也是一次 Run，runId 用于刷新后取回结果 */
   onRun?: (runId: string) => void;
+  onKnowledgeResolved?: (items: ResolvedMdToPptKnowledgeReference[]) => void;
   onDone?: (info: { pages: number; runId?: string }) => void;
   onError?: (message: string) => void;
 }
@@ -137,9 +147,11 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
     try {
       const resolvedKnowledge = await resolveMdToPptKnowledgeReferences(options.knowledgeReferences ?? []);
       if (!resolvedKnowledge.success) {
+        await cancelMdToPptPrewarm();
         options.onError?.(resolvedKnowledge.error.message);
         return;
       }
+      options.onKnowledgeResolved?.(resolvedKnowledge.data.items);
       if (abortController.signal.aborted) return;
       const response = await fetch('/api/md-to-ppt/outline-stream', {
         method: 'POST',
@@ -256,6 +268,33 @@ export function prewarmMdToPpt(runtimeProfileId?: string | null): void {
   });
 }
 
+export async function cancelMdToPptPrewarm(): Promise<void> {
+  await apiRequest('/api/md-to-ppt/prewarm/cancel', { method: 'POST' }).catch(() => undefined);
+}
+
+export async function handleMdToPptRejectedResponse(
+  response: Response,
+  onError?: (message: string) => void,
+  cancelPrewarm: () => Promise<void> = cancelMdToPptPrewarm,
+): Promise<void> {
+  await cancelPrewarm();
+  let message = `请求未被接受（${response.status}）`;
+  try {
+    const payload = await response.json() as {
+      error?: string | { message?: string; code?: string };
+      message?: string;
+      code?: string;
+    };
+    const errorMessage = typeof payload.error === 'string'
+      ? payload.error
+      : payload.error?.message;
+    message = errorMessage || payload.message || message;
+  } catch {
+    // Non-JSON proxy responses are intentionally collapsed to a stable user-facing error.
+  }
+  onError?.(message);
+}
+
 // ============ 模型运行配置（用户随时切换，2026-06-11 诉求 7） ============
 
 export interface MdToPptProfileItem {
@@ -313,6 +352,7 @@ export interface MdToPptConvertRequest {
   slideCount?: number;
   theme?: string;
   sourceSurface?: 'html-ppt' | 'knowledge-base';
+  parentOutlineRunId?: string;
   knowledgeReferences?: Array<{
     entryId: string;
     storeId: string;
@@ -473,6 +513,7 @@ export interface MdToPptConvertSseOptions {
   /** 模型运行配置 ID（用户在 PPT 页切换的模型；缺省走后端默认链） */
   runtimeProfileId?: string;
   sourceSurface?: 'html-ppt' | 'knowledge-base';
+  parentOutlineRunId?: string;
   knowledgeReferences?: Array<{
     entryId: string;
     storeId: string;
@@ -505,8 +546,29 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
     try {
       const resolvedKnowledge = await resolveMdToPptKnowledgeReferences(options.knowledgeReferences ?? []);
       if (!resolvedKnowledge.success) {
+        await cancelMdToPptPrewarm();
         options.onError?.(resolvedKnowledge.error.message);
         return;
+      }
+      if (abortController.signal.aborted) return;
+      if (options.parentOutlineRunId && options.outlinePages?.length) {
+        const confirmation = await fetch(
+          `/api/md-to-ppt/outline/${encodeURIComponent(options.parentOutlineRunId)}/confirm`,
+          {
+            method: 'POST',
+            headers: buildSseHeaders(),
+            body: JSON.stringify({
+              content: options.content,
+              outlinePages: options.outlinePages,
+              summary: options.summary,
+            }),
+            signal: abortController.signal,
+          },
+        );
+        if (!confirmation.ok) {
+          await handleMdToPptRejectedResponse(confirmation, options.onError);
+          return;
+        }
       }
       if (abortController.signal.aborted) return;
       const response = await fetch('/api/md-to-ppt/convert', {
@@ -521,6 +583,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
           summary: options.summary,
           runtimeProfileId: options.runtimeProfileId,
           sourceSurface: options.sourceSurface,
+          parentOutlineRunId: options.parentOutlineRunId,
           knowledgeReferences: resolvedKnowledge.data.items.map(({ entryId, storeId, contentHash }) => ({
             entryId,
             storeId,
@@ -531,7 +594,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
       });
 
       if (!response.ok) {
-        options.onError?.(`HTTP ${response.status}`);
+        await handleMdToPptRejectedResponse(response, options.onError);
         return;
       }
 
@@ -565,6 +628,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
       });
       // stream ended without done/error — unblock the UI
       if (!resolved && !abortController.signal.aborted) {
+        await cancelMdToPptPrewarm();
         options.onError?.('连接意外断开，请重试');
       }
     } catch (e) {
@@ -576,6 +640,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
   })();
 
   return () => {
+    void cancelMdToPptPrewarm();
     abortController.abort();
   };
 }
@@ -719,6 +784,7 @@ export async function persistMdToPptLocalEdit(
 export interface MdToPptRunDetail {
   id: string;
   parentRunId?: string | null;
+  parentOutlineRunId?: string | null;
   parentHtmlHash?: string | null;
   status: 'running' | 'done' | 'error';
   engine: MdToPptEngine;
@@ -731,6 +797,15 @@ export interface MdToPptRunDetail {
   publishedHtmlHash?: string | null;
   /** op=outline 时填充：刷新恢复用的大纲结果 JSON（与 outlineDraft 同形） */
   outlineJson?: string | null;
+  inputAuthority?: 'user-supplied' | 'mixed-user-and-server-knowledge';
+  userSuppliedContentHash?: string | null;
+  knowledgeReferences?: Array<{
+    entryId: string;
+    storeId?: string | null;
+    storeName?: string | null;
+    title: string;
+    contentHash: string;
+  }>;
   error?: string | null;
   model?: string | null;
   platform?: string | null;

@@ -24,6 +24,15 @@ public class InfraAgentSession
 
     public string TraceId { get; set; } = string.Empty;
 
+    /// <summary>未认领预热会话的唯一键；认领或终止时清空，避免多副本重复创建。</summary>
+    public string? PrewarmKey { get; set; }
+
+    /// <summary>预热会话的硬过期时间；后台清理不依赖下一次用户请求。</summary>
+    public DateTime? PrewarmExpiresAt { get; set; }
+
+    /// <summary>原子认领该预热会话的根领域 Run，同时也是 TraceId 的权威来源。</summary>
+    public string? PrewarmClaimedRunId { get; set; }
+
     public string? RuntimeProfileId { get; set; }
 
     public string? ModelBaseUrl { get; set; }

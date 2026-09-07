@@ -129,6 +129,41 @@ function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinit
   collection.createIndex(keys, options)
 }
 
+function ensureCatalogIndex(collectionName, keys, options, legacyDefinitions = []) {
+  const collection = db.getCollection(collectionName)
+  const collectionExists = db.getCollectionInfos({ name: collectionName }).length > 0
+  const existing = collectionExists
+    ? collection.getIndexes().find(index => index.name === options.name)
+    : undefined
+  if (!existing) {
+    collection.createIndex(keys, options)
+    return
+  }
+  if (sameIndexDefinition(existing, keys, options.partialFilterExpression)) {
+    collection.createIndex(keys, options)
+    return
+  }
+  const knownLegacy = legacyDefinitions.some(definition =>
+    sameIndexDefinition(existing, definition.keys, definition.partialFilterExpression)
+  )
+  if (!knownLegacy) {
+    tightenedUniqueIndexMigrationFailures.push(
+      `${collectionName}.${options.name}: existing index definition differs from the catalog`
+    )
+    return
+  }
+  const restoreOptions = restorableIndexOptions(existing)
+  try {
+    collection.dropIndex(existing.name)
+    collection.createIndex(keys, options)
+  } catch (error) {
+    try { collection.createIndex(existing.key, restoreOptions) } catch (_) { }
+    tightenedUniqueIndexMigrationFailures.push(
+      `${collectionName}.${options.name}: ${error.message || error}`
+    )
+  }
+}
+
 // collection: users
 db.users.createIndex({ "Username": 1 })
 db.users.createIndex(
@@ -1143,6 +1178,16 @@ db.hosted_sites.createIndex(
   { name: "idx_hosted_sites_owner_folder" }
 )
 
+// 回退请求持久幂等；同一站点、操作者和请求键最多产生一个回退版本。
+ensureTightenedUniqueIndex("hosted_site_revisions",
+  { "SiteId": 1, "CreatedByUserId": 1, "RollbackIdempotencyKey": 1 },
+  {
+    name: "uniq_hosted_site_revision_rollback_idempotency",
+    unique: true,
+    partialFilterExpression: { "RollbackIdempotencyKey": { $type: "string" } }
+  }
+)
+
 // collection: infra_agent_sessions
 // One-shot design sessions persist remote cleanup intent here. The API cleanup worker scans only
 // dated requests; the partial index keeps normal reusable sessions out of the recovery index.
@@ -1151,6 +1196,26 @@ db.infra_agent_sessions.createIndex(
   {
     name: "idx_infra_agent_sessions_cleanup_requested",
     partialFilterExpression: { "CleanupRequestedAt": { $type: "date" } }
+  }
+)
+
+// PPT 预热跨 API 副本 single-flight；认领或停止会清空 PrewarmKey。
+ensureTightenedUniqueIndex("infra_agent_sessions",
+  { "PrewarmKey": 1 },
+  {
+    name: "uniq_infra_agent_sessions_prewarm_key",
+    unique: true,
+    partialFilterExpression: { "PrewarmKey": { $type: "string" } }
+  }
+)
+db.infra_agent_sessions.createIndex(
+  { "PrewarmExpiresAt": 1 },
+  {
+    name: "idx_infra_agent_sessions_prewarm_expiry",
+    partialFilterExpression: {
+      "ClientApp": "md-to-ppt-prewarm",
+      "PrewarmExpiresAt": { $type: "date" }
+    }
   }
 )
 
@@ -1318,6 +1383,39 @@ db.activity_logs.createIndex(
   { name: "idx_activity_logs_module_created" }
 )
 
+// 后台领域事实幂等键 — HTTP 动态不写此字段，sparse 避免影响普通请求留痕
+db.activity_logs.createIndex(
+  { "DeduplicationKey": 1 },
+  { name: "uniq_activity_logs_deduplication_key", unique: true, sparse: true }
+)
+
+// 生成站点发布审计恢复 — 每 15 秒只扫描尚未完成投影的终态 Run，标记写入后自动退出索引
+ensureCatalogIndex("design_artifact_runs",
+  { "CompletedAt": -1 },
+  {
+    name: "idx_design_artifact_runs_publication_audit_pending",
+    partialFilterExpression: {
+      "Status": "Done",
+      "ArtifactType": "web-page",
+      "Operation": "generate",
+      "ArtifactSiteId": { $type: "string" },
+      "CompletedAt": { $type: "date" },
+      "PublishedActivityProjectionCompletedAt": null
+    }
+  },
+  [{
+    keys: { "CompletedAt": -1 },
+    partialFilterExpression: {
+      "Status": "Done",
+      "ArtifactType": "web-page",
+      "Operation": "generate",
+      "ArtifactSiteId": { $type: "string" },
+      "CompletedAt": { $type: "date" },
+      "PublishedActivityRecordedAt": null
+    }
+  }]
+)
+
 // collection: document_entry_versions
 // (EntryId, VersionNumber) 唯一 — 同一文档版本号不重复，并发重复分配被 unique 索引拦截
 db.document_entry_versions.createIndex(
@@ -1478,6 +1576,51 @@ db.document_entries.createIndex(
 )
 // 卡片预览（每库最近 3 条）走的是同一条索引，不另建。
 // end collection: document_entries
+
+function verifyCatalogIndex(collectionName, name, keys, options = {}) {
+  const index = db.getCollection(collectionName).getIndexes().find(item => item.name === name)
+  if (!index
+      || JSON.stringify(index.key) !== JSON.stringify(keys)
+      || Boolean(index.unique) !== Boolean(options.unique)
+      || Boolean(index.sparse) !== Boolean(options.sparse)
+      || JSON.stringify(index.partialFilterExpression || {}) !== JSON.stringify(options.partialFilterExpression || {})) {
+    tightenedUniqueIndexMigrationFailures.push(`${collectionName}.${name}: deployed definition differs from catalog`)
+  }
+}
+
+verifyCatalogIndex(
+  "activity_logs",
+  "uniq_activity_logs_deduplication_key",
+  { "DeduplicationKey": 1 },
+  { unique: true, sparse: true }
+)
+verifyCatalogIndex(
+  "hosted_site_revisions",
+  "uniq_hosted_site_revision_rollback_idempotency",
+  { "SiteId": 1, "CreatedByUserId": 1, "RollbackIdempotencyKey": 1 },
+  { unique: true, partialFilterExpression: { "RollbackIdempotencyKey": { $type: "string" } } }
+)
+verifyCatalogIndex(
+  "infra_agent_sessions",
+  "uniq_infra_agent_sessions_prewarm_key",
+  { "PrewarmKey": 1 },
+  { unique: true, partialFilterExpression: { "PrewarmKey": { $type: "string" } } }
+)
+verifyCatalogIndex(
+  "design_artifact_runs",
+  "idx_design_artifact_runs_publication_audit_pending",
+  { "CompletedAt": -1 },
+  {
+    partialFilterExpression: {
+      "Status": "Done",
+      "ArtifactType": "web-page",
+      "Operation": "generate",
+      "ArtifactSiteId": { $type: "string" },
+      "CompletedAt": { $type: "date" },
+      "PublishedActivityProjectionCompletedAt": null
+    }
+  }
+)
 
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(

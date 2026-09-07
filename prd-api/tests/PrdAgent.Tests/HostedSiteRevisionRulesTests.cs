@@ -1,10 +1,93 @@
 using PrdAgent.Core.Models;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace PrdAgent.Tests;
 
 public class HostedSiteRevisionRulesTests
 {
+    [Fact]
+    public void ContentShape_ShouldTreatOnlyTheExactGeneratedPackageAsSelfContainedHtml()
+    {
+        var generated = new HostedSite
+        {
+            EntryFile = "index.html",
+            SourceType = "design-agent",
+            Files =
+            [
+                new() { Path = "index.html" },
+                new() { Path = "manifest.json" },
+                new() { Path = "assets/page-outline.json" },
+                new() { Path = "assets/design-tokens.json" },
+                new() { Path = "assets/accessibility-static-report.json" },
+                new() { Path = "assets/provenance.json" },
+            ],
+        };
+        var ordinaryMultiFile = new HostedSite
+        {
+            EntryFile = "index.html",
+            Files = [new() { Path = "index.html" }, new() { Path = "styles.css" }],
+        };
+
+        Assert.Equal(HostedSiteContentShapes.SelfContainedHtml, HostedSiteContentShapeRules.Resolve(generated));
+        generated.SourceType = "saved-share";
+        Assert.Equal(HostedSiteContentShapes.SelfContainedHtml, HostedSiteContentShapeRules.Resolve(generated));
+        Assert.Equal(HostedSiteContentShapes.MultiFile, HostedSiteContentShapeRules.Resolve(ordinaryMultiFile));
+
+        generated.Files.Add(new HostedSiteFile { Path = "assets/unexpected.json" });
+        Assert.Equal(HostedSiteContentShapes.MultiFile, HostedSiteContentShapeRules.Resolve(generated));
+    }
+
+    [Fact]
+    public void GeneratedHtmlNormalization_ShouldMatchSharedGoldenVectors()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null
+               && !File.Exists(Path.Combine(
+                   directory.FullName,
+                   "scripts",
+                   "fixtures",
+                   "generated-html-normalization-v1.json")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+        var fixturePath = Path.Combine(
+            directory!.FullName,
+            "scripts",
+            "fixtures",
+            "generated-html-normalization-v1.json");
+        using var fixture = JsonDocument.Parse(File.ReadAllText(fixturePath));
+        Assert.Equal(
+            HostedSiteRevisionRules.GeneratedArtifactCsp,
+            fixture.RootElement.GetProperty("csp").GetString());
+        foreach (var vector in fixture.RootElement.GetProperty("vectors").EnumerateArray())
+        {
+            var input = vector.GetProperty("input").GetString()!;
+            Assert.Equal(
+                vector.GetProperty("normalized").GetString(),
+                HostedSiteRevisionRules.NormalizeGeneratedHtml(input));
+            var hardened = HostedSiteRevisionRules.HardenGeneratedHtml(input);
+            Assert.Equal(
+                vector.GetProperty("hardenedSha256").GetString(),
+                Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(hardened))).ToLowerInvariant());
+        }
+    }
+
+    [Fact]
+    public void NormalizeRejectionReason_ShouldBeOptionalBoundedAndRedacted()
+    {
+        Assert.Null(HostedSiteRevisionRules.NormalizeRejectionReason("  \r\n "));
+        Assert.Equal(
+            "版式不符合要求 token=***",
+            HostedSiteRevisionRules.NormalizeRejectionReason(" 版式不符合要求\ntoken=secret-value "));
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.NormalizeRejectionReason(
+                new string('a', HostedSiteRevisionRules.MaxRejectionReasonLength + 1)));
+        Assert.Contains(HostedSiteRevisionRules.MaxRejectionReasonLength.ToString(), error.Message);
+    }
+
     [Fact]
     public void NormalizeGeneratedHtml_RemovesMarkdownFence()
     {
@@ -51,6 +134,7 @@ public class HostedSiteRevisionRulesTests
             "<!doctype html><html><body background=\"https://tracker.example/pixel.png\"></body></html>",
             "<!doctype html><html><video poster=\"https://tracker.example/poster.png\"></video></html>",
             "<!doctype html><html><a href=\"#ok\" ping=\"https://tracker.example/ping\">leave</a></html>",
+            "<!doctype html><html><body><svg><a href=\"#ok\"><animate attributeName=\"href\" values=\"https://attacker.example/collect\" dur=\"1ms\" fill=\"freeze\"/><text>continue</text></a></svg><div id=\"ok\">ok</div></body></html>",
         };
 
         foreach (var html in unsafePages)

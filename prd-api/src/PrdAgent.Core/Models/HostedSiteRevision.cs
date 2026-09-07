@@ -1,9 +1,11 @@
+using System.Text.Json.Serialization;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// 托管站点入口 HTML 的不可变版本。
+/// 托管站点的不可变版本。
 ///
-/// 首期只版本化入口 HTML；ZIP 内的 CSS、图片等资源仍保留在原站点目录中。
+/// 常规微调只版本化入口 HTML；经 OpenDesign 验证的产物会连同完整 manifest/sidecar 一起版本化。
 /// 草稿发布与历史回退都会追加一条新记录，不覆盖历史记录。
 /// </summary>
 public class HostedSiteRevision
@@ -14,7 +16,7 @@ public class HostedSiteRevision
 
     public string CreatedByUserId { get; set; } = string.Empty;
 
-    /// <summary>draft | published</summary>
+    /// <summary>draft | publishing | published | rejected</summary>
     public string Status { get; set; } = HostedSiteRevisionStatuses.Draft;
 
     /// <summary>baseline | ai-edit | rollback</summary>
@@ -25,6 +27,9 @@ public class HostedSiteRevision
 
     /// <summary>回退版本明确指向被选择的历史版本；与 ParentRevisionId 的回退前当前版本语义分离。</summary>
     public string? RollbackTargetRevisionId { get; set; }
+
+    /// <summary>回退 HTTP 请求的幂等键；同站点、同操作者范围内唯一。</summary>
+    public string? RollbackIdempotencyKey { get; set; }
 
     /// <summary>生成草稿的 Run，用于从版本追溯模型交互过程。</summary>
     public string? SourceRunId { get; set; }
@@ -40,6 +45,10 @@ public class HostedSiteRevision
 
     /// <summary>完整入口 HTML。控制在 2MB 以内，不向版本列表接口返回。</summary>
     public string Html { get; set; } = string.Empty;
+
+    /// <summary>OpenDesign 已验证的完整公开包；发布时必须整包原子切换。</summary>
+    [JsonIgnore]
+    public List<HostedSiteRevisionFile> VerifiedFiles { get; set; } = new();
 
     /// <summary>该版本生成时所依据的线上 ContentVersion。</summary>
     public DateTime BasedOnContentVersion { get; set; }
@@ -61,6 +70,23 @@ public class HostedSiteRevision
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? PublishedAt { get; set; }
+
+    /// <summary>草稿被明确拒绝的时间；仅 rejected 状态存在。</summary>
+    public DateTime? RejectedAt { get; set; }
+
+    /// <summary>拒绝草稿的用户；仅 rejected 状态存在。</summary>
+    public string? RejectedByUserId { get; set; }
+
+    /// <summary>经长度限制和敏感信息脱敏后的可选拒绝原因。</summary>
+    public string? RejectionReason { get; set; }
+}
+
+public class HostedSiteRevisionFile
+{
+    public string Path { get; set; } = string.Empty;
+    public byte[] Content { get; set; } = Array.Empty<byte>();
+    public string Sha256 { get; set; } = string.Empty;
+    public string MimeType { get; set; } = string.Empty;
 }
 
 public static class HostedSiteRevisionStatuses
@@ -68,6 +94,7 @@ public static class HostedSiteRevisionStatuses
     public const string Draft = "draft";
     public const string Publishing = "publishing";
     public const string Published = "published";
+    public const string Rejected = "rejected";
 }
 
 public static class HostedSiteRevisionSources
@@ -88,6 +115,7 @@ public static class HostedSiteEditRuntimes
 public static class HostedSiteRevisionRules
 {
     public const int MaxHtmlBytes = 2 * 1024 * 1024;
+    public const int MaxRejectionReasonLength = 500;
     public const string GeneratedArtifactCsp = "default-src 'none'; base-uri 'none'; connect-src 'none'; form-action 'none'; img-src data:; font-src data:; media-src data:; style-src 'unsafe-inline'; script-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; manifest-src 'none'";
     private const string DocumentRootPattern = @"^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:""[^""<>]*""|'[^'<>]*'|[^\s""'`=<>]+))?)*\s*>";
     private const string DocumentHeadPattern = @"^\s*(?:<!--[\s\S]*?-->\s*)*<head(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:""[^""<>]*""|'[^'<>]*'|[^\s""'`=<>]+))?)*\s*>";
@@ -98,13 +126,46 @@ public static class HostedSiteRevisionRules
 
     public static string NormalizeGeneratedHtml(string raw)
     {
-        var value = (raw ?? string.Empty).Trim();
+        var value = (raw ?? string.Empty)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
+        if (value.StartsWith('\uFEFF')) value = value[1..];
+        value = TrimHtmlWhitespace(value);
         if (!value.StartsWith("```", StringComparison.Ordinal)) return value;
         var firstLine = value.IndexOf('\n');
         if (firstLine >= 0) value = value[(firstLine + 1)..];
         var closing = value.LastIndexOf("```", StringComparison.Ordinal);
         if (closing >= 0) value = value[..closing];
-        return value.Trim();
+        return TrimHtmlWhitespace(value);
+    }
+
+    private static string TrimHtmlWhitespace(string value) =>
+        value.Trim(' ', '\t', '\n', '\f', '\r');
+
+    public static string? NormalizeRejectionReason(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+
+        var value = raw.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (value.Length > MaxRejectionReasonLength)
+            throw new InvalidOperationException($"拒绝原因不能超过 {MaxRejectionReasonLength} 个字符");
+
+        value = System.Text.RegularExpressions.Regex.Replace(
+            value,
+            @"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+",
+            "Bearer ***",
+            RegexOptions);
+        value = System.Text.RegularExpressions.Regex.Replace(
+            value,
+            @"(?ix)\b(authorization|proxy-authorization|x-api-key|api[-_]?key|apikey|access[-_]?token|refresh[-_]?token|token|password|secret|cookie|set-cookie)\b\s*[:=]\s*(?:Bearer\s+)?(?:[\""'][^\""'\r\n]*[\""']|[^\s,;}\]]+)",
+            "$1=***",
+            RegexOptions);
+        value = System.Text.RegularExpressions.Regex.Replace(
+            value,
+            @"(?i)\bsk-[A-Za-z0-9_-]{8,}\b",
+            "***",
+            RegexOptions);
+        return value;
     }
 
     public static void ValidateHtml(string html)
@@ -128,6 +189,12 @@ public static class HostedSiteRevisionRules
         {
             if (tag.Name.Equals("script", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("生成页面包含可执行脚本，当前安全模式只允许声明式 HTML 与 CSS");
+            if (System.Text.RegularExpressions.Regex.IsMatch(
+                    tag.Name,
+                    @"^(?:animate|set|animateMotion|animateTransform)$",
+                    RegexOptions,
+                    TimeSpan.FromSeconds(1)))
+                throw new InvalidOperationException("生成页面包含不能证明为离线安全的 SVG 动画能力");
             foreach (var attribute in new[] { "src", "href" })
             {
                 var reference = ReadHtmlAttribute(tag.Attributes, attribute);
@@ -141,6 +208,7 @@ public static class HostedSiteRevisionRules
                     || name.Equals("poster", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("ping", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("formaction", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("xlink:href", StringComparison.OrdinalIgnoreCase)
                     || name.StartsWith("on", StringComparison.OrdinalIgnoreCase))
                 || System.Text.RegularExpressions.Regex.IsMatch(
                     tag.Name,

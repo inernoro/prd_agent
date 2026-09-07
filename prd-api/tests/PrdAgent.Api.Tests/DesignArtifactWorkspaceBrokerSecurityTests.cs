@@ -454,11 +454,15 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
             Hash(html),
             html.LongLength,
             "text/html");
+        var manifestFiles = new[]
+        {
+            new DesignArtifactManifestFile(htmlFile.Path, htmlFile.Sha256, htmlFile.Size, htmlFile.MediaType),
+        };
         var manifestValue = new DesignArtifactManifest(
             DesignArtifactWorkspaceBroker.ManifestSchemaVersion,
-            baseRevision,
+            DesignArtifactWorkspaceContract.ComputePublicArtifactRevision(manifestFiles),
             "index.html",
-            [new DesignArtifactManifestFile(htmlFile.Path, htmlFile.Sha256, htmlFile.Size, htmlFile.MediaType)]);
+            manifestFiles);
         var manifest = JsonSerializer.SerializeToUtf8Bytes(
             manifestValue,
             DesignArtifactWorkspaceContract.JsonOptions);

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
@@ -155,6 +157,11 @@ public sealed class HostedSiteEditsController : ControllerBase
                 : editable.Site.Title.Trim(),
             TargetSiteId = siteId,
             KnowledgeReferences = snapshots.ToList(),
+            InputAuthority = snapshots.Count > 0
+                ? DesignArtifactInputAuthorities.MixedUserAndServerKnowledge
+                : DesignArtifactInputAuthorities.UserSupplied,
+            UserSuppliedContentHash = System.Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(instruction))).ToLowerInvariant(),
             Progress = 2,
             Phase = "修改任务已进入队列",
         };
@@ -201,7 +208,7 @@ public sealed class HostedSiteEditsController : ControllerBase
             editable.Site.WrappedAssetType,
             "markdown",
             StringComparison.OrdinalIgnoreCase);
-        if ((editable.Site.Files?.Count ?? 0) > 1 && !isMarkdownWrapper)
+        if (!HostedSiteContentShapeRules.IsSelfContainedHtml(editable.Site) && !isMarkdownWrapper)
         {
             throw new InvalidOperationException(
                 "当前站点包含 ZIP 或多文件资源；首版 AI 微调只支持单个声明式、自包含 HTML，请先把 CSS、图片等资源内嵌到入口 HTML 后再试");
@@ -344,23 +351,91 @@ public sealed class HostedSiteEditsController : ControllerBase
 
     [HttpPost("revisions/{revisionId}/publish")]
     public async Task<IActionResult> PublishRevision(string siteId, string revisionId)
-        => await MutateRevisionAsync(siteId, revisionId, rollback: false);
+        => await MutateRevisionAsync(siteId, revisionId, idempotencyKey: null);
 
     [HttpPost("revisions/{revisionId}/rollback")]
-    public async Task<IActionResult> RollbackRevision(string siteId, string revisionId)
-        => await MutateRevisionAsync(siteId, revisionId, rollback: true);
+    public async Task<IActionResult> RollbackRevision(
+        string siteId,
+        string revisionId,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey)
+    {
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+            return BadRequest(ApiResponse<object>.Fail("IDEMPOTENCY_KEY_REQUIRED", "回退请求缺少 Idempotency-Key"));
+        var normalized = idempotencyKey.Trim();
+        if (normalized.Length is < 8 or > 128
+            || normalized.Any(character => character < 0x21 || character > 0x7e))
+            return BadRequest(ApiResponse<object>.Fail("IDEMPOTENCY_KEY_INVALID", "Idempotency-Key 格式不正确"));
+        return await MutateRevisionAsync(siteId, revisionId, normalized);
+    }
 
-    private async Task<IActionResult> MutateRevisionAsync(string siteId, string revisionId, bool rollback)
+    [HttpPost("revisions/{revisionId}/reject")]
+    public async Task<IActionResult> RejectRevision(
+        string siteId,
+        string revisionId,
+        [FromBody] RejectHostedSiteRevisionRequest? request)
+    {
+        string? reason;
+        try
+        {
+            reason = HostedSiteRevisionRules.NormalizeRejectionReason(request?.Reason);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+
+        try
+        {
+            var result = await _revisions.RejectAsync(
+                siteId,
+                revisionId,
+                this.GetRequiredUserId(),
+                reason,
+                CancellationToken.None);
+            if (!result.Changed)
+                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                revision = ToDto(result.Revision, null),
+                result.Changed,
+            }));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本或站点不存在"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail("REVISION_CONFLICT", ex.Message));
+        }
+    }
+
+    private async Task<IActionResult> MutateRevisionAsync(
+        string siteId,
+        string revisionId,
+        string? idempotencyKey)
     {
         try
         {
-            var result = rollback
-                ? await _revisions.RollbackAsync(siteId, revisionId, this.GetRequiredUserId(), CancellationToken.None)
-                : await _revisions.PublishAsync(siteId, revisionId, this.GetRequiredUserId(), CancellationToken.None);
+            var result = idempotencyKey != null
+                ? await _revisions.RollbackAsync(
+                    siteId,
+                    revisionId,
+                    this.GetRequiredUserId(),
+                    idempotencyKey,
+                    CancellationToken.None)
+                : await _revisions.PublishAsync(
+                    siteId,
+                    revisionId,
+                    this.GetRequiredUserId(),
+                    CancellationToken.None);
+            if (!result.Changed)
+                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
             return Ok(ApiResponse<object>.Ok(new
             {
                 revision = ToDto(result.Revision, result.Site.ContentVersion),
                 site = result.Site,
+                result.Changed,
             }));
         }
         catch (KeyNotFoundException)
@@ -389,6 +464,9 @@ public sealed class HostedSiteEditsController : ControllerBase
         item.PublishedContentVersion,
         item.CreatedAt,
         item.PublishedAt,
+        item.RejectedAt,
+        item.RejectedByUserId,
+        item.RejectionReason,
         isCurrent = currentContentVersion.HasValue && item.PublishedContentVersion == currentContentVersion,
     };
 
@@ -474,4 +552,9 @@ public sealed class HostedSiteKnowledgeReference
     public string? EntryId { get; set; }
     public string? StoreId { get; set; }
     public string? ContentHash { get; set; }
+}
+
+public sealed class RejectHostedSiteRevisionRequest
+{
+    public string? Reason { get; set; }
 }

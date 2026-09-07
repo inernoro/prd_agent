@@ -11,6 +11,7 @@ import {
   listHostedSiteRevisions,
   previewHostedSiteRevision,
   publishHostedSiteRevision,
+  rejectHostedSiteRevision,
   rollbackHostedSiteRevision,
   streamHostedSiteEditRun,
   type HostedSite,
@@ -42,14 +43,35 @@ interface PhaseEvent {
   message?: string;
 }
 
-type RecoveryAction = 'generate' | 'history' | 'preview' | 'publish' | 'rollback';
+type RecoveryAction = 'generate' | 'history' | 'preview' | 'publish' | 'rollback' | 'reject';
+type RevisionMutationAction = 'publish' | 'rollback' | 'reject';
 
 interface RecoveryNotice {
   title: string;
   detail: string;
   action: RecoveryAction;
   revisionId?: string;
+  rejectionReason?: string;
+  idempotencyKey?: string;
   versionConflict?: boolean;
+}
+
+export function createRevisionMutationIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+    return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+type FocusTarget = Pick<HTMLElement, 'focus' | 'isConnected'>;
+
+export function restoreRevisionMutationFocus(
+  primary: FocusTarget | null,
+  fallback: FocusTarget | null,
+  schedule: (callback: () => void) => unknown = (callback) => window.requestAnimationFrame(callback),
+) {
+  schedule(() => (primary?.isConnected ? primary : fallback)?.focus());
 }
 
 interface RuntimeRecoveryGate {
@@ -94,6 +116,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [mutatingId, setMutatingId] = useState<string | null>(null);
+  const [mutatingAction, setMutatingAction] = useState<RevisionMutationAction | null>(null);
   const [recentKnowledge, setRecentKnowledge] = useState<RecentDocumentEntry[]>([]);
   const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
   const [loadingKnowledge, setLoadingKnowledge] = useState(true);
@@ -103,6 +126,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const [recoveryNotice, setRecoveryNotice] = useState<RecoveryNotice | null>(null);
   const [runtimeRecoveryGate, setRuntimeRecoveryGate] = useState<RuntimeRecoveryGate | null>(null);
   const [pendingRollback, setPendingRollback] = useState<HostedSiteRevision | null>(null);
+  const [pendingReject, setPendingReject] = useState<HostedSiteRevision | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('');
   const streamRef = useRef('');
   const lastPaintAtRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -110,6 +135,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const historyRef = useRef<HTMLDivElement | null>(null);
   const rollbackConfirmRef = useRef<HTMLButtonElement | null>(null);
   const rollbackReturnFocusRef = useRef<HTMLButtonElement | null>(null);
+  const rejectReasonRef = useRef<HTMLTextAreaElement | null>(null);
+  const rejectReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const capabilitiesRef = useRef<DesignRuntimeCapability[]>([]);
 
   useEffect(() => {
@@ -146,6 +173,12 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     const frame = window.requestAnimationFrame(() => rollbackConfirmRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [pendingRollback]);
+
+  useEffect(() => {
+    if (!pendingReject) return;
+    const frame = window.requestAnimationFrame(() => rejectReasonRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [pendingReject]);
   const enabledRuntimes = capabilities.filter((item) => item.enabled);
   const activeRuntime = displayedDesignRuntime(
     capabilities,
@@ -493,8 +526,10 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
 
   const publish = async (revisionId: string) => {
     setMutatingId(revisionId);
+    setMutatingAction('publish');
     const result = await publishHostedSiteRevision(site.id, revisionId);
     setMutatingId(null);
+    setMutatingAction(null);
     if (!result.success) {
       const detail = result.error?.message || '请刷新后重试';
       setRecoveryNotice({
@@ -521,10 +556,12 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     await loadHistory();
   };
 
-  const rollback = async (revisionId: string) => {
+  const rollback = async (revisionId: string, idempotencyKey: string) => {
     setMutatingId(revisionId);
-    const result = await rollbackHostedSiteRevision(site.id, revisionId);
+    setMutatingAction('rollback');
+    const result = await rollbackHostedSiteRevision(site.id, revisionId, idempotencyKey);
     setMutatingId(null);
+    setMutatingAction(null);
     if (!result.success) {
       const detail = result.error?.message || '请刷新后重试';
       setRecoveryNotice({
@@ -534,6 +571,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
           : `${detail}。当前线上版本没有变化，可再次尝试。`,
         action: 'rollback',
         revisionId,
+        idempotencyKey,
         versionConflict: result.error?.code === 'REVISION_CONFLICT',
       });
       toast.error('回退失败', detail);
@@ -550,9 +588,43 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     await loadHistory();
   };
 
+  const reject = async (revisionId: string, reason: string) => {
+    setMutatingId(revisionId);
+    setMutatingAction('reject');
+    const result = await rejectHostedSiteRevision(site.id, revisionId, reason);
+    setMutatingId(null);
+    setMutatingAction(null);
+    if (!result.success) {
+      const detail = result.error?.message || '请刷新后重试';
+      setRecoveryNotice({
+        title: '拒绝草稿未完成',
+        detail: result.error?.code === 'REVISION_CONFLICT'
+          ? `${detail}。线上版本没有变化，请刷新版本记录确认草稿当前状态。`
+          : `${detail}。线上版本没有变化，可再次尝试。`,
+        action: result.error?.code === 'REVISION_CONFLICT' ? 'history' : 'reject',
+        revisionId,
+        rejectionReason: reason,
+      });
+      toast.error('拒绝草稿失败', detail);
+      await loadHistory();
+      return;
+    }
+    setRecoveryNotice(null);
+    if (draftRevisionId === revisionId) {
+      setPreviewHtml('');
+      setPreviewedRevision(null);
+      setDraftRevisionId(null);
+      setDraftRevisionStatus(null);
+    }
+    setPhase(result.data.changed ? '草稿已拒绝，线上版本没有变化' : '该草稿已经处于拒绝状态');
+    toast.success(result.data.changed ? '草稿已拒绝' : '草稿此前已经拒绝');
+    await loadHistory();
+  };
+
   const requestRollback = (revision: HostedSiteRevision, trigger: HTMLButtonElement) => {
     rollbackReturnFocusRef.current = trigger;
     setRecoveryNotice(null);
+    setPendingReject(null);
     setPendingRollback(revision);
   };
 
@@ -564,8 +636,40 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const confirmRollback = () => {
     if (!pendingRollback) return;
     const revisionId = pendingRollback.id;
+    const idempotencyKey = createRevisionMutationIdempotencyKey();
     setPendingRollback(null);
-    void rollback(revisionId);
+    void rollback(revisionId, idempotencyKey)
+      .finally(() => restoreRevisionMutationFocus(
+        rollbackReturnFocusRef.current,
+        historyRef.current,
+      ));
+  };
+
+  const requestReject = (revision: HostedSiteRevision, trigger: HTMLButtonElement) => {
+    rejectReturnFocusRef.current = trigger;
+    setRecoveryNotice(null);
+    setPendingRollback(null);
+    setRejectionReason('');
+    setPendingReject(revision);
+  };
+
+  const cancelReject = () => {
+    setPendingReject(null);
+    setRejectionReason('');
+    window.requestAnimationFrame(() => rejectReturnFocusRef.current?.focus());
+  };
+
+  const confirmReject = () => {
+    if (!pendingReject) return;
+    const revisionId = pendingReject.id;
+    const reason = rejectionReason;
+    setPendingReject(null);
+    setRejectionReason('');
+    void reject(revisionId, reason)
+      .finally(() => restoreRevisionMutationFocus(
+        rejectReturnFocusRef.current,
+        historyRef.current,
+      ));
   };
 
   const retryRecovery = () => {
@@ -575,7 +679,11 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     else if (recoveryNotice.action === 'history') void loadHistory();
     else if (recoveryNotice.action === 'preview' && revisionId) void openRevision(revisionId);
     else if (recoveryNotice.action === 'publish' && revisionId) void publish(revisionId);
-    else if (recoveryNotice.action === 'rollback' && revisionId) void rollback(revisionId);
+    else if (recoveryNotice.action === 'rollback' && revisionId && recoveryNotice.idempotencyKey)
+      void rollback(revisionId, recoveryNotice.idempotencyKey);
+    else if (recoveryNotice.action === 'reject' && revisionId) {
+      void reject(revisionId, recoveryNotice.rejectionReason || '');
+    }
   };
 
   const adjustFailedGeneration = () => {
@@ -593,6 +701,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
         ? '重试发布'
         : recoveryNotice?.action === 'rollback'
           ? '重试回退'
+          : recoveryNotice?.action === 'reject'
+            ? '重试拒绝草稿'
           : runtimeRecoveryGate
             ? `正在回收运行环境，已检查 ${runtimeRecoveryGate.checks + 1} 次`
             : '按原要求重试';
@@ -713,6 +823,59 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
               onClick={cancelRollback}
               disabled={mutatingId !== null}
               className="inline-flex min-h-11 items-center justify-center rounded-lg px-3 text-[11px] font-medium text-token-secondary hover-bg-soft disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+      {pendingReject && (
+        <div
+          id={`reject-confirm-${pendingReject.id}`}
+          role="alertdialog"
+          aria-labelledby={`reject-confirm-title-${pendingReject.id}`}
+          aria-describedby={`reject-confirm-detail-${pendingReject.id}`}
+          className="shrink-0 border-b border-rose-500/40 bg-rose-500/10 p-3"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') cancelReject();
+          }}
+        >
+          <div id={`reject-confirm-title-${pendingReject.id}`} className="text-xs font-semibold text-token-primary">
+            确认拒绝这个草稿
+          </div>
+          <p id={`reject-confirm-detail-${pendingReject.id}`} className="mt-1 text-[11px] leading-relaxed text-token-secondary">
+            拒绝后该草稿不能再发布，但版本记录会保留，访客看到的线上页面不会变化。
+          </p>
+          <label
+            htmlFor={`reject-reason-${pendingReject.id}`}
+            className="mt-2 block text-[11px] font-medium text-token-secondary"
+          >
+            拒绝原因（选填，最多 500 字）
+          </label>
+          <textarea
+            ref={rejectReasonRef}
+            id={`reject-reason-${pendingReject.id}`}
+            value={rejectionReason}
+            maxLength={500}
+            rows={2}
+            onChange={(event) => setRejectionReason(event.target.value)}
+            placeholder="例如：版式方向不符合本次要求"
+            className="mt-1 w-full resize-y rounded-lg border border-token-subtle bg-token-card px-3 py-2 text-xs text-token-primary outline-none placeholder:text-token-muted focus:border-rose-500"
+          />
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={confirmReject}
+              disabled={mutatingId !== null}
+              className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-rose-600 px-3 text-[11px] font-semibold text-white hover:bg-rose-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+            >
+              <X size={13} />确认拒绝
+            </button>
+            <button
+              type="button"
+              onClick={cancelReject}
+              disabled={mutatingId !== null}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg px-3 text-[11px] font-medium text-token-secondary hover-bg-soft disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
             >
               取消
             </button>
@@ -908,15 +1071,37 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                   <span className="mt-0.5 block truncate text-[10px]">当前仅预览，线上内容不会因此改变</span>
                 </div>
                 {draftRevisionId && (
-                  <button
-                    type="button"
-                    disabled={mutatingId === draftRevisionId}
-                    onClick={() => void publish(draftRevisionId)}
-                    className="flex min-h-11 items-center gap-1 rounded-md bg-emerald-600 px-3 font-medium text-white hover:bg-emerald-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-                  >
-                    {mutatingId === draftRevisionId ? <MapSpinner size={12} /> : <Check size={12} />}
-                    {draftRevisionStatus === 'publishing' ? '重试发布' : '确认并发布'}
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {draftRevisionStatus === 'draft' && previewedRevision && (
+                      <button
+                        type="button"
+                        title="拒绝这个草稿"
+                        aria-label="拒绝这个草稿"
+                        aria-haspopup="dialog"
+                        aria-expanded={pendingReject?.id === draftRevisionId}
+                        aria-controls={pendingReject?.id === draftRevisionId ? `reject-confirm-${draftRevisionId}` : undefined}
+                        disabled={mutatingId === draftRevisionId}
+                        onClick={(event) => requestReject(previewedRevision, event.currentTarget)}
+                        className="flex min-h-11 items-center gap-1 rounded-md px-2.5 font-medium text-rose-500 hover:bg-rose-500/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+                      >
+                        {mutatingId === draftRevisionId && mutatingAction === 'reject'
+                          ? <MapSpinner size={12} />
+                          : <X size={12} />}
+                        拒绝
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={mutatingId === draftRevisionId}
+                      onClick={() => void publish(draftRevisionId)}
+                      className="flex min-h-11 items-center gap-1 rounded-md bg-emerald-600 px-3 font-medium text-white hover:bg-emerald-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                    >
+                      {mutatingId === draftRevisionId && mutatingAction === 'publish'
+                        ? <MapSpinner size={12} />
+                        : <Check size={12} />}
+                      {draftRevisionStatus === 'publishing' ? '重试发布' : '确认并发布'}
+                    </button>
+                  </div>
                 )}
               </div>
               <iframe
@@ -991,11 +1176,15 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                     ? 'border-blue-500/70 bg-blue-500/5 ring-1 ring-blue-500/30'
                     : item.status === 'draft' || item.status === 'publishing'
                       ? 'border-amber-500/40 bg-amber-500/5'
+                      : item.status === 'rejected'
+                        ? 'border-rose-500/30 bg-rose-500/5'
                       : 'border-token-subtle bg-token-nested';
                 const statusDescription = item.isCurrent
                   ? '访客当前看到的线上内容'
                   : item.status === 'draft' || item.status === 'publishing'
                     ? '仅你可见，尚未影响线上页面'
+                    : item.status === 'rejected'
+                      ? '草稿已拒绝，未影响线上页面'
                     : '历史快照，可预览或回退到此版本';
                 const changeSummary = revisionChangeSummary(item, rollbackTargetRevision);
                 return (
@@ -1008,8 +1197,11 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                       </div>
                       <p className="mt-1 text-[11px] text-token-secondary">{statusDescription}</p>
                       <p className="mt-1.5 line-clamp-2 text-[11px] font-medium leading-relaxed text-token-primary">{changeSummary}</p>
+                      {item.status === 'rejected' && item.rejectionReason && (
+                        <p className="mt-1 text-[10px] leading-relaxed text-rose-500">拒绝原因：{item.rejectionReason}</p>
+                      )}
                       <div className="mt-1 flex items-center gap-1 text-[10px] text-token-muted">
-                        <Clock3 size={10} />{formatRevisionTime(item.publishedAt || item.createdAt)}
+                        <Clock3 size={10} />{formatRevisionTime(item.rejectedAt || item.publishedAt || item.createdAt)}
                       </div>
                       {item.knowledgeEntryIds.length > 0 && (
                         <p className="mt-1 text-[10px] text-token-muted">引用了 {item.knowledgeEntryIds.length} 篇知识</p>
@@ -1043,8 +1235,28 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                           onClick={(event) => requestRollback(item, event.currentTarget)}
                           className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-semibold text-token-secondary hover-bg-soft disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                         >
-                          {mutatingId === item.id ? <MapSpinner size={13} /> : <RotateCcw size={13} />}
+                          {mutatingId === item.id && mutatingAction === 'rollback'
+                            ? <MapSpinner size={13} />
+                            : <RotateCcw size={13} />}
                           回退到此版
+                        </button>
+                      )}
+                      {item.status === 'draft' && (
+                        <button
+                          type="button"
+                          title="拒绝这个草稿"
+                          aria-label="拒绝这个草稿"
+                          aria-haspopup="dialog"
+                          aria-expanded={pendingReject?.id === item.id}
+                          aria-controls={pendingReject?.id === item.id ? `reject-confirm-${item.id}` : undefined}
+                          disabled={mutatingId === item.id}
+                          onClick={(event) => requestReject(item, event.currentTarget)}
+                          className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-semibold text-rose-500 hover:bg-rose-500/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                        >
+                          {mutatingId === item.id && mutatingAction === 'reject'
+                            ? <MapSpinner size={13} />
+                            : <X size={13} />}
+                          拒绝草稿
                         </button>
                       )}
                       {canPublishRevision(item) && (
@@ -1056,7 +1268,9 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                           onClick={() => void publish(item.id)}
                           className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-semibold text-emerald-600 hover-bg-soft disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
                         >
-                          {mutatingId === item.id ? <MapSpinner size={13} /> : <Check size={13} />}
+                          {mutatingId === item.id && mutatingAction === 'publish'
+                            ? <MapSpinner size={13} />
+                            : <Check size={13} />}
                           确认并发布
                         </button>
                       )}

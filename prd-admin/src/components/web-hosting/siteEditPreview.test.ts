@@ -99,6 +99,12 @@ describe('网页版本标签', () => {
     expect(canPublishRevision({ isCurrent: false, status: 'published' })).toBe(false);
   });
 
+  it('已拒绝草稿有独立标签且不能再次发布', () => {
+    const rejected = { isCurrent: false, status: 'rejected' as const, source: 'ai-edit' as const };
+    expect(revisionLabel(rejected)).toBe('已拒绝草稿');
+    expect(canPublishRevision(rejected)).toBe(false);
+  });
+
   it('用人能扫读的摘要说明初始、AI 修改与回退', () => {
     expect(revisionChangeSummary({ source: 'baseline', instruction: null })).toBe('本次变更：建立初始页面');
     expect(revisionChangeSummary({ source: 'ai-edit', instruction: '把标题改得更直接' }))

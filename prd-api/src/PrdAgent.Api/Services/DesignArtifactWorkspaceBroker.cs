@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.DataProtection;
 using MongoDB.Driver;
@@ -55,7 +56,7 @@ public interface IDesignArtifactWorkspaceBroker
 public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBroker
 {
     public const string SchemaVersion = "map-design-workspace-v1";
-    public const string ManifestSchemaVersion = "map-design-artifact-manifest-v1";
+    public const string ManifestSchemaVersion = "map-design-artifact-public-manifest-v2";
     public const long MaxInputBytes = 1_048_576;
     public const long MaxOutputBytes = 6_291_456;
     private static readonly TimeSpan TicketTtl = TimeSpan.FromMinutes(25);
@@ -711,6 +712,10 @@ public static class DesignArtifactWorkspaceContract
     public static DesignWorkspacePackage BuildInputPackage(DesignArtifactRun run, string? currentHtml)
     {
         var visibleTextOccurrenceConstraints = ExtractVisibleTextOccurrenceConstraints(run.Instruction);
+        var factualSources = new List<string>();
+        if (run.KnowledgeReferences.Count > 0) factualSources.Add("server-knowledge");
+        if (run.Operation == DesignArtifactOperations.Edit && !string.IsNullOrWhiteSpace(currentHtml))
+            factualSources.Add("server-current-visible-content");
         var semantic = JsonSerializer.SerializeToUtf8Bytes(new
         {
             run.Id,
@@ -718,6 +723,8 @@ public static class DesignArtifactWorkspaceContract
             run.Operation,
             run.SourceSurface,
             run.Instruction,
+            run.InputAuthority,
+            run.UserSuppliedContentHash,
             run.Title,
             knowledge = run.KnowledgeReferences.Select(item => new { item.EntryId, item.ContentHash }),
             currentHtmlHash = string.IsNullOrEmpty(currentHtml) ? null : HashText(currentHtml),
@@ -731,7 +738,29 @@ public static class DesignArtifactWorkspaceContract
             run.ArtifactType,
             run.Operation,
             run.SourceSurface,
-            run.Instruction,
+            input = new
+            {
+                userSupplied = new
+                {
+                    instruction = run.Instruction,
+                    contentHash = run.UserSuppliedContentHash,
+                    authority = DesignArtifactInputAuthorities.UserSupplied,
+                },
+                serverKnowledge = new
+                {
+                    authority = "server-authoritative-snapshot",
+                    references = run.KnowledgeReferences.Select(item => new
+                    {
+                        item.EntryId,
+                        item.StoreId,
+                        item.ContentHash,
+                    }),
+                },
+                currentHtml = string.IsNullOrWhiteSpace(currentHtml)
+                    ? (object?)null
+                    : new { authority = "server-owned-current-artifact", contentHash = HashText(currentHtml) },
+            },
+            run.InputAuthority,
             run.Title,
             baseRevision,
             responseContract = new
@@ -743,9 +772,8 @@ public static class DesignArtifactWorkspaceContract
             qualityContract = new
             {
                 schemaVersion = "map-design-artifact-quality-v1",
-                factualSources = run.Operation == DesignArtifactOperations.Edit
-                    ? new[] { "title", "instruction", "knowledge", "current-visible-content" }
-                    : new[] { "title", "instruction", "knowledge" },
+                factualSources,
+                userSuppliedInputsAreFactualProvenance = false,
                 measuredClaimsRequireSource = true,
                 sensitiveFactsRequireSource = true,
                 contextBoundMetricsReviewRequired = true,
@@ -880,7 +908,7 @@ public static class DesignArtifactWorkspaceContract
             throw new InvalidOperationException("远程设计没有生成可发布网页，请重试");
         if (manifestBytes == null)
             throw new InvalidOperationException("远程设计结果缺少产物清单，请重新生成");
-        ValidateManifest(manifestBytes, baseRevision, verifiedFiles);
+        ValidateManifest(manifestBytes, verifiedFiles);
         return new ParsedDesignWorkspaceResult(
             indexHtml,
             verifiedFiles.Values.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray());
@@ -888,7 +916,6 @@ public static class DesignArtifactWorkspaceContract
 
     private static void ValidateManifest(
         byte[] bytes,
-        string baseRevision,
         IReadOnlyDictionary<string, DesignWorkspaceFile> verifiedFiles)
     {
         DesignArtifactManifest manifest;
@@ -901,15 +928,13 @@ public static class DesignArtifactWorkspaceContract
         {
             throw new InvalidOperationException("远程设计产物清单格式不正确，请重新生成");
         }
-        if (manifest.SchemaVersion != DesignArtifactWorkspaceBroker.ManifestSchemaVersion
-            || !string.Equals(manifest.BaseRevision, baseRevision, StringComparison.Ordinal)
-            || manifest.EntryFile != "index.html")
-            throw new InvalidOperationException("远程设计产物清单版本不匹配，请重新生成");
-
         var expected = verifiedFiles.Values
             .Where(file => file.Path != "manifest.json")
             .OrderBy(file => file.Path, StringComparer.Ordinal)
             .ToArray();
+        if (manifest.SchemaVersion != DesignArtifactWorkspaceBroker.ManifestSchemaVersion
+            || manifest.EntryFile != "index.html")
+            throw new InvalidOperationException("远程设计产物清单版本不匹配，请重新生成");
         var actual = manifest.Files
             .OrderBy(file => file.Path, StringComparer.Ordinal)
             .ToArray();
@@ -923,6 +948,27 @@ public static class DesignArtifactWorkspaceContract
                 || !string.Equals(actual[index].MediaType, expected[index].MediaType, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("远程设计产物清单与文件校验结果不一致，请重新生成");
         }
+        var expectedRevision = ComputePublicArtifactRevision(expected.Select(file =>
+            new DesignArtifactManifestFile(file.Path, file.Sha256, file.Size, file.MediaType)));
+        if (!string.Equals(manifest.ArtifactRevision, expectedRevision, StringComparison.Ordinal))
+            throw new InvalidOperationException("远程设计产物清单与文件校验结果不一致，请重新生成");
+    }
+
+    public static string ComputePublicArtifactRevision(IEnumerable<DesignArtifactManifestFile> files)
+    {
+        var canonical = new StringBuilder();
+        foreach (var file in files.OrderBy(file => file.Path, StringComparer.Ordinal))
+        {
+            foreach (var value in new[]
+                     {
+                         file.Path,
+                         file.Sha256,
+                         file.Size.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                         file.MediaType,
+                     })
+                canonical.Append(Encoding.UTF8.GetByteCount(value)).Append(':').Append(value);
+        }
+        return HashBytes(Encoding.UTF8.GetBytes(canonical.ToString()));
     }
 
     private static bool TryNormalizeResultPath(string? path, out string normalized)
@@ -976,12 +1022,14 @@ public sealed record ParsedDesignWorkspaceResult(
     string IndexHtml,
     IReadOnlyList<DesignWorkspaceFile> Files);
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record DesignArtifactManifest(
     string SchemaVersion,
-    string BaseRevision,
+    string ArtifactRevision,
     string EntryFile,
     IReadOnlyList<DesignArtifactManifestFile> Files);
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record DesignArtifactManifestFile(
     string Path,
     string Sha256,

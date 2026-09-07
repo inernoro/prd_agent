@@ -88,6 +88,7 @@ interface KbRef {
   storeName: string;
   entryTitle: string;
   content: string;
+  contentHash?: string;
 }
 
 type MsgPhase = 'outline' | 'generating' | 'done' | 'error' | 'patching' | 'text';
@@ -115,6 +116,8 @@ interface OutlineDraft {
   summary: string;
   totalPages: number;
   outline: OutlineSlide[];
+  /** 服务端大纲 Run，最终生成必须继承它冻结的知识哈希。 */
+  outlineRunId?: string;
   /** AI 觉得有歧义时给出的澄清问卷（最多 3 题） */
   clarify?: ClarifyQuestion[];
   clarifyAnswers?: Record<string, string | string[]>;
@@ -1918,6 +1921,7 @@ export function MdToPptAgentPage() {
               summary: d.summary ?? '',
               totalPages: outline.length || (d.totalPages ?? 0),
               outline,
+              outlineRunId: run.id,
               clarify: d.clarify?.slice(0, 3),
               clarifyAnswers: {},
               clarifySent: false,
@@ -2215,6 +2219,7 @@ export function MdToPptAgentPage() {
       let metaSeen = false;
       let pagesSeen = 0;
       let clarifyCount = 0;
+      let serverOutlineRunId = '';
 
       const finish = (errorMsg?: string) => {
         if (errorMsg) {
@@ -2240,11 +2245,23 @@ export function MdToPptAgentPage() {
         knowledgeReferences: kbRefs
           .filter((item): item is KbRef & { entryId: string; storeId: string } => !!item.entryId && !!item.storeId)
           .map((item) => ({ entryId: item.entryId, storeId: item.storeId })),
+        onKnowledgeResolved: (resolved) => {
+          const hashes = new Map(resolved.map((item) => [`${item.storeId}\n${item.entryId}`, item.contentHash]));
+          setActiveKnowledgeRefs((prev) => prev.map((item) => ({
+            ...item,
+            contentHash: hashes.get(`${item.storeId}\n${item.entryId}`) ?? item.contentHash,
+          })));
+        },
         chatHistory: chatHistory || undefined,
         targetPages,
         // 服务器权威：记下大纲 runId。刷新/断开后大纲仍在后台跑完并存库，
         // 挂载时按此 id 取回结果（见下方 outline-recover effect）
         onRun: (id) => {
+          serverOutlineRunId = id;
+          setOutlineDraft((prev) => (prev ? { ...prev, outlineRunId: id } : prev));
+          setMessages((prev) => prev.map((message) => (
+            message.id === assistantMsg.id ? { ...message, runId: id } : message
+          )));
           try { sessionStorage.setItem(OUTLINE_RUN_KEY, JSON.stringify({ id, msgId: assistantMsg.id, sourceText })); } catch { /* quota */ }
         },
         onMeta: (meta) => {
@@ -2259,6 +2276,7 @@ export function MdToPptAgentPage() {
               summary: meta.summary,
               totalPages: meta.totalPages || targetPages,
               outline: [],
+              outlineRunId: serverOutlineRunId || undefined,
               clarify: meta.clarify?.slice(0, 3),
               clarifyAnswers: {},
               clarifySent: false,
@@ -2338,7 +2356,13 @@ export function MdToPptAgentPage() {
 
   // ─── Convert 核心（大纲编辑器「确认生成」与旧版气泡共用）
   const launchConvert = useCallback(
-    (fullContent: string, pages: number | null, outlinePages?: OutlineSlide[], summary?: string) => {
+    (
+      fullContent: string,
+      pages: number | null,
+      outlinePages?: OutlineSlide[],
+      summary?: string,
+      parentOutlineRunId?: string,
+    ) => {
       if (isProcessing) return;
       setIsProcessing(true);
       setArtifactPhase('generating');
@@ -2408,11 +2432,13 @@ export function MdToPptAgentPage() {
         summary,
         runtimeProfileId: selectedProfileId ?? undefined,
         sourceSurface: activeKnowledgeRefs.length > 0 ? 'knowledge-base' : 'html-ppt',
+        parentOutlineRunId,
         knowledgeReferences: activeKnowledgeRefs
           .filter((item): item is KbRef & { entryId: string; storeId: string } => !!item.entryId && !!item.storeId)
           .map((item) => ({
             entryId: item.entryId,
             storeId: item.storeId,
+            contentHash: item.contentHash,
           })),
         onFrame: (f) => {
           setFrameHead(f.head);
@@ -2583,7 +2609,8 @@ export function MdToPptAgentPage() {
       fullContent,
       draft.totalPages || draft.outline.length || null,
       draft.outline,
-      draft.summary
+      draft.summary,
+      draft.outlineRunId,
     );
   }, [outlineDraft, isProcessing, serializeClarifyAnswers, serializeOutline, launchConvert]);
 
@@ -2605,7 +2632,8 @@ export function MdToPptAgentPage() {
         fullContent,
         outlineMsg.totalPages ?? outlineMsg.outline?.length ?? null,
         outlineMsg.outline,
-        outlineMsg.summary
+        outlineMsg.summary,
+        outlineMsg.runId,
       );
     },
     [isProcessing, messages, serializeOutline, launchConvert]
@@ -3101,7 +3129,8 @@ export function MdToPptAgentPage() {
         fullContent,
         outlineDraft.totalPages || outlineDraft.outline.length || null,
         outlineDraft.outline,
-        outlineDraft.summary
+        outlineDraft.summary,
+        outlineDraft.outlineRunId,
       );
       return;
     }

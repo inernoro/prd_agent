@@ -30,7 +30,19 @@ function buildInputPackage() {
     schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
     runId: 'map-fault-matrix-run',
     operation: 'generate',
-    instruction: '生成故障验收页面',
+    input: {
+      userSupplied: {
+        instruction: '生成故障验收页面',
+        contentHash: null,
+        authority: 'user-supplied',
+      },
+      serverKnowledge: {
+        authority: 'server-authoritative-snapshot',
+        references: [],
+      },
+      currentHtml: null,
+    },
+    inputAuthority: 'user-supplied',
     title: '故障验收页面',
     baseRevision: 'fault-matrix-revision',
     responseContract: {
@@ -40,7 +52,8 @@ function buildInputPackage() {
     },
     qualityContract: {
       schemaVersion: 'map-design-artifact-quality-v1',
-      factualSources: ['title', 'instruction', 'knowledge'],
+      factualSources: [],
+      userSuppliedInputsAreFactualProvenance: false,
       measuredClaimsRequireSource: true,
       sensitiveFactsRequireSource: true,
       contextBoundMetricsReviewRequired: true,
@@ -86,8 +99,21 @@ class FaultMatrixShell implements IShellExecutor {
     if (command.startsWith('docker network create')) return execResult('network-id\n');
     if (command.startsWith('docker volume create')) return execResult('volume-id\n');
     if (command.startsWith('docker create ')) return execResult('container-id\n');
+    if (command.startsWith('docker run ') && command.includes('CDS_OUTPUT_PREFLIGHT=1')) {
+      const outputDir = command.match(/type=bind,src=([^,']+),dst=\/cds-output/)?.[1];
+      if (outputDir && this.workspaceDir) {
+        for (const relative of ['index.html', 'manifest.json', 'assets']) {
+          const source = path.join(this.workspaceDir, relative);
+          if (!fs.existsSync(source)) continue;
+          fs.cpSync(source, path.join(outputDir, relative), { recursive: true });
+        }
+      }
+      return execResult('exported\n');
+    }
     if (command.startsWith('docker run ')) return execResult('container-id\n');
     if (command.startsWith('docker start ')) return execResult('started\n');
+    if (command.startsWith('docker pause ')) return execResult('paused\n');
+    if (command.startsWith('docker unpause ')) return execResult('resumed\n');
     if (command.startsWith('docker network connect ')) {
       return this.relayConnectFails
         ? execResult('', 'relay connect rejected', 1)
@@ -297,10 +323,11 @@ describe('Agent workspace preview fault matrix', () => {
     const manifestFile = files.find((file) => file.path === 'manifest.json');
     const manifestText = Buffer.from(String(manifestFile?.contentBase64), 'base64').toString('utf8');
     expect(JSON.parse(manifestText)).toMatchObject({
-      schemaVersion: 'map-design-artifact-manifest-v1',
-      baseRevision: 'fault-matrix-revision',
+      schemaVersion: 'map-design-artifact-public-manifest-v2',
+      artifactRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
       entryFile: 'index.html',
     });
+    expect(manifestText).not.toContain('fault-matrix-revision');
     expect(manifestText).not.toContain('untrusted');
   });
 

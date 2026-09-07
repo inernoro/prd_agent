@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
@@ -195,6 +197,11 @@ public sealed class DesignArtifactsController : ControllerBase
             Instruction = instruction,
             Title = TrimOptional(request.Title, 200) ?? snapshots[0].Title,
             KnowledgeReferences = snapshots.ToList(),
+            InputAuthority = snapshots.Count > 0
+                ? DesignArtifactInputAuthorities.MixedUserAndServerKnowledge
+                : DesignArtifactInputAuthorities.UserSupplied,
+            UserSuppliedContentHash = System.Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(instruction))).ToLowerInvariant(),
             Progress = 2,
             Phase = "网页生成任务已进入队列",
         };

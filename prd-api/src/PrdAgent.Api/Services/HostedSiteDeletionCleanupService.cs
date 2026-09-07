@@ -30,7 +30,9 @@ public sealed class HostedSiteDeletionCleanupService : BackgroundService
                 {
                     using var scope = _scopeFactory.CreateScope();
                     var sites = scope.ServiceProvider.GetRequiredService<HostedSiteService>();
-                    if (!await sites.ResumeNextPendingDeletionAsync(ct: stoppingToken)) break;
+                    var handledDeletion = await sites.ResumeNextPendingDeletionAsync(ct: stoppingToken);
+                    var handledAssets = await sites.ResumeNextPendingAssetCleanupAsync(ct: stoppingToken);
+                    if (!handledDeletion && !handledAssets) break;
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

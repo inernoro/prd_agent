@@ -17,6 +17,8 @@ public sealed class InfraAgentSessionCleanupWorkerTests
         sessions.Setup(service => service.RecoverPendingStopsAsync(It.IsAny<CancellationToken>()))
             .Callback(() => firstSweep.TrySetResult())
             .ReturnsAsync(1);
+        sessions.Setup(service => service.RecoverExpiredPrewarmsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
         var services = new ServiceCollection();
         services.AddScoped(_ => sessions.Object);
         await using var provider = services.BuildServiceProvider();
@@ -30,6 +32,9 @@ public sealed class InfraAgentSessionCleanupWorkerTests
 
         sessions.Verify(
             service => service.RecoverPendingStopsAsync(It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce);
+        sessions.Verify(
+            service => service.RecoverExpiredPrewarmsAsync(It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);
     }
 }

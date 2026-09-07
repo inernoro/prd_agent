@@ -53,6 +53,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     ];
     private static readonly TimeSpan CdsStopLeaseDuration = TimeSpan.FromMinutes(2);
     private const int PendingStopRecoveryBatchSize = 20;
+    private const int ExpiredPrewarmRecoveryBatchSize = 100;
+    private const string MdToPptPrewarmClientApp = "md-to-ppt-prewarm";
     private static readonly TimeSpan CdsStartLeaseDuration = TimeSpan.FromMinutes(2);
     private const int MaxCdsErrorMessageChars = 512;
     private readonly MongoDbContext _db;
@@ -269,6 +271,20 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         var now = DateTime.UtcNow;
         var sessionId = Guid.NewGuid().ToString("N");
+        var clientApp = NormalizeOptional(request.ClientApp);
+        var prewarmKey = NormalizeOptional(request.PrewarmKey);
+        var prewarmExpiresAt = request.PrewarmExpiresAt;
+        if ((prewarmKey != null || prewarmExpiresAt != null)
+            && (!string.Equals(clientApp, MdToPptPrewarmClientApp, StringComparison.Ordinal)
+                || prewarmKey == null
+                || prewarmExpiresAt == null
+                || prewarmExpiresAt <= now))
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.RuntimeProfileIncompatible,
+                "预热会话缺少有效的持久身份或过期时间");
+        }
+
         var session = new InfraAgentSession
         {
             Id = sessionId,
@@ -277,6 +293,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Partner = connection.Partner,
             CdsProjectId = connection.ProjectId,
             TraceId = NormalizeOptional(request.TraceId) ?? BuildEventTraceId(sessionId),
+            PrewarmKey = prewarmKey,
+            PrewarmExpiresAt = prewarmExpiresAt,
             RuntimeProfileId = NormalizeOptional(request.RuntimeProfileId),
             WorkspaceRoot = NormalizeOptional(request.WorkspaceRoot),
             GitRepository = NormalizeOptional(request.GitRepository),
@@ -287,11 +305,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ResourceMemoryMb = 4096,
             TimeoutSeconds = 900,
             NetworkPolicy = InfraAgentRuntimeNetworkPolicies.Restricted,
-            AutoCleanupMinutes = 30,
+            AutoCleanupMinutes = NormalizeAutoCleanupMinutes(request.AutoCleanupMinutes ?? 30),
             ToolPolicy = NormalizeToolPolicy(request.ToolPolicy),
             HookProfileId = NormalizeOptional(request.HookProfileId),
             Title = NormalizeTitle(request.Title),
-            ClientApp = NormalizeOptional(request.ClientApp),
+            ClientApp = clientApp,
             WorkloadKind = NormalizeWorkloadKind(request.WorkloadKind),
             IsolationMode = NormalizeIsolationMode(request.IsolationMode),
             Status = InfraAgentSessionStatuses.Idle,
@@ -433,7 +451,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var networkPolicy = managedLaunch != null
                 ? InfraAgentRuntimeNetworkPolicies.EgressOnly
                 : runtimeProfile?.NetworkPolicy ?? session.NetworkPolicy;
-            var autoCleanupMinutes = runtimeProfile?.AutoCleanupMinutes ?? session.AutoCleanupMinutes;
+            var autoCleanupMinutes = session.PrewarmExpiresAt != null
+                ? session.AutoCleanupMinutes
+                : runtimeProfile?.AutoCleanupMinutes ?? session.AutoCleanupMinutes;
             EnsureRuntimeProfileCompatibleOrLiteFallback(runtime, runtimeProfile, ResolveSidecarRuntimeAdapter());
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
             var body = new
@@ -658,6 +678,85 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
         return session == null ? null : ToView(session);
+    }
+
+    public async Task<InfraAgentSessionView?> ClaimPrewarmedAsync(
+        string userId,
+        string id,
+        string expectedProfileId,
+        string rootRunId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(expectedProfileId) || string.IsNullOrWhiteSpace(rootRunId))
+            return null;
+
+        var now = DateTime.UtcNow;
+        var claimed = await _db.InfraAgentSessions.FindOneAndUpdateAsync(
+            Builders<InfraAgentSession>.Filter.And(
+                Builders<InfraAgentSession>.Filter.Eq(x => x.Id, id),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.UserId, userId),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.ClientApp, MdToPptPrewarmClientApp),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.RuntimeProfileId, expectedProfileId),
+                Builders<InfraAgentSession>.Filter.Ne(x => x.PrewarmKey, null),
+                Builders<InfraAgentSession>.Filter.Gt(x => x.PrewarmExpiresAt, now),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.PrewarmClaimedRunId, null),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.ActiveMessageId, null),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.LastCompletedMessageId, null),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.CurrentRuntimeRunId, null),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.Status, InfraAgentSessionStatuses.Running)),
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.PrewarmClaimedRunId, rootRunId.Trim())
+                .Set(x => x.TraceId, rootRunId.Trim())
+                .Set(x => x.PrewarmKey, null)
+                .Set(x => x.PrewarmExpiresAt, null)
+                .Set(x => x.ClientApp, "md-to-ppt")
+                .Set(x => x.UpdatedAt, now),
+            new FindOneAndUpdateOptions<InfraAgentSession>
+            {
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        return claimed == null ? null : ToView(claimed);
+    }
+
+    public async Task<int> RecoverExpiredPrewarmsAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var candidates = await _db.InfraAgentSessions
+            .Find(x => x.ClientApp == MdToPptPrewarmClientApp
+                       && x.PrewarmClaimedRunId == null
+                       && x.PrewarmExpiresAt != null
+                       && x.PrewarmExpiresAt <= now
+                       && x.Status != InfraAgentSessionStatuses.Stopped)
+            .SortBy(x => x.PrewarmExpiresAt)
+            .Limit(ExpiredPrewarmRecoveryBatchSize)
+            .ToListAsync(ct);
+
+        var stopped = 0;
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                var result = await StopAsync(candidate.UserId, candidate.Id, CancellationToken.None);
+                if (result?.Status == InfraAgentSessionStatuses.Stopped)
+                {
+                    await _db.InfraAgentSessions.UpdateOneAsync(
+                        x => x.Id == candidate.Id
+                             && x.UserId == candidate.UserId
+                             && x.PrewarmClaimedRunId == null,
+                        Builders<InfraAgentSession>.Update
+                            .Set(x => x.PrewarmKey, null)
+                            .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
+                    stopped++;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Expired PPT prewarm cleanup remains pending session={SessionId}", candidate.Id);
+            }
+        }
+        return stopped;
     }
 
     public async Task<InfraAgentSessionView?> SendMessageAsync(
@@ -1352,6 +1451,16 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             session.StartAttemptId,
             session.PendingCdsSessionIds.Count))
         {
+            if (session.PrewarmKey != null || session.PrewarmExpiresAt != null)
+            {
+                await _db.InfraAgentSessions.UpdateOneAsync(
+                    x => x.Id == id && x.UserId == userId && x.Status == InfraAgentSessionStatuses.Stopped,
+                    Builders<InfraAgentSession>.Update
+                        .Set(x => x.PrewarmKey, null)
+                        .Set(x => x.PrewarmExpiresAt, null)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+            }
             return ToView(session);
         }
 
@@ -1539,7 +1648,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             .Set(x => x.CleanupMessageId, null)
             .Set(x => x.CleanupAttemptCount, 0)
             .Set(x => x.CleanupNextAttemptAt, null)
-            .Set(x => x.CleanupLastError, null);
+            .Set(x => x.CleanupLastError, null)
+            .Set(x => x.PrewarmKey, null)
+            .Set(x => x.PrewarmExpiresAt, null);
 
         var stopped = await _db.InfraAgentSessions.UpdateOneAsync(
             x => x.Id == id

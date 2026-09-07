@@ -28,6 +28,15 @@ public class DesignArtifactRun
 
     public string Instruction { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 输入信任边界。用户要求始终是 user-supplied；存在知识快照时为
+    /// mixed-user-and-server-knowledge，不能把整份输入误标成知识库权威正文。
+    /// </summary>
+    public string InputAuthority { get; set; } = DesignArtifactInputAuthorities.UserSupplied;
+
+    /// <summary>用户提供内容的 SHA-256，仅用于审计分区，不把用户正文冒充为知识来源。</summary>
+    public string? UserSuppliedContentHash { get; set; }
+
     public string? Title { get; set; }
 
     public string? TargetSiteId { get; set; }
@@ -67,6 +76,9 @@ public class DesignArtifactRun
 
     /// <summary>生成站点补偿已确认的站点 ID；与对象 key 一起先于站点账本删除持久化。</summary>
     public string? CleanupArtifactSiteId { get; set; }
+
+    /// <summary>当前多资产发布尝试的唯一 fencing token；恢复清理取得所有权时清空。</summary>
+    public string? CleanupPublishAttemptId { get; set; }
 
     /// <summary>生成站点补偿待删除的对象 key。站点账本删除后进程退出时，恢复器据此继续清理。</summary>
     public List<string> CleanupAssetKeys { get; set; } = new();
@@ -135,6 +147,24 @@ public class DesignArtifactRun
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? CompletedAt { get; set; }
+
+    /// <summary>
+    /// 生成站点发布动态已完成幂等投影的时间。为空时恢复器补记；编辑草稿与失败任务始终为空。
+    /// </summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DateTime? PublishedActivityRecordedAt { get; set; }
+
+    /// <summary>发布动态投影已进入 recorded/skipped 终态的时间；用于让坏候选永久退出恢复队列。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DateTime? PublishedActivityProjectionCompletedAt { get; set; }
+
+    /// <summary>recorded | skipped；仅保存有界投影结果，不保存异常正文。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? PublishedActivityProjectionOutcome { get; set; }
+
+    /// <summary>投影终态稳定原因码，例如 site_missing_or_mismatch。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? PublishedActivityProjectionCode { get; set; }
 }
 
 public class DesignKnowledgeSnapshot
@@ -169,6 +199,12 @@ public static class DesignArtifactSourceSurfaces
     public const string WebHosting = "web-hosting";
     public const string KnowledgeBase = "knowledge-base";
     public const string HtmlPpt = "html-ppt";
+}
+
+public static class DesignArtifactInputAuthorities
+{
+    public const string UserSupplied = "user-supplied";
+    public const string MixedUserAndServerKnowledge = "mixed-user-and-server-knowledge";
 }
 
 public static class DesignArtifactRuntimes

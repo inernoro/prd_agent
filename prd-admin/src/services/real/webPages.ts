@@ -39,6 +39,8 @@ export interface HostedSite {
    */
   pdfAssetUrl: string | undefined;
   files: HostedSiteFile[];
+  /** 服务端依据文件角色判定：系统 sidecar 不会把自包含 HTML 误标成多文件站。 */
+  contentShape?: 'self-contained-html' | 'multi-file';
   totalSize: number;
   tags: string[];
   folder?: string;
@@ -73,7 +75,7 @@ export interface HostedSite {
 export interface HostedSiteRevision {
   id: string;
   siteId: string;
-  status: 'draft' | 'publishing' | 'published';
+  status: 'draft' | 'publishing' | 'published' | 'rejected';
   source: 'baseline' | 'ai-edit' | 'rollback';
   parentRevisionId?: string | null;
   rollbackTargetRevisionId?: string | null;
@@ -85,12 +87,21 @@ export interface HostedSiteRevision {
   publishedContentVersion?: string | null;
   createdAt: string;
   publishedAt?: string | null;
+  rejectedAt?: string | null;
+  rejectedByUserId?: string | null;
+  rejectionReason?: string | null;
   isCurrent: boolean;
 }
 
 export interface HostedSiteRevisionMutation {
   revision: HostedSiteRevision;
   site: HostedSite;
+  changed: boolean;
+}
+
+export interface HostedSiteRevisionRejection {
+  revision: HostedSiteRevision;
+  changed: boolean;
 }
 
 export interface DesignRuntimeCapability {
@@ -1157,6 +1168,21 @@ export async function publishHostedSiteRevision(
 export async function rollbackHostedSiteRevision(
   siteId: string,
   revisionId: string,
+  idempotencyKey: string,
 ): Promise<ApiResponse<HostedSiteRevisionMutation>> {
-  return apiRequest(api.webPages.rollbackRevision(siteId, revisionId), { method: 'POST' });
+  return apiRequest(api.webPages.rollbackRevision(siteId, revisionId), {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+  });
+}
+
+export async function rejectHostedSiteRevision(
+  siteId: string,
+  revisionId: string,
+  reason?: string,
+): Promise<ApiResponse<HostedSiteRevisionRejection>> {
+  return apiRequest(api.webPages.rejectRevision(siteId, revisionId), {
+    method: 'POST',
+    body: { reason: reason?.trim() || null },
+  });
 }

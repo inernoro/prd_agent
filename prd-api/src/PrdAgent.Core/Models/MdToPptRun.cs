@@ -31,6 +31,15 @@ public class MdToPptRun
     /// <summary>精修任务所依据的上一条 run；只接受同一用户已持久化的服务端 run。</summary>
     public string? ParentRunId { get; set; }
 
+    /// <summary>最终生成所依据的大纲 Run；用于把人工确认的大纲绑定到同一组知识哈希。</summary>
+    public string? ParentOutlineRunId { get; set; }
+
+    /// <summary>区分客户端输入与服务端知识快照，禁止把混合输入整体标成知识权威。</summary>
+    public string InputAuthority { get; set; } = DesignArtifactInputAuthorities.UserSupplied;
+
+    /// <summary>客户端提供的内容分区 SHA-256；知识正文仍以 KnowledgeReferences 为权威。</summary>
+    public string? UserSuppliedContentHash { get; set; }
+
     /// <summary>用于历史列表展示的标题（取自首个标题行或内容前缀）</summary>
     public string Title { get; set; } = string.Empty;
 
@@ -52,6 +61,20 @@ public class MdToPptRun
     /// 形如 {"totalPages":N,"summary":"...","clarify":[...],"outline":[{title,bullets,design}...]}
     /// </summary>
     public string? OutlineJson { get; set; }
+
+    /// <summary>模型生成大纲的规范化 SHA-256，用于区分原始建议与用户确认稿。</summary>
+    public string? OutlineHash { get; set; }
+
+    /// <summary>用户点击确认时提交、由服务器规范化后保存的大纲；convert 只能使用这一份。</summary>
+    public string? ConfirmedOutlineJson { get; set; }
+
+    /// <summary>用户确认稿的规范化 SHA-256；convert 必须与客户端本次提交逐字义一致。</summary>
+    public string? ConfirmedOutlineHash { get; set; }
+
+    /// <summary>用户确认时完整 convert 输入的 SHA-256，防止确认后替换正文或澄清答案。</summary>
+    public string? ConfirmedContentHash { get; set; }
+
+    public DateTime? OutlineConfirmedAt { get; set; }
 
     public string? Error { get; set; }
 

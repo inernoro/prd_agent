@@ -69,13 +69,81 @@ public sealed class HostedSiteRevisionConsistencyTests
             .ReturnsAsync(publishedSite);
         var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
 
-        var result = await service.RollbackAsync("site-1", target.Id, "user-1");
+        var result = await service.RollbackAsync("site-1", target.Id, "user-1", "rollback-test-0001");
 
         Assert.Equal(HostedSiteEditRuntimes.Manual, result.Revision.Runtime);
         Assert.Null(result.Revision.SourceRunId);
         Assert.Equal(target.KnowledgeEntryIds, result.Revision.KnowledgeEntryIds);
         Assert.Equal(HostedSiteRevisionSources.Rollback, result.Revision.Source);
         Assert.Equal(target.Id, result.Revision.RollbackTargetRevisionId);
+        Assert.True(result.Changed);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task RollbackRetry_WithSameIdempotencyKey_ShouldReuseOneRevision()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var baseVersion = MongoTime(DateTime.UtcNow.AddMinutes(-1));
+        var publishedVersion = MongoTime(DateTime.UtcNow);
+        var target = PublishingRevision("rollback-idempotent-target", baseVersion);
+        target.Status = HostedSiteRevisionStatuses.Published;
+        target.PublishedAt = baseVersion;
+        target.PublishedContentVersion = baseVersion;
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(target);
+        var currentSite = Site(target.Id, baseVersion);
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(currentSite, target.Html, baseVersion));
+        sites.Setup(x => x.ReplaceEntryHtmlAsync(
+                "site-1", "user-1", target.Html, baseVersion, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Site(null, publishedVersion));
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        var first = await service.RollbackAsync("site-1", target.Id, "user-1", "same-request-key");
+        var second = await service.RollbackAsync("site-1", target.Id, "user-1", "same-request-key");
+
+        Assert.True(first.Changed);
+        Assert.False(second.Changed);
+        Assert.Equal(first.Revision.Id, second.Revision.Id);
+        Assert.Equal(1, await fixture.Db.HostedSiteRevisions.CountDocumentsAsync(item =>
+            item.RollbackIdempotencyKey == "same-request-key"));
+        sites.Verify(x => x.ReplaceEntryHtmlAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTime?>(),
+            It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ConcurrentRollback_WithSameIdempotencyKey_ShouldCreateAndPublishOneRevision()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var baseVersion = MongoTime(DateTime.UtcNow.AddMinutes(-1));
+        var target = PublishingRevision("rollback-concurrent-target", baseVersion);
+        target.Status = HostedSiteRevisionStatuses.Published;
+        target.PublishedAt = baseVersion;
+        target.PublishedContentVersion = baseVersion;
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(target);
+        var currentSite = Site(target.Id, baseVersion);
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(currentSite, target.Html, baseVersion));
+        sites.Setup(x => x.ReplaceEntryHtmlAsync(
+                "site-1", "user-1", target.Html, baseVersion, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, string _, string _, DateTime? _, string? revisionId, CancellationToken _) =>
+                Site(revisionId, MongoTime(DateTime.UtcNow)));
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+            service.RollbackAsync("site-1", target.Id, "user-1", "concurrent-request-key")));
+
+        Assert.Single(results, result => result.Changed);
+        Assert.Single(results.Select(result => result.Revision.Id).Distinct(StringComparer.Ordinal));
+        Assert.Equal(1, await fixture.Db.HostedSiteRevisions.CountDocumentsAsync(item =>
+            item.RollbackIdempotencyKey == "concurrent-request-key"));
+        sites.Verify(x => x.ReplaceEntryHtmlAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTime?>(),
+            It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -97,6 +165,7 @@ public sealed class HostedSiteRevisionConsistencyTests
 
         Assert.Equal(HostedSiteRevisionStatuses.Published, result.Revision.Status);
         Assert.Equal(publishedVersion, result.Revision.PublishedContentVersion);
+        Assert.False(result.Changed);
         sites.Verify(
             x => x.ReplaceEntryHtmlAsync(
                 It.IsAny<string>(),
@@ -222,7 +291,7 @@ public sealed class HostedSiteRevisionConsistencyTests
         var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.RollbackAsync("site-1", target.Id, "user-1"));
+            () => service.RollbackAsync("site-1", target.Id, "user-1", "rollback-test-0002"));
 
         var rollback = await fixture.Db.HostedSiteRevisions
             .Find(item => item.Source == HostedSiteRevisionSources.Rollback)
@@ -314,6 +383,144 @@ public sealed class HostedSiteRevisionConsistencyTests
         Assert.Equal("new-attempt", persisted.PublishAttemptId);
     }
 
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task OldAttemptFinalize_ShouldNotFinalizeNewPublishingAttempt()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var baseVersion = MongoTime(DateTime.UtcNow.AddMinutes(-2));
+        var revision = PublishingRevision("revision-finalize-fence", baseVersion);
+        revision.PublishAttemptId = "new-attempt";
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(revision);
+        var service = new HostedSiteRevisionService(fixture.Db, Mock.Of<IHostedSiteService>());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.FinalizePublishedRevisionAsync(revision, baseVersion.AddMinutes(1), "old-attempt"));
+
+        var persisted = await fixture.Db.HostedSiteRevisions.Find(item => item.Id == revision.Id).SingleAsync();
+        Assert.Equal(HostedSiteRevisionStatuses.Publishing, persisted.Status);
+        Assert.Equal("new-attempt", persisted.PublishAttemptId);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task RejectDraft_ShouldPersistBoundedRedactedAuditAndBeIdempotent()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var baseVersion = MongoTime(DateTime.UtcNow.AddMinutes(-1));
+        var revision = PublishingRevision("revision-reject", baseVersion);
+        revision.Status = HostedSiteRevisionStatuses.Draft;
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(revision);
+        var site = Site(null, baseVersion);
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(site, "<!doctype html><html>old</html>", baseVersion));
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        var first = await service.RejectAsync(
+            "site-1",
+            revision.Id,
+            "user-1",
+            " 版式不符合要求\nAuthorization: Bearer secret-token ");
+        var second = await service.RejectAsync(
+            "site-1",
+            revision.Id,
+            "user-1",
+            "第二次调用不应覆盖原始原因");
+
+        Assert.True(first.Changed);
+        Assert.False(second.Changed);
+        Assert.Equal(HostedSiteRevisionStatuses.Rejected, second.Revision.Status);
+        Assert.NotNull(second.Revision.RejectedAt);
+        Assert.Equal("user-1", second.Revision.RejectedByUserId);
+        Assert.Equal("版式不符合要求 Authorization=***", second.Revision.RejectionReason);
+        Assert.DoesNotContain("secret-token", second.Revision.RejectionReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ConcurrentRejects_ShouldHaveExactlyOneStateChange()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var baseVersion = MongoTime(DateTime.UtcNow.AddMinutes(-1));
+        var revision = PublishingRevision("revision-concurrent-reject", baseVersion);
+        revision.Status = HostedSiteRevisionStatuses.Draft;
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(revision);
+        var site = Site(null, baseVersion);
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(site, "<!doctype html><html>old</html>", baseVersion));
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(index =>
+            service.RejectAsync("site-1", revision.Id, "user-1", $"reason-{index}")));
+
+        Assert.Single(results, result => result.Changed);
+        Assert.All(results, result => Assert.Equal(HostedSiteRevisionStatuses.Rejected, result.Revision.Status));
+        var persisted = await fixture.Db.HostedSiteRevisions.Find(x => x.Id == revision.Id).SingleAsync();
+        Assert.Equal(HostedSiteRevisionStatuses.Rejected, persisted.Status);
+        Assert.NotNull(persisted.RejectedAt);
+        Assert.Equal("user-1", persisted.RejectedByUserId);
+    }
+
+    [Theory]
+    [InlineData(HostedSiteRevisionStatuses.Publishing)]
+    [InlineData(HostedSiteRevisionStatuses.Published)]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task RejectNonDraft_ShouldNotChangeRevision(string status)
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var baseVersion = MongoTime(DateTime.UtcNow.AddMinutes(-1));
+        var revision = PublishingRevision($"revision-reject-{status}", baseVersion);
+        revision.Status = status;
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(revision);
+        var site = Site(null, baseVersion);
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(site, "<!doctype html><html>old</html>", baseVersion));
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RejectAsync("site-1", revision.Id, "user-1", null));
+
+        var persisted = await fixture.Db.HostedSiteRevisions.Find(x => x.Id == revision.Id).FirstAsync();
+        Assert.Equal(status, persisted.Status);
+        Assert.Null(persisted.RejectedAt);
+        Assert.Null(persisted.RejectedByUserId);
+        Assert.Null(persisted.RejectionReason);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task RejectedRevision_ShouldNotBePublishable()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var baseVersion = MongoTime(DateTime.UtcNow.AddMinutes(-1));
+        var revision = PublishingRevision("revision-rejected-publish", baseVersion);
+        revision.Status = HostedSiteRevisionStatuses.Rejected;
+        revision.RejectedAt = baseVersion;
+        revision.RejectedByUserId = "user-1";
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(revision);
+        var site = Site(null, baseVersion);
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(site, "<!doctype html><html>old</html>", baseVersion));
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PublishAsync("site-1", revision.Id, "user-1"));
+
+        sites.Verify(
+            x => x.ReplaceEntryHtmlAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<DateTime?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     private static HostedSiteRevision PublishingRevision(string id, DateTime baseVersion) => new()
     {
         Id = id,
@@ -359,7 +566,25 @@ public sealed class HostedSiteRevisionConsistencyTests
             settings.ServerSelectionTimeout = TimeSpan.FromSeconds(3);
             var client = new MongoClient(settings);
             await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
-            return new RevisionMongoFixture(client, connectionString, $"hosted_revision_consistency_{Guid.NewGuid():N}");
+            var fixture = new RevisionMongoFixture(
+                client,
+                connectionString,
+                $"hosted_revision_consistency_{Guid.NewGuid():N}");
+            await fixture.Db.HostedSiteRevisions.Indexes.CreateOneAsync(
+                new CreateIndexModel<HostedSiteRevision>(
+                    Builders<HostedSiteRevision>.IndexKeys
+                        .Ascending(item => item.SiteId)
+                        .Ascending(item => item.CreatedByUserId)
+                        .Ascending(item => item.RollbackIdempotencyKey),
+                    new CreateIndexOptions<HostedSiteRevision>
+                    {
+                        Name = "uniq_hosted_site_revision_rollback_idempotency",
+                        Unique = true,
+                        PartialFilterExpression = new BsonDocument(
+                            nameof(HostedSiteRevision.RollbackIdempotencyKey),
+                            new BsonDocument("$type", "string")),
+                    }));
+            return fixture;
         }
 
         public async ValueTask DisposeAsync() => await _client.DropDatabaseAsync(_databaseName);

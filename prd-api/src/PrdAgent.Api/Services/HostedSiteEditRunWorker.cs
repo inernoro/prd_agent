@@ -1,5 +1,7 @@
 using System.Text;
+using System.Runtime.CompilerServices;
 using MongoDB.Driver;
+using PrdAgent.Api.Filters;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -98,6 +100,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
         var sites = scope.ServiceProvider.GetRequiredService<IHostedSiteService>();
         var revisions = scope.ServiceProvider.GetRequiredService<IHostedSiteRevisionService>();
+        var activityRecorder = scope.ServiceProvider.GetRequiredService<IActivityActionRecorder>();
+        var knowledgeSnapshots = scope.ServiceProvider.GetRequiredService<IDesignKnowledgeSnapshotResolver>();
         var executor = scope.ServiceProvider
             .GetServices<IDesignArtifactExecutor>()
             .FirstOrDefault(x => x.Runtime == run.Runtime && x.Supports(run.ArtifactType, run.Operation));
@@ -142,7 +146,14 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var output = new StringBuilder();
             var sawFirstText = false;
             IReadOnlyList<DesignWorkspaceFile>? verifiedFiles = null;
-            await foreach (var chunk in executor.ExecuteAsync(run, editable?.Html, executionCts.Token))
+            // 统一 dispatch 门必须紧贴 ExecuteAsync；OpenDesign 的 workspace Prepare/上传和
+            // MapGateway 的 LLM 调用都发生在 ExecuteAsync 内，因此撤权失败时两条路径均为 0 次外发。
+            await foreach (var chunk in ExecuteWithKnowledgeDispatchGuardAsync(
+                               knowledgeSnapshots,
+                               executor,
+                               run,
+                               editable?.Html,
+                               executionCts.Token))
             {
                 if (chunk.VerifiedFiles != null)
                 {
@@ -181,7 +192,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 }
             }
 
-            var html = HostedSiteRevisionRules.HardenGeneratedHtml(output.ToString());
+            var html = HardenExecutorOutput(output.ToString(), verifiedFiles);
             var qualityEvidence = BuildQualityEvidence(run, editable);
             HostedSiteRevisionRules.ValidateGeneratedContentQuality(html, qualityEvidence);
             await UpdatePhaseAsync(db, run, leaseOwner, 88,
@@ -223,6 +234,23 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     CancellationToken.None))
                 throw new DesignArtifactRunLeaseLostException(run.Id);
 
+            if (run.Operation == DesignArtifactOperations.Generate)
+            {
+                try
+                {
+                    await RecordGeneratedSitePublicationAsync(
+                        db,
+                        activityRecorder,
+                        run,
+                        CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    // 审计是可恢复投影，不得把已完成的站点生成反写成失败。
+                    _logger.LogWarning(ex, "生成站点发布动态写入失败，等待恢复补记 runId={RunId}", run.Id);
+                }
+            }
+
             meta.Status = RunStatuses.Done;
             meta.EndedAt = DateTime.UtcNow;
             await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
@@ -242,6 +270,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         catch (KeyNotFoundException)
         {
             await MarkErrorAsync(runId, "站点不存在或你没有修改权限", leaseOwner);
+        }
+        catch (DesignKnowledgeSnapshotException ex)
+        {
+            await MarkErrorAsync(runId, ex.Message, leaseOwner);
         }
         catch (DesignArtifactExecutionCancelledException)
         {
@@ -273,11 +305,43 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             "\n",
             new[]
             {
-                run.Title,
-                run.Instruction,
+                // Client-authored title/instruction are generation requests, not evidence
+                // that can substantiate measured or sensitive claims.
                 string.Join("\n", run.KnowledgeReferences.Select(item => $"{item.Title}\n{item.Content}")),
                 editable == null ? string.Empty : HostedSiteRevisionRules.ExtractVisibleText(editable.Html),
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    internal static async Task RevalidateKnowledgeForDispatchAsync(
+        IDesignKnowledgeSnapshotResolver resolver,
+        string userId,
+        IReadOnlyList<DesignKnowledgeSnapshot> frozenSnapshots,
+        CancellationToken ct)
+    {
+        if (frozenSnapshots.Count == 0) return;
+        await resolver.ResolveForRunAsync(
+            userId,
+            frozenSnapshots.Select(item => new DesignKnowledgeReferenceIdentity(
+                item.EntryId,
+                item.StoreId ?? string.Empty,
+                item.ContentHash)).ToList(),
+            ct);
+    }
+
+    internal static async IAsyncEnumerable<DesignArtifactExecutorChunk> ExecuteWithKnowledgeDispatchGuardAsync(
+        IDesignKnowledgeSnapshotResolver resolver,
+        IDesignArtifactExecutor executor,
+        DesignArtifactRun run,
+        string? currentHtml,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        await RevalidateKnowledgeForDispatchAsync(
+            resolver,
+            run.UserId,
+            run.KnowledgeReferences,
+            CancellationToken.None);
+        await foreach (var chunk in executor.ExecuteAsync(run, currentHtml, ct))
+            yield return chunk;
+    }
 
     private async Task UpdatePhaseAsync(
         MongoDbContext db,
@@ -457,7 +521,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             ct,
             scope.ServiceProvider.GetRequiredService<IHostedSiteService>(),
             scope.ServiceProvider.GetRequiredService<IHostedSiteRevisionService>(),
-            scope.ServiceProvider.GetRequiredService<IAssetStorage>());
+            scope.ServiceProvider.GetRequiredService<IAssetStorage>(),
+            scope.ServiceProvider.GetRequiredService<IActivityActionRecorder>());
     }
 
     internal static async Task<PersistedDesignArtifact> PersistArtifactWithLeaseAsync(
@@ -484,17 +549,30 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             HostedSiteRevision? draft = null;
             try
             {
-                draft = await revisions.CreateDraftAsync(
-                    run.TargetSiteId,
-                    run.UserId,
-                    html,
-                    run.Instruction,
-                    run.Runtime,
-                    run.Id,
-                    parent.Id,
-                    run.KnowledgeReferences.Select(x => x.EntryId).ToList(),
-                    editable.ContentVersion,
-                    ct);
+                draft = verifiedFiles == null
+                    ? await revisions.CreateDraftAsync(
+                        run.TargetSiteId,
+                        run.UserId,
+                        html,
+                        run.Instruction,
+                        run.Runtime,
+                        run.Id,
+                        parent.Id,
+                        run.KnowledgeReferences.Select(x => x.EntryId).ToList(),
+                        editable.ContentVersion,
+                        ct)
+                    : await revisions.CreateVerifiedDraftAsync(
+                        run.TargetSiteId,
+                        run.UserId,
+                        html,
+                        BuildVerifiedHostedSiteFiles(verifiedFiles, html),
+                        run.Instruction,
+                        run.Runtime,
+                        run.Id,
+                        parent.Id,
+                        run.KnowledgeReferences.Select(x => x.EntryId).ToList(),
+                        editable.ContentVersion,
+                        ct);
                 if (!await RenewLeaseAsync(
                         db,
                         run.Id,
@@ -538,6 +616,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     run.Id,
                     new List<string> { "知识生成" },
                     null,
+                    leaseOwner,
                     ct);
             }
             else
@@ -563,14 +642,24 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 throw new DesignArtifactRunLeaseLostException(run.Id);
 
             var current = await sites.GetEditableEntryHtmlAsync(site.Id, run.UserId, ct);
-            var baseline = await revisions.EnsureGeneratedSnapshotAsync(
-                site.Id,
-                run.UserId,
-                current,
-                run.Runtime,
-                run.Id,
-                run.KnowledgeReferences.Select(item => item.EntryId).ToList(),
-                ct);
+            var baseline = verifiedFiles == null
+                ? await revisions.EnsureGeneratedSnapshotAsync(
+                    site.Id,
+                    run.UserId,
+                    current,
+                    run.Runtime,
+                    run.Id,
+                    run.KnowledgeReferences.Select(item => item.EntryId).ToList(),
+                    ct)
+                : await revisions.EnsureGeneratedVerifiedSnapshotAsync(
+                    site.Id,
+                    run.UserId,
+                    current,
+                    BuildVerifiedHostedSiteFiles(verifiedFiles, html),
+                    run.Runtime,
+                    run.Id,
+                    run.KnowledgeReferences.Select(item => item.EntryId).ToList(),
+                    ct);
             if (!await RenewLeaseAsync(
                     db,
                     run.Id,
@@ -620,6 +709,19 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 StringComparison.Ordinal))
             throw new InvalidOperationException("设计产物入口与最终安全版本不一致，请重新生成");
         return hostedFiles;
+    }
+
+    internal static string HardenExecutorOutput(
+        string rawHtml,
+        IReadOnlyList<DesignWorkspaceFile>? verifiedFiles)
+    {
+        var hardened = verifiedFiles == null
+            ? HostedSiteRevisionRules.HardenGeneratedHtml(rawHtml)
+            : HostedSiteRevisionRules.HardenGeneratedHtml(
+                HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(rawHtml));
+        if (verifiedFiles != null)
+            _ = BuildVerifiedHostedSiteFiles(verifiedFiles, hardened);
+        return hardened;
     }
 
     internal static async Task<bool> CompleteRunOrCompensateArtifactAsync(
@@ -697,6 +799,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 .Set(x => x.CleanupPending, false)
                 .Set(x => x.CleanupAttemptedAt, attemptedAt)
                 .Set(x => x.CleanupArtifactSiteId, null)
+                .Set(x => x.CleanupPublishAttemptId, null)
                 .Set(x => x.CleanupAssetKeys, new List<string>())
                 .Set(x => x.CleanupSiteRecordDeleted, false)
                 .Set(x => x.CleanupLastError, null),
@@ -812,6 +915,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 .Set(x => x.ArtifactRevisionId, artifactRevisionId)
                 .Set(x => x.CleanupPending, false)
                 .Set(x => x.CleanupArtifactSiteId, null)
+                .Set(x => x.CleanupPublishAttemptId, null)
                 .Set(x => x.CleanupAssetKeys, new List<string>())
                 .Set(x => x.CleanupSiteRecordDeleted, false)
                 .Set(x => x.CleanupLastError, null)
@@ -829,7 +933,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         CancellationToken ct,
         IHostedSiteService? sites = null,
         IHostedSiteRevisionService? revisions = null,
-        IAssetStorage? workspaceStorage = null)
+        IAssetStorage? workspaceStorage = null,
+        IActivityActionRecorder? activityRecorder = null)
     {
         if (workspaceStorage != null)
             await RecoverRejectedWorkspaceResultsAsync(db, workspaceStorage, now, ct);
@@ -912,7 +1017,151 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             if (write.ModifiedCount == 1)
                 await queue.EnqueueAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None);
         }
+
+        if (activityRecorder != null)
+            await RecoverGeneratedSitePublicationActivitiesAsync(db, activityRecorder, ct);
     }
+
+    internal static async Task<bool> RecordGeneratedSitePublicationAsync(
+        MongoDbContext db,
+        IActivityActionRecorder activityRecorder,
+        DesignArtifactRun run,
+        CancellationToken ct)
+    {
+        if (run.Status != RunStatuses.Done
+            || run.ArtifactType != DesignArtifactTypes.WebPage
+            || run.Operation != DesignArtifactOperations.Generate
+            || string.IsNullOrWhiteSpace(run.ArtifactSiteId)
+            || !run.CompletedAt.HasValue)
+            return false;
+
+        var authoritativeRun = await db.DesignArtifactRuns.Find(item =>
+                item.Id == run.Id
+                && item.Status == RunStatuses.Done
+                && item.ArtifactType == DesignArtifactTypes.WebPage
+                && item.Operation == DesignArtifactOperations.Generate
+                && item.ArtifactSiteId != null
+                && item.CompletedAt != null
+                && item.PublishedActivityProjectionCompletedAt == null)
+            .FirstOrDefaultAsync(ct);
+        if (authoritativeRun == null) return false;
+
+        var site = await db.HostedSites.Find(item =>
+                item.Id == authoritativeRun.ArtifactSiteId
+                && item.OwnerUserId == authoritativeRun.UserId
+                && item.SourceType == "design-agent"
+                && item.SourceRef == authoritativeRun.Id)
+            .FirstOrDefaultAsync(ct);
+        if (site == null)
+        {
+            var skippedAt = DateTime.UtcNow;
+            await db.DesignArtifactRuns.UpdateOneAsync(
+                item => item.Id == authoritativeRun.Id
+                        && item.Status == RunStatuses.Done
+                        && item.ArtifactType == DesignArtifactTypes.WebPage
+                        && item.Operation == DesignArtifactOperations.Generate
+                        && item.ArtifactSiteId == authoritativeRun.ArtifactSiteId
+                        && item.CompletedAt == authoritativeRun.CompletedAt
+                        && item.PublishedActivityProjectionCompletedAt == null,
+                Builders<DesignArtifactRun>.Update
+                    .Set(item => item.PublishedActivityProjectionCompletedAt, skippedAt)
+                    .Set(item => item.PublishedActivityProjectionOutcome, "skipped")
+                    .Set(item => item.PublishedActivityProjectionCode, "site_missing_or_mismatch"),
+                cancellationToken: CancellationToken.None);
+            run.PublishedActivityProjectionCompletedAt = skippedAt;
+            run.PublishedActivityProjectionOutcome = "skipped";
+            run.PublishedActivityProjectionCode = "site_missing_or_mismatch";
+            return false;
+        }
+
+        var inserted = await activityRecorder.RecordDomainAsync(
+            ActivityActionRegistry.GeneratedSitePublished,
+            authoritativeRun.UserId,
+            site.Id,
+            site.Title,
+            BuildGeneratedSitePublicationDeduplicationKey(authoritativeRun.Id),
+            authoritativeRun.CompletedAt!.Value,
+            ct);
+        var recordedAt = DateTime.UtcNow;
+        await db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == authoritativeRun.Id
+                    && item.Status == RunStatuses.Done
+                    && item.ArtifactType == DesignArtifactTypes.WebPage
+                    && item.Operation == DesignArtifactOperations.Generate
+                    && item.ArtifactSiteId == site.Id
+                    && item.CompletedAt == authoritativeRun.CompletedAt
+                    && item.PublishedActivityProjectionCompletedAt == null,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.PublishedActivityRecordedAt, recordedAt)
+                .Set(item => item.PublishedActivityProjectionCompletedAt, recordedAt)
+                .Set(item => item.PublishedActivityProjectionOutcome, "recorded")
+                .Set(item => item.PublishedActivityProjectionCode, null),
+            cancellationToken: CancellationToken.None);
+        run.PublishedActivityRecordedAt = recordedAt;
+        run.PublishedActivityProjectionCompletedAt = recordedAt;
+        run.PublishedActivityProjectionOutcome = "recorded";
+        run.PublishedActivityProjectionCode = null;
+        return inserted;
+    }
+
+    internal static async Task<int> RecoverGeneratedSitePublicationActivitiesAsync(
+        MongoDbContext db,
+        IActivityActionRecorder activityRecorder,
+        CancellationToken ct)
+    {
+        var filter = Builders<DesignArtifactRun>.Filter.Eq(run => run.Status, RunStatuses.Done)
+                     & Builders<DesignArtifactRun>.Filter.Eq(run => run.ArtifactType, DesignArtifactTypes.WebPage)
+                     & Builders<DesignArtifactRun>.Filter.Eq(run => run.Operation, DesignArtifactOperations.Generate)
+                     & Builders<DesignArtifactRun>.Filter.Type(
+                         run => run.ArtifactSiteId,
+                         MongoDB.Bson.BsonType.String)
+                     & Builders<DesignArtifactRun>.Filter.Type(
+                         run => run.CompletedAt,
+                         MongoDB.Bson.BsonType.DateTime);
+        var inserted = 0;
+        const int batchSize = 100;
+        const int maxBatches = 10;
+        var attemptedIds = new List<string>();
+        Exception? firstRetryableError = null;
+        for (var batch = 0; batch < maxBatches; batch++)
+        {
+            var pageFilter = filter & Builders<DesignArtifactRun>.Filter.Eq(
+                run => run.PublishedActivityProjectionCompletedAt,
+                null);
+            if (attemptedIds.Count > 0)
+                pageFilter &= Builders<DesignArtifactRun>.Filter.Nin(run => run.Id, attemptedIds);
+            var candidates = await db.DesignArtifactRuns
+                .Find(pageFilter)
+                .SortByDescending(run => run.CompletedAt)
+                .Limit(batchSize)
+                .ToListAsync(ct);
+            if (candidates.Count == 0) break;
+            foreach (var candidate in candidates)
+            {
+                attemptedIds.Add(candidate.Id);
+                try
+                {
+                    if (await RecordGeneratedSitePublicationAsync(
+                            db,
+                            activityRecorder,
+                            candidate,
+                            CancellationToken.None))
+                        inserted++;
+                }
+                catch (Exception ex)
+                {
+                    firstRetryableError ??= ex;
+                }
+            }
+            if (candidates.Count < batchSize) break;
+        }
+        if (firstRetryableError != null)
+            throw new InvalidOperationException("生成站点发布动态仍有待重试项", firstRetryableError);
+        return inserted;
+    }
+
+    internal static string BuildGeneratedSitePublicationDeduplicationKey(string runId) =>
+        $"design-artifact:{runId}:site-published";
 
     internal static async Task<int> RecoverRejectedWorkspaceResultsAsync(
         MongoDbContext db,
@@ -1011,6 +1260,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         .Set(x => x.CleanupPending, false)
                         .Set(x => x.CleanupAttemptedAt, attemptedAt)
                         .Set(x => x.CleanupArtifactSiteId, null)
+                        .Set(x => x.CleanupPublishAttemptId, null)
                         .Set(x => x.CleanupAssetKeys, new List<string>())
                         .Set(x => x.CleanupSiteRecordDeleted, false)
                         .Set(x => x.CleanupLastError, null),

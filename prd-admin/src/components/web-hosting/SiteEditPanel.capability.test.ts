@@ -46,7 +46,19 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('aria-label="把这个版本重新发布为最新版"');
     expect(source).toContain('确认并发布');
     expect(source).toContain('回退');
+    expect(source).toContain('aria-label="拒绝这个草稿"');
+    expect(source).toContain('确认拒绝这个草稿');
     expect(source.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it('拒绝草稿走独立端点、保留可选原因并明确线上无变化', () => {
+    expect(webPagesServiceSource).toContain('api.webPages.rejectRevision(siteId, revisionId)');
+    expect(webPagesServiceSource).toContain("body: { reason: reason?.trim() || null }");
+    expect(source).toContain('role="alertdialog"');
+    expect(source).toContain('maxLength={500}');
+    expect(source).toContain('拒绝后该草稿不能再发布，但版本记录会保留');
+    expect(source).toContain("item.status === 'rejected'");
+    expect(source).toContain('拒绝原因：{item.rejectionReason}');
   });
 
   it('从卡片进入版本记录时会把历史区滚入视野', () => {
@@ -139,6 +151,31 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain("event.key === 'Escape'");
     expect(source).toContain('确认回退');
     expect(source).toContain('cancelRollback');
+  });
+
+  it('回退使用持久幂等键，失败重试复用同一键', () => {
+    expect(webPagesServiceSource).toContain("headers: { 'Idempotency-Key': idempotencyKey }");
+    expect(source).toContain('const idempotencyKey = createRevisionMutationIdempotencyKey()');
+    expect(source).toContain('idempotencyKey,');
+    expect(source).toContain('rollback(revisionId, recoveryNotice.idempotencyKey)');
+  });
+
+  it('确认拒绝或回退后把焦点恢复到触发按钮或版本记录区', () => {
+    expect(source).toContain('restoreRevisionMutationFocus(');
+    expect(source).toContain('rollbackReturnFocusRef.current,');
+    expect(source).toContain('rejectReturnFocusRef.current,');
+    expect(source.match(/historyRef\.current,/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(source).toContain('tabIndex={-1}');
+  });
+
+  it('HTML PPT 在 convert 前持久确认正文和大纲绑定', () => {
+    expect(htmlPptServiceSource).toContain('/confirm`');
+    expect(htmlPptServiceSource).toContain('content: options.content');
+    expect(htmlPptServiceSource).toContain('outlinePages: options.outlinePages');
+    const confirmation = htmlPptServiceSource.indexOf('const confirmation = await fetch');
+    const convert = htmlPptServiceSource.indexOf("fetch('/api/md-to-ppt/convert'");
+    expect(confirmation).toBeGreaterThanOrEqual(0);
+    expect(convert).toBeGreaterThan(confirmation);
   });
 
   it('修改要求有真实标签，知识选择向辅助技术暴露选中状态', () => {

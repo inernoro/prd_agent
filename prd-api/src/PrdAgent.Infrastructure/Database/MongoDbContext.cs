@@ -1671,6 +1671,15 @@ public class MongoDbContext
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_hosted_sites_owner_created" }));
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys
+                .Ascending(x => x.AssetCleanupNextAttemptAt)
+                .Ascending(x => x.AssetCleanupLeaseExpiresAt),
+            new CreateIndexOptions<HostedSite>
+            {
+                Name = "idx_hosted_sites_asset_cleanup_due",
+                PartialFilterExpression = Builders<HostedSite>.Filter.Exists("PendingAssetCleanupKeys.0", true),
+            }));
         HostedSiteDeletionTasks.Indexes.CreateOne(new CreateIndexModel<HostedSiteDeletionTask>(
             Builders<HostedSiteDeletionTask>.IndexKeys
                 .Ascending(x => x.NextAttemptAt)
