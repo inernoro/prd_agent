@@ -240,6 +240,101 @@ public sealed class DesignArtifactsController : ControllerBase
     }
 
     /// <summary>
+    /// 读取跨 adapter 的公共生命周期合同。响应只含逻辑引用、版本边界和文件元数据，
+    /// 不返回指令、知识正文、事件 payload、对象存储 key 或模型配置。
+    /// </summary>
+    [HttpGet("runs/{runId}/contract")]
+    public async Task<IActionResult> GetContract(string runId)
+    {
+        var run = await _db.DesignArtifactRuns
+            .Find(item => item.Id == runId && item.UserId == this.GetRequiredUserId())
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
+
+        var contractVersion = run.ContractVersion ?? DesignArtifactContractVersions.Legacy;
+        var isCurrentContract = contractVersion == DesignArtifactContractVersions.Current;
+        object? manifest = isCurrentContract && run.Manifest != null
+            ? new
+            {
+                run.Manifest.SchemaVersion,
+                run.Manifest.ArtifactType,
+                run.Manifest.EntryFile,
+                run.Manifest.SecurityProfile,
+                files = run.Manifest.Files.Select(file => new
+                {
+                    file.Path,
+                    file.ByteLength,
+                    file.Sha256,
+                }),
+            }
+            : null;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            runId = run.Id,
+            contractVersion,
+            lifecycleVersion = isCurrentContract ? run.LifecycleVersion : 0,
+            run.Status,
+            run.ArtifactType,
+            run.Operation,
+            workspace = isCurrentContract && run.WorkspaceRef != null
+                ? new
+                {
+                    run.WorkspaceRef.WorkspaceId,
+                    run.WorkspaceRef.Kind,
+                    run.WorkspaceRef.BaseRevision,
+                    run.WorkspaceRef.Adapter,
+                }
+                : null,
+            versionBoundary = isCurrentContract && run.VersionBoundary != null
+                ? new
+                {
+                    run.VersionBoundary.BaseArtifactId,
+                    run.VersionBoundary.BaseVersion,
+                    run.VersionBoundary.BaseContentHash,
+                    run.VersionBoundary.OutputContentHash,
+                }
+                : null,
+            manifest,
+            manifestComplete = isCurrentContract && manifest != null,
+            run.ArtifactSiteId,
+            run.ArtifactRevisionId,
+            failureCode = isCurrentContract ? run.LifecycleFailureCode : null,
+            run.CreatedAt,
+            run.UpdatedAt,
+            run.CompletedAt,
+        }));
+    }
+
+    /// <summary>读取公共事件信封元数据；内部 payload 不通过该 API 导出。</summary>
+    [HttpGet("runs/{runId}/contract/events")]
+    public async Task<IActionResult> GetContractEvents(
+        string runId,
+        [FromQuery] long afterSeq = 0,
+        [FromQuery] int limit = 100)
+    {
+        var run = await _db.DesignArtifactRuns
+            .Find(item => item.Id == runId && item.UserId == this.GetRequiredUserId())
+            .Project(item => new { item.Id, item.ArtifactType })
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
+
+        var records = await _events.GetEventsAsync(
+            RunKinds.DesignArtifact,
+            run.Id,
+            Math.Max(0, afterSeq),
+            Math.Clamp(limit, 1, 100),
+            CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = records.Select(record => ToPublicContractEvent(record, run.Id, run.ArtifactType)),
+            nextSeq = records.LastOrDefault()?.Seq ?? Math.Max(0, afterSeq),
+        }));
+    }
+
+    /// <summary>
     /// 导出一条只含稳定关联标识与脱敏状态的 E4 审计证据。
     /// 任何原始错误、Provider 地址、请求正文和凭证均不得进入此响应。
     /// </summary>
@@ -478,6 +573,38 @@ public sealed class DesignArtifactsController : ControllerBase
         run.CompletedAt,
     };
 
+    private static DesignArtifactPublicEvent ToPublicContractEvent(
+        RunEventRecord record,
+        string runId,
+        string artifactType)
+    {
+        int? progress = null;
+        DateTime? occurredAt = null;
+        try
+        {
+            using var payload = JsonDocument.Parse(record.PayloadJson);
+            if (payload.RootElement.TryGetProperty("progress", out var progressElement)
+                && progressElement.TryGetInt32(out var parsedProgress))
+                progress = Math.Clamp(parsedProgress, 0, 100);
+            if (payload.RootElement.TryGetProperty("occurredAt", out var occurredAtElement)
+                && occurredAtElement.ValueKind == JsonValueKind.String
+                && occurredAtElement.TryGetDateTime(out var parsedOccurredAt))
+                occurredAt = parsedOccurredAt;
+        }
+        catch (JsonException)
+        {
+            // 历史坏事件只返回信封元数据，不暴露原始 payload 或解析错误。
+        }
+
+        return new DesignArtifactPublicEvent(
+            runId,
+            artifactType,
+            record.Seq,
+            record.EventName,
+            progress,
+            occurredAt ?? record.CreatedAt);
+    }
+
     private static string? TrimOptional(string? value, int maxLength)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
@@ -603,3 +730,11 @@ public sealed record DesignArtifactLlmAuditEvidence(
     string? LogicalModel,
     DateTime StartedAt,
     DateTime? EndedAt);
+
+public sealed record DesignArtifactPublicEvent(
+    string RunId,
+    string ArtifactType,
+    long Sequence,
+    string Type,
+    int? Progress,
+    DateTime OccurredAt);

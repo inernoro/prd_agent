@@ -20,6 +20,26 @@ public class DesignArtifactRun
 
     public string Runtime { get; set; } = DesignArtifactRuntimes.MapGateway;
 
+    /// <summary>公共生命周期合同版本。存量 Run 缺失时只按只读 v1 兼容，不宣称 manifest 完整。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public int? ContractVersion { get; set; }
+
+    /// <summary>公共生命周期 CAS 版本；只有 lifecycle service 可以推进。</summary>
+    public int LifecycleVersion { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactWorkspaceRef? WorkspaceRef { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactVersionBoundary? VersionBoundary { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactContractManifest? Manifest { get; set; }
+
+    /// <summary>公共生命周期只保存稳定失败码，不保存 provider 异常或请求正文。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? LifecycleFailureCode { get; set; }
+
     /// <summary>
     /// 远程执行器在能力探针通过时冻结的 CDS 连接。Worker 只能使用该连接，
     /// 禁止按更新时间重新选择另一个基础设施目标。
@@ -190,6 +210,7 @@ public static class DesignArtifactTypes
 
 public static class DesignArtifactOperations
 {
+    public const string Plan = "plan";
     public const string Generate = "generate";
     public const string Edit = "edit";
 }
