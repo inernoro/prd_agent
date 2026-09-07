@@ -343,6 +343,24 @@ public sealed class InfraAgentSessionCreateRecoveryTests
     }
 
     [Theory]
+    [InlineData(200, "{\"item\":{\"status\":\"stopped\"}}", "AlreadyStopped")]
+    [InlineData(404, "{\"error\":{\"code\":\"session_not_found\"}}", "AlreadyStopped")]
+    [InlineData(200, "{\"item\":{\"status\":\"idle\"}}", "Retry")]
+    [InlineData(200, "{\"item\":{\"status\":\"stopping\"}}", "Retry")]
+    [InlineData(200, "{\"item\":{\"status\":\"failed\"}}", "Retry")]
+    [InlineData(503, "{}", "Retry")]
+    [InlineData(200, "{\"item\":{\"status\":\"unknown\"}}", "Failure")]
+    [InlineData(200, "{}", "Failure")]
+    [InlineData(401, "{\"error\":{\"code\":\"unauthorized\"}}", "Failure")]
+    public void CdsStopReadbackOnlyConvertsProvenTerminalOrRetryableStates(
+        int statusCode,
+        string body,
+        string expected)
+    {
+        Assert.Equal(expected, InfraAgentSessionService.ClassifyCdsStopReadback(statusCode, body).ToString());
+    }
+
+    [Theory]
     [InlineData(InfraAgentSessionStatuses.Creating, true)]
     [InlineData(InfraAgentSessionStatuses.Running, true)]
     [InlineData(InfraAgentSessionStatuses.Idle, true)]
@@ -367,6 +385,73 @@ public sealed class InfraAgentSessionCreateRecoveryTests
         Assert.Equal(
             expected,
             InfraAgentSessionService.CanAcquireCdsStopLease(status, now.AddSeconds(expiryOffsetSeconds), now));
+    }
+
+    [Theory]
+    [InlineData(InfraAgentSessionStatuses.Idle, null, true, true)]
+    [InlineData(InfraAgentSessionStatuses.Stopping, null, true, true)]
+    [InlineData(InfraAgentSessionStatuses.Idle, "message-active", true, false)]
+    [InlineData(InfraAgentSessionStatuses.Running, null, true, true)]
+    [InlineData(InfraAgentSessionStatuses.Idle, null, false, false)]
+    [InlineData(InfraAgentSessionStatuses.Failed, null, true, true)]
+    [InlineData(InfraAgentSessionStatuses.Failed, null, false, false)]
+    public void OnlyPersistedCompletedCleanupDefersStopFailureProjection(
+        string status,
+        string? activeMessageId,
+        bool cleanupRequested,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            InfraAgentSessionService.ShouldDeferScheduledCleanupFailure(
+                status,
+                activeMessageId,
+                cleanupRequested ? DateTime.UtcNow : null));
+    }
+
+    [Theory]
+    [InlineData(1, 5)]
+    [InlineData(2, 10)]
+    [InlineData(3, 20)]
+    [InlineData(6, 160)]
+    [InlineData(7, 300)]
+    [InlineData(20, 300)]
+    public void PersistedCleanupRetryUsesBoundedExponentialBackoff(int attempt, int expectedSeconds)
+    {
+        Assert.Equal(
+            TimeSpan.FromSeconds(expectedSeconds),
+            InfraAgentSessionService.CalculateCleanupRetryDelay(attempt));
+    }
+
+    [Fact]
+    public void StaleReplicaCannotPiercePersistedCleanupBackoff()
+    {
+        var scanAt = new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc);
+        var requestedAt = scanAt.AddMinutes(-1);
+        var selected = new InfraAgentSession
+        {
+            CdsSessionId = "cds-a",
+            CleanupRequestedAt = requestedAt,
+            CleanupCdsSessionId = "cds-a",
+            CleanupMessageId = "message-a",
+            CleanupAttemptCount = 0,
+            CleanupNextAttemptAt = scanAt.AddSeconds(-1),
+        };
+        var retriedByAnotherReplica = new InfraAgentSession
+        {
+            CdsSessionId = "cds-a",
+            CleanupRequestedAt = requestedAt,
+            CleanupCdsSessionId = "cds-a",
+            CleanupMessageId = "message-a",
+            CleanupAttemptCount = 1,
+            CleanupNextAttemptAt = scanAt.AddSeconds(5),
+        };
+
+        Assert.True(InfraAgentSessionService.CanClaimScheduledCleanup(selected, selected, scanAt));
+        Assert.False(InfraAgentSessionService.CanClaimScheduledCleanup(
+            retriedByAnotherReplica,
+            selected,
+            scanAt));
     }
 
     [Fact]

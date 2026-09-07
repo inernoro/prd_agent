@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -501,11 +502,13 @@ public class DesignArtifactProviderCatalogTests
             .ReturnsAsync([
                 new InfraAgentEventView("event-1", remoteSession.Id, 1, "trace-1", InfraAgentEventTypes.Thinking, "{\"text\":\"正在布局\"}", DateTime.UtcNow),
                 new InfraAgentEventView("event-2", remoteSession.Id, 2, "trace-1", InfraAgentEventTypes.TextDelta, "{\"text\":\"正在生成页面文件\"}", DateTime.UtcNow),
-                new InfraAgentEventView("event-3", remoteSession.Id, 3, "trace-1", InfraAgentEventTypes.Done, "{\"artifactRef\":\"map://design-artifact/run-1/result\"}", DateTime.UtcNow),
+                new InfraAgentEventView("event-3", remoteSession.Id, 3, "trace-1", InfraAgentEventTypes.Done, "{\"artifactRef\":\"map://design-artifact/run-1/result\",\"clientMessageId\":\"message-1\"}", DateTime.UtcNow, remoteSession.CdsSessionId),
             ]);
-        sessions.Setup(service => service.StopAsync(
+        sessions.Setup(service => service.ScheduleStopAsync(
                 "user-1",
                 remoteSession.Id,
+                remoteSession.CdsSessionId!,
+                "message-1",
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(remoteSession);
         var executor = new OpenDesignRemoteArtifactExecutor(
@@ -588,10 +591,16 @@ public class DesignArtifactProviderCatalogTests
                 Assert.Equal("delta", chunk.Type);
                 Assert.Equal("<!doctype html>", chunk.Content);
             });
-        sessions.Verify(service => service.StopAsync(
+        sessions.Verify(service => service.ScheduleStopAsync(
             "user-1",
             remoteSession.Id,
+            remoteSession.CdsSessionId!,
+            "message-1",
             CancellationToken.None), Times.Once);
+        sessions.Verify(service => service.StopAsync(
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -694,6 +703,119 @@ public class DesignArtifactProviderCatalogTests
             "user-1",
             remoteSession.Id,
             CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task OpenDesignExecutorDoesNotDeliverArtifactWhenCleanupLedgerWriteFails()
+    {
+        var connection = BuildConnection();
+        var remoteSession = BuildSession();
+        var connections = new Mock<IInfraConnectionService>();
+        connections.Setup(service => service.ListAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([connection]);
+        var workspaceBroker = new Mock<IDesignArtifactWorkspaceBroker>();
+        workspaceBroker.Setup(service => service.PrepareAsync(
+                It.IsAny<DesignArtifactRun>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PreparedDesignArtifactWorkspace(
+                "https://map.test/input",
+                "input-sha",
+                "https://map.test/result",
+                "transfer-token",
+                "https://map.test/llm/v1",
+                "model-token",
+                "map-managed",
+                "base-revision",
+                1_048_576,
+                6_291_456,
+                ["index.html", "manifest.json", "assets/**"]));
+        workspaceBroker.Setup(service => service.ReadResultHtmlAsync("run-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync("<!doctype html>");
+        var sessions = new Mock<IInfraAgentSessionService>();
+        sessions.Setup(service => service.CreateAsync(
+                "user-1",
+                It.IsAny<CreateInfraAgentSessionRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(remoteSession);
+        sessions.Setup(service => service.StartAsync(
+                "user-1",
+                remoteSession.Id,
+                It.IsAny<StartInfraAgentSessionRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(remoteSession);
+        sessions.Setup(service => service.SendMessageAsync(
+                "user-1",
+                remoteSession.Id,
+                It.IsAny<SendInfraAgentMessageRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(remoteSession);
+        sessions.Setup(service => service.ListPersistedEventsAsync(
+                "user-1",
+                remoteSession.Id,
+                It.IsAny<long>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new InfraAgentEventView(
+                    "event-done",
+                    remoteSession.Id,
+                    1,
+                    "trace-1",
+                    InfraAgentEventTypes.Done,
+                    "{\"artifactRef\":\"map://design-artifact/run-1/result\",\"clientMessageId\":\"message-1\"}",
+                    DateTime.UtcNow,
+                    remoteSession.CdsSessionId),
+            ]);
+        sessions.SetupSequence(service => service.ScheduleStopAsync(
+                "user-1",
+                remoteSession.Id,
+                remoteSession.CdsSessionId!,
+                "message-1",
+                CancellationToken.None))
+            .ThrowsAsync(new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                "transient cleanup failure",
+                StatusCodes.Status502BadGateway))
+            .ReturnsAsync(remoteSession);
+        var executor = new OpenDesignRemoteArtifactExecutor(
+            connections.Object,
+            sessions.Object,
+            workspaceBroker.Object,
+            BuildConfiguration(),
+            NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
+        var run = new DesignArtifactRun
+        {
+            Id = "run-1",
+            UserId = "user-1",
+            ArtifactType = DesignArtifactTypes.WebPage,
+            Operation = DesignArtifactOperations.Generate,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            RuntimeConnectionId = connection.Id,
+            Instruction = "生成页面",
+            Title = "页面",
+        };
+        var chunks = new List<DesignArtifactExecutorChunk>();
+        var error = await Assert.ThrowsAsync<InfraAgentSessionException>(async () =>
+        {
+            await foreach (var chunk in executor.ExecuteAsync(run, currentHtml: null, CancellationToken.None))
+            {
+                chunks.Add(chunk);
+            }
+        });
+
+        Assert.Equal(InfraAgentSessionErrorCodes.CdsRequestFailed, error.ErrorCode);
+        Assert.DoesNotContain(chunks, chunk => chunk.Type == "delta");
+        sessions.Verify(service => service.ScheduleStopAsync(
+            "user-1",
+            remoteSession.Id,
+            remoteSession.CdsSessionId!,
+            "message-1",
+            CancellationToken.None), Times.Exactly(2));
+        sessions.Verify(service => service.StopAsync(
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static InfraConnectionPublicView BuildConnection(

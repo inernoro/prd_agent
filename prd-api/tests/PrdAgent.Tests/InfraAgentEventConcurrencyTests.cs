@@ -176,6 +176,7 @@ public class InfraAgentEventConcurrencyTests : IAsyncLifetime
             .ToListAsync();
         Assert.Equal(InfraAgentSessionStatuses.Idle, session.Status);
         Assert.Null(session.ActiveMessageId);
+        Assert.Equal(clientMessageId, session.LastCompletedMessageId);
         Assert.Equal(InfraAgentMessageStatuses.Completed, outbound.Status);
         Assert.Equal(sourceSessionId, outbound.CdsSourceSessionId);
         var reply = Assert.Single(replies);
@@ -226,6 +227,50 @@ public class InfraAgentEventConcurrencyTests : IAsyncLifetime
         var persisted = await _db.InfraAgentSessions.Find(x => x.Id == sessionId).SingleAsync();
         Assert.Equal(InfraAgentSessionStatuses.Running, persisted.Status);
         Assert.Equal("new-message", persisted.ActiveMessageId);
+    }
+
+    [Fact]
+    public async Task StaleCompletedCleanupSnapshotCannotStopNewActiveTurn()
+    {
+        const string sessionId = "map-stop-turn-fence";
+        var cleanupRequestedAt = DateTime.UtcNow.AddSeconds(-1);
+        await _db.InfraAgentSessions.InsertOneAsync(new InfraAgentSession
+        {
+            Id = sessionId,
+            UserId = "user",
+            ConnectionId = "connection",
+            CdsSessionId = "cds-generation",
+            Status = InfraAgentSessionStatuses.Idle,
+            ActiveMessageId = null,
+            CleanupRequestedAt = cleanupRequestedAt,
+            EventSeqInitialized = true
+        });
+        var staleSnapshot = await _db.InfraAgentSessions
+            .Find(x => x.Id == sessionId)
+            .SingleAsync();
+
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == sessionId && x.Status == InfraAgentSessionStatuses.Idle && x.ActiveMessageId == null,
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.Status, InfraAgentSessionStatuses.Running)
+                .Set(x => x.ActiveMessageId, "new-message"));
+
+        var staleStop = await _db.InfraAgentSessions.UpdateOneAsync(
+            InfraAgentSessionService.BuildCdsStopTransitionFilter(
+                staleSnapshot,
+                "user",
+                sessionId,
+                DateTime.UtcNow),
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.Status, InfraAgentSessionStatuses.Stopping)
+                .Set(x => x.ActiveMessageId, null)
+                .Set(x => x.StopLeaseOwner, "stale-stop"));
+
+        Assert.Equal(0, staleStop.ModifiedCount);
+        var persisted = await _db.InfraAgentSessions.Find(x => x.Id == sessionId).SingleAsync();
+        Assert.Equal(InfraAgentSessionStatuses.Running, persisted.Status);
+        Assert.Equal("new-message", persisted.ActiveMessageId);
+        Assert.Equal(cleanupRequestedAt, persisted.CleanupRequestedAt);
     }
 
     [Fact]

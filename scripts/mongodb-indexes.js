@@ -1143,6 +1143,17 @@ db.hosted_sites.createIndex(
   { name: "idx_hosted_sites_owner_folder" }
 )
 
+// collection: infra_agent_sessions
+// One-shot design sessions persist remote cleanup intent here. The API cleanup worker scans only
+// dated requests; the partial index keeps normal reusable sessions out of the recovery index.
+db.infra_agent_sessions.createIndex(
+  { "CleanupNextAttemptAt": 1, "CleanupRequestedAt": 1, "ActiveMessageId": 1, "Status": 1, "StopLeaseExpiresAt": 1 },
+  {
+    name: "idx_infra_agent_sessions_cleanup_requested",
+    partialFilterExpression: { "CleanupRequestedAt": { $type: "date" } }
+  }
+)
+
 // collection: document_store_share_links
 // 按 Token 唯一；按创建者或知识库倒序查询
 db.document_store_share_links.createIndex(

@@ -214,6 +214,10 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
         var deadline = DateTime.UtcNow.Add(RunTimeout);
         var afterSeq = 0L;
         var nextSessionStatusCheckAt = DateTime.MinValue;
+        var cleanupScheduled = false;
+        var completedTurnObserved = false;
+        string? completedCdsSessionId = null;
+        string? completedMessageId = null;
 
         try
         {
@@ -283,6 +287,21 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                                 "OpenDesign 远程执行失败，请在 CDS 会话日志中查看原因后重试");
                         case InfraAgentEventTypes.Done:
                             var html = await _workspaceBroker.ReadResultHtmlAsync(run.Id, CancellationToken.None);
+                            completedTurnObserved = true;
+                            completedCdsSessionId = item.CdsSourceSessionId ?? session.CdsSessionId;
+                            completedMessageId = ReadPayloadString(item.PayloadJson, "clientMessageId");
+                            var scheduled = await _sessions.ScheduleStopAsync(
+                                run.UserId,
+                                session.Id,
+                                completedCdsSessionId ?? string.Empty,
+                                completedMessageId ?? string.Empty,
+                                CancellationToken.None);
+                            if (scheduled == null)
+                            {
+                                throw new InvalidOperationException(
+                                    "OpenDesign 已生成产物，但无法登记远程资源清理，请重试");
+                            }
+                            cleanupScheduled = true;
                             yield return new DesignArtifactExecutorChunk("delta", html);
                             yield break;
                     }
@@ -317,11 +336,29 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
         {
             try
             {
-                await _sessions.StopAsync(run.UserId, session.Id, CancellationToken.None);
+                if (!cleanupScheduled && completedTurnObserved)
+                {
+                    var scheduled = await _sessions.ScheduleStopAsync(
+                        run.UserId,
+                        session.Id,
+                        completedCdsSessionId ?? string.Empty,
+                        completedMessageId ?? string.Empty,
+                        CancellationToken.None);
+                    cleanupScheduled = scheduled != null;
+                }
+                else if (!cleanupScheduled)
+                {
+                    await _sessions.StopAsync(run.UserId, session.Id, CancellationToken.None);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "停止 OpenDesign 远程会话失败 session={SessionId}", session.Id);
+                _logger.LogWarning(
+                    ex,
+                    completedTurnObserved
+                        ? "登记已完成 OpenDesign 会话清理账本失败 session={SessionId}"
+                        : "停止未完成的 OpenDesign 远程会话失败 session={SessionId}",
+                    session.Id);
             }
         }
     }

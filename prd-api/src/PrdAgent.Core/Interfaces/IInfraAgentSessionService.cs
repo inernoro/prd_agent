@@ -35,6 +35,20 @@ public interface IInfraAgentSessionService
 
     Task RunRuntimeJobAsync(string userId, string id, string messageId, string content, CancellationToken ct);
 
+    /// <summary>
+    /// Persistently records that a completed one-shot session must be reclaimed.
+    /// The background cleanup worker owns remote stop retries so artifact delivery never waits on CDS cleanup.
+    /// </summary>
+    Task<InfraAgentSessionView?> ScheduleStopAsync(
+        string userId,
+        string id,
+        string expectedCdsSessionId,
+        string expectedMessageId,
+        CancellationToken ct);
+
+    /// <summary>Reclaims a bounded batch of persisted cleanup requests whose stop lease is available.</summary>
+    Task<int> RecoverPendingStopsAsync(CancellationToken ct);
+
     Task<InfraAgentSessionView?> StopAsync(string userId, string id, CancellationToken ct);
 
     Task<InfraAgentSessionView?> ArchiveAsync(string userId, string id, CancellationToken ct);

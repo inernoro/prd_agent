@@ -57,6 +57,22 @@ public class InfraAgentSession
 
     public DateTime? StopLeaseExpiresAt { get; set; }
 
+    /// <summary>
+    /// Durable cleanup ledger for one-shot sessions. A background worker keeps retrying until remote cleanup
+    /// reaches Stopped; successful business output is not coupled to this operational lifecycle.
+    /// </summary>
+    public DateTime? CleanupRequestedAt { get; set; }
+
+    public string? CleanupCdsSessionId { get; set; }
+
+    public string? CleanupMessageId { get; set; }
+
+    public int CleanupAttemptCount { get; set; }
+
+    public DateTime? CleanupNextAttemptAt { get; set; }
+
+    public string? CleanupLastError { get; set; }
+
     /// <summary>创建回包迟到或补偿失败时仍需回收的 CDS 会话身份。</summary>
     public List<string> PendingCdsSessionIds { get; set; } = [];
 
@@ -98,6 +114,9 @@ public class InfraAgentSession
     public string? ManualTakeoverReason { get; set; }
 
     public string? LastError { get; set; }
+
+    /// <summary>最后一轮成功投影的稳定消息身份；用于把一次性会话清理绑定到准确轮次。</summary>
+    public string? LastCompletedMessageId { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

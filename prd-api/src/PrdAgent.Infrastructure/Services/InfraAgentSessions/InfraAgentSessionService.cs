@@ -52,6 +52,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         TimeSpan.FromMilliseconds(800)
     ];
     private static readonly TimeSpan CdsStopLeaseDuration = TimeSpan.FromMinutes(2);
+    private const int PendingStopRecoveryBatchSize = 20;
     private static readonly TimeSpan CdsStartLeaseDuration = TimeSpan.FromMinutes(2);
     private const int MaxCdsErrorMessageChars = 512;
     private readonly MongoDbContext _db;
@@ -325,6 +326,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
         if (session == null) return null;
+        if (session.CleanupRequestedAt != null)
+        {
+            return ToView(session);
+        }
         if (!string.IsNullOrWhiteSpace(session.CdsSessionId)
             && session.Status is InfraAgentSessionStatuses.Creating
                 or InfraAgentSessionStatuses.Running
@@ -376,7 +381,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Builders<InfraAgentSession>.Filter.Eq(x => x.Id, id),
             Builders<InfraAgentSession>.Filter.Eq(x => x.UserId, userId),
             Builders<InfraAgentSession>.Filter.Eq(x => x.Status, session.Status),
-            Builders<InfraAgentSession>.Filter.Eq(x => x.StartAttemptId, session.StartAttemptId));
+            Builders<InfraAgentSession>.Filter.Eq(x => x.StartAttemptId, session.StartAttemptId),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.CleanupRequestedAt, null));
         var startTransition = await _db.InfraAgentSessions.UpdateOneAsync(
             startTransitionFilter,
             Builders<InfraAgentSession>.Update
@@ -1176,10 +1182,170 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return ToView(session);
     }
 
-    public async Task<InfraAgentSessionView?> StopAsync(string userId, string id, CancellationToken ct)
+    public async Task<InfraAgentSessionView?> ScheduleStopAsync(
+        string userId,
+        string id,
+        string expectedCdsSessionId,
+        string expectedMessageId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(expectedCdsSessionId)
+            || string.IsNullOrWhiteSpace(expectedMessageId))
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                "完成事件缺少稳定会话或消息身份，不能安全登记资源清理",
+                StatusCodes.Status502BadGateway);
+        }
+
+        var now = DateTime.UtcNow;
+        var completedTurn = Builders<InfraAgentSession>.Filter.Or(
+            Builders<InfraAgentSession>.Filter.And(
+                Builders<InfraAgentSession>.Filter.Eq(x => x.Status, InfraAgentSessionStatuses.Running),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.ActiveMessageId, expectedMessageId)),
+            Builders<InfraAgentSession>.Filter.And(
+                Builders<InfraAgentSession>.Filter.Eq(x => x.Status, InfraAgentSessionStatuses.Idle),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.ActiveMessageId, null),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.LastCompletedMessageId, expectedMessageId)));
+        var scheduled = await _db.InfraAgentSessions.FindOneAndUpdateAsync(
+            Builders<InfraAgentSession>.Filter.And(
+                Builders<InfraAgentSession>.Filter.Eq(x => x.Id, id),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.UserId, userId),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.CdsSessionId, expectedCdsSessionId),
+                completedTurn,
+                Builders<InfraAgentSession>.Filter.Eq(x => x.CleanupRequestedAt, null)),
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.CleanupRequestedAt, now)
+                .Set(x => x.CleanupCdsSessionId, expectedCdsSessionId)
+                .Set(x => x.CleanupMessageId, expectedMessageId)
+                .Set(x => x.CleanupAttemptCount, 0)
+                .Set(x => x.CleanupNextAttemptAt, now)
+                .Set(x => x.CleanupLastError, null)
+                .Set(x => x.UpdatedAt, now),
+            new FindOneAndUpdateOptions<InfraAgentSession>
+            {
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        if (scheduled != null)
+        {
+            try
+            {
+                await AppendRawEventAsync(
+                    scheduled.Id,
+                    await NextEventSeqAsync(scheduled.Id, ct),
+                    InfraAgentEventTypes.Log,
+                    JsonSerializer.Serialize(new
+                    {
+                        level = "info",
+                        source = "session-cleanup-worker",
+                        message = "completed session cleanup scheduled"
+                    }),
+                    ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Completed cleanup ledger persisted but audit append failed session={SessionId}",
+                    scheduled.Id);
+            }
+            return ToView(scheduled);
+        }
+
+        var current = await FindOwnedSessionAsync(userId, id, ct);
+        if (current == null) return null;
+        if (current.Status == InfraAgentSessionStatuses.Stopped
+            || current.CleanupRequestedAt != null
+                && string.Equals(current.CleanupCdsSessionId, expectedCdsSessionId, StringComparison.Ordinal)
+                && string.Equals(current.CleanupMessageId, expectedMessageId, StringComparison.Ordinal))
+        {
+            return ToView(current);
+        }
+        throw new InfraAgentSessionException(
+            InfraAgentSessionErrorCodes.SessionStillRunning,
+            "远程会话已进入其他轮次，不能把旧完成事件附着到当前资源清理",
+            StatusCodes.Status409Conflict);
+    }
+
+    public async Task<int> RecoverPendingStopsAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var leaseAvailable = Builders<InfraAgentSession>.Filter.Or(
+            Builders<InfraAgentSession>.Filter.Ne(x => x.Status, InfraAgentSessionStatuses.Stopping),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.StopLeaseExpiresAt, null),
+            Builders<InfraAgentSession>.Filter.Lte(x => x.StopLeaseExpiresAt, now));
+        var candidates = await _db.InfraAgentSessions
+            .Find(Builders<InfraAgentSession>.Filter.And(
+                Builders<InfraAgentSession>.Filter.Ne(x => x.CleanupRequestedAt, null),
+                Builders<InfraAgentSession>.Filter.Or(
+                    Builders<InfraAgentSession>.Filter.Eq(x => x.CleanupNextAttemptAt, null),
+                    Builders<InfraAgentSession>.Filter.Lte(x => x.CleanupNextAttemptAt, now)),
+                Builders<InfraAgentSession>.Filter.Ne(x => x.Status, InfraAgentSessionStatuses.Stopped),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.ActiveMessageId, null),
+                leaseAvailable))
+            .SortBy(x => x.CleanupNextAttemptAt)
+            .ThenBy(x => x.CleanupRequestedAt)
+            .Limit(PendingStopRecoveryBatchSize)
+            .ToListAsync(ct);
+
+        var stoppedCount = 0;
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                var result = await StopAsyncCore(
+                    candidate.UserId,
+                    candidate.Id,
+                    ct,
+                    expectedCleanup: candidate,
+                    cleanupDueAt: now);
+                if (result?.Status == InfraAgentSessionStatuses.Stopped)
+                {
+                    stoppedCount++;
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Persisted infra agent cleanup remains pending session={SessionId}",
+                    candidate.Id);
+            }
+        }
+
+        return stoppedCount;
+    }
+
+    public Task<InfraAgentSessionView?> StopAsync(string userId, string id, CancellationToken ct)
+        => StopAsyncCore(userId, id, ct, expectedCleanup: null, cleanupDueAt: null);
+
+    private async Task<InfraAgentSessionView?> StopAsyncCore(
+        string userId,
+        string id,
+        CancellationToken ct,
+        InfraAgentSession? expectedCleanup,
+        DateTime? cleanupDueAt)
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
         if (session == null) return null;
+        if (expectedCleanup != null
+            && !CanClaimScheduledCleanup(session, expectedCleanup, cleanupDueAt!.Value))
+        {
+            return ToView(session);
+        }
+
+        // CleanupRequestedAt is the durable authority written only after the caller has accepted
+        // a completed artifact. Historical Done events are deliberately not consulted: an old
+        // terminal event must never soften failure handling for an explicit stop or a newer turn.
+        var deferCompletedTurnStopFailure = ShouldDeferScheduledCleanupFailure(
+            session.Status,
+            session.ActiveMessageId,
+            session.CleanupRequestedAt);
 
         if (CanReturnStoppedWithoutCleanup(
             session.Status,
@@ -1192,21 +1358,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var stoppingAt = DateTime.UtcNow;
         var stopLeaseOwner = $"stop_{Guid.NewGuid():N}";
         var stopLeaseExpiresAt = stoppingAt + CdsStopLeaseDuration;
-        var leaseAvailable = Builders<InfraAgentSession>.Filter.Or(
-            Builders<InfraAgentSession>.Filter.Ne(x => x.Status, InfraAgentSessionStatuses.Stopping),
-            Builders<InfraAgentSession>.Filter.Eq(x => x.StopLeaseExpiresAt, null),
-            Builders<InfraAgentSession>.Filter.Lte(x => x.StopLeaseExpiresAt, stoppingAt));
-        var requiresRemoteCleanup = Builders<InfraAgentSession>.Filter.Or(
-            Builders<InfraAgentSession>.Filter.Ne(x => x.Status, InfraAgentSessionStatuses.Stopped),
-            Builders<InfraAgentSession>.Filter.Ne(x => x.StartAttemptId, null),
-            Builders<InfraAgentSession>.Filter.Not(
-                Builders<InfraAgentSession>.Filter.Size(x => x.PendingCdsSessionIds, 0)));
         var transition = await _db.InfraAgentSessions.UpdateOneAsync(
-            Builders<InfraAgentSession>.Filter.And(
-                Builders<InfraAgentSession>.Filter.Eq(x => x.Id, id),
-                Builders<InfraAgentSession>.Filter.Eq(x => x.UserId, userId),
-                requiresRemoteCleanup,
-                leaseAvailable),
+            BuildCdsStopTransitionFilter(session, userId, id, stoppingAt),
             Builders<InfraAgentSession>.Update
                 .Set(x => x.Status, InfraAgentSessionStatuses.Stopping)
                 .Set(x => x.ActiveMessageId, null)
@@ -1330,8 +1483,14 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         catch (Exception ex)
         {
             var safeError = SanitizeCdsErrorMessage(ex.Message, "停止 CDS Agent 会话失败");
-            var markedFailed = await MarkStopFailedAsync(session, stopLeaseOwner, safeError, CancellationToken.None);
-            if (!markedFailed)
+            var stopFailureRecorded = deferCompletedTurnStopFailure
+                ? await MarkCompletedTurnStopRetryPendingAsync(
+                    session,
+                    stopLeaseOwner,
+                    safeError,
+                    CancellationToken.None)
+                : await MarkStopFailedAsync(session, stopLeaseOwner, safeError, CancellationToken.None);
+            if (!stopFailureRecorded)
             {
                 var current = await FindOwnedSessionAsync(userId, id, CancellationToken.None);
                 if (current?.Status == InfraAgentSessionStatuses.Stopped)
@@ -1374,7 +1533,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             .Set(x => x.ActiveMessageId, null)
             .Set(x => x.StartAttemptId, null)
             .Set(x => x.StopLeaseOwner, null)
-            .Set(x => x.StopLeaseExpiresAt, null);
+            .Set(x => x.StopLeaseExpiresAt, null)
+            .Set(x => x.CleanupRequestedAt, null)
+            .Set(x => x.CleanupCdsSessionId, null)
+            .Set(x => x.CleanupMessageId, null)
+            .Set(x => x.CleanupAttemptCount, 0)
+            .Set(x => x.CleanupNextAttemptAt, null)
+            .Set(x => x.CleanupLastError, null);
 
         var stopped = await _db.InfraAgentSessions.UpdateOneAsync(
             x => x.Id == id
@@ -2274,6 +2439,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             HttpMethod.Post,
             $"/api/projects/{Uri.EscapeDataString(projectId)}/agent-sessions/{Uri.EscapeDataString(cdsSessionId)}/stop");
 
+    internal static CdsSessionStopRequest BuildCdsSessionReadRequest(string projectId, string cdsSessionId)
+        => new(
+            HttpMethod.Get,
+            $"/api/projects/{Uri.EscapeDataString(projectId)}/agent-sessions/{Uri.EscapeDataString(cdsSessionId)}");
+
     internal static CdsStopResponseDisposition ClassifyCdsStopResponse(int statusCode, string body)
     {
         if (statusCode is >= 200 and <= 299) return CdsStopResponseDisposition.Success;
@@ -2311,6 +2481,53 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
 
         return CdsStopResponseDisposition.Failure;
+    }
+
+    internal static CdsStopResponseDisposition ClassifyCdsStopReadback(int statusCode, string body)
+    {
+        var errorCode = ReadCdsErrorCode(body);
+        if (statusCode == StatusCodes.Status404NotFound
+            && string.Equals(errorCode, "session_not_found", StringComparison.OrdinalIgnoreCase))
+        {
+            return CdsStopResponseDisposition.AlreadyStopped;
+        }
+        if (statusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden)
+        {
+            return CdsStopResponseDisposition.Failure;
+        }
+        if (statusCode is < 200 or > 299)
+        {
+            return statusCode is StatusCodes.Status408RequestTimeout
+                or StatusCodes.Status429TooManyRequests
+                or StatusCodes.Status500InternalServerError
+                or StatusCodes.Status502BadGateway
+                or StatusCodes.Status503ServiceUnavailable
+                or StatusCodes.Status504GatewayTimeout
+                ? CdsStopResponseDisposition.Retry
+                : CdsStopResponseDisposition.Failure;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("item", out var item) || item.ValueKind != JsonValueKind.Object)
+            {
+                return CdsStopResponseDisposition.Failure;
+            }
+            var status = GetString(item, "status");
+            if (string.Equals(status, "stopped", StringComparison.OrdinalIgnoreCase))
+            {
+                return CdsStopResponseDisposition.AlreadyStopped;
+            }
+            return status?.ToLowerInvariant() is "creating" or "idle" or "running" or "stopping" or "failed"
+                ? CdsStopResponseDisposition.Retry
+                : CdsStopResponseDisposition.Failure;
+        }
+        catch (JsonException)
+        {
+            return CdsStopResponseDisposition.Failure;
+        }
     }
 
     private static bool IsCdsSemanticStopFailure(string? errorCode)
@@ -2456,11 +2673,70 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             && pendingSessionCount == 0
             && string.IsNullOrWhiteSpace(startAttemptId);
 
+    internal static bool ShouldDeferScheduledCleanupFailure(
+        string status,
+        string? activeMessageId,
+        DateTime? cleanupRequestedAt)
+        => string.IsNullOrWhiteSpace(activeMessageId)
+            && cleanupRequestedAt != null;
+
+    internal static TimeSpan CalculateCleanupRetryDelay(int completedAttemptCount)
+    {
+        var exponent = Math.Clamp(completedAttemptCount - 1, 0, 6);
+        return TimeSpan.FromSeconds(Math.Min(300, 5 * Math.Pow(2, exponent)));
+    }
+
+    internal static bool CanClaimScheduledCleanup(
+        InfraAgentSession current,
+        InfraAgentSession expected,
+        DateTime dueAt)
+        => current.CleanupRequestedAt != null
+            && string.Equals(current.CdsSessionId, expected.CdsSessionId, StringComparison.Ordinal)
+            && string.Equals(current.CdsSessionId, current.CleanupCdsSessionId, StringComparison.Ordinal)
+            && string.Equals(current.CleanupCdsSessionId, expected.CleanupCdsSessionId, StringComparison.Ordinal)
+            && string.Equals(current.CleanupMessageId, expected.CleanupMessageId, StringComparison.Ordinal)
+            && current.CleanupRequestedAt == expected.CleanupRequestedAt
+            && current.CleanupAttemptCount == expected.CleanupAttemptCount
+            && current.CleanupNextAttemptAt == expected.CleanupNextAttemptAt
+            && (current.CleanupNextAttemptAt == null || current.CleanupNextAttemptAt <= dueAt)
+            && string.IsNullOrWhiteSpace(current.ActiveMessageId);
+
     internal static bool CanAcquireCdsStopLease(string currentStatus, DateTime? leaseExpiresAt, DateTime now)
         => currentStatus != InfraAgentSessionStatuses.Stopped
             && (currentStatus != InfraAgentSessionStatuses.Stopping
                 || leaseExpiresAt == null
                 || leaseExpiresAt <= now);
+
+    internal static FilterDefinition<InfraAgentSession> BuildCdsStopTransitionFilter(
+        InfraAgentSession snapshot,
+        string userId,
+        string id,
+        DateTime now)
+    {
+        var leaseAvailable = Builders<InfraAgentSession>.Filter.Or(
+            Builders<InfraAgentSession>.Filter.Ne(x => x.Status, InfraAgentSessionStatuses.Stopping),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.StopLeaseExpiresAt, null),
+            Builders<InfraAgentSession>.Filter.Lte(x => x.StopLeaseExpiresAt, now));
+        var requiresRemoteCleanup = Builders<InfraAgentSession>.Filter.Or(
+            Builders<InfraAgentSession>.Filter.Ne(x => x.Status, InfraAgentSessionStatuses.Stopped),
+            Builders<InfraAgentSession>.Filter.Ne(x => x.StartAttemptId, null),
+            Builders<InfraAgentSession>.Filter.Not(
+                Builders<InfraAgentSession>.Filter.Size(x => x.PendingCdsSessionIds, 0)));
+        return Builders<InfraAgentSession>.Filter.And(
+            Builders<InfraAgentSession>.Filter.Eq(x => x.Id, id),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.UserId, userId),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.Status, snapshot.Status),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.ActiveMessageId, snapshot.ActiveMessageId),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.CdsSessionId, snapshot.CdsSessionId),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.StartAttemptId, snapshot.StartAttemptId),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.CleanupRequestedAt, snapshot.CleanupRequestedAt),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.CleanupCdsSessionId, snapshot.CleanupCdsSessionId),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.CleanupMessageId, snapshot.CleanupMessageId),
+            Builders<InfraAgentSession>.Filter.Eq(x => x.CleanupAttemptCount, snapshot.CleanupAttemptCount),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.CleanupNextAttemptAt, snapshot.CleanupNextAttemptAt),
+            requiresRemoteCleanup,
+            leaseAvailable);
+    }
 
     private async Task<string?> FindCdsSessionIdByClientRequestIdAsync(
         InfraAgentSession session,
@@ -2605,6 +2881,33 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         }),
                         CancellationToken.None);
                     return;
+                }
+
+                if ((int)response.StatusCode == StatusCodes.Status400BadRequest
+                    && string.IsNullOrWhiteSpace(ReadCdsErrorCode(body)))
+                {
+                    var readRequest = BuildCdsSessionReadRequest(session.CdsProjectId, cdsSessionId);
+                    using var readbackCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    using var readback = await SendCdsJsonAsync(
+                        readRequest.Method,
+                        connection,
+                        token,
+                        readRequest.Path,
+                        body: null,
+                        ct: readbackCts.Token,
+                        allowErrorResponse: true);
+                    var readbackBody = await readback.Content.ReadAsStringAsync(CancellationToken.None);
+                    var readbackDisposition = ClassifyCdsStopReadback(
+                        (int)readback.StatusCode,
+                        readbackBody);
+                    if (readbackDisposition == CdsStopResponseDisposition.AlreadyStopped)
+                    {
+                        return;
+                    }
+                    if (readbackDisposition == CdsStopResponseDisposition.Retry)
+                    {
+                        disposition = CdsStopResponseDisposition.Retry;
+                    }
                 }
 
                 var failure = BuildCdsRequestFailureMessage((int)response.StatusCode, body);
@@ -4346,6 +4649,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Builders<InfraAgentSession>.Update
                 .Set(x => x.Status, InfraAgentSessionStatuses.Idle)
                 .Set(x => x.ActiveMessageId, null)
+                .Set(x => x.LastCompletedMessageId, clientMessageId ?? replyTo?.Id)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
         if (doneProjection.MatchedCount != 0) return true;
@@ -4564,6 +4868,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 Builders<InfraAgentSession>.Filter.Eq(x => x.UserId, session.UserId),
                 Builders<InfraAgentSession>.Filter.Eq(x => x.CdsSessionId, session.CdsSessionId),
                 Builders<InfraAgentSession>.Filter.Eq(x => x.ActiveMessageId, null),
+                Builders<InfraAgentSession>.Filter.Eq(x => x.CleanupRequestedAt, null),
                 Builders<InfraAgentSession>.Filter.In(x => x.Status, CdsRuntimeWritableStatuses)),
             Builders<InfraAgentSession>.Update
                 .Set(x => x.ActiveMessageId, messageId)
@@ -4684,6 +4989,55 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             await NextEventSeqAsync(session.Id, ct),
             InfraAgentEventTypes.Error,
             JsonSerializer.Serialize(new { message = error }),
+            ct);
+        return true;
+    }
+
+    private async Task<bool> MarkCompletedTurnStopRetryPendingAsync(
+        InfraAgentSession session,
+        string stopLeaseOwner,
+        string safeError,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var nextAttemptCount = session.CleanupAttemptCount + 1;
+        var nextAttemptAt = now + CalculateCleanupRetryDelay(nextAttemptCount);
+        var result = await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id
+                && x.Status == InfraAgentSessionStatuses.Stopping
+                && x.StopLeaseOwner == stopLeaseOwner,
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.LastError, null)
+                .Set(x => x.StopLeaseOwner, null)
+                .Set(x => x.StopLeaseExpiresAt, null)
+                .Set(x => x.CleanupAttemptCount, nextAttemptCount)
+                .Set(x => x.CleanupNextAttemptAt, nextAttemptAt)
+                .Set(x => x.CleanupLastError, safeError)
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        if (result.ModifiedCount == 0) return false;
+
+        session.Status = InfraAgentSessionStatuses.Stopping;
+        session.LastError = null;
+        session.StopLeaseOwner = null;
+        session.StopLeaseExpiresAt = null;
+        session.CleanupAttemptCount = nextAttemptCount;
+        session.CleanupNextAttemptAt = nextAttemptAt;
+        session.CleanupLastError = safeError;
+        session.UpdatedAt = now;
+        await AppendRawEventAsync(
+            session.Id,
+            await NextEventSeqAsync(session.Id, ct),
+            InfraAgentEventTypes.Log,
+            JsonSerializer.Serialize(new
+            {
+                level = "warning",
+                source = "cds-session-transport",
+                message = "completed session cleanup remains pending durable retry",
+                reason = safeError,
+                attempt = nextAttemptCount,
+                nextAttemptAt
+            }),
             ct);
         return true;
     }
