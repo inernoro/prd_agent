@@ -86,14 +86,17 @@ export function buildHeadline({ clients, today, recentCalls, hasHistory }: Headl
   const bad = denied + failed;
 
   if (calls === 0) {
-    const used = active.filter((c) => c.lastUsedAt).length;
+    const fresh = active.filter((c) => !c.lastUsedAt).length;
+    // 从来没用过的那几台：给一句能照着做的下一步。全都用过、只是今天没动：判断句已经说完了，
+    // 再补一句安抚（「不是坏了」）没有信息量，真机上看着就是一段占地方的字。
+    // 判据看「有没有一台从来没用过」，不看「有没有一台用过」：一台老的用过、一台新的没连上，
+    // 新的那台照样需要这句引导（review 抓出来的混合场景）。
+    const who = fresh === active.length ? '这几台' : `其中 ${fresh} 台`;
     return {
       verdict: `${active.length} 台客户端接着，今天一次都还没调过。`,
-      // 从来没用过：给一句能照着做的下一步。用过、只是今天没动：判断句已经说完了，
-      // 再补一句安抚（「不是坏了」）没有信息量，真机上看着就是一段占地方的字。
       detail:
-        used === 0
-          ? '这几台从来没用过 —— 粘完配置记得重启客户端，再跟它说一句「把这周周报做成一页网页发出来」。'
+        fresh > 0
+          ? `${who}从来没用过 —— 粘完配置记得重启客户端，再跟它说一句「把这周周报做成一页网页发出来」。`
           : null,
     };
   }

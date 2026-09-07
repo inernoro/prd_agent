@@ -503,15 +503,34 @@ function ClientRow({
           >
             {client.name}
           </span>
-          <span
-            className="shrink-0 text-[16px] font-bold tabular-nums"
-            style={{ color: 'var(--text-secondary)' }}
+          {/* 钥匙前缀在折叠态就露着：名字不唯一（发钥匙时不查重），两把同名的折叠后只靠它分得开，
+              而「断开」是收不回来的动作，点错了就得重发一把（review 抓出来的）。 */}
+          <code
+            className="shrink-0 text-[10.5px]"
+            style={{ color: 'var(--text-disabled)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}
+            title="钥匙前缀，同名钥匙靠它区分"
           >
-            {client.todayCalls}
-          </span>
-          <span className="shrink-0 text-[10.5px]" style={{ color: 'var(--text-disabled)' }}>
-            次
-          </span>
+            {client.keyPrefix}…
+          </code>
+          {client.isActive && !client.lastUsedAt ? (
+            // 从来没用过的那把，折叠态就说出来：今天 0 次与从来没连上是两件事，
+            // 后者要用户去做点什么（重启客户端、发第一句话），不能藏进展开区。
+            <span className="shrink-0 text-[10.5px]" style={{ color: 'var(--semantic-warning-text)' }}>
+              还没用过
+            </span>
+          ) : (
+            <>
+              <span
+                className="shrink-0 text-[16px] font-bold tabular-nums"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                {client.todayCalls}
+              </span>
+              <span className="shrink-0 text-[10.5px]" style={{ color: 'var(--text-disabled)' }}>
+                次
+              </span>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -610,12 +629,6 @@ function ClientRow({
                 : '跟着你的权限走：以后平台新上一块能力，它自动就有；你被收回的权限它也立刻跟着没。'}
             </span>
             <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              <code
-                style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}
-              >
-                {client.keyPrefix}…
-              </code>
-              {' · '}
               {client.lastUsedAt ? (
                 <>
                   最后活跃 <RelativeTime value={client.lastUsedAt} />
