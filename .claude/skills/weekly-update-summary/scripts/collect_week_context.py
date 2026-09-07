@@ -719,10 +719,20 @@ def assert_not_shallow():
     try:
         r = subprocess.run(["git", "rev-parse", "--is-shallow-repository"],
                            capture_output=True, text=True, timeout=10)
-        shallow = r.stdout.strip() == "true"
     except Exception as e:
         return {"checked": False, "reason": f"无法判定：{e}"}
-    if not shallow:
+
+    # git 失败时 stdout 是空串，而空串 != "true"，直接比字符串会把「没查成」
+    # 判成「不是浅克隆」，发出一份假的合格证明——守卫自己不会红，正是
+    # predicate-and-wiring-discipline 形状 4b。所以先看返回码。
+    if r.returncode != 0:
+        return {"checked": False,
+                "reason": f"git rev-parse 退出码 {r.returncode}：{(r.stderr or '').strip()[:120]}"}
+
+    out = r.stdout.strip()
+    if out not in ("true", "false"):
+        return {"checked": False, "reason": f"git rev-parse 返回了预期外的值：{out!r}"}
+    if out == "false":
         return {"checked": True, "shallow": False}
     n = subprocess.run(["git", "rev-list", "--count", "HEAD"],
                        capture_output=True, text=True).stdout.strip() or "?"
@@ -757,6 +767,10 @@ def main():
         shallow_state = {"checked": False, "reason": "--allow-shallow 显式放行"}
     else:
         shallow_state = assert_not_shallow()
+        if not shallow_state.get("checked"):
+            sys.stderr.write(
+                "[提醒] 未能判定仓库深度（%s）。若本次实际是浅克隆，"
+                "提交类数字会少算且不会报错，请自行核对。\n" % shallow_state.get("reason", "原因未知"))
 
     base, start, end = a.base.rstrip("/"), a.week_start, a.week_end
     ctx = {"weekStart": start, "weekEnd": end, "base": base, "project": a.project,
