@@ -567,7 +567,7 @@ function ClientRow({
             onClick={onEditQuota}
             aria-label="调整这台客户端的每日上限"
             title="调整这台客户端的每日上限"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] sm:w-auto sm:gap-1.5 sm:px-2.5"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[9px] sm:h-8 sm:w-auto sm:gap-1.5 sm:px-2.5"
             style={{
               background: 'var(--bg-sunken)',
               border: '1px solid var(--border-subtle)',
@@ -586,7 +586,7 @@ function ClientRow({
               onClick={onRevoke}
               aria-label="断开这台客户端（立刻作废这把钥匙）"
               title="立刻作废这把钥匙，这台客户端马上就调不动了"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] sm:w-auto sm:gap-1.5 sm:px-2.5"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[9px] sm:h-8 sm:w-auto sm:gap-1.5 sm:px-2.5"
               style={{
                 background: 'var(--button-danger-bg)',
                 border: '1px solid var(--button-danger-border)',
