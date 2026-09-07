@@ -116,6 +116,32 @@ def extract_snippet():
     return snippet.replace(".claude/skills", abs_path)
 
 
+def gate_def(snippet):
+    """从片段里取 gate() 那一行定义，供单独调用包装函数用。"""
+    for line in snippet.split("\n"):
+        if line.strip().startswith("gate()"):
+            return line
+    raise AssertionError("片段里找不到 gate() 定义——本守卫的前提变了")
+
+
+def run_via_wrapper(snippet, cwd, *args, gate_line=None):
+    """经**文档里那个包装函数**调用，而不是直接调 Python。
+
+    round 6 的回归正是包装层把 --allow-shallow 吃掉（gate() 没转发 "$@"）。
+    如果这里绕过包装直接调采集器，那次回归重演时整套用例照样全绿——守卫会漏掉
+    它唯一见过的真实回归。
+    """
+    line = gate_line or gate_def(snippet)
+    script = line + "\ngate " + " ".join(args) + "\n"
+    with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as f:
+        f.write(script)
+        p = f.name
+    try:
+        return subprocess.run(["bash", p], cwd=cwd, capture_output=True, text=True).returncode
+    finally:
+        os.unlink(p)
+
+
 def run_snippet(snippet, cwd, extra_path=None, python_shim=None):
     e = dict(os.environ)
     parts = [p for p in (extra_path, python_shim) if p]
@@ -169,6 +195,12 @@ def main():
         check("接线-闸自己崩了也拒绝",
               run_snippet(snip, deep, python_shim=crash_py), 1)
 
+        # 逃生阀必须经**包装函数**验，不能绕过它直接调采集器：round 6 的回归就是
+        # gate() 没转发 "$@"，直接调 Python 的用例对那次回归完全无感。
+        s_hatch = make_shallow(origin, os.path.join(tmp, "s7"))
+        check("接线-gate --allow-shallow 经包装函数放行", run_via_wrapper(snip, s_hatch, "--allow-shallow"), 0)
+        check("接线-gate 不带 flag 仍拦住", run_via_wrapper(snip, s_hatch), 2)
+
         print("[3/3] mutation：把修复改回事故写法，守卫必须变红")
         # 3a 删掉 *) 分支 → 闸崩掉时应重新变成静默放行
         no_wildcard = re.sub(r"^else\n.*?\n  exit 1\nfi\n?", "fi\n", snip, flags=re.S | re.M)
@@ -189,6 +221,14 @@ def main():
             raise AssertionError("mutation 3b 没改到东西——它证明不了任何事，等于一条空跑的绿灯")
         check("mutation-去掉补后重验则补救成功也会被误拒",
               run_snippet(no_recheck, make_shallow(origin, os.path.join(tmp, "s6"))), 1)
+        # 3c 把 "$@" 从 gate() 里拿掉 —— 这正是 round 6 真实发生过的回归。
+        # 上面那格必须因此变红，否则它守不住它唯一见过的真实回归。
+        stripped = gate_def(snip).replace(' "$@"', "")
+        if stripped == gate_def(snip):
+            raise AssertionError('gate() 定义里没有 "$@"，逃生阀在包装层就是断的')
+        check("mutation-gate() 不转发 \"$@\" 则逃生阀失效",
+              run_via_wrapper(snip, make_shallow(origin, os.path.join(tmp, "s8")),
+                              "--allow-shallow", gate_line=stripped), 2)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
