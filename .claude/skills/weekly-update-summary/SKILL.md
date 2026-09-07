@@ -83,6 +83,12 @@ git log "$DEFAULT_BRANCH" --format="%cd\t%H\t%an\t%s" --date=short | \
    两处走的都是脚本里那一个 `assert_not_shallow()`，不另写第二份判据。**2.0 红过就得从 2.1 整段
    重跑**——`--unshallow` 补的是本地历史，不会回头改写你已经记下的数字。
 
+   **2.0 的退出码三分**：`0` 查过没问题 / `2` 查明是浅克隆 / `3` **没查成**（深度未知）。三者必须
+   分流处理，「没查成」不许当「没问题」放行。`--allow-shallow` 是唯一的显式担责开关，两个调用点
+   都认它。**两处对「没查成」的处理有意不同**：2.0 硬失败（它守的 2.1-2.6 全是深度敏感的 git 统计），
+   2.7 只警告并把判定写进 `repoDepth`（采集器自己那六段数据不依赖仓库深度，在这里也硬失败只会
+   让老 git 环境连不相干的数据都采不到）。
+
    **为什么把它写进脚本而不是写进本文档**：W33 / W34 / W35 / W36 连续四周踩同一个坑——
    容器里的 clone 只有几百个提交，提交数与逐日分布安静地少算约 11%，事后靠人工发现再
    `git fetch --unshallow` 重算。每一期报告的正文都写下了「下期应该断言」，四期无一执行。
@@ -431,9 +437,19 @@ comm -23 /tmp/expected_weeks.txt /tmp/existing_weeks.txt > /tmp/missing_weeks.tx
 所以在任何 git 统计之前先跑一次：
 
 ```bash
-python3 .claude/skills/weekly-update-summary/scripts/collect_week_context.py --check-shallow-only \
-  || { git fetch --unshallow && echo "已补全历史，从 2.1 重跑"; }
+python3 .claude/skills/weekly-update-summary/scripts/collect_week_context.py --check-shallow-only
+case $? in
+  0) : ;;                                                  # 已查明非浅克隆（或已显式放行），继续 2.1
+  2) git fetch --unshallow && echo "已补全历史，从 2.1 重跑" ;;
+  3) echo "仓库深度没查成，先查清楚；确要在深度未知下采集，加 --allow-shallow 担责" >&2; exit 1 ;;
+esac
 ```
+
+**退出码必须分流，不能只判「非零」**：`0` 是查过没问题、`2` 是查明浅克隆、`3` 是**没查成**
+（git 失败、超时、或老于 2.15 的 git 不认这个 flag）。把 3 当成 0 放行，闸就会在查不动的时候
+安静通过；把 3 当成 2 去 `--unshallow`，则是在拿一个没成立的判断做补救动作。真要在深度未知
+或已知浅克隆的情况下采集，用 `--allow-shallow` 显式担责——它在 2.0 和 2.7 都生效，此时报告
+必须注明提交类数字为下限。
 
 **它红过之后，2.1-2.6 必须整段重跑**：`git fetch --unshallow` 只补全了本地历史，不会回头
 改写你已经记下来的数字。只重跑采集器（2.7）而留着 2.1-2.6 的旧值，正是这道闸要防的那种

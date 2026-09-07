@@ -767,12 +767,28 @@ def main():
 
     # 只做断言：供 Phase 2.0 在 git 统计（2.1-2.6）之前调用。走的是同一个
     # assert_not_shallow()，不另写一份判据——两份判据必然漂移（形状 3）。
+    #
+    # 退出码三分，调用方据此分流。关键是「没查成」必须和「查过没问题」分开：
+    # 混成同一个 0，这道闸就会在查不动的时候安静放行——那正是它要防的东西。
+    #   0 = 已查明非浅克隆，或 --allow-shallow 显式放行 → 可以开始 git 统计
+    #   2 = 已查明是浅克隆                             → 先 git fetch --unshallow
+    #   3 = 没查成（git 失败 / 超时 / 老于 2.15 不认这个 flag）→ 深度未知，人来判
     if a.check_shallow_only:
-        st = assert_not_shallow()  # 浅克隆会在这里 exit 2
+        if a.allow_shallow:
+            # 逃生阀在这一步也必须管用：它只在 Phase 2.7 生效、而 2.0 是强制步骤，
+            # 等于把「明知是浅克隆也要采」这条正式支持的路径堵死了。
+            sys.stderr.write("[仓库深度] --allow-shallow 显式放行，不做断言；"
+                             "本次报告的提交类数字须注明为下限。\n")
+            return
+        st = assert_not_shallow()  # 浅克隆在这里 exit 2
         if not st.get("checked"):
-            sys.stderr.write("[提醒] 未能判定仓库深度（%s）。\n" % st.get("reason", "原因未知"))
-        else:
-            sys.stderr.write("[仓库深度] 非浅克隆，可以开始 git 统计。\n")
+            sys.stderr.write(
+                "\n[无法判定] 仓库深度没查成：%s\n"
+                "  深度未知等于「可能在少算而且不报错」，所以这里不放行。\n"
+                "  查清楚再跑；确实要在深度未知的情况下采集，加 --allow-shallow 显式担责"
+                "（报告须注明提交类数字为下限）。\n" % st.get("reason", "原因未知"))
+            sys.exit(3)
+        sys.stderr.write("[仓库深度] 非浅克隆，可以开始 git 统计。\n")
         return
 
     if not a.week_start or not a.week_end:
@@ -784,9 +800,15 @@ def main():
     else:
         shallow_state = assert_not_shallow()
         if not shallow_state.get("checked"):
+            # 这里「没查成」只警告不中止，和 --check-shallow-only 的 exit 3 有意不同：
+            # 本采集器自己产出的六段（日报/验收/缺陷/团队/采用/上周周报）都不依赖仓库深度，
+            # 依赖深度的是手工跑的 Phase 2.1-2.6，那道闸在 2.0 已经按 exit 3 拦过一次了。
+            # 在这里也硬失败，只会让老版本 git 的环境连不依赖深度的数据都采不到。
+            # 判定结果照样写进 repoDepth，谁读输出谁看得见。
             sys.stderr.write(
-                "[提醒] 未能判定仓库深度（%s）。若本次实际是浅克隆，"
-                "提交类数字会少算且不会报错，请自行核对。\n" % shallow_state.get("reason", "原因未知"))
+                "[提醒] 未能判定仓库深度（%s）。本采集器的各段不依赖深度，照常继续；"
+                "但若本次实际是浅克隆，Phase 2.1-2.6 的提交类数字会少算且不报错，请自行核对。\n"
+                % shallow_state.get("reason", "原因未知"))
 
     base, start, end = a.base.rstrip("/"), a.week_start, a.week_end
     ctx = {"weekStart": start, "weekEnd": end, "base": base, "project": a.project,
