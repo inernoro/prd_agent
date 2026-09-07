@@ -83,8 +83,8 @@ git log "$DEFAULT_BRANCH" --format="%cd\t%H\t%an\t%s" --date=short | \
    两处走的都是脚本里那一个 `assert_not_shallow()`，不另写第二份判据。**2.0 红过就得从 2.1 整段
    重跑**——`--unshallow` 补的是本地历史，不会回头改写你已经记下的数字。
 
-   **2.0 的退出码三分**：`0` 查过没问题 / `2` 查明是浅克隆 / `3` **没查成**（深度未知）。三者必须
-   分流处理，「没查成」不许当「没问题」放行。`--allow-shallow` 是唯一的显式担责开关，两个调用点
+   **2.0 的退出码三分 + 默认拒绝**：`0` 查过没问题 / `2` 查明是浅克隆 / `3` **没查成**（深度未知）／
+   其余一律当作「闸没跑起来」拒绝。放行的出口只有 `0` 一个，「没查成」和「没跑成」都不许当「没问题」。`--allow-shallow` 是唯一的显式担责开关，两个调用点
    都认它。**两处对「没查成」的处理有意不同**：2.0 硬失败（它守的 2.1-2.6 全是深度敏感的 git 统计），
    2.7 只警告并把判定写进 `repoDepth`（采集器自己那六段数据不依赖仓库深度，在这里也硬失败只会
    让老 git 环境连不相干的数据都采不到）。
@@ -437,13 +437,19 @@ comm -23 /tmp/expected_weeks.txt /tmp/existing_weeks.txt > /tmp/missing_weeks.tx
 所以在任何 git 统计之前先跑一次：
 
 ```bash
-python3 .claude/skills/weekly-update-summary/scripts/collect_week_context.py --check-shallow-only
-case $? in
-  0) : ;;                                                  # 已查明非浅克隆（或已显式放行），继续 2.1
+python3 .claude/skills/weekly-update-summary/scripts/collect_week_context.py --check-shallow-only; rc=$?
+case $rc in
+  0) : ;;                                                  # 唯一放行出口：已查明非浅克隆（或已显式担责）
   2) git fetch --unshallow && echo "已补全历史，从 2.1 重跑" ;;
   3) echo "仓库深度没查成，先查清楚；确要在深度未知下采集，加 --allow-shallow 担责" >&2; exit 1 ;;
+  *) echo "浅克隆闸返回未预期退出码 $rc——闸本身没跑起来（python 缺失 / 被杀 / 崩溃）。深度未证实，停。" >&2; exit 1 ;;
 esac
 ```
+
+**默认拒绝：只有 `0` 放行，其余一律停。** `case` 没匹配上任何分支时 bash 是**成功**退出的，所以少一条
+`*)` 就等于「闸自己没跑起来 → 当作通过」——python 不在、被 OOM 杀掉、脚本崩在别处，都会从这个缝里
+漏过去。这也是为什么不写成 `if [ $rc -eq 3 ]` 之类的白名单式判断：能放行的出口只有一个，其余全部
+落到拒绝分支，将来再多出什么退出码也不会变成静默通过。
 
 **退出码必须分流，不能只判「非零」**：`0` 是查过没问题、`2` 是查明浅克隆、`3` 是**没查成**
 （git 失败、超时、或老于 2.15 的 git 不认这个 flag）。把 3 当成 0 放行，闸就会在查不动的时候
