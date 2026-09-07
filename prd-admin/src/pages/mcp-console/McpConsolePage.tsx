@@ -329,10 +329,8 @@ export default function McpConsolePage() {
             ) : (
               <>
                 {/* 图例整屏只出现这一次 —— 它是这套色点的说明书，替代的是原来每张卡上
-                    重复一遍的那两三句话。手机端不隐藏：`mobile-first-density` 说图例可以
-                    `hidden sm:` 收掉，前提是「颜色语义靠块色自明」，而这里颜色恰恰是主通道，
-                    收掉它等于把说明书从唯一需要它的那一屏拿走。它也不是控制条（没有交互），
-                    不占「进内容前 ≤1 条控制条」的额度。 */}
+                    重复一遍的那两三句话。手机端它自己收起（`mobile-first-density` 的收纳表），
+                    说明书改走每张卡的展开区：色点行就是展开钮，点开是逐块的文字。 */}
                 <SignalLegend />
                 {clients.map((client) => (
                 <ClientRow

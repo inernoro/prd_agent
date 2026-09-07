@@ -62,9 +62,12 @@ export function CapabilityDot({
  * 常识讲一次就够，每把钥匙自己的例外才值得占卡片上的位置。
  */
 export function SignalLegend() {
+  // 手机端收起：`mobile-first-density` 的收纳表把图例归为「hidden sm: 或收进可展开视图」。
+  // 这里两条都占了——桌面端这一行照旧；手机上说明书收进每张卡：色点行本身就是展开钮，
+  // 点开就是逐块能力的名字与档位文字，比一行图例更贴着它要解释的那几个点。
   return (
     <div
-      className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 rounded-[11px] px-3 py-2"
+      className="hidden flex-wrap items-center gap-x-3.5 gap-y-1.5 rounded-[11px] px-3 py-2 sm:flex"
       style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-subtle)' }}
     >
       <span className="text-[10.5px]" style={{ color: 'var(--text-disabled)' }}>

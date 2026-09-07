@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { CapabilityDot } from '../SignalDots';
+import { CapabilityDot, SignalLegend } from '../SignalDots';
 import { capabilityVisual } from '../capabilityRegistry';
 import { tierLabel, type CapabilityTier } from '../signalEncoding';
 
@@ -112,6 +112,16 @@ describe('图例：常识讲一次，例外才占卡片的位置', () => {
   it('图例整屏只出现一次，不是每张卡重复一遍', () => {
     const uses = page.match(/<SignalLegend\s*\/>/g) ?? [];
     expect(uses.length, '图例出现了不止一次，那就退回成每张卡都在说同一件常识').toBe(1);
+  });
+
+  it('图例手机端收起、桌面端显示，说明书在手机上走每张卡的展开区', () => {
+    // mobile-first-density 的收纳表：图例手机端 hidden sm:，或收进可展开视图。
+    // 这里两条都成立：图例本身 hidden sm:flex；展开区里有逐块能力的名字与档位（上面装饰点那条已钉住）。
+    const html = renderToStaticMarkup(<SignalLegend />);
+    const cls = html.match(/^<div[^>]*class="([^"]*)"/)?.[1] ?? '';
+    const classes = cls.split(/\s+/);
+    expect(classes, '图例在手机端没有收起').toContain('hidden');
+    expect(classes, '图例在桌面端没有显示回来').toContain('sm:flex');
   });
 
   it('客户端卡上不再逐张重复「自动/手动」那两句常识', () => {
