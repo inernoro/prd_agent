@@ -439,7 +439,9 @@ comm -23 /tmp/expected_weeks.txt /tmp/existing_weeks.txt > /tmp/missing_weeks.tx
 所以在任何 git 统计之前先跑一次：
 
 ```bash
-gate() { python3 .claude/skills/weekly-update-summary/scripts/collect_week_context.py --check-shallow-only; }
+gate() { python3 .claude/skills/weekly-update-summary/scripts/collect_week_context.py --check-shallow-only "$@"; }
+# 明知浅克隆、或深度查不动却仍要采集时，用它显式担责（报告须注明提交类数字为下限）：
+#   gate --allow-shallow && echo "已担责放行"
 
 gate; rc=$?
 if [ "$rc" -eq 2 ]; then                                   # 查明是浅克隆：补历史，然后重新验
