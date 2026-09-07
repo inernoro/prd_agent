@@ -708,10 +708,46 @@ def collect_prev_weekly(base, H, prev_title_hint):
             "prevEntry": {"title": hit.get("title"), "entryId": hit.get("id")} if hit else None}
 
 
+def assert_not_shallow():
+    """浅克隆会让本周提交统计少算，且不会报错——只会安静地少。
+
+    W33/W34/W35/W36 连续四周踩同一个坑：容器里的 clone 只有几百个提交，
+    正文数字先按截断值写出来，事后靠人工发现再 git fetch --unshallow 重算。
+    每一期的报告正文都写下「下期应该断言」，但写进报告正文的待办没人执行，
+    所以这一次写进采集脚本——采集是数字的唯一入口，在这里挡住才算数。
+    """
+    try:
+        r = subprocess.run(["git", "rev-parse", "--is-shallow-repository"],
+                           capture_output=True, text=True, timeout=10)
+    except Exception as e:
+        return {"checked": False, "reason": f"无法判定：{e}"}
+
+    # git 失败时 stdout 是空串，而空串 != "true"，直接比字符串会把「没查成」
+    # 判成「不是浅克隆」，发出一份假的合格证明——守卫自己不会红，正是
+    # predicate-and-wiring-discipline 形状 4b。所以先看返回码。
+    if r.returncode != 0:
+        return {"checked": False,
+                "reason": f"git rev-parse 退出码 {r.returncode}：{(r.stderr or '').strip()[:120]}"}
+
+    out = r.stdout.strip()
+    if out not in ("true", "false"):
+        return {"checked": False, "reason": f"git rev-parse 返回了预期外的值：{out!r}"}
+    if out == "false":
+        return {"checked": True, "shallow": False}
+    n = subprocess.run(["git", "rev-list", "--count", "HEAD"],
+                       capture_output=True, text=True).stdout.strip() or "?"
+    sys.stderr.write(
+        "\n[采集中止] 当前仓库是浅克隆（本地仅 %s 个提交），"
+        "本周提交数与逐日分布都会少算，且不会报错。\n"
+        "  先跑：git fetch --unshallow\n"
+        "  确有理由在浅克隆上采集时，加 --allow-shallow 显式放行（报告需注明数字为下限）。\n" % n)
+    sys.exit(2)
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--week-start", required=True)
-    p.add_argument("--week-end", required=True)
+    p.add_argument("--week-start")
+    p.add_argument("--week-end")
     p.add_argument("--base", default="https://main-prd-agent.miduo.org")
     p.add_argument("--impersonate", default="inernoro")
     p.add_argument("--project", default="prd-agent")
@@ -722,10 +758,61 @@ def main():
                    help="上线→采用回溯几周（默认 4：本周之前的 4 份周报）")
     p.add_argument("--out", default="")
     p.add_argument("--human", action="store_true")
+    p.add_argument("--allow-shallow", action="store_true",
+                   help="放行浅克隆采集（数字会少算，报告须注明为下限）")
+    p.add_argument("--check-shallow-only", action="store_true",
+                   help="只跑浅克隆断言就退出（Phase 2.0 在任何 git 统计之前调它），"
+                        "非浅克隆退 0，浅克隆退 2")
     a = p.parse_args()
 
+    # 只做断言：供 Phase 2 在 git 统计（2.0-2.6）之前调用。走的是同一个
+    # assert_not_shallow()，不另写一份判据——两份判据必然漂移（形状 3）。
+    #
+    # 退出码三分，调用方据此分流。关键是「没查成」必须和「查过没问题」分开：
+    # 混成同一个 0，这道闸就会在查不动的时候安静放行——那正是它要防的东西。
+    #   0 = 已查明非浅克隆，或 --allow-shallow 显式放行 → 可以开始 git 统计
+    #   2 = 已查明是浅克隆                             → 先 git fetch --unshallow
+    #   3 = 没查成（git 失败 / 超时 / 老于 2.15 不认这个 flag）→ 深度未知，人来判
+    if a.check_shallow_only:
+        if a.allow_shallow:
+            # 逃生阀在这一步也必须管用：它只在 Phase 2.7 生效、而 2.0 是强制步骤，
+            # 等于把「明知是浅克隆也要采」这条正式支持的路径堵死了。
+            sys.stderr.write("[仓库深度] --allow-shallow 显式放行，不做断言；"
+                             "本次报告的提交类数字须注明为下限。\n")
+            return
+        st = assert_not_shallow()  # 浅克隆在这里 exit 2
+        if not st.get("checked"):
+            sys.stderr.write(
+                "\n[无法判定] 仓库深度没查成：%s\n"
+                "  深度未知等于「可能在少算而且不报错」，所以这里不放行。\n"
+                "  查清楚再跑；确实要在深度未知的情况下采集，加 --allow-shallow 显式担责"
+                "（报告须注明提交类数字为下限）。\n" % st.get("reason", "原因未知"))
+            sys.exit(3)
+        sys.stderr.write("[仓库深度] 非浅克隆，可以开始 git 统计。\n")
+        return
+
+    if not a.week_start or not a.week_end:
+        p.error("--week-start 与 --week-end 必填（除非只跑 --check-shallow-only）")
+
+    shallow_state = {"checked": True, "shallow": False}
+    if a.allow_shallow:
+        shallow_state = {"checked": False, "reason": "--allow-shallow 显式放行"}
+    else:
+        shallow_state = assert_not_shallow()
+        if not shallow_state.get("checked"):
+            # 这里「没查成」只警告不中止，和 --check-shallow-only 的 exit 3 有意不同：
+            # 本采集器自己产出的六段（日报/验收/缺陷/团队/采用/上周周报）都不依赖仓库深度，
+            # 依赖深度的是手工跑的 Phase 2.0-2.6，那道闸在它们之前已按 exit 3 拦过一次了。
+            # 在这里也硬失败，只会让老版本 git 的环境连不依赖深度的数据都采不到。
+            # 判定结果照样写进 repoDepth，谁读输出谁看得见。
+            sys.stderr.write(
+                "[提醒] 未能判定仓库深度（%s）。本采集器的各段不依赖深度，照常继续；"
+                "但若本次实际是浅克隆，Phase 2.0-2.6 的提交类数字会少算且不报错，请自行核对。\n"
+                % shallow_state.get("reason", "原因未知"))
+
     base, start, end = a.base.rstrip("/"), a.week_start, a.week_end
-    ctx = {"weekStart": start, "weekEnd": end, "base": base, "project": a.project}
+    ctx = {"weekStart": start, "weekEnd": end, "base": base, "project": a.project,
+           "repoDepth": shallow_state}
 
     try:
         H = _headers(a.impersonate)
