@@ -123,6 +123,10 @@ jobs:
               # SKILL.md 虽在 docs filter 里，但那个 job 不跑这批 Python 守卫。
               - '.claude/skills/weekly-update-summary/scripts/collect_week_context.py'
               - '.claude/skills/weekly-update-summary/SKILL.md'
+              # 守卫还读 reference/data-collection.md（断言闸排在第一条 git log 之前、
+              # 重跑边界是 2.0 不是 2.1）。漏登记的话，只改那份 reference 把闸挪到
+              # git log 后面的 PR 一路全绿——守卫读什么就得登记什么。
+              - '.claude/skills/weekly-update-summary/reference/data-collection.md'
               - '.agents/skills/prototype-export/scripts/audit_prototype_package.py'
               - '.agents/skills/prototype-export/tests/test_audit_prototype_package.py'
               # cdscli 的冒烟覆盖守卫盯的是这个脚本本身：不把它登记进来，

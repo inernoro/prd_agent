@@ -33,6 +33,14 @@ SKILL = os.path.join(REPO, ".claude", "skills", "weekly-update-summary", "SKILL.
 REFERENCE = os.path.join(
     REPO, ".claude", "skills", "weekly-update-summary", "reference", "data-collection.md"
 )
+# 本守卫读的全部被测文件（仓库相对路径）。加一个就必须同时登记进 ci.yml 的
+# release_scripts filter，否则 check_ci_wiring() 会红——这是形状 7 的自检。
+GUARDED = [
+    ".claude/skills/weekly-update-summary/scripts/collect_week_context.py",
+    ".claude/skills/weekly-update-summary/SKILL.md",
+    ".claude/skills/weekly-update-summary/reference/data-collection.md",
+    "scripts/tests/test_weekly_shallow_gate.py",
+]
 
 FAILURES = []
 
@@ -145,6 +153,48 @@ def run_via_wrapper(snippet, cwd, *args, gate_line=None):
         os.unlink(p)
 
 
+def _glob_to_regex(p):
+    out, i = "", 0
+    while i < len(p):
+        if p.startswith("**/", i):
+            out += "(?:.*/)?"; i += 3; continue
+        if p.startswith("**", i):
+            out += ".*"; i += 2; continue
+        c = p[i]
+        out += "[^/]*" if c == "*" else ("[^/]" if c == "?" else re.escape(c))
+        i += 1
+    return re.compile("^" + out + "$")
+
+
+def check_ci_wiring():
+    """本守卫读的每个文件，都必须登记在 release_scripts 的 path filter 里。
+
+    形状 7：只登记守卫自己，这道闸就只在「守卫被改」时开，而漂移恰恰发生在被测
+    文件那边。这一条已经在本 PR 里犯过两次——第一次漏了被守的两个文件，第二次
+    加了 reference/data-collection.md 却忘了登记。所以不靠人记，让守卫自己核对：
+    GUARDED 里加一个文件而忘了登记 filter，这一格当场变红。
+    """
+    wf = os.path.join(REPO, ".github", "workflows", "ci.yml")
+    text = open(wf, encoding="utf-8").read()
+    m = re.search(r"^(\s*)release_scripts:\s*$", text, re.M)
+    if not m:
+        check("CI-找得到 release_scripts filter", False, True)
+        return
+    indent, pats = len(m.group(1)), []
+    for line in text[m.end():].split("\n"):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        cur = len(line) - len(line.lstrip())
+        if cur <= indent and not line.lstrip().startswith("-"):
+            break
+        g = re.match(r"^\s*-\s*['\"]?([^'\"]+)['\"]?\s*$", line)
+        if g:
+            pats.append(g.group(1).strip())
+    regexes = [_glob_to_regex(p) for p in pats]
+    for rel in GUARDED:
+        check(f"CI-已登记 {os.path.basename(rel)}", any(r.match(rel) for r in regexes), True)
+
+
 def check_reference_order():
     """闸必须排在 reference 里第一条 git 统计命令之前。
 
@@ -227,6 +277,7 @@ def main():
         check("接线-gate 不带 flag 仍拦住", run_via_wrapper(snip, s_hatch), 2)
 
         check_reference_order()
+        check_ci_wiring()
 
         print("[3/3] mutation：把修复改回事故写法，守卫必须变红")
         # 3a 删掉 *) 分支 → 闸崩掉时应重新变成静默放行
