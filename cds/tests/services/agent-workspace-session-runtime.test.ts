@@ -10,6 +10,7 @@ import {
   AgentWorkspaceRuntimeError,
   AgentWorkspaceSessionRuntime,
   MAP_DESIGN_WORKSPACE_SCHEMA,
+  buildGeneratedArtifactFiles,
   canAcceptUntrackedWorkspaceEdit,
   hardenSelfContainedHtml,
   normalizeWorkspaceTransfer,
@@ -899,6 +900,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
       { path: 'knowledge/source.md', content: 'Product facts', mediaType: 'text/markdown' },
     ]);
     const requests: string[] = [];
+    let committedPackage: any;
     let runCreates = 0;
     const shell = new RecordingShell();
     const runtime = new AgentWorkspaceSessionRuntime(shell, {
@@ -926,6 +928,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
             path.join(shell.workspaceDir, 'index.html'),
             '<!doctype html><html><body><main>Product facts</main></body></html>',
           );
+          fs.mkdirSync(path.join(shell.workspaceDir, 'assets'), { recursive: true });
+          fs.writeFileSync(path.join(shell.workspaceDir, 'assets', 'untrusted-note.json'), '{"private":"must not publish"}');
           return Response.json({ runId: runCreates === 1 ? 'od-generate-build' : 'od-generate-review' }, { status: 202 });
         }
         if (url.pathname === '/api/runs/od-generate-build') {
@@ -936,6 +940,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
         }
         if (url.pathname === '/commit') {
           const body = typeof init?.body === 'string' ? init.body : '';
+          committedPackage = JSON.parse(body);
           return Response.json({ artifactRef: 'artifact:generated', resultSha256: digest(body) });
         }
         if (url.pathname.endsWith('/cancel')) return Response.json({});
@@ -951,7 +956,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
       baseRevision: 'rev-1',
       maxInputBytes: 1024 * 1024,
       maxOutputBytes: 1024 * 1024,
-      allowedOutputPaths: ['index.html', 'manifest.json'],
+      allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
     }, {
       cpuCores: 1,
       memoryMb: 768,
@@ -972,8 +977,75 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(requests).toContain('/api/runs/od-generate-build');
     expect(requests).toContain('/api/runs/od-generate-review');
     expect(requests).toContain('/commit');
+    expect(committedPackage.files.map((file: any) => file.path)).toEqual([
+      'assets/accessibility-static-report.json',
+      'assets/design-tokens.json',
+      'assets/page-outline.json',
+      'assets/provenance.json',
+      'index.html',
+      'manifest.json',
+    ]);
+    const manifestFile = committedPackage.files.find((file: any) => file.path === 'manifest.json');
+    const manifest = JSON.parse(Buffer.from(manifestFile.contentBase64, 'base64').toString('utf8'));
+    expect(manifest.files.map((file: any) => file.path)).toEqual([
+      'assets/accessibility-static-report.json',
+      'assets/design-tokens.json',
+      'assets/page-outline.json',
+      'assets/provenance.json',
+      'index.html',
+    ]);
+    for (const listed of manifest.files) {
+      const committed = committedPackage.files.find((file: any) => file.path === listed.path);
+      expect(committed).toBeDefined();
+      expect(listed).toEqual({
+        path: committed.path,
+        sha256: committed.sha256,
+        size: committed.size,
+        mediaType: committed.mediaType,
+      });
+      expect(committed.sha256).toBe(digest(Buffer.from(committed.contentBase64, 'base64')));
+      expect(committed.size).toBe(Buffer.from(committed.contentBase64, 'base64').byteLength);
+    }
+    expect(committedPackage.files.some((file: any) => file.path === 'assets/untrusted-note.json')).toBe(false);
+    const provenanceFile = committedPackage.files.find((file: any) => file.path === 'assets/provenance.json');
+    const provenanceText = Buffer.from(provenanceFile.contentBase64, 'base64').toString('utf8');
+    expect(provenanceText).not.toContain('Private knowledge body');
+    expect(provenanceText).not.toContain('knowledge/source.md');
+    expect(provenanceText).not.toContain(workspacePackage.sha256);
     expect(fs.existsSync(path.join(rootDir, 'session-generate', 'workspace', 'current', 'index.html'))).toBe(false);
     await runtime.stop('session-generate');
+  });
+
+  it('derives stable public metadata from the hardened page without leaking private provenance', () => {
+    const html = '<!doctype html><html lang="zh-CN"><head><title>产品说明</title><style>:root{--brand:#123456;--space:16px}body{font-family:Inter, sans-serif}@media(max-width:720px){main{padding:8px}}</style></head><body><header></header><main><h1 id="top">产品说明</h1><h2>核心能力</h2><img src="data:image/png;base64,AA==" alt="示意图"><a href="#top">返回</a></main><footer></footer></body></html>';
+
+    const first = buildGeneratedArtifactFiles(html, { knowledgeSourceCount: 2 });
+    const second = buildGeneratedArtifactFiles(html, { knowledgeSourceCount: 2 });
+
+    expect(second).toEqual(first);
+    const decoded = Object.fromEntries(first.map((file) => [
+      file.path,
+      JSON.parse(Buffer.from(file.contentBase64, 'base64').toString('utf8')),
+    ]));
+    expect(decoded['assets/page-outline.json']).toMatchObject({
+      title: '产品说明',
+      headings: [{ level: 1, text: '产品说明', id: 'top' }, { level: 2, text: '核心能力' }],
+    });
+    expect(decoded['assets/design-tokens.json']).toMatchObject({
+      customProperties: { '--brand': '#123456', '--space': '16px' },
+      colors: ['#123456'],
+      responsiveBreakpointsPx: [720],
+    });
+    expect(decoded['assets/accessibility-static-report.json']).toMatchObject({
+      document: { hasLanguage: true, language: 'zh-CN', hasTitle: true, headingCount: 2, hasSingleH1: true },
+      images: { count: 1, missingAltCount: 0 },
+      landmarks: { header: 1, main: 1, footer: 1 },
+    });
+    const provenance = JSON.stringify(decoded['assets/provenance.json']);
+    expect(provenance).toContain('"knowledgeSourceCount":2');
+    expect(provenance).not.toContain('entryId');
+    expect(provenance).not.toContain('objectKey');
+    expect(provenance).not.toContain('sha256');
   });
 
   it.each([

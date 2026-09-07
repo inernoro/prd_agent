@@ -470,8 +470,13 @@ public class DesignArtifactProviderCatalogTests
                 1_048_576,
                 6_291_456,
                 ["index.html", "manifest.json", "assets/**"]));
-        workspaceBroker.Setup(service => service.ReadResultHtmlAsync("run-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync("<!doctype html>");
+        var verifiedResultFiles = new[]
+        {
+            new DesignWorkspaceFile("index.html", "", "verified-sha", 15, "text/html; charset=utf-8"),
+            new DesignWorkspaceFile("manifest.json", "", "manifest-sha", 10, "application/json; charset=utf-8"),
+        };
+        workspaceBroker.Setup(service => service.ReadResultAsync("run-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ParsedDesignWorkspaceResult("<!doctype html>", verifiedResultFiles));
         var sessions = new Mock<IInfraAgentSessionService>();
         sessions.Setup(service => service.CreateAsync(
                 "user-1",
@@ -590,6 +595,7 @@ public class DesignArtifactProviderCatalogTests
             {
                 Assert.Equal("delta", chunk.Type);
                 Assert.Equal("<!doctype html>", chunk.Content);
+                Assert.Same(verifiedResultFiles, chunk.VerifiedFiles);
             });
         sessions.Verify(service => service.ScheduleStopAsync(
             "user-1",
@@ -730,8 +736,8 @@ public class DesignArtifactProviderCatalogTests
                 1_048_576,
                 6_291_456,
                 ["index.html", "manifest.json", "assets/**"]));
-        workspaceBroker.Setup(service => service.ReadResultHtmlAsync("run-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync("<!doctype html>");
+        workspaceBroker.Setup(service => service.ReadResultAsync("run-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ParsedDesignWorkspaceResult("<!doctype html>", []));
         var sessions = new Mock<IInfraAgentSessionService>();
         sessions.Setup(service => service.CreateAsync(
                 "user-1",

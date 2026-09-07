@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using Microsoft.Extensions.Logging;
@@ -317,6 +318,136 @@ public class HostedSiteService : IHostedSiteService
         _logger.LogInformation("用户 {UserId} 通过 {SourceType} 创建托管站点 {SiteId}: {Title}",
             userId, site.SourceType, siteId, site.Title);
 
+        return AttachDerivedFields(site)!;
+    }
+
+    private static readonly string[] VerifiedGeneratedSitePaths =
+    [
+        "assets/accessibility-static-report.json",
+        "assets/design-tokens.json",
+        "assets/page-outline.json",
+        "assets/provenance.json",
+        "index.html",
+        "manifest.json",
+    ];
+
+    public async Task<HostedSite> CreateFromVerifiedFilesAsync(
+        string userId,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        string? title,
+        string? description,
+        string sourceType,
+        string sourceRef,
+        List<string>? tags,
+        string? folder,
+        CancellationToken ct = default)
+    {
+        if (!string.Equals(sourceType, "design-agent", StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(sourceRef))
+            throw new InvalidOperationException("已验证文件包只允许由设计任务创建新站点");
+
+        var ordered = files.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray();
+        if (!ordered.Select(file => file.Path).SequenceEqual(VerifiedGeneratedSitePaths, StringComparer.Ordinal))
+            throw new InvalidOperationException("设计产物文件包不完整，请重新生成");
+        foreach (var file in ordered)
+        {
+            if (file.Content.LongLength == 0
+                || !string.Equals(
+                    Convert.ToHexString(SHA256.HashData(file.Content)).ToLowerInvariant(),
+                    file.Sha256,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("设计产物文件校验失败，请重新生成");
+            if (file.Path != "index.html"
+                && !string.Equals(file.MimeType, "application/json; charset=utf-8", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(file.MimeType, "application/json", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("设计产物包含不能公开托管的文件类型，请重新生成");
+        }
+
+        var indexFile = ordered.Single(file => file.Path == "index.html");
+        if (!indexFile.MimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("设计产物入口类型不正确，请重新生成");
+        var indexHtml = System.Text.Encoding.UTF8.GetString(indexFile.Content);
+        var rehardened = HostedSiteRevisionRules.HardenGeneratedHtml(
+            HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(indexHtml));
+        if (!string.Equals(rehardened, indexHtml, StringComparison.Ordinal))
+            throw new InvalidOperationException("设计产物入口与最终安全版本不一致，请重新生成");
+
+        var siteId = Guid.NewGuid().ToString("N");
+        var objectKeysByPath = ordered.ToDictionary(
+            file => file.Path,
+            file => _storage.BuildSiteKey(siteId, file.Path),
+            StringComparer.Ordinal);
+        var objectKeys = ordered
+            .Select(file => objectKeysByPath[file.Path])
+            .ToList();
+        var plannedAt = DateTime.UtcNow;
+        var cleanupPlan = await _db.DesignArtifactRuns.UpdateOneAsync(
+            run => run.Id == sourceRef
+                   && run.UserId == userId
+                   && run.Status == RunStatuses.Committing,
+            Builders<DesignArtifactRun>.Update
+                .Set(run => run.CleanupPending, true)
+                .Set(run => run.CleanupArtifactSiteId, siteId)
+                .Set(run => run.CleanupAssetKeys, objectKeys)
+                .Set(run => run.CleanupSiteRecordDeleted, false)
+                .Set(run => run.CleanupAttemptedAt, plannedAt)
+                .Set(run => run.CleanupLastError, null),
+            cancellationToken: CancellationToken.None);
+        if (cleanupPlan.MatchedCount != 1)
+            throw new InvalidOperationException("设计产物补偿计划登记失败，请重试");
+
+        var hostedFiles = new List<HostedSiteFile>(ordered.Length);
+        for (var index = 0; index < ordered.Length; index++)
+        {
+            var file = ordered[index];
+            var key = objectKeys[index];
+            await _storage.UploadToKeyAsync(
+                key,
+                file.Content,
+                file.MimeType,
+                CancellationToken.None,
+                SiteCacheControl);
+            hostedFiles.Add(new HostedSiteFile
+            {
+                Path = file.Path,
+                CosKey = key,
+                Size = file.Content.LongLength,
+                MimeType = file.MimeType,
+            });
+        }
+
+        var now = DateTime.UtcNow;
+        var site = new HostedSite
+        {
+            Id = siteId,
+            Title = title?.Trim() ?? "未命名站点",
+            Description = description?.Trim(),
+            SourceType = sourceType,
+            SourceRef = sourceRef.Trim(),
+            CosPrefix = $"web-hosting/sites/{siteId}/",
+            EntryFile = "index.html",
+            SiteUrl = AppendVersion(_storage.BuildUrlForKey(objectKeysByPath["index.html"]), now),
+            CreatedAt = now,
+            UpdatedAt = now,
+            ContentVersion = now,
+            Files = hostedFiles,
+            TotalSize = hostedFiles.Sum(file => file.Size),
+            IsSlideDeck = DetectSlideDeck(indexFile.Content),
+            Tags = tags ?? new(),
+            Folder = folder?.Trim(),
+            OwnerUserId = userId,
+            SlideNavCompatVersion = SlideNavVersion,
+        };
+
+        await _db.HostedSites.InsertOneAsync(site, cancellationToken: CancellationToken.None);
+        _logger.LogInformation(
+            "用户 {UserId} 通过 {SourceType} 创建多资产托管站点 {SiteId}: {Title}, {FileCount} 个文件, {TotalSize} bytes",
+            userId,
+            site.SourceType,
+            siteId,
+            site.Title,
+            site.Files.Count,
+            site.TotalSize);
         return AttachDerivedFields(site)!;
     }
 
@@ -2052,6 +2183,13 @@ public class HostedSiteService : IHostedSiteService
     {
         if (site is null) return null;
         site.PdfAssetUrl = TryBuildPdfAssetUrl(site);
+        var version = EffectiveContentVersion(site);
+        foreach (var file in site.Files ?? new List<HostedSiteFile>())
+        {
+            file.Url = string.IsNullOrWhiteSpace(file.CosKey)
+                ? null
+                : AppendVersion(_storage.BuildUrlForKey(file.CosKey), version);
+        }
         return site;
     }
 

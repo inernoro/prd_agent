@@ -227,6 +227,142 @@ const ARTIFACT_CSP = [
 const DOCUMENT_ROOT_RE = /^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
 const DOCUMENT_HEAD_RE = /^\s*(?:<!--[\s\S]*?-->\s*)*<head(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
 const IGNORED_RUNTIME_OUTPUT_PATHS = ['index.html.artifact.json'] as const;
+const CDS_GENERATED_ARTIFACT_PATHS = [
+  'assets/accessibility-static-report.json',
+  'assets/design-tokens.json',
+  'assets/page-outline.json',
+  'assets/provenance.json',
+] as const;
+
+interface GeneratedArtifactContext {
+  knowledgeSourceCount: number;
+}
+
+function jsonArtifactFile(path: string, value: unknown): WorkspacePackageFile {
+  const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+  return {
+    path,
+    contentBase64: bytes.toString('base64'),
+    sha256: sha256(bytes),
+    size: bytes.byteLength,
+    mediaType: 'application/json; charset=utf-8',
+  };
+}
+
+function plainTextFromMarkup(markup: string): string {
+  return decodeHtmlText(markup.replace(/<[^>]*>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Build public deterministic side files only after the final HTML has passed
+ * CDS hardening. Values come from the publishable document or a non-identifying
+ * count; private source ids, object keys, credentials and source hashes never
+ * cross this boundary.
+ */
+export function buildGeneratedArtifactFiles(
+  hardenedHtml: string,
+  context: GeneratedArtifactContext = { knowledgeSourceCount: 0 },
+): WorkspacePackageFile[] {
+  const tags = scanHtmlTags(hardenedHtml).filter((tag) => !tag.isClosing);
+  const root = tags.find((tag) => tag.name.toLowerCase() === 'html');
+  const titleMatch = hardenedHtml.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+  const headings = Array.from(hardenedHtml.matchAll(/<h([1-6])\b([^>]*)>([\s\S]*?)<\/h\1\s*>/gi))
+    .map((match) => {
+      const attributes = parseHtmlAttributes(match[2]);
+      const text = plainTextFromMarkup(match[3]).slice(0, 240);
+      return {
+        level: Number.parseInt(match[1], 10),
+        text,
+        ...(attributes.get('id') ? { id: decodeHtmlText(attributes.get('id') || '').slice(0, 160) } : {}),
+      };
+    })
+    .filter((heading) => heading.text.length > 0)
+    .slice(0, 256);
+
+  const css = Array.from(hardenedHtml.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi))
+    .map((match) => match[1])
+    .join('\n')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const customProperties = new Map<string, string>();
+  for (const match of css.matchAll(/(--[a-z0-9_-]+)\s*:\s*([^;}{]+)/gi)) {
+    if (!customProperties.has(match[1].toLowerCase()) && customProperties.size >= 256) continue;
+    customProperties.set(match[1].toLowerCase(), match[2].trim().slice(0, 240));
+  }
+  const colors = new Set<string>();
+  for (const match of css.matchAll(/#[0-9a-f]{3,8}\b|(?:rgb|hsl)a?\([^)]{1,120}\)/gi)) {
+    if (colors.size >= 256) break;
+    colors.add(match[0].toLowerCase().replace(/\s+/g, ' '));
+  }
+  const fontFamilies = new Set<string>();
+  for (const match of css.matchAll(/font-family\s*:\s*([^;}{]+)/gi)) {
+    if (fontFamilies.size >= 64) break;
+    fontFamilies.add(match[1].trim().replace(/\s+/g, ' ').slice(0, 240));
+  }
+  const breakpoints = new Set<number>();
+  for (const match of css.matchAll(/@media[^{}]*\((?:min|max)-width\s*:\s*(\d+)px\)/gi)) {
+    if (breakpoints.size >= 64) break;
+    breakpoints.add(Number.parseInt(match[1], 10));
+  }
+
+  const imageTags = tags.filter((tag) => tag.name.toLowerCase() === 'img');
+  const missingImageAltCount = imageTags.filter((tag) => !parseHtmlAttributes(tag.attributes).has('alt')).length;
+  const landmarks = Object.fromEntries(
+    ['header', 'nav', 'main', 'aside', 'footer'].map((name) => [
+      name,
+      tags.filter((tag) => tag.name.toLowerCase() === name).length,
+    ]),
+  );
+  const htmlLanguage = decodeHtmlText(parseHtmlAttributes(root?.attributes || '').get('lang') || '').trim();
+  const title = titleMatch ? plainTextFromMarkup(titleMatch[1]).slice(0, 240) : '';
+
+  return [
+    jsonArtifactFile('assets/page-outline.json', {
+      schemaVersion: 'map-page-outline-v1',
+      title,
+      headings,
+    }),
+    jsonArtifactFile('assets/design-tokens.json', {
+      schemaVersion: 'map-design-tokens-v1',
+      customProperties: Object.fromEntries([...customProperties.entries()].sort(([left], [right]) => left.localeCompare(right))),
+      colors: [...colors].sort(),
+      fontFamilies: [...fontFamilies].sort(),
+      responsiveBreakpointsPx: [...breakpoints].sort((left, right) => left - right),
+    }),
+    jsonArtifactFile('assets/accessibility-static-report.json', {
+      schemaVersion: 'map-accessibility-static-report-v1',
+      document: {
+        hasLanguage: htmlLanguage.length > 0,
+        language: htmlLanguage || null,
+        hasTitle: title.length > 0,
+        headingCount: headings.length,
+        hasSingleH1: headings.filter((heading) => heading.level === 1).length === 1,
+      },
+      images: {
+        count: imageTags.length,
+        missingAltCount: missingImageAltCount,
+      },
+      controls: {
+        linkCount: tags.filter((tag) => tag.name.toLowerCase() === 'a').length,
+        buttonCount: tags.filter((tag) => tag.name.toLowerCase() === 'button').length,
+      },
+      landmarks,
+      scope: 'static-structure-only',
+    }),
+    jsonArtifactFile('assets/provenance.json', {
+      schemaVersion: 'map-artifact-provenance-v1',
+      producer: 'cds-open-design-runtime',
+      derivationStage: 'post-security-hardening',
+      sourceClasses: context.knowledgeSourceCount > 0
+        ? ['map-task', 'map-knowledge-material']
+        : ['map-task'],
+      knowledgeSourceCount: Math.max(0, Math.floor(context.knowledgeSourceCount)),
+      publishedFiles: ['index.html', ...CDS_GENERATED_ARTIFACT_PATHS, 'manifest.json'],
+      privacy: 'no-source-identifiers-keys-credentials-or-source-hashes',
+    }),
+  ].sort((left, right) => left.path.localeCompare(right.path));
+}
 
 // This script runs inside the isolated OpenDesign container before any bytes
 // cross the Docker boundary. Original MAP inputs and CDS-managed skill files
@@ -1993,6 +2129,17 @@ export class AgentWorkspaceSessionRuntime {
       indexFile!.contentBase64 = hardenedBytes.toString('base64');
       indexFile!.sha256 = sha256(hardenedBytes);
       indexFile!.size = hardenedBytes.byteLength;
+      // Publish a closed six-file package. OpenDesign may leave notes below
+      // assets/, but the self-contained page does not consume them and they
+      // have not passed a public active-content policy. CDS replaces those
+      // side outputs with post-hardening metadata it can fully attest.
+      if (!editingExistingPage && handle.transfer.allowedOutputPaths.includes('assets/**')) {
+        const knowledgeSourceCount = handle.inputPaths.filter((filePath) => filePath.startsWith('knowledge/')).length;
+        collectedFiles = [
+          indexFile!,
+          ...buildGeneratedArtifactFiles(hardenedHtml, { knowledgeSourceCount }),
+        ].sort((left, right) => left.path.localeCompare(right.path));
+      }
       const manifestBytes = Buffer.from(JSON.stringify({
         schemaVersion: 'map-design-artifact-manifest-v1',
         baseRevision: handle.transfer.baseRevision,

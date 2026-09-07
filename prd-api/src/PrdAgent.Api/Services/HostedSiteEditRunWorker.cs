@@ -141,8 +141,15 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
             var output = new StringBuilder();
             var sawFirstText = false;
+            IReadOnlyList<DesignWorkspaceFile>? verifiedFiles = null;
             await foreach (var chunk in executor.ExecuteAsync(run, editable?.Html, executionCts.Token))
             {
+                if (chunk.VerifiedFiles != null)
+                {
+                    if (verifiedFiles != null)
+                        throw new InvalidOperationException("设计执行器重复提交了产物文件包，请重新生成");
+                    verifiedFiles = chunk.VerifiedFiles;
+                }
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
                     output.Append(chunk.Content);
@@ -191,7 +198,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 revisions,
                 DateTime.UtcNow,
                 LeaseDuration,
-                executionCts.Token);
+                executionCts.Token,
+                verifiedFiles);
             run.ArtifactSiteId = persisted.SiteId;
             run.ArtifactRevisionId = persisted.RevisionId;
             object donePayload = run.Operation == DesignArtifactOperations.Edit
@@ -463,7 +471,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IHostedSiteRevisionService revisions,
         DateTime now,
         TimeSpan leaseDuration,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<DesignWorkspaceFile>? verifiedFiles = null)
     {
         if (!await BeginCommitAsync(db, run.Id, leaseOwner, now, leaseDuration, CancellationToken.None))
             throw new DesignArtifactRunLeaseLostException(run.Id);
@@ -518,16 +527,32 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         HostedSite? site = null;
         try
         {
-            site = await sites.CreateFromContentAsync(
-                run.UserId,
-                html,
-                run.Title,
-                "由知识驱动设计生成",
-                "design-agent",
-                run.Id,
-                new List<string> { "知识生成" },
-                null,
-                ct);
+            if (verifiedFiles != null)
+            {
+                site = await sites.CreateFromVerifiedFilesAsync(
+                    run.UserId,
+                    BuildVerifiedHostedSiteFiles(verifiedFiles, html),
+                    run.Title,
+                    "由知识驱动设计生成",
+                    "design-agent",
+                    run.Id,
+                    new List<string> { "知识生成" },
+                    null,
+                    ct);
+            }
+            else
+            {
+                site = await sites.CreateFromContentAsync(
+                    run.UserId,
+                    html,
+                    run.Title,
+                    "由知识驱动设计生成",
+                    "design-agent",
+                    run.Id,
+                    new List<string> { "知识生成" },
+                    null,
+                    ct);
+            }
             if (!await RenewLeaseAsync(
                     db,
                     run.Id,
@@ -568,6 +593,33 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             }
             throw;
         }
+    }
+
+    internal static IReadOnlyList<HostedSiteVerifiedFile> BuildVerifiedHostedSiteFiles(
+        IReadOnlyList<DesignWorkspaceFile> files,
+        string hardenedHtml)
+    {
+        var hostedFiles = files.Select(file =>
+        {
+            byte[] content;
+            try
+            {
+                content = Convert.FromBase64String(file.ContentBase64);
+            }
+            catch (FormatException)
+            {
+                throw new InvalidOperationException("设计产物文件损坏，请重新生成");
+            }
+            return new HostedSiteVerifiedFile(file.Path, content, file.Sha256, file.MediaType);
+        }).ToArray();
+        var entry = hostedFiles.SingleOrDefault(file => file.Path == "index.html")
+                    ?? throw new InvalidOperationException("设计产物入口缺失，请重新生成");
+        if (!string.Equals(
+                System.Text.Encoding.UTF8.GetString(entry.Content),
+                hardenedHtml,
+                StringComparison.Ordinal))
+            throw new InvalidOperationException("设计产物入口与最终安全版本不一致，请重新生成");
+        return hostedFiles;
     }
 
     internal static async Task<bool> CompleteRunOrCompensateArtifactAsync(
@@ -758,6 +810,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 .Set(x => x.Phase, phase)
                 .Set(x => x.ArtifactSiteId, artifactSiteId)
                 .Set(x => x.ArtifactRevisionId, artifactRevisionId)
+                .Set(x => x.CleanupPending, false)
+                .Set(x => x.CleanupArtifactSiteId, null)
+                .Set(x => x.CleanupAssetKeys, new List<string>())
+                .Set(x => x.CleanupSiteRecordDeleted, false)
+                .Set(x => x.CleanupLastError, null)
                 .Set(x => x.CompletedAt, completedAt)
                 .Max(x => x.UpdatedAt, completedAt),
             cancellationToken: ct);

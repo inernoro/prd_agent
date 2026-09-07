@@ -8,7 +8,10 @@ using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
 
-public sealed record DesignArtifactExecutorChunk(string Type, string Content);
+public sealed record DesignArtifactExecutorChunk(
+    string Type,
+    string Content,
+    IReadOnlyList<DesignWorkspaceFile>? VerifiedFiles = null);
 
 /// <summary>设计执行器的稳定边界。OpenDesign 或其他运行时必须实现该契约后才能进入调度。</summary>
 public interface IDesignArtifactExecutor
@@ -286,7 +289,7 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             throw new InvalidOperationException(
                                 "OpenDesign 远程执行失败，请在 CDS 会话日志中查看原因后重试");
                         case InfraAgentEventTypes.Done:
-                            var html = await _workspaceBroker.ReadResultHtmlAsync(run.Id, CancellationToken.None);
+                            var package = await _workspaceBroker.ReadResultAsync(run.Id, CancellationToken.None);
                             completedTurnObserved = true;
                             completedCdsSessionId = item.CdsSourceSessionId ?? session.CdsSessionId;
                             completedMessageId = ReadPayloadString(item.PayloadJson, "clientMessageId");
@@ -302,7 +305,10 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                                     "OpenDesign 已生成产物，但无法登记远程资源清理，请重试");
                             }
                             cleanupScheduled = true;
-                            yield return new DesignArtifactExecutorChunk("delta", html);
+                            yield return new DesignArtifactExecutorChunk(
+                                "delta",
+                                package.IndexHtml,
+                                package.Files);
                             yield break;
                     }
                 }

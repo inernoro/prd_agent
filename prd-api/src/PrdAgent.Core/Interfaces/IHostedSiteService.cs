@@ -36,6 +36,21 @@ public interface IHostedSiteService
         List<string>? tags, string? folder,
         CancellationToken ct = default);
 
+    /// <summary>
+    /// 从已验证的完整文件包创建新站点。先把全部目标 key 登记到设计 Run 的补偿账本，
+    /// 全部上传成功后才插入站点记录；首版不用于已有站点编辑或版本发布。
+    /// </summary>
+    Task<HostedSite> CreateFromVerifiedFilesAsync(
+        string userId,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        string? title,
+        string? description,
+        string sourceType,
+        string sourceRef,
+        List<string>? tags,
+        string? folder,
+        CancellationToken ct = default);
+
     // ── 替换内容 ──
 
     /// <summary>重新上传站点文件（HTML 或 ZIP），替换原有内容；wrappedAssetType 由调用方按原始资产类型显式传入（"pdf"/"video"/"markdown"），普通 HTML/ZIP 传 null 会清空 marker</summary>

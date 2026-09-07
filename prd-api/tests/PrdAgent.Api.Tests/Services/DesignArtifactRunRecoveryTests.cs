@@ -2,6 +2,8 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using System.Security.Cryptography;
+using System.Text;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -1099,17 +1101,284 @@ public sealed class DesignArtifactRunRecoveryTests
         storage.VerifyAll();
     }
 
-    private static HostedSiteService CreateHostedSiteService(MongoDbContext db, IAssetStorage storage) =>
-        new(
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task VerifiedMultiAssetCreate_ShouldPublishEveryFileAndClearPlanOnlyWhenRunCompletes()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("run-multi-asset", now);
+        run.Operation = DesignArtifactOperations.Generate;
+        run.Status = RunStatuses.Committing;
+        run.LeaseOwnerId = "worker-a";
+        run.LeaseExpiresAt = now.AddMinutes(2);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.BuildSiteKey(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns((string siteId, string filePath) => $"web-hosting/sites/{siteId}/{filePath}");
+        storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>()))
+            .Returns((string key) => $"https://assets.test/{key}");
+        storage.Setup(x => x.UploadToKeyAsync(
+                It.IsAny<string>(),
+                It.IsAny<byte[]>(),
+                It.IsAny<string?>(),
+                CancellationToken.None,
+                It.IsAny<string?>()))
+            .Returns(Task.CompletedTask);
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        var site = await service.CreateFromVerifiedFilesAsync(
+            run.UserId,
+            BuildVerifiedGeneratedFiles(),
+            "多资产页面",
+            "测试",
+            "design-agent",
+            run.Id,
+            ["知识生成"],
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(6, site.Files.Count);
+        Assert.All(site.Files, file => Assert.StartsWith("https://assets.test/", file.Url, StringComparison.Ordinal));
+        Assert.Equal(
+            [
+                "assets/accessibility-static-report.json",
+                "assets/design-tokens.json",
+                "assets/page-outline.json",
+                "assets/provenance.json",
+                "index.html",
+                "manifest.json",
+            ],
+            site.Files.Select(file => file.Path).ToArray());
+        var queriedSite = await service.GetByIdAsync(site.Id, run.UserId, CancellationToken.None);
+        Assert.NotNull(queriedSite);
+        Assert.Equal(site.Files.Select(file => file.Path), queriedSite!.Files.Select(file => file.Path));
+        Assert.All(queriedSite.Files, file => Assert.StartsWith("https://assets.test/", file.Url, StringComparison.Ordinal));
+        var planned = await fixture.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).FirstAsync();
+        Assert.True(planned.CleanupPending);
+        Assert.Equal(site.Id, planned.CleanupArtifactSiteId);
+        Assert.Equal(site.Files.Select(file => file.CosKey).Order(), planned.CleanupAssetKeys.Order());
+
+        Assert.True(await HostedSiteEditRunWorker.CompleteRunAsync(
+            fixture.Db,
+            run.Id,
+            "worker-a",
+            site.Id,
+            "revision-1",
+            "网页已生成并保存",
+            now.AddSeconds(1),
+            CancellationToken.None));
+        var completed = await fixture.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).FirstAsync();
+        Assert.Equal(RunStatuses.Done, completed.Status);
+        Assert.False(completed.CleanupPending);
+        Assert.Null(completed.CleanupArtifactSiteId);
+        Assert.Empty(completed.CleanupAssetKeys);
+        storage.Verify(x => x.UploadToKeyAsync(
+            It.IsAny<string>(),
+            It.IsAny<byte[]>(),
+            It.IsAny<string?>(),
+            CancellationToken.None,
+            It.IsAny<string?>()), Times.Exactly(6));
+        storage.VerifyAll();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task VerifiedMultiAssetCreate_WhenSecondUploadFails_ShouldRemainFullyCompensatable()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("run-multi-asset-failure", now);
+        run.Operation = DesignArtifactOperations.Generate;
+        run.Status = RunStatuses.Committing;
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var uploadCount = 0;
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.BuildSiteKey(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns((string siteId, string filePath) => $"web-hosting/sites/{siteId}/{filePath}");
+        storage.Setup(x => x.UploadToKeyAsync(
+                It.IsAny<string>(),
+                It.IsAny<byte[]>(),
+                It.IsAny<string?>(),
+                CancellationToken.None,
+                It.IsAny<string?>()))
+            .Returns(() => Interlocked.Increment(ref uploadCount) == 2
+                ? Task.FromException(new IOException("second upload unavailable"))
+                : Task.CompletedTask);
+        storage.Setup(x => x.DeleteByKeyAsync(It.IsAny<string>(), CancellationToken.None))
+            .Returns(Task.CompletedTask);
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        await Assert.ThrowsAsync<IOException>(() => service.CreateFromVerifiedFilesAsync(
+            run.UserId,
+            BuildVerifiedGeneratedFiles(),
+            "多资产页面",
+            null,
+            "design-agent",
+            run.Id,
+            null,
+            null,
+            CancellationToken.None));
+
+        var planned = await fixture.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).FirstAsync();
+        Assert.True(planned.CleanupPending);
+        Assert.NotNull(planned.CleanupArtifactSiteId);
+        Assert.Equal(6, planned.CleanupAssetKeys.Count);
+        Assert.True(await service.CompensateGeneratedSiteAsync(
+            null,
+            run.Id,
+            run.UserId,
+            CancellationToken.None));
+        var cleaned = await fixture.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).FirstAsync();
+        Assert.False(cleaned.CleanupPending);
+        Assert.Null(cleaned.CleanupArtifactSiteId);
+        Assert.Empty(cleaned.CleanupAssetKeys);
+        Assert.Empty(await fixture.Db.HostedSites.Find(x => x.SourceRef == run.Id).ToListAsync());
+        storage.Verify(x => x.DeleteByKeyAsync(It.IsAny<string>(), CancellationToken.None), Times.Exactly(6));
+        storage.VerifyAll();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task VerifiedMultiAssetCreate_WhenIndexNeedsSecondHardening_ShouldRejectBeforeUpload()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var files = BuildVerifiedGeneratedFiles().ToArray();
+        var rawIndex = Encoding.UTF8.GetBytes(
+            "<!doctype html><html><head><title>未硬化页面</title></head><body><main>未硬化页面</main></body></html>");
+        var index = Array.FindIndex(files, file => file.Path == "index.html");
+        files[index] = new HostedSiteVerifiedFile(
+            "index.html",
+            rawIndex,
+            Convert.ToHexString(SHA256.HashData(rawIndex)).ToLowerInvariant(),
+            "text/html; charset=utf-8");
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreateFromVerifiedFilesAsync(
+            "user-1",
+            files,
+            "未硬化页面",
+            null,
+            "design-agent",
+            "run-unhardened",
+            null,
+            null,
+            CancellationToken.None));
+
+        Assert.Contains("最终安全版本不一致", error.Message, StringComparison.Ordinal);
+        storage.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task EditPersistence_ShouldIgnoreVerifiedSideFilesAndCreateHtmlDraftOnly()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("run-edit-html-only", now);
+        run.Operation = DesignArtifactOperations.Edit;
+        run.TargetSiteId = "site-edit";
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var claimed = await HostedSiteEditRunWorker.TryClaimAsync(
+            fixture.Db, run.Id, "worker-a", now, TimeSpan.FromMinutes(2), CancellationToken.None);
+        Assert.NotNull(claimed);
+        var html = "<!doctype html><html><body><main>仅保存 HTML 草稿</main></body></html>";
+        var draft = new HostedSiteRevision { Id = "draft-html-only", SiteId = run.TargetSiteId, Status = HostedSiteRevisionStatuses.Draft };
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(x => x.CreateDraftAsync(
+                run.TargetSiteId,
+                run.UserId,
+                html,
+                run.Instruction,
+                run.Runtime,
+                run.Id,
+                "parent-1",
+                It.IsAny<List<string>>(),
+                now,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(draft);
+
+        var persisted = await HostedSiteEditRunWorker.PersistArtifactWithLeaseAsync(
+            fixture.Db,
+            claimed!,
+            "worker-a",
+            html,
+            new HostedSiteRevision { Id = "parent-1", SiteId = run.TargetSiteId },
+            new HostedSiteEditableEntry(new HostedSite { Id = run.TargetSiteId }, html, now),
+            sites.Object,
+            revisions.Object,
+            now.AddMilliseconds(1),
+            TimeSpan.FromMinutes(2),
+            CancellationToken.None,
+            BuildDesignWorkspaceFiles());
+
+        Assert.Equal(draft.Id, persisted.RevisionId);
+        revisions.VerifyAll();
+        sites.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void VerifiedPackageWhoseIndexDiffersFromWorkerHardenedHtml_ShouldBeRejected()
+    {
+        var files = BuildDesignWorkspaceFiles();
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteEditRunWorker.BuildVerifiedHostedSiteFiles(
+                files,
+                "<!doctype html><html><body>另一个页面</body></html>"));
+
+        Assert.Contains("最终安全版本不一致", error.Message, StringComparison.Ordinal);
+    }
+
+    private static IReadOnlyList<HostedSiteVerifiedFile> BuildVerifiedGeneratedFiles() =>
+        BuildDesignWorkspaceFiles().Select(file => new HostedSiteVerifiedFile(
+            file.Path,
+            Convert.FromBase64String(file.ContentBase64),
+            file.Sha256,
+            file.MediaType)).ToArray();
+
+    private static IReadOnlyList<DesignWorkspaceFile> BuildDesignWorkspaceFiles()
+    {
+        var html = HostedSiteRevisionRules.HardenGeneratedHtml(
+            "<!doctype html><html lang=\"zh-CN\"><head><title>多资产页面</title></head><body><main><h1>多资产页面</h1></main></body></html>");
+        return new Dictionary<string, string>
+        {
+            ["assets/accessibility-static-report.json"] = "{\"schemaVersion\":\"map-accessibility-static-report-v1\"}",
+            ["assets/design-tokens.json"] = "{\"schemaVersion\":\"map-design-tokens-v1\"}",
+            ["assets/page-outline.json"] = "{\"schemaVersion\":\"map-page-outline-v1\"}",
+            ["assets/provenance.json"] = "{\"schemaVersion\":\"map-artifact-provenance-v1\"}",
+            ["index.html"] = html,
+            ["manifest.json"] = "{\"schemaVersion\":\"map-design-artifact-manifest-v1\"}",
+        }.Select(item =>
+        {
+            var bytes = Encoding.UTF8.GetBytes(item.Value);
+            return new DesignWorkspaceFile(
+                item.Key,
+                Convert.ToBase64String(bytes),
+                Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+                bytes.LongLength,
+                item.Key == "index.html" ? "text/html; charset=utf-8" : "application/json; charset=utf-8");
+        }).ToArray();
+    }
+
+    private static HostedSiteService CreateHostedSiteService(MongoDbContext db, IAssetStorage storage)
+    {
+        var teams = new Mock<ITeamService>();
+        teams.Setup(x => x.GetMyTeamIdsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        return new HostedSiteService(
             db,
             storage,
             Mock.Of<IShortLinkService>(),
             Mock.Of<ISharePasswordService>(),
-            Mock.Of<ITeamService>(),
+            teams.Object,
             Mock.Of<ITeamActivityService>(),
             Mock.Of<IUploadProgressService>(),
             Mock.Of<IAskOpeningQuestionGenerator>(),
             NullLogger<HostedSiteService>.Instance);
+    }
 
     private static DesignArtifactRun NewQueuedRun(string id, DateTime updatedAt) => new()
     {

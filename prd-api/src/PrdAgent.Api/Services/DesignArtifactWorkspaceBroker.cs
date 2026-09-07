@@ -45,6 +45,8 @@ public interface IDesignArtifactWorkspaceBroker
 
     Task<string> ReadResultHtmlAsync(string runId, CancellationToken ct);
 
+    Task<ParsedDesignWorkspaceResult> ReadResultAsync(string runId, CancellationToken ct);
+
     Task<DesignArtifactRun> ReserveModelCallAsync(string runId, string token, CancellationToken ct);
 
     Task<DesignArtifactRun> ValidateModelTicketAsync(string runId, string token, CancellationToken ct);
@@ -360,6 +362,9 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     }
 
     public async Task<string> ReadResultHtmlAsync(string runId, CancellationToken ct)
+        => (await ReadResultAsync(runId, ct)).IndexHtml;
+
+    public async Task<ParsedDesignWorkspaceResult> ReadResultAsync(string runId, CancellationToken ct)
     {
         var run = await _db.DesignArtifactRuns.Find(item => item.Id == runId).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
@@ -374,7 +379,10 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 runId,
                 run.WorkspaceBaseRevision ?? string.Empty,
                 MaxOutputBytes);
-        return HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(parsed.IndexHtml);
+        return parsed with
+        {
+            IndexHtml = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(parsed.IndexHtml),
+        };
     }
 
     public async Task<DesignArtifactRun> ReserveModelCallAsync(string runId, string token, CancellationToken ct)
@@ -873,7 +881,9 @@ public static class DesignArtifactWorkspaceContract
         if (manifestBytes == null)
             throw new InvalidOperationException("远程设计结果缺少产物清单，请重新生成");
         ValidateManifest(manifestBytes, baseRevision, verifiedFiles);
-        return new ParsedDesignWorkspaceResult(indexHtml, package.Files);
+        return new ParsedDesignWorkspaceResult(
+            indexHtml,
+            verifiedFiles.Values.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray());
     }
 
     private static void ValidateManifest(

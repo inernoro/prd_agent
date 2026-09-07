@@ -236,7 +236,24 @@ public class HostedSiteFile
 
     /// <summary>MIME 类型</summary>
     public string MimeType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 当前部署下的安全公开地址。只由服务层依据 CosKey 与 ContentVersion 派生，
+    /// 不入库，避免把部署域名固化进数据。
+    /// </summary>
+    [BsonIgnore]
+    public string? Url { get; set; }
 }
+
+/// <summary>
+/// 已在上游完成路径、摘要、大小、MIME 与产物清单校验的托管文件。
+/// 仅供“新生成网页”原子落站；编辑与版本功能仍只替换入口 HTML。
+/// </summary>
+public sealed record HostedSiteVerifiedFile(
+    string Path,
+    byte[] Content,
+    string Sha256,
+    string MimeType);
 
 /// <summary>
 /// 网页分享链接 — 基于 Token 的分享机制（密码保护 + 过期时间）
