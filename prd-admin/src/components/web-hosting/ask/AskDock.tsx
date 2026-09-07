@@ -70,7 +70,10 @@ export default function AskDock({
   source, title, welcome, openingQuestions, allowAnonymous, isMobile, safeBottom, hidden, onStateChange,
 }: Props) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const { messages, status, phaseMessage, model, gateError, clearGateError, isBusy, ask } = useAskStream(source);
+  const {
+    messages, status, phaseMessage, elapsedSeconds, model, gateError,
+    clearGateError, isBusy, ask, cancel,
+  } = useAskStream(source);
 
   const [state, setState] = useState<AskDockState>('collapsed');
   const [moving, setMoving] = useState(false);
@@ -602,6 +605,8 @@ export default function AskDock({
             }}
             isBusy={isBusy}
             phaseMessage={phaseMessage}
+            elapsedSeconds={elapsedSeconds}
+            onCancel={cancel}
           />
 
           {/* 输入区可以折起来：用户想安静看正文时，不该被一个输入框一直占着一截高度。

@@ -1,5 +1,5 @@
 import { useDeadline } from './useDeadline';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { readSseStream, type SseEvent } from '@/lib/sse';
 import { api } from '@/services/api';
 import { buildApiUrl } from '@/services/real/webPages';
@@ -22,6 +22,7 @@ export function useAskStream(source: AskSource) {
   const [messages, setMessages] = useState<AskMessage[]>([]);
   const [status, setStatus] = useState<AskStatus>('idle');
   const [phaseMessage, setPhaseMessage] = useState('');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [model, setModel] = useState<{ model: string; platform?: string } | null>(null);
   /** 门禁类失败：不是"答错了"，而是"没资格问"，UI 要给引导而不是重试按钮 */
   const [gateError, setGateError] = useState<
@@ -31,6 +32,18 @@ export function useAskStream(source: AskSource) {
 
   const sessionIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const startedAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (status !== 'connecting' && status !== 'answering') return undefined;
+    const updateElapsed = () => {
+      const startedAt = startedAtRef.current;
+      setElapsedSeconds(startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : 0);
+    };
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [status]);
 
   const abort = useCallback(() => {
     abortRef.current?.abort();
@@ -42,9 +55,24 @@ export function useAskStream(source: AskSource) {
     setMessages([]);
     setStatus('idle');
     setPhaseMessage('');
+    setElapsedSeconds(0);
     setGateError(null);
     sessionIdRef.current = null;
   }, [abort]);
+
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    startedAtRef.current = null;
+    setMessages((prev) => prev.map((message) => (
+      message.streaming
+        ? { ...message, streaming: false, error: '已停止回答，可修改问题后再次发送。' }
+        : message
+    )));
+    setStatus('idle');
+    setPhaseMessage('');
+    setElapsedSeconds(0);
+  }, []);
 
   /**
    * 只清掉这道门，不动消息与状态。
@@ -76,6 +104,8 @@ export function useAskStream(source: AskSource) {
       abort();
       const ac = new AbortController();
       abortRef.current = ac;
+      startedAtRef.current = Date.now();
+      setElapsedSeconds(0);
 
       const userMsg: AskMessage = { id: `u-${Date.now()}`, role: 'user', content: q };
       const assistantId = `a-${Date.now()}`;
@@ -235,12 +265,14 @@ export function useAskStream(source: AskSource) {
     messages,
     status,
     phaseMessage,
+    elapsedSeconds,
     model,
     gateError,
     clearGateError,
     isBusy: status === 'connecting' || status === 'answering',
     ask,
     abort,
+    cancel,
     reset,
   };
 }
