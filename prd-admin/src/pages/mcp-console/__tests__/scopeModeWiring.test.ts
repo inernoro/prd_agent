@@ -34,9 +34,17 @@ describe('自动 / 手动能力范围的接线', () => {
   it('客户端那一行要把模式与「你还没给它什么」说出来', () => {
     // 手动档的语义是「用户知道、钥匙没权限」。不渲染这两样，前半句就没了：
     // 用户既不知道它已经被钉死，也不知道自己还能给什么。
+    //
+    // 断言的是这条**链路**，不是某个文件里的某个字面量：改成视觉编码之后，
+    // 读 scopeMode 的那一步收进了 signalEncoding（纯函数，另有行为用例），
+    // 页面渲染的是它算出来的 pinned。上一版钉的是 `client.scopeMode` 出现在页面文件里 ——
+    // 那是实现位置，不是性质；判据跟着接线走一格就该跟着改，而不是把接线钉死在原地。
+    const encoding = read('signalEncoding.ts');
+    expect(encoding, '档位不再由 scopeMode 推出来').toContain('scopeMode');
+
     const source = read('McpConsolePage.tsx');
-    expect(source).toContain('client.scopeMode');
-    expect(source).toContain('missingCapabilities');
+    expect(source, '页面没有把档位渲染出来').toContain('signal.pinned');
+    expect(source, '「你还没给它什么」没渲染').toContain('missingCapabilities');
   });
 
   it('接入弹窗只有两屏，选能力收在高级设置里', () => {
