@@ -1,5 +1,5 @@
 import { capabilityVisual } from './capabilityRegistry';
-import { tierLabel, type CapabilityTier } from './signalEncoding';
+import { TIER_REGISTRY, tierLabel, type CapabilityTier, type DotShape } from './signalEncoding';
 
 /**
  * 一块能力 = 一个点。
@@ -36,22 +36,21 @@ export function CapabilityDot({
     ? ({ 'aria-hidden': true } as const)
     : ({ role: 'img', 'aria-label': label, title: label } as const);
 
-  if (tier === 'write' || tier === 'full') {
-    // 实心 = 这把钥匙对这块能力拿满了。「能写」与「已开」形状相同，说法由 tierLabel 分开：
-    // 只有读档的能力拿满了也不能写，不能因为形状一样就说成一样。
-    return <span {...a11y} className={base} style={{ background: color }} />;
+  // 形状由注册表定，这里只管把形状画出来。「能写」与「已开」同为实心，说法由 tierLabel 分开：
+  // 只有读档的能力拿满了也不能写，不能因为形状一样就说成一样。
+  return <span {...a11y} className={base} style={shapeStyle(TIER_REGISTRY[tier].shape, color)} />;
+}
+
+/** 三种形状的画法。圆环与虚线圈中心都透空：与实心是不同形状，不是同一形状的不同深浅。 */
+function shapeStyle(shape: DotShape, color: string): React.CSSProperties {
+  switch (shape) {
+    case 'solid':
+      return { background: color };
+    case 'ring':
+      return { border: `2px solid ${color}`, background: 'transparent' };
+    case 'dashed':
+      return { border: '1px dashed var(--border-default)', background: 'transparent' };
   }
-  if (tier === 'read') {
-    // 圆环：中心透空 —— 与实心是两种形状，不是同一形状的两种深浅
-    return <span {...a11y} className={base} style={{ border: `2px solid ${color}`, background: 'transparent' }} />;
-  }
-  return (
-    <span
-      {...a11y}
-      className={base}
-      style={{ border: '1px dashed var(--border-default)', background: 'transparent' }}
-    />
-  );
 }
 
 /**

@@ -58,12 +58,23 @@ export function capabilityTier(
   return singleTier ? 'full' : 'write';
 }
 
+/** 色点的三种形状：实心 = 拿满了；圆环 = 只拿到读档；虚线圈 = 一点没给 */
+export type DotShape = 'solid' | 'ring' | 'dashed';
+
+/**
+ * 档位注册表：一档的说法与形状登记在同一处（frontend-architecture 的注册表模式）。
+ * 新增一档时 TypeScript 会逼着在这里补一行，标签与形状不会各漂各的。
+ */
+export const TIER_REGISTRY: Record<CapabilityTier, { label: string; shape: DotShape }> = {
+  write: { label: '能写', shape: 'solid' },
+  full: { label: '已开', shape: 'solid' },
+  read: { label: '只能看', shape: 'ring' },
+  none: { label: '未开', shape: 'dashed' },
+};
+
 /** 一个色点该怎么念（读屏与长按提示都用它）。文字与色点同源，不会各说各的。 */
 export function tierLabel(tier: CapabilityTier): string {
-  if (tier === 'write') return '能写';
-  if (tier === 'full') return '已开';
-  if (tier === 'read') return '只能看';
-  return '未开';
+  return TIER_REGISTRY[tier].label;
 }
 
 /**
