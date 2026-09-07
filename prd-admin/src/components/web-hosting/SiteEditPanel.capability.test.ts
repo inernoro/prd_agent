@@ -97,6 +97,16 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('当前线上版本没有变化，可再次尝试。');
   });
 
+  it('远程会话失败后等待运行环境真实恢复再允许重试', () => {
+    expect(source).toContain('runtimeRecoveryGate');
+    expect(source).toContain("runtime?.isolationMode !== 'session-container'");
+    expect(source).toContain('timer = window.setTimeout(inspect, 2000)');
+    expect(source).toContain('正在回收运行环境，已检查');
+    expect(source).toContain('runtimeRecoveryGate !== null');
+    expect(source).toContain("className={runtimeRecoveryGate ? 'animate-spin' : ''}");
+    expect(source).toContain('运行环境已回收，可以按原要求重试。');
+  });
+
   it('并发版本冲突提供刷新记录和按原要求另存草稿两条恢复路径', () => {
     expect(source).toContain("result.error?.code === 'REVISION_CONFLICT'");
     expect(source).toContain('刷新版本记录');

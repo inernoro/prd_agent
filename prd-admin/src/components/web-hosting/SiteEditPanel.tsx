@@ -52,6 +52,11 @@ interface RecoveryNotice {
   versionConflict?: boolean;
 }
 
+interface RuntimeRecoveryGate {
+  runtimeId: string;
+  checks: number;
+}
+
 const GENERATION_STAGES = [
   { label: '建立任务', threshold: 1 },
   { label: '读取与分析', threshold: 20 },
@@ -96,6 +101,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const [selectedRuntime, setSelectedRuntime] = useState('map-gateway');
   const [recoveringRunId, setRecoveringRunId] = useState<string | null>(null);
   const [recoveryNotice, setRecoveryNotice] = useState<RecoveryNotice | null>(null);
+  const [runtimeRecoveryGate, setRuntimeRecoveryGate] = useState<RuntimeRecoveryGate | null>(null);
   const [pendingRollback, setPendingRollback] = useState<HostedSiteRevision | null>(null);
   const streamRef = useRef('');
   const lastPaintAtRef = useRef(0);
@@ -104,6 +110,18 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const historyRef = useRef<HTMLDivElement | null>(null);
   const rollbackConfirmRef = useRef<HTMLButtonElement | null>(null);
   const rollbackReturnFocusRef = useRef<HTMLButtonElement | null>(null);
+  const capabilitiesRef = useRef<DesignRuntimeCapability[]>([]);
+
+  useEffect(() => {
+    capabilitiesRef.current = capabilities;
+  }, [capabilities]);
+
+  const beginRuntimeRecovery = useCallback((runtimeId: string | null | undefined) => {
+    if (!runtimeId) return;
+    const runtime = capabilitiesRef.current.find((item) => item.id === runtimeId);
+    if (runtime?.isolationMode !== 'session-container') return;
+    setRuntimeRecoveryGate({ runtimeId, checks: 0 });
+  }, []);
 
   useEffect(() => {
     const target = focusSection === 'history' ? historyRef.current : composeRef.current;
@@ -182,6 +200,41 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    const runtimeId = runtimeRecoveryGate?.runtimeId;
+    if (!runtimeId || recoveryNotice?.action !== 'generate') return;
+    let active = true;
+    let timer: number | undefined;
+    const inspect = async () => {
+      const result = await getDesignRuntimeCapabilities();
+      if (!active) return;
+      if (result.success) {
+        const supported = result.data.runtimes.filter((item) => item.operations.includes('edit'));
+        setCapabilities(supported);
+        const recovered = supported.find((item) => item.id === runtimeId)?.enabled === true;
+        if (recovered) {
+          setRuntimeRecoveryGate(null);
+          setRecoveryNotice((current) => current?.action === 'generate'
+            ? {
+                ...current,
+                detail: `${current.detail} 运行环境已回收，可以按原要求重试。`,
+              }
+            : current);
+          return;
+        }
+      }
+      setRuntimeRecoveryGate((current) => current?.runtimeId === runtimeId
+        ? { ...current, checks: current.checks + 1 }
+        : current);
+      timer = window.setTimeout(inspect, 2000);
+    };
+    void inspect();
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [recoveryNotice?.action, runtimeRecoveryGate?.runtimeId]);
 
   const toggleKnowledge = (entryId: string) => {
     setSelectedKnowledgeIds((current) => {
@@ -271,6 +324,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       if (status === 'error' || status === 'cancelled') {
         clearRecovery();
         setGenerating(false);
+        beginRuntimeRecovery(result.data.runtime);
         const detail = result.data.error || result.data.phase || '页面修改失败';
         setPhase(detail);
         setRecoveryNotice({
@@ -289,7 +343,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       active = false;
       if (timer) window.clearTimeout(timer);
     };
-  }, [loadHistory, openRevision, recoveringRunId, site.id]);
+  }, [beginRuntimeRecovery, loadHistory, openRevision, recoveringRunId, site.id]);
 
   const generate = async () => {
     const text = instruction.trim();
@@ -317,6 +371,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     setPreviewHtml('');
     setPreviewedRevision(null);
     setRecoveryNotice(null);
+    setRuntimeRecoveryGate(null);
     setProgress(1);
     setPhase('正在创建修改任务');
     streamRef.current = '';
@@ -343,7 +398,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, requestRuntime.id);
     if (!created.success) {
       setGenerating(false);
-      setActiveRunRuntime(null);
+      if (created.error?.code === 'RUNTIME_NOT_READY') beginRuntimeRecovery(requestRuntime.id);
+      setActiveRunRuntime(created.error?.code === 'RUNTIME_NOT_READY' ? requestRuntime.id : null);
       const detail = created.error?.message || '请稍后重试';
       setPhase(detail);
       setRecoveryNotice({
@@ -405,6 +461,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
           if (event.event === 'error') {
             reachedTerminal = true;
             const message = typeof data.message === 'string' ? data.message : '页面修改失败';
+            beginRuntimeRecovery(requestRuntime.id);
             try { sessionStorage.removeItem(activeSiteEditRunStorageKey(site.id)); } catch { /* ignore unavailable storage */ }
             setGenerating(false);
             setPhase(message);
@@ -523,6 +580,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
 
   const adjustFailedGeneration = () => {
     setRecoveryNotice(null);
+    setRuntimeRecoveryGate(null);
     composeRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     window.requestAnimationFrame(() => document.getElementById(`site-edit-instruction-${site.id}`)?.focus());
   };
@@ -535,7 +593,9 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
         ? '重试发布'
         : recoveryNotice?.action === 'rollback'
           ? '重试回退'
-          : '按原要求重试';
+          : runtimeRecoveryGate
+            ? `正在回收运行环境，已检查 ${runtimeRecoveryGate.checks + 1} 次`
+            : '按原要求重试';
 
   const recoverFromVersionConflict = (action: 'refresh' | 'regenerate') => {
     if (action === 'refresh') {
@@ -594,10 +654,10 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                 <button
                   type="button"
                   onClick={retryRecovery}
-                  disabled={generating || mutatingId !== null}
+                  disabled={generating || mutatingId !== null || runtimeRecoveryGate !== null}
                   className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-amber-500 px-3 text-[11px] font-semibold text-black transition-colors hover:bg-amber-400 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                 >
-                  <RefreshCw size={13} />{recoveryActionLabel}
+                  <RefreshCw size={13} className={runtimeRecoveryGate ? 'animate-spin' : ''} />{recoveryActionLabel}
                 </button>
                 {recoveryNotice.action === 'generate' && (
                   <button
