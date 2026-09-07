@@ -1,3 +1,5 @@
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -16,6 +18,11 @@ namespace PrdAgent.Core.Models;
 /// 询问源站）、同一张票（还带着原来的两小时硬过期）、且**至多一次**。
 /// 试跑本来就不写任何东西，把它算成一次消耗才是当初没想清楚的地方。
 /// </summary>
+// BsonIgnoreExtraElements：同一个 CDS 项目下所有分支预览共用一个 Mongo 库，`data_sync_runs`
+// 会被不同构建版本同时读写。较新的构建写入本类还没有的字段（如转正、资产改写计数）后，
+// 旧构建不加本特性就会在反序列化时抛异常，整个数据同步页面不可用（#1406 D1 / #1499）。
+// 本类未在 BsonClassMapRegistration 注册，只能靠特性；嵌套类同理。
+[BsonIgnoreExtraElements]
 public class DataSyncRun
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -102,6 +109,7 @@ public class DataSyncRun
 }
 
 /// <summary>源站在清单里报的、关于某个集合的那份事实。只有源站知道，本站算不出来。</summary>
+[BsonIgnoreExtraElements]
 public class DataSyncPlannedCollection
 {
     /// <summary>源站上报的总条数</summary>
@@ -111,6 +119,7 @@ public class DataSyncPlannedCollection
     public List<string> RedactFields { get; set; } = new();
 }
 
+[BsonIgnoreExtraElements]
 public class DataSyncCollectionProgress
 {
     /// <summary>源站上报的总数（manifest 阶段拿到）</summary>
