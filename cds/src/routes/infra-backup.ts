@@ -417,6 +417,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         // 拿它当迁移数据源或动手前的兜底，等于什么都没有。rabbitmq 的数据在
         // /var/lib/rabbitmq，同一个形状。现在都走与周期备份同一段导出脚本：
         // 流式压缩、两端退出码都保住。
+        const tool = scripted.tool;
         const cmd = ['docker', 'exec', '-i', svc.containerName, 'sh', '-s'];
         const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
         proc.stdin.end(scripted.dump());
@@ -434,7 +435,11 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           // 截断取**尾**不取头：真正说明失败原因的那几行在末尾，取头只会拿到
           // 一堆无关的启动噪音（house rule 见 ssh-exec-failure 的三宗罪）。
           const tail = stderr.length > 300 ? `…（前文截断）${stderr.slice(-300)}` : stderr;
-          throw new Error(`${scripted.tool} exit ${code}: ${tail}`);
+          if (res.headersSent && !res.writableEnded) {
+            res.destroy(new Error(`${tool} exit ${code}: ${tail}`));
+            return;
+          }
+          throw new Error(`${tool} exit ${code}: ${tail}`);
         }
         maintenanceStatus = 'completed';
       } else {

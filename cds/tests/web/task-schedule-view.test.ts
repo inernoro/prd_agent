@@ -190,11 +190,14 @@ describe('今日调度轴', () => {
   const dayStart = new Date(NOW);
   dayStart.setHours(0, 0, 0, 0);
   const at = (h: number, m = 0) => new Date(dayStart.getTime() + (h * 60 + m) * 60_000).toISOString();
+  // NOW 的 ISO 字面量表达绝对时刻，不是所有宿主时区下的本地 14:30。
+  // 调度轴按本地日投影，因此本组显式固定“本地 14:30”，避免把 UTC 当本地时间。
+  const timelineNow = Date.parse(at(14, 30));
 
   it('已发生的来自运行记录、待触发的来自服务端投影，且都换算成当天的百分比', () => {
     const jobs = [job({ id: 'daily', schedule: { type: 'daily', timeOfDay: '06:00' }, nextRuns: [at(18)] })];
     const runsByJob = new Map([[ 'daily', [run({ id: 'r1', jobId: 'daily', status: 'success', queuedAt: at(6) })] ]]);
-    const timeline = buildTimeline(jobs, runsByJob, NOW, '');
+    const timeline = buildTimeline(jobs, runsByJob, timelineNow, '');
 
     expect(timeline.lanes).toHaveLength(1);
     const events = timeline.lanes[0].events;
@@ -214,7 +217,7 @@ describe('今日调度轴', () => {
       run({ id: 'r2', jobId: 'hot', status: 'success', queuedAt: at(2) }),
       run({ id: 'r3', jobId: 'hot', status: 'failed', queuedAt: at(3) }),
     ] ]]);
-    const timeline = buildTimeline(jobs, runsByJob, NOW, '');
+    const timeline = buildTimeline(jobs, runsByJob, timelineNow, '');
     expect(timeline.lanes[0].dense).toBe(true);
     expect(timeline.lanes[0].events).toHaveLength(1);
     expect(timeline.lanes[0].events[0].status).toBe('failed');
@@ -225,7 +228,7 @@ describe('今日调度轴', () => {
       ...Array.from({ length: 8 }, (_, i) => job({ id: `n${i}` })),
       job({ id: 'broken', autoDisabledReason: '连续失败已停用', enabled: false }),
     ];
-    const timeline = buildTimeline(jobs, new Map(), NOW, '');
+    const timeline = buildTimeline(jobs, new Map(), timelineNow, '');
     expect(timeline.lanes).toHaveLength(6);
     expect(timeline.lanes[0].id).toBe('broken');
     expect(timeline.lanes[0].disabled).toBe(true);
@@ -243,7 +246,7 @@ describe('今日调度轴', () => {
       job({ id: 'ran', schedule: { type: 'daily', timeOfDay: '06:00' }, nextRuns: [] }),
     ];
     const runsByJob = new Map([[ 'ran', [run({ id: 'r1', jobId: 'ran', status: 'success', queuedAt: at(6) })] ]]);
-    const timeline = buildTimeline(jobs, runsByJob, NOW, '');
+    const timeline = buildTimeline(jobs, runsByJob, timelineNow, '');
 
     const ids = timeline.lanes.map((lane) => lane.id);
     expect(ids).toContain('daily'); // 今天还要跑
@@ -261,14 +264,14 @@ describe('今日调度轴', () => {
         at(2),                                    // 已过去，不画
       ],
     })];
-    const timeline = buildTimeline(jobs, new Map(), NOW, '');
+    const timeline = buildTimeline(jobs, new Map(), timelineNow, '');
     expect(timeline.lanes[0].events).toHaveLength(1);
     expect(Math.round(timeline.lanes[0].events[0].leftPct)).toBe(83);
   });
 
   it('现在这条线的位置就是当前时刻在当天的占比', () => {
-    const timeline = buildTimeline([job({ id: 'x' })], new Map(), NOW, '');
-    const expected = ((NOW - dayStart.getTime()) / (24 * 3600_000)) * 100;
+    const timeline = buildTimeline([job({ id: 'x' })], new Map(), timelineNow, '');
+    const expected = ((timelineNow - dayStart.getTime()) / (24 * 3600_000)) * 100;
     expect(timeline.nowRatio).toBeCloseTo(expected, 5);
   });
 });

@@ -22481,6 +22481,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       res.status(409).json({ error: (e as Error).message });
       return;
     }
+    // HTTP 日志中间件已经挂了 data listener；下一行开始会跨 await。
+    // 先暂停原始上传流，等 mongorestore stdin 接好后由 req.pipe() 自动恢复，
+    // 否则等待维护作业登记期间 body 会被日志监听器单独读完。
+    req.pause();
     let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
     try {
       maintenanceJob = await stateService.beginInfraMaintenanceJob({
@@ -22491,6 +22495,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       });
     } catch (error) {
       const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      req.resume();
       res.status(rotating ? 409 : 500).json({ error: rotating ? 'MongoDB 正在轮换凭据，暂不能接收迁移恢复。' : '无法登记迁移恢复作业。' });
       return;
     }
