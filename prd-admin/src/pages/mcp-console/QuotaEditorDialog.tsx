@@ -75,7 +75,7 @@ export function QuotaEditorDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="调整用量上限"
-      description={client ? `这把钥匙：${client.name}` : undefined}
+      description={client ? `这把钥匙：${client.name}（${client.keyPrefix}…）` : undefined}
       maxWidth={440}
       content={
         <div className="flex flex-col gap-3.5">

@@ -94,6 +94,33 @@ describe('接入台第一屏那句判断', () => {
     expect(h.verdict).toContain('一次都还没调过');
   });
 
+  it('用过、只是今天没动：判断句下面不再补一句安抚', () => {
+    // 「不是坏了，就是今天还没使唤它」没有信息量，真机上看着就是一段占地方的字。
+    // 判断句已经把事说完了；只有从来没用过的那种才值得多给一句下一步。
+    const idle = buildHeadline({
+      clients: [client({ lastUsedAt: '2026-09-05T08:00:00.000Z' })],
+      today: today(), recentCalls: [], hasHistory: true,
+    });
+    expect(idle.detail).toBeNull();
+
+    const fresh = buildHeadline({ clients: [client({ lastUsedAt: null })], today: today(), recentCalls: [], hasHistory: true });
+    expect(fresh.detail).toContain('重启客户端');
+  });
+
+  it('一台用过、一台从来没用过：新的那台照样拿到引导，不被老的那台盖掉', () => {
+    // 判据是「有没有一台从来没用过」。按「有没有一台用过」写的话，老钥匙一存在，
+    // 新发的那把就永远等不到那句「重启客户端」（review 抓出来的混合场景）。
+    const mixed = buildHeadline({
+      clients: [
+        client({ keyId: 'old', lastUsedAt: '2026-09-05T08:00:00.000Z' }),
+        client({ keyId: 'new', lastUsedAt: null }),
+      ],
+      today: today(), recentCalls: [], hasHistory: true,
+    });
+    expect(mixed.detail).toContain('重启客户端');
+    expect(mixed.detail).toContain('1 台');
+  });
+
   it('没有失败时：判断句挂着真实次数，且不宣称这些调用「都成了」', () => {
     const h = buildHeadline({
       clients: [client()],

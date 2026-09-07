@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   Check,
+  ChevronDown,
   CircleSlash,
   Link2,
   Plug,
@@ -27,7 +28,9 @@ import { RevokeClientDialog } from './RevokeClientDialog';
 import { copyToClipboard } from './clipboard';
 import { capabilityVisual } from './capabilityRegistry';
 import { buildHeadline } from './headline';
-import { grantableTool, grantableToolCount, isReadOnlyTier } from './scopePlan';
+import { grantableTool, grantableToolCount } from './scopePlan';
+import { clientSignal, tierLabel } from './signalEncoding';
+import { CapabilityDot, SignalLegend } from './SignalDots';
 import { quotaFillPercent } from './quotaMeter';
 
 /**
@@ -276,9 +279,11 @@ export default function McpConsolePage() {
           <div className="text-[14px] font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>
             {headline.verdict}
           </div>
-          <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            {headline.detail}
-          </div>
+          {headline.detail && (
+            <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              {headline.detail}
+            </div>
+          )}
         </div>
         {/* 这里**不再**放「今天出图 X / Y」这种合计条。
             用量的分子（服务端权威合计，含当天被撤销的密钥）与额度的分母（只有还在的密钥才有额度）
@@ -315,14 +320,19 @@ export default function McpConsolePage() {
                 style={{ color: 'var(--text-muted)' }}
                 title="额度与「今天」的计数都按 UTC 自然日重置；UTC+8 是每天早上 8 点归零"
               >
-                一台一把钥匙，断哪台都不影响别的 · 「今天」按 UTC 自然日算
+                「今天」按 UTC 自然日算
               </span>
             </div>
 
             {clients.length === 0 ? (
               <EmptyHint text="还没有客户端接进来。点这一页顶上那行里的「接入新的」，起个名字复制一段配置就完事，两分钟就能连上。" />
             ) : (
-              clients.map((client) => (
+              <>
+                {/* 图例整屏只出现这一次 —— 它是这套色点的说明书，替代的是原来每张卡上
+                    重复一遍的那两三句话。手机端它自己收起（`mobile-first-density` 的收纳表），
+                    说明书改走每张卡的展开区：色点行就是展开钮，点开是逐块的文字。 */}
+                <SignalLegend />
+                {clients.map((client) => (
                 <ClientRow
                   key={client.keyId}
                   client={client}
@@ -330,7 +340,8 @@ export default function McpConsolePage() {
                   onRevoke={() => setRevokeTarget(client)}
                   onEditQuota={() => setQuotaTarget(client)}
                 />
-              ))
+                ))}
+              </>
             )}
 
             <PlatformCapabilityBar capabilities={capabilities} />
@@ -438,188 +449,206 @@ function ClientRow({
   onRevoke: () => void;
   onEditQuota: () => void;
 }) {
-  const held = useMemo(() => new Set((client.scopes ?? []).map((s) => s.toLowerCase())), [client.scopes]);
+  const [open, setOpen] = useState(false);
+  const signal = useMemo(() => clientSignal(client, capabilities), [client, capabilities]);
   // 灰度期间新旧后端会同时在跑（分支预览共用一个前端构建），旧的那版不回这个字段。
   // 直接 .length 会白屏 —— 一整页因为一个还没上线的字段消失，比少显示一行提示糟得多。
   const missing = client.missingCapabilities ?? [];
-  const granted = capabilities.filter(
-    (cap) =>
-      (cap.readScope && held.has(cap.readScope.toLowerCase())) ||
-      (cap.writeScope && held.has(cap.writeScope.toLowerCase())),
-  );
-  // 能力卡只覆盖平台内置的那五块。登记表里的开放接口走 `agent.*` scope，网关照样把它们
-  // 当工具列出来（McpGatewayController.DynamicToolVisible），能力卡却一个都对不上 ——
-  // 只挂这类 scope 的钥匙会被这一行说成「一块能力也拿不到」，而它其实调得动。
-  // 这里不去给它们编能力名（那需要后端把登记表的元数据一并回出来，属另一件事），
-  // 但至少要如实说「还有 N 项开放接口授权」，不能报一个假的零。
-  const namedScopes = new Set(
-    granted.flatMap((cap) => [cap.readScope, cap.writeScope].filter(Boolean).map((s) => s!.toLowerCase())),
-  );
-  const extraScopes = (client.scopes ?? []).filter((s) => !namedScopes.has(s.toLowerCase()));
+
+  // 卡片上留哪些字：**只留要用户去做点什么的那几句**。
+  // 「自动档跟着你的权限走」「手动档按清单钉死」这两句是常识，讲一次就够，已经交给图例与左侧色带；
+  // 而下面这两种不是常识，是这把钥匙此刻的例外，认颜色学不会。
+  const alert = !client.isActive
+    ? client.unusableReason === 'expired'
+      ? '钥匙已过期，到「海鲜市场 → 开放接口 → 密钥」续期后还能接着用'
+      : '钥匙已停用。界面上还开不回来（只能走接口），要立刻接着用就点这一页顶上那行里的「接入新的」重接一台；它做过的事和调用记录都留着'
+    : signal.pinned && missing.length > 0
+      // 一块都没给时不再把五块名字列一遍：色点与摘要已经说了「5 块都没开」，
+      // 再列一遍就是同一件事说两次，而它是这张卡上最长的一段字。
+      ? missing.length === capabilities.length
+        ? '界面上改不了已发出去的清单，要给它就重新接一台'
+        : `你自己还有${missing.map((c) => c.title).join('、')}没开给它 —— 界面上改不了已发出去的清单，要给它就重新接一台`
+      : null;
 
   return (
     <div
-      className="flex flex-col gap-2.5 rounded-[13px] px-3.5 py-3"
+      className="flex overflow-hidden rounded-[13px]"
       style={{
         background: 'var(--bg-card)',
         border: '1px solid var(--border-subtle)',
         opacity: client.isActive ? 1 : 0.7,
       }}
     >
-      {/* 名字那一行与状态那一句，窄屏必须分开两行。
-          它们原来同在一个 flex-wrap 里：状态句在手机上很长（「钥匙已停用。界面上还开不回来…」），
-          必然把带 `ml-auto` 的「今天 N 次」挤到下一行，而 ml-auto 在新的一行里照样右对齐 ——
-          于是那个数字孤零零占掉一整行。
-          做法是给状态句 `w-full`（窄屏它放不下任何同伴，自然独占一行，把「今天 N 次」留在第一行末），
-          宽屏再用 `lg:w-auto lg:flex-1` + `lg:order-last` 还原成原来那一排。 */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <span
-          className="block h-2 w-2 shrink-0 rounded-full"
-          style={{
-            background: client.isActive ? 'var(--semantic-success-text)' : 'var(--text-disabled)',
-          }}
-        />
-        <span className="text-[13.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-          {client.name}
-        </span>
-        <code
-          className="text-[10.5px]"
-          style={{
-            color: 'var(--text-muted)',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-          }}
-        >
-          {client.keyPrefix}…
-        </code>
-        <span
-          className="ml-auto text-[12px] font-semibold tabular-nums lg:order-last"
-          style={{ color: 'var(--text-secondary)' }}
-        >
-          今天 {client.todayCalls} 次
-        </span>
-        <span className="w-full text-[11.5px] lg:w-auto lg:flex-1" style={{ color: 'var(--text-muted)' }}>
-          {client.isActive ? (
-            client.lastUsedAt ? (
-              <>
-                最后活跃 <RelativeTime value={client.lastUsedAt} />
-              </>
-            ) : (
-              '还没用过'
-            )
-          ) : (
-            // 这份名单里不会有已吊销的钥匙（服务端按 RevokedAt 先滤过），所以走到这里
-            // 只可能是停用或过了宽限期 —— 两种都救得回来。写「已作废」是不可逆的意思，
-            // 会让用户以为只能重接一台。
-            // 只说界面上真做得到的事。上一版这里写「重新启用后还能接着用」——
-            // 而前端根本没有任何一处会把 isActive 改回 true（密钥页只有续期/作废/删除），
-            // 等于把用户指向一个不存在的动作。这是本 PR 里第二次犯同一个毛病
-            // （第一次是续期指向了没有续期按钮的那一屏），所以这次先核实再写。
-            client.unusableReason === 'expired'
-              ? '钥匙已过期，到「海鲜市场 → 开放接口 → 密钥」续期后还能接着用'
-              : '钥匙已停用。界面上还开不回来（只能走接口），要立刻接着用就点这一页顶上那行里的「接入新的」重接一台；它做过的事和调用记录都留着'
-          )}
-        </span>
-      </div>
+      {/* 左侧色带 = 自动 / 手动。图例上解释一次，这里就不必每张卡再写一遍那两句话。 */}
+      <span
+        aria-hidden
+        className="w-[3px] shrink-0"
+        style={{ background: signal.pinned ? 'var(--accent-primary)' : 'var(--border-default)' }}
+      />
 
-      {/* 说明区与动作区：宽屏并排、中间隔一道竖线（别读成同一排按钮）；
-          窄屏改上下堆叠 —— 并排时说明区换行到第三行，右侧那两个按钮会把最后一个能力标签
-          挤出可视区（390 宽实测：桌面五块能力，手机只剩四块，海鲜市场没了）。
-          「用户看到的授权范围与实际不符」正是这块面板最不该有的毛病。 */}
-      <div className="flex flex-col items-stretch gap-x-3 gap-y-2 sm:flex-row sm:flex-wrap sm:items-center">
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <span className="text-[10.5px] font-medium uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
-            它能做什么
+      <div className="flex min-w-0 flex-1 flex-col gap-2.5 px-3.5 py-3">
+        <div className="flex items-center gap-2">
+          <span
+            className="block h-2 w-2 shrink-0 rounded-full"
+            style={{
+              background: client.isActive ? 'var(--semantic-success-text)' : 'transparent',
+              // 停用的钥匙用空心圈：整屏调成灰度也分得出来，不只靠颜色深浅
+              border: client.isActive ? undefined : '1.5px solid var(--text-disabled)',
+            }}
+          />
+          <span
+            className="min-w-0 flex-1 truncate text-[13.5px] font-semibold"
+            style={{ color: 'var(--text-primary)' }}
+            title={client.name}
+          >
+            {client.name}
           </span>
-          {/* 芯片之间要明显宽于芯片内部，否则「· 只能看」会被扫读成独立的一项 */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-            {granted.length === 0 && extraScopes.length === 0 ? (
-              <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
-                这把钥匙现在一块能力也拿不到
-              </span>
-            ) : (
-              granted.map((cap) => {
-                const v = capabilityVisual(cap.key);
-                const Icon = v.icon;
-                const readOnly = isReadOnlyTier(cap, held);
-                return (
-                  <span
-                    key={cap.key}
-                    className="flex h-6 items-center gap-1.5 text-[11.5px]"
-                    style={{ color: v.text }}
-                  >
-                    <Icon size={13} aria-hidden />
-                    {cap.title}
-                    {readOnly && (
-                      <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
-                        · 只能看
-                      </span>
-                    )}
-                  </span>
-                );
-              })
-            )}
-            {extraScopes.length > 0 && (
+          {/* 钥匙前缀在折叠态就露着：名字不唯一（发钥匙时不查重），两把同名的折叠后只靠它分得开，
+              而「断开」是收不回来的动作，点错了就得重发一把（review 抓出来的）。 */}
+          <code
+            className="shrink-0 text-[10.5px]"
+            style={{ color: 'var(--text-disabled)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}
+            title="钥匙前缀，同名钥匙靠它区分"
+          >
+            {client.keyPrefix}…
+          </code>
+          {client.isActive && !client.lastUsedAt ? (
+            // 从来没用过的那把，折叠态就说出来：今天 0 次与从来没连上是两件事，
+            // 后者要用户去做点什么（重启客户端、发第一句话），不能藏进展开区。
+            <span className="shrink-0 text-[10.5px]" style={{ color: 'var(--semantic-warning-text)' }}>
+              还没用过
+            </span>
+          ) : (
+            <>
               <span
-                className="flex h-6 items-center gap-1.5 text-[11.5px]"
-                style={{ color: 'var(--text-muted)' }}
-                title={extraScopes.join('\n')}
+                className="shrink-0 text-[16px] font-bold tabular-nums"
+                style={{ color: 'var(--text-secondary)' }}
               >
-                <Plug size={13} aria-hidden />
-                另有 {extraScopes.length} 项开放接口授权
+                {client.todayCalls}
               </span>
-            )}
-          </div>
-          {/* 自动 / 手动：这块必须写出来 —— 两者在「平台以后新上一块能力」时行为完全不同 */}
-          <span className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            {client.scopeMode === 'auto'
-              ? '跟着你的权限走：以后平台新上一块能力，它自动就有；你被收回的权限它也立刻跟着没。'
-              : missing.length > 0
-                ? `按当初那份清单钉死。你自己还有${missing.map((c) => c.title).join('、')}没开给它 —— 界面上改不了已发出去的清单，要给它就重新接一台（不改高级设置就是跟着权限走）。`
-                : '按当初那份清单钉死：以后平台新上的能力不会自动进来。'}
-          </span>
+              <span className="shrink-0 text-[10.5px]" style={{ color: 'var(--text-disabled)' }}>
+                次
+              </span>
+            </>
+          )}
         </div>
 
-        <span className="hidden h-9 w-px shrink-0 sm:block" style={{ background: 'var(--border-subtle)' }} />
+        <div className="flex items-center gap-2">
+          {/* 色点行本身就是展开钮：手机上没有 hover，长按提示也不是人人都会用，
+              所以留一条「点一下看文字」的路。展开区里是逐块能力的名字与档位 —— 
+              颜色认不出来的人靠它照样读得全。 */}
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            // 手机端图例收起后这一行是看文字说明的唯一入口，触点必须够手指按：
+            // 最小 44px 高，桌面端不撑；视觉仍是那一行小点，只是可按的区域变大
+            className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 rounded-[8px] py-1 text-left sm:min-h-0"
+          >
+            <span className="flex shrink-0 items-center gap-1.5">
+              {signal.dots.map((d) => (
+                <CapabilityDot key={d.key} capKey={d.key} title={d.title} tier={d.tier} />
+              ))}
+            </span>
+            <span className="min-w-0 truncate text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
+              {signal.summary}
+              {signal.extraScopes.length > 0 && ` · 另有 ${signal.extraScopes.length} 项接口`}
+            </span>
+            <ChevronDown
+              size={13}
+              aria-hidden
+              className="shrink-0 transition-transform"
+              style={{ color: 'var(--text-disabled)', transform: open ? 'rotate(180deg)' : undefined }}
+            />
+          </button>
 
-        <div className="flex shrink-0 items-center justify-end gap-2">
           <button
             type="button"
             onClick={onEditQuota}
-            className="flex h-8 items-center gap-1.5 rounded-[9px] px-2.5 text-[12px] font-medium"
+            aria-label="调整这台客户端的每日上限"
+            title="调整这台客户端的每日上限"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[9px] sm:h-8 sm:w-auto sm:gap-1.5 sm:px-2.5"
             style={{
-              background: 'var(--bg-card)',
+              background: 'var(--bg-sunken)',
               border: '1px solid var(--border-subtle)',
               color: 'var(--text-secondary)',
             }}
           >
             <Sliders size={13} aria-hidden />
-            调整上限
+            <span className="hidden text-[12px] font-medium sm:inline">调整上限</span>
           </button>
+
           {/* 钥匙泄露、或者这台客户端不用了，得能在**这里**当场断掉。
-              从接入台进来的用户根本不知道另有一个密钥管理页，找不到就只能眼看着
-              一把带写入和花钱权限的钥匙活到 90 天期满。 */}
+              从接入台进来的用户根本不知道另有一个密钥管理页。 */}
           {client.isActive && (
             <button
               type="button"
               onClick={onRevoke}
-              className="flex h-8 items-center gap-1.5 rounded-[9px] px-2.5 text-[12px] font-medium"
+              aria-label="断开这台客户端（立刻作废这把钥匙）"
+              title="立刻作废这把钥匙，这台客户端马上就调不动了"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[9px] sm:h-8 sm:w-auto sm:gap-1.5 sm:px-2.5"
               style={{
                 background: 'var(--button-danger-bg)',
                 border: '1px solid var(--button-danger-border)',
                 color: 'var(--button-danger-fg)',
               }}
-              title="立刻作废这把钥匙，这台客户端马上就调不动了"
             >
               <Power size={13} aria-hidden />
-              断开
+              <span className="hidden text-[12px] font-medium sm:inline">断开</span>
             </button>
           )}
         </div>
-      </div>
 
-      <div className="flex flex-wrap gap-x-5 gap-y-2">
-        <QuotaBar label="生图" used={client.todayImages} quota={client.dailyImageQuota} unit="张" />
-        <QuotaBar label="写入类动作" used={client.todayWrites} quota={client.dailyWriteQuota} unit="次" />
+        {open && (
+          <div
+            className="flex flex-col gap-1.5 rounded-[10px] px-3 py-2.5"
+            style={{ background: 'var(--nested-block-bg)' }}
+          >
+            {signal.dots.map((d) => (
+              <span key={d.key} className="flex items-center gap-2 text-[11.5px]">
+                <CapabilityDot capKey={d.key} title={d.title} tier={d.tier} decorative />
+                <span style={{ color: d.tier === 'none' ? 'var(--text-disabled)' : 'var(--text-secondary)' }}>
+                  {d.title}
+                </span>
+                <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
+                  {tierLabel(d.tier)}
+                </span>
+              </span>
+            ))}
+            {signal.extraScopes.length > 0 && (
+              <span
+                className="flex items-center gap-2 text-[11.5px]"
+                style={{ color: 'var(--text-muted)' }}
+                title={signal.extraScopes.join('\n')}
+              >
+                <Plug size={13} aria-hidden />
+                另有 {signal.extraScopes.length} 项开放接口授权
+              </span>
+            )}
+            <span className="pt-1 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              {signal.pinned
+                ? '按当初那份清单钉死：以后平台新上的能力不会自动进来。'
+                : '跟着你的权限走：以后平台新上一块能力，它自动就有；你被收回的权限它也立刻跟着没。'}
+            </span>
+            {/* 从来没用过的那把，折叠态头部已经写着「还没用过」，这里不再说第二遍 */}
+            {client.lastUsedAt && (
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                最后活跃 <RelativeTime value={client.lastUsedAt} />
+              </span>
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-x-5 gap-y-2">
+          <QuotaBar label="生图" used={client.todayImages} quota={client.dailyImageQuota} unit="张" />
+          <QuotaBar label="写入类动作" used={client.todayWrites} quota={client.dailyWriteQuota} unit="次" />
+        </div>
+
+        {alert && (
+          <span className="text-[11.5px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+            {alert}
+          </span>
+        )}
       </div>
     </div>
   );
