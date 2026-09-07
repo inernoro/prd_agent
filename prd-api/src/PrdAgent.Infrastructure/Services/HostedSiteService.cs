@@ -756,6 +756,16 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<bool> DeleteAsync(string siteId, string userId, CancellationToken ct)
     {
+        var existingTask = await _db.HostedSiteDeletionTasks
+            .Find(x => x.Id == siteId && x.RequestedByUserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (existingTask != null)
+        {
+            var resumed = await TryRunHostedSiteDeletionAsync(siteId, DateTime.UtcNow, ignoreSchedule: true);
+            if (resumed.Completed) return true;
+            throw new HostedSiteDeletionPendingException(siteId, resumed.AttemptCount);
+        }
+
         // 角色门控：删除只给文件夹所有者(owner)或站点创建者；editor 不能删别人的站点，viewer 全拒
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
         if (site == null) return false;
@@ -763,24 +773,204 @@ public class HostedSiteService : IHostedSiteService
         if (!WebHostingPermission.Can(role, WebHostingAction.Delete, site.OwnerUserId == userId))
             return false;
 
-        foreach (var f in site.Files)
-        {
-            try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
-            catch (Exception ex) { _logger.LogWarning(ex, "删除 COS 文件失败: {CosKey}", f.CosKey); }
-        }
-
-        await _db.HostedSites.DeleteOneAsync(x => x.Id == siteId, ct);
-        // 个人分享链接清理仍按创建者本人（团队成员不应删别人的分享链接）
-        await _db.WebPageShareLinks.DeleteManyAsync(x => x.SiteId == siteId && x.CreatedBy == userId, ct);
-
-        if (site.SharedTeamIds.Count > 0)
-        {
-            await _teamActivity.LogForTeamsAsync(
-                site.SharedTeamIds, TeamAppKey.WebHosting, userId,
-                TeamActivityAction.SiteDeleted, "site", site.Id, site.Title, ct);
-        }
-        return true;
+        await PersistHostedSiteDeletionIntentAsync(site, userId, ct);
+        var outcome = await TryRunHostedSiteDeletionAsync(siteId, DateTime.UtcNow, ignoreSchedule: true);
+        if (outcome.Completed) return true;
+        throw new HostedSiteDeletionPendingException(siteId, outcome.AttemptCount);
     }
+
+    /// <summary>
+    /// 后台恢复一条到期的站点删除任务。返回 true 表示本轮领取过任务（无论本次是否清理成功）。
+    /// </summary>
+    public async Task<bool> ResumeNextPendingDeletionAsync(
+        DateTime? now = null,
+        CancellationToken ct = default)
+    {
+        var attemptedAt = now ?? DateTime.UtcNow;
+        var outcome = await TryRunHostedSiteDeletionAsync(null, attemptedAt, ignoreSchedule: false, ct);
+        return outcome.Claimed;
+    }
+
+    private async Task PersistHostedSiteDeletionIntentAsync(
+        HostedSite site,
+        string requestedByUserId,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var objectKeys = site.Files
+            .Select(x => x.CosKey?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        await _db.HostedSiteDeletionTasks.UpdateOneAsync(
+            x => x.Id == site.Id,
+            Builders<HostedSiteDeletionTask>.Update
+                .SetOnInsert(x => x.Id, site.Id)
+                .SetOnInsert(x => x.SiteId, site.Id)
+                .SetOnInsert(x => x.SiteOwnerUserId, site.OwnerUserId)
+                .SetOnInsert(x => x.RequestedByUserId, requestedByUserId)
+                .SetOnInsert(x => x.SiteTitle, site.Title)
+                .SetOnInsert(x => x.SharedTeamIds, site.SharedTeamIds)
+                .SetOnInsert(x => x.ObjectKeys, objectKeys)
+                .SetOnInsert(x => x.RequestedAt, now)
+                .SetOnInsert(x => x.NextAttemptAt, now)
+                .SetOnInsert(x => x.AttemptCount, 0),
+            new UpdateOptions { IsUpsert = true },
+            ct);
+    }
+
+    private async Task<(bool Claimed, bool Completed, int AttemptCount)> TryRunHostedSiteDeletionAsync(
+        string? siteId,
+        DateTime now,
+        bool ignoreSchedule,
+        CancellationToken ct = default)
+    {
+        var leaseOwner = Guid.NewGuid().ToString("N");
+        var fb = Builders<HostedSiteDeletionTask>.Filter;
+        var filter = fb.Or(
+            fb.Eq(x => x.LeaseExpiresAt, null),
+            fb.Lte(x => x.LeaseExpiresAt, now));
+        if (!string.IsNullOrWhiteSpace(siteId)) filter &= fb.Eq(x => x.Id, siteId);
+        if (!ignoreSchedule) filter &= fb.Lte(x => x.NextAttemptAt, now);
+
+        var task = await _db.HostedSiteDeletionTasks.FindOneAndUpdateAsync(
+            filter,
+            Builders<HostedSiteDeletionTask>.Update
+                .Set(x => x.LeaseOwnerId, leaseOwner)
+                .Set(x => x.LeaseExpiresAt, now.AddMinutes(2))
+                .Set(x => x.LastAttemptAt, now)
+                .Inc(x => x.AttemptCount, 1),
+            new FindOneAndUpdateOptions<HostedSiteDeletionTask>
+            {
+                Sort = Builders<HostedSiteDeletionTask>.Sort.Ascending(x => x.NextAttemptAt),
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        if (task == null) return (false, false, 0);
+
+        var failureCode = "site_record_cleanup_failed";
+        try
+        {
+            await EnsureHostedSiteRecordDeletedAsync(task, leaseOwner);
+
+            failureCode = "asset_cleanup_failed";
+            foreach (var key in task.ObjectKeys)
+                await _storage.DeleteByKeyAsync(key, CancellationToken.None);
+
+            failureCode = "cleanup_ledger_finalize_failed";
+            var removed = await _db.HostedSiteDeletionTasks.DeleteOneAsync(
+                x => x.Id == task.Id && x.LeaseOwnerId == leaseOwner,
+                CancellationToken.None);
+            if (removed.DeletedCount != 1)
+                throw new InvalidOperationException("站点删除清理账本终态写入失败");
+
+            if (task.SharedTeamIds.Count > 0)
+            {
+                try
+                {
+                    await _teamActivity.LogForTeamsAsync(
+                        task.SharedTeamIds,
+                        TeamAppKey.WebHosting,
+                        task.RequestedByUserId,
+                        TeamActivityAction.SiteDeleted,
+                        "site",
+                        task.SiteId,
+                        task.SiteTitle,
+                        CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "站点删除完成，但团队动态写入失败: siteId={SiteId}", task.SiteId);
+                }
+            }
+
+            return (true, true, task.AttemptCount);
+        }
+        catch (Exception ex)
+        {
+            var retryAt = DateTime.UtcNow + HostedSiteDeletionRetryDelay(task.AttemptCount);
+            _logger.LogWarning(
+                ex,
+                "站点文件清理失败，已进入持久重试: siteId={SiteId} attempt={AttemptCount} retryAt={RetryAt}",
+                task.SiteId,
+                task.AttemptCount,
+                retryAt);
+            await _db.HostedSiteDeletionTasks.UpdateOneAsync(
+                x => x.Id == task.Id && x.LeaseOwnerId == leaseOwner,
+                Builders<HostedSiteDeletionTask>.Update
+                    .Set(x => x.LastErrorCode, failureCode)
+                    .Set(x => x.NextAttemptAt, retryAt)
+                    .Set(x => x.LeaseOwnerId, null)
+                    .Set(x => x.LeaseExpiresAt, null),
+                cancellationToken: CancellationToken.None);
+            return (true, false, task.AttemptCount);
+        }
+    }
+
+    private async Task EnsureHostedSiteRecordDeletedAsync(
+        HostedSiteDeletionTask task,
+        string leaseOwner)
+    {
+        if (task.SiteRecordDeletedAt != null) return;
+
+        var current = await _db.HostedSites
+            .Find(x => x.Id == task.SiteId && x.OwnerUserId == task.SiteOwnerUserId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (current != null)
+        {
+            var currentKeys = current.Files
+                .Select(x => x.CosKey?.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var mergedKeys = task.ObjectKeys
+                .Concat(currentKeys)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var snapshot = await _db.HostedSiteDeletionTasks.UpdateOneAsync(
+                x => x.Id == task.Id && x.LeaseOwnerId == leaseOwner,
+                Builders<HostedSiteDeletionTask>.Update.Set(x => x.ObjectKeys, mergedKeys),
+                cancellationToken: CancellationToken.None);
+            if (snapshot.MatchedCount != 1)
+                throw new InvalidOperationException("站点删除对象清单持久化失败");
+            task.ObjectKeys = mergedKeys;
+
+            var deleted = await _db.HostedSites.DeleteOneAsync(
+                x => x.Id == task.SiteId
+                     && x.OwnerUserId == task.SiteOwnerUserId
+                     && x.ContentVersion == current.ContentVersion
+                     && x.UpdatedAt == current.UpdatedAt,
+                CancellationToken.None);
+            if (deleted.DeletedCount != 1)
+            {
+                var stillExists = await _db.HostedSites
+                    .Find(x => x.Id == task.SiteId && x.OwnerUserId == task.SiteOwnerUserId)
+                    .AnyAsync(CancellationToken.None);
+                if (stillExists)
+                    throw new InvalidOperationException("站点内容在删除期间发生变化，将使用新快照重试");
+            }
+        }
+
+        await _db.HostedSiteRevisions.DeleteManyAsync(
+            x => x.SiteId == task.SiteId,
+            CancellationToken.None);
+        await _db.WebPageShareLinks.DeleteManyAsync(
+            x => x.SiteId == task.SiteId,
+            CancellationToken.None);
+
+        var marked = await _db.HostedSiteDeletionTasks.UpdateOneAsync(
+            x => x.Id == task.Id && x.LeaseOwnerId == leaseOwner,
+            Builders<HostedSiteDeletionTask>.Update.Set(x => x.SiteRecordDeletedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        if (marked.MatchedCount != 1)
+            throw new InvalidOperationException("站点删除墓碑状态写入失败");
+        task.SiteRecordDeletedAt = DateTime.UtcNow;
+    }
+
+    private static TimeSpan HostedSiteDeletionRetryDelay(int attemptCount) =>
+        TimeSpan.FromMinutes(Math.Min(60, Math.Pow(2, Math.Clamp(attemptCount - 1, 0, 6))));
 
     public async Task<bool> CompensateGeneratedSiteAsync(
         string? siteId,
@@ -945,21 +1135,34 @@ public class HostedSiteService : IHostedSiteService
             return WebHostingPermission.Can(role, WebHostingAction.Delete, isOwner);
         }).ToList();
 
+        var completedCount = 0;
+        var pendingCount = 0;
+        var lastPendingSiteId = string.Empty;
+        var lastAttemptCount = 0;
         foreach (var site in sites)
-        foreach (var f in site.Files)
         {
-            try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
-            catch (Exception ex) { _logger.LogWarning(ex, "批量删除 COS 文件失败: {CosKey}", f.CosKey); }
+            try
+            {
+                if (await DeleteAsync(site.Id, userId, ct)) completedCount++;
+            }
+            catch (HostedSiteDeletionPendingException ex)
+            {
+                pendingCount++;
+                lastPendingSiteId = ex.SiteId;
+                lastAttemptCount = ex.AttemptCount;
+            }
         }
 
-        var deletableIds = sites.Select(s => s.Id).ToList();
-        if (deletableIds.Count == 0) return 0;
+        if (pendingCount > 0)
+        {
+            throw new HostedSiteDeletionPendingException(
+                lastPendingSiteId,
+                lastAttemptCount,
+                completedCount,
+                pendingCount);
+        }
 
-        var result = await _db.HostedSites.DeleteManyAsync(fb.In(x => x.Id, deletableIds), ct);
-        await _db.WebPageShareLinks.DeleteManyAsync(
-            x => deletableIds.Contains(x.SiteId!) && x.CreatedBy == userId, ct);
-
-        return result.DeletedCount;
+        return completedCount;
     }
 
     public async Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct)

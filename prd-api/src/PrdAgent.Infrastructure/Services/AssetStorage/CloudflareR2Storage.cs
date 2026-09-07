@@ -257,7 +257,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         if (!IsSafeDeleteAllowed(k, out var reason))
         {
             _logger.LogWarning("R2 delete blocked. bucket={Bucket} key={Key} reason={Reason}", _bucket, k, reason);
-            throw new InvalidOperationException("R2 删除被安全策略拦截：仅允许删除 _it 测试目录下对象，或启用受控删除并命中白名单前缀");
+            throw new InvalidOperationException("R2 删除被安全策略拦截：仅允许受保护的单对象键，或启用受控删除并命中白名单前缀");
         }
 
         try
@@ -574,6 +574,11 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         if (AssetStorageDeletePolicy.IsContentAddressedDesignWorkspaceMetadataKey(normalizedKey, _prefix))
         {
             reason = "owned_design_workspace_metadata";
+            return true;
+        }
+        if (AssetStorageDeletePolicy.IsHostedSiteFileKey(normalizedKey, _prefix))
+        {
+            reason = "owned_hosted_site_file";
             return true;
         }
         if (!_enableSafeDelete) { reason = "disabled"; return false; }

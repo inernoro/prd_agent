@@ -295,6 +295,7 @@ public class MongoDbContext
 
     // Web Hosting 网页托管与分享
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
+    public IMongoCollection<HostedSiteDeletionTask> HostedSiteDeletionTasks => _database.GetCollection<HostedSiteDeletionTask>("hosted_site_deletion_tasks");
     public IMongoCollection<HostedSiteRevision> HostedSiteRevisions => _database.GetCollection<HostedSiteRevision>("hosted_site_revisions");
     public IMongoCollection<DesignArtifactRun> DesignArtifactRuns => _database.GetCollection<DesignArtifactRun>("design_artifact_runs");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
@@ -1670,6 +1671,11 @@ public class MongoDbContext
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_hosted_sites_owner_created" }));
+        HostedSiteDeletionTasks.Indexes.CreateOne(new CreateIndexModel<HostedSiteDeletionTask>(
+            Builders<HostedSiteDeletionTask>.IndexKeys
+                .Ascending(x => x.NextAttemptAt)
+                .Ascending(x => x.LeaseExpiresAt),
+            new CreateIndexOptions { Name = "idx_hosted_site_deletion_due" }));
         ShortVideoMaterialRuns.Indexes.CreateOne(new CreateIndexModel<ShortVideoMaterialRun>(
             Builders<ShortVideoMaterialRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_short_video_material_runs_user_created" }));

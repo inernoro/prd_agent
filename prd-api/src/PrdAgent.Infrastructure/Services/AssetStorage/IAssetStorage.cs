@@ -22,6 +22,36 @@ public static class AssetStorageDeletePolicy
 {
     private const string AvatarPathPrefix = "icon/backups/head/";
 
+    /// <summary>
+    /// 网页托管只允许删除一个明确归属到 32 位站点 ID 的文件对象。
+    /// 目录前缀本身、路径穿越和非标准站点 ID 均拒绝，避免把“删除站点”扩大成按前缀批量删除。
+    /// </summary>
+    public static bool IsHostedSiteFileKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = StripConfiguredPrefix(key, configuredPrefix);
+        if (!normalized.StartsWith("web-hosting/sites/", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var segments = normalized.Split('/', StringSplitOptions.None);
+        if (segments.Length < 4
+            || !string.Equals(segments[0], "web-hosting", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(segments[1], "sites", StringComparison.OrdinalIgnoreCase)
+            || !System.Text.RegularExpressions.Regex.IsMatch(
+                segments[2],
+                "^[0-9a-f]{32}$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase
+                | System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+        {
+            return false;
+        }
+
+        return segments.Skip(3).All(segment =>
+            !string.IsNullOrWhiteSpace(segment)
+            && segment != "."
+            && segment != ".."
+            && !segment.Any(char.IsControl));
+    }
+
     public static bool IsVersionedUserAvatarKey(string? key, string? configuredPrefix = null)
     {
         var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
@@ -90,6 +120,19 @@ public static class AssetStorageDeletePolicy
             @"^web-hosting/meta/[a-z2-7]{26}\.json$",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase
             | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    private static string StripConfiguredPrefix(string? key, string? configuredPrefix)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        return normalized;
     }
 }
 

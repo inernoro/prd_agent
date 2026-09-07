@@ -289,13 +289,13 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         // 重要说明：
         // - COS 的“目录”是对象 Key 的前缀，不是真目录；
         // - 任何“删除目录”的实现，本质上都是枚举前缀后批量 DeleteObject，风险极高；
-        // - 目前阶段：为了避免误用/滥用/AI 误改造成灾难性数据删除，DeleteAsync 仅允许删除测试目录 `_it/` 下的对象。
+        // - 默认只允许 `_it/` 测试对象和 AssetStorageDeletePolicy 能验证归属形态的单个业务对象。
         //
         // 严禁：
         // - 实现“按前缀批量删除”（等价于删目录）
         // - 放开删除到生产 `assets/` 前缀
         //
-        // 如未来必须支持生产删除：必须引入多重保护（显式开关、白名单前缀、审计日志、强限流、二次确认、最小权限密钥）。
+        // 更宽的生产删除必须引入多重保护（显式开关、白名单前缀、审计日志、强限流、二次确认、最小权限密钥）。
         if (!IsSafeDeleteAllowed(k, out var reason))
         {
             _logger.LogWarning(
@@ -305,7 +305,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
                 _enableSafeDelete,
                 reason,
                 _safeDeleteAllowPrefixes);
-            throw new InvalidOperationException("COS 删除被安全策略拦截：仅允许删除 _it 测试目录下对象，或启用受控删除并命中白名单前缀");
+            throw new InvalidOperationException("COS 删除被安全策略拦截：仅允许受保护的单对象键，或启用受控删除并命中白名单前缀");
         }
 
         try
@@ -858,6 +858,12 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         if (AssetStorageDeletePolicy.IsContentAddressedDesignWorkspaceMetadataKey(normalizedKey, _prefix))
         {
             reason = "owned_design_workspace_metadata";
+            return true;
+        }
+
+        if (AssetStorageDeletePolicy.IsHostedSiteFileKey(normalizedKey, _prefix))
+        {
+            reason = "owned_hosted_site_file";
             return true;
         }
 
