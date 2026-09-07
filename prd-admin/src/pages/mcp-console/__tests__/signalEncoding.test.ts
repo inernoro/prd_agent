@@ -93,8 +93,38 @@ describe('一把钥匙的色点行', () => {
     const partial = clientSignal({ scopes: ['visual-agent:use', 'document-store:read'], scopeMode: 'auto' }, catalog);
     expect(partial.grantedCount).toBe(2);
     expect(partial.readOnlyCount).toBe(1);
-    expect(partial.summary).toContain('2');
     expect(partial.summary).toContain('只能看');
+  });
+
+  /**
+   * 「全开」不许和「只能看」同时出现 —— 一句话自己跟自己打架。
+   *
+   * 上一版把只读也算进 granted，于是三块能写 + 两块只读会说成
+   * 「5 块全开 · 2 块只能看」。这条是**真机上看出来的**：单测当时全绿，
+   * 因为没有一条用例问过「这句话自洽吗」。所以钉的是性质而不是某个措辞。
+   */
+  it('摘要不许自相矛盾：说了「全开」就不能同时说「只能看」', () => {
+    const mixed = clientSignal(
+      { scopes: ['visual-agent:use', 'document-store:read', 'marketplace.skills:read'], scopeMode: 'auto' },
+      catalog,
+    );
+    expect(mixed.grantedCount).toBe(3);
+    expect(mixed.readOnlyCount).toBe(1);
+    expect(
+      mixed.summary.includes('全开') && mixed.summary.includes('只能看'),
+      `自相矛盾：${mixed.summary}`,
+    ).toBe(false);
+    // 有只读时把两档分开说，数字对得上：2 块能写 + 1 块只能看
+    expect(mixed.summary).toContain('2 块能写');
+    expect(mixed.summary).toContain('1 块只能看');
+  });
+
+  it('一块只读都没有、且全给了，才配说「全开」', () => {
+    const all = clientSignal(
+      { scopes: ['visual-agent:use', 'document-store:write', 'marketplace.skills:read'], scopeMode: 'auto' },
+      catalog,
+    );
+    expect(all.summary).toBe('3 块全开');
   });
 
   /**

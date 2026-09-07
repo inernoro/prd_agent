@@ -106,6 +106,9 @@ export function clientSignal(
  */
 function summaryOf(granted: number, readOnly: number, total: number): string {
   if (granted === 0) return `${total} 块都没开`;
-  const head = granted === total ? `${total} 块全开` : `${granted}/${total} 块`;
-  return readOnly > 0 ? `${head} · ${readOnly} 块只能看` : head;
+  // 有只读的时候不许说「全开」——上一版写的是「5 块全开 · 2 块只能看」，
+  // 一句话自己跟自己打架（真机上看出来的）。granted 把只读也算在内，
+  // 所以「全开」只在**一块只读都没有**时才成立。
+  if (readOnly > 0) return `${granted - readOnly} 块能写 · ${readOnly} 块只能看`;
+  return granted === total ? `${total} 块全开` : `${granted}/${total} 块`;
 }
