@@ -21,14 +21,16 @@ public class MdToPptPrewarmProfileTests
     }
 
     [Fact]
-    public void KnowledgeReferences_AreResolvedFromServerOwnedIdentity()
+    public void KnowledgeReferences_AreResolvedFromServerOwnedIdentityAndPreflightHash()
     {
         var source = File.ReadAllText(ControllerPath());
 
-        source.ShouldContain("_knowledgeSnapshots.ResolveAsync");
+        source.ShouldContain("_knowledgeSnapshots.ResolveForRunAsync");
         source.ShouldContain("new DesignKnowledgeReferenceIdentity(");
+        source.ShouldContain("item.ContentHash");
         source.ShouldContain("BuildKnowledgeContext(knowledgeReferences)");
         source.ShouldNotContain("x.Content!.Trim()");
+        source.ShouldContain("StatusCodes.Status409Conflict");
 
         var dtoStart = source.IndexOf("public class MdToPptKnowledgeReferenceRequest", StringComparison.Ordinal);
         var dtoEnd = source.IndexOf("public class MdToPptOutlineRequest", dtoStart, StringComparison.Ordinal);
@@ -37,9 +39,29 @@ public class MdToPptPrewarmProfileTests
         var dto = source[dtoStart..dtoEnd];
         dto.ShouldContain("EntryId");
         dto.ShouldContain("StoreId");
-        dto.ShouldNotContain("Content");
+        dto.ShouldContain("ContentHash");
+        dto.ShouldNotContain("public string? Content {");
         dto.ShouldNotContain("Title");
         dto.ShouldNotContain("StoreName");
+    }
+
+    [Fact]
+    public void Convert_RejectsStaleKnowledgeBeforeCreatingRunOrStartingStreaming()
+    {
+        var source = File.ReadAllText(ControllerPath());
+        var start = source.IndexOf("public async Task Convert(", StringComparison.Ordinal);
+        var end = source.IndexOf("[HttpPost(\"patch\")]", start, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        end.ShouldBeGreaterThan(start);
+        var method = source[start..end];
+
+        var resolve = method.IndexOf("ResolveKnowledgeReferencesAsync", StringComparison.Ordinal);
+        var streamHeaders = method.IndexOf("SetSseHeaders()", StringComparison.Ordinal);
+        var createRun = method.IndexOf("CreateRunAsync", StringComparison.Ordinal);
+        resolve.ShouldBeGreaterThanOrEqualTo(0);
+        streamHeaders.ShouldBeGreaterThan(resolve);
+        createRun.ShouldBeGreaterThan(resolve);
+        method.ShouldContain("Response.StatusCode = KnowledgeReferenceStatusCode(ex)");
     }
 
     private static string ControllerPath()

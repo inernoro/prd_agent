@@ -47,6 +47,100 @@ public sealed class DesignKnowledgeSnapshotResolverTests
 
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task ResolveForRunAsync_AcceptsCurrentPreflightHash()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var store = new DocumentStore { Id = "store-hash-current", OwnerId = "owner", Name = "版本锁知识库" };
+        var document = new ParsedPrd { Id = "document-hash-current", RawContent = "创建时仍未变化" };
+        var entry = new DocumentEntry
+        {
+            Id = "entry-hash-current",
+            StoreId = store.Id,
+            DocumentId = document.Id,
+            Title = "版本锁条目",
+            ContentIndex = document.RawContent,
+            CreatedBy = "owner",
+        };
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+        await fixture.Db.Documents.InsertOneAsync(document);
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+
+        var preflight = Assert.Single(await fixture.Resolver.ResolveAsync(
+            "owner",
+            [new DesignKnowledgeReferenceIdentity(entry.Id, store.Id)],
+            CancellationToken.None));
+        var snapshots = await fixture.Resolver.ResolveForRunAsync(
+            "owner",
+            [new DesignKnowledgeReferenceIdentity(entry.Id, store.Id, preflight.ContentHash.ToUpperInvariant())],
+            CancellationToken.None);
+
+        var snapshot = Assert.Single(snapshots);
+        Assert.Equal("创建时仍未变化", snapshot.Content);
+        Assert.Equal(preflight.ContentHash, snapshot.ContentHash);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ResolveForRunAsync_RejectsSourceChangedAfterPreflight()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var store = new DocumentStore { Id = "store-hash-stale", OwnerId = "owner", Name = "变化知识库" };
+        var document = new ParsedPrd { Id = "document-hash-stale", RawContent = "预检正文" };
+        var entry = new DocumentEntry
+        {
+            Id = "entry-hash-stale",
+            StoreId = store.Id,
+            DocumentId = document.Id,
+            Title = "变化条目",
+            ContentIndex = document.RawContent,
+            CreatedBy = "owner",
+        };
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+        await fixture.Db.Documents.InsertOneAsync(document);
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        var preflight = Assert.Single(await fixture.Resolver.ResolveAsync(
+            "owner",
+            [new DesignKnowledgeReferenceIdentity(entry.Id, store.Id)],
+            CancellationToken.None));
+
+        await fixture.Db.Documents.UpdateOneAsync(
+            candidate => candidate.Id == document.Id,
+            Builders<ParsedPrd>.Update.Set(candidate => candidate.RawContent, "创建前已更新"));
+        await fixture.Db.DocumentEntries.UpdateOneAsync(
+            candidate => candidate.Id == entry.Id,
+            Builders<DocumentEntry>.Update.Set(candidate => candidate.ContentIndex, "创建前已更新"));
+
+        var error = await Assert.ThrowsAsync<DesignKnowledgeSnapshotException>(() =>
+            fixture.Resolver.ResolveForRunAsync(
+                "owner",
+                [new DesignKnowledgeReferenceIdentity(entry.Id, store.Id, preflight.ContentHash)],
+                CancellationToken.None));
+
+        Assert.Equal(DesignKnowledgeSnapshotResolver.ContentChangedCode, error.Code);
+        Assert.DoesNotContain("创建前已更新", error.Message);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("abcd")]
+    [InlineData("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ResolveForRunAsync_RequiresCanonicalSha256(string? contentHash)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+
+        var error = await Assert.ThrowsAsync<DesignKnowledgeSnapshotException>(() =>
+            fixture.Resolver.ResolveForRunAsync(
+                "owner",
+                [new DesignKnowledgeReferenceIdentity("entry", "store", contentHash)],
+                CancellationToken.None));
+
+        Assert.Equal(DesignKnowledgeSnapshotResolver.ContentHashRequiredCode, error.Code);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task ResolveAsync_FreezesResolvedContentWhileANewRunObservesSourceChanges()
     {
         await using var fixture = await Fixture.CreateAsync();

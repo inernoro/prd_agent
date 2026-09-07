@@ -340,6 +340,41 @@ public class MdToPptController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>为 HTML PPT 创建链读取知识来源当前哈希；不返回正文，创建时仍会二次校验。</summary>
+    [HttpPost("knowledge-references/resolve")]
+    public async Task<IActionResult> ResolveKnowledgeReferencesPreflight(
+        [FromBody] MdToPptKnowledgeReferencesResolveRequest request)
+    {
+        IReadOnlyList<DesignKnowledgeSnapshot> snapshots;
+        try
+        {
+            snapshots = await _knowledgeSnapshots.ResolveAsync(
+                this.GetRequiredUserId(),
+                (request.KnowledgeReferences ?? new List<MdToPptKnowledgeReferenceRequest>())
+                    .Select(item => new DesignKnowledgeReferenceIdentity(
+                        item.EntryId?.Trim() ?? string.Empty,
+                        item.StoreId?.Trim() ?? string.Empty))
+                    .ToList(),
+                HttpContext.RequestAborted);
+        }
+        catch (DesignKnowledgeSnapshotException ex)
+        {
+            return StatusCode(KnowledgeReferenceStatusCode(ex), ApiResponse<object>.Fail(ex.Code, ex.Message));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = snapshots.Select(snapshot => new
+            {
+                snapshot.EntryId,
+                snapshot.StoreId,
+                snapshot.StoreName,
+                snapshot.Title,
+                snapshot.ContentHash,
+            }),
+        }));
+    }
+
     // ─────────────────────────────────────────────
     // POST /api/md-to-ppt/outline
     // ─────────────────────────────────────────────
@@ -360,7 +395,7 @@ public class MdToPptController : ControllerBase
         }
         catch (DesignKnowledgeSnapshotException ex)
         {
-            return BadRequest(new { error = ex.Message, code = ex.Code });
+            return StatusCode(KnowledgeReferenceStatusCode(ex), new { error = ex.Message, code = ex.Code });
         }
 
         if (string.IsNullOrWhiteSpace(req.Content))
@@ -493,7 +528,7 @@ public class MdToPptController : ControllerBase
         }
         catch (DesignKnowledgeSnapshotException ex)
         {
-            Response.StatusCode = StatusCodes.Status400BadRequest;
+            Response.StatusCode = KnowledgeReferenceStatusCode(ex);
             await Response.WriteAsJsonAsync(new { error = ex.Message, code = ex.Code }, HttpContext.RequestAborted);
             return;
         }
@@ -1277,7 +1312,7 @@ public class MdToPptController : ControllerBase
         }
         catch (DesignKnowledgeSnapshotException ex)
         {
-            Response.StatusCode = StatusCodes.Status400BadRequest;
+            Response.StatusCode = KnowledgeReferenceStatusCode(ex);
             await Response.WriteAsJsonAsync(new { error = ex.Message, code = ex.Code }, HttpContext.RequestAborted);
             return;
         }
@@ -1952,14 +1987,22 @@ public class MdToPptController : ControllerBase
     private Task<IReadOnlyList<DesignKnowledgeSnapshot>> ResolveKnowledgeReferencesAsync(
         string userId,
         List<MdToPptKnowledgeReferenceRequest>? references,
-        CancellationToken ct) => _knowledgeSnapshots.ResolveAsync(
+        CancellationToken ct) => _knowledgeSnapshots.ResolveForRunAsync(
             userId,
             (references ?? new List<MdToPptKnowledgeReferenceRequest>())
                 .Select(item => new DesignKnowledgeReferenceIdentity(
                     item.EntryId?.Trim() ?? string.Empty,
-                    item.StoreId?.Trim() ?? string.Empty))
+                    item.StoreId?.Trim() ?? string.Empty,
+                    item.ContentHash))
                 .ToList(),
             ct);
+
+    private static int KnowledgeReferenceStatusCode(DesignKnowledgeSnapshotException ex) =>
+        ex.Code == DesignKnowledgeSnapshotResolver.ContentChangedCode
+            ? StatusCodes.Status409Conflict
+            : ex.Code == ErrorCodes.NOT_FOUND
+                ? StatusCodes.Status404NotFound
+                : StatusCodes.Status400BadRequest;
 
     private static string BuildKnowledgeContext(IReadOnlyList<DesignKnowledgeSnapshot> references) =>
         "# 服务端校验的知识库内容\n\n" + string.Join(
@@ -4915,6 +4958,12 @@ public class MdToPptKnowledgeReferenceRequest
 {
     public string? EntryId { get; set; }
     public string? StoreId { get; set; }
+    public string? ContentHash { get; set; }
+}
+
+public class MdToPptKnowledgeReferencesResolveRequest
+{
+    public List<MdToPptKnowledgeReferenceRequest>? KnowledgeReferences { get; set; }
 }
 
 public class MdToPptOutlineRequest

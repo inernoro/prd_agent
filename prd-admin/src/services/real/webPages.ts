@@ -111,6 +111,13 @@ export interface DesignRuntimeCapability {
 export interface DesignKnowledgeReferenceInput {
   entryId: string;
   storeId: string;
+  contentHash?: string;
+}
+
+export interface ResolvedDesignKnowledgeReference extends DesignKnowledgeReferenceInput {
+  contentHash: string;
+  storeName: string;
+  title: string;
 }
 
 export interface DesignArtifactRunSummary {
@@ -1014,6 +1021,24 @@ export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
   return apiRequest(api.designArtifacts.runtimeCapabilities());
 }
 
+/**
+ * 创建 Run 前向服务端取得当前权威内容哈希。这里只传来源身份，正文始终由服务端读取；
+ * 创建接口会再读一次并比较哈希，封住预检与入队之间的变更窗口。
+ */
+export async function resolveDesignKnowledgeReferences(
+  references: DesignKnowledgeReferenceInput[],
+): Promise<ApiResponse<{ items: ResolvedDesignKnowledgeReference[] }>> {
+  if (references.length === 0) {
+    return { success: true, data: { items: [] }, error: null };
+  }
+  return apiRequest('/api/design-artifacts/knowledge-references/resolve', {
+    method: 'POST',
+    body: {
+      knowledgeReferences: references.map(({ entryId, storeId }) => ({ entryId, storeId })),
+    },
+  });
+}
+
 export async function createDesignArtifactRun(input: {
   instruction: string;
   title?: string;
@@ -1021,12 +1046,19 @@ export async function createDesignArtifactRun(input: {
   sourceSurface: 'web-hosting' | 'knowledge-base';
   knowledgeReferences: DesignKnowledgeReferenceInput[];
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
+  const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
+  if (!resolved.success) return resolved;
   return apiRequest(api.designArtifacts.runs(), {
     method: 'POST',
     body: {
       artifactType: 'web-page',
       operation: 'generate',
       ...input,
+      knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
+        entryId,
+        storeId,
+        contentHash,
+      })),
       runtime: input.runtime || 'map-gateway',
     },
   });
@@ -1061,9 +1093,19 @@ export async function createHostedSiteEditRun(
   knowledgeReferences: DesignKnowledgeReferenceInput[] = [],
   runtime = 'map-gateway',
 ): Promise<ApiResponse<{ runId: string; status: string; runtime: string }>> {
+  const resolved = await resolveDesignKnowledgeReferences(knowledgeReferences);
+  if (!resolved.success) return resolved;
   return apiRequest(api.webPages.editRuns(siteId), {
     method: 'POST',
-    body: { instruction, runtime, knowledgeReferences },
+    body: {
+      instruction,
+      runtime,
+      knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
+        entryId,
+        storeId,
+        contentHash,
+      })),
+    },
   });
 }
 

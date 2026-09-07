@@ -150,6 +150,178 @@ public sealed class HostedSiteEditsControllerTests
     }
 
     [Fact]
+    public async Task CreateRun_ShouldReturnConflictForStaleKnowledgeBeforePersistingOrQueueing()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>"));
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ThrowsAsync(new DesignKnowledgeSnapshotException(
+                DesignKnowledgeSnapshotResolver.ContentChangedCode,
+                "引用内容已变化，请刷新来源后重试"));
+        var events = new Mock<IRunEventStore>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            knowledge.Object,
+            queue.Object,
+            events: events.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            KnowledgeReferences =
+            [
+                new HostedSiteKnowledgeReference
+                {
+                    EntryId = "entry-a",
+                    StoreId = "store-a",
+                    ContentHash = new string('a', 64),
+                },
+            ],
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(conflict.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(
+            DesignKnowledgeSnapshotResolver.ContentChangedCode,
+            payload.GetProperty("error").GetProperty("code").GetString());
+        queue.VerifyNoOtherCalls();
+        events.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GenerateRun_ShouldReturnConflictForStaleKnowledgeBeforePersistingOrQueueing()
+    {
+        var providers = new Mock<IDesignArtifactProviderCatalog>(MockBehavior.Strict);
+        providers.Setup(service => service.FindAsync(
+                "owner-user",
+                DesignArtifactRuntimes.MapGateway,
+                CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactProviderCapability(
+                DesignArtifactRuntimes.MapGateway,
+                "MAP",
+                DesignArtifactAdapterKinds.InProcess,
+                DesignArtifactExecutionOwners.Map,
+                DesignArtifactIsolationModes.Process,
+                [DesignArtifactTypes.WebPage],
+                [DesignArtifactOperations.Generate],
+                [DesignArtifactSourceSurfaces.WebHosting, DesignArtifactSourceSurfaces.KnowledgeBase],
+                Configured: true,
+                Healthy: true,
+                Enabled: true,
+                Reason: null));
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ThrowsAsync(new DesignKnowledgeSnapshotException(
+                DesignKnowledgeSnapshotResolver.ContentChangedCode,
+                "引用内容已变化，请刷新来源后重试"));
+        var events = new Mock<IRunEventStore>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = new DesignArtifactsController(
+            NewLazyDb(),
+            events.Object,
+            queue.Object,
+            providers.Object,
+            knowledge.Object,
+            new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_hash_unit_{Guid.NewGuid():N}"));
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "owner-user")], "test")),
+            },
+        };
+
+        var result = await controller.CreateRun(new CreateDesignArtifactRunRequest
+        {
+            ArtifactType = DesignArtifactTypes.WebPage,
+            SourceSurface = DesignArtifactSourceSurfaces.KnowledgeBase,
+            Runtime = DesignArtifactRuntimes.MapGateway,
+            Instruction = "生成产品说明网页",
+            KnowledgeReferences =
+            [
+                new DesignKnowledgeReferenceRequest
+                {
+                    EntryId = "entry-a",
+                    StoreId = "store-a",
+                    ContentHash = new string('a', 64),
+                },
+            ],
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(conflict.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(
+            DesignKnowledgeSnapshotResolver.ContentChangedCode,
+            payload.GetProperty("error").GetProperty("code").GetString());
+        queue.VerifyNoOtherCalls();
+        events.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task KnowledgePreflight_ShouldReturnHashMetadataWithoutAuthoritativeContent()
+    {
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ReturnsAsync(
+            [
+                new DesignKnowledgeSnapshot
+                {
+                    EntryId = "entry-a",
+                    StoreId = "store-a",
+                    StoreName = "测试知识库",
+                    Title = "测试条目",
+                    Content = "不得返回的权威正文",
+                    ContentHash = new string('a', 64),
+                },
+            ]);
+        var controller = new DesignArtifactsController(
+            NewLazyDb(),
+            Mock.Of<IRunEventStore>(),
+            Mock.Of<IRunQueue>(),
+            Mock.Of<IDesignArtifactProviderCatalog>(),
+            knowledge.Object,
+            new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_preflight_unit_{Guid.NewGuid():N}"));
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "owner-user")], "test")),
+            },
+        };
+
+        var result = await controller.ResolveKnowledgeReferences(new ResolveDesignKnowledgeReferencesRequest
+        {
+            KnowledgeReferences =
+            [
+                new DesignKnowledgeReferenceRequest { EntryId = "entry-a", StoreId = "store-a" },
+            ],
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var item = payload.GetProperty("data").GetProperty("items")[0];
+        Assert.Equal(new string('a', 64), item.GetProperty("contentHash").GetString());
+        Assert.False(item.TryGetProperty("content", out _));
+        Assert.DoesNotContain("不得返回的权威正文", payload.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CreateRun_ShouldRejectSerializedRemotePackageOverOneMegabyteBeforeQueueing()
     {
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
@@ -158,7 +330,7 @@ public sealed class HostedSiteEditsControllerTests
                 $"<!doctype html><html><body>{new string('a', 800_000)}</body></html>"));
         var providers = EnabledProvider(DesignArtifactRuntimes.Codex);
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
-        knowledge.Setup(service => service.ResolveAsync(
+        knowledge.Setup(service => service.ResolveForRunAsync(
                 "owner-user",
                 It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
                 CancellationToken.None))
@@ -229,7 +401,7 @@ public sealed class HostedSiteEditsControllerTests
                 "<!doctype html><html><body>safe</body></html>",
                 siteTitle: siteTitle));
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>();
-        knowledge.Setup(service => service.ResolveAsync(
+        knowledge.Setup(service => service.ResolveForRunAsync(
                 "owner-user",
                 It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
                 CancellationToken.None))
@@ -322,12 +494,13 @@ public sealed class HostedSiteEditsControllerTests
         IDesignArtifactProviderCatalog? providers = null,
         IDesignKnowledgeSnapshotResolver? knowledgeSnapshots = null,
         IRunQueue? queue = null,
-        IHostedSiteRevisionService? revisions = null)
+        IHostedSiteRevisionService? revisions = null,
+        IRunEventStore? events = null)
     {
         var controller = new HostedSiteEditsController(
             sites ?? Mock.Of<IHostedSiteService>(),
             revisions ?? Mock.Of<IHostedSiteRevisionService>(),
-            Mock.Of<IRunEventStore>(),
+            events ?? Mock.Of<IRunEventStore>(),
             queue ?? Mock.Of<IRunQueue>(),
             db,
             NullLogger<HostedSiteEditsController>.Instance,

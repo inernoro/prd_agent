@@ -80,6 +80,45 @@ public sealed class DesignArtifactsController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 在创建设计任务前读取知识来源的当前权威哈希。响应不返回正文；创建 Run 时仍会二次读取并校验。
+    /// </summary>
+    [HttpPost("knowledge-references/resolve")]
+    public async Task<IActionResult> ResolveKnowledgeReferences(
+        [FromBody] ResolveDesignKnowledgeReferencesRequest request)
+    {
+        IReadOnlyList<DesignKnowledgeSnapshot> snapshots;
+        try
+        {
+            snapshots = await _knowledgeSnapshots.ResolveAsync(
+                this.GetRequiredUserId(),
+                (request.KnowledgeReferences ?? new List<DesignKnowledgeReferenceRequest>())
+                    .Select(reference => new DesignKnowledgeReferenceIdentity(
+                        reference.EntryId ?? string.Empty,
+                        reference.StoreId ?? string.Empty))
+                    .ToList(),
+                CancellationToken.None);
+        }
+        catch (DesignKnowledgeSnapshotException ex)
+        {
+            return ex.Code == ErrorCodes.NOT_FOUND
+                ? NotFound(ApiResponse<object>.Fail(ex.Code, ex.Message))
+                : BadRequest(ApiResponse<object>.Fail(ex.Code, ex.Message));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = snapshots.Select(snapshot => new
+            {
+                snapshot.EntryId,
+                snapshot.StoreId,
+                snapshot.StoreName,
+                snapshot.Title,
+                snapshot.ContentHash,
+            }),
+        }));
+    }
+
     [HttpPost("runs")]
     public async Task<IActionResult> CreateRun([FromBody] CreateDesignArtifactRunRequest request)
     {
@@ -126,18 +165,17 @@ public sealed class DesignArtifactsController : ControllerBase
         IReadOnlyList<DesignKnowledgeSnapshot> snapshots;
         try
         {
-            snapshots = await _knowledgeSnapshots.ResolveAsync(
+            snapshots = await _knowledgeSnapshots.ResolveForRunAsync(
                 userId,
                 references.Select(reference => new DesignKnowledgeReferenceIdentity(
                     reference.EntryId ?? string.Empty,
-                    reference.StoreId ?? string.Empty)).ToList(),
+                    reference.StoreId ?? string.Empty,
+                    reference.ContentHash)).ToList(),
                 CancellationToken.None);
         }
         catch (DesignKnowledgeSnapshotException ex)
         {
-            return ex.Code == ErrorCodes.NOT_FOUND
-                ? NotFound(ApiResponse<object>.Fail(ex.Code, ex.Message))
-                : BadRequest(ApiResponse<object>.Fail(ex.Code, ex.Message));
+            return KnowledgeReferenceFailure(ex);
         }
 
         var sourceSurface = string.Equals(request.SourceSurface, DesignArtifactSourceSurfaces.KnowledgeBase, StringComparison.OrdinalIgnoreCase)
@@ -440,6 +478,13 @@ public sealed class DesignArtifactsController : ControllerBase
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 
+    private IActionResult KnowledgeReferenceFailure(DesignKnowledgeSnapshotException ex) =>
+        ex.Code == ErrorCodes.NOT_FOUND
+            ? NotFound(ApiResponse<object>.Fail(ex.Code, ex.Message))
+            : ex.Code == DesignKnowledgeSnapshotResolver.ContentChangedCode
+                ? Conflict(ApiResponse<object>.Fail(ex.Code, ex.Message))
+                : BadRequest(ApiResponse<object>.Fail(ex.Code, ex.Message));
+
     private static object ToPublicCapability(DesignArtifactProviderCapability item) => new
     {
         item.Id,
@@ -484,6 +529,12 @@ public sealed class DesignKnowledgeReferenceRequest
 {
     public string? EntryId { get; set; }
     public string? StoreId { get; set; }
+    public string? ContentHash { get; set; }
+}
+
+public sealed class ResolveDesignKnowledgeReferencesRequest
+{
+    public List<DesignKnowledgeReferenceRequest>? KnowledgeReferences { get; set; }
 }
 
 public sealed record DesignArtifactE4Evidence(

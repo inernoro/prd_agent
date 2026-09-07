@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8');
+const webPagesServiceSource = readFileSync(new URL('../../services/real/webPages.ts', import.meta.url), 'utf8');
+const htmlPptServiceSource = readFileSync(new URL('../../services/real/mdToPptService.ts', import.meta.url), 'utf8');
 
 describe('网页微调执行器事实接线', () => {
   it('展示实际执行归属和隔离边界，并保留未就绪原因', () => {
@@ -22,6 +24,16 @@ describe('网页微调执行器事实接线', () => {
     expect(source).not.toContain('.slice(0, 20_000)');
     expect(source).toContain('entryId: entry.id');
     expect(source).toContain('storeId: entry.storeId');
+  });
+
+  it('网页生成、网页修改和 HTML PPT 都先预检并携带服务端内容哈希', () => {
+    expect(webPagesServiceSource).toContain('resolveDesignKnowledgeReferences(input.knowledgeReferences)');
+    expect(webPagesServiceSource).toContain('resolveDesignKnowledgeReferences(knowledgeReferences)');
+    expect(webPagesServiceSource.match(/entryId, storeId, contentHash/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(htmlPptServiceSource.match(/resolveMdToPptKnowledgeReferences/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(htmlPptServiceSource).toContain("'/api/md-to-ppt/knowledge-references/resolve'");
+    expect(htmlPptServiceSource.match(/entryId, storeId, contentHash/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(htmlPptServiceSource).not.toContain('content: item.content');
   });
 
   it('在开始前明示首版自包含输入边界', () => {

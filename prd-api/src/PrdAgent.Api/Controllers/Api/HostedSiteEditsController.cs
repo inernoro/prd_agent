@@ -121,18 +121,21 @@ public sealed class HostedSiteEditsController : ControllerBase
         IReadOnlyList<DesignKnowledgeSnapshot> snapshots;
         try
         {
-            snapshots = await _knowledgeSnapshots.ResolveAsync(
+            snapshots = await _knowledgeSnapshots.ResolveForRunAsync(
                 userId,
                 knowledgeReferences.Select(reference => new DesignKnowledgeReferenceIdentity(
                     reference.EntryId ?? string.Empty,
-                    reference.StoreId ?? string.Empty)).ToList(),
+                    reference.StoreId ?? string.Empty,
+                    reference.ContentHash)).ToList(),
                 CancellationToken.None);
         }
         catch (DesignKnowledgeSnapshotException ex)
         {
             return ex.Code == ErrorCodes.NOT_FOUND
                 ? NotFound(ApiResponse<object>.Fail(ex.Code, ex.Message))
-                : BadRequest(ApiResponse<object>.Fail(ex.Code, ex.Message));
+                : ex.Code == DesignKnowledgeSnapshotResolver.ContentChangedCode
+                    ? Conflict(ApiResponse<object>.Fail(ex.Code, ex.Message))
+                    : BadRequest(ApiResponse<object>.Fail(ex.Code, ex.Message));
         }
 
         var runId = Guid.NewGuid().ToString("N");
@@ -470,4 +473,5 @@ public sealed class HostedSiteKnowledgeReference
 {
     public string? EntryId { get; set; }
     public string? StoreId { get; set; }
+    public string? ContentHash { get; set; }
 }

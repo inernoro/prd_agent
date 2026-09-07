@@ -1,6 +1,39 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { useAuthStore } from '@/stores/authStore';
 
+interface MdToPptKnowledgeReferenceInput {
+  entryId: string;
+  storeId: string;
+  contentHash?: string;
+}
+
+interface ResolvedMdToPptKnowledgeReference extends MdToPptKnowledgeReferenceInput {
+  contentHash: string;
+  storeName: string;
+  title: string;
+}
+
+async function resolveMdToPptKnowledgeReferences(
+  references: MdToPptKnowledgeReferenceInput[],
+) {
+  if (references.length === 0) {
+    return {
+      success: true as const,
+      data: { items: [] as ResolvedMdToPptKnowledgeReference[] },
+      error: null,
+    };
+  }
+  return apiRequest<{ items: ResolvedMdToPptKnowledgeReference[] }>(
+    '/api/md-to-ppt/knowledge-references/resolve',
+    {
+      method: 'POST',
+      body: {
+        knowledgeReferences: references.map(({ entryId, storeId }) => ({ entryId, storeId })),
+      },
+    },
+  );
+}
+
 // ============ Outline（大纲先行对话式流程）============
 
 export interface OutlineSlide {
@@ -32,6 +65,7 @@ export interface MdToPptOutlineRequest {
   knowledgeReferences?: Array<{
     entryId: string;
     storeId: string;
+    contentHash?: string;
   }>;
   chatHistory?: string;
   targetPages?: number;
@@ -44,9 +78,20 @@ export interface MdToPptOutlineRequest {
 export async function getMdToPptOutline(
   req: MdToPptOutlineRequest
 ): Promise<{ success: true; data: MdToPptOutlineResult } | { success: false; error: string }> {
+  const resolved = await resolveMdToPptKnowledgeReferences(req.knowledgeReferences ?? []);
+  if (!resolved.success) {
+    return { success: false, error: resolved.error.message };
+  }
   const res = await apiRequest<MdToPptOutlineResult>('/api/md-to-ppt/outline', {
     method: 'POST',
-    body: req,
+    body: {
+      ...req,
+      knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
+        entryId,
+        storeId,
+        contentHash,
+      })),
+    },
   });
   if (!res.success) {
     return { success: false, error: res.error?.message ?? '大纲生成失败' };
@@ -90,13 +135,23 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
   const abortController = new AbortController();
   (async () => {
     try {
+      const resolvedKnowledge = await resolveMdToPptKnowledgeReferences(options.knowledgeReferences ?? []);
+      if (!resolvedKnowledge.success) {
+        options.onError?.(resolvedKnowledge.error.message);
+        return;
+      }
+      if (abortController.signal.aborted) return;
       const response = await fetch('/api/md-to-ppt/outline-stream', {
         method: 'POST',
         headers: buildSseHeaders(),
         body: JSON.stringify({
           content: options.content,
           attachmentText: options.attachmentText,
-          knowledgeReferences: options.knowledgeReferences,
+          knowledgeReferences: resolvedKnowledge.data.items.map(({ entryId, storeId, contentHash }) => ({
+            entryId,
+            storeId,
+            contentHash,
+          })),
           chatHistory: options.chatHistory,
           targetPages: options.targetPages,
         }),
@@ -261,6 +316,7 @@ export interface MdToPptConvertRequest {
   knowledgeReferences?: Array<{
     entryId: string;
     storeId: string;
+    contentHash?: string;
   }>;
 }
 
@@ -420,6 +476,7 @@ export interface MdToPptConvertSseOptions {
   knowledgeReferences?: Array<{
     entryId: string;
     storeId: string;
+    contentHash?: string;
   }>;
   /** 壳子就绪（head 含完整设计系统，实况渲染用） */
   onFrame?: (data: { head: string; suffix?: string; total: number; anchored?: boolean }) => void;
@@ -446,6 +503,12 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
 
   (async () => {
     try {
+      const resolvedKnowledge = await resolveMdToPptKnowledgeReferences(options.knowledgeReferences ?? []);
+      if (!resolvedKnowledge.success) {
+        options.onError?.(resolvedKnowledge.error.message);
+        return;
+      }
+      if (abortController.signal.aborted) return;
       const response = await fetch('/api/md-to-ppt/convert', {
         method: 'POST',
         headers: buildSseHeaders(),
@@ -458,7 +521,11 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
           summary: options.summary,
           runtimeProfileId: options.runtimeProfileId,
           sourceSurface: options.sourceSurface,
-          knowledgeReferences: options.knowledgeReferences,
+          knowledgeReferences: resolvedKnowledge.data.items.map(({ entryId, storeId, contentHash }) => ({
+            entryId,
+            storeId,
+            contentHash,
+          })),
         }),
         signal: abortController.signal,
       });

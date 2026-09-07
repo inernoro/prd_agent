@@ -8,7 +8,10 @@ using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Services;
 
-public sealed record DesignKnowledgeReferenceIdentity(string EntryId, string StoreId);
+public sealed record DesignKnowledgeReferenceIdentity(
+    string EntryId,
+    string StoreId,
+    string? ExpectedContentHash = null);
 
 public sealed class DesignKnowledgeSnapshotException : Exception
 {
@@ -22,7 +25,14 @@ public sealed class DesignKnowledgeSnapshotException : Exception
 
 public interface IDesignKnowledgeSnapshotResolver
 {
+    /// <summary>读取当前权威快照，供创建任务前预检；不得直接用于创建 Run。</summary>
     Task<IReadOnlyList<DesignKnowledgeSnapshot>> ResolveAsync(
+        string userId,
+        IReadOnlyList<DesignKnowledgeReferenceIdentity> references,
+        CancellationToken ct);
+
+    /// <summary>创建 Run 前重新读取权威正文，并校验客户端预检时取得的内容哈希。</summary>
+    Task<IReadOnlyList<DesignKnowledgeSnapshot>> ResolveForRunAsync(
         string userId,
         IReadOnlyList<DesignKnowledgeReferenceIdentity> references,
         CancellationToken ct);
@@ -35,6 +45,8 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
 {
     public const int MaxReferenceCount = 3;
     public const int MaxTotalContentCharacters = 60_000;
+    public const string ContentHashRequiredCode = "KNOWLEDGE_SOURCE_HASH_REQUIRED";
+    public const string ContentChangedCode = "KNOWLEDGE_SOURCE_CHANGED";
     private const int MaxLeafSourceCandidates = 64;
 
     private readonly MongoDbContext _db;
@@ -54,6 +66,17 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
     public async Task<IReadOnlyList<DesignKnowledgeSnapshot>> ResolveAsync(
         string userId,
         IReadOnlyList<DesignKnowledgeReferenceIdentity> references,
+        CancellationToken ct) => await ResolveInternalAsync(userId, references, requireExpectedHash: false, ct);
+
+    public async Task<IReadOnlyList<DesignKnowledgeSnapshot>> ResolveForRunAsync(
+        string userId,
+        IReadOnlyList<DesignKnowledgeReferenceIdentity> references,
+        CancellationToken ct) => await ResolveInternalAsync(userId, references, requireExpectedHash: true, ct);
+
+    private async Task<IReadOnlyList<DesignKnowledgeSnapshot>> ResolveInternalAsync(
+        string userId,
+        IReadOnlyList<DesignKnowledgeReferenceIdentity> references,
+        bool requireExpectedHash,
         CancellationToken ct)
     {
         if (references.Count > MaxReferenceCount)
@@ -63,11 +86,16 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
 
         var normalized = references.Select(reference => new DesignKnowledgeReferenceIdentity(
             reference.EntryId?.Trim() ?? string.Empty,
-            reference.StoreId?.Trim() ?? string.Empty)).ToList();
+            reference.StoreId?.Trim() ?? string.Empty,
+            NormalizeHash(reference.ExpectedContentHash))).ToList();
         if (normalized.Any(reference => reference.EntryId.Length == 0 || reference.StoreId.Length == 0))
             throw Invalid("引用知识缺少条目或知识库身份");
         if (normalized.Select(reference => reference.EntryId).Distinct(StringComparer.Ordinal).Count() != normalized.Count)
             throw Invalid("引用知识中存在重复条目，请重新选择");
+        if (requireExpectedHash && normalized.Any(reference => !IsSha256(reference.ExpectedContentHash)))
+            throw new DesignKnowledgeSnapshotException(
+                ContentHashRequiredCode,
+                "引用内容版本缺失，请刷新来源后重试");
 
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
         IReadOnlyList<string>? permissions = null;
@@ -102,6 +130,18 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
             if (totalCharacters > MaxTotalContentCharacters)
                 throw Invalid($"引用知识正文合计不能超过 {MaxTotalContentCharacters:N0} 个字符，请减少选择或缩短内容");
 
+            var contentHashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(content));
+            var contentHash = Convert.ToHexString(contentHashBytes).ToLowerInvariant();
+            if (requireExpectedHash
+                && !CryptographicOperations.FixedTimeEquals(
+                    contentHashBytes,
+                    Convert.FromHexString(reference.ExpectedContentHash!)))
+            {
+                throw new DesignKnowledgeSnapshotException(
+                    ContentChangedCode,
+                    "引用内容已变化，请刷新来源后重试");
+            }
+
             snapshots.Add(new DesignKnowledgeSnapshot
             {
                 EntryId = entry.Id,
@@ -109,11 +149,27 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
                 StoreName = store.Name,
                 Title = NormalizeTitle(entry.Title, sourceTitle),
                 Content = content,
-                ContentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant(),
+                ContentHash = contentHash,
             });
         }
 
         return snapshots;
+    }
+
+    private static string? NormalizeHash(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
+
+    private static bool IsSha256(string? value)
+    {
+        if (value?.Length != 64) return false;
+        try
+        {
+            return Convert.FromHexString(value).Length == 32;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 
     private async Task<(string? Content, string? Title)> ReadAuthorizedContentAsync(
