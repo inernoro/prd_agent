@@ -307,6 +307,16 @@ node /tmp/daily-driver.mjs "$PREVIEW_URL"      # 产出 OUT/*.png + OUT/manifest
 
 在报告对应的新功能小节插入「{{IMG:<name>}}」占位（report-template.md 已支持逐步配图），**并把 harness 产出的 `manifest.json` 一起传给 Phase 5 的 `publish.py --manifest`**——脚本会先把截图上传到知识库拿可访问 URL、回填占位，再写正文。`publish.py` 发布前有硬闸：正文里若残留任何未替换的 `{{IMG:}}`/`{{EVIDENCE}}` 占位（即占位有了却没传对应截图）会**直接拒发**，杜绝读者看到坏占位。**缺少截图取证的新功能段落，必须显式写「本功能未取截图，原因：……」**（用文字，不要留占位），不留空白让读者疑惑。
 
+**占位的四条写法纪律**（2026-09-07 实测两次翻车后固化，详见 `report-design-system.md` §1.6）：
+
+1. `{{IMG:<name>}}` **独立成行**放在正文里，publish.py 会把它整个换成 `<figure><img><figcaption></figure>`。
+   **禁止**写成 `<img src="{{IMG:x}}">`——整段 figure 会被塞进 `src=""`，页面漏出原始标记；publish.py 命中即拒发。
+2. **图说写在 manifest 的 `caption`**，正文里写的 alt / figcaption 不会被采用。driver 的 `shot(...)` caption 就是最终图说，一次写对。
+3. 展开物是裸 `<figure>`，不带 class，**可以放在任何章节**（不限于 `.story`）——模板已改为无作用域的 `figure img{width:100%}`，
+   自己改模板时不要把它重新收回某个容器下（publish.py 有 manifest 时校验这条，CI 守卫 `scripts/tests/test_report_evidence_figure.py` 盯模板）。
+4. 日报是**阅读用**刊物，取证 `launch(cfg)` 前把 `cfg.screenshot.deviceScaleFactor` 改成 `1`（1440x900 约 300KB）；
+   2x 的 2880x1800 单张 1.5-3MB 只给验收档案做像素比对。publish.py 对超过 1.5MB 的图告警。
+
 > 取证依赖预览环境就绪 + 浏览器登录凭据（`MAP_AI_USER` / `MAP_ACCEPT_PASS`）。若环境/凭据不可用，跳过本阶段并在报告里注明「本期无截图，因预览环境/凭据不可用」，不要假装截过。
 
 ### Phase 5：发布到知识库

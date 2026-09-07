@@ -1,0 +1,5 @@
+| fix | daily-report-summary | 日报/周报模板证据图尺寸规则从 `.story figure img` 收窄为无作用域 `figure img{width:100%}`：`{{IMG:}}` 展开成裸 figure、可放任何章节，放在 .story 之外的截图曾按 2880x1800 原始像素平铺撑破页面 |
+| fix | daily-report-summary | publish.py 新增两道发布闸：占位塞进标签属性（`<img src="{{IMG:x}}">`）拒发；带 manifest 发布时校验模板有无作用域的 figure img 规则且胜出 width 为 100%（取胜者不取第一条、@media 内不算）；单张截图 >1.5MB 告警提示改 1x 采集 |
+| test | daily-report-summary | 新增 CI 守卫 scripts/tests/test_report_evidence_figure.py：跑 publish.py 真函数校验两份模板，把展开物放到 .story 之外再过闸，红绿闭环（收回 .story / 删 width / 后写覆盖 / 只在 @media 声明 均判红），并自查 release-script-test 的 path filter 覆盖模板、publish.py 与守卫本身 |
+| rule | doc | report-design-system.md 新增 §1.6 证据图契约；predicate-and-wiring-discipline.md 新增形状 9「契约挂在容器上而不是挂在展开物上」及自查项；daily-report-summary SKILL.md Phase 4.5 补占位四条写法纪律；debt.report-agent.md 记 EVF-1/2、KBS-1（同名日报知识库按名查找的风险） |
+| fix | cds | 移植主干 CI 修复：db-clone-pipeline 测试的 afterEach 补 await flushAllJsonStateStores（主干自 09-04 起 CDS Build & Test 全红，lint 守卫 await-flush-state-stores 点名此处；本 PR 因改 ci.yml 触发该 job 而撞上） |

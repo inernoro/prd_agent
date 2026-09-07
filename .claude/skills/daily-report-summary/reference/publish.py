@@ -177,6 +177,12 @@ def load_manifest(path):
         ws = item.get("warnings") or []
         if ws:  # harness 在截图前后做就绪校验，把问题写进 warnings；这里提升为拒发硬条件
             errs.append(f"截图未就绪/有问题：{name} -> {' | '.join(ws)}")
+        # 阅读用刊物不需要 2x 像素比对精度：单张超过 1.5MB 多半是 deviceScaleFactor=2 的
+        # 2880x1800 原图，四张就是 6MB 一篇。只告警不拒发——报告可读性优先于文件体积，
+        # 但要让写 driver 的人看见（日报取证用 1x，见 SKILL.md Phase 4.5）
+        if os.path.isfile(p) and os.path.getsize(p) > 1_500_000:
+            print(f"  [告警] 截图 {name} 体积 {os.path.getsize(p) / 1e6:.1f}MB——阅读用刊物取证请用 "
+                  f"deviceScaleFactor=1（1440x900 约 300KB），2x 只给验收档案做像素比对")
     if errs:
         raise RuntimeError("截图清单校验未通过（Phase 4.5 要求每张图就绪且说明验证点）：\n  - " + "\n  - ".join(errs))
     return m
@@ -456,6 +462,189 @@ def img_embed(url_or_path, caption, is_html):
     return f"![{caption}]({url_or_path})"
 
 
+# 占位展开成块级 <figure>，只允许直接落在这些「流式容器」里。<p>/<span>/<a>/<h1> 等
+# 不在表内：块级 figure 进去会把父元素拆成两半；<style>/<script>/属性值里更不行。
+_PLACEHOLDER_FLOW_PARENTS = {
+    "body", "div", "section", "article", "main", "aside", "header", "footer",
+    "nav", "blockquote", "li", "td", "th", "details", "figure",
+}
+_VOID_ELEMENTS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+                  "meta", "param", "source", "track", "wbr"}
+
+
+class _PlaceholderContextScanner(HTMLParser):
+    """按真实 HTML 节点找每个占位：记录它是文本节点还是属性值、以及最内层打开的元素。
+
+    前两版判据都在字符串层面猜结构（「最近的 < 是否比 > 靠后」「整行是否只有占位」），
+    换行一插就绕过（<p>\\n{{IMG:x}}\\n</p>、<img src="\\n{{IMG:x}}\\n">，Codex review 2026-09-07）。
+    根治只能看节点上下文。
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.found = []   # (placeholder, where, parent)
+
+    def handle_starttag(self, tag, attrs):
+        for _, v in attrs:
+            for ph in PLACEHOLDER_RE.findall(v or ""):
+                self.found.append((ph, "attr", tag))
+        if tag not in _VOID_ELEMENTS:
+            self.stack.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        for _, v in attrs:
+            for ph in PLACEHOLDER_RE.findall(v or ""):
+                self.found.append((ph, "attr", tag))
+
+    def handle_endtag(self, tag):
+        # 只弹到匹配的那一层：容忍模板里偶尔漏写的闭合标签，不让栈整体错位
+        if tag in self.stack:
+            while self.stack:
+                if self.stack.pop() == tag:
+                    break
+
+    def handle_data(self, data):
+        for ph in PLACEHOLDER_RE.findall(data):
+            self.found.append((ph, "text", self.stack[-1] if self.stack else "body"))
+
+    def handle_comment(self, data):
+        for ph in PLACEHOLDER_RE.findall(data):
+            self.found.append((ph, "comment", self.stack[-1] if self.stack else "body"))
+
+
+def assert_placeholder_standalone(content):
+    """发布前硬闸：{{IMG:}} / {{EVIDENCE}} 占位必须是「流式容器里的独立文本节点」。
+
+    占位会被 img_embed 展开成整段块级 <figure><img><figcaption></figure>，所以三处都不许：
+      - 标签属性里（<img src="{{IMG:x}}">）：整段 figure 进了 src=""，剩余标记漏到页面上
+        （2026-09-07 日报首次发布实测）
+      - <p>/<span>/<a>/标题等非流式元素里：块级 figure 会把父元素拆成两半
+      - <style>/<script>/HTML 注释里：不会被展开却会被下游守卫当成残留占位
+    并且占位所在那一行必须只有它自己（和文字同行也不行）。判据按真实 HTML 节点上下文，
+    不按字符串猜，换行绕不过。
+    """
+    bad = []
+    sc = _PlaceholderContextScanner()
+    sc.feed(content)
+    sc.close()
+    for ph, where, parent in sc.found:
+        if where != "text":
+            bad.append(f"{ph} 在 <{parent}> 的{'属性值' if where == 'attr' else '注释'}里")
+        elif parent not in _PLACEHOLDER_FLOW_PARENTS:
+            bad.append(f"{ph} 落在 <{parent}> 里（块级 figure 只能直接放在 div/section 这类流式容器里）")
+    for line in content.splitlines():
+        hits = PLACEHOLDER_RE.findall(line)
+        if hits and (len(hits) != 1 or line.strip() != hits[0]):
+            bad.append(f"{hits[0]} 没有独立成行：{line.strip()[:60]}")
+    if bad:
+        raise RuntimeError(
+            "占位写法不合契约：" + " | ".join(sorted(set(bad))) +
+            "。{{IMG:<name>}} / {{EVIDENCE}} 会展开成整段块级 <figure>，必须单独占一行、直接放在"
+            "div/section 这类流式容器里，不能写进标签属性、<p>/<span> 或 <style>；图说来自 manifest 的 caption。")
+
+
+# 展开物是裸 <figure><img>，不带 class，能出现在正文任何位置。它的尺寸契约必须挂在
+# 无作用域的 figure img 规则上，而不是挂在某个作者可用可不用的容器（如 .story）上——
+# 否则放在容器外的证据图按原始物理像素平铺（2x 采集常见 2880x1800），撑破 960px 版心。
+# 见 .claude/rules/report-design-system.md §1.6 / predicate-and-wiring-discipline.md 形状 9。
+_FIGURE_IMG_SELECTORS = {"figure img", "figure>img"}
+# 竞争者判据不解析选择器语法：选择器里只要出现 img 这个标签标记（大小写不敏感；
+# `img[alt]`、`img.x`、`img:hover`、`FIGURE IMG` 都算；`.img` / `#img` / `.img-wrap` 这类
+# 类名 / id 不算），就视为可能命中证据图。前三版分别按「字面相等」「末尾复合选择器」
+# 「伪类」逐项加，每加一项就被下一轮评审用新的语法维度绕过（属性选择器、大小写）——
+# 这是 §5.5 熔断里「同一个解析器第二次被要求加语法」的形状，改成有限判据后到此为止：
+# 宁可误拒一条本来无害的 img 规则，也不再追选择器语法。
+_IMG_TARGET_RE = re.compile(r"(?i)(?<![\w.#-])img(?![\w-])")
+
+
+def _css_rules(css):
+    """把 <style> 原文切成规则 [(selector, decls, conditional)]。
+
+    conditional=True 表示规则在 @media 等条件块内部——它只在某个条件下生效，
+    不能当作「无条件成立」的证据（形状 8），但仍可能在某个视口把宽度改坏，
+    所以查竞争声明时要看、查契约存在时不看。
+    """
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    rules, depth, buf, stack = [], 0, [], []
+    for ch in css:
+        if ch == "{":
+            stack.append("".join(buf).strip())
+            buf = []
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            sel = stack.pop() if stack else ""
+            body = "".join(buf)
+            buf = []
+            if not sel.startswith("@"):
+                conditional = any(s.startswith("@") for s in stack)
+                rules.append((sel, body, conditional))
+        else:
+            buf.append(ch)
+    return rules
+
+
+def _norm_selector(sel):
+    # HTML 标签名大小写不敏感：`FIGURE IMG` 与 `figure img` 是同一条规则
+    return re.sub(r"\s*([>+~])\s*", r"\1", re.sub(r"\s+", " ", sel.strip())).lower()
+
+
+def _width_decls(decls):
+    """规则体里按出现顺序取出 width 声明的值（已去掉 !important、小写）。"""
+    out = []
+    for d in decls.split(";"):
+        if ":" not in d:
+            continue
+        k, v = d.split(":", 1)
+        if k.strip().lower() == "width":
+            out.append(re.sub(r"\s*!important\s*$", "", v.strip().lower()))
+    return out
+
+
+def check_evidence_figure_css(body):
+    """证据图尺寸契约（发布闸 + CI 守卫共用的唯一判定源）。返回问题清单（空 = 通过）。
+
+    两条：
+      1. 存在无作用域的 `figure img`（或 `figure>img`）**顶层**规则，且这些规则里胜出的 width
+         是 100%（同特异性后写的赢，取最后一条不取第一条——形状 6）。
+      2. 不许有任何**别的**能命中 <img> 的规则把 width 声明成 100% 以外的值——不论它在
+         哪个特异性层级、有没有 !important、在不在 @media 里。第一版只比对字面相等的
+         选择器，`body figure img{width:auto}` 这类更高特异性的覆盖会被浏览器采用、却被
+         判据放过（Codex review 2026-09-07）。真算层叠要实现特异性与 !important，
+         这里按形状 6 的口径**保守拒收互相打架的声明**：胜者恰好正确也判红。
+    """
+    sc = _ReportScanner()
+    sc.feed(body)
+    sc.close()
+    css = "\n".join(sc.css_chunks)
+    base_widths, hits, competing = [], 0, []
+    for sel, decls, conditional in _css_rules(css):
+        parts = [_norm_selector(p) for p in sel.split(",") if p.strip()]
+        base = [p for p in parts if p in _FIGURE_IMG_SELECTORS]
+        others = [p for p in parts if p not in _FIGURE_IMG_SELECTORS and _IMG_TARGET_RE.search(p)]
+        ws = _width_decls(decls)
+        if base and not conditional:
+            hits += 1
+            base_widths.extend(ws)
+        # 基础选择器自己的非 100% 声明同样拒收：`figure img{width:auto !important}` 写在前面、
+        # `width:100%` 写在后面，按「后写的赢」取到 100%，浏览器却应用 !important 的那条
+        # （Codex review 2026-09-07）。不算层叠，一律打架处理。
+        if (others or base) and any(w != "100%" for w in ws):
+            competing.append(f"`{sel.strip()}` 声明了 width:{[w for w in ws if w != '100%'][0]}"
+                             + ("（在条件块内）" if conditional else ""))
+    errs = []
+    if hits == 0:
+        errs.append("模板缺无作用域的 `figure img { width:100% }` 规则——{{IMG:}} 展开成裸 <figure><img>，"
+                    "放在 .story 之外的证据图会按截图原始像素平铺撑破页面（report-design-system.md §1.6）")
+    elif not base_widths:
+        errs.append("`figure img` 规则没有声明 width，必须是 width:100%（证据图按版心宽度自适应）")
+    if competing:
+        errs.append("有别的规则在和证据图契约打架（更高特异性 / !important / @media 都会赢过或改坏它，"
+                    "一律拒收）：" + "；".join(competing))
+    return errs
+
+
 def assert_no_placeholder(content):
     """发布前硬闸：正文残留 {{IMG:}}/{{EVIDENCE}} 占位 → 拒发，避免读者看到坏占位。"""
     left = PLACEHOLDER_RE.findall(content)
@@ -535,8 +724,13 @@ def main():
         # 不剥会误伤模板；后端正文守卫同为子串扫描，注释不剥也会被后端误拒（Codex P2）
         body = strip_html_comments(body)
         errs = validate_html_report(body)
+        # 证据图契约只在真要嵌图时才是硬闸：无 manifest 的期次（新增方向为 0、只有 SVG 版画）
+        # 不因此拒发；有图就必须有无作用域的 figure img 尺寸规则（report-design-system.md §1.6）
+        if a.manifest:
+            errs.extend(check_evidence_figure_css(body))
         if errs:
             raise RuntimeError("HTML 报纸版校验未通过：\n  - " + "\n  - ".join(errs))
+        assert_placeholder_standalone(body)
     else:
         body = open(a.report_md, encoding="utf-8").read().lstrip()
         if not body.startswith("#"):

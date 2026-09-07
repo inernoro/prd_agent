@@ -110,6 +110,34 @@ SVG 内部 id 可解析、id 带 `emb-` 前缀防与正文插图撞车、`.emble
 - **禁 emoji**（CLAUDE.md 规则 0）；重要程度用文字分级 + 色彩
 - 知识库渲染的刊物（日报/周报）额外禁 `<script>`、禁 `data:image`（publish.py 硬闸）；CDS 渲染的刊物（验收/巡检）允许 `<script>` 做筛选/折叠交互
 
+### 1.6 证据图契约（{{IMG:}} 占位的样式归谁管）
+
+**原则：占位符的样式契约必须挂在「展开物自己」上，不能挂在「作者可能用也可能不用的容器」上。**
+
+`{{IMG:<name>}}` 由 publish.py 展开成裸 `<figure><img><figcaption></figure>`，不带任何 class；
+作者可以把它放在正文任何位置。若尺寸规则只写成 `.story figure img{width:100%}`，那么
+放在 `.story` 之外的证据图就拿不到任何约束，按截图原始物理像素平铺——2x 采集常见
+2880x1800，是 960px 版心的三倍，整页横向溢出。模板样例里的图恰好都在 `.story` 里，
+所以「看起来有样式」，保证却不成立（`predicate-and-wiring-discipline.md` 形状 9）。
+2026-09-07 日报「视察评审」附加章节实测踩中，用户反馈「截图尺寸过大」。
+
+四条硬约束，`scripts/tests/test_report_evidence_figure.py`（CI 自动执行）钉死前两条，
+publish.py 发布闸钉死后两条：
+
+1. 知识库刊物模板必须有**无作用域**的 `figure img` 规则，胜出的 `width` 为 `100%`；
+   **任何别的选择器里带 `img` 标签标记的规则**（更高特异性如 `body figure img`、`img[alt]`、
+   `img.x`、`FIGURE IMG`、`!important`、`@media` 内）都不许把 width 改成别的值——判据不解析
+   选择器语法也不算层叠，按形状 6 保守拒收打架的声明；宁可误拒也不再追语法维度
+   （`figure.art` 版画插图是 `<svg>` 不是 `<img>`，不在此列）
+2. 该规则匹配的必须是 publish.py `img_embed()` **实际吐出**的标签——守卫跑真函数拿产物再比对，
+   不扫源码字面量
+3. `{{IMG:}}` / `{{EVIDENCE}}` 必须**独立成行**（整行只有这一个占位）：塞进标签属性会把整段
+   `<figure>` 展开进 `src=""` 漏出原始标记；和文字同行或包在 `<p>`/`<span>` 里会让块级
+   `<figure>` 把父元素拆成两半；publish.py 命中即拒发
+4. 图说（figcaption）来自 manifest 的 `caption`，正文里写的 alt/figcaption 不会被采用——
+   要改图说就改 manifest；publish.py 对单张超过 1.5MB 的图给出告警，日报这类**阅读用**刊物
+   取证时 `deviceScaleFactor` 用 1（验收档案才需要 2x 做像素比对）
+
 ---
 
 ## 二、四刊个性设定（一刊一色一版式，禁止互相串味）

@@ -140,6 +140,9 @@ jobs:
               - '.claude/rules/report-design-system.md'
               - '.claude/skills/daily-report-summary/reference/report-template-html.html'
               - '.claude/skills/weekly-update-summary/reference/report-template-html.html'
+              # 证据图守卫 test_report_evidence_figure.py 跑的是 publish.py 里的真判定函数
+              # （check_evidence_figure_css / img_embed），改 publish.py 也必须触发这道闸
+              - '.claude/skills/daily-report-summary/reference/publish.py'
               - '.claude/skills/create-visual-test-to-kb/scripts/archive_report.py'
               - 'cds/src/scheduler/nginx-template.ts'
               - 'scripts/tests/validate-static-dist.test.sh'
