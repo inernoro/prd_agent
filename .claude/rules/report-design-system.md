@@ -125,8 +125,9 @@ SVG 内部 id 可解析、id 带 `emb-` 前缀防与正文插图撞车、`.emble
 publish.py 发布闸钉死后两条：
 
 1. 知识库刊物模板必须有**无作用域**的 `figure img` 规则，胜出的 `width` 为 `100%`；
-   **任何别的能命中 `<img>` 的规则**（更高特异性如 `body figure img`、`!important`、`@media` 内）
-   都不许把 width 改成别的值——判据不算层叠，按形状 6 保守拒收打架的声明
+   **任何别的选择器里带 `img` 标签标记的规则**（更高特异性如 `body figure img`、`img[alt]`、
+   `img.x`、`FIGURE IMG`、`!important`、`@media` 内）都不许把 width 改成别的值——判据不解析
+   选择器语法也不算层叠，按形状 6 保守拒收打架的声明；宁可误拒也不再追语法维度
    （`figure.art` 版画插图是 `<svg>` 不是 `<img>`，不在此列）
 2. 该规则匹配的必须是 publish.py `img_embed()` **实际吐出**的标签——守卫跑真函数拿产物再比对，
    不扫源码字面量

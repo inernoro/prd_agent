@@ -549,9 +549,13 @@ def assert_placeholder_standalone(content):
 # 否则放在容器外的证据图按原始物理像素平铺（2x 采集常见 2880x1800），撑破 960px 版心。
 # 见 .claude/rules/report-design-system.md §1.6 / predicate-and-wiring-discipline.md 形状 9。
 _FIGURE_IMG_SELECTORS = {"figure img", "figure>img"}
-# 任何「最后一个复合选择器是 img」的选择器都可能命中证据图（img / body img / .x figure img /
-# figure>img:hover ...）。契约只认无作用域的 figure img，其余一律视为竞争者。
-_IMG_TARGET_RE = re.compile(r"(?:^|[\s>+~])img(?::[\w-]+(?:\([^)]*\))?)*$")
+# 竞争者判据不解析选择器语法：选择器里只要出现 img 这个标签标记（大小写不敏感；
+# `img[alt]`、`img.x`、`img:hover`、`FIGURE IMG` 都算；`.img` / `#img` / `.img-wrap` 这类
+# 类名 / id 不算），就视为可能命中证据图。前三版分别按「字面相等」「末尾复合选择器」
+# 「伪类」逐项加，每加一项就被下一轮评审用新的语法维度绕过（属性选择器、大小写）——
+# 这是 §5.5 熔断里「同一个解析器第二次被要求加语法」的形状，改成有限判据后到此为止：
+# 宁可误拒一条本来无害的 img 规则，也不再追选择器语法。
+_IMG_TARGET_RE = re.compile(r"(?i)(?<![\w.#-])img(?![\w-])")
 
 
 def _css_rules(css):
@@ -582,7 +586,8 @@ def _css_rules(css):
 
 
 def _norm_selector(sel):
-    return re.sub(r"\s*([>+~])\s*", r"\1", re.sub(r"\s+", " ", sel.strip()))
+    # HTML 标签名大小写不敏感：`FIGURE IMG` 与 `figure img` 是同一条规则
+    return re.sub(r"\s*([>+~])\s*", r"\1", re.sub(r"\s+", " ", sel.strip())).lower()
 
 
 def _width_decls(decls):

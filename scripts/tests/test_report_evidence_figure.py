@@ -116,6 +116,26 @@ def check_red_green(label, text, pub):
     important_first = re.sub(r"(?m)^(\s*)figure img\s*\{", r"\1figure img { width: auto !important; }\n\1figure img {", text, count=1)
     if not pub.check_evidence_figure_css(important_first):
         fail(f"{label}：前置的 `figure img{{width:auto !important}}` 被后写的 100% 掩盖仍判绿")
+    # 选择器语法维度（Codex review 第三轮）：属性选择器 / 类限定 / 大写标签名都命中证据图，必须红；
+    # 判据不解析语法，只认 img 标记，所以这一组是「有限判据」的边界用例
+    for tag, extra in [
+        ("属性选择器", "figure img[alt] { width: 50%; }"),
+        ("类限定", "figure img.evidence { width: 50%; }"),
+        ("大写标签名", "FIGURE IMG { width: auto; }"),
+        ("逗号列表里夹带", ".card, figure img[alt] { width: 50%; }"),
+    ]:
+        overridden = text.replace("</style>", extra + "\n</style>", 1)
+        if not pub.check_evidence_figure_css(overridden):
+            fail(f"{label}：{tag}的竞争规则 `{extra}` 仍判绿")
+    # 反向：类名 / id 里恰好含 img 不是标签，不能误拒
+    for extra in [".img-wrap { width: 50%; }", ".img { width: 50%; }", "#img { width: 30%; }"]:
+        harmless2 = text.replace("</style>", extra + "\n</style>", 1)
+        if pub.check_evidence_figure_css(harmless2):
+            fail(f"{label}：`{extra}` 不是 img 标签却被当成竞争规则")
+    # 基础规则用大写写法也应被认出（标签名大小写不敏感）
+    upper = re.sub(r"(?m)^(\s*)figure img\s*\{", r"\1FIGURE IMG {", text, count=1)
+    if pub.check_evidence_figure_css(upper):
+        fail(f"{label}：`FIGURE IMG {{width:100%}}` 没被认成基础规则")
     # 反向：别的规则也声明 width:100%（不打架）不能误拒
     harmless = text.replace("</style>", ".story figure img { width: 100%; }\n</style>", 1)
     if pub.check_evidence_figure_css(harmless):
