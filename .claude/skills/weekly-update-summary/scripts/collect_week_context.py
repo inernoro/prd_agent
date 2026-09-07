@@ -746,8 +746,8 @@ def assert_not_shallow():
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--week-start", required=True)
-    p.add_argument("--week-end", required=True)
+    p.add_argument("--week-start")
+    p.add_argument("--week-end")
     p.add_argument("--base", default="https://main-prd-agent.miduo.org")
     p.add_argument("--impersonate", default="inernoro")
     p.add_argument("--project", default="prd-agent")
@@ -760,7 +760,23 @@ def main():
     p.add_argument("--human", action="store_true")
     p.add_argument("--allow-shallow", action="store_true",
                    help="放行浅克隆采集（数字会少算，报告须注明为下限）")
+    p.add_argument("--check-shallow-only", action="store_true",
+                   help="只跑浅克隆断言就退出（Phase 2.0 在任何 git 统计之前调它），"
+                        "非浅克隆退 0，浅克隆退 2")
     a = p.parse_args()
+
+    # 只做断言：供 Phase 2.0 在 git 统计（2.1-2.6）之前调用。走的是同一个
+    # assert_not_shallow()，不另写一份判据——两份判据必然漂移（形状 3）。
+    if a.check_shallow_only:
+        st = assert_not_shallow()  # 浅克隆会在这里 exit 2
+        if not st.get("checked"):
+            sys.stderr.write("[提醒] 未能判定仓库深度（%s）。\n" % st.get("reason", "原因未知"))
+        else:
+            sys.stderr.write("[仓库深度] 非浅克隆，可以开始 git 统计。\n")
+        return
+
+    if not a.week_start or not a.week_end:
+        p.error("--week-start 与 --week-end 必填（除非只跑 --check-shallow-only）")
 
     shallow_state = {"checked": True, "shallow": False}
     if a.allow_shallow:

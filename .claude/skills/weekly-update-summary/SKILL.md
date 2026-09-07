@@ -78,6 +78,11 @@ git log "$DEFAULT_BRANCH" --format="%cd\t%H\t%an\t%s" --date=short | \
    确有理由在浅克隆上采集时加 `--allow-shallow` 显式放行，此时报告必须注明数字为下限。
    采集结果里多一段 `repoDepth` 记录本次判定。
 
+   **闸有两个调用点，同一份判据**：Phase 2.0 用 `--check-shallow-only` 在 git 统计之前先过一次
+   （否则 2.1-2.6 已经按截断值算完，闸再红也来不及）；Phase 2.7 正式采集时再自动过一次兜底。
+   两处走的都是脚本里那一个 `assert_not_shallow()`，不另写第二份判据。**2.0 红过就得从 2.1 整段
+   重跑**——`--unshallow` 补的是本地历史，不会回头改写你已经记下的数字。
+
    **为什么把它写进脚本而不是写进本文档**：W33 / W34 / W35 / W36 连续四周踩同一个坑——
    容器里的 clone 只有几百个提交，提交数与逐日分布安静地少算约 11%，事后靠人工发现再
    `git fetch --unshallow` 重算。每一期报告的正文都写下了「下期应该断言」，四期无一执行。
@@ -421,11 +426,24 @@ comm -23 /tmp/expected_weeks.txt /tmp/existing_weeks.txt > /tmp/missing_weeks.tx
 
 依次执行 6 组 git 命令收集原始数据 → 见 [reference/data-collection.md](reference/data-collection.md)
 
+**开跑前先过浅克隆闸（2.0，必须在 2.1 之前）**：2.1-2.6 全部是 git 统计，浅克隆会让它们
+安静地少算。闸放在 Phase 2.7 的采集器里太晚——那时候提交数、逐日分布已经按截断值算完了。
+所以在任何 git 统计之前先跑一次：
+
+```bash
+python3 .claude/skills/weekly-update-summary/scripts/collect_week_context.py --check-shallow-only \
+  || { git fetch --unshallow && echo "已补全历史，从 2.1 重跑"; }
+```
+
+**它红过之后，2.1-2.6 必须整段重跑**：`git fetch --unshallow` 只补全了本地历史，不会回头
+改写你已经记下来的数字。只重跑采集器（2.7）而留着 2.1-2.6 的旧值，正是这道闸要防的那种
+「一半新一半旧」的报告。
+
 **命令速查**：
 
 | 步骤 | 目的 | 关键点 |
 |------|------|--------|
-| 2.0 | 边界准备 | 默认主干 + `MONDAY/SUNDAY` 日期字符串 |
+| 2.0 | 边界准备 + **浅克隆闸** | 默认主干 + `MONDAY/SUNDAY` 日期字符串；`--check-shallow-only` 退 2 就先 unshallow 再从 2.1 起跑 |
 | 2.1 | 提交总量 | `git log "$DEFAULT_BRANCH" --date=short` + 日期文本过滤 |
 | 2.2 | 去重文件/行数 | 禁止 `--shortstat` 累加，用 `git diff --shortstat FIRST^..LAST` |
 | 2.3 | PR 列表与深读 | 只取本周实际 merge 到主干的 PR |
