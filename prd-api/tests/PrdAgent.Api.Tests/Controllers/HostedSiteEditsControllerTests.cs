@@ -48,6 +48,19 @@ public sealed class HostedSiteEditsControllerTests
     }
 
     [Fact]
+    public void ValidateEditInputCompatibility_ShouldAllowMarkdownWrapperWithSourceAsset()
+    {
+        var editable = BuildEditableEntry(
+            "<!doctype html><html><body><h1>原始标题</h1></body></html>",
+            fileCount: 2,
+            wrappedAssetType: "markdown");
+
+        var normalized = HostedSiteEditsController.ValidateEditInputCompatibility(editable);
+
+        Assert.Contains("原始标题", normalized, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CreateRun_ShouldRejectDynamicCurrentHtmlBeforeQueueing()
     {
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);

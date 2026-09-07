@@ -180,7 +180,11 @@ public sealed class HostedSiteEditsController : ControllerBase
 
     internal static string ValidateEditInputCompatibility(HostedSiteEditableEntry editable)
     {
-        if ((editable.Site.Files?.Count ?? 0) > 1)
+        var isMarkdownWrapper = string.Equals(
+            editable.Site.WrappedAssetType,
+            "markdown",
+            StringComparison.OrdinalIgnoreCase);
+        if ((editable.Site.Files?.Count ?? 0) > 1 && !isMarkdownWrapper)
         {
             throw new InvalidOperationException(
                 "当前站点包含 ZIP 或多文件资源；首版 AI 微调只支持单个声明式、自包含 HTML，请先把 CSS、图片等资源内嵌到入口 HTML 后再试");

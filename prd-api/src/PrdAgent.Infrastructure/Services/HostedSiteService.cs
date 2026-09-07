@@ -445,7 +445,7 @@ public class HostedSiteService : IHostedSiteService
         string siteId,
         string userId,
         CancellationToken ct = default) =>
-        GetEntryHtmlAsync(siteId, userId, allowMarkdownWrapper: false, ct);
+        GetEntryHtmlAsync(siteId, userId, allowMarkdownWrapper: true, ct);
 
     public Task<HostedSiteEditableEntry> GetRevisionEntryHtmlAsync(
         string siteId,
@@ -473,7 +473,7 @@ public class HostedSiteService : IHostedSiteService
 
         if (!string.IsNullOrWhiteSpace(site.WrappedAssetType)
             && (!allowMarkdownWrapper || !IsRevisionReadableWrapper(site.WrappedAssetType)))
-            throw new InvalidOperationException("PDF、视频和 Markdown 包装站暂不支持直接微调，请先转换为普通 HTML 站点");
+            throw new InvalidOperationException("PDF、视频包装站暂不支持直接微调，请先转换为普通 HTML 站点");
 
         var extension = Path.GetExtension(site.EntryFile).ToLowerInvariant();
         if (extension is not ".html" and not ".htm")
