@@ -38,10 +38,20 @@ describe('色点：颜色不是唯一通道', () => {
   });
 
   it('每个色点都念得出名字与档位（读屏与长按都拿得到）', () => {
-    expect(src).toContain('aria-label={label}');
-    expect(src).toContain('title={label}');
+    expect(src).toMatch(/'aria-label':\s*label/);
+    expect(src).toMatch(/title:\s*label/);
     // label 必须同时含能力名与档位，只报其一等于没有文字冗余
     expect(src).toMatch(/const label = `\$\{title\} · \$\{tierLabel\(tier\)\}`/);
+  });
+
+  it('旁边已有同样文字的点做装饰，不让读屏把每块能力念两遍', () => {
+    // 展开区逐块清单里名字与档位就在点的旁边；点再带一遍标签，读屏就是「知识库 · 能写、知识库、能写」。
+    // 折叠态的色点行没有那段文字，那里的点必须保留标签 —— 所以是按位置二选一，不是一刀切。
+    expect(src).toMatch(/decorative\s*\?\s*\(\{\s*'aria-hidden':\s*true/);
+    const page = stripComments(read('McpConsolePage.tsx'));
+    const uses = page.match(/<CapabilityDot[^>]*\/>/g) ?? [];
+    expect(uses.length, '页面里应有折叠态与展开区两处色点').toBe(2);
+    expect(uses.filter((u) => /\bdecorative\b/.test(u)).length, '恰好一处（展开区）是装饰点').toBe(1);
   });
 
   it('色点的颜色按能力 key 查，不按 title 查', () => {

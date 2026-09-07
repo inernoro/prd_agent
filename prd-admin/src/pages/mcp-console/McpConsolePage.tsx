@@ -587,7 +587,7 @@ function ClientRow({
           >
             {signal.dots.map((d) => (
               <span key={d.key} className="flex items-center gap-2 text-[11.5px]">
-                <CapabilityDot capKey={d.key} title={d.title} tier={d.tier} />
+                <CapabilityDot capKey={d.key} title={d.title} tier={d.tier} decorative />
                 <span style={{ color: d.tier === 'none' ? 'var(--text-disabled)' : 'var(--text-secondary)' }}>
                   {d.title}
                 </span>

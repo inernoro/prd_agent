@@ -15,39 +15,39 @@ export function CapabilityDot({
   capKey,
   title,
   tier,
+  decorative = false,
 }: {
   capKey: string;
   title: string;
   tier: CapabilityTier;
+  /**
+   * 旁边已经有同样的文字时（展开区逐块清单）点只做装饰，不再自带可读名字 ——
+   * 否则读屏把「知识库 · 能写」念一遍、紧接着又把旁边的「知识库」「能写」念一遍。
+   * 折叠态的色点行上没有这段文字，那里的点必须保留标签（review 抓出来的）。
+   */
+  decorative?: boolean;
 }) {
   // 按 **key** 查视觉登记表。按 title 查会全部落到兜底中性色，
   // 五个点长得一模一样 —— 颜色这一路通道当场作废，而界面照常渲染、测试照常绿。
   const color = capabilityVisual(capKey).text;
   const label = `${title} · ${tierLabel(tier)}`;
   const base = 'block h-[11px] w-[11px] shrink-0 rounded-full';
+  const a11y = decorative
+    ? ({ 'aria-hidden': true } as const)
+    : ({ role: 'img', 'aria-label': label, title: label } as const);
 
   if (tier === 'write' || tier === 'full') {
     // 实心 = 这把钥匙对这块能力拿满了。「能写」与「已开」形状相同，说法由 tierLabel 分开：
     // 只有读档的能力拿满了也不能写，不能因为形状一样就说成一样。
-    return <span role="img" aria-label={label} title={label} className={base} style={{ background: color }} />;
+    return <span {...a11y} className={base} style={{ background: color }} />;
   }
   if (tier === 'read') {
     // 圆环：中心透空 —— 与实心是两种形状，不是同一形状的两种深浅
-    return (
-      <span
-        role="img"
-        aria-label={label}
-        title={label}
-        className={base}
-        style={{ border: `2px solid ${color}`, background: 'transparent' }}
-      />
-    );
+    return <span {...a11y} className={base} style={{ border: `2px solid ${color}`, background: 'transparent' }} />;
   }
   return (
     <span
-      role="img"
-      aria-label={label}
-      title={label}
+      {...a11y}
       className={base}
       style={{ border: '1px dashed var(--border-default)', background: 'transparent' }}
     />
