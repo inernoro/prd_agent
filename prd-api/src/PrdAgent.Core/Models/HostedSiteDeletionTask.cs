@@ -10,7 +10,7 @@ namespace PrdAgent.Core.Models;
 public sealed class HostedSiteDeletionTask
 {
     /// <summary>与站点 ID 相同，保证同一站点只有一份删除账本。</summary>
-    public string Id { get; set; } = string.Empty;
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string SiteId { get; set; } = string.Empty;
     public string SiteOwnerUserId { get; set; } = string.Empty;
