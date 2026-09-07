@@ -26,7 +26,9 @@ export function CapabilityDot({
   const label = `${title} · ${tierLabel(tier)}`;
   const base = 'block h-[11px] w-[11px] shrink-0 rounded-full';
 
-  if (tier === 'write') {
+  if (tier === 'write' || tier === 'full') {
+    // 实心 = 这把钥匙对这块能力拿满了。「能写」与「已开」形状相同，说法由 tierLabel 分开：
+    // 只有读档的能力拿满了也不能写，不能因为形状一样就说成一样。
     return <span role="img" aria-label={label} title={label} className={base} style={{ background: color }} />;
   }
   if (tier === 'read') {
@@ -68,7 +70,7 @@ export function SignalLegend() {
       <span className="text-[10.5px]" style={{ color: 'var(--text-disabled)' }}>
         能力
       </span>
-      <LegendItem label="能写">
+      <LegendItem label="能写 / 已开">
         <span className="block h-[9px] w-[9px] rounded-full" style={{ background: 'var(--text-secondary)' }} />
       </LegendItem>
       <LegendItem label="只能看">

@@ -34,25 +34,28 @@ describe('色点的档位判据', () => {
    */
   it('只有写档的能力：拿到那一个 scope 就是完整权限', () => {
     const visual = cap({ key: 'visual', title: '视觉创作', readScope: null, writeScope: 'visual-agent:use' });
-    expect(capabilityTier(visual, held('visual-agent:use'))).toBe('write');
+    expect(capabilityTier(visual, held('visual-agent:use'))).toBe('full');
     expect(capabilityTier(visual, held())).toBe('none');
   });
 
   /**
-   * 只有读档的能力（海鲜市场：`writeScope` 为空）—— 这条是这个判据最容易错的地方。
+   * 只有读档的能力（海鲜市场：`writeScope` 为空）—— 这条是这个判据最容易错的地方，两个方向都错过。
    *
    * 按「没拿到写档就是只读」写的话，海鲜市场会永远显示成空心圆环，
-   * 等于告诉用户「还有一档没给它」，而那一档根本不存在。同一个功能里
-   * 接入弹窗对海鲜市场什么都不标，两处说法就此打架。
+   * 等于告诉用户「还有一档没给它」，而那一档根本不存在。
+   * 反过来把它并进「能写」也不对（review 抓出来的）：后端没给海鲜市场任何写接口，
+   * 卡片上却念出「海鲜市场 · 能写」。所以它是第三种：拿满了，但说法是「已开」。
    */
-  it('只有读档的能力：拿到那一个 scope 也是完整权限，不许标成只读', () => {
+  it('只有读档的能力：拿到那一个 scope 是完整权限，既不标成只读、也不标成能写', () => {
     const market = cap({ key: 'market', title: '海鲜市场', readScope: 'marketplace.skills:read', writeScope: null });
-    expect(capabilityTier(market, held('marketplace.skills:read'))).toBe('write');
+    expect(capabilityTier(market, held('marketplace.skills:read'))).toBe('full');
     expect(capabilityTier(market, held())).toBe('none');
+    expect(tierLabel('full')).not.toContain('写');
   });
 
   it('档位的说法只此一处，色点与文字不会各说各的', () => {
     expect(tierLabel('write')).toBe('能写');
+    expect(tierLabel('full')).toBe('已开');
     expect(tierLabel('read')).toBe('只能看');
     expect(tierLabel('none')).toBe('未开');
   });
@@ -114,9 +117,11 @@ describe('一把钥匙的色点行', () => {
       mixed.summary.includes('全开') && mixed.summary.includes('只能看'),
       `自相矛盾：${mixed.summary}`,
     ).toBe(false);
-    // 有只读时把两档分开说，数字对得上：2 块能写 + 1 块只能看
-    expect(mixed.summary).toContain('2 块能写');
+    // 有只读时把两档分开说，数字对得上：2 块已开 + 1 块只能看
+    expect(mixed.summary).toContain('2 块已开');
     expect(mixed.summary).toContain('1 块只能看');
+    // 这两块「已开」里有一块是只有读档的海鲜市场，摘要不能替它说「能写」
+    expect(mixed.summary).not.toContain('能写');
   });
 
   it('一块只读都没有、且全给了，才配说「全开」', () => {

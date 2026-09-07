@@ -4,11 +4,15 @@ import { isReadOnlyTier } from './scopePlan';
 /**
  * 一块能力对一把钥匙处在哪一档。色点的形状与颜色都由它决定。
  *
- * - `write` 这把钥匙对这块能力有完整权限（实心点）
+ * - `write` 这块能力分读写两档，钥匙拿到了写档（实心点）
+ * - `full`  这块能力只有一档（视觉/文学只有写档、海鲜市场只有读档），钥匙拿到了它（实心点）
  * - `read`  只拿到了读档，而这块能力确实还有一个写档（空心圆环）
  * - `none`  一点都没给（虚线空圈）
+ *
+ * `full` 与 `write` 形状相同、说法不同：海鲜市场拿到 `marketplace.skills:read` 是完整权限，
+ * 但后端并没有给它任何写接口，标成「能写」就是在撒谎（review 里抓出来的）。
  */
-export type CapabilityTier = 'write' | 'read' | 'none';
+export type CapabilityTier = 'write' | 'full' | 'read' | 'none';
 
 export interface CapabilitySignal {
   key: string;
@@ -48,12 +52,16 @@ export function capabilityTier(
   const hasWrite = !!cap.writeScope && heldLowercase.has(cap.writeScope.toLowerCase());
   const hasRead = !!cap.readScope && heldLowercase.has(cap.readScope.toLowerCase());
   if (!hasWrite && !hasRead) return 'none';
-  return isReadOnlyTier(cap, heldLowercase) ? 'read' : 'write';
+  if (isReadOnlyTier(cap, heldLowercase)) return 'read';
+  // 只有一档的能力：拿到那一档就是完整权限，但它未必是「写」——按能力实际的档位形状说话
+  const singleTier = !cap.readScope || !cap.writeScope;
+  return singleTier ? 'full' : 'write';
 }
 
 /** 一个色点该怎么念（读屏与长按提示都用它）。文字与色点同源，不会各说各的。 */
 export function tierLabel(tier: CapabilityTier): string {
   if (tier === 'write') return '能写';
+  if (tier === 'full') return '已开';
   if (tier === 'read') return '只能看';
   return '未开';
 }
@@ -109,6 +117,7 @@ function summaryOf(granted: number, readOnly: number, total: number): string {
   // 有只读的时候不许说「全开」——上一版写的是「5 块全开 · 2 块只能看」，
   // 一句话自己跟自己打架（真机上看出来的）。granted 把只读也算在内，
   // 所以「全开」只在**一块只读都没有**时才成立。
-  if (readOnly > 0) return `${granted - readOnly} 块能写 · ${readOnly} 块只能看`;
-  return granted === total ? `${total} 块全开` : `${granted}/${total} 块`;
+  // 完整那一档统一说「已开」不说「能写」：只有读档的能力（海鲜市场）拿满了也不能写。
+  if (readOnly > 0) return `${granted - readOnly} 块已开 · ${readOnly} 块只能看`;
+  return granted === total ? `${total} 块全开` : `${granted}/${total} 块已开`;
 }
