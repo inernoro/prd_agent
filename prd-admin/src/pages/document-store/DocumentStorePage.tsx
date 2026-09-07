@@ -4477,6 +4477,39 @@ export function DocumentStorePage() {
           note={`${activeTeamLabel} · ${totalStores} 个知识库 · ${totalDocs} 篇文章`}
         >
           <div className="px-5 pb-4 space-y-5">
+            {/* 关键动作置于面板首屏：筛选项可能很多，不能把统计、同步和接入 AI 推到折叠区下方。 */}
+            {tab === 'mine' && (
+              <section className="space-y-2">
+                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>更多操作</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setShowMobileFilters(false); setShowAccountViewers(true); }}
+                    className="surface-action hover-bg-soft h-16 rounded-[14px] flex flex-col items-center justify-center gap-1 text-token-primary"
+                  >
+                    <BarChart3 size={17} />
+                    <span className="text-[12px]">统计</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowMobileFilters(false); setShowSendToPeer(true); }}
+                    className="surface-action hover-bg-soft h-16 rounded-[14px] flex flex-col items-center justify-center gap-1 text-token-primary"
+                  >
+                    <ArrowLeftRight size={17} />
+                    <span className="text-[12px]">批量同步</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowMobileFilters(false); setShowOpenApi(true); }}
+                    className="surface-action hover-bg-soft h-16 rounded-[14px] flex flex-col items-center justify-center gap-1 text-token-primary"
+                  >
+                    <KeyRound size={17} />
+                    <span className="text-[12px]">接入 AI</span>
+                  </button>
+                </div>
+              </section>
+            )}
+
             {tab === 'team' && (
               <section className="space-y-2">
                 <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>团队范围</div>
@@ -4550,37 +4583,6 @@ export function DocumentStorePage() {
               </section>
             )}
 
-            {tab === 'mine' && (
-              <section className="space-y-2">
-                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>更多操作</div>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setShowMobileFilters(false); setShowAccountViewers(true); }}
-                    className="surface-action hover-bg-soft h-16 rounded-[14px] flex flex-col items-center justify-center gap-1 text-token-primary"
-                  >
-                    <BarChart3 size={17} />
-                    <span className="text-[12px]">统计</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowMobileFilters(false); setShowSendToPeer(true); }}
-                    className="surface-action hover-bg-soft h-16 rounded-[14px] flex flex-col items-center justify-center gap-1 text-token-primary"
-                  >
-                    <ArrowLeftRight size={17} />
-                    <span className="text-[12px]">批量同步</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowMobileFilters(false); setShowOpenApi(true); }}
-                    className="surface-action hover-bg-soft h-16 rounded-[14px] flex flex-col items-center justify-center gap-1 text-token-primary"
-                  >
-                    <KeyRound size={17} />
-                    <span className="text-[12px]">接入 AI</span>
-                  </button>
-                </div>
-              </section>
-            )}
           </div>
         </MobileBottomSheet>
       )}
