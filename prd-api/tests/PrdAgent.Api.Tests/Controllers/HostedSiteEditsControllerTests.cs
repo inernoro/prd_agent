@@ -11,6 +11,7 @@ using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Controllers;
@@ -184,8 +185,9 @@ public sealed class HostedSiteEditsControllerTests
     }
 
     [Fact]
-    public async Task ListRevisions_ShouldExposeRollbackTargetSeparatelyFromParentRevision()
+    public async Task ListRevisions_ShouldReadMarkdownWrapperBaselineAndExposeRollbackTargetSeparatelyFromParentRevision()
     {
+        var contentVersion = DateTime.UtcNow;
         var rollback = new HostedSiteRevision
         {
             Id = "revision-rollback",
@@ -197,17 +199,18 @@ public sealed class HostedSiteEditsControllerTests
             RollbackTargetRevisionId = "revision-selected-history",
             Html = "<!doctype html><html><body>restored</body></html>",
             BasedOnContentVersion = DateTime.UtcNow.AddMinutes(-1),
-            PublishedContentVersion = DateTime.UtcNow,
+            PublishedContentVersion = contentVersion,
         };
+        var markdownEntry = BuildEditableEntry(rollback.Html, wrappedAssetType: "markdown", contentVersion: contentVersion);
         var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
         revisions.Setup(service => service.EnsureCurrentSnapshotAsync(
-                "site-a", "owner-user", null, CancellationToken.None))
+                "site-a", "owner-user", markdownEntry, CancellationToken.None))
             .ReturnsAsync(rollback);
         revisions.Setup(service => service.ListAsync("site-a", "owner-user", CancellationToken.None))
             .ReturnsAsync([rollback]);
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
-        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
-            .ReturnsAsync(BuildEditableEntry(rollback.Html));
+        sites.Setup(service => service.GetRevisionEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(markdownEntry);
         var controller = BuildController(
             NewLazyDb(),
             "owner-user",
@@ -221,6 +224,23 @@ public sealed class HostedSiteEditsControllerTests
         var item = payload.GetProperty("data")[0];
         Assert.Equal("revision-current-before-rollback", item.GetProperty("parentRevisionId").GetString());
         Assert.Equal("revision-selected-history", item.GetProperty("rollbackTargetRevisionId").GetString());
+        Assert.True(item.GetProperty("isCurrent").GetBoolean());
+        sites.Verify(service => service.GetEditableEntryHtmlAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("markdown", true)]
+    [InlineData("MARKDOWN", true)]
+    [InlineData("pdf", false)]
+    [InlineData("video", false)]
+    public void RevisionReadableWrapperPolicy_ShouldOnlyAllowSelfContainedMarkdown(
+        string? wrappedAssetType,
+        bool expected)
+    {
+        Assert.Equal(expected, HostedSiteService.IsRevisionReadableWrapper(wrappedAssetType));
     }
 
     private static HostedSiteEditsController BuildController(
@@ -279,13 +299,16 @@ public sealed class HostedSiteEditsControllerTests
     private static HostedSiteEditableEntry BuildEditableEntry(
         string html,
         int fileCount = 1,
-        string? siteTitle = "测试站点")
+        string? siteTitle = "测试站点",
+        string? wrappedAssetType = null,
+        DateTime? contentVersion = null)
     {
         var site = new HostedSite
         {
             Id = "site-a",
             OwnerUserId = "owner-user",
             Title = siteTitle ?? string.Empty,
+            WrappedAssetType = wrappedAssetType,
             EntryFile = "index.html",
             Files = Enumerable.Range(0, fileCount)
                 .Select(index => new HostedSiteFile
@@ -297,7 +320,7 @@ public sealed class HostedSiteEditsControllerTests
                 })
                 .ToList(),
         };
-        return new HostedSiteEditableEntry(site, html, DateTime.UtcNow);
+        return new HostedSiteEditableEntry(site, html, contentVersion ?? DateTime.UtcNow);
     }
 
     private static string ResponseMessage(BadRequestObjectResult result)

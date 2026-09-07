@@ -54,6 +54,13 @@ public interface IHostedSiteService
         string siteId, string userId, CancellationToken ct = default);
 
     /// <summary>
+    /// 读取用于版本基线的入口 HTML。与直接微调不同，允许正文已经内嵌到入口 HTML 的 Markdown 包装站；
+    /// PDF、视频等依赖原始资产的包装站仍然拒绝。
+    /// </summary>
+    Task<HostedSiteEditableEntry> GetRevisionEntryHtmlAsync(
+        string siteId, string userId, CancellationToken ct = default);
+
+    /// <summary>
     /// 只替换入口 HTML，保留 ZIP 站点里的 CSS、图片等其余文件。
     /// </summary>
     Task<HostedSite> ReplaceEntryHtmlAsync(

@@ -282,9 +282,13 @@ public sealed class HostedSiteEditsController : ControllerBase
         var userId = this.GetRequiredUserId();
         try
         {
-            await _revisions.EnsureCurrentSnapshotAsync(siteId, userId, ct: CancellationToken.None);
+            var current = await _sites.GetRevisionEntryHtmlAsync(siteId, userId, CancellationToken.None);
+            await _revisions.EnsureCurrentSnapshotAsync(
+                siteId,
+                userId,
+                current,
+                CancellationToken.None);
             var items = await _revisions.ListAsync(siteId, userId, CancellationToken.None);
-            var current = await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);
             return Ok(ApiResponse<object>.Ok(items.Select(x => ToDto(x, current.ContentVersion)).ToList()));
         }
         catch (KeyNotFoundException)

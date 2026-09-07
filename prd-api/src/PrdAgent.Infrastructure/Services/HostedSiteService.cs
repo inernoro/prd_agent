@@ -441,10 +441,27 @@ public class HostedSiteService : IHostedSiteService
 
     private const int MaxEditableEntryBytes = 2 * 1024 * 1024;
 
-    public async Task<HostedSiteEditableEntry> GetEditableEntryHtmlAsync(
+    public Task<HostedSiteEditableEntry> GetEditableEntryHtmlAsync(
         string siteId,
         string userId,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        GetEntryHtmlAsync(siteId, userId, allowMarkdownWrapper: false, ct);
+
+    public Task<HostedSiteEditableEntry> GetRevisionEntryHtmlAsync(
+        string siteId,
+        string userId,
+        CancellationToken ct = default) =>
+        GetEntryHtmlAsync(siteId, userId, allowMarkdownWrapper: true, ct);
+
+    internal static bool IsRevisionReadableWrapper(string? wrappedAssetType) =>
+        string.IsNullOrWhiteSpace(wrappedAssetType)
+        || string.Equals(wrappedAssetType, "markdown", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<HostedSiteEditableEntry> GetEntryHtmlAsync(
+        string siteId,
+        string userId,
+        bool allowMarkdownWrapper,
+        CancellationToken ct)
     {
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
         if (site == null)
@@ -454,7 +471,8 @@ public class HostedSiteService : IHostedSiteService
         if (!WebHostingPermission.Can(role, WebHostingAction.Edit, site.OwnerUserId == userId))
             throw new KeyNotFoundException("站点不存在");
 
-        if (!string.IsNullOrWhiteSpace(site.WrappedAssetType))
+        if (!string.IsNullOrWhiteSpace(site.WrappedAssetType)
+            && (!allowMarkdownWrapper || !IsRevisionReadableWrapper(site.WrappedAssetType)))
             throw new InvalidOperationException("PDF、视频和 Markdown 包装站暂不支持直接微调，请先转换为普通 HTML 站点");
 
         var extension = Path.GetExtension(site.EntryFile).ToLowerInvariant();
