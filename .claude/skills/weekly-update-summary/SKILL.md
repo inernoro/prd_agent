@@ -502,6 +502,10 @@ python3 .claude/skills/weekly-update-summary/scripts/collect_week_context.py \
   --out /tmp/week-context-${ISO_YEAR}-W${WEEK_NUM}.json --human
 ```
 
+**若 Phase 2.0 是靠 `--allow-shallow` 担责放行的，这条命令也必须带上 `--allow-shallow`**，否则采集器
+会在这里重新断言、以退出码 2 停下，整条「明知浅克隆也要采」的路径走不完。担责是一次性的决定，
+两个调用点要一致；此时报告必须注明提交类数字为下限。
+
 采集器输出（每段独立降级，失败只标 `available:false`，不阻断周报）：
 
 | 段 | 内容 | 用在报告哪里 |

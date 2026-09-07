@@ -117,6 +117,12 @@ jobs:
               - 'scripts/assemble-changelog.sh'
               - 'scripts/lib/changelog_merge.py'
               - 'scripts/tests/test_*.py'
+              # 周报浅克隆闸的被测文件。守卫读的是采集器的退出码 + SKILL.md 里
+              # Phase 2.0 那段 shell，两者都得登记：只登记守卫自己，这道闸就只在
+              # 「守卫被改」时开，而漂移恰恰发生在被测文件那边（形状 7）。
+              # SKILL.md 虽在 docs filter 里，但那个 job 不跑这批 Python 守卫。
+              - '.claude/skills/weekly-update-summary/scripts/collect_week_context.py'
+              - '.claude/skills/weekly-update-summary/SKILL.md'
               - '.agents/skills/prototype-export/scripts/audit_prototype_package.py'
               - '.agents/skills/prototype-export/tests/test_audit_prototype_package.py'
               # cdscli 的冒烟覆盖守卫盯的是这个脚本本身：不把它登记进来，
