@@ -106,6 +106,16 @@ export function buildStaticUtilities(p: LauncherPerms): ToolboxItem[] {
       tags: ['日志', 'logs', '审计'],
       routePath: '/logs',
     } as ToolboxItem);
+    // 与 navRegistry 同一道权限门（logs.read）。此前只登记在 NAV_REGISTRY，
+    // 首页搜索「授权健康」显示「无匹配」（#1479）。
+    items.push({
+      id: '__authorization-health__',
+      name: '授权健康中心',
+      description: '统一诊断用户、Agent、验收、LLMGW 与部署身份',
+      icon: 'ShieldCheck',
+      tags: ['授权', '401', 'Agent', '验收', 'LLMGW', 'CDS', '健康'],
+      routePath: '/authorization-health',
+    } as ToolboxItem);
   }
 
   return items;
