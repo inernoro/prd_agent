@@ -124,12 +124,15 @@ SVG 内部 id 可解析、id 带 `emb-` 前缀防与正文插图撞车、`.emble
 四条硬约束，`scripts/tests/test_report_evidence_figure.py`（CI 自动执行）钉死前两条，
 publish.py 发布闸钉死后两条：
 
-1. 知识库刊物模板必须有**无作用域**的 `figure img` 规则，胜出的 `width` 为 `100%`
-   （`figure.art` 版画插图靠类选择器特异性更高，不受影响，也不许反过来覆盖它）
+1. 知识库刊物模板必须有**无作用域**的 `figure img` 规则，胜出的 `width` 为 `100%`；
+   **任何别的能命中 `<img>` 的规则**（更高特异性如 `body figure img`、`!important`、`@media` 内）
+   都不许把 width 改成别的值——判据不算层叠，按形状 6 保守拒收打架的声明
+   （`figure.art` 版画插图是 `<svg>` 不是 `<img>`，不在此列）
 2. 该规则匹配的必须是 publish.py `img_embed()` **实际吐出**的标签——守卫跑真函数拿产物再比对，
    不扫源码字面量
-3. `{{IMG:}}` 只能作为独立节点出现，**禁止**塞进任何标签属性（`<img src="{{IMG:x}}">`
-   会把整段 `<figure>` 展开进 `src=""`，页面上漏出原始标记）；publish.py 命中即拒发
+3. `{{IMG:}}` / `{{EVIDENCE}}` 必须**独立成行**（整行只有这一个占位）：塞进标签属性会把整段
+   `<figure>` 展开进 `src=""` 漏出原始标记；和文字同行或包在 `<p>`/`<span>` 里会让块级
+   `<figure>` 把父元素拆成两半；publish.py 命中即拒发
 4. 图说（figcaption）来自 manifest 的 `caption`，正文里写的 alt/figcaption 不会被采用——
    要改图说就改 manifest；publish.py 对单张超过 1.5MB 的图给出告警，日报这类**阅读用**刊物
    取证时 `deviceScaleFactor` 用 1（验收档案才需要 2x 做像素比对）

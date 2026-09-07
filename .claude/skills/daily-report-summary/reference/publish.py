@@ -463,23 +463,28 @@ def img_embed(url_or_path, caption, is_html):
 
 
 def assert_placeholder_standalone(content):
-    """发布前硬闸：{{IMG:}} 占位必须是独立节点，不许塞进任何标签的属性里。
+    """发布前硬闸：{{IMG:}} / {{EVIDENCE}} 占位必须独立成行——整行除空白外只有这一个占位。
 
-    占位会被 img_embed 展开成整段 <figure><img><figcaption></figure>。写成
-    <img src="{{IMG:x}}" alt="..."> 的话，整段 figure 会被塞进 src=""，浏览器把
-    嵌套的引号当作属性结束，剩下的 alt/figcaption 原样漏到页面上（2026-09-07 日报
-    首次发布实测）。判据：占位前最近的一个 '<' 若比最近的 '>' 更靠后，就是在标签内部。
+    占位会被 img_embed 展开成整段块级 <figure><img><figcaption></figure>。两种写法都会坏：
+      - 塞进标签属性：<img src="{{IMG:x}}" alt="...">——整段 figure 进了 src=""，浏览器把
+        嵌套引号当属性结束，剩下的 alt/figcaption 原样漏到页面上（2026-09-07 日报首次发布实测）
+      - 塞进元素文本：<p>说明 {{IMG:x}}</p>——块级 figure 落进 <p>，浏览器按 HTML 解析规则
+        把 <p> 提前闭合、内容被拆成两半（Codex review 2026-09-07）
+    第一版判据只认「在标签内部」，第二种一律放过——判据比它该管的范围窄（形状 1）。
+    改为直接按 SKILL.md 的契约判：占位所在的那一行，去掉首尾空白后必须恰好等于占位本身。
     """
     bad = []
-    for m in re.finditer(r"\{\{IMG:[^}]+\}\}", content):
-        head = content[:m.start()]
-        if head.rfind("<") > head.rfind(">"):
-            bad.append(m.group(0))
+    for line in content.splitlines():
+        hits = PLACEHOLDER_RE.findall(line)
+        if not hits:
+            continue
+        if len(hits) != 1 or line.strip() != hits[0]:
+            bad.append(line.strip()[:80])
     if bad:
         raise RuntimeError(
-            "占位被写进了标签属性里：" + ", ".join(sorted(set(bad))) +
-            "。{{IMG:<name>}} 会展开成整段 <figure>，只能独立成行放在正文里，"
-            "不能写成 <img src=\"{{IMG:...}}\">；图说来自 manifest 的 caption。")
+            "占位没有独立成行：" + " | ".join(bad) +
+            "。{{IMG:<name>}} / {{EVIDENCE}} 会展开成整段块级 <figure>，必须单独占一行，"
+            "不能写进标签属性、也不能和别的文字/标签同行；图说来自 manifest 的 caption。")
 
 
 # 展开物是裸 <figure><img>，不带 class，能出现在正文任何位置。它的尺寸契约必须挂在
@@ -487,62 +492,93 @@ def assert_placeholder_standalone(content):
 # 否则放在容器外的证据图按原始物理像素平铺（2x 采集常见 2880x1800），撑破 960px 版心。
 # 见 .claude/rules/report-design-system.md §1.6 / predicate-and-wiring-discipline.md 形状 9。
 _FIGURE_IMG_SELECTORS = {"figure img", "figure>img"}
+# 任何「最后一个复合选择器是 img」的选择器都可能命中证据图（img / body img / .x figure img /
+# figure>img:hover ...）。契约只认无作用域的 figure img，其余一律视为竞争者。
+_IMG_TARGET_RE = re.compile(r"(?:^|[\s>+~])img(?::[\w-]+(?:\([^)]*\))?)*$")
 
 
-def _top_level_css_rules(css):
-    """把 <style> 原文切成顶层规则 [(selector, decls)]；@media 等条件块内部的规则
-    一律跳过——它们只在某个条件下生效，不能当作「无条件成立」的证据（形状 8）。"""
+def _css_rules(css):
+    """把 <style> 原文切成规则 [(selector, decls, conditional)]。
+
+    conditional=True 表示规则在 @media 等条件块内部——它只在某个条件下生效，
+    不能当作「无条件成立」的证据（形状 8），但仍可能在某个视口把宽度改坏，
+    所以查竞争声明时要看、查契约存在时不看。
+    """
     css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
-    rules, depth, buf, sel = [], 0, [], ""
+    rules, depth, buf, stack = [], 0, [], []
     for ch in css:
         if ch == "{":
-            if depth == 0:
-                sel = "".join(buf).strip()
-                buf = []
-            else:
-                buf.append(ch)
+            stack.append("".join(buf).strip())
+            buf = []
             depth += 1
         elif ch == "}":
             depth -= 1
-            if depth == 0:
-                if not sel.startswith("@"):
-                    rules.append((sel, "".join(buf)))
-                buf, sel = [], ""
-            else:
-                buf.append(ch)
+            sel = stack.pop() if stack else ""
+            body = "".join(buf)
+            buf = []
+            if not sel.startswith("@"):
+                conditional = any(s.startswith("@") for s in stack)
+                rules.append((sel, body, conditional))
         else:
             buf.append(ch)
     return rules
 
 
+def _norm_selector(sel):
+    return re.sub(r"\s*([>+~])\s*", r"\1", re.sub(r"\s+", " ", sel.strip()))
+
+
+def _width_decls(decls):
+    """规则体里按出现顺序取出 width 声明的值（已去掉 !important、小写）。"""
+    out = []
+    for d in decls.split(";"):
+        if ":" not in d:
+            continue
+        k, v = d.split(":", 1)
+        if k.strip().lower() == "width":
+            out.append(re.sub(r"\s*!important\s*$", "", v.strip().lower()))
+    return out
+
+
 def check_evidence_figure_css(body):
     """证据图尺寸契约（发布闸 + CI 守卫共用的唯一判定源）。返回问题清单（空 = 通过）。
 
-    要求：存在无作用域的 `figure img`（或 `figure>img`）顶层规则，且这些规则里
-    **胜出**的 width 声明是 100%（同特异性后写的赢，取最后一条，不取第一条——形状 6）。
+    两条：
+      1. 存在无作用域的 `figure img`（或 `figure>img`）**顶层**规则，且这些规则里胜出的 width
+         是 100%（同特异性后写的赢，取最后一条不取第一条——形状 6）。
+      2. 不许有任何**别的**能命中 <img> 的规则把 width 声明成 100% 以外的值——不论它在
+         哪个特异性层级、有没有 !important、在不在 @media 里。第一版只比对字面相等的
+         选择器，`body figure img{width:auto}` 这类更高特异性的覆盖会被浏览器采用、却被
+         判据放过（Codex review 2026-09-07）。真算层叠要实现特异性与 !important，
+         这里按形状 6 的口径**保守拒收互相打架的声明**：胜者恰好正确也判红。
     """
     sc = _ReportScanner()
     sc.feed(body)
     sc.close()
     css = "\n".join(sc.css_chunks)
-    width, hits = None, 0
-    for sel, decls in _top_level_css_rules(css):
-        parts = {re.sub(r"\s*>\s*", ">", re.sub(r"\s+", " ", p.strip())) for p in sel.split(",")}
-        if not (parts & _FIGURE_IMG_SELECTORS):
-            continue
-        hits += 1
-        for d in decls.split(";"):
-            if ":" not in d:
-                continue
-            k, v = d.split(":", 1)
-            if k.strip().lower() == "width":
-                width = v.strip().lower()
+    width, hits, competing = None, 0, []
+    for sel, decls, conditional in _css_rules(css):
+        parts = [_norm_selector(p) for p in sel.split(",") if p.strip()]
+        base = [p for p in parts if p in _FIGURE_IMG_SELECTORS]
+        others = [p for p in parts if p not in _FIGURE_IMG_SELECTORS and _IMG_TARGET_RE.search(p)]
+        ws = _width_decls(decls)
+        if base and not conditional:
+            hits += 1
+            if ws:
+                width = ws[-1]
+        if (others or (base and conditional)) and any(w != "100%" for w in ws):
+            competing.append(f"`{sel.strip()}` 声明了 width:{[w for w in ws if w != '100%'][0]}"
+                             + ("（在条件块内）" if conditional else ""))
+    errs = []
     if hits == 0:
-        return ["模板缺无作用域的 `figure img { width:100% }` 规则——{{IMG:}} 展开成裸 <figure><img>，"
-                "放在 .story 之外的证据图会按截图原始像素平铺撑破页面（report-design-system.md §1.6）"]
-    if width != "100%":
-        return [f"`figure img` 胜出的 width 是 {width!r}，必须是 100%（证据图按版心宽度自适应）"]
-    return []
+        errs.append("模板缺无作用域的 `figure img { width:100% }` 规则——{{IMG:}} 展开成裸 <figure><img>，"
+                    "放在 .story 之外的证据图会按截图原始像素平铺撑破页面（report-design-system.md §1.6）")
+    elif width != "100%":
+        errs.append(f"`figure img` 胜出的 width 是 {width!r}，必须是 100%（证据图按版心宽度自适应）")
+    if competing:
+        errs.append("有别的规则在和证据图契约打架（更高特异性 / !important / @media 都会赢过或改坏它，"
+                    "一律拒收）：" + "；".join(competing))
+    return errs
 
 
 def assert_no_placeholder(content):

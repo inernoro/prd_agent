@@ -69,9 +69,9 @@ def check_expander_outside_story(label, text, pub):
     if not re.match(r"<figure>\s*<img\b", embed) or 'class="' in embed.split(">", 2)[1]:
         fail(f"img_embed 产物不是裸 <figure><img>：{embed[:80]}——契约挂靠的对象变了，本守卫的前提失效")
         return
-    # 放在正文尾部（.paper 内、任何 .story 之外）
+    # 放在正文尾部（.paper 内、任何 .story 之外），占位按契约独立成行
     idx = text.rfind("</div>")
-    body = text[:idx] + "\n<section class=\"extra\">{{IMG:probe}}</section>\n" + text[idx:]
+    body = text[:idx] + "\n<section class=\"extra\">\n{{IMG:probe}}\n</section>\n" + text[idx:]
     pub.assert_placeholder_standalone(body)
     out = pub.apply_evidence(body, {"probe": embed})
     pub.assert_no_placeholder(out)
@@ -101,16 +101,38 @@ def check_red_green(label, text, pub):
     only_media = scoped.replace("</style>", "@media (max-width:1px){ figure img { width:100%; } }\n</style>", 1)
     if not pub.check_evidence_figure_css(only_media):
         fail(f"{label}：只在 @media 里声明的 figure img 被当成了无条件成立的证据")
+    # 更高特异性 / !important / @media 里的竞争声明浏览器都会采用，判据只比对字面选择器就会放过
+    # （Codex review 2026-09-07）。四种写法都必须红。
+    for tag, extra in [
+        ("更高特异性", "body figure img { width: auto; }"),
+        ("!important 的低特异性", "img { width: auto !important; }"),
+        ("子代组合器 + 伪类", ".paper figure > img:hover { width: 50%; }"),
+        ("@media 内改宽", "@media (max-width: 640px) { figure img { width: 60%; } }"),
+    ]:
+        overridden = text.replace("</style>", extra + "\n</style>", 1)
+        if not pub.check_evidence_figure_css(overridden):
+            fail(f"{label}：{tag}的竞争规则 `{extra}` 仍判绿——浏览器会采用它，证据图又能按原始像素平铺")
+    # 反向：别的规则也声明 width:100%（不打架）不能误拒
+    harmless = text.replace("</style>", ".story figure img { width: 100%; }\n</style>", 1)
+    if pub.check_evidence_figure_css(harmless):
+        fail(f"{label}：同样声明 width:100% 的规则被误判为打架")
 
 
 def check_placeholder_gate(pub):
+    for tag, bad in [
+        ("塞进 <img src>", '<p><img src="{{IMG:x}}" alt="a"></p>'),
+        ("和文字同行（Codex review）", "<p>说明 {{IMG:x}}</p>"),
+        ("包在行内元素里", "<span>{{IMG:x}}</span>"),
+        ("一行两个占位", "{{IMG:a}} {{IMG:b}}"),
+        ("EVIDENCE 与文字同行", "证据：{{EVIDENCE}}"),
+    ]:
+        try:
+            pub.assert_placeholder_standalone(bad)
+            fail(f"占位{tag}没有被拒：{bad}")
+        except RuntimeError:
+            pass
     try:
-        pub.assert_placeholder_standalone('<p><img src="{{IMG:x}}" alt="a"></p>')
-        fail("占位塞进 <img src> 没有被拒——发布闸对 2026-09-07 的那种翻车不设防")
-    except RuntimeError:
-        pass
-    try:
-        pub.assert_placeholder_standalone("<p>前文</p>\n{{IMG:x}}\n<p>后文</p>")
+        pub.assert_placeholder_standalone("<p>前文</p>\n  {{IMG:x}}  \n<p>后文</p>\n{{EVIDENCE}}\n")
     except RuntimeError as e:
         fail(f"独立成行的占位被误拒：{e}")
 
