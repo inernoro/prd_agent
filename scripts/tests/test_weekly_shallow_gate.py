@@ -30,6 +30,9 @@ COLLECTOR = os.path.join(
     REPO, ".claude", "skills", "weekly-update-summary", "scripts", "collect_week_context.py"
 )
 SKILL = os.path.join(REPO, ".claude", "skills", "weekly-update-summary", "SKILL.md")
+REFERENCE = os.path.join(
+    REPO, ".claude", "skills", "weekly-update-summary", "reference", "data-collection.md"
+)
 
 FAILURES = []
 
@@ -142,6 +145,28 @@ def run_via_wrapper(snippet, cwd, *args, gate_line=None):
         os.unlink(p)
 
 
+def check_reference_order():
+    """闸必须排在 reference 里第一条 git 统计命令之前。
+
+    执行者照着 reference/data-collection.md 逐步跑，而它的 2.0 那条 `git log` 就是
+    COMMITS_FILE 的来源——闸排在它后面等于没排。2.1 只是 `wc -l` 读那个文件，所以
+    「补完历史从 2.1 重跑」读到的还是旧的截断文件，数字一个都不会变。
+    这一条是纯顺序断言，防的是文档改着改着又把闸挪到 git 命令后面去。
+    """
+    text = open(REFERENCE, encoding="utf-8").read()
+    gate_at = text.find("浅克隆闸")
+    m = re.search(r"^git log\b", text, re.M)
+    if gate_at < 0:
+        check("reference 里有浅克隆闸", "缺失", "存在")
+        return
+    if not m:
+        check("reference 里有 git 统计命令", "缺失", "存在")
+        return
+    check("reference-闸排在第一条 git log 之前", gate_at < m.start(), True)
+    # 「从 2.1 重跑」是原来的错误说法：COMMITS_FILE 是 2.0 写的，从 2.1 重跑读的是旧文件
+    check("reference-要求从 2.0 重跑而不是 2.1", "从 2.0 重跑" in text, True)
+
+
 def run_snippet(snippet, cwd, extra_path=None, python_shim=None):
     e = dict(os.environ)
     parts = [p for p in (extra_path, python_shim) if p]
@@ -200,6 +225,8 @@ def main():
         s_hatch = make_shallow(origin, os.path.join(tmp, "s7"))
         check("接线-gate --allow-shallow 经包装函数放行", run_via_wrapper(snip, s_hatch, "--allow-shallow"), 0)
         check("接线-gate 不带 flag 仍拦住", run_via_wrapper(snip, s_hatch), 2)
+
+        check_reference_order()
 
         print("[3/3] mutation：把修复改回事故写法，守卫必须变红")
         # 3a 删掉 *) 分支 → 闸崩掉时应重新变成静默放行
