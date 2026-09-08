@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3041,7 +3041,10 @@ def cmd_branch_set_mode(args: argparse.Namespace) -> None:
             if b.get("id") == args.id:
                 ov = (b.get("profileOverrides") or {}).get(args.profile)
                 if isinstance(ov, dict):
-                    existing = dict(ov)
+                    # GET 回来的覆盖对象把未设字段以 null 占位（dbScope: null 等），而 PUT 端
+                    # 对 dbScope / dbInit 做枚举校验时 null 不等于「未提供」，原样回传即 400
+                    # 「dbScope 非法」。只回传真正设过的字段；updatedAt 是服务端戳，不回传。
+                    existing = {k: v for k, v in ov.items() if v is not None and k != "updatedAt"}
                 break
     except Exception:
         existing = {}  # 取不到就退化为只设模式（与旧行为一致，至少不更糟）

@@ -24,6 +24,12 @@ import {
   type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
+import {
+  buildPrebuiltGateRejection,
+  findNonPrebuiltProfiles,
+  isAgentGatedRequest,
+  isAgentPrebuiltOnly,
+} from '../services/agent-prebuilt-gate.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import { ensurePerBranchDbInitialized } from '../services/per-branch-db-init.js';
@@ -12172,6 +12178,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
     const currentProfiles = managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry);
+
+    // Agent 极速版门禁（2026-09-08）：项目开了 agentPrebuiltOnly，机器凭据发起的部署只要有一个
+    // 服务会走源码编译就拒绝——CDS 宿主的编译算力是全部项目共享的，Agent 不该拿它试错。
+    // 判定与响应都在 agent-prebuilt-gate.ts（唯一判定处）；内部系统派发（X-CDS-Trigger）豁免。
+    if (deployProject && isAgentPrebuiltOnly(deployProject) && isAgentGatedRequest(req)) {
+      const violations = findNonPrebuiltProfiles(currentProfiles, entry);
+      if (violations.length > 0) {
+        res.status(409).json(buildPrebuiltGateRejection(deployProject, currentProfiles, violations, {
+          branchId: entry.id,
+          operation: 'deploy',
+        }));
+        return;
+      }
+    }
     let selectedDeploymentVersion = requestedVersionId && deploymentVersionService
       ? deploymentVersionService.get(requestedVersionId)
       : undefined;
@@ -15434,10 +15454,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 用分支**有效** profiles 解析目标（项目 profiles + 分支额外服务），与 GET /profile-overrides 一致
     // （Bugbot「Extra profile overrides PUT fails」）：原仅用项目级 getBuildProfile，分支级 extra-only 的
     // profileId 永远 404，尽管 GET 面板已把它列为可覆盖。effective 查找也天然项目内聚（更安全）。
-    const profile = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId);
+    const effectiveProfiles = stateService.getEffectiveProfilesForBranch(entry);
+    const profile = effectiveProfiles.find((p) => p.id === profileId);
     if (!profile) {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
       return;
+    }
+    // Agent 极速版门禁：Agent 不得把本分支该服务写成非 prebuilt 模式（空串 = 回退基线，
+    // 基线不是极速版同样拒绝）。只在请求体带 activeDeployMode 时判，其它字段的覆盖不受影响。
+    {
+      const overrideBody = (req.body ?? {}) as Record<string, unknown>;
+      const overrideProject = stateService.getProject(entry.projectId || 'default');
+      if (
+        typeof overrideBody.activeDeployMode === 'string'
+        && overrideProject && isAgentPrebuiltOnly(overrideProject) && isAgentGatedRequest(req)
+      ) {
+        const pendingMode = overrideBody.activeDeployMode || profile.activeDeployMode || undefined;
+        const violations = findNonPrebuiltProfiles([profile], entry, { profileId, modeId: pendingMode });
+        if (violations.length > 0) {
+          res.status(409).json(buildPrebuiltGateRejection(overrideProject, [profile], violations, {
+            branchId: entry.id,
+            operation: 'branch-override',
+          }));
+          return;
+        }
+      }
     }
     try {
       // Body is the BuildProfileOverride object. Unknown keys are silently
@@ -16517,6 +16558,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    // Agent 极速版门禁：清掉覆盖等于回退到 profile 基线；基线不是极速版就不许 Agent 清。
+    {
+      const gateProject = stateService.getProject(entry.projectId || 'default');
+      const gateProfile = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId);
+      if (gateProfile && gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req)) {
+        const violations = findNonPrebuiltProfiles([gateProfile], entry, {
+          profileId, modeId: gateProfile.activeDeployMode || undefined,
+        });
+        if (violations.length > 0) {
+          res.status(409).json(buildPrebuiltGateRejection(gateProject, [gateProfile], violations, {
+            branchId: entry.id,
+            operation: 'branch-override',
+          }));
+          return;
+        }
+      }
     }
     try {
       // 「恢复为公共配置」指的是构建/运行那套覆盖，不包括手动入口配置——后者只是恰好
@@ -17941,6 +17999,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const available = profile.deployModes ? Object.keys(profile.deployModes).join(', ') : '无';
         res.status(400).json({ error: `部署模式 "${mode}" 不存在，可用: ${available}` });
         return;
+      }
+      // Agent 极速版门禁：项目默认是同项目全部分支共用的一份值（cross-project-isolation 通道 9
+      // 同款风险），Agent 不得把它写成非 prebuilt 模式，也不得清空回源码基线。
+      {
+        const gateProject = stateService.getProject(profile.projectId || 'default');
+        if (gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req)) {
+          const violations = findNonPrebuiltProfiles([profile], undefined, { profileId: id, modeId: mode || undefined });
+          if (violations.length > 0) {
+            res.status(409).json(buildPrebuiltGateRejection(gateProject, [profile], violations, {
+              operation: 'profile-default',
+            }));
+            return;
+          }
+        }
       }
       stateService.updateBuildProfile(id, { activeDeployMode: mode || undefined });
       stateService.save();

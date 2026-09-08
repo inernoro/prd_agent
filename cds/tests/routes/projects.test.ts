@@ -749,6 +749,31 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.project.autoSmokeEnabled).toBe(false);
     });
 
+    // ── Agent 极速版门禁开关 ──
+    it('agentPrebuiltOnly 缺省关闭，真人可开可关并 GET 回读', async () => {
+      const before = await request(server, 'GET', '/api/projects/default');
+      expect(before.body.agentPrebuiltOnly).toBeFalsy();
+      const on = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: true });
+      expect(on.status).toBe(200);
+      expect(on.body.project.agentPrebuiltOnly).toBe(true);
+      const get = await request(server, 'GET', '/api/projects/default');
+      expect(get.body.agentPrebuiltOnly).toBe(true);
+      const off = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: false });
+      expect(off.body.project.agentPrebuiltOnly).toBe(false);
+    });
+
+    it('机器凭据不得开启或关闭 agentPrebuiltOnly（否则门禁形同虚设）', async () => {
+      await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: true });
+      const res = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: false }, { 'x-ai-access-key': 'agent-key' });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('agent_prebuilt_only_human_only');
+      const get = await request(server, 'GET', '/api/projects/default');
+      expect(get.body.agentPrebuiltOnly).toBe(true);
+      // 机器凭据改别的字段照常，不受这一条影响
+      const other = await request(server, 'PUT', '/api/projects/default', { description: '由 Agent 更新' }, { 'x-ai-access-key': 'agent-key' });
+      expect(other.status).toBe(200);
+    });
+
     it('round-trips the CDS global variable inheritance opt-in', async () => {
       const enabled = await request(server, 'PUT', '/api/projects/default', { inheritGlobalEnv: true });
       expect(enabled.status).toBe(200);

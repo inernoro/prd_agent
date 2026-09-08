@@ -296,6 +296,7 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
       '对每个要部署的 profile 运行 cdscli branch set-mode <branchId> <profileId> <prebuiltModes 中的模式名>，只写当前分支的覆盖。不要用 profile deploy-mode 改项目级默认：那会静默改掉同项目其它分支的部署方式。',
       '部署后用 cdscli branch status <branchId> 核对 deployRuntime.prebuilt 为 true，才算极速版真正生效。镜像还没构建好时分支在等 CI，不是失败：用 branch status 与 deployment-run 持续等待并回报阶段，不得切回源码编译模式抢时间。',
       'profile list 没有任何 prebuilt 模式、也没有 prebuiltImage 站点时，说明项目还没接 CI 预构建：如实报告这个缺口并停在这一步等用户决定，不得自行切到源码编译模式顶替，也不得手写一个不存在的模式名。',
+      '项目开启「Agent 只允许极速版部署」门禁时，非极速版的部署与模式写入会被 CDS 以 409 agent_prebuilt_only 拒绝，响应里列出被拦的服务与可切的模式：按它说的切到极速版重试，不要绕过、不要改项目设置、也不要请求真人替你关闭门禁。',
       'push 之后不要停下来等我测试。按「push → 等 CI 镜像就绪 → 部署 → branch status、branch logs、smoke、preview-url 验证 → 修代码 → 再 push」循环，直到部署就绪、冒烟通过、真实预览入口能打开为止；只有需要页面批准的授权和高风险操作才回来找我。',
       '每一轮失败先读 deployment-run 与 branch logs 找到第一个有效错误，改代码后重新 push 让 CI 重新出镜像；不得靠在 CDS 宿主反复源码编译来试错，也不得把「请你手动验证」或「等待用户测试」当作完成。',
     ];

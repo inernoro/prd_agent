@@ -76,6 +76,8 @@ describe('CDS Agent 接入口令', () => {
     expect(prompt).toContain('核对 deployRuntime.prebuilt 为 true');
     expect(prompt).toContain('不得切回源码编译模式抢时间');
     expect(prompt).toContain('不得自行切到源码编译模式顶替，也不得手写一个不存在的模式名');
+    expect(prompt).toContain('409 agent_prebuilt_only 拒绝');
+    expect(prompt).toContain('不要绕过、不要改项目设置、也不要请求真人替你关闭门禁');
     expect(prompt).toContain('push 之后不要停下来等我测试');
     expect(prompt).toContain('修代码 → 再 push」循环');
     expect(prompt).toContain('不得把「请你手动验证」或「等待用户测试」当作完成');

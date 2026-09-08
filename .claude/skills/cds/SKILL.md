@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.16.1
+  version: 0.16.2
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.16.1 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
+> **版本**：v0.16.2 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -75,6 +75,7 @@ $CLI branch set-mode <branchId> <profileId> dev  # 单分支部署模式覆盖�
 # Agent 分支一律走极速版（CI 预构建）：只从 profile list 的 prebuiltModes 里选模式（本仓库叫 express），
 # 用 branch set-mode 只写当前分支覆盖，不用 profile deploy-mode 改项目级默认；不在 CDS 宿主跑源码编译。
 # 生效判据是 branch status 的 deployRuntime.prebuilt 为 true；prebuiltModes 为空时如实报告缺口，不得切源码模式顶替。
+# 项目开了「Agent 只允许极速版部署」门禁时，非极速版的 deploy / set-mode / profile deploy-mode 会被 409 agent_prebuilt_only 拒绝，按响应里的可切模式改正后重试。
 # 注：就绪超时是「每服务/每 profile」级（无系统全局默认值），无标签时运行时默认 180s。
 #     改完都需要重新部署生效（$CLI branch deploy <id>）。
 
