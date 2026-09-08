@@ -507,7 +507,7 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, activ
        * 其上还有标题、目标选择和 tab 条约 220px。原来写的 calc(100vh-190px)
        * 根本不生效，760px 直接捅出弹窗底 74px（真机量出来的）。
        */
-      className={`relative flex max-h-[calc(90vh-224px)] min-h-[420px] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_20px_70px_rgba(0,0,0,0.18)] transition-[height] duration-200 ${panelTall ? 'h-[760px]' : 'h-[560px]'}`}
+      className={`relative flex max-h-[calc(90vh-14rem)] min-h-[26.25rem] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_1.25rem_4.375rem_rgba(0,0,0,0.18)] transition-[height] duration-200 ${panelTall ? 'h-[47.5rem]' : 'h-[35rem]'}`}
     >
       <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-7 py-5">
         <div className="flex items-start justify-between gap-6">
@@ -650,7 +650,7 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, activ
                     type="button"
                     aria-pressed={includeCds}
                     onClick={() => setIncludeCds((value) => !value)}
-                    className={`w-full max-w-2xl rounded-2xl border-2 p-7 text-left transition-all ${includeCds ? 'border-warn bg-warn-soft shadow-[0_18px_50px_rgba(194,91,33,0.15)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'}`}
+                    className={`w-full max-w-2xl rounded-2xl border-2 p-7 text-left transition-all ${includeCds ? 'border-warn bg-warn-soft shadow-[0_1.125rem_3.125rem_rgba(194,91,33,0.15)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'}`}
                   >
                     <div className="flex items-start gap-5">
                       <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl ${includeCds ? 'bg-warn text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>
@@ -739,10 +739,10 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, activ
                   onClick={copyPrompt}
                   animate={reduceMotion || copied ? undefined : {
                     scale: [1, 1.025, 1],
-                    boxShadow: ['0 16px 45px rgba(194,91,33,0.22)', '0 22px 60px rgba(194,91,33,0.38)', '0 16px 45px rgba(194,91,33,0.22)'],
+                    boxShadow: ['0 1rem 2.8125rem rgba(194,91,33,0.22)', '0 1.375rem 3.75rem rgba(194,91,33,0.38)', '0 1rem 2.8125rem rgba(194,91,33,0.22)'],
                   }}
                   transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-                  className={`flex min-w-[300px] items-center justify-center gap-3 rounded-2xl px-8 font-bold transition-colors ${completionExpanded ? 'mt-4 py-3 text-sm' : 'mt-7 py-4 text-base'} ${copied ? 'bg-ok text-status-ink' : 'agent-starter-copy bg-warn hover:bg-warn'}`}
+                  className={`flex min-w-[18.75rem] items-center justify-center gap-3 rounded-2xl px-8 font-bold transition-colors ${completionExpanded ? 'mt-4 py-3 text-sm' : 'mt-7 py-4 text-base'} ${copied ? 'bg-ok text-status-ink' : 'agent-starter-copy bg-warn hover:bg-warn'}`}
                 >
                   {copied ? <Check className="h-5 w-5" /> : <ClipboardCopy className="h-5 w-5" />}
                   {copied ? '已复制，现在交给 Agent' : '复制启动提示词'}
@@ -784,7 +784,7 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, activ
                     <Server className="h-4 w-4" />
                     技能来源
                     {skillSourceState === 'fallback' && (
-                      <span className="rounded-full bg-warn px-1.5 py-0.5 text-[10px] font-bold text-status-ink">读不到</span>
+                      <span className="rounded-full bg-warn px-1.5 py-0.5 text-[0.625rem] font-bold text-status-ink">读不到</span>
                     )}
                     {showSkillSource ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                   </button>
@@ -793,13 +793,13 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, activ
                 </div>
 
                 {showDecisionCard && (
-                  <div className="mt-3 flex min-h-[220px] flex-1 justify-center overflow-hidden pb-1">
+                  <div className="mt-3 flex min-h-[13.75rem] flex-1 justify-center overflow-hidden pb-1">
                     <DecisionCardPreview model={decisionCardModel} />
                   </div>
                 )}
 
                 {showSkillSource && (
-                  <div className="mt-3 flex min-h-[220px] flex-1 justify-center overflow-hidden pb-1">
+                  <div className="mt-3 flex min-h-[13.75rem] flex-1 justify-center overflow-hidden pb-1">
                     <SkillSourcePanel
                       state={skillSourceState}
                       source={skillSource}
@@ -865,29 +865,29 @@ function DecisionCardPreview({ model }: { model: AgentDecisionCardModel }) {
         <span className="h-7 w-[3px] shrink-0 rounded-sm bg-warn" />
         <div className="min-w-0">
           <div className="text-sm font-semibold">{model.cardTitle}</div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground">
+          <div className="mt-0.5 text-[0.6875rem] text-muted-foreground">
             {model.roleLabel} · 换角色会换成另一套段落
           </div>
         </div>
-        <span className="ml-auto shrink-0 rounded-full bg-[hsl(var(--surface-sunken))] px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+        <span className="ml-auto shrink-0 rounded-full bg-[hsl(var(--surface-sunken))] px-2 py-0.5 font-mono text-[0.625rem] text-muted-foreground">
           {model.sectionCount} 段
         </span>
       </div>
 
       <dl className="grid shrink-0 gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-3">
-        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[11px] leading-relaxed">
+        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[0.6875rem] leading-relaxed">
           <dt className="font-semibold text-muted-foreground">理解方向</dt>
           <dd>{model.lens}</dd>
         </div>
-        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[11px] leading-relaxed">
+        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[0.6875rem] leading-relaxed">
           <dt className="font-semibold text-muted-foreground">先确认</dt>
           <dd>{model.intake.join('；')}</dd>
         </div>
-        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[11px] leading-relaxed">
+        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[0.6875rem] leading-relaxed">
           <dt className="font-semibold text-muted-foreground">关注点</dt>
           <dd className="flex flex-wrap gap-1.5">
             {model.decisionFields.map((field) => (
-              <span key={field} className="rounded-full bg-warn-soft px-2 py-0.5 text-[11px] font-medium">
+              <span key={field} className="rounded-full bg-warn-soft px-2 py-0.5 text-[0.6875rem] font-medium">
                 {field}
               </span>
             ))}
@@ -900,9 +900,9 @@ function DecisionCardPreview({ model }: { model: AgentDecisionCardModel }) {
         {model.sections.map((section, index) => (
           <li
             key={section.label}
-            className={`grid grid-cols-[1.75rem_6rem_minmax(0,1fr)] gap-2.5 px-4 py-1.5 text-[11px] leading-relaxed ${section.roleSpecific ? 'bg-warn-soft' : ''}`}
+            className={`grid grid-cols-[1.75rem_6rem_minmax(0,1fr)] gap-2.5 px-4 py-1.5 text-[0.6875rem] leading-relaxed ${section.roleSpecific ? 'bg-warn-soft' : ''}`}
           >
-            <span className={`font-mono text-[10px] ${section.roleSpecific ? 'text-warn' : 'text-muted-foreground/70'}`}>
+            <span className={`font-mono text-[0.625rem] ${section.roleSpecific ? 'text-warn' : 'text-muted-foreground/70'}`}>
               {String(index + 1).padStart(2, '0')}
             </span>
             <span className={`font-semibold ${section.roleSpecific ? 'text-warn' : ''}`}>{section.label}</span>
@@ -913,7 +913,7 @@ function DecisionCardPreview({ model }: { model: AgentDecisionCardModel }) {
 
       <div className="flex shrink-0 items-start gap-2 border-t border-[hsl(var(--hairline))] bg-bad-soft px-4 py-2.5">
         <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0 text-bad" />
-        <div className="text-[11px] leading-relaxed">
+        <div className="text-[0.6875rem] leading-relaxed">
           <span className="font-semibold text-bad">本角色额外禁止</span>
           <span> {model.roleForbid.join('；')}</span>
         </div>
@@ -940,7 +940,7 @@ export function SkillCard({ skill, selected, recommended, justAdded, onToggle }:
       onClick={onToggle}
       aria-pressed={selected}
       data-skill-card={selected ? 'selected' : 'default'}
-      className={`group relative rounded-xl border p-4 text-left transition-all ${selected ? 'border-warn bg-warn-soft text-foreground shadow-[0_8px_24px_rgba(194,91,33,0.12)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-foreground hover:border-[hsl(var(--hairline-strong))]'}`}
+      className={`group relative rounded-xl border p-4 text-left transition-all ${selected ? 'border-warn bg-warn-soft text-foreground shadow-[0_0.5rem_1.5rem_rgba(194,91,33,0.12)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-foreground hover:border-[hsl(var(--hairline-strong))]'}`}
     >
       <div className="flex items-center justify-between gap-3">
         <PackageCheck className={`h-5 w-5 ${selected ? 'text-warn' : 'text-muted-foreground'}`} />
@@ -951,10 +951,10 @@ export function SkillCard({ skill, selected, recommended, justAdded, onToggle }:
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <span className="text-sm font-bold">{skill.name}</span>
         {justAdded && (
-          <span className="rounded-full border border-ok bg-ok-soft px-1.5 py-px text-[10px] font-bold text-ok">刚加上</span>
+          <span className="rounded-full border border-ok bg-ok-soft px-1.5 py-px text-[0.625rem] font-bold text-ok">刚加上</span>
         )}
         {!justAdded && recommended && (
-          <span className="rounded-full bg-warn px-1.5 py-px text-[10px] font-bold text-status-ink">角色推荐</span>
+          <span className="rounded-full bg-warn px-1.5 py-px text-[0.625rem] font-bold text-status-ink">角色推荐</span>
         )}
       </div>
       <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{skill.description}</p>
@@ -1003,7 +1003,7 @@ export function SkillLibrarySheet({
       .join('，')
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="技能库" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[0_28px_80px_rgba(0,0,0,0.35)]">
+    <div role="dialog" aria-modal="true" aria-label="技能库" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[0_1.75rem_5rem_rgba(0,0,0,0.35)]">
       <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[hsl(var(--hairline))] px-5 py-4">
         <div className="flex min-w-0 items-start gap-2.5">
           <PackageCheck className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
@@ -1036,10 +1036,10 @@ export function SkillLibrarySheet({
               role="tab"
               aria-selected={activeGroup === group.key}
               onClick={() => onActiveGroup(group.key)}
-              className={`flex shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[13px] font-semibold transition-colors ${activeGroup === group.key ? 'bg-warn-soft text-warn' : 'text-foreground hover:bg-[hsl(var(--surface-sunken))]'}`}
+              className={`flex shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[0.8125rem] font-semibold transition-colors ${activeGroup === group.key ? 'bg-warn-soft text-warn' : 'text-foreground hover:bg-[hsl(var(--surface-sunken))]'}`}
             >
               <span>{group.label}</span>
-              <span className="cds-ident text-[11px] opacity-70">{group.count}</span>
+              <span className="cds-ident text-[0.6875rem] opacity-70">{group.count}</span>
             </button>
           ))}
         </div>
@@ -1061,7 +1061,7 @@ export function SkillLibrarySheet({
               onChange={(event) => onQuery(event.target.value)}
               placeholder="搜索技能名称或用途"
               aria-label="搜索技能"
-              className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+              className="min-w-0 flex-1 bg-transparent text-[0.8125rem] text-foreground outline-none placeholder:text-muted-foreground"
             />
           </label>
 
@@ -1164,7 +1164,7 @@ export function SkillSourcePanel({
           <Server className="h-4 w-4 shrink-0 text-warn" />
           <span className="text-sm font-semibold">技能来源</span>
         </div>
-        <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${badge.className}`}>{badge.text}</span>
+        <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[0.6875rem] font-bold ${badge.className}`}>{badge.text}</span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1227,11 +1227,11 @@ export function SkillSourcePanel({
               */}
             {groupsTrustworthy && (
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-[hsl(var(--hairline))] px-4 py-2.5">
-                <span className="text-[11px] text-muted-foreground">分成</span>
+                <span className="text-[0.6875rem] text-muted-foreground">分成</span>
                 {groups.map((group) => (
                   <span
                     key={group.key}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1 text-[11px] text-foreground"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1 text-[0.6875rem] text-foreground"
                   >
                     {group.label}
                     <span className="cds-ident text-muted-foreground">{group.count}</span>
@@ -1267,7 +1267,7 @@ export function SkillSourcePanel({
           target="_blank"
           rel="noreferrer"
           title="给排障用的接口原始返回"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-[0.6875rem] text-muted-foreground hover:text-foreground"
         >
           <Braces className="h-3.5 w-3.5" /> 原始数据
         </a>
@@ -1311,7 +1311,7 @@ function ChoiceCard({ selected, title, eyebrow, description, chips, icon, compac
     <button
       type="button"
       onClick={onClick}
-      className={`group relative flex min-h-0 flex-col justify-between rounded-2xl border-2 text-left transition-all duration-200 ${compact ? 'p-4' : 'p-6'} ${selected ? 'border-warn bg-warn-soft shadow-[0_14px_40px_rgba(194,91,33,0.13)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg'}`}
+      className={`group relative flex min-h-0 flex-col justify-between rounded-2xl border-2 text-left transition-all duration-200 ${compact ? 'p-4' : 'p-6'} ${selected ? 'border-warn bg-warn-soft shadow-[0_0.875rem_2.5rem_rgba(194,91,33,0.13)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg'}`}
     >
       <div>
         <div className="flex items-start justify-between gap-4">
@@ -1326,7 +1326,7 @@ function ChoiceCard({ selected, title, eyebrow, description, chips, icon, compac
             {chips.map((chip) => (
               <span
                 key={chip}
-                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${selected ? 'bg-warn text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}
+                className={`rounded-full px-2 py-0.5 text-[0.6875rem] font-semibold ${selected ? 'bg-warn text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}
               >
                 {chip}
               </span>

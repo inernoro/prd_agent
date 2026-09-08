@@ -67,7 +67,7 @@ describe('资源 chip 横条不许再被裁', () => {
     expectGuardRedOnMutation(
       guard,
       real,
-      mutate(real, 'inline-flex min-h-[2.75rem] min-w-[132px]', 'inline-flex h-10 min-w-[132px]'),
+      mutate(real, 'inline-flex min-h-[2.75rem] min-w-[8.25rem]', 'inline-flex h-10 min-w-[8.25rem]'),
     );
   });
 

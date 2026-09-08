@@ -81,7 +81,7 @@ function useRevealOnScroll(): void {
           }
         }
       },
-      { threshold: 0.16, rootMargin: '0px 0px -40px 0px' },
+      { threshold: 0.16, rootMargin: '0px 0px -2.5rem 0px' },
     );
     els.forEach((el) => io.observe(el));
     return () => io.disconnect();
@@ -311,7 +311,7 @@ export function HomePage(): JSX.Element {
           <nav className="cdsh-nav cdsh-rise" style={{ animationDelay: '0s' }}>
             <Link className="cdsh-brand" to="/">
               <span className="cdsh-logo">
-                <CdsGem mode="brand" detail="simple" className="h-[30px] w-[30px]" />
+                <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />
               </span>
               <b>Cloud Dev Suite</b>
             </Link>

@@ -115,25 +115,25 @@ function ErrorToastPortal({
     <div
       style={{
         position: 'fixed',
-        right: 16,
-        bottom: 16,
+        right: '1rem',
+        bottom: '1rem',
         zIndex: 99999,
-        maxWidth: 360,
+        maxWidth: '22.5rem',
         // --card 是 HSL 三元组（如 '240 4% 12%'），必须 hsl() 包裹才是合法颜色；
         // 旧写法 var(--card, #1E1F20) 解析出非法值导致属性整体失效（fallback 不触发），
         // Toast 双主题下都没有背景。不写 fallback——缺定义时 bug 立刻可见。
         background: 'hsl(var(--card))',
         color: 'hsl(var(--card-foreground))',
         border: '1px solid hsl(var(--destructive) / 0.45)',
-        borderRadius: 8,
-        padding: '12px 14px',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-        fontSize: 13,
+        borderRadius: '0.5rem',
+        padding: '0.75rem 0.875rem',
+        boxShadow: '0 0.5rem 1.5rem rgba(0,0,0,0.18)',
+        fontSize: '0.8125rem',
         lineHeight: 1.5,
       }}
       role="alert"
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.375rem' }}>
         <strong style={{ color: 'hsl(var(--destructive))' }}>
           {isChunkLoad ? '前端代码已更新,正在刷新…' : '页面渲染异常'}
         </strong>
@@ -147,7 +147,7 @@ function ErrorToastPortal({
             color: 'inherit',
             cursor: 'pointer',
             opacity: 0.6,
-            fontSize: 16,
+            fontSize: '1rem',
             lineHeight: 1,
             padding: 0,
           }}
@@ -155,12 +155,12 @@ function ErrorToastPortal({
           ×
         </button>
       </div>
-      <div style={{ opacity: 0.85, marginBottom: 8 }}>
+      <div style={{ opacity: 0.85, marginBottom: '0.5rem' }}>
         {isChunkLoad
           ? 'CDS 已部署新版本,旧的页面代码片段已失效。如果几秒后仍未自动刷新,请手动刷新。'
           : '当前操作触发了一个未捕获的错误,主面板已保留。点下方刷新或继续浏览其它页面。'}
       </div>
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
         <button
           type="button"
           onClick={() => window.location.reload()}
@@ -169,9 +169,9 @@ function ErrorToastPortal({
             background: 'hsl(var(--destructive))',
             color: 'hsl(var(--destructive-foreground))',
             border: 'none',
-            borderRadius: 6,
-            padding: '6px 12px',
-            fontSize: 12,
+            borderRadius: '0.375rem',
+            padding: '0.375rem 0.75rem',
+            fontSize: '0.75rem',
             cursor: 'pointer',
           }}
         >
@@ -185,9 +185,9 @@ function ErrorToastPortal({
               background: 'transparent',
               color: 'inherit',
               border: '1px solid rgba(127,127,127,0.35)',
-              borderRadius: 6,
-              padding: '6px 12px',
-              fontSize: 12,
+              borderRadius: '0.375rem',
+              padding: '0.375rem 0.75rem',
+              fontSize: '0.75rem',
               cursor: 'pointer',
             }}
           >
@@ -195,9 +195,9 @@ function ErrorToastPortal({
           </button>
         ) : null}
       </div>
-      <details style={{ marginTop: 8, opacity: 0.55, fontSize: 11 }}>
+      <details style={{ marginTop: '0.5rem', opacity: 0.55, fontSize: '0.6875rem' }}>
         <summary style={{ cursor: 'pointer' }}>错误详情</summary>
-        <pre style={{ marginTop: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
+        <pre style={{ marginTop: '0.375rem', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: '7.5rem', overflow: 'auto' }}>
           {message}
         </pre>
       </details>
@@ -247,7 +247,7 @@ function shouldAutoReloadAfterChunkFailure(): boolean {
  *   /release-center         Release targets, runs, logs and rollback
  *   /release-console        发布控制台三栏版：左项目环境 / 中发布实况 / 右历史与 Agent
  *   /reports                CDS self-hosted acceptance reports (HTML / Markdown)
- *   /status                 自建存活监控状态页（探测 / 可用率柱条 / 故障时间线）
+ *   /status                 监控中心（存活探测 / 可用率与响应曲线 / 故障时间线 / 自定义监控）
  *   /task-schedule          Project scheduled jobs
  *   /settings/:projectId    Project settings
  */

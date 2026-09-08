@@ -177,7 +177,7 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
           </div>
         ) : (
           <div className="overflow-x-auto rounded-md border border-border">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[45rem] text-sm">
               <thead className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">owner</th>

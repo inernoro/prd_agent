@@ -74,7 +74,7 @@ export function RepoSharingInline({
   const others = sharing.siblings.filter((s) => s.id !== selfId);
   if (others.length === 0) return null;
   return (
-    <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+    <div className="flex min-w-0 items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
       <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden />
       <span className="shrink-0">同仓</span>
       <span className="min-w-0 truncate" title={others.map((o) => o.name).join('、')}>

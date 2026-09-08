@@ -28,8 +28,8 @@ export function BranchRelationsPage(): JSX.Element {
             <>
               {data ? (
                 <>
-                  {data.lint.summary.errors ? <span className="inline-flex h-[18px] items-center rounded-full border border-destructive/60 px-1.5 text-[10px] font-semibold text-destructive">{data.lint.summary.errors} 错误</span> : null}
-                  {data.lint.summary.warnings ? <span className="inline-flex h-[18px] items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[10px] font-semibold text-warn">{data.lint.summary.warnings} 警告</span> : null}
+                  {data.lint.summary.errors ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-destructive/60 px-1.5 text-[0.625rem] font-semibold text-destructive">{data.lint.summary.errors} 错误</span> : null}
+                  {data.lint.summary.warnings ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[0.625rem] font-semibold text-warn">{data.lint.summary.warnings} 警告</span> : null}
                 </>
               ) : null}
               <Button variant={onlyProblems ? 'default' : 'outline'} size="sm" onClick={() => setOnlyProblems((v) => !v)} title="只列错误与警告">只看问题</Button>
@@ -51,8 +51,8 @@ export function BranchRelationsPage(): JSX.Element {
               <div className="cds-surface-sunken cds-hairline min-w-0 flex-1 overflow-hidden rounded-lg">
                 <RelationGraph payload={data} highlight={highlight} style={{ height: '100%' }} />
               </div>
-              <div className="w-[320px] shrink-0 overflow-auto rounded-lg border border-[hsl(var(--hairline))] p-3">
-                <div className="mb-2 text-[11px] font-bold text-muted-foreground">需要处理 · 按严重度</div>
+              <div className="w-[20rem] shrink-0 overflow-auto rounded-lg border border-[hsl(var(--hairline))] p-3">
+                <div className="mb-2 text-[0.6875rem] font-bold text-muted-foreground">需要处理 · 按严重度</div>
                 <FindingsList findings={onlyProblems ? data.lint.findings.filter((f) => f.severity !== 'info') : data.lint.findings} onPick={setHighlight} />
               </div>
             </div>

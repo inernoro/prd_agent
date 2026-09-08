@@ -724,7 +724,7 @@ export function BranchTopologyPage(): JSX.Element {
           {state.status === 'ok' ? (
             <div className="border-t border-border px-4 py-3">
               <div className="space-y-3">
-                <div className="grid gap-3 lg:grid-cols-[220px_minmax(260px,1fr)_minmax(260px,420px)] lg:items-center">
+                <div className="grid gap-3 lg:grid-cols-[13.75rem_minmax(16.25rem,1fr)_minmax(16.25rem,26.25rem)] lg:items-center">
                   <label className="relative block">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <input
@@ -734,7 +734,7 @@ export function BranchTopologyPage(): JSX.Element {
                       placeholder="搜索分支"
                     />
                   </label>
-                  <label className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-[52px_minmax(0,1fr)] sm:items-center">
+                  <label className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-[3.25rem_minmax(0,1fr)] sm:items-center">
                     <span>分支</span>
                     <select
                       className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -807,10 +807,10 @@ export function BranchTopologyPage(): JSX.Element {
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-            <section className="min-h-[620px] cds-surface-raised cds-hairline p-4">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_21.25rem]">
+            <section className="min-h-[38.75rem] cds-surface-raised cds-hairline p-4">
               {state.profiles.length === 0 && state.infra.length === 0 ? (
-                <div className="flex min-h-[540px] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
+                <div className="flex min-h-[33.75rem] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
                   <Layers3 className="h-10 w-10" />
                   <div className="text-base font-medium text-foreground">还没有服务节点</div>
                   <div>先完成 clone 自动识别，或直接在拓扑页添加数据库、缓存等基础设施。</div>
@@ -881,7 +881,7 @@ export function BranchTopologyPage(): JSX.Element {
               )}
             </section>
 
-            <aside className="min-h-[620px] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-40px)] xl:overflow-auto">
+            <aside className="min-h-[38.75rem] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:overflow-auto">
               <NodeDetails
                 selectedProfile={selectedProfile}
                 selectedInfra={selectedInfra}
@@ -1430,7 +1430,7 @@ function StatusGlyph({ status }: { status: BranchSummary['status'] | ServiceStat
 function NodeMiniStat({ label, value }: { label: string; value: string | number }): JSX.Element {
   return (
     <div className="cds-surface-sunken cds-hairline px-2 py-2">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-[0.6875rem] text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate text-xs font-medium">{value}</div>
     </div>
   );
@@ -1539,7 +1539,7 @@ function NodeDetails({
 
   if (!selectedProfile && !selectedInfra) {
     return (
-      <div className="flex h-full min-h-[540px] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
+      <div className="flex h-full min-h-[33.75rem] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
         <Boxes className="h-10 w-10" />
         <div className="text-base font-medium text-foreground">选择一个节点</div>
         <div>点击左侧应用服务或基础设施节点查看运行状态、依赖和跳转入口。</div>
@@ -2054,7 +2054,7 @@ function RuntimeLogs({
             详情页
           </a>
         </div>
-        <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+        <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-[0.6875rem] leading-5 text-muted-foreground">
           {containerLog || '还没有日志输出'}
         </pre>
       </section>

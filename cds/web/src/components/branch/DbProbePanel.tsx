@@ -108,7 +108,7 @@ export function dbProbeAge(probedAt: string, now: Date = new Date()): { label: s
 function VerdictBadge({ verdict }: { verdict: DbProbeVerdict }): JSX.Element {
   const meta = DB_PROBE_VERDICT_META[verdict];
   return (
-    <span className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[11px] leading-none ${meta.cls}`} data-db-probe-verdict={verdict}>
+    <span className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[0.6875rem] leading-none ${meta.cls}`} data-db-probe-verdict={verdict}>
       {meta.label}
     </span>
   );
@@ -126,13 +126,13 @@ export function DbProbeTable({ report, now = new Date() }: { report: DbProbeRepo
     <div data-db-probe-stale={age.stale ? 'true' : 'false'}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm text-foreground">{dbProbeHeadline(report)}</div>
-        <div className={`text-[11px] ${age.stale ? 'text-warn' : 'text-muted-foreground'}`} title={new Date(report.probedAt).toLocaleString('zh-CN')}>
+        <div className={`text-[0.6875rem] ${age.stale ? 'text-warn' : 'text-muted-foreground'}`} title={new Date(report.probedAt).toLocaleString('zh-CN')}>
           {age.label}
         </div>
       </div>
       <div className="overflow-x-auto">
         {/* 固定列宽 + 换行：判定列的原因是这张表最重要的信息，不能被挤到容器外面去 */}
-        <table className="w-full min-w-[760px] table-fixed text-xs [&_td]:break-words">
+        <table className="w-full min-w-[47.5rem] table-fixed text-xs [&_td]:break-words">
           <colgroup>
             <col className="w-[13%]" />
             <col className="w-[19%]" />
@@ -154,7 +154,7 @@ export function DbProbeTable({ report, now = new Date() }: { report: DbProbeRepo
               <tr key={svc.profileId} className="border-t border-[hsl(var(--hairline))]/60 align-top" data-db-probe-service={svc.profileId}>
                 <td className="py-1.5 pr-3">
                   <div className="font-medium">{svc.profileName}</div>
-                  <div className="font-mono text-[11px] text-muted-foreground">{svc.profileId}</div>
+                  <div className="font-mono text-[0.6875rem] text-muted-foreground">{svc.profileId}</div>
                 </td>
                 <td className="py-1.5 pr-3">
                   {svc.verdict === 'not-applicable' ? (
@@ -162,7 +162,7 @@ export function DbProbeTable({ report, now = new Date() }: { report: DbProbeRepo
                   ) : svc.configured.dbName ? (
                     <>
                       <div><Mono>{svc.configured.dbName}</Mono>{svc.configured.engine ? <span className="ml-1 text-muted-foreground">{svc.configured.engine}</span> : null}</div>
-                      <div className="text-[11px] text-muted-foreground">{SCOPE_LABEL[svc.configured.dbScope]} · {SOURCE_LABEL[svc.configured.dbScopeSource]}</div>
+                      <div className="text-[0.6875rem] text-muted-foreground">{SCOPE_LABEL[svc.configured.dbScope]} · {SOURCE_LABEL[svc.configured.dbScopeSource]}</div>
                     </>
                   ) : (
                     <div className="text-muted-foreground" title={svc.configured.reason}>未定位到库</div>
@@ -178,7 +178,7 @@ export function DbProbeTable({ report, now = new Date() }: { report: DbProbeRepo
                   ) : (
                     <>
                       <div><Mono>{svc.container.dbName ?? '(未设置)'}</Mono></div>
-                      <div className="break-all font-mono text-[11px] text-muted-foreground" title={svc.container.containerName}>{svc.container.containerName}</div>
+                      <div className="break-all font-mono text-[0.6875rem] text-muted-foreground" title={svc.container.containerName}>{svc.container.containerName}</div>
                     </>
                   )}
                 </td>
@@ -188,7 +188,7 @@ export function DbProbeTable({ report, now = new Date() }: { report: DbProbeRepo
                   ) : svc.live.ok ? (
                     <>
                       <div><Mono>{svc.live.currentDb ?? ''}</Mono></div>
-                      <div className="text-[11px] text-muted-foreground">
+                      <div className="text-[0.6875rem] text-muted-foreground">
                         {svc.live.serverVersion ? `v${svc.live.serverVersion}` : ''}
                         {svc.live.objectCount !== null ? ` · ${svc.live.objectCount} 个表/集合` : ''}
                         {svc.live.credentialSource ? ` · ${CREDENTIAL_LABEL[svc.live.credentialSource]}` : ''}
@@ -203,7 +203,7 @@ export function DbProbeTable({ report, now = new Date() }: { report: DbProbeRepo
                 <td className="py-1.5">
                   <VerdictBadge verdict={svc.verdict} />
                   {svc.reasons.length > 0 ? (
-                    <ul className={`mt-1 space-y-0.5 text-[11px] ${svc.verdict === 'mismatch' ? 'text-destructive' : 'text-muted-foreground'}`}>
+                    <ul className={`mt-1 space-y-0.5 text-[0.6875rem] ${svc.verdict === 'mismatch' ? 'text-destructive' : 'text-muted-foreground'}`}>
                       {svc.reasons.map((r, i) => <li key={i}>{r}</li>)}
                     </ul>
                   ) : null}

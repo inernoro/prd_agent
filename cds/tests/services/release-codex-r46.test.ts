@@ -131,19 +131,25 @@ describe('P2 预检裁剪必须保住被 run 引用的那些', () => {
 });
 
 describe('P2 故障归因必须在状态页可见', () => {
-  const statusPage = fs.readFileSync(path.join(CDS_ROOT, 'web/src/pages/StatusPage.tsx'), 'utf8');
+  // 2026-09-08 监控中心重做：类型进 lib/monitorCenter，渲染在故障时间线与目标详情两处。
+  const types = fs.readFileSync(path.join(CDS_ROOT, 'web/src/lib/monitorCenter.ts'), 'utf8');
+  const timeline = fs.readFileSync(path.join(CDS_ROOT, 'web/src/pages/status/IncidentTimeline.tsx'), 'utf8');
+  const detail = fs.readFileSync(path.join(CDS_ROOT, 'web/src/pages/status/TargetDetail.tsx'), 'utf8');
 
   it('前端 incident 类型声明了归因字段并真的渲染出来', () => {
     // 事故值：后端 uptime API 一直返回 releaseId / releaseAgeMs，前端既没声明也没渲染，
     // 全仓搜不到任何 web 侧消费者 —— 能力记录了但用户答不出「是哪次发布引入的」。
-    expect(statusPage).toContain('releaseId?: string');
-    expect(statusPage).toContain('releaseAgeMs?: number');
-    expect(statusPage).toContain('incident.releaseId');
-    expect(statusPage).toContain('incident.releaseAgeMs');
+    expect(types).toContain('releaseId?: string');
+    expect(types).toContain('releaseAgeMs?: number');
+    for (const src of [timeline, detail]) {
+      expect(src).toContain('incident.releaseId');
+      expect(src).toContain('incident.releaseAgeMs');
+    }
   });
 
   it('归因文案是「疑似」，不把时间相邻说成因果', () => {
-    expect(statusPage).toContain('疑似 ');
+    expect(timeline).toContain('疑似 ');
+    expect(detail).toContain('疑似 ');
   });
 });
 
