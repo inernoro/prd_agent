@@ -5,3 +5,4 @@
 | test | scripts | 取证守卫改为按 page.evaluate 的真实机制重建并执行（可测红，且不因改写法误红） |
 | ci | scripts | release_scripts 过滤器补登记 scripts/smoke/lib/** 与 WebPagesPage.tsx（只改被守文件的 PR 原本会跳过守卫） |
 | test | scripts | 新增自检：守卫解析 ci.yml 过滤器，断言自己每个输入都在册（可测红） |
+| docs | doc | 新增 debt.acceptance.daily-anchors 台账：五条锚点与归属页面无机械关联，记为 B 类不在本 PR 展开 |

@@ -304,6 +304,7 @@
 ### 六、技术债务台账
 
 - [CDS 验收中心 · 债务台账](./debt.acceptance-center-cds.md) `debt.acceptance-center-cds`
+- [每日验收的锚点契约 · 债务台账](./debt.acceptance.daily-anchors.md) `debt.acceptance.daily-anchors`
 - [功能验收体系 · 债务台账](./debt.acceptance.system.md) `debt.acceptance.system`
 - [智能体宇宙 · 债务台账](./debt.agent-universe.md) `debt.agent-universe`
 - [CDS 平台杂项 · 债务台账](./debt.cds.md) `debt.cds`
