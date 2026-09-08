@@ -123,8 +123,23 @@ describe('agent-prebuilt-gate 判据', () => {
     const p = profile({ activeDeployMode: 'static' });
     expect(findNonPrebuiltDefaultModes([p], { api: 'express' })).toEqual([]);
     expect(findNonPrebuiltDefaultModes([p], { api: 'dev' })).toMatchObject([{ profileId: 'api', modeId: 'dev' }]);
-    expect(findNonPrebuiltDefaultModes([p], { api: '' })).toMatchObject([{ profileId: 'api', modeId: 'static' }]);
+    expect(findNonPrebuiltDefaultModes([p], { api: '' })).toMatchObject([{ profileId: 'api', modeId: '' }]);
     expect(findNonPrebuiltDefaultModes([p], { ghost: 'dev' })).toEqual([]);
+  });
+
+  it('显式空串与缺键不同：基线是极速版的 profile，{api: ""} 仍是源码基线（Codex 第四轮 P1）', () => {
+    const p = profile({ activeDeployMode: 'express' });
+    expect(findNonPrebuiltDefaultModes([p], {}, { coverAllProfiles: true })).toEqual([]);
+    expect(findNonPrebuiltDefaultModes([p], { api: '' })).toMatchObject([{ profileId: 'api', modeId: '', modeLabel: '源码构建（无部署模式）' }]);
+    expect(findNonPrebuiltProfiles([p], branch(), { profileId: 'api', modeId: undefined })).toHaveLength(1);
+  });
+
+  it('listPrebuiltModeIds 与 isPrebuiltMode 同判据：镜像站点上未声明 prebuilt 的模式也算可切', () => {
+    const imageSite = profile({ prebuiltImage: true, deployModes: { source: { label: '源码', prebuilt: false, command: 'pnpm build' }, plain: { label: '沿用' } } });
+    expect(listPrebuiltModeIds(imageSite)).toEqual(['plain']);
+    const rejection = buildPrebuiltGateRejection(project, [imageSite], findNonPrebuiltProfiles([imageSite], branch(), { profileId: 'api', modeId: 'source' }), { operation: 'deploy' });
+    expect(rejection.message).toContain('可切 plain');
+    expect(rejection.hint).not.toContain('还没接 CI 预构建');
   });
 
   it('coverAllProfiles：整表替换时表里没有的 profile 也按基线判，空表不能把安全默认换掉', () => {

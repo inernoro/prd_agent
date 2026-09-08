@@ -741,6 +741,15 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')?.status).toBe('error');
     });
 
+    it('机器 set-mode 传显式空串：即便 profile 基线是 express，空串覆盖等于源码基线，409（Codex 第四轮 P1）', async () => {
+      seedGateProject(true);
+      stateService.updateBuildProfile('api', { activeDeployMode: 'express' });
+      const res = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: '' }, { 'X-Test-Key': 'A' });
+      expect(res.status).toBe(409);
+      expect((res.body as any).violations).toMatchObject([{ profileId: 'api', modeId: '' }]);
+      expect(stateService.getBranchProfileOverride('b1', 'api')).toBeUndefined();
+    });
+
     it('远端执行器派发：门禁下发给执行器的 profile 不带 sourceFallbackProfile，真人派发保留（Codex 第三轮 P1）', async () => {
       seedGateProject(true);
       stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });

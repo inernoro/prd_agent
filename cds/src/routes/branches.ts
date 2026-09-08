@@ -15507,7 +15507,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         typeof overrideBody.activeDeployMode === 'string'
         && overrideProject && isAgentPrebuiltOnly(overrideProject) && isAgentGatedRequest(req)
       ) {
-        const pendingMode = overrideBody.activeDeployMode || profile.activeDeployMode || undefined;
+        // 显式空串会被 applyProfileOverride 原样持久化、resolveActiveDeployModeId 里 `?? ` 让它胜出，
+        // 等于「不选模式 = 源码基线」，不能拿 profile 基线模式顶替去判（Codex 第四轮 P1）。
+        const pendingMode = overrideBody.activeDeployMode.trim() || undefined;
         const violations = findNonPrebuiltProfiles([profile], entry, { profileId, modeId: pendingMode });
         if (violations.length > 0) {
           res.status(409).json(buildPrebuiltGateRejection(overrideProject, [profile], violations, {

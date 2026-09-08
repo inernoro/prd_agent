@@ -805,6 +805,11 @@ describe('Projects router (P4 Part 2)', () => {
       expect(partial.body.violations).toMatchObject([{ profileId: 'gate-web' }]);
       const full = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'express', 'gate-web': 'express' } }, machine);
       expect(full.status).toBe(200);
+      // 显式空串 = 不选模式 = 源码基线，即便该 profile 基线 activeDeployMode 是极速版也拒绝（Codex 第四轮 P1）
+      stateService.updateBuildProfile('gate-web', { activeDeployMode: 'express' });
+      const explicitEmpty = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'express', 'gate-web': '' } }, machine);
+      expect(explicitEmpty.status).toBe(409);
+      expect(explicitEmpty.body.violations).toMatchObject([{ profileId: 'gate-web', modeId: '' }]);
 
       // 真人把默认改回 dev 不受限；随后机器来对齐会被拒（否则源码模式刷进全部分支）
       const human = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'dev' } });

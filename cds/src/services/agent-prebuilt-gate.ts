@@ -97,11 +97,13 @@ export function findNonPrebuiltProfiles(
   return out;
 }
 
-/** 该 profile 有哪些极速版模式可选（给拒绝信息用，Agent 据此知道该切成什么）。 */
+/**
+ * 该 profile 有哪些极速版模式可选（给拒绝信息用，Agent 据此知道该切成什么）。
+ * 与 isPrebuiltMode 同一判据：镜像站点上未声明 prebuilt 的模式继承 prebuiltImage，也算可切
+ * （Codex 第四轮 P2：只列显式 true 会让 Agent 收到「没有极速版模式」而无法自救）。
+ */
 export function listPrebuiltModeIds(profile: BuildProfile): string[] {
-  return Object.entries(profile.deployModes || {})
-    .filter(([, mode]) => mode?.prebuilt === true)
-    .map(([id]) => id);
+  return Object.keys(profile.deployModes || {}).filter((id) => isPrebuiltMode(profile, id));
 }
 
 /**
@@ -133,8 +135,13 @@ export function findNonPrebuiltDefaultModes(
     : profiles.filter((p) => Object.prototype.hasOwnProperty.call(defaults, p.id));
   for (const profile of targets) {
     const profileId = profile.id;
-    const rawMode = defaults[profileId];
-    const modeId = (rawMode || '').trim() || profile.activeDeployMode || undefined;
+    // 「键不存在」与「键存在但为空串」是两回事（Codex 第四轮 P1）：applyDefaultDeployModesToBranch
+    // 会把空串原样写进分支覆盖，resolveActiveDeployModeId 里 `?? ` 让空串胜出 = 不选模式 = 源码基线；
+    // 缺键才真正回到 profile 基线 activeDeployMode。
+    const hasKey = Object.prototype.hasOwnProperty.call(defaults, profileId);
+    const modeId = hasKey
+      ? ((defaults[profileId] || '').trim() || undefined)
+      : (profile.activeDeployMode || undefined);
     if (isPrebuiltMode(profile, modeId)) continue;
     out.push({
       profileId,
