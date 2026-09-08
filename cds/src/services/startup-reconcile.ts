@@ -1,4 +1,5 @@
 import type { BranchEntry } from '../types.js';
+import { hasBranchDeleteIntentReason } from './branch-wake-eligibility.js';
 
 export interface DiscoveredAppContainer {
   containerName: string;
@@ -8,12 +9,11 @@ export interface DiscoveredAppContainer {
 }
 
 export function hasBranchDeleteCleanupIntent(branch: BranchEntry): boolean {
-  const reason = branch.lastStopReason || '';
-  if (!reason.includes('删除分支流程已开始')) return false;
+  // 「是不是删除流程留下的停机」只在 branch-wake-eligibility 里定义一次
+  // （唤醒判据也要读它——半路把正在删的分支拉起来会和清理打架）。
+  // 这里只在它之上加本模块特有的那一条：清理残渣只处理仍卡在 stopping 的分支。
   if (branch.status !== 'stopping') return false;
-  return branch.lastStopSource === 'system'
-    || branch.lastStopSource === 'webhook'
-    || branch.lastStopSource === 'cds';
+  return hasBranchDeleteIntentReason(branch);
 }
 
 export function shouldPruneDeletedBranchStartupResidue(

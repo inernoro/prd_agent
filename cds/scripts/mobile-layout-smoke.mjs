@@ -1,5 +1,24 @@
 #!/usr/bin/env node
+/*
+ * 窄屏布局冒烟，两种模式：
+ *
+ *   真实实例模式（默认，给 baseUrl 或 CDS_HOST）——打一个跑着的 CDS，数据是真的，
+ *     覆盖登录之后的页面。本地排障和部署后巡检用它。
+ *   离线模式（--offline）——自起 vite dev、把 /api/* 换成合成数据。不需要 Docker、
+ *     不需要 Mongo、不需要项目数据，所以它能进每个 PR 的 CI。
+ *
+ * 为什么要有离线模式：这个脚本写好之后很长一段时间没有被任何 workflow 调用过
+ * （2026-09-03 查证：搜它的名字在 .github/ 下零命中），因为它的前置在 CI 上凑不齐。
+ * 一条从不运行的守卫等于没有守卫，所以把数据依赖拆掉，让判据本身跑起来。
+ *
+ * 离线模式测得到什么、测不到什么，说清楚：布局判据（横向溢出 / 文字被压成竖排 /
+ * 可点目标被遮挡）量的是元素怎么排，合成数据一样成立；测不到的是「真实数据的
+ * 长度与数量把布局撑成什么样」——那仍然要靠真实实例模式或视觉验收。
+ */
 import { createRequire } from 'node:module';
+
+import { startViteDevServer } from './lib/vite-dev-server.mjs';
+import { resolveFixture, isEventStream, FIXTURE_PROJECT_ID } from './fixtures/mobile-layout-fixtures.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -18,7 +37,38 @@ function loadPlaywright() {
 
 const { chromium } = loadPlaywright();
 
-const baseUrl = (process.argv[2] || process.env.CDS_HOST || 'http://127.0.0.1:9900').replace(/\/+$/, '');
+const OFFLINE = process.argv.includes('--offline');
+const positional = process.argv.slice(2).find((a) => !a.startsWith('--'));
+let baseUrl = (positional || process.env.CDS_HOST || 'http://127.0.0.1:9900').replace(/\/+$/, '');
+
+/*
+ * 离线模式把 /api/* 全部接管。装在 context 上而不是 page 上：一个 context 里
+ * 后开的页面同样要被喂到，漏一个就是半条链路走真网络、然后在 CI 里超时。
+ */
+/*
+ * 认不出的路径要留痕。原来一律回 {} 让页面走空态，而空态照样能满足
+ * 「文字够多」那条判据（常驻导航就有一百五十多字），于是新增或改名的端点
+ * 漏登记之后冒烟仍然全绿，量的却是一个空页面（Codex P2）。
+ */
+const unregisteredPaths = new Set();
+
+async function installFixtures(context) {
+  await context.route('**/api/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (isEventStream(pathname)) {
+      // EventSource 拿到非 text/event-stream 会立刻 abort 并刷一条控制台错误。
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': fixture\n\n' });
+      return;
+    }
+    const body = resolveFixture(pathname);
+    if (body === null) unregisteredPaths.add(pathname);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(body ?? {}),
+    });
+  });
+}
 const viewports = [
   { label: '390', width: 390, height: 844 },
   { label: '600', width: 600, height: 844 },
@@ -33,6 +83,7 @@ function assertOk(condition, message, details = {}) {
 }
 
 async function getFirstProject(page) {
+  if (OFFLINE) return { id: FIXTURE_PROJECT_ID };
   const response = await page.request.get(`${baseUrl}/api/projects`);
   assertOk(response.ok(), 'GET /api/projects failed', { status: response.status() });
   const body = await response.json();
@@ -41,8 +92,12 @@ async function getFirstProject(page) {
   return project;
 }
 
-async function checkLayout(page, label) {
-  const result = await page.evaluate(() => {
+async function checkLayout(page, label, anchor) {
+  // 锚点可以只认某个容器里的文字：整页 body 上的同名文字（比如抽屉背后那张
+  // 分支卡的标题）会让「抽屉真的渲染出数据了」这件事无法被证明。
+  const anchorText = typeof anchor === 'string' ? anchor : anchor?.text;
+  const anchorWithin = typeof anchor === 'string' ? null : anchor?.within || null;
+  const result = await page.evaluate((scopeSelector) => {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const bodyText = document.body.innerText || '';
@@ -114,16 +169,49 @@ async function checkLayout(page, label) {
       });
     }
 
+    const scopeEl = scopeSelector ? document.querySelector(scopeSelector) : null;
     return {
       url: location.href,
+      bodyText,
       textLength: bodyText.trim().length,
       overflow,
       squeezed: squeezed.slice(0, 10),
       covered: covered.slice(0, 10),
+      scopeFound: scopeSelector ? !!scopeEl : null,
+      scopeText: scopeEl ? (scopeEl.innerText || '') : '',
     };
-  });
+  }, anchorWithin);
 
   assertOk(result.textLength > 60, `${label}: page did not render enough text`, result);
+  /*
+   * 内容锚点：一段只有喂对数据才会出现的文字。
+   *
+   * 上面那条 textLength > 60 拦不住空页面——常驻导航就有一百五十多字，
+   * 所以 fixture 过期、页面退化成空态时它照样绿，而冒烟量的是一个空布局
+   * （Codex P2）。锚点把「量到的是有数据的那一版」这件事钉死。
+   */
+  if (anchorText) {
+    if (anchorWithin) {
+      // 找不到容器本身就是回归（抽屉没开、类名改了），不能当「这次没法判」放行
+      // ——不会红的证据比没有证据更糟（predicate-and-wiring-discipline 形状 4b）。
+      assertOk(
+        result.scopeFound,
+        `${label}: 判据跑不起来——页面上找不到容器「${anchorWithin}」`,
+        { textLength: result.textLength },
+      );
+      assertOk(
+        result.scopeText.includes(anchorText),
+        `${label}: 容器「${anchorWithin}」里找不到内容锚点「${anchorText}」——多半是它的数据喂不动了，量到的是个空壳`,
+        { scopeTextLength: result.scopeText.trim().length, scopeHead: result.scopeText.slice(0, 160) },
+      );
+    } else {
+      assertOk(
+        result.bodyText.includes(anchorText),
+        `${label}: 页面上找不到内容锚点「${anchorText}」——多半是 fixture 喂不动了，量到的是空页面`,
+        { textLength: result.textLength, head: result.bodyText.slice(0, 160) },
+      );
+    }
+  }
   assertOk(result.overflow <= 2, `${label}: horizontal overflow detected`, result);
   assertOk(result.squeezed.length === 0, `${label}: text squeezed into vertical layout`, result);
   assertOk(result.covered.length === 0, `${label}: clickable target is covered`, result);
@@ -153,6 +241,7 @@ async function checkTaskScheduleAction(browser, viewport) {
     viewport: { width: viewport.width, height: viewport.height },
     ignoreHTTPSErrors: true,
   });
+  if (OFFLINE) await installFixtures(context);
   const page = await context.newPage();
   await page.goto(`${baseUrl}/task-schedule`, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForTimeout(1500);
@@ -274,6 +363,8 @@ async function checkTaskScheduleAction(browser, viewport) {
   assertOk(created.clicked, `${label}: 页面上找不到「新建」按钮`);
   assertOk(created.formVisible, `${label}: 点了「新建」表单没出现——按钮是死的`, created);
   assertOk(created.saveVisible, `${label}: 新建表单的「保存」不在视野里`, created);
+  // 通过时也要出声：一条只在失败时说话的检查，跑没跑过在 CI 日志里看不出来。
+  console.log(`PASS ${label} ${hasJobs ? '脊柱 + 两态切换 + 新建浮层' : '空状态 + 新建浮层'}`);
   await context.close();
 }
 
@@ -283,25 +374,38 @@ async function runViewport(browser, project, viewport) {
     deviceScaleFactor: 2,
     ignoreHTTPSErrors: true,
   });
+  if (OFFLINE) await installFixtures(context);
   const page = await context.newPage();
   page.on('pageerror', (err) => {
     throw err;
   });
 
   const projectId = project.id;
+  /*
+   * 第三列是内容锚点：喂对数据才会出现的一段文字。离线模式下它挡住「fixture 过期
+   * → 页面走空态 → 冒烟照常绿」；真实实例模式下锚点取自真实数据，所以只在离线
+   * 模式断言（真实实例上的项目名不是「窄屏样例项目」）。
+   */
   const pages = [
-    ['project-list', `${baseUrl}/project-list`],
-    ['branch-list', `${baseUrl}/branches/${encodeURIComponent(projectId)}`],
-    ['project-settings', `${baseUrl}/settings/${encodeURIComponent(projectId)}#env`],
-    ['cds-settings', `${baseUrl}/cds-settings#maintenance`],
-    ['release-center', `${baseUrl}/release-center?project=${encodeURIComponent(projectId)}`],
+    ['project-list', `${baseUrl}/project-list`, '窄屏样例项目'],
+    ['branch-list', `${baseUrl}/branches/${encodeURIComponent(projectId)}`, 'feature/alpha'],
+    // 取 /api/env 里的键名，不取项目名：项目名只能证明共享的项目 fixture 到位了，
+    // 证明不了这一页自己那个请求成功（Codex P2）。
+    ['project-settings', `${baseUrl}/settings/${encodeURIComponent(projectId)}#env`, 'FIXTURE_SAMPLE_KEY'],
+    // 取 /api/self-branches 里的分支名。原来用的「Docker 网络容量」是这一页
+    // 硬编码的小标题，响应挂掉照样能过，等于没有锚点。
+    ['cds-settings', `${baseUrl}/cds-settings#maintenance`, 'fixture-self-branch'],
+    // 取 /api/releases/center 里的发布目标名。原来用的项目名加 slug 是从
+    // /api/projects **列表**渲染出来的（项目下拉选项），center 响应整个是空的
+    // 也照样能过——那个锚点连「这一页自己的请求成功」都证明不了。
+    ['release-center', `${baseUrl}/release-center?project=${encodeURIComponent(projectId)}`, 'fixture-release-target'],
   ];
 
-  for (const [label, url] of pages) {
+  for (const [label, url, anchor] of pages) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
     await page.waitForTimeout(500);
-    await checkLayout(page, `${viewport.label}:${label}`);
+    await checkLayout(page, `${viewport.label}:${label}`, OFFLINE ? anchor : undefined);
   }
 
   await page.goto(`${baseUrl}/branches/${encodeURIComponent(projectId)}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -309,7 +413,19 @@ async function runViewport(browser, project, viewport) {
   const branchCard = page.locator('[aria-label^="打开 "][aria-label$=" 详情"]').first();
   await branchCard.click({ timeout: 10000 });
   await page.waitForTimeout(800);
-  await checkLayout(page, `${viewport.label}:branch-detail-drawer`);
+  /*
+   * 抽屉的锚点必须限定在抽屉内部，且取一个抽屉独有的值。
+   *
+   * 原来用整页 body 找 `feature/alpha`：那个串在抽屉背后那张分支卡的标题上
+   * 也有（实测文本节点归属 H3.cds-branch-name，不在抽屉里），于是抽屉退化成
+   * 空壳时锚点照样绿。`fixture-alpha` 是分支 fixture 的 previewSlug，实测只
+   * 在抽屉里渲染、抽屉外没有（Codex P2）。
+   */
+  await checkLayout(
+    page,
+    `${viewport.label}:branch-detail-drawer`,
+    OFFLINE ? { text: 'fixture-alpha', within: '.cds-branch-detail-drawer' } : undefined,
+  );
 
   const themeVisibleWhileDrawerOpen = await page.locator('.cds-theme-toggle').evaluate((el) => {
     const style = getComputedStyle(el);
@@ -325,19 +441,41 @@ async function main() {
   // 沙箱/CI 里 Playwright 自带的浏览器版本未必与镜像预装的一致，允许显式指定。
   const executablePath = process.env.CDS_CHROMIUM_PATH || undefined;
   const only = process.env.CDS_SMOKE_ONLY || '';
-  const browser = await chromium.launch({ args: ['--no-sandbox'], executablePath });
-  if (only !== 'task-schedule') {
-    const probe = await browser.newPage();
-    const project = await getFirstProject(probe);
-    await probe.close();
-    for (const viewport of viewports) {
-      await runViewport(browser, project, viewport);
+  let devServer = null;
+  if (OFFLINE) {
+    devServer = await startViteDevServer();
+    baseUrl = devServer.url;
+    console.log(`离线模式：前端起在 ${baseUrl}，/api/* 走合成数据`);
+  }
+  // 浏览器起不来（缺二进制、缺依赖）时，上面那个 dev server 也必须被收掉，
+  // 否则端口一直被占——它是 strictPort，下一次跑会直接起不来（Codex P2）。
+  let browser = null;
+  try {
+    browser = await chromium.launch({ args: ['--no-sandbox'], executablePath });
+    if (only !== 'task-schedule') {
+      const probe = await browser.newPage();
+      const project = await getFirstProject(probe);
+      await probe.close();
+      for (const viewport of viewports) {
+        await runViewport(browser, project, viewport);
+      }
     }
+    for (const viewport of TASK_SCHEDULE_VIEWPORTS) {
+      await checkTaskScheduleAction(browser, viewport);
+    }
+  } finally {
+    if (browser) await browser.close();
+    if (devServer) devServer.stop();
   }
-  for (const viewport of TASK_SCHEDULE_VIEWPORTS) {
-    await checkTaskScheduleAction(browser, viewport);
+
+  if (OFFLINE && unregisteredPaths.size > 0) {
+    const list = [...unregisteredPaths].sort();
+    throw new Error(
+      `${list.length} 条 API 路径没有登记 fixture，页面拿到的是空对象——量到的布局可能是空态而非真实内容。`
+      + `请在 scripts/fixtures/mobile-layout-fixtures.mjs 里给它们登记数据，`
+      + `或在 INTENTIONALLY_EMPTY 里声明「这里就该空」：\n  ${list.join('\n  ')}`,
+    );
   }
-  await browser.close();
 }
 
 main().catch(async (err) => {

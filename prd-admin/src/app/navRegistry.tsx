@@ -46,6 +46,7 @@ const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(
 const KnowledgeDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.KnowledgeDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
+const McpConsolePage = lazy(() => import('@/pages/mcp-console/McpConsolePage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
@@ -58,9 +59,8 @@ const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').t
 const TapdBugReportPage = lazy(() => import('@/pages/tapd-bug-agent').then(m => ({ default: m.TapdBugReportPage })));
 const ChannelTraceAgentPage = lazy(() => import('@/pages/channel-trace-agent').then(m => ({ default: m.ChannelTraceAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
-// 2026-08-25：MAP 侧模型管理整套下线，`/mds` 只剩一块指向 LLM Gateway 控制台的墓碑页。
-const ModelManageMovedPage = lazy(() => import('@/pages/ModelManageMovedPage').then(m => ({ default: m.ModelManageMovedPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
+const AuthorizationHealthPage = lazy(() => import('@/pages/AuthorizationHealthPage'));
 const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPage'));
 const LabPage = lazy(() => import('@/pages/LabPage'));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
@@ -658,7 +658,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
 
-  // ╔══════════════ 实用工具（5）═══════════════════════════
+  // ╔══════════════ 实用工具（6）═══════════════════════════
+  {
+    path: '/mcp-console',
+    permission: 'access',
+    element: shellGuarded('access', <McpConsolePage />),
+    nav: {
+      label: '智能体接入台',
+      shortLabel: '接入台',
+      description: '把平台接进你的智能体：授权哪些能力、连着哪几台客户端、它们刚才做了什么',
+      icon: 'Plug',
+      section: 'utility',
+      tags: ['MCP', '接入', '智能体', 'agent', '密钥', '连接器', 'connector'],
+    },
+  },
   {
     path: '/skill-agent',
     permission: 'access',
@@ -709,6 +722,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       icon: 'ScrollText',
       section: 'utility',
       tags: ['日志', 'logs', '审计'],
+    },
+  },
+  {
+    path: '/authorization-health',
+    permission: 'logs.read',
+    element: shellGuarded('logs.read', <AuthorizationHealthPage />),
+    nav: {
+      label: '授权健康中心',
+      shortLabel: '授权',
+      description: '统一诊断用户、Agent、验收、LLMGW 与部署身份',
+      icon: 'ShieldCheck',
+      section: 'utility',
+      tags: ['授权', '401', 'Agent', '验收', 'LLMGW', 'CDS', '健康'],
+      wip: true,
     },
   },
   {
@@ -845,21 +872,6 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       icon: 'Store',
       section: 'infra',
       tags: ['市场', 'marketplace', '分享', '社区'],
-    },
-  },
-  {
-    path: '/mds',
-    permission: 'mds.read',
-    element: shellGuarded('mds.read', <ModelManageMovedPage />),
-    nav: {
-      // 保留在目录里而不是直接摘掉：搜「模型」的人得撞上这块路牌，而不是撞上 404
-      // 或者退回去在别处再配一遍（navigation-registry：路由必须登记，且不能是 phantom）。
-      label: '模型管理（已迁移）',
-      shortLabel: '模型',
-      description: '上游、模型、模型池已统一到 LLM Gateway 控制台，这里只剩入口',
-      icon: 'Cpu',
-      section: 'infra',
-      tags: ['模型', 'LLM', '模型池', '调度', 'mds', '网关', 'gateway'],
     },
   },
   {

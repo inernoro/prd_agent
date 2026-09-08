@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 import { getAdminAuthzMe } from '@/services';
 import { stashReturnFragment } from './returnFragment';
+import { hasEffectivePermission } from '@/lib/permissionAccess';
 
 /**
  * 未登录时该把人送去哪、登录完该回到哪。
@@ -61,6 +62,7 @@ export function RequirePermission({ perm, children }: { perm: string | string[];
   const loaded = useAuthStore((s) => s.permissionsLoaded);
   const logout = useAuthStore((s) => s.logout);
   const setPermissions = useAuthStore((s) => s.setPermissions);
+  const isRoot = useAuthStore((s) => s.isRoot);
   const navigate = useNavigate();
 
   const [refreshing, setRefreshing] = useState(false);
@@ -68,7 +70,7 @@ export function RequirePermission({ perm, children }: { perm: string | string[];
   const silentRefreshTriedRef = useRef(false);
 
   const required = Array.isArray(perm) ? perm : [perm];
-  const has = Array.isArray(perms) && required.some((p) => perms.includes(p));
+  const has = Array.isArray(perms) && hasEffectivePermission(perms, required, isRoot);
 
   // 缺权限时静默尝试一次刷新 /api/authz/me —— 应对「后端刚加了权限但前端 store 还是老快照」场景
   useEffect(() => {

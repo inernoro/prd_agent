@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Authentication;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
@@ -31,6 +32,7 @@ public sealed class SyntheticLoginController : ControllerBase
     private const int MinTicketSeconds = 60;
     private const int MaxTicketSeconds = 300;
     private const int SessionMinutes = 30;
+    private const string LegacyEntryMissingSuffix = ".__stable-smoke-missing";
 
     private readonly MongoDbContext _db;
     private readonly LlmGatewayDataContext _gatewayData;
@@ -330,6 +332,106 @@ public sealed class SyntheticLoginController : ControllerBase
                 AvatarUrl = avatarUrl,
             },
         }));
+    }
+
+    /// <summary>
+    /// 稳定冒烟夹具：让站点记录的入口 key 在当前 Provider 中缺失，同时保留仍可读取的 SiteUrl。
+    /// 这样 WEB-005 才会真实进入“当前存储失败 -> 历史公网地址回源”，而不是只测当前 Provider。
+    /// </summary>
+    [HttpPost("testing/web-pages/{siteId}/legacy-entry")]
+    [Authorize(AuthenticationSchemes =
+        AiAccessKeyAuthenticationHandler.SchemeName + "," + StableSmokeAuthenticationHandler.SchemeName)]
+    public async Task<IActionResult> PrepareLegacyHostedSite(string siteId, CancellationToken ct)
+    {
+        var accessError = ValidateTestingAccess(out var userId);
+        if (accessError != null) return accessError;
+
+        var site = await _db.HostedSites
+            .Find(item => item.Id == siteId && item.OwnerUserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (site is null)
+            return NotFound(ApiResponse<object>.Fail("STABLE_SMOKE_SITE_NOT_FOUND", "稳定冒烟站点不存在，请重新创建后再试"));
+
+        var entry = site.Files.FirstOrDefault(file =>
+            string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        if (entry is null || string.IsNullOrWhiteSpace(entry.CosKey))
+            return BadRequest(ApiResponse<object>.Fail("STABLE_SMOKE_ENTRY_NOT_FOUND", "站点入口记录不完整，请重新上传后再试"));
+
+        var previousContentVersion = site.ContentVersion;
+        if (!entry.CosKey.EndsWith(LegacyEntryMissingSuffix, StringComparison.Ordinal))
+            entry.CosKey += LegacyEntryMissingSuffix;
+        // 第一次主存储提问已经按 ContentVersion 缓存了正文。夹具只改 CosKey 而不换版本，
+        // 第二次提问会直接命中旧缓存，根本不会经过“当前 key 缺失 -> 历史 URL 回源”。
+        site.ContentVersion = NextContentVersion(site.ContentVersion);
+        await _db.HostedSites.ReplaceOneAsync(
+            item => item.Id == site.Id && item.OwnerUserId == userId,
+            site,
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            prepared = true,
+            contentVersionChanged = site.ContentVersion > previousContentVersion,
+            siteId = site.Id,
+        }));
+    }
+
+    /// <summary>恢复 WEB-005 临时改写的入口 key，确保站点删除时能清掉真实对象。</summary>
+    [HttpDelete("testing/web-pages/{siteId}/legacy-entry")]
+    [Authorize(AuthenticationSchemes =
+        AiAccessKeyAuthenticationHandler.SchemeName + "," + StableSmokeAuthenticationHandler.SchemeName)]
+    public async Task<IActionResult> RestoreLegacyHostedSite(string siteId, CancellationToken ct)
+    {
+        var accessError = ValidateTestingAccess(out var userId);
+        if (accessError != null) return accessError;
+
+        var site = await _db.HostedSites
+            .Find(item => item.Id == siteId && item.OwnerUserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (site is null)
+            return NotFound(ApiResponse<object>.Fail("STABLE_SMOKE_SITE_NOT_FOUND", "稳定冒烟站点不存在，请重新创建后再试"));
+
+        var entry = site.Files.FirstOrDefault(file =>
+            string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        var changed = entry?.CosKey.EndsWith(LegacyEntryMissingSuffix, StringComparison.Ordinal) == true;
+        if (changed)
+        {
+            entry!.CosKey = entry.CosKey[..^LegacyEntryMissingSuffix.Length];
+            site.ContentVersion = NextContentVersion(site.ContentVersion);
+            await _db.HostedSites.ReplaceOneAsync(
+                item => item.Id == site.Id && item.OwnerUserId == userId,
+                site,
+                cancellationToken: ct);
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { restored = true, changed, siteId = site.Id }));
+    }
+
+    private static DateTime NextContentVersion(DateTime current)
+    {
+        var now = DateTime.UtcNow;
+        var minimumNext = current.AddMilliseconds(1);
+        return now > minimumNext ? now : minimumNext;
+    }
+
+    private IActionResult? ValidateTestingAccess(out string userId)
+    {
+        userId = string.Empty;
+        if (!IsEnabled(_configuration))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail("SYNTHETIC_LOGIN_DISABLED", "合成测试登录未启用，请由管理员开启后重试"));
+        }
+
+        var username = User.FindFirst(JwtRegisteredClaimNames.UniqueName)?.Value?.Trim();
+        if (!IsAllowedUser(username, ReadAllowedUsers(_configuration)))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("SYNTHETIC_LOGIN_ACCOUNT_NOT_ALLOWED", "当前账号不是合成测试专用账号，请更换已授权账号后重试"));
+        }
+
+        userId = this.GetRequiredUserId().Trim();
+        return null;
     }
 
     private static bool IsEnabled(IConfiguration configuration) =>

@@ -233,6 +233,37 @@ describe('ForwarderRoutePublisher — 复制集路由', () => {
     expect(routes.some((r) => r.upstreamPort === 9100)).toBe(true);
   });
 
+  it('主容器重建中（building）而成员 running：成员路由 healthState 看成员自己，不被主容器的等待态带去等待页（Codex 三轮 P1）', () => {
+    state.addProject({ id: 'proj', slug: 'demo', name: 'demo', createdAt: new Date().toISOString() } as Parameters<typeof state.addProject>[0]);
+    addProfiles('web', 'api');
+    state.addBranch({
+      id: 'proj-main', projectId: 'proj', branch: 'main', worktreePath: path.join(tmpDir, 'main'),
+      services: {
+        web: { profileId: 'web', containerName: 'c-web', hostPort: 9100, status: 'running' },
+        api: { profileId: 'api', containerName: 'c-api', hostPort: 9200, status: 'building' },
+      },
+      status: 'building',
+      createdAt: new Date().toISOString(),
+      replicaSets: {
+        api: {
+          profileId: 'api', enabled: true, primaryWeight: 80,
+          members: [{ id: 'rsaaaaaa', versionId: 'dv_1', weight: 20, image: 'img@sha256:x', status: 'running', hostPort: 9300, dbMode: 'shared', createdAt: new Date().toISOString() }],
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        },
+      },
+    } as Parameters<typeof state.addBranch>[0]);
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const slug = computePreviewSlug('main', 'demo');
+    const routes = readRoutes();
+    const apiGroup = routes.filter((r) => r.host === `${slug}.miduo.org` && r.pathPrefix === '/api/');
+    expect(apiGroup.find((r) => r.replicaMemberId === 'primary')?.healthState).toBe('unknown');
+    expect(apiGroup.find((r) => r.replicaMemberId === 'rsaaaaaa')?.healthState).toBe('running');
+    const direct = routes.find((r) => r.host === `${slug}-api-rsaaaaaa.miduo.org` && r.pathPrefix === '/api/');
+    expect(direct?.replicaMemberId).toBe('rsaaaaaa');
+    expect(direct?.healthState).toBe('running');
+  });
+
   it('主容器不可路由（error）但成员 running:仍发成员路由与直达子域,不发 primary 记录（Codex P1）', () => {
     // 单服务分支 + 主容器 error:修复前 routableServices 为空,整个分支 host 蒸发
     state.addProject({

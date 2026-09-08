@@ -40,6 +40,8 @@ export interface HostedSite {
   totalSize: number;
   tags: string[];
   folder?: string;
+  /** 服务端权威文件夹名称键；禁止在浏览器端重新实现 Unicode 大小写归一化。 */
+  folderCanonicalName: string;
   coverImageUrl?: string;
   ownerUserId: string;
   /** 分享到的团队 ID 列表（仅网页托管消费） */
@@ -66,6 +68,96 @@ export interface HostedSite {
   askAllowAnonymous?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface HostedSiteOptimizationAnalysis {
+  blocked: boolean;
+  error?: string;
+  recommended: boolean;
+  originalEntries: number;
+  originalFiles: number;
+  originalArchiveBytes: number;
+  originalUncompressedBytes: number;
+  optimizedFiles: number;
+  optimizedUncompressedBytes: number;
+  removedFiles: number;
+  savedUncompressedBytes: number;
+  nodeModulesFiles: number;
+  developmentFiles: number;
+  localizedDependencies: number;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface HostedSiteOptimizationReviewResult {
+  outcome: 'saved' | 'optimization-recommended';
+  site?: HostedSite;
+  sessionId?: string;
+  expiresAt?: string;
+  analysis?: HostedSiteOptimizationAnalysis;
+}
+
+export interface HostedSiteOptimizationPreviewResult {
+  sessionId: string;
+  previewUrl: string;
+  entryFile: string;
+  fileCount: number;
+  totalSize: number;
+  expiresAt: string;
+  analysis: HostedSiteOptimizationAnalysis;
+}
+
+interface HostedSiteOptimizationUploadCreatedResult {
+  sessionId: string;
+  chunkSize: number;
+  totalChunks: number;
+  expiresAt: string;
+}
+
+interface HostedSiteOptimizationUploadStatusResult {
+  sessionId: string;
+  status: string;
+  stage: string;
+  uploadedChunks: number;
+  totalChunks: number;
+  uploadedBytes: number;
+  totalBytes: number;
+  error?: string;
+  review?: HostedSiteOptimizationReviewResult;
+}
+
+const PENDING_OPTIMIZATION_SESSION_KEY = 'web-pages:pending-optimization-session';
+
+interface PendingOptimizationSession {
+  sessionId: string;
+  targetSiteId?: string;
+}
+
+function rememberPendingOptimizationSession(sessionId: string, targetSiteId?: string) {
+  try {
+    sessionStorage.setItem(PENDING_OPTIMIZATION_SESSION_KEY, JSON.stringify({ sessionId, targetSiteId }));
+  } catch { /* 浏览器禁用存储时仍可在当前弹窗继续。 */ }
+}
+
+function clearPendingOptimizationSession(sessionId: string) {
+  try {
+    if (getPendingSiteOptimizationSession()?.sessionId === sessionId)
+      sessionStorage.removeItem(PENDING_OPTIMIZATION_SESSION_KEY);
+  } catch { /* 无本地存储时无需清理。 */ }
+}
+
+export function getPendingSiteOptimizationSession(): PendingOptimizationSession | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_OPTIMIZATION_SESSION_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<PendingOptimizationSession>;
+    return typeof value.sessionId === 'string' && value.sessionId
+      ? { sessionId: value.sessionId, targetSiteId: value.targetSiteId }
+      : null;
+  } catch {
+    try { sessionStorage.removeItem(PENDING_OPTIMIZATION_SESSION_KEY); } catch { /* 存储不可用。 */ }
+    return null;
+  }
 }
 
 export interface ShareLinkItem {
@@ -283,6 +375,262 @@ export async function uploadSite(input: {
     input.onStart?.(xhr);
     xhr.send(fd);
   });
+}
+
+/**
+ * ZIP 专用的审查式上传。干净的包会直接保存；命中确定性冗余时只创建临时会话，
+ * 由调用方展示建议并让用户预览后再确认。
+ */
+export async function reviewSiteZip(input: {
+  file: File;
+  title?: string;
+  description?: string;
+  folder?: string;
+  tags?: string;
+  targetSiteId?: string;
+  uploadId?: string;
+  onProgress?: (loaded: number, total: number) => void;
+  onStart?: (xhr: XMLHttpRequest) => void;
+  onStage?: (stage: string) => void;
+  signal?: AbortSignal;
+}): Promise<ApiResponse<HostedSiteOptimizationReviewResult>> {
+  const created = await apiRequest<HostedSiteOptimizationUploadCreatedResult>(
+    api.webPages.optimizationUploads(),
+    {
+      method: 'POST',
+      signal: input.signal,
+      body: {
+        fileName: input.file.name,
+        fileSize: input.file.size,
+        title: input.title,
+        description: input.description,
+        folder: input.folder,
+        tags: input.tags?.split(',').map(x => x.trim()).filter(Boolean) ?? [],
+        targetSiteId: input.targetSiteId,
+      },
+    },
+  );
+  if (!created.success) return created;
+
+  const { sessionId, chunkSize, totalChunks } = created.data;
+  const token = useAuthStore.getState().token;
+  const cancelAndAbort = (): ApiResponse<HostedSiteOptimizationReviewResult> => {
+    void cancelSiteOptimization(sessionId);
+    return { success: false, data: null as never, error: { code: 'ABORTED', message: '已中止上传' } };
+  };
+
+  for (let index = 0; index < totalChunks; index += 1) {
+    if (input.signal?.aborted) return cancelAndAbort();
+    const start = index * chunkSize;
+    const chunk = input.file.slice(start, Math.min(input.file.size, start + chunkSize));
+    let uploaded: ApiResponse<{ uploaded: boolean; chunkIndex: number }> | null = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      uploaded = await uploadOptimizationChunk({
+        sessionId,
+        chunkIndex: index,
+        chunk,
+        token,
+        signal: input.signal,
+        onStart: input.onStart,
+        onProgress: loaded => input.onProgress?.(start + loaded, input.file.size),
+      });
+      if (uploaded.success || uploaded.error?.code === 'ABORTED') break;
+      if (attempt < 2) await waitForUploadPoll(input.signal);
+    }
+    if (!uploaded) return cancelAndAbort();
+    if (!uploaded.success) {
+      if (uploaded.error?.code === 'ABORTED') return cancelAndAbort();
+      void cancelSiteOptimization(sessionId);
+      return uploaded;
+    }
+    input.onProgress?.(Math.min(input.file.size, start + chunk.size), input.file.size);
+  }
+
+  rememberPendingOptimizationSession(sessionId, input.targetSiteId);
+  input.onStage?.('文件已送达，正在提交安全检查');
+  let queued = await apiRequest<{ queued: boolean; sessionId: string }>(
+    api.webPages.optimizationUploadComplete(encodeURIComponent(sessionId)),
+    { method: 'POST', signal: input.signal },
+  );
+  if (!queued.success && !input.signal?.aborted) {
+    await waitForUploadPoll(input.signal);
+    queued = await apiRequest<{ queued: boolean; sessionId: string }>(
+      api.webPages.optimizationUploadComplete(encodeURIComponent(sessionId)),
+      { method: 'POST', signal: input.signal },
+    );
+  }
+  if (!queued.success) return queued;
+
+  return pollSiteOptimization(sessionId, {
+    signal: input.signal,
+    onStage: input.onStage,
+    cancelOnAbort: true,
+  });
+}
+
+async function pollSiteOptimization(
+  sessionId: string,
+  input: {
+    signal?: AbortSignal;
+    onStage?: (stage: string) => void;
+    cancelOnAbort: boolean;
+  },
+): Promise<ApiResponse<HostedSiteOptimizationReviewResult>> {
+  while (true) {
+    if (input.signal?.aborted) return cancelAndAbort();
+    const status = await apiRequest<HostedSiteOptimizationUploadStatusResult>(
+      api.webPages.optimizationUploadStatus(encodeURIComponent(sessionId)),
+      { signal: input.signal },
+    );
+    if (!status.success) {
+      if (status.error?.code === 'NOT_FOUND') clearPendingOptimizationSession(sessionId);
+      return status;
+    }
+    input.onStage?.(status.data.stage);
+    if (status.data.status === 'failed') {
+      clearPendingOptimizationSession(sessionId);
+      return {
+        success: false,
+        data: null as never,
+        error: { code: 'INVALID_FORMAT', message: status.data.error || '文件处理未完成，请重新上传' },
+      };
+    }
+    if (status.data.review) {
+      if (status.data.review.outcome === 'saved') clearPendingOptimizationSession(sessionId);
+      return { success: true, data: status.data.review, error: null };
+    }
+    await waitForUploadPoll(input.signal);
+  }
+
+  function cancelAndAbort(): ApiResponse<HostedSiteOptimizationReviewResult> {
+    if (input.cancelOnAbort) void cancelSiteOptimization(sessionId);
+    return { success: false, data: null as never, error: { code: 'ABORTED', message: '已停止等待，可重新打开上传窗口继续查看' } };
+  }
+}
+
+export async function resumePendingSiteOptimization(input: {
+  onStage?: (stage: string) => void;
+  signal?: AbortSignal;
+  targetSiteId?: string;
+} = {}): Promise<ApiResponse<HostedSiteOptimizationReviewResult> | null> {
+  const pending = getPendingSiteOptimizationSession();
+  if (!pending || (pending.targetSiteId ?? undefined) !== (input.targetSiteId ?? undefined)) return null;
+  const status = await apiRequest<HostedSiteOptimizationUploadStatusResult>(
+    api.webPages.optimizationUploadStatus(encodeURIComponent(pending.sessionId)),
+    { signal: input.signal },
+  );
+  if (!status.success) {
+    if (status.error?.code === 'NOT_FOUND') clearPendingOptimizationSession(pending.sessionId);
+    return status;
+  }
+  if (status.data.status === 'uploading') {
+    const queued = await apiRequest<{ queued: boolean; sessionId: string }>(
+      api.webPages.optimizationUploadComplete(encodeURIComponent(pending.sessionId)),
+      { method: 'POST', signal: input.signal },
+    );
+    if (!queued.success) {
+      if (queued.error?.code === 'NOT_FOUND') clearPendingOptimizationSession(pending.sessionId);
+      return queued;
+    }
+  }
+  return pollSiteOptimization(pending.sessionId, { ...input, cancelOnAbort: false });
+}
+
+function uploadOptimizationChunk(input: {
+  sessionId: string;
+  chunkIndex: number;
+  chunk: Blob;
+  token?: string | null;
+  signal?: AbortSignal;
+  onStart?: (xhr: XMLHttpRequest) => void;
+  onProgress?: (loaded: number) => void;
+}): Promise<ApiResponse<{ uploaded: boolean; chunkIndex: number }>> {
+  return new Promise((resolve) => {
+    const fd = new FormData();
+    fd.append('chunk', input.chunk, `chunk-${input.chunkIndex}.part`);
+    const url = joinUrl(getApiBaseUrl(), api.webPages.optimizationUploadChunk(
+      encodeURIComponent(input.sessionId), input.chunkIndex));
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Accept', 'application/json');
+    if (input.token) xhr.setRequestHeader('Authorization', `Bearer ${input.token}`);
+    xhr.upload.onprogress = event => input.onProgress?.(Math.min(input.chunk.size, event.loaded));
+    const abort = () => xhr.abort();
+    input.signal?.addEventListener('abort', abort, { once: true });
+    const cleanup = () => input.signal?.removeEventListener('abort', abort);
+    xhr.onload = () => {
+      cleanup();
+      try {
+        resolve(JSON.parse(xhr.responseText) as ApiResponse<{ uploaded: boolean; chunkIndex: number }>);
+      } catch {
+        resolve({ success: false, data: null as never, error: { code: 'INVALID_FORMAT', message: `响应解析失败（HTTP ${xhr.status}）` } });
+      }
+    };
+    xhr.onerror = () => {
+      cleanup();
+      resolve({
+        success: false,
+        data: null as never,
+        error: { code: 'NETWORK_ERROR', message: '网络异常，上传未完成' },
+      });
+    };
+    xhr.onabort = () => {
+      cleanup();
+      resolve({
+        success: false,
+        data: null as never,
+        error: { code: 'ABORTED', message: '已中止上传' },
+      });
+    };
+    input.onStart?.(xhr);
+    xhr.send(fd);
+  });
+}
+
+function waitForUploadPoll(signal?: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    if (signal?.aborted) { resolve(); return; }
+    const timer = window.setTimeout(done, 800);
+    const abort = () => done();
+    function done() {
+      window.clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
+export async function prepareSiteOptimizationPreview(
+  sessionId: string,
+): Promise<ApiResponse<HostedSiteOptimizationPreviewResult>> {
+  const result = await apiRequest<HostedSiteOptimizationPreviewResult>(
+    api.webPages.optimizationPreview(encodeURIComponent(sessionId)),
+    { method: 'POST' },
+  );
+  if (result.success) result.data.previewUrl = buildApiUrl(result.data.previewUrl);
+  return result;
+}
+
+export async function confirmSiteOptimization(
+  sessionId: string,
+  variant: 'original' | 'optimized',
+): Promise<ApiResponse<HostedSite>> {
+  const result = await apiRequest<HostedSite>(api.webPages.optimizationConfirm(encodeURIComponent(sessionId)), {
+    method: 'POST',
+    body: { variant },
+  });
+  if (result.success) clearPendingOptimizationSession(sessionId);
+  return result;
+}
+
+export async function cancelSiteOptimization(sessionId: string): Promise<ApiResponse<{ cancelled: boolean }>> {
+  const result = await apiRequest<{ cancelled: boolean }>(
+    api.webPages.optimizationCancel(encodeURIComponent(sessionId)),
+    { method: 'DELETE' },
+  );
+  if (result.success) clearPendingOptimizationSession(sessionId);
+  return result;
 }
 
 /**

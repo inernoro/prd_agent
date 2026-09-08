@@ -326,7 +326,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         {
             throw new InfraAgentRuntimeProfileException(
                 InfraAgentRuntimeProfileErrorCodes.ModelNotConfigured,
-                "系统模型池没有可用模型，请先在模型设置中配置一个启用模型",
+                "系统模型池没有可用模型，请先到 LLM Gateway 控制台（MAP 左下角「模型网关」） 配置一个启用模型",
                 StatusCodes.Status409Conflict);
         }
 
@@ -340,7 +340,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                     ? InfraAgentRuntimeProfileErrorCodes.ApiKeyUnreadable
                     : InfraAgentRuntimeProfileErrorCodes.ModelConfigIncomplete,
                 resolved.KeyUnreadable
-                    ? $"系统模型「{model.Name}」的平台 API key 无法解密（部署环境加密密钥与存量配置不匹配），请在 模型平台 重新保存该平台的 key 后重试"
+                    ? $"系统模型「{model.Name}」的平台 API key 无法解密（部署环境加密密钥与存量配置不匹配），请到 LLM Gateway 控制台（MAP 左下角「模型网关」） 重新保存该平台的 key 后重试"
                     : $"系统模型「{model.Name}」缺少 baseUrl、model 或 API key，无法同步到 CDS Agent",
                 StatusCodes.Status409Conflict);
         }
@@ -431,7 +431,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                     ? InfraAgentRuntimeProfileErrorCodes.ApiKeyUnreadable
                     : InfraAgentRuntimeProfileErrorCodes.ModelConfigIncomplete,
                 resolved.KeyUnreadable
-                    ? $"模型「{model.Name}」的平台 API key 无法解密（部署环境加密密钥与存量配置不匹配），请在 模型平台 重新保存该平台的 key 后重试"
+                    ? $"模型「{model.Name}」的平台 API key 无法解密（部署环境加密密钥与存量配置不匹配），请到 LLM Gateway 控制台（MAP 左下角「模型网关」） 重新保存该平台的 key 后重试"
                     : $"模型「{model.Name}」缺少 baseUrl、model 或 API key，无法同步到 CDS Agent",
                 StatusCodes.Status409Conflict);
         }

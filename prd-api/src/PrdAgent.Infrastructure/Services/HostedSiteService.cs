@@ -31,6 +31,10 @@ public class HostedSiteService : IHostedSiteService
     // 文件数仍保留硬上限以避免用海量空条目消耗解析与对象存储资源；解压总量另由
     // MaxExtractedSize 独立限制，不能用提高文件数上限绕过 zip bomb 防护。
     public const int MaxZipFileCount = 20000;
+    // MongoDB 单文档硬上限是 16MB。HostedSite 除 Files 外还有标题、分享、提问配置等字段，
+    // 因此把文件清单单独限制在 12MB，至少预留 4MB 给其余字段。必须在任何对象上传前检查，
+    // 否则创建会留下孤儿对象，重传会先覆盖线上文件、再因 DB 更新失败而破坏旧站点。
+    internal const int MaxZipManifestBsonSize = 12 * 1024 * 1024;
 
     // 网页托管对象的 Cache-Control。配合 SiteUrl 上的 ?v={UpdatedAt.Ticks} 版本指纹形成
     // 「内容指纹缓存」：内容不变 → URL 不变 → 命中浏览器/CDN 缓存（满足"没更新就用缓存"）；
@@ -231,7 +235,8 @@ public class HostedSiteService : IHostedSiteService
         string? title, string? description, string? folder, List<string>? tags,
         string? wrappedAssetType = null,
         CancellationToken ct = default,
-        string? uploadId = null)
+        string? uploadId = null,
+        string? sourceRef = null)
     {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
@@ -248,6 +253,7 @@ public class HostedSiteService : IHostedSiteService
             Title = title?.Trim() ?? "未命名站点",
             Description = description?.Trim(),
             SourceType = "upload",
+            SourceRef = sourceRef?.Trim(),
             CosPrefix = cosPrefix,
             EntryFile = result.EntryFile,
             SiteUrl = siteUrl,
@@ -276,7 +282,8 @@ public class HostedSiteService : IHostedSiteService
         string? title, string? description,
         string sourceType, string? sourceRef,
         List<string>? tags, string? folder,
-        CancellationToken ct)
+        CancellationToken ct,
+        int? maxStoredBytes = null)
     {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
@@ -284,6 +291,13 @@ public class HostedSiteService : IHostedSiteService
         // 否则这类站点要等下次服务重启的 backfill 才有 shim。
         var htmlBytes = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(
             System.Text.Encoding.UTF8.GetBytes(htmlContent), "index.html"));
+
+        // 上限按**变换之后**的字节判。只校验调用方给的那份，等于对外承诺 4MB 却存进去 4MB 多：
+        // 重写绝对路径会让内容变长，注入的翻页垫片本身近 10KB。差额不大，但承诺就是承诺。
+        if (maxStoredBytes is > 0 && htmlBytes.Length > maxStoredBytes.Value)
+            throw new InvalidOperationException(
+                $"页面处理后为 {htmlBytes.Length} 字节，超过 {maxStoredBytes.Value} 字节上限。"
+                + "服务端会重写绝对路径并注入翻页兼容脚本，落盘体积比你提交的略大，请再精简一些。");
 
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
         await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
@@ -313,7 +327,18 @@ public class HostedSiteService : IHostedSiteService
             SlideNavCompatVersion = SlideNavVersion, // 创建即注入当前版垫片
         };
 
+        // 站点 id 是随机的，所以这条 insert 不会和任何人撞。
+        //
+        // 这里曾经有一整套「确定性 id + 占坑 + 租约 + 接手补传」，为的是让带 clientRequestId 的
+        // 并发重试收敛到同一个站点。它连续三轮 review 都在长新洞（先传后插会互相覆盖 → 先插后传
+        // 多出一段行在对象不在的窗口 → 接手没有围栏 → 有了围栏还是挡不住慢上传覆盖已收尾的对象），
+        // 根因是「发布」要跨对象存储与 Mongo 两套系统做原子动作，而对象存储这层没有条件写入原语
+        //（IAssetStorage 只有 Save/Read/Delete/UploadToKey，没有 copy/move，也没有 If-None-Match）。
+        // 所以整套撤掉：**先后**两次重试仍由控制器按 SourceRef 查一次挡住（这是真实重试的常态），
+        // **叠在一起**的两次会各建一个站 —— 多一个站是浪费，不是坏数据，比上面那些形态都安全。
+        // 真要收敛得先让发布变成单一存储的原子动作，那是新的语义类别，见 doc/debt.platform.md 边界 12。
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
+
         _logger.LogInformation("用户 {UserId} 通过 {SourceType} 创建托管站点 {SiteId}: {Title}",
             userId, site.SourceType, siteId, site.Title);
 
@@ -329,7 +354,8 @@ public class HostedSiteService : IHostedSiteService
         byte[] fileBytes, string fileName,
         string? wrappedAssetType = null,
         CancellationToken ct = default,
-        string? uploadId = null)
+        string? uploadId = null,
+        string? reuploadRef = null)
     {
         // 角色门控：editor / owner / 站点创建者可重传内容；viewer 与非成员一律拒绝
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
@@ -353,7 +379,7 @@ public class HostedSiteService : IHostedSiteService
 
         if (ext == ".zip")
         {
-            var validationError = ValidateZip(fileBytes);
+            var validationError = ValidateZip(siteId, fileBytes);
             if (validationError != null)
                 throw new InvalidOperationException(validationError);
             // 校验已通过，此处仅可能因基础设施异常失败（与改动前行为一致）
@@ -395,6 +421,8 @@ public class HostedSiteService : IHostedSiteService
         // - 用户把 HTML 重传覆盖原 PDF 包装站，应清空 marker，避免前端继续渲染 PDF 占位
         var normalizedType = string.IsNullOrWhiteSpace(wrappedAssetType)
             ? null : wrappedAssetType.Trim().ToLowerInvariant();
+        var normalizedReuploadRef = string.IsNullOrWhiteSpace(reuploadRef)
+            ? null : reuploadRef.Trim();
 
         var update = Builders<HostedSite>.Update
             .Set(x => x.EntryFile, entryFile)
@@ -402,6 +430,7 @@ public class HostedSiteService : IHostedSiteService
             .Set(x => x.Files, siteFiles)
             .Set(x => x.TotalSize, totalSize)
             .Set(x => x.WrappedAssetType, normalizedType)
+            .Set(x => x.LastReuploadRef, normalizedReuploadRef)
             .Set(x => x.UpdatedAt, now)
             .Set(x => x.ContentVersion, now)
             .Set(x => x.SlideNavCompatVersion, SlideNavVersion) // 重传内容已注入当前版垫片
@@ -860,6 +889,47 @@ public class HostedSiteService : IHostedSiteService
         string visibility = "owner-only",
         bool allocateShortLink = false,
         List<string>? askSuggestedQuestions = null)
+        => (await CreateShareWithReuseInfoAsync(userId, displayName, siteId, siteIds, shareType,
+            title, description, password, expiresInDays, ct, purpose, forceNew, visibility,
+            allocateShortLink, askSuggestedQuestions)).Link;
+
+    /// <summary>
+    /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方**这次有没有真的写下什么**。
+    ///
+    /// 为什么透出的是「复用且一个字没改」而不是单纯的「复用了」：接入台的日额度是「先占坑、
+    /// 幂等命中就退还」，判据是响应里的 deduplicated。而复用这条路**不是只读的** —— 它会把
+    /// 有效期刷成本次所选、必要时改密码/标题，并往 RenewalHistory 里追一条续期审计。
+    /// 把这些都报成「没有副作用」，等于让同一个键无限次续期、无限撑大那条审计数组而不扣额度。
+    /// 所以只有 ups 为空（真的一个字段都没动）才算幂等命中。
+    /// </summary>
+    /// <summary>
+    /// 复用一条分享链时，「有效期到底算不算变了」—— 唯一判定源。
+    ///
+    /// 这一步真正要回答的是：**这是同一次请求的重试，还是又一次新的请求？**
+    /// 绝对时刻直接判等答不了（重试也差几毫秒，于是永远说「变了」）；只比「要的天数」也答不了
+    /// （六天前建的 7 天链接遇上今天的「我要 7 天」，天数一样却明天就过期）。
+    /// 没有请求键时，能分开这两件事的只有**时间距离**：重试是秒级的，新请求不是。
+    ///
+    /// 容差取五分钟：这个系统里的重试都在秒级，而差到分钟以上的那次，把有效期刷成本次所选
+    /// 才是调用方要的。真正的解法是给这个工具一个 clientRequestId（doc/debt.platform.md 边界 7）。
+    /// </summary>
+    internal static bool ExpiryMeaningfullyChanged(DateTime? current, DateTime? requested)
+    {
+        if (current is null || requested is null) return current != requested; // 永久 ⇄ 有期限，是真的变了
+        return (requested.Value - current.Value).Duration() > TimeSpan.FromMinutes(5);
+    }
+
+    public async Task<(WebPageShareLink Link, bool ReusedWithoutChange)> CreateShareWithReuseInfoAsync(
+        string userId, string displayName,
+        string? siteId, List<string>? siteIds, string shareType,
+        string? title, string? description,
+        string? password, int expiresInDays,
+        CancellationToken ct = default,
+        string purpose = "share",
+        bool forceNew = false,
+        string visibility = "owner-only",
+        bool allocateShortLink = false,
+        List<string>? askSuggestedQuestions = null)
     {
         // 开场问题保持三态：null（调用方没提这茬）不动存量值，非 null（含空数组）按用户本次所选落库。
         //
@@ -990,7 +1060,21 @@ public class HostedSiteService : IHostedSiteService
             var ups = new List<UpdateDefinition<WebPageShareLink>>();
             // 保留 mutate 前的 ExpiresAt，供下方审计 RenewalHistory.OldExpiresAt 使用
             var oldExpiresAtForAudit = reuse.ExpiresAt;
-            if (reuse.ExpiresAt != newExpiresAt)
+            // 有效期这一步要回答的其实是：**这是同一次请求的重试，还是又一次新的请求？**
+            //
+            // 拿绝对时刻直接判等答不了：ExpiresAt = 当时那一刻 + 天数，同一个请求重试一次算出来
+            // 必然差几毫秒，于是**永远**得出「变了」—— 幂等重试每次刷一遍有效期、追一条续期审计，
+            // 并且把「这次没产生副作用」这个信号彻底废掉（网关据它退额度）。
+            // 反过来只比「要的天数」也答不了：一条六天前建的 7 天链接，遇上今天这次「我要 7 天」，
+            // 天数一样却被判成没变 —— 调用方以为拿到七天，实际那条明天就过期。
+            //
+            // 没有请求键的时候，能区分这两件事的只有**时间距离**：重试是秒级的，新请求不是。
+            // 所以判据是「新算出来的到期时刻，和它现在的到期时刻差得远不远」——
+            // 秒级的差算同一件事，几天的差就是又一次新请求。
+            // 真正的解法是给这个工具一个 clientRequestId（doc/debt.platform.md 边界 7），
+            // 那之前，这条时间距离是唯一说得清的判据。
+            var expiryChanged = ExpiryMeaningfullyChanged(reuse.ExpiresAt, newExpiresAt);
+            if (expiryChanged)
             {
                 ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, newExpiresAt));
                 reuse.ExpiresAt = newExpiresAt;
@@ -1026,16 +1110,20 @@ public class HostedSiteService : IHostedSiteService
                 reuse.AskSuggestedQuestions = effAskQuestions;
             }
             // 复用即视为续期事件 —— 写一条审计记录，便于事后排查"为什么过期时间变了"
-            if (oldExpiresAtForAudit != newExpiresAt || ups.Count > 0)
+            // 审计跟着「有没有真的改」走，不跟着「算出来的时刻不一样」走 —— 否则每次幂等
+            // 重试都往 RenewalHistory 里追一条，这个数组会被无限撑大。
+            if (ups.Count > 0)
             {
                 var renewEvent = new ShareRenewalEvent
                 {
                     Action = "reused",
                     ByUserId = userId,
                     OldExpiresAt = oldExpiresAtForAudit,
-                    NewExpiresAt = newExpiresAt,
-                    Note = oldExpiresAtForAudit != newExpiresAt
-                        ? $"create-share reused link, ExpiresAt {oldExpiresAtForAudit?.ToString("o") ?? "null"} -> {newExpiresAt?.ToString("o") ?? "null"}"
+                    // 记的是这条链接**现在**的到期时刻。没改有效期时它就等于旧值 ——
+                    // 写 newExpiresAt 会在审计里留下一个从未生效过的时刻，比不记还误导。
+                    NewExpiresAt = reuse.ExpiresAt,
+                    Note = expiryChanged
+                        ? $"create-share reused link, ExpiresAt {oldExpiresAtForAudit?.ToString("o") ?? "null"} -> {reuse.ExpiresAt?.ToString("o") ?? "null"}"
                         : "create-share reused link (metadata refreshed, expiry unchanged)",
                 };
                 ups.Add(Builders<WebPageShareLink>.Update.Push(x => x.RenewalHistory, renewEvent));
@@ -1056,7 +1144,9 @@ public class HostedSiteService : IHostedSiteService
                 await TryAllocateShortSeqAsync(reuse, ct);
             _logger.LogInformation("用户 {UserId} 复用站点分享 {ShareId}, type={Type}",
                 userId, reuse.Id, reuse.ShareType);
-            return reuse;
+            // ups 为空 = 复用且一个字段都没动，这才是真正的幂等命中；
+            // 只要写了（哪怕只是刷新有效期 + 追一条续期审计），这次就是有副作用的，额度照扣。
+            return (reuse, ups.Count == 0);
         }
 
         // 新分享：同时写明文（去重 + 展示给分享者）和 Hash/Salt（校验主路径）
@@ -1075,6 +1165,8 @@ public class HostedSiteService : IHostedSiteService
             PasswordHash = pwdHash?.Hash,
             PasswordSalt = pwdHash?.Salt,
             ExpiresAt = newExpiresAt,
+            // 记下「要的是多少天」：下次同一个键重试时，判「是不是同一件事」比的是这个，
+            // 不是算出来的绝对时刻（那个每次都不一样）。
             Visibility = effVisibility,
             // 保持 null（而不是 new List）当"没选过" —— 读取侧据此继承站点题库
             AskSuggestedQuestions = effAskQuestions,
@@ -1108,7 +1200,7 @@ public class HostedSiteService : IHostedSiteService
         _logger.LogInformation("用户 {UserId} 创建站点分享 {ShareId}, type={Type}, shortSeq={Seq}",
             userId, share.Id, share.ShareType, share.ShortSeq);
 
-        return share;
+        return (share, false);
     }
 
     /// <summary>
@@ -2574,8 +2666,19 @@ public class HostedSiteService : IHostedSiteService
 
     internal static string? ValidateZipFileCount(int fileCount)
         => fileCount > MaxZipFileCount
-            ? $"ZIP 包含的文件数超过上限（{MaxZipFileCount}），请删除无用文件或拆分后再上传"
+            ? $"ZIP 包含的文件数超过上限（{MaxZipFileCount}），请删除无用文件后再上传"
             : null;
+
+    internal static string? ValidateZipManifestSize(IReadOnlyCollection<HostedSiteFile> files)
+    {
+        var filesDocument = new BsonDocument(
+            nameof(HostedSite.Files),
+            new BsonArray(files.Select(file => file.ToBsonDocument())));
+
+        return filesDocument.ToBson().Length > MaxZipManifestBsonSize
+            ? "ZIP 文件路径信息过多，无法安全保存。请缩短文件名和目录层级，或删除无用文件后再上传"
+            : null;
+    }
 
     /// <summary>
     /// ZIP 过滤/计数/限额逻辑的唯一来源（路径穿越、__MACOSX、黑名单后缀、文件数、
@@ -2583,7 +2686,7 @@ public class HostedSiteService : IHostedSiteService
     /// 结构上保证「校验通过」⇔「上传阶段产出 ≥1 文件且不超限」，杜绝两份逻辑各自漂移。
     /// 返回的 Entry 仅在传入 archive 的生命周期内有效。
     /// </summary>
-    private ZipPlan PlanZipEntries(ZipArchive archive)
+    private ZipPlan PlanZipEntries(ZipArchive archive, string siteId)
     {
         var plan = new ZipPlan();
 
@@ -2627,7 +2730,19 @@ public class HostedSiteService : IHostedSiteService
         }
 
         if (plan.Items.Count == 0)
+        {
             plan.Error = "ZIP 中没有有效文件";
+            return plan;
+        }
+
+        var plannedFiles = plan.Items.Select(item => new HostedSiteFile
+        {
+            Path = item.RelativePath,
+            CosKey = _storage.BuildSiteKey(siteId, item.RelativePath),
+            Size = item.Entry.Length,
+            MimeType = item.Mime,
+        }).ToList();
+        plan.Error = ValidateZipManifestSize(plannedFiles);
 
         return plan;
     }
@@ -2651,7 +2766,7 @@ public class HostedSiteService : IHostedSiteService
             using var zipStream = new MemoryStream(zipBytes);
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
 
-            var plan = PlanZipEntries(archive);
+            var plan = PlanZipEntries(archive, siteId);
             if (plan.Error != null)
                 return new ZipExtractResult { Error = plan.Error };
 
@@ -2730,13 +2845,13 @@ public class HostedSiteService : IHostedSiteService
     /// 纯元数据校验 ZIP（不解压内容、不写任何 COS）。与 ExtractAndUploadZip 共用
     /// PlanZipEntries，条件结构上一致。用于重传替换：先校验后写入，失败时零副作用。
     /// </summary>
-    private string? ValidateZip(byte[] zipBytes)
+    private string? ValidateZip(string siteId, byte[] zipBytes)
     {
         try
         {
             using var zipStream = new MemoryStream(zipBytes);
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
-            return PlanZipEntries(archive).Error;
+            return PlanZipEntries(archive, siteId).Error;
         }
         catch (InvalidDataException)
         {

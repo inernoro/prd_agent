@@ -94,6 +94,9 @@ builder.Services.AddControllers(options =>
         // 模型管理退场：api/mds 下的写操作一律 410，配置改由 LLM Gateway 控制台承担。
         // 挂在 ActivityLog 之后：被挡下的请求本来就没发生写入，不该留一条动态。
         options.Filters.Add<PrdAgent.Api.Filters.MdsWriteRetiredFilter>();
+        // 接入台配额：sk-ak 直连内置工具接口（绕开 /api/mcp）时套同一套闸门，
+        // 否则「每日 50 张」只拦得住走网关的那条路。
+        options.Filters.Add<PrdAgent.Api.Filters.AgentApiKeyUsageFilter>();
     })
     .AddJsonOptions(options =>
     {
@@ -335,6 +338,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteOptimizationService, PrdAgent.Infrastructure.Services.HostedSiteOptimizationService>();
 // 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
 
@@ -404,6 +408,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowScheduleWorker>(
 
 // 一次性回填存量 PDF 包装站的 WrappedAssetType marker（PR #612）
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteOptimizationCleanupService>();
 
 // 一次性清理：删除已移除催办 Worker 留下的存量提醒通知（pm-reminder / defect-escalation），让噪音立即归零
 builder.Services.AddHostedService<PrdAgent.Api.Services.EscalationNotificationCleanupService>();
@@ -490,6 +495,10 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AutoLinkProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EntryContentWriteService>();
+// 接入台（MCP）：用量闸门 + 调用记录
+builder.Services.AddScoped<PrdAgent.Api.Services.Mcp.McpUsageService>();
+// 网关回环续跳的自证令牌：每进程一份，随进程生灭，不落库
+builder.Services.AddSingleton<PrdAgent.Api.Services.Mcp.McpLoopbackSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.TutorialLinkGraphService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreAssetNormalizer>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreLiveTranscriptionRelay>();
@@ -852,6 +861,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     {
                         logger.LogWarning("[401] Token claims无效 - Path: {Path}, Method: {Method}, IP: {IP}, sub: {Sub}, clientType: {ClientType}, tv: {Tv}",
                             requestPath, requestMethod, clientIp, sub ?? "null", clientType ?? "null", tvStr ?? "null");
+                        PrdAgent.Api.Authentication.AuthorizationFailureContract.Set(
+                            context.HttpContext,
+                            PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionInvalid);
                         context.Fail("Invalid auth session claims");
                         return;
                     }
@@ -862,6 +874,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     {
                         logger.LogWarning("[401] Token版本不匹配(已被撤销) - Path: {Path}, Method: {Method}, IP: {IP}, UserId: {UserId}, ClientType: {ClientType}, TokenVersion: {Tv}, CurrentVersion: {CurrentTv}",
                             requestPath, requestMethod, clientIp, sub, clientType, tv, currentTv);
+                        PrdAgent.Api.Authentication.AuthorizationFailureContract.Set(
+                            context.HttpContext,
+                            PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionRevoked);
                         context.Fail("Token revoked");
                     }
                 }
@@ -870,6 +885,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     // 安全兜底：依赖服务异常时不直接放行
                     logger.LogWarning(ex, "[401] Token验证异常 - Path: {Path}, Method: {Method}, IP: {IP}",
                         requestPath, requestMethod, clientIp);
+                    PrdAgent.Api.Authentication.AuthorizationFailureContract.Set(
+                        context.HttpContext,
+                        PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionValidationUnavailable);
                     context.Fail("Token validation failed");
                 }
             },
@@ -888,10 +906,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
                 // 跳过默认 challenge 响应（会覆盖 body）
                 context.HandleResponse();
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                context.Response.ContentType = "application/json; charset=utf-8";
-                var payload = ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权");
-                await context.Response.WriteAsync(JsonSerializer.Serialize(payload, jsonOptions));
+                await PrdAgent.Api.Authentication.AuthorizationFailureContract.WriteChallengeAsync(
+                    context.HttpContext,
+                    jsonOptions);
             },
             OnForbidden = async context =>
             {

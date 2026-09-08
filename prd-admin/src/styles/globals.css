@@ -13,3 +13,219 @@
    it just floated the avatar 52px off the bottom of the rail. Removed 2026-08-25.
    If the widget ever goes back to a left-rail anchor, bring the reserve back; the
    guard in AppShell.cdsCompatibility.test.ts watches that anchor and will go red. */
+
+/* ===== 页面渐晕：视觉创作首页背景里唯一的程序元素（见 components/effects/PageBackdrop.tsx）
+   一层、单向、不重复、不动。
+   这条约束是量出来的，不是审美偏好——见 tokens.css 里 --vignette-* 上方那段。
+   简言之：背景里的「器物级细节」要么看不见，要么就在抢内容；而**重复图案**
+   哪怕淡到 4/255，也会因为覆盖面大 + 周期规则而在缩放显示下摩尔纹成条纹布。
+   所以这里只允许一个非重复的径向渐变。往这一层加 repeating-* 有守卫会红。 */
+.page-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 82% at 50% 8%, var(--vignette-core) 0%, transparent 58%),
+    radial-gradient(112% 96% at 50% 42%, transparent 42%, var(--vignette-edge) 100%);
+}
+
+/* ===== 骨架 =====
+   底色 + 一道 45 度的扫光。45 度是为了和印相台的织纹、生图等待卡的织纹同一个角度——
+   等待这件事在这个产品里只有一种材质。颜色全走 token（双写），这里只管运动。 */
+.skeleton-sheen {
+  position: relative;
+  overflow: hidden;
+  background: var(--skeleton-base);
+}
+
+.skeleton-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg,
+    transparent 38%,
+    var(--skeleton-sheen) 50%,
+    transparent 62%);
+  transform: translateX(-100%);
+  animation: skeleton-sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  to { transform: translateX(100%); }
+}
+
+/* 关掉动效时留静态底色：骨架的**占位**职责比扫光重要，不能一起去掉。 */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-sheen::after { animation: none; opacity: 0; }
+}
+
+/* ===== 磨砂玻璃 =====
+   一块玻璃 = 半透明底 + 背后模糊 + **顶边高光** + 投影。前两条谁都会写，
+   真正让它从「一块半透明的板」变成「一块玻璃」的是后两条：
+   顶边那道细高光是光打在玻璃厚度上的边，投影说明它浮在东西之上。
+   取证：先只写前两条，卡片就是块板；补上边和影，玻璃感立刻出来。
+
+   还有一条前提：**背后得有东西可透**。背后一片纯色时磨砂就白磨了，卡片退化成实心板。
+   现在这个前提由背景照片承担（浅色主题不放照片，那一档的玻璃靠渐晕和纸面本身的明暗）。 */
+.glass-pane {
+  background: var(--glass-surface);
+  backdrop-filter: blur(26px) saturate(1.4);
+  -webkit-backdrop-filter: blur(26px) saturate(1.4);
+  box-shadow: inset 0 1px 0 var(--glass-edge), var(--glass-shadow);
+}
+
+/* 卡内的分区（chip、工具条）。它们是同一块玻璃上的分区，不是各自独立的玻璃，
+   所以只换底色、不再各来一道高光和投影——否则一屏里到处是浮起来的小方块。 */
+.glass-sub {
+  background: var(--glass-surface-sub);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+}
+
+/* 背景照片层：轮换素材。cover + 居中，淡入由 JS 在 decode 之后触发。 */
+.backdrop-photo {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  /* 焦点位置由每张素材自己声明（--backdrop-focus），不写就居中。
+     这是「和页面结合」的第一半：让每张图**有意思的那一块**落在没有内容的地方，
+     而不是随机地压在标题底下。 */
+  background-position: var(--backdrop-focus, center);
+  background-repeat: no-repeat;
+  /* 260ms：解码完当帧点亮，留一点点过渡免得「啪」地砸出来，但读起来是「点亮」不是「淡入」。
+     上一版 .9s 叠在「onload 之后还要再解一次码」上面，从准备好到看清接近一秒
+     （2026-09-02 用户：出现的太慢了，应该在元素加载完成的瞬间显示，就和点亮手机一样）。 */
+  transition: opacity .26s ease-out;
+}
+
+/*
+ * 可读性罩。
+ *
+ * 上一版是一整块 rgba(scrim, 0.62) 铺满全屏。用户的三条反馈其实是同一个根因：
+ * 「有效果但不多」「模模糊糊」「没有和页面结合起来的感觉」——
+ * 均匀压暗意味着整张图统一按 38% 透出来，亮的被压灰、暗的被提亮，
+ * 所有东西收敛到同一档中间调；而一个和布局毫无关系的全屏矩形，
+ * 当然也谈不上跟页面有关系。换几张图救不了，得换这一层的形状。
+ *
+ * 现在它是**按内容分布的**：中央偏上那一片（标题、副标题、输入框、预设行都在这里）
+ * 压到 core，往外过渡到 mid，到画面四边只剩 edge。三档由组件按每张素材算：
+ * edge 通常只有 0.14 左右，也就是说**画面边缘的艺术效果是按 86% 露出来的**，
+ * 而不是全屏 38%。字该清楚的地方照样清楚，图该有存在感的地方才真的有。
+ *
+ * 之所以中心点取 22% 而不是 50%：内容是压在上半屏的，罩的重心必须跟着内容走，
+ * 这就是「结合」的第二半——罩的几何来自布局，不是来自画面。
+ */
+.backdrop-scrim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(128% 78% at 50% 22%,
+    rgba(var(--backdrop-scrim), var(--scrim-core)) 0%,
+    rgba(var(--backdrop-scrim), var(--scrim-core)) 34%,
+    rgba(var(--backdrop-scrim), var(--scrim-mid)) 66%,
+    rgba(var(--backdrop-scrim), var(--scrim-edge)) 100%);
+}
+
+/* ===== 唤醒：整页刷新时，壁纸从左上角被点亮到右下角 =====
+ *
+ * 第一版做成了「一道窄光带扫过去」，用户看完的判断是「一闪而过的前期预设」，
+ * 不是他要的——他要的是 Apple 壁纸唤醒那种感觉：**整张图被逐渐点亮**，
+ * 光沿着对角线推进，推到哪里哪里就亮起来，而不是一道高光划过去。
+ *
+ * 两者的机制完全不同，不是把时长调慢就能变过去的：
+ *   窄光带 = 一个在移动的**加法高光**，它经过之后画面回到原样，所以观感是「闪」。
+ *   点亮   = 一块在退去的**遮盖层**，它退到哪里，哪里才第一次显影，是不可逆的推进。
+ *
+ * 所以这一版是「幕」不是「光带」：.wake-veil 用与页面同色的底铺满，
+ * 沿 135deg（正指右下）做渐变——左上是透明、右下是实底，然后整层往右下平移。
+ * 视口先落在它的实底那半边（全黑），随着平移落到透明那半边（全亮），
+ * 于是显影是从左上角开始的。交界处留一道极窄的暖白，那是「光的前沿」，
+ * 让推进看得出是被照亮而不是被擦掉。
+ *
+ * 时长 2500ms（用户在真机上定的；1900 还是偏快）、cubic-bezier(.32,.04,.18,1)。
+ * 曲线是取证调的：第一版用 (.16,.7,.3,1)，那条曲线把大部分行程压在前三分之一——
+ * 逐帧看下去 600ms（32% 的时间）时幕已经退掉八成，等于又变成「唰一下」。
+ * 换成起步平缓、末段收束的这条，光的前沿在整段里都看得见，才是「被点亮」而不是「被擦掉」。
+ */
+/*
+ * inset / translate 这三个数是**量出来的，不是推出来的**，改任何一个都要重跑
+ * scripts/wake-veil-probe.mjs 复核。
+ *
+ * 为什么手推会错：translate 的百分比按**元素自身**算，而这个元素是父级的 3.4 倍，
+ * 所以 -30% 其实是父级的 -102%。第一版写 inset:-55% + translate:±55%，
+ * 算下来幕直接滑出了画面——探针实测 t=0 时四角亮度 20/43/43/37（只有一角是底色），
+ * 也就是刚打开页面就已经漏出大半张图，「被点亮」的过程根本不存在。
+ * 而且渐变是斜的，投影距离还要再乘一个系数，一维的估算必然算不准。
+ *
+ * 判据很简单，探针就测这个：t=0 四角必须全等于页面底色（全盖住），
+ * t=末必须全等于原图（全露出），中途至少一角亮一角暗（有推进）。
+ * 当前这组的实测：t=0 全部 20；t=950 左上 84 / 右上 20 / 左下 51 / 右下 20；
+ * t=1899 恢复到 84/43/43/37。
+ */
+.wake-veil {
+  position: absolute;
+  inset: -120%;
+  pointer-events: none;
+  z-index: 2;
+  background: linear-gradient(135deg,
+    transparent 0%,
+    transparent 42%,
+    var(--wake-beam-soft) 46%,
+    var(--wake-beam-core) 48%,
+    var(--bg-base) 53%,
+    var(--bg-base) 100%);
+  transform: translate3d(-30%, -30%, 0);
+  animation: wake-illuminate 2500ms cubic-bezier(.32, .04, .18, 1) forwards;
+}
+
+@keyframes wake-illuminate {
+  from { transform: translate3d(-30%, -30%, 0); }
+  to   { transform: translate3d(30%, 30%, 0); }
+}
+
+/* 被点亮的元素。延迟按它在对角线上的位置排，跨度铺满整个推进过程——
+   上一版全部挤在 40-600ms 里，光还在左上，右下的东西已经亮完了，
+   因果就断了（demo-causality-contract：先走到，再发生）。 */
+.wake-rise {
+  animation: wake-rise-in 900ms cubic-bezier(.32, .04, .18, 1) both;
+  animation-delay: var(--wake-delay, 0ms);
+}
+
+@keyframes wake-rise-in {
+  from { opacity: 0; transform: translate3d(-14px, -9px, 0); filter: brightness(.42); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+
+/* 关掉动效时：幕整个不放，元素直接就位。
+   这里必须显式把 animation 设成 none 并保证终态可见——
+   只写 opacity 会留下 translate 和 brightness 的初值，页面会歪着且发暗。 */
+@media (prefers-reduced-motion: reduce) {
+  .wake-veil { display: none; }
+  .wake-rise { animation: none; opacity: 1; transform: none; filter: none; }
+}
+
+/*
+ * 浅色主题不放背景照片。
+ *
+ * 这批素材是近黑的暗房光影，浅色下无论压暗罩取什么值都只会把整页糊成一片灰
+ * （取证：hero-dusk-0.55-light.png——眉标那行赤陶色小字几乎读不出来，
+ * 预设 chip 也失去了和底的分层）。没有哪个数值能救一张近黑的图当浅色底，
+ * 所以直接不放，浅色下留潜像场自己成立。
+ */
+[data-theme="light"] .backdrop-photo-layer {
+  display: none;
+}
+
+/*
+ * 但**暗岛例外**：视觉创作首页是 .surface-tone-dark，它钉死深色、不跟文档主题走。
+ * 上面那条按 `[data-theme="light"]` 从文档根匹配，会连暗岛里的背景一起藏掉——
+ * 于是浅色主题的用户打开首页，看到的是一整块纯底色，背景「凭空消失」
+ * （2026-09-02 用户截图）。那条规则的理由是「近黑素材压在浅底上只会糊成一片灰」，
+ * 而暗岛的底本来就是深的，理由在这里不成立。
+ *
+ * 这和刚修的 --glass-surface 是同一个形状：**按文档主题写的规则，撞上钉死主题的局部区域**。
+ * token 那半已经在 tokens.css 的 .surface-tone-dark 里补齐了，这半是 display 规则，
+ * token 覆盖不到，得单独把它放回来。
+ */
+[data-theme="light"] .surface-tone-dark .backdrop-photo-layer {
+  display: block;
+}

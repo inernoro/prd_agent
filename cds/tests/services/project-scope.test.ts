@@ -16,6 +16,32 @@ import {
 } from '../../src/services/project-scope.js';
 
 describe('resolveProjectScope', () => {
+  it('半划状态退回全通配：一个服务没声明，整个项目就不许收窄', () => {
+    // 取并集看着自然，但会让「只改到没划范围那个服务的目录」的推送被判未波及，
+    // 整个项目静默不部署。失败方向必须朝安全的一边。
+    const scope = resolveProjectScope([
+      { id: 'api', buildScope: ['prd-api/**'] },
+      { id: 'web' },
+    ]);
+    expect(scope).toEqual([]);
+  });
+
+  it('部署模式上声明也算数，不算「没声明」', () => {
+    const scope = resolveProjectScope([
+      { id: 'api', buildScope: ['prd-api/**'] },
+      { id: 'gw', deployModes: { express: { buildScope: ['llmgw/**'] } } },
+    ]);
+    expect(new Set(scope)).toEqual(new Set(['prd-api/**', 'llmgw/**']));
+  });
+
+  it('声明了但归一化后被拒（等价于仓库根）也算没声明', () => {
+    const scope = resolveProjectScope([
+      { id: 'api', buildScope: ['prd-api/**'] },
+      { id: 'all', buildScope: ['**'] },
+    ]);
+    expect(scope).toEqual([]);
+  });
+
   it('取名下全部服务 buildScope 的并集并去重', () => {
     const scope = resolveProjectScope([
       { buildScope: ['prd-api/**', '.github/workflows/branch-image.yml'] },
@@ -165,5 +191,33 @@ describe('compose 服务级 cds.build-scope 能真的落进 profile', () => {
     const parsed = parseCdsCompose(yaml)!;
     expect(parsed.buildProfiles.find((p) => p.id === 'web')?.buildScope).toBeUndefined();
     expect(resolveProjectScope(parsed.buildProfiles)).toEqual([]);
+  });
+});
+
+describe('被拒的声明不能被同一条服务上更窄的声明顶掉', () => {
+  it('顶层写 ** + 模式写 cds/** → 整体全通配，不是只留 cds/**', () => {
+    // `**` 是用户显式写下的「整个仓库都可能影响我」。让 cds/** 把它顶掉，
+    // 就是把 fail-open 反转成 fail-closed：改别处会静默不部署。
+    expect(resolveProjectScope([
+      { id: 'p', buildScope: ['**'], deployModes: { express: { buildScope: ['cds/**'] } } },
+    ])).toEqual([]);
+  });
+
+  it('绝对路径 / .. 这类越界声明同样让整体退回全通配', () => {
+    expect(resolveProjectScope([
+      { id: 'p', buildScope: ['/etc'], deployModes: { express: { buildScope: ['cds/**'] } } },
+    ])).toEqual([]);
+    expect(resolveProjectScope([
+      { id: 'p', buildScope: ['../outside'], deployModes: { express: { buildScope: ['cds/**'] } } },
+    ])).toEqual([]);
+  });
+
+  it('压根没写（undefined / 空数组 / 全空串）不算「被拒」，照常由另一份声明作数', () => {
+    expect(resolveProjectScope([
+      { id: 'p', buildScope: [], deployModes: { express: { buildScope: ['cds/**'] } } },
+    ])).toEqual(['cds/**']);
+    expect(resolveProjectScope([
+      { id: 'p', buildScope: ['  '], deployModes: { express: { buildScope: ['cds/**'] } } },
+    ])).toEqual(['cds/**']);
   });
 });

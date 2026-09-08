@@ -6,6 +6,7 @@ using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Api.Mcp;
 
 namespace PrdAgent.Api.Middleware;
 
@@ -129,6 +130,35 @@ public sealed class AdminPermissionMiddleware
         var path = context.Request.Path.Value ?? string.Empty;
         var method = context.Request.Method;
 
+        // 收不回来的动作，一律不给智能体。这道门有两个维度，缺一个都出过事：
+        //
+        // 【位置】必须排在「这条路要不要 admin 权限」**之前**。上一版写在下面的 isAgentKey
+        // 分支里，而那整段在 `required == null` 早退之后 —— 没有 [AdminController] 标记的
+        // 控制器扫描器给不出 required，请求在门开之前就走掉了。
+        //
+        // 【范围】开放层（/api/open/）豁免。它要挡的是**普通业务控制器**：
+        // DELETE /api/web-pages/{id} 这类只挂 [Authorize]、从没为 API key 设计过，
+        // 却因为默认策略收 ApiKey scheme、middleware 又把 scope a:b 认成 admin 权限 a.b
+        // 而被打通的路。开放层不是这种 —— 那八个控制器每一个都显式写着
+        // [Authorize(AuthenticationSchemes = "ApiKey")] + [RequireScope]，本来就是给 sk-ak
+        // 走的受控接口，各自的 scope 就是它的门。不豁免的后果上一版真发生了：
+        // llmgw/tutorial/publisher.py 的教程发布与它的回滚一起 403（见 IsCuratedOpenApiPath）。
+        var isAgentKey = string.Equals(context.User?.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
+        if (isAgentKey
+            && !McpDestructiveActions.IsCuratedOpenApiPath(path)
+            && McpDestructiveActions.IsDestructiveRequest(method, path))
+        {
+            var dip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            _logger.LogWarning("[403] AgentApiKey 破坏性动作被挡 - Path: {Path}, Method: {Method}, IP: {IP}",
+                path, method, dip);
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            context.Response.ContentType = "application/json; charset=utf-8";
+            var blocked = ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                "删除、公开发布这类收不回来的动作不开放给智能体密钥。要做请在界面上操作。");
+            await context.Response.WriteAsync(JsonSerializer.Serialize(blocked, _jsonOptions));
+            return;
+        }
+
         // 使用扫描器获取所需权限
         var required = _scanner.GetRequiredPermission(path, method);
 
@@ -157,7 +187,6 @@ public sealed class AdminPermissionMiddleware
         // AgentApiKey 走"纯 scope"授权，保证最小权限：M2M Key 命中匹配 scope 才放行，
         // 且【绝不】继承 owner 的 admin 权限/root（否则 root 名下的 scoped key 等于全权，最小权限失效）。
         // scope "a:b"（冒号）精确满足 admin 权限 "a.b"（点分），不跨资源泄漏。
-        var isAgentKey = string.Equals(context.User.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
         if (isAgentKey)
         {
             if (HasScopeGrant(context, required) || HasDefectShareScopeGrant(context, required, path, method))

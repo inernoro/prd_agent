@@ -19,88 +19,26 @@
 import { createHash } from 'node:crypto';
 import type { BranchEntry, BuildProfile, InfraService, ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
-import { PER_BRANCH_DB_ENV_KEYS, applyPerBranchDbIsolation } from './db-scope-isolation.js';
+import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
+import { resolveEnvTemplates } from './compose-parser.js';
+import { cloneRelationalDbInPlace } from './db-clone-pipeline.js';
 import { detectInfraDataKind, runDockerExec, maskSecretValues } from '../routes/infra-data.js';
 
-export type ReplicaDbEngine = 'mongo' | 'mysql' | 'postgres';
+import {
+  PER_BRANCH_DB_ENV_KEYS, classifyDbEnvKey, dbInvolvementOf, engineFromRelationalUrls, relationalEnginesFromUrls,
+  isRelationalUrl, rewriteRelationalUrlDb, type DbEngine, type DbInvolvement,
+} from './db-env-keys.js';
 
-/** env key 家族 → 引擎（PER_BRANCH_DB_ENV_KEYS 的引擎归类） */
-function engineForEnvKey(key: string): ReplicaDbEngine | null {
-  if (key.includes('MONGO')) return 'mongo';
-  if (key.includes('MYSQL') || key.includes('MARIADB')) return 'mysql';
-  if (key.includes('POSTGRES')) return 'postgres';
-  return null;
-}
+export type ReplicaDbEngine = DbEngine;
+// 规则 SSOT 在 db-env-keys.ts；这里保留同名导出，老调用方不必改 import
+export {
+  classifyDbEnvKeys, suspectDbEnvKeys, dbInvolvementOf, isRelationalUrl, relationalEnginesFromUrls,
+  engineFromRelationalUrls, rewriteRelationalUrlDb,
+} from './db-env-keys.js';
+export type { DbEnvKeyFamily, DbEnvKeyClassification, DbInvolvement } from './db-env-keys.js';
 
 /** 库名白名单：只允许 [a-z0-9_]，防 shell/SQL 注入 + 三引擎通吃的安全字符集。 */
 const DB_NAME_SAFE = /^[a-z0-9_]+$/i;
-
-/**
- * 补充家族：应用框架风格的库名 env key（如 .NET 双下划线 `MongoDB__DatabaseName`）。
- * 只用于复制集隔离时的库定位，**不进 PER_BRANCH_DB_ENV_KEYS**——那份白名单驱动
- * per-branch 库名改写，部分项目（如 prd-agent）刻意让框架 key 不随分支加后缀。
- * （验收 P1-1：此前只认白名单家族，prd-agent 的 MongoDB__DatabaseName 直接 409。）
- */
-const FRAMEWORK_DB_ENV_PATTERNS: Array<{ engine: ReplicaDbEngine; re: RegExp }> = [
-  { engine: 'mongo', re: /^(CDS_)?MONGO(DB)?_{1,2}DATABASE(_?NAME)?$/i },
-  { engine: 'mysql', re: /^(CDS_)?(MYSQL|MARIADB)_{1,2}DATABASE(_?NAME)?$/i },
-  { engine: 'postgres', re: /^(CDS_)?(POSTGRES(QL)?|PG)_{1,2}(DB|DATABASE)(_?NAME)?$/i },
-];
-
-/**
- * 引擎中立的库名 key（2026-07-28 真机验收补）。
- *
- * Spring / 通用配置风格把库名写成 `DB_NAME` / `DATABASE_NAME` —— 名字里**不含引擎**。
- * 上面那三条模式全靠 key 名带 MYSQL / POSTGRES / MONGO 才能归类，于是这类项目在
- * 隔离入口就被判「环境变量里没有数据库名」，功能整个不可用。生产 CDS 上的标识中台
- * (IMP) 正是如此：DB_NAME + SPRING_DATASOURCE_URL / *_DATASOURCE_URL / *_DB_URL，
- * 六个服务全部 dbIsolatable.ok=false —— JDBC 改写修好了也永远走不到。
- *
- * 这类 key 的引擎不能猜，只能从同一份 env 里的**关系型连接 URL scheme** 读出来
- *（`jdbc:mysql://…` 就是 mysql，明写在那里）。读不出唯一引擎时保持原样拒绝，
- * 绝不臆断——克隆错引擎的库比不能隔离危险得多。
- */
-const ENGINE_NEUTRAL_DB_ENV_PATTERN = /^(CDS_)?(DB|DATABASE)_{1,2}(NAME)$/i;
-
-/**
- * 关系型连接 URL 的 scheme —— **识别与改写共用这一条**（Codex PR #1275 二轮 P1）。
- *
- * 曾经是两条各写各的：引擎探测认 `(jdbc:)?(mysql|mariadb|postgres(ql)?)`，而下游
- * 决定「哪些 URL 要跟着改库名」的那条只列了 `mysql|mariadb|postgres|postgresql|
- * jdbc:mysql|jdbc:postgresql`，漏掉 `jdbc:mariadb` 与 `jdbc:postgres`。后果是最坏的
- * 那种：用 `DB_NAME` + `SPRING_DATASOURCE_URL=jdbc:mariadb://…` 的 Java 服务被判为
- * 可隔离（探测认得），克隆照跑、库名 key 照改，但那条 JDBC URL 进不了改写集合——
- * 应用读的正是它，于是副本流量继续打在源库上，控制面还报「隔离成功」。这正是
- * 已经修过两轮的「隔离是假的」原样复活。合成一条 SSOT，从根上不给漂移留缝。
- */
-const RELATIONAL_URL_SCHEME = /^(jdbc:)?(mysql|mariadb|postgres(ql)?):\/\//i;
-
-/**
- * 这个值是不是关系型连接 URL —— 「能否据此判引擎」与「要不要跟着改库名」必须是
- * 同一个答案，所以两处都调这个函数，不各自 test 各自的正则。
- */
-export function isRelationalUrl(value: unknown): boolean {
-  return typeof value === 'string' && RELATIONAL_URL_SCHEME.test(value.trim());
-}
-
-/** 一份 env 里出现过的全部关系型引擎（去重）。 */
-export function relationalEnginesFromUrls(env: Record<string, string>): ReplicaDbEngine[] {
-  const found = new Set<ReplicaDbEngine>();
-  for (const value of Object.values(env)) {
-    if (typeof value !== 'string') continue;
-    const m = RELATIONAL_URL_SCHEME.exec(value.trim());
-    if (!m) continue;
-    const scheme = m[2].toLowerCase();
-    found.add(scheme.startsWith('postgres') ? 'postgres' : 'mysql');
-  }
-  return [...found];
-}
-
-/** 从一份 env 的关系型连接 URL 里读出唯一引擎；零个或多于一个都返回 null。 */
-export function engineFromRelationalUrls(env: Record<string, string>): ReplicaDbEngine | null {
-  const found = relationalEnginesFromUrls(env);
-  return found.length === 1 ? found[0] : null;
-}
 
 /**
  * 关系型连接 URL 的主机名（小写，去端口去凭据）。解析不出返回 null。
@@ -176,19 +114,6 @@ function resolveNeutralEngine(
   return byDepends.length === 1 ? byDepends[0] : null;
 }
 
-/**
- * 判定某个 env key 是否为库名 key，并归类引擎（白名单 → 框架风格 → 引擎中立三路）。
- * 引擎中立那一路必须由调用方提供 env 上下文，否则无从判断引擎，直接不认。
- */
-function classifyDbEnvKey(key: string, neutralEngine?: ReplicaDbEngine | null): ReplicaDbEngine | null {
-  if ((PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key)) return engineForEnvKey(key);
-  for (const { engine, re } of FRAMEWORK_DB_ENV_PATTERNS) {
-    if (re.test(key)) return engine;
-  }
-  if (neutralEngine && ENGINE_NEUTRAL_DB_ENV_PATTERN.test(key)) return neutralEngine;
-  return null;
-}
-
 /** 框架风格 key（应用真正消费的配置）排在白名单 key 之前——两者值冲突时以应用视角为准。 */
 function isFrameworkDbKey(key: string, neutralEngine?: ReplicaDbEngine | null): boolean {
   return !(PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key)
@@ -254,6 +179,8 @@ export interface ReplicaDbTarget {
   /** 克隆来源库名（已按 dbScope=per-branch 折算成运行时真实库名） */
   sourceDb: string;
   infra: InfraService;
+  /** 服务的运行时 env（项目 → 分支 → profile 合并并按 dbScope 折算），给凭据解析用（克隆后授权给应用用户） */
+  appEnv?: Record<string, string>;
 }
 
 /** Mongo 连接串 env key 家族（.NET 双下划线 / 通用 URI 风格） */
@@ -263,37 +190,6 @@ const MONGO_CONN_ENV_PATTERN = /^(CDS_)?MONGO(DB)?_{1,2}(CONNECTION_?STRING|URI|
  * 解析某服务的数据库目标：库名 env key、运行时真实库名、承载它的 infra 容器。
  * 找不到（无 DB env / infra 未运行 / 引擎不支持）返回带原因的 null 结果。
  */
-/**
- * 关系型连接 URL 里把库名段换成隔离库（Codex 第三十二轮 P1）。
- *
- * CDS 的 mysql/postgres 预设注入的是 `DATABASE_URL / MYSQL_URL / POSTGRES_URL`，
- * 形如 `mysql://app:pw@mysql:3306/<db>`——**库名是 URL 路径里的字面量**，而应用
- * 真正读的就是这个 URL。此前隔离只改 `MYSQL_DATABASE` / `POSTGRES_DB`（那是
- * 服务端初始化变量，不是应用的连接配置），于是副本照旧写主库，控制面与隔离审计
- * 却双双报告「已隔离」——隔离在关系型上一直是假的。
- *
- * 只改路径段：主机/端口/凭据/查询参数原样保留（关系型隔离走同实例建新库，
- * 不像 mongo 那样另起专用实例）。无法解析或路径段对不上源库时返回 null，
- * 由调用方按「不认识就不动」处理，绝不瞎改用户的连接串。
- *
- * scheme 允许内嵌冒号（2026-07-27 真机核对补）：Java/Spring 项目的连接串是
- * `jdbc:mysql://host:3306/db?useSSL=false` 这种**复合 scheme**。下面的
- * RELATIONAL_URL_SCHEME 一直把 `jdbc:mysql` / `jdbc:postgresql` 列为已识别，
- * 但此处的 scheme 段原本写成 `[a-zA-Z][a-zA-Z0-9+.-]*`（不含冒号），JDBC URL
- * 一律解析失败 → 收集阶段的探测也失败 → 这些 key 根本进不了 urlEnvValues →
- * **静默不改写**。于是第三十二轮修好的「关系型隔离是假的」在 Java 项目上原样
- * 复活：控制面报告已隔离，Spring 应用照旧写主库。核对生产 CDS 上的标识中台
- * (IMP) 项目环境变量时发现——它的库连接全部走 SPRING_DATASOURCE_URL /
- * *_DATASOURCE_URL / *_DB_URL 这类 JDBC 形态。
- */
-export function rewriteRelationalUrlDb(url: string, sourceDb: string, isolatedDb: string): string | null {
-  const m = /^([a-zA-Z][a-zA-Z0-9+.:-]*:\/\/[^/?#]*)\/([^/?#]*)([?#].*)?$/.exec(url);
-  if (!m) return null;
-  const [, prefix, dbSegment, tail] = m;
-  if (dbSegment !== sourceDb) return null;
-  return `${prefix}/${isolatedDb}${tail || ''}`;
-}
-
 // 「值看起来像关系型连接 URL」的判定与引擎探测共用上面那条 RELATIONAL_URL_SCHEME，
 // 不再各写一份（两份漂移过一次，见该常量的注释）。
 
@@ -311,11 +207,45 @@ function baseIsolationEnvOverride(target: ReplicaDbTarget, dbName: string): Reco
   return envOverride;
 }
 
+/**
+ * 基础设施记录里的 env 常存模板（`MYSQL_ROOT_PASSWORD=${CDS_MYSQL_ROOT_PASSWORD}`），容器启动时
+ * 才按项目环境变量解析。克隆 / 备份 / 回写这些路直接拿记录里的值当密码，就会把 `${...}`
+ * 字面量发给数据库（2026-09-04 真实 mysql 分支复验时撞上：Access denied for user root）。
+ * 与容器启动、数据工作台同一套解析；解不出来的模板**保留原样**而不是变成空串——
+ * 空串会让 root 无密码静默登录尝试，保留模板让下游能一眼看出「缺哪个变量」。
+ */
+/** 按 vars 展开 env 里的 ${...} 模板；解不出来的保留原样（不变成空串，让下游能看出缺哪个变量） */
+export function resolveTemplatesKeepUnresolved(raw: Record<string, string>, vars: Record<string, string>): Record<string, string> {
+  if (!Object.values(raw).some((v) => /\$\{[^}]+\}/.test(String(v)))) return raw;
+  const resolved = resolveEnvTemplates(raw, vars);
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const r = resolved[k];
+    env[k] = /\$\{[^}]+\}/.test(String(v)) && !String(r ?? '').trim() ? String(v) : String(r ?? '');
+  }
+  return env;
+}
+
+export function resolveInfraForDb(state: Pick<StateService, 'getCustomEnv'>, infra: InfraService): InfraService {
+  const raw = infra.env || {};
+  const env = resolveTemplatesKeepUnresolved(raw, state.getCustomEnv(infra.projectId) || {});
+  return env === raw ? infra : { ...infra, env };
+}
+
 export function resolveReplicaDbTarget(
   state: StateService,
   branch: BranchEntry,
   profile: BuildProfile,
-): { target: ReplicaDbTarget | null; reason?: string } {
+  opts: {
+    /**
+     * 基础设施实例的筛选口径。克隆默认只认台账 running（不往停掉的实例里写）；
+     * 库探测（db-probe）传 'any'：台账状态不是真相，容器是否真在跑由 docker 实测说了算，
+     * 探测只读、失败无害，不该被台账里一个过期的 error 挡在门外。
+     */
+    infraStatus?: 'running' | 'any';
+  } = {},
+): { target: ReplicaDbTarget | null; reason?: string; involvement?: DbInvolvement; suspects?: string[]; inheritedSuspects?: string[] } {
+  const infraOk = (svc: InfraService): boolean => opts.infraStatus === 'any' || svc.status === 'running';
   // 与部署路径 getMergedEnv（branches.ts）同优先级：project customEnv → 分支 scope
   // → profile.env。分支级 env 覆写过库名/连接串时（Codex P1），不合入会把隔离目标
   // 解析到项目级默认库——克隆的不是该分支实际在用的库，或漏掉分支级连接串 key。
@@ -349,9 +279,10 @@ export function resolveReplicaDbTarget(
     // 是「真没配」还是「配了但 CDS 不认」。这里把**看到了什么**如实报出来：
     // 疑似库名 key（只报 key 名，不报值，值可能含凭据）、以及引擎能否从连接 URL 推出。
     // 用户据此一眼知道该补 URL 还是该改 key 名；排障也不必再去猜。
-    const suspects = Object.keys(runtimeEnv).filter(
-      (k) => /(^|_)(DB|DATABASE)(_|$)/i.test(k) || /DATASOURCE|JDBC/i.test(k),
-    );
+    // 服务自己声明的（profile / 分支层）才算「有疑似变量」；只从项目级灌下来的按不涉及数据库处理
+    const ownKeys = new Set([...Object.keys(profileEnv), ...Object.keys(scopeEnv)]);
+    const inv = dbInvolvementOf(runtimeEnv, ownKeys);
+    const suspects = inv.suspects;
     const detail = suspects.length > 0
       ? `。检测到疑似数据库相关变量：${suspects.slice(0, 12).join(', ')}`
         + (neutralEngine
@@ -360,8 +291,15 @@ export function resolveReplicaDbTarget(
       : '';
     return {
       target: null,
-      reason: '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库'
-        + detail,
+      involvement: inv.involvement,
+      suspects,
+      inheritedSuspects: inv.inheritedSuspects,
+      reason: inv.involvement === 'none'
+        ? (inv.inheritedSuspects.length > 0
+          ? `该服务自己没有声明任何库名变量；项目级变量 ${inv.inheritedSuspects.slice(0, 6).join(', ')} 灌给了它，是否使用由服务决定，不据此定位库`
+          : '该服务没有任何数据库相关变量，不涉及数据库')
+        : '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库'
+          + detail,
     };
   }
 
@@ -375,8 +313,7 @@ export function resolveReplicaDbTarget(
   )];
   let engine: ReplicaDbEngine | null = enginesPresent[0] ?? null;
   if (enginesPresent.length > 1) {
-    const running = state.getInfraServicesForProject(branch.projectId)
-      .filter((svc) => svc.status === 'running');
+    const running = state.getInfraServicesForProject(branch.projectId).filter(infraOk);
     const engineOf = engineOfInfra;
     const declared = new Set(profile.dependsOn || []);
     const byDepends = [...new Set(
@@ -415,9 +352,14 @@ export function resolveReplicaDbTarget(
   const envKeys = presentKeys.filter((key) => classifyDbEnvKey(key, neutralEngine) === engine && runtimeEnv[key] === sourceDb);
 
   const infraCandidates = state.getInfraServicesForProject(branch.projectId)
-    .filter((svc) => svc.status === 'running' && detectInfraDataKindForEngine(svc, engine));
+    .filter((svc) => infraOk(svc) && detectInfraDataKindForEngine(svc, engine));
   if (infraCandidates.length === 0) {
-    return { target: null, reason: `项目里没有运行中的 ${engine} 基础设施容器，无法执行克隆` };
+    return {
+      target: null,
+      reason: opts.infraStatus === 'any'
+        ? `项目里没有 ${engine} 基础设施实例，无法定位这个库在哪`
+        : `项目里没有运行中的 ${engine} 基础设施容器，无法执行克隆`,
+    };
   }
   // 实例定位（Codex P1）：优先 profile.dependsOn 显式声明；多实例同引擎且未声明时
   // 不再盲选第一个——按 env 原始值里的 CDS_<实例ID>_PORT/HOST 模板 token 关联
@@ -491,7 +433,10 @@ export function resolveReplicaDbTarget(
       urlEnvValues,
       ...(unboundUrlKeys.length > 0 ? { unboundUrlKeys } : {}),
       sourceDb,
-      infra,
+      infra: resolveInfraForDb(state, infra),
+      // 服务 env 里的连接串常写成 mysql://${CDS_MYSQL_USER}:${CDS_MYSQL_PASSWORD}@...，部署时才展开；
+      // 给凭据解析的这一份先按同一份 env 自展开，否则解析出的「用户名」是模板本身
+      appEnv: resolveTemplatesKeepUnresolved(runtimeEnv, runtimeEnv),
     },
   };
 }
@@ -557,9 +502,6 @@ export async function cloneReplicaDb(opts: {
   }
   const c = target.infra.containerName;
   const env = target.infra.env || {};
-  const image = target.infra.dockerImage;
-  const port = target.infra.containerPort
-    || (target.engine === 'mysql' ? 3306 : target.engine === 'postgres' ? 5432 : 27017);
 
   // mongo 走「专用隔离实例」通道（八轮验收终局取证：共享 mongod 8.0.20 在本宿主
   // 上凡大批量写入随机 SIGSEGV[docker events die exitCode=139]，纯读从未崩——
@@ -568,53 +510,16 @@ export async function cloneReplicaDb(opts: {
     return cloneMongoViaDedicatedInstance({ target, memberId, profileId, dbName, instanceId: opts.instanceId, publishHost: opts.publishHost, now: opts.now, onOutput: opts.onOutput });
   }
 
-  // ── mysql / postgres：共享实例内克隆（写入量小、历轮验收无崩溃记录，维持原路径）──
-  // 复验 R3-P0：独立限额辅助容器（同镜像自带 client 工具、共享 DB 网络命名空间），
-  // 压力大时被杀的是辅助容器，不是数据库本体。
-  const helper = (extraEnv: string[], script: string): string[] => [
-    'run', '--rm', '-i', '--pull', 'never',
-    '--network', `container:${c}`,
-    '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
-    '--entrypoint', 'sh',
-    ...extraEnv,
-    image,
-    '-c', script,
-  ];
-
-  let argv: string[];
-  const secrets: string[] = [];
-
-  // 两阶段 dump→导入（Codex P1）：`dump | client` 管道在 POSIX sh 下退出码取
-  // 末端 client——dump 半路失败而 client 消费掉空/残缺流照样 0 退出，set -e
-  // 拦不住，快照被记成克隆成功、副本对着空库跑实验。落盘中间产物让两个进程
-  // 的退出码都被 set -e 逐个把关（与 mongo 通道的 dump 落盘同款思路；文件写在
-  // 辅助容器自身层，随 --rm 自动消失）。
-  if (target.engine === 'mysql') {
-    const user = 'root';
-    const pw = env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '';
-    secrets.push(pw);
-    const conn = `-h127.0.0.1 -P${port} -u${user}`;
-    argv = helper(['-e', `MYSQL_PWD=${pw}`],
-      `set -e; mysql ${conn} -e 'CREATE DATABASE IF NOT EXISTS \`${dbName}\`'; ` +
-      `mysqldump ${conn} --single-transaction --routines --triggers ${target.sourceDb} > /tmp/rsclone.sql; ` +
-      `mysql ${conn} ${dbName} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`);
-  } else {
-    const user = env.POSTGRES_USER || 'postgres';
-    const pw = env.POSTGRES_PASSWORD || '';
-    secrets.push(pw);
-    const conn = `-h 127.0.0.1 -p ${port} -U ${user}`;
-    argv = helper(['-e', `PGPASSWORD=${pw}`],
-      `set -e; psql ${conn} -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "${dbName}"' 2>/dev/null || true; ` +
-      `pg_dump ${conn} ${target.sourceDb} > /tmp/rsclone.sql; ` +
-      `psql ${conn} -q -v ON_ERROR_STOP=1 -d ${dbName} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`);
-  }
-
+  // ── mysql / postgres：共享实例内克隆——走收敛 4 抽出的三元组管线（来源库、目标库、实例），
+  // 与分支独立库「时间点克隆」共用同一份 dump→导入脚本、辅助容器限额与两阶段落盘。
   opts.onOutput?.(`── 一键隔离数据库: 克隆 ${target.sourceDb} → ${dbName}（${target.engine} @ ${c}，独立限额辅助容器）──`);
-  const result = await runDockerExec(argv, '', 600_000, 64 * 1024);
-  if (result.code !== 0) {
-    // 失败原因保留头尾双段（复验 R3-P2）；失败残留延迟重试清理（复验 R3-P1/R4）
-    const raw = `${result.stderr || result.stdout}`.trim();
-    const detail = maskSecretValues(raw.length > 900 ? `${raw.slice(0, 300)}\n…\n${raw.slice(-500)}` : raw, secrets);
+  try {
+    await cloneRelationalDbInPlace(
+      { engine: target.engine, infra: target.infra, sourceDb: target.sourceDb, targetDb: dbName, scope: { kind: 'replica-member', branchId: opts.branchId, profileId, memberId } },
+      { cleanupOnFailure: false },
+    );
+  } catch (err) {
+    // 失败原因已由管线脱敏；失败残留延迟重试清理（复验 R3-P1/R4）
     let residue = `（警告：半成品克隆库 ${dbName} 未能自动清理，请到数据库工作台手动 DROP）`;
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       try {
@@ -629,7 +534,7 @@ export async function cloneReplicaDb(opts: {
         if (attempt < 5) await new Promise((r) => setTimeout(r, 20_000));
       }
     }
-    throw new Error(`数据库克隆失败（${target.engine}）: ${detail || `exit ${result.code}`}${residue}`);
+    throw new Error(`数据库克隆失败（${target.engine}）: ${(err as Error).message}${residue}`);
   }
   opts.onOutput?.(`── 隔离库 ${dbName} 克隆完成 ──`);
 

@@ -612,12 +612,43 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     && viewport.width <= 480
     && touchPoints >= 1,
   );
-  const resolvedTheme = theme || await page.evaluate(() => {
+  // 实测，不取脚本意图：这个字段曾经把 20 张暗色图全记成 light（调用方传什么就记什么），
+  // 于是「浅色其实没切成功」在账面上看不出来 —— predicate-and-wiring-discipline 形状 6。
+  // 现在无论调用方传没传 theme，都以页面当时真实渲染出来的为准。
+  const resolvedTheme = await page.evaluate(() => {
     const root = document.documentElement;
-    const declared = root.getAttribute('data-theme') || document.body?.getAttribute('data-theme');
-    if (declared === 'light' || declared === 'dark') return declared;
-    if (root.classList.contains('dark') || document.body?.classList.contains('dark')) return 'dark';
-    if (root.classList.contains('light') || document.body?.classList.contains('light')) return 'light';
+    // 标记只当**线索**，不当结论。切主题时 data-theme / class 先翻，对应的 CSS 没生效
+    // （变量没加载、样式表 404、选择器写错）是完全可能的 —— 而那恰恰是双主题验收要抓的
+    // 那一种失败：标记说 light、屏幕上是暗的，证据却按 light 记账，覆盖检查还判通过。
+    // 所以先量真实底色；量得出来就以量到的为准，量不出来才退回标记。
+    const marker = (() => {
+      const declared = root.getAttribute('data-theme') || document.body?.getAttribute('data-theme');
+      if (declared === 'light' || declared === 'dark') return declared;
+      if (root.classList.contains('dark') || document.body?.classList.contains('dark')) return 'dark';
+      if (root.classList.contains('light') || document.body?.classList.contains('light')) return 'light';
+      return null;
+    })();
+    // 兜底量真实底色，而不是问 prefers-color-scheme —— 无头浏览器默认答 light，
+    // 于是一整套暗色截图会被记成 light（这正是那次 20 张全记错的成因）。
+    //
+    // 必须看 alpha：body 的背景常常是 rgba(0,0,0,0)（完全透明，看得见的底色其实来自 html
+    // 或更外层）。只取 rgb 三个分量的话，那三个 0 会被当成纯黑 —— 浅色页反而被记成 dark，
+    // 双主题证据比不量还错。所以只认**不透明**的背景，半透明/全透明一律往外层找；
+    // 都不透明不了就退回媒体查询。
+    const opaqueTheme = (el) => {
+      if (!el) return null;
+      const m = (getComputedStyle(el).backgroundColor || '').match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const parts = m[1].split(',').map((v) => parseFloat(v));
+      const [r, g, b] = parts;
+      const a = parts.length > 3 ? parts[3] : 1;
+      if (![r, g, b, a].every((v) => Number.isFinite(v))) return null;
+      if (a < 1) return null;
+      return (0.2126 * r + 0.7152 * g + 0.0722 * b) < 128 ? 'dark' : 'light';
+    };
+    const measured = opaqueTheme(document.body) || opaqueTheme(root);
+    if (measured) return measured;
+    if (marker) return marker;
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }).catch(() => null);
   const actualPageUrl = page.url();

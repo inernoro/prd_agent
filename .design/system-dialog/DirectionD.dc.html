@@ -1,0 +1,170 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Inter', -apple-system, 'PingFang SC', sans-serif; }
+    a { color: #D97757; } a:hover { color: #E8A87C; }
+    .sd-h1 { font-family: 'Space Grotesk', 'Inter', sans-serif; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+    .sd-eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; }
+    .sd-lede { font-size: 13px; line-height: 1.7; margin: 10px 0 0; max-width: 860px; }
+    .sd-colhead { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+    .sd-spec td { padding: 7px 14px 7px 0; font-size: 12px; vertical-align: top; line-height: 1.6; }
+    .sd-spec td:first-child { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+  </style>
+</helmet>
+
+<div style="padding: 40px; background: #101014; color: #f7f7fb; min-height: 1180px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: baseline; gap: 14px;">
+    <span class="sd-eyebrow" style="color: #E8A87C;">方向 D</span>
+    <h1 class="sd-h1">贴边动作条</h1>
+  </div>
+  <p class="sd-lede" style="color: rgba(247,247,251,0.68);">
+    不做居中方框：贴着视口底边升起一条，宽度跟着内容走，标题正文动作一行排开。
+    理由是 confirm / prompt 本质是**动作**不是**公告**——贴边不遮住你正在判断的那块内容，手也离得近。
+  </p>
+
+  <div style="margin-top: 30px; display: flex; flex-direction: column; gap: 26px;">
+
+    <!-- DARK: 三态叠在一张模拟视口里 -->
+    <div>
+      <div class="sd-colhead" style="color: rgba(247,247,251,0.45); margin-bottom: 10px;">暗色 · 在真实视口里的位置</div>
+      <div style="position: relative; height: 300px; border-radius: 8px; overflow: hidden; background: #141418; border: 1px solid rgba(255,255,255,0.08);">
+        <!-- 底下的页面：示意 -->
+        <div style="padding: 16px 18px; opacity: .5;">
+          <div style="display: flex; gap: 10px; margin-bottom: 14px;">
+            <div style="width: 96px; height: 10px; border-radius: 3px; background: rgba(255,255,255,0.14);"></div>
+            <div style="width: 52px; height: 10px; border-radius: 3px; background: rgba(255,255,255,0.08);"></div>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px;">
+            <div style="height: 96px; border-radius: 6px; background: linear-gradient(150deg,#7d3f2c,#2a1712);"></div>
+            <div style="height: 96px; border-radius: 6px; background: linear-gradient(150deg,#3c5a3a,#16221a);"></div>
+            <div style="height: 96px; border-radius: 6px; background: linear-gradient(150deg,#2f4a63,#141c26);"></div>
+            <div style="height: 96px; border-radius: 6px; background: linear-gradient(150deg,#5a4a2f,#241d12);"></div>
+          </div>
+        </div>
+        <!-- 贴边条 · confirm 危险态 -->
+        <div style="position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); width: min(600px, 92%); border-radius: 10px 10px 0 0; background: rgba(30,30,36,0.90); box-shadow: inset 0 1px 0 rgba(255,236,222,0.13), 0 -14px 40px rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.12); border-bottom: 0;">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 14px 14px 18px;">
+            <span style="width: 3px; align-self: stretch; border-radius: 2px; background: #fca5a5; flex: 0 0 3px;"></span>
+            <div style="flex: 1 1 auto; min-width: 0;">
+              <div style="font-size: 13px; font-weight: 650; color: #f7f7fb;">确认删除</div>
+              <div style="margin-top: 3px; font-size: 12px; line-height: 1.6; color: rgba(247,247,251,0.68);">删除后不可恢复，项目「白桃」下的 12 张图会一并移除。</div>
+            </div>
+            <div style="display: flex; gap: 8px; flex: 0 0 auto;">
+              <div style="height: 34px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: rgba(247,247,251,0.80); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);">取消</div>
+              <div style="height: 34px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #b91c1c; color: #fff;">删除</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 三态并排 -->
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 36px;">
+      <div style="display: flex; flex-direction: column; gap: 18px;">
+        <div class="sd-colhead" style="color: rgba(247,247,251,0.45);">暗色 · alert 与 prompt</div>
+
+        <div style="border-radius: 10px 10px 0 0; background: rgba(30,30,36,0.90); box-shadow: inset 0 1px 0 rgba(255,236,222,0.13), 0 -14px 40px rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.12); border-bottom: 0;">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 14px 14px 18px;">
+            <div style="flex: 1 1 auto; min-width: 0;">
+              <div style="font-size: 13px; font-weight: 650; color: #f7f7fb;">平台密钥自检失败</div>
+              <div style="margin-top: 3px; font-size: 12px; line-height: 1.6; color: rgba(247,247,251,0.68);">2 个平台的 API key 解密失败，模型池会跳过它们继续调度。多半是密钥轮换后存量密文没迁移。</div>
+            </div>
+            <div style="display: flex; gap: 8px; flex: 0 0 auto;">
+              <div style="height: 34px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #f7f7fb; color: #141418;">知道了</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="border-radius: 10px 10px 0 0; background: rgba(30,30,36,0.90); box-shadow: inset 0 1px 0 rgba(255,236,222,0.13), 0 -14px 40px rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.12); border-bottom: 0;">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 14px 14px 18px;">
+            <div style="flex: 0 0 auto;">
+              <div style="font-size: 13px; font-weight: 650; color: #f7f7fb;">重命名</div>
+            </div>
+            <div style="flex: 1 1 auto; min-width: 0; height: 34px; border-radius: 6px; background: #141418; box-shadow: inset 0 0 0 1px rgba(217,119,87,0.55); display: flex; align-items: center; padding: 0 10px; font-size: 13px; color: #f7f7fb;">
+              白桃<span style="width: 1px; height: 15px; background: #D97757; margin-left: 1px;"></span>
+            </div>
+            <div style="display: flex; gap: 8px; flex: 0 0 auto;">
+              <div style="height: 34px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: rgba(247,247,251,0.80); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);">取消</div>
+              <div style="height: 34px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #f7f7fb; color: #141418;">保存</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 18px;">
+        <div class="sd-colhead" style="color: rgba(247,247,251,0.45);">浅色</div>
+
+        <div style="border-radius: 10px 10px 0 0; background: #F8F5EF; box-shadow: inset 0 1px 0 rgba(255,255,255,0.72), 0 -14px 36px rgba(60,44,36,0.14); border: 1px solid rgba(26,26,31,0.12); border-bottom: 0;">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 14px 14px 18px;">
+            <div style="flex: 1 1 auto; min-width: 0;">
+              <div style="font-size: 13px; font-weight: 650; color: #0F172A;">平台密钥自检失败</div>
+              <div style="margin-top: 3px; font-size: 12px; line-height: 1.6; color: rgba(15,23,42,0.68);">2 个平台的 API key 解密失败，模型池会跳过它们继续调度。多半是密钥轮换后存量密文没迁移。</div>
+            </div>
+            <div style="display: flex; gap: 8px; flex: 0 0 auto;">
+              <div style="height: 34px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #0F172A; color: #F8F5EF;">知道了</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="border-radius: 10px 10px 0 0; background: #F8F5EF; box-shadow: inset 0 1px 0 rgba(255,255,255,0.72), 0 -14px 36px rgba(60,44,36,0.14); border: 1px solid rgba(26,26,31,0.12); border-bottom: 0;">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 14px 14px 18px;">
+            <span style="width: 3px; align-self: stretch; border-radius: 2px; background: #b91c1c; flex: 0 0 3px;"></span>
+            <div style="flex: 1 1 auto; min-width: 0;">
+              <div style="font-size: 13px; font-weight: 650; color: #0F172A;">确认删除</div>
+              <div style="margin-top: 3px; font-size: 12px; line-height: 1.6; color: rgba(15,23,42,0.68);">删除后不可恢复，项目「白桃」下的 12 张图会一并移除。</div>
+            </div>
+            <div style="display: flex; gap: 8px; flex: 0 0 auto;">
+              <div style="height: 34px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: rgba(15,23,42,0.78); box-shadow: inset 0 0 0 1px rgba(26,26,31,0.18);">取消</div>
+              <div style="height: 34px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #b91c1c; color: #fff;">删除</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="border-radius: 10px 10px 0 0; background: #F8F5EF; box-shadow: inset 0 1px 0 rgba(255,255,255,0.72), 0 -14px 36px rgba(60,44,36,0.14); border: 1px solid rgba(26,26,31,0.12); border-bottom: 0;">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 14px 14px 18px;">
+            <div style="flex: 0 0 auto;">
+              <div style="font-size: 13px; font-weight: 650; color: #0F172A;">重命名</div>
+            </div>
+            <div style="flex: 1 1 auto; min-width: 0; height: 34px; border-radius: 6px; background: #EEEAE3; box-shadow: inset 0 0 0 1px rgba(217,119,87,0.55); display: flex; align-items: center; padding: 0 10px; font-size: 13px; color: #0F172A;">
+              白桃<span style="width: 1px; height: 15px; background: #D97757; margin-left: 1px;"></span>
+            </div>
+            <div style="display: flex; gap: 8px; flex: 0 0 auto;">
+              <div style="height: 34px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: rgba(15,23,42,0.78); box-shadow: inset 0 0 0 1px rgba(26,26,31,0.18);">取消</div>
+              <div style="height: 34px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #0F172A; color: #F8F5EF;">保存</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 36px; margin-top: 30px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.08);">
+    <table class="sd-spec" style="border-collapse: collapse;">
+      <tr><td style="color: rgba(247,247,251,0.45);">位置</td><td style="color: rgba(247,247,251,0.80);">贴视口底边居中，宽 min(600px, 92%)</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">容器</td><td style="color: rgba(247,247,251,0.80);">上圆角 10 / 下 0 · 无下边框 · 向上的投影</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">排布</td><td style="color: rgba(247,247,251,0.80);">单行：[危险竖条] 文案区 flex-1 · 动作区靠右不换行</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">按钮</td><td style="color: rgba(247,247,251,0.80);">高 34 · 圆角 6 · 12/600（比 A 高 2px，因为要单手够）</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">prompt</td><td style="color: rgba(247,247,251,0.80);">输入框就在同一行占满剩余宽，没有独立正文行</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">遮罩</td><td style="color: rgba(247,247,251,0.80);">很轻或没有——不遮住内容正是它的理由</td></tr>
+    </table>
+    <div style="font-size: 12px; line-height: 1.85; color: rgba(247,247,251,0.68);">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: #E8A87C; margin-bottom: 8px;">取舍</div>
+      牺牲的是**拦截力**。贴在底边、遮罩又轻，它离 toast 只有一步之遥——用户很可能扫一眼就继续操作。所以**它不适合 alert**：真正要人停下来的通知放底边是降级。<br><br>
+      长文案也放不下：单行排布最多两行正文，超了就得换行撑高，那时它和居中卡的区别就只剩位置了。<br><br>
+      最现实的用法是**混合**：confirm / prompt 走贴边条，alert 仍走居中卡。但那意味着系统里有两种弹窗形态，一致性要另外花钱买。
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

@@ -14,6 +14,8 @@ const AgentRequestsPage = lazy(() => import('@/pages/AgentRequestsPage').then((m
 const BranchDetailPage = lazy(() => import('@/pages/BranchDetailPage').then((m) => ({ default: m.BranchDetailPage })));
 const BranchListPage = lazy(() => import('@/pages/BranchListPage').then((m) => ({ default: m.BranchListPage })));
 const BranchTopologyPage = lazy(() => import('@/pages/BranchTopologyPage').then((m) => ({ default: m.BranchTopologyPage })));
+const BranchRelationsPage = lazy(() => import('@/pages/BranchRelationsPage').then((m) => ({ default: m.BranchRelationsPage })));
+const OverviewPage = lazy(() => import('@/pages/OverviewPage').then((m) => ({ default: m.OverviewPage })));
 const CdsSettingsPage = lazy(() => import('@/pages/CdsSettingsPage').then((m) => ({ default: m.CdsSettingsPage })));
 const HelloPage = lazy(() => import('@/pages/HelloPage').then((m) => ({ default: m.HelloPage })));
 const HomePage = lazy(() => import('@/pages/HomePage').then((m) => ({ default: m.HomePage })));
@@ -275,6 +277,8 @@ export function App(): JSX.Element {
               <Route path="/branch-panel" element={<BranchDetailPage />} />
               <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
               <Route path="/branch-topology" element={<BranchTopologyPage />} />
+              <Route path="/branch-relations/:branchId" element={<BranchRelationsPage />} />
+              <Route path="/overview" element={<OverviewPage />} />
               <Route path="/release-center" element={<ReleaseCenterPage />} />
               <Route path="/release-console" element={<ReleaseConsolePage />} />
               <Route path="/reports" element={<ReportsPage />} />

@@ -173,53 +173,91 @@ html[data-perf-mode="performance"] .blur-text span {
 }
 
 /*
- * ── Dialog 文字清晰度修复 ──
- * 1. 居中改用 inset:0 + margin:auto，移除 translate(-50%,-50%) 避免亚像素模糊
- * 2. B 液态玻璃（2026-06-16，用户定）：弹窗压在繁忙页面上，做成真玻璃——
- *    半透明磨砂底（0.55~0.62 暗色，文字仍清晰）+ blur(24) + 边缘棱光，
- *    配合 .prd-dialog-overlay 的 backdrop 模糊，让底下页面"映照"出来产生深度。
+ * ── Dialog：控制台形态 ──
+ *
+ * 2026-09-01 用户选定方向 A。上一版是「B 液态玻璃」：半透磨砂底 + blur(24) + 四道内嵌棱光，
+ * 22px 圆角，里面站着 44px 高的药丸按钮。用户的原话是「新建框是系统默认的吗？还是圆润饱满
+ * 的那种风格，改掉」——问题不在哪个数值不好看，而在整块弹窗自成一套语汇，跟它压着的那个
+ * 界面不是同一个系统的东西。
+ *
+ * 现在它并回产品已有的那一档：实底面板、8px 容器、6px 控件、12-13px 字。
+ *
+ * 顺带删掉了三条补丁规则（浅色覆盖 / 性能模式 / 素色材质）。它们存在的唯一原因是
+ * 「玻璃在没有 blur 的环境里会透而不糊」，实底之后这个前提本身没有了，
+ * 连带那一串 !important 也不再需要——颜色全部由 --dialog-* token 双写。
+ *
+ * 居中仍走 inset:0 + margin:auto（见 motion.css），不用 translate(-50%,-50%)，避免亚像素模糊。
  */
 .prd-dialog-content {
-  backdrop-filter: blur(24px) saturate(185%) brightness(1.08) !important;
-  -webkit-backdrop-filter: blur(24px) saturate(185%) brightness(1.08) !important;
-  background: linear-gradient(150deg, rgba(34, 34, 46, 0.55) 0%, rgba(20, 20, 28, 0.62) 100%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.22) !important;
-  box-shadow:
-    0 28px 64px -12px rgba(0, 0, 0, 0.6),
-    inset 0 1px 1px rgba(255, 255, 255, 0.55),
-    inset 1px 0 0 rgba(255, 255, 255, 0.14),
-    inset 0 -14px 28px -18px rgba(255, 255, 255, 0.20) !important;
+  background: var(--dialog-surface);
+  border: 1px solid var(--dialog-border);
+  box-shadow: var(--dialog-shadow);
 }
 
-/* 浅色下覆盖暗色 !important 背景:走纯白卡片 + 暖咖啡羽化阴影 + 发丝实描边。
-   必须用 !important 才能盖过上面那条同样带 !important 的暗色规则。
-   配合 Dialog.tsx 的 inline style(maxWidth/maxHeight 等)共同生效。 */
-[data-theme="light"] .prd-dialog-content {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  background: var(--bg-card) !important;
-  border-color: var(--hairline-strong) !important;
-  box-shadow: 0 24px 48px rgba(89, 65, 50, 0.12), 0 8px 16px rgba(89, 65, 50, 0.06) !important;
-}
-
-/* 性能模式(玻璃关闭):globals.css 用 !important 清掉所有 backdrop-filter,
-   半透玻璃底失去模糊后会"透而不糊"导致失焦/对比不足。此时把暗色弹窗恢复成
-   近实底背景,保证可读性。:not([data-theme="light"]) 确保不影响浅色纯白卡。 */
-html[data-perf-mode="performance"]:not([data-theme="light"]) .prd-dialog-content {
-  background: linear-gradient(180deg, rgba(22, 22, 28, 0.97) 0%, rgba(18, 18, 24, 0.98) 100%) !important;
-}
-
-/* 同理:素色材质全局清 blur 后，0.55/0.62 半透弹窗底会「透而不糊」叠在繁忙页面上
-   失焦，恢复近实底背景保可读（Codex P2）。reduced-motion 已不再清 blur，无需单独兜底。 */
-html[data-material="solid"]:not([data-theme="light"]) .prd-dialog-content {
-  background: linear-gradient(180deg, rgba(22, 22, 28, 0.97) 0%, rgba(18, 18, 24, 0.98) 100%) !important;
-}
-
+/* 遮罩只压暗，不模糊。模糊是给半透明面板「映照底下页面」用的，
+   实底面板没有可映照的东西，那层 blur 只是白花 GPU。 */
 .prd-dialog-overlay {
   animation: fadeIn 150ms ease-out;
-  /* B 玻璃：遮罩对底下繁忙页面做模糊，让弹窗玻璃能"映照"出页面的颜色与形状 */
-  backdrop-filter: blur(10px) saturate(125%);
-  -webkit-backdrop-filter: blur(10px) saturate(125%);
+}
+
+/* 动作条：正文与操作之间有一条实线，操作区自带一层极淡的底。
+   这条线是控制台形态里唯一的结构性分隔——标题与正文之间不再画线，靠间距分。 */
+.prd-dialog-actions {
+  border-top: 1px solid var(--dialog-divider);
+  background: var(--dialog-footer-bg);
+}
+
+/*
+ * 弹窗内的按钮走控制台尺寸。
+ *
+ * 为什么用 CSS 作用域而不是给 54 个调用方逐个改 size：这批弹窗的底部按钮各写各的，
+ * 逐个改既漏又乱；而「在弹窗里」本身就是一个足够准确的判据。
+ * map-btn-size-md 这个钩子由 design/Button 输出（xs/sm 已经是 28px，不受影响）。
+ */
+.prd-dialog-content .map-btn {
+  border-radius: 6px;
+}
+
+.prd-dialog-content .map-btn-size-md {
+  height: 32px;
+  padding-left: 14px;
+  padding-right: 14px;
+  font-size: 12px;
+}
+
+/* 主操作反色：整块弹窗里最亮的一处。次操作只描边不填色——两个都填色就分不出主次。 */
+.prd-dialog-content .map-btn-primary {
+  background: var(--dialog-primary-bg);
+  color: var(--dialog-primary-fg);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.prd-dialog-content .map-btn-primary:hover:not(:disabled) {
+  background: var(--dialog-primary-bg-hover);
+}
+
+.prd-dialog-content .map-btn-secondary {
+  background: transparent;
+  color: var(--dialog-secondary-fg);
+  border-color: var(--dialog-secondary-border);
+  box-shadow: none;
+}
+
+.prd-dialog-content .map-btn-secondary:hover:not(:disabled) {
+  background: var(--dialog-footer-bg);
+}
+
+/* 危险操作是弹窗里唯一允许填色的语义色：删除这类动作需要在按下之前就被认出来。 */
+.prd-dialog-content .map-btn-danger {
+  background: var(--dialog-danger-bg);
+  color: var(--dialog-danger-fg);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.prd-dialog-content .map-btn-danger:hover:not(:disabled) {
+  background: var(--dialog-danger-bg-hover);
 }
 
 /* 移动端 hover 替代: 触控设备上始终显示原本 hover 才可见的操作按钮 */

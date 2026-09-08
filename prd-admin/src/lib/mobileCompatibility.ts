@@ -47,7 +47,6 @@ export const MOBILE_COMPAT_REGISTRY: Record<string, MobileCompatEntry> = {
   // ── 受限：可以用但体验降级 ──
   '/executive':               { level: 'limited', note: '图表较宽，横屏查看更佳' },
   '/users':                   { level: 'limited', note: '表格较宽，横向滑动查看' },
-  '/mds':                     { level: 'limited', note: '模型配置项较多，建议 PC 编辑' },
   '/logs':                    { level: 'limited', note: '日志表格较宽，建议横屏' },
   '/prompts':                 { level: 'limited' },
   '/automations':             { level: 'limited' },

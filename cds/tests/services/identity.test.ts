@@ -256,8 +256,8 @@ describe('removeProject：授权跟着项目一起谢幕', () => {
     });
   });
 
-  afterEach(() => {
-    flushAllJsonStateStores();
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -334,8 +334,8 @@ describe('findAgentKeyForAuth：撤销当场生效、用一次就续期', () => 
     });
   });
 
-  afterEach(() => {
-    flushAllJsonStateStores();
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 

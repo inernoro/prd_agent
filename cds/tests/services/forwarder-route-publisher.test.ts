@@ -601,7 +601,7 @@ describe('ForwarderRoutePublisher', () => {
     expect(data).toEqual([]);
   });
 
-  it('默认路由优先选择 running 服务，避免被 building 服务抢走', () => {
+  it('默认站未运行时默认路由仍指向它并标 healthState 非 running（forwarder 据此转等待页），不落到碰巧在跑的服务', () => {
     ensureProject('demo', 'demo');
     state.addBranch({
       id: 'demo-mixed',
@@ -622,11 +622,32 @@ describe('ForwarderRoutePublisher', () => {
       rootDomains: ['miduo.org'],
     });
     publisher.publishNow();
-    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
-    const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
-    expect(defaultRoute).toBeDefined();
-    expect(defaultRoute.upstreamPort).toBe(41002);
-    expect(defaultRoute.healthState).toBe('running');
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8')) as Array<{ pathPrefix?: string; host: string; profileId?: string; upstreamPort: number; healthState?: string }>;
+    // 默认站按 id 排序后按名兜底是 admin（building）：此前会把默认路由塞给碰巧在跑的 web，
+    // 用户打开 / 看到的是另一个应用。现在仍指向 admin，healthState=unknown 让 forwarder 转等待页。
+    const defaultRoute = data.find((r) => r.host.startsWith('mixed-demo.') && !r.pathPrefix);
+    expect(defaultRoute).toMatchObject({ profileId: 'admin', upstreamPort: 41001, healthState: 'unknown' });
+  });
+
+  it('默认站在跑时发默认路由，且与 services 键序无关（同一配置永远同一份路由）', () => {
+    ensureProject('demo', 'demo');
+    const mk = (id: string, services: Record<string, { profileId: string; containerName: string; hostPort: number; status: string }>) => state.addBranch({
+      id, projectId: 'demo', branch: id.replace('demo-', ''), worktreePath: path.join(tmpDir, id), services, status: 'running', createdAt: new Date().toISOString(),
+    } as Parameters<typeof state.addBranch>[0]);
+    mk('demo-order-a', {
+      web: { profileId: 'web', containerName: 'a-web', hostPort: 42002, status: 'running' },
+      admin: { profileId: 'admin', containerName: 'a-admin', hostPort: 42001, status: 'running' },
+    });
+    mk('demo-order-b', {
+      admin: { profileId: 'admin', containerName: 'b-admin', hostPort: 42001, status: 'running' },
+      web: { profileId: 'web', containerName: 'b-web', hostPort: 42002, status: 'running' },
+    });
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8')) as Array<{ pathPrefix?: string; host: string; profileId?: string; upstreamPort: number }>;
+    const def = (prefix: string) => data.find((r) => r.host.startsWith(prefix) && !r.pathPrefix);
+    expect(def('order-a-demo.')).toMatchObject({ profileId: 'admin', upstreamPort: 42001 });
+    expect(def('order-b-demo.')).toMatchObject({ profileId: 'admin', upstreamPort: 42001 });
   });
 
   it('同样输入再发布不重复写盘(unchanged hash 短路)', () => {

@@ -88,6 +88,10 @@ export const useNavOrderStore = create<NavOrderState>()(
                   console.error('[navOrderStore] 持久化迁移后的导航布局失败:', err);
                 });
               }
+            } else if (res.data.navLayoutSynced) {
+              // 服务端明确持有「空布局」= 管理员按人重置 / 恢复所有用户 / 用户自己恢复默认。
+              // 这时 sessionStorage 里的旧布局是过期的，回填上传会把重置悄悄撤销（Codex P1）。
+              set({ navOrder: [], navHidden: [], defaultNavOrder, defaultNavHidden, loaded: true });
             } else if (localOrder.length > 0 || localHidden.length > 0) {
               console.info('[navOrderStore] 后端无自定义导航，使用本地缓存并同步到后端');
               set({
@@ -118,7 +122,9 @@ export const useNavOrderStore = create<NavOrderState>()(
       },
 
       setDefaultNavLayoutLocal: (payload) => {
-        set({ defaultNavOrder: payload.navOrder, defaultNavHidden: payload.navHidden });
+        // 服务端存的可能还是 v7 之前的前缀 id（utility:emergence 等），与 loadFromServer 同口径迁移，
+        // 否则回写后目录对不上，会被当成「已下线」条目
+        set({ defaultNavOrder: migrateOrder(payload.navOrder), defaultNavHidden: migrateOrder(payload.navHidden) });
       },
 
       restoreDefault: async () => {

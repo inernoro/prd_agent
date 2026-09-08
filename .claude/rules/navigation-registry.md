@@ -74,7 +74,7 @@ paths:
 #### 测试 2：launcherCatalog 中的 route 必须真实存在
 扫描 `launcherCatalog` 的所有 route，必须能在 `App.tsx` 找到对应 `<Route>`。否则就是 phantom 路由（点击 404）。
 
-历史教训：v0 之前 `infra:models` 写了 `/models`、`utility:prompts` 写了 `/prompts`，但 App.tsx 实际只有 `/mds` 没有 `/prompts`。点开就 404，没人发现。本测试根除此类 bug。
+历史教训：v0 之前 `infra:models` 写了 `/models`、`utility:prompts` 写了 `/prompts`，但 App.tsx 里两条都不存在（模型页当时挂在别的路径，`/prompts` 根本没有）。点开就 404，没人发现。本测试根除此类 bug。
 
 ### 触发场景
 - 本地：`pnpm test`

@@ -4219,7 +4219,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }}
         title="配置管理"
         maxWidth={1500}
-        contentClassName="overflow-hidden !p-4"
+        contentClassName="overflow-hidden"
         contentStyle={{ maxHeight: '75vh', height: '75vh' }}
         titleCenter={
           <div className="flex items-center gap-1 bg-token-nested rounded-lg p-1">

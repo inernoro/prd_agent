@@ -69,11 +69,31 @@ public class RequestResponseLoggingMiddleware
     {
         "/api/llm-gateway/sso/ticket",
         "/api/instance-sync/",
+        // 智能体开放层与 MCP 网关：请求体里是用户的**私人内容本身** ——
+        // 文学正文、知识库文档、要托管的整页 HTML。它们和凭据一样不该进这张
+        // 与生产共用的诊断表，更不该出现在日志页里那条可以直接复制去重放的 curl 里。
+        // 这里的清理器只按键名摘 prompt / message，`content` / `htmlContent` 原样留着；
+        // 而 body 一超长就退回原文，连那点清理也没了。
+        // 诊断能力不受影响：这两条路自己有调用记录（mcp_call_logs），入参摘要按键名脱敏、
+        // 按深度/宽度/长度三维截断，本来就是给人看的那一份。
+        "/api/open/",
+        "/api/mcp",
     };
 
-    /// <summary>这条路径的请求/响应体是不是「不许落库」的那一类。</summary>
+    /// <summary>
+    /// 这条路径的请求/响应体是不是「不许落库」的那一类。
+    ///
+    /// 按**路径段**收，不是裸前缀：裸前缀会顺手把名字以它开头的邻居一起挡掉
+    /// （`/api/mcp` 会连 `/api/mcp-console` 一起收走，而那是个普通后台面板接口）。
+    /// 挡得过宽不会有人发现——日志少一段 body 不报错——但排障能力就这么无声地少一块。
+    /// </summary>
     private static bool CarriesCredential(string path) =>
-        CredentialBearingPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+        CredentialBearingPathPrefixes.Any(p =>
+        {
+            var prefix = p.TrimEnd('/');
+            return path.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase);
+        });
 
     public RequestResponseLoggingMiddleware(
         RequestDelegate next,

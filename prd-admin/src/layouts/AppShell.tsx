@@ -1240,6 +1240,19 @@ export default function AppShell() {
 
           {/* 底部操作 */}
           <div className="mt-auto px-4 py-4 flex flex-col gap-2">
+            {/* 智能体接入台：桌面端在侧栏账号菜单第一项，而那个菜单在小屏是 display:none 的
+                （focusHideAside）。不在这里补一条，手机端就只剩「汉堡 → 百宝箱 → 在几十张卡片里找」
+                这条三层路径，与桌面端的一层不对等。 */}
+            <button
+              type="button"
+              onClick={() => { navigate('/mcp-console'); setMobileDrawerOpen(false); }}
+              className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              <Plug size={18} />
+              <span className="text-sm">智能体接入台</span>
+              <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>连接 / 记录</span>
+            </button>
             {user?.role === 'ADMIN' && (
               <button
                 type="button"
@@ -1644,6 +1657,23 @@ export default function AppShell() {
                   className="h-px mx-2 my-1"
                   style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
                 />
+
+                {/* 智能体接入台：把平台接进用户自己的智能体（MCP）。放在最上面 ——
+                    这是「让 agent 替我干活」的总入口，比设置类条目更常用。 */}
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => navigate('/mcp-console')}
+                >
+                  <Plug size={16} className="shrink-0" />
+                  <span className="text-[13px]">智能体接入台</span>
+                  <span
+                    className="ml-auto text-[10px]"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    连接 / 记录
+                  </span>
+                </DropdownMenu.Item>
 
                 {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account。 */}
                 <DropdownMenu.Item

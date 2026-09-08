@@ -152,7 +152,7 @@ export const MarketplacePage: React.FC = () => {
   const [roleLabels, setRoleLabels] = useState<OfficialSkillRoleLabels>({});
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editingSkill, setEditingSkill] = useState<MarketplaceSkillDto | null>(null);
-  const [openApiOpen, setOpenApiOpen] = useState(false);
+  const [openApiOpen, setOpenApiOpen] = useState(searchParams.get('dialog') === 'open-api');
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
   const [quickConnectPos, setQuickConnectPos] = useState({ top: 0, right: 0 });
   const [cardDensity, setCardDensity] = useState<CardDensity>('short');
@@ -171,6 +171,18 @@ export const MarketplacePage: React.FC = () => {
       window.removeEventListener('resize', close);
     };
   }, [quickConnectOpen]);
+
+  useEffect(() => {
+    if (searchParams.get('dialog') === 'open-api') setOpenApiOpen(true);
+  }, [searchParams]);
+
+  const closeOpenApi = useCallback(() => {
+    setOpenApiOpen(false);
+    if (searchParams.get('dialog') !== 'open-api') return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('dialog');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
 
@@ -637,7 +649,7 @@ export const MarketplacePage: React.FC = () => {
         />
       )}
 
-      {openApiOpen && <SkillOpenApiDialog onClose={() => setOpenApiOpen(false)} />}
+      {openApiOpen && <SkillOpenApiDialog onClose={closeOpenApi} />}
     </div>
   );
 };

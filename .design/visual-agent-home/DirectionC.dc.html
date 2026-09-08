@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap">
+  <style>
+    body { margin: 0; background: #101014; color: #f7f7fb;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif; }
+    a { color: #E8A87C; } a:hover { color: #D97757; }
+    .c-btn { border: 0; cursor: pointer; font: inherit; }
+    /* 墙上的灯：只有一束，缓慢地从左扫到右，扫过的那几格短暂显影。 */
+    @keyframes c-lamp { from { transform: translate3d(-30%,0,0); } to { transform: translate3d(130%,0,0); } }
+    @media (prefers-reduced-motion: reduce) { .c-lamp { animation: none !important; opacity: .5; } }
+  </style>
+</helmet>
+
+<div style="position: relative; width: 1440px; min-height: 1000px; overflow: hidden; background: #101014">
+
+  <div style="position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between;
+    min-height: 60px; padding: 0 28px; border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: rgba(16,16,20,0.86); backdrop-filter: blur(14px)">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <strong style="font-family: 'Space Grotesk', 'PingFang SC', sans-serif; font-size: 13px; font-weight: 650">视觉创作</strong>
+      <span style="color: rgba(247,247,251,0.45); font-size: 9px; letter-spacing: .08em">CONTACT SHEET</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 14px; color: rgba(247,247,251,0.68); font-size: 10px">
+      <span>18 个项目</span><span>241 张图</span><span>本周新增 26</span>
+    </div>
+  </div>
+
+  <!-- 一整面工作墙：全部压暗，像还没显影的印相纸。 -->
+  <div style="position: relative; padding: 0">
+    <div class="c-lamp" style="position: absolute; top: 0; bottom: 0; left: 0; z-index: 1; width: 44%;
+      pointer-events: none; animation: c-lamp 18s linear infinite;
+      background: linear-gradient(100deg, transparent 0%, rgba(255,236,222,0.10) 46%, transparent 100%)"></div>
+
+    <div style="display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 2px">
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #3c5a3a, #16221a); opacity: .34"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #2f4a63, #141c26); opacity: .28"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #5a4a2f, #241d12); opacity: .40"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #46304f, #1b1420); opacity: .24"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #7d3f2c, #2a1712); opacity: .46"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #2c3a3a, #141a1a); opacity: .30"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #3a3a44, #17171d); opacity: .22"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #4a3550, #1d1622); opacity: .34"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #2f4038, #141c18); opacity: .26"></div>
+
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #5f3a2c, #241410); opacity: .30"></div>
+      <!-- 被灯照到的这一格：完全显影 + 元数据浮出 -->
+      <div style="position: relative; grid-column: span 3; grid-row: span 2; overflow: hidden">
+        <div style="width: 100%; height: 100%;
+          background: radial-gradient(70% 90% at 30% 25%, #f6d3b6 0%, #e79a72 38%, #7d3f2c 78%, #2a1712 100%)"></div>
+        <div style="position: absolute; right: 0; bottom: 0; left: 0; padding: 14px 16px;
+          background: linear-gradient(to top, rgba(10,10,12,0.90), transparent)">
+          <strong style="display: block; font-size: 18px">白桃</strong>
+          <small style="display: block; margin-top: 5px; color: rgba(247,247,251,0.68); font-size: 10px">
+            夏季包装主视觉 · 12 张 · 昨天 21:14</small>
+        </div>
+      </div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #354a5f, #161e26); opacity: .32"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #4f4326, #201b10); opacity: .26"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #2e3f4a, #141b20); opacity: .38"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #3f2f2f, #1a1414); opacity: .22"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #34503f, #16221b); opacity: .30"></div>
+
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #45354f, #1c1620); opacity: .28"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #5a4a2f, #241d12); opacity: .34"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #2f4a63, #141c26); opacity: .24"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #3c5a3a, #16221a); opacity: .40"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #2c3a3a, #141a1a); opacity: .26"></div>
+      <div style="aspect-ratio: 1; background: linear-gradient(150deg, #7d3f2c, #2a1712); opacity: .32"></div>
+    </div>
+
+    <!-- 墙上开的那道口子：输入槽。整页唯一有边框、有光的东西。 -->
+    <div style="position: absolute; left: 50%; top: 300px; z-index: 3; width: 700px; margin-left: -350px">
+      <div style="overflow: hidden; border: 1px solid rgba(217,119,87,0.45); border-radius: 10px;
+        background: rgba(16,16,20,0.95); backdrop-filter: blur(24px);
+        box-shadow: 0 30px 80px rgba(0,0,0,0.72), 0 0 0 8px rgba(16,16,20,0.55)">
+        <div style="padding: 15px 18px 4px; color: #E8A87C; font-size: 10px; font-weight: 700">开一张新的</div>
+        <div style="padding: 4px 18px 14px; color: rgba(247,247,251,0.45); font-size: 14px">
+          描述你想要的画面…</div>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px;
+          padding: 8px 10px 8px 12px; border-top: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.05)">
+          <div style="display: flex; gap: 3px">
+            <button class="c-btn" style="min-height: 34px; padding: 0 9px; border-radius: 7px; background: transparent;
+              color: rgba(247,247,251,0.80); font-size: 10px">参考图</button>
+            <button class="c-btn" style="min-height: 34px; padding: 0 9px; border-radius: 7px; background: transparent;
+              color: rgba(247,247,251,0.80); font-size: 10px">1K · 1:1</button>
+          </div>
+          <button class="c-btn" style="min-height: 38px; padding: 0 16px; border-radius: 7px; background: #f7f7fb;
+            color: #141418; font-size: 12px; font-weight: 650">开始创作</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

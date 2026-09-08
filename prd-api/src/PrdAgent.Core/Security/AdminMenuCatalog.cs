@@ -32,7 +32,6 @@ public static class AdminMenuCatalog
         new("emergence", "/emergence", "涌现探索", "可视化功能涌现与创意探索", "Sparkle", 47, "personal"),
 
         // ── 系统管理 (admin) ──
-        new("mds", "/mds", "模型中心", "模型、提示词与实验室", "Cpu", 50, "admin"),
         new("users", "/users", "用户权限", "用户与角色管理", "Users", 60, "admin"),
         new("team-activity", "/team-activity", "VOC", "行为洞察（VOC）+ 全员工作动态时间线", "Activity", 65, "admin"),
         new("settings", "/settings", "设置", "账户、皮肤与导航设置", "Settings", 70, "admin"),

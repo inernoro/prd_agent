@@ -1,7 +1,8 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, Principal, UserCredential, ProjectGrant, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
+import type {
+  DbLedgerEntry, CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, Principal, UserCredential, ProjectGrant, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -1878,13 +1879,14 @@ export class StateService {
     infraServices: string[];
     routingRules: string[];
     projectGrants: string[];
+    dbLedgerEntries: string[];
   } {
     if (!this.state.projects) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [] };
     }
     const project = this.state.projects.find((p) => p.id === id);
     if (!project) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [] };
     }
     if (project.legacyFlag) {
       throw new Error('Cannot remove the legacy default project');
@@ -1912,6 +1914,11 @@ export class StateService {
     const projectGrantsToRevoke = (this.state.projectGrants || [])
       .filter((g) => g.projectId === id && !g.revokedAt)
       .map((g) => g.id);
+    // 数据台账：项目没了，它的派生库记录也没有归属（视图按 projectId 过滤，留着只会成为
+    // 谁也看不到、却仍指向容器 / 备份文件的幽灵行）。承载库的容器由路由层按墓碑拆除。
+    const dbLedgerToRemove = (this.state.dbLedger || [])
+      .filter((e) => e.projectId === id)
+      .map((e) => e.id);
 
     // ── Cascade mutate ──
     for (const bid of branchesToRemove) {
@@ -1942,6 +1949,10 @@ export class StateService {
       }
     }
 
+    if (this.state.dbLedger) {
+      this.state.dbLedger = this.state.dbLedger.filter((e) => e.projectId !== id);
+    }
+
     this.state.projects = this.state.projects.filter((p) => p.id !== id);
     this.save();
 
@@ -1951,6 +1962,7 @@ export class StateService {
       infraServices: infraServicesToRemove,
       routingRules: routingRulesToRemove,
       projectGrants: projectGrantsToRevoke,
+      dbLedgerEntries: dbLedgerToRemove,
     };
   }
 
@@ -4597,6 +4609,25 @@ export class StateService {
    *
    * These can be referenced in app service environments as ${CDS_MONGODB_PORT} etc.
    */
+  // ── 数据台账（数据库隔离收敛 3，2026-09-03）──
+  // 唯一入口；调用方不直接碰 state.dbLedger。
+
+  getDbLedger(projectId: string): DbLedgerEntry[] {
+    return (this.state.dbLedger || []).filter((e) => e.projectId === projectId);
+  }
+
+  getDbLedgerEntry(id: string): DbLedgerEntry | undefined {
+    return (this.state.dbLedger || []).find((e) => e.id === id);
+  }
+
+  /** 按 id 新增或整条替换；不 save，调用方决定落盘时机 */
+  upsertDbLedgerEntry(entry: DbLedgerEntry): void {
+    if (!this.state.dbLedger) this.state.dbLedger = [];
+    const idx = this.state.dbLedger.findIndex((e) => e.id === entry.id);
+    if (idx >= 0) this.state.dbLedger[idx] = entry;
+    else this.state.dbLedger.push(entry);
+  }
+
   // ── ConfigSnapshot / DestructiveOperationLog (2026-04-22) ──
   //
   // See types.ts ConfigSnapshot + DestructiveOperationLog docs. These helpers

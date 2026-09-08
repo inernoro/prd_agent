@@ -62,6 +62,8 @@ export interface ProjectNetworkResolver {
    * 可选方法:测试与旧适配器不实现时不注入该表(等同「未声明入口」)。
    */
   getPublishedEntrypointsEnv?(entry: BranchEntry): PublishedEntrypointsEnv | undefined;
+  /** 跨项目引用解析（cross-project-refs）：容器层不认识别的项目，经适配器解析成公网地址 */
+  resolveCdsRef?(entry: BranchEntry, raw: string): string | null;
   /**
    * 返回 infra 宿主端口该绑在哪几个地址上（见 services/infra-publish.ts）。
    *
@@ -369,6 +371,7 @@ export function applyProfileOverride(baseline: BuildProfile, rawOverride?: Build
     ...(override.startupSignal !== undefined ? { startupSignal: override.startupSignal } : {}),
     ...(override.readinessProbe !== undefined ? { readinessProbe: override.readinessProbe } : {}),
     ...(override.dbScope !== undefined ? { dbScope: override.dbScope } : {}),
+    ...(override.dbInit !== undefined ? { dbInit: override.dbInit } : {}),
     ...(override.entrypoint !== undefined ? { entrypoint: override.entrypoint } : {}),
     // 手动多出口（分支档）：命名子域与用户入口都可以按分支覆盖。空串 subdomain 是
     // 「本分支取消命名 URL」的显式意图，必须照样覆盖掉 baseline，不能当没写。
@@ -888,6 +891,9 @@ export class ContainerService {
         // 公网地址（根 CLAUDE.md 规则 #11）。算这张表要 StateService,容器层不依赖它,
         // 故经适配器注入；适配器未实现则整张表缺席，应用据此显示「未发布该入口」。
         publishedEntrypoints: this.networkResolver?.getPublishedEntrypointsEnv?.(entry),
+        resolveCdsRef: this.networkResolver?.resolveCdsRef
+          ? (raw) => this.networkResolver!.resolveCdsRef!(entry, raw)
+          : undefined,
       },
     ).env;
   }

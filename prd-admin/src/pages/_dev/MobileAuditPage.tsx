@@ -33,7 +33,6 @@ const ROUTES: RouteEntry[] = [
 
   // ── P1: 高频未适配 ──
   { path: '/users', label: '用户管理', group: 'P1 待检查' },
-  { path: '/mds', label: '模型管理', group: 'P1 待检查' },
   { path: '/logs', label: '请求日志', group: 'P1 待检查' },
   { path: '/skills', label: '技能管理', group: 'P1 待检查' },
 

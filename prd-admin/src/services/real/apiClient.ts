@@ -157,6 +157,19 @@ function getApiErrorLike(x: unknown): { code?: string; message?: string } | null
   return code || message ? { code, message } : null;
 }
 
+const SESSION_AUTH_FAILURE_CODES = new Set([
+  'UNAUTHORIZED',
+  'AUTH_SESSION_REQUIRED',
+  'AUTH_SESSION_INVALID',
+  'AUTH_SESSION_REVOKED',
+]);
+
+/** 只有会话类 401 才允许刷新 Token 或退出登录；服务 Key、Agent Key 等 401 必须保留当前用户会话。 */
+export function isSessionAuthenticationFailure(status: number, code?: string): boolean {
+  if (code && code.startsWith('AUTH_')) return SESSION_AUTH_FAILURE_CODES.has(code);
+  return status === 401 || (code != null && SESSION_AUTH_FAILURE_CODES.has(code));
+}
+
 /**
  * 检测后端响应中的权限指纹是否与前端缓存一致。
  * 若不一致（说明后端发布了新版本或角色发生变更），则清除权限/菜单缓存标记，
@@ -320,8 +333,7 @@ async function apiMultipartRequestInner<T>(
   const parsedError = isApiResponseLike(parsed)
     ? getApiErrorLike((parsed as { error: unknown }).error)
     : null;
-  const unauthorized = response.status === 401
-    || (isApiResponseLike(parsed) && parsed.success === false && parsedError?.code === 'UNAUTHORIZED');
+  const unauthorized = isSessionAuthenticationFailure(response.status, parsedError?.code);
   if (unauthorized) {
     if (!didRefresh && await tryRefreshAdminToken()) {
       // FormData 不可假定可重放；重试时必须调用工厂重新构造 body。
@@ -398,7 +410,10 @@ export async function apiDownload(
   }
   checkPermissionFingerprint(response);
 
-  if (response.status === 401) {
+  const errorBody = response.ok
+    ? null
+    : await response.clone().json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
+  if (isSessionAuthenticationFailure(response.status, errorBody?.error?.code)) {
     if (!didRefresh && await tryRefreshAdminToken()) {
       return apiDownload(path, fallbackFileName, true);
     }
@@ -409,7 +424,7 @@ export async function apiDownload(
     }
   }
   if (!response.ok) {
-    const body = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
+    const body = errorBody;
     const code = body?.error?.code || 'DOWNLOAD_FAILED';
     throw new Error(toUserReadableErrorMessage(body?.error, {
       code,
@@ -545,8 +560,12 @@ async function apiRequestInner<T>(
     return fail('DOCUMENT_TOO_LARGE', '文件超过当前大小限制，请缩小文件后重新上传。') as unknown as ApiResponse<T>;
   }
 
-  // 处理 401 未授权：清除认证状态并跳转登录页
-  if (res.status === 401 && auth) {
+  const responseError = isApiResponseLike(json)
+    ? getApiErrorLike((json as { error: unknown }).error)
+    : null;
+
+  // 仅会话类 401 才刷新或退出；AI/Agent/服务身份 401 保留当前用户会话并展示恢复动作。
+  if (auth && isSessionAuthenticationFailure(res.status, responseError?.code)) {
     // 先尝试 refresh 一次（仅 admin 端），成功则重试本次请求
     if (!didRefresh && (options?.auth ?? true)) {
       const okRefresh = await tryRefreshAdminToken();
@@ -565,7 +584,7 @@ async function apiRequestInner<T>(
   if (isApiResponseLike(json)) {
     // 处理业务层面的 UNAUTHORIZED 错误（如 token 过期）
     const err = getApiErrorLike((json as { error: unknown }).error);
-    if (!json.success && err?.code === 'UNAUTHORIZED' && auth) {
+    if (!json.success && auth && isSessionAuthenticationFailure(res.status, err?.code)) {
       if (!didRefresh && (options?.auth ?? true)) {
         const okRefresh = await tryRefreshAdminToken();
         if (okRefresh) {

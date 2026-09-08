@@ -25,6 +25,16 @@ namespace PrdAgent.Api.Services;
 public class PlatformKeyIntegrityWorker : BackgroundService
 {
     private const string NotificationKey = "platform-key-integrity";
+
+    // 2026-09-05：MAP 侧模型页面已下线，平台凭据只在 LLM Gateway 控制台维护——
+
+    // 走网关 SSO 深链（ActionKind = llm-gateway，ActionUrl 是网关控制台内的 returnTo 路径）。
+
+    private const string GatewayActionLabel = "去模型网关检查平台凭据";
+
+    private const string GatewayActionUrl = "/platforms";
+
+    private const string GatewayActionKind = "llm-gateway";
     private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(6);
 
@@ -242,7 +252,7 @@ public class PlatformKeyIntegrityWorker : BackgroundService
             "所有依赖这些平台的模型池调用将以空凭据请求上游（401）。" +
             "典型原因：部署环境的数据加密密钥被轮换，或存量密文来自另一套历史密钥。" +
             "修复：配置 ApiKeyCrypto__LegacySecrets 后重启触发自动迁移，" +
-            "或在模型平台重新保存各平台 API key。";
+            "或到 LLM Gateway 控制台（MAP 左下角「模型网关」） 重新保存各平台 API key。";
 
         _logger.LogError(
             "[PlatformKeyIntegrity] 权威部署 {Source} 检测到 {Count} 个模型相关 API key 无法解密：{Names}。环境数据加密密钥与存量密文不匹配，模型池调用将全部失败",
@@ -255,6 +265,10 @@ public class PlatformKeyIntegrityWorker : BackgroundService
                 n => n.Id == existing.Id,
                 Builders<AdminNotification>.Update
                     .Set(x => x.Message, message)
+                    // 存量告警的处理入口也要一起迁到网关：否则旧记录会一直带着已删除的 /mds
+                    .Set(x => x.ActionLabel, GatewayActionLabel)
+                    .Set(x => x.ActionUrl, GatewayActionUrl)
+                    .Set(x => x.ActionKind, GatewayActionKind)
                     .Set(x => x.UpdatedAt, now)
                     .Set(x => x.ExpiresAt, now.AddDays(7)),
                 cancellationToken: ct);
@@ -270,8 +284,9 @@ public class PlatformKeyIntegrityWorker : BackgroundService
             Level = "error",
             Status = "open",
             Source = "platform-key-integrity",
-            ActionLabel = "去模型平台检查",
-            ActionUrl = "/mds",
+            ActionLabel = GatewayActionLabel,
+            ActionUrl = GatewayActionUrl,
+            ActionKind = GatewayActionKind,
             CreatedAt = now,
             UpdatedAt = now,
             ExpiresAt = now.AddDays(7),

@@ -1,4 +1,4 @@
-const CASE_ID_PATTERN = /\[((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|REG-[a-z0-9-]+)-\d+)\]/gi;
+const CASE_ID_PATTERN = /\[((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|WEB|REG-[a-z0-9-]+)-\d+)\]/gi;
 
 export function collectPlaywrightCases(report, environment) {
   const rows = [];

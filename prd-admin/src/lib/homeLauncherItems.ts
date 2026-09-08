@@ -16,7 +16,6 @@ import type { ToolboxItem } from '@/services';
  */
 
 export interface LauncherPerms {
-  canReadModels: boolean;
   canReadUsers: boolean;
   canReadPrompts: boolean;
   canReadLab: boolean;
@@ -33,7 +32,6 @@ export function deriveLauncherPerms(permissions: string[]): LauncherPerms {
     canReadLab: permissions.includes('lab.read') || permissions.includes('lab.write'),
     canManageAutomations: permissions.includes('automations.manage'),
     canReadLogs: permissions.includes('logs.read'),
-    canReadModels: permissions.includes('mds.read') || permissions.includes('mds.write'),
     canReadUsers: permissions.includes('users.read') || permissions.includes('users.write'),
     canReadTeamActivity: permissions.includes('team-activity.read'),
     canManageOpenPlatform: permissions.includes('open-platform.manage'),
@@ -209,16 +207,6 @@ export function buildStaticInfra(p: LauncherPerms): ToolboxItem[] {
     } as ToolboxItem);
   }
 
-  if (p.canReadModels) {
-    items.push({
-      id: '__models__',
-      name: '模型中心',
-      description: '大模型与模型池配置、健康监控',
-      icon: 'Cpu',
-      tags: ['模型', 'LLM', '模型池', '调度'],
-      routePath: '/mds',
-    } as ToolboxItem);
-  }
   if (p.canReadUsers) {
     items.push({
       id: '__teams__',

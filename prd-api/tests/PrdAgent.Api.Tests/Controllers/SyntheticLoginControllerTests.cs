@@ -1,13 +1,16 @@
 using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using MongoDB.Bson;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Controllers;
+using PrdAgent.Api.Extensions;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Controllers;
@@ -149,11 +152,50 @@ public sealed class SyntheticLoginControllerTests
     [InlineData("POST", "/api/v1/auth/synthetic/ticket", true)]
     [InlineData("POST", "/api/v1/auth/synthetic/gateway-ticket", true)]
     [InlineData("POST", "/api/dashboard/notifications/events", true)]
+    [InlineData("POST", "/api/v1/auth/synthetic/testing/web-pages/0123456789abcdef0123456789abcdef/legacy-entry", true)]
+    [InlineData("DELETE", "/api/v1/auth/synthetic/testing/web-pages/0123456789abcdef0123456789abcdef/legacy-entry", true)]
+    [InlineData("GET", "/api/v1/auth/synthetic/testing/web-pages/0123456789abcdef0123456789abcdef/legacy-entry", false)]
+    [InlineData("POST", "/api/v1/auth/synthetic/testing/web-pages/not-a-site/legacy-entry", false)]
     [InlineData("GET", "/api/v1/auth/synthetic/ticket", false)]
     [InlineData("POST", "/api/users", false)]
     public void StableSmokeSignature_ShouldBeEndpointScoped(string method, string path, bool expected)
     {
         Assert.Equal(expected, StableSmokeAuthenticationHandler.IsAllowedRequest(method, path));
+    }
+
+    [Fact]
+    public void LegacyStorageFixture_ShouldAlwaysAdvanceContentVersion()
+    {
+        var futureVersion = DateTime.UtcNow.AddMinutes(1);
+
+        var next = Invoke<DateTime>("NextContentVersion", futureVersion);
+
+        Assert.True(next > futureVersion);
+        Assert.True(
+            new BsonDateTime(next).MillisecondsSinceEpoch >
+            new BsonDateTime(futureVersion).MillisecondsSinceEpoch);
+    }
+
+    [Fact]
+    public void FixtureAuthorization_ShouldUseSharedIdentityResolverWithNameIdentifier()
+    {
+        var source = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/SyntheticLoginController.cs"));
+        var controller = new IdentityProbeController
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        new[] { new Claim(ClaimTypes.NameIdentifier, "stable-smoke-user-id") },
+                        "test")),
+                },
+            },
+        };
+
+        Assert.Contains("userId = this.GetRequiredUserId().Trim();", source);
+        Assert.Equal("stable-smoke-user-id", controller.GetRequiredUserId());
     }
 
     [Fact]
@@ -291,5 +333,9 @@ public sealed class SyntheticLoginControllerTests
             BindingFlags.Static | BindingFlags.NonPublic);
         Assert.NotNull(method);
         return Assert.IsAssignableFrom<T>(method.Invoke(null, args));
+    }
+
+    private sealed class IdentityProbeController : ControllerBase
+    {
     }
 }

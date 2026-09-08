@@ -22,18 +22,23 @@ public class McpGatewayLogicTests
     // ── 工具目录 ──
 
     [Fact]
-    public void BuiltinTools_ExposeExactlyFiveReadTools_WithExpectedNamesScopesPaths()
+    public void BuiltinTools_KeepTheFiveOriginalReadTools_WithExpectedNamesScopesPaths()
     {
         var byName = McpBuiltinTools.All.ToDictionary(t => t.Name);
 
-        byName.Keys.ShouldBe(new[]
+        // 首批 5 个只读工具是既有客户端已经在用的，名字/scope/路径都不许动。
+        // （写入类与创作类工具后来居上，数量断言在 McpCapabilityCatalogTests 里按能力分组做。）
+        foreach (var name in new[]
         {
             "marketplace_search_skills",
             "marketplace_get_skill",
             "knowledge_base_list_stores",
             "knowledge_base_list_entries",
             "knowledge_base_read_entry",
-        }, ignoreOrder: true);
+        })
+        {
+            byName.ContainsKey(name).ShouldBeTrue($"内置工具 {name} 不见了，既有客户端会突然少一个工具");
+        }
 
         // 海鲜市场工具 → marketplace.skills:read，回环到既有开放接口
         byName["marketplace_search_skills"].RequiredScope.ShouldBe("marketplace.skills:read");

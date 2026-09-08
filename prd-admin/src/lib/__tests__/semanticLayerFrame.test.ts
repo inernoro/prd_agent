@@ -280,3 +280,32 @@ describe('selectExportableLayers', () => {
     expect(selectExportableLayers(base, 'g1').map((item) => item.key)).toEqual(['l1', 'l2']);
   });
 });
+
+describe('副本落位：跨过挡路的那个，不是跳一整幅图', () => {
+  // 用户 2026-09-02：「点击分层之后这两个隔得太远了吧，为什么会这样？导致我一度时间
+  // 找不到这个图，我记得应该就在附近啊，怎么算的这是」。
+  const source = { x: 0, y: 0, w: 2400, h: 2400 };
+
+  it('【关键】小挡板不该让副本挪走一整幅图的距离', () => {
+    // 挡路的只是一张 1024 的生成图，紧贴原图右侧。
+    const blocker = { x: 2520, y: 0, w: 1024, h: 1024 };
+    const rect = planLayeredCopyRect({ source, occupied: [source, blocker] });
+
+    // 必须跨过挡板（不重叠）……
+    expect(rect.x).toBeGreaterThanOrEqual(blocker.x + blocker.w);
+    // ……但不该跨到「原图宽度」那么远去：旧写法给出 2520 + 2400 + 120 = 5040。
+    // 这条能区分两种实现，不是凑数。
+    expect(rect.x).toBeLessThan(source.x + source.w + 120 + source.w);
+  });
+
+  it('挡板越小，副本离得越近（距离随挡板走，不是常数）', () => {
+    const small = planLayeredCopyRect({ source, occupied: [source, { x: 2520, y: 0, w: 200, h: 200 }] });
+    const big = planLayeredCopyRect({ source, occupied: [source, { x: 2520, y: 0, w: 1600, h: 1600 }] });
+    expect(small.x).toBeLessThan(big.x);
+  });
+
+  it('没人挡路时仍然紧贴原图右侧', () => {
+    const rect = planLayeredCopyRect({ source, occupied: [source] });
+    expect(rect.x).toBe(source.x + source.w + 120);
+  });
+});

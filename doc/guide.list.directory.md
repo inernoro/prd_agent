@@ -66,6 +66,7 @@
 - [CDS 配置树 · 技术设计 · 设计](./design.cds.config-tree.md) `design.cds.config-tree`
 - [CDS 控制面 / 数据面分离设计(蓝绿部分已废弃) · 设计](./design.cds.control-data-split.md) `design.cds.control-data-split`
 - [CDS 数据迁移设计 · 设计](./design.cds.data-migration.md) `design.cds.data-migration`
+- [CDS 数据库隔离三档（共享库 / 分支独立库 / 隔离库）· 设计](./design.cds.database-isolation.md) `design.cds.database-isolation`
 - [CDS FU-02 MapAuthStore（Mongo 后端） · 设计](./design.cds.fu-02-auth-store-mongo.md) `design.cds.fu-02-auth-store-mongo`
 - [CDS 生命周期原子性 · 架构设计（对账收敛取代命令式级联） · 设计](./design.cds.lifecycle-atomicity.md) `design.cds.lifecycle-atomicity`
 - [CDS 托管交付契约 · 设计](./design.cds.managed-delivery.md) `design.cds.managed-delivery`
@@ -78,6 +79,7 @@
 - [CDS 复制集模式（一个入口，多个版本并行） · 设计](./design.cds.replica-set.md) `design.cds.replica-set`
 - [CDS 容量预算与故障隔离设计 · 设计](./design.cds.resilience.md) `design.cds.resilience`
 - [CDS Self-Hosting（CDS 托管 CDS）· 技术设计 · 设计](./design.cds.self-hosting.md) `design.cds.self-hosting`
+- [CDS 设置分组与数据分类 · 设计](./design.cds.settings-taxonomy.md) `design.cds.settings-taxonomy`
 - [CDS 技能版本与更新架构 · 设计](./design.cds.skill-version-update.md) `design.cds.skill-version-update`
 - [CDS 绝对可视化一键部署 · 设计](./design.cds.visual-deploy.md) `design.cds.visual-deploy`
 - [CDS 多 Web 入口治理 · 设计](./design.cds.web-entry.md) `design.cds.web-entry`
@@ -267,12 +269,14 @@
 - [AI 百宝箱文本辅助 · 计划](./plan.ai-toolbox.text-assist.md) `plan.ai-toolbox.text-assist`
 - [CDS Agent 官方 SDK 商业闭环 · 计划](./plan.cds.agent.official-sdk-migration.md) `plan.cds.agent.official-sdk-migration`
 - [CDS 未完成事项矩阵 · 计划](./plan.cds.backlog-matrix.md) `plan.cds.backlog-matrix`
+- [CDS 数据库隔离三档收敛 · 计划](./plan.cds.database-isolation.md) `plan.cds.database-isolation`
 - [录音交付页设计稿还原工程](./plan.prd-admin.recording-design-restoration.md) `plan.prd-admin.recording-design-restoration`
 - [CDS 基础设施加固 · 计划](./plan.cds.infra-hardening.md) `plan.cds.infra-hardening`
 - [CDS 一仓多项目与身份层 · 计划](./plan.cds.multi-project-identity.md) `plan.cds.multi-project-identity`
 - [CDS 多项目剩余交付 · 计划](./plan.cds.multi-project-phases.md) `plan.cds.multi-project-phases`
 - [CDS 发布系统改进 · 计划](./plan.cds.release-system.md) `plan.cds.release-system`
 - [CDS 高可用运行验证 · 计划](./plan.cds.resilience-rollout.md) `plan.cds.resilience-rollout`
+- [CDS 服务关系与跨项目引用 · 计划](./plan.cds.service-relations.md) `plan.cds.service-relations`
 - [CDS 当前工作看板 · 计划](./plan.cds.status.md) `plan.cds.status`
 - [CDS Legacy 前端退场 · 计划](./plan.cds.web-migration.md) `plan.cds.web-migration`
 - [网页托管 · 预览修复与向我提问 · 三 PR 拆分看板](./plan.web-hosting.preview-and-ask.md) `plan.web-hosting.preview-and-ask`
@@ -288,6 +292,7 @@
 - [LLM 网关旧路径物理退场 · 计划](./plan.platform.llm-gateway.full-cutover.md) `plan.platform.llm-gateway.full-cutover`
 - [LLM Gateway 故障隔离与恢复 · 计划](./plan.platform.llm-gateway.resilience.md) `plan.platform.llm-gateway.resilience`
 - [模型路由能力契约治理 · 状态看板](./plan.platform.llm-routing.capability-contract.md) `plan.platform.llm-routing.capability-contract`
+- [MCP 智能体接入台 · 计划](./plan.platform.mcp-agent-console.md) `plan.platform.mcp-agent-console`
 - [PA Agent 可执行任务升级 · 计划](./plan.product-agent.pa.competitive-improvements.md) `plan.product-agent.pa.competitive-improvements`
 - [产品管理智能体版本流程收尾 · 计划](./plan.product-agent.version-workflow.md) `plan.product-agent.version-workflow`
 - [Report Agent 模型质量治理 · 计划](./plan.report-agent.model-governance.md) `plan.report-agent.model-governance`
@@ -373,6 +378,7 @@
 - [周报 2026-W33 (2026-08-10 ~ 2026-08-16)](./report.2026-W33.md) `report.2026-W33`
 - [周报 2026-W34 (2026-08-17 ~ 2026-08-23)](./report.2026-W34.md) `report.2026-W34`
 - [周报 2026-W35 (2026-08-24 ~ 2026-08-30)](./report.2026-W35.md) `report.2026-W35`
+- [周报 2026-W36 (2026-08-31 ~ 2026-09-06)](./report.2026-W36.md) `report.2026-W36`
 - [CDS Agent 商业级可用闭环目标审计报告（grandfather 保留） · 报告](./report.cds.agent.goal-completion-audit.2026-05-19.md) `report.cds.agent.goal-completion-audit.2026-05-19`
 - [CDS Agent P4-1 远端发布前验收与试用入口报告（grandfather 保留） · 报告](./report.cds.agent.p4-1-remote-preflight.2026-05-19.md) `report.cds.agent.p4-1-remote-preflight.2026-05-19`
 - [CDS Agent P4-2 远端 Provider 闭环验收报告（grandfather 保留） · 报告](./report.cds.agent.p4-2-provider-closure.2026-05-19.md) `report.cds.agent.p4-2-provider-closure.2026-05-19`

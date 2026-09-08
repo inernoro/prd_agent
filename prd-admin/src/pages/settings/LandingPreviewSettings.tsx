@@ -56,7 +56,7 @@ import {
 /**
  * 一次生成最多自动试几个模型。
  * 不设成「把池子试穿」：15 个模型逐个试要几分钟、烧十几次配额，而失败大多同因。
- * 试到第 3 个还不行，基本就是池子本身有问题，该去模型中心看，不该在这儿硬磨。
+ * 试到第 3 个还不行，基本就是池子本身有问题，该去 LLM Gateway 控制台看，不该在这儿硬磨。
  */
 const MODEL_FALLBACK_LIMIT = 3;
 
@@ -324,7 +324,7 @@ export default function LandingPreviewSettings() {
    */
   const generate = async (targets: { slot: LandingPreviewSlot; prompt: string }[]) => {
     if (!hasModel) {
-      toast.error('没有可用的文生图模型，请先在模型中心配置');
+      toast.error('没有可用的文生图模型，请先到 LLM Gateway 控制台（左下角「模型网关」）配置');
       return;
     }
     if (targets.length === 0) return;
@@ -350,7 +350,7 @@ export default function LandingPreviewSettings() {
     pending.forEach((t) =>
       patchState(t.slot.slot, {
         status: 'error',
-        error: `试了 ${tried} 个模型都没出图（最后一个：${lastModel}）。多半是模型池本身有问题，去「模型中心 → 模型池」看一眼。`,
+        error: `试了 ${tried} 个模型都没出图（最后一个：${lastModel}）。多半是模型池本身有问题，去 LLM Gateway 控制台（左下角「模型网关」→ 模型池）看一眼。`,
       }),
     );
   };
@@ -445,7 +445,7 @@ export default function LandingPreviewSettings() {
           className="text-xs"
           style={{ padding: '10px 12px', borderRadius: '10px', background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}
         >
-          当前没有可用的文生图模型，生成按钮不可用。请先到「模型中心 → 模型池」配置一个 text2img 池。
+          当前没有可用的文生图模型，生成按钮不可用。请先到 LLM Gateway 控制台（左下角「模型网关」→ 模型池）配置一个 text2img 池。
         </div>
       )}
 

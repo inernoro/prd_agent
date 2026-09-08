@@ -1,0 +1,87 @@
+import type { McpCapabilityDto, McpToolDto } from '@/services/contracts/mcpConsole';
+
+export interface CapabilityPick {
+  read: boolean;
+  write: boolean;
+}
+
+export type CapabilityPicks = Record<string, CapabilityPick>;
+
+/**
+ * 「跟着我的权限走」这一档此刻包含哪几项。
+ *
+ * 判据与服务端 `McpCapabilityCatalog.AutoScopesFor` 同源：**我自己有的权限 ∩ 平台开放的能力**。
+ * 服务端才是真值（自动模式的钥匙每次鉴权现算），这里算的是同一件事的**预览**——
+ * 让用户在点下去之前就看见他要交出什么，而不是签完再去别处翻。
+ *
+ * 两处判据必须同口径。不同口径的后果是弹窗上写着「都给它了」，
+ * 连上去却少一块 —— 把用户请到门口再关门。
+ */
+export function autoPicks(capabilities: McpCapabilityDto[]): CapabilityPicks {
+  const picks: CapabilityPicks = {};
+  for (const cap of capabilities) {
+    if (!cap.availableToMe) continue;
+    picks[cap.key] = {
+      read: !!cap.readScope,
+      // 只有读权限位的人，写入档签不出来 —— 自动模式也不能替他长出来
+      write: !!cap.writeScope && cap.writeAvailableToMe,
+    };
+  }
+  return picks;
+}
+
+/** 把勾选摊平成 scope 清单（手动模式提交用；自动模式不提交清单）。 */
+export function picksToScopes(capabilities: McpCapabilityDto[], picks: CapabilityPicks): string[] {
+  const list: string[] = [];
+  for (const cap of capabilities) {
+    const pick = picks[cap.key];
+    if (!pick) continue;
+    if (pick.read && cap.readScope) list.push(cap.readScope);
+    if (pick.write && cap.writeScope) list.push(cap.writeScope);
+  }
+  return Array.from(new Set(list));
+}
+
+/** 当前勾选是不是就等于「跟着我的权限走」那一档（用来判断用户到底动没动过）。 */
+export function samePicks(a: CapabilityPicks, b: CapabilityPicks): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    const x = a[k] ?? { read: false, write: false };
+    const y = b[k] ?? { read: false, write: false };
+    if (x.read !== y.read || x.write !== y.write) return false;
+  }
+  return true;
+}
+
+/**
+ * 这个工具，密钥主人此刻签不签得出来。
+ *
+ * 判据按**工具要求的那个 scope** 走，不按能力整块走：读写分档的能力里，
+ * 只有读权限位的人整块是可用的（`availableToMe` 为真），但写入档那几个工具签不出来。
+ * 按整块判会告诉一个只读用户「发布、分享都能给它」，而那几个 scope 在签发时会被交集校验打回来 ——
+ * 把用户请到门口再关门。与服务端 `McpConsoleController.ScopeAvailable`（按 scope 判）同一个口径。
+ */
+export function grantableTool(cap: McpCapabilityDto, tool: McpToolDto): boolean {
+  if (cap.writeScope && tool.requiredScope === cap.writeScope) return cap.writeAvailableToMe;
+  return cap.availableToMe;
+}
+
+/** 这块能力里，他真能给出去的工具数。 */
+export function grantableToolCount(cap: McpCapabilityDto): number {
+  return cap.tools.filter((t) => grantableTool(cap, t)).length;
+}
+
+/**
+ * 这块能力对这把钥匙是不是「只能看」。
+ *
+ * 三个条件缺一不可：有读档、**有写档**、写档没给它。中间那条最容易漏 ——
+ * 海鲜市场压根没有写入档，漏了它就会给海鲜市场标上「只能看」，等于暗示还有一档没给他，
+ * 而那一档不存在；同一个功能里接入弹窗对海鲜市场什么都不标，两处说法就此打架。
+ */
+export function isReadOnlyTier(
+  cap: Pick<McpCapabilityDto, 'readScope' | 'writeScope'>,
+  heldLowercase: ReadonlySet<string>,
+): boolean {
+  if (!cap.readScope || !cap.writeScope) return false;
+  return !heldLowercase.has(cap.writeScope.toLowerCase());
+}

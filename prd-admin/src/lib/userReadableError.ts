@@ -229,6 +229,45 @@ function classifiedMessage(code: string, recoveryMessage: string): string | null
   if (normalized === 'UNAUTHORIZED') {
     return '当前登录状态无法完成此操作，请重新登录后重试。';
   }
+  if (normalized === 'AUTH_SESSION_REQUIRED' || normalized === 'AUTH_SESSION_INVALID' || normalized === 'AUTH_SESSION_REVOKED') {
+    return '当前登录已失效，请重新登录后重试。';
+  }
+  if (normalized === 'AUTH_SESSION_VALIDATION_UNAVAILABLE') {
+    return '登录校验暂时不可用，请稍后重试。';
+  }
+  if (normalized === 'AUTH_AI_KEY_NOT_CONFIGURED') {
+    return '自动化访问凭据尚未配置，请由管理员恢复当前环境配置后重试。';
+  }
+  if (normalized === 'AUTH_AI_KEY_INVALID') {
+    return '自动化访问凭据与当前环境不一致，请从权威配置重新同步后重试。';
+  }
+  if (normalized === 'AUTH_AI_IDENTITY_REQUIRED') {
+    return '自动化请求缺少目标身份，请补充已授权的专用账号后重试。';
+  }
+  if (normalized === 'AUTH_AI_IDENTITY_UNAVAILABLE') {
+    return '自动化目标身份当前不可用，请检查专用账号状态和允许名单后重试。';
+  }
+  if (normalized === 'AUTH_AGENT_KEY_INVALID') {
+    return 'Agent 授权已失效，请重新签发或续期后重试。';
+  }
+  if (normalized === 'AUTH_OPEN_PLATFORM_KEY_INVALID') {
+    return '开放平台调用凭据已失效，请重新签发后重试。';
+  }
+  if (normalized === 'AUTH_STABLE_SMOKE_NOT_CONFIGURED') {
+    return '稳定冒烟签名身份尚未配置，请同步当前环境公钥和允许主机后重试。';
+  }
+  if (normalized === 'AUTH_STABLE_SMOKE_REQUEST_INVALID') {
+    return '稳定冒烟请求不符合签名通道约束，请检查允许端点、请求头和大小后重试。';
+  }
+  if (normalized === 'AUTH_STABLE_SMOKE_SIGNATURE_EXPIRED') {
+    return '稳定冒烟签名已过期或已使用，请同步时钟并生成新签名后重试。';
+  }
+  if (normalized === 'AUTH_STABLE_SMOKE_SIGNATURE_INVALID') {
+    return '稳定冒烟签名与当前环境不一致，请同步当前环境公钥和执行机私钥后重试。';
+  }
+  if (normalized === 'AUTH_STABLE_SMOKE_IDENTITY_UNAVAILABLE') {
+    return '稳定冒烟专用身份当前不可用，请检查账号状态和允许名单后重试。';
+  }
   if (normalized === 'PERMISSION_DENIED') {
     return '当前账号没有执行此操作的权限，请联系管理员开通后重试。';
   }

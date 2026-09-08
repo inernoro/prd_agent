@@ -52,9 +52,6 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'marketplace': '市场',
   'my-resources': '资源',
   'my-assets': '资源',
-  'model-center': '模型',
-  'models': '模型',
-  'mds': '模型',
   'users': '团队',
   'teams': '团队',
   'document-store': '知识库',
@@ -69,6 +66,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'lab': '实验室',
   'automations': '自动化',
   'logs': '日志',
+  'authorization-health': '授权',
   'team-activity': 'VOC',
 
   // ── 管理 / 其他 ───────────────────────

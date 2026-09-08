@@ -489,6 +489,37 @@ describe('ProxyHandler — unknown host fallback to master', () => {
     expect(masterSeenPath).toBe('/some-path');
   });
 
+  it('上游 healthState 非 running 的路由转 master 等待页，并带判定来源与落点服务响应头', async () => {
+    let masterSeenHost = '';
+    const master = await startUpstream((req, res) => {
+      masterSeenHost = String(req.headers['host'] ?? '');
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<html>service waiting page</html>');
+    });
+    upstreams.push(master);
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      unknownHostFallbackHost: '127.0.0.1',
+      unknownHostFallbackPort: master.port,
+    });
+    const server = http.createServer((req, res) => {
+      void proxy.handle(req, res, {
+        _id: 'b:admin:default:1', host: 'mixed-demo.miduo.org', upstreamHost: '127.0.0.1', upstreamPort: 1,
+        weight: 100, healthState: 'unknown', profileId: 'admin', branchId: 'b',
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    const r = await clientReq(fwdPort, { host: 'mixed-demo.miduo.org', path: '/' });
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('service waiting page');
+    expect(masterSeenHost).toBe('mixed-demo.miduo.org');
+    expect(r.headers['x-cds-resolver']).toBe('master-fallback');
+    expect(r.headers['x-cds-profile']).toBe('admin');
+  });
+
   it('[C-3.3] 没配 fallback 时 route=null 走 plain 503 等候页(不变行为)', async () => {
     const proxy = new ProxyHandler({
       upstreamTimeoutMs: 500,

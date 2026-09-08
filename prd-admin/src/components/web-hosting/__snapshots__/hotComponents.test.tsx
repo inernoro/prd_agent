@@ -36,6 +36,7 @@ const site: HostedSite = {
   files: [{ path: 'index.html', cosKey: 'sites/site-1/index.html', size: 11264, mimeType: 'text/html' }],
   totalSize: 11264,
   tags: ['架构'],
+  folderCanonicalName: '',
   ownerUserId: 'user-1',
   viewCount: 9,
   visibility: 'private',

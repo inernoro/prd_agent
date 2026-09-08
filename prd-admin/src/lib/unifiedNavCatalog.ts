@@ -54,7 +54,7 @@ export const NAV_SECTION_META: Record<
   utility: { label: '实用工具', subtitle: '日常高频入口', iconName: 'Sparkles' },
   infra: {
     label: '基础设施',
-    subtitle: '平台级能力（知识库/市场/模型/团队等）',
+    subtitle: '平台级能力（知识库/市场/团队等）',
     iconName: 'Boxes',
   },
   menu: { label: '其他菜单', subtitle: '后端注册的管理入口', iconName: 'Menu' },
@@ -264,7 +264,7 @@ export const DEFAULT_NAV_ORDER: readonly string[] = [
   NAV_DIVIDER_KEY,
   'marketplace', 'my-assets', 'web-pages', 'document-store', 'emergence',
   NAV_DIVIDER_KEY,
-  'mds', 'users', 'settings',
+  'users', 'settings',
 ];
 
 /**

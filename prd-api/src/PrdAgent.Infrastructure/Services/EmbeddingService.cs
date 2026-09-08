@@ -87,7 +87,7 @@ public class EmbeddingService : IEmbeddingService
             // 这里的失败绝大多数是"根本没配 embedding 模型"。必须如实往上报，
             // 让调用方告诉用户"还没接入向量模型"，而不是悄悄换个模型算出垃圾向量。
             return EmbeddingBatch.Fail("NO_EMBEDDING_MODEL",
-                resolution?.ErrorMessage ?? "没有可用的向量模型，请先在模型管理里接入一个 embedding 模型");
+                resolution?.ErrorMessage ?? "没有可用的向量模型，请先到 LLM Gateway 控制台（MAP 左下角「模型网关」）接入一个 embedding 模型");
         }
 
         // ── 发 ──（只带已算好的 resolution，不触发二次解析）

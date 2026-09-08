@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap">
+  <style>
+    body { margin: 0; background: #0d0d16; color: #f7f7fb;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif; }
+    a { color: #E8A87C; } a:hover { color: #D97757; }
+  </style>
+</helmet>
+
+<!-- 现状复刻，按真实取值：48px 渐变标题、星空插画、圆角胶囊、等宽方卡。
+     放在这里只为对照——不是要改它，是要说清「老」老在哪。 -->
+<div style="position: relative; width: 1440px; min-height: 1000px; overflow: hidden; background: #0d0d16">
+
+  <div style="position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(1px 1px at 12% 18%, rgba(255,255,255,0.55), transparent),
+      radial-gradient(1px 1px at 28% 34%, rgba(255,255,255,0.40), transparent),
+      radial-gradient(1px 1px at 44% 12%, rgba(255,255,255,0.50), transparent),
+      radial-gradient(1px 1px at 62% 28%, rgba(255,255,255,0.35), transparent),
+      radial-gradient(1px 1px at 78% 16%, rgba(255,255,255,0.45), transparent),
+      radial-gradient(1px 1px at 88% 32%, rgba(255,255,255,0.30), transparent),
+      radial-gradient(1px 1px at 20% 46%, rgba(255,255,255,0.28), transparent),
+      radial-gradient(1px 1px at 70% 44%, rgba(255,255,255,0.32), transparent),
+      radial-gradient(58% 40% at 50% 22%, rgba(124,58,237,0.28) 0%, transparent 70%)"></div>
+  <div style="position: absolute; right: 0; bottom: 0; left: 0; height: 380px; pointer-events: none;
+    background: linear-gradient(to top, #171528 0%, #171528 42%, transparent 100%);
+    clip-path: polygon(0 42%, 9% 34%, 18% 40%, 27% 30%, 38% 38%, 49% 27%, 61% 36%, 72% 29%, 84% 37%, 100% 31%, 100% 100%, 0 100%)"></div>
+
+  <div style="position: relative; padding: 34px 32px 0">
+    <button style="display: grid; width: 34px; height: 34px; place-items: center; border: 0; border-radius: 999px;
+      background: rgba(255,255,255,0.10); color: #f7f7fb; cursor: pointer">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+    </button>
+    <span style="position: absolute; right: 32px; top: 34px; display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 11px; border: 1px solid rgba(255,255,255,0.14); border-radius: 8px;
+      color: rgba(247,247,251,0.80); font-size: 11px">教程</span>
+  </div>
+
+  <div style="position: relative; padding: 56px 0 0; text-align: center">
+    <h1 style="margin: 0; font-family: 'Space Grotesk', 'PingFang SC', sans-serif; font-size: 48px; font-weight: 700;
+      background: linear-gradient(90deg, #5eead4, #34d399); -webkit-background-clip: text; background-clip: text;
+      color: transparent">视觉创作 Agent</h1>
+    <p style="margin: 14px 0 0; color: rgba(247,247,251,0.60); font-size: 14px">AI 驱动的设计助手，让创作更简单</p>
+  </div>
+
+  <div style="position: relative; width: 660px; margin: 62px auto 0">
+    <div style="border-radius: 14px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10)">
+      <div style="padding: 22px 22px 0; color: rgba(247,247,251,0.85); font-size: 15px">帮我</div>
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 22px">
+        <div style="display: flex; gap: 8px">
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 9px 13px; border-radius: 8px;
+            background: rgba(255,255,255,0.08); font-size: 12px">图片</span>
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 9px 13px; border-radius: 8px;
+            background: rgba(255,255,255,0.08); font-size: 12px">1K · 1:1 ·</span>
+        </div>
+        <div style="display: flex; gap: 8px">
+          <span style="display: grid; width: 40px; height: 40px; place-items: center; border-radius: 8px;
+            background: rgba(255,255,255,0.08)"></span>
+          <span style="display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; height: 40px;
+            border-radius: 8px; background: rgba(255,255,255,0.14); font-size: 13px">开始创作</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; justify-content: center; gap: 10px; margin-top: 26px">
+      <span style="display: inline-flex; align-items: center; gap: 7px; padding: 11px 17px; border-radius: 999px;
+        border: 1px solid rgba(129,140,248,0.55); background: rgba(99,102,241,0.16); font-size: 13px">MAP Pro</span>
+      <span style="display: inline-flex; align-items: center; gap: 7px; padding: 11px 17px; border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.12); font-size: 13px">平面设计</span>
+      <span style="display: inline-flex; align-items: center; gap: 7px; padding: 11px 17px; border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.12); font-size: 13px">品牌设计</span>
+      <span style="display: inline-flex; align-items: center; gap: 7px; padding: 11px 17px; border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.12); font-size: 13px">插画创作</span>
+      <span style="display: inline-flex; align-items: center; gap: 7px; padding: 11px 17px; border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.12); font-size: 13px">电商设计</span>
+      <span style="display: inline-flex; align-items: center; gap: 7px; padding: 11px 17px; border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.12); font-size: 13px">视频封面</span>
+    </div>
+  </div>
+
+  <div style="position: relative; width: 1376px; margin: 74px auto 0; padding-bottom: 40px">
+    <div style="padding-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.10); font-size: 14px">最近项目</div>
+    <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 20px; margin-top: 20px">
+      <div style="display: grid; place-items: center; height: 200px; border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.04)">
+        <span style="color: rgba(247,247,251,0.68); font-size: 12px">＋ 新建项目</span>
+      </div>
+      <div style="height: 200px; border-radius: 10px;
+        background: radial-gradient(70% 90% at 30% 25%, #f6d3b6 0%, #e79a72 38%, #7d3f2c 78%, #2a1712 100%)"></div>
+      <div style="height: 200px; border-radius: 10px; background: linear-gradient(150deg, #3c5a3a, #16221a)"></div>
+      <div style="height: 200px; border-radius: 10px; background: linear-gradient(150deg, #2f4a63, #141c26)"></div>
+      <div style="height: 200px; border-radius: 10px; background: linear-gradient(150deg, #5a4a2f, #241d12)"></div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

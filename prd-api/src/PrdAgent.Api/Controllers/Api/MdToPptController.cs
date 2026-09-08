@@ -1039,7 +1039,7 @@ public class MdToPptController : ControllerBase
                 cipher = plat.ApiKeyEncrypted;
             if (string.IsNullOrWhiteSpace(cipher)) return "平台未配置 API key";
             if (!ApiKeyCryptoKeyRing.Decrypt(cipher, _configuration).Success)
-                return "平台 API key 无法解密（部署环境数据加密密钥与存量配置不匹配），请在模型平台重新保存该平台的 key";
+                return "平台 API key 无法解密（部署环境数据加密密钥与存量配置不匹配），请到 LLM Gateway 控制台（MAP 左下角「模型网关」） 重新保存该平台的 key";
             return null;
         }
 

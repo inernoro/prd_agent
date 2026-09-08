@@ -1,0 +1,20 @@
+<!doctype html>
+<!--
+  测试专用入口：给移动端布局探针挂载单个弹窗，不进 dist。
+
+  vite build 的默认 input 只有 index.html，所以这个文件不会被打包进产物；
+  它只在 `vite dev` 下可访问，供 scripts/agent-starter-mobile-probe.mjs 使用。
+  这么做是为了让「主操作在手机上够不够得着」这条判据不依赖真实 CDS 实例、
+  不依赖登录态，因而能在每个 PR 的 CI 里跑。
+-->
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>CDS 布局探针</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/probe/agent-starter.tsx"></script>
+  </body>
+</html>

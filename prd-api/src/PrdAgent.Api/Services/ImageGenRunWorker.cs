@@ -1298,7 +1298,12 @@ public class ImageGenRunWorker : BackgroundService
                 x => x.Id == runId,
                 Builders<ImageGenRun>.Update
                     .Set(x => x.Status, ImageGenRunStatus.Failed)
-                    .Set(x => x.EndedAt, DateTime.UtcNow),
+                    .Set(x => x.EndedAt, DateTime.UtcNow)
+                    // 也落库，不只发事件流：这条路上一张 item 都没建（模型被下架、items 不合法、
+                    // 超出上限、服务停机都在排图之前），轮询 runs/{runId} 的调用方拿到的是
+                    // 「Failed + 空 images」—— 原因只在 Redis 事件里，它根本收不到。
+                    .Set(x => x.ErrorCode, errorCode)
+                    .Set(x => x.ErrorMessage, errorMessage),
                 cancellationToken: ct);
 
             var run = await _db.ImageGenRuns.Find(x => x.Id == runId).FirstOrDefaultAsync(ct);

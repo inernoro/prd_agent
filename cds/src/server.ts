@@ -21,6 +21,7 @@ import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
@@ -30,6 +31,9 @@ import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
+import { createProjectDbIsolationRouter } from './routes/project-db-isolation.js';
+import { createDbProbeRouter } from './routes/db-probe.js';
+import { createDbLedgerRouter } from './routes/db-ledger.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
@@ -529,6 +533,8 @@ export interface ServerDeps {
    */
   gracefulShutdown?: GracefulShutdownController;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
+  /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
+  getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
   httpLogStore?: HttpLogSink | null;
   /** Optional persistent diagnostics logger for container/docker/system events. */
   serverEventLogStore?: ServerEventLogSink | null;
@@ -814,6 +820,19 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /deployment-versions': '列出部署版本',
     'GET /projects/:id/delivery': '查看项目交付模式',
     'PUT /projects/:id/delivery': '更新项目交付模式',
+    'GET /projects/:id/db-isolation': '查看数据库隔离',
+    'PUT /projects/:id/db-isolation': '设置数据库隔离',
+    'GET /branches/:id/db-probe': '实测数据库连接',
+    'GET /projects/:id/db-ledger': '查看数据台账',
+    'POST /projects/:id/db-ledger/scan': '扫描补录派生库',
+    'POST /projects/:id/db-ledger/:entryId/backup': '备份派生库',
+    'POST /projects/:id/db-ledger/:entryId/backups/:backupId/verify': '演练验证备份',
+    'DELETE /projects/:id/db-ledger/:entryId': '丢弃派生库',
+    'GET /branches/:id/db-ledger': '查看分支派生库',
+    'POST /branches/:id/db-init/:profileId': '克隆分支独立库',
+    'GET /projects/:id/db-ledger/:entryId/write-back/preview': '预览回写',
+    'POST /projects/:id/db-ledger/:entryId/write-back': '回写派生库',
+    'POST /projects/:id/db-ledger/:entryId/write-backs/:wbId/rollback': '回退回写',
     'POST /projects/:id/managed-plan': '生成托管部署计划',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
@@ -957,6 +976,12 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /projects': '列出项目',
     'POST /projects': '创建项目',
     'POST /cleanup-cross-project-services': '清理跨项目服务',
+    'POST /compose/lint': '对 compose 做拓扑体检',
+    'GET /branches/:id/service-graph': '分支服务关系图与体检',
+    'GET /branches/:id/route-lookup': '路由判定查询（转发器 vs master 兜底）',
+    'GET /branches/:id/references': '分支引用分区（地址类环境变量与跨项目引用）',
+    'GET /overview/topology': '全局概览：各项目关系与体检',
+    'PUT /branches/:id/references/:key': '切换某条引用指向的项目 / 服务 / 分支',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
     'GET /access-requests': '列出授权申请',
@@ -1202,6 +1227,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/bridge\/handshake-status\/(.+)$/, '查询 Bridge 握手状态'],
     // 项目 (CRUD)
     [/^PUT \/projects\/(.+)\/paused$/, '暂停/恢复项目'],
+    [/^GET \/projects\/(.+)\/scope-options$/, '读构建范围候选'],
+    [/^POST \/projects\/(.+)\/scope-options\/apply$/, '采纳构建范围建议'],
     [/^GET \/projects\/(.+)\/agent-keys$/, '列出项目 Agent Keys'],
     [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
     [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],
@@ -1224,6 +1251,19 @@ export function resolveApiLabel(method: string, path: string): string {
     // 「查询项目 / 更新项目」。必须在通配条目之前给出 segment-safe pattern。
     [/^GET \/projects\/[^/]+\/agent-profile$/, '获取项目 Agent 角色'],
     [/^PUT \/projects\/[^/]+\/agent-profile$/, '更新项目 Agent 角色'],
+    [/^GET \/projects\/[^/]+\/db-isolation$/, '查看数据库隔离'],
+    [/^PUT \/projects\/[^/]+\/db-isolation$/, '设置数据库隔离'],
+    [/^GET \/branches\/[^/]+\/db-probe$/, '实测数据库连接'],
+    [/^GET \/projects\/[^/]+\/db-ledger$/, '查看数据台账'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/scan$/, '扫描补录派生库'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/backup$/, '备份派生库'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/backups\/[^/]+\/verify$/, '演练验证备份'],
+    [/^DELETE \/projects\/[^/]+\/db-ledger\/[^/]+$/, '丢弃派生库'],
+    [/^GET \/branches\/[^/]+\/db-ledger$/, '查看分支派生库'],
+    [/^POST \/branches\/[^/]+\/db-init\/[^/]+$/, '克隆分支独立库'],
+    [/^GET \/projects\/[^/]+\/db-ledger\/[^/]+\/write-back\/preview$/, '预览回写'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/write-back$/, '回写派生库'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/write-backs\/[^/]+\/rollback$/, '回退回写'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],
@@ -4154,6 +4194,20 @@ export function createServer(deps: ServerDeps): express.Express {
     shell: deps.shell,
     assertProjectAccess: assertProjectAccess as any,
   }));
+  // 项目级数据库隔离（BuildProfile.dbScope 的项目设置入口 + 原子批量写，2026-09-02）
+  app.use('/api', createProjectDbIsolationRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+  app.use('/api', createDbProbeRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+  app.use('/api', createDbLedgerRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+    repoRoot: deps.config.repoRoot,
+  }));
   // Cache diagnostics / repair / cross-server migration.
   // See routes/cache.ts for why this exists (挂载失效诊断 + 换机器预热).
   app.use('/api', createCacheRouter({ stateService: deps.stateService, shell: deps.shell }));
@@ -4498,6 +4552,19 @@ export function createServer(deps: ServerDeps): express.Express {
     dispatchVersion,
     getDeploymentRunStatus: (runId) => deploymentRunService.get(runId)?.status,
     rootDomains: deps.config.rootDomains || [],
+  }));
+
+  app.use('/api', createTopologyRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+    getPublishedRoutes: deps.getPublishedRoutes,
+    envConfig: { jwtIssuer: deps.config.jwt.issuer, previewHost: deps.config.previewDomain || deps.config.rootDomains?.[0] },
+    // 与复制集 isRemoteBranch 同口径：注册表查不到时保守视为远端
+    isRemoteExecutorBranch: (branch) => {
+      if (!isRemoteExecutorOwned(branch.executorId)) return false;
+      const node = deps.registry?.getAll().find((n) => n.id === branch.executorId);
+      return !node || node.role !== 'embedded';
+    },
   }));
 
   app.use('/api', createManagedProjectsRouter({

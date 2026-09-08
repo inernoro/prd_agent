@@ -278,6 +278,9 @@ import type {
   UpdateHomeLauncherPreferencesContract,
   UpdateDefaultNavLayoutContract,
   ApplyDefaultNavToAllUsersContract,
+  GetUserNavLayoutsContract,
+  ResetUserNavLayoutContract,
+  RemoveNavTokensContract,
 } from '@/services/contracts/userPreferences';
 import type {
   GetModelSizesContract,
@@ -605,6 +608,9 @@ import {
   updateHomeLauncherPreferencesReal,
   updateDefaultNavLayoutReal,
   applyDefaultNavToAllUsersReal,
+  getUserNavLayoutsReal,
+  resetUserNavLayoutReal,
+  removeNavTokensReal,
 } from '@/services/real/userPreferences';
 import {
   getAdminNotificationsReal,
@@ -1380,6 +1386,9 @@ export const updateAgentSwitcherPreferences: UpdateAgentSwitcherPreferencesContr
 export const updateHomeLauncherPreferences: UpdateHomeLauncherPreferencesContract = withAuth(updateHomeLauncherPreferencesReal);
 export const updateDefaultNavLayout: UpdateDefaultNavLayoutContract = withAuth(updateDefaultNavLayoutReal);
 export const applyDefaultNavToAllUsers: ApplyDefaultNavToAllUsersContract = withAuth(applyDefaultNavToAllUsersReal);
+export const getUserNavLayouts: GetUserNavLayoutsContract = withAuth(getUserNavLayoutsReal);
+export const resetUserNavLayout: ResetUserNavLayoutContract = withAuth(resetUserNavLayoutReal);
+export const removeNavTokens: RemoveNavTokensContract = withAuth(removeNavTokensReal);
 
 export const getWatermarks: GetWatermarksContract = withAuth(getWatermarksReal);
 export const getWatermarkByApp: GetWatermarkByAppContract = withAuth(getWatermarkByAppReal);
@@ -1461,6 +1470,21 @@ export const updateAgentApiKey: UpdateAgentApiKeyContract = withAuth(updateAgent
 export const renewAgentApiKey: RenewAgentApiKeyContract = withAuth(renewAgentApiKeyReal);
 export const revokeAgentApiKey: RevokeAgentApiKeyContract = withAuth(revokeAgentApiKeyReal);
 export const deleteAgentApiKey: DeleteAgentApiKeyContract = withAuth(deleteAgentApiKeyReal);
+
+// 智能体接入台（MCP）：能力清单 / 客户端 / 今日额度 / 调用记录
+import type {
+  GetMcpConsoleOverviewContract,
+  GetMcpVisibleToolsContract,
+  ListMcpCallsContract,
+} from '@/services/contracts/mcpConsole';
+import {
+  getMcpConsoleOverviewReal,
+  getMcpVisibleToolsReal,
+  listMcpCallsReal,
+} from '@/services/real/mcpConsole';
+export const getMcpConsoleOverview: GetMcpConsoleOverviewContract = withAuth(getMcpConsoleOverviewReal);
+export const listMcpCalls: ListMcpCallsContract = withAuth(listMcpCallsReal);
+export const getMcpVisibleTools: GetMcpVisibleToolsContract = withAuth(getMcpVisibleToolsReal);
 
 // 限流配置服务
 import type {
@@ -1743,6 +1767,11 @@ export type {
 // ── Web Hosting 网页托管 ──
 export {
   uploadSite,
+  reviewSiteZip,
+  resumePendingSiteOptimization,
+  prepareSiteOptimizationPreview,
+  confirmSiteOptimization,
+  cancelSiteOptimization,
   reuploadSite,
   createFromContent,
   listSites,
@@ -1772,7 +1801,7 @@ export {
   setSiteGroup,
   copySiteToTeam,
 } from '@/services/real/webPages';
-export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, WebPageGroup, WebPageGroupAccessRule, WebPageGroupVisibility, WebPageGroupSubjectType, WebPageGroupRole, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry, ShareAnalyticsVisitorSummary, ShareAnalyticsTrendPoint, ShareAnalyticsHourlyPoint, ShareAnalyticsVisitorStats, ShareAnalyticsCommentEntry } from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, HostedSiteOptimizationAnalysis, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, WebPageGroup, WebPageGroupAccessRule, WebPageGroupVisibility, WebPageGroupSubjectType, WebPageGroupRole, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry, ShareAnalyticsVisitorSummary, ShareAnalyticsTrendPoint, ShareAnalyticsHourlyPoint, ShareAnalyticsVisitorStats, ShareAnalyticsCommentEntry } from '@/services/real/webPages';
 
 // ── Short Video Materials 短视频素材解析 ──
 export {

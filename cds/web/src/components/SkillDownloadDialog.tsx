@@ -234,7 +234,25 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
            * 开在完成页——那一屏的状态最贵，用户可能还没把结果抄走。
            * starter 本来就是默认 tab、进弹窗即挂载，藏起来不额外产生开销。
            */}
-          <div className={active === 'starter' ? undefined : 'hidden'}>
+          <div
+            /*
+             * 这一层是「只藏不卸」的容器，但它同时是移动端高度链上的一环：
+             * 窄屏那套把弹窗全屏化的规则靠 height:100% 一层层往下传，传到这里
+             * 断了——它没有任何高度声明，height:auto 让子元素的 100% 无从解析，
+             * 于是面板长成内容自然高（实测 1009px > 视口 844px），底栏连同
+             * 「确认这些技能」被外层的 overflow:clip 裁在屏幕外，且全链没有
+             * 一个可滚容器，滚都滚不到。给它一个标记，让窄屏规则认得它，
+             * 不再靠 `> div:first-child > :last-child` 这种数位置的选择器。
+             *
+             * 标记只在这个 tab 激活时挂：窄屏那条规则带 `display: flex !important`，
+             * 打得过 `hidden` 的 `display: none`。标记要是常驻，切到别的 tab 时
+             * 上手助手藏不掉，会和新 tab 一起铺在屏幕上（Codex P1，真机 390px 量到
+             * 加了 hidden 之后 display 仍是 flex、高度仍有 826px）。所以标记表达的是
+             * 「当前激活的 starter slot」，不是「这里有个 slot」。
+             */
+            data-agent-starter-slot={active === 'starter' ? 'true' : undefined}
+            className={active === 'starter' ? undefined : 'hidden'}
+          >
             <AgentStarterTab
               active={active === 'starter'}
               cdsPrompt={prompt}
