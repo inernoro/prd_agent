@@ -15,6 +15,7 @@
 import type { DbCloneVerification, InfraService } from '../types.js';
 import type { DbEngine } from './db-env-keys.js';
 import { runDockerExec, maskSecretValues, type DockerExecResult } from '../routes/infra-data.js';
+import { workloadCgroupArgv } from './workload-cgroup.js';
 
 export type DbCloneExec = (argv: string[], stdin: string, timeoutMs?: number, maxBytes?: number) => Promise<DockerExecResult>;
 
@@ -101,6 +102,9 @@ export function relationalCloneArgv(spec: DbCloneSpec): { argv: string[]; secret
     'run', '--rm', '-i', '--pull', 'never',
     '--network', `container:${c}`,
     '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
+    // 数据库隔离克隆会在部署期间自动跑，dump/import 是 CPU 与磁盘密集的一段，
+    // 和其它托管负载一样挂低权重 slice（Codex PR #1516 十四轮 P2）。
+    ...workloadCgroupArgv(),
     '--entrypoint', 'sh',
     ...conn.envFlags,
     spec.infra.dockerImage,
@@ -143,6 +147,9 @@ export function relationalReplaceArgv(spec: DbCloneSpec): { argv: string[]; secr
     'run', '--rm', '-i', '--pull', 'never',
     '--network', `container:${c}`,
     '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
+    // 数据库隔离克隆会在部署期间自动跑，dump/import 是 CPU 与磁盘密集的一段，
+    // 和其它托管负载一样挂低权重 slice（Codex PR #1516 十四轮 P2）。
+    ...workloadCgroupArgv(),
     '--entrypoint', 'sh',
     ...conn.envFlags,
     spec.infra.dockerImage,

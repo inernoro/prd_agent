@@ -20,6 +20,7 @@ import { buildPreviewUrlForProject } from './comment-template.js';
 import { isReleaseRunTerminal, isSuccessfulReleaseRun } from './release-retention.js';
 import { isTimerDrivenSchedule, selectPushRuleJobs, type PushRuleContext } from './release-push-rules.js';
 import type { ReleasePreflightResult, ReleaseStartInput, ReleaseTargetBusyState } from './release-service.js';
+import { workloadCgroupArgv } from './workload-cgroup.js';
 
 /**
  * 定时发布需要的**最小** ReleaseService 面。ReleaseService 结构上天然满足它。
@@ -1036,6 +1037,9 @@ function buildDockerSandboxCommand(input: {
     'docker',
     'run',
     '--rm',
+    // 定时命令作业无人值守地跑，同样是托管负载，挂低权重 slice
+    // （Codex PR #1516 十四轮 P2）。
+    ...workloadCgroupArgv(),
     ...(input.dockerNetwork ? ['--network', input.dockerNetwork] : []),
     '-v',
     `${input.hostSandboxRoot}:/workspace:rw`,
