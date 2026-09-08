@@ -106,7 +106,7 @@ describe('任务调度页的接线', () => {
    * 红绿闭环：把 lg:flex 换回 md:flex，本用例立刻红。
    */
   it('固定宽的统计段要等到宽度够了才露，不能挤掉结论条', () => {
-    expect(src, '统计段仍从 md 就露，768px 那一档会挤掉结论条').not.toMatch(/hidden shrink-0 items-stretch md:flex/);
+    expect(src, '统计段仍从 md 就露，48rem 那一档会挤掉结论条').not.toMatch(/hidden shrink-0 items-stretch md:flex/);
     expect(src).toContain('hidden shrink-0 items-stretch lg:flex');
   });
 

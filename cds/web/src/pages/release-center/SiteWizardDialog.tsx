@@ -113,7 +113,7 @@ export function SiteWizardDialog({
   );
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(896px, calc(100vw - 32px))' }}>
+      <DialogContent className="max-w-none" style={{ width: 'min(56rem, calc(100vw - 2rem))' }}>
         <DialogHeader>
           <DialogTitle>{draft.id ? '配置环境' : '添加环境'}</DialogTitle>
         </DialogHeader>
@@ -135,7 +135,7 @@ export function SiteWizardDialog({
               </button>
             ))}
           </nav>
-          <div className="min-h-[360px] space-y-4">
+          <div className="min-h-[22.5rem] space-y-4">
             {step === 'server' ? (
               <WizardPanel title="选择服务器" description="站点会发布到这台服务器的站点目录。没有现成的就在这里直接加一台，不用离开这个向导。">
                 {hosts.length === 0 ? (

@@ -133,7 +133,7 @@ export function AccessRequestInbox({
                 {primary.purpose}
               </p>
             ) : null}
-            <p className="mt-2 text-[11px] text-muted-foreground">
+            <p className="mt-2 text-[0.6875rem] text-muted-foreground">
               {new Date(primary.createdAt).toLocaleString('zh-CN')}，授权内容只会交付给发起方一次
             </p>
           </div>
@@ -176,8 +176,8 @@ export function AccessRequestInbox({
     ? createPortal((
       <div
         data-testid="cds-access-request-floating"
-        className="pointer-events-auto fixed bottom-[84px] right-5 z-[210] max-h-[calc(100dvh-104px)]
-                   w-[min(420px,calc(100vw-40px))] overflow-y-auto"
+        className="pointer-events-auto fixed bottom-[5.25rem] right-5 z-[210] max-h-[calc(100dvh-104px)]
+                   w-[min(26.25rem,calc(100vw-40px))] overflow-y-auto"
       >
         {primaryCard}
       </div>
@@ -191,7 +191,7 @@ export function AccessRequestInbox({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
           className="max-w-3xl overflow-hidden"
-          style={{ maxHeight: 'min(780px, calc(100dvh - 32px))' }}
+          style={{ maxHeight: 'min(48.75rem, calc(100dvh - 2rem))' }}
         >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">

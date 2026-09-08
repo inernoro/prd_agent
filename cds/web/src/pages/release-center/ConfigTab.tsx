@@ -77,7 +77,7 @@ export function ConfigTab({ row, publicUrl, onConfigure, onArchive }: ConfigTabP
         </div>
         <p className="mt-1.5 text-xs text-muted-foreground">{strategyDescription(row)}</p>
         <pre
-          className="mt-3 max-h-[46vh] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6"
+          className="mt-3 max-h-[46vh] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[0.7188rem] leading-6"
         >
           {scripts.join('\n')}
         </pre>
@@ -86,7 +86,7 @@ export function ConfigTab({ row, publicUrl, onConfigure, onArchive }: ConfigTabP
       {strategy?.detectedFrom && strategy.detectedFrom.length > 0 ? (
         <section className="cds-surface-raised cds-hairline rounded-lg p-4">
           <SectionLabel>探测依据</SectionLabel>
-          <ul className="mt-2 flex flex-col gap-1 text-[12.5px] text-muted-foreground">
+          <ul className="mt-2 flex flex-col gap-1 text-[0.7812rem] text-muted-foreground">
             {strategy.detectedFrom.map((item) => (
               <li key={item} className="font-mono">{item}</li>
             ))}

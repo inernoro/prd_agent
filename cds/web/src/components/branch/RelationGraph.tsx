@@ -216,7 +216,7 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
   const dim = (touch: boolean): number => (!highlight ? 1 : touch ? 1 : 0.28);
   return (
     <div ref={hostRef} className={className} style={{ position: 'relative', overflow: compact ? 'hidden' : 'auto', ...style }} data-testid="relation-graph">
-      <div style={{ position: 'relative', width: layout.width, height: layout.height, transform: scale !== 1 ? `scale(${scale})` : undefined, transformOrigin: 'top left', marginBottom: scale !== 1 ? -(layout.height * (1 - scale)) : undefined, marginLeft: compact ? 4 : Math.max(0, (hostW - layout.width * scale) / 2), marginRight: scale !== 1 ? -(layout.width * (1 - scale)) : undefined, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}>
+      <div style={{ position: 'relative', width: layout.width, height: layout.height, transform: scale !== 1 ? `scale(${scale})` : undefined, transformOrigin: 'top left', marginBottom: scale !== 1 ? -(layout.height * (1 - scale)) : undefined, marginLeft: compact ? 4 : Math.max(0, (hostW - layout.width * scale) / 2), marginRight: scale !== 1 ? -(layout.width * (1 - scale)) : undefined, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '1.625rem 1.625rem' }}>
         <svg width={layout.width} height={layout.height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
           <defs>
             <marker id="rgArr" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="hsl(var(--muted-foreground))" /></marker>
@@ -249,9 +249,9 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
             );
           })}
         </svg>
-        <div className="cds-surface-raised cds-hairline" style={{ position: 'absolute', left: layout.entry.x, top: layout.entry.y, width: layout.entry.w, height: layout.entry.h, borderRadius: 12, padding: '8px 10px', fontSize: 12 }}>
-          <div className="flex items-center gap-2 font-bold"><span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground" style={{ background: tone('--graph-call') }}>GW</span>入口</div>
-          <div className="mt-1 truncate text-[10px] text-muted-foreground">{payload.branch} · forwarder 按 host 与前缀分流</div>
+        <div className="cds-surface-raised cds-hairline" style={{ position: 'absolute', left: layout.entry.x, top: layout.entry.y, width: layout.entry.w, height: layout.entry.h, borderRadius: 12, padding: '0.5rem 0.625rem', fontSize: 12 }}>
+          <div className="flex items-center gap-2 font-bold"><span className="inline-flex h-[1.375rem] w-[1.375rem] items-center justify-center rounded-md text-[0.5625rem] font-extrabold text-primary-foreground" style={{ background: tone('--graph-call') }}>GW</span>入口</div>
+          <div className="mt-1 truncate text-[0.625rem] text-muted-foreground">{payload.branch} · forwarder 按 host 与前缀分流</div>
         </div>
         {Array.from(layout.pos.entries()).map(([id, p]) => {
           const realId = layout.aliasOf.get(id) ?? id;
@@ -264,33 +264,33 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
           const color = tone(token);
           return (
             <div key={id} className="bg-background" data-node={id} data-role={isInfra ? 'infra' : role}
-              style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, borderRadius: 12, border: `1.5px solid ${bad.some((f) => f.severity === 'error') ? 'hsl(var(--bad) / .7)' : bad.length ? 'hsl(var(--warn) / .7)' : tone(token, 0.35)}`, boxShadow: '0 4px 12px hsl(0 0% 0% / .25)', fontSize: 12, opacity: dim(!highlight || realId === highlight) }}>
-              <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
-                <span className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground ${!isInfra && n.roleSource && n.roleSource !== 'declared' ? 'border border-dashed border-primary-foreground/70' : ''}`} style={{ background: color }} title={n.roleReason}>
+              style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, borderRadius: 12, border: `1.5px solid ${bad.some((f) => f.severity === 'error') ? 'hsl(var(--bad) / .7)' : bad.length ? 'hsl(var(--warn) / .7)' : tone(token, 0.35)}`, boxShadow: '0 0.25rem 0.75rem hsl(0 0% 0% / .25)', fontSize: 12, opacity: dim(!highlight || realId === highlight) }}>
+              <div className="flex items-center gap-2 px-2.5 pt-2 text-[0.8125rem] font-bold">
+                <span className={`inline-flex h-[1.375rem] w-[1.375rem] shrink-0 items-center justify-center rounded-md text-[0.5625rem] font-extrabold text-primary-foreground ${!isInfra && n.roleSource && n.roleSource !== 'declared' ? 'border border-dashed border-primary-foreground/70' : ''}`} style={{ background: color }} title={n.roleReason}>
                   {isInfra ? (/redis/i.test(n.dockerImage || n.id) ? 'R' : 'DB') : ROLE_LABEL[role]}
                 </span>
-                <span className="min-w-0 flex-1 truncate" title={realId}>{n.name || realId}{id !== realId ? <span className="ml-1 text-[9px] font-normal text-muted-foreground">同一服务</span> : null}</span>
-                {bad.length > 0 ? <span className={`inline-flex h-[16px] shrink-0 items-center rounded-full border px-1.5 text-[9px] font-semibold ${bad.some((f) => f.severity === 'error') ? 'border-destructive/60 text-destructive' : 'border-warn/60 bg-warn-soft text-warn'}`} title={bad.map((f) => f.message).join('\n')}>{bad.length} 问题</span> : null}
+                <span className="min-w-0 flex-1 truncate" title={realId}>{n.name || realId}{id !== realId ? <span className="ml-1 text-[0.5625rem] font-normal text-muted-foreground">同一服务</span> : null}</span>
+                {bad.length > 0 ? <span className={`inline-flex h-[1rem] shrink-0 items-center rounded-full border px-1.5 text-[0.5625rem] font-semibold ${bad.some((f) => f.severity === 'error') ? 'border-destructive/60 text-destructive' : 'border-warn/60 bg-warn-soft text-warn'}`} title={bad.map((f) => f.message).join('\n')}>{bad.length} 问题</span> : null}
               </div>
-              <div className="truncate px-2.5 pb-1 text-[10px] text-muted-foreground">
+              <div className="truncate px-2.5 pb-1 text-[0.625rem] text-muted-foreground">
                 {isInfra ? '共享实例' : n.subdomain ? `子域 ${n.subdomain}` : (n.pathPrefixes ?? []).join(' ') || '内网'}
               </div>
             </div>
           );
         })}
         {layout.externals.map((e) => (
-          <div key={e.id} className="bg-background" data-node={e.id} style={{ position: 'absolute', left: e.pos.x, top: e.pos.y, width: e.pos.w, height: e.pos.h, borderRadius: 12, border: `1.5px solid ${e.broken ? 'hsl(var(--bad) / .7)' : 'hsl(var(--info) / .5)'}`, fontSize: 12, boxShadow: '0 4px 12px hsl(0 0% 0% / .25)' }}>
-            <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
-              <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground" style={{ background: tone('--graph-external') }}>EXT</span>
+          <div key={e.id} className="bg-background" data-node={e.id} style={{ position: 'absolute', left: e.pos.x, top: e.pos.y, width: e.pos.w, height: e.pos.h, borderRadius: 12, border: `1.5px solid ${e.broken ? 'hsl(var(--bad) / .7)' : 'hsl(var(--info) / .5)'}`, fontSize: 12, boxShadow: '0 0.25rem 0.75rem hsl(0 0% 0% / .25)' }}>
+            <div className="flex items-center gap-2 px-2.5 pt-2 text-[0.8125rem] font-bold">
+              <span className="inline-flex h-[1.375rem] w-[1.375rem] shrink-0 items-center justify-center rounded-md text-[0.5625rem] font-extrabold text-primary-foreground" style={{ background: tone('--graph-external') }}>EXT</span>
               <span className="min-w-0 flex-1 truncate">{e.label}</span>
-              <span className={`inline-flex h-[16px] shrink-0 items-center rounded-full border px-1.5 text-[9px] font-semibold ${e.broken ? 'border-destructive/60 text-destructive' : 'border-ok/50 bg-ok-soft text-ok'}`}>{e.broken ? (e.status === 'running' ? '可达' : e.status === 'stopped' ? '已停止' : '断裂') : '可达'}</span>
+              <span className={`inline-flex h-[1rem] shrink-0 items-center rounded-full border px-1.5 text-[0.5625rem] font-semibold ${e.broken ? 'border-destructive/60 text-destructive' : 'border-ok/50 bg-ok-soft text-ok'}`}>{e.broken ? (e.status === 'running' ? '可达' : e.status === 'stopped' ? '已停止' : '断裂') : '可达'}</span>
             </div>
-            <div className="truncate px-2.5 pb-1 text-[10px] text-muted-foreground" title={e.sub}>{e.sub}</div>
+            <div className="truncate px-2.5 pb-1 text-[0.625rem] text-muted-foreground" title={e.sub}>{e.sub}</div>
           </div>
         ))}
       </div>
       {!compact ? (
-        <div className="cds-surface-raised cds-hairline sticky bottom-2 left-2 mt-2 inline-flex items-center gap-4 rounded-md px-3 py-1.5 text-[10px] text-muted-foreground">
+        <div className="cds-surface-raised cds-hairline sticky bottom-2 left-2 mt-2 inline-flex items-center gap-4 rounded-md px-3 py-1.5 text-[0.625rem] text-muted-foreground">
           <span>虚线框 = 同一 host</span><span>灰线 = 入口分流 / 前缀分流</span><span style={{ color: tone('--graph-call') }}>紫线 = 环境变量引用 / 调用</span><span className="text-info">蓝线 = 跨项目引用</span><span className="text-destructive">红线 = 断裂</span><span>徽标虚边 = 角色是推断的</span>
         </div>
       ) : null}

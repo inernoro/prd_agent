@@ -140,14 +140,14 @@ function BranchListSkeleton(): JSX.Element {
           label="加载项目与本地分支列表"
           size="sm"
           mineral="iris"
-          className="text-[13px] font-medium text-muted-foreground"
+          className="text-[0.8125rem] font-medium text-muted-foreground"
         />
       </div>
       <div className="cds-branch-card-grid">
         {BRANCH_SKELETON_TITLE_WIDTHS.map((width, index) => (
           <article
             key={index}
-            className="flex min-h-[244px] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
+            className="flex min-h-[15.25rem] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
           >
             {/* 头部:分支名 + 状态徽标 */}
             <div className="flex items-center justify-between gap-3 px-5 pt-5">
@@ -4110,12 +4110,12 @@ function ProjectSwitcher({
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium">{displayName(p)}</span>
                 {meta ? (
-                  <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+                  <span className="mt-0.5 block truncate font-mono text-[0.6875rem] text-muted-foreground">
                     {meta}
                   </span>
                 ) : null}
               </span>
-              {isCurrent ? <span className="mt-0.5 shrink-0 text-[10px] text-muted-foreground">当前</span> : null}
+              {isCurrent ? <span className="mt-0.5 shrink-0 text-[0.625rem] text-muted-foreground">当前</span> : null}
             </span>
           </DropdownItem>
         );
@@ -4172,7 +4172,7 @@ function BranchSearchDropdown({
 
   return (
     <div
-      className="cds-overlay-anim absolute left-0 right-0 top-full z-30 mt-2 max-h-[460px] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
+      className="cds-overlay-anim absolute left-0 right-0 top-full z-30 mt-2 max-h-[28.75rem] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
       role="listbox"
       aria-label="分支建议"
     >
@@ -4180,7 +4180,7 @@ function BranchSearchDropdown({
           (选中已跟踪分支只是聚焦卡片,不创建,忽略此项)。默认「项目模板」= 不派生。 */}
       {sourceCandidates.length > 0 ? (
         <div className="flex items-center gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-4 py-2">
-          <label htmlFor="cds-config-source" className="shrink-0 text-[11px] font-medium text-muted-foreground">
+          <label htmlFor="cds-config-source" className="shrink-0 text-[0.6875rem] font-medium text-muted-foreground">
             配置来源
           </label>
           <select
@@ -4199,7 +4199,7 @@ function BranchSearchDropdown({
           </select>
         </div>
       ) : null}
-      <div className="max-h-[420px] overflow-y-auto py-1">
+      <div className="max-h-[26.25rem] overflow-y-auto py-1">
         {empty ? (
           <div className="px-4 py-6 text-center text-sm text-muted-foreground">
             没有匹配的分支。按 Enter 直接尝试以「{query.trim() || '...'}」预览。
@@ -4208,7 +4208,7 @@ function BranchSearchDropdown({
 
         {visibleTracked.length > 0 ? (
           <>
-            <div className="px-4 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+            <div className="px-4 pt-2 pb-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
               已跟踪 · {visibleTracked.length}
             </div>
             {visibleTracked.map((branch) => {
@@ -4228,7 +4228,7 @@ function BranchSearchDropdown({
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{branch.branch}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">
+                    <span className="block truncate text-[0.6875rem] text-muted-foreground">
                       {statusLabel(branch.status)} · 服务 {runningServiceCount(branch)}/{serviceCount(branch)} · {timeBadge.label} {timeBadge.text}
                     </span>
                   </span>
@@ -4241,7 +4241,7 @@ function BranchSearchDropdown({
         ) : null}
 
         {remoteLoading && visibleRemote.length === 0 ? (
-          <div className="px-4 py-3 text-[11px] text-muted-foreground/80">
+          <div className="px-4 py-3 text-[0.6875rem] text-muted-foreground/80">
             <Loader2 className="mr-1.5 inline h-3 w-3 animate-spin" />
             远程分支加载中…
           </div>
@@ -4253,12 +4253,12 @@ function BranchSearchDropdown({
             有任何本地分支 hint 就消失,用户无法发现新远程分支。footer 里的
             「刷新远程」永久按钮兜底 hint 可见性,这里只在空 remote 时给醒目提示。 */}
         {!remoteLoading && visibleRemote.length === 0 ? (
-          <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-4 py-2.5 text-[11px] text-muted-foreground">
+          <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-4 py-2.5 text-[0.6875rem] text-muted-foreground">
             <span>远程分支缓存为空。</span>
             <button
               type="button"
               onClick={onForceFetchRemote}
-              className="rounded px-2 py-1 text-[11px] font-medium text-foreground hover:bg-[hsl(var(--surface-sunken))]"
+              className="rounded px-2 py-1 text-[0.6875rem] font-medium text-foreground hover:bg-[hsl(var(--surface-sunken))]"
             >
               <RefreshCw className="mr-1 inline h-3 w-3" />
               拉取远程(可能 ~10s)
@@ -4268,7 +4268,7 @@ function BranchSearchDropdown({
 
         {visibleRemote.length > 0 ? (
           <>
-            <div className="flex items-center gap-2 px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+            <div className="flex items-center gap-2 px-4 pb-1 pt-3 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
               <span>远程 · {visibleRemote.length}</span>
               {remoteLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
             </div>
@@ -4287,12 +4287,12 @@ function BranchSearchDropdown({
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="truncate text-sm font-medium">{remoteBranch.name}</span>
                       {remoteBranch.isDefault ? (
-                        <span className="shrink-0 rounded border border-info/35 bg-info-soft px-1.5 py-0.5 text-[10px] text-info">
+                        <span className="shrink-0 rounded border border-info/35 bg-info-soft px-1.5 py-0.5 text-[0.625rem] text-info">
                           默认分支
                         </span>
                       ) : null}
                     </span>
-                    <span className="block truncate text-[11px] text-muted-foreground">
+                    <span className="block truncate text-[0.6875rem] text-muted-foreground">
                       {remoteBranch.subject || remoteBranch.author || '部署并预览'}
                     </span>
                   </span>
@@ -4303,7 +4303,7 @@ function BranchSearchDropdown({
           </>
         ) : null}
       </div>
-      <div className="flex items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-4 py-2 text-[11px] text-muted-foreground">
+      <div className="flex items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-4 py-2 text-[0.6875rem] text-muted-foreground">
         <span>↑↓ 浏览 · Enter 预览 · Esc 关闭</span>
         <div className="flex items-center gap-2">
           <span>{visibleTracked.length + visibleRemote.length} 项</span>
@@ -4314,7 +4314,7 @@ function BranchSearchDropdown({
             onClick={onForceFetchRemote}
             disabled={remoteLoading}
             title="重新拉取 origin 远程分支(可能 ~10s)"
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] hover:bg-[hsl(var(--surface-raised))] disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem] hover:bg-[hsl(var(--surface-raised))] disabled:opacity-50"
           >
             {remoteLoading ? (
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -4474,7 +4474,7 @@ function ReleaseBranchDialog({
 
   return (
     <Dialog open={!!branch} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(768px, calc(100vw - 32px))' }}>
+      <DialogContent className="max-w-none" style={{ width: 'min(48rem, calc(100vw - 2rem))' }}>
         <DialogHeader>
           <DialogTitle>发布 {branch?.branch}</DialogTitle>
           <DialogDescription>从已验收预览分支发布到站点。</DialogDescription>
@@ -4613,7 +4613,7 @@ function ReleaseBranchDialog({
                           </div>
                           {longMessage && scriptOpen ? (
                             <div className="mx-3 mb-2 max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
-                              <pre className="p-2.5 font-mono text-[11px] leading-5 text-muted-foreground" style={{ whiteSpace: 'pre', minWidth: 'max-content' }}>{check.message}</pre>
+                              <pre className="p-2.5 font-mono text-[0.6875rem] leading-5 text-muted-foreground" style={{ whiteSpace: 'pre', minWidth: 'max-content' }}>{check.message}</pre>
                             </div>
                           ) : null}
                         </div>
@@ -5097,7 +5097,7 @@ function ReplicaGroupCard({ branch, groupIndex, group, previewBase, onDetail }: 
   const bad = entries.some(([, m]) => m.status === 'error');
   const projectId = (branch as { projectId?: string }).projectId;
   return (
-    <div className={`relative flex min-h-[244px] flex-col rounded-xl border-2 bg-[hsl(var(--surface-raised))] ${bad ? 'border-destructive/60' : 'border-indigo-500/55'}`}
+    <div className={`relative flex min-h-[15.25rem] flex-col rounded-xl border-2 bg-[hsl(var(--surface-raised))] ${bad ? 'border-destructive/60' : 'border-indigo-500/55'}`}
       title={`由 ${branch.branch} 复制出的项目级复制集实例组（非独立 git 分支）：每个容器的第 ${groupIndex + 1} 个副本，入口已按权重负载`}>
       <div className="flex items-center gap-2 px-5 pt-4">
         <Layers className="h-4 w-4 shrink-0 text-indigo-500" />
@@ -5120,7 +5120,7 @@ function ReplicaGroupCard({ branch, groupIndex, group, previewBase, onDetail }: 
         })}
       </div>
       <div className="px-5 pt-3">
-        <span className="inline-flex rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-500">复制集成员 · 入口已负载 · 非独立分支</span>
+        <span className="inline-flex rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[0.625rem] font-semibold text-indigo-500">复制集成员 · 入口已负载 · 非独立分支</span>
       </div>
       <div className="mt-auto flex items-center justify-between gap-3 px-5 pb-4 pt-3">
         <Button type="button" variant="outline" size="sm" onClick={onDetail}>打开详情</Button>
@@ -5427,12 +5427,12 @@ const BranchCard = memo(function BranchCard({
   };
   const commitHistoryPanel = commitMenuOpen ? (
     <div
-      className="absolute bottom-[calc(100%+8px)] left-0 z-[140] w-[min(360px,calc(100vw-48px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
+      className="absolute bottom-[calc(100%+0.5rem)] left-0 z-[140] w-[min(22.5rem,calc(100vw-48px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
       role="menu"
       aria-label={`${branch.branch} 最近提交`}
       onClick={(event) => event.stopPropagation()}
     >
-      <div className="mb-1 flex items-center justify-between gap-2 px-1.5 text-[11px] text-muted-foreground">
+      <div className="mb-1 flex items-center justify-between gap-2 px-1.5 text-[0.6875rem] text-muted-foreground">
         <span>最近提交</span>
         <span className="truncate font-mono">{branch.branch}</span>
       </div>
@@ -5459,7 +5459,7 @@ const BranchCard = memo(function BranchCard({
               <span className="block truncate font-mono text-muted-foreground">{commit.hash}</span>
               <span className="min-w-0">
                 <span className="block truncate text-foreground">{commit.subject || '未命名提交'}</span>
-                <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                <span className="mt-0.5 block truncate text-[0.6875rem] text-muted-foreground">
                   {[commit.author, commit.date].filter(Boolean).join(' · ')}
                 </span>
               </span>
@@ -5473,7 +5473,7 @@ const BranchCard = memo(function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[244px] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
+      className={`group relative flex min-h-[15.25rem] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
         isError
           ? branchIssueCardClass(branch)
           : 'cds-branch-card border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
@@ -5531,7 +5531,7 @@ const BranchCard = memo(function BranchCard({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
               <h3
-                className="cds-branch-name min-w-0 flex-1 truncate text-[17px] font-semibold leading-7"
+                className="cds-branch-name min-w-0 flex-1 truncate text-[1.0625rem] font-semibold leading-7"
                 title={branch.branch}
               >
                 {/* AI 活跃时标题不再扫光：环境光 + 进度轨 + 徽章环已经承担了
@@ -5545,7 +5545,7 @@ const BranchCard = memo(function BranchCard({
               {isAiOperated ? (
                 <button
                   type="button"
-                  className={`relative inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-semibold transition-colors ${isAiActive ? 'cds-ai-badge-ring' : ''} ${aiBadgeClass(aiState.status)}`}
+                  className={`relative inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[0.625rem] font-semibold transition-colors ${isAiActive ? 'cds-ai-badge-ring' : ''} ${aiBadgeClass(aiState.status)}`}
                   title={aiTitle}
                   aria-expanded={aiPanelOpen}
                   onClick={(event) => {
@@ -5582,7 +5582,7 @@ const BranchCard = memo(function BranchCard({
 
       {aiPanelOpen && isAiOperated ? (
         <div
-          className="absolute right-4 top-14 z-[130] w-[min(340px,calc(100%-32px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-3 text-xs shadow-2xl"
+          className="absolute right-4 top-14 z-[130] w-[min(21.25rem,calc(100%-32px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-3 text-xs shadow-2xl"
           role="dialog"
           aria-label={`${branch.branch} AI 操作记录`}
           onClick={(event) => event.stopPropagation()}
@@ -5596,7 +5596,7 @@ const BranchCard = memo(function BranchCard({
               <Bot className={`h-4 w-4 ${isAiActive ? 'text-info' : aiState.status === 'timeout' ? 'text-warn' : 'text-muted-foreground'}`} />
               <span className="truncate">{aiState.label}</span>
               {recentAiAgent ? (
-                <span className="max-w-[120px] truncate rounded border border-info/25 bg-info/10 px-1.5 py-0.5 text-[10px] text-info">
+                <span className="max-w-[7.5rem] truncate rounded border border-info/25 bg-info/10 px-1.5 py-0.5 text-[0.625rem] text-info">
                   {recentAiAgent}
                 </span>
               ) : null}
@@ -5635,7 +5635,7 @@ const BranchCard = memo(function BranchCard({
             </div>
             <div className="flex justify-between gap-3">
               <span>最近 Agent</span>
-              <span className="min-w-0 max-w-[180px] truncate text-foreground">{recentAiAgent || '-'}</span>
+              <span className="min-w-0 max-w-[11.25rem] truncate text-foreground">{recentAiAgent || '-'}</span>
             </div>
           </div>
           <div className="mt-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-3 py-2 leading-5 text-muted-foreground">
@@ -5646,7 +5646,7 @@ const BranchCard = memo(function BranchCard({
                 : '当前分支未处于 AI 活跃窗口，视为 AI 已释放。'}
           </div>
           <div className="mt-3">
-            <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">最近 AI 记录</div>
+            <div className="mb-1.5 text-[0.6875rem] font-medium text-muted-foreground">最近 AI 记录</div>
             {activityEvents.length > 0 ? (
               <div className="max-h-32 space-y-1 overflow-auto pr-1">
                 {activityEvents.map((event) => (
@@ -5656,7 +5656,7 @@ const BranchCard = memo(function BranchCard({
                       <span className="min-w-0 flex-1 truncate text-foreground">{activityLabel(event)}</span>
                       <span className="font-mono text-muted-foreground">{formatDuration(event.duration)}</span>
                     </div>
-                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <div className="mt-1 flex items-center gap-2 text-[0.6875rem] text-muted-foreground">
                       <span>{activitySourceLabel(event)}</span>
                       <span>{formatShortTime(event.ts)}</span>
                     </div>
@@ -5822,7 +5822,7 @@ const BranchCard = memo(function BranchCard({
             {!isError && branch.lastStopSource === 'scheduler' ? (
               <button
                 type="button"
-                className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[0.625rem] font-medium text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
                 title="设置降温条件：修改调度器空闲阈值（CDS 系统设置，全部分支生效，保存即刻生效）"
                 onClick={(e) => { e.stopPropagation(); setCoolEditOpen(true); }}
               >
@@ -5989,7 +5989,7 @@ const BranchCard = memo(function BranchCard({
                     onClick={(event) => event.stopPropagation()}
                   >
                     <div
-                      className="flex max-w-[min(320px,calc(100vw-48px))] flex-wrap gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
+                      className="flex max-w-[min(20rem,calc(100vw-48px))] flex-wrap gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
                       role="menu"
                       aria-label="全部服务端口"
                     >
@@ -6021,15 +6021,15 @@ const BranchCard = memo(function BranchCard({
                 弱化方案(弱化过头,用户建立不了基础容器心智)。 */}
             {infraResources.length > 0 ? (
               <span
-                className="inline-flex min-w-0 shrink-0 flex-wrap items-center gap-1 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))]/40 py-[3px] pl-1 pr-[5px]"
+                className="inline-flex min-w-0 shrink-0 flex-wrap items-center gap-1 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))]/40 py-[3px] pl-1 pr-[0.3125rem]"
                 title="基础容器：分支间共享的基础设施依赖"
               >
-                <span className="px-1 text-[10px] font-semibold tracking-wider text-muted-foreground/75" aria-hidden>基础</span>
+                <span className="px-1 text-[0.625rem] font-semibold tracking-wider text-muted-foreground/75" aria-hidden>基础</span>
                 {infraResources.map((resource) => (
                   <button
                     key={resource.id}
                     type="button"
-                    className="inline-flex h-[21px] shrink-0 items-center gap-1 rounded-[5px] bg-[hsl(var(--surface-raised))] px-1.5 text-xs text-foreground/75 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                    className="inline-flex h-[1.3125rem] shrink-0 items-center gap-1 rounded-[0.3125rem] bg-[hsl(var(--surface-raised))] px-1.5 text-xs text-foreground/75 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                     title={`${resource.displayName}（基础容器 · 分支间共享）\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
                     aria-label={`打开 ${resource.displayName} 基础容器资源面板`}
                     onClick={(event) => {
@@ -6039,8 +6039,8 @@ const BranchCard = memo(function BranchCard({
                   >
                     {resource.status === 'error' ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" aria-hidden /> : null}
                     <ResourceIcon resource={resource} className="h-3 w-3 shrink-0" />
-                    <span className="text-[11px] font-semibold">{infraShortName(resource.runtime)}</span>
-                    {typeof resource.port === 'number' ? <span className="font-mono text-[11px] text-muted-foreground">:{resource.port}</span> : null}
+                    <span className="text-[0.6875rem] font-semibold">{infraShortName(resource.runtime)}</span>
+                    {typeof resource.port === 'number' ? <span className="font-mono text-[0.6875rem] text-muted-foreground">:{resource.port}</span> : null}
                   </button>
                 ))}
               </span>
@@ -6116,7 +6116,7 @@ const BranchCard = memo(function BranchCard({
             return (
               <span
                 key={tag}
-                className={`group/tag inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[11px] font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-colors ${
+                className={`group/tag inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[0.6875rem] font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-colors ${
                   isActive
                     ? 'border-primary/45 bg-primary/15 text-primary'
                     : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-foreground/75 hover:border-primary/40 hover:bg-primary/10 hover:text-primary'
@@ -6124,7 +6124,7 @@ const BranchCard = memo(function BranchCard({
                 title={`标签: ${tag}`}
               >
                 <Tags className="h-3 w-3 shrink-0" aria-hidden />
-                <span className="max-w-[120px] truncate">{tag}</span>
+                <span className="max-w-[7.5rem] truncate">{tag}</span>
                 <button
                   type="button"
                   onClick={(event) => {
@@ -6148,7 +6148,7 @@ const BranchCard = memo(function BranchCard({
                 event.stopPropagation();
                 onEditTags();
               }}
-              className="inline-flex h-6 items-center rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+              className="inline-flex h-6 items-center rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[0.6875rem] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
               title="编辑全部标签"
             >
               +{(branch.tags || []).length - 3}
@@ -6162,7 +6162,7 @@ const BranchCard = memo(function BranchCard({
               setTagDeleteTarget(null);
               setTagDraftError('');
             }}
-            className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/45 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+            className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:border-primary/45 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             title="添加标签"
             aria-expanded={tagEditorOpen}
           >
@@ -6171,7 +6171,7 @@ const BranchCard = memo(function BranchCard({
           </button>
           {tagEditorOpen ? (
             <form
-              className="absolute left-5 top-[calc(100%-4px)] z-30 w-[min(280px,calc(100%-40px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl"
+              className="absolute left-5 top-[calc(100%-4px)] z-30 w-[min(17.5rem,calc(100%-40px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl"
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => {
                 event.stopPropagation();
@@ -6186,7 +6186,7 @@ const BranchCard = memo(function BranchCard({
                 void submitTagDraft();
               }}
             >
-              <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+              <label className="mb-1.5 flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
                 <Tags className="h-3 w-3" aria-hidden />
                 新标签
               </label>
@@ -6208,12 +6208,12 @@ const BranchCard = memo(function BranchCard({
                   添加
                 </button>
               </div>
-              {tagDraftError ? <div className="mt-1.5 text-[11px] text-destructive">{tagDraftError}</div> : null}
+              {tagDraftError ? <div className="mt-1.5 text-[0.6875rem] text-destructive">{tagDraftError}</div> : null}
             </form>
           ) : null}
           {tagDeleteTarget && onRemoveTag ? (
             <div
-              className="absolute left-5 top-[calc(100%-4px)] z-[120] w-[min(300px,calc(100%-40px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-2xl"
+              className="absolute left-5 top-[calc(100%-4px)] z-[120] w-[min(18.75rem,calc(100%-40px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-2xl"
               role="dialog"
               aria-label={`删除标签 ${tagDeleteTarget}`}
               onClick={(event) => event.stopPropagation()}
@@ -6222,7 +6222,7 @@ const BranchCard = memo(function BranchCard({
                 if (event.key === 'Escape') setTagDeleteTarget(null);
               }}
             >
-              <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+              <div className="mb-1.5 flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
                 <Tags className="h-3 w-3" aria-hidden />
                 删除标签
               </div>
@@ -6279,9 +6279,9 @@ const BranchCard = memo(function BranchCard({
         ) : null}
         <div className="relative min-w-0 pr-2 text-muted-foreground">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
+            <div className="flex min-w-[3.375rem] max-w-[5.875rem] shrink-0 flex-col items-center gap-1" title={builderTitle}>
               <div
-                className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+                className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[0.6875rem] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
                 aria-label={builderTitle}
               >
                 <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
@@ -6305,14 +6305,14 @@ const BranchCard = memo(function BranchCard({
                 ) : null}
               </div>
               {footerBuilder ? (
-                <span className={`block max-w-full break-all text-center text-[10px] font-medium leading-tight ${actorNameGlowClass}`}>
+                <span className={`block max-w-full break-all text-center text-[0.625rem] font-medium leading-tight ${actorNameGlowClass}`}>
                   {footerBuilder}
                 </span>
               ) : null}
             </div>
             <div className="relative flex min-w-0 flex-1 items-center gap-2">
               {footerSha ? (
-                <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground" title={`commit ${footerSha}`}>
+                <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`commit ${footerSha}`}>
                   {footerSha}
                 </span>
               ) : null}
@@ -6320,7 +6320,7 @@ const BranchCard = memo(function BranchCard({
                   是静态信息且右边的提交历史下拉一点就能看到。AI 一释放就还回去。 */}
               {deployProgress ? (
                 <span
-                  className="branch-build-elapsed flex min-w-0 flex-1 items-center gap-2 text-[13px]"
+                  className="branch-build-elapsed flex min-w-0 flex-1 items-center gap-2 text-[0.8125rem]"
                   data-since={busySince || ''}
                   title={deployProgress.title}
                 >
@@ -6353,7 +6353,7 @@ const BranchCard = memo(function BranchCard({
                   ) : (
                     <AiRail state={aiRail} orientation="h" />
                   )}
-                  <span className="cds-ai-activity-text min-w-0 flex-1 truncate text-[12px]">
+                  <span className="cds-ai-activity-text min-w-0 flex-1 truncate text-[0.75rem]">
                     {aiRail.detail}
                     {aiState.relative ? (
                       <span className="cds-ai-activity-meta"> · {aiState.relative}</span>

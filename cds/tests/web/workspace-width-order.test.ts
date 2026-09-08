@@ -59,8 +59,8 @@ describe('Workspace 宽度秩序', () => {
   });
 
   it('宽度只有三档，没有第四个魔数', () => {
-    expect(CSS).toContain('--workspace-standard: 1240px');
-    expect(CSS).toContain('--workspace-wide: 1440px');
+    expect(CSS).toContain('--workspace-standard: 77.5rem');
+    expect(CSS).toContain('--workspace-wide: 90rem');
     // 三档之外的硬编码上限（历史上出现过 1280 / 1360 / 1650 / 3000）
     const magic = [...CSS.matchAll(/max-width:\s*(\d{4})px/g)]
       .map((m) => Number(m[1]))
@@ -70,7 +70,7 @@ describe('Workspace 宽度秩序', () => {
 
   it('卡片网格由可用宽度算列数，不写死列数', () => {
     expect(CSS).toContain('.cds-card-grid');
-    expect(CSS).toContain('repeat(auto-fill, minmax(min(100%, var(--cds-card-min, 380px)), 1fr))');
+    expect(CSS).toContain('repeat(auto-fill, minmax(min(100%, var(--cds-card-min, 23.75rem)), 1fr))');
     // 项目卡曾写死 xl:grid-cols-3，宽屏下永远只有三列
     expect(read('pages/ProjectListPage.tsx')).not.toContain('xl:grid-cols-3');
   });
@@ -84,8 +84,8 @@ describe('Workspace 宽度秩序', () => {
    */
   it('横向留白按视口分档，超宽屏更宽松', () => {
     expect(CSS).toContain('--cds-main-px: 2rem');
-    expect(CSS).toMatch(/@media \(min-width: 1536px\)[\s\S]{0,120}--cds-main-px: 3rem/);
-    expect(CSS).toMatch(/@media \(max-width: 767px\)[\s\S]{0,160}--cds-main-px: 1rem/);
+    expect(CSS).toMatch(/@media \(min-width: 1306px\)[\s\S]{0,120}--cds-main-px: 3rem/);
+    expect(CSS).toMatch(/@media \(max-width: 652px\)[\s\S]{0,160}--cds-main-px: 1rem/);
     expect(CSS).toContain('padding: var(--cds-main-pt) var(--cds-main-px) var(--cds-main-pb)');
     // bleed 必须用同一组变量抵消，不许自己抄一份数值
     expect(CSS).toMatch(/\.cds-workspace--bleed \{[\s\S]{0,200}calc\(var\(--cds-main-px\) \* -1\)/);

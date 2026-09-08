@@ -63,7 +63,7 @@ const HEALTH_TEXT: Record<FleetEnv['health'], string> = {
 };
 
 /** 表头与单元格共用同一套列宽，改一处就够——两处各写一份必然漂移。 */
-const COLUMNS = 'minmax(200px,1fr) 76px 104px 92px 92px 116px 170px 170px 110px 192px';
+const COLUMNS = 'minmax(12.5rem,1fr) 4.75rem 6.5rem 5.75rem 5.75rem 7.25rem 10.625rem 10.625rem 6.875rem 12rem';
 
 function LastReleaseCell({ env, nowMs }: { env: FleetEnv; nowMs: number }): JSX.Element {
   if (!env.lastRelease) return <span className="text-muted-foreground">从未发布</span>;
@@ -81,7 +81,7 @@ function LastReleaseCell({ env, nowMs }: { env: FleetEnv; nowMs: number }): JSX.
       <span className="block truncate text-xs">
         {formatFleetAgo(env.lastRelease.atMs, nowMs)} · {env.lastRelease.by}
       </span>
-      <span className={`block truncate cds-ident text-[10.5px] ${toneClass}`}>{tail}</span>
+      <span className={`block truncate cds-ident text-[0.6562rem] ${toneClass}`}>{tail}</span>
     </span>
   );
 }
@@ -91,7 +91,7 @@ function DoraCell({ env }: { env: FleetEnv }): JSX.Element {
     return (
       <span className="block min-w-0">
         <span className="block text-xs text-muted-foreground">样本不足</span>
-        <span className="block truncate text-[10.5px] text-muted-foreground">近 30 天不足 3 次发布</span>
+        <span className="block truncate text-[0.6562rem] text-muted-foreground">近 30 天不足 3 次发布</span>
       </span>
     );
   }
@@ -102,7 +102,7 @@ function DoraCell({ env }: { env: FleetEnv }): JSX.Element {
   return (
     <span className="block min-w-0">
       <span className="block truncate cds-ident text-xs">{env.dora.deploys} 次 / {cfr} / {mttr}</span>
-      <span className="block truncate text-[10.5px] text-muted-foreground">发布 / 变更失败率 / 恢复</span>
+      <span className="block truncate text-[0.6562rem] text-muted-foreground">发布 / 变更失败率 / 恢复</span>
     </span>
   );
 }
@@ -117,7 +117,7 @@ function CapabilityCell({ env }: { env: FleetEnv }): JSX.Element {
   return (
     <span className="flex flex-wrap gap-1">
       {chips.map((chip) => (
-        <span key={chip.text} className={`rounded-[5px] px-1.5 py-0.5 cds-ident text-[10px] ${chip.className}`}>{chip.text}</span>
+        <span key={chip.text} className={`rounded-[0.3125rem] px-1.5 py-0.5 cds-ident text-[0.625rem] ${chip.className}`}>{chip.text}</span>
       ))}
     </span>
   );
@@ -139,7 +139,7 @@ function RowActions({ env, onInspect, onExecute, tall }: {
 }): JSX.Element {
   // 操作列 192px 要装下三个控件：发布 76 + 回滚 68 + 图标 34 + 两个 4px 间隔 = 186。
   // 之前 gap-1.5 + 默认内边距一共 200+，第三个按钮被挤到第二行。
-  const size = tall ? 'h-11' : 'h-[30px]';
+  const size = tall ? 'h-11' : 'h-[1.875rem]';
   const promote = Boolean(env.promotableSha);
   // 候选已经不是分支 tip 时后端必然拒发。概览卡一直是「灰按钮 + 原因」，
   // 矩阵这里原来照样亮着——让人点一次才知道发不出去。
@@ -192,23 +192,23 @@ export function FleetMatrix({ envs, sort, onSort, nowMs, wide, onInspect, onExec
   const failing = envs.filter((env) => env.health === 'failed').length;
 
   return (
-    <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[14px] border">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-[18px] py-4">
+    <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[0.875rem] border">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-[1.125rem] py-4">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 className="text-sm font-bold">全环境矩阵</h2>
-          <span className="cds-ident text-[11.5px] text-muted-foreground">
+          <span className="cds-ident text-[0.7188rem] text-muted-foreground">
             {envs.length} 个环境 · {enabled} 启用 · {failing} 失败
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-[11px] text-muted-foreground">排序</span>
+          <span className="mr-1 text-[0.6875rem] text-muted-foreground">排序</span>
           {FLEET_SORTS.map((item) => (
             <button
               key={item.key}
               type="button"
               aria-pressed={sort === item.key}
               onClick={() => onSort(item.key)}
-              className={`h-7 rounded-lg px-2.5 text-[11.5px] transition-colors duration-150 ${
+              className={`h-7 rounded-lg px-2.5 text-[0.7188rem] transition-colors duration-150 ${
                 sort === item.key
                   ? 'bg-primary/[0.12] font-semibold text-primary'
                   : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'
@@ -221,13 +221,13 @@ export function FleetMatrix({ envs, sort, onSort, nowMs, wide, onInspect, onExec
       </div>
 
       {envs.length === 0 ? (
-        <p className="border-t border-[hsl(var(--hairline)/0.6)] px-[18px] py-6 text-xs text-muted-foreground">
+        <p className="border-t border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-6 text-xs text-muted-foreground">
           这个项目还没有发布环境。用右上角「新建环境」加一个。
         </p>
       ) : wide ? (
         <>
           <div
-            className="grid gap-3 border-y border-[hsl(var(--hairline)/0.6)] bg-[hsl(var(--surface-sunken))] px-[18px] py-2.5 cds-ident text-[11px] uppercase tracking-[0.09em] text-muted-foreground"
+            className="grid gap-3 border-y border-[hsl(var(--hairline)/0.6)] bg-[hsl(var(--surface-sunken))] px-[1.125rem] py-2.5 cds-ident text-[0.6875rem] uppercase tracking-[0.09em] text-muted-foreground"
             style={{ gridTemplateColumns: COLUMNS }}
           >
             <span>环境</span><span>类型</span><span>健康</span><span>可用率 24H</span><span>线上 SHA</span>
@@ -241,28 +241,28 @@ export function FleetMatrix({ envs, sort, onSort, nowMs, wide, onInspect, onExec
                 tabIndex={0}
                 onClick={() => onInspect(env.id)}
                 onKeyDown={(event) => { if (event.key === 'Enter') onInspect(env.id); }}
-                className={`grid cursor-pointer items-center gap-3 border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-[13px] text-[12.5px] transition-colors duration-150 hover:bg-[hsl(var(--surface-sunken))] ${
+                className={`grid cursor-pointer items-center gap-3 border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-[0.8125rem] text-[0.7812rem] transition-colors duration-150 hover:bg-[hsl(var(--surface-sunken))] ${
                   env.health === 'failed' ? 'bg-bad-soft' : ''
                 } ${env.enabled ? '' : 'opacity-55'}`}
                 style={{ gridTemplateColumns: COLUMNS }}
               >
                 <span className="block min-w-0">
                   <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate text-[13.5px] font-semibold">{env.name}</span>
-                    {env.isPrimary ? <span className="shrink-0 rounded-[5px] bg-primary/[0.12] px-1.5 py-0.5 text-[10px] text-primary">主目标</span> : null}
-                    {env.enabled ? null : <span className="shrink-0 rounded-[5px] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[10px] text-muted-foreground">未启用</span>}
+                    <span className="truncate text-[0.8438rem] font-semibold">{env.name}</span>
+                    {env.isPrimary ? <span className="shrink-0 rounded-[0.3125rem] bg-primary/[0.12] px-1.5 py-0.5 text-[0.625rem] text-primary">主目标</span> : null}
+                    {env.enabled ? null : <span className="shrink-0 rounded-[0.3125rem] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">未启用</span>}
                   </span>
-                  <span className="block truncate cds-ident text-[11px] text-muted-foreground">{env.host}</span>
+                  <span className="block truncate cds-ident text-[0.6875rem] text-muted-foreground">{env.host}</span>
                 </span>
                 <span className={`text-xs font-semibold ${TYPE_CLASS[env.type]}`}>{fleetTypeText(env.type)}</span>
                 <span className="flex items-center gap-1.5">
-                  <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${HEALTH_DOT[env.health]}`} />
+                  <span className={`h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full ${HEALTH_DOT[env.health]}`} />
                   <span className={`text-xs ${HEALTH_TEXT[env.health]}`}>{fleetHealthText(env.health)}</span>
                 </span>
-                <span className={`cds-ident text-[12.5px] ${env.availability24h !== null && env.availability24h < 99 ? 'text-bad' : env.availability24h === null ? 'text-muted-foreground' : ''}`}>
+                <span className={`cds-ident text-[0.7812rem] ${env.availability24h !== null && env.availability24h < 99 ? 'text-bad' : env.availability24h === null ? 'text-muted-foreground' : ''}`}>
                   {fleetAvailabilityText(env)}
                 </span>
-                <span className="cds-ident text-[12.5px]">{env.liveSha ? env.liveSha.slice(0, 7) : <span className="text-muted-foreground">未发布过</span>}</span>
+                <span className="cds-ident text-[0.7812rem]">{env.liveSha ? env.liveSha.slice(0, 7) : <span className="text-muted-foreground">未发布过</span>}</span>
                 <span className={`text-xs ${
                   env.behindMain === null ? 'text-muted-foreground'
                     : env.behindMain === 0 ? 'text-ok'
@@ -285,30 +285,30 @@ export function FleetMatrix({ envs, sort, onSort, nowMs, wide, onInspect, onExec
           {sorted.map((env) => (
             <div
               key={env.id}
-              className={`rounded-[10px] border p-3 ${
+              className={`rounded-[0.625rem] border p-3 ${
                 env.health === 'failed' ? 'border-bad/30 bg-bad-soft' : 'border-[hsl(var(--hairline))]'
               } ${env.enabled ? '' : 'opacity-55'}`}
             >
               <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                <span className="truncate text-[13.5px] font-semibold">{env.name}</span>
-                {env.isPrimary ? <span className="rounded-[5px] bg-primary/[0.12] px-1.5 py-0.5 text-[10px] text-primary">主目标</span> : null}
+                <span className="truncate text-[0.8438rem] font-semibold">{env.name}</span>
+                {env.isPrimary ? <span className="rounded-[0.3125rem] bg-primary/[0.12] px-1.5 py-0.5 text-[0.625rem] text-primary">主目标</span> : null}
                 <span className={`text-xs font-semibold ${TYPE_CLASS[env.type]}`}>{fleetTypeText(env.type)}</span>
               </div>
-              <div className="mt-0.5 truncate cds-ident text-[11px] text-muted-foreground">{env.host}</div>
+              <div className="mt-0.5 truncate cds-ident text-[0.6875rem] text-muted-foreground">{env.host}</div>
               <dl className="mt-2.5 grid grid-cols-[92px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
-                <dt className="text-[11.5px] text-muted-foreground">健康</dt>
+                <dt className="text-[0.7188rem] text-muted-foreground">健康</dt>
                 <dd className={HEALTH_TEXT[env.health]}>{fleetHealthText(env.health)}</dd>
-                <dt className="text-[11.5px] text-muted-foreground">可用率 24H</dt>
+                <dt className="text-[0.7188rem] text-muted-foreground">可用率 24H</dt>
                 <dd className="cds-ident">{fleetAvailabilityText(env)}</dd>
-                <dt className="text-[11.5px] text-muted-foreground">线上 SHA</dt>
+                <dt className="text-[0.7188rem] text-muted-foreground">线上 SHA</dt>
                 <dd className="cds-ident">{env.liveSha ? env.liveSha.slice(0, 7) : '未发布过'}</dd>
-                <dt className="text-[11.5px] text-muted-foreground">落后主干</dt>
+                <dt className="text-[0.7188rem] text-muted-foreground">落后主干</dt>
                 <dd>{fleetBehindText(env)}</dd>
-                <dt className="text-[11.5px] text-muted-foreground">最近发布</dt>
+                <dt className="text-[0.7188rem] text-muted-foreground">最近发布</dt>
                 <dd><LastReleaseCell env={env} nowMs={nowMs} /></dd>
-                <dt className="text-[11.5px] text-muted-foreground">DORA 30D</dt>
+                <dt className="text-[0.7188rem] text-muted-foreground">DORA 30D</dt>
                 <dd><DoraCell env={env} /></dd>
-                <dt className="text-[11.5px] text-muted-foreground">能力</dt>
+                <dt className="text-[0.7188rem] text-muted-foreground">能力</dt>
                 <dd><CapabilityCell env={env} /></dd>
               </dl>
               <div className="mt-3">

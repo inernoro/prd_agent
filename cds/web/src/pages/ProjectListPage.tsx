@@ -1467,7 +1467,7 @@ function ProjectListSkeleton(): JSX.Element {
           label="加载项目列表"
           size="sm"
           mineral="iris"
-          className="text-[13px] font-medium text-muted-foreground"
+          className="text-[0.8125rem] font-medium text-muted-foreground"
         />
       </div>
       <div className="cds-card-grid">
@@ -1477,13 +1477,13 @@ function ProjectListSkeleton(): JSX.Element {
             className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
           >
             <header className="px-5 pt-5">
-              <div className="cds-loading-skeleton-line h-[18px]" style={{ width }} />
+              <div className="cds-loading-skeleton-line h-[1.125rem]" style={{ width }} />
             </header>
             <div
-              className="relative mx-3 my-3 h-[220px] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
+              className="relative mx-3 my-3 h-[13.75rem] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
               style={{
                 backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
-                backgroundSize: '14px 14px',
+                backgroundSize: '0.875rem 0.875rem',
               }}
             >
               <div className="absolute inset-0 flex items-center justify-center gap-2.5">
@@ -2020,9 +2020,9 @@ function ProjectCard({
          * 给标题行留出让位的右内边距，其余状态维持原样不浪费横向空间。
          */}
         <header className={`flex items-start justify-between gap-3 px-5 pt-5 ${paused ? 'pr-[13.5rem]' : ''}`}>
-          <h2 className="min-w-0 truncate text-[17px] font-semibold tracking-tight">{title}</h2>
+          <h2 className="min-w-0 truncate text-[1.0625rem] font-semibold tracking-tight">{title}</h2>
           {!isReady && cloneLabel ? (
-            <span className="shrink-0 rounded border border-warn/30 bg-warn-soft px-2 py-0.5 text-[11px] font-medium text-warn">
+            <span className="shrink-0 rounded border border-warn/30 bg-warn-soft px-2 py-0.5 text-[0.6875rem] font-medium text-warn">
               {cloneLabel}
             </span>
           ) : null}
@@ -2031,15 +2031,15 @@ function ProjectCard({
         {/* Dot-grid canvas with tech-stack glyphs — gives the tile its
             "workspace" weight, mirroring Railway's project tiles. */}
         <div
-          className="relative mx-3 my-3 flex h-[220px] items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
+          className="relative mx-3 my-3 flex h-[13.75rem] items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
           style={{
             backgroundImage:
               'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
-            backgroundSize: '14px 14px',
+            backgroundSize: '0.875rem 0.875rem',
             backgroundPosition: '0 0',
           }}
         >
-          <div className="flex w-full max-w-[430px] flex-col items-center pb-8">
+          <div className="flex w-full max-w-[26.875rem] flex-col items-center pb-8">
             <motion.div
               className="cds-project-node-row flex flex-nowrap items-center justify-center"
               onMouseMove={(event) => dockMouseX.set(event.clientX)}
@@ -2070,7 +2070,7 @@ function ProjectCard({
               {hiddenStackBrandCount > 0 ? (
                 <ProjectDockNode
                   mouseX={dockMouseX}
-                  className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 text-[12px] font-semibold text-muted-foreground shadow-sm"
+                  className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 text-[0.75rem] font-semibold text-muted-foreground shadow-sm"
                   title={`另有 ${hiddenStackBrandCount} 个技术栈`}
                   ariaLabel={`另有 ${hiddenStackBrandCount} 个技术栈`}
                 >
@@ -2079,7 +2079,7 @@ function ProjectCard({
               ) : null}
             </motion.div>
 
-            <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
+            <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[0.8125rem] text-muted-foreground">
               {/* On phones the meta row is width-constrained — hide the static
                   "production" prefix so live status / online count / CPU don't
                   get clipped (mobile-layout-fallback.md). Desktop keeps it. */}
@@ -2139,7 +2139,7 @@ function ProjectCard({
         }`}
       >
         {paused ? (
-          <span className="pointer-events-none mr-0.5 inline-flex items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 py-1 text-[11px] font-semibold text-warn shadow-sm backdrop-blur">
+          <span className="pointer-events-none mr-0.5 inline-flex items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 py-1 text-[0.6875rem] font-semibold text-warn shadow-sm backdrop-blur">
             <Pause className="h-3 w-3" aria-hidden />
             已暂停
           </span>
@@ -3460,7 +3460,7 @@ function CreateProjectDialog({
                               disabled={!service.enabled}
                               placeholder={preset.command || '填写容器启动命令'}
                             />
-                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                            <span className="block text-[0.6875rem] leading-4 text-muted-foreground">
                               按所选运行时给的最佳努力默认，可直接改；想完全交给仓库识别就把运行环境选「自动识别」。
                             </span>
                           </label>
@@ -3564,7 +3564,7 @@ function CreateProjectDialog({
                               onChange={(event) => setInfraConfigField(preset.id, 'dbName', event.target.value)}
                               placeholder="app（默认）"
                             />
-                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                            <span className="block text-[0.6875rem] leading-4 text-muted-foreground">
                               会写入容器初始化变量并拼进连接串（如 {preset.connectionEnvKeys[0] || 'DATABASE_URL'}）。
                             </span>
                           </label>
@@ -3578,7 +3578,7 @@ function CreateProjectDialog({
                               onChange={(event) => setInfraConfigField(preset.id, 'initSql', event.target.value)}
                               placeholder={'自动识别失败时再填，例如 CREATE TABLE items (id serial primary key, name text);'}
                             />
-                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                            <span className="block text-[0.6875rem] leading-4 text-muted-foreground">
                               普通部署优先使用仓库扫描出的 Prisma / Django / Alembic / schema.sql 推荐方式；这里仅作为高级兜底，保存后可在拓扑页数据面板执行。
                             </span>
                           </label>
@@ -4017,7 +4017,7 @@ function GithubRepoPickerDialog({
                 没有匹配的仓库。
               </div>
             ) : (
-              <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+              <div className="max-h-[26.25rem] space-y-2 overflow-y-auto pr-1">
                 {visibleRepos.map((repo) => (
                   <button
                     key={repo.id}
@@ -4342,7 +4342,7 @@ function ResourceUsageDialog({
                         <div className="flex items-center gap-2">
                           <span className="truncate font-medium">{row.name}</span>
                           {row.paused ? (
-                            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[10px] font-medium text-warn">
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.625rem] font-medium text-warn">
                               <Pause className="h-2.5 w-2.5" aria-hidden /> 已暂停
                             </span>
                           ) : null}

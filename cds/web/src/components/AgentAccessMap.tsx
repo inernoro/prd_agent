@@ -274,8 +274,8 @@ export function AgentAccessMap({
         <DialogContent
           className="cds-agent-world-dialog max-w-none"
           style={{
-            width: 'min(960px, calc(100vw - 32px))',
-            maxHeight: 'calc(100dvh - 32px)',
+            width: 'min(60rem, calc(100vw - 2rem))',
+            maxHeight: 'calc(100dvh - 2rem)',
             overflowY: 'auto',
             overscrollBehavior: 'contain',
           }}
@@ -404,7 +404,7 @@ export function AgentAccessMap({
                 aria-label={`${draftSelectionLabel}的 Agent 任务`}
                 data-single={draftMissions.length === 1 ? 'true' : 'false'}
                 style={{
-                  gridTemplateColumns: `repeat(${draftMissions.length}, minmax(148px, 1fr))`,
+                  gridTemplateColumns: `repeat(${draftMissions.length}, minmax(9.25rem, 1fr))`,
                 } as CSSProperties}
               >
                 {draftMissions.map((mission, index) => {

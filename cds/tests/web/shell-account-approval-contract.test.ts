@@ -219,7 +219,7 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(accessSource).toContain('void approve(primary.id)');
     expect(accessSource).toContain('批准项目访问');
     expect(accessSource).toContain('data-testid="cds-access-request-floating"');
-    expect(accessSource).toContain('fixed bottom-[84px] right-5');
+    expect(accessSource).toContain('fixed bottom-[5.25rem] right-5');
     expect(accessSource).toContain('createPortal');
     expect(accessSource).toContain('className="max-w-3xl overflow-hidden"');
   });
@@ -227,6 +227,6 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
   it('运维授权弹窗使用更醒目的标题和宽版内容区', () => {
     expect(operatorSource).toContain('需要你的明确授权');
     expect(operatorSource).toContain('className="max-w-2xl overflow-hidden"');
-    expect(operatorSource).toContain("style={{ maxHeight: 'min(760px, calc(100dvh - 32px))' }}");
+    expect(operatorSource).toContain("style={{ maxHeight: 'min(47.5rem, calc(100dvh - 2rem))' }}");
   });
 });

@@ -191,7 +191,7 @@ function ConsoleRouteFallback(): JSX.Element {
     <>
       <header className="cds-topbar" aria-hidden>
         <span className="cds-topbar-brand">
-          <CdsGem mode="brand" detail="simple" className="h-[30px] w-[30px]" />
+          <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />
         </span>
         <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
       </header>
@@ -201,7 +201,7 @@ function ConsoleRouteFallback(): JSX.Element {
           <div className="cds-loading-skeleton-line h-4 w-96 max-w-full" />
           <div className="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 6 }, (_, i) => (
-              <div key={i} className="cds-loading-skeleton-panel h-40 rounded-[10px]" />
+              <div key={i} className="cds-loading-skeleton-panel h-40 rounded-[0.625rem]" />
             ))}
           </div>
         </div>
@@ -406,7 +406,7 @@ export function PaletteHint(): JSX.Element {
     >
       <Search className="h-3.5 w-3.5" />
       搜索
-      <kbd className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-1 font-mono text-[10px]">
+      <kbd className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-1 font-mono text-[0.625rem]">
         {isMac ? '⌘' : 'Ctrl'} K
       </kbd>
     </button>
@@ -930,7 +930,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
         onMouseEnter={preloadProjectListPage}
         onFocus={preloadProjectListPage}
       >
-        <CdsGem mode="brand" detail="simple" className="h-[30px] w-[30px]" aria-hidden />
+        <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" aria-hidden />
       </Link>
       {/* Hamburger — phone only. Opens the slide-in nav drawer. */}
       <button
@@ -950,7 +950,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
           单 DOM 节点跨断点不卸载重挂(Bugbot #741 Low「Resize remounts」),
           也不双份挂载(避免分支搜索 ref/dropdown 状态被破坏)。 */}
       {center ? (
-        <div className={`cds-topbar-center order-1 w-full min-w-0 md:order-none md:w-auto md:flex-1 ${centerWide ? 'md:max-w-none' : 'md:max-w-[640px]'}`}>
+        <div className={`cds-topbar-center order-1 w-full min-w-0 md:order-none md:w-auto md:flex-1 ${centerWide ? 'md:max-w-none' : 'md:max-w-[40rem]'}`}>
           {center}
         </div>
       ) : null}

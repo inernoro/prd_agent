@@ -98,7 +98,7 @@ describe('collapseCheckMessage：整段脚本不许常驻屏幕', () => {
 });
 
 describe('shouldFollowLog：贴底才跟随，翻上去就停', () => {
-  it('距底 ≤48px 视为在看最新', () => {
+  it('距底 ≤3rem 视为在看最新', () => {
     expect(shouldFollowLog(952, 2000, 1000)).toBe(true);
     expect(shouldFollowLog(1000, 2000, 1000)).toBe(true);
   });

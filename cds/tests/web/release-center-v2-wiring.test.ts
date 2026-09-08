@@ -270,7 +270,7 @@ describe('发布中心 v2 · 布局纪律', () => {
     expect(sidebar).toContain('max-h-[46vh]');
     expect(sidebar).toContain('lg:h-full lg:max-h-none');
     // 产物区手机给最小高度并随页面竖滚，lg 起才 flex-1 填满 + 自身滚动。
-    expect(page).toContain('min-h-[320px] p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto');
+    expect(page).toContain('min-h-[20rem] p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto');
   });
 
   it('颜色只走 token 或双主题变体，没有暗色字面量兜底', () => {

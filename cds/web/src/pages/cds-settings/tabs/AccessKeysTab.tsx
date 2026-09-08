@@ -251,7 +251,7 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
                           {key.label || key.id}
                         </span>
                         <span
-                          className={`rounded-md border px-1.5 py-0.5 text-[11px] ${
+                          className={`rounded-md border px-1.5 py-0.5 text-[0.6875rem] ${
                             isRevoked
                               ? 'border-border bg-muted/40 text-muted-foreground opacity-70'
                               : 'border-ok/50 bg-ok-soft text-ok font-semibold'
@@ -259,11 +259,11 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
                         >
                           {isRevoked ? '已吊销' : '有效'}
                         </span>
-                        <span className="rounded-md border border-[hsl(var(--hairline))] bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        <span className="rounded-md border border-[hsl(var(--hairline))] bg-muted/40 px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">
                           {describeAgentKeyScope(key.access)}
                         </span>
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-muted-foreground">
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[0.6875rem] text-muted-foreground">
                         <span>id={key.id}</span>
                         <span>签发={formatDate(key.createdAt)}</span>
                         {key.lastUsedAt ? <span>最近使用={formatDate(key.lastUsedAt)}</span> : null}

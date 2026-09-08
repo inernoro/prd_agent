@@ -35,6 +35,20 @@
  * Rule mapping: see .claude/rules/cds-theme-tokens.md.
  */
 @layer base {
+  /* 2026-09-08 用户拍板：整站按 85% 呈现（用户实测浏览器缩放 80–85% 最好看）。
+     实现走根字号而不是 CSS zoom：Chromium 141 实测 zoom 会让 h-screen 只铺 85% 视口、
+     Radix 浮层定位偏移一百多像素。根字号缩放要求全站尺寸用 rem——本次已把 ≥4px 的
+     字面量全部转成 rem，1–3px 的细线 / 竖条保留 px 以保证像素级清晰；
+     媒体查询与 Tailwind 断点同步乘 0.85，让「多少内容触发几栏」和浏览器缩放一致。
+     逃生阀：html[data-ui-scale='100'] 回到 16px 基准（预留给密度设置）。 */
+  html {
+    font-size: 85%;
+  }
+
+  html[data-ui-scale='100'] {
+    font-size: 100%;
+  }
+
   [data-theme='dark'] {
     --background: 240 5% 8%;
     --foreground: 240 6% 90%;
@@ -79,8 +93,8 @@
       0 0 0 1px hsl(var(--hairline)),
       inset 0 1px 0 hsl(0 0% 100% / 0.06),
       0 1px 2px rgb(0 0 0 / 0.32),
-      0 12px 28px -12px rgb(0 0 0 / 0.5),
-      0 40px 80px -32px rgb(0 0 0 / 0.6);
+      0 0.75rem 1.75rem -12px rgb(0 0 0 / 0.5),
+      0 2.5rem 5rem -32px rgb(0 0 0 / 0.6);
 
     /* chip / 小控件的抬升配方（--shadow-card 的轻量版）。
        暗色里靠顶边白高光把 chip 从凹陷带上"托"起来。 */
@@ -180,8 +194,8 @@
       0 0 0 1px hsl(30 15% 86%),
       inset 0 1px 0 hsl(0 0% 100% / 0.9),
       0 1px 2px hsl(24 30% 20% / 0.05),
-      0 8px 24px -12px hsl(24 30% 20% / 0.12),
-      0 32px 64px -32px hsl(24 30% 20% / 0.15);
+      0 0.5rem 1.5rem -12px hsl(24 30% 20% / 0.12),
+      0 2rem 4rem -32px hsl(24 30% 20% / 0.15);
 
     /* 白天的 chip 抬升：白高光落在白 chip 上等于没有（Codex P1，2026-09-01），
        所以这一档改由接触影承担，观感上仍是"从凹陷带里浮起来"。 */
@@ -236,8 +250,8 @@
     /* Workspace 宽度三档(主题无关)。语义见 @layer components 里
        .cds-workspace 处的"宽度秩序"注释;新页面只允许引用这两个 token
        或 fluid(去上限),禁止再写第四种 max-width。 */
-    --workspace-standard: 1240px;
-    --workspace-wide: 1440px;
+    --workspace-standard: 77.5rem;
+    --workspace-wide: 90rem;
 
     /*
      * 全站英文字形的**唯一来源**。
@@ -282,15 +296,15 @@
     scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
   }
   ::-webkit-scrollbar {
-    width: 12px;
-    height: 12px;
+    width: 0.75rem;
+    height: 0.75rem;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
     background: hsl(var(--muted-foreground) / 0.45);
-    border-radius: 7px;
+    border-radius: 0.4375rem;
     border: 3px solid transparent;
     background-clip: content-box;
   }
@@ -418,14 +432,14 @@
    */
   .cds-card-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cds-card-min, 380px)), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cds-card-min, 23.75rem)), 1fr));
     align-items: start;
     gap: 1.25rem;
   }
 
   .cds-branch-card-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 26.25rem), 1fr));
     align-items: start;
     gap: 1rem;
   }
@@ -436,7 +450,7 @@
      卡片开着 tag 编辑器 / AI 面板 / commit 菜单或 error 态时由 JSX 侧不加本类。 */
   .cds-cv-auto {
     content-visibility: auto;
-    contain-intrinsic-size: auto 240px;
+    contain-intrinsic-size: auto 15rem;
   }
 
   /*
@@ -448,7 +462,7 @@
     border-color: hsl(var(--primary) / 0.65) !important;
     box-shadow:
       0 0 0 1px hsl(var(--primary) / 0.35),
-      0 18px 42px -30px hsl(var(--primary) / 0.75) !important;
+      0 1.125rem 2.625rem -30px hsl(var(--primary) / 0.75) !important;
   }
   @keyframes cds-card-selected-flash {
     0% {
@@ -456,21 +470,21 @@
       box-shadow:
         0 0 0 1px hsl(var(--primary) / 0.35),
         0 0 0 0 hsl(var(--primary) / 0.48),
-        0 18px 42px -30px hsl(var(--primary) / 0.75);
+        0 1.125rem 2.625rem -30px hsl(var(--primary) / 0.75);
     }
     45% {
       transform: translateY(-2px);
       box-shadow:
         0 0 0 1px hsl(var(--primary) / 0.55),
-        0 0 0 5px hsl(var(--primary) / 0.16),
-        0 22px 46px -28px hsl(var(--primary) / 0.9);
+        0 0 0 0.3125rem hsl(var(--primary) / 0.16),
+        0 1.375rem 2.875rem -28px hsl(var(--primary) / 0.9);
     }
     100% {
       transform: translateY(0);
       box-shadow:
         0 0 0 1px hsl(var(--primary) / 0.35),
         0 0 0 0 hsl(var(--primary) / 0),
-        0 18px 42px -30px hsl(var(--primary) / 0.75);
+        0 1.125rem 2.625rem -30px hsl(var(--primary) / 0.75);
     }
   }
   .cds-card-selected-flash {
@@ -487,7 +501,7 @@
   @keyframes cds-branch-card-enter {
     0% {
       opacity: 0;
-      transform: translateY(10px) scale(0.97);
+      transform: translateY(0.625rem) scale(0.97);
     }
     100% {
       opacity: 1;
@@ -501,7 +515,7 @@
     0% {
       opacity: 1;
       transform: translateY(0) scale(1);
-      max-height: 520px;
+      max-height: 32.5rem;
       min-height: 0;
       margin-bottom: 0;
     }
@@ -556,7 +570,7 @@
    * overlap, and settings pages whose long left nav consumes the whole first
    * viewport.
    */
-  @media (max-width: 900px) {
+  @media (max-width: 765px) {
     .cds-settings-nav {
       position: sticky;
       top: 0;
@@ -571,8 +585,8 @@
       -webkit-overflow-scrolling: touch;
       /* Right-edge fade hints the tab strip is horizontally scrollable instead
          of hard-clipping the next tab (mobile-layout-fallback.md §6 cue). */
-      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
-      mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.375rem), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 1.375rem), transparent);
     }
 
     .cds-settings-nav::-webkit-scrollbar {
@@ -675,7 +689,7 @@
     border-color: rgb(14 165 233 / 0.36) !important;
     box-shadow:
       0 0 0 1px rgb(14 165 233 / 0.12),
-      0 16px 36px -30px rgb(14 165 233 / 0.7);
+      0 1rem 2.25rem -30px rgb(14 165 233 / 0.7);
   }
 
   .cds-branch-card-busy::after {
@@ -688,7 +702,7 @@
     border: 1px solid rgb(56 189 248 / 0.38);
     box-shadow:
       inset 0 0 0 1px rgb(56 189 248 / 0.08),
-      0 0 14px -9px rgb(56 189 248 / 0.8);
+      0 0 0.875rem -9px rgb(56 189 248 / 0.8);
     animation: cds-branch-busy-rim 1.8s ease-in-out infinite;
   }
 
@@ -703,14 +717,14 @@
     pointer-events: none;
     background: linear-gradient(90deg, hsl(var(--info) / 0.18), hsl(var(--info) / 0.1));
     border-right: 1px solid hsl(var(--info) / 0.55);
-    box-shadow: 0 0 18px -4px hsl(var(--info) / 0.7);
+    box-shadow: 0 0 1.125rem -4px hsl(var(--info) / 0.7);
     transition: width 700ms ease-out;
   }
 
   .cds-footer-progress-fill--overdue {
     background: linear-gradient(90deg, hsl(var(--warn) / 0.18), hsl(var(--warn) / 0.1));
     border-right-color: hsl(var(--warn) / 0.55);
-    box-shadow: 0 0 18px -4px hsl(var(--warn) / 0.7);
+    box-shadow: 0 0 1.125rem -4px hsl(var(--warn) / 0.7);
   }
 
   .cds-footer-progress-fill--indeterminate {
@@ -719,16 +733,16 @@
     box-shadow: none;
     background: repeating-linear-gradient(
       -45deg,
-      hsl(var(--info) / 0.1) 0 10px,
-      hsl(var(--info) / 0.04) 10px 20px
+      hsl(var(--info) / 0.1) 0 0.625rem,
+      hsl(var(--info) / 0.04) 0.625rem 1.25rem
     );
-    background-size: 28.28px 100%;
+    background-size: 1.7675rem 100%;
     animation: cds-footer-progress-sweep 1.2s linear infinite;
   }
 
   @keyframes cds-footer-progress-sweep {
     to {
-      background-position: 28.28px 0;
+      background-position: 1.7675rem 0;
     }
   }
 
@@ -745,7 +759,7 @@
     border-color: rgb(2 132 199 / 0.42) !important;
     box-shadow:
       0 0 0 1px rgb(2 132 199 / 0.12),
-      0 16px 34px -28px rgb(2 132 199 / 0.45);
+      0 1rem 2.125rem -28px rgb(2 132 199 / 0.45);
   }
 
   /*
@@ -761,7 +775,7 @@
     border-color: rgb(56 189 248 / 0.58) !important;
     box-shadow:
       0 0 0 1px rgb(56 189 248 / 0.18),
-      0 0 18px -10px rgb(56 189 248 / 0.9),
+      0 0 1.125rem -10px rgb(56 189 248 / 0.9),
       inset 0 1px 0 rgb(255 255 255 / 0.08);
     animation: cds-ai-beacon-body 1.9s ease-in-out infinite;
   }
@@ -796,8 +810,8 @@
     z-index: 0;
     border: 1px solid rgb(125 211 252 / 0.2);
     box-shadow:
-      inset 0 0 10px rgb(125 211 252 / 0.2),
-      0 0 10px rgb(56 189 248 / 0.16);
+      inset 0 0 0.625rem rgb(125 211 252 / 0.2),
+      0 0 0.625rem rgb(56 189 248 / 0.16);
     opacity: 0.72;
     animation: cds-ai-beacon-halo 1.9s ease-in-out infinite;
   }
@@ -805,7 +819,7 @@
   .cds-ai-preview-beacon svg {
     position: relative;
     z-index: 1;
-    filter: drop-shadow(0 0 6px rgb(125 211 252 / 0.55));
+    filter: drop-shadow(0 0 0.375rem rgb(125 211 252 / 0.55));
     animation: cds-ai-beacon-icon 1.65s ease-in-out infinite;
   }
 
@@ -814,7 +828,7 @@
     color: hsl(var(--primary-ink));
     box-shadow:
       0 0 0 1px hsl(var(--primary) / 0.18),
-      0 0 20px -10px hsl(var(--primary) / 0.88);
+      0 0 1.25rem -10px hsl(var(--primary) / 0.88);
   }
 
   /* AI 正在操作的分支卡:标题扫光是唯一主动态。卡片只保留静态边框和
@@ -824,14 +838,14 @@
     border-color: rgb(56 189 248 / 0.42) !important;
     box-shadow:
       0 0 0 1px rgb(56 189 248 / 0.1),
-      0 16px 34px -28px rgb(56 189 248 / 0.62);
+      0 1rem 2.125rem -28px rgb(56 189 248 / 0.62);
   }
 
   .cds-actor-name-glow {
     animation: cds-actor-name-breathe 1.85s ease-in-out infinite;
     text-shadow:
-      0 0 8px var(--cds-actor-name-glow),
-      0 0 18px var(--cds-actor-name-glow-soft);
+      0 0 0.5rem var(--cds-actor-name-glow),
+      0 0 1.125rem var(--cds-actor-name-glow-soft);
   }
 
   .cds-actor-name-glow--build {
@@ -856,7 +870,7 @@
     border-color: rgb(2 132 199 / 0.58) !important;
     box-shadow:
       0 0 0 1px rgb(2 132 199 / 0.16),
-      0 0 18px -8px rgb(2 132 199 / 0.7),
+      0 0 1.125rem -8px rgb(2 132 199 / 0.7),
       inset 0 1px 0 rgb(255 255 255 / 0.72);
   }
 
@@ -876,8 +890,8 @@
   [data-theme='light'] .cds-ai-preview-beacon::after {
     border-color: rgb(2 132 199 / 0.18);
     box-shadow:
-      inset 0 0 10px rgb(2 132 199 / 0.14),
-      0 0 10px rgb(2 132 199 / 0.12);
+      inset 0 0 0.625rem rgb(2 132 199 / 0.14),
+      0 0 0.625rem rgb(2 132 199 / 0.12);
   }
 
   /* 白天靠「边界清晰」而不是「整体发光」来表达选中/占用：白底上柔和外发光会糊，
@@ -886,7 +900,7 @@
     border-color: rgb(2 132 199 / 0.62) !important;
     box-shadow:
       0 0 0 1px rgb(2 132 199 / 0.14),
-      0 10px 22px -20px rgb(2 132 199 / 0.34);
+      0 0.625rem 1.375rem -20px rgb(2 132 199 / 0.34);
   }
 
   @keyframes cds-ai-beacon-body {
@@ -950,15 +964,15 @@
 
   .cds-ai-rail--v {
     position: absolute;
-    inset-block: 12px;
+    inset-block: 0.75rem;
     left: 0;
-    width: 4px;
+    width: 0.25rem;
     flex-direction: column;
-    gap: 5px;
+    gap: 0.3125rem;
   }
 
   .cds-ai-rail--h {
-    width: 54px;
+    width: 3.375rem;
     height: 3px;
     flex: none;
     gap: 3px;
@@ -985,13 +999,13 @@
       linear-gradient(rgb(var(--cds-rail-hi) / 0.35), rgb(var(--cds-rail-hi) / 0.35)),
       repeating-linear-gradient(
         180deg,
-        transparent 0 10px,
-        rgb(var(--cds-rail-hi)) 14px,
-        rgb(var(--cds-rail-hi)) 24px,
-        transparent 28px 44px
+        transparent 0 0.625rem,
+        rgb(var(--cds-rail-hi)) 0.875rem,
+        rgb(var(--cds-rail-hi)) 1.5rem,
+        transparent 1.75rem 2.75rem
       );
-    background-size: 100% 100%, 100% 44px;
-    box-shadow: 0 0 10px rgb(var(--cds-rail) / 0.55);
+    background-size: 100% 100%, 100% 2.75rem;
+    box-shadow: 0 0 0.625rem rgb(var(--cds-rail) / 0.55);
     animation: cds-ai-rail-stream 1.1s linear infinite;
   }
 
@@ -1003,7 +1017,7 @@
       rgb(var(--cds-rail-hi) / 0.45)
     );
     background-size: 220% 100%;
-    box-shadow: 0 0 7px rgb(var(--cds-rail) / 0.75);
+    box-shadow: 0 0 0.4375rem rgb(var(--cds-rail) / 0.75);
     animation: cds-ai-track-stream 1.1s linear infinite;
   }
 
@@ -1047,11 +1061,11 @@
   .cds-ai-pulse-dot {
     position: relative;
     flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: 9999px;
+    width: 0.4375rem;
+    height: 0.4375rem;
+    border-radius: 624.9375rem;
     background: rgb(var(--cds-rail-hi));
-    box-shadow: 0 0 8px rgb(var(--cds-rail) / 0.7);
+    box-shadow: 0 0 0.5rem rgb(var(--cds-rail) / 0.7);
     animation: cds-ai-rail-heartbeat 2.8s ease-in-out infinite;
   }
 
@@ -1059,7 +1073,7 @@
     content: '';
     position: absolute;
     inset: -4px;
-    border-radius: 9999px;
+    border-radius: 624.9375rem;
     border: 1px solid rgb(var(--cds-rail) / 0.6);
     animation: cds-ai-pulse-halo 2.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
   }
@@ -1099,7 +1113,7 @@
     content: '';
     position: absolute;
     inset: -3px;
-    border-radius: 8px;
+    border-radius: 0.5rem;
     padding: 1.5px;
     background: conic-gradient(
       from var(--cds-ai-ring-angle),
@@ -1153,7 +1167,7 @@
   }
 
   @keyframes cds-ai-rail-stream {
-    to { background-position: 0 0, 0 44px; }
+    to { background-position: 0 0, 0 2.75rem; }
   }
 
   @keyframes cds-ai-track-stream {
@@ -1190,14 +1204,14 @@
     0%, 100% {
       opacity: 0.74;
       text-shadow:
-        0 0 4px var(--cds-actor-name-glow),
-        0 0 12px var(--cds-actor-name-glow-soft);
+        0 0 0.25rem var(--cds-actor-name-glow),
+        0 0 0.75rem var(--cds-actor-name-glow-soft);
     }
     50% {
       opacity: 1;
       text-shadow:
-        0 0 9px var(--cds-actor-name-glow),
-        0 0 22px var(--cds-actor-name-glow-soft);
+        0 0 0.5625rem var(--cds-actor-name-glow),
+        0 0 1.375rem var(--cds-actor-name-glow-soft);
     }
   }
 
@@ -1278,7 +1292,7 @@
     background-color: hsl(var(--surface-base));
     color: hsl(var(--foreground));
     /* rail 宽度是壳层网格的 SSOT，移动端断点会将其归零。 */
-    --cds-rail-w: 72px;
+    --cds-rail-w: 4.5rem;
     grid-template-columns: var(--cds-rail-w) minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
@@ -1314,7 +1328,7 @@
      而是导航列里第一块磁贴。 */
   .cds-rail-avatar {
     @apply relative flex h-12 w-12 shrink-0 items-center justify-center;
-    border-radius: 14px;
+    border-radius: 0.875rem;
     background-color: hsl(var(--surface-raised));
     border: 1px solid hsl(var(--hairline));
     /* 品牌磁贴呼吸辉光:柔和的品牌色外发光每 4.2s 起落一次,让磁贴"活着"
@@ -1336,7 +1350,7 @@
       box-shadow:
         inset 0 1px 0 hsl(0 0% 100% / 0.05),
         0 1px 2px rgb(0 0 0 / 0.18),
-        0 0 16px -3px hsl(255 90% 66% / 0.5);
+        0 0 1rem -3px hsl(255 90% 66% / 0.5);
     }
   }
 
@@ -1360,7 +1374,7 @@
   }
 
   .cds-gem--glow {
-    filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.18));
+    filter: drop-shadow(0 0 0.625rem hsl(var(--primary) / 0.18));
   }
 
   /* 小尺寸清晰档:**非品牌** simple 切面永远满亮度(状态指示器不发虚)。
@@ -1463,7 +1477,7 @@
     align-items: center;
     justify-content: center;
     color: currentColor;
-    filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.16));
+    filter: drop-shadow(0 0 0.625rem hsl(var(--primary) / 0.16));
   }
 
   .cds-rail-brand-title {
@@ -1754,8 +1768,8 @@
   .cds-agent-route-trigger {
     display: grid;
     width: 100%;
-    min-height: 104px;
-    grid-template-columns: 42px minmax(0, 1fr) auto 18px;
+    min-height: 6.5rem;
+    grid-template-columns: 2.625rem minmax(0, 1fr) auto 1.125rem;
     align-items: center;
     gap: 0.75rem;
     border: 1px solid hsl(var(--primary) / 0.32);
@@ -1779,7 +1793,7 @@
     background-color: hsl(var(--primary) / 0.075);
     box-shadow:
       inset 0 1px 0 hsl(var(--foreground) / 0.05),
-      0 12px 28px -24px hsl(var(--primary) / 0.65);
+      0 0.75rem 1.75rem -24px hsl(var(--primary) / 0.65);
   }
 
   .cds-agent-route-trigger:focus-visible {
@@ -1789,8 +1803,8 @@
 
   .cds-agent-route-trigger-icon {
     display: grid;
-    width: 42px;
-    height: 42px;
+    width: 2.625rem;
+    height: 2.625rem;
     place-items: center;
     border: 1px solid hsl(var(--primary) / 0.24);
     border-radius: 0.65rem;
@@ -1844,7 +1858,7 @@
   }
 
   .cds-agent-route-trigger-route small {
-    max-width: 160px;
+    max-width: 10rem;
     overflow: hidden;
     font-size: 0.6875rem;
     text-overflow: ellipsis;
@@ -1853,7 +1867,7 @@
 
   .cds-agent-route-trigger-route span {
     border: 1px solid hsl(var(--primary) / 0.25);
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background: hsl(var(--surface-raised) / 0.72);
     padding: 0.24rem 0.55rem;
     color: hsl(var(--primary-ink));
@@ -1880,7 +1894,7 @@
     background:
       radial-gradient(circle at 82% 0%, hsl(var(--primary) / 0.08), transparent 34%),
       hsl(var(--card));
-    box-shadow: 0 30px 80px -28px hsl(220 32% 4% / 0.64);
+    box-shadow: 0 1.875rem 5rem -28px hsl(220 32% 4% / 0.64);
   }
 
   .cds-agent-world-dialog > div {
@@ -1889,7 +1903,7 @@
 
   .cds-agent-world-header {
     display: grid !important;
-    grid-template-columns: 42px minmax(0, 1fr);
+    grid-template-columns: 2.625rem minmax(0, 1fr);
     align-items: center;
     gap: 0.75rem;
     text-align: left !important;
@@ -1897,8 +1911,8 @@
 
   .cds-agent-world-title-icon {
     display: grid;
-    width: 42px;
-    height: 42px;
+    width: 2.625rem;
+    height: 2.625rem;
     place-items: center;
     border: 1px solid hsl(var(--primary) / 0.28);
     border-radius: 0.75rem;
@@ -1919,17 +1933,17 @@
 
   .cds-agent-world-step-heading {
     display: grid;
-    grid-template-columns: 28px minmax(0, 1fr) auto;
+    grid-template-columns: 1.75rem minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.65rem;
   }
 
   .cds-agent-world-step-heading > span {
     display: grid;
-    width: 28px;
-    height: 28px;
+    width: 1.75rem;
+    height: 1.75rem;
     place-items: center;
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background: hsl(var(--primary) / 0.11);
     color: hsl(var(--primary-ink));
     font-size: 0.6875rem;
@@ -1961,9 +1975,9 @@
   .cds-agent-continent {
     position: relative;
     display: grid;
-    min-width: 178px;
-    min-height: 68px;
-    grid-template-columns: 30px minmax(0, 1fr);
+    min-width: 11.125rem;
+    min-height: 4.25rem;
+    grid-template-columns: 1.875rem minmax(0, 1fr);
     grid-template-rows: auto auto;
     align-items: center;
     gap: 0.1rem 0.5rem;
@@ -1989,7 +2003,7 @@
     background-image:
       linear-gradient(90deg, transparent 48%, hsl(188 100% 68% / 0.08) 50%, transparent 52%),
       linear-gradient(transparent 48%, hsl(188 100% 68% / 0.08) 50%, transparent 52%);
-    background-size: 18px 18px;
+    background-size: 1.125rem 1.125rem;
     content: '';
     opacity: 0.42;
     mask-image: linear-gradient(110deg, transparent 4%, black 62%, transparent);
@@ -2011,7 +2025,7 @@
       linear-gradient(135deg, hsl(var(--primary) / 0.14), hsl(var(--primary) / 0.055));
     box-shadow:
       inset 0 0 0 1px hsl(var(--primary) / 0.14),
-      inset 0 -18px 30px hsl(188 100% 48% / 0.055);
+      inset 0 -18px 1.875rem hsl(188 100% 48% / 0.055);
   }
 
   .cds-agent-continent[data-selected='true']::after {
@@ -2023,11 +2037,11 @@
 
   .cds-agent-continent-marker {
     display: grid;
-    width: 30px;
-    height: 30px;
+    width: 1.875rem;
+    height: 1.875rem;
     grid-row: 1 / 3;
     place-items: center;
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background: hsl(var(--surface-sunken));
     color: hsl(var(--muted-foreground));
   }
@@ -2035,7 +2049,7 @@
   .cds-agent-continent[data-selected='true'] .cds-agent-continent-marker {
     background: hsl(var(--primary) / 0.14);
     color: hsl(var(--primary-ink));
-    box-shadow: 0 0 0 4px hsl(var(--primary) / 0.07);
+    box-shadow: 0 0 0 0.25rem hsl(var(--primary) / 0.07);
   }
 
   .cds-agent-continent-marker svg {
@@ -2070,7 +2084,7 @@
 
   .cds-agent-world-current-continent {
     display: grid;
-    max-width: 210px;
+    max-width: 13.125rem;
     justify-items: end;
   }
 
@@ -2083,7 +2097,7 @@
 
   .cds-agent-world-current-continent strong,
   .cds-agent-world-current-continent code {
-    max-width: 210px;
+    max-width: 13.125rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2104,7 +2118,7 @@
     position: relative;
     --map-cyan: 188 100% 62%;
     --map-blue: 207 100% 64%;
-    min-height: 300px;
+    min-height: 18.75rem;
     overflow: hidden;
     border: 1px solid hsl(var(--map-cyan) / 0.28);
     border-radius: 0.9rem;
@@ -2115,8 +2129,8 @@
       linear-gradient(155deg, hsl(209 63% 8%), hsl(196 70% 5%));
     box-shadow:
       inset 0 1px 0 hsl(var(--map-cyan) / 0.16),
-      inset 0 -80px 120px hsl(220 78% 2% / 0.5),
-      0 0 28px hsl(188 100% 44% / 0.08);
+      inset 0 -80px 7.5rem hsl(220 78% 2% / 0.5),
+      0 0 1.75rem hsl(188 100% 44% / 0.08);
     animation: cds-agent-world-arrive 320ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   }
 
@@ -2125,14 +2139,14 @@
     inset: 0;
     z-index: 3;
     background:
-      linear-gradient(90deg, hsl(var(--map-cyan) / 0.54), transparent 18px) left 13px top 13px / 56px 1px no-repeat,
-      linear-gradient(hsl(var(--map-cyan) / 0.54), transparent 18px) left 13px top 13px / 1px 56px no-repeat,
-      linear-gradient(-90deg, hsl(var(--map-cyan) / 0.54), transparent 18px) right 13px top 13px / 56px 1px no-repeat,
-      linear-gradient(hsl(var(--map-cyan) / 0.54), transparent 18px) right 13px top 13px / 1px 56px no-repeat,
-      linear-gradient(90deg, hsl(var(--map-cyan) / 0.38), transparent 18px) left 13px bottom 13px / 56px 1px no-repeat,
-      linear-gradient(0deg, hsl(var(--map-cyan) / 0.38), transparent 18px) left 13px bottom 13px / 1px 56px no-repeat,
-      linear-gradient(-90deg, hsl(var(--map-cyan) / 0.38), transparent 18px) right 13px bottom 13px / 56px 1px no-repeat,
-      linear-gradient(0deg, hsl(var(--map-cyan) / 0.38), transparent 18px) right 13px bottom 13px / 1px 56px no-repeat;
+      linear-gradient(90deg, hsl(var(--map-cyan) / 0.54), transparent 1.125rem) left 0.8125rem top 0.8125rem / 3.5rem 1px no-repeat,
+      linear-gradient(hsl(var(--map-cyan) / 0.54), transparent 1.125rem) left 0.8125rem top 0.8125rem / 1px 3.5rem no-repeat,
+      linear-gradient(-90deg, hsl(var(--map-cyan) / 0.54), transparent 1.125rem) right 0.8125rem top 0.8125rem / 3.5rem 1px no-repeat,
+      linear-gradient(hsl(var(--map-cyan) / 0.54), transparent 1.125rem) right 0.8125rem top 0.8125rem / 1px 3.5rem no-repeat,
+      linear-gradient(90deg, hsl(var(--map-cyan) / 0.38), transparent 1.125rem) left 0.8125rem bottom 0.8125rem / 3.5rem 1px no-repeat,
+      linear-gradient(0deg, hsl(var(--map-cyan) / 0.38), transparent 1.125rem) left 0.8125rem bottom 0.8125rem / 1px 3.5rem no-repeat,
+      linear-gradient(-90deg, hsl(var(--map-cyan) / 0.38), transparent 1.125rem) right 0.8125rem bottom 0.8125rem / 3.5rem 1px no-repeat,
+      linear-gradient(0deg, hsl(var(--map-cyan) / 0.38), transparent 1.125rem) right 0.8125rem bottom 0.8125rem / 1px 3.5rem no-repeat;
     content: '';
     pointer-events: none;
   }
@@ -2163,8 +2177,8 @@
       linear-gradient(155deg, hsl(207 56% 11%), hsl(194 62% 7%));
     box-shadow:
       inset 0 1px 0 hsl(var(--map-cyan) / 0.18),
-      inset 0 -80px 120px hsl(220 78% 2% / 0.42),
-      0 10px 30px hsl(196 42% 16% / 0.16);
+      inset 0 -80px 7.5rem hsl(220 78% 2% / 0.42),
+      0 0.625rem 1.875rem hsl(196 42% 16% / 0.16);
   }
 
   .cds-agent-world-ocean-grid {
@@ -2176,16 +2190,16 @@
       linear-gradient(hsl(var(--map-cyan) / 0.075) 1px, transparent 1px),
       linear-gradient(90deg, hsl(var(--map-cyan) / 0.075) 1px, transparent 1px),
       radial-gradient(circle, hsl(var(--map-cyan) / 0.24) 1px, transparent 1.5px),
-      repeating-radial-gradient(circle at 50% 44%, transparent 0 44px, hsl(var(--map-cyan) / 0.055) 45px 46px);
+      repeating-radial-gradient(circle at 50% 44%, transparent 0 2.75rem, hsl(var(--map-cyan) / 0.055) 2.8125rem 2.875rem);
     background-position: center;
-    background-size: 28px 28px, 28px 28px, 72px 72px, auto;
+    background-size: 1.75rem 1.75rem, 1.75rem 1.75rem, 4.5rem 4.5rem, auto;
     mask-image: radial-gradient(ellipse at center, black 12%, transparent 92%);
   }
 
   .cds-agent-world-svg {
     display: block;
     width: 100%;
-    height: 300px;
+    height: 18.75rem;
   }
 
   .cds-agent-world-hud path {
@@ -2199,7 +2213,7 @@
   .cds-agent-world-hud text {
     fill: hsl(var(--map-cyan) / 0.42);
     font-family: var(--cds-font-mono);
-    font-size: 8px;
+    font-size: 0.5rem;
     letter-spacing: 0.08em;
   }
 
@@ -2273,7 +2287,7 @@
   .cds-agent-world-region:hover .cds-agent-world-region-fill {
     fill: hsl(var(--region-hue) 90% 52% / 0.21);
     stroke: hsl(var(--map-cyan) / 0.94);
-    filter: drop-shadow(0 0 7px hsl(var(--map-cyan) / 0.34));
+    filter: drop-shadow(0 0 0.4375rem hsl(var(--map-cyan) / 0.34));
   }
 
   .cds-agent-world-region:focus {
@@ -2290,8 +2304,8 @@
     stroke: hsl(var(--primary));
     stroke-width: 3;
     filter:
-      drop-shadow(0 0 5px hsl(var(--primary) / 0.56))
-      drop-shadow(0 0 14px hsl(var(--primary) / 0.2));
+      drop-shadow(0 0 0.3125rem hsl(var(--primary) / 0.56))
+      drop-shadow(0 0 0.875rem hsl(var(--primary) / 0.2));
   }
 
   .cds-agent-world-region[data-selected='true'] .cds-agent-world-region-grid {
@@ -2316,7 +2330,7 @@
 
   .cds-agent-world-data-node circle:nth-child(2) {
     fill: currentColor;
-    filter: drop-shadow(0 0 4px currentColor);
+    filter: drop-shadow(0 0 0.25rem currentColor);
   }
 
   .cds-agent-world-data-node path {
@@ -2359,7 +2373,7 @@
     fill: hsl(190 84% 48% / 0.12);
     stroke: currentColor;
     stroke-width: 1.8;
-    filter: drop-shadow(0 0 5px hsl(var(--map-cyan) / 0.34));
+    filter: drop-shadow(0 0 0.3125rem hsl(var(--map-cyan) / 0.34));
   }
 
   .cds-agent-world-island path:nth-child(2) {
@@ -2371,13 +2385,13 @@
 
   .cds-agent-world-island circle {
     fill: hsl(var(--map-cyan));
-    filter: drop-shadow(0 0 5px hsl(var(--map-cyan) / 0.72));
+    filter: drop-shadow(0 0 0.3125rem hsl(var(--map-cyan) / 0.72));
   }
 
   .cds-agent-world-region-label {
     display: grid;
-    height: 64px;
-    grid-template-columns: 28px minmax(0, 1fr);
+    height: 4rem;
+    grid-template-columns: 1.75rem minmax(0, 1fr);
     grid-template-rows: auto auto;
     align-content: center;
     align-items: center;
@@ -2385,14 +2399,14 @@
     color: hsl(0 0% 98%);
     font-family: inherit;
     text-shadow:
-      0 1px 5px hsl(220 38% 4% / 0.9),
-      0 0 8px hsl(var(--map-cyan) / 0.16);
+      0 1px 0.3125rem hsl(220 38% 4% / 0.9),
+      0 0 0.5rem hsl(var(--map-cyan) / 0.16);
   }
 
   .cds-agent-world-region-label > span {
     display: grid;
-    width: 28px;
-    height: 28px;
+    width: 1.75rem;
+    height: 1.75rem;
     grid-row: 1 / 3;
     place-items: center;
     border: 1px solid hsl(var(--map-cyan) / 0.3);
@@ -2400,13 +2414,13 @@
     background:
       linear-gradient(135deg, hsl(var(--map-cyan) / 0.14), transparent),
       hsl(220 52% 5% / 0.64);
-    backdrop-filter: blur(5px);
+    backdrop-filter: blur(0.3125rem);
   }
 
   .cds-agent-world-region[data-selected='true'] .cds-agent-world-region-label > span {
     border-color: hsl(var(--primary) / 0.74);
     background: hsl(var(--primary) / 0.24);
-    box-shadow: 0 0 0 5px hsl(var(--primary) / 0.11);
+    box-shadow: 0 0 0 0.3125rem hsl(var(--primary) / 0.11);
   }
 
   .cds-agent-world-region-label svg {
@@ -2454,7 +2468,7 @@
     pointer-events: none;
     filter:
       drop-shadow(0 0 3px hsl(var(--primary) / 0.8))
-      drop-shadow(0 0 8px hsl(var(--primary) / 0.28));
+      drop-shadow(0 0 0.5rem hsl(var(--primary) / 0.28));
     animation: cds-agent-world-route-flow 900ms ease-out both;
   }
 
@@ -2482,7 +2496,7 @@
   .cds-agent-world-compass {
     fill: hsl(0 0% 100% / 0.55);
     color: hsl(0 0% 100% / 0.55);
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 700;
     text-anchor: middle;
   }
@@ -2499,12 +2513,12 @@
     display: flex;
     gap: 0.7rem;
     border: 1px solid hsl(0 0% 100% / 0.08);
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background: hsl(220 36% 6% / 0.42);
     padding: 0.3rem 0.55rem;
     color: hsl(0 0% 100% / 0.68);
     font-size: 0.5625rem;
-    backdrop-filter: blur(8px);
+    backdrop-filter: blur(0.5rem);
   }
 
   [data-theme='light'] .cds-agent-world-map-caption {
@@ -2520,14 +2534,14 @@
   }
 
   .cds-agent-world-map-caption i {
-    width: 7px;
-    height: 7px;
-    border-radius: 999px;
+    width: 0.4375rem;
+    height: 0.4375rem;
+    border-radius: 62.4375rem;
   }
 
   .cds-agent-world-map-caption i[data-kind='land'] {
     background: hsl(var(--map-cyan));
-    box-shadow: 0 0 7px hsl(var(--map-cyan) / 0.54);
+    box-shadow: 0 0 0.4375rem hsl(var(--map-cyan) / 0.54);
   }
 
   .cds-agent-world-map-caption i[data-kind='route'] {
@@ -2551,14 +2565,14 @@
   .cds-agent-world-route-summary {
     display: grid;
     min-width: 0;
-    grid-template-columns: 34px minmax(0, 1fr);
+    grid-template-columns: 2.125rem minmax(0, 1fr);
     align-items: center;
     gap: 0.6rem;
   }
 
   .cds-agent-world-route-summary > svg {
-    width: 34px;
-    height: 34px;
+    width: 2.125rem;
+    height: 2.125rem;
     border-radius: 0.6rem;
     background: hsl(var(--primary) / 0.1);
     padding: 0.55rem;
@@ -2593,7 +2607,7 @@
   @keyframes cds-agent-world-arrive {
     from {
       opacity: 0;
-      transform: translateY(7px) scale(0.992);
+      transform: translateY(0.4375rem) scale(0.992);
     }
     to {
       opacity: 1;
@@ -2604,7 +2618,7 @@
   @keyframes cds-agent-world-region-enter {
     from {
       opacity: 0;
-      transform: translateY(9px);
+      transform: translateY(0.5625rem);
     }
     to {
       opacity: 1;
@@ -2654,20 +2668,20 @@
     }
   }
 
-  @media (max-width: 640px) {
+  @media (max-width: 544px) {
     .cds-agent-world-dialog {
-      width: calc(100vw - 20px) !important;
-      max-width: calc(100vw - 20px) !important;
+      width: calc(100vw - 1.25rem) !important;
+      max-width: calc(100vw - 1.25rem) !important;
     }
 
     .cds-agent-route-trigger {
-      grid-template-columns: 38px minmax(0, 1fr) 16px;
+      grid-template-columns: 2.375rem minmax(0, 1fr) 1rem;
       padding: 0.75rem;
     }
 
     .cds-agent-route-trigger-icon {
-      width: 38px;
-      height: 38px;
+      width: 2.375rem;
+      height: 2.375rem;
     }
 
     .cds-agent-route-trigger-route {
@@ -2679,7 +2693,7 @@
     }
 
     .cds-agent-world-step-heading {
-      grid-template-columns: 28px minmax(0, 1fr);
+      grid-template-columns: 1.75rem minmax(0, 1fr);
     }
 
     .cds-agent-world-current-continent {
@@ -2687,18 +2701,18 @@
     }
 
     .cds-agent-continent {
-      min-width: 160px;
+      min-width: 10rem;
     }
 
     .cds-agent-world-stage {
-      min-height: 270px;
+      min-height: 16.875rem;
       overflow-x: auto;
       overflow-y: hidden;
     }
 
     .cds-agent-world-svg {
-      width: 680px;
-      height: 310px;
+      width: 42.5rem;
+      height: 19.375rem;
       max-width: none;
     }
 
@@ -2736,7 +2750,7 @@
   }
 
   .cds-account-trigger {
-    min-height: 44px;
+    min-height: 2.75rem;
   }
 
   .cds-user-avatar {
@@ -2748,7 +2762,7 @@
     justify-content: center;
     overflow: hidden;
     border: 1px solid hsl(var(--hairline-strong));
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background:
       linear-gradient(145deg, hsl(var(--primary) / 0.22), hsl(var(--surface-raised)));
     color: hsl(var(--foreground));
@@ -2777,19 +2791,19 @@
   .cds-account-menu {
     position: fixed;
     z-index: 110;
-    width: min(272px, calc(100vw - 24px));
+    width: min(17rem, calc(100vw - 1.5rem));
     overflow: hidden;
     border: 1px solid hsl(var(--hairline-strong));
-    border-radius: 10px;
+    border-radius: 0.625rem;
     background-color: hsl(var(--surface-raised));
-    box-shadow: 0 18px 48px rgb(0 0 0 / 0.34);
+    box-shadow: 0 1.125rem 3rem rgb(0 0 0 / 0.34);
     animation: cds-account-menu-enter 160ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   @keyframes cds-account-menu-enter {
     from {
       opacity: 0;
-      transform: translateY(6px) scale(0.98);
+      transform: translateY(0.375rem) scale(0.98);
     }
     to {
       opacity: 1;
@@ -2809,14 +2823,14 @@
 
   .cds-account-menu-item {
     display: flex;
-    min-height: 44px;
+    min-height: 2.75rem;
     width: calc(100% - 0.5rem);
     align-items: center;
     gap: 0.625rem;
     margin: 0.25rem;
     padding: 0 0.625rem;
     border: 0;
-    border-radius: 7px;
+    border-radius: 0.4375rem;
     background: transparent;
     color: hsl(var(--foreground));
     font-size: 0.8125rem;
@@ -2840,7 +2854,7 @@
   .cds-account-menu-item--danger {
     cursor: pointer;
     border-top: 1px solid hsl(var(--hairline));
-    border-radius: 0 0 7px 7px;
+    border-radius: 0 0 0.4375rem 0.4375rem;
   }
 
   .cds-account-menu-item--danger:hover {
@@ -2863,13 +2877,13 @@
   .cds-account-theme-button {
     position: relative;
     display: flex;
-    min-height: 52px;
+    min-height: 3.25rem;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 0.25rem;
     border: 1px solid transparent;
-    border-radius: 7px;
+    border-radius: 0.4375rem;
     background: transparent;
     color: hsl(var(--muted-foreground));
     font-size: 0.6875rem;
@@ -2916,16 +2930,16 @@
     z-index: 190;
     display: inline-flex;
     max-width: calc(100vw - 2rem);
-    min-height: 44px;
+    min-height: 2.75rem;
     align-items: center;
     gap: 0.625rem;
     border: 1px solid hsl(var(--primary) / 0.42);
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background:
       linear-gradient(135deg, hsl(var(--primary) / 0.18), hsl(var(--surface-raised) / 0.96));
     padding: 0.625rem 1rem;
     color: hsl(var(--foreground));
-    box-shadow: 0 12px 30px hsl(var(--background) / 0.32), inset 0 1px 0 hsl(var(--primary) / 0.16);
+    box-shadow: 0 0.75rem 1.875rem hsl(var(--background) / 0.32), inset 0 1px 0 hsl(var(--primary) / 0.16);
     cursor: pointer;
     font-size: 0.875rem;
     font-weight: 600;
@@ -2978,7 +2992,7 @@
        容器反而比内容窄；标签 9.5px 已经在汉字的渲染下限以下，
        「报」「缺」「设」的笔画并成灰块，那才是「失真」的来源。
        现在：栏 72 ⊃ 项 56 ⊃ 内容，三层包含关系正过来；竖向 10+20+4+14+4=52。 */
-    @apply h-[52px] flex-col justify-center gap-1 rounded-xl px-1;
+    @apply h-[3.25rem] flex-col justify-center gap-1 rounded-xl px-1;
   }
 
   /* 图标：全栏一档 20px + 描边 1.7。lucide 把 stroke-width 写成表现属性，
@@ -2988,19 +3002,19 @@
   .cds-rail .cds-rail-section,
   .cds-rail .cds-rail-tools,
   .cds-rail .cds-rail-footer {
-    gap: 6px;
+    gap: 0.375rem;
   }
 
   .cds-rail .cds-rail-tools {
     margin-top: 0;
     padding-top: 0;
-    padding-bottom: 12px;
+    padding-bottom: 0.75rem;
     border-top: 0;
   }
 
   .cds-rail .cds-rail-item svg {
-    width: 20px;
-    height: 20px;
+    width: 1.25rem;
+    height: 1.25rem;
     /* lucide 默认 2 是照 24px 画的；20px 上用 2 会让「缺陷」「Agent」这类密纹图标糊成块。 */
     stroke-width: 1.75;
   }
@@ -3012,9 +3026,11 @@
   /* 11px 是两个汉字在桌面端有余量的第一档：10.5 勉强立住、10 在临界、9.5 已经糊。 */
   .cds-rail .cds-rail-item > .cds-rail-short {
     display: block;
-    font-size: 11px;
+    /* 11px 在 85% 基准下是 9.35px，低于「10px 临界、9.5 已糊」的实测下限：
+       保底 10 物理像素，只有这一处允许字号不随根字号一起缩。 */
+    font-size: max(10px, 0.6875rem);
     font-weight: 500;
-    line-height: 14px;
+    line-height: 0.875rem;
     letter-spacing: 0.02em;
   }
 
@@ -3061,7 +3077,7 @@
     left: 0;
     top: 50%;
     width: 3px;
-    height: 20px;
+    height: 1.25rem;
     transform: translateY(-50%);
     border-radius: 0 3px 3px 0;
     background-color: hsl(var(--primary-ink));
@@ -3089,11 +3105,11 @@
   .cds-rail .cds-agent-access-entry::after {
     content: '';
     position: absolute;
-    top: 6px;
-    left: calc(50% + 6px);
-    width: 5px;
-    height: 5px;
-    border-radius: 999px;
+    top: 0.375rem;
+    left: calc(50% + 0.375rem);
+    width: 0.3125rem;
+    height: 0.3125rem;
+    border-radius: 62.4375rem;
     background-color: hsl(var(--primary-ink));
   }
 
@@ -3113,21 +3129,21 @@
 
   /* 头像跟着图标的节奏走，不再是 32px 的第三档。 */
   .cds-rail .cds-user-avatar {
-    width: 22px;
-    height: 22px;
-    font-size: 9px;
+    width: 1.375rem;
+    height: 1.375rem;
+    font-size: 0.5625rem;
   }
 
   .cds-rail .cds-user-avatar svg {
-    width: 14px;
-    height: 14px;
+    width: 0.875rem;
+    height: 0.875rem;
   }
 
   .cds-rail .cds-rail-brand-title {
     display: none;
   }
 
-  @media (max-width: 767px) {
+  @media (max-width: 652px) {
     /* 手机端:不再保留 64px 常驻图标栏(那是"压缩 PC"观感的根源)。
        工作区吃满整屏宽,导航收进 TopBar 汉堡触发的 slide-in 抽屉。 */
     .cds-app-shell {
@@ -3195,14 +3211,14 @@
     top: 0;
     left: 0;
     bottom: 0;
-    width: min(82vw, 300px);
+    width: min(82vw, 18.75rem);
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
     padding: 1.25rem 1rem;
     background-color: hsl(var(--surface-sunken));
     border-right: 1px solid hsl(var(--hairline));
-    box-shadow: 0 12px 40px hsl(var(--foreground) / 0.18);
+    box-shadow: 0 0.75rem 2.5rem hsl(var(--foreground) / 0.18);
     transform: translateX(-100%);
     transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
   }
@@ -3233,7 +3249,7 @@
        且因为是共享 header，所有页面一样(2026-06-26 用户反馈"一样的")。锁 shrink 即恒 56px。 */
     @apply sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 px-6;
     background-color: hsl(var(--surface-base) / 0.92);
-    backdrop-filter: saturate(180%) blur(10px);
+    backdrop-filter: saturate(180%) blur(0.625rem);
     border-bottom: 1px solid hsl(var(--hairline));
   }
 
@@ -3252,7 +3268,7 @@
    * 2026-06-06 用户反馈:之前是"把一排 PC 工具栏按钮压进窄屏",观感是压缩的电脑,
    * 不是手机设计。本次改成原生移动形态。
    */
-  @media (max-width: 767px) {
+  @media (max-width: 652px) {
     .cds-topbar {
       gap: 0.5rem;
       padding-left: 0.5rem;
@@ -3304,7 +3320,7 @@
   .cds-topbar-sheet {
     position: fixed;
     z-index: 45;
-    min-width: 200px;
+    min-width: 12.5rem;
     max-width: 78vw;
     max-height: 70vh;
     overflow-y: auto;
@@ -3316,7 +3332,7 @@
     border-radius: 0.625rem;
     border: 1px solid hsl(var(--hairline));
     background-color: hsl(var(--surface-raised));
-    box-shadow: 0 12px 40px hsl(var(--foreground) / 0.2);
+    box-shadow: 0 0.75rem 2.5rem hsl(var(--foreground) / 0.2);
   }
 
   /* sheet 内按钮全宽、左对齐,呈菜单行;尺寸放大到舒适可点。
@@ -3344,7 +3360,7 @@
   @keyframes cds-page-enter {
     from {
       opacity: 0;
-      transform: translateY(6px);
+      transform: translateY(0.375rem);
     }
     to {
       opacity: 1;
@@ -3403,13 +3419,13 @@
     scrollbar-gutter: stable;
   }
 
-  @media (min-width: 1536px) {
+  @media (min-width: 1306px) {
     .cds-main {
       --cds-main-px: 3rem;
     }
   }
 
-  @media (max-width: 767px) {
+  @media (max-width: 652px) {
     .cds-main {
       --cds-main-px: 1rem;
       --cds-main-pt: 1rem;
@@ -3430,7 +3446,7 @@
    */
   .cds-workspace {
     width: 100%;
-    max-width: var(--workspace-standard, 1240px);
+    max-width: var(--workspace-standard, 77.5rem);
     margin-left: auto;
     margin-right: auto;
   }
@@ -3508,13 +3524,13 @@
       transparent 75%,
       transparent
     );
-    background-size: 40px 40px;
+    background-size: 2.5rem 2.5rem;
     animation: cds-progress-flow 1s linear infinite;
   }
 
   @keyframes cds-progress-flow {
     from { background-position: 0 0; }
-    to { background-position: 40px 0; }
+    to { background-position: 2.5rem 0; }
   }
 
   /* 状态图标：进行中时向外扩一圈光晕（参考稿 pulseRing）。
@@ -3525,7 +3541,7 @@
 
   @keyframes cds-status-pulse {
     0% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.45); }
-    70% { box-shadow: 0 0 0 12px hsl(var(--primary) / 0); }
+    70% { box-shadow: 0 0 0 0.75rem hsl(var(--primary) / 0); }
     100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0); }
   }
 
@@ -3564,7 +3580,7 @@
 
 
   .cds-workspace-wide {
-    max-width: var(--workspace-wide, 1440px);
+    max-width: var(--workspace-wide, 90rem);
   }
 
   /*
@@ -3578,7 +3594,7 @@
 
   /* 历史别名 → 三档映射(页面零改动),禁止再新增专属宽度。 */
   .cds-workspace-settings {
-    max-width: var(--workspace-wide, 1440px);
+    max-width: var(--workspace-wide, 90rem);
   }
 
   /* ══ 项目设置页：贴边导航 + 铺满内容区（方向 A）══════════════════════
@@ -3604,9 +3620,9 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  @media (min-width: 901px) {
+  @media (min-width: 766px) {
     .cds-settings-layout {
-      grid-template-columns: 244px minmax(0, 1fr);
+      grid-template-columns: 15.25rem minmax(0, 1fr);
     }
 
     /* 导航贴边：不是卡片，只有右侧一条 hairline，从顶通到底，自身内滚。 */
@@ -3631,7 +3647,7 @@
 
   /* 窄屏保持既有的横向 tab 条兜底（mobile-layout-fallback），
      所以 rail 的竖排样式整条收在 min-width: 901px 里。 */
-  @media (max-width: 900px) {
+  @media (max-width: 765px) {
     .cds-settings-rail-head {
       display: none;
     }
@@ -3667,7 +3683,7 @@
    * 已经用 `padding: 1rem !important` 给了 16px 边距，这里再加 24px 就变成每侧
    * 40px——320px 的屏只剩 240px 装表单。横向留给外层，这里只保留纵向节奏。
    */
-  @media (max-width: 900px) {
+  @media (max-width: 765px) {
     .cds-settings-section-body {
       padding: 1rem 0 2rem;
     }
@@ -3686,7 +3702,7 @@
 
   .cds-settings-form-col {
     min-width: 0;
-    max-width: var(--settings-form-max, 620px);
+    max-width: var(--settings-form-max, 38.75rem);
   }
 
   /*
@@ -3695,18 +3711,18 @@
    * 中间空出 384px 的洞——「把富余变成信息」反而变成了一条更显眼的留白带。
    * 真机量出来才看见（设计稿按 1440 画，差额小到看不出）。
    */
-  @media (min-width: 1280px) {
+  @media (min-width: 1088px) {
     .cds-settings-columns:has(> .cds-settings-aside-col) {
-      grid-template-columns: minmax(0, var(--settings-form-max, 620px)) minmax(280px, 360px);
+      grid-template-columns: minmax(0, var(--settings-form-max, 38.75rem)) minmax(17.5rem, 22.5rem);
       justify-content: start;
       gap: 2.5rem;
     }
   }
 
   /* 超宽屏把可读上限抬一档，剩余空间用在字段上而不是继续摊成留白。 */
-  @media (min-width: 1600px) {
+  @media (min-width: 1360px) {
     .cds-settings-columns:has(> .cds-settings-aside-col) {
-      --settings-form-max: 760px;
+      --settings-form-max: 47.5rem;
     }
   }
 
@@ -3727,7 +3743,7 @@
      instead of getting hard-cut mid-icon; `safe center` keeps it centred when
      it fits and falls back to scrollable (not clipped) for the rare 7-stack
      project. The hover-magnify dock is desktop-only, so static sizing is fine. */
-  @media (max-width: 640px) {
+  @media (max-width: 544px) {
     .cds-project-card {
       --project-node-size: 2.6rem;
       --project-node-gap: 0.55rem;
@@ -3756,7 +3772,7 @@
     transform-origin: center bottom;
     background-clip: padding-box;
     box-shadow:
-      0 16px 34px -25px rgb(0 0 0 / 0.85),
+      0 1rem 2.125rem -25px rgb(0 0 0 / 0.85),
       0 1px 0 rgb(255 255 255 / 0.04) inset,
       0 0 0 1px rgb(255 255 255 / 0.035) inset;
     transition:
@@ -3777,9 +3793,9 @@
     .cds-project-node-row .cds-project-node:hover {
       z-index: 3;
       box-shadow:
-        0 26px 54px -28px rgb(0 0 0 / 0.88),
+        0 1.625rem 3.375rem -28px rgb(0 0 0 / 0.88),
         0 0 0 1px hsl(var(--foreground) / 0.08),
-        0 0 28px -18px currentColor,
+        0 0 1.75rem -18px currentColor,
         inset 0 1px 0 rgb(255 255 255 / 0.16);
       filter: saturate(1.12) brightness(1.05);
     }
@@ -3798,7 +3814,7 @@
   }
 
   .cds-project-node-badge {
-    @apply absolute bottom-1 right-1 rounded px-1.5 font-mono text-[11px] font-extrabold leading-4 shadow-sm;
+    @apply absolute bottom-1 right-1 rounded px-1.5 font-mono text-[0.6875rem] font-extrabold leading-4 shadow-sm;
     background-color: hsl(var(--surface-sunken));
   }
 
@@ -3937,7 +3953,7 @@
     pointer-events: none;
     z-index: 0;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    background-size: 160px 160px;
+    background-size: 10rem 10rem;
     opacity: 0.05;
     mix-blend-mode: overlay;
   }
@@ -3958,15 +3974,15 @@
     50% {
       transform: scale(1.15);
       opacity: 1;
-      box-shadow: 0 0 10px 0 currentColor;
+      box-shadow: 0 0 0.625rem 0 currentColor;
     }
   }
 
   .cds-auth-pulse {
-    width: 6px;
-    height: 6px;
+    width: 0.375rem;
+    height: 0.375rem;
     flex: none;
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background-color: currentColor;
     animation: cds-auth-pulse 1.7s ease-in-out infinite;
   }
@@ -4037,12 +4053,12 @@
   /* 未登录页的主题切换:36px 容器 + 20px icon(比例 >=55%,见 cds/CLAUDE.md 规则 1)。 */
   .cds-auth-theme {
     margin-left: auto;
-    width: 36px;
-    height: 36px;
+    width: 2.25rem;
+    height: 2.25rem;
     display: grid;
     place-items: center;
     border: 1px solid hsl(var(--hairline));
-    border-radius: 10px;
+    border-radius: 0.625rem;
     background-color: hsl(var(--surface-raised) / 0.6);
     color: hsl(var(--muted-foreground));
     cursor: pointer;
@@ -4055,8 +4071,8 @@
   }
 
   .cds-auth-theme svg {
-    width: 20px;
-    height: 20px;
+    width: 1.25rem;
+    height: 1.25rem;
   }
 
   /*
@@ -4078,10 +4094,10 @@
     margin: 0 auto;
   }
 
-  @media (min-width: 1024px) {
+  @media (min-width: 870px) {
     .cds-auth-stage {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 400px;
+      grid-template-columns: minmax(0, 1fr) 25rem;
       align-items: center;
       gap: clamp(3rem, 8vw, 8rem);
       padding: 2.5rem 4rem 4.5rem;
@@ -4104,11 +4120,11 @@
   .cds-auth-cmd::before {
     content: '';
     display: inline-block;
-    width: 20px;
+    width: 1.25rem;
     height: 1px;
     background: hsl(var(--primary));
-    vertical-align: 4px;
-    margin-right: 12px;
+    vertical-align: 0.25rem;
+    margin-right: 0.75rem;
   }
 
   .cds-auth-display {
@@ -4145,7 +4161,7 @@
     align-items: center;
     gap: 0.45rem;
     border: 1px solid hsl(var(--hairline));
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     padding: 0.3rem 0.75rem;
     font-size: 0.75rem;
     color: hsl(var(--muted-foreground));
@@ -4154,9 +4170,9 @@
 
   .cds-auth-proof span::before {
     content: '';
-    width: 4px;
-    height: 4px;
-    border-radius: 999px;
+    width: 0.25rem;
+    height: 0.25rem;
+    border-radius: 62.4375rem;
     background-color: hsl(var(--primary) / 0.85);
   }
 
@@ -4177,7 +4193,7 @@
   .cds-auth-line-m::before {
     content: '';
     position: absolute;
-    left: 4px;
+    left: 0.25rem;
     top: 2px;
     bottom: 2px;
     width: 1px;
@@ -4192,12 +4208,12 @@
 
   .cds-auth-line-m-beam {
     position: absolute;
-    left: 4px;
+    left: 0.25rem;
     top: 0;
     width: 1px;
-    height: 56px;
+    height: 3.5rem;
     background: linear-gradient(180deg, transparent, hsl(var(--primary) / 0.95), transparent);
-    box-shadow: 0 0 10px 0 hsl(var(--primary) / 0.35);
+    box-shadow: 0 0 0.625rem 0 hsl(var(--primary) / 0.35);
     opacity: 0;
     animation: cds-auth-beam-m 6.5s cubic-bezier(0.3, 0, 0.5, 1) infinite;
   }
@@ -4222,9 +4238,9 @@
     position: absolute;
     left: -1.25rem;
     top: 0.15em;
-    width: 9px;
-    height: 9px;
-    border-radius: 999px;
+    width: 0.5625rem;
+    height: 0.5625rem;
+    border-radius: 62.4375rem;
     border: 1px solid hsl(var(--foreground) / 0.35);
     background-color: hsl(var(--surface-base));
   }
@@ -4255,7 +4271,7 @@
     color: hsl(var(--muted-foreground));
   }
 
-  @media (min-width: 1024px) {
+  @media (min-width: 870px) {
     .cds-auth-line-m {
       display: none;
     }
@@ -4278,7 +4294,7 @@
     display: none;
   }
 
-  @media (min-width: 1024px) {
+  @media (min-width: 870px) {
     .cds-auth-line {
       display: block;
       position: absolute;
@@ -4311,10 +4327,10 @@
     position: absolute;
     top: 0;
     left: 0;
-    width: 160px;
+    width: 10rem;
     height: 1px;
     background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.95), transparent);
-    box-shadow: 0 0 12px 0 hsl(var(--primary) / 0.35);
+    box-shadow: 0 0 0.75rem 0 hsl(var(--primary) / 0.35);
     opacity: 0;
     animation: cds-auth-beam 6.5s cubic-bezier(0.3, 0, 0.5, 1) infinite;
   }
@@ -4338,10 +4354,10 @@
   }
 
   .cds-auth-station-dot {
-    width: 9px;
-    height: 9px;
+    width: 0.5625rem;
+    height: 0.5625rem;
     margin-top: -4px;
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     border: 1px solid hsl(var(--foreground) / 0.35);
     background-color: hsl(var(--surface-base));
   }
@@ -4372,7 +4388,7 @@
   @keyframes cds-auth-station-glow {
     0%, 100% { filter: none; }
     8% {
-      filter: drop-shadow(0 0 6px hsl(var(--primary) / 0.55));
+      filter: drop-shadow(0 0 0.375rem hsl(var(--primary) / 0.55));
     }
     16% { filter: none; }
   }
@@ -4393,7 +4409,7 @@
     position: relative;
     z-index: 1;
     width: 100%;
-    max-width: 400px;
+    max-width: 25rem;
     margin: 0 auto;
   }
 
@@ -4406,7 +4422,7 @@
     /* 顶部 2px 光线下方要有"被照亮"的落光,否则光源感是假的。 */
     background-image: radial-gradient(120% 64% at 50% 0%, hsl(var(--primary) / 0.06), transparent 58%);
     border: 0;
-    border-radius: 14px;
+    border-radius: 0.875rem;
     padding: 2rem 1.75rem;
     /* 五层影配方(ring/inset 高光/接触/中距/氛围),见 :root --shadow-card。 */
     box-shadow: var(--shadow-card);
@@ -4420,7 +4436,7 @@
   @keyframes cds-auth-rise {
     from {
       opacity: 0;
-      transform: translateY(6px);
+      transform: translateY(0.375rem);
     }
     to {
       opacity: 1;
@@ -4446,7 +4462,7 @@
     10%, 90% { transform: translateX(-1px); }
     20%, 80% { transform: translateX(2px); }
     30%, 50%, 70% { transform: translateX(-4px); }
-    40%, 60% { transform: translateX(4px); }
+    40%, 60% { transform: translateX(0.25rem); }
   }
 
   .cds-auth-card--shake {
@@ -4509,7 +4525,7 @@
     color: hsl(var(--muted-foreground));
     border: 1px solid hsl(var(--hairline));
     background-color: transparent;
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     padding: 0.25rem 0.625rem;
   }
 
@@ -4566,7 +4582,7 @@
   .cds-auth-input {
     height: 2.5rem;
     width: 100%;
-    border-radius: 8px;
+    border-radius: 0.5rem;
     border: 1px solid hsl(var(--hairline));
     background-color: hsl(var(--surface-sunken) / 0.6);
     box-shadow: 0 0 0 0 hsl(var(--ring) / 0);
@@ -4596,7 +4612,7 @@
 
   /* Chrome autofill 会刷成默认黄底,暗色主题下极其破相 —— 用 token 压回去。 */
   .cds-auth-input:-webkit-autofill {
-    -webkit-box-shadow: 0 0 0 1000px hsl(var(--surface-sunken)) inset;
+    -webkit-box-shadow: 0 0 0 62.5rem hsl(var(--surface-sunken)) inset;
     -webkit-text-fill-color: hsl(var(--foreground));
     caret-color: hsl(var(--foreground));
     transition: background-color 9999s ease-out;
@@ -4613,15 +4629,15 @@
 
   .cds-auth-eye {
     position: absolute;
-    right: 6px;
+    right: 0.375rem;
     top: 50%;
     transform: translateY(-50%);
-    width: 28px;
-    height: 28px;
+    width: 1.75rem;
+    height: 1.75rem;
     display: grid;
     place-items: center;
     border: 0;
-    border-radius: 6px;
+    border-radius: 0.375rem;
     background: transparent;
     color: hsl(var(--muted-foreground));
     cursor: pointer;
@@ -4634,8 +4650,8 @@
   }
 
   .cds-auth-eye svg {
-    width: 16px;
-    height: 16px;
+    width: 1rem;
+    height: 1rem;
   }
 
   .cds-auth-error {
@@ -4643,7 +4659,7 @@
     border: 1px solid hsl(var(--destructive) / 0.35);
     background-color: hsl(var(--destructive) / 0.08);
     color: hsl(var(--destructive));
-    border-radius: 8px;
+    border-radius: 0.5rem;
     padding: 0.625rem 0.75rem;
     font-size: 0.8125rem;
     line-height: 1.5;
@@ -4659,20 +4675,20 @@
     gap: 0.5rem;
     font-size: 0.875rem;
     background: hsl(var(--primary));
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 6px 16px -10px hsl(24 100% 55% / 0.45);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 0.375rem 1rem -10px hsl(24 100% 55% / 0.45);
     transition: transform 150ms ease, box-shadow 150ms ease, filter 150ms ease;
   }
 
   .cds-auth-submit:hover:not(:disabled) {
     background: hsl(var(--primary));
     filter: brightness(1.05);
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 8px 20px -10px hsl(24 100% 55% / 0.55);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 0.5rem 1.25rem -10px hsl(24 100% 55% / 0.55);
   }
 
   .cds-auth-submit:active:not(:disabled) {
     transform: translateY(1px) scale(0.99);
     transition-duration: 80ms;
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 3px 10px -8px hsl(24 100% 55% / 0.4);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 3px 0.625rem -8px hsl(24 100% 55% / 0.4);
   }
 
   .cds-auth-submit svg {
@@ -4749,7 +4765,7 @@
     color: hsl(var(--muted-foreground) / 0.8);
   }
 
-  @media (min-width: 1024px) {
+  @media (min-width: 870px) {
     .cds-auth-footer {
       padding: 1.25rem 4rem 1.75rem;
     }
@@ -4786,7 +4802,7 @@
   @keyframes cds-auth-feed-in {
     from {
       opacity: 0;
-      transform: translateY(6px);
+      transform: translateY(0.375rem);
     }
     to {
       opacity: 1;
@@ -4796,8 +4812,8 @@
 
   .cds-auth-ticker-caret {
     display: inline-block;
-    width: 6px;
-    height: 11px;
+    width: 0.375rem;
+    height: 0.6875rem;
     margin-left: 2px;
     vertical-align: -1px;
     background: currentColor;
@@ -4812,7 +4828,7 @@
     flex: none;
   }
 
-  @media (max-width: 640px) {
+  @media (max-width: 544px) {
     .cds-auth-footer-tag {
       display: none;
     }
@@ -4826,7 +4842,7 @@
   }
 
   /* 手机端:卡片让出边框感,内边距收紧,视觉重心交给表单本身。 */
-  @media (max-width: 479px) {
+  @media (max-width: 407px) {
     .cds-auth-body {
       padding: 1.5rem 1rem;
       align-items: flex-start;
@@ -4841,14 +4857,14 @@
   .cds-loading-preview-rings-dark {
     background:
       conic-gradient(from 20deg at 58% 48%, transparent 0 22%, rgba(255, 255, 255, 0.26) 28%, transparent 42%, rgba(255, 255, 255, 0.18) 58%, transparent 74%),
-      repeating-radial-gradient(circle at 58% 48%, transparent 0 74px, rgba(255, 255, 255, 0.24) 76px 78px, transparent 80px 118px);
+      repeating-radial-gradient(circle at 58% 48%, transparent 0 4.625rem, rgba(255, 255, 255, 0.24) 4.75rem 4.875rem, transparent 5rem 7.375rem);
     filter: blur(0.4px);
   }
 
   .cds-loading-preview-rings-light {
     background:
       conic-gradient(from 20deg at 58% 48%, transparent 0 22%, rgba(24, 24, 27, 0.14) 28%, transparent 42%, rgba(24, 24, 27, 0.1) 58%, transparent 74%),
-      repeating-radial-gradient(circle at 58% 48%, transparent 0 74px, rgba(24, 24, 27, 0.16) 76px 78px, transparent 80px 118px);
+      repeating-radial-gradient(circle at 58% 48%, transparent 0 4.625rem, rgba(24, 24, 27, 0.16) 4.75rem 4.875rem, transparent 5rem 7.375rem);
     filter: blur(0.2px);
   }
 
@@ -4866,7 +4882,7 @@
   }
 
   .cds-loading-skeleton-line {
-    border-radius: 10px;
+    border-radius: 0.625rem;
   }
 
   .cds-loading-skeleton-panel {
@@ -4883,13 +4899,13 @@
     opacity: 0.42;
     box-shadow:
       inset 0 0 0 1px rgb(56 189 248 / 0.06),
-      0 0 10px -8px rgb(56 189 248 / 0.65);
+      0 0 0.625rem -8px rgb(56 189 248 / 0.65);
   }
   50% {
     opacity: 0.88;
     box-shadow:
       inset 0 0 0 1px rgb(56 189 248 / 0.14),
-      0 0 16px -7px rgb(56 189 248 / 0.9);
+      0 0 1rem -7px rgb(56 189 248 / 0.9);
   }
 }
 
@@ -4969,24 +4985,24 @@
   box-shadow:
     inset 0 0 0 1px hsl(var(--hairline-strong)),
     0 1px 2px hsl(24 20% 15% / 0.06),
-    0 6px 16px -8px hsl(24 20% 15% / 0.12);
+    0 0.375rem 1rem -8px hsl(24 20% 15% / 0.12);
 }
 
 /* Agent 真实地理地图：地图表达空间，右侧目录保证文字可读。 */
 .cds-agent-world-stage {
   --map-cyan: 188 84% 58%;
-  min-height: 326px;
+  min-height: 20.375rem;
   overflow: hidden;
   border-color: hsl(var(--map-cyan) / 0.34);
   background: hsl(208 55% 7%);
   box-shadow:
     inset 0 0 0 1px hsl(var(--map-cyan) / 0.05),
-    0 12px 30px hsl(220 50% 3% / 0.18);
+    0 0.75rem 1.875rem hsl(220 50% 3% / 0.18);
 }
 
 .cds-agent-world-map-loading {
   display: grid;
-  min-height: 326px;
+  min-height: 20.375rem;
   place-items: center;
   border: 1px solid hsl(188 84% 58% / 0.28);
   border-radius: 0.9rem;
@@ -4998,10 +5014,10 @@
 .cds-agent-world-stage::before {
   z-index: 4;
   background:
-    linear-gradient(90deg, hsl(var(--map-cyan) / 0.65), transparent 26px) left 12px top 12px / 64px 1px no-repeat,
-    linear-gradient(hsl(var(--map-cyan) / 0.65), transparent 26px) left 12px top 12px / 1px 64px no-repeat,
-    linear-gradient(-90deg, hsl(var(--map-cyan) / 0.65), transparent 26px) right 12px bottom 12px / 64px 1px no-repeat,
-    linear-gradient(0deg, hsl(var(--map-cyan) / 0.65), transparent 26px) right 12px bottom 12px / 1px 64px no-repeat;
+    linear-gradient(90deg, hsl(var(--map-cyan) / 0.65), transparent 1.625rem) left 0.75rem top 0.75rem / 4rem 1px no-repeat,
+    linear-gradient(hsl(var(--map-cyan) / 0.65), transparent 1.625rem) left 0.75rem top 0.75rem / 1px 4rem no-repeat,
+    linear-gradient(-90deg, hsl(var(--map-cyan) / 0.65), transparent 1.625rem) right 0.75rem bottom 0.75rem / 4rem 1px no-repeat,
+    linear-gradient(0deg, hsl(var(--map-cyan) / 0.65), transparent 1.625rem) right 0.75rem bottom 0.75rem / 1px 4rem no-repeat;
 }
 
 .cds-agent-world-stage::after {
@@ -5013,15 +5029,15 @@
   background: hsl(208 55% 7%);
   box-shadow:
     inset 0 0 0 1px hsl(var(--map-cyan) / 0.05),
-    0 10px 26px hsl(204 32% 24% / 0.18);
+    0 0.625rem 1.625rem hsl(204 32% 24% / 0.18);
 }
 
 .cds-agent-world-canvas {
   display: grid;
   width: 100%;
   min-width: 0;
-  height: 326px;
-  grid-template-columns: minmax(0, 1fr) 272px;
+  height: 20.375rem;
+  grid-template-columns: minmax(0, 1fr) 17rem;
 }
 
 .cds-agent-world-map-surface {
@@ -5040,7 +5056,7 @@
   background-image:
     linear-gradient(hsl(var(--map-cyan) / 0.035) 1px, transparent 1px),
     linear-gradient(90deg, hsl(var(--map-cyan) / 0.035) 1px, transparent 1px);
-  background-size: 32px 32px;
+  background-size: 2rem 2rem;
   content: '';
   pointer-events: none;
 }
@@ -5049,7 +5065,7 @@
   position: relative;
   z-index: 1;
   width: 100%;
-  height: 326px;
+  height: 20.375rem;
 }
 
 .cds-agent-world-graticule {
@@ -5062,7 +5078,7 @@
 
 .cds-agent-world-hud text {
   fill: hsl(var(--map-cyan) / 0.56);
-  font-size: 9px;
+  font-size: 0.5625rem;
   font-weight: 650;
   letter-spacing: 0.08em;
 }
@@ -5129,7 +5145,7 @@
 
 .cds-agent-world-territory-marker text {
   fill: currentColor;
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 750;
   text-anchor: middle;
 }
@@ -5149,12 +5165,12 @@
   align-items: center;
   gap: 0.35rem;
   border: 1px solid hsl(var(--map-cyan) / 0.17);
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: hsl(207 58% 6% / 0.88);
   padding: 0.3rem 0.55rem;
   color: hsl(0 0% 100% / 0.62);
   font-size: 0.625rem;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(0.5rem);
 }
 
 .cds-agent-world-map-source strong {
@@ -5206,8 +5222,8 @@
 .cds-agent-territory-option {
   display: grid;
   width: 100%;
-  min-height: 50px;
-  grid-template-columns: 24px 20px minmax(0, 1fr) 16px;
+  min-height: 3.125rem;
+  grid-template-columns: 1.5rem 1.25rem minmax(0, 1fr) 1rem;
   align-items: center;
   gap: 0.45rem;
   border: 1px solid transparent;
@@ -5243,10 +5259,10 @@
 
 .cds-agent-territory-option-index {
   display: grid;
-  width: 22px;
-  height: 22px;
+  width: 1.375rem;
+  height: 1.375rem;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: hsl(var(--region-hue) 46% 32% / 0.28);
   color: hsl(var(--region-hue) 88% 78%);
   font-size: 0.625rem;
@@ -5303,7 +5319,7 @@
 @keyframes cds-agent-geo-region-enter {
   from {
     opacity: 0;
-    transform: translateY(5px);
+    transform: translateY(0.3125rem);
   }
   to {
     opacity: 1;
@@ -5322,22 +5338,22 @@
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 544px) {
   .cds-agent-world-stage {
-    min-height: 310px;
+    min-height: 19.375rem;
     overflow-x: auto;
     overflow-y: hidden;
   }
 
   .cds-agent-world-canvas {
-    width: 850px;
-    height: 310px;
-    grid-template-columns: 590px 260px;
+    width: 53.125rem;
+    height: 19.375rem;
+    grid-template-columns: 36.875rem 16.25rem;
   }
 
   .cds-agent-world-svg {
     width: 100%;
-    height: 310px;
+    height: 19.375rem;
   }
 
   .cds-agent-territory-legend {
@@ -5375,7 +5391,7 @@
   border-color: hsl(var(--map-line));
   background: hsl(var(--map-shell));
   color: hsl(var(--map-text));
-  box-shadow: 0 12px 32px hsl(var(--map-shadow) / 0.12);
+  box-shadow: 0 0.75rem 2rem hsl(var(--map-shadow) / 0.12);
 }
 
 .cds-agent-world-stage[data-map-skin='mist'] {
@@ -5399,7 +5415,7 @@
   --map-text: 210 28% 94%;
   --map-muted: 211 15% 66%;
   --map-shadow: 220 55% 3%;
-  box-shadow: 0 14px 34px hsl(var(--map-shadow) / 0.34);
+  box-shadow: 0 0.875rem 2.125rem hsl(var(--map-shadow) / 0.34);
 }
 
 .cds-agent-world-stage::before,
@@ -5411,7 +5427,7 @@
   position: relative;
   z-index: 5;
   display: flex;
-  min-height: 58px;
+  min-height: 3.625rem;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
@@ -5448,8 +5464,8 @@
 
 .cds-agent-map-skin-picker button {
   display: inline-flex;
-  min-width: 44px;
-  height: 44px;
+  min-width: 2.75rem;
+  height: 2.75rem;
   align-items: center;
   justify-content: center;
   gap: 0.3rem;
@@ -5481,7 +5497,7 @@
   border-color: hsl(var(--map-line));
   background: hsl(var(--map-panel));
   color: hsl(var(--map-text));
-  box-shadow: 0 2px 7px hsl(var(--map-shadow) / 0.12);
+  box-shadow: 0 2px 0.4375rem hsl(var(--map-shadow) / 0.12);
 }
 
 .cds-agent-map-skin-picker svg {
@@ -5490,19 +5506,19 @@
 }
 
 .cds-agent-world-map-loading {
-  min-height: 384px;
+  min-height: 24rem;
   border-color: hsl(var(--border));
   background: hsl(var(--background));
   color: hsl(var(--muted-foreground));
 }
 
 .cds-agent-world-canvas {
-  height: 350px;
-  grid-template-columns: minmax(0, 1fr) 284px;
+  height: 21.875rem;
+  grid-template-columns: minmax(0, 1fr) 17.75rem;
 }
 
 .cds-agent-world-map-surface {
-  height: 350px;
+  height: 21.875rem;
   border-color: hsl(var(--map-line));
   background:
     radial-gradient(circle at 51% 48%, hsl(var(--map-panel) / 0.92), transparent 54%),
@@ -5516,7 +5532,7 @@
 }
 
 .cds-agent-world-svg {
-  height: 350px;
+  height: 21.875rem;
 }
 
 .cds-agent-world-grid {
@@ -5533,7 +5549,7 @@
   fill: hsl(var(--map-shadow) / 0.11);
   stroke: hsl(var(--map-line) / 0.64);
   stroke-width: 8;
-  transform: translateY(7px);
+  transform: translateY(0.4375rem);
 }
 
 .cds-agent-world-region-fill {
@@ -5602,7 +5618,7 @@
 }
 
 .cds-agent-territory-legend {
-  height: 350px;
+  height: 21.875rem;
   min-height: 0;
   overflow: hidden;
   background: hsl(var(--map-panel));
@@ -5622,8 +5638,8 @@
 }
 
 .cds-agent-territory-option {
-  min-height: 44px;
-  height: 44px;
+  min-height: 2.75rem;
+  height: 2.75rem;
   color: hsl(var(--map-muted));
 }
 
@@ -5668,7 +5684,7 @@
 
 .cds-agent-territory-explainer {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 1.125rem minmax(0, 1fr);
   gap: 0.45rem;
   border: 1px solid hsl(var(--map-line));
   border-radius: 0.6rem;
@@ -5703,16 +5719,16 @@
   font-size: inherit;
 }
 
-@media (min-width: 641px) and (max-height: 760px) {
+@media (min-width: 545px) and (max-height: 646px) {
   .cds-agent-world-canvas,
   .cds-agent-world-map-surface,
   .cds-agent-world-svg,
   .cds-agent-territory-legend {
-    height: 326px;
+    height: 20.375rem;
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 544px) {
   .cds-agent-world-stage {
     min-height: 0;
     overflow: hidden;
@@ -5742,7 +5758,7 @@
   .cds-agent-world-map-surface,
   .cds-agent-world-svg {
     width: 100%;
-    height: 286px;
+    height: 17.875rem;
   }
 
   .cds-agent-world-map-surface {
@@ -5752,13 +5768,13 @@
 
   .cds-agent-territory-legend {
     height: auto;
-    min-height: 350px;
+    min-height: 21.875rem;
     overflow: visible;
     padding: 0.75rem;
   }
 
   .cds-agent-territory-option {
-    min-height: 52px;
+    min-height: 3.25rem;
     height: auto;
   }
 }
@@ -5770,12 +5786,12 @@
   border-radius: 0.9rem;
   background: hsl(var(--surface-raised));
   padding: 0.75rem;
-  box-shadow: 0 8px 22px hsl(var(--foreground) / 0.045);
+  box-shadow: 0 0.5rem 1.375rem hsl(var(--foreground) / 0.045);
 }
 
 .cds-agent-mission-list-meta {
   display: flex;
-  min-height: 44px;
+  min-height: 2.75rem;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
@@ -5823,7 +5839,7 @@
 
 .cds-agent-role-picker button {
   border: 1px solid hsl(var(--border));
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: hsl(var(--card));
   padding: 0.15rem 0.55rem;
   color: hsl(var(--muted-foreground));
@@ -5863,12 +5879,12 @@
 
 .cds-agent-mission-categories button {
   display: inline-flex;
-  min-height: 44px;
+  min-height: 2.75rem;
   flex: 0 0 auto;
   align-items: center;
   gap: 0.45rem;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: transparent;
   padding: 0.45rem 0.7rem;
   color: hsl(var(--muted-foreground));
@@ -5902,7 +5918,7 @@
   width: 0.35rem;
   height: 0.35rem;
   flex: 0 0 auto;
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: hsl(var(--primary));
   content: '';
 }
@@ -5912,7 +5928,7 @@
   min-width: 1.25rem;
   height: 1.25rem;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: hsl(var(--muted));
   color: hsl(var(--muted-foreground));
   font-size: 0.625rem;
@@ -5936,16 +5952,16 @@
 }
 
 .cds-agent-mission-strip[data-single='true'] {
-  grid-template-columns: minmax(220px, 320px) !important;
+  grid-template-columns: minmax(13.75rem, 20rem) !important;
 }
 
 .cds-agent-mission-card {
   position: relative;
   display: grid;
   min-width: 0;
-  min-height: 112px;
-  grid-template-columns: 28px minmax(0, 1fr) 18px;
-  grid-template-rows: 30px 1fr;
+  min-height: 7rem;
+  grid-template-columns: 1.75rem minmax(0, 1fr) 1.125rem;
+  grid-template-rows: 1.875rem 1fr;
   align-items: center;
   gap: 0.4rem 0.5rem;
   overflow: hidden;
@@ -5966,7 +5982,7 @@
 .cds-agent-mission-card:hover {
   border-color: hsl(var(--primary) / 0.42);
   background: hsl(var(--primary) / 0.035);
-  box-shadow: 0 5px 14px hsl(var(--foreground) / 0.06);
+  box-shadow: 0 0.3125rem 0.875rem hsl(var(--foreground) / 0.06);
 }
 
 .cds-agent-mission-card:focus-visible {
@@ -5979,15 +5995,15 @@
   background: hsl(var(--primary) / 0.075);
   box-shadow:
     inset 3px 0 0 hsl(var(--primary)),
-    0 5px 15px hsl(var(--primary) / 0.1);
+    0 0.3125rem 0.9375rem hsl(var(--primary) / 0.1);
 }
 
 .cds-agent-mission-card-index {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 1.625rem;
+  height: 1.625rem;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: hsl(var(--muted));
   color: hsl(var(--muted-foreground));
   font-size: 0.6875rem;
@@ -6001,8 +6017,8 @@
 
 .cds-agent-mission-card-icon {
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: 1.875rem;
+  height: 1.875rem;
   place-items: center;
   border: 1px solid hsl(var(--border));
   border-radius: 0.55rem;
@@ -6060,7 +6076,7 @@
   opacity: 1;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 544px) {
   .cds-agent-mission-list {
     padding: 0.65rem;
   }
@@ -6084,7 +6100,7 @@
   }
 
   .cds-agent-mission-card {
-    min-height: 108px;
+    min-height: 6.75rem;
   }
 }
 
@@ -6124,7 +6140,7 @@
   pointer-events: none;
   border: 2px solid rgb(234 88 12 / 0.42);
   border-radius: 1.25rem;
-  box-shadow: 0 0 30px rgb(234 88 12 / 0.32);
+  box-shadow: 0 0 1.875rem rgb(234 88 12 / 0.32);
   animation: cds-agent-starter-copy-halo 1.8s ease-in-out infinite;
 }
 
@@ -6140,7 +6156,7 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
   display: none !important;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 544px) {
   [role='dialog']:has([data-agent-starter='true']) {
     inset: 0 !important;
     width: 100vw !important;

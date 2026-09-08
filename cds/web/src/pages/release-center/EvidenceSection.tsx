@@ -56,7 +56,7 @@ function durationOf(run: ReleaseRun): string {
   return s ? `${m} 分 ${s} 秒` : `${m} 分钟`;
 }
 
-const COLUMNS = '150px 130px 92px 104px 88px minmax(0,1fr) auto';
+const COLUMNS = '9.375rem 8.125rem 5.75rem 6.5rem 5.5rem minmax(0,1fr) auto';
 
 /** 状态点与状态文字的色调。与 shared 的 Tone 一一对应，避免这里自造第二套语义。 */
 const DOT_TONE: Record<string, string> = {
@@ -98,10 +98,10 @@ export function EvidenceSection({
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-    <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[14px] border">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-4">
+    <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[0.875rem] border">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-4">
         <h2 className="text-sm font-bold">证据归档</h2>
-        <span className="text-[11.5px] text-muted-foreground">日志与验收报告保留 90 天，生产永久</span>
+        <span className="text-[0.7188rem] text-muted-foreground">日志与验收报告保留 90 天，生产永久</span>
         <span className="flex-1" />
         <span className="flex items-center gap-1">
           {([['all', `全部 ${runs.length}`], ['failed', `仅失败 ${failedCount}`]] as const).map(([key, label]) => (
@@ -110,7 +110,7 @@ export function EvidenceSection({
               type="button"
               aria-pressed={filter === key}
               onClick={() => onFilter(key)}
-              className={`h-[26px] rounded-[7px] px-2.5 text-[11.5px] transition-colors duration-150 ${
+              className={`h-[1.625rem] rounded-[0.4375rem] px-2.5 text-[0.7188rem] transition-colors duration-150 ${
                 filter === key
                   ? 'bg-primary/[0.12] font-semibold text-primary'
                   : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'
@@ -123,13 +123,13 @@ export function EvidenceSection({
       </div>
 
       {visible.length === 0 ? (
-        <p className="px-[18px] py-6 text-xs text-muted-foreground">
+        <p className="px-[1.125rem] py-6 text-xs text-muted-foreground">
           {runs.length === 0 ? '这个项目还没有发布记录。' : '近期没有失败的发布。'}
         </p>
       ) : (
         <>
           <div
-            className="grid gap-3 border-b border-[hsl(var(--hairline)/0.6)] bg-[hsl(var(--surface-sunken))] px-[18px] py-2.5 cds-ident text-[11px] uppercase tracking-[0.09em] text-muted-foreground max-xl:hidden"
+            className="grid gap-3 border-b border-[hsl(var(--hairline)/0.6)] bg-[hsl(var(--surface-sunken))] px-[1.125rem] py-2.5 cds-ident text-[0.6875rem] uppercase tracking-[0.09em] text-muted-foreground max-xl:hidden"
             style={{ gridTemplateColumns: COLUMNS }}
           >
             <span>时间</span><span>环境</span><span>SHA</span><span>结果</span><span>耗时</span><span>操作人</span><span />
@@ -153,16 +153,16 @@ export function EvidenceSection({
               return (
                 <div key={run.releaseId} className="border-b border-[hsl(var(--hairline)/0.6)]">
                   <div
-                    className={`grid items-center gap-3 px-[18px] py-[13px] text-[12.5px] transition-colors duration-150 hover:bg-[hsl(var(--surface-sunken))] max-xl:grid-cols-[92px_minmax(0,1fr)] ${
+                    className={`grid items-center gap-3 px-[1.125rem] py-[0.8125rem] text-[0.7812rem] transition-colors duration-150 hover:bg-[hsl(var(--surface-sunken))] max-xl:grid-cols-[92px_minmax(0,1fr)] ${
                       failed ? 'bg-bad-soft' : ''
                     } ${run.releaseId === selected?.releaseId ? 'bg-[hsl(var(--surface-sunken))]' : ''}`}
                     style={{ gridTemplateColumns: COLUMNS }}
                   >
-                    <span className="cds-ident text-[11.5px] text-muted-foreground">{formatDateTime(run.startedAt)}</span>
+                    <span className="cds-ident text-[0.7188rem] text-muted-foreground">{formatDateTime(run.startedAt)}</span>
                     <span className="truncate font-semibold" title={ownerName}>{ownerName}</span>
                     <span className="cds-ident">{run.commitSha.slice(0, 7)}</span>
                     <span className="flex items-center gap-1.5">
-                      <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${DOT_TONE[tone]}`} />
+                      <span className={`h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full ${DOT_TONE[tone]}`} />
                       <span className={TEXT_TONE[tone]}>{statusLabel(run.status)}</span>
                     </span>
                     <span className="cds-ident text-muted-foreground">{durationOf(run)}</span>
@@ -170,9 +170,9 @@ export function EvidenceSection({
                         合进同一格（说明在上、操作人在下），不额外加一列破坏列宽标注。 */}
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate">{subject || `提交 ${run.commitSha.slice(0, 12)}`}</span>
-                      <span className="truncate text-[11px] text-muted-foreground">{run.operator || '-'}</span>
+                      <span className="truncate text-[0.6875rem] text-muted-foreground">{run.operator || '-'}</span>
                     </span>
-                    <span className="flex flex-wrap items-center justify-end gap-1.5 [&_button]:h-[29px] [&_button]:px-2.5">
+                    <span className="flex flex-wrap items-center justify-end gap-1.5 [&_button]:h-[1.8125rem] [&_button]:px-2.5">
                       {failed ? (
                         <Button
                           variant="outline"
@@ -207,7 +207,7 @@ export function EvidenceSection({
                     </span>
                   </div>
                   {diagnosed ? (
-                    <div className="border-t border-[hsl(var(--hairline)/0.6)] bg-[hsl(var(--surface-sunken))] px-[18px] py-3">
+                    <div className="border-t border-[hsl(var(--hairline)/0.6)] bg-[hsl(var(--surface-sunken))] px-[1.125rem] py-3">
                       <FailureDiagnosis
                         run={run}
                         row={owner}
@@ -224,15 +224,15 @@ export function EvidenceSection({
           </div>
 
           {selected ? (
-            <div className="px-[18px] py-4">
+            <div className="px-[1.125rem] py-4">
               <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-                <span className="text-[11.5px] text-muted-foreground">
+                <span className="text-[0.7188rem] text-muted-foreground">
                   日志预览 · {selected.commitSha.slice(0, 7)} · {formatDateTime(selected.startedAt)}
                 </span>
-                <span className="cds-ident text-[11px] text-muted-foreground">{selected.logs?.length || 0} 行</span>
+                <span className="cds-ident text-[0.6875rem] text-muted-foreground">{selected.logs?.length || 0} 行</span>
               </div>
               <RunSteps run={selected} />
-              <pre className="m-0 mt-2.5 max-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-[9px] bg-[hsl(var(--surface-base))] px-3 py-2.5 cds-ident text-xs leading-[1.75]">
+              <pre className="m-0 mt-2.5 max-h-[20rem] overflow-auto whitespace-pre-wrap break-words rounded-[0.5625rem] bg-[hsl(var(--surface-base))] px-3 py-2.5 cds-ident text-xs leading-[1.75]">
                 {selected.logs && selected.logs.length > 0
                   ? selected.logs.map((log) => `${new Date(log.at).toLocaleTimeString()} ${log.message}`).join('\n')
                   : '这条发布没有留下日志。'}
@@ -243,39 +243,39 @@ export function EvidenceSection({
       )}
     </section>
 
-    <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[14px] border">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-4">
+    <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[0.875rem] border">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-4">
         <h2 className="text-sm font-bold">配置变更历史</h2>
-        <span className="text-[11.5px] text-muted-foreground">谁在什么时候把哪个字段改成了什么</span>
+        <span className="text-[0.7188rem] text-muted-foreground">谁在什么时候把哪个字段改成了什么</span>
       </div>
       {changesLoading ? (
-        <div className="flex items-center gap-2 px-[18px] py-6 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 px-[1.125rem] py-6 text-xs text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           正在读取变更历史
         </div>
       ) : changesError ? (
-        <p className="px-[18px] py-6 text-xs text-muted-foreground">变更历史暂时读不到：{changesError}</p>
+        <p className="px-[1.125rem] py-6 text-xs text-muted-foreground">变更历史暂时读不到：{changesError}</p>
       ) : changes.length === 0 ? (
-        <p className="px-[18px] py-6 text-xs text-muted-foreground">{row.target.name} 还没有配置变更记录。</p>
+        <p className="px-[1.125rem] py-6 text-xs text-muted-foreground">{row.target.name} 还没有配置变更记录。</p>
       ) : (
         <div>
           {changes.map((change, index) => (
             <div
               key={change.id || `${change.at}-${index}`}
-              className="grid gap-x-3 gap-y-1 border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-[13px] text-[12.5px] md:grid-cols-[150px_minmax(0,1fr)]"
+              className="grid gap-x-3 gap-y-1 border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-[0.8125rem] text-[0.7812rem] md:grid-cols-[150px_minmax(0,1fr)]"
             >
-              <span className="cds-ident text-[11.5px] text-muted-foreground">{formatDateTime(change.at)}</span>
+              <span className="cds-ident text-[0.7188rem] text-muted-foreground">{formatDateTime(change.at)}</span>
               <div className="min-w-0">
                 <div className="font-semibold">
                   {RELEASE_CHANGE_KIND_LABELS[change.kind] || change.kind}
                   {change.reason ? <span className="font-normal text-muted-foreground"> · {change.reason}</span> : null}
                 </div>
-                <div className="mt-0.5 text-[11px] text-muted-foreground">{change.actor || '-'}</div>
+                <div className="mt-0.5 text-[0.6875rem] text-muted-foreground">{change.actor || '-'}</div>
                 {/* 明细逐条列 before → after：只写「配置更新」四个字等于把这一栏的价值全丢了。 */}
                 {(change.changes || []).length > 0 ? (
                   <ul className="mt-1 flex flex-col gap-0.5">
                     {change.changes.map((field) => (
-                      <li key={field.path} className="text-[11.5px] text-muted-foreground">
+                      <li key={field.path} className="text-[0.7188rem] text-muted-foreground">
                         <span className="text-foreground">{field.label}</span>
                         <span className="cds-ident">{`：${field.before || '空'} → ${field.after || '空'}`}</span>
                       </li>
@@ -300,13 +300,13 @@ function RunSteps({ run }: { run: ReleaseRun }): JSX.Element {
       {progress.steps.map((step, index) => (
         <div
           key={step.id}
-          className="flex items-center gap-2 rounded-[9px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1.5 text-[12px]"
+          className="flex items-center gap-2 rounded-[0.5625rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1.5 text-[0.75rem]"
         >
           {step.state === 'done' ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-ok" />
             : step.state === 'failed' ? <XCircle className="h-3.5 w-3.5 shrink-0 text-bad" />
               : step.state === 'running' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-info" />
                 : <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
-          <span className="cds-ident shrink-0 text-[10.5px] text-muted-foreground">{index + 1}/{progress.total}</span>
+          <span className="cds-ident shrink-0 text-[0.6562rem] text-muted-foreground">{index + 1}/{progress.total}</span>
           <span className="min-w-0 truncate">{step.label}</span>
         </div>
       ))}

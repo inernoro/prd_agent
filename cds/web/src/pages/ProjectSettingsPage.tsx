@@ -647,11 +647,11 @@ export function ProjectSettingsPage(): JSX.Element {
               <TabsList aria-label="项目设置分区" className="cds-settings-nav cds-settings-rail">
                 <div className="cds-settings-rail-head">
                   <div className="text-sm font-semibold">项目设置</div>
-                  <div className="truncate font-mono text-[11px] text-muted-foreground">{project.slug || project.id}</div>
+                  <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{project.slug || project.id}</div>
                 </div>
                 {tabGroups.map((group, groupIdx) => (
                   <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-3'}`}>
-                    <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                    <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
                       {group.label}
                     </div>
                     {group.items.map((tab) => {
@@ -976,7 +976,7 @@ function RuntimeDefaultsTab({
                   <div className="mt-1 font-mono text-xs text-muted-foreground">{profile.id}</div>
                 </div>
                 <select
-                  className="h-9 min-w-[180px] rounded-md border border-input bg-background px-3 text-sm"
+                  className="h-9 min-w-[11.25rem] rounded-md border border-input bg-background px-3 text-sm"
                   value={modes[profile.id] || ''}
                   onChange={(event) => setModes((current) => ({ ...current, [profile.id]: event.target.value }))}
                   disabled={entries.length === 0}
@@ -1438,7 +1438,7 @@ function GeneralTab({
 
           <aside className="cds-settings-aside-col">
             <div className="cds-surface-raised cds-hairline rounded-lg p-4">
-              <div className="pb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <div className="pb-3 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground">
                 当前生效
               </div>
               <dl className="grid gap-2.5 text-xs">
@@ -1611,7 +1611,7 @@ function RecentAutoDeploys({ projectId }: { projectId: string }): JSX.Element | 
               </a>
             </div>
             <span
-              className={`rounded border px-1.5 py-0.5 text-[10px] ${
+              className={`rounded border px-1.5 py-0.5 text-[0.625rem] ${
                 it.status === 'running' ? 'border-ok/40 bg-ok-soft text-ok'
                 : it.status === 'error' ? 'border-destructive/40 bg-destructive/10 text-destructive'
                 : 'border-[hsl(var(--hairline))] text-muted-foreground'
@@ -2664,7 +2664,7 @@ function CacheTable({
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full min-w-[920px] border-collapse text-sm">
+      <table className="w-full min-w-[57.5rem] border-collapse text-sm">
         <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
           <tr>
             <th className="px-3 py-2 font-medium">名称</th>
@@ -2706,16 +2706,16 @@ function CacheRow({
           {cache.orphan ? <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">孤儿</span> : null}
         </div>
       </td>
-      <td className="max-w-[260px] truncate px-3 py-2 font-mono text-xs" title={cache.hostPath}>
+      <td className="max-w-[16.25rem] truncate px-3 py-2 font-mono text-xs" title={cache.hostPath}>
         {cache.hostPath}
       </td>
-      <td className="max-w-[180px] truncate px-3 py-2 font-mono text-xs" title={cache.containerPath}>
+      <td className="max-w-[11.25rem] truncate px-3 py-2 font-mono text-xs" title={cache.containerPath}>
         {cache.containerPath}
       </td>
       <td className="px-3 py-2 text-right">{formatBytes(cache.sizeBytes)}</td>
       <td className="px-3 py-2 text-right">{cache.fileCount == null ? '暂无' : cache.fileCount.toLocaleString()}</td>
       <td className="px-3 py-2 text-muted-foreground">{formatDate(cache.lastModified)}</td>
-      <td className="max-w-[180px] truncate px-3 py-2 text-muted-foreground" title={cache.usedByProfiles.join(', ')}>
+      <td className="max-w-[11.25rem] truncate px-3 py-2 text-muted-foreground" title={cache.usedByProfiles.join(', ')}>
         {cache.usedByProfiles.length ? cache.usedByProfiles.join(', ') : '暂无'}
       </td>
       <td className="px-3 py-2">
@@ -2834,7 +2834,7 @@ function BranchStats({ projectId }: { projectId: string }): JSX.Element {
       ) : null}
       {state.status === 'ok' && state.branches.length > 0 ? (
         <div className="overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-[720px] border-collapse text-sm">
+          <table className="w-full min-w-[45rem] border-collapse text-sm">
             <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">分支</th>
@@ -2989,7 +2989,7 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
         </div>
         <div className="flex justify-end">
           <span
-            className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] ${actor.tone}`}
+            className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[0.6875rem] ${actor.tone}`}
             title={entry.actor || '系统'}
           >
             {actor.label}
@@ -3448,7 +3448,7 @@ function ProjectComposeTab({
         rows={20}
         spellCheck={false}
         disabled={busy}
-        style={{ minHeight: 320, overflowY: 'auto' }}
+        style={{ minHeight: '20rem', overflowY: 'auto' }}
       />
 
       {/* 字段权威明细 */}
@@ -3720,15 +3720,15 @@ function ProjectMigrationTab({
         <div className="mb-3 flex flex-wrap items-end gap-2">
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">名称(可选)</label>
-            <input className={inputClass} style={{ width: 180 }} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="生产 CDS" />
+            <input className={inputClass} style={{ width: '11.25rem' }} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="生产 CDS" />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">节点地址</label>
-            <input className={monoInputClass} style={{ width: 280 }} value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="noroenrn.com" />
+            <input className={monoInputClass} style={{ width: '17.5rem' }} value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="noroenrn.com" />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">Access Key(可选,留空用本机同款)</label>
-            <input className={monoInputClass} style={{ width: 240 }} type="password" autoComplete="off" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="目标 AI Access Key" />
+            <input className={monoInputClass} style={{ width: '15rem' }} type="password" autoComplete="off" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="目标 AI Access Key" />
           </div>
           <Button type="button" size="sm" onClick={() => void addPeer()} disabled={adding}>
             {adding ? <Loader2 className="animate-spin" /> : <Plus />} 添加目标
@@ -3750,7 +3750,7 @@ function ProjectMigrationTab({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     {p.name}
-                    {p.remoteLabel ? <span className="rounded bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">{p.remoteLabel}</span> : null}
+                    {p.remoteLabel ? <span className="rounded bg-ok-soft px-1.5 py-0.5 text-[0.6875rem] text-ok">{p.remoteLabel}</span> : null}
                   </div>
                   <div className="truncate font-mono text-xs text-muted-foreground">
                     {p.baseUrl} · key {p.keyMasked || '本机回退'}{p.lastVerifiedAt ? ` · 验证于 ${new Date(p.lastVerifiedAt).toLocaleString()}` : ''}
@@ -3793,7 +3793,7 @@ function ProjectMigrationTab({
           <textarea
             readOnly value={preview.yaml}
             className="mb-3 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-xs"
-            rows={12} spellCheck={false} style={{ minHeight: 200, overflowY: 'auto' }}
+            rows={12} spellCheck={false} style={{ minHeight: '12.5rem', overflowY: 'auto' }}
           />
         ) : null}
 
@@ -3852,7 +3852,7 @@ function ProjectMigrationTab({
                         <Download /> 下载源库快照
                       </a>
                     </Button>
-                    <code className="self-center font-mono text-[11px] text-muted-foreground">恢复到 → {b.restore}</code>
+                    <code className="self-center font-mono text-[0.6875rem] text-muted-foreground">恢复到 → {b.restore}</code>
                   </div>
                 </div>
               ))
@@ -4160,7 +4160,7 @@ function ProjectInfraTab({
           <p className="text-xs text-muted-foreground mt-1">
             mongodb / redis / postgres 等 infra 容器,跟随项目独立部署。审批 cds-compose.yml 时自动创建,这里可启停/删除。
           </p>
-          <p className="text-[11px] text-muted-foreground/80 mt-1">
+          <p className="text-[0.6875rem] text-muted-foreground/80 mt-1">
             <span className="font-medium text-foreground/80">数据卷不丢失</span>:删除/停止容器不影响 docker named volume,
             下次同名 infra 创建会自动挂回原数据。
           </p>
@@ -4214,7 +4214,7 @@ function ProjectInfraTab({
                       <span className="font-semibold text-foreground">{svc.name}</span>
                       <CodePill>{svc.id}</CodePill>
                       <span className={
-                        `inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] ` +
+                        `inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem] ` +
                         (svc.status === 'running'
                           ? 'bg-ok-soft text-ok'
                           : svc.status === 'error'
@@ -4230,12 +4230,12 @@ function ProjectInfraTab({
                       :{svc.hostPort}→{svc.containerPort}
                     </div>
                     {cmdText ? (
-                      <div className="mt-1 text-[11px] text-foreground/70 font-mono break-all">
+                      <div className="mt-1 text-[0.6875rem] text-foreground/70 font-mono break-all">
                         cmd: {cmdText}
                       </div>
                     ) : null}
                     {svc.errorMessage ? (
-                      <div className="mt-1.5 text-[11px] text-bad">
+                      <div className="mt-1.5 text-[0.6875rem] text-bad">
                         {svc.errorMessage}
                       </div>
                     ) : null}
@@ -4491,7 +4491,7 @@ function InfraResyncDialog({
               rows={8}
               placeholder={`x-cds-project:\n  name: my-project\nservices:\n  mongodb:\n    image: mongo:7\n    ports: ["27017"]\n    volumes: [mongodb-data:/data/db]\n`}
               disabled={busy}
-              style={{ minHeight: 160, maxHeight: 280, overflowY: 'auto' }}
+              style={{ minHeight: '10rem', maxHeight: '17.5rem', overflowY: 'auto' }}
             />
           </div>
 
@@ -4532,7 +4532,7 @@ function InfraResyncDialog({
                   {diff.updates.map((u) => (
                     <div key={`upd-${u.id}`} className="mt-1 rounded border border-info/30 bg-info-soft px-2 py-1 text-xs">
                       <code className="font-mono">{u.id}</code>
-                      <ul className="mt-0.5 list-disc pl-4 text-[11px] text-foreground/80">
+                      <ul className="mt-0.5 list-disc pl-4 text-[0.6875rem] text-foreground/80">
                         {u.reasons.map((r, i) => <li key={i}>{r}</li>)}
                       </ul>
                     </div>

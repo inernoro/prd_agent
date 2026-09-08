@@ -8,7 +8,17 @@ export default {
       // Tailwind 默认档只有 xl(1280) 和 2xl(1536)，中间空了 256px。
       // 三栏这类「宽了才成立」的布局卡在这段里：1280 勉强、1536 才舒服，
       // 中间的 1440（最常见的笔记本外接屏）无处安放。补一档。
-      screens: { wide: '1440px' },
+      // 2026-09-08：整站按 85% 呈现（根字号 85%）。断点跟着乘 0.85，
+      // 让「窗口多宽时切几栏」和用户在浏览器里缩到 85% 看到的一致：
+      // sm 640→544, md 768→653, lg 1024→870, xl 1280→1088, 2xl 1536→1306, wide 1440→1224。
+      screens: {
+        sm: '544px',
+        md: '653px',
+        lg: '870px',
+        xl: '1088px',
+        '2xl': '1306px',
+        wide: '1224px',
+      },
       colors: {
         // CDS design tokens — single source of truth.
         // Resolves to CSS custom properties in src/index.css. Both dark and

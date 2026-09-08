@@ -146,7 +146,7 @@ function TargetRow({ target }: { target: BackupPanelTarget }): JSX.Element {
         className="grid w-full grid-cols-[8px_minmax(0,1fr)_auto_16px] items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/40 sm:grid-cols-[8px_minmax(0,1fr)_96px_88px_16px]"
       >
         <span className={`h-2 w-2 shrink-0 rounded-full ${DOT_CLASS[meta.tone]}`} />
-        <span className="truncate font-mono text-[13px]">{target.id}</span>
+        <span className="truncate font-mono text-[0.8125rem]">{target.id}</span>
         <span className={`text-xs ${TEXT_CLASS[meta.tone]}`}>{meta.label}</span>
         <span className="hidden text-right font-mono text-xs text-muted-foreground sm:inline">{trailing}</span>
         {open
@@ -200,7 +200,7 @@ function CollapsedGroup({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] hover:bg-muted/40"
+        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[0.8125rem] hover:bg-muted/40"
       >
         <span className={`h-2 w-2 shrink-0 rounded-full ${DOT_CLASS[tone]}`} />
         <span className={`flex-1 ${tone === 'muted' ? 'text-muted-foreground' : ''}`}>{label}</span>
@@ -264,7 +264,7 @@ export function BackupPanel({
       <div className={`flex items-start gap-3 rounded-md border border-border px-4 py-3.5 ${verdictSurface}`}>
         <VerdictIcon className={`mt-0.5 h-5 w-5 shrink-0 ${verdictInk}`} />
         <div className="min-w-0 flex-1">
-          <div className="text-[17px] font-semibold leading-7">{data.verdict.headline}</div>
+          <div className="text-[1.0625rem] font-semibold leading-7">{data.verdict.headline}</div>
           <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>上一轮 <span className="font-mono text-foreground">{lastRound ?? '不知道'}</span></span>
             {nextRound ? <span>下一轮 <span className="font-mono text-foreground">{nextRound}</span></span> : null}
@@ -279,7 +279,7 @@ export function BackupPanel({
       {needsAttention.length > 0 ? (
         <div>
           <div className="mb-1.5 flex items-baseline justify-between gap-2">
-            <h4 className="text-[13px] font-semibold">需要你管的</h4>
+            <h4 className="text-[0.8125rem] font-semibold">需要你管的</h4>
             <span className="text-xs text-muted-foreground">{needsAttention.length} 个</span>
           </div>
           <div className="cds-surface-raised overflow-hidden rounded-md border border-border">

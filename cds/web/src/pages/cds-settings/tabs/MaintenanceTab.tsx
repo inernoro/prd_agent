@@ -944,7 +944,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium">目标分支</span>
                       {visibleBranches.length > 1 ? (
-                        <span className="text-[11px] text-muted-foreground">
+                        <span className="text-[0.6875rem] text-muted-foreground">
                           {visibleBranches.length} 个候选 · 按更新时间倒序
                         </span>
                       ) : null}
@@ -998,7 +998,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                       {pickerOpen && visibleBranches.length > 0 ? (
                         <div
                           role="listbox"
-                          className="absolute left-0 right-0 top-full z-[100] mt-1 max-h-[360px] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
+                          className="absolute left-0 right-0 top-full z-[100] mt-1 max-h-[22.5rem] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
                           style={{ overscrollBehavior: 'contain' }}
                         >
                           {visibleBranches.map((branch, idx) => {
@@ -1029,18 +1029,18 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                                     {branch.name}
                                   </span>
                                   {isCurrent ? (
-                                    <span className="shrink-0 rounded border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[10px] font-semibold text-ok">
+                                    <span className="shrink-0 rounded border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[0.625rem] font-semibold text-ok">
                                       当前
                                     </span>
                                   ) : null}
                                   {!isCurrent && isRecommended ? (
-                                    <span className="shrink-0 rounded border border-info/50 bg-info-soft px-1.5 py-0.5 text-[10px] font-semibold text-info">
+                                    <span className="shrink-0 rounded border border-info/50 bg-info-soft px-1.5 py-0.5 text-[0.625rem] font-semibold text-info">
                                       推荐
                                     </span>
                                   ) : null}
                                   {branch.cdsTouched ? (
                                     <span
-                                      className="shrink-0 rounded border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[10px] font-semibold text-warn"
+                                      className="shrink-0 rounded border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[0.625rem] font-semibold text-warn"
                                       title="该分支相对当前 HEAD 改动过 cds/ 目录"
                                     >
                                       <GitBranch className="mr-0.5 inline h-2.5 w-2.5" />
@@ -1049,7 +1049,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                                   ) : null}
                                 </div>
                                 {branch.committerDate || branch.subject || branch.commitHash ? (
-                                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-5 text-[10px] text-muted-foreground">
+                                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-5 text-[0.625rem] text-muted-foreground">
                                     {branch.committerDate ? (
                                       <span title={branch.committerDate}>
                                         {formatRelativeTime(branch.committerDate)}
@@ -1099,14 +1099,14 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                           会 git fetch 后 hard reset 到 origin/{selectedBranch || '当前分支'},丢弃本地未推送的提交,并重新编译重启 CDS。
                           即使 HEAD 没变也会走完整流程,便于重复触发同一版本验证更新链路。
                         </div>
-                        <div className="text-[11px] text-muted-foreground">
+                        <div className="text-[0.6875rem] text-muted-foreground">
                           当前 {forceHeadSha ? forceHeadSha.slice(0, 7) : '未知'} → origin/{selectedBranch || '当前分支'}
                         </div>
                         {/* 目标不包含当前提交时后端要求声明这是发布还是回滚。
                             前端算不出「包不包含」（self-status 的 ahead 数是拿当前分支比的，
                             不是目标分支），所以直接问人，而不是猜一个自信的错答案。 */}
                         <div className="grid gap-1">
-                          <span className="text-[11px] text-muted-foreground">这次切换属于</span>
+                          <span className="text-[0.6875rem] text-muted-foreground">这次切换属于</span>
                           <div className="flex gap-1">
                             {(['release', 'rollback'] as const).map((value) => (
                               <button
@@ -1125,13 +1125,13 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                           </div>
                         </div>
                         <div className="grid gap-1">
-                          <span className="text-[11px] text-muted-foreground">原因（会记进自更新历史）</span>
+                          <span className="text-[0.6875rem] text-muted-foreground">原因（会记进自更新历史）</span>
                           <input
                             value={forceReasonValue}
                             onChange={(event) => { setForceReason(event.target.value); setForceReasonTouched(true); }}
                             className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2 py-1 text-xs"
                           />
-                          <span className="text-[11px] text-muted-foreground">
+                          <span className="text-[0.6875rem] text-muted-foreground">
                             仅用于自更新历史的审计记录。留空或格式不符也照样执行 —— 强制更新不设前置条件。
                           </span>
                         </div>
@@ -1659,7 +1659,7 @@ function SelfUpdateStatusPanel({
               ? ` · 上次安装 ${formatRelativeTime(data.systemdUnitDrift.installedAt)}`
               : ''}
           </div>
-          <div className="mt-1.5 font-mono text-[11px] text-muted-foreground">
+          <div className="mt-1.5 font-mono text-[0.6875rem] text-muted-foreground">
             一次性修(SSH 到 host):<br />
             <span className="text-foreground">
               cd {'<repo>'}/cds && ./exec_cds.sh install-systemd && sudo cp /tmp/cds-master.service.* /etc/systemd/system/cds-master.service && sudo systemctl daemon-reload
@@ -1728,7 +1728,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
             <div className="text-xs text-muted-foreground">点击一行查看完整日志和阶段耗时</div>
           </div>
           <div className="overflow-x-auto">
-            <table className="min-w-[980px] text-sm">
+            <table className="min-w-[61.25rem] text-sm">
               <thead className="bg-[hsl(var(--surface-raised))] text-xs text-muted-foreground">
                 <tr className="border-b border-border">
                   <th className="px-3 py-2 text-left font-medium">时间</th>
@@ -1774,7 +1774,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
                         {selfUpdateTriggerLabel(rec.trigger)}
                         {rec.actor ? <span className="ml-1">· {rec.actor}</span> : null}
                       </td>
-                      <td className="max-w-[180px] truncate px-3 py-2 align-middle font-mono text-xs" title={rec.branch || '(当前分支)'}>
+                      <td className="max-w-[11.25rem] truncate px-3 py-2 align-middle font-mono text-xs" title={rec.branch || '(当前分支)'}>
                         {rec.branch || '(当前分支)'}
                       </td>
                       <td className="px-3 py-2 align-middle font-mono text-xs text-muted-foreground">
@@ -1793,7 +1793,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
             </table>
           </div>
         </div>
-        <aside className="min-h-[360px] rounded-md border border-border bg-card lg:sticky lg:top-4 lg:max-h-[calc(100vh-8rem)]">
+        <aside className="min-h-[22.5rem] rounded-md border border-border bg-card lg:sticky lg:top-4 lg:max-h-[calc(100vh-8rem)]">
           <div className="border-b border-border px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${selfUpdateStatusClass(selected.status)}`}>
@@ -1810,7 +1810,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
               {selfUpdateTriggerLabel(selected.trigger)}{selected.actor ? ` · ${selected.actor}` : ''} · {selected.branch || '(当前分支)'}
             </div>
           </div>
-          <div className="max-h-[620px] space-y-4 overflow-auto px-4 py-3 lg:max-h-[calc(100vh-16rem)]" style={{ overscrollBehavior: 'contain' }}>
+          <div className="max-h-[38.75rem] space-y-4 overflow-auto px-4 py-3 lg:max-h-[calc(100vh-16rem)]" style={{ overscrollBehavior: 'contain' }}>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <SelfUpdateDetailMetric label="流程耗时" value={fmtMs(selected.durationMs)} />
               <SelfUpdateDetailMetric label="体感耗时" value={fmtMs(selected.totalElapsedMs)} />
@@ -1832,7 +1832,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
                 <div className="text-xs font-medium text-muted-foreground">执行日志</div>
                 <div className="text-xs text-muted-foreground">{selectedSteps.length} 行</div>
               </div>
-              <div className="max-h-[320px] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] leading-5" style={{ overscrollBehavior: 'contain' }}>
+              <div className="max-h-[20rem] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[0.6875rem] leading-5" style={{ overscrollBehavior: 'contain' }}>
                 {selectedSteps.length > 0 ? selectedSteps.map((step, sIdx) => {
                   const normalized = normalizeSelfUpdateStep(step);
                   return (
@@ -1857,7 +1857,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
 function SelfUpdateDetailMetric({ label, value, mono = false }: { label: string; value: string; mono?: boolean }): JSX.Element {
   return (
     <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-[0.6875rem] text-muted-foreground">{label}</div>
       <div className={`mt-1 truncate text-sm font-medium ${mono ? 'font-mono' : ''}`} title={value}>{value}</div>
     </div>
   );
@@ -1897,11 +1897,11 @@ function SelfUpdateFailureCard({
       ) : null}
       {failure.raw ? (
         <details className="group">
-          <summary className="cursor-pointer select-none text-[11px] text-muted-foreground hover:text-foreground">
+          <summary className="cursor-pointer select-none text-[0.6875rem] text-muted-foreground hover:text-foreground">
             原始输出（工具原文，通常是英文）
           </summary>
           <pre
-            className="mt-1.5 max-h-[240px] overflow-auto whitespace-pre-wrap break-all rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-2 font-mono text-[11px] leading-5 text-muted-foreground"
+            className="mt-1.5 max-h-[15rem] overflow-auto whitespace-pre-wrap break-all rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-2 font-mono text-[0.6875rem] leading-5 text-muted-foreground"
             style={{ overscrollBehavior: 'contain' }}
           >
             {failure.raw}
@@ -2100,7 +2100,7 @@ function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }
         </div>
       </div>
       {stats.slowestRec ? (
-        <div className="mt-2 text-[11px] text-muted-foreground">
+        <div className="mt-2 text-[0.6875rem] text-muted-foreground">
           最长一次:{fmtMs(stats.slowestRec.durationMs)} ·{' '}
           {selfUpdateStatusLabel(stats.slowestRec.status)} · {formatRelativeTime(stats.slowestRec.ts)}
           {stats.slowestRec.timings?.webBuildMs && stats.slowestRec.timings.webBuildMs > 60_000
@@ -2300,7 +2300,7 @@ function SelfUpdateLiveProgress({ elapsedMs, currentStep, records }: { elapsedMs
           );
         })}
       </div>
-      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[0.625rem] text-muted-foreground">
         {stages.map((seg, i) => (
           <span key={seg.key} className={i === curIdx ? 'font-medium text-foreground' : ''}>
             <span className={`inline-block h-2 w-2 align-middle ${seg.color} ${i <= curIdx ? '' : 'opacity-30'}`} />{' '}
@@ -2362,7 +2362,7 @@ function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; 
           />
         ))}
       </div>
-      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[0.625rem] text-muted-foreground">
         {legendSegments.map((seg) => (
           <span key={seg.key}>
             <span className={`inline-block h-2 w-2 align-middle ${seg.color}`} />{' '}

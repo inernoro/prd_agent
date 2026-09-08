@@ -126,8 +126,8 @@ function ErrorToastPortal({
         color: 'hsl(var(--card-foreground))',
         border: '1px solid hsl(var(--destructive) / 0.45)',
         borderRadius: 8,
-        padding: '12px 14px',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+        padding: '0.75rem 0.875rem',
+        boxShadow: '0 0.5rem 1.5rem rgba(0,0,0,0.18)',
         fontSize: 13,
         lineHeight: 1.5,
       }}
@@ -170,7 +170,7 @@ function ErrorToastPortal({
             color: 'hsl(var(--destructive-foreground))',
             border: 'none',
             borderRadius: 6,
-            padding: '6px 12px',
+            padding: '0.375rem 0.75rem',
             fontSize: 12,
             cursor: 'pointer',
           }}
@@ -186,7 +186,7 @@ function ErrorToastPortal({
               color: 'inherit',
               border: '1px solid rgba(127,127,127,0.35)',
               borderRadius: 6,
-              padding: '6px 12px',
+              padding: '0.375rem 0.75rem',
               fontSize: 12,
               cursor: 'pointer',
             }}

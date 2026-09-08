@@ -141,10 +141,10 @@ const PROBE_KIND_LABEL: Record<ProbeKind, string> = {
 
 function useIsNarrow(): boolean {
   const [narrow, setNarrow] = useState<boolean>(() =>
-    typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)').matches : false);
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 47.9375rem)').matches : false);
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
-    const mq = window.matchMedia('(max-width: 767px)');
+    const mq = window.matchMedia('(max-width: 47.9375rem)');
     const onChange = (): void => setNarrow(mq.matches);
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
@@ -231,7 +231,7 @@ function StatusPill({ status, excluded }: { status: UptimeStatus; excluded?: boo
   const meta = excluded ? EXCLUDED_META : STATUS_META[status];
   const Icon = meta.icon;
   return (
-    <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${meta.className}`}>
+    <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[0.6875rem] font-medium ${meta.className}`}>
       <Icon className="h-3 w-3" />
       {meta.label}
     </span>
@@ -310,7 +310,7 @@ function OverallBanner({ summary }: { summary: UptimeSummary }): JSX.Element {
             {excludedCount > 0 ? ` · 未纳入监控 ${excludedCount}` : ''}
           </div>
           {excludedCount > 0 ? (
-            <div className="text-[11px] opacity-70">
+            <div className="text-[0.6875rem] opacity-70">
               排除规则（CDS_UPTIME_EXCLUDE）：{(summary.excludePatterns || []).join('、')}
             </div>
           ) : null}
@@ -340,14 +340,14 @@ function TargetRow({ target, segments }: { target: UptimeTargetSummary; segments
           <StatusPill status={target.status} excluded={target.excluded} />
           <span className="truncate text-sm font-medium">{target.name}</span>
           <span
-            className="hidden shrink-0 rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline"
+            className="hidden shrink-0 rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground sm:inline"
             title={target.probeUrl}
           >
             {PROBE_KIND_LABEL[target.probeKind]}
           </span>
           {target.degraded ? (
             <span
-              className="hidden shrink-0 items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn sm:inline-flex "
+              className="hidden shrink-0 items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.625rem] text-warn sm:inline-flex "
               title={target.degradeReason}
             >
               <ShieldAlert className="h-3 w-3" />
@@ -363,12 +363,12 @@ function TargetRow({ target, segments }: { target: UptimeTargetSummary; segments
 
       {/* 柱条：手机端段数减少，仍放不下时容器内横向滚动，绝不撑破 body */}
       <div className="mt-3 overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
-        <div className="flex h-8 min-w-[280px] items-stretch gap-[2px]" role="img" aria-label={`${target.name} 最近 24 小时可用率分布`}>
+        <div className="flex h-8 min-w-[17.5rem] items-stretch gap-[2px]" role="img" aria-label={`${target.name} 最近 24 小时可用率分布`}>
           {shown.map((bucket) => <BarSegment key={bucket.from} bucket={bucket} />)}
         </div>
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] text-muted-foreground">
         <span>{shown.length} 段 · 覆盖最近 24 小时</span>
         {target.sampleCount24h > 0 ? <span>采样 {target.sampleCount24h} 次</span> : null}
         {target.availability7d !== null ? (
@@ -407,7 +407,7 @@ function TargetSection({ title, hint, targets, segments }: {
     <section className="flex flex-col gap-2">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <h2 className="text-sm font-semibold">{title}</h2>
-        <span className="text-[11px] text-muted-foreground">{hint}</span>
+        <span className="text-[0.6875rem] text-muted-foreground">{hint}</span>
       </div>
       {targets.map((target) => <TargetRow key={target.id} target={target} segments={segments} />)}
     </section>
@@ -436,7 +436,7 @@ function StatusErrorCard({ message, onRetry, retrying }: {
         <RefreshCw className={retrying ? 'animate-spin' : undefined} />
         {retrying ? '重试中' : '重新加载'}
       </Button>
-      <div className="text-[11px] text-muted-foreground">
+      <div className="text-[0.6875rem] text-muted-foreground">
         页面每 {POLL_INTERVAL_MS / 1000} 秒也会自动重试一次
       </div>
     </div>
@@ -470,7 +470,7 @@ function IncidentTimeline({ incidents }: { incidents: UptimeIncidentView[] }): J
             // 归因只是「时间上最近的那次发布」，不是因果证明，所以文案用「疑似」。
             // 说死了会让人拿它当结论，反而误导排障方向。
             <span
-              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-2 py-0.5 font-mono text-[11px] text-muted-foreground"
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-2 py-0.5 font-mono text-[0.6875rem] text-muted-foreground"
               title={`故障判定发生在发布 ${incident.releaseId} 完成之后 ${formatDuration(incident.releaseAgeMs ?? 0)}`}
             >
               疑似 {incident.releaseId}
@@ -633,7 +633,7 @@ export function StatusPage(): JSX.Element {
                 </div>
               </div>
 
-              <div className="shrink-0 text-[11px] text-muted-foreground">
+              <div className="shrink-0 text-[0.6875rem] text-muted-foreground">
                 数据由 CDS 自建探测器采集：分支服务直连容器宿主端口（不经预览代理，因此不会影响分支的空闲降温），
                 生产发布目标请求其上线地址。
                 最近一轮探测：{summary.lastCycleAt ? formatClock(summary.lastCycleAt) : '尚未开始'}
