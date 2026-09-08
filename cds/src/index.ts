@@ -53,7 +53,7 @@ import {
   runExternalPortAudit,
   type ExternalPortAuditFamily,
 } from './services/external-port-audit.js';
-import { ProxyService } from './services/proxy.js';
+import { ProxyService, resolveBranchUpstream } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
 import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
@@ -4592,19 +4592,7 @@ process.on('SIGINT', () => { void shutdown('SIGINT'); });
 
 // Configure proxy: resolve branch slug → upstream URL
 proxyService.setResolveUpstream((branchId, profileId) => {
-  const branch = stateService.getBranch(branchId);
-  if (!branch) return null;
-
-  if (profileId && branch.services[profileId]) {
-    const svc = branch.services[profileId];
-    if (svc.status === 'running') return `http://127.0.0.1:${svc.hostPort}`;
-  }
-
-  // Fallback: find first running service
-  for (const svc of Object.values(branch.services)) {
-    if (svc.status === 'running') return `http://127.0.0.1:${svc.hostPort}`;
-  }
-  return null;
+  return resolveBranchUpstream(stateService.getBranch(branchId), profileId);
 });
 
 // ── Web access tracking (throttled: max 1 event per branch per 2s) ──

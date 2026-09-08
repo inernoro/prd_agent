@@ -256,13 +256,15 @@ export class ForwarderRoutePublisher {
 
       if (routableServices.length === 0) continue;
 
-      // 默认入口优先挑 running 服务。若全部仍在 building/starting，则保留
-      // 路由到候选端口，让 forwarder 给出等待页/上游错误，而不是 host 消失。
-      const defaultCandidates = routableServices.some((s) => s.status === 'running')
-        ? routableServices.filter((s) => s.status === 'running')
-        : routableServices;
-      const defaultProfile = pickDefaultProfile(defaultCandidates.map((s) => s.profileId));
-      const defaultPort = defaultCandidates.find((s) => s.profileId === defaultProfile)!.hostPort;
+      // 入口身份先于健康状态确定；否则主站构建或失败时，已就绪的网关 web
+      // 会接管主域。显式根路径与 master 的配置优先级一致；同 profile 的
+      // 健康副本仍可接流量，但不能用另一个产品充当副本。
+      const profileIds = [...new Set([...Object.keys(branch.services ?? {}), ...replicaByProfile.keys()])];
+      const rootProfile = [...profileById.values()].find(
+        (profile) => profileIds.includes(profile.id) && profile.pathPrefixes?.includes('/'),
+      );
+      const defaultProfile = rootProfile?.id ?? pickDefaultProfile(profileIds);
+      const defaultService = routableServices.find((service) => service.profileId === defaultProfile);
 
       const hosts: string[] = [];
       for (const root of this.opts.rootDomains) {
@@ -386,16 +388,17 @@ export class ForwarderRoutePublisher {
             }, apiSvc.profileId, override);
           }
         }
-        // 3) 默认 fallback:无 pathPrefix → 所有未匹配 path 走默认 profile(admin/web/frontend)
-        pushRoute({
+        // 3) 未匹配路径只交给主入口。主入口不可路由时不发布旧端口，
+        // 由现有 master fallback 展示该分支的等待/失败状态。
+        if (defaultService) pushRoute({
           _id: `${branch.id}:${defaultProfile}:default:${idx++}`,
           host,
           upstreamHost: '127.0.0.1',
-          upstreamPort: defaultPort,
+          upstreamPort: defaultService.hostPort,
           branchId: branch.id,
           branchName: branch.branch, // widget injection 需要 branchName,默认 route 也得带,否则 / 页面 widget 消失
           weight: 100,
-          healthState: defaultCandidates.find((s) => s.profileId === defaultProfile)?.status === 'running' ? 'running' : 'unknown',
+          healthState: defaultService.status === 'running' ? 'running' : 'unknown',
           // 不写 updatedAt(理由同前两处:dedup 失效防御)
         }, defaultProfile, override);
       };

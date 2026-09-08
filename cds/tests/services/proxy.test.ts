@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ProxyService } from '../../src/services/proxy.js';
+import { ProxyService, resolveBranchUpstream } from '../../src/services/proxy.js';
 import { StateService } from '../../src/services/state.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -617,6 +617,32 @@ describe('ProxyService', () => {
       expect(written.headers['Content-Type']).toContain('text/html');
       expect(written.body).toContain('启动中');
       expect(written.body).toContain('admin');
+    });
+
+    it.each(['error', 'stopped'] as const)('主入口 %s 时 master 返回错误页，不回退到健康网关', (status) => {
+      addBranch('my-branch', 'running', {
+        'llmgw-web': { profileId: 'llmgw-web', status: 'running' },
+        admin: { profileId: 'admin', status },
+      });
+      stateService.addBuildProfile({
+        id: 'admin', name: 'Admin', dockerImage: 'node:20', workDir: 'admin',
+        containerPort: 5173, pathPrefixes: ['/'],
+      });
+      stateService.setDefaultBranch('my-branch');
+      proxy.setResolveUpstream((branchId, profileId) => resolveBranchUpstream(stateService.getBranch(branchId), profileId));
+
+      const { res, written } = makeRes();
+      proxy.handleRequest(makeReq({ host: 'localhost', accept: 'text/html' }, '/web-pages'), res);
+      expect(written.statusCode).toBe(503);
+      expect(written.body).toContain('预览入口不可达');
+      expect(written.body).toContain('admin');
+      expect(written.body).not.toContain('LLM Gateway');
+
+      const branch = stateService.getBranch('my-branch');
+      expect(resolveBranchUpstream(branch, 'admin')).toBeNull();
+      expect(resolveBranchUpstream(branch, 'missing')).toBeNull();
+      expect(resolveBranchUpstream(branch, 'llmgw-web')).toBe('http://127.0.0.1:9000');
+      expect(resolveBranchUpstream(branch)).toBe('http://127.0.0.1:9000');
     });
 
     it('should serve loading page (not auto-build) when branch is already building', () => {

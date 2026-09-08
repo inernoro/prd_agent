@@ -15,6 +15,8 @@ import path from 'node:path';
 import { StateService } from '../../src/services/state.js';
 import { ForwarderRoutePublisher } from '../../src/services/forwarder-route-publisher.js';
 import { computePreviewSlug } from '../../src/services/preview-slug.js';
+import { resolveRoute } from '../../src/forwarder/route-resolver.js';
+import type { RouteRecord } from '../../src/forwarder/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 let tmpDir: string;
@@ -601,7 +603,7 @@ describe('ForwarderRoutePublisher', () => {
     expect(data).toEqual([]);
   });
 
-  it('默认路由优先选择 running 服务，避免被 building 服务抢走', () => {
+  it('主入口构建中仍保持身份，不把已运行的兄弟网页服务当作主站', () => {
     ensureProject('demo', 'demo');
     state.addBranch({
       id: 'demo-mixed',
@@ -625,8 +627,46 @@ describe('ForwarderRoutePublisher', () => {
     const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
     const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
     expect(defaultRoute).toBeDefined();
-    expect(defaultRoute.upstreamPort).toBe(41002);
-    expect(defaultRoute.healthState).toBe('running');
+    expect(defaultRoute.upstreamPort).toBe(41001);
+    expect(defaultRoute.healthState).toBe('unknown');
+  });
+
+  it.each(['running', 'building', 'starting', 'restarting', 'error', 'stopped'] as const)(
+    '显式主入口为 %s 时，主域、API 与独立网关不串页', (status) => {
+      ensureProject('demo', 'demo');
+      // 网关故意排在主入口前：根路径声明优先于名字和健康状态。
+      addMultiProfileBranch({ projectId: 'demo', branch: 'main', services: {
+        'llmgw-web': 41202, admin: 41200, api: 41201,
+      } });
+      state.addBuildProfile({ id: 'admin', name: 'admin', projectId: 'demo', pathPrefixes: ['/'] } as Parameters<typeof state.addBuildProfile>[0]);
+      state.addBuildProfile({ id: 'api', name: 'api', projectId: 'demo', pathPrefixes: ['/api/'] } as Parameters<typeof state.addBuildProfile>[0]);
+      state.addBuildProfile({ id: 'llmgw-web', name: 'gateway', projectId: 'demo', subdomain: 'llmgw', pathPrefixes: ['/llmgw/'] } as Parameters<typeof state.addBuildProfile>[0]);
+      state.getBranch('demo-main')!.services.admin.status = status;
+      publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+      publisher.publishNow();
+      const routes: RouteRecord[] = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+      const host = `${computePreviewSlug('main', 'demo')}.miduo.org`;
+      for (const requestPath of ['/', '/web-pages']) {
+        const route = resolveRoute(routes, host, requestPath);
+        if (status === 'error' || status === 'stopped') {
+          // 不发布错误服务的旧端口；交给 master 的现有等待/错误页兜底。
+          expect(route).toBeNull();
+        } else {
+          expect(route?.upstreamPort).toBe(41200);
+        }
+      }
+      expect(resolveRoute(routes, host, '/api/users')?.upstreamPort).toBe(41201);
+      expect(resolveRoute(routes, `${computePreviewSlug('main', 'demo')}-llmgw.miduo.org`, '/')?.upstreamPort).toBe(41202);
+    },
+  );
+
+  it('主入口尚无端口时不把主域路由到已就绪的网关', () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({ projectId: 'demo', branch: 'main', services: { admin: 0, 'llmgw-web': 41202 } });
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const routes: RouteRecord[] = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(resolveRoute(routes, `${computePreviewSlug('main', 'demo')}.miduo.org`, '/web-pages')).toBeNull();
   });
 
   it('同样输入再发布不重复写盘(unchanged hash 短路)', () => {

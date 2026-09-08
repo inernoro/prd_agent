@@ -21,6 +21,17 @@ import {
   type HttpLogSink,
 } from './http-log-store.js';
 
+/** 已选定服务的身份不可因故障改变；HTTP 与 WebSocket 共用此解析规则。 */
+export function resolveBranchUpstream(branch: BranchEntry | undefined, profileId?: string): string | null {
+  if (!branch) return null;
+  const service = profileId
+    ? branch.services[profileId]
+    : Object.values(branch.services).find((candidate) => candidate.status === 'running');
+  return service?.status === 'running' && service.hostPort > 0
+    ? `http://127.0.0.1:${service.hostPort}`
+    : null;
+}
+
 /**
  * 代理转发事件 —— 每一次经过 worker port 的请求都会生成一条。
  * 用户通过顶部「转发日志」面板查看，专门用于排查：
