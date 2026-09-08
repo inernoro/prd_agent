@@ -33,6 +33,13 @@ describe('授权健康中心 · 桌面首页搜索', () => {
     const items = buildStaticUtilities(deriveLauncherPerms(['access']));
     expect(items.some((it) => it.routePath === '/authorization-health')).toBe(false);
   });
+
+  it('super 与 root 同路由守卫一样是万能钥匙：没有字面 logs.read 也能搜到 (Codex P2)', () => {
+    const viaSuper = buildStaticUtilities(deriveLauncherPerms(['access', 'super']));
+    expect(viaSuper.some((it) => it.routePath === '/authorization-health')).toBe(true);
+    const viaRoot = buildStaticUtilities(deriveLauncherPerms(['access'], true));
+    expect(viaRoot.some((it) => it.routePath === '/authorization-health')).toBe(true);
+  });
 });
 
 describe('授权健康中心 · 移动抽屉直达', () => {

@@ -474,7 +474,7 @@ export default function AgentLauncherPage() {
 
   const canUseReviewAgent = permissions.includes('review-agent.use');
   const canUsePrReview = permissions.includes('pr-review.use');
-  const launcherPerms = useMemo(() => deriveLauncherPerms(permissions), [permissions]);
+  const launcherPerms = useMemo(() => deriveLauncherPerms(permissions, isRoot), [permissions, isRoot]);
   // 排序侧与记账侧必须用同一个解析器，否则「记进去的 key」和「查出来的 key」对不上
   const launcherCatalog = useMemo(() => getLauncherCatalog({ permissions, isRoot }), [permissions, isRoot]);
 
