@@ -39,6 +39,7 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
     public const string StaleRunningFailureCode = "html_ppt_stale_running";
     public const string RecoveryDeadLetterCode = "html_ppt_recovery_dead_letter";
     internal const int MaxRecoveryAttempts = 5;
+    internal static readonly TimeSpan StaleRunTtl = TimeSpan.FromMinutes(15);
 
     private static readonly HashSet<string> AllowedFailureCodes = new(StringComparer.Ordinal)
     {
@@ -305,7 +306,7 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
                              || run.ArtifactRecoveryNextAttemptAt <= now)
                          && (run.Status == "done"
                              || run.Status == "error"
-                             || run.UpdatedAt <= now.AddMinutes(-5)))
+                             || run.UpdatedAt <= now.Subtract(StaleRunTtl)))
             .SortBy(run => run.UpdatedAt)
             .Limit(Math.Clamp(limit, 1, 500))
             .ToListAsync(CancellationToken.None);
@@ -316,7 +317,7 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
             try
             {
                 var staleRecycled = false;
-                if (run.Status == "running" && run.UpdatedAt <= now.AddMinutes(-5))
+                if (run.Status == "running" && run.UpdatedAt <= now.Subtract(StaleRunTtl))
                 {
                     var staleWrite = await _db.MdToPptRuns.UpdateOneAsync(
                         item => item.Id == run.Id
@@ -376,7 +377,8 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
             Builders<MdToPptRun>.Update
                 .Set(run => run.ArtifactRecoveryAttemptCount, 0)
                 .Set(run => run.ArtifactRecoveryNextAttemptAt, null)
-                .Set(run => run.ArtifactRecoveryLastFailureCode, null),
+                .Set(run => run.ArtifactRecoveryLastFailureCode, null)
+                .Set(run => run.ArtifactRecoveryDeadLetteredAt, null),
             cancellationToken: CancellationToken.None);
     }
 
@@ -393,9 +395,9 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
                 .Set(item => item.ArtifactRecoveryLastFailureCode,
                     deadLettered ? RecoveryDeadLetterCode : RecoveryFailureCode)
                 .Set(item => item.ArtifactRecoveryNextAttemptAt,
-                    deadLettered ? null : attemptedAt.Add(RecoveryBackoff(attempt)))
+                    deadLettered ? (DateTime?)null : attemptedAt.Add(RecoveryBackoff(attempt)))
                 .Set(item => item.ArtifactRecoveryDeadLetteredAt,
-                    deadLettered ? attemptedAt : null),
+                    deadLettered ? attemptedAt : (DateTime?)null),
             cancellationToken: CancellationToken.None);
     }
 

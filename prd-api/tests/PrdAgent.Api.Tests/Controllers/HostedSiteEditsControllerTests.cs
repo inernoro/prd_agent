@@ -769,6 +769,122 @@ public sealed class HostedSiteEditsControllerTests
         revisions.VerifyAll();
     }
 
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CancelRun_MapQueued_ShouldImmediatelyBecomeCancelledAndNeverCreateArtifact()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var run = CancellableEditRun("map-queued", DesignArtifactRuntimes.MapGateway, RunStatuses.Queued);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var events = new InMemoryRunEventStore();
+        var controller = BuildController(fixture.Db, run.UserId, events: events);
+
+        var result = await controller.CancelRun(run.TargetSiteId!, run.Id);
+
+        Assert.IsType<OkObjectResult>(result);
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Cancelled, persisted.Status);
+        Assert.NotNull(persisted.CancelRequestedAt);
+        Assert.NotNull(persisted.CancelledAt);
+        Assert.Null(persisted.ArtifactSiteId);
+        Assert.Null(persisted.ArtifactRevisionId);
+        Assert.Null(persisted.ProducedArtifactSiteId);
+        Assert.Null(persisted.ProducedArtifactRevisionId);
+        var records = await events.GetEventsAsync(RunKinds.DesignArtifact, run.Id, 0, 10);
+        Assert.Contains(records, item => item.EventName == "cancelled");
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CancelRun_MapRunning_ShouldOnlyRequestCancellationUntilWorkerOwnsTerminal()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var run = CancellableEditRun("map-running", DesignArtifactRuntimes.MapGateway, RunStatuses.Running);
+        run.LeaseOwnerId = "worker-map";
+        run.LeaseExpiresAt = DateTime.UtcNow.AddMinutes(2);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var controller = BuildController(fixture.Db, run.UserId, events: new InMemoryRunEventStore());
+
+        Assert.IsType<OkObjectResult>(await controller.CancelRun(run.TargetSiteId!, run.Id));
+        Assert.IsType<OkObjectResult>(await controller.CancelRun(run.TargetSiteId!, run.Id));
+
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Running, persisted.Status);
+        Assert.NotNull(persisted.CancelRequestedAt);
+        Assert.Equal(run.UserId, persisted.CancelRequestedByUserId);
+        Assert.Equal("worker-map", persisted.LeaseOwnerId);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CancelRun_OpenDesignV2_ShouldUseNativeAuthoritativeLifecycle()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var run = CancellableEditRun("open-design-queued", DesignArtifactRuntimes.OpenDesign, RunStatuses.Queued);
+        run.ContractVersion = DesignArtifactContractVersions.Current;
+        run.LifecycleVersion = 1;
+        run.LifecycleEventSequence = 1;
+        run.WorkspaceRef = new DesignArtifactWorkspaceRef
+        {
+            WorkspaceId = $"web-page-{run.Id}",
+            Kind = DesignArtifactWorkspaceKinds.RemotePackage,
+            BaseRevision = "base-revision",
+            Adapter = WebPageDesignArtifactLifecycleAdapter.AdapterId,
+        };
+        run.VersionBoundary = new DesignArtifactVersionBoundary
+        {
+            BaseArtifactId = run.TargetSiteId,
+            BaseVersion = "base-revision",
+            BaseContentHash = new string('a', 64),
+        };
+        run.LifecycleEvents =
+        [
+            new DesignArtifactEventEnvelope
+            {
+                RunId = run.Id,
+                ArtifactType = run.ArtifactType,
+                Sequence = 1,
+                Type = DesignArtifactLifecycleEventTypes.Run,
+                Phase = run.Phase,
+                Progress = run.Progress,
+                Authoritative = true,
+            },
+        ];
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var lifecycle = new DesignArtifactLifecycleService(fixture.Db, new InMemoryRunEventStore());
+        var controller = BuildController(
+            fixture.Db,
+            run.UserId,
+            events: new InMemoryRunEventStore(),
+            lifecycle: lifecycle);
+
+        Assert.IsType<OkObjectResult>(await controller.CancelRun(run.TargetSiteId!, run.Id));
+
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Cancelled, persisted.Status);
+        Assert.Equal(DesignArtifactLifecycleEventTypes.Cancelled, persisted.LifecycleEvents[^1].Type);
+        Assert.True(persisted.LifecycleEvents[^1].Authoritative);
+        Assert.Null(persisted.LifecycleFailureCode);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CancelRun_ShouldHideOtherUsersRunAndRejectCommittingBoundary()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var run = CancellableEditRun("commit-boundary", DesignArtifactRuntimes.MapGateway, RunStatuses.Committing);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+
+        var otherUser = BuildController(fixture.Db, "another-user", events: new InMemoryRunEventStore());
+        Assert.IsType<NotFoundObjectResult>(await otherUser.CancelRun(run.TargetSiteId!, run.Id));
+
+        var owner = BuildController(fixture.Db, run.UserId, events: new InMemoryRunEventStore());
+        Assert.IsType<ConflictObjectResult>(await owner.CancelRun(run.TargetSiteId!, run.Id));
+        var unchanged = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Committing, unchanged.Status);
+        Assert.Null(unchanged.CancelRequestedAt);
+    }
+
     private static HostedSiteEditsController BuildController(
         MongoDbContext db,
         string userId,
@@ -778,7 +894,8 @@ public sealed class HostedSiteEditsControllerTests
         IRunQueue? queue = null,
         IHostedSiteRevisionService? revisions = null,
         IRunEventStore? events = null,
-        IWebPageDesignArtifactLifecycleAdapter? publicLifecycle = null)
+        IWebPageDesignArtifactLifecycleAdapter? publicLifecycle = null,
+        IDesignArtifactLifecycleService? lifecycle = null)
     {
         var controller = new HostedSiteEditsController(
             sites ?? Mock.Of<IHostedSiteService>(),
@@ -789,7 +906,8 @@ public sealed class HostedSiteEditsControllerTests
             NullLogger<HostedSiteEditsController>.Instance,
             providers ?? Mock.Of<IDesignArtifactProviderCatalog>(),
             knowledgeSnapshots ?? Mock.Of<IDesignKnowledgeSnapshotResolver>(),
-            publicLifecycle ?? Mock.Of<IWebPageDesignArtifactLifecycleAdapter>());
+            publicLifecycle ?? Mock.Of<IWebPageDesignArtifactLifecycleAdapter>(),
+            lifecycle ?? Mock.Of<IDesignArtifactLifecycleService>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -851,6 +969,23 @@ public sealed class HostedSiteEditsControllerTests
         };
         return new HostedSiteEditableEntry(site, html, contentVersion ?? DateTime.UtcNow);
     }
+
+    private static DesignArtifactRun CancellableEditRun(string id, string runtime, string status) => new()
+    {
+        Id = id,
+        UserId = "owner-user",
+        Status = status,
+        ArtifactType = DesignArtifactTypes.WebPage,
+        Operation = DesignArtifactOperations.Edit,
+        SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
+        Runtime = runtime,
+        TargetSiteId = "site-a",
+        Instruction = "调整页面标题",
+        Progress = status == RunStatuses.Queued ? 2 : 42,
+        Phase = status == RunStatuses.Queued ? "修改任务已进入队列" : "页面正在生成",
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
+    };
 
     private static string ResponseMessage(BadRequestObjectResult result)
     {

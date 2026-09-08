@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Check, ExternalLink, Send, Server, X } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
@@ -21,6 +21,10 @@ import {
   previewableAiStreamHtml,
   runningGenerationActivity,
 } from './siteEditPreview';
+import {
+  parseSiteGenerationProgressEvent,
+  resolveGeneratedSiteId,
+} from './siteGenerateProgress';
 
 export interface SiteGenerateSource {
   entryId: string;
@@ -34,11 +38,6 @@ interface Props {
   initialSource?: SiteGenerateSource | null;
   onClose: () => void;
   onCreated: (siteId: string) => void;
-}
-
-interface PhaseEvent {
-  progress?: number;
-  message?: string;
 }
 
 const ACTIVE_GENERATION_RUN_KEY = 'web-hosting-design-active-run-v1';
@@ -76,6 +75,59 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
   useEffect(() => {
     onCreatedRef.current = onCreated;
   }, [onCreated]);
+
+  const finishGeneration = useCallback((siteId: string, siteUrl?: string) => {
+    const finalPreview = previewableAiStreamHtml(streamRef.current);
+    if (finalPreview) setPreviewHtml(finalPreview);
+    setCompletedSite({ id: siteId, url: siteUrl });
+    setProgress(100);
+    setPhase('网页已生成并保存，可在网页托管中继续修改和发布分享');
+    setGenerating(false);
+    sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+    onCreatedRef.current(siteId);
+  }, []);
+
+  const recoverActiveRun = useCallback(async (runId: string, signal: AbortSignal) => {
+    let failedReads = 0;
+    while (!signal.aborted) {
+      const result = await getDesignArtifactRun(runId);
+      if (signal.aborted) return;
+      if (!result.success) {
+        failedReads += 1;
+        setGenerating(true);
+        setPhase(failedReads === 1
+          ? '实时连接已中断，正在从服务器恢复任务状态'
+          : '仍在等待服务器恢复任务状态');
+      } else {
+        failedReads = 0;
+        setPhase(result.data.phase || '正在恢复网页生成进度');
+        setProgress(result.data.progress);
+        setActiveRunRuntime(result.data.runtime);
+        setRunStartedAtMs(Date.parse(result.data.createdAt));
+        const status = result.data.status.toLowerCase();
+        const siteId = resolveGeneratedSiteId(result.data);
+        if (status === 'done' && siteId) {
+          finishGeneration(siteId);
+          return;
+        }
+        if (status === 'done') {
+          setGenerating(false);
+          setPhase('网页任务已结束，但未找到可打开的产物，请重新生成');
+          sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+          return;
+        }
+        if (status === 'error' || status === 'cancelled') {
+          const message = result.data.error || '网页生成未完成，请重新发起';
+          setGenerating(false);
+          setPhase(message);
+          sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+          return;
+        }
+        setGenerating(true);
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 1500));
+    }
+  }, [finishGeneration]);
 
   useEffect(() => {
     if (!open) return;
@@ -129,44 +181,16 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     if (!open) return;
     const runId = sessionStorage.getItem(ACTIVE_GENERATION_RUN_KEY);
     if (!runId) return;
-
-    let active = true;
-    let timer: number | undefined;
-    const recover = async () => {
-      const result = await getDesignArtifactRun(runId);
-      if (!active) return;
-      if (!result.success) {
-        sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
-        return;
-      }
-
-      setPhase(result.data.phase);
-      setProgress(result.data.progress);
-      setActiveRunRuntime(result.data.runtime);
-      setRunStartedAtMs(Date.parse(result.data.createdAt));
-      const status = result.data.status.toLowerCase();
-      if (status === 'done' && result.data.artifactSiteId) {
-        setGenerating(false);
-        setCompletedSite({ id: result.data.artifactSiteId });
-        sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
-        onCreatedRef.current(result.data.artifactSiteId);
-        return;
-      }
-      if (status === 'error' || status === 'cancelled') {
-        setGenerating(false);
-        sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
-        return;
-      }
-
-      setGenerating(true);
-      timer = window.setTimeout(recover, 1500);
-    };
-    void recover();
+    const recovery = new AbortController();
+    abortRef.current?.abort();
+    abortRef.current = recovery;
+    setGenerating(true);
+    setPhase('正在恢复上次未完成的网页生成任务');
+    void recoverActiveRun(runId, recovery.signal);
     return () => {
-      active = false;
-      if (timer) window.clearTimeout(timer);
+      recovery.abort();
     };
-  }, [open]);
+  }, [open, recoverActiveRun]);
 
   const enabledRuntime = capabilities.find((item) => item.id === selectedRuntime && item.enabled)
     ?? capabilities.find((item) => item.enabled);
@@ -245,28 +269,24 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     setRunStartedAtMs(Date.parse(created.data.createdAt));
     sessionStorage.setItem(ACTIVE_GENERATION_RUN_KEY, created.data.runId);
 
+    let terminalObserved = false;
     try {
       await streamDesignArtifactRun({
         runId: created.data.runId,
         signal: abort.signal,
         onEvent: (event) => {
-          if (!event.data) return;
-          let data: Record<string, unknown>;
-          try { data = JSON.parse(event.data) as Record<string, unknown>; }
-          catch { return; }
-
-          if (event.event === 'phase') {
-            const item = data as PhaseEvent;
-            if (typeof item.message === 'string') setPhase(item.message);
+          const item = parseSiteGenerationProgressEvent(event);
+          if (item.kind === 'phase') {
+            if (item.message) setPhase(item.message);
             if (typeof item.progress === 'number') setProgress(item.progress);
             return;
           }
-          if (event.event === 'thinking' && typeof data.text === 'string') {
-            setThinking((previous) => `${previous}${data.text}`.slice(-600));
+          if (item.kind === 'thinking') {
+            setThinking((previous) => `${previous}${item.text}`.slice(-600));
             return;
           }
-          if (event.event === 'delta' && typeof data.text === 'string') {
-            streamRef.current += data.text;
+          if (item.kind === 'delta') {
+            streamRef.current += item.text;
             const now = Date.now();
             if (now - lastPaintAtRef.current >= 200) {
               const html = previewableAiStreamHtml(streamRef.current);
@@ -275,32 +295,31 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
             }
             return;
           }
-          if (event.event === 'done' && typeof data.siteId === 'string') {
-            const finalPreview = previewableAiStreamHtml(streamRef.current);
-            if (finalPreview) setPreviewHtml(finalPreview);
-            setCompletedSite({ id: data.siteId, url: typeof data.siteUrl === 'string' ? data.siteUrl : undefined });
-            setProgress(100);
-            setPhase('网页已生成并保存，可在网页托管中继续修改和发布分享');
-            sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
-            onCreated(data.siteId);
+          if (item.kind === 'done') {
+            terminalObserved = true;
+            finishGeneration(item.siteId, item.siteUrl);
             return;
           }
-          if (event.event === 'error') {
-            const message = typeof data.message === 'string' ? data.message : '网页生成失败';
-            setPhase(message);
+          if (item.kind === 'error') {
+            terminalObserved = true;
+            setGenerating(false);
+            setPhase(item.message);
             sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
-            toast.error('网页生成失败', message);
+            toast.error('网页生成失败', item.message);
           }
         },
       });
-    } catch (error) {
+      if (!terminalObserved && !abort.signal.aborted) {
+        setPhase('实时连接已结束，正在核对服务器中的任务状态');
+        await recoverActiveRun(created.data.runId, abort.signal);
+      }
+    } catch {
       if (!abort.signal.aborted) {
-        const message = error instanceof Error ? error.message : '网页生成进度连接中断';
-        setPhase(message);
-        toast.error('网页生成进度中断', '任务仍由服务器继续执行，稍后可在网页托管中查看产物');
+        setPhase('实时连接已中断，正在从服务器恢复任务状态');
+        await recoverActiveRun(created.data.runId, abort.signal);
       }
     } finally {
-      setGenerating(false);
+      if (abort.signal.aborted) setGenerating(false);
     }
   };
 

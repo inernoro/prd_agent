@@ -198,6 +198,19 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
         string? currentHtml,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // Workspace result is the durable completion fact. A worker that restarts after CDS committed
+        // the package but before the Done event arrived must consume the verified package instead of
+        // creating another session and spending another model call.
+        if (!string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
+        {
+            var recovered = await _workspaceBroker.ReadResultAsync(run.Id, CancellationToken.None);
+            yield return new DesignArtifactExecutorChunk(
+                "delta",
+                recovered.IndexHtml,
+                recovered.Files);
+            yield break;
+        }
+
         var connection = await FindFrozenCdsConnectionAsync(run.RuntimeConnectionId, ct);
         var workspace = await _workspaceBroker.PrepareAsync(run, currentHtml, CancellationToken.None);
         var session = await _sessions.CreateAsync(

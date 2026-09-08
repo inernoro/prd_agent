@@ -43,6 +43,15 @@ public sealed class DesignArtifactsController : ControllerBase
         "workspace_session_not_found",
         "workspace_transfer_invalid",
     };
+    private static readonly HashSet<string> PublicGenerationStreamEvents = new(StringComparer.Ordinal)
+    {
+        "phase",
+        "thinking",
+        "delta",
+        "done",
+        "error",
+        "cancelled",
+    };
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _events;
     private readonly IRunQueue _queue;
@@ -546,48 +555,102 @@ public sealed class DesignArtifactsController : ControllerBase
             }), ct);
             return;
         }
-        if (initial.ContractVersion != DesignArtifactContractVersions.Current)
-        {
-            await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
-            {
-                code = DesignArtifactLifecycleErrorCodes.UnsupportedVersion,
-                message = "公共事件流只支持 v2 合同",
-            }), ct);
-            return;
-        }
-
         var cursor = Math.Max(0, afterSeq);
         var idleRounds = 0;
+        var redisProjectionAvailable = true;
+        var lastMongoProgress = -1;
+        string? lastMongoPhase = null;
         try
         {
             while (!ct.IsCancellationRequested)
             {
-                var snapshot = await _db.DesignArtifactRuns
-                    .Find(item => item.Id == runId && item.UserId == userId)
-                    .FirstOrDefaultAsync(CancellationToken.None);
-                if (snapshot == null) return;
-                var batch = snapshot.LifecycleEvents
-                    .Where(item => item.Sequence > cursor)
-                    .OrderBy(item => item.Sequence)
-                    .Take(100)
-                    .ToList();
+                IReadOnlyList<RunEventRecord> batch = Array.Empty<RunEventRecord>();
+                if (redisProjectionAvailable)
+                {
+                    try
+                    {
+                        batch = await _events.GetEventsAsync(
+                            RunKinds.DesignArtifact,
+                            runId,
+                            cursor,
+                            100,
+                            ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        redisProjectionAvailable = false;
+                        _logger?.LogWarning(
+                            ex,
+                            "网页生成任务 Redis 事件流不可用，切换 Mongo 权威状态 runId={RunId}",
+                            runId);
+                    }
+                }
+                var terminalEventEmitted = false;
                 foreach (var item in batch)
                 {
-                    await WriteEventAsync(
-                        item.Sequence,
-                        item.Type,
-                        JsonSerializer.Serialize(ToPublicContractEvent(item)),
-                        ct);
-                    cursor = item.Sequence;
+                    cursor = item.Seq;
+                    if (!PublicGenerationStreamEvents.Contains(item.EventName)) continue;
+                    await WriteEventAsync(item.Seq, item.EventName, item.PayloadJson, ct);
+                    terminalEventEmitted |= item.EventName is "done" or "error" or "cancelled";
                 }
+                if (terminalEventEmitted) return;
                 if (batch.Count > 0)
                 {
                     idleRounds = 0;
                     continue;
                 }
 
-                if (snapshot.Status is RunStatuses.Done or RunStatuses.Error or RunStatuses.Cancelled)
+                var snapshot = await _db.DesignArtifactRuns
+                    .Find(item => item.Id == runId && item.UserId == userId)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                if (snapshot == null) return;
+                if (snapshot.Progress != lastMongoProgress
+                    || !string.Equals(snapshot.Phase, lastMongoPhase, StringComparison.Ordinal))
+                {
+                    await WriteEventAsync(null, "phase", JsonSerializer.Serialize(new
+                    {
+                        progress = snapshot.Progress,
+                        message = snapshot.Phase,
+                    }), ct);
+                    lastMongoProgress = snapshot.Progress;
+                    lastMongoPhase = snapshot.Phase;
+                }
+                if (snapshot.Status == RunStatuses.Done)
+                {
+                    var siteId = snapshot.ArtifactSiteId ?? snapshot.ProducedArtifactSiteId;
+                    var revisionId = snapshot.ArtifactRevisionId ?? snapshot.ProducedArtifactRevisionId;
+                    if (!string.IsNullOrWhiteSpace(siteId))
+                    {
+                        await WriteEventAsync(null, "done", JsonSerializer.Serialize(new
+                        {
+                            siteId,
+                            revisionId,
+                            status = HostedSiteRevisionStatuses.Draft,
+                        }), ct);
+                    }
+                    else
+                    {
+                        await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
+                        {
+                            code = "DESIGN_ARTIFACT_RESULT_MISSING",
+                            message = "网页任务已结束，但未找到可打开的产物，请重新生成",
+                        }), ct);
+                    }
                     return;
+                }
+                if (snapshot.Status is RunStatuses.Error or RunStatuses.Cancelled)
+                {
+                    await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
+                    {
+                        code = snapshot.Status == RunStatuses.Cancelled
+                            ? "DESIGN_ARTIFACT_CANCELLED"
+                            : "DESIGN_ARTIFACT_FAILED",
+                        message = string.IsNullOrWhiteSpace(snapshot.Error)
+                            ? "网页生成未完成，请重新发起"
+                            : snapshot.Error,
+                    }), ct);
+                    return;
+                }
 
                 idleRounds++;
                 if (idleRounds % 20 == 0)
@@ -621,6 +684,8 @@ public sealed class DesignArtifactsController : ControllerBase
         run.Phase,
         run.ArtifactSiteId,
         run.ArtifactRevisionId,
+        run.ProducedArtifactSiteId,
+        run.ProducedArtifactRevisionId,
         run.LinkedRunId,
         run.Error,
         run.RuntimeModelCallCount,

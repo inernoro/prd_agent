@@ -31,6 +31,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     private readonly IDesignArtifactProviderCatalog _providers;
     private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
     private readonly IWebPageDesignArtifactLifecycleAdapter _publicLifecycle;
+    private readonly IDesignArtifactLifecycleService _lifecycle;
 
     public HostedSiteEditsController(
         IHostedSiteService sites,
@@ -41,7 +42,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         ILogger<HostedSiteEditsController> logger,
         IDesignArtifactProviderCatalog providers,
         IDesignKnowledgeSnapshotResolver knowledgeSnapshots,
-        IWebPageDesignArtifactLifecycleAdapter publicLifecycle)
+        IWebPageDesignArtifactLifecycleAdapter publicLifecycle,
+        IDesignArtifactLifecycleService lifecycle)
     {
         _sites = sites;
         _revisions = revisions;
@@ -52,6 +54,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         _providers = providers;
         _knowledgeSnapshots = knowledgeSnapshots;
         _publicLifecycle = publicLifecycle;
+        _lifecycle = lifecycle;
     }
 
     [HttpGet("runtime-capabilities")]
@@ -262,6 +265,54 @@ public sealed class HostedSiteEditsController : ControllerBase
             : Ok(ApiResponse<object>.Ok(ToRunDto(run)));
     }
 
+    [HttpPost("runs/{runId}/cancel")]
+    public async Task<IActionResult> CancelRun(string siteId, string runId)
+    {
+        var userId = this.GetRequiredUserId();
+        var current = await FindOwnedEditRunAsync(siteId, runId, userId);
+        if (current == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "修改任务不存在"));
+
+        DesignArtifactRun updated;
+        try
+        {
+            updated = current.ContractVersion == DesignArtifactContractVersions.Current
+                ? await _lifecycle.RequestCancellationAsync(
+                    new RequestDesignArtifactCancellationRequest(
+                        current.Id,
+                        current.UserId,
+                        current.LifecycleVersion,
+                        current.WorkspaceRef?.BaseRevision,
+                        current.VersionBoundary?.BaseContentHash),
+                    CancellationToken.None)
+                : await RequestLegacyCancellationAsync(_db, current, DateTime.UtcNow);
+        }
+        catch (DesignArtifactLifecycleException ex)
+            when (ex.Code == DesignArtifactLifecycleErrorCodes.Conflict)
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                "DESIGN_ARTIFACT_CANCEL_CONFLICT",
+                "任务已经进入保存或终态，不能再取消；请刷新任务状态确认结果"));
+        }
+        catch (DesignArtifactRunCancellationConflictException)
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                "DESIGN_ARTIFACT_CANCEL_CONFLICT",
+                "任务已经进入保存或终态，不能再取消；请刷新任务状态确认结果"));
+        }
+
+        var changed = current.Status != updated.Status
+                      || current.CancelRequestedAt != updated.CancelRequestedAt;
+        await ProjectCancellationBestEffortAsync(updated);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            runId = updated.Id,
+            updated.Status,
+            cancelRequested = updated.CancelRequestedAt.HasValue,
+            changed,
+        }));
+    }
+
     [HttpGet("runs/{runId}/stream")]
     [Produces("text/event-stream")]
     public async Task StreamRun(string siteId, string runId, [FromQuery] long afterSeq = 0, CancellationToken ct = default)
@@ -346,13 +397,20 @@ public sealed class HostedSiteEditsController : ControllerBase
                     }
                     return;
                 }
-                if (snapshot.Status is RunStatuses.Error or RunStatuses.Cancelled)
+                if (snapshot.Status == RunStatuses.Cancelled)
+                {
+                    await WriteEventAsync(null, "cancelled", JsonSerializer.Serialize(new
+                    {
+                        code = "DESIGN_ARTIFACT_CANCELLED",
+                        message = "设计任务已取消，未生成或发布新版本",
+                    }), ct);
+                    return;
+                }
+                if (snapshot.Status == RunStatuses.Error)
                 {
                     await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
                     {
-                        code = snapshot.Status == RunStatuses.Cancelled
-                            ? "DESIGN_ARTIFACT_CANCELLED"
-                            : "DESIGN_ARTIFACT_FAILED",
+                        code = "DESIGN_ARTIFACT_FAILED",
                         message = string.IsNullOrWhiteSpace(snapshot.Error)
                             ? "页面修改未完成，请重新发起"
                             : snapshot.Error,
@@ -379,14 +437,93 @@ public sealed class HostedSiteEditsController : ControllerBase
         }
     }
 
-    private Task<DesignArtifactRun?> FindOwnedEditRunAsync(string siteId, string runId, string userId) =>
-        _db.DesignArtifactRuns.Find(x => x.Id == runId
+    private async Task<DesignArtifactRun?> FindOwnedEditRunAsync(string siteId, string runId, string userId) =>
+        await _db.DesignArtifactRuns.Find(x => x.Id == runId
                                          && x.UserId == userId
                                          && x.TargetSiteId == siteId
                                          && x.Operation == DesignArtifactOperations.Edit
                                          && x.ArtifactType == DesignArtifactTypes.WebPage
                                          && x.SourceSurface == DesignArtifactSourceSurfaces.WebHosting)
             .FirstOrDefaultAsync(CancellationToken.None);
+
+    internal static async Task<DesignArtifactRun> RequestLegacyCancellationAsync(
+        MongoDbContext db,
+        DesignArtifactRun current,
+        DateTime requestedAt)
+    {
+        if (current.Status == RunStatuses.Cancelled)
+            return current;
+        if (current.Status == RunStatuses.Running && current.CancelRequestedAt.HasValue)
+            return current;
+        if (current.Status is not (RunStatuses.Queued or RunStatuses.Running))
+            throw new DesignArtifactRunCancellationConflictException();
+
+        var terminal = current.Status == RunStatuses.Queued;
+        var filter = Builders<DesignArtifactRun>.Filter.And(
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.Id, current.Id),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.UserId, current.UserId),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.Status, current.Status),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.CancelRequestedAt, null),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.LeaseOwnerId, current.LeaseOwnerId),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.LeaseExpiresAt, current.LeaseExpiresAt),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactSiteId, current.ProducedArtifactSiteId),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactRevisionId, current.ProducedArtifactRevisionId));
+        var update = Builders<DesignArtifactRun>.Update
+            .Set(item => item.CancelRequestedAt, requestedAt)
+            .Set(item => item.CancelRequestedByUserId, current.UserId)
+            .Set(item => item.Phase, terminal ? "设计任务已取消" : "正在停止设计任务")
+            .Set(item => item.UpdatedAt, requestedAt);
+        if (terminal)
+        {
+            update = update
+                .Set(item => item.Status, RunStatuses.Cancelled)
+                .Set(item => item.CancelledAt, requestedAt)
+                .Set(item => item.CompletedAt, requestedAt)
+                .Set(item => item.LeaseOwnerId, null)
+                .Set(item => item.LeaseExpiresAt, null);
+        }
+        var updated = await db.DesignArtifactRuns.FindOneAndUpdateAsync(
+            filter,
+            update,
+            new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
+            {
+                ReturnDocument = ReturnDocument.After,
+            },
+            CancellationToken.None);
+        return updated ?? throw new DesignArtifactRunCancellationConflictException();
+    }
+
+    private async Task ProjectCancellationBestEffortAsync(DesignArtifactRun run)
+    {
+        try
+        {
+            var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, run.Id, CancellationToken.None)
+                       ?? new RunMeta
+                       {
+                           RunId = run.Id,
+                           Kind = RunKinds.DesignArtifact,
+                           CreatedByUserId = run.UserId,
+                           CreatedAt = run.CreatedAt,
+                       };
+            meta.Status = run.Status;
+            if (run.Status == RunStatuses.Cancelled)
+                meta.EndedAt = run.CancelledAt ?? run.CompletedAt ?? DateTime.UtcNow;
+            await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
+            await _events.AppendEventAsync(
+                RunKinds.DesignArtifact,
+                run.Id,
+                run.Status == RunStatuses.Cancelled ? "cancelled" : "phase",
+                run.Status == RunStatuses.Cancelled
+                    ? new { code = "DESIGN_ARTIFACT_CANCELLED", message = "设计任务已取消，未生成或发布新版本" }
+                    : new { progress = run.Progress, message = "正在停止设计任务" },
+                RunTtl,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "网页修改取消状态 Redis 投影暂不可用 runId={RunId}", run.Id);
+        }
+    }
 
     [HttpGet("revisions")]
     public async Task<IActionResult> ListRevisions(string siteId)
@@ -594,6 +731,9 @@ public sealed class HostedSiteEditsController : ControllerBase
         artifactRevisionId = run.ArtifactRevisionId ?? run.ProducedArtifactRevisionId,
         run.LinkedRunId,
         run.Error,
+        cancelRequested = run.CancelRequestedAt.HasValue,
+        run.CancelRequestedAt,
+        run.CancelledAt,
         run.CreatedAt,
         knowledgeReferences = run.KnowledgeReferences.Select(item => new
         {
@@ -653,3 +793,5 @@ public sealed class RejectHostedSiteRevisionRequest
 {
     public string? Reason { get; set; }
 }
+
+internal sealed class DesignArtifactRunCancellationConflictException : InvalidOperationException;

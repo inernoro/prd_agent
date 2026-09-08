@@ -169,6 +169,9 @@ public static class DesignArtifactLifecycleEventTypes
     public const string Delta = "delta";
     public const string Thinking = "thinking";
     public const string Manifest = "manifest";
+    public const string CancelRequested = "cancel-requested";
+    public const string Cancelled = "cancelled";
+    public const string Recovered = "recovered";
     public const string Done = "done";
     public const string Error = "error";
     public const string Published = "published";

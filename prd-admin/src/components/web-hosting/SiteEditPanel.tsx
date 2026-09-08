@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, BookOpen, Check, Clock3, Eye, History, RefreshCw, RotateCcw, Send, Server, ShieldCheck, WandSparkles, X } from 'lucide-react';
+import { AlertTriangle, BookOpen, Check, Clock3, Eye, History, RefreshCw, RotateCcw, Send, Server, ShieldCheck, Square, WandSparkles, X } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { listRecentDocumentEntries } from '@/services/real/documentStore';
 import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import {
   createHostedSiteEditRun,
+  cancelHostedSiteEditRun,
   getDesignRuntimeCapabilities,
   getHostedSiteEditRun,
   listHostedSiteRevisions,
@@ -123,6 +124,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
   const [selectedRuntime, setSelectedRuntime] = useState('map-gateway');
   const [recoveringRunId, setRecoveringRunId] = useState<string | null>(null);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [stopRequested, setStopRequested] = useState(false);
   const [recoveryNotice, setRecoveryNotice] = useState<RecoveryNotice | null>(null);
   const [runtimeRecoveryGate, setRuntimeRecoveryGate] = useState<RuntimeRecoveryGate | null>(null);
   const [pendingRollback, setPendingRollback] = useState<HostedSiteRevision | null>(null);
@@ -307,9 +310,12 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
 
   useEffect(() => {
     try {
-      setRecoveringRunId(sessionStorage.getItem(activeSiteEditRunStorageKey(site.id)));
+      const storedRunId = sessionStorage.getItem(activeSiteEditRunStorageKey(site.id));
+      setRecoveringRunId(storedRunId);
+      setActiveRunId(storedRunId);
     } catch {
       setRecoveringRunId(null);
+      setActiveRunId(null);
     }
   }, [site.id]);
 
@@ -319,7 +325,11 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     let timer: number | undefined;
     const clearRecovery = () => {
       try { sessionStorage.removeItem(activeSiteEditRunStorageKey(site.id)); } catch { /* ignore unavailable storage */ }
-      if (active) setRecoveringRunId(null);
+      if (active) {
+        setRecoveringRunId(null);
+        setActiveRunId(null);
+        setStopRequested(false);
+      }
     };
     const recover = async () => {
       const result = await getHostedSiteEditRun(site.id, recoveringRunId);
@@ -354,7 +364,17 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
         await loadHistory();
         return;
       }
-      if (status === 'error' || status === 'cancelled') {
+      if (status === 'cancelled') {
+        clearRecovery();
+        setGenerating(false);
+        setThinking('');
+        setPreviewHtml('');
+        streamRef.current = '';
+        setPhase('修改任务已停止，线上版本没有变化');
+        setRecoveryNotice(null);
+        return;
+      }
+      if (status === 'error') {
         clearRecovery();
         setGenerating(false);
         beginRuntimeRecovery(result.data.runtime);
@@ -409,6 +429,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     setPhase('正在创建修改任务');
     streamRef.current = '';
     setRecoveringRunId(null);
+    setActiveRunId(null);
+    setStopRequested(false);
 
     const selectedEntries = selectedKnowledgeIds
       .map((entryId) => recentKnowledge.find((item) => item.id === entryId))
@@ -444,6 +466,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       return;
     }
     setActiveRunRuntime(created.data.runtime);
+    setActiveRunId(created.data.runId);
     try { sessionStorage.setItem(activeSiteEditRunStorageKey(site.id), created.data.runId); } catch { /* ignore unavailable storage */ }
 
     let reachedTerminal = false;
@@ -482,6 +505,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
           if (event.event === 'done' && typeof data.revisionId === 'string') {
             reachedTerminal = true;
             try { sessionStorage.removeItem(activeSiteEditRunStorageKey(site.id)); } catch { /* ignore unavailable storage */ }
+            setActiveRunId(null);
+            setStopRequested(false);
             setDraftRevisionId(data.revisionId);
             setDraftRevisionStatus('draft');
             setProgress(100);
@@ -489,6 +514,21 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             setRecoveryNotice(null);
             void openRevision(data.revisionId);
             void loadHistory();
+            return;
+          }
+          if (event.event === 'cancelled'
+            || (event.event === 'error' && data.code === 'DESIGN_ARTIFACT_CANCELLED')) {
+            reachedTerminal = true;
+            try { sessionStorage.removeItem(activeSiteEditRunStorageKey(site.id)); } catch { /* ignore unavailable storage */ }
+            setActiveRunId(null);
+            setStopRequested(false);
+            setGenerating(false);
+            setThinking('');
+            setPreviewHtml('');
+            streamRef.current = '';
+            setPhase('修改任务已停止，线上版本没有变化');
+            setRecoveryNotice(null);
+            toast.info('修改任务已停止', '没有生成或发布新版本');
             return;
           }
           if (event.event === 'error') {
@@ -522,6 +562,36 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     } finally {
       if (!handedOffToRecovery) setGenerating(false);
     }
+  };
+
+  const stopGeneration = async () => {
+    if (!activeRunId || stopRequested) return;
+    setStopRequested(true);
+    setPhase('正在安全停止设计任务');
+    const result = await cancelHostedSiteEditRun(site.id, activeRunId);
+    if (!result.success) {
+      setStopRequested(false);
+      const detail = result.error?.message || '停止请求未送达，任务仍在服务器执行';
+      setPhase('停止请求未完成，正在继续确认任务结果');
+      toast.error('暂时无法停止', detail);
+      return;
+    }
+    if (result.data.status.toLowerCase() === 'cancelled') {
+      abortRef.current?.abort();
+      try { sessionStorage.removeItem(activeSiteEditRunStorageKey(site.id)); } catch { /* ignore unavailable storage */ }
+      setActiveRunId(null);
+      setRecoveringRunId(null);
+      setGenerating(false);
+      setStopRequested(false);
+      setThinking('');
+      setPreviewHtml('');
+      streamRef.current = '';
+      setPhase('修改任务已停止，线上版本没有变化');
+      setRecoveryNotice(null);
+      toast.info('修改任务已停止', '没有生成或发布新版本');
+      return;
+    }
+    setPhase('停止请求已送达，正在结束当前设计步骤');
   };
 
   const publish = async (revisionId: string) => {
@@ -989,15 +1059,27 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
               </div>
             )}
           </div>
-          <button
-            type="button"
-            onClick={() => void generate()}
-            disabled={generating || instruction.trim().length === 0}
-            className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-          >
-            {generating ? <MapSpinner size={14} /> : <Send size={14} />}
-            {generating ? '草稿生成中，线上未改变' : '生成修改草稿'}
-          </button>
+          {generating ? (
+            <button
+              type="button"
+              onClick={() => void stopGeneration()}
+              disabled={!activeRunId || stopRequested}
+              className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 text-xs font-medium text-rose-500 transition-colors hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+            >
+              {stopRequested ? <MapSpinner size={14} /> : <Square size={13} fill="currentColor" />}
+              {stopRequested ? '正在停止，线上未改变' : '停止生成'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void generate()}
+              disabled={instruction.trim().length === 0}
+              className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            >
+              <Send size={14} />
+              生成修改草稿
+            </button>
+          )}
         </div>
 
         {(generating || previewHtml) && (

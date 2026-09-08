@@ -125,7 +125,8 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
     {
         if (string.IsNullOrWhiteSpace(run.PublishIntentId))
         {
-            var created = await _db.MdToPptRuns.FindOneAndUpdateAsync(
+            var created = await IMongoCollectionExtensions.FindOneAndUpdateAsync<MdToPptRun>(
+                _db.MdToPptRuns,
                 item => item.Id == run.Id
                         && item.UserId == run.UserId
                         && item.Status == "done"
@@ -141,11 +142,11 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                     .Set(item => item.PublishIntentNextAttemptAt, DateTime.UtcNow)
                     .Set(item => item.ArtifactContractSynchronizedAt, null)
                     .Set(item => item.UpdatedAt, DateTime.UtcNow),
-                new FindOneAndUpdateOptions<MdToPptRun, MdToPptRun>
+                options: new FindOneAndUpdateOptions<MdToPptRun>
                 {
                     ReturnDocument = ReturnDocument.After,
                 },
-                CancellationToken.None);
+                cancellationToken: CancellationToken.None);
             if (created != null) return created;
         }
 
@@ -198,6 +199,19 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
         try
         {
             var htmlBytes = Encoding.UTF8.GetBytes(claimed.Html ?? string.Empty);
+            var sourceHash = Hash(htmlBytes);
+            if (claimed.Status != "done"
+                || claimed.Op == "outline"
+                || !FixedHashEquals(sourceHash, claimed.HtmlHash)
+                || !FixedHashEquals(sourceHash, claimed.PublishIntentHtmlHash)
+                || !string.Equals(
+                    claimed.PublishIntentId,
+                    BuildIntentId(claimed.Id, sourceHash),
+                    StringComparison.Ordinal))
+                throw new HtmlPptPublishPendingException(
+                    BytesMismatchCode,
+                    "发布意图与权威完成态不一致");
+
             var site = await _sites.CreateFromHtmlIdempotentAsync(
                 claimed.UserId,
                 htmlBytes,
@@ -294,15 +308,26 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
 
     private async Task<HtmlPptPublishResult> LoadCompletedAsync(MdToPptRun run, CancellationToken ct)
     {
-        var site = await _db.HostedSites.Find(item => item.Id == run.PublishedSiteId && item.OwnerUserId == run.UserId)
+        var site = await _db.HostedSites.Find(item => item.Id == run.PublishedSiteId
+                                                       && item.OwnerUserId == run.UserId
+                                                       && item.PublishedRevisionId == run.PublishedVersionId)
             .FirstOrDefaultAsync(ct);
         var revision = await _db.HostedSiteRevisions.Find(item => item.Id == run.PublishedVersionId
                                                                   && item.SiteId == run.PublishedSiteId
+                                                                  && item.CreatedByUserId == run.UserId
                                                                   && item.Status == HostedSiteRevisionStatuses.Published)
             .FirstOrDefaultAsync(ct);
-        if (site == null || revision == null || string.IsNullOrWhiteSpace(run.PublishedHtmlHash))
+        var actualHash = revision == null
+            ? null
+            : Hash(Encoding.UTF8.GetBytes(revision.Html ?? string.Empty));
+        if (site == null
+            || revision == null
+            || revision.PublishedContentVersion != site.ContentVersion
+            || !FixedHashEquals(actualHash, run.PublishedHtmlHash)
+            || !FixedHashEquals(actualHash, run.PublishIntentHtmlHash)
+            || !FixedHashEquals(actualHash, run.HtmlHash))
             throw new HtmlPptPublishPendingException(PendingCode, "发布完成记录正在恢复");
-        return new HtmlPptPublishResult(site, revision, run.PublishedHtmlHash);
+        return new HtmlPptPublishResult(site, revision, actualHash!);
     }
 
     private async Task ScheduleRetryAsync(MdToPptRun run, string owner, string failureCode)
@@ -317,7 +342,7 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                 .Set(item => item.PublishIntentStatus, deadLetter ? "dead-letter" : "retry")
                 .Set(item => item.PublishIntentLastFailureCode, deadLetter ? DeadLetterCode : failureCode)
                 .Set(item => item.PublishIntentNextAttemptAt,
-                    deadLetter ? null : failedAt.Add(Backoff(run.PublishIntentAttemptCount)))
+                    deadLetter ? (DateTime?)null : failedAt.Add(Backoff(run.PublishIntentAttemptCount)))
                 .Set(item => item.PublishIntentLeaseOwnerId, null)
                 .Set(item => item.PublishIntentLeaseExpiresAt, null)
                 .Set(item => item.UpdatedAt, failedAt),

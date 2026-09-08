@@ -106,6 +106,18 @@ public class DesignArtifactRun
 
     public string? Error { get; set; }
 
+    /// <summary>
+    /// 用户通过显式取消 API 提交的服务器权威取消意图。浏览器断开、SSE 中止或 Worker 停机
+    /// 都不得写入此字段。
+    /// </summary>
+    public DateTime? CancelRequestedAt { get; set; }
+
+    /// <summary>提交取消意图的用户；当前仅允许任务所有者取消。</summary>
+    public string? CancelRequestedByUserId { get; set; }
+
+    /// <summary>任务真正进入 Cancelled 终态的时间，与请求时间分开记录。</summary>
+    public DateTime? CancelledAt { get; set; }
+
     /// <summary>当前执行尝试的租约所有者。每次认领使用唯一值，作为所有写入的 fencing token。</summary>
     public string? LeaseOwnerId { get; set; }
 

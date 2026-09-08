@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services.MdToPpt;
 using PrdAgent.Core.Interfaces;
@@ -133,11 +134,28 @@ public sealed class HtmlPptDesignArtifactAdapterTests
             Title = "Recovered PPT",
             SiteUrl = "https://site.invalid/index.html",
             ContentVersion = new DateTime(2026, 9, 8, 1, 2, 3, DateTimeKind.Utc),
+            PublishedRevisionId = "baseline-owned-site",
+        };
+        var revision = new HostedSiteRevision
+        {
+            Id = site.PublishedRevisionId,
+            SiteId = site.Id,
+            CreatedByUserId = done.UserId,
+            Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.Baseline,
+            Runtime = DesignArtifactRuntimes.HtmlPptPipeline,
+            SourceRunId = done.Id,
+            Html = html,
+            BasedOnContentVersion = site.ContentVersion,
+            PublishedContentVersion = site.ContentVersion,
+            CreatedAt = site.ContentVersion,
+            PublishedAt = site.ContentVersion,
         };
         await fixture.Db.HostedSites.InsertOneAsync(site);
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(revision);
         done.PublishedSiteId = site.Id;
         done.PublishedHtmlHash = hash;
-        done.PublishedVersionId = HtmlPptDesignArtifactAdapter.BuildHostedVersionId(site);
+        done.PublishedVersionId = revision.Id;
         done.ArtifactContractSynchronizedAt = null;
         done.UpdatedAt = DateTime.UtcNow;
         await fixture.Db.MdToPptRuns.ReplaceOneAsync(item => item.Id == done.Id, done);
@@ -145,8 +163,8 @@ public sealed class HtmlPptDesignArtifactAdapterTests
         Assert.Equal(1, await adapter.RecoverPendingAsync());
         var bound = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == done.Id).SingleAsync();
         Assert.Equal(site.Id, bound.ArtifactSiteId);
-        Assert.Equal(done.PublishedVersionId, bound.ArtifactRevisionId);
-        Assert.NotEqual(hash, bound.ArtifactRevisionId);
+        Assert.Equal(revision.Id, bound.ArtifactRevisionId);
+        Assert.DoesNotContain("hosted-content-", bound.ArtifactRevisionId, StringComparison.Ordinal);
 
         var failed = Run("recover-error", "convert", "running", string.Empty, null);
         await fixture.Db.MdToPptRuns.InsertOneAsync(failed);
@@ -175,6 +193,226 @@ public sealed class HtmlPptDesignArtifactAdapterTests
             site.Id,
             "hosted-content-untrusted",
             CancellationToken.None));
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task Recovery_ShouldRecycleStaleRunningAndClearRetryState()
+    {
+        await using var fixture = await AdapterMongoFixture.CreateAsync();
+        var adapter = Adapter(fixture, new InMemoryRunEventStore());
+        var stale = Run("stale-running", "convert", "running", string.Empty, null);
+        stale.UpdatedAt = DateTime.UtcNow.Subtract(HtmlPptDesignArtifactAdapter.StaleRunTtl).AddMinutes(-1);
+        stale.ArtifactRecoveryAttemptCount = 2;
+        stale.ArtifactRecoveryNextAttemptAt = DateTime.UtcNow.AddMinutes(-1);
+        stale.ArtifactRecoveryLastFailureCode = HtmlPptDesignArtifactAdapter.RecoveryFailureCode;
+        await fixture.Db.MdToPptRuns.InsertOneAsync(stale);
+
+        Assert.Equal(1, await adapter.RecoverPendingAsync());
+
+        var recoveredRun = await fixture.Db.MdToPptRuns.Find(item => item.Id == stale.Id).SingleAsync();
+        Assert.Equal("error", recoveredRun.Status);
+        Assert.Equal(0, recoveredRun.ArtifactRecoveryAttemptCount);
+        Assert.Null(recoveredRun.ArtifactRecoveryNextAttemptAt);
+        Assert.Null(recoveredRun.ArtifactRecoveryLastFailureCode);
+        Assert.Null(recoveredRun.ArtifactRecoveryDeadLetteredAt);
+        var publicRun = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == stale.Id).SingleAsync();
+        Assert.Equal(HtmlPptDesignArtifactAdapter.StaleRunningFailureCode, publicRun.LifecycleFailureCode);
+        Assert.Null(publicRun.Error);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task PublishCoordinator_ShouldCreateOneSiteAndRealRevisionAcrossConcurrentRetries()
+    {
+        await using var fixture = await AdapterMongoFixture.CreateAsync();
+        const string html = "<!doctype html><html><head></head><body>publish</body></html>";
+        var hash = MdToPptController.ComputeHtmlHash(html);
+        var run = Run("publish-run", "convert", "done", html, hash);
+        await fixture.Db.MdToPptRuns.InsertOneAsync(run);
+
+        var contentVersion = new DateTime(2026, 9, 8, 2, 3, 4, DateTimeKind.Utc);
+        var site = new HostedSite
+        {
+            Id = "idempotent-site",
+            OwnerUserId = run.UserId,
+            Title = run.Title,
+            SiteUrl = "https://site.invalid/index.html",
+            ContentVersion = contentVersion,
+            SourceType = "md-to-ppt",
+            SourceRef = HtmlPptPublishCoordinator.BuildIntentId(run.Id, hash),
+        };
+        var revision = new HostedSiteRevision
+        {
+            Id = "baseline-idempotent-site",
+            SiteId = site.Id,
+            CreatedByUserId = run.UserId,
+            Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.Baseline,
+            Runtime = DesignArtifactRuntimes.HtmlPptPipeline,
+            SourceRunId = run.Id,
+            Html = html,
+            BasedOnContentVersion = contentVersion,
+            PublishedContentVersion = contentVersion,
+            CreatedAt = contentVersion,
+            PublishedAt = contentVersion,
+        };
+        await fixture.Db.HostedSites.InsertOneAsync(site);
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(revision);
+
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.CreateFromHtmlIdempotentAsync(
+                run.UserId,
+                It.Is<byte[]>(bytes => Encoding.UTF8.GetString(bytes) == html),
+                "index.html",
+                run.Title,
+                null,
+                null,
+                It.IsAny<List<string>?>(),
+                "md-to-ppt",
+                site.SourceRef!,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(site);
+        sites.Setup(service => service.GetRevisionEntryHtmlAsync(
+                site.Id,
+                run.UserId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(site, html, contentVersion));
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.EnsureGeneratedSnapshotAsync(
+                site.Id,
+                run.UserId,
+                It.IsAny<HostedSiteEditableEntry>(),
+                DesignArtifactRuntimes.HtmlPptPipeline,
+                run.Id,
+                It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(revision);
+        var artifacts = new Mock<IHtmlPptDesignArtifactAdapter>(MockBehavior.Strict);
+        artifacts.Setup(service => service.BindPublishedAsync(
+                It.Is<MdToPptRun>(item => item.Id == run.Id),
+                site.Id,
+                revision.Id,
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var coordinator = new HtmlPptPublishCoordinator(
+            fixture.Db,
+            sites.Object,
+            revisions.Object,
+            artifacts.Object,
+            NullLogger<HtmlPptPublishCoordinator>.Instance);
+
+        var attempts = await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
+        {
+            try
+            {
+                return await coordinator.PublishAsync(run, run.Title, null, [], []);
+            }
+            catch (HtmlPptPublishPendingException)
+            {
+                return null;
+            }
+        }));
+
+        Assert.Contains(attempts, result => result?.Revision.Id == revision.Id);
+        sites.Verify(service => service.CreateFromHtmlIdempotentAsync(
+            It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<string?>(),
+            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<List<string>?>(),
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        var persisted = await fixture.Db.MdToPptRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal("completed", persisted.PublishIntentStatus);
+        Assert.Equal(site.Id, persisted.PublishedSiteId);
+        Assert.Equal(revision.Id, persisted.PublishedVersionId);
+        Assert.Equal(hash, persisted.PublishedHtmlHash);
+        var persistedSite = await fixture.Db.HostedSites.Find(item => item.Id == site.Id).SingleAsync();
+        Assert.Equal(revision.Id, persistedSite.PublishedRevisionId);
+    }
+
+    [Fact]
+    public void PublishIdentifiersAndBackoff_ShouldBeDeterministicAndBounded()
+    {
+        var hash = new string('a', 64);
+        Assert.Equal(
+            HtmlPptPublishCoordinator.BuildIntentId("run-1", hash),
+            HtmlPptPublishCoordinator.BuildIntentId("run-1", hash.ToUpperInvariant()));
+        Assert.NotEqual(
+            HtmlPptPublishCoordinator.BuildIntentId("run-1", hash),
+            HtmlPptPublishCoordinator.BuildIntentId("run-2", hash));
+        Assert.Equal(
+            MdToPptController.BuildNormalizedRunId("run-1", hash),
+            MdToPptController.BuildNormalizedRunId("run-1", hash.ToUpperInvariant()));
+        Assert.Equal(TimeSpan.FromSeconds(5), HtmlPptPublishCoordinator.Backoff(1));
+        Assert.Equal(TimeSpan.FromMinutes(5), HtmlPptPublishCoordinator.Backoff(100));
+        Assert.Equal(TimeSpan.FromSeconds(5), HtmlPptDesignArtifactAdapter.RecoveryBackoff(1));
+        Assert.Equal(TimeSpan.FromMinutes(5), HtmlPptDesignArtifactAdapter.RecoveryBackoff(100));
+        Assert.Equal(
+            HostedSiteService.BuildIdempotentHtmlSiteId("owner", "source"),
+            HostedSiteService.BuildIdempotentHtmlSiteId(" owner ", " source "));
+        Assert.NotEqual(
+            HostedSiteService.BuildIdempotentHtmlSiteId("owner", "source"),
+            HostedSiteService.BuildIdempotentHtmlSiteId("owner", "other"));
+
+        var original = Encoding.UTF8.GetBytes("<!doctype html><html><body><a href=\"/asset.css\">deck</a></body></html>");
+        var prepared = HostedSiteService.RewritePublishedEntryHtml(original, "index.html");
+        var preparedAgain = HostedSiteService.RewritePublishedEntryHtml(prepared, "index.html");
+        Assert.Equal(prepared, preparedAgain);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task PublishCoordinator_ShouldBackoffAndDeadLetterAfterBoundedFailures()
+    {
+        await using var fixture = await AdapterMongoFixture.CreateAsync();
+        const string html = "<!doctype html><html><body>retry</body></html>";
+        var hash = MdToPptController.ComputeHtmlHash(html);
+        var run = Run("publish-dead-letter", "convert", "done", html, hash);
+        await fixture.Db.MdToPptRuns.InsertOneAsync(run);
+
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.CreateFromHtmlIdempotentAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<List<string>?>(),
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("private provider detail"));
+        var coordinator = new HtmlPptPublishCoordinator(
+            fixture.Db,
+            sites.Object,
+            Mock.Of<IHostedSiteRevisionService>(),
+            Mock.Of<IHtmlPptDesignArtifactAdapter>(),
+            NullLogger<HtmlPptPublishCoordinator>.Instance);
+
+        for (var attempt = 1; attempt <= HtmlPptPublishCoordinator.MaxAttempts; attempt++)
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                coordinator.PublishAsync(run, run.Title, null, [], []));
+            var persisted = await fixture.Db.MdToPptRuns.Find(item => item.Id == run.Id).SingleAsync();
+            Assert.Equal(attempt, persisted.PublishIntentAttemptCount);
+            if (attempt < HtmlPptPublishCoordinator.MaxAttempts)
+            {
+                Assert.Equal("retry", persisted.PublishIntentStatus);
+                Assert.Equal("ppt_publish_failed", persisted.PublishIntentLastFailureCode);
+                Assert.NotNull(persisted.PublishIntentNextAttemptAt);
+                await fixture.Db.MdToPptRuns.UpdateOneAsync(
+                    item => item.Id == run.Id,
+                    Builders<MdToPptRun>.Update.Set(
+                        item => item.PublishIntentNextAttemptAt,
+                        DateTime.UtcNow.AddSeconds(-1)));
+            }
+        }
+
+        var deadLetter = await fixture.Db.MdToPptRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal("dead-letter", deadLetter.PublishIntentStatus);
+        Assert.Equal(HtmlPptPublishCoordinator.DeadLetterCode, deadLetter.PublishIntentLastFailureCode);
+        Assert.Null(deadLetter.PublishIntentNextAttemptAt);
+        Assert.DoesNotContain("private provider detail", deadLetter.PublishIntentLastFailureCode, StringComparison.Ordinal);
+        var stopped = await Assert.ThrowsAsync<HtmlPptPublishPendingException>(() =>
+            coordinator.PublishAsync(run, run.Title, null, [], []));
+        Assert.Equal(HtmlPptPublishCoordinator.DeadLetterCode, stopped.Code);
+        sites.Verify(service => service.CreateFromHtmlIdempotentAsync(
+            It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<string?>(),
+            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<List<string>?>(),
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(HtmlPptPublishCoordinator.MaxAttempts));
     }
 
     private static HtmlPptDesignArtifactAdapter Adapter(AdapterMongoFixture fixture, IRunEventStore events) => new(

@@ -172,7 +172,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             throw Invalid("执行租约期限无效");
 
         var updated = await AtomicUpdateWithEventAsync(
-            CasFilter(current, request.Expected, RunStatuses.Queued),
+            Builders<DesignArtifactRun>.Filter.And(
+                CasFilter(current, request.Expected, RunStatuses.Queued),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.CancelRequestedAt, null)),
             current,
             new BsonDocument
             {
@@ -197,7 +199,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         CancellationToken ct = default)
     {
         var current = await GetExpectedAsync(request.RunId, request.UserId, request.Expected);
-        if (current.Status != RunStatuses.Running || current.Operation == DesignArtifactOperations.Plan)
+        if (current.Status != RunStatuses.Running
+            || current.Operation == DesignArtifactOperations.Plan
+            || current.CancelRequestedAt.HasValue)
             throw Conflict();
         var manifest = NormalizeManifest(request.Manifest, current);
         var hashes = ComputeManifestHashes(manifest);
@@ -219,7 +223,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
 
         var now = DateTime.UtcNow;
         var updated = await AtomicUpdateWithEventAsync(
-            CasFilter(current, request.Expected, RunStatuses.Running),
+            Builders<DesignArtifactRun>.Filter.And(
+                CasFilter(current, request.Expected, RunStatuses.Running),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.CancelRequestedAt, null)),
             current,
             new BsonDocument
             {
@@ -304,6 +310,151 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             },
             DesignArtifactLifecycleEventTypes.Error,
             "设计任务未完成",
+            current.Progress,
+            true);
+        if (updated == null) throw Conflict();
+        await ProjectRunMetaBestEffortAsync(updated);
+        return updated;
+    }
+
+    public async Task<DesignArtifactRun> RequestCancellationAsync(
+        RequestDesignArtifactCancellationRequest request,
+        CancellationToken ct = default)
+    {
+        var current = await GetOwnedV2Async(request.RunId, request.UserId);
+        if (current.Status == RunStatuses.Cancelled)
+            return current;
+        if (current.Status == RunStatuses.Running && current.CancelRequestedAt.HasValue)
+            return current;
+        ValidateClientExpectation(
+            current,
+            request.ExpectedLifecycleVersion,
+            request.ExpectedBaseRevision,
+            request.ExpectedBaseContentHash);
+        if (current.Status is not (RunStatuses.Queued or RunStatuses.Running))
+            throw Conflict();
+
+        var now = DateTime.UtcNow;
+        var terminal = current.Status == RunStatuses.Queued;
+        var filter = Builders<DesignArtifactRun>.Filter.And(
+            ClientCasFilter(
+                current,
+                request.ExpectedLifecycleVersion,
+                request.ExpectedBaseRevision,
+                request.ExpectedBaseContentHash),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.Status, current.Status),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.CancelRequestedAt, null),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.LeaseOwnerId, current.LeaseOwnerId),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.LeaseExpiresAt, current.LeaseExpiresAt));
+        var updates = new BsonDocument
+        {
+            { nameof(DesignArtifactRun.CancelRequestedAt), now },
+            { nameof(DesignArtifactRun.CancelRequestedByUserId), current.UserId },
+            { nameof(DesignArtifactRun.Phase), terminal ? "设计任务已取消" : "正在停止设计任务" },
+            { nameof(DesignArtifactRun.UpdatedAt), now },
+        };
+        if (terminal)
+        {
+            updates[nameof(DesignArtifactRun.Status)] = RunStatuses.Cancelled;
+            updates[nameof(DesignArtifactRun.CancelledAt)] = now;
+            updates[nameof(DesignArtifactRun.CompletedAt)] = now;
+            updates[nameof(DesignArtifactRun.LeaseOwnerId)] = BsonNull.Value;
+            updates[nameof(DesignArtifactRun.LeaseExpiresAt)] = BsonNull.Value;
+        }
+        var updated = await AtomicUpdateWithEventAsync(
+            filter,
+            current,
+            updates,
+            terminal ? DesignArtifactLifecycleEventTypes.Cancelled : DesignArtifactLifecycleEventTypes.CancelRequested,
+            terminal ? "设计任务已取消" : "正在停止设计任务",
+            current.Progress,
+            true);
+        if (updated == null) throw Conflict();
+        await ProjectRunMetaBestEffortAsync(updated);
+        return updated;
+    }
+
+    public async Task<DesignArtifactRun> CancelAsync(
+        CancelDesignArtifactSessionRequest request,
+        CancellationToken ct = default)
+    {
+        var current = await GetOwnedV2Async(request.RunId, request.UserId);
+        if (current.Status == RunStatuses.Cancelled)
+            return current;
+        ValidateExpectation(current, request.Expected);
+        if (current.Status != RunStatuses.Running
+            || !current.CancelRequestedAt.HasValue
+            || !string.Equals(current.CancelRequestedByUserId, current.UserId, StringComparison.Ordinal))
+            throw Conflict();
+
+        var now = DateTime.UtcNow;
+        var updated = await AtomicUpdateWithEventAsync(
+            Builders<DesignArtifactRun>.Filter.And(
+                CasFilter(current, request.Expected, RunStatuses.Running),
+                Builders<DesignArtifactRun>.Filter.Ne(item => item.CancelRequestedAt, null),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.CancelRequestedByUserId, current.UserId),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactSiteId, null),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactRevisionId, null)),
+            current,
+            new BsonDocument
+            {
+                { nameof(DesignArtifactRun.Status), RunStatuses.Cancelled },
+                { nameof(DesignArtifactRun.Phase), "设计任务已取消" },
+                { nameof(DesignArtifactRun.Error), BsonNull.Value },
+                { nameof(DesignArtifactRun.LifecycleFailureCode), BsonNull.Value },
+                { nameof(DesignArtifactRun.CancelledAt), now },
+                { nameof(DesignArtifactRun.CompletedAt), now },
+                { nameof(DesignArtifactRun.LeaseExpiresAt), BsonNull.Value },
+                { nameof(DesignArtifactRun.UpdatedAt), now },
+            },
+            DesignArtifactLifecycleEventTypes.Cancelled,
+            "设计任务已取消",
+            current.Progress,
+            true);
+        if (updated == null) throw Conflict();
+        await ProjectRunMetaBestEffortAsync(updated);
+        return updated;
+    }
+
+    public async Task<DesignArtifactRun> ResumeResultReadyAsync(
+        ResumeResultReadyDesignArtifactSessionRequest request,
+        CancellationToken ct = default)
+    {
+        var current = await GetExpectedAsync(request.RunId, request.UserId, request.Expected);
+        if (current.Status is not (RunStatuses.Running or RunStatuses.Committing)
+            || current.Runtime != DesignArtifactRuntimes.OpenDesign
+            || string.IsNullOrWhiteSpace(current.WorkspaceResultAssetKey)
+            || !string.IsNullOrWhiteSpace(current.ProducedArtifactSiteId)
+            || !string.IsNullOrWhiteSpace(current.ProducedArtifactRevisionId)
+            || current.CancelRequestedAt.HasValue
+            || !request.Expected.Recovery)
+            throw Conflict();
+
+        var now = DateTime.UtcNow;
+        var updated = await AtomicUpdateWithEventAsync(
+            Builders<DesignArtifactRun>.Filter.And(
+                CasFilter(current, request.Expected, current.Status),
+                Builders<DesignArtifactRun>.Filter.Eq(
+                    item => item.WorkspaceResultAssetKey,
+                    current.WorkspaceResultAssetKey),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactSiteId, null),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactRevisionId, null),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.CancelRequestedAt, null)),
+            current,
+            new BsonDocument
+            {
+                { nameof(DesignArtifactRun.Status), RunStatuses.Queued },
+                { nameof(DesignArtifactRun.Phase), "已恢复提交结果，等待继续保存" },
+                { nameof(DesignArtifactRun.LeaseOwnerId), BsonNull.Value },
+                { nameof(DesignArtifactRun.LeaseExpiresAt), BsonNull.Value },
+                { nameof(DesignArtifactRun.HeartbeatAt), BsonNull.Value },
+                { nameof(DesignArtifactRun.RecoveryEnqueuedAt), BsonNull.Value },
+                { nameof(DesignArtifactRun.CompletedAt), BsonNull.Value },
+                { nameof(DesignArtifactRun.Error), BsonNull.Value },
+                { nameof(DesignArtifactRun.UpdatedAt), now },
+            },
+            DesignArtifactLifecycleEventTypes.Recovered,
+            "已恢复提交结果，等待继续保存",
             current.Progress,
             true);
         if (updated == null) throw Conflict();
@@ -570,11 +721,27 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                                                         && item.PublishedVersionId == versionId
                                                         && item.Status == "done")
             .FirstOrDefaultAsync(CancellationToken.None);
+        var htmlPptRevision = await _db.HostedSiteRevisions.Find(item => item.Id == versionId
+                                                                  && item.SiteId == siteId
+                                                                  && item.CreatedByUserId == run.UserId
+                                                                  && item.SourceRunId == run.Id
+                                                                  && item.Runtime == DesignArtifactRuntimes.HtmlPptPipeline
+                                                                  && item.Status == HostedSiteRevisionStatuses.Published)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        var revisionHash = htmlPptRevision == null
+            ? null
+            : Sha256Hex(Encoding.UTF8.GetBytes(htmlPptRevision.Html ?? string.Empty));
         if (source == null
-            || !string.Equals(BuildHostedVersionId(site), versionId, StringComparison.Ordinal)
+            || htmlPptRevision == null
+            || !string.Equals(site.PublishedRevisionId, versionId, StringComparison.Ordinal)
+            || htmlPptRevision.PublishedContentVersion != site.ContentVersion
             || !FixedHashEquals(source.PublishedHtmlHash, artifactHash)
             || !FixedHashEquals(source.HtmlHash, artifactHash)
-            || !FixedHashEquals(run.VersionBoundary?.EntryContentHash, artifactHash))
+            || !FixedHashEquals(run.VersionBoundary?.EntryContentHash, artifactHash)
+            || !FixedHashEquals(
+                run.Manifest?.Files.SingleOrDefault(file => file.Path == run.Manifest.EntryFile)?.Sha256,
+                artifactHash)
+            || !FixedHashEquals(revisionHash, artifactHash))
             throw Invalid("HTML PPT 发布回执与设计产物不一致");
     }
 
@@ -641,6 +808,40 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             filter.Eq(item => item.WorkspaceRef!.BaseRevision, Optional(expected.BaseRevision, 200)),
             filter.Eq(item => item.VersionBoundary!.BaseContentHash, OptionalHash(expected.BaseContentHash)),
             LeaseAuthorityFilter(current, expected));
+    }
+
+    private static void ValidateClientExpectation(
+        DesignArtifactRun current,
+        int expectedLifecycleVersion,
+        string? expectedBaseRevision,
+        string? expectedBaseContentHash)
+    {
+        if (expectedLifecycleVersion < 1)
+            throw Invalid("缺少有效的生命周期版本");
+        if (current.LifecycleVersion != expectedLifecycleVersion
+            || !string.Equals(
+                current.WorkspaceRef?.BaseRevision,
+                Optional(expectedBaseRevision, 200),
+                StringComparison.Ordinal)
+            || !string.Equals(
+                current.VersionBoundary?.BaseContentHash,
+                OptionalHash(expectedBaseContentHash),
+                StringComparison.Ordinal))
+            throw Conflict();
+    }
+
+    private static FilterDefinition<DesignArtifactRun> ClientCasFilter(
+        DesignArtifactRun current,
+        int expectedLifecycleVersion,
+        string? expectedBaseRevision,
+        string? expectedBaseContentHash)
+    {
+        var filter = Builders<DesignArtifactRun>.Filter;
+        return filter.And(
+            OwnedV2Filter(current.Id, current.UserId),
+            filter.Eq(item => item.LifecycleVersion, expectedLifecycleVersion),
+            filter.Eq(item => item.WorkspaceRef!.BaseRevision, Optional(expectedBaseRevision, 200)),
+            filter.Eq(item => item.VersionBoundary!.BaseContentHash, OptionalHash(expectedBaseContentHash)));
     }
 
     private static void ValidateLeaseAuthority(
@@ -911,9 +1112,6 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             throw Invalid("manifest mediaType 无效");
         return value.ToLowerInvariant();
     }
-
-    private static string BuildHostedVersionId(HostedSite site) =>
-        $"hosted-content-{site.ContentVersion.ToUniversalTime().Ticks:x}";
 
     private static void AppendCanonical(StringBuilder builder, params string[] values)
     {

@@ -1983,16 +1983,39 @@ public class MdToPptController : ControllerBase
         if (existing != null) return existing;
 
         var provenance = InheritPatchProvenance(sourceRun);
-        var normalizedRun = await CreateRunAsync(
-            userId,
-            "map",
-            sourceRun.Theme,
-            "normalize",
-            sourceRun.Title,
-            provenance.SourceSurface,
-            provenance.KnowledgeReferences,
-            sourceRun.Id,
-            sourceHash);
+        var normalizedRunId = BuildNormalizedRunId(sourceRun.Id, normalizedHash);
+        var normalizedRun = await _db.MdToPptRuns
+            .Find(item => item.Id == normalizedRunId && item.UserId == userId)
+            .FirstOrDefaultAsync(HttpContext.RequestAborted);
+        if (normalizedRun == null)
+        {
+            try
+            {
+                normalizedRun = await CreateRunAsync(
+                    userId,
+                    "map",
+                    sourceRun.Theme,
+                    "normalize",
+                    sourceRun.Title,
+                    provenance.SourceSurface,
+                    provenance.KnowledgeReferences,
+                    sourceRun.Id,
+                    sourceHash,
+                    runId: normalizedRunId);
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                normalizedRun = await _db.MdToPptRuns
+                    .Find(item => item.Id == normalizedRunId && item.UserId == userId)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+            }
+        }
+        if (normalizedRun == null
+            || normalizedRun.Op != "normalize"
+            || normalizedRun.ParentRunId != sourceRun.Id
+            || !string.Equals(normalizedRun.ParentHtmlHash, sourceHash, StringComparison.OrdinalIgnoreCase))
+            return null;
+
         normalizedRun.Title = sourceRun.Title;
         normalizedRun.ResolvedModels = sourceRun.ResolvedModels.ToList();
         normalizedRun.ResolvedPlatforms = sourceRun.ResolvedPlatforms.ToList();
@@ -2052,10 +2075,12 @@ public class MdToPptController : ControllerBase
         string? parentHtmlHash = null,
         string? parentOutlineRunId = null,
         string? parentPlanContentHash = null,
-        string? userSuppliedContentHash = null)
+        string? userSuppliedContentHash = null,
+        string? runId = null)
     {
         var run = new MdToPptRun
         {
+            Id = string.IsNullOrWhiteSpace(runId) ? Guid.NewGuid().ToString("N") : runId.Trim(),
             UserId = userId,
             Status = "running",
             Engine = engine,
@@ -2152,6 +2177,9 @@ public class MdToPptController : ControllerBase
 
     internal static string ComputeHtmlHash(string html)
         => System.Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(html ?? string.Empty))).ToLowerInvariant();
+
+    internal static string BuildNormalizedRunId(string sourceRunId, string normalizedHash) =>
+        $"normalize-{ComputeHtmlHash($"{sourceRunId.Trim()}\n{normalizedHash.Trim().ToLowerInvariant()}")[..32]}";
 
     private string PreparePublishedHtml(string html) => Encoding.UTF8.GetString(
         _siteService.PrepareHtmlForHosting(Encoding.UTF8.GetBytes(html ?? string.Empty), "index.html"));

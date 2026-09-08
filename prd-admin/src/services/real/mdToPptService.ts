@@ -1,4 +1,4 @@
-import { apiRequest } from '@/services/real/apiClient';
+import { apiRequest, resolveApiUrl } from '@/services/real/apiClient';
 import { useAuthStore } from '@/stores/authStore';
 
 export interface MdToPptKnowledgeReferenceInput {
@@ -153,7 +153,7 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
       }
       options.onKnowledgeResolved?.(resolvedKnowledge.data.items);
       if (abortController.signal.aborted) return;
-      const response = await fetch('/api/md-to-ppt/outline-stream', {
+      const response = await fetch(resolveApiUrl('/api/md-to-ppt/outline-stream'), {
         method: 'POST',
         headers: buildSseHeaders(),
         body: JSON.stringify({
@@ -553,7 +553,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
       if (abortController.signal.aborted) return;
       if (options.parentOutlineRunId && options.outlinePages?.length) {
         const confirmation = await fetch(
-          `/api/md-to-ppt/outline/${encodeURIComponent(options.parentOutlineRunId)}/confirm`,
+          resolveApiUrl(`/api/md-to-ppt/outline/${encodeURIComponent(options.parentOutlineRunId)}/confirm`),
           {
             method: 'POST',
             headers: buildSseHeaders(),
@@ -571,7 +571,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
         }
       }
       if (abortController.signal.aborted) return;
-      const response = await fetch('/api/md-to-ppt/convert', {
+      const response = await fetch(resolveApiUrl('/api/md-to-ppt/convert'), {
         method: 'POST',
         headers: buildSseHeaders(),
         body: JSON.stringify({
@@ -678,7 +678,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
 
   (async () => {
     try {
-      const response = await fetch('/api/md-to-ppt/patch', {
+      const response = await fetch(resolveApiUrl('/api/md-to-ppt/patch'), {
         method: 'POST',
         headers: buildSseHeaders(),
         body: JSON.stringify({

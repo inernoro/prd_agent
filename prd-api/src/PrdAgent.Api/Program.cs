@@ -415,6 +415,9 @@ builder.Services.AddScoped<PrdAgent.Api.Services.IWebPageDesignArtifactLifecycle
 builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptDesignArtifactAdapter,
     PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactAdapter>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactRecoveryWorker>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptPublishCoordinator,
+    PrdAgent.Api.Services.MdToPpt.HtmlPptPublishCoordinator>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.MdToPpt.HtmlPptPublishRecoveryWorker>();
 builder.Services.AddHttpClient("DesignArtifactRuntimeProxy", client =>
 {
     client.Timeout = Timeout.InfiniteTimeSpan;

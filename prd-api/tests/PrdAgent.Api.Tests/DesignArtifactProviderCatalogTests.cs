@@ -437,6 +437,55 @@ public class DesignArtifactProviderCatalogTests
     }
 
     [Fact]
+    public async Task OpenDesignExecutorReusesCommittedWorkspaceResultWithoutStartingAnotherSession()
+    {
+        var connections = new Mock<IInfraConnectionService>(MockBehavior.Strict);
+        var sessions = new Mock<IInfraAgentSessionService>(MockBehavior.Strict);
+        var workspaceBroker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        var verifiedResultFiles = new[]
+        {
+            new DesignWorkspaceFile(
+                "index.html",
+                Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("<!doctype html>recovered")),
+                "verified-sha",
+                25,
+                "text/html; charset=utf-8"),
+        };
+        workspaceBroker.Setup(service => service.ReadResultAsync("run-result-ready", CancellationToken.None))
+            .ReturnsAsync(new ParsedDesignWorkspaceResult("<!doctype html>recovered", verifiedResultFiles));
+        var executor = new OpenDesignRemoteArtifactExecutor(
+            connections.Object,
+            sessions.Object,
+            workspaceBroker.Object,
+            BuildConfiguration(),
+            NullLogger<OpenDesignRemoteArtifactExecutor>.Instance);
+        var run = new DesignArtifactRun
+        {
+            Id = "run-result-ready",
+            UserId = "user-1",
+            ArtifactType = DesignArtifactTypes.WebPage,
+            Operation = DesignArtifactOperations.Generate,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            RuntimeConnectionId = "connection-no-longer-required",
+            WorkspaceResultAssetKey = "private/results/run-result-ready.json",
+            Instruction = "生成页面",
+        };
+        var chunks = new List<DesignArtifactExecutorChunk>();
+
+        await foreach (var chunk in executor.ExecuteAsync(run, currentHtml: null, CancellationToken.None))
+            chunks.Add(chunk);
+
+        var recovered = Assert.Single(chunks);
+        Assert.Equal("delta", recovered.Type);
+        Assert.Equal("<!doctype html>recovered", recovered.Content);
+        Assert.Same(verifiedResultFiles, recovered.VerifiedFiles);
+        workspaceBroker.Verify(service => service.ReadResultAsync("run-result-ready", CancellationToken.None), Times.Once);
+        workspaceBroker.VerifyNoOtherCalls();
+        connections.VerifyNoOtherCalls();
+        sessions.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task OpenDesignExecutorSendsVersionedTaskPackageAndStreamsCdsEvents()
     {
         var connection = BuildConnection();

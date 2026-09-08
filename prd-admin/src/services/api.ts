@@ -1232,6 +1232,7 @@ export const api = {
     askQuotaByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/quota`,
     editRuns: (siteId: string) => `/api/web-pages/${siteId}/edits/runs`,
     editRunById: (siteId: string, runId: string) => `/api/web-pages/${siteId}/edits/runs/${runId}`,
+    cancelEditRun: (siteId: string, runId: string) => `/api/web-pages/${siteId}/edits/runs/${runId}/cancel`,
     editRunStream: (siteId: string, runId: string) => `/api/web-pages/${siteId}/edits/runs/${runId}/stream`,
     revisions: (siteId: string) => `/api/web-pages/${siteId}/edits/revisions`,
     revisionPreview: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/preview`,

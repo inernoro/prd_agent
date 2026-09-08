@@ -28,6 +28,18 @@ public interface IDesignArtifactLifecycleService
         FailDesignArtifactSessionRequest request,
         CancellationToken ct = default);
 
+    Task<DesignArtifactRun> RequestCancellationAsync(
+        RequestDesignArtifactCancellationRequest request,
+        CancellationToken ct = default);
+
+    Task<DesignArtifactRun> CancelAsync(
+        CancelDesignArtifactSessionRequest request,
+        CancellationToken ct = default);
+
+    Task<DesignArtifactRun> ResumeResultReadyAsync(
+        ResumeResultReadyDesignArtifactSessionRequest request,
+        CancellationToken ct = default);
+
     Task<DesignArtifactRun> BindPublishedArtifactAsync(
         BindPublishedDesignArtifactRequest request,
         CancellationToken ct = default);
@@ -88,6 +100,23 @@ public sealed record FailDesignArtifactSessionRequest(
     string UserId,
     DesignArtifactLifecycleExpectation Expected,
     string FailureCode);
+
+public sealed record RequestDesignArtifactCancellationRequest(
+    string RunId,
+    string UserId,
+    int ExpectedLifecycleVersion,
+    string? ExpectedBaseRevision,
+    string? ExpectedBaseContentHash);
+
+public sealed record CancelDesignArtifactSessionRequest(
+    string RunId,
+    string UserId,
+    DesignArtifactLifecycleExpectation Expected);
+
+public sealed record ResumeResultReadyDesignArtifactSessionRequest(
+    string RunId,
+    string UserId,
+    DesignArtifactLifecycleExpectation Expected);
 
 public sealed record BindPublishedDesignArtifactRequest(
     string RunId,

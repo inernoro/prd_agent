@@ -118,8 +118,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         using var executionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var initialLeaseDeadline = run.LeaseExpiresAt ?? DateTime.UtcNow;
         var heartbeatTask = MaintainHeartbeatAsync(db, run.Id, leaseOwner, initialLeaseDeadline, executionCts);
+        var cancellationWatchTask = WatchForCancellationAsync(db, run.Id, leaseOwner, executionCts);
         try
         {
+            executionCts.Token.ThrowIfCancellationRequested();
             if (executor == null)
                 throw new InvalidOperationException("所选设计执行器尚未部署或不支持当前任务，请先使用 MAP 模型");
 
@@ -143,6 +145,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     run.UserId,
                     editable,
                     executionCts.Token);
+                executionCts.Token.ThrowIfCancellationRequested();
             }
 
             var knowledgeChars = run.KnowledgeReferences.Sum(x => x.Content.Length);
@@ -151,6 +154,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
             await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, 18,
                 run.Operation == DesignArtifactOperations.Edit ? "正在理解页面结构与修改要求" : "正在规划页面结构与视觉层级");
+            executionCts.Token.ThrowIfCancellationRequested();
 
             var output = new StringBuilder();
             var sawFirstText = false;
@@ -164,6 +168,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                                editable?.Html,
                                executionCts.Token))
             {
+                executionCts.Token.ThrowIfCancellationRequested();
                 if (chunk.VerifiedFiles != null)
                 {
                     if (verifiedFiles != null)
@@ -201,11 +206,13 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 }
             }
 
+            executionCts.Token.ThrowIfCancellationRequested();
             var html = HardenExecutorOutput(output.ToString(), verifiedFiles);
             var qualityEvidence = BuildQualityEvidence(run, editable);
             HostedSiteRevisionRules.ValidateGeneratedContentQuality(html, qualityEvidence);
             await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, 88,
                 run.Operation == DesignArtifactOperations.Edit ? "正在校验并保存草稿" : "正在校验并保存托管网页");
+            executionCts.Token.ThrowIfCancellationRequested();
 
             if (run.ContractVersion == DesignArtifactContractVersions.Current)
             {
@@ -218,6 +225,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     CancellationToken.None);
             }
 
+            executionCts.Token.ThrowIfCancellationRequested();
             var persisted = await PersistArtifactWithLeaseAsync(
                 db,
                 run,
@@ -323,7 +331,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         catch (DesignArtifactRunLeaseLostException)
         {
             executionCts.Cancel();
-            _logger.LogWarning("设计产物 Run 已失去执行租约 runId={RunId}", runId);
+            if (await HasRequestedCancellationAsync(db, runId, leaseOwner))
+                await MarkCancelledAsync(runId, "设计任务已取消，未生成或发布新版本", leaseOwner);
+            else
+                _logger.LogWarning("设计产物 Run 已失去执行租约 runId={RunId}", runId);
         }
         catch (KeyNotFoundException)
         {
@@ -335,7 +346,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
         catch (DesignArtifactExecutionCancelledException)
         {
-            await MarkCancelledAsync(runId, "设计任务已取消，未生成或发布新版本", leaseOwner);
+            if (await HasRequestedCancellationAsync(db, runId, leaseOwner))
+                await MarkCancelledAsync(runId, "设计任务已取消，未生成或发布新版本", leaseOwner);
+            else
+                await MarkErrorAsync(runId, "远程设计会话提前停止，请重新发起任务", leaseOwner);
         }
         catch (InvalidOperationException ex)
         {
@@ -343,7 +357,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
         catch (OperationCanceledException) when (executionCts.IsCancellationRequested)
         {
-            _logger.LogWarning("设计产物 Run 已失去执行租约 runId={RunId}", runId);
+            if (await HasRequestedCancellationAsync(db, runId, leaseOwner))
+                await MarkCancelledAsync(runId, "设计任务已取消，未生成或发布新版本", leaseOwner);
+            else
+                _logger.LogWarning("设计产物 Run 已失去执行租约 runId={RunId}", runId);
         }
         catch (Exception ex)
         {
@@ -354,6 +371,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         {
             executionCts.Cancel();
             try { await heartbeatTask; }
+            catch (OperationCanceledException) { }
+            try { await cancellationWatchTask; }
             catch (OperationCanceledException) { }
         }
     }
@@ -451,14 +470,84 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             "error",
             "DESIGN_ARTIFACT_FAILED");
 
-    private Task MarkCancelledAsync(string runId, string message, string leaseOwner)
-        => MarkTerminalAsync(
+    private async Task MarkCancelledAsync(string runId, string message, string leaseOwner)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var current = await db.DesignArtifactRuns.Find(item => item.Id == runId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (current == null || current.Status == RunStatuses.Cancelled) return;
+        if (current.Status != RunStatuses.Running
+            || current.LeaseOwnerId != leaseOwner
+            || !current.CancelRequestedAt.HasValue
+            || current.ProducedArtifactSiteId != null
+            || current.ProducedArtifactRevisionId != null)
+            return;
+
+        DesignArtifactRun? cancelled = null;
+        if (current.ContractVersion == DesignArtifactContractVersions.Current)
+        {
+            var lifecycle = scope.ServiceProvider.GetRequiredService<IDesignArtifactLifecycleService>();
+            try
+            {
+                cancelled = await lifecycle.CancelAsync(
+                    new CancelDesignArtifactSessionRequest(
+                        current.Id,
+                        current.UserId,
+                        new DesignArtifactLifecycleExpectation(
+                            current.LifecycleVersion,
+                            current.WorkspaceRef?.BaseRevision,
+                            current.VersionBoundary?.BaseContentHash,
+                            leaseOwner)),
+                    CancellationToken.None);
+            }
+            catch (DesignArtifactLifecycleException ex)
+                when (ex.Code == DesignArtifactLifecycleErrorCodes.Conflict)
+            {
+                return;
+            }
+        }
+        else
+        {
+            var cancelledAt = DateTime.UtcNow;
+            cancelled = await db.DesignArtifactRuns.FindOneAndUpdateAsync<DesignArtifactRun, DesignArtifactRun>(
+                item => item.Id == runId
+                        && item.Status == RunStatuses.Running
+                        && item.LeaseOwnerId == leaseOwner
+                        && item.CancelRequestedAt != null
+                        && item.ProducedArtifactSiteId == null
+                        && item.ProducedArtifactRevisionId == null,
+                Builders<DesignArtifactRun>.Update
+                    .Set(item => item.Status, RunStatuses.Cancelled)
+                    .Set(item => item.Error, null)
+                    .Set(item => item.Phase, message)
+                    .Set(item => item.CancelledAt, cancelledAt)
+                    .Set(item => item.CompletedAt, cancelledAt)
+                    .Set(item => item.UpdatedAt, cancelledAt)
+                    .Set(item => item.LeaseExpiresAt, null),
+                new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
+                {
+                    ReturnDocument = ReturnDocument.After,
+                },
+                CancellationToken.None);
+        }
+        if (cancelled == null) return;
+
+        var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, CancellationToken.None)
+                   ?? new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact };
+        meta.Status = RunStatuses.Cancelled;
+        meta.EndedAt = cancelled.CancelledAt ?? DateTime.UtcNow;
+        meta.ErrorCode = null;
+        meta.ErrorMessage = null;
+        await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
+        await _events.AppendEventAsync(
+            RunKinds.DesignArtifact,
             runId,
-            message,
-            leaseOwner,
-            RunStatuses.Cancelled,
             "cancelled",
-            null);
+            new { code = "DESIGN_ARTIFACT_CANCELLED", message },
+            RunTtl,
+            CancellationToken.None);
+    }
 
     private async Task MarkTerminalAsync(
         string runId,
@@ -545,6 +634,59 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             ex => _logger.LogWarning(ex, "设计产物 Run 心跳写入失败 runId={RunId}", runId));
     }
 
+    private static async Task WatchForCancellationAsync(
+        MongoDbContext db,
+        string runId,
+        string leaseOwner,
+        CancellationTokenSource executionCts)
+    {
+        while (!executionCts.IsCancellationRequested)
+        {
+            var current = await db.DesignArtifactRuns.Find(item => item.Id == runId)
+                .Project(item => new
+                {
+                    item.Status,
+                    item.LeaseOwnerId,
+                    item.CancelRequestedAt,
+                })
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (current == null
+                || current.Status is not (RunStatuses.Running or RunStatuses.Committing)
+                || !string.Equals(current.LeaseOwnerId, leaseOwner, StringComparison.Ordinal))
+            {
+                executionCts.Cancel();
+                return;
+            }
+            if (current.Status == RunStatuses.Running && current.CancelRequestedAt.HasValue)
+            {
+                executionCts.Cancel();
+                return;
+            }
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250), executionCts.Token);
+            }
+            catch (OperationCanceledException) when (executionCts.IsCancellationRequested)
+            {
+                return;
+            }
+        }
+    }
+
+    internal static async Task<bool> HasRequestedCancellationAsync(
+        MongoDbContext db,
+        string runId,
+        string leaseOwner)
+    {
+        return await db.DesignArtifactRuns.Find(item => item.Id == runId
+                                                        && item.Status == RunStatuses.Running
+                                                        && item.LeaseOwnerId == leaseOwner
+                                                        && item.CancelRequestedAt != null
+                                                        && item.ProducedArtifactSiteId == null
+                                                        && item.ProducedArtifactRevisionId == null)
+            .AnyAsync(CancellationToken.None);
+    }
+
     internal static async Task RunLeaseHeartbeatLoopAsync(
         Func<DateTime, CancellationToken, Task<bool>> renew,
         DateTime initialLeaseDeadline,
@@ -616,7 +758,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             scope.ServiceProvider.GetRequiredService<IHostedSiteRevisionService>(),
             scope.ServiceProvider.GetRequiredService<IAssetStorage>(),
             scope.ServiceProvider.GetRequiredService<IActivityActionRecorder>(),
-            publicLifecycle);
+            publicLifecycle,
+            scope.ServiceProvider.GetRequiredService<IDesignArtifactLifecycleService>());
     }
 
     internal static async Task<PersistedDesignArtifact> PersistArtifactWithLeaseAsync(
@@ -912,6 +1055,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                  && (x.Status == RunStatuses.Running
                      || x.ContractVersion == DesignArtifactContractVersions.Current
                      && x.Status == RunStatuses.Committing)
+                 && x.CancelRequestedAt == null
                  && x.LeaseOwnerId == leaseOwner
                  && x.LeaseExpiresAt > now,
             Builders<DesignArtifactRun>.Update
@@ -932,7 +1076,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         CancellationToken ct)
     {
         var fb = Builders<DesignArtifactRun>.Filter;
-        var filter = fb.Eq(x => x.Id, runId) & fb.Eq(x => x.Status, RunStatuses.Queued);
+        var filter = fb.Eq(x => x.Id, runId)
+                     & fb.Eq(x => x.Status, RunStatuses.Queued)
+                     & fb.Eq(x => x.CancelRequestedAt, null);
         return await db.DesignArtifactRuns.FindOneAndUpdateAsync(
             filter,
             Builders<DesignArtifactRun>.Update
@@ -1088,7 +1234,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IHostedSiteRevisionService? revisions = null,
         IAssetStorage? workspaceStorage = null,
         IActivityActionRecorder? activityRecorder = null,
-        IWebPageDesignArtifactLifecycleAdapter? publicLifecycle = null)
+        IWebPageDesignArtifactLifecycleAdapter? publicLifecycle = null,
+        IDesignArtifactLifecycleService? lifecycle = null)
     {
         if (workspaceStorage != null)
             await RecoverRejectedWorkspaceResultsAsync(db, workspaceStorage, now, ct);
@@ -1109,6 +1256,67 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             .ToListAsync(ct);
         foreach (var candidate in staleRunning)
         {
+            if (candidate.CancelRequestedAt.HasValue)
+            {
+                if (await FinalizeRecoveredCancellationAsync(db, events, candidate, lifecycle, now))
+                    continue;
+            }
+
+            if (lifecycle != null
+                && candidate.ContractVersion == DesignArtifactContractVersions.Current
+                && candidate.Runtime == DesignArtifactRuntimes.OpenDesign
+                && !string.IsNullOrWhiteSpace(candidate.WorkspaceResultAssetKey)
+                && string.IsNullOrWhiteSpace(candidate.ProducedArtifactSiteId)
+                && string.IsNullOrWhiteSpace(candidate.ProducedArtifactRevisionId)
+                && !string.IsNullOrWhiteSpace(candidate.LeaseOwnerId)
+                && candidate.LeaseExpiresAt.HasValue)
+            {
+                try
+                {
+                    var resumed = await lifecycle.ResumeResultReadyAsync(
+                        new ResumeResultReadyDesignArtifactSessionRequest(
+                            candidate.Id,
+                            candidate.UserId,
+                            new DesignArtifactLifecycleExpectation(
+                                candidate.LifecycleVersion,
+                                candidate.WorkspaceRef?.BaseRevision,
+                                candidate.VersionBoundary?.BaseContentHash,
+                                candidate.LeaseOwnerId,
+                                candidate.LeaseExpiresAt,
+                                Recovery: true)),
+                        CancellationToken.None);
+                    try
+                    {
+                        await queue.EnqueueAsync(RunKinds.DesignArtifact, resumed.Id, CancellationToken.None);
+                    }
+                    catch
+                    {
+                        // Mongo queued 状态是权威恢复意图；下一轮 queue recovery 会继续补投。
+                    }
+                    try
+                    {
+                        await events.AppendEventAsync(
+                            RunKinds.DesignArtifact,
+                            resumed.Id,
+                            "phase",
+                            new { progress = resumed.Progress, message = resumed.Phase },
+                            RunTtl,
+                            CancellationToken.None);
+                    }
+                    catch
+                    {
+                        // Redis 仅为兼容投影。
+                    }
+                    continue;
+                }
+                catch (DesignArtifactLifecycleException ex)
+                    when (ex.Code == DesignArtifactLifecycleErrorCodes.Conflict)
+                {
+                    // 另一个恢复器或原 Worker 已推进，不能把新状态反写为中断失败。
+                    continue;
+                }
+            }
+
             var interruptedMessage = "服务重启中断了本次设计任务，请重新发起";
             var usesPublicLifecycle = publicLifecycle != null
                                       && candidate.ContractVersion == DesignArtifactContractVersions.Current
@@ -1198,6 +1406,97 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
         if (activityRecorder != null)
             await RecoverGeneratedSitePublicationActivitiesAsync(db, activityRecorder, ct);
+    }
+
+    private static async Task<bool> FinalizeRecoveredCancellationAsync(
+        MongoDbContext db,
+        IRunEventStore events,
+        DesignArtifactRun candidate,
+        IDesignArtifactLifecycleService? lifecycle,
+        DateTime cancelledAt)
+    {
+        DesignArtifactRun? cancelled;
+        if (candidate.ContractVersion == DesignArtifactContractVersions.Current)
+        {
+            if (lifecycle == null
+                || string.IsNullOrWhiteSpace(candidate.LeaseOwnerId)
+                || !candidate.LeaseExpiresAt.HasValue)
+                return false;
+            try
+            {
+                cancelled = await lifecycle.CancelAsync(
+                    new CancelDesignArtifactSessionRequest(
+                        candidate.Id,
+                        candidate.UserId,
+                        new DesignArtifactLifecycleExpectation(
+                            candidate.LifecycleVersion,
+                            candidate.WorkspaceRef?.BaseRevision,
+                            candidate.VersionBoundary?.BaseContentHash,
+                            candidate.LeaseOwnerId,
+                            candidate.LeaseExpiresAt,
+                            Recovery: true)),
+                    CancellationToken.None);
+            }
+            catch (DesignArtifactLifecycleException ex)
+                when (ex.Code == DesignArtifactLifecycleErrorCodes.Conflict)
+            {
+                return true;
+            }
+        }
+        else
+        {
+            cancelled = await db.DesignArtifactRuns.FindOneAndUpdateAsync<DesignArtifactRun, DesignArtifactRun>(
+                item => item.Id == candidate.Id
+                        && item.Status == RunStatuses.Running
+                        && item.LeaseOwnerId == candidate.LeaseOwnerId
+                        && item.LeaseExpiresAt == candidate.LeaseExpiresAt
+                        && item.CancelRequestedAt == candidate.CancelRequestedAt
+                        && item.ProducedArtifactSiteId == null
+                        && item.ProducedArtifactRevisionId == null,
+                Builders<DesignArtifactRun>.Update
+                    .Set(item => item.Status, RunStatuses.Cancelled)
+                    .Set(item => item.Phase, "设计任务已取消")
+                    .Set(item => item.Error, null)
+                    .Set(item => item.CancelledAt, cancelledAt)
+                    .Set(item => item.CompletedAt, cancelledAt)
+                    .Set(item => item.UpdatedAt, cancelledAt)
+                    .Set(item => item.LeaseExpiresAt, null),
+                new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
+                {
+                    ReturnDocument = ReturnDocument.After,
+                },
+                CancellationToken.None);
+            if (cancelled == null) return true;
+        }
+
+        try
+        {
+            var meta = await events.GetRunAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None)
+                       ?? new RunMeta
+                       {
+                           RunId = candidate.Id,
+                           Kind = RunKinds.DesignArtifact,
+                           CreatedByUserId = candidate.UserId,
+                           CreatedAt = candidate.CreatedAt,
+                       };
+            meta.Status = RunStatuses.Cancelled;
+            meta.EndedAt = cancelled.CancelledAt ?? cancelledAt;
+            meta.ErrorCode = null;
+            meta.ErrorMessage = null;
+            await events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
+            await events.AppendEventAsync(
+                RunKinds.DesignArtifact,
+                candidate.Id,
+                "cancelled",
+                new { code = "DESIGN_ARTIFACT_CANCELLED", message = "设计任务已取消，未生成或发布新版本" },
+                RunTtl,
+                CancellationToken.None);
+        }
+        catch
+        {
+            // Mongo 终态是权威事实；Redis 投影由查询/SSE 回退补偿。
+        }
+        return true;
     }
 
     internal static async Task<bool> RecordGeneratedSitePublicationAsync(

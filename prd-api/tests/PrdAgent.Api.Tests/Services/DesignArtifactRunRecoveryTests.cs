@@ -142,6 +142,107 @@ public sealed class DesignArtifactRunRecoveryTests
 
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task ExpiredMapRunWithExplicitCancellation_ShouldRecoverAsCancelledWithoutArtifact()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("run-cancelled-recovery", now.AddMinutes(-5));
+        run.Status = RunStatuses.Running;
+        run.LeaseOwnerId = "dead-worker";
+        run.LeaseExpiresAt = now.AddSeconds(-1);
+        run.CancelRequestedAt = now.AddMinutes(-2);
+        run.CancelRequestedByUserId = run.UserId;
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var events = new InMemoryRunEventStore();
+
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(
+            fixture.Db,
+            new InMemoryRunQueue(),
+            events,
+            now,
+            CancellationToken.None);
+
+        var cancelled = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Cancelled, cancelled.Status);
+        Assert.NotNull(cancelled.CancelledAt);
+        Assert.Null(cancelled.Error);
+        Assert.Null(cancelled.ArtifactSiteId);
+        Assert.Null(cancelled.ArtifactRevisionId);
+        Assert.Empty(await fixture.Db.HostedSiteRevisions.Find(item => item.SourceRunId == run.Id).ToListAsync());
+        var records = await events.GetEventsAsync(RunKinds.DesignArtifact, run.Id, 0, 10);
+        Assert.Contains(records, item => item.EventName == "cancelled");
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ExpiredOpenDesignResultReadyRun_ShouldRequeueWithAuthoritativeRecoveryEvent()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("run-result-ready-recovery", now.AddMinutes(-5));
+        run.Status = RunStatuses.Running;
+        run.Runtime = DesignArtifactRuntimes.OpenDesign;
+        run.ContractVersion = DesignArtifactContractVersions.Current;
+        run.LifecycleVersion = 2;
+        run.LifecycleEventSequence = 2;
+        run.LeaseOwnerId = "dead-worker";
+        run.LeaseExpiresAt = now.AddSeconds(-1);
+        run.WorkspaceResultAssetKey = "trusted/result-ready.json";
+        run.WorkspaceRef = new DesignArtifactWorkspaceRef
+        {
+            WorkspaceId = $"web-page-{run.Id}",
+            Kind = DesignArtifactWorkspaceKinds.RemotePackage,
+            BaseRevision = "base-revision",
+            Adapter = WebPageDesignArtifactLifecycleAdapter.AdapterId,
+        };
+        run.VersionBoundary = new DesignArtifactVersionBoundary
+        {
+            BaseContentHash = new string('a', 64),
+        };
+        run.LifecycleEvents =
+        [
+            new DesignArtifactEventEnvelope
+            {
+                RunId = run.Id,
+                ArtifactType = run.ArtifactType,
+                Sequence = 1,
+                Type = DesignArtifactLifecycleEventTypes.Run,
+                Authoritative = true,
+            },
+            new DesignArtifactEventEnvelope
+            {
+                RunId = run.Id,
+                ArtifactType = run.ArtifactType,
+                Sequence = 2,
+                Type = DesignArtifactLifecycleEventTypes.Phase,
+                Authoritative = true,
+            },
+        ];
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var queue = new InMemoryRunQueue();
+        var events = new InMemoryRunEventStore();
+        var lifecycle = new DesignArtifactLifecycleService(fixture.Db, events);
+
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(
+            fixture.Db,
+            queue,
+            events,
+            now,
+            CancellationToken.None,
+            lifecycle: lifecycle);
+
+        var resumed = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Queued, resumed.Status);
+        Assert.Null(resumed.LeaseOwnerId);
+        Assert.Null(resumed.LeaseExpiresAt);
+        Assert.Equal("trusted/result-ready.json", resumed.WorkspaceResultAssetKey);
+        Assert.Equal(DesignArtifactLifecycleEventTypes.Recovered, resumed.LifecycleEvents[^1].Type);
+        Assert.True(resumed.LifecycleEvents[^1].Authoritative);
+        Assert.Equal(run.Id, await queue.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.Zero));
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task LostQueuedRun_ShouldBeReenqueuedOnlyOncePerRecoveryWindow()
     {
         await using var fixture = await RunMongoFixture.CreateAsync();

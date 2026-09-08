@@ -143,6 +143,8 @@ export interface DesignArtifactRunSummary {
   phase: string;
   artifactSiteId?: string | null;
   artifactRevisionId?: string | null;
+  producedArtifactSiteId?: string | null;
+  producedArtifactRevisionId?: string | null;
   linkedRunId?: string | null;
   error?: string | null;
   createdAt: string;
@@ -1125,6 +1127,13 @@ export async function getHostedSiteEditRun(
   runId: string,
 ): Promise<ApiResponse<DesignArtifactRunSummary>> {
   return apiRequest(api.webPages.editRunById(siteId, runId));
+}
+
+export async function cancelHostedSiteEditRun(
+  siteId: string,
+  runId: string,
+): Promise<ApiResponse<{ runId: string; status: string; cancelRequested: boolean; changed: boolean }>> {
+  return apiRequest(api.webPages.cancelEditRun(siteId, runId), { method: 'POST' });
 }
 
 export async function streamHostedSiteEditRun(input: {
