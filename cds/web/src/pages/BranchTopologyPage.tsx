@@ -881,7 +881,7 @@ export function BranchTopologyPage(): JSX.Element {
               )}
             </section>
 
-            <aside className="min-h-[38.75rem] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-40px)] xl:overflow-auto">
+            <aside className="min-h-[38.75rem] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:overflow-auto">
               <NodeDetails
                 selectedProfile={selectedProfile}
                 selectedInfra={selectedInfra}

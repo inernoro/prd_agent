@@ -98,8 +98,8 @@
       0 0 0 1px hsl(var(--hairline)),
       inset 0 1px 0 hsl(0 0% 100% / 0.06),
       0 1px 2px rgb(0 0 0 / 0.32),
-      0 0.75rem 1.75rem -12px rgb(0 0 0 / 0.5),
-      0 2.5rem 5rem -32px rgb(0 0 0 / 0.6);
+      0 0.75rem 1.75rem -0.75rem rgb(0 0 0 / 0.5),
+      0 2.5rem 5rem -2rem rgb(0 0 0 / 0.6);
 
     /* chip / 小控件的抬升配方（--shadow-card 的轻量版）。
        暗色里靠顶边白高光把 chip 从凹陷带上"托"起来。 */
@@ -199,8 +199,8 @@
       0 0 0 1px hsl(30 15% 86%),
       inset 0 1px 0 hsl(0 0% 100% / 0.9),
       0 1px 2px hsl(24 30% 20% / 0.05),
-      0 0.5rem 1.5rem -12px hsl(24 30% 20% / 0.12),
-      0 2rem 4rem -32px hsl(24 30% 20% / 0.15);
+      0 0.5rem 1.5rem -0.75rem hsl(24 30% 20% / 0.12),
+      0 2rem 4rem -2rem hsl(24 30% 20% / 0.15);
 
     /* 白天的 chip 抬升：白高光落在白 chip 上等于没有（Codex P1，2026-09-01），
        所以这一档改由接触影承担，观感上仍是"从凹陷带里浮起来"。 */
@@ -475,7 +475,7 @@
     border-color: hsl(var(--primary) / 0.65) !important;
     box-shadow:
       0 0 0 1px hsl(var(--primary) / 0.35),
-      0 1.125rem 2.625rem -30px hsl(var(--primary) / 0.75) !important;
+      0 1.125rem 2.625rem -1.875rem hsl(var(--primary) / 0.75) !important;
   }
   @keyframes cds-card-selected-flash {
     0% {
@@ -483,21 +483,21 @@
       box-shadow:
         0 0 0 1px hsl(var(--primary) / 0.35),
         0 0 0 0 hsl(var(--primary) / 0.48),
-        0 1.125rem 2.625rem -30px hsl(var(--primary) / 0.75);
+        0 1.125rem 2.625rem -1.875rem hsl(var(--primary) / 0.75);
     }
     45% {
       transform: translateY(-2px);
       box-shadow:
         0 0 0 1px hsl(var(--primary) / 0.55),
         0 0 0 0.3125rem hsl(var(--primary) / 0.16),
-        0 1.375rem 2.875rem -28px hsl(var(--primary) / 0.9);
+        0 1.375rem 2.875rem -1.75rem hsl(var(--primary) / 0.9);
     }
     100% {
       transform: translateY(0);
       box-shadow:
         0 0 0 1px hsl(var(--primary) / 0.35),
         0 0 0 0 hsl(var(--primary) / 0),
-        0 1.125rem 2.625rem -30px hsl(var(--primary) / 0.75);
+        0 1.125rem 2.625rem -1.875rem hsl(var(--primary) / 0.75);
     }
   }
   .cds-card-selected-flash {
@@ -534,11 +534,11 @@
     }
     35% {
       opacity: 0;
-      transform: translateY(-6px) scale(0.95);
+      transform: translateY(-0.375rem) scale(0.95);
     }
     100% {
       opacity: 0;
-      transform: translateY(-6px) scale(0.95);
+      transform: translateY(-0.375rem) scale(0.95);
       max-height: 0;
       min-height: 0;
       margin-bottom: -1rem;
@@ -702,7 +702,7 @@
     border-color: rgb(14 165 233 / 0.36) !important;
     box-shadow:
       0 0 0 1px rgb(14 165 233 / 0.12),
-      0 1rem 2.25rem -30px rgb(14 165 233 / 0.7);
+      0 1rem 2.25rem -1.875rem rgb(14 165 233 / 0.7);
   }
 
   .cds-branch-card-busy::after {
@@ -715,7 +715,7 @@
     border: 1px solid rgb(56 189 248 / 0.38);
     box-shadow:
       inset 0 0 0 1px rgb(56 189 248 / 0.08),
-      0 0 0.875rem -9px rgb(56 189 248 / 0.8);
+      0 0 0.875rem -0.5625rem rgb(56 189 248 / 0.8);
     animation: cds-branch-busy-rim 1.8s ease-in-out infinite;
   }
 
@@ -730,14 +730,14 @@
     pointer-events: none;
     background: linear-gradient(90deg, hsl(var(--info) / 0.18), hsl(var(--info) / 0.1));
     border-right: 1px solid hsl(var(--info) / 0.55);
-    box-shadow: 0 0 1.125rem -4px hsl(var(--info) / 0.7);
+    box-shadow: 0 0 1.125rem -0.25rem hsl(var(--info) / 0.7);
     transition: width 700ms ease-out;
   }
 
   .cds-footer-progress-fill--overdue {
     background: linear-gradient(90deg, hsl(var(--warn) / 0.18), hsl(var(--warn) / 0.1));
     border-right-color: hsl(var(--warn) / 0.55);
-    box-shadow: 0 0 1.125rem -4px hsl(var(--warn) / 0.7);
+    box-shadow: 0 0 1.125rem -0.25rem hsl(var(--warn) / 0.7);
   }
 
   .cds-footer-progress-fill--indeterminate {
@@ -772,7 +772,7 @@
     border-color: rgb(2 132 199 / 0.42) !important;
     box-shadow:
       0 0 0 1px rgb(2 132 199 / 0.12),
-      0 1rem 2.125rem -28px rgb(2 132 199 / 0.45);
+      0 1rem 2.125rem -1.75rem rgb(2 132 199 / 0.45);
   }
 
   /*
@@ -788,7 +788,7 @@
     border-color: rgb(56 189 248 / 0.58) !important;
     box-shadow:
       0 0 0 1px rgb(56 189 248 / 0.18),
-      0 0 1.125rem -10px rgb(56 189 248 / 0.9),
+      0 0 1.125rem -0.625rem rgb(56 189 248 / 0.9),
       inset 0 1px 0 rgb(255 255 255 / 0.08);
     animation: cds-ai-beacon-body 1.9s ease-in-out infinite;
   }
@@ -841,7 +841,7 @@
     color: hsl(var(--primary-ink));
     box-shadow:
       0 0 0 1px hsl(var(--primary) / 0.18),
-      0 0 1.25rem -10px hsl(var(--primary) / 0.88);
+      0 0 1.25rem -0.625rem hsl(var(--primary) / 0.88);
   }
 
   /* AI 正在操作的分支卡:标题扫光是唯一主动态。卡片只保留静态边框和
@@ -851,7 +851,7 @@
     border-color: rgb(56 189 248 / 0.42) !important;
     box-shadow:
       0 0 0 1px rgb(56 189 248 / 0.1),
-      0 1rem 2.125rem -28px rgb(56 189 248 / 0.62);
+      0 1rem 2.125rem -1.75rem rgb(56 189 248 / 0.62);
   }
 
   .cds-actor-name-glow {
@@ -883,7 +883,7 @@
     border-color: rgb(2 132 199 / 0.58) !important;
     box-shadow:
       0 0 0 1px rgb(2 132 199 / 0.16),
-      0 0 1.125rem -8px rgb(2 132 199 / 0.7),
+      0 0 1.125rem -0.5rem rgb(2 132 199 / 0.7),
       inset 0 1px 0 rgb(255 255 255 / 0.72);
   }
 
@@ -913,7 +913,7 @@
     border-color: rgb(2 132 199 / 0.62) !important;
     box-shadow:
       0 0 0 1px rgb(2 132 199 / 0.14),
-      0 0.625rem 1.375rem -20px rgb(2 132 199 / 0.34);
+      0 0.625rem 1.375rem -1.25rem rgb(2 132 199 / 0.34);
   }
 
   @keyframes cds-ai-beacon-body {
@@ -1085,7 +1085,7 @@
   .cds-ai-pulse-dot::before {
     content: '';
     position: absolute;
-    inset: -4px;
+    inset: -0.25rem;
     border-radius: 624.9375rem;
     border: 1px solid rgb(var(--cds-rail) / 0.6);
     animation: cds-ai-pulse-halo 2.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
@@ -1806,7 +1806,7 @@
     background-color: hsl(var(--primary) / 0.075);
     box-shadow:
       inset 0 1px 0 hsl(var(--foreground) / 0.05),
-      0 0.75rem 1.75rem -24px hsl(var(--primary) / 0.65);
+      0 0.75rem 1.75rem -1.5rem hsl(var(--primary) / 0.65);
   }
 
   .cds-agent-route-trigger:focus-visible {
@@ -1907,7 +1907,7 @@
     background:
       radial-gradient(circle at 82% 0%, hsl(var(--primary) / 0.08), transparent 34%),
       hsl(var(--card));
-    box-shadow: 0 1.875rem 5rem -28px hsl(220 32% 4% / 0.64);
+    box-shadow: 0 1.875rem 5rem -1.75rem hsl(220 32% 4% / 0.64);
   }
 
   .cds-agent-world-dialog > div {
@@ -2038,7 +2038,7 @@
       linear-gradient(135deg, hsl(var(--primary) / 0.14), hsl(var(--primary) / 0.055));
     box-shadow:
       inset 0 0 0 1px hsl(var(--primary) / 0.14),
-      inset 0 -18px 1.875rem hsl(188 100% 48% / 0.055);
+      inset 0 -1.125rem 1.875rem hsl(188 100% 48% / 0.055);
   }
 
   .cds-agent-continent[data-selected='true']::after {
@@ -2142,7 +2142,7 @@
       linear-gradient(155deg, hsl(209 63% 8%), hsl(196 70% 5%));
     box-shadow:
       inset 0 1px 0 hsl(var(--map-cyan) / 0.16),
-      inset 0 -80px 7.5rem hsl(220 78% 2% / 0.5),
+      inset 0 -5rem 7.5rem hsl(220 78% 2% / 0.5),
       0 0 1.75rem hsl(188 100% 44% / 0.08);
     animation: cds-agent-world-arrive 320ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   }
@@ -2190,7 +2190,7 @@
       linear-gradient(155deg, hsl(207 56% 11%), hsl(194 62% 7%));
     box-shadow:
       inset 0 1px 0 hsl(var(--map-cyan) / 0.18),
-      inset 0 -80px 7.5rem hsl(220 78% 2% / 0.42),
+      inset 0 -5rem 7.5rem hsl(220 78% 2% / 0.42),
       0 0.625rem 1.875rem hsl(196 42% 16% / 0.16);
   }
 
@@ -3046,7 +3046,7 @@
     display: block;
     /* 11px 在 85% 基准下是 9.35px，低于「10px 临界、9.5 已糊」的实测下限：
        保底 10 物理像素，只有这一处允许字号不随根字号一起缩。 */
-    font-size: max(10px, 0.6875rem);
+    font-size: max(0.625rem, 0.6875rem);
     font-weight: 500;
     line-height: 0.875rem;
     letter-spacing: 0.02em;
@@ -3790,7 +3790,7 @@
     transform-origin: center bottom;
     background-clip: padding-box;
     box-shadow:
-      0 1rem 2.125rem -25px rgb(0 0 0 / 0.85),
+      0 1rem 2.125rem -1.5625rem rgb(0 0 0 / 0.85),
       0 1px 0 rgb(255 255 255 / 0.04) inset,
       0 0 0 1px rgb(255 255 255 / 0.035) inset;
     transition:
@@ -3811,9 +3811,9 @@
     .cds-project-node-row .cds-project-node:hover {
       z-index: 3;
       box-shadow:
-        0 1.625rem 3.375rem -28px rgb(0 0 0 / 0.88),
+        0 1.625rem 3.375rem -1.75rem rgb(0 0 0 / 0.88),
         0 0 0 1px hsl(var(--foreground) / 0.08),
-        0 0 1.75rem -18px currentColor,
+        0 0 1.75rem -1.125rem currentColor,
         inset 0 1px 0 rgb(255 255 255 / 0.16);
       filter: saturate(1.12) brightness(1.05);
     }
@@ -4368,13 +4368,13 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    transform: translateX(-4px);
+    transform: translateX(-0.25rem);
   }
 
   .cds-auth-station-dot {
     width: 0.5625rem;
     height: 0.5625rem;
-    margin-top: -4px;
+    margin-top: -0.25rem;
     border-radius: 62.4375rem;
     border: 1px solid hsl(var(--foreground) / 0.35);
     background-color: hsl(var(--surface-base));
@@ -4479,7 +4479,7 @@
   @keyframes cds-auth-shake {
     10%, 90% { transform: translateX(-1px); }
     20%, 80% { transform: translateX(2px); }
-    30%, 50%, 70% { transform: translateX(-4px); }
+    30%, 50%, 70% { transform: translateX(-0.25rem); }
     40%, 60% { transform: translateX(0.25rem); }
   }
 
@@ -4693,20 +4693,20 @@
     gap: 0.5rem;
     font-size: 0.875rem;
     background: hsl(var(--primary));
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 0.375rem 1rem -10px hsl(24 100% 55% / 0.45);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 0.375rem 1rem -0.625rem hsl(24 100% 55% / 0.45);
     transition: transform 150ms ease, box-shadow 150ms ease, filter 150ms ease;
   }
 
   .cds-auth-submit:hover:not(:disabled) {
     background: hsl(var(--primary));
     filter: brightness(1.05);
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 0.5rem 1.25rem -10px hsl(24 100% 55% / 0.55);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 0.5rem 1.25rem -0.625rem hsl(24 100% 55% / 0.55);
   }
 
   .cds-auth-submit:active:not(:disabled) {
     transform: translateY(1px) scale(0.99);
     transition-duration: 80ms;
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 3px 0.625rem -8px hsl(24 100% 55% / 0.4);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 3px 0.625rem -0.5rem hsl(24 100% 55% / 0.4);
   }
 
   .cds-auth-submit svg {
@@ -4917,13 +4917,13 @@
     opacity: 0.42;
     box-shadow:
       inset 0 0 0 1px rgb(56 189 248 / 0.06),
-      0 0 0.625rem -8px rgb(56 189 248 / 0.65);
+      0 0 0.625rem -0.5rem rgb(56 189 248 / 0.65);
   }
   50% {
     opacity: 0.88;
     box-shadow:
       inset 0 0 0 1px rgb(56 189 248 / 0.14),
-      0 0 1rem -7px rgb(56 189 248 / 0.9);
+      0 0 1rem -0.4375rem rgb(56 189 248 / 0.9);
   }
 }
 
@@ -5003,7 +5003,7 @@
   box-shadow:
     inset 0 0 0 1px hsl(var(--hairline-strong)),
     0 1px 2px hsl(24 20% 15% / 0.06),
-    0 0.375rem 1rem -8px hsl(24 20% 15% / 0.12);
+    0 0.375rem 1rem -0.5rem hsl(24 20% 15% / 0.12);
 }
 
 /* Agent 真实地理地图：地图表达空间，右侧目录保证文字可读。 */
@@ -6153,7 +6153,7 @@
 [data-agent-starter='true'] .agent-starter-copy::after {
   content: '';
   position: absolute;
-  inset: -8px;
+  inset: -0.5rem;
   z-index: -1;
   pointer-events: none;
   border: 2px solid rgb(234 88 12 / 0.42);

@@ -17,8 +17,9 @@ import { fileURLToPath } from 'node:url';
 
 const WEB = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../web');
 const SRC = path.join(WEB, 'src');
-// 下划线在 Tailwind 方括号里是空格（grid-cols-[20rem_minmax(0,1fr)]），所以 px 前后的 _ 不算单词字符。
-const PX = /(?<![A-Za-z0-9.-])(\d*\.?\d+)px(?![A-Za-z0-9-])/g;
+// 边界只认字母、数字和小数点：下划线在 Tailwind 方括号里是空格（grid-cols-[20rem_minmax(0,1fr)]），
+// 连字符是负号或 calc 里的减号（-17px、calc(100vw-40px)），两者都不能当成「单词的一部分」放过。
+const PX = /(?<![A-Za-z0-9.])(\d*\.?\d+)px(?![A-Za-z0-9])/g;
 
 /** 允许保留的 >3px 场景（每条写明原因）。 */
 const ALLOW: Array<{ file: string; needle: string; why: string }> = [

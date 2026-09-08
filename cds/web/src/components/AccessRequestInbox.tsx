@@ -176,8 +176,8 @@ export function AccessRequestInbox({
     ? createPortal((
       <div
         data-testid="cds-access-request-floating"
-        className="pointer-events-auto fixed bottom-[5.25rem] right-5 z-[210] max-h-[calc(100dvh-104px)]
-                   w-[min(26.25rem,calc(100vw-40px))] overflow-y-auto"
+        className="pointer-events-auto fixed bottom-[5.25rem] right-5 z-[210] max-h-[calc(100dvh-6.5rem)]
+                   w-[min(26.25rem,calc(100vw-2.5rem))] overflow-y-auto"
       >
         {primaryCard}
       </div>

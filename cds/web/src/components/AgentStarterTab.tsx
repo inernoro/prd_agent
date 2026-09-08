@@ -507,7 +507,7 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, activ
        * 其上还有标题、目标选择和 tab 条约 220px。原来写的 calc(100vh-190px)
        * 根本不生效，760px 直接捅出弹窗底 74px（真机量出来的）。
        */
-      className={`relative flex max-h-[calc(90vh-224px)] min-h-[26.25rem] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_1.25rem_4.375rem_rgba(0,0,0,0.18)] transition-[height] duration-200 ${panelTall ? 'h-[47.5rem]' : 'h-[35rem]'}`}
+      className={`relative flex max-h-[calc(90vh-14rem)] min-h-[26.25rem] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_1.25rem_4.375rem_rgba(0,0,0,0.18)] transition-[height] duration-200 ${panelTall ? 'h-[47.5rem]' : 'h-[35rem]'}`}
     >
       <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-7 py-5">
         <div className="flex items-start justify-between gap-6">

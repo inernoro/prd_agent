@@ -81,7 +81,7 @@ function useRevealOnScroll(): void {
           }
         }
       },
-      { threshold: 0.16, rootMargin: '0px 0px -40px 0px' },
+      { threshold: 0.16, rootMargin: '0px 0px -2.5rem 0px' },
     );
     els.forEach((el) => io.observe(el));
     return () => io.disconnect();

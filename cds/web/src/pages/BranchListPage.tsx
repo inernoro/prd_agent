@@ -763,11 +763,11 @@ function branchSortRank(branchName: string): number {
 function branchRoleCardClass(role: BranchVisualRole): string {
   switch (role) {
     case 'main':
-      return 'border-ok/55 shadow-[0_0_0_1px_rgba(52,211,153,0.16),0_1rem_2.125rem_-28px_rgba(52,211,153,0.85)]';
+      return 'border-ok/55 shadow-[0_0_0_1px_rgba(52,211,153,0.16),0_1rem_2.125rem_-1.75rem_rgba(52,211,153,0.85)]';
     case 'master':
-      return 'border-cyan-400/55 shadow-[0_0_0_1px_rgba(34,211,238,0.15),0_1rem_2.125rem_-28px_rgba(34,211,238,0.8)]';
+      return 'border-cyan-400/55 shadow-[0_0_0_1px_rgba(34,211,238,0.15),0_1rem_2.125rem_-1.75rem_rgba(34,211,238,0.8)]';
     case 'environment':
-      return 'border-warn/42 shadow-[0_0_0_1px_rgba(251,191,36,0.12),0_1rem_2.125rem_-30px_rgba(251,191,36,0.72)]';
+      return 'border-warn/42 shadow-[0_0_0_1px_rgba(251,191,36,0.12),0_1rem_2.125rem_-1.875rem_rgba(251,191,36,0.72)]';
     default:
       return '';
   }
@@ -1315,15 +1315,15 @@ function branchIssueRailClass(branch: BranchSummary): string {
 function branchIssueCardClass(branch: BranchSummary): string {
   const category = branchIssueCategory(branch);
   if (category === 'cds-runtime') {
-    return 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_0.25rem_1rem_-4px_hsl(var(--destructive)/0.35)]';
+    return 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_0.25rem_1rem_-0.25rem_hsl(var(--destructive)/0.35)]';
   }
   if (category === 'app-code') {
-    return 'border-warn/55 bg-warn-soft ring-1 ring-warn/20 shadow-[0_0.25rem_1rem_-4px_rgba(245,158,11,0.32)]';
+    return 'border-warn/55 bg-warn-soft ring-1 ring-warn/20 shadow-[0_0.25rem_1rem_-0.25rem_rgba(245,158,11,0.32)]';
   }
   if (category === 'deploy-config') {
-    return 'border-warn/55 bg-warn-soft ring-1 ring-warn/20 shadow-[0_0.25rem_1rem_-4px_rgba(249,115,22,0.32)]';
+    return 'border-warn/55 bg-warn-soft ring-1 ring-warn/20 shadow-[0_0.25rem_1rem_-0.25rem_rgba(249,115,22,0.32)]';
   }
-  return 'border-muted-foreground/40 bg-muted/20 ring-1 ring-muted-foreground/15 shadow-[0_0.25rem_1rem_-4px_rgba(100,116,139,0.28)]';
+  return 'border-muted-foreground/40 bg-muted/20 ring-1 ring-muted-foreground/15 shadow-[0_0.25rem_1rem_-0.25rem_rgba(100,116,139,0.28)]';
 }
 
 // 错误提示条文字色 —— 同样按 category 派发,与卡片/胶囊一致。
@@ -5427,7 +5427,7 @@ const BranchCard = memo(function BranchCard({
   };
   const commitHistoryPanel = commitMenuOpen ? (
     <div
-      className="absolute bottom-[calc(100%+0.5rem)] left-0 z-[140] w-[min(22.5rem,calc(100vw-48px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
+      className="absolute bottom-[calc(100%+0.5rem)] left-0 z-[140] w-[min(22.5rem,calc(100vw-3rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
       role="menu"
       aria-label={`${branch.branch} 最近提交`}
       onClick={(event) => event.stopPropagation()}
@@ -5582,7 +5582,7 @@ const BranchCard = memo(function BranchCard({
 
       {aiPanelOpen && isAiOperated ? (
         <div
-          className="absolute right-4 top-14 z-[130] w-[min(21.25rem,calc(100%-32px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-3 text-xs shadow-2xl"
+          className="absolute right-4 top-14 z-[130] w-[min(21.25rem,calc(100%-2rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-3 text-xs shadow-2xl"
           role="dialog"
           aria-label={`${branch.branch} AI 操作记录`}
           onClick={(event) => event.stopPropagation()}
@@ -5989,7 +5989,7 @@ const BranchCard = memo(function BranchCard({
                     onClick={(event) => event.stopPropagation()}
                   >
                     <div
-                      className="flex max-w-[min(20rem,calc(100vw-48px))] flex-wrap gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
+                      className="flex max-w-[min(20rem,calc(100vw-3rem))] flex-wrap gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
                       role="menu"
                       aria-label="全部服务端口"
                     >
@@ -6171,7 +6171,7 @@ const BranchCard = memo(function BranchCard({
           </button>
           {tagEditorOpen ? (
             <form
-              className="absolute left-5 top-[calc(100%-4px)] z-30 w-[min(17.5rem,calc(100%-40px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl"
+              className="absolute left-5 top-[calc(100%-0.25rem)] z-30 w-[min(17.5rem,calc(100%-2.5rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl"
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => {
                 event.stopPropagation();
@@ -6213,7 +6213,7 @@ const BranchCard = memo(function BranchCard({
           ) : null}
           {tagDeleteTarget && onRemoveTag ? (
             <div
-              className="absolute left-5 top-[calc(100%-4px)] z-[120] w-[min(18.75rem,calc(100%-40px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-2xl"
+              className="absolute left-5 top-[calc(100%-0.25rem)] z-[120] w-[min(18.75rem,calc(100%-2.5rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-2xl"
               role="dialog"
               aria-label={`删除标签 ${tagDeleteTarget}`}
               onClick={(event) => event.stopPropagation()}
