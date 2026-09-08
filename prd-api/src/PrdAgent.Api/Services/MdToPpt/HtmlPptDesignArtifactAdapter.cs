@@ -36,12 +36,17 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
     public const string GenerationFailureCode = "html_ppt_generation_failed";
     public const string PersistenceFailureCode = "html_ppt_persist_failed";
     public const string RecoveryFailureCode = "html_ppt_recovery_failed";
+    public const string StaleRunningFailureCode = "html_ppt_stale_running";
+    public const string RecoveryDeadLetterCode = "html_ppt_recovery_dead_letter";
+    internal const int MaxRecoveryAttempts = 5;
 
     private static readonly HashSet<string> AllowedFailureCodes = new(StringComparer.Ordinal)
     {
         GenerationFailureCode,
         PersistenceFailureCode,
         RecoveryFailureCode,
+        StaleRunningFailureCode,
+        RecoveryDeadLetterCode,
         "html_ppt_knowledge_changed",
         "html_ppt_outline_invalid",
         "html_ppt_output_invalid",
@@ -231,11 +236,26 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
             throw Invalid("HTML PPT 发布内容与源 manifest 不一致");
 
         var hostedSite = await _db.HostedSites
-            .Find(site => site.Id == hostedSiteId && site.OwnerUserId == run.UserId)
+            .Find(site => site.Id == hostedSiteId
+                          && site.OwnerUserId == run.UserId
+                          && site.PublishedRevisionId == hostedVersionId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        var hostedRevision = await _db.HostedSiteRevisions
+            .Find(revision => revision.Id == hostedVersionId
+                              && revision.SiteId == hostedSiteId
+                              && revision.CreatedByUserId == run.UserId
+                              && revision.Status == HostedSiteRevisionStatuses.Published)
             .FirstOrDefaultAsync(CancellationToken.None);
         if (hostedSite == null
-            || !string.Equals(BuildHostedVersionId(hostedSite), hostedVersionId, StringComparison.Ordinal))
+            || hostedRevision == null
+            || hostedRevision.PublishedContentVersion != hostedSite.ContentVersion)
             throw Invalid("HTML PPT 托管版本不存在或不属于当前用户");
+
+        var publishedBytes = Encoding.UTF8.GetBytes(hostedRevision.Html ?? string.Empty);
+        var publishedHash = Convert.ToHexString(SHA256.HashData(publishedBytes)).ToLowerInvariant();
+        if (!FixedHashEquals(run.HtmlHash, publishedHash)
+            || !FixedHashEquals(run.PublishedHtmlHash, publishedHash))
+            throw Invalid("HTML PPT 托管版本字节与源 manifest 不一致");
 
         await CommitAndCompleteAsync(run, CancellationToken.None);
         var current = await RequirePublicRunAsync(run.Id);
@@ -258,8 +278,8 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
                         Expected(current),
                         hostedSiteId,
                         hostedVersionId,
-                        BuildPublishOperationId(run.Id, hostedSiteId, hostedVersionId, run.HtmlHash!),
-                        run.HtmlHash!),
+                        BuildPublishOperationId(run.Id, hostedSiteId, hostedVersionId, publishedHash),
+                        publishedHash),
                     CancellationToken.None);
             }
             catch (DesignArtifactLifecycleException ex)
@@ -280,6 +300,9 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
         var candidates = await _db.MdToPptRuns
             .Find(run => run.ArtifactContractVersion == DesignArtifactContractVersions.Current
                          && run.ArtifactContractSynchronizedAt == null
+                         && run.ArtifactRecoveryDeadLetteredAt == null
+                         && (run.ArtifactRecoveryNextAttemptAt == null
+                             || run.ArtifactRecoveryNextAttemptAt <= now)
                          && (run.Status == "done"
                              || run.Status == "error"
                              || run.UpdatedAt <= now.AddMinutes(-5)))
@@ -292,6 +315,25 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
         {
             try
             {
+                var staleRecycled = false;
+                if (run.Status == "running" && run.UpdatedAt <= now.AddMinutes(-5))
+                {
+                    var staleWrite = await _db.MdToPptRuns.UpdateOneAsync(
+                        item => item.Id == run.Id
+                                && item.Status == "running"
+                                && item.UpdatedAt == run.UpdatedAt,
+                        Builders<MdToPptRun>.Update
+                            .Set(item => item.Status, "error")
+                            .Set(item => item.Error, null)
+                            .Set(item => item.ArtifactContractSynchronizedAt, null)
+                            .Set(item => item.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
+                    if (staleWrite.ModifiedCount == 0) continue;
+                    run.Status = "error";
+                    run.Error = null;
+                    run.UpdatedAt = DateTime.UtcNow;
+                    staleRecycled = true;
+                }
                 await BeginAsync(run, CancellationToken.None);
                 if (run.Status == "done")
                 {
@@ -310,22 +352,57 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
                 }
                 else if (run.Status == "error")
                 {
-                    await FailAsync(run, RecoveryFailureCode, CancellationToken.None);
+                    await FailAsync(
+                        run,
+                        staleRecycled ? StaleRunningFailureCode : RecoveryFailureCode,
+                        CancellationToken.None);
                     recovered++;
                 }
+                await ClearRecoveryFailureAsync(run.Id);
             }
             catch (Exception ex)
             {
+                await RecordRecoveryFailureAsync(run);
                 _logger.LogWarning(ex, "HTML PPT 公共生命周期恢复未完成 runId={RunId}", run.Id);
             }
         }
         return recovered;
     }
 
-    public static string BuildHostedVersionId(HostedSite site)
+    private async Task ClearRecoveryFailureAsync(string runId)
     {
-        if (site == null) throw new ArgumentNullException(nameof(site));
-        return $"hosted-content-{site.ContentVersion.ToUniversalTime().Ticks:x}";
+        await _db.MdToPptRuns.UpdateOneAsync(
+            run => run.Id == runId,
+            Builders<MdToPptRun>.Update
+                .Set(run => run.ArtifactRecoveryAttemptCount, 0)
+                .Set(run => run.ArtifactRecoveryNextAttemptAt, null)
+                .Set(run => run.ArtifactRecoveryLastFailureCode, null),
+            cancellationToken: CancellationToken.None);
+    }
+
+    private async Task RecordRecoveryFailureAsync(MdToPptRun run)
+    {
+        var attemptedAt = DateTime.UtcNow;
+        var attempt = run.ArtifactRecoveryAttemptCount + 1;
+        var deadLettered = attempt >= MaxRecoveryAttempts;
+        await _db.MdToPptRuns.UpdateOneAsync(
+            item => item.Id == run.Id
+                    && item.ArtifactRecoveryAttemptCount == run.ArtifactRecoveryAttemptCount,
+            Builders<MdToPptRun>.Update
+                .Set(item => item.ArtifactRecoveryAttemptCount, attempt)
+                .Set(item => item.ArtifactRecoveryLastFailureCode,
+                    deadLettered ? RecoveryDeadLetterCode : RecoveryFailureCode)
+                .Set(item => item.ArtifactRecoveryNextAttemptAt,
+                    deadLettered ? null : attemptedAt.Add(RecoveryBackoff(attempt)))
+                .Set(item => item.ArtifactRecoveryDeadLetteredAt,
+                    deadLettered ? attemptedAt : null),
+            cancellationToken: CancellationToken.None);
+    }
+
+    internal static TimeSpan RecoveryBackoff(int attempt)
+    {
+        var exponent = Math.Clamp(attempt - 1, 0, 6);
+        return TimeSpan.FromSeconds(Math.Min(300, 5 * (1 << exponent)));
     }
 
     private async Task<DesignArtifactRun> EnsureSessionAsync(MdToPptRun run)

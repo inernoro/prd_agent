@@ -217,8 +217,21 @@ public sealed class WebPageDesignArtifactLifecycleAdapterTests
             PublishedContentVersion = DateTime.UtcNow,
             PublishedAt = DateTime.UtcNow,
         });
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+        {
+            Id = $"legacy-{revisionId}",
+            SiteId = "legacy-site",
+            CreatedByUserId = setup.Run.UserId,
+            Status = HostedSiteRevisionStatuses.Published,
+            SourceRunId = "legacy-run-without-v2-contract",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Html = Html,
+            BasedOnContentVersion = DateTime.UtcNow,
+            PublishedContentVersion = DateTime.UtcNow,
+            PublishedAt = DateTime.UtcNow.AddMinutes(1),
+        });
 
-        var recovered = await setup.Adapter.RecoverPendingAsync();
+        var recovered = await setup.Adapter.RecoverPendingAsync(limit: 1);
 
         Assert.Equal(1, recovered);
         var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == setup.Run.Id).SingleAsync();

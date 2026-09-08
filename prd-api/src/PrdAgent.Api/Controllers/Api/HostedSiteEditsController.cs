@@ -194,15 +194,30 @@ public sealed class HostedSiteEditsController : ControllerBase
             CreatedAt = DateTime.UtcNow,
             InputJson = input,
         };
-        await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
-        await _events.AppendEventAsync(
-            RunKinds.DesignArtifact,
-            runId,
-            "phase",
-            new { progress = 2, message = "修改任务已进入队列" },
-            RunTtl,
-            CancellationToken.None);
-        await _queue.EnqueueAsync(RunKinds.DesignArtifact, runId, CancellationToken.None);
+        try
+        {
+            await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
+            await _events.AppendEventAsync(
+                RunKinds.DesignArtifact,
+                runId,
+                "phase",
+                new { progress = 2, message = "修改任务已进入队列" },
+                RunTtl,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "网页修改任务 Redis 兼容投影暂不可用 runId={RunId}", runId);
+        }
+        try
+        {
+            await _queue.EnqueueAsync(RunKinds.DesignArtifact, runId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // Mongo queued 记录是权威入队意图，恢复器会重试；客户端仍拿到唯一 runId，避免未知副作用后重建任务。
+            _logger.LogWarning(ex, "网页修改任务即时入队失败，等待 Mongo 恢复器重试 runId={RunId}", runId);
+        }
         return Accepted(ApiResponse<object>.Ok(new { runId, status = meta.Status, runtime }));
     }
 
@@ -256,8 +271,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         Response.Headers["X-Accel-Buffering"] = "no";
 
         var userId = this.GetRequiredUserId();
-        var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, ct);
-        if (meta == null || meta.CreatedByUserId != userId || !RunBelongsToSite(meta, siteId))
+        var initial = await FindOwnedEditRunAsync(siteId, runId, userId);
+        if (initial == null)
         {
             await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
             {
@@ -269,25 +284,81 @@ public sealed class HostedSiteEditsController : ControllerBase
 
         var cursor = Math.Max(0, afterSeq);
         var idleRounds = 0;
+        var redisProjectionAvailable = true;
+        var lastMongoProgress = -1;
+        string? lastMongoPhase = null;
         try
         {
             while (!ct.IsCancellationRequested)
             {
-                var batch = await _events.GetEventsAsync(RunKinds.DesignArtifact, runId, cursor, 100, ct);
+                IReadOnlyList<RunEventRecord> batch = Array.Empty<RunEventRecord>();
+                if (redisProjectionAvailable)
+                {
+                    try
+                    {
+                        batch = await _events.GetEventsAsync(RunKinds.DesignArtifact, runId, cursor, 100, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        redisProjectionAvailable = false;
+                        _logger.LogWarning(ex, "网页修改任务 Redis 事件流不可用，切换 Mongo 权威状态 runId={RunId}", runId);
+                    }
+                }
+                var terminalEventEmitted = false;
                 foreach (var item in batch)
                 {
                     await WriteEventAsync(item.Seq, item.EventName, item.PayloadJson, ct);
                     cursor = item.Seq;
+                    terminalEventEmitted = item.EventName is "done" or "error" or "cancelled";
                 }
+                if (terminalEventEmitted) return;
                 if (batch.Count > 0)
                 {
                     idleRounds = 0;
                     continue;
                 }
 
-                meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, ct);
-                if (meta == null || meta.Status is RunStatuses.Done or RunStatuses.Error or RunStatuses.Cancelled)
+                var snapshot = await FindOwnedEditRunAsync(siteId, runId, userId);
+                if (snapshot == null) return;
+                if (!redisProjectionAvailable
+                    && (snapshot.Progress != lastMongoProgress
+                        || !string.Equals(snapshot.Phase, lastMongoPhase, StringComparison.Ordinal)))
+                {
+                    await WriteEventAsync(null, "phase", JsonSerializer.Serialize(new
+                    {
+                        progress = snapshot.Progress,
+                        message = snapshot.Phase,
+                    }), ct);
+                    lastMongoProgress = snapshot.Progress;
+                    lastMongoPhase = snapshot.Phase;
+                }
+                if (snapshot.Status == RunStatuses.Done)
+                {
+                    var revisionId = snapshot.ArtifactRevisionId ?? snapshot.ProducedArtifactRevisionId;
+                    if (!string.IsNullOrWhiteSpace(revisionId))
+                    {
+                        await WriteEventAsync(null, "done", JsonSerializer.Serialize(new
+                        {
+                            revisionId,
+                            siteId = snapshot.ArtifactSiteId ?? snapshot.ProducedArtifactSiteId ?? siteId,
+                            status = HostedSiteRevisionStatuses.Draft,
+                        }), ct);
+                    }
                     return;
+                }
+                if (snapshot.Status is RunStatuses.Error or RunStatuses.Cancelled)
+                {
+                    await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
+                    {
+                        code = snapshot.Status == RunStatuses.Cancelled
+                            ? "DESIGN_ARTIFACT_CANCELLED"
+                            : "DESIGN_ARTIFACT_FAILED",
+                        message = string.IsNullOrWhiteSpace(snapshot.Error)
+                            ? "页面修改未完成，请重新发起"
+                            : snapshot.Error,
+                    }), ct);
+                    return;
+                }
 
                 idleRounds++;
                 if (idleRounds % 20 == 0)
@@ -307,6 +378,15 @@ public sealed class HostedSiteEditsController : ControllerBase
             // 响应已关闭，后台任务仍继续。
         }
     }
+
+    private Task<DesignArtifactRun?> FindOwnedEditRunAsync(string siteId, string runId, string userId) =>
+        _db.DesignArtifactRuns.Find(x => x.Id == runId
+                                         && x.UserId == userId
+                                         && x.TargetSiteId == siteId
+                                         && x.Operation == DesignArtifactOperations.Edit
+                                         && x.ArtifactType == DesignArtifactTypes.WebPage
+                                         && x.SourceSurface == DesignArtifactSourceSurfaces.WebHosting)
+            .FirstOrDefaultAsync(CancellationToken.None);
 
     [HttpGet("revisions")]
     public async Task<IActionResult> ListRevisions(string siteId)
@@ -540,20 +620,6 @@ public sealed class HostedSiteEditsController : ControllerBase
         item.Enabled,
         item.Reason,
     };
-
-    private static bool RunBelongsToSite(RunMeta meta, string siteId)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(meta.InputJson ?? "{}");
-            return doc.RootElement.TryGetProperty("SiteId", out var value)
-                   && value.GetString() == siteId;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
 
     private async Task WriteEventAsync(long? id, string eventName, string json, CancellationToken ct)
     {

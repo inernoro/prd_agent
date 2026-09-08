@@ -9,6 +9,7 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -17,6 +18,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/design-artifacts")]
 [Authorize]
+[AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]
 public sealed class DesignArtifactsController : ControllerBase
 {
     private static readonly TimeSpan RunTtl = TimeSpan.FromHours(24);
@@ -215,15 +217,30 @@ public sealed class DesignArtifactsController : ControllerBase
             CreatedAt = DateTime.UtcNow,
             InputJson = JsonSerializer.Serialize(new { sourceSurface }),
         };
-        await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
-        await _events.AppendEventAsync(
-            RunKinds.DesignArtifact,
-            runId,
-            "phase",
-            new { progress = 2, message = run.Phase },
-            RunTtl,
-            CancellationToken.None);
-        await _queue.EnqueueAsync(RunKinds.DesignArtifact, runId, CancellationToken.None);
+        try
+        {
+            await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
+            await _events.AppendEventAsync(
+                RunKinds.DesignArtifact,
+                runId,
+                "phase",
+                new { progress = 2, message = run.Phase },
+                RunTtl,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "设计任务 Redis 兼容投影暂不可用 runId={RunId}", runId);
+        }
+        try
+        {
+            await _queue.EnqueueAsync(RunKinds.DesignArtifact, runId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // Mongo queued 记录是权威入队意图，恢复器会重试；客户端仍拿到唯一 runId，避免未知副作用后重建任务。
+            _logger?.LogWarning(ex, "设计任务即时入队失败，等待 Mongo 恢复器重试 runId={RunId}", runId);
+        }
         return Accepted(ApiResponse<object>.Ok(ToDto(run)));
     }
 

@@ -17,6 +17,59 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
 {
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task PrepareCasFailureDoesNotWriteUnownedInputObject()
+    {
+        await using var fixture = await BrokerFixture.CreateAsync();
+        var now = DateTime.UtcNow;
+        var run = new DesignArtifactRun
+        {
+            Id = "prepare-cas-lost",
+            UserId = "user-1",
+            Status = RunStatuses.Running,
+            LeaseOwnerId = "worker-old",
+            LeaseExpiresAt = now.AddSeconds(-1),
+            Instruction = "生成页面",
+            KnowledgeReferences = [],
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var objectsBeforePrepare = fixture.AssetObjectCount;
+
+        await Assert.ThrowsAsync<DesignArtifactRunLeaseLostException>(() =>
+            fixture.Broker.PrepareAsync(run, null, CancellationToken.None));
+
+        Assert.Equal(objectsBeforePrepare, fixture.AssetObjectCount);
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Null(persisted.WorkspaceInputAssetKey);
+        Assert.Null(persisted.WorkspaceInputSha256);
+    }
+
+    [Theory]
+    [InlineData("assets/a?download=1")]
+    [InlineData("assets/a#fragment")]
+    [InlineData("assets/%2e%2e/index.html")]
+    [InlineData("assets/NUL.txt")]
+    [InlineData("assets/a.")]
+    [InlineData("other.html")]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task BrokerRejectsEveryLifecycleUnsafePublicPath(string path)
+    {
+        await using var fixture = await BrokerFixture.CreateAsync();
+        var runId = $"unsafe-path-{Guid.NewGuid():N}";
+        var workspace = await fixture.PrepareAsync(runId);
+        var package = BuildResultWithAssetPath(runId, workspace.BaseRevision, path);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Broker.CommitResultAsync(
+            runId,
+            workspace.TransferToken,
+            package,
+            CancellationToken.None));
+
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == runId).SingleAsync();
+        Assert.Null(persisted.WorkspaceResultAssetKey);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task RuntimeTicketCannotReadOrCommitAnotherRun()
     {
         await using var fixture = await BrokerFixture.CreateAsync();
@@ -478,6 +531,49 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
                 runId,
                 baseRevision,
                 [htmlFile, manifestFile]),
+            DesignArtifactWorkspaceContract.JsonOptions);
+    }
+
+    private static byte[] BuildResultWithAssetPath(string runId, string baseRevision, string assetPath)
+    {
+        var html = Encoding.UTF8.GetBytes("<!doctype html><html><body>path-check</body></html>");
+        var asset = Encoding.UTF8.GetBytes("body{}");
+        var htmlFile = new DesignWorkspaceFile(
+            "index.html",
+            Convert.ToBase64String(html),
+            Hash(html),
+            html.LongLength,
+            "text/html");
+        var assetFile = new DesignWorkspaceFile(
+            assetPath,
+            Convert.ToBase64String(asset),
+            Hash(asset),
+            asset.LongLength,
+            "text/css");
+        var manifestFiles = new[]
+        {
+            new DesignArtifactManifestFile(htmlFile.Path, htmlFile.Sha256, htmlFile.Size, htmlFile.MediaType),
+            new DesignArtifactManifestFile(assetFile.Path, assetFile.Sha256, assetFile.Size, assetFile.MediaType),
+        };
+        var manifest = JsonSerializer.SerializeToUtf8Bytes(
+            new DesignArtifactManifest(
+                DesignArtifactWorkspaceBroker.ManifestSchemaVersion,
+                DesignArtifactWorkspaceContract.ComputePublicArtifactRevision(manifestFiles),
+                "index.html",
+                manifestFiles),
+            DesignArtifactWorkspaceContract.JsonOptions);
+        var manifestFile = new DesignWorkspaceFile(
+            "manifest.json",
+            Convert.ToBase64String(manifest),
+            Hash(manifest),
+            manifest.LongLength,
+            "application/json");
+        return JsonSerializer.SerializeToUtf8Bytes(
+            new DesignWorkspacePackage(
+                DesignArtifactWorkspaceBroker.SchemaVersion,
+                runId,
+                baseRevision,
+                [htmlFile, assetFile, manifestFile]),
             DesignArtifactWorkspaceContract.JsonOptions);
     }
 

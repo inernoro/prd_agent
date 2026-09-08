@@ -117,6 +117,49 @@ public sealed class DesignArtifactWorkspaceContractTests
     }
 
     [Fact]
+    public async Task ModelProxyDoesNotExposeUpstreamProviderFailureBody()
+    {
+        var run = BuildRun();
+        run.Id = "run-model-proxy-secret";
+        run.Status = RunStatuses.Running;
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(run);
+        var handler = new CapturingHandler(
+            System.Net.HttpStatusCode.BadGateway,
+            "{\"error\":{\"message\":\"provider-secret-name internal-model-route\"}}");
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve:8091",
+            ["LlmGwServe:ApiKey"] = "gateway-secret",
+            ["DesignArtifactRuntime:Model"] = "gpt-4.1-mini",
+        }).Build();
+        var controller = new DesignArtifactRuntimeController(
+            broker.Object,
+            new SingleClientFactory(handler),
+            configuration,
+            NullLogger<DesignArtifactRuntimeController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+        };
+        var requestBytes = Encoding.UTF8.GetBytes("{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}");
+        controller.Request.Body = new MemoryStream(requestBytes);
+        controller.Request.ContentLength = requestBytes.Length;
+        controller.Request.Headers.Authorization = "Bearer model-ticket";
+        controller.Response.Body = new MemoryStream();
+
+        await controller.ProxyChatCompletions(run.Id, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status502BadGateway, controller.Response.StatusCode);
+        controller.Response.Body.Position = 0;
+        var publicBody = await new StreamReader(controller.Response.Body).ReadToEndAsync();
+        Assert.Contains("DESIGN_RUNTIME_MODEL_REJECTED", publicBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("provider-secret-name", publicBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("internal-model-route", publicBody, StringComparison.Ordinal);
+        broker.VerifyAll();
+    }
+
+    [Fact]
     public async Task ModelProxyStreamStopsWhenNoBytesArriveBeforeIdleDeadline()
     {
         await using var source = new NeverCompletingReadStream();
@@ -755,7 +798,9 @@ public sealed class DesignArtifactWorkspaceContractTests
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
     }
 
-    private sealed class CapturingHandler : HttpMessageHandler
+    private sealed class CapturingHandler(
+        System.Net.HttpStatusCode responseStatus = System.Net.HttpStatusCode.OK,
+        string responseBody = "{\"id\":\"gateway-response\"}") : HttpMessageHandler
     {
         private IReadOnlyDictionary<string, string[]> _headers = new Dictionary<string, string[]>();
 
@@ -774,9 +819,9 @@ public sealed class DesignArtifactWorkspaceContractTests
             RequestTokenCanBeCanceled = cancellationToken.CanBeCanceled;
             _headers = request.Headers.ToDictionary(item => item.Key, item => item.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
             Body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)) as JsonObject;
-            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            return new HttpResponseMessage(responseStatus)
             {
-                Content = new StringContent("{\"id\":\"gateway-response\"}", Encoding.UTF8, "application/json"),
+                Content = new StringContent(responseBody, Encoding.UTF8, "application/json"),
             };
         }
     }

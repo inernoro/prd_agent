@@ -383,21 +383,25 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
             }
         }
 
-        var published = await _db.HostedSiteRevisions.Find(revision =>
-                revision.Status == HostedSiteRevisionStatuses.Published
-                && revision.Runtime == DesignArtifactRuntimes.OpenDesign
-                && revision.SourceRunId != null)
-            .SortByDescending(revision => revision.PublishedAt)
+        var pendingBindings = await _db.DesignArtifactRuns.Find(run =>
+                run.ContractVersion == DesignArtifactContractVersions.Current
+                && run.Runtime == DesignArtifactRuntimes.OpenDesign
+                && run.ArtifactType == DesignArtifactTypes.WebPage
+                && run.WorkspaceRef != null
+                && run.WorkspaceRef.Kind == DesignArtifactWorkspaceKinds.RemotePackage
+                && run.WorkspaceRef.Adapter == AdapterId
+                && run.Status == RunStatuses.Done
+                && run.ArtifactSiteId == null
+                && run.ArtifactRevisionId == null)
+            .SortBy(run => run.UpdatedAt)
             .Limit(Math.Clamp(limit, 1, 500))
             .ToListAsync(CancellationToken.None);
-        foreach (var revision in published)
+        foreach (var run in pendingBindings)
         {
             try
             {
-                var run = await RequireManagedAsync(revision.SourceRunId!);
-                if (run.Status != RunStatuses.Done
-                    || run.ArtifactSiteId != null
-                    || run.ArtifactRevisionId != null)
+                var revision = await FindProducedRevisionAsync(run);
+                if (revision?.Status != HostedSiteRevisionStatuses.Published)
                     continue;
                 await BindPublishedAsync(run.Id, revision.SiteId, revision.Id, CancellationToken.None);
                 recovered++;
@@ -407,8 +411,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                 _logger.LogWarning(
                     ex,
                     "OpenDesign 网页发布绑定恢复未完成 runId={RunId} revisionId={RevisionId}",
-                    revision.SourceRunId,
-                    revision.Id);
+                    run.Id,
+                    run.ProducedArtifactRevisionId);
             }
         }
         return recovered;

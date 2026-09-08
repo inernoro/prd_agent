@@ -19,12 +19,6 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
     {
         DesignArtifactLifecycleEventTypes.Phase,
     };
-    private static readonly HashSet<string> WindowsReservedNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-    };
     private const int MaxManifestFiles = 256;
     private const int MaxAdapterEvents = 1000;
     private const long MaxManifestFileBytes = 100L * 1024 * 1024;
@@ -128,6 +122,8 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             var current = await GetOwnedV2Async(request.RunId, request.UserId);
             if (request.Expected != null)
                 ValidateExpectation(current, request.Expected);
+            else
+                ValidateLeaseAuthority(current, null);
             if (current.Status is not (RunStatuses.Running or RunStatuses.Committing))
                 throw Conflict();
             if (current.LifecycleEvents.Count(item => !item.Authoritative) >= MaxAdapterEvents)
@@ -146,11 +142,8 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             var eventFilter = Builders<DesignArtifactRun>.Filter.And(
                     OwnedV2Filter(current.Id, current.UserId),
                     Builders<DesignArtifactRun>.Filter.Eq(item => item.LifecycleEventSequence, current.LifecycleEventSequence),
-                    Builders<DesignArtifactRun>.Filter.In(item => item.Status, [RunStatuses.Running, RunStatuses.Committing]));
-            if (request.Expected != null)
-                eventFilter = Builders<DesignArtifactRun>.Filter.And(
-                    eventFilter,
-                    LeaseAuthorityFilter(request.Expected));
+                    Builders<DesignArtifactRun>.Filter.In(item => item.Status, [RunStatuses.Running, RunStatuses.Committing]),
+                    LeaseAuthorityFilter(current, request.Expected));
             var updated = await AtomicUpdateWithEventAsync(
                 eventFilter,
                 current,
@@ -331,6 +324,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         var fingerprint = Sha256Hex($"{artifactId}\n{versionId}\n{artifactHash}");
 
         var current = await GetOwnedV2Async(runId, userId);
+        await ValidatePublishedReceiptAsync(current, artifactId, versionId, artifactHash);
         if (current.PublishBindingOperationId != null)
         {
             if (current.PublishBindingOperationId == operationId
@@ -340,7 +334,6 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         }
         if (current.Status != RunStatuses.Done || current.Operation == DesignArtifactOperations.Plan)
             throw Conflict();
-        await ValidatePublishedReceiptAsync(current, artifactId, versionId, artifactHash);
         ValidateExpectation(current, request.Expected);
 
         var now = DateTime.UtcNow;
@@ -521,31 +514,53 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             .FirstOrDefaultAsync(CancellationToken.None);
         if (site == null) throw Invalid("发布站点不存在或不属于当前用户");
 
-        var revision = await _db.HostedSiteRevisions
-            .Find(item => item.Id == versionId
-                          && item.SiteId == siteId
-                          && item.CreatedByUserId == run.UserId
-                          && item.Status == HostedSiteRevisionStatuses.Published)
-            .FirstOrDefaultAsync(CancellationToken.None);
-        if (revision != null)
+        if (run.ArtifactType == DesignArtifactTypes.WebPage)
         {
-            if (revision.VerifiedFiles is { Count: > 0 })
+            if (!string.Equals(run.ProducedArtifactSiteId, siteId, StringComparison.Ordinal)
+                || !string.Equals(run.ProducedArtifactRevisionId, versionId, StringComparison.Ordinal))
+                throw Invalid("发布版本与任务形成的产物不一致");
+            var revision = await _db.HostedSiteRevisions
+                .Find(item => item.Id == versionId
+                              && item.SiteId == siteId
+                              && item.SourceRunId == run.Id
+                              && item.CreatedByUserId == run.UserId
+                              && item.Runtime == run.Runtime
+                              && item.Status == HostedSiteRevisionStatuses.Published)
+                .FirstOrDefaultAsync(CancellationToken.None)
+                ?? throw Invalid("发布版本不存在、归属不一致或不是当前任务的产物");
+            if (revision.VerifiedFiles is not { Count: > 0 } || run.Manifest == null)
+                throw Invalid("发布版本缺少受信产物字节");
+
+            var actualFiles = new List<DesignArtifactPublicRevisionFile>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var file in revision.VerifiedFiles)
             {
-                var packageHash = DesignArtifactPublicRevision.Compute(revision.VerifiedFiles.Select(file =>
-                    new DesignArtifactPublicRevisionFile(
-                        file.Path,
-                        RequiredHash(file.Sha256),
-                        file.Content.LongLength,
-                        StrictMediaType(file.MimeType))));
-                if (!FixedHashEquals(packageHash, artifactHash)
-                    || !FixedHashEquals(run.VersionBoundary?.PackageHash, artifactHash))
-                    throw Invalid("发布版本整包哈希与设计产物不一致");
-                return;
+                var path = StrictRelativePath(file.Path);
+                if (!seen.Add(path)) throw Invalid("发布版本包含重复文件路径");
+                if (string.Equals(path, DesignArtifactPublicRevision.InternalManifestPath, StringComparison.Ordinal))
+                    continue;
+                if (file.Content == null) throw Invalid("发布版本文件正文不存在");
+                actualFiles.Add(new DesignArtifactPublicRevisionFile(
+                    path,
+                    Sha256Hex(file.Content),
+                    file.Content.LongLength,
+                    StrictMediaType(file.MimeType)));
             }
-            var htmlHash = Sha256Hex(Encoding.UTF8.GetBytes(revision.Html ?? string.Empty));
-            if (!FixedHashEquals(htmlHash, artifactHash)
-                || !FixedHashEquals(run.VersionBoundary?.EntryContentHash, artifactHash))
-                throw Invalid("发布版本入口哈希与设计产物不一致");
+            if (actualFiles.Count != run.Manifest.Files.Count)
+                throw Invalid("发布版本文件数量与设计产物不一致");
+            var manifestByPath = run.Manifest.Files.ToDictionary(file => file.Path, StringComparer.Ordinal);
+            foreach (var file in actualFiles)
+            {
+                if (!manifestByPath.TryGetValue(file.Path, out var expected)
+                    || expected.ByteLength != file.Size
+                    || !FixedHashEquals(expected.Sha256, file.Sha256)
+                    || !string.Equals(expected.MediaType, file.MediaType, StringComparison.OrdinalIgnoreCase))
+                    throw Invalid("发布版本字节与设计产物清单不一致");
+            }
+            var packageHash = DesignArtifactPublicRevision.Compute(actualFiles);
+            if (!FixedHashEquals(packageHash, artifactHash)
+                || !FixedHashEquals(run.VersionBoundary?.PackageHash, artifactHash))
+                throw Invalid("发布版本整包哈希与设计产物不一致");
             return;
         }
 
@@ -625,14 +640,21 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             filter.Eq(item => item.Status, status),
             filter.Eq(item => item.WorkspaceRef!.BaseRevision, Optional(expected.BaseRevision, 200)),
             filter.Eq(item => item.VersionBoundary!.BaseContentHash, OptionalHash(expected.BaseContentHash)),
-            LeaseAuthorityFilter(expected));
+            LeaseAuthorityFilter(current, expected));
     }
 
     private static void ValidateLeaseAuthority(
         DesignArtifactRun current,
-        DesignArtifactLifecycleExpectation expected)
+        DesignArtifactLifecycleExpectation? expected)
     {
-        if (string.IsNullOrWhiteSpace(expected.LeaseOwnerId)) return;
+        var hasPersistedLease = current.Status is RunStatuses.Running or RunStatuses.Committing
+                                && (!string.IsNullOrWhiteSpace(current.LeaseOwnerId)
+                                    || current.LeaseExpiresAt.HasValue);
+        if (string.IsNullOrWhiteSpace(expected?.LeaseOwnerId))
+        {
+            if (hasPersistedLease) throw Conflict();
+            return;
+        }
         var owner = SafeToken(expected.LeaseOwnerId, "leaseOwnerId", 256);
         if (!string.Equals(current.LeaseOwnerId, owner, StringComparison.Ordinal))
             throw Conflict();
@@ -649,11 +671,19 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
     }
 
     private static FilterDefinition<DesignArtifactRun> LeaseAuthorityFilter(
-        DesignArtifactLifecycleExpectation expected)
+        DesignArtifactRun current,
+        DesignArtifactLifecycleExpectation? expected)
     {
         var filter = Builders<DesignArtifactRun>.Filter;
-        if (string.IsNullOrWhiteSpace(expected.LeaseOwnerId))
-            return filter.Empty;
+        if (string.IsNullOrWhiteSpace(expected?.LeaseOwnerId))
+        {
+            if (current.Status is RunStatuses.Running or RunStatuses.Committing
+                && (!string.IsNullOrWhiteSpace(current.LeaseOwnerId) || current.LeaseExpiresAt.HasValue))
+                throw Conflict();
+            return filter.And(
+                filter.Eq(item => item.LeaseOwnerId, current.LeaseOwnerId),
+                filter.Eq(item => item.LeaseExpiresAt, current.LeaseExpiresAt));
+        }
         var owner = SafeToken(expected.LeaseOwnerId, "leaseOwnerId", 256);
         return expected.Recovery
             ? filter.And(
@@ -782,6 +812,10 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             throw Invalid("manifest 安全配置与执行能力不一致");
 
         var entryFile = StrictRelativePath(value.EntryFile);
+        if (run.ArtifactType == DesignArtifactTypes.WebPage
+            && run.WorkspaceRef?.Kind == DesignArtifactWorkspaceKinds.RemotePackage
+            && !DesignArtifactPublicPath.IsWebPageWorkspaceOutput(entryFile, includeInternalManifest: false))
+            throw Invalid("manifest 入口路径不属于远程网页工作区");
         var paths = new HashSet<string>(StringComparer.Ordinal);
         var files = new List<DesignArtifactContractManifestFile>(value.Files.Count);
         long totalBytes = 0;
@@ -789,6 +823,10 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         {
             if (item == null) throw Invalid("manifest 文件不能为空");
             var path = StrictRelativePath(item.Path);
+            if (run.ArtifactType == DesignArtifactTypes.WebPage
+                && run.WorkspaceRef?.Kind == DesignArtifactWorkspaceKinds.RemotePackage
+                && !DesignArtifactPublicPath.IsWebPageWorkspaceOutput(path, includeInternalManifest: false))
+                throw Invalid("manifest 文件路径不属于远程网页工作区");
             if (!paths.Add(path)) throw Invalid("manifest 不能包含重复文件路径");
             if (item.ByteLength < 0 || item.ByteLength > MaxManifestFileBytes)
                 throw Invalid("manifest 文件大小超出限制");
@@ -861,26 +899,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
 
     private static string StrictRelativePath(string? value)
     {
-        if (string.IsNullOrEmpty(value) || value.Length > 240 || value != value.Trim())
-            throw Invalid("manifest 路径必须是精确的规范化相对路径");
-        if (!value.IsNormalized(NormalizationForm.FormC)
-            || value.StartsWith("/", StringComparison.Ordinal)
-            || value.Contains('\\')
-            || value.Contains('?')
-            || value.Contains('#')
-            || value.Contains('%')
-            || value.Contains(':')
-            || value.Any(char.IsControl))
-            throw Invalid("manifest 路径包含不安全字符");
-        foreach (var segment in value.Split('/'))
-        {
-            if (segment is "" or "." or ".." || segment.EndsWith(' ') || segment.EndsWith('.'))
-                throw Invalid("manifest 路径包含不安全片段");
-            var basename = segment.Split('.')[0];
-            if (WindowsReservedNames.Contains(basename))
-                throw Invalid("manifest 路径包含系统保留名称");
-        }
-        return value;
+        if (!DesignArtifactPublicPath.TryNormalize(value, out var normalized))
+            throw Invalid("manifest 路径必须是安全、精确的规范化相对路径");
+        return normalized;
     }
 
     private static string StrictMediaType(string? value)

@@ -172,12 +172,37 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 upstream,
                 HttpCompletionOption.ResponseHeadersRead,
                 proxyDeadline.Token);
-            Response.StatusCode = (int)response.StatusCode;
-            Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
             Response.Headers.CacheControl = "no-store";
             if (response.Headers.TryGetValues("x-request-id", out var requestIds)
                 && requestIds.FirstOrDefault() is { Length: > 0 } requestId)
                 Response.Headers["X-Request-Id"] = requestId;
+            if (!response.IsSuccessStatusCode)
+            {
+                var publicStatus = response.StatusCode == System.Net.HttpStatusCode.TooManyRequests
+                    ? StatusCodes.Status429TooManyRequests
+                    : StatusCodes.Status502BadGateway;
+                _logger.LogWarning(
+                    "远程设计模型上游拒绝请求 runId={RunId} upstreamStatus={UpstreamStatus}",
+                    runId,
+                    (int)response.StatusCode);
+                Response.StatusCode = publicStatus;
+                Response.ContentType = "application/json";
+                await Response.WriteAsJsonAsync(new
+                {
+                    error = new
+                    {
+                        code = publicStatus == StatusCodes.Status429TooManyRequests
+                            ? "DESIGN_RUNTIME_MODEL_RATE_LIMITED"
+                            : "DESIGN_RUNTIME_MODEL_REJECTED",
+                        message = publicStatus == StatusCodes.Status429TooManyRequests
+                            ? "设计模型当前请求较多，请稍后重试"
+                            : "设计模型暂时无法处理本次请求，请重新发起任务",
+                    },
+                }, proxyDeadline.Token);
+                return;
+            }
+            Response.StatusCode = (int)response.StatusCode;
+            Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
             await using var stream = await response.Content.ReadAsStreamAsync(proxyDeadline.Token);
             await CopyWithIdleTimeoutAsync(stream, Response.Body, idleTimeout, proxyDeadline.Token);
         }
@@ -297,9 +322,9 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     {
         var (status, code, message) = ex switch
         {
-            UnauthorizedAccessException => (StatusCodes.Status401Unauthorized, "DESIGN_RUNTIME_TICKET_INVALID", ex.Message),
+            UnauthorizedAccessException => (StatusCodes.Status401Unauthorized, "DESIGN_RUNTIME_TICKET_INVALID", "远程设计凭证无效或已过期，请重新发起任务"),
             KeyNotFoundException => (StatusCodes.Status404NotFound, "DESIGN_RUNTIME_RUN_NOT_FOUND", "设计任务不存在，请重新发起"),
-            InvalidOperationException => (StatusCodes.Status409Conflict, "DESIGN_RUNTIME_CONTRACT_REJECTED", ex.Message),
+            InvalidOperationException => (StatusCodes.Status409Conflict, "DESIGN_RUNTIME_CONTRACT_REJECTED", "远程设计数据不符合本次任务合同，请重新发起"),
             BadHttpRequestException => (StatusCodes.Status413PayloadTooLarge, "DESIGN_RUNTIME_PAYLOAD_TOO_LARGE", "远程设计数据超过允许大小，请减少引用后重试"),
             _ => (StatusCodes.Status500InternalServerError, "DESIGN_RUNTIME_UNAVAILABLE", "远程设计服务暂时不可用，请稍后重试"),
         };

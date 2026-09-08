@@ -429,6 +429,95 @@ public sealed class HostedSiteEditsControllerTests
     }
 
     [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateRun_ShouldReturnDurableRunWhenRedisAndImmediateQueueAreUnavailable()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>"));
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>();
+        knowledge.Setup(service => service.ResolveForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ReturnsAsync(Array.Empty<DesignKnowledgeSnapshot>());
+        var events = new Mock<IRunEventStore>();
+        events.Setup(store => store.SetRunAsync(
+                It.IsAny<string>(),
+                It.IsAny<RunMeta>(),
+                It.IsAny<TimeSpan?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("redis unavailable"));
+        var queue = new Mock<IRunQueue>();
+        queue.Setup(service => service.EnqueueAsync(
+                RunKinds.DesignArtifact,
+                It.IsAny<string>(),
+                CancellationToken.None))
+            .ThrowsAsync(new InvalidOperationException("queue unavailable"));
+        var controller = BuildController(
+            fixture.Db,
+            "owner-user",
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            knowledge.Object,
+            queue.Object,
+            events: events.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+        });
+
+        Assert.IsType<AcceptedResult>(result);
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(_ => true).SingleAsync();
+        Assert.Equal(RunStatuses.Queued, persisted.Status);
+        Assert.Null(persisted.RecoveryEnqueuedAt);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task StreamRun_ShouldReturnTerminalDraftFromMongoWhenRedisIsUnavailable()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var run = new DesignArtifactRun
+        {
+            Id = "run-mongo-stream-fallback",
+            UserId = "owner-user",
+            Status = RunStatuses.Done,
+            ArtifactType = DesignArtifactTypes.WebPage,
+            Operation = DesignArtifactOperations.Edit,
+            SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
+            TargetSiteId = "site-a",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Progress = 100,
+            Phase = "草稿已生成",
+            ProducedArtifactSiteId = "site-a",
+            ProducedArtifactRevisionId = "revision-draft",
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var events = new Mock<IRunEventStore>();
+        events.Setup(store => store.GetEventsAsync(
+                RunKinds.DesignArtifact,
+                run.Id,
+                It.IsAny<long>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("redis unavailable"));
+        var controller = BuildController(fixture.Db, "owner-user", events: events.Object);
+        controller.Response.Body = new MemoryStream();
+
+        await controller.StreamRun("site-a", run.Id, ct: CancellationToken.None);
+
+        controller.Response.Body.Position = 0;
+        var stream = await new StreamReader(controller.Response.Body).ReadToEndAsync();
+        Assert.Contains("event: phase", stream, StringComparison.Ordinal);
+        Assert.Contains("event: done", stream, StringComparison.Ordinal);
+        Assert.Contains("revision-draft", stream, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ListRevisions_ShouldReadMarkdownWrapperBaselineAndExposeRollbackTargetSeparatelyFromParentRevision()
     {
         var contentVersion = DateTime.UtcNow;

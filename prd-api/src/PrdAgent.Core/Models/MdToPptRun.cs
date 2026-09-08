@@ -118,6 +118,32 @@ public class MdToPptRun
     /// <summary>实际发布内容的 SHA-256，必须与当前完成态 HTML 一致。</summary>
     public string? PublishedHtmlHash { get; set; }
 
+    /// <summary>发布意图的稳定幂等键；同一个完成态 Run 和内容哈希只能对应一个意图。</summary>
+    public string? PublishIntentId { get; set; }
+
+    /// <summary>pending | running | retry | completed | dead-letter。</summary>
+    public string? PublishIntentStatus { get; set; }
+
+    /// <summary>CreateFromHtml 最终实际发布字节的 SHA-256。</summary>
+    public string? PublishIntentHtmlHash { get; set; }
+
+    public string? PublishIntentTitle { get; set; }
+    public string? PublishIntentDescription { get; set; }
+    public List<string> PublishIntentTags { get; set; } = new();
+    public List<string> PublishIntentTeamIds { get; set; } = new();
+    public string? PublishIntentLeaseOwnerId { get; set; }
+    public DateTime? PublishIntentLeaseExpiresAt { get; set; }
+    public int PublishIntentAttemptCount { get; set; }
+    public DateTime? PublishIntentNextAttemptAt { get; set; }
+    public string? PublishIntentLastFailureCode { get; set; }
+    public DateTime? PublishIntentCompletedAt { get; set; }
+
+    /// <summary>公共生命周期恢复的失败退避；到达上限后进入 dead-letter，避免永久热循环。</summary>
+    public int ArtifactRecoveryAttemptCount { get; set; }
+    public DateTime? ArtifactRecoveryNextAttemptAt { get; set; }
+    public string? ArtifactRecoveryLastFailureCode { get; set; }
+    public DateTime? ArtifactRecoveryDeadLetteredAt { get; set; }
+
     /// <summary>退化为「标题+要点」兜底的页数（并行逐页路径 done 时落库，刷新恢复仍能如实告警）</summary>
     public int Degraded { get; set; }
 

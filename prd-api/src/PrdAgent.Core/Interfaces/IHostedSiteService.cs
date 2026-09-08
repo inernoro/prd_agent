@@ -16,6 +16,25 @@ public interface IHostedSiteService
         string? title, string? description, string? folder, List<string>? tags,
         CancellationToken ct = default);
 
+    /// <summary>返回 CreateFromHtml 最终会写入对象存储的确定性字节。</summary>
+    byte[] PrepareHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html");
+
+    /// <summary>
+    /// 以稳定 sourceRef 创建 HTML 站点。站点 ID 和对象 key 均由 owner + sourceRef 确定，
+    /// 因此并发重试或进程在写入后崩溃都不会产生第二个站点。
+    /// </summary>
+    Task<HostedSite> CreateFromHtmlIdempotentAsync(
+        string userId,
+        byte[] htmlBytes,
+        string fileName,
+        string? title,
+        string? description,
+        string? folder,
+        List<string>? tags,
+        string sourceType,
+        string sourceRef,
+        CancellationToken ct = default);
+
     /// <summary>从 ZIP 文件字节创建站点；wrappedAssetType 由调用方在生成"壳子+资产"包装 ZIP 时显式传入</summary>
     /// <param name="uploadId">
     /// 可选。传了就把解包进度写进 <see cref="IUploadProgressService"/>，

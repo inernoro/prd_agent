@@ -227,6 +227,110 @@ public class HostedSiteService : IHostedSiteService
         return AttachDerivedFields(site)!;
     }
 
+    public byte[] PrepareHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html") =>
+        RewritePublishedEntryHtml(htmlBytes, entryFile);
+
+    public async Task<HostedSite> CreateFromHtmlIdempotentAsync(
+        string userId,
+        byte[] htmlBytes,
+        string fileName,
+        string? title,
+        string? description,
+        string? folder,
+        List<string>? tags,
+        string sourceType,
+        string sourceRef,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId)
+            || string.IsNullOrWhiteSpace(sourceType)
+            || string.IsNullOrWhiteSpace(sourceRef))
+            throw new InvalidOperationException("幂等站点来源信息不完整");
+
+        var normalizedSourceType = sourceType.Trim();
+        var normalizedSourceRef = sourceRef.Trim();
+        var siteId = BuildIdempotentHtmlSiteId(userId, normalizedSourceRef);
+        var existing = await _db.HostedSites.Find(site => site.Id == siteId).FirstOrDefaultAsync(ct);
+        if (existing != null)
+        {
+            EnsureIdempotentHtmlSiteOwner(existing, userId, normalizedSourceType, normalizedSourceRef);
+            return AttachDerivedFields(existing)!;
+        }
+
+        var now = DateTime.UtcNow;
+        var rewritten = PrepareHtmlForHosting(htmlBytes, "index.html");
+        var cosKey = _storage.BuildSiteKey(siteId, "index.html");
+        await _storage.UploadToKeyAsync(
+            cosKey,
+            rewritten,
+            "text/html; charset=utf-8",
+            CancellationToken.None,
+            SiteCacheControl);
+
+        var site = new HostedSite
+        {
+            Id = siteId,
+            Title = title?.Trim() ?? Path.GetFileNameWithoutExtension(fileName),
+            Description = description?.Trim(),
+            SourceType = normalizedSourceType,
+            SourceRef = normalizedSourceRef,
+            CosPrefix = $"web-hosting/sites/{siteId}/",
+            EntryFile = "index.html",
+            SiteUrl = AppendVersion(_storage.BuildUrlForKey(cosKey), now),
+            CreatedAt = now,
+            UpdatedAt = now,
+            ContentVersion = now,
+            Files =
+            [
+                new HostedSiteFile
+                {
+                    Path = "index.html",
+                    CosKey = cosKey,
+                    Size = rewritten.Length,
+                    MimeType = "text/html",
+                },
+            ],
+            TotalSize = rewritten.Length,
+            Tags = tags ?? new List<string>(),
+            Folder = folder?.Trim(),
+            OwnerUserId = userId,
+            SlideNavCompatVersion = SlideNavVersion,
+            IsSlideDeck = DetectSlideDeck(rewritten),
+        };
+
+        try
+        {
+            await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
+            return AttachDerivedFields(site)!;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            existing = await _db.HostedSites.Find(item => item.Id == siteId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (existing == null) throw;
+            EnsureIdempotentHtmlSiteOwner(existing, userId, normalizedSourceType, normalizedSourceRef);
+            return AttachDerivedFields(existing)!;
+        }
+    }
+
+    internal static string BuildIdempotentHtmlSiteId(string userId, string sourceRef)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes($"{userId.Trim()}\n{sourceRef.Trim()}");
+        return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()[..32];
+    }
+
+    private static void EnsureIdempotentHtmlSiteOwner(
+        HostedSite site,
+        string userId,
+        string sourceType,
+        string sourceRef)
+    {
+        if (!string.Equals(site.OwnerUserId, userId, StringComparison.Ordinal)
+            || !string.Equals(site.SourceType, sourceType, StringComparison.Ordinal)
+            || !string.Equals(site.SourceRef, sourceRef, StringComparison.Ordinal))
+            throw new InvalidOperationException("幂等站点标识已被其他来源占用");
+    }
+
     public async Task<HostedSite> CreateFromZipAsync(
         string userId, byte[] zipBytes,
         string? title, string? description, string? folder, List<string>? tags,

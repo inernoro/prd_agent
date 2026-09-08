@@ -49,6 +49,8 @@ public class MdToPptController : ControllerBase
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
     private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
     private readonly IHtmlPptDesignArtifactAdapter _designArtifactAdapter;
+    private readonly IHostedSiteService _siteService;
+    private readonly IHtmlPptPublishCoordinator _publishCoordinator;
     private readonly IConfiguration _configuration;
     private readonly ILogger<MdToPptController> _logger;
 
@@ -329,6 +331,8 @@ public class MdToPptController : ControllerBase
         IInfraAgentRuntimeProfileService runtimeProfiles,
         IDesignKnowledgeSnapshotResolver knowledgeSnapshots,
         IHtmlPptDesignArtifactAdapter designArtifactAdapter,
+        IHostedSiteService siteService,
+        IHtmlPptPublishCoordinator publishCoordinator,
         IConfiguration configuration,
         ILogger<MdToPptController> logger)
     {
@@ -339,6 +343,8 @@ public class MdToPptController : ControllerBase
         _runtimeProfiles = runtimeProfiles;
         _knowledgeSnapshots = knowledgeSnapshots;
         _designArtifactAdapter = designArtifactAdapter;
+        _siteService = siteService;
+        _publishCoordinator = publishCoordinator;
         _configuration = configuration;
         _logger = logger;
     }
@@ -1812,7 +1818,7 @@ public class MdToPptController : ControllerBase
         var sourceHash = sourceRun.HtmlHash ?? ComputeHtmlHash(sourceRun.Html);
         var fontOnlySourceHtml = EnsurePresentationFontLinks(sourceRun.Html);
         var fontOnlySourceHash = ComputeHtmlHash(fontOnlySourceHtml);
-        var normalizedSourceHtml = NormalizePresentationDocument(sourceRun.Html);
+        var normalizedSourceHtml = PreparePublishedHtml(NormalizePresentationDocument(sourceRun.Html));
         if (MdToPptAnchors.HasUnresolvedRuntimeReference(normalizedSourceHtml))
         {
             return StatusCode(StatusCodes.Status500InternalServerError,
@@ -1840,134 +1846,44 @@ public class MdToPptController : ControllerBase
             authoritativeHtml = normalizedRun.Html;
         }
 
-        var publishedHtmlHash = ComputeHtmlHash(authoritativeHtml);
         var title = string.IsNullOrWhiteSpace(req.Title) ? "PPT 幻灯片" : req.Title.Trim();
-        var htmlBytes = Encoding.UTF8.GetBytes(authoritativeHtml);
-
-        // 发布重试优先复用专用 Run 已持久化的托管版本。源 manifest 的 HTML 哈希与
-        // 托管版本 ID 分开保存，不能把内容哈希冒充网页托管版本。
-        if (!string.IsNullOrWhiteSpace(sourceRun.PublishedSiteId))
-        {
-            var existingSite = await _db.HostedSites
-                .Find(site => site.Id == sourceRun.PublishedSiteId && site.OwnerUserId == userId)
-                .FirstOrDefaultAsync(CancellationToken.None);
-            if (existingSite == null
-                || !string.Equals(sourceRun.PublishedHtmlHash, publishedHtmlHash, StringComparison.OrdinalIgnoreCase))
-            {
-                return Conflict(ApiResponse<object>.Fail(
-                    "ppt_published_version_mismatch",
-                    "已发布版本与当前完成态不一致，请从演示稿历史重新发起发布"));
-            }
-
-            var existingVersionId = string.IsNullOrWhiteSpace(sourceRun.PublishedVersionId)
-                ? HtmlPptDesignArtifactAdapter.BuildHostedVersionId(existingSite)
-                : sourceRun.PublishedVersionId;
-            if (string.IsNullOrWhiteSpace(sourceRun.PublishedVersionId))
-            {
-                sourceRun.PublishedVersionId = existingVersionId;
-                sourceRun.ArtifactContractSynchronizedAt = null;
-                sourceRun.UpdatedAt = DateTime.UtcNow;
-                await _db.MdToPptRuns.ReplaceOneAsync(
-                    run => run.Id == sourceRun.Id && run.UserId == userId,
-                    sourceRun,
-                    cancellationToken: CancellationToken.None);
-            }
-
-            try
-            {
-                if (sourceRun.ArtifactContractVersion == DesignArtifactContractVersions.Current)
-                {
-                    await _designArtifactAdapter.BindPublishedAsync(
-                        sourceRun,
-                        existingSite.Id,
-                        existingVersionId,
-                        CancellationToken.None);
-                }
-            }
-            catch (DesignArtifactLifecycleException ex)
-            {
-                _logger.LogWarning(ex, "[MdToPpt] existing publish binding pending runId={RunId}", sourceRun.Id);
-                return StatusCode(StatusCodes.Status503ServiceUnavailable,
-                    ApiResponse<object>.Fail(
-                        "ppt_publish_binding_pending",
-                        "网页已经保留，版本绑定正在恢复，请稍后重试"));
-            }
-
-            return Ok(new
-            {
-                runId = sourceRun.Id,
-                siteId = existingSite.Id,
-                title = existingSite.Title,
-                siteUrl = existingSite.SiteUrl,
-                html = authoritativeHtml,
-                contentHash = publishedHtmlHash,
-                versionId = existingVersionId,
-            });
-        }
-
-        var siteService = HttpContext.RequestServices.GetRequiredService<IHostedSiteService>();
-        var site = await siteService.CreateFromHtmlAsync(
-            userId,
-            htmlBytes,
-            "index.html",
-            title,
-            string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim(),
-            null,
-            req.Tags?.Where(t => !string.IsNullOrWhiteSpace(t)).ToList(),
-            CancellationToken.None);
-
-        if (req.TeamIds is { Count: > 0 })
-        {
-            await siteService.SetSharedTeamsAsync(site.Id, userId, req.TeamIds, CancellationToken.None);
-        }
-
-        var hostedVersionId = HtmlPptDesignArtifactAdapter.BuildHostedVersionId(site);
-
-        var runFilter = Builders<MdToPptRun>.Filter.And(
-            Builders<MdToPptRun>.Filter.Eq(x => x.Id, normalizedRunId),
-            Builders<MdToPptRun>.Filter.Eq(x => x.UserId, userId));
-        await _db.MdToPptRuns.UpdateOneAsync(
-            runFilter,
-            Builders<MdToPptRun>.Update
-                .Set(x => x.PublishedSiteId, site.Id)
-                .Set(x => x.PublishedHtmlHash, publishedHtmlHash)
-                .Set(x => x.PublishedVersionId, hostedVersionId)
-                .Set(x => x.ArtifactContractSynchronizedAt, null)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: CancellationToken.None);
-        sourceRun.PublishedSiteId = site.Id;
-        sourceRun.PublishedHtmlHash = publishedHtmlHash;
-        sourceRun.PublishedVersionId = hostedVersionId;
-        sourceRun.ArtifactContractSynchronizedAt = null;
+        HtmlPptPublishResult published;
         try
         {
-            if (sourceRun.ArtifactContractVersion == DesignArtifactContractVersions.Current)
-            {
-                await _designArtifactAdapter.BindPublishedAsync(
-                    sourceRun,
-                    site.Id,
-                    hostedVersionId,
-                    CancellationToken.None);
-            }
+            published = await _publishCoordinator.PublishAsync(
+                sourceRun,
+                title,
+                string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim(),
+                req.Tags ?? new List<string>(),
+                req.TeamIds ?? new List<string>(),
+                CancellationToken.None);
         }
-        catch (DesignArtifactLifecycleException ex)
+        catch (HtmlPptPublishPendingException ex)
         {
-            _logger.LogWarning(ex, "[MdToPpt] publish binding pending runId={RunId}", sourceRun.Id);
+            _logger.LogWarning(ex, "[MdToPpt] publish pending runId={RunId} code={Code}", sourceRun.Id, ex.Code);
             return StatusCode(StatusCodes.Status503ServiceUnavailable,
                 ApiResponse<object>.Fail(
-                    "ppt_publish_binding_pending",
-                    "网页已经保留，版本绑定正在恢复，请稍后重试"));
+                    ex.Code,
+                    "发布进度已经保留，系统正在自动恢复，请稍后重试"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MdToPpt] publish failed runId={RunId}", sourceRun.Id);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(
+                    HtmlPptPublishCoordinator.PendingCode,
+                    "发布进度已经保留，系统正在自动恢复，请稍后重试"));
         }
 
         return Ok(new
         {
-            runId = normalizedRunId,
-            siteId = site.Id,
-            title = site.Title,
-            siteUrl = site.SiteUrl,
+            runId = sourceRun.Id,
+            siteId = published.Site.Id,
+            title = published.Site.Title,
+            siteUrl = published.Site.SiteUrl,
             html = authoritativeHtml,
-            contentHash = publishedHtmlHash,
-            versionId = hostedVersionId,
+            contentHash = published.ContentHash,
+            versionId = published.Revision.Id,
         });
     }
 
@@ -2049,7 +1965,7 @@ public class MdToPptController : ControllerBase
     private async Task<MdToPptRun?> ResolveReadableHistoricalRunAsync(string userId, MdToPptRun sourceRun)
     {
         var sourceHash = sourceRun.HtmlHash ?? ComputeHtmlHash(sourceRun.Html);
-        var normalizedHtml = NormalizePresentationDocument(sourceRun.Html);
+        var normalizedHtml = PreparePublishedHtml(NormalizePresentationDocument(sourceRun.Html));
         if (MdToPptAnchors.HasUnresolvedRuntimeReference(normalizedHtml)) return null;
 
         var normalizedHash = ComputeHtmlHash(normalizedHtml);
@@ -2195,7 +2111,7 @@ public class MdToPptController : ControllerBase
     {
         try
         {
-            html = NormalizePresentationDocument(html);
+            html = PreparePublishedHtml(NormalizePresentationDocument(html));
             if (MdToPptAnchors.HasUnresolvedRuntimeReference(html))
             {
                 _logger.LogError("[MdToPpt] trusted presentation runtime unavailable runId={Id}", run.Id);
@@ -2236,6 +2152,9 @@ public class MdToPptController : ControllerBase
 
     internal static string ComputeHtmlHash(string html)
         => System.Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(html ?? string.Empty))).ToLowerInvariant();
+
+    private string PreparePublishedHtml(string html) => Encoding.UTF8.GetString(
+        _siteService.PrepareHtmlForHosting(Encoding.UTF8.GetBytes(html ?? string.Empty), "index.html"));
 
     internal static bool HtmlMatchesHash(string html, string expectedHash)
         => !string.IsNullOrWhiteSpace(expectedHash)

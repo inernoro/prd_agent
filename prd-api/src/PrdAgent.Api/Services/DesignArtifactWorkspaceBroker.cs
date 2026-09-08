@@ -102,14 +102,15 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         var expiresAt = DateTime.UtcNow.Add(TicketTtl);
         var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, currentHtml);
         var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, MaxInputBytes);
-
-        var stored = await SaveWorkspaceMetadataAsync(
-            _storage,
+        var inputSha256 = Sha256Hex(bytes);
+        var inputAssetKey = _storage.TryBuildContentAddressedKey(
             bytes,
-            $"{run.Id}.json",
-            CancellationToken.None);
-        if (string.IsNullOrWhiteSpace(stored.Key))
-            throw new InvalidOperationException("远程工作区输入保存失败，请稍后重试");
+            "application/json",
+            domain: AppDomainPaths.DomainWebHosting,
+            type: AppDomainPaths.TypeMeta,
+            fileName: $"{run.Id}.json",
+            extensionHint: ".json")
+            ?? throw new InvalidOperationException("当前对象存储无法预演远程设计输入路径，请联系管理员检查存储配置");
 
         var modelCallLimit = ResolveModelCallLimit(_configuration);
         var updatedAt = DateTime.UtcNow;
@@ -117,8 +118,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 _db,
                 run.Id,
                 run.LeaseOwnerId,
-                stored.Key,
-                stored.Sha256,
+                inputAssetKey,
+                inputSha256,
                 package.BaseRevision,
                 modelCallLimit,
                 expiresAt,
@@ -126,9 +127,21 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 CancellationToken.None))
             throw new DesignArtifactRunLeaseLostException(run.Id);
 
+        // 先把精确内容寻址 key 通过租约 CAS 记入 Run，再写对象。
+        // CAS 失败时尚未产生对象；保存响应丢失时对象仍有精确 Run 引用，不会成为无主对象。
+        var stored = await SaveWorkspaceMetadataAsync(
+            _storage,
+            bytes,
+            $"{run.Id}.json",
+            CancellationToken.None);
+        if (string.IsNullOrWhiteSpace(stored.Key)
+            || !string.Equals(stored.Key, inputAssetKey, StringComparison.Ordinal)
+            || !FixedEquals(stored.Sha256, inputSha256))
+            throw new InvalidOperationException("远程工作区输入保存结果与预演不一致，请联系管理员检查存储配置");
+
         // 本地快照只供后续生成凭证和构造返回值；持久化使用部分 Update，禁止覆盖并发心跳。
-        run.WorkspaceInputAssetKey = stored.Key;
-        run.WorkspaceInputSha256 = stored.Sha256;
+        run.WorkspaceInputAssetKey = inputAssetKey;
+        run.WorkspaceInputSha256 = inputSha256;
         run.WorkspaceBaseRevision = package.BaseRevision;
         run.WorkspaceResultAssetKey = null;
         run.WorkspaceResultSha256 = null;
@@ -152,7 +165,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         var runtimeRoot = $"{publicBaseUrl}/api/design-artifacts/runtime/{Uri.EscapeDataString(run.Id)}";
         return new PreparedDesignArtifactWorkspace(
             $"{runtimeRoot}/workspace/input",
-            stored.Sha256,
+            inputSha256,
             $"{runtimeRoot}/workspace/result",
             transferToken,
             $"{runtimeRoot}/llm/v1",
@@ -436,7 +449,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             item => item.Id == runId
                     && item.Status == RunStatuses.Running
                     && item.LeaseOwnerId == leaseOwner
-                    && item.LeaseExpiresAt > updatedAt,
+                    && item.LeaseExpiresAt > updatedAt
+                    && item.WorkspaceInputAssetKey == null,
             Builders<DesignArtifactRun>.Update
                 .Set(item => item.WorkspaceInputAssetKey, inputAssetKey)
                 .Set(item => item.WorkspaceInputSha256, inputSha256)
@@ -960,23 +974,11 @@ public static class DesignArtifactWorkspaceContract
 
     private static bool TryNormalizeResultPath(string? path, out string normalized)
     {
-        normalized = string.Empty;
-        if (path is null
-            || string.IsNullOrWhiteSpace(path)
-            || path.Length > 512
-            || !string.Equals(path, path.Trim(), StringComparison.Ordinal)
-            || path.Contains('\\')
-            || path.StartsWith("/", StringComparison.Ordinal)
-            || path.Any(character => char.IsControl(character)))
+        if (!DesignArtifactPublicPath.TryNormalize(path, out normalized))
             return false;
-
-        var segments = path.Split('/');
-        if (segments.Any(segment => segment.Length == 0 || segment is "." or ".."))
-            return false;
-
-        normalized = string.Join('/', segments);
-        return normalized is "index.html" or "manifest.json"
-               || (segments.Length > 1 && segments[0] == "assets");
+        return DesignArtifactPublicPath.IsWebPageWorkspaceOutput(
+            normalized,
+            includeInternalManifest: true);
     }
 
     private static DesignWorkspaceFile ToFile(string path, string mediaType, byte[] content) =>

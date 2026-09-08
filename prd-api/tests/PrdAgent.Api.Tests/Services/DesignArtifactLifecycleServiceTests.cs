@@ -9,6 +9,7 @@ using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using Xunit;
@@ -19,6 +20,17 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class DesignArtifactLifecycleServiceTests
 {
+    [Fact]
+    public void DesignArtifactRoutes_ShouldReuseWebPageReadWritePermissions()
+    {
+        var permission = Assert.Single(
+            typeof(DesignArtifactsController).GetCustomAttributes(typeof(AdminControllerAttribute), true)
+                .Cast<AdminControllerAttribute>());
+
+        Assert.Equal(AdminPermissionCatalog.WebPagesRead, permission.ReadPermission);
+        Assert.Equal(AdminPermissionCatalog.WebPagesWrite, permission.WritePermission);
+    }
+
     [Fact]
     public void LifecycleServiceAndPublicReadRoutes_ShouldRemainWired()
     {
@@ -69,6 +81,95 @@ public sealed class DesignArtifactLifecycleServiceTests
     }
 
     [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateEndpoint_ShouldReturnDurableRunWhenRedisAndImmediateQueueAreUnavailable()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var events = new Mock<IRunEventStore>();
+        events.Setup(store => store.SetRunAsync(
+                It.IsAny<string>(),
+                It.IsAny<RunMeta>(),
+                It.IsAny<TimeSpan?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("redis unavailable"));
+        var queue = new Mock<IRunQueue>();
+        queue.Setup(service => service.EnqueueAsync(
+                RunKinds.DesignArtifact,
+                It.IsAny<string>(),
+                CancellationToken.None))
+            .ThrowsAsync(new InvalidOperationException("queue unavailable"));
+        var providers = new Mock<IDesignArtifactProviderCatalog>();
+        providers.Setup(service => service.FindAsync(
+                "owner-user",
+                DesignArtifactRuntimes.MapGateway,
+                CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactProviderCapability(
+                DesignArtifactRuntimes.MapGateway,
+                "MAP",
+                DesignArtifactAdapterKinds.InProcess,
+                DesignArtifactExecutionOwners.Map,
+                DesignArtifactIsolationModes.Process,
+                [DesignArtifactTypes.WebPage],
+                [DesignArtifactOperations.Generate],
+                [DesignArtifactSourceSurfaces.WebHosting],
+                Configured: true,
+                Healthy: true,
+                Enabled: true,
+                Reason: null));
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>();
+        knowledge.Setup(service => service.ResolveForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ReturnsAsync([
+                new DesignKnowledgeSnapshot
+                {
+                    EntryId = "entry-a",
+                    StoreId = "store-a",
+                    Title = "测试知识",
+                    Content = "权威知识正文",
+                    ContentHash = new string('a', 64),
+                },
+            ]);
+        var controller = new DesignArtifactsController(
+            fixture.Db,
+            events.Object,
+            queue.Object,
+            providers.Object,
+            knowledge.Object,
+            new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName));
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "owner-user")], "test")),
+            },
+        };
+
+        var result = await controller.CreateRun(new CreateDesignArtifactRunRequest
+        {
+            ArtifactType = DesignArtifactTypes.WebPage,
+            SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
+            Runtime = DesignArtifactRuntimes.MapGateway,
+            Instruction = "生成产品说明网页",
+            KnowledgeReferences =
+            [
+                new DesignKnowledgeReferenceRequest
+                {
+                    EntryId = "entry-a",
+                    StoreId = "store-a",
+                    ContentHash = new string('a', 64),
+                },
+            ],
+        });
+
+        Assert.IsType<AcceptedResult>(result);
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(_ => true).SingleAsync();
+        Assert.Equal(RunStatuses.Queued, persisted.Status);
+        Assert.Null(persisted.RecoveryEnqueuedAt);
+    }
+
+    [Fact]
     public void MultiAssetPackageHash_ShouldChangeWhenSidecarChanges()
     {
         var first = Manifest(DesignArtifactTypes.WebPage, DesignArtifactSecurityProfiles.WebPageRestricted, 'a');
@@ -93,6 +194,7 @@ public sealed class DesignArtifactLifecycleServiceTests
     [InlineData("CON")]
     [InlineData("assets/NUL.txt")]
     [InlineData("assets/a.")]
+    [InlineData("other.html")]
     [Trait("Category", TestCategories.Integration)]
     public async Task Manifest_ShouldRejectAmbiguousCrossPlatformPaths(string path)
     {
@@ -151,6 +253,56 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(
             [DesignArtifactLifecycleEventTypes.Run, DesignArtifactLifecycleEventTypes.Error],
             failed.LifecycleEvents.Select(item => item.Type));
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ActiveLeaseCannotBeBypassedByOmittingLeaseOwner()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var service = new DesignArtifactLifecycleService(fixture.Db, new InMemoryRunEventStore());
+        var run = await service.CreateSessionAsync(Session(
+            "lease-authority-required",
+            DesignArtifactTypes.WebPage,
+            DesignArtifactWorkspaceKinds.RemotePackage,
+            "open-design"));
+        var leaseExpiresAt = DateTime.UtcNow.AddMinutes(5);
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.LeaseOwnerId, "worker-authoritative")
+                .Set(item => item.LeaseExpiresAt, leaseExpiresAt));
+        var leased = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+
+        await AssertConflict(() => service.AppendEventAsync(new AppendDesignArtifactEventRequest(
+            leased.Id,
+            leased.UserId,
+            DesignArtifactLifecycleEventTypes.Phase,
+            "不能绕过租约",
+            10)));
+        await AssertConflict(() => service.FailAsync(new FailDesignArtifactSessionRequest(
+            leased.Id,
+            leased.UserId,
+            Expected(leased),
+            "adapter_failed")));
+
+        var unchanged = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Running, unchanged.Status);
+        Assert.Equal(1, unchanged.LifecycleEventSequence);
+        var authority = new DesignArtifactLifecycleExpectation(
+            unchanged.LifecycleVersion,
+            unchanged.WorkspaceRef!.BaseRevision,
+            unchanged.VersionBoundary!.BaseContentHash,
+            "worker-authoritative");
+        var appended = await service.AppendEventAsync(new AppendDesignArtifactEventRequest(
+            unchanged.Id,
+            unchanged.UserId,
+            DesignArtifactLifecycleEventTypes.Phase,
+            "持有租约的阶段",
+            10,
+            authority));
+
+        Assert.Equal(2, appended.Sequence);
     }
 
     [Fact]
@@ -396,7 +548,11 @@ public sealed class DesignArtifactLifecycleServiceTests
             DesignArtifactTypes.WebPage,
             DesignArtifactWorkspaceKinds.RemotePackage,
             "open-design"));
-        var validManifest = Manifest(DesignArtifactTypes.WebPage, DesignArtifactSecurityProfiles.WebPageRestricted, 'a');
+        const string publishedHtml = "<!doctype html><html><body>受信页面</body></html>";
+        var validManifest = ManifestForContent(
+            DesignArtifactTypes.WebPage,
+            DesignArtifactSecurityProfiles.WebPageRestricted,
+            publishedHtml);
         await TrustRemoteManifestAsync(fixture, run, validManifest);
         var commitRequest = new CommitDesignArtifactManifestRequest(
             run.Id,
@@ -432,7 +588,7 @@ public sealed class DesignArtifactLifecycleServiceTests
             Expected(committed)));
         Assert.Equal(RunStatuses.Done, completed.Status);
         Assert.Equal(3, completed.LifecycleVersion);
-        var revision = await InsertPublishedRevisionAsync(fixture, completed);
+        var revision = await InsertPublishedRevisionAsync(fixture, completed, publishedHtml);
         Assert.Contains(
             revision.VerifiedFiles,
             file => file.Path == DesignArtifactPublicRevision.InternalManifestPath);
@@ -534,6 +690,73 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(RunStatuses.Error, failed.Status);
         Assert.Equal("adapter_failed", failed.LifecycleFailureCode);
         Assert.DoesNotContain("provider", failed.ToJson(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task PublishBinding_ShouldRejectForgedBytesAndEveryMismatchedOwnershipFence()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var service = new DesignArtifactLifecycleService(fixture.Db, new InMemoryRunEventStore());
+        const string publishedHtml = "<!doctype html><html><body>trusted-page</body></html>";
+        var run = await service.CreateSessionAsync(Session(
+            "strict-publish-receipt",
+            DesignArtifactTypes.WebPage,
+            DesignArtifactWorkspaceKinds.RemotePackage,
+            "open-design"));
+        var manifest = ManifestForContent(
+            DesignArtifactTypes.WebPage,
+            DesignArtifactSecurityProfiles.WebPageRestricted,
+            publishedHtml);
+        await TrustRemoteManifestAsync(fixture, run, manifest);
+        var committed = await service.CommitManifestAsync(new CommitDesignArtifactManifestRequest(
+            run.Id,
+            run.UserId,
+            Expected(run),
+            manifest,
+            Receipt(run, manifest)));
+        var completed = await service.CompleteAsync(new DesignArtifactLifecycleMutationRequest(
+            committed.Id,
+            committed.UserId,
+            Expected(committed)));
+        var revision = await InsertPublishedRevisionAsync(fixture, completed, publishedHtml);
+        var request = new BindPublishedDesignArtifactRequest(
+            completed.Id,
+            completed.UserId,
+            Expected(completed),
+            revision.SiteId,
+            revision.Id,
+            "strict-publish-operation",
+            completed.VersionBoundary!.PackageHash!);
+
+        var trustedBytes = revision.VerifiedFiles[0].Content;
+        revision.VerifiedFiles[0].Content = Enumerable.Repeat((byte)'x', trustedBytes.Length).ToArray();
+        await fixture.Db.HostedSiteRevisions.ReplaceOneAsync(item => item.Id == revision.Id, revision);
+        await AssertInvalidContract(() => service.BindPublishedArtifactAsync(request));
+
+        revision.VerifiedFiles[0].Content = trustedBytes;
+        revision.SourceRunId = "another-run";
+        await fixture.Db.HostedSiteRevisions.ReplaceOneAsync(item => item.Id == revision.Id, revision);
+        await AssertInvalidContract(() => service.BindPublishedArtifactAsync(request));
+
+        revision.SourceRunId = completed.Id;
+        revision.Runtime = DesignArtifactRuntimes.MapGateway;
+        await fixture.Db.HostedSiteRevisions.ReplaceOneAsync(item => item.Id == revision.Id, revision);
+        await AssertInvalidContract(() => service.BindPublishedArtifactAsync(request));
+
+        revision.Runtime = completed.Runtime;
+        await fixture.Db.HostedSiteRevisions.ReplaceOneAsync(item => item.Id == revision.Id, revision);
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == completed.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.ProducedArtifactRevisionId, "another-revision"));
+        await AssertInvalidContract(() => service.BindPublishedArtifactAsync(request));
+
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == completed.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.ProducedArtifactRevisionId, revision.Id));
+        var bound = await service.BindPublishedArtifactAsync(request);
+        Assert.Equal(revision.SiteId, bound.ArtifactSiteId);
+        Assert.Equal(revision.Id, bound.ArtifactRevisionId);
     }
 
     [Fact]
@@ -833,7 +1056,8 @@ public sealed class DesignArtifactLifecycleServiceTests
 
     private static async Task<HostedSiteRevision> InsertPublishedRevisionAsync(
         LifecycleMongoFixture fixture,
-        DesignArtifactRun run)
+        DesignArtifactRun run,
+        string html)
     {
         var site = new HostedSite
         {
@@ -847,13 +1071,14 @@ public sealed class DesignArtifactLifecycleServiceTests
             SiteId = site.Id,
             CreatedByUserId = run.UserId,
             Status = HostedSiteRevisionStatuses.Published,
-            Html = "not-used",
+            SourceRunId = run.Id,
+            Runtime = run.Runtime,
+            Html = html,
         };
-        revision.Html = string.Empty;
         revision.VerifiedFiles = run.Manifest!.Files.Select(file => new HostedSiteRevisionFile
         {
             Path = file.Path,
-            Content = new byte[file.ByteLength],
+            Content = System.Text.Encoding.UTF8.GetBytes(html),
             Sha256 = file.Sha256,
             MimeType = file.MediaType,
         }).ToList();
@@ -865,9 +1090,22 @@ public sealed class DesignArtifactLifecycleServiceTests
             Sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(internalManifestBytes)).ToLowerInvariant(),
             MimeType = "application/json",
         });
+        run.ProducedArtifactSiteId = site.Id;
+        run.ProducedArtifactRevisionId = revision.Id;
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.ProducedArtifactSiteId, site.Id)
+                .Set(item => item.ProducedArtifactRevisionId, revision.Id));
         await fixture.Db.HostedSites.InsertOneAsync(site);
         await fixture.Db.HostedSiteRevisions.InsertOneAsync(revision);
         return revision;
+    }
+
+    private static async Task AssertInvalidContract(Func<Task> action)
+    {
+        var error = await Assert.ThrowsAsync<DesignArtifactLifecycleException>(action);
+        Assert.Equal(DesignArtifactLifecycleErrorCodes.InvalidContract, error.Code);
     }
 
     private static async Task AssertConflict(Func<Task> action)

@@ -201,6 +201,55 @@ public static class DesignArtifactPublicRevision
     }
 }
 
+/// <summary>Broker 与生命周期账本共用的公开产物路径判据。</summary>
+public static class DesignArtifactPublicPath
+{
+    public const int MaxLength = 240;
+
+    private static readonly HashSet<string> WindowsReservedNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+
+    public static bool TryNormalize(string? value, out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrEmpty(value)
+            || value.Length > MaxLength
+            || !string.Equals(value, value.Trim(), StringComparison.Ordinal)
+            || !value.IsNormalized(NormalizationForm.FormC)
+            || value.StartsWith("/", StringComparison.Ordinal)
+            || value.Contains('\\')
+            || value.Contains('?')
+            || value.Contains('#')
+            || value.Contains('%')
+            || value.Contains(':')
+            || value.Any(char.IsControl))
+            return false;
+
+        foreach (var segment in value.Split('/'))
+        {
+            if (segment is "" or "." or ".." || segment.EndsWith(' ') || segment.EndsWith('.'))
+                return false;
+            if (WindowsReservedNames.Contains(segment.Split('.')[0]))
+                return false;
+        }
+
+        normalized = value;
+        return true;
+    }
+
+    public static bool IsWebPageWorkspaceOutput(string normalized, bool includeInternalManifest)
+    {
+        var segments = normalized.Split('/');
+        return normalized == "index.html"
+               || includeInternalManifest && normalized == DesignArtifactPublicRevision.InternalManifestPath
+               || segments.Length > 1 && segments[0] == "assets";
+    }
+}
+
 public sealed record DesignArtifactPublicRevisionFile(
     string Path,
     string Sha256,
