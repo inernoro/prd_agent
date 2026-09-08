@@ -5,7 +5,7 @@
  * 这里只测 renderDesiredUnit() 的纯函数 + 分支逻辑。
  */
 import { describe, it, expect } from 'vitest';
-import { renderDesiredUnit, syncSystemdUnit } from '../../src/services/systemd-sync.js';
+import { extractRuntimeWeights, renderDesiredUnit, syncSystemdUnit } from '../../src/services/systemd-sync.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -101,6 +101,12 @@ describe('systemd unit templates', () => {
       expect(unit, name).toMatch(/^IOWeight=1000$/m);
       expect(unit, name).not.toMatch(/^CPUQuota=/m);
     }
+  });
+
+  it('extractRuntimeWeights 只取 CPUWeight / IOWeight，忽略注释与其它键', () => {
+    const unit = fs.readFileSync(path.resolve(__dirname, '../../systemd/cds-master.service'), 'utf8');
+    expect(extractRuntimeWeights(unit)).toEqual(['CPUWeight=1000', 'IOWeight=1000']);
+    expect(extractRuntimeWeights('# CPUWeight=5\nMemoryMax=infinity\nNice=-5\n')).toEqual([]);
   });
 
   it('workload slice nests under system.slice with low weight and is the value container.ts passes to docker', () => {

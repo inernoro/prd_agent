@@ -52,8 +52,23 @@ export type SystemdUnitSyncResult =
   | { status: 'skipped'; reason: string }
   | { status: 'no-drift' }
   | { status: 'installed' }
-  | { status: 'fixed'; backupPath: string; restarted: boolean }
+  | { status: 'fixed'; backupPath: string; restarted: boolean; runtimeWeightsApplied?: boolean }
   | { status: 'error'; error: string };
+
+/**
+ * 从单元文本里取出可在运行时热应用的资源权重（CPUWeight / IOWeight）。
+ * master 修完 drift 只 daemon-reload 不重启（自己正在跑），新权重本要等下一次
+ * 重启才生效；用 `systemctl set-property --runtime` 先把权重打到当前 cgroup 上，
+ * 09-08 那种「过载时控制面先拿 CPU」不必再等一轮 self-update。
+ */
+export function extractRuntimeWeights(unitText: string): string[] {
+  const out: string[] = [];
+  for (const line of unitText.split('\n')) {
+    const m = /^(CPUWeight|IOWeight)=(\d+)\s*$/.exec(line.trim());
+    if (m) out.push(`${m[1]}=${m[2]}`);
+  }
+  return out;
+}
 
 function whichBin(cmd: string): string {
   try {
@@ -157,6 +172,20 @@ export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncRe
 
   // Forwarder 不重启就用不到新 ExecStart;master 自己已经是新进程,不再自重启。
   let restarted = false;
+  let runtimeWeightsApplied = false;
+  if (!opts.restartAfterReload) {
+    // 不重启的单元（master）：权重热应用到当前 cgroup，其它属性仍等下次重启。
+    const weights = extractRuntimeWeights(desired);
+    if (weights.length > 0) {
+      try {
+        const unitName = path.basename(opts.installedUnit);
+        execSync(`systemctl set-property --runtime ${unitName} ${weights.join(' ')}`, { stdio: 'pipe', timeout: 10_000 });
+        runtimeWeightsApplied = true;
+      } catch (err) {
+        console.warn(`  [systemd-sync:${opts.label}] 权重热应用失败(下次重启生效): ${(err as Error).message}`);
+      }
+    }
+  }
   if (opts.restartAfterReload) {
     try {
       const unitName = path.basename(opts.installedUnit); // e.g. cds-forwarder.service
@@ -169,7 +198,7 @@ export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncRe
     }
   }
 
-  return { status: 'fixed', backupPath, restarted };
+  return { status: 'fixed', backupPath, restarted, runtimeWeightsApplied };
 }
 
 /**
@@ -233,7 +262,7 @@ function logResult(label: string, r: SystemdUnitSyncResult): void {
       break;
     case 'fixed':
       console.log(
-        `  [systemd-sync:${label}] drift 已修复(备份 ${r.backupPath}${r.restarted ? ',已 systemctl restart' : ',下次重启生效'})`,
+        `  [systemd-sync:${label}] drift 已修复(备份 ${r.backupPath}${r.restarted ? ',已 systemctl restart' : (r.runtimeWeightsApplied ? ',CPU/IO 权重已热应用,其余下次重启生效' : ',下次重启生效')})`,
       );
       break;
     case 'error':
