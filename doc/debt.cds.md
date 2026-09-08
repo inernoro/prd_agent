@@ -1047,6 +1047,22 @@ mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按�
 
 ---
 
+## Agent 极速版门禁：三条未纳入本轮的入口（2026-09-08）
+
+来源 PR #1513（项目级 `agentPrebuiltOnly` 门禁）Codex 第三、四轮 review。门禁已覆盖整分支与单服务部署、分支覆盖增删、项目默认与对齐、构建配置通用 PUT 与批量改模式、远端执行器派发共十余条入口，判定收在门禁判定模块（agent-prebuilt-gate）一处。按 CLAUDE.md §5.5 的 review 范围熔断（连续三轮出现新语义类别），以下三条记台账，不在该 PR 展开：
+
+| ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
+|---|---|---|---|---|---|---|
+| G1 | 中 | 2026-09-08 | `POST /api/import-and-init` 接受调用方自带的构建配置并直接起服务，不经过分支部署入口的门禁 | 开了门禁的项目下，机器凭据带源码模式 profile 调该端点 | open | 修法：起服务前对导入的 profile 跑 `findNonPrebuiltProfiles`，机器凭据下 409 并摘掉 `sourceFallbackProfile` |
+| G2 | 中 | 2026-09-08 | `POST /branches/:id/copy-config-from/:sourceId?redeploy=1` 把来源分支（可能是真人的 dev 分支）的覆盖原样拷入，再以内部自调（不带机器凭据）重部署 | 机器凭据从源码模式分支拷配置并要求重部署 | open | 修法：拷贝落盘前对结果跑 `findNonPrebuiltProfiles`，机器凭据下 409；或重部署时透传原调用方身份 |
+| G3 | 低 | 2026-09-08 | `POST /api/build-profiles` 与 `PUT /branches/:id/extra-services` 允许机器凭据新建标为 `prebuiltImage: true` 的配置 | 机器凭据自建「假极速版」配置后部署 | open | 已核实 prebuilt 配置不挂载 worktree（`buildProfileVolumeFlags` 的 `skipSrcMount`），无法编译仓库源码，不违反门禁不变量；若要限制，等于拦掉面向 Agent 的分支额外服务功能，属新策略，需用户拍板 |
+
+**为什么不顺手补**：G1、G2 各是一条独立的部署入口，与该 PR 已接的十余条同属「入口接线」，但已触发熔断；G3 经核实不构成宿主源码编译，限制它会牺牲既有功能。
+
+**做完算数的判据**：开了门禁的项目下，机器凭据走 G1 / G2 两条路径部署源码模式服务均得到 409 `agent_prebuilt_only`，且真人与内部派发行为不变；分支路由测试的「Agent 极速版门禁」组各加一条差分用例。
+
+**绕行**：门禁的定位是防「忘了」不是防「故意」；审计日志按 actor 可追溯谁用了这两条路径。
+
 ## 已结清（供回溯）
 
 下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
@@ -1516,19 +1532,3 @@ PR #1490（2026-09-04，数据库隔离收敛 0-5）落地：`dbScope=per-branch
 mdimp 仓库切到 `dbScope=per-branch` 并下线脚本，属跨仓库迁移，验收方在 mdimp。与
 [debt.cds.ci-prebuilt.md](./debt.cds.ci-prebuilt.md) #13（静态前端运行期配置注入）同属「mdimp 极速版收尾」一组。
 `x-cds-databases` 式的声明契约仍不存在，若 mdimp 迁移时需要多库声明再立项。
-
-## Agent 极速版门禁：三条未纳入本轮的入口（2026-09-08）
-
-来源 PR #1513（项目级 `agentPrebuiltOnly` 门禁）Codex 第三、四轮 review。门禁已覆盖整分支与单服务部署、分支覆盖增删、项目默认与对齐、构建配置通用 PUT 与批量改模式、远端执行器派发共十余条入口，判定收在门禁判定模块（agent-prebuilt-gate）一处。按 CLAUDE.md §5.5 的 review 范围熔断（连续三轮出现新语义类别），以下三条记台账，不在该 PR 展开：
-
-| ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
-|---|---|---|---|---|---|---|
-| G1 | 中 | 2026-09-08 | `POST /api/import-and-init` 接受调用方自带的构建配置并直接起服务，不经过分支部署入口的门禁 | 开了门禁的项目下，机器凭据带源码模式 profile 调该端点 | open | 修法：起服务前对导入的 profile 跑 `findNonPrebuiltProfiles`，机器凭据下 409 并摘掉 `sourceFallbackProfile` |
-| G2 | 中 | 2026-09-08 | `POST /branches/:id/copy-config-from/:sourceId?redeploy=1` 把来源分支（可能是真人的 dev 分支）的覆盖原样拷入，再以内部自调（不带机器凭据）重部署 | 机器凭据从源码模式分支拷配置并要求重部署 | open | 修法：拷贝落盘前对结果跑 `findNonPrebuiltProfiles`，机器凭据下 409；或重部署时透传原调用方身份 |
-| G3 | 低 | 2026-09-08 | `POST /api/build-profiles` 与 `PUT /branches/:id/extra-services` 允许机器凭据新建标为 `prebuiltImage: true` 的配置 | 机器凭据自建「假极速版」配置后部署 | open | 已核实 prebuilt 配置不挂载 worktree（`buildProfileVolumeFlags` 的 `skipSrcMount`），无法编译仓库源码，不违反门禁不变量；若要限制，等于拦掉面向 Agent 的分支额外服务功能，属新策略，需用户拍板 |
-
-**为什么不顺手补**：G1、G2 各是一条独立的部署入口，与该 PR 已接的十余条同属「入口接线」，但已触发熔断；G3 经核实不构成宿主源码编译，限制它会牺牲既有功能。
-
-**做完算数的判据**：开了门禁的项目下，机器凭据走 G1 / G2 两条路径部署源码模式服务均得到 409 `agent_prebuilt_only`，且真人与内部派发行为不变；分支路由测试的「Agent 极速版门禁」组各加一条差分用例。
-
-**绕行**：门禁的定位是防「忘了」不是防「故意」；审计日志按 actor 可追溯谁用了这两条路径。
