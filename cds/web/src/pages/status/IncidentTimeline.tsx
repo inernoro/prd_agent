@@ -47,7 +47,7 @@ export function IncidentTimeline({ incidents, filter, onFilter, onOpenTarget }: 
             {incidents.length === 0 ? '暂未记录到故障事件。' : '这个筛选下没有故障事件。'}
           </div>
         ) : (
-          <ol className="relative flex flex-col gap-2 pl-4 before:absolute before:bottom-2 before:left-[5px] before:top-2 before:w-px before:bg-[hsl(var(--hairline))]">
+          <ol className="relative flex flex-col gap-2 pl-4 before:absolute before:bottom-2 before:left-[0.3125rem] before:top-2 before:w-px before:bg-[hsl(var(--hairline))]">
             {shown.map((incident) => (
               <li key={incident.id} className="relative">
                 <span
@@ -76,7 +76,7 @@ export function IncidentTimeline({ incidents, filter, onFilter, onOpenTarget }: 
                   <span className="min-w-0 basis-full truncate text-muted-foreground sm:basis-auto sm:flex-1" title={incident.cause}>{incident.cause}</span>
                   {incident.releaseId ? (
                     // 归因只是「时间上最近的那次发布」，不是因果证明，所以文案用「疑似」。
-                    <span className="shrink-0 rounded-full border border-[hsl(var(--hairline-strong))] px-2 py-0.5 font-mono text-[11px] text-muted-foreground" title={`故障判定发生在发布 ${incident.releaseId} 完成之后 ${formatDuration(incident.releaseAgeMs ?? 0)}`}>
+                    <span className="shrink-0 rounded-full border border-[hsl(var(--hairline-strong))] px-2 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`故障判定发生在发布 ${incident.releaseId} 完成之后 ${formatDuration(incident.releaseAgeMs ?? 0)}`}>
                       疑似 {incident.releaseId}
                       {typeof incident.releaseAgeMs === 'number' ? ` 后 ${formatDuration(incident.releaseAgeMs)}` : ''}
                     </span>

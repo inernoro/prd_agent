@@ -48,7 +48,7 @@ function TargetRow({ target, selected, onSelect }: {
         <span className={cn('min-w-0 flex-1 truncate text-sm', muted ? 'text-muted-foreground' : 'font-medium text-foreground')}>
           {target.name}
         </span>
-        <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+        <span className="shrink-0 font-mono text-[0.6875rem] tabular-nums text-muted-foreground">
           {target.status === 'down'
             ? <span className="text-destructive">{formatPercent(target.availability24h)}</span>
             : target.measured === false ? '未实测' : formatPercent(target.availability24h)}
@@ -62,7 +62,7 @@ function TargetRow({ target, selected, onSelect }: {
           className="min-w-0 flex-1 opacity-90"
           label={`${target.name} 最近 24 小时可用率分布`}
         />
-        <span className="w-14 shrink-0 text-right font-mono text-[10px] tabular-nums text-muted-foreground">
+        <span className="w-14 shrink-0 text-right font-mono text-[0.625rem] tabular-nums text-muted-foreground">
           {formatLatency(target.avgLatencyMs24h)}
         </span>
       </div>
@@ -93,10 +93,10 @@ function BranchSummaryRow({ group, onOpen }: { group: ProjectBranchGroup; onOpen
           <span className={cn('relative inline-flex h-2.5 w-2.5 rounded-full', group.bad > 0 ? 'bg-destructive' : group.running > 0 ? 'bg-ok' : 'bg-[hsl(var(--hairline-strong))]')} />
         </span>
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{group.projectName} · 分支</span>
-        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">运行中 {group.running} / 共 {group.total}</span>
+        <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">运行中 {group.running} / 共 {group.total}</span>
         <span className="inline-flex shrink-0 items-center text-xs font-medium text-primary">展开<ChevronRight className="h-3.5 w-3.5" /></span>
       </div>
-      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+      <div className="flex items-center gap-2 text-[0.6875rem] text-muted-foreground">
         <span className="inline-flex gap-[3px]">
           {dots.map((tone, i) => <span key={i} className={cn('inline-block h-2 w-2 rounded-full', DOT_TONE[tone])} />)}
         </span>
@@ -202,10 +202,10 @@ export function TargetList({
         {showMain ? groups.map((group) => (
           <section key={group.source} className="mb-2 last:mb-0">
             <div className="sticky top-0 z-[1] flex items-baseline gap-2 bg-[hsl(var(--surface-raised))]/95 px-2.5 py-1.5 backdrop-blur-sm">
-              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h3>
-              <span className="font-mono text-[10px] text-muted-foreground/80">{group.targets.length}</span>
+              <h3 className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h3>
+              <span className="font-mono text-[0.625rem] text-muted-foreground/80">{group.targets.length}</span>
               {group.down > 0 ? (
-                <span className="ml-auto rounded-full bg-destructive/15 px-1.5 font-mono text-[10px] text-destructive">{group.down} 故障</span>
+                <span className="ml-auto rounded-full bg-destructive/15 px-1.5 font-mono text-[0.625rem] text-destructive">{group.down} 故障</span>
               ) : null}
             </div>
             <div className="flex flex-col gap-0.5">
@@ -218,8 +218,8 @@ export function TargetList({
         {showBranches && branchGroups.length > 0 ? (
           <section className="mb-2 last:mb-0">
             <div className="sticky top-0 z-[1] flex items-baseline gap-2 bg-[hsl(var(--surface-raised))]/95 px-2.5 py-1.5 backdrop-blur-sm">
-              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">分支预览（点开看全部，存活的排前面）</h3>
-              <span className="font-mono text-[10px] text-muted-foreground/80">{branchCount}</span>
+              <h3 className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">分支预览（点开看全部，存活的排前面）</h3>
+              <span className="font-mono text-[0.625rem] text-muted-foreground/80">{branchCount}</span>
             </div>
             <div className="flex flex-col gap-1">
               {branchGroups.map((group) => <BranchSummaryRow key={group.projectId} group={group} onOpen={onOpenBranches} />)}

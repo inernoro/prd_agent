@@ -256,7 +256,7 @@ export function UsersTab({ onToast }: { onToast: (msg: string) => void }): JSX.E
                           <div className="flex items-center gap-2 font-medium text-foreground">
                             {u.username || u.githubLogin}
                             {u.isSystemOwner ? (
-                              <span className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
+                              <span className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-primary">
                                 <ShieldCheck className="h-3 w-3" />
                                 所有者
                               </span>
@@ -273,8 +273,8 @@ export function UsersTab({ onToast }: { onToast: (msg: string) => void }): JSX.E
                           <span
                             className={
                               u.status === 'active'
-                                ? 'inline-flex rounded bg-ok-soft px-1.5 py-0.5 text-[11px] font-semibold text-ok'
-                                : 'inline-flex rounded bg-warn-soft px-1.5 py-0.5 text-[11px] font-semibold text-warn'
+                                ? 'inline-flex rounded bg-ok-soft px-1.5 py-0.5 text-[0.6875rem] font-semibold text-ok'
+                                : 'inline-flex rounded bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] font-semibold text-warn'
                             }
                           >
                             {u.status === 'active' ? '正常' : '已禁用'}

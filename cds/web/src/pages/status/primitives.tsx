@@ -56,7 +56,7 @@ export function StatusPill({ status, excluded, measured, size = 'sm' }: { status
     <span
       className={cn(
         'inline-flex shrink-0 items-center gap-1 rounded-full border font-medium',
-        size === 'lg' ? 'px-3 py-1 text-sm' : 'px-2 py-0.5 text-[11px]',
+        size === 'lg' ? 'px-3 py-1 text-sm' : 'px-2 py-0.5 text-[0.6875rem]',
         meta.pill,
       )}
     >
@@ -88,7 +88,7 @@ export function SourceBadge({ source, full = false }: { source: ProbeSource; ful
   const meta = SOURCE_META[source];
   return (
     <span
-      className={cn('inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[10px] font-medium leading-4', SOURCE_TONE[source])}
+      className={cn('inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[0.625rem] font-medium leading-4', SOURCE_TONE[source])}
       title={meta.hint}
     >
       {full ? meta.label : meta.short}
@@ -172,9 +172,9 @@ export function Stat({
   const valueTone = tone === 'ok' ? 'text-ok' : tone === 'warn' ? 'text-warn' : tone === 'danger' ? 'text-destructive' : 'text-foreground';
   return (
     <div className={cn('min-w-0 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2.5', className)}>
-      <div className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="font-mono text-[0.625rem] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={cn('mt-1 truncate text-lg font-semibold tabular-nums leading-tight', valueTone)}>{value}</div>
-      {hint ? <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{hint}</div> : null}
+      {hint ? <div className="mt-0.5 truncate text-[0.6875rem] text-muted-foreground">{hint}</div> : null}
     </div>
   );
 }
@@ -207,7 +207,7 @@ export function SegmentedControl<T extends string>({
           )}
         >
           {opt.label}
-          {typeof opt.count === 'number' ? <span className="font-mono text-[10px] opacity-70">{opt.count}</span> : null}
+          {typeof opt.count === 'number' ? <span className="font-mono text-[0.625rem] opacity-70">{opt.count}</span> : null}
         </button>
       ))}
     </div>
@@ -219,7 +219,7 @@ export function MonitorCenterSkeleton(): JSX.Element {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3" role="status" aria-label="正在读取监控数据">
       <div className="cds-loading-skeleton-line h-20 w-full rounded-lg" />
-      <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[340px_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[21.25rem_minmax(0,1fr)]">
         <div className="flex flex-col gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">
           <div className="cds-loading-skeleton-line h-8 w-full" />
           {[0, 1, 2, 3, 4].map((i) => (
@@ -263,7 +263,7 @@ export function MonitorCenterErrorCard({ message, onRetry, retrying, pollSeconds
         <RefreshCw className={retrying ? 'animate-spin' : undefined} />
         {retrying ? '重试中' : '重新加载'}
       </Button>
-      <div className="text-[11px] text-muted-foreground">页面每 {pollSeconds} 秒也会自动重试一次</div>
+      <div className="text-[0.6875rem] text-muted-foreground">页面每 {pollSeconds} 秒也会自动重试一次</div>
     </div>
   );
 }

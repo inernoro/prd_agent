@@ -116,9 +116,9 @@ function EntryRow({ e, busy, onBackup, onVerify, onDrop, onClone, onWriteBack, o
         <div className="min-w-0 sm:flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-sm">{e.dbName}</span>
-            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[11px] text-muted-foreground">{KIND_LABEL[e.kind]} · {e.engine}</span>
-            <span className={`rounded border px-1.5 py-0.5 text-[11px] ${STATUS_META[e.status].cls}`}>{STATUS_META[e.status].label}</span>
-            {e.origin === 'scan' ? <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">扫描补录</span> : null}
+            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground">{KIND_LABEL[e.kind]} · {e.engine}</span>
+            <span className={`rounded border px-1.5 py-0.5 text-[0.6875rem] ${STATUS_META[e.status].cls}`}>{STATUS_META[e.status].label}</span>
+            {e.origin === 'scan' ? <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] text-warn">扫描补录</span> : null}
           </div>
           <div className="mt-1 text-xs text-muted-foreground">
             {e.branch ? <span className="mr-2">分支 <span className="font-mono">{e.branch}</span></span> : null}
@@ -260,7 +260,7 @@ export function WriteBackConfirm({ entry, preview, pending, onCancel, onConfirm 
         <>
           <div className="mt-1 text-xs text-muted-foreground">{preview.headline}</div>
           <div className="mt-2 overflow-x-auto">
-            <table className="w-full min-w-[420px] table-fixed text-xs">
+            <table className="w-full min-w-[26.25rem] table-fixed text-xs">
               <colgroup><col className="w-[34%]" /><col className="w-[14%]" /><col className="w-[14%]" /><col /></colgroup>
               <thead><tr className="text-left text-muted-foreground"><th className="py-1 font-normal">表</th><th className="py-1 font-normal">主库 {preview.targetDb}</th><th className="py-1 font-normal">派生库</th><th className="py-1 font-normal">回写后</th></tr></thead>
               <tbody>

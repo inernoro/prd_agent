@@ -68,7 +68,7 @@ describe('全局操作与信息中心', () => {
     expect(css).not.toContain('.cds-bottom-left-dock');
     const access = readWeb('components/AccessRequestInbox.tsx');
     expect(access).toContain('data-testid="cds-access-request-floating"');
-    expect(access).toContain('fixed bottom-[84px] right-5');
+    expect(access).toContain('fixed bottom-[5.25rem] right-5');
     expect(access).toContain('createPortal');
   });
 
@@ -87,7 +87,7 @@ describe('全局操作与信息中心', () => {
 
 describe('页面级 toast', () => {
   it('使用右下角标准留白，不再为已移除的缺陷浮标预留高度', () => {
-    expect(bottomRightToastStyle).toEqual({ bottom: '20px', right: '20px' });
+    expect(bottomRightToastStyle).toEqual({ bottom: '1.25rem', right: '1.25rem' });
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * 设置页窄屏内边距不叠层。
  *
- * `.cds-settings-content` 在 `max-width: 900px` 那一档已经用
+ * `.cds-settings-content` 在 `max-width: 56.25rem` 那一档已经用
  * `padding: 1rem !important` 给了 16px 边距。新加的 `.cds-settings-section-body`
  * 又带 1.5rem 横向内边距，两层一叠就是每侧 40px——320px 的屏只剩 240px 装表单。
  *
@@ -46,7 +46,7 @@ describe('设置页窄屏内边距', () => {
     const padding = narrowScreenPadding('.cds-settings-section-body');
     expect(
       padding,
-      '.cds-settings-section-body 在窄屏没有覆盖 padding，会和外层的 1rem 叠成每侧 40px',
+      '.cds-settings-section-body 在窄屏没有覆盖 padding，会和外层的 1rem 叠成每侧 2.5rem',
     ).not.toBeNull();
     const parts = (padding as string).split(/\s+/);
     // 一到四值写法里，横向分量分别在第 2 位（两值/三值/四值）或第 1 位（单值）。

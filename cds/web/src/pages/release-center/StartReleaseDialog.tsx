@@ -215,11 +215,11 @@ export function StartReleaseDialog({
         className="max-w-none"
         // 发布中钉死高度：日志窗格要一块稳定的地盘来吸底滚动；
         // 发布前由内容决定高度（上限 90vh），短内容不硬撑一个空壳。
-        style={{ width: 'min(880px, calc(100vw - 24px))', ...(run ? { height: 'min(680px, 90vh)' } : {}) }}
+        style={{ width: 'min(55rem, calc(100vw - 1.5rem))', ...(run ? { height: 'min(42.5rem, 90vh)' } : {}) }}
       >
         <div className="flex shrink-0 flex-col gap-1 border-b border-[hsl(var(--hairline))] px-5 py-4">
           <DialogTitle>发布到 {intent?.row.target.name || '环境'}</DialogTitle>
-          {intent?.reason ? <p className="text-[12.5px] text-primary">{intent.reason}</p> : null}
+          {intent?.reason ? <p className="text-[0.7812rem] text-primary">{intent.reason}</p> : null}
         </div>
         {!intent ? null : (
           <>
@@ -264,7 +264,7 @@ export function StartReleaseDialog({
                   <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">Commit</div>
                     <div className="mt-1 truncate font-mono text-xs">{commitSha ? commitSha.slice(0, 12) : '-'}</div>
-                    {subject ? <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground" title={subject}>{subject}</div> : null}
+                    {subject ? <div className="mt-0.5 truncate text-[0.7188rem] text-muted-foreground" title={subject}>{subject}</div> : null}
                   </div>
                   <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">来源（分支预览产物）</div>
@@ -301,12 +301,12 @@ export function StartReleaseDialog({
                 </div>
                 <div className="grid shrink-0 gap-2 sm:grid-cols-2">
                   {progress.steps.map((step, index) => (
-                    <div key={step.id} className="flex min-w-0 items-center gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-[13px]">
+                    <div key={step.id} className="flex min-w-0 items-center gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-[0.8125rem]">
                       {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 shrink-0 text-ok" />
                         : step.state === 'failed' ? <XCircle className="h-4 w-4 shrink-0 text-bad" />
                           : step.state === 'running' ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-info" />
                             : <span className="h-4 w-4 shrink-0 rounded-full border border-[hsl(var(--hairline-strong))]" />}
-                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{index + 1}/{progress.total}</span>
+                      <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">{index + 1}/{progress.total}</span>
                       <span className="min-w-0 truncate">{step.label}</span>
                     </div>
                   ))}
@@ -383,7 +383,7 @@ function PreflightCheckItem({ check }: { check: ReleasePreflightResult['checks']
   const collapsed = collapseCheckMessage(check.message);
   return (
     <li
-      className={`flex min-w-0 items-start gap-2.5 rounded-md border px-3 py-2 text-[13px] ${
+      className={`flex min-w-0 items-start gap-2.5 rounded-md border px-3 py-2 text-[0.8125rem] ${
         check.status === 'fail'
           ? 'border-bad/35 bg-bad-soft'
           : check.status === 'warn'
@@ -396,18 +396,18 @@ function PreflightCheckItem({ check }: { check: ReleasePreflightResult['checks']
         : <XCircle className={`mt-0.5 h-4 w-4 shrink-0 ${check.status === 'fail' ? 'text-bad' : 'text-warn'}`} />}
       <span className="min-w-0 flex-1">
         <span className="font-medium">{check.label}</span>
-        <span className="mt-0.5 block break-words text-[12px] text-muted-foreground">{collapsed.summary}</span>
+        <span className="mt-0.5 block break-words text-[0.75rem] text-muted-foreground">{collapsed.summary}</span>
         {collapsed.detail ? (
           <>
             <button
               type="button"
               onClick={() => setExpanded((current) => !current)}
-              className="mt-1 text-[12px] text-primary hover:underline"
+              className="mt-1 text-[0.75rem] text-primary hover:underline"
             >
               {expanded ? '收起完整内容' : `展开完整内容（${collapsed.lineCount} 行）`}
             </button>
             {expanded ? (
-              <pre className="mt-1.5 max-h-64 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2.5 font-mono text-[11px] leading-5" style={{ overscrollBehavior: 'contain' }}>
+              <pre className="mt-1.5 max-h-64 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2.5 font-mono text-[0.6875rem] leading-5" style={{ overscrollBehavior: 'contain' }}>
                 {collapsed.detail}
               </pre>
             ) : null}

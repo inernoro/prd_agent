@@ -114,7 +114,7 @@ function FieldRow({ label, hint, error, children, htmlFor }: {
     <div className="grid gap-1">
       <label htmlFor={htmlFor} className="text-xs font-medium text-muted-foreground">{label}</label>
       {children}
-      {error ? <div className="text-xs text-destructive">{error}</div> : hint ? <div className="text-[11px] text-muted-foreground">{hint}</div> : null}
+      {error ? <div className="text-xs text-destructive">{error}</div> : hint ? <div className="text-[0.6875rem] text-muted-foreground">{hint}</div> : null}
     </div>
   );
 }
@@ -223,14 +223,14 @@ export function MonitorEditorDialog({ open, monitor, defaultProjectId, onOpenCha
                     )}
                   >
                     <span className={cn('text-sm font-medium', selected ? 'text-primary' : 'text-foreground')}>{meta.label}</span>
-                    <span className="text-[11px] leading-4 text-muted-foreground">{meta.hint}</span>
+                    <span className="text-[0.6875rem] leading-4 text-muted-foreground">{meta.hint}</span>
                   </button>
                 );
               })}
             </div>
 
             {draft.kind === 'tcp' ? (
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_120px]">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_7.5rem]">
                 <FieldRow label="主机" htmlFor="mon-host" error={fieldError('host')} hint="域名或 IP，不带协议">
                   <input id="mon-host" className={INPUT_CLASS} value={draft.host} onChange={(e) => update({ host: e.target.value })} placeholder="redis.internal" autoFocus />
                 </FieldRow>

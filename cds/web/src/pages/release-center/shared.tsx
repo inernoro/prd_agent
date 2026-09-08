@@ -47,7 +47,7 @@ export function CodeText({ children, className = '' }: { children: ReactNode; cl
 }
 
 export function SectionLabel({ children }: { children: ReactNode }): JSX.Element {
-  return <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{children}</span>;
+  return <span className="font-mono text-[0.625rem] uppercase tracking-[0.14em] text-muted-foreground">{children}</span>;
 }
 
 export function InfoBlock({ label, children }: { label: string; children: ReactNode }): JSX.Element {
@@ -181,7 +181,7 @@ export function ReleaseLogPane({ text, className = '', style }: { text: string; 
           if (!pane) return;
           syncFollowing(shouldFollowLog(pane.scrollTop, pane.scrollHeight, pane.clientHeight));
         }}
-        className="h-full max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6"
+        className="h-full max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[0.7188rem] leading-6"
       >
         {text || '等待发布日志...'}
       </pre>

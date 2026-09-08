@@ -106,7 +106,7 @@ export function StorageTab(): JSX.Element {
           ) : (
             <div className="divide-y divide-border">
               {splitCollections.map((collection) => (
-                <div key={collection.name} className="grid gap-3 px-4 py-3 text-sm md:grid-cols-[220px_160px_120px_minmax(0,1fr)] md:items-center">
+                <div key={collection.name} className="grid gap-3 px-4 py-3 text-sm md:grid-cols-[13.75rem_10rem_7.5rem_minmax(0,1fr)] md:items-center">
                   <code className="font-mono font-semibold">{collection.name}</code>
                   <span className="text-muted-foreground">{collection.role}</span>
                   <CodePill>{collection.documents} docs</CodePill>

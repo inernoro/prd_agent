@@ -77,7 +77,7 @@ export function LatencyChart({ points, range }: { points: ReadonlyArray<UptimeBu
         <span className="text-muted-foreground">
           最大 <span className="font-mono text-foreground">{formatLatency(series.max)}</span>
         </span>
-        <span className="ml-auto min-h-4 font-mono text-[11px] text-muted-foreground" aria-live="polite">
+        <span className="ml-auto min-h-4 font-mono text-[0.6875rem] text-muted-foreground" aria-live="polite">
           {active
             ? `${range === '24h' ? formatClock(active.t) : formatAxisTime(active.t, range)} · ${formatLatency(active.ms)}${activeBucket ? ` · 成功 ${activeBucket.up}/${activeBucket.up + activeBucket.down}` : ''}`
             : '把鼠标放到曲线上看读数'}

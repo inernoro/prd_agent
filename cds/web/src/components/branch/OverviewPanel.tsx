@@ -314,7 +314,7 @@ function HealthRing({ states }: { states: Array<'ok' | 'bad' | 'idle'> }): JSX.E
           {okCount}
           <span className="text-lg text-muted-foreground">/{states.length}</span>
         </span>
-        <span className="text-[11px] text-muted-foreground">服务就绪</span>
+        <span className="text-[0.6875rem] text-muted-foreground">服务就绪</span>
       </div>
     </div>
   );
@@ -344,15 +344,15 @@ function LiveReadings({
 }): JSX.Element {
   return (
     <section className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
-      <h4 className="mb-2 text-sm font-bold text-foreground">当前读数<span className="ml-2 text-[11px] font-normal text-muted-foreground">{subtitle}</span></h4>
+      <h4 className="mb-2 text-sm font-bold text-foreground">当前读数<span className="ml-2 text-[0.6875rem] font-normal text-muted-foreground">{subtitle}</span></h4>
       <ul className="flex flex-col gap-1.5">
         {services.filter((sv) => liveStats[sv.profileId]).map((sv) => {
           const l = liveStats[sv.profileId];
           return (
             <li key={sv.profileId} className="flex items-baseline gap-2">
-              <span className="min-w-0 flex-1 break-all font-mono text-[11px] text-muted-foreground">{sv.profileId}</span>
-              <span className="shrink-0 font-mono text-[13px] font-bold tabular-nums text-foreground">{l.cpuPercent.toFixed(2)}<span className="text-[10px] font-medium text-muted-foreground">%</span></span>
-              <span className="w-24 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums text-foreground">{formatBytesShort(l.memUsedBytes)}</span>
+              <span className="min-w-0 flex-1 break-all font-mono text-[0.6875rem] text-muted-foreground">{sv.profileId}</span>
+              <span className="shrink-0 font-mono text-[0.8125rem] font-bold tabular-nums text-foreground">{l.cpuPercent.toFixed(2)}<span className="text-[0.625rem] font-medium text-muted-foreground">%</span></span>
+              <span className="w-24 shrink-0 text-right font-mono text-[0.8125rem] font-bold tabular-nums text-foreground">{formatBytesShort(l.memUsedBytes)}</span>
             </li>
           );
         })}
@@ -385,19 +385,19 @@ function MetricsSkeleton({
     <section className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 pb-3 pt-3.5">
       <header className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
         <h4 className="text-sm font-bold text-foreground">CPU 占用</h4>
-        <span className="text-[11px] text-muted-foreground">% · 按服务堆叠 · {windowLabel}</span>
+        <span className="text-[0.6875rem] text-muted-foreground">% · 按服务堆叠 · {windowLabel}</span>
         <div className="flex-1" />
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-[0.6875rem] text-muted-foreground">
           {note ?? (bucketSeconds
             ? `每 ${bucketSeconds} 秒落一个数据点 · 已有 ${filled} 帧 · ${eta}`
             : `已有 ${filled} 帧 · ${eta}`)}
         </span>
       </header>
       <div className="flex gap-2">
-        <div className="flex w-12 shrink-0 flex-col justify-between text-right font-mono text-[10px] leading-none text-muted-foreground/50" style={{ height: 176 }}>
+        <div className="flex w-12 shrink-0 flex-col justify-between text-right font-mono text-[0.625rem] leading-none text-muted-foreground/50" style={{ height: '11rem' }}>
           {['', '', '', ''].map((_, i) => <span key={i}>—</span>)}
         </div>
-        <div className="relative min-w-0 flex-1 overflow-hidden rounded" style={{ height: 176 }}>
+        <div className="relative min-w-0 flex-1 overflow-hidden rounded" style={{ height: '11rem' }}>
           <div className="absolute inset-0 flex flex-col justify-between" aria-hidden>
             {[0, 1, 2, 3].map((i) => <span key={i} className="h-px w-full bg-[hsl(var(--hairline))]" />)}
           </div>
@@ -445,20 +445,20 @@ function ChartShell({
     <section className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 pb-3 pt-3.5">
       <header className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
         <h4 className="text-sm font-bold text-foreground">{title}</h4>
-        <span className="text-[11px] text-muted-foreground">{unit}</span>
+        <span className="text-[0.6875rem] text-muted-foreground">{unit}</span>
         <div className="flex-1" />
         {aside}
         {headline ? (
           <>
             <span className="font-mono text-lg font-bold tracking-tight text-foreground">{headline}</span>
-            <span className="text-[11px] text-muted-foreground">{headlineSuffix}</span>
+            <span className="text-[0.6875rem] text-muted-foreground">{headlineSuffix}</span>
           </>
         ) : null}
       </header>
       {children}
       {legend}
       {footnote ? (
-        <p className="border-t border-[hsl(var(--hairline))] pt-2 text-[11px] leading-[18px] text-muted-foreground">{footnote}</p>
+        <p className="border-t border-[hsl(var(--hairline))] pt-2 text-[0.6875rem] leading-[1.125rem] text-muted-foreground">{footnote}</p>
       ) : null}
     </section>
   );
@@ -481,7 +481,7 @@ function PlotFrame({
     <div className="flex flex-col gap-1">
       <div className="flex gap-2">
         <div
-          className="flex w-12 shrink-0 flex-col justify-between whitespace-nowrap text-right font-mono text-[10px] leading-none text-muted-foreground"
+          className="flex w-12 shrink-0 flex-col justify-between whitespace-nowrap text-right font-mono text-[0.625rem] leading-none text-muted-foreground"
           style={{ height }}
         >
           {yTicks.map((label) => <span key={label}>{label}</span>)}
@@ -495,7 +495,7 @@ function PlotFrame({
           {children}
         </div>
       </div>
-      <div className="flex justify-between pl-14 font-mono text-[10px] text-muted-foreground">
+      <div className="flex justify-between pl-14 font-mono text-[0.625rem] text-muted-foreground">
         {xLabels.map((label) => <span key={label}>{label}</span>)}
       </div>
     </div>
@@ -647,12 +647,12 @@ function CompositionBar({ series }: { series: StackedSeries[] }): JSX.Element {
         {rows.map((r) => (
           <li key={r.id} className="flex items-baseline gap-2">
             <span className="mt-[3px] h-2 w-2 shrink-0 self-start rounded-[2px]" style={{ background: r.color }} aria-hidden />
-            <span className="min-w-0 flex-1 break-all font-mono text-[11px] leading-[15px] text-muted-foreground">{r.id}</span>
+            <span className="min-w-0 flex-1 break-all font-mono text-[0.6875rem] leading-[0.9375rem] text-muted-foreground">{r.id}</span>
             {r.stopped ? (
-              <span className="shrink-0 font-mono text-[12px] font-bold text-bad">停止</span>
+              <span className="shrink-0 font-mono text-[0.75rem] font-bold text-bad">停止</span>
             ) : (
-              <span className="shrink-0 font-mono text-[13px] font-bold tabular-nums text-foreground">
-                {r.nowLabel}<span className="text-[10px] font-medium text-muted-foreground">{r.nowUnit}</span>
+              <span className="shrink-0 font-mono text-[0.8125rem] font-bold tabular-nums text-foreground">
+                {r.nowLabel}<span className="text-[0.625rem] font-medium text-muted-foreground">{r.nowUnit}</span>
               </span>
             )}
           </li>
@@ -673,14 +673,14 @@ function SeriesLegend({ series }: { series: StackedSeries[] }): JSX.Element {
         <div key={s.id} className="flex min-w-0 max-w-full gap-2">
           <span className="w-[3px] shrink-0 rounded-full" style={{ background: s.color }} aria-hidden />
           <span className="flex min-w-0 flex-col gap-px">
-            <span className="truncate font-mono text-[10.5px] text-muted-foreground" title={s.id}>{s.id}</span>
+            <span className="truncate font-mono text-[0.6562rem] text-muted-foreground" title={s.id}>{s.id}</span>
             {s.stopped ? (
               // 停掉的容器不许显示末值：那是它停机前的读数，摆在「当前值」位置上等于说它还活着。
               <span className="font-mono text-base font-bold leading-tight tracking-tight text-bad">停止</span>
             ) : (
               <span className="font-mono text-base font-bold leading-tight tracking-tight text-foreground">
                 {s.nowLabel}
-                <span className="text-[11px] font-medium text-muted-foreground">{s.nowUnit}</span>
+                <span className="text-[0.6875rem] font-medium text-muted-foreground">{s.nowUnit}</span>
               </span>
             )}
           </span>
@@ -728,10 +728,10 @@ function MirroredPair({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline gap-2">
-        <span className="text-[11px] font-semibold text-foreground">{label}</span>
-        <span className="font-mono text-[10px] text-muted-foreground">峰值 {formatBytesShort(peak)}/s</span>
+        <span className="text-[0.6875rem] font-semibold text-foreground">{label}</span>
+        <span className="font-mono text-[0.625rem] text-muted-foreground">峰值 {formatBytesShort(peak)}/s</span>
         <div className="flex-1" />
-        <span className="font-mono text-[11px] text-muted-foreground">
+        <span className="font-mono text-[0.6875rem] text-muted-foreground">
           {upNow == null || downNow == null
             ? '当前速率暂不可用'
             : `${upName} ${formatBytesShort(upNow)}/s · ${downName} ${formatBytesShort(downNow)}/s`}
@@ -847,7 +847,7 @@ function DeployHistoryChart({
             aria-hidden
           />
           <span
-            className="absolute left-0 bg-[hsl(var(--surface-raised))] px-1 font-mono text-[10px] text-warn"
+            className="absolute left-0 bg-[hsl(var(--surface-raised))] px-1 font-mono text-[0.625rem] text-warn"
             style={{ top: Math.max(0, medianTop - 15) }}
           >
             中位 {formatDuration(median)}
@@ -865,13 +865,13 @@ function DeployHistoryChart({
         </div>
         <div className="flex flex-wrap items-center gap-4 border-t border-[hsl(var(--hairline))] pt-2.5">
           <span className="flex flex-col gap-px">
-            <span className="text-[10.5px] text-muted-foreground">最新一次</span>
-            <span className="font-mono text-[15px] font-bold text-foreground">{formatDuration(bars[bars.length - 1].ms)}</span>
+            <span className="text-[0.6562rem] text-muted-foreground">最新一次</span>
+            <span className="font-mono text-[0.9375rem] font-bold text-foreground">{formatDuration(bars[bars.length - 1].ms)}</span>
           </span>
           <span className="h-6 w-px bg-[hsl(var(--hairline))]" aria-hidden />
           <span className="flex flex-col gap-px">
-            <span className="text-[10.5px] text-muted-foreground">成功率</span>
-            <span className={`font-mono text-[15px] font-bold ${failedCount ? 'text-warn' : 'text-ok'}`}>
+            <span className="text-[0.6562rem] text-muted-foreground">成功率</span>
+            <span className={`font-mono text-[0.9375rem] font-bold ${failedCount ? 'text-warn' : 'text-ok'}`}>
               {bars.length - failedCount} / {bars.length}
             </span>
           </span>
@@ -905,25 +905,25 @@ function EntryCard({ e, reachable }: { e: OverviewEntry; reachable: boolean }): 
       }`}
     >
       <span
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.625rem] ${
           lit ? 'bg-ok text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'
         }`}
       >
-        {hero ? <Rocket className="h-[18px] w-[18px]" /> : <Server className="h-4 w-4" />}
+        {hero ? <Rocket className="h-[1.125rem] w-[1.125rem]" /> : <Server className="h-4 w-4" />}
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex items-center gap-1.5">
-          <span className="text-[13px] font-bold text-foreground">{e.name}</span>
+          <span className="text-[0.8125rem] font-bold text-foreground">{e.name}</span>
           {hero ? (
-            <span className={`rounded px-1.5 py-px text-[10px] font-bold ${reachable ? 'bg-ok/15 text-ok' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>默认入口</span>
+            <span className={`rounded px-1.5 py-px text-[0.625rem] font-bold ${reachable ? 'bg-ok/15 text-ok' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>默认入口</span>
           ) : null}
           {e.subdomain ? (
-            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-px font-mono text-[10px] text-muted-foreground">
+            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-px font-mono text-[0.625rem] text-muted-foreground">
               {e.subdomain}
             </span>
           ) : null}
         </span>
-        <span className="truncate font-mono text-[11.5px] text-muted-foreground">{e.url}</span>
+        <span className="truncate font-mono text-[0.7188rem] text-muted-foreground">{e.url}</span>
       </span>
       <ExternalLink className={`h-4 w-4 shrink-0 ${lit ? 'text-ok' : 'text-muted-foreground group-hover:text-foreground'}`} />
     </a>
@@ -978,7 +978,7 @@ function EntryCards({
       {rest.length > 0 ? (
         <div
           className="grid gap-2.5"
-          style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, 300px), 1fr))` }}
+          style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, 18.75rem), 1fr))` }}
         >
           {rest.map((e) => <EntryCard key={e.url} e={e} reachable={reachable} />)}
         </div>
@@ -1401,11 +1401,11 @@ export function OverviewPanel({
         </div>
         {lastReadyAt && running ? (
           <div className="flex flex-col items-end gap-1 border-l border-[hsl(var(--hairline))] pl-6">
-            <span className="text-[10px] font-bold uppercase tracking-[0.09em] text-muted-foreground">已运行</span>
-            <span className="font-mono text-[26px] font-bold leading-none tracking-tight text-foreground">
+            <span className="text-[0.625rem] font-bold uppercase tracking-[0.09em] text-muted-foreground">已运行</span>
+            <span className="font-mono text-[1.625rem] font-bold leading-none tracking-tight text-foreground">
               {formatUptime(lastReadyAt, now)}
             </span>
-            <span className="text-[11px] text-muted-foreground">自容器就绪起算</span>
+            <span className="text-[0.6875rem] text-muted-foreground">自容器就绪起算</span>
           </div>
         ) : null}
       </section>
@@ -1431,7 +1431,7 @@ export function OverviewPanel({
           承诺一条不会出现的曲线。
       */}
       {metricsError ? (
-        <section className="flex items-center gap-2 rounded-xl border border-warn/30 bg-warn-soft px-4 py-2.5 text-[13px] text-warn">
+        <section className="flex items-center gap-2 rounded-xl border border-warn/30 bg-warn-soft px-4 py-2.5 text-[0.8125rem] text-warn">
           <span className="flex-1">实时采样失败：{metricsError}。下面是历史曲线，数字可能不是最新的。</span>
           <button type="button" className="inline-flex items-center gap-1.5 text-xs font-semibold hover:underline" onClick={onRefreshMetrics}>
             <RefreshCw className="h-3.5 w-3.5" />重试
@@ -1449,7 +1449,7 @@ export function OverviewPanel({
          */
         <section className="flex flex-col gap-2 rounded-xl border border-bad/30 bg-bad-soft px-4 py-3 text-sm text-bad">
           <span>读取指标历史失败：{seriesError}</span>
-          <span className="text-[12px] text-foreground-muted">
+          <span className="text-[0.75rem] text-foreground-muted">
             {hasPlot
               ? '下面那条曲线是最后一次成功拉取的结果，已经不再更新——它不是当前的 30 分钟。'
               : '曲线画不出来了（不是还没攒够——这一项不会自己好）。'}
@@ -1524,7 +1524,7 @@ export function OverviewPanel({
             headline={`${cpuTotalNow.toFixed(1)}%`}
             headlineSuffix={`${totalledServiceCount} 个在跑服务合计`}
             aside={(
-              <button type="button" className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground" onClick={onRefreshMetrics}>
+              <button type="button" className="inline-flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground hover:text-foreground" onClick={onRefreshMetrics}>
                 <RefreshCw className="h-3 w-3" />立即刷新
               </button>
             )}
@@ -1568,18 +1568,18 @@ export function OverviewPanel({
       {/* 5. 部署环境 —— 复制集 / 基础设施收成一条，不再各占一格 */}
       <section className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
         <span className="flex flex-col gap-0.5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.09em] text-muted-foreground">复制集</span>
-          <span className="text-[13px] text-foreground-muted">{replicaSummary}</span>
+          <span className="text-[0.625rem] font-bold uppercase tracking-[0.09em] text-muted-foreground">复制集</span>
+          <span className="text-[0.8125rem] text-foreground-muted">{replicaSummary}</span>
         </span>
         <span className="h-7 w-px bg-[hsl(var(--hairline))]" aria-hidden />
         <span className="flex flex-col gap-0.5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.09em] text-muted-foreground">基础设施</span>
-          <span className="text-[13px] text-foreground-muted">{infraSummary}</span>
+          <span className="text-[0.625rem] font-bold uppercase tracking-[0.09em] text-muted-foreground">基础设施</span>
+          <span className="text-[0.8125rem] text-foreground-muted">{infraSummary}</span>
         </span>
         <span className="h-7 w-px bg-[hsl(var(--hairline))]" aria-hidden />
         <span className="flex flex-col gap-0.5">
-          <span className="text-[10px] font-bold uppercase tracking-[0.09em] text-muted-foreground">服务</span>
-          <span className="text-[13px] text-foreground-muted">{services.length} 个 · {okCount} 个在跑</span>
+          <span className="text-[0.625rem] font-bold uppercase tracking-[0.09em] text-muted-foreground">服务</span>
+          <span className="text-[0.8125rem] text-foreground-muted">{services.length} 个 · {okCount} 个在跑</span>
         </span>
       </section>
     </div>
