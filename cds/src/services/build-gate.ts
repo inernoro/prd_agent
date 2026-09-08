@@ -312,6 +312,11 @@ export function pumpWaiters(): number {
     woken += 1;
     next.resolve();
   }
+  // 还有人排着、且这一轮是被负载挡住（不是被上限挡住），就得有定时器在负载回落时
+  // 回来放人。否则出现这条死路：waiter 当初因 active === max 入队（那条路径不开定时器），
+  // 运维随后调高上限并调用本函数，此刻宿主饱和放不出人 —— 队列就只能等下一次
+  // release 才被重新考虑，新腾出来的容量白白空转几分钟（Codex 五轮 P2）。
+  if (waiters.length > 0 && active < maxConcurrentBuilds()) ensureLoadPump();
   return woken;
 }
 

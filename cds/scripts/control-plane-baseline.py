@@ -38,6 +38,35 @@ def parse_ts(s: str) -> dt.datetime:
     return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
+RUNS_API_CAP = 200
+
+
+def runs_window_truncated(dated_count: int, in_window_count: int, cap: int = RUNS_API_CAP) -> bool:
+    """窗口内的部署次数是不是被接口条数上限截断了。
+
+    /api/deployment-runs 把 limit 夹到 cap 且没有翻页游标。拿满 cap 条、而且这 cap 条
+    全都落在窗口内，就说明窗口比接口能给的更长——真实次数只多不少，数字得标成下界。
+    没拿满，或者里面已经有比窗口更老的记录（说明窗口的边界在返回结果之内），就没被截断。
+    """
+    return dated_count >= cap and in_window_count > 0 and in_window_count == dated_count
+
+
+def _self_test() -> None:
+    """判据自检：`--self-test` 跑一次，不打任何接口。"""
+    cases = [
+        # (拿到的有日期记录数, 落在窗口内的数, 期望)
+        ((200, 200), True),    # 拿满且全在窗口内 → 截断
+        ((200, 143), False),   # 拿满但有更老的记录 → 窗口边界可见，没截断
+        ((143, 143), False),   # 没拿满 → 没截断
+        ((200, 0), False),     # 拿满但窗口内一条都没有 → 谈不上截断
+        ((0, 0), False),       # 空
+    ]
+    for (dated, in_window), expected in cases:
+        got = runs_window_truncated(dated, in_window, cap=200)
+        assert got is expected, f"runs_window_truncated({dated}, {in_window}) = {got}, 期望 {expected}"
+    print("self-test ok: runs_window_truncated 5 组判据通过")
+
+
 def pct(sorted_vals, p):
     if not sorted_vals:
         return 0
@@ -47,7 +76,11 @@ def pct(sorted_vals, p):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=int, default=24)
+    ap.add_argument("--self-test", action="store_true", help="只跑判据自检，不打任何接口")
     args = ap.parse_args()
+    if args.self_test:
+        _self_test()
+        return
     now = dt.datetime.now(dt.timezone.utc)
     since = (now - dt.timedelta(hours=args.hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows: list[tuple[str, str]] = []
@@ -119,14 +152,24 @@ def main() -> None:
     non_sse = [l for l in fwd if l.get("requestKind") != "sse" and "/_cds/" in l["path"]]
     rows.append((f"dashboard 接口 5xx（非 SSE，{args.hours}h）", str(len(non_sse))))
 
-    runs = api("/api/deployment-runs?limit=400")
+    # /api/deployment-runs 把 limit 夹到 200 且没有翻页游标：窗口内超过 200 次部署时
+    # 只能看到最新的 200 条。不声张地少算会让长窗口的改前改后对比失真，所以这里显式
+    # 判断有没有被截断，被截断就把数字标成下界（Codex 五轮 P2）。
+    runs = api(f"/api/deployment-runs?limit={RUNS_API_CAP}")
     runs = runs.get("runs") if isinstance(runs, dict) else runs
     cutoff = now - dt.timedelta(hours=args.hours)
-    r24 = [r for r in runs if r.get("startedAt") and parse_ts(r["startedAt"]) >= cutoff]
+    dated = [r for r in runs if r.get("startedAt")]
+    r24 = [r for r in dated if parse_ts(r["startedAt"]) >= cutoff]
+    truncated = runs_window_truncated(len(dated), len(r24))
+    mark = "≥" if truncated else ""
+    note = f"（受接口 {RUNS_API_CAP} 条上限截断，实际更多）" if truncated else ""
     st = collections.Counter(r.get("status") for r in r24)
     top = collections.Counter(r.get("branchId") for r in r24).most_common(3)
-    rows.append((f"部署次数（{args.hours}h）/ 失败 / 取消", f"{len(r24)} / {st.get('failed', 0)} / {st.get('cancelled', 0)}"))
-    rows.append(("部署最多的分支", "；".join(f"{b} x{n}" for b, n in top) or "无"))
+    rows.append((
+        f"部署次数（{args.hours}h）/ 失败 / 取消",
+        f"{mark}{len(r24)} / {mark}{st.get('failed', 0)} / {mark}{st.get('cancelled', 0)}{note}",
+    ))
+    rows.append(("部署最多的分支", ("；".join(f"{b} x{mark}{n}" for b, n in top) or "无") + note))
 
     dock = api("/api/server-events?limit=1000&category=docker").get("events", [])
     if dock:

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   acquireBuildSlot,
   buildGateStatus,
@@ -381,6 +381,39 @@ describe('build-gate 全局构建并发闸', () => {
       expect(buildGateStatus()).toMatchObject({ active: 1, queued: 0 });
       s3.release();
       expect(buildGateStatus().active).toBe(0);
+    });
+
+    /**
+     * Codex 五轮 P2：waiter 当初因 active === max 入队，那条路径不开负载定时器。
+     * 运维随后调高上限并 pumpWaiters()，此刻宿主饱和放不出人——若这里不补开定时器，
+     * 队列就只能等下一次 release 才被重新考虑，新腾出来的容量白白空转几分钟。
+     */
+    it('上限上调时宿主仍饱和：定时器接手，负载回落即放行，不必等有构建 release', async () => {
+      vi.useFakeTimers();
+      try {
+        process.env.CDS_MAX_CONCURRENT_BUILDS = '1';
+        delete process.env.CDS_BUILD_LOAD_FACTOR;
+        let load1 = 2; // 4 核 load 2 = 0.5 倍，不饱和
+        setBuildGateHostLoadProvider(() => ({ load1, cores: 4 }));
+
+        const s1 = await acquireBuildSlot();
+        const p2 = acquireBuildSlot(); // 被上限挡住入队（非负载），这条路径不开定时器
+        await vi.advanceTimersByTimeAsync(0);
+        expect(buildGateStatus()).toMatchObject({ active: 1, queued: 1 });
+
+        load1 = 10; // 宿主转为饱和
+        process.env.CDS_MAX_CONCURRENT_BUILDS = '3'; // 运维调高上限
+        expect(pumpWaiters()).toBe(0); // 这一轮被负载挡住，放不出人
+
+        load1 = 2; // 负载回落——注意全程没有任何构建 release
+        await vi.advanceTimersByTimeAsync(20_000);
+        const s2 = await p2;
+        expect(buildGateStatus()).toMatchObject({ active: 2, queued: 0 });
+        s1.release();
+        s2.release();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('系数关闭时退回纯上限准入', async () => {
