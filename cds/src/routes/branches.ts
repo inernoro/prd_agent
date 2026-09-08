@@ -12592,7 +12592,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
           deploymentVersionId: selectedDeploymentVersion?.id,
           deploymentConfigHash,
           deploymentCapabilities: managedPlan?.capabilities,
-          profiles: selectedDeploymentVersion || managedPlan ? profiles : undefined,
+          // Agent 极速版门禁下的远端派发同样摘掉 sourceFallbackProfile：执行器拿到什么就按什么
+          // runService，master 不在这里摘，执行器就会在镜像拉不到时回退源码编译（Codex 第三轮 P1）。
+          // 未门禁时保持原样（版本 / managed 传已物化清单，否则由 proxy 内部自行 resolve）。
+          profiles: agentPrebuiltGated
+            ? (selectedDeploymentVersion || managedPlan
+                ? profiles
+                : currentProfiles.map((p) => resolveEffectiveProfile(p, entry))
+              ).map((p) => withoutSourceFallback(p))
+            : (selectedDeploymentVersion || managedPlan ? profiles : undefined),
         });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';

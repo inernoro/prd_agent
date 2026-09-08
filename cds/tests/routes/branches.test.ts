@@ -741,6 +741,43 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')?.status).toBe('error');
     });
 
+    it('远端执行器派发：门禁下发给执行器的 profile 不带 sourceFallbackProfile，真人派发保留（Codex 第三轮 P1）', async () => {
+      seedGateProject(true);
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      const b1 = stateService.getBranch('b1')!;
+      b1.executorId = 'exec-gate';
+      stateService.save();
+      const now = new Date().toISOString();
+      registryNodes.push({
+        id: 'exec-gate', host: '127.0.0.1', port: 9109, status: 'online', role: 'remote', labels: [],
+        branches: ['b1'], capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now,
+      });
+      const fetchCalls: Array<{ url: string; body: any }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({ url: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        return new Response('event: done\ndata: {}\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }) as typeof fetch;
+      try {
+        const human = await request(server, 'POST', '/api/branches/b1/deploy', {});
+        expect(human.status).toBe(200);
+        const humanDeploy = fetchCalls.find((c) => c.url.includes('/exec/deploy'));
+        expect(humanDeploy?.body?.profiles?.find((p: any) => p.id === 'api')?.sourceFallbackProfile).toBeDefined();
+
+        fetchCalls.length = 0;
+        const gated = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+        expect(gated.status).toBe(200);
+        const gatedDeploy = fetchCalls.find((c) => c.url.includes('/exec/deploy'));
+        expect(gatedDeploy).toBeDefined();
+        const api = gatedDeploy!.body.profiles.find((p: any) => p.id === 'api');
+        expect(api.prebuiltImage).toBe(true);
+        expect(api.sourceFallbackProfile).toBeUndefined();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it('机器凭据改项目默认部署模式：express 放行，static 与清空拒绝', async () => {
       seedGateProject(true);
       const ok = await request(server, 'PUT', '/api/build-profiles/api/deploy-mode', { mode: 'express' }, { 'X-Test-Key': 'A' });
