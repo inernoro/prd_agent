@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readScoped } from '../smoke/lib/scoped-text.mjs';
 
 const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
 const script = read('scripts/smoke/daily-acceptance.mjs');
@@ -52,32 +53,51 @@ test('声明了 scope 的路由，锚点与字数都只看那一块', () => {
   // 外壳（导航 + 告警条）本身上百字，在 body 上数字数等于路由渲不渲染都够。
   assert.ok(/scope:\s*'\[data-acceptance-scope=/.test(script), '没有任何路由声明取证范围');
   assert.ok(/readScoped/.test(script), 'checkPageAlive 没有按 scope 取文本');
+  // 取文本的实现已经搬进 lib/scoped-text.mjs（为了能被上面那条守卫真的执行）。
+  // 这里只确认主脚本确实用的是那一份，别再长出第二份实现（形状 3：判据分裂）。
   assert.ok(
-    /const root = sel \? document\.querySelector\(sel\) : document\.body;/.test(script),
-    'scope 的解析方式变了，判据该跟着改',
+    /from '\.\/lib\/scoped-text\.mjs'/.test(script),
+    '主脚本没有引用共享的取证实现',
+  );
+  assert.ok(
+    !/const readScoped\s*=/.test(script),
+    '主脚本里又长出了一份本地 readScoped —— 判据会和共享实现漂移',
   );
   // 标记必须真的存在于页面里，否则 scope 恒为 null（那会让判据静默退化）
   const page = read('prd-admin/src/pages/WebPagesPage.tsx');
   assert.ok(/data-acceptance-scope="web-pages"/.test(page), '页面上没有这个取证范围标记');
 });
 
-test('取证函数不许靠闭包拿 scope', () => {
-  // 实际栽过（2026-08-29 f3dcff1）：readScoped 写成柯里化 `(sel) => (n) => ...`，
-  // 而 page.evaluate 是把函数**序列化成源码**丢进浏览器执行的，闭包不跟过去，
-  // 浏览器里 sel 直接 ReferenceError —— 五条「页面产物可见」全部打哑，
-  // 且第一条抛出后 page 没关，攥着隧道连接把后面的用例滚成 goto 超时。
-  // 上一条守卫只断言了 root 那行字符串在，抓不到「参数从哪来」，所以补这一条。
-  assert.ok(
-    !/const readScoped = \([^)]*\)\s*=>\s*\([^)]*\)\s*=>/.test(script),
-    'readScoped 又被写成柯里化了：闭包变量在 page.evaluate 里取不到',
-  );
-  // 必须把 scope 当参数传进去，而不是调用后再交给 evaluate
-  assert.ok(
-    !/page\.evaluate\(readScoped\(/.test(script),
-    'readScoped 被先调用再交给 evaluate —— 传进去的是返回值不是函数体',
-  );
-  const calls = [...script.matchAll(/page\.evaluate\(readScoped,\s*\[/g)];
-  assert.ok(calls.length >= 2, `readScoped 只被以「函数 + 参数数组」的形式调用了 ${calls.length} 次，少于预期`);
+test('取证函数必须能在浏览器里独立求值（真执行，不是扫源码）', () => {
+  // 复刻 page.evaluate 的真实机制：它把函数 **toString 成源码** 送进浏览器再求值，
+  // 所以模块作用域/闭包一律不跟过去。这里用 new Function 在一个没有闭包的上下文里
+  // 按同样的方式重建再执行 —— 柯里化写法在这一步就会原样炸出 ReferenceError，
+  // 正是 2026-08-29 f3dcff1 在线上的形态。
+  //
+  // 这比扫 `page.evaluate(readScoped, [` 这种字面拼写强在两头：
+  // 行为对了就不会因为改写法误红，行为坏了也不会因为源码里还留着那串字而漏绿。
+  const rebuilt = new Function(`return (${readScoped.toString()})`)();
+
+  const run = (text, args, selHit = true) => {
+    const root = { innerText: text };
+    const prev = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    globalThis.document = { body: root, querySelector: () => (selHit ? root : null) };
+    try {
+      return rebuilt(args);
+    } finally {
+      if (prev) Object.defineProperty(globalThis, 'document', prev);
+      else delete globalThis.document;
+    }
+  };
+
+  // 不声明 scope：读整页，空白全部压掉后计字
+  assert.deepEqual(run('  你好   世界 ', [null, null]), { chars: 4, hit: false });
+  // 锚点命中要穿过空白（页面上的字常被标签断开）
+  assert.deepEqual(run('你 好\n世界', [null, '你好世界']), { chars: 4, hit: true });
+  // 声明了 scope 就只看那一块 —— 这正是闭包版拿不到 sel 而炸掉的那条路径
+  assert.deepEqual(run('局部文字', ['[data-acceptance-scope="web-pages"]', '局部']), { chars: 4, hit: true });
+  // scope 选不中要返回 null，让调用方知道判据没生效，而不是悄悄退回整页
+  assert.equal(run('整页文字', ['[data-missing]', '整页'], false), null);
 });
 
 test('页面取证失败也必须把 page 关掉', () => {

@@ -35,6 +35,7 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 import path from 'node:path';
 import os from 'node:os';
+import { readScoped } from './lib/scoped-text.mjs';
 
 const require_ = createRequire(path.join(process.cwd(), 'noop.js'));
 let chromium;
@@ -473,15 +474,8 @@ async function checkPageAlive(ctx, page4) {
   // 外壳（导航 + 告警条）本身有上百字，在 body 上数等于路由渲不渲染都够。
   // 没声明 scope 的路由退回整页——那是明确的降级，只在锚点确实为路由独有时才成立。
   const needle = page4.anchor.replace(/\s+/g, '');
-  // 注意：page.evaluate 是把函数**序列化成源码**丢进浏览器执行的，闭包不会跟过去。
-  // 所以 scope 只能当参数传，不能柯里化closure（那样浏览器里 sel 是 undefined，
-  // 整条用例直接 ReferenceError——2026-08-29 f3dcff1 就是这么把五条用例全打哑的）。
-  const readScoped = ([sel, n]) => {
-    const root = sel ? document.querySelector(sel) : document.body;
-    if (!root) return null;
-    const t = root.innerText.replace(/\s+/g, '');
-    return { chars: t.length, hit: n ? t.includes(n) : false };
-  };
+  // readScoped 在 ./lib/scoped-text.mjs —— 拆出去是为了让守卫能真的执行它，
+  // 而不是只能扫源码字面量。它会被序列化成源码丢进浏览器，约束见那个文件的注释。
   let appeared = false;
   let final = null;
   // 这一段任何一步抛出，page 都必须关掉：漏掉的页会把隧道连接一直攥着，
