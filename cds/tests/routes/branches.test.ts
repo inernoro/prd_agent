@@ -794,6 +794,29 @@ describe('Branch Routes', () => {
       });
     });
 
+    it('修复上线前已损坏的分支覆盖（有名字、没 primary）在下一次保存时从项目档修回 primary (issue #1463, Codex P1)', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      stateService.updateBuildProfile('gateway', {
+        subdomain: 'llmgw',
+        webEntry: { name: '网关控制台', path: '/', primary: true },
+      });
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
+      // 模拟修复前「隐藏 → 重新启用」留下的坏数据：覆盖有名字、但 primary 已被冲掉
+      stateService.setBranchProfileOverride('branch-a', 'gateway', { webEntry: { name: '网关控制台（旧覆盖）', path: '/' } });
+      expect(stateService.getBranchProfileOverride('branch-a', 'gateway')!.webEntry).toEqual({ name: '网关控制台（旧覆盖）', path: '/' });
+
+      // 一次普通的分支档改名保存，primary 必须从项目档修回来，而不是继续从坏覆盖继承「没有」
+      const res = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'branch',
+        entries: [{ serviceId: 'gateway', name: '网关控制台（修回）', subdomain: 'llmgw', path: '/' }],
+      }, { 'X-Test-Key': 'A' });
+      expect(res.status).toBe(200);
+      expect(stateService.getBranchProfileOverride('branch-a', 'gateway')!.webEntry).toEqual({
+        name: '网关控制台（修回）', path: '/', primary: true,
+      });
+    });
+
     it('拒绝撞上本分支自己的子域别名（发布器会因此静默跳过这条服务路由）', async () => {
       seedProject('proj-a', 'a');
       seedProfiles('proj-a');
