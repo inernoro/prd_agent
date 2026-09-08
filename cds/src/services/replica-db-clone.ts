@@ -23,6 +23,7 @@ import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 import { cloneRelationalDbInPlace } from './db-clone-pipeline.js';
 import { detectInfraDataKind, runDockerExec, maskSecretValues } from '../routes/infra-data.js';
+import { workloadCgroupArgv } from './workload-cgroup.js';
 
 import {
   PER_BRANCH_DB_ENV_KEYS, classifyDbEnvKey, dbInvolvementOf, engineFromRelationalUrls, relationalEnginesFromUrls,
@@ -629,6 +630,8 @@ async function cloneMongoViaDedicatedInstance(opts: {
   const authEnv = user ? ['-e', `RS_MONGO_USER=${user}`, '-e', `RS_MONGO_PW=${pw}`] : [];
   const toolsHelper = (network: string, script: string): string[] => [
     'run', '--rm', '-i', '--pull', 'never',
+    // dump / restore 是 CPU 与 IO 大户，同样挂低权重 slice（Codex PR #1516 P2）。
+    ...workloadCgroupArgv(),
     '--network', `container:${network}`,
     '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
     '-v', `${scratchVol}:/rsclone`,
@@ -683,6 +686,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
     const publishSpec = `${publishHost}::27017`;
     const runIso = await runDockerExec([
       'run', '-d', '--name', isoName,
+      ...workloadCgroupArgv(),
       '--label', 'cds.type=rsdb',
       ...(opts.instanceId ? ['--label', `cds.instance=${opts.instanceId}`] : []),
       '--restart', 'unless-stopped',

@@ -22,8 +22,11 @@ def api(path: str, timeout: int = 90):
         sys.exit("CDS_HOST 未设置")
     if not host.startswith("http"):
         host = "https://" + host
+    # 密钥不进 argv（共享宿主上 /proc/*/cmdline 可读）：用 `-K -` 让 curl 从 stdin 读配置。
+    key = os.environ.get("AI_ACCESS_KEY", "").replace('"', "")
     r = subprocess.run(
-        ["curl", "-sS", "--max-time", str(timeout), "-H", f"X-AI-Access-Key: {os.environ.get('AI_ACCESS_KEY', '')}", host + path],
+        ["curl", "-sS", "--max-time", str(timeout), "-K", "-", host + path],
+        input=f'header = "X-AI-Access-Key: {key}"\n',
         capture_output=True, text=True, check=False,
     )
     if r.returncode != 0:

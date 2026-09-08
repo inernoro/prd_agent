@@ -64,6 +64,7 @@ import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
+import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
 type OnboardingService = NonNullable<Project['onboardingServices']>[number];
@@ -2209,7 +2210,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       send('step', { step: 'run', status: 'running', title: '创建容器 + 装载代码(docker cp)…' });
       // 用 sh -c(不是 sh -lc):login shell 会重置 PATH,导致 golang/rust 等把工具放 ENV PATH 的镜像 "go: not found"。
       const createRes = await shell.exec(
-        `docker create --name ${containerName} --label cds.validate=1 --memory=1536m --cpus=1.5 ${port ? `-e PORT=${port} ` : ''}${q(image)} sh -c ${q(`cd /app && ${command}`)}`,
+        `docker create --name ${containerName} --label cds.validate=1 --memory=1536m --cpus=1.5 ${workloadCgroupFlags().map((f) => `${f} `).join('')}${port ? `-e PORT=${port} ` : ''}${q(image)} sh -c ${q(`cd /app && ${command}`)}`,
         { timeout: 30000 },
       );
       if (createRes.exitCode !== 0) {

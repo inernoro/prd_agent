@@ -6,6 +6,7 @@ import {
   getWorkloadCgroupStatus,
   planWorkloadCgroup,
   resolveWorkloadCgroup,
+  workloadCgroupArgv,
   workloadCgroupFlags,
   workloadCgroupParentFromEnv,
 } from '../../src/services/workload-cgroup.js';
@@ -58,6 +59,7 @@ describe('workload-cgroup 托管容器归属', () => {
     expect(s.enabled).toBe(true);
     expect(getWorkloadCgroupStatus()).toEqual(s);
     expect(workloadCgroupFlags()).toEqual([`--cgroup-parent ${DEFAULT_WORKLOAD_SLICE}`]);
+    expect(workloadCgroupArgv()).toEqual(['--cgroup-parent', DEFAULT_WORKLOAD_SLICE]);
     expect(shell.commands.filter((c) => c.includes('docker info'))).toHaveLength(1);
   });
 
@@ -67,6 +69,7 @@ describe('workload-cgroup 托管容器归属', () => {
     const s = await resolveWorkloadCgroup(shell, {});
     expect(s.enabled).toBe(false);
     expect(workloadCgroupFlags()).toEqual([]);
+    expect(workloadCgroupArgv()).toEqual([]);
   });
 
   it('预览实例 env 下不探测 docker、不追加', async () => {

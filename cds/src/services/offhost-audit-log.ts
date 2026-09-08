@@ -59,6 +59,8 @@ export class OffHostAuditLogSink implements ServerEventLogSink {
   private nextRetryAt = 0;
   private skippedWhileOpen = 0;
   private lastFailureEventAt = 0;
+  /** 半开探路只放一条：到点后排在队里的其余事件仍然跳过，探路成功才整体放行。 */
+  private halfOpenProbeInFlight = false;
 
   constructor(private readonly opts: OffHostAuditLogOptions) {}
 
@@ -152,14 +154,34 @@ export class OffHostAuditLogSink implements ServerEventLogSink {
     this.pending += 1;
     this.chain = this.chain.then(async () => {
       try {
-        await this.upload(record);
-        this.onUploadSuccess();
-      } catch (err) {
-        this.onUploadFailure(err);
+        // 队列里的事件是在熔断打开**之前**入队的，真正轮到它上传时熔断可能已经开了
+        // （事件来得比失败快）：执行时再判一次，否则积压的几千条还是会逐条撞 R2
+        // （Codex PR #1516 P1）。到探路时刻也只放一条半开探路，其余照常跳过。
+        if (!this.claimUploadSlot()) {
+          this.skippedWhileOpen += 1;
+          return;
+        }
+        try {
+          await this.upload(record);
+          this.onUploadSuccess();
+        } catch (err) {
+          this.onUploadFailure(err);
+        } finally {
+          this.halfOpenProbeInFlight = false;
+        }
       } finally {
         this.pending -= 1;
       }
     });
+  }
+
+  /** 熔断关着 → 可上传；开着且到点且没有别的探路在飞 → 认领这一条半开探路；否则跳过。 */
+  private claimUploadSlot(): boolean {
+    if (this.breakerOpenedAt === null) return true;
+    if (this.now() < this.nextRetryAt) return false;
+    if (this.halfOpenProbeInFlight) return false;
+    this.halfOpenProbeInFlight = true;
+    return true;
   }
 
   /** 连续失败次数（成功一次即归零）。健康探针据此判断「离机审计是不是已经哑了」。 */
@@ -175,7 +197,7 @@ export class OffHostAuditLogSink implements ServerEventLogSink {
   async recordImmediate(record: EventInput): Promise<void> {
     // 熔断期间同样只落本地：recordImmediate 的调用方在等这个 promise，
     // 让它去撞一次注定失败的上传只会把请求拖慢。
-    if (this.shouldSkipUpload()) {
+    if (!this.claimUploadSlot()) {
       this.skippedWhileOpen += 1;
       await this.opts.primary?.recordImmediate?.(record);
       return;
@@ -183,8 +205,8 @@ export class OffHostAuditLogSink implements ServerEventLogSink {
     await Promise.all([
       this.opts.primary?.recordImmediate?.(record),
       this.upload(record).then(
-        () => this.onUploadSuccess(),
-        (err) => { this.onUploadFailure(err); throw err; },
+        () => { this.halfOpenProbeInFlight = false; this.onUploadSuccess(); },
+        (err) => { this.halfOpenProbeInFlight = false; this.onUploadFailure(err); throw err; },
       ),
     ]);
   }

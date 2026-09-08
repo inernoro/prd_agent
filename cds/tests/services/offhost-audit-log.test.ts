@@ -105,6 +105,36 @@ describe('离机审计日志', () => {
       expect(sink.breakerState().open).toBe(true);
     });
 
+    it('熔断打开前已排队的事件轮到上传时再判一次，不再逐条撞 R2；到点只放一条半开探路（Codex P1）', async () => {
+      let now = 3_000_000;
+      const local: Array<{ action: string }> = [];
+      const primary: ServerEventLogSink = { record: (row) => { local.push(row as never); } };
+      let puts = 0;
+      // 每次上传都卡 10ms 再失败：事件来得比失败快，队列里会积压。
+      const fetchImpl = async (): Promise<Response> => {
+        puts += 1;
+        await new Promise((r) => setTimeout(r, 10));
+        return new Response('', { status: 500 });
+      };
+      const sink = new OffHostAuditLogSink({
+        primary, config, prefix: 'audit/events',
+        fetchImpl: fetchImpl as typeof fetch,
+        now: () => now, breakerOpenAfter: 3, breakerRetryMs: 60_000, failureEventMinIntervalMs: 0,
+      });
+      for (let i = 0; i < 50; i += 1) sink.record(event(i)); // 同步一次性入队 50 条
+      await sink.flush();
+      // 只有前 3 条真的上传（打开熔断），其余 47 条在轮到自己时被熔断拦下。
+      expect(puts).toBe(3);
+      expect(sink.breakerState()).toMatchObject({ open: true, skippedWhileOpen: 47 });
+
+      // 到探路时刻一次性再入队 20 条：只放 1 条半开探路，其余 19 条跳过。
+      now += 60_001;
+      for (let i = 100; i < 120; i += 1) sink.record(event(i));
+      await sink.flush();
+      expect(puts).toBe(4);
+      expect(sink.breakerState()).toMatchObject({ open: true, skippedWhileOpen: 47 + 19 });
+    });
+
     it('探路成功即关闭熔断并补一条恢复事件（带跳过数）', async () => {
       let now = 2_000_000;
       let healthy = false;

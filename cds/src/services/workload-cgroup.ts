@@ -119,9 +119,14 @@ export function getWorkloadCgroupStatus(): WorkloadCgroupStatus {
   return current;
 }
 
-/** docker run / create 追加的参数；未启用时为空数组，调用方无需分支。 */
+/** docker run / create 追加的参数（拼进 shell 字符串用）；未启用时为空数组，调用方无需分支。 */
 export function workloadCgroupFlags(): string[] {
   return current.enabled && current.parent ? [`--cgroup-parent ${current.parent}`] : [];
+}
+
+/** 同上，argv 形态（spawn / execFile 数组参数用）。 */
+export function workloadCgroupArgv(): string[] {
+  return current.enabled && current.parent ? ['--cgroup-parent', current.parent] : [];
 }
 
 /** 仅供测试：直接钉住决策，或传 null 复位为未探测。 */

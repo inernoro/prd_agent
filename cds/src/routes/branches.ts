@@ -59,6 +59,7 @@ import {
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
 import { getEventLoopLag } from '../services/event-loop-lag.js';
+import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
@@ -8765,6 +8766,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     ];
     const cmd = [
       'docker run -d',
+      // 资源代理也是托管工作负载，同样挂低权重 slice（Codex PR #1516 P2）。
+      ...workloadCgroupFlags(),
       `--name ${routeShellQuote(proxyContainerName)}`,
       `--network ${routeShellQuote(network)}`,
       // 纵深防御：即使上层路由门禁将来被误删，这个代理也只能绑定回环，
