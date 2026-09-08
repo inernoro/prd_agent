@@ -5237,6 +5237,26 @@ const BranchCard = memo(function BranchCard({
   const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
   const quickStartAvailable = canQuickStartBranch(branch);
   const busySince = isInterim ? branchBusySince(branch, action) : undefined;
+  /* 方案 B（2026-09-08 用户拍板）：构建期间整个页脚背景就是进度条，文字压在上面；
+     排队 / 无历史样本时没有进度可画，走斜纹「等待」而不编百分比。此前的做法是把
+     「排队」chip + 「极速版进度」pill 塞进页脚中间列，两者都 shrink-0，把左列压到
+     零宽后 sha chip 溢出叠在「前面 N 个」上（用户截图）。现在页脚只剩两列，
+     进度不再占横向空间。这里算一次，填充层与文字层共用。 */
+  const deployProgress = isInterim ? (() => {
+    const estimate = pickDeployEstimate(branch);
+    const elapsedMs = effectiveDeployElapsedMs(branch, busySince, now);
+    const queuedNow = Boolean(branch.buildQueue);
+    const ratio = estimate && estimate.medianMs > 0 ? Math.min(1, elapsedMs / estimate.medianMs) : 0;
+    const overdue = estimate && !queuedNow ? elapsedMs > estimate.medianMs : false;
+    const elapsedText = formatDurationMs(elapsedMs);
+    const queueSuffix = (branch.lastDeployQueueWaitMs || 0) > 0 || queuedNow ? '（另有排队等待，不计入耗时）' : '';
+    const title = queuedNow && branch.buildQueue
+      ? `构建并发已满（${branch.buildQueue.active}/${branch.buildQueue.max} 进行中），本分支排队等待构建槽位；已等待 ${formatElapsedFrom(branch.buildQueue.queuedAt, now)}。排队时间不计入构建耗时对比。`
+      : estimate
+        ? `${statusLabel(branch.status)}；当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
+        : `${statusLabel(branch.status)}；当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}；暂无历史样本，完成后将累积预计耗时`;
+    return { estimate, elapsedText, queuedNow, ratio, overdue, indeterminate: queuedNow || !estimate, title };
+  })() : null;
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
   const runtime = branchRuntimeBadge(branch);
@@ -6239,7 +6259,7 @@ const BranchCard = memo(function BranchCard({
 
       {coolEditOpen ? <CoolPolicyEditorModal onClose={() => setCoolEditOpen(false)} /> : null}
       <footer
-        className="mt-auto grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3"
+        className={`relative mt-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] px-5 py-3 ${deployProgress ? 'bg-[hsl(var(--surface-sunken))]' : 'bg-[hsl(var(--surface-sunken))]/42'}`}
         onClick={(event) => {
           const target = event.target as HTMLElement;
           if (target.closest('button,a,input,textarea,select,[role="menuitem"]')) {
@@ -6247,6 +6267,16 @@ const BranchCard = memo(function BranchCard({
           }
         }}
       >
+        {/* 进度填充层（方案 B）：宽度 = 净耗时 / 近 N 次中位；排队或无样本时铺满斜纹表示
+            「在等」。data-progress 是给工具读的机读值（视觉归视觉、判据归判据）。 */}
+        {deployProgress ? (
+          <span
+            className={`cds-footer-progress-fill${deployProgress.indeterminate ? ' cds-footer-progress-fill--indeterminate' : ''}${deployProgress.overdue ? ' cds-footer-progress-fill--overdue' : ''}`}
+            style={deployProgress.indeterminate ? undefined : { width: `${Math.round(deployProgress.ratio * 100)}%` }}
+            data-progress={deployProgress.indeterminate ? 'indeterminate' : String(Math.round(deployProgress.ratio * 100))}
+            aria-hidden
+          />
+        ) : null}
         <div className="relative min-w-0 pr-2 text-muted-foreground">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
@@ -6288,7 +6318,29 @@ const BranchCard = memo(function BranchCard({
               ) : null}
               {/* AI 活跃时这一格让给「AI 在做什么」：它有时效性，commit subject
                   是静态信息且右边的提交历史下拉一点就能看到。AI 一释放就还回去。 */}
-              {isAiActive ? (
+              {deployProgress ? (
+                <span
+                  className="branch-build-elapsed flex min-w-0 flex-1 items-center gap-2 text-[13px]"
+                  data-since={busySince || ''}
+                  title={deployProgress.title}
+                >
+                  <span className={`h-1.5 w-1.5 shrink-0 animate-pulse rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
+                  {deployProgress.queuedNow ? (
+                    <span className="min-w-0 truncate">
+                      <span className="font-medium text-foreground">排队中</span>
+                      <span className="text-muted-foreground"> · 前面 {branch.buildQueue?.ahead ?? 0} 个 · 已等 {formatElapsedFrom(branch.buildQueue?.queuedAt, now)}</span>
+                    </span>
+                  ) : (
+                    <span className="flex min-w-0 items-baseline gap-2 truncate">
+                      <span className="font-medium text-foreground">{deployModeLabel(branch)}</span>
+                      <span className="branch-deploy-timer-value font-mono text-foreground">{deployProgress.elapsedText}</span>
+                      {deployProgress.estimate ? (
+                        <span className={`font-mono ${deployProgress.overdue ? 'text-warn' : 'text-muted-foreground'}`}>/ {formatDurationMs(deployProgress.estimate.medianMs)}</span>
+                      ) : null}
+                    </span>
+                  )}
+                </span>
+              ) : isAiActive ? (
                 <span
                   className="cds-ai-activity flex min-w-0 flex-1 items-center gap-2"
                   title={`${aiState.label} · ${aiRail.detail}${aiState.relative ? ` · 最近 ${aiState.relative}` : ''}${footerSubject ? `\ncommit: ${footerSubject}` : ''}`}
@@ -6332,64 +6384,7 @@ const BranchCard = memo(function BranchCard({
           </div>
           {commitHistoryPanel}
         </div>
-        {/* 构建进度簇（2026-07-26 用户拍板挪到右下角）：构建中状态 + 计时、排队、
-            模式/净耗时/预计 + 细进度条。顶部 chips 行构建期间保持端口/容器信息。 */}
-        {isInterim ? (
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-            {/* 2026-07-26 用户纠偏：独立「构建中 + 计时」chip 冗余（耗时在进度 pill
-                里已有）且会挤压遮挡左侧 commit sha——删除，状态由 pill 内脉冲色点承载 */}
-            {branch.buildQueue ? (
-              <span
-                className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
-                title={`构建并发已满（${branch.buildQueue.active}/${branch.buildQueue.max} 进行中），本分支排队等待构建槽位；已等待 ${formatElapsedFrom(branch.buildQueue.queuedAt, now)}。排队时间不计入构建耗时对比。`}
-              >
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-info" aria-hidden />
-                排队 · 前面 {branch.buildQueue.ahead} 个
-              </span>
-            ) : null}
-            {(() => {
-              const estimate = pickDeployEstimate(branch);
-              const elapsedMs = effectiveDeployElapsedMs(branch, busySince, now);
-              const queuedNow = Boolean(branch.buildQueue);
-              const ratio = estimate && estimate.medianMs > 0
-                ? Math.min(1, elapsedMs / estimate.medianMs)
-                : 0;
-              const overdue = estimate && !queuedNow ? elapsedMs > estimate.medianMs : false;
-              const elapsedText = formatDurationMs(elapsedMs);
-              const queueSuffix = (branch.lastDeployQueueWaitMs || 0) > 0 || queuedNow
-                ? `（另有排队等待，不计入耗时）`
-                : '';
-              return (
-                <span
-                  className="branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
-                  data-since={busySince || ''}
-                  title={estimate
-                    ? `${statusLabel(branch.status)}；当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
-                    : `${statusLabel(branch.status)}；当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}；暂无历史样本，完成后将累积预计耗时`}
-                >
-                  <span className={`h-1.5 w-1.5 shrink-0 animate-pulse rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
-                  <span className="font-medium text-foreground/85">{deployModeLabel(branch)}</span>
-                  <span className="branch-deploy-timer-value font-mono text-foreground/85">{elapsedText}</span>
-                  {estimate ? (
-                    // 窄卡（<640px）只留净耗时，预计值 + 进度条收进 sm: 以上——防 footer 换行拥挤
-                    <>
-                      <span className={`hidden font-mono sm:inline ${overdue ? 'text-warn' : 'text-foreground/70'}`}>/ {formatDurationMs(estimate.medianMs)}</span>
-                      <span
-                        className="hidden h-1 w-10 overflow-hidden rounded-full bg-[hsl(var(--hairline))] sm:block"
-                        aria-hidden
-                      >
-                        <span
-                          className={`block h-full rounded-full transition-[width] duration-700 ease-out ${overdue ? 'bg-warn/70' : 'bg-primary/60'}`}
-                          style={{ width: `${Math.round(ratio * 100)}%` }}
-                        />
-                      </span>
-                    </>
-                  ) : null}
-                </span>
-              );
-            })()}
-          </div>
-        ) : null}
+        {/* 构建进度簇不再占页脚中间列（2026-09-08 方案 B）：进度是背景填充 + 提交说明槽位里的一行字。 */}
         {/*
           重设计(2026-07-22 用户主诉求):
             - running 态:预览 + 发布合并成一个 split button。主按钮预览,
@@ -6398,7 +6393,7 @@ const BranchCard = memo(function BranchCard({
             - 真正已停止的分支:右下角直接显示「一键启动」,复用轻量 restart,
               不拉代码、不重建镜像。首次部署和异常仍需打开详情确认上下文。
         */}
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="relative flex shrink-0 items-center gap-2">
           {isRunning ? (
             <PreviewActionSplitButton
               disabled={busy}

@@ -531,10 +531,11 @@ function RailNav({
         </Link>
       </div>
       {/*
-       * 工具组紧跟导航，不跟着 flex-1 一起被顶到栏底。
-       * 原来五项全在底部，中间空出约 190px：那不是留白，是把一根栏读成了两根。
-       * 现在只有「我的东西」（主题 / 账号）留在栏底，空隙下移且缩短。
+       * 2026-09-08 用户拍板（方案 S1）：工具组（Agent / 缺陷 / 设置）沉回栏底、紧贴账号。
+       * 它们是动作（弹窗 / 抽屉），不是页面；混在导航下面会被当成页面点。
+       * 栏中间那段空白不是断裂，是「页面」与「动作」之间的边界。
        */}
+      <div className="flex-1" />
       <div className="cds-rail-tools">
         <button
           type="button"
@@ -581,7 +582,6 @@ function RailNav({
           <span className="cds-rail-short">设置</span>
         </Link>
       </div>
-      <div className="flex-1" />
       <div className="cds-rail-footer">
         <RailThemeToggle />
         <UserAccountMenu

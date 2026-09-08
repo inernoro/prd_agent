@@ -692,6 +692,55 @@
     animation: cds-branch-busy-rim 1.8s ease-in-out infinite;
   }
 
+  /* 方案 B（2026-09-08 用户拍板）：构建期间分支卡页脚的背景就是进度条。
+     确定进度：淡蓝填充从左往右推进，右缘一条亮线；超过历史中位转 warn。
+     不确定（排队 / 无历史样本）：铺满缓慢流动的斜纹，只表示「在等」，不编百分比。
+     颜色全走 token，双主题各自成立。 */
+  .cds-footer-progress-fill {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: linear-gradient(90deg, hsl(var(--info) / 0.18), hsl(var(--info) / 0.1));
+    border-right: 1px solid hsl(var(--info) / 0.55);
+    box-shadow: 0 0 18px -4px hsl(var(--info) / 0.7);
+    transition: width 700ms ease-out;
+  }
+
+  .cds-footer-progress-fill--overdue {
+    background: linear-gradient(90deg, hsl(var(--warn) / 0.18), hsl(var(--warn) / 0.1));
+    border-right-color: hsl(var(--warn) / 0.55);
+    box-shadow: 0 0 18px -4px hsl(var(--warn) / 0.7);
+  }
+
+  .cds-footer-progress-fill--indeterminate {
+    width: 100%;
+    border-right: 0;
+    box-shadow: none;
+    background: repeating-linear-gradient(
+      -45deg,
+      hsl(var(--info) / 0.1) 0 10px,
+      hsl(var(--info) / 0.04) 10px 20px
+    );
+    background-size: 28.28px 100%;
+    animation: cds-footer-progress-sweep 1.2s linear infinite;
+  }
+
+  @keyframes cds-footer-progress-sweep {
+    to {
+      background-position: 28.28px 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cds-footer-progress-fill {
+      transition: none;
+    }
+    .cds-footer-progress-fill--indeterminate {
+      animation: none;
+    }
+  }
+
   [data-theme='light'] .cds-branch-card-busy {
     border-color: rgb(2 132 199 / 0.42) !important;
     box-shadow:
@@ -2934,6 +2983,21 @@
 
   /* 图标：全栏一档 20px + 描边 1.7。lucide 把 stroke-width 写成表现属性，
      CSS 声明压得过它，所以不用改任何组件调用点。 */
+  /* 2026-09-08 用户拍板（方案 S1）：项距 2px → 6px，五个导航项从「一根柱子」变成五个块；
+     工具组沉到栏底贴账号，上方不再画分割线——栏中间的空白就是页面与动作的边界。 */
+  .cds-rail .cds-rail-section,
+  .cds-rail .cds-rail-tools,
+  .cds-rail .cds-rail-footer {
+    gap: 6px;
+  }
+
+  .cds-rail .cds-rail-tools {
+    margin-top: 0;
+    padding-top: 0;
+    padding-bottom: 12px;
+    border-top: 0;
+  }
+
   .cds-rail .cds-rail-item svg {
     width: 20px;
     height: 20px;

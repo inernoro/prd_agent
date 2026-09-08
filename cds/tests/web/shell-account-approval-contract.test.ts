@@ -69,13 +69,13 @@ const serverSource = fs.readFileSync(
 
 describe('CDS 壳层用户入口与授权提醒契约', () => {
   /*
-   * 2026-09-02 契约变更（用户选定方向 A）：栏底不再是「五项一起被顶下去」。
-   * 工具组（Agent / 缺陷 / 设置）跟着导航贴顶，flex-1 之后的 footer 只留主题与账号——
-   * 原来中间空出约 190px，一根栏被读成两根。
-   * 仍然钉住的是：撑开的 spacer 存在、footer 在它之后、账号在 footer 里且是最后一项。
+   * 2026-09-08 契约再变（用户拍板方案 S1）：工具组（Agent / 缺陷 / 设置）沉回栏底、
+   * 紧贴账号——它们是动作不是页面，混在导航下面会被当成页面点；栏中间的空白是
+   * 「页面」与「动作」的边界，不是断裂（推翻 2026-09-02 的贴顶方案）。
+   * 钉住的是：spacer 存在、工具组在 spacer 之后、footer 在工具组之后、账号是最后一项。
    * 设置属于工具组，它的位置由「常驻 Agent 接入入口」那条用例钉。
    */
-  it('主题与账号固定在侧栏底部，工具组不跟着被顶下去，退出收进用户菜单', () => {
+  it('主题与账号固定在侧栏底部，工具组沉底贴着账号，退出收进用户菜单', () => {
     const spacerIndex = shellSource.indexOf('<div className="flex-1" />');
     const toolsIndex = shellSource.indexOf('<div className="cds-rail-tools">');
     const footerIndex = shellSource.indexOf('<div className="cds-rail-footer">');
@@ -83,10 +83,10 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     const accountIndex = shellSource.indexOf('<UserAccountMenu', footerIndex);
 
     expect(spacerIndex).toBeGreaterThan(-1);
-    // 工具组在 spacer 之前——这就是「不跟着被顶到栏底」的机读判据。
+    // 工具组在 spacer 之后、footer 之前——这就是「沉底贴账号」的机读判据。
     expect(toolsIndex, '工具组不见了').toBeGreaterThan(-1);
-    expect(toolsIndex, '工具组跑到 spacer 后面了，中间那段断裂会回来').toBeLessThan(spacerIndex);
-    expect(footerIndex).toBeGreaterThan(spacerIndex);
+    expect(toolsIndex, '工具组跑回导航下面了，动作会被当成页面点').toBeGreaterThan(spacerIndex);
+    expect(footerIndex, 'footer 必须在工具组之后，账号才是最后一项').toBeGreaterThan(toolsIndex);
     expect(themeIndex).toBeGreaterThan(footerIndex);
     expect(accountIndex).toBeGreaterThan(themeIndex);
     expect(shellSource).toContain('className="cds-rail-item cds-account-trigger"');
@@ -97,7 +97,7 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
   });
 
   it('在侧栏常驻 Agent 接入入口，并由全局壳层提供上下文弹窗', () => {
-    // 2026-09-02：工具组（Agent / 缺陷 / 设置）跟着导航贴顶，栏底只留主题与账号。
+    // 2026-09-08：工具组（Agent / 缺陷 / 设置）沉底贴账号。
     // 顺序契约不变——Agent → 缺陷 → 设置 → 账号，账号仍在最后。
     const toolsIndex = shellSource.indexOf('<div className="cds-rail-tools">');
     const agentIndex = shellSource.indexOf('aria-label="接入 Agent"', toolsIndex);
