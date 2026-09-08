@@ -2488,11 +2488,13 @@ const containerService = new ContainerService(shell, config, {
 
 // 2026-09-08 宿主过载复盘：托管容器挂低权重 slice。探测一次 docker cgroup driver，
 // 决定 docker run 要不要带 --cgroup-parent（systemd driver 才有权重效果）。
-// executor / 预览实例不接管宿主 cgroup。探测失败安全退化为不追加，只打日志。
-if (config.mode !== 'executor') {
-  const cg = await resolveWorkloadCgroup(shell);
-  console.log(`  [workload-cgroup] ${cg.enabled ? `启用 --cgroup-parent ${cg.parent}` : '未启用'}（driver=${cg.driver}，权重${cg.weightManaged ? '由 systemd 接管' : '未接管'}）：${cg.reason}`);
-}
+// 探测失败安全退化为不追加，只打日志。
+//
+// executor 节点同样要跑：它用的是同一个 ContainerService 在**自己那台宿主**上构建和
+// 起容器，那些负载照样会和 executor API 抢 CPU（Codex 八轮 P2）。跳过的只有预览实例
+// ——它跑在容器里，不接管宿主 cgroup，这个判断在 resolveWorkloadCgroup 内部做。
+const cg = await resolveWorkloadCgroup(shell);
+console.log(`  [workload-cgroup] ${cg.enabled ? `启用 --cgroup-parent ${cg.parent}` : '未启用'}（driver=${cg.driver}，权重${cg.weightManaged ? '由 systemd 接管' : '未接管'}）：${cg.reason}`);
 
 // 2026-06-23：项目级资源占用采样（CPU/内存/构建频次）。每 N 秒跑一次
 // docker stats 并按项目汇总，供「资源占用」面板揪出 CPU 大户 / 反复构建大户。

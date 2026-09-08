@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import {
@@ -16,6 +19,29 @@ import {
  * 契约：不给容器设上限，只在争抢时让 CDS 控制面先拿——所以这里只断言
  * 「挂到哪个 slice、什么情况下不挂」，绝不出现 --cpus / --memory。
  */
+/**
+ * 接线守卫：这条探测在 index.ts 的启动路径上，没有任何用例会因为它被删掉或被条件
+ * 包住而变红（形状 2）。八轮 review 抓到的正是这种静默退化——探测原先被
+ * `config.mode !== 'executor'` 包着，于是 executor 节点在自己那台宿主上跑的构建
+ * 与容器全都拿不到低权重分组，而它们照样和 executor API 抢 CPU。
+ * 跳过预览实例的判断在 resolveWorkloadCgroup 内部做，调用点不该再加模式条件。
+ */
+describe('workload-cgroup 启动接线', () => {
+  const indexSource = fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/index.ts'),
+    'utf8',
+  );
+
+  it('index.ts 无条件调用 resolveWorkloadCgroup，不按运行模式跳过', () => {
+    const at = indexSource.indexOf('await resolveWorkloadCgroup(');
+    expect(at, '启动路径上找不到 resolveWorkloadCgroup 调用').toBeGreaterThan(-1);
+    // 调用点上方这一段里不该出现按模式跳过的分支
+    const preceding = indexSource.slice(Math.max(0, at - 600), at);
+    expect(preceding).not.toMatch(/mode\s*!==\s*'executor'/);
+    expect(preceding).not.toMatch(/mode\s*===\s*'master'/);
+  });
+});
+
 describe('workload-cgroup 托管容器归属', () => {
   afterEach(() => {
     __setWorkloadCgroupForTest(null);

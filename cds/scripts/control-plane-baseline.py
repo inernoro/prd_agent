@@ -116,10 +116,15 @@ def main() -> None:
     age_min = None if not last else round((now.timestamp() * 1000 - last) / 60000)
     rows.append(("探活监控上一轮距今", f"{age_min} 分钟" if age_min is not None else "无"))
 
-    # master 层最近 N 小时的慢端点（分页拉，最多 4 页 x 5000）
+    # master 层最近 N 小时的慢端点：一直翻到时间边界（拿到短页即到底），不再固定 4 页。
+    # 固定页数会在高流量窗口静默只分析最新子集，而那恰恰是要对比的过载时段
+    # ——webhook 计数、部署/删除/列表分位数会一起偏（Codex 八轮 P2）。
+    # 仍留一个页数上限防跑飞；真撞上就把由 logs 派生的指标标成下界。
+    MAX_LOG_PAGES = 40
     logs = []
     until = None
-    for _ in range(4):
+    logs_truncated = False
+    for page_index in range(MAX_LOG_PAGES):
         q = f"/api/http-logs?since={since}&layer=master&limit=5000&sort=recent" + (f"&until={until}" if until else "")
         page = api(q).get("logs", [])
         if not page:
@@ -128,6 +133,10 @@ def main() -> None:
         until = page[-1]["ts"]
         if len(page) < 5000:
             break
+        if page_index == MAX_LOG_PAGES - 1:
+            logs_truncated = True
+    log_mark = "≥" if logs_truncated else ""
+    log_note = f"（已翻 {MAX_LOG_PAGES} 页仍未到窗口边界，实际更多）" if logs_truncated else ""
     seen = {}
     for l in logs:
         seen[l["_id"]] = l
@@ -138,13 +147,13 @@ def main() -> None:
     # 真实的改前改后：改前 = 本行；改后 = 本行 + 被压掉那行。
     wh = [l for l in logs if l["path"].startswith("/api/github/webhook")]
     wh_ms = sum(l["durationMs"] for l in wh)
-    rows.append((f"webhook 投递数（{args.hours}h 采样，仅记录在案的）/ 占用 master 时间", f"{len(wh)} / {round(wh_ms / 1000)} s"))
+    rows.append((f"webhook 投递数（{args.hours}h 采样，仅记录在案的）/ 占用 master 时间", f"{log_mark}{len(wh)} / {log_mark}{round(wh_ms / 1000)} s{log_note}"))
     deploys = sorted(l["durationMs"] for l in logs if l["method"] == "POST" and l["path"].rstrip("/").endswith("/deploy"))
-    rows.append(("部署请求 p50 / p95 / max", f"{pct(deploys, .5) // 1000} / {pct(deploys, .95) // 1000} / {(deploys[-1] // 1000) if deploys else 0} s（n={len(deploys)}）"))
+    rows.append(("部署请求 p50 / p95 / max", f"{pct(deploys, .5) // 1000} / {pct(deploys, .95) // 1000} / {(deploys[-1] // 1000) if deploys else 0} s（n={log_mark}{len(deploys)}{log_note}）"))
     deletes = sorted(l["durationMs"] for l in logs if l["method"] == "DELETE" and "/api/branches/" in l["path"])
-    rows.append(("删分支请求 p50 / max", f"{pct(deletes, .5) // 1000} / {(deletes[-1] // 1000) if deletes else 0} s（n={len(deletes)}）"))
+    rows.append(("删分支请求 p50 / max", f"{pct(deletes, .5) // 1000} / {(deletes[-1] // 1000) if deletes else 0} s（n={log_mark}{len(deletes)}{log_note}）"))
     branches_get = sorted(l["durationMs"] for l in logs if l["method"] == "GET" and l["path"].split("?")[0] in ("/api/branches", "/_cds/api/branches") and l["status"] == 200)
-    rows.append(("分支列表接口 p50 / p95（页面首屏数据）", f"{pct(branches_get, .5)} / {pct(branches_get, .95)} ms（n={len(branches_get)}）"))
+    rows.append(("分支列表接口 p50 / p95（页面首屏数据）", f"{pct(branches_get, .5)} / {pct(branches_get, .95)} ms（n={log_mark}{len(branches_get)}{log_note}）"))
 
     # 同 runs 那条：/api/http-logs 单次最多给 5000 条。重连风暴恰恰是最容易撑满的时候，
     # 不声张地少算会让改前改后对比虚高，所以拿满就把数字标成下界（Codex 七轮 P2）。
