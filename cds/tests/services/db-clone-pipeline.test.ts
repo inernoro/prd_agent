@@ -172,7 +172,7 @@ describe('分支独立库时间点克隆初始化', () => {
     state.addBranch({ id: 'p-feat-x', projectId: 'p', branch: 'feat/x', worktreePath: path.join(tmpDir, 'wt'), status: 'running', createdAt: T, services: {} } as unknown as BranchEntry);
     state.save();
   });
-  afterEach(() => { flushAllJsonStateStores(); fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  afterEach(async () => { await flushAllJsonStateStores(); fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
   it('实例记录里的 ${CDS_MYSQL_ROOT_PASSWORD} 按项目环境变量解析后才进三元组；解不出来的保留模板原样', () => {
     state.updateInfraService('mysql', { env: { MYSQL_ROOT_PASSWORD: '${CDS_MYSQL_ROOT_PASSWORD}', MYSQL_DATABASE: '${NOPE}' } }, 'p');
