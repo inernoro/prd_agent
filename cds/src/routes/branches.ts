@@ -17235,8 +17235,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     try {
+      // #1448: the command string must reach the container's `sh` untouched.
+      // JSON.stringify produced a double-quoted shell word, so the CDS host
+      // shell expanded `$VAR` / `$(...)` BEFORE docker exec — `printenv`-style
+      // commands returned the cds-master process environment (GitHub App
+      // private key included), and `$(cmd)` ran as the CDS main process.
+      // Single-quote it; the container shell does the expansion.
       const result = await shell.exec(
-        `docker exec ${svc.containerName} sh -c ${JSON.stringify(command)}`,
+        `docker exec ${svc.containerName} sh -c ${shellQuote(command)}`,
         { timeout: 30_000 },
       );
       // F15 (HIGH severity, 2026-05-02): docker exec output is the #1 leak

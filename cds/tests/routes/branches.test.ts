@@ -1656,6 +1656,69 @@ describe('Branch Routes', () => {
       }
     });
 
+    it('container-exec single-quotes the command so the CDS host shell never expands $VAR / $(...) (#1448)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      stateService.getBranch('b1')!.services['demo-extra'] = {
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+      };
+      stateService.save();
+
+      const command = `echo "$(printenv)" && echo $CDS_JWT_SECRET && echo 'it'"'"'s'`;
+      const res = await request(server, 'POST', '/api/branches/b1/container-exec', { profileId: 'demo-extra', command });
+      expect(res.status).toBe(200);
+
+      const sent = mock.commands.find((c) => c.includes('docker exec cds-b1-demo-extra'));
+      expect(sent).toBeDefined();
+      // Single-quoted word: `$` is inert on the host, and embedded single quotes are re-escaped.
+      expect(sent).toBe(`docker exec cds-b1-demo-extra sh -c '${command.replace(/'/g, `'\\''`)}'`);
+      expect(sent).not.toContain(`sh -c "`);
+    });
+
+    it('container-exec masks a multi-line PEM private key dumped by printenv (#1448)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      stateService.getBranch('b1')!.services['demo-extra'] = {
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+      };
+      stateService.save();
+
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker exec cds-b1-demo-extra')) {
+          return {
+            stdout: [
+              'HOME=/root',
+              'APP_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----',
+              'MIIEpAIBAAKCAQEA0Z3VS5JJcds',
+              'wJ6ZbN3f1YkYqVhZ2u9xL0vTfq',
+              '-----END RSA PRIVATE KEY-----',
+              'NODE_ENV=production',
+            ].join('\n'),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return originalExec(command, options);
+      };
+      try {
+        const res = await request(server, 'POST', '/api/branches/b1/container-exec', { profileId: 'demo-extra', command: 'printenv' });
+        expect(res.status).toBe(200);
+        const stdout = (res.body as any).stdout as string;
+        expect(stdout).not.toContain('MIIEpAIBAAKCAQEA0Z3VS5JJcds');
+        expect(stdout).not.toContain('wJ6ZbN3f1YkYqVhZ2u9xL0vTfq');
+        expect(stdout).toContain('APP_PRIVATE_KEY=***[masked]***');
+        expect(stdout).toContain('HOME=/root');
+        expect(stdout).toContain('NODE_ENV=production');
+      } finally {
+        mock.exec = originalExec;
+      }
+    });
+
     it('PUT /profile-overrides masks extra-profile secret env in the save response (Codex P1)', async () => {
       seedBranch('b1');
       await request(server, 'PUT', '/api/branches/b1/extra-services', {
