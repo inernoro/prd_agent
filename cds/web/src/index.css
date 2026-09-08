@@ -443,21 +443,18 @@
   }
 
   /* 分支卡网格的列数契约（2026-09-08 用户拍板「一排五个」）：
-     列宽下限是布局 token（rem，跟着界面尺度走），列数由它推导；
-     1600px 及以上封顶五列——再宽也不多排，卡片随之变宽，而不是变成七八列的碎片。
+     列宽下限是布局 token（rem，跟着界面尺度走），列数由它推导，封顶五列——
+     再宽也不多排，卡片随之变宽，而不是变成七八列的碎片。
+     封顶不走媒体查询（断点读不到根字号，三档尺度下会错位），而是把「五等分宽度」
+     也算进列宽下限：min = max(token, (100% - 4 gap) / 5)，auto-fill 自然最多五列。
      不用 zoom 凑五列：Chromium 实测子树 zoom 会让 Radix 菜单飘到别的卡上。 */
   .cds-branch-card-grid {
     --cds-branch-card-min: 20.5rem;
+    --cds-branch-card-gap: 1rem;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cds-branch-card-min)), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, max(var(--cds-branch-card-min), calc((100% - 4 * var(--cds-branch-card-gap)) / 5))), 1fr));
     align-items: start;
-    gap: 1rem;
-  }
-
-  @media (min-width: 1600px) {
-    .cds-branch-card-grid {
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-    }
+    gap: var(--cds-branch-card-gap);
   }
 
   /* 2026-07-09 性能：离屏卡片跳过 layout/paint（大列表不引虚拟化库的轻量替代，
@@ -586,7 +583,7 @@
    * overlap, and settings pages whose long left nav consumes the whole first
    * viewport.
    */
-  @media (max-width: 765px) {
+  @media (max-width: 900px) {
     .cds-settings-nav {
       position: sticky;
       top: 0;
@@ -2684,7 +2681,7 @@
     }
   }
 
-  @media (max-width: 544px) {
+  @media (max-width: 640px) {
     .cds-agent-world-dialog {
       width: calc(100vw - 1.25rem) !important;
       max-width: calc(100vw - 1.25rem) !important;
@@ -3164,7 +3161,7 @@
     display: none;
   }
 
-  @media (max-width: 652px) {
+  @media (max-width: 767px) {
     /* 手机端:不再保留 64px 常驻图标栏(那是"压缩 PC"观感的根源)。
        工作区吃满整屏宽,导航收进 TopBar 汉堡触发的 slide-in 抽屉。 */
     .cds-app-shell {
@@ -3289,7 +3286,7 @@
    * 2026-06-06 用户反馈:之前是"把一排 PC 工具栏按钮压进窄屏",观感是压缩的电脑,
    * 不是手机设计。本次改成原生移动形态。
    */
-  @media (max-width: 652px) {
+  @media (max-width: 767px) {
     .cds-topbar {
       gap: 0.5rem;
       padding-left: 0.5rem;
@@ -3440,13 +3437,13 @@
     scrollbar-gutter: stable;
   }
 
-  @media (min-width: 1306px) {
+  @media (min-width: 1536px) {
     .cds-main {
       --cds-main-px: 3rem;
     }
   }
 
-  @media (max-width: 652px) {
+  @media (max-width: 767px) {
     .cds-main {
       --cds-main-px: 1rem;
       --cds-main-pt: 1rem;
@@ -3641,7 +3638,7 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  @media (min-width: 766px) {
+  @media (min-width: 901px) {
     .cds-settings-layout {
       grid-template-columns: 15.25rem minmax(0, 1fr);
     }
@@ -3668,7 +3665,7 @@
 
   /* 窄屏保持既有的横向 tab 条兜底（mobile-layout-fallback），
      所以 rail 的竖排样式整条收在 min-width: 901px 里。 */
-  @media (max-width: 765px) {
+  @media (max-width: 900px) {
     .cds-settings-rail-head {
       display: none;
     }
@@ -3704,7 +3701,7 @@
    * 已经用 `padding: 1rem !important` 给了 16px 边距，这里再加 24px 就变成每侧
    * 40px——320px 的屏只剩 240px 装表单。横向留给外层，这里只保留纵向节奏。
    */
-  @media (max-width: 765px) {
+  @media (max-width: 900px) {
     .cds-settings-section-body {
       padding: 1rem 0 2rem;
     }
@@ -3732,7 +3729,7 @@
    * 中间空出 384px 的洞——「把富余变成信息」反而变成了一条更显眼的留白带。
    * 真机量出来才看见（设计稿按 1440 画，差额小到看不出）。
    */
-  @media (min-width: 1088px) {
+  @media (min-width: 1280px) {
     .cds-settings-columns:has(> .cds-settings-aside-col) {
       grid-template-columns: minmax(0, var(--settings-form-max, 38.75rem)) minmax(17.5rem, 22.5rem);
       justify-content: start;
@@ -3741,7 +3738,7 @@
   }
 
   /* 超宽屏把可读上限抬一档，剩余空间用在字段上而不是继续摊成留白。 */
-  @media (min-width: 1360px) {
+  @media (min-width: 1600px) {
     .cds-settings-columns:has(> .cds-settings-aside-col) {
       --settings-form-max: 47.5rem;
     }
@@ -3764,7 +3761,7 @@
      instead of getting hard-cut mid-icon; `safe center` keeps it centred when
      it fits and falls back to scrollable (not clipped) for the rare 7-stack
      project. The hover-magnify dock is desktop-only, so static sizing is fine. */
-  @media (max-width: 544px) {
+  @media (max-width: 640px) {
     .cds-project-card {
       --project-node-size: 2.6rem;
       --project-node-gap: 0.55rem;
@@ -4115,7 +4112,7 @@
     margin: 0 auto;
   }
 
-  @media (min-width: 870px) {
+  @media (min-width: 1024px) {
     .cds-auth-stage {
       display: grid;
       grid-template-columns: minmax(0, 1fr) 25rem;
@@ -4292,7 +4289,7 @@
     color: hsl(var(--muted-foreground));
   }
 
-  @media (min-width: 870px) {
+  @media (min-width: 1024px) {
     .cds-auth-line-m {
       display: none;
     }
@@ -4315,7 +4312,7 @@
     display: none;
   }
 
-  @media (min-width: 870px) {
+  @media (min-width: 1024px) {
     .cds-auth-line {
       display: block;
       position: absolute;
@@ -4786,7 +4783,7 @@
     color: hsl(var(--muted-foreground) / 0.8);
   }
 
-  @media (min-width: 870px) {
+  @media (min-width: 1024px) {
     .cds-auth-footer {
       padding: 1.25rem 4rem 1.75rem;
     }
@@ -4849,7 +4846,7 @@
     flex: none;
   }
 
-  @media (max-width: 544px) {
+  @media (max-width: 640px) {
     .cds-auth-footer-tag {
       display: none;
     }
@@ -4863,7 +4860,7 @@
   }
 
   /* 手机端:卡片让出边框感,内边距收紧,视觉重心交给表单本身。 */
-  @media (max-width: 407px) {
+  @media (max-width: 479px) {
     .cds-auth-body {
       padding: 1.5rem 1rem;
       align-items: flex-start;
@@ -5359,7 +5356,7 @@
   }
 }
 
-@media (max-width: 544px) {
+@media (max-width: 640px) {
   .cds-agent-world-stage {
     min-height: 19.375rem;
     overflow-x: auto;
@@ -5740,7 +5737,7 @@
   font-size: inherit;
 }
 
-@media (min-width: 545px) and (max-height: 646px) {
+@media (min-width: 641px) and (max-height: 760px) {
   .cds-agent-world-canvas,
   .cds-agent-world-map-surface,
   .cds-agent-world-svg,
@@ -5749,7 +5746,7 @@
   }
 }
 
-@media (max-width: 544px) {
+@media (max-width: 640px) {
   .cds-agent-world-stage {
     min-height: 0;
     overflow: hidden;
@@ -6097,7 +6094,7 @@
   opacity: 1;
 }
 
-@media (max-width: 544px) {
+@media (max-width: 640px) {
   .cds-agent-mission-list {
     padding: 0.65rem;
   }
@@ -6177,7 +6174,7 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
   display: none !important;
 }
 
-@media (max-width: 544px) {
+@media (max-width: 640px) {
   [role='dialog']:has([data-agent-starter='true']) {
     inset: 0 !important;
     width: 100vw !important;

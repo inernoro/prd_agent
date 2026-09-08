@@ -84,8 +84,8 @@ describe('Workspace 宽度秩序', () => {
    */
   it('横向留白按视口分档，超宽屏更宽松', () => {
     expect(CSS).toContain('--cds-main-px: 2rem');
-    expect(CSS).toMatch(/@media \(min-width: 1306px\)[\s\S]{0,120}--cds-main-px: 3rem/);
-    expect(CSS).toMatch(/@media \(max-width: 652px\)[\s\S]{0,160}--cds-main-px: 1rem/);
+    expect(CSS).toMatch(/@media \(min-width: 1536px\)[\s\S]{0,120}--cds-main-px: 3rem/);
+    expect(CSS).toMatch(/@media \(max-width: 767px\)[\s\S]{0,160}--cds-main-px: 1rem/);
     expect(CSS).toContain('padding: var(--cds-main-pt) var(--cds-main-px) var(--cds-main-pb)');
     // bleed 必须用同一组变量抵消，不许自己抄一份数值
     expect(CSS).toMatch(/\.cds-workspace--bleed \{[\s\S]{0,200}calc\(var\(--cds-main-px\) \* -1\)/);

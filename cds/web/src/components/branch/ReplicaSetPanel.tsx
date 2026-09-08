@@ -537,7 +537,7 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
               <div key={s.id} className="flex flex-wrap items-center gap-4 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs">
                 <span className="min-w-0">
                   <span className="block font-mono font-semibold">{s.dbName}</span>
-                  <span className="mt-0.5 block text-[0.6875rem] text-muted-foreground">{s.engine} · 来源 {s.sourceDb}{s.dedicatedContainer ? ' · 专用隔离实例' : ''} · {new Date(s.clonedAt).toLocaleString()}</span>
+                  <span className="mt-0.5 block text-[11px] text-muted-foreground">{s.engine} · 来源 {s.sourceDb}{s.dedicatedContainer ? ' · 专用隔离实例' : ''} · {new Date(s.clonedAt).toLocaleString()}</span>
                 </span>
                 <ConfirmAction title="删除隔离库" description={`将移除隔离库 ${s.dbName}（专用实例整容器删除），数据不可恢复。确认？`} confirmLabel="删除"
                   trigger={<Button type="button" size="sm" variant="ghost" disabled={busy}><Trash2 />删除</Button>}
@@ -591,7 +591,7 @@ function PlanBoard({ branchId, draft, setDraft, onFailure, setOnFailure, activeP
     <section className="cds-surface-raised cds-hairline px-5 py-4">
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-sm font-semibold">变更清单</span>
-        <span className="text-[0.6875rem] text-muted-foreground">一次操作一条草稿（黄色 = 未保存预期）；点「保存执行」才真正开始，执行中可调序 / 跳过 / 取消</span>
+        <span className="text-[11px] text-muted-foreground">一次操作一条草稿（黄色 = 未保存预期）；点「保存执行」才真正开始，执行中可调序 / 跳过 / 取消</span>
       </div>
 
       {activePlan ? (
@@ -622,10 +622,10 @@ function PlanBoard({ branchId, draft, setDraft, onFailure, setOnFailure, activeP
         <div className="mt-3 grid gap-1.5">
           {draft.map((a, i) => (
             <div key={a.key} className="flex items-center gap-2 rounded-md border border-dashed border-warn/50 bg-warn/[.06] px-2.5 py-1.5 text-xs">
-              <span className="w-5 text-right font-mono text-[0.6875rem] text-muted-foreground">{i + 1}.</span>
-              <span className="rounded border border-warn/50 px-1.5 text-[0.625rem] font-semibold text-warn">{actionKinds(a)}</span>
+              <span className="w-5 text-right font-mono text-[11px] text-muted-foreground">{i + 1}.</span>
+              <span className="rounded border border-warn/50 px-1.5 text-[10px] font-semibold text-warn">{actionKinds(a)}</span>
               <span className="min-w-0 flex-1 truncate">{a.label}</span>
-              <span className="shrink-0 font-mono text-[0.625rem] text-muted-foreground">{a.steps.length} 步</span>
+              <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{a.steps.length} 步</span>
               <button type="button" className="rounded p-0.5 text-muted-foreground hover:text-primary" title="上移" onClick={() => move(i, -1)}><ArrowUp className="h-3.5 w-3.5" /></button>
               <button type="button" className="rounded p-0.5 text-muted-foreground hover:text-primary" title="下移" onClick={() => move(i, 1)}><ArrowDown className="h-3.5 w-3.5" /></button>
               <button type="button" className="rounded p-0.5 text-muted-foreground hover:text-destructive" title="撤销这条操作" onClick={() => setDraft((prev) => prev.filter((x) => x.key !== a.key))}><X className="h-3.5 w-3.5" /></button>
@@ -673,12 +673,12 @@ function StepLine({ step, controls }: { step: PlanStep; controls?: JSX.Element }
         {step.status === 'running' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-warn" /> : (
           <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${step.status === 'done' ? 'bg-ok' : step.status === 'error' ? 'bg-destructive' : step.status === 'rolled-back' ? 'bg-info' : 'bg-[hsl(var(--muted-foreground))]/50'}`} />
         )}
-        <span className="rounded border border-[hsl(var(--hairline))] px-1.5 text-[0.625rem] font-semibold">{KIND_LABEL[step.kind]}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-muted-foreground">{step.profileId}{step.params?.memberId ? ` · ${step.params.memberId}` : ''}{typeof step.params?.weight === 'number' ? ` · 权重 ${step.params.weight}` : ''}</span>
-        <b className={`text-[0.6875rem] ${meta.cls}`}>{meta.text}</b>
+        <span className="rounded border border-[hsl(var(--hairline))] px-1.5 text-[10px] font-semibold">{KIND_LABEL[step.kind]}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{step.profileId}{step.params?.memberId ? ` · ${step.params.memberId}` : ''}{typeof step.params?.weight === 'number' ? ` · 权重 ${step.params.weight}` : ''}</span>
+        <b className={`text-[11px] ${meta.cls}`}>{meta.text}</b>
         {controls}
       </div>
-      {step.error ? <p className="mt-1 whitespace-pre-wrap break-all pl-5 text-[0.6875rem] text-destructive">{step.error}</p> : null}
+      {step.error ? <p className="mt-1 whitespace-pre-wrap break-all pl-5 text-[11px] text-destructive">{step.error}</p> : null}
     </div>
   );
 }
@@ -698,7 +698,7 @@ function PlanRecord({ plan }: { plan: Plan }): JSX.Element {
         <div className="mt-2 grid gap-1">
           {plan.steps.map((s) => <StepLine key={s.id} step={s} />)}
           {plan.rollbackLog?.length ? (
-            <div className="mt-1 rounded-md border border-info/30 bg-info/[.05] px-2.5 py-1.5 text-[0.6875rem]">
+            <div className="mt-1 rounded-md border border-info/30 bg-info/[.05] px-2.5 py-1.5 text-[11px]">
               <b className="text-info">回滚日志</b>
               {plan.rollbackLog.map((line, i) => <p key={i} className="mt-0.5 text-muted-foreground">{line}</p>)}
             </div>
@@ -809,7 +809,7 @@ function ProbeModal({ probe }: { probe: ReturnType<typeof useProbe> }): JSX.Elem
   if (!probe.probeFor) return null;
   return (
     <CanvasModal wide title={`分流实测 · ${probe.probeFor}`} onClose={probe.close}>
-      <div className="max-h-52 overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[0.6875rem] text-muted-foreground" style={{ overscrollBehavior: 'contain' }}>
+      <div className="max-h-52 overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] text-muted-foreground" style={{ overscrollBehavior: 'contain' }}>
         {probe.log.map((line, i) => <div key={i}>{line}</div>)}
         {probe.probing.current ? <div className="mt-1 flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin text-warn" />请求进行中…</div> : null}
       </div>
@@ -889,11 +889,11 @@ function IsolationAuditModal({ audit }: { audit: ReturnType<typeof useIsolationA
                 {r.checks.filter((c) => c.group === g).map((c) => (
                   <div key={c.id} className="rounded-md border border-[hsl(var(--hairline))] px-2.5 py-1.5">
                     <div className="flex items-center gap-2">
-                      <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[0.625rem] font-semibold ${AUDIT_VERDICT_STYLE[c.verdict]}`}>{AUDIT_VERDICT_LABEL[c.verdict]}</span>
+                      <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${AUDIT_VERDICT_STYLE[c.verdict]}`}>{AUDIT_VERDICT_LABEL[c.verdict]}</span>
                       <span className="text-xs font-medium">{c.title}</span>
-                      <span className="ml-auto shrink-0 font-mono text-[0.625rem] text-muted-foreground">{c.id}</span>
+                      <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">{c.id}</span>
                     </div>
-                    <div className="mt-1 break-all font-mono text-[0.625rem] leading-relaxed text-muted-foreground">{c.evidence}</div>
+                    <div className="mt-1 break-all font-mono text-[10px] leading-relaxed text-muted-foreground">{c.evidence}</div>
                   </div>
                 ))}
               </div>
@@ -1010,7 +1010,7 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
           title={`统一战线（分支级）：把主库整库克隆进专用隔离实例，${isolateTargets.length || '所有有副本的'} 个服务的副本改连隔离库（可回切）。先进变更清单，保存后执行`}
           onClick={onIsolateAll}>
           <Copy className="h-4 w-4" />复制隔离到此
-          <span className="text-[0.625rem] font-normal opacity-80">统一战线 · 覆盖 {isolateTargets.length} 个服务</span>
+          <span className="text-[10px] font-normal opacity-80">统一战线 · 覆盖 {isolateTargets.length} 个服务</span>
         </button>
       ) : (
         <StageCard x={geo.isoDbX(mainDbIdx)} y={dbY} w={geo.dbCW} name="隔离区" ico="DB" color={iso.state === 'partial' ? '#f59e0b' : '#10b981'}
@@ -1023,15 +1023,15 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
           extra={(
             <span className="absolute bottom-1.5 right-1.5 flex gap-1">
               {(iso.state === 'done' || iso.state === 'partial') && onAudit ? (
-                <button type="button" className="rounded border border-info/50 bg-background px-1.5 text-[0.625rem] text-info"
+                <button type="button" className="rounded border border-info/50 bg-background px-1.5 text-[10px] text-info"
                   title="隔离审计（MECE 实测）：逐容器 docker inspect 真实连接 + 专用实例活性 + 双向金丝雀写入验证，弹窗显示五面矩阵" onClick={onAudit}>隔离审计</button>
               ) : null}
               {iso.state === 'partial' && isolateTargets.length > 0 ? (
-                <button type="button" className="rounded border border-warn/60 bg-background px-1.5 text-[0.625rem] text-warn"
+                <button type="button" className="rounded border border-warn/60 bg-background px-1.5 text-[10px] text-warn"
                   title="把尚未隔离的服务也加入隔离草稿，对齐统一战线" onClick={onIsolateAll}>补齐隔离</button>
               ) : null}
               {(iso.state === 'done' || iso.state === 'partial') && revertTargets.length > 0 ? (
-                <button type="button" className="rounded border border-ok/50 bg-background px-1.5 text-[0.625rem] text-ok"
+                <button type="button" className="rounded border border-ok/50 bg-background px-1.5 text-[10px] text-ok"
                   title="全部已隔离服务回切主库（隔离库转快照保留）" onClick={onRevertAll}>回切主库</button>
               ) : null}
             </span>
@@ -1242,15 +1242,15 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
     <section className="cds-surface-raised cds-hairline overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-2.5">
         {headerLeft}
-        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />{profileIds.length} 容器 · 虚线框=同一 host · 边=环境变量引用</span>
-        {branchIso.state === 'done' ? <span className="rounded-md border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[0.6875rem] text-ok">已隔离 · 统一战线</span> : null}
-        {branchIso.state === 'partial' ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] text-warn">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length} · 建议补齐</span> : null}
-        {draftActions.length > 0 ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] text-warn">{draftActions.length} 项变更待保存</span> : null}
+        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />{profileIds.length} 容器 · 虚线框=同一 host · 边=环境变量引用</span>
+        {branchIso.state === 'done' ? <span className="rounded-md border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">已隔离 · 统一战线</span> : null}
+        {branchIso.state === 'partial' ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length} · 建议补齐</span> : null}
+        {draftActions.length > 0 ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">{draftActions.length} 项变更待保存</span> : null}
         {headerRight}
       </div>
 
       <div ref={hostRef} className="relative mx-4 my-4 overflow-x-auto rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
-        <div className="relative" style={{ width: canvasW, height, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '1.625rem 1.625rem' }}>
+        <div className="relative" style={{ width: canvasW, height, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}>
           <svg className="pointer-events-none absolute inset-0" width={canvasW} height={height}>
             <defs>
               <marker id="rsArr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="hsl(var(--muted-foreground))" /></marker>
@@ -1374,25 +1374,25 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                   onClick={(e) => { if ((e.target as HTMLElement).closest('button,a,input')) return; setSelected(selected === pid ? null : pid); }}
                   title="点击高亮与它相连的线"
                   style={{ left: p.x, top: p.y, width: BOX_W, height: p.h, borderColor: danger ? 'hsl(var(--destructive) / 0.6)' : selected === pid ? color : `${color}59`, boxShadow: selected === pid ? `0 0 0 2px ${color}55` : undefined }}>
-                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[0.8125rem] font-bold">
-                    <span className={`inline-flex h-[1.375rem] w-[1.375rem] shrink-0 items-center justify-center rounded-md text-[0.5625rem] font-extrabold text-white ${node?.roleSource && node.roleSource !== 'declared' ? 'border border-dashed border-white/70' : ''}`}
+                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
+                    <span className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-white ${node?.roleSource && node.roleSource !== 'declared' ? 'border border-dashed border-white/70' : ''}`}
                       style={{ background: color }} title={roleTitle(node)} data-role={node?.role ?? ''} data-role-source={node?.roleSource ?? ''}>{roleBadge(node)}</span>
                     <span className="min-w-0 flex-1 truncate" title={pid}>{node?.name || pid}</span>
                     {node?.subdomain && !frames.some((f) => f.site.kind === 'subdomain' && f.shell === pid) ? (
-                      <span className="inline-flex h-[1.125rem] shrink-0 items-center rounded-full border border-[hsl(var(--hairline))] px-1.5 text-[0.625rem] text-muted-foreground"
+                      <span className="inline-flex h-[18px] shrink-0 items-center rounded-full border border-[hsl(var(--hairline))] px-1.5 text-[10px] text-muted-foreground"
                         title={`除了主域名上的前缀，它还独占子域 ${node.subdomain}（整站归它）；卡片只画一次，归主域名站点`}>子域</span>
                     ) : null}
                     {conflicts.length > 0 ? (
-                      <span className="inline-flex h-[1.125rem] shrink-0 items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[0.625rem] font-semibold text-warn"
+                      <span className="inline-flex h-[18px] shrink-0 items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[10px] font-semibold text-warn"
                         title={`前缀冲突：${conflicts.join('、')} 被多个服务同时声明，forwarder 只能按 id 字典序二选一。请在 cds-compose 里只保留一个声明方`}>冲突</span>
                     ) : null}
                     {members.length > 0 ? (
-                      <span className="inline-flex h-[1.125rem] shrink-0 items-center rounded-full px-1.5 text-[0.625rem] font-bold text-white" style={{ background: color }} title={`1 主 + ${members.length} 副本`}>
+                      <span className="inline-flex h-[18px] shrink-0 items-center rounded-full px-1.5 text-[10px] font-bold text-white" style={{ background: color }} title={`1 主 + ${members.length} 副本`}>
                         x{1 + members.length}
                       </span>
                     ) : null}
                   </div>
-                  <div className={`flex h-[1.25rem] items-center gap-1.5 px-2.5 text-[0.625rem] ${danger ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
+                  <div className={`flex h-[20px] items-center gap-1.5 px-2.5 text-[10px] ${danger ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : '#10b981' }} />
                     <span className="min-w-0 flex-1 truncate">
                       {rs?.primaryReachable === false ? '主实例不可达' : members.some((m) => m.status === 'provisioning') ? '副本创建中…' : members.length > 0 ? '按权重分流' : '单实例'}
@@ -1490,8 +1490,8 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                   onClick={() => { setPickFor(null); onAction(`${pickFor} · 新增历史版本副本 ${row.commitSha.slice(0, 7)}`, [{ kind: 'add-replica', profileId: pickFor, params: { versionId: row.versionId } }]); }}
                   className="flex items-center gap-4 rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 text-left text-xs hover:border-indigo-500/50 hover:bg-indigo-500/[.06]">
                   <span className="font-mono font-semibold">{row.commitSha.slice(0, 7)}</span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-muted-foreground">{row.image}</span>
-                  <span className="shrink-0 text-[0.6875rem] text-muted-foreground">{new Date(row.createdAt).toLocaleString()}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{row.image}</span>
+                  <span className="shrink-0 text-[11px] text-muted-foreground">{new Date(row.createdAt).toLocaleString()}</span>
                 </button>
               ))}
             </div>
@@ -1511,7 +1511,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
           onClick={() => onOpenLoadTest(profileIds.find((pid) => (replicaSets[pid]?.members.length ?? 0) > 0) || profileIds[0])}>
           <Activity />压测
         </Button>
-        <span className="text-[0.6875rem] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 虚线框 = 同一 host，上面是壳（静态站），下面按前缀分流 · 连线 = 环境变量引用（悬停看键名）· 徽标虚边 = 角色是推断的（cds.role 可声明）· 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
+        <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 虚线框 = 同一 host，上面是壳（静态站），下面按前缀分流 · 连线 = 环境变量引用（悬停看键名）· 徽标虚边 = 角色是推断的（cds.role 可声明）· 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
       </div>
       <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}@keyframes rsflow{to{stroke-dashoffset:-20}}.rsflow{animation:rsflow 1.1s linear infinite}'}</style>
     </section>
@@ -1524,7 +1524,7 @@ function ChipRow({ color, mono, sub, weight, onWeightClick, weightInput, actions
   actions?: JSX.Element; danger?: boolean; boot?: boolean; ghost?: boolean; dim?: boolean;
 }): JSX.Element {
   return (
-    <div className={`flex h-[1.375rem] items-center gap-1.5 border-t border-[hsl(var(--hairline))]/70 px-2.5 text-[0.625rem] ${danger ? 'bg-destructive/[.06] text-destructive' : ghost ? 'bg-warn/[.06] text-warn' : ''} ${dim ? 'opacity-50' : ''}`}>
+    <div className={`flex h-[22px] items-center gap-1.5 border-t border-[hsl(var(--hairline))]/70 px-2.5 text-[10px] ${danger ? 'bg-destructive/[.06] text-destructive' : ghost ? 'bg-warn/[.06] text-warn' : ''} ${dim ? 'opacity-50' : ''}`}>
       {boot ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-warn" /> : (
         <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : ghost ? '#f59e0b' : color }} />
       )}
@@ -1535,7 +1535,7 @@ function ChipRow({ color, mono, sub, weight, onWeightClick, weightInput, actions
       {weight !== undefined && !weightInput ? (
         <button type="button" disabled={!onWeightClick} onClick={onWeightClick}
           title={onWeightClick ? '点击调整权重（进变更清单）' : undefined}
-          className={`shrink-0 rounded border border-indigo-500/45 bg-background px-1 font-mono text-[0.5625rem] text-indigo-500 ${onWeightClick ? 'cursor-pointer hover:bg-indigo-500/10' : ''}`}>
+          className={`shrink-0 rounded border border-indigo-500/45 bg-background px-1 font-mono text-[9px] text-indigo-500 ${onWeightClick ? 'cursor-pointer hover:bg-indigo-500/10' : ''}`}>
           {weight}
         </button>
       ) : null}
@@ -1550,7 +1550,7 @@ function WeightInput({ value, onChange, onCommit, onCancel }: { value: string; o
       onChange={(e) => onChange(e.target.value)}
       onBlur={onCommit}
       onKeyDown={(e) => { if (e.key === 'Enter') onCommit(); if (e.key === 'Escape') onCancel(); }}
-      className="h-4 w-12 shrink-0 rounded border border-primary bg-background px-0.5 text-center font-mono text-[0.5625rem] outline-none" />
+      className="h-4 w-12 shrink-0 rounded border border-primary bg-background px-0.5 text-center font-mono text-[9px] outline-none" />
   );
 }
 
@@ -1705,17 +1705,17 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
     <section className="cds-surface-raised cds-hairline overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-2.5">
         {headerLeft}
-        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />入口 → 项目 → 基础设施</span>
-        {groupCount > 0 ? <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[0.6875rem] text-indigo-500">整组副本 x{groupCount}</span> : null}
-        {uneven ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] text-warn">各容器副本数不齐</span> : null}
-        {branchIso.state === 'done' ? <span className="rounded-md border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[0.6875rem] text-ok">已隔离 · 统一战线</span> : null}
-        {branchIso.state === 'partial' ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] text-warn">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length}</span> : null}
-        {draftActions.length > 0 ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] text-warn">{draftActions.length} 项变更待保存</span> : null}
+        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />入口 → 项目 → 基础设施</span>
+        {groupCount > 0 ? <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] text-indigo-500">整组副本 x{groupCount}</span> : null}
+        {uneven ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">各容器副本数不齐</span> : null}
+        {branchIso.state === 'done' ? <span className="rounded-md border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">已隔离 · 统一战线</span> : null}
+        {branchIso.state === 'partial' ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length}</span> : null}
+        {draftActions.length > 0 ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">{draftActions.length} 项变更待保存</span> : null}
         {headerRight}
       </div>
 
       <div ref={hostRef} className="relative mx-4 my-4 overflow-x-auto rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
-        <div className="relative" style={{ width: canvasW, height, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '1.625rem 1.625rem' }}>
+        <div className="relative" style={{ width: canvasW, height, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}>
           <svg className="pointer-events-none absolute inset-0" width={canvasW} height={height}>
             <defs>
               <marker id="rsArrP" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="hsl(var(--muted-foreground))" /></marker>
@@ -1756,18 +1756,18 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
               return (
                 <div key={`main-${i}`} className="absolute rounded-xl border-[1.5px] border-[hsl(var(--hairline))] bg-background text-xs shadow-md"
                   style={{ left: n.x, top: n.y, width: PROJ_W, height: n.node.h }}>
-                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[0.8125rem] font-bold">
-                    <span className="inline-flex h-[1.375rem] w-[1.375rem] shrink-0 items-center justify-center rounded-md bg-[#8b8578] text-[0.625rem] font-extrabold text-white">PRJ</span>
+                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
+                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-[#8b8578] text-[10px] font-extrabold text-white">PRJ</span>
                     <span className="min-w-0 flex-1 truncate">项目</span>
                   </div>
-                  <div className="flex items-center gap-1.5 px-2.5 pt-0.5 text-[0.625rem] text-muted-foreground">
+                  <div className="flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] text-muted-foreground">
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
                     {profileIds.length} 容器 · 主实例组
                   </div>
                   {/* 容器 chips：与分支卡左上角的 chip 同一视觉语言（2026-07-25 用户拍板，样式不另造） */}
                   <div className="flex flex-col gap-1 px-2.5 pb-2 pt-1.5">
                     {profileIds.map((pid) => (
-                      <span key={pid} className="inline-flex h-[1.375rem] max-w-full items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-1.5 text-[0.625rem]">
+                      <span key={pid} className="inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-1.5 text-[10px]">
                         <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: profileColor(pid) }} />
                         <span className="min-w-0 flex-1 truncate font-mono" title={pid}>{pid}</span>
                         {services?.[pid]?.hostPort ? <span className="shrink-0 font-mono text-muted-foreground">:{services[pid].hostPort}</span> : null}
@@ -1784,21 +1784,21 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
               return (
                 <div key={`group-${k}`} className={`absolute rounded-xl border-[1.5px] bg-background text-xs shadow-md ${danger ? 'border-destructive/60' : 'border-indigo-500/45'}`}
                   style={{ left: n.x, top: n.y, width: GROUP_W, height: n.node.h }}>
-                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[0.8125rem] font-bold">
-                    <span className="inline-flex h-[1.375rem] w-[1.375rem] shrink-0 items-center justify-center rounded-md bg-indigo-500 text-[0.625rem] font-extrabold text-white">PRJ</span>
+                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
+                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-indigo-500 text-[10px] font-extrabold text-white">PRJ</span>
                     <span className="min-w-0 flex-1 truncate">项目-复制集-{k + 1}</span>
                     <button type="button" className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-destructive"
                       title="下线这一组（每个容器各下线对应副本，进变更清单）" onClick={() => removeGroup(k)}>
                       <Trash2 className="h-3 w-3" />
                     </button>
                   </div>
-                  <div className={`flex items-center gap-1.5 px-2.5 pt-0.5 text-[0.625rem] ${danger ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
+                  <div className={`flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] ${danger ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
                     {st.boot > 0 ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-warn" /> : <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : '#10b981' }} />}
                     <span className="min-w-0 flex-1 truncate">{st.boot > 0 ? '创建中…' : danger ? `${st.bad} 个容器副本异常` : st.missing > 0 ? `覆盖 ${profileIds.length - st.missing}/${profileIds.length} 容器` : '复制集成员 · 已负载'}</span>
                     {weightFor === k ? (
                       <WeightInput value={weightDraft} onChange={setWeightDraft} onCommit={() => commitGroupWeight(k)} onCancel={() => setWeightFor(null)} />
                     ) : st.ok > 0 ? (
-                      <button type="button" className="shrink-0 rounded border border-indigo-500/45 bg-background px-1 font-mono text-[0.5625rem] text-indigo-500 hover:bg-indigo-500/10"
+                      <button type="button" className="shrink-0 rounded border border-indigo-500/45 bg-background px-1 font-mono text-[9px] text-indigo-500 hover:bg-indigo-500/10"
                         title="点击调整这一组的权重（整组统一，进变更清单）"
                         onClick={() => { setWeightFor(k); setWeightDraft(String(Object.values(groups[k] ?? {}).find(Boolean)?.weight ?? 0)); }}>
                         {st.weightPct}%
@@ -1811,7 +1811,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
                       const m = groups[k]?.[pid];
                       const c = !m ? '#9ca3af' : m.status === 'running' && m.reachable !== false ? profileColor(pid) : m.status === 'provisioning' ? '#f59e0b' : '#ef4444';
                       return (
-                        <span key={pid} className="inline-flex h-[1.375rem] max-w-full items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-1.5 text-[0.625rem]"
+                        <span key={pid} className="inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-1.5 text-[10px]"
                           title={`${pid}：${m ? (m.status === 'running' ? (m.reachable === false ? '不可达' : '运行中') : m.status) : '缺此组副本'}`}>
                           <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: c, opacity: m ? 1 : 0.4 }} />
                           <span className="min-w-0 flex-1 truncate font-mono">{pid}</span>
@@ -1829,21 +1829,21 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
               return (
                 <div key={`ghost-${n.node.actionKey}`} className="absolute rounded-xl border-[1.5px] border-dashed border-warn/60 bg-warn/[.04] text-xs shadow-md"
                   style={{ left: n.x, top: n.y, width: GROUP_W, height: n.node.h }}>
-                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[0.8125rem] font-bold text-warn">
-                    <span className="inline-flex h-[1.375rem] w-[1.375rem] shrink-0 items-center justify-center rounded-md bg-warn text-[0.625rem] font-extrabold text-white">PRJ</span>
+                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold text-warn">
+                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-warn text-[10px] font-extrabold text-white">PRJ</span>
                     <span className="min-w-0 flex-1 truncate">项目-复制集-{num}</span>
                     <button type="button" className="rounded border border-warn/50 bg-background p-0.5 text-warn hover:text-destructive "
                       title="撤销这条整组副本草稿" onClick={() => onRemoveAction(n.node.actionKey!)}>
                       <X className="h-3 w-3" />
                     </button>
                   </div>
-                  <div className="flex items-center gap-1.5 px-2.5 pt-0.5 text-[0.625rem] text-warn/90 /90">
+                  <div className="flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] text-warn/90 /90">
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
                     <span className="truncate">待保存 · 保存后每容器各创建 1 个副本</span>
                   </div>
                   <div className="flex flex-col gap-1 px-2.5 pb-2 pt-1.5">
                     {profileIds.map((pid) => (
-                      <span key={pid} className="inline-flex h-[1.375rem] max-w-full items-center gap-1.5 rounded-md border border-warn/40 bg-warn/[.06] px-1.5 text-[0.625rem] text-warn"
+                      <span key={pid} className="inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-md border border-warn/40 bg-warn/[.06] px-1.5 text-[10px] text-warn"
                         title={`${pid}：保存后创建副本实例`}>
                         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn/80" />
                         <span className="min-w-0 flex-1 truncate font-mono">{pid}</span>
@@ -1895,7 +1895,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
           onClick={() => onOpenLoadTest(profileIds.find((pid) => (replicaSets[pid]?.members.length ?? 0) > 0) || profileIds[0])}>
           <Activity />压测
         </Button>
-        <span className="text-[0.6875rem] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 整组副本紧跟项目节点右侧生长（放不下换行）· 保存后串行执行</span>
+        <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 整组副本紧跟项目节点右侧生长（放不下换行）· 保存后串行执行</span>
       </div>
       <ProbeModal probe={probe} />
       <IsolationAuditModal audit={audit} />
@@ -1919,7 +1919,7 @@ function ProbeDashboard({ result }: { result: ProbeResult }): JSX.Element {
   const nonOkTagged = result.hits.filter((h) => h.servedBy !== 'untagged' && h.servedBy !== 'error' && (h.status < 200 || h.status >= 300)).length;
   return (
     <div className="flex flex-wrap items-center gap-6 rounded-md border border-[hsl(var(--hairline))] bg-background px-4 py-3">
-      <span className="text-xs text-muted-foreground">分流仪表盘<br /><span className="font-mono text-[0.625rem]">{result.count} 请求 · 串流 · {result.path}</span></span>
+      <span className="text-xs text-muted-foreground">分流仪表盘<br /><span className="font-mono text-[10px]">{result.count} 请求 · 串流 · {result.path}</span></span>
       {entries.map(([who, n], i) => {
         const pct = n / result.count;
         return (
@@ -1930,12 +1930,12 @@ function ProbeDashboard({ result }: { result: ProbeResult }): JSX.Element {
                 strokeDasharray={C} strokeDashoffset={C * (1 - pct)} strokeLinecap="round" transform="rotate(-90 26 26)" />
               <text x="26" y="30" textAnchor="middle" fontSize="12" fontWeight="700" fill="currentColor">{Math.round(pct * 100)}%</text>
             </svg>
-            <span className="text-xs"><b className="block">{PROBE_WHO_LABEL[who] ?? who}</b><span className="font-mono text-[0.625rem] text-muted-foreground">{n} / {result.count} 次</span></span>
+            <span className="text-xs"><b className="block">{PROBE_WHO_LABEL[who] ?? who}</b><span className="font-mono text-[10px] text-muted-foreground">{n} / {result.count} 次</span></span>
           </span>
         );
       })}
       {nonOkTagged > 0 ? (
-        <span className="basis-full text-[0.6875rem] text-muted-foreground">
+        <span className="basis-full text-[11px] text-muted-foreground">
           {nonOkTagged} 个请求返回非 2xx（业务路由无此路径）——落点以 X-CDS-Replica 响应头为准，分流统计不受影响。
         </span>
       ) : null}
@@ -1953,7 +1953,7 @@ function EntryLinks({ x, y, entries }: { x: number; y: number; entries: Array<{ 
         <a key={e.url} href={e.url} target="_blank" rel="noreferrer"
           onClick={(ev) => ev.stopPropagation()}
           title={'打开 ' + e.name + '：' + e.url}
-          className="inline-flex h-6 max-w-[13.75rem] items-center gap-1.5 rounded-md border border-ok/40 bg-ok/[.08] px-2 text-[0.6875rem] font-medium text-ok transition-colors hover:bg-ok-soft ">
+          className="inline-flex h-6 max-w-[220px] items-center gap-1.5 rounded-md border border-ok/40 bg-ok/[.08] px-2 text-[11px] font-medium text-ok transition-colors hover:bg-ok-soft ">
           <span className="truncate">{e.name}</span>
           <ExternalLink className="h-3 w-3 shrink-0" />
         </a>
@@ -1978,23 +1978,23 @@ function StageCard({ x, y, w = 180, name, ico, color, ok, danger, ghost, locked,
             <Lock className="h-3 w-3" />
           </span>
         ) : null}
-        <div className={`flex items-center gap-2 overflow-hidden rounded-t-xl px-3 py-2 text-[0.8125rem] font-bold ${draftStyle ? 'text-warn' : ''}`}>
-          <span className="inline-flex h-[1.375rem] w-[1.375rem] items-center justify-center rounded-md text-[0.625rem] font-extrabold text-white" style={{ background: color }}>{ico}</span>
+        <div className={`flex items-center gap-2 overflow-hidden rounded-t-xl px-3 py-2 text-[13px] font-bold ${draftStyle ? 'text-warn' : ''}`}>
+          <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md text-[10px] font-extrabold text-white" style={{ background: color }}>{ico}</span>
           <span className="truncate">{name}</span>
         </div>
-        <div className={`flex items-center gap-1.5 px-3 pb-2 text-[0.6875rem] ${danger ? 'font-semibold text-destructive' : draftStyle ? 'text-warn/90 /90' : 'text-muted-foreground'}`}>
+        <div className={`flex items-center gap-1.5 px-3 pb-2 text-[11px] ${danger ? 'font-semibold text-destructive' : draftStyle ? 'text-warn/90 /90' : 'text-muted-foreground'}`}>
           <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : draftStyle ? '#f59e0b' : ok ? '#10b981' : 'hsl(var(--muted-foreground))' }} />
           <span className="truncate" title={status}>{status}</span>
         </div>
         {foot !== undefined ? (
-          <div className="overflow-hidden truncate rounded-b-xl border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-1.5 font-mono text-[0.625rem] text-muted-foreground" title={foot}>{foot || ' '}</div>
+          <div className="overflow-hidden truncate rounded-b-xl border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-1.5 font-mono text-[10px] text-muted-foreground" title={foot}>{foot || ' '}</div>
         ) : null}
         {extra}
       </div>
       {label !== undefined && labelX !== undefined && labelY !== undefined ? (
         <button type="button" disabled={!onLabelClick} onClick={onLabelClick}
           title={onLabelClick ? '点击调整权重（进变更清单）' : undefined}
-          className={`absolute -translate-x-1/2 -translate-y-1/2 rounded border border-indigo-500/45 bg-background px-1.5 font-mono text-[0.625rem] text-indigo-500 ${onLabelClick ? 'cursor-pointer hover:bg-indigo-500/10' : ''}`}
+          className={`absolute -translate-x-1/2 -translate-y-1/2 rounded border border-indigo-500/45 bg-background px-1.5 font-mono text-[10px] text-indigo-500 ${onLabelClick ? 'cursor-pointer hover:bg-indigo-500/10' : ''}`}
           style={{ left: labelX, top: labelY }}>{label}</button>
       ) : null}
       <style>{'@keyframes rscolorin{from{filter:grayscale(1);opacity:.45}to{filter:grayscale(0);opacity:1}}'}</style>

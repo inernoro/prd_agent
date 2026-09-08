@@ -141,10 +141,10 @@ const PROBE_KIND_LABEL: Record<ProbeKind, string> = {
 
 function useIsNarrow(): boolean {
   const [narrow, setNarrow] = useState<boolean>(() =>
-    typeof window !== 'undefined' ? window.matchMedia('(max-width: 47.9375rem)').matches : false);
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)').matches : false);
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
-    const mq = window.matchMedia('(max-width: 47.9375rem)');
+    const mq = window.matchMedia('(max-width: 767px)');
     const onChange = (): void => setNarrow(mq.matches);
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);

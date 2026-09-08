@@ -482,7 +482,7 @@ function Chart({ width, height, series, max, empty, dashed }: {
   }
   return (
     <div className="mt-1.5 overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ minWidth: 320, width: '100%' }} preserveAspectRatio="none">
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ minWidth: '20rem', width: '100%' }} preserveAspectRatio="none">
         {[0.25, 0.5, 0.75].map((r) => (
           <line key={r} x1={0} y1={height * r} x2={width} y2={height * r}
             stroke="hsl(var(--hairline))" strokeWidth={1} strokeDasharray="3 4" />

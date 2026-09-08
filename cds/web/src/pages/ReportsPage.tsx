@@ -1163,7 +1163,7 @@ function ReportList({
     return (
       <div key={report.id}
         className={`group flex h-8 cursor-pointer items-center gap-2 rounded px-2 text-sm transition-colors ${active ? 'bg-primary/10 text-primary' : 'hover:bg-[hsl(var(--surface-sunken))]'}`}
-        style={{ paddingLeft: 8 + depth * 16 }}
+        style={{ paddingLeft: `${(8 + depth * 16) / 16}rem` }}
         onClick={() => onSelect(report)}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -1204,7 +1204,7 @@ function ReportList({
     const rows: JSX.Element[] = [
       <div key={folder.id}
         className="group flex h-8 cursor-pointer items-center gap-1.5 rounded px-2 text-sm text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
-        style={{ paddingLeft: 6 + depth * 16 }}
+        style={{ paddingLeft: `${(6 + depth * 16) / 16}rem` }}
         title={`${folder.name}\n${count} 份报告`}
         onClick={() => toggleFolder(folder.id)}
         role="button"
