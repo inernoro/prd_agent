@@ -5823,7 +5823,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // 删项目时级联删掉的自定义监控，运行态台账也立刻抹掉——与单条删除路由同款，
   // 不让状态页把已删的目标和它的故障再挂一个探测间隔（Codex PR #1517 P2）。
   stateService.onProjectRemoved((summary) => {
-    for (const id of summary.uptimeMonitors) uptimeMonitor.forgetTarget(customProbeTargetId({ id }));
+    uptimeMonitor.forgetTargets(summary.uptimeMonitors.map((id) => customProbeTargetId({ id })));
   });
   app.use('/api', createUptimeRouter({
     monitor: uptimeMonitor,

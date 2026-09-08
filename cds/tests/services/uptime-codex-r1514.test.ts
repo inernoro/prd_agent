@@ -643,7 +643,7 @@ describe('第五轮 P2 删项目级联删自定义监控', () => {
       now: () => MIN,
     });
     // 与 index.ts 同款接线
-    state.onProjectRemoved((summary) => { for (const id of summary.uptimeMonitors) svc.forgetTarget(customProbeTargetId({ id })); });
+    state.onProjectRemoved((summary) => { svc.forgetTargets(summary.uptimeMonitors.map((id) => customProbeTargetId({ id }))); });
     await svc.runCycle();
     expect(svc.getSummary(10).targets.map((t) => t.id)).toEqual(['monitor@mon-obs']);
     state.removeProject('p-obs');
@@ -654,7 +654,19 @@ describe('第五轮 P2 删项目级联删自定义监控', () => {
   it('index.ts 把 onProjectRemoved 接到 uptimeMonitor.forgetTarget（少了这行，删项目后状态页还挂一轮）', () => {
     const src = fs.readFileSync(path.join(REPO, 'src/index.ts'), 'utf8');
     expect(src).toContain('stateService.onProjectRemoved((summary) => {');
-    expect(src).toContain('uptimeMonitor.forgetTarget(customProbeTargetId({ id }))');
+    expect(src).toContain('uptimeMonitor.forgetTargets(summary.uptimeMonitors.map((id) => customProbeTargetId({ id })))');
+  });
+
+  it('forgetTargets：批量抹掉只持久化一次，返回真正抹掉的条数', async () => {
+    const monitors = ['a', 'b', 'c'].map((id) => customMonitor({ id: `mon-${id}` }));
+    const svc = makeMonitor({ monitors, now: () => MIN });
+    await svc.runCycle();
+    const persist = vi.spyOn(svc as unknown as { persist(): void }, 'persist');
+    expect(svc.forgetTargets(['monitor@mon-a', 'monitor@mon-b', 'monitor@nope'])).toBe(2);
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(svc.forgetTargets(['monitor@nope'])).toBe(0);
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(svc.getSummary(10).targets.map((t) => t.id)).toEqual(['monitor@mon-c']);
   });
 
   it('项目名下的自定义监控随项目删除，系统级的保留', () => {

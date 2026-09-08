@@ -1799,6 +1799,18 @@ export class UptimeMonitorService {
     return existed;
   }
 
+  /**
+   * 批量抹掉（删项目级联用）：全部删完只持久化一次。逐个调 forgetTarget 会每条都
+   * 把整份台账文件重写一遍，项目名下监控多时是二次方的磁盘功、还堵事件循环
+   * （Codex PR #1517 P2）。返回真正抹掉的条数。
+   */
+  forgetTargets(targetIds: ReadonlyArray<string>): number {
+    let removed = 0;
+    for (const id of targetIds) if (this.records.delete(id)) removed += 1;
+    if (removed > 0) this.persist();
+    return removed;
+  }
+
   // ── 持久化：独立文件 + 原子写，失败静默（监控不能拖垮主流程） ──
 
   private load(): void {
