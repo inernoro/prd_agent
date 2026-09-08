@@ -687,7 +687,9 @@ export const defaultHttpProbe: ProbeFn = async (target, timeoutMs) => {
         path: '/',
         method: 'GET',
         timeout: timeoutMs,
-        headers: { 'user-agent': 'cds-uptime-monitor', ...probeRequestHeaders() },
+        // 只带公开的 polling 分类头，不带探测令牌：这一路直连分支容器，容器里的代码
+        // 能看到请求头；令牌只该出现在经预览域名、由 CDS 自己代理收下的用户视角探测里。
+        headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true' },
       },
       (res) => {
         const code = res.statusCode || 0;

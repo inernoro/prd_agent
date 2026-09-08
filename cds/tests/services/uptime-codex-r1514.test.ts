@@ -12,23 +12,29 @@
  *   P2 详情页「重试」真的重发请求。
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import type { BranchEntry, UptimeCustomMonitor } from '../../src/types.js';
 import {
   UptimeMonitorService,
+  defaultHttpProbe,
   defaultUserViewProbe,
+  selectCustomProbeTargets,
+  selectProbeTargets,
   tallyTargetSummaries,
   type ProbeFn,
   type UptimeMonitorConfig,
   type UserViewProbeFn,
 } from '../../src/services/uptime-monitor.js';
-import { normalizeUptimeMonitorInput } from '../../src/services/uptime-custom-monitor.js';
+import { normalizeUptimeMonitorInput, probeCustomMonitor } from '../../src/services/uptime-custom-monitor.js';
+import { StateService } from '../../src/services/state.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { PROBE_MARKER_HEADER, isTrustedProbeRequest, probeRequestHeaders, stripProbeMarker } from '../../src/services/probe-marker.js';
 import { createUptimeRouter, type UptimeMonitorStore } from '../../src/routes/uptime.js';
 import { MAX_SAMPLES_PER_TARGET } from '../../src/services/uptime-metrics.js';
@@ -324,5 +330,92 @@ describe('P2 详情页「重试」真的重发', () => {
     expect(src).toContain('setReloadToken((n) => n + 1)');
     expect(src).toMatch(/\[targetId, range, generatedAt, reloadToken\]\)/);
     expect(src).not.toContain('setRange((r) => r)');
+  });
+});
+
+describe('第二轮 P2 探测令牌只随用户视角发出', () => {
+  async function capture(): Promise<{ port: number; seen: () => Record<string, unknown>; close: () => Promise<void> }> {
+    let headers: Record<string, unknown> = {};
+    const server = http.createServer((req, res) => { headers = { ...req.headers }; res.statusCode = 200; res.end('ok'); });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return {
+      port: (server.address() as AddressInfo).port,
+      seen: () => headers,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  it('直连分支容器的进程视角探测：带 x-cds-poll、不带令牌（容器里的代码看得到请求头）', async () => {
+    const srv = await capture();
+    try {
+      const [target] = selectProbeTargets([branch({ services: { api: { profileId: 'api', containerName: 'c', hostPort: srv.port, status: 'running' } } as never })]);
+      const r = await defaultHttpProbe(target, 2000);
+      expect(r.up).toBe(true);
+      expect(srv.seen()['x-cds-poll']).toBe('true');
+      expect(srv.seen()[PROBE_MARKER_HEADER]).toBeUndefined();
+      expect(isTrustedProbeRequest(srv.seen())).toBe(false);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('自定义 HTTP 探测打任意外部地址：同样不带令牌', async () => {
+    const srv = await capture();
+    try {
+      const [target] = selectCustomProbeTargets([customMonitor({ url: `http://127.0.0.1:${srv.port}/`, expectedStatus: '200-299' })]);
+      await probeCustomMonitor(target.monitor!, 2000);
+      expect(srv.seen()['x-cds-poll']).toBe('true');
+      expect(srv.seen()[PROBE_MARKER_HEADER]).toBeUndefined();
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('源码守卫：probeRequestHeaders 只在 defaultUserViewProbe 里被展开', () => {
+    const monitorSrc = fs.readFileSync(path.join(REPO, 'src/services/uptime-monitor.ts'), 'utf8');
+    const customSrc = fs.readFileSync(path.join(REPO, 'src/services/uptime-custom-monitor.ts'), 'utf8');
+    expect(monitorSrc.match(/probeRequestHeaders\(\)/g)).toHaveLength(1);
+    const userView = monitorSrc.slice(monitorSrc.indexOf('export const defaultUserViewProbe'), monitorSrc.indexOf('export const defaultUserViewProbe') + 1200);
+    expect(userView).toContain('...probeRequestHeaders()');
+    expect(customSrc).not.toContain('probeRequestHeaders');
+  });
+});
+
+describe('第二轮 P2 管理员可以改归属项目', () => {
+  const dirs: string[] = [];
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  it('同一 id 从系统级挪到项目、再挪到另一个项目，都能保存且不抛冲突', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-uptime-r1514-'));
+    dirs.push(dir);
+    const state = new StateService(path.join(dir, 'state.json'));
+    state.load();
+    const base = customMonitor({ id: 'mon-move', projectId: null });
+    expect(state.upsertUptimeMonitor(base).projectId).toBeNull();
+    expect(state.upsertUptimeMonitor({ ...base, projectId: 'proj' }).projectId).toBe('proj');
+    expect(state.upsertUptimeMonitor({ ...base, projectId: 'other' }).projectId).toBe('other');
+    expect(state.getUptimeMonitor('mon-move')?.projectId).toBe('other');
+    expect(state.listUptimeMonitors('proj')).toHaveLength(0);
+    expect(state.listUptimeMonitors('other').map((m) => m.id)).toEqual(['mon-move']);
+  });
+
+  it('路由：管理员 PUT 换 projectId 得到 200 且落库', async () => {
+    const store = memoryStore([customMonitor({ projectId: 'proj' })]);
+    const svc = makeMonitor({ monitors: [...store.rows.values()], now: () => MIN });
+    const app = await serve(svc, store);
+    try {
+      const r = await app.call('PUT', '/api/uptime/monitors/mon-1', { body: { projectId: 'other' } });
+      expect(r.status).toBe(200);
+      expect(r.json.monitor.projectId).toBe('other');
+      expect(store.rows.get('mon-1')?.projectId).toBe('other');
+      const cleared = await app.call('PUT', '/api/uptime/monitors/mon-1', { body: { projectId: null } });
+      expect(cleared.status).toBe(200);
+      expect(cleared.json.monitor.projectId).toBeNull();
+    } finally {
+      await app.close();
+    }
   });
 });

@@ -18,7 +18,6 @@
 import net from 'node:net';
 import type { UptimeCustomMonitor, UptimeCustomMonitorKind } from '../types.js';
 import type { UptimeSample } from './uptime-metrics.js';
-import { probeRequestHeaders } from './probe-marker.js';
 
 /**
  * 探测记录的命名空间前缀。与 release-probe-target 的 `release@` 同理：分支键
@@ -306,7 +305,9 @@ async function httpProbe(
       method: monitor.method || 'GET',
       signal: ctrl.signal,
       redirect: 'manual',
-      headers: { 'user-agent': 'cds-uptime-monitor', ...probeRequestHeaders() },
+      // 自定义目标是任意外部地址，探测令牌绝不能发出去（会被对端记下并回放到预览
+      // 域名上豁免 LRU）；只带公开的 polling 分类头。
+      headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true' },
     });
     const code = res.status;
     if (!statusMatches(code, monitor.expectedStatus)) {

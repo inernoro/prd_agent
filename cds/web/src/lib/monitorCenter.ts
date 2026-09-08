@@ -345,7 +345,11 @@ export function buildMonitorHeadline(
   }
   const availability = overallAvailability24h(active.filter((t) => t.measured !== false));
   const latency = overallAvgLatency24h(active.filter((t) => t.measured !== false));
-  const recent = incidents.filter((i) => !i.ongoing && now - i.startedAt <= 24 * 3600 * 1000);
+  // 「24 小时内恢复」看的是恢复时刻（endedAt），不是开始时刻：一次持续 30 小时、
+  // 1 小时前才恢复的故障也算，否则刚修完就报「24 小时内没有故障」。最近恢复的排前面。
+  const recent = incidents
+    .filter((i): i is UptimeIncidentView & { endedAt: number } => !i.ongoing && i.endedAt !== null && now - i.endedAt <= 24 * 3600 * 1000)
+    .sort((a, b) => b.endedAt - a.endedAt);
   const unmeasured = overall.unmeasured ?? 0;
   const tail = recent.length > 0
     ? `24 小时内恢复了 ${recent.length} 次故障，最近一次是 ${recent[0].targetName}（持续 ${formatDuration(recent[0].durationMs)}）。`

@@ -2352,11 +2352,10 @@ export class StateService {
   upsertUptimeMonitor(monitor: UptimeCustomMonitor): UptimeCustomMonitor {
     if (!this.state.uptimeMonitors) this.state.uptimeMonitors = {};
     const existing = this.state.uptimeMonitors[monitor.id];
-    // 与发布目标同款防护：客户端可指定 id，命中他人项目的既有条目直接抛冲突，
-    // 路由侧回 409，禁止跨项目覆盖。
-    if (existing && (existing.projectId || null) !== (monitor.projectId || null)) {
-      throw new Error(`监控目标 '${monitor.id}' 已属于其他项目，无法跨项目覆盖`);
-    }
+    // 归属项目允许改：编辑弹窗把「归属项目」摆成了可编辑字段，管理员把一条监控
+    // 从系统级挪到项目、或在项目间挪，都是正当操作（Codex PR #1514 第二轮 P2）。
+    // 「客户端指定 id 命中他人条目」的防护在路由层：写入只给管理员身份，且新增时
+    // id 已存在直接 409，不在这里再判一遍项目。
     const now = new Date().toISOString();
     const saved: UptimeCustomMonitor = {
       ...existing,

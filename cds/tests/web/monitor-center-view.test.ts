@@ -90,6 +90,24 @@ describe('buildMonitorHeadline 第一屏结论', () => {
     expect(h.detail).toContain('a（持续 2 分钟）');
   });
 
+  it('「24h 内恢复」按恢复时刻算：30 小时前开始、1 小时前才恢复的故障也算，且最近恢复的排前面', () => {
+    const HOUR = 60 * MIN;
+    const h = buildMonitorHeadline(
+      summaryOf([target({ name: 'a' }), target({ name: 'b' })]),
+      [
+        // 后端按开始时刻倒序给：新开始的在前
+        incident({ id: 'newer', targetName: 'b', startedAt: NOW - 5 * HOUR, endedAt: NOW - 4 * HOUR, durationMs: HOUR }),
+        incident({ id: 'long', targetName: 'a', startedAt: NOW - 30 * HOUR, endedAt: NOW - HOUR, durationMs: 29 * HOUR }),
+        incident({ id: 'old', targetName: 'a', startedAt: NOW - 40 * HOUR, endedAt: NOW - 30 * HOUR, durationMs: 10 * HOUR }),
+        incident({ id: 'open', targetName: 'b', startedAt: NOW - 2 * HOUR, endedAt: null, durationMs: 2 * HOUR, ongoing: true }),
+      ],
+      NOW,
+    );
+    expect(h.detail).toContain('恢复了 2 次故障');
+    expect(h.detail).toContain('最近一次是 a（持续 1 天 5 小时）');
+    expect(h.detail).not.toContain('24 小时内没有故障');
+  });
+
   it('未实测不算正常：全绿句子里单独点出来；探测器停了先说这个', () => {
     const s = summaryOf([target({ name: 'a' }), target({ name: 'w', measured: false })]);
     s.overall.up = 1; s.overall.unmeasured = 1;
