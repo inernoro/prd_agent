@@ -687,6 +687,26 @@ describe('Branch Routes', () => {
       expect((reuse.body as any)?.error).not.toBe('agent_prebuilt_only');
     });
 
+    it('新建构建配置带 managedBuild 在门禁下拒绝机器凭据；不带的照常创建，真人不受限（Codex 第九轮 P1）', async () => {
+      seedGateProject(true);
+      const managed = {
+        id: 'worker', projectId: 'proj-a', name: 'Worker', dockerImage: 'node:20', containerPort: 6000,
+        managedBuild: { stack: 'node', installCommand: 'pnpm i', buildCommand: 'pnpm build', startCommand: 'node worker.js', artifactImage: 'cds-managed/worker' },
+      };
+      const machine = await request(server, 'POST', '/api/build-profiles', managed, { 'X-Test-Key': 'A' });
+      expect(machine.status).toBe(409);
+      expect((machine.body as any).error).toBe('agent_prebuilt_only');
+      expect((machine.body as any).message).toContain('managedBuild');
+      expect(stateService.getBuildProfile('worker')).toBeUndefined();
+      const plain = await request(server, 'POST', '/api/build-profiles', {
+        id: 'worker-img', projectId: 'proj-a', name: 'Worker Image', dockerImage: 'ghcr.io/x/worker:sha-${CDS_COMMIT_SHA}', containerPort: 6000, prebuiltImage: true,
+      }, { 'X-Test-Key': 'A' });
+      expect(plain.status).toBe(201);
+      const human = await request(server, 'POST', '/api/build-profiles', managed);
+      expect(human.status).toBe(201);
+      expect(stateService.getBuildProfile('worker')!.managedBuild).toBeDefined();
+    });
+
     it('bulk-set-modes 批量改写模式定义在门禁下拒绝机器凭据，真人照常（Codex 第二轮 P1）', async () => {
       seedGateProject(true);
       const body = { profileIds: ['api'], strategy: 'replace', modes: { dev: { label: '开发', command: 'pnpm dev' } } };

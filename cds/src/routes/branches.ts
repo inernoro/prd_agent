@@ -17729,6 +17729,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const m = assertProjectAccess(req as any, profile.projectId);
         if (m) { res.status(m.status).json(m.body); return; }
       }
+      // Agent 极速版门禁：新建配置原样落盘请求体，机器凭据带 managedBuild 建一份配置，直接部署会被拦，
+      // 但随后 push 走豁免的 webhook 派发就在宿主上跑 install / build（Codex 第九轮 P1）。与通用 PUT 同一
+      // 口径只拦 managedBuild：prebuilt 标记本身不挂载源码、不编译（台账 G3），新建时不拦。
+      {
+        const gateProject = stateService.getProject(profile.projectId);
+        if (gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req) && profile.managedBuild) {
+          res.status(409).json({
+            error: 'agent_prebuilt_only',
+            message: `项目「${gateProject.aliasName || gateProject.name || gateProject.id}」要求 Agent 只使用极速版（CI 预构建）部署：managedBuild 会让 CDS 宿主编译源码，Agent 不得新建带它的构建配置，请由真人在项目设置页调整。`,
+            projectId: gateProject.id,
+            violations: [],
+            hint: '极速版配置只需 deployModes 里带 prebuilt: true 的模式或 prebuiltImage: true 的镜像站点，不需要 managedBuild。',
+          });
+          return;
+        }
+      }
       stateService.addBuildProfile(profile);
       stateService.save();
       res.status(201).json({ profile });
