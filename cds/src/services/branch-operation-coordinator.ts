@@ -165,18 +165,24 @@ function isWebhookDeploy(req: BranchOperationRequest): boolean {
 /**
  * 两个 commitSha 指的是不是同一个提交。
  *
- * 部署端点显式接受 7-40 位 SHA：手动 `--commit abc1234` 和 webhook 带的 40 位
- * 全长 SHA 完全可能是同一个提交，字符串直接比必然判不等——然后 manual 优先级更高，
- * 把在途的 webhook 部署顶掉重建同一份代码，正是这条并入路径要消除的重复拆装
- * （Codex PR #1516 六轮 P2）。短的一方必须是长的一方的前缀，且不短于 7 位
- * （短于 7 位的前缀碰撞概率不可忽略，宁可判不同、退回既有语义）。
+ * 判据是「都是 40 位全长 SHA 且完全相等」，短 SHA 一律判不同。
+ *
+ * 六轮 review 先要求把短 SHA 归一（`--commit abc1234` 和 webhook 的 40 位全长
+ * 本可能是同一提交，直判不等会让手动部署顶掉在途 webhook 重建同一份代码），
+ * 七轮又指出前缀匹配自身有歧义：两个提交共享同一个 7 位前缀时，这里会把请求
+ * 并进「碰巧前缀相同」的那次部署并回报已受理——那等于部署了不是你要的代码，
+ * 与不带 commit 时把 B 并进 A 是同一类静默事故。
+ *
+ * 两轮之间来回的是同一个自由文本解析器，按 AGENTS.md §5.5 的熔断纪律不再加
+ * 语义，改回**有限、无歧义**的判据：只认全长相等。代价是短 SHA 的手动部署不
+ * 参与并入（少省一次重复拆装，结果仍正确）；要吃到并入收益就传完整 40 位
+ * ——webhook 天然是全长。这条边界记在 `doc/debt.cds.performance.md`。
  */
 export function sameCommitIdentity(a?: string | null, b?: string | null): boolean {
   const x = (a || '').trim().toLowerCase();
   const y = (b || '').trim().toLowerCase();
-  if (!/^[0-9a-f]{7,40}$/.test(x) || !/^[0-9a-f]{7,40}$/.test(y)) return false;
-  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
-  return long.startsWith(short);
+  if (!/^[0-9a-f]{40}$/.test(x) || !/^[0-9a-f]{40}$/.test(y)) return false;
+  return x === y;
 }
 
 /**

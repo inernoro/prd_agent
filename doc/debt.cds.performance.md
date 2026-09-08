@@ -138,6 +138,14 @@ slice + 控制面 systemd 权重、同 commit 部署并入、webhook 噪声廉�
 - P3 不带 commit 的手动部署不参与「同 commit 并入」：它要落地的是执行到拉取那一刻的分支 HEAD，
   分支上缓存的旧 SHA 判不出它到底要部署什么，判错的后果是新提交静默不被部署。所以这类请求维持既有
   语义（按优先级取代或排队），少省一次重复拆装。想吃到并入收益就带上 `--commit`（webhook 天然带）。
+- P3 短 SHA 的手动部署同样不参与并入：7 位前缀在同一仓库里可能对应两个提交，无从判断唯一性，
+  按前缀并入等于可能把请求并进「碰巧前缀相同」的那次部署。判据收敛为「两边都是 40 位全长且完全相等」，
+  要吃并入收益就传完整 SHA。真要支持短 SHA，得在判定前把两边都解析成完整提交 ID——那要在部署热路径上
+  加一次 git 解析，与本批「治过载」的目标相悖，不在本批范围。
+- P3 构建闸门的负载比用 `os.availableParallelism()` 当分母、`os.loadavg()` 当分子。若将来给
+  cds-master 加 CPU 亲和或配额，两者作用域会不一致（分子是宿主全局、分母是进程可用），闸门会偏保守。
+  当前 systemd 单元明确不设 CPUQuota / CPUAffinity（本批的前提就是不给上限），所以尚无真实路径；
+  哪天要给控制面加 CPU 限制，这两处（`build-gate.ts` 与 `control-plane-pressure.ts`）要同批改。
 
 **做完算数的判据**：`docker info -f '{{.CgroupDriver}}'` 为 systemd 且 /healthz `pressure.workloadCgroup.weightManaged=true`；
 SSE 单连接存活超过 10 分钟不重连；宿主 load1 / 核数 在工作日白天中位数低于 1.0。

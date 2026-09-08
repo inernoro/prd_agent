@@ -146,11 +146,16 @@ def main() -> None:
     branches_get = sorted(l["durationMs"] for l in logs if l["method"] == "GET" and l["path"].split("?")[0] in ("/api/branches", "/_cds/api/branches") and l["status"] == 200)
     rows.append(("分支列表接口 p50 / p95（页面首屏数据）", f"{pct(branches_get, .5)} / {pct(branches_get, .95)} ms（n={len(branches_get)}）"))
 
-    fwd = api(f"/api/http-logs?since={since}&layer=forwarder&minStatus=500&limit=5000").get("logs", [])
+    # 同 runs 那条：/api/http-logs 单次最多给 5000 条。重连风暴恰恰是最容易撑满的时候，
+    # 不声张地少算会让改前改后对比虚高，所以拿满就把数字标成下界（Codex 七轮 P2）。
+    HTTP_LOG_CAP = 5000
+    fwd = api(f"/api/http-logs?since={since}&layer=forwarder&minStatus=500&limit={HTTP_LOG_CAP}").get("logs", [])
+    fwd_mark = "≥" if len(fwd) >= HTTP_LOG_CAP else ""
+    fwd_note = f"（受接口 {HTTP_LOG_CAP} 条上限截断，实际更多）" if fwd_mark else ""
     sse = [l for l in fwd if l.get("requestKind") == "sse"]
-    rows.append((f"dashboard SSE 断连（forwarder 5xx，{args.hours}h）", str(len(sse))))
+    rows.append((f"dashboard SSE 断连（forwarder 5xx，{args.hours}h）", f"{fwd_mark}{len(sse)}{fwd_note}"))
     non_sse = [l for l in fwd if l.get("requestKind") != "sse" and "/_cds/" in l["path"]]
-    rows.append((f"dashboard 接口 5xx（非 SSE，{args.hours}h）", str(len(non_sse))))
+    rows.append((f"dashboard 接口 5xx（非 SSE，{args.hours}h）", f"{fwd_mark}{len(non_sse)}{fwd_note}"))
 
     # /api/deployment-runs 把 limit 夹到 200 且没有翻页游标：窗口内超过 200 次部署时
     # 只能看到最新的 200 条。不声张地少算会让长窗口的改前改后对比失真，所以这里显式
