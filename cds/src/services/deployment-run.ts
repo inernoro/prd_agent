@@ -8,7 +8,12 @@ import type {
 } from '../types.js';
 import type { StateService } from './state.js';
 
-const TERMINAL_STATUSES = new Set<DeploymentRunStatus>(['running', 'failed', 'cancelled']);
+/**
+ * 部署 run 的终态。导出是为了让「这条 run 还在跑吗」只有一个判据——
+ * 2026-09-08 并入在途部署时要在路由层问同一个问题，抄第二份必然漂移。
+ */
+export const DEPLOYMENT_RUN_TERMINAL_STATUSES: ReadonlySet<DeploymentRunStatus> = new Set<DeploymentRunStatus>(['running', 'failed', 'cancelled']);
+const TERMINAL_STATUSES = DEPLOYMENT_RUN_TERMINAL_STATUSES;
 
 const ALLOWED_TRANSITIONS: Record<DeploymentRunStatus, ReadonlySet<DeploymentRunStatus>> = {
   pending: new Set(['queued', 'preparing', 'failed', 'cancelled']),

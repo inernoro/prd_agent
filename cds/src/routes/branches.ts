@@ -67,6 +67,9 @@ import {
 } from '../services/branch-protection.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
+import { getEventLoopLag } from '../services/event-loop-lag.js';
+import { workloadCgroupFlags } from '../services/workload-cgroup.js';
+import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
 import { recordBuild, assessDeployLoop } from '../services/build-activity-tracker.js';
@@ -143,6 +146,7 @@ import {
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import type { DeploymentRunService } from '../services/deployment-run.js';
+import { DEPLOYMENT_RUN_TERMINAL_STATUSES } from '../services/deployment-run.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 import type { ManagedProjectPlan, ManagedProjectService } from '../services/managed-project.js';
 import { classifyDeploymentFailure } from '../services/deployment-failure-classifier.js';
@@ -2800,6 +2804,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
   }
 
+  /**
+   * 找「在途那次部署」的 run。首选按协调器给的 activeOperationId 精确匹配——
+   * 部署一拿到租约就把 operationId 写进了 run。
+   *
+   * 不拿 commitSha 当判据：run.commitSha 会在部署过程中被改写成解析后的真实 SHA
+   * （请求里写 `4444…`、落库可能是 `abc1234`），拿它比对必然静默漏配；何况
+   * 「是不是同一个提交」协调器已经判过了，这里再判一遍就是第二份会漂的判据。
+   *
+   * 匹配不上时只在「排除自己后恰好只剩一条非终态 run」的情况下兜底；有歧义就返回
+   * null，让调用方摘掉响应头退回分支状态轮询，而不是指一条可能错的 run。
+   */
+  function findLiveDeploymentRunId(branchId: string, activeOperationId: string | null, excludeRunId: string | null): string | null {
+    if (!deploymentRunService) return null;
+    const live = deploymentRunService.list({ branchId })
+      .filter((run) => run.id !== excludeRunId && !DEPLOYMENT_RUN_TERMINAL_STATUSES.has(run.status));
+    if (activeOperationId) {
+      const exact = live.find((run) => run.operationId === activeOperationId);
+      if (exact) return exact.id;
+    }
+    return live.length === 1 ? live[0].id : null;
+  }
+
   function beginBranchOperation(
     req: Request,
     res: Response,
@@ -2810,10 +2836,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha?: string | null;
       versionId?: string | null;
       hasOneShotOptions?: boolean;
+      /** commitSha 是请求自己钉住的（而非分支缓存兜底），才允许参与并入判定。 */
+      commitPinned?: boolean;
+      /** 本次部署将要落地的有效配置指纹，用于同 commit 并入判定。 */
+      configHash?: string | null;
       source: string;
       reason?: string | null;
       sse?: boolean;
       continueWith?: 'deploy' | 'deploy-profile' | null;
+      /** 外层在拿租约前就建好的占位 run；并入在途部署时用来排除自己。 */
+      deploymentRunId?: string | null;
     },
   ): BranchOperationLease | null {
     if (!branchOperationCoordinator) return null;
@@ -2829,11 +2861,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha: input.commitSha || null,
       versionId: input.versionId || null,
       hasOneShotOptions: input.hasOneShotOptions || false,
+      commitPinned: input.commitPinned || false,
+      configHash: input.configHash || null,
       source: input.source,
       reason: input.reason || null,
       continueWith: input.continueWith || null,
     });
     if (decision.status === 'started') return decision.lease || null;
+
+    // merged / joined 都是「已受理、不新开操作」：merged 排到当前操作之后重放，
+    // joined 直接并入在途的同 commit 部署（2026-09-08，治 push 后紧跟手动 deploy 拆两遍容器）。
+    const accepted = decision.status === 'merged' || decision.status === 'joined';
+
+    // 并入在途部署时，调用方必须拿到一条**真的会跑完**的 run 来追踪。
+    // 外层 deploy handler 在取租约之前就 begin 了占位 run 并把它写进
+    // X-CDS-Deployment-Run-Id，而并入之后那条占位 run 会被取消；cdscli 只认这个头、
+    // 见 cancelled 即判「部署失败」——本 PR 要治的正是「push 后紧跟 deploy」这条路径，
+    // 头指错了等于治了个寂寞（Codex 三轮 P1）。所以这里把头改指向在途那次部署的 run；
+    // 实在找不到就把头摘掉，让 CLI 退回分支状态轮询，而不是盯着一条注定被取消的记录。
+    const joinedRunId = decision.status === 'joined'
+      ? findLiveDeploymentRunId(entry.id, decision.activeOperationId || null, input.deploymentRunId || null)
+      : null;
+    if (decision.status === 'joined' && !res.headersSent) {
+      if (joinedRunId) res.setHeader('X-CDS-Deployment-Run-Id', joinedRunId);
+      else res.removeHeader('X-CDS-Deployment-Run-Id');
+    }
+    (res.locals as Record<string, unknown>).cdsJoinedDeploymentRunId = joinedRunId || undefined;
 
     const payload = {
       ok: true,
@@ -2842,17 +2895,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       activeOperationId: decision.activeOperationId,
       activeKind: decision.activeKind,
       pendingCommitSha: decision.pendingCommitSha,
-      message: decision.status === 'merged'
-        ? (triggerFromRequest(req) === 'manual'
-          ? '已有同分支操作正在运行，本次部署已合并为最新待部署请求（当前操作完成后自动执行）'
-          : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
-        : decision.reason || '同分支已有写操作正在运行',
+      deploymentRunId: joinedRunId || undefined,
+      message: decision.status === 'joined'
+        ? `同一提交（${(input.commitSha || '').slice(0, 7)}）的部署已在进行中，本次请求已并入在途部署，不再重复拆装容器`
+        : decision.status === 'merged'
+          ? (triggerFromRequest(req) === 'manual'
+            ? '已有同分支操作正在运行，本次部署已合并为最新待部署请求（当前操作完成后自动执行）'
+            : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
+          : decision.reason || '同分支已有写操作正在运行',
     };
     if (input.sse) {
       initSSE(res);
-      sendSSE(res, decision.status === 'merged' ? 'complete' : 'error', payload);
+      sendSSE(res, accepted ? 'complete' : 'error', payload);
       res.end();
-    } else if (decision.status === 'merged') {
+    } else if (accepted) {
       res.status(202).json(payload);
     } else {
       res.status(409).json({ ...payload, ok: false });
@@ -8767,6 +8823,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     ];
     const cmd = [
       'docker run -d',
+      // 资源代理也是托管工作负载，同样挂低权重 slice（Codex PR #1516 P2）。
+      ...workloadCgroupFlags(),
       `--name ${routeShellQuote(proxyContainerName)}`,
       `--network ${routeShellQuote(network)}`,
       // 纵深防御：即使上层路由门禁将来被误删，这个代理也只能绑定回环，
@@ -12526,12 +12584,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 不合并：pending 重放不带这些选项，强制部署会被暂停闸门拦下、env 豁免
       // 失效、执行器指定丢失（Codex P2），撞车维持 409 让调用方自己重试。
       hasOneShotOptions: forceDeployWhilePaused || ignoreRequired || Boolean(req.body?.targetExecutorId),
+      // 只有请求自己钉住了提交（webhook 的 head sha / body.commitSha）才允许并入：
+      // 没钉住时下面 pull 会 hard-reset 到届时的分支 HEAD，entry 上那个缓存 SHA
+      // 说明不了这次要部署什么（Codex 六轮 P1）。
+      commitPinned: Boolean(requestCommitSha),
+      // 同 commit 并入的前提不只是同一个提交，还得是同一份将要落地的配置
+      // （有效 profiles + 合并后的 env）。中间改过 env 或构建配置就不并入。
+      configHash: deploymentConfigHash || null,
       source: 'api.deploy-branch',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
       sse: true,
+      deploymentRunId: deploymentRun?.id || null,
     });
     if (branchOperationCoordinator && !branchOperationLease) {
-      cancelDeploymentRun(deploymentRun?.id, '部署请求未取得分支操作租约');
+      // 并入在途部署时占位 run 照样取消（它确实什么都没做），但要写清去向：
+      // 调用方已被改指向 joinedRunId，运行记录里也能看出这次为什么没自己跑。
+      const joinedRunId = (res.locals as Record<string, unknown>).cdsJoinedDeploymentRunId as string | undefined;
+      cancelDeploymentRun(
+        deploymentRun?.id,
+        joinedRunId ? `已并入在途部署 ${joinedRunId}，本次不重复拆装容器` : '部署请求未取得分支操作租约',
+      );
       return;
     }
 
@@ -24975,6 +25047,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     if (runningContainers > cores * 2) {
       warnings.push({ level: 'warning', code: 'too-many-containers', message: `运行容器 ${runningContainers} 个，超过核数 2 倍（${cores * 2}）：CPU 严重争抢，构建变慢。` });
     }
+    // 2026-09-08 宿主过载复盘：master 自己有没有被饿、构建准入有没有被负载收紧，
+    // 与 /healthz pressure 同口径（判据常量同源）。
+    const eventLoop = getEventLoopLag();
+    const lagP99 = Math.max(eventLoop.current.p99Ms, eventLoop.previous?.p99Ms || 0);
+    if (eventLoop.enabled && lagP99 >= EVENT_LOOP_LAG_CRITICAL_MS) {
+      warnings.push({ level: 'critical', code: 'event-loop-stalled', message: `master 事件循环 p99 延迟 ${lagP99}ms：所有请求一起变慢，先看宿主负载与同步阻塞。` });
+    } else if (eventLoop.enabled && lagP99 >= EVENT_LOOP_LAG_WARN_MS) {
+      warnings.push({ level: 'warning', code: 'event-loop-lagging', message: `master 事件循环 p99 延迟 ${lagP99}ms，临近卡顿。` });
+    }
+    const gate = buildGateStatus();
+    if (gate.load.saturated) {
+      warnings.push({ level: 'warning', code: 'build-throttled-by-load', message: `宿主过载（load ${gate.load.load1} / ${gate.load.cores} 核），构建准入已收紧为 1 并发：${gate.active} 在跑 / ${gate.queued} 排队。` });
+    }
     for (const b of build) {
       const m = Math.max(b.sourceMedianMs || 0, b.releaseMedianMs || 0);
       if (m > 6 * 60 * 1000) {
@@ -24987,6 +25072,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       containers: { running: runningContainers },
       scheduler,
       build,
+      eventLoop,
+      buildGate: { active: gate.active, queued: gate.queued, max: gate.max, load: gate.load },
       warnings,
       generatedAt: new Date().toISOString(),
     });

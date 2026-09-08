@@ -980,6 +980,12 @@ export interface UptimeSummary {
   /** 首批数据预计出现的等待秒数（= 一个探测间隔），给空状态文案用 */
   firstDataEtaSeconds: number;
   lastCycleAt: number | null;
+  /**
+   * 探测循环健康（2026-09-08）：线上曾有一轮 await 卡住 24 小时，cycleRunning 永不复位，
+   * 状态页从此一格数据都没有却依旧显示「已启用」。stale = 距上一轮完成已超过
+   * 3 个探测间隔（或从未完成过且已超过 3 个间隔）。
+   */
+  cycle: UptimeCycleHealth;
   /** 当前生效的排除规则（逃生阀），状态页据此说明「为什么少了几条」 */
   excludePatterns: string[];
   overall: {
@@ -1023,6 +1029,22 @@ export interface UptimeIncidentView extends ReleaseLinkedIncident {
   ongoing: boolean;
 }
 
+export interface UptimeCycleHealth {
+  ok: boolean;
+  running: boolean;
+  lastCycleAt: number | null;
+  /** 距上一轮完成的毫秒数；从未完成为 null */
+  sinceLastCycleMs: number | null;
+  stale: boolean;
+  /** 看门狗强制复位的次数（>0 说明有探测卡死过） */
+  watchdogResets: number;
+  /** 单目标探测被硬 deadline 打断的累计次数 */
+  probeDeadlineHits: number;
+}
+
+/** 单目标探测的硬 deadline：探测器自身的超时之外再兜一层，防止 await 永不返回。 */
+const PROBE_HARD_DEADLINE_EXTRA_MS = 5_000;
+
 /** 系统推导目标的探测方式描述（自定义监控由定义派生，不走这里）。 */
 function defaultProbeDescription(record: Pick<UptimeTargetRecord, 'probeKind' | 'probeUrl'>): string {
   if (record.probeKind === 'url') return `GET ${record.probeUrl || '（未配置上线地址）'} · 状态 2xx`;
@@ -1059,6 +1081,10 @@ export class UptimeMonitorService {
   private lastCycleProbed = 0;
   private lastCycleTargets = 0;
   private cycleRunning = false;
+  private cycleStartedAt: number | null = null;
+  private startedAt: number | null = null;
+  private watchdogResets = 0;
+  private probeDeadlineHits = 0;
   private customLaneRunning = false;
 
   constructor(
@@ -1096,6 +1122,7 @@ export class UptimeMonitorService {
   start(): void {
     if (!this.deps.config.enabled) return;
     if (this.timer) return;
+    this.startedAt = this.now();
     this.timer = setInterval(() => {
       void this.runCycle().catch((err) => {
         this.deps.logger?.warn?.(`[uptime] 探测轮次失败: ${(err as Error).message}`);
@@ -1120,9 +1147,88 @@ export class UptimeMonitorService {
    * 跑一轮探测。重入保护：上一轮没结束就直接跳过本轮（超时 5s × 并发 8，
    * 正常远快于 60s 间隔；真堵住时也不能叠加 fan-out）。
    */
+  /** 距上一轮完成超过几个探测间隔算「停摆」。 */
+  private staleAfterMs(): number {
+    return Math.max(this.deps.config.intervalMs * 3, 60_000);
+  }
+
+  getCycleHealth(): UptimeCycleHealth {
+    const now = this.now();
+    const since = this.lastCycleAt === null ? null : now - this.lastCycleAt;
+    // 从未完成过：以启动时刻为基准判停摆（首轮本该在启动后立即完成）。
+    const sinceStart = this.startedAt === null ? null : now - this.startedAt;
+    const runningTooLong = this.cycleRunning && this.cycleStartedAt !== null && now - this.cycleStartedAt > this.staleAfterMs();
+    const stale = this.deps.config.enabled && (
+      runningTooLong
+      || (since !== null ? since > this.staleAfterMs() : (sinceStart !== null && sinceStart > this.staleAfterMs()))
+    );
+    return {
+      ok: !stale,
+      running: this.cycleRunning,
+      lastCycleAt: this.lastCycleAt,
+      sinceLastCycleMs: since,
+      stale,
+      watchdogResets: this.watchdogResets,
+      probeDeadlineHits: this.probeDeadlineHits,
+    };
+  }
+
+  /**
+   * 单目标硬 deadline：探测器承诺 timeoutMs 内返回，这里再多给 5s；超过就当
+   * 「探测器无响应」记一次内部故障（不参与降级判定），绝不让一个卡死的 await
+   * 把整轮、乃至此后每一轮都堵死。
+   */
+  private probeWithDeadline(
+    probe: ProbeFn,
+    target: ProbeTarget,
+    timeoutMs: number,
+  ): Promise<{ outcome: Omit<UptimeSample, 't'>; thrown: boolean }> {
+    const deadlineMs = timeoutMs + PROBE_HARD_DEADLINE_EXTRA_MS;
+    return new Promise((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        this.probeDeadlineHits += 1;
+        this.deps.logger?.warn?.(`[uptime] 探测器 ${deadlineMs}ms 未返回，按内部故障记一次失败: ${target.id}`);
+        resolve({ outcome: { up: false, ms: deadlineMs, err: `探测器无响应（硬 deadline ${deadlineMs}ms）` }, thrown: true });
+      }, deadlineMs);
+      timer.unref?.();
+      Promise.resolve()
+        .then(() => probe(target, timeoutMs))
+        .then(
+          (outcome) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve({ outcome, thrown: false });
+          },
+          (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            // 探测器自身抛异常属于内部故障，不是「对面不说 HTTP」的证据，
+            // 因此不参与自动降级判定，照常记一次失败。
+            resolve({ outcome: { up: false, ms: 0, err: (err as Error).message }, thrown: true });
+          },
+        );
+    });
+  }
+
   async runCycle(): Promise<void> {
-    if (this.cycleRunning) return;
+    if (this.cycleRunning) {
+      // 看门狗：上一轮开始已久却没结束 → 视为卡死，强制复位再跑本轮。
+      const startedAgo = this.cycleStartedAt === null ? 0 : this.now() - this.cycleStartedAt;
+      if (startedAgo <= this.staleAfterMs()) return;
+      this.watchdogResets += 1;
+      this.deps.logger?.warn?.(`[uptime] 上一轮探测已 ${Math.round(startedAgo / 1000)}s 未结束，看门狗强制复位（第 ${this.watchdogResets} 次）`);
+    }
     this.cycleRunning = true;
+    this.cycleStartedAt = this.now();
+    // 本轮的代号：被看门狗判定卡死的旧轮日后醒来时，只认代号相同才写结果 / 收尾，
+    // 否则旧轮的 finally 会把新一轮的 cycleRunning / cycleStartedAt 一并清掉，
+    // 新一轮反而被自己的代号检查提前退出（2026-09-08 合并 #1514 后发现）。
+    const cycleGeneration = this.cycleStartedAt;
     let customLane: Promise<number> = Promise.resolve(0);
     const cycleStartedAt = this.now();
     try {
@@ -1188,6 +1294,8 @@ export class UptimeMonitorService {
         }
         const chunk = builtinTargets.slice(i, i + PROBE_CONCURRENCY);
         const results = await Promise.all(chunk.map((target) => this.probeOne(target)));
+        // 看门狗已经把本轮当卡死复位、并开了新一轮 → 旧轮不再写结果，避免两轮交错（2026-09-08）。
+        if (this.cycleStartedAt !== cycleGeneration) return;
         for (const { target, outcome, thrown } of results) {
           const folded = this.foldUserView(target, outcome, userViews.get(target.branchId));
           this.applySample(target, { ...folded, t: this.now() }, { allowDegrade: !thrown });
@@ -1203,7 +1311,11 @@ export class UptimeMonitorService {
       this.persist();
     } finally {
       // 分支 / 生产这条主通道一结束就解锁；自定义通道慢也拖不住下一轮主通道。
-      this.cycleRunning = false;
+      // 只清自己这一代：旧轮被看门狗顶掉后醒来，不许碰新一轮的锁。
+      if (this.cycleStartedAt === cycleGeneration) {
+        this.cycleRunning = false;
+        this.cycleStartedAt = null;
+      }
     }
     // 自定义通道比主通道慢时，下一轮可能已经把健康快照换掉了：只给仍属于本轮的
     // 快照记数，否则旧通道的完成数会算到新一轮头上（第五轮 P2）。
@@ -1446,17 +1558,10 @@ export class UptimeMonitorService {
   }> {
     const probe = this.deps.probe || defaultHttpProbe;
     const timeoutMs = target.timeoutMs || this.deps.config.timeoutMs;
-    try {
-      return { target, outcome: await probe(target, timeoutMs), thrown: false };
-    } catch (err) {
-      // 探测器自身抛异常属于内部故障，不是「对面不说 HTTP」的证据，
-      // 因此不参与自动降级判定，照常记一次失败。
-      return {
-        target,
-        outcome: { up: false, ms: 0, err: (err as Error).message },
-        thrown: true,
-      };
-    }
+    // 两条通道、立即探测都从这里走：硬 deadline 兜住「探测器承诺超时却永不返回」
+    // （2026-09-08 一轮 await 卡死 24 小时的根因），异常按内部故障记、不参与降级。
+    const r = await this.probeWithDeadline(probe, target, timeoutMs);
+    return { target, ...r };
   }
 
   /**
@@ -1707,6 +1812,7 @@ export class UptimeMonitorService {
       failureThreshold: this.deps.config.failureThreshold,
       firstDataEtaSeconds: Math.round(this.deps.config.intervalMs / 1000),
       lastCycleAt: this.lastCycleAt,
+      cycle: this.getCycleHealth(),
       excludePatterns: [...(this.deps.config.excludePatterns || [])],
       overall: tallyTargetSummaries(targets),
       targets,

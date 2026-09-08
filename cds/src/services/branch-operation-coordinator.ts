@@ -46,6 +46,23 @@ export interface BranchOperationRequest {
    * （Codex P2「Reject manual deploy merges with one-shot options」）。
    */
   hasOneShotOptions?: boolean;
+  /**
+   * commitSha 是不是请求自己钉住的（webhook 的 head sha / 显式 `--commit`），
+   * 而不是拿分支上缓存的 `githubCommitSha` 兜底来的。
+   *
+   * 没钉住的部署最终落地的是「执行到 pull 那一刻的分支 HEAD」，不是这个缓存值：
+   * 远端已经前进到 B 而缓存还停在 A 时，拿 A 去判「同一个 commit」会把一次
+   * 「要部署 B」的请求并进「正在部署 A」，B 就此不再被部署，调用方还收到「已受理」。
+   * 所以并入要求两边都钉住了提交（Codex PR #1516 六轮 P1）。
+   */
+  commitPinned?: boolean;
+  /**
+   * 本次部署将要落地的有效配置指纹（有效 profiles + 合并后的 env）。
+   * 只用于「同 commit 并入在途部署」的判定：同一个 commit 也可能因为中间改了
+   * 项目/分支环境变量或构建配置而要落不同的东西，仅比 commitSha 会把这次真实的
+   * 配置变更悄悄吞掉——既不生效也不排队（Codex PR #1516 四轮 P1）。
+   */
+  configHash?: string | null;
   source?: string | null;
   reason?: string | null;
   continueWith?: 'deploy' | 'deploy-profile' | null;
@@ -62,7 +79,13 @@ export interface BranchOperationLease {
 }
 
 export interface BranchOperationDecision {
-  status: 'started' | 'merged' | 'rejected';
+  /**
+   * `joined`（2026-09-08 宿主过载复盘）：来的部署与在途部署是**同一个 commit**，
+   * 直接并入在途操作——不新开、不排 pending、更不取代。此前 cdscli「push 后立刻
+   * 手动 deploy」会让 manual deploy 压掉 2 秒前 webhook 刚起的同 sha 部署，同一
+   * 批容器被拆两遍（线上一条分支 90 分钟里连着来了 10 次）。
+   */
+  status: 'started' | 'merged' | 'joined' | 'rejected';
   operationId: string;
   generation: number;
   reason?: string;
@@ -140,6 +163,55 @@ function isWebhookDeploy(req: BranchOperationRequest): boolean {
 }
 
 /**
+ * 两个 commitSha 指的是不是同一个提交。
+ *
+ * 判据是「都是 40 位全长 SHA 且完全相等」，短 SHA 一律判不同。
+ *
+ * 六轮 review 先要求把短 SHA 归一（`--commit abc1234` 和 webhook 的 40 位全长
+ * 本可能是同一提交，直判不等会让手动部署顶掉在途 webhook 重建同一份代码），
+ * 七轮又指出前缀匹配自身有歧义：两个提交共享同一个 7 位前缀时，这里会把请求
+ * 并进「碰巧前缀相同」的那次部署并回报已受理——那等于部署了不是你要的代码，
+ * 与不带 commit 时把 B 并进 A 是同一类静默事故。
+ *
+ * 两轮之间来回的是同一个自由文本解析器，按 AGENTS.md §5.5 的熔断纪律不再加
+ * 语义，改回**有限、无歧义**的判据：只认全长相等。代价是短 SHA 的手动部署不
+ * 参与并入（少省一次重复拆装，结果仍正确）；要吃到并入收益就传完整 40 位
+ * ——webhook 天然是全长。这条边界记在 `doc/debt.cds.performance.md`。
+ */
+export function sameCommitIdentity(a?: string | null, b?: string | null): boolean {
+  const x = (a || '').trim().toLowerCase();
+  const y = (b || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(x) || !/^[0-9a-f]{40}$/.test(y)) return false;
+  return x === y;
+}
+
+/**
+ * 「同一个 commit 的整分支部署已经在跑」判定（2026-09-08）。
+ * 只认整分支 deploy 对整分支 deploy、双方都带 commitSha 且相等、在途未被取消。
+ * 带版本 / 一次性选项的 manual deploy 语义不同（重放会丢配置），不并入。
+ */
+function isSameCommitDeployInFlight(incoming: BranchOperationRequest, active: ActiveOperation): boolean {
+  if (active.cancelled) return false;
+  if (incoming.kind !== 'deploy' || active.request.kind !== 'deploy') return false;
+  // 两边都得是「钉住了提交」的请求。没钉住的落地的是届时的分支 HEAD，
+  // 手里这个缓存 SHA 说明不了它要部署什么（见 commitPinned 注释）。
+  if (!incoming.commitPinned || !active.request.commitPinned) return false;
+  if (!sameCommitIdentity(incoming.commitSha, active.request.commitSha)) return false;
+  // 在途那次也必须是「普通整分支部署」：带版本 / 一次性选项的部署落的是捕获配置或
+  // 强制豁免，与 webhook 要的「当前配置」不是同一件事，并入会让后者悄悄丢失
+  // （Codex PR #1516 二轮 P2）。这种情况维持原语义：webhook 合并为 pending 排到其后重放。
+  if (active.request.versionId || active.request.hasOneShotOptions) return false;
+  // 同一个 commit 未必落同一份配置：两次部署之间改了项目/分支 env 或构建配置，
+  // 有效配置指纹就会变。并入等于用旧配置代替新请求，且不留 pending 重放——
+  // 用户改的东西既不生效也不排队。故要求两边指纹都在且相等；缺指纹一律不并入，
+  // 回落既有语义（合并为 pending，在其后重放）（Codex 四轮 P1）。
+  if (!incoming.configHash || !active.request.configHash) return false;
+  if (incoming.configHash !== active.request.configHash) return false;
+  if (incoming.trigger === 'webhook') return true;
+  return isMergeableManualDeploy(incoming);
+}
+
+/**
  * manual 整分支 deploy 也可合并（2026-07-16 队列堵死复盘）：此前 manual deploy
  * 撞上同优先级的在途 manual deploy 只会 409，agent 排队焦虑 → 反复重试 →
  * 同分支部署叠加、每次重试往全局构建队列塞一整层服务（重试风暴正反馈）。
@@ -191,6 +263,24 @@ export class BranchOperationCoordinator {
       const reserved = this.getUsableReservedContinuation(branchId, request);
       if (reserved) return this.beginAgainstReservedContinuation(request, reserved);
       return this.start(request);
+    }
+
+    if (isSameCommitDeployInFlight(request, active)) {
+      this.record('branch.operation.joined', request, active.operationId, active.generation, 'info', {
+        activeOperationId: active.operationId,
+        activeKind: active.request.kind,
+        activeTrigger: active.request.trigger,
+        commitSha: request.commitSha || null,
+      });
+      return {
+        status: 'joined',
+        operationId: active.operationId,
+        generation: active.generation,
+        activeOperationId: active.operationId,
+        activeKind: active.request.kind,
+        pendingCommitSha: null,
+        reason: 'same commit already deploying; joined the in-flight operation',
+      };
     }
 
     if (isWebhookDeploy(request)) {

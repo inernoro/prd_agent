@@ -3425,6 +3425,65 @@ describe('Branch Routes', () => {
   });
 
   describe('branch operation fencing', () => {
+    // Codex 三轮 P1：并入在途部署时，响应头必须指向那条真的会跑完的 run。
+    // 外层 handler 在取租约前就建了占位 run 并写进 X-CDS-Deployment-Run-Id，并入后
+    // 占位 run 会被取消，而 cdscli 只认这个头、见 cancelled 即判部署失败——正是本批
+    // 要治的「push 后紧跟 deploy」路径。
+    it('points a joined deploy at the in-flight run, not the cancelled placeholder', async () => {
+      const sha = '4444444444444444444444444444444444444444';
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
+      });
+      stateService.addBranch({
+        id: 'joined-run',
+        projectId: 'default',
+        branch: 'feature/joined-run',
+        worktreePath: path.join(tmpDir, 'worktrees', 'joined-run'),
+        status: 'idle',
+        createdAt: new Date().toISOString(),
+        services: {},
+        githubCommitSha: sha,
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-joined-run-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-joined-run', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const activeDeploy = request(
+        server, 'POST', '/api/branches/joined-run/deploy', { commitSha: sha },
+        { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-active' },
+      );
+      await runStarted;
+      const activeRunId = deploymentRunService.list({ branchId: 'joined-run' })[0]?.id;
+      expect(activeRunId).toBeTruthy();
+
+      // cdscli 的同 sha 手动部署：并入，不再自己拆装容器
+      const joined = await request(server, 'POST', '/api/branches/joined-run/deploy', { commitSha: sha });
+      expect(String(joined.body)).toContain('joined');
+      const headerRunId = joined.headers['x-cds-deployment-run-id'];
+      expect(headerRunId).toBe(activeRunId);
+      // 被并入这次自己那条占位 run 确实取消了，但没人被引导去看它
+      const placeholder = deploymentRunService.list({ branchId: 'joined-run' }).find((r) => r.id !== activeRunId);
+      expect(placeholder?.status).toBe('cancelled');
+      expect(placeholder?.events.some((e) => e.message.includes('已并入在途部署'))).toBe(true);
+
+      releaseRun();
+      await activeDeploy;
+      // CLI 跟着这个头轮询，最终看到的是 running（成功），不是 cancelled（失败）
+      expect(deploymentRunService.get(String(headerRunId))?.status).toBe('running');
+    });
+
     it('dispatches only the latest merged webhook commit after the active deploy completes', async () => {
       await request(server, 'POST', '/api/build-profiles', {
         id: 'api',

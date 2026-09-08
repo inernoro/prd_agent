@@ -27,6 +27,7 @@ export const DOCKER_LOG_LIMIT_FLAGS = ['--log-opt max-size=50m', '--log-opt max-
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
 import { isPreviewInstance, previewInstanceBlockedMessage } from './preview-instance.js';
+import { workloadCgroupFlags } from './workload-cgroup.js';
 import { computeCdsInstanceId } from './orphan-container-reaper.js';
 import {
   collectContainerDiagnostics,
@@ -784,6 +785,9 @@ export class ContainerService {
         'docker create',
         `--name ${this.shellQuote(builderName)}`,
         `--network ${this.shellQuote(network)}`,
+        // managed 构建是本机最吃 CPU 的一段（装依赖 + 打包），必须和其它托管
+        // 负载一样挂低权重 slice，否则构建期间照旧和控制面同权抢 CPU（Codex 三轮 P2）。
+        ...workloadCgroupFlags(),
         '--entrypoint=""',
         '-w /app',
         `--env-file ${this.shellQuote(envFilePath)}`,
@@ -1496,7 +1500,9 @@ export class ContainerService {
       // docker 运行时资源限制(--memory / --memory-swap / --cpus)。
       // memoryMB / cpus 字段仅作 capacity 调度规划提示,不下发到 docker run。
       // 不下发任何 --memory / --memory-swap / --cpus,避免任何容器构造慢。
-      const resourceFlags: string[] = [];
+      // 2026-09-08 宿主过载复盘:不设上限,但把托管容器挂到低权重 slice
+      // (--cgroup-parent),争抢时 CDS 控制面先拿 CPU/IO。见 workload-cgroup.ts。
+      const resourceFlags: string[] = [...workloadCgroupFlags()];
 
       // Phase 7 fix(B10,2026-05-01)— --entrypoint 覆盖。
       // 默认不传(走 image 自带 ENTRYPOINT)。指定时:
@@ -1771,6 +1777,8 @@ export class ContainerService {
       const jobSpec = [
         ...volumeFlags,
         ...entrypointFlags,
+        // 一次性构建/迁移作业是 CPU 大头,同样挂低权重 slice(2026-09-08)。
+        ...workloadCgroupFlags(),
         `-w ${this.shellQuote(containerWorkDir)}`,
         envFlag,
         '--tmpfs /tmp',
@@ -2931,6 +2939,8 @@ export class ContainerService {
       ...healthFlags,
       // 同上：基础设施容器同样受日志限额约束（2026-07-27 复盘 P1）
       ...DOCKER_LOG_LIMIT_FLAGS,
+      // 共享 infra 也是托管工作负载,一并挂低权重 slice(2026-09-08)。
+      ...workloadCgroupFlags(),
       ...(entrypointFlag ? [entrypointFlag] : []),
       this.infraLabels(service, network),
       `--restart ${restartPolicy}`,

@@ -94,6 +94,18 @@ SyslogIdentifier=cds-master
 # 现状:MemoryMax 不设上限,CPUQuota 不设上限 → 由 Linux 公平调度,与其他进程共享。
 MemoryMax=infinity
 # 不限 CPU,让 master + child(tsc/vite/pnpm)用满 18 cores
+#
+# 2026-09-08 宿主过载复盘:不设上限不等于不分先后。master 与它拉起的几十个
+# 容器、构建作业在同一台机器上公平调度,load 长期 20+ 时控制面先饿死,用户
+# 看到的就是「CDS 打不开」。这里只给 master 划**优先级**(不是上限):
+#   - CPUWeight/IOWeight=1000 对 system.slice 下的兄弟(默认 100)抢占时先拿;
+#   - 托管容器统一挂到 system-cdsworkloads.slice(CPUWeight/IOWeight=100),
+#     见 cds/systemd/system-cdsworkloads.slice 与 services/workload-cgroup.ts;
+#   - Nice=-5 让 master 在同 cgroup 内也优先于普通进程。
+# 空闲时容器仍可用满整机,05-28 约定不变。
+CPUWeight=1000
+IOWeight=1000
+Nice=-5
 
 # Security hardening — soft, compatible with docker CLI usage
 NoNewPrivileges=true

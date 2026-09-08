@@ -995,18 +995,21 @@ export function BranchDetailPage(): JSX.Element {
         : `/api/branches/${encodeURIComponent(state.branch.id)}/deploy`;
       // 同分支已有在途操作时部署请求会被合并（SSE complete 带 operationStatus='merged'）：
       // 只是排进待部署队列，不能报「已部署」（Codex P2，2026-07-16）。
-      let mergedIntoPending = false;
+      // 2026-09-08 另加 joined：同一提交已在部署中，本次并入在途操作，同样不能报「已部署」。
+      let acceptedStatus: 'merged' | 'joined' | null = null;
       await postSse(path, {}, (event, data) => {
         appendActionLog(eventMessage(event, data));
-        if (event === 'complete' && typeof data === 'object' && data !== null
-          && (data as { operationStatus?: unknown }).operationStatus === 'merged') {
-          mergedIntoPending = true;
+        if (event === 'complete' && typeof data === 'object' && data !== null) {
+          const status = (data as { operationStatus?: unknown }).operationStatus;
+          if (status === 'merged' || status === 'joined') acceptedStatus = status;
         }
       });
       updateAction(null);
-      setToast(mergedIntoPending
-        ? '部署请求已合并，当前部署完成后自动执行'
-        : (profileId ? `${profileId} 已部署` : '分支已部署'));
+      setToast(acceptedStatus === 'joined'
+        ? '同一提交的部署已在进行中，本次请求已并入在途部署'
+        : acceptedStatus === 'merged'
+          ? '部署请求已合并，当前部署完成后自动执行'
+          : (profileId ? `${profileId} 已部署` : '分支已部署'));
       await load(false);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);

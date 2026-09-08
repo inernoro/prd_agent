@@ -34,7 +34,92 @@
  *   锁；check 与 active++ 之间没有 await，天然原子。
  */
 
+import os from 'node:os';
+
 const DEFAULT_MAX_CONCURRENT_BUILDS = 3;
+
+/**
+ * 负载自适应准入（2026-09-08 宿主过载复盘）。
+ *
+ * 固定并发 3 在 18 核宿主上不够用：load1 长期 20+ 时，3 个构建 + 几十个容器 +
+ * CDS 自己一起饿。上限本身不动（那是运维的旋钮），只在**宿主已过载**时收紧准入：
+ *   - load1 / 核数 > CDS_BUILD_LOAD_FACTOR（默认 1.2）视为过载；
+ *   - 过载时只保证 1 个构建在跑（队列不会饿死、也不会雪上加霜），其余排队；
+ *   - 每 15s 重新看一次负载，降下来就按 FIFO 放行（pumpWaiters）。
+ * `CDS_BUILD_LOAD_FACTOR=0` / `off` 关闭本机制，退回纯上限准入。
+ */
+const DEFAULT_BUILD_LOAD_FACTOR = 1.2;
+const LOAD_PUMP_INTERVAL_MS = 15_000;
+
+export interface HostLoadSample {
+  load1: number;
+  cores: number;
+}
+
+function defaultHostLoad(): HostLoadSample {
+  const cores = (typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length) || 1;
+  return { load1: os.loadavg()[0] || 0, cores };
+}
+
+let hostLoadProvider: () => HostLoadSample = defaultHostLoad;
+
+/** 测试注入负载来源；传 null 恢复 os.loadavg。 */
+export function setBuildGateHostLoadProvider(fn: (() => HostLoadSample) | null): void {
+  hostLoadProvider = fn || defaultHostLoad;
+}
+
+/** 过载系数：env 优先；0 / off / false 关闭。 */
+export function buildLoadFactor(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.CDS_BUILD_LOAD_FACTOR ?? '').trim().toLowerCase();
+  if (raw === '0' || raw === 'off' || raw === 'false') return 0;
+  const n = Number.parseFloat(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  return DEFAULT_BUILD_LOAD_FACTOR;
+}
+
+export interface BuildLoadPressure {
+  load1: number;
+  cores: number;
+  /** load1 / cores */
+  ratio: number;
+  factor: number;
+  /** 过载：ratio > factor（factor=0 时恒为 false） */
+  saturated: boolean;
+}
+
+export function buildLoadPressure(): BuildLoadPressure {
+  const factor = buildLoadFactor();
+  const sample = hostLoadProvider();
+  const cores = Math.max(1, sample.cores || 1);
+  const ratio = Number(((sample.load1 || 0) / cores).toFixed(2));
+  return { load1: Number((sample.load1 || 0).toFixed(2)), cores, ratio, factor, saturated: factor > 0 && ratio > factor };
+}
+
+/**
+ * 准入判定：上限之内，且（未过载 或 当前一个都没在跑）。
+ * 「一个都没在跑就放行」保证过载时队列仍以 1 的并发前进，不会饿死。
+ */
+function admissionAllowed(): boolean {
+  if (active >= maxConcurrentBuilds()) return false;
+  if (active === 0) return true;
+  return !buildLoadPressure().saturated;
+}
+
+let loadPumpTimer: ReturnType<typeof setInterval> | null = null;
+
+/** 有人在排队时才开负载复查定时器；队列空了自动停，进程不被它挂住。 */
+function ensureLoadPump(): void {
+  if (loadPumpTimer) return;
+  loadPumpTimer = setInterval(() => {
+    if (waiters.length === 0) {
+      clearInterval(loadPumpTimer!);
+      loadPumpTimer = null;
+      return;
+    }
+    pumpWaiters();
+  }, LOAD_PUMP_INTERVAL_MS);
+  loadPumpTimer.unref?.();
+}
 
 /**
  * 运行时上限供给器（CDS 系统设置注入）。env 变量优先于它——env 是运维的
@@ -101,7 +186,7 @@ export interface AcquireOptions {
    * @param info.active 当前正在构建的数量
    * @param info.max    并发上限
    */
-  onQueued?(info: { ahead: number; active: number; max: number }): void;
+  onQueued?(info: { ahead: number; active: number; max: number; throttledByLoad?: boolean; load?: BuildLoadPressure }): void;
   /** 等待结束、拿到槽位时触发（仅排过队的调用方会收到）。 */
   onStart?(info: { waitedMs: number }): void;
   /** 持有者身份（观测用，不参与调度决策）。 */
@@ -132,6 +217,13 @@ function grantSlot(holder: BuildGateHolder | undefined): BuildSlot {
       // 立刻唤醒下一个排队者，下调的上限要等队列彻底排空才生效。
       if (active > maxConcurrentBuilds()) {
         active -= 1;
+        return;
+      }
+      // 过载时不转移槽位（转移等于维持当前并发）：先缩到 active-1，等待者留在队里，
+      // 由负载复查定时器在负载降下来后按 FIFO 放行；active 归零时下一次 pump 至少放 1 个。
+      if (active > 1 && buildLoadPressure().saturated) {
+        active -= 1;
+        ensureLoadPump();
         return;
       }
       // 槽位转移：跳过（并拒绝）已取消的等待者，交给第一个仍存活的。
@@ -165,12 +257,18 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
     throw new BuildSlotCancelledError('进入排队前操作已失效');
   }
   const max = maxConcurrentBuilds();
-  if (active < max) {
+  if (admissionAllowed()) {
     active += 1;
     return grantSlot(opts?.holder);
   }
   const enqueuedAt = Date.now();
-  opts?.onQueued?.({ ahead: waiters.length, active, max });
+  const pressure = buildLoadPressure();
+  const throttledByLoad = active < max && pressure.saturated;
+  // 只有真被负载压住时才附带 throttledByLoad/load，上限排队的旧形态保持不变。
+  opts?.onQueued?.(throttledByLoad
+    ? { ahead: waiters.length, active, max, throttledByLoad: true, load: pressure }
+    : { ahead: waiters.length, active, max });
+  if (throttledByLoad) ensureLoadPump();
   await new Promise<void>((resolve, reject) => {
     const waiter: Waiter = {
       resolve,
@@ -202,9 +300,8 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
  * 与槽位转移不同，这里是**新增**槽位：每唤醒一个 active += 1。
  */
 export function pumpWaiters(): number {
-  const max = maxConcurrentBuilds();
   let woken = 0;
-  while (active < max && waiters.length > 0) {
+  while (admissionAllowed() && waiters.length > 0) {
     const next = waiters.shift()!;
     next.cleanup?.();
     if (next.isCancelled?.()) {
@@ -215,6 +312,11 @@ export function pumpWaiters(): number {
     woken += 1;
     next.resolve();
   }
+  // 还有人排着、且这一轮是被负载挡住（不是被上限挡住），就得有定时器在负载回落时
+  // 回来放人。否则出现这条死路：waiter 当初因 active === max 入队（那条路径不开定时器），
+  // 运维随后调高上限并调用本函数，此刻宿主饱和放不出人 —— 队列就只能等下一次
+  // release 才被重新考虑，新腾出来的容量白白空转几分钟（Codex 五轮 P2）。
+  if (waiters.length > 0 && active < maxConcurrentBuilds()) ensureLoadPump();
   return woken;
 }
 
@@ -223,6 +325,8 @@ export function buildGateStatus(): {
   active: number;
   queued: number;
   max: number;
+  /** 宿主负载压力；saturated 为 true 时新构建只在 active=0 时放行 */
+  load: BuildLoadPressure;
   holders: Array<BuildGateHolder & { acquiredAt: string }>;
   waiters: Array<BuildGateHolder & { enqueuedAt: string }>;
 } {
@@ -230,6 +334,7 @@ export function buildGateStatus(): {
     active,
     queued: waiters.length,
     max: maxConcurrentBuilds(),
+    load: buildLoadPressure(),
     holders: [...holders.values()],
     waiters: waiters.map((w) => ({ ...(w.holder || {}), enqueuedAt: new Date(w.enqueuedAt).toISOString() })),
   };
@@ -245,4 +350,9 @@ export function __resetBuildGateForTest(): void {
   waiters.length = 0;
   holders.clear();
   maxProvider = null;
+  hostLoadProvider = defaultHostLoad;
+  if (loadPumpTimer) {
+    clearInterval(loadPumpTimer);
+    loadPumpTimer = null;
+  }
 }
