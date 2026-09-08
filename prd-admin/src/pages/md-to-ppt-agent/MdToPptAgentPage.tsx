@@ -1714,6 +1714,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [pendingKbRefs, setPendingKbRefs] = useState<KbRef[]>(savedSession?.pendingKbRefs ?? []);
   const [launchImported, setLaunchImported] = useState(savedSession?.launchImported ?? false);
+  const [launchImportFailed, setLaunchImportFailed] = useState(false);
+  const [launchImportAttempt, setLaunchImportAttempt] = useState(0);
+  // 从首帧即阻止发送；正文和引用一起带入后才解除，不能等 effect 启动后再禁用。
+  const launchImportBlocked = Boolean(context.launch && !launchImported);
   const [activeKnowledgeRefs, setActiveKnowledgeRefs] = useState<KbRef[]>(
     savedSession?.activeKnowledgeRefs ?? [],
   );
@@ -1723,16 +1727,17 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     const launch = context.launch;
     if (!launch || launchImported) return;
     let active = true;
+    setLaunchImportFailed(false);
     void apiRequest<{ entryId: string; title: string; content: string | null; hasContent: boolean }>(
       `/api/document-store/entries/${encodeURIComponent(launch.sourceEntryId)}/content`,
     ).then((result) => {
       if (!active) return;
       if (!result.success || !result.data.hasContent || !result.data.content) {
-        toast.error('知识带入失败', result.error?.message || '当前文档没有可读取的正文');
+        setLaunchImportFailed(true);
         return;
       }
       setPendingKbRefs((previous) => {
-        if (previous.some((item) => item.entryId === launch.sourceEntryId)) return previous;
+        if (previous.some((item) => item.storeId === launch.sourceStoreId && item.entryId === launch.sourceEntryId)) return previous;
         return [...previous, {
           storeId: launch.sourceStoreId,
           entryId: launch.sourceEntryId,
@@ -1743,9 +1748,28 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       });
       setLaunchImported(true);
       toast.success('当前知识已带入 HTML PPT 工作台');
+    }).catch(() => {
+      if (active) setLaunchImportFailed(true);
     });
     return () => { active = false; };
-  }, [context.launch, launchImported]);
+  }, [context.launch, launchImported, launchImportAttempt]);
+
+  // 两端共用同一状态与恢复入口；失败不吞掉输入，也不静默永久禁用。
+  const launchImportNotice = launchImportBlocked ? (
+    <div role={launchImportFailed ? 'alert' : 'status'} className="flex items-center gap-2 text-xs text-token-secondary" data-testid="knowledge-launch-import">
+      {launchImportFailed ? (
+        <>
+          <span className="min-w-0 flex-1">知识尚未带入，暂未发送。请重试；若仍失败，请返回知识库检查正文与访问权限。</span>
+          <button type="button" className="min-h-11 shrink-0 rounded-md border border-token-subtle px-3 py-2 text-token-primary" onClick={() => {
+            setLaunchImportFailed(false);
+            setLaunchImportAttempt((attempt) => attempt + 1);
+          }}>重试带入</button>
+        </>
+      ) : (
+        <><MapSpinner size={14} /><span>正在带入知识，可先填写要求，完成后即可发送。</span></>
+      )}
+    </div>
+  ) : null;
 
   // 左侧对话栏宽度（可拖拽，280-640px；纯 UI 偏好走 localStorage——关浏览器仍记住）
   const [chatWidth, setChatWidth] = useState<number>(() => {
@@ -3004,7 +3028,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   // ─── Main send handler
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || isProcessing) return;
+    if (!text || isProcessing || launchImportBlocked) return;
 
     const atts = [...pendingAttachments];
     const kbs = [...pendingKbRefs];
@@ -3040,7 +3064,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       // 初次生成：大纲先行
       void requestOutline(text, atts, kbs);
     }
-  }, [input, isProcessing, pendingAttachments, pendingKbRefs, generatedHtml, outlineDraft, pushMsg, startPatch, requestOutline, requestOutlineAdjust, latestHtml, activeRunId, editMode, commitEdits]);
+  }, [input, isProcessing, launchImportBlocked, pendingAttachments, pendingKbRefs, generatedHtml, outlineDraft, pushMsg, startPatch, requestOutline, requestOutlineAdjust, latestHtml, activeRunId, editMode, commitEdits]);
 
   // ─── Publish（携带主题样式发布，标题取自 deck <title>）
   const handlePublish = useCallback(async () => {
@@ -3403,6 +3427,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           </div>
 
           <div className="rounded-lg border border-token-subtle bg-[var(--panel-solid)] p-3 shadow-[0_18px_60px_rgba(0,0,0,.28)] focus-within:border-purple-300/55">
+            {launchImportNotice}
             {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {pendingAttachments.map((a, i) => (
@@ -3472,7 +3497,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               )}
               <button
                 onClick={handleSend}
-                disabled={!input.trim() || isProcessing}
+                disabled={!input.trim() || isProcessing || launchImportBlocked}
                 className="flex h-10 items-center gap-2 rounded-md bg-purple-500 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {isProcessing ? <MapSpinner size={15} /> : <Send size={15} />}
@@ -3827,6 +3852,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               className="flex flex-col gap-2 rounded-2xl border border-token-subtle bg-token-nested px-3.5 pt-3 pb-2.5 transition-all duration-300 focus-within:border-purple-400/80 focus-within:bg-token-nested focus-within:ring-2 focus-within:ring-purple-500/35 focus-within:shadow-[0_8px_32px_rgba(168,85,247,.22)]"
             >
               {/* Pending attachments & KB refs（卡内顶部） */}
+              {launchImportNotice}
               {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
                 <div className="flex flex-wrap gap-1.5">
                   {pendingAttachments.map((a, i) => (
@@ -4070,7 +4096,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 {/* 实底主按钮（主操作一眼可见） */}
                 <button
                   onClick={handleSend}
-                  disabled={!input.trim() || isProcessing}
+                  disabled={!input.trim() || isProcessing || launchImportBlocked}
                   title="Enter 发送 · Shift+Enter 换行"
                   className="shrink-0 flex items-center gap-1.5 h-7 px-3 rounded-lg text-[11px] font-semibold bg-purple-500/85 text-white hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
