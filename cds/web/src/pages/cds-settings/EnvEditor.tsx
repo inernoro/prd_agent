@@ -356,7 +356,7 @@ export function EnvEditor({
 
           {entryMode === 'single' ? (
             <form className="px-4 py-4" onSubmit={(event) => void saveNewEnv(event)}>
-              <div className="grid gap-3 lg:grid-cols-[minmax(11.25rem,17.5rem)_minmax(16.25rem,1fr)_112px] lg:items-start">
+              <div className="grid gap-3 lg:grid-cols-[minmax(11.25rem,17.5rem)_minmax(16.25rem,1fr)_7rem] lg:items-start">
                 <label className="grid gap-2">
                   <span className={singleFieldLabelClass}>变量名</span>
                   <input
@@ -468,7 +468,7 @@ export function EnvEditor({
                       const displayValue = sensitive && !revealed ? maskSecret(row.key, row.value) : row.value;
                       const isEditing = inlineEdit?.key === row.key;
                       return (
-                        <div key={row.key} className="grid gap-3 px-4 py-3 text-sm lg:grid-cols-[minmax(13.75rem,18.75rem)_minmax(17.5rem,1fr)_176px] lg:items-center">
+                        <div key={row.key} className="grid gap-3 px-4 py-3 text-sm lg:grid-cols-[minmax(13.75rem,18.75rem)_minmax(17.5rem,1fr)_11rem] lg:items-center">
                           <div className="min-w-0">
                             <div className="truncate font-mono font-semibold">{row.key}</div>
                             <div className="mt-1 flex gap-2">

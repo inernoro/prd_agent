@@ -3625,7 +3625,7 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
           </div>
         </div>
         <div className={DETAIL_LOG_VIEWPORT_CLASS}>
-          <div className="grid grid-cols-[150px_minmax(0,1fr)] border-b border-[hsl(var(--hairline))] px-4 py-2 text-xs font-medium text-muted-foreground">
+          <div className="grid grid-cols-[9.375rem_minmax(0,1fr)] border-b border-[hsl(var(--hairline))] px-4 py-2 text-xs font-medium text-muted-foreground">
             <span>Time</span>
             <span>Message</span>
           </div>
@@ -3634,7 +3634,7 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
           ) : (
             <div className="divide-y divide-[hsl(var(--hairline))]">
               {rows.map((row) => (
-                <div key={row.key} className="grid grid-cols-[150px_minmax(0,1fr)] gap-3 px-4 py-2 text-xs">
+                <div key={row.key} className="grid grid-cols-[9.375rem_minmax(0,1fr)] gap-3 px-4 py-2 text-xs">
                   <span className="font-mono text-muted-foreground">{time || '-'}</span>
                   <pre className="min-w-0 whitespace-pre-wrap break-words font-mono leading-5 text-muted-foreground">{row.text}</pre>
                 </div>
@@ -4349,7 +4349,7 @@ function ResourceConnection({
             {externalEnabled ? '关闭公网' : '临时开启'}
           </Button>
         </div>
-        <div className="grid gap-2 md:grid-cols-[140px_minmax(0,1fr)]">
+        <div className="grid gap-2 md:grid-cols-[8.75rem_minmax(0,1fr)]">
           <label className="grid gap-1">
             <span className="text-[0.6875rem] text-warn/80 /80">有效期（分钟）</span>
             <input
@@ -4960,7 +4960,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
         subtitle={`${databaseLabel}.${selectedCollection || '-'} · ${resource.displayName}`}
         onClose={() => { setWorkbenchOpen(false); onWorkbenchDismiss?.(); }}
       >
-        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[20rem_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
@@ -5038,7 +5038,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
             </div>
           </aside>
 
-          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[245px_minmax(0,1fr)]">
+          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_minmax(0,1fr)]">
             <section className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-background/30">
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
@@ -5419,7 +5419,7 @@ function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
 
   return (
     <div className="grid gap-3 text-sm">
-      <div className="grid min-h-[26.25rem] gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
+      <div className="grid min-h-[26.25rem] gap-3 lg:grid-cols-[17.5rem_minmax(0,1fr)]">
         <aside className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
           <div className="grid gap-2 border-b border-[hsl(var(--hairline))] px-3 py-3">
             <div className="flex items-center justify-between gap-2">
@@ -5772,7 +5772,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
         subtitle={`${tablesState.database || '-'}${selectedTable ? `.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : ''} · ${resource.displayName}`}
         onClose={() => { setWorkbenchOpen(false); onWorkbenchDismiss?.(); }}
       >
-        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[20rem_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
@@ -5821,7 +5821,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
             </div>
           </aside>
 
-          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[245px_minmax(0,1fr)]">
+          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_minmax(0,1fr)]">
             <section className="border-b border-[hsl(var(--hairline))] bg-background/30">
               <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">

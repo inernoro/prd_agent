@@ -265,7 +265,7 @@ describe('发布中心 v2 · 布局纪律', () => {
     // 而当初「滚不动」的直接原因是页内面板的 overscroll-behavior: contain 切断了
     // 滚动链，那条禁令继续有效（见 overscroll-containment.test.ts），与这里无关。
     expect(page).toContain('flex min-h-0 flex-col gap-4 overflow-y-auto lg:h-full lg:overflow-hidden');
-    expect(page).toContain('flex flex-col gap-4 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[288px_minmax(0,1fr)]');
+    expect(page).toContain('flex flex-col gap-4 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[18rem_minmax(0,1fr)]');
     // 左栏手机限高 + 自身滚动，lg 解除限高改为填满整列。
     expect(sidebar).toContain('max-h-[46vh]');
     expect(sidebar).toContain('lg:h-full lg:max-h-none');

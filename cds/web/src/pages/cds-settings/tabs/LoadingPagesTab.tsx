@@ -397,9 +397,9 @@ function ShapeGridWaitingPreview({
         hoverFillColor="rgba(255,255,255,0.035)"
         hoverTrailAmount={0}
       />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(900px_620px_at_52%_46%,rgba(255,255,255,0.08),transparent_36%,rgba(18,15,23,0.82)_100%),linear-gradient(90deg,rgba(18,15,23,0.9),rgba(18,15,23,0.22)_48%,rgba(18,15,23,0.84))]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(56.25rem_38.75rem_at_52%_46%,rgba(255,255,255,0.08),transparent_36%,rgba(18,15,23,0.82)_100%),linear-gradient(90deg,rgba(18,15,23,0.9),rgba(18,15,23,0.22)_48%,rgba(18,15,23,0.84))]" />
       <main className="relative z-10 grid h-full grid-cols-1 items-center px-[clamp(1.25rem,6vw,5.75rem)] py-[clamp(2rem,7vw,5.75rem)] lg:grid-cols-[minmax(17.5rem,45rem)_minmax(0,1fr)]">
-        <section className="max-w-[45rem] [text-shadow:0_2px_30px_rgba(0,0,0,0.72)]">
+        <section className="max-w-[45rem] [text-shadow:0_2px_1.875rem_rgba(0,0,0,0.72)]">
           <div className="mb-7 inline-flex items-center gap-2.5 font-mono text-[0.6875rem] uppercase tracking-[0.28em] text-[#ded8ef]">
             <CdsLogoLoader size="sm" className="text-[#f7f5ff]" />
             CDS Waiting Room
@@ -417,7 +417,7 @@ function ShapeGridWaitingPreview({
           <div className="mt-8 flex max-w-[38.75rem] flex-col gap-3">
             {services.map((service, index) => (
               <div key={service} className="relative flex items-center gap-3 overflow-hidden border-t border-white/10 py-3 text-[0.9375rem]">
-                <span className="h-2 w-2 rounded-full bg-[#dbe4ee] shadow-[0_0_14px_#dbe4ee]" />
+                <span className="h-2 w-2 rounded-full bg-[#dbe4ee] shadow-[0_0_0.875rem_#dbe4ee]" />
                 <span>{service} · {index === 0 ? '进行中' : '等待中'}</span>
               </div>
             ))}
@@ -428,7 +428,7 @@ function ShapeGridWaitingPreview({
               <strong className="font-mono text-[0.9375rem] text-slate-50">{compact ? '42%' : '68%'}</strong>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-              <span className={cn('block h-full rounded-full bg-[linear-gradient(90deg,#fff,#9f5050)] shadow-[0_0_18px_rgba(255,255,255,0.22)]', compact ? 'w-[42%]' : 'w-[68%]')} />
+              <span className={cn('block h-full rounded-full bg-[linear-gradient(90deg,#fff,#9f5050)] shadow-[0_0_1.125rem_rgba(255,255,255,0.22)]', compact ? 'w-[42%]' : 'w-[68%]')} />
             </div>
           </div>
         </section>

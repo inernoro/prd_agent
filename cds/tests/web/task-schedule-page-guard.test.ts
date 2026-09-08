@@ -120,7 +120,7 @@ describe('任务调度页的接线', () => {
    */
   it('编辑弹窗是双栏，动作占右栏并撑满，保存与「还差什么」在底栏', () => {
     const dialog = src.slice(src.indexOf('<Dialog open={editorOpen}'), src.indexOf('<Dialog open={actionDialogOpen}'));
-    expect(dialog, '弹窗不再是双栏').toContain('lg:grid-cols-[300px_minmax(0,1fr)]');
+    expect(dialog, '弹窗不再是双栏').toContain('lg:grid-cols-[18.75rem_minmax(0,1fr)]');
     expect(dialog, '窄屏没有单栏回退').toMatch(/flex min-h-0 flex-col lg:grid/);
     expect(dialog, '动作区没有撑满右栏').toMatch(/flex min-h-0 flex-col p-4/);
     expect(dialog, '保存旁边没有说清还差什么').toContain('{editorBlocker ||');

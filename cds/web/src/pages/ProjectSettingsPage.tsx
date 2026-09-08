@@ -2124,7 +2124,7 @@ function GithubRepoPickerDialog({
           <DialogDescription>先选择 GitHub App 安装，再选择仓库并确认绑定到当前项目。</DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-5 md:grid-cols-[240px_minmax(0,1fr)]">
+        <div className="grid gap-5 md:grid-cols-[15rem_minmax(0,1fr)]">
           <div className="space-y-2">
             <div className="text-sm font-medium">安装</div>
             {installationsState.status === 'loading' ? <LoadingBlock label="加载安装" /> : null}
@@ -2394,7 +2394,7 @@ function CommentTemplateTab({
             <button
               key={variable.key}
               type="button"
-              className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground md:grid-cols-[180px_180px_minmax(0,1fr)] md:items-center"
+              className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground md:grid-cols-[11.25rem_11.25rem_minmax(0,1fr)] md:items-center"
               onClick={() => insertVariable(variable.key)}
             >
               <code className="rounded bg-muted px-2 py-1 font-mono text-xs text-foreground">{`{{${variable.key}}}`}</code>
@@ -2582,7 +2582,7 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
         description="迁移服务器时，可把旧 CDS 导出的 tar.gz 缓存包导入到当前缓存根目录。"
       >
         <div className="max-w-3xl cds-surface-raised cds-hairline px-4 py-4">
-          <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
+          <div className="grid gap-3 md:grid-cols-[11.25rem_minmax(0,1fr)_auto] md:items-end">
             <label className="block space-y-1.5">
               <span className="text-sm font-medium">缓存名称</span>
               <input
@@ -2974,7 +2974,7 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="grid w-full gap-2 px-3 py-3 text-left text-sm md:grid-cols-[20px_160px_120px_minmax(0,1fr)_140px] md:items-center hover:bg-muted/10"
+        className="grid w-full gap-2 px-3 py-3 text-left text-sm md:grid-cols-[1.25rem_10rem_7.5rem_minmax(0,1fr)_8.75rem] md:items-center hover:bg-muted/10"
         aria-expanded={expanded}
       >
         {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
@@ -3273,7 +3273,7 @@ function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast
                       <CodePill>{profile.workDir}</CodePill>
                       <span className="text-xs text-muted-foreground">端口 {profile.containerPort}</span>
                     </div>
-                    <dl className="mt-3 grid gap-2 text-xs md:grid-cols-[100px_minmax(0,1fr)]">
+                    <dl className="mt-3 grid gap-2 text-xs md:grid-cols-[6.25rem_minmax(0,1fr)]">
                       <dt className="text-muted-foreground">构建</dt>
                       <dd className="break-all font-mono">{[profile.managedBuild?.installCommand, profile.managedBuild?.buildCommand].filter(Boolean).join(' && ') || '无需构建'}</dd>
                       <dt className="text-muted-foreground">启动</dt>

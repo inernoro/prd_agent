@@ -763,11 +763,11 @@ function branchSortRank(branchName: string): number {
 function branchRoleCardClass(role: BranchVisualRole): string {
   switch (role) {
     case 'main':
-      return 'border-ok/55 shadow-[0_0_0_1px_rgba(52,211,153,0.16),0_16px_34px_-28px_rgba(52,211,153,0.85)]';
+      return 'border-ok/55 shadow-[0_0_0_1px_rgba(52,211,153,0.16),0_1rem_2.125rem_-28px_rgba(52,211,153,0.85)]';
     case 'master':
-      return 'border-cyan-400/55 shadow-[0_0_0_1px_rgba(34,211,238,0.15),0_16px_34px_-28px_rgba(34,211,238,0.8)]';
+      return 'border-cyan-400/55 shadow-[0_0_0_1px_rgba(34,211,238,0.15),0_1rem_2.125rem_-28px_rgba(34,211,238,0.8)]';
     case 'environment':
-      return 'border-warn/42 shadow-[0_0_0_1px_rgba(251,191,36,0.12),0_16px_34px_-30px_rgba(251,191,36,0.72)]';
+      return 'border-warn/42 shadow-[0_0_0_1px_rgba(251,191,36,0.12),0_1rem_2.125rem_-30px_rgba(251,191,36,0.72)]';
     default:
       return '';
   }
@@ -1315,15 +1315,15 @@ function branchIssueRailClass(branch: BranchSummary): string {
 function branchIssueCardClass(branch: BranchSummary): string {
   const category = branchIssueCategory(branch);
   if (category === 'cds-runtime') {
-    return 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]';
+    return 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_0.25rem_1rem_-4px_hsl(var(--destructive)/0.35)]';
   }
   if (category === 'app-code') {
-    return 'border-warn/55 bg-warn-soft ring-1 ring-warn/20 shadow-[0_4px_16px_-4px_rgba(245,158,11,0.32)]';
+    return 'border-warn/55 bg-warn-soft ring-1 ring-warn/20 shadow-[0_0.25rem_1rem_-4px_rgba(245,158,11,0.32)]';
   }
   if (category === 'deploy-config') {
-    return 'border-warn/55 bg-warn-soft ring-1 ring-warn/20 shadow-[0_4px_16px_-4px_rgba(249,115,22,0.32)]';
+    return 'border-warn/55 bg-warn-soft ring-1 ring-warn/20 shadow-[0_0.25rem_1rem_-4px_rgba(249,115,22,0.32)]';
   }
-  return 'border-muted-foreground/40 bg-muted/20 ring-1 ring-muted-foreground/15 shadow-[0_4px_16px_-4px_rgba(100,116,139,0.28)]';
+  return 'border-muted-foreground/40 bg-muted/20 ring-1 ring-muted-foreground/15 shadow-[0_0.25rem_1rem_-4px_rgba(100,116,139,0.28)]';
 }
 
 // 错误提示条文字色 —— 同样按 category 派发,与卡片/胶囊一致。
@@ -5452,7 +5452,7 @@ const BranchCard = memo(function BranchCard({
           {commitHistoryState.commits.map((commit, index) => (
             <div
               key={`${commit.hash}-${index}`}
-              className="grid grid-cols-[64px_minmax(0,1fr)] gap-3 rounded-md px-2 py-1.5 text-xs hover:bg-muted/35"
+              className="grid grid-cols-[4rem_minmax(0,1fr)] gap-3 rounded-md px-2 py-1.5 text-xs hover:bg-muted/35"
               role="menuitem"
               title={`${commit.hash} ${commit.subject}`}
             >
@@ -5492,7 +5492,7 @@ const BranchCard = memo(function BranchCard({
       aria-label={`打开 ${branch.branch} 详情`}
     >
       {highlighted ? (
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-primary shadow-[0_0_18px_hsl(var(--primary)/0.45)]" aria-hidden />
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-primary shadow-[0_0_1.125rem_hsl(var(--primary)/0.45)]" aria-hidden />
       ) : null}
       {isAiActive ? (
         <>

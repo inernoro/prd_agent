@@ -144,7 +144,7 @@ function EnvironmentRow({
     <button
       type="button"
       onClick={onSelect}
-      className={`grid w-full grid-cols-[10px_minmax(0,1fr)] items-start gap-2.5 border-b border-[hsl(var(--hairline))] px-3.5 py-3 text-left transition-colors ${
+      className={`grid w-full grid-cols-[0.625rem_minmax(0,1fr)] items-start gap-2.5 border-b border-[hsl(var(--hairline))] px-3.5 py-3 text-left transition-colors ${
         selected ? 'bg-primary/10 shadow-[inset_3px_0_0_hsl(var(--primary))]' : 'hover:bg-[hsl(var(--surface-sunken))]/60'
       }`}
     >

@@ -507,7 +507,7 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, activ
        * 其上还有标题、目标选择和 tab 条约 220px。原来写的 calc(100vh-190px)
        * 根本不生效，760px 直接捅出弹窗底 74px（真机量出来的）。
        */
-      className={`relative flex max-h-[calc(90vh-224px)] min-h-[26.25rem] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_20px_70px_rgba(0,0,0,0.18)] transition-[height] duration-200 ${panelTall ? 'h-[47.5rem]' : 'h-[35rem]'}`}
+      className={`relative flex max-h-[calc(90vh-224px)] min-h-[26.25rem] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_1.25rem_4.375rem_rgba(0,0,0,0.18)] transition-[height] duration-200 ${panelTall ? 'h-[47.5rem]' : 'h-[35rem]'}`}
     >
       <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-7 py-5">
         <div className="flex items-start justify-between gap-6">
@@ -650,7 +650,7 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, activ
                     type="button"
                     aria-pressed={includeCds}
                     onClick={() => setIncludeCds((value) => !value)}
-                    className={`w-full max-w-2xl rounded-2xl border-2 p-7 text-left transition-all ${includeCds ? 'border-warn bg-warn-soft shadow-[0_18px_50px_rgba(194,91,33,0.15)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'}`}
+                    className={`w-full max-w-2xl rounded-2xl border-2 p-7 text-left transition-all ${includeCds ? 'border-warn bg-warn-soft shadow-[0_1.125rem_3.125rem_rgba(194,91,33,0.15)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'}`}
                   >
                     <div className="flex items-start gap-5">
                       <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl ${includeCds ? 'bg-warn text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>
@@ -940,7 +940,7 @@ export function SkillCard({ skill, selected, recommended, justAdded, onToggle }:
       onClick={onToggle}
       aria-pressed={selected}
       data-skill-card={selected ? 'selected' : 'default'}
-      className={`group relative rounded-xl border p-4 text-left transition-all ${selected ? 'border-warn bg-warn-soft text-foreground shadow-[0_8px_24px_rgba(194,91,33,0.12)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-foreground hover:border-[hsl(var(--hairline-strong))]'}`}
+      className={`group relative rounded-xl border p-4 text-left transition-all ${selected ? 'border-warn bg-warn-soft text-foreground shadow-[0_0.5rem_1.5rem_rgba(194,91,33,0.12)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-foreground hover:border-[hsl(var(--hairline-strong))]'}`}
     >
       <div className="flex items-center justify-between gap-3">
         <PackageCheck className={`h-5 w-5 ${selected ? 'text-warn' : 'text-muted-foreground'}`} />
@@ -1003,7 +1003,7 @@ export function SkillLibrarySheet({
       .join('，')
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="技能库" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[0_28px_80px_rgba(0,0,0,0.35)]">
+    <div role="dialog" aria-modal="true" aria-label="技能库" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[0_1.75rem_5rem_rgba(0,0,0,0.35)]">
       <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[hsl(var(--hairline))] px-5 py-4">
         <div className="flex min-w-0 items-start gap-2.5">
           <PackageCheck className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
@@ -1311,7 +1311,7 @@ function ChoiceCard({ selected, title, eyebrow, description, chips, icon, compac
     <button
       type="button"
       onClick={onClick}
-      className={`group relative flex min-h-0 flex-col justify-between rounded-2xl border-2 text-left transition-all duration-200 ${compact ? 'p-4' : 'p-6'} ${selected ? 'border-warn bg-warn-soft shadow-[0_14px_40px_rgba(194,91,33,0.13)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg'}`}
+      className={`group relative flex min-h-0 flex-col justify-between rounded-2xl border-2 text-left transition-all duration-200 ${compact ? 'p-4' : 'p-6'} ${selected ? 'border-warn bg-warn-soft shadow-[0_0.875rem_2.5rem_rgba(194,91,33,0.13)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg'}`}
     >
       <div>
         <div className="flex items-start justify-between gap-4">

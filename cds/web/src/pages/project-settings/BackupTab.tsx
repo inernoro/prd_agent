@@ -143,7 +143,7 @@ function TargetRow({ target }: { target: BackupPanelTarget }): JSX.Element {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="grid w-full grid-cols-[8px_minmax(0,1fr)_auto_16px] items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/40 sm:grid-cols-[8px_minmax(0,1fr)_96px_88px_16px]"
+        className="grid w-full grid-cols-[0.5rem_minmax(0,1fr)_auto_1rem] items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/40 sm:grid-cols-[0.5rem_minmax(0,1fr)_6rem_5.5rem_1rem]"
       >
         <span className={`h-2 w-2 shrink-0 rounded-full ${DOT_CLASS[meta.tone]}`} />
         <span className="truncate font-mono text-[0.8125rem]">{target.id}</span>

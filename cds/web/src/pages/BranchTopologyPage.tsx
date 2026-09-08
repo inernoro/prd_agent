@@ -724,7 +724,7 @@ export function BranchTopologyPage(): JSX.Element {
           {state.status === 'ok' ? (
             <div className="border-t border-border px-4 py-3">
               <div className="space-y-3">
-                <div className="grid gap-3 lg:grid-cols-[220px_minmax(16.25rem,1fr)_minmax(16.25rem,26.25rem)] lg:items-center">
+                <div className="grid gap-3 lg:grid-cols-[13.75rem_minmax(16.25rem,1fr)_minmax(16.25rem,26.25rem)] lg:items-center">
                   <label className="relative block">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <input
@@ -734,7 +734,7 @@ export function BranchTopologyPage(): JSX.Element {
                       placeholder="搜索分支"
                     />
                   </label>
-                  <label className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-[52px_minmax(0,1fr)] sm:items-center">
+                  <label className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-[3.25rem_minmax(0,1fr)] sm:items-center">
                     <span>分支</span>
                     <select
                       className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -807,7 +807,7 @@ export function BranchTopologyPage(): JSX.Element {
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_21.25rem]">
             <section className="min-h-[38.75rem] cds-surface-raised cds-hairline p-4">
               {state.profiles.length === 0 && state.infra.length === 0 ? (
                 <div className="flex min-h-[33.75rem] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">

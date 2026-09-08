@@ -153,7 +153,7 @@ export function EvidenceSection({
               return (
                 <div key={run.releaseId} className="border-b border-[hsl(var(--hairline)/0.6)]">
                   <div
-                    className={`grid items-center gap-3 px-[1.125rem] py-[0.8125rem] text-[0.7812rem] transition-colors duration-150 hover:bg-[hsl(var(--surface-sunken))] max-xl:grid-cols-[92px_minmax(0,1fr)] ${
+                    className={`grid items-center gap-3 px-[1.125rem] py-[0.8125rem] text-[0.7812rem] transition-colors duration-150 hover:bg-[hsl(var(--surface-sunken))] max-xl:grid-cols-[5.75rem_minmax(0,1fr)] ${
                       failed ? 'bg-bad-soft' : ''
                     } ${run.releaseId === selected?.releaseId ? 'bg-[hsl(var(--surface-sunken))]' : ''}`}
                     style={{ gridTemplateColumns: COLUMNS }}
@@ -262,7 +262,7 @@ export function EvidenceSection({
           {changes.map((change, index) => (
             <div
               key={change.id || `${change.at}-${index}`}
-              className="grid gap-x-3 gap-y-1 border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-[0.8125rem] text-[0.7812rem] md:grid-cols-[150px_minmax(0,1fr)]"
+              className="grid gap-x-3 gap-y-1 border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-[0.8125rem] text-[0.7812rem] md:grid-cols-[9.375rem_minmax(0,1fr)]"
             >
               <span className="cds-ident text-[0.7188rem] text-muted-foreground">{formatDateTime(change.at)}</span>
               <div className="min-w-0">

@@ -117,7 +117,7 @@ export function SiteWizardDialog({
         <DialogHeader>
           <DialogTitle>{draft.id ? '配置环境' : '添加环境'}</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <div className="grid gap-5 lg:grid-cols-[13.75rem_minmax(0,1fr)]">
           <nav className="grid content-start gap-2">
             {wizardSteps.map((item, index) => (
               <button
@@ -280,7 +280,7 @@ export function SiteWizardDialog({
 
             {step === 'health' ? (
               <WizardPanel title="配置上线地址" description="上线地址用于发布后的健康检查，也是左栏那盏健康灯的判据来源。">
-                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_10rem]">
                   {draft.id ? (
                     <Field label="上线地址" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="https://app.example.com" />
                   ) : (

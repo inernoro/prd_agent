@@ -157,7 +157,7 @@ describe('稿子 §2 全环境矩阵', () => {
 
   it('窄屏塌成单列卡片，按钮 2.75rem 命中区，不横向滚动', () => {
     expect(matrix).toContain("tall ? 'h-11'");
-    expect(matrix).toContain('grid-cols-[92px_minmax(0,1fr)]');
+    expect(matrix).toContain('grid-cols-[5.75rem_minmax(0,1fr)]');
     expect(matrix).not.toContain('overflow-x-auto');
   });
 });
@@ -271,7 +271,7 @@ describe('稿子 §4 自动发布规则', () => {
 
 describe('稿子 §5 健康监测', () => {
   it('左卡片 26.25rem 探测配置四项齐全', () => {
-    expect(health).toContain('xl:grid-cols-[420px_minmax(0,1fr)]');
+    expect(health).toContain('xl:grid-cols-[26.25rem_minmax(0,1fr)]');
     for (const label of ['检查地址', '探测间隔', '超时', '连续失败阈值']) {
       expect(health, `缺 ${label}`).toContain(`>${label}</dt>`);
     }

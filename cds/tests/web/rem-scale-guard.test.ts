@@ -15,7 +15,8 @@ import { fileURLToPath } from 'node:url';
 
 const WEB = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../web');
 const SRC = path.join(WEB, 'src');
-const PX = /(?<![\w.-])(\d*\.?\d+)px(?![\w-])/g;
+// 下划线在 Tailwind 方括号里是空格（grid-cols-[20rem_minmax(0,1fr)]），所以 px 前后的 _ 不算单词字符。
+const PX = /(?<![A-Za-z0-9.-])(\d*\.?\d+)px(?![A-Za-z0-9-])/g;
 
 /** 允许保留的 >3px 场景（每条写明原因）。 */
 const ALLOW: Array<{ file: string; needle: string; why: string }> = [
@@ -61,7 +62,7 @@ describe('整站 85%：尺寸用 rem，px 只留给细线', () => {
     expect(shell).toContain('UI_SCALE_PRESETS.map(');
   });
 
-  it('分支卡网格：列宽下限是 rem token，1600px 起封顶五列', () => {
+  it('分支卡网格：列宽下限是 rem token，100rem 起封顶五列', () => {
     expect(css).toMatch(/\.cds-branch-card-grid\s*\{[^}]*--cds-branch-card-min:\s*[\d.]+rem;[^}]*minmax\(min\(100%, var\(--cds-branch-card-min\)\), 1fr\)/);
     expect(css).toMatch(/@media \(min-width: 1600px\)\s*\{\s*\.cds-branch-card-grid\s*\{\s*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\);/);
     expect(css, '列数不许靠 zoom 凑').not.toMatch(/\.cds-branch-card-grid\s*\{[^}]*zoom:/);

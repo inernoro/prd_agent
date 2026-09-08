@@ -79,12 +79,12 @@ export function HealthSection({ envs, selected }: HealthSectionProps): JSX.Eleme
   const unmonitored = envs.filter((env) => env.health === 'unmonitored');
 
   return (
-    <div className="grid items-start gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
+    <div className="grid items-start gap-4 xl:grid-cols-[26.25rem_minmax(0,1fr)]">
       <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[0.875rem] border">
         <div className="border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-4">
           <h2 className="text-sm font-bold">探测配置</h2>
         </div>
-        <dl className="grid grid-cols-[104px_minmax(0,1fr)] gap-x-3 gap-y-2.5 px-[1.125rem] py-4 text-[0.7812rem]">
+        <dl className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 px-[1.125rem] py-4 text-[0.7812rem]">
           <dt className="text-[0.7188rem] text-muted-foreground">检查地址</dt>
           <dd className="min-w-0 break-all cds-ident">
             {selected ? (selectedProbe?.probeUrl || '未配置健康检查地址') : '未选择环境'}

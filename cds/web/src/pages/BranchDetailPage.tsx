@@ -1267,7 +1267,7 @@ export function BranchDetailPage(): JSX.Element {
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22.5rem]">
             <section className="min-w-0 space-y-5">
               <Card className="rounded-md">
                 <CardHeader className="p-5">

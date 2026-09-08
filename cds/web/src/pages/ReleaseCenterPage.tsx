@@ -783,7 +783,7 @@ export function ReleaseCenterPage(): JSX.Element {
 
                 {/* ══ 分区二~五：都落到单个环境上，左边一列选环境 ══ */}
                 {section !== 'fleet' ? (
-                  <div className={wide ? 'grid grid-cols-[260px_minmax(0,1fr)] items-start gap-4' : 'flex flex-col gap-4'}>
+                  <div className={wide ? 'grid grid-cols-[16.25rem_minmax(0,1fr)] items-start gap-4' : 'flex flex-col gap-4'}>
                     <EnvironmentSidebar
                       sections={sections}
                       selectedTargetId={effectiveTargetId}

@@ -76,8 +76,10 @@ requireRegex(
 // 防回流：不许再用页面级 className 在 CSS 里改写档位（那正是被修掉的旧机制）。
 requireNotContains('css', '.cds-workspace.cds-branch-list-workspace', 'branch list has no page-scoped width override');
 requireNotContains('branchList', 'cds-branch-list-workspace', 'branch list does not reintroduce the page-scoped workspace class');
-requireContains('css', 'grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));', 'branch grid keeps empty tracks so a single card does not stretch full-width');
-requireNotContains('css', 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));', 'branch grid avoids auto-fit single-card stretch regression');
+// 2026-09-08 起列宽下限是 rem token（--cds-branch-card-min，随界面尺度走），字面量不再是 420px；
+// 守的语义不变：auto-fill 保留空轨道，单卡不铺满。
+requireContains('css', 'grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cds-branch-card-min)), 1fr));', 'branch grid keeps empty tracks so a single card does not stretch full-width');
+requireNotContains('css', 'grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--cds-branch-card-min)), 1fr));', 'branch grid avoids auto-fit single-card stretch regression');
 
 // Preview/release action: the release action must live inside the preview split
 // menu on both the branch card and detail drawer. Separate strong action buttons
@@ -124,7 +126,7 @@ requireContains('drawer', 'function SqlResourceDataPanel', 'SQL workbench panel 
 // (flex flex-col) and the modal body scrolls instead of overlapping — see
 // cds/.claude/rules/mobile-layout-fallback.md. Match only the desktop column
 // invariant so the mobile-flow prefix can evolve without tripping this guard.
-requireRegex('drawer', /lg:grid-cols-\[320px_minmax\(0,1fr\)\]/, 'workbench keeps desktop side tree plus main operation canvas');
+requireRegex('drawer', /lg:grid-cols-\[20rem_minmax\(0,1fr\)\]/, 'workbench keeps desktop side tree plus main operation canvas');
 requireContains('drawer', 'overflow-y-auto lg:overflow-hidden', 'workbench modal body scrolls on mobile and fills on desktop');
 
 if (failures.length > 0) {

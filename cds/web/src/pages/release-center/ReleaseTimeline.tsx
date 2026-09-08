@@ -88,7 +88,7 @@ export function ReleaseTimeline({
             const duration = formatDuration(run.startedAt, run.finishedAt);
             return (
               <div key={run.releaseId} className={failed ? 'bg-bad-soft' : live ? 'bg-primary/[0.07]' : ''}>
-                <div className="grid grid-cols-[16px_minmax(0,1fr)] items-start gap-3 px-4 py-3 md:grid-cols-[16px_minmax(0,1fr)_auto]">
+                <div className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-3 px-4 py-3 md:grid-cols-[1rem_minmax(0,1fr)_auto]">
                   <span className="mt-1.5"><Led tone={runTone(run.status)} /></span>
                   <div className="min-w-0">
                     <div className="truncate text-[0.8125rem] font-medium" title={meta?.subject || run.commitSha}>

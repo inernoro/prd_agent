@@ -3428,7 +3428,7 @@ function CreateProjectDialog({
                       </label>
                       <div className="mt-2 text-xs leading-5 text-muted-foreground">{preset.description}</div>
                       {editableRuntime ? (
-                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_110px]">
+                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_6.875rem]">
                           <label className="block space-y-1.5">
                             <span className="text-xs font-medium text-muted-foreground">Docker 镜像</span>
                             <input

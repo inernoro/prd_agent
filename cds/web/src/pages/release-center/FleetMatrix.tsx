@@ -295,7 +295,7 @@ export function FleetMatrix({ envs, sort, onSort, nowMs, wide, onInspect, onExec
                 <span className={`text-xs font-semibold ${TYPE_CLASS[env.type]}`}>{fleetTypeText(env.type)}</span>
               </div>
               <div className="mt-0.5 truncate cds-ident text-[0.6875rem] text-muted-foreground">{env.host}</div>
-              <dl className="mt-2.5 grid grid-cols-[92px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
+              <dl className="mt-2.5 grid grid-cols-[5.75rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
                 <dt className="text-[0.7188rem] text-muted-foreground">健康</dt>
                 <dd className={HEALTH_TEXT[env.health]}>{fleetHealthText(env.health)}</dd>
                 <dt className="text-[0.7188rem] text-muted-foreground">可用率 24H</dt>

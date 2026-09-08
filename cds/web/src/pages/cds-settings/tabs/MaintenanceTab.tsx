@@ -1385,7 +1385,7 @@ function DockerNetworkHealthPanel({
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_440px]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_27.5rem]">
         <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm font-medium">可清理候选</div>
@@ -1721,7 +1721,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
           <RefreshCw /> 刷新历史
         </Button>
       </div>
-      <div className="flex min-h-0 flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_390px]">
+      <div className="flex min-h-0 flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_24.375rem]">
         <div className="min-w-0 overflow-hidden rounded-md border border-border bg-card">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-[hsl(var(--surface-raised))] px-3 py-2">
             <div className="text-sm font-medium">历史记录</div>

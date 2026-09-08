@@ -714,7 +714,7 @@ export function ReleaseConsolePage(): JSX.Element {
             并让页面横滚，本仓库不允许——见 cds/.claude/rules/mobile-layout-fallback.md）。
             所以：xl 收成 240/300，wide(1440) 回到 264/340，2xl 才是参考值 288/380。 */}
         <div
-          className="flex h-full min-h-0 flex-col overflow-y-auto max-xl:gap-4 max-xl:p-4 xl:grid xl:grid-cols-[240px_minmax(0,1fr)_300px] xl:overflow-hidden wide:grid-cols-[264px_minmax(0,1fr)_340px] 2xl:grid-cols-[288px_minmax(0,1fr)_380px]"
+          className="flex h-full min-h-0 flex-col overflow-y-auto max-xl:gap-4 max-xl:p-4 xl:grid xl:grid-cols-[15rem_minmax(0,1fr)_18.75rem] xl:overflow-hidden wide:grid-cols-[16.5rem_minmax(0,1fr)_21.25rem] 2xl:grid-cols-[18rem_minmax(0,1fr)_23.75rem]"
         >
           {/* ══ 左栏：项目 + 环境 ══ */}
           {/* 窄屏把顺序翻过来：用户来这一页第一眼要看的是「现在成没成」，
@@ -1108,7 +1108,7 @@ export function ReleaseConsolePage(): JSX.Element {
 
             {/* 参考稿的流水线列是 300px，同样只在宽画布上成立：中栏 560 的时候
                 300 会把实时输出压到 246px，日志头那一排按钮直接被卡片切掉。 */}
-            <div className="grid min-h-0 flex-1 gap-3.5 xl:grid-cols-[232px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)]">
+            <div className="grid min-h-0 flex-1 gap-3.5 xl:grid-cols-[14.5rem_minmax(0,1fr)] 2xl:grid-cols-[18.75rem_minmax(0,1fr)]">
               {/* 与右侧日志等高（参考稿 grid 两列 stretch）。之前用 self-start 让它按内容收高，
                   结果卡片底边下面空出一大块底色 —— 悬空的短卡读起来是「洞」，不是「省地方」。 */}
               <section className="cds-surface-raised cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[0.875rem] border">
@@ -1394,7 +1394,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   ))}
                 </ol>
               )}
-              <dl className="grid grid-cols-[92px_minmax(0,1fr)] gap-x-3 gap-y-2 border-t border-[hsl(var(--hairline))] pt-3 text-xs">
+              <dl className="grid grid-cols-[5.75rem_minmax(0,1fr)] gap-x-3 gap-y-2 border-t border-[hsl(var(--hairline))] pt-3 text-xs">
                 <dt className="text-[0.6875rem] font-semibold uppercase tracking-normal text-muted-foreground">方式</dt>
                 <dd className="break-words">{row?.target.strategy?.mode || '项目现有脚本'}</dd>
                 <dt className="text-[0.6875rem] font-semibold uppercase tracking-normal text-muted-foreground">部署命令</dt>

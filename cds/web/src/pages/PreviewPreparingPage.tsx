@@ -21,14 +21,14 @@ export function PreviewPreparingSurface({
   return (
     <div className="relative h-full min-h-[inherit] overflow-hidden bg-black text-white">
       <Hyperspeed effectOptions={effectOptions} />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(900px_520px_at_52%_50%,rgba(255,255,255,0.10),transparent_34%),linear-gradient(90deg,rgba(0,0,0,0.88),rgba(0,0,0,0.26)_50%,rgba(0,0,0,0.72))]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(56.25rem_32.5rem_at_52%_50%,rgba(255,255,255,0.10),transparent_34%),linear-gradient(90deg,rgba(0,0,0,0.88),rgba(0,0,0,0.26)_50%,rgba(0,0,0,0.72))]" />
       <main
         className={cn(
           'relative z-10 grid h-full min-h-[inherit] items-center px-[clamp(2rem,8vw,7rem)] py-[clamp(1.875rem,7vw,5.375rem)]',
           compact ? 'max-w-[57.5rem]' : 'max-w-[70rem]',
         )}
       >
-        <section className="max-w-[47.5rem] [text-shadow:0_2px_34px_rgba(0,0,0,0.72)]">
+        <section className="max-w-[47.5rem] [text-shadow:0_2px_2.125rem_rgba(0,0,0,0.72)]">
           <div className="mb-7 inline-flex items-center gap-2.5 font-mono text-[0.6875rem] uppercase tracking-[0.28em] text-white/68">
             {/* 构建上下文的加载器用琥珀矿色(状态系统:building = amber) */}
             <CdsGemLoader size="sm" mineral="amber" className="text-cyan-100" />
@@ -50,7 +50,7 @@ export function PreviewPreparingSurface({
               <strong className="font-mono text-[0.9375rem] text-white">68%</strong>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-white/12">
-              <span className="block h-full w-[68%] rounded-full bg-[linear-gradient(90deg,#f8fafc,#03b3c3,#d856bf)] shadow-[0_0_18px_rgba(3,179,195,0.35)]" />
+              <span className="block h-full w-[68%] rounded-full bg-[linear-gradient(90deg,#f8fafc,#03b3c3,#d856bf)] shadow-[0_0_1.125rem_rgba(3,179,195,0.35)]" />
             </div>
           </div>
         </section>

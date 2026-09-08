@@ -552,7 +552,7 @@ export function TaskSchedulePage(): JSX.Element {
                 此前索引被时间轴压到 y=445（52% 屏高）、只有 280×367，而它是使用频率
                 最高的元件；同时 2xl 才存在的第三栏让「新建」在 1536px 以下不可见。
                 两栏之后没有断点分歧，那个洞从结构上被填掉。 */}
-            <div className="grid flex-1 gap-3 xl:min-h-0 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]">
+            <div className="grid flex-1 gap-3 xl:min-h-0 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[18.75rem_minmax(0,1fr)]">
 
               {/* 左：任务索引。窄屏（<xl）退回自然流并限高，桌面才满高填充。 */}
               <section className="flex min-h-0 max-h-[52vh] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] xl:max-h-none">
@@ -633,7 +633,7 @@ export function TaskSchedulePage(): JSX.Element {
                         hiddenCount={0}
                       />
                     ) : null}
-                    <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
+                    <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_23.75rem] 2xl:grid-cols-[minmax(0,1fr)_27.5rem]">
                       <div className="flex min-h-0 max-h-[70vh] flex-col overflow-hidden border-b border-[hsl(var(--hairline))] xl:max-h-none xl:border-b-0 xl:border-r">
                         <JobOverview
                           job={selectedJob}
@@ -714,7 +714,7 @@ export function TaskSchedulePage(): JSX.Element {
             </DialogHeader>
 
             <div className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
-              <div className="flex min-h-0 flex-col lg:grid lg:h-full lg:grid-cols-[300px_minmax(0,1fr)]">
+              <div className="flex min-h-0 flex-col lg:grid lg:h-full lg:grid-cols-[18.75rem_minmax(0,1fr)]">
                 <div className="min-h-0 border-b border-[hsl(var(--hairline))] p-4 lg:overflow-y-auto lg:border-b-0 lg:border-r">
                   <Field label="任务名称">
                     <input className={compactInputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="生码统计同步" />
@@ -954,7 +954,7 @@ export function TaskSchedulePage(): JSX.Element {
                       </div>
                     </div>
                   </details>
-                  <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3">
+                  <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
                     <Field label="方法">
                       <select className={compactInputClass} value={actionDraft.method} onChange={(e) => setActionDraft({ ...actionDraft, method: e.target.value as HttpMethod })}>
                         {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((method) => <option key={method} value={method}>{method}</option>)}
@@ -1342,7 +1342,7 @@ function TimelineBand({
           ))}
 
           <div
-            className="pointer-events-none absolute top-0 w-px bg-primary shadow-[0_0_10px_hsl(var(--primary)/0.6)]"
+            className="pointer-events-none absolute top-0 w-px bg-primary shadow-[0_0_0.625rem_hsl(var(--primary)/0.6)]"
             style={{ left: `calc(12.5rem + (100% - 22rem) * ${nowRatio / 100})`, height: `${lanes.length * 28}px` }}
           />
           {compact ? null : (
