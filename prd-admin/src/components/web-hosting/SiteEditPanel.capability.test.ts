@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8');
+const knowledgePickerSource = readFileSync(new URL('../knowledge/KnowledgeEntryPicker.tsx', import.meta.url), 'utf8');
 const webPagesServiceSource = readFileSync(new URL('../../services/real/webPages.ts', import.meta.url), 'utf8');
 const htmlPptServiceSource = readFileSync(new URL('../../services/real/mdToPptService.ts', import.meta.url), 'utf8');
 
@@ -22,8 +23,9 @@ describe('网页微调执行器事实接线', () => {
   it('只提交知识身份并由服务端校验正文和容量', () => {
     expect(source).not.toContain('getDocumentContent');
     expect(source).not.toContain('.slice(0, 20_000)');
-    expect(source).toContain('entryId: entry.id');
+    expect(source).toContain('entryId: entry.entryId');
     expect(source).toContain('storeId: entry.storeId');
+    expect(source).toContain('<KnowledgeEntryPicker');
   });
 
   it('网页生成、网页修改和 HTML PPT 都先预检并携带服务端内容哈希', () => {
@@ -192,6 +194,7 @@ describe('网页微调执行器事实接线', () => {
   it('修改要求有真实标签，知识选择向辅助技术暴露选中状态', () => {
     expect(source).toContain('htmlFor={`site-edit-instruction-${site.id}`}');
     expect(source).toContain('id={`site-edit-instruction-${site.id}`}');
-    expect(source).toContain('aria-pressed={selected}');
+    expect(source).toContain('<KnowledgeEntryPicker');
+    expect(knowledgePickerSource).toContain('aria-pressed={selected}');
   });
 });

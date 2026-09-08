@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Check, ExternalLink, Send, Server, Square, X } from 'lucide-react';
+import { Check, ExternalLink, Send, Server, Square } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import KnowledgeEntryPicker, { type KnowledgeEntrySelection } from '@/components/knowledge/KnowledgeEntryPicker';
 import { toast } from '@/lib/toast';
 import { listRecentDocumentEntries } from '@/services/real/documentStore';
 import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
@@ -45,7 +46,7 @@ const ACTIVE_GENERATION_RUN_KEY = 'web-hosting-design-active-run-v1';
 
 export default function SiteGenerateDialog({ open, initialSource, onClose, onCreated }: Props) {
   const [recentKnowledge, setRecentKnowledge] = useState<RecentDocumentEntry[]>([]);
-  const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
+  const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeEntrySelection[]>([]);
   const [loadingKnowledge, setLoadingKnowledge] = useState(false);
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
   const [selectedRuntime, setSelectedRuntime] = useState('map-gateway');
@@ -153,11 +154,16 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     setCompletedSite(null);
     setActiveRunId(null);
     setStopRequested(false);
-    setSelectedKnowledgeIds(initialSource ? [initialSource.entryId] : []);
+    setSelectedKnowledge(initialSource ? [{
+      entryId: initialSource.entryId,
+      storeId: initialSource.storeId,
+      title: initialSource.title,
+      storeName: initialSource.storeName || '当前知识库',
+    }] : []);
     let active = true;
     void Promise.all([listRecentDocumentEntries(16), getDesignRuntimeCapabilities()]).then(([recent, runtimes]) => {
       if (!active) return;
-      const items = recent.success ? recent.data.items : [];
+      const items = recent.success ? [...recent.data.items] : [];
       if (initialSource && !items.some((item) => item.id === initialSource.entryId)) {
         items.unshift({
           id: initialSource.entryId,
@@ -217,21 +223,9 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     [capabilities],
   );
 
-  const toggleKnowledge = (entryId: string) => {
-    if (generating) return;
-    setSelectedKnowledgeIds((current) => {
-      if (current.includes(entryId)) return current.filter((id) => id !== entryId);
-      if (current.length >= 3) {
-        toast.info('首版一次最多引用 3 篇知识');
-        return current;
-      }
-      return [...current, entryId];
-    });
-  };
-
   const generate = async () => {
     const text = instruction.trim();
-    if (!text || selectedKnowledgeIds.length === 0 || generating) return;
+    if (!text || selectedKnowledge.length === 0 || generating) return;
     if (!enabledRuntime) {
       toast.error('没有可用的设计执行器', '请检查执行器部署状态后重试');
       return;
@@ -251,10 +245,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     setPhase('正在校验所选知识');
     streamRef.current = '';
 
-    const selectedEntries = selectedKnowledgeIds
-      .map((entryId) => recentKnowledge.find((item) => item.id === entryId))
-      .filter((entry): entry is RecentDocumentEntry => !!entry);
-    if (selectedEntries.length !== selectedKnowledgeIds.length || selectedEntries.some((entry) => !entry.storeId)) {
+    if (selectedKnowledge.some((entry) => !entry.entryId || !entry.storeId)) {
       setGenerating(false);
       setActiveRunId(null);
       setPhase('引用知识身份不完整，请重新选择');
@@ -262,13 +253,13 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
       return;
     }
 
-    const knowledgeReferences = selectedEntries.map((entry) => ({
-      entryId: entry.id,
+    const knowledgeReferences = selectedKnowledge.map((entry) => ({
+      entryId: entry.entryId,
       storeId: entry.storeId,
     }));
     const created = await createDesignArtifactRun({
       instruction: text,
-      title: title.trim() || selectedEntries[0].title,
+      title: title.trim() || selectedKnowledge[0].title,
       runtime: enabledRuntime.id,
       sourceSurface: initialSource ? 'knowledge-base' : 'web-hosting',
       knowledgeReferences,
@@ -404,34 +395,15 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
               className="mt-2 w-full rounded-lg border border-token-subtle bg-token-card px-3 py-2 text-xs text-token-primary outline-none focus:border-blue-500 disabled:opacity-60"
             />
 
-            <div className="mt-4 flex items-center justify-between text-xs font-semibold text-token-primary">
-              <span className="flex items-center gap-1.5"><BookOpen size={14} />引用知识</span>
-              <span className="font-normal text-token-muted">{selectedKnowledgeIds.length}/3</span>
+            <div className="mt-4">
+              <KnowledgeEntryPicker
+                recentEntries={recentKnowledge}
+                selectedEntries={selectedKnowledge}
+                onChange={setSelectedKnowledge}
+                loadingRecent={loadingKnowledge}
+                disabled={generating}
+              />
             </div>
-            {loadingKnowledge ? (
-              <div className="mt-2"><MapSectionLoader text="正在读取最近知识" /></div>
-            ) : recentKnowledge.length === 0 ? (
-              <p className="mt-2 text-xs text-token-muted">最近没有可引用的知识，请先在知识库中创建内容。</p>
-            ) : (
-              <div className="mt-2 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
-                {recentKnowledge.map((item) => {
-                  const selected = selectedKnowledgeIds.includes(item.id);
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      disabled={generating}
-                      onClick={() => toggleKnowledge(item.id)}
-                      title={`${item.storeName} / ${item.title}`}
-                      className={`flex min-w-0 max-w-full items-center gap-1 rounded-md border px-2 py-1.5 text-[11px] transition-colors disabled:opacity-50 ${selected ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}
-                    >
-                      <span className="min-w-0 truncate">{item.title}</span>
-                      {selected && <X size={10} className="shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
 
             <label className="mt-4 block text-xs font-semibold text-token-primary" htmlFor="design-site-instruction">补充两句话</label>
             <textarea
@@ -491,7 +463,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
                 className="sticky bottom-0 z-10 mt-4 w-full justify-center shadow-lg"
                 size="sm"
                 variant="primary"
-                disabled={!enabledRuntime || !instruction.trim() || selectedKnowledgeIds.length === 0}
+                disabled={!enabledRuntime || !instruction.trim() || selectedKnowledge.length === 0}
                 onClick={() => void generate()}
               >
                 <Send size={14} />

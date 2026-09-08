@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, BookOpen, Check, Clock3, Eye, History, RefreshCw, RotateCcw, Send, Server, ShieldCheck, Square, WandSparkles, X } from 'lucide-react';
+import { AlertTriangle, Check, Clock3, Eye, History, RefreshCw, RotateCcw, Send, Server, ShieldCheck, Square, WandSparkles, X } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import KnowledgeEntryPicker, { type KnowledgeEntrySelection } from '@/components/knowledge/KnowledgeEntryPicker';
 import { toast } from '@/lib/toast';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 import { listRecentDocumentEntries } from '@/services/real/documentStore';
@@ -142,7 +143,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const [mutatingId, setMutatingId] = useState<string | null>(null);
   const [mutatingAction, setMutatingAction] = useState<RevisionMutationAction | null>(null);
   const [recentKnowledge, setRecentKnowledge] = useState<RecentDocumentEntry[]>([]);
-  const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
+  const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeEntrySelection[]>([]);
   const [loadingKnowledge, setLoadingKnowledge] = useState(true);
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
   const [selectedRuntime, setSelectedRuntime] = useState('map-gateway');
@@ -293,17 +294,6 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       if (timer) window.clearTimeout(timer);
     };
   }, [recoveryNotice?.action, runtimeRecoveryGate?.runtimeId]);
-
-  const toggleKnowledge = (entryId: string) => {
-    setSelectedKnowledgeIds((current) => {
-      if (current.includes(entryId)) return current.filter((id) => id !== entryId);
-      if (current.length >= 3) {
-        toast.info('首版一次最多引用 3 篇知识');
-        return current;
-      }
-      return [...current, entryId];
-    });
-  };
 
   const openRevision = useCallback(async (revisionId: string) => {
     const result = await previewHostedSiteRevision(site.id, revisionId);
@@ -457,10 +447,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     setActiveRunId(null);
     setStopRequested(false);
 
-    const selectedEntries = selectedKnowledgeIds
-      .map((entryId) => recentKnowledge.find((item) => item.id === entryId))
-      .filter((entry): entry is RecentDocumentEntry => !!entry);
-    if (selectedEntries.length !== selectedKnowledgeIds.length || selectedEntries.some((entry) => !entry.storeId)) {
+    if (selectedKnowledge.some((entry) => !entry.entryId || !entry.storeId)) {
       setGenerating(false);
       setPhase('引用知识身份不完整，请重新选择');
       setRecoveryNotice({
@@ -471,8 +458,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       toast.error('无法校验引用知识', '请刷新知识列表后重新选择');
       return;
     }
-    const knowledgeReferences = selectedEntries.map((entry) => ({
-      entryId: entry.id,
+    const knowledgeReferences = selectedKnowledge.map((entry) => ({
+      entryId: entry.entryId,
       storeId: entry.storeId,
     }));
     const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, requestRuntime.id);
@@ -1061,35 +1048,14 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             className="mt-1.5 w-full resize-none rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-base leading-relaxed text-token-primary outline-none focus:border-blue-500 focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-60 sm:text-xs"
           />
           <div className="mt-3 rounded-lg border border-token-subtle bg-token-nested p-2.5">
-            <div className="flex items-center justify-between gap-2 text-[11px]">
-              <span className="flex items-center gap-1.5 font-medium"><BookOpen size={13} />引用知识库</span>
-              <span className="text-token-muted">{selectedKnowledgeIds.length}/3</span>
-            </div>
-            {loadingKnowledge ? (
-              <p className="mt-2 text-[10px] text-token-muted" role="status" aria-live="polite">正在读取最近知识</p>
-            ) : recentKnowledge.length === 0 ? (
-              <p className="mt-2 text-[10px] text-token-muted">最近没有可引用的知识。</p>
-            ) : (
-              <div className="mt-2 flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
-                {recentKnowledge.map((item) => {
-                  const selected = selectedKnowledgeIds.includes(item.id);
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      aria-pressed={selected}
-                      disabled={generating}
-                      onClick={() => toggleKnowledge(item.id)}
-                      title={`${item.storeName} / ${item.title}`}
-                      className={`flex min-h-11 max-w-full items-center gap-1 rounded-md border px-2 text-xs transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${selected ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}
-                    >
-                      <span className="truncate">{item.title}</span>
-                      {selected && <X size={10} className="shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <KnowledgeEntryPicker
+              recentEntries={recentKnowledge}
+              selectedEntries={selectedKnowledge}
+              onChange={setSelectedKnowledge}
+              loadingRecent={loadingKnowledge}
+              disabled={generating}
+              compact
+            />
           </div>
           {generating ? (
             <button

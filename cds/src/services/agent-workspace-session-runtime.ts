@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { ExecResult, IShellExecutor } from '../types.js';
 import { computeCdsInstanceId } from './orphan-container-reaper.js';
 import { maskSecrets } from './secret-masker.js';
+import { EGRESS_HEALTH_EXEC_TIMEOUT_MS, EGRESS_HEALTH_PROBE_SCRIPT, EGRESS_PROXY_PORT } from './agent-egress-health.js';
 
 export const MAP_DESIGN_WORKSPACE_SCHEMA = 'map-design-workspace-v1';
 const PUBLIC_ARTIFACT_MANIFEST_SCHEMA = 'map-design-artifact-public-manifest-v2';
@@ -208,7 +209,6 @@ const STORAGE_CAPABILITY_PROBE_BYTES = 1024 * 1024;
 const STORAGE_CAPABILITY_PROBE_INODES = 64;
 const DEFAULT_CLEANUP_RETRY_BASE_MS = 1000;
 const DEFAULT_CLEANUP_RETRY_MAX_MS = 30_000;
-const EGRESS_PROXY_PORT = 8787;
 const ARTIFACT_CSP = [
   "default-src 'none'",
   "base-uri 'none'",
@@ -2686,17 +2686,15 @@ export class AgentWorkspaceSessionRuntime {
       );
     }
     let ready = false;
-    const readyDeadline = Date.now() + 15_000;
-    while (Date.now() < readyDeadline) {
+    try {
       const probe = await this.shell.exec(
-        `docker exec ${shellQuote(containerName)} node -e ${shellQuote(`fetch('http://127.0.0.1:${EGRESS_PROXY_PORT}/__health').then(r=>process.exit(r.status===204?0:1)).catch(()=>process.exit(1))`)}`,
-        { timeout: 3000 },
+        `docker exec ${shellQuote(containerName)} node -e ${shellQuote(EGRESS_HEALTH_PROBE_SCRIPT)}`,
+        { timeout: EGRESS_HEALTH_EXEC_TIMEOUT_MS },
       );
-      if (probe.exitCode === 0) {
-        ready = true;
-        break;
-      }
-      await delay(Math.min(this.pollIntervalMs, 250));
+      ready = probe.exitCode === 0;
+    } catch {
+      // A timed-out Docker CLI can leave its exec process alive. Do not spawn
+      // more probes; the failure path removes this session's relay container.
     }
     if (!ready) {
       await this.failEgressAndCleanup(

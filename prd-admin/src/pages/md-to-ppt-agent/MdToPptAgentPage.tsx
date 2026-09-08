@@ -56,7 +56,7 @@ import {
 import { apiRequest } from '@/services/real/apiClient';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
-import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
+import { activatePptSessionContext, resolvePptSessionContext, type PptSessionContext } from './sessionContext';
 import { NextStepBar } from './NextStepBar';
 import { SelectionFeedbackOverlay, type SelectionRectPct } from './SelectionFeedbackOverlay';
 
@@ -129,6 +129,8 @@ interface SessionState {
   activeRunId: string;
   /** 本次产物实际采用的知识来源，用于刷新恢复与发布溯源 */
   activeKnowledgeRefs?: KbRef[];
+  pendingKbRefs?: KbRef[];
+  launchImported?: boolean;
   theme: string;
   /** 选中的自定义模板 ID（null = 用官方主题 theme） */
   templateId?: string | null;
@@ -148,10 +150,6 @@ interface KbEntry {
   summary?: string;
   contentType: string;
 }
-
-const SESSION_KEY = 'md-to-ppt-chat-v1';
-// 服务器权威：进行中大纲 run 的 id（刷新后取回结果，不再"刷新即丢"）
-const OUTLINE_RUN_KEY = 'md-to-ppt-outline-run-v1';
 
 // dotBg/dotRing 用于预览工具栏的风格色点；preview 用于画廊迷你幻灯预览。
 // 「风格」语义（2026-06-10 用户纠偏）：风格是 AI 生成 HTML 时参照的设计语言（提示词里的
@@ -1113,9 +1111,9 @@ export function buildLiveSlideDoc(headAssets: string, sectionHtml: string): stri
 }
 
 // 读取 sessionStorage（安全）
-function loadSession(): SessionState | null {
+function loadSession(key: string): SessionState | null {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
+    const raw = sessionStorage.getItem(key);
     if (!raw) return null;
     return JSON.parse(raw) as SessionState;
   } catch {
@@ -1123,14 +1121,14 @@ function loadSession(): SessionState | null {
   }
 }
 
-function saveSession(s: SessionState): void {
+function saveSession(key: string, s: SessionState): void {
   try {
     // 不持久化 HTML 到 sessionStorage（太大），只存消息和 runId
     const toSave: SessionState = {
       ...s,
       messages: s.messages.map((m) => ({ ...m, outline: m.outline })),
     };
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(toSave));
+    sessionStorage.setItem(key, JSON.stringify(toSave));
   } catch {
     /* ignore quota errors */
   }
@@ -1425,8 +1423,23 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export function MdToPptAgentPage() {
+  const { key, search } = useLocation();
+  const context = useMemo(
+    () => resolvePptSessionContext({ key, search }, { getItem: (name) => sessionStorage.getItem(name) }),
+    [key, search],
+  );
+  useEffect(() => {
+    activatePptSessionContext(context, { setItem: (key, value) => sessionStorage.setItem(key, value) });
+  }, [context]);
+  // 切换知识启动时卸载旧观察者；迟到的旧结果只能属于旧组件和旧存储键。
+  return <MdToPptSessionPage key={context.id} context={context} />;
+}
+
+function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const navigate = useNavigate();
-  const location = useLocation();
+  const SESSION_KEY = context.sessionKey;
+  const OUTLINE_RUN_KEY = context.outlineRunKey;
+  const mountedRef = useRef(true);
 
   // ─── CDS 连接状态：openai-compatible 配置优先走 LLM Gateway 直出；
   // 这里只作为 CDS Agent 兼容路径的状态提示，不再整页禁用。
@@ -1434,7 +1447,7 @@ export function MdToPptAgentPage() {
 
   // ─── Session lazy-load: run BEFORE any other useState so saveSession
   // never overwrites sessionStorage with empty initial state on first render.
-  const [savedSession] = useState<SessionState | null>(loadSession);
+  const [savedSession] = useState<SessionState | null>(() => loadSession(SESSION_KEY));
 
   // ─── Global settings (收进设置区，不占对话空间）
   // 引擎由运行配置决定：openai-compatible 走 LLM Gateway 直出，anthropic/CDS 配置走 CDS Agent 兼容。
@@ -1699,19 +1712,16 @@ export function MdToPptAgentPage() {
 
   // ─── Attachments & KB
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
-  const [pendingKbRefs, setPendingKbRefs] = useState<KbRef[]>([]);
+  const [pendingKbRefs, setPendingKbRefs] = useState<KbRef[]>(savedSession?.pendingKbRefs ?? []);
+  const [launchImported, setLaunchImported] = useState(savedSession?.launchImported ?? false);
   const [activeKnowledgeRefs, setActiveKnowledgeRefs] = useState<KbRef[]>(
     savedSession?.activeKnowledgeRefs ?? [],
   );
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [showKbPicker, setShowKbPicker] = useState(false);
-  const consumedLaunchRef = useRef('');
-
   useEffect(() => {
-    if (!location.search || consumedLaunchRef.current === location.search) return;
-    const launch = parseDesignArtifactLaunch(location.search);
-    if (!launch || launch.target !== 'html-ppt') return;
-    consumedLaunchRef.current = location.search;
+    const launch = context.launch;
+    if (!launch || launchImported) return;
     let active = true;
     void apiRequest<{ entryId: string; title: string; content: string | null; hasContent: boolean }>(
       `/api/document-store/entries/${encodeURIComponent(launch.sourceEntryId)}/content`,
@@ -1731,10 +1741,11 @@ export function MdToPptAgentPage() {
           content: result.data.content!,
         }];
       });
+      setLaunchImported(true);
       toast.success('当前知识已带入 HTML PPT 工作台');
     });
     return () => { active = false; };
-  }, [location.search]);
+  }, [context.launch, launchImported]);
 
   // 左侧对话栏宽度（可拖拽，280-640px；纯 UI 偏好走 localStorage——关浏览器仍记住）
   const [chatWidth, setChatWidth] = useState<number>(() => {
@@ -1816,7 +1827,9 @@ export function MdToPptAgentPage() {
 
   // ─── Cleanup on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       cleanupRef.current?.();
     };
   }, []);
@@ -1945,12 +1958,12 @@ export function MdToPptAgentPage() {
     }
 
     return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
-  }, []);
+  }, [OUTLINE_RUN_KEY]);
 
   // ─── Session persistence: save on state change
   useEffect(() => {
-    saveSession({ messages, activeRunId, activeKnowledgeRefs, theme, templateId, outlineDraft });
-  }, [messages, activeRunId, activeKnowledgeRefs, theme, templateId, outlineDraft]);
+    saveSession(SESSION_KEY, { messages, activeRunId, activeKnowledgeRefs, pendingKbRefs, launchImported, theme, templateId, outlineDraft });
+  }, [SESSION_KEY, messages, activeRunId, activeKnowledgeRefs, pendingKbRefs, launchImported, theme, templateId, outlineDraft]);
 
   // 模板列表进页即载（右侧模板画廊是空状态主视觉，必须秒出）；模型配置列表同时载入
   useEffect(() => {
@@ -2056,6 +2069,7 @@ export function MdToPptAgentPage() {
     setIsSavingEdit(true);
     try {
       const result = await persistMdToPptLocalEdit(activeRunId, editedHtml);
+      if (!mountedRef.current) return null;
       if (!result.success) {
         toast.error('保存编辑失败', result.error + '。当前修改仍保留在编辑器中。');
         return null;
@@ -2184,6 +2198,7 @@ export function MdToPptAgentPage() {
       sourceTextOverride?: string,
       adjustMode?: boolean
     ) => {
+      if (!mountedRef.current) return;
       setIsProcessing(true);
       if (!adjustMode) setActiveKnowledgeRefs(kbRefs);
       // 调整模式：编辑器保持在场（内联 busy 蒙层），不切全屏「规划中」——
@@ -2222,6 +2237,7 @@ export function MdToPptAgentPage() {
       let serverOutlineRunId = '';
 
       const finish = (errorMsg?: string) => {
+        if (!mountedRef.current) return;
         if (errorMsg) {
           setMessages((prev) =>
             prev.map((m) =>
@@ -2257,6 +2273,7 @@ export function MdToPptAgentPage() {
         // 服务器权威：记下大纲 runId。刷新/断开后大纲仍在后台跑完并存库，
         // 挂载时按此 id 取回结果（见下方 outline-recover effect）
         onRun: (id) => {
+          if (!mountedRef.current) return;
           serverOutlineRunId = id;
           setOutlineDraft((prev) => (prev ? { ...prev, outlineRunId: id } : prev));
           setMessages((prev) => prev.map((message) => (
@@ -2320,6 +2337,7 @@ export function MdToPptAgentPage() {
           }
         },
         onDone: () => {
+          if (!mountedRef.current) return;
           if (!metaSeen && pagesSeen === 0) {
             finish('大纲为空，请重试');
             return;
@@ -2351,7 +2369,7 @@ export function MdToPptAgentPage() {
       });
       cleanupRef.current = cleanup;
     },
-    [messages, pushMsg, outlineDraft, selectedProfileId]
+    [messages, pushMsg, outlineDraft, selectedProfileId, OUTLINE_RUN_KEY]
   );
 
   // ─── Convert 核心（大纲编辑器「确认生成」与旧版气泡共用）
@@ -2363,7 +2381,7 @@ export function MdToPptAgentPage() {
       summary?: string,
       parentOutlineRunId?: string,
     ) => {
-      if (isProcessing) return;
+      if (isProcessing || !mountedRef.current) return;
       setIsProcessing(true);
       setArtifactPhase('generating');
       setPublishedUrl('');
@@ -2390,7 +2408,9 @@ export function MdToPptAgentPage() {
           )
         );
         const tick = async () => {
+          if (!mountedRef.current) return;
           const run = await getMdToPptRun(liveRunId);
+          if (!mountedRef.current) return;
           if (!run) return;
           if (run.status === 'done' && run.html) {
             setGeneratedHtml(run.html);
@@ -2472,6 +2492,7 @@ export function MdToPptAgentPage() {
           );
         },
         onRun: (runId) => {
+          if (!mountedRef.current) return;
           liveRunId = runId;
           if (runId) setActiveRunId(runId);
           try {
@@ -2483,6 +2504,7 @@ export function MdToPptAgentPage() {
         onThinking: handleThinkingDelta,
         onDelta: handleStreamDelta,
         onDone: (result) => {
+          if (!mountedRef.current) return;
           const html = result.html;
           if (!looksLikeDeck(html)) {
             setMessages((prev) =>
@@ -2533,8 +2555,10 @@ export function MdToPptAgentPage() {
         onError: (err) => {
           // 断线 ≠ 失败（2026-06-12 用户截图实锤误报）：先对账 run 真实状态
           void (async () => {
+            if (!mountedRef.current) return;
             if (liveRunId) {
               const run = await getMdToPptRun(liveRunId).catch(() => null);
+              if (!mountedRef.current) return;
               if (run && run.status === 'running') {
                 resumePolling();
                 return;
@@ -2569,7 +2593,7 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [isProcessing, pushMsg, theme, templateId, selectedProfileId, activeKnowledgeRefs, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
+    [isProcessing, pushMsg, theme, templateId, selectedProfileId, activeKnowledgeRefs, resetStreamPreview, handleStreamDelta, handleThinkingDelta, SESSION_KEY]
   );
 
   // 序列化大纲（注入生成提示词 / 调整上下文共用）
@@ -2674,7 +2698,7 @@ export function MdToPptAgentPage() {
     ) => {
       const base = baseHtml ?? generatedHtml;
       const sourceRunId = parentRunIdOverride ?? activeRunId;
-      if (!base || isProcessing) return;
+      if (!base || isProcessing || !mountedRef.current) return;
       if (!sourceRunId) {
         toast.error('无法精修', '当前演示稿没有可追溯的来源版本，请先恢复历史版本或重新生成。');
         return;
@@ -2916,6 +2940,7 @@ export function MdToPptAgentPage() {
       if (isProcessing || historyOpeningId) return;
       setHistoryOpeningId(summary.id);
       const run = await getMdToPptRun(summary.id);
+      if (!mountedRef.current) return;
       setHistoryOpeningId(null);
       if (!run || !run.html || !looksLikeDeck(run.html)) {
         pushMsg({ role: 'assistant', content: `历史记录「${summary.title || '未命名'}」没有可用的 PPT 产物（状态：${run?.status ?? '未知'}）。`, phase: 'error' });
@@ -3070,7 +3095,7 @@ export function MdToPptAgentPage() {
     setArtifactPhase(generatedHtml ? 'done' : 'idle');
     resetStreamPreview();
     updateLastAssistantMsg({ content: '已中止。', phase: 'text' });
-  }, [generatedHtml, updateLastAssistantMsg, resetStreamPreview]);
+  }, [generatedHtml, updateLastAssistantMsg, resetStreamPreview, OUTLINE_RUN_KEY]);
 
   // ─── Reset
   const handleReset = useCallback(() => {
@@ -3104,7 +3129,7 @@ export function MdToPptAgentPage() {
       sessionStorage.removeItem(SESSION_KEY);
       sessionStorage.removeItem(OUTLINE_RUN_KEY);
     } catch { /* ignore */ }
-  }, [resetStreamPreview]);
+  }, [resetStreamPreview, SESSION_KEY, OUTLINE_RUN_KEY]);
 
   const lastUserPrompt = useMemo(() => {
     return [...messages].reverse().find((m) => m.role === 'user')?.content?.trim() ?? '';

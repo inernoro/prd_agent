@@ -58,6 +58,7 @@ class RecordingShell implements IShellExecutor {
   failEgressConnect = false;
   failEgressRun = false;
   egressHealthFailures = 0;
+  throwEgressHealth = false;
   failContainerCreate = false;
   failVolumeInit = false;
   failTemplateInit = false;
@@ -141,6 +142,7 @@ class RecordingShell implements IShellExecutor {
       return this.failEgressConnect ? result('', 'connect denied', 1) : result('connected\n');
     }
     if (command.startsWith('docker exec ')) {
+      if (command.includes('/__health') && this.throwEgressHealth) throw new Error('health exec timed out');
       if (this.failTemplateInit && command.includes('design-templates/web-prototype')) {
         return result('', 'web prototype resources missing', 1);
       }
@@ -530,7 +532,6 @@ describe('AgentWorkspaceSessionRuntime', () => {
       expect(command).not.toMatch(/--user\s+(?:'|")?(?:root|0)(?:\s|:|'|")/);
       ownershipCheckedExports++;
     };
-    shell.egressHealthFailures = 3;
     const fakeFetch: typeof fetch = async (input, init) => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
       const requestPath = url.pathname;
@@ -942,7 +943,10 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(designRuns[1]?.body.message).toContain('keep the existing content unchanged');
     expect(designRuns[1]?.body.conversationId).toBe('od-conversation');
     expect(JSON.stringify(run?.body)).not.toContain('Private knowledge body');
-    expect(shell.calls.filter((call) => call.command.includes('/__health'))).toHaveLength(4);
+    const healthProbes = shell.calls.filter((call) => call.command.includes('/__health'));
+    expect(healthProbes).toHaveLength(1);
+    expect(healthProbes[0].options?.timeout).toBe(45_000);
+    expect(healthProbes[0].command).toContain("require('\"'\"'node:http'\"'\"')");
     const sessionResourceCreates = shell.calls.filter((call) =>
       call.command.includes('cds.type=agent-session') && (
         call.command.startsWith('docker network create')
@@ -1943,7 +1947,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(cleanupSettled).toHaveBeenCalledWith();
   });
 
-  it('fails closed before an Agent run when the MAP-only egress relay cannot be isolated', async () => {
+  it.each(['connect', 'health', 'health-throw'])('fails closed before an Agent run on relay %s failure', async failure => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
     const workspacePackage = buildPackage([
       { path: 'brief.txt', content: 'brief', mediaType: 'text/plain' },
@@ -1987,7 +1991,9 @@ describe('AgentWorkspaceSessionRuntime', () => {
       networkPolicy: 'egress-only',
       autoCleanupMinutes: 5,
     });
-    shell.failEgressConnect = true;
+    shell.failEgressConnect = failure === 'connect';
+    shell.egressHealthFailures = failure === 'health' ? 1 : 0;
+    shell.throwEgressHealth = failure === 'health-throw';
 
     await expect(runtime.execute('session-egress-fail', 'Build the page.', {
       baseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
@@ -1996,6 +2002,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
       model: 'map-managed',
     }, 'transfer-token')).rejects.toMatchObject({ code: 'workspace_egress_unavailable' });
     expect(requestedPaths).not.toContain('/api/runs');
+    expect(shell.calls.filter(call => call.command.includes('/__health'))).toHaveLength(failure === 'connect' ? 0 : 1);
+    expect(shell.calls.some(call => call.command.startsWith('docker rm -f ') && call.command.includes('cds-od-egress-'))).toBe(true);
 
     await runtime.stop('session-egress-fail');
   });

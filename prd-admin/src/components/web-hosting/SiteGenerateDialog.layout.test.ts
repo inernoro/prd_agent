@@ -33,8 +33,9 @@ describe('SiteGenerateDialog responsive layout contract', () => {
   it('submits only knowledge identities and never truncates or uploads browser-fetched content', () => {
     expect(source).not.toContain('getDocumentContent');
     expect(source).not.toContain('.slice(0, 20_000)');
-    expect(source).toContain('entryId: entry.id');
+    expect(source).toContain('entryId: entry.entryId');
     expect(source).toContain('storeId: entry.storeId');
+    expect(source).toContain('<KnowledgeEntryPicker');
   });
 
   it('gives the saved result controls their own themed surface over arbitrary generated content', () => {
