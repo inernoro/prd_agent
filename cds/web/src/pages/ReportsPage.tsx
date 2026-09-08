@@ -2124,7 +2124,11 @@ function ReportViewer({
       <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           {onBack ? (
-            <Button variant="ghost" size="icon" className="-ml-1 h-8 w-8 shrink-0 lg:hidden" aria-label="返回报告列表" title="返回报告列表" onClick={onBack}>
+            /* 桌面端也必须能回去（2026-09-08 验收发现）：主页改成「结论优先」之后，
+               /reports 的默认画面是结论头条而不是列表；这个按钮原来带 lg:hidden，
+               桌面端一旦打开报告就再也回不到首页——点左栏「报告」是同一条路由，
+               组件不重挂载、selected 不复位，用户只能刷新整页。故去掉断点限制。 */
+            <Button variant="ghost" size="icon" className="-ml-1 h-8 w-8 shrink-0" aria-label="返回报告首页" title="返回报告首页" onClick={onBack}>
               <ArrowLeft />
             </Button>
           ) : null}

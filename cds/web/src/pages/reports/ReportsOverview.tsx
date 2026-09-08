@@ -347,7 +347,7 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
   return (
     <div className="flex flex-col gap-5">
       {/* ① 结论头条 + 发布闸 + 分布 */}
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <div className="relative flex flex-col gap-4 overflow-hidden rounded-[10px] border bg-card p-5" style={{ borderColor: `color-mix(in srgb, ${statusMeta.color} 35%, hsl(var(--hairline)))` }}>
           <div className="absolute bottom-0 left-0 top-0 w-1" style={{ background: statusMeta.color }} />
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -358,7 +358,7 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
           </div>
           <h1 className="m-0 text-[22px] font-semibold leading-snug tracking-[-0.015em] lg:text-[26px]" style={{ textWrap: 'pretty' }}>{headline.sentence}</h1>
           {headline.supports.length ? (
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
               {headline.supports.map((s) => (
                 <div key={s.kind} className="flex flex-col gap-1.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5 py-3">
                   <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="h-2 w-2 shrink-0 rounded-full" style={supportDot(s.kind)} />{supportLabel[s.kind]}</div>
