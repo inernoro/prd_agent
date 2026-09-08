@@ -585,16 +585,20 @@ export default function AppShell() {
 
   // 移动抽屉底部的实用工具入口：按 MOBILE_DRAWER_UTILITY_ROUTES 的顺序从目录里取，
   // 目录已按权限过滤，所以这里查不到就是「该用户看不见」，直接不渲染。
+  // 再套一层导航偏好：用户隐藏的不露、已经画进主导航的不重复（与 groupedNav 同一份 effectiveNavHidden）。
   const mobileDrawerUtilities = useMemo(
     () =>
-      resolveMobileDrawerUtilities(getLauncherCatalog({ permissions, isRoot })).map(({ route, hint, item }) => {
+      resolveMobileDrawerUtilities(getLauncherCatalog({ permissions, isRoot }), {
+        hiddenIds: effectiveNavHidden,
+        alreadyShown: groupedNav.flatMap((g) => g.items.map((it) => ({ appKey: it.appKey, route: it.key }))),
+      }).map(({ route, hint, item }) => {
         const IconComp =
           iconMap[item.icon] ??
           ((LucideIcons as unknown as Record<string, LucideIcon | undefined>)[item.icon]) ??
           Cpu;
         return { route, hint, label: item.name, icon: <IconComp size={18} /> };
       }),
-    [permissions, isRoot],
+    [permissions, isRoot, effectiveNavHidden, groupedNav],
   );
 
   // 首页为 Agent Launcher 沉浸页，不自动跳转，让用户自主选择 Agent

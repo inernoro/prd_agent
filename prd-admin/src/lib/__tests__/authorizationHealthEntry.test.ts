@@ -58,6 +58,27 @@ describe('授权健康中心 · 移动抽屉直达', () => {
     expect(withoutLogs.map((u) => u.route)).toEqual(['/mcp-console']);
   });
 
+  it('遵守导航偏好：用户在「我的导航」隐藏了它，抽屉底部也不露 (Codex P2)', () => {
+    const catalog = getLauncherCatalog({ permissions: ['access', 'logs.read'], isRoot: false });
+    const authId = catalog.find((it) => it.route === '/authorization-health')!.id;
+    const hidden = resolveMobileDrawerUtilities(catalog, { hiddenIds: [authId] });
+    expect(hidden.map((u) => u.route)).toEqual(['/mcp-console']);
+  });
+
+  it('遵守导航偏好：已显式加进主导航（navOrder）的，底部清单不再画第二次 (Codex P2)', () => {
+    const catalog = getLauncherCatalog({ permissions: ['access', 'logs.read'], isRoot: false });
+    const authId = catalog.find((it) => it.route === '/authorization-health')!.id;
+    const byAppKey = resolveMobileDrawerUtilities(catalog, { alreadyShown: [{ appKey: authId }] });
+    expect(byAppKey.map((u) => u.route)).toEqual(['/mcp-console']);
+    const byRoute = resolveMobileDrawerUtilities(catalog, { alreadyShown: [{ route: '/authorization-health' }] });
+    expect(byRoute.map((u) => u.route)).toEqual(['/mcp-console']);
+  });
+
+  it('AppShell 把 effectiveNavHidden 与 groupedNav 都接进了底部清单（接线守卫）', () => {
+    expect(appShellSource).toMatch(/hiddenIds:\s*effectiveNavHidden/);
+    expect(appShellSource).toMatch(/alreadyShown:\s*groupedNav\.flatMap\(/);
+  });
+
   it('AppShell 的抽屉真的在渲染这份清单（接线守卫，删掉不会红的那种）', () => {
     expect(appShellSource).toContain("from '@/lib/mobileDrawerUtilities'");
     expect(appShellSource).toMatch(/mobileDrawerUtilities\.map\(/);
