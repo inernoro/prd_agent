@@ -184,7 +184,7 @@ describe('网页微调执行器事实接线', () => {
     expect(htmlPptServiceSource).toContain('content: options.content');
     expect(htmlPptServiceSource).toContain('outlinePages: options.outlinePages');
     const confirmation = htmlPptServiceSource.indexOf('const confirmation = await fetch');
-    const convert = htmlPptServiceSource.indexOf("fetch('/api/md-to-ppt/convert'");
+    const convert = htmlPptServiceSource.indexOf("fetch(resolveApiUrl('/api/md-to-ppt/convert')");
     expect(confirmation).toBeGreaterThanOrEqual(0);
     expect(convert).toBeGreaterThan(confirmation);
   });

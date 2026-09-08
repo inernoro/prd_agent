@@ -147,6 +147,9 @@ export interface DesignArtifactRunSummary {
   producedArtifactRevisionId?: string | null;
   linkedRunId?: string | null;
   error?: string | null;
+  cancelRequested?: boolean;
+  cancelRequestedAt?: string | null;
+  cancelledAt?: string | null;
   createdAt: string;
   knowledgeReferences: Array<{
     entryId: string;
@@ -1081,6 +1084,12 @@ export async function getDesignArtifactRun(
   runId: string,
 ): Promise<ApiResponse<DesignArtifactRunSummary>> {
   return apiRequest(api.designArtifacts.byId(runId));
+}
+
+export async function cancelDesignArtifactRun(
+  runId: string,
+): Promise<ApiResponse<{ runId: string; status: string; cancelRequested: boolean; changed: boolean }>> {
+  return apiRequest(api.designArtifacts.cancel(runId), { method: 'POST' });
 }
 
 export async function streamDesignArtifactRun(input: {

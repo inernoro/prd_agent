@@ -319,6 +319,67 @@ public sealed class DesignArtifactRunRecoveryTests
 
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task CancellationRequestBeforeCommit_ShouldFenceArtifactPersistence()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("run-cancel-before-commit", now);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        Assert.NotNull(await HostedSiteEditRunWorker.TryClaimAsync(
+            fixture.Db, run.Id, "worker-a", now, TimeSpan.FromMinutes(2), CancellationToken.None));
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.CancelRequestedAt, now.AddSeconds(1))
+                .Set(item => item.CancelRequestedByUserId, run.UserId));
+
+        Assert.False(await HostedSiteEditRunWorker.BeginCommitAsync(
+            fixture.Db,
+            run.Id,
+            "worker-a",
+            now.AddSeconds(2),
+            TimeSpan.FromMinutes(2),
+            CancellationToken.None));
+
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Running, persisted.Status);
+        Assert.Null(persisted.ProducedArtifactSiteId);
+        Assert.Null(persisted.ProducedArtifactRevisionId);
+        Assert.Empty(await fixture.Db.HostedSites.Find(_ => true).ToListAsync());
+        Assert.Empty(await fixture.Db.HostedSiteRevisions.Find(_ => true).ToListAsync());
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ExplicitCancellationRequest_ShouldStopActiveExecutionToken()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("run-active-cancel-watch", now);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var claimed = await HostedSiteEditRunWorker.TryClaimAsync(
+            fixture.Db, run.Id, "worker-a", now, TimeSpan.FromMinutes(2), CancellationToken.None);
+        Assert.NotNull(claimed);
+        using var execution = new CancellationTokenSource();
+        var watch = HostedSiteEditRunWorker.WatchForCancellationAsync(
+            fixture.Db, run.Id, "worker-a", execution);
+
+        await DesignArtifactCancellationCoordinator.RequestLegacyAsync(
+            fixture.Db,
+            claimed!,
+            now.AddSeconds(1),
+            CancellationToken.None);
+        await watch.WaitAsync(TimeSpan.FromSeconds(3));
+
+        Assert.True(execution.IsCancellationRequested);
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Running, persisted.Status);
+        Assert.NotNull(persisted.CancelRequestedAt);
+        Assert.Null(persisted.ProducedArtifactRevisionId);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task WorkspacePreparation_ShouldPreserveHeartbeatAndNeverReviveRecoveredRun()
     {
         await using var fixture = await RunMongoFixture.CreateAsync();

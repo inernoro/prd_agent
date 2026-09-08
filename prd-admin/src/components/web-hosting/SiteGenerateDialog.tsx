@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Check, ExternalLink, Send, Server, X } from 'lucide-react';
+import { BookOpen, Check, ExternalLink, Send, Server, Square, X } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -8,6 +8,7 @@ import { listRecentDocumentEntries } from '@/services/real/documentStore';
 import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import {
   createDesignArtifactRun,
+  cancelDesignArtifactRun,
   getDesignArtifactRun,
   getDesignRuntimeCapabilities,
   streamDesignArtifactRun,
@@ -58,6 +59,8 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
   const [thinking, setThinking] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
   const [generating, setGenerating] = useState(false);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [stopRequested, setStopRequested] = useState(false);
   const [completedSite, setCompletedSite] = useState<{ id: string; url?: string } | null>(null);
   const streamRef = useRef('');
   const lastPaintAtRef = useRef(0);
@@ -83,6 +86,8 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     setProgress(100);
     setPhase('网页已生成并保存，可在网页托管中继续修改和发布分享');
     setGenerating(false);
+    setActiveRunId(null);
+    setStopRequested(false);
     sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
     onCreatedRef.current(siteId);
   }, []);
@@ -117,8 +122,12 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
           return;
         }
         if (status === 'error' || status === 'cancelled') {
-          const message = result.data.error || '网页生成未完成，请重新发起';
+          const message = status === 'cancelled'
+            ? '网页生成已取消，未保存或发布新页面'
+            : result.data.error || '网页生成未完成，请重新发起';
           setGenerating(false);
+          setActiveRunId(null);
+          setStopRequested(false);
           setPhase(message);
           sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
           return;
@@ -142,6 +151,8 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     setThinking('');
     setPreviewHtml('');
     setCompletedSite(null);
+    setActiveRunId(null);
+    setStopRequested(false);
     setSelectedKnowledgeIds(initialSource ? [initialSource.entryId] : []);
     let active = true;
     void Promise.all([listRecentDocumentEntries(16), getDesignRuntimeCapabilities()]).then(([recent, runtimes]) => {
@@ -185,6 +196,8 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     abortRef.current?.abort();
     abortRef.current = recovery;
     setGenerating(true);
+    setActiveRunId(runId);
+    setStopRequested(false);
     setPhase('正在恢复上次未完成的网页生成任务');
     void recoverActiveRun(runId, recovery.signal);
     return () => {
@@ -227,6 +240,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     abortRef.current?.abort();
     abortRef.current = abort;
     setGenerating(true);
+    setStopRequested(false);
     setElapsedSeconds(0);
     setRunStartedAtMs(Date.now());
     setActiveRunRuntime(enabledRuntime.id);
@@ -242,6 +256,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
       .filter((entry): entry is RecentDocumentEntry => !!entry);
     if (selectedEntries.length !== selectedKnowledgeIds.length || selectedEntries.some((entry) => !entry.storeId)) {
       setGenerating(false);
+      setActiveRunId(null);
       setPhase('引用知识身份不完整，请重新选择');
       toast.error('无法校验引用知识', '请刷新知识列表后重新选择');
       return;
@@ -266,6 +281,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
       return;
     }
     setActiveRunRuntime(created.data.runtime);
+    setActiveRunId(created.data.runId);
     setRunStartedAtMs(Date.parse(created.data.createdAt));
     sessionStorage.setItem(ACTIVE_GENERATION_RUN_KEY, created.data.runId);
 
@@ -303,9 +319,22 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
           if (item.kind === 'error') {
             terminalObserved = true;
             setGenerating(false);
+            setActiveRunId(null);
+            setStopRequested(false);
             setPhase(item.message);
             sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
             toast.error('网页生成失败', item.message);
+            return;
+          }
+          if (item.kind === 'cancelled') {
+            terminalObserved = true;
+            setGenerating(false);
+            setActiveRunId(null);
+            setStopRequested(false);
+            setPreviewHtml('');
+            streamRef.current = '';
+            setPhase(item.message);
+            sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
           }
         },
       });
@@ -321,6 +350,31 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     } finally {
       if (abort.signal.aborted) setGenerating(false);
     }
+  };
+
+  const stopGeneration = async () => {
+    if (!activeRunId || stopRequested) return;
+    setStopRequested(true);
+    setPhase('正在请求服务器停止生成，线上页面不会改变');
+    const result = await cancelDesignArtifactRun(activeRunId);
+    if (!result.success) {
+      setStopRequested(false);
+      setPhase(result.error?.message || '停止请求未成功，任务仍由服务器继续执行');
+      toast.error('无法停止生成', result.error?.message || '请刷新任务状态后重试');
+      return;
+    }
+    if (result.data.status.toLowerCase() === 'cancelled') {
+      abortRef.current?.abort();
+      setGenerating(false);
+      setActiveRunId(null);
+      setStopRequested(false);
+      setPreviewHtml('');
+      streamRef.current = '';
+      setPhase('网页生成已取消，未保存或发布新页面');
+      sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+      return;
+    }
+    setPhase('服务器正在停止生成，完成前不会保存或发布页面');
   };
 
   return (
@@ -421,16 +475,29 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
               )}
             </div>
 
-            <Button
-              className="sticky bottom-0 z-10 mt-4 w-full justify-center shadow-lg"
-              size="sm"
-              variant="primary"
-              disabled={generating || !enabledRuntime || !instruction.trim() || selectedKnowledgeIds.length === 0}
-              onClick={() => void generate()}
-            >
-              {generating ? <MapSpinner size={14} /> : <Send size={14} />}
-              <span className="ml-1.5">{generating ? '网页正在生长' : '生成并保存网页'}</span>
-            </Button>
+            {generating ? (
+              <Button
+                className="sticky bottom-0 z-10 mt-4 w-full justify-center shadow-lg"
+                size="sm"
+                variant="secondary"
+                disabled={!activeRunId || stopRequested}
+                onClick={() => void stopGeneration()}
+              >
+                {stopRequested ? <MapSpinner size={14} /> : <Square size={13} fill="currentColor" />}
+                <span className="ml-1.5">{stopRequested ? '正在停止，线上未改变' : '停止生成'}</span>
+              </Button>
+            ) : (
+              <Button
+                className="sticky bottom-0 z-10 mt-4 w-full justify-center shadow-lg"
+                size="sm"
+                variant="primary"
+                disabled={!enabledRuntime || !instruction.trim() || selectedKnowledgeIds.length === 0}
+                onClick={() => void generate()}
+              >
+                <Send size={14} />
+                <span className="ml-1.5">生成并保存网页</span>
+              </Button>
+            )}
           </div>
 
           <div className={`${generating || previewHtml || completedSite ? 'flex' : 'hidden lg:flex'} min-h-[220px] min-w-0 flex-col overflow-hidden rounded-xl border border-token-subtle bg-token-nested lg:min-h-0`}>

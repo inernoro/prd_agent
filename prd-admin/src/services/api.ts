@@ -1244,6 +1244,7 @@ export const api = {
     runtimeCapabilities: () => '/api/design-artifacts/runtime-capabilities',
     runs: () => '/api/design-artifacts/runs',
     byId: (runId: string) => `/api/design-artifacts/runs/${runId}`,
+    cancel: (runId: string) => `/api/design-artifacts/runs/${runId}/cancel`,
     stream: (runId: string) => `/api/design-artifacts/runs/${runId}/stream`,
   },
   // ============ Short Video Materials 短视频素材解析 ============

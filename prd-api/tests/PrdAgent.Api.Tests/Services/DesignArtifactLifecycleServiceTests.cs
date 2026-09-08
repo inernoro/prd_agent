@@ -50,8 +50,10 @@ public sealed class DesignArtifactLifecycleServiceTests
 
         Assert.Contains("AddScoped<PrdAgent.Core.Interfaces.IDesignArtifactLifecycleService", program, StringComparison.Ordinal);
         Assert.Contains("PrdAgent.Infrastructure.Services.DesignArtifactLifecycleService", program, StringComparison.Ordinal);
+        Assert.Contains("AddScoped<PrdAgent.Api.Services.IDesignArtifactCancellationCoordinator", program, StringComparison.Ordinal);
         Assert.Contains("[HttpGet(\"runs/{runId}/contract\")]", controller, StringComparison.Ordinal);
         Assert.Contains("[HttpGet(\"runs/{runId}/contract/events\")]", controller, StringComparison.Ordinal);
+        Assert.Contains("[HttpPost(\"runs/{runId}/cancel\")]", controller, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -137,7 +139,8 @@ public sealed class DesignArtifactLifecycleServiceTests
             queue.Object,
             providers.Object,
             knowledge.Object,
-            new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName));
+            new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName),
+            Mock.Of<IDesignArtifactCancellationCoordinator>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -346,8 +349,8 @@ public sealed class DesignArtifactLifecycleServiceTests
             requested.UserId,
             new DesignArtifactLifecycleExpectation(
                 requested.LifecycleVersion,
-                requested.WorkspaceRef.BaseRevision,
-                requested.VersionBoundary.BaseContentHash,
+                requested.WorkspaceRef!.BaseRevision,
+                requested.VersionBoundary!.BaseContentHash,
                 "worker-owner"),
             Manifest(DesignArtifactTypes.WebPage, DesignArtifactSecurityProfiles.WebPageRestricted, 'a'),
             UnsafeReceipt(requested, Manifest(
@@ -359,8 +362,8 @@ public sealed class DesignArtifactLifecycleServiceTests
             requested.UserId,
             new DesignArtifactLifecycleExpectation(
                 requested.LifecycleVersion,
-                requested.WorkspaceRef.BaseRevision,
-                requested.VersionBoundary.BaseContentHash,
+                requested.WorkspaceRef!.BaseRevision,
+                requested.VersionBoundary!.BaseContentHash,
                 "different-worker"))));
 
         var cancelled = await service.CancelAsync(new CancelDesignArtifactSessionRequest(
@@ -368,8 +371,8 @@ public sealed class DesignArtifactLifecycleServiceTests
             requested.UserId,
             new DesignArtifactLifecycleExpectation(
                 requested.LifecycleVersion,
-                requested.WorkspaceRef.BaseRevision,
-                requested.VersionBoundary.BaseContentHash,
+                requested.WorkspaceRef!.BaseRevision,
+                requested.VersionBoundary!.BaseContentHash,
                 "worker-owner")));
 
         Assert.Equal(RunStatuses.Cancelled, cancelled.Status);
@@ -452,6 +455,7 @@ public sealed class DesignArtifactLifecycleServiceTests
                 .Set(item => item.LeaseExpiresAt, expiredAt)
                 .Set(item => item.WorkspaceResultAssetKey, "trusted/result-ready.json"));
         run = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        var observedExpiry = run.LeaseExpiresAt!.Value;
 
         await AssertConflict(() => service.ResumeResultReadyAsync(new ResumeResultReadyDesignArtifactSessionRequest(
             run.Id,
@@ -464,6 +468,34 @@ public sealed class DesignArtifactLifecycleServiceTests
                 expiredAt,
                 Recovery: true))));
 
+        await AssertConflict(() => service.ResumeResultReadyAsync(new ResumeResultReadyDesignArtifactSessionRequest(
+            run.Id,
+            run.UserId,
+            new DesignArtifactLifecycleExpectation(
+                run.LifecycleVersion,
+                run.WorkspaceRef!.BaseRevision,
+                run.VersionBoundary!.BaseContentHash,
+                "dead-worker",
+                observedExpiry.AddSeconds(-1),
+                Recovery: true))));
+
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.ProducedArtifactRevisionId, "already-written"));
+        await AssertConflict(() => service.ResumeResultReadyAsync(new ResumeResultReadyDesignArtifactSessionRequest(
+            run.Id,
+            run.UserId,
+            new DesignArtifactLifecycleExpectation(
+                run.LifecycleVersion,
+                run.WorkspaceRef!.BaseRevision,
+                run.VersionBoundary!.BaseContentHash,
+                "dead-worker",
+                observedExpiry,
+                Recovery: true))));
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.ProducedArtifactRevisionId, null));
+
         var resumed = await service.ResumeResultReadyAsync(new ResumeResultReadyDesignArtifactSessionRequest(
             run.Id,
             run.UserId,
@@ -472,7 +504,7 @@ public sealed class DesignArtifactLifecycleServiceTests
                 run.WorkspaceRef!.BaseRevision,
                 run.VersionBoundary!.BaseContentHash,
                 "dead-worker",
-                expiredAt,
+                observedExpiry,
                 Recovery: true)));
 
         Assert.Equal(RunStatuses.Queued, resumed.Status);
@@ -481,6 +513,112 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal("trusted/result-ready.json", resumed.WorkspaceResultAssetKey);
         Assert.Equal(DesignArtifactLifecycleEventTypes.Recovered, resumed.LifecycleEvents[^1].Type);
         Assert.True(resumed.LifecycleEvents[^1].Authoritative);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task GenerationCancelEndpoint_ShouldShareCoordinatorForMapV1AndOpenDesignV2(bool currentContract)
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var events = new InMemoryRunEventStore();
+        var lifecycle = new DesignArtifactLifecycleService(fixture.Db, events);
+        DesignArtifactRun run;
+        if (currentContract)
+        {
+            run = await lifecycle.CreateSessionAsync(Session(
+                "cancel-generation-v2",
+                DesignArtifactTypes.WebPage,
+                DesignArtifactWorkspaceKinds.RemotePackage,
+                "open-design"));
+            await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+                item => item.Id == run.Id,
+                Builders<DesignArtifactRun>.Update.Set(item => item.Status, RunStatuses.Queued));
+        }
+        else
+        {
+            run = new DesignArtifactRun
+            {
+                Id = "cancel-generation-v1",
+                UserId = "owner-user",
+                Status = RunStatuses.Queued,
+                ArtifactType = DesignArtifactTypes.WebPage,
+                Operation = DesignArtifactOperations.Generate,
+                SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
+                Runtime = DesignArtifactRuntimes.MapGateway,
+                Phase = "已排队",
+            };
+            await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        }
+        var coordinator = new DesignArtifactCancellationCoordinator(fixture.Db, lifecycle);
+        var controller = Controller(fixture, events, run.UserId, coordinator);
+
+        Assert.IsType<OkObjectResult>(await controller.CancelRun(run.Id));
+        Assert.IsType<OkObjectResult>(await controller.CancelRun(run.Id));
+
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Cancelled, persisted.Status);
+        Assert.NotNull(persisted.CancelRequestedAt);
+        Assert.NotNull(persisted.CancelledAt);
+        Assert.Null(persisted.ProducedArtifactSiteId);
+        Assert.Null(persisted.ProducedArtifactRevisionId);
+        if (currentContract)
+        {
+            Assert.Equal(DesignArtifactLifecycleEventTypes.Cancelled, persisted.LifecycleEvents[^1].Type);
+            Assert.True(persisted.LifecycleEvents[^1].Authoritative);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task GenerationCancelEndpoint_ShouldRejectRunWithProducedArtifact(bool currentContract)
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var events = new InMemoryRunEventStore();
+        var lifecycle = new DesignArtifactLifecycleService(fixture.Db, events);
+        DesignArtifactRun run;
+        if (currentContract)
+        {
+            run = await lifecycle.CreateSessionAsync(Session(
+                "cancel-produced-v2",
+                DesignArtifactTypes.WebPage,
+                DesignArtifactWorkspaceKinds.RemotePackage,
+                "open-design"));
+            await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+                item => item.Id == run.Id,
+                Builders<DesignArtifactRun>.Update.Set(item => item.Status, RunStatuses.Queued));
+        }
+        else
+        {
+            run = new DesignArtifactRun
+            {
+                Id = "cancel-produced-v1",
+                UserId = "owner-user",
+                Status = RunStatuses.Queued,
+                ArtifactType = DesignArtifactTypes.WebPage,
+                Operation = DesignArtifactOperations.Generate,
+                SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
+                Runtime = DesignArtifactRuntimes.MapGateway,
+            };
+            await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        }
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.ProducedArtifactSiteId, "site-written")
+                .Set(item => item.ProducedArtifactRevisionId, "revision-written"));
+        var coordinator = new DesignArtifactCancellationCoordinator(fixture.Db, lifecycle);
+        var controller = Controller(fixture, events, run.UserId, coordinator);
+
+        Assert.IsType<ConflictObjectResult>(await controller.CancelRun(run.Id));
+
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Queued, persisted.Status);
+        Assert.Null(persisted.CancelRequestedAt);
+        Assert.Equal("revision-written", persisted.ProducedArtifactRevisionId);
     }
 
     [Fact]
@@ -1349,7 +1487,8 @@ public sealed class DesignArtifactLifecycleServiceTests
     private static DesignArtifactsController Controller(
         LifecycleMongoFixture fixture,
         IRunEventStore events,
-        string userId)
+        string userId,
+        IDesignArtifactCancellationCoordinator? cancellation = null)
     {
         var controller = new DesignArtifactsController(
             fixture.Db,
@@ -1357,7 +1496,8 @@ public sealed class DesignArtifactLifecycleServiceTests
             Mock.Of<IRunQueue>(),
             Mock.Of<IDesignArtifactProviderCatalog>(),
             Mock.Of<IDesignKnowledgeSnapshotResolver>(),
-            new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName));
+            new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName),
+            cancellation ?? Mock.Of<IDesignArtifactCancellationCoordinator>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

@@ -235,7 +235,8 @@ public sealed class HostedSiteEditsControllerTests
             queue.Object,
             providers.Object,
             knowledge.Object,
-            new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_hash_unit_{Guid.NewGuid():N}"));
+            new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_hash_unit_{Guid.NewGuid():N}"),
+            Mock.Of<IDesignArtifactCancellationCoordinator>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -296,7 +297,8 @@ public sealed class HostedSiteEditsControllerTests
             Mock.Of<IRunQueue>(),
             Mock.Of<IDesignArtifactProviderCatalog>(),
             knowledge.Object,
-            new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_preflight_unit_{Guid.NewGuid():N}"));
+            new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_preflight_unit_{Guid.NewGuid():N}"),
+            Mock.Of<IDesignArtifactCancellationCoordinator>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -907,7 +909,9 @@ public sealed class HostedSiteEditsControllerTests
             providers ?? Mock.Of<IDesignArtifactProviderCatalog>(),
             knowledgeSnapshots ?? Mock.Of<IDesignKnowledgeSnapshotResolver>(),
             publicLifecycle ?? Mock.Of<IWebPageDesignArtifactLifecycleAdapter>(),
-            lifecycle ?? Mock.Of<IDesignArtifactLifecycleService>());
+            new DesignArtifactCancellationCoordinator(
+                db,
+                lifecycle ?? Mock.Of<IDesignArtifactLifecycleService>()));
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

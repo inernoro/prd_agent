@@ -237,6 +237,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapterTests
         var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == setup.Run.Id).SingleAsync();
         Assert.Equal(siteId, persisted.ArtifactSiteId);
         Assert.Equal(revisionId, persisted.ArtifactRevisionId);
+        Assert.Equal(siteId, persisted.ProducedArtifactSiteId);
+        Assert.Equal(revisionId, persisted.ProducedArtifactRevisionId);
         Assert.Equal(DesignArtifactLifecycleEventTypes.Published, persisted.LifecycleEvents[^1].Type);
         Assert.True(persisted.LifecycleEvents[^1].Authoritative);
     }

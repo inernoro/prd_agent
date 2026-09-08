@@ -56,4 +56,17 @@ describe('SiteGenerateDialog generation progress contract', () => {
     expect(source).toContain('resolveGeneratedSiteId(result.data)');
     expect(source).not.toContain("if (!result.success) {\n        sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY)");
   });
+
+  it('offers explicit server cancellation without treating dialog close as cancellation', () => {
+    expect(parseSiteGenerationProgressEvent({
+      event: 'cancelled',
+      data: '{"message":"网页生成已取消"}',
+    })).toEqual({ kind: 'cancelled', message: '网页生成已取消' });
+    const source = readFileSync(path.resolve(__dirname, 'SiteGenerateDialog.tsx'), 'utf8');
+    expect(source).toContain('cancelDesignArtifactRun(activeRunId)');
+    expect(source).toContain("onClick={() => void stopGeneration()}");
+    expect(source).toContain("'停止生成'");
+    expect(source).toContain('abortRef.current?.abort();');
+    expect(source).not.toContain('return () => {\n      void stopGeneration()');
+  });
 });

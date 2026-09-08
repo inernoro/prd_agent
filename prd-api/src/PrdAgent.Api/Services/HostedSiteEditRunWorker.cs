@@ -634,7 +634,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             ex => _logger.LogWarning(ex, "设计产物 Run 心跳写入失败 runId={RunId}", runId));
     }
 
-    private static async Task WatchForCancellationAsync(
+    internal static async Task WatchForCancellationAsync(
         MongoDbContext db,
         string runId,
         string leaseOwner,

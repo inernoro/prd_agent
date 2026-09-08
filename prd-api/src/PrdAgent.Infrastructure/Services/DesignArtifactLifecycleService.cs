@@ -331,7 +331,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             request.ExpectedLifecycleVersion,
             request.ExpectedBaseRevision,
             request.ExpectedBaseContentHash);
-        if (current.Status is not (RunStatuses.Queued or RunStatuses.Running))
+        if (current.Status is not (RunStatuses.Queued or RunStatuses.Running)
+            || !string.IsNullOrWhiteSpace(current.ProducedArtifactSiteId)
+            || !string.IsNullOrWhiteSpace(current.ProducedArtifactRevisionId))
             throw Conflict();
 
         var now = DateTime.UtcNow;
@@ -345,7 +347,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             Builders<DesignArtifactRun>.Filter.Eq(item => item.Status, current.Status),
             Builders<DesignArtifactRun>.Filter.Eq(item => item.CancelRequestedAt, null),
             Builders<DesignArtifactRun>.Filter.Eq(item => item.LeaseOwnerId, current.LeaseOwnerId),
-            Builders<DesignArtifactRun>.Filter.Eq(item => item.LeaseExpiresAt, current.LeaseExpiresAt));
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.LeaseExpiresAt, current.LeaseExpiresAt),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactSiteId, null),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactRevisionId, null));
         var updates = new BsonDocument
         {
             { nameof(DesignArtifactRun.CancelRequestedAt), now },
@@ -475,16 +479,48 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         var fingerprint = Sha256Hex($"{artifactId}\n{versionId}\n{artifactHash}");
 
         var current = await GetOwnedV2Async(runId, userId);
-        await ValidatePublishedReceiptAsync(current, artifactId, versionId, artifactHash);
         if (current.PublishBindingOperationId != null)
         {
+            await ValidatePublishedReceiptAsync(current, artifactId, versionId, artifactHash);
             if (current.PublishBindingOperationId == operationId
                 && FixedHashEquals(current.PublishBindingFingerprint, fingerprint))
-                return current;
+            {
+                if (!string.IsNullOrWhiteSpace(current.ProducedArtifactSiteId)
+                    || !string.IsNullOrWhiteSpace(current.ProducedArtifactRevisionId))
+                    return current;
+                var healed = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
+                    Builders<DesignArtifactRun>.Filter.And(
+                        OwnedV2Filter(current.Id, current.UserId),
+                        Builders<DesignArtifactRun>.Filter.Eq(
+                            item => item.PublishBindingOperationId,
+                            operationId),
+                        Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactSiteId, null),
+                        Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactRevisionId, null)),
+                    Builders<DesignArtifactRun>.Update
+                        .Set(item => item.ProducedArtifactSiteId, artifactId)
+                        .Set(item => item.ProducedArtifactRevisionId, versionId)
+                        .Set(item => item.UpdatedAt, DateTime.UtcNow),
+                    new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
+                    {
+                        ReturnDocument = ReturnDocument.After,
+                    },
+                    CancellationToken.None);
+                var healedOrWinner = healed ?? await GetOwnedV2Async(runId, userId);
+                await ValidatePublishedReceiptAsync(
+                    healedOrWinner,
+                    artifactId,
+                    versionId,
+                    artifactHash);
+                if (string.Equals(healedOrWinner.ProducedArtifactSiteId, artifactId, StringComparison.Ordinal)
+                    && string.Equals(healedOrWinner.ProducedArtifactRevisionId, versionId, StringComparison.Ordinal))
+                    return healedOrWinner;
+                throw Conflict();
+            }
             throw Conflict();
         }
         if (current.Status != RunStatuses.Done || current.Operation == DesignArtifactOperations.Plan)
             throw Conflict();
+        await ValidatePublishedReceiptAsync(current, artifactId, versionId, artifactHash);
         ValidateExpectation(current, request.Expected);
 
         var now = DateTime.UtcNow;
@@ -492,7 +528,13 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             CasFilter(current, request.Expected, RunStatuses.Done),
             Builders<DesignArtifactRun>.Filter.Eq(item => item.PublishBindingOperationId, null),
             Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactSiteId, null),
-            Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactRevisionId, null));
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactRevisionId, null),
+            Builders<DesignArtifactRun>.Filter.Eq(
+                item => item.ProducedArtifactSiteId,
+                current.ProducedArtifactSiteId),
+            Builders<DesignArtifactRun>.Filter.Eq(
+                item => item.ProducedArtifactRevisionId,
+                current.ProducedArtifactRevisionId));
         var updated = await AtomicUpdateWithEventAsync(
             filter,
             current,
@@ -500,6 +542,8 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             {
                 { nameof(DesignArtifactRun.ArtifactSiteId), artifactId },
                 { nameof(DesignArtifactRun.ArtifactRevisionId), versionId },
+                { nameof(DesignArtifactRun.ProducedArtifactSiteId), artifactId },
+                { nameof(DesignArtifactRun.ProducedArtifactRevisionId), versionId },
                 { nameof(DesignArtifactRun.PublishBindingOperationId), operationId },
                 { nameof(DesignArtifactRun.PublishBindingFingerprint), fingerprint },
                 { nameof(DesignArtifactRun.UpdatedAt), now },
@@ -667,9 +711,21 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
 
         if (run.ArtifactType == DesignArtifactTypes.WebPage)
         {
-            if (!string.Equals(run.ProducedArtifactSiteId, siteId, StringComparison.Ordinal)
-                || !string.Equals(run.ProducedArtifactRevisionId, versionId, StringComparison.Ordinal))
+            var hasNoProducedIdentity = string.IsNullOrWhiteSpace(run.ProducedArtifactSiteId)
+                                        && string.IsNullOrWhiteSpace(run.ProducedArtifactRevisionId);
+            var hasMatchingProducedIdentity = string.Equals(
+                                                  run.ProducedArtifactSiteId,
+                                                  siteId,
+                                                  StringComparison.Ordinal)
+                                              && string.Equals(
+                                                  run.ProducedArtifactRevisionId,
+                                                  versionId,
+                                                  StringComparison.Ordinal);
+            if (!hasNoProducedIdentity && !hasMatchingProducedIdentity)
                 throw Invalid("发布版本与任务形成的产物不一致");
+            if (run.Operation == DesignArtifactOperations.Edit
+                && !string.Equals(run.TargetSiteId, siteId, StringComparison.Ordinal))
+                throw Invalid("发布站点与网页修改目标不一致");
             var revision = await _db.HostedSiteRevisions
                 .Find(item => item.Id == versionId
                               && item.SiteId == siteId

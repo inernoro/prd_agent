@@ -6,6 +6,7 @@ export type SiteGenerationProgressEvent =
   | { kind: 'thinking'; text: string }
   | { kind: 'delta'; text: string }
   | { kind: 'done'; siteId: string; siteUrl?: string }
+  | { kind: 'cancelled'; message: string }
   | { kind: 'error'; message: string }
   | { kind: 'unknown' };
 
@@ -40,7 +41,13 @@ export function parseSiteGenerationProgressEvent(event: SseEvent): SiteGeneratio
       siteUrl: typeof data.siteUrl === 'string' ? data.siteUrl : undefined,
     };
   }
-  if (event.event === 'error' || event.event === 'cancelled') {
+  if (event.event === 'cancelled') {
+    return {
+      kind: 'cancelled',
+      message: typeof data.message === 'string' ? data.message : '网页生成已取消',
+    };
+  }
+  if (event.event === 'error') {
     return {
       kind: 'error',
       message: typeof data.message === 'string' ? data.message : '网页生成失败',

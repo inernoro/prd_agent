@@ -57,6 +57,7 @@ public sealed class DesignArtifactsController : ControllerBase
     private readonly IRunQueue _queue;
     private readonly IDesignArtifactProviderCatalog _providers;
     private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
+    private readonly IDesignArtifactCancellationCoordinator _cancellation;
     private readonly LlmGatewayDataContext _gatewayDb;
     private readonly ILogger<DesignArtifactsController>? _logger;
 
@@ -67,6 +68,7 @@ public sealed class DesignArtifactsController : ControllerBase
         IDesignArtifactProviderCatalog providers,
         IDesignKnowledgeSnapshotResolver knowledgeSnapshots,
         LlmGatewayDataContext gatewayDb,
+        IDesignArtifactCancellationCoordinator cancellation,
         ILogger<DesignArtifactsController>? logger = null)
     {
         _db = db;
@@ -75,6 +77,7 @@ public sealed class DesignArtifactsController : ControllerBase
         _providers = providers;
         _knowledgeSnapshots = knowledgeSnapshots;
         _gatewayDb = gatewayDb;
+        _cancellation = cancellation;
         _logger = logger;
     }
 
@@ -262,6 +265,50 @@ public sealed class DesignArtifactsController : ControllerBase
         return run == null
             ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"))
             : Ok(ApiResponse<object>.Ok(ToDto(run)));
+    }
+
+    [HttpPost("runs/{runId}/cancel")]
+    public async Task<IActionResult> CancelRun(string runId)
+    {
+        var userId = this.GetRequiredUserId();
+        var generationRun = await _db.DesignArtifactRuns
+            .Find(run => run.Id == runId
+                         && run.UserId == userId
+                         && run.ArtifactType == DesignArtifactTypes.WebPage
+                         && run.Operation == DesignArtifactOperations.Generate)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (generationRun == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
+
+        DesignArtifactCancellationResult? cancellation;
+        try
+        {
+            cancellation = await _cancellation.RequestAsync(runId, userId, CancellationToken.None);
+        }
+        catch (DesignArtifactLifecycleException ex)
+            when (ex.Code == DesignArtifactLifecycleErrorCodes.Conflict)
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                "DESIGN_ARTIFACT_CANCEL_CONFLICT",
+                "任务已经进入保存或终态，不能再取消；请刷新任务状态确认结果"));
+        }
+        catch (DesignArtifactCancellationConflictException)
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                "DESIGN_ARTIFACT_CANCEL_CONFLICT",
+                "任务已经进入保存或终态，不能再取消；请刷新任务状态确认结果"));
+        }
+
+        if (cancellation == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
+        await ProjectCancellationBestEffortAsync(cancellation.Run);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            runId = cancellation.Run.Id,
+            cancellation.Run.Status,
+            cancelRequested = cancellation.Run.CancelRequestedAt.HasValue,
+            cancellation.Changed,
+        }));
     }
 
     /// <summary>
@@ -640,14 +687,16 @@ public sealed class DesignArtifactsController : ControllerBase
                 }
                 if (snapshot.Status is RunStatuses.Error or RunStatuses.Cancelled)
                 {
-                    await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
+                    await WriteEventAsync(null, snapshot.Status == RunStatuses.Cancelled ? "cancelled" : "error", JsonSerializer.Serialize(new
                     {
                         code = snapshot.Status == RunStatuses.Cancelled
                             ? "DESIGN_ARTIFACT_CANCELLED"
                             : "DESIGN_ARTIFACT_FAILED",
-                        message = string.IsNullOrWhiteSpace(snapshot.Error)
-                            ? "网页生成未完成，请重新发起"
-                            : snapshot.Error,
+                        message = snapshot.Status == RunStatuses.Cancelled
+                            ? "网页生成已取消，未保存或发布新页面"
+                            : string.IsNullOrWhiteSpace(snapshot.Error)
+                                ? "网页生成未完成，请重新发起"
+                                : snapshot.Error,
                     }), ct);
                     return;
                 }
@@ -688,6 +737,9 @@ public sealed class DesignArtifactsController : ControllerBase
         run.ProducedArtifactRevisionId,
         run.LinkedRunId,
         run.Error,
+        cancelRequested = run.CancelRequestedAt.HasValue,
+        run.CancelRequestedAt,
+        run.CancelledAt,
         run.RuntimeModelCallCount,
         run.RuntimeModelCallLimit,
         run.WorkspaceInputSha256,
@@ -705,6 +757,38 @@ public sealed class DesignArtifactsController : ControllerBase
         run.UpdatedAt,
         run.CompletedAt,
     };
+
+    private async Task ProjectCancellationBestEffortAsync(DesignArtifactRun run)
+    {
+        try
+        {
+            var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, run.Id, CancellationToken.None)
+                       ?? new RunMeta
+                       {
+                           RunId = run.Id,
+                           Kind = RunKinds.DesignArtifact,
+                           CreatedByUserId = run.UserId,
+                           CreatedAt = run.CreatedAt,
+                       };
+            meta.Status = run.Status;
+            if (run.Status == RunStatuses.Cancelled)
+                meta.EndedAt = run.CancelledAt ?? run.CompletedAt ?? DateTime.UtcNow;
+            await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
+            await _events.AppendEventAsync(
+                RunKinds.DesignArtifact,
+                run.Id,
+                run.Status == RunStatuses.Cancelled ? "cancelled" : "phase",
+                run.Status == RunStatuses.Cancelled
+                    ? new { code = "DESIGN_ARTIFACT_CANCELLED", message = "设计任务已取消，未生成或发布新版本" }
+                    : new { progress = run.Progress, message = "正在停止设计任务" },
+                RunTtl,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "设计任务取消的 Redis 投影暂不可用 runId={RunId}", run.Id);
+        }
+    }
 
     private static DesignArtifactPublicEvent ToPublicContractEvent(DesignArtifactEventEnvelope record) => new(
         record.RunId,
