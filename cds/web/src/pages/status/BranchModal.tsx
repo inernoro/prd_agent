@@ -5,11 +5,10 @@
  * 可用率、响应、当前状态与「打开分支」。点一行 = 选中该分支的代表目标看详情。
  * 主列表只汇总，明细全在这里；分支再多也不会把主站挤出第一屏。
  */
-import { useMemo, useState } from 'react';
-import { Search, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import {
@@ -106,6 +105,13 @@ export function BranchModal({ group, open, onOpenChange, onSelectBranch }: {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<BranchFilter>('all');
   const [sort, setSort] = useState<BranchSort>('alive');
+  // 每次打开都从「全部 · 按存活」开始：上一次留下的筛选会让人以为分支少了。
+  useEffect(() => {
+    if (!open) return;
+    setQuery('');
+    setFilter('all');
+    setSort('alive');
+  }, [open, group?.projectId]);
 
   const shown = useMemo(() => {
     if (!group) return [];
@@ -125,7 +131,7 @@ export function BranchModal({ group, open, onOpenChange, onSelectBranch }: {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent frame className="max-w-[1200px]" style={{ height: '82vh' }}>
-        <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-[18px] py-3.5">
+        <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] py-3.5 pl-[18px] pr-14">
           <div className="flex min-w-0 flex-col gap-0.5">
             <DialogTitle className="text-lg font-semibold">
               {group.projectName} · 全部分支 <span className="font-mono text-sm font-normal text-muted-foreground">{group.total}</span>
@@ -164,9 +170,6 @@ export function BranchModal({ group, open, onOpenChange, onSelectBranch }: {
               onChange={setSort}
               ariaLabel="排序"
             />
-            <Button variant="ghost" size="icon" onClick={() => onOpenChange(false)} aria-label="关闭">
-              <X />
-            </Button>
           </div>
         </header>
         <div className={cn(GRID, 'shrink-0 px-3.5 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground')} role="row">

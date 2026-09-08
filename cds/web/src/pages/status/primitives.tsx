@@ -109,7 +109,7 @@ function bucketTitle(bucket: UptimeBucket): string {
 
 /** 柱条单段。颜色 + 高度 + 斜纹三重编码，不只靠颜色区分 up/down。 */
 export function BarSegment({ bucket, compact = false }: { bucket: UptimeBucket; compact?: boolean }): JSX.Element {
-  const base = 'w-full shrink-0 rounded-[2px] transition-colors';
+  const base = 'min-w-0 flex-1 rounded-[2px] transition-colors';
   if (bucket.status === 'none') {
     return (
       <span

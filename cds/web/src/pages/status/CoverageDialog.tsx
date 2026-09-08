@@ -4,9 +4,6 @@
  * 四档手段固定文案（它们描述的是探测器的实现，不是数据）；未纳入清单来自
  * summary.coverage（后端从同一份目标推导，不在前端另算一遍）。
  */
-import { X } from 'lucide-react';
-
-import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import type { UptimeCoverage, UptimeProberHealth } from '@/lib/monitorCenter';
@@ -30,15 +27,12 @@ export function CoverageDialog({ open, onOpenChange, coverage, prober }: {
   const uncovered = coverage?.uncovered ?? [];
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent frame className="max-w-[1200px]" style={{ height: '82vh' }}>
-        <header className="flex shrink-0 items-start gap-3 border-b border-[hsl(var(--hairline))] px-[18px] py-3.5">
+      <DialogContent frame className="max-w-[1200px]" style={{ maxHeight: '82vh' }}>
+        <header className="flex shrink-0 items-start gap-3 border-b border-[hsl(var(--hairline))] py-3.5 pl-[18px] pr-14">
           <div className="flex min-w-0 flex-col gap-0.5">
             <DialogTitle className="text-lg font-semibold">覆盖面与判定手段</DialogTitle>
             <DialogDescription className="text-xs">监控中心自己先回答两个问题：还有谁没被盯？盯的手段有多可信？</DialogDescription>
           </div>
-          <Button variant="ghost" size="icon" className="ml-auto" onClick={() => onOpenChange(false)} aria-label="关闭">
-            <X />
-          </Button>
         </header>
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-[18px]" style={{ overscrollBehavior: 'contain' }}>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
