@@ -145,11 +145,9 @@ export function createUptimeRouter(deps: { monitor: UptimeMonitorService; store?
     const raw = Number(req.query.limit);
     const limit = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 50;
     const scope = projectScopeOf(req);
-    // 先按作用域过滤再截断：反过来会让项目级调用者拿到「前 N 条里恰好属于我的」
-    // 那几条，看起来故障变少了。
-    const incidents = scope
-      ? deps.monitor.getIncidents(Number.MAX_SAFE_INTEGER).filter((i) => i.projectId === scope).slice(0, limit)
-      : deps.monitor.getIncidents(limit);
+    // 作用域过滤在 getIncidents 内部、截断之前：在外面 filter 拿到的已经是全实例
+    // 截过 200 条的结果，别的项目故障多时项目级调用者一条都分不到。
+    const incidents = deps.monitor.getIncidents(limit, scope);
     res.json({ incidents, generatedAt: Date.now() });
   });
 
