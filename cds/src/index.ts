@@ -5817,6 +5817,16 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 故障归因到发布。少了这一行，生产站点宕机时状态页只会说「宕了」，
       // 答不出「是哪次发布引入的」——而这是排障时第一个要问的问题。
       getReleaseRuns: (targetId: string) => stateService.getReleaseRuns({ targetId }),
+      // 监控中心手动添加的目标。少了这一行，「添加监控」保存成功但永远不会被探——
+      // 守卫测试 uptime-custom-monitors 盯着它。
+      getUptimeMonitors: () => stateService.listUptimeMonitors(),
+      // 用户视角探测的地址：与预览入口探测、PR 评论里的预览链接同一个拼法。
+      // 少了这一行，分支目标只有进程视角，「用户视角 ●」永远不会出现。
+      getPreviewUrl: (branch) => {
+        const previewHost = config.previewDomain || config.rootDomains?.[0];
+        if (!previewHost || !branch.branch) return '';
+        return buildPreviewUrlForProject(previewHost, branch.branch, stateService.getProject(branch.projectId), branch.projectId).url;
+      },
     },
     config: uptimeConfigFromEnv(config.repoRoot),
     logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
@@ -5825,7 +5835,16 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     // 「这条要不要叫醒人」的判定仍只在 CDS_EVENT_ALERT_CLASS 一处，这里只转发。
     onAlert: (type, data) => { cdsEventsBus.publish(type, data); },
   });
-  app.use('/api', createUptimeRouter({ monitor: uptimeMonitor }));
+  app.use('/api', createUptimeRouter({
+    monitor: uptimeMonitor,
+    store: {
+      listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
+      getUptimeMonitor: (id: string) => stateService.getUptimeMonitor(id),
+      upsertUptimeMonitor: (monitor) => stateService.upsertUptimeMonitor(monitor),
+      removeUptimeMonitor: (id: string) => stateService.removeUptimeMonitor(id),
+      getProject: (projectId: string) => stateService.getProject(projectId),
+    },
+  }));
   // 回填给 /healthz：探活循环停摆必须在健康端点上可见（2026-09-08）。
   serverDeps.uptimeMonitor = uptimeMonitor;
   // 发布中心从这里读生产健康，不再自己打 healthcheckUrl。晚绑定是因为 createServer()

@@ -1510,6 +1510,53 @@ export interface ReleaseStrategy {
   detectedFrom?: string[];
 }
 
+/**
+ * 监控中心里由人手动添加的探测目标（2026-09-08）。
+ *
+ * 与分支预览服务（从 BranchEntry 推导）和生产发布目标（从 ReleaseTarget 推导）
+ * 并列成为第三类探测来源。前两类是「系统替你盯」，这一类是「你让系统盯」——
+ * 第三方依赖、上游网关、还没接进 CDS 的旧服务，都归这里。
+ *
+ * 只存定义，不存采样：采样与故障台账仍由 uptime-monitor 统一记在自己的落盘文件里，
+ * 定义删掉后该目标的台账会在下一轮探测被清理。
+ */
+export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp';
+
+export interface UptimeCustomMonitor {
+  id: string;
+  /** 展示名；留空时由服务端按地址派生（主机名 / host:port） */
+  name: string;
+  kind: UptimeCustomMonitorKind;
+  /** http / keyword：完整地址（http 或 https） */
+  url?: string;
+  /** http / keyword：请求方法，默认 GET */
+  method?: 'GET' | 'HEAD';
+  /**
+   * http / keyword：判存活的状态码规则，如 `200-299` / `200-399,401`。
+   * 默认 `200-399`。空串与缺省同义。
+   */
+  expectedStatus?: string;
+  /** keyword：响应体必须包含的文本（区分大小写） */
+  keyword?: string;
+  /** tcp：主机 */
+  host?: string;
+  /** tcp：端口 */
+  port?: number;
+  /** 探测间隔（秒）。缺省跟随实例全局间隔；小于全局间隔时按全局间隔执行 */
+  intervalSeconds?: number;
+  /** 单次探测超时（毫秒）。缺省跟随实例全局超时 */
+  timeoutMs?: number;
+  /** 归属项目；空 = 系统级（只有人类账号与全局 Key 可见） */
+  projectId?: string | null;
+  /** 自由标签，列表里用于分组与搜索 */
+  tags?: string[];
+  /** false = 手动暂停：不探测、不计故障、已开的故障就地收尾 */
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
 export interface ReleaseProjectIdentity {
   projectId: string;
   projectSlug: string;
@@ -1904,6 +1951,8 @@ export interface CdsState {
   releaseTargets?: Record<string, ReleaseTarget>;
   /** Release plan templates keyed by id. */
   releasePlans?: Record<string, ReleasePlan>;
+  /** 监控中心的自定义探测目标，key 为 UptimeCustomMonitor.id。旧状态可缺省。 */
+  uptimeMonitors?: Record<string, UptimeCustomMonitor>;
   /**
    * 落库的发布前检查结论，key 为 ReleasePreflightRecord.id。
    * 存量 state.json / mongo global 文档里**没有这个键**，所有读处必须 `?.` 兜底，

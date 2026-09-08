@@ -482,17 +482,39 @@ CDS 自建存活监控按固定间隔直连容器宿主端口探测每个分支�
 |---|------|------|------|
 | 1 | 纯 worker / 端口无人监听仍会误报 | 这类目标探测拿到的是 `ECONNREFUSED`（不可达），与「HTTP 服务真挂了」不可区分，故意不自动降级。只能靠 `CDS_UPTIME_EXCLUDE` 手动排除 | 未配置排除名单时仍会红 |
 | 2 | 根路径返回 5xx 的服务仍会误报 | 拿到 HTTP 状态码说明对面在说 HTTP，按现有口径就是故障。根本解法是让 profile 声明健康检查路径（复用 `readinessProbe`），本次未做——`ProbeTarget` 只从 `BranchEntry.services` 推导，拿不到 profile 定义 | 需手动排除 |
-| 3 | 排除名单只有环境变量入口 | 没有项目级 / profile 级字段，也没有 UI 开关，改名单要改环境变量并重启 CDS。后续可加 `BuildProfile.uptime.enabled` 与「CDS 系统设置」里的开关 | 运维便利性 |
+| 3 | 排除名单只有环境变量入口（2026-09-08 部分缓解） | 系统推导的两类目标（分支 / 生产）仍没有项目级 / profile 级字段与 UI 开关，改名单要改环境变量并重启 CDS。**自定义监控**已有 UI 上的暂停 / 恢复，不走排除名单。后续可加 `BuildProfile.uptime.enabled` 与「CDS 系统设置」里的开关 | 运维便利性 |
 | 4 | 降级是粘性的 | 一旦降级，只有该服务的宿主机端口发生变化（重新部署重分配端口）才会解除并重新试 HTTP。同端口重启的服务从「不说 HTTP」变成「说 HTTP」时，需删除 `.cds/uptime-monitor.json` 才能回到 HTTP 探测 | 概率低，可手动清台账 |
 | 5 | 降级前的失败采样仍计入可用率 | 触发降级前的 `failureThreshold - 1` 次协议层失败已经落进采样与日聚合，会把该目标 24h 可用率压低一截（不开 incident、不判 down） | 首次接入后 24 小时内的可用率数字偏低 |
-| 6 | 探测路径固定为 `/`，方法固定 GET | 不支持自定义路径 / 方法 / 期望状态码，鉴权网关型服务只能靠「< 500 即存活」兜底 | 判定精度 |
+| 6 | 分支目标的探测路径固定为 `/`，方法固定 GET（2026-09-08 部分缓解） | 分支预览服务仍不支持自定义路径 / 方法 / 期望状态码，鉴权网关型服务只能靠「< 500 即存活」兜底。需要精确判定时可在监控中心**另加一条自定义监控**（任意地址 + 方法 + 状态码规则 + 关键字），但那是一条独立目标，不会替代分支目标那一行 | 判定精度 |
 
 ### 债务 2：状态页与探测器的次要边界（open）
 
 | # | 债务 | 说明 | 影响 |
 |---|------|------|------|
 | 2 | 探测台账不跨实例共享 | 落盘在单机 `.cds/uptime-monitor.json`，多实例部署各存各的，可用率不合并 | 集群场景数据分散 |
-| 3 | 状态页无单目标下钻 | `GET /api/uptime/targets/:id/history` 已就绪并做了降采样，前端尚未提供点开柱条看时序的入口 | 排障需直接调 API |
+| 3 | ~~状态页无单目标下钻~~（2026-09-08 已偿还） | 监控中心右栏详情已接 `GET /api/uptime/targets/:id/history`：24h / 7d / 30d 可用率柱条 + 响应时间曲线 + 本目标故障 + 最近 20 次原始采样 | 已闭环 |
+
+### 债务 2.5：监控中心自定义监控的边界（open，2026-09-08 随重做登记）
+
+| # | 债务 | 说明 | 影响 |
+|---|------|------|------|
+| 1 | 探测从 CDS 主机出网 | 自定义 HTTP / 关键字 / TCP 探测由 CDS 进程直接发起，走宿主机的出网与 DNS；内网地址在多节点部署下只在协调端可达，远端 executor 不参与探测 | 被探对象只能是协调端能连到的地址 |
+| 2 | 间隔只能比全局慢 | 轮次仍由 `CDS_UPTIME_INTERVAL` 那一个定时器驱动，单目标间隔小于全局时按全局执行；没有「某条 10 秒探一次」 | 高频探测需求要改全局间隔 |
+| 3 | 没有 ICMP ping 与 DNS 记录探测 | 只有 http / keyword / tcp 三种；ping 需要 raw socket 权限，容器里通常没有 | 只能用 TCP 端口代替连通性检查 |
+| 4 | 关键字只读响应体前 512 KB、区分大小写、不支持正则 | 判定实现在 `uptime-custom-monitor.ts` 的 `httpProbe`；正则与大小写选项未做 | 大响应体尾部的关键字匹配不到 |
+| 5 | 告警只有掉线 / 恢复两档 | 自定义监控复用 `uptime.target.down` 事件与通知账本；没有响应时间阈值告警、没有证书到期提醒 | 慢而不断的退化不会被通知 |
+| 6 | 定义落 CdsState 全局文档、采样落单机文件 | 定义随 mongo-split 的 global doc 持久化；采样 / 故障台账仍在 `.cds/uptime-monitor.json`（与债务 2-2 同因），多实例各存各的 | 集群场景数据分散 |
+| 7 | 自定义监控只给管理员身份，项目级 Key 只读 | 自定义目标的地址由调用方任填、CDS 主机替它去连，放开给项目级 Key 等于借 CDS 主机扫回环 / 内网 / 别的项目的内部服务（Codex PR #1514 P1）。现在新增 / 修改 / 删除 / 试探对带 `cdsProjectKey` 的请求一律 403，列出与摘要仍按项目收窄可读。要让项目级自助添加，得先做目标地址白名单（按项目授权的主机 / 网段 + 重定向与 DNS 重绑定校验），本轮没做 | 项目级 Agent 不能自助加自定义监控 |
+
+### 债务 2.6：客观性（open，2026-09-08 第二轮反馈「监测是否客观」后登记）
+
+| # | 债务 | 说明 | 影响 |
+|---|------|------|------|
+| 1 | 用户视角只有一个视角、只探分支主入口 | 分支的用户视角探测打的是分支主预览域名（`buildPreviewUrlForProject`），非主入口服务（命名子域 / 路径前缀路由）不单独探；探测点仍是 CDS 主机自己，公网 DNS / CDN 一层的差异探不到 | 命名子域出口挂了而主入口正常时不会被用户视角抓到 |
+| 2 | 生产 / 自定义目标没有第二视角 | 它们探的本来就是对外地址，但仍是 CDS 主机单点；没有远端探测点 | 内网 DNS / 出网策略差异会造成假绿假红 |
+| 3 | preview-canary 仍会 touch 调度器 | `services/preview-canary.ts` 每 30 秒抽样 3 条运行分支的预览域名，请求不带探测令牌，代理侧照常刷新 LRU——被抽到的分支永不降温。本轮只给存活监控的用户视角探测加了探测令牌（`probe-marker.ts`，进程级随机值；公开的 `x-cds-poll` 头伪造不了豁免）与代理豁免，没动 canary（行为改动要先确认；要接的话给请求加 `probeRequestHeaders()` 即可） | 运行中分支的 idleTTL 被 canary 部分抵消 |
+| 4 | 覆盖面不含基础设施 | `coverage` 只从三类探测目标推导，分支 / 项目的 Mongo / Redis / MySQL 不在里面（它们走各自的健康检查） | 覆盖面数字不含基础设施 |
+| 5 | 未实测目标仍会产采样 | 按容器状态判定的目标每轮照样落一条采样（up 恒真），只是摘要里不算正常、不计整体可用率；它自己那一行的 24h 可用率仍会显示 100% | 详情页数字与「未实测」标签并存，需读标签 |
 
 ### 债务 3：服务端通知账本的残留边界（open，2026-07-29 随告警外发一并登记）
 
@@ -1078,7 +1100,7 @@ mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按�
 
 | 位置 | 文件 |
 |------|------|
-| 总览 | `cds/src/services/uptime-monitor.ts`、`cds/src/services/uptime-metrics.ts`、`cds/src/routes/uptime.ts`、`cds/web/src/pages/StatusPage.tsx`、`cds/web/src/lib/statusView.ts`、`cds/src/services/deploy-stuck-reconciler.ts`、`cds/src/index.ts`、`cds/src/executor/routes.ts` |
+| 总览 | `cds/src/services/uptime-monitor.ts`、`cds/src/services/uptime-custom-monitor.ts`、`cds/src/services/uptime-metrics.ts`、`cds/src/routes/uptime.ts`、`cds/web/src/pages/StatusPage.tsx`、`cds/web/src/pages/status/`、`cds/web/src/lib/monitorCenter.ts`、`cds/web/src/lib/statusView.ts`、`cds/src/services/deploy-stuck-reconciler.ts`、`cds/src/index.ts`、`cds/src/executor/routes.ts` |
 | 相关 | `cds/tests/routes/notices-scope.test.ts`、`cds/tests/web/status-page-view-state.test.ts` |
 | 相关 | `cds/src/routes/project-migration.ts`（路由处理器） |
 | 相关 | `cds/web/src/pages/ProjectSettingsPage.tsx`（`ProjectMigrationTab`） |
@@ -1087,7 +1109,7 @@ mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按�
 | 相关 | `cds/src/services/deploy-stuck-reconciler.ts`（看门狗纯函数 SSOT） |
 | 相关 | `cds/src/services/build-log-meta.ts`（构建历史元数据纯函数，已单测） |
 | 过期分支预览页 | `cds/src/index.ts`（墓碑页渲染与分流）、`cds/src/services/state.ts`（墓碑记录）、`cds/src/routes/github-webhook.ts`（触发） |
-| 存活监控回归 | `cds/tests/services/uptime-monitor-cycle.test.ts`、`cds/tests/services/uptime-metrics.test.ts` |
+| 存活监控回归 | `cds/tests/services/uptime-monitor-cycle.test.ts`、`cds/tests/services/uptime-metrics.test.ts`、`cds/tests/services/uptime-custom-monitors.test.ts`、`cds/tests/services/uptime-objectivity.test.ts`、`cds/tests/web/monitor-center-view.test.ts` |
 | 通知账本 | `cds/src/services/notice-ledger.ts`、`cds/src/services/notice-outbound-map.ts`、`cds/src/routes/notices.ts` |
 | 基础设施端口绑定 | `cds/src/services/infra-publish.ts`（唯一判定）、`cds/src/services/container.ts`（`startInfraService` 调用点）、`cds/src/services/state.ts`（网桥地址与注入同源）、`cds/src/index.ts`（适配器接线） |
 | 端口绑定回归 | `cds/tests/services/infra-publish-host.test.ts` |

@@ -196,7 +196,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['storage-mode', '状态存储模式切换', 'storage-mode.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', '切换前必须预检后端、迁移路径和回滚策略'],
   ['ticket-sso', '平台无关票据 SSO', 'ticket-sso.ts', 'system', 'human-only', 'protocol', 'guided', 'cds', '', '保留当前管理员会话，在隔离会话完成登录验证'],
   ['topology', '服务关系图、拓扑体检与引用切换', 'topology.ts', 'project', 'project', 'write', 'direct', 'cds', 'verify / topology', '体检与读图只读；切换引用（PUT references）会写该服务的分支覆盖并要求重新部署，所以整组按写能力对待；修正 compose 仍回写仓库根再导入'],
-  ['uptime', '服务存活监控与故障时间线', 'uptime.ts', 'system', 'system', 'read-only', 'direct', 'cds', '', '只读探测结果，可用率与故障判定以探测器采样为准，不代表可直接重启服务'],
+  ['uptime', '监控中心：存活探测、故障时间线与自定义监控', 'uptime.ts', 'mixed', 'system', 'write', 'direct', 'cds', 'monitor', '探测结果只读，可用率与故障判定以探测器采样为准；自定义监控的增删改与「立即探测」是写操作，项目级 Key 只能改自己项目的目标，不代表可直接重启服务'],
   ['workspaces', '工作区、成员与邀请', 'workspaces.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '成员角色和邀请变更必须由工作区管理员确认'],
   ['server-control-plane', '健康、观测、AI 配对与系统状态', 'server.ts', 'mixed', 'system', 'write', 'direct', 'cds', 'health / auth / self', '公开探针只读，AI 批准和系统写操作保持人类边界'],
   ['executor-scheduler', 'Executor 注册、容量与调度', 'scheduler/routes.ts', 'system', 'protocol-token', 'destructive', 'internal-only', 'cds', '', '永久 Executor Token 专用，不向普通项目 Agent 暴露'],

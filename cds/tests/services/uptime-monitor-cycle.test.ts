@@ -621,7 +621,7 @@ describe('集群：远端 executor 上的分支不得用协调端地址探测', 
   });
 });
 
-describe('监控范围默认只看主干（用户 2026-07-28 反馈「监控的有点多了」）', () => {
+describe('监控范围（2026-07-28 默认只看主干；2026-09-08 监控中心重做后默认全部分支、展示层折叠）', () => {
   const b = (id: string, name: string, projectId = 'p1') => ({
     id, projectId, branch: name, status: 'running',
     services: { api: { status: 'running', hostPort: 30000 } },
@@ -629,13 +629,22 @@ describe('监控范围默认只看主干（用户 2026-07-28 反馈「监控的�
 
   const all = [b('p1-main', 'main'), b('p1-feat', 'feat/x'), b('p1-master', 'master', 'p2')];
 
-  it('默认 scope=trunk：只产主干目标，特性分支根本不进列表', () => {
+  it('默认 scope=all：特性分支也进列表（主列表按项目折叠成汇总行，噪声在展示层解决）', () => {
     const ids = selectProbeTargets(all, []).map((t) => t.branchId);
-    expect(ids).toEqual(['p1-main', 'p1-master']);
+    expect(ids).toEqual(['p1-main', 'p1-feat', 'p1-master']);
+    delete process.env.CDS_UPTIME_SCOPE;
+    expect(uptimeConfigFromEnv('/srv/cds').scope).toBe('all');
   });
 
-  it('scope=all 时恢复全量（逃生阀）', () => {
-    expect(selectProbeTargets(all, [], { scope: 'all' })).toHaveLength(3);
+  it('scope=trunk 仍可收窄到主干（逃生阀），特性分支根本不进列表', () => {
+    const ids = selectProbeTargets(all, [], { scope: 'trunk' }).map((t) => t.branchId);
+    expect(ids).toEqual(['p1-main', 'p1-master']);
+    process.env.CDS_UPTIME_SCOPE = 'trunk';
+    try {
+      expect(uptimeConfigFromEnv('/srv/cds').scope).toBe('trunk');
+    } finally {
+      delete process.env.CDS_UPTIME_SCOPE;
+    }
   });
 
   it('认得项目自定义的默认分支名（gitDefaultBranch）', () => {
