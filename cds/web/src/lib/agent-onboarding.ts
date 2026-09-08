@@ -279,6 +279,27 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
     ? '优先使用 cdscli health、auth inspect、auth check 和能力目录中已登记的系统只读接口；系统写操作只通过受保护页面与人类审批完成，不手写旁路请求。'
     : '优先使用 cdscli health、project show、branch status、deployment-run、diagnose、help-me-check、branch logs、smoke 和 preview-url 等已经存在的能力，不手写旁路请求替代 CDS 技能。';
   const missionLines = missionPromptLines(context);
+  // 极速版（CI 预构建）是 Agent 分支的必备品，不是可选项：CDS 宿主的编译算力由全部项目
+  // 共享，Agent 一旦用源码模式（dev / static）部署，就是在宿主上跑 dotnet build / pnpm build
+  // 试错，一条分支就能把别人的部署排到队尾（2026-07-27 宿主全量重编宕机）。镜像交给仓库 CI
+  // 按 commit 构建，CDS 只 pull + run；判据是 profile list 的 prebuiltModes（deployModes 里
+  // prebuilt 为 true 的模式），不认模式名。切换只写分支覆盖（branch set-mode），不动项目级
+  // 默认（profile deploy-mode 会静默改掉同项目其它分支的部署方式）。
+  // 系统级任务没有项目分支可部署，这一段不输出。
+  const deploySelfTestLines = target.kind === 'system'
+    ? []
+    : [
+      '',
+      '六、部署只用极速版（CI 预构建），并自己测试直到完成',
+      'CDS 宿主的编译算力是全部项目共享的稀缺资源。Agent 分支一律使用极速版（CI 预构建）部署：镜像由仓库 CI 按 commit 构建，CDS 只做 docker pull 与启动，不在宿主上跑 dotnet build、pnpm build 等源码编译。dev、static 等源码编译模式只留给人类在页面上手动选择，Agent 不得为了快、为了试错或为了绕过 CI 而使用。',
+      '触发任何部署之前先运行 cdscli profile list --project <projectId>，只认返回里 prebuiltModes 列出的模式（本仓库命名为 express）；模式名不是判据，deployModes 里 prebuilt 为 true 才是。prebuiltImage 为 true 的 profile 本身就是镜像站点，无需切换。',
+      '对每个要部署的 profile 运行 cdscli branch set-mode <branchId> <profileId> <prebuiltModes 中的模式名>，只写当前分支的覆盖。不要用 profile deploy-mode 改项目级默认：那会静默改掉同项目其它分支的部署方式。',
+      '部署后用 cdscli branch status <branchId> 核对 deployRuntime.prebuilt 为 true，才算极速版真正生效。镜像还没构建好时分支在等 CI，不是失败：用 branch status 与 deployment-run 持续等待并回报阶段，不得切回源码编译模式抢时间。',
+      'profile list 没有任何 prebuilt 模式、也没有 prebuiltImage 站点时，说明项目还没接 CI 预构建：如实报告这个缺口并停在这一步等用户决定，不得自行切到源码编译模式顶替，也不得手写一个不存在的模式名。',
+      'push 之后不要停下来等我测试。按「push → 等 CI 镜像就绪 → 部署 → branch status、branch logs、smoke、preview-url 验证 → 修代码 → 再 push」循环，直到部署就绪、冒烟通过、真实预览入口能打开为止；只有需要页面批准的授权和高风险操作才回来找我。',
+      '每一轮失败先读 deployment-run 与 branch logs 找到第一个有效错误，改代码后重新 push 让 CI 重新出镜像；不得靠在 CDS 宿主反复源码编译来试错，也不得把「请你手动验证」或「等待用户测试」当作完成。',
+    ];
+  const verificationHeading = target.kind === 'system' ? '六、自动验证' : '七、自动验证';
 
   return [
     '请作为 CDS 操作 Agent 完成下面的任务。把我当作不熟悉开发工具的用户：能自动读取的不要反问我，必须由我决定的授权和高风险操作再清楚提示。',
@@ -327,8 +348,9 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
     preferredOperations,
     '读取环境变量只使用 env get --metadata-only。日志和诊断结果必须先脱敏再总结，不把原始日志整段复制到对话。',
     '代码检查默认只读；用户只说“检查”不等于授权修改。删除、清空、恢复、回滚、发布、迁移、集群和跨项目写操作必须展示目标、影响、回滚点和预检结果后等待明确批准。',
+    ...deploySelfTestLines,
     '',
-    '六、自动验证',
+    verificationHeading,
     '完成后再次运行 auth check，并确认当前仓库没有新增可提交的凭据文件，shell 配置没有变化。',
     '涉及部署或预览时必须调用 preview-url 技能。预览地址只能使用 CDS API 返回的 previewUrl / previewUrls；返回几条就验证并列出几条。',
     '所有入口只使用公开 previewDomain；rootDomains 可能包含隐藏、备用或内部域名，禁止向用户暴露。',

@@ -56,6 +56,55 @@ describe('CDS Agent 接入口令', () => {
     expect(prompt).toContain('禁止根据分支名、项目名、profileId、CDS host 或旧公式自行拼接');
   });
 
+  it('项目口令把极速版（CI 预构建）写成必备品，并要求 Agent 自测到完成', () => {
+    // CDS 宿主的编译算力是全部项目共享的：Agent 用 dev / static 源码模式部署，等于在宿主上
+    // 跑 dotnet build / pnpm build 试错，一条分支就能把别人的部署排到队尾。所以口令必须
+    // 把极速版写成硬约束，判据是 prebuiltModes（不是模式名），切换只写分支覆盖，
+    // 生效看 deployRuntime.prebuilt；push 之后自己循环验证，不把测试甩回给用户。
+    const prompt = buildCdsAgentPrompt({
+      cdsOrigin: 'https://cds.example',
+      target: { kind: 'existing', projectId: 'proj-a' },
+    });
+
+    expect(prompt).toContain('六、部署只用极速版（CI 预构建），并自己测试直到完成');
+    expect(prompt).toContain('不在宿主上跑 dotnet build、pnpm build 等源码编译');
+    expect(prompt).toContain('cdscli profile list --project <projectId>');
+    expect(prompt).toContain('只认返回里 prebuiltModes 列出的模式');
+    expect(prompt).toContain('模式名不是判据，deployModes 里 prebuilt 为 true 才是');
+    expect(prompt).toContain('cdscli branch set-mode <branchId> <profileId> <prebuiltModes 中的模式名>');
+    expect(prompt).toContain('不要用 profile deploy-mode 改项目级默认');
+    expect(prompt).toContain('核对 deployRuntime.prebuilt 为 true');
+    expect(prompt).toContain('不得切回源码编译模式抢时间');
+    expect(prompt).toContain('不得自行切到源码编译模式顶替，也不得手写一个不存在的模式名');
+    expect(prompt).toContain('push 之后不要停下来等我测试');
+    expect(prompt).toContain('修代码 → 再 push」循环');
+    expect(prompt).toContain('不得把「请你手动验证」或「等待用户测试」当作完成');
+    // 极速版段落在「锁定操作上下文」之后、「自动验证」之前，验证段落顺延为七。
+    expect(prompt.indexOf('五、锁定操作上下文')).toBeLessThan(prompt.indexOf('六、部署只用极速版'));
+    expect(prompt.indexOf('六、部署只用极速版')).toBeLessThan(prompt.indexOf('七、自动验证'));
+    expect(prompt).not.toContain('六、自动验证');
+  });
+
+  it('首次接入口令同样要求极速版：新项目也不得占用 CDS 宿主编译资源', () => {
+    const prompt = buildCdsAgentPrompt({
+      cdsOrigin: 'https://cds.example',
+      target: { kind: 'new' },
+    });
+    expect(prompt).toContain('六、部署只用极速版（CI 预构建），并自己测试直到完成');
+    expect(prompt).toContain('七、自动验证');
+  });
+
+  it('系统任务口令没有分支可部署，不输出极速版段落，自动验证仍是第六节', () => {
+    const prompt = buildCdsAgentPrompt({
+      cdsOrigin: 'https://cds.example',
+      target: { kind: 'system' },
+    });
+    expect(prompt).not.toContain('极速版');
+    expect(prompt).not.toContain('branch set-mode');
+    expect(prompt).toContain('六、自动验证');
+    expect(prompt).not.toContain('七、自动验证');
+  });
+
   it('首次接入口令申请一次性新项目权限', () => {
     const prompt = buildCdsAgentPrompt({
       cdsOrigin: 'https://cds.example',

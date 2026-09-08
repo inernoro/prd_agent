@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -2949,6 +2949,24 @@ def _find_build_profile(profile_id: str, project: str | None) -> dict[str, Any]:
     raise SystemExit(2)  # unreachable, satisfies type checker
 
 
+def _prebuilt_mode_ids(p: dict[str, Any]) -> list[str]:
+    """deployModes 里 prebuilt 为 true 的模式 id（极速版 / CI 预构建）。
+
+    模式名不是判据：本仓库叫 express，别的项目可以叫任何名字；接入口令要求 Agent
+    只认这个列表，而不是按名字猜。prebuilt 值可能是 bool 也可能是字符串 'true'
+    （compose-parser 两种都收），这里同样两种都认。
+    """
+    modes = p.get("deployModes") or {}
+    out: list[str] = []
+    for mode_id, mode in modes.items():
+        if not isinstance(mode, dict):
+            continue
+        prebuilt = mode.get("prebuilt")
+        if prebuilt is True or (isinstance(prebuilt, str) and prebuilt.lower() == "true"):
+            out.append(str(mode_id))
+    return out
+
+
 def _profile_summary(p: dict[str, Any]) -> dict[str, Any]:
     rp = p.get("readinessProbe") or {}
     return {
@@ -2957,6 +2975,10 @@ def _profile_summary(p: dict[str, Any]) -> dict[str, Any]:
         "projectId": p.get("projectId"),
         "activeDeployMode": p.get("activeDeployMode") or None,
         "deployModes": list((p.get("deployModes") or {}).keys()),
+        # 极速版（CI 预构建）判据：Agent 分支必须从这里选模式，空列表 = 项目还没接 CI 预构建
+        "prebuiltModes": _prebuilt_mode_ids(p),
+        # 整个 profile 就是预构建镜像站点（cds.prebuilt-image），无需切模式
+        "prebuiltImage": p.get("prebuiltImage") is True,
         "readiness": {
             "timeoutSeconds": rp.get("timeoutSeconds"),
             "intervalSeconds": rp.get("intervalSeconds"),
