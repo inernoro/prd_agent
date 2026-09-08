@@ -74,6 +74,7 @@ import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { createUptimeRouter } from './routes/uptime.js';
+import { customProbeTargetId } from './services/uptime-custom-monitor.js';
 import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-monitor.js';
 import { cdsEventsBus } from './services/cds-events-bus.js';
 import { setReleaseHealthSource } from './services/release-health-snapshot.js';
@@ -5818,6 +5819,11 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     // 没人盯着状态页就等于没发生——服务端站内信账本正是订阅总线拿到它的。
     // 「这条要不要叫醒人」的判定仍只在 CDS_EVENT_ALERT_CLASS 一处，这里只转发。
     onAlert: (type, data) => { cdsEventsBus.publish(type, data); },
+  });
+  // 删项目时级联删掉的自定义监控，运行态台账也立刻抹掉——与单条删除路由同款，
+  // 不让状态页把已删的目标和它的故障再挂一个探测间隔（Codex PR #1517 P2）。
+  stateService.onProjectRemoved((summary) => {
+    for (const id of summary.uptimeMonitors) uptimeMonitor.forgetTarget(customProbeTargetId({ id }));
   });
   app.use('/api', createUptimeRouter({
     monitor: uptimeMonitor,

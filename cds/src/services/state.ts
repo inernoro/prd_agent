@@ -280,6 +280,17 @@ function migrateCustomEnv(raw: unknown): CustomEnvStore {
   return out;
 }
 
+/** removeProject 的级联清理清单（也是 onProjectRemoved 观察者收到的东西）。 */
+export interface ProjectRemovalSummary {
+  branches: string[];
+  buildProfiles: string[];
+  infraServices: string[];
+  routingRules: string[];
+  projectGrants: string[];
+  dbLedgerEntries: string[];
+  uptimeMonitors: string[];
+}
+
 export class StateService {
   private state: CdsState = emptyState();
   private readonly filePath: string;
@@ -305,6 +316,8 @@ export class StateService {
    * unref 掉：它绝不该让进程为了一次日志落盘而多活着。
    */
   private releaseLogFlushTimer: NodeJS.Timeout | null = null;
+
+  private readonly projectRemovedListeners: Array<(summary: ProjectRemovalSummary) => void> = [];
 
   constructor(filePath: string, repoRoot?: string, backingStore?: StateBackingStore) {
     this.filePath = filePath;
@@ -1873,15 +1886,17 @@ export class StateService {
    * Returns a summary of what was removed so the caller (route) can
    * report it to the operator.
    */
-  removeProject(id: string): {
-    branches: string[];
-    buildProfiles: string[];
-    infraServices: string[];
-    routingRules: string[];
-    projectGrants: string[];
-    dbLedgerEntries: string[];
-    uptimeMonitors: string[];
-  } {
+  /**
+   * 删项目的观察者：台账落库之后回调一次，拿到级联清理清单。存活监控用它立刻
+   * 抹掉被删自定义监控的运行态台账——否则删项目响应回了 200，状态页还会把那条
+   * 监控和它的故障挂到下一轮（单条删除路由已经是立即 forgetTarget，删项目得同款）。
+   * 回调各自 try/catch，一个观察者抛了不影响删除结果。
+   */
+  onProjectRemoved(listener: (summary: ProjectRemovalSummary) => void): void {
+    this.projectRemovedListeners.push(listener);
+  }
+
+  removeProject(id: string): ProjectRemovalSummary {
     if (!this.state.projects) {
       return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [], uptimeMonitors: [] };
     }
@@ -1964,7 +1979,7 @@ export class StateService {
     this.state.projects = this.state.projects.filter((p) => p.id !== id);
     this.save();
 
-    return {
+    const summary: ProjectRemovalSummary = {
       uptimeMonitors: uptimeMonitorsToRemove,
       branches: branchesToRemove,
       buildProfiles: buildProfilesToRemove,
@@ -1973,6 +1988,10 @@ export class StateService {
       projectGrants: projectGrantsToRevoke,
       dbLedgerEntries: dbLedgerToRemove,
     };
+    for (const listener of this.projectRemovedListeners) {
+      try { listener(summary); } catch (err) { console.warn(`[state] 删项目观察者异常：${(err as Error).message}`); }
+    }
+    return summary;
   }
 
   /**

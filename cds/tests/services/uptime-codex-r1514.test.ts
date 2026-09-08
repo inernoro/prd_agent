@@ -32,7 +32,7 @@ import {
   type UptimeMonitorConfig,
   type UserViewProbeFn,
 } from '../../src/services/uptime-monitor.js';
-import { normalizeUptimeMonitorInput, probeCustomMonitor } from '../../src/services/uptime-custom-monitor.js';
+import { customProbeTargetId, normalizeUptimeMonitorInput, probeCustomMonitor } from '../../src/services/uptime-custom-monitor.js';
 import { StateService } from '../../src/services/state.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { PROBE_MARKER_HEADER, isTrustedProbeRequest, probeRequestHeaders, stripProbeMarker } from '../../src/services/probe-marker.js';
@@ -624,6 +624,37 @@ describe('第五轮 P2 删项目级联删自定义监控', () => {
   afterEach(async () => {
     await flushAllJsonStateStores();
     for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  it('删项目观察者：存活监控立刻抹掉被删监控的运行态台账，不等下一轮', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-uptime-r1517-'));
+    dirs.push(dir);
+    const state = new StateService(path.join(dir, 'state.json'));
+    state.load();
+    state.addProject({ id: 'p-obs', name: '观察', kind: 'git' } as never);
+    state.upsertUptimeMonitor(customMonitor({ id: 'mon-obs', projectId: 'p-obs' }));
+    const svc = new UptimeMonitorService({
+      state: { getAllBranches: () => [], getReleaseTargets: () => [], getUptimeMonitors: () => state.listUptimeMonitors() },
+      config: {
+        enabled: true, intervalMs: MIN, timeoutMs: 5_000, failureThreshold: 3, recoveryThreshold: 1,
+        maxSamples: MAX_SAMPLES_PER_TARGET, excludePatterns: [], scope: 'all', storePath: '', userViewEnabled: true,
+      },
+      probe: async () => ({ up: true, ms: 1 }),
+      now: () => MIN,
+    });
+    // 与 index.ts 同款接线
+    state.onProjectRemoved((summary) => { for (const id of summary.uptimeMonitors) svc.forgetTarget(customProbeTargetId({ id })); });
+    await svc.runCycle();
+    expect(svc.getSummary(10).targets.map((t) => t.id)).toEqual(['monitor@mon-obs']);
+    state.removeProject('p-obs');
+    expect(svc.getSummary(10).targets).toHaveLength(0);
+    expect(svc.getRecord('monitor@mon-obs')).toBeUndefined();
+  });
+
+  it('index.ts 把 onProjectRemoved 接到 uptimeMonitor.forgetTarget（少了这行，删项目后状态页还挂一轮）', () => {
+    const src = fs.readFileSync(path.join(REPO, 'src/index.ts'), 'utf8');
+    expect(src).toContain('stateService.onProjectRemoved((summary) => {');
+    expect(src).toContain('uptimeMonitor.forgetTarget(customProbeTargetId({ id }))');
   });
 
   it('项目名下的自定义监控随项目删除，系统级的保留', () => {
