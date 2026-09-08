@@ -501,9 +501,20 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
     title: '分支部署与预览',
     summary: '理解当前项目与分支，完成部署、等待就绪和真实预览验证。',
     goal: '读取当前项目的分支状态和部署记录，完成用户在当前页面要做的部署操作。',
-    steps: ['确认当前项目、Git 分支和目标提交', '读取分支状态与最近部署运行', '触发部署并持续等待阶段变化', '就绪后执行 smoke 和 preview-url'],
-    checks: ['不跨项目操作', '长任务持续回报阶段与进度', '只使用 CDS API 返回的预览入口'],
-    completion: ['目标提交已部署', '服务健康', '真实预览入口可访问'],
+    steps: [
+      '确认当前项目、Git 分支和目标提交',
+      '读取分支状态与最近部署运行',
+      '用 profile list 找到 prebuiltModes 里的极速版模式，再用 branch set-mode 只写当前分支覆盖',
+      '触发部署并持续等待阶段变化（等 CI 镜像就绪也是阶段，不是失败）',
+      '就绪后执行 smoke 和 preview-url，失败就修代码重新 push，循环到通过',
+    ],
+    checks: [
+      '不跨项目操作',
+      '长任务持续回报阶段与进度',
+      '只使用 CDS API 返回的预览入口',
+      '只用极速版（CI 预构建）部署，不在 CDS 宿主跑源码编译，也不改项目级默认部署模式',
+    ],
+    completion: ['目标提交已部署', 'branch status 的 deployRuntime.prebuilt 为 true', '服务健康', '真实预览入口可访问'],
     pagePath: (projectId) => projectPath('/branches', projectId),
   },
   'build-diagnostics': {

@@ -749,6 +749,78 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.project.autoSmokeEnabled).toBe(false);
     });
 
+    // ── Agent 极速版门禁开关 ──
+    it('agentPrebuiltOnly 缺省关闭，真人可开可关并 GET 回读', async () => {
+      const before = await request(server, 'GET', '/api/projects/default');
+      expect(before.body.agentPrebuiltOnly).toBeFalsy();
+      const on = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: true });
+      expect(on.status).toBe(200);
+      expect(on.body.project.agentPrebuiltOnly).toBe(true);
+      const get = await request(server, 'GET', '/api/projects/default');
+      expect(get.body.agentPrebuiltOnly).toBe(true);
+      const off = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: false });
+      expect(off.body.project.agentPrebuiltOnly).toBe(false);
+    });
+
+    it('机器凭据不得开启或关闭 agentPrebuiltOnly（否则门禁形同虚设）', async () => {
+      await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: true });
+      const res = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: false }, { 'x-ai-access-key': 'agent-key' });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('agent_prebuilt_only_human_only');
+      const get = await request(server, 'GET', '/api/projects/default');
+      expect(get.body.agentPrebuiltOnly).toBe(true);
+      // 机器凭据改别的字段照常，不受这一条影响
+      const other = await request(server, 'PUT', '/api/projects/default', { description: '由 Agent 更新' }, { 'x-ai-access-key': 'agent-key' });
+      expect(other.status).toBe(200);
+    });
+
+    it('门禁下机器凭据写 defaultDeployModes：源码模式 409、极速版放行；对齐端点同样受闸（Codex P1）', async () => {
+      stateService.addBuildProfile({
+        id: 'gate-api', projectId: 'default', name: 'API', dockerImage: 'node:20', command: 'pnpm build', workDir: '.', containerPort: 5000,
+        deployModes: { dev: { label: '开发' }, express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}' } },
+      });
+      await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: true });
+      const machine = { 'x-ai-access-key': 'agent-key' };
+
+      const dev = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'dev' } }, machine);
+      expect(dev.status).toBe(409);
+      expect(dev.body.error).toBe('agent_prebuilt_only');
+      expect(dev.body.message).toContain('defaultDeployModes');
+      expect(stateService.getProject('default')!.defaultDeployModes).toBeUndefined();
+
+      const express = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'express' } }, machine);
+      expect(express.status).toBe(200);
+      expect(express.body.project.defaultDeployModes).toEqual({ 'gate-api': 'express' });
+
+      // 整表替换：空表 / 漏掉基线是源码的 profile 都会让新分支落回源码基线，拒绝（Codex 第二轮 P1）
+      const empty = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: {} }, machine);
+      expect(empty.status).toBe(409);
+      expect(stateService.getProject('default')!.defaultDeployModes).toEqual({ 'gate-api': 'express' });
+      stateService.addBuildProfile({
+        id: 'gate-web', projectId: 'default', name: 'Web', dockerImage: 'node:20', command: 'pnpm build', workDir: '.', containerPort: 8080,
+        deployModes: { static: { label: '静态' }, express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/web:sha-${CDS_COMMIT_SHA}' } },
+      });
+      const partial = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'express' } }, machine);
+      expect(partial.status).toBe(409);
+      expect(partial.body.violations).toMatchObject([{ profileId: 'gate-web' }]);
+      const full = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'express', 'gate-web': 'express' } }, machine);
+      expect(full.status).toBe(200);
+      // 显式空串 = 不选模式 = 源码基线，即便该 profile 基线 activeDeployMode 是极速版也拒绝（Codex 第四轮 P1）
+      stateService.updateBuildProfile('gate-web', { activeDeployMode: 'express' });
+      const explicitEmpty = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'express', 'gate-web': '' } }, machine);
+      expect(explicitEmpty.status).toBe(409);
+      expect(explicitEmpty.body.violations).toMatchObject([{ profileId: 'gate-web', modeId: '' }]);
+
+      // 真人把默认改回 dev 不受限；随后机器来对齐会被拒（否则源码模式刷进全部分支）
+      const human = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'dev' } });
+      expect(human.status).toBe(200);
+      const align = await request(server, 'POST', '/api/projects/default/align-deploy-modes', {}, machine);
+      expect(align.status).toBe(409);
+      expect(align.body.error).toBe('agent_prebuilt_only');
+      const humanAlign = await request(server, 'POST', '/api/projects/default/align-deploy-modes', {});
+      expect(humanAlign.status).toBe(200);
+    });
+
     it('round-trips the CDS global variable inheritance opt-in', async () => {
       const enabled = await request(server, 'PUT', '/api/projects/default', { inheritGlobalEnv: true });
       expect(enabled.status).toBe(200);

@@ -74,6 +74,7 @@ interface ProjectSummary {
   createdAt?: string;
   updatedAt?: string;
   autoSmokeEnabled?: boolean;
+  agentPrebuiltOnly?: boolean;
   inheritGlobalEnv?: boolean;
   branchCount?: number;
   runningBranchCount?: number;
@@ -1242,6 +1243,7 @@ function GeneralTab({
   const [description, setDescription] = useState(project.description || '');
   const [gitRepoUrl, setGitRepoUrl] = useState(project.gitRepoUrl || '');
   const [autoSmokeEnabled, setAutoSmokeEnabled] = useState(Boolean(project.autoSmokeEnabled));
+  const [agentPrebuiltOnly, setAgentPrebuiltOnly] = useState(Boolean(project.agentPrebuiltOnly));
   const [resourceChipDisplay, setResourceChipDisplay] = useState<Required<ResourceChipDisplay>>(
     normalizeResourceChipDisplay(project.resourceChipDisplay),
   );
@@ -1279,6 +1281,7 @@ function GeneralTab({
     setDescription(project.description || '');
     setGitRepoUrl(project.gitRepoUrl || '');
     setAutoSmokeEnabled(Boolean(project.autoSmokeEnabled));
+    setAgentPrebuiltOnly(Boolean(project.agentPrebuiltOnly));
     setResourceChipDisplay(normalizeResourceChipDisplay(project.resourceChipDisplay));
   }, [project]);
 
@@ -1305,6 +1308,7 @@ function GeneralTab({
           description: description.trim(),
           gitRepoUrl: gitRepoUrl.trim(),
           autoSmokeEnabled,
+          agentPrebuiltOnly,
           resourceChipDisplay,
         },
       });
@@ -1391,6 +1395,20 @@ function GeneralTab({
             <span className="text-sm leading-6">
               <span className="font-medium">部署成功后自动冒烟测试</span>
               <span className="block text-muted-foreground">需要项目可访问 AI access key 后才会执行。</span>
+            </span>
+          </label>
+          <label className="flex max-w-3xl items-start gap-3 cds-surface-raised cds-hairline px-3 py-3">
+            <input
+              className="mt-1 h-4 w-4"
+              type="checkbox"
+              checked={agentPrebuiltOnly}
+              onChange={(event) => setAgentPrebuiltOnly(event.target.checked)}
+            />
+            <span className="text-sm leading-6">
+              <span className="font-medium">Agent 只允许极速版（CI 预构建）部署</span>
+              <span className="block text-muted-foreground">
+                开启后，Agent 凭据发起的部署只要有服务会在 CDS 宿主上源码编译就被拦下，Agent 也不能把分支或项目默认切成 dev / static。真人在页面上的操作不受限。默认关闭，不影响其它项目。
+              </span>
             </span>
           </label>
           <div className="max-w-3xl space-y-3 cds-surface-raised cds-hairline px-3 py-3">
