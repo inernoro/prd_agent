@@ -5,6 +5,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -32,6 +33,185 @@ public sealed class HostedSiteRevisionConsistencyTests
         Assert.Equal(HostedSiteEditRuntimes.OpenDesign, revision.Runtime);
         Assert.Equal("run-open-design", revision.SourceRunId);
         Assert.Equal(["entry-1", "entry-2"], revision.KnowledgeEntryIds);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task GeneratedSnapshot_ShouldClaimCompatibleOrdinaryBaselineIdempotently()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var version = MongoTime(DateTime.UtcNow);
+        var site = Site(null, version);
+        const string html = "<!doctype html><html>html-ppt</html>";
+        var entry = new HostedSiteEditableEntry(site, html, version);
+        var service = new HostedSiteRevisionService(fixture.Db, Mock.Of<IHostedSiteService>());
+        var ordinary = await service.EnsureCurrentSnapshotAsync(site.Id, site.OwnerUserId, entry);
+
+        var claimed = await service.EnsureGeneratedSnapshotAsync(
+            site.Id,
+            site.OwnerUserId,
+            entry,
+            DesignArtifactRuntimes.HtmlPptPipeline,
+            "ppt-run-1",
+            ["knowledge-1"]);
+        var retry = await service.EnsureGeneratedSnapshotAsync(
+            site.Id,
+            site.OwnerUserId,
+            entry,
+            DesignArtifactRuntimes.HtmlPptPipeline,
+            "ppt-run-1",
+            ["knowledge-1"]);
+
+        Assert.Equal(ordinary.Id, claimed.Id);
+        Assert.Equal(claimed.Id, retry.Id);
+        Assert.Equal("ppt-run-1", claimed.SourceRunId);
+        Assert.Equal(DesignArtifactRuntimes.HtmlPptPipeline, claimed.Runtime);
+        Assert.Equal(["knowledge-1"], claimed.KnowledgeEntryIds);
+        Assert.Equal(1, await fixture.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+    }
+
+    [Theory]
+    [InlineData("other-owner")]
+    [InlineData("different-hash")]
+    [InlineData("other-source-run")]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task GeneratedSnapshot_ShouldRejectUntrustedBaselineClaim(string mutation)
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var version = MongoTime(DateTime.UtcNow);
+        var site = Site(null, version);
+        const string html = "<!doctype html><html>html-ppt</html>";
+        var entry = new HostedSiteEditableEntry(site, html, version);
+        var service = new HostedSiteRevisionService(fixture.Db, Mock.Of<IHostedSiteService>());
+        var ordinary = await service.EnsureCurrentSnapshotAsync(site.Id, site.OwnerUserId, entry);
+        var update = mutation switch
+        {
+            "other-owner" => Builders<HostedSiteRevision>.Update.Set(item => item.CreatedByUserId, "other-user"),
+            "different-hash" => Builders<HostedSiteRevision>.Update.Set(
+                item => item.Html,
+                "<!doctype html><html>different</html>"),
+            "other-source-run" => Builders<HostedSiteRevision>.Update
+                .Set(item => item.SourceRunId, "another-run")
+                .Set(item => item.Runtime, DesignArtifactRuntimes.HtmlPptPipeline),
+            _ => throw new InvalidOperationException("未知测试变体"),
+        };
+        await fixture.Db.HostedSiteRevisions.UpdateOneAsync(item => item.Id == ordinary.Id, update);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EnsureGeneratedSnapshotAsync(
+            site.Id,
+            site.OwnerUserId,
+            entry,
+            DesignArtifactRuntimes.HtmlPptPipeline,
+            "ppt-run-1",
+            ["knowledge-1"]));
+
+        var persisted = await fixture.Db.HostedSiteRevisions.Find(item => item.Id == ordinary.Id).SingleAsync();
+        Assert.NotEqual("ppt-run-1", persisted.SourceRunId);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task GeneratedVerifiedSnapshot_ShouldClaimExistingMultiFileSiteBaselineWithVerifiedBytes()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var version = MongoTime(DateTime.UtcNow);
+        const string runId = "run-multi-file";
+        const string html = "<!doctype html><html><link rel=\"stylesheet\" href=\"assets/site.css\"></html>";
+        var files = VerifiedFiles(html);
+        var site = MultiFileSite(version, runId, files);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(MultiFileRun(runId));
+        await fixture.Db.HostedSites.InsertOneAsync(site);
+        var entry = new HostedSiteEditableEntry(site, html, version);
+        var storage = StorageFor(files, site.Files);
+        var service = new HostedSiteRevisionService(
+            fixture.Db,
+            Mock.Of<IHostedSiteService>(),
+            storage.Object);
+        var ordinary = await service.EnsureCurrentSnapshotAsync(site.Id, site.OwnerUserId, entry);
+
+        var claimed = await service.EnsureGeneratedVerifiedSnapshotAsync(
+            site.Id,
+            site.OwnerUserId,
+            entry,
+            files,
+            DesignArtifactRuntimes.OpenDesign,
+            runId,
+            ["knowledge-1"]);
+        var retry = await service.EnsureGeneratedVerifiedSnapshotAsync(
+            site.Id,
+            site.OwnerUserId,
+            entry,
+            files,
+            DesignArtifactRuntimes.OpenDesign,
+            runId,
+            ["knowledge-1"]);
+
+        Assert.Equal(ordinary.Id, claimed.Id);
+        Assert.Equal(claimed.Id, retry.Id);
+        Assert.Equal(runId, claimed.SourceRunId);
+        Assert.Equal(files.Select(file => file.Path), claimed.VerifiedFiles.Select(file => file.Path));
+        Assert.All(claimed.VerifiedFiles, file => Assert.NotEmpty(file.Content));
+        Assert.Equal(1, await fixture.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+        storage.Verify(
+            item => item.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(files.Count));
+    }
+
+    [Theory]
+    [InlineData("other-run")]
+    [InlineData("other-owner")]
+    [InlineData("different-object-hash")]
+    [InlineData("missing-file")]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task GeneratedVerifiedSnapshot_ShouldRejectUntrustedMultiFileSiteClaim(string mutation)
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var version = MongoTime(DateTime.UtcNow);
+        const string runId = "run-multi-file";
+        const string html = "<!doctype html><html><link rel=\"stylesheet\" href=\"assets/site.css\"></html>";
+        var files = VerifiedFiles(html);
+        var site = MultiFileSite(version, runId, files);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(MultiFileRun(runId));
+        await fixture.Db.HostedSites.InsertOneAsync(site);
+        var entry = new HostedSiteEditableEntry(site, html, version);
+        var storage = StorageFor(files, site.Files);
+        var service = new HostedSiteRevisionService(
+            fixture.Db,
+            Mock.Of<IHostedSiteService>(),
+            storage.Object);
+        var ordinary = await service.EnsureCurrentSnapshotAsync(site.Id, site.OwnerUserId, entry);
+
+        if (mutation == "other-run")
+            await fixture.Db.HostedSites.UpdateOneAsync(
+                item => item.Id == site.Id,
+                Builders<HostedSite>.Update.Set(item => item.SourceRef, "another-run"));
+        else if (mutation == "other-owner")
+            await fixture.Db.HostedSites.UpdateOneAsync(
+                item => item.Id == site.Id,
+                Builders<HostedSite>.Update.Set(item => item.OwnerUserId, "other-user"));
+        else if (mutation == "different-object-hash")
+            storage.Setup(item => item.TryDownloadBytesAsync(
+                    site.Files[1].CosKey,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync("tampered"u8.ToArray());
+        else if (mutation == "missing-file")
+            await fixture.Db.HostedSites.UpdateOneAsync(
+                item => item.Id == site.Id,
+                Builders<HostedSite>.Update.PopLast(item => item.Files));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.EnsureGeneratedVerifiedSnapshotAsync(
+                site.Id,
+                site.OwnerUserId,
+                entry,
+                files,
+                DesignArtifactRuntimes.OpenDesign,
+                runId,
+                ["knowledge-1"]));
+
+        var persisted = await fixture.Db.HostedSiteRevisions.Find(item => item.Id == ordinary.Id).SingleAsync();
+        Assert.Null(persisted.SourceRunId);
+        Assert.Empty(persisted.VerifiedFiles);
     }
 
     [Fact]
@@ -531,6 +711,65 @@ public sealed class HostedSiteRevisionConsistencyTests
         BasedOnContentVersion = baseVersion,
         CreatedAt = baseVersion,
     };
+
+    private static List<HostedSiteVerifiedFile> VerifiedFiles(string html)
+    {
+        var index = System.Text.Encoding.UTF8.GetBytes(html);
+        var css = "body{color:#111}"u8.ToArray();
+        return
+        [
+            new HostedSiteVerifiedFile("index.html", index, Sha256(index), "text/html; charset=utf-8"),
+            new HostedSiteVerifiedFile("assets/site.css", css, Sha256(css), "text/css; charset=utf-8"),
+        ];
+    }
+
+    private static HostedSite MultiFileSite(
+        DateTime contentVersion,
+        string sourceRunId,
+        IReadOnlyList<HostedSiteVerifiedFile> files)
+    {
+        var site = Site(null, contentVersion);
+        site.SourceType = "design-agent";
+        site.SourceRef = sourceRunId;
+        site.Files = files.Select((file, index) => new HostedSiteFile
+        {
+            Path = file.Path,
+            CosKey = $"sites/site-1/generated/{index}/{file.Path}",
+            Size = file.Content.LongLength,
+            MimeType = file.MimeType,
+        }).ToList();
+        site.TotalSize = site.Files.Sum(file => file.Size);
+        return site;
+    }
+
+    private static DesignArtifactRun MultiFileRun(string runId) => new()
+    {
+        Id = runId,
+        UserId = "user-1",
+        Runtime = DesignArtifactRuntimes.OpenDesign,
+        ArtifactType = DesignArtifactTypes.WebPage,
+        Operation = DesignArtifactOperations.Generate,
+        Status = RunStatuses.Committing,
+    };
+
+    private static Mock<IAssetStorage> StorageFor(
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        IReadOnlyList<HostedSiteFile> hostedFiles)
+    {
+        var storage = new Mock<IAssetStorage>();
+        foreach (var pair in hostedFiles.Zip(files))
+        {
+            var bytes = pair.Second.Content.ToArray();
+            storage.Setup(item => item.TryDownloadBytesAsync(
+                    pair.First.CosKey,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(bytes);
+        }
+        return storage;
+    }
+
+    private static string Sha256(byte[] content) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content)).ToLowerInvariant();
 
     private static HostedSite Site(string? revisionId, DateTime contentVersion) => new()
     {

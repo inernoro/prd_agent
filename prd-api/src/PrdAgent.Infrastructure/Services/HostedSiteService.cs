@@ -477,22 +477,43 @@ public class HostedSiteService : IHostedSiteService
         if (!string.Equals(rehardened, indexHtml, StringComparison.Ordinal))
             throw new InvalidOperationException("设计产物入口与最终安全版本不一致，请重新生成");
 
-        var siteId = Guid.NewGuid().ToString("N");
+        // 站点身份绑定 Run，而对象仍按发布尝试隔离。这样完成建站但尚未回写 Produced
+        // 时可以认领原站，旧尝试的晚到上传/补偿也不会触碰新尝试的对象。
+        var publishingRun = await _db.DesignArtifactRuns.Find(run =>
+                run.Id == sourceRef && run.UserId == userId
+                && run.Status == RunStatuses.Committing && run.LeaseOwnerId == leaseOwnerId
+                && run.LeaseExpiresAt > DateTime.UtcNow && run.CleanupLeaseOwnerId == null)
+            .FirstOrDefaultAsync(ct);
+        if (publishingRun == null)
+            throw new InvalidOperationException("设计产物发布租约或补偿账本已变化，不能认领站点");
+        // 兼容升级前已写入的随机站点身份，补偿账本是该 Run 已保留的发布意图。
+        var siteId = !string.IsNullOrWhiteSpace(publishingRun.CleanupArtifactSiteId)
+            ? publishingRun.CleanupArtifactSiteId
+            : BuildIdempotentHtmlSiteId(userId, $"design-agent-files:{sourceRef}");
+        var existing = await _db.HostedSites.Find(site => site.Id == siteId).FirstOrDefaultAsync(ct);
+        if (existing != null)
+        {
+            await ValidateGeneratedSiteReplayAsync(existing, userId, sourceRef, leaseOwnerId, ordered, ct);
+            return AttachDerivedFields(existing)!;
+        }
+
+        var publishAttemptId = Guid.NewGuid().ToString("N");
         var objectKeysByPath = ordered.ToDictionary(
             file => file.Path,
-            file => _storage.BuildSiteKey(siteId, file.Path),
+            file => _storage.BuildSiteKey(siteId, $".generated/{publishAttemptId}/{file.Path}"),
             StringComparer.Ordinal);
         var objectKeys = ordered
             .Select(file => objectKeysByPath[file.Path])
             .ToList();
         var plannedAt = DateTime.UtcNow;
-        var publishAttemptId = Guid.NewGuid().ToString("N");
         var cleanupPlan = await _db.DesignArtifactRuns.UpdateOneAsync(
             run => run.Id == sourceRef
                    && run.UserId == userId
                    && run.Status == RunStatuses.Committing
                    && run.LeaseOwnerId == leaseOwnerId
-                   && run.LeaseExpiresAt > plannedAt,
+                   && run.LeaseExpiresAt > plannedAt
+                   && !run.CleanupPending
+                   && run.CleanupLeaseOwnerId == null,
             Builders<DesignArtifactRun>.Update
                 .Set(run => run.CleanupPending, true)
                 .Set(run => run.CleanupArtifactSiteId, siteId)
@@ -563,6 +584,9 @@ public class HostedSiteService : IHostedSiteService
             SlideNavCompatVersion = SlideNavVersion,
         };
 
+        if (!await HasCurrentPublishFenceAsync(sourceRef, userId, leaseOwnerId,
+                publishAttemptId, CancellationToken.None))
+            throw new InvalidOperationException("设计产物发布租约已失效，已停止站点提交");
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: CancellationToken.None);
         if (!await HasCurrentPublishFenceAsync(
                 sourceRef,
@@ -571,8 +595,9 @@ public class HostedSiteService : IHostedSiteService
                 publishAttemptId,
                 CancellationToken.None))
         {
-            await CompensateGeneratedSiteAsync(site.Id, sourceRef, userId, CancellationToken.None);
-            throw new InvalidOperationException("设计产物发布租约已失效，已撤销晚到站点");
+            await CompensateGeneratedSiteCoreAsync(site.Id, sourceRef, userId, null,
+                CancellationToken.None, leaseOwnerId, publishAttemptId);
+            throw new InvalidOperationException("设计产物发布租约已失效，站点将由当前任务恢复处理");
         }
         _logger.LogInformation(
             "用户 {UserId} 通过 {SourceType} 创建多资产托管站点 {SiteId}: {Title}, {FileCount} 个文件, {TotalSize} bytes",
@@ -583,6 +608,42 @@ public class HostedSiteService : IHostedSiteService
             site.Files.Count,
             site.TotalSize);
         return AttachDerivedFields(site)!;
+    }
+
+    private async Task ValidateGeneratedSiteReplayAsync(
+        HostedSite site,
+        string userId,
+        string runId,
+        string leaseOwnerId,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        CancellationToken ct)
+    {
+        EnsureIdempotentHtmlSiteOwner(site, userId, "design-agent", runId);
+        if (site.EntryFile != "index.html" || site.Files.Count != files.Count)
+            throw new InvalidOperationException("设计任务已有站点与待发布文件包不一致，不能认领");
+        foreach (var file in files)
+        {
+            var stored = site.Files.SingleOrDefault(item => item.Path == file.Path);
+            if (stored == null || stored.Size != file.Content.LongLength
+                || !string.Equals(stored.MimeType, file.MimeType, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("设计任务已有站点与待发布文件包不一致，不能认领");
+            var bytes = await _storage.TryDownloadBytesAsync(stored.CosKey, ct);
+            if (bytes == null || !SHA256.HashData(bytes).AsSpan().SequenceEqual(SHA256.HashData(file.Content)))
+                throw new InvalidOperationException("设计任务已有站点的对象内容不一致，不能认领");
+        }
+
+        // 校验完外部对象后再确认租约和补偿账本，禁止越权或与清理任务并发认领。
+        var now = DateTime.UtcNow;
+        var claim = await _db.DesignArtifactRuns.Find(run =>
+                run.Id == runId && run.UserId == userId
+                && run.Status == RunStatuses.Committing
+                && run.LeaseOwnerId == leaseOwnerId && run.LeaseExpiresAt > now
+                && run.CleanupPending && run.CleanupArtifactSiteId == site.Id
+                && run.CleanupLeaseOwnerId == null)
+            .FirstOrDefaultAsync(ct);
+        if (claim == null || !claim.CleanupAssetKeys.OrderBy(key => key, StringComparer.Ordinal)
+                .SequenceEqual(site.Files.Select(file => file.CosKey).OrderBy(key => key, StringComparer.Ordinal), StringComparer.Ordinal))
+            throw new InvalidOperationException("设计产物发布租约或补偿账本已变化，不能认领站点");
     }
 
     private Task<bool> HasCurrentPublishFenceAsync(
@@ -598,6 +659,7 @@ public class HostedSiteService : IHostedSiteService
                 && run.LeaseOwnerId == leaseOwnerId
                 && run.LeaseExpiresAt > DateTime.UtcNow
                 && run.CleanupPending
+                && run.CleanupLeaseOwnerId == null
                 && run.CleanupPublishAttemptId == publishAttemptId)
             .AnyAsync(ct);
 
@@ -1702,12 +1764,39 @@ public class HostedSiteService : IHostedSiteService
         CancellationToken ct = default) =>
         await CompensateGeneratedSiteCoreAsync(siteId, runId, userId, null, ct);
 
+    public Task<bool> CompensateGeneratedSiteWithLeaseAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        string leaseOwnerId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(leaseOwnerId))
+            throw new ArgumentException("发布租约归属不能为空", nameof(leaseOwnerId));
+        return CompensateGeneratedSiteCoreAsync(siteId, runId, userId, null, ct, leaseOwnerId);
+    }
+
+    public Task<bool> RecoverGeneratedSiteCleanupAsync(
+        string runId,
+        string userId,
+        string leaseOwnerId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(leaseOwnerId))
+            throw new ArgumentException("恢复租约归属不能为空", nameof(leaseOwnerId));
+        return CompensateGeneratedSiteCoreAsync(
+            null, runId, userId, null, ct, leaseOwnerId, requireExpiredExecutionLease: true);
+    }
+
     internal async Task<bool> CompensateGeneratedSiteCoreAsync(
         string? siteId,
         string runId,
         string userId,
         Func<Task>? afterPlanPersisted,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? expectedLeaseOwnerId = null,
+        string? expectedPublishAttemptId = null,
+        bool requireExpiredExecutionLease = false)
     {
         var cleanupOwner = Guid.NewGuid().ToString("N");
         var claimedAt = DateTime.UtcNow;
@@ -1717,11 +1806,26 @@ public class HostedSiteService : IHostedSiteService
                                  & runFb.In(x => x.Status, new[] { RunStatuses.Committing, RunStatuses.Error })
                                  & (runFb.Eq(x => x.CleanupLeaseExpiresAt, null)
                                     | runFb.Lte(x => x.CleanupLeaseExpiresAt, claimedAt));
+        if (expectedLeaseOwnerId != null)
+            cleanupClaimFilter &= runFb.Eq(x => x.LeaseOwnerId, expectedLeaseOwnerId);
+        if (expectedPublishAttemptId != null)
+            cleanupClaimFilter &= runFb.Eq(x => x.CleanupPublishAttemptId, expectedPublishAttemptId);
+        if (requireExpiredExecutionLease)
+            cleanupClaimFilter &= runFb.Eq(x => x.Status, RunStatuses.Committing)
+                                  & runFb.Eq(x => x.Operation, DesignArtifactOperations.Generate)
+                                  & runFb.Eq(x => x.CleanupPending, true)
+                                  & (runFb.Ne(x => x.CleanupStartedAt, null)
+                                     | runFb.Ne(x => x.CleanupLeaseOwnerId, null))
+                                  & runFb.Ne(x => x.LeaseExpiresAt, null)
+                                  & runFb.Lte(x => x.LeaseExpiresAt, claimedAt)
+                                  & runFb.Eq(x => x.ProducedArtifactSiteId, null)
+                                  & runFb.Eq(x => x.ProducedArtifactRevisionId, null);
         var run = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
             cleanupClaimFilter,
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.CleanupPending, true)
                 .Set(x => x.CleanupLeaseOwnerId, cleanupOwner)
+                .Set(x => x.CleanupStartedAt, claimedAt)
                 .Set(x => x.CleanupLeaseExpiresAt, claimedAt.AddMinutes(1)),
             new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun> { ReturnDocument = ReturnDocument.After },
             ct);
@@ -1787,6 +1891,11 @@ public class HostedSiteService : IHostedSiteService
             if (!siteRecordDeleted)
             {
                 var exactFence = ownershipFence & fb.Eq(x => x.Id, cleanupSiteId);
+                // Run 账本只能删除它登记的那一包对象对应的站点，不能删除相同站点 ID
+                // 被另一发布尝试写入的新版本。
+                exactFence &= fb.Size(x => x.Files, cleanupKeys.Count);
+                foreach (var key in cleanupKeys)
+                    exactFence &= fb.ElemMatch(x => x.Files, file => file.CosKey == key);
                 var deleted = await _db.HostedSites.DeleteOneAsync(exactFence, ct);
                 if (deleted.DeletedCount != 1)
                 {
@@ -1838,6 +1947,7 @@ public class HostedSiteService : IHostedSiteService
             x => x.Id == runId && x.UserId == userId && x.CleanupLeaseOwnerId == cleanupOwner,
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.CleanupPending, false)
+                .Set(x => x.CleanupStartedAt, null)
                 .Set(x => x.CleanupArtifactSiteId, null)
                 .Set(x => x.CleanupPublishAttemptId, null)
                 .Set(x => x.CleanupAssetKeys, new List<string>())

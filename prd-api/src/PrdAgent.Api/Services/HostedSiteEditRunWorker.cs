@@ -71,7 +71,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
     }
 
-    private async Task ProcessAsync(string runId, CancellationToken ct)
+    internal async Task ProcessAsync(string runId, CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
@@ -88,7 +88,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             ct);
         if (run == null) return;
 
-        var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, ct) ?? new RunMeta
+        var projection = new RunProjection(_logger, runId);
+        var meta = new RunMeta
         {
             RunId = runId,
             Kind = RunKinds.DesignArtifact,
@@ -103,8 +104,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
         meta.Status = RunStatuses.Running;
         meta.StartedAt ??= DateTime.UtcNow;
-        await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
-        await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, 8,
+        await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
+        await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 8,
             run.Operation == DesignArtifactOperations.Edit ? "正在读取当前页面" : "正在整理知识与页面目标");
 
         var sites = scope.ServiceProvider.GetRequiredService<IHostedSiteService>();
@@ -152,7 +153,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             if ((editable?.Html.Length ?? 0) + knowledgeChars > MaxModelInputChars)
                 throw new InvalidOperationException("页面与知识正文过长，首版最多支持约 24 万字符，请减少引用或精简内容");
 
-            await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, 18,
+            await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 18,
                 run.Operation == DesignArtifactOperations.Edit ? "正在理解页面结构与修改要求" : "正在规划页面结构与视觉层级");
             executionCts.Token.ThrowIfCancellationRequested();
 
@@ -181,27 +182,27 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     if (!sawFirstText)
                     {
                         sawFirstText = true;
-                        await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, 36, "页面已经开始生成");
+                        await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 36, "页面已经开始生成");
                     }
-                    await _events.AppendEventAsync(
+                    await projection.WriteAsync(() => _events.AppendEventAsync(
                         RunKinds.DesignArtifact,
                         runId,
                         "delta",
                         new { text = chunk.Content },
                         RunTtl,
-                        CancellationToken.None);
+                        CancellationToken.None));
                     continue;
                 }
 
                 if (chunk.Type == "thinking" && !string.IsNullOrEmpty(chunk.Content))
                 {
-                    await _events.AppendEventAsync(
+                    await projection.WriteAsync(() => _events.AppendEventAsync(
                         RunKinds.DesignArtifact,
                         runId,
                         "thinking",
                         new { text = chunk.Content },
                         RunTtl,
-                        CancellationToken.None);
+                        CancellationToken.None));
                     continue;
                 }
             }
@@ -210,7 +211,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var html = HardenExecutorOutput(output.ToString(), verifiedFiles);
             var qualityEvidence = BuildQualityEvidence(run, editable);
             HostedSiteRevisionRules.ValidateGeneratedContentQuality(html, qualityEvidence);
-            await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, 88,
+            await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 88,
                 run.Operation == DesignArtifactOperations.Edit ? "正在校验并保存草稿" : "正在校验并保存托管网页");
             executionCts.Token.ThrowIfCancellationRequested();
 
@@ -319,14 +320,14 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
             meta.Status = RunStatuses.Done;
             meta.EndedAt = DateTime.UtcNow;
-            await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
-            await _events.AppendEventAsync(
+            await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
+            await projection.WriteAsync(() => _events.AppendEventAsync(
                 RunKinds.DesignArtifact,
                 runId,
                 "done",
                 donePayload,
                 RunTtl,
-                CancellationToken.None);
+                CancellationToken.None));
         }
         catch (DesignArtifactRunLeaseLostException)
         {
@@ -425,6 +426,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         DesignArtifactRun run,
         string leaseOwner,
         IWebPageDesignArtifactLifecycleAdapter publicLifecycle,
+        RunProjection projection,
         int progress,
         string message)
     {
@@ -452,13 +454,13 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         {
             throw new DesignArtifactRunLeaseLostException(run.Id);
         }
-        await _events.AppendEventAsync(
+        await projection.WriteAsync(() => _events.AppendEventAsync(
             RunKinds.DesignArtifact,
             run.Id,
             "phase",
             new { progress, message },
             RunTtl,
-            CancellationToken.None);
+            CancellationToken.None));
     }
 
     private Task MarkErrorAsync(string runId, string message, string leaseOwner)
@@ -533,20 +535,21 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
         if (cancelled == null) return;
 
-        var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, CancellationToken.None)
-                   ?? new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact };
+        var projection = new RunProjection(_logger, runId);
+        var meta = new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact,
+            CreatedByUserId = cancelled.UserId, CreatedAt = cancelled.CreatedAt };
         meta.Status = RunStatuses.Cancelled;
         meta.EndedAt = cancelled.CancelledAt ?? DateTime.UtcNow;
         meta.ErrorCode = null;
         meta.ErrorMessage = null;
-        await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
-        await _events.AppendEventAsync(
+        await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
+        await projection.WriteAsync(() => _events.AppendEventAsync(
             RunKinds.DesignArtifact,
             runId,
             "cancelled",
             new { code = "DESIGN_ARTIFACT_CANCELLED", message },
             RunTtl,
-            CancellationToken.None);
+            CancellationToken.None));
     }
 
     private async Task MarkTerminalAsync(
@@ -595,20 +598,42 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             cancellationToken: CancellationToken.None);
         if (write.ModifiedCount == 0) return;
 
-        var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, CancellationToken.None)
-                   ?? new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact };
+        var projection = new RunProjection(_logger, runId);
+        var meta = new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact,
+            CreatedByUserId = current!.UserId, CreatedAt = current.CreatedAt };
         meta.Status = status;
         meta.EndedAt = DateTime.UtcNow;
         meta.ErrorCode = errorCode;
         meta.ErrorMessage = errorCode == null ? null : message;
-        await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
-        await _events.AppendEventAsync(
+        await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
+        await projection.WriteAsync(() => _events.AppendEventAsync(
             RunKinds.DesignArtifact,
             runId,
             eventName,
             new { code = errorCode, message },
             RunTtl,
-            CancellationToken.None);
+            CancellationToken.None));
+    }
+
+    // Redis 只投影当前执行的界面事件。一次失败后停止本次执行的投影，
+    // 避免每个 token 重试拖慢模型；Mongo 阶段、产物和终态仍走原有权威写入。
+    private sealed class RunProjection(ILogger logger, string runId)
+    {
+        private bool _unavailable;
+
+        public async Task WriteAsync(Func<Task> write)
+        {
+            if (_unavailable) return;
+            try
+            {
+                await write();
+            }
+            catch (Exception ex)
+            {
+                _unavailable = true;
+                logger.LogWarning(ex, "设计任务实时投影不可用，继续执行并由 Mongo 恢复进度 runId={RunId}", runId);
+            }
+        }
     }
 
     private async Task MaintainHeartbeatAsync(
@@ -911,7 +936,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         {
             try
             {
-                await sites.CompensateGeneratedSiteAsync(site?.Id, run.Id, run.UserId, CancellationToken.None);
+                if (run.ContractVersion == DesignArtifactContractVersions.Current)
+                    await sites.CompensateGeneratedSiteWithLeaseAsync(site?.Id, run.Id, run.UserId, leaseOwner, CancellationToken.None);
+                else
+                    await sites.CompensateGeneratedSiteAsync(site?.Id, run.Id, run.UserId, CancellationToken.None);
             }
             catch (Exception cleanupEx)
             {
@@ -1056,6 +1084,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                      || x.ContractVersion == DesignArtifactContractVersions.Current
                      && x.Status == RunStatuses.Committing)
                  && x.CancelRequestedAt == null
+                 && x.CleanupLeaseOwnerId == null
                  && x.LeaseOwnerId == leaseOwner
                  && x.LeaseExpiresAt > now,
             Builders<DesignArtifactRun>.Update
@@ -1078,6 +1107,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         var fb = Builders<DesignArtifactRun>.Filter;
         var filter = fb.Eq(x => x.Id, runId)
                      & fb.Eq(x => x.Status, RunStatuses.Queued)
+                     & fb.Eq(x => x.CleanupLeaseOwnerId, null)
                      & fb.Eq(x => x.CancelRequestedAt, null);
         return await db.DesignArtifactRuns.FindOneAndUpdateAsync(
             filter,
@@ -1137,6 +1167,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
             x => x.Id == runId
                  && (x.Status == RunStatuses.Running || x.Status == RunStatuses.Committing)
+                 && x.CleanupLeaseOwnerId == null
                  && x.LeaseOwnerId == leaseOwner
                  && x.LeaseExpiresAt > now,
             Builders<DesignArtifactRun>.Update
@@ -1144,7 +1175,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 .Set(x => x.LeaseExpiresAt, now + leaseDuration)
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
-        return write.ModifiedCount == 1;
+        // Mongo 以毫秒存储时间；同毫秒续租可能不改变字节，但匹配仍证明租约有效。
+        return write.MatchedCount == 1;
     }
 
     internal static async Task<bool> PersistPhaseAsync(
@@ -1182,6 +1214,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
             x => x.Id == runId
                  && x.Status == RunStatuses.Committing
+                 && x.CleanupLeaseOwnerId == null
                  && x.LeaseOwnerId == leaseOwner
                  && x.LeaseExpiresAt > completedAt,
             Builders<DesignArtifactRun>.Update
@@ -1214,6 +1247,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             run => run.Id == runId
                    && run.ContractVersion == DesignArtifactContractVersions.Current
                    && run.Status == RunStatuses.Committing
+                   && run.CleanupLeaseOwnerId == null
                    && run.LeaseOwnerId == leaseOwner
                    && run.LeaseExpiresAt > DateTime.UtcNow,
             Builders<DesignArtifactRun>.Update
@@ -1248,6 +1282,35 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         foreach (var candidate in pendingCleanup)
             await TryCompensateRecoveredRunAsync(db, candidate, sites, revisions, now);
 
+        // 补偿认领后进程退出时任务仍是 Committing。先接管过期清理意图，
+        // 再重新读取任务恢复可信结果，不能只清空 owner 后允许重新发布。
+        if (sites != null)
+        {
+            var interruptedCleanup = await db.DesignArtifactRuns
+                .Find(x => x.Status == RunStatuses.Committing
+                           && x.Operation == DesignArtifactOperations.Generate
+                           && x.CleanupPending
+                           && (x.CleanupStartedAt != null || x.CleanupLeaseOwnerId != null)
+                           && x.LeaseOwnerId != null
+                           && x.LeaseExpiresAt != null && x.LeaseExpiresAt <= now
+                           && (x.CleanupLeaseExpiresAt == null || x.CleanupLeaseExpiresAt <= now)
+                           && x.ProducedArtifactSiteId == null && x.ProducedArtifactRevisionId == null)
+                .Limit(100)
+                .ToListAsync(ct);
+            foreach (var candidate in interruptedCleanup)
+            {
+                try
+                {
+                    await sites.RecoverGeneratedSiteCleanupAsync(
+                        candidate.Id, candidate.UserId, candidate.LeaseOwnerId!, CancellationToken.None);
+                }
+                catch
+                {
+                    // 持久清理意图仍在；本轮不重新发布，下一轮继续接管。
+                }
+            }
+        }
+
         var staleRunning = await db.DesignArtifactRuns
             .Find(x => (x.Status == RunStatuses.Running || x.Status == RunStatuses.Committing)
                        && ((x.LeaseExpiresAt != null && x.LeaseExpiresAt <= now)
@@ -1256,6 +1319,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             .ToListAsync(ct);
         foreach (var candidate in staleRunning)
         {
+            if (candidate.CleanupStartedAt != null || candidate.CleanupLeaseOwnerId != null)
+                continue;
+
             if (candidate.CancelRequestedAt.HasValue)
             {
                 if (await FinalizeRecoveredCancellationAsync(db, events, candidate, lifecycle, now))

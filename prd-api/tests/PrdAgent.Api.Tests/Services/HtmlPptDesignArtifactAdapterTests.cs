@@ -329,6 +329,88 @@ public sealed class HtmlPptDesignArtifactAdapterTests
     }
 
     [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task PublishCoordinator_ShouldClaimOrdinaryBaselineCreatedAfterSiteWriteBeforeRevisionWrite()
+    {
+        await using var fixture = await AdapterMongoFixture.CreateAsync();
+        const string html = "<!doctype html><html><head></head><body>claim baseline</body></html>";
+        var hash = MdToPptController.ComputeHtmlHash(html);
+        var run = Run("publish-claim-baseline", "convert", "done", html, hash);
+        await fixture.Db.MdToPptRuns.InsertOneAsync(run);
+        var contentVersion = new DateTime(2026, 9, 8, 3, 4, 5, DateTimeKind.Utc);
+        var site = new HostedSite
+        {
+            Id = "claim-baseline-site",
+            OwnerUserId = run.UserId,
+            Title = run.Title,
+            ContentVersion = contentVersion,
+            SourceType = "md-to-ppt",
+            SourceRef = HtmlPptPublishCoordinator.BuildIntentId(run.Id, hash),
+        };
+        await fixture.Db.HostedSites.InsertOneAsync(site);
+        var entry = new HostedSiteEditableEntry(site, html, contentVersion);
+        var calls = new List<string>();
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        HostedSiteRevisionService? revisions = null;
+        sites.Setup(service => service.CreateFromHtmlIdempotentAsync(
+                run.UserId,
+                It.Is<byte[]>(bytes => Encoding.UTF8.GetString(bytes) == html),
+                "index.html",
+                run.Title,
+                null,
+                null,
+                It.IsAny<List<string>?>(),
+                "md-to-ppt",
+                site.SourceRef!,
+                It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                calls.Add("create-site");
+                return Task.FromResult(site);
+            });
+        sites.Setup(service => service.GetRevisionEntryHtmlAsync(
+                site.Id,
+                run.UserId,
+                It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                calls.Add("read-site");
+                await revisions!.EnsureCurrentSnapshotAsync(site.Id, run.UserId, entry);
+                calls.Add("ordinary-baseline");
+                return entry;
+            });
+        revisions = new HostedSiteRevisionService(fixture.Db, sites.Object);
+        var artifacts = new Mock<IHtmlPptDesignArtifactAdapter>(MockBehavior.Strict);
+        artifacts.Setup(service => service.BindPublishedAsync(
+                It.Is<MdToPptRun>(item => item.Id == run.Id),
+                site.Id,
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((MdToPptRun _, string _, string _, CancellationToken _) =>
+            {
+                calls.Add("bind-public-artifact");
+                return Task.CompletedTask;
+            });
+        var coordinator = new HtmlPptPublishCoordinator(
+            fixture.Db,
+            sites.Object,
+            revisions,
+            artifacts.Object,
+            NullLogger<HtmlPptPublishCoordinator>.Instance);
+
+        var result = await coordinator.PublishAsync(run, run.Title, null, [], []);
+
+        Assert.Equal(["create-site", "read-site", "ordinary-baseline", "bind-public-artifact"], calls);
+        Assert.Equal(run.Id, result.Revision.SourceRunId);
+        Assert.Equal(DesignArtifactRuntimes.HtmlPptPipeline, result.Revision.Runtime);
+        Assert.Equal(hash, MdToPptController.ComputeHtmlHash(result.Revision.Html));
+        Assert.Equal(1, await fixture.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+        var persisted = await fixture.Db.HostedSiteRevisions.Find(item => item.Id == result.Revision.Id).SingleAsync();
+        Assert.Equal(run.Id, persisted.SourceRunId);
+        Assert.Equal(DesignArtifactRuntimes.HtmlPptPipeline, persisted.Runtime);
+    }
+
+    [Fact]
     public void PublishIdentifiersAndBackoff_ShouldBeDeterministicAndBounded()
     {
         var hash = new string('a', 64);

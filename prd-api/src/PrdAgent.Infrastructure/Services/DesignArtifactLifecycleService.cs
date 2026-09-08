@@ -164,7 +164,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         CancellationToken ct = default)
     {
         var current = await GetExpectedAsync(request.RunId, request.UserId, request.Expected);
-        if (current.Status != RunStatuses.Queued)
+        if (current.Status != RunStatuses.Queued || current.CleanupLeaseOwnerId != null)
             throw Conflict();
         var leaseOwner = SafeToken(request.LeaseOwnerId, "leaseOwnerId", 256);
         var now = DateTime.UtcNow;
@@ -174,6 +174,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         var updated = await AtomicUpdateWithEventAsync(
             Builders<DesignArtifactRun>.Filter.And(
                 CasFilter(current, request.Expected, RunStatuses.Queued),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.CleanupLeaseOwnerId, null),
                 Builders<DesignArtifactRun>.Filter.Eq(item => item.CancelRequestedAt, null)),
             current,
             new BsonDocument
@@ -253,7 +254,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         var current = await GetExpectedAsync(request.RunId, request.UserId, request.Expected);
         var isPlanning = current.Operation == DesignArtifactOperations.Plan;
         var expectedStatus = isPlanning ? RunStatuses.Running : RunStatuses.Committing;
-        if (current.Status != expectedStatus)
+        if (current.Status != expectedStatus || current.CleanupLeaseOwnerId != null)
             throw Conflict();
         DesignArtifactPlanReceipt? planReceipt = null;
         if (isPlanning)
@@ -276,7 +277,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         if (planReceipt != null)
             updates[nameof(DesignArtifactRun.PlanReceipt)] = planReceipt.ToBsonDocument();
         var updated = await AtomicUpdateWithEventAsync(
-            CasFilter(current, request.Expected, expectedStatus),
+            Builders<DesignArtifactRun>.Filter.And(
+                CasFilter(current, request.Expected, expectedStatus),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.CleanupLeaseOwnerId, null)),
             current,
             updates,
             DesignArtifactLifecycleEventTypes.Done,
@@ -431,6 +434,8 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             || !string.IsNullOrWhiteSpace(current.ProducedArtifactSiteId)
             || !string.IsNullOrWhiteSpace(current.ProducedArtifactRevisionId)
             || current.CancelRequestedAt.HasValue
+            || current.CleanupStartedAt != null
+            || current.CleanupLeaseOwnerId != null
             || !request.Expected.Recovery)
             throw Conflict();
 
@@ -443,6 +448,8 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                     current.WorkspaceResultAssetKey),
                 Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactSiteId, null),
                 Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactRevisionId, null),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.CleanupLeaseOwnerId, null),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.CleanupStartedAt, null),
                 Builders<DesignArtifactRun>.Filter.Eq(item => item.CancelRequestedAt, null)),
             current,
             new BsonDocument
@@ -479,6 +486,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         var fingerprint = Sha256Hex($"{artifactId}\n{versionId}\n{artifactHash}");
 
         var current = await GetOwnedV2Async(runId, userId);
+        if (current.CleanupLeaseOwnerId != null) throw Conflict();
         if (current.PublishBindingOperationId != null)
         {
             await ValidatePublishedReceiptAsync(current, artifactId, versionId, artifactHash);
@@ -491,6 +499,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                 var healed = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
                     Builders<DesignArtifactRun>.Filter.And(
                         OwnedV2Filter(current.Id, current.UserId),
+                        Builders<DesignArtifactRun>.Filter.Eq(item => item.CleanupLeaseOwnerId, null),
                         Builders<DesignArtifactRun>.Filter.Eq(
                             item => item.PublishBindingOperationId,
                             operationId),
@@ -526,6 +535,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         var now = DateTime.UtcNow;
         var filter = Builders<DesignArtifactRun>.Filter.And(
             CasFilter(current, request.Expected, RunStatuses.Done),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.CleanupLeaseOwnerId, null),
             Builders<DesignArtifactRun>.Filter.Eq(item => item.PublishBindingOperationId, null),
             Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactSiteId, null),
             Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactRevisionId, null),

@@ -2,6 +2,8 @@ using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Moq;
@@ -20,6 +22,140 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class DesignArtifactLifecycleServiceTests
 {
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task Worker_ShouldNotClaimOrPublishWhileCleanupOwnsResources()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var now = DateTime.UtcNow;
+        var run = new DesignArtifactRun
+        {
+            Id = "cleanup-fence", UserId = "owner-user", Status = RunStatuses.Queued,
+            ContractVersion = DesignArtifactContractVersions.Current,
+            LeaseOwnerId = "worker-a", LeaseExpiresAt = now.AddMinutes(2),
+            CleanupLeaseOwnerId = "cleanup-a", CleanupLeaseExpiresAt = now.AddMinutes(1),
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        Assert.Null(await HostedSiteEditRunWorker.TryClaimAsync(fixture.Db, run.Id, "worker-b", now,
+            TimeSpan.FromMinutes(2), CancellationToken.None));
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.Status, RunStatuses.Committing));
+
+        Assert.False(await HostedSiteEditRunWorker.BeginCommitAsync(fixture.Db, run.Id, "worker-a", now,
+            TimeSpan.FromMinutes(2), CancellationToken.None));
+        Assert.False(await HostedSiteEditRunWorker.RenewLeaseAsync(fixture.Db, run.Id, "worker-a", now,
+            TimeSpan.FromMinutes(2), CancellationToken.None));
+        Assert.False(await HostedSiteEditRunWorker.RecordProducedArtifactAsync(fixture.Db, run.Id, "worker-a",
+            "site-a", "revision-a", CancellationToken.None));
+        Assert.False(await HostedSiteEditRunWorker.CompleteRunAsync(fixture.Db, run.Id, "worker-a",
+            "site-a", "revision-a", "完成", now, CancellationToken.None));
+        var current = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Committing, current.Status);
+        Assert.Null(current.ProducedArtifactSiteId);
+        Assert.Null(current.ArtifactSiteId);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task LeaseRenewal_InSameMillisecond_ShouldRemainOwned()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var now = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()).UtcDateTime;
+        var run = new DesignArtifactRun
+        {
+            Id = "same-millisecond", UserId = "owner-user", Status = RunStatuses.Running,
+            LeaseOwnerId = "worker-a", LeaseExpiresAt = now.AddMinutes(2), HeartbeatAt = now, UpdatedAt = now,
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+
+        Assert.True(await HostedSiteEditRunWorker.RenewLeaseAsync(fixture.Db, run.Id, "worker-a", now,
+            TimeSpan.FromMinutes(2), CancellationToken.None));
+        Assert.False(await HostedSiteEditRunWorker.RenewLeaseAsync(fixture.Db, run.Id, "worker-b", now,
+            TimeSpan.FromMinutes(2), CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("metadata")]
+    [InlineData("phase")]
+    [InlineData("thinking")]
+    [InlineData("delta")]
+    [InlineData("done")]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task Worker_RedisFailureDuringExecution_ShouldStillPersistOneCompletedArtifact(string failurePoint)
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var run = new DesignArtifactRun
+        {
+            Id = "projection-outage", UserId = "owner-user", Instruction = "生成说明网页", Title = "说明网页",
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var events = new Mock<IRunEventStore>();
+        events.Setup(store => store.GetRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("redis read unavailable"));
+        if (failurePoint == "metadata")
+            events.Setup(store => store.SetRunAsync(It.IsAny<string>(), It.IsAny<RunMeta>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("redis metadata unavailable"));
+        events.Setup(store => store.AppendEventAsync(It.IsAny<string>(), run.Id, failurePoint, It.IsAny<object>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("redis stream unavailable"));
+        var sites = new Mock<IHostedSiteService>();
+        var site = new HostedSite { Id = "persisted-site", OwnerUserId = run.UserId, Title = run.Title! };
+        sites.Setup(service => service.CreateFromContentAsync(run.UserId, It.IsAny<string>(), run.Title,
+                It.IsAny<string>(), "design-agent", run.Id, It.IsAny<List<string>>(), null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(site);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync(site.Id, run.UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(site, ProjectionTestHtml, DateTime.UtcNow));
+        var revisions = new Mock<IHostedSiteRevisionService>();
+        revisions.Setup(service => service.EnsureGeneratedSnapshotAsync(site.Id, run.UserId,
+                It.IsAny<HostedSiteEditableEntry>(), run.Runtime, run.Id, It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteRevision { Id = "persisted-revision", SiteId = site.Id, Status = HostedSiteRevisionStatuses.Published });
+        var services = new ServiceCollection();
+        services.AddSingleton(fixture.Db);
+        services.AddSingleton(sites.Object);
+        services.AddSingleton(revisions.Object);
+        services.AddSingleton(Mock.Of<IWebPageDesignArtifactLifecycleAdapter>());
+        services.AddSingleton(Mock.Of<IDesignArtifactLifecycleService>());
+        services.AddSingleton(Mock.Of<IDesignKnowledgeSnapshotResolver>());
+        services.AddSingleton(Mock.Of<IActivityActionRecorder>());
+        services.AddSingleton<IDesignArtifactExecutor>(new ProjectionTestExecutor());
+        using var provider = services.BuildServiceProvider();
+        using var worker = new HostedSiteEditRunWorker(provider.GetRequiredService<IServiceScopeFactory>(),
+            Mock.Of<IRunQueue>(), events.Object, NullLogger<HostedSiteEditRunWorker>.Instance);
+
+        await worker.ProcessAsync(run.Id, CancellationToken.None);
+
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Done, persisted.Status);
+        Assert.Equal(100, persisted.Progress);
+        Assert.Equal(site.Id, persisted.ArtifactSiteId);
+        Assert.Equal("persisted-revision", persisted.ArtifactRevisionId);
+        Assert.Null(persisted.Error);
+        sites.Verify(service => service.CreateFromContentAsync(run.UserId, It.IsAny<string>(), run.Title,
+            It.IsAny<string>(), "design-agent", run.Id, It.IsAny<List<string>>(), null, It.IsAny<CancellationToken>()), Times.Once);
+        sites.Verify(service => service.CompensateGeneratedSiteAsync(It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        events.Verify(store => store.GetRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        if (failurePoint != "metadata")
+            events.Verify(store => store.AppendEventAsync(It.IsAny<string>(), run.Id, failurePoint, It.IsAny<object>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private const string ProjectionTestHtml = "<!doctype html><html lang=\"zh-CN\"><head><title>说明网页</title></head><body><main><h1>说明网页</h1><p>知识内容负责事实，页面展示帮助读者理解。</p></main></body></html>";
+
+    private sealed class ProjectionTestExecutor : IDesignArtifactExecutor
+    {
+        public string Runtime => DesignArtifactRuntimes.MapGateway;
+        public bool Supports(string artifactType, string operation) => true;
+        public async IAsyncEnumerable<DesignArtifactExecutorChunk> ExecuteAsync(DesignArtifactRun run, string? currentHtml,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.Yield();
+            yield return new DesignArtifactExecutorChunk("thinking", "正在整理结构");
+            yield return new DesignArtifactExecutorChunk("delta", ProjectionTestHtml);
+            yield return new DesignArtifactExecutorChunk("delta", "\n");
+        }
+    }
+
     [Fact]
     public void DesignArtifactRoutes_ShouldReuseWebPageReadWritePermissions()
     {

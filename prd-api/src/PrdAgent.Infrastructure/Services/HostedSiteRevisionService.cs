@@ -1,7 +1,10 @@
+using System.Security.Cryptography;
+using System.Text;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Infrastructure.Services;
 
@@ -14,11 +17,21 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
     internal static readonly TimeSpan PublishAttemptTtl = TimeSpan.FromMinutes(2);
     private readonly MongoDbContext _db;
     private readonly IHostedSiteService _sites;
+    private readonly IAssetStorage? _storage;
 
     public HostedSiteRevisionService(MongoDbContext db, IHostedSiteService sites)
+        : this(db, sites, null)
+    {
+    }
+
+    public HostedSiteRevisionService(
+        MongoDbContext db,
+        IHostedSiteService sites,
+        IAssetStorage? storage)
     {
         _db = db;
         _sites = sites;
+        _storage = storage;
     }
 
     public Task<HostedSiteRevision> EnsureCurrentSnapshotAsync(
@@ -60,13 +73,24 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         CancellationToken ct)
     {
         var entry = knownEntry ?? await _sites.GetEditableEntryHtmlAsync(siteId, userId, ct);
+        if (!string.Equals(entry.Site.Id, siteId, StringComparison.Ordinal))
+            throw new InvalidOperationException("站点快照与请求归属不一致");
         await ReconcileActivePublicationAsync(entry.Site.PublishedRevisionId, entry.ContentVersion);
         var existing = await _db.HostedSiteRevisions
             .Find(x => x.SiteId == siteId
                        && x.Status == HostedSiteRevisionStatuses.Published
                        && x.PublishedContentVersion == entry.ContentVersion)
             .FirstOrDefaultAsync(ct);
-        if (existing != null) return existing;
+        if (existing != null)
+            return await ResolveExistingSnapshotAsync(
+                existing,
+                entry,
+                userId,
+                verifiedFiles,
+                runtime,
+                sourceRunId,
+                knowledgeEntryIds,
+                ct);
 
         var baseline = new HostedSiteRevision
         {
@@ -103,8 +127,231 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            return await _db.HostedSiteRevisions.Find(x => x.Id == baseline.Id).FirstAsync(ct);
+            var winner = await _db.HostedSiteRevisions.Find(x => x.Id == baseline.Id).FirstAsync(ct);
+            return await ResolveExistingSnapshotAsync(
+                winner,
+                entry,
+                userId,
+                verifiedFiles,
+                runtime,
+                sourceRunId,
+                knowledgeEntryIds,
+                ct);
         }
+    }
+
+    private async Task<HostedSiteRevision> ResolveExistingSnapshotAsync(
+        HostedSiteRevision existing,
+        HostedSiteEditableEntry entry,
+        string userId,
+        IReadOnlyList<HostedSiteVerifiedFile> verifiedFiles,
+        string? runtime,
+        string? sourceRunId,
+        IReadOnlyCollection<string>? knowledgeEntryIds,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(sourceRunId)) return existing;
+
+        var expectedRunId = sourceRunId.Trim();
+        var expectedRuntime = string.IsNullOrWhiteSpace(runtime)
+            ? throw new InvalidOperationException("生成版本缺少运行时来源")
+            : runtime.Trim();
+        var expectedKnowledge = NormalizeKnowledgeEntryIds(knowledgeEntryIds);
+        var canPopulateVerifiedFiles = string.IsNullOrWhiteSpace(existing.SourceRunId)
+                                       && existing.VerifiedFiles.Count == 0
+                                       && verifiedFiles.Count > 0;
+        if (canPopulateVerifiedFiles)
+            await ValidateHostedSitePackageAsync(
+                entry,
+                userId,
+                expectedRunId,
+                expectedRuntime,
+                verifiedFiles,
+                ct);
+        ValidateGeneratedSnapshotIdentity(
+            existing,
+            entry,
+            userId,
+            verifiedFiles,
+            expectedRuntime,
+            expectedRunId,
+            expectedKnowledge,
+            allowMissingVerifiedFiles: canPopulateVerifiedFiles);
+        if (string.Equals(existing.SourceRunId, expectedRunId, StringComparison.Ordinal))
+            return existing;
+
+        var claimFilter = Builders<HostedSiteRevision>.Filter.And(
+            Builders<HostedSiteRevision>.Filter.Eq(revision => revision.Id, existing.Id),
+            Builders<HostedSiteRevision>.Filter.Eq(revision => revision.SiteId, entry.Site.Id),
+            Builders<HostedSiteRevision>.Filter.Eq(revision => revision.CreatedByUserId, userId),
+            Builders<HostedSiteRevision>.Filter.Eq(revision => revision.Status, HostedSiteRevisionStatuses.Published),
+            Builders<HostedSiteRevision>.Filter.Eq(revision => revision.Source, HostedSiteRevisionSources.Baseline),
+            Builders<HostedSiteRevision>.Filter.Eq(revision => revision.SourceRunId, null),
+            Builders<HostedSiteRevision>.Filter.Eq(revision => revision.Runtime, existing.Runtime),
+            Builders<HostedSiteRevision>.Filter.Eq(revision => revision.Html, existing.Html),
+            Builders<HostedSiteRevision>.Filter.Eq(revision => revision.BasedOnContentVersion, entry.ContentVersion),
+            Builders<HostedSiteRevision>.Filter.Eq(revision => revision.PublishedContentVersion, entry.ContentVersion));
+        if (canPopulateVerifiedFiles)
+            claimFilter &= Builders<HostedSiteRevision>.Filter.Size(revision => revision.VerifiedFiles, 0);
+        var claimUpdate = Builders<HostedSiteRevision>.Update
+            .Set(revision => revision.SourceRunId, expectedRunId)
+            .Set(revision => revision.Runtime, expectedRuntime)
+            .Set(revision => revision.KnowledgeEntryIds, expectedKnowledge);
+        if (canPopulateVerifiedFiles)
+            claimUpdate = claimUpdate.Set(
+                revision => revision.VerifiedFiles,
+                verifiedFiles.Select(ToRevisionFile).ToList());
+        var claimed = await _db.HostedSiteRevisions.FindOneAndUpdateAsync(
+            claimFilter,
+            claimUpdate,
+            new FindOneAndUpdateOptions<HostedSiteRevision, HostedSiteRevision>
+            {
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        if (claimed != null) return claimed;
+
+        var winner = await _db.HostedSiteRevisions.Find(revision => revision.Id == existing.Id)
+            .FirstAsync(ct);
+        ValidateGeneratedSnapshotIdentity(
+            winner,
+            entry,
+            userId,
+            verifiedFiles,
+            expectedRuntime,
+            expectedRunId,
+            expectedKnowledge,
+            allowMissingVerifiedFiles: false);
+        if (!string.Equals(winner.SourceRunId, expectedRunId, StringComparison.Ordinal))
+            throw new InvalidOperationException("该站点版本已经归属于另一生成任务");
+        return winner;
+    }
+
+    private static void ValidateGeneratedSnapshotIdentity(
+        HostedSiteRevision existing,
+        HostedSiteEditableEntry entry,
+        string userId,
+        IReadOnlyList<HostedSiteVerifiedFile> verifiedFiles,
+        string expectedRuntime,
+        string expectedRunId,
+        IReadOnlyList<string> expectedKnowledge,
+        bool allowMissingVerifiedFiles = false)
+    {
+        if (!string.Equals(existing.SiteId, entry.Site.Id, StringComparison.Ordinal)
+            || !string.Equals(existing.CreatedByUserId, userId, StringComparison.Ordinal)
+            || existing.Status != HostedSiteRevisionStatuses.Published
+            || existing.Source != HostedSiteRevisionSources.Baseline
+            || existing.BasedOnContentVersion != entry.ContentVersion
+            || existing.PublishedContentVersion != entry.ContentVersion)
+            throw new InvalidOperationException("现有站点版本与生成任务归属不一致");
+        if (!SameContentHash(existing.Html, entry.Html))
+            throw new InvalidOperationException("现有站点版本与生成结果哈希不一致");
+        if (!allowMissingVerifiedFiles && !VerifiedFilesMatch(existing.VerifiedFiles, verifiedFiles))
+            throw new InvalidOperationException("现有站点版本与已验证文件不一致");
+        if (!string.IsNullOrWhiteSpace(existing.SourceRunId)
+            && !string.Equals(existing.SourceRunId, expectedRunId, StringComparison.Ordinal))
+            throw new InvalidOperationException("该站点版本已经归属于另一生成任务");
+        if (string.Equals(existing.SourceRunId, expectedRunId, StringComparison.Ordinal)
+            && (!string.Equals(existing.Runtime, expectedRuntime, StringComparison.Ordinal)
+                || !existing.KnowledgeEntryIds.SequenceEqual(expectedKnowledge, StringComparer.Ordinal)))
+            throw new InvalidOperationException("现有站点版本的生成来源记录不一致");
+    }
+
+    private async Task ValidateHostedSitePackageAsync(
+        HostedSiteEditableEntry entry,
+        string userId,
+        string expectedRunId,
+        string expectedRuntime,
+        IReadOnlyList<HostedSiteVerifiedFile> expectedFiles,
+        CancellationToken ct)
+    {
+        if (_storage == null)
+            throw new InvalidOperationException("无法验证站点对象包，不能认领生成版本");
+        var site = await _db.HostedSites.Find(item => item.Id == entry.Site.Id).FirstOrDefaultAsync(ct)
+                   ?? throw new InvalidOperationException("站点不存在，不能认领生成版本");
+        var sourceRun = await _db.DesignArtifactRuns.Find(run =>
+                run.Id == expectedRunId
+                && run.UserId == userId
+                && run.Runtime == expectedRuntime
+                && run.ArtifactType == DesignArtifactTypes.WebPage
+                && run.Operation == DesignArtifactOperations.Generate
+                && run.Status == RunStatuses.Committing
+                && run.ProducedArtifactSiteId == null
+                && run.ProducedArtifactRevisionId == null)
+            .FirstOrDefaultAsync(ct);
+        if (sourceRun == null)
+            throw new InvalidOperationException("生成任务状态或产物归属已变化，不能认领版本");
+        if (!string.Equals(site.OwnerUserId, userId, StringComparison.Ordinal)
+            || !string.Equals(site.SourceType, "design-agent", StringComparison.Ordinal)
+            || !string.Equals(site.SourceRef, expectedRunId, StringComparison.Ordinal)
+            || site.ContentVersion != entry.ContentVersion)
+            throw new InvalidOperationException("站点与生成任务归属不一致");
+
+        var hostedFiles = (site.Files ?? []).OrderBy(file => file.Path, StringComparer.Ordinal).ToList();
+        var verifiedFiles = expectedFiles.OrderBy(file => file.Path, StringComparer.Ordinal).ToList();
+        if (hostedFiles.Count != verifiedFiles.Count
+            || site.TotalSize != hostedFiles.Sum(file => file.Size))
+            throw new InvalidOperationException("站点文件清单与生成结果不一致");
+        for (var index = 0; index < hostedFiles.Count; index++)
+        {
+            var hosted = hostedFiles[index];
+            var expected = verifiedFiles[index];
+            if (string.IsNullOrWhiteSpace(hosted.CosKey)
+                || !string.Equals(hosted.Path, expected.Path, StringComparison.Ordinal)
+                || !string.Equals(hosted.MimeType, expected.MimeType, StringComparison.OrdinalIgnoreCase)
+                || hosted.Size != expected.Content.LongLength
+                || !MatchesSha256(expected.Content, expected.Sha256))
+                throw new InvalidOperationException("站点文件清单与生成结果不一致");
+            var stored = await _storage.TryDownloadBytesAsync(hosted.CosKey, ct);
+            if (stored == null
+                || !MatchesSha256(stored, expected.Sha256)
+                || !CryptographicOperations.FixedTimeEquals(stored, expected.Content))
+                throw new InvalidOperationException("站点对象内容与生成结果不一致");
+        }
+    }
+
+    private static bool MatchesSha256(byte[] content, string expected) =>
+        string.Equals(
+            Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant(),
+            expected,
+            StringComparison.OrdinalIgnoreCase);
+
+    private static HostedSiteRevisionFile ToRevisionFile(HostedSiteVerifiedFile file) => new()
+    {
+        Path = file.Path,
+        Content = file.Content.ToArray(),
+        Sha256 = file.Sha256,
+        MimeType = file.MimeType,
+    };
+
+    private static List<string> NormalizeKnowledgeEntryIds(IReadOnlyCollection<string>? values) =>
+        (values ?? Array.Empty<string>())
+        .Where(value => !string.IsNullOrWhiteSpace(value))
+        .Select(value => value.Trim())
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+
+    private static bool SameContentHash(string left, string right) =>
+        CryptographicOperations.FixedTimeEquals(
+            SHA256.HashData(Encoding.UTF8.GetBytes(left)),
+            SHA256.HashData(Encoding.UTF8.GetBytes(right)));
+
+    private static bool VerifiedFilesMatch(
+        IReadOnlyList<HostedSiteRevisionFile> existing,
+        IReadOnlyList<HostedSiteVerifiedFile> expected)
+    {
+        if (existing.Count != expected.Count) return false;
+        for (var index = 0; index < existing.Count; index++)
+        {
+            var left = existing[index];
+            var right = expected[index];
+            if (!string.Equals(left.Path, right.Path, StringComparison.Ordinal)
+                || !string.Equals(left.MimeType, right.MimeType, StringComparison.Ordinal)
+                || !string.Equals(left.Sha256, right.Sha256, StringComparison.OrdinalIgnoreCase)
+                || !CryptographicOperations.FixedTimeEquals(left.Content, right.Content))
+                return false;
+        }
+        return true;
     }
 
     public async Task<HostedSiteRevision> CreateDraftAsync(

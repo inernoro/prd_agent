@@ -151,6 +151,9 @@ public class DesignArtifactRun
     /// <summary>持久化清理计划对应的站点账本是否已通过采用围栏删除。</summary>
     public bool CleanupSiteRecordDeleted { get; set; }
 
+    /// <summary>真正进入补偿清理的持久标记；不能用上传预写账本的 CleanupPending 代替。</summary>
+    public DateTime? CleanupStartedAt { get; set; }
+
     /// <summary>跨实例清理租约，避免两个恢复器同时改写同一持久化清理计划。</summary>
     public string? CleanupLeaseOwnerId { get; set; }
 

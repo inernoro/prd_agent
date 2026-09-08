@@ -2175,6 +2175,98 @@ public sealed class DesignArtifactRunRecoveryTests
     private static DateTime MongoTime(DateTime value) =>
         new(value.Ticks - value.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
 
+    [Theory]
+    [Trait("Category", TestCategories.Integration)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    public async Task InterruptedCommittingCleanup_ShouldFinishBeforeResultReadyRecovery(
+        bool executionExpired, bool cleanupExpired, bool failFirstDelete)
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("run-interrupted-cleanup", now.AddMinutes(-5));
+        run.LifecycleVersion = 2;
+        run.Status = RunStatuses.Committing;
+        run.Runtime = DesignArtifactRuntimes.OpenDesign;
+        run.ContractVersion = DesignArtifactContractVersions.Current;
+        run.LeaseOwnerId = "dead-executor";
+        run.LeaseExpiresAt = now.AddMinutes(executionExpired ? -2 : 5);
+        run.CleanupPending = true;
+        run.CleanupLeaseOwnerId = "dead-cleaner";
+        run.CleanupLeaseExpiresAt = now.AddMinutes(cleanupExpired ? -1 : 5);
+        run.CleanupArtifactSiteId = "site-interrupted-cleanup";
+        run.CleanupPublishAttemptId = "old-attempt";
+        run.CleanupAssetKeys = ["sites/old-attempt/index.html"];
+        run.WorkspaceResultAssetKey = "trusted/result-ready.json";
+        run.WorkspaceRef = new DesignArtifactWorkspaceRef
+        {
+            WorkspaceId = $"web-page-{run.Id}",
+            Kind = DesignArtifactWorkspaceKinds.RemotePackage,
+            BaseRevision = "base-revision",
+            Adapter = WebPageDesignArtifactLifecycleAdapter.AdapterId,
+        };
+        run.VersionBoundary = new DesignArtifactVersionBoundary { BaseContentHash = new string('a', 64) };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        await fixture.Db.HostedSites.InsertOneAsync(new HostedSite
+        {
+            Id = run.CleanupArtifactSiteId,
+            OwnerUserId = run.UserId,
+            SourceType = "design-agent",
+            SourceRef = run.Id,
+            Visibility = "private",
+            Files = [new HostedSiteFile { Path = "index.html", CosKey = run.CleanupAssetKeys[0] }],
+        });
+        var deletes = 0;
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.DeleteByKeyAsync(run.CleanupAssetKeys[0], CancellationToken.None))
+            .Returns(() =>
+            {
+                if (Interlocked.Increment(ref deletes) == 1 && failFirstDelete)
+                    throw new IOException("synthetic cleanup failure");
+                return Task.CompletedTask;
+            });
+        var sites = CreateHostedSiteService(fixture.Db, storage.Object);
+        var events = new InMemoryRunEventStore();
+        var queue = new InMemoryRunQueue();
+        var lifecycle = new DesignArtifactLifecycleService(fixture.Db, events);
+
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(
+            fixture.Db, queue, events, now, CancellationToken.None, sites, lifecycle: lifecycle);
+
+        var observed = await fixture.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).SingleAsync();
+        if (!executionExpired || !cleanupExpired)
+        {
+            Assert.Equal(RunStatuses.Committing, observed.Status);
+            Assert.Equal("dead-cleaner", observed.CleanupLeaseOwnerId);
+            Assert.True(observed.CleanupPending);
+            Assert.Equal(0, deletes);
+            Assert.True(await fixture.Db.HostedSites.Find(x => x.Id == run.CleanupArtifactSiteId).AnyAsync());
+            return;
+        }
+        if (failFirstDelete)
+        {
+            Assert.Equal(RunStatuses.Committing, observed.Status);
+            Assert.True(observed.CleanupPending);
+            Assert.Null(observed.CleanupLeaseOwnerId);
+            Assert.Equal("trusted/result-ready.json", observed.WorkspaceResultAssetKey);
+            await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(
+                fixture.Db, queue, events, now.AddSeconds(15), CancellationToken.None, sites, lifecycle: lifecycle);
+            observed = await fixture.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).SingleAsync();
+        }
+        Assert.Equal(RunStatuses.Queued, observed.Status);
+        Assert.False(observed.CleanupPending);
+        Assert.Null(observed.CleanupLeaseOwnerId);
+        Assert.Null(observed.LeaseOwnerId);
+        Assert.Empty(observed.CleanupAssetKeys);
+        Assert.Equal("trusted/result-ready.json", observed.WorkspaceResultAssetKey);
+        Assert.False(await fixture.Db.HostedSites.Find(x => x.Id == run.CleanupArtifactSiteId).AnyAsync());
+        Assert.Equal(failFirstDelete ? 2 : 1, deletes);
+        Assert.Equal(run.Id, await queue.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.Zero));
+        Assert.Equal(DesignArtifactLifecycleEventTypes.Recovered, observed.LifecycleEvents[^1].Type);
+    }
+
     private sealed class RunMongoFixture : IAsyncDisposable
     {
         private readonly MongoClient _client;

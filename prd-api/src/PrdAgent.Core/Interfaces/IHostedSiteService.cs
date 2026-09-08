@@ -163,6 +163,21 @@ public interface IHostedSiteService
         string userId,
         CancellationToken ct = default);
 
+    /// <summary>接管执行租约与清理租约均已过期的生成补偿，清理完成前禁止重新发布。</summary>
+    Task<bool> RecoverGeneratedSiteCleanupAsync(
+        string runId,
+        string userId,
+        string leaseOwnerId,
+        CancellationToken ct = default);
+
+    /// <summary>执行中的 Worker 补偿必须原子校验发布租约归属，旧 Worker 不得清理接管者的产物。</summary>
+    Task<bool> CompensateGeneratedSiteWithLeaseAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        string leaseOwnerId,
+        CancellationToken ct = default);
+
     Task<long> BatchDeleteAsync(List<string> siteIds, string userId, CancellationToken ct = default);
 
     // ── 可见性 ──
