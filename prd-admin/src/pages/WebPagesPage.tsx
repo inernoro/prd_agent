@@ -86,6 +86,7 @@ import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
+import { MobileFab } from '@/components/mobile/MobileFab';
 import SiteGenerateDialog, { type SiteGenerateSource } from '@/components/web-hosting/SiteGenerateDialog';
 import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
 import { useLocation } from 'react-router-dom';
@@ -112,7 +113,6 @@ import {
   X,
   Lock,
   Clock,
-  History,
   Sparkles,
   RefreshCw,
   Link2,
@@ -470,9 +470,8 @@ export default function WebPagesPage() {
   // 用户在列表里找遍菜单也找不到提问配置（形状 2：接线只建了一半）。
   const [askConfigSite, setAskConfigSite] = useState<HostedSite | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  // 桌面工具条只保留搜索与主要动作，低频的组织、显示和视图能力统一渐进披露。
-  const [openToolbarPanel, setOpenToolbarPanel] = useState<'organize' | 'filter' | null>(null);
-  const [showDesktopContext, setShowDesktopContext] = useState(false);
+  // 桌面工具条上同时只展开一个气泡（显示 / 筛选），避免两块浮层互相盖住
+  const [openToolbarPanel, setOpenToolbarPanel] = useState<'display' | 'filter' | null>(null);
   /**
    * 后台的两档语境：资产库（我有什么）/ 分享（谁在看）。
    * 访客阅读页**不是**第三档 —— 它在独立域名 /s/wp/{token} 上，访客根本不进后台；
@@ -910,7 +909,7 @@ export default function WebPagesPage() {
         style={{
           // 设计稿：minmax(236px,1fr) 拉伸铺满 + gap 14 + 左对齐。
           // 固定轨道 + 居中会让卡片左缘与上方结论行错开、右侧留一条死区。
-          gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), 1fr))`,
+          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), 1fr))`,
           justifyContent: isMobile ? 'stretch' : 'start',
           alignContent: 'start',
           gap: isMobile ? 12 : 14,
@@ -942,7 +941,6 @@ export default function WebPagesPage() {
             onComments={() => setCommentSite(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
             onAiEdit={() => openSiteEditor(site, 'compose')}
-            onVersionHistory={() => openSiteEditor(site, 'history')}
           />
         ))}
       </div>
@@ -964,7 +962,6 @@ export default function WebPagesPage() {
             onComments={() => setCommentSite(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
             onAiEdit={() => openSiteEditor(site, 'compose')}
-            onVersionHistory={() => openSiteEditor(site, 'history')}
           />
         ))}
       </div>
@@ -1024,19 +1021,6 @@ export default function WebPagesPage() {
                 >
                   <Eye size={13} /> 以访客身份预览
                 </button>
-                <button
-                  type="button"
-                  data-tour-id="webpages-context-toggle"
-                  aria-expanded={showDesktopContext || !!selectedSite || selectedIds.size > 1}
-                  aria-controls="webpages-context-panel"
-                  onClick={() => setShowDesktopContext((value) => !value)}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  style={showDesktopContext
-                    ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
-                    : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
-                >
-                  <MoreHorizontal size={13} /> 站点概览
-                </button>
       <span className="h-[22px] w-px" style={{ background: 'var(--border-subtle)' }} />
       <TeamSwitcher
         current={currentSpace}
@@ -1052,10 +1036,10 @@ export default function WebPagesPage() {
   const desktopToolbar = (
             <>
               {/*
-                桌面工具条：搜索与主要动作常驻，组织、排序、显示和视图收进「整理」。
+                桌面工具条（设计稿屏 1·A）：搜索 → 组织方式四档 → 显示 → 视图 → 上传。
                 「我在看哪一批」（空间 / 分组 / 标签）搬去常驻左栏 LibraryRail：
                 那是定位信息，用户全程都得看得见，收进气泡等于每次都要点开才知道自己在哪。
-                低频能力不删除，只通过渐进披露降低首屏竞争。
+                留在这一行的是「怎么看」与「加东西」。
               */}
               <div className="surface-nav-bar flex items-center gap-3" style={{ overflow: 'visible' }}>
                 <div className="relative shrink-0" style={{ width: 280 }}>
@@ -1081,39 +1065,45 @@ export default function WebPagesPage() {
                   </span>
                 </div>
 
+                <div
+                  data-tour-id="webpages-group-pills"
+                  className="flex shrink-0 items-center"
+                  style={{ padding: 3, gap: 2, borderRadius: 'var(--radius-control)', background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)' }}
+                >
+                  {ALL_GROUP_MODES.map((m) => {
+                    const avail = groupModeAvailability(m, currentSpace.kind);
+                    const on = groupMode === m;
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        disabled={!avail.ok}
+                        title={avail.reason}
+                        onClick={() => setGroupMode(m)}
+                        className="flex items-center whitespace-nowrap transition-colors"
+                        style={{
+                          height: 26, padding: '0 11px', borderRadius: 'var(--radius-pill)', fontSize: 12.5,
+                          cursor: avail.ok ? 'pointer' : 'not-allowed',
+                          ...(on
+                            ? { background: 'var(--accent-primary)', color: 'var(--accent-on-primary)', fontWeight: 600 }
+                            : { background: 'transparent', color: avail.ok ? 'var(--text-muted)' : 'var(--text-disabled)' }),
+                        }}
+                      >
+                        {GROUP_MODE_LABELS[m]}
+                      </button>
+                    );
+                  })}
+                </div>
+
+
                 <ToolbarPopover
-                  label="整理"
-                  summary={`${GROUP_MODE_LABELS[groupMode]} · ${activeSortLabel}`}
-                  tourId="webpages-organize-popover"
-                  open={openToolbarPanel === 'organize'}
-                  onOpenChange={(v) => setOpenToolbarPanel(v ? 'organize' : null)}
+                  label="显示"
+                  summary={`${activeSortLabel} · ${CARD_SIZE_OPTIONS.find((o) => o.value === cardSize)?.label ?? '中'}`}
+                  tourId="webpages-display-popover"
+                  open={openToolbarPanel === 'display'}
+                  onOpenChange={(v) => setOpenToolbarPanel(v ? 'display' : null)}
                 >
                   <div className="space-y-3" style={{ minWidth: 260 }}>
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-semibold text-token-muted">组织方式</div>
-                      <div data-tour-id="webpages-group-pills" className="flex flex-wrap items-center gap-1.5">
-                        {ALL_GROUP_MODES.map((mode) => {
-                          const availability = groupModeAvailability(mode, currentSpace.kind);
-                          const active = groupMode === mode;
-                          return (
-                            <button
-                              key={mode}
-                              type="button"
-                              disabled={!availability.ok}
-                              title={availability.reason}
-                              aria-pressed={active}
-                              onClick={() => setGroupMode(mode)}
-                              className="min-h-8 rounded-full px-2.5 text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed"
-                              style={active
-                                ? { background: 'var(--accent-primary)', color: 'var(--accent-on-primary)', fontWeight: 600 }
-                                : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: availability.ok ? 'var(--text-muted)' : 'var(--text-disabled)' }}
-                            >
-                              {GROUP_MODE_LABELS[mode]}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
                     <div className="space-y-1">
                       <div className="text-[11px] font-semibold text-token-muted">排序</div>
                       <div data-tour-id="webpages-sort-pills">
@@ -1150,57 +1140,39 @@ export default function WebPagesPage() {
                         ))}
                       </div>
                     </div>
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-semibold text-token-muted">视图</div>
-                      <div data-tour-id="webpages-view-toggle" className="inline-flex items-center overflow-hidden rounded-lg border border-token-default">
-                        <button
-                          type="button"
-                          onClick={() => setViewMode('grid')}
-                          title="网格视图"
-                          aria-label="网格视图"
-                          aria-pressed={viewMode === 'grid'}
-                          className="h-8 w-10 inline-flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
-                          style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
-                        >
-                          <Grid3X3 size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setViewMode('list')}
-                          title="列表视图"
-                          aria-label="列表视图"
-                          aria-pressed={viewMode === 'list'}
-                          className="h-8 w-10 inline-flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
-                          style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
-                        >
-                          <List size={14} />
-                        </button>
-                      </div>
-                    </div>
                     <div className="text-[11px] text-token-muted">偏好会被记住，下次进来沿用。</div>
                   </div>
                 </ToolbarPopover>
+
+                <div data-tour-id="webpages-view-toggle" className="inline-flex shrink-0 items-center overflow-hidden rounded-lg border border-token-default">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('grid')}
+                    title="网格视图"
+                    aria-label="网格视图"
+                    className="h-8 w-9 inline-flex items-center justify-center transition-colors"
+                    style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
+                  >
+                    <Grid3X3 size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('list')}
+                    title="列表视图"
+                    aria-label="列表视图"
+                    className="h-8 w-9 inline-flex items-center justify-center transition-colors"
+                    style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
+                  >
+                    <List size={14} />
+                  </button>
+                </div>
 
                 {/* 上传按设计稿落在工具条右端：它是「往这批里加东西」，
                     跟顶栏的语境切换（资产库 / 分享）不是一类动作。
                     「从个人空间添加」只留左栏底部那一处，不在两个地方各摆一遍。 */}
                 {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-                  <div className="ml-auto flex shrink-0 items-center gap-2">
-                    {contextSite && siteCaps(contextSite).canEdit && (
-                      <Button
-                        data-tour-id="webpages-ai-edit-primary"
-                        size="sm"
-                        variant="primary"
-                        onClick={() => openSiteEditor(contextSite, 'compose')}
-                        title={`用 AI 修改「${contextSite.title}」`}
-                      >
-                        <WandSparkles size={14} className="mr-1" /> 帮我修改
-                      </Button>
-                    )}
-                    <Button data-tour-id="webpages-knowledge-generate" size="sm" variant="secondary" onClick={() => { setGenerateSource(null); setShowGenerateDialog(true); }}>
-                      <WandSparkles size={14} className="mr-1" /> 知识生成
-                    </Button>
-                    <Button data-tour-id="webpages-upload-primary" size="sm" variant={contextSite && siteCaps(contextSite).canEdit ? 'secondary' : 'primary'} onClick={openCreateUploadDialog}>
+                  <div className="ml-auto shrink-0">
+                    <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
                       <Upload size={14} className="mr-1" /> 上传网页
                     </Button>
                   </div>
@@ -1402,24 +1374,7 @@ export default function WebPagesPage() {
         ) : null}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-          <div className="grid grid-cols-2 gap-2 px-2" aria-label="网页托管快捷操作">
-            <button
-              type="button"
-              onClick={() => { setGenerateSource(null); setShowGenerateDialog(true); }}
-              aria-label="引用知识生成网页"
-              className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-token-subtle bg-token-elevated px-3 text-xs font-semibold text-token-primary"
-            >
-              <WandSparkles size={15} />知识生成
-            </button>
-            <button
-              type="button"
-              onClick={openCreateUploadDialog}
-              aria-label="上传网页"
-              className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 text-xs font-semibold text-white"
-            >
-              <Upload size={15} />上传网页
-            </button>
-          </div>
+          <MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />
         )}
 
         {/* Batch actions */}
@@ -1709,14 +1664,9 @@ export default function WebPagesPage() {
           {/* 与顶部上传按钮同款权限闸门：团队空间只读 viewer 不展示上传入口，
               避免点开弹窗 uploadSite 后被 setTeams 403、徒留站点在个人空间 */}
           {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <Button size="sm" variant="secondary" onClick={() => { setGenerateSource(null); setShowGenerateDialog(true); }}>
-                <WandSparkles size={14} className="mr-1" /> 引用知识生成
-              </Button>
-              <Button size="sm" variant="primary" onClick={openCreateUploadDialog}>
-                <Upload size={14} className="mr-1" /> 上传第一个站点
-              </Button>
-            </div>
+            <Button size="sm" variant="primary" onClick={openCreateUploadDialog}>
+              <Upload size={14} className="mr-1" /> 上传第一个站点
+            </Button>
           )}
           {/* 教程引导锚点占位：空态下也让「网页托管 3 步」教程能找到 webpages-card / webpages-viewcount 目标，
               避免「没找到目标元素」报错。占位卡是一张轻量预览卡，告诉新用户站点卡长什么样。 */}
@@ -1759,10 +1709,10 @@ export default function WebPagesPage() {
       )}
         </div>
         </div>
-        {/* 右栏三态：选中时自动出现；未选中时由「站点概览」显式展开，降低默认首屏密度。 */}
-        {!isMobile && (selectedSite || selectedIds.size > 1 || showDesktopContext) && (
-          <div id="webpages-context-panel" className="contents">
-          {selectedSite ? (
+        {/* 右栏三态（设计稿屏 1）：没选中 = 讲「最近动过」的那个站点；选中 1 个 = 对它做什么；
+            选中多个 = 批量操作。选中**不是**换上下文的手段，它换的是整块面板的用途。 */}
+        {!isMobile && (
+          selectedSite ? (
             <SiteSelectionPanel
               site={selectedSite}
               links={shareLinks}
@@ -1793,8 +1743,7 @@ export default function WebPagesPage() {
               onAnalytics={() => setShowAnalytics(true)}
               onRenew={(link) => { setShareTargetId(link.siteId ?? null); setShowSharesPanel(true); }}
             />
-          )}
-          </div>
+          )
         )}
       </div>
 
@@ -1820,6 +1769,12 @@ export default function WebPagesPage() {
           item={editItem}
           folders={folders}
           initialFile={pendingExternalFile}
+          onGenerate={() => {
+            setShowUploadDialog(false);
+            setPendingExternalFile(null);
+            setGenerateSource(null);
+            setShowGenerateDialog(true);
+          }}
           onClose={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); }}
           onShareSite={(id) => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); setShareTargetId(id); setShowShareDialog(true); }}
           onSaved={async (saved, isCreate, keepOpen) => {
@@ -2706,7 +2661,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit, onVersionHistory }: {
+function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
@@ -2722,7 +2677,6 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   /** 提问设置抽屉；仅 canEdit 时传入 */
   onAskConfig?: () => void;
   onAiEdit?: () => void;
-  onVersionHistory?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
@@ -2812,24 +2766,6 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
-        {c.canEdit && onAiEdit && onVersionHistory && (
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={onAiEdit}
-              className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg bg-token-nested px-3 text-xs font-semibold text-token-primary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-            >
-              <WandSparkles size={14} />帮我修改
-            </button>
-            <button
-              type="button"
-              onClick={onVersionHistory}
-              className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg bg-token-nested px-3 text-xs font-semibold text-token-primary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-            >
-              <History size={14} />版本记录
-            </button>
-          </div>
-        )}
         <button onClick={handleVisit} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="打开" aria-label="打开">
           <ExternalLink size={14} className="text-token-muted" />
         </button>
@@ -2852,6 +2788,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
         )}
         <MoreActionsButton
           actions={[
+            c.canEdit && onAiEdit ? { label: '帮我修改', icon: <WandSparkles size={13} />, onClick: onAiEdit } : null,
             { label: '二维码', icon: <QrCode size={13} />, onClick: onQrCode },
             c.canSetVisibility
               ? isPublic
@@ -2876,7 +2813,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
 
 // ─── Upload / Edit Dialog ───
 
-function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initialFile }: {
+function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initialFile, onGenerate }: {
   item: HostedSite | null;
   folders: string[];
   onClose: () => void;
@@ -2885,6 +2822,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   /** 完成态「立即分享」：关掉本窗，直接拉起分享弹窗 */
   onShareSite: (siteId: string) => void;
   initialFile?: File | null;
+  onGenerate: () => void;
 }) {
   const isEdit = !!item;
   const [title, setTitle] = useState(item?.title ?? '');
@@ -3264,6 +3202,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
         ) : (
         <>
           <div className="flex flex-col gap-3 max-h-[65vh] overflow-y-auto pr-1">
+            {!isEdit && !file && !saving && (
+              <Button data-tour-id="webpages-knowledge-generate" size="sm" variant="secondary" onClick={onGenerate}>
+                <WandSparkles size={14} className="mr-1" /> 引用知识生成网页
+              </Button>
+            )}
 
             {/* File drop zone */}
             {(!isEdit || file !== null) ? (

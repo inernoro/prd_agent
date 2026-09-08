@@ -564,6 +564,43 @@ public sealed class HostedSiteEditsControllerTests
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task ListRevisions_WhenCurrentEntryCannotBeRead_ShouldReturnStableHistoryUnavailableWithoutCreatingBaseline()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetRevisionEntryHtmlAsync(
+                "site-a", "owner-user", CancellationToken.None))
+            .ThrowsAsync(new InvalidOperationException("storage-specific detail must not escape"));
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites: sites.Object,
+            revisions: revisions.Object);
+
+        var result = await controller.ListRevisions("site-a");
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(
+            badRequest.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(
+            ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE,
+            payload.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal(
+            "版本记录暂时不可用，请检查网页文件后重试",
+            payload.GetProperty("error").GetProperty("message").GetString());
+        revisions.Verify(service => service.EnsureCurrentSnapshotAsync(
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<HostedSiteEditableEntry?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        revisions.Verify(service => service.ListAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        sites.VerifyAll();
+        revisions.VerifyNoOtherCalls();
+    }
+
     [Theory]
     [InlineData(null, true)]
     [InlineData("", true)]

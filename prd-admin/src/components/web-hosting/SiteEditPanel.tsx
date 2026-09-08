@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, BookOpen, Check, Clock3, Eye, History, RefreshCw, RotateCcw, Send, Server, ShieldCheck, Square, WandSparkles, X } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
+import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 import { listRecentDocumentEntries } from '@/services/real/documentStore';
 import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import {
@@ -101,6 +102,13 @@ function generationRecoveryDetail(detail: string) {
   return `${detail}。线上版本没有变化，修改要求已保留。${nextStep}`;
 }
 
+export function revisionHistoryErrorMessage(error: unknown): string {
+  return toUserReadableErrorMessage(error, {
+    fallbackMessage: '版本记录暂时无法读取',
+    recoveryMessage: '请刷新版本记录；若仍失败，请联系管理员检查网页文件。',
+  });
+}
+
 export default function SiteEditPanel({ site, onPublished, focusSection = 'compose' }: Props) {
   const [instruction, setInstruction] = useState('');
   const [phase, setPhase] = useState('告诉我你想改什么，系统会先生成草稿，不会直接覆盖线上页面。');
@@ -115,6 +123,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const [draftRevisionStatus, setDraftRevisionStatus] = useState<'draft' | 'publishing' | null>(null);
   const [revisions, setRevisions] = useState<HostedSiteRevision[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [mutatingId, setMutatingId] = useState<string | null>(null);
   const [mutatingAction, setMutatingAction] = useState<RevisionMutationAction | null>(null);
@@ -204,11 +213,10 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     const result = await listHostedSiteRevisions(site.id);
     if (result.success) {
       setRevisions(result.data);
+      setHistoryError(null);
       setRecoveryNotice((current) => current?.action === 'history' ? null : current);
     } else {
-      const detail = result.error?.message || '请稍后重试';
-      setRecoveryNotice({ title: '版本记录读取失败', detail, action: 'history' });
-      toast.error('版本记录读取失败', detail);
+      setHistoryError(revisionHistoryErrorMessage(result.error));
     }
     setLoadingHistory(false);
   }, [site.id]);
@@ -1268,10 +1276,16 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
               <RefreshCw size={12} className={loadingHistory ? 'animate-spin' : ''} />
             </button>
           </div>
+          {historyError && (
+            <div role="alert" className="mb-3 flex items-start gap-2 text-[11px] leading-relaxed text-token-secondary">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-500" />
+              <p>{historyError}{revisions.length > 0 ? ' 以下为上次读取的记录。' : ''}</p>
+            </div>
+          )}
           {loadingHistory ? (
             <MapSectionLoader text="正在读取版本记录" />
           ) : revisions.length === 0 ? (
-            <p className="text-[11px] text-token-muted">尚无版本记录。</p>
+            !historyError && <p className="text-[11px] text-token-muted">尚无版本记录。</p>
           ) : (
             <div className="space-y-2">
               {revisions.map((item) => {

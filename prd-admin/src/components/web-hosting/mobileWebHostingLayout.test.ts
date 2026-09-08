@@ -60,16 +60,22 @@ describe('mobile web hosting layout', () => {
     expect(previewSource).not.toContain("background: 'var(--panel-solid, var(--bg-elevated))'");
   });
 
-  it('uses one full-width card column on mobile', () => {
-    expect(pageSource).toContain("isMobile ? 'minmax(0, 1fr)'");
-    expect(pageSource).not.toContain("isMobile ? 'repeat(2, minmax(0, 1fr))'");
+  it('restores the original two-column mobile cards without shrinking menu touch targets', () => {
+    expect(pageSource).toContain("isMobile ? 'repeat(2, minmax(0, 1fr))'");
+    expect(pageSource).not.toContain("isMobile ? 'minmax(0, 1fr)'");
+    expect(cardActionsSource).toContain('max-sm:w-11 max-sm:min-w-11');
+    expect(cardActionsSource).toContain('max-sm:h-11 max-sm:min-h-11');
+    expect(cardSource).toContain('[@media(hover:none)]:block');
+    expect(cardSource).toContain("label: '帮我修改'");
+    expect(cardSource).not.toContain('data-site-version-actions');
   });
 
-  it('keeps mobile create actions in document flow so they never cover site cards', () => {
-    expect(pageSource).toContain('aria-label="网页托管快捷操作"');
-    expect(pageSource).toContain('className="grid grid-cols-2 gap-2 px-2"');
-    expect(pageSource).not.toContain('fixed right-[18px] z-[90]');
-    expect(pageSource).not.toContain('<MobileFab');
+  it('restores the original upload FAB and keeps knowledge generation inside that entry', () => {
+    expect(pageSource).toContain('<MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />');
+    expect(pageSource).not.toContain('aria-label="网页托管快捷操作"');
+    expect(pageSource).toContain('!isEdit && !file && !saving');
+    expect(pageSource).toContain('data-tour-id="webpages-knowledge-generate"');
+    expect(pageSource).toContain('onClick={onGenerate}');
     expect(dialogSource).toContain('zIndex: zIndex ?? 100');
   });
 

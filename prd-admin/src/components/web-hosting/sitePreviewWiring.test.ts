@@ -92,10 +92,14 @@ describe('分享下拉接线', () => {
 });
 
 describe('网页微调与版本入口接线', () => {
-  it('卡片两个常驻动作分别直达修改区和版本记录区', () => {
+  it('原操作菜单直达修改面板，版本记录不再作为列表或卡片常驻动作', () => {
     const source = read('pages/WebPagesPage.tsx');
     expect(source).toContain("onAiEdit={() => openSiteEditor(site, 'compose')}");
-    expect(source).toContain("onVersionHistory={() => openSiteEditor(site, 'history')}");
+    expect(source).not.toContain('onVersionHistory');
+    const card = read('components/web-hosting/SiteCard.tsx');
+    expect(card).toContain("label: '帮我修改'");
+    expect(card).toContain('onClick: args.onAiEdit');
+    expect(card).not.toContain('data-site-version-actions');
     expect(source).toContain('initialPanel={previewInitialPanel}');
     expect(source).toContain('initialEditSection={previewEditSection}');
   });

@@ -122,6 +122,9 @@ public static class ErrorCodes
     public const string QUOTA_EXCEEDED = "QUOTA_EXCEEDED";
     public const string WORKSPACE_GENERATION_ACTIVE = "WORKSPACE_GENERATION_ACTIVE";
 
+    // 网页托管版本记录相关
+    public const string HOSTED_SITE_HISTORY_UNAVAILABLE = "HOSTED_SITE_HISTORY_UNAVAILABLE";
+
     // 分享相关
     public const string SHARE_EXPIRED = "SHARE_EXPIRED";
     public const string SHARE_REVOKED = "SHARE_REVOKED";

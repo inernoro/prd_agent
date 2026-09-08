@@ -542,7 +542,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
                 </div>
               )}
               {completedSite && (
-                <div className="absolute bottom-4 right-4 flex items-center gap-2 rounded-lg border border-token-subtle bg-token-elevated p-2 shadow-lg">
+                <div className="surface-reading absolute bottom-4 right-4 flex items-center gap-2 rounded-lg border border-token-subtle p-2 shadow-lg">
                   <span className="flex items-center gap-1.5 text-xs text-token-primary"><Check size={14} />已保存到网页托管</span>
                   {completedSite.url && (
                     <Button size="xs" variant="secondary" onClick={() => window.open(completedSite.url, '_blank', 'noopener')}>

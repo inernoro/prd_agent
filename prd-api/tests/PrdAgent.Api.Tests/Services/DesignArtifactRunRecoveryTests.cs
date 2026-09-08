@@ -1684,6 +1684,29 @@ public sealed class DesignArtifactRunRecoveryTests
                 files));
     }
 
+    [Theory]
+    [MemberData(nameof(UntrustedMapEditSystemMetaVariants))]
+    public void MapEditNormalization_ShouldKeepUntrustedSystemMetaForSafetyRejection(string html)
+    {
+        var run = NewQueuedRun("run-map-edit-csp-rejection", DateTime.UtcNow);
+        run.Operation = DesignArtifactOperations.Edit;
+        run.Runtime = DesignArtifactRuntimes.MapGateway;
+
+        var normalized = HostedSiteEditRunWorker.NormalizeExecutorInput(run, html);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteEditRunWorker.HardenExecutorOutput(normalized!, null));
+    }
+
+    public static IEnumerable<object[]> UntrustedMapEditSystemMetaVariants()
+    {
+        var trusted = $"<meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.GeneratedArtifactCsp}\">";
+        yield return [$"<!doctype html><html><head>{trusted}{trusted}<title>重复包装</title></head><body></body></html>"];
+        yield return ["<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'self'\"><title>自报策略</title></head><body></body></html>"];
+        yield return ["<!doctype html><html><head><meta http-equiv=\"refresh\" content=\"0;url=https://evil.example\"><title>跳转</title></head><body></body></html>"];
+        yield return [$"<!doctype html><html><head><title>非受信位置</title>{trusted}</head><body></body></html>"];
+    }
+
     [Fact]
     public void VerifiedPackageWhoseIndexDiffersFromWorkerHardenedHtml_ShouldBeRejected()
     {

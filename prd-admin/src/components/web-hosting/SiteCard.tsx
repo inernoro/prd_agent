@@ -6,7 +6,6 @@ import {
   Eye,
   FolderInput,
   Globe,
-  History,
   Link2,
   Lock,
   MessageCircleQuestion,
@@ -79,10 +78,8 @@ export interface SiteCardProps {
   onMove?: () => void;
   onComments?: () => void;
   onAskConfig?: () => void;
-  /** 直接进入 AI 微调，不让核心任务藏在预览弹窗后的二级入口。 */
+  /** 原操作菜单中的 AI 微调入口；版本记录留在编辑面板内部。 */
   onAiEdit?: () => void;
-  /** 直接进入版本记录，用于预览、发布草稿和回退旧版本。 */
-  onVersionHistory?: () => void;
 }
 
 /**
@@ -105,6 +102,7 @@ export function buildCardActionLayers(args: {
   onMove?: () => void;
   onComments?: () => void;
   onAskConfig?: () => void;
+  onAiEdit?: () => void;
 }): { hover: CardMoreAction[]; menu: CardMoreAction[] } {
   const { site, caps: c } = args;
   const isPublic = site.visibility === 'public';
@@ -122,6 +120,7 @@ export function buildCardActionLayers(args: {
   ].filter(Boolean) as CardMoreAction[];
 
   const lowFrequency: CardMoreAction[] = [
+    c.canEdit && args.onAiEdit ? { label: '帮我修改', icon: <WandSparkles size={13} />, onClick: args.onAiEdit } : null,
     c.canSetVisibility
       ? isPublic
         ? { label: '取消公开', icon: <Lock size={13} />, onClick: args.onTogglePublic }
@@ -178,7 +177,6 @@ export function SiteCard({
   onComments,
   onAskConfig,
   onAiEdit,
-  onVersionHistory,
 }: SiteCardProps) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
@@ -235,6 +233,7 @@ export function SiteCard({
     onMove,
     onComments,
     onAskConfig,
+    onAiEdit,
   });
 
   // 状态胶囊（设计稿：10.5px / padding 2-6 / radius 5 / 同色系描边 + 淡底，胶囊内无图标）
@@ -573,34 +572,6 @@ export function SiteCard({
                   {relativeTime(site.createdAt)}
                 </span>
               )}
-            </div>
-          )}
-
-          {/* 修改与版本是托管后的核心闭环，必须常驻可见，不能依赖 hover 或更多菜单。 */}
-          {c.canEdit && onAiEdit && onVersionHistory && (
-            <div
-              data-site-version-actions
-              className={`grid gap-1.5 border-t border-token-subtle pt-2 ${isSmall ? 'grid-cols-1' : 'grid-cols-2'}`}
-            >
-              <button
-                type="button"
-                data-no-drag
-                onClick={(event) => { event.stopPropagation(); onAiEdit(); }}
-                className="inline-flex min-h-11 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-2 text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)', border: '1px solid var(--accent-primary-edge)' }}
-              >
-                <WandSparkles size={13} className="shrink-0" />
-                <span className="truncate">帮我修改</span>
-              </button>
-              <button
-                type="button"
-                data-no-drag
-                onClick={(event) => { event.stopPropagation(); onVersionHistory(); }}
-                className="inline-flex min-h-11 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-2 text-[11px] font-semibold text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              >
-                <History size={13} className="shrink-0" />
-                <span className="truncate">版本记录</span>
-              </button>
             </div>
           )}
 

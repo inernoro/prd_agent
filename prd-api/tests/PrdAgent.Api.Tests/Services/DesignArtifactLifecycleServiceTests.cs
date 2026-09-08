@@ -24,6 +24,111 @@ public sealed class DesignArtifactLifecycleServiceTests
 {
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task MapEditOfPreviouslyHardenedPage_ShouldCreateReadableDraftWithOneSystemCsp()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var now = DateTime.UtcNow;
+        var originalHtml = HostedSiteRevisionRules.HardenGeneratedHtml(
+            "<!doctype html><html lang=\"zh-CN\"><head><title>社区服务</title><style>header{background:#334155}</style></head><body><header><h1>社区服务</h1></header><main><p>开放安排与服务规则保持不变。</p></main></body></html>");
+        var site = new HostedSite
+        {
+            Id = "site-hardened-map-edit",
+            OwnerUserId = "owner-user",
+            ContentVersion = now,
+        };
+        var editable = new HostedSiteEditableEntry(site, originalHtml, now);
+        var parent = new HostedSiteRevision
+        {
+            Id = "revision-parent",
+            SiteId = site.Id,
+            CreatedByUserId = site.OwnerUserId,
+            Html = originalHtml,
+            BasedOnContentVersion = now,
+        };
+        var run = new DesignArtifactRun
+        {
+            Id = "run-hardened-map-edit",
+            UserId = site.OwnerUserId,
+            Operation = DesignArtifactOperations.Edit,
+            Runtime = DesignArtifactRuntimes.MapGateway,
+            TargetSiteId = site.Id,
+            Instruction = "只把页眉背景改为 #12665a，其他不变",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync(site.Id, run.UserId, CancellationToken.None))
+            .ReturnsAsync(editable);
+        var revisions = new Mock<IHostedSiteRevisionService>();
+        revisions.Setup(service => service.EnsureCurrentSnapshotAsync(
+                site.Id, run.UserId, editable, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(parent);
+        HostedSiteRevision? savedDraft = null;
+        revisions.Setup(service => service.CreateDraftAsync(
+                site.Id,
+                run.UserId,
+                It.IsAny<string>(),
+                run.Instruction,
+                run.Runtime,
+                run.Id,
+                parent.Id,
+                It.IsAny<IReadOnlyCollection<string>>(),
+                now,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, string _, string html, string _, string _, string _, string _,
+                IReadOnlyCollection<string> _, DateTime _, CancellationToken _) =>
+            {
+                savedDraft = new HostedSiteRevision
+                {
+                    Id = "revision-map-draft",
+                    SiteId = site.Id,
+                    CreatedByUserId = run.UserId,
+                    Status = HostedSiteRevisionStatuses.Draft,
+                    SourceRunId = run.Id,
+                    Html = html,
+                    BasedOnContentVersion = now,
+                };
+                return savedDraft;
+            });
+        var executor = new CspPreservingMapEditExecutor();
+        var services = new ServiceCollection();
+        services.AddSingleton(fixture.Db);
+        services.AddSingleton(sites.Object);
+        services.AddSingleton(revisions.Object);
+        services.AddSingleton(Mock.Of<IWebPageDesignArtifactLifecycleAdapter>());
+        services.AddSingleton(Mock.Of<IDesignArtifactLifecycleService>());
+        services.AddSingleton(Mock.Of<IDesignKnowledgeSnapshotResolver>());
+        services.AddSingleton(Mock.Of<IActivityActionRecorder>());
+        services.AddSingleton<IDesignArtifactExecutor>(executor);
+        using var provider = services.BuildServiceProvider();
+        using var worker = new HostedSiteEditRunWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Mock.Of<IRunQueue>(),
+            new InMemoryRunEventStore(),
+            NullLogger<HostedSiteEditRunWorker>.Instance);
+
+        await worker.ProcessAsync(run.Id, CancellationToken.None);
+
+        Assert.NotNull(executor.InputHtml);
+        Assert.DoesNotContain("Content-Security-Policy", executor.InputHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(savedDraft);
+        Assert.Equal(HostedSiteRevisionStatuses.Draft, savedDraft.Status);
+        Assert.Contains("#12665a", savedDraft.Html, StringComparison.Ordinal);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(
+                savedDraft.Html,
+                "Content-Security-Policy",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Cast<System.Text.RegularExpressions.Match>());
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Done, persisted.Status);
+        Assert.Equal(site.Id, persisted.ArtifactSiteId);
+        Assert.Equal(savedDraft.Id, persisted.ArtifactRevisionId);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task Worker_ShouldNotClaimOrPublishWhileCleanupOwnsResources()
     {
         await using var fixture = await LifecycleMongoFixture.CreateAsync();
@@ -141,6 +246,25 @@ public sealed class DesignArtifactLifecycleServiceTests
     }
 
     private const string ProjectionTestHtml = "<!doctype html><html lang=\"zh-CN\"><head><title>说明网页</title></head><body><main><h1>说明网页</h1><p>知识内容负责事实，页面展示帮助读者理解。</p></main></body></html>";
+
+    private sealed class CspPreservingMapEditExecutor : IDesignArtifactExecutor
+    {
+        public string Runtime => DesignArtifactRuntimes.MapGateway;
+        public string? InputHtml { get; private set; }
+        public bool Supports(string artifactType, string operation) => operation == DesignArtifactOperations.Edit;
+
+        public async IAsyncEnumerable<DesignArtifactExecutorChunk> ExecuteAsync(
+            DesignArtifactRun run,
+            string? currentHtml,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.Yield();
+            InputHtml = currentHtml;
+            yield return new DesignArtifactExecutorChunk(
+                "delta",
+                (currentHtml ?? string.Empty).Replace("#334155", "#12665a", StringComparison.Ordinal));
+        }
+    }
 
     private sealed class ProjectionTestExecutor : IDesignArtifactExecutor
     {

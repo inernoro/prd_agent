@@ -489,9 +489,11 @@ public sealed class HostedSiteEditsController : ControllerBase
         {
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE,
+                "版本记录暂时不可用，请检查网页文件后重试"));
         }
     }
 

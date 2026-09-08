@@ -54,6 +54,7 @@ const USER_MESSAGE_ALLOWLIST = new Map<string, ReadonlySet<string>>([
 ]);
 
 const USER_FACING_CODE_MESSAGES = new Map<string, string>([
+  ['HOSTED_SITE_HISTORY_UNAVAILABLE', '版本记录暂时无法读取，请刷新重试；若仍失败，请联系管理员检查网页文件。'],
   ['NOT_FOUND', '目标内容不存在或已被删除，请返回后刷新列表。'],
   ['CONTENT_EMPTY', '提交内容为空，请输入内容后重试。'],
   ['DOCUMENT_NOT_FOUND', '目标文档不存在或已被删除，请返回后刷新列表。'],

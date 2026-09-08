@@ -37,6 +37,14 @@ describe('SiteGenerateDialog responsive layout contract', () => {
     expect(source).toContain('storeId: entry.storeId');
   });
 
+  it('gives the saved result controls their own themed surface over arbitrary generated content', () => {
+    const completionPanel = source.slice(source.indexOf('{completedSite && ('));
+    expect(completionPanel).toContain('className="surface-reading absolute bottom-4 right-4');
+    expect(completionPanel).not.toContain('bg-token-elevated');
+    expect(completionPanel).toContain('已保存到网页托管');
+    expect(completionPanel).toContain('打开网页');
+  });
+
   it('updates visible elapsed time every second during a long remote generation', () => {
     expect(source).toContain('window.setInterval');
     expect(source).toContain('runningGenerationActivity(phase, elapsedSeconds)');

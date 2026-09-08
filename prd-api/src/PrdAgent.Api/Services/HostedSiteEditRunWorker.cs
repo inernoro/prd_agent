@@ -150,7 +150,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             }
 
             var knowledgeChars = run.KnowledgeReferences.Sum(x => x.Content.Length);
-            if ((editable?.Html.Length ?? 0) + knowledgeChars > MaxModelInputChars)
+            var executorInputHtml = NormalizeExecutorInput(run, editable?.Html);
+            if ((executorInputHtml?.Length ?? 0) + knowledgeChars > MaxModelInputChars)
                 throw new InvalidOperationException("页面与知识正文过长，首版最多支持约 24 万字符，请减少引用或精简内容");
 
             await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 18,
@@ -166,7 +167,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                                knowledgeSnapshots,
                                executor,
                                run,
-                               editable?.Html,
+                               executorInputHtml,
                                executionCts.Token))
             {
                 executionCts.Token.ThrowIfCancellationRequested();
@@ -980,13 +981,33 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string rawHtml,
         IReadOnlyList<DesignWorkspaceFile>? verifiedFiles)
     {
-        var hardened = verifiedFiles == null
-            ? HostedSiteRevisionRules.HardenGeneratedHtml(rawHtml)
-            : HostedSiteRevisionRules.HardenGeneratedHtml(
-                HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(rawHtml));
+        var hardened = HostedSiteRevisionRules.HardenGeneratedHtml(
+            NormalizeTrustedSystemCspEnvelope(rawHtml));
         if (verifiedFiles != null)
             _ = BuildVerifiedHostedSiteFiles(verifiedFiles, hardened);
         return hardened;
+    }
+
+    internal static string? NormalizeExecutorInput(DesignArtifactRun run, string? currentHtml)
+    {
+        if (string.IsNullOrEmpty(currentHtml)
+            || run.Operation != DesignArtifactOperations.Edit
+            || run.Runtime != DesignArtifactRuntimes.MapGateway)
+        {
+            return currentHtml;
+        }
+
+        return NormalizeTrustedSystemCspEnvelope(currentHtml);
+    }
+
+    internal static string NormalizeTrustedSystemCspEnvelope(string html)
+    {
+        var stripped = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(html);
+        if (string.Equals(stripped, html, StringComparison.Ordinal)) return html;
+
+        // 输入与输出共用此边界，避免相邻的重复系统包装被两个阶段各剥离一次。
+        var strippedAgain = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(stripped);
+        return string.Equals(strippedAgain, stripped, StringComparison.Ordinal) ? stripped : html;
     }
 
     internal static async Task<bool> CompleteRunOrCompensateArtifactAsync(
