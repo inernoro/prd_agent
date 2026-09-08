@@ -61,6 +61,26 @@ describe('workload-cgroup 托管容器归属', () => {
     expect(s).toMatchObject({ enabled: true, parent: DEFAULT_WORKLOAD_SLICE, weightManaged: true });
   });
 
+  /**
+   * Codex 十二轮 P1：`--cgroup-parent` 是建容器时的参数，升级前就在跑的容器
+   * （尤其长命的共享基础设施）不会自己迁进来。哪怕权重真被接管，覆盖面也不是全量，
+   * 状态必须说清楚，否则又是一次谎报。
+   */
+  it('无论哪种归属，都声明覆盖面只到「此后新建的容器」', () => {
+    for (const s of [
+      planWorkloadCgroup(DEFAULT_WORKLOAD_SLICE, 'systemd'),
+      planWorkloadCgroup(DEFAULT_WORKLOAD_SLICE, 'systemd', { controlPlanePrioritized: false }),
+      planWorkloadCgroup(DEFAULT_WORKLOAD_SLICE, 'cgroupfs'),
+      planWorkloadCgroup(DEFAULT_WORKLOAD_SLICE, 'unknown'),
+      planWorkloadCgroup(null, 'systemd'),
+      planWorkloadCgroup('bad name', 'systemd'),
+    ]) {
+      expect(s.coverage).toBe('new-containers-only');
+    }
+    // 权重真被接管那条也要在 reason 里点明，别让读的人以为是全量
+    expect(planWorkloadCgroup(DEFAULT_WORKLOAD_SLICE, 'systemd').reason).toContain('新建');
+  });
+
   it('systemd driver 但值不是 .slice → 不追加（docker 会拒绝非 slice 名）', () => {
     const s = planWorkloadCgroup('/cds-workloads', 'systemd');
     expect(s.enabled).toBe(false);

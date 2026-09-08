@@ -33,6 +33,14 @@ export type DockerCgroupDriver = 'systemd' | 'cgroupfs' | 'unknown';
 export interface WorkloadCgroupStatus {
   /** 是否会给托管容器追加 --cgroup-parent */
   enabled: boolean;
+  /**
+   * 归组只对**此后新建**的容器生效：`--cgroup-parent` 是 docker create/run 时的参数，
+   * 升级前就在跑的容器（尤其长命的共享基础设施）不会自己迁进来，要等下次重建。
+   * 所以哪怕 weightManaged 为真，覆盖面也不是全量——不说清楚就是又一次谎报
+   * （Codex PR #1516 十二轮 P1）。真要全量得巡检每个容器的实际归属再逐个重建，
+   * 那是运维动作，不在本批范围。
+   */
+  coverage: 'new-containers-only';
   /** 实际传给 docker 的 --cgroup-parent 值；未启用为 null */
   parent: string | null;
   driver: DockerCgroupDriver;
@@ -46,6 +54,7 @@ const UNRESOLVED: WorkloadCgroupStatus = {
   parent: null,
   driver: 'unknown',
   weightManaged: false,
+  coverage: 'new-containers-only',
   reason: '尚未探测 docker cgroup driver',
 };
 
@@ -106,21 +115,21 @@ export function planWorkloadCgroup(
   opts: { previewInstance?: boolean; controlPlanePrioritized?: boolean } = {},
 ): WorkloadCgroupStatus {
   if (opts.previewInstance) {
-    return { enabled: false, parent: null, driver, weightManaged: false, reason: '预览实例不接管宿主 cgroup' };
+    return { enabled: false, parent: null, driver, weightManaged: false, coverage: 'new-containers-only', reason: '预览实例不接管宿主 cgroup' };
   }
   if (!configured) {
-    return { enabled: false, parent: null, driver, weightManaged: false, reason: 'CDS_WORKLOAD_CGROUP_PARENT 已关闭' };
+    return { enabled: false, parent: null, driver, weightManaged: false, coverage: 'new-containers-only', reason: 'CDS_WORKLOAD_CGROUP_PARENT 已关闭' };
   }
   if (!CGROUP_PARENT_PATTERN.test(configured)) {
     return {
-      enabled: false, parent: null, driver, weightManaged: false,
+      enabled: false, parent: null, driver, weightManaged: false, coverage: 'new-containers-only',
       reason: `CDS_WORKLOAD_CGROUP_PARENT「${configured}」含非法字符（只允许字母数字与 . _ - /），已跳过`,
     };
   }
   if (driver === 'systemd') {
     if (!configured.endsWith('.slice')) {
       return {
-        enabled: false, parent: null, driver, weightManaged: false,
+        enabled: false, parent: null, driver, weightManaged: false, coverage: 'new-containers-only',
         reason: `systemd cgroup driver 要求 --cgroup-parent 是 .slice 名，当前值「${configured}」不合法，已跳过`,
       };
     }
@@ -131,11 +140,11 @@ export function planWorkloadCgroup(
     // 给该宿主装上单元或手动设权重后即刻生效），但状态如实说没保护。
     if (opts.controlPlanePrioritized === false) {
       return {
-        enabled: true, parent: configured, driver, weightManaged: false,
+        enabled: true, parent: configured, driver, weightManaged: false, coverage: 'new-containers-only',
         reason: `托管容器已挂到 ${configured}，但本进程不在控制面 systemd 单元（${CONTROL_PLANE_UNITS.join(' / ')}）下，拿不到 CPUWeight/IOWeight 提权：容器已归组，控制面未受保护`,
       };
     }
-    return { enabled: true, parent: configured, driver, weightManaged: true, reason: `托管容器挂到 ${configured}（systemd 接管权重）` };
+    return { enabled: true, parent: configured, driver, weightManaged: true, coverage: 'new-containers-only', reason: `托管容器挂到 ${configured}（systemd 接管权重）；仅对此后新建的容器生效，升级前就在跑的容器要等下次重建才进组` };
   }
   if (driver === 'cgroupfs') {
     // cgroupfs 只认路径；把 slice 名折成一段路径，至少把容器归到一起，方便运维手动设权重。
@@ -143,11 +152,11 @@ export function planWorkloadCgroup(
       ? `/${configured.slice(0, -'.slice'.length).replace(/^system-/, '')}`
       : (configured.startsWith('/') ? configured : `/${configured}`);
     return {
-      enabled: true, parent: pathName, driver, weightManaged: false,
+      enabled: true, parent: pathName, driver, weightManaged: false, coverage: 'new-containers-only',
       reason: `docker 用 cgroupfs driver，容器归到 ${pathName} 但权重需运维手动设置（建议切 systemd driver）`,
     };
   }
-  return { enabled: false, parent: null, driver, weightManaged: false, reason: '无法识别 docker cgroup driver，未追加 --cgroup-parent' };
+  return { enabled: false, parent: null, driver, weightManaged: false, coverage: 'new-containers-only', reason: '无法识别 docker cgroup driver，未追加 --cgroup-parent' };
 }
 
 /** 探测 docker cgroup driver 并固化本进程的归属决策。失败一律安全退化为不追加。 */
