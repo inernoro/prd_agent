@@ -707,6 +707,20 @@ describe('Branch Routes', () => {
       expect(stateService.getBuildProfile('worker')!.managedBuild).toBeDefined();
     });
 
+    it('带空白的模式名按将要落盘的原值判：分支覆盖与通用 PUT 写 " express " 都 409，精确值放行（Codex 第十轮 P1）', async () => {
+      seedGateProject(true);
+      const padded = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: ' express ' }, { 'X-Test-Key': 'A' });
+      expect(padded.status).toBe(409);
+      expect((padded.body as any).error).toBe('agent_prebuilt_only');
+      expect(stateService.getBranch('b1')!.profileOverrides?.api).toBeUndefined();
+      const exact = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'express' }, { 'X-Test-Key': 'A' });
+      expect(exact.status).toBe(200);
+      expect(stateService.getBranch('b1')!.profileOverrides?.api?.activeDeployMode).toBe('express');
+      const paddedProfile = await request(server, 'PUT', '/api/build-profiles/api', { activeDeployMode: ' express ' }, { 'X-Test-Key': 'A' });
+      expect(paddedProfile.status).toBe(409);
+      expect(stateService.getBuildProfile('api')!.activeDeployMode).toBe('static');
+    });
+
     it('bulk-set-modes 批量改写模式定义在门禁下拒绝机器凭据，真人照常（Codex 第二轮 P1）', async () => {
       seedGateProject(true);
       const body = { profileIds: ['api'], strategy: 'replace', modes: { dev: { label: '开发', command: 'pnpm dev' } } };

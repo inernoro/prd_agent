@@ -15534,8 +15534,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const overrideProject = stateService.getProject(entry.projectId || 'default');
       if (overrideProject && isAgentPrebuiltOnly(overrideProject) && isAgentGatedRequest(req)) {
         const hasModeField = Object.prototype.hasOwnProperty.call(overrideBody, 'activeDeployMode');
+        // 判的必须是**将要落盘的原值**，不能先 trim：路由按原值持久化、运行时按原值精确查模式，
+        // `" express "` 这种值判成 express 放行后存下来查不到、落回源码基线（Codex 第十轮 P1）。
         const pendingMode = hasModeField
-          ? (typeof overrideBody.activeDeployMode === 'string' ? overrideBody.activeDeployMode.trim() || undefined : undefined)
+          ? (typeof overrideBody.activeDeployMode === 'string' && overrideBody.activeDeployMode !== '' ? overrideBody.activeDeployMode : undefined)
           : (profile.activeDeployMode || undefined);
         const violations = findNonPrebuiltProfiles([profile], entry, { profileId, modeId: pendingMode });
         if (violations.length > 0) {
@@ -17840,8 +17842,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
             return;
           }
           if ('activeDeployMode' in patch) {
-            const nextMode = typeof patch.activeDeployMode === 'string' && patch.activeDeployMode.trim()
-              ? patch.activeDeployMode.trim()
+            // 判将要落盘的原值，不 trim（同分支覆盖处的理由，Codex 第十轮 P1）
+            const nextMode = typeof patch.activeDeployMode === 'string' && patch.activeDeployMode !== ''
+              ? patch.activeDeployMode
               : undefined;
             if (!isPrebuiltMode(existing, nextMode)) {
               const modeLabel = nextMode ? (existing.deployModes?.[nextMode]?.label || nextMode) : '源码构建（无部署模式）';
