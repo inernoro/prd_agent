@@ -247,7 +247,7 @@ function shouldAutoReloadAfterChunkFailure(): boolean {
  *   /release-center         Release targets, runs, logs and rollback
  *   /release-console        发布控制台三栏版：左项目环境 / 中发布实况 / 右历史与 Agent
  *   /reports                CDS self-hosted acceptance reports (HTML / Markdown)
- *   /status                 自建存活监控状态页（探测 / 可用率柱条 / 故障时间线）
+ *   /status                 监控中心（存活探测 / 可用率与响应曲线 / 故障时间线 / 自定义监控）
  *   /task-schedule          Project scheduled jobs
  *   /settings/:projectId    Project settings
  */

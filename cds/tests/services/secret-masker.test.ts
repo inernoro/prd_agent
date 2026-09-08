@@ -432,6 +432,40 @@ describe('secret-masker.looksLikeSecretBearingValue', () => {
   });
 });
 
+// #1448: `printenv` inside container-exec leaked a full RSA private key — only the
+// `KEY=-----BEGIN` line got masked, the ~27 body lines carried no `KEY=` prefix.
+describe('secret-masker.maskSecrets PEM block', () => {
+  const body = ['MIIEpAIBAAKCAQEA0Z3VS5JJcds', 'wJ6ZbN3f1YkYqVhZ2u9xL0vTfq', 'QIDAQAB'].join('\n');
+  const pem = `-----BEGIN RSA PRIVATE KEY-----\n${body}\n-----END RSA PRIVATE KEY-----`;
+
+  it('masks every line of a KEY=<pem> env dump, not just the BEGIN line', () => {
+    const out = maskSecrets(`PATH=/usr/bin\nCDS_GITHUB_APP_PRIVATE_KEY=${pem}\nNODE_ENV=production`);
+    expect(out).not.toContain('MIIEpAIBAAKCAQEA0Z3VS5JJcds');
+    expect(out).not.toContain('wJ6ZbN3f1YkYqVhZ2u9xL0vTfq');
+    expect(out).not.toContain('BEGIN RSA PRIVATE KEY');
+    expect(out).toContain('CDS_GITHUB_APP_PRIVATE_KEY=***[masked]***');
+    expect(out).toContain('PATH=/usr/bin');
+    expect(out).toContain('NODE_ENV=production');
+  });
+
+  it('masks a bare PEM block (no KEY= prefix, e.g. `cat key.pem`) including OPENSSH / EC labels', () => {
+    for (const label of ['RSA ', 'OPENSSH ', 'EC ', 'ENCRYPTED ', '']) {
+      const out = maskSecrets(`before\n-----BEGIN ${label}PRIVATE KEY-----\n${body}\n-----END ${label}PRIVATE KEY-----\nafter`);
+      expect(out).toBe('before\n***[masked]***\nafter');
+    }
+  });
+
+  it('masks an unterminated block through to end of text (truncated output)', () => {
+    const out = maskSecrets(`ok\n-----BEGIN RSA PRIVATE KEY-----\n${body}`);
+    expect(out).toBe('ok\n***[masked]***');
+  });
+
+  it('does not touch a public certificate block', () => {
+    const cert = '-----BEGIN CERTIFICATE-----\nMIIBszCCAV0\n-----END CERTIFICATE-----';
+    expect(maskSecrets(cert)).toBe(cert);
+  });
+});
+
 describe('secret-masker.maskBranchExtraProfilesEnv', () => {
   it('masks extraProfiles[].env and leaves other fields + branches without extras untouched', () => {
     const branch = {

@@ -766,6 +766,57 @@ describe('Branch Routes', () => {
       });
     });
 
+    it('隐藏后重新启用不丢 primary：分支档空名占位不参与 primary 继承判定 (issue #1463)', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      stateService.updateBuildProfile('gateway', {
+        subdomain: 'llmgw',
+        webEntry: { name: '网关控制台', path: '/', primary: true },
+      });
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
+
+      // 第一步：分支档隐藏这个入口——存下的是空名占位，不带 primary
+      const hideRes = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'branch',
+        entries: [{ serviceId: 'gateway', name: '', subdomain: 'llmgw', path: '/' }],
+      }, { 'X-Test-Key': 'A' });
+      expect(hideRes.status).toBe(200);
+      expect(stateService.getBranchProfileOverride('branch-a', 'gateway')!.webEntry).toEqual({ name: '', path: '/' });
+
+      // 第二步：重新启用并改名——primary 必须继承自项目档 baseline，不能被第一步的隐藏占位冲掉
+      const reEnableRes = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'branch',
+        entries: [{ serviceId: 'gateway', name: '网关控制台（重新启用）', subdomain: 'llmgw', path: '/' }],
+      }, { 'X-Test-Key': 'A' });
+      expect(reEnableRes.status).toBe(200);
+      expect(stateService.getBranchProfileOverride('branch-a', 'gateway')!.webEntry).toEqual({
+        name: '网关控制台（重新启用）', path: '/', primary: true,
+      });
+    });
+
+    it('修复上线前已损坏的分支覆盖（有名字、没 primary）在下一次保存时从项目档修回 primary (issue #1463, Codex P1)', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      stateService.updateBuildProfile('gateway', {
+        subdomain: 'llmgw',
+        webEntry: { name: '网关控制台', path: '/', primary: true },
+      });
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
+      // 模拟修复前「隐藏 → 重新启用」留下的坏数据：覆盖有名字、但 primary 已被冲掉
+      stateService.setBranchProfileOverride('branch-a', 'gateway', { webEntry: { name: '网关控制台（旧覆盖）', path: '/' } });
+      expect(stateService.getBranchProfileOverride('branch-a', 'gateway')!.webEntry).toEqual({ name: '网关控制台（旧覆盖）', path: '/' });
+
+      // 一次普通的分支档改名保存，primary 必须从项目档修回来，而不是继续从坏覆盖继承「没有」
+      const res = await request(server, 'PUT', '/api/branches/branch-a/web-entry-config', {
+        scope: 'branch',
+        entries: [{ serviceId: 'gateway', name: '网关控制台（修回）', subdomain: 'llmgw', path: '/' }],
+      }, { 'X-Test-Key': 'A' });
+      expect(res.status).toBe(200);
+      expect(stateService.getBranchProfileOverride('branch-a', 'gateway')!.webEntry).toEqual({
+        name: '网关控制台（修回）', path: '/', primary: true,
+      });
+    });
+
     it('拒绝撞上本分支自己的子域别名（发布器会因此静默跳过这条服务路由）', async () => {
       seedProject('proj-a', 'a');
       seedProfiles('proj-a');
@@ -1651,6 +1702,69 @@ describe('Branch Routes', () => {
         // Override-supplied secret must be redacted (was leaked when masking read the unmerged profile).
         expect((res.body as any).stdout).not.toContain('supersecretvalue123');
         expect((res.body as any).stdout).toContain('***');
+      } finally {
+        mock.exec = originalExec;
+      }
+    });
+
+    it('container-exec single-quotes the command so the CDS host shell never expands $VAR / $(...) (#1448)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      stateService.getBranch('b1')!.services['demo-extra'] = {
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+      };
+      stateService.save();
+
+      const command = `echo "$(printenv)" && echo $CDS_JWT_SECRET && echo 'it'"'"'s'`;
+      const res = await request(server, 'POST', '/api/branches/b1/container-exec', { profileId: 'demo-extra', command });
+      expect(res.status).toBe(200);
+
+      const sent = mock.commands.find((c) => c.includes('docker exec cds-b1-demo-extra'));
+      expect(sent).toBeDefined();
+      // Single-quoted word: `$` is inert on the host, and embedded single quotes are re-escaped.
+      expect(sent).toBe(`docker exec cds-b1-demo-extra sh -c '${command.replace(/'/g, `'\\''`)}'`);
+      expect(sent).not.toContain(`sh -c "`);
+    });
+
+    it('container-exec masks a multi-line PEM private key dumped by printenv (#1448)', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      stateService.getBranch('b1')!.services['demo-extra'] = {
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+      };
+      stateService.save();
+
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker exec cds-b1-demo-extra')) {
+          return {
+            stdout: [
+              'HOME=/root',
+              'APP_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----',
+              'MIIEpAIBAAKCAQEA0Z3VS5JJcds',
+              'wJ6ZbN3f1YkYqVhZ2u9xL0vTfq',
+              '-----END RSA PRIVATE KEY-----',
+              'NODE_ENV=production',
+            ].join('\n'),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return originalExec(command, options);
+      };
+      try {
+        const res = await request(server, 'POST', '/api/branches/b1/container-exec', { profileId: 'demo-extra', command: 'printenv' });
+        expect(res.status).toBe(200);
+        const stdout = (res.body as any).stdout as string;
+        expect(stdout).not.toContain('MIIEpAIBAAKCAQEA0Z3VS5JJcds');
+        expect(stdout).not.toContain('wJ6ZbN3f1YkYqVhZ2u9xL0vTfq');
+        expect(stdout).toContain('APP_PRIVATE_KEY=***[masked]***');
+        expect(stdout).toContain('HOME=/root');
+        expect(stdout).toContain('NODE_ENV=production');
       } finally {
         mock.exec = originalExec;
       }
