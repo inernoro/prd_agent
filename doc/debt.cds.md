@@ -1056,10 +1056,11 @@ mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按�
 | G1 | 中 | 2026-09-08 | `POST /api/import-and-init` 接受调用方自带的构建配置并直接起服务，不经过分支部署入口的门禁 | 开了门禁的项目下，机器凭据带源码模式 profile 调该端点 | open | 修法：起服务前对导入的 profile 跑 `findNonPrebuiltProfiles`，机器凭据下 409 并摘掉 `sourceFallbackProfile` |
 | G2 | 中 | 2026-09-08 | `POST /branches/:id/copy-config-from/:sourceId?redeploy=1` 把来源分支（可能是真人的 dev 分支）的覆盖原样拷入，再以内部自调（不带机器凭据）重部署 | 机器凭据从源码模式分支拷配置并要求重部署 | open | 修法：拷贝落盘前对结果跑 `findNonPrebuiltProfiles`，机器凭据下 409；或重部署时透传原调用方身份 |
 | G3 | 低 | 2026-09-08 | `POST /api/build-profiles` 与 `PUT /branches/:id/extra-services` 允许机器凭据新建标为 `prebuiltImage: true` 的配置 | 机器凭据自建「假极速版」配置后部署 | open | 已核实 prebuilt 配置不挂载 worktree（`buildProfileVolumeFlags` 的 `skipSrcMount`），无法编译仓库源码，不违反门禁不变量；若要限制，等于拦掉面向 Agent 的分支额外服务功能，属新策略，需用户拍板 |
+| G4 | 中 | 2026-09-08 | `PUT /branches/:id/extra-services?redeploy=1` 保存源码模式的额外服务后以内部自调重部署，内部自调不带机器凭据、不受门禁 | 机器凭据带 `redeploy=1` 写入不带 `prebuiltImage` 的额外服务 | open | 修法与 G2 同：保存前对结果跑 `findNonPrebuiltProfiles`，机器凭据下 409；或重部署时透传原调用方身份 |
 
-**为什么不顺手补**：G1、G2 各是一条独立的部署入口，与该 PR 已接的十余条同属「入口接线」，但已触发熔断；G3 经核实不构成宿主源码编译，限制它会牺牲既有功能。
+**为什么不顺手补**：G1、G2、G4 各是一条独立的部署入口，与该 PR 已接的十余条同属「入口接线」，但已触发熔断；G3 经核实不构成宿主源码编译，限制它会牺牲既有功能。
 
-**做完算数的判据**：开了门禁的项目下，机器凭据走 G1 / G2 两条路径部署源码模式服务均得到 409 `agent_prebuilt_only`，且真人与内部派发行为不变；分支路由测试的「Agent 极速版门禁」组各加一条差分用例。
+**做完算数的判据**：开了门禁的项目下，机器凭据走 G1 / G2 / G4 三条路径部署源码模式服务均得到 409 `agent_prebuilt_only`，且真人与内部派发行为不变；分支路由测试的「Agent 极速版门禁」组各加一条差分用例。
 
 **绕行**：门禁的定位是防「忘了」不是防「故意」；审计日志按 actor 可追溯谁用了这两条路径。
 

@@ -134,6 +134,13 @@ describe('agent-prebuilt-gate 判据', () => {
     expect(findNonPrebuiltProfiles([p], branch(), { profileId: 'api', modeId: undefined })).toHaveLength(1);
   });
 
+  it('带 managedBuild 的 profile 不算极速版：那是宿主上的源码构建（Codex 第五轮 P1）', () => {
+    const managed = profile({ prebuiltImage: true, managedBuild: { install: 'pnpm i', build: 'pnpm build' } as never });
+    expect(isPrebuiltMode(managed, 'express')).toBe(false);
+    expect(isPrebuiltMode(managed, undefined)).toBe(false);
+    expect(listPrebuiltModeIds(managed)).toEqual([]);
+  });
+
   it('listPrebuiltModeIds 与 isPrebuiltMode 同判据：镜像站点上未声明 prebuilt 的模式也算可切', () => {
     const imageSite = profile({ prebuiltImage: true, deployModes: { source: { label: '源码', prebuilt: false, command: 'pnpm build' }, plain: { label: '沿用' } } });
     expect(listPrebuiltModeIds(imageSite)).toEqual(['plain']);

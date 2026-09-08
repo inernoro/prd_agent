@@ -62,6 +62,9 @@ export function isAgentGatedRequest(req: unknown): boolean {
  * 显式 `prebuilt: false` 的源码模式仍算源码；没选模式（基线）只看 prebuiltImage。
  */
 export function isPrebuiltMode(profile: BuildProfile, modeId: string | undefined): boolean {
+  // managedBuild 是宿主上的源码构建（runService 先于 prebuilt 路径调 buildManagedArtifact，
+  // 拷 worktree 跑 install / build），带着它的 profile 不管标了什么都不算极速版（Codex 第五轮 P1）。
+  if (profile.managedBuild) return false;
   const mode = modeId ? profile.deployModes?.[modeId] : undefined;
   if (mode && mode.prebuilt !== undefined) return mode.prebuilt === true;
   return profile.prebuiltImage === true;

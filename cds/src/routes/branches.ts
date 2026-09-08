@@ -15498,18 +15498,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
       return;
     }
-    // Agent 极速版门禁：Agent 不得把本分支该服务写成非 prebuilt 模式（空串 = 回退基线，
-    // 基线不是极速版同样拒绝）。只在请求体带 activeDeployMode 时判，其它字段的覆盖不受影响。
+    // Agent 极速版门禁：本 PUT 是**整体替换**（setBranchProfileOverride），所以机器凭据的每一次写入
+    // 都按「替换后的生效模式」判，不只在带 activeDeployMode 时判——只改 containerPort 的请求同样会把
+    // 原有的 express 覆盖抹掉、落回源码基线（Codex 第五轮 P1）。
+    //   - 带 activeDeployMode：显式空串会被原样持久化、解析时 `?? ` 让它胜出 = 不选模式 = 源码基线；
+    //   - 不带：替换后覆盖里没有模式，回到 profile 基线 activeDeployMode。
     {
       const overrideBody = (req.body ?? {}) as Record<string, unknown>;
       const overrideProject = stateService.getProject(entry.projectId || 'default');
-      if (
-        typeof overrideBody.activeDeployMode === 'string'
-        && overrideProject && isAgentPrebuiltOnly(overrideProject) && isAgentGatedRequest(req)
-      ) {
-        // 显式空串会被 applyProfileOverride 原样持久化、resolveActiveDeployModeId 里 `?? ` 让它胜出，
-        // 等于「不选模式 = 源码基线」，不能拿 profile 基线模式顶替去判（Codex 第四轮 P1）。
-        const pendingMode = overrideBody.activeDeployMode.trim() || undefined;
+      if (overrideProject && isAgentPrebuiltOnly(overrideProject) && isAgentGatedRequest(req)) {
+        const hasModeField = Object.prototype.hasOwnProperty.call(overrideBody, 'activeDeployMode');
+        const pendingMode = hasModeField
+          ? (typeof overrideBody.activeDeployMode === 'string' ? overrideBody.activeDeployMode.trim() || undefined : undefined)
+          : (profile.activeDeployMode || undefined);
         const violations = findNonPrebuiltProfiles([profile], entry, { profileId, modeId: pendingMode });
         if (violations.length > 0) {
           res.status(409).json(buildPrebuiltGateRejection(overrideProject, [profile], violations, {
@@ -17998,28 +17999,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Agent 极速版门禁：本端点整体替换 / 合并 deployModes（模式定义），机器凭据在开了门禁的
-      // 项目里一律不得动（改了就能抹掉 prebuilt 标记，Codex 第二轮 P1）。只要有一个受影响的
-      // profile 属于开门禁的项目就整体拒绝，不做半截写入。
-      if (isAgentGatedRequest(req)) {
-        const gatedProjectIds = new Set(
-          stateService.getBuildProfiles()
-            .filter((p) => (Array.isArray(profileIds) && profileIds.length > 0) ? profileIds.includes(p.id) : true)
-            .map((p) => p.projectId || 'default')
-            .filter((pid) => isAgentPrebuiltOnly(stateService.getProject(pid))),
-        );
-        if (gatedProjectIds.size > 0) {
-          res.status(409).json({
-            error: 'agent_prebuilt_only',
-            message: `项目 ${[...gatedProjectIds].join('、')} 要求 Agent 只使用极速版（CI 预构建）部署：批量改写 deployModes（模式定义）会改变什么算极速版，Agent 不得执行，请由真人在项目设置页调整。`,
-            projectId: [...gatedProjectIds][0],
-            violations: [],
-            hint: '要切换本分支的部署模式请用 cdscli branch set-mode <branchId> <profileId> <极速版模式>。',
-          });
-          return;
-        }
-      }
-
       const matchPattern: ((img: string) => boolean) = (() => {
         if (Array.isArray(profileIds)) return () => false;
         if (filter === 'all') return () => true;
@@ -18042,6 +18021,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: '没有匹配的 profile，请检查 filter / profileIds' });
         return;
       }
+
+      // Agent 极速版门禁：本端点整体替换 / 合并 deployModes（模式定义），机器凭据在开了门禁的
+      // 项目里一律不得动（改了就能抹掉 prebuilt 标记，Codex 第二轮 P1）。按**实际命中的 targets**
+      // 判（Codex 第五轮 P2：按全量 profile 判会让只改未门禁项目的批量请求被无关项目拦下）。
+      if (isAgentGatedRequest(req)) {
+        const gatedProjectIds = new Set(
+          targets
+            .map((p) => p.projectId || 'default')
+            .filter((pid) => isAgentPrebuiltOnly(stateService.getProject(pid))),
+        );
+        if (gatedProjectIds.size > 0) {
+          res.status(409).json({
+            error: 'agent_prebuilt_only',
+            message: `项目 ${[...gatedProjectIds].join('、')} 要求 Agent 只使用极速版（CI 预构建）部署：批量改写 deployModes（模式定义）会改变什么算极速版，Agent 不得执行，请由真人在项目设置页调整。`,
+            projectId: [...gatedProjectIds][0],
+            violations: [],
+            hint: '要切换本分支的部署模式请用 cdscli branch set-mode <branchId> <profileId> <极速版模式>。',
+          });
+          return;
+        }
+      }
+
 
       // 自动快照（这是批量破坏性写入）
       const snapshot = stateService.createConfigSnapshot({

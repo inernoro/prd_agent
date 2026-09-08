@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.3"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -2957,12 +2957,19 @@ def _prebuilt_mode_ids(p: dict[str, Any]) -> list[str]:
     （compose-parser 两种都收），这里同样两种都认。
     """
     modes = p.get("deployModes") or {}
+    inherited = p.get("prebuiltImage") is True
     out: list[str] = []
     for mode_id, mode in modes.items():
         if not isinstance(mode, dict):
             continue
         prebuilt = mode.get("prebuilt")
-        if prebuilt is True or (isinstance(prebuilt, str) and prebuilt.lower() == "true"):
+        # 与服务端 isPrebuiltMode 同口径：mode.prebuilt ?? profile.prebuiltImage——镜像站点上
+        # 未声明 prebuilt 的模式继承 prebuiltImage，也是可切的极速版（Codex PR #1513 第五轮 P2）。
+        if prebuilt is None:
+            is_prebuilt = inherited
+        else:
+            is_prebuilt = prebuilt is True or (isinstance(prebuilt, str) and prebuilt.lower() == "true")
+        if is_prebuilt:
             out.append(str(mode_id))
     return out
 

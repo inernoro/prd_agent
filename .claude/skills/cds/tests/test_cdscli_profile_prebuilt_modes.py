@@ -56,3 +56,13 @@ def test_profile_summary_marks_prebuilt_image_site():
     summary = cdscli._profile_summary(_profile(deployModes={}, prebuiltImage=True))
     assert summary["prebuiltModes"] == []
     assert summary["prebuiltImage"] is True
+
+
+def test_prebuilt_modes_inherit_profile_prebuilt_image_when_mode_omits_flag():
+    # 与服务端同口径：mode.prebuilt ?? profile.prebuiltImage。镜像站点上未声明的模式可切，显式 False 的不可切。
+    summary = cdscli._profile_summary(_profile(prebuiltImage=True, deployModes={
+        "source": {"label": "源码", "prebuilt": False},
+        "plain": {"label": "沿用"},
+    }))
+    assert summary["prebuiltModes"] == ["plain"]
+    assert summary["prebuiltImage"] is True

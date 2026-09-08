@@ -634,6 +634,13 @@ describe('Branch Routes', () => {
       const human = await request(server, 'POST', '/api/build-profiles/bulk-set-modes', body);
       expect(human.status).toBe(200);
       expect(stateService.getBuildProfile('api')!.deployModes!.express).toBeUndefined();
+      // 只命中未门禁项目的批量请求不被无关的门禁项目拦下（Codex 第五轮 P2）
+      const now2 = new Date().toISOString();
+      stateService.addProject({ id: 'proj-free', slug: 'free', name: 'Free', kind: 'git', createdAt: now2, updatedAt: now2 });
+      stateService.addBuildProfile({ id: 'py', projectId: 'proj-free', name: 'Py', dockerImage: 'python:3.12', command: 'python app.py', workDir: '.', containerPort: 8000 });
+      const filtered = await request(server, 'POST', '/api/build-profiles/bulk-set-modes', { filter: 'python', strategy: 'merge', modes: { dev: { label: '开发', command: 'python app.py' } } }, { 'X-Test-Key': 'A' });
+      expect(filtered.status).toBe(200);
+      expect(stateService.getBuildProfile('py')!.deployModes!.dev).toBeDefined();
     });
 
     it('开关关闭（缺省）时机器凭据部署源码模式分支不被门禁拦', async () => {
@@ -660,9 +667,14 @@ describe('Branch Routes', () => {
       expect(removed.status).toBe(409);
       expect(stateService.getBranchProfileOverride('b1', 'api')?.activeDeployMode).toBe('express');
 
-      // 只改别的覆盖字段（不带 activeDeployMode）不受门禁影响
+      // 只改别的覆盖字段（不带 activeDeployMode）：PUT 是整体替换，会把 express 覆盖抹掉、落回 static 基线，拒绝（Codex 第五轮 P1）
       const port = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { containerPort: 8080 }, { 'X-Test-Key': 'A' });
-      expect(port.status).toBe(200);
+      expect(port.status).toBe(409);
+      expect(stateService.getBranchProfileOverride('b1', 'api')?.activeDeployMode).toBe('express');
+      // 基线本身是 express 时，不带模式的部分写入落回基线仍是极速版，放行
+      stateService.updateBuildProfile('api', { activeDeployMode: 'express' });
+      const portOk = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { containerPort: 8080 }, { 'X-Test-Key': 'A' });
+      expect(portOk.status).toBe(200);
     });
 
     it('极速版分支：机器凭据部署通过门禁（不再是 409）', async () => {
