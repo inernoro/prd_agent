@@ -30,6 +30,12 @@
 
 import { Router, type Request } from 'express';
 import { randomUUID } from 'node:crypto';
+import {
+  WEBHOOK_SUPPORTED_EVENTS,
+  WebhookNoiseCounter,
+  classifyWebhookNoise,
+  type WebhookNoiseStats,
+} from '../services/github-webhook-noise.js';
 import type { StateService } from '../services/state.js';
 import type { GithubWebhookDelivery, GithubAppWhitelistSettings } from '../types.js';
 import type { WorktreeService } from '../services/worktree.js';
@@ -109,21 +115,9 @@ type RawBodyRequest = Request & { rawBody?: Buffer };
  *
  * Kept in sync with the switch in GitHubWebhookDispatcher.handle().
  */
-const SUPPORTED_EVENTS: ReadonlySet<string> = new Set([
-  'ping',
-  'push',
-  'installation',
-  'installation_repositories',
-  'check_run',
-  'pull_request',
-  'issue_comment',
-  'delete',
-  'repository',
-  'release',
-  // 2026-06-23 极速版（CI 预构建）：监听 GitHub Actions 构建完成,据此按 commit SHA
-  // 拉取预构建镜像部署（替代 CDS 本机编译）。
-  'workflow_run',
-]);
+// 事件清单与噪声判定的唯一定义在 services/github-webhook-noise.ts（2026-09-08 收敛），
+// 路由只引用，避免「清单一份、dispatcher 一份」各自漂移。
+const SUPPORTED_EVENTS = WEBHOOK_SUPPORTED_EVENTS;
 
 /**
  * Deploy dispatch dedup window. When a GitHub App is subscribed to
@@ -168,6 +162,16 @@ export function __resetWebhookDedupForTests(): void {
  * 用户最多看到角标稍微滞后一点)。
  */
 let cdsHostBranchCache: string | null = null;
+
+/**
+ * 噪声计数器（2026-09-08）：被廉价 ack 的投递只在内存计数，按需聚合上报。
+ * 路由创建时接上 serverEventLogStore；healthz / perf-health 通过
+ * getWebhookNoiseStats 读数。
+ */
+let activeNoiseCounter: WebhookNoiseCounter | null = null;
+export function getWebhookNoiseStats(): WebhookNoiseStats | null {
+  return activeNoiseCounter ? activeNoiseCounter.stats() : null;
+}
 async function getCdsHostBranch(
   shell: IShellExecutor,
   repoRoot: string,
@@ -220,6 +224,20 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     ? new CheckRunRunner({ stateService, githubApp, config })
     : undefined;
 
+  const noiseCounter = new WebhookNoiseCounter({
+    report: ({ suppressed, byEvent }) => {
+      serverEventLogStore?.record({
+        category: 'system',
+        severity: 'info',
+        source: 'github-webhook',
+        action: 'github.webhook.noise-suppressed',
+        message: `已廉价 ack ${suppressed} 条 CI 噪声投递（不落投递日志 / 不写事件 / 不记 HTTP 日志）`,
+        details: { suppressed, byEvent },
+      });
+    },
+  });
+  activeNoiseCounter = noiseCounter;
+
   // ── POST /api/github/webhook ───────────────────────────────────────
   router.post('/github/webhook', async (req: RawBodyRequest, res) => {
     // 2026-05-07 webhook 投递日志(用户反馈"需要看到每次 hook 详情"):
@@ -250,6 +268,8 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       selfStatusBroadcast?: boolean;
       payloadSnippet?: string;
       error?: string;
+      /** 廉价 ack：不落投递日志、不写服务器事件、不记 HTTP 日志，只进噪声计数器 */
+      cheapAck?: boolean;
     } = {
       signatureValid: false,
       dispatchAction: 'error',
@@ -257,6 +277,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       githubWhitelistDecision: 'not-evaluated',
     };
     res.on('finish', () => {
+      if (outcome.cheapAck) return;
       try {
         const delivery: GithubWebhookDelivery = {
           id: recordId,
@@ -358,6 +379,11 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     if (!SUPPORTED_EVENTS.has(eventName)) {
       outcome.dispatchAction = 'ignored';
       outcome.dispatchReason = `event '${eventName}' 不在 CDS 处理范围(只处理 push / pull_request / check_run / workflow_run / delete / issue_comment / release 等类),已 ack 不动作`;
+      // 2026-09-08：噪声只计数，不落任何一层日志（此前每条都 state 全量 save +
+      // 服务器事件 + 离机审计 + HTTP 日志，8678 条/12h 占 master 一成时间）。
+      outcome.cheapAck = true;
+      noiseCounter.note(eventName);
+      res.locals.cdsSkipHttpLog = true;
       res.setHeader('X-CDS-Suppress-Activity', '1');
       res.json({
         ok: true,
@@ -403,6 +429,26 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       const payloadStr = JSON.stringify(payload);
       outcome.payloadSnippet = payloadStr.length > 4096 ? payloadStr.slice(0, 4096) + '…[truncated]' : payloadStr;
     } catch { /* swallow — 抽字段失败不阻断 */ }
+
+    // 受支持的事件里也有大半是不触发动作的 action（check_run.created/completed、
+    // workflow_run.requested/in_progress …），与 dispatcher 的判定同源，同样廉价 ack。
+    const noiseVerdict = classifyWebhookNoise(eventName, payload);
+    if (noiseVerdict.noise) {
+      outcome.dispatchAction = 'ignored';
+      outcome.dispatchReason = noiseVerdict.reason || 'noise';
+      outcome.cheapAck = true;
+      noiseCounter.note(eventName, String((payload as { action?: unknown })?.action || ''));
+      res.locals.cdsSkipHttpLog = true;
+      res.setHeader('X-CDS-Suppress-Activity', '1');
+      res.json({
+        ok: true,
+        event: eventName,
+        delivery: deliveryId,
+        action: 'ignored-noise',
+        message: noiseVerdict.reason,
+      });
+      return;
+    }
 
     if (eventName !== 'ping') {
       const whitelistDecision = evaluateGitHubOwner(

@@ -13,7 +13,7 @@ import {
   resolveCommandTemplate,
 } from './services/compose-parser.js';
 import fs from 'node:fs';
-import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq } from './server.js';
+import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq, type ServerDeps } from './server.js';
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
@@ -86,6 +86,8 @@ import { createGracefulShutdownController } from './services/graceful-shutdown.j
 import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
 import { PreviewCanaryService, type PreviewCanaryTarget } from './services/preview-canary.js';
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
+import { resolveWorkloadCgroup } from './services/workload-cgroup.js';
+import { startEventLoopLagMonitor } from './services/event-loop-lag.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
@@ -2482,6 +2484,14 @@ const containerService = new ContainerService(shell, config, {
   // StateService 的网桥地址解析），否则连接串指向的地址上根本没有监听。
   getInfraPublishHosts: () => stateService.getInfraPublishHosts(),
 }, activeServerEventLogStore);
+
+// 2026-09-08 宿主过载复盘：托管容器挂低权重 slice。探测一次 docker cgroup driver，
+// 决定 docker run 要不要带 --cgroup-parent（systemd driver 才有权重效果）。
+// executor / 预览实例不接管宿主 cgroup。探测失败安全退化为不追加，只打日志。
+if (config.mode !== 'executor') {
+  const cg = await resolveWorkloadCgroup(shell);
+  console.log(`  [workload-cgroup] ${cg.enabled ? `启用 --cgroup-parent ${cg.parent}` : '未启用'}（driver=${cg.driver}，权重${cg.weightManaged ? '由 systemd 接管' : '未接管'}）：${cg.reason}`);
+}
 
 // 2026-06-23：项目级资源占用采样（CPU/内存/构建频次）。每 N 秒跑一次
 // docker stats 并按项目汇总，供「资源占用」面板揪出 CPU 大户 / 反复构建大户。
@@ -5272,8 +5282,12 @@ function stateStorageLabel(): string {
   return `state.json (${stateFile})`;
 }
 
+// 事件循环延迟采样（2026-09-08）：/healthz 的 pressure.eventLoop 数据源。
+startEventLoopLagMonitor();
+
 // ── Master server (dashboard + API on masterPort) ──
-const app = createServer({
+// serverDeps 保留引用：uptimeMonitor 在下面才构造，建好后回填给 /healthz 用。
+const serverDeps: ServerDeps = {
   getPublishedRoutes: () => forwarderRoutePublisher?.getPublishedRoutes() ?? [],
   stateService,
   worktreeService,
@@ -5293,7 +5307,9 @@ const app = createServer({
   httpLogStore: activeHttpLogStore,
   serverEventLogStore: activeServerEventLogStore,
   branchOperationCoordinator,
-});
+  offhostAudit: activeServerEventLogStore instanceof OffHostAuditLogSink ? activeServerEventLogStore : null,
+};
+const app = createServer(serverDeps);
 
 // ── Helper: kill process on port so CDS can bind ──
 // force=true → kill any process (used for masterPort which belongs exclusively to CDS)
@@ -5810,6 +5826,8 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     onAlert: (type, data) => { cdsEventsBus.publish(type, data); },
   });
   app.use('/api', createUptimeRouter({ monitor: uptimeMonitor }));
+  // 回填给 /healthz：探活循环停摆必须在健康端点上可见（2026-09-08）。
+  serverDeps.uptimeMonitor = uptimeMonitor;
   // 发布中心从这里读生产健康，不再自己打 healthcheckUrl。晚绑定是因为 createServer()
   // 在模块顶层就跑完了，而 uptimeMonitor 到这一行才存在——闭包捕获不到。
   // 没接上这一行不会报错，只会让发布中心的健康列恒为「存活监控未启用」：

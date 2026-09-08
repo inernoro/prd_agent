@@ -376,6 +376,33 @@ describe('GitHub webhook route', () => {
     expect(deployCalls).toHaveLength(0);
   });
 
+  // 2026-09-08 宿主过载复盘：噪声投递不再落投递日志——此前每条都 state 全量 save。
+  it('cheap-acks noise without recording a delivery: unsupported events and inert check_run/workflow_run actions', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
+    server = startServer();
+    const before = stateService.getGithubWebhookDeliveries(100).length;
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ['workflow_job', { action: 'completed', repository: { full_name: 'octocat/repo' } }, 'ignored-unsubscribed'],
+      ['check_suite', { action: 'completed', repository: { full_name: 'octocat/repo' } }, 'ignored-unsubscribed'],
+      ['check_run', { action: 'created', check_run: { external_id: 'x', head_sha: 'a'.repeat(40) }, repository: { full_name: 'octocat/repo' } }, 'ignored-noise'],
+      ['check_run', { action: 'completed', check_run: { external_id: 'x', head_sha: 'a'.repeat(40) }, repository: { full_name: 'octocat/repo' } }, 'ignored-noise'],
+      ['workflow_run', { action: 'in_progress', workflow_run: { id: 1 }, repository: { full_name: 'octocat/repo' } }, 'ignored-noise'],
+    ];
+    for (const [event, payload, expectedAction] of cases) {
+      const body = JSON.stringify(payload);
+      const res = await request(server, 'POST', '/api/github/webhook', body, {
+        'X-GitHub-Event': event,
+        'X-Hub-Signature-256': sign('whsec-test', body),
+      });
+      expect(res.status, event).toBe(200);
+      expect(res.body.action, event).toBe(expectedAction);
+      expect(res.headers['x-cds-suppress-activity']).toBe('1');
+    }
+    await new Promise((r) => setTimeout(r, 30));
+    expect(stateService.getGithubWebhookDeliveries(100).length).toBe(before);
+    expect(deployCalls).toHaveLength(0);
+  });
+
   it('returns 200 (ok:false) — NOT 500 — when the dispatcher throws', async () => {
     stateService.setGithubAppWhitelistOwners(['octocat']);
     // Wire a worktree mock that explodes so handlePush throws synchronously

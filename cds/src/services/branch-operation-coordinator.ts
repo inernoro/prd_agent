@@ -62,7 +62,13 @@ export interface BranchOperationLease {
 }
 
 export interface BranchOperationDecision {
-  status: 'started' | 'merged' | 'rejected';
+  /**
+   * `joined`（2026-09-08 宿主过载复盘）：来的部署与在途部署是**同一个 commit**，
+   * 直接并入在途操作——不新开、不排 pending、更不取代。此前 cdscli「push 后立刻
+   * 手动 deploy」会让 manual deploy 压掉 2 秒前 webhook 刚起的同 sha 部署，同一
+   * 批容器被拆两遍（线上一条分支 90 分钟里连着来了 10 次）。
+   */
+  status: 'started' | 'merged' | 'joined' | 'rejected';
   operationId: string;
   generation: number;
   reason?: string;
@@ -140,6 +146,20 @@ function isWebhookDeploy(req: BranchOperationRequest): boolean {
 }
 
 /**
+ * 「同一个 commit 的整分支部署已经在跑」判定（2026-09-08）。
+ * 只认整分支 deploy 对整分支 deploy、双方都带 commitSha 且相等、在途未被取消。
+ * 带版本 / 一次性选项的 manual deploy 语义不同（重放会丢配置），不并入。
+ */
+function isSameCommitDeployInFlight(incoming: BranchOperationRequest, active: ActiveOperation): boolean {
+  if (active.cancelled) return false;
+  if (incoming.kind !== 'deploy' || active.request.kind !== 'deploy') return false;
+  if (!incoming.commitSha || !active.request.commitSha) return false;
+  if (incoming.commitSha !== active.request.commitSha) return false;
+  if (incoming.trigger === 'webhook') return true;
+  return isMergeableManualDeploy(incoming);
+}
+
+/**
  * manual 整分支 deploy 也可合并（2026-07-16 队列堵死复盘）：此前 manual deploy
  * 撞上同优先级的在途 manual deploy 只会 409，agent 排队焦虑 → 反复重试 →
  * 同分支部署叠加、每次重试往全局构建队列塞一整层服务（重试风暴正反馈）。
@@ -191,6 +211,24 @@ export class BranchOperationCoordinator {
       const reserved = this.getUsableReservedContinuation(branchId, request);
       if (reserved) return this.beginAgainstReservedContinuation(request, reserved);
       return this.start(request);
+    }
+
+    if (isSameCommitDeployInFlight(request, active)) {
+      this.record('branch.operation.joined', request, active.operationId, active.generation, 'info', {
+        activeOperationId: active.operationId,
+        activeKind: active.request.kind,
+        activeTrigger: active.request.trigger,
+        commitSha: request.commitSha || null,
+      });
+      return {
+        status: 'joined',
+        operationId: active.operationId,
+        generation: active.generation,
+        activeOperationId: active.operationId,
+        activeKind: active.request.kind,
+        pendingCommitSha: null,
+        reason: 'same commit already deploying; joined the in-flight operation',
+      };
     }
 
     if (isWebhookDeploy(request)) {

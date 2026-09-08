@@ -67,6 +67,13 @@ SyslogIdentifier=cds-forwarder
 # 会反向放大延迟。MemoryMax=256M 在大量并发连接时也可能 OOM kill。
 MemoryMax=infinity
 # 不限 CPU,跟随 Linux 公平调度
+#
+# 2026-09-08 宿主过载复盘:forwarder 是所有预览域名与 dashboard 的第一跳,
+# 被容器 / 构建作业挤掉 CPU 时整站一起慢。同 cds-master.service:只划优先级
+# (权重 1000 对托管容器 slice 的 100),不设上限。
+CPUWeight=1000
+IOWeight=1000
+Nice=-5
 
 # 安全加固
 NoNewPrivileges=true

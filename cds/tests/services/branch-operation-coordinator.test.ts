@@ -157,6 +157,59 @@ describe('BranchOperationCoordinator', () => {
     expect(records.filter((r) => r.action === 'branch.operation.merged')).toHaveLength(2);
   });
 
+  // 2026-09-08 宿主过载复盘：push 后 2 秒内的手动 deploy 与 webhook 刚起的同 sha 部署
+  // 不再互相拆台——同 commit 直接并入在途操作，不新开、不排 pending、不取代。
+  it('joins a manual deploy into the in-flight webhook deploy of the same commit instead of superseding it', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const active = coordinator.begin({
+      branchId: 'combo-gift-preview',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: 'abc1234',
+    });
+    const manual = coordinator.begin({
+      branchId: 'combo-gift-preview',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'cdscli',
+      commitSha: 'abc1234',
+    });
+    expect(active.status).toBe('started');
+    expect(manual.status).toBe('joined');
+    expect(manual.activeOperationId).toBe(active.operationId);
+    expect(active.lease?.isCurrent()).toBe(true);
+    expect(coordinator.getPendingWebhookDeploy('combo-gift-preview')).toBeUndefined();
+    expect(records.map((r) => r.action)).toEqual([
+      'branch.operation.started',
+      'branch.operation.joined',
+    ]);
+  });
+
+  it('joins a late webhook push for the commit that a manual deploy is already deploying', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const active = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'deadbee' });
+    const hook = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'deadbee' });
+    expect(hook.status).toBe('joined');
+    expect(hook.activeOperationId).toBe(active.operationId);
+    // 完成后没有 pending 重放——否则同一 sha 会被部署第二遍。
+    expect(coordinator.complete(active.lease!, 'completed')).toBeNull();
+  });
+
+  it('still supersedes when the manual deploy targets a different commit or carries one-shot options', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const active = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: '1111111' });
+    const other = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: '2222222' });
+    expect(other.status).toBe('started');
+    expect(active.lease?.isCurrent()).toBe(false);
+
+    const c2 = new BranchOperationCoordinator();
+    const a2 = c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: '3333333' });
+    const forced = c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: '3333333', hasOneShotOptions: true });
+    expect(forced.status).toBe('started');
+    expect(a2.lease?.isCurrent()).toBe(false);
+  });
+
   it('manual delete cancels an active webhook deploy and fences the old lease', () => {
     const { sink, records } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);

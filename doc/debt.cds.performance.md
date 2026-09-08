@@ -111,6 +111,29 @@ admin/api 的编译耗时是 **CPU 固有成本**，I/O/并行旋钮榨不动；
 4. [x] mongo-split 迁移 activity/webhook 到独立集合（2026-07-09，见 [debt.cds.state-json.md](./debt.cds.state-json.md) Phase 1+2）；索引由 `mongo-split-store.init()` 自动创建，DDL 记录备查于 [doc/guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md) CDS 段
 5. [ ] 评估卷/网络的安全自动清理（涉数据，需白名单 `cds.precious`，维持谨慎不动）
 
+## 控制面过载治理（2026-09-08）
+
+**现状**：09-08 线上取证：18 核宿主 load1 26.2 / load15 20.6，49 个托管容器合计 CPU 只有 348%，
+负载大头是部署翻车式重建（24h 154 次部署，mdimp-main 一个分支 22 次、每次拆装 14 个容器）、
+CI 噪声 webhook（12h 8678 条、91% 不触发动作、每条走完整落盘链）、离机审计外发热循环（连续失败
+54256 次、每秒 2 条错误事件）；探活监控一轮 await 卡死 24 小时无告警。本批落地：托管容器挂低权重
+slice + 控制面 systemd 权重、同 commit 部署并入、webhook 噪声廉价 ack、审计熔断、探活硬 deadline
+与看门狗、构建闸门负载自适应、/healthz pressure 快照。
+
+**仍欠**：
+
+- P1 docker 若用 cgroupfs driver，`--cgroup-parent` 只能归类不能设权重（healthz 会报
+  `workload-cgroup-unmanaged`）；正解是切 systemd driver，属宿主运维动作。
+- P2 dashboard 的 SSE 流（`/_cds/api/activity-stream`、`/_cds/api/branches/stream`）在约 120s 处被
+  外层链路切断后重连（24h 2054 次 502 aborted）；forwarder 与 nginx 模板都不是 120s，来源未查清。
+- P2 forwarder 自己被饿死时不会留下任何记录，「打不开」的那几分钟在 HTTP 日志里仍是盲区；现在只能靠
+  /healthz pressure 的事件循环延迟与宿主 load 事后回溯。
+- P3 mdimp 分支部署反复失败（Flyway 迁移、镜像缺失）是项目侧根因，每次失败仍会拆一遍容器；CDS 侧只能
+  靠 joined / merged 减少重复，不能替项目修代码。
+
+**做完算数的判据**：`docker info -f '{{.CgroupDriver}}'` 为 systemd 且 /healthz `pressure.workloadCgroup.weightManaged=true`；
+SSE 单连接存活超过 10 分钟不重连；宿主 load1 / 核数 在工作日白天中位数低于 1.0。
+
 ## 相关
 - `cds/.claude/rules/` / `no-auto-index.md` — 索引由 DBA 手动建
 - 主仓 `CLAUDE.md` 规则 #11 / CDS 自部署

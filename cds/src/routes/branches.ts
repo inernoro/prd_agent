@@ -58,6 +58,8 @@ import {
 } from '../services/branch-protection.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
+import { getEventLoopLag } from '../services/event-loop-lag.js';
+import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
 import { recordBuild, assessDeployLoop } from '../services/build-activity-tracker.js';
@@ -2826,6 +2828,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     if (decision.status === 'started') return decision.lease || null;
 
+    // merged / joined 都是「已受理、不新开操作」：merged 排到当前操作之后重放，
+    // joined 直接并入在途的同 commit 部署（2026-09-08，治 push 后紧跟手动 deploy 拆两遍容器）。
+    const accepted = decision.status === 'merged' || decision.status === 'joined';
     const payload = {
       ok: true,
       operationStatus: decision.status,
@@ -2833,17 +2838,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       activeOperationId: decision.activeOperationId,
       activeKind: decision.activeKind,
       pendingCommitSha: decision.pendingCommitSha,
-      message: decision.status === 'merged'
-        ? (triggerFromRequest(req) === 'manual'
-          ? '已有同分支操作正在运行，本次部署已合并为最新待部署请求（当前操作完成后自动执行）'
-          : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
-        : decision.reason || '同分支已有写操作正在运行',
+      message: decision.status === 'joined'
+        ? `同一提交（${(input.commitSha || '').slice(0, 7)}）的部署已在进行中，本次请求已并入在途部署，不再重复拆装容器`
+        : decision.status === 'merged'
+          ? (triggerFromRequest(req) === 'manual'
+            ? '已有同分支操作正在运行，本次部署已合并为最新待部署请求（当前操作完成后自动执行）'
+            : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
+          : decision.reason || '同分支已有写操作正在运行',
     };
     if (input.sse) {
       initSSE(res);
-      sendSSE(res, decision.status === 'merged' ? 'complete' : 'error', payload);
+      sendSSE(res, accepted ? 'complete' : 'error', payload);
       res.end();
-    } else if (decision.status === 'merged') {
+    } else if (accepted) {
       res.status(202).json(payload);
     } else {
       res.status(409).json({ ...payload, ok: false });
@@ -24763,6 +24770,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     if (runningContainers > cores * 2) {
       warnings.push({ level: 'warning', code: 'too-many-containers', message: `运行容器 ${runningContainers} 个，超过核数 2 倍（${cores * 2}）：CPU 严重争抢，构建变慢。` });
     }
+    // 2026-09-08 宿主过载复盘：master 自己有没有被饿、构建准入有没有被负载收紧，
+    // 与 /healthz pressure 同口径（判据常量同源）。
+    const eventLoop = getEventLoopLag();
+    const lagP99 = Math.max(eventLoop.current.p99Ms, eventLoop.previous?.p99Ms || 0);
+    if (eventLoop.enabled && lagP99 >= EVENT_LOOP_LAG_CRITICAL_MS) {
+      warnings.push({ level: 'critical', code: 'event-loop-stalled', message: `master 事件循环 p99 延迟 ${lagP99}ms：所有请求一起变慢，先看宿主负载与同步阻塞。` });
+    } else if (eventLoop.enabled && lagP99 >= EVENT_LOOP_LAG_WARN_MS) {
+      warnings.push({ level: 'warning', code: 'event-loop-lagging', message: `master 事件循环 p99 延迟 ${lagP99}ms，临近卡顿。` });
+    }
+    const gate = buildGateStatus();
+    if (gate.load.saturated) {
+      warnings.push({ level: 'warning', code: 'build-throttled-by-load', message: `宿主过载（load ${gate.load.load1} / ${gate.load.cores} 核），构建准入已收紧为 1 并发：${gate.active} 在跑 / ${gate.queued} 排队。` });
+    }
     for (const b of build) {
       const m = Math.max(b.sourceMedianMs || 0, b.releaseMedianMs || 0);
       if (m > 6 * 60 * 1000) {
@@ -24775,6 +24795,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       containers: { running: runningContainers },
       scheduler,
       build,
+      eventLoop,
+      buildGate: { active: gate.active, queued: gate.queued, max: gate.max, load: gate.load },
       warnings,
       generatedAt: new Date().toISOString(),
     });

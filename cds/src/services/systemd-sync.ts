@@ -39,11 +39,19 @@ export interface SystemdUnitSyncOptions {
    *   - master: false(自身正在跑新版本,daemon-reload 后下次自然重启时生效)
    *   - forwarder: true(forwarder 是独立进程,daemon-reload 后必须 restart 才能切到新 ExecStart) */
   restartAfterReload: boolean;
+  /**
+   * 系统里还没有这个单元时是否直接安装（而不是按「dev 环境」跳过）。
+   * 用于后加的 slice 单元：老机器上 cds-master.service 早就装好了，
+   * 新加的 system-cdsworkloads.slice 若只在「已存在」时才同步，永远装不上。
+   * 调用方只在确认宿主已装 cds-master.service 时才打开它。
+   */
+  installIfMissing?: boolean;
 }
 
 export type SystemdUnitSyncResult =
   | { status: 'skipped'; reason: string }
   | { status: 'no-drift' }
+  | { status: 'installed' }
   | { status: 'fixed'; backupPath: string; restarted: boolean }
   | { status: 'error'; error: string };
 
@@ -80,7 +88,8 @@ export function renderDesiredUnit(template: string, opts: {
 }
 
 export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncResult {
-  if (!fs.existsSync(opts.installedUnit)) {
+  const installedExists = fs.existsSync(opts.installedUnit);
+  if (!installedExists && !opts.installIfMissing) {
     return { status: 'skipped', reason: `${opts.installedUnit} not installed (dev env?)` };
   }
   if (!fs.existsSync(opts.repoUnit)) {
@@ -101,7 +110,7 @@ export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncRe
   let installed: string;
   try {
     template = fs.readFileSync(opts.repoUnit, 'utf8');
-    installed = fs.readFileSync(opts.installedUnit, 'utf8');
+    installed = installedExists ? fs.readFileSync(opts.installedUnit, 'utf8') : '';
   } catch (err) {
     return { status: 'error', error: `read failed: ${(err as Error).message}` };
   }
@@ -114,8 +123,21 @@ export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncRe
     npxBin,
   });
 
-  if (installed === desired) {
+  if (installedExists && installed === desired) {
     return { status: 'no-drift' };
+  }
+
+  if (!installedExists) {
+    // 首次安装：没有旧文件可备份，写入 + daemon-reload 即可。
+    // slice 这类单元没有进程，daemon-reload 后被首个容器引用时自动生效。
+    try {
+      fs.writeFileSync(opts.installedUnit, desired);
+      execSync('systemctl daemon-reload', { stdio: 'pipe', timeout: 10_000 });
+    } catch (err) {
+      try { fs.rmSync(opts.installedUnit, { force: true }); } catch { /* */ }
+      return { status: 'error', error: `install/daemon-reload failed: ${(err as Error).message}` };
+    }
+    return { status: 'installed' };
   }
 
   const backupPath = `${opts.installedUnit}.bak.${Date.now()}`;
@@ -157,18 +179,33 @@ export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncRe
 export function syncAllSystemdUnits(repoRoot: string): {
   master: SystemdUnitSyncResult;
   forwarder: SystemdUnitSyncResult;
+  workloadSlice: SystemdUnitSyncResult;
 } {
   const cdsDir = path.resolve(repoRoot, 'cds');
+  const masterInstalledUnit = '/etc/systemd/system/cds-master.service';
 
   const master = syncSystemdUnit({
     repoUnit: path.resolve(cdsDir, 'systemd', 'cds-master.service'),
-    installedUnit: '/etc/systemd/system/cds-master.service',
+    installedUnit: masterInstalledUnit,
     repoRoot,
     cdsDir,
     label: 'cds-master',
     restartAfterReload: false,
   });
   logResult('cds-master', master);
+
+  // 托管容器的低权重 slice（2026-09-08）。只在宿主确实装了 cds-master.service 时
+  // 才首次安装——否则 dev 机器上也会往 /etc/systemd 写东西。
+  const workloadSlice = syncSystemdUnit({
+    repoUnit: path.resolve(cdsDir, 'systemd', 'system-cdsworkloads.slice'),
+    installedUnit: '/etc/systemd/system/system-cdsworkloads.slice',
+    repoRoot,
+    cdsDir,
+    label: 'system-cdsworkloads.slice',
+    restartAfterReload: false,
+    installIfMissing: fs.existsSync(masterInstalledUnit),
+  });
+  logResult('system-cdsworkloads.slice', workloadSlice);
 
   const forwarder = syncSystemdUnit({
     repoUnit: path.resolve(cdsDir, 'systemd', 'cds-forwarder.service'),
@@ -180,7 +217,7 @@ export function syncAllSystemdUnits(repoRoot: string): {
   });
   logResult('cds-forwarder', forwarder);
 
-  return { master, forwarder };
+  return { master, forwarder, workloadSlice };
 }
 
 function logResult(label: string, r: SystemdUnitSyncResult): void {
@@ -190,6 +227,9 @@ function logResult(label: string, r: SystemdUnitSyncResult): void {
       break;
     case 'no-drift':
       // 无 drift 不打日志 — 99% 启动都走这条,刷屏没意义
+      break;
+    case 'installed':
+      console.log(`  [systemd-sync:${label}] 首次安装完成(已 daemon-reload)`);
       break;
     case 'fixed':
       console.log(

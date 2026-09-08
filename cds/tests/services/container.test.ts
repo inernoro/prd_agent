@@ -489,6 +489,37 @@ describe('ContainerService', () => {
       expect(runCmd).not.toContain('--memory-swap');
     });
 
+    // 2026-09-08 宿主过载复盘：不设上限，但托管容器挂低权重 slice（--cgroup-parent）。
+    // 决策由 workload-cgroup.ts 探测固化；这里只断言 run 命令「有决策就带、没决策不带」，
+    // 且永远不会因此夹带 --cpus / --memory。
+    it('appends --cgroup-parent to docker run when the workload cgroup is resolved, never a hard limit', async () => {
+      const { __setWorkloadCgroupForTest } = await import('../../src/services/workload-cgroup.js');
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+      __setWorkloadCgroupForTest({
+        enabled: true, parent: 'system-cdsworkloads.slice', driver: 'systemd', weightManaged: true, reason: 'test',
+      });
+      try {
+        await service.runService(makeEntry(), makeProfile({ resources: { memoryMB: 1024, cpus: 2 } }), makeService());
+        const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
+        expect(runCmd).toContain('--cgroup-parent system-cdsworkloads.slice');
+        expect(runCmd).not.toContain('--cpus');
+        expect(runCmd).not.toContain('--memory');
+      } finally {
+        __setWorkloadCgroupForTest(null);
+      }
+    });
+
+    it('omits --cgroup-parent when the workload cgroup is unresolved', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+      await service.runService(makeEntry(), makeProfile(), makeService());
+      const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
+      expect(runCmd).not.toContain('--cgroup-parent');
+    });
+
     // 2026-05-28 用户授权"关闭所有容器资源限制" — 不再下发 --cpus 也不再下发
     // --memory。cpus / memoryMB 字段保留作 capacity 调度规划提示,不进 docker run。
     it('should NOT apply --cpus even when cpus is set (no-cpu-limit policy)', async () => {
