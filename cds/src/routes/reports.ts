@@ -36,6 +36,7 @@ import type { StateService } from '../services/state.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { buildZip } from '../utils/zip.js';
+import { buildReportsOverview } from '../services/acceptance-overview.js';
 
 /**
  * Project-scoped agent key (cdsp_) stamped on the request by the auth gate.
@@ -646,6 +647,32 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       // 响应附带 projectSlug，便于跨系统（MAP）按项目归类展示，免二次查项目表。
       .map((r) => ({ ...r, projectSlug: r.projectId ? stateService.getProject(r.projectId)?.slug ?? null : null }));
     res.json({ reports });
+  });
+
+  // GET /api/reports/overview — 验收主页聚合（结论优先，2026-09-08）。
+  // 纯函数在 services/acceptance-overview.ts；这里只做作用域与参数规范化。
+  // 注册在 `/reports/:id` 之前，避免 overview 被当成报告 id。
+  router.get('/reports/overview', (req: Request, res: Response) => {
+    let projectId = typeof req.query.projectId === 'string' && req.query.projectId
+      ? req.query.projectId
+      : undefined;
+    if (projectId) projectId = stateService.getProject(projectId)?.id ?? projectId;
+    const key = projectKeyOf(req);
+    if (key) projectId = key.projectId;
+    const daysRaw = Number(req.query.days);
+    const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(90, Math.floor(daysRaw)) : 7;
+    const tzRaw = Number(req.query.tzOffset);
+    const tzOffsetMinutes = Number.isFinite(tzRaw) && Math.abs(tzRaw) <= 14 * 60 ? tzRaw : 0;
+    const toRaw = typeof req.query.to === 'string' ? Date.parse(req.query.to) : Number.NaN;
+    const to = Number.isFinite(toRaw) ? new Date(toRaw) : new Date();
+    // `__self__` = 只看无项目归属（CDS 自身）的报告；这类报告没有主干合并记录。
+    const selfOnly = projectId === '__self__' && !key;
+    const reports = selfOnly
+      ? stateService.listAcceptanceReports(null).filter((r) => !r.projectId)
+      : stateService.listAcceptanceReports(projectId ?? null);
+    const tombstones = selfOnly ? [] : stateService.listRemovedBranches(projectId ?? null);
+    const overview = buildReportsOverview(reports, tombstones, { days, tzOffsetMinutes, to, projectId: selfOnly ? null : projectId ?? null });
+    res.json({ overview });
   });
 
   // GET /api/reports/assets/:name — 内容寻址的报告图片资源（PNG/JPG/...）。

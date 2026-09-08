@@ -4358,6 +4358,18 @@ export class StateService {
     this.save();
   }
 
+  /**
+   * 列出全部分支墓碑（验收主页「合并未验」用：reason='merged' 的墓碑就是主干合并记录，
+   * 与报告的 prNumber / commitSha / branch 交叉即可算出哪些合并没有任何验收）。
+   * 可按项目过滤；按 removedAt 倒序。
+   */
+  listRemovedBranches(projectId?: string | null): BranchTombstone[] {
+    const map = this.state.removedBranches;
+    if (!map) return [];
+    const all = Object.values(map).filter((t) => !projectId || t.projectId === projectId);
+    return all.sort((a, b) => (b.removedAt || '').localeCompare(a.removedAt || ''));
+  }
+
   /** 按 previewSlug 查分支墓碑；无记录返回 undefined。 */
   getRemovedBranch(previewSlug: string): BranchTombstone | undefined {
     if (!previewSlug) return undefined;

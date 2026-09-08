@@ -257,6 +257,95 @@ export async function listReports(projectId?: string, folderId?: string): Promis
 }
 
 /** List report folders for a project scope (omit projectId for global/CDS-self). */
+// ── 验收主页聚合（结论优先，2026-09-08）──
+// 类型与 cds/src/services/acceptance-overview.ts 的导出一一对应；后端是 SSOT。
+
+export type ReportKind =
+  | '功能验收' | '每日验收' | 'PR验收' | 'Commit验收' | '分支验收' | '缺陷复测' | '视觉回归' | '发布验收' | '规范演练' | '其他';
+
+export interface OverviewReportRef {
+  id: string;
+  title: string;
+  kind: ReportKind;
+  target: string;
+  targetDate: string | null;
+  verdict: ReportVerdict | null;
+  tier: string | null;
+  defectCounts: Record<string, number> | null;
+  projectId: string | null;
+  branch: string | null;
+  commitSha: string | null;
+  prNumber: number | null;
+  createdAt: string;
+  shared: boolean;
+  version: number;
+  supersedes: string[];
+}
+
+export interface OverviewCluster {
+  id: string;
+  verdict: 'fail' | 'conditional' | 'conflict';
+  target: string;
+  projectId: string | null;
+  kinds: ReportKind[];
+  count: number;
+  reportIds: string[];
+  latestReportId: string;
+  latestCreatedAt: string;
+  defectCounts: Record<string, number>;
+  streakWindows: number;
+}
+
+export interface OverviewDay {
+  date: string;
+  reports: Array<{ id: string; verdict: ReportVerdict | null }>;
+  worst: ReportVerdict | null;
+}
+
+export type MergeCoverageStatus = 'verified' | 'conditional' | 'failed' | 'unverified';
+
+export interface OverviewMergeItem {
+  branch: string;
+  projectId: string;
+  prNumber: number | null;
+  prUrl: string | null;
+  mergeCommitSha: string | null;
+  mergedAt: string;
+  status: MergeCoverageStatus;
+  reportIds: string[];
+}
+
+export interface ReportsOverview {
+  window: { from: string; to: string; days: number; previousFrom: string };
+  headline: {
+    status: 'broken' | 'ok' | 'untested';
+    statusLabel: string;
+    sentence: string;
+    supports: Array<{ kind: 'new' | 'coverage' | 'decision'; text: string; anchor: 'clusters' | 'coverage' | 'ledger' }>;
+  };
+  releaseGate: { state: 'blocked' | 'open' | 'unknown'; reason: string; latest: OverviewReportRef | null; lastPass: OverviewReportRef | null };
+  totals: {
+    archived: number; folded: number; counted: number; pass: number; conditional: number; fail: number; undetermined: number;
+    previous: { counted: number; pass: number; conditional: number; fail: number };
+  };
+  passRate: { kind: ReportKind; numerator: number; denominator: number; rate: number | null; previous: { numerator: number; denominator: number; rate: number | null } };
+  kinds: Array<{ kind: ReportKind; count: number }>;
+  clusters: OverviewCluster[];
+  daily: OverviewDay[];
+  mergeCoverage: { items: OverviewMergeItem[]; counts: Record<MergeCoverageStatus, number> };
+  reports: OverviewReportRef[];
+}
+
+/** 验收主页聚合；days 为时间窗天数，时区偏移取浏览器本地。 */
+export async function fetchReportsOverview(input: { projectId?: string; days?: number } = {}): Promise<ReportsOverview> {
+  const params = new URLSearchParams();
+  if (input.projectId) params.set('projectId', input.projectId);
+  if (input.days) params.set('days', String(input.days));
+  params.set('tzOffset', String(new Date().getTimezoneOffset()));
+  const res = await apiRequest<{ overview: ReportsOverview }>(`/api/reports/overview?${params.toString()}`);
+  return res.overview;
+}
+
 export async function listReportFolders(projectId?: string): Promise<ReportFolder[]> {
   const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
   const res = await apiRequest<{ folders: ReportFolder[] }>(`/api/report-folders${qs}`);
