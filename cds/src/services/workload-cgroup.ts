@@ -59,6 +59,20 @@ export function workloadCgroupParentFromEnv(env: NodeJS.ProcessEnv = process.env
   return raw;
 }
 
+/**
+ * docker `--cgroup-parent` 允许的字符集。这个值来自运维配置的
+ * `CDS_WORKLOAD_CGROUP_PARENT`，会被拼进宿主 shell 的 docker 命令行——
+ * 一个空格就能让此后所有部署的命令行错位，一个分号就是宿主上的另一条命令
+ * （Codex PR #1516 六轮 P2）。所以先按字符集拒收，再在拼串时加引号，两道都要。
+ * systemd slice 名与 cgroupfs 路径都落在这个集合里：字母数字加 `.-_/`。
+ */
+const CGROUP_PARENT_PATTERN = /^[A-Za-z0-9._\/-]+$/;
+
+/** 拼进 shell 字符串前的单引号包裹（值里的单引号按 POSIX 方式转义）。 */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 /** 纯函数：给定 driver 与配置值，算出最终归属（便于单测覆盖每个分支）。 */
 export function planWorkloadCgroup(
   configured: string | null,
@@ -70,6 +84,12 @@ export function planWorkloadCgroup(
   }
   if (!configured) {
     return { enabled: false, parent: null, driver, weightManaged: false, reason: 'CDS_WORKLOAD_CGROUP_PARENT 已关闭' };
+  }
+  if (!CGROUP_PARENT_PATTERN.test(configured)) {
+    return {
+      enabled: false, parent: null, driver, weightManaged: false,
+      reason: `CDS_WORKLOAD_CGROUP_PARENT「${configured}」含非法字符（只允许字母数字与 . _ - /），已跳过`,
+    };
   }
   if (driver === 'systemd') {
     if (!configured.endsWith('.slice')) {
@@ -121,7 +141,7 @@ export function getWorkloadCgroupStatus(): WorkloadCgroupStatus {
 
 /** docker run / create 追加的参数（拼进 shell 字符串用）；未启用时为空数组，调用方无需分支。 */
 export function workloadCgroupFlags(): string[] {
-  return current.enabled && current.parent ? [`--cgroup-parent ${current.parent}`] : [];
+  return current.enabled && current.parent ? [`--cgroup-parent ${shellQuote(current.parent)}`] : [];
 }
 
 /** 同上，argv 形态（spawn / execFile 数组参数用）。 */

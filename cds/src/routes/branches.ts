@@ -2836,6 +2836,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha?: string | null;
       versionId?: string | null;
       hasOneShotOptions?: boolean;
+      /** commitSha 是请求自己钉住的（而非分支缓存兜底），才允许参与并入判定。 */
+      commitPinned?: boolean;
       /** 本次部署将要落地的有效配置指纹，用于同 commit 并入判定。 */
       configHash?: string | null;
       source: string;
@@ -2859,6 +2861,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha: input.commitSha || null,
       versionId: input.versionId || null,
       hasOneShotOptions: input.hasOneShotOptions || false,
+      commitPinned: input.commitPinned || false,
       configHash: input.configHash || null,
       source: input.source,
       reason: input.reason || null,
@@ -12581,6 +12584,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 不合并：pending 重放不带这些选项，强制部署会被暂停闸门拦下、env 豁免
       // 失效、执行器指定丢失（Codex P2），撞车维持 409 让调用方自己重试。
       hasOneShotOptions: forceDeployWhilePaused || ignoreRequired || Boolean(req.body?.targetExecutorId),
+      // 只有请求自己钉住了提交（webhook 的 head sha / body.commitSha）才允许并入：
+      // 没钉住时下面 pull 会 hard-reset 到届时的分支 HEAD，entry 上那个缓存 SHA
+      // 说明不了这次要部署什么（Codex 六轮 P1）。
+      commitPinned: Boolean(requestCommitSha),
       // 同 commit 并入的前提不只是同一个提交，还得是同一份将要落地的配置
       // （有效 profiles + 合并后的 env）。中间改过 env 或构建配置就不并入。
       configHash: deploymentConfigHash || null,

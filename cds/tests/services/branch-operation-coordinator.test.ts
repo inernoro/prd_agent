@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BranchOperationCoordinator, BranchOperationSupersededError } from '../../src/services/branch-operation-coordinator.js';
+import { BranchOperationCoordinator, BranchOperationSupersededError, sameCommitIdentity } from '../../src/services/branch-operation-coordinator.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 function eventSink(): {
@@ -167,6 +167,7 @@ describe('BranchOperationCoordinator', () => {
       kind: 'deploy',
       trigger: 'webhook',
       commitSha: 'abc1234',
+      commitPinned: true,
       configHash: 'cfg-1',
     });
     const manual = coordinator.begin({
@@ -175,6 +176,7 @@ describe('BranchOperationCoordinator', () => {
       trigger: 'manual',
       actor: 'cdscli',
       commitSha: 'abc1234',
+      commitPinned: true,
       configHash: 'cfg-1',
     });
     expect(active.status).toBe('started');
@@ -190,8 +192,8 @@ describe('BranchOperationCoordinator', () => {
 
   it('joins a late webhook push for the commit that a manual deploy is already deploying', () => {
     const coordinator = new BranchOperationCoordinator();
-    const active = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'deadbee', configHash: 'cfg-1' });
-    const hook = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'deadbee', configHash: 'cfg-1' });
+    const active = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'deadbee', commitPinned: true, configHash: 'cfg-1' });
+    const hook = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'deadbee', commitPinned: true, configHash: 'cfg-1' });
     expect(hook.status).toBe('joined');
     expect(hook.activeOperationId).toBe(active.operationId);
     // 完成后没有 pending 重放——否则同一 sha 会被部署第二遍。
@@ -201,35 +203,84 @@ describe('BranchOperationCoordinator', () => {
   // Codex 四轮 P1：同一个 commit 未必落同一份配置。两次部署之间改了项目/分支 env
   // 或构建配置，有效配置指纹就变了；并入等于用旧配置代替新请求，且不留 pending 重放,
   // 用户改的东西既不生效也不排队。
+  /**
+   * Codex 六轮 P1：不带 commitSha 的部署最终落地的是「pull 那一刻的分支 HEAD」。
+   * 远端已经前进到 B 而分支上缓存的还是 A 时，拿 A 去判「同一个 commit」会把一次
+   * 「要部署 B」的请求并进「正在部署 A」——B 就此不再被部署，调用方还收到「已受理」。
+   */
+  it('does not join a deploy whose commit is not pinned by the request itself', () => {
+    // 在途 webhook 钉住 A，迟到的手动部署没钉（它要落地的是届时的 HEAD，可能已是 B）
+    const c1 = new BranchOperationCoordinator();
+    c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', commitPinned: true, configHash: 'cfg' });
+    expect(c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg' }).status).not.toBe('joined');
+
+    // 反过来：在途的那次没钉，迟到的 webhook 钉了，同样不并入
+    const c2 = new BranchOperationCoordinator();
+    c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg' });
+    expect(c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', commitPinned: true, configHash: 'cfg' }).status).toBe('merged');
+  });
+
+  /**
+   * Codex 六轮 P2：部署端点显式接受 7-40 位 SHA，手动 `--commit abc1234` 与 webhook
+   * 带的 40 位全长 SHA 完全可能是同一个提交。字符串直接比判不等之后，manual 优先级
+   * 更高会把在途 webhook 顶掉、重建同一份代码——正是这条路径要消除的重复拆装。
+   */
+  it('treats an unambiguous short SHA as the same commit as its full form', () => {
+    const full = 'abc1234def5678901234567890abcdef12345678';
+    const c1 = new BranchOperationCoordinator();
+    const active = c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: full, commitPinned: true, configHash: 'cfg' });
+    const manualShort = c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', commitPinned: true, configHash: 'cfg' });
+    expect(manualShort.status).toBe('joined');
+    expect(manualShort.activeOperationId).toBe(active.operationId);
+
+    // 前缀不同 → 不同提交，照旧走既有语义
+    const c2 = new BranchOperationCoordinator();
+    c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: full, commitPinned: true, configHash: 'cfg' });
+    expect(c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'fff0000', commitPinned: true, configHash: 'cfg' }).status).not.toBe('joined');
+  });
+
+  it('sameCommitIdentity：短于 7 位或非法字符一律判不同（宁可不并入）', () => {
+    const full = 'abc1234def5678901234567890abcdef12345678';
+    expect(sameCommitIdentity(full, full)).toBe(true);
+    expect(sameCommitIdentity('ABC1234', full)).toBe(true); // 大小写无关
+    expect(sameCommitIdentity('abc1234', full)).toBe(true);
+    expect(sameCommitIdentity('abc123', full)).toBe(false); // 6 位太短，碰撞概率不可忽略
+    expect(sameCommitIdentity('abc1235', full)).toBe(false);
+    expect(sameCommitIdentity('', full)).toBe(false);
+    expect(sameCommitIdentity(null, full)).toBe(false);
+    expect(sameCommitIdentity('main', full)).toBe(false); // 不是 hex
+    expect(sameCommitIdentity(`${full}0`, full)).toBe(false); // 超长
+  });
+
   it('does not join when the effective config changed between the two same-commit deploys', () => {
     // 在途 manual + 迟到 webhook：webhook 压不过 manual，不并入就只能排 pending。
     // 若按 sha 无脑并入，用户刚改的 env 既不生效也不排队，就此消失。
     const c1 = new BranchOperationCoordinator();
-    const activeManual = c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg-before' });
-    const lateHook = c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', configHash: 'cfg-after' });
+    const activeManual = c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', commitPinned: true, configHash: 'cfg-before' });
+    const lateHook = c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', commitPinned: true, configHash: 'cfg-after' });
     expect(lateHook.status).toBe('merged');
     expect(c1.complete(activeManual.lease!, 'completed')?.request.configHash).toBe('cfg-after');
 
     // manual 撞 manual 同理（同优先级，压不过）
     const c2 = new BranchOperationCoordinator();
-    const a2 = c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg-before' });
-    expect(c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg-after' }).status).toBe('merged');
+    const a2 = c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', commitPinned: true, configHash: 'cfg-before' });
+    expect(c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', commitPinned: true, configHash: 'cfg-after' }).status).toBe('merged');
     expect(c2.complete(a2.lease!, 'completed')?.request.configHash).toBe('cfg-after');
 
     // 配置没变才并入
     const c3 = new BranchOperationCoordinator();
-    c3.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg-same' });
-    expect(c3.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', configHash: 'cfg-same' }).status).toBe('joined');
+    c3.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', commitPinned: true, configHash: 'cfg-same' });
+    expect(c3.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', commitPinned: true, configHash: 'cfg-same' }).status).toBe('joined');
   });
 
   it('does not join when either side has no config fingerprint', () => {
     const c1 = new BranchOperationCoordinator();
-    c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234' });
-    expect(c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', configHash: 'cfg-1' }).status).toBe('merged');
+    c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', commitPinned: true });
+    expect(c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', commitPinned: true, configHash: 'cfg-1' }).status).toBe('merged');
 
     const c2 = new BranchOperationCoordinator();
-    c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg-1' });
-    expect(c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234' }).status).toBe('merged');
+    c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', commitPinned: true, configHash: 'cfg-1' });
+    expect(c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', commitPinned: true }).status).toBe('merged');
   });
 
   it('does not join a webhook onto an in-flight versioned or one-shot manual deploy; it queues as pending instead', () => {

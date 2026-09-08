@@ -135,6 +135,9 @@ slice + 控制面 systemd 权重、同 commit 部署并入、webhook 噪声廉�
   要动前端消费方，不在本批范围内。
 - P3 度量尺脚本只有判据自检（`--self-test` 跑截断判断那一条），整体没有进 CI 的守卫；它取的字段跟着
   接口漂移时不会有人变红。
+- P3 不带 commit 的手动部署不参与「同 commit 并入」：它要落地的是执行到拉取那一刻的分支 HEAD，
+  分支上缓存的旧 SHA 判不出它到底要部署什么，判错的后果是新提交静默不被部署。所以这类请求维持既有
+  语义（按优先级取代或排队），少省一次重复拆装。想吃到并入收益就带上 `--commit`（webhook 天然带）。
 
 **做完算数的判据**：`docker info -f '{{.CgroupDriver}}'` 为 systemd 且 /healthz `pressure.workloadCgroup.weightManaged=true`；
 SSE 单连接存活超过 10 分钟不重连；宿主 load1 / 核数 在工作日白天中位数低于 1.0。

@@ -46,6 +46,39 @@ describe('workload-cgroup 托管容器归属', () => {
     expect(s.reason).toContain('权重');
   });
 
+  /**
+   * Codex 六轮 P2：这个值来自运维配置，会被拼进宿主 shell 的 docker 命令行。
+   * 一个空格让此后所有部署的命令行错位，一个分号就是宿主上的另一条命令。
+   * 字符集拒收 + 拼串时加引号，两道都要。
+   */
+  it('含 shell 元字符或空白的配置值一律拒收，不进 docker 命令行', () => {
+    for (const bad of [
+      'system-cds.slice; rm -rf /',
+      'system cds.slice',
+      'system-cds.slice$(id)',
+      'system-cds.slice`id`',
+      "system-cds.slice'",
+      'system-cds.slice\n',
+      'system-cds.slice|tee',
+    ]) {
+      const s = planWorkloadCgroup(bad, 'systemd');
+      expect(s.enabled, bad).toBe(false);
+      expect(s.reason, bad).toContain('非法字符');
+      __setWorkloadCgroupForTest(s);
+      expect(workloadCgroupFlags(), bad).toEqual([]);
+      expect(workloadCgroupArgv(), bad).toEqual([]);
+    }
+  });
+
+  it('合法的自定义 slice 名照常生效，且拼串形态带引号', () => {
+    const s = planWorkloadCgroup('my-workloads.slice', 'systemd');
+    expect(s).toMatchObject({ enabled: true, parent: 'my-workloads.slice', weightManaged: true });
+    __setWorkloadCgroupForTest(s);
+    expect(workloadCgroupFlags()).toEqual(["--cgroup-parent 'my-workloads.slice'"]);
+    // argv 形态不经 shell，原样传
+    expect(workloadCgroupArgv()).toEqual(['--cgroup-parent', 'my-workloads.slice']);
+  });
+
   it('driver 未知 / 关闭 / 预览实例 一律不追加', () => {
     expect(planWorkloadCgroup(DEFAULT_WORKLOAD_SLICE, 'unknown').enabled).toBe(false);
     expect(planWorkloadCgroup(null, 'systemd').enabled).toBe(false);
@@ -58,7 +91,7 @@ describe('workload-cgroup 托管容器归属', () => {
     const s = await resolveWorkloadCgroup(shell, {});
     expect(s.enabled).toBe(true);
     expect(getWorkloadCgroupStatus()).toEqual(s);
-    expect(workloadCgroupFlags()).toEqual([`--cgroup-parent ${DEFAULT_WORKLOAD_SLICE}`]);
+    expect(workloadCgroupFlags()).toEqual([`--cgroup-parent '${DEFAULT_WORKLOAD_SLICE}'`]);
     expect(workloadCgroupArgv()).toEqual(['--cgroup-parent', DEFAULT_WORKLOAD_SLICE]);
     expect(shell.commands.filter((c) => c.includes('docker info'))).toHaveLength(1);
   });

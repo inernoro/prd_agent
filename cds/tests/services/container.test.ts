@@ -503,7 +503,7 @@ describe('ContainerService', () => {
       try {
         await service.runService(makeEntry(), makeProfile({ resources: { memoryMB: 1024, cpus: 2 } }), makeService());
         const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
-        expect(runCmd).toContain('--cgroup-parent system-cdsworkloads.slice');
+        expect(runCmd).toContain("--cgroup-parent 'system-cdsworkloads.slice'");
         expect(runCmd).not.toContain('--cpus');
         expect(runCmd).not.toContain('--memory');
       } finally {
@@ -545,7 +545,7 @@ describe('ContainerService', () => {
           },
         }), makeService());
         const createCmd = mock.commands.find((c) => c.includes('docker create') && c.includes('-managed-build'))!;
-        expect(createCmd).toContain('--cgroup-parent system-cdsworkloads.slice');
+        expect(createCmd).toContain("--cgroup-parent 'system-cdsworkloads.slice'");
         expect(createCmd).not.toContain('--cpus');
         expect(createCmd).not.toContain('--memory');
       } finally {
