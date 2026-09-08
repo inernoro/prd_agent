@@ -66,3 +66,14 @@ def test_prebuilt_modes_inherit_profile_prebuilt_image_when_mode_omits_flag():
     }))
     assert summary["prebuiltModes"] == ["plain"]
     assert summary["prebuiltImage"] is True
+
+
+def test_managed_build_profile_has_no_prebuilt_signals():
+    # 与服务端同口径：managedBuild 是宿主源码构建，prebuiltModes 为空、prebuiltImage 也不报可用。
+    summary = cdscli._profile_summary(_profile(
+        prebuiltImage=True,
+        managedBuild={"install": "pnpm i", "build": "pnpm build"},
+        deployModes={"express": {"label": "极速版", "prebuilt": True}},
+    ))
+    assert summary["prebuiltModes"] == []
+    assert summary["prebuiltImage"] is False

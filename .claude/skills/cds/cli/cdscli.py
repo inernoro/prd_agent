@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.3"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.4"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -2956,6 +2956,10 @@ def _prebuilt_mode_ids(p: dict[str, Any]) -> list[str]:
     只认这个列表，而不是按名字猜。prebuilt 值可能是 bool 也可能是字符串 'true'
     （compose-parser 两种都收），这里同样两种都认。
     """
+    # 与服务端 isPrebuiltMode 同口径：带 managedBuild 的 profile 是宿主上的源码构建，
+    # 任何模式都不算极速版（Codex PR #1513 第六轮 P2）。
+    if p.get("managedBuild"):
+        return []
     modes = p.get("deployModes") or {}
     inherited = p.get("prebuiltImage") is True
     out: list[str] = []
@@ -2984,8 +2988,8 @@ def _profile_summary(p: dict[str, Any]) -> dict[str, Any]:
         "deployModes": list((p.get("deployModes") or {}).keys()),
         # 极速版（CI 预构建）判据：Agent 分支必须从这里选模式，空列表 = 项目还没接 CI 预构建
         "prebuiltModes": _prebuilt_mode_ids(p),
-        # 整个 profile 就是预构建镜像站点（cds.prebuilt-image），无需切模式
-        "prebuiltImage": p.get("prebuiltImage") is True,
+        # 整个 profile 就是预构建镜像站点（cds.prebuilt-image），无需切模式；带 managedBuild 的不算
+        "prebuiltImage": p.get("prebuiltImage") is True and not p.get("managedBuild"),
         "readiness": {
             "timeoutSeconds": rp.get("timeoutSeconds"),
             "intervalSeconds": rp.get("intervalSeconds"),
