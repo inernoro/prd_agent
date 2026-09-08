@@ -446,8 +446,9 @@ public class MdToPptController : ControllerBase
             req.ChatHistory,
             knowledgeReferences);
 
+        var requestId = Guid.NewGuid().ToString("N");
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-            RequestId: Guid.NewGuid().ToString("N"),
+            RequestId: requestId,
             GroupId: null,
             SessionId: outlineRun.Id,
             UserId: userId,
@@ -459,23 +460,8 @@ public class MdToPptController : ControllerBase
             AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.Outline,
             RunId: outlineRun.Id));
 
-        var gatewayRequest = new GatewayRequest
-        {
-            AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.Outline,
-            ModelType = ModelTypes.Chat,
-            Stream = true,
-            TimeoutSeconds = 60,
-            RequestBody = new JsonObject
-            {
-                ["messages"] = new JsonArray
-                {
-                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                    new JsonObject { ["role"] = "user",   ["content"] = userContent },
-                },
-                ["temperature"] = 0.3,
-                ["max_tokens"] = OutlineCompletionTokenBudget,
-            },
-        };
+        var gatewayRequest = BuildGatewayOutlineRequest(
+            systemPrompt, userContent, requestId, userId, outlineRun.Id, 60);
 
         var fullText = new StringBuilder();
         try
@@ -638,8 +624,9 @@ public class MdToPptController : ControllerBase
             req.ChatHistory,
             knowledgeReferences);
 
+        var requestId = Guid.NewGuid().ToString("N");
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-            RequestId: Guid.NewGuid().ToString("N"),
+            RequestId: requestId,
             GroupId: null,
             SessionId: run.Id,
             UserId: userId,
@@ -651,23 +638,8 @@ public class MdToPptController : ControllerBase
             AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.Outline,
             RunId: run.Id));
 
-        var gatewayRequest = new GatewayRequest
-        {
-            AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.Outline,
-            ModelType = ModelTypes.Chat,
-            Stream = true,
-            TimeoutSeconds = 90,
-            RequestBody = new JsonObject
-            {
-                ["messages"] = new JsonArray
-                {
-                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                    new JsonObject { ["role"] = "user",   ["content"] = userContent },
-                },
-                ["temperature"] = 0.3,
-                ["max_tokens"] = OutlineCompletionTokenBudget,
-            },
-        };
+        var gatewayRequest = BuildGatewayOutlineRequest(
+            systemPrompt, userContent, requestId, userId, run.Id, 90);
 
         var fullText = new StringBuilder();
         var lineBuf = new StringBuilder();   // 当前未闭合行
@@ -3833,6 +3805,43 @@ public class MdToPptController : ControllerBase
 
     internal static string GenerationModelLabel(InfraAgentRuntimeProfile profile)
         => string.IsNullOrWhiteSpace(profile.Model) ? "自动选择" : profile.Model.Trim();
+
+    internal static GatewayRequest BuildGatewayOutlineRequest(
+        string systemPrompt,
+        string userContent,
+        string requestId,
+        string userId,
+        string runId,
+        int timeoutSeconds)
+    {
+        return new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.Outline,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            TimeoutSeconds = timeoutSeconds,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userContent },
+                },
+                ["temperature"] = 0.3,
+                ["max_tokens"] = OutlineCompletionTokenBudget,
+            },
+            // 跨进程网关只接收请求载荷，不能依赖调用方的 ambient 审计作用域。
+            Context = new GatewayRequestContext
+            {
+                RequestId = requestId,
+                RunId = runId,
+                SessionId = runId,
+                UserId = userId,
+                SourceSystem = "map",
+                IngressProtocol = "gw-native",
+            },
+        };
+    }
 
     internal static GatewayRequest BuildGatewayPageRequest(
         InfraAgentRuntimeProfile profile,

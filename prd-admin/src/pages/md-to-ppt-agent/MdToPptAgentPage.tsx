@@ -805,8 +805,9 @@ const FONT_LINKS =
   '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin data-map-inject>' +
   '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,wght@0,400;0,500;1,300;1,400&family=Hanken+Grotesk:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400;1,600&family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@300;400;700&display=swap" rel="stylesheet" data-map-inject>';
 
-function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
+function prepareIframeHtml(html: string, opts?: { editor?: boolean; documentId?: string }): string {
   if (!html) return html;
+  const bridgeIdentity = ',documentId:' + JSON.stringify(opts?.documentId ?? '');
 
   // 1. in-memory storage shim（遮蔽 opaque origin 下 reveal 对 storage 的访问）
   const storageshim =
@@ -862,7 +863,7 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
     'function pressKey(key,code){var ev;try{ev=new KeyboardEvent("keydown",{key:key,keyCode:code,which:code,bubbles:true});}catch(e){return;}try{Object.defineProperty(ev,"keyCode",{get:function(){return code;}});}catch(e2){}document.dispatchEvent(ev);}' +
     'function anchoredNav(dir){pressKey(dir==="prev"?"ArrowLeft":"ArrowRight",dir==="prev"?37:39);}' +
     'function anchoredGoto(h){var guard=0;while(cur()>1&&guard<60){anchoredNav("prev");guard++;}for(var i=0;i<h&&i<60;i++){anchoredNav("next");}}' +
-    'function rep(){try{parent.postMessage({type:"map-ppt-slide",cur:cur(),total:tot()},"*");}catch(e){}}' +
+    'function rep(){try{parent.postMessage({type:"map-ppt-slide"' + bridgeIdentity + ',cur:cur(),total:tot()},"*");}catch(e){}}' +
     // 圈选信息桥：父页面发来视口百分比矩形，换算像素后在中心点 + 四角内缩 10% 共 5 个采样点
     // elementFromPoint 取元素，向上找最近的语义祖先（到 .slides 为止），去重收集至多 5 条描述回传。
     // 任何异常也必须回传（texts 为空数组），不许静默吞掉。
@@ -879,21 +880,24 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
     'var txt=tag==="img"?(nd.getAttribute("alt")||"img"):(nd.textContent||"").replace(/\\s+/g," ").trim().slice(0,60);' +
     'texts.push(tag+":"+txt);}' +
     '}catch(e){}' +
-    'try{parent.postMessage({type:"map-ppt-rect-info",id:d.id,slide:cur(),texts:texts},"*");}catch(e){}}' +
+    'try{parent.postMessage({type:"map-ppt-rect-info"' + bridgeIdentity + ',id:d.id,slide:cur(),texts:texts},"*");}catch(e){}}' +
     'window.addEventListener("message",function(e){var d=e.data||{};try{' +
     'if(d.type==="map-ppt-nav"){if(window.Reveal){if(d.dir==="prev"){Reveal.prev();}else{Reveal.next();}}else{anchoredNav(d.dir);}setTimeout(rep,80);}' +
     // 页位恢复：父页面指定 0-based 横向索引直接跳页
     'if(d.type==="map-ppt-goto"&&typeof d.h==="number"){if(window.Reveal){Reveal.slide(d.h);}else{anchoredGoto(d.h);}setTimeout(rep,80);}' +
     'if(d.type==="map-ppt-rect-query"){rectInfo(d);}' +
-    '}catch(err){if(d.type==="map-ppt-rect-query"){try{parent.postMessage({type:"map-ppt-rect-info",id:d.id,slide:1,texts:[]},"*");}catch(e2){}}}});' +
-    'var n=0;var iv=setInterval(function(){n++;var R=window.Reveal;' +
-    'if(R&&R.getIndices){clearInterval(iv);rep();try{if(R.on){R.on("slidechanged",rep);}else if(R.addEventListener){R.addEventListener("slidechanged",rep);}}catch(e){}' +
-    'try{parent.postMessage({type:"map-ppt-ready"},"*");}catch(e){}}' +
+    '}catch(err){if(d.type==="map-ppt-rect-query"){try{parent.postMessage({type:"map-ppt-rect-info"' + bridgeIdentity + ',id:d.id,slide:1,texts:[]},"*");}catch(e2){}}}});' +
+    // DOM 中有 slide 不代表文档末尾/DOMContentLoaded 的导航监听已经安装。
+    // 下一个任务开始探测，让本轮所有 DOMContentLoaded 监听先执行完；不是按经验延时重试。
+    'function start(){var n=0;var iv=setInterval(function(){n++;var R=window.Reveal;' +
+    'if(R&&R.isReady&&R.isReady()){clearInterval(iv);rep();try{if(R.on){R.on("slidechanged",rep);}else if(R.addEventListener){R.addEventListener("slidechanged",rep);}}catch(e){}' +
+    'try{parent.postMessage({type:"map-ppt-ready"' + bridgeIdentity + '},"*");}catch(e){}}' +
     // 锚定运行时：找到 .slide 即就绪；active 类翻转走 MutationObserver 上报页码
     'else if(isAnchored()){clearInterval(iv);rep();try{var ss=slides();var mo=new MutationObserver(function(){rep();});for(var i=0;i<ss.length;i++){mo.observe(ss[i],{attributes:true,attributeFilter:["class","style"]});}}catch(e){}' +
     'setInterval(rep,800);' +
-    'try{parent.postMessage({type:"map-ppt-ready"},"*");}catch(e){}}' +
-    'else if(n>60){clearInterval(iv);}},250);' +
+    'try{parent.postMessage({type:"map-ppt-ready"' + bridgeIdentity + '},"*");}catch(e){}}' +
+    'else if(n>60){clearInterval(iv);}},250);}' +
+    'if(document.readyState==="complete"){start();}else{window.addEventListener("DOMContentLoaded",function(){setTimeout(start,0);},{once:true});}' +
     '})();</script>';
 
   // 4. 编辑器脚本（仅编辑模式注入）：点击文字 contenteditable 直接改、
@@ -936,7 +940,7 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
       'try{var sc=root.querySelectorAll(".slides section");for(var b=0;b<sc.length;b++){var sn=sc[b];sn.classList.remove("present");sn.classList.remove("past");sn.classList.remove("future");if(!sn.getAttribute("class")){sn.removeAttribute("class");}sn.removeAttribute("hidden");sn.removeAttribute("aria-hidden");sn.style.removeProperty("display");sn.style.removeProperty("top");if(!sn.getAttribute("style")){sn.removeAttribute("style");}}}catch(e2){}' +
       'try{var sl=root.querySelector(".reveal .slides");if(sl){sl.removeAttribute("style");}}catch(e3){}' +
       'try{var rv=root.querySelector(".reveal");if(rv){rv.classList.remove("ready");rv.classList.remove("overview");rv.classList.remove("paused");}}catch(e4){}' +
-      'parent.postMessage({type:"map-ppt-html",html:"<!DOCTYPE html>\\n"+root.outerHTML},"*");' +
+      'parent.postMessage({type:"map-ppt-html"' + bridgeIdentity + ',html:"<!DOCTYPE html>\\n"+root.outerHTML},"*");' +
       '}catch(e){}}' +
       'function sched(){clearTimeout(t);t=setTimeout(serialize,500);}' +
       'var tb=document.createElement("div");tb.id="__map_editor_toolbar__";' +
@@ -1694,6 +1698,13 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   // ─── 所见即所得编辑 + 页码（iframe postMessage 通道）
   const [editMode, setEditMode] = useState(false);
+  // 身份随文档/编辑模式更换，普通重渲染不改 srcDoc；旧文档的 ready 不可解锁新文档。
+  const previewDocument = useMemo(() => {
+    const id = crypto.randomUUID();
+    return { id, html: prepareIframeHtml(generatedHtml, { editor: editMode, documentId: id }) };
+  }, [generatedHtml, editMode]);
+  const [readyPreviewId, setReadyPreviewId] = useState<string | null>(null);
+  const previewReady = readyPreviewId === previewDocument.id;
   const [dirtyEdits, setDirtyEdits] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [slidePos, setSlidePos] = useState<{ cur: number; total: number } | null>(null);
@@ -2011,10 +2022,11 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       // opaque origin 下 e.origin === 'null'，只认来自当前预览 iframe 的消息
       if (e.source !== iframeRef.current?.contentWindow) return;
       const d = e.data as {
-        type?: string; html?: string; cur?: number; total?: number;
+        type?: string; documentId?: string; html?: string; cur?: number; total?: number;
         id?: string; slide?: number; texts?: string[];
       } | null;
       if (!d || typeof d !== 'object') return;
+      if (d.documentId !== previewDocument.id) return;
       if (d.type === 'map-ppt-slide' && typeof d.cur === 'number' && typeof d.total === 'number') {
         setSlidePos({ cur: d.cur, total: d.total });
         restoreSlideRef.current = d.cur - 1;
@@ -2025,6 +2037,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       }
       // 桥就绪：按重载前的快照回跳（open-design ready-signal 模式）
       if (d.type === 'map-ppt-ready') {
+        setReadyPreviewId(previewDocument.id);
         const target = pendingRestoreRef.current;
         pendingRestoreRef.current = null;
         if (target != null && target > 0) {
@@ -2045,7 +2058,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
-  }, [composeFeedback]);
+  }, [composeFeedback, previewDocument.id]);
 
   // ─── 圈选提交：向 iframe 反查选区内元素，1s 无响应则退化为坐标描述
   const handleFeedbackSubmit = useCallback((payload: { rect: SelectionRectPct; note: string }) => {
@@ -2068,8 +2081,9 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   // ─── Nav: 翻页走 postMessage（opaque origin 下无法直接访问 contentWindow.Reveal）
   const deckNav = useCallback((dir: 'prev' | 'next') => {
+    if (!previewReady) return;
     iframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-nav', dir }, '*');
-  }, []);
+  }, [previewReady]);
 
   // ─── 编辑产物：取最新 HTML（编辑模式下优先未提交的编辑稿）
   const latestHtml = useCallback(() => {
@@ -4877,22 +4891,26 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                     onClick={() => deckNav('prev')}
                     title="上一页"
                     aria-label="上一页"
-                    className="flex h-11 w-11 items-center justify-center rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
+                    disabled={!previewReady}
+                    className="flex h-11 w-11 items-center justify-center rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)] disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <ChevronLeft size={14} />
                   </button>
                   <span
                     data-testid="ppt-page-indicator"
+                    role="status"
+                    aria-label={previewReady ? '演示稿页码' : '正在准备翻页'}
                     className="text-[10px] tabular-nums text-[var(--text-secondary)] min-w-[40px] text-center"
                   >
-                    {slidePos ? `${slidePos.cur} / ${slidePos.total}` : '- / -'}
+                    {previewReady && slidePos ? `${slidePos.cur} / ${slidePos.total}` : <MapSpinner size={14} />}
                   </span>
                   <button
                     type="button"
                     onClick={() => deckNav('next')}
                     title="下一页"
                     aria-label="下一页"
-                    className="flex h-11 w-11 items-center justify-center rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
+                    disabled={!previewReady}
+                    className="flex h-11 w-11 items-center justify-center rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)] disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <ChevronRight size={14} />
                   </button>
@@ -5141,9 +5159,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                     翻页/页码/编辑/页位恢复/圈选反查全部走 postMessage 通道（见 controlScript/editorScript）。 */}
               <div ref={previewWrapRef} className="flex-1 flex flex-col bg-token-nested" style={{ minHeight: 0, position: 'relative' }}>
                 <iframe
+                  key={previewDocument.id}
                   ref={iframeRef}
                   className="flex-1 w-full border-0"
-                  srcDoc={prepareIframeHtml(generatedHtml, { editor: editMode })}
+                  srcDoc={previewDocument.html}
                   sandbox="allow-scripts"
                   title="PPT 预览"
                   style={{ minHeight: 0 }}

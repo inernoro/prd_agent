@@ -3127,7 +3127,7 @@ export function canAcceptUntrackedWorkspaceEdit(
     && (currentHtml === undefined || !currentHtml.equals(outputHtml));
 }
 
-function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {
+export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {
   const { message } = error;
   if (message === 'index.html contains no explicit body element') {
     return {
@@ -3213,9 +3213,17 @@ function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code:
     };
   }
   if (message.startsWith('index.html contains an unsupported measured claim:')) {
+    const ordinal = typeof error.details?.measuredClaimOrdinal === 'number'
+      && Number.isSafeInteger(error.details.measuredClaimOrdinal)
+      && error.details.measuredClaimOrdinal > 0
+      ? error.details.measuredClaimOrdinal
+      : undefined;
+    const token = controlledMeasuredClaimToken(error.details?.measuredClaimToken);
     return {
       code: 'unsupported_measured_claim',
-      instruction: 'Remove every measured claim that is not supported by the MAP knowledge sources.',
+      instruction: ordinal !== undefined && token !== undefined
+        ? `Visible measured claim number ${ordinal} in document order has unsupported normalized token ${token}. Remove that exact claim or rewrite it using only a value supported for the same subject by the MAP knowledge sources, then inspect every other measured claim.`
+        : 'Remove every measured claim that is not supported by the MAP knowledge sources.',
     };
   }
   if (message.startsWith('index.html contains an unsupported date, contact, or URL:')) {
@@ -3547,12 +3555,13 @@ interface MeasuredClaimContext {
 function measuredClaimContexts(text: string): MeasuredClaimContext[] {
   const claims: MeasuredClaimContext[] = [];
   for (const segment of text.split(/[\r\n。！？!?；;，,：:]+/)) {
+    const segmentClaims: Array<MeasuredClaimContext & { offset: number; patternOrder: number }> = [];
     const patterns = [
       { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
       { regex: /([￥¥$])\s*(\d+(?:[.,]\d+)*)/gi, numberIndex: 2, unitIndex: 1 },
       { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
     ];
-    for (const pattern of patterns) {
+    for (const [patternOrder, pattern] of patterns.entries()) {
       for (const match of segment.matchAll(pattern.regex)) {
         const rawNumber = match[pattern.numberIndex];
         const parsed = Number(rawNumber.replaceAll(',', ''));
@@ -3561,17 +3570,34 @@ function measuredClaimContexts(text: string): MeasuredClaimContext[] {
         const requiresContext = isCountUnit(rawUnit);
         const entityKeys = extractClaimEntityKeys(segment, rawUnit);
         const unit = normalizeClaimUnit(rawUnit, entityKeys);
-        claims.push({
+        segmentClaims.push({
           token: `${number}|${unit}`,
           context: normalizeClaimContext(segment),
           requiresContext,
           isStructural: requiresContext && isStructuralCount(segment),
           entityKeys,
+          offset: match.index ?? 0,
+          patternOrder,
         });
       }
     }
+    segmentClaims.sort((left, right) => left.offset - right.offset || left.patternOrder - right.patternOrder);
+    for (const { offset: _offset, patternOrder: _patternOrder, ...claim } of segmentClaims) claims.push(claim);
   }
   return claims;
+}
+
+const CONTROLLED_MEASURED_CLAIM_UNITS = new Set([
+  '%', '分钟', '小时', '天', '周', '月', '年', '万字', 'KB', 'MB', 'GB', 'CNY', 'USD',
+  '个', '条', '次', '字', '项', '例', '份', '种', '类', '层', '步',
+  'PERSON', 'ARTICLE', 'ORGANIZATION', 'SECTION', 'PAGE', 'PROJECT', 'CUSTOMER', 'USER',
+  'CONSUMER', 'READER', 'EMPLOYEE', 'CASE', 'MODULE', 'CATEGORY', 'OPERATION', 'COLUMN',
+]);
+
+function controlledMeasuredClaimToken(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 48) return undefined;
+  const match = /^(?:0|[1-9]\d*)(?:\.\d+)?(.+)$/.exec(value);
+  return match && CONTROLLED_MEASURED_CLAIM_UNITS.has(match[1]) ? value : undefined;
 }
 
 function normalizeClaimContext(value: string): string {
@@ -3789,7 +3815,7 @@ function validateArtifactQuality(
   }
 
   const supportedClaims = measuredClaimContexts(evidenceText);
-  for (const claim of measuredClaimContexts(visible)) {
+  for (const [claimIndex, claim] of measuredClaimContexts(visible).entries()) {
     if (claim.isStructural) continue;
     const candidates = supportedClaims.filter((candidate) => candidate.token.toLowerCase() === claim.token.toLowerCase());
     if (candidates.some((candidate) => hasClaimContextOverlap(
@@ -3800,7 +3826,16 @@ function validateArtifactQuality(
       claim.entityKeys,
     ))) continue;
     const [number, unit] = claim.token.split('|');
-    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `index.html contains an unsupported measured claim: ${number}${unit}`);
+    const measuredClaimToken = `${number}${unit}`;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      `index.html contains an unsupported measured claim: ${measuredClaimToken}`,
+      false,
+      {
+        measuredClaimOrdinal: claimIndex + 1,
+        measuredClaimToken,
+      },
+    );
   }
   const supportedFacts = sensitiveFacts(evidenceText);
   for (const fact of sensitiveFacts(visible)) {

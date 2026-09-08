@@ -1,5 +1,7 @@
 using Shouldly;
+using System.Text.Json;
 using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using Xunit;
 
@@ -108,10 +110,10 @@ public class MdToPptPrewarmProfileTests
     public void OutlineGatewayAudit_IsCreatedAfterRunAndCarriesRunIdentity()
     {
         var source = File.ReadAllText(ControllerPath());
-        foreach (var (methodName, runVariable) in new[]
+        foreach (var (methodName, runVariable, timeoutSeconds) in new[]
                  {
-                     ("public async Task<IActionResult> Outline(", "outlineRun"),
-                     ("public async Task OutlineStream(", "run"),
+                     ("public async Task<IActionResult> Outline(", "outlineRun", 60),
+                     ("public async Task OutlineStream(", "run", 90),
                  })
         {
             var start = source.IndexOf(methodName, StringComparison.Ordinal);
@@ -125,7 +127,44 @@ public class MdToPptPrewarmProfileTests
             beginScope.ShouldBeGreaterThan(createRun);
             method.ShouldContain($"SessionId: {runVariable}.Id");
             method.ShouldContain($"RunId: {runVariable}.Id");
+            method.ShouldContain("var requestId = Guid.NewGuid().ToString(\"N\")");
+            method.ShouldContain("RequestId: requestId");
+            method.ShouldContain("var gatewayRequest = BuildGatewayOutlineRequest(");
+            method.ShouldContain($"systemPrompt, userContent, requestId, userId, {runVariable}.Id, {timeoutSeconds}");
+            method.ShouldContain("_gateway.StreamAsync(gatewayRequest, CancellationToken.None)");
         }
+    }
+
+    [Theory]
+    [InlineData(60)]
+    [InlineData(90)]
+    public void OutlineGatewayRequest_SerializesExplicitAuditIdentityWithoutChangingRouting(int timeoutSeconds)
+    {
+        var request = MdToPptController.BuildGatewayOutlineRequest(
+            "outline-system", "frozen-knowledge", "request-identity", "owner-identity", "run-identity", timeoutSeconds);
+
+        // HTTP transport serializes the request, not the caller's ambient LlmRequestContext.
+        var json = JsonSerializer.Serialize(request, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var wire = JsonSerializer.Deserialize<GatewayRequest>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        wire.Context.ShouldNotBeNull();
+        wire.Context.RequestId.ShouldBe("request-identity");
+        wire.Context.RunId.ShouldBe("run-identity");
+        wire.Context.SessionId.ShouldBe("run-identity");
+        wire.Context.UserId.ShouldBe("owner-identity");
+        wire.Context.SourceSystem.ShouldBe("map");
+        wire.Context.IngressProtocol.ShouldBe("gw-native");
+        wire.Context.ModelPolicy.ShouldBeNull();
+        wire.AppCallerCode.ShouldBe(AppCallerRegistry.MdToPptAgent.Generation.Outline);
+        wire.ModelType.ShouldBe(ModelTypes.Chat);
+        wire.ExpectedModel.ShouldBeNull();
+        wire.PinnedModelId.ShouldBeNull();
+        wire.PinnedPlatformId.ShouldBeNull();
+        wire.Stream.ShouldBeTrue();
+        wire.TimeoutSeconds.ShouldBe(timeoutSeconds);
+        wire.RequestBody!["temperature"]!.GetValue<double>().ShouldBe(0.3);
+        wire.RequestBody["max_tokens"]!.GetValue<int>().ShouldBe(MdToPptController.OutlineCompletionTokenBudget);
+        wire.RequestBody["messages"]![0]!["content"]!.GetValue<string>().ShouldBe("outline-system");
+        wire.RequestBody["messages"]![1]!["content"]!.GetValue<string>().ShouldBe("frozen-knowledge");
     }
 
     [Fact]
