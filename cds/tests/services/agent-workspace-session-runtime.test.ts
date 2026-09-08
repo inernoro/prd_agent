@@ -2753,6 +2753,48 @@ describe('AgentWorkspaceSessionRuntime', () => {
     )).toContain('客服平均答复30分钟');
   });
 
+  it.each([
+    ['paragraphs', '<p>周二至周五：14:00—19:00</p><p>周六至周日：09:30—17:30</p>'],
+    ['line break', '周二至周五：14:00—19:00<br>周六至周日：09:30—17:30'],
+    ['inline labels', '<span>周二至周五：14:00—19:00</span> <span>周六至周日：09:30—17:30</span>'],
+    ['split inline clock', '周二至周五：14:00—<span>19</span>:<span>00</span> <span>周六至周日：09:30—17:30</span>'],
+    ['source punctuation', '周二至周五：14:00—19:00。<br>周六至周日：09:30—17:30。'],
+  ])('does not reinterpret a complete opening clock as a duration: %s', (_name, body) => {
+    const evidence = '周二至周五：14:00—19:00。\n周六至周日：09:30—17:30。';
+    expect(() => hardenSelfContainedHtml(
+      `<!doctype html><html><body>${body}</body></html>`, evidence,
+    )).not.toThrow();
+  });
+
+  it('keeps line breaks as measured-claim boundaries without splitting inline quantities', () => {
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body>编号0<br>周六开放</body></html>', '周六开放',
+    )).not.toThrow();
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body>共设24<span>个</span>阅读座位</body></html>', '共设24个阅读座位',
+    )).not.toThrow();
+  });
+
+  it.each(['0周', '5周'])('still rejects an actual unsupported duration beside a clock: %s', (duration) => {
+    expect(() => hardenSelfContainedHtml(
+      `<!doctype html><html><body>周二至周五：14:00—19:00 活动持续${duration}。</body></html>`,
+      '周二至周五：14:00—19:00。',
+    )).toThrowError(expect.objectContaining({
+      code: 'design_output_quality_rejected',
+      details: expect.objectContaining({ measuredClaimToken: duration }),
+    }));
+  });
+
+  it('uses the same clock boundary for evidence and visible claims and preserves subject checks', () => {
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body>活动持续0周。</body></html>',
+      '周二至周五：14:00—19:00 周六至周日：09:30—17:30',
+    )).toThrowError(expect.objectContaining({ code: 'design_output_quality_rejected' }));
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body>平台已有24个项目。</body></html>', '共设24个阅读座位。',
+    )).toThrowError(expect.objectContaining({ code: 'design_output_quality_rejected' }));
+  });
+
   it('enforces MAP visible text occurrence constraints without exposing the text in errors', () => {
     const marker = '唯一发布验收标记';
     const constraints = [{ text: marker, minOccurrences: 1, maxOccurrences: 1 }];

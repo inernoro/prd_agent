@@ -3458,6 +3458,8 @@ function extractVisibleTextFromMarkup(html: string): string {
         || hasHtmlAttribute(tag.attributes, 'hidden')
         || readHtmlAttribute(tag.attributes, 'aria-hidden')?.trim().toLowerCase() === 'true'
         || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)/i.test(style);
+      // A visible line break is a text boundary, unlike inline spans within a quantity.
+      if (suppressedDepth === 0 && !suppressed && tag.name.toLowerCase() === 'br') appendVisibleText('。');
       if (suppressedDepth === 0 && !suppressed && tag.name.toLowerCase() === 'input') {
         const type = (readHtmlAttribute(tag.attributes, 'type') ?? 'text').trim().toLowerCase();
         if (!['hidden', 'checkbox', 'radio', 'file', 'color', 'range'].includes(type)) {
@@ -3554,7 +3556,15 @@ interface MeasuredClaimContext {
 
 function measuredClaimContexts(text: string): MeasuredClaimContext[] {
   const claims: MeasuredClaimContext[] = [];
-  for (const segment of text.split(/[\r\n。！？!?；;，,：:]+/)) {
+  // Clock minutes are not standalone quantities: splitting "19:00 周六" at ':'
+  // must not invent "0周". Mask only complete clock digits before segmentation,
+  // retaining delimiters/offsets and using this same lexical boundary for both
+  // source evidence and visible text. This does not establish clock fact support.
+  const quantityText = text.replace(
+    /(?<![\d:：])(?:[01]?\d|2[0-3])[:：][0-5]\d(?!\d|[:：]\d)/g,
+    (clock) => clock.replace(/\d/g, ' '),
+  );
+  for (const segment of quantityText.split(/[\r\n。！？!?；;，,：:]+/)) {
     const segmentClaims: Array<MeasuredClaimContext & { offset: number; patternOrder: number }> = [];
     const patterns = [
       { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
