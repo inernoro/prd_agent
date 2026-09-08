@@ -31,7 +31,8 @@ const TONE_DOT: Record<BranchTone, string> = {
   muted: 'bg-[hsl(var(--hairline-strong))]',
 };
 
-const GRID = 'grid grid-cols-[24px_minmax(0,1.6fr)_minmax(0,1.4fr)_200px_80px_70px_150px_90px] items-center gap-3';
+// 桌面是一行八列的表格；手机（< md）退化为堆叠卡片：名字行 → 服务点 → 迷你条 + 数字 + 状态。
+const GRID = 'md:grid md:grid-cols-[24px_minmax(0,1.6fr)_minmax(0,1.4fr)_200px_80px_70px_150px_90px] md:items-center md:gap-3';
 
 function ServiceDots({ branch }: { branch: BranchView }): JSX.Element {
   return (
@@ -62,26 +63,35 @@ function BranchRow({ branch, onSelect }: { branch: BranchView; onSelect: (branch
       role="row"
       className={cn(
         GRID,
-        'border-t border-[hsl(var(--hairline))] px-3.5 py-2.5 text-[13px]',
+        'flex flex-col gap-1.5 border-t border-[hsl(var(--hairline))] px-3.5 py-2.5 text-[13px]',
         alive ? 'bg-[hsl(var(--surface-raised))]' : 'bg-[hsl(var(--surface-sunken))]/35',
       )}
     >
-      <span className="relative inline-flex h-2.5 w-2.5" aria-hidden="true">
+      <span className="relative hidden h-2.5 w-2.5 md:inline-flex" aria-hidden="true">
         {branch.tone === 'bad' ? <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-60" /> : null}
         <span className={cn('relative inline-flex h-2.5 w-2.5 rounded-full', TONE_DOT[branch.tone])} />
       </span>
-      <button type="button" onClick={() => onSelect(branch)} className="flex min-w-0 flex-col items-start gap-0.5 text-left">
-        <span className={cn('max-w-full truncate font-mono', alive ? 'font-medium text-foreground' : 'text-muted-foreground')}>{branch.branchName}</span>
-        {branch.note ? <span className="max-w-full truncate text-[11px] text-muted-foreground" title={branch.note}>{branch.note}</span> : null}
+      <button type="button" onClick={() => onSelect(branch)} className="flex min-w-0 items-start gap-2 text-left md:block">
+        <span className={cn('mt-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full md:hidden', TONE_DOT[branch.tone])} aria-hidden="true" />
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className={cn('max-w-full truncate font-mono', alive ? 'font-medium text-foreground' : 'text-muted-foreground')}>{branch.branchName}</span>
+          {branch.note ? <span className="max-w-full truncate text-[11px] text-muted-foreground" title={branch.note}>{branch.note}</span> : null}
+        </span>
       </button>
       <ServiceDots branch={branch} />
-      <AvailabilityBar buckets={branch.primary.buckets} segments={40} compact label={`${branch.branchName} 最近 24 小时可用率分布`} />
-      <span className={cn('font-mono tabular-nums', branch.tone === 'bad' ? 'text-destructive' : alive ? 'text-foreground' : 'text-muted-foreground')}>
-        {alive ? formatPercent(branch.availability24h) : '—'}
-      </span>
-      <span className="font-mono tabular-nums text-muted-foreground">{alive ? formatLatency(branch.avgLatencyMs24h) : '—'}</span>
-      <span className={cn('text-xs', branch.tone === 'bad' ? 'text-destructive' : 'text-muted-foreground')}>{branch.statusText}</span>
-      <Link to={`/branch-panel/${encodeURIComponent(branch.branchId)}`} className="text-xs font-medium text-primary hover:underline">打开分支</Link>
+      <div className="flex items-center gap-3 md:contents">
+        <div className="min-w-0 flex-1 md:flex-none">
+          <AvailabilityBar buckets={branch.primary.buckets} segments={40} compact label={`${branch.branchName} 最近 24 小时可用率分布`} />
+        </div>
+        <span className={cn('shrink-0 font-mono tabular-nums', branch.tone === 'bad' ? 'text-destructive' : alive ? 'text-foreground' : 'text-muted-foreground')}>
+          {alive ? formatPercent(branch.availability24h) : '—'}
+        </span>
+        <span className="shrink-0 font-mono tabular-nums text-muted-foreground">{alive ? formatLatency(branch.avgLatencyMs24h) : '—'}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3 md:contents">
+        <span className={cn('text-xs', branch.tone === 'bad' ? 'text-destructive' : 'text-muted-foreground')}>{branch.statusText}</span>
+        <Link to={`/branch-panel/${encodeURIComponent(branch.branchId)}`} className="shrink-0 text-xs font-medium text-primary hover:underline">打开分支</Link>
+      </div>
     </div>
   );
 }
@@ -131,7 +141,7 @@ export function BranchModal({ group, open, onOpenChange, onSelectBranch }: {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent frame className="max-w-[1200px]" style={{ height: '82vh' }}>
-        <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] py-3.5 pl-[18px] pr-14">
+        <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] py-3.5 pl-4 pr-14 md:pl-[18px]">
           <div className="flex min-w-0 flex-col gap-0.5">
             <DialogTitle className="text-lg font-semibold">
               {group.projectName} · 全部分支 <span className="font-mono text-sm font-normal text-muted-foreground">{group.total}</span>
@@ -142,7 +152,7 @@ export function BranchModal({ group, open, onOpenChange, onSelectBranch }: {
             </DialogDescription>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <label className="relative block w-60">
+            <label className="relative block w-full sm:w-60">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <input
                 type="search"
@@ -172,7 +182,7 @@ export function BranchModal({ group, open, onOpenChange, onSelectBranch }: {
             />
           </div>
         </header>
-        <div className={cn(GRID, 'shrink-0 px-3.5 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground')} role="row">
+        <div className={cn(GRID, 'hidden shrink-0 px-3.5 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground')} role="row">
           <span />
           <span>分支</span>
           <span>服务（进程视角）</span>
