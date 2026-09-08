@@ -110,7 +110,10 @@ def main() -> None:
         elif covered_h < args.hours * 0.9:
             cmp_note = f"；覆盖 {covered_h}h **短于** {args.hours}h 窗口，与上一行不可直接相加（进程刚重启过）"
         elif covered_h > args.hours * 1.1:
-            cmp_note = f"；覆盖 {covered_h}h **长于** {args.hours}h 窗口，与上一行相加会高估，按 {args.hours}/{covered_h} 折算后再比"
+            # 不给「按比例折算」的建议：那只在流量均匀时成立，而这张表要对比的恰恰是
+            # 突发过载时段——burst 落在窗口外会被摊进来，落在窗口内又会被摊薄
+            # （Codex 十一轮 P2）。只能定性参考，不能当同口径数字。
+            cmp_note = f"；覆盖 {covered_h}h **长于** {args.hours}h 窗口，与上一行**不可相加也不可按比例折算**（流量非均匀，折算会失真），只作定性参考"
         else:
             cmp_note = f"；覆盖 {covered_h}h，与 {args.hours}h 窗口大致同口径，可与上一行相加"
         rows.append((
