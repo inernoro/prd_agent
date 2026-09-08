@@ -134,7 +134,7 @@ slice + 控制面 systemd 权重、同 commit 部署并入、webhook 噪声廉�
 **做完算数的判据**：`docker info -f '{{.CgroupDriver}}'` 为 systemd 且 /healthz `pressure.workloadCgroup.weightManaged=true`；
 SSE 单连接存活超过 10 分钟不重连；宿主 load1 / 核数 在工作日白天中位数低于 1.0。
 
-**改前基线（上线前最后一次采样，度量尺 `cds/scripts/control-plane-baseline.py --hours 24`，一周后用同一把尺子复测）**：
+**改前基线（上线前最后一次采样，取自控制面度量尺脚本按最近 24 小时的输出，脚本位置见文末「实现来源」；一周后用同一把尺子复测）**：
 
 | 指标 | 2026-09-08 12:25 UTC |
 |---|---|
@@ -170,3 +170,4 @@ SSE 单连接存活超过 10 分钟不重连；宿主 load1 / 核数 在工作�
 | 位置 | 文件 | 作用 |
 |------|------|------|
 | 相关 | `cds/src/services/janitor.ts` | 本次首步落地 |
+| 度量 | `cds/scripts/control-plane-baseline.py` | 控制面过载治理的改前改后度量尺（同一口径出 Markdown 表） |
