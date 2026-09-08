@@ -35,12 +35,19 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import type { BranchEntry, Project, ReleaseRun, ReleaseTarget } from '../types.js';
+import type { BranchEntry, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
+import {
+  CUSTOM_PROBE_ID_PREFIX,
+  customProbeTargetId,
+  describeMonitorProbe,
+  probeCustomMonitor,
+} from './uptime-custom-monitor.js';
 // 故障归因到发布的时间窗判定只有这一处，发布中心将来要展示同款关联必须复用它。
 import { linkIncidentToRelease, releaseIncidentLinkWindowMs } from './release-incident-link.js';
 import { isTrunkBranch } from './branch-protection.js';
 import { isRemoteExecutorOwned } from './executor-ownership.js';
 import {
+  RELEASE_PROBE_ID_PREFIX,
   isReleaseTargetProbeable,
   releaseProbeSkipReason,
   releaseProbeTargetId,
@@ -49,6 +56,7 @@ import {
 // 生产目标的探测必须与发布中心预检用同一个 HTTP 判定函数：两处各写一遍的结局是
 // 「预检说健康、状态页说宕机」（或反过来），用户无从判断该信哪个。
 import { probeHealthcheckStatus } from './release-service.js';
+import { probeRequestHeaders } from './probe-marker.js';
 import {
   DEFAULT_BAR_SEGMENTS,
   DEFAULT_FAILURE_THRESHOLD,
@@ -78,12 +86,27 @@ import {
  * 二分里——container 分支读的是 serviceStatus（控制面意图），生产站点整站挂掉时
  * 那个值仍是「enabled」，状态页会全绿。
  */
-export type ProbeKind = 'http' | 'container' | 'url';
+export type ProbeKind = 'http' | 'container' | 'url' | 'keyword' | 'tcp';
+
+/**
+ * 目标来源：分支预览服务（系统从分支台账推导）/ 生产发布目标（从发布中心推导）/
+ * 自定义监控（人在监控中心手动添加）。这是状态页分组、可用率含义与操作权限的
+ * 分界线——probeKind 只说「怎么探」，source 说「这是谁的承诺」。
+ */
+export type ProbeSource = 'branch' | 'release' | 'custom';
+
+/** 从记录 id 反推来源。三类前缀在结构上互斥（见各自 *_PROBE_ID_PREFIX 注释）。 */
+export function probeSourceOfId(id: string): ProbeSource {
+  if (id.startsWith(RELEASE_PROBE_ID_PREFIX)) return 'release';
+  if (id.startsWith(CUSTOM_PROBE_ID_PREFIX)) return 'custom';
+  return 'branch';
+}
 
 /** 探测目标：一个分支的一个对外服务，或一个生产发布目标。 */
 export interface ProbeTarget {
-  /** 分支目标为 `${branchId}::${profileId}`，发布目标为 `release@${targetId}`；URL 里需 encodeURIComponent */
+  /** 分支目标为 `${branchId}::${profileId}`，发布目标为 `release@${targetId}`，自定义为 `monitor@${id}`；URL 里需 encodeURIComponent */
   id: string;
+  source: ProbeSource;
   branchId: string;
   projectId: string;
   profileId: string;
@@ -115,6 +138,40 @@ export interface ProbeTarget {
   excluded: boolean;
   /** 命中的那条排除规则，用于展示「为什么这条没被监控」 */
   excludedBy?: string;
+  /** 自定义监控的定义（探测实现按它分派）；其它来源为空 */
+  monitor?: UptimeCustomMonitor;
+  /** 自定义监控自己的间隔（毫秒）；缺省跟随全局。只能比全局慢，不能更快 */
+  intervalMs?: number;
+  /** 自定义监控自己的超时（毫秒）；缺省跟随全局 */
+  timeoutMs?: number;
+  /** 一句人话描述探测方式（详情页展示） */
+  probeDescription?: string;
+  /** 分支目标：git 分支名 / 项目显示名 / 最近访问时间（监控中心分支汇总与模态窗用） */
+  branchName?: string;
+  projectName?: string;
+  branchLastActiveAt?: string;
+  /**
+   * 分支目标的「用户视角」探测地址（预览域名）。有它才会做第二判定：
+   * 经 forwarder / TLS / 路由整条链路，与真人打开预览是同一条路。
+   */
+  userViewUrl?: string;
+}
+
+/**
+ * 用户视角探测的落盘状态（挂在分支目标的台账上）。
+ *
+ * 与进程视角分开记：进程视角说「容器里的进程在应答」，用户视角说「从预览域名进去
+ * 真的能到」。两者都对才算正常；用户视角失败会折进主采样判故障（原因写明是用户视角），
+ * 但探测器自己够不着预览域名（DNS / 连接失败）不算故障——那是探测器的问题，
+ * 单独标 unreachable，不许把它变成一屏假红。
+ */
+export interface UserViewState {
+  url: string;
+  /** 只按最近一次结果给：up / down / unknown（未探过） */
+  status: UptimeStatus;
+  lastSample: UptimeSample | null;
+  /** 探测器够不着预览域名（不是用户视角故障） */
+  unreachable?: boolean;
 }
 
 /** 单个 target 的持久化状态。 */
@@ -139,6 +196,8 @@ export interface UptimeAlertEventData {
 
 export interface UptimeTargetRecord {
   id: string;
+  /** 旧台账可缺省，load 时按 id 前缀回填 */
+  source?: ProbeSource;
   branchId: string;
   projectId: string;
   profileId: string;
@@ -167,6 +226,18 @@ export interface UptimeTargetRecord {
   httpEverUp?: boolean;
   /** 连续协议层失败次数（非 HTTP 响应），达阈值触发降级 */
   protocolFailures?: number;
+  /** 探测方式的人话描述（自定义监控由定义派生，其它来源按 probeKind 兜底） */
+  probeDescription?: string;
+  /** 本目标实际生效的探测间隔（毫秒） */
+  intervalMs?: number;
+  /** 本目标实际生效的超时（毫秒） */
+  timeoutMs?: number;
+  branchName?: string;
+  projectName?: string;
+  branchStatus?: string;
+  branchLastActiveAt?: string;
+  /** 分支目标的用户视角判定 */
+  userView?: UserViewState;
   firstSeenAt: number;
 }
 
@@ -194,14 +265,19 @@ export interface UptimeMonitorConfig {
    */
   excludePatterns: string[];
   /**
-   * 监控范围。默认 `trunk` —— 只盯各项目的主干分支。
+   * 监控范围。默认 `all`（2026-09-08 监控中心重做起）——全部分支都探。
    *
-   * 为什么默认只看主干：特性分支是「今天开、明天删」的临时物，天然大量处于
-   * 降温/构建/已停止态，全量纳入会让状态页变成一屏噪声（生产实测 139 个目标里
-   * 103 个是暂停态），真故障反而被淹没。状态页要回答的是「我的服务好不好」，
-   * 不是「今天开了多少条分支」。需要全量时设 CDS_UPTIME_SCOPE=all。
+   * 此前默认只看主干，理由是特性分支大量处于降温态、全量纳入会把状态页变成一屏噪声。
+   * 重做后主列表只展示主站（生产目标 + 自定义监控），分支按项目折成一条汇总行、
+   * 点开模态窗才看明细，噪声问题在展示层解决，探测面就不必再缩。
+   * 仍可设 CDS_UPTIME_SCOPE=trunk 收窄到主干。
    */
   scope: 'trunk' | 'all';
+  /**
+   * 分支目标是否做「用户视角」第二判定（`CDS_UPTIME_USER_VIEW`，默认开）。
+   * 经预览域名整条链路探，带进程级探测令牌，代理侧不刷新 LRU。
+   */
+  userViewEnabled?: boolean;
   /**
    * 是否把生产发布目标纳入探测（`CDS_UPTIME_RELEASE_ENABLED`，默认开）。
    *
@@ -233,6 +309,16 @@ export interface UptimeStateSource {
    * 绝不因为少接一行而报错或漏掉故障本身。
    */
   getReleaseRuns?(targetId: string): ReleaseRun[];
+  /**
+   * 读监控中心的自定义探测目标。可选——不接线时监控中心只有系统推导的两类目标，
+   * 「添加监控」保存了也永远不会被探（守卫测试盯着 index.ts 的这行接线）。
+   */
+  getUptimeMonitors?(): UptimeCustomMonitor[];
+  /**
+   * 分支的预览地址（用户视角探测用）。可选——不接线就没有用户视角判定，
+   * 分支目标只有进程视角。
+   */
+  getPreviewUrl?(branch: BranchEntry): string;
 }
 
 export type ProbeFn = (target: ProbeTarget, timeoutMs: number) => Promise<Omit<UptimeSample, 't'>>;
@@ -241,6 +327,11 @@ const DEFAULT_INTERVAL_SECONDS = 60;
 const DEFAULT_TIMEOUT_MS = 5_000;
 /** 单轮并发探测上限，避免一次 fan-out 打爆 socket。 */
 const PROBE_CONCURRENCY = 8;
+/** 用户视角是一次轻量 fetch，可以比直连探测放得更开：100 条分支两轮就完。 */
+const USER_VIEW_CONCURRENCY = 32;
+/** 轮次预算：用户视角最多占间隔的四成，主通道整体不超过九成，超了就把剩下的留给下一轮。 */
+const USER_VIEW_BUDGET_RATIO = 0.4;
+const CYCLE_BUDGET_RATIO = 0.9;
 /** 「应该活着」的服务状态：只有 running 才算承诺对外可用。 */
 const LIVE_SERVICE_STATUSES = new Set(['running']);
 /** 「应该活着」的分支状态。building / starting / stopping / idle 都算 paused。 */
@@ -321,8 +412,9 @@ export function uptimeConfigFromEnv(repoRoot: string): UptimeMonitorConfig {
       60,
       MAX_SAMPLES_HARD_CEILING,
     ),
-    // 默认只监控主干；CDS_UPTIME_SCOPE=all 才纳入全部分支。
-    scope: (process.env.CDS_UPTIME_SCOPE || '').trim().toLowerCase() === 'all' ? 'all' : 'trunk',
+    // 默认全部分支都探（展示层折叠）；CDS_UPTIME_SCOPE=trunk 收窄到主干。
+    scope: (process.env.CDS_UPTIME_SCOPE || '').trim().toLowerCase() === 'trunk' ? 'trunk' : 'all',
+    userViewEnabled: envFlag('CDS_UPTIME_USER_VIEW', true),
     releaseTargetsEnabled: envFlag('CDS_UPTIME_RELEASE_ENABLED', true),
     storePath: path.join(repoRoot, '.cds', 'uptime-monitor.json'),
   };
@@ -344,15 +436,18 @@ export function selectProbeTargets(
   options: {
     scope?: 'trunk' | 'all';
     getProject?: (projectId: string) => Project | null | undefined;
+    getPreviewUrl?: (branch: BranchEntry) => string;
   } = {},
 ): ProbeTarget[] {
-  const scope = options.scope ?? 'trunk';
+  const scope = options.scope ?? 'all';
   const targets: ProbeTarget[] = [];
   for (const branch of branches) {
     if (!branch || branch.deleting) continue;
+    const project = options.getProject?.(branch.projectId);
     // 非主干分支在 trunk 范围下**根本不产 target**（而不是产一个 paused 的），
     // 否则状态页仍要滚过上百条灰条才看得到主干——那等于没收窄。
-    if (scope === 'trunk' && !isTrunkBranch(branch, options.getProject?.(branch.projectId))) continue;
+    if (scope === 'trunk' && !isTrunkBranch(branch, project)) continue;
+    const userViewUrl = options.getPreviewUrl ? (options.getPreviewUrl(branch) || '').trim() : '';
     const services = branch.services || {};
     for (const profileId of Object.keys(services).sort()) {
       const svc = services[profileId];
@@ -377,6 +472,7 @@ export function selectProbeTargets(
       const active = branchLive && serviceLive && !excludedBy && !remoteExecutor;
       targets.push({
         id,
+        source: 'branch',
         branchId: branch.id,
         projectId: branch.projectId,
         profileId,
@@ -389,6 +485,10 @@ export function selectProbeTargets(
         excluded: Boolean(excludedBy),
         excludedBy: excludedBy || undefined,
         remoteExecutor: remoteExecutor || undefined,
+        branchName: branch.branch || branch.id,
+        projectName: project?.name || undefined,
+        branchLastActiveAt: branch.lastAccessedAt,
+        userViewUrl: userViewUrl || undefined,
       });
     }
   }
@@ -421,6 +521,7 @@ export function selectReleaseProbeTargets(
     );
     targets.push({
       id,
+      source: 'release',
       branchId: '',
       projectId: target.projectId,
       profileId: target.id,
@@ -441,7 +542,55 @@ export function selectReleaseProbeTargets(
 }
 
 /**
- * 两类目标合并成一轮探测清单。合并只此一处，避免调用方各自拼一份后漏掉某一类。
+ * 从监控中心的自定义定义推导探测目标（纯函数）。
+ *
+ * 与前两类的差别：活性只看 `enabled`（人手动暂停），没有分支状态、executor
+ * 归属这些维度；间隔与超时可按目标覆盖，但只在轮次里判「到没到点」，
+ * 定时器仍是全局那一个。排除名单照样生效（逃生阀对三类一视同仁）。
+ */
+export function selectCustomProbeTargets(
+  monitors: ReadonlyArray<UptimeCustomMonitor>,
+  excludePatterns: ReadonlyArray<string> = [],
+  options: { globalIntervalMs?: number } = {},
+): ProbeTarget[] {
+  const targets: ProbeTarget[] = [];
+  for (const monitor of monitors) {
+    if (!monitor || !monitor.id) continue;
+    const id = customProbeTargetId(monitor);
+    const name = monitor.name || monitor.id;
+    const excludedBy = matchExcludePattern(
+      { id, branchId: '', projectId: monitor.projectId || '', profileId: monitor.id, name },
+      excludePatterns,
+    );
+    const ownInterval = monitor.intervalSeconds ? monitor.intervalSeconds * 1000 : undefined;
+    const globalInterval = options.globalIntervalMs || 0;
+    targets.push({
+      id,
+      source: 'custom',
+      branchId: '',
+      projectId: monitor.projectId || '',
+      profileId: monitor.id,
+      name,
+      hostPort: 0,
+      probeKind: monitor.kind === 'tcp' ? 'tcp' : monitor.kind === 'keyword' ? 'keyword' : 'url',
+      url: monitor.url,
+      active: monitor.enabled && !excludedBy,
+      branchStatus: 'custom-monitor',
+      serviceStatus: monitor.enabled ? 'enabled' : 'paused',
+      excluded: Boolean(excludedBy),
+      excludedBy: excludedBy || undefined,
+      monitor,
+      // 比全局还快的间隔没有意义（轮次本身按全局跑），按全局结算并如实展示。
+      intervalMs: ownInterval && globalInterval ? Math.max(ownInterval, globalInterval) : ownInterval,
+      timeoutMs: monitor.timeoutMs,
+      probeDescription: describeMonitorProbe(monitor),
+    });
+  }
+  return targets;
+}
+
+/**
+ * 三类目标合并成一轮探测清单。合并只此一处，避免调用方各自拼一份后漏掉某一类。
  */
 export function selectAllProbeTargets(
   branches: ReadonlyArray<BranchEntry>,
@@ -451,11 +600,17 @@ export function selectAllProbeTargets(
     scope?: 'trunk' | 'all';
     getProject?: (projectId: string) => Project | null | undefined;
     releaseTargetsEnabled?: boolean;
+    customMonitors?: ReadonlyArray<UptimeCustomMonitor>;
+    globalIntervalMs?: number;
+    getPreviewUrl?: (branch: BranchEntry) => string;
   } = {},
 ): ProbeTarget[] {
   const branchTargets = selectProbeTargets(branches, excludePatterns, options);
-  if (options.releaseTargetsEnabled === false) return branchTargets;
-  return [...branchTargets, ...selectReleaseProbeTargets(releaseTargets, excludePatterns)];
+  const customTargets = selectCustomProbeTargets(options.customMonitors || [], excludePatterns, {
+    globalIntervalMs: options.globalIntervalMs,
+  });
+  if (options.releaseTargetsEnabled === false) return [...branchTargets, ...customTargets];
+  return [...branchTargets, ...selectReleaseProbeTargets(releaseTargets, excludePatterns), ...customTargets];
 }
 
 /** paused 原因的人话文案（前端直接展示）。 */
@@ -465,6 +620,9 @@ export function pausedReasonOf(target: ProbeTarget): string {
   }
   if (target.remoteExecutor) {
     return '未纳入监控（容器在远端 executor，协调端探不到其宿主端口）';
+  }
+  if (target.source === 'custom') {
+    return '已手动暂停，在监控中心点「恢复探测」即可继续';
   }
   // url 型必须在分支/服务状态之前结算：它的 branchStatus 是占位值 release-target，
   // 落到下面的模板会输出「分支状态 release-target，暂不探测」——用户读到的是
@@ -504,6 +662,12 @@ async function probeReleaseUrl(target: ProbeTarget, timeoutMs: number): Promise<
  * 只是没有那个路由）；5xx / 连接失败 / 超时算故障。
  */
 export const defaultHttpProbe: ProbeFn = async (target, timeoutMs) => {
+  // 自定义监控按自己的定义分派（状态码规则 / 关键字 / TCP），不走下面任何一条
+  // 分支专用口径——「< 500 即存活」对用户明确写了「必须 200」的目标就是假绿。
+  if (target.source === 'custom') {
+    if (!target.monitor) return { up: false, ms: 0, err: '自定义监控缺少定义' };
+    return await probeCustomMonitor(target.monitor, timeoutMs);
+  }
   // url 型必须在 hostPort 判定之前分派：它的 hostPort 恒为 0，落进下面的容器
   // 兜底就会拿 serviceStatus 当结论 —— 那探的是「CDS 以为的目标开关」，不是
   // 生产站点本身，站点整站挂掉时依然报 up。
@@ -528,6 +692,8 @@ export const defaultHttpProbe: ProbeFn = async (target, timeoutMs) => {
         path: '/',
         method: 'GET',
         timeout: timeoutMs,
+        // 只带公开的 polling 分类头，不带探测令牌：这一路直连分支容器，容器里的代码
+        // 能看到请求头；令牌只该出现在经预览域名、由 CDS 自己代理收下的用户视角探测里。
         headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true' },
       },
       (res) => {
@@ -560,6 +726,47 @@ export const defaultHttpProbe: ProbeFn = async (target, timeoutMs) => {
 
 
 /** 一天的毫秒数（按天聚合与 range 判定共用）。 */
+/** 用户视角探测结果。unreachable = 探测器够不着预览域名，不是用户视角故障。 */
+export interface UserViewOutcome extends Omit<UptimeSample, 't'> {
+  unreachable?: boolean;
+}
+
+export type UserViewProbeFn = (url: string, timeoutMs: number) => Promise<UserViewOutcome>;
+
+/**
+ * 用户视角探测：经预览域名走完整条链路（边缘 / forwarder / 路由 / 容器）。
+ *
+ * 判定口径与进程视角一致：拿到任何 < 500 的响应算可达（401 是预览门禁在应答，
+ * 404 是路由到了应用），5xx / 超时算失败。连接层错误（DNS、拒绝、TLS）另标
+ * unreachable——那说明探测器自己够不着预览域名，不能折成目标故障。
+ * 带进程级探测令牌（probe-marker.ts）：代理侧据此不刷新 LRU、不记访问（proxy.ts）；
+ * 公开的 x-cds-poll 头只影响日志分类，伪造不了豁免。
+ */
+export const defaultUserViewProbe: UserViewProbeFn = async (url, timeoutMs) => {
+  const startedAt = Date.now();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      redirect: 'manual',
+      cache: 'no-store',
+      signal: ctrl.signal,
+      headers: { 'user-agent': 'cds-uptime-monitor', ...probeRequestHeaders(), accept: 'text/html,*/*;q=0.8' },
+    });
+    await res.body?.cancel().catch(() => undefined);
+    const code = res.status;
+    return { up: code > 0 && code < 500, ms: Date.now() - startedAt, code, err: code >= 500 ? `用户视角 HTTP ${code}` : undefined };
+  } catch (err) {
+    const aborted = (err as Error).name === 'AbortError';
+    if (aborted) return { up: false, ms: Date.now() - startedAt, err: `用户视角探测超时（${timeoutMs}ms）` };
+    const msg = (err as Error & { cause?: Error }).cause?.message || (err as Error).message;
+    return { up: false, ms: Date.now() - startedAt, err: `探测器够不着预览域名：${msg}`, unreachable: true };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const DAY_MS = 24 * 3600 * 1000;
 
 /**
@@ -650,6 +857,7 @@ export function compareTargetsForDisplay(
 function emptyRecord(target: ProbeTarget, now: number): UptimeTargetRecord {
   return {
     id: target.id,
+    source: target.source,
     branchId: target.branchId,
     projectId: target.projectId,
     profileId: target.profileId,
@@ -670,6 +878,7 @@ function emptyRecord(target: ProbeTarget, now: number): UptimeTargetRecord {
 /** 对外摘要里的单个 target。 */
 export interface UptimeTargetSummary {
   id: string;
+  source: ProbeSource;
   name: string;
   branchId: string;
   projectId: string;
@@ -696,6 +905,70 @@ export interface UptimeTargetSummary {
   sampleCount24h: number;
   buckets: ReturnType<typeof bucketizeSamples>;
   openIncidentSince: number | null;
+  /**
+   * 当前状态从何时起持续（down = 开着的故障起点；up = 上一次故障结束 / 首次看到）。
+   * 状态页「已正常 3 天 / 故障已持续 12 分钟」都从这里算。unknown / paused 为 null。
+   */
+  statusSince: number | null;
+  /** 台账里的故障事件数（含已恢复，上限 MAX_INCIDENTS_PER_TARGET） */
+  incidentCount: number;
+  /** 探测方式的人话描述 */
+  probeDescription: string;
+  /** 本目标实际生效的探测间隔（秒） */
+  intervalSeconds: number;
+  /** 本目标实际生效的超时（毫秒） */
+  timeoutMs: number;
+  /** 自定义监控的定义 id（source=custom 时有），前端据此编辑 / 暂停 / 删除 */
+  monitorId?: string;
+  /** 自定义监控的标签 */
+  tags?: string[];
+  /** 自定义监控是否启用（source=custom 时有） */
+  enabled?: boolean;
+  /**
+   * 是否真发过请求探出来的。false = 按容器状态判定（读的是 CDS 自己的记录，
+   * 不是观测），状态页标「未实测」，不算正常、不计可用率。
+   */
+  measured: boolean;
+  /** 分支目标的用户视角判定（有预览地址且开了用户视角才有） */
+  userView?: UserViewState;
+  branchName?: string;
+  projectName?: string;
+  branchStatus?: string;
+  branchLastActiveAt?: string;
+}
+
+/** 覆盖面里一条「没被盯」的对象 */
+export interface UptimeCoverageItem {
+  id: string;
+  name: string;
+  source: ProbeSource;
+  projectId: string;
+  projectName?: string;
+  kind: string;
+  reason: string;
+  action: string;
+}
+
+export interface UptimeCoverage {
+  /** 全站可监测对象（三类来源推导出的全部目标） */
+  total: number;
+  /** 已纳入探测（含降温 / 未运行的分支：它们运行时就会被探） */
+  covered: number;
+  uncovered: UptimeCoverageItem[];
+  /** 未纳入按原因计数 */
+  byReason: Array<{ kind: string; count: number }>;
+  scope: 'trunk' | 'all';
+}
+
+/** 探测器自身健康：横幅上告诉人「监测本身没停」 */
+export interface UptimeProberHealth {
+  lastCycleAt: number | null;
+  lastCycleDurationMs: number | null;
+  lastCycleProbed: number;
+  lastCycleTargets: number;
+  /** 超过两个间隔没跑完一轮 */
+  stalled: boolean;
+  userViewEnabled: boolean;
 }
 
 export interface UptimeSummary {
@@ -717,9 +990,13 @@ export interface UptimeSummary {
     unknown: number;
     /** 未纳入监控的目标数（命中排除名单），与 paused 分开计 */
     excluded: number;
+    /** 未实测（按容器状态判定）的目标数，不算正常 */
+    unmeasured: number;
     ok: boolean;
   };
   targets: UptimeTargetSummary[];
+  coverage: UptimeCoverage;
+  prober: UptimeProberHealth;
 }
 
 /**
@@ -739,23 +1016,58 @@ export interface ReleaseLinkedIncident extends UptimeIncident {
 
 export interface UptimeIncidentView extends ReleaseLinkedIncident {
   targetName: string;
+  source: ProbeSource;
   branchId: string;
   projectId: string;
   durationMs: number;
   ongoing: boolean;
 }
 
+/** 系统推导目标的探测方式描述（自定义监控由定义派生，不走这里）。 */
+function defaultProbeDescription(record: Pick<UptimeTargetRecord, 'probeKind' | 'probeUrl'>): string {
+  if (record.probeKind === 'url') return `GET ${record.probeUrl || '（未配置上线地址）'} · 状态 2xx`;
+  if (record.probeKind === 'container') return '按容器状态判定（无可探测端口或已自动降级）';
+  return 'GET 容器宿主端口根路径 · 状态 < 500';
+}
+
+/**
+ * 总览计数的唯一口径：getSummary 与路由的项目级收窄都用它，别各算一份——
+ * 项目级那份曾漏掉「未实测」，把按容器状态猜出来的「正常」当成实测健康报给项目 Key
+ * （Codex PR #1514 P2）。按容器状态判出来的「正常」不是观测，单列未实测，不给它绿。
+ */
+export function tallyTargetSummaries(
+  targets: ReadonlyArray<Pick<UptimeTargetSummary, 'status' | 'excluded' | 'measured'>>,
+): UptimeSummary['overall'] {
+  const tally = { total: targets.length, up: 0, down: 0, paused: 0, unknown: 0, excluded: 0, unmeasured: 0, ok: true };
+  for (const t of targets) {
+    if (t.excluded) tally.excluded += 1;
+    else if (t.status === 'paused') tally.paused += 1;
+    else if (!t.measured && t.status !== 'down') tally.unmeasured += 1;
+    else if (t.status === 'up') tally.up += 1;
+    else if (t.status === 'down') tally.down += 1;
+    else tally.unknown += 1;
+  }
+  tally.ok = tally.down === 0;
+  return tally;
+}
+
 export class UptimeMonitorService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private records = new Map<string, UptimeTargetRecord>();
   private lastCycleAt: number | null = null;
+  private lastCycleDurationMs: number | null = null;
+  private lastCycleProbed = 0;
+  private lastCycleTargets = 0;
   private cycleRunning = false;
+  private customLaneRunning = false;
 
   constructor(
     private readonly deps: {
       state: UptimeStateSource;
       config: UptimeMonitorConfig;
       probe?: ProbeFn;
+      /** 用户视角探测实现（测试注入） */
+      userViewProbe?: UserViewProbeFn;
       now?: () => number;
       logger?: { warn?: (m: string) => void; info?: (m: string) => void };
       /**
@@ -811,18 +1123,10 @@ export class UptimeMonitorService {
   async runCycle(): Promise<void> {
     if (this.cycleRunning) return;
     this.cycleRunning = true;
+    let customLane: Promise<number> = Promise.resolve(0);
     try {
       const now = this.now();
-      const targets = selectAllProbeTargets(
-        this.deps.state.getAllBranches(),
-        this.deps.state.getReleaseTargets?.() || [],
-        this.deps.config.excludePatterns || [],
-        {
-          scope: this.deps.config.scope ?? 'trunk',
-          getProject: this.deps.state.getProject?.bind(this.deps.state),
-          releaseTargetsEnabled: this.deps.config.releaseTargetsEnabled !== false,
-        },
-      );
+      const targets = this.selectTargets();
       const liveIds = new Set(targets.map((t) => t.id));
 
       // 分支删除 / profile 移除后清掉台账，防止 records 无限增长。
@@ -844,52 +1148,347 @@ export class UptimeMonitorService {
         const target: ProbeTarget = record.degraded
           ? { ...rawTarget, probeKind: 'container', hostPort: 0 }
           : rawTarget;
-        record.name = target.name;
-        record.probeKind = target.probeKind;
-        record.probeUrl = target.url;
-        record.projectId = target.projectId;
-        record.excluded = target.excluded;
+        this.syncRecordIdentity(record, target);
         this.records.set(target.id, record);
         if (target.active) {
-          activeTargets.push(target);
+          // 自定义监控可以比全局慢：没到点就跳过这一轮，状态原样保留。
+          if (this.isDueThisCycle(target, record, now)) activeTargets.push(target);
           continue;
         }
         // 暂停：不产采样（时间桶留空），并把仍开着的故障事件就地收尾，
         // 否则一个被手动停掉的分支、或刚被加进排除名单的非 HTTP 服务，
         // 会留下一条永不结束的 incident。
-        record.status = 'paused';
-        record.pausedReason = pausedReasonOf(target);
-        record.consecutiveFailures = 0;
-        record.consecutiveSuccesses = 0;
-        applyIncidentTransition(record.incidents, 'to-up', { targetId: target.id, at: now });
+        this.markPaused(record, target, now);
       }
 
-      const probe = this.deps.probe || defaultHttpProbe;
-      for (let i = 0; i < activeTargets.length; i += PROBE_CONCURRENCY) {
-        const chunk = activeTargets.slice(i, i + PROBE_CONCURRENCY);
-        const results = await Promise.all(chunk.map(async (target) => {
-          try {
-            return { target, outcome: await probe(target, this.deps.config.timeoutMs), thrown: false };
-          } catch (err) {
-            // 探测器自身抛异常属于内部故障，不是「对面不说 HTTP」的证据，
-            // 因此不参与自动降级判定，照常记一次失败。
-            return {
-              target,
-              outcome: { up: false, ms: 0, err: (err as Error).message } as Omit<UptimeSample, 't'>,
-              thrown: true,
-            };
-          }
-        }));
+      // 自定义目标单独一条通道：它们的超时由用户配置（最长 60s，等于默认间隔），
+      // 一个挂住的自定义地址若与分支 / 生产目标同批 await，会把整轮拖过下一次定时
+      // 触发、让 cycleRunning 把那一轮直接丢掉——九个这样的目标就让所有分支结果
+      // 迟到两分钟（Codex PR #1514 第三轮 P1）。通道有自己的重入锁：它还没跑完时
+      // 下一轮照常探分支 / 生产，只是自定义目标跳过这一轮。
+      const builtinTargets = activeTargets.filter((t) => t.source !== 'custom');
+      const customTargets = activeTargets.filter((t) => t.source === 'custom');
+      customLane = this.runCustomLane(customTargets);
+
+      // 轮次预算（Codex PR #1514 第四轮 P1）：用户视角与直连探测都是按并发分批
+      // 串行 await 的，全站预览域名同时超时（网关挂了）时 100 条分支的用户视角
+      // 就要 60 多秒，把下一次定时触发整个吞掉。到了预算就停，没探到的分支
+      // 用户视角标「本轮未探」（不折入主判定），直连探测没轮到的目标状态原样
+      // 留到下一轮——总比整轮迟到强。
+      const intervalMs = this.deps.config.intervalMs;
+      const userViews = await this.probeUserViews(builtinTargets, now + intervalMs * USER_VIEW_BUDGET_RATIO);
+
+      const cycleDeadline = now + intervalMs * CYCLE_BUDGET_RATIO;
+      let builtinProbed = 0;
+      for (let i = 0; i < builtinTargets.length; i += PROBE_CONCURRENCY) {
+        if (i > 0 && this.now() >= cycleDeadline) {
+          this.deps.logger?.warn?.(`[uptime] 本轮预算用尽，${builtinTargets.length - i} 个目标留到下一轮再探`);
+          break;
+        }
+        const chunk = builtinTargets.slice(i, i + PROBE_CONCURRENCY);
+        const results = await Promise.all(chunk.map((target) => this.probeOne(target)));
         for (const { target, outcome, thrown } of results) {
-          this.applySample(target, { ...outcome, t: this.now() }, { allowDegrade: !thrown });
+          const folded = this.foldUserView(target, outcome, userViews.get(target.branchId));
+          this.applySample(target, { ...folded, t: this.now() }, { allowDegrade: !thrown });
+          builtinProbed += 1;
         }
       }
 
       this.lastCycleAt = now;
+      this.lastCycleDurationMs = Math.max(0, this.now() - now);
+      // 只计真正探完的：自定义通道还在跑或被跳过时不能先记成「完成」（第四轮 P2）。
+      this.lastCycleProbed = builtinProbed;
+      this.lastCycleTargets = targets.length;
       this.persist();
     } finally {
+      // 分支 / 生产这条主通道一结束就解锁；自定义通道慢也拖不住下一轮主通道。
       this.cycleRunning = false;
     }
+    this.lastCycleProbed += await customLane;
+  }
+
+  /** 暂停 / 排除的目标：不产采样，把仍开着的故障就地收尾。轮次、立即探测、改定义共用。 */
+  private markPaused(record: UptimeTargetRecord, target: ProbeTarget, now: number): void {
+    record.status = 'paused';
+    record.pausedReason = pausedReasonOf(target);
+    record.consecutiveFailures = 0;
+    record.consecutiveSuccesses = 0;
+    applyIncidentTransition(record.incidents, 'to-up', { targetId: target.id, at: now });
+  }
+
+  /**
+   * 自定义目标通道：与主通道并行、独立重入锁。上一轮还没探完（某个地址挂在
+   * 用户配置的长超时上）就整体跳过本轮，状态原样保留，主通道不受影响。
+   */
+  private async runCustomLane(targets: ReadonlyArray<ProbeTarget>): Promise<number> {
+    if (targets.length === 0) return 0;
+    if (this.customLaneRunning) {
+      this.deps.logger?.info?.(`[uptime] 自定义目标上一轮尚未探完，本轮跳过 ${targets.length} 个自定义目标`);
+      return 0;
+    }
+    this.customLaneRunning = true;
+    let probed = 0;
+    try {
+      for (let i = 0; i < targets.length; i += PROBE_CONCURRENCY) {
+        const chunk = targets.slice(i, i + PROBE_CONCURRENCY);
+        const results = await Promise.all(chunk.map((target) => this.probeOne(target)));
+        for (const { target, outcome, thrown } of results) {
+          this.applySample(target, { ...outcome, t: this.now() }, { allowDegrade: !thrown });
+          probed += 1;
+        }
+      }
+      this.persist();
+    } finally {
+      this.customLaneRunning = false;
+    }
+    return probed;
+  }
+
+  /** 本轮探测清单（三类来源合并）。runCycle 与 probeNow 共用，避免两处各拼一份。 */
+  private selectTargets(): ProbeTarget[] {
+    return selectAllProbeTargets(
+      this.deps.state.getAllBranches(),
+      this.deps.state.getReleaseTargets?.() || [],
+      this.deps.config.excludePatterns || [],
+      {
+        scope: this.deps.config.scope ?? 'all',
+        getProject: this.deps.state.getProject?.bind(this.deps.state),
+        releaseTargetsEnabled: this.deps.config.releaseTargetsEnabled !== false,
+        customMonitors: this.deps.state.getUptimeMonitors?.() || [],
+        globalIntervalMs: this.deps.config.intervalMs,
+        getPreviewUrl: this.deps.state.getPreviewUrl?.bind(this.deps.state),
+      },
+    );
+  }
+
+  /**
+   * 对本轮活跃的分支目标按分支去重，各探一次预览域名。结果按 branchId 返回，
+   * 同一分支的所有服务共用同一个用户视角结论。关掉用户视角或没有预览地址时为空。
+   */
+  private async probeUserViews(
+    activeTargets: ReadonlyArray<ProbeTarget>,
+    deadlineAt: number = Number.POSITIVE_INFINITY,
+  ): Promise<Map<string, UserViewOutcome & { url: string }>> {
+    const out = new Map<string, UserViewOutcome & { url: string }>();
+    if (this.deps.config.userViewEnabled === false) return out;
+    const byBranch = new Map<string, string>();
+    for (const t of activeTargets) {
+      if (t.source !== 'branch' || !t.userViewUrl || byBranch.has(t.branchId)) continue;
+      byBranch.set(t.branchId, t.userViewUrl);
+    }
+    const probe = this.deps.userViewProbe || defaultUserViewProbe;
+    const entries = [...byBranch.entries()];
+    for (let i = 0; i < entries.length; i += USER_VIEW_CONCURRENCY) {
+      if (i > 0 && this.now() >= deadlineAt) {
+        // 预算用尽：剩下的分支这一轮不探用户视角，只标「未探」，不折入主判定。
+        for (const [branchId, url] of entries.slice(i)) {
+          out.set(branchId, { up: false, ms: 0, err: '本轮探测预算用尽，用户视角未探', unreachable: true, url });
+        }
+        this.deps.logger?.warn?.(`[uptime] 用户视角预算用尽，${entries.length - i} 条分支留到下一轮`);
+        break;
+      }
+      const chunk = entries.slice(i, i + USER_VIEW_CONCURRENCY);
+      const results = await Promise.all(chunk.map(async ([branchId, url]) => {
+        try {
+          return [branchId, { ...(await probe(url, this.deps.config.timeoutMs)), url }] as const;
+        } catch (err) {
+          return [branchId, { up: false, ms: 0, err: `用户视角探测异常：${(err as Error).message}`, unreachable: true, url }] as const;
+        }
+      }));
+      for (const [branchId, result] of results) out.set(branchId, result);
+    }
+    return out;
+  }
+
+  /**
+   * 把用户视角折进主采样：进程在答但用户视角 5xx / 超时 → 记为失败（原因写明是用户视角）。
+   * 探测器够不着预览域名（unreachable）只记在 userView 上，不折——那不是目标故障。
+   */
+  private foldUserView(
+    target: ProbeTarget,
+    outcome: Omit<UptimeSample, 't'>,
+    userView: (UserViewOutcome & { url: string }) | undefined,
+  ): Omit<UptimeSample, 't'> {
+    const record = this.records.get(target.id);
+    if (!record || target.source !== 'branch') return outcome;
+    if (!userView) {
+      // 本轮没有用户视角（关掉了 / 没地址）：清掉旧结论，别让上一轮的红一直挂着。
+      if (record.userView && !target.userViewUrl) record.userView = undefined;
+      return outcome;
+    }
+    const sample: UptimeSample = { t: this.now(), up: userView.up, ms: userView.ms, code: userView.code, err: userView.err };
+    record.userView = {
+      url: userView.url,
+      status: userView.unreachable ? 'unknown' : (userView.up ? 'up' : 'down'),
+      lastSample: sample,
+      unreachable: userView.unreachable || undefined,
+    };
+    if (outcome.up && !userView.up && !userView.unreachable) {
+      return { up: false, ms: userView.ms, code: userView.code, err: userView.err || '用户视角不可达' };
+    }
+    return outcome;
+  }
+
+  /** 把目标定义上会变的展示字段同步进台账（改名、改地址、改间隔都要立刻反映）。 */
+  private syncRecordIdentity(record: UptimeTargetRecord, target: ProbeTarget): void {
+    record.source = target.source;
+    record.name = target.name;
+    record.probeKind = target.probeKind;
+    record.probeUrl = target.url;
+    record.projectId = target.projectId;
+    record.profileId = target.profileId;
+    record.excluded = target.excluded;
+    record.probeDescription = target.probeDescription;
+    record.intervalMs = target.intervalMs || this.deps.config.intervalMs;
+    record.timeoutMs = target.timeoutMs || this.deps.config.timeoutMs;
+    record.branchName = target.branchName;
+    record.projectName = target.projectName;
+    record.branchStatus = target.source === 'branch' ? target.branchStatus : undefined;
+    record.branchLastActiveAt = target.branchLastActiveAt;
+  }
+
+  /** 按容器状态判定的目标不是观测，标「未实测」。 */
+  private isMeasured(record: Pick<UptimeTargetRecord, 'probeKind' | 'source'>): boolean {
+    return record.probeKind !== 'container';
+  }
+
+  /**
+   * 覆盖面（对外口径）。项目级凭据只能看自己项目那一份：uncovered 里有目标 id、
+   * 分支名、项目名与原因，全量吐给一把项目 Key 就是跨项目枚举（Codex PR #1514 P1）。
+   */
+  getCoverage(projectId?: string | null): UptimeCoverage {
+    const all = this.selectTargets();
+    return this.computeCoverage(projectId ? all.filter((t) => t.projectId === projectId) : all);
+  }
+
+  /**
+   * 目标此刻的归属项目：先看本轮目标定义（刚保存、还没参与过轮次的目标也算），
+   * 再看台账。都没有 → undefined = 目标不存在。路由靠它判项目级凭据能不能碰。
+   */
+  getTargetProjectId(targetId: string): string | undefined {
+    const live = this.selectTargets().find((t) => t.id === targetId);
+    if (live) return live.projectId;
+    return this.records.get(targetId)?.projectId;
+  }
+
+  /**
+   * 目标定义改了（改名、改归属项目）就立刻把台账同步过来，不等下一轮：
+   * 台账里的 projectId 决定项目级 Key 看不看得到它，改完归属还让旧项目看着、
+   * 新项目看不见，等于隔离穿透（Codex PR #1514 第三轮 P2）。没有台账 = 还没探过，无事可同步。
+   */
+  refreshTarget(targetId: string): boolean {
+    const record = this.records.get(targetId);
+    if (!record) return false;
+    const live = this.selectTargets().find((t) => t.id === targetId);
+    if (!live) return false;
+    this.syncRecordIdentity(record, live);
+    // 定义里把它停了：台账立刻转 paused、开着的故障就地收尾，不等下一轮
+    // （直接调 API 停用、或界面的跟进探测失败时，摘要不能还挂着「故障」）。
+    if (!live.active) this.markPaused(record, live, this.now());
+    this.persist();
+    return true;
+  }
+
+  /** 覆盖面：全站可监测对象里，哪些没被盯、为什么、能怎么办。 */
+  private computeCoverage(targets: ReadonlyArray<ProbeTarget>): UptimeCoverage {
+    const uncovered: UptimeCoverageItem[] = [];
+    for (const t of targets) {
+      let kind: string | null = null;
+      let reason = '';
+      let action = '';
+      if (t.excluded) {
+        kind = '命中排除名单';
+        reason = `命中排除规则 ${t.excludedBy}`;
+        action = '在 CDS_UPTIME_EXCLUDE 里移除该规则';
+      } else if (t.remoteExecutor) {
+        kind = '远端执行器探不到';
+        reason = '容器跑在远端执行器，协调端探不到其宿主端口';
+        action = '等执行器侧探测上线';
+      } else if (t.source === 'release' && t.releaseSkipReason) {
+        kind = t.releaseSkipReason.includes('上线地址') ? '发布目标缺上线地址' : '发布目标未启用';
+        reason = t.releaseSkipReason;
+        action = t.releaseSkipReason.includes('上线地址') ? '去发布中心补 healthcheckUrl' : '在发布中心启用后自动纳入';
+      }
+      if (!kind) continue;
+      uncovered.push({ id: t.id, name: t.name, source: t.source, projectId: t.projectId, projectName: t.projectName, kind, reason, action });
+    }
+    const counts = new Map<string, number>();
+    for (const u of uncovered) counts.set(u.kind, (counts.get(u.kind) || 0) + 1);
+    return {
+      total: targets.length,
+      covered: targets.length - uncovered.length,
+      uncovered,
+      byReason: [...counts.entries()].map(([kind, count]) => ({ kind, count })),
+      scope: this.deps.config.scope ?? 'all',
+    };
+  }
+
+  /**
+   * 自定义监控的间隔闸：只有它自己的间隔比全局慢时才需要判断。容差取半个全局
+   * 间隔——定时器有漂移，卡死在「差 300ms 才到点」上会让 2 分钟间隔变成 3 分钟。
+   */
+  private isDueThisCycle(target: ProbeTarget, record: UptimeTargetRecord, now: number): boolean {
+    const own = target.intervalMs || 0;
+    const global = this.deps.config.intervalMs;
+    if (own <= global) return true;
+    if (!record.lastSample) return true;
+    return now - record.lastSample.t >= own - global / 2;
+  }
+
+  private async probeOne(target: ProbeTarget): Promise<{
+    target: ProbeTarget;
+    outcome: Omit<UptimeSample, 't'>;
+    thrown: boolean;
+  }> {
+    const probe = this.deps.probe || defaultHttpProbe;
+    const timeoutMs = target.timeoutMs || this.deps.config.timeoutMs;
+    try {
+      return { target, outcome: await probe(target, timeoutMs), thrown: false };
+    } catch (err) {
+      // 探测器自身抛异常属于内部故障，不是「对面不说 HTTP」的证据，
+      // 因此不参与自动降级判定，照常记一次失败。
+      return {
+        target,
+        outcome: { up: false, ms: 0, err: (err as Error).message },
+        thrown: true,
+      };
+    }
+  }
+
+  /**
+   * 对单个目标立刻探一次并记入台账（监控中心「立即探测」）。
+   *
+   * 走与轮次完全相同的 probe → applySample 路径，所以去抖、故障合成、告警外发
+   * 都照常生效——它只是把「等下一轮」变成「现在」，不是另一套判定。
+   * 返回 null = 目标不存在；skipped = 目标此刻不该探（暂停 / 排除），原因随附。
+   */
+  async probeNow(targetId: string): Promise<
+    | { ok: true; sample: UptimeSample; status: UptimeStatus }
+    | { ok: false; skipped: string }
+    | null
+  > {
+    const target = this.selectTargets().find((t) => t.id === targetId);
+    if (!target) return null;
+    const now = this.now();
+    const record = this.records.get(target.id) || emptyRecord(target, now);
+    this.syncRecordIdentity(record, target);
+    this.records.set(target.id, record);
+    if (!target.active) {
+      // 刚保存就被暂停的目标也要立刻在状态页出现且标对档，不能等下一轮才从
+      // unknown 翻成 paused。收尾逻辑与轮次一致。
+      this.markPaused(record, target, now);
+      this.persist();
+      return { ok: false, skipped: pausedReasonOf(target) };
+    }
+    const effective: ProbeTarget = record.degraded ? { ...target, probeKind: 'container', hostPort: 0 } : target;
+    // 用户视角与轮次同款：进程在答但预览域名 5xx 时，「立即探测」不能把目标翻绿、
+    // 把故障就地收尾——恢复阈值默认是 1，一次进程视角的成功就够翻了（Codex PR #1514 P1）。
+    const [{ outcome, thrown }, userViews] = await Promise.all([this.probeOne(effective), this.probeUserViews([effective])]);
+    const folded = this.foldUserView(effective, outcome, userViews.get(effective.branchId));
+    const sample: UptimeSample = { ...folded, t: this.now() };
+    this.applySample(effective, sample, { allowDegrade: !thrown });
+    this.persist();
+    return { ok: true, sample: record.lastSample || sample, status: record.status };
   }
 
   private applySample(
@@ -975,7 +1574,7 @@ export class UptimeMonitorService {
    * 前缀是 releaseProbeTargetId 的实现细节，在这里再解析一遍就是第二个判定源。
    */
   private attachReleaseAttribution(target: ProbeTarget, record: UptimeTargetRecord, atMs: number): void {
-    if (target.probeKind !== 'url' || !target.profileId) return;
+    if (target.source !== 'release' || !target.profileId) return;
     const readRuns = this.deps.state.getReleaseRuns;
     if (!readRuns) return;
     let link: ReturnType<typeof linkIncidentToRelease> = null;
@@ -1016,6 +1615,8 @@ export class UptimeMonitorService {
     // 这边根本没有容器，读到的是 ProbeTarget 上占位的 'enabled' → 恒为 up。
     // 事故值：生产整站挂掉，连续拿到协议层错误，状态页反而从红转绿。
     if (target.probeKind === 'url') return sample;
+    // 自定义监控的判定就是用户写的那条规则，没有「其实它不说 HTTP」这回事。
+    if (target.source !== 'branch') return sample;
     if (sample.up) {
       record.protocolFailures = 0;
       if (target.probeKind === 'http') record.httpEverUp = true;
@@ -1045,23 +1646,21 @@ export class UptimeMonitorService {
     const now = this.now();
     const dayMs = 24 * 3600 * 1000;
     const targets: UptimeTargetSummary[] = [];
-    let up = 0;
-    let down = 0;
-    let paused = 0;
-    let unknown = 0;
-    let excluded = 0;
 
     for (const record of [...this.records.values()].sort(compareTargetsForDisplay)) {
+      const measured = this.isMeasured(record);
       const a24 = availabilityOverRange(record, dayMs, now);
       const a7 = availabilityOverRange(record, 7 * dayMs, now);
       const open = record.incidents.find((i) => i.endedAt === null) || null;
-      if (record.excluded) excluded += 1;
-      else if (record.status === 'up') up += 1;
-      else if (record.status === 'down') down += 1;
-      else if (record.status === 'paused') paused += 1;
-      else unknown += 1;
+      const lastClosed = [...record.incidents].reverse().find((i) => i.endedAt !== null) || null;
+      const statusSince = record.status === 'down'
+        ? (open ? open.startedAt : null)
+        : record.status === 'up'
+          ? (lastClosed?.endedAt ?? record.firstSeenAt)
+          : null;
       targets.push({
         id: record.id,
+        source: record.source || probeSourceOfId(record.id),
         name: record.name,
         branchId: record.branchId,
         projectId: record.projectId,
@@ -1080,9 +1679,22 @@ export class UptimeMonitorService {
         sampleCount24h: a24.upCount + a24.downCount,
         buckets: bucketizeSamples(record.samples, now - dayMs, now, barSegments),
         openIncidentSince: open ? open.startedAt : null,
+        statusSince,
+        incidentCount: record.incidents.length,
+        probeDescription: record.probeDescription || defaultProbeDescription(record),
+        intervalSeconds: Math.round((record.intervalMs || this.deps.config.intervalMs) / 1000),
+        timeoutMs: record.timeoutMs || this.deps.config.timeoutMs,
+        measured,
+        userView: record.userView,
+        branchName: record.branchName,
+        projectName: record.projectName,
+        branchStatus: record.branchStatus,
+        branchLastActiveAt: record.branchLastActiveAt,
+        ...(record.source === 'custom' ? this.customFacet(record.profileId) : {}),
       });
     }
 
+    const intervalMs = this.deps.config.intervalMs;
     return {
       enabled: this.deps.config.enabled,
       generatedAt: now,
@@ -1092,9 +1704,24 @@ export class UptimeMonitorService {
       firstDataEtaSeconds: Math.round(this.deps.config.intervalMs / 1000),
       lastCycleAt: this.lastCycleAt,
       excludePatterns: [...(this.deps.config.excludePatterns || [])],
-      overall: { total: targets.length, up, down, paused, unknown, excluded, ok: down === 0 },
+      overall: tallyTargetSummaries(targets),
       targets,
+      coverage: this.getCoverage(),
+      prober: {
+        lastCycleAt: this.lastCycleAt,
+        lastCycleDurationMs: this.lastCycleDurationMs,
+        lastCycleProbed: this.lastCycleProbed,
+        lastCycleTargets: this.lastCycleTargets,
+        stalled: this.deps.config.enabled && this.lastCycleAt !== null && now - this.lastCycleAt > intervalMs * 2,
+        userViewEnabled: this.deps.config.userViewEnabled !== false,
+      },
     };
+  }
+
+  /** 自定义监控在摘要里附带的定义字段（编辑 / 暂停 / 标签都靠它）。 */
+  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled'> {
+    const monitor = (this.deps.state.getUptimeMonitors?.() || []).find((m) => m.id === monitorId);
+    return { monitorId, tags: monitor?.tags || [], enabled: monitor ? monitor.enabled : true };
   }
 
   /** 单 target 时序（已降采样到固定桶数）。 */
@@ -1105,6 +1732,8 @@ export class UptimeMonitorService {
     to: number;
     bucketCount: number;
     points: ReturnType<typeof bucketizeSamples>;
+    /** 最近 20 次原始采样，最新在前——判定就是从这些来的，给人核对 */
+    recentSamples: UptimeSample[];
   } | null {
     const record = this.records.get(targetId);
     if (!record) return null;
@@ -1122,7 +1751,7 @@ export class UptimeMonitorService {
     const points = needsRollup
       ? dailyRollupPoints(record, from, now)
       : bucketizeSamples(record.samples, from, now, bucketCount);
-    return { id: record.id, name: record.name, from, to: now, bucketCount: points.length, points };
+    return { id: record.id, name: record.name, from, to: now, bucketCount: points.length, points, recentSamples: record.samples.slice(-20).reverse() };
   }
 
   /** 全局故障事件时间线，最近的在前。 */
@@ -1134,6 +1763,7 @@ export class UptimeMonitorService {
         rows.push({
           ...incident,
           targetName: record.name,
+          source: record.source || probeSourceOfId(record.id),
           branchId: record.branchId,
           projectId: record.projectId,
           durationMs: incidentDurationMs(incident, now),
@@ -1150,6 +1780,16 @@ export class UptimeMonitorService {
     return this.records.get(targetId);
   }
 
+  /**
+   * 立刻抹掉一个目标的台账（删除自定义监控时用）。不调它也会在下一轮被清理，
+   * 但那意味着删掉的东西还要在状态页上挂最多一个探测间隔——用户会以为没删成。
+   */
+  forgetTarget(targetId: string): boolean {
+    const existed = this.records.delete(targetId);
+    if (existed) this.persist();
+    return existed;
+  }
+
   // ── 持久化：独立文件 + 原子写，失败静默（监控不能拖垮主流程） ──
 
   private load(): void {
@@ -1164,6 +1804,7 @@ export class UptimeMonitorService {
         record.samples = Array.isArray(record.samples) ? record.samples.slice(-this.deps.config.maxSamples) : [];
         record.daily = Array.isArray(record.daily) ? record.daily.slice(-MAX_DAILY_ROLLUPS) : [];
         record.incidents = Array.isArray(record.incidents) ? record.incidents.slice(-MAX_INCIDENTS_PER_TARGET) : [];
+        if (!record.source) record.source = probeSourceOfId(record.id);
         this.records.set(record.id, record);
       }
     } catch (err) {
