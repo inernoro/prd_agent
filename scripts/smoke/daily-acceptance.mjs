@@ -131,7 +131,10 @@ const PAGES = [
     scope: '[data-acceptance-scope="web-pages"]' },
   { key: 'doc-store',  route: '/document-store', anchor: '新建知识库',           minChars: 60, label: '知识库 / 文件解析' },
   { key: 'defect',     route: '/defect-agent',   anchor: '提交缺陷',             minChars: 60, label: '缺陷管理' },
-  { key: 'visual',     route: '/visual-agent',   anchor: 'AI 驱动的设计助手',     minChars: 60, label: '视觉创作' },
+  // 锚点跟着改版走：旧文案「AI 驱动的设计助手，让创作更简单」在视觉创作改版时被删掉了
+  // （理由见 .design/visual-agent-home/canvas.json：放到任何产品上都成立，等于没说），
+  // 而这里没跟着改，于是页面好好的却天天判红。换成改版后的主标题——它是这条路由独有的。
+  { key: 'visual',     route: '/visual-agent',   anchor: '今天做什么图？',         minChars: 60, label: '视觉创作' },
 ];
 
 const results = [];
@@ -462,8 +465,6 @@ async function checkPageAlive(ctx, page4) {
     if (u.startsWith(BASE) && r.status() >= 400) bad.push(`${r.status()} ${u.slice(BASE.length).slice(0, 50)}`);
   });
   page.on('pageerror', (e) => bad.push(`pageerror: ${e.message.slice(0, 50)}`));
-  await page.goto(`${BASE}${page4.route}`, { waitUntil: 'domcontentloaded' });
-
   // 等锚点真的出现，而不是干等固定秒数。
   // 固定 9 秒有两种坏法：慢的路由还没渲染完就被判（/document-store 就是 9 秒时空的、
   // 20 秒才出来），快的路由白等。等锚点则「慢就多等一会儿、真没有才红」。
@@ -472,22 +473,32 @@ async function checkPageAlive(ctx, page4) {
   // 外壳（导航 + 告警条）本身有上百字，在 body 上数等于路由渲不渲染都够。
   // 没声明 scope 的路由退回整页——那是明确的降级，只在锚点确实为路由独有时才成立。
   const needle = page4.anchor.replace(/\s+/g, '');
-  const readScoped = (sel) => (n) => {
+  // 注意：page.evaluate 是把函数**序列化成源码**丢进浏览器执行的，闭包不会跟过去。
+  // 所以 scope 只能当参数传，不能柯里化closure（那样浏览器里 sel 是 undefined，
+  // 整条用例直接 ReferenceError——2026-08-29 f3dcff1 就是这么把五条用例全打哑的）。
+  const readScoped = ([sel, n]) => {
     const root = sel ? document.querySelector(sel) : document.body;
     if (!root) return null;
     const t = root.innerText.replace(/\s+/g, '');
     return { chars: t.length, hit: n ? t.includes(n) : false };
   };
   let appeared = false;
-  const deadline = Date.now() + 25000;
-  while (Date.now() < deadline) {
-    const read = await page.evaluate(readScoped(page4.scope || null), needle);
-    if (read?.hit) { appeared = true; break; }
-    await page.waitForTimeout(500);
+  let final = null;
+  // 这一段任何一步抛出，page 都必须关掉：漏掉的页会把隧道连接一直攥着，
+  // 于是「一条用例坏」滚成「后面每条都 goto 超时」，红的原因被彻底盖住。
+  try {
+    await page.goto(`${BASE}${page4.route}`, { waitUntil: 'domcontentloaded' });
+    const deadline = Date.now() + 25000;
+    while (Date.now() < deadline) {
+      const read = await page.evaluate(readScoped, [page4.scope || null, needle]);
+      if (read?.hit) { appeared = true; break; }
+      await page.waitForTimeout(500);
+    }
+    final = await page.evaluate(readScoped, [page4.scope || null, null]);
+  } finally {
+    await page.close().catch(() => {});
   }
-  const final = await page.evaluate(readScoped(page4.scope || null), null);
   const text = { length: final?.chars ?? 0 };
-  await page.close();
 
   const enough = text.length >= page4.minChars;
   const anchored = appeared;

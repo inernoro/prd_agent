@@ -60,3 +60,30 @@ test('声明了 scope 的路由，锚点与字数都只看那一块', () => {
   const page = read('prd-admin/src/pages/WebPagesPage.tsx');
   assert.ok(/data-acceptance-scope="web-pages"/.test(page), '页面上没有这个取证范围标记');
 });
+
+test('取证函数不许靠闭包拿 scope', () => {
+  // 实际栽过（2026-08-29 f3dcff1）：readScoped 写成柯里化 `(sel) => (n) => ...`，
+  // 而 page.evaluate 是把函数**序列化成源码**丢进浏览器执行的，闭包不跟过去，
+  // 浏览器里 sel 直接 ReferenceError —— 五条「页面产物可见」全部打哑，
+  // 且第一条抛出后 page 没关，攥着隧道连接把后面的用例滚成 goto 超时。
+  // 上一条守卫只断言了 root 那行字符串在，抓不到「参数从哪来」，所以补这一条。
+  assert.ok(
+    !/const readScoped = \([^)]*\)\s*=>\s*\([^)]*\)\s*=>/.test(script),
+    'readScoped 又被写成柯里化了：闭包变量在 page.evaluate 里取不到',
+  );
+  // 必须把 scope 当参数传进去，而不是调用后再交给 evaluate
+  assert.ok(
+    !/page\.evaluate\(readScoped\(/.test(script),
+    'readScoped 被先调用再交给 evaluate —— 传进去的是返回值不是函数体',
+  );
+  const calls = [...script.matchAll(/page\.evaluate\(readScoped,\s*\[/g)];
+  assert.ok(calls.length >= 2, `readScoped 只被以「函数 + 参数数组」的形式调用了 ${calls.length} 次，少于预期`);
+});
+
+test('页面取证失败也必须把 page 关掉', () => {
+  // 漏关的页会一直攥着隧道连接，于是「一条用例坏」滚成「后面每条都 goto 超时」，
+  // 真正红的原因被彻底盖住 —— 2026-08-29 那次就是这么把 5 条红读成 6 条的。
+  const fn = script.slice(script.indexOf('async function checkPageAlive'), script.indexOf('// ── 主流程 ──'));
+  assert.ok(/finally\s*\{[\s\S]*?page\.close\(\)/.test(fn), 'checkPageAlive 没有在 finally 里关页');
+  assert.ok(/try\s*\{[\s\S]*?page\.goto\(/.test(fn), 'goto 在 try 之外：它超时同样会漏页');
+});
