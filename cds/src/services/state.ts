@@ -2,7 +2,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type {
-  DbLedgerEntry, CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, Principal, UserCredential, ProjectGrant, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
+  DbLedgerEntry, CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, Principal, UserCredential, ProjectGrant, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, UptimeCustomMonitor, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -2333,6 +2333,46 @@ export class StateService {
     if (!this.state.releaseTargets?.[id]) return false;
     delete this.state.releaseTargets[id];
     this.save();
+    return true;
+  }
+
+  // ── 监控中心：自定义探测目标 ──
+
+  listUptimeMonitors(projectId?: string): UptimeCustomMonitor[] {
+    if (!this.state.uptimeMonitors) return [];
+    return Object.values(this.state.uptimeMonitors)
+      .filter((monitor) => !projectId || monitor.projectId === projectId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  getUptimeMonitor(id: string): UptimeCustomMonitor | undefined {
+    return this.state.uptimeMonitors?.[id];
+  }
+
+  upsertUptimeMonitor(monitor: UptimeCustomMonitor): UptimeCustomMonitor {
+    if (!this.state.uptimeMonitors) this.state.uptimeMonitors = {};
+    const existing = this.state.uptimeMonitors[monitor.id];
+    // 与发布目标同款防护：客户端可指定 id，命中他人项目的既有条目直接抛冲突，
+    // 路由侧回 409，禁止跨项目覆盖。
+    if (existing && (existing.projectId || null) !== (monitor.projectId || null)) {
+      throw new Error(`监控目标 '${monitor.id}' 已属于其他项目，无法跨项目覆盖`);
+    }
+    const now = new Date().toISOString();
+    const saved: UptimeCustomMonitor = {
+      ...existing,
+      ...monitor,
+      createdAt: existing?.createdAt || monitor.createdAt || now,
+      updatedAt: now,
+    };
+    this.state.uptimeMonitors[monitor.id] = saved;
+    this.save(HINT_GLOBAL);
+    return saved;
+  }
+
+  removeUptimeMonitor(id: string): boolean {
+    if (!this.state.uptimeMonitors?.[id]) return false;
+    delete this.state.uptimeMonitors[id];
+    this.save(HINT_GLOBAL);
     return true;
   }
 

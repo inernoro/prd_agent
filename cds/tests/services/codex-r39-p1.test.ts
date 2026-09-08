@@ -10,6 +10,7 @@
  * 每个 it 都先写清「事故值」，改回旧行为必须红。
  */
 
+import { buildMonitorHeadline } from '../../web/src/lib/monitorCenter.js';
 import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -790,15 +791,28 @@ describe('第四十五轮：环境字典条目数与状态横幅', () => {
   });
 
   it('状态横幅在有「待确认」目标时不许报全部正常', () => {
-    const src = fs.readFileSync(path.join(REPO, 'web/src/pages/StatusPage.tsx'), 'utf-8');
-    // 事故值：down===0 && up>0 就直接绿 + 「全部服务正常」，
+    // 事故值：down===0 && up>0 就直接绿 + 「全部正常」，
     // 而同一张卡下面写着「待确认 N」——首轮探测中或去抖未到阈值的故障被绿灯盖住。
-    expect(src).toContain('状态确认中');
+    // 2026-09-08 监控中心重做后结论句由 lib/monitorCenter 的纯函数产出，直接断言行为。
+    const src = fs.readFileSync(path.join(REPO, 'web/src/lib/monitorCenter.ts'), 'utf-8');
     expect(src).toMatch(/overall\.unknown > 0/);
-    // 绿色分支必须排在 unknown 判定之后
     const unknownAt = src.indexOf('overall.unknown > 0');
-    const greenAt = src.indexOf("'全部服务正常'");
+    const greenAt = src.indexOf('个目标正常');
     expect(unknownAt).toBeGreaterThan(-1);
     expect(unknownAt).toBeLessThan(greenAt);
+    const target = (status: 'up' | 'unknown') => ({
+      id: status, source: 'branch' as const, name: status, branchId: '', projectId: '', profileId: '',
+      probeKind: 'http' as const, status, lastSample: null, availability24h: 1, availability7d: 1,
+      avgLatencyMs24h: 10, sampleCount24h: 10, buckets: [], openIncidentSince: null, statusSince: null,
+      incidentCount: 0, probeDescription: '', intervalSeconds: 60, timeoutMs: 5000,
+    });
+    const headline = buildMonitorHeadline({
+      enabled: true,
+      overall: { total: 2, up: 1, down: 0, paused: 0, unknown: 1, excluded: 0, ok: true },
+      targets: [target('up'), target('unknown')],
+    }, [], Date.now());
+    expect(headline.tone).toBe('warn');
+    expect(headline.title).toContain('确认中');
+    expect(headline.title).not.toContain('全部');
   });
 });

@@ -519,15 +519,15 @@ function RailNav({
           to="/status"
           className="cds-rail-item"
           data-active={active === 'status' ? 'true' : 'false'}
-          aria-label="存活状态"
-          title="存活状态（自建探测 / 可用率柱条 / 故障时间线）"
+          aria-label="监控中心"
+          title="监控中心（存活探测 / 可用率与响应曲线 / 故障时间线 / 自定义监控）"
           onClick={onNavigate}
           onMouseEnter={preloadStatusPage}
           onFocus={preloadStatusPage}
         >
           <Activity />
-          <span className="cds-rail-full">存活状态</span>
-          <span className="cds-rail-short">状态</span>
+          <span className="cds-rail-full">监控中心</span>
+          <span className="cds-rail-short">监控</span>
         </Link>
       </div>
       {/*
