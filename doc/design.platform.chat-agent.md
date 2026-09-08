@@ -178,8 +178,11 @@
    **2026-09-08 定性**：零实例的原因是 CDS 上的共享服务项目「Claude SDK Sidecar Pool」
    在 2026-07-02 被人为暂停，之后未再部署（最后一次部署 2026-05-18）。维护者决定不恢复，
    #1337 据此关闭。含义是：**通用对话当前没有运行时**，「模型自主调度工具」这一环在
-   共享运行时重新部署之前无法验证；要恢复只需在 CDS 上取消该项目暂停、建 `main` 分支、
-   部署，再按 #1337 里的三条判据复核。
+   共享运行时重新部署之前无法验证。恢复要走共享服务恢复流程（取消该项目暂停、登记 enabled
+   remote host、经 `deploy-sidecar` 部署 sidecar、shared pool 审计），**不能**用普通分支
+   create/deploy 去建 `main`；完整步骤与禁止路径见
+   [guide.cds.agent.runtime-pool-recovery.md](./guide.cds.agent.runtime-pool-recovery.md)，
+   债务登记为 [debt.platform.md](./debt.platform.md) 的 CHAT-1。
 2. **出图的画面质量**。出图链路全通，但灰度环境的生图模型池命中的是占位模型，
    产出的是占位图而非真实作画。链路是真的，画笔是环境配置决定的。
    换成真实生图模型后代码无需改动。

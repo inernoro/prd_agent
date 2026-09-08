@@ -751,7 +751,7 @@ PR 都会被它拦。该 job 是路径过滤的，多数 PR 会 skip，聚合的
 
 | ID | 说明 | 优先级 | 触发条件 | 状态 | 责任 |
 |---|---|---|---|---|---|
-| CHAT-1 | 通用对话没有运行时可用，入口却仍对全员可见。二选一：恢复共享运行时（取消该 CDS 项目暂停 → 建 `main` 分支 → 部署 → 按 #1337 三条判据复核），或在恢复之前把「对话」入口按 `wip` 收回百宝箱、导航不再展示 | **P1**（用户可见的空功能） | 任何人打开「对话」发一句话 | open（2026-09-08，来源 #1337） | 维护者决定恢复与否；入口收回属前端一处改动，可由巡检 Agent 执行 |
+| CHAT-1 | 通用对话没有运行时可用，入口却仍对全员可见。二选一：恢复共享运行时，或在恢复之前把「对话」入口按 `wip` 收回百宝箱、导航不再展示。**恢复必须走共享服务恢复流程**（[guide.cds.agent.runtime-pool-recovery.md](./guide.cds.agent.runtime-pool-recovery.md)）：取消该 CDS 项目暂停 → 登记至少一台 enabled remote host → 经 CDS 系统侧 `deploy-sidecar` 部署官方 SDK runtime → 跑 shared-service pool 审计确认有 running 实例 → 再按 #1337 三条判据复核。这个池是 `shared-service` 项目，不是普通分支预览：**禁止**用 `cdscli branch create/deploy` 给它建 `main` 分支——那条路恢复不了运行时，还会把 branch-local 运行时污染重新引回 `prd-agent`（runbook 与它配套的只读恢复计划脚本都把这条列为禁止路径） | **P1**（用户可见的空功能） | 任何人打开「对话」发一句话 | open（2026-09-08，来源 #1337） | 维护者决定恢复与否；入口收回属前端一处改动，可由巡检 Agent 执行 |
 
 ---
 
