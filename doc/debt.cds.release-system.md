@@ -91,7 +91,7 @@ cd cds && pnpm vitest run tests/routes/release-ssh-e2e.test.ts
 | E | 网关（C#）附件转发到缺陷系统 | 本地无 dotnet，只有源码守卫 + CDS 构建的编译验证。等价逻辑的 **TypeScript 侧**已用真 HTTP 假 MAP 服务端到端验过（`cds/tests/routes/bug-report-forward-e2e.test.ts`，断言 create → attachments → submit 的真实顺序与字节） |
 | F | 取消对**远端**脚本进程的影响 | 见「已知边界 #2」：需要远端脚本侧配合，属阶段四 |
 | G | 远程主机三种认证方式（密码 / 生成密钥对 / 粘贴私钥）的真实 SSH 连接 | 来源 #1287（2026-07-29，2026-09-07 固化后关闭）。`release-ssh-e2e.test.ts` 只走私钥路径；「测试连接」按钮本身是真连（`sidecar-deployer.ts` 的 `testConnection` 真跑 `echo`），缺的只是对着一台外部可达的一次性 sshd 各点一次并留证 |
-| H | 存量密码主机 `sshPrivateKeyFingerprint` 的轮换 | 来源 #1287 跟进项。PR #1292 把新写入改成随机 `opaqueCredentialRef()`，但此前创建的密码主机库里仍是由明文口令派生的无盐 sha256，且仍经 `GET /api/cds-system/remote-hosts` 公开返回。待决策三选一：一次性迁移脚本重写该字段（只影响 UI「换没换过凭据」展示）/ 逐台改密码自然轮换 / 判定已暴露则按泄露处理目标机实际口令。目前没有迁移脚本，也没盘过存量条数 |
+| H | ~~存量密码主机 `sshPrivateKeyFingerprint` 的轮换~~ **已核实无存量（2026-09-08）** | 来源 #1287 跟进项。PR #1292 把新写入改成随机 `opaqueCredentialRef()`，担心此前创建的密码主机库里仍是由明文口令派生的无盐 sha256。2026-09-08 用 `GET /api/cds-system/remote-hosts` 盘点：共 4 台（06-21 至 08-01 创建），fingerprint 全部是 16 hex 随机形态，没有 64 hex 的旧派生值。三选一决策不需要做，无迁移脚本需求 |
 | I | 发布中心运行态三块（时间线 / 失败诊断 / 回滚）在真实 run 上的取证 | 来源 #1288（2026-07-29，2026-09-07 固化后关闭）。`release-diagnosis.test.ts` / `release-center-render-smoke.test.ts` 只覆盖纯函数与渲染层；本表 C 条只证明回滚走并发闸，不证明三块页面在真实 run 上渲染正确。缺一次在允许发布的非生产项目上跑「一次成功 + 一次故意失败 + 一次回滚」，把三块截图挂回看板 |
 
 ## 修复主线（已完成，供回溯）
