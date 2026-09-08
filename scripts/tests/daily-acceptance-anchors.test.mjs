@@ -4,6 +4,15 @@ import { readFileSync } from 'node:fs';
 import { readScoped } from '../smoke/lib/scoped-text.mjs';
 
 const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
+// 这条守卫的全部输入。改这里就要同步 ci.yml 的 release_scripts 过滤器——
+// 最后那条 test 会替你核对，漏登记直接红。
+const GUARD_INPUTS = [
+  'scripts/smoke/daily-acceptance.mjs',
+  'scripts/smoke/lib/scoped-text.mjs',
+  'prd-admin/src/app/navRegistry.tsx',
+  'prd-admin/src/pages/WebPagesPage.tsx',
+];
+
 const script = read('scripts/smoke/daily-acceptance.mjs');
 const navRegistry = read('prd-admin/src/app/navRegistry.tsx');
 
@@ -106,4 +115,39 @@ test('页面取证失败也必须把 page 关掉', () => {
   const fn = script.slice(script.indexOf('async function checkPageAlive'), script.indexOf('// ── 主流程 ──'));
   assert.ok(/finally\s*\{[\s\S]*?page\.close\(\)/.test(fn), 'checkPageAlive 没有在 finally 里关页');
   assert.ok(/try\s*\{[\s\S]*?page\.goto\(/.test(fn), 'goto 在 try 之外：它超时同样会漏页');
+});
+
+test('守卫自己必须接在闸上（每个输入都登记进 CI 过滤器）', () => {
+  // 形状 7：守卫写了、也接进 CI 了，但被守文件不在 path filter 里，
+  // 于是它只在「自己被改」时才跑；真正会引入漂移的那种 PR（只改被守文件）一路全绿。
+  //
+  // 这个坑在本 PR 里当场复发过一次：readScoped 拆进 scripts/smoke/lib/ 之后没登记，
+  // 我还在 PR 描述里写「由主脚本 import，随主脚本一起被覆盖」——错的，
+  // path filter 匹配的是**改了哪些文件**，不是 import 图。所以这条自检必须存在：
+  // 让守卫自己去解析 workflow，而不是靠人记得。
+  const ci = read('.github/workflows/ci.yml');
+  const block = ci.slice(ci.indexOf('            release_scripts:'), ci.indexOf('            acceptance_report:'));
+  assert.ok(block.length > 200, 'release_scripts 过滤器没解析出来，判据多半失效了');
+
+  const patterns = [...block.matchAll(/^\s*- '([^']+)'/gm)].map((m) => m[1]);
+  assert.ok(patterns.length > 10, `过滤器只解析出 ${patterns.length} 条，解析多半失效了`);
+
+  // 把 path filter 的 glob 翻成正则：** 跨目录，* 不跨目录
+  const covers = (pattern, file) => {
+    const rx = new RegExp(
+      '^' + pattern
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*\*/g, '\u0000')
+        .replace(/\*/g, '[^/]*')
+        .replace(/\u0000/g, '.*') + '$',
+    );
+    return rx.test(file);
+  };
+
+  const missing = GUARD_INPUTS.filter((f) => !patterns.some((p) => covers(p, f)));
+  assert.deepEqual(
+    missing,
+    [],
+    `这些被守文件没登记进 release_scripts 过滤器，只改它们的 PR 会跳过本守卫：${missing.join(', ')}`,
+  );
 });
