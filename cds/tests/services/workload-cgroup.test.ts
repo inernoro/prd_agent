@@ -7,6 +7,7 @@ import {
   DEFAULT_WORKLOAD_SLICE,
   __setWorkloadCgroupForTest,
   getWorkloadCgroupStatus,
+  isControlPlanePrioritized,
   planWorkloadCgroup,
   resolveWorkloadCgroup,
   workloadCgroupArgv,
@@ -120,11 +121,34 @@ describe('workload-cgroup 托管容器归属', () => {
     expect(workloadCgroupFlags()).toEqual([`--cgroup-parent '${DEFAULT_WORKLOAD_SLICE}'`]);
   });
 
-  it('CDS_MODE=executor 时探测结果如实报未提权', async () => {
+  /**
+   * Codex 十轮 P2：按运行模式猜「有没有被提权」仍然窄——executor 接入、后台或前台直接
+   * 跑 node，几条路径都不经过控制面 systemd 单元。判据改成量真实的 cgroup 归属。
+   */
+  it('isControlPlanePrioritized：只有落在控制面单元下才算被提权', () => {
+    // cgroup v2
+    expect(isControlPlanePrioritized('0::/system.slice/cds-master.service\n')).toBe(true);
+    expect(isControlPlanePrioritized('0::/system.slice/cds-forwarder.service\n')).toBe(true);
+    // 后台 / 前台直接起的 node：落在用户会话或根下
+    expect(isControlPlanePrioritized('0::/user.slice/user-0.slice/session-3.scope\n')).toBe(false);
+    expect(isControlPlanePrioritized('0::/\n')).toBe(false);
+    // 别的服务单元不算
+    expect(isControlPlanePrioritized('0::/system.slice/docker.service\n')).toBe(false);
+    // cgroup v1 多行格式
+    expect(isControlPlanePrioritized('9:name=systemd:/system.slice/cds-master.service\n8:pids:/\n')).toBe(true);
+    expect(isControlPlanePrioritized('9:name=systemd:/\n8:pids:/\n')).toBe(false);
+    // 读不到一律按未提权
+    expect(isControlPlanePrioritized(null)).toBe(false);
+    expect(isControlPlanePrioritized('')).toBe(false);
+  });
+
+  it('探测时按真实 cgroup 归属判提权（沙箱不在控制面单元下 → 如实报未受保护）', async () => {
     const shell = new MockShellExecutor();
     shell.addResponsePattern(/docker info/, () => ({ stdout: 'systemd\n', stderr: '', exitCode: 0 }));
-    const s = await resolveWorkloadCgroup(shell, { CDS_MODE: 'executor' });
-    expect(s).toMatchObject({ enabled: true, weightManaged: false });
+    const s = await resolveWorkloadCgroup(shell, {});
+    expect(s.enabled).toBe(true);
+    // 这个进程不是 cds-master.service 起的，所以必须报未提权——而不是因为 CDS_MODE 是什么
+    expect(s.weightManaged).toBe(false);
     expect(s.reason).toContain('控制面未受保护');
   });
 

@@ -101,9 +101,21 @@ def main() -> None:
         cg = pressure.get("workloadCgroup", {})
         rows.append(("托管容器 cgroup 权重接管", f"{cg.get('weightManaged')}（driver={cg.get('driver')}）"))
         noise = pressure.get("webhookNoise") or {}
+        # 这两个是**进程生命周期累计**，不是窗口量：直接和按小时查的 HTTP 日志行相加会串口径
+        # （进程跑了一周就把好几天算进 24 小时对比，刚重启又会少算）。所以把它覆盖的时长一并
+        # 打出来，并在两者不一致时明确写出该怎么读（Codex 十轮 P2）。
+        covered_h = round((noise.get("coveredMs") or 0) / 3600000, 1)
+        if covered_h <= 0:
+            cmp_note = ""
+        elif covered_h < args.hours * 0.9:
+            cmp_note = f"；覆盖 {covered_h}h **短于** {args.hours}h 窗口，与上一行不可直接相加（进程刚重启过）"
+        elif covered_h > args.hours * 1.1:
+            cmp_note = f"；覆盖 {covered_h}h **长于** {args.hours}h 窗口，与上一行相加会高估，按 {args.hours}/{covered_h} 折算后再比"
+        else:
+            cmp_note = f"；覆盖 {covered_h}h，与 {args.hours}h 窗口大致同口径，可与上一行相加"
         rows.append((
             "webhook 噪声已压掉（进程启动以来）/ 这批仍占用 master",
-            f"{noise.get('suppressedTotal')} 条 / {round((noise.get('suppressedDurationMs') or 0) / 1000, 1)} s",
+            f"{noise.get('suppressedTotal')} 条 / {round((noise.get('suppressedDurationMs') or 0) / 1000, 1)} s{cmp_note}",
         ))
         audit = pressure.get("offhostAudit") or {}
         rows.append(("离机审计熔断", f"open={audit.get('open')} 连续失败={audit.get('consecutiveFailures')} 跳过={audit.get('skippedWhileOpen')}"))

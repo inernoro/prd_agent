@@ -22,6 +22,7 @@
  *   - cgroupfs：只能传路径，权重没人管（仅归类），启动日志与 healthz 会明说。
  * 探测走一次 `docker info`，进程生命周期内不变。
  */
+import fs from 'node:fs';
 import type { IShellExecutor } from '../types.js';
 import { isPreviewInstance } from './preview-instance.js';
 
@@ -57,6 +58,31 @@ export function workloadCgroupParentFromEnv(env: NodeJS.ProcessEnv = process.env
   const lower = raw.toLowerCase();
   if (lower === '0' || lower === 'off' || lower === 'false' || lower === 'no') return null;
   return raw;
+}
+
+/**
+ * 控制面被提权的唯一来源是 systemd 单元里的 CPUWeight/IOWeight/Nice，而 CDS 有好几条
+ * 启动路径都不经过那份单元：executor 接入时以后台进程拉起、standalone/scheduler 也能
+ * 用后台或前台方式直接跑 node。按运行模式猜会漏掉后两类，继续按模式打补丁只会越补越窄
+ * （Codex PR #1516 十轮 P2）。改成量真实的那个值：读进程自己的 cgroup 归属，落在控制面
+ * 单元下才算被提权。
+ *
+ * 兼容 cgroup v2（`0::/system.slice/cds-master.service`）与 v1（每行一个子系统）。
+ */
+export const CONTROL_PLANE_UNITS = ['cds-master.service', 'cds-forwarder.service'] as const;
+
+export function isControlPlanePrioritized(selfCgroup: string | null): boolean {
+  if (!selfCgroup) return false;
+  return CONTROL_PLANE_UNITS.some((unit) => selfCgroup.includes(unit));
+}
+
+/** 读 /proc/self/cgroup；读不到（非 Linux、被裁剪的容器）返回 null，按未提权处理。 */
+export function readSelfCgroup(): string | null {
+  try {
+    return fs.readFileSync('/proc/self/cgroup', 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -106,7 +132,7 @@ export function planWorkloadCgroup(
     if (opts.controlPlanePrioritized === false) {
       return {
         enabled: true, parent: configured, driver, weightManaged: false,
-        reason: `托管容器已挂到 ${configured}，但本进程不是 systemd 单元启动（executor 用 nohup 起），没有 CPUWeight/IOWeight 提权：容器已归组，控制面未受保护`,
+        reason: `托管容器已挂到 ${configured}，但本进程不在控制面 systemd 单元（${CONTROL_PLANE_UNITS.join(' / ')}）下，拿不到 CPUWeight/IOWeight 提权：容器已归组，控制面未受保护`,
       };
     }
     return { enabled: true, parent: configured, driver, weightManaged: true, reason: `托管容器挂到 ${configured}（systemd 接管权重）` };
@@ -142,9 +168,9 @@ export async function resolveWorkloadCgroup(
   } catch {
     driver = 'unknown';
   }
-  // executor 由 `nohup node dist/index.js` 启动（exec_cds.sh 的 connect 流程），
-  // 不走 cds-master.service，因此拿不到那份单元的 CPUWeight/IOWeight/Nice。
-  const controlPlanePrioritized = (env.CDS_MODE || '').trim().toLowerCase() !== 'executor';
+  // 量真实值而不是按运行模式猜：好几条启动路径（executor 接入、后台/前台直接跑 node）
+  // 都不经过控制面 systemd 单元，只有落在那份单元下才真的有 CPUWeight/IOWeight 提权。
+  const controlPlanePrioritized = isControlPlanePrioritized(readSelfCgroup());
   current = planWorkloadCgroup(configured, driver, { controlPlanePrioritized });
   return current;
 }

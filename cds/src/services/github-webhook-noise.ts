@@ -65,6 +65,13 @@ export interface WebhookNoiseStats {
   /** 上次聚合上报以来压掉的数量 */
   suppressedSinceFlush: number;
   /**
+   * 上面两个累计值覆盖多长时间（毫秒，= 进程启动到现在）。
+   * 它们是**进程生命周期累计**，不是某个时间窗内的量：拿去和按小时窗查询的
+   * HTTP 日志行相加会串口径——进程跑了一周就把好几天算进 24 小时的对比里，
+   * 刚重启过又会少算（Codex PR #1516 十轮 P2）。度量尺据此标注或换算。
+   */
+  coveredMs: number;
+  /**
    * 压掉的这些请求仍然消耗的 master 时间累计（毫秒，进程启动以来）。
    *
    * 廉价 ack 不写 HTTP 日志，于是它们从「按日志统计 webhook 耗时」的口径里整个消失。
@@ -86,6 +93,7 @@ export class WebhookNoiseCounter {
   private durationSinceFlush = 0;
   private byEvent = new Map<string, number>();
   private lastFlushAt: number | null = null;
+  private readonly createdAt: number;
 
   constructor(
     private readonly opts: {
@@ -94,7 +102,9 @@ export class WebhookNoiseCounter {
       /** 聚合上报出口；不接则只计数 */
       report?: (summary: { suppressed: number; durationMs: number; byEvent: Record<string, number> }) => void;
     } = {},
-  ) {}
+  ) {
+    this.createdAt = this.now();
+  }
 
   private now(): number {
     return this.opts.now ? this.opts.now() : Date.now();
@@ -141,6 +151,7 @@ export class WebhookNoiseCounter {
     return {
       suppressedTotal: this.total,
       suppressedSinceFlush: this.sinceFlush,
+      coveredMs: Math.max(0, this.now() - this.createdAt),
       suppressedDurationMs: Math.round(this.totalDurationMs),
       byEvent,
       lastFlushAt: this.lastFlushAt === null ? null : new Date(this.lastFlushAt).toISOString(),

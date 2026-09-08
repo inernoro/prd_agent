@@ -69,6 +69,20 @@ describe('WebhookNoiseCounter 聚合上报', () => {
    * 的口径里整个消失。若不另记一笔，改前改后对比会把「不再观测」读成「不再耗时」。
    * 这些请求仍然做了签名校验、读 body、路由，时间是真花掉的。
    */
+  /**
+   * Codex 十轮 P2：这些累计值覆盖的是进程生命周期，不是某个时间窗。度量尺要拿它和
+   * 按小时查的日志行比，就必须知道它覆盖多久，否则「相加」本身就是串口径。
+   */
+  it('stats 带出累计值覆盖的时长（进程启动到现在）', () => {
+    let now = 5_000_000;
+    const counter = new WebhookNoiseCounter({ now: () => now });
+    expect(counter.stats().coveredMs).toBe(0);
+    now += 3_600_000;
+    counter.note('status', undefined, 4);
+    expect(counter.stats().coveredMs).toBe(3_600_000);
+    expect(counter.stats().suppressedDurationMs).toBe(4);
+  });
+
   it('如实累计被压掉那些请求仍然花掉的 master 时间', () => {
     const counter = new WebhookNoiseCounter();
     counter.note('workflow_job', undefined, 7);
