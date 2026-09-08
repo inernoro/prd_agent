@@ -155,6 +155,10 @@ function isSameCommitDeployInFlight(incoming: BranchOperationRequest, active: Ac
   if (incoming.kind !== 'deploy' || active.request.kind !== 'deploy') return false;
   if (!incoming.commitSha || !active.request.commitSha) return false;
   if (incoming.commitSha !== active.request.commitSha) return false;
+  // 在途那次也必须是「普通整分支部署」：带版本 / 一次性选项的部署落的是捕获配置或
+  // 强制豁免，与 webhook 要的「当前配置」不是同一件事，并入会让后者悄悄丢失
+  // （Codex PR #1516 二轮 P2）。这种情况维持原语义：webhook 合并为 pending 排到其后重放。
+  if (active.request.versionId || active.request.hasOneShotOptions) return false;
   if (incoming.trigger === 'webhook') return true;
   return isMergeableManualDeploy(incoming);
 }

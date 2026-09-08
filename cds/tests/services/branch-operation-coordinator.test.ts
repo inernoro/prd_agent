@@ -196,6 +196,20 @@ describe('BranchOperationCoordinator', () => {
     expect(coordinator.complete(active.lease!, 'completed')).toBeNull();
   });
 
+  it('does not join a webhook onto an in-flight versioned or one-shot manual deploy; it queues as pending instead', () => {
+    const c1 = new BranchOperationCoordinator();
+    const versioned = c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', versionId: 'v1' });
+    const hook1 = c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234' });
+    expect(hook1.status).toBe('merged');
+    expect(c1.getPendingWebhookDeploy('b')?.request.commitSha).toBe('abc1234');
+    expect(c1.complete(versioned.lease!, 'completed')?.request.commitSha).toBe('abc1234');
+
+    const c2 = new BranchOperationCoordinator();
+    c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', hasOneShotOptions: true });
+    const hook2 = c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234' });
+    expect(hook2.status).toBe('merged');
+  });
+
   it('still supersedes when the manual deploy targets a different commit or carries one-shot options', () => {
     const coordinator = new BranchOperationCoordinator();
     const active = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: '1111111' });
