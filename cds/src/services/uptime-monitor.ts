@@ -56,6 +56,7 @@ import {
 // 生产目标的探测必须与发布中心预检用同一个 HTTP 判定函数：两处各写一遍的结局是
 // 「预检说健康、状态页说宕机」（或反过来），用户无从判断该信哪个。
 import { probeHealthcheckStatus } from './release-service.js';
+import { probeRequestHeaders } from './probe-marker.js';
 import {
   DEFAULT_BAR_SEGMENTS,
   DEFAULT_FAILURE_THRESHOLD,
@@ -274,7 +275,7 @@ export interface UptimeMonitorConfig {
   scope: 'trunk' | 'all';
   /**
    * 分支目标是否做「用户视角」第二判定（`CDS_UPTIME_USER_VIEW`，默认开）。
-   * 经预览域名整条链路探，带 x-cds-poll 头，代理侧不刷新 LRU。
+   * 经预览域名整条链路探，带进程级探测令牌，代理侧不刷新 LRU。
    */
   userViewEnabled?: boolean;
   /**
@@ -686,7 +687,7 @@ export const defaultHttpProbe: ProbeFn = async (target, timeoutMs) => {
         path: '/',
         method: 'GET',
         timeout: timeoutMs,
-        headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true' },
+        headers: { 'user-agent': 'cds-uptime-monitor', ...probeRequestHeaders() },
       },
       (res) => {
         const code = res.statusCode || 0;
@@ -731,7 +732,8 @@ export type UserViewProbeFn = (url: string, timeoutMs: number) => Promise<UserVi
  * 判定口径与进程视角一致：拿到任何 < 500 的响应算可达（401 是预览门禁在应答，
  * 404 是路由到了应用），5xx / 超时算失败。连接层错误（DNS、拒绝、TLS）另标
  * unreachable——那说明探测器自己够不着预览域名，不能折成目标故障。
- * 带 x-cds-poll 头：代理侧据此不刷新 LRU、不记访问（proxy.ts）。
+ * 带进程级探测令牌（probe-marker.ts）：代理侧据此不刷新 LRU、不记访问（proxy.ts）；
+ * 公开的 x-cds-poll 头只影响日志分类，伪造不了豁免。
  */
 export const defaultUserViewProbe: UserViewProbeFn = async (url, timeoutMs) => {
   const startedAt = Date.now();
@@ -743,7 +745,7 @@ export const defaultUserViewProbe: UserViewProbeFn = async (url, timeoutMs) => {
       redirect: 'manual',
       cache: 'no-store',
       signal: ctrl.signal,
-      headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true', accept: 'text/html,*/*;q=0.8' },
+      headers: { 'user-agent': 'cds-uptime-monitor', ...probeRequestHeaders(), accept: 'text/html,*/*;q=0.8' },
     });
     await res.body?.cancel().catch(() => undefined);
     const code = res.status;
@@ -1021,6 +1023,27 @@ function defaultProbeDescription(record: Pick<UptimeTargetRecord, 'probeKind' | 
   return 'GET 容器宿主端口根路径 · 状态 < 500';
 }
 
+/**
+ * 总览计数的唯一口径：getSummary 与路由的项目级收窄都用它，别各算一份——
+ * 项目级那份曾漏掉「未实测」，把按容器状态猜出来的「正常」当成实测健康报给项目 Key
+ * （Codex PR #1514 P2）。按容器状态判出来的「正常」不是观测，单列未实测，不给它绿。
+ */
+export function tallyTargetSummaries(
+  targets: ReadonlyArray<Pick<UptimeTargetSummary, 'status' | 'excluded' | 'measured'>>,
+): UptimeSummary['overall'] {
+  const tally = { total: targets.length, up: 0, down: 0, paused: 0, unknown: 0, excluded: 0, unmeasured: 0, ok: true };
+  for (const t of targets) {
+    if (t.excluded) tally.excluded += 1;
+    else if (t.status === 'paused') tally.paused += 1;
+    else if (!t.measured && t.status !== 'down') tally.unmeasured += 1;
+    else if (t.status === 'up') tally.up += 1;
+    else if (t.status === 'down') tally.down += 1;
+    else tally.unknown += 1;
+  }
+  tally.ok = tally.down === 0;
+  return tally;
+}
+
 export class UptimeMonitorService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private records = new Map<string, UptimeTargetRecord>();
@@ -1252,6 +1275,25 @@ export class UptimeMonitorService {
     return record.probeKind !== 'container';
   }
 
+  /**
+   * 覆盖面（对外口径）。项目级凭据只能看自己项目那一份：uncovered 里有目标 id、
+   * 分支名、项目名与原因，全量吐给一把项目 Key 就是跨项目枚举（Codex PR #1514 P1）。
+   */
+  getCoverage(projectId?: string | null): UptimeCoverage {
+    const all = this.selectTargets();
+    return this.computeCoverage(projectId ? all.filter((t) => t.projectId === projectId) : all);
+  }
+
+  /**
+   * 目标此刻的归属项目：先看本轮目标定义（刚保存、还没参与过轮次的目标也算），
+   * 再看台账。都没有 → undefined = 目标不存在。路由靠它判项目级凭据能不能碰。
+   */
+  getTargetProjectId(targetId: string): string | undefined {
+    const live = this.selectTargets().find((t) => t.id === targetId);
+    if (live) return live.projectId;
+    return this.records.get(targetId)?.projectId;
+  }
+
   /** 覆盖面：全站可监测对象里，哪些没被盯、为什么、能怎么办。 */
   private computeCoverage(targets: ReadonlyArray<ProbeTarget>): UptimeCoverage {
     const uncovered: UptimeCoverageItem[] = [];
@@ -1348,8 +1390,11 @@ export class UptimeMonitorService {
       return { ok: false, skipped: pausedReasonOf(target) };
     }
     const effective: ProbeTarget = record.degraded ? { ...target, probeKind: 'container', hostPort: 0 } : target;
-    const { outcome, thrown } = await this.probeOne(effective);
-    const sample: UptimeSample = { ...outcome, t: this.now() };
+    // 用户视角与轮次同款：进程在答但预览域名 5xx 时，「立即探测」不能把目标翻绿、
+    // 把故障就地收尾——恢复阈值默认是 1，一次进程视角的成功就够翻了（Codex PR #1514 P1）。
+    const [{ outcome, thrown }, userViews] = await Promise.all([this.probeOne(effective), this.probeUserViews([effective])]);
+    const folded = this.foldUserView(effective, outcome, userViews.get(effective.branchId));
+    const sample: UptimeSample = { ...folded, t: this.now() };
     this.applySample(effective, sample, { allowDegrade: !thrown });
     this.persist();
     return { ok: true, sample: record.lastSample || sample, status: record.status };
@@ -1510,12 +1555,6 @@ export class UptimeMonitorService {
     const now = this.now();
     const dayMs = 24 * 3600 * 1000;
     const targets: UptimeTargetSummary[] = [];
-    let up = 0;
-    let down = 0;
-    let paused = 0;
-    let unknown = 0;
-    let excluded = 0;
-    let unmeasured = 0;
 
     for (const record of [...this.records.values()].sort(compareTargetsForDisplay)) {
       const measured = this.isMeasured(record);
@@ -1528,13 +1567,6 @@ export class UptimeMonitorService {
         : record.status === 'up'
           ? (lastClosed?.endedAt ?? record.firstSeenAt)
           : null;
-      if (record.excluded) excluded += 1;
-      else if (record.status === 'paused') paused += 1;
-      // 按容器状态判出来的「正常」不是观测，单列未实测，不给它绿。
-      else if (!measured && record.status !== 'down') unmeasured += 1;
-      else if (record.status === 'up') up += 1;
-      else if (record.status === 'down') down += 1;
-      else unknown += 1;
       targets.push({
         id: record.id,
         source: record.source || probeSourceOfId(record.id),
@@ -1581,9 +1613,9 @@ export class UptimeMonitorService {
       firstDataEtaSeconds: Math.round(this.deps.config.intervalMs / 1000),
       lastCycleAt: this.lastCycleAt,
       excludePatterns: [...(this.deps.config.excludePatterns || [])],
-      overall: { total: targets.length, up, down, paused, unknown, excluded, unmeasured, ok: down === 0 },
+      overall: tallyTargetSummaries(targets),
       targets,
-      coverage: this.computeCoverage(this.selectTargets()),
+      coverage: this.getCoverage(),
       prober: {
         lastCycleAt: this.lastCycleAt,
         lastCycleDurationMs: this.lastCycleDurationMs,

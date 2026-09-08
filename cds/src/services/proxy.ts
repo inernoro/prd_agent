@@ -11,6 +11,7 @@ import { isAutoWakeEligible } from './branch-wake-eligibility.js';
 import { computeWaitTiming } from './wait-timing.js';
 import { GEM_STORY_CSS, buildGemStorySvg, serverGemMineralForStatus } from '../loading-pages/gem.js';
 import { resolveProfileForPath } from './route-conventions.js';
+import { isTrustedProbeRequest, stripProbeMarker } from './probe-marker.js';
 import { resolveEffectiveProfile } from './container.js';
 import { ROUTABLE_SERVICE_STATUSES } from './forwarder-route-publisher.js';
 import type { DeployDurationMode } from '../types.js';
@@ -796,14 +797,17 @@ export class ProxyService {
     // Update warm-pool LRU ordering. Throttling for access-event broadcasts
     // is handled separately via setOnAccess; scheduler.touch is cheap (single
     // save) and correctness depends on every request refreshing lastAccessedAt.
-    // 探测请求（存活监控的「用户视角」探测等带 x-cds-poll: true）不算用户访问：
-    // 不刷新 LRU、不记访问事件。否则监控每分钟一次的探测会让分支永远不降温，
-    // 等于把 idleTTL 废掉（uptime-monitor.ts 顶部纪律 1 的代理侧半边）。
-    const isPollRequest = String(req.headers['x-cds-poll'] || '').toLowerCase() === 'true';
-    if (this.scheduler && !isPollRequest) {
+    // 探测请求（存活监控的「用户视角」探测等）不算用户访问：不刷新 LRU、不记访问
+    // 事件。否则监控每分钟一次的探测会让分支永远不降温，等于把 idleTTL 废掉
+    // （uptime-monitor.ts 顶部纪律 1 的代理侧半边）。
+    // 只认本进程签发的探测令牌，不认公开的 x-cds-poll 头：后者任何客户端都能带，
+    // 真实流量带上它会让一条在用的分支被当成闲置停掉（probe-marker.ts）。
+    const isProbeRequest = isTrustedProbeRequest(req.headers);
+    stripProbeMarker(req.headers);
+    if (this.scheduler && !isProbeRequest) {
       try { this.scheduler.touch(branch.id); } catch { /* ignore */ }
     }
-    this.proxyRequest(req, res, upstream, { branchId: branch.id, branchName: branchRef, trackAccess: !isPollRequest, profileId });
+    this.proxyRequest(req, res, upstream, { branchId: branch.id, branchName: branchRef, trackAccess: !isProbeRequest, profileId });
   }
 
   private serveBranchStatusResponse(

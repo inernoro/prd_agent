@@ -18,6 +18,7 @@
 import net from 'node:net';
 import type { UptimeCustomMonitor, UptimeCustomMonitorKind } from '../types.js';
 import type { UptimeSample } from './uptime-metrics.js';
+import { probeRequestHeaders } from './probe-marker.js';
 
 /**
  * 探测记录的命名空间前缀。与 release-probe-target 的 `release@` 同理：分支键
@@ -176,7 +177,11 @@ export function normalizeUptimeMonitorInput(
       return { ok: false, error: '关键字探测需要读取响应体，请求方法只能用 GET', field: 'method' };
     }
     monitor.method = method;
-    const expectedStatus = str(input.expectedStatus) || options.existing?.expectedStatus || DEFAULT_EXPECTED_STATUS;
+    // 状态码规则三种输入：没传 = 沿用旧值；传 null = 清掉自定义、回到默认；传字符串 = 用它。
+    // 编辑弹窗把清空的输入框发成 null——发成「不传」的话永远改不回默认（Codex PR #1514 P2）。
+    const expectedStatus = input.expectedStatus === null
+      ? DEFAULT_EXPECTED_STATUS
+      : (str(input.expectedStatus) || options.existing?.expectedStatus || DEFAULT_EXPECTED_STATUS);
     if (!parseStatusSpec(expectedStatus)) {
       return { ok: false, error: '状态码规则写法不合法，示例：200-299 或 200-399,401', field: 'expectedStatus' };
     }
@@ -194,6 +199,8 @@ export function normalizeUptimeMonitorInput(
   monitor.name = name || deriveMonitorName(monitor);
   if (!monitor.name) return { ok: false, error: '请填写监控名称', field: 'name' };
 
+  // 间隔 / 超时同上：null = 回到全局默认（optionalInt 把 null 收成 undefined，而下面的
+  // 「沿用旧值」分支只认真正没传的 undefined）。
   const interval = optionalInt(input.intervalSeconds);
   if (interval !== undefined) {
     if (Number.isNaN(interval) || interval < MIN_MONITOR_INTERVAL_SECONDS || interval > MAX_MONITOR_INTERVAL_SECONDS) {
@@ -299,7 +306,7 @@ async function httpProbe(
       method: monitor.method || 'GET',
       signal: ctrl.signal,
       redirect: 'manual',
-      headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true' },
+      headers: { 'user-agent': 'cds-uptime-monitor', ...probeRequestHeaders() },
     });
     const code = res.status;
     if (!statusMatches(code, monitor.expectedStatus)) {

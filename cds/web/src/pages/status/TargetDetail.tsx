@@ -60,7 +60,8 @@ export interface TargetActions {
   remove: (target: UptimeTargetSummary) => Promise<void>;
 }
 
-function useHistory(targetId: string, range: HistoryRange, generatedAt: number): HistoryState {
+/** reloadToken：「重试」按钮递增它来重发请求——把 range 原样 set 回去 React 会直接跳过，不会重发。 */
+function useHistory(targetId: string, range: HistoryRange, generatedAt: number, reloadToken: number): HistoryState {
   const [state, setState] = useState<HistoryState>({ status: 'idle' });
   useEffect(() => {
     let cancelled = false;
@@ -75,7 +76,7 @@ function useHistory(targetId: string, range: HistoryRange, generatedAt: number):
       });
     return () => { cancelled = true; };
     // generatedAt 进依赖：每次摘要刷新后曲线也跟着刷，不然 24h 视图会停在打开那一刻。
-  }, [targetId, range, generatedAt]);
+  }, [targetId, range, generatedAt, reloadToken]);
   return state;
 }
 
@@ -105,7 +106,8 @@ export function TargetDetail({
   onBack?: () => void;
 }): JSX.Element {
   const [range, setRange] = useState<HistoryRange>('24h');
-  const history = useHistory(target.id, range, generatedAt);
+  const [reloadToken, setReloadToken] = useState(0);
+  const history = useHistory(target.id, range, generatedAt, reloadToken);
   const own = useMemo(() => incidents.filter((i) => i.targetId === target.id).slice(0, 20), [incidents, target.id]);
   const link = sourceLink(target);
   const isCustom = target.source === 'custom';
@@ -281,7 +283,7 @@ export function TargetDetail({
             ) : history.status === 'error' ? (
               <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 text-xs text-destructive">
                 <span>读取时序失败：{history.message}</span>
-                <Button variant="outline" size="sm" onClick={() => setRange((r) => r)}>
+                <Button variant="outline" size="sm" onClick={() => setReloadToken((n) => n + 1)}>
                   <RefreshCw />
                   重试
                 </Button>

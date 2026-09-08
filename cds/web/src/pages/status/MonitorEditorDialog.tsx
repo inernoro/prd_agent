@@ -71,7 +71,10 @@ function draftFrom(monitor: CustomMonitor | null): Draft {
   };
 }
 
-/** 把草稿收成请求体：空串一律不传，让服务端用默认值 / 沿用旧值。 */
+/**
+ * 把草稿收成请求体。高级区里清空的输入框发 null 而不是不传：服务端把「不传」当
+ * 「沿用旧值」，编辑时清掉间隔 / 超时 / 状态码规则就永远改不回默认；null 才是「重置」。
+ */
 function payloadOf(draft: Draft): Record<string, unknown> {
   const body: Record<string, unknown> = { kind: draft.kind, name: draft.name };
   if (draft.kind === 'tcp') {
@@ -80,11 +83,11 @@ function payloadOf(draft: Draft): Record<string, unknown> {
   } else {
     body.url = draft.url;
     body.method = draft.method;
-    if (draft.expectedStatus.trim()) body.expectedStatus = draft.expectedStatus;
+    body.expectedStatus = draft.expectedStatus.trim() || null;
     if (draft.kind === 'keyword') body.keyword = draft.keyword;
   }
-  if (draft.intervalSeconds.trim()) body.intervalSeconds = draft.intervalSeconds;
-  if (draft.timeoutMs.trim()) body.timeoutMs = draft.timeoutMs;
+  body.intervalSeconds = draft.intervalSeconds.trim() || null;
+  body.timeoutMs = draft.timeoutMs.trim() || null;
   body.projectId = draft.projectId || null;
   body.tags = draft.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
   return body;

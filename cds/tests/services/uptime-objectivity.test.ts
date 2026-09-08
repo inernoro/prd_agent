@@ -255,11 +255,11 @@ describe('接线守卫', () => {
     expect(window).toContain('buildPreviewUrlForProject(previewHost, branch.branch');
   });
 
-  it('proxy.ts 对 x-cds-poll 请求不 touch 调度器、不记访问（否则用户视角探测让分支永不降温）', () => {
+  it('proxy.ts 对可信探测请求不 touch 调度器、不记访问（否则用户视角探测让分支永不降温）', () => {
     const src = fs.readFileSync(path.join(REPO, 'src/services/proxy.ts'), 'utf8');
-    expect(src).toMatch(/isPollRequest = String\(req\.headers\['x-cds-poll'\]/);
-    expect(src).toMatch(/if \(this\.scheduler && !isPollRequest\)/);
-    expect(src).toContain('trackAccess: !isPollRequest');
+    expect(src).toContain('const isProbeRequest = isTrustedProbeRequest(req.headers);');
+    expect(src).toMatch(/if \(this\.scheduler && !isProbeRequest\)/);
+    expect(src).toContain('trackAccess: !isProbeRequest');
   });
 
   it('selectProbeTargets 把预览地址挂到每个分支目标上', () => {
