@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.4"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.5"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -2953,8 +2953,10 @@ def _prebuilt_mode_ids(p: dict[str, Any]) -> list[str]:
     """deployModes 里 prebuilt 为 true 的模式 id（极速版 / CI 预构建）。
 
     模式名不是判据：本仓库叫 express，别的项目可以叫任何名字；接入口令要求 Agent
-    只认这个列表，而不是按名字猜。prebuilt 值可能是 bool 也可能是字符串 'true'
-    （compose-parser 两种都收），这里同样两种都认。
+    只认这个列表，而不是按名字猜。prebuilt 只认布尔 True——服务端门禁 isPrebuiltMode
+    用的是 `=== true`，compose 导入时字符串 'true' 已被规整成布尔，但直接 POST 建的
+    配置不会规整；这里若把字符串也当 True，会让 Agent 按提示切过去后反复吃 409
+    （Codex PR #1513 第七轮 P2）。
     """
     # 与服务端 isPrebuiltMode 同口径：带 managedBuild 的 profile 是宿主上的源码构建，
     # 任何模式都不算极速版（Codex PR #1513 第六轮 P2）。
@@ -2972,7 +2974,7 @@ def _prebuilt_mode_ids(p: dict[str, Any]) -> list[str]:
         if prebuilt is None:
             is_prebuilt = inherited
         else:
-            is_prebuilt = prebuilt is True or (isinstance(prebuilt, str) and prebuilt.lower() == "true")
+            is_prebuilt = prebuilt is True
         if is_prebuilt:
             out.append(str(mode_id))
     return out

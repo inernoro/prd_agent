@@ -37,11 +37,13 @@ def test_profile_summary_lists_prebuilt_modes_by_flag_not_name():
     assert summary["prebuiltImage"] is False
 
 
-def test_profile_summary_accepts_string_true_and_ignores_mode_name():
-    # 模式名叫 express 但 prebuilt 没开：不算极速版；名字随意但 prebuilt='true'：算。
+def test_profile_summary_only_accepts_boolean_true_and_ignores_mode_name():
+    # 模式名叫 express 但 prebuilt 没开：不算极速版；名字随意但 prebuilt=True：算。
+    # 字符串 'true' 不算：服务端门禁只认布尔，CLI 若报它可切，Agent 切过去只会反复吃 409。
     summary = cdscli._profile_summary(_profile(deployModes={
         "express": {"label": "假极速"},
-        "ci-image": {"label": "CI 镜像", "prebuilt": "true"},
+        "ci-image": {"label": "CI 镜像", "prebuilt": True},
+        "stringy": {"label": "字符串 true", "prebuilt": "true"},
     }))
     assert summary["prebuiltModes"] == ["ci-image"]
 

@@ -624,6 +624,28 @@ describe('Branch Routes', () => {
       expect((res.body as any).error).toBe('agent_prebuilt_only');
     });
 
+    it('带 versionId 重放合规历史版本时按版本物化后的清单判，分支基线已切回源码模式也不误拦（Codex 第七轮 P2）', async () => {
+      seedGateProject(true);
+      const branch = stateService.getBranch('b1')!;
+      const profile = stateService.getBuildProfile('api')!;
+      // 历史版本是当年极速版跑出来的不可变镜像；此刻分支基线仍是 static（源码模式）。
+      const version = deploymentVersionService.create({
+        projectId: 'proj-a',
+        branchId: 'b1',
+        commitSha: 'abcdef1234567890abcdef1234567890abcdef12',
+        configHash: 'cfg',
+        profiles: [{ ...profile, prebuiltImage: true, dockerImage: 'ghcr.io/x/api:sha-abcdef1234567890abcdef1234567890abcdef12' }],
+        branch,
+        createdByRunId: 'run-0',
+      });
+      expect(version.profiles[0]).toMatchObject({ reusable: true, artifactKind: 'prebuilt-image' });
+      const plain = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(plain.status).toBe(409);
+      const replay = await request(server, 'POST', '/api/branches/b1/deploy', { versionId: version.id }, { 'X-Test-Key': 'A' });
+      expect(replay.status).not.toBe(409);
+      expect((replay.body as any)?.error).not.toBe('agent_prebuilt_only');
+    });
+
     it('bulk-set-modes 批量改写模式定义在门禁下拒绝机器凭据，真人照常（Codex 第二轮 P1）', async () => {
       seedGateProject(true);
       const body = { profileIds: ['api'], strategy: 'replace', modes: { dev: { label: '开发', command: 'pnpm dev' } } };

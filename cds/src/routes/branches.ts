@@ -12186,18 +12186,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 服务会走源码编译就拒绝——CDS 宿主的编译算力是全部项目共享的，Agent 不该拿它试错。
     // 判定与响应都在 agent-prebuilt-gate.ts（唯一判定处）。项目按 `entry.projectId || 'default'`
     // 取：没存 projectId 的老分支归 default 项目，不能因 deployProject 为空就漏判（Codex 第二轮 P1）。
+    // 判的对象是下面真正要部署的 `profiles`（带 versionId 时是版本物化后的清单，全是不可变镜像，
+    // 不编译源码），不是 currentProfiles——否则分支基线已切回源码模式时，重放一个合规的历史版本也会被
+    // 误拦（Codex 第七轮 P2）。
     const gateProject = stateService.getProject(entry.projectId || 'default');
     const agentPrebuiltGated = Boolean(gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req));
-    if (agentPrebuiltGated && gateProject) {
-      const violations = findNonPrebuiltProfiles(currentProfiles, entry);
-      if (violations.length > 0) {
-        res.status(409).json(buildPrebuiltGateRejection(gateProject, currentProfiles, violations, {
-          branchId: entry.id,
-          operation: 'deploy',
-        }));
-        return;
-      }
-    }
     let selectedDeploymentVersion = requestedVersionId && deploymentVersionService
       ? deploymentVersionService.get(requestedVersionId)
       : undefined;
@@ -12221,6 +12214,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let profiles = selectedDeploymentVersion
       ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles)
       : currentProfiles;
+    if (agentPrebuiltGated && gateProject) {
+      const violations = findNonPrebuiltProfiles(profiles, entry);
+      if (violations.length > 0) {
+        res.status(409).json(buildPrebuiltGateRejection(gateProject, profiles, violations, {
+          branchId: entry.id,
+          operation: 'deploy',
+        }));
+        return;
+      }
+    }
     const effectiveProfilesForHash = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
     let deploymentConfigHash = selectedDeploymentVersion?.configHash
       || deploymentVersionService?.computeConfigHash(
