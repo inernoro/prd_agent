@@ -134,6 +134,29 @@ slice + 控制面 systemd 权重、同 commit 部署并入、webhook 噪声廉�
 **做完算数的判据**：`docker info -f '{{.CgroupDriver}}'` 为 systemd 且 /healthz `pressure.workloadCgroup.weightManaged=true`；
 SSE 单连接存活超过 10 分钟不重连；宿主 load1 / 核数 在工作日白天中位数低于 1.0。
 
+**改前基线（上线前最后一次采样，度量尺 `cds/scripts/control-plane-baseline.py --hours 24`，一周后用同一把尺子复测）**：
+
+| 指标 | 2026-09-08 12:25 UTC |
+|---|---|
+| 宿主 load1 / load5 / load15（核数） | 13.43 / 12 / 13.09（18 核） |
+| 内存已用 | 75% |
+| 托管容器数 / 容器 CPU 合计 | 66 / 116.3% |
+| /healthz pressure | 旧版本无此字段（改前） |
+| 探活监控上一轮距今 | 0 分钟 |
+| webhook 投递数（24h 内已采样）/ 占用 master 时间 | 12726 / 2422 s |
+| 部署请求 p50 / p95 / max | 72 / 1081 / 1718 s（n=123） |
+| 删分支请求 p50 / max | 141 / 290 s（n=14） |
+| 分支列表接口 p50 / p95（页面首屏数据） | 56 / 517 ms（n=106） |
+| dashboard SSE 断连（forwarder 5xx，24h） | 2912 |
+| dashboard 接口 5xx（非 SSE，24h） | 0 |
+| 部署次数（24h）/ 失败 / 取消 | 143 / 55 / 21 |
+| 部署最多的分支 | mdimp-main x18；combo-gift-admin-demo-demo-combo-gift-preview x17；combo-gift-admin-demo-dev-baier x14 |
+| 容器死亡事件速率 | 51 次/小时（最近 1000 条 docker 事件跨 3.8 h） |
+| 审计外发失败事件速率 | 102.4 条/分钟（最近 1000 条系统事件跨 5 分钟） |
+
+复测时重点看四行：webhook 占用 master 时间应降八成以上；部署请求 p95 与容器死亡事件速率应明显下降；
+审计外发失败事件速率应降到每分钟 1 条以下；新出现的「master 事件循环 p99」在白天应低于 200ms。
+
 ## 相关
 - `cds/.claude/rules/` / `no-auto-index.md` — 索引由 DBA 手动建
 - 主仓 `CLAUDE.md` 规则 #11 / CDS 自部署
