@@ -1054,6 +1054,7 @@ export class UptimeMonitorService {
   private lastCycleProbed = 0;
   private lastCycleTargets = 0;
   private cycleRunning = false;
+  private customLaneRunning = false;
 
   constructor(
     private readonly deps: {
@@ -1117,6 +1118,7 @@ export class UptimeMonitorService {
   async runCycle(): Promise<void> {
     if (this.cycleRunning) return;
     this.cycleRunning = true;
+    let customLane: Promise<void> = Promise.resolve();
     try {
       const now = this.now();
       const targets = this.selectTargets();
@@ -1158,11 +1160,20 @@ export class UptimeMonitorService {
         applyIncidentTransition(record.incidents, 'to-up', { targetId: target.id, at: now });
       }
 
-      // 用户视角：每条运行中的分支探一次预览域名（不是每个服务一次）。
-      const userViews = await this.probeUserViews(activeTargets);
+      // 自定义目标单独一条通道：它们的超时由用户配置（最长 60s，等于默认间隔），
+      // 一个挂住的自定义地址若与分支 / 生产目标同批 await，会把整轮拖过下一次定时
+      // 触发、让 cycleRunning 把那一轮直接丢掉——九个这样的目标就让所有分支结果
+      // 迟到两分钟（Codex PR #1514 第三轮 P1）。通道有自己的重入锁：它还没跑完时
+      // 下一轮照常探分支 / 生产，只是自定义目标跳过这一轮。
+      const builtinTargets = activeTargets.filter((t) => t.source !== 'custom');
+      const customTargets = activeTargets.filter((t) => t.source === 'custom');
+      customLane = this.runCustomLane(customTargets);
 
-      for (let i = 0; i < activeTargets.length; i += PROBE_CONCURRENCY) {
-        const chunk = activeTargets.slice(i, i + PROBE_CONCURRENCY);
+      // 用户视角：每条运行中的分支探一次预览域名（不是每个服务一次）。
+      const userViews = await this.probeUserViews(builtinTargets);
+
+      for (let i = 0; i < builtinTargets.length; i += PROBE_CONCURRENCY) {
+        const chunk = builtinTargets.slice(i, i + PROBE_CONCURRENCY);
         const results = await Promise.all(chunk.map((target) => this.probeOne(target)));
         for (const { target, outcome, thrown } of results) {
           const folded = this.foldUserView(target, outcome, userViews.get(target.branchId));
@@ -1176,7 +1187,34 @@ export class UptimeMonitorService {
       this.lastCycleTargets = targets.length;
       this.persist();
     } finally {
+      // 分支 / 生产这条主通道一结束就解锁；自定义通道慢也拖不住下一轮主通道。
       this.cycleRunning = false;
+    }
+    await customLane;
+  }
+
+  /**
+   * 自定义目标通道：与主通道并行、独立重入锁。上一轮还没探完（某个地址挂在
+   * 用户配置的长超时上）就整体跳过本轮，状态原样保留，主通道不受影响。
+   */
+  private async runCustomLane(targets: ReadonlyArray<ProbeTarget>): Promise<void> {
+    if (targets.length === 0) return;
+    if (this.customLaneRunning) {
+      this.deps.logger?.info?.(`[uptime] 自定义目标上一轮尚未探完，本轮跳过 ${targets.length} 个自定义目标`);
+      return;
+    }
+    this.customLaneRunning = true;
+    try {
+      for (let i = 0; i < targets.length; i += PROBE_CONCURRENCY) {
+        const chunk = targets.slice(i, i + PROBE_CONCURRENCY);
+        const results = await Promise.all(chunk.map((target) => this.probeOne(target)));
+        for (const { target, outcome, thrown } of results) {
+          this.applySample(target, { ...outcome, t: this.now() }, { allowDegrade: !thrown });
+        }
+      }
+      this.persist();
+    } finally {
+      this.customLaneRunning = false;
     }
   }
 
@@ -1294,6 +1332,21 @@ export class UptimeMonitorService {
     const live = this.selectTargets().find((t) => t.id === targetId);
     if (live) return live.projectId;
     return this.records.get(targetId)?.projectId;
+  }
+
+  /**
+   * 目标定义改了（改名、改归属项目）就立刻把台账同步过来，不等下一轮：
+   * 台账里的 projectId 决定项目级 Key 看不看得到它，改完归属还让旧项目看着、
+   * 新项目看不见，等于隔离穿透（Codex PR #1514 第三轮 P2）。没有台账 = 还没探过，无事可同步。
+   */
+  refreshTarget(targetId: string): boolean {
+    const record = this.records.get(targetId);
+    if (!record) return false;
+    const live = this.selectTargets().find((t) => t.id === targetId);
+    if (!live) return false;
+    this.syncRecordIdentity(record, live);
+    this.persist();
+    return true;
   }
 
   /** 覆盖面：全站可监测对象里，哪些没被盯、为什么、能怎么办。 */

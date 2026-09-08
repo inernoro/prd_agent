@@ -387,6 +387,8 @@ export interface BranchView {
   services: BranchServiceView[];
   /** 代表目标：故障优先，其次实测的第一个 */
   primary: UptimeTargetSummary;
+  /** 24h 迷你条：各实测服务的桶逐段合并，与旁边的可用率 / 响应数字同一口径 */
+  buckets: UptimeBucket[];
   availability24h: number | null;
   avgLatencyMs24h: number | null;
   statusText: string;
@@ -418,6 +420,33 @@ function serviceTone(t: UptimeTargetSummary): BranchTone {
 
 const BRANCH_LIVE = new Set(['running']);
 
+/**
+ * 把多个服务的 24h 桶逐段合并成一条：同一段里任一服务有失败就标 down / partial，
+ * 都好才 up。迷你条只画代表目标的桶、数字却按全部实测服务算，一个服务全绿另一个
+ * 时断时续时会出现「75% 旁边一条全绿」（Codex PR #1514 第三轮 P2）。
+ */
+export function mergeBuckets(series: ReadonlyArray<ReadonlyArray<UptimeBucket>>): UptimeBucket[] {
+  const lists = series.filter((b) => b.length > 0);
+  if (lists.length === 0) return [];
+  const length = Math.min(...lists.map((b) => b.length));
+  const out: UptimeBucket[] = [];
+  for (let i = 0; i < length; i += 1) {
+    let up = 0;
+    let down = 0;
+    let latencySum = 0;
+    let latencyCount = 0;
+    for (const b of lists) {
+      const cell = b[i];
+      up += cell.up;
+      down += cell.down;
+      if (cell.avgLatencyMs !== null) { latencySum += cell.avgLatencyMs; latencyCount += 1; }
+    }
+    const status: UptimeBucket['status'] = up > 0 && down > 0 ? 'partial' : down > 0 ? 'down' : up > 0 ? 'up' : 'none';
+    out.push({ from: lists[0][i].from, to: lists[0][i].to, up, down, avgLatencyMs: latencyCount > 0 ? latencySum / latencyCount : null, status });
+  }
+  return out;
+}
+
 function buildBranchView(targets: UptimeTargetSummary[], now: number): BranchView {
   const first = targets[0];
   const services = targets.map((t) => ({ profileId: t.profileId, target: t, tone: serviceTone(t) }));
@@ -432,6 +461,7 @@ function buildBranchView(targets: UptimeTargetSummary[], now: number): BranchVie
   const measured = targets.filter((t) => t.measured !== false && !t.excluded);
   const availability24h = overallAvailability24h(measured);
   const avgLatencyMs24h = overallAvgLatency24h(measured);
+  const buckets = mergeBuckets((measured.length > 0 ? measured : [primary]).map((t) => t.buckets));
   let statusText: string;
   let note = '';
   if (bucket === 'idle') {
@@ -461,6 +491,7 @@ function buildBranchView(targets: UptimeTargetSummary[], now: number): BranchVie
     tone,
     services,
     primary,
+    buckets,
     availability24h,
     avgLatencyMs24h,
     statusText,

@@ -81,7 +81,7 @@ function BranchRow({ branch, onSelect }: { branch: BranchView; onSelect: (branch
       <ServiceDots branch={branch} />
       <div className="flex items-center gap-3 md:contents">
         <div className="min-w-0 flex-1 md:flex-none">
-          <AvailabilityBar buckets={branch.primary.buckets} segments={40} compact label={`${branch.branchName} 最近 24 小时可用率分布`} />
+          <AvailabilityBar buckets={branch.buckets} segments={40} compact label={`${branch.branchName} 最近 24 小时可用率分布（各服务合并）`} />
         </div>
         <span className={cn('shrink-0 font-mono tabular-nums', branch.tone === 'bad' ? 'text-destructive' : alive ? 'text-foreground' : 'text-muted-foreground')}>
           {alive ? formatPercent(branch.availability24h) : '—'}

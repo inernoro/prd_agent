@@ -419,3 +419,73 @@ describe('第二轮 P2 管理员可以改归属项目', () => {
     }
   });
 });
+
+describe('第三轮 P1 自定义目标单独通道', () => {
+  it('一个挂住的自定义地址不阻塞下一轮分支探测；自定义目标那一轮跳过，解挂后照常', async () => {
+    let now = MIN;
+    let release: () => void = () => undefined;
+    const hang = new Promise<{ up: boolean; ms: number }>((resolve) => { release = () => resolve({ up: true, ms: 1 }); });
+    const probe: ProbeFn = vi.fn(async (target) => (target.source === 'custom' ? hang : { up: true, ms: 5, code: 200 }));
+    const svc = makeMonitor({ branches: [branch()], monitors: [customMonitor()], probe, userViewProbe: async () => ({ up: true, ms: 1 }), now: () => now });
+    const first = svc.runCycle();
+    // 主通道已结束（分支拿到第一份采样），自定义通道还挂着。
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(svc.getRecord('proj-main::api')?.samples).toHaveLength(1);
+    expect(svc.getRecord('monitor@mon-1')?.samples ?? []).toHaveLength(0);
+    now += MIN;
+    await svc.runCycle();
+    expect(svc.getRecord('proj-main::api')?.samples).toHaveLength(2);
+    expect(svc.getRecord('monitor@mon-1')?.samples ?? []).toHaveLength(0);
+    release();
+    await first;
+    expect(svc.getRecord('monitor@mon-1')?.samples).toHaveLength(1);
+    now += MIN;
+    await svc.runCycle();
+    expect(svc.getRecord('monitor@mon-1')?.samples).toHaveLength(2);
+    expect(svc.getRecord('proj-main::api')?.samples).toHaveLength(3);
+  });
+});
+
+describe('第三轮 P2 forwarder 数据面抹探测令牌', () => {
+  it('两条转发路径（HTTP / Upgrade）复制请求头后都删掉令牌', () => {
+    const src = fs.readFileSync(path.join(REPO, 'src/forwarder/proxy-handler.ts'), 'utf8');
+    expect(src).toContain("import { PROBE_MARKER_HEADER } from '../services/probe-marker.js';");
+    expect(src.match(/delete fwdHeaders\[PROBE_MARKER_HEADER\]/g)).toHaveLength(2);
+  });
+});
+
+describe('第三轮 P2 改归属项目后台账立刻同步', () => {
+  it('refreshTarget：PUT 换 projectId 后，不等下一轮，摘要与项目级作用域都按新归属', async () => {
+    const store = memoryStore([customMonitor({ projectId: 'proj' })]);
+    const svc = new UptimeMonitorService({
+      state: {
+        getAllBranches: () => [],
+        getReleaseTargets: () => [],
+        getUptimeMonitors: () => [...store.rows.values()],
+        getProject: (id) => ({ id, name: id } as never),
+      },
+      config: {
+        enabled: true, intervalMs: MIN, timeoutMs: 5_000, failureThreshold: 3, recoveryThreshold: 1,
+        maxSamples: MAX_SAMPLES_PER_TARGET, excludePatterns: [], scope: 'all', storePath: '', userViewEnabled: true,
+      },
+      probe: async () => ({ up: true, ms: 10, code: 200 }),
+      now: () => MIN,
+    });
+    await svc.runCycle();
+    expect(svc.getTargetProjectId('monitor@mon-1')).toBe('proj');
+    const app = await serve(svc, store);
+    try {
+      const r = await app.call('PUT', '/api/uptime/monitors/mon-1', { body: { projectId: 'other' } });
+      expect(r.status).toBe(200);
+      expect(svc.getRecord('monitor@mon-1')?.projectId).toBe('other');
+      expect(svc.getSummary(10).targets[0].projectId).toBe('other');
+      const old = await app.call('GET', '/api/uptime/summary?segments=10', { scope: 'proj' });
+      expect(old.json.targets).toHaveLength(0);
+      const fresh = await app.call('GET', '/api/uptime/summary?segments=10', { scope: 'other' });
+      expect(fresh.json.targets.map((t: { id: string }) => t.id)).toEqual(['monitor@mon-1']);
+      expect((await app.call('POST', '/api/uptime/targets/monitor@mon-1/probe', { scope: 'proj' })).status).toBe(403);
+    } finally {
+      await app.close();
+    }
+  });
+});

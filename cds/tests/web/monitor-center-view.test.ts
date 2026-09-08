@@ -5,10 +5,14 @@
  * 全是「看起来对、编译过、通读也挑不出」的判据，只能拿真值锁。
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import {
   availabilityOfBuckets,
   buildMonitorHeadline,
+  mergeBuckets,
   filterBranches,
   groupBranchesByProject,
   mainSiteTargets,
@@ -24,6 +28,8 @@ import {
   type UptimeIncidentView,
   type UptimeTargetSummary,
 } from '../../web/src/lib/monitorCenter.js';
+
+const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../');
 
 const NOW = Date.parse('2026-09-08T10:00:00.000Z');
 const MIN = 60_000;
@@ -263,5 +269,29 @@ describe('分支按项目汇总（主列表只放主站，分支折成汇总行�
     expect(filterBranches(branches, 'idle', '').map((b) => b.branchName)).toEqual(['feat/old', 'feat/older']);
     expect(filterBranches(branches, 'all', 'pay').map((b) => b.branchName)).toEqual(['feat/payment-v2']);
     expect(sortBranchesAliveFirst([...branches].reverse()).map((b) => b.branchName)).toEqual(branches.map((b) => b.branchName));
+  });
+});
+
+describe('mergeBuckets 分支迷你条按各服务合并', () => {
+  const bucket = (status: 'up' | 'down' | 'partial' | 'none', up: number, down: number, i: number) => ({ from: i, to: i + 1, up, down, avgLatencyMs: up + down > 0 ? 100 : null, status });
+
+  it('同一段里任一服务失败就不再全绿：一个全绿 + 一个时断时续 → partial', () => {
+    const a = [bucket('up', 5, 0, 0), bucket('up', 5, 0, 1), bucket('up', 5, 0, 2)];
+    const b = [bucket('up', 5, 0, 0), bucket('partial', 3, 2, 1), bucket('down', 0, 5, 2)];
+    expect(mergeBuckets([a, b]).map((x) => x.status)).toEqual(['up', 'partial', 'partial']);
+    expect(mergeBuckets([a, b])[2]).toMatchObject({ up: 5, down: 5 });
+    expect(mergeBuckets([a, b])[0].avgLatencyMs).toBe(100);
+  });
+
+  it('空序列与长度不一致：取公共前缀，全空给空数组', () => {
+    expect(mergeBuckets([])).toEqual([]);
+    expect(mergeBuckets([[], [bucket('up', 1, 0, 0)]])).toHaveLength(1);
+    expect(mergeBuckets([[bucket('none', 0, 0, 0)], [bucket('none', 0, 0, 0), bucket('up', 1, 0, 1)]]).map((x) => x.status)).toEqual(['none']);
+  });
+
+  it('BranchModal 用分支合并后的桶，而不是代表目标的桶', () => {
+    const src = fs.readFileSync(path.join(REPO, 'web/src/pages/status/BranchModal.tsx'), 'utf8');
+    expect(src).toContain('buckets={branch.buckets}');
+    expect(src).not.toContain('branch.primary.buckets');
   });
 });

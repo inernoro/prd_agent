@@ -239,6 +239,8 @@ export function createUptimeRouter(deps: { monitor: UptimeMonitorService; store?
     }
     try {
       const saved = store.upsertUptimeMonitor(monitor);
+      // 台账立刻跟上新定义（尤其是归属项目），不等下一轮探测。
+      deps.monitor.refreshTarget(customProbeTargetId(saved));
       res.json({ monitor: saved, description: describeMonitorProbe(saved) });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
