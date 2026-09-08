@@ -30,8 +30,12 @@ import {
   buildMonitorHeadline,
   filterTargets,
   formatLatency,
+  groupBranchesByProject,
+  mainSiteTargets,
   pickDefaultTargetId,
+  type BranchView,
   type CustomMonitor,
+  type ProjectBranchGroup,
   type StatusFilter,
   type TargetFilter,
   type UptimeIncidentView,
@@ -40,6 +44,8 @@ import {
   type UptimeTargetSummary,
 } from '@/lib/monitorCenter';
 import { resolveStatusViewPhase } from '@/lib/statusView';
+import { BranchModal } from './status/BranchModal';
+import { CoverageDialog } from './status/CoverageDialog';
 import { IncidentTimeline, type IncidentFilter } from './status/IncidentTimeline';
 import { MonitorEditorDialog } from './status/MonitorEditorDialog';
 import { OverviewStrip } from './status/OverviewStrip';
@@ -80,6 +86,8 @@ export function StatusPage(): JSX.Element {
   const [editor, setEditor] = useState<{ open: boolean; monitor: CustomMonitor | null }>({ open: false, monitor: null });
   const [busy, setBusy] = useState<'probe' | 'toggle' | 'remove' | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [branchModalProject, setBranchModalProject] = useState<string | null>(null);
+  const [coverageOpen, setCoverageOpen] = useState(false);
   const mounted = useRef(true);
 
   // 必须在 setup 里把 ref 置回 true：React.StrictMode（dev）会跑
@@ -124,12 +132,33 @@ export function StatusPage(): JSX.Element {
   }, [notice]);
 
   const targets = summary?.targets ?? [];
-  const filtered = useMemo(() => filterTargets(targets, filter), [targets, filter]);
+  // 主列表只放主站（自定义 + 生产）；分支按项目折成汇总行，明细进模态窗。
+  const filtered = useMemo(() => filterTargets(mainSiteTargets(targets), filter), [targets, filter]);
+  const branchGroups = useMemo(() => {
+    const groups = groupBranchesByProject(targets, now);
+    if (filter.status === 'all' && !filter.query.trim()) return groups;
+    // 状态 / 搜索筛选也作用到分支汇总：只留有命中分支的项目
+    return groups.filter((g) => g.branches.some((b) => {
+      const q = filter.query.trim().toLowerCase();
+      const hit = !q || b.branchName.toLowerCase().includes(q) || b.projectName.toLowerCase().includes(q);
+      const st = filter.status === 'all' ? true
+        : filter.status === 'down' ? b.tone === 'bad'
+          : filter.status === 'up' ? b.tone === 'ok'
+            : filter.status === 'paused' ? b.bucket === 'idle'
+              : b.bucket === 'unmeasured';
+      return hit && st;
+    }));
+  }, [targets, filter, now]);
+  const branchModalGroup = useMemo(
+    () => (branchModalProject ? groupBranchesByProject(targets, now).find((g) => g.projectId === branchModalProject) ?? null : null),
+    [targets, now, branchModalProject],
+  );
   // 选中项优先在全量里找（筛选掉了也不丢详情）；没有选中时按「故障优先」挑一个。
   const selected = useMemo(() => {
     const current = selectedId ? targets.find((t) => t.id === selectedId) : undefined;
     if (current) return current;
-    const fallbackId = pickDefaultTargetId(filtered.length > 0 ? filtered : targets, null);
+    const fallbackId = pickDefaultTargetId(filtered.length > 0 ? filtered : targets.filter((t) => t.status === 'down' || t.source !== 'branch'), null)
+      ?? pickDefaultTargetId(targets, null);
     return fallbackId ? targets.find((t) => t.id === fallbackId) ?? null : null;
   }, [targets, filtered, selectedId]);
   const headline = useMemo(() => (summary ? buildMonitorHeadline(summary, incidents, now) : null), [summary, incidents, now]);
@@ -140,6 +169,8 @@ export function StatusPage(): JSX.Element {
     setRightTab('detail');
     setMobileView('detail');
   }, []);
+  const openBranch = useCallback((branch: BranchView): void => { openTarget(branch.primary.id); }, [openTarget]);
+  const openBranches = useCallback((group: ProjectBranchGroup): void => { setBranchModalProject(group.projectId); }, []);
 
   const probeTarget = useCallback(async (targetId: string): Promise<{ sample: UptimeSample; status: string } | null> => {
     try {
@@ -285,7 +316,7 @@ export function StatusPage(): JSX.Element {
           ) : (
             <>
               <div className="shrink-0">
-                <OverviewStrip summary={summary} incidents={incidents} headline={headline} statusFilter={filter.status} onStatusFilter={onStatusFilter} />
+                <OverviewStrip summary={summary} incidents={incidents} headline={headline} statusFilter={filter.status} onStatusFilter={onStatusFilter} onOpenCoverage={() => setCoverageOpen(true)} now={now} />
               </div>
 
               <div className="flex flex-col gap-3 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)]">
@@ -294,10 +325,12 @@ export function StatusPage(): JSX.Element {
                     <TargetList
                       targets={filtered}
                       allTargets={targets}
+                      branchGroups={branchGroups}
                       filter={filter}
                       onFilter={setFilter}
                       selectedId={selected?.id ?? null}
                       onSelect={openTarget}
+                      onOpenBranches={openBranches}
                     />
                   </div>
                 </div>
@@ -357,6 +390,13 @@ export function StatusPage(): JSX.Element {
         </div>
       </Workspace>
 
+      <BranchModal
+        group={branchModalGroup}
+        open={branchModalProject !== null}
+        onOpenChange={(open) => { if (!open) setBranchModalProject(null); }}
+        onSelectBranch={openBranch}
+      />
+      <CoverageDialog open={coverageOpen} onOpenChange={setCoverageOpen} coverage={summary?.coverage} prober={summary?.prober} />
       <MonitorEditorDialog
         open={editor.open}
         monitor={editor.monitor}

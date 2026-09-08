@@ -797,7 +797,7 @@ describe('第四十五轮：环境字典条目数与状态横幅', () => {
     const src = fs.readFileSync(path.join(REPO, 'web/src/lib/monitorCenter.ts'), 'utf-8');
     expect(src).toMatch(/overall\.unknown > 0/);
     const unknownAt = src.indexOf('overall.unknown > 0');
-    const greenAt = src.indexOf('个目标正常');
+    const greenAt = src.indexOf('实测目标全部正常');
     expect(unknownAt).toBeGreaterThan(-1);
     expect(unknownAt).toBeLessThan(greenAt);
     const target = (status: 'up' | 'unknown') => ({

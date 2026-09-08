@@ -93,26 +93,33 @@ export function LatencyChart({ points, range }: { points: ReadonlyArray<UptimeBu
       >
         {gridValues.map((v) => (
           <g key={v}>
-            <line x1={PAD.left} x2={W - PAD.right} y1={sy(v)} y2={sy(v)} stroke="hsl(var(--hairline))" strokeWidth={1} />
-            <text x={PAD.left - 6} y={sy(v) + 3} textAnchor="end" fontSize={10} fill="hsl(var(--muted-foreground))" fontFamily="ui-monospace, monospace">
+            <line x1={PAD.left} x2={W - PAD.right} y1={sy(v)} y2={sy(v)} stroke="hsl(var(--hairline-strong))" strokeWidth={1} strokeDasharray={v === 0 ? undefined : '3 3'} />
+            <text x={PAD.left - 6} y={sy(v) + 4} textAnchor="end" fontSize={11} fontWeight={600} fill="hsl(var(--foreground))" fontFamily="ui-monospace, monospace">
               {v >= 1000 ? `${(v / 1000).toFixed(1)}s` : `${v}ms`}
             </text>
           </g>
         ))}
-        <path d={areaPath} fill="hsl(var(--primary) / 0.12)" />
-        <path d={linePath} fill="none" stroke="hsl(var(--primary))" strokeWidth={1.75} strokeLinejoin="round" strokeLinecap="round" />
+        <path d={areaPath} fill="hsl(var(--primary) / 0.22)" />
+        <path d={linePath} fill="none" stroke="hsl(var(--primary-ink))" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
         {series.points.map((p, i) => (
           p.status !== 'up' ? (
-            <circle key={p.t} cx={sx(p.t)} cy={sy(p.ms)} r={3} fill="hsl(var(--destructive))" stroke="hsl(var(--surface-raised))" strokeWidth={1.5}>
-              <title>{`${formatClock(p.t)} 存在失败采样`}</title>
-            </circle>
-          ) : (i === hover ? <circle key={p.t} cx={sx(p.t)} cy={sy(p.ms)} r={3.5} fill="hsl(var(--primary))" stroke="hsl(var(--surface-raised))" strokeWidth={1.5} /> : null)
+            <g key={p.t}>
+              <circle cx={sx(p.t)} cy={sy(p.ms)} r={5} fill="hsl(var(--destructive))" stroke="hsl(var(--surface-raised))" strokeWidth={2}>
+                <title>{`${formatClock(p.t)} 存在失败采样`}</title>
+              </circle>
+              {i === hover || series.points.filter((q) => q.status !== 'up').length <= 3 ? (
+                <text x={Math.min(sx(p.t) + 8, W - PAD.right - 90)} y={Math.max(sy(p.ms) - 8, PAD.top + 10)} fontSize={11} fontWeight={600} fill="hsl(var(--destructive))" fontFamily="ui-monospace, monospace">
+                  {formatLatency(p.ms)} · 有失败
+                </text>
+              ) : null}
+            </g>
+          ) : (i === hover ? <circle key={p.t} cx={sx(p.t)} cy={sy(p.ms)} r={4} fill="hsl(var(--primary-ink))" stroke="hsl(var(--surface-raised))" strokeWidth={2} /> : null)
         ))}
         {active ? (
           <line x1={sx(active.t)} x2={sx(active.t)} y1={PAD.top} y2={PAD.top + plotH} stroke="hsl(var(--hairline-strong))" strokeDasharray="3 3" />
         ) : null}
-        <text x={PAD.left} y={H - 6} fontSize={10} fill="hsl(var(--muted-foreground))" fontFamily="ui-monospace, monospace">{formatAxisTime(x0, range)}</text>
-        <text x={W - PAD.right} y={H - 6} textAnchor="end" fontSize={10} fill="hsl(var(--muted-foreground))" fontFamily="ui-monospace, monospace">{formatAxisTime(x1, range)}</text>
+        <text x={PAD.left} y={H - 6} fontSize={11} fontWeight={600} fill="hsl(var(--foreground))" fontFamily="ui-monospace, monospace">{formatAxisTime(x0, range)}</text>
+        <text x={W - PAD.right} y={H - 6} textAnchor="end" fontSize={11} fontWeight={600} fill="hsl(var(--foreground))" fontFamily="ui-monospace, monospace">{formatAxisTime(x1, range)}</text>
       </svg>
     </div>
   );

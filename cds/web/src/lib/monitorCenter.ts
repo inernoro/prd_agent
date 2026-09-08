@@ -63,6 +63,49 @@ export interface UptimeTargetSummary {
   monitorId?: string;
   tags?: string[];
   enabled?: boolean;
+  /** false = 按容器状态判定（不是观测），标「未实测」，不算正常 */
+  measured: boolean;
+  /** 分支目标的用户视角判定（经预览域名） */
+  userView?: UserViewState;
+  branchName?: string;
+  projectName?: string;
+  branchStatus?: string;
+  branchLastActiveAt?: string;
+}
+
+export interface UserViewState {
+  url: string;
+  status: UptimeStatus;
+  lastSample: UptimeSample | null;
+  unreachable?: boolean;
+}
+
+export interface UptimeCoverageItem {
+  id: string;
+  name: string;
+  source: ProbeSource;
+  projectId: string;
+  projectName?: string;
+  kind: string;
+  reason: string;
+  action: string;
+}
+
+export interface UptimeCoverage {
+  total: number;
+  covered: number;
+  uncovered: UptimeCoverageItem[];
+  byReason: Array<{ kind: string; count: number }>;
+  scope: 'trunk' | 'all';
+}
+
+export interface UptimeProberHealth {
+  lastCycleAt: number | null;
+  lastCycleDurationMs: number | null;
+  lastCycleProbed: number;
+  lastCycleTargets: number;
+  stalled: boolean;
+  userViewEnabled: boolean;
 }
 
 export interface UptimeSummary {
@@ -81,9 +124,12 @@ export interface UptimeSummary {
     paused: number;
     unknown: number;
     excluded?: number;
+    unmeasured?: number;
     ok: boolean;
   };
   targets: UptimeTargetSummary[];
+  coverage?: UptimeCoverage;
+  prober?: UptimeProberHealth;
 }
 
 export interface UptimeIncidentView {
@@ -111,6 +157,8 @@ export interface UptimeHistory {
   bucketCount: number;
   points: UptimeBucket[];
   range: HistoryRange;
+  /** 最近原始采样，最新在前 */
+  recentSamples?: UptimeSample[];
 }
 
 export interface CustomMonitor {
@@ -256,7 +304,7 @@ function joinNames(names: string[], max = 3): string {
 }
 
 export function buildMonitorHeadline(
-  summary: Pick<UptimeSummary, 'enabled' | 'overall' | 'targets'>,
+  summary: Pick<UptimeSummary, 'enabled' | 'overall' | 'targets'> & { prober?: UptimeProberHealth },
   incidents: ReadonlyArray<UptimeIncidentView>,
   now: number,
 ): MonitorHeadline {
@@ -265,6 +313,13 @@ export function buildMonitorHeadline(
   }
   const { overall } = summary;
   const active = summary.targets.filter((t) => !t.excluded);
+  if (summary.prober?.stalled) {
+    return {
+      tone: 'warn',
+      title: '监测本身停了',
+      detail: `探测器上一轮在 ${summary.prober.lastCycleAt ? formatRelative(summary.prober.lastCycleAt, now) : '未知时刻'}，超过两个探测间隔没有跑完，下面的状态可能已经过期。`,
+    };
+  }
   if (active.length === 0) {
     return { tone: 'neutral', title: '还没有可监控的目标', detail: '点右上角「添加监控」盯一个地址，或部署一个分支、给发布目标配上上线地址。' };
   }
@@ -288,9 +343,10 @@ export function buildMonitorHeadline(
       detail: `其余 ${overall.up} 个正常。首轮探测或连续失败还没到判定阈值时会停在这一档，不会先报绿。`,
     };
   }
-  const availability = overallAvailability24h(active);
-  const latency = overallAvgLatency24h(active);
+  const availability = overallAvailability24h(active.filter((t) => t.measured !== false));
+  const latency = overallAvgLatency24h(active.filter((t) => t.measured !== false));
   const recent = incidents.filter((i) => !i.ongoing && now - i.startedAt <= 24 * 3600 * 1000);
+  const unmeasured = overall.unmeasured ?? 0;
   const tail = recent.length > 0
     ? `24 小时内恢复了 ${recent.length} 次故障，最近一次是 ${recent[0].targetName}（持续 ${formatDuration(recent[0].durationMs)}）。`
     : '24 小时内没有故障。';
@@ -298,11 +354,182 @@ export function buildMonitorHeadline(
     availability !== null ? `近 24h 整体可用率 ${formatPercent(availability)}` : null,
     latency !== null ? `平均响应 ${formatLatency(latency)}` : null,
   ].filter(Boolean).join('，');
+  const unmeasuredNote = unmeasured > 0 ? `另有 ${unmeasured} 个只按容器状态判定、未实测，不算在正常里。` : '';
   return {
     tone: overall.up > 0 ? 'ok' : 'neutral',
-    title: overall.up > 0 ? `全部 ${overall.up} 个目标正常` : `${overall.paused} 个目标已暂停，暂无在探的目标`,
-    detail: stats ? `${stats}。${tail}` : tail,
+    title: overall.up > 0 ? `${overall.up} 个实测目标全部正常` : `${overall.paused} 个目标已暂停，暂无在探的目标`,
+    detail: `${stats ? `${stats}。` : ''}${tail}${unmeasuredNote ? ` ${unmeasuredNote}` : ''}`,
   };
+}
+
+// ── 分支：按项目汇总 + 模态窗明细 ──
+
+export type BranchTone = 'ok' | 'bad' | 'warn' | 'muted';
+
+export interface BranchServiceView {
+  profileId: string;
+  target: UptimeTargetSummary;
+  tone: BranchTone;
+}
+
+export interface BranchView {
+  branchId: string;
+  branchName: string;
+  projectId: string;
+  projectName: string;
+  /** running = 存活 / unmeasured = 在跑但没有一个服务实测到 / idle = 降温或未运行 */
+  bucket: 'running' | 'unmeasured' | 'idle';
+  tone: BranchTone;
+  services: BranchServiceView[];
+  /** 代表目标：故障优先，其次实测的第一个 */
+  primary: UptimeTargetSummary;
+  availability24h: number | null;
+  avgLatencyMs24h: number | null;
+  statusText: string;
+  note: string;
+  userView?: UserViewState;
+  lastActiveAt?: string;
+}
+
+export interface ProjectBranchGroup {
+  projectId: string;
+  projectName: string;
+  branches: BranchView[];
+  running: number;
+  total: number;
+  ok: number;
+  bad: number;
+  unmeasured: number;
+  idle: number;
+}
+
+function serviceTone(t: UptimeTargetSummary): BranchTone {
+  if (t.excluded) return 'muted';
+  if (t.status === 'down') return 'bad';
+  if (t.status === 'paused') return 'muted';
+  if (t.measured === false) return 'warn';
+  if (t.status === 'up') return 'ok';
+  return 'warn';
+}
+
+const BRANCH_LIVE = new Set(['running']);
+
+function buildBranchView(targets: UptimeTargetSummary[], now: number): BranchView {
+  const first = targets[0];
+  const services = targets.map((t) => ({ profileId: t.profileId, target: t, tone: serviceTone(t) }));
+  const live = BRANCH_LIVE.has(first.branchStatus || '');
+  const anyDown = services.some((s) => s.tone === 'bad');
+  const anyMeasuredUp = services.some((s) => s.tone === 'ok');
+  const allExcluded = services.every((s) => s.target.excluded);
+  let bucket: BranchView['bucket'] = 'idle';
+  if (live && !allExcluded) bucket = anyMeasuredUp || anyDown ? 'running' : 'unmeasured';
+  const tone: BranchTone = anyDown ? 'bad' : bucket === 'running' ? 'ok' : bucket === 'unmeasured' ? 'warn' : 'muted';
+  const primary = services.find((s) => s.tone === 'bad')?.target || services.find((s) => s.tone === 'ok')?.target || first;
+  const measured = targets.filter((t) => t.measured !== false && !t.excluded);
+  const availability24h = overallAvailability24h(measured);
+  const avgLatencyMs24h = overallAvgLatency24h(measured);
+  let statusText: string;
+  let note = '';
+  if (bucket === 'idle') {
+    statusText = first.branchLastActiveAt ? `上次运行 ${formatRelative(Date.parse(first.branchLastActiveAt), now)}` : (first.pausedReason || '未运行');
+  } else if (anyDown) {
+    const bad = services.find((s) => s.tone === 'bad')!.target;
+    statusText = describeStatusSince('down', bad.openIncidentSince ?? bad.statusSince, now);
+    note = `${bad.profileId}：${bad.lastSample?.err || '连续失败'}`;
+  } else if (bucket === 'unmeasured') {
+    statusText = '未实测';
+    note = first.pausedReason || first.degradeReason || '没有可探测的 HTTP 端口，只按容器状态判定';
+  } else {
+    const up = services.find((s) => s.tone === 'ok')!.target;
+    statusText = describeStatusSince('up', up.statusSince, now);
+    const warnSvc = services.filter((s) => s.tone === 'warn').map((s) => s.profileId);
+    if (warnSvc.length > 0) note = `${warnSvc.join('、')} 未实测（无 HTTP 端口，按容器状态）`;
+    const uv = first.userView;
+    if (uv?.status === 'down') note = `用户视角不可达：${uv.lastSample?.err || ''}`;
+    else if (uv?.unreachable) note = '探测器够不着预览域名，用户视角暂不可用';
+  }
+  return {
+    branchId: first.branchId,
+    branchName: first.branchName || first.branchId,
+    projectId: first.projectId,
+    projectName: first.projectName || first.projectId,
+    bucket,
+    tone,
+    services,
+    primary,
+    availability24h,
+    avgLatencyMs24h,
+    statusText,
+    note,
+    userView: first.userView,
+    lastActiveAt: first.branchLastActiveAt,
+  };
+}
+
+const BUCKET_RANK: Record<BranchView['bucket'], number> = { running: 0, unmeasured: 1, idle: 2 };
+const TONE_RANK: Record<BranchTone, number> = { bad: 0, ok: 1, warn: 2, muted: 3 };
+
+/** 存活的排前面：运行中（故障优先）→ 未实测 → 已降温（最近活跃的在前）。 */
+export function sortBranchesAliveFirst(branches: ReadonlyArray<BranchView>): BranchView[] {
+  return [...branches].sort((a, b) => {
+    const bucket = BUCKET_RANK[a.bucket] - BUCKET_RANK[b.bucket];
+    if (bucket !== 0) return bucket;
+    if (a.bucket === 'idle') {
+      const at = a.lastActiveAt ? Date.parse(a.lastActiveAt) : 0;
+      const bt = b.lastActiveAt ? Date.parse(b.lastActiveAt) : 0;
+      if (at !== bt) return bt - at;
+    }
+    const tone = TONE_RANK[a.tone] - TONE_RANK[b.tone];
+    if (tone !== 0) return tone;
+    return a.branchName.localeCompare(b.branchName);
+  });
+}
+
+/** 把分支来源的目标按项目汇总；每个项目一条汇总行，明细进模态窗。 */
+export function groupBranchesByProject(targets: ReadonlyArray<UptimeTargetSummary>, now: number): ProjectBranchGroup[] {
+  const byBranch = new Map<string, UptimeTargetSummary[]>();
+  for (const t of targets) {
+    if (t.source !== 'branch') continue;
+    const list = byBranch.get(t.branchId) || [];
+    list.push(t);
+    byBranch.set(t.branchId, list);
+  }
+  const byProject = new Map<string, BranchView[]>();
+  for (const list of byBranch.values()) {
+    const view = buildBranchView(list, now);
+    const arr = byProject.get(view.projectId) || [];
+    arr.push(view);
+    byProject.set(view.projectId, arr);
+  }
+  return [...byProject.entries()]
+    .map(([projectId, branches]) => {
+      const sorted = sortBranchesAliveFirst(branches);
+      return {
+        projectId,
+        projectName: sorted[0]?.projectName || projectId,
+        branches: sorted,
+        running: sorted.filter((b) => b.bucket !== 'idle').length,
+        total: sorted.length,
+        ok: sorted.filter((b) => b.tone === 'ok').length,
+        bad: sorted.filter((b) => b.tone === 'bad').length,
+        unmeasured: sorted.filter((b) => b.bucket === 'unmeasured').length,
+        idle: sorted.filter((b) => b.bucket === 'idle').length,
+      };
+    })
+    .sort((a, b) => (b.bad - a.bad) || (b.running - a.running) || a.projectName.localeCompare(b.projectName));
+}
+
+export type BranchFilter = 'all' | 'running' | 'bad' | 'idle';
+
+export function filterBranches(branches: ReadonlyArray<BranchView>, filter: BranchFilter, query: string): BranchView[] {
+  const q = query.trim().toLowerCase();
+  return branches.filter((b) => {
+    if (filter === 'running' && b.bucket === 'idle') return false;
+    if (filter === 'bad' && b.tone !== 'bad') return false;
+    if (filter === 'idle' && b.bucket !== 'idle') return false;
+    if (!q) return true;
+    return b.branchName.toLowerCase().includes(q) || b.services.some((s) => s.profileId.toLowerCase().includes(q));
+  });
 }
 
 // ── 列表：筛选 / 分组 / 默认选中 ──
@@ -311,6 +538,11 @@ export interface TargetFilter {
   query: string;
   status: StatusFilter;
   source: ProbeSource | 'all';
+}
+
+/** 主列表的「主站」目标：生产发布目标 + 自定义监控。分支来源另走 groupBranchesByProject。 */
+export function mainSiteTargets(targets: ReadonlyArray<UptimeTargetSummary>): UptimeTargetSummary[] {
+  return targets.filter((t) => t.source !== 'branch');
 }
 
 export function filterTargets(

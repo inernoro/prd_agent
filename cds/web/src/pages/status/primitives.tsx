@@ -35,12 +35,22 @@ const EXCLUDED_META = {
   dot: 'bg-[hsl(var(--hairline-strong))]',
 } as const;
 
-export function statusMetaOf(status: UptimeStatus, excluded?: boolean): { label: string; icon: typeof CheckCircle2; pill: string; dot: string } {
-  return excluded ? EXCLUDED_META : STATUS_META[status];
+/** 按容器状态判定的「正常」不是观测：单独一档，暖色，不给绿。 */
+const UNMEASURED_META = {
+  label: '未实测',
+  icon: HelpCircle,
+  pill: 'border-warn/40 bg-warn-soft text-warn',
+  dot: 'bg-warn',
+} as const;
+
+export function statusMetaOf(status: UptimeStatus, excluded?: boolean, measured?: boolean): { label: string; icon: typeof CheckCircle2; pill: string; dot: string } {
+  if (excluded) return EXCLUDED_META;
+  if (measured === false && status !== 'down' && status !== 'paused') return UNMEASURED_META;
+  return STATUS_META[status];
 }
 
-export function StatusPill({ status, excluded, size = 'sm' }: { status: UptimeStatus; excluded?: boolean; size?: 'sm' | 'lg' }): JSX.Element {
-  const meta = statusMetaOf(status, excluded);
+export function StatusPill({ status, excluded, measured, size = 'sm' }: { status: UptimeStatus; excluded?: boolean; measured?: boolean; size?: 'sm' | 'lg' }): JSX.Element {
+  const meta = statusMetaOf(status, excluded, measured);
   const Icon = meta.icon;
   return (
     <span
@@ -57,8 +67,8 @@ export function StatusPill({ status, excluded, size = 'sm' }: { status: UptimeSt
 }
 
 /** 列表行左侧的状态点：故障时带呼吸光晕，扫一眼就能定位。 */
-export function StatusDot({ status, excluded }: { status: UptimeStatus; excluded?: boolean }): JSX.Element {
-  const meta = statusMetaOf(status, excluded);
+export function StatusDot({ status, excluded, measured }: { status: UptimeStatus; excluded?: boolean; measured?: boolean }): JSX.Element {
+  const meta = statusMetaOf(status, excluded, measured);
   const alive = status === 'down' && !excluded;
   return (
     <span className="relative inline-flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
@@ -103,7 +113,7 @@ export function BarSegment({ bucket, compact = false }: { bucket: UptimeBucket; 
   if (bucket.status === 'none') {
     return (
       <span
-        className={cn(base, 'h-1/3 self-end bg-[hsl(var(--hairline-strong))]/50')}
+        className={cn(base, 'h-[40%] self-end bg-[hsl(var(--hairline-strong))]/85')}
         title={compact ? undefined : bucketTitle(bucket)}
         aria-label="无采样"
       />

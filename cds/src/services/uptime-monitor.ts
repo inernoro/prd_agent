@@ -145,6 +145,32 @@ export interface ProbeTarget {
   timeoutMs?: number;
   /** 一句人话描述探测方式（详情页展示） */
   probeDescription?: string;
+  /** 分支目标：git 分支名 / 项目显示名 / 最近访问时间（监控中心分支汇总与模态窗用） */
+  branchName?: string;
+  projectName?: string;
+  branchLastActiveAt?: string;
+  /**
+   * 分支目标的「用户视角」探测地址（预览域名）。有它才会做第二判定：
+   * 经 forwarder / TLS / 路由整条链路，与真人打开预览是同一条路。
+   */
+  userViewUrl?: string;
+}
+
+/**
+ * 用户视角探测的落盘状态（挂在分支目标的台账上）。
+ *
+ * 与进程视角分开记：进程视角说「容器里的进程在应答」，用户视角说「从预览域名进去
+ * 真的能到」。两者都对才算正常；用户视角失败会折进主采样判故障（原因写明是用户视角），
+ * 但探测器自己够不着预览域名（DNS / 连接失败）不算故障——那是探测器的问题，
+ * 单独标 unreachable，不许把它变成一屏假红。
+ */
+export interface UserViewState {
+  url: string;
+  /** 只按最近一次结果给：up / down / unknown（未探过） */
+  status: UptimeStatus;
+  lastSample: UptimeSample | null;
+  /** 探测器够不着预览域名（不是用户视角故障） */
+  unreachable?: boolean;
 }
 
 /** 单个 target 的持久化状态。 */
@@ -205,6 +231,12 @@ export interface UptimeTargetRecord {
   intervalMs?: number;
   /** 本目标实际生效的超时（毫秒） */
   timeoutMs?: number;
+  branchName?: string;
+  projectName?: string;
+  branchStatus?: string;
+  branchLastActiveAt?: string;
+  /** 分支目标的用户视角判定 */
+  userView?: UserViewState;
   firstSeenAt: number;
 }
 
@@ -232,14 +264,19 @@ export interface UptimeMonitorConfig {
    */
   excludePatterns: string[];
   /**
-   * 监控范围。默认 `trunk` —— 只盯各项目的主干分支。
+   * 监控范围。默认 `all`（2026-09-08 监控中心重做起）——全部分支都探。
    *
-   * 为什么默认只看主干：特性分支是「今天开、明天删」的临时物，天然大量处于
-   * 降温/构建/已停止态，全量纳入会让状态页变成一屏噪声（生产实测 139 个目标里
-   * 103 个是暂停态），真故障反而被淹没。状态页要回答的是「我的服务好不好」，
-   * 不是「今天开了多少条分支」。需要全量时设 CDS_UPTIME_SCOPE=all。
+   * 此前默认只看主干，理由是特性分支大量处于降温态、全量纳入会把状态页变成一屏噪声。
+   * 重做后主列表只展示主站（生产目标 + 自定义监控），分支按项目折成一条汇总行、
+   * 点开模态窗才看明细，噪声问题在展示层解决，探测面就不必再缩。
+   * 仍可设 CDS_UPTIME_SCOPE=trunk 收窄到主干。
    */
   scope: 'trunk' | 'all';
+  /**
+   * 分支目标是否做「用户视角」第二判定（`CDS_UPTIME_USER_VIEW`，默认开）。
+   * 经预览域名整条链路探，带 x-cds-poll 头，代理侧不刷新 LRU。
+   */
+  userViewEnabled?: boolean;
   /**
    * 是否把生产发布目标纳入探测（`CDS_UPTIME_RELEASE_ENABLED`，默认开）。
    *
@@ -276,6 +313,11 @@ export interface UptimeStateSource {
    * 「添加监控」保存了也永远不会被探（守卫测试盯着 index.ts 的这行接线）。
    */
   getUptimeMonitors?(): UptimeCustomMonitor[];
+  /**
+   * 分支的预览地址（用户视角探测用）。可选——不接线就没有用户视角判定，
+   * 分支目标只有进程视角。
+   */
+  getPreviewUrl?(branch: BranchEntry): string;
 }
 
 export type ProbeFn = (target: ProbeTarget, timeoutMs: number) => Promise<Omit<UptimeSample, 't'>>;
@@ -364,8 +406,9 @@ export function uptimeConfigFromEnv(repoRoot: string): UptimeMonitorConfig {
       60,
       MAX_SAMPLES_HARD_CEILING,
     ),
-    // 默认只监控主干；CDS_UPTIME_SCOPE=all 才纳入全部分支。
-    scope: (process.env.CDS_UPTIME_SCOPE || '').trim().toLowerCase() === 'all' ? 'all' : 'trunk',
+    // 默认全部分支都探（展示层折叠）；CDS_UPTIME_SCOPE=trunk 收窄到主干。
+    scope: (process.env.CDS_UPTIME_SCOPE || '').trim().toLowerCase() === 'trunk' ? 'trunk' : 'all',
+    userViewEnabled: envFlag('CDS_UPTIME_USER_VIEW', true),
     releaseTargetsEnabled: envFlag('CDS_UPTIME_RELEASE_ENABLED', true),
     storePath: path.join(repoRoot, '.cds', 'uptime-monitor.json'),
   };
@@ -387,15 +430,18 @@ export function selectProbeTargets(
   options: {
     scope?: 'trunk' | 'all';
     getProject?: (projectId: string) => Project | null | undefined;
+    getPreviewUrl?: (branch: BranchEntry) => string;
   } = {},
 ): ProbeTarget[] {
-  const scope = options.scope ?? 'trunk';
+  const scope = options.scope ?? 'all';
   const targets: ProbeTarget[] = [];
   for (const branch of branches) {
     if (!branch || branch.deleting) continue;
+    const project = options.getProject?.(branch.projectId);
     // 非主干分支在 trunk 范围下**根本不产 target**（而不是产一个 paused 的），
     // 否则状态页仍要滚过上百条灰条才看得到主干——那等于没收窄。
-    if (scope === 'trunk' && !isTrunkBranch(branch, options.getProject?.(branch.projectId))) continue;
+    if (scope === 'trunk' && !isTrunkBranch(branch, project)) continue;
+    const userViewUrl = options.getPreviewUrl ? (options.getPreviewUrl(branch) || '').trim() : '';
     const services = branch.services || {};
     for (const profileId of Object.keys(services).sort()) {
       const svc = services[profileId];
@@ -433,6 +479,10 @@ export function selectProbeTargets(
         excluded: Boolean(excludedBy),
         excludedBy: excludedBy || undefined,
         remoteExecutor: remoteExecutor || undefined,
+        branchName: branch.branch || branch.id,
+        projectName: project?.name || undefined,
+        branchLastActiveAt: branch.lastAccessedAt,
+        userViewUrl: userViewUrl || undefined,
       });
     }
   }
@@ -546,6 +596,7 @@ export function selectAllProbeTargets(
     releaseTargetsEnabled?: boolean;
     customMonitors?: ReadonlyArray<UptimeCustomMonitor>;
     globalIntervalMs?: number;
+    getPreviewUrl?: (branch: BranchEntry) => string;
   } = {},
 ): ProbeTarget[] {
   const branchTargets = selectProbeTargets(branches, excludePatterns, options);
@@ -667,6 +718,46 @@ export const defaultHttpProbe: ProbeFn = async (target, timeoutMs) => {
 
 
 /** 一天的毫秒数（按天聚合与 range 判定共用）。 */
+/** 用户视角探测结果。unreachable = 探测器够不着预览域名，不是用户视角故障。 */
+export interface UserViewOutcome extends Omit<UptimeSample, 't'> {
+  unreachable?: boolean;
+}
+
+export type UserViewProbeFn = (url: string, timeoutMs: number) => Promise<UserViewOutcome>;
+
+/**
+ * 用户视角探测：经预览域名走完整条链路（边缘 / forwarder / 路由 / 容器）。
+ *
+ * 判定口径与进程视角一致：拿到任何 < 500 的响应算可达（401 是预览门禁在应答，
+ * 404 是路由到了应用），5xx / 超时算失败。连接层错误（DNS、拒绝、TLS）另标
+ * unreachable——那说明探测器自己够不着预览域名，不能折成目标故障。
+ * 带 x-cds-poll 头：代理侧据此不刷新 LRU、不记访问（proxy.ts）。
+ */
+export const defaultUserViewProbe: UserViewProbeFn = async (url, timeoutMs) => {
+  const startedAt = Date.now();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      redirect: 'manual',
+      cache: 'no-store',
+      signal: ctrl.signal,
+      headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true', accept: 'text/html,*/*;q=0.8' },
+    });
+    await res.body?.cancel().catch(() => undefined);
+    const code = res.status;
+    return { up: code > 0 && code < 500, ms: Date.now() - startedAt, code, err: code >= 500 ? `用户视角 HTTP ${code}` : undefined };
+  } catch (err) {
+    const aborted = (err as Error).name === 'AbortError';
+    if (aborted) return { up: false, ms: Date.now() - startedAt, err: `用户视角探测超时（${timeoutMs}ms）` };
+    const msg = (err as Error & { cause?: Error }).cause?.message || (err as Error).message;
+    return { up: false, ms: Date.now() - startedAt, err: `探测器够不着预览域名：${msg}`, unreachable: true };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const DAY_MS = 24 * 3600 * 1000;
 
 /**
@@ -824,6 +915,51 @@ export interface UptimeTargetSummary {
   tags?: string[];
   /** 自定义监控是否启用（source=custom 时有） */
   enabled?: boolean;
+  /**
+   * 是否真发过请求探出来的。false = 按容器状态判定（读的是 CDS 自己的记录，
+   * 不是观测），状态页标「未实测」，不算正常、不计可用率。
+   */
+  measured: boolean;
+  /** 分支目标的用户视角判定（有预览地址且开了用户视角才有） */
+  userView?: UserViewState;
+  branchName?: string;
+  projectName?: string;
+  branchStatus?: string;
+  branchLastActiveAt?: string;
+}
+
+/** 覆盖面里一条「没被盯」的对象 */
+export interface UptimeCoverageItem {
+  id: string;
+  name: string;
+  source: ProbeSource;
+  projectId: string;
+  projectName?: string;
+  kind: string;
+  reason: string;
+  action: string;
+}
+
+export interface UptimeCoverage {
+  /** 全站可监测对象（三类来源推导出的全部目标） */
+  total: number;
+  /** 已纳入探测（含降温 / 未运行的分支：它们运行时就会被探） */
+  covered: number;
+  uncovered: UptimeCoverageItem[];
+  /** 未纳入按原因计数 */
+  byReason: Array<{ kind: string; count: number }>;
+  scope: 'trunk' | 'all';
+}
+
+/** 探测器自身健康：横幅上告诉人「监测本身没停」 */
+export interface UptimeProberHealth {
+  lastCycleAt: number | null;
+  lastCycleDurationMs: number | null;
+  lastCycleProbed: number;
+  lastCycleTargets: number;
+  /** 超过两个间隔没跑完一轮 */
+  stalled: boolean;
+  userViewEnabled: boolean;
 }
 
 export interface UptimeSummary {
@@ -845,9 +981,13 @@ export interface UptimeSummary {
     unknown: number;
     /** 未纳入监控的目标数（命中排除名单），与 paused 分开计 */
     excluded: number;
+    /** 未实测（按容器状态判定）的目标数，不算正常 */
+    unmeasured: number;
     ok: boolean;
   };
   targets: UptimeTargetSummary[];
+  coverage: UptimeCoverage;
+  prober: UptimeProberHealth;
 }
 
 /**
@@ -885,6 +1025,9 @@ export class UptimeMonitorService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private records = new Map<string, UptimeTargetRecord>();
   private lastCycleAt: number | null = null;
+  private lastCycleDurationMs: number | null = null;
+  private lastCycleProbed = 0;
+  private lastCycleTargets = 0;
   private cycleRunning = false;
 
   constructor(
@@ -892,6 +1035,8 @@ export class UptimeMonitorService {
       state: UptimeStateSource;
       config: UptimeMonitorConfig;
       probe?: ProbeFn;
+      /** 用户视角探测实现（测试注入） */
+      userViewProbe?: UserViewProbeFn;
       now?: () => number;
       logger?: { warn?: (m: string) => void; info?: (m: string) => void };
       /**
@@ -988,15 +1133,22 @@ export class UptimeMonitorService {
         applyIncidentTransition(record.incidents, 'to-up', { targetId: target.id, at: now });
       }
 
+      // 用户视角：每条运行中的分支探一次预览域名（不是每个服务一次）。
+      const userViews = await this.probeUserViews(activeTargets);
+
       for (let i = 0; i < activeTargets.length; i += PROBE_CONCURRENCY) {
         const chunk = activeTargets.slice(i, i + PROBE_CONCURRENCY);
         const results = await Promise.all(chunk.map((target) => this.probeOne(target)));
         for (const { target, outcome, thrown } of results) {
-          this.applySample(target, { ...outcome, t: this.now() }, { allowDegrade: !thrown });
+          const folded = this.foldUserView(target, outcome, userViews.get(target.branchId));
+          this.applySample(target, { ...folded, t: this.now() }, { allowDegrade: !thrown });
         }
       }
 
       this.lastCycleAt = now;
+      this.lastCycleDurationMs = Math.max(0, this.now() - now);
+      this.lastCycleProbed = activeTargets.length;
+      this.lastCycleTargets = targets.length;
       this.persist();
     } finally {
       this.cycleRunning = false;
@@ -1010,13 +1162,71 @@ export class UptimeMonitorService {
       this.deps.state.getReleaseTargets?.() || [],
       this.deps.config.excludePatterns || [],
       {
-        scope: this.deps.config.scope ?? 'trunk',
+        scope: this.deps.config.scope ?? 'all',
         getProject: this.deps.state.getProject?.bind(this.deps.state),
         releaseTargetsEnabled: this.deps.config.releaseTargetsEnabled !== false,
         customMonitors: this.deps.state.getUptimeMonitors?.() || [],
         globalIntervalMs: this.deps.config.intervalMs,
+        getPreviewUrl: this.deps.state.getPreviewUrl?.bind(this.deps.state),
       },
     );
+  }
+
+  /**
+   * 对本轮活跃的分支目标按分支去重，各探一次预览域名。结果按 branchId 返回，
+   * 同一分支的所有服务共用同一个用户视角结论。关掉用户视角或没有预览地址时为空。
+   */
+  private async probeUserViews(activeTargets: ReadonlyArray<ProbeTarget>): Promise<Map<string, UserViewOutcome & { url: string }>> {
+    const out = new Map<string, UserViewOutcome & { url: string }>();
+    if (this.deps.config.userViewEnabled === false) return out;
+    const byBranch = new Map<string, string>();
+    for (const t of activeTargets) {
+      if (t.source !== 'branch' || !t.userViewUrl || byBranch.has(t.branchId)) continue;
+      byBranch.set(t.branchId, t.userViewUrl);
+    }
+    const probe = this.deps.userViewProbe || defaultUserViewProbe;
+    const entries = [...byBranch.entries()];
+    for (let i = 0; i < entries.length; i += PROBE_CONCURRENCY) {
+      const chunk = entries.slice(i, i + PROBE_CONCURRENCY);
+      const results = await Promise.all(chunk.map(async ([branchId, url]) => {
+        try {
+          return [branchId, { ...(await probe(url, this.deps.config.timeoutMs)), url }] as const;
+        } catch (err) {
+          return [branchId, { up: false, ms: 0, err: `用户视角探测异常：${(err as Error).message}`, unreachable: true, url }] as const;
+        }
+      }));
+      for (const [branchId, result] of results) out.set(branchId, result);
+    }
+    return out;
+  }
+
+  /**
+   * 把用户视角折进主采样：进程在答但用户视角 5xx / 超时 → 记为失败（原因写明是用户视角）。
+   * 探测器够不着预览域名（unreachable）只记在 userView 上，不折——那不是目标故障。
+   */
+  private foldUserView(
+    target: ProbeTarget,
+    outcome: Omit<UptimeSample, 't'>,
+    userView: (UserViewOutcome & { url: string }) | undefined,
+  ): Omit<UptimeSample, 't'> {
+    const record = this.records.get(target.id);
+    if (!record || target.source !== 'branch') return outcome;
+    if (!userView) {
+      // 本轮没有用户视角（关掉了 / 没地址）：清掉旧结论，别让上一轮的红一直挂着。
+      if (record.userView && !target.userViewUrl) record.userView = undefined;
+      return outcome;
+    }
+    const sample: UptimeSample = { t: this.now(), up: userView.up, ms: userView.ms, code: userView.code, err: userView.err };
+    record.userView = {
+      url: userView.url,
+      status: userView.unreachable ? 'unknown' : (userView.up ? 'up' : 'down'),
+      lastSample: sample,
+      unreachable: userView.unreachable || undefined,
+    };
+    if (outcome.up && !userView.up && !userView.unreachable) {
+      return { up: false, ms: userView.ms, code: userView.code, err: userView.err || '用户视角不可达' };
+    }
+    return outcome;
   }
 
   /** 把目标定义上会变的展示字段同步进台账（改名、改地址、改间隔都要立刻反映）。 */
@@ -1031,6 +1241,49 @@ export class UptimeMonitorService {
     record.probeDescription = target.probeDescription;
     record.intervalMs = target.intervalMs || this.deps.config.intervalMs;
     record.timeoutMs = target.timeoutMs || this.deps.config.timeoutMs;
+    record.branchName = target.branchName;
+    record.projectName = target.projectName;
+    record.branchStatus = target.source === 'branch' ? target.branchStatus : undefined;
+    record.branchLastActiveAt = target.branchLastActiveAt;
+  }
+
+  /** 按容器状态判定的目标不是观测，标「未实测」。 */
+  private isMeasured(record: Pick<UptimeTargetRecord, 'probeKind' | 'source'>): boolean {
+    return record.probeKind !== 'container';
+  }
+
+  /** 覆盖面：全站可监测对象里，哪些没被盯、为什么、能怎么办。 */
+  private computeCoverage(targets: ReadonlyArray<ProbeTarget>): UptimeCoverage {
+    const uncovered: UptimeCoverageItem[] = [];
+    for (const t of targets) {
+      let kind: string | null = null;
+      let reason = '';
+      let action = '';
+      if (t.excluded) {
+        kind = '命中排除名单';
+        reason = `命中排除规则 ${t.excludedBy}`;
+        action = '在 CDS_UPTIME_EXCLUDE 里移除该规则';
+      } else if (t.remoteExecutor) {
+        kind = '远端执行器探不到';
+        reason = '容器跑在远端执行器，协调端探不到其宿主端口';
+        action = '等执行器侧探测上线';
+      } else if (t.source === 'release' && t.releaseSkipReason) {
+        kind = t.releaseSkipReason.includes('上线地址') ? '发布目标缺上线地址' : '发布目标未启用';
+        reason = t.releaseSkipReason;
+        action = t.releaseSkipReason.includes('上线地址') ? '去发布中心补 healthcheckUrl' : '在发布中心启用后自动纳入';
+      }
+      if (!kind) continue;
+      uncovered.push({ id: t.id, name: t.name, source: t.source, projectId: t.projectId, projectName: t.projectName, kind, reason, action });
+    }
+    const counts = new Map<string, number>();
+    for (const u of uncovered) counts.set(u.kind, (counts.get(u.kind) || 0) + 1);
+    return {
+      total: targets.length,
+      covered: targets.length - uncovered.length,
+      uncovered,
+      byReason: [...counts.entries()].map(([kind, count]) => ({ kind, count })),
+      scope: this.deps.config.scope ?? 'all',
+    };
   }
 
   /**
@@ -1262,8 +1515,10 @@ export class UptimeMonitorService {
     let paused = 0;
     let unknown = 0;
     let excluded = 0;
+    let unmeasured = 0;
 
     for (const record of [...this.records.values()].sort(compareTargetsForDisplay)) {
+      const measured = this.isMeasured(record);
       const a24 = availabilityOverRange(record, dayMs, now);
       const a7 = availabilityOverRange(record, 7 * dayMs, now);
       const open = record.incidents.find((i) => i.endedAt === null) || null;
@@ -1274,9 +1529,11 @@ export class UptimeMonitorService {
           ? (lastClosed?.endedAt ?? record.firstSeenAt)
           : null;
       if (record.excluded) excluded += 1;
+      else if (record.status === 'paused') paused += 1;
+      // 按容器状态判出来的「正常」不是观测，单列未实测，不给它绿。
+      else if (!measured && record.status !== 'down') unmeasured += 1;
       else if (record.status === 'up') up += 1;
       else if (record.status === 'down') down += 1;
-      else if (record.status === 'paused') paused += 1;
       else unknown += 1;
       targets.push({
         id: record.id,
@@ -1304,10 +1561,17 @@ export class UptimeMonitorService {
         probeDescription: record.probeDescription || defaultProbeDescription(record),
         intervalSeconds: Math.round((record.intervalMs || this.deps.config.intervalMs) / 1000),
         timeoutMs: record.timeoutMs || this.deps.config.timeoutMs,
+        measured,
+        userView: record.userView,
+        branchName: record.branchName,
+        projectName: record.projectName,
+        branchStatus: record.branchStatus,
+        branchLastActiveAt: record.branchLastActiveAt,
         ...(record.source === 'custom' ? this.customFacet(record.profileId) : {}),
       });
     }
 
+    const intervalMs = this.deps.config.intervalMs;
     return {
       enabled: this.deps.config.enabled,
       generatedAt: now,
@@ -1317,8 +1581,17 @@ export class UptimeMonitorService {
       firstDataEtaSeconds: Math.round(this.deps.config.intervalMs / 1000),
       lastCycleAt: this.lastCycleAt,
       excludePatterns: [...(this.deps.config.excludePatterns || [])],
-      overall: { total: targets.length, up, down, paused, unknown, excluded, ok: down === 0 },
+      overall: { total: targets.length, up, down, paused, unknown, excluded, unmeasured, ok: down === 0 },
       targets,
+      coverage: this.computeCoverage(this.selectTargets()),
+      prober: {
+        lastCycleAt: this.lastCycleAt,
+        lastCycleDurationMs: this.lastCycleDurationMs,
+        lastCycleProbed: this.lastCycleProbed,
+        lastCycleTargets: this.lastCycleTargets,
+        stalled: this.deps.config.enabled && this.lastCycleAt !== null && now - this.lastCycleAt > intervalMs * 2,
+        userViewEnabled: this.deps.config.userViewEnabled !== false,
+      },
     };
   }
 
@@ -1336,6 +1609,8 @@ export class UptimeMonitorService {
     to: number;
     bucketCount: number;
     points: ReturnType<typeof bucketizeSamples>;
+    /** 最近 20 次原始采样，最新在前——判定就是从这些来的，给人核对 */
+    recentSamples: UptimeSample[];
   } | null {
     const record = this.records.get(targetId);
     if (!record) return null;
@@ -1353,7 +1628,7 @@ export class UptimeMonitorService {
     const points = needsRollup
       ? dailyRollupPoints(record, from, now)
       : bucketizeSamples(record.samples, from, now, bucketCount);
-    return { id: record.id, name: record.name, from, to: now, bucketCount: points.length, points };
+    return { id: record.id, name: record.name, from, to: now, bucketCount: points.length, points, recentSamples: record.samples.slice(-20).reverse() };
   }
 
   /** 全局故障事件时间线，最近的在前。 */

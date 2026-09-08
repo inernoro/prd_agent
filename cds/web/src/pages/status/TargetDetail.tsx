@@ -38,6 +38,7 @@ import {
   formatLatency,
   formatPercent,
   formatRelative,
+  formatShortClock,
   type HistoryRange,
   type UptimeHistory,
   type UptimeIncidentView,
@@ -112,6 +113,11 @@ export function TargetDetail({
   const rangeAvailability = rangeBuckets ? availabilityOfBuckets(rangeBuckets) : null;
   const statusTone = target.status === 'down' ? 'danger' : target.status === 'up' ? 'ok' : target.status === 'unknown' ? 'warn' : 'default';
   const canProbe = !target.excluded && target.status !== 'paused';
+  const unmeasured = target.measured === false;
+  const viewpoint = target.source === 'branch'
+    ? (target.userView ? 'CDS 主机 → 容器端口（进程视角） + 预览域名整条链路（用户视角）' : 'CDS 主机 → 容器端口（进程视角，单点）')
+    : 'CDS 主机出网 → 目标地址，单点；与用户视角一致但不等价（内网 DNS / 出网策略可能不同）';
+  const recentSamples = history.status === 'ok' ? (history.history.recentSamples || []) : [];
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
@@ -125,7 +131,7 @@ export function TargetDetail({
           ) : null}
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <StatusPill status={target.status} excluded={target.excluded} size="lg" />
+              <StatusPill status={target.status} excluded={target.excluded} measured={target.measured} size="lg" />
               <h2 className="min-w-0 truncate text-lg font-semibold leading-tight">{target.name}</h2>
               <SourceBadge source={target.source} full />
               {target.degraded ? (
@@ -140,6 +146,14 @@ export function TargetDetail({
                 {describeStatusSince(target.status, target.statusSince, now)}
               </span>
               <span className="min-w-0 truncate font-mono" title={target.probeDescription}>{target.probeDescription}</span>
+              {target.source === 'branch' && target.userView ? (
+                <span className="inline-flex items-center gap-2 rounded border border-[hsl(var(--hairline-strong))] px-1.5 py-0.5 text-[11px]" title={`用户视角：${target.userView.url}`}>
+                  <span className="inline-flex items-center gap-1">进程 <span className={cn('inline-block h-2 w-2 rounded-full', target.status === 'down' && !(target.lastSample?.err || '').includes('用户视角') ? 'bg-destructive' : unmeasured ? 'bg-warn' : 'bg-ok')} /></span>
+                  <span className="inline-flex items-center gap-1">用户视角 <span className={cn('inline-block h-2 w-2 rounded-full', target.userView.status === 'up' ? 'bg-ok' : target.userView.status === 'down' ? 'bg-destructive' : 'bg-[hsl(var(--hairline-strong))]')} /></span>
+                </span>
+              ) : (
+                <span className="rounded border border-[hsl(var(--hairline-strong))] px-1.5 py-0.5 text-[11px]">视角：{target.source === 'branch' ? 'CDS 主机 → 容器端口' : 'CDS 主机 → 公网地址'}</span>
+              )}
             </div>
             {(target.tags || []).length > 0 ? (
               <div className="mt-1.5 flex flex-wrap gap-1">
@@ -193,6 +207,17 @@ export function TargetDetail({
           <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
             <span className="font-medium">最近失败原因：</span>{target.lastSample.err}
             {target.openIncidentSince ? <span className="opacity-80">（故障始于 {formatClock(target.openIncidentSince)}）</span> : null}
+          </div>
+        ) : null}
+        {unmeasured && target.status !== 'down' ? (
+          <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
+            这条没有可探测的 HTTP 端口，只能按容器状态判定——读的是 CDS 自己的记录，不是观测。它不算「正常」，也不计入可用率。
+            {target.degradeReason ? ` ${target.degradeReason}` : ''}
+          </div>
+        ) : null}
+        {target.userView?.unreachable ? (
+          <div className="rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs leading-5 text-muted-foreground">
+            用户视角暂不可用：探测器够不着预览域名（{target.userView.lastSample?.err || '连接失败'}），这不算目标故障。
           </div>
         ) : null}
         {target.status === 'paused' && target.pausedReason ? (
@@ -266,8 +291,35 @@ export function TargetDetail({
             )}
             <div className="text-[11px] text-muted-foreground">
               {range === '24h'
-                ? `90 段 · 覆盖最近 24 小时，原始采样按 ${target.intervalSeconds} 秒一次`
+                ? `90 段 · 覆盖最近 24 小时，原始采样按 ${target.intervalSeconds} 秒一次 · 灰段 = 无采样（不计入可用率分母）`
                 : '按自然日聚合（UTC）：每一段是一天，曲线是当天平均响应'}
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-baseline gap-2">
+              <h3 className="text-sm font-semibold">原始采样（最近 {recentSamples.length} 次）</h3>
+              <span className="text-[11px] text-muted-foreground">判定就是从这些数据来的，可自行核对；每 {target.intervalSeconds} 秒一次，连续失败达阈值判故障，一次成功即恢复</span>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]" style={{ overscrollBehavior: 'contain' }}>
+              <div className="min-w-[520px]">
+                <div className="grid grid-cols-[100px_60px_70px_80px_minmax(0,1fr)] gap-3 bg-[hsl(var(--surface-sunken))] px-3 py-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
+                  <span>时间</span><span>结果</span><span>状态码</span><span>耗时</span><span>原因</span>
+                </div>
+                {recentSamples.length === 0 ? (
+                  <div className="border-t border-[hsl(var(--hairline))] px-3 py-4 text-center text-xs text-muted-foreground">
+                    {history.status === 'ok' ? '尚无采样' : '读取中'}
+                  </div>
+                ) : recentSamples.map((s) => (
+                  <div key={s.t} className="grid grid-cols-[100px_60px_70px_80px_minmax(0,1fr)] gap-3 border-t border-[hsl(var(--hairline))] px-3 py-1.5 font-mono text-xs">
+                    <span>{formatShortClock(s.t)}</span>
+                    <span className={cn('font-semibold', s.up ? 'text-ok' : 'text-destructive')}>{s.up ? '成功' : '失败'}</span>
+                    <span>{s.code ?? '—'}</span>
+                    <span>{formatLatency(s.ms)}</span>
+                    <span className="truncate text-muted-foreground" title={s.err}>{s.err || ''}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
 
@@ -304,7 +356,15 @@ export function TargetDetail({
               <dt className="text-muted-foreground">来源</dt>
               <dd>{SOURCE_META[target.source].label} · {SOURCE_META[target.source].hint}</dd>
               <dt className="text-muted-foreground">方式</dt>
-              <dd>{PROBE_KIND_LABEL[target.probeKind]}</dd>
+              <dd>{PROBE_KIND_LABEL[target.probeKind]}{unmeasured ? '（不是观测，读的是 CDS 自己的记录）' : '（真实请求）'}</dd>
+              <dt className="text-muted-foreground">视角</dt>
+              <dd>{viewpoint}</dd>
+              {target.userView ? (
+                <>
+                  <dt className="text-muted-foreground">用户视角地址</dt>
+                  <dd className="break-all font-mono">{target.userView.url}</dd>
+                </>
+              ) : null}
               <dt className="text-muted-foreground">规则</dt>
               <dd className="break-all font-mono">{target.probeDescription}</dd>
               {target.probeUrl ? (

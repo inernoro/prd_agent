@@ -492,7 +492,7 @@ CDS 自建存活监控按固定间隔直连容器宿主端口探测每个分支�
 | # | 债务 | 说明 | 影响 |
 |---|------|------|------|
 | 2 | 探测台账不跨实例共享 | 落盘在单机 `.cds/uptime-monitor.json`，多实例部署各存各的，可用率不合并 | 集群场景数据分散 |
-| 3 | ~~状态页无单目标下钻~~（2026-09-08 已偿还） | 监控中心右栏详情已接 `GET /api/uptime/targets/:id/history`：24h / 7d / 30d 可用率柱条 + 响应时间曲线 + 本目标故障 | 已闭环 |
+| 3 | ~~状态页无单目标下钻~~（2026-09-08 已偿还） | 监控中心右栏详情已接 `GET /api/uptime/targets/:id/history`：24h / 7d / 30d 可用率柱条 + 响应时间曲线 + 本目标故障 + 最近 20 次原始采样 | 已闭环 |
 
 ### 债务 2.5：监控中心自定义监控的边界（open，2026-09-08 随重做登记）
 
@@ -504,6 +504,16 @@ CDS 自建存活监控按固定间隔直连容器宿主端口探测每个分支�
 | 4 | 关键字只读响应体前 512 KB、区分大小写、不支持正则 | 判定实现在 `uptime-custom-monitor.ts` 的 `httpProbe`；正则与大小写选项未做 | 大响应体尾部的关键字匹配不到 |
 | 5 | 告警只有掉线 / 恢复两档 | 自定义监控复用 `uptime.target.down` 事件与通知账本；没有响应时间阈值告警、没有证书到期提醒 | 慢而不断的退化不会被通知 |
 | 6 | 定义落 CdsState 全局文档、采样落单机文件 | 定义随 mongo-split 的 global doc 持久化；采样 / 故障台账仍在 `.cds/uptime-monitor.json`（与债务 2-2 同因），多实例各存各的 | 集群场景数据分散 |
+
+### 债务 2.6：客观性（open，2026-09-08 第二轮反馈「监测是否客观」后登记）
+
+| # | 债务 | 说明 | 影响 |
+|---|------|------|------|
+| 1 | 用户视角只有一个视角、只探分支主入口 | 分支的用户视角探测打的是分支主预览域名（`buildPreviewUrlForProject`），非主入口服务（命名子域 / 路径前缀路由）不单独探；探测点仍是 CDS 主机自己，公网 DNS / CDN 一层的差异探不到 | 命名子域出口挂了而主入口正常时不会被用户视角抓到 |
+| 2 | 生产 / 自定义目标没有第二视角 | 它们探的本来就是对外地址，但仍是 CDS 主机单点；没有远端探测点 | 内网 DNS / 出网策略差异会造成假绿假红 |
+| 3 | preview-canary 仍会 touch 调度器 | `services/preview-canary.ts` 每 30 秒抽样 3 条运行分支的预览域名，请求不带 `x-cds-poll` 头，代理侧照常刷新 LRU——被抽到的分支永不降温。本轮只给存活监控的用户视角探测加了探测头与代理豁免，没动 canary（行为改动要先确认） | 运行中分支的 idleTTL 被 canary 部分抵消 |
+| 4 | 覆盖面不含基础设施 | `coverage` 只从三类探测目标推导，分支 / 项目的 Mongo / Redis / MySQL 不在里面（它们走各自的健康检查） | 覆盖面数字不含基础设施 |
+| 5 | 未实测目标仍会产采样 | 按容器状态判定的目标每轮照样落一条采样（up 恒真），只是摘要里不算正常、不计整体可用率；它自己那一行的 24h 可用率仍会显示 100% | 详情页数字与「未实测」标签并存，需读标签 |
 
 ### 债务 3：服务端通知账本的残留边界（open，2026-07-29 随告警外发一并登记）
 
@@ -1098,7 +1108,7 @@ mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按�
 | 相关 | `cds/src/services/deploy-stuck-reconciler.ts`（看门狗纯函数 SSOT） |
 | 相关 | `cds/src/services/build-log-meta.ts`（构建历史元数据纯函数，已单测） |
 | 过期分支预览页 | `cds/src/index.ts`（墓碑页渲染与分流）、`cds/src/services/state.ts`（墓碑记录）、`cds/src/routes/github-webhook.ts`（触发） |
-| 存活监控回归 | `cds/tests/services/uptime-monitor-cycle.test.ts`、`cds/tests/services/uptime-metrics.test.ts`、`cds/tests/services/uptime-custom-monitors.test.ts`、`cds/tests/web/monitor-center-view.test.ts` |
+| 存活监控回归 | `cds/tests/services/uptime-monitor-cycle.test.ts`、`cds/tests/services/uptime-metrics.test.ts`、`cds/tests/services/uptime-custom-monitors.test.ts`、`cds/tests/services/uptime-objectivity.test.ts`、`cds/tests/web/monitor-center-view.test.ts` |
 | 通知账本 | `cds/src/services/notice-ledger.ts`、`cds/src/services/notice-outbound-map.ts`、`cds/src/routes/notices.ts` |
 | 基础设施端口绑定 | `cds/src/services/infra-publish.ts`（唯一判定）、`cds/src/services/container.ts`（`startInfraService` 调用点）、`cds/src/services/state.ts`（网桥地址与注入同源）、`cds/src/index.ts`（适配器接线） |
 | 端口绑定回归 | `cds/tests/services/infra-publish-host.test.ts` |

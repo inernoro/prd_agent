@@ -796,10 +796,14 @@ export class ProxyService {
     // Update warm-pool LRU ordering. Throttling for access-event broadcasts
     // is handled separately via setOnAccess; scheduler.touch is cheap (single
     // save) and correctness depends on every request refreshing lastAccessedAt.
-    if (this.scheduler) {
+    // 探测请求（存活监控的「用户视角」探测等带 x-cds-poll: true）不算用户访问：
+    // 不刷新 LRU、不记访问事件。否则监控每分钟一次的探测会让分支永远不降温，
+    // 等于把 idleTTL 废掉（uptime-monitor.ts 顶部纪律 1 的代理侧半边）。
+    const isPollRequest = String(req.headers['x-cds-poll'] || '').toLowerCase() === 'true';
+    if (this.scheduler && !isPollRequest) {
       try { this.scheduler.touch(branch.id); } catch { /* ignore */ }
     }
-    this.proxyRequest(req, res, upstream, { branchId: branch.id, branchName: branchRef, trackAccess: true, profileId });
+    this.proxyRequest(req, res, upstream, { branchId: branch.id, branchName: branchRef, trackAccess: !isPollRequest, profileId });
   }
 
   private serveBranchStatusResponse(

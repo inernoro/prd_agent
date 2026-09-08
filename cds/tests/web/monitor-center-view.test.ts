@@ -9,6 +9,10 @@ import { describe, it, expect } from 'vitest';
 import {
   availabilityOfBuckets,
   buildMonitorHeadline,
+  filterBranches,
+  groupBranchesByProject,
+  mainSiteTargets,
+  sortBranchesAliveFirst,
   describeStatusSince,
   filterTargets,
   formatDuration,
@@ -29,7 +33,7 @@ function target(over: Partial<UptimeTargetSummary>): UptimeTargetSummary {
     id: over.name || 'x', source: 'branch', name: 'x', branchId: '', projectId: '', profileId: '', probeKind: 'http',
     status: 'up', lastSample: null, availability24h: 1, availability7d: 1, avgLatencyMs24h: 100, sampleCount24h: 10,
     buckets: [], openIncidentSince: null, statusSince: null, incidentCount: 0, probeDescription: '',
-    intervalSeconds: 60, timeoutMs: 5000, ...over,
+    intervalSeconds: 60, timeoutMs: 5000, measured: true, ...over,
   };
 }
 
@@ -80,10 +84,21 @@ describe('buildMonitorHeadline 第一屏结论', () => {
       NOW,
     );
     expect(h.tone).toBe('ok');
-    expect(h.title).toBe('全部 2 个目标正常');
+    expect(h.title).toBe('2 个实测目标全部正常');
     expect(h.detail).toContain('99.50%');
     expect(h.detail).toContain('恢复了 1 次故障');
     expect(h.detail).toContain('a（持续 2 分钟）');
+  });
+
+  it('未实测不算正常：全绿句子里单独点出来；探测器停了先说这个', () => {
+    const s = summaryOf([target({ name: 'a' }), target({ name: 'w', measured: false })]);
+    s.overall.up = 1; s.overall.unmeasured = 1;
+    const h = buildMonitorHeadline(s, [], NOW);
+    expect(h.title).toBe('1 个实测目标全部正常');
+    expect(h.detail).toContain('另有 1 个只按容器状态判定、未实测');
+    const stalled = buildMonitorHeadline({ ...s, prober: { lastCycleAt: NOW - 10 * MIN, lastCycleDurationMs: 1000, lastCycleProbed: 2, lastCycleTargets: 2, stalled: true, userViewEnabled: true } }, [], NOW);
+    expect(stalled.tone).toBe('warn');
+    expect(stalled.title).toBe('监测本身停了');
   });
 
   it('没有目标 / 监控关闭：直说，不凑句子', () => {
@@ -174,5 +189,61 @@ describe('格式化：量纲随大小切换，不输出「0 小时」', () => {
     expect(describeStatusSince('up', NOW - 3 * 24 * 60 * MIN, NOW)).toBe('已连续正常 3 天');
     expect(describeStatusSince('paused', null, NOW)).toBe('探测已暂停');
     expect(describeStatusSince('unknown', null, NOW)).toBe('状态确认中');
+  });
+});
+
+describe('分支按项目汇总（主列表只放主站，分支折成汇总行）', () => {
+  const br = (branchId: string, branchName: string, profileId: string, over: Partial<UptimeTargetSummary> = {}) => target({
+    id: `${branchId}::${profileId}`, source: 'branch', name: `${branchName} / ${profileId}`, branchId, branchName, profileId,
+    projectId: 'proj', projectName: 'MAP 平台', branchStatus: 'running', statusSince: NOW - 2 * 60 * MIN, ...over,
+  });
+  const list = [
+    target({ name: '官网', source: 'release' }),
+    br('p-main', 'main', 'api'), br('p-main', 'main', 'web'),
+    br('p-pay', 'feat/payment-v2', 'api'), br('p-pay', 'feat/payment-v2', 'worker', { measured: false }),
+    br('p-search', 'feat/search-index', 'api', { status: 'down', openIncidentSince: NOW - 12 * MIN, lastSample: { t: NOW, up: false, ms: 0, err: 'connect ECONNREFUSED' } }), br('p-search', 'feat/search-index', 'web'),
+    br('p-grpc', 'feat/grpc', 'grpc', { measured: false }),
+    br('p-old', 'feat/old', 'api', { status: 'paused', branchStatus: 'idle', branchLastActiveAt: new Date(NOW - 3 * 24 * 60 * MIN).toISOString() }),
+    br('p-older', 'feat/older', 'api', { status: 'paused', branchStatus: 'idle', branchLastActiveAt: new Date(NOW - 7 * 24 * 60 * MIN).toISOString() }),
+  ];
+
+  it('mainSiteTargets 只留生产与自定义', () => {
+    expect(mainSiteTargets(list).map((t) => t.name)).toEqual(['官网']);
+  });
+
+  it('每个项目一条汇总：运行中 / 正常 / 故障 / 未实测 / 已降温 计数', () => {
+    const groups = groupBranchesByProject(list, NOW);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ projectId: 'proj', projectName: 'MAP 平台', total: 6, running: 4, ok: 2, bad: 1, unmeasured: 1, idle: 2 });
+  });
+
+  it('存活的排前面：运行中（故障优先）→ 未实测 → 已降温（最近活跃在前）', () => {
+    const names = groupBranchesByProject(list, NOW)[0].branches.map((b) => [b.branchName, b.bucket, b.tone]);
+    expect(names).toEqual([
+      ['feat/search-index', 'running', 'bad'],
+      ['feat/payment-v2', 'running', 'ok'],
+      ['main', 'running', 'ok'],
+      ['feat/grpc', 'unmeasured', 'warn'],
+      ['feat/old', 'idle', 'muted'],
+      ['feat/older', 'idle', 'muted'],
+    ]);
+  });
+
+  it('分支视图带服务点、代表目标、状态文案与备注', () => {
+    const [search, pay] = groupBranchesByProject(list, NOW)[0].branches;
+    expect(search.services.map((s) => [s.profileId, s.tone])).toEqual([['api', 'bad'], ['web', 'ok']]);
+    expect(search.primary.profileId).toBe('api');
+    expect(search.statusText).toBe('故障已持续 12 分钟');
+    expect(search.note).toContain('ECONNREFUSED');
+    expect(pay.note).toContain('worker 未实测');
+    expect(pay.statusText).toContain('已连续正常');
+  });
+
+  it('filterBranches 与 sortBranchesAliveFirst', () => {
+    const branches = groupBranchesByProject(list, NOW)[0].branches;
+    expect(filterBranches(branches, 'bad', '').map((b) => b.branchName)).toEqual(['feat/search-index']);
+    expect(filterBranches(branches, 'idle', '').map((b) => b.branchName)).toEqual(['feat/old', 'feat/older']);
+    expect(filterBranches(branches, 'all', 'pay').map((b) => b.branchName)).toEqual(['feat/payment-v2']);
+    expect(sortBranchesAliveFirst([...branches].reverse()).map((b) => b.branchName)).toEqual(branches.map((b) => b.branchName));
   });
 });

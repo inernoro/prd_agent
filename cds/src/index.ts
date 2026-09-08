@@ -5804,6 +5804,13 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 监控中心手动添加的目标。少了这一行，「添加监控」保存成功但永远不会被探——
       // 守卫测试 uptime-custom-monitors 盯着它。
       getUptimeMonitors: () => stateService.listUptimeMonitors(),
+      // 用户视角探测的地址：与预览入口探测、PR 评论里的预览链接同一个拼法。
+      // 少了这一行，分支目标只有进程视角，「用户视角 ●」永远不会出现。
+      getPreviewUrl: (branch) => {
+        const previewHost = config.previewDomain || config.rootDomains?.[0];
+        if (!previewHost || !branch.branch) return '';
+        return buildPreviewUrlForProject(previewHost, branch.branch, stateService.getProject(branch.projectId), branch.projectId).url;
+      },
     },
     config: uptimeConfigFromEnv(config.repoRoot),
     logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
