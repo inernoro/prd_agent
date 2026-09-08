@@ -1,4 +1,5 @@
 import type { ToolboxItem } from '@/services';
+import { hasEffectivePermission } from '@/lib/permissionAccess';
 
 /**
  * 首页/启动器的「静态入口」单一数据源（SSOT）。
@@ -25,16 +26,23 @@ export interface LauncherPerms {
   canManageOpenPlatform: boolean;
 }
 
-/** 从权限串解析启动器入口的权限门（桌面/移动共用，口径唯一） */
-export function deriveLauncherPerms(permissions: string[]): LauncherPerms {
+/**
+ * 从权限串解析启动器入口的权限门（桌面/移动共用，口径唯一）。
+ *
+ * 走 hasEffectivePermission 而不是 includes：路由守卫与 launcherCatalog 都把 `super`
+ * 当万能钥匙，这里若只认字面权限，一个只有 `super` 的账号能打开页面、能在 Cmd+K 与
+ * 移动抽屉里看到入口，桌面首页搜索却报「无匹配」（Codex review P2，#1479）。
+ */
+export function deriveLauncherPerms(permissions: string[], isRoot = false): LauncherPerms {
+  const can = (required: string | string[]) => hasEffectivePermission(permissions, required, isRoot);
   return {
-    canReadPrompts: permissions.includes('prompts.read') || permissions.includes('prompts.write'),
-    canReadLab: permissions.includes('lab.read') || permissions.includes('lab.write'),
-    canManageAutomations: permissions.includes('automations.manage'),
-    canReadLogs: permissions.includes('logs.read'),
-    canReadUsers: permissions.includes('users.read') || permissions.includes('users.write'),
-    canReadTeamActivity: permissions.includes('team-activity.read'),
-    canManageOpenPlatform: permissions.includes('open-platform.manage'),
+    canReadPrompts: can(['prompts.read', 'prompts.write']),
+    canReadLab: can(['lab.read', 'lab.write']),
+    canManageAutomations: can('automations.manage'),
+    canReadLogs: can('logs.read'),
+    canReadUsers: can(['users.read', 'users.write']),
+    canReadTeamActivity: can('team-activity.read'),
+    canManageOpenPlatform: can('open-platform.manage'),
   };
 }
 
@@ -105,6 +113,16 @@ export function buildStaticUtilities(p: LauncherPerms): ToolboxItem[] {
       icon: 'ScrollText',
       tags: ['日志', 'logs', '审计'],
       routePath: '/logs',
+    } as ToolboxItem);
+    // 与 navRegistry 同一道权限门（logs.read）。此前只登记在 NAV_REGISTRY，
+    // 首页搜索「授权健康」显示「无匹配」（#1479）。
+    items.push({
+      id: '__authorization-health__',
+      name: '授权健康中心',
+      description: '统一诊断用户、Agent、验收、LLMGW 与部署身份',
+      icon: 'ShieldCheck',
+      tags: ['授权', '401', 'Agent', '验收', 'LLMGW', 'CDS', '健康'],
+      routePath: '/authorization-health',
     } as ToolboxItem);
   }
 
