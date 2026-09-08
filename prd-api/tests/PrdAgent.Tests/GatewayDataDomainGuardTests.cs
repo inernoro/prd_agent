@@ -1252,6 +1252,22 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void WebHostingGenerationAndEdit_RequireHttpBeforeGatewayModeSelection()
+    {
+        var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        var allowlistStart = program.IndexOf("var httpAllowlist =", StringComparison.Ordinal);
+        var allowlistEnd = program.IndexOf("var shadowFullSampleAllowlist =", allowlistStart, StringComparison.Ordinal);
+        Assert.True(allowlistStart >= 0 && allowlistEnd > allowlistStart);
+        var unconditionalAllowlist = program[allowlistStart..allowlistEnd];
+
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.GenerateHtml);", unconditionalAllowlist);
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.EditHtml);", unconditionalAllowlist);
+        Assert.DoesNotContain("if (", unconditionalAllowlist);
+        Assert.Contains("else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)", program);
+        Assert.Contains("httpAllowlist: httpAllowlist", program);
+    }
+
+    [Fact]
     public void ShadowForceSampling_PropagatesAcrossQueuedRuns()
     {
         var imageRun = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ImageGenRun.cs");
@@ -3096,7 +3112,7 @@ public class GatewayDataDomainGuardTests
             "正式 compose 的控制台与两份 serving 必须使用同一 GW Mongo 配置入口");
         Assert.Contains("config[\"LlmGateway:MongoConnectionString\"]", consoleProgram);
         Assert.Contains("gatewayMongoClient.GetDatabase(gatewayDbName)", consoleProgram);
-        Assert.Contains("cds.readiness-path: \"/gw/v1/healthz\"", cdsServing);
+        Assert.Contains("cds.readiness-path: \"/gw/v1/readyz\"", cdsServing);
         Assert.Contains("LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}", compose);
         Assert.DoesNotContain("http://gateway/gw/v1", compose);
         Assert.Contains("MapGet(\"/gw/v1/readyz\"", endpoint);

@@ -66,6 +66,7 @@ class RecordingShell implements IShellExecutor {
   outputPreflightFailure: 'total_bytes' | 'file_count' | 'workspace_file_count' | 'node_count' | 'directory_depth' | 'special_file' | 'path_not_allowed' | 'input_changed' | 'file_changed' | null = null;
   returnNoSuchForRepeatedCleanup = false;
   failStorageCapability = false;
+  beforeOutputExport?: (outputDir: string, command: string) => void;
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     this.calls.push({ command, options });
@@ -119,6 +120,7 @@ class RecordingShell implements IShellExecutor {
         return result('', `CDS_OUTPUT_PREFLIGHT:${this.outputPreflightFailure}${rejectedPath}`, 1);
       }
       const outputDir = command.match(/type=bind,src=([^,']+),dst=\/cds-output/)?.[1];
+      if (outputDir) this.beforeOutputExport?.(outputDir, command);
       if (outputDir && this.workspaceDir) {
         for (const relative of ['index.html', 'manifest.json', 'assets']) {
           const source = path.join(this.workspaceDir, relative);
@@ -268,6 +270,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     if (rootDir) fs.rmSync(rootDir, { recursive: true, force: true });
   });
 
@@ -508,6 +511,25 @@ describe('AgentWorkspaceSessionRuntime', () => {
     ]);
     const requests: Array<{ path: string; authorization: string; body?: any }> = [];
     const shell = new RecordingShell();
+    const mkdir = vi.spyOn(fs, 'mkdirSync');
+    const chown = vi.spyOn(fs, 'chownSync');
+    let ownershipCheckedExports = 0;
+    shell.beforeOutputExport = (outputDir, command) => {
+      // 初始会话 chown 不够：必须在每次 rm/mkdir 重建后、导出前恢复属主。
+      // spy 保留真实文件操作，比较调用次序，防止宿主与测试 UID 相同掩盖回归。
+      const lastMkdir = mkdir.mock.calls.findLastIndex(([target]) => target === outputDir);
+      const lastChown = chown.mock.calls.findLastIndex(([target]) => target === outputDir);
+      expect(lastMkdir).toBeGreaterThanOrEqual(0);
+      expect(lastChown).toBeGreaterThanOrEqual(0);
+      expect(chown.mock.invocationCallOrder[lastChown]).toBeGreaterThan(mkdir.mock.invocationCallOrder[lastMkdir]);
+      expect(chown.mock.calls[lastChown]).toEqual([outputDir, process.getuid?.() ?? 1001, process.getgid?.() ?? 1001]);
+      const stat = fs.statSync(outputDir);
+      expect(stat.mode & 0o777).toBe(0o700);
+      expect(stat.uid).toBe(process.getuid?.() ?? 1001);
+      expect(stat.gid).toBe(process.getgid?.() ?? 1001);
+      expect(command).not.toMatch(/--user\s+(?:'|")?(?:root|0)(?:\s|:|'|")/);
+      ownershipCheckedExports++;
+    };
     shell.egressHealthFailures = 3;
     const fakeFetch: typeof fetch = async (input, init) => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
@@ -971,6 +993,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     );
 
     await runtime.stop('session-test-1');
+    expect(ownershipCheckedExports).toBeGreaterThan(0);
     expect(runtime.has('session-test-1')).toBe(false);
     expect(fs.existsSync(created.hostRoot)).toBe(false);
     expect(shell.calls.some((call) => call.command.startsWith('docker rm -f '))).toBe(true);

@@ -69,6 +69,49 @@ public sealed class ApplicationReadinessProbeTests
         json.ShouldNotContain("ErrorMessage", Case.Insensitive);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("write_failed")]
+    [InlineData("provider_exception: never-return-raw-diagnostic")]
+    public async Task CheckAsync_ShouldNormalizeAssetFailureWithoutLeakingRawDiagnostics(string? rawErrorCode)
+    {
+        const string rawMessage = "never-return-private-storage-diagnostic";
+        var asset = new AssetStorageReadinessResponse
+        {
+            Status = "unhealthy",
+            ErrorCode = rawErrorCode,
+            ErrorMessage = rawMessage,
+            WriteVerified = true,
+            InternalReadVerified = true,
+            PublicReadVerified = false,
+            CleanupVerified = true,
+        };
+        var probe = CreateProbe(
+            mongo: _ => Task.CompletedTask,
+            redis: _ => Task.CompletedTask,
+            asset: (_, _) => Task.FromResult(asset));
+
+        var result = await probe.CheckAsync();
+
+        result.Status.ShouldBe("unhealthy");
+        result.ErrorCode.ShouldBe(ApplicationReadinessProbe.AssetStorageUnavailable);
+        result.Components.Single(component => component.Name == "asset-storage")
+            .ErrorCode.ShouldBe(ApplicationReadinessProbe.AssetStorageUnavailable);
+        result.Components.Single(component => component.Name == "asset-storage").Ready.ShouldBeFalse();
+        result.WriteVerified.ShouldBeTrue();
+        result.InternalReadVerified.ShouldBeTrue();
+        result.PublicReadVerified.ShouldBeFalse();
+        result.CleanupVerified.ShouldBeTrue();
+        var json = JsonSerializer.Serialize(result);
+        json.ShouldNotContain(rawMessage);
+        if (!string.IsNullOrWhiteSpace(rawErrorCode)) json.ShouldNotContain(rawErrorCode);
+        // 聚合器不改写专用诊断探针的结果，诊断端点仍可使用其阶段信息。
+        asset.ErrorCode.ShouldBe(rawErrorCode);
+        asset.ErrorMessage.ShouldBe(rawMessage);
+    }
+
     [Fact]
     public async Task CheckAsync_ShouldPropagateCallerCancellation()
     {

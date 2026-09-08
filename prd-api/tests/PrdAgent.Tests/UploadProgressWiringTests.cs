@@ -43,7 +43,12 @@ public class UploadProgressWiringTests
         Assert.Contains("_uploadProgress.CompleteAsync(uploadId)", body);
 
         // 服务层：这个参数真的往下走到解包，不是收了就丢
-        Assert.Contains("ExtractAndUploadZip(siteId, fileBytes, uploadId)", svc);
+        var reupload = SourceSlice.Member(svc, "public async Task<HostedSite> ReuploadAsync(");
+        // 不可变版本增加了存储目录参数，但第三个进度参数仍必须逐层传递。
+        Assert.Matches(@"ExtractAndUploadZip\(\s*siteId,\s*fileBytes,\s*uploadId\s*[,)]", reupload);
+        var extract = SourceSlice.Member(svc, "private async Task<ZipExtractResult> ExtractAndUploadZip(");
+        Assert.Contains("string? uploadId = null", extract);
+        Assert.Matches(@"_uploadProgress\.ReportAsync\(\s*uploadId,", extract);
 
         // 前端：表单里真的带上了。
         //

@@ -588,6 +588,12 @@
     ]
   },
   {
+    "code": "prd-agent-web.web-hosting.generate-html::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "prd-agent.arena.battle::chat",
     "modelTypes": [
       "chat"

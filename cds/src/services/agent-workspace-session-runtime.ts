@@ -2755,6 +2755,8 @@ export class AgentWorkspaceSessionRuntime {
   private async copyOutputsFromContainer(handle: RuntimeHandle, executionDeadline: number): Promise<void> {
     fs.rmSync(handle.outputDir, { recursive: true, force: true });
     fs.mkdirSync(handle.outputDir, { recursive: true, mode: 0o700 });
+    // 重建目录会丢失会话初始化时的属主；导出容器仍以非 root 用户写入此绑定目录。
+    this.chownForContainer(handle.outputDir);
     const paused = await this.shell.exec(
       `docker pause ${shellQuote(handle.containerName)}`,
       { timeout: Math.min(30_000, this.remainingExecutionMs(executionDeadline)) },

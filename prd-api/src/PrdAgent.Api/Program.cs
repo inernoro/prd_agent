@@ -256,6 +256,10 @@ httpAllowlist.Add(AppCallerRegistry.VisualAgent.VideoGen.Generate);
 // 对 compose 环境的覆盖或遗漏让请求静默退回 MAP 进程内直连。
 httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.Outline);
 httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate);
+// 网页生成与微调同样必须进入独立 LLMGW；不能因部署白名单遗漏而写回 MAP 旧日志域，
+// 否则产物已经发布，按 Run 关联的网关证据却为空。
+httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.GenerateHtml);
+httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.EditHtml);
 var shadowFullSampleAllowlist = (builder.Configuration["LlmGateway:ShadowFullSampleAppCallerAllowlist"] ?? string.Empty)
     .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Where(x => !string.IsNullOrWhiteSpace(x))

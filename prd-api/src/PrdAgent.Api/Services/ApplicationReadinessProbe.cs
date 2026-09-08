@@ -125,11 +125,8 @@ public sealed class ApplicationReadinessProbe
             }
 
             return new AssetReadinessResult(
-                Failed(
-                    "asset-storage",
-                    string.IsNullOrWhiteSpace(result.ErrorCode)
-                        ? AssetStorageUnavailable
-                        : result.ErrorCode),
+                // 聚合就绪接口只暴露稳定组件码；对象存储阶段详情留在专用诊断端点。
+                Failed("asset-storage", AssetStorageUnavailable),
                 result);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

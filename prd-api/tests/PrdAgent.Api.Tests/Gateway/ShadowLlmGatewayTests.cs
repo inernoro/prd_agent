@@ -519,6 +519,57 @@ public class ShadowLlmGatewayTests
         inproc.SendCount.ShouldBe(0, "白名单命中不应再走 inproc");
     }
 
+    [Theory]
+    [InlineData(AppCallerRegistry.Admin.WebHosting.GenerateHtml, false)]
+    [InlineData(AppCallerRegistry.Admin.WebHosting.EditHtml, false)]
+    [InlineData(AppCallerRegistry.Admin.WebHosting.GenerateHtml, true)]
+    [InlineData(AppCallerRegistry.Admin.WebHosting.EditHtml, true)]
+    public async Task WebHostingRequiredHttp_WithInprocAndMissingConfiguredAllowlist_NeverFallsBack(
+        string appCallerCode, bool httpFails)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["LlmGateway:Mode"] = "inproc",
+                ["LlmGateway:LogicalModelsRequireHttp"] = "false",
+            }).Build();
+        configuration["LlmGateway:HttpAppCallerAllowlist"].ShouldBeNull();
+        // Program 的无条件装配由 GatewayDataDomainGuardTests 单独守卫；这里运行真实路由器，
+        // 验证只有强制调用方名单、没有部署白名单时的发送行为与失败边界。
+        var requiredCallers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+            AppCallerRegistry.Admin.WebHosting.EditHtml,
+        };
+        var inproc = new FakeGateway(Res("legacy-model", "openai", "openai"));
+        var http = new FakeGateway(Res("gateway-model", "openai", "openai"))
+        {
+            Content = "gateway-content",
+            ThrowOnSend = httpFails,
+        };
+        var router = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance,
+            httpAllowlist: requiredCallers, configuration: configuration);
+        var request = new GatewayRequest { AppCallerCode = appCallerCode, ModelType = ModelTypes.Chat };
+
+        if (httpFails)
+        {
+            await Should.ThrowAsync<InvalidOperationException>(() => router.SendAsync(request));
+        }
+        else
+        {
+            (await router.SendAsync(request)).Content.ShouldBe("gateway-content");
+            var chunks = new List<GatewayStreamChunk>();
+            await foreach (var chunk in router.StreamAsync(request)) chunks.Add(chunk);
+            chunks.First().Resolution!.ActualModel.ShouldBe("gateway-model");
+            http.StreamCount.ShouldBe(1);
+        }
+
+        http.SendCount.ShouldBe(1);
+        inproc.SendCount.ShouldBe(0, "独立网关失败也不能回退到 MAP 旧数据域");
+        inproc.StreamCount.ShouldBe(0);
+        inproc.ResolveCount.ShouldBe(0);
+    }
+
     [Fact]
     public async Task Allowlist_Miss_StaysInprocAndCompares()
     {

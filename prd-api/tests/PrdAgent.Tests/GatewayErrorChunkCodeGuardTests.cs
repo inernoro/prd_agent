@@ -56,6 +56,7 @@ public class GatewayErrorChunkCodeGuardTests
         ("prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs", 2, "待迁：解析结果 + 网关响应"),
         ("prd-api/src/PrdAgent.Api/Services/ReportAgent/WorkflowExecutionService.cs", 1, "非网关：工作流执行记录自己的错误"),
         ("prd-api/src/PrdAgent.Infrastructure/Services/ModelDomainService.cs", 1, "待迁：流块"),
+        ("prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs", 2, "非网关：CDS 会话创建响应，异常已携带 CdsRequestFailed 领域码"),
         ("prd-api/src/PrdAgent.Infrastructure/Services/Poster/PosterAutopilotService.cs", 1, "待迁：网关响应"),
         ("prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/ImageDescriptionService.cs", 1, "待迁：流块"),
         ("prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs", 1, "待迁：流块"),

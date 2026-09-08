@@ -240,9 +240,21 @@ public class AskOpeningQuestionWiringTests
     public void 开启提问与重新上传都要排一次生成()
     {
         var svc = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "HostedSiteService.cs"));
-        // 三处：开启提问、重新上传换了正文、分享页兜底（存量站点走不到前两处）
-        Assert.Equal(3, Regex.Matches(svc, @"_askOpeners\.QueueEnsure\(").Count);
-        Assert.Contains("SetAskConfigAsync", svc);
+        // 按真实入口逐一守卫，防止新增发布路径令全文件计数误报，或一处漏接被另一处重复调用抵消。
+        var paths = new[]
+        {
+            ("public async Task<HostedSite?> SetAskConfigAsync(", "site"),
+            ("public async Task<HostedSite> ReuploadAsync(", "reloaded"),
+            ("public async Task<ShareViewResult?> ViewShareAsync(", "askSite"),
+            ("public async Task<HostedSite> ReplaceEntryHtmlAsync(", "reloaded"),
+            ("public async Task<HostedSite> ReplaceWithVerifiedFilesAsync(", "reloaded"),
+        };
+        foreach (var (signature, siteArgument) in paths)
+        {
+            var body = SourceSlice.Member(svc, signature);
+            Assert.Single(Regex.Matches(body, @"_askOpeners\.QueueEnsure\("));
+            Assert.Matches($@"_askOpeners\.QueueEnsure\(\s*{siteArgument}\s*\)", body);
+        }
     }
 
     [Fact]
