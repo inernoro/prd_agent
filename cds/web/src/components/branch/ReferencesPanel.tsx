@@ -54,7 +54,7 @@ function StatusChip({ status }: { status: RefStatus | string }): JSX.Element {
   const warn = status === 'building' || status === 'stopped' || status === 'restricted';
   const cls = ok ? 'border-ok/50 bg-ok-soft text-ok' : warn ? 'border-warn/60 bg-warn-soft text-warn' : 'border-destructive/60 bg-[hsl(var(--bad-soft))] text-destructive';
   const label = ({ running: '运行中', stopped: '已停止', building: '构建中', error: '异常', 'missing-service': '没有该服务', 'missing-branch': '没有该分支', 'missing-project': '没有该项目', restricted: '无权查看', unroutable: '无公网路由' } as Record<string, string>)[status] ?? status;
-  return <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10px] font-semibold ${cls}`}>{label}</span>;
+  return <span className={`inline-flex h-[1.125rem] items-center rounded-full border px-1.5 text-[0.625rem] font-semibold ${cls}`}>{label}</span>;
 }
 
 export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToast?: (message: string) => void }): JSX.Element {
@@ -163,7 +163,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold">引用</span>
         <span className="text-xs text-muted-foreground">指向别的服务、分支或项目的地址，从全部环境变量里单独抽出来</span>
-        {broken.length > 0 ? <span className="inline-flex h-[18px] items-center rounded-full border border-destructive/60 px-1.5 text-[10px] font-semibold text-destructive">{broken.length} 条断裂</span> : null}
+        {broken.length > 0 ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-destructive/60 px-1.5 text-[0.625rem] font-semibold text-destructive">{broken.length} 条断裂</span> : null}
         <span className="flex-1" />
         {progress ? <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="references-redeploy-progress"><Loader2 className="h-3.5 w-3.5 animate-spin" />{progress}</span> : null}
         {pendingRedeploy.size > 0 ? (
@@ -180,7 +180,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
       ) : (
         <div className="overflow-x-auto rounded-md border border-[hsl(var(--hairline))]">
           <table className="w-full text-xs">
-            <thead className="bg-[hsl(var(--surface-sunken))] text-[10px] font-bold text-muted-foreground">
+            <thead className="bg-[hsl(var(--surface-sunken))] text-[0.625rem] font-bold text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 text-left">服务 · 键</th>
                 <th className="px-3 py-2 text-left">值</th>
@@ -200,15 +200,15 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
                   <tr key={`${item.profileId}:${item.key}`} className={`border-t border-[hsl(var(--hairline))] ${rowBad ? 'bg-[hsl(var(--bad-soft))]/40' : ''}`} data-ref-kind={item.kind}>
                     <td className="px-3 py-2 align-top">
                       <div className="font-mono">{item.key}</div>
-                      <div className="text-[10px] text-muted-foreground">{item.profileId} · {KIND_LABEL[item.kind]}</div>
+                      <div className="text-[0.625rem] text-muted-foreground">{item.profileId} · {KIND_LABEL[item.kind]}</div>
                     </td>
-                    <td className="max-w-[320px] truncate px-3 py-2 align-top font-mono text-muted-foreground" title={item.rawValue}>
+                    <td className="max-w-[20rem] truncate px-3 py-2 align-top font-mono text-muted-foreground" title={item.rawValue}>
                       {item.kind === 'cds-ref' ? item.rawValue : item.value}
-                      {resolvedList.filter((x) => x.url).map((x) => <div key={x.ref.raw} className="truncate text-[10px]" title={x.url ?? ''}>{resolvedList.length > 1 ? `${x.ref.raw} = ` : '= '}{x.url}</div>)}
+                      {resolvedList.filter((x) => x.url).map((x) => <div key={x.ref.raw} className="truncate text-[0.625rem]" title={x.url ?? ''}>{resolvedList.length > 1 ? `${x.ref.raw} = ` : '= '}{x.url}</div>)}
                     </td>
                     <td className="px-3 py-2 align-top">
                       {r ? resolvedList.map((x) => (
-                        <div key={x.ref.raw}>{x.target.projectSlug ?? x.ref.projectRef} / <b>{x.target.branchName ?? '?'}</b>{x.target.isDefaultBranch ? <span className="text-[10px] text-muted-foreground">（默认）</span> : null} / {x.ref.serviceId}{x.reason ? <div className="text-[10px] text-destructive">{x.reason}</div> : null}</div>
+                        <div key={x.ref.raw}>{x.target.projectSlug ?? x.ref.projectRef} / <b>{x.target.branchName ?? '?'}</b>{x.target.isDefaultBranch ? <span className="text-[0.625rem] text-muted-foreground">（默认）</span> : null} / {x.ref.serviceId}{x.reason ? <div className="text-[0.625rem] text-destructive">{x.reason}</div> : null}</div>
                       )) : item.matchedBranch ? (
                         <span>CDS 分支 <b>{item.matchedBranch.branchName}</b>{item.matchedBranch.branchId === branchId ? '（本分支）' : ''}</span>
                       ) : item.kind === 'platform' ? <span className="text-muted-foreground">本分支已发布入口表</span> : <span className="text-muted-foreground">CDS 外部或同分支内网</span>}
@@ -221,14 +221,14 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
                       {r ? (
                         <div className="flex flex-col gap-1">
                           {resolvedList.map((x) => x.status !== 'missing-project' && x.status !== 'restricted' ? (
-                            <Button key={x.ref.raw} size="sm" variant="outline" className="h-6 text-[11px]" disabled={busy} onClick={() => void openPicker(item, x)} title={resolvedList.length > 1 ? `切换 ${x.ref.raw}` : undefined}>
-                              切换分支{resolvedList.length > 1 ? <span className="font-mono text-[10px] text-muted-foreground">{x.ref.serviceId}{x.ref.branchRef ? `@${x.ref.branchRef}` : ''}</span> : null}
+                            <Button key={x.ref.raw} size="sm" variant="outline" className="h-6 text-[0.6875rem]" disabled={busy} onClick={() => void openPicker(item, x)} title={resolvedList.length > 1 ? `切换 ${x.ref.raw}` : undefined}>
+                              切换分支{resolvedList.length > 1 ? <span className="font-mono text-[0.625rem] text-muted-foreground">{x.ref.serviceId}{x.ref.branchRef ? `@${x.ref.branchRef}` : ''}</span> : null}
                             </Button>
                           ) : null)}
                         </div>
                       ) : item.suggestion ? (
-                        <span className="text-[10px] text-warn" title={item.suggestion}>建议改成引用变量</span>
-                      ) : item.kind === 'platform' ? <span className="text-[10px] text-muted-foreground">只读</span> : null}
+                        <span className="text-[0.625rem] text-warn" title={item.suggestion}>建议改成引用变量</span>
+                      ) : item.kind === 'platform' ? <span className="text-[0.625rem] text-muted-foreground">只读</span> : null}
                     </td>
                   </tr>
                 );
@@ -243,22 +243,22 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
             <span className="font-semibold">切换分支</span>
             <span className="text-muted-foreground"><span className="font-mono">{picker.item.key}</span> 指向 {picker.ref.target.projectSlug ?? picker.ref.ref.projectRef} 的</span>
             <span className="flex-1" />
-            <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => setPicker(null)}>取消</Button>
+            <Button size="sm" variant="ghost" className="h-6 text-[0.6875rem]" onClick={() => setPicker(null)}>取消</Button>
           </div>
           {picker.branches === null ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取目标项目的分支…</div>
           ) : (
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={busy} onClick={() => void switchTo(null)} title="不钉分支，跟随目标项目的默认分支">默认分支</Button>
+              <Button size="sm" variant="outline" className="h-7 text-[0.6875rem]" disabled={busy} onClick={() => void switchTo(null)} title="不钉分支，跟随目标项目的默认分支">默认分支</Button>
               {picker.branches.map((b) => (
-                <Button key={b.id} size="sm" variant={b.branch === picker.ref.target.branchName && !picker.ref.target.isDefaultBranch ? 'default' : 'outline'} className="h-7 gap-1.5 text-[11px]" disabled={busy} onClick={() => void switchTo(b.branch)}>
+                <Button key={b.id} size="sm" variant={b.branch === picker.ref.target.branchName && !picker.ref.target.isDefaultBranch ? 'default' : 'outline'} className="h-7 gap-1.5 text-[0.6875rem]" disabled={busy} onClick={() => void switchTo(b.branch)}>
                   <span className="font-mono">{b.branch}</span>
                   <StatusChip status={b.status} />
                 </Button>
               ))}
             </div>
           )}
-          <div className="mt-2 text-[10px] text-muted-foreground">改动写入该服务的分支覆盖，不动项目根；选定后立即重新部署该服务（重建容器）让新地址生效。</div>
+          <div className="mt-2 text-[0.625rem] text-muted-foreground">改动写入该服务的分支覆盖，不动项目根；选定后立即重新部署该服务（重建容器）让新地址生效。</div>
         </div>
       ) : null}
     </section>

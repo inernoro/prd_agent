@@ -32,20 +32,20 @@ const TONE_DOT: Record<BranchTone, string> = {
 };
 
 // 桌面是一行八列的表格；手机（< md）退化为堆叠卡片：名字行 → 服务点 → 迷你条 + 数字 + 状态。
-const GRID = 'md:grid md:grid-cols-[24px_minmax(0,1.6fr)_minmax(0,1.4fr)_200px_80px_70px_150px_90px] md:items-center md:gap-3';
+const GRID = 'md:grid md:grid-cols-[1.5rem_minmax(0,1.6fr)_minmax(0,1.4fr)_12.5rem_5rem_4.375rem_9.375rem_5.625rem] md:items-center md:gap-3';
 
 function ServiceDots({ branch }: { branch: BranchView }): JSX.Element {
   return (
     <div className="flex flex-wrap gap-x-2.5 gap-y-1">
       {branch.services.map((s) => (
-        <span key={s.profileId} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground" title={`${s.profileId}：${s.target.probeDescription}`}>
+        <span key={s.profileId} className="inline-flex items-center gap-1 text-[0.6875rem] text-muted-foreground" title={`${s.profileId}：${s.target.probeDescription}`}>
           <span className={cn('inline-block h-2 w-2 rounded-full', TONE_DOT[s.tone])} />
           {s.profileId}
         </span>
       ))}
       {branch.userView ? (
         <span
-          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+          className="inline-flex items-center gap-1 text-[0.6875rem] text-muted-foreground"
           title={branch.userView.unreachable ? '探测器够不着预览域名，用户视角暂不可用' : `用户视角：经预览域名 ${branch.userView.url}`}
         >
           <span className={cn('inline-block h-2 w-2 rounded-full', branch.userView.status === 'up' ? 'bg-ok' : branch.userView.status === 'down' ? 'bg-destructive' : 'bg-[hsl(var(--hairline-strong))]')} />
@@ -63,7 +63,7 @@ function BranchRow({ branch, onSelect }: { branch: BranchView; onSelect: (branch
       role="row"
       className={cn(
         GRID,
-        'flex flex-col gap-1.5 border-t border-[hsl(var(--hairline))] px-3.5 py-2.5 text-[13px]',
+        'flex flex-col gap-1.5 border-t border-[hsl(var(--hairline))] px-3.5 py-2.5 text-[0.8125rem]',
         alive ? 'bg-[hsl(var(--surface-raised))]' : 'bg-[hsl(var(--surface-sunken))]/35',
       )}
     >
@@ -75,7 +75,7 @@ function BranchRow({ branch, onSelect }: { branch: BranchView; onSelect: (branch
         <span className={cn('mt-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full md:hidden', TONE_DOT[branch.tone])} aria-hidden="true" />
         <span className="flex min-w-0 flex-col gap-0.5">
           <span className={cn('max-w-full truncate font-mono', alive ? 'font-medium text-foreground' : 'text-muted-foreground')}>{branch.branchName}</span>
-          {branch.note ? <span className="max-w-full truncate text-[11px] text-muted-foreground" title={branch.note}>{branch.note}</span> : null}
+          {branch.note ? <span className="max-w-full truncate text-[0.6875rem] text-muted-foreground" title={branch.note}>{branch.note}</span> : null}
         </span>
       </button>
       <ServiceDots branch={branch} />
@@ -98,7 +98,7 @@ function BranchRow({ branch, onSelect }: { branch: BranchView; onSelect: (branch
 
 function SectionBar({ label, count, hint }: { label: string; count: number; hint: string }): JSX.Element {
   return (
-    <div className="flex items-baseline gap-2 bg-[hsl(var(--surface-sunken))] px-3.5 pb-1.5 pt-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <div className="flex items-baseline gap-2 bg-[hsl(var(--surface-sunken))] px-3.5 pb-1.5 pt-2.5 text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">
       {label}
       <span className="font-mono">{count}</span>
       <span className="font-normal normal-case tracking-normal">{hint}</span>
@@ -140,8 +140,8 @@ export function BranchModal({ group, open, onOpenChange, onSelectBranch }: {
   if (!group) return <></>;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent frame className="max-w-[1200px]" style={{ height: '82vh' }}>
-        <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] py-3.5 pl-4 pr-14 md:pl-[18px]">
+      <DialogContent frame className="max-w-[75rem]" style={{ height: '82vh' }}>
+        <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] py-3.5 pl-4 pr-14 md:pl-[1.125rem]">
           <div className="flex min-w-0 flex-col gap-0.5">
             <DialogTitle className="text-lg font-semibold">
               {group.projectName} · 全部分支 <span className="font-mono text-sm font-normal text-muted-foreground">{group.total}</span>
@@ -160,7 +160,7 @@ export function BranchModal({ group, open, onOpenChange, onSelectBranch }: {
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="搜分支名或服务"
                 aria-label="搜索分支"
-                className="h-8 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] pl-8 pr-2 text-[13px] outline-none placeholder:text-muted-foreground/70 focus:border-primary/60"
+                className="h-8 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] pl-8 pr-2 text-[0.8125rem] outline-none placeholder:text-muted-foreground/70 focus:border-primary/60"
               />
             </label>
             <SegmentedControl<BranchFilter>
@@ -182,7 +182,7 @@ export function BranchModal({ group, open, onOpenChange, onSelectBranch }: {
             />
           </div>
         </header>
-        <div className={cn(GRID, 'hidden shrink-0 px-3.5 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground')} role="row">
+        <div className={cn(GRID, 'hidden shrink-0 px-3.5 py-2 text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground')} role="row">
           <span />
           <span>分支</span>
           <span>服务（进程视角）</span>

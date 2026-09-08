@@ -44,9 +44,9 @@ function Kpi({ label, value, hint, active, onClick, tone }: {
   const valueTone = tone === 'ok' ? 'text-ok' : tone === 'danger' ? 'text-destructive' : tone === 'warn' ? 'text-warn' : 'text-foreground';
   const body = (
     <>
-      <div className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="font-mono text-[0.625rem] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={cn('mt-0.5 text-xl font-semibold tabular-nums leading-tight', valueTone)}>{value}</div>
-      {hint ? <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{hint}</div> : null}
+      {hint ? <div className="mt-0.5 truncate text-[0.6875rem] text-muted-foreground">{hint}</div> : null}
     </>
   );
   const cls = cn(
@@ -96,7 +96,7 @@ export function OverviewStrip({ summary, incidents, headline, statusFilter, onSt
             <div className="mt-0.5 text-xs leading-5 opacity-85">{headline.detail}</div>
           </div>
         </div>
-        <div className="shrink-0 text-[11px] leading-4 opacity-75 sm:text-right">
+        <div className="shrink-0 text-[0.6875rem] leading-4 opacity-75 sm:text-right">
           {proberLine(summary, now)}
           <br />
           每 {summary.intervalSeconds} 秒探测 · 连续 {summary.failureThreshold} 次失败判定故障 · 视角：CDS 主机{summary.prober?.userViewEnabled === false ? '' : ' + 分支用户视角'}
@@ -111,7 +111,7 @@ export function OverviewStrip({ summary, incidents, headline, statusFilter, onSt
         <Kpi label="近 24h 可用率" value={formatPercent(availability)} hint="只算实测目标，暂停不计分母" />
       </div>
       {coverage ? (
-        <div className="flex flex-wrap items-center gap-2.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3.5 py-2 text-[13px]">
+        <div className="flex flex-wrap items-center gap-2.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3.5 py-2 text-[0.8125rem]">
           <span className="font-semibold">覆盖面</span>
           <span>
             全站可监测对象 <span className="font-mono font-semibold">{coverage.total}</span>，已纳入{' '}
@@ -124,7 +124,7 @@ export function OverviewStrip({ summary, incidents, headline, statusFilter, onSt
               {r.kind} <span className="font-mono text-muted-foreground">{r.count}</span>
             </span>
           ))}
-          <button type="button" onClick={onOpenCoverage} className="ml-auto text-[13px] font-medium text-primary hover:underline">
+          <button type="button" onClick={onOpenCoverage} className="ml-auto text-[0.8125rem] font-medium text-primary hover:underline">
             查看未纳入清单与判定手段 →
           </button>
         </div>

@@ -211,7 +211,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
 
       <section className="cds-surface-raised cds-hairline rounded-md border border-[hsl(var(--hairline))] p-4">
         <div className="flex flex-wrap items-end gap-3">
-          <label className="flex min-w-[220px] flex-1 flex-col gap-1 text-xs">
+          <label className="flex min-w-[13.75rem] flex-1 flex-col gap-1 text-xs">
             <span className="text-muted-foreground">给这台机器 / 这个智能体起个名字</span>
             <input
               className="h-9 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary"
@@ -258,7 +258,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
                 只出现一次，给一条跑不通的命令等于没给。主机就是当前这个页面
                 的域名，直接从地址栏取，不写死。
               */}
-              <pre className="overflow-x-auto rounded bg-[hsl(var(--background))] px-2 py-1.5 font-mono text-[11px] leading-5">
+              <pre className="overflow-x-auto rounded bg-[hsl(var(--background))] px-2 py-1.5 font-mono text-[0.6875rem] leading-5">
                 {`cdscli identity save --host ${typeof window === 'undefined' ? '<CDS 主机>' : window.location.host}`}
               </pre>
               <p className="mt-1 text-xs leading-6 text-muted-foreground">
@@ -288,11 +288,11 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
             <header className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
               <UserCog className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-semibold">{row.principal.name}</span>
-              <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+              <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground">
                 {KIND_LABEL[row.principal.kind]}
               </span>
               <span
-                className={`rounded px-1.5 py-0.5 text-[10px] ${disabled ? 'bg-bad-soft text-bad' : 'bg-ok-soft text-ok'}`}
+                className={`rounded px-1.5 py-0.5 text-[0.625rem] ${disabled ? 'bg-bad-soft text-bad' : 'bg-ok-soft text-ok'}`}
               >
                 {disabled ? '已停用' : '正常'}
               </span>
@@ -336,7 +336,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
                       title={grant.origin === 'created' ? '这个项目是它建的' : '经人在页面上批准过一次'}
                     >
                       {grant.projectName || grant.projectId}
-                      <span className="ml-1 text-[10px] text-muted-foreground">
+                      <span className="ml-1 text-[0.625rem] text-muted-foreground">
                         {grant.origin === 'created' ? '创建' : '批准'}
                       </span>
                     </span>
@@ -354,8 +354,8 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
                   className="flex flex-wrap items-center gap-3 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs"
                 >
                   <KeyRound className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="font-mono text-[11px]">{cred.id}</span>
-                  <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[10px]">
+                  <span className="font-mono text-[0.6875rem]">{cred.id}</span>
+                  <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.625rem]">
                     {cred.kind === 'user' ? '用户级' : `项目级 · ${cred.projectName || cred.projectId}`}
                   </span>
                   {cred.label ? <span className="text-muted-foreground">{cred.label}</span> : null}
@@ -394,7 +394,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
               {open
                 ? row.retiredCredentials.map((cred) => (
                     <div key={cred.id} className="flex flex-wrap items-center gap-3 px-3 py-1 text-xs text-muted-foreground">
-                      <span className="font-mono text-[11px]">{cred.id}</span>
+                      <span className="font-mono text-[0.6875rem]">{cred.id}</span>
                       <span>{retiredReason(cred)}</span>
                     </div>
                   ))
@@ -415,7 +415,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
           </p>
           <div className="flex flex-wrap gap-2 text-xs">
             {unclaimed.slice(0, 30).map((cred) => (
-              <span key={cred.id} className="rounded border border-[hsl(var(--hairline))] px-2 py-0.5 font-mono text-[11px]">
+              <span key={cred.id} className="rounded border border-[hsl(var(--hairline))] px-2 py-0.5 font-mono text-[0.6875rem]">
                 {cred.projectName || cred.projectId} · {cred.id}
               </span>
             ))}

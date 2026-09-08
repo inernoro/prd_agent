@@ -375,7 +375,7 @@ export function ExtraServiceFormDialog({
           <div>
             <label className={labelClass}>环境变量（每行一条 KEY=VALUE；已保存密钥显示为 ***，保持不动即保留原值）</label>
             <textarea
-              className="min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
+              className="min-h-[5.5rem] w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
               value={envText}
               onChange={(e) => setEnvText(e.target.value)}
               placeholder={'MODE=standalone'}

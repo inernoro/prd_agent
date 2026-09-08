@@ -140,7 +140,7 @@ export function ConfigSnapshotsTab({ onToast }: Props): JSX.Element {
         <ul className="divide-y divide-[hsl(var(--hairline))] rounded-md border border-border">
           {state.snapshots.map((s) => (
             <li key={s.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
-              <span className={`rounded-md border px-2 py-0.5 text-[11px] ${triggerTone(s.trigger)}`}>
+              <span className={`rounded-md border px-2 py-0.5 text-[0.6875rem] ${triggerTone(s.trigger)}`}>
                 {triggerLabel(s.trigger)}
               </span>
               <div className="min-w-0 flex-1">

@@ -363,7 +363,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         aria-label="关闭命令面板"
       />
       <div
-        className="cds-surface-raised cds-hairline relative z-10 mx-4 flex max-h-[72vh] w-full max-w-[560px] flex-col overflow-hidden shadow-2xl"
+        className="cds-surface-raised cds-hairline relative z-10 mx-4 flex max-h-[72vh] w-full max-w-[35rem] flex-col overflow-hidden shadow-2xl"
         style={{ animation: 'cds-overlay-fade-in 160ms ease-out' }}
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--hairline))] px-4">
@@ -379,7 +379,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             spellCheck={false}
           />
           {loading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
-          <kbd className="hidden rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-flex">
+          <kbd className="hidden rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground sm:inline-flex">
             ESC
           </kbd>
         </div>
@@ -401,10 +401,10 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                 <PaletteIcon kind={item.icon} />
                 <span className="min-w-0 flex-1">
                   {item.path ? (
-                    <span className="mb-0.5 block truncate text-[11px] text-muted-foreground/70">{item.path}</span>
+                    <span className="mb-0.5 block truncate text-[0.6875rem] text-muted-foreground/70">{item.path}</span>
                   ) : null}
                   <span className="block truncate text-sm font-medium">{item.label}</span>
-                  {item.hint ? <span className="block truncate text-[11px] text-muted-foreground">{item.hint}</span> : null}
+                  {item.hint ? <span className="block truncate text-[0.6875rem] text-muted-foreground">{item.hint}</span> : null}
                 </span>
                 {idx === activeIdx ? (
                   <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -415,7 +415,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             ))
           )}
         </div>
-        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-4 py-2 text-[11px] text-muted-foreground">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-4 py-2 text-[0.6875rem] text-muted-foreground">
           <span>↑↓ 选择 · Enter 跳转 · Esc 关闭</span>
           <span>{results.length} 项</span>
         </div>

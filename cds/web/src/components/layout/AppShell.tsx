@@ -2,7 +2,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Activity, Check, CircleAlert, Clock, Contrast, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Search, Settings, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
+import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
@@ -14,6 +14,7 @@ import {
 } from '@/lib/agent-onboarding';
 import { apiUrl, fetchInstanceMode, isChildPreviewCdsInstance } from '@/lib/api';
 import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
+import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
 
 /*
@@ -191,7 +192,7 @@ function ConsoleRouteFallback(): JSX.Element {
     <>
       <header className="cds-topbar" aria-hidden>
         <span className="cds-topbar-brand">
-          <CdsGem mode="brand" detail="simple" className="h-[30px] w-[30px]" />
+          <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />
         </span>
         <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
       </header>
@@ -201,7 +202,7 @@ function ConsoleRouteFallback(): JSX.Element {
           <div className="cds-loading-skeleton-line h-4 w-96 max-w-full" />
           <div className="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 6 }, (_, i) => (
-              <div key={i} className="cds-loading-skeleton-panel h-40 rounded-[10px]" />
+              <div key={i} className="cds-loading-skeleton-panel h-40 rounded-[0.625rem]" />
             ))}
           </div>
         </div>
@@ -406,7 +407,7 @@ export function PaletteHint(): JSX.Element {
     >
       <Search className="h-3.5 w-3.5" />
       搜索
-      <kbd className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-1 font-mono text-[10px]">
+      <kbd className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-1 font-mono text-[0.625rem]">
         {isMac ? '⌘' : 'Ctrl'} K
       </kbd>
     </button>
@@ -531,10 +532,11 @@ function RailNav({
         </Link>
       </div>
       {/*
-       * 工具组紧跟导航，不跟着 flex-1 一起被顶到栏底。
-       * 原来五项全在底部，中间空出约 190px：那不是留白，是把一根栏读成了两根。
-       * 现在只有「我的东西」（主题 / 账号）留在栏底，空隙下移且缩短。
+       * 2026-09-08 用户拍板（方案 S1）：工具组（Agent / 缺陷 / 设置）沉回栏底、紧贴账号。
+       * 它们是动作（弹窗 / 抽屉），不是页面；混在导航下面会被当成页面点。
+       * 栏中间那段空白不是断裂，是「页面」与「动作」之间的边界。
        */}
+      <div className="flex-1" />
       <div className="cds-rail-tools">
         <button
           type="button"
@@ -581,7 +583,6 @@ function RailNav({
           <span className="cds-rail-short">设置</span>
         </Link>
       </div>
-      <div className="flex-1" />
       <div className="cds-rail-footer">
         <RailThemeToggle />
         <UserAccountMenu
@@ -648,6 +649,7 @@ function UserAccountMenu({
   user,
 }: Omit<RailNavProps, 'active' | 'onAgentAccess' | 'onBugReport'> & { onNavigate?: () => void }): JSX.Element {
   const { mode, setTheme } = useTheme();
+  const { scale, setScale } = useUiScale();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ bottom: number; left: number }>({ bottom: 12, left: 80 });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -748,6 +750,32 @@ function UserAccountMenu({
                     },
                   );
                 }}
+              >
+                <Icon />
+                <span>{item.label}</span>
+                {active ? <Check className="cds-account-theme-check" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {/* 界面尺度（2026-09-08）：全站唯一的大小杠杆，三档对应根字号 80 / 85 / 100%。
+          和主题并列放在这里：都是「我的浏览器偏好」，都存 localStorage、首帧前落地。 */}
+      <div className="cds-account-theme cds-account-scale" aria-label="界面尺度">
+        <div className="mb-2 text-xs font-medium text-muted-foreground">界面尺度</div>
+        <div className="grid grid-cols-3 gap-1">
+          {UI_SCALE_PRESETS.map((item) => {
+            const Icon = item.value === '80' ? Shrink : item.value === '100' ? Expand : Scaling;
+            const active = scale === item.value;
+            return (
+              <button
+                key={item.value}
+                type="button"
+                className="cds-account-theme-button"
+                data-active={active ? 'true' : 'false'}
+                data-ui-scale-option={item.value}
+                title={item.hint}
+                onClick={() => setScale(item.value)}
               >
                 <Icon />
                 <span>{item.label}</span>
@@ -930,7 +958,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
         onMouseEnter={preloadProjectListPage}
         onFocus={preloadProjectListPage}
       >
-        <CdsGem mode="brand" detail="simple" className="h-[30px] w-[30px]" aria-hidden />
+        <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" aria-hidden />
       </Link>
       {/* Hamburger — phone only. Opens the slide-in nav drawer. */}
       <button
@@ -950,7 +978,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
           单 DOM 节点跨断点不卸载重挂(Bugbot #741 Low「Resize remounts」),
           也不双份挂载(避免分支搜索 ref/dropdown 状态被破坏)。 */}
       {center ? (
-        <div className={`cds-topbar-center order-1 w-full min-w-0 md:order-none md:w-auto md:flex-1 ${centerWide ? 'md:max-w-none' : 'md:max-w-[640px]'}`}>
+        <div className={`cds-topbar-center order-1 w-full min-w-0 md:order-none md:w-auto md:flex-1 ${centerWide ? 'md:max-w-none' : 'md:max-w-[40rem]'}`}>
           {center}
         </div>
       ) : null}

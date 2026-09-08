@@ -111,7 +111,7 @@ describe('稿子 §2 全环境矩阵', () => {
   });
 
   it('列宽照标注：1fr/76/104/92/92/116/170/170/110/192', () => {
-    expect(matrix).toContain("'minmax(200px,1fr) 76px 104px 92px 92px 116px 170px 170px 110px 192px'");
+    expect(matrix).toContain("'minmax(12.5rem,1fr) 4.75rem 6.5rem 5.75rem 5.75rem 7.25rem 10.625rem 10.625rem 6.875rem 12rem'");
   });
 
   it('五种排序 chip 与默认严重度', () => {
@@ -155,9 +155,9 @@ describe('稿子 §2 全环境矩阵', () => {
     expect(matrix).toContain('event.stopPropagation()');
   });
 
-  it('窄屏塌成单列卡片，按钮 44px 命中区，不横向滚动', () => {
+  it('窄屏塌成单列卡片，按钮 2.75rem 命中区，不横向滚动', () => {
     expect(matrix).toContain("tall ? 'h-11'");
-    expect(matrix).toContain('grid-cols-[92px_minmax(0,1fr)]');
+    expect(matrix).toContain('grid-cols-[5.75rem_minmax(0,1fr)]');
     expect(matrix).not.toContain('overflow-x-auto');
   });
 });
@@ -190,14 +190,14 @@ describe('稿子 §3 环境与配置（唯一写入口）', () => {
       expect(control, `${field} 用了 input，多行脚本会被压平`).toContain('<textarea');
     }
     // 生效序列预览要限高，否则整段脚本会把下面的内容挤没
-    expect(config).toContain('max-h-[260px]');
+    expect(config).toContain('max-h-[16.25rem]');
   });
 
   it('两个开关卡片，轨道与滑块尺寸照稿子', () => {
     expect(config).toContain('设为主目标');
     expect(config).toContain('启用该环境');
-    expect(config).toContain('h-[19px] w-[34px]');
-    expect(config).toContain('h-[15px] w-[15px]');
+    expect(config).toContain('h-[1.1875rem] w-[2.125rem]');
+    expect(config).toContain('h-[0.9375rem] w-[0.9375rem]');
     expect(config).toContain('left: on ? 17 : 2');
   });
 
@@ -226,16 +226,16 @@ describe('稿子 §4 自动发布规则', () => {
   it('每行照标注：分支胶囊 → 箭头 → 环境名 + 类型；触发 170 / 最近触发 150 / 状态 96 / 编辑 30', () => {
     expect(rules).toContain('job.schedule.branchPattern');
     expect(rules).toContain('<ArrowRight');
-    expect(rules).toContain("rounded-[7px]");
-    expect(rules).toContain('w-[170px]');
-    expect(rules).toContain('w-[150px]');
-    expect(rules).toContain('w-[96px]');
-    expect(rules).toContain('[&_button]:h-[30px]');
+    expect(rules).toContain("rounded-[0.4375rem]");
+    expect(rules).toContain('w-[10.625rem]');
+    expect(rules).toContain('w-[9.375rem]');
+    expect(rules).toContain('w-[6rem]');
+    expect(rules).toContain('[&_button]:h-[1.875rem]');
     expect(rules).toContain('尚未触发');
     expect(rules).toContain("job.enabled ? '启用' : '暂停'");
     // 行内第一组：宽屏 min-width 280，窄屏 0 且换行
     expect(rules).toContain('flex-wrap');
-    expect(rules).toContain('xl:min-w-[280px]');
+    expect(rules).toContain('xl:min-w-[17.5rem]');
   });
 
   /**
@@ -270,8 +270,8 @@ describe('稿子 §4 自动发布规则', () => {
 });
 
 describe('稿子 §5 健康监测', () => {
-  it('左卡片 420px 探测配置四项齐全', () => {
-    expect(health).toContain('xl:grid-cols-[420px_minmax(0,1fr)]');
+  it('左卡片 26.25rem 探测配置四项齐全', () => {
+    expect(health).toContain('xl:grid-cols-[26.25rem_minmax(0,1fr)]');
     for (const label of ['检查地址', '探测间隔', '超时', '连续失败阈值']) {
       expect(health, `缺 ${label}`).toContain(`>${label}</dt>`);
     }
@@ -284,7 +284,7 @@ describe('稿子 §5 健康监测', () => {
   it('右卡片 24 根柱子，尺寸与配色照稿子；未监测不画柱子', () => {
     expect(health).toContain('segments=24');
     expect(health).toContain("gap-[3px]");
-    expect(health).toContain('h-[34px]');
+    expect(health).toContain('h-[2.125rem]');
     expect(health).toContain('rounded-t-[2px]');
     // 三档阈值配色改走语义 token；判据仍是「有三档且各不相同」。
     expect(health).toContain('bg-bad');
@@ -296,7 +296,7 @@ describe('稿子 §5 健康监测', () => {
 
 describe('稿子 §6 证据归档', () => {
   it('六列 + 两个按钮，列宽照标注', () => {
-    expect(evidence).toContain("'150px 130px 92px 104px 88px minmax(0,1fr) auto'");
+    expect(evidence).toContain("'9.375rem 8.125rem 5.75rem 6.5rem 5.5rem minmax(0,1fr) auto'");
     for (const col of ['时间', '环境', 'SHA', '结果', '耗时', '操作人']) {
       expect(evidence, `缺列 ${col}`).toContain(`>${col}</span>`);
     }

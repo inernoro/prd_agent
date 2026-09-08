@@ -27,22 +27,22 @@ export function CoverageDialog({ open, onOpenChange, coverage, prober }: {
   const uncovered = coverage?.uncovered ?? [];
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent frame className="max-w-[1200px]" style={{ maxHeight: '82vh' }}>
-        <header className="flex shrink-0 items-start gap-3 border-b border-[hsl(var(--hairline))] py-3.5 pl-[18px] pr-14">
+      <DialogContent frame className="max-w-[75rem]" style={{ maxHeight: '82vh' }}>
+        <header className="flex shrink-0 items-start gap-3 border-b border-[hsl(var(--hairline))] py-3.5 pl-[1.125rem] pr-14">
           <div className="flex min-w-0 flex-col gap-0.5">
             <DialogTitle className="text-lg font-semibold">覆盖面与判定手段</DialogTitle>
             <DialogDescription className="text-xs">监控中心自己先回答两个问题：还有谁没被盯？盯的手段有多可信？</DialogDescription>
           </div>
         </header>
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-[18px]" style={{ overscrollBehavior: 'contain' }}>
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-[1.125rem]" style={{ overscrollBehavior: 'contain' }}>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             {METHODS.map((m) => (
               <div key={m.title} className={cn('flex flex-col gap-2 rounded-lg border border-[hsl(var(--hairline))] border-l-4 bg-[hsl(var(--surface-raised))] px-3.5 py-3', TONE_BAR[m.tone])}>
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold">{m.title}</span>
-                  <span className={cn('text-[11px] font-semibold', TONE_TEXT[m.tone])}>{m.verdict}</span>
+                  <span className={cn('text-[0.6875rem] font-semibold', TONE_TEXT[m.tone])}>{m.verdict}</span>
                 </div>
-                {m.lines.map((l) => <span key={l} className="text-xs leading-[18px] text-muted-foreground">{l}</span>)}
+                {m.lines.map((l) => <span key={l} className="text-xs leading-[1.125rem] text-muted-foreground">{l}</span>)}
               </div>
             ))}
           </div>
@@ -57,7 +57,7 @@ export function CoverageDialog({ open, onOpenChange, coverage, prober }: {
                 范围：{coverage?.scope === 'trunk' ? '主干分支' : '全部分支'} + 生产目标 + 自定义（分支默认收起，主列表只展示主站）
               </span>
             </div>
-            <div className="hidden grid-cols-[minmax(0,1.4fr)_140px_minmax(0,2fr)_180px] gap-3 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground md:grid">
+            <div className="hidden grid-cols-[minmax(0,1.4fr)_8.75rem_minmax(0,2fr)_11.25rem] gap-3 px-3 py-2 text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground md:grid">
               <span>对象</span><span>类型</span><span>为什么没盯</span><span>可以怎么做</span>
             </div>
             {uncovered.length === 0 ? (
@@ -65,7 +65,7 @@ export function CoverageDialog({ open, onOpenChange, coverage, prober }: {
                 全部可监测对象都已纳入探测。
               </div>
             ) : uncovered.map((u) => (
-              <div key={u.id} className="grid gap-1 border-t border-[hsl(var(--hairline))] px-3 py-2.5 text-[13px] md:grid-cols-[minmax(0,1.4fr)_140px_minmax(0,2fr)_180px] md:items-center md:gap-3">
+              <div key={u.id} className="grid gap-1 border-t border-[hsl(var(--hairline))] px-3 py-2.5 text-[0.8125rem] md:grid-cols-[minmax(0,1.4fr)_8.75rem_minmax(0,2fr)_11.25rem] md:items-center md:gap-3">
                 <span className="font-medium">{u.name}{u.projectName ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">{u.projectName}</span> : null}</span>
                 <span className="text-xs text-muted-foreground">{u.kind}</span>
                 <span className="text-xs text-warn">{u.reason}</span>

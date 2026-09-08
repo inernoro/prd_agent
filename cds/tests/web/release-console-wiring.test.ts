@@ -366,7 +366,7 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
    * 10 / 10.5px 等宽，用户 08-14 明确要求照它做，所以下限跟着参考稿走。
    * 10px 以下仍然不行：等宽字到那个尺寸笔画会糊。
    */
-  it('没有 10px 以下的字号：等宽字再小笔画会糊', () => {
+  it('没有 0.625rem 以下的字号：等宽字再小笔画会糊', () => {
     const tooSmall = [...PAGE.matchAll(/text-\[(\d+(?:\.\d+)?)px\]/g)]
       .map((m) => Number(m[1]))
       .filter((n) => n < 10);
@@ -380,7 +380,7 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
    * 而且必须是**唯一一份定义**（SectionLabel），四处各写各的就会漂移。
    */
   it('分区标题照参考稿的终端风，且只有一份定义', () => {
-    expect(PAGE).toContain("className=\"cds-ident text-[11px] uppercase tracking-[0.14em] text-muted-foreground\"");
+    expect(PAGE).toContain("className=\"cds-ident text-[0.6875rem] uppercase tracking-[0.14em] text-muted-foreground\"");
     // 除 SectionLabel 自身外，不许再有第二处手写同款标题样式
     expect(PAGE.match(/tracking-\[0\.14em\]/g) || []).toHaveLength(1);
     for (const label of ['PROJECTS', 'ENVIRONMENTS', 'Pipeline', 'Live output']) {
@@ -426,14 +426,14 @@ describe('发布控制台 · 窄屏与主题纪律', () => {
    * 1024-1280 用自然流（各块竖排、自身限高滚动），到 xl 才切回固定外壳三栏。
    */
   it('三栏在 xl 才接管，lg 段仍走自然流', () => {
-    expect(PAGE).toContain('xl:grid-cols-[240px_minmax(0,1fr)_300px]');
-    expect(PAGE).toContain('2xl:grid-cols-[288px_minmax(0,1fr)_380px]');
+    expect(PAGE).toContain('xl:grid-cols-[15rem_minmax(0,1fr)_18.75rem]');
+    expect(PAGE).toContain('2xl:grid-cols-[18rem_minmax(0,1fr)_23.75rem]');
     // lg 段不许再出现任何三栏/内滚开关，否则 1024 又会被塞回去
     expect(PAGE).not.toMatch(/(?<![a-z0-9-])lg:/);
   });
 
   /**
-   * 中栏不许给 min-width。写过 `minmax(560px,1fr)`，实测 1024 宽下三栏总最小
+   * 中栏不许给 min-width。写过 `minmax(35rem,1fr)`，实测 1024 宽下三栏总最小
    * 1260px 超出可用的 878px，grid 到 982 就结束、右栏一路画到 1364——历史记录
    * 那一整栏被切掉 382px（1280 下仍切 126px），而外层 overflow-hidden 让它
    * 既不报横向滚动也看不出来。固定列 + 无下界的 1fr 才不会溢出。
@@ -530,13 +530,13 @@ describe('发布控制台 · 状态条不许被按钮文案顶高', () => {
  */
 describe('发布控制台 · 状态条一行的宽度预算', () => {
   it('中段 min-width 留得下操作组，且版本选择不在操作组里', () => {
-    expect(PAGE).toContain('min-w-[340px] flex-1 basis-0');
+    expect(PAGE).toContain('min-w-[21.25rem] flex-1 basis-0');
     const STACK_MIN = 340;
     const ICON = 52;
     const GAP = 18;
     // 操作组只有三个按钮：发布 + 试跑 + 中止 + 两个 8px 间隔
     const GROUP = 120 + 72 + 90 + 8 * 2;
-    expect(ICON + GAP + STACK_MIN + GAP + GROUP, '1600 宽下内容行只有 764px').toBeLessThanOrEqual(764);
+    expect(ICON + GAP + STACK_MIN + GAP + GROUP, '1600 宽下内容行只有 47.75rem').toBeLessThanOrEqual(764);
   });
 
   /**
@@ -562,7 +562,7 @@ describe('发布控制台 · 节奏', () => {
   it('进度条跑动时是流动斜纹，终态静止', () => {
     expect(CSS).toContain('.cds-progress-fill--running');
     expect(CSS).toContain('@keyframes cds-progress-flow');
-    expect(CSS).toContain('background-size: 40px 40px');
+    expect(CSS).toContain('background-size: 2.5rem 2.5rem');
     // 只有 running 才挂 --running，终态不许一直流
     expect(PAGE).toContain("${running ? 'cds-progress-fill--running' : ''}");
   });
@@ -645,7 +645,7 @@ describe('发布控制台 · 贴边的栏不带圆角', () => {
       const at = PAGE.indexOf(order);
       const cls = PAGE.slice(PAGE.lastIndexOf('className="', at), PAGE.indexOf('"', at));
       expect(cls, `${order} 那一栏贴边时不许有圆角`).toContain('xl:rounded-none');
-      expect(cls, `${order} 那一栏窄屏浮起来时要有圆角`).toContain('max-xl:rounded-[14px]');
+      expect(cls, `${order} 那一栏窄屏浮起来时要有圆角`).toContain('max-xl:rounded-[0.875rem]');
     }
   });
 
