@@ -1230,8 +1230,9 @@ export class UptimeMonitorService {
     // 新一轮反而被自己的代号检查提前退出（2026-09-08 合并 #1514 后发现）。
     const cycleGeneration = this.cycleStartedAt;
     let customLane: Promise<number> = Promise.resolve(0);
+    const cycleStartedAt = this.now();
     try {
-      const now = this.now();
+      const now = cycleStartedAt;
       const targets = this.selectTargets();
       const liveIds = new Set(targets.map((t) => t.id));
 
@@ -1316,7 +1317,10 @@ export class UptimeMonitorService {
         this.cycleStartedAt = null;
       }
     }
-    this.lastCycleProbed += await customLane;
+    // 自定义通道比主通道慢时，下一轮可能已经把健康快照换掉了：只给仍属于本轮的
+    // 快照记数，否则旧通道的完成数会算到新一轮头上（第五轮 P2）。
+    const customProbed = await customLane;
+    if (this.lastCycleAt === cycleStartedAt) this.lastCycleProbed += customProbed;
   }
 
   /** 暂停 / 排除的目标：不产采样，把仍开着的故障就地收尾。轮次、立即探测、改定义共用。 */
@@ -1861,10 +1865,15 @@ export class UptimeMonitorService {
   }
 
   /** 全局故障事件时间线，最近的在前。 */
-  getIncidents(limit = 50): UptimeIncidentView[] {
+  /**
+   * 故障时间线。projectId 给了就先按项目过滤再截断——上限 200 是全实例的，
+   * 别的项目有 200 条更新的故障时，项目级调用者会一条都拿不到（Codex PR #1514 第五轮 P2）。
+   */
+  getIncidents(limit = 50, projectId?: string | null): UptimeIncidentView[] {
     const now = this.now();
     const rows: UptimeIncidentView[] = [];
     for (const record of this.records.values()) {
+      if (projectId && record.projectId !== projectId) continue;
       for (const incident of record.incidents) {
         rows.push({
           ...incident,
@@ -1894,6 +1903,18 @@ export class UptimeMonitorService {
     const existed = this.records.delete(targetId);
     if (existed) this.persist();
     return existed;
+  }
+
+  /**
+   * 批量抹掉（删项目级联用）：全部删完只持久化一次。逐个调 forgetTarget 会每条都
+   * 把整份台账文件重写一遍，项目名下监控多时是二次方的磁盘功、还堵事件循环
+   * （Codex PR #1517 P2）。返回真正抹掉的条数。
+   */
+  forgetTargets(targetIds: ReadonlyArray<string>): number {
+    let removed = 0;
+    for (const id of targetIds) if (this.records.delete(id)) removed += 1;
+    if (removed > 0) this.persist();
+    return removed;
   }
 
   // ── 持久化：独立文件 + 原子写，失败静默（监控不能拖垮主流程） ──

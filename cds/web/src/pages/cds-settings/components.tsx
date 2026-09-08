@@ -77,13 +77,13 @@ function PartialLoadingPanel({
       aria-live="polite"
       aria-label={a11yLabel}
       aria-busy="true"
-      className={cn('w-full rounded-md', expanded ? 'min-h-[320px] p-5' : 'min-h-28 p-4', className)}
+      className={cn('w-full rounded-md', expanded ? 'min-h-[20rem] p-5' : 'min-h-28 p-4', className)}
     >
       {expanded ? (
         <div className="flex flex-col gap-4">
           {/* 头部:标题 + 副标题 */}
           <div className="flex flex-col gap-2.5">
-            <div className="cds-loading-skeleton-line h-6 w-1/3 min-w-[140px]" />
+            <div className="cds-loading-skeleton-line h-6 w-1/3 min-w-[8.75rem]" />
             <div className="cds-loading-skeleton-line h-3.5 w-2/3 max-w-md" />
           </div>
           {/* 指标条 */}

@@ -232,8 +232,8 @@ export function AgentRequestsPage(): JSX.Element {
             <option key={st} value={st}>{st === '' ? '全部状态' : (STATUS_STYLE[st]?.label ?? st)}</option>
           ))}
         </select>
-        <div className="relative flex-1 min-w-[180px]">
-          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <div className="relative flex-1 min-w-[11.25rem]">
+          <Search size="0.8125rem" className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             value={fQ}
             onChange={(e) => setFQ(e.target.value)}
@@ -247,9 +247,9 @@ export function AgentRequestsPage(): JSX.Element {
           onClick={() => void load()}
           className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-xs hover:bg-accent"
         >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> 刷新
+          <RefreshCw size="0.75rem" className={loading ? 'animate-spin' : ''} /> 刷新
         </button>
-        <span className="text-[11px] text-muted-foreground tabular-nums">
+        <span className="text-[0.6875rem] text-muted-foreground tabular-nums">
           live {data?.liveCount ?? 0} · 历史 {data?.historyCount ?? 0}
         </span>
       </div>
@@ -281,27 +281,27 @@ export function AgentRequestsPage(): JSX.Element {
                 className="w-full px-3 py-2.5 text-left"
               >
                 <div className="flex items-center gap-2 flex-wrap">
-                  {open ? <ChevronDown size={13} className="shrink-0 text-muted-foreground" /> : <ChevronRight size={13} className="shrink-0 text-muted-foreground" />}
-                  <span className={['inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', st.cls].join(' ')}>
+                  {open ? <ChevronDown size="0.8125rem" className="shrink-0 text-muted-foreground" /> : <ChevronRight size="0.8125rem" className="shrink-0 text-muted-foreground" />}
+                  <span className={['inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[0.625rem] font-medium', st.cls].join(' ')}>
                     {st.pulse && <span className="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
                     {st.label}
                   </span>
-                  <span className="text-sm font-medium truncate max-w-[280px]">{item.title || item.sessionId.slice(0, 18)}</span>
+                  <span className="text-sm font-medium truncate max-w-[17.5rem]">{item.title || item.sessionId.slice(0, 18)}</span>
                   {item.clientApp && (
-                    <span className="rounded bg-info-soft border border-info/25 px-1.5 py-0.5 text-[10px] text-info">{item.clientApp}</span>
+                    <span className="rounded bg-info-soft border border-info/25 px-1.5 py-0.5 text-[0.625rem] text-info">{item.clientApp}</span>
                   )}
                   {item.clientUser && (
-                    <span className="rounded bg-foreground/6 border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground" title={item.clientUser}>
+                    <span className="rounded bg-foreground/6 border border-border px-1.5 py-0.5 text-[0.625rem] text-muted-foreground" title={item.clientUser}>
                       {item.clientUser.slice(0, 10)}
                     </span>
                   )}
-                  {item.model && <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[170px]">{item.model}</span>}
-                  {item.live && <span className="text-[9px] text-ok font-semibold">LIVE</span>}
-                  <span className="ml-auto shrink-0 text-[10px] text-muted-foreground tabular-nums">
+                  {item.model && <span className="text-[0.625rem] font-mono text-muted-foreground truncate max-w-[10.625rem]">{item.model}</span>}
+                  {item.live && <span className="text-[0.5625rem] text-ok font-semibold">LIVE</span>}
+                  <span className="ml-auto shrink-0 text-[0.625rem] text-muted-foreground tabular-nums">
                     {fmtTime(item.createdAt)} · {fmtDuration(item.durationMs)} · {item.eventCount} 事件
                   </span>
                 </div>
-                <div className="mt-1.5 grid gap-1 md:grid-cols-2 text-[11px]">
+                <div className="mt-1.5 grid gap-1 md:grid-cols-2 text-[0.6875rem]">
                   <div className="truncate text-muted-foreground">
                     <span className="text-info font-medium">发 </span>
                     {item.requestPreview ?? '（无请求消息）'}
@@ -317,32 +317,32 @@ export function AgentRequestsPage(): JSX.Element {
                 <div className="border-t border-border px-3 py-2.5 flex flex-col gap-2.5" data-testid="request-detail">
                   <div className="grid gap-2.5 md:grid-cols-2">
                     <div>
-                      <div className="text-[10px] font-semibold text-info mb-1">请求内容（messages[0]）</div>
-                      <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background px-2.5 py-2 text-[11px] leading-relaxed">
+                      <div className="text-[0.625rem] font-semibold text-info mb-1">请求内容（messages[0]）</div>
+                      <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background px-2.5 py-2 text-[0.6875rem] leading-relaxed">
                         {item.requestPreview ?? '（无）'}
                       </pre>
                     </div>
                     <div>
-                      <div className="text-[10px] font-semibold text-ok mb-1">返回内容（finalText 截断 2000 字）</div>
-                      <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background px-2.5 py-2 text-[11px] leading-relaxed">
+                      <div className="text-[0.625rem] font-semibold text-ok mb-1">返回内容（finalText 截断 2000 字）</div>
+                      <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background px-2.5 py-2 text-[0.6875rem] leading-relaxed">
                         {item.responsePreview ?? '（尚无返回）'}
                       </pre>
                     </div>
                   </div>
                   <div>
-                    <div className="text-[10px] font-semibold text-muted-foreground mb-1">
+                    <div className="text-[0.625rem] font-semibold text-muted-foreground mb-1">
                       完整事件流（{item.live ? '内存实录' : '会话已结束——live 会话才有全量事件，历史仅保留收发摘要'}）
                     </div>
-                    {events === 'loading' && <div className="text-[11px] text-muted-foreground">事件流加载中...</div>}
+                    {events === 'loading' && <div className="text-[0.6875rem] text-muted-foreground">事件流加载中...</div>}
                     {events === 'error' && (
-                      <div className="text-[11px] text-warn">
+                      <div className="text-[0.6875rem] text-warn">
                         事件流不可用（会话可能已随 CDS 重启清理，收发摘要见上）
                       </div>
                     )}
                     {Array.isArray(events) && (
                       <div className="max-h-64 overflow-auto rounded-md border border-border bg-background px-2.5 py-2 flex flex-col gap-1">
                         {events.map((ev) => (
-                          <div key={ev.seq} className="flex items-start gap-2 text-[11px] leading-relaxed">
+                          <div key={ev.seq} className="flex items-start gap-2 text-[0.6875rem] leading-relaxed">
                             <span className="shrink-0 w-8 text-right tabular-nums text-muted-foreground">#{ev.seq}</span>
                             <span className="shrink-0 w-20 font-mono text-muted-foreground">{ev.type}</span>
                             <span className="min-w-0 break-all text-foreground/80">
@@ -354,10 +354,10 @@ export function AgentRequestsPage(): JSX.Element {
                                     ? (ev.payload.finalText as string).slice(0, 300)
                                     : JSON.stringify(ev.payload).slice(0, 300)}
                             </span>
-                            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground tabular-nums">{fmtTime(ev.createdAt)}</span>
+                            <span className="ml-auto shrink-0 text-[0.625rem] text-muted-foreground tabular-nums">{fmtTime(ev.createdAt)}</span>
                           </div>
                         ))}
-                        {events.length === 0 && <div className="text-[11px] text-muted-foreground">（空）</div>}
+                        {events.length === 0 && <div className="text-[0.6875rem] text-muted-foreground">（空）</div>}
                       </div>
                     )}
                   </div>

@@ -141,11 +141,12 @@ export function StatusPage(): JSX.Element {
     return groups.filter((g) => g.branches.some((b) => {
       const q = filter.query.trim().toLowerCase();
       const hit = !q || b.branchName.toLowerCase().includes(q) || b.projectName.toLowerCase().includes(q);
+      // 「待确认」= 实测但还没判定的分支，加上只按容器状态判定的未实测分支——两者都还不能算绿。
       const st = filter.status === 'all' ? true
         : filter.status === 'down' ? b.tone === 'bad'
           : filter.status === 'up' ? b.tone === 'ok'
             : filter.status === 'paused' ? b.bucket === 'idle'
-              : b.bucket === 'unmeasured';
+              : b.unconfirmed || b.bucket === 'unmeasured';
       return hit && st;
     }));
   }, [targets, filter, now]);
@@ -319,7 +320,7 @@ export function StatusPage(): JSX.Element {
                 <OverviewStrip summary={summary} incidents={incidents} headline={headline} statusFilter={filter.status} onStatusFilter={onStatusFilter} onOpenCoverage={() => setCoverageOpen(true)} now={now} />
               </div>
 
-              <div className="flex flex-col gap-3 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)]">
+              <div className="flex flex-col gap-3 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[21.25rem_minmax(0,1fr)] xl:grid-cols-[23.75rem_minmax(0,1fr)]">
                 <div className={cn('min-h-0 lg:h-full', mobileView === 'detail' ? 'hidden lg:block' : 'block')}>
                   <div className="h-[60vh] min-h-0 lg:h-full">
                     <TargetList
@@ -346,7 +347,7 @@ export function StatusPage(): JSX.Element {
                       onChange={setRightTab}
                       ariaLabel="右栏内容"
                     />
-                    <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                    <span className="hidden text-[0.6875rem] text-muted-foreground sm:inline">
                       分支服务直连容器宿主端口（不经预览代理，不影响空闲降温）；生产与自定义目标请求其地址
                     </span>
                   </div>
@@ -364,7 +365,7 @@ export function StatusPage(): JSX.Element {
                         onBack={() => setMobileView('list')}
                       />
                     ) : (
-                      <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] px-6 py-10 text-center">
+                      <div className="flex h-full min-h-[17.5rem] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] px-6 py-10 text-center">
                         <div className="text-sm font-medium">还没有可监控的目标</div>
                         <div className="max-w-md text-xs leading-5 text-muted-foreground">
                           监控中心盯三类对象：你在这里添加的自定义监控（任意网址、关键字或 TCP 端口）、

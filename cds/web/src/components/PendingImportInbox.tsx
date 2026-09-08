@@ -178,8 +178,8 @@ export function PendingImportInbox({
         >
           <Inbox className="h-4 w-4" />
           <span>Agent 导入 {count}</span>
-          <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full
-                           bg-destructive text-destructive-foreground text-[11px] px-1.5">
+          <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full
+                           bg-destructive text-destructive-foreground text-[0.6875rem] px-1.5">
             {count}
           </span>
         </button>
@@ -189,7 +189,7 @@ export function PendingImportInbox({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
           className="max-w-2xl overflow-hidden"
-          style={{ maxHeight: 'min(760px, calc(100dvh - 32px))' }}
+          style={{ maxHeight: 'min(47.5rem, calc(100dvh - 2rem))' }}
         >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -224,7 +224,7 @@ export function PendingImportInbox({
                           <div className="mt-1 text-xs text-foreground/80">{item.purpose}</div>
                         ) : null}
                         {item.summary ? (
-                          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                          <div className="mt-2 flex flex-wrap gap-1.5 text-[0.6875rem]">
                             {(item.summary.addedProfiles || []).map((p) => (
                               <span key={`p-${p}`} className="rounded bg-info-soft text-info px-1.5 py-0.5">
                                 profile: {p}
@@ -244,9 +244,9 @@ export function PendingImportInbox({
                         ) : null}
                         {item.composeYaml ? (
                           <details className="mt-2">
-                            <summary className="cursor-pointer text-[11px] text-foreground/70">查看 YAML</summary>
+                            <summary className="cursor-pointer text-[0.6875rem] text-foreground/70">查看 YAML</summary>
                             <pre
-                              className="mt-1 max-h-60 overflow-auto rounded p-2 text-[10px]"
+                              className="mt-1 max-h-60 overflow-auto rounded p-2 text-[0.625rem]"
                               style={{
                                 background: 'var(--bg-base, var(--surface-sunken))',
                                 color: 'var(--text-primary, inherit)',

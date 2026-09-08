@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.5"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -2949,6 +2949,37 @@ def _find_build_profile(profile_id: str, project: str | None) -> dict[str, Any]:
     raise SystemExit(2)  # unreachable, satisfies type checker
 
 
+def _prebuilt_mode_ids(p: dict[str, Any]) -> list[str]:
+    """deployModes 里 prebuilt 为 true 的模式 id（极速版 / CI 预构建）。
+
+    模式名不是判据：本仓库叫 express，别的项目可以叫任何名字；接入口令要求 Agent
+    只认这个列表，而不是按名字猜。prebuilt 只认布尔 True——服务端门禁 isPrebuiltMode
+    用的是 `=== true`，compose 导入时字符串 'true' 已被规整成布尔，但直接 POST 建的
+    配置不会规整；这里若把字符串也当 True，会让 Agent 按提示切过去后反复吃 409
+    （Codex PR #1513 第七轮 P2）。
+    """
+    # 与服务端 isPrebuiltMode 同口径：带 managedBuild 的 profile 是宿主上的源码构建，
+    # 任何模式都不算极速版（Codex PR #1513 第六轮 P2）。
+    if p.get("managedBuild"):
+        return []
+    modes = p.get("deployModes") or {}
+    inherited = p.get("prebuiltImage") is True
+    out: list[str] = []
+    for mode_id, mode in modes.items():
+        if not isinstance(mode, dict):
+            continue
+        prebuilt = mode.get("prebuilt")
+        # 与服务端 isPrebuiltMode 同口径：mode.prebuilt ?? profile.prebuiltImage——镜像站点上
+        # 未声明 prebuilt 的模式继承 prebuiltImage，也是可切的极速版（Codex PR #1513 第五轮 P2）。
+        if prebuilt is None:
+            is_prebuilt = inherited
+        else:
+            is_prebuilt = prebuilt is True
+        if is_prebuilt:
+            out.append(str(mode_id))
+    return out
+
+
 def _profile_summary(p: dict[str, Any]) -> dict[str, Any]:
     rp = p.get("readinessProbe") or {}
     return {
@@ -2957,6 +2988,10 @@ def _profile_summary(p: dict[str, Any]) -> dict[str, Any]:
         "projectId": p.get("projectId"),
         "activeDeployMode": p.get("activeDeployMode") or None,
         "deployModes": list((p.get("deployModes") or {}).keys()),
+        # 极速版（CI 预构建）判据：Agent 分支必须从这里选模式，空列表 = 项目还没接 CI 预构建
+        "prebuiltModes": _prebuilt_mode_ids(p),
+        # 整个 profile 就是预构建镜像站点（cds.prebuilt-image），无需切模式；带 managedBuild 的不算
+        "prebuiltImage": p.get("prebuiltImage") is True and not p.get("managedBuild"),
         "readiness": {
             "timeoutSeconds": rp.get("timeoutSeconds"),
             "intervalSeconds": rp.get("intervalSeconds"),
@@ -3019,7 +3054,10 @@ def cmd_branch_set_mode(args: argparse.Namespace) -> None:
             if b.get("id") == args.id:
                 ov = (b.get("profileOverrides") or {}).get(args.profile)
                 if isinstance(ov, dict):
-                    existing = dict(ov)
+                    # GET 回来的覆盖对象把未设字段以 null 占位（dbScope: null 等），而 PUT 端
+                    # 对 dbScope / dbInit 做枚举校验时 null 不等于「未提供」，原样回传即 400
+                    # 「dbScope 非法」。只回传真正设过的字段；updatedAt 是服务端戳，不回传。
+                    existing = {k: v for k, v in ov.items() if v is not None and k != "updatedAt"}
                 break
     except Exception:
         existing = {}  # 取不到就退化为只设模式（与旧行为一致，至少不更糟）

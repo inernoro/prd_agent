@@ -261,7 +261,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
           ) : null}
           {connections.length > 0 ? (
             <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full min-w-[720px] text-sm">
+              <table className="w-full min-w-[45rem] text-sm">
                 <thead className="bg-muted/40 text-xs text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">名称</th>
@@ -286,7 +286,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
                       <td className="px-3 py-2.5">
                         <div className="flex flex-wrap gap-1">
                           {connection.scopes.map((scope) => (
-                            <span key={scope} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{scope}</span>
+                            <span key={scope} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground">{scope}</span>
                           ))}
                         </div>
                       </td>

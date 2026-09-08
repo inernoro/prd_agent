@@ -28,8 +28,8 @@ describe('BranchListPage preview contract', () => {
   });
 
   it('keeps commit history separate from the current commit summary', () => {
-    expect(source).toContain('bottom-[calc(100%+8px)]');
-    expect(source).toContain('grid-cols-[64px_minmax(0,1fr)] gap-3');
+    expect(source).toContain('bottom-[calc(100%+0.5rem)]');
+    expect(source).toContain('grid-cols-[4rem_minmax(0,1fr)] gap-3');
     expect(source).toContain('block truncate font-mono text-muted-foreground');
   });
 

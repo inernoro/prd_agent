@@ -121,7 +121,7 @@ function PhaseLogPreview({
     );
   }
   return (
-    <pre className="mt-2 max-h-[260px] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] leading-5 text-foreground/85 whitespace-pre-wrap break-words">
+    <pre className="mt-2 max-h-[16.25rem] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[0.6875rem] leading-5 text-foreground/85 whitespace-pre-wrap break-words">
       {text}
     </pre>
   );
@@ -149,7 +149,7 @@ function PhaseLogDetails({
         {controls?.onMaximize ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-[11px] hover:border-[hsl(var(--hairline-strong))]"
+            className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-[0.6875rem] hover:border-[hsl(var(--hairline-strong))]"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -180,7 +180,7 @@ function PhaseLogDetails({
                   e.stopPropagation();
                   controls!.onSelect(svc.profileId);
                 }}
-                className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] transition-colors ${
+                className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[0.6875rem] transition-colors ${
                   active
                     ? 'border-primary bg-primary/10 text-foreground'
                     : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-muted-foreground hover:text-foreground'

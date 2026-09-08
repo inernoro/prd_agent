@@ -42,6 +42,12 @@ import { repoNameFromGitRef } from '../services/preview-slug.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 import { isMachineCaller } from '../services/machine-caller.js';
+import {
+  buildPrebuiltGateRejection,
+  findNonPrebuiltDefaultModes,
+  isAgentGatedRequest,
+  isAgentPrebuiltOnly,
+} from '../services/agent-prebuilt-gate.js';
 import { summarizeRepoSharing, type RepoSharingSummary } from '../services/repo-sharing.js';
 import { inferProjectScope, inferProfileScope, declaredScopeSources } from '../services/build-scope-inference.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
@@ -3193,6 +3199,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       description: string;
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
+      agentPrebuiltOnly: boolean;
       resourceChipDisplay: {
         icon?: boolean;
         name?: boolean;
@@ -3286,7 +3293,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'resourceChipDisplay' | 'githubEventPolicy' | 'githubBotPushFilterEnabled' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'agentPrebuiltOnly' | 'resourceChipDisplay' | 'githubEventPolicy' | 'githubBotPushFilterEnabled' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
     if (body.inheritGlobalEnv !== undefined) {
       if (typeof body.inheritGlobalEnv !== 'boolean') {
         res.status(400).json({
@@ -3325,6 +3332,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // Booleans come in as true / false / 'true' / 'false' depending on
       // the UI; coerce everything truthy but 'false' into a real boolean.
       patch.autoSmokeEnabled = body.autoSmokeEnabled === true || body.autoSmokeEnabled === 'true' as unknown as boolean;
+    }
+    if (body.agentPrebuiltOnly !== undefined) {
+      // Agent 极速版门禁的开关本身只能由真人改：机器凭据能关掉它，门禁就形同虚设。
+      // 与 agent-prebuilt-gate.ts 同一口径（isMachineCaller），不看 X-CDS-Trigger——
+      // 没有任何内部派发需要改这个开关。
+      if (isMachineCaller(req)) {
+        res.status(403).json({
+          error: 'agent_prebuilt_only_human_only',
+          message: '「Agent 只允许极速版部署」开关只能由真人在项目设置页修改，Agent 凭据不得开启或关闭。',
+        });
+        return;
+      }
+      patch.agentPrebuiltOnly = body.agentPrebuiltOnly === true || body.agentPrebuiltOnly === 'true' as unknown as boolean;
     }
     if (body.resourceChipDisplay !== undefined) {
       const incoming = body.resourceChipDisplay;
@@ -3366,6 +3386,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           return;
         }
         next[profileId] = mode;
+      }
+      // Agent 极速版门禁：项目默认会在建分支时拷贝进覆盖、align-deploy-modes 会刷进全部分支，
+      // 之后豁免的 webhook 部署就会在宿主上编译——机器凭据不得把它写成非极速版（Codex PR #1513 P1）。
+      if (isAgentPrebuiltOnly(project) && isAgentGatedRequest(req)) {
+        const violations = findNonPrebuiltDefaultModes(projectProfiles, next, { coverAllProfiles: true });
+        if (violations.length > 0) {
+          res.status(409).json(buildPrebuiltGateRejection(project, projectProfiles, violations, { operation: 'project-default' }));
+          return;
+        }
       }
       patch.defaultDeployModes = next;
     }
@@ -3450,6 +3479,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
     const profiles = stateService.getBuildProfilesForProject(project.id);
+    // Agent 极速版门禁：对齐会把项目默认刷进全部分支，默认里有源码模式就等于让 Agent 把
+    // 整个项目的分支都切成源码编译，拒绝（真人在页面上对齐不受限）。
+    if (isAgentPrebuiltOnly(project) && isAgentGatedRequest(req)) {
+      const violations = findNonPrebuiltDefaultModes(profiles, defaults);
+      if (violations.length > 0) {
+        res.status(409).json(buildPrebuiltGateRejection(project, profiles, violations, { operation: 'project-default' }));
+        return;
+      }
+    }
     const branches = stateService.getBranchesForProject(project.id);
     const aligned: Array<{ branchId: string; modes: Record<string, string> }> = [];
     for (const branch of branches) {

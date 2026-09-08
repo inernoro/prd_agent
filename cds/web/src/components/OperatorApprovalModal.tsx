@@ -104,7 +104,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
     <Dialog open={!!pending} onOpenChange={(open) => { if (!open) setPending(null); }}>
       <DialogContent
         className="max-w-2xl overflow-hidden"
-        style={{ maxHeight: 'min(760px, calc(100dvh - 32px))' }}
+        style={{ maxHeight: 'min(47.5rem, calc(100dvh - 2rem))' }}
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -138,7 +138,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
             <div className="mb-2 flex items-center gap-2">
               <Wrench className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-semibold">{pending.opName}</span>
-              <span className={`ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] ${meta.tone}`}>
+              <span className={`ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[0.6875rem] ${meta.tone}`}>
                 {meta.icon}
                 {meta.label}
               </span>
@@ -149,7 +149,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
             {pending.args && Object.keys(pending.args).length > 0 ? (
               <details className="mt-2">
                 <summary className="cursor-pointer text-xs text-foreground/70">参数</summary>
-                <pre className="mt-1 max-h-40 overflow-auto rounded bg-background/50 p-2 text-[10px]">
+                <pre className="mt-1 max-h-40 overflow-auto rounded bg-background/50 p-2 text-[0.625rem]">
                   {JSON.stringify(pending.args, null, 2)}
                 </pre>
               </details>

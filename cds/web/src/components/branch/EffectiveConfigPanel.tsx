@@ -92,7 +92,7 @@ const SOURCE_META: Record<EnvSource, { label: string; cls: string }> = {
 function SourceBadge({ source }: { source: EnvSource }): JSX.Element {
   const meta = SOURCE_META[source] || { label: source, cls: 'border-[hsl(var(--hairline))]' };
   return (
-    <span className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[11px] leading-none ${meta.cls}`}>
+    <span className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[0.6875rem] leading-none ${meta.cls}`}>
       {meta.label}
     </span>
   );
@@ -113,13 +113,13 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
           {profile.isExtra ? <SourceBadge source="extra-service" /> : null}
           {profile.hasOverride ? <SourceBadge source="branch-override" /> : null}
           {profile.dbScope === 'per-branch' ? (
-            <span className="rounded border border-ok/30 bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">
+            <span className="rounded border border-ok/30 bg-ok-soft px-1.5 py-0.5 text-[0.6875rem] text-ok">
               分支独立库{profile.dbScopeSource === 'branch-override' ? '(本分支覆盖)' : ''}
             </span>
           ) : null}
           <span className="font-mono">:{profile.containerPort}</span>
-          {profile.activeDeployMode ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[11px]">{profile.activeDeployMode}</span> : null}
-          <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[11px]">env×{profile.envProvenance.length}</span>
+          {profile.activeDeployMode ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.6875rem]">{profile.activeDeployMode}</span> : null}
+          <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.6875rem]">env×{profile.envProvenance.length}</span>
         </span>
       </button>
       {open ? (
@@ -144,7 +144,7 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
           ) : null}
           {profile.envProvenance.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[520px] text-xs">
+              <table className="w-full min-w-[32.5rem] text-xs">
                 <thead>
                   <tr className="text-left text-muted-foreground">
                     <th className="py-1 pr-3 font-medium">变量</th>
@@ -156,15 +156,15 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
                 <tbody>
                   {profile.envProvenance.map((p) => (
                     <tr key={p.key} className="border-t border-[hsl(var(--hairline))]/60 align-top">
-                      <td className="max-w-[180px] truncate py-1.5 pr-3 font-mono" title={p.key}>{p.key}</td>
-                      <td className="max-w-[220px] truncate py-1.5 pr-3 font-mono text-muted-foreground" title={p.value}>
+                      <td className="max-w-[11.25rem] truncate py-1.5 pr-3 font-mono" title={p.key}>{p.key}</td>
+                      <td className="max-w-[13.75rem] truncate py-1.5 pr-3 font-mono text-muted-foreground" title={p.value}>
                         {p.value}
-                        {p.templated ? <span className="ml-1 rounded border border-info/30 bg-info-soft px-1 text-[10px] text-info">模板展开</span> : null}
+                        {p.templated ? <span className="ml-1 rounded border border-info/30 bg-info-soft px-1 text-[0.625rem] text-info">模板展开</span> : null}
                       </td>
                       <td className="py-1.5 pr-3">
                         <SourceBadge source={p.source} />
-                        {p.detail === 'per-branch-db-suffix' ? <span className="ml-1 text-[10px] text-muted-foreground">库名加分支后缀</span> : null}
-                        {p.detail === 'per-branch-db-url' ? <span className="ml-1 text-[10px] text-ok">连接串已跟随库名</span> : null}
+                        {p.detail === 'per-branch-db-suffix' ? <span className="ml-1 text-[0.625rem] text-muted-foreground">库名加分支后缀</span> : null}
+                        {p.detail === 'per-branch-db-url' ? <span className="ml-1 text-[0.625rem] text-ok">连接串已跟随库名</span> : null}
                       </td>
                       <td className="py-1.5">
                         {p.shadowed && p.shadowed.length > 0 ? (
@@ -327,9 +327,9 @@ export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; 
                 <div key={c.profileId} className="flex flex-wrap items-center gap-1.5">
                   <span className="text-muted-foreground">起容器</span>
                   <span className="font-mono">{c.containerName}</span>
-                  <span className="max-w-[240px] truncate font-mono text-muted-foreground" title={c.dockerImage}>({c.dockerImage}:{c.containerPort})</span>
+                  <span className="max-w-[15rem] truncate font-mono text-muted-foreground" title={c.dockerImage}>({c.dockerImage}:{c.containerPort})</span>
                   {c.isExtra ? <SourceBadge source="extra-service" /> : null}
-                  {c.prebuilt ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[10px]">预构建</span> : null}
+                  {c.prebuilt ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.625rem]">预构建</span> : null}
                 </div>
               ))}
               <div className="flex flex-wrap items-center gap-1.5">
@@ -353,7 +353,7 @@ export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; 
                   ))}
                 </div>
               ) : null}
-              <div className="pt-1 text-[11px] text-muted-foreground">
+              <div className="pt-1 text-[0.6875rem] text-muted-foreground">
                 以上基于当前记录状态推算;共享基础设施(数据库/缓存)为项目级容器,所有分支共用同一实例。
               </div>
             </div>

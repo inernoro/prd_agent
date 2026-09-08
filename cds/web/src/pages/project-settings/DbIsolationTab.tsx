@@ -302,12 +302,12 @@ export function DbIsolationPanel({
                       <span className="truncate text-sm font-medium">{service.name}</span>
                       <span className="font-mono text-xs text-muted-foreground">{service.profileId}</span>
                       {service.dbScopeSource === 'default' && !isChanged ? (
-                        <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[11px] text-muted-foreground" title="profile 上没有写 dbScope，按默认共享库生效">
+                        <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground" title="profile 上没有写 dbScope，按默认共享库生效">
                           默认值
                         </span>
                       ) : null}
                       {isChanged ? (
-                        <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">
+                        <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] text-warn">
                           未保存：{DB_SCOPE_LABEL[service.dbScope]} 变为 {DB_SCOPE_LABEL[value]}
                         </span>
                       ) : null}
@@ -465,7 +465,7 @@ export function DbIsolationPanel({
                   {entry.branch}
                 </a>
                 {Object.entries(entry.overrides).map(([profileId, scope]) => (
-                  <span key={profileId} className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">
+                  <span key={profileId} className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] text-warn">
                     {profileId}：{DB_SCOPE_LABEL[scope]}
                   </span>
                 ))}
@@ -520,7 +520,7 @@ export function BranchProbeSection({ branches }: { branches: DbIsolationBranch[]
               title={(
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="truncate font-mono text-sm">{b.branch}</span>
-                  {b.hasOverride ? <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">有本分支覆盖</span> : null}
+                  {b.hasOverride ? <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] text-warn">有本分支覆盖</span> : null}
                   <span className="text-xs text-muted-foreground">{BRANCH_STATUS_LABEL[b.status] ?? b.status}</span>
                 </span>
               )}

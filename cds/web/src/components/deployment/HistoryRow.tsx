@@ -122,7 +122,7 @@ export function HistoryRow({ deployment, onOpenLogs, defaultExpanded = false }: 
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass(deployment.status)}`} />
         <span className="shrink-0 font-medium">{deploymentKindLabel(deployment.kind)}</span>
         {triggerText ? (
-          <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">
             {triggerText}
           </span>
         ) : null}
@@ -130,7 +130,7 @@ export function HistoryRow({ deployment, onOpenLogs, defaultExpanded = false }: 
           <span className="shrink-0 font-mono text-muted-foreground">{deployment.commitSha.slice(0, 7)}</span>
         ) : null}
         {duration.stuck ? (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded border border-warn/35 bg-warn-soft px-1.5 py-0.5 text-[10px] font-semibold text-warn">
+          <span className="inline-flex shrink-0 items-center gap-1 rounded border border-warn/35 bg-warn-soft px-1.5 py-0.5 text-[0.625rem] font-semibold text-warn">
             <AlertTriangle className="h-3 w-3" />
             疑似卡住 ≥{formatDurationMs(duration.cappedMs)}
           </span>
@@ -189,7 +189,7 @@ export function HistoryRow({ deployment, onOpenLogs, defaultExpanded = false }: 
                 </span>
               </header>
               {primarySnapshot.logs?.trim() ? (
-                <pre className="max-h-[360px] overflow-auto px-3 py-2 font-mono text-[11px] leading-5 text-foreground/85 whitespace-pre-wrap break-words">
+                <pre className="max-h-[22.5rem] overflow-auto px-3 py-2 font-mono text-[0.6875rem] leading-5 text-foreground/85 whitespace-pre-wrap break-words">
                   {primarySnapshot.logs}
                 </pre>
               ) : (

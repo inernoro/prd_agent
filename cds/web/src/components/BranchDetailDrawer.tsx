@@ -541,7 +541,7 @@ function DrawerTabButton({
       onClick={onClick}
     >
       {tab.label}
-      {tab.planned ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[10px] text-muted-foreground">计划</span> : null}
+      {tab.planned ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">计划</span> : null}
       {active ? <span className="absolute inset-x-2 bottom-0 h-px bg-primary" /> : null}
     </button>
   );
@@ -767,7 +767,7 @@ async function copyTextToClipboard(text: string): Promise<void> {
   textarea.value = text;
   textarea.setAttribute('readonly', '');
   textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
+  textarea.style.left = '-624.9375rem';
   textarea.style.top = '0';
   document.body.appendChild(textarea);
   textarea.select();
@@ -2215,13 +2215,13 @@ export function BranchDetailDrawer({
                 <span className="text-muted-foreground/60">·</span>
                 <span className="min-w-0 truncate whitespace-nowrap font-mono text-xs">{branch.branch}</span>
                 {/* 2026-07-25 用户拍板：状态条并入标题行（不重要信息丢弃，不再单独占一格） */}
-                <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
-                {branch.commitSha ? <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
+                <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[0.625rem] ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
+                {branch.commitSha ? <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
                 {(() => {
                   const svcList = Object.values(branch.services || {});
                   if (!svcList.length) return null;
                   const up = svcList.filter((x) => (x as { status?: string }).status === 'running').length;
-                  return <span className="shrink-0 text-[11px] text-muted-foreground">服务 {up}/{svcList.length}</span>;
+                  return <span className="shrink-0 text-[0.6875rem] text-muted-foreground">服务 {up}/{svcList.length}</span>;
                 })()}
               </>
             ) : null}
@@ -2329,7 +2329,7 @@ export function BranchDetailDrawer({
                       */}
                       {branch.lastStoppedAt &&
                       !['running', 'building', 'starting', 'restarting'].includes(branch.status) ? (
-                        <div className="mt-2 rounded border border-warn/30 bg-warn-soft px-2.5 py-1.5 text-[11px] leading-5 text-warn ">
+                        <div className="mt-2 rounded border border-warn/30 bg-warn-soft px-2.5 py-1.5 text-[0.6875rem] leading-5 text-warn ">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-medium">上次停止</span>
                             <span className="opacity-90">{formatDeployTimestamp(branch.lastStoppedAt)}</span>
@@ -2364,7 +2364,7 @@ export function BranchDetailDrawer({
                       <button
                         type="button"
                         onClick={() => void copyFailurePrompt()}
-                        className={`inline-flex h-7 items-center gap-1.5 rounded-md border border-destructive/45 bg-destructive/15 px-2 text-[11px] font-semibold text-destructive transition-colors hover:bg-destructive/25 ${
+                        className={`inline-flex h-7 items-center gap-1.5 rounded-md border border-destructive/45 bg-destructive/15 px-2 text-[0.6875rem] font-semibold text-destructive transition-colors hover:bg-destructive/25 ${
                           copiedFailurePrompt ? '' : 'animate-pulse'
                         }`}
                         title="复制错误上下文和大模型修复提示词"
@@ -2381,15 +2381,15 @@ export function BranchDetailDrawer({
                           return (
                           <div key={diag.profileId} className="space-y-1.5">
                             <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="rounded border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-medium uppercase">
+                              <span className="rounded border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[0.625rem] font-medium uppercase">
                                 {diag.profileId}
                               </span>
-                              <span className="rounded border border-destructive/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
+                              <span className="rounded border border-destructive/30 px-1.5 py-0.5 text-[0.625rem] uppercase tracking-wide">
                                 {diag.errorCategory.replace('-', ' ')}
                               </span>
                               {/* 主题感知的责任方徽章：白天用深色文字保证对比度（旧写法硬编码
                                   亮系 #f59e0b/#9ca3af 落在 0.15 透明底上，白天对比度约 2:1 看不清） */}
-                              <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                              <span className={`rounded px-1.5 py-0.5 text-[0.625rem] font-medium ${
                                 diag.responsibilitySide === 'cds' ? 'bg-warn-soft text-warn'
                                   : diag.responsibilitySide === 'code' ? 'bg-bad-soft text-bad'
                                   : diag.responsibilitySide === 'config' ? 'bg-info-soft text-info'
@@ -2405,7 +2405,7 @@ export function BranchDetailDrawer({
                               <div className="text-destructive/90">{diag.errorHint}</div>
                             ) : null}
                             {keyLines.length > 0 ? (
-                              <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[10px] leading-4 text-foreground/85">
+                              <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[0.625rem] leading-4 text-foreground/85">
                                 {keyLines.join('\n')}
                               </pre>
                             ) : null}
@@ -2418,7 +2418,7 @@ export function BranchDetailDrawer({
                             const first = failureDiag.failedServices[0];
                             openFailureLogs(first?.profileId);
                           }}
-                          className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/20"
+                          className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-[0.6875rem] font-medium text-destructive transition-colors hover:bg-destructive/20"
                         >
                           打开容器日志 →
                         </button>
@@ -2473,7 +2473,7 @@ export function BranchDetailDrawer({
                         <header className="flex items-center gap-2 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
                           <span className="text-xs font-semibold">构建日志 · {selectedBuildLog.title}</span>
                           {selectedBuildLog.commitSha ? (
-                            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{selectedBuildLog.commitSha.slice(0, 7)}</span>
+                            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground">{selectedBuildLog.commitSha.slice(0, 7)}</span>
                           ) : null}
                           <button
                             type="button"
@@ -2612,7 +2612,7 @@ export function BranchDetailDrawer({
                             此前 10 个 chip 挤一条横滚行，副本排末尾被遮住根本翻不到） */}
                         <div className="space-y-2 border-b border-[hsl(var(--hairline))] px-4 py-3">
                           <div className="flex min-w-0 items-center gap-3">
-                            <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">主容器</span>
+                            <span className="w-14 shrink-0 font-mono text-[0.625rem] uppercase tracking-wide text-muted-foreground">主容器</span>
                             <div className="flex min-w-0 flex-1 flex-wrap gap-2">
                               {(services.length > 0 ? services : []).map((svc) => (
                                 <button
@@ -2635,7 +2635,7 @@ export function BranchDetailDrawer({
                           </div>
                           {memberLogTargets.length > 0 ? (
                             <div className="flex min-w-0 items-center gap-3">
-                              <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-wide text-indigo-500 dark:text-indigo-400">副本容器</span>
+                              <span className="w-14 shrink-0 font-mono text-[0.625rem] uppercase tracking-wide text-indigo-500 dark:text-indigo-400">副本容器</span>
                               <div className="flex min-w-0 flex-1 flex-wrap gap-2">
                                 {memberLogTargets.map(({ key, pid, member: m }) => (
                                   <button
@@ -3032,8 +3032,8 @@ function DeploymentVersionLedger({
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className="font-mono text-xs text-foreground" title={version.id}>{version.id.slice(0, 15)}</span>
                 <span className="font-mono text-xs text-muted-foreground">{version.commitSha.slice(0, 7)}</span>
-                {isCurrent ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary">当前版本</span> : null}
-                <span className={`rounded border px-1.5 py-0.5 text-[11px] ${reusable ? 'border-ok/30 bg-ok-soft text-ok' : 'border-warn/30 bg-warn-soft text-warn'}`}>
+                {isCurrent ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[0.6875rem] text-primary">当前版本</span> : null}
+                <span className={`rounded border px-1.5 py-0.5 text-[0.6875rem] ${reusable ? 'border-ok/30 bg-ok-soft text-ok' : 'border-warn/30 bg-warn-soft text-warn'}`}>
                   {reusable ? '产物可复用' : '仅记录'}
                 </span>
               </div>
@@ -3093,7 +3093,7 @@ function DeploymentRunLedger({
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className={`rounded border px-2 py-0.5 text-xs ${meta.className}`}>{meta.label}</span>
                 <span className="font-mono text-xs text-muted-foreground" title={run.id}>{run.id.slice(0, 15)}</span>
-                {run.id === activeRunId ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary">分支当前运行</span> : null}
+                {run.id === activeRunId ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[0.6875rem] text-primary">分支当前运行</span> : null}
                 <span className="text-xs text-muted-foreground">{deploymentRunTriggerLabel(run.trigger)}</span>
                 {run.commitSha ? <span className="font-mono text-xs text-muted-foreground">{run.commitSha.slice(0, 7)}</span> : null}
               </div>
@@ -3181,7 +3181,7 @@ function DeploymentRunDiagnosis({ runId }: { runId: string }): JSX.Element {
   return (
     <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
       <div className="flex flex-wrap items-center gap-2">
-        {failure?.code ? <span className="rounded border border-destructive/25 bg-destructive/5 px-2 py-0.5 font-mono text-[11px] text-destructive">{failure.code}</span> : null}
+        {failure?.code ? <span className="rounded border border-destructive/25 bg-destructive/5 px-2 py-0.5 font-mono text-[0.6875rem] text-destructive">{failure.code}</span> : null}
         {failure?.owner ? <span className="text-xs text-muted-foreground">责任侧: {deploymentFailureOwnerLabel(failure.owner)}</span> : null}
         {failure ? <span className="text-xs text-muted-foreground">{failure.retryable ? '修复前置条件后可重试' : '需先修复根因'}</span> : null}
       </div>
@@ -3285,7 +3285,7 @@ export function DeploymentCard({
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap gap-1.5">
             {stages.length > 0 ? stages.map((stage) => (
-              <span key={stage} className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-2 py-0.5 text-[11px] text-muted-foreground">
+              <span key={stage} className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-2 py-0.5 text-[0.6875rem] text-muted-foreground">
                 {stage}
               </span>
             )) : (
@@ -3522,7 +3522,7 @@ function TriggerLogsPanel({
                   : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'
               }`}
             >
-              <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+              <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2 text-[0.6875rem] text-muted-foreground">
                 <span className={`rounded border px-1.5 py-0.5 ${dispatchActionClass(item.dispatchAction)}`}>
                   {dispatchActionLabel(item.dispatchAction)}
                 </span>
@@ -3625,7 +3625,7 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
           </div>
         </div>
         <div className={DETAIL_LOG_VIEWPORT_CLASS}>
-          <div className="grid grid-cols-[150px_minmax(0,1fr)] border-b border-[hsl(var(--hairline))] px-4 py-2 text-xs font-medium text-muted-foreground">
+          <div className="grid grid-cols-[9.375rem_minmax(0,1fr)] border-b border-[hsl(var(--hairline))] px-4 py-2 text-xs font-medium text-muted-foreground">
             <span>Time</span>
             <span>Message</span>
           </div>
@@ -3634,7 +3634,7 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
           ) : (
             <div className="divide-y divide-[hsl(var(--hairline))]">
               {rows.map((row) => (
-                <div key={row.key} className="grid grid-cols-[150px_minmax(0,1fr)] gap-3 px-4 py-2 text-xs">
+                <div key={row.key} className="grid grid-cols-[9.375rem_minmax(0,1fr)] gap-3 px-4 py-2 text-xs">
                   <span className="font-mono text-muted-foreground">{time || '-'}</span>
                   <pre className="min-w-0 whitespace-pre-wrap break-words font-mono leading-5 text-muted-foreground">{row.text}</pre>
                 </div>
@@ -3673,11 +3673,11 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
       <div className="space-y-2">
         {rows.map((row) => (
           <div key={row.key} className={`rounded-md border px-3 py-2 ${row.status === 'error' ? 'border-destructive/35 bg-destructive/5' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'}`}>
-            <div className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+            <div className="mb-1 flex items-center gap-2 text-[0.6875rem] text-muted-foreground">
               <span className={`rounded border px-1.5 py-0.5 ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
               <span>{row.time}</span>
             </div>
-            <pre className="whitespace-pre-wrap font-mono text-[11px] leading-5 text-muted-foreground">{row.text}</pre>
+            <pre className="whitespace-pre-wrap font-mono text-[0.6875rem] leading-5 text-muted-foreground">{row.text}</pre>
           </div>
         ))}
       </div>
@@ -3914,7 +3914,7 @@ function ResourceConsole({
         >
           {groups.map((group) => (
             <div key={group.kind} className="flex shrink-0 items-center gap-2 pr-1">
-              <span className="shrink-0 border-r border-[hsl(var(--hairline-strong))] pr-3 text-[11px] font-bold uppercase tracking-[0.1em] text-foreground/70">
+              <span className="shrink-0 border-r border-[hsl(var(--hairline-strong))] pr-3 text-[0.6875rem] font-bold uppercase tracking-[0.1em] text-foreground/70">
                 {resourceKindLabel(group.kind)}
               </span>
               {group.items.map((resource) => {
@@ -3932,7 +3932,7 @@ function ResourceConsole({
                   <span key={resource.id} className="relative inline-flex shrink-0">
                     <button
                       type="button"
-                      className={`inline-flex min-h-[2.75rem] min-w-[132px] shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left leading-tight transition-colors ${
+                      className={`inline-flex min-h-[2.75rem] min-w-[8.25rem] shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left leading-tight transition-colors ${
                         active
                           ? 'border-primary bg-primary/12 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
                           : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[shadow:var(--shadow-chip)] hover:bg-[hsl(var(--accent))]'
@@ -3951,11 +3951,11 @@ function ResourceConsole({
                           {isReplicaSet ? (
                             <span className="inline-flex items-center gap-0.5 text-indigo-500">
                               <Layers className="h-3 w-3 shrink-0" />
-                              <span className="text-[10px] font-bold tabular-nums">x{(chipInfo?.members ?? 0) + 1}</span>
+                              <span className="text-[0.625rem] font-bold tabular-nums">x{(chipInfo?.members ?? 0) + 1}</span>
                             </span>
                           ) : null}
                         </span>
-                        <span className="block truncate font-mono text-[11px] text-muted-foreground">:{resource.port || resource.containerPort || '?'}</span>
+                        <span className="block truncate font-mono text-[0.6875rem] text-muted-foreground">:{resource.port || resource.containerPort || '?'}</span>
                       </span>
                       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusRailClass(resource.status)}`} />
                     </button>
@@ -3990,7 +3990,7 @@ function ResourceConsole({
                         className="fixed z-[300] w-40 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-background shadow-lg"
                         style={{ left: plusMenuFor.left, top: plusMenuFor.top }}
                       >
-                        <div className="border-b border-[hsl(var(--hairline))] px-3 py-1.5 text-[11px] text-muted-foreground">加几个副本？</div>
+                        <div className="border-b border-[hsl(var(--hairline))] px-3 py-1.5 text-[0.6875rem] text-muted-foreground">加几个副本？</div>
                         {[1, 2, 3].map((n) => (
                           <button
                             key={n}
@@ -3999,7 +3999,7 @@ function ResourceConsole({
                             onClick={() => { setPlusMenuFor(null); void onQuickReplica?.(profileId, n); }}
                           >
                             <span>{n} 个副本</span>
-                            <span className="text-[10px] text-muted-foreground">确认</span>
+                            <span className="text-[0.625rem] text-muted-foreground">确认</span>
                           </button>
                         ))}
                       </div>,
@@ -4025,7 +4025,7 @@ function ResourceConsole({
         ) : null}
       </div>
 
-      <div className="min-h-[620px] min-w-0">
+      <div className="min-h-[38.75rem] min-w-0">
         {selectedResource ? (
           <>
             <div className="flex min-w-0 items-start justify-between gap-3 border-b border-[hsl(var(--hairline))] px-5 py-4">
@@ -4304,7 +4304,7 @@ function ResourceConnection({
               </Button>
             ) : null}
           </div>
-          {row.help ? <div className="mt-2 text-[11px] leading-4 text-muted-foreground">{row.help}</div> : null}
+          {row.help ? <div className="mt-2 text-[0.6875rem] leading-4 text-muted-foreground">{row.help}</div> : null}
         </div>
       ))}
       {connectionMessage ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground">{connectionMessage}</div> : null}
@@ -4349,9 +4349,9 @@ function ResourceConnection({
             {externalEnabled ? '关闭公网' : '临时开启'}
           </Button>
         </div>
-        <div className="grid gap-2 md:grid-cols-[140px_minmax(0,1fr)]">
+        <div className="grid gap-2 md:grid-cols-[8.75rem_minmax(0,1fr)]">
           <label className="grid gap-1">
-            <span className="text-[11px] text-warn/80 /80">有效期（分钟）</span>
+            <span className="text-[0.6875rem] text-warn/80 /80">有效期（分钟）</span>
             <input
               value={ttlDraft}
               onChange={(event) => setTtlDraft(event.target.value)}
@@ -4361,11 +4361,11 @@ function ResourceConnection({
             />
           </label>
           <label className="grid gap-1">
-            <span className="text-[11px] text-warn/80 /80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
+            <span className="text-[0.6875rem] text-warn/80 /80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
             <textarea
               value={allowlistDraft}
               onChange={(event) => setAllowlistDraft(event.target.value)}
-              className="min-h-[64px] resize-y rounded-md border border-warn/30 bg-background px-2 py-1.5 font-mono text-xs outline-none focus:border-warn"
+              className="min-h-[4rem] resize-y rounded-md border border-warn/30 bg-background px-2 py-1.5 font-mono text-xs outline-none focus:border-warn"
               placeholder="203.0.113.10/32"
               spellCheck={false}
             />
@@ -4579,7 +4579,7 @@ function PlannedResourceWorkbenchPanel({ resource, adapter }: { resource: Branch
             <div className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
               {adapter.treeLabel}，右上执行 {adapter.consoleLabel}，右下查看{adapter.resultModes.map(resultModeLabel).join(' / ')}。{adapter.note}
             </div>
-            <div className="mt-2 font-mono text-[11px] text-muted-foreground">
+            <div className="mt-2 font-mono text-[0.6875rem] text-muted-foreground">
               {resource.displayName} · :{resource.port || resource.containerPort || '?'}
             </div>
           </div>
@@ -4595,7 +4595,7 @@ function PlannedResourceWorkbenchPanel({ resource, adapter }: { resource: Branch
         {adapter.customPanels.length > 0 ? (
           <div className="mt-3 flex flex-wrap gap-2">
             {adapter.customPanels.map((panel) => (
-              <span key={panel} className="rounded border border-[hsl(var(--hairline))] bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">
+              <span key={panel} className="rounded border border-[hsl(var(--hairline))] bg-background/60 px-2 py-1 font-mono text-[0.6875rem] text-muted-foreground">
                 {panel}
               </span>
             ))}
@@ -4734,7 +4734,7 @@ function ResourceWorkbenchLauncher({
             {title}
           </div>
           <div className="mt-1 text-xs text-muted-foreground">{description}</div>
-          <div className="mt-2 font-mono text-[11px] text-muted-foreground">
+          <div className="mt-2 font-mono text-[0.6875rem] text-muted-foreground">
             {resource.displayName} · :{resource.port || resource.containerPort || '?'}
           </div>
         </div>
@@ -4767,7 +4767,7 @@ function ResourceWorkbenchModal({
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold">{title}</div>
-            <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{subtitle}</div>
+            <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">{subtitle}</div>
           </div>
           <Button type="button" size="sm" variant="ghost" onClick={onClose} aria-label="关闭工作台">
             <X />
@@ -4960,19 +4960,19 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
         subtitle={`${databaseLabel}.${selectedCollection || '-'} · ${resource.displayName}`}
         onClose={() => { setWorkbenchOpen(false); onWorkbenchDismiss?.(); }}
       >
-        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[20rem_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-xs font-semibold">数据库 / collection</div>
-                  <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
+                  <div className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
                 </div>
                 <Button type="button" size="sm" variant="outline" disabled={databasesState.status === 'loading'} onClick={() => void loadDatabases()}>
                   <RefreshCw className={databasesState.status === 'loading' ? 'animate-spin' : ''} />
                 </Button>
               </div>
-              {configuredDatabaseNotice ? <div className="mt-2 rounded-md border border-[hsl(var(--hairline))] bg-background/55 px-2 py-1.5 text-[11px] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
+              {configuredDatabaseNotice ? <div className="mt-2 rounded-md border border-[hsl(var(--hairline))] bg-background/55 px-2 py-1.5 text-[0.6875rem] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
             </div>
             <div className="min-h-0 max-h-[40vh] overflow-auto p-2 lg:max-h-none lg:flex-1">
               {databasesState.status === 'error' ? (
@@ -4997,13 +4997,13 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
                           <span className="text-muted-foreground">{activeDatabase ? '▾' : '▸'}</span>
                           <Database className="h-3.5 w-3.5 shrink-0 text-ok" />
                           <span className="min-w-0 flex-1 truncate font-mono">{db.name}</span>
-                          {isConfigured ? <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">默认</span> : null}
-                          {isSystem ? <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">系统</span> : null}
+                          {isConfigured ? <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[0.625rem] text-primary">默认</span> : null}
+                          {isSystem ? <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">系统</span> : null}
                         </button>
                         {activeDatabase ? (
                           <div className="ml-6 mt-1 space-y-1 border-l border-[hsl(var(--hairline))] pl-2">
                             {collectionsState.status === 'error' ? (
-                              <div className="px-2 py-2 text-[11px] leading-5 text-destructive">{collectionsState.message}</div>
+                              <div className="px-2 py-2 text-[0.6875rem] leading-5 text-destructive">{collectionsState.message}</div>
                             ) : collectionsState.collections.length > 0 ? collectionsState.collections.map((collection) => {
                               const activeCollection = collection.name === selectedCollection;
                               return (
@@ -5022,7 +5022,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
                                 </button>
                               );
                             }) : (
-                              <div className="px-2 py-2 text-[11px] text-muted-foreground">
+                              <div className="px-2 py-2 text-[0.6875rem] text-muted-foreground">
                                 {collectionsState.status === 'loading' ? '读取 collection...' : '暂无 collection'}
                               </div>
                             )}
@@ -5038,12 +5038,12 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
             </div>
           </aside>
 
-          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[245px_minmax(0,1fr)]">
+          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_minmax(0,1fr)]">
             <section className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-background/30">
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold">MongoDB Console<span className="ml-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">只读</span></div>
-                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
+                  <div className="text-xs font-semibold">MongoDB Console<span className="ml-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">只读</span></div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
                 </div>
                 <Button type="button" size="sm" disabled={!selectedDatabase || !command.trim() || commandState.status === 'loading'} onClick={() => void runMongoCommand()}>
                   {commandState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
@@ -5068,7 +5068,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
                   minHeight={120}
                   placeholder="db.getCollection('users').find({}).limit(50);"
                 />
-                <div className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                <div className="mt-2 text-[0.6875rem] leading-5 text-muted-foreground">
                   命令行仅执行只读查询（find/findOne/countDocuments/distinct）。写操作请用下方「结构化写入」面板——
                   服务端固定 action + JSON 参数、不 eval 命令文本，从根上杜绝注入。
                 </div>
@@ -5117,7 +5117,7 @@ function MongoStructuredWritePanel({
   onSubmit: () => void;
 }): JSX.Element {
   const inputCls = 'w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-2 py-1.5 text-xs outline-none focus:border-primary';
-  const jsonCls = `${inputCls} min-h-[64px] font-mono leading-5`;
+  const jsonCls = `${inputCls} min-h-[4rem] font-mono leading-5`;
   const canSubmit = !disabled && state.status !== 'loading' && (form.collection || selectedCollection).trim().length > 0 && form.confirm.trim().length > 0;
   return (
     <details className="mt-3 rounded-md border border-warn/35 bg-warn/5">
@@ -5144,18 +5144,18 @@ function MongoStructuredWritePanel({
         </div>
         {form.action === 'insertOne' ? (
           <label className="block">
-            <span className="text-[11px] text-muted-foreground">document (JSON)</span>
+            <span className="text-[0.6875rem] text-muted-foreground">document (JSON)</span>
             <textarea className={jsonCls} value={form.document} onChange={(e) => onFormChange({ ...form, document: e.target.value })} spellCheck={false} />
           </label>
         ) : (
           <label className="block">
-            <span className="text-[11px] text-muted-foreground">filter (JSON){form.action === 'deleteMany' ? '（deleteMany 必须非空）' : ''}</span>
+            <span className="text-[0.6875rem] text-muted-foreground">filter (JSON){form.action === 'deleteMany' ? '（deleteMany 必须非空）' : ''}</span>
             <textarea className={jsonCls} value={form.filter} onChange={(e) => onFormChange({ ...form, filter: e.target.value })} spellCheck={false} />
           </label>
         )}
         {form.action === 'updateMany' ? (
           <label className="block">
-            <span className="text-[11px] text-muted-foreground">update (JSON，含 $set 等操作符)</span>
+            <span className="text-[0.6875rem] text-muted-foreground">update (JSON，含 $set 等操作符)</span>
             <textarea className={jsonCls} value={form.update} onChange={(e) => onFormChange({ ...form, update: e.target.value })} spellCheck={false} />
           </label>
         ) : null}
@@ -5172,9 +5172,9 @@ function MongoStructuredWritePanel({
           </Button>
         </div>
         {state.status === 'error' ? (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">{state.message}</div>
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[0.6875rem] text-destructive">{state.message}</div>
         ) : state.status === 'ok' ? (
-          <pre className="max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background/40 p-2 font-mono text-[11px] leading-5">{JSON.stringify(state.result, null, 2)}</pre>
+          <pre className="max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background/40 p-2 font-mono text-[0.6875rem] leading-5">{JSON.stringify(state.result, null, 2)}</pre>
         ) : null}
       </div>
     </details>
@@ -5212,11 +5212,11 @@ function MongoDocumentsView({
   const activeMode: WorkbenchResultMode = viewMode === 'table' && !hasDocuments ? 'output' : viewMode;
 
   return (
-    <div className="grid min-h-[300px] grid-rows-[auto_minmax(0,1fr)] bg-background/20 lg:min-h-0">
+    <div className="grid min-h-[18.75rem] grid-rows-[auto_minmax(0,1fr)] bg-background/20 lg:min-h-0">
       <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] bg-background/30 px-3 py-2">
         <div className="min-w-0">
           <div className="text-xs font-semibold">结果</div>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+          <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">
             {collection || '-'} · {hasDocuments ? `${state.documents.length} rows` : 'command output'}
           </div>
         </div>
@@ -5225,7 +5225,7 @@ function MongoDocumentsView({
             <button
               key={mode}
               type="button"
-              className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[11px] transition-colors ${activeMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[0.6875rem] transition-colors ${activeMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               onClick={() => onViewModeChange(mode)}
             >
               {mode === 'table' ? <Table2 className="h-3.5 w-3.5" /> : mode === 'json' ? <Braces className="h-3.5 w-3.5" /> : <Terminal className="h-3.5 w-3.5" />}
@@ -5267,7 +5267,7 @@ function MongoDocumentTable({
   const columns = mongoDocumentColumns(documents);
   return (
     <div className="min-h-0 overflow-auto">
-      <table className="w-full min-w-[920px] text-left text-xs">
+      <table className="w-full min-w-[57.5rem] text-left text-xs">
         <thead className="sticky top-0 z-10 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
           <tr>
             <th className="w-12 px-3 py-2 font-medium">#</th>
@@ -5291,7 +5291,7 @@ function MongoDocumentTable({
               >
                 <td className="px-3 py-2 font-mono text-muted-foreground">{rowIndex + 1}</td>
                 {columns.map((column) => (
-                  <td key={`${rowIndex}-${column}`} className="max-w-[280px] truncate px-3 py-2 font-mono text-muted-foreground" title={mongoValuePreview(row[column])}>
+                  <td key={`${rowIndex}-${column}`} className="max-w-[17.5rem] truncate px-3 py-2 font-mono text-muted-foreground" title={mongoValuePreview(row[column])}>
                     {mongoValuePreview(row[column])}
                   </td>
                 ))}
@@ -5419,13 +5419,13 @@ function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
 
   return (
     <div className="grid gap-3 text-sm">
-      <div className="grid min-h-[420px] gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
+      <div className="grid min-h-[26.25rem] gap-3 lg:grid-cols-[17.5rem_minmax(0,1fr)]">
         <aside className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
           <div className="grid gap-2 border-b border-[hsl(var(--hairline))] px-3 py-3">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xs font-semibold">Key Browser</div>
-                <div className="mt-0.5 text-[11px] text-muted-foreground">SCAN · 只读</div>
+                <div className="mt-0.5 text-[0.6875rem] text-muted-foreground">SCAN · 只读</div>
               </div>
               <Button type="button" size="sm" variant="outline" disabled={keysState.status === 'loading'} onClick={() => void loadKeys('0')}>
                 <RefreshCw className={keysState.status === 'loading' ? 'animate-spin' : ''} />
@@ -5441,7 +5441,7 @@ function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
               <Button type="button" size="sm" variant="outline" onClick={() => void loadKeys('0')}>过滤</Button>
             </div>
           </div>
-          <div className="max-h-[340px] overflow-auto p-2">
+          <div className="max-h-[21.25rem] overflow-auto p-2">
             {keysState.status === 'error' ? (
               <div className="px-2 py-3 text-xs leading-5 text-destructive">{keysState.message}</div>
             ) : keysState.keys.length > 0 ? (
@@ -5456,8 +5456,8 @@ function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
                       onClick={() => setSelectedKey(item.key)}
                     >
                       <span className="min-w-0 truncate font-mono">{item.key}</span>
-                      <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[10px]">{item.type}</span>
-                      <span className="col-span-2 text-[11px] text-muted-foreground">
+                      <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.625rem]">{item.type}</span>
+                      <span className="col-span-2 text-[0.6875rem] text-muted-foreground">
                         TTL {formatRedisTtl(item.ttl)} · {item.memoryBytes ? formatBytes(item.memoryBytes) : 'memory -'}
                       </span>
                     </button>
@@ -5491,7 +5491,7 @@ function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
                   <MetricChip label="Memory" value={detailState.detail.memoryBytes ? formatBytes(detailState.detail.memoryBytes) : '-'} />
                   <MetricChip label="Preview" value={detailState.detail.preview.kind} />
                 </div>
-                <pre className="max-h-[260px] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background p-3 font-mono text-xs leading-5 text-muted-foreground">
+                <pre className="max-h-[16.25rem] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background p-3 font-mono text-xs leading-5 text-muted-foreground">
                   {formatRedisPreview(detailState.detail.preview)}
                 </pre>
               </div>
@@ -5531,7 +5531,7 @@ function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
 function MetricChip({ label, value }: { label: string; value: string }): JSX.Element {
   return (
     <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/60 px-3 py-2">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-[0.6875rem] text-muted-foreground">{label}</div>
       <div className="mt-1 truncate font-mono text-xs">{value}</div>
     </div>
   );
@@ -5772,13 +5772,13 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
         subtitle={`${tablesState.database || '-'}${selectedTable ? `.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : ''} · ${resource.displayName}`}
         onClose={() => { setWorkbenchOpen(false); onWorkbenchDismiss?.(); }}
       >
-        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[20rem_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-xs font-semibold">{adapter.treeLabel}</div>
-                  <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{resource.displayName} · {tablesState.database || '-'}</div>
+                  <div className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">{resource.displayName} · {tablesState.database || '-'}</div>
                 </div>
                 <Button type="button" size="sm" variant="outline" disabled={tablesState.status === 'loading'} onClick={() => void loadTables()}>
                   <RefreshCw className={tablesState.status === 'loading' ? 'animate-spin' : ''} />
@@ -5809,7 +5809,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                         >
                           <Table2 className="h-3.5 w-3.5 shrink-0" />
                           <span className="min-w-0 flex-1 truncate font-mono">{table.schema && resource.runtime === 'PostgreSQL' ? `${table.schema}.${table.name}` : table.name}</span>
-                          <span className="text-[10px] text-muted-foreground">{table.type === 'VIEW' ? 'view' : 'table'}</span>
+                          <span className="text-[0.625rem] text-muted-foreground">{table.type === 'VIEW' ? 'view' : 'table'}</span>
                         </button>
                       );
                     })}
@@ -5821,12 +5821,12 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
             </div>
           </aside>
 
-          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[245px_minmax(0,1fr)]">
+          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_minmax(0,1fr)]">
             <section className="border-b border-[hsl(var(--hairline))] bg-background/30">
               <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold">{adapter.consoleLabel}</div>
-                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : tablesState.database || '-'}</div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : tablesState.database || '-'}</div>
                 </div>
                 <Button type="button" size="sm" disabled={!sql.trim() || resultState.status === 'loading'} onClick={() => void runSqlCommand()}>
                   {resultState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
@@ -5865,7 +5865,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
               <summary className="cursor-pointer text-xs font-semibold">初始化 / 迁移 / 重试</summary>
               <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                 <div className="space-y-2">
-                  <div className="text-[11px] font-medium text-muted-foreground">执行初始化 SQL</div>
+                  <div className="text-[0.6875rem] font-medium text-muted-foreground">执行初始化 SQL</div>
                   <textarea
                     className="min-h-28 w-full resize-y rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={initSql}
@@ -5883,7 +5883,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <div className="text-[11px] font-medium text-muted-foreground">执行迁移命令</div>
+                  <div className="text-[0.6875rem] font-medium text-muted-foreground">执行迁移命令</div>
                   <input
                     className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-background px-3 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={migrationCommand}
@@ -5896,7 +5896,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   </Button>
                   {initError ? <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{initError}</div> : null}
                   {initResult ? (
-                    <pre className="max-h-32 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background p-2 font-mono text-[11px] leading-5 text-muted-foreground">
+                    <pre className="max-h-32 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background p-2 font-mono text-[0.6875rem] leading-5 text-muted-foreground">
                       {(initResult.error ? `[exit ${initResult.exitCode ?? 1}]\n${initResult.error}\n\n` : '') + (initResult.output || (initResult.ok === false ? '执行失败' : '执行完成'))}
                       {initResult.truncated ? '\n...(输出已截断)' : ''}
                     </pre>
@@ -5936,11 +5936,11 @@ function DbResultTable({
       : emptyLabel;
 
   return (
-    <div className="grid min-h-[300px] grid-rows-[auto_minmax(0,1fr)] bg-background/20 lg:min-h-0">
+    <div className="grid min-h-[18.75rem] grid-rows-[auto_minmax(0,1fr)] bg-background/20 lg:min-h-0">
       <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] bg-background/30 px-3 py-2">
         <div className="min-w-0">
           <div className="text-xs font-semibold">结果</div>
-          <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+          <div className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">
             {hasRows ? `${state.result?.rowCount || 0} rows` : 'command output'}
           </div>
         </div>
@@ -5949,7 +5949,7 @@ function DbResultTable({
             <button
               key={mode}
               type="button"
-              className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[11px] transition-colors ${activeMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[0.6875rem] transition-colors ${activeMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               onClick={() => onViewModeChange(mode)}
             >
               {mode === 'table' ? <Table2 className="h-3.5 w-3.5" /> : mode === 'json' ? <Braces className="h-3.5 w-3.5" /> : <Terminal className="h-3.5 w-3.5" />}
@@ -5963,7 +5963,7 @@ function DbResultTable({
         <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />执行中</div>
       ) : activeMode === 'table' && hasRows ? (
         <div className="min-h-0 overflow-auto">
-          <table className="w-full min-w-[720px] text-left text-xs">
+          <table className="w-full min-w-[45rem] text-left text-xs">
             <thead className="sticky top-0 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
               <tr>
                 {state.result!.columns.map((column) => <th key={column} className="px-3 py-2 font-medium">{column}</th>)}
@@ -5977,7 +5977,7 @@ function DbResultTable({
                   className="border-t border-[hsl(var(--hairline))] hover:bg-[hsl(var(--surface-sunken))]/70"
                 >
                   {state.result!.columns.map((column, columnIndex) => (
-                    <td key={`${column}-${columnIndex}`} className="max-w-[260px] truncate px-3 py-2 font-mono text-muted-foreground" title={row[columnIndex] || ''}>
+                    <td key={`${column}-${columnIndex}`} className="max-w-[16.25rem] truncate px-3 py-2 font-mono text-muted-foreground" title={row[columnIndex] || ''}>
                       {row[columnIndex] || 'NULL'}
                     </td>
                   ))}
@@ -6151,7 +6151,7 @@ function ResourceBackupsPanel({
         <div className="mb-2 flex items-center justify-between gap-3">
           <div>
             <div className="text-xs font-semibold text-muted-foreground">备份文件</div>
-            {backupState.database ? <div className="mt-1 font-mono text-[11px] text-muted-foreground">{backupState.database}</div> : null}
+            {backupState.database ? <div className="mt-1 font-mono text-[0.6875rem] text-muted-foreground">{backupState.database}</div> : null}
           </div>
           <div className="flex items-center gap-2">
             <Button type="button" size="sm" variant="outline" disabled={backupState.status === 'loading'} onClick={() => void loadBackups()}>
@@ -6321,7 +6321,7 @@ function ResourceMetricsPanel({ resource }: { resource: BranchResource }): JSX.E
           <div key={metric.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
             <div className="text-xs text-muted-foreground">{metric.label}</div>
             <div className="mt-1 font-mono text-sm">{metric.value}</div>
-            {'sub' in metric && metric.sub ? <div className="mt-0.5 text-[10px] text-muted-foreground">{metric.sub}</div> : null}
+            {'sub' in metric && metric.sub ? <div className="mt-0.5 text-[0.625rem] text-muted-foreground">{metric.sub}</div> : null}
           </div>
         ))}
       </div>
@@ -6392,7 +6392,7 @@ function ResourceLogsPanel({ resource }: { resource: BranchResource }): JSX.Elem
         </Button>
       </div>
       {logs ? (
-        <pre className="max-h-[420px] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3 font-mono text-[11px] leading-5 text-foreground">
+        <pre className="max-h-[26.25rem] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3 font-mono text-[0.6875rem] leading-5 text-foreground">
           {logs}
         </pre>
       ) : (
@@ -6507,7 +6507,7 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
               <textarea
                 value={dangerSql}
                 onChange={(event) => setDangerSql(event.target.value)}
-                className="min-h-[84px] resize-y rounded-md border border-destructive/25 bg-background px-3 py-2 font-mono text-xs outline-none focus:border-destructive"
+                className="min-h-[5.25rem] resize-y rounded-md border border-destructive/25 bg-background px-3 py-2 font-mono text-xs outline-none focus:border-destructive"
                 placeholder="INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE"
                 spellCheck={false}
               />
@@ -6582,7 +6582,7 @@ function ServiceLogsPanel({
             <span className="flex min-w-0 items-center gap-2">
               {replica ? (
                 <>
-                  <span className="shrink-0 rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">复制集副本</span>
+                  <span className="shrink-0 rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[0.625rem] font-semibold text-indigo-600 dark:text-indigo-400">复制集副本</span>
                   <span className="truncate">{replica.pid} · <b className="font-mono text-foreground">{replica.memberId}</b> 的容器日志</span>
                 </>
               ) : (
@@ -6601,7 +6601,7 @@ function ServiceLogsPanel({
               {state.message}
             </div>
           ) : (
-            <pre className={`${serviceLogViewportClass} overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[11px] leading-5 text-muted-foreground`}>
+            <pre className={`${serviceLogViewportClass} overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[0.6875rem] leading-5 text-muted-foreground`}>
               {state.status === 'loading' && isCurrent
                 ? '正在读取 docker logs...'
                 : visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
@@ -6692,7 +6692,7 @@ function HttpLogsPanel({ events, query }: { events: DrawerActivityEvent[]; query
               <span className="font-mono text-muted-foreground">{duration}</span>
               <span className="text-muted-foreground">{event.ts ? new Date(event.ts).toLocaleTimeString() : ''}</span>
               {!ok && (event.errorSummary || event.requestId) ? (
-                <div className="col-span-5 rounded border border-destructive/25 bg-destructive/10 px-2 py-1 font-mono text-[11px] leading-5 text-destructive">
+                <div className="col-span-5 rounded border border-destructive/25 bg-destructive/10 px-2 py-1 font-mono text-[0.6875rem] leading-5 text-destructive">
                   {event.errorSummary || '后端未返回错误摘要'}
                   {event.requestId ? <span className="ml-2 text-destructive/75">requestId={event.requestId}</span> : null}
                 </div>
@@ -6830,7 +6830,7 @@ function VariablesPanel({
           <RefreshCw />刷新
         </Button>
       </header>
-      <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-4 py-2 text-[11px] leading-5 text-muted-foreground">
+      <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-4 py-2 text-[0.6875rem] leading-5 text-muted-foreground">
         当前编辑范围:<span className="mx-1 rounded border border-warn/35 bg-warn-soft px-1.5 py-0.5 font-medium text-warn">仅本分支</span>
         。分支覆盖优先级最高，左侧出现橙色“分支覆盖”即表示该 key 被当前分支改写。
         项目级默认值仍在 <a className="text-primary underline-offset-2 hover:underline" href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>项目环境变量</a> 中维护。
@@ -6884,7 +6884,7 @@ function VariablesPanel({
         </ul>
       )}
 
-      <footer className="border-t border-[hsl(var(--hairline))] px-4 py-2 text-[11px] leading-5 text-muted-foreground">
+      <footer className="border-t border-[hsl(var(--hairline))] px-4 py-2 text-[0.6875rem] leading-5 text-muted-foreground">
         优先级:project &gt; global &gt; mirror &gt; cds-derived &gt; cds-builtin。同名 key 后写覆盖前写。
         敏感值默认隐藏,点眼睛图标按条解锁。
       </footer>
@@ -6930,7 +6930,7 @@ function EnvRow({
     : displayValue;
   return (
     <li className="flex items-center gap-3 px-4 py-2 text-sm">
-      <span className={`inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[10px] font-medium ${envSourceClass(entry.source)}`}>
+      <span className={`inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[0.625rem] font-medium ${envSourceClass(entry.source)}`}>
         {entry.source === 'branch' ? <AlertCircle className="mr-1 h-3 w-3" aria-hidden /> : null}
         {envSourceLabel(entry.source)}
       </span>
@@ -7138,7 +7138,7 @@ function SettingsPanel({
                     </div>
                   </div>
                   <select
-                    className="h-9 min-w-[170px] rounded-md border border-input bg-background px-3 text-sm"
+                    className="h-9 min-w-[10.625rem] rounded-md border border-input bg-background px-3 text-sm"
                     value={activeMode}
                     onChange={(event) => onSetProfileDeployMode(profile, event.target.value)}
                     disabled={entries.length === 0 || modeSavingProfileId === profile.profileId}
@@ -7152,7 +7152,7 @@ function SettingsPanel({
                     ))}
                   </select>
                   <select
-                    className="h-9 min-w-[190px] rounded-md border border-input bg-background px-3 text-sm"
+                    className="h-9 min-w-[11.875rem] rounded-md border border-input bg-background px-3 text-sm"
                     value={dbScopeOverride ?? ''}
                     onChange={(event) => onSetProfileDbScope(profile, event.target.value as '' | 'shared' | 'per-branch')}
                     disabled={modeSavingProfileId === profile.profileId}
@@ -7425,7 +7425,7 @@ function MetricBar({
       <div className="h-1.5 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]">
         <div className={`h-full ${colorClass} transition-[width] duration-500`} style={{ width: `${pct}%` }} />
       </div>
-      {sub ? <div className="mt-0.5 text-[10px] text-muted-foreground">{sub}</div> : null}
+      {sub ? <div className="mt-0.5 text-[0.625rem] text-muted-foreground">{sub}</div> : null}
     </div>
   );
 }

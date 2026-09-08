@@ -566,6 +566,362 @@ describe('Branch Routes', () => {
    * 项目档与分支档、以及非法值与撞名被拦。判据都断行为（state 与 /subdomain-aliases
    * 的入口清单），不断源码字面量。
    */
+  /*
+   * Agent 极速版门禁（2026-09-08）。判定在 agent-prebuilt-gate.ts；这里只证明四个入口都接上了线，
+   * 并且开关缺省关闭时老项目零变化（predicate-and-wiring-discipline 形状 2：删掉接线必须变红）。
+   * 测试中间件把 X-Test-Key 盖成 cdsProjectKey，等价于机器凭据；不带 key 就是真人 cookie 路径。
+   */
+  describe('Agent 极速版门禁 agentPrebuiltOnly', () => {
+    function seedGateProject(agentPrebuiltOnly: boolean): void {
+      const now = new Date().toISOString();
+      stateService.addProject({ id: 'proj-a', slug: 'a', name: 'A', kind: 'git', createdAt: now, updatedAt: now, agentPrebuiltOnly });
+      stateService.addBuildProfile({
+        id: 'api', projectId: 'proj-a', name: 'API', dockerImage: 'node:20', command: 'pnpm build && node server.js', workDir: '.', containerPort: 5000,
+        activeDeployMode: 'static',
+        deployModes: {
+          dev: { label: '开发模式', command: 'pnpm dev' },
+          static: { label: '静态部署', command: 'pnpm build && node server.js' },
+          express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}' },
+        },
+      });
+      stateService.addBranch({
+        id: 'b1', projectId: 'proj-a', branch: 'feat/x', worktreePath: '/tmp/wt/b1', services: {},
+        status: 'idle', createdAt: now,
+      });
+    }
+
+    it('机器凭据部署源码模式分支被 409 拒绝，响应说清被拦服务与可切模式', async () => {
+      seedGateProject(true);
+      const res = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(res.status).toBe(409);
+      const body = res.body as any;
+      expect(body.error).toBe('agent_prebuilt_only');
+      expect(body.message).toContain('API（当前 静态部署，可切 express）');
+      expect(body.message).toContain('cdscli branch set-mode b1');
+      expect(body.violations).toMatchObject([{ profileId: 'api', modeId: 'static', prebuiltModes: ['express'] }]);
+    });
+
+    it('内部系统派发不带机器凭据（X-CDS-Internal 走 loopback 旁路），不受门禁；机器凭据自己加 X-CDS-Trigger 换不来豁免', async () => {
+      seedGateProject(true);
+      const internal = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-CDS-Internal': '1', 'X-CDS-Trigger': 'webhook' });
+      expect(internal.status).not.toBe(409);
+      const spoofed = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A', 'X-CDS-Trigger': 'webhook' });
+      expect(spoofed.status).toBe(409);
+    });
+
+    it('没存 projectId 的老分支归 default 项目，default 开了门禁同样拦（Codex 第二轮 P1）', async () => {
+      const now = new Date().toISOString();
+      const def = stateService.getProject('default');
+      if (def) def.agentPrebuiltOnly = true;
+      else stateService.addProject({ id: 'default', slug: 'default', name: 'default', kind: 'git', createdAt: now, updatedAt: now, agentPrebuiltOnly: true });
+      stateService.addBuildProfile({
+        id: 'legacy-api', projectId: 'default', name: 'Legacy API', dockerImage: 'node:20', command: 'pnpm build', workDir: '.', containerPort: 5000,
+        deployModes: { static: { label: '静态' }, express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}' } },
+      });
+      stateService.addBranch({ id: 'legacy-b', branch: 'legacy', worktreePath: '/tmp/wt/legacy-b', services: {}, status: 'idle', createdAt: now } as any);
+      const res = await request(server, 'POST', '/api/branches/legacy-b/deploy', {}, { 'x-ai-access-key': 'agent-key' });
+      expect(res.status).toBe(409);
+      expect((res.body as any).error).toBe('agent_prebuilt_only');
+    });
+
+    it('带 versionId 重放合规历史版本时按版本物化后的清单判，分支基线已切回源码模式也不误拦（Codex 第七轮 P2）', async () => {
+      seedGateProject(true);
+      const branch = stateService.getBranch('b1')!;
+      const profile = stateService.getBuildProfile('api')!;
+      // 历史版本是当年极速版跑出来的不可变镜像；此刻分支基线仍是 static（源码模式）。
+      const version = deploymentVersionService.create({
+        projectId: 'proj-a',
+        branchId: 'b1',
+        commitSha: 'abcdef1234567890abcdef1234567890abcdef12',
+        configHash: 'cfg',
+        profiles: [{ ...profile, prebuiltImage: true, dockerImage: 'ghcr.io/x/api:sha-abcdef1234567890abcdef1234567890abcdef12' }],
+        branch,
+        createdByRunId: 'run-0',
+      });
+      expect(version.profiles[0]).toMatchObject({ reusable: true, artifactKind: 'prebuilt-image' });
+      const plain = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(plain.status).toBe(409);
+      const replay = await request(server, 'POST', '/api/branches/b1/deploy', { versionId: version.id }, { 'X-Test-Key': 'A' });
+      expect(replay.status).not.toBe(409);
+      expect((replay.body as any)?.error).not.toBe('agent_prebuilt_only');
+      // 分支此刻选了显式 prebuilt: false 的模式：版本重放执行时不套分支覆盖，判定也不能套（Codex 第八轮 P2）
+      profile.deployModes!.legacy = { label: '源码', prebuilt: false, command: 'pnpm dev' };
+      stateService.getBranch('b1')!.profileOverrides = { api: { activeDeployMode: 'legacy' } } as any;
+      const overridden = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(overridden.status).toBe(409);
+      const replayOverridden = await request(server, 'POST', '/api/branches/b1/deploy', { versionId: version.id }, { 'X-Test-Key': 'A' });
+      expect(replayOverridden.status).not.toBe(409);
+      expect((replayOverridden.body as any)?.error).not.toBe('agent_prebuilt_only');
+    });
+
+    it('同一 commit 自动复用可复用版本时按物化清单判：managed 配置有产物版本就放行，没有就 409（Codex 第八轮 P2）', async () => {
+      seedGateProject(true);
+      const commitSha = 'abcdef1234567890abcdef1234567890abcdef12';
+      const profile = stateService.getBuildProfile('api')!;
+      profile.dockerImage = 'cds-managed/api:sha-abcdef1234567890abcdef1234567890abcdef12';
+      profile.managedBuild = { stack: 'node', installCommand: 'pnpm i', buildCommand: 'pnpm build', startCommand: 'node server.js', artifactImage: 'cds-managed/api' };
+      // 真人先部署一次，拿到路由为当前配置算出的 configHash（版本能否自动复用就看它）
+      const human = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha });
+      const runId = String(human.headers['x-cds-deployment-run-id'] || '');
+      expect(runId).toMatch(/^run_|^dr_|./);
+      const configHash = deploymentRunService.get(runId)?.configHash;
+      expect(configHash).toBeTruthy();
+      const branch = stateService.getBranch('b1')!;
+      const version = deploymentVersionService.create({
+        projectId: 'proj-a',
+        branchId: 'b1',
+        commitSha,
+        configHash: configHash!,
+        profiles: [stateService.getBuildProfile('api')!],
+        branch: { ...branch, services: {} },
+        createdByRunId: runId,
+      });
+      expect(version.profiles[0]).toMatchObject({ reusable: true, artifactKind: 'managed-image' });
+      const noSha = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(noSha.status).toBe(409);
+      expect((noSha.body as any).error).toBe('agent_prebuilt_only');
+      const otherSha = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha: '1111111111111111111111111111111111111111' }, { 'X-Test-Key': 'A' });
+      expect(otherSha.status).toBe(409);
+      const reuse = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha }, { 'X-Test-Key': 'A' });
+      expect(reuse.status).not.toBe(409);
+      expect((reuse.body as any)?.error).not.toBe('agent_prebuilt_only');
+    });
+
+    it('新建构建配置带 managedBuild 在门禁下拒绝机器凭据；不带的照常创建，真人不受限（Codex 第九轮 P1）', async () => {
+      seedGateProject(true);
+      const managed = {
+        id: 'worker', projectId: 'proj-a', name: 'Worker', dockerImage: 'node:20', containerPort: 6000,
+        managedBuild: { stack: 'node', installCommand: 'pnpm i', buildCommand: 'pnpm build', startCommand: 'node worker.js', artifactImage: 'cds-managed/worker' },
+      };
+      const machine = await request(server, 'POST', '/api/build-profiles', managed, { 'X-Test-Key': 'A' });
+      expect(machine.status).toBe(409);
+      expect((machine.body as any).error).toBe('agent_prebuilt_only');
+      expect((machine.body as any).message).toContain('managedBuild');
+      expect(stateService.getBuildProfile('worker')).toBeUndefined();
+      const plain = await request(server, 'POST', '/api/build-profiles', {
+        id: 'worker-img', projectId: 'proj-a', name: 'Worker Image', dockerImage: 'ghcr.io/x/worker:sha-${CDS_COMMIT_SHA}', containerPort: 6000, prebuiltImage: true,
+      }, { 'X-Test-Key': 'A' });
+      expect(plain.status).toBe(201);
+      const human = await request(server, 'POST', '/api/build-profiles', managed);
+      expect(human.status).toBe(201);
+      expect(stateService.getBuildProfile('worker')!.managedBuild).toBeDefined();
+    });
+
+    it('带空白的模式名按将要落盘的原值判：分支覆盖与通用 PUT 写 " express " 都 409，精确值放行（Codex 第十轮 P1）', async () => {
+      seedGateProject(true);
+      const padded = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: ' express ' }, { 'X-Test-Key': 'A' });
+      expect(padded.status).toBe(409);
+      expect((padded.body as any).error).toBe('agent_prebuilt_only');
+      expect(stateService.getBranch('b1')!.profileOverrides?.api).toBeUndefined();
+      const exact = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'express' }, { 'X-Test-Key': 'A' });
+      expect(exact.status).toBe(200);
+      expect(stateService.getBranch('b1')!.profileOverrides?.api?.activeDeployMode).toBe('express');
+      const paddedProfile = await request(server, 'PUT', '/api/build-profiles/api', { activeDeployMode: ' express ' }, { 'X-Test-Key': 'A' });
+      expect(paddedProfile.status).toBe(409);
+      expect(stateService.getBuildProfile('api')!.activeDeployMode).toBe('static');
+    });
+
+    it('bulk-set-modes 批量改写模式定义在门禁下拒绝机器凭据，真人照常（Codex 第二轮 P1）', async () => {
+      seedGateProject(true);
+      const body = { profileIds: ['api'], strategy: 'replace', modes: { dev: { label: '开发', command: 'pnpm dev' } } };
+      const machine = await request(server, 'POST', '/api/build-profiles/bulk-set-modes', body, { 'X-Test-Key': 'A' });
+      expect(machine.status).toBe(409);
+      expect((machine.body as any).error).toBe('agent_prebuilt_only');
+      expect(stateService.getBuildProfile('api')!.deployModes!.express.prebuilt).toBe(true);
+      const human = await request(server, 'POST', '/api/build-profiles/bulk-set-modes', body);
+      expect(human.status).toBe(200);
+      expect(stateService.getBuildProfile('api')!.deployModes!.express).toBeUndefined();
+      // 只命中未门禁项目的批量请求不被无关的门禁项目拦下（Codex 第五轮 P2）
+      const now2 = new Date().toISOString();
+      stateService.addProject({ id: 'proj-free', slug: 'free', name: 'Free', kind: 'git', createdAt: now2, updatedAt: now2 });
+      stateService.addBuildProfile({ id: 'py', projectId: 'proj-free', name: 'Py', dockerImage: 'python:3.12', command: 'python app.py', workDir: '.', containerPort: 8000 });
+      const filtered = await request(server, 'POST', '/api/build-profiles/bulk-set-modes', { filter: 'python', strategy: 'merge', modes: { dev: { label: '开发', command: 'python app.py' } } }, { 'X-Test-Key': 'A' });
+      expect(filtered.status).toBe(200);
+      expect(stateService.getBuildProfile('py')!.deployModes!.dev).toBeDefined();
+    });
+
+    it('开关关闭（缺省）时机器凭据部署源码模式分支不被门禁拦', async () => {
+      seedGateProject(false);
+      const res = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(res.status).not.toBe(409);
+    });
+
+    it('机器凭据 set-mode：写 express 放行，写 dev 拒绝，清空回源码基线也拒绝', async () => {
+      seedGateProject(true);
+      const ok = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'express' }, { 'X-Test-Key': 'A' });
+      expect(ok.status).toBe(200);
+      expect(stateService.getBranchProfileOverride('b1', 'api')?.activeDeployMode).toBe('express');
+
+      const dev = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'dev' }, { 'X-Test-Key': 'A' });
+      expect(dev.status).toBe(409);
+      expect((dev.body as any).error).toBe('agent_prebuilt_only');
+      expect((dev.body as any).message).toContain('分支部署模式覆盖被拒绝');
+      expect(stateService.getBranchProfileOverride('b1', 'api')?.activeDeployMode).toBe('express');
+
+      const reset = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: '' }, { 'X-Test-Key': 'A' });
+      expect(reset.status).toBe(409);
+      const removed = await request(server, 'DELETE', '/api/branches/b1/profile-overrides/api', undefined, { 'X-Test-Key': 'A' });
+      expect(removed.status).toBe(409);
+      expect(stateService.getBranchProfileOverride('b1', 'api')?.activeDeployMode).toBe('express');
+
+      // 只改别的覆盖字段（不带 activeDeployMode）：PUT 是整体替换，会把 express 覆盖抹掉、落回 static 基线，拒绝（Codex 第五轮 P1）
+      const port = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { containerPort: 8080 }, { 'X-Test-Key': 'A' });
+      expect(port.status).toBe(409);
+      expect(stateService.getBranchProfileOverride('b1', 'api')?.activeDeployMode).toBe('express');
+      // 基线本身是 express 时，不带模式的部分写入落回基线仍是极速版，放行
+      stateService.updateBuildProfile('api', { activeDeployMode: 'express' });
+      const portOk = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { containerPort: 8080 }, { 'X-Test-Key': 'A' });
+      expect(portOk.status).toBe(200);
+    });
+
+    it('极速版分支：机器凭据部署通过门禁（不再是 409）', async () => {
+      seedGateProject(true);
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      const res = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(res.status).not.toBe(409);
+    });
+
+    it('真人（无机器凭据）仍可把分支切成 dev，门禁只管 Agent', async () => {
+      seedGateProject(true);
+      const res = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'dev' });
+      expect(res.status).toBe(200);
+      expect(stateService.getBranchProfileOverride('b1', 'api')?.activeDeployMode).toBe('dev');
+    });
+
+    it('单服务部署端点走同一道闸：source 模式 409，express 放行（Codex P1）', async () => {
+      seedGateProject(true);
+      const bad = await request(server, 'POST', '/api/branches/b1/deploy/api', {}, { 'X-Test-Key': 'A' });
+      expect(bad.status).toBe(409);
+      expect((bad.body as any).error).toBe('agent_prebuilt_only');
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      const ok = await request(server, 'POST', '/api/branches/b1/deploy/api', {}, { 'X-Test-Key': 'A' });
+      expect(ok.status).not.toBe(409);
+    });
+
+    it('通用 PUT /build-profiles/:id 同样受闸：写 activeDeployMode=dev 409、动 deployModes / prebuiltImage 409、改名放行（Codex P1）', async () => {
+      seedGateProject(true);
+      const dev = await request(server, 'PUT', '/api/build-profiles/api', { activeDeployMode: 'dev' }, { 'X-Test-Key': 'A' });
+      expect(dev.status).toBe(409);
+      expect((dev.body as any).error).toBe('agent_prebuilt_only');
+      const redefine = await request(server, 'PUT', '/api/build-profiles/api', {
+        deployModes: { dev: { label: '假极速', prebuilt: true } },
+      }, { 'X-Test-Key': 'A' });
+      expect(redefine.status).toBe(409);
+      expect((redefine.body as any).message).toContain('deployModes');
+      const flag = await request(server, 'PUT', '/api/build-profiles/api', { prebuiltImage: true }, { 'X-Test-Key': 'A' });
+      expect(flag.status).toBe(409);
+      // managedBuild 让宿主先跑 install / build 再起容器：机器凭据不得给极速版配置加上它（Codex 第八轮 P1）
+      const managed = await request(server, 'PUT', '/api/build-profiles/api', {
+        managedBuild: { stack: 'node', installCommand: 'pnpm i', buildCommand: 'pnpm build', startCommand: 'node server.js', artifactImage: 'cds-managed/api' },
+      }, { 'X-Test-Key': 'A' });
+      expect(managed.status).toBe(409);
+      expect((managed.body as any).message).toContain('managedBuild');
+      expect(stateService.getBuildProfile('api')!.managedBuild).toBeUndefined();
+      expect(stateService.getBuildProfile('api')!.activeDeployMode).toBe('static');
+      expect(stateService.getBuildProfile('api')!.deployModes!.dev.prebuilt).toBeUndefined();
+
+      const rename = await request(server, 'PUT', '/api/build-profiles/api', { name: 'API 服务' }, { 'X-Test-Key': 'A' });
+      expect(rename.status).toBe(200);
+      const express = await request(server, 'PUT', '/api/build-profiles/api', { activeDeployMode: 'express' }, { 'X-Test-Key': 'A' });
+      expect(express.status).toBe(200);
+      expect(stateService.getBuildProfile('api')!.activeDeployMode).toBe('express');
+      // 真人改回 dev、改模式定义都不受限
+      const human = await request(server, 'PUT', '/api/build-profiles/api', { activeDeployMode: 'dev', deployModes: { dev: { label: '开发' } } });
+      expect(human.status).toBe(200);
+    });
+
+    /*
+     * 极速版镜像拉不到时 runService 会按 sourceFallbackProfile 在宿主上编译源码——
+     * 正是门禁要禁的事。差分断言：同一条 express 分支、同样拉不到镜像，内部派发的部署
+     * 回退源码并起了带源码命令的容器；Agent 的部署不回退，分支以失败收场。
+     */
+    it('门禁下镜像拉不到不回退源码编译：Agent 部署失败等 CI，内部派发（不带机器凭据）仍回退（Codex P1）', async () => {
+      seedGateProject(true);
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      stateService.save();
+      mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
+      mock.addResponsePattern(/docker ps -a --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -aq --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      const sourceRuns = () => mock.commands.filter((c) => c.includes('docker run') && c.includes('pnpm build')).length;
+
+      const exempt = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-CDS-Internal': '1', 'X-CDS-Trigger': 'webhook' });
+      expect(exempt.status).toBe(200);
+      expect(String(exempt.body)).toContain('自动回退源码编译');
+      expect(sourceRuns()).toBe(1);
+
+      const gated = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(gated.status).toBe(200);
+      expect(String(gated.body)).toContain('极速版门禁：镜像缺失不回退源码编译');
+      expect(String(gated.body)).not.toContain('自动回退源码编译');
+      expect(sourceRuns()).toBe(1);
+      expect(stateService.getBranch('b1')?.status).toBe('error');
+    });
+
+    it('机器 set-mode 传显式空串：即便 profile 基线是 express，空串覆盖等于源码基线，409（Codex 第四轮 P1）', async () => {
+      seedGateProject(true);
+      stateService.updateBuildProfile('api', { activeDeployMode: 'express' });
+      const res = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: '' }, { 'X-Test-Key': 'A' });
+      expect(res.status).toBe(409);
+      expect((res.body as any).violations).toMatchObject([{ profileId: 'api', modeId: '' }]);
+      expect(stateService.getBranchProfileOverride('b1', 'api')).toBeUndefined();
+    });
+
+    it('远端执行器派发：门禁下发给执行器的 profile 不带 sourceFallbackProfile，真人派发保留（Codex 第三轮 P1）', async () => {
+      seedGateProject(true);
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      const b1 = stateService.getBranch('b1')!;
+      b1.executorId = 'exec-gate';
+      stateService.save();
+      const now = new Date().toISOString();
+      registryNodes.push({
+        id: 'exec-gate', host: '127.0.0.1', port: 9109, status: 'online', role: 'remote', labels: [],
+        branches: ['b1'], capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now,
+      });
+      const fetchCalls: Array<{ url: string; body: any }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({ url: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        return new Response('event: done\ndata: {}\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }) as typeof fetch;
+      try {
+        const human = await request(server, 'POST', '/api/branches/b1/deploy', {});
+        expect(human.status).toBe(200);
+        const humanDeploy = fetchCalls.find((c) => c.url.includes('/exec/deploy'));
+        expect(humanDeploy?.body?.profiles?.find((p: any) => p.id === 'api')?.sourceFallbackProfile).toBeDefined();
+
+        fetchCalls.length = 0;
+        const gated = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+        expect(gated.status).toBe(200);
+        const gatedDeploy = fetchCalls.find((c) => c.url.includes('/exec/deploy'));
+        expect(gatedDeploy).toBeDefined();
+        const api = gatedDeploy!.body.profiles.find((p: any) => p.id === 'api');
+        expect(api.prebuiltImage).toBe(true);
+        expect(api.sourceFallbackProfile).toBeUndefined();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('机器凭据改项目默认部署模式：express 放行，static 与清空拒绝', async () => {
+      seedGateProject(true);
+      const ok = await request(server, 'PUT', '/api/build-profiles/api/deploy-mode', { mode: 'express' }, { 'X-Test-Key': 'A' });
+      expect(ok.status).toBe(200);
+      expect(stateService.getBuildProfile('api')!.activeDeployMode).toBe('express');
+
+      const bad = await request(server, 'PUT', '/api/build-profiles/api/deploy-mode', { mode: 'static' }, { 'X-Test-Key': 'A' });
+      expect(bad.status).toBe(409);
+      expect((bad.body as any).message).toContain('项目默认部署模式修改被拒绝');
+      const reset = await request(server, 'PUT', '/api/build-profiles/api/deploy-mode', { mode: '' }, { 'X-Test-Key': 'A' });
+      expect(reset.status).toBe(409);
+      expect(stateService.getBuildProfile('api')!.activeDeployMode).toBe('express');
+
+      // 真人改回 static 不受限
+      const human = await request(server, 'PUT', '/api/build-profiles/api/deploy-mode', { mode: 'static' });
+      expect(human.status).toBe(200);
+    });
+  });
+
   describe('手动入口配置 /api/branches/:id/web-entry-config', () => {
     function seedProject(id: string, slug: string): void {
       const now = new Date().toISOString();

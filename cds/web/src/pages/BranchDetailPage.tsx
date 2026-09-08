@@ -1155,7 +1155,7 @@ export function BranchDetailPage(): JSX.Element {
                   </span>
                   {state.project ? (
                     <span className="cds-stat">
-                      <span className="cds-stat-value truncate max-w-[180px]">{displayName(state.project)}</span>
+                      <span className="cds-stat-value truncate max-w-[11.25rem]">{displayName(state.project)}</span>
                       <span className="cds-stat-label">项目</span>
                     </span>
                   ) : null}
@@ -1270,7 +1270,7 @@ export function BranchDetailPage(): JSX.Element {
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22.5rem]">
             <section className="min-w-0 space-y-5">
               <Card className="rounded-md">
                 <CardHeader className="p-5">
@@ -1695,7 +1695,7 @@ export function BranchDetailPage(): JSX.Element {
                   {containerLogs.status === 'loading' ? <LoadingBlock label="加载容器日志" /> : null}
                   {containerLogs.status === 'error' ? <ErrorBlock message={containerLogs.message} /> : null}
                   {containerLogs.status === 'ok' ? (
-                    <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
+                    <pre className="max-h-[26.25rem] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
                       {containerLogs.logs.trim() || '还没有日志输出'}
                     </pre>
                   ) : null}
@@ -2076,7 +2076,7 @@ function LogPanel({ title, lines, status = 'running' }: { title: string; lines: 
           下一步：{suggestion}
         </div>
       ) : null}
-      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5 text-muted-foreground">
+      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap font-mono text-[0.6875rem] leading-5 text-muted-foreground">
         {lines.slice(-24).join('\n') || '等待日志输出...'}
       </pre>
     </div>

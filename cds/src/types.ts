@@ -3627,6 +3627,16 @@ export interface Project {
    */
   autoSmokeEnabled?: boolean;
   /**
+   * Agent 只允许极速版（CI 预构建）部署（2026-09-08）。
+   *
+   * 开启后，凡是机器凭据（项目 Agent Key / AI Access Key，判定见 machine-caller.ts）
+   * 发起的部署，若任一服务的生效部署模式不是 prebuilt，就在入口拒绝（409
+   * `agent_prebuilt_only`）；Agent 也不能把分支覆盖或项目默认写成非 prebuilt 模式，
+   * 更不能自己关掉这个开关。真人在页面上的操作不受限，内部系统派发
+   * （X-CDS-Trigger）不受限。默认关闭：老项目行为零变化，需要的项目自己打开。
+   */
+  agentPrebuiltOnly?: boolean;
+  /**
    * 项目的虚拟 cds-compose.yml —— 配置 SSOT（2026-05-29）。
    *
    * 历史上 composeYaml 只存在于临时 PendingImport（审批快照），批准后被

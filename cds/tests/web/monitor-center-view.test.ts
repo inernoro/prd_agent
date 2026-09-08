@@ -334,3 +334,20 @@ describe('第四轮 P2 实测但未判定的服务不让分支报绿', () => {
     expect(b.note).toContain('worker 未实测');
   });
 });
+
+describe('第五轮 P2 「待确认」筛选认 unconfirmed 分支', () => {
+  it('实测但未判定的分支 unconfirmed=true；未实测分支 unconfirmed=false；StatusPage 的待确认筛选两者都收', () => {
+    const groups = groupBranchesByProject([
+      target({ id: 'b::api', branchId: 'b', branchName: 'main', profileId: 'api', branchStatus: 'running', name: 'main / api' }),
+      target({ id: 'b::web', branchId: 'b', branchName: 'main', profileId: 'web', branchStatus: 'running', name: 'main / web', status: 'unknown' }),
+      target({ id: 'c::worker', branchId: 'c', branchName: 'feat/c', profileId: 'worker', branchStatus: 'running', name: 'feat/c / worker', measured: false }),
+      target({ id: 'd::api', branchId: 'd', branchName: 'feat/d', profileId: 'api', branchStatus: 'running', name: 'feat/d / api' }),
+    ], NOW);
+    const byName = Object.fromEntries(groups[0].branches.map((b) => [b.branchName, b]));
+    expect(byName['main'].unconfirmed).toBe(true);
+    expect(byName['feat/c']).toMatchObject({ unconfirmed: false, bucket: 'unmeasured' });
+    expect(byName['feat/d']).toMatchObject({ unconfirmed: false, tone: 'ok' });
+    const src = fs.readFileSync(path.join(REPO, 'web/src/pages/StatusPage.tsx'), 'utf8');
+    expect(src).toContain("b.unconfirmed || b.bucket === 'unmeasured'");
+  });
+});

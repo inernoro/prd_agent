@@ -225,7 +225,7 @@ export function ClusterTab(): JSX.Element {
           <MetricTile label="本机运行" value={formatUptime(host.uptimeSeconds)} />
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22.5rem]">
           <div className="space-y-4">
             <div className="rounded-md border border-border bg-card p-4">
               <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

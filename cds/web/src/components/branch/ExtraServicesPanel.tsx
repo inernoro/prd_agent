@@ -208,7 +208,7 @@ export function ExtraServicesPanel({
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{profile.id}</div>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                  <span className="max-w-[220px] truncate font-mono" title={profile.dockerImage}>{profile.dockerImage}</span>
+                  <span className="max-w-[13.75rem] truncate font-mono" title={profile.dockerImage}>{profile.dockerImage}</span>
                   <span className="font-mono">:{profile.containerPort}</span>
                   {profile.subdomain ? (
                     <span className="rounded border border-info/30 bg-info-soft px-1.5 py-0.5 text-info">

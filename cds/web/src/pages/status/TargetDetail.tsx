@@ -137,7 +137,7 @@ export function TargetDetail({
               <h2 className="min-w-0 truncate text-lg font-semibold leading-tight">{target.name}</h2>
               <SourceBadge source={target.source} full />
               {target.degraded ? (
-                <span className="inline-flex items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn" title={target.degradeReason}>
+                <span className="inline-flex items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.625rem] text-warn" title={target.degradeReason}>
                   <ShieldAlert className="h-3 w-3" />
                   已自动降级
                 </span>
@@ -149,18 +149,18 @@ export function TargetDetail({
               </span>
               <span className="min-w-0 truncate font-mono" title={target.probeDescription}>{target.probeDescription}</span>
               {target.source === 'branch' && target.userView ? (
-                <span className="inline-flex items-center gap-2 rounded border border-[hsl(var(--hairline-strong))] px-1.5 py-0.5 text-[11px]" title={`用户视角：${target.userView.url}`}>
+                <span className="inline-flex items-center gap-2 rounded border border-[hsl(var(--hairline-strong))] px-1.5 py-0.5 text-[0.6875rem]" title={`用户视角：${target.userView.url}`}>
                   <span className="inline-flex items-center gap-1">进程 <span className={cn('inline-block h-2 w-2 rounded-full', target.status === 'down' && !(target.lastSample?.err || '').includes('用户视角') ? 'bg-destructive' : unmeasured ? 'bg-warn' : 'bg-ok')} /></span>
                   <span className="inline-flex items-center gap-1">用户视角 <span className={cn('inline-block h-2 w-2 rounded-full', target.userView.status === 'up' ? 'bg-ok' : target.userView.status === 'down' ? 'bg-destructive' : 'bg-[hsl(var(--hairline-strong))]')} /></span>
                 </span>
               ) : (
-                <span className="rounded border border-[hsl(var(--hairline-strong))] px-1.5 py-0.5 text-[11px]">视角：{target.source === 'branch' ? 'CDS 主机 → 容器端口' : 'CDS 主机 → 公网地址'}</span>
+                <span className="rounded border border-[hsl(var(--hairline-strong))] px-1.5 py-0.5 text-[0.6875rem]">视角：{target.source === 'branch' ? 'CDS 主机 → 容器端口' : 'CDS 主机 → 公网地址'}</span>
               )}
             </div>
             {(target.tags || []).length > 0 ? (
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {(target.tags || []).map((tag) => (
-                  <span key={tag} className="rounded bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[10px] text-muted-foreground">{tag}</span>
+                  <span key={tag} className="rounded bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">{tag}</span>
                 ))}
               </div>
             ) : null}
@@ -267,11 +267,11 @@ export function TargetDetail({
             </div>
             {range === '24h' ? (
               <div className="overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
-                <AvailabilityBar buckets={target.buckets} segments={90} className="min-w-[320px]" label={`${target.name} 最近 24 小时可用率分布`} />
+                <AvailabilityBar buckets={target.buckets} segments={90} className="min-w-[20rem]" label={`${target.name} 最近 24 小时可用率分布`} />
               </div>
             ) : rangeBuckets ? (
               <div className="overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
-                <AvailabilityBar buckets={rangeBuckets} segments={rangeBuckets.length} className="min-w-[320px]" label={`${target.name} 最近 ${range} 可用率分布`} />
+                <AvailabilityBar buckets={rangeBuckets} segments={rangeBuckets.length} className="min-w-[20rem]" label={`${target.name} 最近 ${range} 可用率分布`} />
               </div>
             ) : null}
             {history.status === 'loading' || history.status === 'idle' ? (
@@ -291,7 +291,7 @@ export function TargetDetail({
             ) : (
               <LatencyChart points={history.history.points} range={range} />
             )}
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-[0.6875rem] text-muted-foreground">
               {range === '24h'
                 ? `90 段 · 覆盖最近 24 小时，原始采样按 ${target.intervalSeconds} 秒一次 · 灰段 = 无采样（不计入可用率分母）`
                 : '按自然日聚合（UTC）：每一段是一天，曲线是当天平均响应'}
@@ -301,11 +301,11 @@ export function TargetDetail({
           <section className="flex flex-col gap-2">
             <div className="flex flex-wrap items-baseline gap-2">
               <h3 className="text-sm font-semibold">原始采样（最近 {recentSamples.length} 次）</h3>
-              <span className="text-[11px] text-muted-foreground">判定就是从这些数据来的，可自行核对；每 {target.intervalSeconds} 秒一次，连续失败达阈值判故障，一次成功即恢复</span>
+              <span className="text-[0.6875rem] text-muted-foreground">判定就是从这些数据来的，可自行核对；每 {target.intervalSeconds} 秒一次，连续失败达阈值判故障，一次成功即恢复</span>
             </div>
             <div className="overflow-x-auto rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]" style={{ overscrollBehavior: 'contain' }}>
-              <div className="min-w-[520px]">
-                <div className="grid grid-cols-[100px_60px_70px_80px_minmax(0,1fr)] gap-3 bg-[hsl(var(--surface-sunken))] px-3 py-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
+              <div className="min-w-[32.5rem]">
+                <div className="grid grid-cols-[6.25rem_3.75rem_4.375rem_5rem_minmax(0,1fr)] gap-3 bg-[hsl(var(--surface-sunken))] px-3 py-1.5 text-[0.6875rem] font-semibold uppercase text-muted-foreground">
                   <span>时间</span><span>结果</span><span>状态码</span><span>耗时</span><span>原因</span>
                 </div>
                 {recentSamples.length === 0 ? (
@@ -313,7 +313,7 @@ export function TargetDetail({
                     {history.status === 'ok' ? '尚无采样' : '读取中'}
                   </div>
                 ) : recentSamples.map((s) => (
-                  <div key={s.t} className="grid grid-cols-[100px_60px_70px_80px_minmax(0,1fr)] gap-3 border-t border-[hsl(var(--hairline))] px-3 py-1.5 font-mono text-xs">
+                  <div key={s.t} className="grid grid-cols-[6.25rem_3.75rem_4.375rem_5rem_minmax(0,1fr)] gap-3 border-t border-[hsl(var(--hairline))] px-3 py-1.5 font-mono text-xs">
                     <span>{formatShortClock(s.t)}</span>
                     <span className={cn('font-semibold', s.up ? 'text-ok' : 'text-destructive')}>{s.up ? '成功' : '失败'}</span>
                     <span>{s.code ?? '—'}</span>
@@ -342,7 +342,7 @@ export function TargetDetail({
                     <span className="text-muted-foreground">持续 {formatDuration(incident.durationMs)}</span>
                     <span className="min-w-0 flex-1 truncate text-foreground/90" title={incident.cause}>{incident.cause}</span>
                     {incident.releaseId ? (
-                      <span className="shrink-0 rounded-full border border-[hsl(var(--hairline-strong))] px-2 py-0.5 font-mono text-[11px] text-muted-foreground" title={`故障判定发生在发布 ${incident.releaseId} 完成之后 ${formatDuration(incident.releaseAgeMs ?? 0)}`}>
+                      <span className="shrink-0 rounded-full border border-[hsl(var(--hairline-strong))] px-2 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`故障判定发生在发布 ${incident.releaseId} 完成之后 ${formatDuration(incident.releaseAgeMs ?? 0)}`}>
                         疑似 {incident.releaseId}
                       </span>
                     ) : null}

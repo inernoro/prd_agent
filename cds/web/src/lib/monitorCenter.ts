@@ -388,6 +388,8 @@ export interface BranchView {
   projectName: string;
   /** running = 存活 / unmeasured = 在跑但没有一个服务实测到 / idle = 降温或未运行 */
   bucket: 'running' | 'unmeasured' | 'idle';
+  /** 在跑、有实测服务但还没判定出来（首轮 / 未到阈值）：「待确认」筛选认它 */
+  unconfirmed: boolean;
   tone: BranchTone;
   services: BranchServiceView[];
   /** 代表目标：故障优先，其次实测的第一个 */
@@ -503,6 +505,7 @@ function buildBranchView(targets: UptimeTargetSummary[], now: number): BranchVie
     projectId: first.projectId,
     projectName: first.projectName || first.projectId,
     bucket,
+    unconfirmed: bucket === 'running' && !anyDown && unconfirmed.length > 0,
     tone,
     services,
     primary,
