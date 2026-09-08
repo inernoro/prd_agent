@@ -489,3 +489,99 @@ describe('第三轮 P2 改归属项目后台账立刻同步', () => {
     }
   });
 });
+
+describe('第四轮 P1 轮次预算', () => {
+  it('用户视角：并发批次串行 await，超过预算后剩余分支标「本轮未探」且不折入主判定；直连探测照常全做', async () => {
+    let now = MIN;
+    const branches = Array.from({ length: 40 }, (_, i) => branch({ id: `proj-b${i}`, branch: `feat/b${i}` }));
+    // 每次用户视角探测把时钟推 0.8 秒：第一批 32 条并发后时钟已过用户视角预算（60s × 0.4 = 24s），
+    // 但还远没到主通道预算（54s），直连探测照常全做。
+    const userViewProbe = vi.fn(async () => { now += 800; return { up: false, ms: 800, code: 502, err: '用户视角 HTTP 502' }; });
+    const probe: ProbeFn = vi.fn(async () => ({ up: true, ms: 5, code: 200 }));
+    const svc = makeMonitor({ branches, probe, userViewProbe, now: () => now });
+    await svc.runCycle();
+    expect(userViewProbe).toHaveBeenCalledTimes(32);
+    expect(probe).toHaveBeenCalledTimes(40);
+    const targets = svc.getSummary(10).targets;
+    const skipped = targets.filter((t) => t.userView?.unreachable && (t.userView.lastSample?.err || '').includes('预算'));
+    expect(skipped).toHaveLength(8);
+    // 没探到用户视角的分支只按进程视角记，不能因此判失败
+    expect(skipped.every((t) => t.lastSample?.up === true)).toBe(true);
+    expect(svc.getSummary(10).prober.lastCycleProbed).toBe(40);
+  });
+
+  it('直连探测：预算用尽后剩余目标留到下一轮，状态原样保留而不是整轮迟到', async () => {
+    let now = MIN;
+    const branches = Array.from({ length: 24 }, (_, i) => branch({ id: `proj-c${i}`, branch: `feat/c${i}` }));
+    // 每个直连探测推 5 秒：一批 8 个并发推 40s，第二批开始时 40s 还在 54s 预算内、
+    // 跑完到 80s，第三批开始前已超预算 → 只探了 16 个，剩 8 个留到下一轮。
+    const probe: ProbeFn = vi.fn(async () => { now += 5_000; return { up: true, ms: 5_000, code: 200 }; });
+    const svc = makeMonitor({ branches, probe, userViewProbe: async () => ({ up: true, ms: 1 }), now: () => now, config: { userViewEnabled: false } });
+    await svc.runCycle();
+    expect(probe).toHaveBeenCalledTimes(16);
+    const p = svc.getSummary(10).prober;
+    expect(p.lastCycleProbed).toBe(16);
+    expect(p.lastCycleTargets).toBe(24);
+    expect(svc.getRecord('proj-c23::api')?.samples ?? []).toHaveLength(0);
+    // 下一轮从头再探：这次时钟不推，24 个全做完。
+    now += MIN;
+    (probe as ReturnType<typeof vi.fn>).mockImplementation(async () => ({ up: true, ms: 5, code: 200 }));
+    await svc.runCycle();
+    expect(svc.getSummary(10).prober.lastCycleProbed).toBe(24);
+  });
+});
+
+describe('第四轮 P2 探测器健康只计真正探完的', () => {
+  it('自定义通道还挂着时 lastCycleProbed 只算主通道；解挂后才把自定义算进去', async () => {
+    let now = MIN;
+    let release: () => void = () => undefined;
+    const hang = new Promise<{ up: boolean; ms: number }>((resolve) => { release = () => resolve({ up: true, ms: 1 }); });
+    const probe: ProbeFn = async (target) => (target.source === 'custom' ? hang : { up: true, ms: 5, code: 200 });
+    const svc = makeMonitor({ branches: [branch()], monitors: [customMonitor()], probe, userViewProbe: async () => ({ up: true, ms: 1 }), now: () => now });
+    const first = svc.runCycle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(svc.getSummary(10).prober).toMatchObject({ lastCycleProbed: 1, lastCycleTargets: 2 });
+    release();
+    await first;
+    expect(svc.getSummary(10).prober.lastCycleProbed).toBe(2);
+    now += MIN;
+    await svc.runCycle();
+    expect(svc.getSummary(10).prober.lastCycleProbed).toBe(2);
+  });
+});
+
+describe('第四轮 P2 PUT 停用即时转 paused', () => {
+  it('故障中的自定义监控被 PUT enabled=false 后，不等下一轮：状态 paused、故障收尾', async () => {
+    const store = memoryStore([customMonitor()]);
+    let now = MIN;
+    const svc = new UptimeMonitorService({
+      state: {
+        getAllBranches: () => [],
+        getReleaseTargets: () => [],
+        getUptimeMonitors: () => [...store.rows.values()],
+        getProject: (id) => ({ id, name: id } as never),
+      },
+      config: {
+        enabled: true, intervalMs: MIN, timeoutMs: 5_000, failureThreshold: 3, recoveryThreshold: 1,
+        maxSamples: MAX_SAMPLES_PER_TARGET, excludePatterns: [], scope: 'all', storePath: '', userViewEnabled: true,
+      },
+      probe: async () => ({ up: false, ms: 1, err: 'HTTP 500' }),
+      now: () => now,
+    });
+    for (let i = 0; i < 3; i += 1) { now += MIN; await svc.runCycle(); }
+    let t = svc.getSummary(10).targets[0];
+    expect(t.status).toBe('down');
+    expect(t.openIncidentSince).not.toBeNull();
+    const app = await serve(svc, store);
+    try {
+      const r = await app.call('PUT', '/api/uptime/monitors/mon-1', { body: { enabled: false } });
+      expect(r.status).toBe(200);
+      t = svc.getSummary(10).targets[0];
+      expect(t.status).toBe('paused');
+      expect(t.openIncidentSince).toBeNull();
+      expect(t.pausedReason).toContain('手动暂停');
+    } finally {
+      await app.close();
+    }
+  });
+});

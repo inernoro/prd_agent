@@ -13,6 +13,8 @@ import {
   availabilityOfBuckets,
   buildMonitorHeadline,
   mergeBuckets,
+  overallAvailability24h,
+  overallAvgLatency24h,
   filterBranches,
   groupBranchesByProject,
   mainSiteTargets,
@@ -293,5 +295,42 @@ describe('mergeBuckets 分支迷你条按各服务合并', () => {
     const src = fs.readFileSync(path.join(REPO, 'web/src/pages/status/BranchModal.tsx'), 'utf8');
     expect(src).toContain('buckets={branch.buckets}');
     expect(src).not.toContain('branch.primary.buckets');
+  });
+});
+
+describe('第四轮 P2 暂停目标不参与整体口径', () => {
+  it('暂停的目标即使还留着采样也不拉平均', () => {
+    const list = [
+      target({ name: 'a', availability24h: 1, avgLatencyMs24h: 100, sampleCount24h: 10 }),
+      target({ name: 'p', status: 'paused', availability24h: 0, avgLatencyMs24h: 9000, sampleCount24h: 10 }),
+    ];
+    expect(overallAvailability24h(list)).toBe(1);
+    expect(overallAvgLatency24h(list)).toBe(100);
+  });
+});
+
+describe('第四轮 P2 实测但未判定的服务不让分支报绿', () => {
+  it('一个服务正常、另一个实测服务 unknown：分支 tone=warn、状态「确认中」，不算进项目的正常数', () => {
+    const groups = groupBranchesByProject([
+      target({ id: 'b::api', branchId: 'b', branchName: 'main', profileId: 'api', branchStatus: 'running', name: 'main / api' }),
+      target({ id: 'b::web', branchId: 'b', branchName: 'main', profileId: 'web', branchStatus: 'running', name: 'main / web', status: 'unknown' }),
+    ], NOW);
+    const b = groups[0].branches[0];
+    expect(b.bucket).toBe('running');
+    expect(b.tone).toBe('warn');
+    expect(b.statusText).toBe('状态确认中');
+    expect(b.note).toContain('web');
+    expect(b.note).not.toContain('未实测');
+    expect(groups[0].ok).toBe(0);
+  });
+
+  it('未实测（按容器状态）的服务仍是「未实测」文案，与 unknown 分开', () => {
+    const groups = groupBranchesByProject([
+      target({ id: 'b::api', branchId: 'b', branchName: 'main', profileId: 'api', branchStatus: 'running', name: 'main / api' }),
+      target({ id: 'b::worker', branchId: 'b', branchName: 'main', profileId: 'worker', branchStatus: 'running', name: 'main / worker', measured: false }),
+    ], NOW);
+    const b = groups[0].branches[0];
+    expect(b.tone).toBe('ok');
+    expect(b.note).toContain('worker 未实测');
   });
 });

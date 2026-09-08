@@ -327,6 +327,11 @@ const DEFAULT_INTERVAL_SECONDS = 60;
 const DEFAULT_TIMEOUT_MS = 5_000;
 /** 单轮并发探测上限，避免一次 fan-out 打爆 socket。 */
 const PROBE_CONCURRENCY = 8;
+/** 用户视角是一次轻量 fetch，可以比直连探测放得更开：100 条分支两轮就完。 */
+const USER_VIEW_CONCURRENCY = 32;
+/** 轮次预算：用户视角最多占间隔的四成，主通道整体不超过九成，超了就把剩下的留给下一轮。 */
+const USER_VIEW_BUDGET_RATIO = 0.4;
+const CYCLE_BUDGET_RATIO = 0.9;
 /** 「应该活着」的服务状态：只有 running 才算承诺对外可用。 */
 const LIVE_SERVICE_STATUSES = new Set(['running']);
 /** 「应该活着」的分支状态。building / starting / stopping / idle 都算 paused。 */
@@ -1118,7 +1123,7 @@ export class UptimeMonitorService {
   async runCycle(): Promise<void> {
     if (this.cycleRunning) return;
     this.cycleRunning = true;
-    let customLane: Promise<void> = Promise.resolve();
+    let customLane: Promise<number> = Promise.resolve(0);
     try {
       const now = this.now();
       const targets = this.selectTargets();
@@ -1153,11 +1158,7 @@ export class UptimeMonitorService {
         // 暂停：不产采样（时间桶留空），并把仍开着的故障事件就地收尾，
         // 否则一个被手动停掉的分支、或刚被加进排除名单的非 HTTP 服务，
         // 会留下一条永不结束的 incident。
-        record.status = 'paused';
-        record.pausedReason = pausedReasonOf(target);
-        record.consecutiveFailures = 0;
-        record.consecutiveSuccesses = 0;
-        applyIncidentTransition(record.incidents, 'to-up', { targetId: target.id, at: now });
+        this.markPaused(record, target, now);
       }
 
       // 自定义目标单独一条通道：它们的超时由用户配置（最长 60s，等于默认间隔），
@@ -1169,53 +1170,78 @@ export class UptimeMonitorService {
       const customTargets = activeTargets.filter((t) => t.source === 'custom');
       customLane = this.runCustomLane(customTargets);
 
-      // 用户视角：每条运行中的分支探一次预览域名（不是每个服务一次）。
-      const userViews = await this.probeUserViews(builtinTargets);
+      // 轮次预算（Codex PR #1514 第四轮 P1）：用户视角与直连探测都是按并发分批
+      // 串行 await 的，全站预览域名同时超时（网关挂了）时 100 条分支的用户视角
+      // 就要 60 多秒，把下一次定时触发整个吞掉。到了预算就停，没探到的分支
+      // 用户视角标「本轮未探」（不折入主判定），直连探测没轮到的目标状态原样
+      // 留到下一轮——总比整轮迟到强。
+      const intervalMs = this.deps.config.intervalMs;
+      const userViews = await this.probeUserViews(builtinTargets, now + intervalMs * USER_VIEW_BUDGET_RATIO);
 
+      const cycleDeadline = now + intervalMs * CYCLE_BUDGET_RATIO;
+      let builtinProbed = 0;
       for (let i = 0; i < builtinTargets.length; i += PROBE_CONCURRENCY) {
+        if (i > 0 && this.now() >= cycleDeadline) {
+          this.deps.logger?.warn?.(`[uptime] 本轮预算用尽，${builtinTargets.length - i} 个目标留到下一轮再探`);
+          break;
+        }
         const chunk = builtinTargets.slice(i, i + PROBE_CONCURRENCY);
         const results = await Promise.all(chunk.map((target) => this.probeOne(target)));
         for (const { target, outcome, thrown } of results) {
           const folded = this.foldUserView(target, outcome, userViews.get(target.branchId));
           this.applySample(target, { ...folded, t: this.now() }, { allowDegrade: !thrown });
+          builtinProbed += 1;
         }
       }
 
       this.lastCycleAt = now;
       this.lastCycleDurationMs = Math.max(0, this.now() - now);
-      this.lastCycleProbed = activeTargets.length;
+      // 只计真正探完的：自定义通道还在跑或被跳过时不能先记成「完成」（第四轮 P2）。
+      this.lastCycleProbed = builtinProbed;
       this.lastCycleTargets = targets.length;
       this.persist();
     } finally {
       // 分支 / 生产这条主通道一结束就解锁；自定义通道慢也拖不住下一轮主通道。
       this.cycleRunning = false;
     }
-    await customLane;
+    this.lastCycleProbed += await customLane;
+  }
+
+  /** 暂停 / 排除的目标：不产采样，把仍开着的故障就地收尾。轮次、立即探测、改定义共用。 */
+  private markPaused(record: UptimeTargetRecord, target: ProbeTarget, now: number): void {
+    record.status = 'paused';
+    record.pausedReason = pausedReasonOf(target);
+    record.consecutiveFailures = 0;
+    record.consecutiveSuccesses = 0;
+    applyIncidentTransition(record.incidents, 'to-up', { targetId: target.id, at: now });
   }
 
   /**
    * 自定义目标通道：与主通道并行、独立重入锁。上一轮还没探完（某个地址挂在
    * 用户配置的长超时上）就整体跳过本轮，状态原样保留，主通道不受影响。
    */
-  private async runCustomLane(targets: ReadonlyArray<ProbeTarget>): Promise<void> {
-    if (targets.length === 0) return;
+  private async runCustomLane(targets: ReadonlyArray<ProbeTarget>): Promise<number> {
+    if (targets.length === 0) return 0;
     if (this.customLaneRunning) {
       this.deps.logger?.info?.(`[uptime] 自定义目标上一轮尚未探完，本轮跳过 ${targets.length} 个自定义目标`);
-      return;
+      return 0;
     }
     this.customLaneRunning = true;
+    let probed = 0;
     try {
       for (let i = 0; i < targets.length; i += PROBE_CONCURRENCY) {
         const chunk = targets.slice(i, i + PROBE_CONCURRENCY);
         const results = await Promise.all(chunk.map((target) => this.probeOne(target)));
         for (const { target, outcome, thrown } of results) {
           this.applySample(target, { ...outcome, t: this.now() }, { allowDegrade: !thrown });
+          probed += 1;
         }
       }
       this.persist();
     } finally {
       this.customLaneRunning = false;
     }
+    return probed;
   }
 
   /** 本轮探测清单（三类来源合并）。runCycle 与 probeNow 共用，避免两处各拼一份。 */
@@ -1239,7 +1265,10 @@ export class UptimeMonitorService {
    * 对本轮活跃的分支目标按分支去重，各探一次预览域名。结果按 branchId 返回，
    * 同一分支的所有服务共用同一个用户视角结论。关掉用户视角或没有预览地址时为空。
    */
-  private async probeUserViews(activeTargets: ReadonlyArray<ProbeTarget>): Promise<Map<string, UserViewOutcome & { url: string }>> {
+  private async probeUserViews(
+    activeTargets: ReadonlyArray<ProbeTarget>,
+    deadlineAt: number = Number.POSITIVE_INFINITY,
+  ): Promise<Map<string, UserViewOutcome & { url: string }>> {
     const out = new Map<string, UserViewOutcome & { url: string }>();
     if (this.deps.config.userViewEnabled === false) return out;
     const byBranch = new Map<string, string>();
@@ -1249,8 +1278,16 @@ export class UptimeMonitorService {
     }
     const probe = this.deps.userViewProbe || defaultUserViewProbe;
     const entries = [...byBranch.entries()];
-    for (let i = 0; i < entries.length; i += PROBE_CONCURRENCY) {
-      const chunk = entries.slice(i, i + PROBE_CONCURRENCY);
+    for (let i = 0; i < entries.length; i += USER_VIEW_CONCURRENCY) {
+      if (i > 0 && this.now() >= deadlineAt) {
+        // 预算用尽：剩下的分支这一轮不探用户视角，只标「未探」，不折入主判定。
+        for (const [branchId, url] of entries.slice(i)) {
+          out.set(branchId, { up: false, ms: 0, err: '本轮探测预算用尽，用户视角未探', unreachable: true, url });
+        }
+        this.deps.logger?.warn?.(`[uptime] 用户视角预算用尽，${entries.length - i} 条分支留到下一轮`);
+        break;
+      }
+      const chunk = entries.slice(i, i + USER_VIEW_CONCURRENCY);
       const results = await Promise.all(chunk.map(async ([branchId, url]) => {
         try {
           return [branchId, { ...(await probe(url, this.deps.config.timeoutMs)), url }] as const;
@@ -1345,6 +1382,9 @@ export class UptimeMonitorService {
     const live = this.selectTargets().find((t) => t.id === targetId);
     if (!live) return false;
     this.syncRecordIdentity(record, live);
+    // 定义里把它停了：台账立刻转 paused、开着的故障就地收尾，不等下一轮
+    // （直接调 API 停用、或界面的跟进探测失败时，摘要不能还挂着「故障」）。
+    if (!live.active) this.markPaused(record, live, this.now());
     this.persist();
     return true;
   }
@@ -1436,11 +1476,7 @@ export class UptimeMonitorService {
     if (!target.active) {
       // 刚保存就被暂停的目标也要立刻在状态页出现且标对档，不能等下一轮才从
       // unknown 翻成 paused。收尾逻辑与轮次一致。
-      record.status = 'paused';
-      record.pausedReason = pausedReasonOf(target);
-      record.consecutiveFailures = 0;
-      record.consecutiveSuccesses = 0;
-      applyIncidentTransition(record.incidents, 'to-up', { targetId: target.id, at: now });
+      this.markPaused(record, target, now);
       this.persist();
       return { ok: false, skipped: pausedReasonOf(target) };
     }

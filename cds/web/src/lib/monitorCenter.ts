@@ -275,12 +275,17 @@ export interface MonitorHeadline {
   detail: string;
 }
 
+/** 参与整体口径的目标：排除的、暂停的都不拉平均——关键数旁边写着「暂停不计入」，就得真不计入。 */
+function contributes(t: UptimeTargetSummary): boolean {
+  return !t.excluded && t.status !== 'paused' && t.sampleCount24h > 0;
+}
+
 /** 按采样次数加权的整体可用率：只算真正探过的目标，暂停 / 排除的不拉平均。 */
 export function overallAvailability24h(targets: ReadonlyArray<UptimeTargetSummary>): number | null {
   let weight = 0;
   let sum = 0;
   for (const t of targets) {
-    if (t.excluded || t.availability24h === null || t.sampleCount24h <= 0) continue;
+    if (!contributes(t) || t.availability24h === null) continue;
     weight += t.sampleCount24h;
     sum += t.availability24h * t.sampleCount24h;
   }
@@ -291,7 +296,7 @@ export function overallAvgLatency24h(targets: ReadonlyArray<UptimeTargetSummary>
   let weight = 0;
   let sum = 0;
   for (const t of targets) {
-    if (t.excluded || t.avgLatencyMs24h === null || t.sampleCount24h <= 0) continue;
+    if (!contributes(t) || t.avgLatencyMs24h === null) continue;
     weight += t.sampleCount24h;
     sum += t.avgLatencyMs24h * t.sampleCount24h;
   }
@@ -454,9 +459,17 @@ function buildBranchView(targets: UptimeTargetSummary[], now: number): BranchVie
   const anyDown = services.some((s) => s.tone === 'bad');
   const anyMeasuredUp = services.some((s) => s.tone === 'ok');
   const allExcluded = services.every((s) => s.target.excluded);
+  // 实测但还没判定出来（首轮 / 连续失败未到阈值）的服务：分支不能先报绿。
+  // 它和「未实测（按容器状态）」是两回事，文案要分开说。
+  const unconfirmed = services.filter((s) => !s.target.excluded && s.target.measured !== false && s.target.status === 'unknown');
+  const containerOnly = services.filter((s) => s.tone === 'warn' && s.target.measured === false);
   let bucket: BranchView['bucket'] = 'idle';
-  if (live && !allExcluded) bucket = anyMeasuredUp || anyDown ? 'running' : 'unmeasured';
-  const tone: BranchTone = anyDown ? 'bad' : bucket === 'running' ? 'ok' : bucket === 'unmeasured' ? 'warn' : 'muted';
+  if (live && !allExcluded) bucket = anyMeasuredUp || anyDown || unconfirmed.length > 0 ? 'running' : 'unmeasured';
+  const tone: BranchTone = anyDown
+    ? 'bad'
+    : bucket === 'running'
+      ? (unconfirmed.length > 0 ? 'warn' : 'ok')
+      : bucket === 'unmeasured' ? 'warn' : 'muted';
   const primary = services.find((s) => s.tone === 'bad')?.target || services.find((s) => s.tone === 'ok')?.target || first;
   const measured = targets.filter((t) => t.measured !== false && !t.excluded);
   const availability24h = overallAvailability24h(measured);
@@ -473,11 +486,13 @@ function buildBranchView(targets: UptimeTargetSummary[], now: number): BranchVie
   } else if (bucket === 'unmeasured') {
     statusText = '未实测';
     note = first.pausedReason || first.degradeReason || '没有可探测的 HTTP 端口，只按容器状态判定';
+  } else if (unconfirmed.length > 0) {
+    statusText = '状态确认中';
+    note = `${unconfirmed.map((s) => s.profileId).join('、')} 首轮探测或连续失败还没到判定阈值`;
   } else {
     const up = services.find((s) => s.tone === 'ok')!.target;
     statusText = describeStatusSince('up', up.statusSince, now);
-    const warnSvc = services.filter((s) => s.tone === 'warn').map((s) => s.profileId);
-    if (warnSvc.length > 0) note = `${warnSvc.join('、')} 未实测（无 HTTP 端口，按容器状态）`;
+    if (containerOnly.length > 0) note = `${containerOnly.map((s) => s.profileId).join('、')} 未实测（无 HTTP 端口，按容器状态）`;
     const uv = first.userView;
     if (uv?.status === 'down') note = `用户视角不可达：${uv.lastSample?.err || ''}`;
     else if (uv?.unreachable) note = '探测器够不着预览域名，用户视角暂不可用';
