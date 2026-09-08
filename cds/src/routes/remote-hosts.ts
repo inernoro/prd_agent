@@ -854,7 +854,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       }
       if (item.status === 'creating') {
         const inFlight = existing ? cdsAgentSessionCreations.get(stableSessionId) : undefined;
-        if (inFlight) {
+        const reservationWrite = cdsAgentSessionReservationWrites.get(stableSessionId);
+        const durable = reservationWrite ? await reservationWrite : true;
+        if (inFlight && (item.runtime !== 'open-design' || !durable)) {
           const outcome = await inFlight;
           const replayBody = outcome.status === 201
             ? {
@@ -902,6 +904,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
     const runtime = provider.id;
+    if (runtime === 'open-design' && !clientRequestId) {
+      res.status(400).json({ error: {
+        code: 'agent_session_client_request_id_required',
+        message: 'OpenDesign session creation requires a stable clientRequestId',
+      } });
+      return;
+    }
     const workloadKind = normalizeAgentWorkloadKind(req.body?.workloadKind);
     if (!provider.workloadKinds.includes(workloadKind)) {
       res.status(422).json({
@@ -1094,27 +1103,48 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const creationOutcomePromise = new Promise<CdsAgentSessionCreationOutcome>((resolve) => {
       resolveCreationOutcome = resolve;
     });
-    const respondCreation = (status: number, body: Record<string, unknown>): void => {
+    let resolveReservationWrite!: (durable: boolean) => void;
+    const reservationWrite = new Promise<boolean>((resolve) => { resolveReservationWrite = resolve; });
+    let creationAccepted = false;
+    const respondCreation = async (status: number, body: Record<string, unknown>): Promise<void> => {
+      // Once accepted, the reservation is the response channel. Even a clean startup failure
+      // must remain queryable/replayable; deleting it would permit a retry to allocate twice.
+      if (creationAccepted && status >= 400 && session.status !== 'stopped' && session.status !== 'stopping') {
+        session.status = 'failed';
+        const failure = body.error as SanitizedAgentWorkspaceRuntimeError;
+        session.creationFailure = { ...failure, retryable: failure.retryable ?? status >= 500 };
+        session.updatedAt = new Date().toISOString();
+        cdsAgentSessionSecrets.delete(session.id);
+        pushCdsAgentEvent(session, 'error', session.creationFailure);
+        try {
+          persistAgentSession(session);
+          recordAgentRequestHistory(session);
+          await deps.stateService.flush();
+        } catch { /* keep the in-memory terminal outcome; startup recovery owns the durable reservation */ }
+      }
       resolveCreationOutcome({ status, body });
       if (cdsAgentSessionCreations.get(session.id) === creationOutcomePromise) {
         cdsAgentSessionCreations.delete(session.id);
       }
-      res.status(status).json(body);
+      if (!creationAccepted) res.status(status).json(body);
     };
     // 会话名额与 in-flight promise 必须在第一次 await 前原子预占。Node 的同步区间
-    // 不会交错，因而同进程重放会等待同一个最终结果，不能创建第二个 runtime。
+    // 不会交错；重放只观察同一身份，不能创建第二个 runtime，且落盘前不能提前受理。
     cdsAgentSessions.set(session.id, session);
     cdsAgentSessionCreations.set(session.id, creationOutcomePromise);
+    cdsAgentSessionReservationWrites.set(session.id, reservationWrite);
     try {
       persistAgentSession(session);
       await deps.stateService.flush();
+      resolveReservationWrite(true);
     } catch {
+      resolveReservationWrite(false);
       cdsAgentSessions.delete(session.id);
       try {
         if (session.clientRequestId) deps.stateService.removeAgentSessionReservation(session.id);
         await deps.stateService.flush();
       } catch { /* retain the persistence failure as the primary error */ }
-      respondCreation(503, {
+      await respondCreation(503, {
         error: {
           code: 'agent_session_reservation_persist_failed',
           message: 'agent session reservation could not be persisted',
@@ -1122,6 +1152,8 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         },
       });
       return;
+    } finally {
+      cdsAgentSessionReservationWrites.delete(session.id);
     }
     const creationWasCancelled = (): boolean => (
       session.status === 'stopping'
@@ -1151,7 +1183,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         session.updatedAt = new Date().toISOString();
         persistAgentSession(session);
         await deps.stateService.flush();
-        respondCreation(session.status === 'failed' ? 502 : 409, {
+        await respondCreation(session.status === 'failed' ? 502 : 409, {
           item: toCdsAgentSessionView(session),
           error: {
             code: 'agent_session_creation_cancelled',
@@ -1169,18 +1201,19 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         persistAgentSession(session);
         recordAgentRequestHistory(session);
         await deps.stateService.flush().catch(() => undefined);
-        respondCreation(502, { item: toCdsAgentSessionView(session), error: runtimeError });
+        await respondCreation(502, { item: toCdsAgentSessionView(session), error: runtimeError });
       }
     };
 
+    const runCreation = async (): Promise<void> => {
     // The durable creating reservation above is visible before this first asynchronous check.
     // Concurrent retries therefore replay the same stable session instead of creating a second
     // runtime resource, and MAP can recover the attempt through the filtered GET route.
     try {
       await agentSessionRecoveryPromise;
     } catch {
-      await releaseAgentSessionReservation(session).catch(() => undefined);
-      respondCreation(503, {
+      if (!creationAccepted) await releaseAgentSessionReservation(session).catch(() => undefined);
+      await respondCreation(503, {
         error: {
           code: 'agent_session_recovery_persist_failed',
           message: 'agent session recovery state could not be persisted',
@@ -1195,8 +1228,8 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         ? await agentWorkspaceSessionRuntime.capability()
         : null;
     } catch {
-      await releaseAgentSessionReservation(session).catch(() => undefined);
-      respondCreation(503, {
+      if (!creationAccepted) await releaseAgentSessionReservation(session).catch(() => undefined);
+      await respondCreation(503, {
         error: {
           code: 'agent_runtime_capability_failed',
           message: 'agent runtime capability validation failed',
@@ -1218,8 +1251,8 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         )
       : AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION;
     if (isolationMode === 'session-container' && !resourcePolicyEnforcedPerSession) {
-      await releaseAgentSessionReservation(session).catch(() => undefined);
-      respondCreation(409, {
+      if (!creationAccepted) await releaseAgentSessionReservation(session).catch(() => undefined);
+      await respondCreation(409, {
         error: {
           code: 'resource_policy_not_enforced',
           message: workspaceCapability?.reason
@@ -1245,6 +1278,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           workspaceTransfer,
           resourcePolicy,
           (stage, detail) => {
+            if (creationWasCancelled()) return;
             pushCdsAgentEvent(session, 'status', { status: 'creating', reason: stage, ...detail });
           },
           (error) => settleAgentWorkspaceSessionCleanup(session, error, (settledSession) => {
@@ -1259,7 +1293,6 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         containerName = allocated.containerName;
         session.containerName = allocated.containerName;
         session.workspaceRoot = '/workspace';
-        session.status = 'running';
         session.updatedAt = new Date().toISOString();
       } catch (error) {
         if (creationWasCancelled()) {
@@ -1271,6 +1304,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           workspaceTransfer.transferToken,
         ]);
         session.status = 'failed';
+        session.creationFailure = runtimeError;
         session.updatedAt = new Date().toISOString();
         const runtimeRetainsSession = typeof agentWorkspaceSessionRuntime.has === 'function'
           && agentWorkspaceSessionRuntime.has(session.id);
@@ -1312,43 +1346,26 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           persistAgentSession(session);
           recordAgentRequestHistory(session);
           await deps.stateService.flush().catch(() => undefined);
-        } else {
+        } else if (!creationAccepted) {
           await releaseAgentSessionReservation(session).catch(() => undefined);
         }
-        respondCreation(runtimeError.retryable ? 503 : 409, {
+        await respondCreation(runtimeError.retryable ? 503 : 409, {
           error: runtimeError,
           ...(session.resourceCleanupPending ? { item: toCdsAgentSessionView(session) } : {}),
         });
         return;
       }
     }
-    pushCdsAgentEvent(session, 'status', {
-      status: 'running',
-      reason: 'session_created',
-      runtime,
-      model: session.model,
-      modelBaseUrl,
-      modelProtocol,
-      workspaceRoot,
-      gitRepository,
-      gitRef,
-      runtimeProfileId: session.runtimeProfileId,
-      modelCredential: hasModelApiKey ? 'configured' : 'missing',
-      resourcePolicy,
-      workloadKind,
-      isolationMode,
-      executionOwner: provider.executionOwner,
-      resourcePolicyEnforcedPerSession,
-    });
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
       message: `session created runtime=${runtime} workload=${workloadKind} isolation=${isolationMode} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy}`,
       source: runtimeSource,
     });
     session.logs.push(`[${now}] session created runtime=${runtime} provider=${provider.id} workload=${workloadKind} isolation=${isolationMode} owner=${provider.executionOwner} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy} cleanup=${resourcePolicy.autoCleanupMinutes}m resourcePolicyEnforcedPerSession=${resourcePolicyEnforcedPerSession}`);
-    session.status = 'running';
     session.updatedAt = new Date().toISOString();
-    persistAgentSession(session);
+    // Persist a ready snapshot without changing the live object. GET, replay, messages and
+    // events must continue to observe Creating until this durability barrier has succeeded.
+    persistAgentSession({ ...session, status: 'running' });
     try {
       await deps.stateService.flush();
     } catch (persistError) {
@@ -1397,13 +1414,56 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         recordAgentRequestHistory(session);
         await deps.stateService.flush();
       } catch { /* in-memory failed outcome remains authoritative for same-process replay */ }
-      respondCreation(503, {
+      await respondCreation(503, {
         item: toCdsAgentSessionView(session),
         error: finalPersistFailure,
       });
       return;
     }
-    respondCreation(201, { item: toCdsAgentSessionView(session) });
+    if (creationWasCancelled()) {
+      await finishCancelledCreation();
+      return;
+    }
+    session.status = 'running';
+    pushCdsAgentEvent(session, 'status', {
+      status: 'running',
+      reason: 'session_created',
+      runtime,
+      model: session.model,
+      modelBaseUrl,
+      modelProtocol,
+      workspaceRoot,
+      gitRepository,
+      gitRef,
+      runtimeProfileId: session.runtimeProfileId,
+      modelCredential: hasModelApiKey ? 'configured' : 'missing',
+      resourcePolicy,
+      workloadKind,
+      isolationMode,
+      executionOwner: provider.executionOwner,
+      resourcePolicyEnforcedPerSession,
+    });
+    await respondCreation(201, { item: toCdsAgentSessionView(session) });
+    };
+    if (runtime === 'open-design') {
+      creationAccepted = true;
+      res.status(202).json({ item: toCdsAgentSessionView(session), pending: true });
+      // HTTP disconnect is not cancellation. Stop owns cancellation and waits for the same
+      // creation outcome; the existing startup reaper settles persisted work after a restart.
+      void runCreation().catch(async (error) => {
+        const runtimeError = sanitizeAgentWorkspaceRuntimeError(error, [modelApiKey, workspaceTransfer?.transferToken]);
+        let cleanupFailed = false;
+        try {
+          await agentWorkspaceSessionRuntime?.stop(session.id, 'background_creation_failed');
+        } catch { cleanupFailed = true; }
+        session.resourceCleanupPending = cleanupFailed || Boolean(
+          typeof agentWorkspaceSessionRuntime?.has === 'function' && agentWorkspaceSessionRuntime.has(session.id),
+        );
+        await respondCreation(503, { item: toCdsAgentSessionView(session), error: runtimeError });
+      });
+    } else {
+      await runCreation();
+    }
   });
 
   router.get('/projects/:id/agent-sessions', (req, res) => {
@@ -1504,7 +1564,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         return;
       }
     }
-    if (session.status === 'stopped' || session.status === 'failed' || session.status === 'stopping') {
+    if (session.status === 'creating' || session.status === 'stopped' || session.status === 'failed' || session.status === 'stopping') {
       res.status(409).json({
         error: {
           code: `session_${session.status}`,
@@ -2837,6 +2897,7 @@ const cdsAgentSessions = new Map<string, CdsAgentSession>();
 const cdsAgentSessionSecrets = new Map<string, { modelApiKey?: string; transferToken?: string }>();
 const cdsAgentStreamWaiters = new Map<string, Set<() => void>>();
 const cdsAgentSessionCreations = new Map<string, Promise<CdsAgentSessionCreationOutcome>>();
+const cdsAgentSessionReservationWrites = new Map<string, Promise<boolean>>();
 
 const AGENT_CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 

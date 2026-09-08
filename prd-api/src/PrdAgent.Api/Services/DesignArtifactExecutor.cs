@@ -283,7 +283,7 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
 
         try
         {
-            session = await _sessions.StartAsync(
+            session = await WaitForSessionReadyAsync(token => _sessions.StartAsync(
                 run.UserId,
                 session.Id,
                 new StartInfraAgentSessionRequest(
@@ -303,7 +303,7 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             workspace.MaxInputBytes,
                             workspace.MaxOutputBytes,
                             workspace.AllowedOutputPaths))),
-                ct) ?? throw new InvalidOperationException("CDS 未能启动 OpenDesign 远程会话");
+                token), deadline, ct);
             session = await _sessions.SendMessageAsync(
                 run.UserId,
                 session.Id,
@@ -425,6 +425,55 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                         : "停止未完成的 OpenDesign 远程会话失败 session={SessionId}",
                     session.Id);
             }
+        }
+    }
+
+    internal static async Task<InfraAgentSessionView> WaitForSessionReadyAsync(
+        Func<CancellationToken, Task<InfraAgentSessionView?>> startSameSession,
+        DateTime deadline,
+        CancellationToken ct,
+        TimeSpan? pollDelay = null)
+    {
+        var remaining = deadline - DateTime.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+            throw new InvalidOperationException("OpenDesign 启动等待已超时，请检查 CDS 会话日志后重试");
+        using var timeout = new CancellationTokenSource(remaining);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+        try
+        {
+            while (true)
+            {
+                linked.Token.ThrowIfCancellationRequested();
+                InfraAgentSessionView? current = null;
+                try
+                {
+                    // Start preserves its durable StartAttemptId while pending. Never create a
+                    // second MAP session or dispatch a message before CDS confirms readiness.
+                    current = await startSameSession(linked.Token);
+                    if (current == null)
+                        throw new InvalidOperationException("CDS 未能启动 OpenDesign 远程会话");
+                }
+                catch (InfraAgentSessionException ex) when (
+                    ex.ErrorCode == InfraAgentSessionErrorCodes.SessionCreationPending)
+                {
+                    // Pending is an observation, not a failed execution requiring compensation.
+                }
+                if (current != null)
+                {
+                    if (current.Status is InfraAgentSessionStatuses.Stopped or InfraAgentSessionStatuses.Stopping)
+                        throw new DesignArtifactExecutionCancelledException("OpenDesign 远程会话在启动期间已停止");
+                    if (current.Status is InfraAgentSessionStatuses.Running or InfraAgentSessionStatuses.Idle
+                        && !string.IsNullOrWhiteSpace(current.CdsSessionId))
+                        return current;
+                    if (current.Status != InfraAgentSessionStatuses.Creating)
+                        throw new InvalidOperationException("OpenDesign 远程会话未能就绪，请检查 CDS 会话日志后重试");
+                }
+                await Task.Delay(pollDelay ?? TimeSpan.FromSeconds(1), linked.Token);
+            }
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            throw new InvalidOperationException("OpenDesign 启动等待已超时，请检查 CDS 会话日志后重试");
         }
     }
 

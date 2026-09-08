@@ -58,6 +58,16 @@ async function request(
   });
 }
 
+async function waitForSessionStatus(server: http.Server, projectId: string, token: string, sessionId: string, status: string) {
+  let result: Awaited<ReturnType<typeof request>>;
+  await waitFor(async () => {
+    result = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, token);
+    return result.status === 200 && result.body.item.status === status;
+  });
+  expect(result!.status).toBe(200);
+  return result!;
+}
+
 function streamRequest(
   server: http.Server,
   urlPath: string,
@@ -500,7 +510,7 @@ describe('Remote hosts project instances route', () => {
       'POST',
       `/api/projects/${projectId}/agent-sessions`,
       longToken,
-      { runtime: 'open-design', workloadKind: 'design-artifact' },
+      { runtime: 'open-design', workloadKind: 'design-artifact', clientRequestId: 'missing-runtime' },
     );
     expect(rejected.status).toBe(409);
     expect(rejected.body.error).toMatchObject({
@@ -543,7 +553,8 @@ describe('Remote hosts project instances route', () => {
     });
   });
 
-  it('releases ordinary OpenDesign creation failures after credential-safe diagnostics', async () => {
+  it('retains ordinary OpenDesign creation failures with credential-safe diagnostics and releases clean capacity', async () => {
+    process.env.CDS_AGENT_SESSION_PRINCIPAL_LIMIT = '1';
     const events: Array<Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }> = [];
     const serverEventLogStore: ServerEventLogSink = {
       record(event) {
@@ -582,6 +593,7 @@ describe('Remote hosts project instances route', () => {
         workloadKind: 'design-artifact',
         model: 'map-managed',
         modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+        clientRequestId: 'ordinary-create-failure',
         modelProtocol: 'openai',
         modelApiKey: 'model-secret',
         workspaceTransfer: {
@@ -605,9 +617,9 @@ describe('Remote hosts project instances route', () => {
       },
     );
 
-    expect(failed.status).toBe(503);
-    expect(failed.body).not.toHaveProperty('item');
-    expect(failed.body.error).toMatchObject({
+    expect(failed.status).toBe(202);
+    const terminal = await waitForSessionStatus(server, projectId, longToken, failed.body.item.id, 'failed');
+    expect(terminal.body.item.creationFailure).toMatchObject({
       code: 'workspace_container_create_failed',
       message: 'OpenDesign container failed to be created',
       retryable: true,
@@ -647,13 +659,16 @@ describe('Remote hosts project instances route', () => {
 
     const failedSessionId = String(events[0].details?.sessionId || '');
     expect(failedSessionId).not.toBe('');
-    const missing = await request(
+    const retained = await request(
       server,
       'GET',
       `/api/projects/${projectId}/agent-sessions/${failedSessionId}`,
       longToken,
     );
-    expect(missing.status).toBe(404);
+    expect(retained.status).toBe(200);
+    expect(retained.body.item.resourceCleanupPending).toBe(false);
+    const replacement = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, { runtime: 'fake' });
+    expect(replacement.status).toBe(201);
   });
 
   it('rejects credentialed OpenDesign model URLs before creating or observing a session', async () => {
@@ -693,6 +708,7 @@ describe('Remote hosts project instances route', () => {
           workloadKind: 'design-artifact',
           model: 'map-managed',
           modelBaseUrl: 'https://url-user:url-password@map.example.test/api?token=url-token#url-fragment',
+          clientRequestId: 'invalid-model-url',
           modelProtocol: 'openai',
           modelApiKey: 'model-secret-url-validation',
           workspaceTransfer: {
@@ -792,6 +808,7 @@ describe('Remote hosts project instances route', () => {
       workloadKind: 'design-artifact',
       model: 'map-managed',
       modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-create-cleanup/llm/v1',
+      clientRequestId: 'create-cleanup-failure',
       modelProtocol: 'openai',
       modelApiKey: modelSecret,
       workspaceTransfer: {
@@ -821,9 +838,10 @@ describe('Remote hosts project instances route', () => {
       longToken,
       createBody,
     );
-    expect(failed.status).toBe(503);
-    expect(failed.body.error.code).toBe('workspace_cleanup_failed');
-    expect(failed.body.item).toMatchObject({
+    expect(failed.status).toBe(202);
+    const terminal = await waitForSessionStatus(server, projectId, longToken, failed.body.item.id, 'failed');
+    expect(terminal.body.item.creationFailure.code).toBe('workspace_cleanup_failed');
+    expect(terminal.body.item).toMatchObject({
       status: 'failed',
       resourceCleanupPending: true,
     });
@@ -955,6 +973,7 @@ describe('Remote hosts project instances route', () => {
           workloadKind: 'design-artifact',
           model: 'map-managed',
           modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-redaction/llm/v1',
+          clientRequestId: 'execution-redaction',
           modelProtocol: 'openai',
           modelApiKey: modelSecret,
           workspaceTransfer: {
@@ -977,8 +996,9 @@ describe('Remote hosts project instances route', () => {
           },
         },
       );
-      expect(created.status).toBe(201);
+      expect(created.status).toBe(202);
       const sessionId = created.body.item.id;
+      await waitForSessionStatus(server, projectId, longToken, sessionId, 'running');
 
       const sent = await request(
         server,
@@ -1076,6 +1096,7 @@ describe('Remote hosts project instances route', () => {
         workloadKind: 'design-artifact',
         model: 'map-managed',
         modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-stop-retry/llm/v1',
+        clientRequestId: 'stop-retry',
         modelProtocol: 'openai',
         modelApiKey: 'model-secret-stop-retry',
         workspaceTransfer: {
@@ -1099,6 +1120,8 @@ describe('Remote hosts project instances route', () => {
       },
     );
 
+    expect(created.status).toBe(202);
+    await waitForSessionStatus(server, projectId, longToken, created.body.item.id, 'running');
     const stopped = await request(
       server,
       'POST',
@@ -1171,6 +1194,7 @@ describe('Remote hosts project instances route', () => {
         workloadKind: 'design-artifact',
         model: 'map-managed',
         modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-stop-race/llm/v1',
+        clientRequestId: 'stop-race',
         modelProtocol: 'openai',
         modelApiKey: 'model-secret-stop-race',
         workspaceTransfer: {
@@ -1193,7 +1217,9 @@ describe('Remote hosts project instances route', () => {
         },
       },
     );
+    expect(created.status).toBe(202);
     const sessionId = created.body.item.id;
+    await waitForSessionStatus(server, projectId, longToken, sessionId, 'running');
     const sent = await request(
       server,
       'POST',
@@ -1288,6 +1314,7 @@ describe('Remote hosts project instances route', () => {
         workloadKind: 'design-artifact',
         model: 'map-managed',
         modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-cleanup/llm/v1',
+        clientRequestId: 'cleanup-capacity',
         modelProtocol: 'openai',
         modelApiKey: modelSecret,
         workspaceTransfer: {
@@ -1310,8 +1337,9 @@ describe('Remote hosts project instances route', () => {
         },
       },
     );
-    expect(created.status).toBe(201);
+    expect(created.status).toBe(202);
     const sessionId = created.body.item.id;
+    await waitForSessionStatus(server, projectId, longToken, sessionId, 'running');
     const sent = await request(
       server,
       'POST',
@@ -1508,6 +1536,7 @@ describe('Remote hosts project instances route', () => {
         workloadKind: 'design-artifact',
         model: 'map-managed',
         modelBaseUrl: 'HTTPS://MAP.EXAMPLE.TEST:443/api/design-artifacts/runtime/run-1/llm/v1',
+        clientRequestId: 'committed-result',
         modelProtocol: 'openai',
         modelApiKey: 'model-secret',
         workspaceTransfer: transfer,
@@ -1521,8 +1550,9 @@ describe('Remote hosts project instances route', () => {
       },
     );
 
-    expect(created.status).toBe(201);
-    expect(created.body.item).toMatchObject({
+    expect(created.status).toBe(202);
+    const ready = await waitForSessionStatus(server, projectId, longToken, created.body.item.id, 'running');
+    expect(ready.body.item).toMatchObject({
       runtime: 'open-design',
       workloadKind: 'design-artifact',
       containerName: 'cds-od-test',

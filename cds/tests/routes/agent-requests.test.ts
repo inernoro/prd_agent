@@ -96,6 +96,16 @@ describe('Agent requests observability routes', () => {
     });
   }
 
+  async function waitForSession(projectId: string, token: string, sessionId: string, status: string) {
+    let result: Awaited<ReturnType<typeof request>>;
+    await vi.waitFor(async () => {
+      result = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, token);
+      expect(result.status).toBe(200);
+      expect(result.body.item.status).toBe(status);
+    });
+    return result!;
+  }
+
   function authorizeSharedServiceProject(options: {
     projectId?: string;
     partnerId?: string;
@@ -316,23 +326,24 @@ describe('Agent requests observability routes', () => {
     });
 
     const secondPromise = request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, body);
-    let replaySettled = false;
-    void secondPromise.finally(() => { replaySettled = true; });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(replaySettled).toBe(false);
-    releaseCapabilities();
     const [first, second] = await Promise.all([firstPromise, secondPromise]);
 
-    expect(first.status).toBe(201);
-    expect(second.status).toBe(200);
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
     expect(second.body.idempotentReplay).toBe(true);
-    expect(second.body.item.status).toBe('running');
+    expect(second.body.item.status).toBe('creating');
     expect(first.body.item.id).toBe(second.body.item.id);
     expect(capabilityCalls).toBe(1);
+    expect(createCalls).toBe(0);
+    const earlyMessage = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions/${first.body.item.id}/messages`, longToken, { content: 'must not run yet', clientMessageId: 'too-early' });
+    expect(earlyMessage.status).toBe(409);
+    expect(earlyMessage.body.error.code).toBe('session_creating');
+    releaseCapabilities();
+    await waitForSession(projectId, longToken, first.body.item.id, 'running');
     expect(createCalls).toBe(1);
   });
 
-  it('releases a durable reservation when the first capability check fails', async () => {
+  it('retains an accepted failure and replays it without allocating another runtime', async () => {
     let capabilityCalls = 0;
     const workspaceRuntime = {
       async capability() {
@@ -375,19 +386,42 @@ describe('Agent requests observability routes', () => {
     };
 
     const first = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, body);
-    expect(first.status).toBe(409);
-    const missing = await request(
+    expect(first.status).toBe(202);
+    await waitForSession(projectId, longToken, first.body.item.id, 'failed');
+    const found = await request(
       server,
       'GET',
       `/api/projects/${projectId}/agent-sessions?clientRequestId=${clientRequestId}`,
       longToken,
     );
-    expect(missing.status).toBe(200);
-    expect(missing.body.items).toEqual([]);
+    expect(found.status).toBe(200);
+    expect(found.body.items).toHaveLength(1);
+    expect(found.body.items[0]).toMatchObject({ status: 'failed', creationFailure: { code: 'resource_policy_not_enforced' } });
 
     const retry = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, body);
     expect(retry.status).toBe(409);
-    expect(capabilityCalls).toBe(2);
+    expect(retry.body.item.id).toBe(first.body.item.id);
+    expect(capabilityCalls).toBe(1);
+    await flushAllJsonStateStores();
+    const diskState = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    diskState.load();
+    expect(diskState.listAgentSessionReservations().find((item) => item.id === first.body.item.id)?.item)
+      .toMatchObject({ status: 'failed', creationFailure: { code: 'resource_policy_not_enforced' } });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    stateService = diskState;
+    vi.resetModules();
+    const { createRemoteHostsRouter: createFreshRouter } = await import('../../src/routes/remote-hosts.js');
+    const restartedApp = express();
+    restartedApp.use(express.json());
+    restartedApp.use('/api', createFreshRouter({ stateService, agentWorkspaceSessionRuntime: workspaceRuntime }));
+    await new Promise<void>((resolve) => { server = restartedApp.listen(0, '127.0.0.1', resolve); });
+    const recovered = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions?clientRequestId=${clientRequestId}`, longToken);
+    expect(recovered.body.items).toHaveLength(1);
+    expect(recovered.body.items[0]).toMatchObject({ id: first.body.item.id, status: 'failed', creationFailure: { code: 'resource_policy_not_enforced' } });
+    const replayAfterRestart = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, body);
+    expect(replayAfterRestart.status).toBe(409);
+    expect(replayAfterRestart.body.recovered).toBe(true);
+    expect(capabilityCalls).toBe(1);
   });
 
   it('flushes the durable reservation before capability or runtime creation starts', async () => {
@@ -424,10 +458,19 @@ describe('Agent requests observability routes', () => {
     expect(capabilityCalls).toBe(0);
     expect(createCalls).toBe(0);
 
+    let replaySettled = false;
+    const replayPromise = request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, openDesignSessionBody('request-flush-barrier-001'));
+    void replayPromise.then(() => { replaySettled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(replaySettled).toBe(false);
     flushGate.resolve();
     flushSpy.mockImplementation(originalFlush);
     const created = await createPromise;
-    expect(created.status).toBe(201);
+    expect(created.status).toBe(202);
+    const replay = await replayPromise;
+    expect(replay.status).toBe(202);
+    expect(replay.body.item.id).toBe(created.body.item.id);
+    await waitForSession(projectId, longToken, created.body.item.id, 'running');
     expect(capabilityCalls).toBe(1);
     expect(createCalls).toBe(1);
   });
@@ -468,6 +511,101 @@ describe('Agent requests observability routes', () => {
     expect(createCalls).toBe(0);
   });
 
+  it('rejects OpenDesign without a stable request identity before reserving or probing', async () => {
+    const capability = vi.fn();
+    const create = vi.fn();
+    await startServer({ agentWorkspaceSessionRuntime: { capability, create } as unknown as AgentWorkspaceSessionRuntime });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const { clientRequestId: _unused, ...body } = openDesignSessionBody('identity-to-remove');
+    const rejected = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, body);
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error.code).toBe('agent_session_client_request_id_required');
+    expect(capability).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    expect(stateService.listAgentSessionReservations()).toHaveLength(0);
+  });
+
+  it.each(['ready', 'failed', 'stopped'])('does not expose ready or dispatch before final durability (%s)', async (outcome) => {
+    const failFlush = outcome === 'failed';
+    const enteredFlush = deferred<void>();
+    const releaseFlush = deferred<void>();
+    let executeCalls = 0;
+    let stopCalls = 0;
+    let allocated = false;
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create(sessionId: string) {
+        allocated = true;
+        return { containerName: `workspace-${sessionId}` };
+      },
+      async execute() {
+        executeCalls++;
+        return { artifactRef: 'test-artifact', resultSha256: 'test-hash', files: [] };
+      },
+      async stop() { stopCalls++; allocated = false; },
+      has() { return allocated; },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    await new Promise((resolve) => setImmediate(resolve));
+    const originalFlush = stateService.flush.bind(stateService);
+    let flushCalls = 0;
+    vi.spyOn(stateService, 'flush').mockImplementation(async () => {
+      if (++flushCalls === 2) {
+        enteredFlush.resolve();
+        await releaseFlush.promise;
+        if (failFlush) throw new Error('final durable flush failed');
+      }
+      await originalFlush();
+    });
+    const body = openDesignSessionBody(`durability-window-${outcome}`);
+    const basePath = `/api/projects/${projectId}/agent-sessions`;
+    const accepted = await request(server, 'POST', basePath, longToken, body);
+    const sessionId = accepted.body.item.id;
+    const message = { content: 'must wait for durability', clientMessageId: 'durable-message' };
+    let stopping: ReturnType<typeof request> | undefined;
+    try {
+      await enteredFlush.promise;
+      const detail = await request(server, 'GET', `${basePath}/${sessionId}`, longToken);
+      const list = await request(server, 'GET', `${basePath}?clientRequestId=${body.clientRequestId}`, longToken);
+      const replay = await request(server, 'POST', basePath, longToken, body);
+      const rejected = await request(server, 'POST', `${basePath}/${sessionId}/messages`, longToken, message);
+      expect(detail.body.item.status).toBe('creating');
+      expect(list.body.items).toHaveLength(1);
+      expect(list.body.items[0]).toMatchObject({ id: sessionId, status: 'creating' });
+      expect(replay.status).toBe(202);
+      expect(replay.body.item).toMatchObject({ id: sessionId, status: 'creating' });
+      expect(rejected.status).toBe(409);
+      expect(rejected.body.error.code).toBe('session_creating');
+      expect(executeCalls).toBe(0);
+      if (outcome === 'stopped') {
+        stopping = request(server, 'POST', `${basePath}/${sessionId}/stop`, longToken, {});
+        await waitForSession(projectId, longToken, sessionId, 'stopping');
+      }
+    } finally {
+      releaseFlush.resolve();
+    }
+    if (stopping) await stopping;
+    await waitForSession(projectId, longToken, sessionId, outcome === 'ready' ? 'running' : outcome);
+    if (outcome !== 'ready') {
+      const rejected = await request(server, 'POST', `${basePath}/${sessionId}/messages`, longToken, message);
+      expect(rejected.status).toBe(409);
+      expect(executeCalls).toBe(0);
+      expect(stopCalls).toBeGreaterThanOrEqual(1);
+      expect(allocated).toBe(false);
+    } else {
+      const sent = await request(server, 'POST', `${basePath}/${sessionId}/messages`, longToken, message);
+      const replay = await request(server, 'POST', `${basePath}/${sessionId}/messages`, longToken, message);
+      expect(sent.status).toBe(202);
+      expect(sent.body.accepted).toBe(true);
+      expect(replay.body.replayed).toBe(true);
+      expect(executeCalls).toBe(1);
+      expect(stopCalls).toBe(0);
+    }
+  });
+
   it('cleans a created runtime and replays a deterministic failure when final flush fails', async () => {
     let createCalls = 0;
     let stopCalls = 0;
@@ -503,7 +641,9 @@ describe('Agent requests observability routes', () => {
     const body = openDesignSessionBody(clientRequestId);
 
     // Treat the first response as lost: correctness is asserted through the idempotent replay.
-    await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, body);
+    const accepted = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, body);
+    expect(accepted.status).toBe(202);
+    await waitForSession(projectId, longToken, accepted.body.item.id, 'failed');
     const replay = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, body);
 
     expect(replay.status).toBe(503);
@@ -611,9 +751,8 @@ describe('Agent requests observability routes', () => {
     expect(stopped.status).toBe(200);
     expect(stopped.body.item.status).toBe('stopped');
 
-    expect(createResult.status).toBe(409);
-    expect(createResult.body.error.code).toBe('agent_session_creation_cancelled');
-    expect(createResult.body.item.status).toBe('stopped');
+    expect(createResult.status).toBe(202);
+    expect(createResult.body.item.status).toBe('creating');
     expect(createCalls).toBe(1);
     expect(stopCalls).toBeGreaterThanOrEqual(2);
 

@@ -486,21 +486,28 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 workloadKind = session.WorkloadKind,
                 isolationMode = session.IsolationMode
             };
-            using var response = await SendCdsJsonAsync(
-                HttpMethod.Post,
-                connection,
-                token,
-                $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions",
-                body,
-                ct,
-                allowErrorResponse: true);
+            HttpResponseMessage createHttpResponse;
+            try
+            {
+                createHttpResponse = await SendCdsJsonAsync(
+                    HttpMethod.Post, connection, token,
+                    $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions",
+                    body, ct, allowErrorResponse: true);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException)
+            {
+                // The request may already own a CDS reservation. Preserve its attempt identity;
+                // the next observation replays that same key, never a fresh resource allocation.
+                throw CreateCdsCreatePendingException();
+            }
+            using var response = createHttpResponse;
             async Task PersistCreateResponseAsync(CdsCreateSessionResponse createResponse, CancellationToken recoveryCt)
             {
                 var item = createResponse.Item!.Value;
                 var cdsSessionId = GetString(item, "id")!;
                 var workerId = GetString(item, "workerId");
                 var containerName = GetString(item, "containerName");
-                var status = response.IsSuccessStatusCode
+                var status = (createResponse.Succeeded ?? response.IsSuccessStatusCode)
                     ? MapCdsStatus(GetString(item, "status"))
                     : InfraAgentSessionStatuses.Failed;
                 now = DateTime.UtcNow;
@@ -603,46 +610,16 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 session.LastError = createResponse.ErrorMessage;
             }
 
-            if ((int)response.StatusCode == StatusCodes.Status202Accepted)
-            {
-                // A persisted CDS reservation deliberately returns 202 while its original create
-                // operation is still running. Its item.id is only a reservation identity at this
-                // point: it must not become MAP's dispatchable primary session or retire the stable
-                // StartAttemptId. Recover briefly through the idempotency key; a later Start call
-                // safely repeats the same clientRequestId when creation is still pending.
-                var accepted = await RunCdsCreateRecoveryAsync(recoveryCt =>
-                    ReadCdsCreateResponseAsync(response, recoveryCt));
-                EnsureCdsCreateResponseHasIdentity(accepted);
-                var recoveredItem = await RunCdsCreateRecoveryAsync(recoveryCt =>
+            await ProcessCdsCreateResponseAsync(
+                response,
+                PersistCreateResponseAsync,
+                recoverAsync: recoveryCt =>
                     WaitForCdsCreateReplayTerminalAsync(
                         session,
                         startAttemptId,
                         connection,
                         token,
                         recoveryCt));
-                if (!recoveredItem.HasValue)
-                {
-                    throw CreateCdsCreatePendingException();
-                }
-
-                var disposition = ClassifyCdsCreateReplayStatus(GetString(recoveredItem.Value, "status"));
-                var recoveredError = disposition == CdsCreateReplayDisposition.Failed
-                    ? ReadCdsCreateFailureMessage(recoveredItem.Value)
-                    : null;
-                var recovered = new CdsCreateSessionResponse(recoveredItem, recoveredError);
-                await RunCdsRecoveryAsync(recoveryCt => PersistCreateResponseAsync(recovered, recoveryCt));
-                if (disposition == CdsCreateReplayDisposition.Failed)
-                {
-                    throw new InfraAgentSessionException(
-                        InfraAgentSessionErrorCodes.CdsRequestFailed,
-                        recoveredError ?? "CDS 创建会话失败，远端资源清理待重试",
-                        StatusCodes.Status502BadGateway);
-                }
-            }
-            else
-            {
-                await ProcessCdsCreateResponseAsync(response, PersistCreateResponseAsync);
-            }
             var current = await FindOwnedSessionAsync(userId, id, CancellationToken.None);
             if (current == null
                 || current.CdsSessionId != session.CdsSessionId
@@ -2528,7 +2505,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return token;
     }
 
-    internal readonly record struct CdsCreateSessionResponse(JsonElement? Item, string? ErrorMessage);
+    internal readonly record struct CdsCreateSessionResponse(JsonElement? Item, string? ErrorMessage, bool? Succeeded = null);
     internal readonly record struct CdsSessionStopRequest(HttpMethod Method, string Path);
     internal enum CdsCreateReplayDisposition
     {
@@ -2938,10 +2915,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             }
             if (disposition == CdsCreateReplayDisposition.Invalid)
             {
-                throw new InfraAgentSessionException(
-                    InfraAgentSessionErrorCodes.CdsRequestFailed,
-                    "CDS 会话恢复查询返回了无法识别的状态",
-                    StatusCodes.Status502BadGateway);
+                return item;
             }
         }
         return null;
@@ -3169,9 +3143,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     internal static async Task<CdsCreateSessionResponse> ProcessCdsCreateResponseAsync(
         HttpResponseMessage response,
         Func<CdsCreateSessionResponse, CancellationToken, Task> persistAsync,
-        TimeSpan? recoveryTimeout = null)
+        TimeSpan? recoveryTimeout = null,
+        Func<CancellationToken, Task<JsonElement?>>? recoverAsync = null)
     {
-        if ((int)response.StatusCode == StatusCodes.Status202Accepted)
+        var accepted = (int)response.StatusCode == StatusCodes.Status202Accepted;
+        if (accepted && recoverAsync == null)
         {
             // 202 is a durable reservation replay, not a dispatchable runtime session. The caller
             // must resolve it by clientRequestId; persisting its provisional item here would clear
@@ -3179,14 +3155,59 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             throw CreateCdsCreatePendingException();
         }
         using var recoveryCts = new CancellationTokenSource(recoveryTimeout ?? CdsCreateRecoveryTimeout);
-        var createResponse = await ReadCdsCreateResponseAsync(response, recoveryCts.Token);
+        var uncertainStatus = response.IsSuccessStatusCode || (int)response.StatusCode >= 500
+            || (int)response.StatusCode == StatusCodes.Status408RequestTimeout;
+        CdsCreateSessionResponse createResponse;
+        try
+        {
+            createResponse = await ReadCdsCreateResponseAsync(response, recoveryCts.Token);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
+        {
+            // ResponseHeadersRead only acknowledges the headers. Losing the body still leaves
+            // the durable create outcome unknown; do not route that loss into failure/Stop.
+            // Explicit client rejection remains a rejection, even if its error body is lost.
+            if (!uncertainStatus)
+                throw new InfraAgentSessionException(InfraAgentSessionErrorCodes.CdsRequestFailed,
+                    BuildCdsRequestFailureMessage((int)response.StatusCode, string.Empty),
+                    StatusCodes.Status502BadGateway);
+            if (recoverAsync == null) throw CreateCdsCreatePendingException();
+            createResponse = new CdsCreateSessionResponse(null, null);
+        }
+        if (recoverAsync != null && (accepted || (!createResponse.Item.HasValue
+            && uncertainStatus)))
+        {
+            // A proxy failure page does not prove the durable CDS attempt failed. Reconcile the
+            // SAME clientRequestId, just as with 202, before persisting a dispatchable identity.
+            // A truncated 202 may contain no identity. Recovery is keyed by the already persisted
+            // clientRequestId, not by an untrusted or partially received response body.
+            JsonElement? recovered;
+            try
+            {
+                recovered = await recoverAsync(recoveryCts.Token);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or JsonException
+                || ex is InfraAgentSessionException { HttpStatus: >= 500 })
+            {
+                throw CreateCdsCreatePendingException();
+            }
+            if (!recovered.HasValue) throw CreateCdsCreatePendingException();
+            var disposition = ClassifyCdsCreateReplayStatus(GetString(recovered.Value, "status"));
+            if (disposition == CdsCreateReplayDisposition.Pending) throw CreateCdsCreatePendingException();
+            if (disposition == CdsCreateReplayDisposition.Invalid)
+                throw new InfraAgentSessionException(InfraAgentSessionErrorCodes.CdsRequestFailed,
+                    "CDS 会话恢复查询返回了无法识别的状态", StatusCodes.Status502BadGateway);
+            var succeeded = disposition == CdsCreateReplayDisposition.Ready;
+            createResponse = new CdsCreateSessionResponse(recovered,
+                succeeded ? null : ReadCdsCreateFailureMessage(recovered.Value), succeeded);
+        }
         EnsureCdsCreateResponseHasIdentity(createResponse);
 
         // Once CDS has returned a remote resource identity, persistence is recovery work rather
         // than request work. Complete it under an independent bounded token before surfacing a
         // non-success response, so caller cancellation cannot orphan the remote session.
         await persistAsync(createResponse, recoveryCts.Token);
-        if (!response.IsSuccessStatusCode)
+        if (!(createResponse.Succeeded ?? response.IsSuccessStatusCode))
         {
             throw new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.CdsRequestFailed,
@@ -3200,12 +3221,6 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         using var recoveryCts = new CancellationTokenSource(CdsCreateRecoveryTimeout);
         await action(recoveryCts.Token);
-    }
-
-    private static async Task<T> RunCdsCreateRecoveryAsync<T>(Func<CancellationToken, Task<T>> action)
-    {
-        using var recoveryCts = new CancellationTokenSource(CdsCreateRecoveryTimeout);
-        return await action(recoveryCts.Token);
     }
 
     private static void EnsureCdsCreateResponseHasIdentity(CdsCreateSessionResponse createResponse)
@@ -3233,6 +3248,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             message ??= GetString(error, "message");
         }
+        if (item.TryGetProperty("creationFailure", out var failure) && failure.ValueKind == JsonValueKind.Object)
+            message ??= GetString(failure, "message");
+        if (item.TryGetProperty("recoveryError", out var recoveryError) && recoveryError.ValueKind == JsonValueKind.Object)
+            message ??= GetString(recoveryError, "message");
         return SanitizeCdsErrorMessage(message, "CDS 创建会话失败，远端资源清理待重试");
     }
 
@@ -5473,7 +5492,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         public CdsCreatePendingException()
             : base(
-                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                InfraAgentSessionErrorCodes.SessionCreationPending,
                 "CDS 会话仍在创建中，请稍后重试；本次启动会继续复用同一请求标识",
                 StatusCodes.Status503ServiceUnavailable)
         {

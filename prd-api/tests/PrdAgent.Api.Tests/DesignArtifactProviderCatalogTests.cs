@@ -485,8 +485,10 @@ public class DesignArtifactProviderCatalogTests
         sessions.VerifyNoOtherCalls();
     }
 
-    [Fact]
-    public async Task OpenDesignExecutorSendsVersionedTaskPackageAndStreamsCdsEvents()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task OpenDesignExecutorSendsVersionedTaskPackageAndStreamsCdsEvents(int pendingStarts)
     {
         var connection = BuildConnection();
         var remoteSession = BuildSession();
@@ -527,6 +529,7 @@ public class DesignArtifactProviderCatalogTests
         workspaceBroker.Setup(service => service.ReadResultAsync("run-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ParsedDesignWorkspaceResult("<!doctype html>", verifiedResultFiles));
         var sessions = new Mock<IInfraAgentSessionService>();
+        var startCalls = 0;
         sessions.Setup(service => service.CreateAsync(
                 "user-1",
                 It.IsAny<CreateInfraAgentSessionRequest>(),
@@ -538,8 +541,18 @@ public class DesignArtifactProviderCatalogTests
                 remoteSession.Id,
                 It.IsAny<StartInfraAgentSessionRequest>(),
                 It.IsAny<CancellationToken>()))
-            .Callback<string, string, StartInfraAgentSessionRequest, CancellationToken>((_, _, request, _) => startRequest = request)
-            .ReturnsAsync(remoteSession);
+            .Returns<string, string, StartInfraAgentSessionRequest, CancellationToken>((_, _, request, _) =>
+            {
+                startRequest = request;
+                startCalls++;
+                if (startCalls <= pendingStarts)
+                {
+                    sessions.Verify(service => service.StopAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+                    sessions.Verify(service => service.SendMessageAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<SendInfraAgentMessageRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+                    throw new InfraAgentSessionException(InfraAgentSessionErrorCodes.SessionCreationPending, "创建中", 503);
+                }
+                return Task.FromResult<InfraAgentSessionView?>(remoteSession);
+            });
         sessions.Setup(service => service.SendMessageAsync(
                 "user-1",
                 remoteSession.Id,
@@ -599,6 +612,9 @@ public class DesignArtifactProviderCatalogTests
             chunks.Add(chunk);
 
         Assert.NotNull(createRequest);
+        Assert.Equal(pendingStarts + 1, startCalls);
+        sessions.Verify(service => service.CreateAsync("user-1", It.IsAny<CreateInfraAgentSessionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        sessions.Verify(service => service.SendMessageAsync("user-1", remoteSession.Id, It.IsAny<SendInfraAgentMessageRequest>(), It.IsAny<CancellationToken>()), Times.Once);
         Assert.Equal(connection.Id, createRequest.ConnectionId);
         Assert.Equal(InfraAgentRuntimes.OpenDesign, createRequest.Runtime);
         Assert.Equal(InfraAgentWorkloadKinds.DesignArtifact, createRequest.WorkloadKind);
@@ -871,6 +887,59 @@ public class DesignArtifactProviderCatalogTests
             It.IsAny<string>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StartupObservationWaitsForCreatingViewButDoesNotRetryDefiniteFailure()
+    {
+        var session = BuildSession();
+        var count = 0;
+        var ready = await OpenDesignRemoteArtifactExecutor.WaitForSessionReadyAsync(_ =>
+            Task.FromResult<InfraAgentSessionView?>(++count == 1
+                ? session with { Status = InfraAgentSessionStatuses.Creating, CdsSessionId = null }
+                : session), DateTime.UtcNow.AddSeconds(2), CancellationToken.None, TimeSpan.Zero);
+        Assert.Equal(2, count);
+        Assert.Same(session, ready);
+        count = 0;
+        var error = await Assert.ThrowsAsync<InfraAgentSessionException>(() =>
+            OpenDesignRemoteArtifactExecutor.WaitForSessionReadyAsync(_ =>
+            {
+                count++;
+                throw new InfraAgentSessionException(InfraAgentSessionErrorCodes.CdsRequestFailed, "确定失败", 503);
+            }, DateTime.UtcNow.AddSeconds(2), CancellationToken.None, TimeSpan.Zero));
+        Assert.Equal(1, count);
+        Assert.Equal(InfraAgentSessionErrorCodes.CdsRequestFailed, error.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(InfraAgentSessionStatuses.Stopped)]
+    [InlineData(InfraAgentSessionStatuses.Stopping)]
+    public async Task StartupObservationHonorsStoppedState(string status)
+    {
+        await Assert.ThrowsAsync<DesignArtifactExecutionCancelledException>(() =>
+            OpenDesignRemoteArtifactExecutor.WaitForSessionReadyAsync(_ => Task.FromResult<InfraAgentSessionView?>(
+                BuildSession() with { Status = status }), DateTime.UtcNow.AddSeconds(2), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task StartupObservationKeepsExistingDeadlineAndCallerCancellation()
+    {
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            OpenDesignRemoteArtifactExecutor.WaitForSessionReadyAsync(async token =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return BuildSession();
+            }, DateTime.UtcNow.AddMilliseconds(100), CancellationToken.None));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var calls = 0;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            OpenDesignRemoteArtifactExecutor.WaitForSessionReadyAsync(_ =>
+            {
+                calls++;
+                return Task.FromResult<InfraAgentSessionView?>(BuildSession());
+            }, DateTime.UtcNow.AddSeconds(2), cancellation.Token));
+        Assert.Equal(0, calls);
     }
 
     private static InfraConnectionPublicView BuildConnection(

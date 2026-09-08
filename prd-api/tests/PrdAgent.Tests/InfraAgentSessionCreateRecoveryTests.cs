@@ -7,6 +7,231 @@ namespace PrdAgent.Tests;
 
 public sealed class InfraAgentSessionCreateRecoveryTests
 {
+    [Theory]
+    [InlineData(200, "io")]
+    [InlineData(201, "http")]
+    [InlineData(202, "cancel")]
+    [InlineData(408, "io")]
+    [InlineData(502, "http")]
+    public async Task LostResponseBodyRecoversSameReservationBeforePersistence(int status, string failure)
+    {
+        using var response = new HttpResponseMessage((System.Net.HttpStatusCode)status)
+        {
+            Content = new FailingCreateContent(failure)
+        };
+        var order = new List<string>();
+        var result = await InfraAgentSessionService.ProcessCdsCreateResponseAsync(response,
+            (item, _) =>
+            {
+                Assert.Equal("original-reservation", item.Item!.Value.GetProperty("id").GetString());
+                order.Add("persist");
+                return Task.CompletedTask;
+            },
+            recoverAsync: _ =>
+            {
+                order.Add("recover");
+                return Task.FromResult<System.Text.Json.JsonElement?>(System.Text.Json.JsonSerializer.SerializeToElement(
+                    new { id = "original-reservation", status = "running" }));
+            });
+        Assert.True(result.Succeeded);
+        Assert.Equal(["recover", "persist"], order);
+    }
+
+    [Theory]
+    [InlineData("io")]
+    [InlineData("http")]
+    [InlineData("cancel")]
+    public async Task LostBodyAndUnresolvedReplayRemainPendingWithoutPersistence(string failure)
+    {
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.Created)
+        {
+            Content = new FailingCreateContent(failure)
+        };
+        var error = await Assert.ThrowsAnyAsync<InfraAgentSessionException>(() =>
+            InfraAgentSessionService.ProcessCdsCreateResponseAsync(response,
+                (_, _) => throw new Xunit.Sdk.XunitException("must not persist an unknown outcome"),
+                recoverAsync: _ => Task.FromResult<System.Text.Json.JsonElement?>(null)));
+        Assert.Equal(InfraAgentSessionErrorCodes.SessionCreationPending, error.ErrorCode);
+        Assert.DoesNotContain("private-body-detail", error.Message);
+    }
+
+    [Fact]
+    public async Task LostBodyWithoutRecoveryCallbackRemainsPending()
+    {
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.Created)
+        {
+            Content = new FailingCreateContent("io")
+        };
+        var error = await Assert.ThrowsAnyAsync<InfraAgentSessionException>(() =>
+            InfraAgentSessionService.ProcessCdsCreateResponseAsync(response,
+                (_, _) => throw new Xunit.Sdk.XunitException("must not persist")));
+        Assert.Equal(InfraAgentSessionErrorCodes.SessionCreationPending, error.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(400)]
+    [InlineData(401)]
+    [InlineData(403)]
+    [InlineData(429)]
+    public async Task ExplicitRejectionWithLostBodyDoesNotRecoverOrBypassGate(int status)
+    {
+        using var response = new HttpResponseMessage((System.Net.HttpStatusCode)status)
+        {
+            Content = new FailingCreateContent("io")
+        };
+        var error = await Assert.ThrowsAnyAsync<InfraAgentSessionException>(() =>
+            InfraAgentSessionService.ProcessCdsCreateResponseAsync(response,
+                (_, _) => throw new Xunit.Sdk.XunitException("must not persist"),
+                recoverAsync: _ => throw new Xunit.Sdk.XunitException("must not recover a rejected create")));
+        Assert.Equal(InfraAgentSessionErrorCodes.CdsRequestFailed, error.ErrorCode);
+        Assert.Contains($"HTTP {status}", error.Message);
+        Assert.DoesNotContain("private-body-detail", error.Message);
+    }
+
+    [Fact]
+    public async Task TruncatedAcceptedBodyUsesDurableRequestLookupInsteadOfProvisionalIdentity()
+    {
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.Accepted)
+        {
+            Content = new StringContent("{\"item\":")
+        };
+        var result = await InfraAgentSessionService.ProcessCdsCreateResponseAsync(response,
+            (item, _) =>
+            {
+                Assert.Equal("original-reservation", item.Item!.Value.GetProperty("id").GetString());
+                return Task.CompletedTask;
+            },
+            recoverAsync: _ => Task.FromResult<System.Text.Json.JsonElement?>(System.Text.Json.JsonSerializer.SerializeToElement(
+                new { id = "original-reservation", status = "idle" })));
+        Assert.True(result.Succeeded);
+    }
+
+    private sealed class FailingCreateContent(string failure) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context)
+            => Task.FromException(failure switch
+            {
+                "http" => new HttpRequestException("private-body-detail"),
+                "cancel" => new OperationCanceledException("private-body-detail"),
+                _ => new IOException("private-body-detail")
+            });
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
+    [Theory]
+    [InlineData(202)]
+    [InlineData(502)]
+    [InlineData(524)]
+    [InlineData(200)]
+    public async Task AcceptedOrUncertainCreateRecoversReadyIdentityBeforeDispatch(int status)
+    {
+        using var response = new HttpResponseMessage((System.Net.HttpStatusCode)status)
+        {
+            Content = new StringContent(status == 202
+                ? """{"item":{"id":"reservation-1","status":"creating"}}"""
+                : "<html>upstream response unavailable token=not-for-users</html>")
+        };
+        var queries = 0;
+        var persisted = new List<string>();
+        var result = await InfraAgentSessionService.ProcessCdsCreateResponseAsync(response,
+            (item, _) =>
+            {
+                Assert.True(item.Succeeded);
+                persisted.Add(item.Item!.Value.GetProperty("id").GetString()!);
+                return Task.CompletedTask;
+            },
+            recoverAsync: _ =>
+            {
+                queries++;
+                return Task.FromResult<System.Text.Json.JsonElement?>(System.Text.Json.JsonSerializer.SerializeToElement(
+                    new { id = "reservation-1", status = "running" }));
+            });
+        Assert.True(result.Succeeded);
+        Assert.Null(result.ErrorMessage);
+        Assert.Equal(1, queries);
+        Assert.Equal(["reservation-1"], persisted);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("creating")]
+    [InlineData("queued")]
+    public async Task UncertainCreateKeepsPendingReservationWithoutPersistingDispatchableSession(string? status)
+    {
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent("<html>gateway unavailable</html>")
+        };
+        var persisted = false;
+        var error = await Assert.ThrowsAnyAsync<InfraAgentSessionException>(() =>
+            InfraAgentSessionService.ProcessCdsCreateResponseAsync(response,
+                (_, _) => { persisted = true; return Task.CompletedTask; },
+                recoverAsync: _ => Task.FromResult<System.Text.Json.JsonElement?>(status == null ? null
+                    : System.Text.Json.JsonSerializer.SerializeToElement(new { id = "reservation-1", status }))));
+        Assert.Equal(InfraAgentSessionErrorCodes.SessionCreationPending, error.ErrorCode);
+        Assert.False(persisted);
+    }
+
+    [Fact]
+    public async Task RecoveryLookupTransportFailureIsStillPendingRatherThanDefiniteFailure()
+    {
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent("<html>gateway unavailable</html>")
+        };
+        var error = await Assert.ThrowsAnyAsync<InfraAgentSessionException>(() =>
+            InfraAgentSessionService.ProcessCdsCreateResponseAsync(response,
+                (_, _) => throw new InvalidOperationException("must not persist"),
+                recoverAsync: _ => throw new HttpRequestException("connection interrupted")));
+        Assert.Equal(InfraAgentSessionErrorCodes.SessionCreationPending, error.ErrorCode);
+    }
+
+    [Fact]
+    public async Task RecoveredDurableFailureRetainsIdentityAndSanitizedReasonBeforeThrowing()
+    {
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.Accepted)
+        {
+            Content = new StringContent("""{"item":{"id":"reservation-1","status":"creating"}}""")
+        };
+        string? identity = null;
+        var error = await Assert.ThrowsAnyAsync<InfraAgentSessionException>(() =>
+            InfraAgentSessionService.ProcessCdsCreateResponseAsync(response,
+                (item, _) =>
+                {
+                    Assert.False(item.Succeeded);
+                    identity = item.Item!.Value.GetProperty("id").GetString();
+                    return Task.CompletedTask;
+                },
+                recoverAsync: _ => Task.FromResult<System.Text.Json.JsonElement?>(System.Text.Json.JsonSerializer.SerializeToElement(
+                    new { id = "reservation-1", status = "failed", creationFailure = new { message = "启动失败 token=private-value" } }))));
+        Assert.Equal("reservation-1", identity);
+        Assert.Equal(InfraAgentSessionErrorCodes.CdsRequestFailed, error.ErrorCode);
+        Assert.Contains("启动失败", error.Message);
+        Assert.DoesNotContain("private-value", error.Message);
+    }
+
+    [Theory]
+    [InlineData("stopped")]
+    [InlineData("stopping")]
+    public async Task RecoveredStoppedAttemptDoesNotBecomePendingOrDispatchable(string status)
+    {
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.Accepted)
+        {
+            Content = new StringContent("""{"item":{"id":"reservation-1","status":"creating"}}""")
+        };
+        var error = await Assert.ThrowsAnyAsync<InfraAgentSessionException>(() =>
+            InfraAgentSessionService.ProcessCdsCreateResponseAsync(response,
+                (_, _) => throw new InvalidOperationException("must not persist"),
+                recoverAsync: _ => Task.FromResult<System.Text.Json.JsonElement?>(System.Text.Json.JsonSerializer.SerializeToElement(
+                    new { id = "reservation-1", status }))));
+        Assert.Equal(InfraAgentSessionErrorCodes.CdsRequestFailed, error.ErrorCode);
+    }
+
     [Fact]
     public void FailedCreateResponseKeepsRemoteSessionIdentityForCleanup()
     {
@@ -112,7 +337,7 @@ public sealed class InfraAgentSessionCreateRecoveryTests
                 TimeSpan.FromSeconds(1)));
 
         Assert.Equal(0, persistCalls);
-        Assert.Equal(InfraAgentSessionErrorCodes.CdsRequestFailed, error.ErrorCode);
+        Assert.Equal(InfraAgentSessionErrorCodes.SessionCreationPending, error.ErrorCode);
         Assert.Equal(503, error.HttpStatus);
         Assert.Contains("仍在创建中", error.Message);
         Assert.Contains("同一请求标识", error.Message);

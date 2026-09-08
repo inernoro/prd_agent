@@ -88,6 +88,20 @@ const GENERATION_STAGES = [
   { label: '人工确认', threshold: 100 },
 ] as const;
 
+type SiteEditProgressState = 'draft-ready' | 'published' | 'incomplete';
+
+export function siteEditDisplayProgress(state: SiteEditProgressState, reportedProgress = 0) {
+  if (state === 'incomplete') return Math.min(reportedProgress, 95);
+  return state === 'published' ? 100 : 95;
+}
+
+export function siteEditStageState(index: number, activeIndex: number, generating: boolean, progress: number) {
+  const threshold = GENERATION_STAGES[index]?.threshold ?? 100;
+  const complete = index < activeIndex
+    || (index === activeIndex && !generating && progress >= threshold);
+  return { complete, current: index === activeIndex && !complete };
+}
+
 function formatRevisionTime(value?: string | null) {
   if (!value) return '尚未发布';
   const date = new Date(value);
@@ -313,7 +327,9 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
         : null,
     );
     setPhase(revisionLabel(result.data.revision));
-    setProgress(publishable ? 95 : 100);
+    setProgress(siteEditDisplayProgress(
+      result.data.revision.status === 'published' ? 'published' : 'draft-ready',
+    ));
   }, [site.id]);
 
   useEffect(() => {
@@ -361,7 +377,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       }
 
       setPhase(result.data.phase);
-      setProgress(result.data.progress);
+      setProgress(siteEditDisplayProgress('incomplete', result.data.progress));
       setActiveRunRuntime(result.data.runtime);
       setRunStartedAtMs(Date.parse(result.data.createdAt));
       const status = result.data.status.toLowerCase();
@@ -387,6 +403,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
         setGenerating(false);
         beginRuntimeRecovery(result.data.runtime);
         const detail = result.data.error || result.data.phase || '页面修改失败';
+        setProgress((current) => siteEditDisplayProgress('incomplete', current));
         setPhase(detail);
         setRecoveryNotice({
           title: '页面修改未完成',
@@ -493,7 +510,9 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
           if (event.event === 'phase') {
             const item = data as PhaseEvent;
             if (typeof item.message === 'string') setPhase(item.message);
-            if (typeof item.progress === 'number') setProgress(item.progress);
+            if (typeof item.progress === 'number') {
+              setProgress(siteEditDisplayProgress('incomplete', item.progress));
+            }
             return;
           }
           if (event.event === 'thinking' && typeof data.text === 'string') {
@@ -517,7 +536,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             setStopRequested(false);
             setDraftRevisionId(data.revisionId);
             setDraftRevisionStatus('draft');
-            setProgress(100);
+            setProgress(siteEditDisplayProgress('draft-ready'));
             setPhase('草稿已生成，请预览确认后再发布');
             setRecoveryNotice(null);
             void openRevision(data.revisionId);
@@ -545,6 +564,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             beginRuntimeRecovery(requestRuntime.id);
             try { sessionStorage.removeItem(activeSiteEditRunStorageKey(site.id)); } catch { /* ignore unavailable storage */ }
             setGenerating(false);
+            setProgress((current) => siteEditDisplayProgress('incomplete', current));
             setPhase(message);
             setRecoveryNotice({
               title: '页面修改未完成',
@@ -620,6 +640,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
         versionConflict: result.error?.code === 'REVISION_CONFLICT',
       });
       toast.error('发布失败', detail);
+      setProgress((current) => siteEditDisplayProgress('incomplete', current));
       await loadHistory();
       if (draftRevisionId === revisionId) await openRevision(revisionId);
       return;
@@ -629,6 +650,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     setPreviewedRevision(result.data.revision);
     setDraftRevisionId(null);
     setDraftRevisionStatus(null);
+    setProgress(siteEditDisplayProgress('published'));
     setPhase('新版本已经发布');
     toast.success('新版本已经发布');
     await loadHistory();
@@ -653,6 +675,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
         versionConflict: result.error?.code === 'REVISION_CONFLICT',
       });
       toast.error('回退失败', detail);
+      setProgress((current) => siteEditDisplayProgress('incomplete', current));
       return;
     }
     onPublished(result.data.site);
@@ -661,6 +684,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     setPreviewedRevision(null);
     setDraftRevisionId(null);
     setDraftRevisionStatus(null);
+    setProgress(siteEditDisplayProgress('published'));
     setPhase('旧内容已作为一个新版本重新发布');
     toast.success('已经回退并发布为新版本');
     await loadHistory();
@@ -1114,9 +1138,12 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
 
               <ol className="mt-3 grid grid-cols-4 gap-1" aria-label="草稿生成阶段">
                 {GENERATION_STAGES.map((item, index) => {
-                  const complete = index < generationStageIndex
-                    || (index === generationStageIndex && !generating && !!previewHtml);
-                  const current = index === generationStageIndex && !complete;
+                  const { complete, current } = siteEditStageState(
+                    index,
+                    generationStageIndex,
+                    generating,
+                    progress,
+                  );
                   return (
                     <li key={item.label} aria-current={current ? 'step' : undefined} className="min-w-0 text-center">
                       <span className={`mx-auto flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-semibold ${complete ? 'border-emerald-500 bg-emerald-500/15 text-emerald-500' : current ? 'border-blue-500 bg-blue-500/15 text-blue-500' : 'border-token-subtle bg-token-nested text-token-muted'}`}>
