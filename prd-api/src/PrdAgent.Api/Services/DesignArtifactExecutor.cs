@@ -4,7 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.Interfaces;
-using PrdAgent.Core.Interfaces.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
@@ -40,7 +40,7 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
 
     internal string? ForMapClient()
     {
-        // CreateClient 的 expectedModel 不携带 model_policy/model_pool_id，不能假扮严格池路由。
+        // 本执行器只实现明确模型或自动选择；本批不扩展严格模型池路由合同。
         if (ModelPoolId != null)
             throw new InvalidOperationException("当前执行器暂不支持已配置的模型选择方式，请切换 OpenDesign，或联系管理员调整设计模型配置");
         return Model;
@@ -98,13 +98,17 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
         var caller = run.Operation == DesignArtifactOperations.Edit
             ? AppCallerRegistry.Admin.WebHosting.EditHtml
             : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
+        var requestId = Guid.NewGuid().ToString("N");
+        var documentChars = (currentHtml?.Length ?? 0) + knowledgeChars;
+        var systemPrompt = DesignArtifactPromptBuilder.BuildSystemPrompt(run.Operation);
+        var userPrompt = DesignArtifactPromptBuilder.BuildUserPrompt(run, currentHtml);
         using var _ = _llmContext.BeginScope(new LlmRequestContext(
-            RequestId: Guid.NewGuid().ToString("N"),
+            RequestId: requestId,
             GroupId: null,
             SessionId: run.Id,
             UserId: run.UserId,
             ViewRole: null,
-            DocumentChars: (currentHtml?.Length ?? 0) + knowledgeChars,
+            DocumentChars: documentChars,
             DocumentHash: null,
             SystemPromptRedacted: run.Operation == DesignArtifactOperations.Edit
                 ? "[WebHosting-EditHtml]"
@@ -113,27 +117,43 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
             AppCallerCode: caller,
             RunId: run.Id));
 
-        var client = _gateway.CreateClient(
-            caller,
-            ModelTypes.Chat,
-            // 默认模型池可能回落到 4K completion 上限；首版先保证所有已配置聊天模型都能执行。
-            // 更长网页由模型配置升级或后续分段生成解决，不能在业务层假定 16K 输出能力。
-            maxTokens: 4_096,
-            temperature: run.Operation == DesignArtifactOperations.Edit ? 0.25 : 0.45,
-            includeThinking: true,
-            expectedModel: expectedModel);
-        var messages = new List<LLMMessage>
+        // 业务不设置固定输出 token 上限；模型能力和协议所需参数由现有网关处理。
+        var request = new GatewayRequest
         {
-            new() { Role = "user", Content = DesignArtifactPromptBuilder.BuildUserPrompt(run, currentHtml) },
+            AppCallerCode = caller,
+            ModelType = ModelTypes.Chat,
+            ExpectedModel = expectedModel,
+            Stream = true,
+            EnablePromptCache = true,
+            IncludeThinking = true,
+            TimeoutSeconds = 120,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userPrompt },
+                },
+                ["temperature"] = run.Operation == DesignArtifactOperations.Edit ? 0.25 : 0.45,
+            },
+            Context = new GatewayRequestContext
+            {
+                RequestId = requestId,
+                RunId = run.Id,
+                SessionId = run.Id,
+                UserId = run.UserId,
+                SourceSystem = "map",
+                DocumentChars = documentChars,
+                QuestionText = userPrompt,
+                SystemPromptChars = systemPrompt.Length,
+                SystemPromptText = systemPrompt,
+            },
         };
-        await foreach (var chunk in client.StreamGenerateAsync(
-                           DesignArtifactPromptBuilder.BuildSystemPrompt(run.Operation),
-                           messages,
-                           ct))
+        await foreach (var chunk in _gateway.StreamAsync(request, ct))
         {
-            if (chunk.Type is "delta" or "thinking" && !string.IsNullOrEmpty(chunk.Content))
-                yield return new DesignArtifactExecutorChunk(chunk.Type, chunk.Content);
-            else if (chunk.Type == "error")
+            if (chunk.Type is GatewayChunkType.Text or GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                yield return new DesignArtifactExecutorChunk(chunk.Type == GatewayChunkType.Text ? "delta" : "thinking", chunk.Content);
+            else if (chunk.Type == GatewayChunkType.Error)
                 throw new InvalidOperationException("模型暂时无法完成页面设计，请稍后重试");
         }
     }

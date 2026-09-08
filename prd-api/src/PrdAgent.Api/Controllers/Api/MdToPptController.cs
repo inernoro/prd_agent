@@ -40,7 +40,6 @@ namespace PrdAgent.Api.Controllers.Api;
 public class MdToPptController : ControllerBase
 {
     internal const string SystemGatewayProfileId = "system-gateway-default";
-    internal const int OutlineCompletionTokenBudget = 4_096;
 
     private readonly IInfraAgentSessionService _sessions;
     private readonly MongoDbContext _db;
@@ -2502,10 +2501,10 @@ public class MdToPptController : ControllerBase
             "1. 下方版式范本的类名、结构层级、装饰元素一律保留——这是设计系统的身份，禁止改类名/删装饰/换结构\n" +
             "2. 只把范本中的占位内容（标题/段落/数字/标签/列表项文字）替换为本页真实内容；标题与要点必须逐字复制输入，不得润色、改写或新增业务文案；同构列表项允许增删 1-2 个\n" +
             "3. 禁止内联布局样式：style 属性里不得出现 position/width/height/min-/max-/margin/transform/z-index/inset，禁止 vh/vw 单位\n" +
-            "4. 内容必须放得下：标题不超过范本对应位置字数的 1.3 倍；每条要点不超过 40 字；放不下就精炼文字，禁止缩字号硬塞\n" +
+            "4. 内容必须忠实且放得下：不得精炼、摘要、拆义或另造短标签；优先删除重复展示和装饰性文字，仍放不下就保持原句让系统走既有兜底，禁止缩字号硬塞\n" +
             "5. 颜色/字体不得偏离设计系统（不要写新的颜色值）\n" +
-            "6. 不得压到页脚/页眉：内容总量不超过范本原有内容量，宁可少写一条也不让正文与底部页码/页脚文字重叠；保留页脚的位置与样式，但页脚样例文字必须替换为当前主题、栏目和正确页码\n" +
-            "7. 视觉装置不得留空：范本里的图表/数据可视化/SVG/统计块/大数字等装置必须填满；只能使用本页要点或全局上下文明确给出的事实，缺少数字时改用定性标签或原文短句，禁止编造人名、命令、版本、时间、token、费用、百分比或其他示意数值\n" +
+            "6. 不得压到页脚/页眉：内容总量不超过范本原有内容量，宁可减少重复展示也不让正文与底部页码/页脚文字重叠；只在范本已有页码容器中保留原 class 并替换为正确页码，范本没有页码容器时禁止新增匿名数字页脚\n" +
+            "7. 视觉装置不得留空：范本里的图表/数据可视化/SVG/统计块/大数字等装置必须填满；只能使用本页要点或全局上下文明确给出的事实，缺少数字时只能改用输入已有的完整原句，禁止编造人名、命令、版本、时间、token、费用、百分比或其他示意数值\n" +
             "8. 用户给出的创意方向只能转译为范本内的文案、数值、标签和已有视觉装置语义，不得破坏成品模板结构\n" +
             "9. 禁止低级兜底版式：不得输出可见标题为“封面/目录/总结/标题/本页标题”的泛化页；不得只给一个标题加 bullet 列表；每页至少保留并填实范本中的两类视觉结构（如数据块、卡片组、图表、分栏、流程、时间线、对比、引用、行动区）\n" +
             $"10. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
@@ -2525,7 +2524,7 @@ public class MdToPptController : ControllerBase
             "- 如需要讲稿或创作说明，只能放进隐藏的 .notes 或 aside.notes，禁止把 presenter-only 文案显示在 slide 上\n";
     }
 
-    private static string BuildAnchoredPageUserPrompt(MdToPptConvertRequest req, int index, int total)
+    internal static string BuildAnchoredPageUserPrompt(MdToPptConvertRequest req, int index, int total)
     {
         var pages = req.OutlinePages!;
         var page = pages[index];
@@ -2541,6 +2540,8 @@ public class MdToPptController : ControllerBase
         if (!string.IsNullOrEmpty(consoleGuard)) sb.Append(consoleGuard);
         sb.Append("创意与质量要求：只通过版式、层级、装饰和已有视觉装置表达用户意图，不得发明文案、数字、对比标签或流程节点；");
         sb.Append("范本同构区域只能填入上面的标题与要点原文，不得输出泛化标题“封面/目录/总结/标题”；");
+        sb.Append("不得缩写、精炼、重组标题或要点，也不得为卡片、数据块另造短标签；只可使用输入中的完整原句；");
+        sb.Append("页码只能复用范本已有页码容器和原 class，范本没有页码容器时不要新增数字页脚；");
         sb.Append("如果本页是封面，主标题必须是产品或主题名称，不得显示“封面”二字。");
         sb.Append("把范本占位内容替换为以上真实内容，输出整个 slide 块。");
         return sb.ToString();
@@ -3160,11 +3161,33 @@ public class MdToPptController : ControllerBase
             !allowed.Contains(sample, StringComparison.OrdinalIgnoreCase));
     }
 
+    internal enum UnsupportedVisibleClaimKind
+    {
+        None,
+        UnsupportedNumeric,
+        UnsupportedSemantic,
+    }
+
+    internal sealed record UnsupportedVisibleClaimValidation(
+        UnsupportedVisibleClaimKind Kind,
+        int? EvidenceOrdinal = null,
+        string? NormalizedToken = null,
+        int SemanticRemainingLength = 0)
+    {
+        public bool Rejected => Kind != UnsupportedVisibleClaimKind.None;
+
+        public static UnsupportedVisibleClaimValidation Accepted { get; } =
+            new(UnsupportedVisibleClaimKind.None);
+    }
+
+    internal const string AnchoredQualityRepairFeedbackHeader = "## 首轮质量校验反馈";
+
     /// <summary>
     /// 锚点只提供视觉结构；可见业务文字必须由本页标题、要点或源内容的完整事实片段组成。
     /// 先移除允许事实，再检查剩余语义字符，因此跨多个内联标签拆分也不能绕过。
+    /// 返回有限枚举诊断供唯一一次重试使用；布尔兼容入口委托到这里，禁止复制判据。
     /// </summary>
-    internal static bool ContainsUnsupportedVisibleClaims(
+    internal static UnsupportedVisibleClaimValidation ValidateUnsupportedVisibleClaims(
         string generated,
         MdToPptOutlinePageDto page,
         string? deckSummary,
@@ -3172,7 +3195,7 @@ public class MdToPptController : ControllerBase
         int? pageIndex = null,
         int? totalPages = null)
     {
-        if (string.IsNullOrWhiteSpace(generated)) return false;
+        if (string.IsNullOrWhiteSpace(generated)) return UnsupportedVisibleClaimValidation.Accepted;
 
         static string Normalize(string value) => System.Text.RegularExpressions.Regex.Replace(
             System.Net.WebUtility.HtmlDecode(value), "\\s+", " ").Trim();
@@ -3265,7 +3288,16 @@ public class MdToPptController : ControllerBase
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .SelectMany(value => NumericFacts(value!))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (NumericFacts(visible).Any(value => !allowedNumericFacts.Contains(value))) return true;
+        var visibleNumericFacts = NumericFacts(visible).ToList();
+        for (var index = 0; index < visibleNumericFacts.Count; index++)
+        {
+            var value = visibleNumericFacts[index];
+            if (allowedNumericFacts.Contains(value)) continue;
+            return new UnsupportedVisibleClaimValidation(
+                UnsupportedVisibleClaimKind.UnsupportedNumeric,
+                EvidenceOrdinal: index + 1,
+                NormalizedToken: value);
+        }
 
         static string Semantic(string value) => System.Text.RegularExpressions.Regex.Replace(
             Normalize(value).ToLowerInvariant(), "[\\p{P}\\p{S}\\s\\d]+", string.Empty);
@@ -3284,8 +3316,65 @@ public class MdToPptController : ControllerBase
             .Replace("section", string.Empty, StringComparison.OrdinalIgnoreCase)
             .Replace("slide", string.Empty, StringComparison.OrdinalIgnoreCase)
             .Replace("page", string.Empty, StringComparison.OrdinalIgnoreCase);
-        return remaining.Length >= 3;
+        return remaining.Length >= 3
+            ? new UnsupportedVisibleClaimValidation(
+                UnsupportedVisibleClaimKind.UnsupportedSemantic,
+                EvidenceOrdinal: 1,
+                SemanticRemainingLength: remaining.Length)
+            : UnsupportedVisibleClaimValidation.Accepted;
     }
+
+    internal static bool ContainsUnsupportedVisibleClaims(
+        string generated,
+        MdToPptOutlinePageDto page,
+        string? deckSummary,
+        string? deckContent,
+        int? pageIndex = null,
+        int? totalPages = null) =>
+        ValidateUnsupportedVisibleClaims(
+            generated,
+            page,
+            deckSummary,
+            deckContent,
+            pageIndex,
+            totalPages).Rejected;
+
+    internal static string BuildAnchoredPageRetryUserPrompt(
+        string originalUserPrompt,
+        UnsupportedVisibleClaimValidation validation)
+    {
+        if (!validation.Rejected) return originalUserPrompt;
+
+        var feedback = validation.Kind switch
+        {
+            UnsupportedVisibleClaimKind.UnsupportedNumeric when
+                validation.EvidenceOrdinal is > 0 &&
+                IsSafeNormalizedNumericFact(validation.NormalizedToken) =>
+                $"校验原因：unsupported_numeric。安全定位：可见数字事实第 {validation.EvidenceOrdinal.Value} 项，" +
+                $"归一化 token 为 {validation.NormalizedToken}。删除该无来源数字；若它只是页码，只能复用范本已有且保留原 class 的页码容器，禁止新建匿名数字页脚。",
+            UnsupportedVisibleClaimKind.UnsupportedNumeric =>
+                "校验原因：unsupported_numeric。安全定位不可用。删除所有未逐字出现在标题、要点或来源中的数字；页码只能复用范本已有且保留原 class 的页码容器。",
+            UnsupportedVisibleClaimKind.UnsupportedSemantic when validation.SemanticRemainingLength > 0 =>
+                $"校验原因：unsupported_semantic。安全定位：可见文字聚合段第 1 项仍有 {validation.SemanticRemainingLength} 个未获完整原句支持的语义字符。" +
+                "删除自创、缩写或重组标签，只使用输入中的完整标题、完整要点或完整来源原句。",
+            UnsupportedVisibleClaimKind.UnsupportedSemantic =>
+                "校验原因：unsupported_semantic。安全定位不可用。删除自创、缩写或重组标签，只使用输入中的完整标题、完整要点或完整来源原句。",
+            _ => string.Empty,
+        };
+        if (string.IsNullOrEmpty(feedback)) return originalUserPrompt;
+
+        return originalUserPrompt.TrimEnd() + "\n\n" + AnchoredQualityRepairFeedbackHeader + "\n" + feedback +
+               "\n其余版式结构保持不变，输出完整 slide 块。";
+    }
+
+    private static bool IsSafeNormalizedNumericFact(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.Length <= 48 &&
+        System.Text.RegularExpressions.Regex.IsMatch(
+            value,
+            "^(?:[$¥￥€£])?\\d+(?:[.,]\\d+)*(?:%|％|ms|min|tokens?|gb|mb|[skmh]|元|万|亿|天|家|人|个|次|项|位|套|页|x|×)?$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
 
     internal static string NormalizeSlidePageIdentity(string slide, int index, int total)
     {
@@ -3828,7 +3917,6 @@ public class MdToPptController : ControllerBase
                     new JsonObject { ["role"] = "user", ["content"] = userContent },
                 },
                 ["temperature"] = 0.3,
-                ["max_tokens"] = OutlineCompletionTokenBudget,
             },
             // 跨进程网关只接收请求载荷，不能依赖调用方的 ambient 审计作用域。
             Context = new GatewayRequestContext
@@ -3870,9 +3958,6 @@ public class MdToPptController : ControllerBase
                     new JsonObject { ["role"] = "user",   ["content"] = userPrompt },
                 },
                 ["temperature"] = 0.48,
-                // 默认模型池可能回落到 4K 输出模型；单页与两页短 deck 先保证可运行。
-                // 更长输出由并行逐页生成承接，不用超限参数换取表面上的一次性长输出。
-                ["max_tokens"] = 4096,
             },
             Context = new GatewayRequestContext
             {
@@ -4277,6 +4362,7 @@ public class MdToPptController : ControllerBase
                     var pageResult = await RunPageOnceAsync(
                         userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", run.Id,
                         i == 0 ? presession : null, run.KnowledgeReferences);
+                    var unsupportedClaims = UnsupportedVisibleClaimValidation.Accepted;
                     var section = NormalizeGeneratedSlideFragment(pageResult.Text, anchor != null);
                     if (anchor != null && layout != null && !string.IsNullOrEmpty(section))
                         section = RewriteAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content);
@@ -4288,11 +4374,19 @@ public class MdToPptController : ControllerBase
                         _logger.LogWarning("[MdToPpt-Pages] page {Idx} retained anchor sample text, retrying", i);
                         section = string.Empty;
                     }
-                    if (anchor != null && !string.IsNullOrEmpty(section) &&
-                        ContainsUnsupportedVisibleClaims(section, pages[i], req.Summary, req.Content, i, total))
+                    if (anchor != null && !string.IsNullOrEmpty(section))
                     {
-                        _logger.LogWarning("[MdToPpt-Pages] page {Idx} contains unsupported visible claims, retrying", i);
-                        section = string.Empty;
+                        unsupportedClaims = ValidateUnsupportedVisibleClaims(
+                            section, pages[i], req.Summary, req.Content, i, total);
+                        if (unsupportedClaims.Rejected)
+                        {
+                            _logger.LogWarning(
+                                "[MdToPpt-Pages] page {Idx} contains unsupported visible claims kind={Kind} ordinal={Ordinal}, retrying",
+                                i,
+                                unsupportedClaims.Kind,
+                                unsupportedClaims.EvidenceOrdinal);
+                            section = string.Empty;
+                        }
                     }
                     if (consoleDashboardMode && !string.IsNullOrEmpty(section) && LooksLikeConsoleVisualMismatch(section, anchor?.Name))
                     {
@@ -4311,8 +4405,9 @@ public class MdToPptController : ControllerBase
                         // 单页失败重试一次，再失败用范本兜底（结构不塌，内容退化为范本+标题要点）
                         if (pageResult.Error == null || pageResult.Text != null)
                             _logger.LogWarning("[MdToPpt-Pages] page {Idx} invalid block, retrying", i);
+                        var retryUserPrompt = BuildAnchoredPageRetryUserPrompt(usr, unsupportedClaims);
                         var retryResult = await RunPageOnceAsync(
-                            userId, connection, profile, sys, usr, $"PPT 第{i + 1}页R", run.Id,
+                            userId, connection, profile, sys, retryUserPrompt, $"PPT 第{i + 1}页R", run.Id,
                             null, run.KnowledgeReferences);
                         section = NormalizeGeneratedSlideFragment(retryResult.Text, anchor != null);
                         if (anchor != null && layout != null && !string.IsNullOrEmpty(section))

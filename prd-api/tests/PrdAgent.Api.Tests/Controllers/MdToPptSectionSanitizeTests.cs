@@ -176,7 +176,7 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
-    public void GatewayPageRequest_PinsExpectedModelAndKeepsStream()
+    public void GatewayPageRequest_PinsExpectedModelKeepsStreamAndOmitsTaskOutputCap()
     {
         var profile = new InfraAgentRuntimeProfile
         {
@@ -193,7 +193,8 @@ public class MdToPptSectionSanitizeTests
         Assert.Equal("req1", request.Context?.RequestId);
         Assert.Equal("u1", request.Context?.UserId);
         Assert.Equal("run-1", request.Context?.RunId);
-        Assert.Equal(4096, request.RequestBody?["max_tokens"]?.GetValue<int>());
+        Assert.False(request.RequestBody?.ContainsKey("max_tokens"));
+        Assert.False(request.RequestBody?.ContainsKey("max_completion_tokens"));
     }
 
     [Fact]
@@ -206,12 +207,6 @@ public class MdToPptSectionSanitizeTests
         Assert.True(profile.IsDefault);
         Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
         Assert.Equal("自动选择", MdToPptController.GenerationModelLabel(profile));
-    }
-
-    [Fact]
-    public void OutlineCompletionBudget_StaysWithinGatewayCompatibilityCeiling()
-    {
-        Assert.Equal(4096, MdToPptController.OutlineCompletionTokenBudget);
     }
 
     [Fact]

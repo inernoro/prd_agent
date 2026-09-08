@@ -19,7 +19,6 @@ namespace PrdAgent.Api.Controllers.Api;
 public sealed class DesignArtifactRuntimeController : ControllerBase
 {
     private const int MaxProxyRequestBytes = 1_048_576;
-    private const int DefaultMaxCompletionTokens = 4_096;
     private const int DefaultProxyTimeoutSeconds = 900;
     private const int DefaultProxyIdleTimeoutSeconds = 90;
     private readonly IDesignArtifactWorkspaceBroker _broker;
@@ -110,12 +109,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
 
             var run = await _broker.ReserveModelCallAsync(runId, ReadBearerToken(), ct);
             DesignArtifactModelSelection.Resolve(_configuration).ApplyToOpenAiRequest(body);
-            var maxCompletionTokens = Math.Clamp(
-                _configuration.GetValue<int?>("DesignArtifactRuntime:MaxCompletionTokens")
-                ?? DefaultMaxCompletionTokens,
-                1,
-                8_192);
-            ApplyMapOwnedCompletionBudget(body, maxCompletionTokens);
+            ApplySingleOutputContract(body);
 
             var serveBaseUrl = _configuration["LlmGateway:ServeBaseUrl"]?.Trim().TrimEnd('/');
             var gatewayKey = _configuration["LlmGwServe:ApiKey"]?.Trim();
@@ -278,14 +272,11 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         return ticketBudget < configuredTimeout ? ticketBudget : configuredTimeout;
     }
 
-    internal static void ApplyMapOwnedCompletionBudget(JsonObject body, int maxCompletionTokens)
+    internal static void ApplySingleOutputContract(JsonObject body)
     {
-        // OpenDesign is only a passive consumer of the MAP model endpoint. It cannot raise the
-        // output budget through either OpenAI spelling or fan out one call into several choices.
-        body.Remove("max_tokens");
-        body.Remove("max_completion_tokens");
+        // 设计运行时消费单个输出，不支持候选分叉。输出 token 字段保持原样，
+        // 包括缺省和畸形值；合法性与模型能力仍由 LLMGW / 上游校验，不能默改成任务预算。
         body.Remove("best_of");
-        body["max_tokens"] = Math.Clamp(maxCompletionTokens, 1, 8_192);
         body["n"] = 1;
     }
 

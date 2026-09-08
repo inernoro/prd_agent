@@ -13,7 +13,7 @@ using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
-using PrdAgent.Core.Interfaces.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using Xunit;
@@ -37,6 +37,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             ["DesignArtifactRuntime:ModelPoolId"] = " ",
             ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve:8091",
             ["LlmGwServe:ApiKey"] = "gateway-secret",
+            ["DesignArtifactRuntime:MaxCompletionTokens"] = "1",
         }).Build();
         var run = BuildRun();
         run.Operation = operation;
@@ -45,23 +46,50 @@ public sealed class DesignArtifactWorkspaceContractTests
             ? AppCallerRegistry.Admin.WebHosting.EditHtml
             : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
         var temperature = operation == DesignArtifactOperations.Edit ? 0.25 : 0.45;
-        var client = new Mock<ILLMClient>(MockBehavior.Strict);
-        client.Setup(item => item.StreamGenerateAsync(
-                It.IsAny<string>(), It.IsAny<List<LLMMessage>>(), It.IsAny<CancellationToken>()))
-            .Returns(DesignResponse());
+        GatewayRequest? sent = null;
+        LlmRequestContext? auditScope = null;
         var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
-        gateway.Setup(item => item.CreateClient(caller, ModelTypes.Chat, 4096, temperature, true, expectedModel, null, null))
-            .Returns(client.Object);
+        gateway.Setup(item => item.StreamAsync(It.IsAny<GatewayRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewayRequest, CancellationToken>((request, _) => sent = request)
+            .Returns(DesignResponse());
         var context = new Mock<ILLMRequestContextAccessor>(MockBehavior.Strict);
         context.Setup(item => item.BeginScope(It.Is<LlmRequestContext>(value => value.RunId == run.Id)))
+            .Callback<LlmRequestContext>(value => auditScope = value)
             .Returns(Mock.Of<IDisposable>());
         var executor = new MapGatewayDesignArtifactExecutor(gateway.Object, context.Object, configuration);
         var chunks = new List<DesignArtifactExecutorChunk>();
         await foreach (var chunk in executor.ExecuteAsync(run, null, CancellationToken.None)) chunks.Add(chunk);
-        Assert.Equal("<html>synthetic</html>", Assert.Single(chunks).Content);
-        gateway.Verify(item => item.CreateClient(caller, ModelTypes.Chat, 4096, temperature, true, expectedModel, null, null), Times.Once);
-        client.Verify(item => item.StreamGenerateAsync(
-            It.IsAny<string>(), It.IsAny<List<LLMMessage>>(), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Collection(chunks,
+            chunk => { Assert.Equal("thinking", chunk.Type); Assert.Equal("synthetic thinking", chunk.Content); },
+            chunk => { Assert.Equal("delta", chunk.Type); Assert.Equal("<html>synthetic</html>", chunk.Content); });
+        Assert.NotNull(sent);
+        Assert.Equal(caller, sent.AppCallerCode);
+        Assert.Equal(ModelTypes.Chat, sent.ModelType);
+        Assert.Equal(expectedModel, sent.ExpectedModel);
+        Assert.True(sent.Stream);
+        Assert.True(sent.IncludeThinking);
+        Assert.True(sent.EnablePromptCache);
+        Assert.Equal(120, sent.TimeoutSeconds);
+        Assert.Equal(temperature, sent.RequestBody!["temperature"]!.GetValue<double>());
+        Assert.False(sent.RequestBody.ContainsKey("max_tokens"));
+        Assert.False(sent.RequestBody.ContainsKey("max_completion_tokens"));
+        var wireBody = JsonNode.Parse(JsonSerializer.Serialize(sent))!["RequestBody"]!.AsObject();
+        Assert.False(wireBody.ContainsKey("max_tokens"));
+        Assert.False(wireBody.ContainsKey("max_completion_tokens"));
+        Assert.Equal(run.Id, sent.Context!.RunId);
+        Assert.Equal(run.Id, sent.Context.SessionId);
+        Assert.Equal(run.UserId, sent.Context.UserId);
+        Assert.Equal("map", sent.Context.SourceSystem);
+        Assert.NotNull(auditScope);
+        Assert.Equal(auditScope.RequestId, sent.Context.RequestId);
+        Assert.Equal(auditScope.DocumentChars, sent.Context.DocumentChars);
+        Assert.Equal(caller, auditScope.AppCallerCode);
+        Assert.Equal(DesignArtifactPromptBuilder.BuildSystemPrompt(operation), sent.RequestBody["messages"]![0]!["content"]!.GetValue<string>());
+        Assert.Equal(DesignArtifactPromptBuilder.BuildUserPrompt(run, null), sent.RequestBody["messages"]![1]!["content"]!.GetValue<string>());
+        Assert.Equal(sent.Context.SystemPromptText, sent.RequestBody["messages"]![0]!["content"]!.GetValue<string>());
+        Assert.Equal(sent.Context.QuestionText, sent.RequestBody["messages"]![1]!["content"]!.GetValue<string>());
+        // VerifyNoOtherCalls also rejects a fallback to CreateClient's implicit 4096 default.
+        gateway.Verify(item => item.StreamAsync(It.IsAny<GatewayRequest>(), It.IsAny<CancellationToken>()), Times.Once);
         gateway.VerifyNoOtherCalls();
 
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
@@ -85,6 +113,8 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.NotNull(handler.Body);
         Assert.Equal(expectedModel, handler.Body!["model"]?.GetValue<string>());
         Assert.Equal(expectedModel != null, handler.Body.ContainsKey("model"));
+        Assert.False(handler.Body.ContainsKey("max_tokens"));
+        Assert.False(handler.Body.ContainsKey("max_completion_tokens"));
         foreach (var key in new[] { "model_pool_id", "modelPoolId", "model_policy", "modelPolicy" })
             Assert.False(handler.Body.ContainsKey(key));
         Assert.Equal(caller, handler.Header("X-Gateway-App-Caller"));
@@ -113,14 +143,57 @@ public sealed class DesignArtifactWorkspaceContractTests
         gateway.Verify(item => item.CreateClient(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<double>(), It.IsAny<bool>(),
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>()), Times.Never);
+        gateway.Verify(item => item.StreamAsync(It.IsAny<GatewayRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         gateway.VerifyNoOtherCalls();
         context.VerifyNoOtherCalls();
     }
 
-    private static async IAsyncEnumerable<LLMStreamChunk> DesignResponse()
+    private static async IAsyncEnumerable<GatewayStreamChunk> DesignResponse()
     {
         await Task.CompletedTask;
-        yield return new LLMStreamChunk { Type = "delta", Content = "<html>synthetic</html>" };
+        yield return GatewayStreamChunk.Thinking("synthetic thinking");
+        yield return GatewayStreamChunk.Text("<html>synthetic</html>");
+        yield return GatewayStreamChunk.Done("stop", null);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MapStreamRetainsSanitizedErrorAndCancellationBoundaries(bool cancelled)
+    {
+        using var cancellation = new CancellationTokenSource();
+        if (cancelled) cancellation.Cancel();
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.StreamAsync(It.IsAny<GatewayRequest>(), cancellation.Token))
+            .Returns(FailingDesignResponse(cancellation.Token));
+        var context = new Mock<ILLMRequestContextAccessor>(MockBehavior.Strict);
+        context.Setup(item => item.BeginScope(It.IsAny<LlmRequestContext>())).Returns(Mock.Of<IDisposable>());
+        var executor = new MapGatewayDesignArtifactExecutor(gateway.Object, context.Object, new ConfigurationBuilder().Build());
+        async Task Execute()
+        {
+            await foreach (var _ in executor.ExecuteAsync(BuildRun(), null, cancellation.Token))
+                Assert.Fail("失败或取消后不能继续输出内容");
+        }
+
+        if (cancelled)
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(Execute);
+        else
+        {
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(Execute);
+            Assert.Equal("模型暂时无法完成页面设计，请稍后重试", error.Message);
+            Assert.DoesNotContain("provider-secret", error.Message, StringComparison.Ordinal);
+        }
+        gateway.Verify(item => item.StreamAsync(It.IsAny<GatewayRequest>(), cancellation.Token), Times.Once);
+        gateway.VerifyNoOtherCalls();
+    }
+
+    private static async IAsyncEnumerable<GatewayStreamChunk> FailingDesignResponse(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        await Task.CompletedTask;
+        yield return GatewayStreamChunk.Fail("provider-secret", "UPSTREAM_FAILED");
+        yield return GatewayStreamChunk.Text("must not render");
     }
 
     [Theory]
@@ -161,17 +234,22 @@ public sealed class DesignArtifactWorkspaceContractTests
 
     [Theory]
     [InlineData("{\"messages\":[]}")]
-    [InlineData("{\"messages\":[],\"max_tokens\":999999,\"n\":8,\"best_of\":8}")]
-    [InlineData("{\"messages\":[],\"max_completion_tokens\":999999}")]
+    [InlineData("{\"messages\":[],\"max_tokens\":16384,\"n\":8,\"best_of\":8}")]
+    [InlineData("{\"messages\":[],\"max_completion_tokens\":32768}")]
+    [InlineData("{\"messages\":[],\"max_tokens\":16384,\"max_completion_tokens\":32768}")]
     [InlineData("{\"messages\":[],\"max_tokens\":\"unbounded\",\"max_completion_tokens\":{}}")]
-    public void MapAlwaysOwnsRemoteCompletionBudgetAndFanOut(string json)
+    public void MapPreservesRuntimeTokenParametersAndOnlyEnforcesSingleOutput(string json)
     {
         var body = JsonNode.Parse(json)!.AsObject();
+        var original = body.DeepClone().AsObject();
 
-        DesignArtifactRuntimeController.ApplyMapOwnedCompletionBudget(body, 4_096);
+        DesignArtifactRuntimeController.ApplySingleOutputContract(body);
 
-        Assert.Equal(4_096, body["max_tokens"]?.GetValue<int>());
-        Assert.Null(body["max_completion_tokens"]);
+        foreach (var key in new[] { "max_tokens", "max_completion_tokens" })
+        {
+            Assert.Equal(original.ContainsKey(key), body.ContainsKey(key));
+            Assert.True(JsonNode.DeepEquals(original[key], body[key]));
+        }
         Assert.Equal(1, body["n"]?.GetValue<int>());
         Assert.Null(body["best_of"]);
     }
@@ -189,8 +267,12 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.DoesNotContain("只使用内联 CSS 与原生 JavaScript", generate, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task ModelProxyUsesMapSourceAndKeepsOpenDesignRunAttribution()
+    [Theory]
+    [InlineData("{\"model\":\"map-managed\",\"messages\":[]}")]
+    [InlineData("{\"model\":\"map-managed\",\"max_tokens\":16384,\"messages\":[]}")]
+    [InlineData("{\"model\":\"map-managed\",\"max_completion_tokens\":32768,\"messages\":[]}")]
+    [InlineData("{\"model\":\"map-managed\",\"max_tokens\":\"invalid\",\"max_completion_tokens\":{},\"messages\":[]}")]
+    public async Task ModelProxyUsesMapSourceAndKeepsOpenDesignRunAttribution(string requestJson)
     {
         var run = BuildRun();
         run.Id = "run-model-proxy-1";
@@ -205,6 +287,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve:8091",
             ["LlmGwServe:ApiKey"] = "gateway-secret",
             ["DesignArtifactRuntime:Model"] = "gpt-4.1-mini",
+            ["DesignArtifactRuntime:MaxCompletionTokens"] = "1",
         }).Build();
         var controller = new DesignArtifactRuntimeController(
             broker.Object,
@@ -214,7 +297,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
-        var requestBytes = Encoding.UTF8.GetBytes("{\"model\":\"map-managed\",\"max_tokens\":8192,\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}");
+        var requestBytes = Encoding.UTF8.GetBytes(requestJson);
         controller.Request.Body = new MemoryStream(requestBytes);
         controller.Request.ContentLength = requestBytes.Length;
         controller.Request.Headers.Authorization = "Bearer model-ticket";
@@ -230,7 +313,12 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Equal("gateway-secret", handler.Header("X-Gateway-Key"));
         Assert.True(handler.RequestTokenCanBeCanceled);
         Assert.Equal("gpt-4.1-mini", handler.Body?["model"]?.GetValue<string>());
-        Assert.Equal(4096, handler.Body?["max_tokens"]?.GetValue<int>());
+        var original = JsonNode.Parse(requestJson)!.AsObject();
+        foreach (var key in new[] { "max_tokens", "max_completion_tokens" })
+        {
+            Assert.Equal(original.ContainsKey(key), handler.Body!.ContainsKey(key));
+            Assert.True(JsonNode.DeepEquals(original[key], handler.Body[key]));
+        }
         broker.VerifyAll();
     }
 

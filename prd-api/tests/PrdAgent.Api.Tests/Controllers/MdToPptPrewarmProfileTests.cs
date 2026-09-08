@@ -138,7 +138,7 @@ public class MdToPptPrewarmProfileTests
     [Theory]
     [InlineData(60)]
     [InlineData(90)]
-    public void OutlineGatewayRequest_SerializesExplicitAuditIdentityWithoutChangingRouting(int timeoutSeconds)
+    public void OutlineGatewayRequest_SerializesAuditIdentityWithoutInjectingTaskOutputCap(int timeoutSeconds)
     {
         var request = MdToPptController.BuildGatewayOutlineRequest(
             "outline-system", "frozen-knowledge", "request-identity", "owner-identity", "run-identity", timeoutSeconds);
@@ -162,7 +162,8 @@ public class MdToPptPrewarmProfileTests
         wire.Stream.ShouldBeTrue();
         wire.TimeoutSeconds.ShouldBe(timeoutSeconds);
         wire.RequestBody!["temperature"]!.GetValue<double>().ShouldBe(0.3);
-        wire.RequestBody["max_tokens"]!.GetValue<int>().ShouldBe(MdToPptController.OutlineCompletionTokenBudget);
+        wire.RequestBody.ContainsKey("max_tokens").ShouldBeFalse();
+        wire.RequestBody.ContainsKey("max_completion_tokens").ShouldBeFalse();
         wire.RequestBody["messages"]![0]!["content"]!.GetValue<string>().ShouldBe("outline-system");
         wire.RequestBody["messages"]![1]!["content"]!.GetValue<string>().ShouldBe("frozen-knowledge");
     }
